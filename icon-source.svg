@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- API检测工具图标 - 设计理念：API符号 + 雷达扫描 + 网络连接 -->
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- 背景渐变：深紫到蓝紫 -->
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#7c3aed;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#6366f1;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#3b82f6;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- 扫描波纹渐变 -->
+    <radialGradient id="scanGradient">
+      <stop offset="0%" style="stop-color:#60a5fa;stop-opacity:0.8" />
+      <stop offset="100%" style="stop-color:#60a5fa;stop-opacity:0" />
+    </radialGradient>
+    
+    <!-- 发光效果 -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- 圆角矩形背景 -->
+  <rect x="0" y="0" width="512" height="512" rx="100" fill="url(#bgGradient)"/>
+  
+  <!-- 雷达扫描背景圆 -->
+  <circle cx="256" cy="256" r="140" fill="url(#scanGradient)" opacity="0.3"/>
+  <circle cx="256" cy="256" r="100" fill="none" stroke="#60a5fa" stroke-width="2" opacity="0.4"/>
+  <circle cx="256" cy="256" r="70" fill="none" stroke="#60a5fa" stroke-width="2" opacity="0.5"/>
+  
+  <!-- API符号：左花括号 { -->
+  <path d="M 150 200 
+           Q 130 200, 130 220
+           L 130 230
+           Q 130 240, 120 240
+           Q 130 240, 130 250
+           L 130 292
+           Q 130 312, 150 312" 
+        fill="none" 
+        stroke="#ffffff" 
+        stroke-width="20" 
+        stroke-linecap="round"
+        filter="url(#glow)"/>
+  
+  <!-- API符号：右花括号 } -->
+  <path d="M 362 200 
+           Q 382 200, 382 220
+           L 382 230
+           Q 382 240, 392 240
+           Q 382 240, 382 250
+           L 382 292
+           Q 382 312, 362 312" 
+        fill="none" 
+        stroke="#ffffff" 
+        stroke-width="20" 
+        stroke-linecap="round"
+        filter="url(#glow)"/>
+  
+  <!-- 中心检测图标：放大镜 + 对勾 -->
+  <g transform="translate(230, 230)">
+    <!-- 放大镜圆圈 -->
+    <circle cx="16" cy="16" r="24" 
+            fill="none" 
+            stroke="#ffffff" 
+            stroke-width="8" 
+            filter="url(#glow)"/>
+    
+    <!-- 放大镜手柄 -->
+    <line x1="34" y1="34" x2="50" y2="50" 
+          stroke="#ffffff" 
+          stroke-width="8" 
+          stroke-linecap="round"
+          filter="url(#glow)"/>
+    
+    <!-- 检测成功对勾 -->
+    <path d="M 8 16 L 16 24 L 28 10" 
+          fill="none" 
+          stroke="#10b981" 
+          stroke-width="5" 
+          stroke-linecap="round" 
+          stroke-linejoin="round"
+          filter="url(#glow)"/>
+  </g>
+  
+  <!-- 数据点：表示多个API站点 -->
+  <circle cx="180" cy="380" r="12" fill="#10b981" opacity="0.9" filter="url(#glow)"/>
+  <circle cx="256" cy="400" r="12" fill="#60a5fa" opacity="0.9" filter="url(#glow)"/>
+  <circle cx="332" cy="380" r="12" fill="#f59e0b" opacity="0.9" filter="url(#glow)"/>
+  
+  <!-- 连接线 -->
+  <line x1="180" y1="380" x2="256" y2="300" stroke="#ffffff" stroke-width="2" opacity="0.3"/>
+  <line x1="256" y1="400" x2="256" y2="300" stroke="#ffffff" stroke-width="2" opacity="0.3"/>
+  <line x1="332" y1="380" x2="256" y2="300" stroke="#ffffff" stroke-width="2" opacity="0.3"/>
+  
+  <!-- 小型数据脉冲效果 -->
+  <circle cx="256" cy="120" r="8" fill="#60a5fa" opacity="0.6">
+    <animate attributeName="opacity" values="0.6;1;0.6" dur="2s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="380" cy="256" r="8" fill="#a855f7" opacity="0.6">
+    <animate attributeName="opacity" values="0.6;1;0.6" dur="2.5s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="132" cy="256" r="8" fill="#10b981" opacity="0.6">
+    <animate attributeName="opacity" values="0.6;1;0.6" dur="3s" repeatCount="indefinite"/>
+  </circle>
+</svg>

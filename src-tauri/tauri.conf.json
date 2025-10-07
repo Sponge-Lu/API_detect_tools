@@ -1,0 +1,53 @@
+{
+  "productName": "API Detect Tool",
+  "version": "1.0.0",
+  "identifier": "com.api.detector",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+      "windows": [
+        {
+          "title": "API Detect Tool",
+          "width": 800,
+          "height": 700,
+          "minWidth": 750,
+          "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "transparent": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null,
+      "capabilities": [
+        {
+          "identifier": "main-capability",
+          "description": "Main application capabilities",
+          "windows": ["main"],
+          "permissions": [
+            "core:default",
+            "shell:allow-open",
+            "clipboard-manager:allow-write-text"
+          ]
+        }
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "resources": [],
+    "externalBin": [],
+    "copyright": "Copyright © 2025",
+    "category": "Utility",
+    "shortDescription": "API站点检测工具",
+    "longDescription": "自动检测公益站可用模型和账户余额，支持NewAPI、VeloeraAPI等OpenAI兼容接口"
+  }
+}
+
