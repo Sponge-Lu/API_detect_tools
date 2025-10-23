@@ -22,9 +22,9 @@ export function SettingsPanel({
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-6">
-      <div className="bg-slate-800 rounded-xl shadow-2xl max-w-lg w-full border border-white/10">
+      <div className="bg-slate-800 rounded-xl shadow-2xl max-w-2xl w-full border border-white/10">
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
-          <h2 className="text-xl font-bold">全局设置</h2>
+          <h2 className="text-xl font-bold">设置</h2>
           <button
             onClick={onCancel}
             className="p-2 hover:bg-white/10 rounded-lg transition-all"
@@ -166,4 +166,3 @@ export function SettingsPanel({
     </div>
   );
 }
-

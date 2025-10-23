@@ -1,49 +1,36 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-*.egg-info/
-dist-python/
-*.egg
-
-# Tauri + Rust
-src-tauri/target/
-src-tauri/Cargo.lock
-
-# Node + React
+# Dependencies
 node_modules/
+
+# Build outputs
 dist/
-.vite/
+dist-renderer/
+release/
 
-# Config
-config.json
-
-# Memory & Cache
-.cunzhi-memory/
-.roo/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
+# Logs
+*.log
+npm-debug.log*
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Build outputs
-*.exe
-*.dmg
-*.app
-*.deb
-*.rpm
-*.AppImage
+# IDE
+.vscode/
+.idea/
 
-# Logs
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# Electron
+out/
+
+# doc
+API-interface-doc.md
+DEV_RECORD.md
+
+# 其他项目
+.all-api-hub/
+.one-api-hub/
+.api/
+
+# 规则
+.cunzhi-memory/
+.cursor/
+.roo/
