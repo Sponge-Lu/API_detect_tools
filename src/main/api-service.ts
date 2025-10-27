@@ -1,27 +1,5 @@
 import axios from 'axios';
-
-interface SiteConfig {
-  name: string;
-  url: string;
-  /**
-   * API Key: 用户在站点上创建的API令牌，用于调用模型接口 (/v1/*)
-   * 通过 /api/token/ 接口获取，或由用户手动填入
-   */
-  api_key: string;
-  /**
-   * System Token (Access Token): 系统访问令牌，用于管理操作
-   * 用于获取余额、用户信息等管理接口 (/api/user/*, /api/log/* 等)
-   * 通过 /api/user/token 或 /api/user/self 接口自动获取
-   */
-  system_token?: string;
-  /**
-   * User ID: 用户ID，配合令牌使用（New-API-User等headers）
-   * 从localStorage或API响应中自动获取
-   */
-  user_id?: string;
-  enabled: boolean;
-  has_checkin?: boolean;
-}
+import type { SiteConfig } from './types/token';
 
 interface DetectionResult {
   name: string;
@@ -31,7 +9,8 @@ interface DetectionResult {
   balance?: number;
   todayUsage?: number; // 今日消费（美元）
   error?: string;
-  has_checkin: boolean;
+  has_checkin: boolean;  // 是否支持签到功能
+  can_check_in?: boolean;  // 今日是否可签到（true=可签到, false=已签到）
   // 新增：缓存的扩展数据
   apiKeys?: any[];
   userGroups?: Record<string, { desc: string; ratio: number }>;
@@ -126,6 +105,56 @@ export class ApiService {
       console.log('   - userGroups:', userGroups ? `${Object.keys(userGroups).length}个` : '无');
       console.log('   - modelPricing:', modelPricing ? '有' : '无');
       
+      // 检测是否支持签到功能（智能两步检测）
+      let hasCheckin = false;
+      let canCheckIn: boolean | undefined = undefined;
+      
+      if (this.tokenService && site.system_token && site.user_id) {
+        try {
+          console.log('🔍 [ApiService] 开始签到功能检测...');
+          
+          // 步骤1：检查站点配置（/api/status 的 check_in_enabled）
+          let siteConfigSupports = false;
+          
+          if (site.force_enable_checkin) {
+            // 用户强制启用，跳过所有检查
+            console.log('⚙️ [ApiService] 用户强制启用签到，跳过站点配置检查');
+            siteConfigSupports = true;
+          } else {
+            // 检查站点配置（传入共享页面以绕过Cloudflare）
+            siteConfigSupports = await this.tokenService.checkSiteSupportsCheckIn(site.url, sharedPage);
+          }
+          
+          // 步骤2：获取签到状态（仅当站点配置支持或用户强制启用时）
+          if (siteConfigSupports) {
+            // 站点配置支持签到（或用户强制启用），获取签到状态
+            const checkInStatus = await this.tokenService.fetchCheckInStatus(
+              site.url,
+              parseInt(site.user_id),
+              site.system_token,
+              sharedPage  // 传入共享页面以绕过Cloudflare
+            );
+            
+            // 如果签到状态接口返回了有效数据
+            if (checkInStatus !== undefined) {
+              hasCheckin = true;
+              canCheckIn = checkInStatus;
+              console.log(`✅ [ApiService] 签到功能检测: 支持=${hasCheckin}, 可签到=${canCheckIn}`);
+            } else {
+              // 签到状态接口不可用
+              console.log('⚠️ [ApiService] 站点配置支持签到，但签到状态接口不可用');
+            }
+          } else {
+            // 站点配置不支持签到，且用户未强制启用
+            console.log('ℹ️ [ApiService] 站点不支持签到功能 (check_in_enabled=false)');
+            console.log('💡 [ApiService] 如需强制启用，请在站点配置中勾选"强制启用签到"');
+          }
+          
+        } catch (error: any) {
+          console.log('⚠️ [ApiService] 签到功能检测失败:', error.message);
+        }
+      }
+
       const result = {
         name: site.name,
         url: site.url,
@@ -134,7 +163,8 @@ export class ApiService {
         balance: balanceData?.balance,
         todayUsage: balanceData?.todayUsage,
         error: undefined,
-        has_checkin: site.has_checkin || false,
+        has_checkin: hasCheckin,
+        can_check_in: canCheckIn,  // 添加签到状态
         apiKeys,
         userGroups,
         modelPricing
@@ -460,7 +490,11 @@ export class ApiService {
     // 使用api_key时用OpenAI兼容接口，使用system_token时尝试多个用户模型接口
     const endpoints = hasApiKey 
       ? ['/v1/models']
-      : ['/api/user/models', '/api/user/available_models'];  // 新增one-api支持
+      : [
+          '/api/user/models',           // New API, One API
+          '/api/user/available_models', // One API
+          '/api/available_model'        // Done Hub (返回对象格式)
+        ];
     
     const headers: any = {
       'Authorization': `Bearer ${authToken}`,
@@ -545,6 +579,22 @@ export class ApiService {
               return models;
             }
             
+            // 格式6: Done Hub /api/available_model 对象格式
+            // { success: true, data: { "ModelName1": {...}, "ModelName2": {...} } }
+            if (data?.success && data?.data && typeof data.data === 'object' && !Array.isArray(data.data)) {
+              // 检查是否为 Done Hub 格式（对象的值包含 price 或 groups 字段）
+              const values = Object.values(data.data);
+              if (values.length > 0) {
+                const firstValue = values[0] as any;
+                if (firstValue && (firstValue.price || firstValue.groups)) {
+                  // 模型名称就是对象的 keys
+                  const models = Object.keys(data.data);
+                  console.log(`✅ [ApiService] 成功获取 ${models.length} 个模型 (Done Hub对象格式)`);
+                  return models;
+                }
+              }
+            }
+            
             console.warn('⚠️ [ApiService] 未识别的响应格式，返回空数组');
             console.log('   完整响应:', JSON.stringify(data).substring(0, 200));
             return [];
@@ -555,6 +605,9 @@ export class ApiService {
         if (result.result && result.result.length > 0) {
           return { models: result.result, page: result.page };
         }
+        
+        // 如果返回空数组，尝试下一个端点
+        console.log(`ℹ️ [ApiService] 端点 ${endpoint} 返回空模型列表，尝试下一个端点...`);
         
         // 保存page以便后续复用
         sharedPage = result.page;
@@ -748,7 +801,7 @@ export class ApiService {
       const { start: startTimestamp, end: endTimestamp } = this.getTodayTimestampRange();
       
       let currentPage = 1;
-      const maxPages = 10; // 最多查询10页
+      const maxPages = 100; // 最多查询10页
       const pageSize = 100; // 每页100条
       let totalConsumption = 0;
 
@@ -888,7 +941,7 @@ export class ApiService {
         userGroups: detectionResult.userGroups,
         modelPricing: detectionResult.modelPricing,
         lastRefresh: Date.now(),
-        can_check_in: detectionResult.has_checkin
+        can_check_in: detectionResult.can_check_in  // 保存签到状态
       };
       
       // 更新账号

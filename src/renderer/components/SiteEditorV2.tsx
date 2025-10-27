@@ -169,15 +169,15 @@ export function SiteEditorV2({ site, onSave, onCancel }: Props) {
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl shadow-2xl w-full max-w-2xl border border-white/10">
+      <div className="bg-light-card dark:bg-dark-card rounded-2xl shadow-2xl w-full max-w-2xl border border-slate-200 dark:border-slate-700">
         {/* 头部 */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700">
           <h2 className="text-xl font-bold">
             {site ? "编辑站点" : "智能添加站点 V2"}
           </h2>
           <button
             onClick={onCancel}
-            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+            className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -222,7 +222,7 @@ export function SiteEditorV2({ site, onSave, onCancel }: Props) {
           {step === 'input-url' && (
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
+                <label className="block text-sm font-medium text-light-secondary dark:text-dark-secondary mb-2">
                   站点URL
                 </label>
                 <input
@@ -230,9 +230,9 @@ export function SiteEditorV2({ site, onSave, onCancel }: Props) {
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   placeholder="https://api.example.com"
-                  className="w-full px-4 py-3 bg-black/30 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  className="w-full px-4 py-3 bg-black/30 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
                 />
-                <p className="mt-2 text-xs text-gray-400">
+                <p className="mt-2 text-xs text-light-secondary dark:text-dark-secondary">
                   输入API站点的完整URL，例如：https://tbai.xin
                 </p>
               </div>
@@ -271,10 +271,10 @@ export function SiteEditorV2({ site, onSave, onCancel }: Props) {
           {/* 步骤2: 浏览器登录 */}
           {step === 'login' && (
             <div className="space-y-4">
-              <div className="px-6 py-8 bg-black/30 rounded-xl border border-white/10 text-center space-y-4">
+              <div className="px-6 py-8 bg-black/30 rounded-xl border border-slate-200 dark:border-slate-700 text-center space-y-4">
                 <Chrome className="w-16 h-16 mx-auto text-primary-400 animate-pulse" />
                 <h3 className="text-lg font-semibold">请在浏览器中完成登录</h3>
-                <p className="text-sm text-gray-400">
+                <p className="text-sm text-light-secondary dark:text-dark-secondary">
                   已在Chrome中打开 <span className="text-primary-400">{url}</span>
                   <br />
                   请完成登录操作，然后点击下方按钮继续
@@ -320,7 +320,7 @@ export function SiteEditorV2({ site, onSave, onCancel }: Props) {
             <div className="px-6 py-12 text-center space-y-4">
               <Loader2 className="w-16 h-16 mx-auto text-primary-400 animate-spin" />
               <h3 className="text-lg font-semibold">正在获取站点信息...</h3>
-              <p className="text-sm text-gray-400">
+              <p className="text-sm text-light-secondary dark:text-dark-secondary">
                 使用TokenService自动读取账户信息、余额等数据
               </p>
             </div>
@@ -331,7 +331,7 @@ export function SiteEditorV2({ site, onSave, onCancel }: Props) {
             <div className="space-y-4">
               <div className="space-y-3">
                 <div className="px-4 py-3 bg-black/30 rounded-lg">
-                  <div className="text-xs text-gray-400 mb-1">站点名称</div>
+                  <div className="text-xs text-light-secondary dark:text-dark-secondary mb-1">站点名称</div>
                   <input
                     type="text"
                     value={autoInfo.name}
@@ -341,13 +341,13 @@ export function SiteEditorV2({ site, onSave, onCancel }: Props) {
                 </div>
 
                 <div className="px-4 py-3 bg-black/30 rounded-lg">
-                  <div className="text-xs text-gray-400 mb-1">站点URL</div>
+                  <div className="text-xs text-light-secondary dark:text-dark-secondary mb-1">站点URL</div>
                   <div className="text-white break-all">{url}</div>
                 </div>
 
                 {autoInfo.balance !== null && (
                   <div className="px-4 py-3 bg-black/30 rounded-lg">
-                    <div className="text-xs text-gray-400 mb-1">账户余额</div>
+                    <div className="text-xs text-light-secondary dark:text-dark-secondary mb-1">账户余额</div>
                     <div className="text-white">
                       {autoInfo.balance === -1 ? '∞ 无限' : `$${autoInfo.balance.toFixed(2)}`}
                     </div>
@@ -356,14 +356,14 @@ export function SiteEditorV2({ site, onSave, onCancel }: Props) {
 
                 {autoInfo.userId && (
                   <div className="px-4 py-3 bg-black/30 rounded-lg">
-                    <div className="text-xs text-gray-400 mb-1">用户ID</div>
+                    <div className="text-xs text-light-secondary dark:text-dark-secondary mb-1">用户ID</div>
                     <div className="text-white font-mono text-sm">{autoInfo.userId}</div>
                   </div>
                 )}
 
                 {/* Access Token 输入区域 */}
                 <div className="px-4 py-3 bg-black/30 rounded-lg">
-                  <div className="text-xs text-gray-400 mb-1">Access Token</div>
+                  <div className="text-xs text-light-secondary dark:text-dark-secondary mb-1">Access Token</div>
                   <input
                     type="password"
                     value={autoInfo.systemToken}
@@ -380,7 +380,7 @@ export function SiteEditorV2({ site, onSave, onCancel }: Props) {
 
                 {/* API Key 输入区域 */}
                 <div className="px-4 py-3 bg-black/30 rounded-lg">
-                  <div className="text-xs text-gray-400 mb-1">API Key (可选)</div>
+                  <div className="text-xs text-light-secondary dark:text-dark-secondary mb-1">API Key (可选)</div>
                   <input
                     type="password"
                     value={autoInfo.apiKey}

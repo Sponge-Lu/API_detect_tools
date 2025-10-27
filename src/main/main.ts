@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, dialog, Menu } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { ChromeManager } from './chrome-manager';
@@ -15,9 +15,19 @@ const tokenService = new TokenService(chromeManager);
 const apiService = new ApiService(tokenService, tokenStorage);
 
 function createWindow() {
+  // 注意：打包后的图标通过 package.json 的 build.win.icon 配置
+  // 这里的 icon 参数只影响开发环境的窗口图标
+  const iconPath = path.join(app.getAppPath(), 'build', 'icon.png');
+  
+  console.log('📍 图标路径:', iconPath);
+  console.log('📦 是否已打包:', app.isPackaged);
+  
   mainWindow = new BrowserWindow({
-    width: 1200,
+    width: 700,
     height: 800,
+    title: 'API Hub Management Tools',
+    // 开发环境使用 icon 参数，打包后通过 package.json 配置
+    ...(app.isPackaged ? {} : { icon: iconPath }),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -25,11 +35,19 @@ function createWindow() {
     }
   });
 
-  // 开发环境加载Vite服务器
-  mainWindow.loadURL('http://localhost:5173');
-  
-  // 打开开发者工具
-  mainWindow.webContents.openDevTools();
+  // 完全移除菜单栏
+  mainWindow.setMenu(null);
+
+  // 根据环境加载不同的URL
+  if (app.isPackaged) {
+    // 生产环境：加载打包后的HTML文件
+    mainWindow.loadFile(path.join(__dirname, '../dist-renderer/index.html'));
+  } else {
+    // 开发环境：加载Vite服务器
+    mainWindow.loadURL('http://localhost:5173');
+    // 开发环境打开开发者工具
+    // mainWindow.webContents.openDevTools();
+  }
 }
 
 app.whenReady().then(() => {
@@ -187,6 +205,20 @@ ipcMain.handle('token:fetch-model-pricing', async (_, baseUrl: string, userId: n
   } catch (error: any) {
     console.error('❌ [IPC] 获取模型定价失败:', error);
     return { success: false, error: error.message };
+  }
+});
+
+/**
+ * 执行签到
+ */
+ipcMain.handle('token:check-in', async (_, baseUrl: string, userId: number, accessToken: string) => {
+  try {
+    console.log('📝 [IPC] 收到签到请求');
+    const result = await tokenService.checkIn(baseUrl, userId, accessToken);
+    return result;
+  } catch (error: any) {
+    console.error('❌ [IPC] 签到失败:', error);
+    return { success: false, message: error.message };
   }
 });
 

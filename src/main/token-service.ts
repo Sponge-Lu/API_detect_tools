@@ -69,7 +69,10 @@ export class TokenService {
       
       // 步骤3: 构建SiteAccount对象
       const now = Date.now();
-      const siteAccount: SiteAccount = {
+      const siteAccount: SiteAccount & { 
+        supportsCheckIn?: boolean;
+        canCheckIn?: boolean;
+      } = {
         id: `account_${now}_${Math.random().toString(36).substring(2, 11)}`,
         site_name: localData.systemName || new URL(baseUrl).hostname,
         site_url: baseUrl,
@@ -82,6 +85,10 @@ export class TokenService {
         last_sync_time: 0,
         exchange_rate: 7.0, // 默认汇率
         
+        // 签到信息（从localStorage读取）
+        supportsCheckIn: localData.supportsCheckIn,
+        canCheckIn: localData.canCheckIn,
+        
         // 兼容旧字段结构
         account_info: {
           id: localData.userId,
@@ -92,7 +99,11 @@ export class TokenService {
           today_completion_tokens: 0,
           today_quota_consumption: 0,
           today_requests_count: 0
-        }
+        },
+        
+        // 保存签到支持状态（用于SiteEditor显示）
+        supports_check_in: localData.supportsCheckIn,
+        can_check_in: localData.canCheckIn
       };
       
       console.log('🎉 [TokenService] ========== 站点初始化完成 ==========');
@@ -101,6 +112,8 @@ export class TokenService {
       console.log('   - 站点名:', siteAccount.site_name);
       console.log('   - 用户ID:', siteAccount.user_id);
       console.log('   - 用户名:', siteAccount.username);
+      console.log('   - 支持签到:', siteAccount.supportsCheckIn ?? '未知');
+      console.log('   - 可签到:', siteAccount.canCheckIn ?? '未知');
       
       return siteAccount;
       
@@ -259,12 +272,19 @@ export class TokenService {
       // 处理模型定价
       if (modelPricing.status === 'fulfilled' && modelPricing.value) {
         cachedData.modelPricing = modelPricing.value;
+        
+        // 从模型定价中提取可用模型列表
+        if (modelPricing.value?.data && typeof modelPricing.value.data === 'object') {
+          cachedData.models = Object.keys(modelPricing.value.data);
+          console.log(`   - 从定价数据中提取 ${cachedData.models.length} 个模型`);
+        }
       }
 
       console.log('✅ [TokenService] 数据刷新成功');
       console.log('   - 余额:', cachedData.quota);
       console.log('   - 今日消费:', cachedData.today_quota_consumption);
       console.log('   - API Keys:', cachedData.apiKeys?.length || 0);
+      console.log('   - 模型数量:', cachedData.models?.length || 0);
 
       return {
         success: true,
@@ -302,6 +322,318 @@ export class TokenService {
     } catch (error: any) {
       console.error('❌ [TokenService] 令牌验证失败');
       return false;
+    }
+  }
+
+  /**
+   * 检查站点是否支持签到功能（通过 /api/status）
+   * 这是最准确的方式，因为check_in_enabled由站点管理员配置
+   * 支持浏览器模式以绕过 Cloudflare
+   * 
+   * @param baseUrl 站点URL
+   * @param page 可选的浏览器页面（用于绕过Cloudflare）
+   * @returns 是否支持签到
+   */
+  async checkSiteSupportsCheckIn(baseUrl: string, page?: any): Promise<boolean> {
+    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    const url = `${cleanBaseUrl}/api/status`;
+    
+    try {
+      console.log('🔍 [TokenService] 检查站点配置:', url);
+      
+      // 优先使用浏览器模式（如果有共享页面）
+      if (page) {
+        console.log('♻️ [TokenService] 使用浏览器页面获取站点配置');
+        try {
+          const result = await page.evaluate(async (apiUrl: string) => {
+            const response = await fetch(apiUrl, {
+              method: 'GET',
+              credentials: 'include'
+            });
+            return await response.json();
+          }, url);
+          
+          const checkInEnabled = result?.data?.check_in_enabled === true;
+          console.log(`${checkInEnabled ? '✅' : 'ℹ️'} [TokenService] 站点${checkInEnabled ? '支持' : '不支持'}签到功能 (check_in_enabled=${checkInEnabled})`);
+          return checkInEnabled;
+        } catch (browserError: any) {
+          console.warn('⚠️ [TokenService] 浏览器模式获取站点配置失败:', browserError.message);
+          // 浏览器模式失败，回退到axios
+        }
+      }
+      
+      // axios 模式
+      const response = await axios.get(url, {
+        timeout: 10000,
+        validateStatus: (status) => status < 500
+      });
+      
+      // 检查是否返回HTML（Cloudflare拦截）
+      if (typeof response.data === 'string' && response.data.includes('<!DOCTYPE')) {
+        console.log('🛡️ [TokenService] 检测到Cloudflare拦截，无法获取站点配置');
+        return false;
+      }
+      
+      // 调试：打印完整响应结构
+      console.log('📦 [TokenService] /api/status 响应结构:', {
+        hasSuccess: 'success' in response.data,
+        successValue: response.data?.success,
+        hasData: 'data' in response.data,
+        dataType: typeof response.data?.data,
+        checkInEnabledValue: response.data?.data?.check_in_enabled,
+        checkInEnabledType: typeof response.data?.data?.check_in_enabled
+      });
+      
+      // 标准响应：{ success: true, data: { check_in_enabled: boolean, ... } }
+      const checkInEnabled = response.data?.data?.check_in_enabled === true;
+      console.log(`${checkInEnabled ? '✅' : 'ℹ️'} [TokenService] 站点${checkInEnabled ? '支持' : '不支持'}签到功能 (check_in_enabled=${checkInEnabled})`);
+      return checkInEnabled;
+      
+    } catch (error: any) {
+      console.log('⚠️ [TokenService] 无法获取站点配置:', error.message);
+      return false;
+    }
+  }
+
+  /**
+   * 获取签到状态
+   * 根据API文档：GET /api/user/check_in_status
+   * 注意：调用此方法前应先用 checkSiteSupportsCheckIn 确认站点支持签到
+   * 
+   * @param baseUrl 站点URL
+   * @param userId 用户ID
+   * @param accessToken 访问令牌
+   * @param page 可选的浏览器页面
+   * @returns 签到状态信息
+   */
+  async fetchCheckInStatus(
+    baseUrl: string,
+    userId: number,
+    accessToken: string,
+    page?: any
+  ): Promise<boolean | undefined> {
+    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    const url = `${cleanBaseUrl}/api/user/check_in_status`;
+    
+    try {
+      console.log('🔍 [TokenService] 获取签到状态:', url);
+      
+      // 优先使用浏览器模式（如果有共享页面）
+      if (page) {
+        console.log('♻️ [TokenService] 使用浏览器页面获取签到状态');
+        try {
+          const userIdHeaders = this.getAllUserIdHeaders(userId);
+          const result = await page.evaluate(
+            async (apiUrl: string, token: string, additionalHeaders: Record<string, string>) => {
+              const headers: Record<string, string> = {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+                ...additionalHeaders
+              };
+              
+              const response = await fetch(apiUrl, {
+                method: 'GET',
+                credentials: 'include',
+                headers: headers
+              });
+              return await response.json();
+            },
+            url,
+            accessToken,
+            userIdHeaders
+          );
+          
+          // 解析浏览器返回的结果
+          if (result?.success && result?.data) {
+            const canCheckIn = result.data.can_check_in;
+            const checkedInDays = result.data.checked_in_days || 0;
+            
+            if (typeof canCheckIn === 'boolean') {
+              console.log(`✅ [TokenService] 签到状态(浏览器模式): ${canCheckIn ? '可签到' : '已签到'}, 连续签到${checkedInDays}天`);
+              return canCheckIn;
+            }
+          }
+          
+          console.warn('⚠️ [TokenService] 浏览器模式返回数据格式不符合预期');
+          return undefined;
+          
+        } catch (browserError: any) {
+          console.warn('⚠️ [TokenService] 浏览器模式获取签到状态失败:', browserError.message);
+          // 浏览器模式失败，回退到axios
+        }
+      }
+      
+      // axios 模式
+      const response = await axios.get(url, {
+        headers: this.createRequestHeaders(userId, accessToken, baseUrl),
+        timeout: 10000,
+        validateStatus: (status) => status < 500  // 接受所有非5xx响应
+      });
+      
+      // 检查是否返回HTML（Cloudflare拦截）
+      if (typeof response.data === 'string' && response.data.includes('<!DOCTYPE')) {
+        console.log('🛡️ [TokenService] 检测到Cloudflare拦截签到状态接口');
+        return undefined;
+      }
+      
+      // 标准响应格式：{ success: true, data: { can_check_in: boolean, checked_in_days: number, ... } }
+      if (response.data?.success && response.data?.data) {
+        const canCheckIn = response.data.data.can_check_in;
+        const checkedInDays = response.data.data.checked_in_days || 0;
+        
+        if (typeof canCheckIn === 'boolean') {
+          console.log(`✅ [TokenService] 签到状态: ${canCheckIn ? '可签到' : '已签到'}, 连续签到${checkedInDays}天`);
+          return canCheckIn;
+        } else {
+          console.warn('⚠️ [TokenService] can_check_in 不是布尔值:', canCheckIn);
+        }
+      } else {
+        console.warn('⚠️ [TokenService] 响应格式不符合预期');
+      }
+      
+      return undefined;
+    } catch (error: any) {
+      const status = error.response?.status;
+      console.error('❌ [TokenService] 获取签到状态失败:', {
+        status,
+        message: error.message
+      });
+      
+      // 404 = 接口不存在，说明该站点不支持签到功能
+      if (status === 404) {
+        console.log('ℹ️ [TokenService] 该站点不支持签到功能（接口不存在）');
+        return undefined;
+      }
+      return undefined;
+    }
+  }
+
+  /**
+   * 执行签到操作
+   * 根据API文档：POST /api/user/check_in
+   * 
+   * @param baseUrl 站点URL
+   * @param userId 用户ID
+   * @param accessToken 访问令牌
+   * @returns 签到结果
+   */
+  async checkIn(
+    baseUrl: string,
+    userId: number,
+    accessToken: string
+  ): Promise<{ 
+    success: boolean; 
+    message: string;
+    needManualCheckIn?: boolean;  // 是否需要手动签到
+    reward?: number;  // 签到奖励（内部单位）
+  }> {
+    console.log('📝 [TokenService] 执行签到操作...');
+    console.log('📍 [TokenService] 站点:', baseUrl);
+    console.log('🆔 [TokenService] 用户ID:', userId);
+    
+    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    
+    // 标准端点（根据API文档）
+    const url = `${cleanBaseUrl}/api/user/check_in`;
+    
+    try {
+      console.log(`🔍 [TokenService] 签到端点: ${url}`);
+      
+      const response = await axios.post(
+        url,
+        {},  // POST请求体为空（根据文档）
+        {
+          headers: this.createRequestHeaders(userId, accessToken, baseUrl),
+          timeout: 15000,  // 增加超时时间
+          validateStatus: (status) => status < 500  // 接受所有非5xx响应
+        }
+      );
+      
+      console.log('📦 [TokenService] 签到响应:', {
+        success: response.data?.success,
+        message: response.data?.message,
+        hasReward: !!response.data?.data?.reward
+      });
+      
+      // 标准响应格式：{ success: true, message: "签到成功", data: { reward: 5000 } }
+      if (response.data?.success === true) {
+        const reward = response.data.data?.reward;
+        let message = response.data.message || '签到成功！';
+        
+        // 如果有奖励，添加到消息中
+        if (reward && typeof reward === 'number') {
+          const rewardInDollars = (reward / 500000).toFixed(4);
+          message += `\n🎁 获得奖励: $${rewardInDollars}`;
+        }
+        
+        console.log(`✅ [TokenService] 签到成功: ${message}`);
+        return {
+          success: true,
+          message: message,
+          reward: reward
+        };
+      } 
+      
+      // 签到失败的情况
+      if (response.data?.success === false) {
+        const errorMsg = response.data.message || '签到失败';
+        console.log(`ℹ️ [TokenService] 签到失败: ${errorMsg}`);
+        
+        // 检查是否需要人机验证或手动签到
+        const needManual = errorMsg.includes('验证') || 
+                          errorMsg.includes('人机') || 
+                          errorMsg.includes('captcha') ||
+                          errorMsg.includes('challenge') ||
+                          errorMsg.includes('已签到');
+        
+        return {
+          success: false,
+          message: errorMsg,
+          needManualCheckIn: needManual
+        };
+      }
+      
+      // 未知响应格式
+      console.warn('⚠️ [TokenService] 未知的响应格式');
+      return {
+        success: false,
+        message: '签到响应格式异常，请尝试手动签到',
+        needManualCheckIn: true
+      };
+      
+    } catch (error: any) {
+      const status = error.response?.status;
+      console.error(`❌ [TokenService] 签到请求失败:`, {
+        status,
+        message: error.message,
+        data: error.response?.data
+      });
+      
+      // 404 = 接口不存在
+      if (status === 404) {
+        return {
+          success: false,
+          message: '该站点不支持签到功能（接口不存在）',
+          needManualCheckIn: false
+        };
+      }
+      
+      // 401/403 = 认证失败
+      if (status === 401 || status === 403) {
+        return {
+          success: false,
+          message: '认证失败，请检查 access_token 是否有效',
+          needManualCheckIn: true
+        };
+      }
+      
+      // 其他错误
+      const errorMsg = error.response?.data?.message || error.message || '签到失败';
+      return {
+        success: false,
+        message: `签到失败: ${errorMsg}`,
+        needManualCheckIn: true
+      };
     }
   }
 
@@ -432,6 +764,14 @@ export class TokenService {
 
         console.log(`📊 [TokenService] URL ${url} axios获取到 ${tokens.length} 个tokens`);
 
+        // 标准化处理：将空的 group 字段设置为 "default"
+        tokens = tokens.map(token => {
+          if (!token.group || token.group.trim() === '') {
+            token.group = 'default';
+          }
+          return token;
+        });
+
         // 如果获取到数据或已是最后一个URL，返回结果
         if (tokens.length > 0 || url === urls[urls.length - 1]) {
           return tokens;
@@ -552,6 +892,14 @@ export class TokenService {
 
         console.log(`✅ [TokenService] URL ${url} 获取到 ${tokens.length} 个tokens`);
         
+        // 标准化处理：将空的 group 字段设置为 "default"
+        tokens = tokens.map(token => {
+          if (!token.group || token.group.trim() === '') {
+            token.group = 'default';
+          }
+          return token;
+        });
+        
         // 如果获取到数据或已是最后一个URL，返回结果
         if (tokens.length > 0 || url === urls[urls.length - 1]) {
           return tokens;
@@ -602,16 +950,21 @@ export class TokenService {
           // 检查是否为Done Hub格式（有name和ratio字段）
           const firstValue = Object.values(response.data.data)[0] as any;
           if (firstValue && ('name' in firstValue || 'ratio' in firstValue)) {
-            // Done Hub 格式: { data: { default: { name: "...", ratio: 1 } }, success: true }
+            // Done Hub 格式: { data: { default: { id, symbol, name, ratio, enable, ... } }, success: true }
             console.log('   格式类型: Done Hub');
+            console.log('   原始分组数据:', response.data.data);
             const groups: Record<string, { desc: string; ratio: number }> = {};
             for (const [key, value] of Object.entries(response.data.data)) {
               const group = value as any;
-              groups[key] = {
-                desc: group.name || group.desc || key,
-                ratio: group.ratio || 1
-              };
+              // 只添加启用的分组
+              if (group.enable !== false) {  // undefined 或 true 都算启用
+                groups[key] = {
+                  desc: group.name || group.desc || key,
+                  ratio: group.ratio || 1
+                };
+              }
             }
+            console.log('   转换后分组:', groups);
             return groups;
           } else {
             // New API 格式: { data: { "default": { desc: "...", ratio: 1 } } }
@@ -713,10 +1066,13 @@ export class TokenService {
             const groups: Record<string, { desc: string; ratio: number }> = {};
             for (const [key, value] of Object.entries(result.data)) {
               const group = value as any;
-              groups[key] = {
-                desc: group.name || group.desc || key,
-                ratio: group.ratio || 1
-              };
+              // 只添加启用的分组
+              if (group.enable !== false) {  // undefined 或 true 都算启用
+                groups[key] = {
+                  desc: group.name || group.desc || key,
+                  ratio: group.ratio || 1
+                };
+              }
             }
             return groups;
           } else {
@@ -765,7 +1121,7 @@ export class TokenService {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
     const urls = [
       `${cleanBaseUrl}/api/pricing`,          // New API
-      `${cleanBaseUrl}/api/available_model`   // Done Hub
+      `${cleanBaseUrl}/api/available_model`   // Done Hub, One Hub
     ];
 
     // 如果提供了page，使用浏览器环境
@@ -781,6 +1137,17 @@ export class TokenService {
           timeout: 10000
         });
 
+        console.log(`📦 [TokenService] 模型定价响应结构:`, {
+          url,
+          hasSuccess: 'success' in response.data,
+          successValue: response.data?.success,
+          hasData: 'data' in response.data,
+          dataType: typeof response.data?.data,
+          isDataArray: Array.isArray(response.data?.data),
+          dataLength: Array.isArray(response.data?.data) ? response.data.data.length : 'N/A',
+          firstKey: response.data?.data && typeof response.data.data === 'object' ? Object.keys(response.data.data)[0] : 'N/A'
+        });
+
         // 检查响应数据是否存在
         if (response.data) {
           // New API /api/pricing 格式: { success: true, data: [...数组] }
@@ -791,14 +1158,14 @@ export class TokenService {
             response.data.data.forEach((model: any) => {
               const modelName = model.model_name || model.model;
               if (modelName) {
+                // 保留原始字段，不在后端计算价格
                 pricing.data[modelName] = {
                   quota_type: model.quota_type || 0,
                   model_ratio: model.model_ratio || 1,
                   model_price: model.model_price || 0,
                   completion_ratio: model.completion_ratio || 1,
                   enable_groups: model.enable_groups || [],
-                  input: model.model_price,  // 用于UI显示
-                  output: model.model_price * (model.completion_ratio || 1)
+                  model_description: model.model_description || ''
                 };
               }
             });
@@ -809,40 +1176,68 @@ export class TokenService {
           if (response.data?.success && response.data?.data && typeof response.data.data === 'object' && !Array.isArray(response.data.data)) {
             const firstValue = Object.values(response.data.data)[0] as any;
             
-            // 判断是否为Done Hub格式（有price对象）
+            // 判断是否为Done Hub/One Hub格式（有price对象）
             if (firstValue && firstValue.price) {
-              console.log('✅ [TokenService] 模型定价获取成功 (Done Hub对象格式)');
-              // 转换 Done Hub 格式到标准格式
+              console.log('✅ [TokenService] 模型定价获取成功 (Done Hub/One Hub对象格式)');
+              console.log('📝 [TokenService] 示例模型数据:', {
+                firstModelName: Object.keys(response.data.data)[0],
+                firstModelData: firstValue
+              });
+              
+              // 转换 Done Hub/One Hub 格式到标准格式
               const pricing: any = { data: {} };
+              let sampleConverted: any = null;
+              
               for (const [modelName, modelInfo] of Object.entries(response.data.data)) {
                 const info = modelInfo as any;
                 if (info.price) {
-                  pricing.data[modelName] = {
-                    input: info.price.input,
-                    output: info.price.output,
-                    quota_type: info.price.type === 'tokens' ? 0 : 1,
-                    model_ratio: 1,
-                    completion_ratio: info.price.output / info.price.input || 1,
-                    enable_groups: info.groups || []
+                  // quota_type: 'times' = 1 (按次), 'tokens' = 0 (按量)
+                  const quotaType = info.price.type === 'times' ? 1 : 0;
+                  
+                  // 保留原始字段，价格直接来自API
+                  const converted = {
+                    quota_type: quotaType,
+                    type: info.price.type,  // 保留原始type字段
+                    model_ratio: 1,  // Done Hub/One Hub 不使用 model_ratio
+                    completion_ratio: info.price.output && info.price.input ? info.price.output / info.price.input : 1,
+                    enable_groups: info.groups || [],  // Done Hub/One Hub 使用 groups 字段
+                    // Done Hub/One Hub 总是把价格放到 model_price 对象中（不管按量还是按次）
+                    model_price: {
+                      input: info.price.input,
+                      output: info.price.output
+                    }
                   };
+                  
+                  pricing.data[modelName] = converted;
+                  
+                  // 保存第一个转换结果用于调试
+                  if (!sampleConverted) {
+                    sampleConverted = { modelName, converted };
+                  }
                 }
               }
+              
+              console.log('📝 [TokenService] 转换后示例:', sampleConverted);
+              console.log(`📊 [TokenService] 共转换 ${Object.keys(pricing.data).length} 个模型`);
               return pricing;
             }
           }
           
-          console.log('⚠️ [TokenService] 未识别的定价格式');
+          console.log('⚠️ [TokenService] 未识别的定价格式，返回空定价');
           return { data: {} };
         }
       } catch (error: any) {
-        console.warn(`⚠️ [TokenService] URL ${url} 失败:`, error.message);
+        console.warn(`⚠️ [TokenService] URL ${url} 失败:`, {
+          status: error.response?.status,
+          message: error.message
+        });
         continue;
       }
     }
 
     // 所有URL都失败，尝试浏览器模式
     if (!page) {
-      console.log('🛡️ [TokenService] 尝试浏览器模式获取模型定价...');
+      console.log('🛡️ [TokenService] axios获取失败，尝试浏览器模式获取模型定价...');
       try {
         const browserPage = await this.chromeManager.createPage(baseUrl);
         try {
@@ -857,6 +1252,7 @@ export class TokenService {
       }
     }
 
+    console.warn('⚠️ [TokenService] 所有方式都无法获取模型定价，返回空定价（该站点可能不支持定价查询）');
     return { data: {} };
   }
 
@@ -909,29 +1305,55 @@ export class TokenService {
           if (result?.success && result?.data && typeof result.data === 'object') {
             const firstValue = Object.values(result.data)[0] as any;
             
-            // 判断是否为Done Hub格式（有price对象）
+            // 判断是否为Done Hub/One Hub格式（有price对象）
             if (firstValue && firstValue.price) {
-              console.log('✅ [TokenService] 浏览器获取成功 (Done Hub格式)');
+              console.log('✅ [TokenService] 浏览器获取成功 (Done Hub/One Hub格式)');
               const pricing: any = { data: {} };
               for (const [modelName, modelInfo] of Object.entries(result.data)) {
                 const info = modelInfo as any;
                 if (info.price) {
+                  // quota_type: 'times' = 1 (按次), 'tokens' = 0 (按量)
+                  const quotaType = info.price.type === 'times' ? 1 : 0;
+                  
+                  // 保留原始字段，价格直接来自API
                   pricing.data[modelName] = {
-                    input: info.price.input,
-                    output: info.price.output,
-                    type: info.price.type || info.price.quota_type,
-                    model: info.price.model,
-                    quota_type: info.price.quota_type || 0,
-                    model_price: info.price.model_price,
-                    enable_groups: info.enable_groups || []
+                    quota_type: quotaType,
+                    type: info.price.type,  // 保留原始type字段
+                    model_ratio: 1,  // Done Hub/One Hub 不使用 model_ratio
+                    completion_ratio: info.price.output && info.price.input ? info.price.output / info.price.input : 1,
+                    enable_groups: info.groups || [],  // Done Hub/One Hub 使用 groups 字段
+                    // Done Hub/One Hub 总是把价格放到 model_price 对象中（不管按量还是按次）
+                    model_price: {
+                      input: info.price.input,
+                      output: info.price.output
+                    }
                   };
                 }
               }
               return pricing;
-            } else {
-              // New API 格式
-              console.log('✅ [TokenService] 浏览器获取成功 (New API格式)');
-              return result;
+            } else if (result?.success && result?.data && Array.isArray(result.data)) {
+              // New API /api/pricing 数组格式
+              console.log('✅ [TokenService] 浏览器获取成功 (New API数组格式)');
+              const pricing: any = { data: {} };
+              result.data.forEach((model: any) => {
+                const modelName = model.model_name || model.model;
+                if (modelName) {
+                  // 保留原始字段，不在后端计算价格
+                  pricing.data[modelName] = {
+                    quota_type: model.quota_type || 0,
+                    model_ratio: model.model_ratio || 1,
+                    model_price: model.model_price || 0,
+                    completion_ratio: model.completion_ratio || 1,
+                    enable_groups: model.enable_groups || [],
+                    model_description: model.model_description || ''
+                  };
+                }
+              });
+              return pricing;
+           // 其他格式，直接返回
+              console.log('✅ [TokenService] 浏览器获取成功 (通用格式)');
+                    } else {
+         return result;
             }
           }
           

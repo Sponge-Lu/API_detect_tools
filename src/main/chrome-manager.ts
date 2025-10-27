@@ -11,6 +11,8 @@ interface LocalStorageData {
   username: string | null;
   systemName: string | null;
   accessToken: string | null;
+  supportsCheckIn?: boolean;  // 站点是否支持签到
+  canCheckIn?: boolean;       // 当前是否可签到
 }
 
 export class ChromeManager {
@@ -25,7 +27,18 @@ export class ChromeManager {
    */
   async createPage(url: string): Promise<Page> {
     try {
-      // 如果浏览器未启动，先启动
+      // 检查浏览器连接状态
+      if (this.browser) {
+        try {
+          // 尝试获取页面列表来验证连接是否有效
+          await this.browser.pages();
+        } catch (e) {
+          console.warn('⚠️ [ChromeManager] 浏览器连接失效，需要重新启动');
+          this.browser = null;
+        }
+      }
+
+      // 如果浏览器未启动或连接失效，先启动
       if (!this.browser) {
         await this.launchBrowser(url);
       }
@@ -39,23 +52,32 @@ export class ChromeManager {
 
       if (pages.length > 0) {
         page = pages[0];
+        console.log('📄 [ChromeManager] 使用已有页面');
       } else {
         page = await this.browser.newPage();
+        console.log('📄 [ChromeManager] 创建新页面');
       }
 
+      console.log(`🌐 [ChromeManager] 导航到: ${url}`);
       await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+      
       return page;
     } catch (error: any) {
+      console.error('❌ [ChromeManager] createPage失败:', error.message);
+      
       // 如果创建页面失败，清理并重试一次
       if (error.message.includes('Target.createTarget timed out') ||
           error.message.includes('Session closed') ||
-          error.message.includes('Connection closed')) {
+          error.message.includes('Connection closed') ||
+          error.message.includes('Protocol error')) {
         console.log('⚠️ [ChromeManager] 浏览器连接异常，清理并重试...');
+        
         this.cleanup();
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise(resolve => setTimeout(resolve, 1000));
         
         // 只重试一次，避免无限循环
         if (!error.retried) {
+          console.log('🔄 [ChromeManager] 重试创建页面...');
           const retryError = new Error(error.message) as any;
           retryError.retried = true;
           await this.launchBrowser(url);
@@ -71,20 +93,99 @@ export class ChromeManager {
    * @param url 初始URL
    */
   private async launchBrowser(url: string): Promise<void> {
+    console.log('🚀 [ChromeManager] 启动浏览器...');
+    
+    // 1. 先彻底清理旧资源
+    this.cleanup();
+    await this.waitForPortFree(this.debugPort);
+    
+    // 2. 准备启动参数
     const chromePath = this.getChromePath();
     const userDataDir = path.join(os.tmpdir(), 'api-detector-chrome');
 
     const command = `"${chromePath}" --remote-debugging-port=${this.debugPort} --user-data-dir="${userDataDir}" "${url}"`;
     
-    this.chromeProcess = exec(command);
+    console.log(`📝 [ChromeManager] 启动命令: ${command.substring(0, 100)}...`);
+    
+    // 3. 启动Chrome进程
+    this.chromeProcess = exec(command, (error, stdout, stderr) => {
+      if (error) {
+        console.error('❌ [ChromeManager] Chrome进程错误:', error.message);
+      }
+    });
 
-    // 等待Chrome启动
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    // 4. 等待调试端口就绪
+    console.log(`⏳ [ChromeManager] 等待调试端口 ${this.debugPort} 就绪...`);
+    await this.waitForPortReady(this.debugPort);
 
-    // 连接到Chrome，增加超时时间
+    // 5. 连接到Chrome
+    console.log('🔌 [ChromeManager] 连接到Chrome...');
     this.browser = await puppeteer.connect({
       browserURL: `http://127.0.0.1:${this.debugPort}`,
       protocolTimeout: 60000 // 60秒超时
+    });
+    
+    console.log('✅ [ChromeManager] 浏览器启动成功');
+  }
+
+  /**
+   * 等待端口释放
+   */
+  private async waitForPortFree(port: number, maxWait: number = 3000): Promise<void> {
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < maxWait) {
+      try {
+        const isUsed = await this.isPortInUse(port);
+        if (!isUsed) {
+          console.log(`✅ [ChromeManager] 端口 ${port} 已释放`);
+          return;
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (e) {
+        // 忽略检测错误
+      }
+    }
+    
+    console.warn(`⚠️ [ChromeManager] 端口 ${port} 可能仍被占用，继续尝试...`);
+  }
+
+  /**
+   * 等待端口就绪
+   */
+  private async waitForPortReady(port: number, maxWait: number = 5000): Promise<void> {
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < maxWait) {
+      try {
+        const isReady = await this.isPortInUse(port);
+        if (isReady) {
+          console.log(`✅ [ChromeManager] 端口 ${port} 已就绪`);
+          await new Promise(resolve => setTimeout(resolve, 500)); // 额外等待稳定
+          return;
+        }
+        await new Promise(resolve => setTimeout(resolve, 200));
+      } catch (e) {
+        // 继续等待
+      }
+    }
+    
+    throw new Error(`端口 ${port} 在 ${maxWait}ms 内未就绪`);
+  }
+
+  /**
+   * 检查端口是否被使用
+   */
+  private async isPortInUse(port: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const net = require('net');
+      const tester = net.createServer()
+        .once('error', () => resolve(true))  // 端口被占用
+        .once('listening', () => {
+          tester.once('close', () => resolve(false))  // 端口空闲
+            .close();
+        })
+        .listen(port, '127.0.0.1');
     });
   }
 
@@ -95,26 +196,14 @@ export class ChromeManager {
    */
   async launchForLogin(url: string): Promise<{ success: boolean; message: string }> {
     try {
-      // 查找Chrome路径
-      const chromePath = this.getChromePath();
-      const userDataDir = path.join(os.tmpdir(), 'api-detector-chrome');
-
-      // 启动Chrome调试实例
-      const command = `"${chromePath}" --remote-debugging-port=${this.debugPort} --user-data-dir="${userDataDir}" "${url}"`;
+      console.log('🚀 [ChromeManager] 启动浏览器供用户登录...');
       
-      this.chromeProcess = exec(command);
-
-      // 等待Chrome启动
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
-      // 连接到Chrome，增加超时时间
-      this.browser = await puppeteer.connect({
-        browserURL: `http://127.0.0.1:${this.debugPort}`,
-        protocolTimeout: 60000 // 60秒超时
-      });
+      // 使用统一的启动流程
+      await this.launchBrowser(url);
 
       return { success: true, message: '浏览器已启动，请在浏览器中完成登录' };
     } catch (error: any) {
+      console.error('❌ [ChromeManager] 启动浏览器失败:', error.message);
       return { success: false, message: `启动失败: ${error.message}` };
     }
   }
@@ -151,6 +240,8 @@ export class ChromeManager {
     console.log('   - username:', localData.username || '缺失');
     console.log('   - systemName:', localData.systemName || '缺失');
     console.log('   - accessToken:', localData.accessToken ? '已获取' : '缺失');
+    console.log('   - supportsCheckIn:', localData.supportsCheckIn ?? '未知');
+    console.log('   - canCheckIn:', localData.canCheckIn ?? '未知');
     
     // 第二步：检查是否需要API回退
     const needsApiFallback = !localData.userId || !localData.accessToken;
@@ -329,6 +420,48 @@ export class ChromeManager {
                           storage.getItem('api_token') ||
                           storage.getItem('apiToken') ||
                           storage.getItem('bearer_token');
+        
+        // ===== 签到信息多路径获取 =====
+        // 从siteInfo对象获取签到支持状态
+        if (siteInfoStr) {
+          try {
+            const siteInfo = JSON.parse(siteInfoStr);
+            // 站点是否支持签到（从 /api/status 的 check_in_enabled）
+            if (typeof siteInfo.check_in_enabled === 'boolean') {
+              data.supportsCheckIn = siteInfo.check_in_enabled;
+            }
+          } catch (e) {}
+        }
+        
+        // 从user对象获取当前签到状态
+        if (userStr) {
+          try {
+            const user = JSON.parse(userStr);
+            // 当前是否可签到（从 /api/user/check_in_status 的 can_check_in）
+            if (typeof user.can_check_in === 'boolean') {
+              data.canCheckIn = user.can_check_in;
+            }
+          } catch (e) {}
+        }
+        
+        // 从status对象获取
+        const statusStr = storage.getItem('status') || storage.getItem('siteStatus');
+        if (statusStr) {
+          try {
+            const status = JSON.parse(statusStr);
+            data.supportsCheckIn = data.supportsCheckIn ?? status.check_in_enabled;
+          } catch (e) {}
+        }
+        
+        // 从checkIn对象获取
+        const checkInStr = storage.getItem('checkIn') || storage.getItem('check_in');
+        if (checkInStr) {
+          try {
+            const checkIn = JSON.parse(checkInStr);
+            data.canCheckIn = data.canCheckIn ?? checkIn.can_check_in;
+            data.supportsCheckIn = data.supportsCheckIn ?? checkIn.enabled;
+          } catch (e) {}
+        }
         
       } catch (e) {
         console.error('[Browser Context] 读取localStorage失败:', e);
@@ -545,14 +678,45 @@ export class ChromeManager {
    * 清理资源
    */
   cleanup() {
+    console.log('🧹 [ChromeManager] 开始清理浏览器资源...');
+    
     if (this.browser) {
-      this.browser.disconnect();
+      try {
+        this.browser.disconnect();
+        console.log('✅ [ChromeManager] 浏览器连接已断开');
+      } catch (e) {
+        console.warn('⚠️ [ChromeManager] 断开浏览器连接失败:', e);
+      }
       this.browser = null;
     }
+    
     if (this.chromeProcess) {
-      this.chromeProcess.kill();
+      try {
+        // Windows: 强制终止进程树
+        if (process.platform === 'win32') {
+          const pid = this.chromeProcess.pid;
+          if (pid) {
+            console.log(`🔪 [ChromeManager] 强制终止Chrome进程 (PID: ${pid})`);
+            exec(`taskkill /F /T /PID ${pid}`, (error) => {
+              if (error) {
+                console.warn('⚠️ [ChromeManager] taskkill失败:', error.message);
+              } else {
+                console.log('✅ [ChromeManager] Chrome进程已终止');
+              }
+            });
+          }
+        } else {
+          // Linux/Mac: 使用 SIGKILL
+          this.chromeProcess.kill('SIGKILL');
+          console.log('✅ [ChromeManager] Chrome进程已发送SIGKILL');
+        }
+      } catch (e) {
+        console.warn('⚠️ [ChromeManager] 终止Chrome进程失败:', e);
+      }
       this.chromeProcess = null;
     }
+    
+    console.log('✅ [ChromeManager] 资源清理完成');
   }
 
   /**

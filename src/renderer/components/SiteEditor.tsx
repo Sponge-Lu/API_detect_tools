@@ -26,6 +26,8 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
     systemToken: site?.system_token || "",
     userId: site?.user_id || "",
     balance: null as number | null,
+    extraLinks: site?.extra_links || "",  // 加油站链接
+    enableCheckin: site?.force_enable_checkin || false,  // 启用签到功能
   });
 
   // 脱敏显示函数
@@ -89,12 +91,20 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
       const siteAccount = siteAccountResult.data;
       console.log('✅ [SiteEditor] 成功初始化站点，数据:', siteAccount);
       
-      const { user_id, username, site_name, access_token } = siteAccount;
+      const { 
+        user_id, 
+        username, 
+        site_name, 
+        access_token,
+        supportsCheckIn
+      } = siteAccount;
+      
       console.log('✅ [SiteEditor] 解构后的数据:');
       console.log('   - 用户ID:', user_id);
       console.log('   - 用户名:', username);
       console.log('   - 站点名称:', site_name);
       console.log('   - 令牌长度:', access_token?.length || 0);
+      console.log('   - 支持签到:', supportsCheckIn ?? '未知');
       
       if (!user_id) {
         throw new Error('初始化站点返回的数据中缺少用户ID');
@@ -106,6 +116,7 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
       console.log('   - 站点名称:', site_name);
       console.log('   - 用户ID:', userId);
       console.log('   - 令牌状态:', access_token ? '已获取' : '未获取');
+      console.log('   - 签到功能:', supportsCheckIn ? '支持' : (supportsCheckIn === false ? '不支持' : '未知'));
       console.log('ℹ️ [SiteEditor] 首次添加站点，仅保存核心认证数据，余额将在刷新时获取');
       
       setAutoInfo({
@@ -114,6 +125,8 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
         systemToken: access_token || "",
         userId: userId,
         balance: null, // 首次添加不获取余额
+        extraLinks: "",  // 加油站链接
+        enableCheckin: supportsCheckIn === true,  // 如果检测到支持签到，默认启用
       });
 
       setStep('confirm');
@@ -169,61 +182,37 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
     }
   };
 
-  const handleSave = async () => {
-    setLoading(true);
-    setError("");
-    
-    try {
-      // 1. 构建站点配置
-      const newSite: SiteConfig = {
-        name: autoInfo.name || extractDomainName(url),
-        url: url.trim(),
-        api_key: autoInfo.apiKey,
-        system_token: autoInfo.systemToken,
-        user_id: autoInfo.userId,
-        enabled: true,
-        has_checkin: false,
-      };
+  const handleSave = () => {
+    // 1. 构建站点配置
+    const newSite: SiteConfig = {
+      name: autoInfo.name || extractDomainName(url),
+      url: url.trim(),
+      api_key: autoInfo.apiKey,
+      system_token: autoInfo.systemToken,
+      user_id: autoInfo.userId,
+      enabled: true,
+      has_checkin: false,
+      extra_links: autoInfo.extraLinks,  // 加油站链接
+      force_enable_checkin: autoInfo.enableCheckin,  // 用户勾选的签到功能
+    };
 
-      // 2. 先保存站点
-      console.log('💾 [SiteEditor] 保存站点配置...');
-      onSave(newSite);
-      
-      // 3. 获取完整显示数据
-      console.log('🔄 [SiteEditor] 获取完整显示数据...');
-      try {
-        await window.electronAPI.detectSite(
-          newSite,
-          10000,  // 10秒超时
-          false,   // quickRefresh = false (完整刷新)
-          undefined  // 无缓存数据
-        );
-        console.log('✅ [SiteEditor] 站点数据获取成功');
-      } catch (detectError: any) {
-        console.error('⚠️ [SiteEditor] 获取显示数据失败:', detectError.message);
-        // 即使获取失败也继续，站点已保存
-      }
-      
-    } catch (error: any) {
-      setError('保存站点失败: ' + error.message);
-      setLoading(false);
-      return;
-    }
-    
-    setLoading(false);
+    // 2. 保存站点并关闭对话框
+    console.log('💾 [SiteEditor] 保存站点配置并关闭对话框');
+    onSave(newSite);
+    // onSave 会触发 App.tsx 的回调，关闭对话框并触发刷新
   };
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl shadow-2xl w-full max-w-2xl border border-white/10">
+      <div className="bg-light-card dark:bg-dark-card rounded-2xl shadow-2xl w-full max-w-2xl border border-slate-200 dark:border-slate-700">
         {/* 头部 */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700">
           <h2 className="text-xl font-bold">
             {site ? "编辑站点" : "智能添加站点"}
           </h2>
           <button
             onClick={onCancel}
-            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+            className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -241,23 +230,23 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
             ].map((s, idx) => (
               <div key={s.id} className="flex items-center flex-1">
                 <div className={`flex items-center gap-2 ${
-                  step === s.id ? 'text-primary-400' : 
+                  step === s.id ? 'text-primary-600 dark:text-primary-400' : 
                   ['login', 'fetching', 'confirm'].indexOf(s.id) <= ['login', 'fetching', 'confirm'].indexOf(step as any) ? 
-                  'text-green-400' : 'text-gray-500'
+                  'text-green-600 dark:text-green-400' : 'text-slate-500 dark:text-slate-400'
                 }`}>
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold ${
+                  <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-base text-white shadow-md ${
                     step === s.id ? 'bg-primary-500' :
                     ['login', 'fetching', 'confirm'].indexOf(s.id) <= ['login', 'fetching', 'confirm'].indexOf(step as any) ?
-                    'bg-green-500' : 'bg-gray-600'
+                    'bg-green-500' : 'bg-slate-400 dark:bg-slate-600'
                   }`}>
                     {s.icon}
                   </div>
-                  <span className="text-sm font-medium">{s.label}</span>
+                  <span className="text-sm font-semibold">{s.label}</span>
                 </div>
                 {idx < 3 && (
                   <div className={`flex-1 h-1 mx-2 rounded ${
                     ['login', 'fetching', 'confirm'].indexOf(['input-url', 'login', 'fetching', 'confirm'][idx + 1]) <= ['login', 'fetching', 'confirm'].indexOf(step as any) ?
-                    'bg-green-500' : 'bg-gray-600'
+                    'bg-green-500' : 'bg-slate-300 dark:bg-slate-600'
                   }`} />
                 )}
               </div>
@@ -268,7 +257,7 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
           {step === 'input-url' && (
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
+                <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-2">
                   站点URL
                 </label>
                 <input
@@ -276,22 +265,22 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   placeholder="https://api.example.com"
-                  className="w-full px-4 py-3 bg-black/30 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  className="w-full px-4 py-3 bg-white dark:bg-dark-bg border-2 border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-light-text dark:text-dark-text placeholder-slate-400 dark:placeholder-slate-500"
                 />
-                <p className="mt-2 text-xs text-gray-400">
+                <p className="mt-2 text-xs text-light-text-secondary dark:text-dark-text-secondary">
                   输入API站点的完整URL，例如：https://tbai.xin
                 </p>
               </div>
 
               {error && (
-                <div className="px-4 py-3 bg-red-500/20 border border-red-500/50 rounded-lg text-red-300 text-sm">
+                <div className="px-4 py-3 bg-red-50 dark:bg-red-900/30 border-2 border-red-400 dark:border-red-600 rounded-lg text-red-700 dark:text-red-300 text-sm font-medium">
                   {error}
                 </div>
               )}
 
-              <div className="px-4 py-3 bg-blue-500/10 border border-blue-500/30 rounded-lg text-blue-300 text-sm">
+              <div className="px-4 py-3 bg-blue-50 dark:bg-blue-900/30 border-2 border-blue-300 dark:border-blue-600 rounded-lg text-blue-700 dark:text-blue-300 text-sm">
                 <div className="font-semibold mb-1">✨ 智能站点识别</div>
-                <div className="text-xs">
+                <div className="text-xs opacity-90">
                   • 自动从localStorage读取system_name作为站点名称<br/>
                   • 自动获取access_token和用户信息<br/>
                   • API Key可选，无需强制填写
@@ -321,10 +310,10 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
           {/* 步骤2: 浏览器登录 */}
           {step === 'login' && (
             <div className="space-y-4">
-              <div className="px-6 py-8 bg-black/30 rounded-xl border border-white/10 text-center space-y-4">
+              <div className="px-6 py-8 bg-black/30 rounded-xl border border-slate-200 dark:border-slate-700 text-center space-y-4">
                 <Chrome className="w-16 h-16 mx-auto text-primary-400 animate-pulse" />
                 <h3 className="text-lg font-semibold">请在浏览器中完成登录</h3>
-                <p className="text-sm text-gray-400">
+                <p className="text-sm text-light-secondary dark:text-dark-secondary">
                   已在Chrome中打开 <span className="text-primary-400">{url}</span>
                   <br />
                   请完成登录操作，然后点击下方按钮继续
@@ -370,25 +359,9 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
             <div className="px-6 py-12 text-center space-y-4">
               <Loader2 className="w-16 h-16 mx-auto text-primary-400 animate-spin" />
               <h3 className="text-lg font-semibold">正在获取站点信息...</h3>
-              <p className="text-sm text-gray-400">
+              <p className="text-sm text-light-secondary dark:text-dark-secondary">
                 自动读取 system_name、userID 和 access_token
               </p>
-            </div>
-          )}
-
-          {/* 加载提示覆盖层 */}
-          {loading && step === 'confirm' && (
-            <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-              <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-xl p-6 border border-white/10 shadow-2xl max-w-md">
-                <div className="flex items-center gap-4">
-                  <Loader2 className="w-8 h-8 animate-spin text-primary-400" />
-                  <div>
-                    <h3 className="text-lg font-semibold text-white">正在获取站点数据</h3>
-                    <p className="text-sm text-gray-400 mt-1">正在获取余额、API Keys、模型信息等...</p>
-                    <p className="text-xs text-gray-500 mt-2">这可能需要几秒到几分钟时间</p>
-                  </div>
-                </div>
-              </div>
             </div>
           )}
 
@@ -406,56 +379,56 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
               )}
               
               <div className="space-y-3">
-                <div className="px-4 py-3 bg-black/30 rounded-lg">
-                  <div className="text-xs text-gray-400 mb-1">站点名称</div>
+                <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
+                  <div className="text-xs text-light-text-secondary dark:text-dark-text-secondary mb-1 font-medium">站点名称</div>
                   <input
                     type="text"
                     value={autoInfo.name}
                     onChange={(e) => setAutoInfo({...autoInfo, name: e.target.value})}
-                    className="w-full bg-transparent border-none outline-none text-white"
+                    className="w-full bg-transparent border-none outline-none text-light-text dark:text-dark-text font-medium"
                     placeholder="输入站点名称"
                   />
                 </div>
 
-                <div className="px-4 py-3 bg-black/30 rounded-lg">
-                  <div className="text-xs text-gray-400 mb-1">站点URL</div>
+                <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
+                  <div className="text-xs text-light-text-secondary dark:text-dark-text-secondary mb-1 font-medium">站点URL</div>
                   {site ? (
                     <input
                       type="url"
                       value={url}
                       onChange={(e) => setUrl(e.target.value)}
-                      className="w-full bg-transparent border-none outline-none text-white"
+                      className="w-full bg-transparent border-none outline-none text-light-text dark:text-dark-text font-medium"
                       placeholder="https://api.example.com"
                     />
                   ) : (
-                    <div className="text-white break-all">{url}</div>
+                    <div className="text-light-text dark:text-dark-text break-all font-medium">{url}</div>
                   )}
                 </div>
 
                 {autoInfo.balance !== null && (
-                  <div className="px-4 py-3 bg-black/30 rounded-lg">
-                    <div className="text-xs text-gray-400 mb-1">账户余额</div>
-                    <div className="text-white">
+                  <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <div className="text-xs text-light-text-secondary dark:text-dark-text-secondary mb-1 font-medium">账户余额</div>
+                    <div className="text-light-text dark:text-dark-text font-semibold">
                       {autoInfo.balance === -1 ? '∞ 无限' : `$${autoInfo.balance.toFixed(2)}`}
                     </div>
                   </div>
                 )}
 
-                <div className="px-4 py-3 bg-black/30 rounded-lg">
-                  <div className="text-xs text-gray-400 mb-1">用户ID</div>
+                <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
+                  <div className="text-xs text-light-text-secondary dark:text-dark-text-secondary mb-1 font-medium">用户ID</div>
                   <input
                     type="text"
                     value={autoInfo.userId}
                     onChange={(e) => setAutoInfo({...autoInfo, userId: e.target.value})}
-                    className="w-full bg-transparent border-none outline-none text-white font-mono text-sm"
+                    className="w-full bg-transparent border-none outline-none text-light-text dark:text-dark-text font-mono text-sm font-medium"
                     placeholder="输入用户ID"
                   />
                 </div>
 
                 {/* Access Token 输入区域 */}
-                <div className="px-4 py-3 bg-black/30 rounded-lg">
+                <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs text-gray-400">Access Token</span>
+                    <span className="text-xs text-light-text-secondary dark:text-dark-text-secondary font-medium">Access Token</span>
                     {autoInfo.systemToken && (
                       <button
                         onClick={() => setShowToken(!showToken)}
@@ -467,7 +440,7 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
                   </div>
                   {autoInfo.systemToken ? (
                     <div className="flex items-center gap-2">
-                      <div className="flex-1 text-sm text-white font-mono bg-black/20 px-2 py-1 rounded">
+                      <div className="flex-1 text-sm text-light-text dark:text-dark-text font-mono bg-white dark:bg-slate-900 px-3 py-2 rounded border border-slate-200 dark:border-slate-600">
                         {showToken ? autoInfo.systemToken : maskToken(autoInfo.systemToken)}
                       </div>
                       <button
@@ -475,7 +448,7 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
                           navigator.clipboard.writeText(autoInfo.systemToken);
                           alert('Access Token已复制到剪贴板');
                         }}
-                        className="p-1 hover:bg-white/10 rounded transition-colors text-gray-400 hover:text-white"
+                        className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors text-light-secondary dark:text-dark-secondary hover:text-white"
                         title="复制"
                       >
                         📋
@@ -488,15 +461,49 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
                         value={autoInfo.systemToken}
                         onChange={(e) => setAutoInfo({...autoInfo, systemToken: e.target.value})}
                         placeholder="请手动填入 Access Token"
-                        className="w-full bg-transparent border-none outline-none text-white placeholder-gray-500"
+                        className="w-full bg-transparent border-none outline-none text-light-text dark:text-dark-text placeholder-slate-400 dark:placeholder-slate-500 font-medium"
                       />
-                      <div className="text-xs text-yellow-400 mt-1">
+                      <div className="text-xs text-yellow-700 dark:text-yellow-400 mt-1 font-medium">
                         ⚠️ 无法自动获取 Access Token，可能session已过期。请点击"重新登录"或从网站复制填入
                       </div>
                     </>
                   )}
                 </div>
 
+                {/* 加油站链接输入区域 */}
+                <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
+                  <div className="text-xs text-light-text-secondary dark:text-dark-text-secondary mb-1 font-medium">
+                    加油站链接 <span className="text-slate-400 dark:text-slate-500">(可选)</span>
+                  </div>
+                  <input
+                    type="url"
+                    value={autoInfo.extraLinks}
+                    onChange={(e) => setAutoInfo({...autoInfo, extraLinks: e.target.value})}
+                    className="w-full bg-transparent border-none outline-none text-light-text dark:text-dark-text font-mono text-sm placeholder-slate-400 dark:placeholder-slate-500"
+                    placeholder="https://example.com/lottery (抽奖/额外签到等链接)"
+                  />
+                  <div className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
+                    💡 有些站点虽然没有签到功能，但有其他的抽奖或签到网站，可在此添加快捷链接
+                  </div>
+                </div>
+
+                {/* 签到功能开关 */}
+                <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={autoInfo.enableCheckin}
+                      onChange={(e) => setAutoInfo({...autoInfo, enableCheckin: e.target.checked})}
+                      className="w-4 h-4 rounded border-gray-600 text-primary-600 focus:ring-primary-500 focus:ring-offset-gray-900"
+                    />
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-white">启用签到功能</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        📅 勾选后，一级面板会显示签到图标，刷新站点时会自动获取签到状态
+                      </div>
+                    </div>
+                  </label>
+                </div>
 
                 {!site && (
                   <div className="px-4 py-3 bg-green-500/10 border border-green-500/30 rounded-lg text-green-300 text-sm flex items-center gap-2">
@@ -524,20 +531,11 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
                 </button>
                 <button
                   onClick={handleSave}
-                  disabled={loading || !autoInfo.name || !url || !autoInfo.systemToken || !autoInfo.userId}
+                  disabled={!autoInfo.name || !url || !autoInfo.systemToken || !autoInfo.userId}
                   className="flex-1 px-6 py-3 bg-green-600 hover:bg-green-700 rounded-lg font-semibold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                 >
-                  {loading ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      获取数据中...
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle className="w-5 h-5" />
-                      {site ? '保存修改' : '保存站点'}
-                    </>
-                  )}
+                  <CheckCircle className="w-5 h-5" />
+                  {site ? '保存修改' : '保存站点'}
                 </button>
               </div>
             </div>

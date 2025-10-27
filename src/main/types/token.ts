@@ -68,6 +68,7 @@ export interface CachedDisplayData {
     ratio: number;
   }>;
   modelPricing?: any;                     // 模型定价信息
+  models?: string[];                      // 可用模型列表
   lastRefresh: number;                    // 最后刷新时间戳
   can_check_in?: boolean;                 // 是否可签到
 }
@@ -117,5 +118,7 @@ export interface SiteConfig {
   system_token?: string;        // 系统访问令牌 (即access_token)
   user_id?: string;             // 用户ID (字符串格式)
   enabled: boolean;
-  has_checkin?: boolean;
+  has_checkin?: boolean;        // 是否有签到功能（自动检测）
+  force_enable_checkin?: boolean; // 用户手动启用签到
+  extra_links?: string;         // 加油站链接（抽奖、额外签到等）
 }

@@ -5,6 +5,7 @@ node_modules/
 dist/
 dist-renderer/
 release/
+release-*/
 
 # Logs
 *.log
@@ -24,6 +25,7 @@ out/
 # doc
 API-interface-doc.md
 DEV_RECORD.md
+comparison.md
 
 # 其他项目
 .all-api-hub/

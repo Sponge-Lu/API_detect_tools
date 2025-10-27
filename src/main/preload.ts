@@ -33,7 +33,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('token:fetch-user-groups', baseUrl, userId, accessToken),
     // 获取模型定价（兼容旧接口）
     fetchModelPricing: (baseUrl: string, userId: number, accessToken: string) =>
-      ipcRenderer.invoke('token:fetch-model-pricing', baseUrl, userId, accessToken)
+      ipcRenderer.invoke('token:fetch-model-pricing', baseUrl, userId, accessToken),
+    // 执行签到
+    checkIn: (baseUrl: string, userId: number, accessToken: string) =>
+      ipcRenderer.invoke('token:check-in', baseUrl, userId, accessToken)
   },
   
   // 账号存储API
