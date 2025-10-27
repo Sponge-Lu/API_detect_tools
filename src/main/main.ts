@@ -1,11 +1,24 @@
 import { app, BrowserWindow, ipcMain, shell, dialog, Menu } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs/promises';
+import * as os from 'os';
 import { ChromeManager } from './chrome-manager';
 import { ApiService } from './api-service';
 import { ConfigManager } from './config-manager';
 import { TokenService } from './token-service';
 import { TokenStorage } from './token-storage';
+
+// 设置Windows控制台编码为UTF-8，解决中文乱码问题
+if (os.platform() === 'win32') {
+  process.env['PYTHONIOENCODING'] = 'utf-8';
+  // 尝试设置控制台代码页为UTF-8
+  try {
+    const { execSync } = require('child_process');
+    execSync('chcp 65001', { stdio: 'ignore' });
+  } catch (e) {
+    // 忽略错误
+  }
+}
 
 let mainWindow: BrowserWindow | null = null;
 const chromeManager = new ChromeManager();
