@@ -1,6 +1,6 @@
 # API Hub Management Tools
 
-一个基于all-api-hub(https://github.com/qixing-jk/all-api-hub)开发的用于API管理与监控的桌面客户端，能自动从浏览器获取认证信息，通过API端点获取余额/模型等信息。
+一个基于all-api-hub(https://github.com/qixing-jk/all-api-hub) 开发的用于API管理与监控的桌面客户端，能自动从浏览器获取认证信息，通过API端点获取余额/模型等信息。
 
 ## 核心功能
 
