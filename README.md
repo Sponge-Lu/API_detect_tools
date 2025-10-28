@@ -1,6 +1,6 @@
 # API Hub Management Tools
 
-一个专业的API管理与监控工具，能自动从浏览器获取认证信息，简化API的调试和管理流程。
+一个基于all-api-hub(https://github.com/qixing-jk/all-api-hub)开发的用于API管理与监控的桌面客户端，能自动从浏览器获取认证信息，通过API端点获取余额/模型等信息。
 
 ## 核心功能
 
@@ -44,6 +44,8 @@
   - 自定义名称：支持修改站点显示名称（不会被覆盖）
   - 信息密度提升：优化间距，在相同空间显示更多信息
 - **性能优化**：
+  - Chrome 启动优化：使用 spawn 替代 exec，更稳定可靠
+  - 智能路径检测：自动搜索多个可能的 Chrome 安装位置
   - 浏览器进程管理：彻底清理旧进程，避免端口占用
   - 配置保存优化：确保所有修改完整保存，防止数据丢失
   - 智能端口检测：自动等待调试端口就绪
@@ -57,31 +59,21 @@
 
 ## 快速开始
 
-1.  **安装依赖**
-    ```bash
-    npm install
-    ```
-
-2.  **启动开发环境**
-    ```bash
-    npm run dev
-    ```
-
-3.  **构建应用**
-    ```bash
-    npm run dist
-    ```
-
-## 构建优化
-
-应用已进行全面的体积优化，从 172MB 减小至 **68MB**（减少 **60.5%**）。
-
-**优化措施**：
-- 🌍 只保留中文和英文语言包（`package.json` - electronLanguages）
-- 📦 启用 ASAR 归档压缩
-- 🗜️ 最大压缩级别
-- 🎯 代码压缩和分割（`vite.config.ts`）
-- 🗑️ 排除不必要文件
+1. 直接使用安装包 https://github.com/Sponge-Lu/API_detect_tools/releases
+或者
+2. 开发环境构建应用：
+  1.  **安装依赖**
+      ```bash
+      npm install
+      ```
+  2.  **启动开发环境**
+      ```bash
+      npm run dev
+      ```
+  3.  **构建应用**
+      ```bash
+      npm run dist
+      ```
 
 ## 许可证
 
