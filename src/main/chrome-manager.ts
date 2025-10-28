@@ -2,6 +2,7 @@ import { exec } from 'child_process';
 import puppeteer, { Browser, Page } from 'puppeteer-core';
 import * as path from 'path';
 import * as os from 'os';
+import * as fs from 'fs';
 
 /**
  * localStorage数据结构
@@ -103,15 +104,28 @@ export class ChromeManager {
     const chromePath = this.getChromePath();
     const userDataDir = path.join(os.tmpdir(), 'api-detector-chrome');
 
-    const command = `"${chromePath}" --remote-debugging-port=${this.debugPort} --user-data-dir="${userDataDir}" "${url}"`;
+    // 3. 启动Chrome进程 - 使用spawn而不是exec，并设置正确的编码
+    const { spawn } = require('child_process');
     
-    console.log(`📝 [ChromeManager] 启动命令: ${command.substring(0, 100)}...`);
+    console.log(`📝 [ChromeManager] Chrome路径: ${chromePath}`);
     
-    // 3. 启动Chrome进程
-    this.chromeProcess = exec(command, (error, stdout, stderr) => {
-      if (error) {
-        console.error('❌ [ChromeManager] Chrome进程错误:', error.message);
-      }
+    // 使用spawn避免命令解析问题，并设置编码
+    const args = [
+      `--remote-debugging-port=${this.debugPort}`,
+      `--user-data-dir=${userDataDir}`,
+      url
+    ];
+    
+    this.chromeProcess = spawn(chromePath, args, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'ignore', 'ignore'], // 忽略所有输出
+      detached: true,
+      windowsHide: true
+    });
+    
+    // 处理进程错误
+    this.chromeProcess.on('error', (error: any) => {
+      console.error('❌ [ChromeManager] Chrome进程错误:', error.message);
     });
 
     // 4. 等待调试端口就绪
@@ -726,7 +740,23 @@ export class ChromeManager {
     const platform = process.platform;
     
     if (platform === 'win32') {
-      return 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+      // 尝试多个可能的Chrome安装位置
+      const possiblePaths = [
+        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Users\\' + process.env.USERNAME + '\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe'
+      ];
+      
+      // 检查文件是否存在
+      for (const chromePath of possiblePaths) {
+        if (fs.existsSync(chromePath)) {
+          return chromePath;
+        }
+      }
+      
+      // 如果都不存在，返回最常见的位置
+      console.warn('⚠️ [ChromeManager] 未找到Chrome，使用默认路径');
+      return possiblePaths[0];
     } else if (platform === 'darwin') {
       return '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
     } else {
