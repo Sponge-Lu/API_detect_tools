@@ -20,13 +20,109 @@ export class ChromeManager {
   private browser: Browser | null = null;
   private chromeProcess: any = null;
   private debugPort = 9222;
+  private browserRefCount: number = 0; // 浏览器引用计数
+  private browserLock: Promise<void> | null = null; // 浏览器启动锁，防止并发启动
+  private cleanupTimer: NodeJS.Timeout | null = null; // 延迟关闭定时器
+  private isBrowserClosed: boolean = false; // 浏览器是否已关闭标志
+  private abortController: AbortController | null = null; // 用于取消正在进行的操作
+
+  /**
+   * 获取浏览器引用（增加引用计数）
+   * @returns 释放函数，调用后减少引用计数
+   */
+  private async acquireBrowser(): Promise<() => void> {
+    this.browserRefCount++;
+    console.log(`📊 [ChromeManager] 浏览器引用计数: ${this.browserRefCount}`);
+    
+    // 如果浏览器未启动，启动浏览器
+    if (!this.browser) {
+      // 等待锁完成（如果有）
+      if (this.browserLock) {
+        await this.browserLock;
+      }
+      
+      // 如果等待后仍然没有浏览器，创建新的启动锁并启动
+      if (!this.browser) {
+        let resolveLock: () => void;
+        this.browserLock = new Promise((resolve) => {
+          resolveLock = resolve;
+        });
+        
+        try {
+          // 使用一个虚拟URL启动浏览器，实际URL会在createPage中设置
+          await this.launchBrowser('about:blank');
+        } finally {
+          this.browserLock = null;
+          resolveLock!();
+        }
+      }
+    }
+    
+    // 返回释放函数
+    return () => {
+      this.releaseBrowser();
+    };
+  }
+
+  /**
+   * 释放浏览器引用（减少引用计数）
+   */
+  private releaseBrowser(): void {
+    if (this.browserRefCount > 0) {
+      this.browserRefCount--;
+      console.log(`📊 [ChromeManager] 浏览器引用计数: ${this.browserRefCount}`);
+      
+      // 如果引用计数为0，延迟关闭浏览器（以便后续检测复用）
+      if (this.browserRefCount === 0) {
+        // 清除之前的定时器
+        if (this.cleanupTimer) {
+          clearTimeout(this.cleanupTimer);
+        }
+        
+        // 延迟5秒关闭，以便后续检测复用
+        this.cleanupTimer = setTimeout(() => {
+          if (this.browserRefCount === 0) {
+            console.log('⏰ [ChromeManager] 引用计数为0，延迟关闭浏览器');
+            this.cleanup();
+          }
+        }, 5000);
+      }
+    }
+  }
 
   /**
    * 创建一个新页面并导航到指定URL
+   * 自动管理引用计数
    * @param url 目标URL
-   * @returns Page对象
+   * @returns 包含页面和释放函数的对象
    */
-  async createPage(url: string): Promise<Page> {
+  async createPage(url: string): Promise<{ page: Page; release: () => void }> {
+    // 如果浏览器已关闭且引用计数为0，重置状态以允许重新启动
+    // 注意：如果引用计数不为0，说明还有其他操作在使用，不应该重置状态
+    if (this.isBrowserClosed && this.browserRefCount === 0) {
+      console.log('🔄 [ChromeManager] 检测到浏览器已关闭且无其他操作，重置状态并重新启动...');
+      this.isBrowserClosed = false;
+      // 注意：浏览器已关闭时，this.browser 应该已经是 null（在 handleBrowserDisconnected 中设置）
+      // 但为了安全，这里再次确认
+      if (this.browser) {
+        try {
+          this.browser.removeAllListeners('disconnected');
+          this.browser.disconnect();
+        } catch (e) {
+          // 忽略错误
+        }
+        this.browser = null;
+      }
+      // 创建新的 AbortController
+      this.abortController = new AbortController();
+    } else if (this.isBrowserClosed && this.browserRefCount > 0) {
+      // 浏览器已关闭但还有引用，说明有其他操作在使用，抛出错误
+      throw new Error('浏览器已关闭，操作已取消');
+    }
+    
+    // 获取浏览器引用（增加引用计数）
+    const release = await this.acquireBrowser();
+    
     try {
       // 检查浏览器连接状态
       if (this.browser) {
@@ -36,34 +132,30 @@ export class ChromeManager {
         } catch (e) {
           console.warn('⚠️ [ChromeManager] 浏览器连接失效，需要重新启动');
           this.browser = null;
+          // 连接失效时，需要重新获取引用
+          const newRelease = await this.acquireBrowser();
+          // 替换释放函数
+          const oldRelease = release;
+          return {
+            page: await this.createPageInternal(url),
+            release: () => {
+              newRelease();
+              oldRelease();
+            }
+          };
         }
-      }
-
-      // 如果浏览器未启动或连接失效，先启动
-      if (!this.browser) {
-        await this.launchBrowser(url);
       }
 
       if (!this.browser) {
         throw new Error('浏览器启动失败');
       }
 
-      const pages = await this.browser.pages();
-      let page: Page;
-
-      if (pages.length > 0) {
-        page = pages[0];
-        console.log('📄 [ChromeManager] 使用已有页面');
-      } else {
-        page = await this.browser.newPage();
-        console.log('📄 [ChromeManager] 创建新页面');
-      }
-
-      console.log(`🌐 [ChromeManager] 导航到: ${url}`);
-      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+      const page = await this.createPageInternal(url);
       
-      return page;
+      return { page, release };
     } catch (error: any) {
+      // 如果创建失败，释放引用
+      release();
       console.error('❌ [ChromeManager] createPage失败:', error.message);
       
       // 如果创建页面失败，清理并重试一次
@@ -73,7 +165,10 @@ export class ChromeManager {
           error.message.includes('Protocol error')) {
         console.log('⚠️ [ChromeManager] 浏览器连接异常，清理并重试...');
         
-        this.cleanup();
+        // 只有在引用计数为0时才清理
+        if (this.browserRefCount === 0) {
+          this.cleanup();
+        }
         await new Promise(resolve => setTimeout(resolve, 1000));
         
         // 只重试一次，避免无限循环
@@ -81,12 +176,44 @@ export class ChromeManager {
           console.log('🔄 [ChromeManager] 重试创建页面...');
           const retryError = new Error(error.message) as any;
           retryError.retried = true;
-          await this.launchBrowser(url);
-          return this.createPage(url);
+          // 重新获取引用并重试
+          const retryRelease = await this.acquireBrowser();
+          try {
+            const page = await this.createPageInternal(url);
+            return { page, release: retryRelease };
+          } catch (retryError) {
+            retryRelease();
+            throw retryError;
+          }
         }
       }
       throw error;
     }
+  }
+
+  /**
+   * 内部方法：创建页面并导航到URL（不管理引用计数）
+   */
+  private async createPageInternal(url: string): Promise<Page> {
+    if (!this.browser) {
+      throw new Error('浏览器未启动');
+    }
+
+    const pages = await this.browser.pages();
+    let page: Page;
+
+    if (pages.length > 0) {
+      page = pages[0];
+      console.log('📄 [ChromeManager] 使用已有页面');
+    } else {
+      page = await this.browser.newPage();
+      console.log('📄 [ChromeManager] 创建新页面');
+    }
+
+    console.log(`🌐 [ChromeManager] 导航到: ${url}`);
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+    
+    return page;
   }
 
   /**
@@ -96,8 +223,60 @@ export class ChromeManager {
   private async launchBrowser(url: string): Promise<void> {
     console.log('🚀 [ChromeManager] 启动浏览器...');
     
-    // 1. 先彻底清理旧资源
-    this.cleanup();
+    // 1. 检查引用计数，如果 > 0，不应该清理（保持复用逻辑）
+    if (this.browserRefCount > 0) {
+      console.warn(`⚠️ [ChromeManager] 浏览器正在使用中（引用计数: ${this.browserRefCount}），跳过清理`);
+      // 如果浏览器已存在且连接有效，直接返回（复用）
+      if (this.browser) {
+        try {
+          await this.browser.pages();
+          console.log('✅ [ChromeManager] 浏览器已存在且连接有效，复用');
+          // 如果之前标记为关闭，现在重置状态（因为浏览器实际上还在运行）
+          if (this.isBrowserClosed) {
+            console.log('🔄 [ChromeManager] 浏览器实际仍在运行，重置关闭标志');
+            this.isBrowserClosed = false;
+            this.abortController = new AbortController();
+          }
+          return;
+        } catch (e) {
+          console.warn('⚠️ [ChromeManager] 浏览器连接失效，需要重新启动');
+          this.browser = null;
+          // 连接失效时，重置关闭标志以允许重新启动
+          this.isBrowserClosed = false;
+          this.abortController = new AbortController();
+        }
+      } else if (this.isBrowserClosed) {
+        // 浏览器引用为null但标记为关闭，重置状态以允许重新启动
+        console.log('🔄 [ChromeManager] 浏览器已关闭，重置状态以重新启动...');
+        this.isBrowserClosed = false;
+        this.abortController = new AbortController();
+      }
+    } else {
+      // 引用计数为0时，清理资源（但不设置 isBrowserClosed，因为可能马上要重新启动）
+      // 只清理资源，不设置关闭标志，以保持复用能力
+      if (this.browser) {
+        try {
+          this.browser.removeAllListeners('disconnected');
+          this.browser.disconnect();
+        } catch (e) {
+          // 忽略错误
+        }
+        this.browser = null;
+      }
+      if (this.cleanupTimer) {
+        clearTimeout(this.cleanupTimer);
+        this.cleanupTimer = null;
+      }
+      // 清理Chrome进程（如果存在）
+      this.cleanupChromeProcess();
+      // 重置关闭标志，以便后续操作可以重新启动浏览器
+      if (this.isBrowserClosed) {
+        console.log('🔄 [ChromeManager] 引用计数为0，重置关闭标志以允许后续复用');
+        this.isBrowserClosed = false;
+        this.abortController = new AbortController();
+      }
+    }
+    
     await this.waitForPortFree(this.debugPort);
     
     // 2. 准备启动参数
@@ -137,6 +316,16 @@ export class ChromeManager {
     this.browser = await puppeteer.connect({
       browserURL: `http://127.0.0.1:${this.debugPort}`,
       protocolTimeout: 60000 // 60秒超时
+    });
+    
+    // 重置关闭标志和创建新的 AbortController
+    this.isBrowserClosed = false;
+    this.abortController = new AbortController();
+    
+    // 监听浏览器断开事件
+    this.browser.on('disconnected', () => {
+      console.log('⚠️ [ChromeManager] 检测到浏览器已关闭');
+      this.handleBrowserDisconnected();
     });
     
     console.log('✅ [ChromeManager] 浏览器启动成功');
@@ -226,9 +415,18 @@ export class ChromeManager {
    * 从浏览器localStorage获取核心数据
    * 统一策略：优先localStorage，必要时通过Cookie+API回退补全
    * @param url 站点URL
+   * @param waitForLogin 是否等待用户登录（默认false）
+   * @param maxWaitTime 最大等待时间（毫秒，默认60秒）
    * @returns localStorage中的核心数据
    */
-  async getLocalStorageData(url: string): Promise<LocalStorageData> {
+  async getLocalStorageData(
+    url: string, 
+    waitForLogin: boolean = false,
+    maxWaitTime: number = 60000
+  ): Promise<LocalStorageData> {
+    // 检查浏览器是否已关闭
+    this.checkBrowserClosed();
+    
     if (!this.browser) {
       throw new Error('浏览器未启动');
     }
@@ -247,7 +445,7 @@ export class ChromeManager {
     console.log('🔍 [ChromeManager] 开始读取localStorage...');
     
     // 第一步：从localStorage获取所有可能的信息
-    const localData = await this.tryGetFromLocalStorage(page);
+    let localData = await this.tryGetFromLocalStorage(page);
     
     console.log('📊 [ChromeManager] localStorage数据:');
     console.log('   - userId:', localData.userId || '缺失');
@@ -257,12 +455,49 @@ export class ChromeManager {
     console.log('   - supportsCheckIn:', localData.supportsCheckIn ?? '未知');
     console.log('   - canCheckIn:', localData.canCheckIn ?? '未知');
     
+    // 如果没有userId且需要等待登录，则轮询检查
+    if (!localData.userId && waitForLogin) {
+      console.log('⏳ [ChromeManager] 未检测到登录状态，等待用户登录...');
+      console.log(`   最长等待 ${maxWaitTime / 1000} 秒`);
+      console.log('💡 [ChromeManager] 将同时检查localStorage和API接口');
+      
+      // 在进入等待循环前，先尝试一次API回退（用户可能已经登录，只是localStorage没有数据）
+      console.log('🔄 [ChromeManager] 先尝试通过API检查是否已登录...');
+      try {
+        this.checkBrowserClosed(); // 检查浏览器状态
+        const apiData = await this.getUserDataFromApi(page, url);
+        if (apiData.userId) {
+          console.log(`✅ [ChromeManager] 通过API检测到用户已登录！用户ID: ${apiData.userId}`);
+          // 合并数据，API数据优先
+          localData = { ...localData, ...apiData };
+        } else {
+          // API也没有数据，进入等待循环
+          localData = await this.waitForUserLogin(page, url, maxWaitTime);
+        }
+      } catch (apiError: any) {
+        // 如果是浏览器关闭错误，直接抛出
+        if (apiError.message.includes('浏览器已关闭') || apiError.message.includes('操作已被取消')) {
+          throw apiError;
+        }
+        console.log(`ℹ️ [ChromeManager] 初始API检查失败: ${apiError.message}，进入等待循环...`);
+        // API失败，进入等待循环
+        localData = await this.waitForUserLogin(page, url, maxWaitTime);
+      }
+      
+      console.log('✅ [ChromeManager] 用户已登录，继续获取数据');
+      console.log('📊 [ChromeManager] 登录后数据:');
+      console.log('   - userId:', localData.userId);
+      console.log('   - username:', localData.username || '未获取');
+      console.log('   - accessToken:', localData.accessToken ? '已获取' : '未获取');
+    }
+    
     // 第二步：检查是否需要API回退
     const needsApiFallback = !localData.userId || !localData.accessToken;
     
     if (needsApiFallback) {
       console.log('⚠️ [ChromeManager] 信息不完整，尝试通过API补全...');
       try {
+        this.checkBrowserClosed(); // 检查浏览器状态
         const apiData = await this.getUserDataFromApi(page, url);
         // 合并数据，localStorage优先
         const merged = { ...apiData, ...localData };
@@ -274,6 +509,10 @@ export class ChromeManager {
         
         return merged;
       } catch (apiError: any) {
+        // 如果是浏览器关闭错误，直接抛出
+        if (apiError.message.includes('浏览器已关闭') || apiError.message.includes('操作已被取消')) {
+          throw apiError;
+        }
         console.error('❌ [ChromeManager] API补全失败:', apiError.message);
         if (!localData.userId) {
           throw new Error('未找到用户ID，请确保已登录');
@@ -281,7 +520,159 @@ export class ChromeManager {
       }
     }
     
+    // 最后检查一次浏览器状态
+    this.checkBrowserClosed();
+    
     return localData;
+  }
+
+  /**
+   * 处理浏览器断开连接
+   */
+  private handleBrowserDisconnected(): void {
+    this.isBrowserClosed = true;
+    
+    // 取消所有正在进行的操作
+    if (this.abortController) {
+      this.abortController.abort();
+      console.log('🛑 [ChromeManager] 已取消所有正在进行的操作');
+    }
+    
+    // 重置浏览器引用
+    this.browser = null;
+    
+    // 如果引用计数为0，清理进程
+    if (this.browserRefCount === 0) {
+      this.cleanupChromeProcess();
+    }
+  }
+
+  /**
+   * 检查浏览器是否已关闭
+   * @throws 如果浏览器已关闭，抛出错误
+   */
+  private checkBrowserClosed(): void {
+    if (this.isBrowserClosed) {
+      throw new Error('浏览器已关闭，操作已取消');
+    }
+    
+    // 检查 AbortController 信号
+    if (this.abortController?.signal.aborted) {
+      throw new Error('操作已被取消（浏览器已关闭）');
+    }
+  }
+
+  /**
+   * 等待用户登录
+   * 轮询检查localStorage中的userId，同时定期尝试API回退，直到检测到登录或超时
+   * @param page 浏览器页面
+   * @param baseUrl 站点URL（用于API回退）
+   * @param maxWaitTime 最大等待时间（毫秒）
+   * @returns 登录后的localStorage数据
+   */
+  private async waitForUserLogin(page: Page, baseUrl: string, maxWaitTime: number): Promise<LocalStorageData> {
+    const startTime = Date.now();
+    const checkInterval = 2000; // 每2秒检查一次
+    let checkCount = 0;
+    const apiCheckInterval = 5; // 每5次检查（10秒）尝试一次API回退
+    
+    while (Date.now() - startTime < maxWaitTime) {
+      // 检查浏览器是否已关闭
+      this.checkBrowserClosed();
+      
+      // 等待一段时间再检查（使用可中断的等待）
+      await this.sleepWithAbort(checkInterval);
+      
+      // 再次检查（可能在等待期间浏览器关闭了）
+      this.checkBrowserClosed();
+      
+      checkCount++;
+      const elapsedTime = Math.floor((Date.now() - startTime) / 1000);
+      console.log(`⏳ [ChromeManager] 等待登录中... (${elapsedTime}/${Math.floor(maxWaitTime / 1000)}秒)`);
+      
+      // 检查localStorage
+      try {
+        const localData = await this.tryGetFromLocalStorage(page);
+        
+        if (localData.userId) {
+          console.log(`✅ [ChromeManager] 检测到用户登录！用户ID: ${localData.userId}`);
+          return localData;
+        }
+        
+        // 定期尝试API回退（每10秒尝试一次）
+        if (checkCount % apiCheckInterval === 0) {
+          console.log('🔄 [ChromeManager] 尝试通过API检查登录状态...');
+          try {
+            this.checkBrowserClosed(); // 在API调用前检查
+            const apiData = await this.getUserDataFromApi(page, baseUrl);
+            if (apiData.userId) {
+              console.log(`✅ [ChromeManager] 通过API检测到用户登录！用户ID: ${apiData.userId}`);
+              // 合并数据，API数据优先（因为localStorage可能没有）
+              return { ...localData, ...apiData };
+            }
+          } catch (apiError: any) {
+            // 如果是浏览器关闭错误，直接抛出
+            if (apiError.message.includes('浏览器已关闭') || apiError.message.includes('操作已被取消')) {
+              throw apiError;
+            }
+            // API失败不影响继续等待
+            console.log(`ℹ️ [ChromeManager] API检查失败: ${apiError.message}，继续等待...`);
+          }
+        }
+      } catch (error: any) {
+        // 如果是浏览器关闭错误，直接抛出
+        if (error.message.includes('浏览器已关闭') || error.message.includes('操作已被取消')) {
+          throw error;
+        }
+        console.warn('⚠️ [ChromeManager] 检查登录状态时出错:', error.message);
+        // 继续等待
+      }
+    }
+    
+    // 超时前，最后尝试一次API回退
+    this.checkBrowserClosed(); // 检查浏览器是否已关闭
+    
+    console.log('⏰ [ChromeManager] 等待超时，最后尝试API回退...');
+    try {
+      const apiData = await this.getUserDataFromApi(page, baseUrl);
+      if (apiData.userId) {
+        console.log(`✅ [ChromeManager] 通过API检测到用户登录！用户ID: ${apiData.userId}`);
+        const localData = await this.tryGetFromLocalStorage(page);
+        return { ...localData, ...apiData };
+      }
+    } catch (apiError: any) {
+      // 如果是浏览器关闭错误，直接抛出
+      if (apiError.message.includes('浏览器已关闭') || apiError.message.includes('操作已被取消')) {
+        throw apiError;
+      }
+      console.log(`ℹ️ [ChromeManager] 最后API检查也失败: ${apiError.message}`);
+    }
+    
+    // 最后检查一次浏览器状态
+    this.checkBrowserClosed();
+    
+    // 超时
+    throw new Error(`等待登录超时（${maxWaitTime / 1000}秒），请确保已在浏览器中完成登录`);
+  }
+
+  /**
+   * 可中断的睡眠函数
+   * @param ms 等待时间（毫秒）
+   */
+  private async sleepWithAbort(ms: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        resolve();
+      }, ms);
+      
+      // 监听 AbortSignal
+      if (this.abortController) {
+        this.abortController.signal.addEventListener('abort', () => {
+          clearTimeout(timeout);
+          reject(new Error('操作已被取消（浏览器已关闭）'));
+        }, { once: true });
+      }
+    });
   }
 
   /**
@@ -493,6 +884,14 @@ export class ChromeManager {
    * @returns 用户数据
    */
   private async getUserDataFromApi(page: any, baseUrl: string): Promise<LocalStorageData> {
+    // 检查浏览器是否已关闭
+    this.checkBrowserClosed();
+    
+    // 检查页面是否已关闭
+    if (page.isClosed()) {
+      throw new Error('浏览器已关闭，操作已取消');
+    }
+    
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
     
     // 多个API端点尝试
@@ -505,6 +904,12 @@ export class ChromeManager {
     let lastError: any = null;
     
     for (const endpoint of endpoints) {
+      // 在每次循环前检查浏览器状态
+      this.checkBrowserClosed();
+      if (page.isClosed()) {
+        throw new Error('浏览器已关闭，操作已取消');
+      }
+      
       const apiUrl = `${cleanBaseUrl}${endpoint}`;
       
       try {
@@ -569,13 +974,23 @@ export class ChromeManager {
         
         // 如果成功获取到userId，返回结果
         if (result.userId) {
+          // 再次检查浏览器状态
+          this.checkBrowserClosed();
+          if (page.isClosed()) {
+            throw new Error('浏览器已关闭，操作已取消');
+          }
+          
           // 尝试获取system_name
           try {
             const systemName = await this.getSystemNameFromApi(page, cleanBaseUrl);
             if (systemName) {
               result.systemName = systemName;
             }
-          } catch (e) {
+          } catch (e: any) {
+            // 如果是浏览器关闭错误，直接抛出
+            if (e.message.includes('浏览器已关闭') || e.message.includes('操作已取消')) {
+              throw e;
+            }
             console.warn('⚠️ [ChromeManager] 获取system_name失败，继续');
           }
           
@@ -583,6 +998,10 @@ export class ChromeManager {
         }
         
       } catch (error: any) {
+        // 如果是浏览器关闭错误，直接抛出
+        if (error.message.includes('浏览器已关闭') || error.message.includes('操作已取消')) {
+          throw error;
+        }
         console.warn(`⚠️ [ChromeManager] 端点 ${endpoint} 失败:`, error.message);
         lastError = error;
         continue;
@@ -604,6 +1023,14 @@ export class ChromeManager {
    * @returns 系统名称
    */
   private async getSystemNameFromApi(page: any, baseUrl: string): Promise<string | null> {
+    // 检查浏览器是否已关闭
+    this.checkBrowserClosed();
+    
+    // 检查页面是否已关闭
+    if (page.isClosed()) {
+      throw new Error('浏览器已关闭，操作已取消');
+    }
+    
     const statusUrl = `${baseUrl}/api/status`;
     
     try {
@@ -689,21 +1116,9 @@ export class ChromeManager {
   }
 
   /**
-   * 清理资源
+   * 清理Chrome进程（内部方法）
    */
-  cleanup() {
-    console.log('🧹 [ChromeManager] 开始清理浏览器资源...');
-    
-    if (this.browser) {
-      try {
-        this.browser.disconnect();
-        console.log('✅ [ChromeManager] 浏览器连接已断开');
-      } catch (e) {
-        console.warn('⚠️ [ChromeManager] 断开浏览器连接失败:', e);
-      }
-      this.browser = null;
-    }
-    
+  private cleanupChromeProcess(): void {
     if (this.chromeProcess) {
       try {
         // Windows: 强制终止进程树
@@ -729,6 +1144,50 @@ export class ChromeManager {
       }
       this.chromeProcess = null;
     }
+  }
+
+  /**
+   * 清理资源
+   * 只有在引用计数为0时才会真正清理
+   */
+  cleanup() {
+    // 检查引用计数
+    if (this.browserRefCount > 0) {
+      console.warn(`⚠️ [ChromeManager] 浏览器正在使用中（引用计数: ${this.browserRefCount}），跳过清理`);
+      return;
+    }
+    
+    console.log('🧹 [ChromeManager] 开始清理浏览器资源...');
+    
+    // 标记浏览器已关闭
+    this.isBrowserClosed = true;
+    
+    // 取消所有正在进行的操作
+    if (this.abortController) {
+      this.abortController.abort();
+      this.abortController = null;
+    }
+    
+    // 清除延迟关闭定时器
+    if (this.cleanupTimer) {
+      clearTimeout(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+    
+    if (this.browser) {
+      try {
+        // 移除事件监听器，避免重复触发
+        this.browser.removeAllListeners('disconnected');
+        this.browser.disconnect();
+        console.log('✅ [ChromeManager] 浏览器连接已断开');
+      } catch (e) {
+        console.warn('⚠️ [ChromeManager] 断开浏览器连接失败:', e);
+      }
+      this.browser = null;
+    }
+    
+    // 清理Chrome进程
+    this.cleanupChromeProcess();
     
     console.log('✅ [ChromeManager] 资源清理完成');
   }

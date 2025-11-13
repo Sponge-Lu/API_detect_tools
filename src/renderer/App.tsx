@@ -312,8 +312,10 @@ function App() {
   useEffect(() => {
     // 先加载配置，再加载缓存数据
     const init = async () => {
-      await loadConfig();
-      await loadCachedData();
+      const cfg = await loadConfig();
+      if (cfg) {
+        await loadCachedData(cfg);
+      }
     };
     init();
   }, []);
@@ -330,13 +332,15 @@ function App() {
     });
   }, [apiKeys, expandedSites]);
 
-  const loadConfig = async () => {
+  const loadConfig = async (): Promise<Config | null> => {
     try {
       setLoading(true);
       const cfg = await window.electronAPI.loadConfig();
       setConfig(cfg);
+      return cfg;
     } catch (error) {
       console.error("加载配置失败:", error);
+      return null;
     } finally {
       setLoading(false);
     }
@@ -344,8 +348,9 @@ function App() {
 
   /**
    * 启动时加载缓存的显示数据
+   * @param currentConfig 当前的配置对象，用于匹配站点名称
    */
-  const loadCachedData = async () => {
+  const loadCachedData = async (currentConfig: Config) => {
     try {
       console.log('📂 [App] 加载缓存的显示数据...');
       const accounts = await window.electronAPI.getAllAccounts();
@@ -357,7 +362,7 @@ function App() {
         const accountsMap: Record<string, any> = {};
         accounts.forEach((account: any) => {
           // 🔧 修复：使用配置文件中的站点名称
-          const configSite = config?.sites.find(s => {
+          const configSite = currentConfig.sites.find(s => {
             try {
               return new URL(s.url).origin === new URL(account.site_url).origin;
             } catch {
@@ -365,6 +370,12 @@ function App() {
             }
           });
           const siteName = configSite?.name || account.site_name;
+          
+          // 调试日志：显示名称映射
+          console.log(`   🔗 [App] 站点映射: ${account.site_url}`);
+          console.log(`      - 缓存中的名称: ${account.site_name}`);
+          console.log(`      - 配置中的名称: ${configSite?.name || '未找到'}`);
+          console.log(`      - 最终使用名称: ${siteName}`);
           
           // 使用URL作为key（更准确）
           const urlKey = new URL(account.site_url).origin;
@@ -386,7 +397,7 @@ function App() {
           .map((account: any) => {
             // 🔧 修复：使用配置文件中的站点名称，而不是缓存中的名称
             // 通过URL匹配找到配置中的站点
-            const configSite = config?.sites.find(s => {
+            const configSite = currentConfig.sites.find(s => {
               try {
                 return new URL(s.url).origin === new URL(account.site_url).origin;
               } catch {
@@ -397,21 +408,16 @@ function App() {
             // 优先使用配置中的名称，如果找不到则使用缓存中的名称
             const siteName = configSite?.name || account.site_name;
             
+            console.log(`   📦 [App] 加载缓存: ${account.site_url} → 使用名称: ${siteName} (来源: ${configSite ? '配置' : '缓存'})`);
+            
             const result = {
               name: siteName,  // 使用配置文件中的名称
               url: account.site_url,
               status: '成功',
               models: account.cached_display_data?.models || [],
-              balance: account.cached_display_data?.quota !== undefined 
-                ? (account.cached_display_data.quota > 1000 
-                    ? account.cached_display_data.quota / 500000 
-                    : account.cached_display_data.quota)
-                : undefined,
-              todayUsage: account.cached_display_data?.today_quota_consumption !== undefined
-                ? (account.cached_display_data.today_quota_consumption > 1000
-                    ? account.cached_display_data.today_quota_consumption / 500000
-                    : account.cached_display_data.today_quota_consumption)
-                : undefined,
+              // 🔧 修复：缓存中的余额已经在后端转换过了，直接使用即可
+              balance: account.cached_display_data?.quota,
+              todayUsage: account.cached_display_data?.today_quota_consumption,
               has_checkin: typeof account.cached_display_data?.can_check_in === 'boolean',  // 如果有can_check_in字段，说明支持签到
               can_check_in: account.cached_display_data?.can_check_in,  // 签到状态
               apiKeys: account.cached_display_data?.apiKeys,
@@ -608,11 +614,20 @@ function App() {
           setModelPricing(prev => ({ ...prev, [site.name]: result.modelPricing! }));
         }
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("检测失败:", error);
+      
+      // 检查是否是浏览器关闭错误
+      const errorMessage = error?.message || String(error);
+      let displayMessage = '❌ 刷新失败: ' + errorMessage;
+      
+      if (errorMessage.includes('浏览器已关闭') || errorMessage.includes('操作已取消') || errorMessage.includes('操作已被取消')) {
+        displayMessage = '⚠️ 浏览器已关闭，操作已取消。请重新打开浏览器后重试。';
+      }
+      
       setRefreshMessage({
         site: site.name,
-        message: '❌ 刷新失败: ' + error,
+        message: displayMessage,
         type: 'info'
       });
       setTimeout(() => {
@@ -681,12 +696,19 @@ function App() {
       }
     } catch (error: any) {
       console.error("签到失败:", error);
-      const shouldOpenSite = confirm(
-        `❌ 签到请求失败\n\n${error.message}\n\n` +
-        "是否打开网站手动签到？"
-      );
-      if (shouldOpenSite) {
-        await openCheckinPage(site);
+      
+      // 检查是否是浏览器关闭错误
+      const errorMessage = error?.message || String(error);
+      if (errorMessage.includes('浏览器已关闭') || errorMessage.includes('操作已取消') || errorMessage.includes('操作已被取消')) {
+        alert('⚠️ 浏览器已关闭，操作已取消。\n\n请重新打开浏览器后重试签到。');
+      } else {
+        const shouldOpenSite = confirm(
+          `❌ 签到请求失败\n\n${errorMessage}\n\n` +
+          "是否打开网站手动签到？"
+        );
+        if (shouldOpenSite) {
+          await openCheckinPage(site);
+        }
       }
     } finally {
       setCheckingIn(null);

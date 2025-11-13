@@ -50,12 +50,14 @@ export class ApiService {
     cachedData?: DetectionResult
   ): Promise<DetectionResult> {
     let sharedPage: any = null;
+    let pageRelease: (() => void) | undefined = undefined;
     
     try {
       // 获取模型列表（可能会创建浏览器页面）
       const modelsResult = await this.getModels(site, timeout);
       const models = modelsResult.models;
       sharedPage = modelsResult.page;
+      pageRelease = modelsResult.pageRelease;
       
       // 如果创建了浏览器页面，确保Cloudflare验证完成
       if (sharedPage) {
@@ -192,6 +194,16 @@ export class ApiService {
         has_checkin: false
       };
     } finally {
+      // 释放浏览器引用（如果创建了页面）
+      if (pageRelease) {
+        try {
+          console.log('🔒 [ApiService] 释放浏览器引用');
+          pageRelease();
+        } catch (error: any) {
+          console.error('⚠️ [ApiService] 释放浏览器引用失败:', error.message);
+        }
+      }
+      
       // 确保关闭浏览器页面
       if (sharedPage) {
         try {
@@ -252,6 +264,11 @@ export class ApiService {
       // 2. 循环检测验证状态
       while (Date.now() - startTime < maxWaitTime) {
         try {
+          // 检查页面是否已关闭（浏览器关闭会导致页面关闭）
+          if (page.isClosed()) {
+            throw new Error('浏览器已关闭，操作已取消');
+          }
+          
           // 2.1 检测是否仍在验证中
           const verificationStatus = await page.evaluate(() => {
             const doc = (globalThis as any).document;
@@ -313,6 +330,17 @@ export class ApiService {
           await new Promise(resolve => setTimeout(resolve, 2000));
           
         } catch (error: any) {
+          // 如果是浏览器关闭错误，直接抛出
+          if (error.message.includes('浏览器已关闭') || error.message.includes('操作已取消')) {
+            console.log('⚠️ [ApiService] 检测到浏览器已关闭，停止Cloudflare验证等待');
+            throw error;
+          }
+          
+          // 检查页面是否已关闭
+          if (page.isClosed()) {
+            throw new Error('浏览器已关闭，操作已取消');
+          }
+          
           console.error('❌ [ApiService] 验证检测错误:', error.message);
           // 检测错误，等待3秒后继续
           await new Promise(resolve => setTimeout(resolve, 3000));
@@ -376,7 +404,7 @@ export class ApiService {
     timeout: number,
     parseResponse: (data: any) => T,
     sharedPage?: any
-  ): Promise<{ result: T; page?: any }> {
+  ): Promise<{ result: T; page?: any; pageRelease?: () => void }> {
     console.log('📡 [ApiService] 发起请求:', url);
     
     try {
@@ -414,11 +442,14 @@ export class ApiService {
         try {
           // 如果有共享页面，直接使用；否则创建新页面
           let page = sharedPage;
+          let pageRelease: (() => void) | null = null;
           let shouldClosePage = false;
           
           if (!page) {
             console.log('🌐 [ApiService] 创建新浏览器页面...');
-            page = await chromeManager.createPage(site.url);
+            const pageResult = await chromeManager.createPage(site.url);
+            page = pageResult.page;
+            pageRelease = pageResult.release;
             shouldClosePage = false; // 不在这里关闭，由调用者决定
             
             // 调用智能Cloudflare验证等待
@@ -457,10 +488,18 @@ export class ApiService {
             );
             
             console.log('✅ [ApiService] 浏览器模式请求成功');
-            return { result: parseResponse(result), page: shouldClosePage ? undefined : page };
+            // 返回页面和释放函数（如果创建了新页面）
+            return { 
+              result: parseResponse(result), 
+              page: shouldClosePage ? undefined : page,
+              pageRelease: pageRelease || undefined
+            };
             
           } catch (evalError) {
-            // 如果是我们创建的页面且执行失败，关闭它
+            // 如果是我们创建的页面且执行失败，释放引用并关闭页面
+            if (pageRelease) {
+              pageRelease();
+            }
             if (shouldClosePage && page) {
               await page.close();
             }
@@ -478,7 +517,7 @@ export class ApiService {
     }
   }
 
-  private async getModels(site: SiteConfig, timeout: number): Promise<{ models: string[]; page?: any }> {
+  private async getModels(site: SiteConfig, timeout: number): Promise<{ models: string[]; page?: any; pageRelease?: () => void }> {
     const hasApiKey = !!site.api_key;
     const authToken = site.api_key || site.system_token;
     
@@ -510,6 +549,7 @@ export class ApiService {
     // 尝试所有端点
     let lastError: any = null;
     let sharedPage: any = null;
+    let sharedPageRelease: (() => void) | undefined = undefined;
     
     for (const endpoint of endpoints) {
       const url = `${site.url.replace(/\/$/, '')}${endpoint}`;
@@ -603,14 +643,19 @@ export class ApiService {
         
         // 如果成功获取到模型，返回结果
         if (result.result && result.result.length > 0) {
-          return { models: result.result, page: result.page };
+          return { 
+            models: result.result, 
+            page: result.page,
+            pageRelease: result.pageRelease
+          };
         }
         
         // 如果返回空数组，尝试下一个端点
         console.log(`ℹ️ [ApiService] 端点 ${endpoint} 返回空模型列表，尝试下一个端点...`);
         
-        // 保存page以便后续复用
+        // 保存page和pageRelease以便后续复用
         sharedPage = result.page;
+        sharedPageRelease = result.pageRelease;
         
       } catch (error: any) {
         console.warn(`⚠️ [ApiService] 端点 ${endpoint} 失败:`, error.message);
@@ -624,7 +669,7 @@ export class ApiService {
       console.error('❌ [ApiService] 所有模型接口都失败');
     }
     
-    return { models: [], page: sharedPage };
+    return { models: [], page: sharedPage, pageRelease: sharedPageRelease };
   }
 
   private async getBalanceAndUsage(site: SiteConfig, timeout: number, sharedPage?: any): Promise<{ balance?: number; todayUsage?: number } | undefined> {

@@ -27,16 +27,27 @@ export class TokenService {
    * 这是添加新站点时的唯一入口
    * 
    * @param baseUrl 站点URL
+   * @param waitForLogin 是否等待用户登录（默认true，用于刷新场景）
+   * @param maxWaitTime 最大等待时间（毫秒，默认60秒）
    * @returns 完整的站点账号信息
    */
-  async initializeSiteAccount(baseUrl: string): Promise<SiteAccount> {
+  async initializeSiteAccount(
+    baseUrl: string,
+    waitForLogin: boolean = true,
+    maxWaitTime: number = 600000
+  ): Promise<SiteAccount> {
     console.log('🚀 [TokenService] ========== 开始初始化站点账号 ==========');
     console.log('📍 [TokenService] 站点URL:', baseUrl);
+    console.log('⏳ [TokenService] 等待登录:', waitForLogin ? '是' : '否');
     
     try {
       // 步骤1: 从localStorage获取核心数据（支持API回退）
       console.log('📖 [TokenService] 步骤1: 读取用户数据（localStorage优先，API回退）...');
-      const localData = await this.chromeManager.getLocalStorageData(baseUrl);
+      const localData = await this.chromeManager.getLocalStorageData(
+        baseUrl, 
+        waitForLogin, 
+        maxWaitTime
+      );
       
       if (!localData.userId) {
         throw new Error('无法获取用户ID，请确保已登录并刷新页面');
@@ -152,6 +163,11 @@ export class TokenService {
 
     const page = pages[0];
     
+    // 检查页面是否已关闭（浏览器关闭会导致页面关闭）
+    if (page.isClosed()) {
+      throw new Error('浏览器已关闭，操作已取消');
+    }
+    
     // 确保在正确的域名下
     const currentUrl = await page.url();
     try {
@@ -161,8 +177,17 @@ export class TokenService {
         console.log('🔄 [TokenService] 导航到目标站点...');
         await page.goto(baseUrl, { waitUntil: 'networkidle0', timeout: 10000 });
       }
-    } catch (err) {
+    } catch (err: any) {
+      // 如果是浏览器关闭错误，直接抛出
+      if (err.message.includes('浏览器已关闭') || err.message.includes('操作已取消') || page.isClosed()) {
+        throw new Error('浏览器已关闭，操作已取消');
+      }
       console.warn('⚠️ [TokenService] 域名检查失败，继续尝试:', err);
+    }
+
+    // 再次检查页面是否已关闭
+    if (page.isClosed()) {
+      throw new Error('浏览器已关闭，操作已取消');
     }
 
     // 在浏览器上下文中调用API
@@ -201,6 +226,16 @@ export class TokenService {
       return result;
       
     } catch (error: any) {
+      // 如果是浏览器关闭错误，直接抛出
+      if (error.message.includes('浏览器已关闭') || error.message.includes('操作已取消')) {
+        throw error;
+      }
+      
+      // 检查页面是否已关闭
+      if (page.isClosed()) {
+        throw new Error('浏览器已关闭，操作已取消');
+      }
+      
       console.error('❌ [TokenService] 创建令牌失败:', error.message);
       
       // 提供友好的错误提示
@@ -1239,12 +1274,17 @@ export class TokenService {
     if (!page) {
       console.log('🛡️ [TokenService] axios获取失败，尝试浏览器模式获取模型定价...');
       try {
-        const browserPage = await this.chromeManager.createPage(baseUrl);
+        const pageResult = await this.chromeManager.createPage(baseUrl);
+        const browserPage = pageResult.page;
+        const pageRelease = pageResult.release;
         try {
           await browserPage.waitForSelector('body', { timeout: 10000 });
           await new Promise(resolve => setTimeout(resolve, 2000));
           return await this.fetchModelPricingInBrowser(baseUrl, userId, accessToken, browserPage);
         } finally {
+          // 释放浏览器引用
+          pageRelease();
+          // 关闭页面
           await browserPage.close();
         }
       } catch (browserError: any) {
