@@ -413,7 +413,9 @@ function App() {
             const result = {
               name: siteName,  // 使用配置文件中的名称
               url: account.site_url,
-              status: '成功',
+              // 恢复最近一次检测状态，如果没有则默认为成功
+              status: (account as any).last_detection_status || '成功',
+              error: (account as any).last_detection_error,
               models: account.cached_display_data?.models || [],
               // 🔧 修复：缓存中的余额已经在后端转换过了，直接使用即可
               balance: account.cached_display_data?.quota,
@@ -521,10 +523,41 @@ function App() {
   const detectAllSites = async () => {
     if (!config) return;
     setDetecting(true);
-    setResults([]);
     try {
-      const results = await window.electronAPI.detectAllSites(config);
-      setResults(results);
+      const newResults = await window.electronAPI.detectAllSites(config);
+      // 合并新结果与旧结果：如果新结果失败且旧结果存在，则保留旧数据但覆盖状态和错误信息
+      setResults((prev) => {
+        const map = new Map<string, DetectionResult>();
+        prev.forEach(r => map.set(r.name, r));
+        newResults.forEach((result) => {
+          const old = map.get(result.name);
+          let effective = result;
+          if (result.status === "失败" && old) {
+            effective = {
+              ...old,
+              status: result.status,
+              error: result.error,
+            };
+          }
+          map.set(result.name, effective);
+        });
+        return Array.from(map.values());
+      });
+
+      // 更新成功站点的最后检测时间（仅成功时刷新，失败保留旧时间）
+      setSiteAccounts((prev) => {
+        const next = { ...prev };
+        const now = Date.now();
+        newResults.forEach((result) => {
+          if (result.status === "成功" && next[result.name]) {
+            next[result.name] = {
+              ...next[result.name],
+              last_sync_time: now,
+            };
+          }
+        });
+        return next;
+      });
     } catch (error) {
       console.error("检测失败:", error);
       alert("检测失败: " + error);
@@ -562,15 +595,26 @@ function App() {
     setDetectingSite(site.name);
     
     try {
+      // 现有检测结果（用于在失败时保留旧数据）
+      const existingResult = results.find(r => r.name === site.name);
       // 快速刷新模式：传递现有的缓存数据
-      const cachedResult = quickRefresh ? results.find(r => r.name === site.name) : undefined;
+      const cachedResult = quickRefresh ? existingResult : undefined;
       
-      const result = await window.electronAPI.detectSite(
+      const rawResult = await window.electronAPI.detectSite(
         site,
         config.settings.timeout,
         quickRefresh,
         cachedResult
       );
+      
+      // 如果本次检测失败且存在旧结果，则保留旧数据，只更新状态和错误信息
+      const result: DetectionResult = (rawResult.status === "失败" && existingResult)
+        ? {
+            ...existingResult,
+            status: rawResult.status,
+            error: rawResult.error,
+          }
+        : rawResult;
       
       // 检查数据是否有变化
       const hasChanges = hasSignificantChanges(cachedResult, result);
@@ -600,18 +644,33 @@ function App() {
         const filtered = prev.filter((r) => r.name !== site.name);
         return [...filtered, result];
       });
+
+      // 成功时更新该站点的最后检测时间（失败时保留旧时间）
+      if (rawResult.status === "成功") {
+        setSiteAccounts((prev) => {
+          const next = { ...prev };
+          const acc = next[site.name];
+          if (acc) {
+            next[site.name] = {
+              ...acc,
+              last_sync_time: Date.now(),
+            };
+          }
+          return next;
+        });
+      }
       
-      // 立即更新缓存（不管站点是否展开）
-      if (result) {
-        if (result.apiKeys) {
-          setApiKeys(prev => ({ ...prev, [site.name]: result.apiKeys! }));
+      // 立即更新缓存（不管站点是否展开），仅在检测成功时刷新扩展数据
+      if (rawResult && rawResult.status === "成功") {
+        if (rawResult.apiKeys) {
+          setApiKeys(prev => ({ ...prev, [site.name]: rawResult.apiKeys! }));
         }
-        if (result.userGroups) {
-          setUserGroups(prev => ({ ...prev, [site.name]: result.userGroups! }));
+        if (rawResult.userGroups) {
+          setUserGroups(prev => ({ ...prev, [site.name]: rawResult.userGroups! }));
         }
-        if (result.modelPricing) {
-          console.log(`💾 [App] 保存 ${site.name} 的定价数据，模型数: ${result.modelPricing?.data ? Object.keys(result.modelPricing.data).length : 0}`);
-          setModelPricing(prev => ({ ...prev, [site.name]: result.modelPricing! }));
+        if (rawResult.modelPricing) {
+          console.log(`💾 [App] 保存 ${site.name} 的定价数据，模型数: ${rawResult.modelPricing?.data ? Object.keys(rawResult.modelPricing.data).length : 0}`);
+          setModelPricing(prev => ({ ...prev, [site.name]: rawResult.modelPricing! }));
         }
       }
     } catch (error: any) {
@@ -1093,10 +1152,63 @@ function App() {
               </div>
             ) : (
               config.sites.map((site, index) => {
-                const siteResult = results.find(r => r.name === site.name);
+                // 先按名称匹配检测结果，如果名称被修改则回退到按URL匹配
+                let siteResult = results.find(r => r.name === site.name);
+                if (!siteResult) {
+                  try {
+                    const siteOrigin = new URL(site.url).origin;
+                    siteResult = results.find(r => {
+                      try {
+                        return new URL(r.url).origin === siteOrigin;
+                      } catch {
+                        return false;
+                      }
+                    });
+                  } catch {
+                    // ignore url parse error
+                  }
+                }
                 const isExpanded = expandedSites.has(site.name);
                 const showToken = showTokens[site.name] || false;
-                const siteAccount = siteAccounts[site.name];  // 获取站点账号信息
+                // 账号信息也优先按名称匹配，失败时按URL回退
+                let siteAccount = siteAccounts[site.name];
+                if (!siteAccount) {
+                  try {
+                    const urlKey = new URL(site.url).origin;
+                    siteAccount = siteAccounts[urlKey];
+                  } catch {
+                    // ignore
+                  }
+                }
+                
+                // 计算最后更新时间显示（格式：月/日 时:分）
+                let lastSyncDisplay: string | null = null;
+                if (siteAccount?.last_sync_time) {
+                  const dt = new Date(siteAccount.last_sync_time);
+                  const month = String(dt.getMonth() + 1).padStart(2, '0');
+                  const day = String(dt.getDate()).padStart(2, '0');
+                  const hour = String(dt.getHours()).padStart(2, '0');
+                  const minute = String(dt.getMinutes()).padStart(2, '0');
+                  lastSyncDisplay = `${month}/${day} ${hour}:${minute}`;
+                }
+                
+                // 从错误信息中提取 Error Code（例如 "status code 403"）
+                let errorCode: string | null = null;
+                // 从错误信息中提取超时秒数（例如 "timeout of 10000ms exceeded"）
+                let timeoutSeconds: number | null = null;
+                if (siteResult?.error) {
+                  const codeMatch = siteResult.error.match(/status code (\d{3})/i);
+                  if (codeMatch) {
+                    errorCode = codeMatch[1];
+                  }
+                  const timeoutMatch = siteResult.error.match(/timeout.*?(\d+)\s*ms/i);
+                  if (timeoutMatch) {
+                    const ms = parseInt(timeoutMatch[1], 10);
+                    if (!isNaN(ms) && ms > 0) {
+                      timeoutSeconds = Math.round(ms / 1000);
+                    }
+                  }
+                }
                 
                 return (
                   <div
@@ -1188,7 +1300,8 @@ function App() {
                               <span className={`font-semibold text-xs ${
                                 (() => {
                                   // 优先使用定价数据中的模型数量
-                                  const pricing = modelPricing[site.name];
+                                  const key = siteResult?.name || site.name;
+                                  const pricing = modelPricing[key];
                                   const apiModelCount = siteResult?.models?.length || 0;
                                   const pricingModelCount = pricing?.data ? Object.keys(pricing.data).length : 0;
                                   const actualCount = Math.max(apiModelCount, pricingModelCount);
@@ -1197,7 +1310,8 @@ function App() {
                               }`}>
                                 {(() => {
                                   // 优先使用定价数据中的模型数量
-                                  const pricing = modelPricing[site.name];
+                                  const key = siteResult?.name || site.name;
+                                  const pricing = modelPricing[key];
                                   const apiModelCount = siteResult?.models?.length || 0;
                                   const pricingModelCount = pricing?.data ? Object.keys(pricing.data).length : 0;
                                   return Math.max(apiModelCount, pricingModelCount);
@@ -1205,15 +1319,22 @@ function App() {
                               </span>
                             </div>
                             
-                            {/* 最后更新时间 */}
-                            {siteAccount?.last_sync_time && (
+                            {/* 最后更新时间 + 错误码 / Timeout */}
+                            {lastSyncDisplay && (
                               <div className="flex items-center gap-1">
                                 <span className="text-slate-500 dark:text-slate-400 text-xs">
-                                  更新: {new Date(siteAccount.last_sync_time).toLocaleTimeString('zh-CN', {
-                                    hour: '2-digit',
-                                    minute: '2-digit'
-                                  })}
+                                  更新: {lastSyncDisplay}
                                 </span>
+                                {errorCode && (
+                                  <span className="text-red-500 dark:text-red-400 text-xs font-bold">
+                                    Error Code: {errorCode}
+                                  </span>
+                                )}
+                                {!errorCode && timeoutSeconds !== null && (
+                                  <span className="text-red-500 dark:text-red-400 text-xs font-bold">
+                                    Timeout {timeoutSeconds}s
+                                  </span>
+                                )}
                               </div>
                             )}
                           </div>
@@ -1387,10 +1508,13 @@ function App() {
                         )}
                         
                         {/* 用户分组 */}
-                        {userGroups[site.name] && Object.keys(userGroups[site.name]).length > 0 && (
+                        {(() => {
+                          const key = siteResult?.name || site.name;
+                          return userGroups[key] && Object.keys(userGroups[key]).length > 0;
+                        })() && (
                           <div className="flex items-center gap-1 flex-wrap py-0">
                             <span className="text-xs text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">分组</span>
-                            {Object.entries(userGroups[site.name]).map(([groupName, groupData]: [string, any]) => (
+                            {Object.entries(userGroups[siteResult?.name || site.name]).map(([groupName, groupData]: [string, any]) => (
                               <button
                                 key={groupName}
                                 onClick={() => toggleGroupFilter(site.name, groupName)}
@@ -1418,18 +1542,24 @@ function App() {
                         )}
                         
                         {/* API Keys列表 */}
-                        {apiKeys[site.name] && apiKeys[site.name].length > 0 && (
+                        {(() => {
+                          const key = siteResult?.name || site.name;
+                          return apiKeys[key] && apiKeys[key].length > 0;
+                        })() && (
                           <div className="space-y-0.5">
                             <div className="flex items-center gap-1">
                               <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                                Keys ({getFilteredApiKeys(site.name).length}/{apiKeys[site.name].length})
+                                {(() => {
+                                  const key = siteResult?.name || site.name;
+                                  return `Keys (${getFilteredApiKeys(key).length}/${apiKeys[key].length})`;
+                                })()}
                                 {selectedGroup[site.name] && (
                                   <span className="ml-1 text-primary-400">· {selectedGroup[site.name]}</span>
                                 )}
                               </span>
                             </div>
                             <div className="space-y-0.5 max-h-40 overflow-y-auto">
-                              {getFilteredApiKeys(site.name).map((key: any, idx: number) => {
+                              {getFilteredApiKeys(siteResult?.name || site.name).map((key: any, idx: number) => {
                                 const quotaInfo = key.unlimited_quota ? null : getQuotaTypeInfo(key.type || 0);
                                 return (
                                   <div
@@ -1613,7 +1743,7 @@ function App() {
                                   const enableGroups = pricingData?.enable_groups || [];
                                   
                                   // 获取用户分组倍率（默认为1）
-                                  const groupRatio = userGroups[site.name] || {};
+                                  const groupRatio = userGroups[siteResult?.name || site.name] || {};
                                   const currentGroup = selectedGroup[site.name] || 'default';
                                   const groupMultiplier = groupRatio[currentGroup]?.ratio || 1;
                                   

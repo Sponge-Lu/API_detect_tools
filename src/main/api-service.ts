@@ -172,7 +172,7 @@ export class ApiService {
         modelPricing
       };
       
-      // 保存缓存数据到TokenStorage
+      // 保存缓存数据到TokenStorage（成功时）
       if (this.tokenStorage && site.system_token && site.user_id) {
         try {
           await this.saveCachedDisplayData(site.url, result);
@@ -183,7 +183,7 @@ export class ApiService {
       
       return result;
     } catch (error: any) {
-      return {
+      const failedResult: DetectionResult = {
         name: site.name,
         url: site.url,
         status: '失败',
@@ -193,6 +193,17 @@ export class ApiService {
         error: error.message,
         has_checkin: false
       };
+      
+      // 失败时也记录检测状态与错误信息，但不覆盖已有的缓存展示数据
+      if (this.tokenStorage && site.system_token && site.user_id) {
+        try {
+          await this.saveLastDetectionStatus(site.url, failedResult.status, failedResult.error);
+        } catch (e: any) {
+          console.error('⚠️ [ApiService] 保存失败检测状态失败:', e.message);
+        }
+      }
+      
+      return failedResult;
     } finally {
       // 释放浏览器引用（如果创建了页面）
       if (pageRelease) {
@@ -203,16 +214,10 @@ export class ApiService {
           console.error('⚠️ [ApiService] 释放浏览器引用失败:', error.message);
         }
       }
-      
-      // 确保关闭浏览器页面
-      if (sharedPage) {
-        try {
-          console.log('🔒 [ApiService] 关闭共享浏览器页面');
-          await sharedPage.close();
-        } catch (error: any) {
-          console.error('⚠️ [ApiService] 关闭页面失败:', error.message);
-        }
-      }
+
+      // ❗ 不再在这里主动关闭共享页面，交由 ChromeManager 统一管理生命周期
+      // 原因：并发检测时多个站点可能复用同一个 Page，过早关闭会影响其他正在进行的检测任务
+      // 如果需要彻底关闭浏览器，将由 ChromeManager 的引用计数与 cleanup 定时器负责清理
     }
   }
 
@@ -373,6 +378,51 @@ export class ApiService {
       }
     }
     return false;
+  }
+
+  /**
+   * 判断HTTP状态码是否为致命错误
+   * 对于这些错误码，继续重试其它端点通常没有意义，可以直接结束当前站点检测
+   *
+   * 说明：
+   * - 403/5xx 基本可以确认是权限/服务异常，继续尝试其它端点成功概率极低
+   * - 404 在部分站点可能表示“当前端点不存在，但其它备用端点可用”，为兼容性考虑不视为致命
+   */
+  private isFatalHttpStatus(status?: number): boolean {
+    if (!status) return false;
+    const fatalStatuses = [400, 403, 500, 502, 503, 504, 522];
+    return fatalStatuses.includes(status);
+  }
+
+  /**
+   * 判断是否为超时错误
+   */
+  private isTimeoutError(error: any): boolean {
+    if (!error) return false;
+    if (error.code === 'ECONNABORTED') return true;
+    const msg = String(error.message || '').toLowerCase();
+    return msg.includes('timeout') && msg.includes('exceeded');
+  }
+
+  /**
+   * 仅保存最近一次检测状态和错误信息（不更新展示数据）
+   */
+  private async saveLastDetectionStatus(
+    siteUrl: string,
+    status: string,
+    error?: string
+  ): Promise<void> {
+    if (!this.tokenStorage) return;
+    try {
+      const account = await this.tokenStorage.getAccountByUrl(siteUrl);
+      if (!account) return;
+      (account as any).last_detection_status = status;
+      (account as any).last_detection_error = error;
+      await this.tokenStorage.saveAccount(account);
+      console.log('✅ [ApiService] 最近一次检测状态已保存:', { siteUrl, status });
+    } catch (e: any) {
+      console.error('❌ [ApiService] 保存最近检测状态失败:', e.message);
+    }
   }
 
   /**
@@ -653,22 +703,41 @@ export class ApiService {
         // 如果返回空数组，尝试下一个端点
         console.log(`ℹ️ [ApiService] 端点 ${endpoint} 返回空模型列表，尝试下一个端点...`);
         
-        // 保存page和pageRelease以便后续复用
-        sharedPage = result.page;
-        sharedPageRelease = result.pageRelease;
+        // 保存 page 和 pageRelease 以便后续复用
+        // 注意：只在有新的 pageRelease 时覆盖，避免丢失首次创建页面时的释放函数，防止引用计数泄漏
+        if (result.page) {
+          sharedPage = result.page;
+        }
+        if (result.pageRelease) {
+          sharedPageRelease = result.pageRelease;
+        }
         
       } catch (error: any) {
         console.warn(`⚠️ [ApiService] 端点 ${endpoint} 失败:`, error.message);
         lastError = error;
+
+        // 对于致命状态码（如 400/403/5xx 等）或超时错误，继续尝试其它端点通常没有意义，直接终止
+        const status = error?.response?.status;
+        if (this.isFatalHttpStatus(status) || this.isTimeoutError(error)) {
+          if (this.isFatalHttpStatus(status)) {
+            console.warn(`⛔ [ApiService] 检测到致命HTTP状态码 ${status}，停止尝试其它模型端点`);
+          } else {
+            console.warn('⛔ [ApiService] 检测到超时错误，停止尝试其它模型端点');
+          }
+          break;
+        }
+
         continue;
       }
     }
     
-    // 所有端点都失败，抛出最后一个错误或返回空结果
+    // 所有端点都失败，直接结束当前站点检测
     if (lastError) {
       console.error('❌ [ApiService] 所有模型接口都失败');
+      throw new Error(`模型接口请求失败: ${lastError.message || lastError}`);
     }
     
+    // 没有错误但也没有模型，返回空结果（认为该站点暂无模型，不算致命错误）
     return { models: [], page: sharedPage, pageRelease: sharedPageRelease };
   }
 
@@ -691,8 +760,9 @@ export class ApiService {
       
       return { balance, todayUsage };
     } catch (error: any) {
-      console.error('❌ [ApiService] 获取余额失败:', error.message);
-      return undefined;
+      console.error('❌ [ApiService] 获取余额或今日消费失败:', error.message);
+      // 将错误抛给上层，由 detectSite 结束当前站点检测并在卡片显示错误信息
+      throw new Error(`余额/消费接口请求失败: ${error.message}`);
     }
   }
 
@@ -706,6 +776,7 @@ export class ApiService {
     sharedPage?: any
   ): Promise<number | undefined> {
     const endpoints = ['/api/user/self', '/api/user/dashboard'];
+    let lastError: any = null;
     
     for (const endpoint of endpoints) {
       try {
@@ -737,8 +808,27 @@ export class ApiService {
         }
       } catch (error: any) {
         console.log(`⚠️ [ApiService] 端点 ${endpoint} 获取余额失败，尝试下一个...`);
+        lastError = error;
+
+        // 对于致命状态码或超时错误，直接终止余额查询，避免无意义的重试
+        const status = error?.response?.status;
+        if (this.isFatalHttpStatus(status) || this.isTimeoutError(error)) {
+          if (this.isFatalHttpStatus(status)) {
+            console.warn(`⛔ [ApiService] 检测到致命HTTP状态码 ${status}，停止尝试其它余额端点`);
+          } else {
+            console.warn('⛔ [ApiService] 检测到超时错误，停止尝试其它余额端点');
+          }
+          break;
+        }
+
         continue;
       }
+    }
+    
+    // 所有端点都失败，抛出错误结束当前站点检测
+    if (lastError) {
+      console.error('❌ [ApiService] 所有余额接口都失败');
+      throw new Error(`余额接口请求失败: ${lastError.message || lastError}`);
     }
     
     return undefined;
@@ -914,7 +1004,8 @@ export class ApiService {
           currentPage++;
         } catch (error: any) {
           console.error(`❌ [ApiService] 日志查询异常(第${currentPage}页):`, error.message);
-          break;
+          // 直接抛出，让上层结束当前站点检测
+          throw new Error(`日志接口请求失败: ${error.message}`);
         }
       }
 
@@ -924,10 +1015,11 @@ export class ApiService {
 
       console.log(`💰 [ApiService] 今日总消费: $${totalConsumption.toFixed(4)}`);
       return totalConsumption;
-
+      
     } catch (error: any) {
       console.error('❌ [ApiService] 获取今日消费失败:', error.message);
-      return 0;
+      // 将错误抛给上层，由 getBalanceAndUsage 决定是否结束检测
+      throw new Error(`日志接口请求失败: ${error.message}`);
     }
   }
 
@@ -991,6 +1083,9 @@ export class ApiService {
       
       // 更新账号
       account.cached_display_data = cachedData;
+      // 记录最近一次检测状态与错误信息，供下次启动时恢复
+      (account as any).last_detection_status = detectionResult.status;
+      (account as any).last_detection_error = detectionResult.error;
       account.last_sync_time = Date.now();
       account.updated_at = Date.now();
       

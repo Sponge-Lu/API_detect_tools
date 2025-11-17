@@ -97,10 +97,15 @@ export class ChromeManager {
    * @returns 包含页面和释放函数的对象
    */
   async createPage(url: string): Promise<{ page: Page; release: () => void }> {
-    // 如果浏览器已关闭且引用计数为0，重置状态以允许重新启动
-    // 注意：如果引用计数不为0，说明还有其他操作在使用，不应该重置状态
-    if (this.isBrowserClosed && this.browserRefCount === 0) {
-      console.log('🔄 [ChromeManager] 检测到浏览器已关闭且无其他操作，重置状态并重新启动...');
+    // 如果浏览器已关闭，则重置状态以允许重新启动
+    // 说明：理论上浏览器关闭后不应再有有效引用，如果引用计数仍大于0，说明之前有引用泄漏
+    // 为了保证后续检测可以继续工作，这里进行容错处理：强制将引用计数重置为0，并重新启动浏览器
+    if (this.isBrowserClosed) {
+      if (this.browserRefCount > 0) {
+        console.warn(`⚠️ [ChromeManager] 检测到浏览器已关闭但引用计数仍为 ${this.browserRefCount}，强制重置为0以恢复后续操作`);
+        this.browserRefCount = 0;
+      }
+      console.log('🔄 [ChromeManager] 浏览器已关闭，重置状态并准备重新启动...');
       this.isBrowserClosed = false;
       // 注意：浏览器已关闭时，this.browser 应该已经是 null（在 handleBrowserDisconnected 中设置）
       // 但为了安全，这里再次确认
@@ -115,9 +120,6 @@ export class ChromeManager {
       }
       // 创建新的 AbortController
       this.abortController = new AbortController();
-    } else if (this.isBrowserClosed && this.browserRefCount > 0) {
-      // 浏览器已关闭但还有引用，说明有其他操作在使用，抛出错误
-      throw new Error('浏览器已关闭，操作已取消');
     }
     
     // 获取浏览器引用（增加引用计数）
@@ -199,16 +201,9 @@ export class ChromeManager {
       throw new Error('浏览器未启动');
     }
 
-    const pages = await this.browser.pages();
-    let page: Page;
-
-    if (pages.length > 0) {
-      page = pages[0];
-      console.log('📄 [ChromeManager] 使用已有页面');
-    } else {
-      page = await this.browser.newPage();
-      console.log('📄 [ChromeManager] 创建新页面');
-    }
+    // 多 Tab 模式：每次检测创建独立的 Page，避免并发检测时多个站点抢同一个页面
+    const page = await this.browser.newPage();
+    console.log('📄 [ChromeManager] 创建新页面');
 
     console.log(`🌐 [ChromeManager] 导航到: ${url}`);
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
