@@ -28,9 +28,10 @@ const tokenService = new TokenService(chromeManager);
 const apiService = new ApiService(tokenService, tokenStorage);
 
 function createWindow() {
-  // 注意：打包后的图标通过 package.json 的 build.win.icon 配置
-  // 这里的 icon 参数只影响开发环境的窗口图标
-  const iconPath = path.join(app.getAppPath(), 'build', 'icon.png');
+  // 根据环境选择合适的图标，打包后从 resources 目录读取 ico 文件
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.ico')
+    : path.join(app.getAppPath(), 'build', 'icon.png');
   
   console.log('📍 图标路径:', iconPath);
   console.log('📦 是否已打包:', app.isPackaged);
@@ -39,8 +40,8 @@ function createWindow() {
     width: 700,
     height: 800,
     title: 'API Hub Management Tools',
-    // 开发环境使用 icon 参数，打包后通过 package.json 配置
-    ...(app.isPackaged ? {} : { icon: iconPath }),
+    // 无论开发还是生产都显式指定窗口图标，防止 EXE 默认图标被沿用
+    icon: iconPath,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import Logo from "./assets/logo.svg";
 import {
   Server,
   Plus,
@@ -939,161 +940,14 @@ function App() {
         <header className="bg-white/80 dark:bg-dark-card/80 backdrop-blur-md border-b border-light-border dark:border-dark-border px-4 py-3 shadow-sm">
         <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              {/* Logo - 黑色六边形 + 动态粒子 */}
-              <div className="relative w-10 h-10">
-                <svg viewBox="0 0 200 200" className="w-full h-full drop-shadow-lg">
-                  <defs>
-                    {/* 裁剪路径：限制粒子在六边形内 */}
-                    <clipPath id="hexClip">
-                      <path d="M100 20 L170 60 L170 140 L100 180 L30 140 L30 60 Z"/>
-                    </clipPath>
-                    
-                    {/* 阴影效果 */}
-                    <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
-                      <feDropShadow dx="0" dy="4" stdDeviation="8" floodOpacity="0.3"/>
-                    </filter>
-                    
-                    {/* 发光效果 */}
-                    <filter id="glow">
-                      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
-                      <feMerge>
-                        <feMergeNode in="coloredBlur"/>
-                        <feMergeNode in="SourceGraphic"/>
-                      </feMerge>
-                    </filter>
-                  </defs>
-                  
-                  {/* 六边形主体 - 纯黑色 */}
-                  <path
-                    d="M100 20 L170 60 L170 140 L100 180 L30 140 L30 60 Z"
-                    fill="#000000"
-                    filter="url(#shadow)"
-                  />
-                  
-                  {/* 粒子和连线容器（裁剪在六边形内） */}
-                  <g clipPath="url(#hexClip)">
-                    {/* 连线层 */}
-                    <g opacity="0.15" stroke="#10b981" strokeWidth="0.5" fill="none">
-                      {/* 动态连线 - 随机分布 */}
-                      <line x1="45" y1="50" x2="85" y2="75">
-                        <animate attributeName="x1" values="45;50;45" dur="8s" repeatCount="indefinite"/>
-                        <animate attributeName="y1" values="50;55;50" dur="7s" repeatCount="indefinite"/>
-                      </line>
-                      <line x1="85" y1="75" x2="120" y2="65">
-                        <animate attributeName="x2" values="120;125;120" dur="9s" repeatCount="indefinite"/>
-                      </line>
-                      <line x1="120" y1="65" x2="155" y2="85">
-                        <animate attributeName="y2" values="85;80;85" dur="10s" repeatCount="indefinite"/>
-                      </line>
-                      <line x1="60" y1="110" x2="95" y2="130">
-                        <animate attributeName="x1" values="60;65;60" dur="11s" repeatCount="indefinite"/>
-                      </line>
-                      <line x1="155" y1="85" x2="145" y2="120">
-                        <animate attributeName="x1" values="155;150;155" dur="9.5s" repeatCount="indefinite"/>
-                      </line>
-                      <line x1="50" y1="80" x2="70" y2="115">
-                        <animate attributeName="y2" values="115;110;115" dur="12s" repeatCount="indefinite"/>
-                      </line>
-                    </g>
-                    
-                    {/* 粒子层 */}
-                    <g filter="url(#glow)">
-                      {/* 大粒子 - 翡翠绿 */}
-                      <circle cx="45" cy="50" r="2.5" fill="#10b981" opacity="0.9">
-                        <animate attributeName="cx" values="45;50;45" dur="8s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="50;55;50" dur="7s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.9;0.6;0.9" dur="4s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      <circle cx="85" cy="75" r="2" fill="#10b981" opacity="0.8">
-                        <animate attributeName="cx" values="85;90;85" dur="9s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="75;70;75" dur="8s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.8;0.5;0.8" dur="3.5s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      <circle cx="120" cy="65" r="3" fill="#f97316" opacity="0.85">
-                        <animate attributeName="cx" values="120;125;120" dur="9s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="65;60;65" dur="10s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.85;0.6;0.85" dur="4.5s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      <circle cx="155" cy="85" r="2.2" fill="#f97316" opacity="0.75">
-                        <animate attributeName="cx" values="155;150;155" dur="10s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="85;80;85" dur="9s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.75;0.5;0.75" dur="3.8s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      {/* 中等粒子 */}
-                      <circle cx="60" cy="110" r="1.8" fill="#10b981" opacity="0.7">
-                        <animate attributeName="cx" values="60;65;60" dur="11s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="110;105;110" dur="8s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.7;0.4;0.7" dur="3.2s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      <circle cx="95" cy="130" r="2.5" fill="#f97316" opacity="0.8">
-                        <animate attributeName="cx" values="95;100;95" dur="8.5s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="130;135;130" dur="9.5s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.8;0.55;0.8" dur="4.2s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      <circle cx="135" cy="145" r="2" fill="#10b981" opacity="0.75">
-                        <animate attributeName="cx" values="135;140;135" dur="10s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="145;150;145" dur="11s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.75;0.5;0.75" dur="3.6s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      <circle cx="145" cy="120" r="1.5" fill="#f97316" opacity="0.65">
-                        <animate attributeName="cx" values="145;150;145" dur="9.5s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="120;125;120" dur="10.5s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.65;0.4;0.65" dur="3.3s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      {/* 小粒子 - 增加随性感 */}
-                      <circle cx="75" cy="155" r="1.2" fill="#10b981" opacity="0.6">
-                        <animate attributeName="cx" values="75;80;75" dur="10.5s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="155;150;155" dur="12s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.6;0.3;0.6" dur="2.8s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      <circle cx="50" cy="80" r="1.3" fill="#f97316" opacity="0.6">
-                        <animate attributeName="cx" values="50;55;50" dur="12s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="80;85;80" dur="10s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.6;0.35;0.6" dur="2.9s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      <circle cx="70" cy="115" r="1.1" fill="#10b981" opacity="0.55">
-                        <animate attributeName="cx" values="70;75;70" dur="9.8s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="115;110;115" dur="11.2s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.55;0.3;0.55" dur="3.4s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      <circle cx="160" cy="110" r="1.4" fill="#f97316" opacity="0.65">
-                        <animate attributeName="cx" values="160;155;160" dur="10.3s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="110;115;110" dur="8.7s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.65;0.4;0.65" dur="3.7s" repeatCount="indefinite"/>
-                      </circle>
-                    </g>
-                  </g>
-                  
-                  {/* API 文字 - 保持原大小 */}
-                  <text
-                    x="100"
-                    y="120"
-                    fontSize="60"
-                    fontWeight="bold"
-                    fill="white"
-                    textAnchor="middle"
-                    fontFamily="Arial, Helvetica, sans-serif"
-                    letterSpacing="-2"
-                  >
-                    API
-                  </text>
-                </svg>
-            </div>
-            <div>
+              {/* Logo - 使用新的品牌图标 */}
+              <div className="relative w-10 h-10 rounded-2xl border border-light-border dark:border-dark-border bg-white/70 dark:bg-dark-card/70 shadow-lg flex items-center justify-center overflow-hidden">
+                <img src={Logo} alt="API Hub Management Tools logo" className="w-8 h-8 object-contain select-none" draggable={false} />
+              </div>
+              <div>
                 <h1 className="text-lg font-bold text-light-text dark:text-dark-text">API Hub Management Tools</h1>
+              </div>
             </div>
-          </div>
           <div className="flex items-center gap-2">
             {saving && (
                 <div className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-500/10 text-primary-600 dark:text-primary-400 rounded-lg text-xs border border-primary-500/20">
