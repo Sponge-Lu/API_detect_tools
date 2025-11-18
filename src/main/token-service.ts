@@ -950,6 +950,190 @@ export class TokenService {
   }
 
   /**
+   * 创建新的 API 令牌
+   * 
+   * 说明：
+   * - 兼容 New API / Done Hub / Veloera 等多种站点实现
+   * - 只使用通用字段，其他高级配置交由服务端使用默认值
+   * 
+   * @param baseUrl    站点基础 URL
+   * @param userId     用户 ID（用于 User-Id 相关请求头）
+   * @param accessToken 系统访问令牌（access_token）
+   * @param tokenData  创建令牌所需的核心字段（名称、额度、过期时间、分组等）
+   */
+  async createApiToken(
+    baseUrl: string,
+    userId: number,
+    accessToken: string,
+    tokenData: {
+      name: string;
+      remain_quota: number;
+      expired_time: number;
+      unlimited_quota: boolean;
+      model_limits_enabled: boolean;
+      model_limits: string;
+      allow_ips: string;
+      group: string;
+    }
+  ): Promise<boolean> {
+    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    const url = `${cleanBaseUrl}/api/token/`;
+
+    console.log('🆕 [TokenService] 创建 API 令牌...', {
+      url,
+      name: tokenData.name,
+      group: tokenData.group,
+      unlimited_quota: tokenData.unlimited_quota,
+      remain_quota: tokenData.remain_quota,
+      expired_time: tokenData.expired_time
+    });
+
+    try {
+      const response = await axios.post(
+        url,
+        tokenData,
+        {
+          headers: this.createRequestHeaders(userId, accessToken, baseUrl),
+          timeout: 15000,
+          validateStatus: (status) => status < 500  // 接受所有非 5xx 响应，方便解析错误信息
+        }
+      );
+
+      const status = response.status;
+      const rawData = response.data;
+
+      // 如果返回的是 HTML（例如 Cloudflare "Just a moment..."），直接切换到浏览器模式
+      if (typeof rawData === 'string' && rawData.includes('<!DOCTYPE html')) {
+        console.warn('🛡️ [TokenService] 创建令牌遇到 Cloudflare HTML 响应，切换到浏览器模式重试...');
+        return await this.createApiTokenInBrowser(baseUrl, userId, accessToken, tokenData);
+      }
+
+      const data = (rawData && typeof rawData === 'object') ? rawData : {};
+
+      console.log('📦 [TokenService] 创建令牌响应:', {
+        status,
+        hasSuccess: typeof data === 'object' && data !== null && 'success' in data,
+        success: (data as any)?.success,
+        message: (data as any)?.message
+      });
+
+      // HTTP 非 2xx 直接视为失败
+      if (status < 200 || status >= 300) {
+        const message = (data as any)?.message || `HTTP ${status}`;
+        throw new Error(`创建令牌失败: ${message}`);
+      }
+
+      // 存在 success 字段且为 false，则视为业务失败
+      if (typeof (data as any)?.success === 'boolean' && !(data as any).success) {
+        throw new Error((data as any).message || '创建令牌失败');
+      }
+
+      return true;
+    } catch (error: any) {
+      // 如果是 axios 错误且响应体是 Cloudflare HTML，同样尝试浏览器模式
+      const html = error?.response?.data;
+      if (typeof html === 'string' && html.includes('<!DOCTYPE html')) {
+        console.warn('🛡️ [TokenService] axios 创建令牌遇到 Cloudflare HTML 响应，切换到浏览器模式重试...');
+        return await this.createApiTokenInBrowser(baseUrl, userId, accessToken, tokenData);
+      }
+
+      console.error('❌ [TokenService] 创建 API 令牌失败:', error.message || error);
+      throw error;
+    }
+  }
+
+  /**
+   * 在浏览器环境中创建 API 令牌（用于绕过 Cloudflare 等前端防护）
+   * 说明：
+   * - 通过 Puppeteer 连接到已登录站点页面，在页面上下文中使用 fetch 调用 /api/token/
+   * - 复用与检测逻辑共享的 Chrome 实例和用户数据目录，因此只要用户在该浏览器中完成过登录，通常即可通过 Cloudflare 检查
+   */
+  private async createApiTokenInBrowser(
+    baseUrl: string,
+    userId: number,
+    accessToken: string,
+    tokenData: {
+      name: string;
+      remain_quota: number;
+      expired_time: number;
+      unlimited_quota: boolean;
+      model_limits_enabled: boolean;
+      model_limits: string;
+      allow_ips: string;
+      group: string;
+    }
+  ): Promise<boolean> {
+    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    const url = `${cleanBaseUrl}/api/token/`;
+
+    console.log('🧭 [TokenService] 浏览器模式创建 API 令牌...', {
+      url,
+      name: tokenData.name,
+      group: tokenData.group
+    });
+
+    // 通过 ChromeManager 创建页面（自动管理引用计数与生命周期）
+    const { page, release } = await this.chromeManager.createPage(cleanBaseUrl);
+
+    try {
+      const userIdHeaders = this.getAllUserIdHeaders(userId);
+
+      const result = await page.evaluate(
+        async (apiUrl: string, token: string, payload: any, additionalHeaders: Record<string, string>) => {
+          try {
+            const response = await fetch(apiUrl, {
+              method: 'POST',
+              credentials: 'include',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+                ...additionalHeaders,
+                'Pragma': 'no-cache'
+              },
+              body: JSON.stringify(payload)
+            });
+
+            const status = response.status;
+            const text = await response.text();
+
+            // 尝试解析 JSON，如果失败则返回文本片段，方便诊断
+            try {
+              const data = JSON.parse(text);
+              return { status, ok: response.ok, isJson: true, data };
+            } catch {
+              return { status, ok: response.ok, isJson: false, textSnippet: text.slice(0, 200) };
+            }
+          } catch (err: any) {
+            return { status: 0, ok: false, isJson: false, error: err?.message || String(err) };
+          }
+        },
+        url,
+        accessToken,
+        tokenData,
+        userIdHeaders
+      );
+
+      console.log('📦 [TokenService] 浏览器模式创建令牌结果:', result);
+
+      if (!result.ok || result.status < 200 || result.status >= 300) {
+        const reason = result.isJson
+          ? (result.data?.message || `HTTP ${result.status}`)
+          : (result.textSnippet || `HTTP ${result.status}`);
+        throw new Error(`创建令牌失败(浏览器): ${reason}`);
+      }
+
+      if (result.isJson && typeof result.data?.success === 'boolean' && !result.data.success) {
+        throw new Error(result.data.message || '创建令牌失败(浏览器)');
+      }
+
+      return true;
+    } finally {
+      // 释放浏览器引用
+      release();
+    }
+  }
+
+  /**
    * 获取用户分组信息
    */
   async fetchUserGroups(

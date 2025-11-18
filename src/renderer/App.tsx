@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import Logo from "./assets/logo.svg";
 import {
   Server,
@@ -78,6 +78,18 @@ export interface DetectionResult {
   modelPricing?: any;
 }
 
+// 新增：创建 API Key 表单数据类型
+interface NewApiTokenForm {
+  name: string;            // 令牌名称
+  group: string;           // 分组名称
+  unlimitedQuota: boolean; // 是否无限额度
+  quota: string;           // 用户输入的额度（单位：美元，字符串便于校验）
+  expiredTime: string;     // 过期时间（datetime-local 字符串，空字符串表示永不过期）
+}
+
+// 新增：额度换算系数（与后端保持一致：1 美元 = 500000 内部单位）
+const QUOTA_CONVERSION_FACTOR = 500000;
+
 function App() {
   // 初始化主题系统
   useTheme();
@@ -112,6 +124,29 @@ function App() {
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   // 新增：保存状态
   const [saving, setSaving] = useState(false);
+  // 新增：创建 API Key 弹窗状态
+  const [creatingTokenSite, setCreatingTokenSite] = useState<SiteConfig | null>(null);
+  // 新增：创建 API Key 弹窗版本号，用于每次打开时强制重新挂载，避免残留状态影响输入
+  const [tokenDialogVersion, setTokenDialogVersion] = useState(0);
+  // 新增：创建 API Key 名称输入框引用，用于自动聚焦
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const [newTokenForm, setNewTokenForm] = useState<NewApiTokenForm>({
+    name: '',
+    group: 'default',
+    unlimitedQuota: true,
+    quota: '',
+    expiredTime: '',
+  });
+  const [creatingToken, setCreatingToken] = useState(false);
+
+  // 当弹窗打开或版本号变化时，自动聚焦到名称输入框
+  useEffect(() => {
+    if (creatingTokenSite && nameInputRef.current) {
+      // 自动聚焦并选中文本，提升输入体验
+      nameInputRef.current.focus();
+      nameInputRef.current.select();
+    }
+  }, [creatingTokenSite, tokenDialogVersion]);
 
   // 切换令牌显示/隐藏
   const toggleTokenVisibility = (siteName: string) => {
@@ -297,6 +332,148 @@ function App() {
       ...prev,
       [siteName]: prev[siteName] === groupName ? null : groupName
     }));
+  };
+
+  // 打开创建 API Key 弹窗
+  const openCreateTokenDialog = (site: SiteConfig) => {
+    if (!site.system_token || !site.user_id) {
+      alert('当前站点未配置系统 Token 或用户 ID，请先在“编辑站点”中填写。');
+      return;
+    }
+
+    // 根据检测结果名称选择 userGroups 的 key（保持与后端缓存一致）
+    const siteResult = results.find(r => r.name === site.name);
+    const siteKey = siteResult?.name || site.name;
+    const groupsForSite = userGroups[siteKey] || {};
+    const groupNames = Object.keys(groupsForSite);
+
+    // 选择一个默认分组：优先 default，其次第一个分组
+    let defaultGroup = 'default';
+    if (groupNames.length > 0) {
+      if (groupsForSite.default) {
+        defaultGroup = 'default';
+      } else {
+        defaultGroup = groupNames[0];
+      }
+    }
+
+    // 每次打开前重置“创建中”状态，避免异常情况下残留
+    setCreatingToken(false);
+    // 递增版本号，确保对话框组件在每次打开时重新挂载
+    setTokenDialogVersion(prev => prev + 1);
+
+    setNewTokenForm({
+      name: '',
+      group: defaultGroup,
+      unlimitedQuota: true,
+      quota: '',
+      expiredTime: '',
+    });
+    setCreatingTokenSite(site);
+  };
+
+  // 关闭创建 API Key 弹窗并重置表单
+  const closeCreateTokenDialog = () => {
+    setCreatingTokenSite(null);
+    setNewTokenForm({
+      name: '',
+      group: 'default',
+      unlimitedQuota: true,
+      quota: '',
+      expiredTime: '',
+    });
+  };
+
+  // 提交创建 API Key
+  const handleCreateTokenSubmit = async () => {
+    if (!creatingTokenSite) return;
+    const site = creatingTokenSite;
+
+    if (!site.system_token || !site.user_id) {
+      alert('当前站点未配置系统 Token 或用户 ID，请先在“编辑站点”中填写。');
+      return;
+    }
+
+    const name = newTokenForm.name.trim();
+    if (!name) {
+      alert('请填写令牌名称');
+      return;
+    }
+
+    // 处理额度：无限额度时 remain_quota 置为 0（后端根据 unlimited_quota 判断），有限额度时按美元转换为内部单位
+    let remainQuota = 0;
+    if (newTokenForm.unlimitedQuota) {
+      remainQuota = 0;
+    } else {
+      const quotaNumber = parseFloat(newTokenForm.quota);
+      if (isNaN(quotaNumber) || quotaNumber <= 0) {
+        alert('请输入大于 0 的额度（单位：美元）');
+        return;
+      }
+      remainQuota = Math.floor(quotaNumber * QUOTA_CONVERSION_FACTOR);
+    }
+
+    // 处理过期时间：空字符串表示永不过期（-1）
+    let expiredTime = -1;
+    if (newTokenForm.expiredTime) {
+      const dt = new Date(newTokenForm.expiredTime);
+      if (isNaN(dt.getTime())) {
+        alert('请输入有效的过期时间');
+        return;
+      }
+      if (dt.getTime() <= Date.now()) {
+        alert('过期时间必须晚于当前时间');
+        return;
+      }
+      expiredTime = Math.floor(dt.getTime() / 1000);
+    }
+
+    const group = newTokenForm.group || 'default';
+
+    // 构造后端需要的 payload（与 all-api-hub 保持一致的通用字段）
+    const tokenPayload = {
+      name,
+      remain_quota: remainQuota,
+      expired_time: expiredTime,
+      unlimited_quota: newTokenForm.unlimitedQuota,
+      model_limits_enabled: false,
+      model_limits: '',
+      allow_ips: '',
+      group,
+    };
+
+    try {
+      setCreatingToken(true);
+      const userIdNum = parseInt(site.user_id || '0', 10);
+      if (!userIdNum) {
+        alert('当前站点用户 ID 无效，请在“编辑站点”中检查配置。');
+        return;
+      }
+
+      const resp = await window.electronAPI.token?.createApiToken?.(
+        site.url,
+        userIdNum,
+        site.system_token!,
+        tokenPayload
+      );
+
+      // IPC 统一返回 { success, error? }
+      if (!resp || resp.success !== true) {
+        throw new Error(resp?.error || '未知错误');
+      }
+
+      // 创建成功后，直接使用检测流程刷新该站点的数据（包含最新的 API Keys）
+      // 说明：detectSingle 内部会处理 Cloudflare 等情况，比直接调用 /api/token/ 更可靠
+      await detectSingle(site, true);
+
+      alert('API Key 创建成功');
+      closeCreateTokenDialog();
+    } catch (error: any) {
+      console.error('❌ [App] 创建 API Key 失败:', error);
+      alert(`创建 API Key 失败: ${error.message || error}`);
+    } finally {
+      setCreatingToken(false);
+    }
   };
 
   // 复制到剪贴板
@@ -1396,106 +1573,129 @@ function App() {
                         )}
                         
                         {/* API Keys列表 */}
-                        {(() => {
-                          const key = siteResult?.name || site.name;
-                          return apiKeys[key] && apiKeys[key].length > 0;
-                        })() && (
-                          <div className="space-y-0.5">
-                            <div className="flex items-center gap-1">
-                              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                                {(() => {
-                                  const key = siteResult?.name || site.name;
-                                  return `Keys (${getFilteredApiKeys(key).length}/${apiKeys[key].length})`;
-                                })()}
-                                {selectedGroup[site.name] && (
-                                  <span className="ml-1 text-primary-400">· {selectedGroup[site.name]}</span>
-                                )}
-                              </span>
-                            </div>
-                            <div className="space-y-0.5 max-h-40 overflow-y-auto">
-                              {getFilteredApiKeys(siteResult?.name || site.name).map((key: any, idx: number) => {
-                                const quotaInfo = key.unlimited_quota ? null : getQuotaTypeInfo(key.type || 0);
-                                return (
-                                  <div
-                                    key={idx}
-                                    className="px-1.5 py-0.5 bg-white dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-700 transition-all flex items-center justify-between gap-1"
-                                  >
-                                    {/* 左侧：名称+标签 */}
-                                    <div className="flex items-center gap-0.5 min-w-0 flex-1">
-                                      <span className="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate">
-                                        {key.name || `Key #${idx + 1}`}
-                                      </span>
-                                      {key.group && key.group.trim() && (
-                                        <span className={`px-1.5 py-0.5 text-xs rounded border flex items-center gap-0.5 flex-shrink-0 ${getGroupColor(key.group)}`}>
-                                          {getGroupIcon(key.group, false)}
-                                          <span className="font-medium">{key.group}</span>
-                                        </span>
-                                      )}
-                                      {quotaInfo && (
-                                        <span className={`p-0.5 text-xs rounded border flex items-center flex-shrink-0 ${quotaInfo.color}`} title={quotaInfo.text}>
-                                          {quotaInfo.icon}
-                                        </span>
-                                      )}
-                                      {key.unlimited_quota && (
-                                        <span className="px-1 py-0.5 text-xs rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 flex-shrink-0">
-                                          ∞
-                                        </span>
-                                      )}
-                                      <span className={`p-0.5 text-xs rounded flex-shrink-0 ${
-                                        key.status === 1
-                                          ? 'bg-green-500/20 text-green-300 border border-green-500/30'
-                                          : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
-                                      }`}>
-                                        {key.status === 1 ? '✓' : '✕'}
-                                      </span>
-                                    </div>
-                                    
-                                    {/* 中间：令牌+数据 */}
-                                    <div className="flex items-center gap-2 text-xs">
-                                      <span className="font-mono text-blue-600 dark:text-blue-400">
-                                        {maskToken(addSkPrefix(key.key), showTokens[`${site.name}_key_${idx}`] || false)}
-                                      </span>
-                                      {!key.unlimited_quota && key.remain_quota !== undefined && (
-                                        <span className="text-slate-500 dark:text-slate-400">
-                                          余<span className={key.remain_quota > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>
-                                            ${(key.remain_quota / 500000).toFixed(2)}
-                                          </span>
-                                        </span>
-                                      )}
-                                      {key.used_quota !== undefined && (
-                                        <span className="text-slate-500 dark:text-slate-400">
-                                          用<span className="text-orange-600 dark:text-orange-400">${(key.used_quota / 500000).toFixed(2)}</span>
-                                        </span>
-                                      )}
-                                    </div>
-                                    
-                                    {/* 右侧：操作按钮 */}
-                                    <div className="flex items-center gap-0.5 flex-shrink-0">
-                                      <button
-                                        onClick={() => toggleTokenVisibility(`${site.name}_key_${idx}`)}
-                                        className="p-0.5 hover:bg-white/10 rounded transition-all"
-                                        title={showTokens[`${site.name}_key_${idx}`] ? "隐藏" : "显示"}
-                                      >
-                                        {showTokens[`${site.name}_key_${idx}`] ? (
-                                          <EyeOff className="w-3 h-3 text-gray-400" />
-                                        ) : (
-                                          <Eye className="w-3 h-3 text-gray-400" />
-                                        )}
-                                      </button>
-                                      <button
-                                        onClick={() => copyToClipboard(addSkPrefix(key.key), `API Key: ${key.name}`)}
-                                        className="p-0.5 hover:bg-white/10 rounded transition-all"
-                                        title="复制"
-                                      >
-                                        <Copy className="w-3 h-3 text-gray-400" />
-                                      </button>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1 justify-between">
+                            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                              {(() => {
+                                const siteKey = siteResult?.name || site.name;
+                                const allKeys = apiKeys[siteKey] || [];
+                                return `Keys (${getFilteredApiKeys(siteKey).length}/${allKeys.length})`;
+                              })()}
+                              {selectedGroup[site.name] && (
+                                <span className="ml-1 text-primary-400">· {selectedGroup[site.name]}</span>
+                              )}
+                            </span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openCreateTokenDialog(site);
+                              }}
+                              className="px-1.5 py-0.5 bg-primary-600 hover:bg-primary-700 text-white rounded text-xs flex items-center gap-0.5 shadow-sm"
+                              title="创建新的 API Key"
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>添加令牌</span>
+                            </button>
                           </div>
-                        )}
+                          {(() => {
+                            const siteKey = siteResult?.name || site.name;
+                            const allKeys = apiKeys[siteKey] || [];
+                            const filtered = getFilteredApiKeys(siteKey);
+
+                            if (!allKeys || allKeys.length === 0) {
+                              return (
+                                <div className="px-1 text-[11px] text-slate-400 dark:text-slate-500">
+                                  暂无 API Key，可点击右侧“添加令牌”创建。
+                                </div>
+                              );
+                            }
+
+                            return (
+                              <div className="space-y-0.5 max-h-40 overflow-y-auto">
+                                {filtered.map((token: any, idx: number) => {
+                                  const quotaInfo = token.unlimited_quota ? null : getQuotaTypeInfo(token.type || 0);
+                                  return (
+                                    <div
+                                      key={idx}
+                                      className="px-1.5 py-0.5 bg-white dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-700 transition-all flex items-center justify-between gap-1"
+                                    >
+                                      {/* 左侧：名称+标签 */}
+                                      <div className="flex items-center gap-0.5 min-w-0 flex-1">
+                                        <span className="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate">
+                                          {token.name || `Key #${idx + 1}`}
+                                        </span>
+                                        {token.group && token.group.trim() && (
+                                          <span className={`px-1.5 py-0.5 text-xs rounded border flex items-center gap-0.5 flex-shrink-0 ${getGroupColor(token.group)}`}>
+                                            {getGroupIcon(token.group, false)}
+                                            <span className="font-medium">{token.group}</span>
+                                          </span>
+                                        )}
+                                        {quotaInfo && (
+                                          <span className={`p-0.5 text-xs rounded border flex items-center flex-shrink-0 ${quotaInfo.color}`} title={quotaInfo.text}>
+                                            {quotaInfo.icon}
+                                          </span>
+                                        )}
+                                        {token.unlimited_quota && (
+                                          <span className="px-1 py-0.5 text-xs rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 flex-shrink-0">
+                                            ∞
+                                          </span>
+                                        )}
+                                        <span className={`p-0.5 text-xs rounded flex-shrink-0 ${
+                                          token.status === 1
+                                            ? 'bg-green-500/20 text-green-300 border border-green-500/30'
+                                            : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
+                                        }`}>
+                                          {token.status === 1 ? '✓' : '✕'}
+                                        </span>
+                                      </div>
+                                      
+                                      {/* 中间：令牌+数据 */}
+                                      <div className="flex items-center gap-2 text-xs">
+                                        <span className="font-mono text-blue-600 dark:text-blue-400">
+                                          {maskToken(addSkPrefix(token.key), showTokens[`${site.name}_key_${idx}`] || false)}
+                                        </span>
+                                        {!token.unlimited_quota && token.remain_quota !== undefined && (
+                                          <span className="text-slate-500 dark:text-slate-400">
+                                            余<span className={token.remain_quota > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>
+                                              ${(token.remain_quota / 500000).toFixed(2)}
+                                            </span>
+                                          </span>
+                                        )}
+                                        {token.used_quota !== undefined && (
+                                          <span className="text-slate-500 dark:text-slate-400">
+                                            用<span className="text-orange-600 dark:text-orange-400">${(token.used_quota / 500000).toFixed(2)}</span>
+                                          </span>
+                                        )}
+                                      </div>
+                                      
+                                      {/* 右侧：操作按钮 */}
+                                      <div className="flex items-center gap-0.5 flex-shrink-0">
+                                        <button
+                                          onClick={() => toggleTokenVisibility(`${site.name}_key_${idx}`)}
+                                          className="p-0.5 hover:bg-white/10 rounded transition-all"
+                                          title={showTokens[`${site.name}_key_${idx}`] ? "隐藏" : "显示"}
+                                        >
+                                          {showTokens[`${site.name}_key_${idx}`] ? (
+                                            <EyeOff className="w-3 h-3 text-gray-400" />
+                                          ) : (
+                                            <Eye className="w-3 h-3 text-gray-400" />
+                                          )}
+                                        </button>
+                                        <button
+                                          onClick={() => copyToClipboard(addSkPrefix(token.key), `API Key: ${token.name}`)}
+                                          className="p-0.5 hover:bg-white/10 rounded transition-all"
+                                          title="复制"
+                                        >
+                                          <Copy className="w-3 h-3 text-gray-400" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })()}
+                        </div>
                         
                         {/* 可用模型列表 - 添加搜索框 */}
                         {(() => {
@@ -1783,6 +1983,166 @@ function App() {
           }}
           onCancel={() => setShowSettings(false)}
         />
+      )}
+
+      {/* 创建 API Key 弹窗 */}
+      {creatingTokenSite && (
+        <div
+          key={tokenDialogVersion}
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/40"
+        >
+          <div className="bg-white dark:bg-slate-900 rounded-lg shadow-xl w-full max-w-md p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                为「{creatingTokenSite.name}」创建 API Key
+              </h2>
+              <button
+                onClick={closeCreateTokenDialog}
+                className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                title="关闭"
+              >
+                <XCircle className="w-4 h-4 text-slate-400" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {/* 名称 */}
+              <div>
+                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">
+                  名称
+                </label>
+                <input
+                  type="text"
+                  ref={nameInputRef}
+                  value={newTokenForm.name}
+                  onChange={(e) => setNewTokenForm(prev => ({ ...prev, name: e.target.value }))}
+                  className="w-full px-2 py-1.5 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                  placeholder="请输入令牌名称"
+                />
+              </div>
+
+              {/* 分组 */}
+              <div>
+                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">
+                  分组
+                </label>
+                {(() => {
+                  const siteResult = results.find(r => r.name === creatingTokenSite.name);
+                  const siteKey = siteResult?.name || creatingTokenSite.name;
+                  const groups = userGroups[siteKey] || {};
+                  const groupNames = Object.keys(groups);
+
+                  if (groupNames.length === 0) {
+                    return (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-slate-400 dark:text-slate-500">
+                          未获取到分组信息，默认使用 <span className="font-mono">default</span>
+                        </span>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <select
+                      value={newTokenForm.group}
+                      onChange={(e) => setNewTokenForm(prev => ({ ...prev, group: e.target.value }))}
+                      className="w-full px-2 py-1.5 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                    >
+                      {groupNames.map((groupName) => (
+                        <option key={groupName} value={groupName}>
+                          {groupName} {groups[groupName]?.desc ? `- ${groups[groupName].desc}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  );
+                })()}
+              </div>
+
+              {/* 过期时间 */}
+              <div>
+                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">
+                  过期时间（默认永不过期）
+                </label>
+                <input
+                  type="datetime-local"
+                  value={newTokenForm.expiredTime}
+                  onChange={(e) => setNewTokenForm(prev => ({ ...prev, expiredTime: e.target.value }))}
+                  className="w-full px-2 py-1.5 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                />
+                <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
+                  留空表示永不过期。
+                </p>
+              </div>
+
+              {/* 额度设置 */}
+              <div>
+                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">
+                  额度设置
+                </label>
+                <div className="flex items-center gap-2 mb-2">
+                  <label className="flex items-center gap-1 text-xs text-slate-600 dark:text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={newTokenForm.unlimitedQuota}
+                      onChange={(e) => setNewTokenForm(prev => ({ ...prev, unlimitedQuota: e.target.checked }))}
+                      className="rounded border-slate-300 dark:border-slate-600"
+                    />
+                    <span>无限额度</span>
+                  </label>
+                </div>
+                {!newTokenForm.unlimitedQuota && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={newTokenForm.quota}
+                      onChange={(e) => setNewTokenForm(prev => ({ ...prev, quota: e.target.value }))}
+                      className="flex-1 px-2 py-1.5 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                      placeholder="输入额度（单位：美元）"
+                    />
+                    <span className="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                      单位：美元
+                    </span>
+                  </div>
+                )}
+                {newTokenForm.unlimitedQuota && (
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                    勾选后表示不限制额度，后端会忽略具体额度数值。
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* 操作按钮 */}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={closeCreateTokenDialog}
+                className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-600 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                disabled={creatingToken}
+              >
+                取消
+              </button>
+              <button
+                onClick={handleCreateTokenSubmit}
+                disabled={creatingToken}
+                className="px-3 py-1.5 rounded bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-xs text-white flex items-center gap-1 transition-colors"
+              >
+                {creatingToken ? (
+                  <>
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>创建中...</span>
+                  </>
+                ) : (
+                  <>
+                    <Plus className="w-3 h-3" />
+                    <span>提交创建</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

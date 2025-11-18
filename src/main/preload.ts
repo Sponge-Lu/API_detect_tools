@@ -34,6 +34,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 获取模型定价（兼容旧接口）
     fetchModelPricing: (baseUrl: string, userId: number, accessToken: string) =>
       ipcRenderer.invoke('token:fetch-model-pricing', baseUrl, userId, accessToken),
+    // 创建新的 API 令牌
+    createApiToken: (baseUrl: string, userId: number, accessToken: string, tokenData: any) =>
+      ipcRenderer.invoke('token:create-api-token', baseUrl, userId, accessToken, tokenData),
     // 执行签到
     checkIn: (baseUrl: string, userId: number, accessToken: string) =>
       ipcRenderer.invoke('token:check-in', baseUrl, userId, accessToken)

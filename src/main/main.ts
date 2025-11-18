@@ -195,6 +195,20 @@ ipcMain.handle('token:fetch-api-tokens', async (_, baseUrl: string, userId: numb
 });
 
 /**
+ * 创建新的 API 令牌
+ */
+ipcMain.handle('token:create-api-token', async (_, baseUrl: string, userId: number, accessToken: string, tokenData: any) => {
+  try {
+    console.log('🆕 [IPC] 收到创建 API 令牌请求');
+    const ok = await tokenService.createApiToken(baseUrl, userId, accessToken, tokenData);
+    return { success: ok };
+  } catch (error: any) {
+    console.error('❌ [IPC] 创建 API 令牌失败:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+/**
  * 获取用户分组信息
  */
 ipcMain.handle('token:fetch-user-groups', async (_, baseUrl: string, userId: number, accessToken: string) => {
