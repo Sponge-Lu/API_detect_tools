@@ -55,6 +55,8 @@ export interface Settings {
   show_disabled: boolean;
   auto_refresh: boolean;
   refresh_interval: number;
+  // 新增：浏览器可执行文件路径（可选），用于自定义 Chromium / Edge / 便携版浏览器
+  browser_path?: string;
 }
 
 export interface Config {

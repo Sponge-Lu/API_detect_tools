@@ -31,7 +31,9 @@ export class ConfigManager {
           concurrent: true,
           show_disabled: false,
           auto_refresh: false,
-          refresh_interval: 30
+          refresh_interval: 30,
+          // 新增：浏览器可执行文件路径（可选），用于自定义 Chromium / Edge / 便携版浏览器
+          browser_path: ''
         }
       };
       await this.saveConfig(defaultConfig);
