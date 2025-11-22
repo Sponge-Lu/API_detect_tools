@@ -27,7 +27,11 @@ const tokenStorage = new TokenStorage();
 const tokenService = new TokenService(chromeManager);
 const apiService = new ApiService(tokenService, tokenStorage);
 
-function createWindow() {
+ /**
+  * 创建主窗口并加载渲染内容（开发/生产）
+  * 开发模式下支持自动端口回退（5173→5174→5175），避免Vite端口占用导致空白页
+  */
+ async function createWindow() {
   // 注意：打包后的图标通过 package.json 的 build.win.icon 配置
   // 这里的 icon 参数只影响开发环境的窗口图标
   const iconPath = path.join(app.getAppPath(), 'build', 'icon.png');
@@ -54,11 +58,26 @@ function createWindow() {
   // 根据环境加载不同的URL
   if (app.isPackaged) {
     // 生产环境：加载打包后的HTML文件
-    mainWindow.loadFile(path.join(__dirname, '../dist-renderer/index.html'));
+    await mainWindow.loadFile(path.join(__dirname, '../dist-renderer/index.html'));
   } else {
-    // 开发环境：加载Vite服务器
-    mainWindow.loadURL('http://localhost:5173');
-    // 开发环境打开开发者工具
+    // 开发环境：尝试多个常用端口，避免5173被占用时出现空白
+    const ports = [5173, 5174, 5175];
+    let loaded = false;
+    for (const p of ports) {
+      const url = `http://localhost:${p}`;
+      try {
+        await mainWindow.loadURL(url);
+        loaded = true;
+        break;
+      } catch (e) {
+        console.warn(`[Dev] 加载失败，尝试下一个端口: ${url}`);
+      }
+    }
+    if (!loaded) {
+      // 如果都失败，仍尝试默认端口，便于调试
+      await mainWindow.loadURL('http://localhost:5173');
+    }
+    // 开发环境可按需打开开发者工具
     // mainWindow.webContents.openDevTools();
   }
 }

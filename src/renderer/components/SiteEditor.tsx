@@ -1,6 +1,6 @@
 
 import { useState } from "react";
-import { X, Loader2, Chrome, CheckCircle } from "lucide-react";
+import { X, Loader2, Globe, CheckCircle } from "lucide-react";
 import { SiteConfig } from "../App";
 
 interface Props {
@@ -11,6 +11,13 @@ interface Props {
 
 type Step = 'input-url' | 'login' | 'fetching' | 'confirm';
 
+/**
+ * 站点编辑器组件
+ * 负责新增/编辑站点的完整交互流程：输入URL→浏览器登录→获取信息→确认保存
+ * - 新增模式：从输入URL开始，点击“下一步：浏览器登录”后打开Chrome供用户登录
+ * - 登录完成：点击“已完成登录”后通过主进程获取用户ID、站点名称、access_token 等核心数据
+ * - 确认保存：校验必要字段并将配置回传父组件保存
+ */
 export function SiteEditor({ site, onSave, onCancel }: Props) {
   // 编辑模式下直接跳到确认步骤，新增模式从输入URL开始
   const [step, setStep] = useState<Step>(site ? 'confirm' : 'input-url');
@@ -19,6 +26,12 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
   const [error, setError] = useState("");
   const [showToken, setShowToken] = useState(false); // 控制令牌显示/隐藏
   const isEditing = !!site; // 判断是否为编辑模式
+  const [importText, setImportText] = useState(""); // 控制台导入JSON文本
+  const [importHint, setImportHint] = useState(""); // 导入结果提示
+  const [copyHint, setCopyHint] = useState(""); // 复制脚本提示
+  const [copyTargetHint, setCopyTargetHint] = useState(""); // 复制目标地址提示
+  const [mode, setMode] = useState<'auto' | 'import'>('auto');
+  const [urlError, setUrlError] = useState("");
   
   // 自动获取的信息
   const [autoInfo, setAutoInfo] = useState({
@@ -38,18 +51,83 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
     return `${token.substring(0, 3)}...${token.substring(token.length - 4)}`;
   };
 
+  /**
+   * URL合法性校验函数（严格）
+   * 规则：必须能被URL解析，协议限定为http/https，必须包含主机名
+   */
+  const isValidUrlStrict = (value: string): boolean => {
+    try {
+      const u = new URL(value.trim());
+      if (!u.protocol || !/^https?:$/.test(u.protocol)) return false;
+      if (!u.hostname) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  /**
+   * URL自动补全与规范化
+   * 策略：去空白、补全协议（默认https://）、去除多余空格
+   */
+  const normalizeUrl = (value: string): string => {
+    let v = (value || "").trim();
+    if (!v) return "";
+    if (!/^https?:\/\//i.test(v)) v = "https://" + v;
+    return v;
+  };
+
+  /**
+   * 处理URL输入变更：实时校验并提示错误
+   */
+  const handleUrlChange = (value: string) => {
+    setUrl(value);
+    if (!value.trim()) {
+      setUrlError("请输入URL");
+      return;
+    }
+    const v = normalizeUrl(value);
+    setUrlError(isValidUrlStrict(v) ? "" : "URL格式不合法，请输入形如 https://example.com 的地址");
+  };
+
+
+  /**
+   * 手动执行自动补全（为未填写协议的域名补 https://）
+   */
+  const handleAutoCompleteUrl = () => {
+    const v = normalizeUrl(url);
+    setUrl(v);
+    setUrlError(isValidUrlStrict(v) ? "" : "URL格式不合法，请检查");
+  };
+
+  /**
+   * 处理“下一步：浏览器登录”点击事件
+   * 职责：
+   * 1. 校验并保存用户输入的站点 URL
+   * 2. 通过预加载暴露的 API 启动 Chrome 浏览器并导航到该 URL
+   * 3. 启动成功后切换到“浏览器登录”步骤，失败则展示错误
+   */
   const handleUrlSubmit = async () => {
     if (!url.trim()) {
       setError("请输入站点URL");
+      setUrlError("请输入URL");
       return;
     }
+
+    const finalUrl = normalizeUrl(url);
+    if (!isValidUrlStrict(finalUrl)) {
+      setUrlError("URL格式不合法，请输入形如 https://example.com 的地址");
+      return;
+    }
+
+    setUrl(finalUrl);
 
     setLoading(true);
     setError("");
 
     try {
       // 启动Chrome让用户登录
-      const result = await window.electronAPI.launchChromeForLogin(url);
+      const result = await window.electronAPI.launchChromeForLogin(finalUrl);
       
       if (result.success) {
         setStep('login');
@@ -63,6 +141,14 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
     }
   };
 
+  /**
+   * 处理“已完成登录”点击事件
+   * 职责：
+   * 1. 进入“获取信息”步骤并开启30秒超时保护
+   * 2. 调用主进程 TokenService.initializeSite，优先从 localStorage 获取数据，必要时 API 回退
+   * 3. 成功后填充自动信息（站点名、用户ID、access_token、签到能力等）进入“确认保存”步骤
+   * 4. 失败时根据错误类型提供友好的中文提示并回退相应步骤
+   */
   const handleLoginComplete = async () => {
     setStep('fetching');
     setLoading(true);
@@ -163,8 +249,422 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
   };
 
   /**
+   * 处理“控制台数据导入”操作
+   * 职责：
+   * 1. 解析用户从目标站点控制台复制的 JSON 文本
+   * 2. 校验并提取必要字段（site_url/site_name/user_id/access_token）
+   * 3. 更新当前编辑器的 url 与 autoInfo，跳转至“确认保存”步骤
+   */
+  const handleImportData = () => {
+    try {
+      setImportHint("");
+      if (!importText.trim()) {
+        setImportHint("请粘贴控制台输出的JSON数据");
+        return;
+      }
+      const payload = JSON.parse(importText);
+
+      const siteUrl: string = (payload.site_url || payload.base_url || payload.url || "").trim();
+      const siteName: string = (payload.site_name || payload.system_name || "").trim();
+      const userIdRaw = payload.user_id ?? payload.uid ?? payload.id;
+      const token: string = (payload.access_token || payload.token || payload.auth_token || "").trim();
+
+      if (!siteUrl) {
+        setImportHint("缺少 site_url 字段");
+        return;
+      }
+      if (!userIdRaw) {
+        setImportHint("缺少 user_id 字段");
+        return;
+      }
+      if (!token) {
+        setImportHint("缺少 access_token 字段");
+        return;
+      }
+
+      const userId = String(userIdRaw);
+      setUrl(siteUrl);
+      setAutoInfo({
+        name: siteName || extractDomainName(siteUrl),
+        apiKey: "",
+        systemToken: token,
+        userId,
+        balance: null,
+        extraLinks: "",
+        enableCheckin: payload.supportsCheckIn === true
+      });
+      setStep('confirm');
+      setImportHint("✅ 已导入数据，请在下方确认后保存");
+    } catch (e: any) {
+      setImportHint("JSON解析失败：" + (e.message || String(e)));
+    }
+  };
+
+  /**
+   * 生成控制台脚本文本
+   * 职责：提供一段可在目标站点控制台执行的JS，输出统一JSON
+   */
+  const getConsoleScript = (): string => {
+    return `(
+  async () => {
+    const origin = location.origin.replace(/\/$/, '');
+
+    const parseJSON = (str) => { try { return JSON.parse(str); } catch { return null; } };
+    const pick = (obj, keys) => keys.reduce((v, k) => v ?? obj?.[k], undefined);
+
+    const scanStoresForToken = (stores) => {
+      let token = null;
+      for (const store of stores) {
+        for (let i = 0; i < store.length; i++) {
+          const key = store.key(i);
+          const val = store.getItem(key);
+          if (!val) continue;
+          const obj = parseJSON(val);
+          if (obj && typeof obj === 'object') {
+            const ks = ['access_token','accessToken','token','auth_token','authToken','api_token','bearer_token'];
+            for (const k of ks) {
+              const v = obj[k];
+              if (typeof v === 'string' && v.length > 15) { token = token || v; }
+            }
+          } else if (typeof val === 'string') {
+            const m = val.match(/[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+/);
+            if (m && m[0] && m[0].length > 30) { token = token || m[0]; }
+          }
+        }
+      }
+      return token;
+    };
+
+    const readCookieToken = () => {
+      const map = {};
+      document.cookie.split(';').forEach(p => {
+        const [k, ...rest] = p.split('=');
+        if (!k) return;
+        map[k.trim()] = rest.join('=').trim();
+      });
+      const ks = ['access_token','token','auth_token','api_token','bearer_token'];
+      for (const k of ks) { const v = map[k]; if (v && v.length > 15) return v; }
+      for (const k of Object.keys(map)) {
+        const v = map[k];
+        const m = v && v.match(/Bearer\s+([^;\s]+)/i);
+        if (m && m[1]) return m[1];
+      }
+      return null;
+    };
+
+    const readLocal = () => {
+      const s = window.localStorage;
+      const ss = window.sessionStorage;
+
+      const user = parseJSON(s.getItem('user'));
+      const siteInfo = parseJSON(s.getItem('siteInfo'));
+      const userInfo = parseJSON(s.getItem('userInfo'));
+      const config = parseJSON(s.getItem('config') || s.getItem('siteConfig'));
+      const status = parseJSON(s.getItem('status') || s.getItem('siteStatus'));
+      const checkIn = parseJSON(s.getItem('checkIn') || s.getItem('check_in'));
+
+      const user_id = (
+        pick(user, ['id','user_id','userId','uid','user_ID']) ??
+        pick(siteInfo, ['id','user_id','userId','uid']) ??
+        pick(userInfo, ['id','user_id','userId']) ??
+        (s.getItem('user_id') || s.getItem('userId') || s.getItem('uid') || s.getItem('id'))
+      );
+
+      const username = (
+        pick(user, ['username','name','display_name','displayName','nickname','login']) ??
+        pick(siteInfo, ['username','name','display_name','user_name']) ??
+        pick(userInfo, ['username','name']) ??
+        (s.getItem('username') || s.getItem('user_name') || s.getItem('nickname'))
+      );
+
+      const system_name = (
+        pick(siteInfo, ['system_name','systemName','site_name','siteName','name']) ??
+        pick(config, ['system_name','systemName','site_name','name']) ??
+        (s.getItem('system_name') || s.getItem('systemName') || s.getItem('site_name') || s.getItem('siteName') || s.getItem('app_name'))
+      );
+
+      const tokenFromKnown = (
+        pick(user, ['access_token','accessToken','token','auth_token','authToken','api_token','bearer_token']) ??
+        pick(siteInfo, ['access_token','accessToken','token']) ??
+        (parseJSON(s.getItem('auth') || s.getItem('authentication'))?.access_token) ??
+        (s.getItem('access_token') || s.getItem('accessToken') || s.getItem('token') || s.getItem('auth_token') || s.getItem('authToken') || s.getItem('api_token') || s.getItem('apiToken') || s.getItem('bearer_token'))
+      );
+      const tokenFromScan = scanStoresForToken([s, ss]);
+      const tokenFromCookie = readCookieToken();
+      const access_token = tokenFromKnown || tokenFromScan || tokenFromCookie || null;
+
+      const supportsCheckIn = siteInfo?.check_in_enabled ?? status?.check_in_enabled ?? checkIn?.enabled ?? null;
+      const canCheckIn = user?.can_check_in ?? checkIn?.can_check_in ?? null;
+
+      return { user_id, username, system_name, access_token, supportsCheckIn, canCheckIn };
+    };
+
+    const getJSON = async (url) => {
+      const resp = await fetch(url, { method: 'GET', credentials: 'include', headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Pragma': 'no-cache' } });
+      const text = await resp.text();
+      if (!resp.ok) throw new Error(\`HTTP \${resp.status}\`);
+      if (text.includes('<!DOCTYPE')) throw new Error('被拦截或挑战页面');
+      try { return JSON.parse(text); } catch { throw new Error('not valid JSON'); }
+    };
+
+    const readViaApi = async () => {
+      const candidates = ['/api/user/self', '/api/user/dashboard', '/api/user'];
+      let user = {};
+      for (const p of candidates) {
+        try {
+          const data = await getJSON(origin + p);
+          const u = data?.data ?? data;
+          if (u?.id || u?.user_id) {
+            user.user_id = u.id ?? u.user_id ?? u.userId ?? u.uid ?? u.user_ID;
+            user.username = u.username ?? u.name ?? u.display_name ?? u.displayName ?? u.nickname ?? u.login ?? u.user_name;
+            user.access_token = u.access_token ?? u.accessToken ?? u.token ?? u.auth_token ?? u.authToken ?? u.api_token ?? u.bearer_token;
+            break;
+          }
+        } catch (e) { /* ignore */ }
+      }
+      let system_name = null;
+      try {
+        const s = await getJSON(origin + '/api/status');
+        system_name = s?.data?.system_name ?? s?.data?.systemName ?? s?.data?.site_name ?? s?.data?.name ?? s?.system_name ?? s?.systemName ?? null;
+      } catch (e) { /* ignore */ }
+      return { ...user, system_name };
+    };
+
+    // 获取 API Keys（令牌回退），兼容多返回结构并打印日志
+    const fetchApiKeys = async (user_id) => {
+      if (!user_id) return [];
+      const headers = {
+        'Content-Type': 'application/json',
+        'New-API-User': String(user_id),
+        'Veloera-User': String(user_id),
+        'voapi-user': String(user_id),
+        'User-id': String(user_id),
+        'Cache-Control': 'no-store',
+        'Pragma': 'no-cache'
+      };
+      const urls = [
+        origin + '/api/token/?page=1&size=100&keyword=&order=-id',
+        origin + '/api/token/?p=1&size=100',
+        origin + '/api/token/?p=0&size=100',
+        origin + '/api/token/'
+      ];
+      for (const url of urls) {
+        try {
+          console.log('[ConsoleScript] GET', url);
+          const resp = await fetch(url, { method: 'GET', credentials: 'include', headers });
+          const text = await resp.text();
+          if (!resp.ok) { console.log('[ConsoleScript] HTTP', resp.status, text.slice(0,120)); continue; }
+          if (text.includes('<!DOCTYPE')) { console.log('[ConsoleScript] HTML intercepted'); continue; }
+          const data = JSON.parse(text);
+          let items = [];
+          if (Array.isArray(data)) items = data;
+          else if (Array.isArray(data?.data)) items = data.data;
+          else if (Array.isArray(data?.data?.items)) items = data.data.items;
+          else if (Array.isArray(data?.items)) items = data.items;
+          if (items.length > 0) {
+            console.log('[ConsoleScript] Tokens count:', items.length);
+            return items;
+          }
+        } catch (err) {
+          console.log('[ConsoleScript] fetchApiKeys error:', err?.message || String(err));
+          continue;
+        }
+      }
+      return [];
+    };
+
+    const createTokenIfMissing = async (user_id) => {
+      if (!user_id) return null;
+      const headers = {
+        'Content-Type': 'application/json',
+        'New-API-User': String(user_id),
+        'Veloera-User': String(user_id),
+        'voapi-user': String(user_id),
+        'User-id': String(user_id),
+        'Cache-Control': 'no-store',
+        'Pragma': 'no-cache'
+      };
+      try {
+        const resp = await fetch(origin + '/api/user/token', { method: 'GET', credentials: 'include', headers });
+        const text = await resp.text();
+        if (!resp.ok) throw new Error(\`HTTP \${resp.status}\`);
+        const data = JSON.parse(text);
+        if (typeof data === 'string' && data.length > 10) return data;
+        if (data?.data && typeof data.data === 'string') return data.data;
+        if (data?.token && typeof data.token === 'string') return data.token;
+        if (data?.data?.token && typeof data.data.token === 'string') return data.data.token;
+        throw new Error(data?.message || '创建令牌失败');
+      } catch (e) { return null; }
+    };
+
+    const local = readLocal();
+    const api = (!local.user_id || !local.access_token) ? await readViaApi() : {};
+    const merged = { ...local, ...api };
+    if (!merged.access_token) {
+      console.log('[ConsoleScript] access_token missing, try /api/user/token');
+      merged.access_token = await createTokenIfMissing(merged.user_id);
+    }
+    let api_key = null;
+    if (!merged.access_token) {
+      console.log('[ConsoleScript] token creation failed, try /api/token list');
+      const keys = await fetchApiKeys(merged.user_id);
+      if (Array.isArray(keys) && keys.length > 0) {
+        api_key = keys[0]?.key || null;
+        merged.access_token = api_key || merged.access_token;
+        console.log('[ConsoleScript] fallback api_key selected:', api_key ? (api_key.slice(0,4)+'...') : 'none');
+      }
+    }
+
+    const payload = {
+      site_url: origin,
+      site_name: merged.system_name || new URL(origin).hostname,
+      user_id: merged.user_id,
+      username: merged.username || null,
+      access_token: merged.access_token,
+      supportsCheckIn: merged.supportsCheckIn ?? null,
+      canCheckIn: merged.canCheckIn ?? null
+    };
+    if (api_key) payload.api_key = api_key;
+
+    const out = JSON.stringify(payload);
+    console.log('控制台导出JSON如下，复制并粘贴到应用：');
+    console.log(out);
+    try { await navigator.clipboard.writeText(out); console.log('已复制到剪贴板'); } catch {}
+  }
+)();`;
+  };
+
+  /**
+   * 计算推荐的控制台页面URL（中文注释）
+   * 职责：对当前 URL 进行规范化与严格校验，合法时返回 origin+'/console/token'，否则返回空字符串
+   */
+  const getTargetConsoleUrl = (): string => {
+    const v = normalizeUrl(url);
+    if (!isValidUrlStrict(v)) return '';
+    try {
+      const u = new URL(v);
+      return `${u.origin}/console/token`;
+    } catch {
+      return '';
+    }
+  };
+
+  /**
+   * 处理“复制目标地址”点击事件（中文注释）
+   * 职责：基于合法URL生成推荐链接，写入剪贴板并提示结果
+   */
+  const handleCopyTargetUrl = async () => {
+    const v = normalizeUrl(url);
+    if (!isValidUrlStrict(v)) {
+      setCopyTargetHint('请先填写有效的站点URL');
+      setTimeout(() => setCopyTargetHint(''), 4000);
+      return;
+    }
+    const target = getTargetConsoleUrl();
+    try {
+      await navigator.clipboard.writeText(target);
+      setCopyTargetHint('✅ 已复制目标地址');
+      setTimeout(() => setCopyTargetHint(''), 4000);
+    } catch (e: any) {
+      setCopyTargetHint('复制失败：' + (e?.message || String(e)));
+      setTimeout(() => setCopyTargetHint(''), 5000);
+    }
+  };
+
+  /**
+   * 处理“打开登录页”点击事件（中文注释）
+   * 职责：根据合法URL生成推荐链接，通过主进程打开页面
+   */
+  const handleOpenTargetUrl = async () => {
+    const v = normalizeUrl(url);
+    if (!isValidUrlStrict(v)) {
+      setCopyTargetHint('请先填写有效的站点URL');
+      setTimeout(() => setCopyTargetHint(''), 4000);
+      return;
+    }
+    const target = getTargetConsoleUrl();
+    try {
+      const result = await (window as any).electronAPI.launchChromeForLogin(target);
+      if (!result?.success) {
+        setCopyTargetHint(result?.message || '打开浏览器失败');
+        setTimeout(() => setCopyTargetHint(''), 5000);
+      }
+    } catch (e: any) {
+      setCopyTargetHint('打开失败：' + (e?.message || String(e)));
+      setTimeout(() => setCopyTargetHint(''), 5000);
+    }
+  };
+
+  /**
+   * 生成兼容性的控制台脚本（ES5语法、无模板字符串/箭头函数）
+   * 用于修复某些浏览器控制台粘贴执行时出现的 Unexpected token 错误
+   */
+  const getSafeConsoleScript = (): string => {
+    const lines = [
+      '(function(){',
+      'var origin=location.origin.replace(/\\\/$/, "");',
+      'function parseJSON(str){try{return JSON.parse(str)}catch(e){return null}}',
+      'function pick(obj,keys){var v=null;for(var i=0;i<keys.length;i++){var k=keys[i];if(obj&&obj[k]!=null){if(v===null){v=obj[k]}}}return v}',
+      'function scanStoresForToken(stores){var token=null;for(var si=0;si<stores.length;si++){var store=stores[si];for(var i=0;i<store.length;i++){var key=store.key(i);var val=store.getItem(key);if(!val)continue;var obj=parseJSON(val);if(obj&&typeof obj==="object"){var ks=["access_token","accessToken","token","auth_token","authToken","api_token","bearer_token"];for(var j=0;j<ks.length;j++){var v=obj[ks[j]];if(typeof v==="string"&&v.length>15){token=token||v}}}else if(typeof val==="string"){var m=val.match(/[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]+/);if(m&&m[0]&&m[0].length>30){token=token||m[0]}}}}return token}',
+      'function readCookieToken(){var map={};var parts=document.cookie.split(";");for(var i=0;i<parts.length;i++){var p=parts[i];var seg=p.split("=");var k=seg[0];var rest=seg.slice(1).join("=");if(!k)continue;map[k.trim()]=rest.trim()}var ks=["access_token","token","auth_token","api_token","bearer_token"];for(var j=0;j<ks.length;j++){var v=map[ks[j]];if(v&&v.length>15)return v}for(var k in map){var v=map[k];var m=v&&v.match(/Bearer\s+([^;\s]+)/i);if(m&&m[1])return m[1]}return null}',
+      'function getJSON(url,headers){return fetch(url,{method:"GET",credentials:"include",headers:headers}).then(function(resp){return resp.text().then(function(text){if(!resp.ok)throw new Error("HTTP "+resp.status);if(text.indexOf("<!DOCTYPE")>=0)throw new Error("HTML");try{return JSON.parse(text)}catch(e){throw new Error("not valid JSON")}})})}',
+      'function readLocal(){var s=window.localStorage;var ss=window.sessionStorage;var user=parseJSON(s.getItem("user"));var siteInfo=parseJSON(s.getItem("siteInfo"));var userInfo=parseJSON(s.getItem("userInfo"));var config=parseJSON(s.getItem("config")||s.getItem("siteConfig"));var status=parseJSON(s.getItem("status")||s.getItem("siteStatus"));var checkIn=parseJSON(s.getItem("checkIn")||s.getItem("check_in"));var uid=null;uid=pick(user,["id","user_id","userId","uid","user_ID"])||pick(siteInfo,["id","user_id","userId","uid"])||pick(userInfo,["id","user_id","userId"]);if(uid==null){var idStr=s.getItem("user_id")||s.getItem("userId")||s.getItem("uid")||s.getItem("id");if(idStr){var p=parseInt(idStr,10);if(!isNaN(p))uid=p}}var username=pick(user,["username","name","display_name","displayName","nickname","login"])||pick(siteInfo,["username","name","display_name","user_name"])||pick(userInfo,["username","name"])||s.getItem("username")||s.getItem("user_name")||s.getItem("nickname");var system_name=pick(siteInfo,["system_name","systemName","site_name","siteName","name"])||pick(config,["system_name","systemName","site_name","name"])||s.getItem("system_name")||s.getItem("systemName")||s.getItem("site_name")||s.getItem("siteName")||s.getItem("app_name");var tokenKnown=pick(user,["access_token","accessToken","token","auth_token","authToken","api_token","bearer_token"])||pick(siteInfo,["access_token","accessToken","token"])||((parseJSON(s.getItem("auth")||s.getItem("authentication"))||{}).access_token)||s.getItem("access_token")||s.getItem("accessToken")||s.getItem("token")||s.getItem("auth_token")||s.getItem("authToken")||s.getItem("api_token")||s.getItem("apiToken")||s.getItem("bearer_token");var tokenScan=scanStoresForToken([s,ss]);var tokenCookie=readCookieToken();var access_token=tokenKnown||tokenScan||tokenCookie||null;var supportsCheckIn=(siteInfo&&siteInfo.check_in_enabled!=null)?siteInfo.check_in_enabled:((status&&status.check_in_enabled!=null)?status.check_in_enabled:null);var canCheckIn=(user&&user.can_check_in!=null)?user.can_check_in:((checkIn&&checkIn.can_check_in!=null)?checkIn.can_check_in:null);return {user_id:uid,username:username,system_name:system_name,access_token:access_token,supportsCheckIn:supportsCheckIn,canCheckIn:canCheckIn}}',
+      'function readViaApi(origin){var bases=[origin,origin+"/console"];var candidates=["/api/user/self","/api/user/dashboard","/api/user"];var user={};var bi=0;var ci=0;function nextBase(){ci=0;if(bi>=bases.length)return Promise.resolve(user);return nextPath()}function nextPath(){if(ci>=candidates.length){bi++;return nextBase()}var base=bases[bi];var p=candidates[ci++];return getJSON(base+p,{}).then(function(data){var u=(data&&data.data)?data.data:data;if(u&&(u.id!=null||u.user_id!=null)){user.user_id=u.id||u.user_id||u.userId||u.uid||u.user_ID;user.username=u.username||u.name||u.display_name||u.displayName||u.nickname||u.login||u.user_name;user.access_token=u.access_token||u.accessToken||u.token||u.auth_token||u.authToken||u.api_token||u.bearer_token;return user}return nextPath()}).catch(function(){return nextPath()})}return nextBase().then(function(){var base=bases[0];return getJSON(base+"/api/status",{}).then(function(s){var name=null;if(s&&s.data){name=s.data.system_name||s.data.systemName||s.data.site_name||s.data.name}user.system_name=name;return user}).catch(function(){return user})})}',
+      'function createTokenIfMissing(origin,uid){if(!uid)return Promise.resolve(null);var headers={"Content-Type":"application/json","New-API-User":String(uid),"Veloera-User":String(uid),"voapi-user":String(uid),"User-id":String(uid),"Cache-Control":"no-store","Pragma":"no-cache"};var bases=[origin,origin+"/console"];var i=0;function next(){if(i>=bases.length)return Promise.resolve(null);var base=bases[i++];return fetch(base+"/api/user/token",{method:"GET",credentials:"include",headers:headers}).then(function(resp){return resp.text().then(function(text){if(!resp.ok)throw new Error("HTTP "+resp.status);var data=parseJSON(text);if(typeof data==="string"&&data.length>10)return data;if(data&&typeof data.data==="string")return data.data;if(data&&typeof data.token==="string")return data.token;if(data&&data.data&&typeof data.data.token==="string")return data.data.token;throw new Error((data&&data.message)||"创建令牌失败")})}).catch(function(){return next()})}return next()}',
+      'function fetchApiKeys(origin,uid){if(!uid)return Promise.resolve([]);var headers={"Content-Type":"application/json","New-API-User":String(uid),"Veloera-User":String(uid),"voapi-user":String(uid),"User-id":String(uid),"Cache-Control":"no-store","Pragma":"no-cache"};var bases=[origin,origin+"/console"];var bi=0;var ui=0;var urls=[];function build(){urls=[bases[bi]+"/api/token/?page=1&size=100&keyword=&order=-id",bases[bi]+"/api/token/?p=1&size=100",bases[bi]+"/api/token/?p=0&size=100",bases[bi]+"/api/token/"]}build();function next(){if(ui>=urls.length){bi++;ui=0;if(bi>=bases.length)return Promise.resolve([]);build()}var url=urls[ui++];console.log("[ConsoleScript] GET",url);return fetch(url,{method:"GET",credentials:"include",headers:headers}).then(function(resp){return resp.text().then(function(text){if(!resp.ok){console.log("[ConsoleScript] HTTP",resp.status,text.slice(0,120));return next()}if(text.indexOf("<!DOCTYPE")>=0){console.log("[ConsoleScript] HTML intercepted");return next()}var data=parseJSON(text)||{};var items=[];if(Array.isArray(data))items=data;else if(Array.isArray(data.data))items=data.data;else if(data.data&&Array.isArray(data.data.items))items=data.data.items;else if(Array.isArray(data.items))items=data.items;if(items.length>0){console.log("[ConsoleScript] Tokens count:",items.length);return items}return next()})}).catch(function(err){console.log("[ConsoleScript] fetchApiKeys error:",err&&err.message?err.message:String(err));return next()})}return next()}',
+      'var local=readLocal();',
+      'readViaApi(origin).then(function(api){var merged={};for(var k in local){merged[k]=local[k]}for(var k2 in api){merged[k2]=api[k2]}if(!merged.access_token){console.log("[ConsoleScript] access_token missing, try /api/user/token");return createTokenIfMissing(origin,merged.user_id).then(function(tok){merged.access_token=tok;return merged})}return merged}).then(function(merged){if(merged.access_token){return Promise.resolve({merged:merged,apiKey:null})}console.log("[ConsoleScript] token creation failed, try /api/token list");return fetchApiKeys(origin,merged.user_id).then(function(items){var key=null;if(Array.isArray(items)&&items.length>0){key=items[0]&&items[0].key?items[0].key:null;merged.access_token=key||merged.access_token;console.log("[ConsoleScript] fallback api_key selected:",key?key.slice(0,4)+"...":"none")}return {merged:merged,apiKey:key}})}).then(function(res){var merged=res.merged;var apiKey=res.apiKey;var payload={site_url:origin.replace(/[`]/g,\'\').trim(),site_name:(merged.system_name||new URL(origin).hostname),user_id:merged.user_id,username:(merged.username||null),access_token:merged.access_token,supportsCheckIn:(merged.supportsCheckIn!=null?merged.supportsCheckIn:null),canCheckIn:(merged.canCheckIn!=null?merged.canCheckIn:null)};if(apiKey)payload.api_key=apiKey;var out=JSON.stringify(payload);console.log("控制台导出JSON如下，复制并粘贴到应用：");console.log(out);if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(out).then(function(){console.log("已复制到剪贴板")}).catch(function(){})}}).catch(function(err){console.log("[ConsoleScript] fatal:",err&&err.message?err.message:String(err))})',
+      '})();'
+    ];
+    return lines.join('\n');
+  };
+
+  /**
+   * 生成最小化控制台脚本（仅站点令牌 + API Keys + 状态）
+   */
+  const getMinimalConsoleScript = (): string => {
+    const s = [
+      '(function(){',
+      'var origin=(new URL(location.href)).origin;',
+      'function parseJSON(str){try{return JSON.parse(str)}catch(e){return null}}',
+      'function pick(obj,keys){var v=null;for(var i=0;i<keys.length;i++){var k=keys[i];if(obj&&obj[k]!=null){if(v===null){v=obj[k]}}}return v}',
+      'function tryFetch(url,headers){return fetch(url,{method:"GET",credentials:"include",headers:headers}).then(function(resp){return resp.text().then(function(text){if(!resp.ok)throw new Error("HTTP "+resp.status+" "+text.slice(0,120));if(text.indexOf("<!DOCTYPE")>=0)throw new Error("HTML "+text.slice(0,120));var data=parseJSON(text);if(!data)throw new Error("not valid JSON");return data})})}',
+      'function getSiteToken(uid){var headers={"accept":"application/json, text/plain, */*","referer":origin+"/console/token","new-api-user":String(uid),"veloera-user":String(uid),"voapi-user":String(uid),"user-id":String(uid),"cache-control":"no-store","pragma":"no-cache"};var bases=[origin,origin+"/console"];var i=0;function next(){if(i>=bases.length)return Promise.resolve(null);var base=bases[i++];return tryFetch(base+"/api/user/token",headers).then(function(data){if(typeof data==="string")return data;if(data&&typeof data.data==="string")return data.data;if(data&&typeof data.token==="string")return data.token;if(data&&data.data&&typeof data.data.token==="string")return data.data.token;return null}).catch(function(){return next()})}return next()}',
+      'function getApiKeys(uid){var headers={"accept":"application/json, text/plain, */*","referer":origin+"/console/token","new-api-user":String(uid),"cache-control":"no-store","pragma":"no-cache"};var bases=[origin,origin+"/console"];var urls=[];for(var b=0;b<bases.length;b++){var base=bases[b];urls.push(base+"/api/token/?page=1&size=100&keyword=&order=-id");urls.push(base+"/api/token/?p=1&size=100");urls.push(base+"/api/token/?p=0&size=100");urls.push(base+"/api/token/")}var i=0;function next(){if(i>=urls.length)return Promise.resolve([]);var url=urls[i++];return tryFetch(url,headers).then(function(data){var items=Array.isArray(data)?data:(Array.isArray(data&&data.data)?data.data:(Array.isArray(data&&data.data&&data.data.items)?data.data.items:(Array.isArray(data&&data.items)?data.items:[])));if(items.length>0)return items;return next()}).catch(function(){return next()})}return next()}',
+      'function getStatus(){var bases=[origin,origin+"/console"];var i=0;function next(){if(i>=bases.length)return Promise.resolve(null);var base=bases[i++];return tryFetch(base+"/api/status",{}).then(function(s){var name=null;if(s&&s.data){name=s.data.system_name||s.data.systemName||s.data.site_name||s.data.name}return name}).catch(function(){return next()})}return next()}',
+      'var ls=window.localStorage;var user=parseJSON(ls.getItem("user"));var uid=user&&user.id?user.id:(user&&user.user_id?user.user_id:(ls.getItem("user_id")||ls.getItem("userId")));',
+      'if(!uid){console.log("未发现 user_id，请先进入控制台用户页或手动填写");return}',
+      'Promise.all([getSiteToken(uid),getApiKeys(uid),getStatus()]).then(function(arr){var siteToken=arr[0];var keys=arr[1]||[];var apiKey=keys.length?keys[0].key:null;var siteName=arr[2]||"";var payload={site_url:origin.replace(/[`]/g,"").trim(),site_name:siteName||new URL(origin).hostname,user_id:Number(uid),username:(user&&user.username)||user&&user.name||null,access_token:siteToken||apiKey||null,api_key:apiKey||null};var out=JSON.stringify(payload);console.log("控制台导出JSON如下，复制到应用：");console.log(out);if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(out).then(function(){console.log("已复制到剪贴板")}).catch(function(){})}}).catch(function(e){console.log("[MinimalScript] fatal:",e&&e.message?e.message:String(e))})',
+      '})();'
+    ];
+    return s.join('\n');
+  };
+
+  /**
+   * 处理“复制控制台脚本”点击事件
+   * 职责：将控制台脚本写入剪贴板，便于在目标站点页面直接粘贴执行
+   */
+  const handleCopyConsoleScript = async () => {
+    try {
+      await navigator.clipboard.writeText(getMinimalConsoleScript());
+      setCopyHint('✅ 控制台脚本已复制，请到目标站点控制台粘贴执行');
+      setTimeout(() => setCopyHint(''), 5000);
+    } catch (e: any) {
+      setCopyHint('复制失败：' + (e?.message || String(e)));
+      setTimeout(() => setCopyHint(''), 5000);
+    }
+  };
+
+  void getSafeConsoleScript;
+  void (typeof (globalThis as any).getConsoleScript !== 'undefined' && (globalThis as any).getConsoleScript);
+
+  /**
    * 从URL中提取站点名称
    * 优先使用域名主要部分，去除常见的www前缀和TLD后缀
+   */
+  /**
+   * 从站点 URL 提取站点名称
+   * 策略：去除 www 前缀，优先取主域名部分（支持二级/三级域名），异常时返回“新站点”
    */
   const extractDomainName = (url: string): string => {
     try {
@@ -187,6 +687,12 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
     }
   };
 
+  /**
+   * 处理“保存站点”点击事件
+   * 职责：
+   * 1. 组装用户确认后的站点配置（必要字段：name/url/user_id/system_token）
+   * 2. 通过 onSave 回传父组件触发持久化与后续刷新
+   */
   const handleSave = () => {
     // 1. 构建站点配置
     const newSite: SiteConfig = {
@@ -207,11 +713,49 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
     // onSave 会触发 App.tsx 的回调，关闭对话框并触发刷新
   };
 
+  /**
+   * 处理“导入并保存”点击事件
+   * 职责：解析控制台JSON，直接保存站点，不进入自动识别向导
+   */
+  const handleImportSave = () => {
+    try {
+      setImportHint("");
+      if (!importText.trim()) {
+        setImportHint("请粘贴控制台输出的JSON数据");
+        return;
+      }
+      const payload = JSON.parse(importText);
+      const siteUrl: string = (payload.site_url || payload.base_url || payload.url || "").trim();
+      const siteName: string = (payload.site_name || payload.system_name || "").trim();
+      const userIdRaw = payload.user_id ?? payload.uid ?? payload.id;
+      const token: string = (payload.access_token || payload.token || payload.auth_token || "").trim();
+      const apiKey: string = (payload.api_key || "").trim();
+      if (!siteUrl) { setImportHint("缺少 site_url 字段"); return; }
+      if (!userIdRaw) { setImportHint("缺少 user_id 字段"); return; }
+      if (!token && !apiKey) { setImportHint("缺少访问令牌或API Key"); return; }
+      const newSite: SiteConfig = {
+        name: siteName || extractDomainName(siteUrl),
+        url: siteUrl,
+        api_key: apiKey || '',
+        system_token: token || undefined,
+        user_id: String(userIdRaw),
+        enabled: true,
+        has_checkin: false,
+        extra_links: "",
+        force_enable_checkin: false,
+      };
+      onSave(newSite);
+      setImportHint("✅ 已导入并保存站点");
+    } catch (e: any) {
+      setImportHint("JSON解析失败：" + (e.message || String(e)));
+    }
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-light-card dark:bg-dark-card rounded-2xl shadow-2xl w-full max-w-2xl border border-slate-200 dark:border-slate-700">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 overflow-y-auto">
+      <div className="bg-light-card dark:bg-dark-card rounded-2xl shadow-2xl w-full max-w-2xl md:max-w-3xl border border-slate-200 dark:border-slate-700 max-h-[85vh] flex flex-col">
         {/* 头部 */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700">
+        <div className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700 bg-light-card dark:bg-dark-card">
           <h2 className="text-xl font-bold">
             {site ? "编辑站点" : "智能添加站点"}
           </h2>
@@ -224,8 +768,24 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
         </div>
 
         {/* 内容区 */}
-        <div className="px-6 py-6 space-y-6">
-          {/* 步骤指示器 */}
+        <div className="px-6 py-6 space-y-6 overflow-y-auto scroll-smooth">
+          {/* 添加方式切换 */}
+          <div className="flex items-center gap-2">
+            <button
+              className={`px-3 py-2 rounded-lg text-sm font-semibold ${mode==='auto' ? 'bg-primary-600 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200'}`}
+              onClick={() => setMode('auto')}
+            >
+              自动识别
+            </button>
+            <button
+              className={`px-3 py-2 rounded-lg text-sm font-semibold ${mode==='import' ? 'bg-primary-600 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200'}`}
+              onClick={() => setMode('import')}
+            >
+              控制台导入
+            </button>
+          </div>
+          {/* 步骤指示器（仅自动识别模式显示） */}
+          {mode==='auto' && (
           <div className="flex items-center justify-between">
             {[
               { id: 'input-url', label: '输入URL', icon: '1' },
@@ -257,9 +817,99 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
               </div>
             ))}
           </div>
+          )}
+
+          {/* 控制台导入（独立入口，脱离自动识别流程） */}
+          {mode==='import' && (
+            <div className="px-4 py-3 bg-light-bg-secondary dark:bg-dark-bg-secondary border-2 border-light-border dark:border-dark-border rounded-lg text-sm space-y-2 mt-4 text-light-text dark:text-dark-text">
+              <div className="font-semibold text-green-700 dark:text-green-300">🧩 控制台数据导入（无需自动化）</div>
+              <div className="text-xs text-green-700/80 dark:text-green-300/80">
+                在目标站点登录后，点击“复制控制台脚本”，到推荐页面控制台粘贴执行；复制输出的JSON到文本框并点击导入。
+              </div>
+              {/* 导入流程专用URL输入 */}
+              <div className="space-y-2">
+                <label className="block text-xs font-medium text-light-text dark:text-dark-text">目标站点URL</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="url"
+                    inputMode="url"
+                    autoComplete="url"
+                    value={url}
+                    onChange={(e) => handleUrlChange(e.target.value)}
+                    onBlur={handleAutoCompleteUrl}
+                    placeholder="https://api.example.com"
+                    className="flex-1 px-3 py-2 bg-light-card dark:bg-dark-bg border-2 border-light-border dark:border-dark-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-light-text dark:text-dark-text placeholder-slate-400 dark:placeholder-slate-500"
+                  />
+                </div>
+                {urlError && (
+                  <div className="px-3 py-2 bg-red-50 dark:bg-red-900/30 border-2 border-red-400 dark:border-red-600 rounded-lg text-red-700 dark:text-red-300 text-xs">
+                    {urlError}
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-slate-700 dark:text-slate-300">推荐页面：</span>
+                {getTargetConsoleUrl() ? (
+                  <a href={getTargetConsoleUrl()} target="_blank" rel="noreferrer" className="underline text-blue-600 dark:text-blue-400">
+                    {getTargetConsoleUrl()}
+                  </a>
+                ) : (
+                  <span className="text-slate-500 dark:text-slate-400">请先填写站点URL</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleCopyTargetUrl}
+                  disabled={!getTargetConsoleUrl()}
+                  className="px-3 py-2 border-2 border-primary-200 dark:border-primary-400/40 bg-transparent text-primary-700 dark:text-primary-300 hover:bg-primary-50 dark:hover:bg-primary-900/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm"
+                >
+                  复制目标地址
+                </button>
+                <button
+                  onClick={handleOpenTargetUrl}
+                  disabled={!getTargetConsoleUrl()}
+                  className="px-3 py-2 border-2 border-primary-200 dark:border-primary-400/40 bg-transparent text-primary-700 dark:text-primary-300 hover:bg-primary-50 dark:hover:bg-primary-900/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm"
+                >
+                  打开登录页
+                </button>
+                {copyTargetHint && (
+                  <span className="text-xs text-slate-700 dark:text-slate-300 font-medium">{copyTargetHint}</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleCopyConsoleScript}
+                  className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-semibold"
+                >
+                  复制控制台脚本
+                </button>
+                {copyHint && (
+                  <span className="text-xs text-slate-700 dark:text-slate-300 font-medium">{copyHint}</span>
+                )}
+              </div>
+              <textarea
+                value={importText}
+                onChange={(e) => setImportText(e.target.value)}
+                placeholder='{"site_url":"https://example.com","site_name":"MySite","user_id":123,"access_token":"..."}'
+                className="w-full mt-2 px-3 py-2 bg-light-card dark:bg-dark-card border-2 border-light-border dark:border-dark-border rounded text-xs font-mono"
+                rows={4}
+              />
+              {importHint && (
+                <div className="text-xs font-medium text-green-700 dark:text-green-300">{importHint}</div>
+              )}
+              <div className="flex gap-2">
+                <button
+                  onClick={handleImportSave}
+                  className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold"
+                >
+                  导入并保存
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* 步骤1: 输入URL */}
-          {step === 'input-url' && (
+          {mode==='auto' && step === 'input-url' && (
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-2">
@@ -283,7 +933,7 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
                 </div>
               )}
 
-              <div className="px-4 py-3 bg-blue-50 dark:bg-blue-900/30 border-2 border-blue-300 dark:border-blue-600 rounded-lg text-blue-700 dark:text-blue-300 text-sm">
+              <div className="px-4 py-3 bg-light-bg-secondary dark:bg-dark-bg-secondary border-2 border-light-border dark:border-dark-border rounded-lg text-light-text dark:text-dark-text text-sm">
                 <div className="font-semibold mb-1">✨ 智能站点识别</div>
                 <div className="text-xs opacity-90">
                   • 自动从localStorage读取system_name作为站点名称<br/>
@@ -304,7 +954,7 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
                   </>
                 ) : (
                   <>
-                    <Chrome className="w-5 h-5 text-white" />
+                    <Globe className="w-5 h-5 text-white" />
                     下一步：浏览器登录
                   </>
                 )}
@@ -316,10 +966,10 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
           {step === 'login' && (
             <div className="space-y-4">
               <div className="px-6 py-8 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-300 dark:border-slate-600 text-center space-y-4 shadow-md">
-                <Chrome className="w-16 h-16 mx-auto text-primary-500 dark:text-primary-400 animate-pulse" />
+                <Globe className="w-16 h-16 mx-auto text-primary-500 dark:text-primary-400 animate-pulse" />
                 <h3 className="text-xl font-bold text-slate-800 dark:text-white">请在浏览器中完成登录</h3>
                 <p className="text-sm text-slate-600 dark:text-slate-300">
-                  已在Chrome中打开 <span className="text-primary-600 dark:text-primary-400 font-semibold">{url}</span>
+                  已在浏览器中打开 <span className="text-primary-600 dark:text-primary-400 font-semibold">{url}</span>
                   <br />
                   请完成登录操作，然后点击下方按钮继续
                 </p>
@@ -531,7 +1181,7 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
                   }}
                   className="flex-1 px-6 py-3 bg-yellow-600 hover:bg-yellow-700 rounded-lg font-semibold flex items-center justify-center gap-2 transition-all"
                 >
-                  <Chrome className="w-5 h-5" />
+                  <Globe className="w-5 h-5" />
                   {site ? '重新登录获取信息' : '重新登录'}
                 </button>
                 <button
@@ -552,3 +1202,4 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
 }
 
 export default SiteEditor;
+/*** End of File */
