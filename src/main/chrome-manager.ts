@@ -913,13 +913,30 @@ export class ChromeManager {
         
         const result = await page.evaluate(async (url: string) => {
           try {
+            const s = (globalThis as any).localStorage;
+            const parseJSON = (str: string | null) => { try { return str ? JSON.parse(str) : null } catch { return null } };
+            const user = parseJSON(s.getItem('user')) || {};
+            const siteInfo = parseJSON(s.getItem('siteInfo')) || {};
+            const userInfo = parseJSON(s.getItem('userInfo')) || {};
+            const uid = (user.id ?? user.user_id ?? user.userId ?? user.uid ?? user.user_ID ??
+              siteInfo.id ?? siteInfo.user_id ?? siteInfo.userId ?? siteInfo.uid ??
+              userInfo.id ?? userInfo.user_id ?? userInfo.userId ??
+              s.getItem('user_id') ?? s.getItem('userId') ?? s.getItem('uid') ?? s.getItem('id')) || null;
+
             const response = await fetch(url, {
               method: 'GET',
               credentials: 'include', // 携带Cookie
               headers: {
+                'Accept': 'application/json, text/plain, */*',
                 'Content-Type': 'application/json',
                 'Cache-Control': 'no-store',
-                'Pragma': 'no-cache'
+                'Pragma': 'no-cache',
+                ...(uid ? {
+                  'New-API-User': String(uid),
+                  'Veloera-User': String(uid),
+                  'voapi-user': String(uid),
+                  'User-id': String(uid)
+                } : {})
               }
             });
 
