@@ -13,7 +13,8 @@ export function useTheme() {
   // 从 localStorage 读取主题设置，默认跟随系统
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    return (stored as ThemeMode) || 'system';
+    const isValid = stored === 'light' || stored === 'dark' || stored === 'system';
+    return (isValid ? (stored as ThemeMode) : 'system');
   });
 
   // 获取系统主题偏好
@@ -81,4 +82,3 @@ export function useTheme() {
     changeThemeMode,
   };
 }
-

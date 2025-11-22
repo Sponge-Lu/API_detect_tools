@@ -4,6 +4,28 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>API Hub Management Tools</title>
+  <script>
+    /**
+     * 主题预置脚本（首屏前执行）
+     * 作用：在 React/CSS 加载前，根据上次选择的主题或系统偏好设置 html 的 .dark 类，避免首帧跟随系统导致的错误主题与闪烁
+     */
+    (function bootstrapTheme() {
+      var KEY = 'app-theme-mode';
+      try {
+        var mode = localStorage.getItem(KEY);
+        var root = document.documentElement;
+        var prefersDark = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        var applied = (mode === 'light') ? 'light' : (mode === 'dark') ? 'dark' : (prefersDark ? 'dark' : 'light');
+        if (applied === 'dark') {
+          root.classList.add('dark');
+        } else {
+          root.classList.remove('dark');
+        }
+      } catch (e) {
+        // 忽略读取失败，保持默认浅色
+      }
+    })();
+  </script>
 </head>
 <body>
   <div id="root"></div>

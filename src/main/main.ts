@@ -27,7 +27,7 @@ const tokenStorage = new TokenStorage();
 const tokenService = new TokenService(chromeManager);
 const apiService = new ApiService(tokenService, tokenStorage);
 
-function createWindow() {
+async function createWindow() {
   // 根据环境选择合适的图标，打包后从 resources 目录读取 ico 文件
   const iconPath = app.isPackaged
     ? path.join(process.resourcesPath, 'icon.ico')
@@ -55,11 +55,26 @@ function createWindow() {
   // 根据环境加载不同的URL
   if (app.isPackaged) {
     // 生产环境：加载打包后的HTML文件
-    mainWindow.loadFile(path.join(__dirname, '../dist-renderer/index.html'));
+    await mainWindow.loadFile(path.join(__dirname, '../dist-renderer/index.html'));
   } else {
-    // 开发环境：加载Vite服务器
-    mainWindow.loadURL('http://localhost:5173');
-    // 开发环境打开开发者工具
+    // 开发环境：尝试多个常用端口，避免5173被占用时出现空白
+    const ports = [5173, 5174, 5175];
+    let loaded = false;
+    for (const p of ports) {
+      const url = `http://localhost:${p}`;
+      try {
+        await mainWindow.loadURL(url);
+        loaded = true;
+        break;
+      } catch (e) {
+        console.warn(`[Dev] 加载失败，尝试下一个端口: ${url}`);
+      }
+    }
+    if (!loaded) {
+      // 如果都失败，仍尝试默认端口，便于调试
+      await mainWindow.loadURL('http://localhost:5173');
+    }
+    // 开发环境可按需打开开发者工具
     // mainWindow.webContents.openDevTools();
   }
 }

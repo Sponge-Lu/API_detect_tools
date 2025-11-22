@@ -19,6 +19,25 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Trae IDE
+.trae/
+
+# Secrets & env
+.env*
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.keystore
+credentials*
+secrets*
+*.sqlite
+*.db
+*.config
+*.conf
+*.ini
+
 # Electron
 out/
 
@@ -26,6 +45,7 @@ out/
 API-interface-doc.md
 DEV_RECORD.md
 comparison.md
+docs/login-flow.md
 
 # 其他项目
 .all-api-hub/

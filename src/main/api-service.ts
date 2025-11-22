@@ -921,6 +921,11 @@ export class ApiService {
   /**
    * 获取今日消费数据（通过日志API）
    */
+  /**
+   * 通过日志API计算今日消费（更健壮的解析与容错）
+   * - 兼容多种响应结构：data.items、data.data、data.list、顶层数组等
+   * - 发生格式不符、404/403/5xx或超时时不再抛出错误，返回已累计或0
+   */
   private async fetchTodayUsageFromLogs(
     site: SiteConfig,
     timeout: number,
@@ -936,7 +941,7 @@ export class ApiService {
       const { start: startTimestamp, end: endTimestamp } = this.getTodayTimestampRange();
       
       let currentPage = 1;
-      const maxPages = 100; // 最多查询10页
+      const maxPages = 100;
       const pageSize = 100; // 每页100条
       let totalConsumption = 0;
 
@@ -968,33 +973,39 @@ export class ApiService {
         Object.assign(headers, userIdHeaders);
 
         try {
-          // 使用通用的带回退的请求方法，传入共享页面
-          const result = await this.fetchWithBrowserFallback<LogResponse>(
+          const result = await this.fetchWithBrowserFallback<LogResponse | any>(
             logUrl,
             headers,
             site,
             timeout,
             (data: any) => {
-              if (!data.success || !data.data) {
-                throw new Error('日志响应格式错误');
-              }
-              return data as LogResponse;
+              const normalize = (resp: any): { items: LogItem[]; total: number } => {
+                if (!resp) return { items: [], total: 0 };
+                const d = resp.data ?? resp;
+                let items: any = [];
+                if (Array.isArray(d)) items = d;
+                else if (Array.isArray(d?.items)) items = d.items;
+                else if (Array.isArray(d?.data)) items = d.data;
+                else if (Array.isArray(d?.list)) items = d.list;
+                else if (Array.isArray(resp?.items)) items = resp.items;
+                const total = (d?.total ?? d?.total_count ?? resp?.total ?? 0) as number;
+                return { items, total: typeof total === 'number' ? total : (Array.isArray(items) ? items.length : 0) };
+              };
+              const { items, total } = normalize(data);
+              return { success: true, data: { items, total } } as LogResponse;
             },
             sharedPage
           );
-          
-          const logData = result.result;
 
+          const logData = result.result as LogResponse;
           const items = logData.data.items || [];
           const currentPageItemCount = items.length;
 
-          // 聚合当前页数据
           const pageConsumption = this.aggregateUsageData(items);
           totalConsumption += pageConsumption;
 
           console.log(`📄 [ApiService] 第${currentPage}页: ${currentPageItemCount}条记录, 消费: $${pageConsumption.toFixed(4)}`);
 
-          // 检查是否还有更多数据
           const totalPages = Math.ceil((logData.data.total || 0) / pageSize);
           if (currentPage >= totalPages || currentPageItemCount === 0) {
             console.log(`✅ [ApiService] 日志查询完成，共${currentPage}页`);
@@ -1003,9 +1014,13 @@ export class ApiService {
 
           currentPage++;
         } catch (error: any) {
+          const status = error?.response?.status;
+          if (this.isFatalHttpStatus(status) || this.isTimeoutError(error)) {
+            console.warn(`⚠️ [ApiService] 日志接口不可用或超时(HTTP ${status || 'N/A'})，返回已累计: $${totalConsumption.toFixed(4)}`);
+            break;
+          }
           console.error(`❌ [ApiService] 日志查询异常(第${currentPage}页):`, error.message);
-          // 直接抛出，让上层结束当前站点检测
-          throw new Error(`日志接口请求失败: ${error.message}`);
+          break;
         }
       }
 
@@ -1017,9 +1032,8 @@ export class ApiService {
       return totalConsumption;
       
     } catch (error: any) {
-      console.error('❌ [ApiService] 获取今日消费失败:', error.message);
-      // 将错误抛给上层，由 getBalanceAndUsage 决定是否结束检测
-      throw new Error(`日志接口请求失败: ${error.message}`);
+      console.warn('⚠️ [ApiService] 今日消费查询失败，返回0:', error.message);
+      return 0;
     }
   }
 
