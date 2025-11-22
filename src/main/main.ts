@@ -27,14 +27,11 @@ const tokenStorage = new TokenStorage();
 const tokenService = new TokenService(chromeManager);
 const apiService = new ApiService(tokenService, tokenStorage);
 
- /**
-  * 创建主窗口并加载渲染内容（开发/生产）
-  * 开发模式下支持自动端口回退（5173→5174→5175），避免Vite端口占用导致空白页
-  */
- async function createWindow() {
-  // 注意：打包后的图标通过 package.json 的 build.win.icon 配置
-  // 这里的 icon 参数只影响开发环境的窗口图标
-  const iconPath = path.join(app.getAppPath(), 'build', 'icon.png');
+function createWindow() {
+  // 根据环境选择合适的图标，打包后从 resources 目录读取 ico 文件
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.ico')
+    : path.join(app.getAppPath(), 'build', 'icon.png');
   
   console.log('📍 图标路径:', iconPath);
   console.log('📦 是否已打包:', app.isPackaged);
@@ -43,8 +40,8 @@ const apiService = new ApiService(tokenService, tokenStorage);
     width: 700,
     height: 800,
     title: 'API Hub Management Tools',
-    // 开发环境使用 icon 参数，打包后通过 package.json 配置
-    ...(app.isPackaged ? {} : { icon: iconPath }),
+    // 无论开发还是生产都显式指定窗口图标，防止 EXE 默认图标被沿用
+    icon: iconPath,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -208,6 +205,20 @@ ipcMain.handle('token:fetch-api-tokens', async (_, baseUrl: string, userId: numb
     return { success: true, data: tokens };
   } catch (error: any) {
     console.error('❌ [IPC] 获取API令牌列表失败:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+/**
+ * 创建新的 API 令牌
+ */
+ipcMain.handle('token:create-api-token', async (_, baseUrl: string, userId: number, accessToken: string, tokenData: any) => {
+  try {
+    console.log('🆕 [IPC] 收到创建 API 令牌请求');
+    const ok = await tokenService.createApiToken(baseUrl, userId, accessToken, tokenData);
+    return { success: ok };
+  } catch (error: any) {
+    console.error('❌ [IPC] 创建 API 令牌失败:', error);
     return { success: false, error: error.message };
   }
 });

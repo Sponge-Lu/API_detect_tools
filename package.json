@@ -1,6 +1,6 @@
 {
   "name": "api-hub-management-tools",
-  "version": "2.0.2",
+  "version": "2.0.4",
   "description": "API Hub Management Tools - Professional API management and monitoring tool",
   "main": "dist/main.js",
   "type": "commonjs",
@@ -37,6 +37,7 @@
     "vite": "^5.4.0"
   },
   "build": {
+    "buildVersion": "2.0.4.1",
     "appId": "com.apihub.management",
     "productName": "API Hub Management Tools",
     "directories": {
@@ -65,10 +66,11 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
-      "deleteAppDataOnUninstall": true
+      "deleteAppDataOnUninstall": true,
+      "artifactName": "${productName} Setup ${buildVersion}.${ext}"
     },
     "portable": {
-      "artifactName": "${productName}-${version}-portable.exe"
+      "artifactName": "${productName}-${buildVersion}-portable.exe"
     },
     "extraResources": [
       {

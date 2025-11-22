@@ -36,6 +36,9 @@ export interface SiteAccount {
   exchange_rate?: number;        // 汇率 (CNY per USD)
   notes?: string;                // 用户备注
   health?: HealthStatus;         // 健康状态
+  // 最近一次检测结果（用于界面恢复状态）
+  last_detection_status?: string; // 上次检测状态（成功/失败）
+  last_detection_error?: string;  // 上次检测错误信息
   
   // === 旧字段兼容 (保留以支持现有代码) ===
   account_info?: {

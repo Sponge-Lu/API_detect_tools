@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import Logo from "./assets/logo.svg";
 import {
   Server,
   Plus,
@@ -54,6 +55,8 @@ export interface Settings {
   show_disabled: boolean;
   auto_refresh: boolean;
   refresh_interval: number;
+  // 新增：浏览器可执行文件路径（可选），用于自定义 Chromium / Edge / 便携版浏览器
+  browser_path?: string;
 }
 
 export interface Config {
@@ -76,6 +79,18 @@ export interface DetectionResult {
   userGroups?: Record<string, { desc: string; ratio: number }>;
   modelPricing?: any;
 }
+
+// 新增：创建 API Key 表单数据类型
+interface NewApiTokenForm {
+  name: string;            // 令牌名称
+  group: string;           // 分组名称
+  unlimitedQuota: boolean; // 是否无限额度
+  quota: string;           // 用户输入的额度（单位：美元，字符串便于校验）
+  expiredTime: string;     // 过期时间（datetime-local 字符串，空字符串表示永不过期）
+}
+
+// 新增：额度换算系数（与后端保持一致：1 美元 = 500000 内部单位）
+const QUOTA_CONVERSION_FACTOR = 500000;
 
 function App() {
   // 初始化主题系统
@@ -111,6 +126,29 @@ function App() {
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   // 新增：保存状态
   const [saving, setSaving] = useState(false);
+  // 新增：创建 API Key 弹窗状态
+  const [creatingTokenSite, setCreatingTokenSite] = useState<SiteConfig | null>(null);
+  // 新增：创建 API Key 弹窗版本号，用于每次打开时强制重新挂载，避免残留状态影响输入
+  const [tokenDialogVersion, setTokenDialogVersion] = useState(0);
+  // 新增：创建 API Key 名称输入框引用，用于自动聚焦
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const [newTokenForm, setNewTokenForm] = useState<NewApiTokenForm>({
+    name: '',
+    group: 'default',
+    unlimitedQuota: true,
+    quota: '',
+    expiredTime: '',
+  });
+  const [creatingToken, setCreatingToken] = useState(false);
+
+  // 当弹窗打开或版本号变化时，自动聚焦到名称输入框
+  useEffect(() => {
+    if (creatingTokenSite && nameInputRef.current) {
+      // 自动聚焦并选中文本，提升输入体验
+      nameInputRef.current.focus();
+      nameInputRef.current.select();
+    }
+  }, [creatingTokenSite, tokenDialogVersion]);
 
   // 切换令牌显示/隐藏
   const toggleTokenVisibility = (siteName: string) => {
@@ -298,6 +336,148 @@ function App() {
     }));
   };
 
+  // 打开创建 API Key 弹窗
+  const openCreateTokenDialog = (site: SiteConfig) => {
+    if (!site.system_token || !site.user_id) {
+      alert('当前站点未配置系统 Token 或用户 ID，请先在“编辑站点”中填写。');
+      return;
+    }
+
+    // 根据检测结果名称选择 userGroups 的 key（保持与后端缓存一致）
+    const siteResult = results.find(r => r.name === site.name);
+    const siteKey = siteResult?.name || site.name;
+    const groupsForSite = userGroups[siteKey] || {};
+    const groupNames = Object.keys(groupsForSite);
+
+    // 选择一个默认分组：优先 default，其次第一个分组
+    let defaultGroup = 'default';
+    if (groupNames.length > 0) {
+      if (groupsForSite.default) {
+        defaultGroup = 'default';
+      } else {
+        defaultGroup = groupNames[0];
+      }
+    }
+
+    // 每次打开前重置“创建中”状态，避免异常情况下残留
+    setCreatingToken(false);
+    // 递增版本号，确保对话框组件在每次打开时重新挂载
+    setTokenDialogVersion(prev => prev + 1);
+
+    setNewTokenForm({
+      name: '',
+      group: defaultGroup,
+      unlimitedQuota: true,
+      quota: '',
+      expiredTime: '',
+    });
+    setCreatingTokenSite(site);
+  };
+
+  // 关闭创建 API Key 弹窗并重置表单
+  const closeCreateTokenDialog = () => {
+    setCreatingTokenSite(null);
+    setNewTokenForm({
+      name: '',
+      group: 'default',
+      unlimitedQuota: true,
+      quota: '',
+      expiredTime: '',
+    });
+  };
+
+  // 提交创建 API Key
+  const handleCreateTokenSubmit = async () => {
+    if (!creatingTokenSite) return;
+    const site = creatingTokenSite;
+
+    if (!site.system_token || !site.user_id) {
+      alert('当前站点未配置系统 Token 或用户 ID，请先在“编辑站点”中填写。');
+      return;
+    }
+
+    const name = newTokenForm.name.trim();
+    if (!name) {
+      alert('请填写令牌名称');
+      return;
+    }
+
+    // 处理额度：无限额度时 remain_quota 置为 0（后端根据 unlimited_quota 判断），有限额度时按美元转换为内部单位
+    let remainQuota = 0;
+    if (newTokenForm.unlimitedQuota) {
+      remainQuota = 0;
+    } else {
+      const quotaNumber = parseFloat(newTokenForm.quota);
+      if (isNaN(quotaNumber) || quotaNumber <= 0) {
+        alert('请输入大于 0 的额度（单位：美元）');
+        return;
+      }
+      remainQuota = Math.floor(quotaNumber * QUOTA_CONVERSION_FACTOR);
+    }
+
+    // 处理过期时间：空字符串表示永不过期（-1）
+    let expiredTime = -1;
+    if (newTokenForm.expiredTime) {
+      const dt = new Date(newTokenForm.expiredTime);
+      if (isNaN(dt.getTime())) {
+        alert('请输入有效的过期时间');
+        return;
+      }
+      if (dt.getTime() <= Date.now()) {
+        alert('过期时间必须晚于当前时间');
+        return;
+      }
+      expiredTime = Math.floor(dt.getTime() / 1000);
+    }
+
+    const group = newTokenForm.group || 'default';
+
+    // 构造后端需要的 payload（与 all-api-hub 保持一致的通用字段）
+    const tokenPayload = {
+      name,
+      remain_quota: remainQuota,
+      expired_time: expiredTime,
+      unlimited_quota: newTokenForm.unlimitedQuota,
+      model_limits_enabled: false,
+      model_limits: '',
+      allow_ips: '',
+      group,
+    };
+
+    try {
+      setCreatingToken(true);
+      const userIdNum = parseInt(site.user_id || '0', 10);
+      if (!userIdNum) {
+        alert('当前站点用户 ID 无效，请在“编辑站点”中检查配置。');
+        return;
+      }
+
+      const resp = await window.electronAPI.token?.createApiToken?.(
+        site.url,
+        userIdNum,
+        site.system_token!,
+        tokenPayload
+      );
+
+      // IPC 统一返回 { success, error? }
+      if (!resp || resp.success !== true) {
+        throw new Error(resp?.error || '未知错误');
+      }
+
+      // 创建成功后，直接使用检测流程刷新该站点的数据（包含最新的 API Keys）
+      // 说明：detectSingle 内部会处理 Cloudflare 等情况，比直接调用 /api/token/ 更可靠
+      await detectSingle(site, true);
+
+      alert('API Key 创建成功');
+      closeCreateTokenDialog();
+    } catch (error: any) {
+      console.error('❌ [App] 创建 API Key 失败:', error);
+      alert(`创建 API Key 失败: ${error.message || error}`);
+    } finally {
+      setCreatingToken(false);
+    }
+  };
+
   // 复制到剪贴板
   const copyToClipboard = async (text: string, label: string) => {
     try {
@@ -413,7 +593,9 @@ function App() {
             const result = {
               name: siteName,  // 使用配置文件中的名称
               url: account.site_url,
-              status: '成功',
+              // 恢复最近一次检测状态，如果没有则默认为成功
+              status: (account as any).last_detection_status || '成功',
+              error: (account as any).last_detection_error,
               models: account.cached_display_data?.models || [],
               // 🔧 修复：缓存中的余额已经在后端转换过了，直接使用即可
               balance: account.cached_display_data?.quota,
@@ -521,10 +703,41 @@ function App() {
   const detectAllSites = async () => {
     if (!config) return;
     setDetecting(true);
-    setResults([]);
     try {
-      const results = await window.electronAPI.detectAllSites(config);
-      setResults(results);
+      const newResults = await window.electronAPI.detectAllSites(config);
+      // 合并新结果与旧结果：如果新结果失败且旧结果存在，则保留旧数据但覆盖状态和错误信息
+      setResults((prev) => {
+        const map = new Map<string, DetectionResult>();
+        prev.forEach(r => map.set(r.name, r));
+        newResults.forEach((result) => {
+          const old = map.get(result.name);
+          let effective = result;
+          if (result.status === "失败" && old) {
+            effective = {
+              ...old,
+              status: result.status,
+              error: result.error,
+            };
+          }
+          map.set(result.name, effective);
+        });
+        return Array.from(map.values());
+      });
+
+      // 更新成功站点的最后检测时间（仅成功时刷新，失败保留旧时间）
+      setSiteAccounts((prev) => {
+        const next = { ...prev };
+        const now = Date.now();
+        newResults.forEach((result) => {
+          if (result.status === "成功" && next[result.name]) {
+            next[result.name] = {
+              ...next[result.name],
+              last_sync_time: now,
+            };
+          }
+        });
+        return next;
+      });
     } catch (error) {
       console.error("检测失败:", error);
       alert("检测失败: " + error);
@@ -562,15 +775,26 @@ function App() {
     setDetectingSite(site.name);
     
     try {
+      // 现有检测结果（用于在失败时保留旧数据）
+      const existingResult = results.find(r => r.name === site.name);
       // 快速刷新模式：传递现有的缓存数据
-      const cachedResult = quickRefresh ? results.find(r => r.name === site.name) : undefined;
+      const cachedResult = quickRefresh ? existingResult : undefined;
       
-      const result = await window.electronAPI.detectSite(
+      const rawResult = await window.electronAPI.detectSite(
         site,
         config.settings.timeout,
         quickRefresh,
         cachedResult
       );
+      
+      // 如果本次检测失败且存在旧结果，则保留旧数据，只更新状态和错误信息
+      const result: DetectionResult = (rawResult.status === "失败" && existingResult)
+        ? {
+            ...existingResult,
+            status: rawResult.status,
+            error: rawResult.error,
+          }
+        : rawResult;
       
       // 检查数据是否有变化
       const hasChanges = hasSignificantChanges(cachedResult, result);
@@ -600,18 +824,33 @@ function App() {
         const filtered = prev.filter((r) => r.name !== site.name);
         return [...filtered, result];
       });
+
+      // 成功时更新该站点的最后检测时间（失败时保留旧时间）
+      if (rawResult.status === "成功") {
+        setSiteAccounts((prev) => {
+          const next = { ...prev };
+          const acc = next[site.name];
+          if (acc) {
+            next[site.name] = {
+              ...acc,
+              last_sync_time: Date.now(),
+            };
+          }
+          return next;
+        });
+      }
       
-      // 立即更新缓存（不管站点是否展开）
-      if (result) {
-        if (result.apiKeys) {
-          setApiKeys(prev => ({ ...prev, [site.name]: result.apiKeys! }));
+      // 立即更新缓存（不管站点是否展开），仅在检测成功时刷新扩展数据
+      if (rawResult && rawResult.status === "成功") {
+        if (rawResult.apiKeys) {
+          setApiKeys(prev => ({ ...prev, [site.name]: rawResult.apiKeys! }));
         }
-        if (result.userGroups) {
-          setUserGroups(prev => ({ ...prev, [site.name]: result.userGroups! }));
+        if (rawResult.userGroups) {
+          setUserGroups(prev => ({ ...prev, [site.name]: rawResult.userGroups! }));
         }
-        if (result.modelPricing) {
-          console.log(`💾 [App] 保存 ${site.name} 的定价数据，模型数: ${result.modelPricing?.data ? Object.keys(result.modelPricing.data).length : 0}`);
-          setModelPricing(prev => ({ ...prev, [site.name]: result.modelPricing! }));
+        if (rawResult.modelPricing) {
+          console.log(`💾 [App] 保存 ${site.name} 的定价数据，模型数: ${rawResult.modelPricing?.data ? Object.keys(rawResult.modelPricing.data).length : 0}`);
+          setModelPricing(prev => ({ ...prev, [site.name]: rawResult.modelPricing! }));
         }
       }
     } catch (error: any) {
@@ -880,161 +1119,14 @@ function App() {
         <header className="bg-white/80 dark:bg-dark-card/80 backdrop-blur-md border-b border-light-border dark:border-dark-border px-4 py-3 shadow-sm">
         <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              {/* Logo - 黑色六边形 + 动态粒子 */}
-              <div className="relative w-10 h-10">
-                <svg viewBox="0 0 200 200" className="w-full h-full drop-shadow-lg">
-                  <defs>
-                    {/* 裁剪路径：限制粒子在六边形内 */}
-                    <clipPath id="hexClip">
-                      <path d="M100 20 L170 60 L170 140 L100 180 L30 140 L30 60 Z"/>
-                    </clipPath>
-                    
-                    {/* 阴影效果 */}
-                    <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
-                      <feDropShadow dx="0" dy="4" stdDeviation="8" floodOpacity="0.3"/>
-                    </filter>
-                    
-                    {/* 发光效果 */}
-                    <filter id="glow">
-                      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
-                      <feMerge>
-                        <feMergeNode in="coloredBlur"/>
-                        <feMergeNode in="SourceGraphic"/>
-                      </feMerge>
-                    </filter>
-                  </defs>
-                  
-                  {/* 六边形主体 - 纯黑色 */}
-                  <path
-                    d="M100 20 L170 60 L170 140 L100 180 L30 140 L30 60 Z"
-                    fill="#000000"
-                    filter="url(#shadow)"
-                  />
-                  
-                  {/* 粒子和连线容器（裁剪在六边形内） */}
-                  <g clipPath="url(#hexClip)">
-                    {/* 连线层 */}
-                    <g opacity="0.15" stroke="#10b981" strokeWidth="0.5" fill="none">
-                      {/* 动态连线 - 随机分布 */}
-                      <line x1="45" y1="50" x2="85" y2="75">
-                        <animate attributeName="x1" values="45;50;45" dur="8s" repeatCount="indefinite"/>
-                        <animate attributeName="y1" values="50;55;50" dur="7s" repeatCount="indefinite"/>
-                      </line>
-                      <line x1="85" y1="75" x2="120" y2="65">
-                        <animate attributeName="x2" values="120;125;120" dur="9s" repeatCount="indefinite"/>
-                      </line>
-                      <line x1="120" y1="65" x2="155" y2="85">
-                        <animate attributeName="y2" values="85;80;85" dur="10s" repeatCount="indefinite"/>
-                      </line>
-                      <line x1="60" y1="110" x2="95" y2="130">
-                        <animate attributeName="x1" values="60;65;60" dur="11s" repeatCount="indefinite"/>
-                      </line>
-                      <line x1="155" y1="85" x2="145" y2="120">
-                        <animate attributeName="x1" values="155;150;155" dur="9.5s" repeatCount="indefinite"/>
-                      </line>
-                      <line x1="50" y1="80" x2="70" y2="115">
-                        <animate attributeName="y2" values="115;110;115" dur="12s" repeatCount="indefinite"/>
-                      </line>
-                    </g>
-                    
-                    {/* 粒子层 */}
-                    <g filter="url(#glow)">
-                      {/* 大粒子 - 翡翠绿 */}
-                      <circle cx="45" cy="50" r="2.5" fill="#10b981" opacity="0.9">
-                        <animate attributeName="cx" values="45;50;45" dur="8s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="50;55;50" dur="7s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.9;0.6;0.9" dur="4s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      <circle cx="85" cy="75" r="2" fill="#10b981" opacity="0.8">
-                        <animate attributeName="cx" values="85;90;85" dur="9s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="75;70;75" dur="8s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.8;0.5;0.8" dur="3.5s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      <circle cx="120" cy="65" r="3" fill="#f97316" opacity="0.85">
-                        <animate attributeName="cx" values="120;125;120" dur="9s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="65;60;65" dur="10s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.85;0.6;0.85" dur="4.5s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      <circle cx="155" cy="85" r="2.2" fill="#f97316" opacity="0.75">
-                        <animate attributeName="cx" values="155;150;155" dur="10s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="85;80;85" dur="9s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.75;0.5;0.75" dur="3.8s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      {/* 中等粒子 */}
-                      <circle cx="60" cy="110" r="1.8" fill="#10b981" opacity="0.7">
-                        <animate attributeName="cx" values="60;65;60" dur="11s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="110;105;110" dur="8s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.7;0.4;0.7" dur="3.2s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      <circle cx="95" cy="130" r="2.5" fill="#f97316" opacity="0.8">
-                        <animate attributeName="cx" values="95;100;95" dur="8.5s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="130;135;130" dur="9.5s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.8;0.55;0.8" dur="4.2s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      <circle cx="135" cy="145" r="2" fill="#10b981" opacity="0.75">
-                        <animate attributeName="cx" values="135;140;135" dur="10s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="145;150;145" dur="11s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.75;0.5;0.75" dur="3.6s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      <circle cx="145" cy="120" r="1.5" fill="#f97316" opacity="0.65">
-                        <animate attributeName="cx" values="145;150;145" dur="9.5s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="120;125;120" dur="10.5s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.65;0.4;0.65" dur="3.3s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      {/* 小粒子 - 增加随性感 */}
-                      <circle cx="75" cy="155" r="1.2" fill="#10b981" opacity="0.6">
-                        <animate attributeName="cx" values="75;80;75" dur="10.5s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="155;150;155" dur="12s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.6;0.3;0.6" dur="2.8s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      <circle cx="50" cy="80" r="1.3" fill="#f97316" opacity="0.6">
-                        <animate attributeName="cx" values="50;55;50" dur="12s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="80;85;80" dur="10s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.6;0.35;0.6" dur="2.9s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      <circle cx="70" cy="115" r="1.1" fill="#10b981" opacity="0.55">
-                        <animate attributeName="cx" values="70;75;70" dur="9.8s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="115;110;115" dur="11.2s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.55;0.3;0.55" dur="3.4s" repeatCount="indefinite"/>
-                      </circle>
-                      
-                      <circle cx="160" cy="110" r="1.4" fill="#f97316" opacity="0.65">
-                        <animate attributeName="cx" values="160;155;160" dur="10.3s" repeatCount="indefinite"/>
-                        <animate attributeName="cy" values="110;115;110" dur="8.7s" repeatCount="indefinite"/>
-                        <animate attributeName="opacity" values="0.65;0.4;0.65" dur="3.7s" repeatCount="indefinite"/>
-                      </circle>
-                    </g>
-                  </g>
-                  
-                  {/* API 文字 - 保持原大小 */}
-                  <text
-                    x="100"
-                    y="120"
-                    fontSize="60"
-                    fontWeight="bold"
-                    fill="white"
-                    textAnchor="middle"
-                    fontFamily="Arial, Helvetica, sans-serif"
-                    letterSpacing="-2"
-                  >
-                    API
-                  </text>
-                </svg>
-            </div>
-            <div>
+              {/* Logo - 使用新的品牌图标 */}
+              <div className="relative w-10 h-10 rounded-2xl border border-light-border dark:border-dark-border bg-white/70 dark:bg-dark-card/70 shadow-lg flex items-center justify-center overflow-hidden">
+                <img src={Logo} alt="API Hub Management Tools logo" className="w-8 h-8 object-contain select-none" draggable={false} />
+              </div>
+              <div>
                 <h1 className="text-lg font-bold text-light-text dark:text-dark-text">API Hub Management Tools</h1>
+              </div>
             </div>
-          </div>
           <div className="flex items-center gap-2">
             {saving && (
                 <div className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-500/10 text-primary-600 dark:text-primary-400 rounded-lg text-xs border border-primary-500/20">
@@ -1093,10 +1185,63 @@ function App() {
               </div>
             ) : (
               config.sites.map((site, index) => {
-                const siteResult = results.find(r => r.name === site.name);
+                // 先按名称匹配检测结果，如果名称被修改则回退到按URL匹配
+                let siteResult = results.find(r => r.name === site.name);
+                if (!siteResult) {
+                  try {
+                    const siteOrigin = new URL(site.url).origin;
+                    siteResult = results.find(r => {
+                      try {
+                        return new URL(r.url).origin === siteOrigin;
+                      } catch {
+                        return false;
+                      }
+                    });
+                  } catch {
+                    // ignore url parse error
+                  }
+                }
                 const isExpanded = expandedSites.has(site.name);
                 const showToken = showTokens[site.name] || false;
-                const siteAccount = siteAccounts[site.name];  // 获取站点账号信息
+                // 账号信息也优先按名称匹配，失败时按URL回退
+                let siteAccount = siteAccounts[site.name];
+                if (!siteAccount) {
+                  try {
+                    const urlKey = new URL(site.url).origin;
+                    siteAccount = siteAccounts[urlKey];
+                  } catch {
+                    // ignore
+                  }
+                }
+                
+                // 计算最后更新时间显示（格式：月/日 时:分）
+                let lastSyncDisplay: string | null = null;
+                if (siteAccount?.last_sync_time) {
+                  const dt = new Date(siteAccount.last_sync_time);
+                  const month = String(dt.getMonth() + 1).padStart(2, '0');
+                  const day = String(dt.getDate()).padStart(2, '0');
+                  const hour = String(dt.getHours()).padStart(2, '0');
+                  const minute = String(dt.getMinutes()).padStart(2, '0');
+                  lastSyncDisplay = `${month}/${day} ${hour}:${minute}`;
+                }
+                
+                // 从错误信息中提取 Error Code（例如 "status code 403"）
+                let errorCode: string | null = null;
+                // 从错误信息中提取超时秒数（例如 "timeout of 10000ms exceeded"）
+                let timeoutSeconds: number | null = null;
+                if (siteResult?.error) {
+                  const codeMatch = siteResult.error.match(/status code (\d{3})/i);
+                  if (codeMatch) {
+                    errorCode = codeMatch[1];
+                  }
+                  const timeoutMatch = siteResult.error.match(/timeout.*?(\d+)\s*ms/i);
+                  if (timeoutMatch) {
+                    const ms = parseInt(timeoutMatch[1], 10);
+                    if (!isNaN(ms) && ms > 0) {
+                      timeoutSeconds = Math.round(ms / 1000);
+                    }
+                  }
+                }
                 
                 return (
                   <div
@@ -1188,7 +1333,8 @@ function App() {
                               <span className={`font-semibold text-xs ${
                                 (() => {
                                   // 优先使用定价数据中的模型数量
-                                  const pricing = modelPricing[site.name];
+                                  const key = siteResult?.name || site.name;
+                                  const pricing = modelPricing[key];
                                   const apiModelCount = siteResult?.models?.length || 0;
                                   const pricingModelCount = pricing?.data ? Object.keys(pricing.data).length : 0;
                                   const actualCount = Math.max(apiModelCount, pricingModelCount);
@@ -1197,7 +1343,8 @@ function App() {
                               }`}>
                                 {(() => {
                                   // 优先使用定价数据中的模型数量
-                                  const pricing = modelPricing[site.name];
+                                  const key = siteResult?.name || site.name;
+                                  const pricing = modelPricing[key];
                                   const apiModelCount = siteResult?.models?.length || 0;
                                   const pricingModelCount = pricing?.data ? Object.keys(pricing.data).length : 0;
                                   return Math.max(apiModelCount, pricingModelCount);
@@ -1205,15 +1352,22 @@ function App() {
                               </span>
                             </div>
                             
-                            {/* 最后更新时间 */}
-                            {siteAccount?.last_sync_time && (
+                            {/* 最后更新时间 + 错误码 / Timeout */}
+                            {lastSyncDisplay && (
                               <div className="flex items-center gap-1">
                                 <span className="text-slate-500 dark:text-slate-400 text-xs">
-                                  更新: {new Date(siteAccount.last_sync_time).toLocaleTimeString('zh-CN', {
-                                    hour: '2-digit',
-                                    minute: '2-digit'
-                                  })}
+                                  更新: {lastSyncDisplay}
                                 </span>
+                                {errorCode && (
+                                  <span className="text-red-500 dark:text-red-400 text-xs font-bold">
+                                    Error Code: {errorCode}
+                                  </span>
+                                )}
+                                {!errorCode && timeoutSeconds !== null && (
+                                  <span className="text-red-500 dark:text-red-400 text-xs font-bold">
+                                    Timeout {timeoutSeconds}s
+                                  </span>
+                                )}
                               </div>
                             )}
                           </div>
@@ -1387,10 +1541,13 @@ function App() {
                         )}
                         
                         {/* 用户分组 */}
-                        {userGroups[site.name] && Object.keys(userGroups[site.name]).length > 0 && (
+                        {(() => {
+                          const key = siteResult?.name || site.name;
+                          return userGroups[key] && Object.keys(userGroups[key]).length > 0;
+                        })() && (
                           <div className="flex items-center gap-1 flex-wrap py-0">
                             <span className="text-xs text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">分组</span>
-                            {Object.entries(userGroups[site.name]).map(([groupName, groupData]: [string, any]) => (
+                            {Object.entries(userGroups[siteResult?.name || site.name]).map(([groupName, groupData]: [string, any]) => (
                               <button
                                 key={groupName}
                                 onClick={() => toggleGroupFilter(site.name, groupName)}
@@ -1418,100 +1575,129 @@ function App() {
                         )}
                         
                         {/* API Keys列表 */}
-                        {apiKeys[site.name] && apiKeys[site.name].length > 0 && (
-                          <div className="space-y-0.5">
-                            <div className="flex items-center gap-1">
-                              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                                Keys ({getFilteredApiKeys(site.name).length}/{apiKeys[site.name].length})
-                                {selectedGroup[site.name] && (
-                                  <span className="ml-1 text-primary-400">· {selectedGroup[site.name]}</span>
-                                )}
-                              </span>
-                            </div>
-                            <div className="space-y-0.5 max-h-40 overflow-y-auto">
-                              {getFilteredApiKeys(site.name).map((key: any, idx: number) => {
-                                const quotaInfo = key.unlimited_quota ? null : getQuotaTypeInfo(key.type || 0);
-                                return (
-                                  <div
-                                    key={idx}
-                                    className="px-1.5 py-0.5 bg-white dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-700 transition-all flex items-center justify-between gap-1"
-                                  >
-                                    {/* 左侧：名称+标签 */}
-                                    <div className="flex items-center gap-0.5 min-w-0 flex-1">
-                                      <span className="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate">
-                                        {key.name || `Key #${idx + 1}`}
-                                      </span>
-                                      {key.group && key.group.trim() && (
-                                        <span className={`px-1.5 py-0.5 text-xs rounded border flex items-center gap-0.5 flex-shrink-0 ${getGroupColor(key.group)}`}>
-                                          {getGroupIcon(key.group, false)}
-                                          <span className="font-medium">{key.group}</span>
-                                        </span>
-                                      )}
-                                      {quotaInfo && (
-                                        <span className={`p-0.5 text-xs rounded border flex items-center flex-shrink-0 ${quotaInfo.color}`} title={quotaInfo.text}>
-                                          {quotaInfo.icon}
-                                        </span>
-                                      )}
-                                      {key.unlimited_quota && (
-                                        <span className="px-1 py-0.5 text-xs rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 flex-shrink-0">
-                                          ∞
-                                        </span>
-                                      )}
-                                      <span className={`p-0.5 text-xs rounded flex-shrink-0 ${
-                                        key.status === 1
-                                          ? 'bg-green-500/20 text-green-300 border border-green-500/30'
-                                          : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
-                                      }`}>
-                                        {key.status === 1 ? '✓' : '✕'}
-                                      </span>
-                                    </div>
-                                    
-                                    {/* 中间：令牌+数据 */}
-                                    <div className="flex items-center gap-2 text-xs">
-                                      <span className="font-mono text-blue-600 dark:text-blue-400">
-                                        {maskToken(addSkPrefix(key.key), showTokens[`${site.name}_key_${idx}`] || false)}
-                                      </span>
-                                      {!key.unlimited_quota && key.remain_quota !== undefined && (
-                                        <span className="text-slate-500 dark:text-slate-400">
-                                          余<span className={key.remain_quota > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>
-                                            ${(key.remain_quota / 500000).toFixed(2)}
-                                          </span>
-                                        </span>
-                                      )}
-                                      {key.used_quota !== undefined && (
-                                        <span className="text-slate-500 dark:text-slate-400">
-                                          用<span className="text-orange-600 dark:text-orange-400">${(key.used_quota / 500000).toFixed(2)}</span>
-                                        </span>
-                                      )}
-                                    </div>
-                                    
-                                    {/* 右侧：操作按钮 */}
-                                    <div className="flex items-center gap-0.5 flex-shrink-0">
-                                      <button
-                                        onClick={() => toggleTokenVisibility(`${site.name}_key_${idx}`)}
-                                        className="p-0.5 hover:bg-white/10 rounded transition-all"
-                                        title={showTokens[`${site.name}_key_${idx}`] ? "隐藏" : "显示"}
-                                      >
-                                        {showTokens[`${site.name}_key_${idx}`] ? (
-                                          <EyeOff className="w-3 h-3 text-gray-400" />
-                                        ) : (
-                                          <Eye className="w-3 h-3 text-gray-400" />
-                                        )}
-                                      </button>
-                                      <button
-                                        onClick={() => copyToClipboard(addSkPrefix(key.key), `API Key: ${key.name}`)}
-                                        className="p-0.5 hover:bg-white/10 rounded transition-all"
-                                        title="复制"
-                                      >
-                                        <Copy className="w-3 h-3 text-gray-400" />
-                                      </button>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1 justify-between">
+                            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                              {(() => {
+                                const siteKey = siteResult?.name || site.name;
+                                const allKeys = apiKeys[siteKey] || [];
+                                return `Keys (${getFilteredApiKeys(siteKey).length}/${allKeys.length})`;
+                              })()}
+                              {selectedGroup[site.name] && (
+                                <span className="ml-1 text-primary-400">· {selectedGroup[site.name]}</span>
+                              )}
+                            </span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openCreateTokenDialog(site);
+                              }}
+                              className="px-1.5 py-0.5 bg-primary-600 hover:bg-primary-700 text-white rounded text-xs flex items-center gap-0.5 shadow-sm"
+                              title="创建新的 API Key"
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>添加令牌</span>
+                            </button>
                           </div>
-                        )}
+                          {(() => {
+                            const siteKey = siteResult?.name || site.name;
+                            const allKeys = apiKeys[siteKey] || [];
+                            const filtered = getFilteredApiKeys(siteKey);
+
+                            if (!allKeys || allKeys.length === 0) {
+                              return (
+                                <div className="px-1 text-[11px] text-slate-400 dark:text-slate-500">
+                                  暂无 API Key，可点击右侧“添加令牌”创建。
+                                </div>
+                              );
+                            }
+
+                            return (
+                              <div className="space-y-0.5 max-h-40 overflow-y-auto">
+                                {filtered.map((token: any, idx: number) => {
+                                  const quotaInfo = token.unlimited_quota ? null : getQuotaTypeInfo(token.type || 0);
+                                  return (
+                                    <div
+                                      key={idx}
+                                      className="px-1.5 py-0.5 bg-white dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-700 transition-all flex items-center justify-between gap-1"
+                                    >
+                                      {/* 左侧：名称+标签 */}
+                                      <div className="flex items-center gap-0.5 min-w-0 flex-1">
+                                        <span className="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate">
+                                          {token.name || `Key #${idx + 1}`}
+                                        </span>
+                                        {token.group && token.group.trim() && (
+                                          <span className={`px-1.5 py-0.5 text-xs rounded border flex items-center gap-0.5 flex-shrink-0 ${getGroupColor(token.group)}`}>
+                                            {getGroupIcon(token.group, false)}
+                                            <span className="font-medium">{token.group}</span>
+                                          </span>
+                                        )}
+                                        {quotaInfo && (
+                                          <span className={`p-0.5 text-xs rounded border flex items-center flex-shrink-0 ${quotaInfo.color}`} title={quotaInfo.text}>
+                                            {quotaInfo.icon}
+                                          </span>
+                                        )}
+                                        {token.unlimited_quota && (
+                                          <span className="px-1 py-0.5 text-xs rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 flex-shrink-0">
+                                            ∞
+                                          </span>
+                                        )}
+                                        <span className={`p-0.5 text-xs rounded flex-shrink-0 ${
+                                          token.status === 1
+                                            ? 'bg-green-500/20 text-green-300 border border-green-500/30'
+                                            : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
+                                        }`}>
+                                          {token.status === 1 ? '✓' : '✕'}
+                                        </span>
+                                      </div>
+                                      
+                                      {/* 中间：令牌+数据 */}
+                                      <div className="flex items-center gap-2 text-xs">
+                                        <span className="font-mono text-blue-600 dark:text-blue-400">
+                                          {maskToken(addSkPrefix(token.key), showTokens[`${site.name}_key_${idx}`] || false)}
+                                        </span>
+                                        {!token.unlimited_quota && token.remain_quota !== undefined && (
+                                          <span className="text-slate-500 dark:text-slate-400">
+                                            余<span className={token.remain_quota > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>
+                                              ${(token.remain_quota / 500000).toFixed(2)}
+                                            </span>
+                                          </span>
+                                        )}
+                                        {token.used_quota !== undefined && (
+                                          <span className="text-slate-500 dark:text-slate-400">
+                                            用<span className="text-orange-600 dark:text-orange-400">${(token.used_quota / 500000).toFixed(2)}</span>
+                                          </span>
+                                        )}
+                                      </div>
+                                      
+                                      {/* 右侧：操作按钮 */}
+                                      <div className="flex items-center gap-0.5 flex-shrink-0">
+                                        <button
+                                          onClick={() => toggleTokenVisibility(`${site.name}_key_${idx}`)}
+                                          className="p-0.5 hover:bg-white/10 rounded transition-all"
+                                          title={showTokens[`${site.name}_key_${idx}`] ? "隐藏" : "显示"}
+                                        >
+                                          {showTokens[`${site.name}_key_${idx}`] ? (
+                                            <EyeOff className="w-3 h-3 text-gray-400" />
+                                          ) : (
+                                            <Eye className="w-3 h-3 text-gray-400" />
+                                          )}
+                                        </button>
+                                        <button
+                                          onClick={() => copyToClipboard(addSkPrefix(token.key), `API Key: ${token.name}`)}
+                                          className="p-0.5 hover:bg-white/10 rounded transition-all"
+                                          title="复制"
+                                        >
+                                          <Copy className="w-3 h-3 text-gray-400" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })()}
+                        </div>
                         
                         {/* 可用模型列表 - 添加搜索框 */}
                         {(() => {
@@ -1613,7 +1799,7 @@ function App() {
                                   const enableGroups = pricingData?.enable_groups || [];
                                   
                                   // 获取用户分组倍率（默认为1）
-                                  const groupRatio = userGroups[site.name] || {};
+                                  const groupRatio = userGroups[siteResult?.name || site.name] || {};
                                   const currentGroup = selectedGroup[site.name] || 'default';
                                   const groupMultiplier = groupRatio[currentGroup]?.ratio || 1;
                                   
@@ -1799,6 +1985,166 @@ function App() {
           }}
           onCancel={() => setShowSettings(false)}
         />
+      )}
+
+      {/* 创建 API Key 弹窗 */}
+      {creatingTokenSite && (
+        <div
+          key={tokenDialogVersion}
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/40"
+        >
+          <div className="bg-white dark:bg-slate-900 rounded-lg shadow-xl w-full max-w-md p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                为「{creatingTokenSite.name}」创建 API Key
+              </h2>
+              <button
+                onClick={closeCreateTokenDialog}
+                className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                title="关闭"
+              >
+                <XCircle className="w-4 h-4 text-slate-400" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {/* 名称 */}
+              <div>
+                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">
+                  名称
+                </label>
+                <input
+                  type="text"
+                  ref={nameInputRef}
+                  value={newTokenForm.name}
+                  onChange={(e) => setNewTokenForm(prev => ({ ...prev, name: e.target.value }))}
+                  className="w-full px-2 py-1.5 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                  placeholder="请输入令牌名称"
+                />
+              </div>
+
+              {/* 分组 */}
+              <div>
+                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">
+                  分组
+                </label>
+                {(() => {
+                  const siteResult = results.find(r => r.name === creatingTokenSite.name);
+                  const siteKey = siteResult?.name || creatingTokenSite.name;
+                  const groups = userGroups[siteKey] || {};
+                  const groupNames = Object.keys(groups);
+
+                  if (groupNames.length === 0) {
+                    return (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-slate-400 dark:text-slate-500">
+                          未获取到分组信息，默认使用 <span className="font-mono">default</span>
+                        </span>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <select
+                      value={newTokenForm.group}
+                      onChange={(e) => setNewTokenForm(prev => ({ ...prev, group: e.target.value }))}
+                      className="w-full px-2 py-1.5 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                    >
+                      {groupNames.map((groupName) => (
+                        <option key={groupName} value={groupName}>
+                          {groupName} {groups[groupName]?.desc ? `- ${groups[groupName].desc}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  );
+                })()}
+              </div>
+
+              {/* 过期时间 */}
+              <div>
+                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">
+                  过期时间（默认永不过期）
+                </label>
+                <input
+                  type="datetime-local"
+                  value={newTokenForm.expiredTime}
+                  onChange={(e) => setNewTokenForm(prev => ({ ...prev, expiredTime: e.target.value }))}
+                  className="w-full px-2 py-1.5 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                />
+                <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
+                  留空表示永不过期。
+                </p>
+              </div>
+
+              {/* 额度设置 */}
+              <div>
+                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">
+                  额度设置
+                </label>
+                <div className="flex items-center gap-2 mb-2">
+                  <label className="flex items-center gap-1 text-xs text-slate-600 dark:text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={newTokenForm.unlimitedQuota}
+                      onChange={(e) => setNewTokenForm(prev => ({ ...prev, unlimitedQuota: e.target.checked }))}
+                      className="rounded border-slate-300 dark:border-slate-600"
+                    />
+                    <span>无限额度</span>
+                  </label>
+                </div>
+                {!newTokenForm.unlimitedQuota && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={newTokenForm.quota}
+                      onChange={(e) => setNewTokenForm(prev => ({ ...prev, quota: e.target.value }))}
+                      className="flex-1 px-2 py-1.5 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                      placeholder="输入额度（单位：美元）"
+                    />
+                    <span className="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                      单位：美元
+                    </span>
+                  </div>
+                )}
+                {newTokenForm.unlimitedQuota && (
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                    勾选后表示不限制额度，后端会忽略具体额度数值。
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* 操作按钮 */}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={closeCreateTokenDialog}
+                className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-600 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                disabled={creatingToken}
+              >
+                取消
+              </button>
+              <button
+                onClick={handleCreateTokenSubmit}
+                disabled={creatingToken}
+                className="px-3 py-1.5 rounded bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-xs text-white flex items-center gap-1 transition-colors"
+              >
+                {creatingToken ? (
+                  <>
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>创建中...</span>
+                  </>
+                ) : (
+                  <>
+                    <Plus className="w-3 h-3" />
+                    <span>提交创建</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -200,6 +200,25 @@ export function SettingsPanel({
             </div>
           )}
 
+          {/* 浏览器路径设置 */}
+          <div>
+            <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-2">
+              浏览器路径（可选）
+            </label>
+            <input
+              type="text"
+              value={formData.browser_path || ""}
+              onChange={(e) =>
+                setFormData({ ...formData, browser_path: e.target.value })
+              }
+              placeholder="例如：C:\PortableApps\Chrome\chrome.exe，留空则自动检测 Chrome / Edge"
+              className="w-full px-4 py-2 bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 outline-none transition-all text-light-text dark:text-dark-text"
+            />
+            <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
+              当需要使用 Edge 或便携版 Chrome 等自定义 Chromium 浏览器时，可在此填写其可执行文件路径；留空则从系统自动查找 Chrome / Edge。
+            </p>
+          </div>
+
           {/* 按钮 */}
           <div className="flex items-center gap-3 pt-4">
             <button

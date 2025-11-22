@@ -10,6 +10,7 @@ interface Props {
 }
 
 type Step = 'input-url' | 'login' | 'fetching' | 'confirm';
+type Mode = 'auto' | 'manual'; // 添加站点模式：auto=智能添加（默认），manual=手动添加
 
 /**
  * 站点编辑器组件
@@ -21,6 +22,7 @@ type Step = 'input-url' | 'login' | 'fetching' | 'confirm';
 export function SiteEditor({ site, onSave, onCancel }: Props) {
   // 编辑模式下直接跳到确认步骤，新增模式从输入URL开始
   const [step, setStep] = useState<Step>(site ? 'confirm' : 'input-url');
+  const [mode, setMode] = useState<Mode>('auto'); // 当前添加模式
   const [url, setUrl] = useState(site?.url || "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -755,10 +757,53 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 overflow-y-auto">
       <div className="bg-light-card dark:bg-dark-card rounded-2xl shadow-2xl w-full max-w-2xl md:max-w-3xl border border-slate-200 dark:border-slate-700 max-h-[85vh] flex flex-col">
         {/* 头部 */}
-        <div className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700 bg-light-card dark:bg-dark-card">
-          <h2 className="text-xl font-bold">
-            {site ? "编辑站点" : "智能添加站点"}
-          </h2>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700">
+          <div className="flex flex-col gap-1">
+            <h2 className="text-xl font-bold">
+              {site
+                ? "编辑站点"
+                : mode === 'manual'
+                  ? "手动添加站点"
+                  : "智能添加站点"}
+            </h2>
+
+            {/* 新增站点时提供模式切换：智能添加（默认） / 手动添加 */}
+            {!site && (
+              <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                <span className="font-medium">添加方式：</span>
+                <button
+                  className={`px-2 py-0.5 rounded-full border text-[11px] transition-colors ${
+                    mode === 'auto'
+                      ? 'bg-primary-500 text-white border-primary-500'
+                      : 'bg-transparent text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-600'
+                  }`}
+                  onClick={() => {
+                    // 切换回智能添加：回到浏览器引导流程
+                    setMode('auto');
+                    setStep('input-url');
+                    setError("");
+                  }}
+                >
+                  智能添加（默认）
+                </button>
+                <button
+                  className={`px-2 py-0.5 rounded-full border text-[11px] transition-colors ${
+                    mode === 'manual'
+                      ? 'bg-primary-500 text-white border-primary-500'
+                      : 'bg-transparent text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-600'
+                  }`}
+                  onClick={() => {
+                    // 切换为手动添加：直接进入确认/手动填写步骤
+                    setMode('manual');
+                    setStep('confirm');
+                    setError("");
+                  }}
+                >
+                  手动添加站点
+                </button>
+              </div>
+            )}
+          </div>
           <button
             onClick={onCancel}
             className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
@@ -768,148 +813,44 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
         </div>
 
         {/* 内容区 */}
-        <div className="px-6 py-6 space-y-6 overflow-y-auto scroll-smooth">
-          {/* 添加方式切换 */}
-          <div className="flex items-center gap-2">
-            <button
-              className={`px-3 py-2 rounded-lg text-sm font-semibold ${mode==='auto' ? 'bg-primary-600 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200'}`}
-              onClick={() => setMode('auto')}
-            >
-              自动识别
-            </button>
-            <button
-              className={`px-3 py-2 rounded-lg text-sm font-semibold ${mode==='import' ? 'bg-primary-600 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200'}`}
-              onClick={() => setMode('import')}
-            >
-              控制台导入
-            </button>
-          </div>
-          {/* 步骤指示器（仅自动识别模式显示） */}
-          {mode==='auto' && (
-          <div className="flex items-center justify-between">
-            {[
-              { id: 'input-url', label: '输入URL', icon: '1' },
-              { id: 'login', label: '浏览器登录', icon: '2' },
-              { id: 'fetching', label: '获取信息', icon: '3' },
-              { id: 'confirm', label: '确认保存', icon: '4' },
-            ].map((s, idx) => (
-              <div key={s.id} className="flex items-center flex-1">
-                <div className={`flex items-center gap-2 ${
-                  step === s.id ? 'text-primary-600 dark:text-primary-400' : 
-                  ['login', 'fetching', 'confirm'].indexOf(s.id) <= ['login', 'fetching', 'confirm'].indexOf(step as any) ? 
-                  'text-green-600 dark:text-green-400' : 'text-slate-500 dark:text-slate-400'
-                }`}>
-                  <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-base text-white shadow-md ${
-                    step === s.id ? 'bg-primary-500' :
-                    ['login', 'fetching', 'confirm'].indexOf(s.id) <= ['login', 'fetching', 'confirm'].indexOf(step as any) ?
-                    'bg-green-500' : 'bg-slate-400 dark:bg-slate-600'
+        <div className="px-6 py-6 space-y-6">
+          {/* 步骤指示器（智能添加模式或编辑模式显示） */}
+          {(mode === 'auto' || site) && (
+            <div className="flex items-center justify-between">
+              {[
+                { id: 'input-url', label: '输入URL', icon: '1' },
+                { id: 'login', label: '浏览器登录', icon: '2' },
+                { id: 'fetching', label: '获取信息', icon: '3' },
+                { id: 'confirm', label: '确认保存', icon: '4' },
+              ].map((s, idx) => (
+                <div key={s.id} className="flex items-center flex-1">
+                  <div className={`flex items-center gap-2 ${
+                    step === s.id ? 'text-primary-600 dark:text-primary-400' : 
+                    ['login', 'fetching', 'confirm'].indexOf(s.id) <= ['login', 'fetching', 'confirm'].indexOf(step as any) ? 
+                    'text-green-600 dark:text-green-400' : 'text-slate-500 dark:text-slate-400'
                   }`}>
-                    {s.icon}
+                    <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-base text-white shadow-md ${
+                      step === s.id ? 'bg-primary-500' :
+                      ['login', 'fetching', 'confirm'].indexOf(s.id) <= ['login', 'fetching', 'confirm'].indexOf(step as any) ?
+                      'bg-green-500' : 'bg-slate-400 dark:bg-slate-600'
+                    }`}>
+                      {s.icon}
+                    </div>
+                    <span className="text-sm font-semibold">{s.label}</span>
                   </div>
-                  <span className="text-sm font-semibold">{s.label}</span>
+                  {idx < 3 && (
+                    <div className={`flex-1 h-1 mx-2 rounded ${
+                      ['login', 'fetching', 'confirm'].indexOf(['input-url', 'login', 'fetching', 'confirm'][idx + 1]) <= ['login', 'fetching', 'confirm'].indexOf(step as any) ?
+                      'bg-green-500' : 'bg-slate-300 dark:bg-slate-600'
+                    }`} />
+                  )}
                 </div>
-                {idx < 3 && (
-                  <div className={`flex-1 h-1 mx-2 rounded ${
-                    ['login', 'fetching', 'confirm'].indexOf(['input-url', 'login', 'fetching', 'confirm'][idx + 1]) <= ['login', 'fetching', 'confirm'].indexOf(step as any) ?
-                    'bg-green-500' : 'bg-slate-300 dark:bg-slate-600'
-                  }`} />
-                )}
-              </div>
-            ))}
-          </div>
-          )}
-
-          {/* 控制台导入（独立入口，脱离自动识别流程） */}
-          {mode==='import' && (
-            <div className="px-4 py-3 bg-light-bg-secondary dark:bg-dark-bg-secondary border-2 border-light-border dark:border-dark-border rounded-lg text-sm space-y-2 mt-4 text-light-text dark:text-dark-text">
-              <div className="font-semibold text-green-700 dark:text-green-300">🧩 控制台数据导入（无需自动化）</div>
-              <div className="text-xs text-green-700/80 dark:text-green-300/80">
-                在目标站点登录后，点击“复制控制台脚本”，到推荐页面控制台粘贴执行；复制输出的JSON到文本框并点击导入。
-              </div>
-              {/* 导入流程专用URL输入 */}
-              <div className="space-y-2">
-                <label className="block text-xs font-medium text-light-text dark:text-dark-text">目标站点URL</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="url"
-                    inputMode="url"
-                    autoComplete="url"
-                    value={url}
-                    onChange={(e) => handleUrlChange(e.target.value)}
-                    onBlur={handleAutoCompleteUrl}
-                    placeholder="https://api.example.com"
-                    className="flex-1 px-3 py-2 bg-light-card dark:bg-dark-bg border-2 border-light-border dark:border-dark-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-light-text dark:text-dark-text placeholder-slate-400 dark:placeholder-slate-500"
-                  />
-                </div>
-                {urlError && (
-                  <div className="px-3 py-2 bg-red-50 dark:bg-red-900/30 border-2 border-red-400 dark:border-red-600 rounded-lg text-red-700 dark:text-red-300 text-xs">
-                    {urlError}
-                  </div>
-                )}
-              </div>
-              <div className="flex items-center gap-2 text-xs">
-                <span className="text-slate-700 dark:text-slate-300">推荐页面：</span>
-                {getTargetConsoleUrl() ? (
-                  <a href={getTargetConsoleUrl()} target="_blank" rel="noreferrer" className="underline text-blue-600 dark:text-blue-400">
-                    {getTargetConsoleUrl()}
-                  </a>
-                ) : (
-                  <span className="text-slate-500 dark:text-slate-400">请先填写站点URL</span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleCopyTargetUrl}
-                  disabled={!getTargetConsoleUrl()}
-                  className="px-3 py-2 border-2 border-primary-200 dark:border-primary-400/40 bg-transparent text-primary-700 dark:text-primary-300 hover:bg-primary-50 dark:hover:bg-primary-900/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm"
-                >
-                  复制目标地址
-                </button>
-                <button
-                  onClick={handleOpenTargetUrl}
-                  disabled={!getTargetConsoleUrl()}
-                  className="px-3 py-2 border-2 border-primary-200 dark:border-primary-400/40 bg-transparent text-primary-700 dark:text-primary-300 hover:bg-primary-50 dark:hover:bg-primary-900/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm"
-                >
-                  打开登录页
-                </button>
-                {copyTargetHint && (
-                  <span className="text-xs text-slate-700 dark:text-slate-300 font-medium">{copyTargetHint}</span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleCopyConsoleScript}
-                  className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-semibold"
-                >
-                  复制控制台脚本
-                </button>
-                {copyHint && (
-                  <span className="text-xs text-slate-700 dark:text-slate-300 font-medium">{copyHint}</span>
-                )}
-              </div>
-              <textarea
-                value={importText}
-                onChange={(e) => setImportText(e.target.value)}
-                placeholder='{"site_url":"https://example.com","site_name":"MySite","user_id":123,"access_token":"..."}'
-                className="w-full mt-2 px-3 py-2 bg-light-card dark:bg-dark-card border-2 border-light-border dark:border-dark-border rounded text-xs font-mono"
-                rows={4}
-              />
-              {importHint && (
-                <div className="text-xs font-medium text-green-700 dark:text-green-300">{importHint}</div>
-              )}
-              <div className="flex gap-2">
-                <button
-                  onClick={handleImportSave}
-                  className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold"
-                >
-                  导入并保存
-                </button>
-              </div>
+              ))}
             </div>
           )}
 
-          {/* 步骤1: 输入URL */}
-          {mode==='auto' && step === 'input-url' && (
+          {/* 步骤1: 输入URL（仅智能添加模式使用） */}
+          {mode === 'auto' && step === 'input-url' && (
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-2">
@@ -922,9 +863,6 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
                   placeholder="https://api.example.com"
                   className="w-full px-4 py-3 bg-white dark:bg-dark-bg border-2 border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-light-text dark:text-dark-text placeholder-slate-400 dark:placeholder-slate-500"
                 />
-                <p className="mt-2 text-xs text-light-text-secondary dark:text-dark-text-secondary">
-                  输入API站点的完整URL，例如：https://tbai.xin
-                </p>
               </div>
 
               {error && (
@@ -938,7 +876,6 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
                 <div className="text-xs opacity-90">
                   • 自动从localStorage读取system_name作为站点名称<br/>
                   • 自动获取access_token和用户信息<br/>
-                  • API Key可选，无需强制填写
                 </div>
               </div>
 
@@ -962,8 +899,8 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
             </div>
           )}
 
-          {/* 步骤2: 浏览器登录 */}
-          {step === 'login' && (
+          {/* 步骤2: 浏览器登录（仅智能添加模式使用） */}
+          {mode === 'auto' && step === 'login' && (
             <div className="space-y-4">
               <div className="px-6 py-8 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-300 dark:border-slate-600 text-center space-y-4 shadow-md">
                 <Globe className="w-16 h-16 mx-auto text-primary-500 dark:text-primary-400 animate-pulse" />
@@ -1009,8 +946,8 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
             </div>
           )}
 
-          {/* 步骤3: 获取信息中 */}
-          {step === 'fetching' && (
+          {/* 步骤3: 获取信息中（仅智能添加模式使用） */}
+          {mode === 'auto' && step === 'fetching' && (
             <div className="px-6 py-12 text-center space-y-4">
               <Loader2 className="w-16 h-16 mx-auto text-primary-400 animate-spin" />
               <h3 className="text-lg font-semibold">正在获取站点信息...</h3>
@@ -1020,7 +957,7 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
             </div>
           )}
 
-          {/* 步骤4: 确认信息 */}
+          {/* 步骤4: 确认信息（智能添加完成后或手动添加模式下使用） */}
           {step === 'confirm' && (
             <div className="space-y-4">
               {/* 编辑模式提示 */}
@@ -1032,7 +969,24 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
                   </div>
                 </div>
               )}
-              
+
+              {/* 通用错误提示：包括从自动获取流程返回的手动填写提示 */}
+              {error && (
+                <div className="px-4 py-3 bg-red-500/20 border border-red-500/60 rounded-lg text-red-100 text-xs whitespace-pre-line">
+                  {error}
+                </div>
+              )}
+
+              {/* 新增站点的手动模式提示（格式与智能添加提示区域保持一致） */}
+              {!site && mode === 'manual' && (
+                <div className="px-4 py-3 bg-blue-50 dark:bg-blue-900/30 border-2 border-blue-300 dark:border-blue-600 rounded-lg text-blue-700 dark:text-blue-300 text-sm">
+                  <div className="font-semibold mb-1">当前为手动添加模式</div>
+                  <div className="text-xs opacity-90">
+                    请输入站点URL、用户ID和 Access Token。保存后将直接作为固定配置使用，不会触发浏览器登录流程。
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-3">
                 <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-3">
                   <div className="text-sm text-slate-700 dark:text-slate-300 font-semibold whitespace-nowrap">站点名称</div>
@@ -1047,7 +1001,7 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
 
                 <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-3">
                   <div className="text-sm text-slate-700 dark:text-slate-300 font-semibold whitespace-nowrap">站点URL</div>
-                  {isEditing ? (
+                  {isEditing || mode === 'manual' ? (
                     <input
                       type="url"
                       value={url}
@@ -1118,31 +1072,29 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
                       )}
                     </div>
                   </div>
-                  {!autoInfo.systemToken && (
+                  {/* 仅在智能添加模式下提示自动获取失败，手动添加模式不再显示此提醒 */}
+                  {!autoInfo.systemToken && mode === 'auto' && (
                     <div className="text-sm text-yellow-700 dark:text-yellow-400 mt-2 bg-yellow-50 dark:bg-yellow-900/20 px-2 py-1.5 rounded border border-yellow-200 dark:border-yellow-800 font-medium">
                       ⚠️ 无法自动获取 Access Token，可能session已过期。请点击"重新登录"或从网站复制填入
                     </div>
                   )}
                 </div>
 
-                {/* 加油站链接输入区域 */}
-                <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
-                  <div className="text-xs text-light-text-secondary dark:text-dark-text-secondary mb-1 font-medium">
-                    加油站链接 <span className="text-slate-400 dark:text-slate-500">(可选)</span>
+                {/* 加油站链接输入区域（样式与站点名称保持一致） */}
+                <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                  <div className="text-sm text-slate-700 dark:text-slate-300 font-semibold whitespace-nowrap">
+                    加油站链接
                   </div>
                   <input
                     type="url"
                     value={autoInfo.extraLinks}
                     onChange={(e) => setAutoInfo({...autoInfo, extraLinks: e.target.value})}
-                    className="w-full bg-transparent border-none outline-none text-light-text dark:text-dark-text font-mono text-sm placeholder-slate-400 dark:placeholder-slate-500"
-                    placeholder="https://example.com/lottery (抽奖/额外签到等链接)"
+                    className="flex-1 bg-transparent border-none outline-none text-light-text dark:text-dark-text font-mono text-sm placeholder-slate-400 dark:placeholder-slate-500 text-right"
+                    placeholder="https://example.com/lottery"
                   />
-                  <div className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
-                    💡 有些站点虽然没有签到功能，但有其他的抽奖或签到网站，可在此添加快捷链接
-                  </div>
                 </div>
 
-                {/* 签到功能开关 */}
+                {/* 签到功能开关（简洁版，无额外说明文案） */}
                 <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
                   <label className="flex items-center gap-3 cursor-pointer">
                     <input
@@ -1152,15 +1104,15 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
                       className="w-4 h-4 rounded border-gray-400 dark:border-gray-500 text-primary-600 focus:ring-primary-500 focus:ring-offset-white dark:focus:ring-offset-gray-900"
                     />
                     <div className="flex-1">
-                      <div className="text-sm font-medium text-slate-700 dark:text-slate-300">启用签到功能</div>
-                      <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                        📅 勾选后，一级面板会显示签到图标，刷新站点时会自动获取签到状态
+                      <div className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                        启用签到功能
                       </div>
                     </div>
                   </label>
                 </div>
 
-                {!site && (
+                {/* 仅在智能添加模式下展示自动获取状态提示，手动添加模式不显示此文案 */}
+                {!site && mode === 'auto' && (
                   <div className="px-4 py-3 bg-green-500/20 border border-green-500/50 rounded-lg text-green-700 dark:text-green-300 text-sm flex items-center gap-2">
                     <CheckCircle className="w-4 h-4 flex-shrink-0" />
                     <span className="font-semibold">{autoInfo.systemToken ? "信息已自动获取" : "请手动填入 Access Token"}，点击保存即可完成添加</span>
@@ -1169,25 +1121,27 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
               </div>
 
               <div className="flex gap-3">
-                <button
-                  onClick={() => {
-                    // 编辑模式：返回到input-url步骤重新开始流程
-                    // 新增模式：返回到login步骤
-                    if (site) {
-                      setStep('input-url');
-                    } else {
-                      setStep('login');
-                    }
-                  }}
-                  className="flex-1 px-6 py-3 bg-yellow-600 hover:bg-yellow-700 rounded-lg font-semibold flex items-center justify-center gap-2 transition-all"
-                >
-                  <Globe className="w-5 h-5" />
-                  {site ? '重新登录获取信息' : '重新登录'}
-                </button>
+                {(mode === 'auto' || site) && (
+                  <button
+                    onClick={() => {
+                      // 编辑模式：返回到input-url步骤重新开始流程
+                      // 新增模式：返回到login步骤
+                      if (site) {
+                        setStep('input-url');
+                      } else {
+                        setStep('login');
+                      }
+                    }}
+                    className="flex-1 px-6 py-3 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg font-semibold flex items-center justify-center gap-2 transition-all"
+                  >
+                    <Chrome className="w-5 h-5" />
+                    {site ? '重新登录获取信息' : '重新登录'}
+                  </button>
+                )}
                 <button
                   onClick={handleSave}
                   disabled={!autoInfo.name || !url || !autoInfo.systemToken || !autoInfo.userId}
-                  className="flex-1 px-6 py-3 bg-green-600 hover:bg-green-700 rounded-lg font-semibold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  className="flex-1 px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                 >
                   <CheckCircle className="w-5 h-5" />
                   {site ? '保存修改' : '保存站点'}
