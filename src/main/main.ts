@@ -27,7 +27,7 @@ const tokenStorage = new TokenStorage();
 const tokenService = new TokenService(chromeManager);
 const apiService = new ApiService(tokenService, tokenStorage);
 
-function createWindow() {
+async function createWindow() {
   // 根据环境选择合适的图标，打包后从 resources 目录读取 ico 文件
   const iconPath = app.isPackaged
     ? path.join(process.resourcesPath, 'icon.ico')
