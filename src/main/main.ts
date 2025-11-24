@@ -37,7 +37,8 @@ function createWindow() {
   console.log('📦 是否已打包:', app.isPackaged);
   
   mainWindow = new BrowserWindow({
-    width: 700,
+    // 默认窗口宽度调整为 1280，兼顾多列统计信息展示与常见屏幕适配
+    width: 1280,
     height: 800,
     title: 'API Hub Management Tools',
     // 无论开发还是生产都显式指定窗口图标，防止 EXE 默认图标被沿用
@@ -200,10 +201,24 @@ ipcMain.handle('token:fetch-api-tokens', async (_, baseUrl: string, userId: numb
 ipcMain.handle('token:create-api-token', async (_, baseUrl: string, userId: number, accessToken: string, tokenData: any) => {
   try {
     console.log('🆕 [IPC] 收到创建 API 令牌请求');
-    const ok = await tokenService.createApiToken(baseUrl, userId, accessToken, tokenData);
-    return { success: ok };
+    const result = await tokenService.createApiToken(baseUrl, userId, accessToken, tokenData);
+    return { success: result.success, data: result.data };
   } catch (error: any) {
     console.error('❌ [IPC] 创建 API 令牌失败:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+/**
+ * 删除 API 令牌
+ */
+ipcMain.handle('token:delete-api-token', async (_, baseUrl: string, userId: number, accessToken: string, tokenIdentifier: any) => {
+  try {
+    console.log('🗑 [IPC] 收到删除 API 令牌请求');
+    const result = await tokenService.deleteApiToken(baseUrl, userId, accessToken, tokenIdentifier);
+    return { success: result.success, data: result.data };
+  } catch (error: any) {
+    console.error('❌ [IPC] 删除 API 令牌失败:', error);
     return { success: false, error: error.message };
   }
 });

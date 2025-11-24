@@ -71,6 +71,10 @@ export interface DetectionResult {
   models: string[];
   balance?: number;
   todayUsage?: number; // 今日消费(美元)
+  todayPromptTokens?: number;      // 今日输入 Token
+  todayCompletionTokens?: number;  // 今日输出 Token
+  todayTotalTokens?: number;       // 今日总 Token
+  todayRequests?: number;          // 今日请求次数
   error?: string;
   has_checkin: boolean;  // 是否支持签到功能
   can_check_in?: boolean;  // 今日是否可签到（true=可签到, false=已签到）
@@ -91,6 +95,24 @@ interface NewApiTokenForm {
 
 // 新增：额度换算系数（与后端保持一致：1 美元 = 500000 内部单位）
 const QUOTA_CONVERSION_FACTOR = 500000;
+
+// 站点列表默认列宽设置（单位：像素），顺序为：
+// 0: 站点名称、1: 状态、2: 余额、3: 今日消费、4: 总 Token、5: 输入、6: 输出、
+// 7: 请求、8: RPM、9: TPM、10: 模型数、11: 更新时间
+const DEFAULT_COLUMN_WIDTHS: number[] = [
+  110, // 站点
+  70,  // 状态
+  90,  // 余额
+  75,  // 今日消费
+  70,  // 总 Token
+  70,  // 输入
+  70,  // 输出
+  55,  // 请求
+  55,  // RPM
+  55,  // TPM
+  50,  // 模型数
+  60,  // 更新时间
+];
 
 function App() {
   // 初始化主题系统
@@ -140,6 +162,74 @@ function App() {
     expiredTime: '',
   });
   const [creatingToken, setCreatingToken] = useState(false);
+  // 新增：删除 API Key 状态（用字符串标识当前正在删除的令牌，避免重复点击）
+  const [deletingTokenKey, setDeletingTokenKey] = useState<string | null>(null);
+  // 新增：站点列表列宽，可调整并持久化到 localStorage
+  const [columnWidths, setColumnWidths] = useState<number[]>(() => {
+    try {
+      const stored = window.localStorage.getItem('siteListColumnWidths');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length === DEFAULT_COLUMN_WIDTHS.length) {
+          const forcedIndices = new Set([0, 1, 3]); // 站点 / 状态 / 今日消费 使用最新默认值
+          return parsed.map((v: any, idx: number) => {
+            if (forcedIndices.has(idx)) {
+              return DEFAULT_COLUMN_WIDTHS[idx];
+            }
+            return typeof v === 'number' && v > 0 ? v : DEFAULT_COLUMN_WIDTHS[idx];
+          });
+        }
+      }
+    } catch {
+      // 忽略解析错误，回退到默认值
+    }
+    return DEFAULT_COLUMN_WIDTHS;
+  });
+  const columnWidthsRef = useRef<number[]>(columnWidths);
+
+  // 保持 ref 与 state 同步，并在变更时写入 localStorage
+  useEffect(() => {
+    columnWidthsRef.current = columnWidths;
+    try {
+      window.localStorage.setItem('siteListColumnWidths', JSON.stringify(columnWidths));
+    } catch {
+      // 某些环境可能禁用存储，忽略错误即可
+    }
+  }, [columnWidths]);
+
+  // 列宽调整：在表头右侧拖动分隔线即可调整宽度
+  const handleColumnResizeMouseDown = (event: React.MouseEvent, index: number) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const startX = event.clientX;
+    const startWidth = columnWidthsRef.current[index];
+
+    // 最小/最大列宽，防止列被拖没或过宽
+    const minWidth = 50;
+    const maxWidth = 320;
+
+    const onMouseMove = (e: MouseEvent) => {
+      const delta = e.clientX - startX;
+      let nextWidth = startWidth + delta;
+      if (nextWidth < minWidth) nextWidth = minWidth;
+      if (nextWidth > maxWidth) nextWidth = maxWidth;
+
+      setColumnWidths(prev => {
+        const next = [...prev];
+        next[index] = nextWidth;
+        return next;
+      });
+    };
+
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
 
   // 当弹窗打开或版本号变化时，自动聚焦到名称输入框
   useEffect(() => {
@@ -155,62 +245,54 @@ function App() {
     setShowTokens(prev => ({ ...prev, [siteName]: !prev[siteName] }));
   };
 
-  // 脱敏显示令牌
-  const maskToken = (token: string | undefined, show: boolean): string => {
-    if (!token) return '未设置';
-    if (show) return token;
-    if (token.length <= 8) return '***';
-    return `${token.substring(0, 3)}...${token.substring(token.length - 4)}`;
-  };
-
   // 为API Key添加sk-前缀（如果没有）
   const addSkPrefix = (key: string): string => {
     if (!key) return '';
     return key.startsWith('sk-') ? key : `sk-${key}`;
   };
 
-  // 获取分组的颜色样式（API Key 使用，包含背景色）
-  const getGroupColor = (groupName: string): string => {
-    const colors: Record<string, string> = {
-      'default': 'bg-blue-500/20 text-blue-300 border-blue-500/30',
-      'vip': 'bg-purple-500/20 text-purple-300 border-purple-500/30',
-      'premium': 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30',
-      'free': 'bg-gray-500/20 text-gray-300 border-gray-500/30',
-    };
-    
-    // 尝试匹配关键词
-    const lowerGroup = groupName.toLowerCase();
-    if (lowerGroup.includes('vip')) return colors.vip;
-    if (lowerGroup.includes('premium') || lowerGroup.includes('pro')) return colors.premium;
-    if (lowerGroup.includes('free')) return colors.free;
-    
-    // 默认颜色
-    return colors.default;
-  };
+  // 分组文字颜色池（高对比度，且不同分组之间颜色差异足够大，而不是一整条渐变）
+  const GROUP_TEXT_COLOR_POOL = [
+    // 选取的是“间隔明显”的色相，避免连续渐变感
+    'text-red-600 dark:text-red-300',
+    'text-emerald-500 dark:text-emerald-300',
+    'text-blue-600 dark:text-blue-300',
+    'text-amber-500 dark:text-amber-300',
+    'text-violet-500 dark:text-violet-300',
+    'text-cyan-500 dark:text-cyan-300',
+    'text-pink-500 dark:text-pink-300',
+    'text-lime-600 dark:text-lime-300',
+    'text-indigo-500 dark:text-indigo-300',
+    'text-orange-500 dark:text-orange-300',
+  ] as const;
 
-  // 获取分组的文字颜色（用户分组选择器使用，仅文字颜色）
+  // 全局分组颜色映射，确保同一应用内每个分组颜色唯一且一致
+  const groupColorRegistry: Record<string, string> = {};
+
+  // 获取分组的文字颜色（用户分组 / API Key / 模型分组统一调用）
   const getGroupTextColor = (groupName: string): string => {
-    // 尝试匹配关键词
-    const lowerGroup = groupName.toLowerCase();
-    if (lowerGroup.includes('vip')) return 'text-purple-400';
-    if (lowerGroup.includes('premium') || lowerGroup.includes('pro')) return 'text-yellow-400';
-    if (lowerGroup.includes('free') || lowerGroup.includes('公益')) return 'text-gray-400';
-    if (lowerGroup.includes('default') || lowerGroup.includes('默认')) return 'text-blue-400';
-    if (lowerGroup.includes('translate') || lowerGroup.includes('翻译')) return 'text-cyan-400';
-    
-    // 为其他分组根据首字母hash动态生成颜色
-    const charCode = groupName.charCodeAt(0);
-    const colorIndex = charCode % 6;
-    const dynamicColors = [
-      'text-green-400',
-      'text-orange-400',
-      'text-teal-400',
-      'text-pink-400',
-      'text-indigo-400',
-      'text-rose-400'
-    ];
-    
-    return dynamicColors[colorIndex];
+    if (!groupName) return 'text-slate-400';
+
+    // 已经分配过颜色，直接复用（保证同名分组颜色一致）
+    if (groupColorRegistry[groupName]) {
+      return groupColorRegistry[groupName];
+    }
+
+    // 优先分配尚未使用过的颜色，确保“所有分组颜色都不一样”
+    const used = new Set(Object.values(groupColorRegistry));
+    let color = GROUP_TEXT_COLOR_POOL.find((c) => !used.has(c));
+
+    // 如果颜色池用完（极端大量分组），使用稳定 hash 回退，尽量分散
+    if (!color) {
+      let hash = 0;
+      for (let i = 0; i < groupName.length; i++) {
+        hash = (hash * 31 + groupName.charCodeAt(i)) >>> 0;
+      }
+      color = GROUP_TEXT_COLOR_POOL[hash % GROUP_TEXT_COLOR_POOL.length];
+    }
+
+    groupColorRegistry[groupName] = color;
+    return color;
   };
 
   // 格式化价格显示，去除多余的0
@@ -228,65 +310,77 @@ function App() {
     }
   };
 
-  // 获取分组对应的图标
-  // inheritColor: 是否继承父元素颜色（用于用户分组选择器）
-  const getGroupIcon = (groupName: string, inheritColor: boolean = false) => {
-    const lowerGroup = groupName.toLowerCase();
-    
-    // 如果继承颜色，图标使用 currentColor（继承父元素的文字颜色）
-    if (inheritColor) {
-      if (lowerGroup.includes('vip')) return <Crown className="w-3 h-3" />;
-      if (lowerGroup.includes('premium') || lowerGroup.includes('pro')) return <Star className="w-3 h-3" />;
-      if (lowerGroup.includes('free') || lowerGroup.includes('公益')) return <Users className="w-3 h-3" />;
-      if (lowerGroup.includes('default') || lowerGroup.includes('默认')) return <Server className="w-3 h-3" />;
-      if (lowerGroup.includes('translate') || lowerGroup.includes('翻译')) return <RefreshCw className="w-3 h-3" />;
-      
-      // 根据首字母hash分配不同图标（无颜色）
-      const charCode = groupName.charCodeAt(0);
-      const iconIndex = charCode % 5;
-      const icons = [
-        <Zap className="w-3 h-3" />,
-        <DollarSign className="w-3 h-3" />,
-        <CheckCircle className="w-3 h-3" />,
-        <Gift className="w-3 h-3" />,
-        <Play className="w-3 h-3" />
-      ];
-      return icons[iconIndex];
+  // 分组图标池（全部使用 currentColor，由外层文字颜色控制）
+  const GROUP_ICON_POOL = [
+    (className = "w-3 h-3") => <Crown className={className} />,
+    (className = "w-3 h-3") => <Star className={className} />,
+    (className = "w-3 h-3") => <Users className={className} />,
+    (className = "w-3 h-3") => <Server className={className} />,
+    (className = "w-3 h-3") => <RefreshCw className={className} />,
+    (className = "w-3 h-3") => <Zap className={className} />,
+    (className = "w-3 h-3") => <DollarSign className={className} />,
+    (className = "w-3 h-3") => <CheckCircle className={className} />,
+    (className = "w-3 h-3") => <Gift className={className} />,
+    (className = "w-3 h-3") => <Play className={className} />,
+    (className = "w-3 h-3") => <Calendar className={className} />,
+    (className = "w-3 h-3") => <Fuel className={className} />,
+    (className = "w-3 h-3") => <Plus className={className} />,
+    (className = "w-3 h-3") => <Edit className={className} />,
+    (className = "w-3 h-3") => <Trash2 className={className} />,
+  ] as const;
+
+  // 全局分组图标映射，确保同一应用内每个分组图标唯一且一致
+  const groupIconRegistry: Record<string, number> = {};
+
+  // 获取分组对应的图标（在一个会话内保证图标不重复）
+  // inheritColor: 是否继承父元素颜色（目前始终为 true，只控制大小）
+  const getGroupIcon = (groupName: string, _inheritColor: boolean = false) => {
+    if (!groupName) return <Server className="w-3 h-3" />;
+
+    // 已分配过图标，直接复用
+    if (groupIconRegistry[groupName] !== undefined) {
+      const idx = groupIconRegistry[groupName];
+      return GROUP_ICON_POOL[idx]("w-3 h-3");
     }
-    
-    // API Key和模型卡片使用固定颜色的图标
-    if (lowerGroup.includes('vip')) return <Crown className="w-3 h-3 text-yellow-400" />;
-    if (lowerGroup.includes('premium') || lowerGroup.includes('pro')) return <Star className="w-3 h-3 text-purple-400" />;
-    if (lowerGroup.includes('free') || lowerGroup.includes('公益')) return <Users className="w-3 h-3 text-blue-400" />;
-    if (lowerGroup.includes('default') || lowerGroup.includes('默认')) return <Server className="w-3 h-3 text-gray-400" />;
-    if (lowerGroup.includes('translate') || lowerGroup.includes('翻译')) return <RefreshCw className="w-3 h-3 text-cyan-400" />;
-    
-    // 根据首字母hash分配不同图标（带颜色）
-    const charCode = groupName.charCodeAt(0);
-    const iconIndex = charCode % 5;
-    const icons = [
-      <Zap className="w-3 h-3 text-green-400" />,
-      <DollarSign className="w-3 h-3 text-orange-400" />,
-      <CheckCircle className="w-3 h-3 text-teal-400" />,
-      <Gift className="w-3 h-3 text-pink-400" />,
-      <Play className="w-3 h-3 text-indigo-400" />
-    ];
-    return icons[iconIndex];
+
+    // 先占用一个尚未被使用过的图标槽位，尽量保证不重复
+    const used = new Set(Object.values(groupIconRegistry));
+    let index = -1;
+    for (let i = 0; i < GROUP_ICON_POOL.length; i++) {
+      if (!used.has(i)) {
+        index = i;
+        break;
+      }
+    }
+
+    // 如果图标数量不够（极端大量分组），使用稳定 hash 回退
+    if (index === -1) {
+      let hash = 0;
+      for (let i = 0; i < groupName.length; i++) {
+        hash = (hash * 31 + groupName.charCodeAt(i)) >>> 0;
+      }
+      index = hash % GROUP_ICON_POOL.length;
+    }
+
+    groupIconRegistry[groupName] = index;
+    return GROUP_ICON_POOL[index]("w-3 h-3");
   };
 
   // 获取计费模式图标和文本
   const getQuotaTypeInfo = (quotaType: number): { icon: JSX.Element; text: string; color: string } => {
     if (quotaType === 1) {
       return {
-        icon: <span className="text-xs font-bold text-orange-800 dark:text-orange-200">次</span>,
+        // 次数计费：提高前景/背景对比度
+        icon: <span className="text-xs font-bold text-orange-700 dark:text-orange-100">次</span>,
         text: '按次',
-        color: 'bg-orange-500/20 text-orange-300 border-orange-500/30'
+        color: 'bg-orange-500/10 dark:bg-orange-500/30 text-orange-700 dark:text-orange-100 border-orange-500/40'
       };
     }
     return {
-      icon: <span className="text-xs font-bold text-blue-800 dark:text-blue-200">量</span>,
+      // 按量计费：同样增强对比度
+      icon: <span className="text-xs font-bold text-blue-700 dark:text-blue-100">量</span>,
       text: '按量',
-      color: 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+      color: 'bg-blue-500/10 dark:bg-blue-500/30 text-blue-700 dark:text-blue-100 border-blue-500/40'
     };
   };
 
@@ -386,6 +480,57 @@ function App() {
     });
   };
 
+  /**
+   * 仅刷新指定站点的 API Key 列表（不重新检测余额、模型等）
+   * 使用后端的 token:fetch-api-tokens 接口，只更新前端的 apiKeys 与 DetectionResult.apiKeys
+   */
+  const refreshSiteApiKeys = async (site: SiteConfig) => {
+    if (!site.system_token || !site.user_id) {
+      console.warn('⚠️ [App] 当前站点未配置系统 Token 或用户 ID，无法刷新 API Key 列表');
+      return;
+    }
+
+    const userIdNum = parseInt(site.user_id || '0', 10);
+    if (!userIdNum) {
+      console.warn('⚠️ [App] 当前站点用户 ID 无效，无法刷新 API Key 列表');
+      return;
+    }
+
+    try {
+      const resp = await window.electronAPI.token?.fetchApiTokens?.(
+        site.url,
+        userIdNum,
+        site.system_token!
+      );
+
+      if (!resp || resp.success !== true) {
+        throw new Error(resp?.error || '未知错误');
+      }
+
+      const tokens: any[] = Array.isArray(resp.data) ? resp.data : [];
+
+      // 更新独立的 apiKeys 状态（用于列表展示）
+      setApiKeys(prev => ({
+        ...prev,
+        [site.name]: tokens,
+      }));
+
+      // 同步更新检测结果中的 apiKeys 缓存，保持数据一致
+      setResults(prev =>
+        prev.map(r =>
+          r.name === site.name
+            ? { ...r, apiKeys: tokens }
+            : r
+        )
+      );
+
+      console.log(`✅ [App] 已刷新站点 ${site.name} 的 API Key 列表，数量: ${tokens.length}`);
+    } catch (error: any) {
+      console.error('❌ [App] 刷新 API Key 列表失败:', error);
+      // 这里不弹窗打扰用户，仅在控制台记录
+    }
+  };
+
   // 提交创建 API Key
   const handleCreateTokenSubmit = async () => {
     if (!creatingTokenSite) return;
@@ -459,14 +604,29 @@ function App() {
         tokenPayload
       );
 
-      // IPC 统一返回 { success, error? }
+      // IPC 返回 { success, data?: any[], error? }
       if (!resp || resp.success !== true) {
         throw new Error(resp?.error || '未知错误');
       }
 
-      // 创建成功后，直接使用检测流程刷新该站点的数据（包含最新的 API Keys）
-      // 说明：detectSingle 内部会处理 Cloudflare 等情况，比直接调用 /api/token/ 更可靠
-      await detectSingle(site, true);
+      // 如果后端在浏览器模式下已经返回了最新 API Key 列表（data），优先直接使用
+      if (resp.data && Array.isArray(resp.data)) {
+        const tokens: any[] = resp.data;
+        setApiKeys(prev => ({
+          ...prev,
+          [site.name]: tokens,
+        }));
+        setResults(prev =>
+          prev.map(r =>
+            r.name === site.name
+              ? { ...r, apiKeys: tokens }
+              : r
+          )
+        );
+      } else {
+        // 否则仅刷新该站点的 API Key 列表（axios 模式）
+        await refreshSiteApiKeys(site);
+      }
 
       alert('API Key 创建成功');
       closeCreateTokenDialog();
@@ -475,6 +635,77 @@ function App() {
       alert(`创建 API Key 失败: ${error.message || error}`);
     } finally {
       setCreatingToken(false);
+    }
+  };
+
+  /**
+   * 删除指定站点下的单个 API Key
+   * 说明：
+   * - 优先通过 axios 调用后端删除接口；
+   * - 如果被 Cloudflare 拦截，后端会自动回退到浏览器模式，在已打开的站点页面中执行删除；
+   * - 删除成功后，调用 detectSingle 快速刷新当前站点的数据（包含最新的 API Keys）。
+   */
+  const handleDeleteToken = async (site: SiteConfig, token: any, tokenIndex: number) => {
+    if (!site.system_token || !site.user_id) {
+      alert('当前站点未配置系统 Token 或用户 ID，请先在“编辑站点”中填写。');
+      return;
+    }
+
+    const displayName = token.name || `Key #${tokenIndex + 1}`;
+    const confirmMsg = `确认要删除 API Key「${displayName}」吗？\n此操作不可恢复，请谨慎操作。`;
+    if (!window.confirm(confirmMsg)) {
+      return;
+    }
+
+    const userIdNum = parseInt(site.user_id || '0', 10);
+    if (!userIdNum) {
+      alert('当前站点用户 ID 无效，请在“编辑站点”中检查配置。');
+      return;
+    }
+
+    const deletingKeyId = `${site.name}_${token.id ?? token.key ?? tokenIndex}`;
+    setDeletingTokenKey(deletingKeyId);
+
+    try {
+      const resp = await window.electronAPI.token?.deleteApiToken?.(
+        site.url,
+        userIdNum,
+        site.system_token!,
+        {
+          // 同时传递 id 和 key，后端会自动选择可用的识别方式
+          id: token.id ?? token.token_id ?? undefined,
+          key: token.key ?? token.token ?? undefined,
+        }
+      );
+
+      if (!resp || resp.success !== true) {
+        throw new Error(resp?.error || '未知错误');
+      }
+
+      // 如果后端在浏览器模式下已经返回了最新 API Key 列表（data），优先直接使用
+      if (resp.data && Array.isArray(resp.data)) {
+        const tokens: any[] = resp.data;
+        setApiKeys(prev => ({
+          ...prev,
+          [site.name]: tokens,
+        }));
+        setResults(prev =>
+          prev.map(r =>
+            r.name === site.name
+              ? { ...r, apiKeys: tokens }
+              : r
+          )
+        );
+      } else {
+        // 否则仅刷新该站点的 API Key 列表（axios 模式）
+        await refreshSiteApiKeys(site);
+      }
+      alert(`API Key「${displayName}」已删除`);
+    } catch (error: any) {
+      console.error('❌ [App] 删除 API Key 失败:', error);
+      alert(`删除 API Key 失败: ${error.message || error}`);
+    } finally {
+      setDeletingTokenKey(null);
     }
   };
 
@@ -600,6 +831,15 @@ function App() {
               // 🔧 修复：缓存中的余额已经在后端转换过了，直接使用即可
               balance: account.cached_display_data?.quota,
               todayUsage: account.cached_display_data?.today_quota_consumption,
+              // 日志指标：从缓存中恢复
+              todayPromptTokens: account.cached_display_data?.today_prompt_tokens,
+              todayCompletionTokens: account.cached_display_data?.today_completion_tokens,
+              todayTotalTokens:
+                account.cached_display_data?.today_prompt_tokens !== undefined &&
+                account.cached_display_data?.today_completion_tokens !== undefined
+                  ? account.cached_display_data.today_prompt_tokens + account.cached_display_data.today_completion_tokens
+                  : undefined,
+              todayRequests: account.cached_display_data?.today_requests_count,
               has_checkin: typeof account.cached_display_data?.can_check_in === 'boolean',  // 如果有can_check_in字段，说明支持签到
               can_check_in: account.cached_display_data?.can_check_in,  // 签到状态
               apiKeys: account.cached_display_data?.apiKeys,
@@ -997,6 +1237,12 @@ function App() {
 
   // 拖拽处理函数
   const handleDragStart = (e: React.DragEvent, index: number) => {
+    // 如果起始拖拽位置在禁止拖拽区域（如二级面板、令牌管理卡片等），直接忽略
+    const target = e.target as HTMLElement;
+    if (target.closest('[data-no-drag="true"]')) {
+      e.preventDefault();
+      return;
+    }
     setDraggedIndex(index);
     e.dataTransfer.effectAllowed = 'move';
     // 设置拖拽时的透明度
@@ -1110,7 +1356,7 @@ function App() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-light-bg dark:bg-dark-bg text-light-text dark:text-dark-text relative overflow-hidden">
+    <div className="h-screen flex flex-col bg-light-bg dark:bg-dark-bg text-light-text dark:text-dark-text relative overflow-x-auto overflow-y-hidden">
       {/* 装饰背景 */}
       <div className="light-bg-decoration dark:dark-bg-decoration"></div>
       
@@ -1145,7 +1391,7 @@ function App() {
         </div>
       </header>
 
-      <div className="flex-1 overflow-hidden flex">
+      <div className="flex-1 overflow-y-hidden overflow-x-visible flex">
         <div className="flex-1 flex flex-col">
           <div className="px-4 py-3 bg-white/60 dark:bg-dark-card/60 backdrop-blur-sm border-b border-light-border dark:border-dark-border flex items-center justify-between">
             <button
@@ -1176,7 +1422,8 @@ function App() {
               )}
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {/* 站点列表区域：纵向滚动交给内部容器，横向滚动交给整体窗口（根容器 overflow-x-auto） */}
+          <div className="flex-1 overflow-y-auto overflow-x-visible px-4 pb-4 space-y-3">
             {config.sites.length === 0 ? (
               <div className="text-center py-16 text-light-text-secondary dark:text-dark-text-secondary">
                 <Server className="w-16 h-16 mx-auto mb-4 opacity-30" strokeWidth={1.5} />
@@ -1184,25 +1431,72 @@ function App() {
                 <p className="text-sm">点击"添加站点"按钮开始</p>
               </div>
             ) : (
-              config.sites.map((site, index) => {
-                // 先按名称匹配检测结果，如果名称被修改则回退到按URL匹配
-                let siteResult = results.find(r => r.name === site.name);
-                if (!siteResult) {
-                  try {
-                    const siteOrigin = new URL(site.url).origin;
-                    siteResult = results.find(r => {
+              // 为了在窗口变窄时出现横向滚动条，内部内容设置一个最小宽度（由根容器负责横向滚动）
+              <>
+                {/* 列表表头（固定在滚动容器顶部）：站点名称 / 状态 / 余额 / 今日消费 / 总Token / 输入 / 输出 / 请求 / RPM / TPM / 模型数 / 更新时间 / 操作 */}
+                <div className="min-w-[1180px] sticky top-0 z-20 px-4 py-2 bg-light-bg/95 dark:bg-dark-bg/95 backdrop-blur-sm border-b border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-xs font-semibold text-slate-700 dark:text-slate-100">
+                  <div
+                    className="grid gap-x-1 flex-1 items-center select-none"
+                    style={{ gridTemplateColumns: columnWidths.map(w => `${w}px`).join(' ') }}
+                  >
+                    {[
+                      '站点',
+                      '状态',
+                      '余额',
+                      '今日消费',
+                      '总 Token',
+                      '输入',
+                      '输出',
+                      '请求',
+                      'RPM',
+                      'TPM',
+                      '模型数',
+                      '更新时间',
+                    ].map((label, idx) => {
+                      const centerHeader = idx >= 4 && idx <= 11; // 总 Token / 输入 / 输出 / 请求 / RPM / TPM / 模型数 / 更新时间
+                      return (
+                        <div
+                          key={label}
+                          className={`relative flex items-center pr-1 ${
+                            centerHeader ? 'justify-center text-center' : 'justify-start'
+                          }`}
+                        >
+                          <span className={centerHeader ? 'w-full text-center' : undefined}>
+                            {label}
+                          </span>
+                        {/* 列宽调整拖拽条：占据单元格右侧 4px 区域 */}
+                          <div
+                            onMouseDown={(e) => handleColumnResizeMouseDown(e, idx)}
+                            className="absolute top-0 right-0 h-full w-1 cursor-col-resize group"
+                          >
+                            <div className="w-[3px] h-full mx-auto opacity-0 group-hover:opacity-60 bg-slate-300 dark:bg-slate-500 transition-opacity" />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="w-[96px] text-right pr-1">站点操作</div>
+                </div>
+
+                <div className="min-w-[1180px] space-y-3">
+                  {config.sites.map((site, index) => {
+                    // 先按名称匹配检测结果，如果名称被修改则回退到按URL匹配
+                    let siteResult = results.find(r => r.name === site.name);
+                    if (!siteResult) {
                       try {
-                        return new URL(r.url).origin === siteOrigin;
+                        const siteOrigin = new URL(site.url).origin;
+                        siteResult = results.find(r => {
+                          try {
+                            return new URL(r.url).origin === siteOrigin;
+                          } catch {
+                            return false;
+                          }
+                        });
                       } catch {
-                        return false;
+                        // ignore url parse error
                       }
-                    });
-                  } catch {
-                    // ignore url parse error
-                  }
-                }
-                const isExpanded = expandedSites.has(site.name);
-                const showToken = showTokens[site.name] || false;
+                    }
+                    const isExpanded = expandedSites.has(site.name);
                 // 账号信息也优先按名称匹配，失败时按URL回退
                 let siteAccount = siteAccounts[site.name];
                 if (!siteAccount) {
@@ -1214,15 +1508,39 @@ function App() {
                   }
                 }
                 
-                // 计算最后更新时间显示（格式：月/日 时:分）
+                // 计算最后更新时间显示：
+                // - 如果是今天：显示具体「小时:分钟」（如 13:45）
+                // - 7天以内：显示「X天前」
+                // - 超过7天且在1个月以内：显示「X周前」
+                // - 超过1个月：显示「X月前」
                 let lastSyncDisplay: string | null = null;
                 if (siteAccount?.last_sync_time) {
                   const dt = new Date(siteAccount.last_sync_time);
-                  const month = String(dt.getMonth() + 1).padStart(2, '0');
-                  const day = String(dt.getDate()).padStart(2, '0');
-                  const hour = String(dt.getHours()).padStart(2, '0');
-                  const minute = String(dt.getMinutes()).padStart(2, '0');
-                  lastSyncDisplay = `${month}/${day} ${hour}:${minute}`;
+                  const now = new Date();
+
+                  const isSameDay =
+                    dt.getFullYear() === now.getFullYear() &&
+                    dt.getMonth() === now.getMonth() &&
+                    dt.getDate() === now.getDate();
+
+                  if (isSameDay) {
+                    const hour = String(dt.getHours()).padStart(2, '0');
+                    const minute = String(dt.getMinutes()).padStart(2, '0');
+                    lastSyncDisplay = `${hour}:${minute}`;
+                  } else {
+                    const diffMs = now.getTime() - dt.getTime();
+                    const diffDays = Math.max(Math.floor(diffMs / (1000 * 60 * 60 * 24)), 1);
+
+                    if (diffDays < 7) {
+                      lastSyncDisplay = `${diffDays}天前`;
+                    } else if (diffDays < 30) {
+                      const weeks = Math.max(Math.floor(diffDays / 7), 1);
+                      lastSyncDisplay = `${weeks}周前`;
+                    } else {
+                      const months = Math.max(Math.floor(diffDays / 30), 1);
+                      lastSyncDisplay = `${months}月前`;
+                    }
+                  }
                 }
                 
                 // 从错误信息中提取 Error Code（例如 "status code 403"）
@@ -1242,6 +1560,24 @@ function App() {
                     }
                   }
                 }
+
+                // ===== 日志指标计算（总 Token / 输入 / 输出 / 请求 / RPM / TPM）=====
+                const todayPromptTokens = siteResult?.todayPromptTokens ?? 0;
+                const todayCompletionTokens = siteResult?.todayCompletionTokens ?? 0;
+                const todayTotalTokens =
+                  siteResult?.todayTotalTokens ?? (todayPromptTokens + todayCompletionTokens);
+                const todayRequests = siteResult?.todayRequests ?? 0;
+
+                // 以本地时间的「今日 00:00」到当前时间作为统计窗口，计算平均 RPM / TPM
+                const now = new Date();
+                const dayStart = new Date(now);
+                dayStart.setHours(0, 0, 0, 0);
+                const minutesSinceStart = Math.max(
+                  (now.getTime() - dayStart.getTime()) / 60000,
+                  1
+                );
+                const rpm = todayRequests > 0 ? todayRequests / minutesSinceStart : 0;
+                const tpm = todayTotalTokens > 0 ? todayTotalTokens / minutesSinceStart : 0;
                 
                 return (
                   <div
@@ -1271,110 +1607,201 @@ function App() {
                       </div>
                     )}
                     
-                    {/* 一级信息 - 紧凑卡片布局 */}
+                    {/* 一级信息 - 紧凑卡片布局（固定栅格列宽确保对齐） */}
                     <div className="px-3 py-2.5">
                       <div className="flex items-center justify-between">
-                        {/* 左侧：站点名称和状态图标 */}
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                          <button
-                            onClick={() => openCheckinPage(site)}
-                            className="flex items-center gap-1.5 hover:text-primary-400 transition-colors group min-w-0"
-                            title={`打开 ${site.name}`}
-                          >
-                            {site.enabled ? (
-                              <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
-                            ) : (
-                              <XCircle className="w-4 h-4 text-gray-500 flex-shrink-0" />
-                            )}
-                            <span className="font-bold text-base truncate max-w-[150px]">
-                              {site.name}
-                            </span>
-                          </button>
-                          
-                          {/* 关键指标展示 */}
-                          <div className="flex items-center gap-2 text-xs flex-wrap">
-                            {/* 网站状态 - 仅显示图标 */}
-                            <div className="flex items-center">
-                              {siteResult ? (
-                                siteResult.status === "成功" ? (
-                                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" title="在线" />
+                        {/* 左侧：固定宽度栅格，确保所有站点卡片上下对齐（多列布局，与表头对应）*/}
+                        <div
+                          className="grid gap-x-1 items-center text-xs"
+                          style={{ gridTemplateColumns: columnWidths.map(w => `${w}px`).join(' ') }}
+                        >
+                            {/* 1. 站点名称（不再在这里显示状态图标，状态列单独展示） */}
+                            <button
+                              onClick={() => openCheckinPage(site)}
+                              className="flex items-center hover:text-primary-400 transition-colors group min-w-0"
+                              title={`打开 ${site.name}`}
+                            >
+                              <span className="font-bold text-sm md:text-base truncate">
+                                {site.name}
+                              </span>
+                            </button>
+
+                            {/* 2. 状态（在线/离线/未检测） + 错误码/超时信息 */}
+                            <div className="flex flex-col items-start gap-0.5">
+                              <div className="flex items-center gap-1">
+                                {siteResult ? (
+                                  siteResult.status === "成功" ? (
+                                    <div
+                                      className="w-2 h-2 rounded-full bg-green-500 animate-pulse"
+                                      title="在线"
+                                    />
+                                  ) : (
+                                    <div
+                                      className="w-2 h-2 rounded-full bg-red-500"
+                                      title="离线"
+                                    />
+                                  )
                                 ) : (
-                                  <div className="w-2 h-2 rounded-full bg-red-500" title="离线" />
-                                )
-                              ) : (
-                                <div className="w-2 h-2 rounded-full bg-gray-500" title="未检测" />
+                                  <div
+                                    className="w-2 h-2 rounded-full bg-gray-500"
+                                    title="未检测"
+                                  />
+                                )}
+                                <span
+                                  className={`${
+                                    siteResult
+                                      ? siteResult.status === "成功"
+                                        ? "text-green-600 dark:text-green-400"
+                                        : "text-red-500 dark:text-red-400"
+                                      : "text-slate-400 dark:text-slate-500"
+                                  }`}
+                                >
+                                  {siteResult
+                                    ? siteResult.status === "成功"
+                                      ? "在线"
+                                      : "离线"
+                                    : "未检测"}
+                                </span>
+                              </div>
+                              {errorCode && (
+                                <span className="text-red-500 dark:text-red-400 text-[11px] font-semibold">
+                                  Err {errorCode}
+                                </span>
+                              )}
+                              {!errorCode && timeoutSeconds !== null && (
+                                <span className="text-red-500 dark:text-red-400 text-[11px] font-semibold">
+                                  Timeout {timeoutSeconds}s
+                                </span>
                               )}
                             </div>
-                            
-                            {/* 余额/消费 - 合并显示 */}
-                            <div className="flex items-center gap-1">
-                              {siteResult && siteResult.balance !== undefined && siteResult.balance !== null ? (
+
+                            {/* 3. 余额 */}
+                            <div className="flex flex-col">
+                              {siteResult &&
+                              siteResult.balance !== undefined &&
+                              siteResult.balance !== null ? (
                                 siteResult.balance === -1 ? (
-                                  <span className="text-xs">
-                                    <span className="text-purple-600 dark:text-purple-400 font-bold">∞</span>
-                                    <span className="text-slate-400 dark:text-slate-500">/</span>
-                                    <span className="text-orange-600 dark:text-orange-400 font-bold">$-{siteResult?.todayUsage?.toFixed(2) || '0.00'}</span>
+                                  <span className="font-mono font-semibold text-purple-600 dark:text-purple-400">
+                                    ∞
                                   </span>
                                 ) : (
-                                  <span className="text-xs">
-                                    <span className="text-green-600 dark:text-green-400 font-bold">${siteResult.balance.toFixed(2)}</span>
-                                    <span className="text-slate-400 dark:text-slate-500">/</span>
-                                    <span className="text-orange-600 dark:text-orange-400 font-bold">$-{siteResult?.todayUsage?.toFixed(2) || '0.00'}</span>
+                                  <span className="font-mono font-semibold text-green-600 dark:text-green-400 truncate">
+                                    ${siteResult.balance.toFixed(2)}
                                   </span>
                                 )
                               ) : (
-                                <span className="text-slate-400 dark:text-slate-500 text-xs">--/--</span>
+                                <span className="text-slate-400 dark:text-slate-500">
+                                  --
+                                </span>
                               )}
                             </div>
-                            
-                            {/* 可用模型数 - 文字显示 */}
-                            <div className="flex items-center gap-1">
-                              <span className="text-slate-500 dark:text-slate-400 text-xs">模型:</span>
-                              <span className={`font-semibold text-xs ${
-                                (() => {
-                                  // 优先使用定价数据中的模型数量
-                                  const key = siteResult?.name || site.name;
-                                  const pricing = modelPricing[key];
-                                  const apiModelCount = siteResult?.models?.length || 0;
-                                  const pricingModelCount = pricing?.data ? Object.keys(pricing.data).length : 0;
-                                  const actualCount = Math.max(apiModelCount, pricingModelCount);
-                                  return actualCount > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500';
-                                })()
-                              }`}>
+
+                            {/* 4. 今日消费 */}
+                            <div className="flex flex-col">
+                              {siteResult && siteResult.todayUsage !== undefined ? (
+                                <span className="font-mono font-semibold text-orange-600 dark:text-orange-400 truncate">
+                                  $-{siteResult.todayUsage.toFixed(2)}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 dark:text-slate-500">
+                                  --
+                                </span>
+                              )}
+                            </div>
+
+                            {/* 5. 总 Token */}
+                            <div className="flex flex-col items-center justify-center text-[11px] text-slate-600 dark:text-slate-300">
+                              <span className="font-mono font-medium">
+                                {todayTotalTokens.toLocaleString()}
+                              </span>
+                            </div>
+
+                            {/* 6. 输入 Token */}
+                            <div className="flex flex-col items-center justify-center text-[11px] text-slate-600 dark:text-slate-300">
+                              <span className="font-mono font-medium">
+                                {todayPromptTokens.toLocaleString()}
+                              </span>
+                            </div>
+
+                            {/* 7. 输出 Token */}
+                            <div className="flex flex-col items-center justify-center text-[11px] text-slate-600 dark:text-slate-300">
+                              <span className="font-mono font-medium">
+                                {todayCompletionTokens.toLocaleString()}
+                              </span>
+                            </div>
+
+                            {/* 8. 请求次数 */}
+                            <div className="flex flex-col items-center justify-center text-[11px] text-slate-600 dark:text-slate-300">
+                              <span className="font-mono font-medium">
+                                {todayRequests.toLocaleString()}
+                              </span>
+                            </div>
+
+                            {/* 9. RPM */}
+                            <div className="flex flex-col items-center justify-center text-[11px] text-slate-600 dark:text-slate-300">
+                              <span className="font-mono font-medium">
+                                {rpm.toFixed(2)}
+                              </span>
+                            </div>
+
+                            {/* 10. TPM */}
+                            <div className="flex flex-col items-center justify-center text-[11px] text-slate-600 dark:text-slate-300">
+                              <span className="font-mono font-medium">
+                                {tpm.toFixed(0)}
+                              </span>
+                            </div>
+
+                            {/* 11. 模型数 */}
+                            <div className="flex flex-col items-center justify-center text-[11px] text-slate-600 dark:text-slate-300">
+                              <span
+                                className={`font-medium ${
+                                  (() => {
+                                    const key = siteResult?.name || site.name;
+                                    const pricing = modelPricing[key];
+                                    const apiModelCount =
+                                      siteResult?.models?.length || 0;
+                                    const pricingModelCount = pricing?.data
+                                      ? Object.keys(pricing.data).length
+                                      : 0;
+                                    const actualCount = Math.max(
+                                      apiModelCount,
+                                      pricingModelCount
+                                    );
+                                    return actualCount > 0
+                                      ? "text-blue-600 dark:text-blue-400"
+                                      : "text-slate-400 dark:text-slate-500";
+                                  })()
+                                }`}
+                              >
                                 {(() => {
-                                  // 优先使用定价数据中的模型数量
                                   const key = siteResult?.name || site.name;
                                   const pricing = modelPricing[key];
-                                  const apiModelCount = siteResult?.models?.length || 0;
-                                  const pricingModelCount = pricing?.data ? Object.keys(pricing.data).length : 0;
+                                  const apiModelCount =
+                                    siteResult?.models?.length || 0;
+                                  const pricingModelCount = pricing?.data
+                                    ? Object.keys(pricing.data).length
+                                    : 0;
                                   return Math.max(apiModelCount, pricingModelCount);
                                 })()}
                               </span>
                             </div>
-                            
-                            {/* 最后更新时间 + 错误码 / Timeout */}
-                            {lastSyncDisplay && (
-                              <div className="flex items-center gap-1">
-                                <span className="text-slate-500 dark:text-slate-400 text-xs">
-                                  更新: {lastSyncDisplay}
+
+                            {/* 12. 更新时间 */}
+                            <div className="flex flex-col items-center justify-center text-[11px] text-slate-600 dark:text-slate-300">
+                              {lastSyncDisplay ? (
+                                <span className="font-medium">
+                                  {lastSyncDisplay}
                                 </span>
-                                {errorCode && (
-                                  <span className="text-red-500 dark:text-red-400 text-xs font-bold">
-                                    Error Code: {errorCode}
-                                  </span>
-                                )}
-                                {!errorCode && timeoutSeconds !== null && (
-                                  <span className="text-red-500 dark:text-red-400 text-xs font-bold">
-                                    Timeout {timeoutSeconds}s
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                          </div>
+                              ) : (
+                                <span className="text-slate-400 dark:text-slate-500">
+                                  --
+                                </span>
+                              )}
+                            </div>
                         </div>
                         
-                        {/* 右侧：操作按钮组 */}
-                        <div className="flex items-center gap-1">
+                        {/* 右侧：操作按钮组（固定在右侧）*/}
+                        <div className="flex items-center gap-1 ml-2 flex-shrink-0">
                           {/* 签到按钮 - 优先使用用户配置，然后使用检测结果 */}
                           {(site.force_enable_checkin || siteResult?.has_checkin) && (
                             <>
@@ -1437,6 +1864,15 @@ function App() {
                             <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                           </button>
                           
+                          {/* 复制 URL 按钮（复制站点地址） */}
+                          <button
+                            onClick={() => copyToClipboard(site.url, 'URL')}
+                            className="p-1 hover:bg-white/10 rounded transition-all"
+                            title="复制URL"
+                          >
+                            <Copy className="w-3.5 h-3.5 text-gray-400" />
+                          </button>
+                          
                           <button
                             onClick={() => detectSingle(site)}
                             disabled={detectingSite === site.name}
@@ -1475,78 +1911,17 @@ function App() {
                     
                     {/* 二级展开面板 */}
                     {isExpanded && (
-                      <div className="border-t border-slate-200/50 dark:border-slate-700/50 bg-slate-50/80 dark:bg-slate-900/60 px-3 py-1.5 space-y-1">
-                        {/* URL */}
-                        <div className="flex items-center justify-between py-0">
-                          <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">URL</span>
-                          <div className="flex items-center gap-1">
-                            <span className="text-xs text-slate-700 dark:text-slate-300 font-mono max-w-xs truncate">{site.url}</span>
-                            <button
-                              onClick={() => copyToClipboard(site.url, 'URL')}
-                              className="p-0.5 hover:bg-white/10 rounded transition-all"
-                              title="复制"
-                            >
-                              <Copy className="w-2.5 h-2.5 text-gray-400" />
-                            </button>
-                          </div>
-                        </div>
-                        
-                        {/* Access Token */}
-                        {site.system_token && (
-                          <div className="flex items-center justify-between py-0">
-                            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Token</span>
-                            <div className="flex items-center gap-0.5">
-                              <span className="text-xs text-primary-600 dark:text-primary-400 font-mono">
-                                {maskToken(site.system_token, showToken)}
-                              </span>
-                              <button
-                                onClick={() => toggleTokenVisibility(site.name)}
-                                className="p-0.5 hover:bg-white/10 rounded transition-all"
-                                title={showToken ? "隐藏" : "显示"}
-                              >
-                                {showToken ? (
-                                  <EyeOff className="w-2.5 h-2.5 text-gray-400" />
-                                ) : (
-                                  <Eye className="w-2.5 h-2.5 text-gray-400" />
-                                )}
-                              </button>
-                              <button
-                                onClick={() => copyToClipboard(site.system_token!, 'Token')}
-                                className="p-0.5 hover:bg-white/10 rounded transition-all"
-                                title="复制"
-                              >
-                                <Copy className="w-2.5 h-2.5 text-gray-400" />
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                        
-                        {/* API Key */}
-                        {site.api_key && (
-                          <div className="flex items-center justify-between py-0">
-                            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Key</span>
-                            <div className="flex items-center gap-0.5">
-                              <span className="text-xs text-blue-600 dark:text-blue-400 font-mono">
-                                {maskToken(site.api_key, showToken)}
-                              </span>
-                              <button
-                                onClick={() => copyToClipboard(site.api_key, 'Key')}
-                                className="p-0.5 hover:bg-white/10 rounded transition-all"
-                                title="复制"
-                              >
-                                <Copy className="w-2.5 h-2.5 text-gray-400" />
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                        
+                      <div
+                        className="border-t border-slate-200/50 dark:border-slate-700/50 bg-slate-50/80 dark:bg-slate-900/60 px-3 py-1.5 space-y-1 cursor-default"
+                        data-no-drag="true"
+                      >
                         {/* 用户分组 */}
                         {(() => {
                           const key = siteResult?.name || site.name;
                           return userGroups[key] && Object.keys(userGroups[key]).length > 0;
                         })() && (
                           <div className="flex items-center gap-1 flex-wrap py-0">
-                            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">分组</span>
+                            <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold whitespace-nowrap">用户分组</span>
                             {Object.entries(userGroups[siteResult?.name || site.name]).map(([groupName, groupData]: [string, any]) => (
                               <button
                                 key={groupName}
@@ -1574,14 +1949,14 @@ function App() {
                           </div>
                         )}
                         
-                        {/* API Keys列表 */}
+                        {/* 令牌管理（API Keys 列表） */}
                         <div className="space-y-0.5">
                           <div className="flex items-center gap-1 justify-between">
-                            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                            <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold">
                               {(() => {
                                 const siteKey = siteResult?.name || site.name;
                                 const allKeys = apiKeys[siteKey] || [];
-                                return `Keys (${getFilteredApiKeys(siteKey).length}/${allKeys.length})`;
+                                return `令牌管理 (${getFilteredApiKeys(siteKey).length}/${allKeys.length})`;
                               })()}
                               {selectedGroup[site.name] && (
                                 <span className="ml-1 text-primary-400">· {selectedGroup[site.name]}</span>
@@ -1619,77 +1994,109 @@ function App() {
                                   return (
                                     <div
                                       key={idx}
-                                      className="px-1.5 py-0.5 bg-white dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-700 transition-all flex items-center justify-between gap-1"
+                                      className="px-1.5 py-0.5 bg-white dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-700 transition-all"
                                     >
-                                      {/* 左侧：名称+标签 */}
-                                      <div className="flex items-center gap-0.5 min-w-0 flex-1">
-                                        <span className="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate">
+                                      {/* 单行固定栅格布局：名称 | 状态 | 分组 | 标签 | 已使用 | API Key | 操作 */}
+                                      <div className="grid grid-cols-[120px_50px_180px_90px_120px_minmax(280px,1fr)_60px] gap-x-3 items-center text-xs">
+                                        {/* 1. 名称 */}
+                                        <div className="font-semibold text-slate-800 dark:text-slate-100 truncate">
                                           {token.name || `Key #${idx + 1}`}
-                                        </span>
-                                        {token.group && token.group.trim() && (
-                                          <span className={`px-1.5 py-0.5 text-xs rounded border flex items-center gap-0.5 flex-shrink-0 ${getGroupColor(token.group)}`}>
-                                            {getGroupIcon(token.group, false)}
-                                            <span className="font-medium">{token.group}</span>
-                                          </span>
-                                        )}
-                                        {quotaInfo && (
-                                          <span className={`p-0.5 text-xs rounded border flex items-center flex-shrink-0 ${quotaInfo.color}`} title={quotaInfo.text}>
-                                            {quotaInfo.icon}
-                                          </span>
-                                        )}
-                                        {token.unlimited_quota && (
-                                          <span className="px-1 py-0.5 text-xs rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 flex-shrink-0">
-                                            ∞
-                                          </span>
-                                        )}
-                                        <span className={`p-0.5 text-xs rounded flex-shrink-0 ${
+                                        </div>
+                                        
+                                        {/* 2. 状态（不要框框）*/}
+                                        <div className={`font-medium ${
                                           token.status === 1
-                                            ? 'bg-green-500/20 text-green-300 border border-green-500/30'
-                                            : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
+                                            ? 'text-green-600 dark:text-green-400'
+                                            : 'text-gray-500 dark:text-gray-400'
                                         }`}>
-                                          {token.status === 1 ? '✓' : '✕'}
-                                        </span>
-                                      </div>
-                                      
-                                      {/* 中间：令牌+数据 */}
-                                      <div className="flex items-center gap-2 text-xs">
-                                        <span className="font-mono text-blue-600 dark:text-blue-400">
-                                          {maskToken(addSkPrefix(token.key), showTokens[`${site.name}_key_${idx}`] || false)}
-                                        </span>
-                                        {!token.unlimited_quota && token.remain_quota !== undefined && (
-                                          <span className="text-slate-500 dark:text-slate-400">
-                                            余<span className={token.remain_quota > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>
-                                              ${(token.remain_quota / 500000).toFixed(2)}
+                                          {token.status === 1 ? '✓ 启用' : '✕ 禁用'}
+                                        </div>
+                                        
+                                        {/* 3. 分组（带图标，颜色与「用户分组」保持一致，仅文字颜色，无背景）*/}
+                                        <div className="min-w-0">
+                                          {token.group && token.group.trim() ? (
+                                            <span
+                                              className={`font-medium flex items-center gap-1 ${getGroupTextColor(
+                                                token.group,
+                                              )}`}
+                                            >
+                                              {getGroupIcon(token.group, true)}
+                                              <span>{token.group}</span>
                                             </span>
-                                          </span>
-                                        )}
-                                        {token.used_quota !== undefined && (
-                                          <span className="text-slate-500 dark:text-slate-400">
-                                            用<span className="text-orange-600 dark:text-orange-400">${(token.used_quota / 500000).toFixed(2)}</span>
-                                          </span>
-                                        )}
-                                      </div>
-                                      
-                                      {/* 右侧：操作按钮 */}
-                                      <div className="flex items-center gap-0.5 flex-shrink-0">
-                                        <button
-                                          onClick={() => toggleTokenVisibility(`${site.name}_key_${idx}`)}
-                                          className="p-0.5 hover:bg-white/10 rounded transition-all"
-                                          title={showTokens[`${site.name}_key_${idx}`] ? "隐藏" : "显示"}
-                                        >
-                                          {showTokens[`${site.name}_key_${idx}`] ? (
-                                            <EyeOff className="w-3 h-3 text-gray-400" />
                                           ) : (
-                                            <Eye className="w-3 h-3 text-gray-400" />
+                                            <span className="text-slate-400 dark:text-slate-500">--</span>
                                           )}
-                                        </button>
-                                        <button
-                                          onClick={() => copyToClipboard(addSkPrefix(token.key), `API Key: ${token.name}`)}
-                                          className="p-0.5 hover:bg-white/10 rounded transition-all"
-                                          title="复制"
-                                        >
-                                          <Copy className="w-3 h-3 text-gray-400" />
-                                        </button>
+                                        </div>
+                                        
+                                        {/* 4. 标签（颜色与名称保持一致）*/}
+                                        <div className="text-slate-800 dark:text-slate-100">
+                                          {token.unlimited_quota ? (
+                                            <span className="font-medium">限额: ∞</span>
+                                          ) : quotaInfo ? (
+                                            <span className="font-medium">限额: {quotaInfo.text}</span>
+                                          ) : (
+                                            <span className="text-slate-400 dark:text-slate-500">--</span>
+                                          )}
+                                        </div>
+                                        
+                                        {/* 5. 已使用: xxx */}
+                                        <div className="text-slate-600 dark:text-slate-400">
+                                          {token.used_quota !== undefined ? (
+                                            <>
+                                              已使用: <span className="text-orange-600 dark:text-orange-400 font-semibold">${(token.used_quota / 500000).toFixed(2)}</span>
+                                            </>
+                                          ) : (
+                                            <span className="text-slate-400 dark:text-slate-500">已使用: --</span>
+                                          )}
+                                        </div>
+                                        
+                                        {/* 6. API Key（头尾显示更多字符）*/}
+                                        <div className="font-mono text-blue-600 dark:text-blue-400 truncate pl-[100px]">
+                                          {(() => {
+                                            const fullKey = addSkPrefix(token.key);
+                                            const isVisible = showTokens[`${site.name}_key_${idx}`] || false;
+                                            if (isVisible) {
+                                              return fullKey;
+                                            }
+                                            // 显示更多头尾字符：前12位 + ... + 后8位
+                                            if (fullKey.length > 25) {
+                                              return `${fullKey.slice(0, 12)}...${fullKey.slice(-8)}`;
+                                            }
+                                            return fullKey;
+                                          })()}
+                                        </div>
+                                        
+                                        {/* 7. 操作 */}
+                                        <div className="flex items-center gap-0.5 justify-end">
+                                          <button
+                                            onClick={() => toggleTokenVisibility(`${site.name}_key_${idx}`)}
+                                            className="p-0.5 hover:bg-white/10 rounded transition-all"
+                                          >
+                                            {showTokens[`${site.name}_key_${idx}`] ? (
+                                              <EyeOff className="w-3 h-3 text-gray-400" />
+                                            ) : (
+                                              <Eye className="w-3 h-3 text-gray-400" />
+                                            )}
+                                          </button>
+                                          <button
+                                            onClick={() => copyToClipboard(addSkPrefix(token.key), `API Key: ${token.name}`)}
+                                            className="p-0.5 hover:bg-white/10 rounded transition-all"
+                                          >
+                                            <Copy className="w-3 h-3 text-gray-400" />
+                                          </button>
+                                          <button
+                                            onClick={() => handleDeleteToken(site, token, idx)}
+                                            disabled={deletingTokenKey === `${site.name}_${token.id ?? token.key ?? idx}`}
+                                            className="p-0.5 hover:bg-red-500/20 rounded transition-all disabled:opacity-60"
+                                            title="删除该 API Key"
+                                          >
+                                            {deletingTokenKey === `${site.name}_${token.id ?? token.key ?? idx}` ? (
+                                              <Loader2 className="w-3 h-3 text-red-500 animate-spin" />
+                                            ) : (
+                                              <Trash2 className="w-3 h-3 text-red-500" />
+                                            )}
+                                          </button>
+                                        </div>
                                       </div>
                                     </div>
                                   );
@@ -1732,8 +2139,8 @@ function App() {
                             <div className="space-y-0.5">
                               <div className="flex items-center justify-between gap-1">
                                 <div className="flex items-center gap-1 flex-1">
-                                  <span className="text-xs text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">
-                                    模型 ({getFilteredModels(site.name, allModels).length}/{allModels.length})
+                                  <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold whitespace-nowrap">
+                                    可用模型 ({getFilteredModels(site.name, allModels).length}/{allModels.length})
                                     {selectedModels.size > 0 && (
                                       <span className="ml-1 text-primary-400">· 已选{selectedModels.size}</span>
                                     )}
@@ -1741,14 +2148,16 @@ function App() {
                                       <span className="ml-1 text-primary-400">· {selectedGroup[site.name]}</span>
                                     )}
                                   </span>
-                                {/* 搜索框 */}
-                                <input
-                                  type="text"
-                                  placeholder="搜索..."
-                                  value={modelSearch[site.name] || ''}
-                                  onChange={(e) => setModelSearch(prev => ({ ...prev, [site.name]: e.target.value }))}
-                                  className="px-1.5 py-0.5 text-xs bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded text-slate-700 dark:text-slate-300 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-primary-400 transition-colors w-20"
-                                />
+                                {/* 搜索框（整体右移，略小于原先偏移） */}
+                                <div className="ml-7">
+                                  <input
+                                    type="text"
+                                    placeholder="搜索..."
+                                    value={modelSearch[site.name] || ''}
+                                    onChange={(e) => setModelSearch(prev => ({ ...prev, [site.name]: e.target.value }))}
+                                    className="px-1.5 py-0.5 text-xs bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded text-slate-700 dark:text-slate-300 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-primary-400 transition-colors w-[100px]"
+                                  />
+                                </div>
                               </div>
                               {selectedModels.size > 0 && (
                                 <button
@@ -1892,10 +2301,9 @@ function App() {
                                             {enableGroups.map((group: string, gidx: number) => (
                                               <span
                                                 key={gidx}
-                                                className={`p-0.5 rounded ${getGroupColor(group)}`}
-                                                title={group}
+                                                className={getGroupTextColor(group)}
                                               >
-                                                {getGroupIcon(group, false)}
+                                                {getGroupIcon(group, true)}
                                               </span>
                                             ))}
                                           </div>
@@ -1944,7 +2352,7 @@ function App() {
                         })()}
                         
                         {/* 错误信息 */}
-                        {siteResult && siteResult.error && (
+                        {(siteResult?.error) && (
                           <div className="px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg">
                             <p className="text-xs text-red-400">❌ {siteResult.error}</p>
                           </div>
@@ -1953,13 +2361,15 @@ function App() {
                     )}
                   </div>
                 );
-              })
+                  })}
+                </div>
+              </>
             )}
           </div>
         </div>
       </div>
-      </div>
       {/* 关闭 relative z-10 h-full flex flex-col 的 div */}
+      </div>
 
       {showSiteEditor && (
         <SiteEditor

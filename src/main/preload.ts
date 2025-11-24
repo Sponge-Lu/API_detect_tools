@@ -37,6 +37,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 创建新的 API 令牌
     createApiToken: (baseUrl: string, userId: number, accessToken: string, tokenData: any) =>
       ipcRenderer.invoke('token:create-api-token', baseUrl, userId, accessToken, tokenData),
+    // 删除 API 令牌
+    deleteApiToken: (baseUrl: string, userId: number, accessToken: string, tokenIdentifier: any) =>
+      ipcRenderer.invoke('token:delete-api-token', baseUrl, userId, accessToken, tokenIdentifier),
     // 执行签到
     checkIn: (baseUrl: string, userId: number, accessToken: string) =>
       ipcRenderer.invoke('token:check-in', baseUrl, userId, accessToken)
