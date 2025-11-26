@@ -740,6 +740,9 @@ export class TokenService {
       `${cleanBaseUrl}/api/token/`
     ];
 
+    let lastError: any = null;
+    let lastStatus: number | undefined = undefined;
+
     for (const url of urls) {
       try {
         const response = await axios.get(url, {
@@ -812,13 +815,16 @@ export class TokenService {
           return tokens;
         }
       } catch (error: any) {
+        lastError = error;
+        lastStatus = error.response?.status;
+
         console.log(`⚠️ [TokenService] URL ${url} axios失败:`, {
-          status: error.response?.status,
+          status: lastStatus,
           message: error.message
         });
         
-        // 如果是403错误且有共享页面，直接使用浏览器模式
-        if (error.response?.status === 403 && page) {
+        // 如果调用方已经提供了共享页面，则在403时直接切换到浏览器模式
+        if (lastStatus === 403 && page) {
           console.log('🛡️ [TokenService] 检测到403错误，使用共享浏览器页面获取API Keys...');
           try {
             return await this.fetchApiTokensInBrowser(baseUrl, userId, accessToken, page);
@@ -827,6 +833,30 @@ export class TokenService {
           }
         }
         continue;
+      }
+    }
+
+    // 如果 axios 全部失败且没有提供共享页面，但错误看起来像 Cloudflare/403 场景，则自动回退到浏览器模式
+    if (!page && lastError && (lastStatus === 403 || this.isCloudflareError(lastError))) {
+      console.log('🛡️ [TokenService] axios 获取 API Keys 失败且疑似 Cloudflare，尝试使用浏览器模式重新获取...');
+      try {
+        // 通过 ChromeManager 创建页面（自动管理引用计数与生命周期）
+        const { page: browserPage, release } = await this.chromeManager.createPage(cleanBaseUrl);
+        try {
+          // 等待 Cloudflare 验证通过（如果存在）
+          await this.waitForCloudflareChallengeToPass(browserPage);
+          const tokens = await this.fetchApiTokensInBrowser(baseUrl, userId, accessToken, browserPage);
+          return tokens;
+        } finally {
+          try {
+            await browserPage.close();
+          } catch {
+            // 忽略关闭错误
+          }
+          release();
+        }
+      } catch (browserError: any) {
+        console.error('❌ [TokenService] 浏览器模式获取 API Keys 最终失败:', browserError.message || browserError);
       }
     }
 
@@ -950,6 +980,416 @@ export class TokenService {
   }
 
   /**
+   * 删除 API 令牌
+   *
+   * 优先使用 axios 直接调用后端接口；
+   * 如果遇到 Cloudflare / HTML 响应，则回退到浏览器模式，在已打开的站点页面中发送删除请求。
+   *
+   * @param baseUrl    站点基础 URL
+   * @param userId     用户 ID（用于 User-Id 相关请求头）
+   * @param accessToken 系统访问令牌（access_token）
+   * @param tokenIdentifier 令牌标识（兼容 id / key 两种形式）
+   */
+  async deleteApiToken(
+    baseUrl: string,
+    userId: number,
+    accessToken: string,
+    tokenIdentifier: { id?: number | string; key?: string }
+  ): Promise<{ success: boolean; data?: any[] }> {
+    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    const id = tokenIdentifier.id != null ? String(tokenIdentifier.id) : undefined;
+    const key = tokenIdentifier.key != null ? String(tokenIdentifier.key) : undefined;
+
+    if (!id && !key) {
+      throw new Error('缺少令牌标识，无法删除 API Key');
+    }
+
+    console.log('🗑 [TokenService] 删除 API 令牌...', {
+      baseUrl: cleanBaseUrl,
+      id,
+      hasKey: !!key
+    });
+
+    // ===== 1. axios 模式（优先尝试）=====
+    type AxiosDeleteCandidate = {
+      method: 'DELETE' | 'POST';
+      url: string;
+      body?: any;
+      description: string;
+    };
+
+    const axiosCandidates: AxiosDeleteCandidate[] = [];
+
+    // 优先使用 id 作为主键（New API / Done Hub 等大多数实现）
+    if (id) {
+      axiosCandidates.push(
+        {
+          method: 'DELETE',
+          url: `${cleanBaseUrl}/api/token/${encodeURIComponent(id)}`,
+          description: 'DELETE /api/token/{id}'
+        },
+        {
+          method: 'DELETE',
+          url: `${cleanBaseUrl}/api/token/?id=${encodeURIComponent(id)}`,
+          description: 'DELETE /api/token/?id={id}'
+        },
+        {
+          method: 'POST',
+          url: `${cleanBaseUrl}/api/token/${encodeURIComponent(id)}/delete`,
+          body: { id },
+          description: 'POST /api/token/{id}/delete'
+        },
+        {
+          method: 'POST',
+          url: `${cleanBaseUrl}/api/token/delete`,
+          body: { id },
+          description: 'POST /api/token/delete (body.id)'
+        }
+      );
+    }
+
+    // 兼容部分站点使用 key 作为删除依据
+    if (key) {
+      axiosCandidates.push(
+        {
+          method: 'DELETE',
+          url: `${cleanBaseUrl}/api/token/${encodeURIComponent(key)}`,
+          description: 'DELETE /api/token/{key}'
+        },
+        {
+          method: 'DELETE',
+          url: `${cleanBaseUrl}/api/token/?key=${encodeURIComponent(key)}`,
+          description: 'DELETE /api/token/?key={key}'
+        },
+        {
+          method: 'POST',
+          url: `${cleanBaseUrl}/api/token/delete`,
+          body: { key },
+          description: 'POST /api/token/delete (body.key)'
+        }
+      );
+    }
+
+    let needBrowserFallback = false;
+    let lastError: any = null;
+
+    for (const candidate of axiosCandidates) {
+      try {
+        console.log(`📡 [TokenService] 尝试删除令牌 (axios): ${candidate.description} -> ${candidate.url}`);
+        const response = await axios.request({
+          method: candidate.method,
+          url: candidate.url,
+          data: candidate.body,
+          headers: this.createRequestHeaders(userId, accessToken, baseUrl),
+          timeout: 15000,
+          validateStatus: (status) => status < 500
+        });
+
+        const rawData = response.data;
+
+        // 如果返回的是 HTML，很可能被 Cloudflare 拦截，后续使用浏览器模式重试
+        if (typeof rawData === 'string' && rawData.includes('<!DOCTYPE html')) {
+          console.warn('🛡️ [TokenService] 删除令牌遇到 HTML 响应（可能是 Cloudflare），准备回退到浏览器模式');
+          needBrowserFallback = true;
+          break;
+        }
+
+        const data = (rawData && typeof rawData === 'object') ? rawData : {};
+
+        console.log('📦 [TokenService] 删除令牌响应:', {
+          status: response.status,
+          hasSuccess: 'success' in data,
+          success: (data as any).success,
+          message: (data as any).message
+        });
+
+        // HTTP 2xx 视为成功（除非明确 success === false）
+        if (response.status >= 200 && response.status < 300) {
+          if (typeof (data as any).success === 'boolean' && !(data as any).success) {
+            // 明确业务失败，记录错误信息并尝试下一个候选
+            console.warn('⚠️ [TokenService] 删除令牌业务失败，尝试下一个候选:', (data as any).message);
+            lastError = new Error((data as any).message || '删除令牌失败');
+            continue;
+          }
+          console.log('✅ [TokenService] axios 删除令牌成功');
+          // axios 模式删除成功，不额外获取列表，前端后续用 axios 刷新 API Key 列表
+          return { success: true };
+        }
+
+        // 某些站点可能用 4xx 表示“该 URL 不支持删除”，继续尝试下一个候选
+        console.warn('⚠️ [TokenService] 删除令牌 HTTP 非 2xx，尝试下一个候选:', {
+          status: response.status,
+          url: candidate.url
+        });
+        lastError = new Error((data as any).message || `HTTP ${response.status}`);
+      } catch (error: any) {
+        lastError = error;
+        // 如果检测到 Cloudflare 相关错误，直接回退到浏览器模式
+        if (this.isCloudflareError(error)) {
+          console.warn('🛡️ [TokenService] 检测到 Cloudflare 保护，准备回退到浏览器模式删除令牌');
+          needBrowserFallback = true;
+          break;
+        }
+
+        console.warn('⚠️ [TokenService] axios 删除令牌失败，尝试下一个候选:', {
+          message: error.message
+        });
+        continue;
+      }
+    }
+
+    // 如果 axios 没有成功且没有明显的 Cloudflare 错误，直接抛出最后一个错误
+    if (!needBrowserFallback) {
+      if (lastError) {
+        console.error('❌ [TokenService] 所有 axios 删除方式均失败:', lastError.message || lastError);
+        throw lastError;
+      }
+      console.error('❌ [TokenService] 无可用的删除方式，axios 删除失败');
+      throw new Error('删除 API Key 失败，后端未提供兼容的删除端点');
+    }
+
+    // ===== 2. 浏览器模式（Cloudflare 场景 / axios 不可用时）=====
+    return await this.deleteApiTokenInBrowser(baseUrl, userId, accessToken, { id, key });
+  }
+
+  /**
+   * 在浏览器环境中删除 API 令牌
+   *
+   * 说明：
+   * - 通过 Puppeteer 连接到已登录站点页面；
+   * - 等待 Cloudflare 验证通过后，在页面上下文中使用 fetch 调用删除接口；
+   * - 操作完成后关闭当前标签页，并通过引用计数让浏览器按需延迟退出。
+   */
+  private async deleteApiTokenInBrowser(
+    baseUrl: string,
+    userId: number,
+    accessToken: string,
+    tokenIdentifier: { id?: string; key?: string }
+  ): Promise<{ success: boolean; data?: any[] }> {
+    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    const id = tokenIdentifier.id;
+    const key = tokenIdentifier.key;
+
+    if (!id && !key) {
+      throw new Error('缺少令牌标识，无法在浏览器中删除 API Key');
+    }
+
+    console.log('🧭 [TokenService] 浏览器模式删除 API 令牌...', {
+      baseUrl: cleanBaseUrl,
+      id,
+      hasKey: !!key
+    });
+
+    const { page, release } = await this.chromeManager.createPage(cleanBaseUrl);
+
+    try {
+      // 确保页面前置，方便用户在 Cloudflare 页面中进行验证
+      await page.bringToFront().catch(() => {});
+
+      // 等待 Cloudflare 验证通过（如果存在）
+      await this.waitForCloudflareChallengeToPass(page);
+
+      const userIdHeaders = this.getAllUserIdHeaders(Number(userId));
+
+      type BrowserDeleteCandidate = {
+        method: 'DELETE' | 'POST';
+        url: string;
+        body?: any;
+        description: string;
+      };
+
+      const browserCandidates: BrowserDeleteCandidate[] = [];
+
+      if (id) {
+        browserCandidates.push(
+          {
+            method: 'DELETE',
+            url: `${cleanBaseUrl}/api/token/${encodeURIComponent(id)}`,
+            description: 'DELETE /api/token/{id}'
+          },
+          {
+            method: 'DELETE',
+            url: `${cleanBaseUrl}/api/token/?id=${encodeURIComponent(id)}`,
+            description: 'DELETE /api/token/?id={id}'
+          },
+          {
+            method: 'POST',
+            url: `${cleanBaseUrl}/api/token/${encodeURIComponent(id)}/delete`,
+            body: { id },
+            description: 'POST /api/token/{id}/delete'
+          },
+          {
+            method: 'POST',
+            url: `${cleanBaseUrl}/api/token/delete`,
+            body: { id },
+            description: 'POST /api/token/delete (body.id)'
+          }
+        );
+      }
+
+      if (key) {
+        browserCandidates.push(
+          {
+            method: 'DELETE',
+            url: `${cleanBaseUrl}/api/token/${encodeURIComponent(key)}`,
+            description: 'DELETE /api/token/{key}'
+          },
+          {
+            method: 'DELETE',
+            url: `${cleanBaseUrl}/api/token/?key=${encodeURIComponent(key)}`,
+            description: 'DELETE /api/token/?key={key}'
+          },
+          {
+            method: 'POST',
+            url: `${cleanBaseUrl}/api/token/delete`,
+            body: { key },
+            description: 'POST /api/token/delete (body.key)'
+          }
+        );
+      }
+
+      let lastError: any = null;
+
+      for (const candidate of browserCandidates) {
+        console.log(`📡 [TokenService] 浏览器删除令牌: ${candidate.description} -> ${candidate.url}`);
+
+        const result = await page.evaluate(
+          async (
+            apiUrl: string,
+            token: string,
+            method: string,
+            payload: any,
+            additionalHeaders: Record<string, string>
+          ) => {
+            try {
+              const headers: Record<string, string> = {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+                ...additionalHeaders,
+                'Pragma': 'no-cache'
+              };
+
+              const init: RequestInit = {
+                method,
+                credentials: 'include',
+                headers
+              };
+
+              if (method === 'POST' && payload) {
+                init.body = JSON.stringify(payload);
+              }
+
+              const response = await fetch(apiUrl, init);
+              const status = response.status;
+              const text = await response.text();
+
+              try {
+                const data = JSON.parse(text);
+                return { ok: response.ok, status, isJson: true, data };
+              } catch {
+                return { ok: response.ok, status, isJson: false, textSnippet: text.slice(0, 200) };
+              }
+            } catch (err: any) {
+              return { ok: false, status: 0, isJson: false, error: err?.message || String(err) };
+            }
+          },
+          candidate.url,
+          accessToken,
+          candidate.method,
+          candidate.body || null,
+          userIdHeaders
+        );
+
+        console.log('📦 [TokenService] 浏览器删除令牌结果:', result);
+
+        if (!result.ok || result.status < 200 || result.status >= 300) {
+          const reason = result.isJson
+            ? (result.data?.message || `HTTP ${result.status}`)
+            : (result.textSnippet || `HTTP ${result.status}`);
+
+          console.warn('⚠️ [TokenService] 浏览器删除令牌失败，尝试下一个候选:', reason);
+          lastError = new Error(reason);
+          continue;
+        }
+
+        if (result.isJson && typeof result.data?.success === 'boolean' && !result.data.success) {
+          const reason = result.data.message || '删除令牌失败(浏览器)';
+          console.warn('⚠️ [TokenService] 浏览器删除令牌业务失败，尝试下一个候选:', reason);
+          lastError = new Error(reason);
+          continue;
+        }
+
+        console.log('✅ [TokenService] 浏览器模式删除令牌成功');
+
+        // 删除成功后，直接在同一浏览器页面中获取最新 API Key 列表
+        const tokens = await this.fetchApiTokensInBrowser(baseUrl, userId, accessToken, page);
+        console.log(`✅ [TokenService] 浏览器模式删除令牌后已获取最新 API Keys，数量: ${tokens.length}`);
+
+        return { success: true, data: tokens };
+      }
+
+      if (lastError) {
+        console.error('❌ [TokenService] 浏览器模式删除令牌全部候选失败:', lastError.message || lastError);
+        throw lastError;
+      }
+
+      throw new Error('删除 API Key 失败（浏览器模式未找到可用端点）');
+    } finally {
+      // 关闭当前标签页，并释放浏览器引用计数
+      try {
+        await page.close();
+      } catch (e) {
+        // 忽略关闭错误
+      }
+      release();
+    }
+  }
+
+  /**
+   * 等待 Cloudflare 验证通过
+   *
+   * 策略：
+   * - 轮询页面 HTML 内容，如果包含典型 Cloudflare 文本（如 "Just a moment" / "cf-browser-verification"）则认为仍在验证中；
+   * - 最长等待 maxWaitMs 毫秒，期间用户可以在浏览器窗口中完成验证；
+   * - 超时后不直接失败，而是给出警告日志后继续后续操作（由实际接口响应来最终决定是否成功）。
+   *
+   * @param page Puppeteer 页面对象
+   * @param maxWaitMs 最大等待时间（默认 120 秒）
+   */
+  private async waitForCloudflareChallengeToPass(page: any, maxWaitMs: number = 600000): Promise<void> {
+    const start = Date.now();
+
+    while (Date.now() - start < maxWaitMs) {
+      if (page.isClosed && page.isClosed()) {
+        throw new Error('浏览器已关闭，操作已取消');
+      }
+
+      try {
+        const html: string = await page.content();
+        const hasChallenge =
+          html.includes('cf-browser-verification') ||
+          html.includes('Just a moment') ||
+          html.includes('Checking your browser before accessing') ||
+          html.includes('Cloudflare');
+
+        if (!hasChallenge) {
+          console.log('✅ [TokenService] 未检测到 Cloudflare 挑战页面，继续执行后续操作');
+          return;
+        }
+
+        console.log('🛡️ [TokenService] 检测到 Cloudflare 挑战页面，等待用户完成验证...');
+      } catch (error: any) {
+        console.warn('⚠️ [TokenService] 检查 Cloudflare 状态失败，稍后重试:', error.message || error);
+      }
+
+      // 间隔 2 秒再次检查
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+
+    console.warn('⚠️ [TokenService] 等待 Cloudflare 验证超时，继续尝试调用接口，成功与否由后续响应决定');
+  }
+
+  /**
    * 创建新的 API 令牌
    * 
    * 说明：
@@ -975,7 +1415,7 @@ export class TokenService {
       allow_ips: string;
       group: string;
     }
-  ): Promise<boolean> {
+  ): Promise<{ success: boolean; data?: any[] }> {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
     const url = `${cleanBaseUrl}/api/token/`;
 
@@ -1028,7 +1468,8 @@ export class TokenService {
         throw new Error((data as any).message || '创建令牌失败');
       }
 
-      return true;
+      // axios 模式创建成功，不额外获取列表，前端后续用 axios 刷新 API Key 列表
+      return { success: true };
     } catch (error: any) {
       // 如果是 axios 错误且响应体是 Cloudflare HTML，同样尝试浏览器模式
       const html = error?.response?.data;
@@ -1062,7 +1503,7 @@ export class TokenService {
       allow_ips: string;
       group: string;
     }
-  ): Promise<boolean> {
+  ): Promise<{ success: boolean; data?: any[] }> {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
     const url = `${cleanBaseUrl}/api/token/`;
 
@@ -1076,6 +1517,12 @@ export class TokenService {
     const { page, release } = await this.chromeManager.createPage(cleanBaseUrl);
 
     try {
+      // 确保页面前置，方便用户在 Cloudflare 页面中进行验证
+      await page.bringToFront().catch(() => {});
+
+      // 等待 Cloudflare 验证通过（如果存在）
+      await this.waitForCloudflareChallengeToPass(page);
+
       const userIdHeaders = this.getAllUserIdHeaders(userId);
 
       const result = await page.evaluate(
@@ -1126,7 +1573,11 @@ export class TokenService {
         throw new Error(result.data.message || '创建令牌失败(浏览器)');
       }
 
-      return true;
+      // 创建成功后，直接在同一浏览器页面中获取最新 API Key 列表
+      const tokens = await this.fetchApiTokensInBrowser(baseUrl, userId, accessToken, page);
+      console.log(`✅ [TokenService] 浏览器模式创建令牌后已获取最新 API Keys，数量: ${tokens.length}`);
+
+      return { success: true, data: tokens };
     } finally {
       // 释放浏览器引用
       release();
