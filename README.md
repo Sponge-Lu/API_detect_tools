@@ -79,6 +79,7 @@
 1. 直接使用安装包 https://github.com/Sponge-Lu/API_detect_tools/releases
 或者
 2. 开发环境构建应用：
+  windows:
   1.  **安装依赖**
       ```bash
       npm install
@@ -92,6 +93,8 @@
       npm run dist
       ```
 
+  mac:
+  运行 run-mac.sh
 ## 许可证
 
 MIT
