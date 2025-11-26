@@ -216,7 +216,7 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
           </button>
         </div>
 
-        <div className="px-6 py-6 space-y-6">
+        <div className="px-6 py-6 space-y-6 overflow-y-auto flex-1">
           {/* 步骤指示器：智能添加模式或编辑模式显示 */}
           {(mode === "auto" || site) && (
             <div className="flex items-center justify-between">

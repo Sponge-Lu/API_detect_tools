@@ -60,5 +60,31 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   
   // 从 token-storage.json 恢复站点配置
-  recoverSitesFromStorage: () => ipcRenderer.invoke('recover-sites-from-storage')
+  recoverSitesFromStorage: () => ipcRenderer.invoke('recover-sites-from-storage'),
+  
+  // 备份管理 API
+  backup: {
+    // 列出所有备份
+    list: () => ipcRenderer.invoke('backup:list'),
+    // 获取备份目录路径
+    getDir: () => ipcRenderer.invoke('backup:get-dir'),
+    // 获取最新备份时间
+    getLatestTime: () => ipcRenderer.invoke('backup:get-latest-time'),
+    // 手动触发备份
+    manual: () => ipcRenderer.invoke('backup:manual'),
+    // 从备份恢复配置
+    restoreConfig: (backupFileName: string) => ipcRenderer.invoke('backup:restore-config', backupFileName),
+    // 从备份恢复令牌存储
+    restoreTokenStorage: (backupFileName: string) => ipcRenderer.invoke('backup:restore-token-storage', backupFileName),
+    // 打开备份目录
+    openDir: () => ipcRenderer.invoke('backup:open-dir')
+  },
+  
+  // 主题设置 API
+  theme: {
+    // 保存主题设置到主进程存储（用于下次启动时设置窗口背景色）
+    save: (themeMode: 'light' | 'dark' | 'system') => ipcRenderer.invoke('theme:save', themeMode),
+    // 加载保存的主题设置
+    load: () => ipcRenderer.invoke('theme:load')
+  }
 });

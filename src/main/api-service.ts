@@ -381,17 +381,58 @@ export class ApiService {
   }
 
   /**
+   * 检测响应数据是否为 Bot Detection 页面（返回200但内容是HTML）
+   */
+  private isBotDetectionPage(data: any): boolean {
+    if (typeof data === 'string') {
+      const lowerData = data.toLowerCase();
+      // 检测常见的 Bot Detection 特征
+      return (
+        lowerData.includes('<!doctype html') ||
+        lowerData.includes('<html') ||
+        lowerData.includes('bot detection') ||
+        lowerData.includes('bunkerweb') ||
+        lowerData.includes('please wait while we check') ||
+        lowerData.includes('checking your browser') ||
+        lowerData.includes('just a moment')
+      );
+    }
+    return false;
+  }
+
+  /**
    * 判断HTTP状态码是否为致命错误
    * 对于这些错误码，继续重试其它端点通常没有意义，可以直接结束当前站点检测
    *
    * 说明：
-   * - 403/5xx 基本可以确认是权限/服务异常，继续尝试其它端点成功概率极低
-   * - 404 在部分站点可能表示“当前端点不存在，但其它备用端点可用”，为兼容性考虑不视为致命
+   * - 401/403/5xx 基本可以确认是权限/服务异常，继续尝试其它端点成功概率极低
+   * - 404 在部分站点可能表示"当前端点不存在，但其它备用端点可用"，为兼容性考虑不视为致命
    */
   private isFatalHttpStatus(status?: number): boolean {
     if (!status) return false;
-    const fatalStatuses = [400, 403, 500, 502, 503, 504, 522];
+    const fatalStatuses = [400, 401, 403, 500, 502, 503, 504, 522];
     return fatalStatuses.includes(status);
+  }
+
+  /**
+   * 判断是否为认证/授权错误（401/403）
+   */
+  private isAuthError(error: any): boolean {
+    const status = error?.response?.status;
+    return status === 401 || status === 403;
+  }
+
+  /**
+   * 为认证错误添加友好提示
+   */
+  private formatAuthError(error: any, originalMessage: string): string {
+    const status = error?.response?.status;
+    if (status === 401) {
+      return `${originalMessage} (认证失败，请重新获取 access_token)`;
+    } else if (status === 403) {
+      return `${originalMessage} (权限不足，请重新获取 access_token)`;
+    }
+    return originalMessage;
   }
 
   /**
@@ -464,6 +505,16 @@ export class ApiService {
         headers
       });
       
+      // 检测是否返回了 Bot Detection 页面（200 状态码但内容是 HTML）
+      if (this.isBotDetectionPage(response.data)) {
+        console.log('🛡️ [ApiService] 检测到 Bot Detection 页面，需要浏览器验证...');
+        throw { 
+          isBotDetection: true, 
+          message: 'Bot Detection page detected',
+          response: { status: 200, data: response.data }
+        };
+      }
+      
       console.log('✅ [ApiService] axios请求成功');
       return { result: parseResponse(response.data), page: sharedPage };
       
@@ -473,9 +524,10 @@ export class ApiService {
         status: error.response?.status
       });
       
-      // 第二步：检测是否为Cloudflare保护
-      if (this.isCloudflareProtection(error)) {
-        console.log('🛡️ [ApiService] 检测到Cloudflare保护，切换到浏览器模式...');
+      // 第二步：检测是否为Cloudflare保护或Bot Detection
+      const needBrowserFallback = this.isCloudflareProtection(error) || error.isBotDetection === true;
+      if (needBrowserFallback) {
+        console.log('🛡️ [ApiService] 检测到Bot/Cloudflare保护，切换到浏览器模式...');
         
         // 确保有必要的认证信息
         if (!this.tokenService || !site.system_token || !site.user_id) {
@@ -600,6 +652,8 @@ export class ApiService {
     let lastError: any = null;
     let sharedPage: any = null;
     let sharedPageRelease: (() => void) | undefined = undefined;
+    // 跟踪是否有端点返回"成功但无数据"的情况（可能是权限问题）
+    let hasEmptySuccessResponse = false;
     
     for (const endpoint of endpoints) {
       const url = `${site.url.replace(/\/$/, '')}${endpoint}`;
@@ -631,6 +685,8 @@ export class ApiService {
             // 这种情况说明该站点没有可用模型或需要特殊权限
             if (!data || !('data' in data)) {
               console.warn('⚠️ [ApiService] 响应中没有data字段，可能需要特殊权限或该站点无模型');
+              // 标记检测到空成功响应
+              hasEmptySuccessResponse = true;
               return [];
             }
             
@@ -734,10 +790,24 @@ export class ApiService {
     // 所有端点都失败，直接结束当前站点检测
     if (lastError) {
       console.error('❌ [ApiService] 所有模型接口都失败');
-      throw new Error(`模型接口请求失败: ${lastError.message || lastError}`);
+      let baseMessage = `模型接口请求失败: ${lastError.message || lastError}`;
+      // 如果有端点返回了"成功但无数据"，添加权限提示
+      if (hasEmptySuccessResponse) {
+        baseMessage += ' (部分接口返回成功但无数据，请检查 access_token 权限或重新获取)';
+      } else {
+        // 使用认证错误格式化
+        baseMessage = this.formatAuthError(lastError, baseMessage);
+      }
+      throw new Error(baseMessage);
     }
     
-    // 没有错误但也没有模型，返回空结果（认为该站点暂无模型，不算致命错误）
+    // 没有错误但也没有模型
+    if (hasEmptySuccessResponse) {
+      // 接口返回成功但没有数据，可能是权限问题
+      throw new Error('模型接口返回成功但无数据，请检查 access_token 权限或重新获取');
+    }
+    
+    // 返回空结果（认为该站点暂无模型，不算致命错误）
     return { models: [], page: sharedPage, pageRelease: sharedPageRelease };
   }
 
@@ -828,7 +898,8 @@ export class ApiService {
     // 所有端点都失败，抛出错误结束当前站点检测
     if (lastError) {
       console.error('❌ [ApiService] 所有余额接口都失败');
-      throw new Error(`余额接口请求失败: ${lastError.message || lastError}`);
+      const baseMessage = `余额接口请求失败: ${lastError.message || lastError}`;
+      throw new Error(this.formatAuthError(lastError, baseMessage));
     }
     
     return undefined;
@@ -1015,6 +1086,11 @@ export class ApiService {
           currentPage++;
         } catch (error: any) {
           const status = error?.response?.status;
+          // 如果是第一页就遇到401/403认证错误，抛出带提示的错误
+          if (currentPage === 1 && this.isAuthError(error)) {
+            const baseMessage = `日志接口请求失败: ${error.message || error}`;
+            throw new Error(this.formatAuthError(error, baseMessage));
+          }
           if (this.isFatalHttpStatus(status) || this.isTimeoutError(error)) {
             console.warn(`⚠️ [ApiService] 日志接口不可用或超时(HTTP ${status || 'N/A'})，返回已累计: $${totalConsumption.toFixed(4)}`);
             break;

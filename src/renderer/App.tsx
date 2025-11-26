@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { SiteEditor } from "./components/SiteEditor";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { ConfirmDialog, DialogState, initialDialogState } from "./components/ConfirmDialog";
 import { useTheme } from "./hooks/useTheme";
 // 从共享的types文件导入并重新导出SiteConfig
 import type { SiteConfig } from "../main/types/token";
@@ -47,6 +48,10 @@ declare global {
       getAllAccounts: () => Promise<any[]>;
       token?: any;
       storage?: any;
+      theme?: {
+        save: (themeMode: 'light' | 'dark' | 'system') => Promise<{ success: boolean }>;
+        load: () => Promise<{ success: boolean; data?: 'light' | 'dark' | 'system' }>;
+      };
     };
   }
 }
@@ -160,6 +165,9 @@ function App() {
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   // 新增：分组表头作为拖拽目标时的高亮状态
   const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null);
+  // 新增：分组标签拖拽排序状态
+  const [draggedGroupIndex, setDraggedGroupIndex] = useState<number | null>(null);
+  const [dragOverGroupIndex, setDragOverGroupIndex] = useState<number | null>(null);
   // 新增：保存状态
   const [saving, setSaving] = useState(false);
   // 新增：创建 API Key 弹窗状态
@@ -178,6 +186,13 @@ function App() {
   const [creatingToken, setCreatingToken] = useState(false);
   // 新增：删除 API Key 状态（用字符串标识当前正在删除的令牌，避免重复点击）
   const [deletingTokenKey, setDeletingTokenKey] = useState<string | null>(null);
+  // 新增：自定义确认弹窗状态
+  const [dialogState, setDialogState] = useState<DialogState>(initialDialogState);
+  // 新增：认证错误弹窗状态
+  const [authErrorSites, setAuthErrorSites] = useState<{name: string, url: string, error: string}[]>([]);
+  const [showAuthErrorDialog, setShowAuthErrorDialog] = useState(false);
+  // 当前正在处理的认证错误站点名称（用于保存后从列表中移除）
+  const [processingAuthErrorSite, setProcessingAuthErrorSite] = useState<string | null>(null);
   // 新增：站点列表列宽，可调整并持久化到 localStorage
   const [columnWidths, setColumnWidths] = useState<number[]>(() => {
     try {
@@ -661,19 +676,22 @@ function App() {
    */
   const handleDeleteToken = async (site: SiteConfig, token: any, tokenIndex: number) => {
     if (!site.system_token || !site.user_id) {
-      alert('当前站点未配置系统 Token 或用户 ID，请先在“编辑站点”中填写。');
+      showAlert('当前站点未配置系统 Token 或用户 ID，请先在"编辑站点"中填写。', 'error');
       return;
     }
 
     const displayName = token.name || `Key #${tokenIndex + 1}`;
-    const confirmMsg = `确认要删除 API Key「${displayName}」吗？\n此操作不可恢复，请谨慎操作。`;
-    if (!window.confirm(confirmMsg)) {
-      return;
-    }
+    const confirmed = await showDialog({
+      type: 'warning',
+      title: '删除 API Key',
+      message: `确认要删除 API Key「${displayName}」吗？\n此操作不可恢复，请谨慎操作。`,
+      confirmText: '删除',
+    });
+    if (!confirmed) return;
 
     const userIdNum = parseInt(site.user_id || '0', 10);
     if (!userIdNum) {
-      alert('当前站点用户 ID 无效，请在“编辑站点”中检查配置。');
+      showAlert('当前站点用户 ID 无效，请在"编辑站点"中检查配置。', 'error');
       return;
     }
 
@@ -714,10 +732,10 @@ function App() {
         // 否则仅刷新该站点的 API Key 列表（axios 模式）
         await refreshSiteApiKeys(site);
       }
-      alert(`API Key「${displayName}」已删除`);
+      showAlert(`API Key「${displayName}」已删除`, 'success');
     } catch (error: any) {
       console.error('❌ [App] 删除 API Key 失败:', error);
-      alert(`删除 API Key 失败: ${error.message || error}`);
+      showAlert(`删除 API Key 失败: ${error.message || error}`, 'error');
     } finally {
       setDeletingTokenKey(null);
     }
@@ -727,10 +745,10 @@ function App() {
   const copyToClipboard = async (text: string, label: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      alert(`${label} 已复制到剪贴板`);
+      showAlert(`${label} 已复制到剪贴板`, 'success');
     } catch (error) {
       console.error('复制失败:', error);
-      alert('复制失败: ' + error);
+      showAlert('复制失败: ' + error, 'error');
     }
   };
 
@@ -756,6 +774,38 @@ function App() {
       }
     });
   }, [apiKeys, expandedSites]);
+
+  // 弹窗辅助函数
+  const showDialog = (options: Partial<DialogState> & { message: string }): Promise<boolean> => {
+    return new Promise((resolve) => {
+      setDialogState({
+        isOpen: true,
+        type: options.type || 'confirm',
+        title: options.title,
+        message: options.message,
+        confirmText: options.confirmText,
+        cancelText: options.cancelText,
+        onConfirm: () => {
+          setDialogState(initialDialogState);
+          resolve(true);
+        },
+        onCancel: () => {
+          setDialogState(initialDialogState);
+          resolve(false);
+        },
+      });
+    });
+  };
+
+  const showAlert = (message: string, type: 'success' | 'error' | 'alert' | 'warning' = 'alert', title?: string) => {
+    setDialogState({
+      isOpen: true,
+      type,
+      title,
+      message,
+      onConfirm: () => setDialogState(initialDialogState),
+    });
+  };
 
   const loadConfig = async (): Promise<Config | null> => {
     try {
@@ -1019,7 +1069,7 @@ function App() {
       (g) => g.name === trimmed && g.id !== editingGroup.id
     );
     if (duplicated) {
-      alert("已存在同名分组，请使用其他名称");
+      showAlert("已存在同名分组，请使用其他名称", 'error');
       return;
     }
 
@@ -1043,7 +1093,7 @@ function App() {
 
     // 不允许删除默认分组
     if (groupId === defaultGroupId) {
-      alert("默认分组不能删除");
+      showAlert("默认分组不能删除", 'error');
       return;
     }
 
@@ -1064,7 +1114,8 @@ function App() {
         ? `确定要删除分组「${groupToDelete.name}」吗？\n\n该分组下有 ${sitesInGroup.length} 个站点，删除后这些站点将被移动到默认分组。`
         : `确定要删除分组「${groupToDelete.name}」吗？`;
 
-    if (!confirm(confirmMsg)) return;
+    const confirmed = await showDialog({ type: 'warning', title: '删除分组', message: confirmMsg, confirmText: '删除' });
+    if (!confirmed) return;
 
     // 将该分组下的站点移动到默认分组
     const newSites = config.sites.map((s) =>
@@ -1127,7 +1178,14 @@ function App() {
 
   const deleteSite = async (index: number) => {
     if (!config) return;
-    if (!confirm("确定要删除这个站点吗？")) return;
+    const siteName = config.sites[index]?.name || '该站点';
+    const confirmed = await showDialog({
+      type: 'warning',
+      title: '删除站点',
+      message: `确定要删除「${siteName}」吗？\n此操作不可恢复。`,
+      confirmText: '删除',
+    });
+    if (!confirmed) return;
     const newSites = config.sites.filter((_, i) => i !== index);
     await saveConfig({ ...config, sites: newSites });
   };
@@ -1137,6 +1195,22 @@ function App() {
     const newSites = [...config.sites];
     newSites[index] = { ...newSites[index], enabled: !newSites[index].enabled };
     await saveConfig({ ...config, sites: newSites });
+  };
+
+  // 检测错误是否为认证/权限错误
+  const isAuthenticationError = (error?: string): boolean => {
+    if (!error) return false;
+    // 检查 401/403 状态码
+    const codeMatch = error.match(/status code (\d{3})/i);
+    if (codeMatch && (codeMatch[1] === '401' || codeMatch[1] === '403')) {
+      return true;
+    }
+    // 检查关键词
+    return error.includes('请重新获取 access_token') || 
+           error.includes('请检查 access_token') ||
+           error.includes('认证失败') || 
+           error.includes('权限不足') ||
+           error.includes('返回成功但无数据');
   };
 
   const detectAllSites = async () => {
@@ -1177,6 +1251,17 @@ function App() {
         });
         return next;
       });
+
+      // 收集有认证错误的站点
+      const authErrors = newResults
+        .filter(r => r.status === '失败' && isAuthenticationError(r.error))
+        .map(r => ({ name: r.name, url: r.url, error: r.error || '' }));
+      
+      // 如果有认证错误，显示弹窗
+      if (authErrors.length > 0) {
+        setAuthErrorSites(authErrors);
+        setShowAuthErrorDialog(true);
+      }
     } catch (error) {
       console.error("检测失败:", error);
       alert("检测失败: " + error);
@@ -1235,28 +1320,34 @@ function App() {
           }
         : rawResult;
       
-      // 检查数据是否有变化
-      const hasChanges = hasSignificantChanges(cachedResult, result);
-      
-      // 显示提示消息
-      if (hasChanges) {
-        setRefreshMessage({
-          site: site.name,
-          message: '✅ 数据已更新',
-          type: 'success'
-        });
+      // 检查是否为认证错误，如果是则显示弹窗
+      if (rawResult.status === '失败' && isAuthenticationError(rawResult.error)) {
+        setAuthErrorSites([{ name: site.name, url: site.url, error: rawResult.error || '' }]);
+        setShowAuthErrorDialog(true);
       } else {
-        setRefreshMessage({
-          site: site.name,
-          message: 'ℹ️ 数据无变化',
-          type: 'info'
-        });
+        // 检查数据是否有变化
+        const hasChanges = hasSignificantChanges(cachedResult, result);
+        
+        // 显示提示消息
+        if (hasChanges) {
+          setRefreshMessage({
+            site: site.name,
+            message: '✅ 数据已更新',
+            type: 'success'
+          });
+        } else {
+          setRefreshMessage({
+            site: site.name,
+            message: 'ℹ️ 数据无变化',
+            type: 'info'
+          });
+        }
+        
+        // 3秒后自动清除提示
+        setTimeout(() => {
+          setRefreshMessage(null);
+        }, 3000);
       }
-      
-      // 3秒后自动清除提示
-      setTimeout(() => {
-        setRefreshMessage(null);
-      }, 3000);
       
       // 更新结果
       setResults((prev) => {
@@ -1322,7 +1413,7 @@ function App() {
       await window.electronAPI.openUrl(site.url);
     } catch (error) {
       console.error("打开浏览器失败:", error);
-      alert("打开浏览器失败: " + error);
+      showAlert("打开浏览器失败: " + error, 'error');
     }
   };
 
@@ -1332,10 +1423,12 @@ function App() {
   const handleCheckIn = async (site: SiteConfig) => {
     // 检查是否有必要的认证信息
     if (!site.system_token || !site.user_id) {
-      const shouldOpenSite = confirm(
-        "签到失败：缺少必要的认证信息\n\n" +
-        "是否打开网站手动签到？"
-      );
+      const shouldOpenSite = await showDialog({
+        type: 'warning',
+        title: '签到失败',
+        message: "缺少必要的认证信息\n\n是否打开网站手动签到？",
+        confirmText: '打开网站',
+      });
       if (shouldOpenSite) {
         await openCheckinPage(site);
       }
@@ -1353,23 +1446,25 @@ function App() {
 
       if (result.success) {
         // 签到成功
-        alert(`✅ 签到成功！\n\n${result.message}`);
+        showAlert(`签到成功！\n\n${result.message}`, 'success', '签到成功');
         // 签到成功后刷新站点数据
         await detectSingle(site, true);
       } else {
         // 签到失败
         if (result.needManualCheckIn) {
           // 需要手动签到
-          const shouldOpenSite = confirm(
-            `❌ 自动签到失败\n\n${result.message}\n\n` +
-            "是否打开网站手动签到？"
-          );
+          const shouldOpenSite = await showDialog({
+            type: 'warning',
+            title: '自动签到失败',
+            message: `${result.message}\n\n是否打开网站手动签到？`,
+            confirmText: '打开网站',
+          });
           if (shouldOpenSite) {
             await openCheckinPage(site);
           }
         } else {
           // 不需要手动签到（如今日已签到、站点不支持等）
-          alert(`ℹ️ ${result.message}`);
+          showAlert(result.message, 'alert');
         }
       }
     } catch (error: any) {
@@ -1378,12 +1473,14 @@ function App() {
       // 检查是否是浏览器关闭错误
       const errorMessage = error?.message || String(error);
       if (errorMessage.includes('浏览器已关闭') || errorMessage.includes('操作已取消') || errorMessage.includes('操作已被取消')) {
-        alert('⚠️ 浏览器已关闭，操作已取消。\n\n请重新打开浏览器后重试签到。');
+        showAlert('浏览器已关闭，操作已取消。\n\n请重新打开浏览器后重试签到。', 'warning');
       } else {
-        const shouldOpenSite = confirm(
-          `❌ 签到请求失败\n\n${errorMessage}\n\n` +
-          "是否打开网站手动签到？"
-        );
+        const shouldOpenSite = await showDialog({
+          type: 'error',
+          title: '签到请求失败',
+          message: `${errorMessage}\n\n是否打开网站手动签到？`,
+          confirmText: '打开网站',
+        });
         if (shouldOpenSite) {
           await openCheckinPage(site);
         }
@@ -1519,6 +1616,56 @@ function App() {
 
     await saveConfig({ ...config, sites: newSites });
     setDragOverGroupId(null);
+  };
+
+  // 新增：分组标签拖拽排序处理函数
+  const handleGroupDragStart = (e: React.DragEvent, index: number) => {
+    // 阻止事件冒泡，避免与站点拖拽冲突
+    e.stopPropagation();
+    setDraggedGroupIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+    (e.target as HTMLElement).style.opacity = '0.5';
+  };
+
+  const handleGroupDragEnd = (e: React.DragEvent) => {
+    (e.target as HTMLElement).style.opacity = '1';
+    setDraggedGroupIndex(null);
+    setDragOverGroupIndex(null);
+  };
+
+  const handleGroupDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (draggedGroupIndex !== null && draggedGroupIndex !== index) {
+      setDragOverGroupIndex(index);
+    }
+  };
+
+  const handleGroupDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOverGroupIndex(null);
+  };
+
+  const handleGroupDrop = async (e: React.DragEvent, dropIndex: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!config || draggedGroupIndex === null || draggedGroupIndex === dropIndex) {
+      setDragOverGroupIndex(null);
+      return;
+    }
+
+    // 获取当前分组列表
+    const currentGroups = Array.isArray(config.siteGroups) && config.siteGroups.length > 0
+      ? [...config.siteGroups]
+      : [{ id: 'default', name: '默认分组' }];
+
+    // 重新排序分组
+    const [draggedGroup] = currentGroups.splice(draggedGroupIndex, 1);
+    currentGroups.splice(dropIndex, 0, draggedGroup);
+
+    await saveConfig({ ...config, siteGroups: currentGroups });
+    setDragOverGroupIndex(null);
   };
 
   // 当展开站点时从缓存中加载数据（所有数据在检测时已获取）
@@ -1659,20 +1806,24 @@ function App() {
               {/* 从缓存恢复站点按钮 */}
               <button
                 onClick={async () => {
-                  if (!confirm('是否尝试从 token-storage.json 恢复站点配置？\n\n这将从缓存的账号数据中恢复站点列表（不会影响已有站点）。')) {
-                    return;
-                  }
+                  const confirmed = await showDialog({
+                    type: 'confirm',
+                    title: '恢复站点配置',
+                    message: '是否尝试从 token-storage.json 恢复站点配置？\n\n这将从缓存的账号数据中恢复站点列表（不会影响已有站点）。',
+                    confirmText: '恢复',
+                  });
+                  if (!confirmed) return;
                   try {
                     const result = await (window.electronAPI as any).recoverSitesFromStorage();
                     if (result.success) {
-                      alert(result.message + (result.sites?.length ? `\n\n恢复的站点：${result.sites.join('、')}` : ''));
+                      showAlert(result.message + (result.sites?.length ? `\n\n恢复的站点：${result.sites.join('、')}` : ''), 'success', '恢复成功');
                       // 重新加载配置
                       await loadConfig();
                     } else {
-                      alert('恢复失败：' + (result.error || '未知错误'));
+                      showAlert('恢复失败：' + (result.error || '未知错误'), 'error');
                     }
                   } catch (error: any) {
-                    alert('恢复失败：' + error.message);
+                    showAlert('恢复失败：' + error.message, 'error');
                   }
                 }}
                 className="px-3 py-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg transition-all flex items-center gap-1.5 text-sm font-medium shadow-md hover:shadow-lg"
@@ -1700,6 +1851,136 @@ function App() {
               )}
             </button>
           </div>
+
+          {/* 站点分组控制栏：固定在滚动容器外面，始终可见 */}
+          {config.sites.length > 0 && (
+            <div className="min-w-[1180px] px-4 pt-2 pb-1 flex items-center justify-between text-[13px] text-slate-500 dark:text-slate-400 bg-light-bg dark:bg-dark-bg border-b border-slate-200/50 dark:border-slate-700/50 flex-shrink-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-semibold text-slate-700 dark:text-slate-200">
+                  站点分组
+                </span>
+                {/* 显示全部按钮 */}
+                <button
+                  onClick={() => setActiveSiteGroupFilter(null)}
+                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[13px] transition-all ${
+                    activeSiteGroupFilter === null
+                      ? 'border-primary-500 bg-primary-500 text-white'
+                      : 'border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-900/60 hover:border-primary-300'
+                  }`}
+                  title="显示全部站点"
+                >
+                  <span className="font-semibold">全部</span>
+                  <span className={`text-xs ${activeSiteGroupFilter === null ? 'text-white/80' : 'text-slate-400 dark:text-slate-500'}`}>
+                    {config.sites.length} 个
+                  </span>
+                </button>
+                {siteGroups.map((group, groupIndex) => {
+                  const groupId = group.id;
+                  const isActive = activeSiteGroupFilter === groupId;
+                  const groupSitesCount = config.sites.filter(
+                    (s) => (s.group || defaultGroupId) === groupId
+                  ).length;
+                  const colorClass = getGroupTextColor(group.name);
+                  const isDefaultGroup = groupId === defaultGroupId;
+                  const isDragOverForSort = dragOverGroupIndex === groupIndex && draggedGroupIndex !== null;
+                  return (
+                    <div
+                      key={groupId}
+                      draggable
+                      onDragStart={(e) => handleGroupDragStart(e, groupIndex)}
+                      onDragEnd={handleGroupDragEnd}
+                      className={`group/tag inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[13px] transition-all cursor-grab active:cursor-grabbing ${
+                        isActive
+                          ? 'border-primary-500 bg-primary-500 text-white'
+                          : isDragOverForSort
+                            ? 'border-primary-500 bg-primary-100/80 dark:bg-primary-900/50 scale-105'
+                            : dragOverGroupId === groupId
+                              ? 'border-primary-400 bg-primary-50/80 dark:bg-primary-900/30'
+                              : 'border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-900/60 hover:border-primary-300'
+                      }`}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        // 区分：如果正在拖拽分组，则处理分组排序；否则处理站点移动到分组
+                        if (draggedGroupIndex !== null) {
+                          handleGroupDragOver(e, groupIndex);
+                        } else {
+                          setDragOverGroupId(groupId);
+                        }
+                      }}
+                      onDragLeave={(e) => {
+                        e.preventDefault();
+                        if (draggedGroupIndex !== null) {
+                          handleGroupDragLeave(e);
+                        } else {
+                          setDragOverGroupId((prev) =>
+                            prev === groupId ? null : prev
+                          );
+                        }
+                      }}
+                      onDrop={(e) => {
+                        // 区分：如果正在拖拽分组，则处理分组排序；否则处理站点移动到分组
+                        if (draggedGroupIndex !== null) {
+                          handleGroupDrop(e, groupIndex);
+                        } else {
+                          handleDropOnGroup(e, groupId);
+                        }
+                      }}
+                      onClick={() => toggleSiteGroupFilter(groupId)}
+                      title={isActive ? '点击显示全部站点' : `点击只显示「${group.name}」分组的站点\n拖动站点卡片到此可移动分组\n拖动分组标签可调整顺序`}
+                    >
+                      <span
+                        className={`flex items-center gap-1 ${isActive ? 'text-white' : colorClass}`}
+                      >
+                        {getGroupIcon(group.name, true)}
+                        <span className="font-semibold">{group.name}</span>
+                      </span>
+                      {/* 站点数量 - 始终显示 */}
+                      <span className={`text-xs ${isActive ? 'text-white/80' : 'text-slate-400 dark:text-slate-500'}`}>
+                        {groupSitesCount} 个
+                      </span>
+                      {/* 编辑按钮 - 悬停时显示 */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEditGroupDialog(group);
+                        }}
+                        className={`hidden group-hover/tag:block p-0.5 rounded transition-colors ${isActive ? 'hover:bg-white/20 text-white/80 hover:text-white' : 'hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-primary-500'}`}
+                        title="编辑分组名称"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                      {/* 删除按钮 - 悬停时显示，且不是默认分组 */}
+                      {!isDefaultGroup && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteSiteGroup(groupId);
+                          }}
+                          className={`hidden group-hover/tag:block p-0.5 rounded transition-colors ${isActive ? 'hover:bg-white/20 text-white/80 hover:text-white' : 'hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-red-500'}`}
+                          title="删除分组"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-slate-400 dark:text-slate-500">
+                  小提示：拖动分组标签可调整顺序，拖动站点卡片到分组可移动站点
+                </span>
+                <button
+                  onClick={openCreateGroupDialog}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-dashed border-slate-300 dark:border-slate-600 text-[13px] text-slate-600 dark:text-slate-200 hover:border-primary-400 hover:text-primary-500"
+                >
+                  <Plus className="w-3 h-3" />
+                  新建分组
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* 站点列表区域：纵向滚动交给内部容器，横向滚动交给整体窗口（根容器 overflow-x-auto） */}
           <div className="flex-1 overflow-y-auto overflow-x-visible px-4 pb-4 space-y-3">
             {config.sites.length === 0 ? (
@@ -1710,20 +1991,24 @@ function App() {
                 {/* 恢复站点按钮 */}
                 <button
                   onClick={async () => {
-                    if (!confirm('是否尝试从 token-storage.json 恢复站点配置？\n\n这将从缓存的账号数据中恢复站点列表。')) {
-                      return;
-                    }
+                    const confirmed = await showDialog({
+                      type: 'confirm',
+                      title: '恢复站点配置',
+                      message: '是否尝试从 token-storage.json 恢复站点配置？\n\n这将从缓存的账号数据中恢复站点列表。',
+                      confirmText: '恢复',
+                    });
+                    if (!confirmed) return;
                     try {
                       const result = await (window.electronAPI as any).recoverSitesFromStorage();
                       if (result.success) {
-                        alert(result.message + (result.sites?.length ? `\n\n恢复的站点：${result.sites.join('、')}` : ''));
+                        showAlert(result.message + (result.sites?.length ? `\n\n恢复的站点：${result.sites.join('、')}` : ''), 'success', '恢复成功');
                         // 重新加载配置
                         await loadConfig();
                       } else {
-                        alert('恢复失败：' + (result.error || '未知错误'));
+                        showAlert('恢复失败：' + (result.error || '未知错误'), 'error');
                       }
                     } catch (error: any) {
-                      alert('恢复失败：' + error.message);
+                      showAlert('恢复失败：' + error.message, 'error');
                     }
                   }}
                   className="px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg transition-all text-sm font-medium shadow-md hover:shadow-lg"
@@ -1737,113 +2022,8 @@ function App() {
             ) : (
               // 为了在窗口变窄时出现横向滚动条，内部内容设置一个最小宽度（由根容器负责横向滚动）
               <>
-                {/* 站点分组控制栏：展示所有分组、支持展开/收起和拖拽变更分组 */}
-                <div className="min-w-[1180px] px-4 pt-2 pb-1 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold text-slate-700 dark:text-slate-200">
-                      站点分组
-                    </span>
-                    {/* 显示全部按钮 */}
-                    <button
-                      onClick={() => setActiveSiteGroupFilter(null)}
-                      className={`inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[11px] transition-all ${
-                        activeSiteGroupFilter === null
-                          ? 'border-primary-500 bg-primary-500 text-white'
-                          : 'border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-900/60 hover:border-primary-300'
-                      }`}
-                      title="显示全部站点"
-                    >
-                      <span className="font-semibold">全部</span>
-                      <span className={`text-[10px] ${activeSiteGroupFilter === null ? 'text-white/80' : 'text-slate-400 dark:text-slate-500'}`}>
-                        {config.sites.length} 个
-                      </span>
-                    </button>
-                    {siteGroups.map((group) => {
-                      const groupId = group.id;
-                      const isActive = activeSiteGroupFilter === groupId;
-                      const groupSitesCount = config.sites.filter(
-                        (s) => (s.group || defaultGroupId) === groupId
-                      ).length;
-                      const colorClass = getGroupTextColor(group.name);
-                      const isDefaultGroup = groupId === defaultGroupId;
-                      return (
-                        <div
-                          key={groupId}
-                          className={`group/tag inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[11px] transition-all cursor-pointer ${
-                            isActive
-                              ? 'border-primary-500 bg-primary-500 text-white'
-                              : dragOverGroupId === groupId
-                                ? 'border-primary-400 bg-primary-50/80 dark:bg-primary-900/30'
-                                : 'border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-900/60 hover:border-primary-300'
-                          }`}
-                          onDragOver={(e) => {
-                            e.preventDefault();
-                            setDragOverGroupId(groupId);
-                          }}
-                          onDragLeave={(e) => {
-                            e.preventDefault();
-                            setDragOverGroupId((prev) =>
-                              prev === groupId ? null : prev
-                            );
-                          }}
-                          onDrop={(e) => handleDropOnGroup(e, groupId)}
-                          onClick={() => toggleSiteGroupFilter(groupId)}
-                          title={isActive ? '点击显示全部站点' : `点击只显示「${group.name}」分组的站点，或拖动站点卡片到此以变更分组`}
-                        >
-                          <span
-                            className={`flex items-center gap-1 ${isActive ? 'text-white' : colorClass}`}
-                          >
-                            {getGroupIcon(group.name, true)}
-                            <span className="font-semibold">{group.name}</span>
-                          </span>
-                          {/* 站点数量 - 始终显示 */}
-                          <span className={`text-[10px] ${isActive ? 'text-white/80' : 'text-slate-400 dark:text-slate-500'}`}>
-                            {groupSitesCount} 个
-                          </span>
-                          {/* 编辑按钮 - 悬停时显示 */}
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openEditGroupDialog(group);
-                            }}
-                            className={`hidden group-hover/tag:block p-0.5 rounded transition-colors ${isActive ? 'hover:bg-white/20 text-white/80 hover:text-white' : 'hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-primary-500'}`}
-                            title="编辑分组名称"
-                          >
-                            <Pencil className="w-3 h-3" />
-                          </button>
-                          {/* 删除按钮 - 悬停时显示，且不是默认分组 */}
-                          {!isDefaultGroup && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                deleteSiteGroup(groupId);
-                              }}
-                              className={`hidden group-hover/tag:block p-0.5 rounded transition-colors ${isActive ? 'hover:bg-white/20 text-white/80 hover:text-white' : 'hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-red-500'}`}
-                              title="删除分组"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-[10px] text-slate-400 dark:text-slate-500">
-                      小提示：拖动站点卡片到分组标签即可移动分组
-                    </span>
-                    <button
-                      onClick={openCreateGroupDialog}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-dashed border-slate-300 dark:border-slate-600 text-[11px] text-slate-600 dark:text-slate-200 hover:border-primary-400 hover:text-primary-500"
-                    >
-                      <Plus className="w-3 h-3" />
-                      新建分组
-                    </button>
-                  </div>
-                </div>
-
                 {/* 列表表头（固定在滚动容器顶部）：站点名称 / 状态 / 余额 / 今日消费 / 总Token / 输入 / 输出 / 请求 / RPM / TPM / 模型数 / 更新时间 / 操作 */}
-                <div className="min-w-[1180px] sticky top-0 z-20 px-4 py-2 bg-light-bg/95 dark:bg-dark-bg/95 backdrop-blur-sm border-b border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-xs font-semibold text-slate-700 dark:text-slate-100">
+                <div className="min-w-[1180px] sticky top-0 z-20 px-4 py-2 bg-light-bg/95 dark:bg-dark-bg/95 backdrop-blur-sm border-b border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-sm font-semibold text-slate-700 dark:text-slate-100">
                   <div
                     className="grid gap-x-1 flex-1 items-center select-none"
                     style={{ gridTemplateColumns: columnWidths.map(w => `${w}px`).join(' ') }}
@@ -2028,7 +2208,7 @@ function App() {
                       <div className="flex items-center justify-between">
                         {/* 左侧：固定宽度栅格，确保所有站点卡片上下对齐（多列布局，与表头对应）*/}
                         <div
-                          className="grid gap-x-1 items-center text-xs"
+                          className="grid gap-x-1 items-center text-[13px]"
                           style={{ gridTemplateColumns: columnWidths.map(w => `${w}px`).join(' ') }}
                         >
                             {/* 1. 站点名称（不再在这里显示状态图标，状态列单独展示） */}
@@ -2080,12 +2260,12 @@ function App() {
                                 </span>
                               </div>
                               {errorCode && (
-                                <span className="text-red-500 dark:text-red-400 text-[11px] font-semibold">
+                                <span className="text-red-500 dark:text-red-400 text-xs font-semibold">
                                   Err {errorCode}
                                 </span>
                               )}
                               {!errorCode && timeoutSeconds !== null && (
-                                <span className="text-red-500 dark:text-red-400 text-[11px] font-semibold">
+                                <span className="text-red-500 dark:text-red-400 text-xs font-semibold">
                                   Timeout {timeoutSeconds}s
                                 </span>
                               )}
@@ -2126,49 +2306,49 @@ function App() {
                             </div>
 
                             {/* 5. 总 Token */}
-                            <div className="flex flex-col items-center justify-center text-[11px] text-slate-600 dark:text-slate-300">
+                            <div className="flex flex-col items-center justify-center text-[13px] text-slate-600 dark:text-slate-300">
                               <span className="font-mono font-medium">
                                 {todayTotalTokens.toLocaleString()}
                               </span>
                             </div>
 
                             {/* 6. 输入 Token */}
-                            <div className="flex flex-col items-center justify-center text-[11px] text-slate-600 dark:text-slate-300">
+                            <div className="flex flex-col items-center justify-center text-[13px] text-slate-600 dark:text-slate-300">
                               <span className="font-mono font-medium">
                                 {todayPromptTokens.toLocaleString()}
                               </span>
                             </div>
 
                             {/* 7. 输出 Token */}
-                            <div className="flex flex-col items-center justify-center text-[11px] text-slate-600 dark:text-slate-300">
+                            <div className="flex flex-col items-center justify-center text-[13px] text-slate-600 dark:text-slate-300">
                               <span className="font-mono font-medium">
                                 {todayCompletionTokens.toLocaleString()}
                               </span>
                             </div>
 
                             {/* 8. 请求次数 */}
-                            <div className="flex flex-col items-center justify-center text-[11px] text-slate-600 dark:text-slate-300">
+                            <div className="flex flex-col items-center justify-center text-[13px] text-slate-600 dark:text-slate-300">
                               <span className="font-mono font-medium">
                                 {todayRequests.toLocaleString()}
                               </span>
                             </div>
 
                             {/* 9. RPM */}
-                            <div className="flex flex-col items-center justify-center text-[11px] text-slate-600 dark:text-slate-300">
+                            <div className="flex flex-col items-center justify-center text-[13px] text-slate-600 dark:text-slate-300">
                               <span className="font-mono font-medium">
                                 {rpm.toFixed(2)}
                               </span>
                             </div>
 
                             {/* 10. TPM */}
-                            <div className="flex flex-col items-center justify-center text-[11px] text-slate-600 dark:text-slate-300">
+                            <div className="flex flex-col items-center justify-center text-[13px] text-slate-600 dark:text-slate-300">
                               <span className="font-mono font-medium">
                                 {tpm.toFixed(0)}
                               </span>
                             </div>
 
                             {/* 11. 模型数 */}
-                            <div className="flex flex-col items-center justify-center text-[11px] text-slate-600 dark:text-slate-300">
+                            <div className="flex flex-col items-center justify-center text-[13px] text-slate-600 dark:text-slate-300">
                               <span
                                 className={`font-medium ${
                                   (() => {
@@ -2203,7 +2383,7 @@ function App() {
                             </div>
 
                             {/* 12. 更新时间 */}
-                            <div className="flex flex-col items-center justify-center text-[11px] text-slate-600 dark:text-slate-300">
+                            <div className="flex flex-col items-center justify-center text-[13px] text-slate-600 dark:text-slate-300">
                               {lastSyncDisplay ? (
                                 <span className="font-medium">
                                   {lastSyncDisplay}
@@ -2790,15 +2970,53 @@ function App() {
       {showSiteEditor && (
         <SiteEditor
           site={editingSite !== null ? config.sites[editingSite] : undefined}
-          onSave={(site) => {
-            if (editingSite !== null) {
+          onSave={async (site) => {
+            const isEditing = editingSite !== null;
+            if (isEditing) {
               updateSite(editingSite, site);
             } else {
               addSite(site);
             }
             setShowSiteEditor(false);
+            
+            // 如果正在处理认证错误站点，从列表中移除并检查是否还有剩余
+            if (processingAuthErrorSite) {
+              const remaining = authErrorSites.filter(s => s.name !== processingAuthErrorSite);
+              setAuthErrorSites(remaining);
+              setProcessingAuthErrorSite(null);
+              
+              // 如果还有剩余站点，重新显示弹窗
+              if (remaining.length > 0) {
+                setTimeout(() => {
+                  setShowAuthErrorDialog(true);
+                }, 300); // 延迟显示，让 SiteEditor 关闭动画完成
+              }
+            }
+            
+            // 保存后刷新站点数据（编辑模式下刷新当前站点）
+            if (isEditing) {
+              // 延迟刷新，等待配置保存完成
+              setTimeout(async () => {
+                try {
+                  await detectSingle(site, false); // 完整刷新（非快速模式）
+                  console.log('✅ [App] 站点数据刷新完成:', site.name);
+                } catch (error: any) {
+                  console.error('⚠️ [App] 站点数据刷新失败:', error.message);
+                }
+              }, 500);
+            }
           }}
-          onCancel={() => setShowSiteEditor(false)}
+          onCancel={() => {
+            setShowSiteEditor(false);
+            
+            // 如果取消编辑但还有认证错误站点，重新显示弹窗
+            if (processingAuthErrorSite && authErrorSites.length > 0) {
+              setProcessingAuthErrorSite(null);
+              setTimeout(() => {
+                setShowAuthErrorDialog(true);
+              }, 300);
+            }
+          }}
           groups={siteGroups}
           defaultGroupId={defaultGroupId}
         />
@@ -2813,6 +3031,106 @@ function App() {
           }}
           onCancel={() => setShowSettings(false)}
         />
+      )}
+
+      {/* 认证错误弹窗 */}
+      {showAuthErrorDialog && authErrorSites.length > 0 && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowAuthErrorDialog(false);
+            }
+          }}
+        >
+          <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+            {/* 标题栏 */}
+            <div className="px-5 py-4 bg-amber-500/10 border-b border-amber-500/20">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center">
+                  <span className="text-xl">🔑</span>
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                    Access Token 需要更新
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {authErrorSites.length === 1 
+                      ? '检测到 1 个站点的 Token 已过期或无效'
+                      : `检测到 ${authErrorSites.length} 个站点的 Token 已过期或无效`
+                    }
+                  </p>
+                </div>
+              </div>
+            </div>
+            
+            {/* 站点列表 */}
+            <div className="px-5 py-4 max-h-64 overflow-y-auto">
+              <div className="space-y-2">
+                {authErrorSites.map((site, index) => {
+                  // 找到对应的站点配置索引
+                  const siteIndex = config?.sites.findIndex(s => s.name === site.name);
+                  return (
+                    <div 
+                      key={index}
+                      className="flex items-center justify-between px-3 py-2 bg-slate-50 dark:bg-slate-800/50 rounded-lg"
+                    >
+                      <div className="flex-1 min-w-0 mr-3">
+                        <p className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">
+                          {site.name}
+                        </p>
+                        <p className="text-xs text-red-500 dark:text-red-400 truncate" title={site.error}>
+                          {site.error.length > 50 ? site.error.substring(0, 50) + '...' : site.error}
+                        </p>
+                      </div>
+                      {siteIndex !== undefined && siteIndex !== -1 && (
+                        <button
+                          onClick={() => {
+                            setProcessingAuthErrorSite(site.name);
+                            setEditingSite(siteIndex);
+                            setShowSiteEditor(true);
+                            setShowAuthErrorDialog(false);
+                          }}
+                          className="px-3 py-1.5 text-xs font-medium bg-primary-500 hover:bg-primary-600 text-white rounded-lg transition-colors whitespace-nowrap"
+                        >
+                          重新获取
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            
+            {/* 底部按钮 */}
+            <div className="px-5 py-3 bg-slate-50 dark:bg-slate-800/30 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-2">
+              <button
+                onClick={() => setShowAuthErrorDialog(false)}
+                className="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
+              >
+                稍后处理
+              </button>
+              {authErrorSites.length > 1 && (
+                <button
+                  onClick={() => {
+                    // 依次打开第一个站点的编辑器
+                    const firstSite = authErrorSites[0];
+                    const siteIndex = config?.sites.findIndex(s => s.name === firstSite.name);
+                    if (siteIndex !== undefined && siteIndex !== -1) {
+                      setProcessingAuthErrorSite(firstSite.name);
+                      setEditingSite(siteIndex);
+                      setShowSiteEditor(true);
+                    }
+                    setShowAuthErrorDialog(false);
+                  }}
+                  className="px-4 py-2 text-sm font-medium bg-primary-500 hover:bg-primary-600 text-white rounded-lg transition-colors"
+                >
+                  逐个处理
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 创建站点分组弹窗 */}
@@ -3118,6 +3436,18 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* 自定义确认弹窗 */}
+      <ConfirmDialog
+        isOpen={dialogState.isOpen}
+        type={dialogState.type}
+        title={dialogState.title}
+        message={dialogState.message}
+        confirmText={dialogState.confirmText}
+        cancelText={dialogState.cancelText}
+        onConfirm={dialogState.onConfirm || (() => setDialogState(initialDialogState))}
+        onCancel={dialogState.onCancel}
+      />
     </div>
   );
 }

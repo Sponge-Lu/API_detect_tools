@@ -8,6 +8,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
 import type { SiteAccount, StorageConfig } from './types/token';
+import { backupManager } from './backup-manager';
 
 export class TokenStorage {
   private storagePath: string;
@@ -47,6 +48,13 @@ export class TokenStorage {
   }
 
   /**
+   * 获取存储文件路径
+   */
+  getStoragePath(): string {
+    return this.storagePath;
+  }
+
+  /**
    * 保存配置到磁盘
    */
   private saveToDisk(): void {
@@ -55,6 +63,12 @@ export class TokenStorage {
       const data = JSON.stringify(this.config, null, 2);
       fs.writeFileSync(this.storagePath, data, 'utf-8');
       console.log('💾 存储文件已保存');
+      
+      // 保存后自动备份
+      backupManager.backupFile(this.storagePath).catch((error) => {
+        console.error('⚠️ [TokenStorage] 自动备份失败:', error);
+        // 备份失败不影响保存操作
+      });
     } catch (error) {
       console.error('❌ 保存存储文件失败:', error);
       throw error;

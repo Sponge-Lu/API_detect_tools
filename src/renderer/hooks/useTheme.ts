@@ -1,6 +1,7 @@
 /**
  * 主题管理 Hook
  * 支持：白天模式、夜晚模式、跟随系统
+ * 主题设置会同步保存到主进程存储，确保下次启动时窗口背景色正确
  */
 
 import { useState, useEffect } from 'react';
@@ -43,10 +44,14 @@ export function useTheme() {
     }
   };
 
-  // 切换主题模式
+  // 切换主题模式（同时保存到 localStorage 和主进程存储）
   const changeThemeMode = (mode: ThemeMode) => {
     setThemeMode(mode);
     localStorage.setItem(THEME_STORAGE_KEY, mode);
+    // 同步保存到主进程存储，确保下次启动时窗口背景色正确
+    window.electronAPI?.theme?.save(mode).catch(() => {
+      // 静默处理保存失败
+    });
   };
 
   // 监听主题模式变化

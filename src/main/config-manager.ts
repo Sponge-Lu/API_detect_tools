@@ -1,6 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { app } from 'electron';
+import { backupManager } from './backup-manager';
 
 export class ConfigManager {
   private configPath: string;
@@ -8,6 +9,13 @@ export class ConfigManager {
   constructor() {
     const userDataPath = app.getPath('userData');
     this.configPath = path.join(userDataPath, 'config.json');
+  }
+
+  /**
+   * 获取配置文件路径
+   */
+  getConfigPath(): string {
+    return this.configPath;
   }
 
   async loadConfig(): Promise<any> {
@@ -170,5 +178,13 @@ export class ConfigManager {
 
   async saveConfig(config: any): Promise<void> {
     await fs.writeFile(this.configPath, JSON.stringify(config, null, 2), 'utf-8');
+    
+    // 保存后自动备份
+    try {
+      await backupManager.backupFile(this.configPath);
+    } catch (error) {
+      console.error('⚠️ [ConfigManager] 自动备份失败:', error);
+      // 备份失败不影响保存操作
+    }
   }
 }

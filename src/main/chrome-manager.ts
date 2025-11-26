@@ -202,6 +202,9 @@ export class ChromeManager {
       throw new Error('浏览器未启动');
     }
 
+    // 清理旧页面：关闭所有 about:blank 和非目标域名的页面
+    await this.cleanupOldPages(url);
+
     // 多 Tab 模式：每次检测创建独立的 Page，避免并发检测时多个站点抢同一个页面
     const page = await this.browser.newPage();
     console.log('📄 [ChromeManager] 创建新页面');
@@ -210,6 +213,41 @@ export class ChromeManager {
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
     
     return page;
+  }
+
+  /**
+   * 清理旧页面：关闭 about:blank、浏览器内部页面和历史页面
+   */
+  private async cleanupOldPages(_targetUrl: string): Promise<void> {
+    if (!this.browser) return;
+    
+    try {
+      const pages = await this.browser.pages();
+      
+      for (const page of pages) {
+        try {
+          const pageUrl = page.url();
+          // 关闭 about:blank 页面、浏览器内部页面和历史页面
+          const shouldClose = 
+            pageUrl === 'about:blank' || 
+            pageUrl === '' ||
+            pageUrl.startsWith('chrome://') ||
+            pageUrl.startsWith('edge://') ||
+            pageUrl.startsWith('chrome-extension://') ||
+            // 关闭非 API 站点的历史页面（保留已打开的目标站点页面）
+            (!pageUrl.includes('/api/') && !pageUrl.includes('/v1/'));
+          
+          if (shouldClose) {
+            await page.close();
+            console.log(`🧹 [ChromeManager] 关闭旧页面: ${pageUrl || 'blank'}`);
+          }
+        } catch (e) {
+          // 页面可能已关闭，忽略错误
+        }
+      }
+    } catch (e) {
+      // 静默失败
+    }
   }
 
   /**
@@ -279,6 +317,9 @@ export class ChromeManager {
     const chromePath = this.getChromePath();
     const userDataDir = path.join(os.tmpdir(), 'api-detector-chrome');
 
+    // 2.5 清理会话恢复相关文件，防止打开历史页面
+    this.cleanupSessionFiles(userDataDir);
+
     // 3. 启动Chrome进程 - 使用spawn而不是exec，并设置正确的编码
     const { spawn } = require('child_process');
     
@@ -288,6 +329,14 @@ export class ChromeManager {
     const args = [
       `--remote-debugging-port=${this.debugPort}`,
       `--user-data-dir=${userDataDir}`,
+      '--no-first-run',                    // 跳过首次运行向导
+      '--no-default-browser-check',        // 跳过默认浏览器检查
+      '--disable-session-crashed-bubble',  // 禁用会话崩溃恢复提示
+      '--hide-crash-restore-bubble',       // 隐藏崩溃恢复气泡
+      '--disable-features=SessionRestore,InfiniteSessionRestore', // 禁用会话恢复功能
+      '--disable-restore-session-state',   // 禁用恢复会话状态
+      '--noerrdialogs',                    // 禁用错误对话框
+      '--disable-infobars',                // 禁用信息栏
       url
     ];
     
@@ -370,6 +419,61 @@ export class ChromeManager {
     }
     
     throw new Error(`端口 ${port} 在 ${maxWait}ms 内未就绪`);
+  }
+
+  /**
+   * 清理会话恢复相关文件，防止浏览器打开历史页面
+   */
+  private cleanupSessionFiles(userDataDir: string): void {
+    try {
+      const defaultDir = path.join(userDataDir, 'Default');
+      
+      // 需要清理的会话相关文件
+      const sessionFiles = [
+        'Current Session',
+        'Current Tabs', 
+        'Last Session',
+        'Last Tabs',
+        'Preferences'  // 包含会话恢复设置
+      ];
+      
+      // 需要清理的会话相关目录
+      const sessionDirs = [
+        'Sessions',
+        'Session Storage'
+      ];
+      
+      // 清理文件
+      for (const fileName of sessionFiles) {
+        const filePath = path.join(defaultDir, fileName);
+        if (fs.existsSync(filePath)) {
+          try {
+            fs.unlinkSync(filePath);
+            console.log(`🧹 [ChromeManager] 已清理会话文件: ${fileName}`);
+          } catch (e) {
+            // 文件可能被锁定，忽略错误
+          }
+        }
+      }
+      
+      // 清理目录
+      for (const dirName of sessionDirs) {
+        const dirPath = path.join(defaultDir, dirName);
+        if (fs.existsSync(dirPath)) {
+          try {
+            fs.rmSync(dirPath, { recursive: true, force: true });
+            console.log(`🧹 [ChromeManager] 已清理会话目录: ${dirName}`);
+          } catch (e) {
+            // 目录可能被锁定，忽略错误
+          }
+        }
+      }
+      
+      console.log('✅ [ChromeManager] 会话文件清理完成');
+    } catch (error: any) {
+      console.warn('⚠️ [ChromeManager] 清理会话文件失败:', error.message);
+      // 不影响后续流程
+    }
   }
 
   /**
@@ -1160,6 +1264,39 @@ export class ChromeManager {
   }
 
   /**
+   * 通过端口查找并终止浏览器进程（更可靠的方法）
+   */
+  private killBrowserByPort(): void {
+    const port = this.debugPort;
+    
+    try {
+      if (process.platform === 'win32') {
+        // Windows: 查找监听指定端口的进程并终止
+        exec(`for /f "tokens=5" %a in ('netstat -ano ^| findstr :${port} ^| findstr LISTENING') do taskkill /F /T /PID %a`, { shell: 'cmd.exe' }, (error) => {
+          if (error) {
+            // 静默失败，可能进程已经关闭
+            console.log(`ℹ️ [ChromeManager] 端口 ${port} 上没有找到进程`);
+          } else {
+            console.log(`✅ [ChromeManager] 已终止端口 ${port} 上的浏览器进程`);
+          }
+        });
+      } else {
+        // Linux/Mac: 使用 lsof 和 kill
+        exec(`lsof -ti :${port} | xargs kill -9 2>/dev/null || true`, (error) => {
+          if (!error) {
+            console.log(`✅ [ChromeManager] 已终止端口 ${port} 上的浏览器进程`);
+          }
+        });
+      }
+    } catch (e) {
+      // 静默失败
+    }
+    
+    // 重置进程引用
+    this.chromeProcess = null;
+  }
+
+  /**
    * 清理资源
    * 只有在引用计数为0时才会真正清理
    */
@@ -1191,16 +1328,17 @@ export class ChromeManager {
       try {
         // 移除事件监听器，避免重复触发
         this.browser.removeAllListeners('disconnected');
-        this.browser.disconnect();
-        console.log('✅ [ChromeManager] 浏览器连接已断开');
+        // 尝试正常关闭浏览器（通过 DevTools Protocol）
+        this.browser.close().catch(() => {});
+        console.log('✅ [ChromeManager] 浏览器已关闭');
       } catch (e) {
-        console.warn('⚠️ [ChromeManager] 断开浏览器连接失败:', e);
+        console.warn('⚠️ [ChromeManager] 关闭浏览器失败:', e);
       }
       this.browser = null;
     }
     
-    // 清理Chrome进程
-    this.cleanupChromeProcess();
+    // 清理Chrome进程（通过端口查找）
+    this.killBrowserByPort();
     
     console.log('✅ [ChromeManager] 资源清理完成');
   }

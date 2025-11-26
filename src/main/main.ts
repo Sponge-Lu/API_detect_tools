@@ -7,6 +7,7 @@ import { ApiService } from './api-service';
 import { ConfigManager } from './config-manager';
 import { TokenService } from './token-service';
 import { TokenStorage } from './token-storage';
+import { backupManager } from './backup-manager';
 
 // 设置Windows控制台编码为UTF-8，解决中文乱码问题
 if (os.platform() === 'win32') {
@@ -27,6 +28,40 @@ const tokenStorage = new TokenStorage();
 const tokenService = new TokenService(chromeManager);
 const apiService = new ApiService(tokenService, tokenStorage);
 
+// 主题设置文件路径（与渲染进程保持一致）
+function getThemeSettingsPath() {
+  const userDataPath = app.getPath('userData');
+  return path.join(userDataPath, 'theme-settings.json');
+}
+
+// 读取保存的主题设置
+async function getSavedTheme(): Promise<'light' | 'dark' | 'system'> {
+  try {
+    const themePath = getThemeSettingsPath();
+    const data = await fs.readFile(themePath, 'utf-8');
+    const settings = JSON.parse(data);
+    if (settings.themeMode === 'light' || settings.themeMode === 'dark' || settings.themeMode === 'system') {
+      return settings.themeMode;
+    }
+  } catch (e) {
+    // 文件不存在或解析失败，返回默认值
+  }
+  return 'system';
+}
+
+// 根据主题模式获取窗口背景色
+function getWindowBackgroundColor(themeMode: 'light' | 'dark' | 'system'): string {
+  if (themeMode === 'dark') {
+    return '#1a1b1e'; // 深色主题背景色
+  } else if (themeMode === 'light') {
+    return '#f8fafc'; // 浅色主题背景色
+  } else {
+    // system 模式：根据系统主题决定
+    const { nativeTheme } = require('electron');
+    return nativeTheme.shouldUseDarkColors ? '#1a1b1e' : '#f8fafc';
+  }
+}
+
 async function createWindow() {
   // 根据环境选择合适的图标，打包后从 resources 目录读取 ico 文件
   const iconPath = app.isPackaged
@@ -36,6 +71,10 @@ async function createWindow() {
   console.log('📍 图标路径:', iconPath);
   console.log('📦 是否已打包:', app.isPackaged);
   
+  // 读取保存的主题设置，设置对应的窗口背景色以避免白屏
+  const savedTheme = await getSavedTheme();
+  const backgroundColor = getWindowBackgroundColor(savedTheme);
+  
   mainWindow = new BrowserWindow({
     // 默认窗口宽度调整为 1280，兼顾多列统计信息展示与常见屏幕适配
     width: 1280,
@@ -43,11 +82,19 @@ async function createWindow() {
     title: 'API Hub Management Tools',
     // 无论开发还是生产都显式指定窗口图标，防止 EXE 默认图标被沿用
     icon: iconPath,
+    // 防止白屏：设置初始背景色，窗口先隐藏
+    backgroundColor,
+    show: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js')
     }
+  });
+  
+  // 窗口准备好后再显示，避免白屏闪烁
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show();
   });
 
   // 完全移除菜单栏
@@ -100,6 +147,63 @@ ipcMain.handle('load-config', async () => {
 
 ipcMain.handle('save-config', async (_, config) => {
   return await configManager.saveConfig(config);
+});
+
+// 主题设置 IPC 处理器
+ipcMain.handle('theme:save', async (_, themeMode: 'light' | 'dark' | 'system') => {
+  try {
+    const themePath = getThemeSettingsPath();
+    await fs.writeFile(themePath, JSON.stringify({ themeMode }, null, 2), 'utf-8');
+    return { success: true };
+  } catch (error: any) {
+    console.error('保存主题设置失败:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('theme:load', async () => {
+  try {
+    const themeMode = await getSavedTheme();
+    return { success: true, data: themeMode };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 备份相关 IPC 处理器
+ipcMain.handle('backup:list', async () => {
+  return backupManager.listBackups();
+});
+
+ipcMain.handle('backup:get-dir', async () => {
+  return backupManager.getBackupDir();
+});
+
+ipcMain.handle('backup:get-latest-time', async () => {
+  return backupManager.getLatestBackupTime();
+});
+
+ipcMain.handle('backup:manual', async () => {
+  await backupManager.backupAll();
+  return { success: true };
+});
+
+ipcMain.handle('backup:restore-config', async (_, backupFileName: string) => {
+  const targetPath = configManager.getConfigPath();
+  const success = await backupManager.restoreFromBackup(backupFileName, targetPath);
+  return { success };
+});
+
+ipcMain.handle('backup:restore-token-storage', async (_, backupFileName: string) => {
+  const targetPath = tokenStorage.getStoragePath();
+  const success = await backupManager.restoreFromBackup(backupFileName, targetPath);
+  return { success };
+});
+
+ipcMain.handle('backup:open-dir', async () => {
+  const backupDir = backupManager.getBackupDir();
+  await shell.openPath(backupDir);
+  return { success: true };
 });
 
 ipcMain.handle('launch-chrome-for-login', async (_, url: string) => {
