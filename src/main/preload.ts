@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadConfig: () => ipcRenderer.invoke('load-config'),
   saveConfig: (config: any) => ipcRenderer.invoke('save-config', config),
   launchChromeForLogin: (url: string) => ipcRenderer.invoke('launch-chrome-for-login', url),
+  // 主动关闭浏览器（用于添加站点后的自动刷新完成后关闭登录浏览器）
+  closeBrowser: () => ipcRenderer.invoke('close-browser'),
   getCookies: (url: string) => ipcRenderer.invoke('get-cookies', url),
   fetchWithCookies: (url: string, options: any) => ipcRenderer.invoke('fetch-with-cookies', url, options),
   detectSite: (site: any, timeout: number, quickRefresh?: boolean, cachedData?: any) => 
@@ -55,5 +57,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('storage:update-token', id, token),
     export: () => ipcRenderer.invoke('storage:export'),
     import: (data: any) => ipcRenderer.invoke('storage:import', data)
-  }
+  },
+  
+  // 从 token-storage.json 恢复站点配置
+  recoverSitesFromStorage: () => ipcRenderer.invoke('recover-sites-from-storage')
 });

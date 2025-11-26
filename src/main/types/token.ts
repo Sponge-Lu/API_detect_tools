@@ -121,6 +121,8 @@ export interface SiteConfig {
   system_token?: string;        // 系统访问令牌 (即access_token)
   user_id?: string;             // 用户ID (字符串格式)
   enabled: boolean;
+  // 新增：站点分组 ID（用于前端分组展示），例如 "default" 或 "group_xxx"
+  group?: string;
   has_checkin?: boolean;        // 是否有签到功能（自动检测）
   force_enable_checkin?: boolean; // 用户手动启用签到
   extra_links?: string;         // 加油站链接（抽奖、额外签到等）

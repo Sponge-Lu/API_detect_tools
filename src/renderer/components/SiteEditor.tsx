@@ -7,12 +7,16 @@ interface Props {
   site?: SiteConfig;
   onSave: (site: SiteConfig) => void;
   onCancel: () => void;
+  // 站点分组列表（来自 config.siteGroups）
+  groups: { id: string; name: string }[];
+  // 默认分组 ID（例如 "default"）
+  defaultGroupId: string;
 }
 
 type Step = 'input-url' | 'login' | 'fetching' | 'confirm';
 type Mode = 'auto' | 'manual'; // 添加站点模式：auto=智能添加（默认），manual=手动添加
 
-export function SiteEditor({ site, onSave, onCancel }: Props) {
+export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: Props) {
   // 编辑模式下直接跳到确认步骤，新增模式从输入URL开始
   const [step, setStep] = useState<Step>(site ? 'confirm' : 'input-url');
   const [mode, setMode] = useState<Mode>('auto'); // 当前添加模式
@@ -32,6 +36,10 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
     extraLinks: site?.extra_links || "",  // 加油站链接
     enableCheckin: site?.force_enable_checkin || false,  // 启用签到功能
   });
+  // 站点分组选择
+  const [selectedGroupId, setSelectedGroupId] = useState<string>(
+    site?.group || defaultGroupId
+  );
 
   // 脱敏显示函数
   const maskToken = (token: string): string => {
@@ -201,6 +209,8 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
       has_checkin: false,
       extra_links: autoInfo.extraLinks,  // 加油站链接
       force_enable_checkin: autoInfo.enableCheckin,  // 用户勾选的签到功能
+      // 分组信息（如果用户未选择则归入默认分组）
+      group: selectedGroupId || defaultGroupId,
     };
 
     // 2. 保存站点并关闭对话框
@@ -453,6 +463,27 @@ export function SiteEditor({ site, onSave, onCancel }: Props) {
                     className="flex-1 bg-transparent border-none outline-none text-slate-800 dark:text-slate-100 font-medium text-right"
                     placeholder="输入站点名称"
                   />
+                </div>
+
+                {/* 站点分组选择 */}
+                <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                  <div className="text-sm text-slate-700 dark:text-slate-300 font-semibold whitespace-nowrap">
+                    站点分组
+                  </div>
+                  <select
+                    value={selectedGroupId}
+                    onChange={(e) => setSelectedGroupId(e.target.value)}
+                    className="flex-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded px-2 py-1.5 text-sm text-slate-800 dark:text-slate-100"
+                  >
+                    {(groups && groups.length > 0
+                      ? groups
+                      : [{ id: defaultGroupId, name: "默认分组" }]
+                    ).map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {g.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-3">

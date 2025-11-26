@@ -135,6 +135,20 @@ ipcMain.handle('open-url', async (_, url: string) => {
   await shell.openExternal(url);
 });
 
+/**
+ * 主动关闭浏览器（登录/检测完成后调用）
+ * 说明：
+ * - 内部会检查引用计数，只有在 browserRefCount === 0 时才会真正关闭浏览器
+ * - 如果正在被其他检测任务使用，则本次调用会被忽略
+ */
+ipcMain.handle('close-browser', async () => {
+  try {
+    chromeManager.cleanup();
+  } catch (error: any) {
+    console.error('❌ [IPC] 关闭浏览器失败:', error?.message || error);
+  }
+});
+
 // 新增：获取所有站点账号（含缓存数据）
 ipcMain.handle('get-all-accounts', async () => {
   return await tokenStorage.getAllAccounts();
@@ -358,6 +372,89 @@ ipcMain.handle('storage:import', async (_, data: any) => {
     return { success: true };
   } catch (error: any) {
     console.error('导入数据失败:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+/**
+ * 从 token-storage.json 恢复站点配置到 config.json
+ * 用于配置文件丢失时恢复站点列表
+ */
+ipcMain.handle('recover-sites-from-storage', async () => {
+  try {
+    console.log('🔄 [IPC] 开始从 token-storage.json 恢复站点配置...');
+    
+    // 获取所有账号
+    const accounts = await tokenStorage.getAllAccounts();
+    
+    if (!accounts || accounts.length === 0) {
+      return { success: false, error: 'token-storage.json 中没有账号数据' };
+    }
+    
+    console.log(`📦 [IPC] 找到 ${accounts.length} 个账号，开始恢复...`);
+    
+    // 加载当前配置
+    const currentConfig = await configManager.loadConfig();
+    
+    // 从账号数据恢复站点配置
+    const recoveredSites: any[] = [];
+    
+    for (const account of accounts) {
+      // 检查是否已存在相同 URL 的站点
+      const existingSite = currentConfig.sites.find((s: any) => {
+        try {
+          return new URL(s.url).origin === new URL(account.site_url).origin;
+        } catch {
+          return false;
+        }
+      });
+      
+      if (existingSite) {
+        console.log(`⏭️ [IPC] 跳过已存在的站点: ${account.site_name} (${account.site_url})`);
+        continue;
+      }
+      
+      // 构建站点配置
+      const siteConfig = {
+        name: account.site_name || '恢复的站点',
+        url: account.site_url,
+        api_key: '', // API Key 需要用户重新创建
+        system_token: account.access_token || '',
+        user_id: account.user_id?.toString() || '',
+        enabled: true,
+        has_checkin: account.supports_check_in || account.can_check_in || false,
+        force_enable_checkin: account.supports_check_in || false,
+        extra_links: '',
+        group: 'default'
+      };
+      
+      recoveredSites.push(siteConfig);
+      console.log(`✅ [IPC] 恢复站点: ${siteConfig.name} (${siteConfig.url})`);
+    }
+    
+    if (recoveredSites.length === 0) {
+      return { success: true, message: '没有需要恢复的站点（所有站点已存在）', count: 0 };
+    }
+    
+    // 合并到配置中
+    const newConfig = {
+      ...currentConfig,
+      sites: [...currentConfig.sites, ...recoveredSites]
+    };
+    
+    // 保存配置
+    await configManager.saveConfig(newConfig);
+    
+    console.log(`🎉 [IPC] 成功恢复 ${recoveredSites.length} 个站点`);
+    
+    return { 
+      success: true, 
+      message: `成功恢复 ${recoveredSites.length} 个站点`, 
+      count: recoveredSites.length,
+      sites: recoveredSites.map(s => s.name)
+    };
+  } catch (error: any) {
+    console.error('❌ [IPC] 恢复站点失败:', error);
     return { success: false, error: error.message };
   }
 });

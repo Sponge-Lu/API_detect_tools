@@ -7,6 +7,7 @@ import {
   Settings,
   Trash2,
   Edit,
+  Pencil,
   CheckCircle,
   XCircle,
   Loader2,
@@ -37,6 +38,7 @@ declare global {
       loadConfig: () => Promise<Config>;
       saveConfig: (config: Config) => Promise<void>;
       launchChromeForLogin: (url: string) => Promise<{ success: boolean; message: string }>;
+      closeBrowser: () => Promise<void>;
       getCookies: (url: string) => Promise<any[]>;
       fetchWithCookies: (url: string, options: any) => Promise<{ ok: boolean; status: number; statusText: string; data: any }>;
       detectSite: (site: SiteConfig, timeout: number, quickRefresh?: boolean, cachedData?: DetectionResult) => Promise<DetectionResult>;
@@ -59,9 +61,17 @@ export interface Settings {
   browser_path?: string;
 }
 
+// 新增：站点分组配置
+export interface SiteGroup {
+  id: string;   // 分组唯一ID，例如 "default" 或 "group_xxx"
+  name: string; // 分组显示名称，例如 "默认分组"、"国内站点"
+}
+
 export interface Config {
   sites: SiteConfig[];
   settings: Settings;
+  // 新增：站点分组列表，可选（兼容旧版本配置）
+  siteGroups?: SiteGroup[];
 }
 
 export interface DetectionResult {
@@ -141,11 +151,15 @@ function App() {
   const [modelSearch, setModelSearch] = useState<Record<string, string>>({});
   // 新增：存储站点账号数据（用于显示最后更新时间）
   const [siteAccounts, setSiteAccounts] = useState<Record<string, any>>({});
+  // 新增：当前选中的站点分组筛选（null 表示显示全部）
+  const [activeSiteGroupFilter, setActiveSiteGroupFilter] = useState<string | null>(null);
   // 新增：签到状态
   const [checkingIn, setCheckingIn] = useState<string | null>(null);  // 正在签到的站点名称
   // 新增：拖拽状态
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  // 新增：分组表头作为拖拽目标时的高亮状态
+  const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null);
   // 新增：保存状态
   const [saving, setSaving] = useState(false);
   // 新增：创建 API Key 弹窗状态
@@ -902,12 +916,188 @@ function App() {
     }
   };
 
+  // 新增：创建站点分组弹窗状态
+  const [showCreateGroupDialog, setShowCreateGroupDialog] = useState(false);
+  const [newGroupName, setNewGroupName] = useState("");
+  const newGroupNameInputRef = useRef<HTMLInputElement | null>(null);
+
+  // 新增：编辑站点分组弹窗状态
+  const [showEditGroupDialog, setShowEditGroupDialog] = useState(false);
+  const [editingGroup, setEditingGroup] = useState<SiteGroup | null>(null);
+  const [editGroupName, setEditGroupName] = useState("");
+  const editGroupNameInputRef = useRef<HTMLInputElement | null>(null);
+
+  // 打开创建分组弹窗
+  const openCreateGroupDialog = () => {
+    setNewGroupName("");
+    setShowCreateGroupDialog(true);
+    // 延迟聚焦，确保弹窗已渲染
+    setTimeout(() => {
+      newGroupNameInputRef.current?.focus();
+    }, 50);
+  };
+
+  // 打开编辑分组弹窗
+  const openEditGroupDialog = (group: SiteGroup) => {
+    setEditingGroup(group);
+    setEditGroupName(group.name);
+    setShowEditGroupDialog(true);
+    setTimeout(() => {
+      editGroupNameInputRef.current?.focus();
+      editGroupNameInputRef.current?.select();
+    }, 50);
+  };
+
+  // 确认创建分组
+  const confirmCreateSiteGroup = async () => {
+    if (!config) return;
+
+    const trimmed = newGroupName.trim();
+    if (!trimmed) {
+      alert("分组名称不能为空");
+      return;
+    }
+
+    const existingGroups: SiteGroup[] = Array.isArray(config.siteGroups)
+      ? config.siteGroups
+      : [];
+
+    // 检查是否存在同名分组
+    const duplicated = existingGroups.some((g) => g.name === trimmed);
+    if (duplicated) {
+      alert("已存在同名分组，请使用其他名称");
+      return;
+    }
+
+    // 根据名称生成分组ID，避免与已有ID冲突
+    const baseId =
+      trimmed
+        .toLowerCase()
+        .replace(/\s+/g, "-")
+        .replace(/[^a-z0-9-_]/g, "") || "group";
+    let id = baseId;
+    let counter = 1;
+    const existsId = (targetId: string) =>
+      existingGroups.some((g) => g.id === targetId);
+    while (existsId(id)) {
+      id = `${baseId}-${counter++}`;
+    }
+
+    const newGroups: SiteGroup[] = [
+      ...existingGroups,
+      {
+        id,
+        name: trimmed,
+      },
+    ];
+
+    await saveConfig({
+      ...config,
+      siteGroups: newGroups,
+    });
+
+    setShowCreateGroupDialog(false);
+    setNewGroupName("");
+  };
+
+  // 确认编辑分组
+  const confirmEditSiteGroup = async () => {
+    if (!config || !editingGroup) return;
+
+    const trimmed = editGroupName.trim();
+    if (!trimmed) {
+      alert("分组名称不能为空");
+      return;
+    }
+
+    const existingGroups: SiteGroup[] = Array.isArray(config.siteGroups)
+      ? config.siteGroups
+      : [];
+
+    // 检查是否存在同名分组（排除当前编辑的分组）
+    const duplicated = existingGroups.some(
+      (g) => g.name === trimmed && g.id !== editingGroup.id
+    );
+    if (duplicated) {
+      alert("已存在同名分组，请使用其他名称");
+      return;
+    }
+
+    const newGroups = existingGroups.map((g) =>
+      g.id === editingGroup.id ? { ...g, name: trimmed } : g
+    );
+
+    await saveConfig({
+      ...config,
+      siteGroups: newGroups,
+    });
+
+    setShowEditGroupDialog(false);
+    setEditingGroup(null);
+    setEditGroupName("");
+  };
+
+  // 删除分组
+  const deleteSiteGroup = async (groupId: string) => {
+    if (!config) return;
+
+    // 不允许删除默认分组
+    if (groupId === defaultGroupId) {
+      alert("默认分组不能删除");
+      return;
+    }
+
+    const existingGroups: SiteGroup[] = Array.isArray(config.siteGroups)
+      ? config.siteGroups
+      : [];
+
+    const groupToDelete = existingGroups.find((g) => g.id === groupId);
+    if (!groupToDelete) return;
+
+    // 统计该分组下的站点数量
+    const sitesInGroup = config.sites.filter(
+      (s) => (s.group || defaultGroupId) === groupId
+    );
+
+    const confirmMsg =
+      sitesInGroup.length > 0
+        ? `确定要删除分组「${groupToDelete.name}」吗？\n\n该分组下有 ${sitesInGroup.length} 个站点，删除后这些站点将被移动到默认分组。`
+        : `确定要删除分组「${groupToDelete.name}」吗？`;
+
+    if (!confirm(confirmMsg)) return;
+
+    // 将该分组下的站点移动到默认分组
+    const newSites = config.sites.map((s) =>
+      (s.group || defaultGroupId) === groupId
+        ? { ...s, group: defaultGroupId }
+        : s
+    );
+
+    const newGroups = existingGroups.filter((g) => g.id !== groupId);
+
+    // 如果当前筛选的是被删除的分组，重置筛选
+    if (activeSiteGroupFilter === groupId) {
+      setActiveSiteGroupFilter(null);
+    }
+
+    await saveConfig({
+      ...config,
+      sites: newSites,
+      siteGroups: newGroups,
+    });
+  };
+
+  // 新增：切换站点分组筛选（点击同一个分组则取消筛选，显示全部）
+  const toggleSiteGroupFilter = (groupId: string) => {
+    setActiveSiteGroupFilter((prev) => (prev === groupId ? null : groupId));
+  };
+
   const addSite = async (site: SiteConfig) => {
     if (!config) return;
     // 保存配置
     await saveConfig({ ...config, sites: [...config.sites, site] });
     console.log('✅ [App] 站点已添加到配置，开始刷新数据...');
-    
+
     // 延迟刷新，确保config已更新并对话框已关闭
     setTimeout(async () => {
       try {
@@ -915,6 +1105,15 @@ function App() {
         console.log('✅ [App] 新站点数据刷新完成');
       } catch (error: any) {
         console.error('⚠️ [App] 新站点数据刷新失败:', error.message);
+       } finally {
+         // 新增：刷新完成后尝试自动关闭浏览器（例如添加站点时打开的登录浏览器）
+         try {
+           // 可选链防御旧版本 preload 中尚未暴露 closeBrowser 的情况
+           await window.electronAPI.closeBrowser?.();
+           console.log('✅ [App] 已尝试自动关闭浏览器');
+         } catch (err) {
+           console.warn('⚠️ [App] 自动关闭浏览器失败:', err);
+         }
       }
     }, 300);
   };
@@ -1247,12 +1446,15 @@ function App() {
     e.dataTransfer.effectAllowed = 'move';
     // 设置拖拽时的透明度
     (e.target as HTMLElement).style.opacity = '0.5';
+    // 清空分组高亮状态
+    setDragOverGroupId(null);
   };
 
   const handleDragEnd = (e: React.DragEvent) => {
     (e.target as HTMLElement).style.opacity = '1';
     setDraggedIndex(null);
     setDragOverIndex(null);
+    setDragOverGroupId(null);
   };
 
   const handleDragOver = (e: React.DragEvent, index: number) => {
@@ -1270,6 +1472,7 @@ function App() {
     
     if (!config || draggedIndex === null || draggedIndex === dropIndex) {
       setDragOverIndex(null);
+      setDragOverGroupId(null);
       return;
     }
 
@@ -1280,6 +1483,42 @@ function App() {
 
     await saveConfig({ ...config, sites: newSites });
     setDragOverIndex(null);
+    setDragOverGroupId(null);
+  };
+
+  // 新增：拖放到分组表头时，切换站点所属分组
+  const handleDropOnGroup = async (
+    e: React.DragEvent,
+    targetGroupId: string
+  ) => {
+    e.preventDefault();
+
+    if (!config || draggedIndex === null) {
+      setDragOverGroupId(null);
+      return;
+    }
+
+    const newSites = [...config.sites];
+    const originalSite = newSites[draggedIndex];
+    if (!originalSite) {
+      setDragOverGroupId(null);
+      return;
+    }
+
+    // 仅在分组发生变化时更新配置
+    if (originalSite.group === targetGroupId) {
+      setDragOverGroupId(null);
+      return;
+    }
+
+    newSites[draggedIndex] = {
+      ...originalSite,
+      // 目标分组ID由分组标签提供，理论上必然存在；fallback 使用 "default"
+      group: targetGroupId || 'default',
+    };
+
+    await saveConfig({ ...config, sites: newSites });
+    setDragOverGroupId(null);
   };
 
   // 当展开站点时从缓存中加载数据（所有数据在检测时已获取）
@@ -1355,6 +1594,18 @@ function App() {
     );
   }
 
+  // 规范化站点分组配置（确保始终存在一个“默认分组”）
+  const siteGroups: SiteGroup[] = (() => {
+    if (!config.siteGroups || !Array.isArray(config.siteGroups) || config.siteGroups.length === 0) {
+      return [{ id: 'default', name: '默认分组' }];
+    }
+    return config.siteGroups;
+  })();
+
+  // 默认分组ID：优先使用id为"default"的分组，否则取第一个分组
+  const defaultGroupId: string =
+    siteGroups.find((g) => g.id === 'default')?.id || siteGroups[0].id;
+
   return (
     <div className="h-screen flex flex-col bg-light-bg dark:bg-dark-bg text-light-text dark:text-dark-text relative overflow-x-auto overflow-y-hidden">
       {/* 装饰背景 */}
@@ -1394,16 +1645,43 @@ function App() {
       <div className="flex-1 overflow-y-hidden overflow-x-visible flex">
         <div className="flex-1 flex flex-col">
           <div className="px-4 py-3 bg-white/60 dark:bg-dark-card/60 backdrop-blur-sm border-b border-light-border dark:border-dark-border flex items-center justify-between">
-            <button
-              onClick={() => {
-                setEditingSite(null);
-                setShowSiteEditor(true);
-              }}
-              className="px-4 py-2 bg-primary-500 hover:bg-primary-600 text-white rounded-lg transition-all flex items-center gap-2 text-sm font-medium shadow-md hover:shadow-lg"
-            >
-              <Plus className="w-4 h-4" strokeWidth={2.5} />
-              添加站点
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setEditingSite(null);
+                  setShowSiteEditor(true);
+                }}
+                className="px-4 py-2 bg-primary-500 hover:bg-primary-600 text-white rounded-lg transition-all flex items-center gap-2 text-sm font-medium shadow-md hover:shadow-lg"
+              >
+                <Plus className="w-4 h-4" strokeWidth={2.5} />
+                添加站点
+              </button>
+              {/* 从缓存恢复站点按钮 */}
+              <button
+                onClick={async () => {
+                  if (!confirm('是否尝试从 token-storage.json 恢复站点配置？\n\n这将从缓存的账号数据中恢复站点列表（不会影响已有站点）。')) {
+                    return;
+                  }
+                  try {
+                    const result = await (window.electronAPI as any).recoverSitesFromStorage();
+                    if (result.success) {
+                      alert(result.message + (result.sites?.length ? `\n\n恢复的站点：${result.sites.join('、')}` : ''));
+                      // 重新加载配置
+                      await loadConfig();
+                    } else {
+                      alert('恢复失败：' + (result.error || '未知错误'));
+                    }
+                  } catch (error: any) {
+                    alert('恢复失败：' + error.message);
+                  }
+                }}
+                className="px-3 py-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg transition-all flex items-center gap-1.5 text-sm font-medium shadow-md hover:shadow-lg"
+                title="从 token-storage.json 恢复丢失的站点配置"
+              >
+                <RefreshCw className="w-4 h-4" strokeWidth={2.5} />
+                恢复站点
+              </button>
+            </div>
             <button
               onClick={detectAllSites}
               disabled={detecting || !config || config.sites.length === 0}
@@ -1428,11 +1706,142 @@ function App() {
               <div className="text-center py-16 text-light-text-secondary dark:text-dark-text-secondary">
                 <Server className="w-16 h-16 mx-auto mb-4 opacity-30" strokeWidth={1.5} />
                 <p className="text-lg font-medium mb-2">还没有添加任何站点</p>
-                <p className="text-sm">点击"添加站点"按钮开始</p>
+                <p className="text-sm mb-4">点击"添加站点"按钮开始</p>
+                {/* 恢复站点按钮 */}
+                <button
+                  onClick={async () => {
+                    if (!confirm('是否尝试从 token-storage.json 恢复站点配置？\n\n这将从缓存的账号数据中恢复站点列表。')) {
+                      return;
+                    }
+                    try {
+                      const result = await (window.electronAPI as any).recoverSitesFromStorage();
+                      if (result.success) {
+                        alert(result.message + (result.sites?.length ? `\n\n恢复的站点：${result.sites.join('、')}` : ''));
+                        // 重新加载配置
+                        await loadConfig();
+                      } else {
+                        alert('恢复失败：' + (result.error || '未知错误'));
+                      }
+                    } catch (error: any) {
+                      alert('恢复失败：' + error.message);
+                    }
+                  }}
+                  className="px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg transition-all text-sm font-medium shadow-md hover:shadow-lg"
+                >
+                  🔄 从缓存恢复站点
+                </button>
+                <p className="text-xs mt-2 text-slate-400">
+                  如果站点配置丢失但 token-storage.json 中有数据，可尝试恢复
+                </p>
               </div>
             ) : (
               // 为了在窗口变窄时出现横向滚动条，内部内容设置一个最小宽度（由根容器负责横向滚动）
               <>
+                {/* 站点分组控制栏：展示所有分组、支持展开/收起和拖拽变更分组 */}
+                <div className="min-w-[1180px] px-4 pt-2 pb-1 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold text-slate-700 dark:text-slate-200">
+                      站点分组
+                    </span>
+                    {/* 显示全部按钮 */}
+                    <button
+                      onClick={() => setActiveSiteGroupFilter(null)}
+                      className={`inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[11px] transition-all ${
+                        activeSiteGroupFilter === null
+                          ? 'border-primary-500 bg-primary-500 text-white'
+                          : 'border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-900/60 hover:border-primary-300'
+                      }`}
+                      title="显示全部站点"
+                    >
+                      <span className="font-semibold">全部</span>
+                      <span className={`text-[10px] ${activeSiteGroupFilter === null ? 'text-white/80' : 'text-slate-400 dark:text-slate-500'}`}>
+                        {config.sites.length} 个
+                      </span>
+                    </button>
+                    {siteGroups.map((group) => {
+                      const groupId = group.id;
+                      const isActive = activeSiteGroupFilter === groupId;
+                      const groupSitesCount = config.sites.filter(
+                        (s) => (s.group || defaultGroupId) === groupId
+                      ).length;
+                      const colorClass = getGroupTextColor(group.name);
+                      const isDefaultGroup = groupId === defaultGroupId;
+                      return (
+                        <div
+                          key={groupId}
+                          className={`group/tag inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[11px] transition-all cursor-pointer ${
+                            isActive
+                              ? 'border-primary-500 bg-primary-500 text-white'
+                              : dragOverGroupId === groupId
+                                ? 'border-primary-400 bg-primary-50/80 dark:bg-primary-900/30'
+                                : 'border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-900/60 hover:border-primary-300'
+                          }`}
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            setDragOverGroupId(groupId);
+                          }}
+                          onDragLeave={(e) => {
+                            e.preventDefault();
+                            setDragOverGroupId((prev) =>
+                              prev === groupId ? null : prev
+                            );
+                          }}
+                          onDrop={(e) => handleDropOnGroup(e, groupId)}
+                          onClick={() => toggleSiteGroupFilter(groupId)}
+                          title={isActive ? '点击显示全部站点' : `点击只显示「${group.name}」分组的站点，或拖动站点卡片到此以变更分组`}
+                        >
+                          <span
+                            className={`flex items-center gap-1 ${isActive ? 'text-white' : colorClass}`}
+                          >
+                            {getGroupIcon(group.name, true)}
+                            <span className="font-semibold">{group.name}</span>
+                          </span>
+                          {/* 站点数量 - 始终显示 */}
+                          <span className={`text-[10px] ${isActive ? 'text-white/80' : 'text-slate-400 dark:text-slate-500'}`}>
+                            {groupSitesCount} 个
+                          </span>
+                          {/* 编辑按钮 - 悬停时显示 */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openEditGroupDialog(group);
+                            }}
+                            className={`hidden group-hover/tag:block p-0.5 rounded transition-colors ${isActive ? 'hover:bg-white/20 text-white/80 hover:text-white' : 'hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-primary-500'}`}
+                            title="编辑分组名称"
+                          >
+                            <Pencil className="w-3 h-3" />
+                          </button>
+                          {/* 删除按钮 - 悬停时显示，且不是默认分组 */}
+                          {!isDefaultGroup && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteSiteGroup(groupId);
+                              }}
+                              className={`hidden group-hover/tag:block p-0.5 rounded transition-colors ${isActive ? 'hover:bg-white/20 text-white/80 hover:text-white' : 'hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-red-500'}`}
+                              title="删除分组"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-[10px] text-slate-400 dark:text-slate-500">
+                      小提示：拖动站点卡片到分组标签即可移动分组
+                    </span>
+                    <button
+                      onClick={openCreateGroupDialog}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-dashed border-slate-300 dark:border-slate-600 text-[11px] text-slate-600 dark:text-slate-200 hover:border-primary-400 hover:text-primary-500"
+                    >
+                      <Plus className="w-3 h-3" />
+                      新建分组
+                    </button>
+                  </div>
+                </div>
+
                 {/* 列表表头（固定在滚动容器顶部）：站点名称 / 状态 / 余额 / 今日消费 / 总Token / 输入 / 输出 / 请求 / RPM / TPM / 模型数 / 更新时间 / 操作 */}
                 <div className="min-w-[1180px] sticky top-0 z-20 px-4 py-2 bg-light-bg/95 dark:bg-dark-bg/95 backdrop-blur-sm border-b border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-xs font-semibold text-slate-700 dark:text-slate-100">
                   <div
@@ -1496,6 +1905,13 @@ function App() {
                         // ignore url parse error
                       }
                     }
+
+                    // 按分组筛选决定是否渲染该站点
+                    const groupId = site.group || defaultGroupId;
+                    if (activeSiteGroupFilter !== null && groupId !== activeSiteGroupFilter) {
+                      return null;
+                    }
+
                     const isExpanded = expandedSites.has(site.name);
                 // 账号信息也优先按名称匹配，失败时按URL回退
                 let siteAccount = siteAccounts[site.name];
@@ -2383,6 +2799,8 @@ function App() {
             setShowSiteEditor(false);
           }}
           onCancel={() => setShowSiteEditor(false)}
+          groups={siteGroups}
+          defaultGroupId={defaultGroupId}
         />
       )}
 
@@ -2395,6 +2813,150 @@ function App() {
           }}
           onCancel={() => setShowSettings(false)}
         />
+      )}
+
+      {/* 创建站点分组弹窗 */}
+      {showCreateGroupDialog && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onClick={(e) => {
+            // 只有点击背景层时才关闭
+            if (e.target === e.currentTarget) {
+              setShowCreateGroupDialog(false);
+            }
+          }}
+        >
+          <div 
+            className="bg-white dark:bg-slate-900 rounded-lg shadow-xl w-full max-w-sm p-4"
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                新建站点分组
+              </h2>
+              <button
+                onClick={() => setShowCreateGroupDialog(false)}
+                className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                title="关闭"
+              >
+                <XCircle className="w-4 h-4 text-slate-400" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">
+                  分组名称
+                </label>
+                <input
+                  ref={newGroupNameInputRef}
+                  type="text"
+                  autoFocus
+                  value={newGroupName}
+                  onChange={(e) => setNewGroupName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      confirmCreateSiteGroup();
+                    }
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  className="w-full px-3 py-2 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  placeholder="请输入分组名称"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  onClick={() => setShowCreateGroupDialog(false)}
+                  className="px-4 py-2 text-sm rounded border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={confirmCreateSiteGroup}
+                  className="px-4 py-2 text-sm rounded bg-primary-500 text-white hover:bg-primary-600 transition-colors"
+                >
+                  确认创建
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 编辑站点分组弹窗 */}
+      {showEditGroupDialog && editingGroup && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onClick={(e) => {
+            // 只有点击背景层时才关闭
+            if (e.target === e.currentTarget) {
+              setShowEditGroupDialog(false);
+              setEditingGroup(null);
+              setEditGroupName("");
+            }
+          }}
+        >
+          <div 
+            className="bg-white dark:bg-slate-900 rounded-lg shadow-xl w-full max-w-sm p-4"
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                编辑站点分组
+              </h2>
+              <button
+                onClick={() => {
+                  setShowEditGroupDialog(false);
+                  setEditingGroup(null);
+                  setEditGroupName("");
+                }}
+                className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                title="关闭"
+              >
+                <XCircle className="w-4 h-4 text-slate-400" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">
+                  分组名称
+                </label>
+                <input
+                  ref={editGroupNameInputRef}
+                  type="text"
+                  autoFocus
+                  value={editGroupName}
+                  onChange={(e) => setEditGroupName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      confirmEditSiteGroup();
+                    }
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  className="w-full px-3 py-2 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  placeholder="请输入分组名称"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  onClick={() => {
+                    setShowEditGroupDialog(false);
+                    setEditingGroup(null);
+                    setEditGroupName("");
+                  }}
+                  className="px-4 py-2 text-sm rounded border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={confirmEditSiteGroup}
+                  className="px-4 py-2 text-sm rounded bg-primary-500 text-white hover:bg-primary-600 transition-colors"
+                >
+                  保存修改
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 创建 API Key 弹窗 */}
