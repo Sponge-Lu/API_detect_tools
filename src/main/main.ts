@@ -28,6 +28,13 @@ const tokenStorage = new TokenStorage();
 const tokenService = new TokenService(chromeManager);
 const apiService = new ApiService(tokenService, tokenStorage);
 
+// 发送站点初始化状态到渲染进程
+function sendSiteInitStatus(status: string) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('site-init-status', status);
+  }
+}
+
 // 主题设置文件路径（与渲染进程保持一致）
 function getThemeSettingsPath() {
   const userDataPath = app.getPath('userData');
@@ -280,7 +287,7 @@ ipcMain.handle('get-all-accounts', async () => {
  */
 ipcMain.handle('token:initialize-site', async (_, baseUrl: string) => {
   try {
-    const siteAccount = await tokenService.initializeSiteAccount(baseUrl);
+    const siteAccount = await tokenService.initializeSiteAccount(baseUrl, true, 600000, sendSiteInitStatus);
     return { success: true, data: siteAccount };
   } catch (error: any) {
     console.error('初始化站点失败:', error);

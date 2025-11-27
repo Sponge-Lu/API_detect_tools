@@ -517,12 +517,14 @@ export class ChromeManager {
    * @param url 站点URL
    * @param waitForLogin 是否等待用户登录（默认false）
    * @param maxWaitTime 最大等待时间（毫秒，默认60秒）
+   * @param onStatus 状态回调函数（用于向前端发送实时状态）
    * @returns localStorage中的核心数据
    */
   async getLocalStorageData(
     url: string, 
     waitForLogin: boolean = false,
-    maxWaitTime: number = 60000
+    maxWaitTime: number = 60000,
+    onStatus?: (status: string) => void
   ): Promise<LocalStorageData> {
     // 检查浏览器是否已关闭
     this.checkBrowserClosed();
@@ -538,31 +540,21 @@ export class ChromeManager {
 
     const page = pages[0];
     
-    await page.waitForNetworkIdle({ timeout: 5000 }).catch(() => {
-      console.log('⚠️ [ChromeManager] 页面加载超时，继续获取数据');
-    });
+    // 等待页面稳定并读取 localStorage（处理重定向、Cloudflare 验证等）
+    onStatus?.('等待页面加载...');
+    let localData = await this.waitAndReadLocalStorage(page, url, onStatus);
     
-    console.log('🔍 [ChromeManager] 开始读取localStorage...');
+    // 判断是否需要等待登录：没有 userId，或者有 userId 但没有 accessToken（可能是残留数据）
+    const needsLoginCheck = !localData.userId || (!localData.accessToken && waitForLogin);
     
-    // 第一步：从localStorage获取所有可能的信息
-    let localData = await this.tryGetFromLocalStorage(page);
-    
-    console.log('📊 [ChromeManager] localStorage数据:');
-    console.log('   - userId:', localData.userId || '缺失');
-    console.log('   - username:', localData.username || '缺失');
-    console.log('   - systemName:', localData.systemName || '缺失');
-    console.log('   - accessToken:', localData.accessToken ? '已获取' : '缺失');
-    console.log('   - supportsCheckIn:', localData.supportsCheckIn ?? '未知');
-    console.log('   - canCheckIn:', localData.canCheckIn ?? '未知');
-    
-    // 如果没有userId且需要等待登录，则轮询检查
-    if (!localData.userId && waitForLogin) {
-      console.log('⏳ [ChromeManager] 未检测到登录状态，等待用户登录...');
+    if (needsLoginCheck && waitForLogin) {
+      console.log('⏳ [ChromeManager] 需要验证登录状态...');
       console.log(`   最长等待 ${maxWaitTime / 1000} 秒`);
       console.log('💡 [ChromeManager] 将同时检查localStorage和API接口');
+      onStatus?.('正在验证登录状态...');
       
-      // 在进入等待循环前，先尝试一次API回退（用户可能已经登录，只是localStorage没有数据）
-      console.log('🔄 [ChromeManager] 先尝试通过API检查是否已登录...');
+      // 先尝试一次API验证（用户可能已经登录）
+      console.log('🔄 [ChromeManager] 尝试通过API验证登录状态...');
       try {
         this.checkBrowserClosed(); // 检查浏览器状态
         const apiData = await this.getUserDataFromApi(page, url);
@@ -572,16 +564,18 @@ export class ChromeManager {
           localData = { ...localData, ...apiData };
         } else {
           // API也没有数据，进入等待循环
-          localData = await this.waitForUserLogin(page, url, maxWaitTime);
+          onStatus?.('未检测到登录，请在浏览器中登录账号...');
+          localData = await this.waitForUserLogin(page, url, maxWaitTime, onStatus);
         }
       } catch (apiError: any) {
         // 如果是浏览器关闭错误，直接抛出
         if (apiError.message.includes('浏览器已关闭') || apiError.message.includes('操作已被取消')) {
           throw apiError;
         }
-        console.log(`ℹ️ [ChromeManager] 初始API检查失败: ${apiError.message}，进入等待循环...`);
-        // API失败，进入等待循环
-        localData = await this.waitForUserLogin(page, url, maxWaitTime);
+        console.log(`ℹ️ [ChromeManager] API验证失败: ${apiError.message}，进入等待循环...`);
+        // API失败（可能401/403），进入等待循环
+        onStatus?.('登录状态无效，请在浏览器中登录账号...');
+        localData = await this.waitForUserLogin(page, url, maxWaitTime, onStatus);
       }
       
       console.log('✅ [ChromeManager] 用户已登录，继续获取数据');
@@ -591,7 +585,7 @@ export class ChromeManager {
       console.log('   - accessToken:', localData.accessToken ? '已获取' : '未获取');
     }
     
-    // 第二步：检查是否需要API回退
+    // 第二步：检查是否需要API回退（没有 accessToken 说明需要验证登录状态）
     const needsApiFallback = !localData.userId || !localData.accessToken;
     
     if (needsApiFallback) {
@@ -614,6 +608,19 @@ export class ChromeManager {
           throw apiError;
         }
         console.error('❌ [ChromeManager] API补全失败:', apiError.message);
+        
+        // 如果 API 返回 401 或其他认证错误，说明 session 过期，需要重新登录
+        const isAuthError = apiError.message.includes('401') || 
+                           apiError.message.includes('403') ||
+                           apiError.message.includes('Execution context was destroyed');
+        
+        if (isAuthError && waitForLogin) {
+          console.log('🔄 [ChromeManager] 检测到登录状态无效，等待用户重新登录...');
+          onStatus?.('登录状态已过期，请在浏览器中重新登录...');
+          localData = await this.waitForUserLogin(page, url, maxWaitTime, onStatus);
+          return localData;
+        }
+        
         if (!localData.userId) {
           throw new Error('未找到用户ID，请确保已登录');
         }
@@ -668,9 +675,10 @@ export class ChromeManager {
    * @param page 浏览器页面
    * @param baseUrl 站点URL（用于API回退）
    * @param maxWaitTime 最大等待时间（毫秒）
+   * @param onStatus 状态回调函数
    * @returns 登录后的localStorage数据
    */
-  private async waitForUserLogin(page: Page, baseUrl: string, maxWaitTime: number): Promise<LocalStorageData> {
+  private async waitForUserLogin(page: Page, baseUrl: string, maxWaitTime: number, onStatus?: (status: string) => void): Promise<LocalStorageData> {
     const startTime = Date.now();
     const checkInterval = 2000; // 每2秒检查一次
     let checkCount = 0;
@@ -689,14 +697,35 @@ export class ChromeManager {
       checkCount++;
       const elapsedTime = Math.floor((Date.now() - startTime) / 1000);
       console.log(`⏳ [ChromeManager] 等待登录中... (${elapsedTime}/${Math.floor(maxWaitTime / 1000)}秒)`);
+      onStatus?.(`等待登录中... (${elapsedTime}s)`);
       
       // 检查localStorage
       try {
         const localData = await this.tryGetFromLocalStorage(page);
         
-        if (localData.userId) {
+        // 如果有 userId 且有 accessToken，说明登录有效
+        if (localData.userId && localData.accessToken) {
           console.log(`✅ [ChromeManager] 检测到用户登录！用户ID: ${localData.userId}`);
           return localData;
+        }
+        
+        // 如果有 userId 但没有 accessToken，需要通过 API 验证登录状态
+        if (localData.userId && !localData.accessToken) {
+          console.log('🔄 [ChromeManager] 检测到userId但无accessToken，验证登录状态...');
+          try {
+            this.checkBrowserClosed();
+            const apiData = await this.getUserDataFromApi(page, baseUrl);
+            if (apiData.userId) {
+              console.log(`✅ [ChromeManager] 登录状态有效！用户ID: ${apiData.userId}`);
+              return { ...localData, ...apiData };
+            }
+          } catch (apiError: any) {
+            if (apiError.message.includes('浏览器已关闭') || apiError.message.includes('操作已被取消')) {
+              throw apiError;
+            }
+            // API 返回 401 等错误，说明 session 过期，继续等待
+            console.log('ℹ️ [ChromeManager] localStorage有残留数据但session已过期，继续等待登录...');
+          }
         }
         
         // 定期尝试API回退（每10秒尝试一次）
@@ -753,6 +782,94 @@ export class ChromeManager {
     
     // 超时
     throw new Error(`等待登录超时（${maxWaitTime / 1000}秒），请确保已在浏览器中完成登录`);
+  }
+
+  /**
+   * 等待页面稳定并读取 localStorage
+   * 处理页面导航、重定向、Cloudflare 验证等情况
+   * @param page 浏览器页面
+   * @param url 目标站点URL
+   * @param onStatus 状态回调
+   * @returns localStorage 数据
+   */
+  private async waitAndReadLocalStorage(
+    page: Page, 
+    url: string, 
+    onStatus?: (status: string) => void
+  ): Promise<LocalStorageData> {
+    const maxRetries = 10;
+    const retryDelay = 2000;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      this.checkBrowserClosed();
+      
+      try {
+        // 检查页面 URL，确保在目标域名上
+        const currentUrl = page.url();
+        console.log(`📍 [ChromeManager] 当前页面URL: ${currentUrl}`);
+        
+        // 检查是否是 Cloudflare 挑战页面
+        const html = await page.content().catch(() => '');
+        const isCloudflare = html.includes('cf-browser-verification') || 
+                            html.includes('Just a moment') ||
+                            html.includes('Checking your browser');
+        
+        if (isCloudflare) {
+          console.log('🛡️ [ChromeManager] 检测到 Cloudflare 验证页面，等待验证通过...');
+          onStatus?.('正在等待 Cloudflare 验证...');
+          await this.sleepWithAbort(retryDelay);
+          continue;
+        }
+        
+        // 等待页面网络空闲
+        await page.waitForNetworkIdle({ timeout: 3000 }).catch(() => {});
+        
+        // 短暂等待让页面稳定
+        await this.sleepWithAbort(500);
+        
+        // 尝试读取 localStorage
+        console.log('🔍 [ChromeManager] 尝试读取 localStorage...');
+        const localData = await this.tryGetFromLocalStorage(page);
+        
+        console.log('📊 [ChromeManager] localStorage数据:');
+        console.log('   - userId:', localData.userId || '缺失');
+        console.log('   - username:', localData.username || '缺失');
+        console.log('   - systemName:', localData.systemName || '缺失');
+        console.log('   - accessToken:', localData.accessToken ? '已获取' : '缺失');
+        console.log('   - supportsCheckIn:', localData.supportsCheckIn ?? '未知');
+        console.log('   - canCheckIn:', localData.canCheckIn ?? '未知');
+        
+        return localData;
+        
+      } catch (error: any) {
+        // 如果是浏览器关闭错误，直接抛出
+        if (error.message.includes('浏览器已关闭') || error.message.includes('操作已被取消')) {
+          throw error;
+        }
+        
+        // 页面导航错误，等待后重试
+        if (error.message.includes('Execution context was destroyed') ||
+            error.message.includes('navigation') ||
+            error.message.includes('Target closed') ||
+            error.message.includes('Session closed')) {
+          console.log(`⚠️ [ChromeManager] 页面正在导航中 (${attempt}/${maxRetries})，等待页面稳定...`);
+          onStatus?.(`页面加载中... (${attempt}/${maxRetries})`);
+          await this.sleepWithAbort(retryDelay);
+          continue;
+        }
+        
+        // 其他错误，记录并重试
+        console.warn(`⚠️ [ChromeManager] 读取 localStorage 失败 (${attempt}/${maxRetries}):`, error.message);
+        if (attempt < maxRetries) {
+          await this.sleepWithAbort(retryDelay);
+          continue;
+        }
+        throw error;
+      }
+    }
+    
+    // 所有重试都失败
+    throw new Error('无法读取页面数据，页面可能仍在加载中');
   }
 
   /**

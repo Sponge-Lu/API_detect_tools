@@ -29,12 +29,14 @@ export class TokenService {
    * @param baseUrl 站点URL
    * @param waitForLogin 是否等待用户登录（默认true，用于刷新场景）
    * @param maxWaitTime 最大等待时间（毫秒，默认60秒）
+   * @param onStatus 状态回调函数（用于向前端发送实时状态）
    * @returns 完整的站点账号信息
    */
   async initializeSiteAccount(
     baseUrl: string,
     waitForLogin: boolean = true,
-    maxWaitTime: number = 600000
+    maxWaitTime: number = 600000,
+    onStatus?: (status: string) => void
   ): Promise<SiteAccount> {
     console.log('🚀 [TokenService] ========== 开始初始化站点账号 ==========');
     console.log('📍 [TokenService] 站点URL:', baseUrl);
@@ -43,15 +45,19 @@ export class TokenService {
     try {
       // 步骤1: 从localStorage获取核心数据（支持API回退）
       console.log('📖 [TokenService] 步骤1: 读取用户数据（localStorage优先，API回退）...');
+      onStatus?.('正在检测登录状态...');
       const localData = await this.chromeManager.getLocalStorageData(
         baseUrl, 
         waitForLogin, 
-        maxWaitTime
+        maxWaitTime,
+        onStatus
       );
       
       if (!localData.userId) {
         throw new Error('无法获取用户ID，请确保已登录并刷新页面');
       }
+      
+      onStatus?.('检测到已登录账号，正在获取信息...');
       
       console.log('✅ [TokenService] 已获取用户基础信息:');
       console.log('   - 用户ID:', localData.userId);
@@ -65,6 +71,7 @@ export class TokenService {
       if (!accessToken) {
         console.log('⚠️ [TokenService] 未找到access_token，尝试创建...');
         console.log('🔧 [TokenService] 步骤2: 调用 /api/user/token 创建令牌');
+        onStatus?.('正在创建访问令牌...');
         
         try {
           accessToken = await this.createAccessToken(baseUrl, localData.userId);

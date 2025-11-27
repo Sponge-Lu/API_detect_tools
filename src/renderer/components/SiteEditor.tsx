@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { X, Loader2, Globe, CheckCircle } from "lucide-react";
 import { SiteConfig } from "../App";
 
@@ -12,7 +12,7 @@ interface Props {
   defaultGroupId: string;
 }
 
-type Step = "input-url" | "login" | "fetching" | "confirm";
+type Step = "input-url" | "fetching" | "confirm";
 // 新增：添加方式模式，auto=智能添加，manual=手动添加
 type Mode = "auto" | "manual";
 
@@ -23,6 +23,7 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
   const [url, setUrl] = useState(site?.url || "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [statusMessage, setStatusMessage] = useState(""); // 动态状态消息
   const [showToken, setShowToken] = useState(false); // 控制令牌显示/隐藏
   const isEditing = !!site; // 判断是否为编辑模式
   // 自动/手动共用的信息结构
@@ -39,6 +40,14 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
   const [selectedGroupId, setSelectedGroupId] = useState<string>(
     site?.group || defaultGroupId
   );
+
+  // 监听后端发送的状态更新事件
+  useEffect(() => {
+    const cleanup = (window.electronAPI as any).onSiteInitStatus?.((status: string) => {
+      setStatusMessage(status);
+    });
+    return () => cleanup?.();
+  }, []);
 
   const maskToken = (token: string): string => {
     if (!token) return "";
@@ -78,38 +87,39 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
     setUrl(finalUrl);
     setLoading(true);
     setError("");
-    try {
-      const result = await window.electronAPI.launchChromeForLogin(finalUrl);
-      if (result.success) setStep("login");
-      else setError(result.message);
-    } catch (err: any) {
-      setError("启动浏览器失败: " + err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleLoginComplete = async () => {
+    setStatusMessage("正在启动浏览器...");
     setStep("fetching");
-    setLoading(true);
-    setError("");
-    // 保留超时保护逻辑
-    const timeout = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error("TIMEOUT")), 30000);
-    });
+    
     try {
-      const siteAccountResult = (await Promise.race([
-        (window.electronAPI as any).token.initializeSite(url),
-        timeout,
-      ])) as any;
-      if (!siteAccountResult.success)
+      // 启动浏览器
+      const result = await window.electronAPI.launchChromeForLogin(finalUrl);
+      if (!result.success) {
+        setError(result.message);
+        setStatusMessage("");
+        setStep("input-url");
+        setLoading(false);
+        return;
+      }
+      
+      setStatusMessage("浏览器已启动，正在检测登录状态...");
+      
+      // 浏览器启动成功后，直接获取站点信息（系统会自动检测登录状态）
+      // 后端会自动等待用户登录
+      const siteAccountResult = (await (window.electronAPI as any).token.initializeSite(finalUrl)) as any;
+      
+      if (!siteAccountResult.success) {
         throw new Error(siteAccountResult.error || "初始化站点失败");
-      const { user_id, site_name, access_token, supportsCheckIn } =
-        siteAccountResult.data;
-      if (!user_id)
+      }
+      
+      setStatusMessage("✅ 信息获取成功！");
+      
+      const { user_id, site_name, access_token, supportsCheckIn } = siteAccountResult.data;
+      if (!user_id) {
         throw new Error("初始化站点返回的数据中缺少用户ID");
+      }
+      
       setAutoInfo({
-        name: site_name || extractDomainName(url),
+        name: site_name || extractDomainName(finalUrl),
         apiKey: "",
         systemToken: access_token || "",
         userId: String(user_id),
@@ -117,10 +127,16 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
         extraLinks: "",
         enableCheckin: supportsCheckIn === true,
       });
-      setStep("confirm");
+      
+      // 短暂显示成功消息后进入确认页
+      setTimeout(() => {
+        setStep("confirm");
+        setStatusMessage("");
+      }, 800);
     } catch (err: any) {
       // 失败时允许用户继续在确认页手动填写
       setError("获取站点信息失败: " + err.message);
+      setStatusMessage("");
       setStep("confirm");
     } finally {
       setLoading(false);
@@ -162,9 +178,9 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 overflow-y-auto">
       <div className="bg-light-card dark:bg-dark-card rounded-2xl shadow-2xl w-full max-w-2xl md:max-w-3xl border border-slate-200 dark:border-slate-700 max-h-[85vh] flex flex-col">
         {/* 头部：标题 + 添加方式切换 */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700">
-          <div className="flex flex-col gap-1">
-            <h2 className="text-xl font-bold">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 dark:border-slate-700">
+          <div className="flex flex-col gap-0.5">
+            <h2 className="text-lg font-bold">
               {site
                 ? "编辑站点"
                 : mode === "manual"
@@ -216,63 +232,8 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
           </button>
         </div>
 
-        <div className="px-6 py-6 space-y-6 overflow-y-auto flex-1">
-          {/* 步骤指示器：智能添加模式或编辑模式显示 */}
-          {(mode === "auto" || site) && (
-            <div className="flex items-center justify-between">
-              {[
-                { id: "input-url", label: "输入URL", icon: "1" },
-                { id: "login", label: "浏览器登录", icon: "2" },
-                { id: "fetching", label: "获取信息", icon: "3" },
-                { id: "confirm", label: "确认保存", icon: "4" },
-              ].map((s, idx) => (
-                <div key={s.id} className="flex items-center flex-1">
-                  <div
-                    className={`flex items-center gap-2 ${
-                      step === s.id
-                        ? "text-primary-600 dark:text-primary-400"
-                        : ["login", "fetching", "confirm"].indexOf(s.id) <=
-                          ["login", "fetching", "confirm"].indexOf(
-                            step as any
-                          )
-                        ? "text-green-600 dark:text-green-400"
-                        : "text-slate-500 dark:text-slate-400"
-                    }`}
-                  >
-                    <div
-                      className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-base text-white shadow-md ${
-                        step === s.id
-                          ? "bg-primary-500"
-                          : ["login", "fetching", "confirm"].indexOf(s.id) <=
-                            ["login", "fetching", "confirm"].indexOf(
-                              step as any
-                            )
-                          ? "bg-green-500"
-                          : "bg-slate-400 dark:bg-slate-600"
-                      }`}
-                    >
-                      {s.icon}
-                    </div>
-                    <span className="text-sm font-semibold">{s.label}</span>
-                  </div>
-                  {idx < 3 && (
-                    <div
-                      className={`flex-1 h-1 mx-2 rounded ${
-                        ["login", "fetching", "confirm"].indexOf(
-                          ["input-url", "login", "fetching", "confirm"][idx + 1]
-                        ) <=
-                        ["login", "fetching", "confirm"].indexOf(step as any)
-                          ? "bg-green-500"
-                          : "bg-slate-300 dark:bg-slate-600"
-                      }`}
-                    />
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* 步骤1：输入URL（仅智能添加模式使用） */}
+        <div className="px-5 py-4 space-y-4 overflow-y-auto flex-1">
+          {/* 输入URL（仅智能添加模式使用） */}
           {mode === "auto" && step === "input-url" && (
             <div className="space-y-4">
               <div>
@@ -281,112 +242,110 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
               </div>
               {error && (<div className="px-4 py-3 bg-red-50 dark:bg-red-900/30 border-2 border-red-400 dark:border-red-600 rounded-lg text-red-700 dark:text-red-300 text-sm font-medium">{error}</div>)}
               <button onClick={handleUrlSubmit} disabled={loading || !url.trim()} className="w-full px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-semibold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all">
-                {loading ? (<><Loader2 className="w-5 h-5 animate-spin text-white" />启动浏览器中...</>) : (<><Globe className="w-5 h-5 text-white" />下一步：浏览器登录</>)}
+                {loading ? (<><Loader2 className="w-5 h-5 animate-spin text-white" />获取中...</>) : (<><Globe className="w-5 h-5 text-white" />获取信息</>)}
               </button>
             </div>
           )}
 
-          {step === 'login' && (
+          {/* 获取信息中（仅智能添加模式使用） */}
+          {mode === "auto" && step === "fetching" && (
             <div className="space-y-4">
-              <div className="px-6 py-8 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-300 dark:border-slate-600 text-center space-y-4 shadow-md">
-                <Globe className="w-16 h-16 mx-auto text-primary-500 dark:text-primary-400 animate-pulse" />
-                <h3 className="text-xl font-bold text-slate-800 dark:text-white">请在浏览器中完成登录</h3>
-                <p className="text-sm text-slate-600 dark:text-slate-300">已在浏览器中打开 <span className="text-primary-600 dark:text-primary-400 font-semibold">{url}</span><br/>完成登录后继续</p>
+              <div className="px-6 py-10 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-300 dark:border-slate-600 text-center space-y-5 shadow-md">
+                {/* 动态状态显示 */}
+                <div className="flex items-center justify-center gap-3">
+                  {statusMessage.startsWith("✅") ? (
+                    <CheckCircle className="w-8 h-8 text-green-500" />
+                  ) : (
+                    <Loader2 className="w-8 h-8 text-primary-500 animate-spin" />
+                  )}
+                  <span className="text-lg font-semibold text-slate-800 dark:text-white">
+                    {statusMessage || "准备中..."}
+                  </span>
+                </div>
+                
+                {/* 站点URL显示 */}
+                <div className="text-sm text-slate-500 dark:text-slate-400">
+                  <span className="text-primary-600 dark:text-primary-400 font-medium">{url}</span>
+                </div>
+                
+                {/* 提示信息 */}
+                {!statusMessage.startsWith("✅") && (
+                  <p className="text-xs text-slate-500 dark:text-slate-400 bg-slate-200/50 dark:bg-slate-700/50 px-4 py-2 rounded-lg">
+                    💡 如果账号未登录，请在浏览器中完成登录，系统会自动检测
+                  </p>
+                )}
               </div>
               {error && (<div className="px-4 py-3 bg-red-500/30 border border-red-500/60 rounded-lg text-red-700 dark:text-red-200 text-sm font-medium">{error}</div>)}
-              <div className="flex gap-3">
-                <button onClick={() => setStep('input-url')} className="flex-1 px-6 py-3 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-semibold transition-all">返回</button>
-                <button onClick={handleLoginComplete} disabled={loading} className="flex-1 px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold flex items-center justify-center gap-2 disabled:opacity-50 transition-all">
-                  {loading ? (<><Loader2 className="w-5 h-5 animate-spin" />获取信息中...</>) : (<><CheckCircle className="w-5 h-5" />已完成登录</>)}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* 步骤3：获取信息中（仅智能添加模式使用） */}
-          {mode === "auto" && step === "fetching" && (
-            <div className="px-6 py-12 text-center space-y-4">
-              <Loader2 className="w-16 h-16 mx-auto text-primary-400 animate-spin" />
-              <h3 className="text-lg font-semibold">正在获取站点信息...</h3>
-              <p className="text-sm text-light-secondary dark:text-dark-secondary">自动读取 system_name、userID 和 access_token</p>
             </div>
           )}
 
           {/* 步骤4：确认信息（智能添加完成后或手动添加模式下使用） */}
           {step === "confirm" && (
-            <div className="space-y-4">
+            <div className="space-y-2">
               {/* 通用错误提示：包括从自动获取流程返回的手动填写提示 */}
               {error && (
-                <div className="px-4 py-3 bg-red-500/20 border border-red-500/60 rounded-lg text-red-100 text-xs whitespace-pre-line">
+                <div className="px-3 py-2 bg-red-500/20 border border-red-500/60 rounded-lg text-red-100 text-xs whitespace-pre-line">
                   {error}
                 </div>
               )}
 
-              {/* 新增站点的手动模式提示 */}
-              {!site && mode === "manual" && (
-                <div className="px-4 py-3 bg-blue-50 dark:bg-blue-900/30 border-2 border-blue-300 dark:border-blue-600 rounded-lg text-blue-700 dark:text-blue-300 text-sm">
-                  <div className="font-semibold mb-1">当前为手动添加模式</div>
-                  <div className="text-xs opacity-90">
-                    请输入站点URL、用户ID和 Access Token。保存后将直接作为固定配置使用，不会触发浏览器登录流程。
-                  </div>
-                </div>
-              )}
-
-              <div className="space-y-3">
-                <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-3">
+              <div className="space-y-1.5">
+                <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-2">
                   <div className="text-sm text-slate-700 dark:text-slate-300 font-semibold whitespace-nowrap">站点名称</div>
-                  <input type="text" value={autoInfo.name} onChange={(e) => setAutoInfo({...autoInfo, name: e.target.value})} className="flex-1 bg-transparent border-none outline-none text-slate-800 dark:text-slate-100 font-medium text-right" placeholder="输入站点名称" />
+                  <input type="text" value={autoInfo.name} onChange={(e) => setAutoInfo({...autoInfo, name: e.target.value})} className="flex-1 bg-transparent border-none outline-none text-slate-800 dark:text-slate-100 font-medium text-right text-sm" placeholder="输入站点名称" />
                 </div>
 
                 {/* 站点分组选择 */}
-                <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-2">
                   <div className="text-sm text-slate-700 dark:text-slate-300 font-semibold whitespace-nowrap">
                     站点分组
                   </div>
-                  <select
-                    value={selectedGroupId}
-                    onChange={(e) => setSelectedGroupId(e.target.value)}
-                    className="flex-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded px-2 py-1.5 text-sm text-slate-800 dark:text-slate-100"
-                  >
-                    {(groups && groups.length > 0
-                      ? groups
-                      : [{ id: defaultGroupId, name: "默认分组" }]
-                    ).map((g) => (
-                      <option key={g.id} value={g.id}>
-                        {g.name}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="flex-1 flex justify-end">
+                    <select
+                      value={selectedGroupId}
+                      onChange={(e) => setSelectedGroupId(e.target.value)}
+                      className="w-32 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded px-2 py-1 text-sm text-slate-800 dark:text-slate-100"
+                    >
+                      {(groups && groups.length > 0
+                        ? groups
+                        : [{ id: defaultGroupId, name: "默认分组" }]
+                      ).map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
-                <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-2">
                   <div className="text-sm text-slate-700 dark:text-slate-300 font-semibold whitespace-nowrap">站点URL</div>
-                  {isEditing ? (
-                    <input type="url" value={url} onChange={(e) => setUrl(e.target.value)} className="flex-1 bg-transparent border-none outline-none text-slate-800 dark:text-slate-100 font-medium text-right" placeholder="https://api.example.com" />
+                  {isEditing || mode === "manual" ? (
+                    <input type="url" value={url} onChange={(e) => setUrl(e.target.value)} className="flex-1 bg-transparent border-none outline-none text-slate-800 dark:text-slate-100 font-medium text-right text-sm" placeholder="https://api.example.com" />
                   ) : (
-                    <div className="flex-1 text-slate-800 dark:text-slate-100 break-all font-medium text-right">{url}</div>
+                    <div className="flex-1 text-slate-800 dark:text-slate-100 break-all font-medium text-right text-sm">{url}</div>
                   )}
                 </div>
-                <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-2">
                   <div className="text-sm text-slate-700 dark:text-slate-300 font-semibold whitespace-nowrap">用户ID</div>
                   <input type="text" value={autoInfo.userId} onChange={(e) => setAutoInfo({...autoInfo, userId: e.target.value})} className="flex-1 bg-transparent border-none outline-none text-slate-800 dark:text-slate-100 font-mono text-sm font-semibold text-right" placeholder="输入用户ID" />
                 </div>
-                <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
-                  <div className="flex items-center gap-3">
+                <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
+                  <div className="flex items-center gap-2">
                     <span className="text-sm text-slate-700 dark:text-slate-300 font-semibold whitespace-nowrap">
                       Access Token
                     </span>
                     <div className="flex-1 flex justify-end">
                       {autoInfo.systemToken ? (
-                        <div className="flex items-center gap-2 w-full justify-end">
-                          <div className="flex-1 text-sm text-slate-800 dark:text-slate-100 font-mono bg-white dark:bg-slate-900 px-3 py-2 rounded border border-slate-300 dark:border-slate-600 text-right">
+                        <div className="flex items-center gap-1.5 w-full justify-end">
+                          <div className="flex-1 text-sm text-slate-800 dark:text-slate-100 font-mono bg-white dark:bg-slate-900 px-2 py-1 rounded border border-slate-300 dark:border-slate-600 text-right">
                             {showToken
                               ? autoInfo.systemToken
                               : maskToken(autoInfo.systemToken)}
                           </div>
                           <button
                             onClick={() => setShowToken(!showToken)}
-                            className="text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors font-medium whitespace-nowrap px-2"
+                            className="text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors font-medium whitespace-nowrap px-1.5"
                           >
                             {showToken ? "隐藏" : "显示"}
                           </button>
@@ -395,7 +354,7 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
                               navigator.clipboard.writeText(autoInfo.systemToken);
                               alert("Access Token已复制到剪贴板");
                             }}
-                            className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-colors text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
+                            className="p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-colors text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
                             title="复制"
                           >
                             📋
@@ -412,23 +371,23 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
                             })
                           }
                           placeholder="请手动填入 Access Token"
-                          className="w-full bg-transparent border-none outline-none text-slate-800 dark:text-slate-100 placeholder-slate-500 dark:placeholder-slate-400 font-medium text-right"
+                          className="w-full bg-transparent border-none outline-none text-slate-800 dark:text-slate-100 placeholder-slate-500 dark:placeholder-slate-400 font-medium text-right text-sm"
                         />
                       )}
                     </div>
                   </div>
                   {/* 仅在智能添加模式下提示自动获取失败，手动添加模式不再显示此提醒 */}
                   {!autoInfo.systemToken && mode === "auto" && (
-                    <div className="text-sm text-yellow-700 dark:text-yellow-400 mt-2 bg-yellow-50 dark:bg-yellow-900/20 px-2 py-1.5 rounded border border-yellow-200 dark:border-yellow-800 font-medium">
-                      ⚠️ 无法自动获取 Access Token，可能session已过期。请点击"重新登录"或从网站复制填入
+                    <div className="text-xs text-yellow-700 dark:text-yellow-400 mt-1.5 bg-yellow-50 dark:bg-yellow-900/20 px-2 py-1 rounded border border-yellow-200 dark:border-yellow-800 font-medium">
+                      ⚠️ 无法自动获取 Access Token，请点击"重新获取"或手动填入
                     </div>
                   )}
                 </div>
 
                 {/* 加油站链接输入区域 */}
-                <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-2">
                   <div className="text-sm text-slate-700 dark:text-slate-300 font-semibold whitespace-nowrap">
-                    加油站链接
+                    加油站链接<span className="text-slate-400 dark:text-slate-500 font-normal ml-1">(可选)</span>
                   </div>
                   <input
                     type="url"
@@ -445,30 +404,30 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
                 </div>
 
                 {/* 签到功能开关 */}
-                <div className="px-4 py-3 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={autoInfo.enableCheckin}
+                <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-2">
+                  <div className="text-sm text-slate-700 dark:text-slate-300 font-semibold whitespace-nowrap">
+                    启用签到功能<span className="text-slate-400 dark:text-slate-500 font-normal ml-1">(可选)</span>
+                  </div>
+                  <div className="flex-1 flex justify-end">
+                    <select
+                      value={autoInfo.enableCheckin ? "enabled" : "disabled"}
                       onChange={(e) =>
                         setAutoInfo({
                           ...autoInfo,
-                          enableCheckin: e.target.checked,
+                          enableCheckin: e.target.value === "enabled",
                         })
                       }
-                      className="w-4 h-4 rounded border-gray-400 dark:border-gray-500 text-primary-600 focus:ring-primary-500 focus:ring-offset-white dark:focus:ring-offset-gray-900"
-                    />
-                    <div className="flex-1">
-                      <div className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                        启用签到功能
-                      </div>
-                    </div>
-                  </label>
+                      className="w-20 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded px-2 py-1 text-sm text-slate-800 dark:text-slate-100"
+                    >
+                      <option value="disabled">禁用</option>
+                      <option value="enabled">启用</option>
+                    </select>
+                  </div>
                 </div>
 
                 {/* 仅在智能添加模式下展示自动获取状态提示，手动添加模式不显示此文案 */}
                 {!site && mode === "auto" && (
-                  <div className="px-4 py-3 bg-green-500/20 border border-green-500/50 rounded-lg text-green-700 dark:text-green-300 text-sm flex items-center gap-2">
+                  <div className="px-3 py-2 bg-green-500/20 border border-green-500/50 rounded-lg text-green-700 dark:text-green-300 text-sm flex items-center gap-2">
                     <CheckCircle className="w-4 h-4 flex-shrink-0" />
                     <span className="font-semibold">
                       {autoInfo.systemToken
@@ -480,22 +439,18 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
                 )}
               </div>
 
-              <div className="flex gap-3">
+              <div className="flex gap-2 pt-1">
                 {(mode === "auto" || site) && (
                   <button
                     onClick={() => {
-                      // 编辑模式：返回到input-url步骤重新开始流程
-                      // 新增模式：返回到login步骤
-                      if (site) {
-                        setStep("input-url");
-                      } else {
-                        setStep("login");
-                      }
+                      // 返回到input-url步骤重新开始流程
+                      setStep("input-url");
+                      setError("");
                     }}
-                    className="flex-1 px-6 py-3 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg font-semibold flex items-center justify-center gap-2 transition-all"
+                    className="flex-1 px-4 py-2.5 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg font-semibold flex items-center justify-center gap-2 transition-all text-sm"
                   >
-                    <Globe className="w-5 h-5" />
-                    {site ? "重新登录获取信息" : "重新登录"}
+                    <Globe className="w-4 h-4" />
+                    重新获取信息
                   </button>
                 )}
                 <button
@@ -506,9 +461,9 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
                     !autoInfo.systemToken ||
                     !autoInfo.userId
                   }
-                  className="flex-1 px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  className="flex-1 px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all text-sm"
                 >
-                  <CheckCircle className="w-5 h-5" />
+                  <CheckCircle className="w-4 h-4" />
                   {site ? "保存修改" : "保存站点"}
                 </button>
               </div>

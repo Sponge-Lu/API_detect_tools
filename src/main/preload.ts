@@ -5,6 +5,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadConfig: () => ipcRenderer.invoke('load-config'),
   saveConfig: (config: any) => ipcRenderer.invoke('save-config', config),
   launchChromeForLogin: (url: string) => ipcRenderer.invoke('launch-chrome-for-login', url),
+  
+  // 站点初始化状态事件监听
+  onSiteInitStatus: (callback: (status: string) => void) => {
+    const handler = (_event: any, status: string) => callback(status);
+    ipcRenderer.on('site-init-status', handler);
+    return () => ipcRenderer.removeListener('site-init-status', handler);
+  },
   // 主动关闭浏览器（用于添加站点后的自动刷新完成后关闭登录浏览器）
   closeBrowser: () => ipcRenderer.invoke('close-browser'),
   getCookies: (url: string) => ipcRenderer.invoke('get-cookies', url),

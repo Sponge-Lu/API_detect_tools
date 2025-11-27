@@ -1410,7 +1410,9 @@ function App() {
 
   const openCheckinPage = async (site: SiteConfig) => {
     try {
-      await window.electronAPI.openUrl(site.url);
+      // 在URL后面添加 app/me 路径直接跳转到签到页面
+      const checkinUrl = site.url.replace(/\/$/, '') + '/app/me';
+      await window.electronAPI.openUrl(checkinUrl);
     } catch (error) {
       console.error("打开浏览器失败:", error);
       showAlert("打开浏览器失败: " + error, 'error');
@@ -1426,7 +1428,7 @@ function App() {
       const shouldOpenSite = await showDialog({
         type: 'warning',
         title: '签到失败',
-        message: "缺少必要的认证信息\n\n是否打开网站手动签到？",
+        message: "缺少必要的认证信息\n\n是否打开网站手动签到？\n\n💡 手动签到后，请手动刷新站点数据",
         confirmText: '打开网站',
       });
       if (shouldOpenSite) {
@@ -1456,7 +1458,7 @@ function App() {
           const shouldOpenSite = await showDialog({
             type: 'warning',
             title: '自动签到失败',
-            message: `${result.message}\n\n是否打开网站手动签到？`,
+            message: `${result.message}\n\n是否打开网站手动签到？\n\n💡 手动签到后，请手动刷新站点数据`,
             confirmText: '打开网站',
           });
           if (shouldOpenSite) {
@@ -1478,7 +1480,7 @@ function App() {
         const shouldOpenSite = await showDialog({
           type: 'error',
           title: '签到请求失败',
-          message: `${errorMessage}\n\n是否打开网站手动签到？`,
+          message: `${errorMessage}\n\n是否打开网站手动签到？\n\n💡 手动签到后，请手动刷新站点数据`,
           confirmText: '打开网站',
         });
         if (shouldOpenSite) {
@@ -1764,8 +1766,8 @@ function App() {
         <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               {/* Logo - 使用新的品牌图标 */}
-              <div className="relative w-10 h-10 rounded-2xl border border-light-border dark:border-dark-border bg-white/70 dark:bg-dark-card/70 shadow-lg flex items-center justify-center overflow-hidden">
-                <img src={Logo} alt="API Hub Management Tools logo" className="w-8 h-8 object-contain select-none" draggable={false} />
+              <div className="relative w-10 h-10 flex items-center justify-center">
+                <img src={Logo} alt="API Hub Management Tools logo" className="w-10 h-10 object-contain select-none" draggable={false} />
               </div>
               <div>
                 <h1 className="text-lg font-bold text-light-text dark:text-dark-text">API Hub Management Tools</h1>
