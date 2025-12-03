@@ -15,7 +15,7 @@ export function useTheme() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
     const isValid = stored === 'light' || stored === 'dark' || stored === 'system';
-    return (isValid ? (stored as ThemeMode) : 'system');
+    return isValid ? (stored as ThemeMode) : 'system';
   });
 
   // 获取系统主题偏好

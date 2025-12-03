@@ -1,0 +1,7 @@
+node_modules/
+dist/
+dist-renderer/
+release/
+*.md
+package-lock.json
+

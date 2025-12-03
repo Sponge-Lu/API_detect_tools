@@ -1,0 +1,56 @@
+﻿import Logger from '../utils/logger';
+/**
+ * IPC Handlers 统一注册入口
+ * v2: 使用 UnifiedConfigManager 替代 ConfigManager + TokenStorage
+ */
+
+import { BrowserWindow } from 'electron';
+import type { ChromeManager } from '../chrome-manager';
+import type { ApiService } from '../api-service';
+import type { TokenService } from '../token-service';
+import type { BackupManager } from '../backup-manager';
+
+import { registerUnifiedConfigHandlers } from './unified-config-handlers';
+import { registerThemeHandlers } from './theme-handlers';
+import { registerBackupHandlers } from './backup-handlers';
+import { registerTokenHandlers } from './token-handlers';
+import { registerDetectionHandlers } from './detection-handlers';
+
+interface HandlerDependencies {
+  chromeManager: ChromeManager;
+  apiService: ApiService;
+  tokenService: TokenService;
+  backupManager: BackupManager;
+  getMainWindow: () => BrowserWindow | null;
+}
+
+/**
+ * 注册所有 IPC 处理器
+ */
+export function registerAllHandlers(deps: HandlerDependencies) {
+  const { chromeManager, apiService, tokenService, backupManager, getMainWindow } = deps;
+
+  // 统一配置相关（替代原 config-handlers 和 storage-handlers）
+  registerUnifiedConfigHandlers();
+
+  // 主题相关
+  registerThemeHandlers();
+
+  // 备份相关
+  registerBackupHandlers(backupManager);
+
+  // 令牌管理相关
+  registerTokenHandlers(tokenService, null as any, getMainWindow);
+
+  // 站点检测相关
+  registerDetectionHandlers(apiService, chromeManager);
+
+  Logger.info('✅ [Handlers] 所有 IPC 处理器已注册');
+}
+
+// 导出各个 handler 模块（供单独使用）
+export * from './unified-config-handlers';
+export * from './theme-handlers';
+export * from './backup-handlers';
+export * from './token-handlers';
+export * from './detection-handlers';

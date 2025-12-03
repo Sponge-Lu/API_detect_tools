@@ -1,3 +1,4 @@
+﻿import Logger from './utils/logger';
 /**
  * API请求助手类
  * 提供统一的API请求方法，兼容All API Hub的请求格式
@@ -21,14 +22,14 @@ export class ApiRequestHelper {
     // 基础请求头（所有站点通用）
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${accessToken}`,
-      'Pragma': 'no-cache'
+      Authorization: `Bearer ${accessToken}`,
+      Pragma: 'no-cache',
     };
 
     // 根据站点URL判断类型，添加特定的User-ID头
     if (siteUrl) {
       const hostname = siteUrl.toLowerCase();
-      
+
       if (hostname.includes('veloera') || hostname.includes('velo')) {
         // Veloera站点：只使用 Veloera-User
         headers['Veloera-User'] = userId.toString();
@@ -53,24 +54,21 @@ export class ApiRequestHelper {
    * @param options 请求选项
    * @returns 响应数据
    */
-  static async request<T>(
-    url: string,
-    options?: RequestInit
-  ): Promise<ApiResponse<T>> {
+  static async request<T>(url: string, options?: RequestInit): Promise<ApiResponse<T>> {
     try {
       const response = await fetch(url, {
         ...options,
-        credentials: 'omit' // 不携带cookie，使用Bearer token
+        credentials: 'omit', // 不携带cookie，使用Bearer token
       });
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      const data = await response.json() as ApiResponse<T>;
+      const data = (await response.json()) as ApiResponse<T>;
       return data;
     } catch (error: any) {
-      console.error(`API请求失败 [${url}]:`, error);
+      Logger.error(`API请求失败 [${url}]:`, error);
       throw error;
     }
   }
@@ -81,10 +79,7 @@ export class ApiRequestHelper {
    * @param options 请求选项
    * @returns 数据
    */
-  static async requestData<T>(
-    url: string,
-    options?: RequestInit
-  ): Promise<T> {
+  static async requestData<T>(url: string, options?: RequestInit): Promise<T> {
     const response = await this.request<T>(url, options);
 
     if (!response.success || response.data === undefined) {
@@ -110,7 +105,7 @@ export class ApiRequestHelper {
   ): Promise<T> {
     return this.requestData<T>(url, {
       method: 'GET',
-      headers: this.createHeaders(userId, accessToken, siteUrl)
+      headers: this.createHeaders(userId, accessToken, siteUrl),
     });
   }
 
@@ -133,7 +128,7 @@ export class ApiRequestHelper {
     return this.requestData<T>(url, {
       method: 'POST',
       headers: this.createHeaders(userId, accessToken, siteUrl),
-      body: body ? JSON.stringify(body) : undefined
+      body: body ? JSON.stringify(body) : undefined,
     });
   }
 
@@ -156,7 +151,7 @@ export class ApiRequestHelper {
     return this.requestData<T>(url, {
       method: 'PUT',
       headers: this.createHeaders(userId, accessToken, siteUrl),
-      body: body ? JSON.stringify(body) : undefined
+      body: body ? JSON.stringify(body) : undefined,
     });
   }
 
@@ -176,7 +171,7 @@ export class ApiRequestHelper {
   ): Promise<T> {
     return this.requestData<T>(url, {
       method: 'DELETE',
-      headers: this.createHeaders(userId, accessToken, siteUrl)
+      headers: this.createHeaders(userId, accessToken, siteUrl),
     });
   }
 }

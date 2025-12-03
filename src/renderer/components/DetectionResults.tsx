@@ -1,22 +1,12 @@
-import {
-  CheckCircle,
-  XCircle,
-  Loader2,
-  Server,
-  DollarSign,
-  Box,
-} from "lucide-react";
-import { DetectionResult } from "../App";
+import { CheckCircle, XCircle, Loader2, Server, DollarSign, Box } from 'lucide-react';
+import { DetectionResult } from '../App';
 
 interface DetectionResultsProps {
   results: DetectionResult[];
   detecting: boolean;
 }
 
-export function DetectionResults({
-  results,
-  detecting,
-}: DetectionResultsProps) {
+export function DetectionResults({ results, detecting }: DetectionResultsProps) {
   if (detecting) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -44,23 +34,21 @@ export function DetectionResults({
     <>
       <div className="px-6 py-4 bg-black/10 backdrop-blur-sm border-b border-white/10">
         <h2 className="text-lg font-semibold">检测结果</h2>
-        <p className="text-sm text-gray-400">
-          共检测 {results.length} 个站点
-        </p>
+        <p className="text-sm text-gray-400">共检测 {results.length} 个站点</p>
       </div>
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
         {results.map((result, index) => (
           <div
             key={index}
             className={`bg-white/5 backdrop-blur-sm rounded-lg p-4 border transition-all ${
-              result.status === "成功"
-                ? "border-green-500/30 hover:border-green-500/50"
-                : "border-red-500/30 hover:border-red-500/50"
+              result.status === '成功'
+                ? 'border-green-500/30 hover:border-green-500/50'
+                : 'border-red-500/30 hover:border-red-500/50'
             }`}
           >
             <div className="flex items-start justify-between mb-3">
               <div className="flex items-center gap-2">
-                {result.status === "成功" ? (
+                {result.status === '成功' ? (
                   <CheckCircle className="w-5 h-5 text-green-500" />
                 ) : (
                   <XCircle className="w-5 h-5 text-red-500" />
@@ -72,9 +60,9 @@ export function DetectionResults({
               </div>
               <span
                 className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                  result.status === "成功"
-                    ? "bg-green-500/20 text-green-500"
-                    : "bg-red-500/20 text-red-500"
+                  result.status === '成功'
+                    ? 'bg-green-500/20 text-green-500'
+                    : 'bg-red-500/20 text-red-500'
                 }`}
               >
                 {result.status}
@@ -90,9 +78,7 @@ export function DetectionResults({
             {result.balance !== undefined && result.balance !== null && (
               <div className="mb-3 flex items-center gap-2 text-primary-400">
                 <DollarSign className="w-4 h-4" />
-                <span className="font-semibold">
-                  余额: ${result.balance.toFixed(2)}
-                </span>
+                <span className="font-semibold">余额: ${result.balance.toFixed(2)}</span>
               </div>
             )}
 
@@ -100,9 +86,7 @@ export function DetectionResults({
               <div>
                 <div className="flex items-center gap-2 mb-2 text-gray-400">
                   <Box className="w-4 h-4" />
-                  <span className="text-sm font-medium">
-                    可用模型 ({result.models.length})
-                  </span>
+                  <span className="text-sm font-medium">可用模型 ({result.models.length})</span>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {result.models.slice(0, 10).map((model, idx) => (
@@ -127,4 +111,3 @@ export function DetectionResults({
     </>
   );
 }
-

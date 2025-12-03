@@ -1,13 +1,17 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 export default defineConfig({
   plugins: [react()],
-  root: path.join(__dirname, 'src/renderer'),
+  root: join(__dirname, 'src/renderer'),
   base: './',
   build: {
-    outDir: path.join(__dirname, 'dist-renderer'),
+    outDir: join(__dirname, 'dist-renderer'),
     emptyOutDir: true,
     // 优化构建配置
     minify: 'terser', // 使用 terser 进行更好的压缩
@@ -23,7 +27,8 @@ export default defineConfig({
         manualChunks: {
           // 将大型依赖分离出来
           'react-vendor': ['react', 'react-dom'],
-          'lucide': ['lucide-react']
+          'lucide': ['lucide-react'],
+          'state': ['zustand']
         }
       }
     },

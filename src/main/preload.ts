@@ -5,7 +5,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadConfig: () => ipcRenderer.invoke('load-config'),
   saveConfig: (config: any) => ipcRenderer.invoke('save-config', config),
   launchChromeForLogin: (url: string) => ipcRenderer.invoke('launch-chrome-for-login', url),
-  
+
   // 站点初始化状态事件监听
   onSiteInitStatus: (callback: (status: string) => void) => {
     const handler = (_event: any, status: string) => callback(status);
@@ -14,26 +14,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   // 主动关闭浏览器（用于添加站点后的自动刷新完成后关闭登录浏览器）
   closeBrowser: () => ipcRenderer.invoke('close-browser'),
-  getCookies: (url: string) => ipcRenderer.invoke('get-cookies', url),
-  fetchWithCookies: (url: string, options: any) => ipcRenderer.invoke('fetch-with-cookies', url, options),
-  detectSite: (site: any, timeout: number, quickRefresh?: boolean, cachedData?: any) => 
+  fetchWithCookies: (url: string, options: any) =>
+    ipcRenderer.invoke('fetch-with-cookies', url, options),
+  detectSite: (site: any, timeout: number, quickRefresh?: boolean, cachedData?: any) =>
     ipcRenderer.invoke('detect-site', site, timeout, quickRefresh, cachedData),
-  detectAllSites: (config: any, quickRefresh?: boolean, cachedResults?: any) => 
+  detectAllSites: (config: any, quickRefresh?: boolean, cachedResults?: any) =>
     ipcRenderer.invoke('detect-all-sites', config, quickRefresh, cachedResults),
   openUrl: (url: string) => ipcRenderer.invoke('open-url', url),
   getAllAccounts: () => ipcRenderer.invoke('get-all-accounts'),
-  
+
   // 令牌管理API (重构后的新接口)
   token: {
     // 初始化站点账号（一次性从浏览器获取所有数据）
-    initializeSite: (baseUrl: string) =>
-      ipcRenderer.invoke('token:initialize-site', baseUrl),
+    initializeSite: (baseUrl: string) => ipcRenderer.invoke('token:initialize-site', baseUrl),
     // 刷新显示数据（使用access_token获取余额、使用量等）
-    refreshDisplayData: (account: any) =>
-      ipcRenderer.invoke('token:refresh-display-data', account),
+    refreshDisplayData: (account: any) => ipcRenderer.invoke('token:refresh-display-data', account),
     // 验证令牌有效性
-    validate: (account: any) =>
-      ipcRenderer.invoke('token:validate', account),
+    validate: (account: any) => ipcRenderer.invoke('token:validate', account),
     // 获取API令牌列表（兼容旧接口）
     fetchApiTokens: (baseUrl: string, userId: number, accessToken: string) =>
       ipcRenderer.invoke('token:fetch-api-tokens', baseUrl, userId, accessToken),
@@ -51,9 +48,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('token:delete-api-token', baseUrl, userId, accessToken, tokenIdentifier),
     // 执行签到
     checkIn: (baseUrl: string, userId: number, accessToken: string) =>
-      ipcRenderer.invoke('token:check-in', baseUrl, userId, accessToken)
+      ipcRenderer.invoke('token:check-in', baseUrl, userId, accessToken),
   },
-  
+
   // 账号存储API
   storage: {
     getAllAccounts: () => ipcRenderer.invoke('storage:get-all-accounts'),
@@ -63,12 +60,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     updateToken: (id: string, token: string) =>
       ipcRenderer.invoke('storage:update-token', id, token),
     export: () => ipcRenderer.invoke('storage:export'),
-    import: (data: any) => ipcRenderer.invoke('storage:import', data)
+    import: (data: any) => ipcRenderer.invoke('storage:import', data),
   },
-  
-  // 从 token-storage.json 恢复站点配置
-  recoverSitesFromStorage: () => ipcRenderer.invoke('recover-sites-from-storage'),
-  
+
   // 备份管理 API
   backup: {
     // 列出所有备份
@@ -80,18 +74,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 手动触发备份
     manual: () => ipcRenderer.invoke('backup:manual'),
     // 从备份恢复配置
-    restoreConfig: (backupFileName: string) => ipcRenderer.invoke('backup:restore-config', backupFileName),
-    // 从备份恢复令牌存储
-    restoreTokenStorage: (backupFileName: string) => ipcRenderer.invoke('backup:restore-token-storage', backupFileName),
+    restoreConfig: (backupFileName: string) =>
+      ipcRenderer.invoke('backup:restore-config', backupFileName),
     // 打开备份目录
-    openDir: () => ipcRenderer.invoke('backup:open-dir')
+    openDir: () => ipcRenderer.invoke('backup:open-dir'),
   },
-  
+
   // 主题设置 API
   theme: {
     // 保存主题设置到主进程存储（用于下次启动时设置窗口背景色）
     save: (themeMode: 'light' | 'dark' | 'system') => ipcRenderer.invoke('theme:save', themeMode),
     // 加载保存的主题设置
-    load: () => ipcRenderer.invoke('theme:load')
-  }
+    load: () => ipcRenderer.invoke('theme:load'),
+  },
 });

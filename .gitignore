@@ -38,12 +38,6 @@ secrets*
 # Electron
 out/
 
-# doc
-API-interface-doc.md
-DEV_RECORD.md
-comparison.md
-docs/login-flow.md
-
 # 其他项目
 .all-api-hub/
 .one-api-hub/
@@ -53,3 +47,6 @@ docs/login-flow.md
 .cunzhi-memory/
 .cursor/
 .roo/
+
+# 文档
+docs/archive/

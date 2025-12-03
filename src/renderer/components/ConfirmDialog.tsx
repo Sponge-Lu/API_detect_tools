@@ -76,17 +76,15 @@ export function ConfirmDialog({
   const defaultConfirmText = isAlertOnly ? '确定' : '确认';
 
   // 根据类型确定确认按钮样式
-  const confirmBtnClass = type === 'error' || type === 'warning'
-    ? 'bg-red-500 hover:bg-red-600 focus:ring-red-500'
-    : 'bg-primary-500 hover:bg-primary-600 focus:ring-primary-500';
+  const confirmBtnClass =
+    type === 'error' || type === 'warning'
+      ? 'bg-red-500 hover:bg-red-600 focus:ring-red-500'
+      : 'bg-primary-500 hover:bg-primary-600 focus:ring-primary-500';
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center">
       {/* 背景遮罩 */}
-      <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-        onClick={onCancel}
-      />
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onCancel} />
 
       {/* 弹窗内容 */}
       <div
@@ -156,4 +154,3 @@ export const initialDialogState: DialogState = {
   type: 'confirm',
   message: '',
 };
-
