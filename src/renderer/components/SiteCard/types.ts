@@ -27,6 +27,7 @@ export interface SiteCardProps {
   // 详情面板状态
   selectedGroup: string | null;
   modelSearch: string;
+  globalModelSearch: string;
   showTokens: Record<string, boolean>;
   selectedModels: Set<string>;
   deletingTokenKey: string | null;

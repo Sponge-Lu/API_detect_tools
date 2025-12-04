@@ -50,6 +50,7 @@ interface UIState {
 
   // 模型搜索
   modelSearch: Record<string, string>;
+  globalModelSearch: string;
 
   // 提示消息
   refreshMessage: RefreshMessage | null;
@@ -106,6 +107,8 @@ interface UIState {
 
   // Actions - 模型搜索
   setModelSearch: (siteName: string, search: string) => void;
+  setGlobalModelSearch: (search: string) => void;
+  clearAllModelSearch: () => void;
 
   // Actions - 提示消息
   setRefreshMessage: (message: RefreshMessage | null) => void;
@@ -173,6 +176,7 @@ export const useUIStore = create<UIState>()(
       selectedGroup: {},
       activeSiteGroupFilter: null,
       modelSearch: {},
+      globalModelSearch: '',
       refreshMessage: null,
       checkingIn: null,
       draggedIndex: null,
@@ -262,6 +266,8 @@ export const useUIStore = create<UIState>()(
         const { modelSearch } = get();
         set({ modelSearch: { ...modelSearch, [siteName]: search } });
       },
+      setGlobalModelSearch: search => set({ globalModelSearch: search }),
+      clearAllModelSearch: () => set({ modelSearch: {} }),
 
       // 提示消息 Actions
       setRefreshMessage: message => set({ refreshMessage: message }),

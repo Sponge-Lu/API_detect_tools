@@ -235,7 +235,7 @@ export function SettingsPanel({
                       max_concurrent: Math.min(5, Math.max(1, Number(e.target.value) || 1)),
                     })
                   }
-                  className="w-24 rounded-md border border-light-border dark:border-dark-border bg-white dark:bg-dark-surface py-1.5 px-3 text-sm text-light-text dark:text-dark-text focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  className="w-24 rounded-md border border-light-border dark:border-dark-border bg-light-bg dark:bg-dark-bg py-1.5 px-3 text-sm text-light-text dark:text-dark-text focus:outline-none focus:ring-2 focus:ring-primary-500"
                 />
                 <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
                   默认 1（串行），可按机器/网络情况调到 2–5。

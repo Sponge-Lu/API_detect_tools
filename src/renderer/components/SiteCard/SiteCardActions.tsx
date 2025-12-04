@@ -36,42 +36,60 @@ export function SiteCardActions({
       {/* 签到按钮 */}
       {(site.force_enable_checkin || siteResult?.has_checkin) && (
         <>
-          {/* 可签到 */}
-          {(siteResult?.can_check_in === true ||
-            (site.force_enable_checkin && siteResult?.can_check_in !== false)) && (
-            <button
-              onClick={e => {
-                e.stopPropagation();
-                onCheckIn(site);
-              }}
-              disabled={checkingIn === site.name}
-              className="px-2 py-1 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-300 rounded transition-all flex items-center gap-1 text-xs font-semibold disabled:opacity-50"
-              title="点击签到"
-            >
-              {checkingIn === site.name ? (
-                <>
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                  <span>签到中</span>
-                </>
-              ) : (
-                <>
-                  <Calendar className="w-3 h-3" />
-                  <span>签到</span>
-                </>
-              )}
-            </button>
-          )}
+          {/* 判断缓存是否是今天的数据 */}
+          {(() => {
+            const isToday = siteResult?.lastRefresh
+              ? new Date(siteResult.lastRefresh).toDateString() === new Date().toDateString()
+              : false;
+            // 如果缓存不是今天的，忽略 can_check_in=false 状态
+            const effectiveCanCheckIn = isToday
+              ? siteResult?.can_check_in
+              : siteResult?.can_check_in === false
+                ? undefined
+                : siteResult?.can_check_in;
 
-          {/* 已签到 */}
-          {siteResult?.can_check_in === false && (
-            <div
-              className="px-2 py-1 bg-gray-500/20 text-gray-400 rounded flex items-center gap-1 text-xs"
-              title="今日已签到"
-            >
-              <CheckCircle className="w-3 h-3" />
-              <span>已签</span>
-            </div>
-          )}
+            return (
+              <>
+                {/* 可签到 */}
+                {(effectiveCanCheckIn === true ||
+                  effectiveCanCheckIn === undefined ||
+                  (site.force_enable_checkin && effectiveCanCheckIn !== false)) && (
+                  <button
+                    onClick={e => {
+                      e.stopPropagation();
+                      onCheckIn(site);
+                    }}
+                    disabled={checkingIn === site.name}
+                    className="px-2 py-1 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-700 dark:text-yellow-300 rounded transition-all flex items-center gap-1 text-xs font-semibold disabled:opacity-50"
+                    title="点击签到"
+                  >
+                    {checkingIn === site.name ? (
+                      <>
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        <span>签到中</span>
+                      </>
+                    ) : (
+                      <>
+                        <Calendar className="w-3 h-3" />
+                        <span>签到</span>
+                      </>
+                    )}
+                  </button>
+                )}
+
+                {/* 已签到 - 仅当缓存是今天且明确为false时显示 */}
+                {effectiveCanCheckIn === false && (
+                  <div
+                    className="px-2 py-1 bg-gray-500/20 text-gray-400 rounded flex items-center gap-1 text-xs"
+                    title="今日已签到"
+                  >
+                    <CheckCircle className="w-3 h-3" />
+                    <span>已签</span>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </>
       )}
 

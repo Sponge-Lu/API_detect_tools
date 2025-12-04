@@ -1,6 +1,18 @@
 ﻿import Logger from './utils/logger';
-import React, { useEffect, useRef, useState } from 'react';
-import { Server, Plus, Play, Trash2, Pencil, XCircle, Loader2, RefreshCw } from 'lucide-react';
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
+import {
+  Server,
+  Plus,
+  Play,
+  Trash2,
+  Pencil,
+  XCircle,
+  Loader2,
+  RefreshCw,
+  Search,
+  X,
+  ChevronsUpDown,
+} from 'lucide-react';
 import { SiteEditor } from './components/SiteEditor';
 import { SettingsPanel } from './components/SettingsPanel';
 import { ConfirmDialog, DialogState, initialDialogState } from './components/ConfirmDialog';
@@ -139,6 +151,7 @@ function App() {
     editingSite,
     setEditingSite,
     expandedSites,
+    setExpandedSites,
     toggleSiteExpanded,
     selectedModels,
     toggleModelSelected,
@@ -149,7 +162,10 @@ function App() {
     activeSiteGroupFilter,
     setActiveSiteGroupFilter,
     modelSearch,
+    globalModelSearch,
     setModelSearch: setModelSearchStore,
+    setGlobalModelSearch,
+    clearAllModelSearch,
     refreshMessage,
     checkingIn,
     setCheckingIn,
@@ -537,6 +553,36 @@ function App() {
     }
   };
 
+  // 防抖展开站点的 ref
+  const expandDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  // 全局模型搜索：展开所有站点并清空单站搜索框
+  const handleGlobalModelSearchChange = useCallback(
+    (value: string) => {
+      if (Object.values(modelSearch).some(text => text && text.trim() !== '')) {
+        clearAllModelSearch();
+      }
+
+      setGlobalModelSearch(value);
+
+      // 清除之前的防抖
+      if (expandDebounceRef.current) {
+        clearTimeout(expandDebounceRef.current);
+      }
+
+      if (!value) {
+        // 清空搜索时立即收起所有站点
+        setExpandedSites(new Set());
+      } else if (config?.sites?.length) {
+        // 有搜索内容时，防抖展开所有站点（300ms）
+        expandDebounceRef.current = setTimeout(() => {
+          setExpandedSites(new Set(config.sites.map(site => site.name)));
+        }, 300);
+      }
+    },
+    [modelSearch, clearAllModelSearch, setGlobalModelSearch, setExpandedSites, config?.sites]
+  );
+
   // 分组标签拖拽排序处理函数
   const handleGroupDragStart = (e: React.DragEvent, index: number) => {
     // 阻止事件冒泡，避免与站点拖拽冲突
@@ -594,35 +640,48 @@ function App() {
     toggleSiteExpanded(siteName);
 
     if (isExpanding) {
-      Logger.info(`🔽 [App] 展开站点: ${siteName}`);
       // 展开时从 DetectionResult 缓存中加载数据
       const siteResult = results.find(r => r.name === siteName);
-      Logger.info('📦 [App] 查找结果:', siteResult ? '找到' : '未找到');
-
       if (siteResult) {
-        Logger.info('📊 [App] 数据状态:', {
-          hasApiKeys: !!siteResult.apiKeys,
-          apiKeysCount: siteResult.apiKeys?.length || 0,
-          hasUserGroups: !!siteResult.userGroups,
-          userGroupsCount: siteResult.userGroups ? Object.keys(siteResult.userGroups).length : 0,
-          hasModelPricing: !!siteResult.modelPricing,
-          modelPricingCount: siteResult.modelPricing?.data
-            ? Object.keys(siteResult.modelPricing.data).length
-            : 0,
-        });
-
         // 从缓存加载数据到 state（即使为空也要设置，避免使用旧数据）
         setApiKeys(siteName, siteResult.apiKeys || []);
         setUserGroups(siteName, siteResult.userGroups || {});
         setModelPricing(siteName, siteResult.modelPricing || { data: {} });
-
-        Logger.info('✅ [App] 数据已加载到 state');
-      } else {
-        Logger.warn('⚠️ [App] 未找到站点数据，可能需要先刷新');
       }
-    } else {
-      Logger.info(`🔽 [App] 收起站点: ${siteName}`);
     }
+  };
+
+  // 展开/收起全部站点
+  const handleToggleAllExpanded = () => {
+    if (!config) return;
+    const allSiteNames = config.sites.map(s => s.name);
+    const allExpanded = allSiteNames.every(name => expandedSites.has(name));
+
+    if (allExpanded) {
+      // 收起全部
+      setExpandedSites(new Set());
+    } else {
+      // 展开全部 - 数据在渲染时按需从 results 读取，无需预加载
+      setExpandedSites(new Set(allSiteNames));
+    }
+  };
+
+  // 检查站点是否有匹配全局搜索的模型
+  const siteHasMatchingModels = (site: SiteConfig, siteResult?: DetectionResult): boolean => {
+    if (!globalModelSearch) return true; // 无搜索时显示所有
+    const searchTerm = globalModelSearch.toLowerCase();
+
+    // 获取模型列表
+    let models = siteResult?.models || [];
+    const pricing = modelPricing[site.name];
+    if (pricing?.data && typeof pricing.data === 'object') {
+      const pricingModels = Object.keys(pricing.data);
+      if (pricingModels.length > models.length) {
+        models = pricingModels;
+      }
+    }
+
+    return models.some(m => m.toLowerCase().includes(searchTerm));
   };
 
   if (loading) {
@@ -702,23 +761,43 @@ function App() {
                   恢复站点
                 </button>
               </div>
-              <button
-                onClick={handleDetectAllSites}
-                disabled={detecting || !config || config.sites.length === 0}
-                className="px-5 py-2 bg-accent-500 hover:bg-accent-600 text-white rounded-lg transition-all flex items-center gap-2 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
-              >
-                {detecting ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" strokeWidth={2.5} />
-                    检测中...
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-4 h-4" strokeWidth={2.5} />
-                    检测所有站点
-                  </>
-                )}
-              </button>
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    value={globalModelSearch}
+                    onChange={e => handleGlobalModelSearchChange(e.target.value)}
+                    placeholder="搜索可用模型（全局）"
+                    className="pl-8 pr-7 py-2 text-sm bg-white/80 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-600 rounded-lg text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-primary-400 shadow-inner"
+                  />
+                  {globalModelSearch && (
+                    <button
+                      onClick={() => handleGlobalModelSearchChange('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                      title="清空全局搜索"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+                <button
+                  onClick={handleDetectAllSites}
+                  disabled={detecting || !config || config.sites.length === 0}
+                  className="px-5 py-2 bg-accent-500 hover:bg-accent-600 text-white rounded-lg transition-all flex items-center gap-2 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
+                >
+                  {detecting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" strokeWidth={2.5} />
+                      检测中...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-4 h-4" strokeWidth={2.5} />
+                      检测所有站点
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
 
             {/* 站点分组控制栏：固定在滚动容器外面，始终可见 */}
@@ -889,7 +968,7 @@ function App() {
                 // 为了在窗口变窄时出现横向滚动条，内部内容设置一个最小宽度（由根容器负责横向滚动）
                 <>
                   {/* 列表表头（固定在滚动容器顶部）：站点名称 / 状态 / 余额 / 今日消费 / 总Token / 输入 / 输出 / 请求 / RPM / TPM / 模型数 / 更新时间 / 操作 */}
-                  <div className="min-w-[1180px] sticky top-0 z-20 px-4 py-2 bg-light-bg/95 dark:bg-dark-bg/95 backdrop-blur-sm border-b border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-sm font-semibold text-slate-700 dark:text-slate-100">
+                  <div className="min-w-[1180px] sticky top-0 z-20 px-4 py-2 bg-gradient-to-r from-emerald-50/60 to-amber-50/60 dark:from-emerald-900/20 dark:to-amber-900/20 backdrop-blur-sm border-b border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-sm font-semibold text-slate-700 dark:text-slate-100">
                     <div
                       className="grid gap-x-1 flex-1 items-center select-none"
                       style={{ gridTemplateColumns: columnWidths.map(w => `${w}px`).join(' ') }}
@@ -930,7 +1009,20 @@ function App() {
                         );
                       })}
                     </div>
-                    <div className="w-[96px] text-right pr-1">站点操作</div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleToggleAllExpanded}
+                        className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-all mr-[46px]"
+                        title={
+                          config.sites.every(s => expandedSites.has(s.name))
+                            ? '收起全部'
+                            : '展开全部'
+                        }
+                      >
+                        <ChevronsUpDown className="w-4 h-4" />
+                      </button>
+                      <span className="w-[72px] text-right pr-1">站点操作</span>
+                    </div>
                   </div>
 
                   <div className="min-w-[1180px] space-y-3">
@@ -958,6 +1050,11 @@ function App() {
                         return null;
                       }
 
+                      // 全局模型搜索时，隐藏没有匹配模型的站点
+                      if (!siteHasMatchingModels(site, siteResult)) {
+                        return null;
+                      }
+
                       const isExpanded = expandedSites.has(site.name);
                       // 账号信息也优先按名称匹配，失败时按URL回退
                       // 新架构下不再需要 siteAccounts，直接从 config 获取
@@ -981,6 +1078,7 @@ function App() {
                           refreshMessage={refreshMessage}
                           selectedGroup={selectedGroup[site.name] || null}
                           modelSearch={modelSearch[site.name] || ''}
+                          globalModelSearch={globalModelSearch}
                           showTokens={showTokens}
                           selectedModels={selectedModels}
                           deletingTokenKey={deletingTokenKey}

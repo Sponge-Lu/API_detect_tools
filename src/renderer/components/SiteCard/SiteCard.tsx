@@ -26,6 +26,7 @@ export function SiteCard({
   // 详情面板状态
   selectedGroup,
   modelSearch,
+  globalModelSearch,
   showTokens,
   selectedModels,
   deletingTokenKey,
@@ -154,8 +155,8 @@ export function SiteCard({
         </div>
       )}
 
-      {/* 一级信息 */}
-      <div className="px-3 py-2.5">
+      {/* 一级信息 - 绿到橙淡渐变 */}
+      <div className="px-3 py-2.5 bg-gradient-to-r from-emerald-50/60 to-amber-50/60 dark:from-emerald-900/20 dark:to-amber-900/20 rounded-t-xl">
         <div className="flex items-center justify-between">
           {/* 左侧：信息栅格 */}
           <SiteCardHeader
@@ -205,6 +206,7 @@ export function SiteCard({
           modelPricing={modelPricing}
           selectedGroup={selectedGroup}
           modelSearch={modelSearch}
+          globalModelSearch={globalModelSearch}
           showTokens={showTokens}
           selectedModels={selectedModels}
           deletingTokenKey={deletingTokenKey}

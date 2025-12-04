@@ -16,6 +16,7 @@ interface SiteCardDetailsProps {
   modelPricing: any;
   selectedGroup: string | null;
   modelSearch: string;
+  globalModelSearch: string;
   showTokens: Record<string, boolean>;
   selectedModels: Set<string>;
   deletingTokenKey: string | null;
@@ -66,6 +67,7 @@ export function SiteCardDetails({
   modelPricing,
   selectedGroup,
   modelSearch,
+  globalModelSearch,
   showTokens,
   selectedModels,
   deletingTokenKey,
@@ -86,7 +88,7 @@ export function SiteCardDetails({
 
   // 筛选模型
   const getFilteredModels = (allModels: string[]): string[] => {
-    const searchTerm = (modelSearch || '').toLowerCase();
+    const searchTerm = (globalModelSearch || modelSearch || '').toLowerCase();
     let filtered = allModels;
 
     if (selectedGroup && modelPricing) {
@@ -118,7 +120,7 @@ export function SiteCardDetails({
 
   return (
     <div
-      className="border-t border-slate-200/50 dark:border-slate-700/50 bg-slate-50/80 dark:bg-slate-900/60 px-3 py-1.5 space-y-1 cursor-default"
+      className="border-t border-slate-300/60 dark:border-slate-600/60 bg-slate-100/90 dark:bg-slate-900/80 px-3 py-1.5 space-y-1 cursor-default"
       data-no-drag="true"
     >
       {/* 用户分组 */}
@@ -301,14 +303,18 @@ export function SiteCardDetails({
                   <span className="ml-1 text-primary-400">· 已选{selectedModels.size}</span>
                 )}
                 {selectedGroup && <span className="ml-1 text-primary-400">· {selectedGroup}</span>}
+                {globalModelSearch && (
+                  <span className="ml-1 text-primary-500">· 全局: {globalModelSearch}</span>
+                )}
               </span>
               <div className="ml-7">
                 <input
                   type="text"
-                  placeholder="搜索..."
+                  placeholder={globalModelSearch ? '全局搜索生效中' : '搜索...'}
                   value={modelSearch}
                   onChange={e => onModelSearchChange(site.name, e.target.value)}
-                  className="px-1.5 py-0.5 text-xs bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded text-slate-700 dark:text-slate-300 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-primary-400 transition-colors w-[100px]"
+                  disabled={!!globalModelSearch}
+                  className="px-1.5 py-0.5 text-xs bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded text-slate-700 dark:text-slate-300 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-primary-400 transition-colors w-[100px] disabled:opacity-60 disabled:cursor-not-allowed"
                 />
               </div>
             </div>
