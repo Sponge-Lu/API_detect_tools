@@ -1,5 +1,5 @@
 ﻿import Logger from './utils/logger';
-import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Server,
   Plus,
