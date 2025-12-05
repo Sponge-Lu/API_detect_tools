@@ -15,6 +15,7 @@ import { registerThemeHandlers } from './theme-handlers';
 import { registerBackupHandlers } from './backup-handlers';
 import { registerTokenHandlers } from './token-handlers';
 import { registerDetectionHandlers } from './detection-handlers';
+import { registerWebDAVHandlers } from './webdav-handlers';
 
 interface HandlerDependencies {
   chromeManager: ChromeManager;
@@ -45,6 +46,9 @@ export function registerAllHandlers(deps: HandlerDependencies) {
   // 站点检测相关
   registerDetectionHandlers(apiService, chromeManager);
 
+  // WebDAV 备份相关
+  registerWebDAVHandlers();
+
   Logger.info('✅ [Handlers] 所有 IPC 处理器已注册');
 }
 
@@ -54,3 +58,4 @@ export * from './theme-handlers';
 export * from './backup-handlers';
 export * from './token-handlers';
 export * from './detection-handlers';
+export * from './webdav-handlers';

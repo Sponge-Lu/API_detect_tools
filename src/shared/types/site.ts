@@ -84,6 +84,56 @@ export interface Settings {
   auto_refresh: boolean;
   refresh_interval: number;
   browser_path?: string;
+  webdav?: WebDAVConfig;
+}
+
+// ============= WebDAV 类型 =============
+
+/** WebDAV 连接配置 */
+export interface WebDAVConfig {
+  enabled: boolean;
+  serverUrl: string;
+  username: string;
+  password: string; // 存储时 Base64 编码
+  remotePath: string; // 默认 '/api-hub-backups'
+  maxBackups: number; // 默认 10
+}
+
+/** WebDAV 备份文件信息 */
+export interface WebDAVBackupInfo {
+  filename: string;
+  path: string;
+  lastModified: Date;
+  size: number;
+}
+
+/** WebDAV 操作结果 */
+export interface WebDAVResult<T = void> {
+  success: boolean;
+  data?: T;
+  error?: string;
+}
+
+/** WebDAV 配置默认值 */
+export const DEFAULT_WEBDAV_CONFIG: WebDAVConfig = {
+  enabled: false,
+  serverUrl: '',
+  username: '',
+  password: '',
+  remotePath: '/api-hub-backups',
+  maxBackups: 10,
+};
+
+/** 填充 WebDAV 配置默认值 */
+export function fillWebDAVConfigDefaults(partial: Partial<WebDAVConfig>): WebDAVConfig {
+  return {
+    enabled: partial.enabled ?? DEFAULT_WEBDAV_CONFIG.enabled,
+    serverUrl: partial.serverUrl ?? DEFAULT_WEBDAV_CONFIG.serverUrl,
+    username: partial.username ?? DEFAULT_WEBDAV_CONFIG.username,
+    password: partial.password ?? DEFAULT_WEBDAV_CONFIG.password,
+    remotePath: partial.remotePath ?? DEFAULT_WEBDAV_CONFIG.remotePath,
+    maxBackups: partial.maxBackups ?? DEFAULT_WEBDAV_CONFIG.maxBackups,
+  };
 }
 
 /**

@@ -139,7 +139,7 @@ export function SiteCardDetails({
 
   return (
     <div
-      className="border-t border-slate-300/60 dark:border-slate-600/60 bg-slate-100/90 dark:bg-slate-900/80 px-3 py-1.5 space-y-1 cursor-default"
+      className="border-t-2 border-slate-300/60 dark:border-slate-500/50 bg-slate-100/90 dark:bg-slate-950/90 px-3 py-1.5 space-y-1 cursor-default"
       data-no-drag="true"
     >
       {/* 用户分组 */}

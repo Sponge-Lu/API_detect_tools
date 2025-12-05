@@ -38,6 +38,7 @@ export class UnifiedConfigManager {
   constructor() {
     const userDataPath = app.getPath('userData');
     this.configPath = path.join(userDataPath, 'config.json');
+    Logger.info(`📁 [UnifiedConfigManager] 配置文件路径: ${this.configPath}`);
   }
 
   getConfigPath(): string {
@@ -295,8 +296,13 @@ export class UnifiedConfigManager {
   }): Promise<void> {
     if (!this.config) await this.loadConfig();
 
-    // 更新设置和分组
-    this.config!.settings = legacyConfig.settings;
+    // 更新设置和分组，保留现有的 webdav 配置（如果前端没有传递）
+    const existingWebdav = this.config!.settings?.webdav;
+    this.config!.settings = {
+      ...legacyConfig.settings,
+      // 如果前端传递了 webdav 配置则使用，否则保留现有配置
+      webdav: legacyConfig.settings.webdav || existingWebdav,
+    };
     if (legacyConfig.siteGroups) {
       this.config!.siteGroups = legacyConfig.siteGroups;
     }

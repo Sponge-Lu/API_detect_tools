@@ -1,8 +1,24 @@
-import { useState, useRef } from 'react';
-import { X, Sun, Moon, Monitor, Download, Upload } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import {
+  X,
+  Sun,
+  Moon,
+  Monitor,
+  Download,
+  Upload,
+  Cloud,
+  Loader2,
+  Eye,
+  EyeOff,
+  Check,
+  AlertCircle,
+  FolderOpen,
+} from 'lucide-react';
 import { Settings, Config } from '../App';
 import { useTheme } from '../hooks/useTheme';
 import { toast } from '../store/toastStore';
+import { WebDAVConfig, DEFAULT_WEBDAV_CONFIG } from '../../shared/types/site';
+import { WebDAVBackupDialog } from './dialogs';
 
 interface SettingsPanelProps {
   settings: Settings;
@@ -25,6 +41,73 @@ export function SettingsPanel({
   const [formData, setFormData] = useState<Settings>(settings);
   const { themeMode, changeThemeMode } = useTheme();
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // WebDAV 设置状态
+  const [webdavConfig, setWebdavConfig] = useState<WebDAVConfig>(DEFAULT_WEBDAV_CONFIG);
+  const [showPassword, setShowPassword] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [savingWebdav, setSavingWebdav] = useState(false);
+  const [connectionTestResult, setConnectionTestResult] = useState<{
+    success: boolean;
+    message: string;
+  } | null>(null);
+  const [showBackupDialog, setShowBackupDialog] = useState(false);
+
+  // 加载 WebDAV 配置
+  useEffect(() => {
+    const loadWebdavConfig = async () => {
+      try {
+        const result = await window.electronAPI.webdav?.getConfig();
+        if (result?.success && result.data) {
+          setWebdavConfig(result.data);
+        }
+      } catch (error) {
+        console.error('加载 WebDAV 配置失败:', error);
+      }
+    };
+    loadWebdavConfig();
+  }, []);
+
+  // 测试 WebDAV 连接
+  const handleTestConnection = async () => {
+    if (!webdavConfig.serverUrl) {
+      setConnectionTestResult({ success: false, message: '请输入服务器地址' });
+      return;
+    }
+
+    setTestingConnection(true);
+    setConnectionTestResult(null);
+
+    try {
+      const result = await window.electronAPI.webdav?.testConnection(webdavConfig);
+      if (result?.success) {
+        setConnectionTestResult({ success: true, message: '连接成功' });
+      } else {
+        setConnectionTestResult({ success: false, message: result?.error || '连接失败' });
+      }
+    } catch (error: any) {
+      setConnectionTestResult({ success: false, message: error.message || '连接测试失败' });
+    } finally {
+      setTestingConnection(false);
+    }
+  };
+
+  // 保存 WebDAV 配置
+  const handleSaveWebdavConfig = async () => {
+    setSavingWebdav(true);
+    try {
+      const result = await window.electronAPI.webdav?.saveConfig(webdavConfig);
+      if (result?.success) {
+        toast.success('WebDAV 配置已保存');
+      } else {
+        toast.error(result?.error || '保存失败');
+      }
+    } catch (error: any) {
+      toast.error(error.message || '保存 WebDAV 配置失败');
+    } finally {
+      setSavingWebdav(false);
+    }
+  };
 
   // 导出配置（完整导出，包含认证信息）
   const handleExport = () => {
@@ -109,260 +192,476 @@ export function SettingsPanel({
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
-          {/* 主题设置 */}
-          <div>
-            <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-3">
-              外观主题
-            </label>
-            <div className="grid grid-cols-3 gap-3">
-              <button
-                type="button"
-                onClick={() => changeThemeMode('light')}
-                className={`px-4 py-3 rounded-lg border-2 transition-all flex flex-col items-center gap-2 ${
-                  themeMode === 'light'
-                    ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-                    : 'border-light-border dark:border-dark-border hover:border-primary-300 dark:hover:border-primary-700'
-                }`}
-              >
-                <Sun
-                  className={`w-5 h-5 ${themeMode === 'light' ? 'text-primary-500' : 'text-light-text-secondary dark:text-dark-text-secondary'}`}
-                />
-                <span
-                  className={`text-sm font-medium ${themeMode === 'light' ? 'text-primary-600 dark:text-primary-400' : 'text-light-text-secondary dark:text-dark-text-secondary'}`}
-                >
-                  白天模式
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => changeThemeMode('dark')}
-                className={`px-4 py-3 rounded-lg border-2 transition-all flex flex-col items-center gap-2 ${
-                  themeMode === 'dark'
-                    ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-                    : 'border-light-border dark:border-dark-border hover:border-primary-300 dark:hover:border-primary-700'
-                }`}
-              >
-                <Moon
-                  className={`w-5 h-5 ${themeMode === 'dark' ? 'text-primary-500' : 'text-light-text-secondary dark:text-dark-text-secondary'}`}
-                />
-                <span
-                  className={`text-sm font-medium ${themeMode === 'dark' ? 'text-primary-600 dark:text-primary-400' : 'text-light-text-secondary dark:text-dark-text-secondary'}`}
-                >
-                  夜晚模式
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => changeThemeMode('system')}
-                className={`px-4 py-3 rounded-lg border-2 transition-all flex flex-col items-center gap-2 ${
-                  themeMode === 'system'
-                    ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-                    : 'border-light-border dark:border-dark-border hover:border-primary-300 dark:hover:border-primary-700'
-                }`}
-              >
-                <Monitor
-                  className={`w-5 h-5 ${themeMode === 'system' ? 'text-primary-500' : 'text-light-text-secondary dark:text-dark-text-secondary'}`}
-                />
-                <span
-                  className={`text-sm font-medium ${themeMode === 'system' ? 'text-primary-600 dark:text-primary-400' : 'text-light-text-secondary dark:text-dark-text-secondary'}`}
-                >
-                  跟随系统
-                </span>
-              </button>
-            </div>
-            <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-2">
-              选择应用的外观主题，跟随系统将根据操作系统设置自动切换
-            </p>
-          </div>
-          {/* 超时设置 */}
-          <div>
-            <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-2">
-              请求超时时间 (秒)
-            </label>
-            <input
-              type="number"
-              min="1"
-              max="60"
-              value={formData.timeout}
-              onChange={e => setFormData({ ...formData, timeout: Number(e.target.value) })}
-              className="w-full px-4 py-2 bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 outline-none transition-all text-light-text dark:text-dark-text"
-            />
-            <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
-              每个站点的最大等待时间
-            </p>
-          </div>
-
-          {/* 并发检测 */}
-          <div className="flex items-start gap-3">
-            <input
-              type="checkbox"
-              id="concurrent"
-              checked={formData.concurrent}
-              onChange={e => setFormData({ ...formData, concurrent: e.target.checked })}
-              className="mt-1 w-4 h-4 rounded border-light-border dark:border-dark-border text-primary-600 focus:ring-primary-500"
-            />
-            <div className="flex-1">
-              <label
-                htmlFor="concurrent"
-                className="text-sm font-medium block text-light-text dark:text-dark-text cursor-pointer"
-              >
-                并发检测
+          {/* ===== 外观设置 ===== */}
+          <section className="space-y-4">
+            <h3 className="text-sm font-semibold text-primary-600 dark:text-primary-400 uppercase tracking-wide flex items-center gap-2">
+              <Sun className="w-4 h-4" />
+              外观设置
+            </h3>
+            <div className="bg-slate-50 dark:bg-slate-800/80 rounded-lg p-4 border border-slate-200 dark:border-slate-700">
+              <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-3">
+                外观主题
               </label>
-              <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
-                同时检测所有站点，速度更快但占用资源更多
+              <div className="grid grid-cols-3 gap-3">
+                <button
+                  type="button"
+                  onClick={() => changeThemeMode('light')}
+                  className={`px-4 py-3 rounded-lg border-2 transition-all flex flex-col items-center gap-2 ${
+                    themeMode === 'light'
+                      ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
+                      : 'border-light-border dark:border-dark-border hover:border-primary-300 dark:hover:border-primary-700'
+                  }`}
+                >
+                  <Sun
+                    className={`w-5 h-5 ${themeMode === 'light' ? 'text-primary-500' : 'text-light-text-secondary dark:text-dark-text-secondary'}`}
+                  />
+                  <span
+                    className={`text-sm font-medium ${themeMode === 'light' ? 'text-primary-600 dark:text-primary-400' : 'text-light-text-secondary dark:text-dark-text-secondary'}`}
+                  >
+                    白天模式
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => changeThemeMode('dark')}
+                  className={`px-4 py-3 rounded-lg border-2 transition-all flex flex-col items-center gap-2 ${
+                    themeMode === 'dark'
+                      ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
+                      : 'border-light-border dark:border-dark-border hover:border-primary-300 dark:hover:border-primary-700'
+                  }`}
+                >
+                  <Moon
+                    className={`w-5 h-5 ${themeMode === 'dark' ? 'text-primary-500' : 'text-light-text-secondary dark:text-dark-text-secondary'}`}
+                  />
+                  <span
+                    className={`text-sm font-medium ${themeMode === 'dark' ? 'text-primary-600 dark:text-primary-400' : 'text-light-text-secondary dark:text-dark-text-secondary'}`}
+                  >
+                    夜晚模式
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => changeThemeMode('system')}
+                  className={`px-4 py-3 rounded-lg border-2 transition-all flex flex-col items-center gap-2 ${
+                    themeMode === 'system'
+                      ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
+                      : 'border-light-border dark:border-dark-border hover:border-primary-300 dark:hover:border-primary-700'
+                  }`}
+                >
+                  <Monitor
+                    className={`w-5 h-5 ${themeMode === 'system' ? 'text-primary-500' : 'text-light-text-secondary dark:text-dark-text-secondary'}`}
+                  />
+                  <span
+                    className={`text-sm font-medium ${themeMode === 'system' ? 'text-primary-600 dark:text-primary-400' : 'text-light-text-secondary dark:text-dark-text-secondary'}`}
+                  >
+                    跟随系统
+                  </span>
+                </button>
+              </div>
+              <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-2">
+                选择应用的外观主题，跟随系统将根据操作系统设置自动切换
               </p>
             </div>
-          </div>
+          </section>
 
-          {formData.concurrent && (
-            <div className="mt-3 flex items-start gap-3">
-              <label
-                htmlFor="max_concurrent"
-                className="text-sm font-medium text-light-text dark:text-dark-text w-32 pt-1"
-              >
-                最大并发数
-              </label>
-              <div className="flex-1">
+          {/* ===== 检测设置 ===== */}
+          <section className="space-y-4">
+            <h3 className="text-sm font-semibold text-primary-600 dark:text-primary-400 uppercase tracking-wide flex items-center gap-2">
+              <Monitor className="w-4 h-4" />
+              检测设置
+            </h3>
+            <div className="bg-slate-50 dark:bg-slate-800/80 rounded-lg p-4 space-y-4 border border-slate-200 dark:border-slate-700">
+              {/* 超时设置 */}
+              <div>
+                <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-2">
+                  请求超时时间 (秒)
+                </label>
                 <input
-                  id="max_concurrent"
                   type="number"
-                  min={1}
-                  max={5}
-                  value={formData.max_concurrent ?? 1}
-                  onChange={e =>
-                    setFormData({
-                      ...formData,
-                      max_concurrent: Math.min(5, Math.max(1, Number(e.target.value) || 1)),
-                    })
-                  }
-                  className="w-24 rounded-md border border-light-border dark:border-dark-border bg-light-bg dark:bg-dark-bg py-1.5 px-3 text-sm text-light-text dark:text-dark-text focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  min="1"
+                  max="60"
+                  value={formData.timeout}
+                  onChange={e => setFormData({ ...formData, timeout: Number(e.target.value) })}
+                  className="w-full px-4 py-2 bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 outline-none transition-all text-light-text dark:text-dark-text"
                 />
                 <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
-                  默认 1（串行），可按机器/网络情况调到 2–5。
+                  每个站点的最大等待时间
+                </p>
+              </div>
+
+              {/* 并发检测 */}
+              <div className="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  id="concurrent"
+                  checked={formData.concurrent}
+                  onChange={e => setFormData({ ...formData, concurrent: e.target.checked })}
+                  className="mt-1 w-4 h-4 rounded border-light-border dark:border-dark-border text-primary-600 focus:ring-primary-500"
+                />
+                <div className="flex-1">
+                  <label
+                    htmlFor="concurrent"
+                    className="text-sm font-medium block text-light-text dark:text-dark-text cursor-pointer"
+                  >
+                    并发检测
+                  </label>
+                  <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
+                    同时检测所有站点，速度更快但占用资源更多
+                  </p>
+                </div>
+              </div>
+
+              {formData.concurrent && (
+                <div className="flex items-start gap-3 pl-7">
+                  <label
+                    htmlFor="max_concurrent"
+                    className="text-sm font-medium text-light-text dark:text-dark-text w-32 pt-1"
+                  >
+                    最大并发数
+                  </label>
+                  <div className="flex-1">
+                    <input
+                      id="max_concurrent"
+                      type="number"
+                      min={1}
+                      max={5}
+                      value={formData.max_concurrent ?? 1}
+                      onChange={e =>
+                        setFormData({
+                          ...formData,
+                          max_concurrent: Math.min(5, Math.max(1, Number(e.target.value) || 1)),
+                        })
+                      }
+                      className="w-24 rounded-md border border-light-border dark:border-dark-border bg-light-bg dark:bg-dark-bg py-1.5 px-3 text-sm text-light-text dark:text-dark-text focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    />
+                    <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
+                      默认 1（串行），可按机器/网络情况调到 2–5。
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* 显示禁用站点 */}
+              <div className="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  id="show_disabled"
+                  checked={formData.show_disabled}
+                  onChange={e => setFormData({ ...formData, show_disabled: e.target.checked })}
+                  className="mt-1 w-4 h-4 rounded border-light-border dark:border-dark-border text-primary-600 focus:ring-primary-500"
+                />
+                <div className="flex-1">
+                  <label
+                    htmlFor="show_disabled"
+                    className="text-sm font-medium block text-light-text dark:text-dark-text cursor-pointer"
+                  >
+                    显示禁用的站点
+                  </label>
+                  <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
+                    在检测时也包含已禁用的站点
+                  </p>
+                </div>
+              </div>
+
+              {/* 自动刷新设置 */}
+              <div className="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  id="auto_refresh"
+                  checked={formData.auto_refresh || false}
+                  onChange={e => setFormData({ ...formData, auto_refresh: e.target.checked })}
+                  className="mt-1 w-4 h-4 rounded border-light-border dark:border-dark-border text-primary-600 focus:ring-primary-500"
+                />
+                <div className="flex-1">
+                  <label
+                    htmlFor="auto_refresh"
+                    className="text-sm font-medium block text-light-text dark:text-dark-text cursor-pointer"
+                  >
+                    自动刷新
+                  </label>
+                  <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
+                    定时自动检测所有站点
+                  </p>
+                </div>
+              </div>
+
+              {/* 刷新间隔 */}
+              {formData.auto_refresh && (
+                <div className="pl-7">
+                  <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-2">
+                    刷新间隔 (分钟)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="1440"
+                    value={formData.refresh_interval || 30}
+                    onChange={e =>
+                      setFormData({ ...formData, refresh_interval: Number(e.target.value) })
+                    }
+                    className="w-32 px-4 py-2 bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 outline-none transition-all text-light-text dark:text-dark-text"
+                  />
+                  <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
+                    每 {formData.refresh_interval || 30} 分钟自动检测一次
+                  </p>
+                </div>
+              )}
+
+              {/* 浏览器路径设置 */}
+              <div>
+                <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-2">
+                  浏览器路径（可选）
+                </label>
+                <input
+                  type="text"
+                  value={formData.browser_path || ''}
+                  onChange={e => setFormData({ ...formData, browser_path: e.target.value })}
+                  placeholder="例如：C:\PortableApps\Chrome\chrome.exe"
+                  className="w-full px-4 py-2 bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 outline-none transition-all text-light-text dark:text-dark-text text-sm"
+                />
+                <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
+                  留空则自动检测 Chrome / Edge
                 </p>
               </div>
             </div>
-          )}
+          </section>
 
-          {/* 显示禁用站点 */}
-          <div className="flex items-start gap-3">
-            <input
-              type="checkbox"
-              id="show_disabled"
-              checked={formData.show_disabled}
-              onChange={e => setFormData({ ...formData, show_disabled: e.target.checked })}
-              className="mt-1 w-4 h-4 rounded border-light-border dark:border-dark-border text-primary-600 focus:ring-primary-500"
-            />
-            <div className="flex-1">
-              <label
-                htmlFor="show_disabled"
-                className="text-sm font-medium block text-light-text dark:text-dark-text cursor-pointer"
-              >
-                显示禁用的站点
-              </label>
-              <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
-                在检测时也包含已禁用的站点
-              </p>
-            </div>
-          </div>
-
-          {/* 自动刷新设置 */}
-          <div className="flex items-start gap-3">
-            <input
-              type="checkbox"
-              id="auto_refresh"
-              checked={formData.auto_refresh || false}
-              onChange={e => setFormData({ ...formData, auto_refresh: e.target.checked })}
-              className="mt-1 w-4 h-4 rounded border-light-border dark:border-dark-border text-primary-600 focus:ring-primary-500"
-            />
-            <div className="flex-1">
-              <label
-                htmlFor="auto_refresh"
-                className="text-sm font-medium block text-light-text dark:text-dark-text cursor-pointer"
-              >
-                自动刷新
-              </label>
-              <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
-                定时自动检测所有站点
-              </p>
-            </div>
-          </div>
-
-          {/* 刷新间隔 */}
-          {formData.auto_refresh && (
-            <div>
-              <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-2">
-                刷新间隔 (分钟)
-              </label>
-              <input
-                type="number"
-                min="1"
-                max="1440"
-                value={formData.refresh_interval || 30}
-                onChange={e =>
-                  setFormData({ ...formData, refresh_interval: Number(e.target.value) })
-                }
-                className="w-full px-4 py-2 bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 outline-none transition-all text-light-text dark:text-dark-text"
-              />
-              <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
-                每 {formData.refresh_interval || 30} 分钟自动检测一次
-              </p>
-            </div>
-          )}
-
-          {/* 浏览器路径设置 */}
-          <div>
-            <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-2">
-              浏览器路径（可选）
-            </label>
-            <input
-              type="text"
-              value={formData.browser_path || ''}
-              onChange={e => setFormData({ ...formData, browser_path: e.target.value })}
-              placeholder="例如：C:\PortableApps\Chrome\chrome.exe，留空则自动检测 Chrome / Edge"
-              className="w-full px-4 py-2 bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 outline-none transition-all text-light-text dark:text-dark-text"
-            />
-            <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
-              当需要使用 Edge 或便携版 Chrome 等自定义 Chromium
-              浏览器时，可在此填写其可执行文件路径；留空则从系统自动查找 Chrome / Edge。
-            </p>
-          </div>
-
-          {/* 导入导出 */}
-          {config && onImport && (
-            <div>
-              <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-3">
-                数据管理
-              </label>
-              <div className="flex gap-3">
-                <button
-                  type="button"
-                  onClick={handleExport}
-                  className="flex-1 px-4 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-all flex items-center justify-center gap-2 font-medium"
-                >
-                  <Download className="w-4 h-4" />
-                  导出配置
-                </button>
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex-1 px-4 py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-all flex items-center justify-center gap-2 font-medium"
-                >
-                  <Upload className="w-4 h-4" />
-                  导入配置
-                </button>
+          {/* ===== WebDAV 云端备份 ===== */}
+          <section className="space-y-4">
+            <h3 className="text-sm font-semibold text-primary-600 dark:text-primary-400 uppercase tracking-wide flex items-center gap-2">
+              <Cloud className="w-4 h-4" />
+              WebDAV 云端备份
+            </h3>
+            <div className="bg-slate-50 dark:bg-slate-800/80 rounded-lg p-4 space-y-4 border border-slate-200 dark:border-slate-700">
+              {/* 启用开关 */}
+              <div className="flex items-start gap-3">
                 <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".json"
-                  onChange={handleImport}
-                  className="hidden"
+                  type="checkbox"
+                  id="webdav_enabled"
+                  checked={webdavConfig.enabled}
+                  onChange={e => setWebdavConfig({ ...webdavConfig, enabled: e.target.checked })}
+                  className="mt-1 w-4 h-4 rounded border-light-border dark:border-dark-border text-primary-600 focus:ring-primary-500"
                 />
+                <div className="flex-1">
+                  <label
+                    htmlFor="webdav_enabled"
+                    className="text-sm font-medium block text-light-text dark:text-dark-text cursor-pointer"
+                  >
+                    启用 WebDAV 备份
+                  </label>
+                  <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
+                    将配置备份到支持 WebDAV 的云存储（如坚果云、NextCloud）
+                  </p>
+                </div>
               </div>
-              <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-2">
-                导出包含完整配置（含认证信息），请妥善保管导出文件
-              </p>
+
+              {/* WebDAV 配置表单 - 仅在启用时显示 */}
+              {webdavConfig.enabled && (
+                <div className="space-y-4 pl-7 border-l-2 border-primary-200 dark:border-primary-800">
+                  {/* 服务器地址 */}
+                  <div>
+                    <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-1">
+                      服务器地址
+                    </label>
+                    <input
+                      type="text"
+                      value={webdavConfig.serverUrl}
+                      onChange={e =>
+                        setWebdavConfig({ ...webdavConfig, serverUrl: e.target.value })
+                      }
+                      placeholder="https://dav.jianguoyun.com/dav/"
+                      className="w-full px-4 py-2 bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 outline-none transition-all text-light-text dark:text-dark-text text-sm"
+                    />
+                  </div>
+
+                  {/* 用户名 */}
+                  <div>
+                    <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-1">
+                      用户名
+                    </label>
+                    <input
+                      type="text"
+                      value={webdavConfig.username}
+                      onChange={e => setWebdavConfig({ ...webdavConfig, username: e.target.value })}
+                      placeholder="your-email@example.com"
+                      className="w-full px-4 py-2 bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 outline-none transition-all text-light-text dark:text-dark-text text-sm"
+                    />
+                  </div>
+
+                  {/* 密码 */}
+                  <div>
+                    <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-1">
+                      密码 / 应用密码
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        value={webdavConfig.password}
+                        onChange={e =>
+                          setWebdavConfig({ ...webdavConfig, password: e.target.value })
+                        }
+                        placeholder="应用专用密码"
+                        className="w-full px-4 py-2 pr-10 bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 outline-none transition-all text-light-text dark:text-dark-text text-sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-light-text-secondary dark:text-dark-text-secondary hover:text-light-text dark:hover:text-dark-text"
+                      >
+                        {showPassword ? (
+                          <EyeOff className="w-4 h-4" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+                    <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
+                      建议使用应用专用密码而非账户密码
+                    </p>
+                  </div>
+
+                  {/* 远程路径 */}
+                  <div>
+                    <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-1">
+                      远程备份路径
+                    </label>
+                    <input
+                      type="text"
+                      value={webdavConfig.remotePath}
+                      onChange={e =>
+                        setWebdavConfig({ ...webdavConfig, remotePath: e.target.value })
+                      }
+                      placeholder="/api-hub-backups"
+                      className="w-full px-4 py-2 bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 outline-none transition-all text-light-text dark:text-dark-text text-sm"
+                    />
+                  </div>
+
+                  {/* 最大备份数量 */}
+                  <div>
+                    <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-1">
+                      最大备份数量
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={webdavConfig.maxBackups}
+                      onChange={e =>
+                        setWebdavConfig({
+                          ...webdavConfig,
+                          maxBackups: Math.min(100, Math.max(1, Number(e.target.value) || 10)),
+                        })
+                      }
+                      className="w-24 px-4 py-2 bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 outline-none transition-all text-light-text dark:text-dark-text text-sm"
+                    />
+                    <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
+                      超过此数量时自动删除最旧的备份
+                    </p>
+                  </div>
+
+                  {/* 连接测试结果 */}
+                  {connectionTestResult && (
+                    <div
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${
+                        connectionTestResult.success
+                          ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'
+                          : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400'
+                      }`}
+                    >
+                      {connectionTestResult.success ? (
+                        <Check className="w-4 h-4" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4" />
+                      )}
+                      {connectionTestResult.message}
+                    </div>
+                  )}
+
+                  {/* 操作按钮 */}
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={handleTestConnection}
+                      disabled={testingConnection || !webdavConfig.serverUrl}
+                      className="px-3 py-1.5 bg-slate-500 hover:bg-slate-600 disabled:bg-slate-300 dark:disabled:bg-slate-700 text-white rounded-lg transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed"
+                    >
+                      {testingConnection ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          测试中...
+                        </>
+                      ) : (
+                        '测试连接'
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveWebdavConfig}
+                      disabled={savingWebdav}
+                      className="px-3 py-1.5 bg-primary-500 hover:bg-primary-600 disabled:bg-primary-300 dark:disabled:bg-primary-700 text-white rounded-lg transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed"
+                    >
+                      {savingWebdav ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          保存中...
+                        </>
+                      ) : (
+                        '保存设置'
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowBackupDialog(true)}
+                      disabled={!webdavConfig.serverUrl}
+                      className="px-3 py-1.5 bg-green-500 hover:bg-green-600 disabled:bg-green-300 dark:disabled:bg-green-700 text-white rounded-lg transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed"
+                    >
+                      <FolderOpen className="w-4 h-4" />
+                      管理备份
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
+          </section>
+
+          {/* ===== 数据管理 ===== */}
+          {config && onImport && (
+            <section className="space-y-4">
+              <h3 className="text-sm font-semibold text-primary-600 dark:text-primary-400 uppercase tracking-wide flex items-center gap-2">
+                <Download className="w-4 h-4" />
+                数据管理
+              </h3>
+              <div className="bg-slate-50 dark:bg-slate-800/80 rounded-lg p-4 border border-slate-200 dark:border-slate-700">
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={handleExport}
+                    className="flex-1 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-all flex items-center justify-center gap-2 font-medium text-sm"
+                  >
+                    <Download className="w-4 h-4" />
+                    导出配置
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex-1 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-all flex items-center justify-center gap-2 font-medium text-sm"
+                  >
+                    <Upload className="w-4 h-4" />
+                    导入配置
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".json"
+                    onChange={handleImport}
+                    className="hidden"
+                  />
+                </div>
+                <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-2">
+                  导出包含完整配置（含认证信息），请妥善保管导出文件
+                </p>
+              </div>
+            </section>
           )}
 
           {/* 按钮 */}
@@ -383,6 +682,9 @@ export function SettingsPanel({
           </div>
         </form>
       </div>
+
+      {/* WebDAV 备份管理对话框 */}
+      <WebDAVBackupDialog isOpen={showBackupDialog} onClose={() => setShowBackupDialog(false)} />
     </div>
   );
 }

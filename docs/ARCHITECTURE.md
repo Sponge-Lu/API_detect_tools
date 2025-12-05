@@ -53,6 +53,7 @@ src/
 │   │   ├── backup-handlers.ts     # 备份恢复
 │   │   ├── token-handlers.ts      # 令牌与认证
 │   │   ├── detection-handlers.ts  # 站点检测
+│   │   ├── webdav-handlers.ts     # WebDAV 云端备份
 │   │   └── index.ts               # 统一注册入口
 │   ├── utils/                     # 后端工具
 │   ├── types/                     # 后端类型定义
@@ -60,7 +61,8 @@ src/
 │   ├── token-service.ts           # 令牌管理服务
 │   ├── chrome-manager.ts          # 浏览器自动化管理
 │   ├── unified-config-manager.ts  # 统一配置管理 (config.json)
-│   ├── backup-manager.ts          # 备份管理
+│   ├── backup-manager.ts          # 本地备份管理
+│   ├── webdav-manager.ts          # WebDAV 云端备份管理
 │   ├── main.ts                    # 主进程入口
 │   └── preload.ts                 # 预加载脚本 (IPC 桥接)
 │
@@ -111,7 +113,8 @@ src/
 - **ApiService**: 处理所有 HTTP 请求，负责站点余额、模型列表、API Key 的获取。内置请求去重和缓存机制。
 - **TokenService**: 负责处理 API Key 的创建、删除、权限验证，以及适配不同站点的 Token 协议。
 - **ChromeManager**: 管理 Puppeteer 实例的生命周期。负责启动浏览器、管理页面、注入脚本、提取 LocalStorage/Cookie 信息。支持浏览器复用和崩溃自动重启。
-- **UnifiedConfigManager**: 负责 `config.json` 的读写，保证配置数据的原子性和一致性。
+- **UnifiedConfigManager**: 负责 `config.json` 的读写，保证配置数据的原子性和一致性。支持前端兼容层，在保存旧格式配置时自动保留 WebDAV 等扩展配置。
+- **WebDAVManager**: 负责 WebDAV 云端备份功能，包括连接测试、备份上传/下载/删除、自动清理旧备份等。使用动态 import 加载 ESM 模块以兼容 Electron 的 CommonJS 环境。
 
 ### 认证与安全
 

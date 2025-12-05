@@ -73,6 +73,18 @@ declare global {
         save: (themeMode: 'light' | 'dark' | 'system') => Promise<{ success: boolean }>;
         load: () => Promise<{ success: boolean; data?: 'light' | 'dark' | 'system' }>;
       };
+      webdav?: {
+        testConnection: (config: any) => Promise<{ success: boolean; error?: string }>;
+        saveConfig: (config: any) => Promise<{ success: boolean; error?: string }>;
+        getConfig: () => Promise<{ success: boolean; data?: any; error?: string }>;
+        listBackups: () => Promise<{ success: boolean; data?: any[]; error?: string }>;
+        uploadBackup: () => Promise<{ success: boolean; data?: string; error?: string }>;
+        restoreBackup: (filename: string) => Promise<{ success: boolean; error?: string }>;
+        deleteBackup: (filename: string) => Promise<{ success: boolean; error?: string }>;
+      };
+      backup?: {
+        list: () => Promise<any[]>;
+      };
     };
   }
 }
@@ -86,6 +98,15 @@ export interface Settings {
   refresh_interval: number;
   // 新增：浏览器可执行文件路径（可选），用于自定义 Chromium / Edge / 便携版浏览器
   browser_path?: string;
+  // WebDAV 云端备份配置
+  webdav?: {
+    enabled: boolean;
+    serverUrl: string;
+    username: string;
+    password: string;
+    remotePath: string;
+    maxBackups: number;
+  };
 }
 
 // 新增：站点分组配置

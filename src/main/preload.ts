@@ -87,4 +87,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 加载保存的主题设置
     load: () => ipcRenderer.invoke('theme:load'),
   },
+
+  // WebDAV 备份 API
+  webdav: {
+    // 测试 WebDAV 连接
+    testConnection: (config: any) => ipcRenderer.invoke('webdav:test-connection', config),
+    // 上传备份到 WebDAV
+    uploadBackup: () => ipcRenderer.invoke('webdav:upload-backup'),
+    // 列出 WebDAV 备份
+    listBackups: () => ipcRenderer.invoke('webdav:list-backups'),
+    // 删除 WebDAV 备份
+    deleteBackup: (filename: string) => ipcRenderer.invoke('webdav:delete-backup', filename),
+    // 恢复 WebDAV 备份
+    restoreBackup: (filename: string) => ipcRenderer.invoke('webdav:restore-backup', filename),
+    // 保存 WebDAV 配置
+    saveConfig: (config: any) => ipcRenderer.invoke('webdav:save-config', config),
+    // 获取 WebDAV 配置
+    getConfig: () => ipcRenderer.invoke('webdav:get-config'),
+  },
 });

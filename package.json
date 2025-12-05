@@ -1,6 +1,6 @@
 {
   "name": "api-hub-management-tools",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "API Hub Management Tools - Professional API management and monitoring tool",
   "author": "API Hub Team",
   "main": "dist/main/main.js",
@@ -34,6 +34,7 @@
     "axios": "^1.6.0",
     "electron-log": "^5.4.3",
     "puppeteer-core": "^21.0.0",
+    "webdav": "^5.8.0",
     "zod": "^4.1.13",
     "zustand": "^5.0.8"
   },
@@ -57,6 +58,7 @@
     "eslint-plugin-prettier": "^5.5.4",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
+    "fast-check": "^4.3.0",
     "husky": "^9.1.7",
     "jsdom": "^27.2.0",
     "lint-staged": "^16.2.7",
@@ -73,7 +75,7 @@
     "vitest": "^4.0.14"
   },
   "build": {
-    "buildVersion": "2.1.1",
+    "buildVersion": "2.1.2",
     "appId": "com.apihub.management",
     "productName": "API Hub Management Tools",
     "directories": {

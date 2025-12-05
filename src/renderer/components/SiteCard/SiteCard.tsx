@@ -156,7 +156,7 @@ export function SiteCard({
       )}
 
       {/* 一级信息 - 绿到橙淡渐变 */}
-      <div className="px-3 py-2.5 bg-gradient-to-r from-emerald-50/60 to-amber-50/60 dark:from-emerald-900/20 dark:to-amber-900/20 rounded-t-xl">
+      <div className="px-3 py-2.5 bg-gradient-to-r from-emerald-50/60 to-amber-50/60 dark:from-emerald-900/40 dark:to-amber-900/40 rounded-t-xl">
         <div className="flex items-center justify-between">
           {/* 左侧：信息栅格 */}
           <SiteCardHeader

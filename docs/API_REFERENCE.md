@@ -276,4 +276,46 @@
 
 ---
 
+---
+
+## 10. 内部 IPC 接口 (Electron)
+
+### 10.1 WebDAV 云端备份接口
+
+以下接口通过 Electron IPC 通信，供渲染进程调用：
+
+| 通道名称 | 说明 | 参数 | 返回值 |
+| :--- | :--- | :--- | :--- |
+| `webdav:test-connection` | 测试 WebDAV 连接 | `config: WebDAVConfig` | `{ success, error? }` |
+| `webdav:save-config` | 保存 WebDAV 配置 | `config: WebDAVConfig` | `{ success, error? }` |
+| `webdav:get-config` | 获取 WebDAV 配置 | - | `{ success, data?: WebDAVConfig }` |
+| `webdav:upload-backup` | 上传备份到云端 | - | `{ success, data?: filename }` |
+| `webdav:list-backups` | 列出云端备份 | - | `{ success, data?: WebDAVBackupInfo[] }` |
+| `webdav:delete-backup` | 删除云端备份 | `filename: string` | `{ success, error? }` |
+| `webdav:restore-backup` | 从云端恢复备份 | `filename: string` | `{ success, error? }` |
+
+**WebDAVConfig 结构**:
+```typescript
+interface WebDAVConfig {
+  enabled: boolean;      // 是否启用
+  serverUrl: string;     // 服务器地址
+  username: string;      // 用户名
+  password: string;      // 密码
+  remotePath: string;    // 远程备份路径
+  maxBackups: number;    // 最大备份数量
+}
+```
+
+**WebDAVBackupInfo 结构**:
+```typescript
+interface WebDAVBackupInfo {
+  filename: string;      // 文件名
+  path: string;          // 完整路径
+  lastModified: Date;    // 最后修改时间
+  size: number;          // 文件大小 (字节)
+}
+```
+
+---
+
 **声明：** 本文档由 API Hub Management Tools 项目组维护，旨在为开发者提供准确、全面的 API 参考。如有疏漏，欢迎反馈。
