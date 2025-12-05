@@ -60,7 +60,7 @@ export function SiteListHeader({ columnWidths, onColumnWidthChange }: SiteListHe
 
   return (
     <div
-      className="grid gap-x-1 items-center px-3 py-2 text-xs font-semibold text-slate-500 dark:text-slate-400 bg-slate-100/50 dark:bg-slate-800/50 rounded-lg mb-2"
+      className="grid gap-x-1 items-center px-3 py-2 text-xs font-semibold text-slate-500 dark:text-slate-400 bg-gradient-to-r from-emerald-50/60 to-amber-50/60 dark:from-emerald-900/20 dark:to-amber-900/20 rounded-lg mb-2"
       style={{
         gridTemplateColumns: columnWidths.map(w => `${w}px`).join(' ') + ' 1fr',
       }}

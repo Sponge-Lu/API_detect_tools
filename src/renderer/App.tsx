@@ -31,7 +31,7 @@ import {
   useSiteDetection,
 } from './hooks';
 import type { NewApiTokenForm } from './hooks';
-import { getGroupTextColor, getGroupIcon } from './utils/groupStyle';
+import { getGroupTextColor } from './utils/groupStyle';
 // 从共享的types文件导入并重新导出类型
 import type { SiteConfig, DetectionResult } from '../shared/types/site';
 export type { SiteConfig, DetectionResult } from '../shared/types/site';
@@ -884,7 +884,6 @@ function App() {
                         <span
                           className={`flex items-center gap-1 ${isActive ? 'text-white' : colorClass}`}
                         >
-                          {getGroupIcon(group.name)}
                           <span className="font-semibold">{group.name}</span>
                         </span>
                         {/* 站点数量 - 始终显示 */}

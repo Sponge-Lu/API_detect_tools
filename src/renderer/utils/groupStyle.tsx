@@ -1,21 +1,3 @@
-import {
-  Server,
-  Crown,
-  Star,
-  Users,
-  RefreshCw,
-  Zap,
-  DollarSign,
-  CheckCircle,
-  Gift,
-  Play,
-  Calendar,
-  Fuel,
-  Plus,
-  Edit,
-  Trash2,
-} from 'lucide-react';
-
 // 分组文字颜色池
 const GROUP_TEXT_COLOR_POOL = [
   'text-red-600 dark:text-red-300',
@@ -30,28 +12,27 @@ const GROUP_TEXT_COLOR_POOL = [
   'text-orange-500 dark:text-orange-300',
 ] as const;
 
-// 分组图标池
-const GROUP_ICON_POOL = [
-  (className = 'w-3 h-3') => <Crown className={className} />,
-  (className = 'w-3 h-3') => <Star className={className} />,
-  (className = 'w-3 h-3') => <Users className={className} />,
-  (className = 'w-3 h-3') => <Server className={className} />,
-  (className = 'w-3 h-3') => <RefreshCw className={className} />,
-  (className = 'w-3 h-3') => <Zap className={className} />,
-  (className = 'w-3 h-3') => <DollarSign className={className} />,
-  (className = 'w-3 h-3') => <CheckCircle className={className} />,
-  (className = 'w-3 h-3') => <Gift className={className} />,
-  (className = 'w-3 h-3') => <Play className={className} />,
-  (className = 'w-3 h-3') => <Calendar className={className} />,
-  (className = 'w-3 h-3') => <Fuel className={className} />,
-  (className = 'w-3 h-3') => <Plus className={className} />,
-  (className = 'w-3 h-3') => <Edit className={className} />,
-  (className = 'w-3 h-3') => <Trash2 className={className} />,
+// 带圆框的数字字符
+const CIRCLED_NUMBERS = [
+  '①',
+  '②',
+  '③',
+  '④',
+  '⑤',
+  '⑥',
+  '⑦',
+  '⑧',
+  '⑨',
+  '⑩',
+  '⑪',
+  '⑫',
+  '⑬',
+  '⑭',
+  '⑮',
 ] as const;
 
-// 全局单例 registry，确保整个应用内同一分组颜色/图标一致
+// 全局单例 registry，确保整个应用内同一分组颜色一致
 const groupColorRegistry: Record<string, string> = {};
-const groupIconRegistry: Record<string, number> = {};
 
 /**
  * 获取分组的文字颜色
@@ -79,32 +60,11 @@ export function getGroupTextColor(groupName: string): string {
 }
 
 /**
- * 获取分组对应的图标
+ * 获取分组对应的带圆框数字
+ * @param groupName 分组名称
+ * @param index 可选，直接指定序号（0-based）
  */
-export function getGroupIcon(groupName: string): React.ReactNode {
-  if (!groupName) return <Server className="w-3 h-3" />;
-
-  if (groupIconRegistry[groupName] !== undefined) {
-    return GROUP_ICON_POOL[groupIconRegistry[groupName]]('w-3 h-3');
-  }
-
-  const used = new Set(Object.values(groupIconRegistry));
-  let index = -1;
-  for (let i = 0; i < GROUP_ICON_POOL.length; i++) {
-    if (!used.has(i)) {
-      index = i;
-      break;
-    }
-  }
-
-  if (index === -1) {
-    let hash = 0;
-    for (let i = 0; i < groupName.length; i++) {
-      hash = (hash * 31 + groupName.charCodeAt(i)) >>> 0;
-    }
-    index = hash % GROUP_ICON_POOL.length;
-  }
-
-  groupIconRegistry[groupName] = index;
-  return GROUP_ICON_POOL[index]('w-3 h-3');
+export function getGroupIcon(_groupName: string, index?: number): React.ReactNode {
+  const idx = index !== undefined ? index % CIRCLED_NUMBERS.length : 0;
+  return <span className="text-xs font-bold">{CIRCLED_NUMBERS[idx]}</span>;
 }

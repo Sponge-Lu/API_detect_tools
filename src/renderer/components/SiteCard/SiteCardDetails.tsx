@@ -129,7 +129,7 @@ export function SiteCardDetails({
           <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold whitespace-nowrap">
             用户分组
           </span>
-          {Object.entries(userGroups).map(([groupName, groupData]) => (
+          {Object.entries(userGroups).map(([groupName, groupData], index) => (
             <button
               key={groupName}
               onClick={() => onToggleGroupFilter(site.name, groupName)}
@@ -140,7 +140,7 @@ export function SiteCardDetails({
               }`}
               title={`${groupData.desc} (倍率: ${groupData.ratio})`}
             >
-              {getGroupIcon(groupName)}
+              {getGroupIcon(groupName, index)}
               <span className="font-semibold">{groupName}</span>
               <span className="opacity-90">×{groupData.ratio}</span>
             </button>
@@ -209,7 +209,7 @@ export function SiteCardDetails({
                         <span
                           className={`font-medium flex items-center gap-1 ${getGroupTextColor(token.group)}`}
                         >
-                          {getGroupIcon(token.group)}
+                          {getGroupIcon(token.group, Object.keys(userGroups).indexOf(token.group))}
                           <span>{token.group}</span>
                         </span>
                       ) : (
@@ -393,7 +393,7 @@ export function SiteCardDetails({
                         <div className="flex items-center gap-0.5">
                           {enableGroups.map((group: string, gidx: number) => (
                             <span key={gidx} className={getGroupTextColor(group)}>
-                              {getGroupIcon(group)}
+                              {getGroupIcon(group, Object.keys(userGroups).indexOf(group))}
                             </span>
                           ))}
                         </div>
