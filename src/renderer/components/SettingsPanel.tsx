@@ -144,15 +144,17 @@ export function SettingsPanel({
       sites: config.sites.map(s => ({
         name: s.name,
         url: s.url,
-        api_key: s.api_key,
+        api_key: s.api_key || '',
         enabled: s.enabled,
-        group: s.group,
-        has_checkin: s.has_checkin,
-        force_enable_checkin: s.force_enable_checkin,
-        extra_links: s.extra_links,
-        // 新架构：导出完整认证信息
-        system_token: s.system_token,
-        user_id: s.user_id,
+        group: s.group || 'default',
+        // 签到相关配置
+        has_checkin: s.has_checkin ?? false,
+        force_enable_checkin: s.force_enable_checkin ?? false,
+        // 加油站链接
+        extra_links: s.extra_links || '',
+        // 认证信息
+        system_token: s.system_token || '',
+        user_id: s.user_id || '',
       })),
       siteGroups: config.siteGroups,
       settings: config.settings,

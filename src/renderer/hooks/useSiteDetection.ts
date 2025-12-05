@@ -284,6 +284,13 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
       } finally {
         setDetecting(false);
         setDetectingSite(null);
+        // 检测完成后关闭浏览器
+        try {
+          await window.electronAPI.closeBrowser?.();
+          Logger.info('✅ [useSiteDetection] 检测完成，已关闭浏览器');
+        } catch (err) {
+          Logger.warn('⚠️ [useSiteDetection] 关闭浏览器失败:', err);
+        }
       }
     },
     [setDetecting, setDetectingSite, setResults, setSiteAccounts, options]

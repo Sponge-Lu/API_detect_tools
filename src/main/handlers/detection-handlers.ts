@@ -63,10 +63,11 @@ export function registerDetectionHandlers(apiService: ApiService, chromeManager:
     await shell.openExternal(url);
   });
 
-  // 关闭浏览器
+  // 关闭浏览器（强制关闭，忽略引用计数）
   ipcMain.handle('close-browser', async () => {
     try {
-      chromeManager.cleanup();
+      // 使用 forceCleanup 确保浏览器被关闭，即使引用计数不为0
+      chromeManager.forceCleanup();
     } catch (error: any) {
       Logger.error('❌ [IPC] 关闭浏览器失败:', error?.message || error);
     }

@@ -366,4 +366,21 @@ interface UpdateSettings {
 
 ---
 
+### 10.3 浏览器管理接口
+
+以下接口通过 Electron IPC 通信，用于管理 Puppeteer 浏览器实例：
+
+| 通道名称 | 说明 | 参数 | 返回值 |
+| :--- | :--- | :--- | :--- |
+| `launch-chrome-for-login` | 启动浏览器供用户登录 | `url: string` | `{ success, message }` |
+| `close-browser` | 强制关闭浏览器 | - | - |
+
+**浏览器管理说明**:
+- 浏览器使用引用计数管理，多个检测任务可共享同一浏览器实例
+- `close-browser` 使用 `forceCleanup` 方法，会强制重置引用计数并关闭浏览器
+- 检测完成后会自动调用 `close-browser` 确保浏览器被关闭
+- 页面管理会自动清理同一域名的重复页面，避免资源浪费
+
+---
+
 **声明：** 本文档由 API Hub Management Tools 项目组维护，旨在为开发者提供准确、全面的 API 参考。如有疏漏，欢迎反馈。

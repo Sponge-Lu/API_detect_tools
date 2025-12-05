@@ -220,28 +220,48 @@ export class ChromeManager {
   }
 
   /**
-   * 清理旧页面：关闭 about:blank、浏览器内部页面和历史页面
+   * 清理旧页面：关闭 about:blank、浏览器内部页面和同一域名的重复页面
    */
-  private async cleanupOldPages(_targetUrl: string): Promise<void> {
+  private async cleanupOldPages(targetUrl: string): Promise<void> {
     if (!this.browser) return;
 
     try {
       const pages = await this.browser.pages();
+      let targetOrigin: string | null = null;
+
+      // 解析目标URL的origin
+      try {
+        targetOrigin = new URL(targetUrl).origin;
+      } catch {
+        // 无效URL，跳过域名检查
+      }
 
       for (const page of pages) {
         try {
           const pageUrl = page.url();
-          // 关闭 about:blank 页面、浏览器内部页面和历史页面
-          const shouldClose =
+          // 关闭 about:blank 页面、浏览器内部页面
+          const isBlankOrInternal =
             pageUrl === 'about:blank' ||
             pageUrl === '' ||
             pageUrl.startsWith('chrome://') ||
             pageUrl.startsWith('edge://') ||
             pageUrl.startsWith('chrome-extension://');
 
-          if (shouldClose) {
+          // 检查是否是同一域名的页面（避免重复打开）
+          let isSameOrigin = false;
+          if (targetOrigin && pageUrl) {
+            try {
+              isSameOrigin = new URL(pageUrl).origin === targetOrigin;
+            } catch {
+              // 无效URL，跳过
+            }
+          }
+
+          if (isBlankOrInternal || isSameOrigin) {
             await page.close();
-            Logger.info(`🧹 [ChromeManager] 关闭旧页面: ${pageUrl || 'blank'}`);
+            Logger.info(
+              `🧹 [ChromeManager] 关闭旧页面: ${pageUrl || 'blank'}${isSameOrigin ? ' (同域名)' : ''}`
+            );
           }
         } catch (e) {
           // 页面可能已关闭，忽略错误
@@ -1565,6 +1585,23 @@ export class ChromeManager {
     // 清理Chrome进程（通过端口查找）
 
     Logger.info('✅ [ChromeManager] 资源清理完成');
+  }
+
+  /**
+   * 强制清理浏览器资源（忽略引用计数）
+   * 用于检测完成后确保浏览器被关闭
+   */
+  forceCleanup() {
+    Logger.info(`🔧 [ChromeManager] 强制清理浏览器资源（当前引用计数: ${this.browserRefCount}）`);
+
+    // 重置引用计数
+    if (this.browserRefCount > 0) {
+      Logger.warn(`⚠️ [ChromeManager] 强制重置引用计数从 ${this.browserRefCount} 到 0`);
+      this.browserRefCount = 0;
+    }
+
+    // 调用正常清理逻辑
+    this.cleanup();
   }
 
   /**
