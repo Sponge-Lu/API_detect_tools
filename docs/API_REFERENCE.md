@@ -318,4 +318,52 @@ interface WebDAVBackupInfo {
 
 ---
 
+### 10.2 软件更新接口
+
+以下接口通过 Electron IPC 通信，供渲染进程调用：
+
+| 通道名称 | 说明 | 参数 | 返回值 |
+| :--- | :--- | :--- | :--- |
+| `update:check` | 检查软件更新 | - | `UpdateCheckResult` |
+| `update:get-current-version` | 获取当前版本 | - | `string` |
+| `update:open-download` | 打开下载链接 | `url: string` | - |
+| `update:get-settings` | 获取更新设置 | - | `UpdateSettings` |
+| `update:save-settings` | 保存更新设置 | `settings: UpdateSettings` | - |
+
+**UpdateCheckResult 结构**:
+```typescript
+interface UpdateCheckResult {
+  hasUpdate: boolean;              // 是否有正式版更新
+  hasPreReleaseUpdate: boolean;    // 是否有预发布版更新
+  currentVersion: string;          // 当前版本
+  latestVersion: string;           // 最新正式版本
+  latestPreReleaseVersion?: string; // 最新预发布版本
+  releaseInfo?: ReleaseInfo;       // 正式版详情
+  preReleaseInfo?: ReleaseInfo;    // 预发布版详情
+}
+```
+
+**ReleaseInfo 结构**:
+```typescript
+interface ReleaseInfo {
+  version: string;       // 版本号
+  releaseDate: string;   // 发布日期
+  releaseNotes: string;  // 更新说明
+  downloadUrl: string;   // 下载链接
+  htmlUrl: string;       // GitHub Release 页面
+  isPreRelease: boolean; // 是否为预发布版本
+}
+```
+
+**UpdateSettings 结构**:
+```typescript
+interface UpdateSettings {
+  autoCheckEnabled: boolean;   // 是否启用自动检查
+  includePreRelease: boolean;  // 是否包含预发布版本
+  lastCheckTime?: string;      // 上次检查时间
+}
+```
+
+---
+
 **声明：** 本文档由 API Hub Management Tools 项目组维护，旨在为开发者提供准确、全面的 API 参考。如有疏漏，欢迎反馈。

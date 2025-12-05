@@ -105,4 +105,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 获取 WebDAV 配置
     getConfig: () => ipcRenderer.invoke('webdav:get-config'),
   },
+
+  // 软件更新 API
+  update: {
+    // 检查更新
+    check: () => ipcRenderer.invoke('update:check'),
+    // 获取当前版本
+    getCurrentVersion: () => ipcRenderer.invoke('update:get-current-version'),
+    // 打开下载链接
+    openDownload: (url: string) => ipcRenderer.invoke('update:open-download', url),
+    // 获取更新设置
+    getSettings: () => ipcRenderer.invoke('update:get-settings'),
+    // 保存更新设置
+    saveSettings: (settings: any) => ipcRenderer.invoke('update:save-settings', settings),
+  },
 });

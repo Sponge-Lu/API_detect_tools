@@ -13,12 +13,15 @@ import {
   Check,
   AlertCircle,
   FolderOpen,
+  RefreshCw,
+  Info,
 } from 'lucide-react';
 import { Settings, Config } from '../App';
 import { useTheme } from '../hooks/useTheme';
+import { useUpdate, ReleaseInfo, UpdateCheckResult } from '../hooks/useUpdate';
 import { toast } from '../store/toastStore';
 import { WebDAVConfig, DEFAULT_WEBDAV_CONFIG } from '../../shared/types/site';
-import { WebDAVBackupDialog } from './dialogs';
+import { WebDAVBackupDialog, UpdateDialog } from './dialogs';
 
 interface SettingsPanelProps {
   settings: Settings;
@@ -26,6 +29,8 @@ interface SettingsPanelProps {
   onCancel: () => void;
   config?: Config;
   onImport?: (config: Config) => void;
+  // 从 App.tsx 传入的更新信息（启动时自动检查的结果）
+  initialUpdateInfo?: UpdateCheckResult | null;
 }
 
 // 导出格式版本
@@ -37,10 +42,26 @@ export function SettingsPanel({
   onCancel,
   config,
   onImport,
+  initialUpdateInfo,
 }: SettingsPanelProps) {
   const [formData, setFormData] = useState<Settings>(settings);
   const { themeMode, changeThemeMode } = useTheme();
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 软件更新相关状态
+  const {
+    currentVersion,
+    updateInfo: hookUpdateInfo,
+    isChecking,
+    error: updateError,
+    settings: updateSettings,
+    checkForUpdates,
+    openDownloadUrl,
+    updateSettings: saveUpdateSettings,
+  } = useUpdate();
+
+  // 优先使用 hook 返回的更新信息，如果没有则使用传入的初始值
+  const updateInfo = hookUpdateInfo || initialUpdateInfo;
 
   // WebDAV 设置状态
   const [webdavConfig, setWebdavConfig] = useState<WebDAVConfig>(DEFAULT_WEBDAV_CONFIG);
@@ -52,6 +73,8 @@ export function SettingsPanel({
     message: string;
   } | null>(null);
   const [showBackupDialog, setShowBackupDialog] = useState(false);
+  const [showUpdateDialog, setShowUpdateDialog] = useState(false);
+  const [selectedRelease, setSelectedRelease] = useState<ReleaseInfo | null>(null);
 
   // 加载 WebDAV 配置
   useEffect(() => {
@@ -624,6 +647,173 @@ export function SettingsPanel({
             </div>
           </section>
 
+          {/* ===== 软件更新 ===== */}
+          <section className="space-y-4">
+            <h3 className="text-sm font-semibold text-primary-600 dark:text-primary-400 uppercase tracking-wide flex items-center gap-2">
+              <Info className="w-4 h-4" />
+              软件更新
+            </h3>
+            <div className="bg-slate-50 dark:bg-slate-800/80 rounded-lg p-4 space-y-4 border border-slate-200 dark:border-slate-700">
+              {/* 当前版本显示 */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-medium text-light-text dark:text-dark-text">
+                    当前版本
+                  </span>
+                  <span className="ml-2 text-sm text-light-text-secondary dark:text-dark-text-secondary">
+                    v{currentVersion || '加载中...'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={checkForUpdates}
+                  disabled={isChecking}
+                  className="px-3 py-1.5 bg-primary-500 hover:bg-primary-600 disabled:bg-primary-300 dark:disabled:bg-primary-700 text-white rounded-lg transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed"
+                >
+                  {isChecking ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      检查中...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-4 h-4" />
+                      检查更新
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* 更新检查结果 */}
+              {updateError && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400">
+                  <AlertCircle className="w-4 h-4" />
+                  {updateError}
+                </div>
+              )}
+
+              {updateInfo && !updateError && (
+                <div className="space-y-2">
+                  {/* 正式版本信息 */}
+                  <div
+                    className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm ${
+                      updateInfo.hasUpdate
+                        ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'
+                        : 'bg-slate-100 dark:bg-slate-700/50 text-light-text-secondary dark:text-dark-text-secondary'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      {updateInfo.hasUpdate ? (
+                        <>
+                          <Check className="w-4 h-4" />
+                          正式版 v{updateInfo.latestVersion}
+                        </>
+                      ) : (
+                        <>
+                          <Check className="w-4 h-4" />
+                          正式版 v{updateInfo.latestVersion} (当前最新)
+                        </>
+                      )}
+                    </div>
+                    {updateInfo.hasUpdate && updateInfo.releaseInfo && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedRelease(updateInfo.releaseInfo!);
+                          setShowUpdateDialog(true);
+                        }}
+                        className="text-xs px-2 py-1 bg-green-500 hover:bg-green-600 text-white rounded transition-colors"
+                      >
+                        查看详情
+                      </button>
+                    )}
+                  </div>
+
+                  {/* 预发布版本信息 */}
+                  {updateInfo.latestPreReleaseVersion && (
+                    <div
+                      className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm ${
+                        updateInfo.hasPreReleaseUpdate
+                          ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400'
+                          : 'bg-slate-100 dark:bg-slate-700/50 text-light-text-secondary dark:text-dark-text-secondary'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        {updateInfo.hasPreReleaseUpdate ? (
+                          <>
+                            <AlertCircle className="w-4 h-4" />
+                            预发布版 v{updateInfo.latestPreReleaseVersion}
+                          </>
+                        ) : (
+                          <>
+                            <Check className="w-4 h-4" />
+                            预发布版 v{updateInfo.latestPreReleaseVersion} (当前最新)
+                          </>
+                        )}
+                      </div>
+                      {updateInfo.hasPreReleaseUpdate && updateInfo.preReleaseInfo && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedRelease(updateInfo.preReleaseInfo!);
+                            setShowUpdateDialog(true);
+                          }}
+                          className="text-xs px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded transition-colors"
+                        >
+                          查看详情
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 自动检查更新开关 */}
+              <div className="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  id="auto_check_update"
+                  checked={updateSettings.autoCheckEnabled}
+                  onChange={e => saveUpdateSettings({ autoCheckEnabled: e.target.checked })}
+                  className="mt-1 w-4 h-4 rounded border-light-border dark:border-dark-border text-primary-600 focus:ring-primary-500"
+                />
+                <div className="flex-1">
+                  <label
+                    htmlFor="auto_check_update"
+                    className="text-sm font-medium block text-light-text dark:text-dark-text cursor-pointer"
+                  >
+                    启动时自动检查更新
+                  </label>
+                  <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
+                    应用启动时自动在后台检查是否有新版本
+                  </p>
+                </div>
+              </div>
+
+              {/* 包含预发布版本开关 */}
+              <div className="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  id="include_pre_release"
+                  checked={updateSettings.includePreRelease}
+                  onChange={e => saveUpdateSettings({ includePreRelease: e.target.checked })}
+                  className="mt-1 w-4 h-4 rounded border-light-border dark:border-dark-border text-primary-600 focus:ring-primary-500"
+                />
+                <div className="flex-1">
+                  <label
+                    htmlFor="include_pre_release"
+                    className="text-sm font-medium block text-light-text dark:text-dark-text cursor-pointer"
+                  >
+                    包含预发布版本
+                  </label>
+                  <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
+                    检查更新时包含 Beta、Alpha 等预发布版本
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+
           {/* ===== 数据管理 ===== */}
           {config && onImport && (
             <section className="space-y-4">
@@ -685,6 +875,24 @@ export function SettingsPanel({
 
       {/* WebDAV 备份管理对话框 */}
       <WebDAVBackupDialog isOpen={showBackupDialog} onClose={() => setShowBackupDialog(false)} />
+
+      {/* 软件更新对话框 */}
+      {selectedRelease && (
+        <UpdateDialog
+          isOpen={showUpdateDialog}
+          onClose={() => {
+            setShowUpdateDialog(false);
+            setSelectedRelease(null);
+          }}
+          currentVersion={currentVersion}
+          releaseInfo={selectedRelease}
+          onDownload={() => {
+            if (selectedRelease?.downloadUrl) {
+              window.electronAPI?.update?.openDownload(selectedRelease.downloadUrl);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

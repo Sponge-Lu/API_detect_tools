@@ -29,6 +29,7 @@ import {
   useDataLoader,
   useSiteDrag,
   useSiteDetection,
+  useUpdate,
 } from './hooks';
 import type { NewApiTokenForm } from './hooks';
 import { getGroupTextColor } from './utils/groupStyle';
@@ -85,6 +86,43 @@ declare global {
       backup?: {
         list: () => Promise<any[]>;
       };
+      update?: {
+        check: () => Promise<{
+          hasUpdate: boolean;
+          hasPreReleaseUpdate: boolean;
+          currentVersion: string;
+          latestVersion: string;
+          latestPreReleaseVersion?: string;
+          releaseInfo?: {
+            version: string;
+            releaseDate: string;
+            releaseNotes: string;
+            downloadUrl: string;
+            htmlUrl: string;
+            isPreRelease: boolean;
+          };
+          preReleaseInfo?: {
+            version: string;
+            releaseDate: string;
+            releaseNotes: string;
+            downloadUrl: string;
+            htmlUrl: string;
+            isPreRelease: boolean;
+          };
+        }>;
+        getCurrentVersion: () => Promise<string>;
+        openDownload: (url: string) => Promise<void>;
+        getSettings: () => Promise<{
+          autoCheckEnabled: boolean;
+          includePreRelease: boolean;
+          lastCheckTime?: string;
+        }>;
+        saveSettings: (settings: {
+          autoCheckEnabled: boolean;
+          includePreRelease: boolean;
+          lastCheckTime?: string;
+        }) => Promise<void>;
+      };
     };
   }
 }
@@ -137,6 +175,9 @@ interface BackupInfo {
 function App() {
   // 初始化主题系统
   useTheme();
+
+  // 软件更新检查
+  const { updateInfo, settings: updateSettings, checkForUpdatesInBackground } = useUpdate();
 
   // Toast store
   const { toasts, removeToast } = useToastStore();
@@ -347,6 +388,18 @@ function App() {
     };
     init();
   }, []);
+
+  // 启动时自动检查更新（后台静默检查，不阻塞用户交互）
+  useEffect(() => {
+    // 仅在自动检查启用时执行
+    if (updateSettings.autoCheckEnabled) {
+      // 延迟执行，确保应用完全加载后再检查
+      const timer = setTimeout(() => {
+        checkForUpdatesInBackground();
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [updateSettings.autoCheckEnabled, checkForUpdatesInBackground]);
 
   // 当expandedSites改变时，确保UI能正确显示
   useEffect(() => {
@@ -771,7 +824,11 @@ function App() {
 
       {/* 主要内容 */}
       <div className="relative z-10 h-full flex flex-col">
-        <Header saving={saving} onOpenSettings={() => setShowSettings(true)} />
+        <Header
+          saving={saving}
+          hasUpdate={updateInfo?.hasUpdate}
+          onOpenSettings={() => setShowSettings(true)}
+        />
 
         <div className="flex-1 overflow-y-hidden overflow-x-visible flex">
           <div className="flex-1 flex flex-col">
@@ -1235,6 +1292,7 @@ function App() {
             await saveConfig(newConfig);
             setShowSettings(false);
           }}
+          initialUpdateInfo={updateInfo}
         />
       )}
 

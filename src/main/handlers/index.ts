@@ -16,6 +16,7 @@ import { registerBackupHandlers } from './backup-handlers';
 import { registerTokenHandlers } from './token-handlers';
 import { registerDetectionHandlers } from './detection-handlers';
 import { registerWebDAVHandlers } from './webdav-handlers';
+import { registerUpdateHandlers } from './update-handlers';
 
 interface HandlerDependencies {
   chromeManager: ChromeManager;
@@ -49,6 +50,9 @@ export function registerAllHandlers(deps: HandlerDependencies) {
   // WebDAV 备份相关
   registerWebDAVHandlers();
 
+  // 软件更新相关
+  registerUpdateHandlers();
+
   Logger.info('✅ [Handlers] 所有 IPC 处理器已注册');
 }
 
@@ -59,3 +63,4 @@ export * from './backup-handlers';
 export * from './token-handlers';
 export * from './detection-handlers';
 export * from './webdav-handlers';
+export * from './update-handlers';

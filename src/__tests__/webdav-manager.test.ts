@@ -132,33 +132,35 @@ describe('WebDAV Manager Property Tests', () => {
    */
   describe('Property 2: Backup Filename Format Consistency', () => {
     it('should generate filenames matching the expected pattern', () => {
+      // Use integer-based date generation to avoid NaN dates
+      const validDateArbitrary = fc
+        .integer({ min: 946684800000, max: 4102444800000 }) // 2000-01-01 to 2100-01-01
+        .map(ts => new Date(ts));
+
       fc.assert(
-        fc.property(
-          fc.date({ min: new Date(2000, 0, 1), max: new Date(2100, 11, 31) }),
-          (date: Date) => {
-            const filename = generateBackupFilename(date);
+        fc.property(validDateArbitrary, (date: Date) => {
+          const filename = generateBackupFilename(date);
 
-            // Check pattern: config_YYYY-MM-DD_HH-mm-ss.json
-            const pattern = /^config_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.json$/;
-            expect(filename).toMatch(pattern);
+          // Check pattern: config_YYYY-MM-DD_HH-mm-ss.json
+          const pattern = /^config_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.json$/;
+          expect(filename).toMatch(pattern);
 
-            // Extract and verify date components
-            const match = filename.match(
-              /^config_(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})\.json$/
-            );
-            expect(match).not.toBeNull();
+          // Extract and verify date components
+          const match = filename.match(
+            /^config_(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})\.json$/
+          );
+          expect(match).not.toBeNull();
 
-            if (match) {
-              const [, year, month, day, hours, minutes, seconds] = match;
-              expect(parseInt(year)).toBe(date.getFullYear());
-              expect(parseInt(month)).toBe(date.getMonth() + 1);
-              expect(parseInt(day)).toBe(date.getDate());
-              expect(parseInt(hours)).toBe(date.getHours());
-              expect(parseInt(minutes)).toBe(date.getMinutes());
-              expect(parseInt(seconds)).toBe(date.getSeconds());
-            }
+          if (match) {
+            const [, year, month, day, hours, minutes, seconds] = match;
+            expect(parseInt(year)).toBe(date.getFullYear());
+            expect(parseInt(month)).toBe(date.getMonth() + 1);
+            expect(parseInt(day)).toBe(date.getDate());
+            expect(parseInt(hours)).toBe(date.getHours());
+            expect(parseInt(minutes)).toBe(date.getMinutes());
+            expect(parseInt(seconds)).toBe(date.getSeconds());
           }
-        ),
+        }),
         { numRuns: 100 }
       );
     });

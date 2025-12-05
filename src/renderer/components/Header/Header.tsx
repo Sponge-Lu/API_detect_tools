@@ -8,10 +8,11 @@ import Logo from '../../assets/logo.svg';
 
 interface HeaderProps {
   saving: boolean;
+  hasUpdate?: boolean;
   onOpenSettings: () => void;
 }
 
-export function Header({ saving, onOpenSettings }: HeaderProps) {
+export function Header({ saving, hasUpdate, onOpenSettings }: HeaderProps) {
   return (
     <header className="bg-white/80 dark:bg-dark-card/80 backdrop-blur-md border-b border-light-border dark:border-dark-border px-4 py-3 shadow-sm">
       <div className="flex items-center justify-between">
@@ -40,10 +41,16 @@ export function Header({ saving, onOpenSettings }: HeaderProps) {
           )}
           <button
             onClick={onOpenSettings}
-            className="px-3 py-1.5 bg-light-card dark:bg-dark-card hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-all flex items-center gap-1.5 text-sm border border-light-border dark:border-dark-border shadow-sm"
+            className="relative px-3 py-1.5 bg-light-card dark:bg-dark-card hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-all flex items-center gap-1.5 text-sm border border-light-border dark:border-dark-border shadow-sm"
           >
             <Settings className="w-4 h-4" strokeWidth={2} />
             设置
+            {hasUpdate && (
+              <span
+                className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"
+                title="有新版本可用"
+              />
+            )}
           </button>
         </div>
       </div>

@@ -10,3 +10,5 @@ export { useSiteGroups } from './useSiteGroups';
 export { useCheckIn } from './useCheckIn';
 export { useTokenManagement } from './useTokenManagement';
 export type { NewApiTokenForm } from './useTokenManagement';
+export { useUpdate } from './useUpdate';
+export type { UpdateCheckResult, UpdateSettings, ReleaseInfo, UseUpdateReturn } from './useUpdate';

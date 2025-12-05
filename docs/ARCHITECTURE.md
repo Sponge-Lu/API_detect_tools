@@ -63,6 +63,7 @@ src/
 │   ├── unified-config-manager.ts  # 统一配置管理 (config.json)
 │   ├── backup-manager.ts          # 本地备份管理
 │   ├── webdav-manager.ts          # WebDAV 云端备份管理
+│   ├── update-service.ts          # 软件更新服务
 │   ├── main.ts                    # 主进程入口
 │   └── preload.ts                 # 预加载脚本 (IPC 桥接)
 │
@@ -115,6 +116,7 @@ src/
 - **ChromeManager**: 管理 Puppeteer 实例的生命周期。负责启动浏览器、管理页面、注入脚本、提取 LocalStorage/Cookie 信息。支持浏览器复用和崩溃自动重启。
 - **UnifiedConfigManager**: 负责 `config.json` 的读写，保证配置数据的原子性和一致性。支持前端兼容层，在保存旧格式配置时自动保留 WebDAV 等扩展配置。
 - **WebDAVManager**: 负责 WebDAV 云端备份功能，包括连接测试、备份上传/下载/删除、自动清理旧备份等。使用动态 import 加载 ESM 模块以兼容 Electron 的 CommonJS 环境。
+- **UpdateService**: 负责软件更新检测功能，通过 GitHub Releases API 获取最新版本信息，支持正式版本和预发布版本的检测，提供版本比较和下载链接打开功能。
 
 ### 认证与安全
 
