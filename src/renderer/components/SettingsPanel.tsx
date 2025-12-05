@@ -56,7 +56,6 @@ export function SettingsPanel({
     error: updateError,
     settings: updateSettings,
     checkForUpdates,
-    openDownloadUrl,
     updateSettings: saveUpdateSettings,
   } = useUpdate();
 
