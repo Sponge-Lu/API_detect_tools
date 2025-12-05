@@ -574,13 +574,32 @@ function App() {
         // 清空搜索时立即收起所有站点
         setExpandedSites(new Set());
       } else if (config?.sites?.length) {
-        // 有搜索内容时，防抖展开所有站点（300ms）
+        // 有搜索内容时，防抖展开所有站点（100ms，仅用于避免输入时频繁触发）
         expandDebounceRef.current = setTimeout(() => {
+          // 为所有站点加载缓存数据
+          config.sites.forEach(site => {
+            const siteResult = results.find(r => r.name === site.name);
+            if (siteResult) {
+              setApiKeys(site.name, siteResult.apiKeys || []);
+              setUserGroups(site.name, siteResult.userGroups || {});
+              setModelPricing(site.name, siteResult.modelPricing || { data: {} });
+            }
+          });
           setExpandedSites(new Set(config.sites.map(site => site.name)));
-        }, 300);
+        }, 100);
       }
     },
-    [modelSearch, clearAllModelSearch, setGlobalModelSearch, setExpandedSites, config?.sites]
+    [
+      modelSearch,
+      clearAllModelSearch,
+      setGlobalModelSearch,
+      setExpandedSites,
+      config?.sites,
+      results,
+      setApiKeys,
+      setUserGroups,
+      setModelPricing,
+    ]
   );
 
   // 分组标签拖拽排序处理函数
@@ -661,7 +680,15 @@ function App() {
       // 收起全部
       setExpandedSites(new Set());
     } else {
-      // 展开全部 - 数据在渲染时按需从 results 读取，无需预加载
+      // 展开全部 - 同时为所有站点加载缓存数据
+      allSiteNames.forEach(siteName => {
+        const siteResult = results.find(r => r.name === siteName);
+        if (siteResult) {
+          setApiKeys(siteName, siteResult.apiKeys || []);
+          setUserGroups(siteName, siteResult.userGroups || {});
+          setModelPricing(siteName, siteResult.modelPricing || { data: {} });
+        }
+      });
       setExpandedSites(new Set(allSiteNames));
     }
   };

@@ -18,6 +18,7 @@ Thumbs.db
 .vscode/
 .idea/
 .trae/
+.kiro
 
 # Secrets & env
 .env*

@@ -3,10 +3,14 @@
  * 包含用户分组、API Keys 列表、模型列表
  */
 
-import { Plus, Copy, Eye, EyeOff, Trash2, Loader2 } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { Plus, Copy, Eye, EyeOff, Trash2, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import type { SiteConfig } from '../../../shared/types/site';
 import type { DetectionResult } from '../../App';
 import { getGroupTextColor, getGroupIcon } from '../../utils/groupStyle';
+
+// 每页显示的模型数量
+const MODELS_PER_PAGE = 50;
 
 interface SiteCardDetailsProps {
   site: SiteConfig;
@@ -117,6 +121,21 @@ export function SiteCardDetails({
 
   const filteredApiKeys = getFilteredApiKeys();
   const filteredModels = getFilteredModels(allModels);
+
+  // 模型列表分页状态
+  const [showAllModels, setShowAllModels] = useState(false);
+
+  // 计算显示的模型列表（有搜索时显示全部匹配结果，否则分页）
+  const displayedModels = useMemo(() => {
+    const hasSearch = globalModelSearch || modelSearch;
+    if (hasSearch || showAllModels) {
+      return filteredModels;
+    }
+    return filteredModels.slice(0, MODELS_PER_PAGE);
+  }, [filteredModels, showAllModels, globalModelSearch, modelSearch]);
+
+  const hasMoreModels =
+    filteredModels.length > MODELS_PER_PAGE && !globalModelSearch && !modelSearch;
 
   return (
     <div
@@ -330,7 +349,7 @@ export function SiteCardDetails({
           </div>
           <div className="max-h-32 overflow-y-auto p-1 bg-slate-50 dark:bg-slate-900/80 rounded border border-slate-200/50 dark:border-slate-700/50">
             <div className="flex flex-wrap gap-0.5">
-              {filteredModels.map((model, idx) => {
+              {displayedModels.map((model, idx) => {
                 const pricingData = modelPricing?.data?.[model] || modelPricing?.[model];
                 let quotaType = pricingData?.quota_type;
                 if (quotaType === undefined && pricingData?.type) {
@@ -442,6 +461,27 @@ export function SiteCardDetails({
                 );
               })}
             </div>
+            {/* 显示更多/收起按钮 */}
+            {hasMoreModels && (
+              <div className="flex justify-center mt-1 pt-1 border-t border-slate-200/50 dark:border-slate-700/50">
+                <button
+                  onClick={() => setShowAllModels(!showAllModels)}
+                  className="px-2 py-0.5 text-xs text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-900/30 rounded flex items-center gap-0.5 transition-colors"
+                >
+                  {showAllModels ? (
+                    <>
+                      <ChevronUp className="w-3 h-3" />
+                      收起 (显示前 {MODELS_PER_PAGE} 个)
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="w-3 h-3" />
+                      显示全部 {filteredModels.length} 个模型
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
