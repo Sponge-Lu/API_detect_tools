@@ -1,4 +1,4 @@
-﻿import axios from 'axios';
+import axios from 'axios';
 import type { SiteConfig } from './types/token';
 import { requestManager, RequestManager } from './utils/request-manager';
 import { getAllUserIdHeaders } from '../shared/utils/headers';

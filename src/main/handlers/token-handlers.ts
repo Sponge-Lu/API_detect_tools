@@ -1,4 +1,4 @@
-﻿import Logger from '../utils/logger';
+import Logger from '../utils/logger';
 /**
  * 令牌管理相关 IPC 处理器
  */

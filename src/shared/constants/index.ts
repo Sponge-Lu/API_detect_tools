@@ -140,15 +140,15 @@ export const LIGHT_THEME_BG_COLOR = '#f8fafc';
 /** 站点列表默认列宽（像素） */
 export const DEFAULT_COLUMN_WIDTHS = [
   110, // 站点
-  70, // 状态
-  90, // 余额
+  60, // 状态
+  75, // 余额
   75, // 今日消费
-  70, // 总 Token
-  70, // 输入
-  70, // 输出
-  55, // 请求
-  55, // RPM
-  55, // TPM
+  60, // 总 Token
+  50, // 输入
+  50, // 输出
+  50, // 请求
+  50, // RPM
+  50, // TPM
   50, // 模型数
   60, // 更新时间
 ] as const;
