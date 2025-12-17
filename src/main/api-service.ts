@@ -754,8 +754,7 @@ export class ApiService {
     let lastError: any = null;
     let sharedPage: any = null;
     let sharedPageRelease: (() => void) | undefined = undefined;
-    // 跟踪是否有端点返回"成功但无数据"的情况（可能是权限问题）
-    let hasEmptySuccessResponse = false;
+    let hasEmptyResponse = false; // 跟踪是否有端点返回空数组（session可能过期）
 
     for (const endpoint of endpoints) {
       const url = `${site.url.replace(/\/$/, '')}${endpoint}`;
@@ -783,15 +782,12 @@ export class ApiService {
               dataKeys: data?.data ? Object.keys(data.data) : [],
             });
 
-            // Done Hub可能返回空的 { success: true, message: "..." } 没有data
-            // 这种情况说明 Session 已过期或需要特殊权限
-            // 注意：返回 null 表示需要立即终止尝试，与返回空数组不同
+            // 某些站点可能返回 { success: true, message: "..." } 没有data字段
+            // 这不一定是认证问题，可能只是该端点不适用于此站点类型
+            // 返回空数组，继续尝试其他端点
             if (!data || !('data' in data)) {
-              Logger.warn('⚠️ [ApiService] 响应中没有data字段，可能是 Session 已过期');
-              // 标记检测到空成功响应
-              hasEmptySuccessResponse = true;
-              // 返回 null 让外层知道应该停止尝试
-              return null;
+              Logger.info('ℹ️ [ApiService] 响应中没有data字段，尝试下一个端点');
+              return [];
             }
 
             // 格式1: Done Hub嵌套data { success: true, data: { data: [...], total_count } }
@@ -860,12 +856,6 @@ export class ApiService {
           }
         );
 
-        // 如果返回 null，说明检测到空成功响应（Session 过期），立即停止尝试
-        if (result.result === null) {
-          Logger.warn('⛔ [ApiService] 检测到返回成功但无数据，停止尝试其他端点');
-          break;
-        }
-
         // 如果成功获取到模型，返回结果
         if (result.result && result.result.length > 0) {
           return {
@@ -875,7 +865,8 @@ export class ApiService {
           };
         }
 
-        // 如果返回空数组，尝试下一个端点
+        // 如果返回空数组，标记并继续尝试下一个端点（不存在站点没有模型的情况，空数组可能是session过期）
+        hasEmptyResponse = true;
         Logger.info(`ℹ️ [ApiService] 端点 ${endpoint} 返回空模型列表，尝试下一个端点...`);
 
         // 保存 page 和 pageRelease 以便后续复用
@@ -889,36 +880,19 @@ export class ApiService {
       } catch (error: any) {
         Logger.warn(`⚠️ [ApiService] 端点 ${endpoint} 失败:`, error.message);
         lastError = error;
-
-        // 对于致命状态码（如 400/403/5xx 等）或超时错误，继续尝试其它端点通常没有意义，直接终止
-        const status = error?.response?.status;
-        if (
-          this.isFatalHttpStatus(status) ||
-          this.isTimeoutError(error) ||
-          this.isCertError(error)
-        ) {
-          if (this.isFatalHttpStatus(status)) {
-            Logger.warn(`⛔ [ApiService] 检测到致命HTTP状态码 ${status}，停止尝试其它模型端点`);
-          } else if (this.isCertError(error)) {
-            Logger.warn('⛔ [ApiService] 检测到证书错误（可能证书过期），停止尝试其它模型端点');
-          } else {
-            Logger.warn('⛔ [ApiService] 检测到超时错误，停止尝试其它模型端点');
-          }
-          break;
-        }
-
+        // 继续尝试下一个端点，不提前终止
         continue;
       }
     }
 
-    // 所有端点都失败，直接结束当前站点检测
-    // 优先处理 hasEmptySuccessResponse，因为它说明有端点已成功响应但返回空数据
-    // 这通常意味着登录已过期或 session 失效，而不是端点本身的问题
-    if (hasEmptySuccessResponse) {
-      Logger.error('❌ [ApiService] 模型接口返回成功但无数据，可能登录已过期');
-      throw new Error('模型接口返回成功但无数据 (登录可能已过期，请点击"重新获取"登录站点)');
+    // 所有端点都尝试完毕，综合判断结果
+    // 优先处理空响应（不存在站点没有模型的情况，空数组意味着session过期）
+    if (hasEmptyResponse) {
+      Logger.error('❌ [ApiService] 模型接口返回空数组，可能是session过期');
+      throw new Error('模型接口返回空数据 (登录可能已过期，请点击"重新获取"登录站点)');
     }
 
+    // 所有端点都抛出错误
     if (lastError) {
       Logger.error('❌ [ApiService] 所有模型接口都失败');
       let baseMessage = `模型接口请求失败: ${lastError.message || lastError}`;
@@ -930,7 +904,6 @@ export class ApiService {
       throw new Error(baseMessage);
     }
 
-    // 返回空结果（认为该站点暂无模型，不算致命错误）
     return { models: [], page: sharedPage, pageRelease: sharedPageRelease };
   }
 
@@ -1031,24 +1004,7 @@ export class ApiService {
       } catch (error: any) {
         Logger.info(`⚠️ [ApiService] 端点 ${endpoint} 获取余额失败，尝试下一个...`);
         lastError = error;
-
-        // 对于致命状态码或超时错误，直接终止余额查询，避免无意义的重试
-        const status = error?.response?.status;
-        if (
-          this.isFatalHttpStatus(status) ||
-          this.isTimeoutError(error) ||
-          this.isCertError(error)
-        ) {
-          if (this.isFatalHttpStatus(status)) {
-            Logger.warn(`⛔ [ApiService] 检测到致命HTTP状态码 ${status}，停止尝试其它余额端点`);
-          } else if (this.isCertError(error)) {
-            Logger.warn('⛔ [ApiService] 检测到证书错误（可能证书过期），停止尝试其它余额端点');
-          } else {
-            Logger.warn('⛔ [ApiService] 检测到超时错误，停止尝试其它余额端点');
-          }
-          break;
-        }
-
+        // 继续尝试下一个端点，不提前终止
         continue;
       }
     }

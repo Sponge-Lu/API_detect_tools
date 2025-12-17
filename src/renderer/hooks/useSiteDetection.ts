@@ -217,27 +217,7 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
           try {
             setDetectingSite(site.name);
             rawResult = await execDetect(true);
-
-            // 需要登录时提示并重试
-            if (rawResult.status === '失败' && isAuthenticationError(rawResult.error)) {
-              await window.electronAPI.launchChromeForLogin(site.url);
-              if (options.showDialog) {
-                const confirmed = await options.showDialog({
-                  type: 'alert',
-                  title: '需要登录',
-                  message: `请在打开的浏览器中登录「${site.name}」，登录完成后点击"继续"以获取数据。`,
-                  confirmText: '继续',
-                  cancelText: '跳过',
-                });
-                if (confirmed) {
-                  rawResult = await execDetect(false);
-                } else {
-                  upsertAuthError(site, rawResult.error || '');
-                }
-              } else {
-                rawResult = await execDetect(false);
-              }
-            }
+            // 认证错误不再立即弹窗，只收集错误，最后统一提醒
           } catch (error: any) {
             rawResult = {
               name: site.name,
