@@ -18,16 +18,37 @@ interface UseSiteDetectionOptions {
 }
 
 // 检测错误是否为认证/权限错误
+// 注意：仅 401/403 状态码或明确的登录/认证失败提示才算认证错误
+// 404 等其他错误不应该触发认证错误处理流程
 const isAuthenticationError = (error?: string): boolean => {
   if (!error) return false;
+
+  // 1. 检测 HTTP 状态码：只有 401/403 算认证错误
   const codeMatch = error.match(/status code (\d{3})/i);
-  if (codeMatch && (codeMatch[1] === '401' || codeMatch[1] === '403')) return true;
+  if (codeMatch) {
+    const statusCode = codeMatch[1];
+    // 404 等非认证相关状态码直接返回 false
+    if (statusCode !== '401' && statusCode !== '403') {
+      return false;
+    }
+    // 401/403 是认证错误
+    return true;
+  }
+
+  // 2. 检测明确的认证相关错误提示（匹配后端更新后的错误信息）
   return (
+    // 新错误信息（后端已更新）
+    error.includes('登录已过期') ||
+    error.includes('登录可能已过期') ||
+    error.includes('登录站点') ||
+    error.includes('未登录') ||
+    error.includes('请检查账号状态') ||
+    // 旧错误信息（兼容性保留）
     error.includes('请重新获取 access_token') ||
-    error.includes('请检查 access_token') ||
     error.includes('认证失败') ||
-    error.includes('权限不足') ||
-    error.includes('返回成功但无数据')
+    // 注意：单独的"权限不足"可能是业务权限问题，不一定需要重新登录
+    // 只有明确包含登录相关提示时才算认证错误
+    (error.includes('权限不足') && (error.includes('登录') || error.includes('凭证')))
   );
 };
 

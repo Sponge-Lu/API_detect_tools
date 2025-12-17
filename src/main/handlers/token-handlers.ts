@@ -5,6 +5,7 @@ import Logger from '../utils/logger';
 
 import { ipcMain, BrowserWindow } from 'electron';
 import type { TokenService } from '../token-service';
+import type { ChromeManager } from '../chrome-manager';
 
 // 发送站点初始化状态到渲染进程
 function sendSiteInitStatus(mainWindow: BrowserWindow | null, status: string) {
@@ -15,7 +16,7 @@ function sendSiteInitStatus(mainWindow: BrowserWindow | null, status: string) {
 
 export function registerTokenHandlers(
   tokenService: TokenService,
-  _tokenStorage: any, // 已废弃，保留参数兼容性
+  chromeManager: ChromeManager,
   getMainWindow: () => BrowserWindow | null
 ) {
   // 初始化站点账号
@@ -28,9 +29,18 @@ export function registerTokenHandlers(
         600000,
         (status: string) => sendSiteInitStatus(mainWindow, status)
       );
+      // 站点初始化完成后，关闭浏览器窗口
+      Logger.info('🧹 [TokenHandlers] 站点初始化完成，关闭浏览器...');
+      chromeManager.forceCleanup();
       return { success: true, data: siteAccount };
     } catch (error: any) {
       Logger.error('初始化站点失败:', error);
+      // 即使失败也要尝试关闭浏览器
+      try {
+        chromeManager.forceCleanup();
+      } catch (cleanupError) {
+        Logger.warn('⚠️ [TokenHandlers] 关闭浏览器失败:', cleanupError);
+      }
       return { success: false, error: error.message };
     }
   });

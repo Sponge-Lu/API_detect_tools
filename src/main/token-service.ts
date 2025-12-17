@@ -678,11 +678,18 @@ export class TokenService {
         };
       }
 
-      // 401/403 = 认证失败
-      if (status === 401 || status === 403) {
+      // 401 = 登录过期或未登录，403 = 权限不足
+      if (status === 401) {
         return {
           success: false,
-          message: '认证失败，请检查 access_token 是否有效',
+          message: '登录已过期或未登录，请重新登录站点获取凭证',
+          needManualCheckIn: true,
+        };
+      }
+      if (status === 403) {
+        return {
+          success: false,
+          message: '权限不足，请检查账号状态是否正常',
           needManualCheckIn: true,
         };
       }

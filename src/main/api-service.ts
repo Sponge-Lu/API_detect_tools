@@ -523,13 +523,20 @@ export class ApiService {
 
   /**
    * 为认证错误添加友好提示
+   *
+   * 错误码语义：
+   * - 401 Unauthorized: 未认证或认证失效（登录过期、access_token 失效）
+   * - 403 Forbidden: 已认证但权限不足（账号被禁用、无权访问该资源）
    */
   private formatAuthError(error: any, originalMessage: string): string {
     const status = error?.response?.status;
     if (status === 401) {
-      return `${originalMessage} (认证失败，请重新获取 access_token)`;
+      // 401 通常表示认证失效，可能是登录过期或 access_token 失效
+      // 引导用户重新登录站点，这会同时更新 Cookie 和 access_token
+      return `${originalMessage} (登录已过期或未登录，请点击"重新获取"登录站点)`;
     } else if (status === 403) {
-      return `${originalMessage} (权限不足，请重新获取 access_token)`;
+      // 403 表示权限不足，可能是账号状态异常
+      return `${originalMessage} (权限不足，请检查账号状态是否正常)`;
     }
     return originalMessage;
   }
@@ -777,12 +784,14 @@ export class ApiService {
             });
 
             // Done Hub可能返回空的 { success: true, message: "..." } 没有data
-            // 这种情况说明该站点没有可用模型或需要特殊权限
+            // 这种情况说明 Session 已过期或需要特殊权限
+            // 注意：返回 null 表示需要立即终止尝试，与返回空数组不同
             if (!data || !('data' in data)) {
-              Logger.warn('⚠️ [ApiService] 响应中没有data字段，可能需要特殊权限或该站点无模型');
+              Logger.warn('⚠️ [ApiService] 响应中没有data字段，可能是 Session 已过期');
               // 标记检测到空成功响应
               hasEmptySuccessResponse = true;
-              return [];
+              // 返回 null 让外层知道应该停止尝试
+              return null;
             }
 
             // 格式1: Done Hub嵌套data { success: true, data: { data: [...], total_count } }
@@ -851,6 +860,12 @@ export class ApiService {
           }
         );
 
+        // 如果返回 null，说明检测到空成功响应（Session 过期），立即停止尝试
+        if (result.result === null) {
+          Logger.warn('⛔ [ApiService] 检测到返回成功但无数据，停止尝试其他端点');
+          break;
+        }
+
         // 如果成功获取到模型，返回结果
         if (result.result && result.result.length > 0) {
           return {
@@ -897,23 +912,22 @@ export class ApiService {
     }
 
     // 所有端点都失败，直接结束当前站点检测
+    // 优先处理 hasEmptySuccessResponse，因为它说明有端点已成功响应但返回空数据
+    // 这通常意味着登录已过期或 session 失效，而不是端点本身的问题
+    if (hasEmptySuccessResponse) {
+      Logger.error('❌ [ApiService] 模型接口返回成功但无数据，可能登录已过期');
+      throw new Error('模型接口返回成功但无数据 (登录可能已过期，请点击"重新获取"登录站点)');
+    }
+
     if (lastError) {
       Logger.error('❌ [ApiService] 所有模型接口都失败');
       let baseMessage = `模型接口请求失败: ${lastError.message || lastError}`;
       if (this.isCertError(lastError)) {
         baseMessage += ' (证书错误，站点 HTTPS 证书可能已过期或不受信任)';
-      } else if (hasEmptySuccessResponse) {
-        baseMessage += ' (部分接口返回成功但无数据，请检查 access_token 权限或重新获取)';
       } else {
         baseMessage = this.formatAuthError(lastError, baseMessage);
       }
       throw new Error(baseMessage);
-    }
-
-    // 没有错误但也没有模型
-    if (hasEmptySuccessResponse) {
-      // 接口返回成功但没有数据，可能是权限问题
-      throw new Error('模型接口返回成功但无数据，请检查 access_token 权限或重新获取');
     }
 
     // 返回空结果（认为该站点暂无模型，不算致命错误）

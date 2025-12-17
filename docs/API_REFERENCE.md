@@ -1,386 +1,920 @@
 # API 接口参考文档
 
-> 本文档整理了 One API 系列项目（one-api、new-api、Veloera、one-hub、done-hub、VoAPI、Super-API）及相关管理插件（one-api-hub、all-api-hub）的完整接口信息。
+> 本文档整理了 One API 系列项目（one-api、new-api、Veloera、one-hub、done-hub、VoAPI、Super-API）的完整接口信息。
 >
-> **最后更新时间**：2025-12-02
-> **版本**：v2.1.0
+> **最后更新时间**：2025-12-12
+> **版本**：v2.2.0
 
 ---
 
-## 1. 认证系统
+## 1. 项目概述
 
-### 1.1 认证方式
-
-所有 API 项目支持两种主要认证方式：
-
-1.  **Cookie 认证 (Session)**
-    - 适用于 Web 管理界面。
-    - 通过登录接口获取 Session Cookie。
-    - Cookie 自动存储在浏览器中。
-
-2.  **Token 认证 (Bearer Token)**
-    - 适用于 API 调用。
-    - 在用户面板生成 Access Token。
-    - 请求头格式：`Authorization: Bearer <token>`
-
-### 1.2 权限级别
-
-系统定义了三个权限级别：
-
-1.  **普通用户 (Common User)**
-    - 权限值：1
-    - 可管理自己的令牌、查看日志和额度、充值。
-
-2.  **管理员 (Admin User)**
-    - 权限值：10
-    - 拥有普通用户权限，可管理所有用户、渠道和令牌，查看所有日志。
-
-3.  **超级管理员 (Root User)**
-    - 权限值：100
-    - 拥有管理员权限，可修改系统设置、管理管理员权限。
-
-### 1.3 Token 格式
-
--   **标准格式**：`sk-<随机字符串>`
--   **渠道绑定格式**：`sk-<token>-<channel_id>` （管理员专用）
+| 项目 | 基础框架 | 特点 |
+| :--- | :--- | :--- |
+| **one-api** | 原版 | 基础功能，最稳定 |
+| **new-api** | one-api 二开 | 支持系统初始化、2FA、Passkey、Stripe支付 |
+| **Veloera** | new-api 二开 | 签到功能、消息系统、模型映射 |
+| **one-hub** | one-api 二开 | 用户组管理、渠道标签、数据分析 |
+| **done-hub** | one-hub 二开 | 邀请码系统、发票系统、WebAuthn |
+| **VoAPI** | 独立开发 | 规则引擎、多货币、日志分表 |
+| **Super-API** | new-api 二开 | 闭源，UI重构、签到、礼品码 |
 
 ---
 
-## 2. 系统初始化接口
+## 2. 认证系统
 
-### 2.1 初始化状态检查
--   **接口**：`GET /api/setup`
--   **说明**：检查系统是否已完成初始化（仅 new-api 支持）。
--   **响应**：
-    ```json
-    {
-      "success": true,
-      "data": { "initialized": false, "username": "", "password": "" }
-    }
-    ```
+### 2.1 认证方式
 
-### 2.2 系统初始化
--   **接口**：`POST /api/setup`
--   **说明**：首次安装时初始化系统，创建 root 用户（仅 new-api 支持）。
--   **请求**：`{ "username": "root", "password": "your_password" }`
+1. **Cookie 认证 (Session)** - 适用于 Web 管理界面
+2. **Token 认证 (Bearer Token)** - 请求头：`Authorization: Bearer <token>`
 
 ---
 
-## 3. 公共信息接口
+## 3. 公共信息接口 (`/api`)
 
-### 3.1 获取系统状态
--   **接口**：`GET /api/status`
--   **说明**：获取系统基本信息和配置状态。
--   **权限**：公开。
+| 接口 | 方法 | 说明 | 支持项目 |
+| :--- | :---: | :--- | :--- |
+| `/api/status` | GET | 系统状态 | 全部 |
+| `/api/models` | GET | 模型列表(仪表盘) | 全部 |
+| `/api/pricing` | GET | 定价信息 | new-api, Veloera |
+| `/api/prices` | GET | 定价列表 | one-hub, done-hub |
+| `/api/available_model` | GET | 可用模型(含价格) | one-hub, done-hub |
+| `/api/user_group_map` | GET | 用户组倍率 | one-hub, done-hub |
 
-### 3.2 获取公告信息
--   **接口**：`GET /api/notice`
--   **权限**：公开。
+---
 
-### 3.3 获取关于信息
--   **接口**：`GET /api/about`
--   **权限**：公开。
+## 4. 用户接口 (`/api/user`)
 
-### 3.4 获取模型列表 (仪表盘)
--   **接口**：`GET /api/models`
--   **说明**：获取所有渠道类型支持的模型列表。
--   **权限**：普通用户。
+### 4.1 个人信息 (需用户认证)
 
-### 3.5 获取用户组列表
--   **接口**：`GET /api/group`
--   **说明**：获取所有用户组名称。
--   **权限**：管理员。
+| 接口 | 方法 | 说明 | 支持项目 |
+| :--- | :---: | :--- | :--- |
+| `/api/user/self` | GET | 获取当前用户信息 | 全部 |
+| `/api/user/self` | PUT | 更新当前用户信息 | 全部 |
+| `/api/user/self` | DELETE | 删除当前用户 | one-api, new-api, Veloera |
+| `/api/user/token` | GET | 生成访问令牌 | 全部 |
+| `/api/user/aff` | GET | 获取邀请码 | 全部 |
+| `/api/user/models` | GET | 获取用户可用模型 | new-api, Veloera |
+| `/api/user/available_models` | GET | 获取用户可用模型 | one-api |
+| `/api/user/self/groups` | GET | 获取用户分组 | new-api, Veloera |
+| `/api/user/groups` | GET | 获取用户组列表 | new-api, Veloera |
 
-### 3.6 获取定价信息
--   **接口**：`GET /api/pricing` (New API) 或 `GET /api/available_model` (Done Hub/One Hub)
--   **说明**：获取模型定价信息。
--   **权限**：公开或用户。
+### 4.2 充值相关 (需用户认证)
 
-**New API 响应结构**:
+| 接口 | 方法 | 说明 | 支持项目 |
+| :--- | :---: | :--- | :--- |
+| `/api/user/topup` | POST | 兑换码充值 | 全部 |
+| `/api/user/topup/self` | GET | 充值记录 | new-api |
+| `/api/user/topup/info` | GET | 充值信息 | new-api |
+
+### 4.3 仪表盘 (需用户认证)
+
+| 接口 | 方法 | 说明 | 支持项目 |
+| :--- | :---: | :--- | :--- |
+| `/api/user/dashboard` | GET | 用户仪表盘 | one-api, one-hub, done-hub |
+| `/api/user/dashboard/rate` | GET | 实时速率 | one-hub, done-hub |
+
+
+### 4.4 特色功能 (需用户认证)
+
+| 接口 | 方法 | 说明 | 支持项目 |
+| :--- | :---: | :--- | :--- |
+| `/api/user/check_in_status` | GET | 签到状态 | Veloera |
+| `/api/user/check_in` | POST | 每日签到 | Veloera |
+
+---
+
+## 5. 令牌管理接口 (`/api/token`)
+
+所有接口需用户认证。
+
+| 接口 | 方法 | 说明 |
+| :--- | :---: | :--- |
+| `/api/token/` | GET | 获取令牌列表 |
+| `/api/token/search` | GET | 搜索令牌 |
+| `/api/token/:id` | GET | 获取指定令牌 |
+| `/api/token/` | POST | 创建令牌 |
+| `/api/token/` | PUT | 更新令牌 |
+| `/api/token/:id` | DELETE | 删除令牌 |
+| `/api/token/batch` | POST | 批量删除 (new-api) |
+| `/api/token/playground` | GET | 获取Playground令牌 (one-hub, done-hub) |
+
+---
+
+## 6. 日志接口 (`/api/log`)
+
+| 接口 | 方法 | 权限 | 说明 |
+| :--- | :---: | :--- | :--- |
+| `/api/log/self` | GET | 用户 | 获取当前用户日志 |
+| `/api/log/self/search` | GET | 用户 | 搜索用户日志 |
+| `/api/log/self/stat` | GET | 用户 | 用户日志统计 |
+| `/api/log/self/export` | GET | 用户 | 导出用户日志 (done-hub) |
+| `/api/log/token` | GET | 用户 | 按令牌查询日志 (new-api, Veloera) |
+
+---
+
+## 7. 详细响应结构
+
+### 7.1 标准响应格式
+
+所有管理 API 接口返回统一的 JSON 格式：
+
+**成功响应：**
 ```json
 {
   "success": true,
-  "data": [
-    {
-      "model_name": "gpt-4",
-      "quota_type": 0,           // 0=按量, 1=按次
-      "model_ratio": 15,         // 基础倍率
-      "model_price": 0.03,       // 按次价格
-      "completion_ratio": 1.5,   // 输出/输入比
-      "enable_groups": ["default", "vip"]
-    }
-  ],
-  "group_ratio": { "default": 1, "vip": 0.8 }
+  "message": "",
+  "data": { ... }
 }
 ```
 
-**Done Hub 响应结构**:
+**错误响应：**
+```json
+{
+  "success": false,
+  "message": "错误信息"
+}
+```
+
+### 7.1.1 各项目响应结构差异总览
+
+| 特性 | one-api | new-api | Veloera | one-hub | done-hub |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **登录响应含 group 字段** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **登录响应含 avatar_url 字段** | ❌ | ❌ | ❌ | ✅ | ✅ |
+| **2FA 登录流程** | ❌ | ✅ | ❌ | ❌ | ❌ |
+| **用户信息含 permissions 字段** | ❌ | ✅ | ❌ | ❌ | ❌ |
+| **用户信息含 sidebar_modules 字段** | ❌ | ✅ | ❌ | ❌ | ❌ |
+| **用户信息含 stripe_customer 字段** | ❌ | ✅ | ❌ | ❌ | ❌ |
+| **分页响应格式** | 数组 | 对象 | 对象 | 对象 | 对象 |
+| **实时速率接口** | ❌ | ❌ | ❌ | ✅ | ✅ |
+| **消息系统接口** | ❌ | ❌ | ✅ | ❌ | ❌ |
+
+### 7.1.2 分页响应格式差异
+
+**one-api 分页响应（数组格式）：**
 ```json
 {
   "success": true,
+  "message": "",
+  "data": [
+    { "id": 1, ... },
+    { "id": 2, ... }
+  ]
+}
+```
+
+**new-api/Veloera/one-hub/done-hub 分页响应（对象格式）：**
+```json
+{
+  "success": true,
+  "message": "",
   "data": {
-    "gpt-4": {
-      "groups": ["vip"],
-      "price": {
-        "type": "tokens",      // "tokens"=按量, "times"=按次
-        "input": 30,           // 已包含分组倍率
-        "output": 30
-      }
-    }
+    "items": [
+      { "id": 1, ... },
+      { "id": 2, ... }
+    ],
+    "total": 100,
+    "page": 1,
+    "page_size": 10
   }
 }
 ```
 
 ---
 
-## 4. 令牌管理接口
+### 7.2 公共信息接口响应
 
-### 4.1 获取令牌列表
--   **接口**：`GET /api/token`
--   **参数**：`p` (页码), `order` (排序)
--   **权限**：普通用户。
+#### `/api/status` - 系统状态
+```json
+{
+  "success": true,
+  "message": "",
+  "data": {
+    "version": "v0.0.1",
+    "start_time": 1699999999,
+    "email_verification": true,
+    "github_oauth": true,
+    "github_client_id": "xxx",
+    "linuxdo_oauth": false,
+    "telegram_oauth": false,
+    "system_name": "One API",
+    "logo": "/logo.png",
+    "footer_html": "",
+    "wechat_qrcode": "",
+    "wechat_login": false,
+    "server_address": "https://api.example.com",
+    "turnstile_check": false,
+    "turnstile_site_key": "",
+    "top_up_link": "",
+    "quota_per_unit": 500000,
+    "display_in_currency": false,
+    "enable_batch_update": false,
+    "enable_drawing": true,
+    "enable_task": true,
+    "oidc_enabled": false,
+    "passkey_login": false,
+    "setup": true
+  }
+}
+```
 
-### 4.2 创建令牌
--   **接口**：`POST /api/token`
--   **权限**：普通用户。
--   **请求体**：
-    ```json
+#### `/api/models` - 模型列表(仪表盘)
+```json
+{
+  "success": true,
+  "message": "",
+  "data": ["gpt-3.5-turbo", "gpt-4", "gpt-4-turbo", "claude-3-opus"]
+}
+```
+
+#### `/api/pricing` - 定价信息 (new-api/Veloera)
+```json
+{
+  "success": true,
+  "data": [
     {
-      "name": "新令牌",
-      "expired_time": -1,
-      "remain_quota": 1000000,
-      "unlimited_quota": false,
-      "models": "gpt-3.5-turbo,gpt-4",
-      "subnet": ""
+      "model_name": "gpt-4",
+      "quota_type": 0,
+      "model_ratio": 15,
+      "model_price": 0.03,
+      "completion_ratio": 1.5,
+      "enable_groups": ["default", "vip"]
     }
-    ```
+  ],
+  "group_ratio": { "default": 1, "vip": 0.8 },
+  "usable_group": { "default": "默认", "vip": "VIP" },
+  "vendors": [
+    { "id": 1, "name": "OpenAI", "icon": "openai" }
+  ],
+  "supported_endpoint": {
+    "chat_completions": true,
+    "completions": true,
+    "embeddings": true
+  },
+  "auto_groups": ["auto"]
+}
+```
 
-### 4.3 更新令牌
--   **接口**：`PUT /api/token`
--   **参数**：`status_only` (仅更新状态)
--   **权限**：普通用户。
-
-### 4.4 删除令牌
--   **接口**：`DELETE /api/token/:id`
--   **权限**：普通用户。
-
-### 4.5 获取令牌状态 (OpenAI 兼容)
--   **接口**：`GET /v1/dashboard/billing/credit_grants`
--   **权限**：Token 认证。
-
----
-
-## 5. 日志查询接口
-
-### 5.1 获取所有日志
--   **接口**：`GET /api/log`
--   **权限**：管理员。
-
-### 5.2 获取当前用户日志
--   **接口**：`GET /api/log/self`
--   **权限**：普通用户。
-
-### 5.3 获取日志统计
--   **接口**：`GET /api/log/self/stat`
--   **说明**：获取当前用户的日志统计信息（消费额度、Token 数）。
--   **权限**：普通用户。
-
----
-
-## 6. 充值与支付接口
-
-### 6.1 获取充值记录
--   **接口**：`GET /api/user/topup/self`
--   **权限**：普通用户。
-
-### 6.2 兑换码充值
--   **接口**：`POST /api/user/topup`
--   **请求**：`{ "key": "兑换码" }`
-
-### 6.3 在线支付
--   **接口**：`POST /api/user/pay` (New API/Veloera)
--   **接口**：`POST /api/user/stripe/pay` (New API Stripe)
-
----
-
-## 7. 个人信息接口
-
-### 7.1 获取当前用户信息
--   **接口**：`GET /api/user/self`
--   **权限**：普通用户。
--   **响应**：
-    ```json
+#### `/api/prices` - 定价列表 (one-hub/done-hub)
+```json
+{
+  "success": true,
+  "message": "",
+  "data": [
     {
-      "success": true,
-      "data": {
-        "id": 1,
-        "username": "user",
-        "quota": 1000000,
-        "used_quota": 500,
-        "role": 1,
-        "group": "default"
+      "model": "gpt-4",
+      "type": "tokens",
+      "channel_type": 1,
+      "input": 30,
+      "output": 60
+    }
+  ]
+}
+```
+
+#### `/api/available_model` - 可用模型 (one-hub/done-hub)
+```json
+{
+  "success": true,
+  "message": "",
+  "data": {
+    "gpt-4": {
+      "groups": ["default", "vip"],
+      "owned_by": "openai",
+      "price": {
+        "type": "tokens",
+        "input": 30,
+        "output": 60,
+        "channel_type": 1
+      }
+    },
+    "gpt-3.5-turbo": {
+      "groups": ["default"],
+      "owned_by": "openai",
+      "price": {
+        "type": "tokens",
+        "input": 0.5,
+        "output": 1.5,
+        "channel_type": 1
       }
     }
-    ```
-
-### 7.2 生成个人访问令牌
--   **接口**：`GET /api/user/token`
--   **说明**：生成一个永久有效的 Access Token。
-
-### 7.3 获取用户分组
--   **接口**：`GET /api/user/self/groups` (New API/Veloera)
--   **响应**：包含分组名称和倍率信息。
-
----
-
-## 8. OpenAI 兼容接口
-
-所有项目均提供完全兼容 OpenAI API 格式的接口，通常位于 `/v1` 路径下。
-
--   **聊天补全**：`POST /v1/chat/completions`
--   **文本补全**：`POST /v1/completions`
--   **图像生成**：`POST /v1/images/generations`
--   **嵌入向量**：`POST /v1/embeddings`
--   **语音转文本**：`POST /v1/audio/transcriptions`
--   **文本转语音**：`POST /v1/audio/speech`
-
----
-
-## 9. 站点架构差异对比
-
-| 功能特性 | one-api | new-api | one-hub | done-hub | Veloera |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **基础接口** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **系统初始化** | ❌ | ✅ | ❌ | ❌ | ✅ |
-| **在线充值** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **令牌分组** | ❌ | ✅ | ❌ | ❌ | ❌ |
-| **Midjourney** | ❌ | ✅ | ✅ | ✅ | ✅ |
-| **签到功能** | ❌ | ❌ | ❌ | ❌ | ✅ |
-| **LinuxDO登录** | ❌ | ✅ | ❌ | ✅ | ✅ |
-| **数据分析** | ❌ | ✅ | ✅ | ✅ | ✅ |
-
-### 关键差异总结
-
-1.  **用户模型查询**：
-    -   one-api: `/api/user/available_models`
-    -   new-api/Veloera: `/api/user/models`
-    -   one-hub/done-hub: 使用渠道模型逻辑
-
-2.  **定价信息**：
-    -   New API: `/api/pricing` (基础价格 + 倍率)
-    -   Done Hub: `/api/available_model` (最终价格)
-
-3.  **用户组管理**：
-    -   one-api/new-api: 仅 `/api/group`
-    -   one-hub/done-hub: 完整的 `/api/user_group` CRUD
-
----
-
----
-
-## 10. 内部 IPC 接口 (Electron)
-
-### 10.1 WebDAV 云端备份接口
-
-以下接口通过 Electron IPC 通信，供渲染进程调用：
-
-| 通道名称 | 说明 | 参数 | 返回值 |
-| :--- | :--- | :--- | :--- |
-| `webdav:test-connection` | 测试 WebDAV 连接 | `config: WebDAVConfig` | `{ success, error? }` |
-| `webdav:save-config` | 保存 WebDAV 配置 | `config: WebDAVConfig` | `{ success, error? }` |
-| `webdav:get-config` | 获取 WebDAV 配置 | - | `{ success, data?: WebDAVConfig }` |
-| `webdav:upload-backup` | 上传备份到云端 | - | `{ success, data?: filename }` |
-| `webdav:list-backups` | 列出云端备份 | - | `{ success, data?: WebDAVBackupInfo[] }` |
-| `webdav:delete-backup` | 删除云端备份 | `filename: string` | `{ success, error? }` |
-| `webdav:restore-backup` | 从云端恢复备份 | `filename: string` | `{ success, error? }` |
-
-**WebDAVConfig 结构**:
-```typescript
-interface WebDAVConfig {
-  enabled: boolean;      // 是否启用
-  serverUrl: string;     // 服务器地址
-  username: string;      // 用户名
-  password: string;      // 密码
-  remotePath: string;    // 远程备份路径
-  maxBackups: number;    // 最大备份数量
+  }
 }
 ```
 
-**WebDAVBackupInfo 结构**:
-```typescript
-interface WebDAVBackupInfo {
-  filename: string;      // 文件名
-  path: string;          // 完整路径
-  lastModified: Date;    // 最后修改时间
-  size: number;          // 文件大小 (字节)
+#### `/api/ownedby` - 模型厂商列表 (one-hub/done-hub)
+```json
+{
+  "success": true,
+  "message": "",
+  "data": [
+    { "id": 1, "name": "OpenAI" },
+    { "id": 14, "name": "Anthropic" },
+    { "id": 25, "name": "Google Gemini" }
+  ]
+}
+```
+
+#### `/api/user_group_map` - 用户组倍率 (one-hub/done-hub)
+```json
+{
+  "success": true,
+  "message": "",
+  "data": {
+    "default": 1.0,
+    "vip": 0.8,
+    "svip": 0.6
+  }
 }
 ```
 
 ---
 
-### 10.2 软件更新接口
+### 7.3 用户接口响应
 
-以下接口通过 Electron IPC 通信，供渲染进程调用：
+#### `/api/user/self` - 获取当前用户信息
 
-| 通道名称 | 说明 | 参数 | 返回值 |
-| :--- | :--- | :--- | :--- |
-| `update:check` | 检查软件更新 | - | `UpdateCheckResult` |
-| `update:get-current-version` | 获取当前版本 | - | `string` |
-| `update:open-download` | 打开下载链接 | `url: string` | - |
-| `update:get-settings` | 获取更新设置 | - | `UpdateSettings` |
-| `update:save-settings` | 保存更新设置 | `settings: UpdateSettings` | - |
-
-**UpdateCheckResult 结构**:
-```typescript
-interface UpdateCheckResult {
-  hasUpdate: boolean;              // 是否有正式版更新
-  hasPreReleaseUpdate: boolean;    // 是否有预发布版更新
-  currentVersion: string;          // 当前版本
-  latestVersion: string;           // 最新正式版本
-  latestPreReleaseVersion?: string; // 最新预发布版本
-  releaseInfo?: ReleaseInfo;       // 正式版详情
-  preReleaseInfo?: ReleaseInfo;    // 预发布版详情
+**one-api 用户信息：**
+```json
+{
+  "success": true,
+  "message": "",
+  "data": {
+    "id": 1,
+    "username": "user",
+    "display_name": "显示名称",
+    "email": "user@example.com",
+    "role": 1,
+    "status": 1,
+    "quota": 1000000,
+    "used_quota": 500,
+    "request_count": 100,
+    "group": "default",
+    "aff_code": "XXXX",
+    "inviter_id": 0,
+    "github_id": "",
+    "wechat_id": "",
+    "lark_id": "",
+    "oidc_id": ""
+  }
 }
 ```
 
-**ReleaseInfo 结构**:
-```typescript
-interface ReleaseInfo {
-  version: string;       // 版本号
-  releaseDate: string;   // 发布日期
-  releaseNotes: string;  // 更新说明
-  downloadUrl: string;   // 下载链接
-  htmlUrl: string;       // GitHub Release 页面
-  isPreRelease: boolean; // 是否为预发布版本
+**new-api 用户信息（含 permissions、sidebar_modules、stripe_customer）：**
+```json
+{
+  "success": true,
+  "message": "",
+  "data": {
+    "id": 1,
+    "username": "user",
+    "display_name": "显示名称",
+    "email": "user@example.com",
+    "role": 1,
+    "status": 1,
+    "quota": 1000000,
+    "used_quota": 500,
+    "request_count": 100,
+    "group": "default",
+    "aff_code": "XXXX",
+    "aff_count": 5,
+    "aff_quota": 10000,
+    "aff_history_quota": 50000,
+    "inviter_id": 0,
+    "github_id": "",
+    "oidc_id": "",
+    "wechat_id": "",
+    "telegram_id": "",
+    "linux_do_id": "",
+    "setting": "{}",
+    "stripe_customer": "",
+    "sidebar_modules": "{}",
+    "permissions": {
+      "sidebar_settings": true,
+      "sidebar_modules": {}
+    }
+  }
 }
 ```
 
-**UpdateSettings 结构**:
-```typescript
-interface UpdateSettings {
-  autoCheckEnabled: boolean;   // 是否启用自动检查
-  includePreRelease: boolean;  // 是否包含预发布版本
-  lastCheckTime?: string;      // 上次检查时间
+**Veloera 用户信息（含 group、setting，无 permissions）：**
+```json
+{
+  "success": true,
+  "message": "",
+  "data": {
+    "id": 1,
+    "username": "user",
+    "display_name": "显示名称",
+    "email": "user@example.com",
+    "role": 1,
+    "status": 1,
+    "quota": 1000000,
+    "used_quota": 500,
+    "request_count": 100,
+    "group": "default",
+    "aff_code": "XXXX",
+    "aff_count": 5,
+    "aff_quota": 10000,
+    "aff_history_quota": 50000,
+    "inviter_id": 0,
+    "github_id": "",
+    "oidc_id": "",
+    "wechat_id": "",
+    "telegram_id": "",
+    "linux_do_id": "",
+    "setting": "{}"
+  }
+}
+```
+
+**one-hub/done-hub 用户信息（含 avatar_url、last_login_time）：**
+```json
+{
+  "success": true,
+  "message": "",
+  "data": {
+    "id": 1,
+    "username": "user",
+    "display_name": "显示名称",
+    "avatar_url": "https://example.com/avatar.png",
+    "email": "user@example.com",
+    "role": 1,
+    "status": 1,
+    "quota": 1000000,
+    "used_quota": 500,
+    "request_count": 100,
+    "group": "default",
+    "aff_code": "XXXX",
+    "aff_count": 5,
+    "aff_quota": 10000,
+    "aff_history_quota": 50000,
+    "inviter_id": 0,
+    "oidc_id": "",
+    "github_id": "",
+    "wechat_id": "",
+    "telegram_id": 0,
+    "lark_id": "",
+    "last_login_time": 1699999999
+  }
+}
+```
+
+#### `/api/user/token` - 生成访问令牌
+```json
+{
+  "success": true,
+  "message": "",
+  "data": "sk-xxxxxxxxxxxxxxxxxxxxxxxx"
+}
+```
+
+#### `/api/user/aff` - 获取邀请码
+```json
+{
+  "success": true,
+  "message": "",
+  "data": "ABCD"
+}
+```
+
+#### `/api/user/models` - 获取用户可用模型 (new-api/Veloera)
+```json
+{
+  "success": true,
+  "message": "",
+  "data": ["gpt-3.5-turbo", "gpt-4", "gpt-4-turbo", "claude-3-opus"]
+}
+```
+
+#### `/api/user/dashboard` - 用户仪表盘 (one-hub/done-hub)
+```json
+{
+  "success": true,
+  "message": "",
+  "data": [
+    {
+      "date": "2024-01-01",
+      "model": "gpt-4",
+      "request_count": 100,
+      "quota": 50000,
+      "prompt_tokens": 10000,
+      "completion_tokens": 5000
+    }
+  ]
+}
+```
+
+#### `/api/user/dashboard/rate` - 实时速率 (one-hub/done-hub)
+```json
+{
+  "success": true,
+  "message": "",
+  "data": {
+    "rpm": 10,
+    "maxRPM": 60,
+    "usageRpmRate": 16.67,
+    "tpm": 0,
+    "maxTPM": 0,
+    "usageTpmRate": 0
+  }
+}
+```
+
+#### `/api/user/check_in_status` - 签到状态 (Veloera)
+```json
+{
+  "success": true,
+  "message": "",
+  "data": {
+    "checked_in": false,
+    "last_check_in": "2024-01-01",
+    "continuous_days": 5,
+    "reward": 1000
+  }
+}
+```
+
+#### `/api/user/check_in` - 每日签到 (Veloera)
+```json
+{
+  "success": true,
+  "message": "签到成功",
+  "data": {
+    "reward": 1000,
+    "continuous_days": 6
+  }
+}
+```
+
+#### `/api/user/topup` - 兑换码充值
+```json
+{
+  "success": true,
+  "message": "",
+  "data": 100000
 }
 ```
 
 ---
 
-### 10.3 浏览器管理接口
+### 7.4 令牌接口响应
 
-以下接口通过 Electron IPC 通信，用于管理 Puppeteer 浏览器实例：
+#### `/api/token/` - 获取令牌列表
+```json
+{
+  "success": true,
+  "message": "",
+  "data": {
+    "page": 1,
+    "page_size": 10,
+    "total": 5,
+    "items": [
+      {
+        "id": 1,
+        "user_id": 1,
+        "name": "默认令牌",
+        "key": "sk-xxxx...xxxx",
+        "status": 1,
+        "created_time": 1699999999,
+        "accessed_time": 1699999999,
+        "expired_time": -1,
+        "remain_quota": 1000000,
+        "unlimited_quota": false,
+        "used_quota": 500,
+        "model_limits_enabled": false,
+        "model_limits": "",
+        "allow_ips": "",
+        "group": "default"
+      }
+    ]
+  }
+}
+```
 
-| 通道名称 | 说明 | 参数 | 返回值 |
-| :--- | :--- | :--- | :--- |
-| `launch-chrome-for-login` | 启动浏览器供用户登录 | `url: string` | `{ success, message }` |
-| `close-browser` | 强制关闭浏览器 | - | - |
+#### `/api/token/:id` - 获取指定令牌
+```json
+{
+  "success": true,
+  "message": "",
+  "data": {
+    "id": 1,
+    "user_id": 1,
+    "name": "默认令牌",
+    "key": "sk-xxxxxxxxxxxxxxxxxxxx",
+    "status": 1,
+    "created_time": 1699999999,
+    "accessed_time": 1699999999,
+    "expired_time": -1,
+    "remain_quota": 1000000,
+    "unlimited_quota": false,
+    "used_quota": 500,
+    "model_limits_enabled": false,
+    "model_limits": "",
+    "allow_ips": "",
+    "group": "default"
+  }
+}
+```
 
-**浏览器管理说明**:
-- 浏览器使用引用计数管理，多个检测任务可共享同一浏览器实例
-- `close-browser` 使用 `forceCleanup` 方法，会强制重置引用计数并关闭浏览器
-- 检测完成后会自动调用 `close-browser` 确保浏览器被关闭
-- 页面管理会自动清理同一域名的重复页面，避免资源浪费
+#### `/api/token/search` - 搜索令牌
+```json
+{
+  "success": true,
+  "message": "",
+  "data": {
+    "page": 1,
+    "page_size": 10,
+    "total": 5,
+    "items": [
+      {
+        "id": 1,
+        "user_id": 1,
+        "name": "默认令牌",
+        "key": "sk-xxxx...xxxx",
+        "status": 1,
+        "created_time": 1699999999,
+        "accessed_time": 1699999999,
+        "expired_time": -1,
+        "remain_quota": 1000000,
+        "unlimited_quota": false,
+        "used_quota": 500
+      }
+    ]
+  }
+}
+```
+
+#### `/api/token/playground` - 获取Playground令牌 (one-hub/done-hub)
+```json
+{
+  "success": true,
+  "message": "",
+  "data": "sk-playground-xxxxxxxxxxxx"
+}
+```
 
 ---
 
-**声明：** 本文档由 API Hub Management Tools 项目组维护，旨在为开发者提供准确、全面的 API 参考。如有疏漏，欢迎反馈。
+### 7.5 日志接口响应
+
+#### `/api/log/self` - 获取当前用户日志
+```json
+{
+  "success": true,
+  "message": "",
+  "data": {
+    "page": 1,
+    "page_size": 10,
+    "total": 100,
+    "items": [
+      {
+        "id": 1,
+        "user_id": 1,
+        "username": "user",
+        "token_id": 1,
+        "token_name": "默认令牌",
+        "model_name": "gpt-4",
+        "created_at": 1699999999,
+        "prompt_tokens": 100,
+        "completion_tokens": 50,
+        "quota": 1500,
+        "channel_id": 1,
+        "channel_name": "OpenAI官方",
+        "type": 2,
+        "content": ""
+      }
+    ]
+  }
+}
+```
+
+#### `/api/log/self/search` - 搜索用户日志
+```json
+{
+  "success": true,
+  "message": "",
+  "data": {
+    "page": 1,
+    "page_size": 10,
+    "total": 50,
+    "items": [
+      {
+        "id": 1,
+        "user_id": 1,
+        "username": "user",
+        "token_id": 1,
+        "token_name": "默认令牌",
+        "model_name": "gpt-4",
+        "created_at": 1699999999,
+        "prompt_tokens": 100,
+        "completion_tokens": 50,
+        "quota": 1500,
+        "channel_id": 1,
+        "channel_name": "OpenAI官方",
+        "type": 2,
+        "content": ""
+      }
+    ]
+  }
+}
+```
+
+#### `/api/log/self/stat` - 用户日志统计
+```json
+{
+  "success": true,
+  "message": "",
+  "data": {
+    "quota": 1000000,
+    "token": 50000,
+    "request_count": 1000
+  }
+}
+```
+
+#### `/api/log/self/export` - 导出用户日志 (done-hub)
+返回 CSV 格式文件下载。
+
+#### `/api/log/token` - 按令牌查询日志 (new-api, Veloera)
+```json
+{
+  "success": true,
+  "message": "",
+  "data": {
+    "page": 1,
+    "page_size": 10,
+    "total": 30,
+    "items": [
+      {
+        "id": 1,
+        "user_id": 1,
+        "username": "user",
+        "token_id": 1,
+        "token_name": "默认令牌",
+        "model_name": "gpt-4",
+        "created_at": 1699999999,
+        "prompt_tokens": 100,
+        "completion_tokens": 50,
+        "quota": 1500,
+        "channel_id": 1,
+        "channel_name": "OpenAI官方",
+        "type": 2,
+        "content": ""
+      }
+    ]
+  }
+}
+```
+
+---
+
+## 8. 站点功能对比
+
+| 功能特性 | one-api | new-api | Veloera | one-hub | done-hub | VoAPI |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **基础接口** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **系统初始化** | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ |
+| **2FA认证** | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Passkey** | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **WebAuthn** | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
+| **签到功能** | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ |
+| **消息系统** | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| **模型映射** | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ |
+| **用户组管理** | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
+| **渠道标签** | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **邀请码系统** | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| **发票系统** | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
+| **数据分析** | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Midjourney** | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Suno音乐** | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| **Claude原生** | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| **Gemini原生** | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| **RecraftAI** | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
+| **Kling视频** | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
+| **LinuxDO登录** | ❌ | ✅ | ✅ | ❌ | ✅ | ✅ |
+| **Stripe支付** | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **规则引擎** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| **多货币** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| **日志分表** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+
+---
+
+## 9. 关键接口差异总结
+
+### 9.1 用户模型查询
+
+| 项目 | 接口 |
+| :--- | :--- |
+| one-api | `/api/user/available_models` |
+| new-api, Veloera | `/api/user/models` |
+| one-hub, done-hub | `/api/available_model` (公开) |
+
+**端点探测优先级**（代码实现）:
+1. `/api/user/models` - New API, Veloera
+2. `/api/user/available_models` - One API
+3. `/api/available_model` - Done Hub, One Hub
+
+### 9.2 定价信息
+
+| 项目 | 接口 | 特点 |
+| :--- | :--- | :--- |
+| new-api, Veloera | `/api/pricing` | 基础价格 + 分组倍率 |
+| one-hub, done-hub | `/api/available_model` | 最终价格(已计算倍率) |
+| one-hub, done-hub | `/api/prices` | 管理员定价列表 |
+
+**端点探测优先级**（代码实现）:
+1. `/api/pricing` - New API, Veloera
+2. `/api/available_model` - Done Hub, One Hub
+
+### 9.3 用户分组信息
+
+| 项目 | 接口 |
+| :--- | :--- |
+| new-api, Veloera | `/api/user/self/groups`, `/api/user/groups` |
+| one-hub, done-hub | `/api/user_group_map` |
+
+**端点探测优先级**（代码实现）:
+1. `/api/user/self/groups` - New API, Veloera, Super-API
+2. `/api/user/groups` - New API, Veloera (公开端点)
+3. `/api/user_group_map` - One Hub, Done Hub
+4. `/api/group` - One API (回退)
+
+---
+
+## 10. 响应字段差异详细对比
+
+### 10.1 用户对象字段差异（对应 `/api/user/self` 接口）
+
+| 字段 | one-api | new-api | Veloera | one-hub | done-hub | 说明 |
+| :--- | :---: | :---: | :---: | :---: | :---: | :--- |
+| `id` | ✅ | ✅ | ✅ | ✅ | ✅ | 用户ID |
+| `username` | ✅ | ✅ | ✅ | ✅ | ✅ | 用户名 |
+| `display_name` | ✅ | ✅ | ✅ | ✅ | ✅ | 显示名称 |
+| `email` | ✅ | ✅ | ✅ | ✅ | ✅ | 邮箱 |
+| `role` | ✅ | ✅ | ✅ | ✅ | ✅ | 角色 |
+| `status` | ✅ | ✅ | ✅ | ✅ | ✅ | 状态 |
+| `quota` | ✅ | ✅ | ✅ | ✅ | ✅ | 额度 |
+| `used_quota` | ✅ | ✅ | ✅ | ✅ | ✅ | 已用额度 |
+| `request_count` | ✅ | ✅ | ✅ | ✅ | ✅ | 请求次数 |
+| `group` | ✅ | ✅ | ✅ | ✅ | ✅ | 用户组 |
+| `avatar_url` | ❌ | ❌ | ❌ | ✅ | ✅ | 头像URL |
+| `last_login_time` | ❌ | ❌ | ❌ | ✅ | ✅ | 最后登录时间 |
+| `oidc_id` | ✅ | ✅ | ✅ | ✅ | ✅ | OIDC ID |
+| `telegram_id` | ❌ | ✅ | ✅ | ✅ | ✅ | Telegram ID |
+| `linux_do_id` | ❌ | ✅ | ✅ | ❌ | ✅ | LinuxDO ID |
+| `lark_id` | ✅ | ❌ | ❌ | ✅ | ✅ | 飞书ID |
+| `stripe_customer` | ❌ | ✅ | ❌ | ❌ | ❌ | Stripe客户ID |
+| `setting` | ❌ | ✅ | ✅ | ❌ | ❌ | 用户设置JSON |
+| `sidebar_modules` | ❌ | ✅ | ❌ | ❌ | ❌ | 侧边栏模块配置 |
+| `permissions` | ❌ | ✅ | ❌ | ❌ | ❌ | 权限配置 |
+
+### 10.2 令牌对象字段差异（对应 `/api/token/` 系列接口）
+
+| 字段 | one-api | new-api | Veloera | one-hub | done-hub | 说明 |
+| :--- | :---: | :---: | :---: | :---: | :---: | :--- |
+| `id` | ✅ | ✅ | ✅ | ✅ | ✅ | 令牌ID |
+| `user_id` | ✅ | ✅ | ✅ | ✅ | ✅ | 用户ID |
+| `name` | ✅ | ✅ | ✅ | ✅ | ✅ | 令牌名称 |
+| `key` | ✅ | ✅ | ✅ | ✅ | ✅ | 令牌密钥 |
+| `status` | ✅ | ✅ | ✅ | ✅ | ✅ | 状态 |
+| `created_time` | ✅ | ✅ | ✅ | ✅ | ✅ | 创建时间 |
+| `accessed_time` | ✅ | ✅ | ✅ | ✅ | ✅ | 访问时间 |
+| `expired_time` | ✅ | ✅ | ✅ | ✅ | ✅ | 过期时间 |
+| `remain_quota` | ✅ | ✅ | ✅ | ✅ | ✅ | 剩余额度 |
+| `unlimited_quota` | ✅ | ✅ | ✅ | ✅ | ✅ | 无限额度 |
+| `used_quota` | ✅ | ✅ | ✅ | ✅ | ✅ | 已用额度 |
+| `model_limits_enabled` | ❌ | ✅ | ✅ | ❌ | ❌ | 模型限制启用 |
+| `model_limits` | ❌ | ✅ | ✅ | ❌ | ❌ | 模型限制 |
+| `setting` | ❌ | ❌ | ❌ | ✅ | ✅ | 令牌设置JSON |
+| `models` | ✅ | ❌ | ❌ | ❌ | ❌ | 允许的模型 (one-api专用) |
+| `group` | ❌ | ✅ | ✅ | ✅ | ✅ | 用户组 |
+| `subnet/allow_ips` | ✅ | ✅ | ✅ | ❌ | ❌ | IP限制 (one-api用subnet, new-api/Veloera用allow_ips) |
+
+### 10.3 日志对象字段差异（对应 `/api/log/self` 系列接口）
+
+| 字段 | one-api | new-api | Veloera | one-hub | done-hub | 说明 |
+| :--- | :---: | :---: | :---: | :---: | :---: | :--- |
+| `id` | ✅ | ✅ | ✅ | ✅ | ✅ | 日志ID |
+| `user_id` | ✅ | ✅ | ✅ | ✅ | ✅ | 用户ID |
+| `username` | ✅ | ✅ | ✅ | ✅ | ✅ | 用户名 |
+| `token_id` | ❌ | ✅ | ✅ | ❌ | ❌ | 令牌ID |
+| `token_name` | ✅ | ✅ | ✅ | ✅ | ✅ | 令牌名称 |
+| `model_name` | ✅ | ✅ | ✅ | ✅ | ✅ | 模型名称 |
+| `created_at` | ✅ | ✅ | ✅ | ✅ | ✅ | 创建时间 |
+| `prompt_tokens` | ✅ | ✅ | ✅ | ✅ | ✅ | 提示词Token |
+| `completion_tokens` | ✅ | ✅ | ✅ | ✅ | ✅ | 补全Token |
+| `quota` | ✅ | ✅ | ✅ | ✅ | ✅ | 消耗额度 |
+| `channel_id` | ✅ | ✅ | ✅ | ✅ | ✅ | 渠道ID |
+| `channel_name` | ❌ | ✅ | ✅ | ✅ | ✅ | 渠道名称 |
+| `type` | ✅ | ✅ | ✅ | ✅ | ✅ | 日志类型 |
+| `content` | ✅ | ✅ | ✅ | ✅ | ✅ | 内容 |
+| `request_id` | ✅ | ❌ | ❌ | ❌ | ❌ | 请求ID |
+| `is_stream` | ✅ | ✅ | ✅ | ✅ | ✅ | 是否流式 |
+| `group` | ❌ | ✅ | ✅ | ❌ | ❌ | 用户组 |
+| `ip/source_ip` | ❌ | ✅ | ✅ | ✅ | ✅ | 请求IP |
+
+---
+
+**声明：** 本文档由 API Hub Management Tools 项目组维护，基于各项目源代码分析整理。如有疏漏，欢迎反馈。

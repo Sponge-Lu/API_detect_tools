@@ -42,7 +42,7 @@ export function registerAllHandlers(deps: HandlerDependencies) {
   registerBackupHandlers(backupManager);
 
   // 令牌管理相关
-  registerTokenHandlers(tokenService, null as any, getMainWindow);
+  registerTokenHandlers(tokenService, chromeManager, getMainWindow);
 
   // 站点检测相关
   registerDetectionHandlers(apiService, chromeManager);

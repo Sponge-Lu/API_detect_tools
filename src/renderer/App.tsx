@@ -1230,7 +1230,7 @@ function App() {
           onSave={async site => {
             const isEditing = editingSite !== null;
             if (isEditing) {
-              storeUpdateSite(editingSite, site);
+              await storeUpdateSite(editingSite, site);
             } else {
               addSite(site);
             }
@@ -1259,6 +1259,14 @@ function App() {
                   Logger.info('✅ [App] 站点数据刷新完成:', site.name);
                 } catch (error: any) {
                   Logger.error('⚠️ [App] 站点数据刷新失败:', error.message);
+                } finally {
+                  // 刷新完成后尝试关闭浏览器（会检查引用计数，不会误关其他检测）
+                  try {
+                    await window.electronAPI.closeBrowser?.();
+                    Logger.info('✅ [App] 已尝试关闭浏览器');
+                  } catch (err) {
+                    Logger.warn('⚠️ [App] 关闭浏览器失败:', err);
+                  }
                 }
               }, 500);
             }
