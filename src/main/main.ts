@@ -1,5 +1,10 @@
 ﻿import Logger from './utils/logger';
 import { app, BrowserWindow } from 'electron';
+
+// 解决 Electron 打包后 BoringSSL 与某些服务器 TLS 握手失败的问题
+// 允许使用更多的加密套件和 TLS 版本
+app.commandLine.appendSwitch('ignore-certificate-errors', 'false');
+app.commandLine.appendSwitch('disable-http2'); // 某些服务器 HTTP/2 实现有问题
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import * as os from 'os';

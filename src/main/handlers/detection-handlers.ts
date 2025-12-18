@@ -45,8 +45,15 @@ export function registerDetectionHandlers(apiService: ApiService, chromeManager:
   // 检测单个站点
   ipcMain.handle(
     'detect-site',
-    async (_, site, timeout, quickRefresh = false, cachedData = undefined) => {
-      return await apiService.detectSite(site, timeout, quickRefresh, cachedData);
+    async (
+      _,
+      site,
+      timeout,
+      quickRefresh = false,
+      cachedData = undefined,
+      forceAcceptEmpty = false
+    ) => {
+      return await apiService.detectSite(site, timeout, quickRefresh, cachedData, forceAcceptEmpty);
     }
   );
 

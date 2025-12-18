@@ -1,5 +1,5 @@
-import axios from 'axios';
 import type { SiteConfig } from './types/token';
+import { httpGet } from './utils/http-client';
 import { requestManager, RequestManager } from './utils/request-manager';
 import { getAllUserIdHeaders } from '../shared/utils/headers';
 import Logger from './utils/logger';
@@ -64,7 +64,8 @@ export class ApiService {
     site: SiteConfig,
     timeout: number,
     quickRefresh: boolean = false,
-    cachedData?: DetectionResult
+    cachedData?: DetectionResult,
+    forceAcceptEmpty: boolean = false
   ): Promise<DetectionResult> {
     let sharedPage: any = null;
     let pageRelease: (() => void) | undefined = undefined;
@@ -72,7 +73,7 @@ export class ApiService {
 
     try {
       // 获取模型列表（可能会创建浏览器页面）
-      const modelsResult = await this.getModels(site, timeout);
+      const modelsResult = await this.getModels(site, timeout, forceAcceptEmpty);
       const models = modelsResult.models;
       sharedPage = modelsResult.page;
       pageRelease = modelsResult.pageRelease;
@@ -596,9 +597,10 @@ export class ApiService {
 
     try {
       // 使用 requestManager 包装请求，实现去重和缓存
+      // httpGet 在打包环境自动使用 Electron net 模块（Chromium 网络栈）
       const response = await requestManager.request(
         cacheKey,
-        () => axios.get(url, { timeout: timeout * 1000, headers }),
+        () => httpGet(url, { timeout: timeout * 1000, headers }),
         { ttl: cacheOptions?.ttl ?? 30000, skipCache: cacheOptions?.skipCache }
       );
 
@@ -720,7 +722,8 @@ export class ApiService {
 
   private async getModels(
     site: SiteConfig,
-    timeout: number
+    timeout: number,
+    forceAcceptEmpty: boolean = false
   ): Promise<{ models: string[]; page?: any; pageRelease?: () => void }> {
     const hasApiKey = !!site.api_key;
     const authToken = site.api_key || site.system_token;
@@ -887,9 +890,16 @@ export class ApiService {
 
     // 所有端点都尝试完毕，综合判断结果
     // 优先处理空响应（不存在站点没有模型的情况，空数组意味着session过期）
-    if (hasEmptyResponse) {
+    // 但如果 forceAcceptEmpty 为 true，则接受空数据（用户确认站点确实没有模型）
+    if (hasEmptyResponse && !forceAcceptEmpty) {
       Logger.error('❌ [ApiService] 模型接口返回空数组，可能是session过期');
       throw new Error('模型接口返回空数据 (登录可能已过期，请点击"重新获取"登录站点)');
+    }
+
+    // 强制接受空数据模式：返回空数组作为成功结果
+    if (hasEmptyResponse && forceAcceptEmpty) {
+      Logger.info('ℹ️ [ApiService] 强制接受空数据模式：模型列表为空');
+      return { models: [], page: sharedPage, pageRelease: sharedPageRelease };
     }
 
     // 所有端点都抛出错误

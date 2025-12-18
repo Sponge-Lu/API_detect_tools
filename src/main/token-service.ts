@@ -6,8 +6,8 @@
  * 3. 验证令牌有效性
  */
 
-import axios from 'axios';
 import { ChromeManager } from './chrome-manager';
+import { httpGet, httpPost, httpRequest } from './utils/http-client';
 import type {
   SiteAccount,
   CachedDisplayData,
@@ -418,10 +418,10 @@ export class TokenService {
         }
       }
 
-      // axios 模式
-      const response = await axios.get(url, {
+      // HTTP 请求（打包环境自动使用 Electron net 模块）
+      const response = await httpGet(url, {
         timeout: 10000,
-        validateStatus: status => status < 500,
+        validateStatus: (status: number) => status < 500,
       });
 
       // 检查是否返回HTML（Cloudflare拦截）
@@ -521,11 +521,11 @@ export class TokenService {
         }
       }
 
-      // axios 模式
-      const response = await axios.get(url, {
+      // HTTP 请求（打包环境自动使用 Electron net 模块）
+      const response = await httpGet(url, {
         headers: this.createRequestHeaders(userId, accessToken, baseUrl),
         timeout: 10000,
-        validateStatus: status => status < 500, // 接受所有非5xx响应
+        validateStatus: (status: number) => status < 500,
       });
 
       // 检查是否返回HTML（Cloudflare拦截）
@@ -599,13 +599,13 @@ export class TokenService {
     try {
       Logger.info(`🔍 [TokenService] 签到端点: ${url}`);
 
-      const response = await axios.post(
+      const response = await httpPost(
         url,
-        {}, // POST请求体为空（根据文档）
+        {},
         {
           headers: this.createRequestHeaders(userId, accessToken, baseUrl),
-          timeout: 15000, // 增加超时时间
-          validateStatus: status => status < 500, // 接受所有非5xx响应
+          timeout: 15000,
+          validateStatus: (status: number) => status < 500,
         }
       );
 
@@ -645,7 +645,8 @@ export class TokenService {
           errorMsg.includes('人机') ||
           errorMsg.includes('captcha') ||
           errorMsg.includes('challenge') ||
-          errorMsg.includes('已签到');
+          errorMsg.includes('已签到') ||
+          errorMsg.toLowerCase().includes('turnstile');
 
         return {
           success: false,
@@ -722,7 +723,7 @@ export class TokenService {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
     const url = `${cleanBaseUrl}/api/user/self`;
 
-    const response = await axios.get(url, {
+    const response = await httpGet(url, {
       headers: this.createRequestHeaders(userId, accessToken),
       timeout: 10000,
     });
@@ -777,7 +778,7 @@ export class TokenService {
 
     for (const url of urls) {
       try {
-        const response = await axios.get(url, {
+        const response = await httpGet(url, {
           headers: this.createRequestHeaders(userId, accessToken, baseUrl),
           timeout: 10000,
         });
@@ -1120,13 +1121,13 @@ export class TokenService {
         Logger.info(
           `📡 [TokenService] 尝试删除令牌 (axios): ${candidate.description} -> ${candidate.url}`
         );
-        const response = await axios.request({
+        const response = await httpRequest({
           method: candidate.method,
           url: candidate.url,
           data: candidate.body,
           headers: this.createRequestHeaders(userId, accessToken, baseUrl),
           timeout: 15000,
-          validateStatus: status => status < 500,
+          validateStatus: (status: number) => status < 500,
         });
 
         const rawData = response.data;
@@ -1496,10 +1497,10 @@ export class TokenService {
     });
 
     try {
-      const response = await axios.post(url, tokenData, {
+      const response = await httpPost(url, tokenData, {
         headers: this.createRequestHeaders(userId, accessToken, baseUrl),
         timeout: 15000,
-        validateStatus: status => status < 500, // 接受所有非 5xx 响应，方便解析错误信息
+        validateStatus: (status: number) => status < 500,
       });
 
       const status = response.status;
@@ -1680,7 +1681,7 @@ export class TokenService {
     for (const url of urls) {
       try {
         Logger.info(`📡 [TokenService] 尝试获取用户分组: ${url}`);
-        const response = await axios.get(url, {
+        const response = await httpGet(url, {
           headers: this.createRequestHeaders(userId, accessToken, baseUrl),
           timeout: 10000,
         });
@@ -1880,7 +1881,7 @@ export class TokenService {
     for (const url of urls) {
       try {
         Logger.info(`📡 [TokenService] 尝试获取模型定价: ${url}`);
-        const response = await axios.get(url, {
+        const response = await httpGet(url, {
           headers: this.createRequestHeaders(userId, accessToken, baseUrl),
           timeout: 10000,
         });

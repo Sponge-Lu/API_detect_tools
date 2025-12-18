@@ -16,8 +16,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   closeBrowser: () => ipcRenderer.invoke('close-browser'),
   fetchWithCookies: (url: string, options: any) =>
     ipcRenderer.invoke('fetch-with-cookies', url, options),
-  detectSite: (site: any, timeout: number, quickRefresh?: boolean, cachedData?: any) =>
-    ipcRenderer.invoke('detect-site', site, timeout, quickRefresh, cachedData),
+  detectSite: (
+    site: any,
+    timeout: number,
+    quickRefresh?: boolean,
+    cachedData?: any,
+    forceAcceptEmpty?: boolean
+  ) => ipcRenderer.invoke('detect-site', site, timeout, quickRefresh, cachedData, forceAcceptEmpty),
   detectAllSites: (config: any, quickRefresh?: boolean, cachedResults?: any) =>
     ipcRenderer.invoke('detect-all-sites', config, quickRefresh, cachedResults),
   openUrl: (url: string) => ipcRenderer.invoke('open-url', url),

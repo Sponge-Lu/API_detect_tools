@@ -61,6 +61,8 @@ interface AuthErrorDialogProps {
   onClose: () => void;
   onEditSite: (siteIndex: number, siteName: string) => void;
   onProcessAll: () => void;
+  onForceRefresh: (siteIndex: number, siteName: string) => void;
+  onOpenSite: (url: string) => void;
 }
 
 export function AuthErrorDialog({
@@ -69,6 +71,8 @@ export function AuthErrorDialog({
   onClose,
   onEditSite,
   onProcessAll,
+  onForceRefresh,
+  onOpenSite,
 }: AuthErrorDialogProps) {
   if (sites.length === 0) return null;
 
@@ -118,23 +122,32 @@ export function AuthErrorDialog({
                       </span>
                     </div>
                     {siteIndex !== -1 && (
-                      <button
-                        onClick={() => onEditSite(siteIndex, site.name)}
-                        className="px-3 py-1.5 text-xs font-medium bg-primary-500 hover:bg-primary-600 text-white rounded-lg transition-colors whitespace-nowrap"
-                      >
-                        重新获取
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => onForceRefresh(siteIndex, site.name)}
+                          className="px-2.5 py-1.5 text-xs font-medium bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-colors whitespace-nowrap"
+                          title="确认站点数据确实为空，强制更新（不重新登录）"
+                        >
+                          真·空数据
+                        </button>
+                        <button
+                          onClick={() => onEditSite(siteIndex, site.name)}
+                          className="px-2.5 py-1.5 text-xs font-medium bg-primary-500 hover:bg-primary-600 text-white rounded-lg transition-colors whitespace-nowrap"
+                        >
+                          重新获取
+                        </button>
+                      </div>
                     )}
                   </div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">
-                    {errorAnalysis.description}
-                  </p>
-                  <p
-                    className="text-xs text-red-500/80 dark:text-red-400/80 truncate"
-                    title={site.error}
-                  >
-                    详情:{' '}
-                    {site.error.length > 60 ? site.error.substring(0, 60) + '...' : site.error}
+                  <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1 flex-wrap">
+                    <span>💡 请先</span>
+                    <button
+                      onClick={() => onOpenSite(site.url)}
+                      className="text-primary-500 hover:text-primary-600 underline font-medium"
+                    >
+                      打开站点
+                    </button>
+                    <span>确认数据状态，再选择操作</span>
                   </p>
                 </div>
               );

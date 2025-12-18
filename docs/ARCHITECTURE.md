@@ -118,6 +118,29 @@ src/
 - **WebDAVManager**: 负责 WebDAV 云端备份功能，包括连接测试、备份上传/下载/删除、自动清理旧备份等。使用动态 import 加载 ESM 模块以兼容 Electron 的 CommonJS 环境。
 - **UpdateService**: 负责软件更新检测功能，通过 GitHub Releases API 获取最新版本信息，支持正式版本和预发布版本的检测，提供版本比较和下载链接打开功能。
 
+### HTTP 客户端架构
+
+为解决 Electron 打包后 BoringSSL 与某些服务器 TLS 握手失败的问题，项目实现了统一的 HTTP 客户端层：
+
+```
+src/main/utils/
+├── electron-fetch.ts   # Electron net 模块封装
+└── http-client.ts      # 统一 HTTP 客户端（自动切换）
+```
+
+**设计原理**：
+- **开发环境**：Node.js 使用 OpenSSL，支持广泛的加密套件
+- **打包环境**：Electron 使用 BoringSSL（Chrome 的 SSL 库），支持的加密套件更少
+- **解决方案**：打包环境自动使用 Electron `net` 模块（Chromium 网络栈），与浏览器行为一致
+
+**使用方式**：
+```typescript
+import { httpGet, httpPost, httpRequest } from './utils/http-client';
+
+// 自动根据环境选择底层实现
+const response = await httpGet(url, { headers, timeout });
+```
+
 ### 认证与安全
 
 **认证策略**：

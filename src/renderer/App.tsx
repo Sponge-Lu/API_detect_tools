@@ -59,7 +59,8 @@ declare global {
         site: SiteConfig,
         timeout: number,
         quickRefresh?: boolean,
-        cachedData?: DetectionResult
+        cachedData?: DetectionResult,
+        forceAcceptEmpty?: boolean
       ) => Promise<DetectionResult>;
       detectAllSites: (
         config: Config,
@@ -1325,6 +1326,51 @@ function App() {
               setShowSiteEditor(true);
             }
             setShowAuthErrorDialog(false);
+          }}
+          onForceRefresh={async (siteIndex, siteName) => {
+            const site = config.sites[siteIndex];
+            if (!site) return;
+
+            // 从列表中移除当前站点
+            const remaining = authErrorSites.filter(s => s.name !== siteName);
+            setAuthErrorSites(remaining);
+
+            // 如果没有剩余站点，关闭弹窗
+            if (remaining.length === 0) {
+              setShowAuthErrorDialog(false);
+            }
+
+            // 强制获取数据（接受空数据）
+            toast.info(`正在强制刷新 ${siteName}...`);
+            try {
+              const timeout = config.settings?.timeout ?? 30;
+              const result = await window.electronAPI.detectSite(
+                site,
+                timeout,
+                false,
+                undefined,
+                true
+              );
+
+              // 更新结果（无论是否为空）
+              const filtered = results.filter(r => r.name !== site.name);
+              setResults([...filtered, result]);
+
+              if (result.status === '成功') {
+                toast.success(`${siteName} 数据已更新（模型数: ${result.models.length}）`);
+              } else {
+                toast.warning(`${siteName} 获取失败: ${result.error}`);
+              }
+            } catch (error: any) {
+              toast.error(`强制刷新失败: ${error.message}`);
+            }
+          }}
+          onOpenSite={async url => {
+            try {
+              await window.electronAPI.openUrl(url);
+            } catch (error: any) {
+              toast.error(`打开站点失败: ${error.message}`);
+            }
           }}
         />
       )}
