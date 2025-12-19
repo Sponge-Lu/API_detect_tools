@@ -24,8 +24,6 @@ const DEFAULT_SETTINGS: Settings = {
   concurrent: true,
   max_concurrent: 3,
   show_disabled: false,
-  auto_refresh: false,
-  refresh_interval: 30,
   browser_path: '',
 };
 
@@ -276,6 +274,7 @@ export class UnifiedConfigManager {
       has_checkin: site.has_checkin,
       force_enable_checkin: site.force_enable_checkin,
       extra_links: site.extra_links,
+      auto_refresh: site.auto_refresh, // 站点独立的自动刷新开关
       cached_data: site.cached_data, // 保留缓存数据
     }));
 
@@ -326,6 +325,8 @@ export class UnifiedConfigManager {
           has_checkin: oldSite.has_checkin,
           force_enable_checkin: oldSite.force_enable_checkin,
           extra_links: oldSite.extra_links,
+          auto_refresh: oldSite.auto_refresh,
+          auto_refresh_interval: oldSite.auto_refresh_interval,
           updated_at: Date.now(),
         };
       } else {
@@ -342,6 +343,8 @@ export class UnifiedConfigManager {
           has_checkin: oldSite.has_checkin,
           force_enable_checkin: oldSite.force_enable_checkin,
           extra_links: oldSite.extra_links,
+          auto_refresh: oldSite.auto_refresh,
+          auto_refresh_interval: oldSite.auto_refresh_interval,
           created_at: Date.now(),
           updated_at: Date.now(),
         };

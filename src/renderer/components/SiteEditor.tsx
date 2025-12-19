@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Loader2, Globe, CheckCircle } from 'lucide-react';
+import { X, Loader2, Globe, CheckCircle, AlertTriangle } from 'lucide-react';
 import { SiteConfig } from '../App';
 import { toast } from '../store/toastStore';
 
@@ -36,6 +36,8 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
     balance: null as number | null,
     extraLinks: site?.extra_links || '', // 加油站链接
     enableCheckin: site?.force_enable_checkin || false, // 启用签到功能
+    autoRefresh: site?.auto_refresh || false, // 自动刷新开关
+    autoRefreshInterval: site?.auto_refresh_interval || 5, // 自动刷新间隔（分钟）
   });
   // 站点分组选择
   const [selectedGroupId, setSelectedGroupId] = useState<string>(site?.group || defaultGroupId);
@@ -128,6 +130,8 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
         balance: null,
         extraLinks: prev.extraLinks, // 保留原有加油站链接
         enableCheckin: supportsCheckIn === true,
+        autoRefresh: prev.autoRefresh, // 保留原有自动刷新设置
+        autoRefreshInterval: prev.autoRefreshInterval, // 保留原有自动刷新间隔
       }));
 
       // 短暂显示成功消息后进入确认页
@@ -171,6 +175,10 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
       force_enable_checkin: autoInfo.enableCheckin, // 用户勾选的签到功能
       // 分组信息（如果用户未选择则归入默认分组）
       group: selectedGroupId || defaultGroupId,
+      // 自动刷新配置
+      auto_refresh: autoInfo.autoRefresh,
+      // 始终保存间隔值（即使禁用），以便下次启用时恢复
+      auto_refresh_interval: Math.max(3, autoInfo.autoRefreshInterval),
     };
     onSave(newSite);
   };
@@ -481,6 +489,58 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
                     </select>
                   </div>
                 </div>
+
+                {/* 自动刷新配置 */}
+                <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-2">
+                  <div className="text-sm text-slate-700 dark:text-slate-300 font-semibold whitespace-nowrap">
+                    自动刷新
+                    <span className="text-slate-400 dark:text-slate-500 font-normal ml-1">
+                      (可选)
+                    </span>
+                  </div>
+                  <div className="flex-1 flex items-center justify-end gap-2">
+                    <select
+                      value={autoInfo.autoRefresh ? 'enabled' : 'disabled'}
+                      onChange={e =>
+                        setAutoInfo({
+                          ...autoInfo,
+                          autoRefresh: e.target.value === 'enabled',
+                        })
+                      }
+                      className="w-20 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded px-2 py-1 text-sm text-slate-800 dark:text-slate-100"
+                    >
+                      <option value="disabled">禁用</option>
+                      <option value="enabled">启用</option>
+                    </select>
+                    {autoInfo.autoRefresh && (
+                      <>
+                        <input
+                          type="number"
+                          min={3}
+                          value={autoInfo.autoRefreshInterval}
+                          onChange={e =>
+                            setAutoInfo({
+                              ...autoInfo,
+                              autoRefreshInterval: Math.max(3, parseInt(e.target.value) || 3),
+                            })
+                          }
+                          className="w-16 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded px-2 py-1 text-sm text-slate-800 dark:text-slate-100 text-center"
+                        />
+                        <span className="text-sm text-slate-500 dark:text-slate-400">分钟</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Cloudflare 保护警告 - 仅在启用自动刷新时显示 */}
+                {autoInfo.autoRefresh && (
+                  <div className="px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                    <span className="text-xs text-amber-700 dark:text-amber-300">
+                      如果站点启用了 Cloudflare 保护，自动刷新需要保持浏览器窗口打开才能正常工作
+                    </span>
+                  </div>
+                )}
 
                 {/* 仅在智能添加模式下展示自动获取状态提示，手动添加模式不显示此文案 */}
                 {!site && mode === 'auto' && (

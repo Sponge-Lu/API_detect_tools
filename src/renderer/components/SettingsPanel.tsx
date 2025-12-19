@@ -387,50 +387,6 @@ export function SettingsPanel({
                 </div>
               </div>
 
-              {/* 自动刷新设置 */}
-              <div className="flex items-start gap-3">
-                <input
-                  type="checkbox"
-                  id="auto_refresh"
-                  checked={formData.auto_refresh || false}
-                  onChange={e => setFormData({ ...formData, auto_refresh: e.target.checked })}
-                  className="mt-1 w-4 h-4 rounded border-light-border dark:border-dark-border text-primary-600 focus:ring-primary-500"
-                />
-                <div className="flex-1">
-                  <label
-                    htmlFor="auto_refresh"
-                    className="text-sm font-medium block text-light-text dark:text-dark-text cursor-pointer"
-                  >
-                    自动刷新
-                  </label>
-                  <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
-                    定时自动检测所有站点
-                  </p>
-                </div>
-              </div>
-
-              {/* 刷新间隔 */}
-              {formData.auto_refresh && (
-                <div className="pl-7">
-                  <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-2">
-                    刷新间隔 (分钟)
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="1440"
-                    value={formData.refresh_interval || 30}
-                    onChange={e =>
-                      setFormData({ ...formData, refresh_interval: Number(e.target.value) })
-                    }
-                    className="w-32 px-4 py-2 bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 outline-none transition-all text-light-text dark:text-dark-text"
-                  />
-                  <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
-                    每 {formData.refresh_interval || 30} 分钟自动检测一次
-                  </p>
-                </div>
-              )}
-
               {/* 浏览器路径设置 */}
               <div>
                 <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-2">

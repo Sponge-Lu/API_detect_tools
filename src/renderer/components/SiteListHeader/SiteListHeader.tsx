@@ -13,7 +13,6 @@ interface SiteListHeaderProps {
 
 const COLUMN_LABELS = [
   '站点',
-  '状态',
   '余额',
   '今日消费',
   '总 Token',

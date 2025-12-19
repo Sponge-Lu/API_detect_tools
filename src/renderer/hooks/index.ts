@@ -12,3 +12,5 @@ export { useTokenManagement } from './useTokenManagement';
 export type { NewApiTokenForm } from './useTokenManagement';
 export { useUpdate } from './useUpdate';
 export type { UpdateCheckResult, UpdateSettings, ReleaseInfo, UseUpdateReturn } from './useUpdate';
+export { useAutoRefresh } from './useAutoRefresh';
+export type { UseAutoRefreshOptions, UseAutoRefreshReturn } from './useAutoRefresh';

@@ -41,52 +41,37 @@ export function SiteCardHeader({
         gridTemplateColumns: columnWidths.map(w => `${w}px`).join(' '),
       }}
     >
-      {/* 1. 站点名称 */}
+      {/* 1. 站点名称（带状态图标） */}
       <button
         onClick={() => onOpenCheckinPage(site)}
-        className="flex items-center hover:text-primary-400 transition-colors group min-w-0"
-        title={`打开 ${site.name}`}
+        className="flex items-center gap-1.5 hover:text-primary-400 transition-colors group min-w-0"
+        title={`打开 ${site.name}${siteResult ? (siteResult.status === '成功' ? ' (在线)' : ' (离线)') : ' (未检测)'}`}
       >
-        <span className="font-bold text-sm md:text-base truncate">{site.name}</span>
-      </button>
-
-      {/* 2. 状态 */}
-      <div className="flex flex-col items-start gap-0.5">
-        <div className="flex items-center gap-1">
-          {siteResult ? (
-            siteResult.status === '成功' ? (
-              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" title="在线" />
-            ) : (
-              <div className="w-2 h-2 rounded-full bg-red-500" title="离线" />
-            )
+        {/* 状态图标 */}
+        {siteResult ? (
+          siteResult.status === '成功' ? (
+            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse flex-shrink-0" />
           ) : (
-            <div className="w-2 h-2 rounded-full bg-gray-500" title="未检测" />
-          )}
-          <span
-            className={`${
-              siteResult
-                ? siteResult.status === '成功'
-                  ? 'text-green-600 dark:text-green-400'
-                  : 'text-red-500 dark:text-red-400'
-                : 'text-slate-400 dark:text-slate-500'
-            }`}
-          >
-            {siteResult ? (siteResult.status === '成功' ? '在线' : '离线') : '未检测'}
-          </span>
-        </div>
+            <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
+          )
+        ) : (
+          <div className="w-2 h-2 rounded-full bg-gray-500 flex-shrink-0" />
+        )}
+        <span className="font-bold text-sm md:text-base truncate">{site.name}</span>
+        {/* 错误码/超时提示 */}
         {errorCode && (
-          <span className="text-red-500 dark:text-red-400 text-xs font-semibold">
-            Err {errorCode}
+          <span className="text-red-500 dark:text-red-400 text-[10px] font-semibold flex-shrink-0">
+            {errorCode}
           </span>
         )}
         {!errorCode && timeoutSeconds !== null && (
-          <span className="text-red-500 dark:text-red-400 text-xs font-semibold">
-            Timeout {timeoutSeconds}s
+          <span className="text-red-500 dark:text-red-400 text-[10px] font-semibold flex-shrink-0">
+            T/O
           </span>
         )}
-      </div>
+      </button>
 
-      {/* 3. 余额 */}
+      {/* 2. 余额 */}
       <div className="flex flex-col">
         {siteResult && siteResult.balance !== undefined && siteResult.balance !== null ? (
           siteResult.balance === -1 ? (
@@ -101,10 +86,16 @@ export function SiteCardHeader({
         )}
       </div>
 
-      {/* 4. 今日消费 */}
+      {/* 3. 今日消费 */}
       <div className="flex flex-col">
         {siteResult && siteResult.todayUsage !== undefined ? (
-          <span className="font-mono font-semibold text-orange-600 dark:text-orange-400 truncate">
+          <span
+            className={`font-mono font-semibold truncate ${
+              siteResult.todayUsage === 0
+                ? 'text-orange-300 dark:text-orange-600'
+                : 'text-orange-600 dark:text-orange-400'
+            }`}
+          >
             $-{siteResult.todayUsage.toFixed(2)}
           </span>
         ) : (
@@ -112,45 +103,85 @@ export function SiteCardHeader({
         )}
       </div>
 
-      {/* 5. 总 Token */}
-      <div className="flex flex-col items-center justify-center text-[13px] text-slate-600 dark:text-slate-300">
-        <span className="font-mono font-medium" title={todayTotalTokens.toLocaleString()}>
+      {/* 4. 总 Token */}
+      <div className="flex flex-col items-center justify-center text-[13px]">
+        <span
+          className={`font-mono font-medium ${
+            todayTotalTokens > 0
+              ? 'text-slate-700 dark:text-slate-200'
+              : 'text-slate-400 dark:text-slate-500'
+          }`}
+          title={todayTotalTokens.toLocaleString()}
+        >
           {formatNumber(todayTotalTokens)}
         </span>
       </div>
 
-      {/* 6. 输入 Token */}
-      <div className="flex flex-col items-center justify-center text-[13px] text-slate-600 dark:text-slate-300">
-        <span className="font-mono font-medium" title={todayPromptTokens.toLocaleString()}>
+      {/* 5. 输入 Token */}
+      <div className="flex flex-col items-center justify-center text-[13px]">
+        <span
+          className={`font-mono font-medium ${
+            todayPromptTokens > 0
+              ? 'text-slate-700 dark:text-slate-200'
+              : 'text-slate-400 dark:text-slate-500'
+          }`}
+          title={todayPromptTokens.toLocaleString()}
+        >
           {formatNumber(todayPromptTokens)}
         </span>
       </div>
 
-      {/* 7. 输出 Token */}
-      <div className="flex flex-col items-center justify-center text-[13px] text-slate-600 dark:text-slate-300">
-        <span className="font-mono font-medium" title={todayCompletionTokens.toLocaleString()}>
+      {/* 6. 输出 Token */}
+      <div className="flex flex-col items-center justify-center text-[13px]">
+        <span
+          className={`font-mono font-medium ${
+            todayCompletionTokens > 0
+              ? 'text-slate-700 dark:text-slate-200'
+              : 'text-slate-400 dark:text-slate-500'
+          }`}
+          title={todayCompletionTokens.toLocaleString()}
+        >
           {formatNumber(todayCompletionTokens)}
         </span>
       </div>
 
-      {/* 8. 请求次数 */}
-      <div className="flex flex-col items-center justify-center text-[13px] text-slate-600 dark:text-slate-300">
-        <span className="font-mono font-medium" title={todayRequests.toLocaleString()}>
+      {/* 7. 请求次数 */}
+      <div className="flex flex-col items-center justify-center text-[13px]">
+        <span
+          className={`font-mono font-medium ${
+            todayRequests > 0
+              ? 'text-slate-700 dark:text-slate-200'
+              : 'text-slate-400 dark:text-slate-500'
+          }`}
+          title={todayRequests.toLocaleString()}
+        >
           {formatNumber(todayRequests)}
         </span>
       </div>
 
-      {/* 9. RPM */}
-      <div className="flex flex-col items-center justify-center text-[13px] text-slate-600 dark:text-slate-300">
-        <span className="font-mono font-medium">{rpm.toFixed(2)}</span>
+      {/* 8. RPM */}
+      <div className="flex flex-col items-center justify-center text-[13px]">
+        <span
+          className={`font-mono font-medium ${
+            rpm > 0 ? 'text-slate-700 dark:text-slate-200' : 'text-slate-400 dark:text-slate-500'
+          }`}
+        >
+          {rpm.toFixed(2)}
+        </span>
       </div>
 
-      {/* 10. TPM */}
-      <div className="flex flex-col items-center justify-center text-[13px] text-slate-600 dark:text-slate-300">
-        <span className="font-mono font-medium">{formatNumber(Math.round(tpm))}</span>
+      {/* 9. TPM */}
+      <div className="flex flex-col items-center justify-center text-[13px]">
+        <span
+          className={`font-mono font-medium ${
+            tpm > 0 ? 'text-slate-700 dark:text-slate-200' : 'text-slate-400 dark:text-slate-500'
+          }`}
+        >
+          {formatNumber(Math.round(tpm))}
+        </span>
       </div>
 
-      {/* 11. 模型数 */}
+      {/* 10. 模型数 */}
       <div className="flex flex-col items-center justify-center text-[13px] text-slate-600 dark:text-slate-300">
         <span
           className={`font-medium ${
@@ -163,7 +194,7 @@ export function SiteCardHeader({
         </span>
       </div>
 
-      {/* 12. 更新时间 */}
+      {/* 11. 更新时间 */}
       <div className="flex flex-col items-center justify-center text-[13px] text-slate-600 dark:text-slate-300">
         {lastSyncDisplay ? (
           <span className="font-medium">{lastSyncDisplay}</span>

@@ -15,6 +15,23 @@ interface RefreshMessage {
   type: 'success' | 'info';
 }
 
+// 排序字段类型
+export type SortField =
+  | 'name'
+  | 'balance'
+  | 'todayUsage'
+  | 'totalTokens'
+  | 'promptTokens'
+  | 'completionTokens'
+  | 'requests'
+  | 'rpm'
+  | 'tpm'
+  | 'modelCount'
+  | 'lastUpdate';
+
+// 排序方向
+export type SortOrder = 'asc' | 'desc';
+
 interface AuthErrorSite {
   name: string;
   url: string;
@@ -82,6 +99,10 @@ interface UIState {
 
   // 列宽
   columnWidths: number[];
+
+  // 排序状态
+  sortField: SortField | null;
+  sortOrder: SortOrder;
 
   // Actions - 面板
   setShowSiteEditor: (show: boolean) => void;
@@ -153,6 +174,12 @@ interface UIState {
   // Actions - 列宽
   setColumnWidth: (index: number, width: number) => void;
   resetColumnWidths: () => void;
+
+  // Actions - 排序
+  setSortField: (field: SortField | null) => void;
+  setSortOrder: (order: SortOrder) => void;
+  toggleSort: (field: SortField) => void;
+  resetSort: () => void;
 }
 
 const initialNewTokenForm: NewApiTokenForm = {
@@ -194,6 +221,8 @@ export const useUIStore = create<UIState>()(
       showAuthErrorDialog: false,
       processingAuthErrorSite: null,
       columnWidths: [...DEFAULT_COLUMN_WIDTHS],
+      sortField: null,
+      sortOrder: 'desc',
 
       // 面板 Actions
       setShowSiteEditor: show => set({ showSiteEditor: show }),
@@ -379,12 +408,40 @@ export const useUIStore = create<UIState>()(
       },
 
       resetColumnWidths: () => set({ columnWidths: [...DEFAULT_COLUMN_WIDTHS] }),
+
+      // 排序 Actions
+      setSortField: field => set({ sortField: field }),
+      setSortOrder: order => set({ sortOrder: order }),
+
+      toggleSort: field => {
+        const { sortField, sortOrder } = get();
+        if (sortField === field) {
+          // 同一字段：切换排序方向，或第三次点击取消排序
+          if (sortOrder === 'desc') {
+            set({ sortOrder: 'asc' });
+          } else {
+            // 已经是升序，再点击取消排序
+            set({ sortField: null, sortOrder: 'desc' });
+          }
+        } else {
+          // 新字段：默认降序
+          set({ sortField: field, sortOrder: 'desc' });
+        }
+      },
+
+      resetSort: () => set({ sortField: null, sortOrder: 'desc' }),
     }),
     {
       name: 'api-hub-ui-storage',
       partialize: state => ({
         columnWidths: state.columnWidths,
       }),
+      // 迁移：列数变化时重置为默认值
+      onRehydrateStorage: () => state => {
+        if (state && state.columnWidths.length !== DEFAULT_COLUMN_WIDTHS.length) {
+          state.columnWidths = [...DEFAULT_COLUMN_WIDTHS];
+        }
+      },
     }
   )
 );

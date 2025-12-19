@@ -89,9 +89,13 @@ src/
 为了避免 React Context 的性能问题和 Prop Drilling，项目采用 Zustand 进行状态管理，拆分为多个独立的 Store：
 
 - **configStore**: 管理全局配置、站点列表、分组信息。
-- **detectionStore**: 管理站点检测结果、加载状态。
+- **detectionStore**: 管理站点检测结果、加载状态、并发刷新状态。
 - **uiStore**: 管理 UI 状态（如侧边栏折叠、拖拽状态）。
 - **toastStore**: 管理全局通知消息。
+
+**并发刷新支持**：
+- `detectionStore` 使用 `detectingSites: Set<string>` 跟踪多个正在刷新的站点。
+- `upsertResult` 方法确保并发刷新时结果不会互相覆盖。
 
 **性能优化策略**：
 - 模型列表采用分页渲染，默认只显示前 50 个模型，避免大量 DOM 元素导致的渲染延迟。
@@ -111,7 +115,7 @@ src/
 
 主进程的业务逻辑封装在几个核心 Service 类中，实现关注点分离：
 
-- **ApiService**: 处理所有 HTTP 请求，负责站点余额、模型列表、API Key 的获取。内置请求去重和缓存机制。
+- **ApiService**: 处理所有 HTTP 请求，负责站点余额、模型列表、API Key 的获取。内置请求去重和缓存机制。日志统计时自动过滤非模型调用日志，确保今日消费、Token 使用量和请求次数只统计真正的模型调用。
 - **TokenService**: 负责处理 API Key 的创建、删除、权限验证，以及适配不同站点的 Token 协议。
 - **ChromeManager**: 管理 Puppeteer 实例的生命周期。负责启动浏览器、管理页面、注入脚本、提取 LocalStorage/Cookie 信息。支持浏览器复用和崩溃自动重启。
 - **UnifiedConfigManager**: 负责 `config.json` 的读写，保证配置数据的原子性和一致性。支持前端兼容层，在保存旧格式配置时自动保留 WebDAV 等扩展配置。
@@ -189,7 +193,15 @@ const response = await httpGet(url, { headers, timeout });
    - 错误处理：处理 401/403 认证错误，识别 Cloudflare 拦截。
 4. **结果处理**：格式化数据（如统一价格单位），计算统计指标（RPM/TPM）。
 5. **缓存更新**：将结果写入内存缓存并持久化到磁盘。
-6. **UI 更新**：通过 IPC 推送最新数据到渲染进程。
+6. **UI 更新**：通过 `upsertResult` 安全更新单个站点结果，支持多站点并发刷新。
+
+### 自动刷新流程
+
+1. **定时器管理**：`useAutoRefresh` hook 为每个启用自动刷新的站点创建独立定时器。
+2. **配置监听**：监听站点配置变化，自动创建/删除/重启定时器。
+3. **并发执行**：多个站点的定时器独立运行，互不干扰。
+4. **结果更新**：使用 `upsertResult` 确保并发刷新时结果不会互相覆盖。
+5. **资源清理**：组件卸载时自动清理所有定时器。
 
 ### 浏览器自动化流程
 

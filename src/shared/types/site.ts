@@ -47,6 +47,8 @@ export interface UnifiedSite {
   extra_links?: string; // 加油站链接
   has_checkin?: boolean; // 是否支持签到（检测结果）
   force_enable_checkin?: boolean; // 强制启用签到
+  auto_refresh?: boolean; // 站点独立的自动刷新开关
+  auto_refresh_interval?: number; // 自动刷新间隔（分钟），最小3分钟
 
   // === 检测结果缓存 ===
   cached_data?: {
@@ -81,8 +83,6 @@ export interface Settings {
   concurrent: boolean;
   max_concurrent?: number;
   show_disabled: boolean;
-  auto_refresh: boolean;
-  refresh_interval: number;
   browser_path?: string;
   webdav?: WebDAVConfig;
 }
@@ -163,6 +163,8 @@ export interface SiteConfig {
   has_checkin?: boolean;
   force_enable_checkin?: boolean;
   extra_links?: string;
+  auto_refresh?: boolean; // 站点独立的自动刷新开关
+  auto_refresh_interval?: number; // 自动刷新间隔（分钟），最小3分钟
 }
 
 /**

@@ -32,16 +32,19 @@ export interface SiteCardProps {
   selectedModels: Set<string>;
   deletingTokenKey: string | null;
 
+  // 自动刷新状态
+  autoRefreshEnabled?: boolean;
+
   // 回调函数
   onExpand: (name: string) => void;
   onDetect: (site: SiteConfig) => void;
-  onToggle: (index: number) => void;
   onEdit: (index: number) => void;
   onDelete: (index: number) => void;
   onCheckIn: (site: SiteConfig) => void;
   onOpenCheckinPage: (site: SiteConfig) => void;
   onOpenExtraLink: (link: string) => void;
   onCopyToClipboard: (text: string, label: string) => void;
+  onToggleAutoRefresh?: () => void;
 
   // 拖拽回调
   onDragStart: (e: React.DragEvent, index: number) => void;
@@ -84,13 +87,14 @@ export interface SiteCardActionsProps {
   isExpanded: boolean;
   detectingSite: string | null;
   checkingIn: string | null;
+  autoRefreshEnabled?: boolean;
 
   onExpand: (name: string) => void;
   onDetect: (site: SiteConfig) => void;
-  onToggle: (index: number) => void;
   onEdit: (index: number) => void;
   onDelete: (index: number) => void;
   onCheckIn: (site: SiteConfig) => void;
   onOpenExtraLink: (link: string) => void;
   onCopyToClipboard: (text: string, label: string) => void;
+  onToggleAutoRefresh?: () => void;
 }

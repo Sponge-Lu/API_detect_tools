@@ -71,10 +71,14 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
   const {
     results,
     setResults,
+    upsertResult,
     detecting,
     setDetecting,
     detectingSite,
     setDetectingSite,
+    addDetectingSite,
+    removeDetectingSite,
+    isDetectingSite,
     setApiKeys,
     setUserGroups,
     setModelPricing,
@@ -86,11 +90,12 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
   // 检测单个站点
   const detectSingle = useCallback(
     async (site: SiteConfig, quickRefresh: boolean = true, config?: Config) => {
-      if (detectingSite === site.name) {
+      // 使用 store 的方法检查，支持多站点并发
+      if (isDetectingSite(site.name)) {
         Logger.info('⚠️ 站点正在刷新中，请稍候...');
         return;
       }
-      setDetectingSite(site.name);
+      addDetectingSite(site.name);
 
       try {
         const existingResult = results.find(r => r.name === site.name);
@@ -121,8 +126,8 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
           setTimeout(() => setRefreshMessage(null), 3000);
         }
 
-        const filtered = results.filter(r => r.name !== site.name);
-        setResults([...filtered, result]);
+        // 使用 upsertResult 安全地更新结果，避免并发刷新时的覆盖问题
+        upsertResult(result);
 
         if (rawResult.status === '成功') {
           const acc = siteAccounts[site.name];
@@ -157,15 +162,16 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
         setRefreshMessage({ site: site.name, message: displayMessage, type: 'info' });
         setTimeout(() => setRefreshMessage(null), 5000);
       } finally {
-        setDetectingSite(null);
+        removeDetectingSite(site.name);
       }
     },
     [
-      detectingSite,
       results,
       siteAccounts,
-      setDetectingSite,
-      setResults,
+      isDetectingSite,
+      addDetectingSite,
+      removeDetectingSite,
+      upsertResult,
       setSiteAccounts,
       setApiKeys,
       setUserGroups,
@@ -285,12 +291,17 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
       } finally {
         setDetecting(false);
         setDetectingSite(null);
-        // 检测完成后关闭浏览器
-        try {
-          await window.electronAPI.closeBrowser?.();
-          Logger.info('✅ [useSiteDetection] 检测完成，已关闭浏览器');
-        } catch (err) {
-          Logger.warn('⚠️ [useSiteDetection] 关闭浏览器失败:', err);
+        // 检测完成后关闭浏览器（如果有站点开启了自动刷新则保持浏览器开启）
+        const hasAutoRefreshSite = config.sites.some(s => s.enabled && s.auto_refresh);
+        if (hasAutoRefreshSite) {
+          Logger.info('ℹ️ [useSiteDetection] 检测完成，有站点开启自动刷新，保持浏览器开启');
+        } else {
+          try {
+            await window.electronAPI.closeBrowser?.();
+            Logger.info('✅ [useSiteDetection] 检测完成，已关闭浏览器');
+          } catch (err) {
+            Logger.warn('⚠️ [useSiteDetection] 关闭浏览器失败:', err);
+          }
         }
       }
     },

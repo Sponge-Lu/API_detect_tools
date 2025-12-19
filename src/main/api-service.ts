@@ -4,6 +4,11 @@ import { requestManager, RequestManager } from './utils/request-manager';
 import { getAllUserIdHeaders } from '../shared/utils/headers';
 import Logger from './utils/logger';
 import { unifiedConfigManager } from './unified-config-manager';
+import {
+  isModelLog,
+  aggregateUsageData as sharedAggregateUsageData,
+  type LogItem,
+} from '../shared/utils/log-filter';
 
 interface DetectionResult {
   name: string;
@@ -33,13 +38,6 @@ interface TodayUsageStats {
   todayCompletionTokens: number;
   todayTotalTokens: number;
   todayRequests: number;
-}
-
-// 日志条目接口
-interface LogItem {
-  quota?: number;
-  prompt_tokens?: number;
-  completion_tokens?: number;
 }
 
 // 日志响应接口
@@ -1111,23 +1109,19 @@ export class ApiService {
 
   /**
    * 聚合日志数据计算今日消费和 Token 统计
+   * 使用共享的聚合函数以保持一致性
    */
   private aggregateUsageData(items: LogItem[]): {
     quota: number;
     promptTokens: number;
     completionTokens: number;
   } {
-    let totalQuota = 0;
-    let promptTokens = 0;
-    let completionTokens = 0;
-
-    for (const item of items) {
-      totalQuota += item.quota || 0;
-      promptTokens += item.prompt_tokens || 0;
-      completionTokens += item.completion_tokens || 0;
-    }
-
-    return { quota: totalQuota, promptTokens, completionTokens };
+    const stats = sharedAggregateUsageData(items);
+    return {
+      quota: stats.quota,
+      promptTokens: stats.promptTokens,
+      completionTokens: stats.completionTokens,
+    };
   }
 
   /**
@@ -1228,21 +1222,24 @@ export class ApiService {
 
           const logData = result.result as LogResponse;
           const items = logData.data.items || [];
-          const currentPageItemCount = items.length;
 
-          const pageStats = this.aggregateUsageData(items);
+          // 过滤非模型日志，只保留有效的模型调用日志
+          const modelLogs = items.filter(isModelLog);
+          const modelLogCount = modelLogs.length;
+
+          const pageStats = this.aggregateUsageData(modelLogs);
           totalQuota += pageStats.quota;
           totalPromptTokens += pageStats.promptTokens;
           totalCompletionTokens += pageStats.completionTokens;
-          totalRequests += currentPageItemCount;
+          totalRequests += modelLogCount;
 
           const pageConsumption = pageStats.quota / 500000;
           Logger.info(
-            `📄 [ApiService] 第${currentPage}页: ${currentPageItemCount}条记录, 消费: $${pageConsumption.toFixed(4)}`
+            `📄 [ApiService] 第${currentPage}页: ${items.length}条记录, 模型日志: ${modelLogCount}条, 消费: $${pageConsumption.toFixed(4)}`
           );
 
           const totalPages = Math.ceil((logData.data.total || 0) / pageSize);
-          if (currentPage >= totalPages || currentPageItemCount === 0) {
+          if (currentPage >= totalPages || items.length === 0) {
             Logger.info(`✅ [ApiService] 日志查询完成，共${currentPage}页`);
             break;
           }

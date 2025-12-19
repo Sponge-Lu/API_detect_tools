@@ -31,15 +31,16 @@ export function SiteCard({
   selectedModels,
   deletingTokenKey,
   // 回调
+  autoRefreshEnabled,
   onExpand,
   onDetect,
-  onToggle,
   onEdit,
   onDelete,
   onCheckIn,
   onOpenCheckinPage,
   onOpenExtraLink,
   onCopyToClipboard,
+  onToggleAutoRefresh,
   onDragStart,
   onDragEnd,
   onDragOver,
@@ -184,14 +185,15 @@ export function SiteCard({
             isExpanded={isExpanded}
             detectingSite={detectingSite}
             checkingIn={checkingIn}
+            autoRefreshEnabled={autoRefreshEnabled}
             onExpand={onExpand}
             onDetect={onDetect}
-            onToggle={onToggle}
             onEdit={onEdit}
             onDelete={onDelete}
             onCheckIn={onCheckIn}
             onOpenExtraLink={onOpenExtraLink}
             onCopyToClipboard={onCopyToClipboard}
+            onToggleAutoRefresh={onToggleAutoRefresh}
           />
         </div>
       </div>

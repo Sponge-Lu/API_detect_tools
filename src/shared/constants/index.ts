@@ -139,8 +139,7 @@ export const LIGHT_THEME_BG_COLOR = '#f8fafc';
 
 /** 站点列表默认列宽（像素） */
 export const DEFAULT_COLUMN_WIDTHS = [
-  110, // 站点
-  60, // 状态
+  120, // 站点（含状态图标）
   75, // 余额
   75, // 今日消费
   60, // 总 Token

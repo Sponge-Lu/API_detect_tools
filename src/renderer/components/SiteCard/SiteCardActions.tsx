@@ -12,6 +12,8 @@ import {
   Calendar,
   Loader2,
   Fuel,
+  Timer,
+  TimerOff,
 } from 'lucide-react';
 import type { SiteCardActionsProps } from './types';
 
@@ -22,14 +24,15 @@ export function SiteCardActions({
   isExpanded,
   detectingSite,
   checkingIn,
+  autoRefreshEnabled,
   onExpand,
   onDetect,
-  onToggle,
   onEdit,
   onDelete,
   onCheckIn,
   onOpenExtraLink,
   onCopyToClipboard,
+  onToggleAutoRefresh,
 }: SiteCardActionsProps) {
   return (
     <div className="flex items-center gap-1 ml-2 flex-shrink-0">
@@ -60,31 +63,21 @@ export function SiteCardActions({
                       onCheckIn(site);
                     }}
                     disabled={checkingIn === site.name}
-                    className="px-2 py-1 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-700 dark:text-yellow-300 rounded transition-all flex items-center gap-1 text-xs font-semibold disabled:opacity-50"
+                    className="p-1 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-700 dark:text-yellow-300 rounded transition-all disabled:opacity-50"
                     title="点击签到"
                   >
                     {checkingIn === site.name ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>签到中</span>
-                      </>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     ) : (
-                      <>
-                        <Calendar className="w-3 h-3" />
-                        <span>签到</span>
-                      </>
+                      <Calendar className="w-3.5 h-3.5" />
                     )}
                   </button>
                 )}
 
                 {/* 已签到 - 仅当缓存是今天且明确为false时显示 */}
                 {effectiveCanCheckIn === false && (
-                  <div
-                    className="px-2 py-1 bg-gray-500/20 text-gray-400 rounded flex items-center gap-1 text-xs"
-                    title="今日已签到"
-                  >
-                    <CheckCircle className="w-3 h-3" />
-                    <span>已签</span>
+                  <div className="p-1 bg-gray-500/20 text-gray-400 rounded" title="今日已签到">
+                    <CheckCircle className="w-3.5 h-3.5" />
                   </div>
                 )}
               </>
@@ -100,11 +93,10 @@ export function SiteCardActions({
             e.stopPropagation();
             onOpenExtraLink(site.extra_links!);
           }}
-          className="px-2 py-1 bg-purple-500/20 hover:bg-purple-500/30 text-purple-700 dark:text-purple-300 rounded transition-all flex items-center gap-1 text-xs font-semibold"
+          className="p-1 bg-purple-500/20 hover:bg-purple-500/30 text-purple-700 dark:text-purple-300 rounded transition-all"
           title={`打开加油站: ${site.extra_links}`}
         >
-          <Fuel className="w-3 h-3 animate-pulse" />
-          <span>加油站</span>
+          <Fuel className="w-3.5 h-3.5 animate-pulse" />
         </button>
       )}
 
@@ -138,15 +130,17 @@ export function SiteCardActions({
         <RefreshCw className={`w-3.5 h-3.5 ${detectingSite === site.name ? 'animate-spin' : ''}`} />
       </button>
 
-      {/* 启用/禁用 */}
+      {/* 自动刷新开关 */}
       <button
-        onClick={() => onToggle(index)}
-        className="p-1 hover:bg-white/10 rounded transition-all"
-        title={site.enabled ? '禁用站点' : '启用站点'}
+        onClick={() => onToggleAutoRefresh?.()}
+        className={`p-1 rounded transition-all ${autoRefreshEnabled ? 'bg-green-500/20 hover:bg-green-500/30' : 'hover:bg-white/10'}`}
+        title={autoRefreshEnabled ? '关闭自动刷新' : '开启自动刷新'}
       >
-        <CheckCircle
-          className={`w-3.5 h-3.5 ${site.enabled ? 'text-green-500' : 'text-gray-500'}`}
-        />
+        {autoRefreshEnabled ? (
+          <Timer className="w-3.5 h-3.5 text-green-500" />
+        ) : (
+          <TimerOff className="w-3.5 h-3.5 text-gray-400" />
+        )}
       </button>
 
       {/* 编辑 */}

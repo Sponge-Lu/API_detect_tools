@@ -1,5 +1,5 @@
 ﻿import Logger from './utils/logger';
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   Server,
   Plus,
@@ -12,6 +12,8 @@ import {
   Search,
   X,
   ChevronsUpDown,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import { SiteEditor } from './components/SiteEditor';
 import { SettingsPanel } from './components/SettingsPanel';
@@ -30,6 +32,7 @@ import {
   useSiteDrag,
   useSiteDetection,
   useUpdate,
+  useAutoRefresh,
 } from './hooks';
 import type { NewApiTokenForm } from './hooks';
 import { getGroupTextColor } from './utils/groupStyle';
@@ -40,7 +43,7 @@ export type { SiteConfig, DetectionResult } from '../shared/types/site';
 // 导入 Zustand Store
 import { useConfigStore } from './store/configStore';
 import { useDetectionStore } from './store/detectionStore';
-import { useUIStore } from './store/uiStore';
+import { useUIStore, SortField } from './store/uiStore';
 import { useToastStore, toast } from './store/toastStore';
 
 declare global {
@@ -133,8 +136,6 @@ export interface Settings {
   concurrent: boolean;
   max_concurrent?: number;
   show_disabled: boolean;
-  auto_refresh: boolean;
-  refresh_interval: number;
   // 新增：浏览器可执行文件路径（可选），用于自定义 Chromium / Edge / 便携版浏览器
   browser_path?: string;
   // WebDAV 云端备份配置
@@ -145,6 +146,11 @@ export interface Settings {
     password: string;
     remotePath: string;
     maxBackups: number;
+  };
+  // 站点列表排序设置
+  sort?: {
+    field: string | null;
+    order: 'asc' | 'desc';
   };
 }
 
@@ -200,7 +206,6 @@ function App() {
     addSite: storeAddSite,
     updateSite: storeUpdateSite,
     deleteSite: storeDeleteSite,
-    toggleSiteEnabled,
   } = useConfigStore();
   // detectionStore - 获取展示用的数据和 setter（检测状态由 useSiteDetection hook 管理）
   const { apiKeys, userGroups, modelPricing, setApiKeys, setUserGroups, setModelPricing } =
@@ -230,6 +235,7 @@ function App() {
     setGlobalModelSearch,
     clearAllModelSearch,
     refreshMessage,
+    setRefreshMessage,
     checkingIn,
     setCheckingIn,
     draggedGroupIndex,
@@ -256,6 +262,11 @@ function App() {
     setProcessingAuthErrorSite,
     columnWidths,
     setColumnWidth,
+    sortField,
+    sortOrder,
+    toggleSort,
+    setSortField,
+    setSortOrder,
   } = useUIStore();
 
   // 兼容层
@@ -286,6 +297,41 @@ function App() {
       // 某些环境可能禁用存储，忽略错误即可
     }
   }, [columnWidths]);
+
+  // 排序设置变化时保存到 config
+  const sortSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const configRef = useRef(config);
+  configRef.current = config;
+
+  useEffect(() => {
+    if (!configRef.current) return;
+    // 防抖保存，避免频繁写入
+    if (sortSaveTimeoutRef.current) {
+      clearTimeout(sortSaveTimeoutRef.current);
+    }
+    sortSaveTimeoutRef.current = setTimeout(async () => {
+      const currentConfig = configRef.current;
+      if (!currentConfig) return;
+      const currentSort = currentConfig.settings?.sort;
+      const newSort = { field: sortField, order: sortOrder };
+      // 只有当排序设置真正变化时才保存
+      if (currentSort?.field !== newSort.field || currentSort?.order !== newSort.order) {
+        const newSettings = { ...currentConfig.settings, sort: newSort };
+        try {
+          await window.electronAPI.saveConfig({ ...currentConfig, settings: newSettings });
+          // 更新本地 config 状态（不触发重新渲染循环）
+          setConfig({ ...currentConfig, settings: newSettings });
+        } catch (error) {
+          Logger.error('保存排序设置失败:', error);
+        }
+      }
+    }, 500);
+    return () => {
+      if (sortSaveTimeoutRef.current) {
+        clearTimeout(sortSaveTimeoutRef.current);
+      }
+    };
+  }, [sortField, sortOrder, setConfig]);
 
   // 列宽调整：在表头右侧拖动分隔线即可调整宽度
   const handleColumnResizeMouseDown = (event: React.MouseEvent, index: number) => {
@@ -460,6 +506,19 @@ function App() {
       showDialog,
     });
 
+  // 自动刷新 hook - 管理站点自动刷新定时器
+  useAutoRefresh({
+    sites: config?.sites || [],
+    detectSingle,
+    enabled: true,
+    onRefresh: (siteName: string) => {
+      toast.success(`${siteName} 自动刷新完成`);
+    },
+    onError: (siteName: string, error: Error) => {
+      Logger.error(`[AutoRefresh] ${siteName} 刷新失败:`, error);
+    },
+  });
+
   // 数据加载 hook（需要在 setResults 可用后初始化）
   const { loadCachedData } = useDataLoader({
     setResults,
@@ -473,6 +532,16 @@ function App() {
       setLoading(true);
       const cfg = await window.electronAPI.loadConfig();
       setConfig(cfg);
+      // 从配置中恢复排序设置
+      if (cfg?.settings?.sort) {
+        const { field, order } = cfg.settings.sort;
+        if (field) {
+          setSortField(field as SortField);
+        }
+        if (order) {
+          setSortOrder(order);
+        }
+      }
       return cfg;
     } catch (error) {
       Logger.error('加载配置失败:', error);
@@ -786,6 +855,91 @@ function App() {
     return models.some(m => m.toLowerCase().includes(searchTerm));
   };
 
+  // 获取站点的排序值
+  const getSortValue = useCallback(
+    (site: SiteConfig, siteResult?: DetectionResult): number | string => {
+      if (!sortField) return 0;
+
+      // 计算 Token 相关值
+      const todayPromptTokens = siteResult?.todayPromptTokens ?? 0;
+      const todayCompletionTokens = siteResult?.todayCompletionTokens ?? 0;
+      const todayTotalTokens =
+        siteResult?.todayTotalTokens ?? todayPromptTokens + todayCompletionTokens;
+      const todayRequests = siteResult?.todayRequests ?? 0;
+
+      // 计算 RPM / TPM
+      const now = new Date();
+      const dayStart = new Date(now);
+      dayStart.setHours(0, 0, 0, 0);
+      const minutesSinceStart = Math.max((now.getTime() - dayStart.getTime()) / 60000, 1);
+      const rpm = todayRequests > 0 ? todayRequests / minutesSinceStart : 0;
+      const tpm = todayTotalTokens > 0 ? todayTotalTokens / minutesSinceStart : 0;
+
+      // 计算模型数量
+      const apiModelCount = siteResult?.models?.length || 0;
+      const pricing = modelPricing[site.name];
+      const pricingModelCount = pricing?.data ? Object.keys(pricing.data).length : 0;
+      const modelCount = Math.max(apiModelCount, pricingModelCount);
+
+      // 获取最后更新时间
+      const lastSyncTime = siteResult?.lastRefresh || 0;
+
+      switch (sortField) {
+        case 'name':
+          return site.name.toLowerCase();
+        case 'balance':
+          return siteResult?.balance ?? -Infinity;
+        case 'todayUsage':
+          return siteResult?.todayUsage ?? -Infinity;
+        case 'totalTokens':
+          return todayTotalTokens;
+        case 'promptTokens':
+          return todayPromptTokens;
+        case 'completionTokens':
+          return todayCompletionTokens;
+        case 'requests':
+          return todayRequests;
+        case 'rpm':
+          return rpm;
+        case 'tpm':
+          return tpm;
+        case 'modelCount':
+          return modelCount;
+        case 'lastUpdate':
+          return lastSyncTime ? new Date(lastSyncTime).getTime() : 0;
+        default:
+          return 0;
+      }
+    },
+    [sortField, modelPricing]
+  );
+
+  // 排序后的站点列表（带原始索引）
+  const sortedSites = useMemo(() => {
+    if (!config?.sites) return [];
+
+    const sitesWithIndex = config.sites.map((site, index) => {
+      const siteResult = results.find(r => r.name === site.name);
+      return { site, index, siteResult };
+    });
+
+    if (!sortField) return sitesWithIndex;
+
+    return [...sitesWithIndex].sort((a, b) => {
+      const aValue = getSortValue(a.site, a.siteResult);
+      const bValue = getSortValue(b.site, b.siteResult);
+
+      let comparison = 0;
+      if (typeof aValue === 'string' && typeof bValue === 'string') {
+        comparison = aValue.localeCompare(bValue);
+      } else {
+        comparison = (aValue as number) - (bValue as number);
+      }
+
+      return sortOrder === 'asc' ? comparison : -comparison;
+    });
+  }, [config?.sites, results, sortField, sortOrder, getSortValue]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen bg-light-bg dark:bg-dark-bg relative">
@@ -1078,21 +1232,23 @@ function App() {
                       className="grid gap-x-1 flex-1 items-center select-none"
                       style={{ gridTemplateColumns: columnWidths.map(w => `${w}px`).join(' ') }}
                     >
-                      {[
-                        '站点',
-                        '状态',
-                        '余额',
-                        '今日消费',
-                        '总 Token',
-                        '输入',
-                        '输出',
-                        '请求',
-                        'RPM',
-                        'TPM',
-                        '模型数',
-                        '更新时间',
-                      ].map((label, idx) => {
-                        const centerHeader = idx >= 4 && idx <= 11; // 总 Token / 输入 / 输出 / 请求 / RPM / TPM / 模型数 / 更新时间
+                      {(
+                        [
+                          { label: '站点', field: 'name' },
+                          { label: '余额', field: 'balance' },
+                          { label: '今日消费', field: 'todayUsage' },
+                          { label: '总 Token', field: 'totalTokens' },
+                          { label: '输入', field: 'promptTokens' },
+                          { label: '输出', field: 'completionTokens' },
+                          { label: '请求', field: 'requests' },
+                          { label: 'RPM', field: 'rpm' },
+                          { label: 'TPM', field: 'tpm' },
+                          { label: '模型数', field: 'modelCount' },
+                          { label: '更新时间', field: 'lastUpdate' },
+                        ] as { label: string; field: SortField }[]
+                      ).map(({ label, field }, idx) => {
+                        const centerHeader = idx >= 3 && idx <= 10; // 总 Token / 输入 / 输出 / 请求 / RPM / TPM / 模型数 / 更新时间
+                        const isActive = sortField === field;
                         return (
                           <div
                             key={label}
@@ -1100,9 +1256,21 @@ function App() {
                               centerHeader ? 'justify-center text-center' : 'justify-start'
                             }`}
                           >
-                            <span className={centerHeader ? 'w-full text-center' : undefined}>
-                              {label}
-                            </span>
+                            <button
+                              onClick={() => toggleSort(field)}
+                              className={`flex items-center gap-0.5 hover:text-primary-500 transition-colors ${
+                                isActive ? 'text-primary-500' : ''
+                              } ${centerHeader ? 'justify-center' : ''}`}
+                              title={`点击按${label}排序`}
+                            >
+                              <span>{label}</span>
+                              {isActive &&
+                                (sortOrder === 'desc' ? (
+                                  <ArrowDown className="w-3 h-3" />
+                                ) : (
+                                  <ArrowUp className="w-3 h-3" />
+                                ))}
+                            </button>
                             {/* 列宽调整拖拽条：占据单元格右侧 4px 区域 */}
                             <div
                               onMouseDown={e => handleColumnResizeMouseDown(e, idx)}
@@ -1131,21 +1299,24 @@ function App() {
                   </div>
 
                   <div className="min-w-[1180px] space-y-3">
-                    {config.sites.map((site, index) => {
-                      // 先按名称匹配检测结果，如果名称被修改则回退到按URL匹配
-                      let siteResult = results.find(r => r.name === site.name);
+                    {sortedSites.map(({ site, index, siteResult: cachedResult }) => {
+                      // 使用排序时已缓存的结果，或重新查找
+                      let siteResult = cachedResult;
                       if (!siteResult) {
-                        try {
-                          const siteOrigin = new URL(site.url).origin;
-                          siteResult = results.find(r => {
-                            try {
-                              return new URL(r.url).origin === siteOrigin;
-                            } catch {
-                              return false;
-                            }
-                          });
-                        } catch {
-                          // ignore url parse error
+                        siteResult = results.find(r => r.name === site.name);
+                        if (!siteResult) {
+                          try {
+                            const siteOrigin = new URL(site.url).origin;
+                            siteResult = results.find(r => {
+                              try {
+                                return new URL(r.url).origin === siteOrigin;
+                              } catch {
+                                return false;
+                              }
+                            });
+                          } catch {
+                            // ignore url parse error
+                          }
                         }
                       }
 
@@ -1167,7 +1338,7 @@ function App() {
 
                       return (
                         <SiteCard
-                          key={index}
+                          key={site.name}
                           site={site}
                           index={index}
                           siteResult={siteResult}
@@ -1187,9 +1358,9 @@ function App() {
                           showTokens={showTokens}
                           selectedModels={selectedModels}
                           deletingTokenKey={deletingTokenKey}
+                          autoRefreshEnabled={site.auto_refresh ?? false}
                           onExpand={handleExpandSite}
                           onDetect={detectSingle}
-                          onToggle={toggleSiteEnabled}
                           onEdit={idx => {
                             setEditingSite(idx);
                             setShowSiteEditor(true);
@@ -1213,6 +1384,27 @@ function App() {
                           onCopySelectedModels={copySelectedModels}
                           onOpenCreateTokenDialog={handleOpenCreateTokenDialog}
                           onDeleteToken={handleDeleteToken}
+                          onToggleAutoRefresh={() => {
+                            const newSites = [...config.sites];
+                            // 获取当前间隔值或使用默认值5分钟
+                            const interval = site.auto_refresh_interval || 5;
+                            if (site.auto_refresh) {
+                              // 关闭自动刷新，但保留间隔值
+                              newSites[index] = {
+                                ...site,
+                                auto_refresh: false,
+                                auto_refresh_interval: interval,
+                              };
+                            } else {
+                              // 开启自动刷新：使用已保存的间隔或默认值5分钟
+                              newSites[index] = {
+                                ...site,
+                                auto_refresh: true,
+                                auto_refresh_interval: interval,
+                              };
+                            }
+                            saveConfig({ ...config, sites: newSites });
+                          }}
                         />
                       );
                     })}
@@ -1341,8 +1533,8 @@ function App() {
             }
 
             // 强制获取数据（接受空数据）
-            toast.info(`正在强制刷新 ${siteName}...`);
             try {
+              const existingResult = results.find(r => r.name === siteName);
               const timeout = config.settings?.timeout ?? 30;
               const result = await window.electronAPI.detectSite(
                 site,
@@ -1356,13 +1548,28 @@ function App() {
               const filtered = results.filter(r => r.name !== site.name);
               setResults([...filtered, result]);
 
-              if (result.status === '成功') {
-                toast.success(`${siteName} 数据已更新（模型数: ${result.models.length}）`);
-              } else {
-                toast.warning(`${siteName} 获取失败: ${result.error}`);
-              }
+              // 使用与其他刷新操作完全一致的提示方式
+              const hasChanges =
+                !existingResult ||
+                existingResult.status !== result.status ||
+                existingResult.balance !== result.balance ||
+                existingResult.todayUsage !== result.todayUsage ||
+                existingResult.models.length !== result.models.length ||
+                JSON.stringify(existingResult.apiKeys) !== JSON.stringify(result.apiKeys);
+
+              setRefreshMessage({
+                site: siteName,
+                message: hasChanges ? '✅ 数据已更新' : 'ℹ️ 数据无变化',
+                type: hasChanges ? 'success' : 'info',
+              });
+              setTimeout(() => setRefreshMessage(null), 3000);
             } catch (error: any) {
-              toast.error(`强制刷新失败: ${error.message}`);
+              setRefreshMessage({
+                site: siteName,
+                message: `❌ 刷新失败: ${error.message}`,
+                type: 'info',
+              });
+              setTimeout(() => setRefreshMessage(null), 5000);
             }
           }}
           onOpenSite={async url => {
