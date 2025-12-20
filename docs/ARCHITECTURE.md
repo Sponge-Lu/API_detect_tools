@@ -53,6 +53,7 @@ src/
 │   │   ├── backup-handlers.ts     # 备份恢复
 │   │   ├── token-handlers.ts      # 令牌与认证
 │   │   ├── detection-handlers.ts  # 站点检测
+│   │   ├── cli-compat-handlers.ts # CLI 兼容性测试
 │   │   ├── webdav-handlers.ts     # WebDAV 云端备份
 │   │   └── index.ts               # 统一注册入口
 │   ├── utils/                     # 后端工具
@@ -64,6 +65,7 @@ src/
 │   ├── backup-manager.ts          # 本地备份管理
 │   ├── webdav-manager.ts          # WebDAV 云端备份管理
 │   ├── update-service.ts          # 软件更新服务
+│   ├── cli-compat-service.ts      # CLI 兼容性测试服务
 │   ├── main.ts                    # 主进程入口
 │   └── preload.ts                 # 预加载脚本 (IPC 桥接)
 │
@@ -121,6 +123,21 @@ src/
 - **UnifiedConfigManager**: 负责 `config.json` 的读写，保证配置数据的原子性和一致性。支持前端兼容层，在保存旧格式配置时自动保留 WebDAV 等扩展配置。
 - **WebDAVManager**: 负责 WebDAV 云端备份功能，包括连接测试、备份上传/下载/删除、自动清理旧备份等。使用动态 import 加载 ESM 模块以兼容 Electron 的 CommonJS 环境。
 - **UpdateService**: 负责软件更新检测功能，通过 GitHub Releases API 获取最新版本信息，支持正式版本和预发布版本的检测，提供版本比较和下载链接打开功能。
+- **CliCompatService**: 负责 CLI 兼容性测试功能，支持 Claude Code、Codex、Gemini CLI、Chat 四种工具的兼容性检测，通过模拟 API 请求验证站点是否支持特定 CLI 工具。Chat 使用基础测试（不带 tools 参数）。
+
+### CLI 配置数据存储
+
+CLI 相关数据的存储位置设计：
+
+| 数据类型 | 存储位置 | 说明 |
+|---------|---------|------|
+| **CLI 配置** | `site.cli_config` 或 `site.cached_data.cli_config` | 用户配置的 API Key 和模型选择，优先从站点根级别读取 |
+| **CLI 兼容性结果** | `site.cached_data.cli_compatibility` 或 `site.cli_compatibility` | 测试结果缓存，优先从 cached_data 读取 |
+
+**兼容性处理**：
+- `useDataLoader` 在加载时会同时检查两个位置，确保兼容旧版本数据结构
+- CLI 配置优先从 `site.cli_config` 读取，兼容从 `site.cached_data.cli_config` 读取
+- CLI 兼容性结果优先从 `site.cached_data.cli_compatibility` 读取，兼容从 `site.cli_compatibility` 读取
 
 ### HTTP 客户端架构
 

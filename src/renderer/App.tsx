@@ -20,7 +20,13 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { ConfirmDialog, DialogState, initialDialogState } from './components/ConfirmDialog';
 import { Header } from './components/Header';
 import { SiteCard } from './components/SiteCard';
-import { AuthErrorDialog, SiteGroupDialog, BackupSelectDialog } from './components/dialogs';
+import {
+  AuthErrorDialog,
+  SiteGroupDialog,
+  BackupSelectDialog,
+  CliConfigDialog,
+} from './components/dialogs';
+import type { CliConfig } from './components/dialogs';
 import { CreateApiKeyDialog } from './components/CreateApiKeyDialog';
 import { ToastContainer } from './components/Toast';
 import {
@@ -33,6 +39,7 @@ import {
   useSiteDetection,
   useUpdate,
   useAutoRefresh,
+  useCliCompatTest,
 } from './hooks';
 import type { NewApiTokenForm } from './hooks';
 import { getGroupTextColor } from './utils/groupStyle';
@@ -127,6 +134,26 @@ declare global {
           lastCheckTime?: string;
         }) => Promise<void>;
       };
+      cliCompat: {
+        testWithConfig: (params: {
+          siteUrl: string;
+          configs: Array<{
+            cliType: 'claudeCode' | 'codex' | 'geminiCli';
+            apiKey: string;
+            model: string;
+          }>;
+        }) => Promise<{
+          success: boolean;
+          data?: {
+            claudeCode: boolean | null;
+            codex: boolean | null;
+            geminiCli: boolean | null;
+          };
+          error?: string;
+        }>;
+        saveResult: (siteUrl: string, result: any) => Promise<{ success: boolean; error?: string }>;
+        saveConfig: (siteUrl: string, config: any) => Promise<{ success: boolean; error?: string }>;
+      };
     };
   }
 }
@@ -208,8 +235,15 @@ function App() {
     deleteSite: storeDeleteSite,
   } = useConfigStore();
   // detectionStore - 获取展示用的数据和 setter（检测状态由 useSiteDetection hook 管理）
-  const { apiKeys, userGroups, modelPricing, setApiKeys, setUserGroups, setModelPricing } =
-    useDetectionStore();
+  const {
+    apiKeys,
+    userGroups,
+    modelPricing,
+    setApiKeys,
+    setUserGroups,
+    setModelPricing,
+    setCliCompatibility,
+  } = useDetectionStore();
   // uiStore
   const {
     showSiteEditor,
@@ -288,14 +322,9 @@ function App() {
 
   const columnWidthsRef = useRef<number[]>(columnWidths);
 
-  // 保持 ref 与 state 同步，并在变更时写入 localStorage
+  // 保持 ref 与 state 同步
   useEffect(() => {
     columnWidthsRef.current = columnWidths;
-    try {
-      window.localStorage.setItem('siteListColumnWidths', JSON.stringify(columnWidths));
-    } catch {
-      // 某些环境可能禁用存储，忽略错误即可
-    }
   }, [columnWidths]);
 
   // 排序设置变化时保存到 config
@@ -425,16 +454,8 @@ function App() {
     handleDropOnGroup,
   } = useSiteDrag({ config, saveConfig });
 
-  useEffect(() => {
-    // 先加载配置，再加载缓存数据
-    const init = async () => {
-      const cfg = await loadConfig();
-      if (cfg) {
-        await loadCachedData(cfg);
-      }
-    };
-    init();
-  }, []);
+  // 用于存储初始化状态的 ref
+  const initRef = useRef(false);
 
   // 启动时自动检查更新（后台静默检查，不阻塞用户交互）
   useEffect(() => {
@@ -519,13 +540,48 @@ function App() {
     },
   });
 
+  // CLI 兼容性测试 hook
+  const {
+    testSite: testCliCompatSite,
+    isTestingSite: isCliTestingSite,
+    getCompatibility,
+    getCliConfig,
+    setCliConfig,
+  } = useCliCompatTest();
+
+  // CLI 配置对话框状态
+  const [showCliConfigDialog, setShowCliConfigDialog] = useState(false);
+  const [cliConfigSite, setCliConfigSite] = useState<SiteConfig | null>(null);
+
   // 数据加载 hook（需要在 setResults 可用后初始化）
   const { loadCachedData } = useDataLoader({
     setResults,
     setApiKeys,
     setUserGroups,
     setModelPricing,
+    setCliCompatibility,
+    setCliConfig,
   });
+
+  // 使用 ref 存储 loadCachedData 的最新引用，避免 useEffect 闭包问题
+  const loadCachedDataRef = useRef(loadCachedData);
+  loadCachedDataRef.current = loadCachedData; // 同步更新 ref
+
+  // 应用初始化：加载配置和缓存数据
+  useEffect(() => {
+    // 防止重复初始化
+    if (initRef.current) return;
+    initRef.current = true;
+
+    const init = async () => {
+      const cfg = await loadConfig();
+      if (cfg) {
+        // 使用 ref 确保调用最新的 loadCachedData
+        await loadCachedDataRef.current?.(cfg);
+      }
+    };
+    init();
+  }, []);
 
   const loadConfig = async (): Promise<Config | null> => {
     try {
@@ -1226,7 +1282,7 @@ function App() {
               ) : (
                 // 为了在窗口变窄时出现横向滚动条，内部内容设置一个最小宽度（由根容器负责横向滚动）
                 <>
-                  {/* 列表表头（固定在滚动容器顶部）：站点名称 / 状态 / 余额 / 今日消费 / 总Token / 输入 / 输出 / 请求 / RPM / TPM / 模型数 / 更新时间 / 操作 */}
+                  {/* 列表表头（固定在滚动容器顶部）：站点名称 / 状态 / 余额 / 今日消费 / 总Token / 输入 / 输出 / 请求 / RPM / TPM / 模型数 / 更新时间 / CC-CX-Gemini? / 操作 */}
                   <div className="min-w-[1180px] sticky top-0 z-20 px-4 py-2 bg-gradient-to-r from-emerald-50/60 to-amber-50/60 dark:from-emerald-900/20 dark:to-amber-900/20 backdrop-blur-sm border-b border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-sm font-semibold text-slate-700 dark:text-slate-100">
                     <div
                       className="grid gap-x-1 flex-1 items-center select-none"
@@ -1245,10 +1301,12 @@ function App() {
                           { label: 'TPM', field: 'tpm' },
                           { label: '模型数', field: 'modelCount' },
                           { label: '更新时间', field: 'lastUpdate' },
-                        ] as { label: string; field: SortField }[]
+                          { label: 'CC-CX-Gemini?', field: null },
+                        ] as { label: string; field: SortField | null }[]
                       ).map(({ label, field }, idx) => {
-                        const centerHeader = idx >= 3 && idx <= 10; // 总 Token / 输入 / 输出 / 请求 / RPM / TPM / 模型数 / 更新时间
-                        const isActive = sortField === field;
+                        const centerHeader = idx >= 3 && idx <= 11; // 总 Token / 输入 / 输出 / 请求 / RPM / TPM / 模型数 / 更新时间 / CC-CX-Gemini?
+                        const isActive = field && sortField === field;
+                        const isSortable = field !== null;
                         return (
                           <div
                             key={label}
@@ -1256,21 +1314,27 @@ function App() {
                               centerHeader ? 'justify-center text-center' : 'justify-start'
                             }`}
                           >
-                            <button
-                              onClick={() => toggleSort(field)}
-                              className={`flex items-center gap-0.5 hover:text-primary-500 transition-colors ${
-                                isActive ? 'text-primary-500' : ''
-                              } ${centerHeader ? 'justify-center' : ''}`}
-                              title={`点击按${label}排序`}
-                            >
-                              <span>{label}</span>
-                              {isActive &&
-                                (sortOrder === 'desc' ? (
-                                  <ArrowDown className="w-3 h-3" />
-                                ) : (
-                                  <ArrowUp className="w-3 h-3" />
-                                ))}
-                            </button>
+                            {isSortable ? (
+                              <button
+                                onClick={() => toggleSort(field)}
+                                className={`flex items-center gap-0.5 hover:text-primary-500 transition-colors ${
+                                  isActive ? 'text-primary-500' : ''
+                                } ${centerHeader ? 'justify-center' : ''}`}
+                                title={`点击按${label}排序`}
+                              >
+                                <span>{label}</span>
+                                {isActive &&
+                                  (sortOrder === 'desc' ? (
+                                    <ArrowDown className="w-3 h-3" />
+                                  ) : (
+                                    <ArrowUp className="w-3 h-3" />
+                                  ))}
+                              </button>
+                            ) : (
+                              <span className={centerHeader ? 'text-center w-full' : ''}>
+                                {label}
+                              </span>
+                            )}
                             {/* 列宽调整拖拽条：占据单元格右侧 4px 区域 */}
                             <div
                               onMouseDown={e => handleColumnResizeMouseDown(e, idx)}
@@ -1359,6 +1423,9 @@ function App() {
                           selectedModels={selectedModels}
                           deletingTokenKey={deletingTokenKey}
                           autoRefreshEnabled={site.auto_refresh ?? false}
+                          cliCompatibility={getCompatibility(site.name)}
+                          cliConfig={getCliConfig(site.name)}
+                          isCliTesting={isCliTestingSite(site.name)}
                           onExpand={handleExpandSite}
                           onDetect={detectSingle}
                           onEdit={idx => {
@@ -1384,6 +1451,14 @@ function App() {
                           onCopySelectedModels={copySelectedModels}
                           onOpenCreateTokenDialog={handleOpenCreateTokenDialog}
                           onDeleteToken={handleDeleteToken}
+                          onOpenCliConfig={() => {
+                            setCliConfigSite(site);
+                            setShowCliConfigDialog(true);
+                          }}
+                          onTestCliCompat={() => {
+                            const siteApiKeys = apiKeys[siteResult?.name || site.name] || [];
+                            testCliCompatSite(site.name, site.url, siteApiKeys);
+                          }}
                           onToggleAutoRefresh={() => {
                             const newSites = [...config.sites];
                             // 获取当前间隔值或使用默认值5分钟
@@ -1618,6 +1693,34 @@ function App() {
           onFormChange={partial => setNewTokenForm(prev => ({ ...prev, ...partial }))}
           onSubmit={handleCreateTokenSubmit}
           onClose={closeCreateTokenDialog}
+        />
+      )}
+
+      {/* CLI 配置对话框 */}
+      {cliConfigSite && (
+        <CliConfigDialog
+          isOpen={showCliConfigDialog}
+          siteName={cliConfigSite.name}
+          apiKeys={apiKeys[cliConfigSite.name] || []}
+          userGroups={userGroups[cliConfigSite.name] || {}}
+          siteModels={results.find(r => r.name === cliConfigSite.name)?.models || []}
+          currentConfig={getCliConfig(cliConfigSite.name)}
+          onClose={() => {
+            setShowCliConfigDialog(false);
+            setCliConfigSite(null);
+          }}
+          onSave={async (newConfig: CliConfig) => {
+            setCliConfig(cliConfigSite.name, newConfig);
+            // 保存到站点配置（不是 cached_data）
+            try {
+              await (window.electronAPI as any).cliCompat.saveConfig(cliConfigSite.url, newConfig);
+              toast.success('CLI 配置已保存');
+            } catch {
+              toast.error('保存 CLI 配置失败');
+            }
+            setShowCliConfigDialog(false);
+            setCliConfigSite(null);
+          }}
         />
       )}
 

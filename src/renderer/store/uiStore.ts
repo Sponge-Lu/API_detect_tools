@@ -433,15 +433,9 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: 'api-hub-ui-storage',
-      partialize: state => ({
-        columnWidths: state.columnWidths,
-      }),
-      // 迁移：列数变化时重置为默认值
-      onRehydrateStorage: () => state => {
-        if (state && state.columnWidths.length !== DEFAULT_COLUMN_WIDTHS.length) {
-          state.columnWidths = [...DEFAULT_COLUMN_WIDTHS];
-        }
-      },
+      version: 3,
+      // 不再持久化 columnWidths，让它每次都使用 DEFAULT_COLUMN_WIDTHS
+      partialize: () => ({}),
     }
   )
 );

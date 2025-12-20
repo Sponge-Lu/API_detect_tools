@@ -149,7 +149,8 @@ export const DEFAULT_COLUMN_WIDTHS = [
   50, // RPM
   50, // TPM
   50, // 模型数
-  60, // 更新时间
+  100, // 更新时间
+  115, // CLI兼容性（配置按钮、测试按钮、CLI 图标）
 ] as const;
 
 /** 列宽最小值 */

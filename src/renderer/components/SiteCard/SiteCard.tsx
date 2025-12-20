@@ -32,6 +32,9 @@ export function SiteCard({
   deletingTokenKey,
   // 回调
   autoRefreshEnabled,
+  cliCompatibility,
+  cliConfig,
+  isCliTesting,
   onExpand,
   onDetect,
   onEdit,
@@ -41,6 +44,8 @@ export function SiteCard({
   onOpenExtraLink,
   onCopyToClipboard,
   onToggleAutoRefresh,
+  onOpenCliConfig,
+  onTestCliCompat,
   onDragStart,
   onDragEnd,
   onDragOver,
@@ -175,6 +180,11 @@ export function SiteCard({
             tpm={tpm}
             modelCount={modelCount}
             onOpenCheckinPage={onOpenCheckinPage}
+            cliCompatibility={cliCompatibility}
+            cliConfig={cliConfig}
+            isCliTesting={isCliTesting}
+            onOpenCliConfig={onOpenCliConfig}
+            onTestCliCompat={onTestCliCompat}
           />
 
           {/* 右侧：操作按钮 */}

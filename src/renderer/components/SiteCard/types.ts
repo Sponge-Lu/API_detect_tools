@@ -4,6 +4,8 @@
 
 import type { SiteConfig } from '../../../main/types/token';
 import type { DetectionResult } from '../../App';
+import type { CliCompatibilityResult } from '../../store/detectionStore';
+import type { CliConfig } from '../dialogs/CliConfigDialog';
 
 export interface SiteCardProps {
   site: SiteConfig;
@@ -35,6 +37,11 @@ export interface SiteCardProps {
   // 自动刷新状态
   autoRefreshEnabled?: boolean;
 
+  // CLI 兼容性状态
+  cliCompatibility?: CliCompatibilityResult;
+  cliConfig?: CliConfig | null;
+  isCliTesting?: boolean;
+
   // 回调函数
   onExpand: (name: string) => void;
   onDetect: (site: SiteConfig) => void;
@@ -45,6 +52,8 @@ export interface SiteCardProps {
   onOpenExtraLink: (link: string) => void;
   onCopyToClipboard: (text: string, label: string) => void;
   onToggleAutoRefresh?: () => void;
+  onOpenCliConfig?: () => void;
+  onTestCliCompat?: () => void;
 
   // 拖拽回调
   onDragStart: (e: React.DragEvent, index: number) => void;
@@ -78,6 +87,12 @@ export interface SiteCardHeaderProps {
   tpm: number;
   modelCount: number;
   onOpenCheckinPage: (site: SiteConfig) => void;
+  // CLI 兼容性相关
+  cliCompatibility?: CliCompatibilityResult;
+  cliConfig?: CliConfig | null;
+  isCliTesting?: boolean;
+  onOpenCliConfig?: () => void;
+  onTestCliCompat?: () => void;
 }
 
 export interface SiteCardActionsProps {

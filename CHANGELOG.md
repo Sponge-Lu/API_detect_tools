@@ -4,6 +4,31 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，并且本项目遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
+## [v2.1.6]
+
+### 新增
+- **CLI 兼容性测试**：检测站点是否支持 Claude Code、Codex、Gemini CLI、Chat 等工具
+  - 支持单站点测试（需先配置 CLI 设置）
+  - 站点卡片显示 CLI 兼容性图标（彩色=支持，深灰=不支持，浅灰=已配置待测试，非常淡=未配置）
+  - 鼠标悬停显示详细状态和上次测试时间
+  - 测试结果持久化保存，重启应用后自动恢复
+- **CLI 配置对话框**：为每个站点配置 CLI 测试参数
+  - 选择用于测试的 API Key
+  - 选择用于测试的模型（Claude Code 只显示 claude* 模型，Codex 只显示 gpt* 模型，Gemini CLI 只显示 gemini* 模型）
+  - 支持 Claude Code、Codex、Gemini CLI、Chat 四种类型
+  - Chat 使用基础测试（不带 tools），可选择任意模型
+- **CLI 官方图标**：使用 lobehub.com/icons 官方 SVG 图标
+  - Claude Code（Anthropic 官方 logo）
+  - Codex（OpenAI 官方 logo，绿色）
+  - Gemini CLI（Google Gemini 官方 logo）
+  - Chat（对话气泡图标，蓝紫色渐变）
+
+### 修复
+- **CLI 配置加载**：修复应用重启后 CLI 配置和测试结果不显示的问题
+  - 兼容 `cached_data` 和站点根级别两种数据存储位置
+
+---
+
 ## [v2.1.5]
 
 ### 优化

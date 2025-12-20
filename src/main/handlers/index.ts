@@ -17,6 +17,7 @@ import { registerTokenHandlers } from './token-handlers';
 import { registerDetectionHandlers } from './detection-handlers';
 import { registerWebDAVHandlers } from './webdav-handlers';
 import { registerUpdateHandlers } from './update-handlers';
+import { registerCliCompatHandlers } from './cli-compat-handlers';
 
 interface HandlerDependencies {
   chromeManager: ChromeManager;
@@ -53,6 +54,9 @@ export function registerAllHandlers(deps: HandlerDependencies) {
   // 软件更新相关
   registerUpdateHandlers();
 
+  // CLI 兼容性测试相关
+  registerCliCompatHandlers();
+
   Logger.info('✅ [Handlers] 所有 IPC 处理器已注册');
 }
 
@@ -64,3 +68,4 @@ export * from './token-handlers';
 export * from './detection-handlers';
 export * from './webdav-handlers';
 export * from './update-handlers';
+export * from './cli-compat-handlers';

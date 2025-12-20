@@ -20,6 +20,23 @@ export interface UserGroupInfo {
   ratio: number;
 }
 
+/** CLI 兼容性数据 */
+export interface CliCompatibilityData {
+  claudeCode: boolean | null;
+  codex: boolean | null;
+  geminiCli: boolean | null;
+  chat: boolean | null;
+  testedAt: number | null;
+  error?: string;
+}
+
+/** CLI 配置数据 */
+export interface CliConfigData {
+  claudeCode: { apiKeyId: number | null; model: string | null } | null;
+  codex: { apiKeyId: number | null; model: string | null } | null;
+  geminiCli: { apiKeyId: number | null; model: string | null } | null;
+}
+
 // ============= 统一站点类型 =============
 
 /**
@@ -50,6 +67,9 @@ export interface UnifiedSite {
   auto_refresh?: boolean; // 站点独立的自动刷新开关
   auto_refresh_interval?: number; // 自动刷新间隔（分钟），最小3分钟
 
+  // === CLI 配置（保存在站点配置中，备份时不会丢失） ===
+  cli_config?: CliConfigData;
+
   // === 检测结果缓存 ===
   cached_data?: {
     models: string[];
@@ -63,6 +83,7 @@ export interface UnifiedSite {
     model_pricing?: ModelPricingData;
     last_refresh: number;
     can_check_in?: boolean;
+    cli_compatibility?: CliCompatibilityData;
   };
 
   // === 元数据 ===

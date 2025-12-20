@@ -8,6 +8,24 @@
 import { create } from 'zustand';
 import type { DetectionResult } from '../App';
 
+/** CLI 兼容性测试结果 */
+export interface CliCompatibilityResult {
+  claudeCode: boolean | null; // true=支持, false=不支持, null=未测试
+  codex: boolean | null;
+  geminiCli: boolean | null;
+  chat: boolean | null;
+  testedAt: number | null; // Unix timestamp
+  error?: string; // 测试错误信息（可选）
+}
+
+/** CLI 配置（每个 CLI 类型的 API Key 和模型选择） */
+export interface CliConfig {
+  claudeCode: { apiKeyId: number | null; model: string | null } | null;
+  codex: { apiKeyId: number | null; model: string | null } | null;
+  geminiCli: { apiKeyId: number | null; model: string | null } | null;
+  chat: { apiKeyId: number | null; model: string | null } | null;
+}
+
 interface DetectionState {
   // 检测结果
   results: DetectionResult[];
@@ -21,6 +39,11 @@ interface DetectionState {
   apiKeys: Record<string, any[]>;
   userGroups: Record<string, Record<string, { desc: string; ratio: number }>>;
   modelPricing: Record<string, any>;
+
+  // CLI 兼容性数据
+  cliCompatibility: Record<string, CliCompatibilityResult>;
+  cliConfigs: Record<string, CliConfig>; // CLI 配置
+  cliTestingSites: Set<string>; // 正在测试 CLI 兼容性的站点
 
   // Actions
   setResults: (results: DetectionResult[]) => void;
@@ -39,6 +62,14 @@ interface DetectionState {
     groups: Record<string, { desc: string; ratio: number }>
   ) => void;
   setModelPricing: (siteName: string, pricing: any) => void;
+
+  // CLI 兼容性 Actions
+  setCliCompatibility: (siteName: string, result: CliCompatibilityResult) => void;
+  setCliConfig: (siteName: string, config: CliConfig) => void;
+  getCliConfig: (siteName: string) => CliConfig | null;
+  addCliTestingSite: (siteName: string) => void;
+  removeCliTestingSite: (siteName: string) => void;
+  isCliTestingSite: (siteName: string) => boolean;
 }
 
 export const useDetectionStore = create<DetectionState>()((set, get) => ({
@@ -50,6 +81,9 @@ export const useDetectionStore = create<DetectionState>()((set, get) => ({
   apiKeys: {},
   userGroups: {},
   modelPricing: {},
+  cliCompatibility: {},
+  cliConfigs: {},
+  cliTestingSites: new Set<string>(),
 
   // 基础 setters
   setResults: results => set({ results }),
@@ -118,5 +152,40 @@ export const useDetectionStore = create<DetectionState>()((set, get) => ({
   setModelPricing: (siteName, pricing) => {
     const { modelPricing } = get();
     set({ modelPricing: { ...modelPricing, [siteName]: pricing } });
+  },
+
+  // CLI 兼容性 Actions
+  setCliCompatibility: (siteName, result) => {
+    const { cliCompatibility } = get();
+    set({ cliCompatibility: { ...cliCompatibility, [siteName]: result } });
+  },
+
+  setCliConfig: (siteName, config) => {
+    const { cliConfigs } = get();
+    set({ cliConfigs: { ...cliConfigs, [siteName]: config } });
+  },
+
+  getCliConfig: siteName => {
+    const { cliConfigs } = get();
+    return cliConfigs[siteName] ?? null;
+  },
+
+  addCliTestingSite: siteName => {
+    const { cliTestingSites } = get();
+    const newSet = new Set(cliTestingSites);
+    newSet.add(siteName);
+    set({ cliTestingSites: newSet });
+  },
+
+  removeCliTestingSite: siteName => {
+    const { cliTestingSites } = get();
+    const newSet = new Set(cliTestingSites);
+    newSet.delete(siteName);
+    set({ cliTestingSites: newSet });
+  },
+
+  isCliTestingSite: siteName => {
+    const { cliTestingSites } = get();
+    return cliTestingSites.has(siteName);
   },
 }));

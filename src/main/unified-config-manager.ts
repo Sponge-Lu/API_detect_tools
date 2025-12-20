@@ -251,10 +251,14 @@ export class UnifiedConfigManager {
 
   /**
    * 获取兼容旧格式的配置（供前端使用）
-   * 包含 cached_data 以支持缓存数据显示
+   * 包含 cached_data 和 cli_config 以支持缓存数据显示和 CLI 配置
    */
   getLegacyConfig(): {
-    sites: (SiteConfig & { cached_data?: UnifiedSite['cached_data'] })[];
+    sites: (SiteConfig & {
+      cached_data?: UnifiedSite['cached_data'];
+      cli_config?: UnifiedSite['cli_config'];
+      cli_compatibility?: any; // 兼容旧版本数据结构
+    })[];
     settings: Settings;
     siteGroups: SiteGroup[];
   } {
@@ -262,7 +266,7 @@ export class UnifiedConfigManager {
       return { sites: [], settings: DEFAULT_SETTINGS, siteGroups: [DEFAULT_GROUP] };
     }
 
-    // 转换为旧格式，保留 cached_data
+    // 转换为旧格式，保留 cached_data 和 cli_config
     const sites = this.config.sites.map(site => ({
       name: site.name,
       url: site.url,
@@ -275,7 +279,10 @@ export class UnifiedConfigManager {
       force_enable_checkin: site.force_enable_checkin,
       extra_links: site.extra_links,
       auto_refresh: site.auto_refresh, // 站点独立的自动刷新开关
+      auto_refresh_interval: site.auto_refresh_interval, // 自动刷新间隔
       cached_data: site.cached_data, // 保留缓存数据
+      cli_config: site.cli_config, // 保留 CLI 配置
+      cli_compatibility: (site as any).cli_compatibility, // 兼容旧版本数据结构（站点根级别）
     }));
 
     return {

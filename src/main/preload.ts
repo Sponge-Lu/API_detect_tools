@@ -124,4 +124,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 保存更新设置
     saveSettings: (settings: any) => ipcRenderer.invoke('update:save-settings', settings),
   },
+
+  // CLI 兼容性测试 API
+  cliCompat: {
+    // 使用配置测试 CLI 兼容性
+    testWithConfig: (params: {
+      siteUrl: string;
+      configs: Array<{
+        cliType: 'claudeCode' | 'codex' | 'geminiCli';
+        apiKey: string;
+        model: string;
+      }>;
+    }) => ipcRenderer.invoke('cli-compat:test-with-config', params),
+    // 保存 CLI 兼容性结果到缓存
+    saveResult: (siteUrl: string, result: any) =>
+      ipcRenderer.invoke('cli-compat:save-result', siteUrl, result),
+    // 保存 CLI 配置
+    saveConfig: (siteUrl: string, config: any) =>
+      ipcRenderer.invoke('cli-compat:save-config', siteUrl, config),
+  },
 });

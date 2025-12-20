@@ -23,6 +23,7 @@ const COLUMN_LABELS = [
   'TPM',
   '模型数',
   '更新时间',
+  'CC-CX-Gemini?',
 ];
 
 export function SiteListHeader({ columnWidths, onColumnWidthChange }: SiteListHeaderProps) {
@@ -66,7 +67,7 @@ export function SiteListHeader({ columnWidths, onColumnWidthChange }: SiteListHe
     >
       {COLUMN_LABELS.map((label, index) => (
         <div key={label} className="relative flex items-center">
-          <span className={index >= 4 ? 'text-center w-full' : ''}>{label}</span>
+          <span className={index >= 4 || index === 11 ? 'text-center w-full' : ''}>{label}</span>
           {/* 列宽调整手柄 */}
           {index < COLUMN_LABELS.length - 1 && (
             <div

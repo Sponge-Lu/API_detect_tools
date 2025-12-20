@@ -1,6 +1,6 @@
 {
   "name": "api-hub-management-tools",
-  "version": "2.1.5",
+  "version": "2.1.6",
   "description": "API Hub Management Tools - Professional API management and monitoring tool",
   "author": "API Hub Team",
   "main": "dist/main/main.js",
@@ -75,7 +75,7 @@
     "vitest": "^4.0.14"
   },
   "build": {
-    "buildVersion": "2.1.5",
+    "buildVersion": "2.1.6",
     "appId": "com.apihub.management",
     "productName": "API Hub Management Tools",
     "directories": {

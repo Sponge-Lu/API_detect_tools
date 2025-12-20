@@ -14,3 +14,5 @@ export { useUpdate } from './useUpdate';
 export type { UpdateCheckResult, UpdateSettings, ReleaseInfo, UseUpdateReturn } from './useUpdate';
 export { useAutoRefresh } from './useAutoRefresh';
 export type { UseAutoRefreshOptions, UseAutoRefreshReturn } from './useAutoRefresh';
+export { useCliCompatTest } from './useCliCompatTest';
+export type { UseCliCompatTestReturn } from './useCliCompatTest';

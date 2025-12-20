@@ -3,6 +3,6 @@
  */
 
 export { useConfigStore } from './configStore';
-export { useDetectionStore } from './detectionStore';
+export { useDetectionStore, type CliCompatibilityResult } from './detectionStore';
 export { useUIStore } from './uiStore';
 export { useToastStore, toast } from './toastStore';

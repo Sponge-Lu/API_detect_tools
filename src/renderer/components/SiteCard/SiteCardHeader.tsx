@@ -4,6 +4,7 @@
  */
 
 import type { SiteCardHeaderProps } from './types';
+import { CliCompatibilityIcons } from '../CliCompatibilityIcons';
 
 /**
  * 格式化数字为 K/M 单位
@@ -33,6 +34,11 @@ export function SiteCardHeader({
   tpm,
   modelCount,
   onOpenCheckinPage,
+  cliCompatibility,
+  cliConfig,
+  isCliTesting,
+  onOpenCliConfig,
+  onTestCliCompat,
 }: SiteCardHeaderProps) {
   return (
     <div
@@ -201,6 +207,17 @@ export function SiteCardHeader({
         ) : (
           <span className="text-slate-400 dark:text-slate-500">--</span>
         )}
+      </div>
+
+      {/* 12. CLI 兼容性图标 */}
+      <div className="flex items-center justify-start">
+        <CliCompatibilityIcons
+          compatibility={cliCompatibility}
+          cliConfig={cliConfig ?? null}
+          isLoading={isCliTesting}
+          onConfig={onOpenCliConfig}
+          onTest={onTestCliCompat}
+        />
       </div>
     </div>
   );
