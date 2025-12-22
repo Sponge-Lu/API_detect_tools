@@ -25,17 +25,30 @@ export interface CliCompatibilityData {
   claudeCode: boolean | null;
   codex: boolean | null;
   geminiCli: boolean | null;
-  chat: boolean | null;
   testedAt: number | null;
   error?: string;
 }
 
+/** 单个 CLI 配置项 */
+export interface CliConfigItem {
+  apiKeyId: number | null;
+  model: string | null;
+  enabled: boolean; // 是否启用（控制图标显示和测试）
+}
+
 /** CLI 配置数据 */
 export interface CliConfigData {
-  claudeCode: { apiKeyId: number | null; model: string | null } | null;
-  codex: { apiKeyId: number | null; model: string | null } | null;
-  geminiCli: { apiKeyId: number | null; model: string | null } | null;
+  claudeCode: CliConfigItem;
+  codex: CliConfigItem;
+  geminiCli: CliConfigItem;
 }
+
+/** 默认 CLI 配置 - 所有 CLI 默认启用 */
+export const DEFAULT_CLI_CONFIG_DATA: CliConfigData = {
+  claudeCode: { apiKeyId: null, model: null, enabled: true },
+  codex: { apiKeyId: null, model: null, enabled: true },
+  geminiCli: { apiKeyId: null, model: null, enabled: true },
+};
 
 // ============= 统一站点类型 =============
 

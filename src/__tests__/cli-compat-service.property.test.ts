@@ -189,27 +189,6 @@ function buildGeminiCliRequest(baseUrl: string, apiKey: string, model: string): 
   };
 }
 
-/**
- * 构建基础 Chat 测试请求
- */
-function buildChatRequest(baseUrl: string, apiKey: string, model: string): RequestFormat {
-  const url = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
-
-  return {
-    url,
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: {
-      model,
-      max_tokens: 1,
-      messages: [{ role: 'user', content: 'hi' }],
-    },
-  };
-}
-
 // ============= Arbitraries =============
 
 /**
@@ -513,55 +492,13 @@ describe('CLI Compatibility Service Property Tests', () => {
   });
 
   /**
-   * **Property 6: Chat Request Format**
-   * **Validates: Requirements 4.4**
-   *
-   * *For any* Chat test request, the request SHALL:
-   * - Target endpoint /v1/chat/completions
-   * - NOT include tools array
-   */
-  describe('Property 6: Chat Request Format', () => {
-    it('should target /v1/chat/completions endpoint', () => {
-      fc.assert(
-        fc.property(urlArb, apiKeyArb, modelNameArb('gpt-'), (baseUrl, apiKey, model) => {
-          const request = buildChatRequest(baseUrl, apiKey, model);
-          expect(request.url).toContain('/v1/chat/completions');
-        }),
-        { numRuns: 100 }
-      );
-    });
-
-    it('should NOT include tools array', () => {
-      fc.assert(
-        fc.property(urlArb, apiKeyArb, modelNameArb('gpt-'), (baseUrl, apiKey, model) => {
-          const request = buildChatRequest(baseUrl, apiKey, model);
-          const body = request.body as any;
-
-          expect(body.tools).toBeUndefined();
-        }),
-        { numRuns: 100 }
-      );
-    });
-
-    it('should use Authorization Bearer header', () => {
-      fc.assert(
-        fc.property(urlArb, apiKeyArb, modelNameArb('gpt-'), (baseUrl, apiKey, model) => {
-          const request = buildChatRequest(baseUrl, apiKey, model);
-          expect(request.headers['Authorization']).toBe(`Bearer ${apiKey}`);
-        }),
-        { numRuns: 100 }
-      );
-    });
-  });
-
-  /**
-   * **Property 7: Minimal Token Consumption**
+   * **Property 6: Minimal Token Consumption**
    * **Validates: Requirements 5.1, 5.2**
    *
    * *For any* test request (regardless of CLI type), the request SHALL
    * set max_tokens/maxOutputTokens to 1 and use minimal message content.
    */
-  describe('Property 7: Minimal Token Consumption', () => {
+  describe('Property 6: Minimal Token Consumption', () => {
     it('should set max_tokens to 1 for Claude Code requests', () => {
       fc.assert(
         fc.property(urlArb, apiKeyArb, modelNameArb('claude-'), (baseUrl, apiKey, model) => {
@@ -595,35 +532,21 @@ describe('CLI Compatibility Service Property Tests', () => {
       );
     });
 
-    it('should set max_tokens to 1 for Chat requests', () => {
-      fc.assert(
-        fc.property(urlArb, apiKeyArb, modelNameArb('gpt-'), (baseUrl, apiKey, model) => {
-          const request = buildChatRequest(baseUrl, apiKey, model);
-          const body = request.body as any;
-          expect(body.max_tokens).toBe(1);
-        }),
-        { numRuns: 100 }
-      );
-    });
-
     it('should use minimal message content for all request types', () => {
       fc.assert(
         fc.property(urlArb, apiKeyArb, modelNameArb('claude-'), (baseUrl, apiKey, model) => {
           const claudeRequest = buildClaudeCodeRequest(baseUrl, apiKey, model);
           const codexRequest = buildCodexRequest(baseUrl, apiKey, model);
           const geminiRequest = buildGeminiCliRequest(baseUrl, apiKey, model);
-          const chatRequest = buildChatRequest(baseUrl, apiKey, model);
 
           // Check message content is minimal (e.g., "hi")
           const claudeBody = claudeRequest.body as any;
           const codexBody = codexRequest.body as any;
           const geminiBody = geminiRequest.body as any;
-          const chatBody = chatRequest.body as any;
 
           expect(claudeBody.messages[0].content.length).toBeLessThanOrEqual(10);
           expect(codexBody.messages[0].content.length).toBeLessThanOrEqual(10);
           expect(geminiBody.contents[0].parts[0].text.length).toBeLessThanOrEqual(10);
-          expect(chatBody.messages[0].content.length).toBeLessThanOrEqual(10);
         }),
         { numRuns: 100 }
       );
@@ -797,7 +720,6 @@ describe('Property 8: Icon Style Correctness', () => {
       claudeCode: boolean | null;
       codex: boolean | null;
       geminiCli: boolean | null;
-      chat: boolean | null;
       testedAt: number | null;
       error?: string;
     }
@@ -806,14 +728,13 @@ describe('Property 8: Icon Style Correctness', () => {
       claudeCode: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
       codex: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
       geminiCli: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
-      chat: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
       testedAt: fc.oneof(fc.integer({ min: 0, max: Date.now() + 1000000 }), fc.constant(null)),
       error: fc.option(fc.string({ minLength: 0, maxLength: 200 }), { nil: undefined }),
     });
 
     fc.assert(
       fc.property(cliCompatibilityResultArb, result => {
-        const cliTypes = ['claudeCode', 'codex', 'geminiCli', 'chat'] as const;
+        const cliTypes = ['claudeCode', 'codex', 'geminiCli'] as const;
 
         for (const cliType of cliTypes) {
           const status = result[cliType];
@@ -835,19 +756,18 @@ describe('Property 8: Icon Style Correctness', () => {
 });
 
 /**
- * **Property 9: Persistence Round Trip**
+ * **Property 8: Persistence Round Trip**
  * **Validates: Requirements 6.1**
  *
  * *For any* compatibility result, saving to cache and then loading from cache
  * SHALL produce an equivalent result.
  */
-describe('Property 9: Persistence Round Trip', () => {
+describe('Property 8: Persistence Round Trip', () => {
   /** CLI 兼容性测试结果 */
   interface CliCompatibilityResult {
     claudeCode: boolean | null;
     codex: boolean | null;
     geminiCli: boolean | null;
-    chat: boolean | null;
     testedAt: number | null;
     error?: string;
   }
@@ -859,7 +779,6 @@ describe('Property 9: Persistence Round Trip', () => {
     claudeCode: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
     codex: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
     geminiCli: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
-    chat: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
     testedAt: fc.oneof(fc.integer({ min: 0, max: Date.now() + 1000000 }), fc.constant(null)),
     error: fc.option(fc.string({ minLength: 0, maxLength: 200 }), { nil: undefined }),
   });
@@ -884,7 +803,6 @@ describe('Property 9: Persistence Round Trip', () => {
       a.claudeCode === b.claudeCode &&
       a.codex === b.codex &&
       a.geminiCli === b.geminiCli &&
-      a.chat === b.chat &&
       a.testedAt === b.testedAt &&
       a.error === b.error
     );
@@ -912,7 +830,6 @@ describe('Property 9: Persistence Round Trip', () => {
         expect(typeof deserialized.claudeCode).toBe(typeof original.claudeCode);
         expect(typeof deserialized.codex).toBe(typeof original.codex);
         expect(typeof deserialized.geminiCli).toBe(typeof original.geminiCli);
-        expect(typeof deserialized.chat).toBe(typeof original.chat);
       }),
       { numRuns: 100 }
     );

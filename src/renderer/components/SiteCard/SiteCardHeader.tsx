@@ -39,6 +39,7 @@ export function SiteCardHeader({
   isCliTesting,
   onOpenCliConfig,
   onTestCliCompat,
+  onApply,
 }: SiteCardHeaderProps) {
   return (
     <div
@@ -217,6 +218,7 @@ export function SiteCardHeader({
           isLoading={isCliTesting}
           onConfig={onOpenCliConfig}
           onTest={onTestCliCompat}
+          onApply={onApply}
         />
       </div>
     </div>

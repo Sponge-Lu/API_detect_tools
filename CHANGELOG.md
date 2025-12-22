@@ -4,10 +4,48 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，并且本项目遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
+## [v2.1.7]
+
+### 新增
+- **Gemini CLI 配置支持**：完整支持 Gemini CLI 配置生成和应用
+  - Gemini CLI 默认启用
+  - 支持生成 settings.json 和 .env 配置文件
+  - 配置模板参考 `docs/cli_config_template/gemini_cli_config_template.md`
+- **配置合并模式**：应用配置时支持合并和覆盖两种模式
+  - 合并模式（默认）：保留现有配置，只更新相关项
+  - 覆盖模式：完全替换现有配置文件
+  - JSON 文件：深度合并，保留现有配置项
+  - TOML 文件：合并顶级变量和 sections
+  - .env 文件：只更新相关环境变量，保留其他变量
+  - 避免覆盖用户的 MCP 服务器配置等自定义设置
+- **配置重置功能**：配置预览区域新增"重置"按钮
+  - 点击后弹出确认对话框，确认后恢复为默认生成的配置
+  - 仅在有编辑内容时显示
+- **统一 CLI 配置对话框**：合并原有的 CLI 配置和配置生成功能
+  - CLI 开关区域：所有 CLI 类型在同一行显示，支持独立启用/禁用
+  - 模型分离：测试使用模型和 CLI 使用模型分开配置
+  - 实时配置预览：选择 API Key 和模型后自动生成配置，支持编辑
+  - 配置模板：未选择配置时显示完整模板内容供参考
+  - 代理设置：Claude Code 配置自动包含 HTTPS_PROXY 和 HTTP_PROXY
+- **应用配置功能**：一键将配置写入本地文件
+  - 应用弹出菜单：显示已配置的 CLI 列表（包括 Gemini CLI）
+  - 配置文件写入：自动创建目录并写入配置文件
+  - Claude Code 重启提醒：应用配置后提示用户重启 IDE
+
+### 变更
+- 移除 Chat 基础测试功能及相关代码
+- Gemini CLI 从默认禁用改为默认启用
+
+### 优化
+- 移除独立的配置生成对话框，功能整合到统一配置对话框
+- 配置预览窗口移除固定高度限制，显示完整内容
+
+---
+
 ## [v2.1.6]
 
 ### 新增
-- **CLI 兼容性测试**：检测站点是否支持 Claude Code、Codex、Gemini CLI、Chat 等工具
+- **CLI 兼容性测试**：检测站点是否支持 Claude Code、Codex、Gemini CLI 等工具
   - 支持单站点测试（需先配置 CLI 设置）
   - 站点卡片显示 CLI 兼容性图标（彩色=支持，深灰=不支持，浅灰=已配置待测试，非常淡=未配置）
   - 鼠标悬停显示详细状态和上次测试时间
@@ -15,13 +53,11 @@
 - **CLI 配置对话框**：为每个站点配置 CLI 测试参数
   - 选择用于测试的 API Key
   - 选择用于测试的模型（Claude Code 只显示 claude* 模型，Codex 只显示 gpt* 模型，Gemini CLI 只显示 gemini* 模型）
-  - 支持 Claude Code、Codex、Gemini CLI、Chat 四种类型
-  - Chat 使用基础测试（不带 tools），可选择任意模型
+  - 支持 Claude Code、Codex、Gemini CLI 三种类型
 - **CLI 官方图标**：使用 lobehub.com/icons 官方 SVG 图标
   - Claude Code（Anthropic 官方 logo）
   - Codex（OpenAI 官方 logo，绿色）
   - Gemini CLI（Google Gemini 官方 logo）
-  - Chat（对话气泡图标，蓝紫色渐变）
 
 ### 修复
 - **CLI 配置加载**：修复应用重启后 CLI 配置和测试结果不显示的问题

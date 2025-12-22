@@ -13,17 +13,31 @@ export interface CliCompatibilityResult {
   claudeCode: boolean | null; // true=支持, false=不支持, null=未测试
   codex: boolean | null;
   geminiCli: boolean | null;
-  chat: boolean | null;
   testedAt: number | null; // Unix timestamp
   error?: string; // 测试错误信息（可选）
 }
 
+/** 编辑后的配置文件 */
+export interface EditedConfigFile {
+  path: string;
+  content: string;
+}
+
+/** 单个 CLI 配置项 */
+export interface CliConfigItem {
+  apiKeyId: number | null;
+  model: string | null; // CLI 使用模型
+  testModel?: string | null; // 测试使用模型
+  enabled?: boolean; // 是否启用（控制图标显示和测试），可选以兼容旧数据
+  editedFiles?: EditedConfigFile[] | null; // 用户编辑后的配置文件内容
+  applyMode?: 'merge' | 'overwrite'; // 应用配置模式：合并或覆盖，默认合并
+}
+
 /** CLI 配置（每个 CLI 类型的 API Key 和模型选择） */
 export interface CliConfig {
-  claudeCode: { apiKeyId: number | null; model: string | null } | null;
-  codex: { apiKeyId: number | null; model: string | null } | null;
-  geminiCli: { apiKeyId: number | null; model: string | null } | null;
-  chat: { apiKeyId: number | null; model: string | null } | null;
+  claudeCode?: CliConfigItem | null;
+  codex?: CliConfigItem | null;
+  geminiCli?: CliConfigItem | null;
 }
 
 interface DetectionState {

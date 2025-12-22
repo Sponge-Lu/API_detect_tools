@@ -15,7 +15,6 @@ export enum CliType {
   CLAUDE_CODE = 'claudeCode',
   CODEX = 'codex',
   GEMINI_CLI = 'geminiCli',
-  CHAT = 'chat',
 }
 
 /** CLI 兼容性测试结果 */
@@ -23,7 +22,6 @@ export interface CliCompatibilityResult {
   claudeCode: boolean | null; // true=支持, false=不支持, null=未测试
   codex: boolean | null;
   geminiCli: boolean | null;
-  chat: boolean | null;
   testedAt: number | null; // Unix timestamp
   error?: string; // 测试错误信息（可选）
 }
@@ -247,28 +245,6 @@ export function buildGeminiCliRequest(
   };
 }
 
-/**
- * 构建基础 Chat 测试请求
- * 使用 /v1/chat/completions 端点，不包含 tools
- */
-export function buildChatRequest(baseUrl: string, apiKey: string, model: string): RequestFormat {
-  const url = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
-
-  return {
-    url,
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: {
-      model,
-      max_tokens: 1,
-      messages: [{ role: 'user', content: 'hi' }],
-    },
-  };
-}
-
 // ============= CLI 兼容性服务类 =============
 
 /**
@@ -343,26 +319,6 @@ export class CliCompatService {
   }
 
   /**
-   * 测试基础 Chat 兼容性
-   */
-  async testChat(url: string, apiKey: string, model: string): Promise<boolean> {
-    try {
-      const request = buildChatRequest(url, apiKey, model);
-      log.info(`Testing Chat compatibility: ${request.url}`);
-
-      const response = await httpPost(request.url, request.body, {
-        headers: request.headers,
-        timeout: this.timeout,
-      });
-
-      return response.status >= 200 && response.status < 300;
-    } catch (error: any) {
-      log.warn(`Chat test failed: ${error.message}`);
-      return false;
-    }
-  }
-
-  /**
    * 测试单个站点的所有 CLI 兼容性
    */
   async testSite(config: TestConfig): Promise<CliCompatibilityResult> {
@@ -375,26 +331,19 @@ export class CliCompatService {
     const gptModel = selectLowestModel(models, 'gpt-');
     const geminiModel = selectLowestModel(models, 'gemini-');
 
-    // 对于 Chat，优先使用 gpt 模型，如果没有则使用任意模型
-    const chatModel = gptModel || (models.length > 0 ? models[0] : null);
-
-    log.info(
-      `Selected models - Claude: ${claudeModel}, GPT: ${gptModel}, Gemini: ${geminiModel}, Chat: ${chatModel}`
-    );
+    log.info(`Selected models - Claude: ${claudeModel}, GPT: ${gptModel}, Gemini: ${geminiModel}`);
 
     // 并发执行所有测试
-    const [claudeCodeResult, codexResult, geminiCliResult, chatResult] = await Promise.all([
+    const [claudeCodeResult, codexResult, geminiCliResult] = await Promise.all([
       claudeModel ? this.testClaudeCode(siteUrl, apiKey, claudeModel) : Promise.resolve(null),
       gptModel ? this.testCodex(siteUrl, apiKey, gptModel) : Promise.resolve(null),
       geminiModel ? this.testGeminiCli(siteUrl, apiKey, geminiModel) : Promise.resolve(null),
-      chatModel ? this.testChat(siteUrl, apiKey, chatModel) : Promise.resolve(null),
     ]);
 
     const result: CliCompatibilityResult = {
       claudeCode: claudeCodeResult,
       codex: codexResult,
       geminiCli: geminiCliResult,
-      chat: chatResult,
       testedAt: Date.now(),
     };
 

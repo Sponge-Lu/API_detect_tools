@@ -4,13 +4,13 @@
  */
 
 import type { CliCompatibilityResult } from '../../store/detectionStore';
-import type { CliConfig } from '../dialogs/CliConfigDialog';
+import type { CliConfig } from '../../../shared/types/cli-config';
+import { DEFAULT_CLI_CONFIG } from '../../../shared/types/cli-config';
 
 // 导入 CLI 图标
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../assets/cli-icons/codex.svg';
 import GeminiIcon from '../../assets/cli-icons/gemini.svg';
-import ChatIcon from '../../assets/cli-icons/chat.svg';
 
 export interface CliCompatibilityIconsProps {
   /** CLI 兼容性结果 */
@@ -23,11 +23,13 @@ export interface CliCompatibilityIconsProps {
   onConfig?: () => void;
   /** 测试按钮点击回调 */
   onTest?: () => void;
+  /** 应用配置按钮点击回调 */
+  onApply?: (e?: React.MouseEvent<HTMLButtonElement>) => void;
 }
 
 /** CLI 类型配置 */
 interface CliTypeConfig {
-  key: keyof Pick<CliCompatibilityResult, 'claudeCode' | 'codex' | 'geminiCli' | 'chat'>;
+  key: keyof Pick<CliCompatibilityResult, 'claudeCode' | 'codex' | 'geminiCli'>;
   configKey: keyof CliConfig;
   name: string;
   icon: string;
@@ -50,30 +52,29 @@ const CLI_TYPES: CliTypeConfig[] = [
     icon: GeminiIcon,
     sizeClass: 'w-5 h-5',
   },
-  { key: 'chat', configKey: 'chat', name: 'Chat', icon: ChatIcon, sizeClass: 'w-5 h-5' },
 ];
 
 /**
  * 获取图标样式类名
  * @param status - 兼容性状态: true=支持, false=不支持, null/undefined=未测试
- * @param isConfigured - 是否已配置
+ * @param isConfigured - 是否已配置（有 API Key 和 Model）
  */
 export function getIconStyleClass(
   status: boolean | null | undefined,
   isConfigured: boolean
 ): string {
-  if (!isConfigured) {
-    return 'opacity-15 grayscale'; // 未配置 - 非常淡灰色
-  }
-  // 已配置的情况下，根据测试结果显示
+  // 根据测试结果显示
   if (status === true) {
     return 'opacity-100'; // 全彩色 - 测试通过，支持
   }
   if (status === false) {
     return 'opacity-70 grayscale brightness-75'; // 深灰色 - 测试失败，不支持
   }
-  // status === null 或 undefined 表示已配置但未测试
-  return 'opacity-35 grayscale'; // 灰度半透明 - 已配置但未测试
+  // status === null 或 undefined 表示未测试
+  if (isConfigured) {
+    return 'opacity-50 grayscale'; // 灰度半透明 - 已配置但未测试
+  }
+  return 'opacity-25 grayscale'; // 非常淡灰色 - 未配置
 }
 
 /**
@@ -125,25 +126,29 @@ function LoadingSpinner() {
 }
 
 /**
- * 检查 CLI 是否已配置
+ * 检查 CLI 是否已配置（有 API Key 和 Model）
  */
 function isCliConfigured(cliConfig: CliConfig | null, key: keyof CliConfig): boolean {
   if (!cliConfig) return false;
   const config = cliConfig[key];
-  return !!(config && config.apiKeyId && config.model);
+  if (!config) return false;
+  return !!(config.apiKeyId && config.model);
 }
 
 /**
- * 检查是否有任何 CLI 已配置
+ * 检查 CLI 是否启用（仅通过 enabled 字段判断）
  */
-function hasAnyCliConfigured(cliConfig: CliConfig | null): boolean {
-  if (!cliConfig) return false;
-  return (
-    isCliConfigured(cliConfig, 'claudeCode') ||
-    isCliConfigured(cliConfig, 'codex') ||
-    isCliConfigured(cliConfig, 'geminiCli') ||
-    isCliConfigured(cliConfig, 'chat')
-  );
+export function isCliEnabled(cliConfig: CliConfig | null, key: keyof CliConfig): boolean {
+  if (!cliConfig) {
+    // 没有配置时使用默认配置
+    return DEFAULT_CLI_CONFIG[key].enabled;
+  }
+  const config = cliConfig[key];
+  // 兼容旧配置格式（可能没有 enabled 字段）
+  if (!config || config.enabled === undefined) {
+    return DEFAULT_CLI_CONFIG[key].enabled;
+  }
+  return config.enabled;
 }
 
 /**
@@ -155,12 +160,12 @@ export function CliCompatibilityIcons({
   isLoading = false,
   onConfig,
   onTest,
+  onApply,
 }: CliCompatibilityIconsProps) {
   const testedAtText = formatTestedAt(compatibility?.testedAt);
-  const hasConfigured = hasAnyCliConfigured(cliConfig);
 
   return (
-    <div className="flex items-center gap-1.5 pl-2">
+    <div className="flex items-center gap-1 pl-2">
       {/* 加载状态 */}
       {isLoading ? (
         <div className="flex items-center gap-1 px-1">
@@ -169,8 +174,16 @@ export function CliCompatibilityIcons({
         </div>
       ) : (
         <>
-          {/* CLI 图标 */}
+          {/* CLI 图标 - 仅通过 enabled 字段判断是否显示 */}
           {CLI_TYPES.map(({ key, configKey, name, icon, sizeClass }) => {
+            // 仅通过 enabled 字段判断是否显示图标
+            const enabled = isCliEnabled(cliConfig, configKey);
+
+            // 禁用则不显示图标
+            if (!enabled) {
+              return null;
+            }
+
             const status = compatibility?.[key];
             const configured = isCliConfigured(cliConfig, configKey);
             const styleClass = getIconStyleClass(status, configured);
@@ -188,69 +201,98 @@ export function CliCompatibilityIcons({
             );
           })}
 
-          {/* 配置按钮 */}
-          {onConfig && (
-            <button
-              onClick={e => {
-                e.stopPropagation();
-                onConfig();
-              }}
-              className="ml-1 p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-              title="配置 CLI"
-            >
-              <svg
-                className="w-5 h-5 text-slate-500 hover:text-blue-500"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+          {/* 操作按钮组 - 配置/测试/应用 */}
+          <div className="flex items-center gap-0.5 ml-1 px-1 py-0.5 rounded border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700/50">
+            {/* 配置按钮 */}
+            {onConfig && (
+              <button
+                onClick={e => {
+                  e.stopPropagation();
+                  onConfig();
+                }}
+                className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                title="配置 CLI"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-                />
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                />
-              </svg>
-            </button>
-          )}
+                <svg
+                  className="w-[18px] h-[18px] text-slate-500 hover:text-blue-500"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                  />
+                </svg>
+              </button>
+            )}
 
-          {/* 测试按钮 - 只有配置了才显示 */}
-          {onTest && hasConfigured && (
-            <button
-              onClick={e => {
-                e.stopPropagation();
-                onTest();
-              }}
-              className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-              title="测试 CLI 兼容性"
-            >
-              <svg
-                className="w-5 h-5 text-slate-500 hover:text-green-500"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+            {/* 测试按钮 - 始终显示 */}
+            {onTest && (
+              <button
+                onClick={e => {
+                  e.stopPropagation();
+                  onTest();
+                }}
+                className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                title="测试 CLI 兼容性"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
-                />
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-            </button>
-          )}
+                <svg
+                  className="w-[18px] h-[18px] text-slate-500 hover:text-green-500"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+              </button>
+            )}
+
+            {/* 应用配置按钮 */}
+            {onApply && (
+              <button
+                onClick={e => {
+                  e.stopPropagation();
+                  onApply(e);
+                }}
+                className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                title="应用 CLI 配置到本地文件"
+              >
+                <svg
+                  className="w-[18px] h-[18px] text-slate-500 hover:text-purple-500"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                  />
+                </svg>
+              </button>
+            )}
+          </div>
         </>
       )}
     </div>

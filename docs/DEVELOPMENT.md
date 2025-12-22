@@ -138,6 +138,14 @@ npm run test src/__tests__/example.test.ts
 **编写测试**:
 测试文件位于 `src/__tests__/` 目录。建议为核心业务逻辑 (如 Hooks, Utils) 编写测试用例。
 
+**属性测试 (Property-Based Testing)**:
+本项目使用 fast-check 进行属性测试，验证代码在各种输入下的正确性。属性测试文件以 `.property.test.ts` 结尾。
+
+```bash
+# 运行所有属性测试
+npm run test src/__tests__/*.property.test.ts
+```
+
 ---
 
 ## 贡献流程

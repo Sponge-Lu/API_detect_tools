@@ -142,5 +142,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 保存 CLI 配置
     saveConfig: (siteUrl: string, config: any) =>
       ipcRenderer.invoke('cli-compat:save-config', siteUrl, config),
+    // 写入 CLI 配置文件到文件系统
+    writeConfig: (params: {
+      cliType: 'claudeCode' | 'codex';
+      files: Array<{
+        path: string;
+        content: string;
+      }>;
+    }) => ipcRenderer.invoke('cli-compat:write-config', params),
   },
 });

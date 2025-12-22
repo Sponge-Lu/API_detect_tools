@@ -24,9 +24,10 @@ import {
   AuthErrorDialog,
   SiteGroupDialog,
   BackupSelectDialog,
-  CliConfigDialog,
+  UnifiedCliConfigDialog,
+  ApplyConfigPopover,
 } from './components/dialogs';
-import type { CliConfig } from './components/dialogs';
+import type { CliConfig } from '../shared/types/cli-config';
 import { CreateApiKeyDialog } from './components/CreateApiKeyDialog';
 import { ToastContainer } from './components/Toast';
 import {
@@ -549,9 +550,14 @@ function App() {
     setCliConfig,
   } = useCliCompatTest();
 
-  // CLI 配置对话框状态
+  // CLI 配置对话框状态（使用 UnifiedCliConfigDialog）
   const [showCliConfigDialog, setShowCliConfigDialog] = useState(false);
   const [cliConfigSite, setCliConfigSite] = useState<SiteConfig | null>(null);
+
+  // 应用配置弹出菜单状态
+  const [showApplyConfigPopover, setShowApplyConfigPopover] = useState(false);
+  const [applyConfigAnchorEl, setApplyConfigAnchorEl] = useState<HTMLElement | null>(null);
+  const [applyConfigSite, setApplyConfigSite] = useState<SiteConfig | null>(null);
 
   // 数据加载 hook（需要在 setResults 可用后初始化）
   const { loadCachedData } = useDataLoader({
@@ -1459,6 +1465,11 @@ function App() {
                             const siteApiKeys = apiKeys[siteResult?.name || site.name] || [];
                             testCliCompatSite(site.name, site.url, siteApiKeys);
                           }}
+                          onApply={(e?: React.MouseEvent<HTMLButtonElement>) => {
+                            setApplyConfigSite(site);
+                            setApplyConfigAnchorEl(e?.currentTarget || null);
+                            setShowApplyConfigPopover(true);
+                          }}
                           onToggleAutoRefresh={() => {
                             const newSites = [...config.sites];
                             // 获取当前间隔值或使用默认值5分钟
@@ -1696,13 +1707,13 @@ function App() {
         />
       )}
 
-      {/* CLI 配置对话框 */}
+      {/* CLI 配置对话框 - 使用 UnifiedCliConfigDialog */}
       {cliConfigSite && (
-        <CliConfigDialog
+        <UnifiedCliConfigDialog
           isOpen={showCliConfigDialog}
           siteName={cliConfigSite.name}
+          siteUrl={cliConfigSite.url}
           apiKeys={apiKeys[cliConfigSite.name] || []}
-          userGroups={userGroups[cliConfigSite.name] || {}}
           siteModels={results.find(r => r.name === cliConfigSite.name)?.models || []}
           currentConfig={getCliConfig(cliConfigSite.name)}
           onClose={() => {
@@ -1720,6 +1731,23 @@ function App() {
             }
             setShowCliConfigDialog(false);
             setCliConfigSite(null);
+          }}
+        />
+      )}
+
+      {/* 应用配置弹出菜单 */}
+      {applyConfigSite && (
+        <ApplyConfigPopover
+          isOpen={showApplyConfigPopover}
+          anchorEl={applyConfigAnchorEl}
+          cliConfig={getCliConfig(applyConfigSite.name)}
+          siteUrl={applyConfigSite.url}
+          siteName={applyConfigSite.name}
+          apiKeys={apiKeys[applyConfigSite.name] || []}
+          onClose={() => {
+            setShowApplyConfigPopover(false);
+            setApplyConfigAnchorEl(null);
+            setApplyConfigSite(null);
           }}
         />
       )}

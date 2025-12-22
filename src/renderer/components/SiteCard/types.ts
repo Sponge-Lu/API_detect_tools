@@ -5,7 +5,7 @@
 import type { SiteConfig } from '../../../main/types/token';
 import type { DetectionResult } from '../../App';
 import type { CliCompatibilityResult } from '../../store/detectionStore';
-import type { CliConfig } from '../dialogs/CliConfigDialog';
+import type { CliConfig } from '../../../shared/types/cli-config';
 
 export interface SiteCardProps {
   site: SiteConfig;
@@ -54,6 +54,7 @@ export interface SiteCardProps {
   onToggleAutoRefresh?: () => void;
   onOpenCliConfig?: () => void;
   onTestCliCompat?: () => void;
+  onApply?: (e?: React.MouseEvent<HTMLButtonElement>) => void;
 
   // 拖拽回调
   onDragStart: (e: React.DragEvent, index: number) => void;
@@ -93,6 +94,8 @@ export interface SiteCardHeaderProps {
   isCliTesting?: boolean;
   onOpenCliConfig?: () => void;
   onTestCliCompat?: () => void;
+  // CLI 配置应用相关
+  onApply?: (e?: React.MouseEvent<HTMLButtonElement>) => void;
 }
 
 export interface SiteCardActionsProps {

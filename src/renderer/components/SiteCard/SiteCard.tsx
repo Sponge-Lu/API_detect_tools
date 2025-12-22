@@ -46,6 +46,7 @@ export function SiteCard({
   onToggleAutoRefresh,
   onOpenCliConfig,
   onTestCliCompat,
+  onApply,
   onDragStart,
   onDragEnd,
   onDragOver,
@@ -185,6 +186,7 @@ export function SiteCard({
             isCliTesting={isCliTesting}
             onOpenCliConfig={onOpenCliConfig}
             onTestCliCompat={onTestCliCompat}
+            onApply={onApply}
           />
 
           {/* 右侧：操作按钮 */}
