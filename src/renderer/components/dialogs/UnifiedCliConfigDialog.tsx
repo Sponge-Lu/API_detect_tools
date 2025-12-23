@@ -481,15 +481,50 @@ export function UnifiedCliConfigDialog({
       }));
     }
 
-    // 获取最新的 editedFiles（包括刚刚编辑的）
+    // 为指定 CLI 类型生成配置文件
+    const generateConfigForCli = (cliType: 'claudeCode' | 'codex' | 'geminiCli') => {
+      const config = cliConfigs[cliType];
+      if (!config.apiKeyId || !config.model) return null;
+
+      const apiKey = apiKeys.find(k => getApiKeyId(k) === config.apiKeyId);
+      if (!apiKey) return null;
+
+      const params = {
+        siteUrl,
+        siteName,
+        apiKey: getApiKeyValue(apiKey),
+        model: config.model,
+      };
+
+      if (cliType === 'claudeCode') {
+        return generateClaudeCodeConfig(params);
+      } else if (cliType === 'codex') {
+        return generateCodexConfig(params);
+      } else if (cliType === 'geminiCli') {
+        return generateGeminiCliConfig(params);
+      }
+      return null;
+    };
+
+    // 获取最新的 editedFiles（优先级：当前编辑 > 已保存编辑 > 实时生成）
     const getEditedFiles = (cliType: 'claudeCode' | 'codex' | 'geminiCli') => {
+      // 1. 当前正在编辑的配置
       if (selectedCli === cliType && editedConfig) {
         return editedConfig.files.map(f => ({ path: f.path, content: f.content }));
       }
-      return (
-        cliConfigs[cliType].editedFiles?.files.map(f => ({ path: f.path, content: f.content })) ??
-        null
-      );
+      // 2. 已保存的编辑配置
+      if (cliConfigs[cliType].editedFiles) {
+        return cliConfigs[cliType].editedFiles!.files.map(f => ({
+          path: f.path,
+          content: f.content,
+        }));
+      }
+      // 3. 实时生成的配置（如果有完整的 apiKeyId 和 model）
+      const generatedConfig = generateConfigForCli(cliType);
+      if (generatedConfig) {
+        return generatedConfig.files.map(f => ({ path: f.path, content: f.content }));
+      }
+      return null;
     };
 
     const newConfig: CliConfig = {

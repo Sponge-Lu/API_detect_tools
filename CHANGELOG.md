@@ -4,6 +4,15 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，并且本项目遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
+## [v2.1.7.01]
+
+### 修复
+- **CLI 配置保存**：修复保存 CLI 配置后 `editedFiles` 为空导致测试失败的问题
+  - 保存时自动生成配置文件内容（如果用户未手动编辑）
+  - 优先级：手动编辑 > 已保存编辑 > 实时生成
+
+---
+
 ## [v2.1.7]
 
 ### 新增

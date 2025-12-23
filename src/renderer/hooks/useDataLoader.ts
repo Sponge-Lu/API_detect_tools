@@ -89,9 +89,42 @@ export function useDataLoader({
             // CLI 兼容性结果：优先从 cached_data 加载，兼容从站点根级别加载
             const cliCompatibility = site.cached_data?.cli_compatibility || site.cli_compatibility;
             if (setCliCompatibility && cliCompatibility) {
-              setCliCompatibility(site.name, cliCompatibility);
-              cliCompatCount++;
-              Logger.info(`📋 [useDataLoader] 加载 ${site.name} 的 CLI 兼容性数据`);
+              // 验证 CLI 兼容性数据格式是否有效
+              const isValidCliCompatibility =
+                typeof cliCompatibility === 'object' &&
+                cliCompatibility !== null &&
+                ('claudeCode' in cliCompatibility ||
+                  'codex' in cliCompatibility ||
+                  'geminiCli' in cliCompatibility);
+
+              if (isValidCliCompatibility) {
+                // 确保所有字段都有默认值，处理部分损坏的数据
+                const normalizedResult: CliCompatibilityResult = {
+                  claudeCode:
+                    typeof cliCompatibility.claudeCode === 'boolean'
+                      ? cliCompatibility.claudeCode
+                      : null,
+                  codex:
+                    typeof cliCompatibility.codex === 'boolean' ? cliCompatibility.codex : null,
+                  geminiCli:
+                    typeof cliCompatibility.geminiCli === 'boolean'
+                      ? cliCompatibility.geminiCli
+                      : null,
+                  testedAt:
+                    typeof cliCompatibility.testedAt === 'number'
+                      ? cliCompatibility.testedAt
+                      : null,
+                  error:
+                    typeof cliCompatibility.error === 'string' ? cliCompatibility.error : undefined,
+                };
+                setCliCompatibility(site.name, normalizedResult);
+                cliCompatCount++;
+                Logger.info(`📋 [useDataLoader] 加载 ${site.name} 的 CLI 兼容性数据`);
+              } else {
+                Logger.warn(
+                  `⚠️ [useDataLoader] ${site.name} 的 CLI 兼容性数据格式无效，将视为未测试状态`
+                );
+              }
             }
             // CLI 配置：优先从站点根级别加载，兼容从 cached_data 加载（旧版本数据）
             const cliConfig = site.cli_config || site.cached_data?.cli_config;

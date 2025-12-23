@@ -103,8 +103,9 @@ export function generateClaudeCodeTemplate(): GeneratedConfig {
   // 完全照搬模板文件内容，包含注释
   const settingsContent = `{
   "env": {
-    "ANTHROPIC_BASE_URL": "https://anyrouter.top",
-    "ANTHROPIC_AUTH_TOKEN": "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "ANTHROPIC_BASE_URL": "https://anyrouter.top",   # URL需要去对应的站点确认
+    "ANTHROPIC_AUTH_TOKEN": "sk-xxxxxxxxxxxxxxxx",   # 中转站使用这个，默认使用
+    #"ANTHROPIC_API_KEY": "sk-xxxxxxxxxxxxxxxxxx",   # 标准 Anthropic 形式接口使用这个
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-opus-4-5-20251101",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-5-20251101",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-opus-4-5-20251101",
@@ -116,7 +117,9 @@ export function generateClaudeCodeTemplate(): GeneratedConfig {
   "includeCoAuthoredBy": false
 }`;
 
-  const configContent = `{
+  const configContent = `## config.json (路径：~/.claude/config.json)
+## 该文件仅配置一次即可，primaryApiKey填写任意字符即可
+{
   "primaryApiKey": "any"
 }`;
 
