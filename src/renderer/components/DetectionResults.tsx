@@ -1,3 +1,14 @@
+/**
+ * 输入: DetectionResultsProps (检测结果数组、检测状态)
+ * 输出: React 组件 (检测结果展示 UI)
+ * 定位: 展示层 - 显示站点检测结果，包含状态图标和详细信息
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
 import { CheckCircle, XCircle, Loader2, Server, DollarSign, Box } from 'lucide-react';
 import { DetectionResult } from '../App';
 

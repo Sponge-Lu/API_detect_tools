@@ -1,6 +1,12 @@
 /**
- * 站点卡片展开详情组件
- * 包含用户分组、API Keys 列表、模型列表
+ * 输入: SiteCardDetailsProps (站点数据、检测结果、API Keys、用户分组、模型定价)
+ * 输出: React 组件 (站点卡片详情 UI)
+ * 定位: 展示层 - 站点卡片展开详情组件，包含用户分组、API Keys 列表、模型列表
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/SiteCard/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 import { useState, useMemo } from 'react';

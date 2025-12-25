@@ -1,6 +1,12 @@
 /**
- * 前端日志工具类
- * 生产环境自动禁用 debug 级别日志
+ * 输入: 日志消息, 日志级别
+ * 输出: 格式化的控制台日志
+ * 定位: 工具层 - 前端日志工具类，生产环境自动禁用 debug 级别日志
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/utils/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 type LogLevel = 'error' | 'warn' | 'info' | 'debug';

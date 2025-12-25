@@ -1,6 +1,12 @@
 /**
- * 站点列表表头组件
- * 显示各列标题，支持列宽调整
+ * 输入: SiteListHeaderProps (列宽数组、列宽变更回调)
+ * 输出: React 组件 (站点列表表头 UI)
+ * 定位: 展示层 - 站点列表表头组件，显示各列标题，支持列宽调整
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/SiteListHeader/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 import { useRef, useCallback } from 'react';

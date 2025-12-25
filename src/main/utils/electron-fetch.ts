@@ -1,6 +1,12 @@
 /**
- * 使用 Electron net 模块的 HTTP 客户端
- * 解决打包后 BoringSSL 与某些服务器 TLS 握手失败的问题
+ * 输入: HTTP 请求配置 (URL, method, headers, body, timeout)
+ * 输出: HTTP 响应数据
+ * 定位: 工具层 - 使用 Electron net 模块的 HTTP 客户端，解决打包后 TLS 握手问题
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/main/utils/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 import { net } from 'electron';

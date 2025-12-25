@@ -1,6 +1,6 @@
 {
   "name": "api-hub-management-tools",
-  "version": "2.1.8",
+  "version": "2.1.9",
   "description": "API Hub Management Tools - Professional API management and monitoring tool",
   "author": "API Hub Team",
   "main": "dist/main/main.js",
@@ -30,6 +30,7 @@
     ]
   },
   "dependencies": {
+    "@iarna/toml": "^2.2.5",
     "@tanstack/react-virtual": "^3.13.12",
     "axios": "^1.6.0",
     "electron-log": "^5.4.3",
@@ -75,7 +76,7 @@
     "vitest": "^4.0.14"
   },
   "build": {
-    "buildVersion": "2.1.8",
+    "buildVersion": "2.1.9",
     "appId": "com.apihub.management",
     "productName": "API Hub Management Tools",
     "directories": {

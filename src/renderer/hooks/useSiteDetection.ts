@@ -1,4 +1,15 @@
 /**
+ * 输入: DetectionStore (检测状态), ConfigStore (配置), IPC 调用
+ * 输出: 检测方法 (detect, detectAll), 检测状态
+ * 定位: 业务逻辑层 - 管理站点检测操作和结果处理
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/hooks/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+/**
  * 站点检测 Hook
  * 封装站点检测相关的业务逻辑
  */

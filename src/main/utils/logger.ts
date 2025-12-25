@@ -1,6 +1,12 @@
 /**
- * 日志工具类
- * 基于 electron-log 封装，支持文件持久化和级别控制
+ * 输入: 日志消息, 日志级别, 元数据
+ * 输出: 格式化的日志输出 (控制台 + 文件)
+ * 定位: 工具层 - 日志工具类，基于 electron-log 封装，支持文件持久化和级别控制
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/main/utils/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 import log from 'electron-log/main';

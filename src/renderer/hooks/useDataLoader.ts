@@ -1,6 +1,18 @@
 /**
+ * 输入: Config (应用配置), 缓存数据, IPC 调用
+ * 输出: 数据加载方法 (loadData, loadCachedData), 加载状态, 自动检测触发
+ * 定位: 业务逻辑层 - 管理数据加载和缓存，支持启动时自动检测 CLI 配置
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/hooks/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+/**
  * 数据加载 Hook
  * 从 App.tsx 抽离的缓存数据加载逻辑
+ * 支持启动时自动检测 CLI 配置 (Requirements 6.1)
  */
 
 import { useCallback } from 'react';
@@ -8,6 +20,7 @@ import Logger from '../utils/logger';
 import type { Config } from '../App';
 import type { DetectionResult } from '../../shared/types/site';
 import type { CliCompatibilityResult, CliConfig } from '../store/detectionStore';
+import type { SiteInfo } from '../../shared/types/config-detection';
 
 interface UseDataLoaderOptions {
   setResults: (results: DetectionResult[]) => void;
@@ -19,6 +32,8 @@ interface UseDataLoaderOptions {
   setModelPricing: (siteName: string, pricing: any) => void;
   setCliCompatibility?: (siteName: string, result: CliCompatibilityResult) => void;
   setCliConfig?: (siteName: string, config: CliConfig) => void;
+  /** CLI 配置检测函数 (Requirements 6.1) */
+  detectCliConfig?: (sites: SiteInfo[]) => Promise<void>;
 }
 
 export function useDataLoader({
@@ -28,6 +43,7 @@ export function useDataLoader({
   setModelPricing,
   setCliCompatibility,
   setCliConfig,
+  detectCliConfig,
 }: UseDataLoaderOptions) {
   /**
    * 启动时加载缓存的显示数据（从 config.json）
@@ -106,10 +122,12 @@ export function useDataLoader({
                       : null,
                   codex:
                     typeof cliCompatibility.codex === 'boolean' ? cliCompatibility.codex : null,
+                  codexDetail: cliCompatibility.codexDetail || undefined, // 加载 Codex 详细测试结果
                   geminiCli:
                     typeof cliCompatibility.geminiCli === 'boolean'
                       ? cliCompatibility.geminiCli
                       : null,
+                  geminiDetail: cliCompatibility.geminiDetail || undefined, // 加载 Gemini CLI 详细测试结果
                   testedAt:
                     typeof cliCompatibility.testedAt === 'number'
                       ? cliCompatibility.testedAt
@@ -140,6 +158,30 @@ export function useDataLoader({
           if (cliConfigCount > 0) {
             Logger.info(`✅ [useDataLoader] 加载了 ${cliConfigCount} 个站点的 CLI 配置`);
           }
+
+          // 启动时自动检测 CLI 配置 (Requirements 6.1)
+          if (detectCliConfig) {
+            // 从缓存结果中提取站点信息用于匹配
+            const siteInfos: SiteInfo[] = cachedResults
+              .filter(r => r.url)
+              .map(r => ({
+                id: r.name,
+                name: r.name,
+                url: r.url!,
+              }));
+
+            if (siteInfos.length > 0) {
+              Logger.info('🔍 [useDataLoader] 启动时自动检测 CLI 配置...');
+              // 异步执行检测，不阻塞启动流程
+              detectCliConfig(siteInfos)
+                .then(() => {
+                  Logger.info('✅ [useDataLoader] CLI 配置自动检测完成');
+                })
+                .catch(error => {
+                  Logger.error('❌ [useDataLoader] CLI 配置自动检测失败:', error);
+                });
+            }
+          }
         } else {
           Logger.info('ℹ️ [useDataLoader] config.json 中没有缓存数据');
         }
@@ -147,7 +189,15 @@ export function useDataLoader({
         Logger.error('❌ [useDataLoader] 加载缓存数据失败:', error);
       }
     },
-    [setResults, setApiKeys, setUserGroups, setModelPricing, setCliCompatibility, setCliConfig]
+    [
+      setResults,
+      setApiKeys,
+      setUserGroups,
+      setModelPricing,
+      setCliCompatibility,
+      setCliConfig,
+      detectCliConfig,
+    ]
   );
 
   return { loadCachedData };

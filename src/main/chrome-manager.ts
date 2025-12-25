@@ -1,4 +1,15 @@
-﻿import puppeteer, { Browser, Page } from 'puppeteer-core';
+﻿/**
+ * 输入: Puppeteer (浏览器自动化), Electron app (应用路径), Logger (日志记录)
+ * 输出: Browser 实例, Page 实例, LocalStorageData, 自动登录结果
+ * 定位: 基础设施层 - 管理 Chrome 浏览器自动化，处理自动登录和数据提取
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/main/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+import puppeteer, { Browser, Page } from 'puppeteer-core';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';

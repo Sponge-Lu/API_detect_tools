@@ -1,6 +1,12 @@
 /**
- * 请求管理器
- * 实现请求去重和结果缓存
+ * 输入: 请求键 (requestKey), 请求函数, 缓存配置
+ * 输出: 请求结果 (去重和缓存后)
+ * 定位: 工具层 - 请求管理器，实现请求去重和结果缓存
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/main/utils/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 import { Logger } from './logger';

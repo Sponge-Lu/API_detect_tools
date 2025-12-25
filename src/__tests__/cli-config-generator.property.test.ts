@@ -1,10 +1,14 @@
 /**
- * Property-Based Tests for CLI Config Generator Service
+ * 输入: 模拟的 CLI 配置生成参数
+ * 输出: 属性测试验证结果
+ * 定位: 测试层 - CLI 配置生成器的属性测试，验证端点选择逻辑正确性
  *
- * **Feature: cli-config-generator**
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/__tests__/FOLDER_INDEX.md
  *
- * These tests verify the correctness properties defined in the design document
- * using fast-check for property-based testing.
+ * **功能: cli-config-generator**
+ * 使用 fast-check 进行属性测试，验证设计文档中定义的正确性属性
  */
 
 import { describe, it, expect } from 'vitest';
@@ -15,7 +19,10 @@ import {
   generateClaudeCodeConfig,
   generateCodexConfig,
   generateGeminiCliConfig,
+  selectEndpointFormat,
+  generateEndpointComment,
   ConfigParams,
+  GeminiConfigParams,
 } from '../renderer/services/cli-config-generator';
 
 // ============= Arbitraries =============
@@ -456,5 +463,148 @@ describe('Property 4: Gemini CLI config generation produces valid output', () =>
       }),
       { numRuns: 100 }
     );
+  });
+});
+
+// ============= Gemini Detail Arbitraries =============
+
+/**
+ * Generate a valid GeminiDetail object
+ */
+const geminiDetailArb = fc.record({
+  native: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
+  proxy: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
+});
+
+/**
+ * Generate valid GeminiConfigParams
+ */
+const geminiConfigParamsArb: fc.Arbitrary<GeminiConfigParams> = fc.record({
+  siteUrl: baseUrlArb,
+  siteName: siteNameArb,
+  apiKey: apiKeyArb,
+  model: modelNameArb,
+  geminiDetail: fc.option(geminiDetailArb, { nil: undefined }),
+});
+
+// ============= Property 2: 端点格式选择正确性 =============
+
+/**
+ * **Property 2: 端点格式选择正确性**
+ * **Validates: Requirements 2.1, 2.2, 2.3**
+ *
+ * *For any* combination of Gemini test results (native: boolean | null, proxy: boolean | null),
+ * the `selectEndpointFormat` function SHALL return:
+ * - 'proxy' when proxy === true (regardless of native)
+ * - 'native' when proxy !== true AND native === true
+ * - 'proxy' when both are false or null (default)
+ */
+describe('Property 2: 端点格式选择正确性', () => {
+  it('should return proxy when proxy === true (regardless of native)', () => {
+    fc.assert(
+      fc.property(fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)), native => {
+        const result = selectEndpointFormat({ native, proxy: true });
+        expect(result).toBe('proxy');
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  it('should return native when proxy !== true AND native === true', () => {
+    fc.assert(
+      fc.property(fc.oneof(fc.constant(false), fc.constant(null)), proxy => {
+        const result = selectEndpointFormat({ native: true, proxy });
+        expect(result).toBe('native');
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  it('should return proxy when both are false or null (default)', () => {
+    fc.assert(
+      fc.property(
+        fc.oneof(fc.constant(false), fc.constant(null)),
+        fc.oneof(fc.constant(false), fc.constant(null)),
+        (native, proxy) => {
+          const result = selectEndpointFormat({ native, proxy });
+          expect(result).toBe('proxy');
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+
+  it('should return proxy when geminiDetail is undefined', () => {
+    const result = selectEndpointFormat(undefined);
+    expect(result).toBe('proxy');
+  });
+
+  it('should always return either proxy or native', () => {
+    fc.assert(
+      fc.property(geminiDetailArb, detail => {
+        const result = selectEndpointFormat(detail);
+        expect(['proxy', 'native']).toContain(result);
+      }),
+      { numRuns: 100 }
+    );
+  });
+});
+
+// ============= Property 3: 配置注释包含测试结果 =============
+
+/**
+ * **Property 3: 配置注释包含测试结果**
+ * **Validates: Requirements 2.4**
+ *
+ * *For any* Gemini CLI configuration generation with geminiDetail provided,
+ * the generated `.env` file content SHALL contain a comment line showing the test results
+ * in format `# 端点测试结果: native=X, proxy=Y` where X and Y are ✓, ✗, or ?.
+ */
+describe('Property 3: 配置注释包含测试结果', () => {
+  it('should include endpoint comment in .env file when geminiDetail is provided', () => {
+    fc.assert(
+      fc.property(geminiConfigParamsArb, params => {
+        const config = generateGeminiCliConfig(params);
+        const envFile = config.files.find(f => f.path.includes('.env'));
+        expect(envFile).toBeDefined();
+
+        const content = envFile!.content;
+
+        if (params.geminiDetail) {
+          // Should contain test result comment
+          expect(content).toContain('# 端点测试结果:');
+          expect(content).toContain('native=');
+          expect(content).toContain('proxy=');
+        } else {
+          // Should contain default comment (端点格式说明)
+          expect(content).toContain('# 端点格式说明:');
+          expect(content).toContain('native');
+          expect(content).toContain('proxy');
+        }
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  it('should use correct status symbols in comment', () => {
+    fc.assert(
+      fc.property(geminiDetailArb, detail => {
+        const comment = generateEndpointComment(detail);
+
+        const nativeExpected = detail.native === true ? '✓' : detail.native === false ? '✗' : '?';
+        const proxyExpected = detail.proxy === true ? '✓' : detail.proxy === false ? '✗' : '?';
+
+        expect(comment).toContain(`native=${nativeExpected}`);
+        expect(comment).toContain(`proxy=${proxyExpected}`);
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  it('should return default comment when geminiDetail is undefined', () => {
+    const comment = generateEndpointComment(undefined);
+    expect(comment).toContain('# 端点格式说明:');
+    expect(comment).toContain('proxy');
+    expect(comment).toContain('native');
   });
 });

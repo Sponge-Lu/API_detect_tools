@@ -1,5 +1,12 @@
 /**
- * 站点卡片操作按钮组件
+ * 输入: SiteCardActionsProps (操作回调、加载状态、展开状态)
+ * 输出: React 组件 (站点卡片操作按钮 UI)
+ * 定位: 展示层 - 站点卡片操作按钮组件，包含复制、刷新、编辑、删除等操作
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/SiteCard/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 import {

@@ -1,10 +1,14 @@
 /**
- * Property-Based Tests for Unified CLI Config Dialog
+ * 输入: 模拟的统一 CLI 配置参数
+ * 输出: 属性测试验证结果
+ * 定位: 测试层 - 统一 CLI 配置对话框的属性测试，验证配置过滤和启用逻辑
  *
- * **Feature: unified-cli-config**
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/__tests__/FOLDER_INDEX.md
  *
- * These tests verify the correctness properties defined in the design document
- * using fast-check for property-based testing.
+ * **功能: unified-cli-config**
+ * 使用 fast-check 进行属性测试，验证设计文档中定义的正确性属性
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';

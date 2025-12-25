@@ -1,6 +1,12 @@
 /**
- * 软件更新对话框
- * 显示新版本信息、更新说明和下载链接
+ * 输入: UpdateDialogProps (版本信息、发布信息、下载回调)
+ * 输出: React 组件 (软件更新对话框 UI)
+ * 定位: 展示层 - 软件更新对话框，显示新版本信息、更新说明和下载链接
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/dialogs/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 import { X, Download, Calendar, Tag, FileText, ExternalLink } from 'lucide-react';

@@ -1,4 +1,15 @@
 /**
+ * 输入: Config (应用配置), UIStore (UI 状态), 拖拽事件
+ * 输出: 拖拽处理方法 (onDragStart, onDragOver, onDrop), 拖拽状态
+ * 定位: 业务逻辑层 - 管理站点拖拽排序
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/hooks/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+/**
  * 站点拖拽排序 Hook
  * 封装站点拖拽相关的状态和逻辑
  */

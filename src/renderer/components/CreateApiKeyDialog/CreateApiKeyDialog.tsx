@@ -1,5 +1,12 @@
 /**
- * 创建 API Key 弹窗组件
+ * 输入: CreateApiKeyDialogProps (站点数据、表单数据、用户分组、回调函数)
+ * 输出: React 组件 (创建 API Key 对话框 UI)
+ * 定位: 展示层 - 创建 API Key 对话框，支持配置名称、分组、配额和过期时间
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/CreateApiKeyDialog/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 import { useRef, useEffect } from 'react';

@@ -1,10 +1,14 @@
 /**
- * Property-Based Tests for CLI Compatibility Service
+ * 输入: 模拟的 CLI 兼容性测试参数
+ * 输出: 属性测试验证结果
+ * 定位: 测试层 - CLI 兼容性服务的属性测试，验证双端点测试完整性
  *
- * **Feature: cli-compatibility-test**
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/__tests__/FOLDER_INDEX.md
  *
- * These tests verify the correctness properties defined in the design document
- * using fast-check for property-based testing.
+ * **功能: cli-compatibility-test**
+ * 使用 fast-check 进行属性测试，验证设计文档中定义的正确性属性
  */
 
 import { describe, it, expect } from 'vitest';
@@ -83,6 +87,81 @@ function selectLowestModel(models: string[], prefix: string): string | null {
   modelsWithVersion.sort((a, b) => compareVersions(a.version, b.version));
 
   return modelsWithVersion[0].model;
+}
+
+/**
+ * 使用正则表达式匹配模型类型
+ */
+function findModelByType(models: string[], type: 'claude' | 'gpt' | 'gemini'): string | null {
+  if (!models || models.length === 0) {
+    return null;
+  }
+
+  const patterns: Record<string, RegExp[]> = {
+    claude: [/^claude[-_]?/i, /^anthropic[-_]?/i, /^claude\d/i],
+    gpt: [/^gpt[-_]?/i, /^openai[-_]?/i, /^chatgpt[-_]?/i, /^o[134][-_]?/i, /^gpt\d/i],
+    gemini: [/^gemini[-_]?/i, /^google[-_]?/i, /^gemini\d/i],
+  };
+
+  const regexList = patterns[type];
+  if (!regexList) {
+    return null;
+  }
+
+  for (const regex of regexList) {
+    const matchingModels = models.filter(m => regex.test(m));
+    if (matchingModels.length > 0) {
+      return matchingModels[0];
+    }
+  }
+
+  return null;
+}
+
+/**
+ * 检查响应是否表示 API 支持
+ */
+function isApiSupported(status: number, data: any): boolean {
+  if (status >= 200 && status < 300) {
+    if (data?.error) {
+      const errorType = data.error.type || data.error.code || '';
+      const errorMessage = data.error.message || '';
+      const supportedErrors = [
+        'invalid_request_error',
+        'invalid_api_key',
+        'authentication_error',
+        'rate_limit_error',
+        'insufficient_quota',
+      ];
+      if (supportedErrors.some(e => errorType.includes(e) || errorMessage.includes(e))) {
+        return true;
+      }
+      return false;
+    }
+    return true;
+  }
+
+  if (status === 401 || status === 403 || status === 429) {
+    return true;
+  }
+
+  if (status === 400) {
+    if (data?.error) {
+      const errorType = data.error.type || data.error.code || '';
+      const errorMessage = data.error.message || '';
+      const supportedErrors = [
+        'invalid_request_error',
+        'invalid_model',
+        'model_not_found',
+        'invalid_api_key',
+      ];
+      if (supportedErrors.some(e => errorType.includes(e) || errorMessage.includes(e))) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -216,7 +295,7 @@ const modelListArb = fc.array(
     modelNameArb('claude-'),
     modelNameArb('gpt-'),
     modelNameArb('gemini-'),
-    fc.constantFrom('llama-3', 'mistral-7b', 'qwen-72b')
+    fc.constantFrom('llama-3', 'mistral-7b', 'qwen-72b', 'claude3', 'gpt4o', 'gemini1.5')
   ),
   { minLength: 0, maxLength: 20 }
 );
@@ -306,6 +385,98 @@ describe('CLI Compatibility Service Property Tests', () => {
         ),
         { numRuns: 100 }
       );
+    });
+  });
+
+  /**
+   * **Property 1b: Flexible Model Matching**
+   * **Validates: Requirements 1.2 (improved)**
+   *
+   * *For any* list of models, the findModelByType function SHALL
+   * match models with various naming conventions (with or without hyphen).
+   */
+  describe('Property 1b: Flexible Model Matching', () => {
+    it('should match models without hyphen (e.g., claude3, gpt4o)', () => {
+      const modelsWithoutHyphen = ['claude3', 'gpt4o', 'gemini1.5'];
+
+      expect(findModelByType(modelsWithoutHyphen, 'claude')).toBe('claude3');
+      expect(findModelByType(modelsWithoutHyphen, 'gpt')).toBe('gpt4o');
+      expect(findModelByType(modelsWithoutHyphen, 'gemini')).toBe('gemini1.5');
+    });
+
+    it('should match models with hyphen (e.g., claude-3, gpt-4)', () => {
+      const modelsWithHyphen = ['claude-3', 'gpt-4', 'gemini-1.5'];
+
+      expect(findModelByType(modelsWithHyphen, 'claude')).toBe('claude-3');
+      expect(findModelByType(modelsWithHyphen, 'gpt')).toBe('gpt-4');
+      expect(findModelByType(modelsWithHyphen, 'gemini')).toBe('gemini-1.5');
+    });
+
+    it('should match o-series models as GPT', () => {
+      const oSeriesModels = ['o1-preview', 'o3-mini', 'o4'];
+
+      expect(findModelByType(oSeriesModels, 'gpt')).toBe('o1-preview');
+    });
+
+    it('should return null for empty model list', () => {
+      expect(findModelByType([], 'claude')).toBeNull();
+      expect(findModelByType([], 'gpt')).toBeNull();
+      expect(findModelByType([], 'gemini')).toBeNull();
+    });
+
+    it('should return null when no models match', () => {
+      const unrelatedModels = ['llama-3', 'mistral-7b', 'qwen-72b'];
+
+      expect(findModelByType(unrelatedModels, 'claude')).toBeNull();
+      expect(findModelByType(unrelatedModels, 'gpt')).toBeNull();
+      expect(findModelByType(unrelatedModels, 'gemini')).toBeNull();
+    });
+  });
+
+  /**
+   * **Property 2b: Improved Response Validation**
+   * **Validates: Requirements 1.3, 1.4 (improved)**
+   *
+   * *For any* API response, the isApiSupported function SHALL correctly
+   * identify whether the API is supported based on status code and response body.
+   */
+  describe('Property 2b: Improved Response Validation', () => {
+    it('should return true for 2xx status codes without error', () => {
+      fc.assert(
+        fc.property(fc.integer({ min: 200, max: 299 }), status => {
+          expect(isApiSupported(status, {})).toBe(true);
+          expect(isApiSupported(status, { choices: [] })).toBe(true);
+        }),
+        { numRuns: 100 }
+      );
+    });
+
+    it('should return true for 401/403/429 (auth/rate limit errors indicate API exists)', () => {
+      expect(isApiSupported(401, {})).toBe(true);
+      expect(isApiSupported(403, {})).toBe(true);
+      expect(isApiSupported(429, {})).toBe(true);
+    });
+
+    it('should return true for 400 with known error types', () => {
+      expect(isApiSupported(400, { error: { type: 'invalid_request_error' } })).toBe(true);
+      expect(isApiSupported(400, { error: { type: 'invalid_model' } })).toBe(true);
+      expect(isApiSupported(400, { error: { code: 'model_not_found' } })).toBe(true);
+    });
+
+    it('should return false for 404/500 errors', () => {
+      expect(isApiSupported(404, {})).toBe(false);
+      expect(isApiSupported(500, {})).toBe(false);
+      expect(isApiSupported(502, {})).toBe(false);
+      expect(isApiSupported(503, {})).toBe(false);
+    });
+
+    it('should return true for 200 with rate_limit_error in body', () => {
+      expect(isApiSupported(200, { error: { type: 'rate_limit_error' } })).toBe(true);
+      expect(isApiSupported(200, { error: { type: 'insufficient_quota' } })).toBe(true);
+    });
+
+    it('should return false for 200 with unknown error in body', () => {
+      expect(isApiSupported(200, { error: { type: 'unknown_error' } })).toBe(false);
     });
   });
 
@@ -882,6 +1053,176 @@ describe('Property 8: Persistence Round Trip', () => {
         // Check all values are equivalent
         for (const key of Object.keys(original)) {
           expect(areResultsEqual(original[key], deserialized[key])).toBe(true);
+        }
+      }),
+      { numRuns: 100 }
+    );
+  });
+});
+
+/**
+ * **Property 9: Gemini CLI 双端点测试完整性**
+ * **Validates: Requirements 1.1, 1.2**
+ *
+ * *For any* Gemini CLI compatibility test invocation, the system SHALL test both
+ * native and proxy endpoints and return a result containing `geminiDetail` with
+ * both `native` and `proxy` boolean values.
+ */
+describe('Property 9: Gemini CLI Dual Endpoint Test Completeness', () => {
+  /** Gemini CLI 详细测试结果 */
+  interface GeminiTestDetail {
+    native: boolean | null;
+    proxy: boolean | null;
+  }
+
+  /**
+   * Arbitrary for generating GeminiTestDetail
+   */
+  const geminiTestDetailArb: fc.Arbitrary<GeminiTestDetail> = fc.record({
+    native: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
+    proxy: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
+  });
+
+  /**
+   * Simulates the testGeminiWithDetail logic
+   * Returns { supported: boolean, detail: GeminiTestDetail }
+   */
+  function simulateTestGeminiWithDetail(
+    nativeResult: boolean,
+    proxyResult: boolean
+  ): { supported: boolean; detail: GeminiTestDetail } {
+    return {
+      supported: proxyResult || nativeResult, // 任一通过即支持
+      detail: {
+        native: nativeResult,
+        proxy: proxyResult,
+      },
+    };
+  }
+
+  it('should return geminiDetail with both native and proxy fields', () => {
+    fc.assert(
+      fc.property(fc.boolean(), fc.boolean(), (nativeResult, proxyResult) => {
+        const result = simulateTestGeminiWithDetail(nativeResult, proxyResult);
+
+        // Verify geminiDetail exists and has both fields
+        expect(result.detail).toBeDefined();
+        expect('native' in result.detail).toBe(true);
+        expect('proxy' in result.detail).toBe(true);
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  it('should set supported=true when proxy is true (regardless of native)', () => {
+    fc.assert(
+      fc.property(fc.boolean(), nativeResult => {
+        const result = simulateTestGeminiWithDetail(nativeResult, true);
+        expect(result.supported).toBe(true);
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  it('should set supported=true when native is true (regardless of proxy)', () => {
+    fc.assert(
+      fc.property(fc.boolean(), proxyResult => {
+        const result = simulateTestGeminiWithDetail(true, proxyResult);
+        expect(result.supported).toBe(true);
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  it('should set supported=false only when both native and proxy are false', () => {
+    const result = simulateTestGeminiWithDetail(false, false);
+    expect(result.supported).toBe(false);
+    expect(result.detail.native).toBe(false);
+    expect(result.detail.proxy).toBe(false);
+  });
+
+  it('should correctly reflect individual endpoint results in detail', () => {
+    fc.assert(
+      fc.property(fc.boolean(), fc.boolean(), (nativeResult, proxyResult) => {
+        const result = simulateTestGeminiWithDetail(nativeResult, proxyResult);
+
+        // Detail should exactly match input results
+        expect(result.detail.native).toBe(nativeResult);
+        expect(result.detail.proxy).toBe(proxyResult);
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  it('should preserve geminiDetail through serialization round trip', () => {
+    fc.assert(
+      fc.property(geminiTestDetailArb, original => {
+        const serialized = JSON.stringify(original);
+        const deserialized = JSON.parse(serialized) as GeminiTestDetail;
+
+        expect(deserialized.native).toBe(original.native);
+        expect(deserialized.proxy).toBe(original.proxy);
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  it('should handle all combinations of native/proxy results correctly', () => {
+    // Test all 4 combinations explicitly
+    const combinations: [boolean, boolean][] = [
+      [false, false],
+      [false, true],
+      [true, false],
+      [true, true],
+    ];
+
+    for (const [native, proxy] of combinations) {
+      const result = simulateTestGeminiWithDetail(native, proxy);
+
+      // Verify supported logic: either one being true means supported
+      expect(result.supported).toBe(native || proxy);
+
+      // Verify detail reflects actual results
+      expect(result.detail.native).toBe(native);
+      expect(result.detail.proxy).toBe(proxy);
+    }
+  });
+
+  /**
+   * Test that CliCompatibilityResult with geminiDetail preserves correctly
+   */
+  it('should preserve geminiDetail in CliCompatibilityResult round trip', () => {
+    interface CliCompatibilityResultWithGeminiDetail {
+      claudeCode: boolean | null;
+      codex: boolean | null;
+      geminiCli: boolean | null;
+      geminiDetail?: GeminiTestDetail;
+      testedAt: number | null;
+      error?: string;
+    }
+
+    const cliCompatibilityResultWithGeminiDetailArb: fc.Arbitrary<CliCompatibilityResultWithGeminiDetail> =
+      fc.record({
+        claudeCode: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
+        codex: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
+        geminiCli: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
+        geminiDetail: fc.option(geminiTestDetailArb, { nil: undefined }),
+        testedAt: fc.oneof(fc.integer({ min: 0, max: Date.now() + 1000000 }), fc.constant(null)),
+        error: fc.option(fc.string({ minLength: 0, maxLength: 200 }), { nil: undefined }),
+      });
+
+    fc.assert(
+      fc.property(cliCompatibilityResultWithGeminiDetailArb, original => {
+        const serialized = JSON.stringify(original);
+        const deserialized = JSON.parse(serialized) as CliCompatibilityResultWithGeminiDetail;
+
+        // Verify geminiDetail is preserved
+        if (original.geminiDetail === undefined) {
+          expect(deserialized.geminiDetail).toBeUndefined();
+        } else {
+          expect(deserialized.geminiDetail).toBeDefined();
+          expect(deserialized.geminiDetail!.native).toBe(original.geminiDetail.native);
+          expect(deserialized.geminiDetail!.proxy).toBe(original.geminiDetail.proxy);
         }
       }),
       { numRuns: 100 }

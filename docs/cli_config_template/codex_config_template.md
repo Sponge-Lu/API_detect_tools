@@ -10,6 +10,14 @@ network_access = "enabled"
 [model_providers.IkunCoding]                //去提供商获取正确名字
 name = "ikun"                               //去提供商获取正确名字
 base_url = "https://api.ikuncode.cc/v1"
+# wire_api 选项：
+# - "responses": 使用 Responses API (推荐，功能更强，支持 Agent 能力)
+# - "chat": 使用 Chat Completions API (兼容性更好，大多数中转站支持)
+# 
+# 如何选择：
+# - 如果测试结果显示 responses=✓，优先使用 "responses"
+# - 如果只有 chat=✓，使用 "chat"
+# - 如果都不支持，建议先使用 "chat" 尝试
 wire_api = "responses"
 requires_openai_auth = true
 

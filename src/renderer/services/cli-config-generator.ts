@@ -1,8 +1,21 @@
 /**
+ * 输入: ConfigParams (站点 URL、API Key、模型), CodexTestDetail (Codex 测试结果), GeminiTestDetail (Gemini 测试结果)
+ * 输出: GeneratedConfig (CLI 配置文件内容), ConfigParams, CodexConfigParams, GeminiConfigParams
+ * 定位: 服务层 - CLI 配置生成器，根据站点信息和测试结果生成配置文件
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/services/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+/**
  * CLI 配置生成器服务
  *
  * 根据站点信息和用户选择的 API Key、模型生成 CLI 配置文件内容
- * 支持 Claude Code 和 Codex 配置生成
+ * 支持 Claude Code、Codex、Gemini CLI 配置生成
+ * Codex 配置支持根据测试结果自动选择 wire_api (chat/responses)
+ * Gemini CLI 配置支持根据测试结果生成端点注释 (native/proxy)
  * 配置模板参考 docs/cli_config_template/
  */
 
@@ -12,6 +25,24 @@ export interface ConfigParams {
   siteName: string;
   apiKey: string;
   model: string;
+}
+
+/** Codex 配置生成参数（扩展） */
+export interface CodexConfigParams extends ConfigParams {
+  /** Codex 详细测试结果，用于自动选择 wire_api */
+  codexDetail?: {
+    chat: boolean | null;
+    responses: boolean | null;
+  };
+}
+
+/** Gemini CLI 配置生成参数（扩展） */
+export interface GeminiConfigParams extends ConfigParams {
+  /** Gemini CLI 详细测试结果，用于生成端点注释 */
+  geminiDetail?: {
+    native: boolean | null;
+    proxy: boolean | null;
+  };
 }
 
 /** 单个配置文件 */
@@ -140,17 +171,134 @@ export function generateClaudeCodeTemplate(): GeneratedConfig {
 }
 
 /**
+ * 根据测试结果选择最佳的 wire_api
+ * @param codexDetail - Codex 详细测试结果
+ * @returns 推荐的 wire_api 值
+ */
+function selectWireApi(codexDetail?: { chat: boolean | null; responses: boolean | null }): string {
+  if (!codexDetail) {
+    // 没有测试结果，默认使用 responses（功能更强）
+    return 'responses';
+  }
+
+  const { chat, responses } = codexDetail;
+
+  // 优先使用 responses（功能更强）
+  if (responses === true) {
+    return 'responses';
+  }
+
+  // 如果 responses 不支持但 chat 支持，使用 chat
+  if (chat === true) {
+    return 'chat';
+  }
+
+  // 都不支持或未测试，默认使用 responses
+  return 'responses';
+}
+
+/**
+ * 生成 wire_api 注释说明
+ * @param codexDetail - Codex 详细测试结果
+ * @returns 注释文本
+ */
+function generateWireApiComment(codexDetail?: {
+  chat: boolean | null;
+  responses: boolean | null;
+}): string {
+  if (!codexDetail) {
+    return '# wire_api: "responses" (推荐) 或 "chat" (兼容性更好)';
+  }
+
+  const chatStatus = codexDetail.chat === true ? '✓' : codexDetail.chat === false ? '✗' : '?';
+  const responsesStatus =
+    codexDetail.responses === true ? '✓' : codexDetail.responses === false ? '✗' : '?';
+
+  return `# wire_api 测试结果: chat=${chatStatus}, responses=${responsesStatus}`;
+}
+
+/**
+ * 根据测试结果选择最佳端点格式
+ * 优先级：proxy > native（proxy 兼容性更好，中转站常用）
+ * @param geminiDetail - Gemini CLI 详细测试结果
+ * @returns 推荐的端点格式
+ */
+export function selectEndpointFormat(geminiDetail?: {
+  native: boolean | null;
+  proxy: boolean | null;
+}): 'proxy' | 'native' {
+  if (!geminiDetail) {
+    return 'proxy'; // 默认使用 proxy
+  }
+
+  const { native, proxy } = geminiDetail;
+
+  // 优先使用 proxy（中转站兼容性更好）
+  if (proxy === true) {
+    return 'proxy';
+  }
+
+  // 如果 proxy 不支持但 native 支持，使用 native
+  if (native === true) {
+    return 'native';
+  }
+
+  // 都不支持或未测试，默认使用 proxy
+  return 'proxy';
+}
+
+/**
+ * 生成端点测试结果注释
+ * native: Google 原生格式 (/v1beta/models/{model}:generateContent) - Gemini CLI 实际使用此格式
+ * proxy: OpenAI 兼容格式 (/v1/chat/completions) - 仅供参考，Gemini CLI 不使用此格式
+ * @param geminiDetail - Gemini CLI 详细测试结果
+ * @returns 注释文本
+ */
+export function generateEndpointComment(geminiDetail?: {
+  native: boolean | null;
+  proxy: boolean | null;
+}): string {
+  if (!geminiDetail) {
+    return `# 端点格式说明:
+# - native: Google 原生格式 (/v1beta/models/{model}:generateContent) - Gemini CLI 使用此格式
+# - proxy: OpenAI 兼容格式 (/v1/chat/completions) - 仅供参考`;
+  }
+
+  const nativeStatus =
+    geminiDetail.native === true ? '✓' : geminiDetail.native === false ? '✗' : '?';
+  const proxyStatus = geminiDetail.proxy === true ? '✓' : geminiDetail.proxy === false ? '✗' : '?';
+
+  // 添加使用建议
+  let advice = '';
+  if (geminiDetail.native === true) {
+    advice = '\n# ✓ 原生格式可用，Gemini CLI 应该可以正常工作';
+  } else if (geminiDetail.native === false && geminiDetail.proxy === true) {
+    advice = '\n# ⚠️ 仅兼容格式可用，Gemini CLI 可能无法正常工作（CLI 使用原生格式）';
+  } else if (geminiDetail.native === false && geminiDetail.proxy === false) {
+    advice = '\n# ✗ 两种格式均不可用，Gemini CLI 无法使用此站点';
+  }
+
+  return `# 端点测试结果: native=${nativeStatus}, proxy=${proxyStatus}
+# - native: Google 原生格式 - Gemini CLI 实际使用此格式
+# - proxy: OpenAI 兼容格式 - 仅供参考${advice}`;
+}
+
+/**
  * 生成 Codex 配置
  * 完全按照 docs/cli_config_template/codex_config_template.md 模板生成
- * @param params - 配置参数
+ * @param params - 配置参数（支持 codexDetail 用于自动选择 wire_api）
  * @returns 生成的配置文件内容
  */
-export function generateCodexConfig(params: ConfigParams): GeneratedConfig {
+export function generateCodexConfig(params: CodexConfigParams): GeneratedConfig {
   const normalizedUrl = normalizeUrl(params.siteUrl);
   const normalizedApiKey = normalizeApiKey(params.apiKey);
   const providerName = params.siteName.replace(/\s+/g, '_');
 
-  // 按照模板生成 config.toml
+  // 根据测试结果选择 wire_api
+  const wireApi = selectWireApi(params.codexDetail);
+  const wireApiComment = generateWireApiComment(params.codexDetail);
+
+  // 按照模板生成 config.toml，添加测试结果注释
   const configToml = `model_provider = "${providerName}"
 model = "${params.model}"
 model_reasoning_effort = "high"
@@ -160,7 +308,8 @@ network_access = "enabled"
 [model_providers.${providerName}]
 name = "${providerName.toLowerCase()}"
 base_url = "${normalizedUrl}/v1"
-wire_api = "responses"
+${wireApiComment}
+wire_api = "${wireApi}"
 requires_openai_auth = true
 
 [features]
@@ -193,7 +342,7 @@ web_search_request = true`;
  * @returns 配置模板内容
  */
 export function generateCodexTemplate(): GeneratedConfig {
-  // 完全照搬模板文件内容，包含注释
+  // 完全照搬模板文件内容，包含注释和 wire_api 说明
   const configTomlTemplate = `model_provider = "IkunCoding"               //去提供商获取正确名字
 model = "gpt-5.1-codex-max"
 model_reasoning_effort = "high"
@@ -203,6 +352,14 @@ network_access = "enabled"
 [model_providers.IkunCoding]                //去提供商获取正确名字
 name = "ikun"                               //去提供商获取正确名字
 base_url = "https://api.ikuncode.cc/v1"
+# wire_api 选项：
+# - "responses": 使用 Responses API (推荐，功能更强，支持 Agent 能力)
+# - "chat": 使用 Chat Completions API (兼容性更好，大多数中转站支持)
+# 
+# 如何选择：
+# - 如果测试结果显示 responses=✓，优先使用 "responses"
+# - 如果只有 chat=✓，使用 "chat"
+# - 如果都不支持，建议先使用 "chat" 尝试
 wire_api = "responses"
 requires_openai_auth = true
 
@@ -232,12 +389,15 @@ web_search_request = true`;
 /**
  * 生成 Gemini CLI 配置
  * 完全按照 docs/cli_config_template/gemini_cli_config_template.md 模板生成
- * @param params - 配置参数
+ * @param params - 配置参数（支持 geminiDetail 用于生成端点注释）
  * @returns 生成的配置文件内容
  */
-export function generateGeminiCliConfig(params: ConfigParams): GeneratedConfig {
+export function generateGeminiCliConfig(params: GeminiConfigParams): GeneratedConfig {
   const normalizedUrl = normalizeUrl(params.siteUrl);
   const normalizedApiKey = normalizeApiKey(params.apiKey);
+
+  // 生成端点测试结果注释
+  const endpointComment = generateEndpointComment(params.geminiDetail);
 
   // 按照模板生成 settings.json
   const settingsJson = {
@@ -256,8 +416,9 @@ export function generateGeminiCliConfig(params: ConfigParams): GeneratedConfig {
     timeout: 30000,
   };
 
-  // 按照模板生成 .env
-  const envContent = `GEMINI_API_KEY=${normalizedApiKey}
+  // 按照模板生成 .env，添加测试结果注释
+  const envContent = `${endpointComment}
+GEMINI_API_KEY=${normalizedApiKey}
 GEMINI_MODEL=${params.model}
 GOOGLE_GEMINI_BASE_URL=${normalizedUrl}`;
 

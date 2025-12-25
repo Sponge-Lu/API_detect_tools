@@ -1,4 +1,15 @@
 /**
+ * 输入: ChromeManager (浏览器自动化), HttpClient (HTTP 请求), UnifiedConfigManager (配置管理)
+ * 输出: SiteAccount, CachedDisplayData, RefreshAccountResult, Token 管理结果
+ * 定位: 服务层 - 管理 Token 生命周期，处理所有站点的认证和 Token 刷新
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/main/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+/**
  * 令牌服务类 - 精简重构版
  * 核心职责：
  * 1. 初始化站点账号（一次性从浏览器获取数据）

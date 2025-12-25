@@ -1,6 +1,12 @@
 /**
- * 骨架屏组件
- * 用于数据加载时显示占位内容
+ * 输入: SkeletonProps (className 样式类)
+ * 输出: React 组件 (骨架屏 UI)
+ * 定位: 展示层 - 骨架屏组件，用于数据加载时显示占位内容
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/Skeleton/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 interface SkeletonProps {

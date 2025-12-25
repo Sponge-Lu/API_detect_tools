@@ -1,3 +1,14 @@
+/**
+ * 输入: AuthErrorDialogProps (认证错误站点列表、回调函数)
+ * 输出: React 组件 (认证错误对话框 UI)
+ * 定位: 展示层 - 认证错误对话框，分析并展示 Session/Token 过期等问题
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/dialogs/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
 import type { SiteConfig } from '../../App';
 
 interface AuthErrorSite {

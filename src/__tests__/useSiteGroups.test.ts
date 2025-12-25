@@ -1,3 +1,13 @@
+/**
+ * 输入: 模拟的站点配置和分组数据
+ * 输出: 测试验证结果
+ * 定位: 测试层 - useSiteGroups Hook 测试，验证站点分组管理逻辑
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/__tests__/FOLDER_INDEX.md
+ */
+
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useSiteGroups } from '../renderer/hooks/useSiteGroups';

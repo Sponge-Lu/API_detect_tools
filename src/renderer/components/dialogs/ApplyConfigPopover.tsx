@@ -1,17 +1,26 @@
 /**
- * 应用配置弹出菜单组件
- * 允许用户选择目标 CLI 并将配置写入对应路径
+ * 输入: ApplyConfigPopoverProps (CLI 配置、API Keys、兼容性数据), configStore (应用配置), detectionStore (CLI 配置检测)
+ * 输出: React 组件 (应用配置弹出菜单 UI)
+ * 定位: 展示层 - 应用配置弹出菜单，允许用户选择目标 CLI 并写入配置，应用后自动刷新 CLI 配置检测状态
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/dialogs/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 import { useState, useEffect, useRef } from 'react';
 import { Check, AlertCircle, Loader2 } from 'lucide-react';
 import type { CliConfig, ApiKeyInfo } from '../../../shared/types/cli-config';
+import type { CliCompatibilityData } from '../../../shared/types/site';
 import {
   generateClaudeCodeConfig,
   generateCodexConfig,
   generateGeminiCliConfig,
 } from '../../services/cli-config-generator';
 import { toast } from '../../store/toastStore';
+import { useDetectionStore } from '../../store/detectionStore';
+import { useConfigStore } from '../../store/configStore';
 
 // 导入 CLI 图标
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
@@ -22,6 +31,7 @@ export interface ApplyConfigPopoverProps {
   isOpen: boolean;
   anchorEl: HTMLElement | null;
   cliConfig: CliConfig | null;
+  cliCompatibility?: CliCompatibilityData | null; // CLI 兼容性测试结果
   siteUrl: string;
   siteName: string;
   apiKeys: ApiKeyInfo[];
@@ -75,6 +85,7 @@ export function ApplyConfigPopover({
   isOpen,
   anchorEl,
   cliConfig,
+  cliCompatibility,
   siteUrl,
   siteName,
   apiKeys,
@@ -83,14 +94,40 @@ export function ApplyConfigPopover({
   const popoverRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const [applyingCli, setApplyingCli] = useState<SupportedCliType | null>(null);
+  const [isPositioned, setIsPositioned] = useState(false);
 
-  // 计算弹出菜单位置
+  // 获取 CLI 配置检测相关方法 (Requirements 6.2)
+  const { clearCliConfigDetection, detectCliConfig } = useDetectionStore();
+  const { config: appConfig } = useConfigStore();
+
+  // 计算弹出菜单位置（自动检测空间，向上或向下展开）
   useEffect(() => {
     if (isOpen && anchorEl) {
+      // 先设置初始位置（向下展开）
       const rect = anchorEl.getBoundingClientRect();
       setPosition({
         top: rect.bottom + 8,
         left: rect.left,
+      });
+      setIsPositioned(false);
+
+      // 等待下一帧，获取实际弹框高度后调整位置
+      requestAnimationFrame(() => {
+        if (popoverRef.current) {
+          const popoverRect = popoverRef.current.getBoundingClientRect();
+          const viewportHeight = window.innerHeight;
+          const spaceBelow = viewportHeight - rect.bottom;
+          const spaceAbove = rect.top;
+
+          // 如果下方空间不足且上方空间更大，则向上展开
+          if (spaceBelow < popoverRect.height + 16 && spaceAbove > spaceBelow) {
+            setPosition({
+              top: rect.top - popoverRect.height - 8,
+              left: rect.left,
+            });
+          }
+          setIsPositioned(true);
+        }
       });
     }
   }, [isOpen, anchorEl]);
@@ -152,7 +189,11 @@ export function ApplyConfigPopover({
         if (cliType === 'claudeCode') {
           generatedConfig = generateClaudeCodeConfig(params);
         } else if (cliType === 'codex') {
-          generatedConfig = generateCodexConfig(params);
+          // 传递 codexDetail 用于自动选择 wire_api
+          generatedConfig = generateCodexConfig({
+            ...params,
+            codexDetail: cliCompatibility?.codexDetail,
+          });
         } else {
           generatedConfig = generateGeminiCliConfig(params);
         }
@@ -172,6 +213,28 @@ export function ApplyConfigPopover({
       if (result.success) {
         const pathsStr = result.writtenPaths.join(', ');
         toast.success(`配置已写入: ${pathsStr}`);
+
+        // 配置应用后自动刷新 CLI 配置检测 (Requirements 6.2)
+        // 先清除后端缓存，再清除前端状态并重新检测
+        try {
+          await window.electronAPI.configDetection.clearCache();
+        } catch (error) {
+          console.error('清除 CLI 配置缓存失败:', error);
+        }
+        clearCliConfigDetection();
+
+        // 从 configStore 获取站点列表（而不是检测结果）
+        const siteInfos = (appConfig?.sites || [])
+          .filter((s: { url?: string }) => s.url)
+          .map((s: { name: string; url?: string }) => ({
+            id: s.name,
+            name: s.name,
+            url: s.url!,
+          }));
+        // 即使没有站点也执行检测，以更新 CLI 配置状态
+        detectCliConfig(siteInfos).catch(error => {
+          console.error('CLI 配置检测刷新失败:', error);
+        });
 
         // Claude Code 配置应用后提醒用户重启 IDE
         if (cliType === 'claudeCode') {
@@ -196,7 +259,9 @@ export function ApplyConfigPopover({
   return (
     <div
       ref={popoverRef}
-      className="fixed z-50 bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 py-1 min-w-[180px]"
+      className={`fixed z-50 bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 py-1 min-w-[180px] transition-opacity duration-100 ${
+        isPositioned ? 'opacity-100' : 'opacity-0'
+      }`}
       style={{ top: position.top, left: position.left }}
     >
       {validCliTypes.length === 0 ? (

@@ -1,3 +1,13 @@
+/**
+ * 输入: 各种格式的数据 (URL, 站点名称, 用户 ID 等)
+ * 输出: 测试验证结果
+ * 定位: 测试层 - Zod Schema 验证测试，验证数据验证规则正确性
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/__tests__/FOLDER_INDEX.md
+ */
+
 import { describe, it, expect } from 'vitest';
 import {
   urlSchema,

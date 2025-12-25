@@ -1,3 +1,13 @@
+/**
+ * 输入: 模拟的 WebDAV URL 和备份信息
+ * 输出: 属性测试验证结果
+ * 定位: 测试层 - WebDAV 管理器属性测试，验证 URL 验证和备份信息处理逻辑
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/__tests__/FOLDER_INDEX.md
+ */
+
 import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
 import type { WebDAVBackupInfo } from '../shared/types/site';

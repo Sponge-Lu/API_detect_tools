@@ -1,3 +1,14 @@
+/**
+ * 输入: SiteEditorProps (站点数据、分组列表、保存/取消回调)
+ * 输出: React 组件 (站点编辑器 UI)
+ * 定位: 展示层 - 站点编辑器组件，支持智能添加和手动添加模式
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
 import { useState, useEffect } from 'react';
 import { X, Loader2, Globe, CheckCircle, AlertTriangle } from 'lucide-react';
 import { SiteConfig } from '../App';

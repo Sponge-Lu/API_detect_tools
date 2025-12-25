@@ -1,12 +1,18 @@
 /**
- * 统一 CLI 配置对话框
- * 合并 CliConfigDialog 和 CliConfigGeneratorDialog 功能
- * 支持 CLI 启用/禁用开关、配置选择、预览编辑和保存
+ * 输入: UnifiedCliConfigDialogProps (站点数据、API Keys、CLI 配置、测试结果)
+ * 输出: React 组件 (统一 CLI 配置对话框 UI)
+ * 定位: 展示层 - 统一 CLI 配置对话框，支持 CLI 启用/禁用、配置选择、预览编辑和保存
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/dialogs/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 import { useState, useEffect, useMemo } from 'react';
 import { X, Copy, Check, Edit2, Eye, ToggleLeft, ToggleRight, RotateCcw } from 'lucide-react';
 import type { CliConfig, ApiKeyInfo } from '../../../shared/types/cli-config';
+import type { CodexTestDetail, GeminiTestDetail } from '../../../shared/types/site';
 import { DEFAULT_CLI_CONFIG } from '../../../shared/types/cli-config';
 import {
   generateClaudeCodeConfig,
@@ -31,6 +37,8 @@ export interface UnifiedCliConfigDialogProps {
   apiKeys: ApiKeyInfo[];
   siteModels: string[];
   currentConfig: CliConfig | null;
+  codexDetail?: CodexTestDetail | null; // Codex 详细测试结果，用于自动选择 wire_api
+  geminiDetail?: GeminiTestDetail | null; // Gemini CLI 详细测试结果，用于自动选择端点格式
   onClose: () => void;
   onSave: (config: CliConfig) => void;
 }
@@ -163,6 +171,8 @@ export function UnifiedCliConfigDialog({
   apiKeys,
   siteModels,
   currentConfig,
+  codexDetail,
+  geminiDetail,
   onClose,
   onSave,
 }: UnifiedCliConfigDialogProps) {
@@ -344,12 +354,12 @@ export function UnifiedCliConfigDialog({
     if (selectedCli === 'claudeCode') {
       return generateClaudeCodeConfig(params);
     } else if (selectedCli === 'codex') {
-      return generateCodexConfig(params);
+      return generateCodexConfig({ ...params, codexDetail: codexDetail ?? undefined });
     } else if (selectedCli === 'geminiCli') {
-      return generateGeminiCliConfig(params);
+      return generateGeminiCliConfig({ ...params, geminiDetail: geminiDetail ?? undefined });
     }
     return null;
-  }, [selectedCli, selectedApiKey, cliConfigs, siteUrl, siteName]);
+  }, [selectedCli, selectedApiKey, cliConfigs, siteUrl, siteName, codexDetail, geminiDetail]);
 
   // 配置模板（未选择 API Key 和 model 时显示）
   const templateConfig = useMemo(() => {
@@ -499,9 +509,9 @@ export function UnifiedCliConfigDialog({
       if (cliType === 'claudeCode') {
         return generateClaudeCodeConfig(params);
       } else if (cliType === 'codex') {
-        return generateCodexConfig(params);
+        return generateCodexConfig({ ...params, codexDetail: codexDetail ?? undefined });
       } else if (cliType === 'geminiCli') {
-        return generateGeminiCliConfig(params);
+        return generateGeminiCliConfig({ ...params, geminiDetail: geminiDetail ?? undefined });
       }
       return null;
     };
@@ -811,6 +821,13 @@ export function UnifiedCliConfigDialog({
                         </button>
                       </div>
                     )}
+                  </div>
+                  {/* 配置确认提醒 - 对所有 CLI 类型显示 */}
+                  <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg">
+                    <span className="text-amber-600 dark:text-amber-400">⚠️</span>
+                    <span className="text-xs text-amber-700 dark:text-amber-300">
+                      请去站点确认配置信息是否正确
+                    </span>
                   </div>
                   {isShowingTemplate && (
                     <div className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 rounded-lg">

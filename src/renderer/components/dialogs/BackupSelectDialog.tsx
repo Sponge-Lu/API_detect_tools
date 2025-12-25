@@ -1,6 +1,12 @@
 /**
- * 备份选择对话框
- * 从备份目录选择配置文件进行恢复
+ * 输入: BackupSelectDialogProps (备份列表、加载状态、选择/关闭回调)
+ * 输出: React 组件 (备份选择对话框 UI)
+ * 定位: 展示层 - 备份选择对话框，从备份目录选择配置文件进行恢复
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/dialogs/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 import { X, FileJson, Clock, HardDrive } from 'lucide-react';

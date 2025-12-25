@@ -1,3 +1,14 @@
+/**
+ * 输入: AutoRefreshDialogProps (站点名称、当前间隔、确认/取消回调)
+ * 输出: React 组件 (自动刷新设置对话框 UI)
+ * 定位: 展示层 - 自动刷新设置对话框，配置站点自动刷新间隔
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/dialogs/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
 import { useState } from 'react';
 import { X, AlertTriangle } from 'lucide-react';
 

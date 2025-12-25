@@ -1,10 +1,14 @@
 /**
- * Property-Based Tests for CLI Compatibility Persistence
+ * 输入: 模拟的 CLI 兼容性持久化参数
+ * 输出: 属性测试验证结果
+ * 定位: 测试层 - CLI 兼容性持久化的属性测试，验证数据存储和恢复逻辑
  *
- * **Feature: cli-compat-persistence**
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/__tests__/FOLDER_INDEX.md
  *
- * These tests verify the correctness properties defined in the design document
- * using fast-check for property-based testing.
+ * **功能: cli-compat-persistence**
+ * 使用 fast-check 进行属性测试，验证设计文档中定义的正确性属性
  */
 
 import { describe, it, expect } from 'vitest';

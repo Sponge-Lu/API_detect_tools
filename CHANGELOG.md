@@ -4,7 +4,65 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，并且本项目遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
-## [v2.1.7.01]
+## [v2.1.9]
+
+### 新增
+- **窗口关闭行为选择**：点击关闭按钮时可选择退出或最小化到托盘
+  - 首次关闭时弹出选择对话框
+  - 支持"记住我的选择"功能
+  - 系统托盘图标支持（点击恢复窗口、右键菜单）
+  - 设置面板中可随时更改偏好（每次询问/直接退出/最小化到托盘）
+- **CLI 配置检测功能**：自动检测本地 CLI 工具的配置状态
+  - 支持检测 Claude Code、Codex、Gemini CLI 三种 CLI 工具
+  - 显示配置来源类型：managed（本应用管理）、other（其他来源）、unconfigured（未配置）
+  - Header 区域显示 CLI 配置状态面板，支持展开查看详情
+  - 支持手动刷新检测结果
+- **Codex 双 API 测试**：同时测试 Chat Completions API 和 Responses API
+  - 测试结果显示详细信息：`chat: ✓/✗, responses: ✓/✗`
+  - 鼠标悬停 Codex 图标显示详细测试结果
+  - 测试完成后自动更新配置文件中的 `wire_api` 值
+  - 根据测试结果自动选择最佳 API（优先 responses，其次 chat）
+  - 配置文件包含测试结果注释
+- **Gemini CLI 双端点测试**：同时测试 Native 和 Proxy 端点
+  - Native: Google 原生格式 (`/v1beta/models/{model}:generateContent`) - Gemini CLI 实际使用此格式
+  - Proxy: OpenAI 兼容格式 (`/v1/chat/completions`) - 仅供参考
+  - 测试结果显示详细信息：`native: ✓/✗, proxy: ✓/✗`
+  - 鼠标悬停显示详细状态和使用建议
+  - 测试完成后弹窗提示测试结果和使用建议
+  - 配置文件包含端点测试结果注释和说明
+  - Gemini CLI 支持状态仅基于 Native 测试结果（因为 CLI 只使用原生格式）
+- **分形多级索引系统**：https://github.com/Claudate/project-multilevel-index
+
+### 改进
+- **Toast 提示时间**：默认显示时间从 3 秒增加到 5 秒
+- **CLI 配置优先级检测**：正确检测各 CLI 工具的有效配置
+  - Codex：OAuth 登录优先于自定义 provider 配置（除非设置 `forced_login_method = 'api'`）
+  - Codex：修复 OAuth 凭证检测，从 `auth.json` 的 `tokens` 字段检测登录状态
+  - Gemini CLI：Google 登录/Vertex AI 优先于 base_url 配置
+  - Claude Code：环境变量优先于 settings.json 配置
+- **CLI 状态显示优化**：增加不同 CLI 之间的分隔线，显示更清晰
+
+### 修复
+- **CLI 配置检测刷新**：修复点击刷新后显示"未检测"的问题
+  - 刷新时先清除后端缓存再重新检测
+  - 站点列表从应用配置获取，而非检测结果
+- **CLI 配置应用后自动刷新**：应用 CLI 配置后自动刷新检测状态
+- **CLI 兼容性测试准确性**：改进 CLI 兼容性测试逻辑
+  - 支持更灵活的模型名称匹配（如 `claude3`、`gpt4o`、`o1-preview` 等）
+  - 改进响应验证：401/403/429 状态码表示 API 存在，400 + 特定错误类型也表示支持
+  - 500 + 内容验证错误（如 `EMPTY_RESPONSE`）也表示 API 格式正确
+  - Gemini CLI 测试支持 OpenAI 兼容格式（中转站常用）
+- **CLI 测试结果持久化**：修复热重载和重启应用后 CLI 测试结果丢失的问题
+  - 修复 `api-service.ts` 保存检测结果时覆盖 `cli_compatibility` 的问题
+  - 修复 `configStore.ts` 更新站点时丢失 `cached_data` 的问题
+- **应用配置弹框显示**：修复最后一个站点点击应用按钮时弹框显示不全的问题
+  - 弹框自动检测空间，下方空间不足时向上展开
+- **Codex OAuth 检测**：修复 Codex 账号登录后仍显示自定义站点的问题
+  - 正确检测 auth.json 中的 tokens 字段来判断 OAuth 登录状态
+
+---
+
+## [v2.1.8]
 
 ### 修复
 - **CLI 配置保存**：修复保存 CLI 配置后 `editedFiles` 为空导致测试失败的问题

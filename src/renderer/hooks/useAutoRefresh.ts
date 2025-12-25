@@ -1,4 +1,15 @@
 /**
+ * 输入: SiteConfig (站点配置), 刷新间隔配置, 回调函数
+ * 输出: 自动刷新控制方法 (startRefresh, stopRefresh, setInterval)
+ * 定位: 业务逻辑层 - 管理站点自动刷新定时器和状态
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/hooks/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+/**
  * useAutoRefresh Hook
  * 管理站点自动刷新定时器
  * Requirements: 4.1

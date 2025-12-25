@@ -1,6 +1,12 @@
 /**
- * 站点卡片头部组件
- * 显示站点基本信息（名称、状态、余额、消费等）
+ * 输入: SiteCardHeaderProps (站点数据、检测结果、CLI 兼容性)
+ * 输出: React 组件 (站点卡片头部 UI)
+ * 定位: 展示层 - 站点卡片头部组件，显示站点基本信息（名称、状态、余额、消费等）
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/SiteCard/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 import type { SiteCardHeaderProps } from './types';

@@ -1,4 +1,15 @@
 /**
+ * 输入: DialogState (对话框状态), 主题配置, 列表配置
+ * 输出: UiState (UI 状态), UI 操作方法
+ * 定位: 状态管理层 - 管理 UI 交互、对话框和布局状态
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/store/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+/**
  * UI 状态管理
  * 管理界面交互状态
  */

@@ -1,4 +1,15 @@
 /**
+ * 输入: HttpClient (HTTP 请求), Logger (日志记录)
+ * 输出: CliCompatibilityResult, CodexTestDetail, GeminiTestDetail, CliCompatService, 请求构建函数
+ * 定位: 服务层 - CLI 工具兼容性测试服务，支持 Claude Code、Codex（双 API）、Gemini CLI（双端点）
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/main/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+/**
  * CLI 兼容性测试服务
  * 用于检测站点是否支持 Claude Code、Codex、Gemini CLI 等 CLI 工具
  */
@@ -17,11 +28,25 @@ export enum CliType {
   GEMINI_CLI = 'geminiCli',
 }
 
+/** Codex 详细测试结果 */
+export interface CodexTestDetail {
+  chat: boolean | null; // Chat Completions API 测试结果
+  responses: boolean | null; // Responses API 测试结果
+}
+
+/** Gemini CLI 详细测试结果 */
+export interface GeminiTestDetail {
+  native: boolean | null; // Google 原生格式测试结果
+  proxy: boolean | null; // OpenAI 兼容格式测试结果
+}
+
 /** CLI 兼容性测试结果 */
 export interface CliCompatibilityResult {
   claudeCode: boolean | null; // true=支持, false=不支持, null=未测试
   codex: boolean | null;
+  codexDetail?: CodexTestDetail; // Codex 详细测试结果（chat/responses）
   geminiCli: boolean | null;
+  geminiDetail?: GeminiTestDetail; // Gemini CLI 详细测试结果（native/proxy）
   testedAt: number | null; // Unix timestamp
   error?: string; // 测试错误信息（可选）
 }
@@ -71,6 +96,130 @@ export function selectLowestModel(models: string[], prefix: string): string | nu
   modelsWithVersion.sort((a, b) => compareVersions(a.version, b.version));
 
   return modelsWithVersion[0].model;
+}
+
+/**
+ * 使用正则表达式匹配模型类型
+ * 支持更灵活的模型名称格式
+ * @param models 模型列表
+ * @param type 模型类型 ('claude' | 'gpt' | 'gemini')
+ * @returns 匹配的模型名称，如果没有匹配则返回 null
+ */
+export function findModelByType(
+  models: string[],
+  type: 'claude' | 'gpt' | 'gemini'
+): string | null {
+  if (!models || models.length === 0) {
+    return null;
+  }
+
+  // 定义各类型的匹配模式
+  const patterns: Record<string, RegExp[]> = {
+    claude: [/^claude[-_]?/i, /^anthropic[-_]?/i, /^claude\d/i],
+    gpt: [/^gpt[-_]?/i, /^openai[-_]?/i, /^chatgpt[-_]?/i, /^o[134][-_]?/i, /^gpt\d/i],
+    gemini: [/^gemini[-_]?/i, /^google[-_]?/i, /^gemini\d/i],
+  };
+
+  const regexList = patterns[type];
+  if (!regexList) {
+    return null;
+  }
+
+  // 尝试每个正则表达式
+  for (const regex of regexList) {
+    const matchingModels = models.filter(m => regex.test(m));
+    if (matchingModels.length > 0) {
+      // 返回第一个匹配的模型（可以进一步优化为选择最低版本）
+      return matchingModels[0];
+    }
+  }
+
+  return null;
+}
+
+/**
+ * 检查响应是否表示 API 支持
+ * @param status HTTP 状态码
+ * @param data 响应数据
+ * @returns true 表示 API 支持，false 表示不支持
+ */
+export function isApiSupported(status: number, data: any): boolean {
+  // 2xx 状态码通常表示成功
+  if (status >= 200 && status < 300) {
+    // 检查响应体是否包含错误
+    if (data?.error) {
+      // 某些错误类型表示 API 存在但请求有问题
+      const errorType = data.error.type || data.error.code || '';
+      const errorMessage = data.error.message || '';
+
+      // 这些错误表示 API 存在，只是请求参数有问题
+      const supportedErrors = [
+        'invalid_request_error',
+        'invalid_api_key',
+        'authentication_error',
+        'rate_limit_error',
+        'insufficient_quota',
+      ];
+
+      if (supportedErrors.some(e => errorType.includes(e) || errorMessage.includes(e))) {
+        return true;
+      }
+
+      return false;
+    }
+    return true;
+  }
+
+  // 401/403 通常表示认证问题，但 API 存在
+  if (status === 401 || status === 403) {
+    return true;
+  }
+
+  // 429 表示速率限制，API 存在
+  if (status === 429) {
+    return true;
+  }
+
+  // 500 内部服务器错误 - 检查是否是中转站的内容验证错误
+  // 这种错误说明请求格式正确，只是模型响应有问题
+  if (status === 500) {
+    // 检查是否是内容验证错误（中转站特有的错误）
+    const errorMessage = data?.error?.message || data?.message || '';
+    const errorCode = data?.error?.code || data?.code || '';
+
+    // 这些错误表示 API 格式正确，只是响应内容有问题
+    const contentValidationErrors = [
+      'content_validation_error',
+      'EMPTY_RESPONSE',
+      'Response content validation failed',
+    ];
+
+    if (contentValidationErrors.some(e => errorMessage.includes(e) || errorCode.includes(e))) {
+      return true;
+    }
+  }
+
+  // 400 可能表示参数错误，需要检查响应体
+  if (status === 400) {
+    if (data?.error) {
+      const errorType = data.error.type || data.error.code || '';
+      const errorMessage = data.error.message || '';
+
+      // 这些错误表示 API 存在
+      const supportedErrors = [
+        'invalid_request_error',
+        'invalid_model',
+        'model_not_found',
+        'invalid_api_key',
+      ];
+
+      if (supportedErrors.some(e => errorType.includes(e) || errorMessage.includes(e))) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -165,7 +314,7 @@ export function buildClaudeCodeRequest(
 }
 
 /**
- * 构建 Codex 测试请求
+ * 构建 Codex 测试请求 (Chat Completions API)
  * 使用 /v1/chat/completions 端点，Bearer 认证，tools 使用 function.parameters 格式
  */
 export function buildCodexRequest(baseUrl: string, apiKey: string, model: string): RequestFormat {
@@ -198,6 +347,31 @@ export function buildCodexRequest(baseUrl: string, apiKey: string, model: string
           },
         },
       ],
+    },
+  };
+}
+
+/**
+ * 构建 Codex Responses API 测试请求
+ * 使用 /v1/responses 端点，Bearer 认证
+ */
+export function buildCodexResponsesRequest(
+  baseUrl: string,
+  apiKey: string,
+  model: string
+): RequestFormat {
+  const url = `${baseUrl.replace(/\/$/, '')}/v1/responses`;
+
+  return {
+    url,
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: {
+      model,
+      input: 'hi',
     },
   };
 }
@@ -245,6 +419,32 @@ export function buildGeminiCliRequest(
   };
 }
 
+/**
+ * 构建 Gemini CLI 测试请求（OpenAI 兼容格式，用于中转站）
+ * 使用 /v1/chat/completions 端点
+ */
+export function buildGeminiCliProxyRequest(
+  baseUrl: string,
+  apiKey: string,
+  model: string
+): RequestFormat {
+  const url = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
+
+  return {
+    url,
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: {
+      model,
+      max_tokens: 1,
+      messages: [{ role: 'user', content: 'hi' }],
+    },
+  };
+}
+
 // ============= CLI 兼容性服务类 =============
 
 /**
@@ -270,52 +470,173 @@ export class CliCompatService {
         timeout: this.timeout,
       });
 
-      // 成功响应（2xx）表示支持
-      return response.status >= 200 && response.status < 300;
+      // 使用改进的响应验证
+      const supported = isApiSupported(response.status, response.data);
+      log.info(`Claude Code test result: status=${response.status}, supported=${supported}`);
+      return supported;
     } catch (error: any) {
       log.warn(`Claude Code test failed: ${error.message}`);
+      // 网络错误等不代表不支持，返回 null 更合适，但为了兼容性返回 false
       return false;
     }
+  }
+
+  /**
+   * 测试 Codex 兼容性（Chat Completions API）
+   */
+  async testCodexChat(url: string, apiKey: string, model: string): Promise<boolean> {
+    try {
+      const request = buildCodexRequest(url, apiKey, model);
+      log.info(`Testing Codex (Chat) compatibility: ${request.url}`);
+
+      const response = await httpPost(request.url, request.body, {
+        headers: request.headers,
+        timeout: this.timeout,
+      });
+
+      const supported = isApiSupported(response.status, response.data);
+      log.info(`Codex (Chat) test result: status=${response.status}, supported=${supported}`);
+      return supported;
+    } catch (error: any) {
+      log.warn(`Codex (Chat) test failed: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * 测试 Codex 兼容性（Responses API）
+   */
+  async testCodexResponses(url: string, apiKey: string, model: string): Promise<boolean> {
+    try {
+      const request = buildCodexResponsesRequest(url, apiKey, model);
+      log.info(`Testing Codex (Responses) compatibility: ${request.url}`);
+
+      const response = await httpPost(request.url, request.body, {
+        headers: request.headers,
+        timeout: this.timeout,
+      });
+
+      const supported = isApiSupported(response.status, response.data);
+      log.info(`Codex (Responses) test result: status=${response.status}, supported=${supported}`);
+      return supported;
+    } catch (error: any) {
+      log.warn(`Codex (Responses) test failed: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * 测试 Codex 兼容性（同时测试 Chat 和 Responses API）
+   * @returns 包含详细测试结果的对象
+   */
+  async testCodexWithDetail(
+    url: string,
+    apiKey: string,
+    model: string
+  ): Promise<{ supported: boolean; detail: CodexTestDetail }> {
+    // 并发测试两种 API
+    const [chatResult, responsesResult] = await Promise.all([
+      this.testCodexChat(url, apiKey, model),
+      this.testCodexResponses(url, apiKey, model),
+    ]);
+
+    return {
+      supported: chatResult || responsesResult, // 任一通过即支持
+      detail: {
+        chat: chatResult,
+        responses: responsesResult,
+      },
+    };
   }
 
   /**
    * 测试 Codex 兼容性
+   * 同时测试 Chat 和 Responses API，任一通过即支持
    */
   async testCodex(url: string, apiKey: string, model: string): Promise<boolean> {
+    const result = await this.testCodexWithDetail(url, apiKey, model);
+    return result.supported;
+  }
+
+  /**
+   * 测试 Gemini CLI 兼容性（Google 原生格式）
+   */
+  async testGeminiNative(url: string, apiKey: string, model: string): Promise<boolean> {
     try {
-      const request = buildCodexRequest(url, apiKey, model);
-      log.info(`Testing Codex compatibility: ${request.url}`);
+      const request = buildGeminiCliRequest(url, apiKey, model);
+      log.info(`Testing Gemini CLI (Native) compatibility: ${request.url}`);
 
       const response = await httpPost(request.url, request.body, {
         headers: request.headers,
         timeout: this.timeout,
       });
 
-      return response.status >= 200 && response.status < 300;
+      const supported = isApiSupported(response.status, response.data);
+      log.info(
+        `Gemini CLI (Native) test result: status=${response.status}, supported=${supported}`
+      );
+      return supported;
     } catch (error: any) {
-      log.warn(`Codex test failed: ${error.message}`);
+      log.warn(`Gemini CLI (Native) test failed: ${error.message}`);
       return false;
     }
   }
 
   /**
-   * 测试 Gemini CLI 兼容性
+   * 测试 Gemini CLI 兼容性（OpenAI 兼容格式，用于中转站）
    */
-  async testGeminiCli(url: string, apiKey: string, model: string): Promise<boolean> {
+  async testGeminiProxy(url: string, apiKey: string, model: string): Promise<boolean> {
     try {
-      const request = buildGeminiCliRequest(url, apiKey, model);
-      log.info(`Testing Gemini CLI compatibility: ${request.url}`);
+      const request = buildGeminiCliProxyRequest(url, apiKey, model);
+      log.info(`Testing Gemini CLI (Proxy) compatibility: ${request.url}`);
 
       const response = await httpPost(request.url, request.body, {
         headers: request.headers,
         timeout: this.timeout,
       });
 
-      return response.status >= 200 && response.status < 300;
+      const supported = isApiSupported(response.status, response.data);
+      log.info(`Gemini CLI (Proxy) test result: status=${response.status}, supported=${supported}`);
+      return supported;
     } catch (error: any) {
-      log.warn(`Gemini CLI test failed: ${error.message}`);
+      log.warn(`Gemini CLI (Proxy) test failed: ${error.message}`);
       return false;
     }
+  }
+
+  /**
+   * 测试 Gemini CLI 兼容性（同时测试 Native 和 Proxy 端点）
+   * 注意：Gemini CLI 实际只使用 Native 格式，Proxy 测试仅供参考
+   * @returns 包含详细测试结果的对象
+   */
+  async testGeminiWithDetail(
+    url: string,
+    apiKey: string,
+    model: string
+  ): Promise<{ supported: boolean; detail: GeminiTestDetail }> {
+    // 并发测试两种端点
+    const [proxyResult, nativeResult] = await Promise.all([
+      this.testGeminiProxy(url, apiKey, model),
+      this.testGeminiNative(url, apiKey, model),
+    ]);
+
+    return {
+      // Gemini CLI 只使用 native 格式，所以支持状态只基于 native 测试结果
+      supported: nativeResult === true,
+      detail: {
+        native: nativeResult,
+        proxy: proxyResult,
+      },
+    };
+  }
+
+  /**
+   * 测试 Gemini CLI 兼容性
+   * 同时测试 Native 和 Proxy 端点，任一通过即支持
+   */
+  async testGeminiCli(url: string, apiKey: string, model: string): Promise<boolean> {
+    const result = await this.testGeminiWithDetail(url, apiKey, model);
+    return result.supported;
   }
 
   /**
@@ -326,24 +647,42 @@ export class CliCompatService {
 
     log.info(`Testing CLI compatibility for site: ${siteUrl}`);
 
-    // 为每种 CLI 类型选择最低版本的模型
-    const claudeModel = selectLowestModel(models, 'claude-');
-    const gptModel = selectLowestModel(models, 'gpt-');
-    const geminiModel = selectLowestModel(models, 'gemini-');
+    // 使用改进的模型匹配逻辑
+    // 先尝试使用正则匹配，如果失败再使用前缀匹配
+    let claudeModel = findModelByType(models, 'claude');
+    let gptModel = findModelByType(models, 'gpt');
+    let geminiModel = findModelByType(models, 'gemini');
+
+    // 如果正则匹配失败，回退到前缀匹配
+    if (!claudeModel) {
+      claudeModel = selectLowestModel(models, 'claude-');
+    }
+    if (!gptModel) {
+      gptModel = selectLowestModel(models, 'gpt-');
+    }
+    if (!geminiModel) {
+      geminiModel = selectLowestModel(models, 'gemini-');
+    }
 
     log.info(`Selected models - Claude: ${claudeModel}, GPT: ${gptModel}, Gemini: ${geminiModel}`);
 
     // 并发执行所有测试
-    const [claudeCodeResult, codexResult, geminiCliResult] = await Promise.all([
+    const [claudeCodeResult, codexResultWithDetail, geminiResultWithDetail] = await Promise.all([
       claudeModel ? this.testClaudeCode(siteUrl, apiKey, claudeModel) : Promise.resolve(null),
-      gptModel ? this.testCodex(siteUrl, apiKey, gptModel) : Promise.resolve(null),
-      geminiModel ? this.testGeminiCli(siteUrl, apiKey, geminiModel) : Promise.resolve(null),
+      gptModel
+        ? this.testCodexWithDetail(siteUrl, apiKey, gptModel)
+        : Promise.resolve({ supported: null, detail: { chat: null, responses: null } }),
+      geminiModel
+        ? this.testGeminiWithDetail(siteUrl, apiKey, geminiModel)
+        : Promise.resolve({ supported: null, detail: { native: null, proxy: null } }),
     ]);
 
     const result: CliCompatibilityResult = {
       claudeCode: claudeCodeResult,
-      codex: codexResult,
-      geminiCli: geminiCliResult,
+      codex: codexResultWithDetail.supported,
+      codexDetail: codexResultWithDetail.detail,
+      geminiCli: geminiResultWithDetail.supported,
+      geminiDetail: geminiResultWithDetail.detail,
       testedAt: Date.now(),
     };
 

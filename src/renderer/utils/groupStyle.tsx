@@ -1,3 +1,14 @@
+/**
+ * 输入: groupId (分组 ID), 颜色池配置
+ * 输出: 样式类名字符串, 颜色值
+ * 定位: 工具层 - 根据分组 ID 生成一致的站点分组样式
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/utils/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
 // 分组文字颜色池
 const GROUP_TEXT_COLOR_POOL = [
   'text-red-600 dark:text-red-300',

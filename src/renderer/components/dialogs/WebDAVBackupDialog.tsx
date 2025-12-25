@@ -1,6 +1,12 @@
 /**
- * WebDAV 备份管理对话框
- * 显示云端备份列表，支持上传、恢复、删除操作
+ * 输入: WebDAVBackupDialogProps (WebDAV 配置、备份列表、操作回调)
+ * 输出: React 组件 (WebDAV 备份管理对话框 UI)
+ * 定位: 展示层 - WebDAV 备份管理对话框，支持上传、恢复、删除操作
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/dialogs/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 import { useState, useEffect, useCallback } from 'react';

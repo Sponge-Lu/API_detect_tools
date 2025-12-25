@@ -1,4 +1,15 @@
 /**
+ * 输入: WebDAV client (WebDAV 通信), BackupManager (本地备份), UnifiedConfigManager (配置管理)
+ * 输出: WebDAVResult (操作结果), WebDAVBackupInfo (备份信息)
+ * 定位: 基础设施层 - 通过 WebDAV 协议管理云端备份和同步
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/main/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+/**
  * WebDAV 备份管理器
  * 负责与 WebDAV 服务器通信，实现配置文件的云端备份和恢复
  */

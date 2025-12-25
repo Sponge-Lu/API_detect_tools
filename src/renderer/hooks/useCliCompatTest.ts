@@ -1,6 +1,18 @@
 /**
+ * 输入: DetectionStore (检测状态), IPC 调用, Toast 通知
+ * 输出: 测试方法 (testSite), 兼容性结果, 自动更新配置和 Toast 提示
+ * 定位: 业务逻辑层 - CLI 兼容性测试 Hook，封装测试逻辑和结果处理
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/hooks/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+/**
  * CLI 兼容性测试 Hook
  * 封装 CLI 兼容性测试相关的业务逻辑
+ * 测试完成后自动更新 Codex 配置文件中的 wire_api 值
  */
 
 import { useCallback, useMemo } from 'react';
@@ -133,6 +145,49 @@ function parseGeminiCliConfig(
 }
 
 /**
+ * 更新 Codex 配置文件中的 wire_api 值
+ * @param editedFiles - 当前配置文件列表
+ * @param wireApi - 新的 wire_api 值
+ * @param codexDetail - 测试结果详情（用于生成注释）
+ * @returns 更新后的配置文件列表，如果无法更新则返回 null
+ */
+function updateCodexWireApi(
+  editedFiles: Array<{ path: string; content: string }>,
+  wireApi: string,
+  codexDetail: { chat: boolean | null; responses: boolean | null }
+): Array<{ path: string; content: string }> | null {
+  const configFile = editedFiles.find(f => f.path.includes('config.toml'));
+  if (!configFile) {
+    return null;
+  }
+
+  // 生成测试结果注释
+  const chatStatus = codexDetail.chat === true ? '✓' : codexDetail.chat === false ? '✗' : '?';
+  const responsesStatus =
+    codexDetail.responses === true ? '✓' : codexDetail.responses === false ? '✗' : '?';
+  const testComment = `# wire_api 测试结果: chat=${chatStatus}, responses=${responsesStatus}`;
+
+  let content = configFile.content;
+
+  // 更新或添加测试结果注释
+  const commentPattern = /# wire_api 测试结果:.*\n/;
+  if (commentPattern.test(content)) {
+    content = content.replace(commentPattern, testComment + '\n');
+  } else {
+    // 在 wire_api 行前添加注释
+    content = content.replace(/(wire_api\s*=)/, testComment + '\n$1');
+  }
+
+  // 更新 wire_api 值
+  const wireApiPattern = /wire_api\s*=\s*"[^"]*"/;
+  if (wireApiPattern.test(content)) {
+    content = content.replace(wireApiPattern, `wire_api = "${wireApi}"`);
+  }
+
+  return editedFiles.map(f => (f.path.includes('config.toml') ? { ...f, content } : f));
+}
+
+/**
  * CLI 兼容性测试 Hook
  */
 export function useCliCompatTest(): UseCliCompatTestReturn {
@@ -249,7 +304,9 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
         const result: CliCompatibilityResult = {
           claudeCode: response.data.claudeCode ?? null,
           codex: response.data.codex ?? null,
+          codexDetail: response.data.codexDetail, // 保存 Codex 详细测试结果
           geminiCli: response.data.geminiCli ?? null,
+          geminiDetail: response.data.geminiDetail, // 保存 Gemini CLI 详细测试结果
           testedAt: Date.now(),
         };
 
@@ -262,7 +319,78 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
           // 忽略保存错误
         }
 
-        toast.success(`${siteName} CLI 兼容性测试完成`);
+        toast.info(`${siteName} CLI 兼容性测试完成`);
+
+        // 显示 Claude Code 测试结果
+        if (cc?.enabled && response.data.claudeCode !== undefined) {
+          if (response.data.claudeCode === true) {
+            toast.success('Claude Code: 兼容 ✓', 6000);
+          } else if (response.data.claudeCode === false) {
+            toast.error('Claude Code: 不兼容 ✗', 6000);
+          }
+        }
+
+        // 如果测试了 Codex，显示结果并自动更新配置文件中的 wire_api
+        if (response.data.codexDetail && cx?.editedFiles) {
+          const { chat, responses } = response.data.codexDetail;
+          const chatStatus = chat === true ? '✓' : chat === false ? '✗' : '?';
+          const responsesStatus = responses === true ? '✓' : responses === false ? '✗' : '?';
+          const newWireApi = responses === true ? 'responses' : chat === true ? 'chat' : null;
+
+          if (newWireApi) {
+            // 更新配置文件中的 wire_api
+            const updatedEditedFiles = updateCodexWireApi(
+              cx.editedFiles,
+              newWireApi,
+              response.data.codexDetail
+            );
+            if (updatedEditedFiles) {
+              const updatedCliConfig = {
+                ...cliConfig,
+                codex: {
+                  ...cx,
+                  editedFiles: updatedEditedFiles,
+                },
+              };
+              setCliConfig(siteName, updatedCliConfig);
+            }
+            // 有可用 API，显示成功
+            toast.success(
+              `Codex: wire_api="${newWireApi}" [chat: ${chatStatus}, responses: ${responsesStatus}]`,
+              6000
+            );
+          } else if (response.data.codex === false) {
+            // 两种 API 都不支持，显示错误
+            toast.error(`Codex: 不兼容 [chat: ${chatStatus}, responses: ${responsesStatus}]`, 6000);
+          }
+        }
+
+        // 如果测试了 Gemini CLI，显示详细测试结果提示
+        if (response.data.geminiDetail && gc?.enabled) {
+          const { native, proxy } = response.data.geminiDetail;
+          const nativeStatus = native === true ? '✓' : native === false ? '✗' : '?';
+          const proxyStatus = proxy === true ? '✓' : proxy === false ? '✗' : '?';
+
+          // 使用较长的显示时间（6秒），让用户有足够时间阅读
+          if (native === true) {
+            toast.success(
+              `Gemini CLI: 兼容 [native: ${nativeStatus}, proxy: ${proxyStatus}]`,
+              6000
+            );
+          } else if (native === false && proxy === true) {
+            toast.warning(
+              `Gemini CLI: 部分兼容 [native: ${nativeStatus}, proxy: ${proxyStatus}]`,
+              6000
+            );
+          } else if (native === false && proxy === false) {
+            toast.error(
+              `Gemini CLI: 不兼容 [native: ${nativeStatus}, proxy: ${proxyStatus}]`,
+              6000
+            );
+          } else {
+            toast.info(`Gemini CLI: [native: ${nativeStatus}, proxy: ${proxyStatus}]`, 6000);
+          }
+        }
       } catch (error: any) {
         toast.error(`${siteName} CLI 兼容性测试失败: ${error.message}`);
 
@@ -270,7 +398,9 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
         setCliCompatibility(siteName, {
           claudeCode: null,
           codex: null,
+          codexDetail: undefined,
           geminiCli: null,
+          geminiDetail: undefined,
           testedAt: Date.now(),
           error: error.message,
         });

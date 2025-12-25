@@ -1,3 +1,14 @@
+/**
+ * 输入: ToastItem (消息类型、内容、持续时间), onClose 回调
+ * 输出: React 组件 (Toast 通知 UI)
+ * 定位: 展示层 - Toast 通知组件，显示成功/错误/警告/信息提示
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/Toast/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
 import { useEffect } from 'react';
 import { CheckCircle, XCircle, AlertTriangle, Info, X } from 'lucide-react';
 
@@ -39,7 +50,7 @@ export function Toast({ toast, onClose }: ToastProps) {
 
   return (
     <div
-      className={`flex items-center gap-3 px-4 py-3 rounded-lg border shadow-lg ${bgColors[toast.type]} animate-in slide-in-from-right-full duration-300`}
+      className={`flex items-center gap-3 px-4 py-3 rounded-lg border shadow-lg ${bgColors[toast.type]} animate-in slide-in-from-top-full duration-300`}
     >
       {icons[toast.type]}
       <span className="text-sm text-slate-700 dark:text-slate-200 flex-1">{toast.message}</span>
@@ -62,7 +73,7 @@ export function ToastContainer({ toasts, onClose }: ToastContainerProps) {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed top-4 right-4 z-[200] flex flex-col gap-2 max-w-sm">
+    <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[200] flex flex-col gap-2 max-w-sm">
       {toasts.map(toast => (
         <Toast key={toast.id} toast={toast} onClose={onClose} />
       ))}

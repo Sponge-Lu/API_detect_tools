@@ -1,6 +1,12 @@
 /**
- * CLI 兼容性图标组件
- * 显示各 CLI 工具的兼容性状态
+ * 输入: CliCompatibilityResult (兼容性结果), CliConfig (CLI 配置)
+ * 输出: CLI 兼容性图标组件，显示各工具支持状态和详细测试结果
+ * 定位: UI 组件层 - 显示 Claude Code、Codex、Gemini CLI 的兼容性状态图标
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/CliCompatibilityIcons/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 import type { CliCompatibilityResult } from '../../store/detectionStore';
@@ -85,6 +91,44 @@ function getStatusText(status: boolean | null | undefined, isConfigured: boolean
   if (status === true) return '支持';
   if (status === false) return '不支持';
   return '已配置，待测试';
+}
+
+/**
+ * 获取 Codex 详细状态文本
+ */
+function getCodexDetailText(compatibility: CliCompatibilityResult | undefined): string {
+  const detail = compatibility?.codexDetail;
+  if (!detail) return '';
+
+  const chatStatus = detail.chat === true ? '✓' : detail.chat === false ? '✗' : '?';
+  const responsesStatus = detail.responses === true ? '✓' : detail.responses === false ? '✗' : '?';
+
+  return ` [chat: ${chatStatus}, responses: ${responsesStatus}]`;
+}
+
+/**
+ * 获取 Gemini CLI 详细状态文本
+ * native: Google 原生格式 (/v1beta/models/{model}:generateContent) - Gemini CLI 实际使用此格式
+ * proxy: OpenAI 兼容格式 (/v1/chat/completions) - 仅供参考，Gemini CLI 不使用此格式
+ */
+function getGeminiDetailText(compatibility: CliCompatibilityResult | undefined): string {
+  const detail = compatibility?.geminiDetail;
+  if (!detail) return '';
+
+  const nativeStatus = detail.native === true ? '✓' : detail.native === false ? '✗' : '?';
+  const proxyStatus = detail.proxy === true ? '✓' : detail.proxy === false ? '✗' : '?';
+
+  // 添加更详细的说明
+  let hint = '';
+  if (detail.native === true) {
+    hint = ' (原生格式可用)';
+  } else if (detail.native === false && detail.proxy === true) {
+    hint = ' (仅兼容格式可用，CLI可能不工作)';
+  } else if (detail.native === false && detail.proxy === false) {
+    hint = ' (均不可用)';
+  }
+
+  return ` [native: ${nativeStatus}, proxy: ${proxyStatus}]${hint}`;
 }
 
 /**
@@ -188,7 +232,12 @@ export function CliCompatibilityIcons({
             const configured = isCliConfigured(cliConfig, configKey);
             const styleClass = getIconStyleClass(status, configured);
             const statusText = getStatusText(status, configured);
-            const tooltipText = `${name}: ${statusText}${testedAtText && configured ? ` (${testedAtText})` : ''}`;
+
+            // 为 Codex 添加详细测试结果
+            const codexDetailText = key === 'codex' ? getCodexDetailText(compatibility) : '';
+            // 为 Gemini CLI 添加详细测试结果
+            const geminiDetailText = key === 'geminiCli' ? getGeminiDetailText(compatibility) : '';
+            const tooltipText = `${name}: ${statusText}${codexDetailText}${geminiDetailText}${testedAtText && configured ? ` (${testedAtText})` : ''}`;
 
             return (
               <div

@@ -1,4 +1,15 @@
-﻿import Logger from './utils/logger';
+﻿/**
+ * 输入: Hooks (useSiteGroups, useAutoRefresh, useSiteDetection), Store (configStore, uiStore), Components (Header, SiteCard, etc)
+ * 输出: React 组件树, UI 状态管理, IPC 事件处理
+ * 定位: 展示层 - 根组件，管理主布局并协调所有 UI 组件
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+import Logger from './utils/logger';
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   Server,
@@ -26,6 +37,7 @@ import {
   BackupSelectDialog,
   UnifiedCliConfigDialog,
   ApplyConfigPopover,
+  CloseBehaviorDialog,
 } from './components/dialogs';
 import type { CliConfig } from '../shared/types/cli-config';
 import { CreateApiKeyDialog } from './components/CreateApiKeyDialog';
@@ -155,6 +167,33 @@ declare global {
         saveResult: (siteUrl: string, result: any) => Promise<{ success: boolean; error?: string }>;
         saveConfig: (siteUrl: string, config: any) => Promise<{ success: boolean; error?: string }>;
       };
+      configDetection: {
+        detectCliConfig: (
+          cliType: 'claudeCode' | 'codex' | 'geminiCli',
+          sites: Array<{ id: string; name: string; url: string }>
+        ) => Promise<any>;
+        detectAllCliConfig: (
+          sites: Array<{ id: string; name: string; url: string }>
+        ) => Promise<import('../shared/types/config-detection').AllCliDetectionResult>;
+        clearCache: (cliType?: 'claudeCode' | 'codex' | 'geminiCli') => Promise<void>;
+      };
+      closeBehavior?: {
+        getSettings: () => Promise<{
+          success: boolean;
+          data?: { behavior: 'ask' | 'quit' | 'minimize' };
+          error?: string;
+        }>;
+        saveSettings: (settings: {
+          behavior: 'ask' | 'quit' | 'minimize';
+        }) => Promise<{ success: boolean; error?: string }>;
+        onShowDialog: (callback: () => void) => () => void;
+        respondToDialog: (response: {
+          action: 'quit' | 'minimize';
+          remember: boolean;
+        }) => Promise<{ success: boolean; error?: string }>;
+        minimizeToTray: () => Promise<{ success: boolean; error?: string }>;
+        quitApp: () => Promise<{ success: boolean; error?: string }>;
+      };
     };
   }
 }
@@ -244,6 +283,7 @@ function App() {
     setUserGroups,
     setModelPricing,
     setCliCompatibility,
+    detectCliConfig,
   } = useDetectionStore();
   // uiStore
   const {
@@ -554,6 +594,9 @@ function App() {
   const [showCliConfigDialog, setShowCliConfigDialog] = useState(false);
   const [cliConfigSite, setCliConfigSite] = useState<SiteConfig | null>(null);
 
+  // 窗口关闭行为对话框状态
+  const [showCloseBehaviorDialog, setShowCloseBehaviorDialog] = useState(false);
+
   // 应用配置弹出菜单状态
   const [showApplyConfigPopover, setShowApplyConfigPopover] = useState(false);
   const [applyConfigAnchorEl, setApplyConfigAnchorEl] = useState<HTMLElement | null>(null);
@@ -567,6 +610,7 @@ function App() {
     setModelPricing,
     setCliCompatibility,
     setCliConfig,
+    detectCliConfig,
   });
 
   // 使用 ref 存储 loadCachedData 的最新引用，避免 useEffect 闭包问题
@@ -587,6 +631,16 @@ function App() {
       }
     };
     init();
+  }, []);
+
+  // 监听主进程的关闭行为对话框显示事件
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.closeBehavior?.onShowDialog(() => {
+      setShowCloseBehaviorDialog(true);
+    });
+    return () => {
+      unsubscribe?.();
+    };
   }, []);
 
   const loadConfig = async (): Promise<Config | null> => {
@@ -1716,6 +1770,8 @@ function App() {
           apiKeys={apiKeys[cliConfigSite.name] || []}
           siteModels={results.find(r => r.name === cliConfigSite.name)?.models || []}
           currentConfig={getCliConfig(cliConfigSite.name)}
+          codexDetail={getCompatibility(cliConfigSite.name)?.codexDetail}
+          geminiDetail={getCompatibility(cliConfigSite.name)?.geminiDetail}
           onClose={() => {
             setShowCliConfigDialog(false);
             setCliConfigSite(null);
@@ -1741,6 +1797,7 @@ function App() {
           isOpen={showApplyConfigPopover}
           anchorEl={applyConfigAnchorEl}
           cliConfig={getCliConfig(applyConfigSite.name)}
+          cliCompatibility={getCompatibility(applyConfigSite.name)}
           siteUrl={applyConfigSite.url}
           siteName={applyConfigSite.name}
           apiKeys={apiKeys[applyConfigSite.name] || []}
@@ -1796,6 +1853,12 @@ function App() {
           }
         }}
         onClose={() => setShowBackupDialog(false)}
+      />
+
+      {/* 窗口关闭行为对话框 */}
+      <CloseBehaviorDialog
+        open={showCloseBehaviorDialog}
+        onClose={() => setShowCloseBehaviorDialog(false)}
       />
 
       {/* Toast 通知 */}

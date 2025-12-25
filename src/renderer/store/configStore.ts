@@ -1,4 +1,15 @@
 /**
+ * 输入: Config (应用配置), SiteConfig (站点配置), Settings (应用设置)
+ * 输出: ConfigState (配置状态), 配置操作方法
+ * 定位: 状态管理层 - 使用 Zustand 管理应用配置和站点数据
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/store/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+/**
  * 配置状态管理
  * 管理应用配置和站点账号数据
  *
@@ -69,7 +80,12 @@ export const useConfigStore = create<ConfigState>()((set, get) => ({
     const { config, saveConfig } = get();
     if (!config) return;
     const newSites = [...config.sites];
-    newSites[index] = site;
+    // 保留现有站点的 cached_data 和 cli_config，只更新用户可编辑的字段
+    const existingSite = newSites[index];
+    newSites[index] = {
+      ...existingSite, // 保留 cached_data、cli_config 等字段
+      ...site, // 覆盖用户编辑的字段
+    };
     set({
       config: {
         ...config,

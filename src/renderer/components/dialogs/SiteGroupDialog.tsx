@@ -1,3 +1,14 @@
+/**
+ * 输入: SiteGroupDialogProps (模式、分组名称、编辑分组、回调函数)
+ * 输出: React 组件 (站点分组对话框 UI)
+ * 定位: 展示层 - 站点分组对话框，支持创建和编辑分组
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/dialogs/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
 import { useRef, useEffect } from 'react';
 import { XCircle } from 'lucide-react';
 

@@ -1,10 +1,17 @@
 /**
- * 应用头部组件
- * 包含 Logo、标题、保存状态和设置按钮
+ * 输入: HeaderProps (保存状态、更新状态、设置回调)
+ * 输出: React 组件 (应用头部 UI)
+ * 定位: 展示层 - 应用头部组件，包含 Logo、标题、CLI 配置状态、保存状态和设置按钮
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/Header/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 import { Settings, Loader2 } from 'lucide-react';
 import Logo from '../../assets/logo.svg';
+import { CliConfigStatusPanel } from '../CliConfigStatus';
 
 interface HeaderProps {
   saving: boolean;
@@ -32,7 +39,10 @@ export function Header({ saving, hasUpdate, onOpenSettings }: HeaderProps) {
             </h1>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          {/* CLI 配置状态 */}
+          <CliConfigStatusPanel compact showRefresh />
+
           {saving && (
             <div className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-500/10 text-primary-600 dark:text-primary-400 rounded-lg text-xs border border-primary-500/20">
               <Loader2 className="w-3.5 h-3.5 animate-spin" />

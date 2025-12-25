@@ -1,4 +1,15 @@
 /**
+ * 输入: 无 (纯 Schema 定义)
+ * 输出: Zod Schema 对象 (urlSchema, siteSchema, configSchema 等)
+ * 定位: 验证层 - 使用 Zod 定义运行时类型检查的数据验证规则
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/shared/schemas/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+/**
  * 数据验证 Schema
  * 使用 Zod 进行前后端统一的数据验证
  */

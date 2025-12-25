@@ -1,4 +1,15 @@
 /**
+ * 输入: SiteConfig (站点配置), IPC 调用, Toast 通知
+ * 输出: Token 操作方法 (getToken, saveToken, deleteToken, refreshToken)
+ * 定位: 业务逻辑层 - 管理 Token 生命周期和认证
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/hooks/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+/**
  * 令牌管理 Hook
  * 从 App.tsx 抽离的 API Token 相关功能
  */

@@ -1,3 +1,14 @@
+/**
+ * 输入: Config (应用配置), SiteGroup (站点分组), DialogState (对话框状态)
+ * 输出: 分组管理方法 (addGroup, deleteGroup, updateGroup, reorderGroups)
+ * 定位: 业务逻辑层 - 管理站点分组操作和状态
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/hooks/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
 import { useState } from 'react';
 import type { Config, SiteGroup } from '../App';
 import type { DialogState } from '../components/ConfirmDialog';

@@ -1,4 +1,15 @@
 /**
+ * 输入: FileSystem (文件系统), Electron app (应用路径), BackupManager (备份管理)
+ * 输出: UnifiedConfig (统一配置), 配置操作方法
+ * 定位: 数据层 - 管理统一配置作为单一数据源
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/main/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+/**
  * 统一配置管理器
  * 合并 ConfigManager 和 TokenStorage 为单一数据源
  */

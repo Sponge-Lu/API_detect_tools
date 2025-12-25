@@ -1,3 +1,14 @@
+/**
+ * 输入: TokenService (获取 Token), HttpClient (HTTP 请求), RequestManager (请求管理), UnifiedConfigManager (配置管理)
+ * 输出: DetectionResult, BalanceInfo, StatusInfo, API 响应数据
+ * 定位: 服务层 - 处理所有外部站点的 API 请求，管理请求生命周期和错误处理
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/main/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
 import type { SiteConfig } from './types/token';
 import { httpGet } from './utils/http-client';
 import { requestManager, RequestManager } from './utils/request-manager';
@@ -1305,8 +1316,12 @@ export class ApiService {
         return;
       }
 
-      // 构建缓存数据
+      // 获取现有的缓存数据，保留 cli_compatibility 等字段
+      const existingCachedData = site.cached_data || {};
+
+      // 构建缓存数据，保留现有的 cli_compatibility
       const cachedData = {
+        ...existingCachedData, // 保留现有字段（如 cli_compatibility）
         models: detectionResult.models || [],
         balance: detectionResult.balance,
         today_usage: detectionResult.todayUsage,

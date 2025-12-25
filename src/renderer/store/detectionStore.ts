@@ -1,4 +1,15 @@
 /**
+ * 输入: DetectionResult (检测结果), CliCompatibilityResult (CLI 兼容性结果), CodexTestDetail, GeminiTestDetail, AllCliDetectionResult (CLI 配置检测结果)
+ * 输出: DetectionState (检测状态), 检测结果操作方法, useDetectionStore hook
+ * 定位: 状态管理层 - 管理站点检测结果、CLI 兼容性数据和 CLI 配置检测结果
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/store/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+/**
  * 检测状态管理
  * 管理站点检测结果和相关数据
  *
@@ -7,12 +18,27 @@
 
 import { create } from 'zustand';
 import type { DetectionResult } from '../App';
+import type { AllCliDetectionResult, SiteInfo } from '../../shared/types/config-detection';
+
+/** Codex 详细测试结果 */
+export interface CodexTestDetail {
+  chat: boolean | null; // Chat Completions API 测试结果
+  responses: boolean | null; // Responses API 测试结果
+}
+
+/** Gemini CLI 详细测试结果 */
+export interface GeminiTestDetail {
+  native: boolean | null; // Google 原生格式测试结果
+  proxy: boolean | null; // OpenAI 兼容格式测试结果
+}
 
 /** CLI 兼容性测试结果 */
 export interface CliCompatibilityResult {
   claudeCode: boolean | null; // true=支持, false=不支持, null=未测试
   codex: boolean | null;
+  codexDetail?: CodexTestDetail; // Codex 详细测试结果（chat/responses）
   geminiCli: boolean | null;
+  geminiDetail?: GeminiTestDetail; // Gemini CLI 详细测试结果（native/proxy）
   testedAt: number | null; // Unix timestamp
   error?: string; // 测试错误信息（可选）
 }
@@ -59,6 +85,10 @@ interface DetectionState {
   cliConfigs: Record<string, CliConfig>; // CLI 配置
   cliTestingSites: Set<string>; // 正在测试 CLI 兼容性的站点
 
+  // CLI 配置检测结果
+  cliConfigDetection: AllCliDetectionResult | null;
+  isDetectingCliConfig: boolean;
+
   // Actions
   setResults: (results: DetectionResult[]) => void;
   updateResult: (name: string, result: Partial<DetectionResult>) => void;
@@ -84,6 +114,11 @@ interface DetectionState {
   addCliTestingSite: (siteName: string) => void;
   removeCliTestingSite: (siteName: string) => void;
   isCliTestingSite: (siteName: string) => boolean;
+
+  // CLI 配置检测 Actions
+  detectCliConfig: (sites: SiteInfo[]) => Promise<void>;
+  clearCliConfigDetection: () => void;
+  setCliConfigDetection: (result: AllCliDetectionResult | null) => void;
 }
 
 export const useDetectionStore = create<DetectionState>()((set, get) => ({
@@ -98,6 +133,8 @@ export const useDetectionStore = create<DetectionState>()((set, get) => ({
   cliCompatibility: {},
   cliConfigs: {},
   cliTestingSites: new Set<string>(),
+  cliConfigDetection: null,
+  isDetectingCliConfig: false,
 
   // 基础 setters
   setResults: results => set({ results }),
@@ -201,5 +238,26 @@ export const useDetectionStore = create<DetectionState>()((set, get) => ({
   isCliTestingSite: siteName => {
     const { cliTestingSites } = get();
     return cliTestingSites.has(siteName);
+  },
+
+  // CLI 配置检测 Actions
+  detectCliConfig: async (sites: SiteInfo[]) => {
+    set({ isDetectingCliConfig: true });
+    try {
+      const result = await window.electronAPI.configDetection.detectAllCliConfig(sites);
+      set({ cliConfigDetection: result, isDetectingCliConfig: false });
+    } catch (error) {
+      console.error('CLI 配置检测失败:', error);
+      set({ isDetectingCliConfig: false });
+    }
+  },
+
+  clearCliConfigDetection: () => {
+    set({ cliConfigDetection: null });
+    // 注意：后端缓存清除由 useConfigDetection hook 的 refresh 函数处理
+  },
+
+  setCliConfigDetection: (result: AllCliDetectionResult | null) => {
+    set({ cliConfigDetection: result });
   },
 }));

@@ -1,6 +1,12 @@
 /**
- * CLI 配置相关类型定义
- * 从 CliConfigDialog.tsx 迁移，供多个组件共享使用
+ * 输入: 无
+ * 输出: CLI 配置相关类型定义 (CliConfig, CliConfigItem, ApiKeyInfo 等)
+ * 定位: 类型层 - CLI 配置相关类型定义，供多个组件共享使用
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/shared/types/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 /** 编辑后的配置文件 */

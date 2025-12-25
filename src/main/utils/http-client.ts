@@ -1,7 +1,12 @@
 /**
- * 统一 HTTP 客户端
- * 打包环境下使用 Electron net 模块（Chromium 网络栈），解决 BoringSSL TLS 握手问题
- * 开发环境下使用 axios
+ * 输入: HTTP 请求配置 (AxiosRequestConfig 兼容)
+ * 输出: HTTP 响应数据
+ * 定位: 工具层 - 统一 HTTP 客户端，打包环境使用 Electron net，开发环境使用 axios
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/main/utils/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 import axios, { AxiosRequestConfig } from 'axios';

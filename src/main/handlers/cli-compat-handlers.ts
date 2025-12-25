@@ -335,7 +335,9 @@ export function registerCliCompatHandlers() {
       const results: Partial<CliCompatibilityResult> = {
         claudeCode: null,
         codex: null,
+        codexDetail: undefined,
         geminiCli: null,
+        geminiDetail: undefined,
       };
 
       // 并发测试所有配置的 CLI
@@ -355,18 +357,30 @@ export function registerCliCompatHandlers() {
                 );
                 results.claudeCode = success;
                 break;
-              case 'codex':
-                success = await cliCompatService.testCodex(testUrl, config.apiKey, config.model);
-                results.codex = success;
-                break;
-              case 'geminiCli':
-                success = await cliCompatService.testGeminiCli(
+              case 'codex': {
+                // 使用 testCodexWithDetail 获取详细测试结果
+                const codexResult = await cliCompatService.testCodexWithDetail(
                   testUrl,
                   config.apiKey,
                   config.model
                 );
-                results.geminiCli = success;
+                results.codex = codexResult.supported;
+                results.codexDetail = codexResult.detail;
+                success = codexResult.supported ?? false;
                 break;
+              }
+              case 'geminiCli': {
+                // 使用 testGeminiWithDetail 获取详细测试结果
+                const geminiResult = await cliCompatService.testGeminiWithDetail(
+                  testUrl,
+                  config.apiKey,
+                  config.model
+                );
+                results.geminiCli = geminiResult.supported;
+                results.geminiDetail = geminiResult.detail;
+                success = geminiResult.supported ?? false;
+                break;
+              }
             }
 
             log.info(`CLI test ${config.cliType} (${testUrl}): ${success ? 'passed' : 'failed'}`);
@@ -409,7 +423,9 @@ export function registerCliCompatHandlers() {
             cli_compatibility: {
               claudeCode: result.claudeCode,
               codex: result.codex,
+              codexDetail: result.codexDetail, // 保存 Codex 详细测试结果
               geminiCli: result.geminiCli,
+              geminiDetail: result.geminiDetail, // 保存 Gemini CLI 详细测试结果
               testedAt: result.testedAt,
               error: result.error,
             },

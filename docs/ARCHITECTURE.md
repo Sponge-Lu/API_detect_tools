@@ -123,8 +123,9 @@ src/
 - **UnifiedConfigManager**: 负责 `config.json` 的读写，保证配置数据的原子性和一致性。支持前端兼容层，在保存旧格式配置时自动保留 WebDAV 等扩展配置。
 - **WebDAVManager**: 负责 WebDAV 云端备份功能，包括连接测试、备份上传/下载/删除、自动清理旧备份等。使用动态 import 加载 ESM 模块以兼容 Electron 的 CommonJS 环境。
 - **UpdateService**: 负责软件更新检测功能，通过 GitHub Releases API 获取最新版本信息，支持正式版本和预发布版本的检测，提供版本比较和下载链接打开功能。
-- **CliCompatService**: 负责 CLI 兼容性测试功能，支持 Claude Code、Codex、Gemini CLI 三种工具的兼容性检测，通过模拟 API 请求验证站点是否支持特定 CLI 工具。
-- **CliConfigGenerator**: 负责生成 CLI 配置文件内容，支持 Claude Code、Codex 和 Gemini CLI 配置生成，按照 `docs/cli_config_template/` 中的模板格式生成配置。Claude Code 配置包含 HTTPS_PROXY 和 HTTP_PROXY 代理设置。同时提供配置模板函数用于未选择 API Key 和模型时的预览显示。应用配置时采用合并模式，只更新相关配置项，保留用户的其他设置。
+- **CliCompatService**: 负责 CLI 兼容性测试功能，支持 Claude Code、Codex、Gemini CLI 三种工具的兼容性检测，通过模拟 API 请求验证站点是否支持特定 CLI 工具。Codex 支持双 API 测试（Chat Completions 和 Responses API），Gemini CLI 支持双端点测试（Native 原生格式和 Proxy OpenAI 兼容格式），测试结果包含详细信息用于配置生成和用户提示。
+- **CliConfigGenerator**: 负责生成 CLI 配置文件内容，支持 Claude Code、Codex 和 Gemini CLI 配置生成，按照 `docs/cli_config_template/` 中的模板格式生成配置。Claude Code 配置包含 HTTPS_PROXY 和 HTTP_PROXY 代理设置。Codex 配置根据双 API 测试结果自动选择 `wire_api` 值并添加测试结果注释。Gemini CLI 配置根据双端点测试结果添加端点说明和使用建议注释。同时提供配置模板函数用于未选择 API Key 和模型时的预览显示。应用配置时采用合并模式，只更新相关配置项，保留用户的其他设置。
+- **CloseBehaviorManager**: 负责窗口关闭行为管理，支持退出应用或最小化到系统托盘。管理用户偏好设置的持久化，创建和管理系统托盘图标及上下文菜单。
 
 ### CLI 配置数据存储
 
@@ -133,7 +134,7 @@ CLI 相关数据的存储位置设计：
 | 数据类型 | 存储位置 | 说明 |
 |---------|---------|------|
 | **CLI 配置** | `site.cli_config` 或 `site.cached_data.cli_config` | 用户配置的 API Key、模型选择和启用状态，优先从站点根级别读取 |
-| **CLI 兼容性结果** | `site.cached_data.cli_compatibility` 或 `site.cli_compatibility` | 测试结果缓存，优先从 cached_data 读取 |
+| **CLI 兼容性结果** | `site.cached_data.cli_compatibility` 或 `site.cli_compatibility` | 测试结果缓存，包含 codexDetail 和 geminiDetail 详细信息，优先从 cached_data 读取 |
 
 **CLI 配置项结构**：
 ```typescript

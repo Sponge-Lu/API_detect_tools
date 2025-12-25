@@ -1,6 +1,12 @@
 /**
- * 自定义确认弹窗组件
- * 替代原生的 confirm/alert，提供更美观的 UI
+ * 输入: ConfirmDialogProps (弹窗状态、类型、标题、消息、回调)
+ * 输出: React 组件 (确认弹窗 UI)
+ * 定位: 展示层 - 自定义确认弹窗组件，替代原生 confirm/alert
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 import React, { useEffect, useRef } from 'react';

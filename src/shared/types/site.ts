@@ -1,4 +1,15 @@
 /**
+ * 输入: 无 (纯类型定义)
+ * 输出: TypeScript 类型和接口 (Site, SiteGroup, SiteStatus, DetectionResult 等)
+ * 定位: 类型定义层 - 定义主进程和渲染进程共享的数据模型
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/shared/types/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+/**
  * 统一站点数据模型
  * 单一数据源：config.json
  */
@@ -20,11 +31,25 @@ export interface UserGroupInfo {
   ratio: number;
 }
 
+/** Codex 详细测试结果 */
+export interface CodexTestDetail {
+  chat: boolean | null; // Chat Completions API 测试结果
+  responses: boolean | null; // Responses API 测试结果
+}
+
+/** Gemini CLI 详细测试结果 */
+export interface GeminiTestDetail {
+  native: boolean | null; // Google 原生格式测试结果
+  proxy: boolean | null; // OpenAI 兼容格式测试结果
+}
+
 /** CLI 兼容性数据 */
 export interface CliCompatibilityData {
   claudeCode: boolean | null;
   codex: boolean | null;
+  codexDetail?: CodexTestDetail; // Codex 详细测试结果（chat/responses）
   geminiCli: boolean | null;
+  geminiDetail?: GeminiTestDetail; // Gemini CLI 详细测试结果（native/proxy）
   testedAt: number | null;
   error?: string;
 }

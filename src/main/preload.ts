@@ -1,3 +1,14 @@
+/**
+ * 输入: Electron contextBridge, ipcRenderer
+ * 输出: electronAPI 对象 (暴露给渲染进程的 IPC 接口)
+ * 定位: 安全层 - 提供带上下文隔离的安全 IPC 接口
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/main/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -150,5 +161,42 @@ contextBridge.exposeInMainWorld('electronAPI', {
         content: string;
       }>;
     }) => ipcRenderer.invoke('cli-compat:write-config', params),
+  },
+
+  // CLI 配置检测 API
+  configDetection: {
+    // 检测单个 CLI 配置
+    detectCliConfig: (
+      cliType: 'claudeCode' | 'codex' | 'geminiCli',
+      sites: Array<{ id: string; name: string; url: string }>
+    ) => ipcRenderer.invoke('detection:detect-cli-config', cliType, sites),
+    // 检测所有 CLI 配置
+    detectAllCliConfig: (sites: Array<{ id: string; name: string; url: string }>) =>
+      ipcRenderer.invoke('detection:detect-all-cli-config', sites),
+    // 清除 CLI 配置检测缓存
+    clearCache: (cliType?: 'claudeCode' | 'codex' | 'geminiCli') =>
+      ipcRenderer.invoke('detection:clear-cli-config-cache', cliType),
+  },
+
+  // 窗口关闭行为 API
+  closeBehavior: {
+    // 获取当前设置
+    getSettings: () => ipcRenderer.invoke('close-behavior:get-settings'),
+    // 保存设置
+    saveSettings: (settings: { behavior: 'ask' | 'quit' | 'minimize' }) =>
+      ipcRenderer.invoke('close-behavior:save-settings', settings),
+    // 监听显示对话框事件
+    onShowDialog: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('close-behavior:show-dialog', handler);
+      return () => ipcRenderer.removeListener('close-behavior:show-dialog', handler);
+    },
+    // 响应对话框选择
+    respondToDialog: (response: { action: 'quit' | 'minimize'; remember: boolean }) =>
+      ipcRenderer.invoke('close-behavior:dialog-response', response),
+    // 最小化到托盘
+    minimizeToTray: () => ipcRenderer.invoke('close-behavior:minimize-to-tray'),
+    // 退出应用
+    quitApp: () => ipcRenderer.invoke('close-behavior:quit-app'),
   },
 });

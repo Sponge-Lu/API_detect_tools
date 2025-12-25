@@ -1,4 +1,15 @@
 /**
+ * 输入: SiteConfig (站点配置), IPC 调用, 对话框和提示
+ * 输出: 签到方法 (checkIn, checkInAll), 签到状态
+ * 定位: 业务逻辑层 - 管理站点每日签到操作
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/hooks/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+/**
  * 签到逻辑 Hook
  * 从 App.tsx 抽离的签到相关功能
  */

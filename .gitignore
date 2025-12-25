@@ -35,6 +35,8 @@ secrets*
 *.config
 *.conf
 *.ini
+.cursorrules
+.kirorules
 
 # Electron
 out/

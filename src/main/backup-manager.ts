@@ -1,4 +1,15 @@
-﻿import Logger from './utils/logger';
+﻿/**
+ * 输入: UnifiedConfigManager (配置管理), FileSystem (文件系统), Electron app (应用路径)
+ * 输出: BackupInfo (备份信息), 备份文件
+ * 定位: 基础设施层 - 管理本地备份和恢复操作
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/main/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+import Logger from './utils/logger';
 /**
  * 备份管理器
  * 自动备份配置文件到用户主目录

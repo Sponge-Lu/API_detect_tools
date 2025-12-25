@@ -1,6 +1,12 @@
 /**
- * 站点分组标签组件
- * 支持分组筛选、拖拽排序、编辑和删除
+ * 输入: SiteGroupTabsProps (分组列表、活动分组、拖拽状态、操作回调)
+ * 输出: React 组件 (站点分组标签 UI)
+ * 定位: 展示层 - 站点分组标签组件，支持分组筛选、拖拽排序、编辑和删除
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/SiteGroupTabs/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 import { useState } from 'react';

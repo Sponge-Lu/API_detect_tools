@@ -1,10 +1,14 @@
 /**
- * Property-Based Tests for useAutoRefresh Hook
+ * 输入: 模拟的自动刷新 Hook 参数
+ * 输出: 属性测试验证结果
+ * 定位: 测试层 - useAutoRefresh Hook 的属性测试，验证定时器管理逻辑
  *
- * **Feature: auto-refresh-timer**
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/__tests__/FOLDER_INDEX.md
  *
- * These tests verify the correctness properties defined in the design document
- * using fast-check for property-based testing.
+ * **功能: auto-refresh-timer**
+ * 使用 fast-check 进行属性测试，验证设计文档中定义的正确性属性
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -69,7 +73,6 @@ function computeTimerChanges(
 } {
   const toCreate = new Map<string, number>();
   const toRemove = new Set<string>();
-  const newSiteNames = new Set(newSites.map(s => s.name));
 
   // Find timers to remove (deleted sites or disabled auto_refresh)
   currentTimers.forEach(siteName => {
@@ -344,7 +347,7 @@ describe('useAutoRefresh Property Tests', () => {
                   throw new Error(`Simulated error for ${site.name}`);
                 }
                 successfulRefreshes.push(site.name);
-              } catch (error) {
+              } catch {
                 errors.push(site.name);
               }
             });

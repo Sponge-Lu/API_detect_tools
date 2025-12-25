@@ -1,3 +1,13 @@
+/**
+ * 输入: 分组 ID 字符串
+ * 输出: 测试验证结果
+ * 定位: 测试层 - 分组样式工具函数测试，验证颜色和图标生成逻辑
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/__tests__/FOLDER_INDEX.md
+ */
+
 import { describe, it, expect } from 'vitest';
 import { getGroupTextColor, getGroupIcon } from '../renderer/utils/groupStyle';
 

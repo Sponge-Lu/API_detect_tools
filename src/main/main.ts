@@ -1,4 +1,15 @@
-﻿import Logger from './utils/logger';
+﻿/**
+ * 输入: Electron app/BrowserWindow, ChromeManager, ApiService, TokenService, BackupManager, UnifiedConfigManager, IPC handlers
+ * 输出: BrowserWindow 实例, IPC 事件监听器, 应用生命周期管理
+ * 定位: 应用入口 - 初始化 Electron 应用，管理主窗口，协调所有服务
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/main/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+import Logger from './utils/logger';
 import { app, BrowserWindow } from 'electron';
 
 // 解决 Electron 打包后 BoringSSL 与某些服务器 TLS 握手失败的问题
@@ -14,6 +25,7 @@ import { TokenService } from './token-service';
 import { backupManager } from './backup-manager';
 import { registerAllHandlers } from './handlers';
 import { unifiedConfigManager } from './unified-config-manager';
+import { createCloseBehaviorManager, CloseBehaviorManager } from './close-behavior-manager';
 
 // 设置Windows控制台编码为UTF-8，解决中文乱码问题
 if (os.platform() === 'win32') {
@@ -31,6 +43,7 @@ let mainWindow: BrowserWindow | null = null;
 const chromeManager = new ChromeManager();
 let tokenService: TokenService;
 let apiService: ApiService;
+let closeBehaviorManager: CloseBehaviorManager | null = null;
 
 // 发送站点初始化状态到渲染进程
 function sendSiteInitStatus(status: string) {
@@ -152,6 +165,16 @@ app.whenReady().then(async () => {
   tokenService = new TokenService(chromeManager);
   apiService = new ApiService(tokenService, null as any); // tokenStorage 不再需要
 
+  // 创建窗口
+  await createWindow();
+
+  // 初始化窗口关闭行为管理器（需要在窗口创建后）
+  if (mainWindow) {
+    closeBehaviorManager = createCloseBehaviorManager(mainWindow);
+    await closeBehaviorManager.initialize();
+    Logger.info('✅ [Main] 窗口关闭行为管理器已初始化');
+  }
+
   // 注册所有 IPC 处理器
   registerAllHandlers({
     chromeManager,
@@ -159,9 +182,8 @@ app.whenReady().then(async () => {
     tokenService,
     backupManager,
     getMainWindow: () => mainWindow,
+    closeBehaviorManager: closeBehaviorManager || undefined,
   });
-
-  createWindow();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -170,5 +192,9 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   chromeManager.cleanup();
+  // 清理托盘资源
+  if (closeBehaviorManager) {
+    closeBehaviorManager.destroyTray();
+  }
   if (process.platform !== 'darwin') app.quit();
 });

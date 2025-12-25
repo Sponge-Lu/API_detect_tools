@@ -1,3 +1,14 @@
+/**
+ * 输入: SettingsPanelProps (设置数据、配置、回调函数)
+ * 输出: React 组件 (设置面板 UI)
+ * 定位: 展示层 - 应用设置面板，包含主题、备份、WebDAV 等配置
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
 import { useState, useRef, useEffect } from 'react';
 import {
   X,
@@ -15,6 +26,7 @@ import {
   FolderOpen,
   RefreshCw,
   Info,
+  Power,
 } from 'lucide-react';
 import { Settings, Config } from '../App';
 import { useTheme } from '../hooks/useTheme';
@@ -75,6 +87,11 @@ export function SettingsPanel({
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
   const [selectedRelease, setSelectedRelease] = useState<ReleaseInfo | null>(null);
 
+  // 关闭行为设置状态
+  const [closeBehavior, setCloseBehavior] = useState<'ask' | 'quit' | 'minimize'>('ask');
+  const [loadingCloseBehavior, setLoadingCloseBehavior] = useState(true);
+  const [savingCloseBehavior, setSavingCloseBehavior] = useState(false);
+
   // 加载 WebDAV 配置
   useEffect(() => {
     const loadWebdavConfig = async () => {
@@ -88,6 +105,23 @@ export function SettingsPanel({
       }
     };
     loadWebdavConfig();
+  }, []);
+
+  // 加载关闭行为设置
+  useEffect(() => {
+    const loadCloseBehaviorSettings = async () => {
+      try {
+        const result = await window.electronAPI.closeBehavior?.getSettings();
+        if (result?.success && result.data?.behavior) {
+          setCloseBehavior(result.data.behavior);
+        }
+      } catch (error) {
+        console.error('加载关闭行为设置失败:', error);
+      } finally {
+        setLoadingCloseBehavior(false);
+      }
+    };
+    loadCloseBehaviorSettings();
   }, []);
 
   // 测试 WebDAV 连接
@@ -128,6 +162,20 @@ export function SettingsPanel({
       toast.error(error.message || '保存 WebDAV 配置失败');
     } finally {
       setSavingWebdav(false);
+    }
+  };
+
+  // 保存关闭行为设置
+  const handleCloseBehaviorChange = async (behavior: 'ask' | 'quit' | 'minimize') => {
+    setSavingCloseBehavior(true);
+    try {
+      await window.electronAPI.closeBehavior?.saveSettings({ behavior });
+      setCloseBehavior(behavior);
+      toast.success('关闭行为设置已保存');
+    } catch (error: any) {
+      toast.error(error.message || '保存关闭行为设置失败');
+    } finally {
+      setSavingCloseBehavior(false);
     }
   };
 
@@ -768,6 +816,91 @@ export function SettingsPanel({
                   </p>
                 </div>
               </div>
+            </div>
+          </section>
+
+          {/* ===== 关闭行为 ===== */}
+          <section className="space-y-4">
+            <h3 className="text-sm font-semibold text-primary-600 dark:text-primary-400 uppercase tracking-wide flex items-center gap-2">
+              <Power className="w-4 h-4" />
+              关闭行为
+            </h3>
+            <div className="bg-slate-50 dark:bg-slate-800/80 rounded-lg p-4 border border-slate-200 dark:border-slate-700">
+              <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-3">
+                点击关闭按钮时
+              </label>
+              {loadingCloseBehavior ? (
+                <div className="flex items-center gap-2 text-light-text-secondary dark:text-dark-text-secondary">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span className="text-sm">加载中...</span>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="closeBehavior"
+                      value="ask"
+                      checked={closeBehavior === 'ask'}
+                      onChange={() => handleCloseBehaviorChange('ask')}
+                      disabled={savingCloseBehavior}
+                      className="mt-1 w-4 h-4 border-light-border dark:border-dark-border text-primary-600 focus:ring-primary-500"
+                    />
+                    <div className="flex-1">
+                      <span className="text-sm font-medium text-light-text dark:text-dark-text">
+                        每次询问
+                      </span>
+                      <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-0.5">
+                        每次关闭窗口时询问是退出还是最小化到托盘
+                      </p>
+                    </div>
+                  </label>
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="closeBehavior"
+                      value="quit"
+                      checked={closeBehavior === 'quit'}
+                      onChange={() => handleCloseBehaviorChange('quit')}
+                      disabled={savingCloseBehavior}
+                      className="mt-1 w-4 h-4 border-light-border dark:border-dark-border text-primary-600 focus:ring-primary-500"
+                    />
+                    <div className="flex-1">
+                      <span className="text-sm font-medium text-light-text dark:text-dark-text">
+                        直接退出
+                      </span>
+                      <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-0.5">
+                        关闭窗口时直接退出应用程序
+                      </p>
+                    </div>
+                  </label>
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="closeBehavior"
+                      value="minimize"
+                      checked={closeBehavior === 'minimize'}
+                      onChange={() => handleCloseBehaviorChange('minimize')}
+                      disabled={savingCloseBehavior}
+                      className="mt-1 w-4 h-4 border-light-border dark:border-dark-border text-primary-600 focus:ring-primary-500"
+                    />
+                    <div className="flex-1">
+                      <span className="text-sm font-medium text-light-text dark:text-dark-text">
+                        最小化到托盘
+                      </span>
+                      <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-0.5">
+                        关闭窗口时最小化到系统托盘，可通过托盘图标恢复
+                      </p>
+                    </div>
+                  </label>
+                </div>
+              )}
+              {savingCloseBehavior && (
+                <div className="flex items-center gap-2 mt-3 text-primary-600 dark:text-primary-400">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span className="text-sm">保存中...</span>
+                </div>
+              )}
             </div>
           </section>
 

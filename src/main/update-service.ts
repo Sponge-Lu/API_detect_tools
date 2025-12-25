@@ -1,4 +1,15 @@
 /**
+ * 输入: Axios (HTTP 请求), Electron app (应用信息), GitHub API
+ * 输出: UpdateInfo (更新信息), 更新检查结果
+ * 定位: 服务层 - 从 GitHub Releases 检查应用更新
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/main/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+/**
  * 软件更新服务
  * 负责检查 GitHub Releases 获取最新版本信息
  */

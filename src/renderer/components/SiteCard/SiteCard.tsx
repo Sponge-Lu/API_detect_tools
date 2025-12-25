@@ -1,4 +1,15 @@
 /**
+ * 输入: SiteCardProps (站点数据、操作回调), SiteResult (检测结果), 子组件 (Header, Actions, Details)
+ * 输出: React 组件, 用户交互事件
+ * 定位: 展示层 - 显示站点信息并处理用户交互
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/SiteCard/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+/**
  * 站点卡片主组件
  * 封装站点的展示和交互逻辑
  */

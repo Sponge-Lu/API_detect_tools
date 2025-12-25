@@ -1,4 +1,15 @@
 /**
+ * 输入: IPC 调用 (update:check), ReleaseInfo (发布信息)
+ * 输出: 更新检查方法, 更新状态, 发布信息
+ * 定位: 业务逻辑层 - 管理应用更新检查和通知
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/hooks/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+/**
  * 软件更新管理 Hook
  * 提供更新检查、下载链接打开、设置管理等功能
  */
