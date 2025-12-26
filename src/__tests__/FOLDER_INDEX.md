@@ -41,6 +41,7 @@
 | **close-behavior-manager.property.test.ts** | 窗口关闭行为测试 | CloseBehaviorManager 设置持久化 |
 | **config-detection.property.test.ts** | 配置检测属性测试 | ConfigDetectionService |
 | **cli-config-priority.property.test.ts** | CLI 配置优先级测试 | CLI 配置优先级逻辑 |
+| **codex-official-api-detection.property.test.ts** | Codex 官方 API Key 检测测试 | isOfficialOpenAIApiKey 函数 |
 
 ---
 
@@ -292,4 +293,4 @@ it('should call IPC', async () => {
 ---
 
 **版本**: 2.1.9  
-**更新日期**: 2025-12-25
+**更新日期**: 2025-12-26

@@ -162,6 +162,29 @@ export function parseGeminiEnvConfig(): GeminiEnvConfig | null {
   return parseEnvFile<GeminiEnvConfig>(configPath);
 }
 
+// ============= 官方 API Key 检测函数 =============
+
+/**
+ * 检查 API Key 是否为 OpenAI 官方 API Key
+ *
+ * OpenAI 官方 API Key 格式:
+ * - sk-proj-... (项目级 API Key，最常见)
+ * - sk-... (传统格式)
+ *
+ * @param apiKey API Key 字符串
+ * @returns 是否为官方 API Key
+ *
+ * Requirements: 1.1, 1.2, 1.3
+ */
+export function isOfficialOpenAIApiKey(apiKey: string | null | undefined): boolean {
+  if (!apiKey || typeof apiKey !== 'string') {
+    return false;
+  }
+
+  // OpenAI 官方 API Key 以 "sk-" 开头
+  return apiKey.startsWith('sk-');
+}
+
 // ============= 提取函数 =============
 
 /**
@@ -341,6 +364,8 @@ export interface EffectiveCodexConfig {
   authType: AuthType;
   /** 是否有 ChatGPT OAuth 凭证 */
   hasChatGptOAuth: boolean;
+  /** 是否为官方 OpenAI API Key (以 sk- 开头) */
+  isOfficialApiKey?: boolean;
 }
 
 /**
@@ -416,19 +441,34 @@ export function getEffectiveCodexConfig(
   }
 
   // 3. 检测 API Key
-  const hasApiKey = !!(envApiKey || jsonAuthConfig?.OPENAI_API_KEY);
+  const authApiKey = jsonAuthConfig?.OPENAI_API_KEY;
+  const apiKey = envApiKey || authApiKey;
+  const hasApiKey = !!apiKey;
 
-  // 4. 检查 forced_login_method 配置
+  // 4. 检查是否为官方 API Key (Requirements 1.1, 1.2, 1.3)
+  const isOfficialKey = isOfficialOpenAIApiKey(apiKey);
+
+  // 5. 检查 forced_login_method 配置
   const forcedLoginMethod = tomlConfig?.forced_login_method;
   const isApiForced = forcedLoginMethod === 'api';
 
-  // 5. 确定认证类型和配置来源
+  // 6. 确定认证类型和配置来源
   // Requirements 2.1: 如果有 OAuth 且未强制使用 API，OAuth 优先（覆盖 base_url 配置）
   if (hasChatGptOAuth && !isApiForced) {
     return {
       hasApiKey: false,
       authType: 'chatgpt-oauth',
       hasChatGptOAuth: true,
+    };
+  }
+
+  // Requirements 2.1, 2.2, 3.1: 如果是官方 API Key，优先返回 official（优先于站点配置）
+  if (isOfficialKey) {
+    return {
+      hasApiKey: true,
+      authType: 'api-key',
+      hasChatGptOAuth,
+      isOfficialApiKey: true,
     };
   }
 
@@ -439,6 +479,7 @@ export function getEffectiveCodexConfig(
       hasApiKey,
       authType: hasApiKey ? 'api-key' : 'unknown',
       hasChatGptOAuth,
+      isOfficialApiKey: false,
     };
   }
 
@@ -448,6 +489,7 @@ export function getEffectiveCodexConfig(
       hasApiKey: true,
       authType: 'api-key',
       hasChatGptOAuth,
+      isOfficialApiKey: false,
     };
   }
 

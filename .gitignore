@@ -53,3 +53,4 @@ out/
 
 # 文档
 docs/archive/
+.ace-tool/

@@ -151,8 +151,9 @@ export class ConfigDetectionService {
    * 使用 getEffectiveCodexConfig() 获取真正生效的配置，
    * 正确处理配置优先级：
    * 1. ChatGPT OAuth 凭证存在 → official
-   * 2. config.toml model_provider.base_url
-   * 3. 环境变量/auth.json OPENAI_API_KEY
+   * 2. 官方 API Key (sk-*) → official (优先于站点配置)
+   * 3. config.toml model_provider.base_url
+   * 4. 环境变量/auth.json OPENAI_API_KEY
    *
    * @param sites 站点列表
    * @returns 检测结果
@@ -168,12 +169,14 @@ export class ConfigDetectionService {
 
     try {
       // 使用新的有效配置获取函数
-      const { baseUrl, hasApiKey, authType } = getEffectiveCodexConfig();
+      const { baseUrl, hasApiKey, authType, isOfficialApiKey } = getEffectiveCodexConfig();
 
+      // Requirements 2.1, 2.2, 2.3: 传递 isOfficialApiKey 参数给 determineSourceType
       const { sourceType, siteName, siteId } = determineSourceType({
         baseUrl,
         hasApiKey,
         authType,
+        isOfficialApiKey,
         cliType: 'codex',
         sites,
       });

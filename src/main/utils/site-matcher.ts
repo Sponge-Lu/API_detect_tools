@@ -133,12 +133,15 @@ export function matchSite(configUrl: string, sites: SiteInfo[]): MatchResult {
  *
  * @param options 检测选项
  * @returns 配置来源类型
+ *
+ * Requirements: 2.1, 2.2, 2.3
  */
 export function determineSourceType(options: {
   baseUrl?: string;
   hasApiKey: boolean;
   authType?: AuthType;
   isSubscription?: boolean;
+  isOfficialApiKey?: boolean;
   cliType: CliType;
   sites: SiteInfo[];
 }): {
@@ -146,7 +149,8 @@ export function determineSourceType(options: {
   siteName?: string;
   siteId?: string;
 } {
-  const { baseUrl, hasApiKey, authType, isSubscription, cliType, sites } = options;
+  const { baseUrl, hasApiKey, authType, isSubscription, isOfficialApiKey, cliType, sites } =
+    options;
 
   // 1. 优先检查认证类型（订阅账号）
   if (isSubscription || authType === 'google-login' || authType === 'vertex-ai') {
@@ -158,9 +162,16 @@ export function determineSourceType(options: {
     return { sourceType: 'official' };
   }
 
-  // 3. 如果有 base URL，进行匹配
+  // 3. 检查官方 API Key（优先于站点配置）
+  // Requirements 2.1, 2.2: 官方 API Key 优先返回 official
+  if (isOfficialApiKey) {
+    return { sourceType: 'official' };
+  }
+
+  // 4. 如果有 base URL，进行匹配
   if (baseUrl) {
-    // 3.1 检查是否匹配管理的站点
+    // 4.1 检查是否匹配管理的站点
+    // Requirements 2.3: 非官方 API Key 且有站点配置时返回 managed
     const matchResult = matchSite(baseUrl, sites);
     if (matchResult.matched) {
       return {
@@ -170,20 +181,20 @@ export function determineSourceType(options: {
       };
     }
 
-    // 3.2 检查是否为官方 URL
+    // 4.2 检查是否为官方 URL
     if (isOfficialUrl(baseUrl, cliType)) {
       return { sourceType: 'official' };
     }
 
-    // 3.3 其他中转站
+    // 4.3 其他中转站
     return { sourceType: 'other' };
   }
 
-  // 4. 没有 base URL，但有 API Key，视为使用官方 API
+  // 5. 没有 base URL，但有 API Key，视为使用官方 API
   if (hasApiKey) {
     return { sourceType: 'official' };
   }
 
-  // 5. 无法确定
+  // 6. 无法确定
   return { sourceType: 'unknown' };
 }

@@ -819,10 +819,26 @@ const codexAuthConfigWithApiKeyArb: fc.Arbitrary<CodexAuthConfig> = fc.record({
 });
 
 /**
+ * Generate a valid Codex auth config with non-official API key (not starting with sk-)
+ * Used for testing custom provider base_url detection
+ */
+const codexAuthConfigWithNonOfficialApiKeyArb: fc.Arbitrary<CodexAuthConfig> = fc.record({
+  OPENAI_API_KEY: apiKeyArb.map(k => `custom-${k}`),
+});
+
+/**
  * Generate environment variables for Codex with API key
  */
 const codexProcessEnvWithApiKeyArb = fc.record({
   OPENAI_API_KEY: apiKeyArb.map(k => `sk-${k}`),
+});
+
+/**
+ * Generate environment variables for Codex with non-official API key
+ * Used for testing custom provider base_url detection
+ */
+const codexProcessEnvWithNonOfficialApiKeyArb = fc.record({
+  OPENAI_API_KEY: apiKeyArb.map(k => `custom-${k}`),
 });
 
 // ============= Codex Property Tests =============
@@ -954,7 +970,7 @@ describe('Property 8: Codex 自定义 Provider 配置', () => {
     fc.assert(
       fc.property(
         codexConfigWithCustomProviderArb,
-        codexAuthConfigWithApiKeyArb,
+        codexAuthConfigWithNonOfficialApiKeyArb,
         (config, authConfig) => {
           const result = getEffectiveCodexConfig(config, authConfig, {}, false);
 
@@ -962,6 +978,7 @@ describe('Property 8: Codex 自定义 Provider 配置', () => {
           expect(result.baseUrl).toBe(expectedBaseUrl);
           expect(result.hasApiKey).toBe(true);
           expect(result.hasChatGptOAuth).toBe(false);
+          expect(result.isOfficialApiKey).toBe(false);
         }
       ),
       { numRuns: 100 }
@@ -972,12 +989,13 @@ describe('Property 8: Codex 自定义 Provider 配置', () => {
     fc.assert(
       fc.property(
         codexConfigWithCustomProviderArb,
-        codexAuthConfigWithApiKeyArb,
+        codexAuthConfigWithNonOfficialApiKeyArb,
         (config, authConfig) => {
           const result = getEffectiveCodexConfig(config, authConfig, {}, false);
 
           expect(result.hasApiKey).toBe(true);
           expect(result.authType).toBe('api-key');
+          expect(result.isOfficialApiKey).toBe(false);
         }
       ),
       { numRuns: 100 }
@@ -988,12 +1006,13 @@ describe('Property 8: Codex 自定义 Provider 配置', () => {
     fc.assert(
       fc.property(
         codexConfigWithCustomProviderArb,
-        codexProcessEnvWithApiKeyArb,
+        codexProcessEnvWithNonOfficialApiKeyArb,
         (config, processEnv) => {
           const result = getEffectiveCodexConfig(config, null, processEnv, false);
 
           expect(result.hasApiKey).toBe(true);
           expect(result.authType).toBe('api-key');
+          expect(result.isOfficialApiKey).toBe(false);
         }
       ),
       { numRuns: 100 }

@@ -32,7 +32,7 @@
 | **validation-utils.ts** | 数据验证 | `validateUrl()`, `validateEmail()` 等 |
 | **toml-parser.ts** | TOML 解析 | `parseTomlFile()`, `parseTomlString()` |
 | **env-parser.ts** | ENV 解析 | `parseEnvFile()`, `parseEnvString()` |
-| **config-parsers.ts** | CLI 配置解析 | `parseClaudeCodeConfig()`, `parseCodexConfig()`, `parseGeminiCliConfig()` 等 |
+| **config-parsers.ts** | CLI 配置解析 | `parseClaudeCodeConfig()`, `parseCodexConfig()`, `parseGeminiCliConfig()`, `isOfficialOpenAIApiKey()` 等 |
 | **site-matcher.ts** | 站点匹配 | `normalizeUrl()`, `matchSite()`, `isOfficialUrl()`, `determineSourceType()` |
 
 ---
@@ -353,5 +353,5 @@ describe('retry-utils', () => {
 
 ---
 
-**版本**: 2.1.8  
-**更新日期**: 2025-12-24
+**版本**: 2.1.9  
+**更新日期**: 2025-12-26
