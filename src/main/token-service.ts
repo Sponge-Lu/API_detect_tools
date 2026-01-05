@@ -1,7 +1,11 @@
 /**
  * 输入: ChromeManager (浏览器自动化), HttpClient (HTTP 请求), UnifiedConfigManager (配置管理)
- * 输出: SiteAccount, CachedDisplayData, RefreshAccountResult, Token 管理结果
- * 定位: 服务层 - 管理 Token 生命周期，处理所有站点的认证和 Token 刷新
+ * 输出: SiteAccount, CachedDisplayData, RefreshAccountResult, Token 管理结果, 签到结果
+ * 定位: 服务层 - 管理 Token 生命周期，处理所有站点的认证、Token 刷新和签到功能
+ *
+ * 签到功能支持两种站点类型:
+ * - Veloera: check_in_enabled, /api/user/check_in_status, /api/user/check_in, reward
+ * - New API: checkin_enabled, /api/user/checkin?month=YYYY-MM, /api/user/checkin, quota_awarded
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -392,8 +396,9 @@ export class TokenService {
 
   /**
    * 检查站点是否支持签到功能（通过 /api/status）
-   * 这是最准确的方式，因为check_in_enabled由站点管理员配置
-   * 支持浏览器模式以绕过 Cloudflare
+   * 支持两种站点类型：
+   * - Veloera: check_in_enabled 字段
+   * - New API: checkin_enabled 字段（无下划线）
    *
    * @param baseUrl 站点URL
    * @param page 可选的浏览器页面（用于绕过Cloudflare）
@@ -418,9 +423,11 @@ export class TokenService {
             return await response.json();
           }, url);
 
-          const checkInEnabled = result?.data?.check_in_enabled === true;
+          // 兼容两种站点类型：Veloera (check_in_enabled) 和 New API (checkin_enabled)
+          const checkInEnabled =
+            result?.data?.check_in_enabled === true || result?.data?.checkin_enabled === true;
           Logger.info(
-            `${checkInEnabled ? '✅' : 'ℹ️'} [TokenService] 站点${checkInEnabled ? '支持' : '不支持'}签到功能 (check_in_enabled=${checkInEnabled})`
+            `${checkInEnabled ? '✅' : 'ℹ️'} [TokenService] 站点${checkInEnabled ? '支持' : '不支持'}签到功能 (check_in_enabled=${result?.data?.check_in_enabled}, checkin_enabled=${result?.data?.checkin_enabled})`
           );
           return checkInEnabled;
         } catch (browserError: any) {
@@ -448,13 +455,15 @@ export class TokenService {
         hasData: 'data' in response.data,
         dataType: typeof response.data?.data,
         checkInEnabledValue: response.data?.data?.check_in_enabled,
-        checkInEnabledType: typeof response.data?.data?.check_in_enabled,
+        checkinEnabledValue: response.data?.data?.checkin_enabled,
       });
 
-      // 标准响应：{ success: true, data: { check_in_enabled: boolean, ... } }
-      const checkInEnabled = response.data?.data?.check_in_enabled === true;
+      // 兼容两种站点类型：Veloera (check_in_enabled) 和 New API (checkin_enabled)
+      const checkInEnabled =
+        response.data?.data?.check_in_enabled === true ||
+        response.data?.data?.checkin_enabled === true;
       Logger.info(
-        `${checkInEnabled ? '✅' : 'ℹ️'} [TokenService] 站点${checkInEnabled ? '支持' : '不支持'}签到功能 (check_in_enabled=${checkInEnabled})`
+        `${checkInEnabled ? '✅' : 'ℹ️'} [TokenService] 站点${checkInEnabled ? '支持' : '不支持'}签到功能 (check_in_enabled=${response.data?.data?.check_in_enabled}, checkin_enabled=${response.data?.data?.checkin_enabled})`
       );
       return checkInEnabled;
     } catch (error: any) {
@@ -465,14 +474,15 @@ export class TokenService {
 
   /**
    * 获取签到状态
-   * 根据API文档：GET /api/user/check_in_status
-   * 注意：调用此方法前应先用 checkSiteSupportsCheckIn 确认站点支持签到
+   * 支持两种站点类型：
+   * - Veloera: GET /api/user/check_in_status -> { can_check_in: boolean }
+   * - New API: GET /api/user/checkin?month=YYYY-MM -> { stats: { checked_in_today: boolean } }
    *
    * @param baseUrl 站点URL
    * @param userId 用户ID
    * @param accessToken 访问令牌
    * @param page 可选的浏览器页面
-   * @returns 签到状态信息
+   * @returns 是否可签到（true=可签到, false=已签到, undefined=无法获取）
    */
   async fetchCheckInStatus(
     baseUrl: string,
@@ -481,107 +491,139 @@ export class TokenService {
     page?: any
   ): Promise<boolean | undefined> {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
-    const url = `${cleanBaseUrl}/api/user/check_in_status`;
 
-    try {
-      Logger.info('🔍 [TokenService] 获取签到状态:', url);
+    // 尝试两种接口：Veloera 和 New API
+    const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM 格式
+    const endpoints = [
+      { url: `${cleanBaseUrl}/api/user/check_in_status`, type: 'veloera' },
+      { url: `${cleanBaseUrl}/api/user/checkin?month=${currentMonth}`, type: 'newapi' },
+    ];
 
-      // 优先使用浏览器模式（如果有共享页面）
-      if (page) {
-        Logger.info('♻️ [TokenService] 使用浏览器页面获取签到状态');
-        try {
-          const userIdHeaders = getAllUserIdHeaders(userId);
-          const result = await page.evaluate(
-            async (apiUrl: string, token: string, additionalHeaders: Record<string, string>) => {
-              const headers: Record<string, string> = {
-                Authorization: `Bearer ${token}`,
-                'Content-Type': 'application/json',
-                ...additionalHeaders,
-              };
+    for (const endpoint of endpoints) {
+      try {
+        Logger.info(`🔍 [TokenService] 获取签到状态 (${endpoint.type}):`, endpoint.url);
 
-              const response = await fetch(apiUrl, {
-                method: 'GET',
-                credentials: 'include',
-                headers: headers,
-              });
-              return await response.json();
-            },
-            url,
-            accessToken,
-            userIdHeaders
-          );
+        // 优先使用浏览器模式（如果有共享页面）
+        if (page) {
+          Logger.info('♻️ [TokenService] 使用浏览器页面获取签到状态');
+          try {
+            const userIdHeaders = getAllUserIdHeaders(userId);
+            const result = await page.evaluate(
+              async (apiUrl: string, token: string, additionalHeaders: Record<string, string>) => {
+                const headers: Record<string, string> = {
+                  Authorization: `Bearer ${token}`,
+                  'Content-Type': 'application/json',
+                  ...additionalHeaders,
+                };
 
-          // 解析浏览器返回的结果
-          if (result?.success && result?.data) {
-            const canCheckIn = result.data.can_check_in;
-            const checkedInDays = result.data.checked_in_days || 0;
+                const response = await fetch(apiUrl, {
+                  method: 'GET',
+                  credentials: 'include',
+                  headers: headers,
+                });
+                return await response.json();
+              },
+              endpoint.url,
+              accessToken,
+              userIdHeaders
+            );
 
-            if (typeof canCheckIn === 'boolean') {
-              Logger.info(
-                `✅ [TokenService] 签到状态(浏览器模式): ${canCheckIn ? '可签到' : '已签到'}, 连续签到${checkedInDays}天`
-              );
-              return canCheckIn;
+            // 解析浏览器返回的结果
+            if (result?.success && result?.data) {
+              // Veloera 格式: { can_check_in: boolean, checked_in_days: number }
+              if (typeof result.data.can_check_in === 'boolean') {
+                const canCheckIn = result.data.can_check_in;
+                const checkedInDays = result.data.checked_in_days || 0;
+                Logger.info(
+                  `✅ [TokenService] 签到状态(浏览器模式, Veloera): ${canCheckIn ? '可签到' : '已签到'}, 连续签到${checkedInDays}天`
+                );
+                return canCheckIn;
+              }
+
+              // New API 格式: { enabled: boolean, stats: { checked_in_today: boolean } }
+              if (result.data.stats && typeof result.data.stats.checked_in_today === 'boolean') {
+                const checkedInToday = result.data.stats.checked_in_today;
+                const canCheckIn = !checkedInToday; // 取反：checked_in_today=false 表示可签到
+                const totalCheckins = result.data.stats.total_checkins || 0;
+                Logger.info(
+                  `✅ [TokenService] 签到状态(浏览器模式, New API): ${canCheckIn ? '可签到' : '已签到'}, 累计签到${totalCheckins}次`
+                );
+                return canCheckIn;
+              }
             }
+
+            Logger.warn('⚠️ [TokenService] 浏览器模式返回数据格式不符合预期，尝试下一个端点');
+            continue;
+          } catch (browserError: any) {
+            Logger.warn('⚠️ [TokenService] 浏览器模式获取签到状态失败:', browserError.message);
+            // 浏览器模式失败，回退到axios
+          }
+        }
+
+        // HTTP 请求（打包环境自动使用 Electron net 模块）
+        const response = await httpGet(endpoint.url, {
+          headers: this.createRequestHeaders(userId, accessToken, baseUrl),
+          timeout: 10000,
+          validateStatus: (status: number) => status < 500,
+        });
+
+        // 检查是否返回HTML（Cloudflare拦截）
+        if (typeof response.data === 'string' && response.data.includes('<!DOCTYPE')) {
+          Logger.info('🛡️ [TokenService] 检测到Cloudflare拦截签到状态接口');
+          continue;
+        }
+
+        if (response.data?.success && response.data?.data) {
+          // Veloera 格式: { can_check_in: boolean, checked_in_days: number }
+          if (typeof response.data.data.can_check_in === 'boolean') {
+            const canCheckIn = response.data.data.can_check_in;
+            const checkedInDays = response.data.data.checked_in_days || 0;
+            Logger.info(
+              `✅ [TokenService] 签到状态(Veloera): ${canCheckIn ? '可签到' : '已签到'}, 连续签到${checkedInDays}天`
+            );
+            return canCheckIn;
           }
 
-          Logger.warn('⚠️ [TokenService] 浏览器模式返回数据格式不符合预期');
-          return undefined;
-        } catch (browserError: any) {
-          Logger.warn('⚠️ [TokenService] 浏览器模式获取签到状态失败:', browserError.message);
-          // 浏览器模式失败，回退到axios
+          // New API 格式: { enabled: boolean, stats: { checked_in_today: boolean } }
+          if (
+            response.data.data.stats &&
+            typeof response.data.data.stats.checked_in_today === 'boolean'
+          ) {
+            const checkedInToday = response.data.data.stats.checked_in_today;
+            const canCheckIn = !checkedInToday; // 取反：checked_in_today=false 表示可签到
+            const totalCheckins = response.data.data.stats.total_checkins || 0;
+            Logger.info(
+              `✅ [TokenService] 签到状态(New API): ${canCheckIn ? '可签到' : '已签到'}, 累计签到${totalCheckins}次`
+            );
+            return canCheckIn;
+          }
+        }
+
+        Logger.warn(`⚠️ [TokenService] ${endpoint.type} 响应格式不符合预期，尝试下一个端点`);
+      } catch (error: any) {
+        const status = error.response?.status;
+        Logger.info(`⚠️ [TokenService] ${endpoint.type} 端点失败:`, {
+          status,
+          message: error.message,
+        });
+
+        // 404 = 接口不存在，尝试下一个端点
+        if (status === 404) {
+          Logger.info(`ℹ️ [TokenService] ${endpoint.type} 接口不存在，尝试下一个端点`);
+          continue;
         }
       }
-
-      // HTTP 请求（打包环境自动使用 Electron net 模块）
-      const response = await httpGet(url, {
-        headers: this.createRequestHeaders(userId, accessToken, baseUrl),
-        timeout: 10000,
-        validateStatus: (status: number) => status < 500,
-      });
-
-      // 检查是否返回HTML（Cloudflare拦截）
-      if (typeof response.data === 'string' && response.data.includes('<!DOCTYPE')) {
-        Logger.info('🛡️ [TokenService] 检测到Cloudflare拦截签到状态接口');
-        return undefined;
-      }
-
-      // 标准响应格式：{ success: true, data: { can_check_in: boolean, checked_in_days: number, ... } }
-      if (response.data?.success && response.data?.data) {
-        const canCheckIn = response.data.data.can_check_in;
-        const checkedInDays = response.data.data.checked_in_days || 0;
-
-        if (typeof canCheckIn === 'boolean') {
-          Logger.info(
-            `✅ [TokenService] 签到状态: ${canCheckIn ? '可签到' : '已签到'}, 连续签到${checkedInDays}天`
-          );
-          return canCheckIn;
-        } else {
-          Logger.warn('⚠️ [TokenService] can_check_in 不是布尔值:', canCheckIn);
-        }
-      } else {
-        Logger.warn('⚠️ [TokenService] 响应格式不符合预期');
-      }
-
-      return undefined;
-    } catch (error: any) {
-      const status = error.response?.status;
-      Logger.error('❌ [TokenService] 获取签到状态失败:', {
-        status,
-        message: error.message,
-      });
-
-      // 404 = 接口不存在，说明该站点不支持签到功能
-      if (status === 404) {
-        Logger.info('ℹ️ [TokenService] 该站点不支持签到功能（接口不存在）');
-        return undefined;
-      }
-      return undefined;
     }
+
+    Logger.info('ℹ️ [TokenService] 所有签到状态端点均不可用');
+    return undefined;
   }
 
   /**
    * 执行签到操作
-   * 根据API文档：POST /api/user/check_in
+   * 支持两种站点类型：
+   * - Veloera: POST /api/user/check_in -> { reward: number }
+   * - New API: POST /api/user/checkin -> { quota_awarded: number }
    *
    * @param baseUrl 站点URL
    * @param userId 用户ID
@@ -597,6 +639,7 @@ export class TokenService {
     message: string;
     needManualCheckIn?: boolean; // 是否需要手动签到
     reward?: number; // 签到奖励（内部单位）
+    siteType?: 'veloera' | 'newapi'; // 站点类型（用于确定手动签到页面路径）
   }> {
     Logger.info('📝 [TokenService] 执行签到操作...');
     Logger.info('📍 [TokenService] 站点:', baseUrl);
@@ -604,116 +647,159 @@ export class TokenService {
 
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
 
-    // 标准端点（根据API文档）
-    const url = `${cleanBaseUrl}/api/user/check_in`;
+    // 尝试两种签到端点：Veloera 和 New API
+    const endpoints = [
+      { url: `${cleanBaseUrl}/api/user/check_in`, type: 'veloera' },
+      { url: `${cleanBaseUrl}/api/user/checkin`, type: 'newapi' },
+    ];
 
-    try {
-      Logger.info(`🔍 [TokenService] 签到端点: ${url}`);
+    let lastError: any = null;
+    let lastEndpointType: 'veloera' | 'newapi' = 'veloera'; // 记录最后尝试的端点类型
+    let cloudflareDetected = false; // 是否检测到 Cloudflare 拦截
 
-      const response = await httpPost(
-        url,
-        {},
-        {
-          headers: this.createRequestHeaders(userId, accessToken, baseUrl),
-          timeout: 15000,
-          validateStatus: (status: number) => status < 500,
+    for (const endpoint of endpoints) {
+      try {
+        lastEndpointType = endpoint.type as 'veloera' | 'newapi';
+        Logger.info(`🔍 [TokenService] 尝试签到端点 (${endpoint.type}): ${endpoint.url}`);
+
+        const response = await httpPost(
+          endpoint.url,
+          {},
+          {
+            headers: this.createRequestHeaders(userId, accessToken, baseUrl),
+            timeout: 15000,
+            validateStatus: (status: number) => status < 500,
+          }
+        );
+
+        // 检测 Cloudflare 拦截（响应是 HTML 而不是 JSON）
+        if (typeof response.data === 'string' && response.data.includes('<!DOCTYPE')) {
+          Logger.info(`🛡️ [TokenService] 检测到 Cloudflare 拦截签到接口 (${endpoint.type})`);
+          cloudflareDetected = true;
+          continue; // 尝试下一个端点
         }
-      );
 
-      Logger.info('📦 [TokenService] 签到响应:', {
-        success: response.data?.success,
-        message: response.data?.message,
-        hasReward: !!response.data?.data?.reward,
-      });
+        Logger.info(`📦 [TokenService] 签到响应 (${endpoint.type}):`, {
+          success: response.data?.success,
+          message: response.data?.message,
+          hasReward: !!response.data?.data?.reward,
+          hasQuotaAwarded: !!response.data?.data?.quota_awarded,
+        });
 
-      // 标准响应格式：{ success: true, message: "签到成功", data: { reward: 5000 } }
-      if (response.data?.success === true) {
-        const reward = response.data.data?.reward;
-        let message = response.data.message || '签到成功！';
+        // 签到成功
+        if (response.data?.success === true) {
+          // Veloera 格式: { reward: number }
+          const reward = response.data.data?.reward;
+          // New API 格式: { quota_awarded: number }
+          const quotaAwarded = response.data.data?.quota_awarded;
 
-        // 如果有奖励，添加到消息中
-        if (reward && typeof reward === 'number') {
-          const rewardInDollars = (reward / 500000).toFixed(4);
-          message += `\n🎁 获得奖励: $${rewardInDollars}`;
+          let message = response.data.message || '签到成功！';
+          const finalReward = reward || quotaAwarded;
+
+          // 如果有奖励，添加到消息中
+          if (finalReward && typeof finalReward === 'number') {
+            const rewardInDollars = (finalReward / 500000).toFixed(4);
+            message += `\n🎁 获得奖励: $${rewardInDollars}`;
+          }
+
+          Logger.info(`✅ [TokenService] 签到成功 (${endpoint.type}): ${message}`);
+          return {
+            success: true,
+            message: message,
+            reward: finalReward,
+          };
         }
 
-        Logger.info(`✅ [TokenService] 签到成功: ${message}`);
-        return {
-          success: true,
-          message: message,
-          reward: reward,
-        };
+        // 签到失败的情况
+        if (response.data?.success === false) {
+          const errorMsg = response.data.message || '签到失败';
+          Logger.info(`ℹ️ [TokenService] 签到失败 (${endpoint.type}): ${errorMsg}`);
+
+          // 检查是否需要人机验证或手动签到
+          const needManual =
+            errorMsg.includes('验证') ||
+            errorMsg.includes('人机') ||
+            errorMsg.includes('captcha') ||
+            errorMsg.includes('challenge') ||
+            errorMsg.includes('已签到') ||
+            errorMsg.toLowerCase().includes('turnstile');
+
+          return {
+            success: false,
+            message: errorMsg,
+            needManualCheckIn: needManual,
+            siteType: endpoint.type as 'veloera' | 'newapi',
+          };
+        }
+
+        // 未知响应格式，尝试下一个端点
+        Logger.warn(`⚠️ [TokenService] ${endpoint.type} 未知的响应格式，尝试下一个端点`);
+      } catch (error: any) {
+        const status = error.response?.status;
+        Logger.info(`⚠️ [TokenService] ${endpoint.type} 端点失败:`, {
+          status,
+          message: error.message,
+        });
+
+        lastError = error;
+
+        // 404 = 接口不存在，尝试下一个端点
+        if (status === 404) {
+          Logger.info(`ℹ️ [TokenService] ${endpoint.type} 接口不存在，尝试下一个端点`);
+          continue;
+        }
+
+        // 401 = 登录过期或未登录，403 = 权限不足（这些错误不需要尝试其他端点）
+        if (status === 401) {
+          return {
+            success: false,
+            message: '登录已过期或未登录，请重新登录站点获取凭证',
+            needManualCheckIn: true,
+            siteType: endpoint.type as 'veloera' | 'newapi',
+          };
+        }
+        if (status === 403) {
+          return {
+            success: false,
+            message: '权限不足，请检查账号状态是否正常',
+            needManualCheckIn: true,
+            siteType: endpoint.type as 'veloera' | 'newapi',
+          };
+        }
+
+        // 其他错误，继续尝试下一个端点
+        continue;
       }
+    }
 
-      // 签到失败的情况
-      if (response.data?.success === false) {
-        const errorMsg = response.data.message || '签到失败';
-        Logger.info(`ℹ️ [TokenService] 签到失败: ${errorMsg}`);
+    // 所有端点都失败
+    Logger.error('❌ [TokenService] 所有签到端点均失败');
 
-        // 检查是否需要人机验证或手动签到
-        const needManual =
-          errorMsg.includes('验证') ||
-          errorMsg.includes('人机') ||
-          errorMsg.includes('captcha') ||
-          errorMsg.includes('challenge') ||
-          errorMsg.includes('已签到') ||
-          errorMsg.toLowerCase().includes('turnstile');
-
-        return {
-          success: false,
-          message: errorMsg,
-          needManualCheckIn: needManual,
-        };
-      }
-
-      // 未知响应格式
-      Logger.warn('⚠️ [TokenService] 未知的响应格式');
+    // 如果检测到 Cloudflare 拦截，提示用户手动签到
+    if (cloudflareDetected) {
       return {
         success: false,
-        message: '签到响应格式异常，请尝试手动签到',
+        message: '站点开启了 Cloudflare 保护，无法自动签到',
         needManualCheckIn: true,
+        siteType: lastEndpointType,
       };
-    } catch (error: any) {
-      const status = error.response?.status;
-      Logger.error(`❌ [TokenService] 签到请求失败:`, {
-        status,
-        message: error.message,
-        data: error.response?.data,
-      });
+    }
 
-      // 404 = 接口不存在
-      if (status === 404) {
-        return {
-          success: false,
-          message: '该站点不支持签到功能（接口不存在）',
-          needManualCheckIn: false,
-        };
-      }
-
-      // 401 = 登录过期或未登录，403 = 权限不足
-      if (status === 401) {
-        return {
-          success: false,
-          message: '登录已过期或未登录，请重新登录站点获取凭证',
-          needManualCheckIn: true,
-        };
-      }
-      if (status === 403) {
-        return {
-          success: false,
-          message: '权限不足，请检查账号状态是否正常',
-          needManualCheckIn: true,
-        };
-      }
-
-      // 其他错误
-      const errorMsg = error.response?.data?.message || error.message || '签到失败';
+    if (lastError) {
+      const errorMsg = lastError.response?.data?.message || lastError.message || '签到失败';
       return {
         success: false,
         message: `签到失败: ${errorMsg}`,
         needManualCheckIn: true,
+        siteType: lastEndpointType,
       };
     }
+
+    return {
+      success: false,
+      message: '该站点不支持签到功能（接口不存在）',
+      needManualCheckIn: false,
+    };
   }
 
   /**

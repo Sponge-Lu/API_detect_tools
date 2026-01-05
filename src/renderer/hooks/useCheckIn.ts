@@ -3,6 +3,10 @@
  * 输出: 签到方法 (checkIn, checkInAll), 签到状态
  * 定位: 业务逻辑层 - 管理站点每日签到操作
  *
+ * 签到失败时根据站点类型打开对应的手动签到页面:
+ * - Veloera: /app/me
+ * - New API: /console/personal
+ *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
  * - src/renderer/hooks/FOLDER_INDEX.md
@@ -35,14 +39,18 @@ export function useCheckIn({
   detectSingle,
 }: UseCheckInOptions) {
   /**
-   * 打开站点页面
+   * 打开站点签到页面
    * @param site 站点配置
-   * @param appendPath 是否添加 /app/me 路径（签到失败时使用）
+   * @param siteType 站点类型（veloera 或 newapi），用于确定签到页面路径
    */
-  const openCheckinPage = async (site: SiteConfig, appendPath = false) => {
+  const openCheckinPage = async (site: SiteConfig, siteType?: 'veloera' | 'newapi') => {
     try {
       const baseUrl = site.url.replace(/\/$/, '');
-      const targetUrl = appendPath ? baseUrl + '/app/me' : baseUrl;
+      // 根据站点类型选择正确的签到页面路径
+      // Veloera: /app/me
+      // New API: /console/personal
+      const checkinPath = siteType === 'newapi' ? '/console/personal' : '/app/me';
+      const targetUrl = baseUrl + checkinPath;
       await window.electronAPI.openUrl(targetUrl);
     } catch (error) {
       Logger.error('打开浏览器失败:', error);
@@ -63,7 +71,8 @@ export function useCheckIn({
         confirmText: '打开网站',
       });
       if (shouldOpenSite) {
-        await openCheckinPage(site, true);
+        // 缺少认证信息时，默认使用 veloera 路径
+        await openCheckinPage(site, 'veloera');
       }
       return;
     }
@@ -89,7 +98,8 @@ export function useCheckIn({
             confirmText: '打开网站',
           });
           if (shouldOpenSite) {
-            await openCheckinPage(site, true);
+            // 使用后端返回的站点类型，默认 veloera
+            await openCheckinPage(site, result.siteType || 'veloera');
           }
         } else {
           showAlert(result.message, 'alert');
@@ -112,7 +122,8 @@ export function useCheckIn({
           confirmText: '打开网站',
         });
         if (shouldOpenSite) {
-          await openCheckinPage(site, true);
+          // 异常情况下，默认使用 veloera 路径
+          await openCheckinPage(site, 'veloera');
         }
       }
     } finally {

@@ -4,6 +4,92 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，并且本项目遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
+## [v2.1.10]
+
+### 新增
+- **Linux Do Credit 积分监控**：
+  - 新增完整用户信息展示：头像、昵称、信任等级徽章
+  - 新增收支信息：总收入、总支出、可用余额
+  - 新增支付信息：支付评分、支付等级、剩余配额、每日限额
+  - 可折叠的详情面板，展示每日收支统计和交易记录
+  - 使用网格布局优化核心积分信息展示
+  - 展开详情显示三栏布局：交易记录、收入统计、支出统计
+- **LDC 充值功能**：在 Credit 面板展开详情底部新增快捷充值入口
+  - 一行紧凑布局：标题 | 站点选择 | 金额输入 | 所需积分 | 充值按钮
+  - 选择支持 LDC 支付的站点，输入充值金额（整数，最小1）
+  - 自动计算所需 LDC 积分（充值金额 × 兑换比例）
+  - 余额不足时显示警告
+  - 点击充值按钮后在浏览器中打开支付页面
+- **站点 LDC 支付检测**：站点检测时自动检测是否支持 Linux Do Credit 支付
+  - 调用 `/api/user/topup/info` 检查 `pay_methods` 数组中是否包含 LDC 支付方式
+  - 支持多种 LDC 支付名称匹配（Linuxdo Credit、LinuxDo Credit、Linux Do Credit、LDC 等）
+  - 调用 `/api/user/amount`（POST 方法）获取 LDC 兑换比例
+  - 站点列表新增 "LDC充值比例" 列，显示支付比例（如 "0.60"），不支持时显示 "-"
+  - LDC 支付信息持久化到站点的 `cached_data` 中，重启应用后自动加载显示
+- **New API 签到功能支持**：兼容 New API 类型站点的签到功能
+  - 签到检测：同时支持 `check_in_enabled`（Veloera）和 `checkin_enabled`（New API）字段
+  - 签到状态：支持 `/api/user/check_in_status`（Veloera）和 `/api/user/checkin?month=YYYY-MM`（New API）两种接口
+  - 执行签到：支持 `/api/user/check_in`（Veloera）和 `/api/user/checkin`（New API）两种端点
+  - 奖励解析：兼容 `reward`（Veloera）和 `quota_awarded`（New API）两种响应格式
+  - 签到失败时根据站点类型打开对应的手动签到页面（Veloera: /app/me, New API: /console/personal）
+
+### 优化
+- **Credit 面板 UI 优化**：
+  - 紧凑视图只显示"今日积分变化"差值
+  - 展开视图积分信息分两组显示：Linux Do 社区积分（基准值/当前分/今日积分变化）和 Linux Do Credit 积分（收入/支出/可用）
+  - 统计卡片采用紧凑布局，高度自适应内容
+  - 收入/支出统计使用水平条形图，日期和数值在条形上方（日期靠左，数值靠右）
+  - 只显示最近5天的统计数据
+  - 支付信息区使用四列布局显示支付评分、支付等级、剩余配额、每日限额
+  - 活动卡片"查看全部"链接移到更新时间后面，使用蓝色字体
+- **Credit 面板设置简化**：移除设置按钮，将自动刷新开关和间隔设置直接显示在面板底部
+- **代码精简**：删除未使用的 CreditPanel 组件，只保留 CreditPanelCompact
+- **Linux Do Credit 数据加载策略**：优化登录时的数据获取流程
+  - 登录时在 credit.linux.do 页面一次性获取所有数据（用户信息、每日统计、交易记录）
+  - 避免跨域问题：在导航到 linux.do 之前完成 credit.linux.do API 调用
+  - 数据缓存到本地，展开详情时直接使用缓存数据，无需重新获取
+  - 新增 IPC 通道支持获取缓存的每日统计和交易记录
+- **UI 布局调整**：
+  - 移除站点分组标签的提示文字，"新建分组"按钮移到所有分组标签最后
+  - "搜索可用模型（全局）"移到右侧区域
+  - 移除"站点操作"文字，移除顶部工具栏的"检测所有站点"按钮
+  - 检测所有站点刷新按钮移到站点表头，对齐到单个站点刷新按钮正上方
+  - 展开全部按钮移到站点表头，对齐到单个站点展开按钮正上方
+  - CLI 配置状态面板移到"添加站点/恢复站点"行的最右侧
+  - Credit 面板移到 Header 设置按钮左侧，展开后使用 fixed 定位确保显示在 UI 最上层
+  - 未登录时 Credit 面板显示"Linux Do Credit"而非"Credit"
+  - 移除一级卡片的复制 URL 按钮
+  - 二级卡片（展开详情）顶部新增站点 URL 和 Access Token 显示
+  - URL 和 Access Token 显示在同一行，各带复制按钮
+  - Access Token 脱敏显示（前8位 + **** + 后8位），支持显示/隐藏切换
+
+### 修复
+- **formatDateToMMDD 函数**：修复对无效日期格式的处理，使用正则验证确保输入格式正确
+- **Linux Do Credit 登录问题**：修复 Cloudflare 保护导致的"登录已过期"错误
+  - 使用浏览器环境 (`page.evaluate`) 获取 API 数据，绕过 Cloudflare `cf_clearance` 验证
+  - 登录成功后在同一浏览器会话中直接获取积分数据
+  - 支持导航到 `linux.do` 获取 `gamification_score`（当前分）
+  - 修复打开两个浏览器页面的问题，现在只打开一个页面
+- **Credit 面板层级问题**：修复展开的 Credit 面板被站点列表遮挡的问题
+- **LDC 充值功能修复**：
+  - 修复充值时"站点认证 token 不可用"错误，改用浏览器模式进行充值
+  - 修复充值时"支付方式不存在"错误，将参数名从 `topup_method` 改为 `payment_method`
+  - 修复支付页面 404 错误，改用 POST 表单提交到支付网关
+  - 修复登录检测问题，使用 localStorage 检测登录状态（与站点刷新逻辑一致）
+  - 修复支付页面过早关闭问题，成功跳转到支付页面后保持浏览器打开
+  - 添加 `New-Api-User` header 支持站点 API 认证
+- **Codex 官方 API Key 检测**：修正官方 API Key 判断逻辑，从 `sk-` 改为 `sk-proj-` 前缀
+  - 很多中转站也使用 `sk-xxx` 格式的 API Key，但只有 `sk-proj-` 开头的才是 OpenAI 官方 API Key
+  - 修复使用中转站时错误显示"官方 API"的问题
+- **Linux Do Credit 积分刷新**：修复访问 linux.do 时遇到 Cloudflare 验证（403）导致无法获取用户积分的问题
+  - 将 HTTP 直接请求改为浏览器环境请求，绕过 Cloudflare 人机验证
+  - 直接导航到 linux.do 获取数据，不再先尝试跨域请求
+- **应用重启后登录状态**：修复重启应用后需要重新登录才能显示数据的问题
+  - 如果有缓存的 cookies，直接认为已登录，显示缓存数据
+  - 只有在实际获取数据失败时才更新登录状态
+- **刷新间隔显示**：修复自动刷新间隔显示单位错误（从"秒"改为"分钟"）
+- **刷新间隔同步**：修复配置加载后输入框显示值与实际配置不一致的问题
+
 ## [v2.1.9]
 
 ### 新增

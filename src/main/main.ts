@@ -1,5 +1,5 @@
 ﻿/**
- * 输入: Electron app/BrowserWindow, ChromeManager, ApiService, TokenService, BackupManager, UnifiedConfigManager, IPC handlers
+ * 输入: Electron app/BrowserWindow, ChromeManager, ApiService, TokenService, BackupManager, UnifiedConfigManager, CreditService, IPC handlers
  * 输出: BrowserWindow 实例, IPC 事件监听器, 应用生命周期管理
  * 定位: 应用入口 - 初始化 Electron 应用，管理主窗口，协调所有服务
  *
@@ -26,6 +26,7 @@ import { backupManager } from './backup-manager';
 import { registerAllHandlers } from './handlers';
 import { unifiedConfigManager } from './unified-config-manager';
 import { createCloseBehaviorManager, CloseBehaviorManager } from './close-behavior-manager';
+import { createCreditService } from './credit-service';
 
 // 设置Windows控制台编码为UTF-8，解决中文乱码问题
 if (os.platform() === 'win32') {
@@ -174,6 +175,11 @@ app.whenReady().then(async () => {
     await closeBehaviorManager.initialize();
     Logger.info('✅ [Main] 窗口关闭行为管理器已初始化');
   }
+
+  // 初始化 Credit 积分检测服务
+  const creditService = createCreditService(chromeManager);
+  await creditService.initialize();
+  Logger.info('✅ [Main] Credit 积分检测服务已初始化');
 
   // 注册所有 IPC 处理器
   registerAllHandlers({

@@ -215,7 +215,6 @@ export function SiteCard({
             onDelete={onDelete}
             onCheckIn={onCheckIn}
             onOpenExtraLink={onOpenExtraLink}
-            onCopyToClipboard={onCopyToClipboard}
             onToggleAutoRefresh={onToggleAutoRefresh}
           />
         </div>

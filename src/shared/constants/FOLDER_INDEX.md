@@ -170,6 +170,33 @@ export const THEME_CONFIG = {
   SYSTEM: 'system'
 } as const;
 
+// 站点列表默认列宽
+export const DEFAULT_COLUMN_WIDTHS = [
+  120, // 站点（含状态图标）
+  75,  // 余额
+  75,  // 今日消费
+  75,  // 总 Token
+  50,  // 输入
+  50,  // 输出
+  50,  // 请求
+  50,  // RPM
+  50,  // TPM
+  60,  // 模型数
+  80,  // 更新时间
+  115, // CLI兼容性
+  40,  // LDC 支付
+] as const;
+
+// LDC 支付方式名称匹配列表（不同站点可能使用不同名称）
+export const LDC_PAYMENT_NAMES = [
+  'Linuxdo Credit',
+  'LinuxDo Credit',
+  'Linux Do Credit',
+  'LDC',
+  'linuxdo credit',
+  'linux do credit',
+] as const;
+
 // 语言配置
 export const LANGUAGE_CONFIG = {
   ZH_CN: 'zh-CN',
@@ -389,5 +416,5 @@ export const NEW_FEATURE_CONFIG = {
 
 ---
 
-**版本**: 2.1.8  
-**更新日期**: 2025-12-24
+**版本**: 2.1.11  
+**更新日期**: 2025-12-30

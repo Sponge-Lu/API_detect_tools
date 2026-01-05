@@ -29,15 +29,16 @@ export function registerTokenHandlers(
         600000,
         (status: string) => sendSiteInitStatus(mainWindow, status)
       );
-      // 站点初始化完成后，关闭浏览器窗口
-      Logger.info('🧹 [TokenHandlers] 站点初始化完成，关闭浏览器...');
-      chromeManager.forceCleanup();
+      // 站点初始化完成后，不立即关闭浏览器
+      // 让浏览器保持打开状态，以便后续的 API 调用（如获取模型列表）可以复用同一个浏览器会话
+      // 浏览器会在引用计数为0后延迟60秒自动关闭
+      Logger.info('✅ [TokenHandlers] 站点初始化完成，浏览器保持打开以便后续 API 调用复用');
       return { success: true, data: siteAccount };
     } catch (error: any) {
       Logger.error('初始化站点失败:', error);
-      // 即使失败也要尝试关闭浏览器
+      // 失败时尝试关闭浏览器
       try {
-        chromeManager.forceCleanup();
+        await chromeManager.forceCleanup();
       } catch (cleanupError) {
         Logger.warn('⚠️ [TokenHandlers] 关闭浏览器失败:', cleanupError);
       }

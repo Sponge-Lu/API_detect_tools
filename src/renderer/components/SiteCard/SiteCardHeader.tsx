@@ -1,7 +1,7 @@
 /**
  * 输入: SiteCardHeaderProps (站点数据、检测结果、CLI 兼容性)
  * 输出: React 组件 (站点卡片头部 UI)
- * 定位: 展示层 - 站点卡片头部组件，显示站点基本信息（名称、状态、余额、消费等）
+ * 定位: 展示层 - 站点卡片头部组件，显示站点基本信息（名称、状态、余额、消费、LDC支付比例等）
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -217,7 +217,7 @@ export function SiteCardHeader({
       </div>
 
       {/* 12. CLI 兼容性图标 */}
-      <div className="flex items-center justify-start">
+      <div className="flex items-center justify-start gap-1">
         <CliCompatibilityIcons
           compatibility={cliCompatibility}
           cliConfig={cliConfig ?? null}
@@ -226,6 +226,20 @@ export function SiteCardHeader({
           onTest={onTestCliCompat}
           onApply={onApply}
         />
+      </div>
+
+      {/* 13. LDC 支付比例 */}
+      <div className="flex items-center justify-center text-[13px]">
+        {siteResult?.ldcPaymentSupported && siteResult?.ldcExchangeRate ? (
+          <span
+            className="font-mono font-medium text-amber-600 dark:text-amber-400 cursor-help"
+            title={`支持 LDC 支付，比例: ${siteResult.ldcExchangeRate}:1`}
+          >
+            {siteResult.ldcExchangeRate}
+          </span>
+        ) : (
+          <span className="text-slate-400 dark:text-slate-500">-</span>
+        )}
       </div>
     </div>
   );

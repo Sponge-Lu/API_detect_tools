@@ -11,14 +11,21 @@
 
 /**
  * 获取所有可能的User-ID请求头（兼容各种API站点）
+ * 注意：某些站点对 header 大小写敏感，因此同时包含多种格式
  */
 export function getAllUserIdHeaders(userId: string | number): Record<string, string> {
   const id = String(userId);
   return {
+    // Pascal Case 格式
     'New-API-User': id,
     'Veloera-User': id,
-    'User-id': id,
-    'voapi-user': id,
+    'User-Id': id,
     'X-User-Id': id,
+    // 小写格式（某些站点可能需要）
+    'new-api-user': id,
+    'veloera-user': id,
+    'user-id': id,
+    'voapi-user': id,
+    'x-user-id': id,
   };
 }

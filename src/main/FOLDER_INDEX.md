@@ -34,6 +34,7 @@
 | **update-service.ts** | 应用更新服务 | `UpdateService` 类 |
 | **config-detection-service.ts** | CLI 配置检测服务 | `ConfigDetectionService` 类 |
 | **close-behavior-manager.ts** | 窗口关闭行为管理 | `CloseBehaviorManager` 类 |
+| **credit-service.ts** | Linux Do Credit 积分检测、LDC 充值 | `CreditService` 类 |
 | **preload.ts** | Preload 脚本 | IPC 上下文隔离 |
 | **api-request-helper.ts** | API 请求辅助函数 | 通用请求逻辑 |
 
@@ -92,34 +93,51 @@ main.ts: app.whenReady()
 - `checkBalance(site)` - 查询余额
 - `checkStatus(site)` - 检测站点状态
 - `checkSignIn(site)` - 检测签到状态
+- `detectLdcPayment(site, timeout, sharedPage)` - 检测 LDC 支付支持
 
 **依赖**: TokenService (获取 Token)
 
 ### TokenService
 
-**职责**: 管理 Token 的获取、存储、刷新
+**职责**: 管理 Token 的获取、存储、刷新，以及签到功能
 
 **关键方法**:
 - `getToken(site)` - 获取 Token
 - `saveToken(site, token)` - 保存 Token
 - `refreshToken(site)` - 刷新 Token
 - `deleteToken(site)` - 删除 Token
+- `checkSiteSupportsCheckIn(baseUrl, page?)` - 检查站点是否支持签到（兼容 Veloera/New API）
+- `fetchCheckInStatus(baseUrl, userId, accessToken, page?)` - 获取签到状态（兼容两种接口）
+- `checkIn(baseUrl, userId, accessToken)` - 执行签到（兼容两种端点和响应格式）
+
+**签到功能兼容性**:
+- Veloera: `check_in_enabled`, `/api/user/check_in_status`, `/api/user/check_in`, `reward`
+- New API: `checkin_enabled`, `/api/user/checkin?month=YYYY-MM`, `/api/user/checkin`, `quota_awarded`
 
 **依赖**: ChromeManager (自动登录)
 
 ### ChromeManager
 
-**职责**: 启动 Chrome 浏览器，自动登录获取 Token
+**职责**: 启动 Chrome 浏览器，自动登录获取 Token，读取 localStorage 数据
 
 **关键方法**:
 - `launch()` - 启动浏览器
 - `login(site)` - 自动登录
 - `cleanup()` - 清理资源
+- `getLocalStorageData(url, waitForLogin, maxWaitTime, onStatus)` - 获取 localStorage 数据（含签到状态）
+- `createPage(url)` - 创建页面（支持同域名页面复用）
+- `findExistingPageForUrl(url)` - 查找可复用的同域名页面
+
+**LocalStorageData 签到字段**:
+- Veloera: `check_in_enabled`, `can_check_in`
+- New API: `checkin_enabled`, `checkin.stats.checked_in_today` (取反得到 canCheckIn)
 
 **特点**:
 - 支持 Cloudflare 智能绕过
 - 随机化调试端口，避免冲突
 - 自动捕获登录凭证
+- 支持两种站点类型的签到状态读取
+- **页面复用策略**: 同域名页面复用，保持 session 连续性（v2.1.11+）
 
 ### CliCompatService
 
@@ -155,6 +173,21 @@ main.ts: app.whenReady()
 **支持工具**: Claude Code, Codex, Gemini CLI
 
 **缓存机制**: 检测结果缓存 5 分钟，避免重复读取文件
+
+### CreditService
+
+**职责**: Linux Do Credit 积分检测服务
+
+**关键方法**:
+- `fetchCreditData()` - 获取积分数据（基准值、当前分、差值）
+- `launchLogin()` - 启动浏览器登录
+- `getLoginStatus()` - 获取登录状态
+- `logout()` - 登出
+- `saveConfig(config)` - 保存配置
+- `loadConfig()` - 加载配置
+- `getCachedCreditInfo()` - 获取缓存的积分数据
+
+**依赖**: ChromeManager (浏览器登录)
 
 ### BackupManager
 
@@ -223,6 +256,16 @@ main.ts: app.whenReady()
 - `cli:test` - 测试 CLI 兼容性
 - `cli:generateConfig` - 生成 CLI 配置
 
+### Credit 相关
+
+- `credit:fetch` - 获取积分数据
+- `credit:login` - 启动登录
+- `credit:logout` - 登出
+- `credit:get-status` - 获取登录状态
+- `credit:save-config` - 保存配置
+- `credit:load-config` - 加载配置
+- `credit:get-cached` - 获取缓存数据
+
 ---
 
 ## 🔐 安全考虑
@@ -249,5 +292,5 @@ main.ts: app.whenReady()
 
 ---
 
-**版本**: 2.1.9  
-**更新日期**: 2025-12-26
+**版本**: 2.1.11  
+**更新日期**: 2026-01-04

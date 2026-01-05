@@ -168,8 +168,10 @@ export function parseGeminiEnvConfig(): GeminiEnvConfig | null {
  * 检查 API Key 是否为 OpenAI 官方 API Key
  *
  * OpenAI 官方 API Key 格式:
- * - sk-proj-... (项目级 API Key，最常见)
- * - sk-... (传统格式)
+ * - sk-proj-... (项目级 API Key，官方格式)
+ *
+ * 注意：很多中转站也使用 sk-xxx 格式的 API Key，
+ * 但只有 sk-proj- 开头的才是 OpenAI 官方 API Key
  *
  * @param apiKey API Key 字符串
  * @returns 是否为官方 API Key
@@ -181,8 +183,8 @@ export function isOfficialOpenAIApiKey(apiKey: string | null | undefined): boole
     return false;
   }
 
-  // OpenAI 官方 API Key 以 "sk-" 开头
-  return apiKey.startsWith('sk-');
+  // OpenAI 官方 API Key 以 "sk-proj-" 开头（项目级 API Key）
+  return apiKey.startsWith('sk-proj-');
 }
 
 // ============= 提取函数 =============

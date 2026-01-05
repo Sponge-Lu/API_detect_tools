@@ -85,6 +85,10 @@ export function useDataLoader({
                 userGroups: site.cached_data?.user_groups,
                 modelPricing: site.cached_data?.model_pricing,
                 lastRefresh: site.cached_data?.last_refresh,
+                // LDC 支付信息
+                ldcPaymentSupported: site.cached_data?.ldc_payment_supported,
+                ldcExchangeRate: site.cached_data?.ldc_exchange_rate,
+                ldcPaymentType: site.cached_data?.ldc_payment_type,
               };
             });
 

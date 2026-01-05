@@ -25,6 +25,7 @@
 |------|------|--------|
 | **index.ts** | 处理器注册入口 | `registerAllHandlers()` |
 | **close-behavior-handlers.ts** | 窗口关闭行为处理 | `close-behavior:get-settings`, `close-behavior:save-settings` 等 |
+| **credit-handlers.ts** | Credit 积分检测处理 | `credit:fetch`, `credit:login`, `credit:logout` 等 |
 | **api.handler.ts** | API 请求处理 | `api:request`, `api:checkBalance` 等 |
 | **token.handler.ts** | Token 管理处理 | `token:get`, `token:save`, `token:delete` 等 |
 | **config.handler.ts** | 配置管理处理 | `config:load`, `config:save`, `config:export` 等 |
@@ -147,6 +148,20 @@ try {
 | `browser:login` | `{ site, url }` | `{ token }` | 自动登录 |
 | `browser:close` | `{}` | `{ success }` | 关闭浏览器 |
 
+### Credit 处理器 (credit-handlers.ts)
+
+| 事件 | 请求参数 | 响应数据 | 职责 |
+|------|---------|--------|------|
+| `credit:fetch` | `{}` | `{ creditInfo }` | 获取积分数据 |
+| `credit:fetch-daily-stats` | `{ days? }` | `{ dailyStats }` | 获取每日统计数据 |
+| `credit:fetch-transactions` | `{ page?, pageSize? }` | `{ transactionList }` | 获取交易记录 |
+| `credit:login` | `{}` | `{ success }` | 启动登录 |
+| `credit:logout` | `{}` | `{ success }` | 登出 |
+| `credit:get-status` | `{}` | `{ isLoggedIn }` | 获取登录状态 |
+| `credit:save-config` | `{ config }` | `{ success }` | 保存配置 |
+| `credit:load-config` | `{}` | `{ config }` | 加载配置 |
+| `credit:get-cached` | `{}` | `{ cachedInfo }` | 获取缓存数据 |
+
 ---
 
 ## 🔐 安全考虑
@@ -255,5 +270,5 @@ describe('API Handlers', () => {
 
 ---
 
-**版本**: 2.1.8  
-**更新日期**: 2025-12-24
+**版本**: 2.1.10  
+**更新日期**: 2025-12-30

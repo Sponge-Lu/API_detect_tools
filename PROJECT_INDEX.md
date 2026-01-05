@@ -65,6 +65,7 @@ graph TD
         TokenSvc["TokenService<br/>(Token 认证)"]
         ApiSvc["ApiService<br/>(API 请求)"]
         CliCompat["CliCompatService<br/>(CLI 兼容性)"]
+        CreditSvc["CreditService<br/>(积分检测)"]
         BackupMgr["BackupManager<br/>(备份管理)"]
         WebDAVMgr["WebDAVManager<br/>(云端备份)"]
         ConfigMgr["UnifiedConfigManager<br/>(配置管理)"]
@@ -94,6 +95,7 @@ graph TD
     TokenSvc --> ChromeMgr
     ApiSvc --> TokenSvc
     CliCompat --> ApiSvc
+    CreditSvc --> ChromeMgr
     BackupMgr --> ConfigMgr
     WebDAVMgr --> ConfigMgr
     
@@ -102,6 +104,7 @@ graph TD
     Handlers --> BackupMgr
     Handlers --> WebDAVMgr
     Handlers --> CliCompat
+    Handlers --> CreditSvc
     
     App --> Components
     App --> Hooks
@@ -115,6 +118,7 @@ graph TD
     
     ApiSvc --> Types
     TokenSvc --> Types
+    CreditSvc --> Types
     CliCompat --> Schemas
     ConfigMgr --> Types
     
@@ -131,10 +135,11 @@ graph TD
 | 模块 | 职责 | 关键方法 |
 |------|------|--------|
 | **main.ts** | 应用入口、窗口管理 | `createWindow()`, `app.whenReady()` |
-| **ChromeManager** | 浏览器启动、自动登录 | `launch()`, `login()`, `cleanup()` |
-| **TokenService** | Token 获取、存储、刷新 | `getToken()`, `saveToken()`, `refreshToken()` |
-| **ApiService** | API 请求、错误处理 | `request()`, `checkBalance()`, `checkStatus()` |
+| **ChromeManager** | 浏览器启动、自动登录、localStorage 读取（含签到状态） | `launch()`, `login()`, `cleanup()`, `getLocalStorageData()` |
+| **TokenService** | Token 获取、存储、刷新、签到功能（兼容 Veloera/New API） | `getToken()`, `saveToken()`, `refreshToken()`, `checkIn()` |
+| **ApiService** | API 请求、错误处理、LDC 支付检测 | `request()`, `checkBalance()`, `checkStatus()`, `detectLdcPayment()` |
 | **CliCompatService** | CLI 兼容性测试（支持双 API/双端点测试） | `testCompatibility()`, `testCodexWithDetail()`, `testGeminiWithDetail()` |
+| **CreditService** | Linux Do Credit 积分检测、LDC 充值 | `fetchCreditData()`, `launchLogin()`, `logout()`, `initiateRecharge()` |
 | **BackupManager** | 本地备份、恢复 | `backup()`, `restore()`, `export()` |
 | **WebDAVManager** | 云端备份、同步 | `uploadBackup()`, `downloadBackup()` |
 | **UnifiedConfigManager** | 配置管理、迁移 | `loadConfig()`, `saveConfig()`, `migrate()` |
@@ -153,7 +158,7 @@ graph TD
 
 | 模块 | 职责 |
 |------|------|
-| **Types** | TypeScript 类型定义 |
+| **Types** | TypeScript 类型定义（site.ts, cli-config.ts, config-detection.ts, credit.ts），包含 LDC 支付相关类型 |
 | **Schemas** | Zod 数据验证规则 |
 | **Constants** | 常量定义 |
 | **Utils** | 共享工具函数 |
@@ -181,6 +186,10 @@ graph TD
 - `backup:import` - 导入备份
 - `config:load` - 加载配置
 - `config:save` - 保存配置
+- `credit:fetch` - 获取积分数据
+- `credit:login` - 启动登录
+- `credit:logout` - 登出
+- `credit:initiate-recharge` - 发起 LDC 充值
 
 ---
 
@@ -321,6 +330,6 @@ npm run dist         # 打包为 EXE 安装程序
 
 ---
 
-**版本**: 2.1.9  
-**更新日期**: 2025-12-26  
+**版本**: 2.1.11  
+**更新日期**: 2026-01-04  
 **维护者**: API Hub Team

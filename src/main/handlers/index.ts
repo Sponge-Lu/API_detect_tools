@@ -30,6 +30,7 @@ import { registerWebDAVHandlers } from './webdav-handlers';
 import { registerUpdateHandlers } from './update-handlers';
 import { registerCliCompatHandlers } from './cli-compat-handlers';
 import { registerCloseBehaviorHandlers } from './close-behavior-handlers';
+import { registerCreditHandlers } from './credit-handlers';
 import type { CloseBehaviorManager } from '../close-behavior-manager';
 
 interface HandlerDependencies {
@@ -83,6 +84,9 @@ export function registerAllHandlers(deps: HandlerDependencies) {
     registerCloseBehaviorHandlers(closeBehaviorManager);
   }
 
+  // Credit 积分检测相关
+  registerCreditHandlers();
+
   Logger.info('✅ [Handlers] 所有 IPC 处理器已注册');
 }
 
@@ -96,3 +100,4 @@ export * from './webdav-handlers';
 export * from './update-handlers';
 export * from './cli-compat-handlers';
 export * from './close-behavior-handlers';
+export * from './credit-handlers';

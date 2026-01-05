@@ -44,6 +44,7 @@
 | **CliCompatibilityIcons/** | CLI 兼容性图标 | CliIcon, CliIconGroup |
 | **CliConfigStatus/** | CLI 配置状态显示 | CliConfigStatus, CliConfigStatusPanel |
 | **CreateApiKeyDialog/** | API Key 创建对话框 | CreateApiKeyDialog |
+| **CreditPanel/** | Linux Do Credit 积分面板 | CreditPanelCompact |
 
 ---
 
@@ -195,6 +196,24 @@ interface ToastProps {
 - 堆叠显示
 - 动画效果
 
+### CreditPanelCompact 组件
+
+**职责**: Linux Do Credit 积分面板（显示在表头区域）
+
+**Props**:
+```typescript
+interface CreditPanelCompactProps {
+  className?: string;
+}
+```
+
+**特点**:
+- 紧凑显示核心积分数据（基准值、当前分、差值）
+- 点击展开详情弹出面板
+- 展开面板包含完整积分信息和三栏布局（交易记录、收入统计、支出统计）
+- 点击外部自动关闭展开面板
+- 支持登录/登出、刷新、自动刷新配置
+
 ### CliCompatibilityIcons 组件
 
 **职责**: 显示 CLI 工具兼容性图标
@@ -324,5 +343,5 @@ describe('SiteCard', () => {
 
 ---
 
-**版本**: 2.1.9  
-**更新日期**: 2025-12-26
+**版本**: 2.1.10  
+**更新日期**: 2025-12-30

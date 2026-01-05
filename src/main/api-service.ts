@@ -1,7 +1,7 @@
 /**
- * 输入: TokenService (获取 Token), HttpClient (HTTP 请求), RequestManager (请求管理), UnifiedConfigManager (配置管理)
- * 输出: DetectionResult, BalanceInfo, StatusInfo, API 响应数据
- * 定位: 服务层 - 处理所有外部站点的 API 请求，管理请求生命周期和错误处理
+ * 输入: TokenService (获取 Token), HttpClient (HTTP 请求), RequestManager (请求管理), UnifiedConfigManager (配置管理), LDC_PAYMENT_NAMES (支付名称常量)
+ * 输出: DetectionResult (含 LDC 支付信息), BalanceInfo, StatusInfo, API 响应数据
+ * 定位: 服务层 - 处理所有外部站点的 API 请求，管理请求生命周期和错误处理，检测 LDC 支付支持
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -10,7 +10,7 @@
  */
 
 import type { SiteConfig } from './types/token';
-import { httpGet } from './utils/http-client';
+import { httpGet, httpPost } from './utils/http-client';
 import { requestManager, RequestManager } from './utils/request-manager';
 import { getAllUserIdHeaders } from '../shared/utils/headers';
 import Logger from './utils/logger';
@@ -20,6 +20,13 @@ import {
   aggregateUsageData as sharedAggregateUsageData,
   type LogItem,
 } from '../shared/utils/log-filter';
+import type {
+  TopupInfoApiResponse,
+  AmountApiResponse,
+  PayMethod,
+  LdcPaymentInfo,
+} from '../shared/types/site';
+import { LDC_PAYMENT_NAMES } from '../shared/constants';
 
 interface DetectionResult {
   name: string;
@@ -40,6 +47,10 @@ interface DetectionResult {
   userGroups?: Record<string, { desc: string; ratio: number }>;
   modelPricing?: any;
   lastRefresh?: number; // 最后刷新时间
+  // LDC 支付信息
+  ldcPaymentSupported?: boolean; // 是否支持 LDC 支付
+  ldcExchangeRate?: string; // 兑换比例（LDC:站点余额）
+  ldcPaymentType?: string; // 支付方式类型，如 "epay"
 }
 
 // 今日使用统计
@@ -207,6 +218,25 @@ export class ApiService {
         }
       }
 
+      // 检测是否支持 LDC 支付
+      let ldcPaymentSupported = false;
+      let ldcExchangeRate: string | undefined = undefined;
+      let ldcPaymentType: string | undefined = undefined;
+
+      try {
+        Logger.info('💰 [ApiService] 开始 LDC 支付检测...');
+        const ldcPaymentInfo = await this.detectLdcPayment(site, timeout, sharedPage);
+        ldcPaymentSupported = ldcPaymentInfo.ldcPaymentSupported;
+        ldcExchangeRate = ldcPaymentInfo.ldcExchangeRate;
+        ldcPaymentType = ldcPaymentInfo.ldcPaymentType;
+        Logger.info(
+          `✅ [ApiService] LDC 支付检测完成: 支持=${ldcPaymentSupported}, 比例=${ldcExchangeRate || '未知'}, 类型=${ldcPaymentType || '未知'}`
+        );
+      } catch (error: any) {
+        Logger.info('⚠️ [ApiService] LDC 支付检测失败:', error.message);
+        // 检测失败不影响整体检测流程
+      }
+
       const result = {
         name: site.name,
         url: site.url,
@@ -225,6 +255,9 @@ export class ApiService {
         userGroups,
         modelPricing,
         lastRefresh: Date.now(), // 添加最后刷新时间
+        ldcPaymentSupported, // LDC 支付支持状态
+        ldcExchangeRate, // LDC 兑换比例
+        ldcPaymentType, // LDC 支付方式类型
       };
 
       // 保存缓存数据到统一配置（成功时）
@@ -678,7 +711,7 @@ export class ApiService {
                 requestHeaders: Record<string, string>,
                 additionalHeaders: Record<string, string>
               ) => {
-                // 构建完整的请求头（包含所有User-ID头）
+                // 构建完整的请求头（包含所有User-ID头和Authorization）
                 const fullHeaders: Record<string, string> = {
                   ...requestHeaders,
                   ...additionalHeaders,
@@ -1303,6 +1336,122 @@ export class ApiService {
   }
 
   /**
+   * 检测站点是否支持 LDC 支付
+   * @param site 站点配置
+   * @param timeout 超时时间（秒）
+   * @param sharedPage 共享的浏览器页面
+   * @returns LDC 支付信息
+   */
+  private async detectLdcPayment(
+    site: SiteConfig,
+    timeout: number,
+    sharedPage?: any
+  ): Promise<LdcPaymentInfo> {
+    const result: LdcPaymentInfo = {
+      ldcPaymentSupported: false,
+      ldcExchangeRate: undefined,
+      ldcPaymentType: undefined,
+    };
+
+    try {
+      // 步骤1：调用 /api/user/topup/info 检查支付方式
+      const topupInfoUrl = `${site.url.replace(/\/$/, '')}/api/user/topup/info`;
+      const authToken = site.system_token || site.api_key;
+
+      if (!authToken) {
+        Logger.info('⚠️ [ApiService] 缺少认证令牌，跳过 LDC 支付检测');
+        return result;
+      }
+
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${authToken}`,
+        'Content-Type': 'application/json',
+      };
+
+      // 添加 User-ID headers
+      if (site.user_id) {
+        const userIdHeaders = getAllUserIdHeaders(site.user_id);
+        Object.assign(headers, userIdHeaders);
+      }
+
+      try {
+        const topupInfoResult = await this.fetchWithBrowserFallback<TopupInfoApiResponse>(
+          topupInfoUrl,
+          headers,
+          site,
+          timeout,
+          (data: any) => data as TopupInfoApiResponse,
+          sharedPage,
+          { ttl: 60000 } // 缓存1分钟
+        );
+
+        const topupInfo = topupInfoResult.result;
+
+        // 检查 pay_methods 数组中是否有 LDC 支付方式（支持多种名称）
+        const payMethods = topupInfo?.data?.pay_methods || [];
+        Logger.info(
+          `📋 [ApiService] 站点支付方式列表: ${JSON.stringify(payMethods.map((m: PayMethod) => ({ name: m.name, type: m.type })))}`
+        );
+
+        const ldcPayMethod = payMethods.find((method: PayMethod) =>
+          LDC_PAYMENT_NAMES.some(name => method.name?.toLowerCase() === name.toLowerCase())
+        );
+
+        if (ldcPayMethod) {
+          result.ldcPaymentSupported = true;
+          result.ldcPaymentType = ldcPayMethod.type; // 保存支付方式类型
+          Logger.info(`✅ [ApiService] 站点支持 LDC 支付, 类型: ${ldcPayMethod.type}`);
+
+          // 步骤2：调用 /api/user/amount 获取兑换比例（需要 POST 方法，传递 amount 参数）
+          try {
+            const amountUrl = `${site.url.replace(/\/$/, '')}/api/user/amount`;
+            Logger.info('📡 [ApiService] 发起 POST 请求获取兑换比例:', amountUrl);
+
+            // API 需要传递 amount 参数，传递 1 来获取 1 单位的兑换比例
+            const amountResponse = await httpPost(
+              amountUrl,
+              { amount: 1 },
+              {
+                headers,
+                timeout: timeout * 1000,
+              }
+            );
+
+            Logger.info(
+              '📦 [ApiService] /api/user/amount 原始响应:',
+              JSON.stringify(amountResponse.data)
+            );
+
+            const amountData = amountResponse.data as AmountApiResponse;
+            // 检查响应是否成功（success 不为 false 且 message 不是 error）
+            if (amountData?.data && amountData.message !== 'error') {
+              result.ldcExchangeRate = amountData.data;
+              Logger.info(`✅ [ApiService] LDC 兑换比例: ${result.ldcExchangeRate}`);
+            } else {
+              Logger.warn(
+                '⚠️ [ApiService] 获取兑换比例失败:',
+                amountData?.data || amountData?.message
+              );
+            }
+          } catch (amountError: any) {
+            Logger.warn('⚠️ [ApiService] 获取 LDC 兑换比例失败:', amountError.message);
+            // 兑换比例获取失败不影响支付支持状态
+          }
+        } else {
+          Logger.info('ℹ️ [ApiService] 站点不支持 LDC 支付');
+        }
+      } catch (topupError: any) {
+        Logger.info('⚠️ [ApiService] 获取充值信息失败:', topupError.message);
+        // topup/info 接口失败，设置为不支持
+      }
+    } catch (error: any) {
+      Logger.error('❌ [ApiService] LDC 支付检测异常:', error.message);
+    }
+
+    return result;
+  }
+
+  /**
    * 保存缓存显示数据到统一配置
    */
   private async saveCachedDisplayData(
@@ -1333,6 +1482,10 @@ export class ApiService {
         model_pricing: detectionResult.modelPricing,
         last_refresh: Date.now(),
         can_check_in: detectionResult.can_check_in,
+        // LDC 支付信息
+        ldc_payment_supported: detectionResult.ldcPaymentSupported,
+        ldc_exchange_rate: detectionResult.ldcExchangeRate,
+        ldc_payment_type: detectionResult.ldcPaymentType,
       };
 
       // 更新站点缓存

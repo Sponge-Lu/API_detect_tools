@@ -65,7 +65,9 @@
 | :--- | :---: | :--- | :--- |
 | `/api/user/topup` | POST | 兑换码充值 | 全部 |
 | `/api/user/topup/self` | GET | 充值记录 | new-api |
-| `/api/user/topup/info` | GET | 充值信息 | new-api |
+| `/api/user/topup/info` | GET | 充值信息（含支付方式列表） | new-api |
+| `/api/user/amount` | POST | 获取 LDC 兑换比例 | new-api (支持 LDC 支付的站点) |
+| `/api/user/pay` | POST | 发起 LDC 充值请求 | new-api (支持 LDC 支付的站点) |
 
 ### 4.3 仪表盘 (需用户认证)
 

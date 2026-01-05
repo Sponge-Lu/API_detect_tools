@@ -21,7 +21,7 @@
 
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
-| **SiteListHeader.tsx** | 列表头部主组件 | `SiteListHeader` 组件 |
+| **SiteListHeader.tsx** | 列表头部主组件，显示列标题（站点、余额、消费、Token、RPM/TPM、模型数、更新时间、CLI兼容性、LDC支付） | `SiteListHeader` 组件 |
 | **SearchBar.tsx** | 搜索框 | `SearchBar` 组件 |
 | **FilterBar.tsx** | 筛选栏 | `FilterBar` 组件 |
 | **SortMenu.tsx** | 排序菜单 | `SortMenu` 组件 |
@@ -34,5 +34,5 @@
 
 ---
 
-**版本**: 2.1.8  
-**更新日期**: 2025-12-24
+**版本**: 2.1.11  
+**更新日期**: 2025-12-30

@@ -161,7 +161,18 @@ export const DEFAULT_COLUMN_WIDTHS = [
   50, // TPM
   60, // 模型数
   80, // 更新时间
-  115, // CLI兼容性（配置按钮、测试按钮、CLI 图标）
+  170, // CLI兼容性（配置按钮、测试按钮、CLI 图标）
+  65, // LDC 支付
+] as const;
+
+/** LDC 支付方式名称匹配列表（不同站点可能使用不同名称） */
+export const LDC_PAYMENT_NAMES = [
+  'Linuxdo Credit',
+  'LinuxDo Credit',
+  'Linux Do Credit',
+  'LDC',
+  'linuxdo credit',
+  'linux do credit',
 ] as const;
 
 /** 列宽最小值 */

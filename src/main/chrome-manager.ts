@@ -1,7 +1,13 @@
 ﻿/**
  * 输入: Puppeteer (浏览器自动化), Electron app (应用路径), Logger (日志记录)
- * 输出: Browser 实例, Page 实例, LocalStorageData, 自动登录结果
+ * 输出: Browser 实例, Page 实例, LocalStorageData (含签到状态), 自动登录结果
  * 定位: 基础设施层 - 管理 Chrome 浏览器自动化，处理自动登录和数据提取
+ *
+ * LocalStorageData 签到字段支持两种站点类型:
+ * - Veloera: check_in_enabled, can_check_in
+ * - New API: checkin_enabled, checkin.stats.checked_in_today (取反)
+ *
+ * cleanupSessionFiles 清理的目录包括 Cookies，用于解决旧 Cookie 导致的 401 问题
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -92,7 +98,7 @@ export class ChromeManager {
         }
 
         // 延迟5秒关闭，以便后续检测复用
-        this.cleanupTimer = setTimeout(() => {
+        this.cleanupTimer = setTimeout(async () => {
           if (this.browserRefCount === 0) {
             Logger.info('⏰ [ChromeManager] 引用计数为0，延迟关闭浏览器');
             this.cleanup();
@@ -185,7 +191,7 @@ export class ChromeManager {
 
         // 只有在引用计数为0时才清理
         if (this.browserRefCount === 0) {
-          this.cleanup();
+          await this.cleanup();
         }
         await new Promise(resolve => setTimeout(resolve, 1000));
 
@@ -1212,9 +1218,11 @@ export class ChromeManager {
         if (siteInfoStr) {
           try {
             const siteInfo = JSON.parse(siteInfoStr);
-            // 站点是否支持签到（从 /api/status 的 check_in_enabled）
+            // 站点是否支持签到：兼容 Veloera (check_in_enabled) 和 New API (checkin_enabled)
             if (typeof siteInfo.check_in_enabled === 'boolean') {
               data.supportsCheckIn = siteInfo.check_in_enabled;
+            } else if (typeof siteInfo.checkin_enabled === 'boolean') {
+              data.supportsCheckIn = siteInfo.checkin_enabled;
             }
           } catch (error) {
             logParseError('siteInfo', error);
@@ -1239,13 +1247,15 @@ export class ChromeManager {
         if (statusStr) {
           try {
             const status = JSON.parse(statusStr);
-            data.supportsCheckIn = data.supportsCheckIn ?? status.check_in_enabled;
+            // 兼容 Veloera (check_in_enabled) 和 New API (checkin_enabled)
+            data.supportsCheckIn =
+              data.supportsCheckIn ?? status.check_in_enabled ?? status.checkin_enabled;
           } catch (error) {
             logParseError('status', error);
           }
         }
 
-        // 从checkIn对象获取
+        // 从checkIn对象获取（Veloera格式）
         const checkInStr = storage.getItem('checkIn') || storage.getItem('check_in');
         if (checkInStr) {
           try {
@@ -1254,6 +1264,24 @@ export class ChromeManager {
             data.supportsCheckIn = data.supportsCheckIn ?? checkIn.enabled;
           } catch (error) {
             logParseError('checkIn', error);
+          }
+        }
+
+        // 从checkin对象获取（New API格式）
+        const checkinStr = storage.getItem('checkin');
+        if (checkinStr) {
+          try {
+            const checkin = JSON.parse(checkinStr);
+            // New API 格式: { enabled: true, stats: { checked_in_today: boolean } }
+            if (typeof checkin.enabled === 'boolean') {
+              data.supportsCheckIn = data.supportsCheckIn ?? checkin.enabled;
+            }
+            if (checkin.stats && typeof checkin.stats.checked_in_today === 'boolean') {
+              // checked_in_today=false 表示可签到，取反
+              data.canCheckIn = data.canCheckIn ?? !checkin.stats.checked_in_today;
+            }
+          } catch (error) {
+            logParseError('checkin', error);
           }
         }
       } catch (error) {

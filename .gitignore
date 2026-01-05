@@ -37,6 +37,7 @@ secrets*
 *.ini
 .cursorrules
 .kirorules
+.roorules
 
 # Electron
 out/
@@ -45,6 +46,8 @@ out/
 .all-api-hub/
 .one-api-hub/
 .api/
+.linux_do_credit
+LINUX DO Credit.user.js
 
 # 规则
 .cunzhi-memory/

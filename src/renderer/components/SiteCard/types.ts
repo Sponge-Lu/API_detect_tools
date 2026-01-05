@@ -113,6 +113,5 @@ export interface SiteCardActionsProps {
   onDelete: (index: number) => void;
   onCheckIn: (site: SiteConfig) => void;
   onOpenExtraLink: (link: string) => void;
-  onCopyToClipboard: (text: string, label: string) => void;
   onToggleAutoRefresh?: () => void;
 }

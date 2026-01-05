@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 输入: Hooks (useSiteGroups, useAutoRefresh, useSiteDetection), Store (configStore, uiStore), Components (Header, SiteCard, etc)
  * 输出: React 组件树, UI 状态管理, IPC 事件处理
  * 定位: 展示层 - 根组件，管理主布局并协调所有 UI 组件
@@ -14,7 +14,6 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import {
   Server,
   Plus,
-  Play,
   Trash2,
   Pencil,
   XCircle,
@@ -42,6 +41,7 @@ import {
 import type { CliConfig } from '../shared/types/cli-config';
 import { CreateApiKeyDialog } from './components/CreateApiKeyDialog';
 import { ToastContainer } from './components/Toast';
+import { CliConfigStatusPanel } from './components/CliConfigStatus';
 import {
   useTheme,
   useSiteGroups,
@@ -58,6 +58,7 @@ import type { NewApiTokenForm } from './hooks';
 import { getGroupTextColor } from './utils/groupStyle';
 // 从共享的types文件导入并重新导出类型
 import type { SiteConfig, DetectionResult } from '../shared/types/site';
+import type { LdcSiteInfo } from './components/CreditPanel';
 export type { SiteConfig, DetectionResult } from '../shared/types/site';
 
 // 导入 Zustand Store
@@ -193,6 +194,15 @@ declare global {
         }) => Promise<{ success: boolean; error?: string }>;
         minimizeToTray: () => Promise<{ success: boolean; error?: string }>;
         quitApp: () => Promise<{ success: boolean; error?: string }>;
+      };
+      credit?: {
+        fetch: () => Promise<{ success: boolean; data?: any; error?: string }>;
+        login: () => Promise<{ success: boolean; message?: string; error?: string }>;
+        logout: () => Promise<{ success: boolean; error?: string }>;
+        getStatus: () => Promise<{ success: boolean; data?: boolean; error?: string }>;
+        saveConfig: (config: any) => Promise<{ success: boolean; error?: string }>;
+        loadConfig: () => Promise<{ success: boolean; data?: any; error?: string }>;
+        getCached: () => Promise<{ success: boolean; data?: any; error?: string }>;
       };
     };
   }
@@ -567,6 +577,34 @@ function App() {
       },
       showDialog,
     });
+
+  // 计算支持 LDC 支付的站点列表 (用于充值功能)
+  const ldcSites = useMemo((): LdcSiteInfo[] => {
+    if (!config?.sites || !results) return [];
+
+    const sites: LdcSiteInfo[] = [];
+
+    config.sites.forEach(site => {
+      const siteResult = results.find(r => r.name === site.name);
+
+      // 只返回支持 LDC 支付的站点
+      if (siteResult?.ldcPaymentSupported && siteResult?.ldcExchangeRate) {
+        sites.push({
+          name: site.name,
+          url: site.url,
+          exchangeRate: siteResult.ldcExchangeRate,
+          // 直接从站点配置获取 system_token（即 access_token）
+          token: (site as any).system_token,
+          // 添加 userId 用于 User-ID headers
+          userId: site.user_id,
+          // 添加支付方式类型
+          paymentType: siteResult.ldcPaymentType,
+        });
+      }
+    });
+
+    return sites;
+  }, [config?.sites, results]);
 
   // 自动刷新 hook - 管理站点自动刷新定时器
   useAutoRefresh({
@@ -1099,6 +1137,7 @@ function App() {
           saving={saving}
           hasUpdate={updateInfo?.hasUpdate}
           onOpenSettings={() => setShowSettings(true)}
+          ldcSites={ldcSites}
         />
 
         <div className="flex-1 overflow-y-hidden overflow-x-visible flex">
@@ -1138,41 +1177,8 @@ function App() {
                 </button>
               </div>
               <div className="flex items-center gap-3">
-                <div className="relative">
-                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input
-                    value={globalModelSearch}
-                    onChange={e => handleGlobalModelSearchChange(e.target.value)}
-                    placeholder="搜索可用模型（全局）"
-                    className="pl-8 pr-7 py-2 text-sm bg-white/80 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-600 rounded-lg text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-primary-400 shadow-inner"
-                  />
-                  {globalModelSearch && (
-                    <button
-                      onClick={() => handleGlobalModelSearchChange('')}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                      title="清空全局搜索"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-                <button
-                  onClick={handleDetectAllSites}
-                  disabled={detecting || !config || config.sites.length === 0}
-                  className="px-5 py-2 bg-accent-500 hover:bg-accent-600 text-white rounded-lg transition-all flex items-center gap-2 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
-                >
-                  {detecting ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" strokeWidth={2.5} />
-                      检测中...
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-4 h-4" strokeWidth={2.5} />
-                      检测所有站点
-                    </>
-                  )}
-                </button>
+                {/* CLI 配置状态面板 - 显示本地 CLI 工具配置来源 */}
+                <CliConfigStatusPanel compact showRefresh />
               </div>
             </div>
 
@@ -1295,24 +1301,40 @@ function App() {
                       </div>
                     );
                   })}
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-slate-400 dark:text-slate-500">
-                    小提示：分组标签、站点卡片可拖动调整顺序
-                  </span>
+                  {/* 新建分组按钮移到分组标签最后面 (Requirements: 11.2) */}
                   <button
                     onClick={openCreateGroupDialog}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-dashed border-slate-300 dark:border-slate-600 text-[13px] text-slate-600 dark:text-slate-200 hover:border-primary-400 hover:text-primary-500"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-dashed border-slate-300 dark:border-slate-600 text-[13px] text-slate-600 dark:text-slate-200 hover:border-primary-400 hover:text-primary-500"
+                    title="新建分组"
                   >
                     <Plus className="w-3 h-3" />
                     新建分组
                   </button>
                 </div>
+                {/* 搜索可用模型移到右侧 (Requirements: 12.1, 12.2) */}
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    value={globalModelSearch}
+                    onChange={e => handleGlobalModelSearchChange(e.target.value)}
+                    placeholder="搜索可用模型（全局）"
+                    className="pl-8 pr-7 py-2 text-sm bg-white/80 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-600 rounded-lg text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-primary-400 shadow-inner"
+                  />
+                  {globalModelSearch && (
+                    <button
+                      onClick={() => handleGlobalModelSearchChange('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                      title="清空全局搜索"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 
             {/* 站点列表区域：纵向滚动交给内部容器，横向滚动交给整体窗口（根容器 overflow-x-auto） */}
-            <div className="flex-1 overflow-y-auto overflow-x-visible px-4 pb-4 space-y-3">
+            <div className="flex-1 overflow-y-auto overflow-x-visible px-4 pb-4 space-y-3 relative z-0">
               {config.sites.length === 0 ? (
                 <div className="text-center py-16 text-light-text-secondary dark:text-dark-text-secondary">
                   <Server className="w-16 h-16 mx-auto mb-4 opacity-30" strokeWidth={1.5} />
@@ -1342,7 +1364,7 @@ function App() {
               ) : (
                 // 为了在窗口变窄时出现横向滚动条，内部内容设置一个最小宽度（由根容器负责横向滚动）
                 <>
-                  {/* 列表表头（固定在滚动容器顶部）：站点名称 / 状态 / 余额 / 今日消费 / 总Token / 输入 / 输出 / 请求 / RPM / TPM / 模型数 / 更新时间 / CC-CX-Gemini? / 操作 */}
+                  {/* 列表表头（固定在滚动容器顶部）：站点名称 / 状态 / 余额 / 今日消费 / 总Token / 输入 / 输出 / 请求 / RPM / TPM / 模型数 / 更新时间 / CC-CX-Gemini? / LDC / 操作 */}
                   <div className="min-w-[1180px] sticky top-0 z-20 px-4 py-2 bg-gradient-to-r from-emerald-50/60 to-amber-50/60 dark:from-emerald-900/20 dark:to-amber-900/20 backdrop-blur-sm border-b border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-sm font-semibold text-slate-700 dark:text-slate-100">
                     <div
                       className="grid gap-x-1 flex-1 items-center select-none"
@@ -1362,9 +1384,10 @@ function App() {
                           { label: '模型数', field: 'modelCount' },
                           { label: '更新时间', field: 'lastUpdate' },
                           { label: 'CC-CX-Gemini?', field: null },
+                          { label: 'LDC比例', field: null },
                         ] as { label: string; field: SortField | null }[]
                       ).map(({ label, field }, idx) => {
-                        const centerHeader = idx >= 3 && idx <= 11; // 总 Token / 输入 / 输出 / 请求 / RPM / TPM / 模型数 / 更新时间 / CC-CX-Gemini?
+                        const centerHeader = idx >= 3 && idx <= 12; // 总 Token / 输入 / 输出 / 请求 / RPM / TPM / 模型数 / 更新时间 / CC-CX-Gemini? / LDC比例
                         const isActive = field && sortField === field;
                         const isSortable = field !== null;
                         return (
@@ -1406,19 +1429,40 @@ function App() {
                         );
                       })}
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1">
+                      {/* 展开全部按钮 - 对齐到单个站点展开按钮 */}
                       <button
                         onClick={handleToggleAllExpanded}
-                        className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-all mr-[46px]"
+                        className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-all"
                         title={
                           config.sites.every(s => expandedSites.has(s.name))
                             ? '收起全部'
                             : '展开全部'
                         }
                       >
-                        <ChevronsUpDown className="w-4 h-4" />
+                        <ChevronsUpDown className="w-3.5 h-3.5" />
                       </button>
-                      <span className="w-[72px] text-right pr-1">站点操作</span>
+                      {/* 检测所有站点刷新按钮 - 对齐到单个站点刷新按钮 */}
+                      <button
+                        onClick={handleDetectAllSites}
+                        disabled={detecting || !config || config.sites.length === 0}
+                        className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="检测所有站点"
+                      >
+                        {detecting ? (
+                          <Loader2
+                            className="w-3.5 h-3.5 animate-spin text-primary-500"
+                            strokeWidth={2.5}
+                          />
+                        ) : (
+                          <RefreshCw
+                            className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300 hover:text-primary-500"
+                            strokeWidth={2.5}
+                          />
+                        )}
+                      </button>
+                      {/* 占位 - 对应自动刷新、编辑、删除按钮位置 */}
+                      <div className="w-[71px]" />
                     </div>
                   </div>
 

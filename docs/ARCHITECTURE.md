@@ -118,7 +118,7 @@ src/
 主进程的业务逻辑封装在几个核心 Service 类中，实现关注点分离：
 
 - **ApiService**: 处理所有 HTTP 请求，负责站点余额、模型列表、API Key 的获取。内置请求去重和缓存机制。日志统计时自动过滤非模型调用日志，确保今日消费、Token 使用量和请求次数只统计真正的模型调用。
-- **TokenService**: 负责处理 API Key 的创建、删除、权限验证，以及适配不同站点的 Token 协议。
+- **TokenService**: 负责处理 API Key 的创建、删除、权限验证，以及适配不同站点的 Token 协议。同时负责签到功能，支持 Veloera 和 New API 两种站点类型的签到 API 兼容（不同的签到状态检测端点和签到执行端点）。
 - **ChromeManager**: 管理 Puppeteer 实例的生命周期。负责启动浏览器、管理页面、注入脚本、提取 LocalStorage/Cookie 信息。支持浏览器复用和崩溃自动重启。
 - **UnifiedConfigManager**: 负责 `config.json` 的读写，保证配置数据的原子性和一致性。支持前端兼容层，在保存旧格式配置时自动保留 WebDAV 等扩展配置。
 - **WebDAVManager**: 负责 WebDAV 云端备份功能，包括连接测试、备份上传/下载/删除、自动清理旧备份等。使用动态 import 加载 ESM 模块以兼容 Electron 的 CommonJS 环境。
@@ -126,6 +126,7 @@ src/
 - **CliCompatService**: 负责 CLI 兼容性测试功能，支持 Claude Code、Codex、Gemini CLI 三种工具的兼容性检测，通过模拟 API 请求验证站点是否支持特定 CLI 工具。Codex 支持双 API 测试（Chat Completions 和 Responses API），Gemini CLI 支持双端点测试（Native 原生格式和 Proxy OpenAI 兼容格式），测试结果包含详细信息用于配置生成和用户提示。
 - **CliConfigGenerator**: 负责生成 CLI 配置文件内容，支持 Claude Code、Codex 和 Gemini CLI 配置生成，按照 `docs/cli_config_template/` 中的模板格式生成配置。Claude Code 配置包含 HTTPS_PROXY 和 HTTP_PROXY 代理设置。Codex 配置根据双 API 测试结果自动选择 `wire_api` 值并添加测试结果注释。Gemini CLI 配置根据双端点测试结果添加端点说明和使用建议注释。同时提供配置模板函数用于未选择 API Key 和模型时的预览显示。应用配置时采用合并模式，只更新相关配置项，保留用户的其他设置。
 - **CloseBehaviorManager**: 负责窗口关闭行为管理，支持退出应用或最小化到系统托盘。管理用户偏好设置的持久化，创建和管理系统托盘图标及上下文菜单。
+- **CreditService**: 负责 Linux Do Credit 积分查询和充值功能。通过浏览器自动化获取用户在 credit.linux.do 的积分数据（基准值、余额等）和 linux.do 论坛的当前积分。采用 `page.evaluate()` 在浏览器上下文中发起 API 请求，绕过 Cloudflare 保护。支持登录状态检测、积分差值计算、每日统计和交易记录查询。提供 LDC 充值功能，调用站点 `/api/user/pay` 端点获取支付 URL 并在浏览器中打开支付页面。
 
 ### CLI 配置数据存储
 

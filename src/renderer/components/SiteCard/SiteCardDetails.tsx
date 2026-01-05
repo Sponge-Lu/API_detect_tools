@@ -10,7 +10,18 @@
  */
 
 import { useState, useMemo } from 'react';
-import { Plus, Copy, Eye, EyeOff, Trash2, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
+import {
+  Plus,
+  Copy,
+  Eye,
+  EyeOff,
+  Trash2,
+  Loader2,
+  ChevronDown,
+  ChevronUp,
+  Link,
+  Key,
+} from 'lucide-react';
 import type { SiteConfig } from '../../../shared/types/site';
 import type { DetectionResult } from '../../App';
 import { getGroupTextColor, getGroupIcon } from '../../utils/groupStyle';
@@ -131,6 +142,16 @@ export function SiteCardDetails({
   // 模型列表分页状态
   const [showAllModels, setShowAllModels] = useState(false);
 
+  // Access Token 显示状态
+  const [showAccessToken, setShowAccessToken] = useState(false);
+
+  // 脱敏显示 access token
+  const maskAccessToken = (token: string | undefined): string => {
+    if (!token) return '--';
+    if (token.length <= 16) return token.slice(0, 4) + '****' + token.slice(-4);
+    return token.slice(0, 8) + '****' + token.slice(-8);
+  };
+
   // 计算显示的模型列表（有搜索时显示全部匹配结果，否则分页）
   const displayedModels = useMemo(() => {
     const hasSearch = globalModelSearch || modelSearch;
@@ -148,6 +169,58 @@ export function SiteCardDetails({
       className="border-t-2 border-slate-300/60 dark:border-slate-500/50 bg-slate-100/90 dark:bg-slate-950/90 px-3 py-1.5 space-y-1 cursor-default"
       data-no-drag="true"
     >
+      {/* 站点 URL 和 Access Token */}
+      <div className="flex items-center gap-4 py-0.5">
+        {/* 站点 URL */}
+        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+          <Link className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+          <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-shrink-0">
+            URL:
+          </span>
+          <span className="text-xs font-mono text-blue-600 dark:text-blue-400 truncate">
+            {site.url}
+          </span>
+          <button
+            onClick={() => onCopyToClipboard(site.url, 'URL')}
+            className="p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-all flex-shrink-0"
+            title="复制 URL"
+          >
+            <Copy className="w-3 h-3 text-gray-400" />
+          </button>
+        </div>
+
+        {/* Access Token */}
+        {site.system_token && (
+          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+            <Key className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-shrink-0">
+              Token:
+            </span>
+            <span className="text-xs font-mono text-amber-600 dark:text-amber-400 truncate">
+              {showAccessToken ? site.system_token : maskAccessToken(site.system_token)}
+            </span>
+            <button
+              onClick={() => setShowAccessToken(!showAccessToken)}
+              className="p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-all flex-shrink-0"
+              title={showAccessToken ? '隐藏 Token' : '显示 Token'}
+            >
+              {showAccessToken ? (
+                <EyeOff className="w-3 h-3 text-gray-400" />
+              ) : (
+                <Eye className="w-3 h-3 text-gray-400" />
+              )}
+            </button>
+            <button
+              onClick={() => onCopyToClipboard(site.system_token!, 'Access Token')}
+              className="p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-all flex-shrink-0"
+              title="复制 Access Token"
+            >
+              <Copy className="w-3 h-3 text-gray-400" />
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* 用户分组 */}
       {Object.keys(userGroups).length > 0 && (
         <div className="flex items-center gap-1 flex-wrap py-0">

@@ -11,7 +11,6 @@
 
 import {
   ChevronDown,
-  Copy,
   RefreshCw,
   CheckCircle,
   Edit,
@@ -38,7 +37,6 @@ export function SiteCardActions({
   onDelete,
   onCheckIn,
   onOpenExtraLink,
-  onCopyToClipboard,
   onToggleAutoRefresh,
 }: SiteCardActionsProps) {
   return (
@@ -116,15 +114,6 @@ export function SiteCardActions({
         <ChevronDown
           className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
         />
-      </button>
-
-      {/* 复制 URL */}
-      <button
-        onClick={() => onCopyToClipboard(site.url, 'URL')}
-        className="p-1 hover:bg-white/10 rounded transition-all"
-        title="复制URL"
-      >
-        <Copy className="w-3.5 h-3.5 text-gray-400" />
       </button>
 
       {/* 刷新检测 */}

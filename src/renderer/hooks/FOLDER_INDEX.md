@@ -37,6 +37,7 @@
 | **useTheme.ts** | 主题管理 | `{ theme, setTheme, isDark, ... }` |
 | **useUpdate.ts** | 应用更新检查 | `{ hasUpdate, isChecking, checkUpdate, ... }` |
 | **useConfigDetection.ts** | CLI 配置检测 | `{ detection, isLoading, refresh, detect }` |
+| **useCredit.ts** | Linux Do Credit 积分检测 | `{ creditInfo, isLoggedIn, fetchCredit, login, logout, ... }` |
 
 ---
 
@@ -161,6 +162,7 @@ interface UseCheckInReturn {
 - 单个签到
 - 批量签到
 - 签到历史记录
+- 签到失败时根据站点类型打开对应的手动签到页面（Veloera: /app/me, New API: /console/personal）
 
 ### useCliCompatTest
 
@@ -266,6 +268,41 @@ interface UseUpdateReturn {
 - 版本比较
 - 下载更新
 - 更新提示
+
+### useCredit
+
+**职责**: Linux Do Credit 积分检测
+
+**返回值**:
+```typescript
+interface UseCreditReturn {
+  isLoggedIn: boolean;
+  isLoading: boolean;
+  isRefreshing: boolean;
+  error: string | null;
+  creditInfo: CreditInfo | null;
+  config: CreditConfig;
+  dailyStats: DailyStats | null;
+  transactions: TransactionList | null;
+  isLoadingStats: boolean;
+  isLoadingTransactions: boolean;
+  fetchCredit: () => Promise<void>;
+  fetchDailyStats: (days?: number) => Promise<void>;
+  fetchTransactions: (page?: number, pageSize?: number) => Promise<void>;
+  login: () => Promise<void>;
+  logout: () => Promise<void>;
+  updateConfig: (config: Partial<CreditConfig>) => Promise<void>;
+}
+```
+
+**特点**:
+- 积分数据获取
+- 每日统计数据获取
+- 交易记录获取
+- 登录/登出管理
+- 自动刷新（可配置间隔，最小30秒）
+- 页面隐藏时暂停自动刷新
+- 配置持久化
 
 ---
 
@@ -410,5 +447,5 @@ export function useNewFeature(): UseNewFeatureReturn {
 
 ---
 
-**版本**: 2.1.9  
-**更新日期**: 2025-12-26
+**版本**: 2.1.10  
+**更新日期**: 2025-12-30

@@ -1,0 +1,1272 @@
+/**
+ * 杈撳叆: TokenService (鑾峰彇 Token), HttpClient (HTTP 璇锋眰), RequestManager (璇锋眰绠＄悊), UnifiedConfigManager (閰嶇疆绠＄悊)
+ * 杈撳嚭: DetectionResult, BalanceInfo, StatusInfo, API 鍝嶅簲鏁版嵁
+ * 瀹氫綅: 鏈嶅姟灞?- 澶勭悊鎵€鏈夊閮ㄧ珯鐐圭殑 API 璇锋眰锛岀鐞嗚姹傜敓鍛藉懆鏈熷拰閿欒澶勭悊
+ *
+ * 馃攧 鑷紩鐢? 褰撴鏂囦欢鍙樻洿鏃讹紝鏇存柊:
+ * - 鏈枃浠跺ご娉ㄩ噴
+ * - src/main/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
+ */
+
+import type { SiteConfig } from './types/token';
+import { httpGet } from './utils/http-client';
+import { requestManager, RequestManager } from './utils/request-manager';
+import { getAllUserIdHeaders } from '../shared/utils/headers';
+import Logger from './utils/logger';
+import { unifiedConfigManager } from './unified-config-manager';
+import {
+  isModelLog,
+  aggregateUsageData as sharedAggregateUsageData,
+  type LogItem,
+} from '../shared/utils/log-filter';
+
+interface DetectionResult {
+  name: string;
+  url: string;
+  status: string;
+  models: string[];
+  balance?: number;
+  todayUsage?: number; // 浠婃棩娑堣垂锛堢編鍏冿級
+  todayPromptTokens?: number; // 浠婃棩杈撳叆 Token
+  todayCompletionTokens?: number; // 浠婃棩杈撳嚭 Token
+  todayTotalTokens?: number; // 浠婃棩鎬?Token
+  todayRequests?: number; // 浠婃棩璇锋眰娆℃暟
+  error?: string;
+  has_checkin: boolean; // 鏄惁鏀寔绛惧埌鍔熻兘
+  can_check_in?: boolean; // 浠婃棩鏄惁鍙鍒帮紙true=鍙鍒? false=宸茬鍒帮級
+  // 鏂板锛氱紦瀛樼殑鎵╁睍鏁版嵁
+  apiKeys?: any[];
+  userGroups?: Record<string, { desc: string; ratio: number }>;
+  modelPricing?: any;
+  lastRefresh?: number; // 鏈€鍚庡埛鏂版椂闂?}
+
+// 浠婃棩浣跨敤缁熻
+interface TodayUsageStats {
+  todayUsage: number;
+  todayPromptTokens: number;
+  todayCompletionTokens: number;
+  todayTotalTokens: number;
+  todayRequests: number;
+}
+
+// 鏃ュ織鍝嶅簲鎺ュ彛
+interface LogResponse {
+  success: boolean;
+  data: {
+    items: LogItem[];
+    total: number;
+  };
+  message?: string;
+}
+
+export class ApiService {
+  private tokenService: any;
+
+  constructor(tokenService?: any, _tokenStorage?: any) {
+    this.tokenService = tokenService;
+    // tokenStorage 鍙傛暟宸插簾寮冿紝浣跨敤 unifiedConfigManager 鏇夸唬
+  }
+
+  async detectSite(
+    site: SiteConfig,
+    timeout: number,
+    quickRefresh: boolean = false,
+    cachedData?: DetectionResult,
+    forceAcceptEmpty: boolean = false
+  ): Promise<DetectionResult> {
+    let sharedPage: any = null;
+    let pageRelease: (() => void) | undefined = undefined;
+    let balancePageRelease: (() => void) | undefined = undefined;
+
+    try {
+      // 鑾峰彇妯″瀷鍒楄〃锛堝彲鑳戒細鍒涘缓娴忚鍣ㄩ〉闈級
+      const modelsResult = await this.getModels(site, timeout, forceAcceptEmpty);
+      const models = modelsResult.models;
+      sharedPage = modelsResult.page;
+      pageRelease = modelsResult.pageRelease;
+
+      // 濡傛灉鍒涘缓浜嗘祻瑙堝櫒椤甸潰锛岀‘淇滳loudflare楠岃瘉瀹屾垚
+      if (sharedPage) {
+        Logger.info('馃洝锔?[ApiService] 妫€娴嬪埌浣跨敤娴忚鍣ㄩ〉闈紝纭繚Cloudflare楠岃瘉瀹屾垚...');
+        await this.waitForCloudflareChallenge(sharedPage, 600000);
+      }
+
+      // 鑾峰彇浣欓鍜屼粖鏃ユ秷璐癸紝澶嶇敤娴忚鍣ㄩ〉闈?      const balanceData = await this.getBalanceAndUsage(site, timeout, sharedPage);
+
+      // 濡傛灉 getBalanceAndUsage 鍒涘缓浜嗘柊鐨勬祻瑙堝櫒椤甸潰锛岄渶瑕佸湪鏈€鍚庨噴鏀?      balancePageRelease = balanceData?.pageRelease;
+
+      // 鑾峰彇鎵╁睍鏁版嵁锛屽鐢ㄦ祻瑙堝櫒椤甸潰
+      let apiKeys, userGroups, modelPricing;
+
+      if (this.tokenService && site.system_token && site.user_id) {
+        try {
+          Logger.info('馃摝 [ApiService] 鑾峰彇鎵╁睍鏁版嵁...');
+
+          // 骞惰鑾峰彇鎵€鏈夋墿灞曟暟鎹紝浼犲叆鍏变韩鐨勬祻瑙堝櫒椤甸潰
+          const [apiKeysResult, userGroupsResult, modelPricingResult] = await Promise.allSettled([
+            this.tokenService.fetchApiTokens(
+              site.url,
+              parseInt(site.user_id),
+              site.system_token,
+              sharedPage
+            ),
+            this.tokenService.fetchUserGroups(
+              site.url,
+              parseInt(site.user_id),
+              site.system_token,
+              sharedPage
+            ),
+            this.tokenService.fetchModelPricing(
+              site.url,
+              parseInt(site.user_id),
+              site.system_token,
+              sharedPage
+            ),
+          ]);
+
+          if (apiKeysResult.status === 'fulfilled' && apiKeysResult.value) {
+            apiKeys = apiKeysResult.value;
+            Logger.info(`鉁?[ApiService] 鑾峰彇鍒?${apiKeys?.length || 0} 涓狝PI Keys`);
+          }
+
+          if (userGroupsResult.status === 'fulfilled' && userGroupsResult.value) {
+            userGroups = userGroupsResult.value;
+            Logger.info(
+              `鉁?[ApiService] 鑾峰彇鍒?${Object.keys(userGroups || {}).length} 涓敤鎴峰垎缁刞
+            );
+          }
+
+          if (modelPricingResult.status === 'fulfilled' && modelPricingResult.value) {
+            modelPricing = modelPricingResult.value;
+            Logger.info(`鉁?[ApiService] 鑾峰彇鍒版ā鍨嬪畾浠蜂俊鎭痐);
+          }
+        } catch (error: any) {
+          Logger.error('鈿狅笍 [ApiService] 鑾峰彇鎵╁睍鏁版嵁澶辫触:', error.message);
+        }
+      }
+
+      Logger.info('馃摛 [ApiService] 鍑嗗杩斿洖缁撴灉:');
+      Logger.info('   - name:', site.name);
+      Logger.info('   - apiKeys:', apiKeys ? `${apiKeys.length}涓猔 : '鏃?);
+      Logger.info('   - userGroups:', userGroups ? `${Object.keys(userGroups).length}涓猔 : '鏃?);
+      Logger.info('   - modelPricing:', modelPricing ? '鏈? : '鏃?);
+
+      // 妫€娴嬫槸鍚︽敮鎸佺鍒板姛鑳斤紙鏅鸿兘涓ゆ妫€娴嬶級
+      let hasCheckin = false;
+      let canCheckIn: boolean | undefined = undefined;
+
+      if (this.tokenService && site.system_token && site.user_id) {
+        try {
+          Logger.info('馃攳 [ApiService] 寮€濮嬬鍒板姛鑳芥娴?..');
+
+          // 姝ラ1锛氭鏌ョ珯鐐归厤缃紙/api/status 鐨?check_in_enabled锛?          let siteConfigSupports = false;
+
+          if (site.force_enable_checkin) {
+            // 鐢ㄦ埛寮哄埗鍚敤锛岃烦杩囨墍鏈夋鏌?            Logger.info('鈿欙笍 [ApiService] 鐢ㄦ埛寮哄埗鍚敤绛惧埌锛岃烦杩囩珯鐐归厤缃鏌?);
+            siteConfigSupports = true;
+          } else {
+            // 妫€鏌ョ珯鐐归厤缃紙浼犲叆鍏变韩椤甸潰浠ョ粫杩嘋loudflare锛?            siteConfigSupports = await this.tokenService.checkSiteSupportsCheckIn(
+              site.url,
+              sharedPage
+            );
+          }
+
+          // 姝ラ2锛氳幏鍙栫鍒扮姸鎬侊紙浠呭綋绔欑偣閰嶇疆鏀寔鎴栫敤鎴峰己鍒跺惎鐢ㄦ椂锛?          if (siteConfigSupports) {
+            // 绔欑偣閰嶇疆鏀寔绛惧埌锛堟垨鐢ㄦ埛寮哄埗鍚敤锛夛紝鑾峰彇绛惧埌鐘舵€?            const checkInStatus = await this.tokenService.fetchCheckInStatus(
+              site.url,
+              parseInt(site.user_id),
+              site.system_token,
+              sharedPage // 浼犲叆鍏变韩椤甸潰浠ョ粫杩嘋loudflare
+            );
+
+            // 濡傛灉绛惧埌鐘舵€佹帴鍙ｈ繑鍥炰簡鏈夋晥鏁版嵁
+            if (checkInStatus !== undefined) {
+              hasCheckin = true;
+              canCheckIn = checkInStatus;
+              Logger.info(`鉁?[ApiService] 绛惧埌鍔熻兘妫€娴? 鏀寔=${hasCheckin}, 鍙鍒?${canCheckIn}`);
+            } else {
+              // 绛惧埌鐘舵€佹帴鍙ｄ笉鍙敤
+              Logger.info('鈿狅笍 [ApiService] 绔欑偣閰嶇疆鏀寔绛惧埌锛屼絾绛惧埌鐘舵€佹帴鍙ｄ笉鍙敤');
+            }
+          } else {
+            // 绔欑偣閰嶇疆涓嶆敮鎸佺鍒帮紝涓旂敤鎴锋湭寮哄埗鍚敤
+            Logger.info('鈩癸笍 [ApiService] 绔欑偣涓嶆敮鎸佺鍒板姛鑳?(check_in_enabled=false)');
+            Logger.info('馃挕 [ApiService] 濡傞渶寮哄埗鍚敤锛岃鍦ㄧ珯鐐归厤缃腑鍕鹃€?寮哄埗鍚敤绛惧埌"');
+          }
+        } catch (error: any) {
+          Logger.info('鈿狅笍 [ApiService] 绛惧埌鍔熻兘妫€娴嬪け璐?', error.message);
+        }
+      }
+
+      const result = {
+        name: site.name,
+        url: site.url,
+        status: '鎴愬姛',
+        models,
+        balance: balanceData?.balance,
+        todayUsage: balanceData?.todayUsage,
+        todayPromptTokens: balanceData?.todayPromptTokens,
+        todayCompletionTokens: balanceData?.todayCompletionTokens,
+        todayTotalTokens: balanceData?.todayTotalTokens,
+        todayRequests: balanceData?.todayRequests,
+        error: undefined,
+        has_checkin: hasCheckin,
+        can_check_in: canCheckIn, // 娣诲姞绛惧埌鐘舵€?        apiKeys,
+        userGroups,
+        modelPricing,
+        lastRefresh: Date.now(), // 娣诲姞鏈€鍚庡埛鏂版椂闂?      };
+
+      // 淇濆瓨缂撳瓨鏁版嵁鍒扮粺涓€閰嶇疆锛堟垚鍔熸椂锛?      if (site.system_token && site.user_id) {
+        try {
+          await this.saveCachedDisplayData(site.url, result);
+        } catch (error: any) {
+          Logger.error('鈿狅笍 [ApiService] 淇濆瓨缂撳瓨鏁版嵁澶辫触:', error.message);
+        }
+      }
+
+      return result;
+    } catch (error: any) {
+      const failedResult: DetectionResult = {
+        name: site.name,
+        url: site.url,
+        status: '澶辫触',
+        models: [],
+        balance: undefined,
+        todayUsage: undefined,
+        error: error.message,
+        has_checkin: false,
+      };
+
+      // 澶辫触鏃朵篃璁板綍妫€娴嬬姸鎬佷笌閿欒淇℃伅锛屼絾涓嶈鐩栧凡鏈夌殑缂撳瓨灞曠ず鏁版嵁
+      if (site.system_token && site.user_id) {
+        try {
+          await this.saveLastDetectionStatus(site.url, failedResult.status, failedResult.error);
+        } catch (e: any) {
+          Logger.error('鈿狅笍 [ApiService] 淇濆瓨澶辫触妫€娴嬬姸鎬佸け璐?', e.message);
+        }
+      }
+
+      return failedResult;
+    } finally {
+      // 閲婃斁娴忚鍣ㄥ紩鐢紙濡傛灉鍒涘缓浜嗛〉闈級
+      if (pageRelease) {
+        try {
+          Logger.info('馃敀 [ApiService] 閲婃斁娴忚鍣ㄥ紩鐢?(getModels)');
+          pageRelease();
+        } catch (error: any) {
+          Logger.error('鈿狅笍 [ApiService] 閲婃斁娴忚鍣ㄥ紩鐢ㄥけ璐?', error.message);
+        }
+      }
+
+      // 閲婃斁 getBalanceAndUsage 鍙兘鍒涘缓鐨勬祻瑙堝櫒寮曠敤
+      if (balancePageRelease) {
+        try {
+          Logger.info('馃敀 [ApiService] 閲婃斁娴忚鍣ㄥ紩鐢?(getBalanceAndUsage)');
+          balancePageRelease();
+        } catch (error: any) {
+          Logger.error('鈿狅笍 [ApiService] 閲婃斁娴忚鍣ㄥ紩鐢ㄥけ璐?', error.message);
+        }
+      }
+
+      // 鉂?涓嶅啀鍦ㄨ繖閲屼富鍔ㄥ叧闂叡浜〉闈紝浜ょ敱 ChromeManager 缁熶竴绠＄悊鐢熷懡鍛ㄦ湡
+      // 鍘熷洜锛氬苟鍙戞娴嬫椂澶氫釜绔欑偣鍙兘澶嶇敤鍚屼竴涓?Page锛岃繃鏃╁叧闂細褰卞搷鍏朵粬姝ｅ湪杩涜鐨勬娴嬩换鍔?      // 濡傛灉闇€瑕佸交搴曞叧闂祻瑙堝櫒锛屽皢鐢?ChromeManager 鐨勫紩鐢ㄨ鏁颁笌 cleanup 瀹氭椂鍣ㄨ礋璐ｆ竻鐞?    }
+  }
+
+  async detectAllSites(
+    config: any,
+    quickRefresh: boolean = false,
+    cachedResults?: DetectionResult[]
+  ): Promise<DetectionResult[]> {
+    const enabledSites = config.sites.filter((s: SiteConfig) => s.enabled);
+    const results: DetectionResult[] = [];
+
+    // 鍒涘缓缂撳瓨鏁版嵁鏄犲皠锛堟寜绔欑偣鍚嶇О绱㈠紩锛?    const cachedMap = new Map<string, DetectionResult>();
+    if (cachedResults) {
+      cachedResults.forEach(result => cachedMap.set(result.name, result));
+    }
+
+    if (config.settings.concurrent) {
+      // 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷突锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟侥筹拷锟斤拷锟斤拷耄拷锟?锟斤拷
+      const maxConcurrent = Math.max(1, config.settings.max_concurrent || 3);
+      let cursor = 0;
+
+      const worker = async () => {
+        while (true) {
+          const index = cursor++;
+          if (index >= enabledSites.length) break;
+          const site = enabledSites[index];
+          const cachedData = cachedMap.get(site.name);
+          results[index] = await this.detectSite(
+            site,
+            config.settings.timeout,
+            quickRefresh,
+            cachedData
+          );
+        }
+      };
+
+      const workerCount = Math.min(maxConcurrent, enabledSites.length);
+      await Promise.all(Array.from({ length: workerCount }, () => worker()));
+      return results;
+    }
+
+    // 锟截憋拷锟斤拷锟? 顺锟斤拷执锟斤拷
+    for (const site of enabledSites) {
+      const cachedData = cachedMap.get(site.name);
+      const result = await this.detectSite(site, config.settings.timeout, quickRefresh, cachedData);
+      results.push(result);
+    }
+    return results;
+  }
+
+  /**
+   * 鏅鸿兘绛夊緟Cloudflare楠岃瘉瀹屾垚
+   * @param page Puppeteer椤甸潰瀵硅薄
+   * @param maxWaitTime 鏈€澶х瓑寰呮椂闂达紙姣锛夛紝榛樿10鍒嗛挓
+   */
+  private async waitForCloudflareChallenge(page: any, maxWaitTime: number = 600000): Promise<void> {
+    Logger.info('馃洝锔?[ApiService] 寮€濮婥loudflare楠岃瘉妫€娴嬶紙鏈€闀跨瓑寰?0鍒嗛挓锛?..');
+
+    const startTime = Date.now();
+    let lastLogTime = startTime;
+
+    try {
+      // 1. 绛夊緟body鍏冪礌鍔犺浇
+      await page.waitForSelector('body', { timeout: 30000 });
+      Logger.info('鉁?[ApiService] 椤甸潰body宸插姞杞?);
+
+      // 2. 寰幆妫€娴嬮獙璇佺姸鎬?      while (Date.now() - startTime < maxWaitTime) {
+        try {
+          // 妫€鏌ラ〉闈㈡槸鍚﹀凡鍏抽棴锛堟祻瑙堝櫒鍏抽棴浼氬鑷撮〉闈㈠叧闂級
+          if (page.isClosed()) {
+            throw new Error('娴忚鍣ㄥ凡鍏抽棴锛屾搷浣滃凡鍙栨秷');
+          }
+
+          // 2.1 妫€娴嬫槸鍚︿粛鍦ㄩ獙璇佷腑
+          const verificationStatus = await page.evaluate(() => {
+            const doc = (globalThis as any).document;
+
+            // 妫€娴婥loudflare楠岃瘉鐩稿叧鍏冪礌
+            const cfChallenge = doc.querySelector('[class*="cf-challenge"]');
+            const cfVerifying = doc.querySelector('[class*="cf-browser-verification"]');
+            const cfLoading = doc.querySelector('[id*="challenge-stage"]');
+            const cfSpinner = doc.querySelector('[class*="cf-spinner"]');
+
+            // 妫€娴嬫爣棰?            const titleCheck =
+              doc.title.includes('Just a moment') ||
+              doc.title.includes('Checking your browser') ||
+              doc.title.includes('Please wait');
+
+            // 妫€娴媌ody class
+            const bodyCheck =
+              doc.body.className.includes('no-js') || doc.body.className.includes('cf-challenge');
+
+            // 妫€娴媔frame锛堟煇浜涚珯鐐逛娇鐢╥frame杩涜楠岃瘉锛?            const iframeCheck = doc.querySelector('iframe[src*="challenges.cloudflare.com"]');
+
+            const isVerifying = !!(
+              cfChallenge ||
+              cfVerifying ||
+              cfLoading ||
+              cfSpinner ||
+              titleCheck ||
+              bodyCheck ||
+              iframeCheck
+            );
+
+            return {
+              isVerifying,
+              title: doc.title,
+              bodyClass: doc.body.className,
+            };
+          });
+
+          // 姣?0绉掕緭鍑轰竴娆℃棩蹇?          const elapsed = Date.now() - startTime;
+          if (elapsed - (lastLogTime - startTime) >= 30000) {
+            Logger.info(
+              `鈴?[ApiService] Cloudflare楠岃瘉涓?.. (${Math.floor(elapsed / 1000)}s / ${Math.floor(maxWaitTime / 1000)}s)`
+            );
+            lastLogTime = Date.now();
+          }
+
+          if (!verificationStatus.isVerifying) {
+            Logger.info('鉁?[ApiService] Cloudflare楠岃瘉宸插畬鎴?);
+            Logger.info(`   - 椤甸潰鏍囬: ${verificationStatus.title}`);
+
+            // 楠岃瘉瀹屾垚鍚庨澶栫瓑寰?绉掔‘淇濋〉闈㈢ǔ瀹?            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            // 绛夊緟缃戠粶绌洪棽锛堟渶澶?绉掞級
+            try {
+              await page.waitForNetworkIdle({ timeout: 3000 });
+              Logger.info('鉁?[ApiService] 缃戠粶宸茬┖闂?);
+            } catch (e) {
+              Logger.info('鈿狅笍 [ApiService] 缃戠粶鏈畬鍏ㄧ┖闂诧紝缁х画鎵ц');
+            }
+
+            return;
+          }
+
+          // 浠嶅湪楠岃瘉涓紝绛夊緟2绉掑悗閲嶆柊妫€娴?          await new Promise(resolve => setTimeout(resolve, 2000));
+        } catch (error: any) {
+          // 濡傛灉鏄祻瑙堝櫒鍏抽棴閿欒锛岀洿鎺ユ姏鍑?          if (error.message.includes('娴忚鍣ㄥ凡鍏抽棴') || error.message.includes('鎿嶄綔宸插彇娑?)) {
+            Logger.info('鈿狅笍 [ApiService] 妫€娴嬪埌娴忚鍣ㄥ凡鍏抽棴锛屽仠姝loudflare楠岃瘉绛夊緟');
+            throw error;
+          }
+
+          // 妫€鏌ラ〉闈㈡槸鍚﹀凡鍏抽棴
+          if (page.isClosed()) {
+            throw new Error('娴忚鍣ㄥ凡鍏抽棴锛屾搷浣滃凡鍙栨秷');
+          }
+
+          Logger.error('鉂?[ApiService] 楠岃瘉妫€娴嬮敊璇?', error.message);
+          // 妫€娴嬮敊璇紝绛夊緟3绉掑悗缁х画
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+      }
+
+      // 瓒呮椂澶勭悊
+      if (Date.now() - startTime >= maxWaitTime) {
+        Logger.info('鈿狅笍 [ApiService] Cloudflare楠岃瘉瓒呮椂锛?0鍒嗛挓锛夛紝缁х画鎵ц');
+      }
+    } catch (error: any) {
+      Logger.error('鉂?[ApiService] Cloudflare绛夊緟澶辫触:', error.message);
+      // 澶辫触涔熺户缁墽琛?    }
+  }
+
+  /**
+   * 妫€娴嬫槸鍚︿负Cloudflare淇濇姢
+   */
+  private isCloudflareProtection(error: any): boolean {
+    if (error.response?.status === 403) {
+      const data = error.response?.data || '';
+      const dataStr = typeof data === 'string' ? data : JSON.stringify(data);
+      // 妫€娴婥loudflare鐗瑰緛
+      if (
+        dataStr.includes('Just a moment') ||
+        dataStr.includes('cf-mitigated') ||
+        error.response?.headers?.['cf-mitigated'] === 'challenge'
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 妫€娴嬪搷搴旀暟鎹槸鍚︿负 Bot Detection 椤甸潰锛堣繑鍥?00浣嗗唴瀹规槸HTML锛?   */
+  private isBotDetectionPage(data: any): boolean {
+    if (typeof data === 'string') {
+      const lowerData = data.toLowerCase();
+      // 妫€娴嬪父瑙佺殑 Bot Detection 鐗瑰緛
+      return (
+        lowerData.includes('<!doctype html') ||
+        lowerData.includes('<html') ||
+        lowerData.includes('bot detection') ||
+        lowerData.includes('bunkerweb') ||
+        lowerData.includes('please wait while we check') ||
+        lowerData.includes('checking your browser') ||
+        lowerData.includes('just a moment')
+      );
+    }
+    return false;
+  }
+
+  /**
+   * 鍒ゆ柇HTTP鐘舵€佺爜鏄惁涓鸿嚧鍛介敊璇?   * 瀵逛簬杩欎簺閿欒鐮侊紝缁х画閲嶈瘯鍏跺畠绔偣閫氬父娌℃湁鎰忎箟锛屽彲浠ョ洿鎺ョ粨鏉熷綋鍓嶇珯鐐规娴?   *
+   * 璇存槑锛?   * - 401/403/5xx 鍩烘湰鍙互纭鏄潈闄?鏈嶅姟寮傚父锛岀户缁皾璇曞叾瀹冪鐐规垚鍔熸鐜囨瀬浣?   * - 404 鍦ㄩ儴鍒嗙珯鐐瑰彲鑳借〃绀?褰撳墠绔偣涓嶅瓨鍦紝浣嗗叾瀹冨鐢ㄧ鐐瑰彲鐢?锛屼负鍏煎鎬ц€冭檻涓嶈涓鸿嚧鍛?   */
+  private isFatalHttpStatus(status?: number): boolean {
+    if (!status) return false;
+    const fatalStatuses = [400, 401, 403, 500, 502, 503, 504, 522];
+    return fatalStatuses.includes(status);
+  }
+
+  /**
+   * 鍒ゆ柇鏄惁涓鸿璇?鎺堟潈閿欒锛?01/403锛?   */
+  private isAuthError(error: any): boolean {
+    const status = error?.response?.status;
+    return status === 401 || status === 403;
+  }
+
+  /**
+   * 鍒ゆ柇鏄惁涓鸿瘉涔﹂敊璇紙濡傝瘉涔﹁繃鏈?涓嶅彈淇′换锛?   */
+  private isCertError(error: any): boolean {
+    const code = error?.code;
+    const msg = (error?.message || '').toLowerCase();
+    return (
+      code === 'CERT_HAS_EXPIRED' ||
+      code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' ||
+      msg.includes('certificate has expired') ||
+      msg.includes('certificate expired') ||
+      msg.includes('unable to verify the first certificate')
+    );
+  }
+
+  /**
+   * 涓鸿璇侀敊璇坊鍔犲弸濂芥彁绀?   *
+   * 閿欒鐮佽涔夛細
+   * - 401 Unauthorized: 鏈璇佹垨璁よ瘉澶辨晥锛堢櫥褰曡繃鏈熴€乤ccess_token 澶辨晥锛?   * - 403 Forbidden: 宸茶璇佷絾鏉冮檺涓嶈冻锛堣处鍙疯绂佺敤銆佹棤鏉冭闂璧勬簮锛?   */
+  private formatAuthError(error: any, originalMessage: string): string {
+    const status = error?.response?.status;
+    if (status === 401) {
+      // 401 閫氬父琛ㄧず璁よ瘉澶辨晥锛屽彲鑳芥槸鐧诲綍杩囨湡鎴?access_token 澶辨晥
+      // 寮曞鐢ㄦ埛閲嶆柊鐧诲綍绔欑偣锛岃繖浼氬悓鏃舵洿鏂?Cookie 鍜?access_token
+      return `${originalMessage} (鐧诲綍宸茶繃鏈熸垨鏈櫥褰曪紝璇风偣鍑?閲嶆柊鑾峰彇"鐧诲綍绔欑偣)`;
+    } else if (status === 403) {
+      // 403 琛ㄧず鏉冮檺涓嶈冻锛屽彲鑳芥槸璐﹀彿鐘舵€佸紓甯?      return `${originalMessage} (鏉冮檺涓嶈冻锛岃妫€鏌ヨ处鍙风姸鎬佹槸鍚︽甯?`;
+    }
+    return originalMessage;
+  }
+
+  /**
+   * 鍒ゆ柇鏄惁涓鸿秴鏃堕敊璇?   */
+  private isTimeoutError(error: any): boolean {
+    if (!error) return false;
+    if (error.code === 'ECONNABORTED') return true;
+    const msg = String(error.message || '').toLowerCase();
+    return msg.includes('timeout') && msg.includes('exceeded');
+  }
+
+  /**
+   * 浠呬繚瀛樻渶杩戜竴娆℃娴嬬姸鎬佸拰閿欒淇℃伅锛堜笉鏇存柊灞曠ず鏁版嵁锛?   */
+  private async saveLastDetectionStatus(
+    siteUrl: string,
+    status: string,
+    error?: string
+  ): Promise<void> {
+    try {
+      const site = unifiedConfigManager.getSiteByUrl(siteUrl);
+      if (!site) return;
+      await unifiedConfigManager.updateSite(site.id, {
+        // 鍙互鍦?UnifiedSite 涓坊鍔犺繖浜涘瓧娈碉紝鏆傛椂璺宠繃
+      });
+      Logger.info('鉁?[ApiService] 鏈€杩戜竴娆℃娴嬬姸鎬佸凡淇濆瓨:', { siteUrl, status });
+    } catch (e: any) {
+      Logger.error('鉂?[ApiService] 淇濆瓨鏈€杩戞娴嬬姸鎬佸け璐?', e.message);
+    }
+  }
+
+  /**
+   * 閫氱敤鐨勫甫Cloudflare鍥為€€鐨凥TTP GET璇锋眰
+   * @param url 璇锋眰URL
+   * @param headers 璇锋眰澶?   * @param site 绔欑偣閰嶇疆
+   * @param timeout 瓒呮椂鏃堕棿锛堢锛?   * @param parseResponse 鍝嶅簲瑙ｆ瀽鍑芥暟
+   * @returns 瑙ｆ瀽鍚庣殑鏁版嵁
+   */
+  private async fetchWithBrowserFallback<T>(
+    url: string,
+    headers: Record<string, string>,
+    site: SiteConfig,
+    timeout: number,
+    parseResponse: (data: any) => T,
+    sharedPage?: any,
+    cacheOptions?: { ttl?: number; skipCache?: boolean }
+  ): Promise<{ result: T; page?: any; pageRelease?: () => void }> {
+    Logger.info('馃摗 [ApiService] 鍙戣捣璇锋眰:', url);
+
+    // 鐢熸垚缂撳瓨 key锛堝熀浜?URL 鍜岀敤鎴?ID锛?    const cacheKey = RequestManager.key(url, site.user_id || 'anonymous');
+
+    try {
+      // 浣跨敤 requestManager 鍖呰璇锋眰锛屽疄鐜板幓閲嶅拰缂撳瓨
+      // httpGet 鍦ㄦ墦鍖呯幆澧冭嚜鍔ㄤ娇鐢?Electron net 妯″潡锛圕hromium 缃戠粶鏍堬級
+      const response = await requestManager.request(
+        cacheKey,
+        () => httpGet(url, { timeout: timeout * 1000, headers }),
+        { ttl: cacheOptions?.ttl ?? 30000, skipCache: cacheOptions?.skipCache }
+      );
+
+      // 妫€娴嬫槸鍚﹁繑鍥炰簡 Bot Detection 椤甸潰锛?00 鐘舵€佺爜浣嗗唴瀹规槸 HTML锛?      if (this.isBotDetectionPage(response.data)) {
+        Logger.info('馃洝锔?[ApiService] 妫€娴嬪埌 Bot Detection 椤甸潰锛岄渶瑕佹祻瑙堝櫒楠岃瘉...');
+        throw {
+          isBotDetection: true,
+          message: 'Bot Detection page detected',
+          response: { status: 200, data: response.data },
+        };
+      }
+
+      Logger.info('鉁?[ApiService] axios璇锋眰鎴愬姛');
+      return { result: parseResponse(response.data), page: sharedPage };
+    } catch (error: any) {
+      Logger.error('鉂?[ApiService] axios璇锋眰澶辫触:', {
+        message: error.message,
+        status: error.response?.status,
+      });
+
+      // 绗簩姝ワ細妫€娴嬫槸鍚︿负Cloudflare淇濇姢鎴朆ot Detection
+      const needBrowserFallback =
+        this.isCloudflareProtection(error) || error.isBotDetection === true;
+      if (needBrowserFallback) {
+        Logger.info('馃洝锔?[ApiService] 妫€娴嬪埌Bot/Cloudflare淇濇姢锛屽垏鎹㈠埌娴忚鍣ㄦā寮?..');
+
+        // 纭繚鏈夊繀瑕佺殑璁よ瘉淇℃伅
+        if (!this.tokenService || !site.system_token || !site.user_id) {
+          Logger.error('鉂?[ApiService] 缂哄皯蹇呰鐨勮璇佷俊鎭紝鏃犳硶浣跨敤娴忚鍣ㄦā寮?);
+          throw error;
+        }
+
+        const chromeManager = (this.tokenService as any).chromeManager;
+        if (!chromeManager) {
+          Logger.error('鉂?[ApiService] ChromeManager涓嶅彲鐢?);
+          throw error;
+        }
+
+        try {
+          // 濡傛灉鏈夊叡浜〉闈紝鐩存帴浣跨敤锛涘惁鍒欏垱寤烘柊椤甸潰
+          let page = sharedPage;
+          let pageRelease: (() => void) | null = null;
+          let shouldClosePage = false;
+
+          if (!page) {
+            Logger.info('馃寪 [ApiService] 鍒涘缓鏂版祻瑙堝櫒椤甸潰...');
+            const pageResult = await chromeManager.createPage(site.url);
+            page = pageResult.page;
+            pageRelease = pageResult.release;
+            shouldClosePage = false; // 涓嶅湪杩欓噷鍏抽棴锛岀敱璋冪敤鑰呭喅瀹?
+            // 璋冪敤鏅鸿兘Cloudflare楠岃瘉绛夊緟
+            await this.waitForCloudflareChallenge(page, 600000); // 10鍒嗛挓 = 600绉?          } else {
+            Logger.info('鈾伙笍 [ApiService] 澶嶇敤鍏变韩娴忚鍣ㄩ〉闈?);
+          }
+
+          try {
+            Logger.info('馃摗 [ApiService] 鍦ㄦ祻瑙堝櫒涓皟鐢ˋPI...');
+            // 鍦ㄦ祻瑙堝櫒鐜涓皟鐢ˋPI
+            const userIdHeaders = getAllUserIdHeaders(site.user_id!);
+            const result = await page.evaluate(
+              async (
+                apiUrl: string,
+                requestHeaders: Record<string, string>,
+                additionalHeaders: Record<string, string>
+              ) => {
+                // 鏋勫缓瀹屾暣鐨勮姹傚ご锛堝寘鍚墍鏈塙ser-ID澶达級
+                const fullHeaders: Record<string, string> = {
+                  ...requestHeaders,
+                  ...additionalHeaders,
+                };
+
+                const response = await fetch(apiUrl, {
+                  method: 'GET',
+                  credentials: 'include',
+                  headers: fullHeaders,
+                });
+
+                if (!response.ok) {
+                  throw new Error(`HTTP ${response.status}`);
+                }
+
+                return await response.json();
+              },
+              url,
+              headers,
+              userIdHeaders
+            );
+
+            Logger.info('鉁?[ApiService] 娴忚鍣ㄦā寮忚姹傛垚鍔?);
+            // 杩斿洖椤甸潰鍜岄噴鏀惧嚱鏁帮紙濡傛灉鍒涘缓浜嗘柊椤甸潰锛?            return {
+              result: parseResponse(result),
+              page: shouldClosePage ? undefined : page,
+              pageRelease: pageRelease || undefined,
+            };
+          } catch (evalError) {
+            // 濡傛灉鏄垜浠垱寤虹殑椤甸潰涓旀墽琛屽け璐ワ紝閲婃斁寮曠敤骞跺叧闂〉闈?            if (pageRelease) {
+              pageRelease();
+            }
+            if (shouldClosePage && page) {
+              await page.close();
+            }
+            throw evalError;
+          }
+        } catch (browserError: any) {
+          Logger.error('鉂?[ApiService] 娴忚鍣ㄦā寮忎篃澶辫触:', browserError.message);
+          throw browserError;
+        }
+      }
+
+      // 濡傛灉涓嶆槸Cloudflare淇濇姢锛岀洿鎺ユ姏鍑哄師閿欒
+      throw error;
+    }
+  }
+
+  private async getModels(
+    site: SiteConfig,
+    timeout: number,
+    forceAcceptEmpty: boolean = false
+  ): Promise<{ models: string[]; page?: any; pageRelease?: () => void }> {
+    const hasApiKey = !!site.api_key;
+    const authToken = site.api_key || site.system_token;
+
+    if (!authToken) {
+      Logger.error('鉂?[ApiService] 娌℃湁鍙敤鐨勮璇佷护鐗?);
+      throw new Error('缂哄皯璁よ瘉浠ょ墝');
+    }
+
+    // 浣跨敤api_key鏃剁敤OpenAI鍏煎鎺ュ彛锛屼娇鐢╯ystem_token鏃跺皾璇曞涓敤鎴锋ā鍨嬫帴鍙?    const endpoints = hasApiKey
+      ? ['/v1/models']
+      : [
+          '/api/user/models', // New API, One API
+          '/api/user/available_models', // One API
+          '/api/available_model', // Done Hub (杩斿洖瀵硅薄鏍煎紡)
+        ];
+
+    const headers: any = {
+      Authorization: `Bearer ${authToken}`,
+      'Content-Type': 'application/json',
+    };
+
+    // 濡傛灉浣跨敤system_token锛岄渶瑕佹坊鍔犳墍鏈塙ser-ID headers锛堝吋瀹瑰悇绉嶇珯鐐癸級
+    if (!hasApiKey && site.user_id) {
+      const userIdHeaders = getAllUserIdHeaders(site.user_id);
+      Object.assign(headers, userIdHeaders);
+    }
+
+    // 灏濊瘯鎵€鏈夌鐐?    let lastError: any = null;
+    let sharedPage: any = null;
+    let sharedPageRelease: (() => void) | undefined = undefined;
+    let hasEmptyResponse = false; // 璺熻釜鏄惁鏈夌鐐硅繑鍥炵┖鏁扮粍锛坰ession鍙兘杩囨湡锛?
+    for (const endpoint of endpoints) {
+      const url = `${site.url.replace(/\/$/, '')}${endpoint}`;
+
+      try {
+        Logger.info('馃摗 [ApiService] 灏濊瘯鑾峰彇妯″瀷鍒楄〃:', {
+          url,
+          authMethod: hasApiKey ? 'api_key' : 'system_token (access_token)',
+          endpoint,
+        });
+
+        const result = await this.fetchWithBrowserFallback(
+          url,
+          headers,
+          site,
+          timeout,
+          (data: any) => {
+            // 鎵撳嵃瀹屾暣鍝嶅簲缁撴瀯鐢ㄤ簬璋冭瘯
+            Logger.info('馃摝 [ApiService] 妯″瀷鍒楄〃鍝嶅簲缁撴瀯:', {
+              hasSuccess: 'success' in data,
+              hasData: 'data' in data,
+              isDataArray: Array.isArray(data?.data),
+              dataType: typeof data?.data,
+              topLevelKeys: Object.keys(data || {}),
+              dataKeys: data?.data ? Object.keys(data.data) : [],
+            });
+
+            // 鏌愪簺绔欑偣鍙兘杩斿洖 { success: true, message: "..." } 娌℃湁data瀛楁
+            // 杩欎笉涓€瀹氭槸璁よ瘉闂锛屽彲鑳藉彧鏄绔偣涓嶉€傜敤浜庢绔欑偣绫诲瀷
+            // 杩斿洖绌烘暟缁勶紝缁х画灏濊瘯鍏朵粬绔偣
+            if (!data || !('data' in data)) {
+              Logger.info('鈩癸笍 [ApiService] 鍝嶅簲涓病鏈塪ata瀛楁锛屽皾璇曚笅涓€涓鐐?);
+              return [];
+            }
+
+            // 鏍煎紡1: Done Hub宓屽data { success: true, data: { data: [...], total_count } }
+            if (data?.data?.data && Array.isArray(data.data.data)) {
+              const models = data.data.data.map((m: any) => m.id || m.name || m);
+              Logger.info(
+                `鉁?[ApiService] 鎴愬姛鑾峰彇 ${models.length} 涓ā鍨?(data.data.data鏍煎紡) 鉁卄
+              );
+              return models;
+            }
+
+            // 鏍煎紡2: { success: true, data: [...] } 鎴?{ data: [...] }
+            if (data?.data && Array.isArray(data.data)) {
+              const models = data.data.map((m: any) => m.id || m.name || m);
+              Logger.info(`鉁?[ApiService] 鎴愬姛鑾峰彇 ${models.length} 涓ā鍨?(data鏁扮粍鏍煎紡)`);
+              return models;
+            }
+
+            // 鏍煎紡3: { success: true, data: { models: [...] } }
+            if (data?.data?.models && Array.isArray(data.data.models)) {
+              const models = data.data.models.map((m: any) => m.id || m.name || m);
+              Logger.info(`鉁?[ApiService] 鎴愬姛鑾峰彇 ${models.length} 涓ā鍨?(data.models鏍煎紡)`);
+              return models;
+            }
+
+            // 鏍煎紡4: 鐩存帴鏁扮粍 [...]
+            if (Array.isArray(data)) {
+              const models = data.map((m: any) => m.id || m.name || m);
+              Logger.info(`鉁?[ApiService] 鎴愬姛鑾峰彇 ${models.length} 涓ā鍨?(鐩存帴鏁扮粍鏍煎紡)`);
+              return models;
+            }
+
+            // 鏍煎紡5: { models: [...] } 鐩存帴瀛楁
+            if (data?.models && Array.isArray(data.models)) {
+              const models = data.models.map((m: any) => m.id || m.name || m);
+              Logger.info(`鉁?[ApiService] 鎴愬姛鑾峰彇 ${models.length} 涓ā鍨?(models瀛楁)`);
+              return models;
+            }
+
+            // 鏍煎紡6: Done Hub /api/available_model 瀵硅薄鏍煎紡
+            // { success: true, data: { "ModelName1": {...}, "ModelName2": {...} } }
+            if (
+              data?.success &&
+              data?.data &&
+              typeof data.data === 'object' &&
+              !Array.isArray(data.data)
+            ) {
+              // 妫€鏌ユ槸鍚︿负 Done Hub 鏍煎紡锛堝璞＄殑鍊煎寘鍚?price 鎴?groups 瀛楁锛?              const values = Object.values(data.data);
+              if (values.length > 0) {
+                const firstValue = values[0] as any;
+                if (firstValue && (firstValue.price || firstValue.groups)) {
+                  // 妯″瀷鍚嶇О灏辨槸瀵硅薄鐨?keys
+                  const models = Object.keys(data.data);
+                  Logger.info(
+                    `鉁?[ApiService] 鎴愬姛鑾峰彇 ${models.length} 涓ā鍨?(Done Hub瀵硅薄鏍煎紡)`
+                  );
+                  return models;
+                }
+              }
+            }
+
+            Logger.warn('鈿狅笍 [ApiService] 鏈瘑鍒殑鍝嶅簲鏍煎紡锛岃繑鍥炵┖鏁扮粍');
+            Logger.info('   瀹屾暣鍝嶅簲:', JSON.stringify(data).substring(0, 200));
+            return [];
+          }
+        );
+
+        // 濡傛灉鎴愬姛鑾峰彇鍒版ā鍨嬶紝杩斿洖缁撴灉
+        if (result.result && result.result.length > 0) {
+          return {
+            models: result.result,
+            page: result.page,
+            pageRelease: result.pageRelease,
+          };
+        }
+
+        // 濡傛灉杩斿洖绌烘暟缁勶紝鏍囪骞剁户缁皾璇曚笅涓€涓鐐癸紙涓嶅瓨鍦ㄧ珯鐐规病鏈夋ā鍨嬬殑鎯呭喌锛岀┖鏁扮粍鍙兘鏄痵ession杩囨湡锛?        hasEmptyResponse = true;
+        Logger.info(`鈩癸笍 [ApiService] 绔偣 ${endpoint} 杩斿洖绌烘ā鍨嬪垪琛紝灏濊瘯涓嬩竴涓鐐?..`);
+
+        // 淇濆瓨 page 鍜?pageRelease 浠ヤ究鍚庣画澶嶇敤
+        // 娉ㄦ剰锛氬彧鍦ㄦ湁鏂扮殑 pageRelease 鏃惰鐩栵紝閬垮厤涓㈠け棣栨鍒涘缓椤甸潰鏃剁殑閲婃斁鍑芥暟锛岄槻姝㈠紩鐢ㄨ鏁版硠婕?        if (result.page) {
+          sharedPage = result.page;
+        }
+        if (result.pageRelease) {
+          sharedPageRelease = result.pageRelease;
+        }
+      } catch (error: any) {
+        Logger.warn(`鈿狅笍 [ApiService] 绔偣 ${endpoint} 澶辫触:`, error.message);
+        lastError = error;
+        // 缁х画灏濊瘯涓嬩竴涓鐐癸紝涓嶆彁鍓嶇粓姝?        continue;
+      }
+    }
+
+    // 鎵€鏈夌鐐归兘灏濊瘯瀹屾瘯锛岀患鍚堝垽鏂粨鏋?    // 浼樺厛澶勭悊绌哄搷搴旓紙涓嶅瓨鍦ㄧ珯鐐规病鏈夋ā鍨嬬殑鎯呭喌锛岀┖鏁扮粍鎰忓懗鐫€session杩囨湡锛?    // 浣嗗鏋?forceAcceptEmpty 涓?true锛屽垯鎺ュ彈绌烘暟鎹紙鐢ㄦ埛纭绔欑偣纭疄娌℃湁妯″瀷锛?    if (hasEmptyResponse && !forceAcceptEmpty) {
+      Logger.error('鉂?[ApiService] 妯″瀷鎺ュ彛杩斿洖绌烘暟缁勶紝鍙兘鏄痵ession杩囨湡');
+      throw new Error('妯″瀷鎺ュ彛杩斿洖绌烘暟鎹?(鐧诲綍鍙兘宸茶繃鏈燂紝璇风偣鍑?閲嶆柊鑾峰彇"鐧诲綍绔欑偣)');
+    }
+
+    // 寮哄埗鎺ュ彈绌烘暟鎹ā寮忥細杩斿洖绌烘暟缁勪綔涓烘垚鍔熺粨鏋?    if (hasEmptyResponse && forceAcceptEmpty) {
+      Logger.info('鈩癸笍 [ApiService] 寮哄埗鎺ュ彈绌烘暟鎹ā寮忥細妯″瀷鍒楄〃涓虹┖');
+      return { models: [], page: sharedPage, pageRelease: sharedPageRelease };
+    }
+
+    // 鎵€鏈夌鐐归兘鎶涘嚭閿欒
+    if (lastError) {
+      Logger.error('鉂?[ApiService] 鎵€鏈夋ā鍨嬫帴鍙ｉ兘澶辫触');
+      let baseMessage = `妯″瀷鎺ュ彛璇锋眰澶辫触: ${lastError.message || lastError}`;
+      if (this.isCertError(lastError)) {
+        baseMessage += ' (璇佷功閿欒锛岀珯鐐?HTTPS 璇佷功鍙兘宸茶繃鏈熸垨涓嶅彈淇′换)';
+      } else {
+        baseMessage = this.formatAuthError(lastError, baseMessage);
+      }
+      throw new Error(baseMessage);
+    }
+
+    return { models: [], page: sharedPage, pageRelease: sharedPageRelease };
+  }
+
+  private async getBalanceAndUsage(
+    site: SiteConfig,
+    timeout: number,
+    sharedPage?: any
+  ): Promise<
+    | {
+        balance?: number;
+        todayUsage?: number;
+        todayPromptTokens?: number;
+        todayCompletionTokens?: number;
+        todayTotalTokens?: number;
+        todayRequests?: number;
+        pageRelease?: () => void;
+      }
+    | undefined
+  > {
+    Logger.info('馃挵 [ApiService] 鑾峰彇浣欓鍜屼粖鏃ユ秷璐?..');
+
+    const authToken = site.system_token || site.api_key;
+
+    if (!authToken || !site.user_id) {
+      Logger.warn('鈿狅笍 [ApiService] 缂哄皯璁よ瘉淇℃伅');
+      return undefined;
+    }
+
+    try {
+      // 骞惰鑾峰彇浣欓鍜屼粖鏃ユ秷璐癸紝浼犲叆鍏变韩椤甸潰
+      const [balanceResult, usageStats] = await Promise.all([
+        this.fetchBalance(site, timeout, authToken, sharedPage),
+        this.fetchTodayUsageFromLogs(site, timeout, sharedPage),
+      ]);
+
+      return {
+        balance: balanceResult?.balance,
+        todayUsage: usageStats.todayUsage,
+        todayPromptTokens: usageStats.todayPromptTokens,
+        todayCompletionTokens: usageStats.todayCompletionTokens,
+        todayTotalTokens: usageStats.todayTotalTokens,
+        todayRequests: usageStats.todayRequests,
+        pageRelease: balanceResult?.pageRelease,
+      };
+    } catch (error: any) {
+      Logger.error('鉂?[ApiService] 鑾峰彇浣欓鎴栦粖鏃ユ秷璐瑰け璐?', error.message);
+      // 灏嗛敊璇姏缁欎笂灞傦紝鐢?detectSite 缁撴潫褰撳墠绔欑偣妫€娴嬪苟鍦ㄥ崱鐗囨樉绀洪敊璇俊鎭?      throw new Error(`浣欓/娑堣垂鎺ュ彛璇锋眰澶辫触: ${error.message}`);
+    }
+  }
+
+  /**
+   * 鑾峰彇璐︽埛浣欓锛堢畝鍖栫増锛?   */
+  private async fetchBalance(
+    site: SiteConfig,
+    timeout: number,
+    authToken: string,
+    sharedPage?: any
+  ): Promise<{ balance?: number; pageRelease?: () => void } | undefined> {
+    const endpoints = ['/api/user/self', '/api/user/dashboard'];
+    let lastError: any = null;
+    let pageRelease: (() => void) | undefined = undefined;
+
+    for (const endpoint of endpoints) {
+      try {
+        const url = `${site.url.replace(/\/$/, '')}${endpoint}`;
+        const headers: any = {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+          Pragma: 'no-cache',
+        };
+
+        // 娣诲姞鎵€鏈塙ser-ID澶达紙鍏煎鍚勭绔欑偣锛?        const userIdHeaders = getAllUserIdHeaders(site.user_id!);
+        Object.assign(headers, userIdHeaders);
+
+        // 浣跨敤閫氱敤鐨勫甫鍥為€€鐨勮姹傛柟娉曪紝浼犲叆鍏变韩椤甸潰
+        const result = await this.fetchWithBrowserFallback(
+          url,
+          headers,
+          site,
+          timeout,
+          (data: any) => this.extractBalance(data),
+          sharedPage
+        );
+
+        // 淇濆瓨 pageRelease锛堝鏋滄湁锛?        if (result.pageRelease) {
+          pageRelease = result.pageRelease;
+        }
+
+        const balance = result.result;
+
+        if (balance !== undefined) {
+          return { balance, pageRelease };
+        }
+      } catch (error: any) {
+        Logger.info(`鈿狅笍 [ApiService] 绔偣 ${endpoint} 鑾峰彇浣欓澶辫触锛屽皾璇曚笅涓€涓?..`);
+        lastError = error;
+        // 缁х画灏濊瘯涓嬩竴涓鐐癸紝涓嶆彁鍓嶇粓姝?        continue;
+      }
+    }
+
+    // 鎵€鏈夌鐐归兘澶辫触锛屾姏鍑洪敊璇粨鏉熷綋鍓嶇珯鐐规娴?    if (lastError) {
+      Logger.error('鉂?[ApiService] 鎵€鏈変綑棰濇帴鍙ｉ兘澶辫触');
+      let baseMessage = `浣欓鎺ュ彛璇锋眰澶辫触: ${lastError.message || lastError}`;
+      if (this.isCertError(lastError)) {
+        baseMessage += ' (璇佷功閿欒锛岀珯鐐?HTTPS 璇佷功鍙兘宸茶繃鏈熸垨涓嶅彈淇′换)';
+      } else {
+        baseMessage = this.formatAuthError(lastError, baseMessage);
+      }
+      throw new Error(baseMessage);
+    }
+
+    return { balance: undefined, pageRelease };
+  }
+
+  private extractBalance(data: any): number | undefined {
+    // 妫€鏌ユ槸鍚︿负鏃犻檺棰濆害
+    if (data?.data?.unlimited_quota === true) return -1;
+
+    // 澶氳矾寰勫皾璇曪紙鎸変紭鍏堢骇鎺掑簭锛屽弬鑰僡ll-api-hub锛?    const paths = [
+      'data.quota', // 鏈€甯歌 (New API, Veloera)
+      'data.total_available', // One Hub
+      'data.user_info.quota', // 宓屽鏍煎紡
+      'data.balance', // 鏌愪簺绔欑偣
+      'data.remain_quota', // 鍓╀綑棰濆害
+      'data.total_balance', // 鎬讳綑棰?      'data.available_quota', // 鍙敤棰濆害
+      'quota', // 鐩存帴瀛楁
+      'balance', // 鐩存帴瀛楁
+    ];
+
+    for (const path of paths) {
+      const value = this.getNestedValue(data, path);
+      if (typeof value === 'number' && value !== null && value !== undefined) {
+        // 鏍规嵁鏁板€煎ぇ灏忓垽鏂槸鍚﹂渶瑕佽浆鎹?        // 濡傛灉>1000锛岃涓烘槸浠ュ唴閮ㄥ崟浣嶅瓨鍌紙1 USD = 500000鍗曚綅锛?        const converted = value > 1000 ? value / 500000 : value;
+        Logger.info(`鉁?[ApiService] 浠?${path} 鎻愬彇浣欓: ${converted} (鍘熷鍊? ${value})`);
+        return converted;
+      }
+    }
+
+    Logger.warn('鈿狅笍 [ApiService] 鏈壘鍒颁綑棰濆瓧娈?);
+    return undefined;
+  }
+
+  private extractTodayUsage(data: any): number | undefined {
+    // 鏌ユ壘浠婃棩娑堣垂瀛楁锛堝璺緞灏濊瘯锛?    const paths = [
+      'data.today_quota_consumption', // New API
+      'data.user_info.today_quota_consumption', // 宓屽鏍煎紡
+      'data.today_consumption', // 鏌愪簺绔欑偣
+      'data.today_used', // 鏌愪簺绔欑偣
+      'today_quota_consumption', // 鐩存帴瀛楁
+      'today_consumption', // 鐩存帴瀛楁
+      'today_used', // 鐩存帴瀛楁
+    ];
+
+    for (const path of paths) {
+      const value = this.getNestedValue(data, path);
+      if (typeof value === 'number' && value !== null && value !== undefined) {
+        // 鏍规嵁鏁板€煎ぇ灏忓垽鏂槸鍚﹂渶瑕佽浆鎹?        const converted = value > 1000 ? value / 500000 : value;
+        Logger.info(`鉁?[ApiService] 浠?${path} 鎻愬彇浠婃棩娑堣垂: ${converted} (鍘熷鍊? ${value})`);
+        return converted;
+      }
+    }
+
+    Logger.warn('鈿狅笍 [ApiService] 鏈壘鍒颁粖鏃ユ秷璐瑰瓧娈碉紝杩斿洖0');
+    return 0; // 榛樿杩斿洖0鑰屼笉鏄痷ndefined
+  }
+
+  /**
+   * 鑾峰彇浠婃棩鏃堕棿鎴宠寖鍥达紙UTC+8鏃跺尯锛?   */
+  private getTodayTimestampRange(): { start: number; end: number } {
+    const today = new Date();
+
+    // 浠婃棩寮€濮嬫椂闂存埑
+    today.setHours(0, 0, 0, 0);
+    const start = Math.floor(today.getTime() / 1000);
+
+    // 浠婃棩缁撴潫鏃堕棿鎴?    today.setHours(23, 59, 59, 999);
+    const end = Math.floor(today.getTime() / 1000);
+
+    return { start, end };
+  }
+
+  /**
+   * 鑱氬悎鏃ュ織鏁版嵁璁＄畻浠婃棩娑堣垂鍜?Token 缁熻
+   * 浣跨敤鍏变韩鐨勮仛鍚堝嚱鏁颁互淇濇寔涓€鑷存€?   */
+  private aggregateUsageData(items: LogItem[]): {
+    quota: number;
+    promptTokens: number;
+    completionTokens: number;
+  } {
+    const stats = sharedAggregateUsageData(items);
+    return {
+      quota: stats.quota,
+      promptTokens: stats.promptTokens,
+      completionTokens: stats.completionTokens,
+    };
+  }
+
+  /**
+   * 鑾峰彇浠婃棩娑堣垂鏁版嵁锛堥€氳繃鏃ュ織API锛?   */
+  /**
+   * 閫氳繃鏃ュ織API璁＄畻浠婃棩娑堣垂锛堟洿鍋ュ．鐨勮В鏋愪笌瀹归敊锛?   * - 鍏煎澶氱鍝嶅簲缁撴瀯锛歞ata.items銆乨ata.data銆乨ata.list銆侀《灞傛暟缁勭瓑
+   * - 鍙戠敓鏍煎紡涓嶇銆?04/403/5xx鎴栬秴鏃舵椂涓嶅啀鎶涘嚭閿欒锛岃繑鍥炲凡绱鎴?
+   */
+  private async fetchTodayUsageFromLogs(
+    site: SiteConfig,
+    timeout: number,
+    sharedPage?: any
+  ): Promise<TodayUsageStats> {
+    const emptyStats: TodayUsageStats = {
+      todayUsage: 0,
+      todayPromptTokens: 0,
+      todayCompletionTokens: 0,
+      todayTotalTokens: 0,
+      todayRequests: 0,
+    };
+
+    try {
+      const authToken = site.system_token || site.api_key;
+      if (!authToken || !site.user_id) {
+        Logger.info('鈿狅笍 [ApiService] 缂哄皯璁よ瘉淇℃伅锛岃烦杩囦粖鏃ユ秷璐规煡璇?);
+        return emptyStats;
+      }
+
+      const { start: startTimestamp, end: endTimestamp } = this.getTodayTimestampRange();
+
+      let currentPage = 1;
+      const maxPages = 100;
+      const pageSize = 100; // 姣忛〉100鏉?      let totalQuota = 0;
+      let totalPromptTokens = 0;
+      let totalCompletionTokens = 0;
+      let totalRequests = 0;
+
+      Logger.info(
+        `馃搳 [ApiService] 寮€濮嬫煡璇粖鏃ユ秷璐? ${new Date(startTimestamp * 1000).toLocaleString()} ~ ${new Date(endTimestamp * 1000).toLocaleString()}`
+      );
+
+      // 寰幆鑾峰彇鎵€鏈夊垎椤垫暟鎹?      while (currentPage <= maxPages) {
+        const params = new URLSearchParams({
+          p: currentPage.toString(),
+          page_size: pageSize.toString(),
+          type: '0',
+          token_name: '',
+          model_name: '',
+          start_timestamp: startTimestamp.toString(),
+          end_timestamp: endTimestamp.toString(),
+          group: '',
+        });
+
+        const logUrl = `${site.url.replace(/\/$/, '')}/api/log/self?${params.toString()}`;
+
+        const headers: any = {
+          Authorization: `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+          Pragma: 'no-cache',
+        };
+
+        // 娣诲姞鎵€鏈塙ser-ID澶达紙鍏煎鍚勭绔欑偣锛?        const userIdHeaders = getAllUserIdHeaders(site.user_id!);
+        Object.assign(headers, userIdHeaders);
+
+        try {
+          const result = await this.fetchWithBrowserFallback<LogResponse | any>(
+            logUrl,
+            headers,
+            site,
+            timeout,
+            (data: any) => {
+              const normalize = (resp: any): { items: LogItem[]; total: number } => {
+                if (!resp) return { items: [], total: 0 };
+                const d = resp.data ?? resp;
+                let items: any = [];
+                if (Array.isArray(d)) items = d;
+                else if (Array.isArray(d?.items)) items = d.items;
+                else if (Array.isArray(d?.data)) items = d.data;
+                else if (Array.isArray(d?.list)) items = d.list;
+                else if (Array.isArray(resp?.items)) items = resp.items;
+                const total = (d?.total ?? d?.total_count ?? resp?.total ?? 0) as number;
+                return {
+                  items,
+                  total:
+                    typeof total === 'number' ? total : Array.isArray(items) ? items.length : 0,
+                };
+              };
+              const { items, total } = normalize(data);
+              return { success: true, data: { items, total } } as LogResponse;
+            },
+            sharedPage
+          );
+
+          const logData = result.result as LogResponse;
+          const items = logData.data.items || [];
+
+          // 杩囨护闈炴ā鍨嬫棩蹇楋紝鍙繚鐣欐湁鏁堢殑妯″瀷璋冪敤鏃ュ織
+          const modelLogs = items.filter(isModelLog);
+          const modelLogCount = modelLogs.length;
+
+          const pageStats = this.aggregateUsageData(modelLogs);
+          totalQuota += pageStats.quota;
+          totalPromptTokens += pageStats.promptTokens;
+          totalCompletionTokens += pageStats.completionTokens;
+          totalRequests += modelLogCount;
+
+          const pageConsumption = pageStats.quota / 500000;
+          Logger.info(
+            `馃搫 [ApiService] 绗?{currentPage}椤? ${items.length}鏉¤褰? 妯″瀷鏃ュ織: ${modelLogCount}鏉? 娑堣垂: $${pageConsumption.toFixed(4)}`
+          );
+
+          const totalPages = Math.ceil((logData.data.total || 0) / pageSize);
+          if (currentPage >= totalPages || items.length === 0) {
+            Logger.info(`鉁?[ApiService] 鏃ュ織鏌ヨ瀹屾垚锛屽叡${currentPage}椤礰);
+            break;
+          }
+
+          currentPage++;
+        } catch (error: any) {
+          const status = error?.response?.status;
+          // 濡傛灉鏄涓€椤靛氨閬囧埌401/403璁よ瘉閿欒锛屾姏鍑哄甫鎻愮ず鐨勯敊璇?          if (currentPage === 1 && this.isAuthError(error)) {
+            const baseMessage = `鏃ュ織鎺ュ彛璇锋眰澶辫触: ${error.message || error}`;
+            throw new Error(this.formatAuthError(error, baseMessage));
+          }
+          if (this.isFatalHttpStatus(status) || this.isTimeoutError(error)) {
+            Logger.warn(
+              `鈿狅笍 [ApiService] 鏃ュ織鎺ュ彛涓嶅彲鐢ㄦ垨瓒呮椂(HTTP ${status || 'N/A'})锛岃繑鍥炲凡绱鏁版嵁`
+            );
+            break;
+          }
+          Logger.error(`鉂?[ApiService] 鏃ュ織鏌ヨ寮傚父(绗?{currentPage}椤?:`, error.message);
+          break;
+        }
+      }
+
+      if (currentPage > maxPages) {
+        Logger.info(`鈿狅笍 [ApiService] 杈惧埌鏈€澶у垎椤甸檺鍒?${maxPages}椤?锛屽仠姝㈡煡璇);
+      }
+
+      const todayUsage = totalQuota / 500000;
+      const todayTotalTokens = totalPromptTokens + totalCompletionTokens;
+
+      Logger.info(
+        `馃挵 [ApiService] 浠婃棩缁熻: 娑堣垂=$${todayUsage.toFixed(4)}, 璇锋眰=${totalRequests}, Token=${todayTotalTokens}`
+      );
+
+      return {
+        todayUsage,
+        todayPromptTokens: totalPromptTokens,
+        todayCompletionTokens: totalCompletionTokens,
+        todayTotalTokens,
+        todayRequests: totalRequests,
+      };
+    } catch (error: any) {
+      Logger.warn('鈿狅笍 [ApiService] 浠婃棩娑堣垂鏌ヨ澶辫触锛岃繑鍥?:', error.message);
+      return emptyStats;
+    }
+  }
+
+  private getNestedValue(obj: any, path: string): any {
+    return path.split('.').reduce((current, key) => current?.[key], obj);
+  }
+
+  /**
+   * 淇濆瓨缂撳瓨鏄剧ず鏁版嵁鍒扮粺涓€閰嶇疆
+   */
+  private async saveCachedDisplayData(
+    siteUrl: string,
+    detectionResult: DetectionResult
+  ): Promise<void> {
+    try {
+      const site = unifiedConfigManager.getSiteByUrl(siteUrl);
+      if (!site) {
+        Logger.info('鈿狅笍 [ApiService] 鏈壘鍒板搴旂珯鐐癸紝璺宠繃缂撳瓨淇濆瓨');
+        return;
+      }
+
+      // 鑾峰彇鐜版湁鐨勭紦瀛樻暟鎹紝淇濈暀 cli_compatibility 绛夊瓧娈?      const existingCachedData = site.cached_data || {};
+
+      // 鏋勫缓缂撳瓨鏁版嵁锛屼繚鐣欑幇鏈夌殑 cli_compatibility
+      const cachedData = {
+        ...existingCachedData, // 淇濈暀鐜版湁瀛楁锛堝 cli_compatibility锛?        models: detectionResult.models || [],
+        balance: detectionResult.balance,
+        today_usage: detectionResult.todayUsage,
+        today_prompt_tokens: detectionResult.todayPromptTokens,
+        today_completion_tokens: detectionResult.todayCompletionTokens,
+        today_requests: detectionResult.todayRequests,
+        api_keys: detectionResult.apiKeys,
+        user_groups: detectionResult.userGroups,
+        model_pricing: detectionResult.modelPricing,
+        last_refresh: Date.now(),
+        can_check_in: detectionResult.can_check_in,
+      };
+
+      // 鏇存柊绔欑偣缂撳瓨
+      await unifiedConfigManager.updateSite(site.id, {
+        cached_data: cachedData,
+        has_checkin: detectionResult.has_checkin,
+        last_sync_time: Date.now(),
+      });
+
+      Logger.info('鉁?[ApiService] 缂撳瓨鏁版嵁宸蹭繚瀛樺埌 config.json');
+    } catch (error: any) {
+      Logger.error('鉂?[ApiService] 淇濆瓨缂撳瓨鏁版嵁澶辫触:', error.message);
+    }
+  }
+}

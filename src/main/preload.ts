@@ -199,4 +199,34 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 退出应用
     quitApp: () => ipcRenderer.invoke('close-behavior:quit-app'),
   },
+
+  // Linux Do Credit 积分检测 API
+  credit: {
+    // 获取积分数据
+    fetch: () => ipcRenderer.invoke('credit:fetch'),
+    // 获取每日统计数据
+    fetchDailyStats: (days?: number) => ipcRenderer.invoke('credit:fetch-daily-stats', days),
+    // 获取交易记录
+    fetchTransactions: (page?: number, pageSize?: number) =>
+      ipcRenderer.invoke('credit:fetch-transactions', page, pageSize),
+    // 启动登录
+    login: () => ipcRenderer.invoke('credit:login'),
+    // 登出
+    logout: () => ipcRenderer.invoke('credit:logout'),
+    // 获取登录状态
+    getStatus: () => ipcRenderer.invoke('credit:get-status'),
+    // 保存配置
+    saveConfig: (config: any) => ipcRenderer.invoke('credit:save-config', config),
+    // 加载配置
+    loadConfig: () => ipcRenderer.invoke('credit:load-config'),
+    // 获取缓存数据
+    getCached: () => ipcRenderer.invoke('credit:get-cached'),
+    // 获取缓存的每日统计数据
+    getCachedDailyStats: () => ipcRenderer.invoke('credit:get-cached-daily-stats'),
+    // 获取缓存的交易记录
+    getCachedTransactions: () => ipcRenderer.invoke('credit:get-cached-transactions'),
+    // 发起充值
+    initiateRecharge: (request: { siteUrl: string; amount: number; token: string }) =>
+      ipcRenderer.invoke('credit:initiate-recharge', request),
+  },
 });

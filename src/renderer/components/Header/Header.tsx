@@ -1,7 +1,7 @@
 /**
- * 输入: HeaderProps (保存状态、更新状态、设置回调)
+ * 输入: HeaderProps (保存状态、更新状态、设置回调、LDC 站点列表)
  * 输出: React 组件 (应用头部 UI)
- * 定位: 展示层 - 应用头部组件，包含 Logo、标题、CLI 配置状态、保存状态和设置按钮
+ * 定位: 展示层 - 应用头部组件，包含 Logo、标题、Credit 面板、保存状态和设置按钮
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -11,17 +11,19 @@
 
 import { Settings, Loader2 } from 'lucide-react';
 import Logo from '../../assets/logo.svg';
-import { CliConfigStatusPanel } from '../CliConfigStatus';
+import { CreditPanelCompact, type LdcSiteInfo } from '../CreditPanel';
 
 interface HeaderProps {
   saving: boolean;
   hasUpdate?: boolean;
   onOpenSettings: () => void;
+  /** 支持 LDC 支付的站点列表 */
+  ldcSites?: LdcSiteInfo[];
 }
 
-export function Header({ saving, hasUpdate, onOpenSettings }: HeaderProps) {
+export function Header({ saving, hasUpdate, onOpenSettings, ldcSites = [] }: HeaderProps) {
   return (
-    <header className="bg-white/80 dark:bg-dark-card/80 backdrop-blur-md border-b border-light-border dark:border-dark-border px-4 py-3 shadow-sm">
+    <header className="relative z-[100] bg-white/80 dark:bg-dark-card/80 backdrop-blur-md border-b border-light-border dark:border-dark-border px-4 py-3 shadow-sm">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           {/* Logo */}
@@ -40,8 +42,8 @@ export function Header({ saving, hasUpdate, onOpenSettings }: HeaderProps) {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {/* CLI 配置状态 */}
-          <CliConfigStatusPanel compact showRefresh />
+          {/* Credit 面板 - 显示在设置按钮左侧 */}
+          <CreditPanelCompact ldcSites={ldcSites} />
 
           {saving && (
             <div className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-500/10 text-primary-600 dark:text-primary-400 rounded-lg text-xs border border-primary-500/20">

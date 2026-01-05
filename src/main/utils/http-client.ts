@@ -40,7 +40,11 @@ export async function httpGet<T = any>(
     });
     return { data: res.data, status: res.status };
   } else {
-    const res = await axios.get<T>(url, config);
+    // 开发环境使用 axios，配置 validateStatus 以接收所有状态码
+    const res = await axios.get<T>(url, {
+      ...config,
+      validateStatus: () => true, // 接收所有状态码，不抛出异常
+    });
     return { data: res.data, status: res.status };
   }
 }

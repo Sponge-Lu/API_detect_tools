@@ -1,6 +1,6 @@
 /**
  * 输入: 无 (纯类型定义)
- * 输出: TypeScript 类型和接口 (Site, SiteGroup, SiteStatus, DetectionResult 等)
+ * 输出: TypeScript 类型和接口 (Site, SiteGroup, SiteStatus, DetectionResult, LdcPaymentInfo 等)
  * 定位: 类型定义层 - 定义主进程和渲染进程共享的数据模型
  *
  * 🔄 自引用: 当此文件变更时，更新:
@@ -52,6 +52,45 @@ export interface CliCompatibilityData {
   geminiDetail?: GeminiTestDetail; // Gemini CLI 详细测试结果（native/proxy）
   testedAt: number | null;
   error?: string;
+}
+
+// ============= LDC 支付类型 =============
+
+/** 支付方式 */
+export interface PayMethod {
+  name: string; // 支付方式名称，如 "Linuxdo Credit"
+  type: string; // 支付方式类型，如 "epay"
+}
+
+/** 充值信息 API 响应 - /api/user/topup/info */
+export interface TopupInfoApiResponse {
+  success: boolean;
+  message: string;
+  data: {
+    amount_options: number[]; // 充值金额选项 [10, 20, 50, 100, 200, 500]
+    creem_products: string; // Creem 产品配置
+    discount: Record<string, unknown>; // 折扣配置
+    enable_creem_topup: boolean; // 是否启用 Creem 充值
+    enable_online_topup: boolean; // 是否启用在线充值
+    enable_stripe_topup: boolean; // 是否启用 Stripe 充值
+    min_topup: number; // 最小充值金额
+    pay_methods: PayMethod[]; // 支付方式列表
+    stripe_min_topup: number; // Stripe 最小充值金额
+  };
+}
+
+/** 兑换比例 API 响应 - /api/user/amount */
+export interface AmountApiResponse {
+  success?: boolean;
+  message?: string;
+  data: string; // 兑换比例，如 "10.00" 表示 10 LDC = 1 站点余额
+}
+
+/** LDC 支付信息 */
+export interface LdcPaymentInfo {
+  ldcPaymentSupported: boolean; // 是否支持 LDC 支付
+  ldcExchangeRate?: string; // 兑换比例（LDC:站点余额）
+  ldcPaymentType?: string; // 支付方式类型，如 "epay"
 }
 
 /** 单个 CLI 配置项 */
@@ -122,6 +161,9 @@ export interface UnifiedSite {
     last_refresh: number;
     can_check_in?: boolean;
     cli_compatibility?: CliCompatibilityData;
+    // LDC 支付信息
+    ldc_payment_supported?: boolean; // 是否支持 LDC 支付
+    ldc_exchange_rate?: string; // 兑换比例（LDC:站点余额）
   };
 
   // === 元数据 ===
@@ -284,6 +326,10 @@ export interface DetectionResult {
   userGroups?: Record<string, UserGroupInfo>;
   modelPricing?: ModelPricingData;
   lastRefresh?: number; // 最后刷新时间
+  // LDC 支付信息
+  ldcPaymentSupported?: boolean; // 是否支持 LDC 支付
+  ldcExchangeRate?: string; // 兑换比例（LDC:站点余额）
+  ldcPaymentType?: string; // 支付方式类型，如 "epay"
 }
 
 // ============= 辅助类型 =============
@@ -329,6 +375,10 @@ export interface CachedDisplayData {
   models?: string[];
   lastRefresh: number;
   can_check_in?: boolean;
+  // LDC 支付信息
+  ldcPaymentSupported?: boolean; // 是否支持 LDC 支付
+  ldcExchangeRate?: string; // 兑换比例（LDC:站点余额）
+  ldcPaymentType?: string; // 支付方式类型，如 "epay"
 }
 
 // ============= API 响应类型 =============
