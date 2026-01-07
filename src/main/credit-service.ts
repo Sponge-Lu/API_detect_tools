@@ -671,7 +671,7 @@ export class CreditService {
         const startTime = Date.now();
 
         while (Date.now() - startTime < maxWaitTime) {
-          // 检查是否已登录（通过检查 API 响应）
+          // 检查是否已登录（通过直接调用 API 验证，不依赖特定 cookie 名称）
           try {
             // 获取 credit.linux.do 域名的所有 cookies（包括 .linux.do 的跨域 cookies）
             const cookies = await page.cookies('https://credit.linux.do');
@@ -681,17 +681,14 @@ export class CreditService {
             const cookieDetails = cookies.map((c: any) => `${c.name}(${c.domain})`).join(', ');
             Logger.info(`🍪 [CreditService] Cookies: ${cookieDetails}`);
 
-            // 查找必要的 cookies：session cookie 和 cf_clearance (Cloudflare)
-            const sessionCookie = cookies.find((c: any) => c.name === 'linux_do_credit_session_id');
+            // 查找 cf_clearance cookie (Cloudflare 验证通过的标志)
             const cfClearanceCookie = cookies.find((c: any) => c.name === 'cf_clearance');
 
-            // 必须同时有 session cookie 和 cf_clearance cookie
-            if (sessionCookie && cfClearanceCookie) {
+            // 只要有 cf_clearance cookie，就尝试通过 API 验证登录状态
+            // 不再依赖特定的 session cookie 名称，因为网站可能使用不同的 cookie 名称
+            if (cfClearanceCookie) {
               Logger.info(
-                `🍪 [CreditService] 找到 session cookie: ${sessionCookie.name}, domain: ${sessionCookie.domain}`
-              );
-              Logger.info(
-                `🍪 [CreditService] 找到 cf_clearance cookie: ${cfClearanceCookie.name}, domain: ${cfClearanceCookie.domain}`
+                `🍪 [CreditService] 找到 cf_clearance cookie, 尝试通过 API 验证登录状态...`
               );
 
               // 构建 cookie 字符串（包含所有 cookies）
@@ -749,6 +746,9 @@ export class CreditService {
 
                 // 【第一阶段】在 credit.linux.do 页面获取每日统计和交易记录
                 // 必须在导航到 linux.do 之前完成，否则跨域无法访问 credit.linux.do API
+                // 等待页面稳定，确保 Cloudflare 验证完全通过
+                await new Promise(resolve => setTimeout(resolve, 1000));
+
                 Logger.info('📡 [CreditService] 获取每日统计数据...');
                 let dailyStats: DailyStats | null = null;
                 let transactions: TransactionList | null = null;
@@ -793,7 +793,8 @@ export class CreditService {
                 }
 
                 try {
-                  // 获取交易记录
+                  // 获取交易记录（等待一下确保 Cloudflare 验证完全通过）
+                  await new Promise(resolve => setTimeout(resolve, 500));
                   Logger.info('📡 [CreditService] 获取交易记录...');
                   const transactionsResult = (await page.evaluate(
                     async (url: string, body: { page: number; page_size: number }) => {
@@ -804,6 +805,8 @@ export class CreditService {
                           headers: {
                             Accept: 'application/json, text/plain, */*',
                             'Content-Type': 'application/json',
+                            Origin: 'https://credit.linux.do',
+                            Referer: 'https://credit.linux.do/home',
                           },
                           body: JSON.stringify(body),
                         });
@@ -837,61 +840,55 @@ export class CreditService {
                   Logger.warn(`⚠️ [CreditService] 获取交易记录失败: ${e.message}`);
                 }
 
-                // 【第二阶段】获取 linux.do 用户积分（需要导航到 linux.do）
-                Logger.info('📡 [CreditService] 在浏览器中获取 linux.do 用户积分...');
+                // 【第二阶段】获取 linux.do 用户积分（直接导航到 linux.do 页面）
+                Logger.info('📡 [CreditService] 导航到 linux.do 获取用户积分...');
                 const linuxDoUrl = `https://linux.do/u/${encodeURIComponent(username)}.json`;
 
-                // 在浏览器中导航到 linux.do 并获取数据
-                const linuxDoResult = (await page.evaluate(async (url: string) => {
-                  try {
-                    const response = await fetch(url, {
-                      method: 'GET',
-                      credentials: 'include',
-                      headers: {
-                        Accept: 'application/json',
-                      },
-                    });
+                let gamificationScore = 0;
+                try {
+                  // 直接导航到 linux.do 用户页面（避免跨域问题）
+                  await page.goto(`https://linux.do/u/${encodeURIComponent(username)}`, {
+                    waitUntil: 'networkidle2',
+                    timeout: 30000,
+                  });
 
-                    if (!response.ok) {
-                      return {
-                        success: false,
-                        status: response.status,
-                        error: `HTTP ${response.status}`,
-                      };
+                  // 等待 Cloudflare 验证通过（检测页面内容）
+                  let retryCount = 0;
+                  const maxRetries = 5;
+                  while (retryCount < maxRetries) {
+                    const html = await page.content().catch(() => '');
+                    const isCloudflare =
+                      html.includes('cf-browser-verification') ||
+                      html.includes('Just a moment') ||
+                      html.includes('Checking your browser');
+
+                    if (!isCloudflare) {
+                      break;
                     }
 
-                    const data = await response.json();
-                    return { success: true, data, status: response.status };
-                  } catch (e: any) {
-                    return { success: false, error: e.message, status: 0 };
-                  }
-                }, linuxDoUrl)) as { success: boolean; data?: any; status: number; error?: string };
-
-                let gamificationScore = 0;
-                if (
-                  linuxDoResult.success &&
-                  linuxDoResult.data?.user?.gamification_score !== undefined
-                ) {
-                  gamificationScore = linuxDoResult.data.user.gamification_score;
-                  Logger.info(`✅ [CreditService] 当前分: ${gamificationScore}`);
-                } else {
-                  // 如果在 credit.linux.do 页面无法获取 linux.do 数据（跨域），尝试导航到 linux.do
-                  Logger.info(
-                    `⚠️ [CreditService] 跨域请求失败 (${linuxDoResult.status}), 尝试导航到 linux.do...`
-                  );
-
-                  try {
-                    // 导航到 linux.do 用户页面
-                    await page.goto(`https://linux.do/u/${encodeURIComponent(username)}`, {
-                      waitUntil: 'networkidle2',
-                      timeout: 30000,
-                    });
-
-                    // 等待页面加载
+                    Logger.info(
+                      `🛡️ [CreditService] 等待 linux.do Cloudflare 验证... (${retryCount + 1}/${maxRetries})`
+                    );
                     await new Promise(resolve => setTimeout(resolve, 2000));
+                    retryCount++;
+                  }
 
-                    // 在 linux.do 页面获取用户数据
-                    const linuxDoData = (await page.evaluate(async (url: string) => {
+                  // 等待页面稳定
+                  await new Promise(resolve => setTimeout(resolve, 1000));
+
+                  // 在 linux.do 页面获取用户数据（带重试）
+                  let linuxDoResult: {
+                    success: boolean;
+                    data?: any;
+                    status: number;
+                    error?: string;
+                  } = {
+                    success: false,
+                    status: 0,
+                  };
+
+                  for (let attempt = 0; attempt < 3; attempt++) {
+                    linuxDoResult = (await page.evaluate(async (url: string) => {
                       try {
                         const response = await fetch(url, {
                           method: 'GET',
@@ -902,7 +899,11 @@ export class CreditService {
                         });
 
                         if (!response.ok) {
-                          return { success: false, status: response.status };
+                          return {
+                            success: false,
+                            status: response.status,
+                            error: `HTTP ${response.status}`,
+                          };
                         }
 
                         const data = await response.json();
@@ -917,20 +918,32 @@ export class CreditService {
                       error?: string;
                     };
 
-                    if (
-                      linuxDoData.success &&
-                      linuxDoData.data?.user?.gamification_score !== undefined
-                    ) {
-                      gamificationScore = linuxDoData.data.user.gamification_score;
-                      Logger.info(`✅ [CreditService] 当前分 (导航后): ${gamificationScore}`);
-                    } else {
-                      Logger.warn(
-                        `⚠️ [CreditService] 无法获取 linux.do 积分数据: ${linuxDoData.error || linuxDoData.status}`
-                      );
+                    if (linuxDoResult.success) {
+                      break;
                     }
-                  } catch (navError: any) {
-                    Logger.warn(`⚠️ [CreditService] 导航到 linux.do 失败: ${navError.message}`);
+
+                    // 如果是 403，等待后重试
+                    if (linuxDoResult.status === 403 && attempt < 2) {
+                      Logger.info(
+                        `⏳ [CreditService] linux.do 返回 403，等待后重试... (${attempt + 1}/3)`
+                      );
+                      await new Promise(resolve => setTimeout(resolve, 2000));
+                    }
                   }
+
+                  if (
+                    linuxDoResult.success &&
+                    linuxDoResult.data?.user?.gamification_score !== undefined
+                  ) {
+                    gamificationScore = linuxDoResult.data.user.gamification_score;
+                    Logger.info(`✅ [CreditService] 当前分: ${gamificationScore}`);
+                  } else {
+                    Logger.warn(
+                      `⚠️ [CreditService] 无法获取 linux.do 积分数据: ${linuxDoResult.error || linuxDoResult.status}`
+                    );
+                  }
+                } catch (navError: any) {
+                  Logger.warn(`⚠️ [CreditService] 导航到 linux.do 失败: ${navError.message}`);
                 }
 
                 // 计算差值
@@ -983,6 +996,11 @@ export class CreditService {
                   transactions,
                 };
                 return { success: true, data: loginResult };
+              } else {
+                // API 验证失败，可能用户还未完成 OAuth 登录
+                Logger.info(
+                  `⏳ [CreditService] API 验证失败 (status: ${creditResult.status})，等待用户完成登录...`
+                );
               }
             }
           } catch (e) {

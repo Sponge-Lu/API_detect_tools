@@ -9,12 +9,15 @@
  * - PROJECT_INDEX.md
  */
 
+import { pinyin } from 'pinyin-pro';
+
 /**
  * CLI 配置生成器服务
  *
  * 根据站点信息和用户选择的 API Key、模型生成 CLI 配置文件内容
  * 支持 Claude Code、Codex、Gemini CLI 配置生成
  * Codex 配置支持根据测试结果自动选择 wire_api (chat/responses)
+ * Codex 配置支持中文站点名称自动转换为拼音（ASCII 兼容格式）
  * Gemini CLI 配置支持根据测试结果生成端点注释 (native/proxy)
  * 配置模板参考 docs/cli_config_template/
  */
@@ -289,10 +292,42 @@ export function generateEndpointComment(geminiDetail?: {
  * @param params - 配置参数（支持 codexDetail 用于自动选择 wire_api）
  * @returns 生成的配置文件内容
  */
+/**
+ * 将站点名称转换为 ASCII 兼容的提供商名称
+ * 中文字符会被转换为拼音，其他非英文字符会被移除
+ * @param siteName - 原始站点名称（可能包含中文或其他语言）
+ * @returns 仅包含英文字母、数字和下划线的提供商名称
+ */
+function sanitizeProviderName(siteName: string): string {
+  // 使用 pinyin-pro 将中文转换为拼音（无声调，连续输出）
+  let name = pinyin(siteName, { toneType: 'none', type: 'array' }).join('');
+
+  // 移除所有非英文字母和数字的字符（包括其他语言文字）
+  name = name.replace(/[^a-zA-Z0-9]/g, '_');
+
+  // 移除连续的下划线
+  name = name.replace(/_+/g, '_');
+
+  // 移除首尾下划线
+  name = name.replace(/^_+|_+$/g, '');
+
+  // 确保名称以字母开头（TOML 标识符要求）
+  if (!/^[a-zA-Z]/.test(name)) {
+    name = 'P_' + name;
+  }
+
+  // 首字母大写，使其更像提供商名称
+  if (name.length > 0) {
+    name = name.charAt(0).toUpperCase() + name.slice(1);
+  }
+
+  return name || 'Provider';
+}
+
 export function generateCodexConfig(params: CodexConfigParams): GeneratedConfig {
   const normalizedUrl = normalizeUrl(params.siteUrl);
   const normalizedApiKey = normalizeApiKey(params.apiKey);
-  const providerName = params.siteName.replace(/\s+/g, '_');
+  const providerName = sanitizeProviderName(params.siteName);
 
   // 根据测试结果选择 wire_api
   const wireApi = selectWireApi(params.codexDetail);
@@ -343,14 +378,14 @@ web_search_request = true`;
  */
 export function generateCodexTemplate(): GeneratedConfig {
   // 完全照搬模板文件内容，包含注释和 wire_api 说明
-  const configTomlTemplate = `model_provider = "IkunCoding"               //去提供商获取正确名字
+  const configTomlTemplate = `model_provider = "IkunCoding"
 model = "gpt-5.1-codex-max"
 model_reasoning_effort = "high"
 disable_response_storage = true
 network_access = "enabled"
 
-[model_providers.IkunCoding]                //去提供商获取正确名字
-name = "ikun"                               //去提供商获取正确名字
+[model_providers.IkunCoding]
+name = "ikun"
 base_url = "https://api.ikuncode.cc/v1"
 # wire_api 选项：
 # - "responses": 使用 Responses API (推荐，功能更强，支持 Agent 能力)

@@ -1,7 +1,7 @@
 /**
  * 输入: Config (应用配置), 缓存数据, IPC 调用
  * 输出: 数据加载方法 (loadData, loadCachedData), 加载状态, 自动检测触发
- * 定位: 业务逻辑层 - 管理数据加载和缓存，支持启动时自动检测 CLI 配置
+ * 定位: 业务逻辑层 - 管理数据加载和缓存，支持启动时自动检测 CLI 配置，支持站点状态持久化
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -13,6 +13,7 @@
  * 数据加载 Hook
  * 从 App.tsx 抽离的缓存数据加载逻辑
  * 支持启动时自动检测 CLI 配置 (Requirements 6.1)
+ * 支持站点检测状态持久化 (Requirements 3.1-3.4)
  */
 
 import { useCallback } from 'react';
@@ -65,8 +66,9 @@ export function useDataLoader({
               return {
                 name: site.name,
                 url: site.url,
-                status: '成功', // 缓存数据默认显示成功
-                error: undefined,
+                // 从缓存读取状态，默认为 '成功'（向后兼容）
+                status: site.cached_data?.status || '成功',
+                error: site.cached_data?.error,
                 models: site.cached_data?.models || [],
                 balance: site.cached_data?.balance,
                 todayUsage: site.cached_data?.today_usage,
@@ -89,6 +91,15 @@ export function useDataLoader({
                 ldcPaymentSupported: site.cached_data?.ldc_payment_supported,
                 ldcExchangeRate: site.cached_data?.ldc_exchange_rate,
                 ldcPaymentType: site.cached_data?.ldc_payment_type,
+                // 签到统计数据 (New API)
+                checkinStats: site.cached_data?.checkin_stats
+                  ? {
+                      todayQuota: site.cached_data.checkin_stats.today_quota,
+                      checkinCount: site.cached_data.checkin_stats.checkin_count,
+                      totalCheckins: site.cached_data.checkin_stats.total_checkins,
+                      siteType: site.cached_data.checkin_stats.site_type,
+                    }
+                  : undefined,
               };
             });
 

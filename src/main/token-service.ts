@@ -1,11 +1,16 @@
 /**
  * 输入: ChromeManager (浏览器自动化), HttpClient (HTTP 请求), UnifiedConfigManager (配置管理)
- * 输出: SiteAccount, CachedDisplayData, RefreshAccountResult, Token 管理结果, 签到结果
+ * 输出: SiteAccount, CachedDisplayData, RefreshAccountResult, Token 管理结果, 签到结果, CheckinStats
  * 定位: 服务层 - 管理 Token 生命周期，处理所有站点的认证、Token 刷新和签到功能
  *
  * 签到功能支持两种站点类型:
  * - Veloera: check_in_enabled, /api/user/check_in_status, /api/user/check_in, reward
  * - New API: checkin_enabled, /api/user/checkin?month=YYYY-MM, /api/user/checkin, quota_awarded
+ *
+ * 签到统计功能 (New API):
+ * - fetchCheckinStats: 获取当月签到统计 (今日签到金额, 当月签到次数)
+ * - checkIn: 签到成功后自动获取签到统计
+ * - checkInWithBrowser: 浏览器模式签到回退 (绕过 Cloudflare)
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -29,8 +34,10 @@ import type {
   RefreshAccountResult,
   HealthCheckResult,
 } from './types/token';
+import type { CheckinStats } from '../shared/types/site';
 import { getAllUserIdHeaders } from '../shared/utils/headers';
 import Logger from './utils/logger';
+import { runOnPageQueue } from './utils/page-exec-queue';
 
 export class TokenService {
   private chromeManager: ChromeManager;
@@ -222,40 +229,42 @@ export class TokenService {
 
     // 在浏览器上下文中调用API
     try {
-      const result = await page.evaluate(
-        async (apiUrl: string, uid: number) => {
-          const response = await fetch(apiUrl, {
-            method: 'GET',
-            credentials: 'include', // 携带Cookie
-            headers: {
-              'Content-Type': 'application/json',
-              'New-API-User': uid.toString(),
-              'Veloera-User': uid.toString(),
-              'voapi-user': uid.toString(),
-              'User-id': uid.toString(),
-              'Cache-Control': 'no-store',
-              Pragma: 'no-cache',
-            },
-          });
+      const result = await runOnPageQueue(page, () =>
+        page.evaluate(
+          async (apiUrl: string, uid: number) => {
+            const response = await fetch(apiUrl, {
+              method: 'GET',
+              credentials: 'include', // 携带Cookie
+              headers: {
+                'Content-Type': 'application/json',
+                'New-API-User': uid.toString(),
+                'Veloera-User': uid.toString(),
+                'voapi-user': uid.toString(),
+                'User-id': uid.toString(),
+                'Cache-Control': 'no-store',
+                Pragma: 'no-cache',
+              },
+            });
 
-          if (!response.ok) {
-            const text = await response.text();
-            throw new Error(
-              `HTTP ${response.status}: ${response.statusText} - ${text.substring(0, 200)}`
-            );
-          }
+            if (!response.ok) {
+              const text = await response.text();
+              throw new Error(
+                `HTTP ${response.status}: ${response.statusText} - ${text.substring(0, 200)}`
+              );
+            }
 
-          const responseText = await response.text();
-          const data = JSON.parse(responseText);
+            const responseText = await response.text();
+            const data = JSON.parse(responseText);
 
-          if (!data.success || !data.data) {
-            throw new Error(data.message || '创建令牌失败');
-          }
+            if (!data.success || !data.data) {
+              throw new Error(data.message || '创建令牌失败');
+            }
 
-          return data.data as string;
-        },
-        url,
-        userId
+            return data.data as string;
+          },
+          url,
+          userId
+        )
       );
 
       Logger.info('✅ [TokenService] 令牌创建成功，长度:', result.length);
@@ -415,13 +424,15 @@ export class TokenService {
       if (page) {
         Logger.info('♻️ [TokenService] 使用浏览器页面获取站点配置');
         try {
-          const result = await page.evaluate(async (apiUrl: string) => {
-            const response = await fetch(apiUrl, {
-              method: 'GET',
-              credentials: 'include',
-            });
-            return await response.json();
-          }, url);
+          const result = await runOnPageQueue(page, () =>
+            page.evaluate(async (apiUrl: string) => {
+              const response = await fetch(apiUrl, {
+                method: 'GET',
+                credentials: 'include',
+              });
+              return await response.json();
+            }, url)
+          );
 
           // 兼容两种站点类型：Veloera (check_in_enabled) 和 New API (checkin_enabled)
           const checkInEnabled =
@@ -508,24 +519,30 @@ export class TokenService {
           Logger.info('♻️ [TokenService] 使用浏览器页面获取签到状态');
           try {
             const userIdHeaders = getAllUserIdHeaders(userId);
-            const result = await page.evaluate(
-              async (apiUrl: string, token: string, additionalHeaders: Record<string, string>) => {
-                const headers: Record<string, string> = {
-                  Authorization: `Bearer ${token}`,
-                  'Content-Type': 'application/json',
-                  ...additionalHeaders,
-                };
+            const result = await runOnPageQueue(page, () =>
+              page.evaluate(
+                async (
+                  apiUrl: string,
+                  token: string,
+                  additionalHeaders: Record<string, string>
+                ) => {
+                  const headers: Record<string, string> = {
+                    Authorization: `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                    ...additionalHeaders,
+                  };
 
-                const response = await fetch(apiUrl, {
-                  method: 'GET',
-                  credentials: 'include',
-                  headers: headers,
-                });
-                return await response.json();
-              },
-              endpoint.url,
-              accessToken,
-              userIdHeaders
+                  const response = await fetch(apiUrl, {
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: headers,
+                  });
+                  return await response.json();
+                },
+                endpoint.url,
+                accessToken,
+                userIdHeaders
+              )
             );
 
             // 解析浏览器返回的结果
@@ -633,13 +650,17 @@ export class TokenService {
   async checkIn(
     baseUrl: string,
     userId: number,
-    accessToken: string
+    accessToken: string,
+    page?: any
   ): Promise<{
     success: boolean;
     message: string;
     needManualCheckIn?: boolean; // 是否需要手动签到
     reward?: number; // 签到奖励（内部单位）
     siteType?: 'veloera' | 'newapi'; // 站点类型（用于确定手动签到页面路径）
+    checkinStats?: CheckinStats; // 签到统计数据 (New API)
+    browserPage?: any; // 浏览器页面（用于后续余额刷新）
+    pageRelease?: () => void; // 页面释放函数
   }> {
     Logger.info('📝 [TokenService] 执行签到操作...');
     Logger.info('📍 [TokenService] 站点:', baseUrl);
@@ -703,10 +724,27 @@ export class TokenService {
           }
 
           Logger.info(`✅ [TokenService] 签到成功 (${endpoint.type}): ${message}`);
+
+          // 如果是 New API 类型，获取签到统计数据
+          let checkinStats: CheckinStats | undefined;
+          if (endpoint.type === 'newapi') {
+            try {
+              checkinStats = await this.fetchCheckinStats(baseUrl, userId, accessToken, page);
+              // 如果没有从 API 获取到今日签到金额，使用签到返回的 quota_awarded
+              if (checkinStats && checkinStats.todayQuota === undefined && quotaAwarded) {
+                checkinStats.todayQuota = quotaAwarded;
+              }
+            } catch (statsError: any) {
+              Logger.warn('⚠️ [TokenService] 获取签到统计失败，但签到已成功:', statsError.message);
+            }
+          }
+
           return {
             success: true,
             message: message,
             reward: finalReward,
+            siteType: endpoint.type as 'veloera' | 'newapi',
+            checkinStats,
           };
         }
 
@@ -775,14 +813,25 @@ export class TokenService {
     // 所有端点都失败
     Logger.error('❌ [TokenService] 所有签到端点均失败');
 
-    // 如果检测到 Cloudflare 拦截，提示用户手动签到
+    // 如果检测到 Cloudflare 拦截，尝试浏览器模式签到
     if (cloudflareDetected) {
-      return {
-        success: false,
-        message: '站点开启了 Cloudflare 保护，无法自动签到',
-        needManualCheckIn: true,
-        siteType: lastEndpointType,
-      };
+      Logger.info('🛡️ [TokenService] 检测到 Cloudflare 拦截，尝试浏览器模式签到...');
+      try {
+        const browserResult = await this.checkInWithBrowser(baseUrl, userId, accessToken);
+        if (browserResult.success) {
+          return browserResult;
+        }
+        // 浏览器模式也失败，返回浏览器模式的错误信息
+        return browserResult;
+      } catch (browserError: any) {
+        Logger.error('❌ [TokenService] 浏览器模式签到失败:', browserError.message);
+        return {
+          success: false,
+          message: '站点开启了 Cloudflare 保护，浏览器模式签到也失败',
+          needManualCheckIn: true,
+          siteType: lastEndpointType,
+        };
+      }
     }
 
     if (lastError) {
@@ -800,6 +849,370 @@ export class TokenService {
       message: '该站点不支持签到功能（接口不存在）',
       needManualCheckIn: false,
     };
+  }
+
+  /**
+   * 在浏览器环境中执行签到操作（用于绕过 Cloudflare 保护）
+   * 签到成功时不关闭页面，返回页面引用供后续余额刷新使用
+   *
+   * @param baseUrl 站点URL
+   * @param userId 用户ID
+   * @param accessToken 访问令牌
+   * @returns 签到结果（包含页面引用）
+   */
+  private async checkInWithBrowser(
+    baseUrl: string,
+    userId: number,
+    accessToken: string
+  ): Promise<{
+    success: boolean;
+    message: string;
+    needManualCheckIn?: boolean;
+    reward?: number;
+    siteType?: 'veloera' | 'newapi';
+    checkinStats?: CheckinStats;
+    browserPage?: any; // 浏览器页面（签到成功时返回，供后续余额刷新使用）
+    pageRelease?: () => void; // 页面释放函数
+  }> {
+    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+
+    Logger.info('🧭 [TokenService] 浏览器模式签到...');
+    Logger.info('📍 [TokenService] 站点:', cleanBaseUrl);
+
+    // 通过 ChromeManager 创建页面
+    const { page, release } = await this.chromeManager.createPage(cleanBaseUrl);
+
+    // 用于跟踪是否需要在失败时关闭页面
+    let shouldClosePage = true;
+
+    try {
+      // 确保页面前置，方便用户在 Cloudflare 页面中进行验证
+      await page.bringToFront().catch(() => {});
+
+      // 等待 Cloudflare 验证通过（如果存在）
+      await this.waitForCloudflareChallengeToPass(page);
+      const userIdHeaders = getAllUserIdHeaders(userId);
+
+      // 尝试两种签到端点
+      const endpoints = [
+        { url: `${cleanBaseUrl}/api/user/check_in`, type: 'veloera' },
+        { url: `${cleanBaseUrl}/api/user/checkin`, type: 'newapi' },
+      ];
+
+      let lastError: any = null;
+      let lastEndpointType: 'veloera' | 'newapi' = 'veloera';
+
+      for (const endpoint of endpoints) {
+        lastEndpointType = endpoint.type as 'veloera' | 'newapi';
+        Logger.info(`📡 [TokenService] 浏览器签到: ${endpoint.url}`);
+
+        try {
+          const result = await runOnPageQueue(page, () =>
+            page.evaluate(
+              async (apiUrl: string, token: string, additionalHeaders: Record<string, string>) => {
+                try {
+                  const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      Authorization: `Bearer ${token}`,
+                      ...additionalHeaders,
+                      Pragma: 'no-cache',
+                    },
+                    body: JSON.stringify({}),
+                  });
+
+                  const status = response.status;
+                  const text = await response.text();
+
+                  try {
+                    const data = JSON.parse(text);
+                    return { ok: response.ok, status, isJson: true, data };
+                  } catch {
+                    return {
+                      ok: response.ok,
+                      status,
+                      isJson: false,
+                      textSnippet: text.slice(0, 200),
+                    };
+                  }
+                } catch (err: any) {
+                  return {
+                    ok: false,
+                    status: 0,
+                    isJson: false,
+                    error: err?.message || String(err),
+                  };
+                }
+              },
+              endpoint.url,
+              accessToken,
+              userIdHeaders
+            )
+          );
+
+          Logger.info('📦 [TokenService] 浏览器签到结果:', result);
+
+          // 检查是否返回 HTML（仍然被 Cloudflare 拦截）
+          if (!result.isJson && result.textSnippet?.includes('<!DOCTYPE')) {
+            Logger.warn('⚠️ [TokenService] 浏览器模式仍被 Cloudflare 拦截，尝试下一个端点');
+            continue;
+          }
+
+          // 签到成功
+          if (result.isJson && result.data?.success === true) {
+            const reward = result.data.data?.reward;
+            const quotaAwarded = result.data.data?.quota_awarded;
+            const finalReward = reward || quotaAwarded;
+
+            let message = result.data.message || '签到成功！';
+            if (finalReward && typeof finalReward === 'number') {
+              const rewardInDollars = (finalReward / 500000).toFixed(4);
+              message += `\n🎁 获得奖励: $${rewardInDollars}`;
+            }
+
+            Logger.info(`✅ [TokenService] 浏览器签到成功 (${endpoint.type}): ${message}`);
+
+            // 如果是 New API 类型，获取签到统计数据
+            let checkinStats: CheckinStats | undefined;
+            if (endpoint.type === 'newapi') {
+              try {
+                checkinStats = await this.fetchCheckinStats(baseUrl, userId, accessToken, page);
+                if (checkinStats && checkinStats.todayQuota === undefined && quotaAwarded) {
+                  checkinStats.todayQuota = quotaAwarded;
+                }
+              } catch (statsError: any) {
+                Logger.warn(
+                  '⚠️ [TokenService] 获取签到统计失败，但签到已成功:',
+                  statsError.message
+                );
+              }
+            }
+
+            // 签到成功，不关闭页面，返回页面引用供后续余额刷新使用
+            shouldClosePage = false;
+
+            return {
+              success: true,
+              message: message,
+              reward: finalReward,
+              siteType: endpoint.type as 'veloera' | 'newapi',
+              checkinStats,
+              browserPage: page,
+              pageRelease: release,
+            };
+          }
+
+          // 签到失败
+          if (result.isJson && result.data?.success === false) {
+            const errorMsg = result.data.message || '签到失败';
+            Logger.info(`ℹ️ [TokenService] 浏览器签到失败 (${endpoint.type}): ${errorMsg}`);
+
+            const needManual =
+              errorMsg.includes('验证') ||
+              errorMsg.includes('人机') ||
+              errorMsg.includes('captcha') ||
+              errorMsg.includes('challenge') ||
+              errorMsg.includes('已签到') ||
+              errorMsg.toLowerCase().includes('turnstile');
+
+            return {
+              success: false,
+              message: errorMsg,
+              needManualCheckIn: needManual,
+              siteType: endpoint.type as 'veloera' | 'newapi',
+            };
+          }
+
+          // HTTP 错误
+          if (!result.ok || result.status >= 400) {
+            const reason = result.isJson
+              ? result.data?.message || `HTTP ${result.status}`
+              : result.textSnippet || `HTTP ${result.status}`;
+            Logger.warn(`⚠️ [TokenService] 浏览器签到 HTTP 错误 (${endpoint.type}):`, reason);
+            lastError = new Error(reason);
+            continue;
+          }
+
+          // 未知响应格式
+          Logger.warn(`⚠️ [TokenService] 浏览器签到未知响应格式 (${endpoint.type})`);
+          lastError = new Error('未知响应格式');
+        } catch (error: any) {
+          Logger.warn(`⚠️ [TokenService] 浏览器签到端点失败 (${endpoint.type}):`, error.message);
+          lastError = error;
+          continue;
+        }
+      }
+
+      // 所有端点都失败
+      if (lastError) {
+        return {
+          success: false,
+          message: `浏览器模式签到失败: ${lastError.message}`,
+          needManualCheckIn: true,
+          siteType: lastEndpointType,
+        };
+      }
+
+      return {
+        success: false,
+        message: '浏览器模式签到失败（接口不存在）',
+        needManualCheckIn: true,
+        siteType: lastEndpointType,
+      };
+    } finally {
+      // 只有在失败时才关闭页面，成功时由调用者负责释放
+      if (shouldClosePage) {
+        try {
+          await page.close();
+        } catch {
+          // 忽略关闭错误
+        }
+        release();
+      }
+    }
+  }
+
+  /**
+   * 获取当月签到统计 (New API)
+   * 调用 GET /api/user/checkin?month=YYYY-MM 获取签到统计数据
+   *
+   * @param baseUrl 站点URL
+   * @param userId 用户ID
+   * @param accessToken 访问令牌
+   * @param page 可选的浏览器页面（用于绕过Cloudflare）
+   * @returns 签到统计数据
+   */
+  async fetchCheckinStats(
+    baseUrl: string,
+    userId: number,
+    accessToken: string,
+    page?: any
+  ): Promise<CheckinStats | undefined> {
+    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM 格式
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD 格式
+    const url = `${cleanBaseUrl}/api/user/checkin?month=${currentMonth}`;
+
+    Logger.info('📊 [TokenService] 获取签到统计...');
+    Logger.info('📍 [TokenService] URL:', url);
+
+    try {
+      // 优先使用浏览器模式（如果有共享页面）
+      if (page) {
+        Logger.info('♻️ [TokenService] 使用浏览器页面获取签到统计');
+        try {
+          const userIdHeaders = getAllUserIdHeaders(userId);
+          const result = await runOnPageQueue(page, () =>
+            page.evaluate(
+              async (apiUrl: string, token: string, additionalHeaders: Record<string, string>) => {
+                const headers: Record<string, string> = {
+                  Authorization: `Bearer ${token}`,
+                  'Content-Type': 'application/json',
+                  ...additionalHeaders,
+                };
+
+                const response = await fetch(apiUrl, {
+                  method: 'GET',
+                  credentials: 'include',
+                  headers: headers,
+                });
+                return await response.json();
+              },
+              url,
+              accessToken,
+              userIdHeaders
+            )
+          );
+
+          // 解析浏览器返回的结果
+          if (result?.success && result?.data?.stats) {
+            const stats = result.data.stats;
+            let todayQuota: number | undefined;
+
+            // 从 records 中查找今日签到金额
+            if (stats.records && Array.isArray(stats.records)) {
+              const todayRecord = stats.records.find(
+                (r: { checkin_date: string; quota_awarded: number }) => r.checkin_date === today
+              );
+              if (todayRecord) {
+                todayQuota = todayRecord.quota_awarded;
+              }
+            }
+
+            const checkinStats: CheckinStats = {
+              todayQuota,
+              checkinCount: stats.checkin_count,
+              totalCheckins: stats.total_checkins,
+              siteType: 'newapi',
+            };
+
+            Logger.info('✅ [TokenService] 签到统计获取成功(浏览器模式):', {
+              todayQuota,
+              checkinCount: stats.checkin_count,
+              totalCheckins: stats.total_checkins,
+            });
+
+            return checkinStats;
+          }
+
+          Logger.warn('⚠️ [TokenService] 浏览器模式返回数据格式不符合预期');
+        } catch (browserError: any) {
+          Logger.warn('⚠️ [TokenService] 浏览器模式获取签到统计失败:', browserError.message);
+          // 浏览器模式失败，回退到axios
+        }
+      }
+
+      // HTTP 请求（打包环境自动使用 Electron net 模块）
+      const response = await httpGet(url, {
+        headers: this.createRequestHeaders(userId, accessToken, baseUrl),
+        timeout: 10000,
+        validateStatus: (status: number) => status < 500,
+      });
+
+      // 检查是否返回HTML（Cloudflare拦截）
+      if (typeof response.data === 'string' && response.data.includes('<!DOCTYPE')) {
+        Logger.info('🛡️ [TokenService] 检测到Cloudflare拦截签到统计接口');
+        return undefined;
+      }
+
+      if (response.data?.success && response.data?.data?.stats) {
+        const stats = response.data.data.stats;
+        let todayQuota: number | undefined;
+
+        // 从 records 中查找今日签到金额
+        if (stats.records && Array.isArray(stats.records)) {
+          const todayRecord = stats.records.find(
+            (r: { checkin_date: string; quota_awarded: number }) => r.checkin_date === today
+          );
+          if (todayRecord) {
+            todayQuota = todayRecord.quota_awarded;
+          }
+        }
+
+        const checkinStats: CheckinStats = {
+          todayQuota,
+          checkinCount: stats.checkin_count,
+          totalCheckins: stats.total_checkins,
+          siteType: 'newapi',
+        };
+
+        Logger.info('✅ [TokenService] 签到统计获取成功:', {
+          todayQuota,
+          checkinCount: stats.checkin_count,
+          totalCheckins: stats.total_checkins,
+        });
+
+        return checkinStats;
+      }
+
+      Logger.warn('⚠️ [TokenService] 签到统计响应格式不符合预期');
+      return undefined;
+    } catch (error: any) {
+      Logger.warn('⚠️ [TokenService] 获取签到统计失败:', error.message);
+      return undefined;
+    }
   }
 
   /**
@@ -1030,28 +1443,30 @@ export class TokenService {
     for (const url of urls) {
       try {
         Logger.info(`📡 [TokenService] 浏览器获取: ${url}`);
-        const result = await page.evaluate(
-          async (apiUrl: string, token: string, additionalHeaders: Record<string, string>) => {
-            const response = await fetch(apiUrl, {
-              method: 'GET',
-              credentials: 'include',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-                ...additionalHeaders,
-                Pragma: 'no-cache',
-              },
-            });
+        const result = await runOnPageQueue(page, () =>
+          page.evaluate(
+            async (apiUrl: string, token: string, additionalHeaders: Record<string, string>) => {
+              const response = await fetch(apiUrl, {
+                method: 'GET',
+                credentials: 'include',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${token}`,
+                  ...additionalHeaders,
+                  Pragma: 'no-cache',
+                },
+              });
 
-            if (!response.ok) {
-              throw new Error(`HTTP ${response.status}`);
-            }
+              if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+              }
 
-            return await response.json();
-          },
-          url,
-          accessToken,
-          userIdHeaders
+              return await response.json();
+            },
+            url,
+            accessToken,
+            userIdHeaders
+          )
         );
 
         Logger.info(`📦 [TokenService] API Keys响应结构:`, {
@@ -1405,51 +1820,58 @@ export class TokenService {
           `📡 [TokenService] 浏览器删除令牌: ${candidate.description} -> ${candidate.url}`
         );
 
-        const result = await page.evaluate(
-          async (
-            apiUrl: string,
-            token: string,
-            method: string,
-            payload: any,
-            additionalHeaders: Record<string, string>
-          ) => {
-            try {
-              const headers: Record<string, string> = {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-                ...additionalHeaders,
-                Pragma: 'no-cache',
-              };
-
-              const init: RequestInit = {
-                method,
-                credentials: 'include',
-                headers,
-              };
-
-              if (method === 'POST' && payload) {
-                init.body = JSON.stringify(payload);
-              }
-
-              const response = await fetch(apiUrl, init);
-              const status = response.status;
-              const text = await response.text();
-
+        const result = await runOnPageQueue(page, () =>
+          page.evaluate(
+            async (
+              apiUrl: string,
+              token: string,
+              method: string,
+              payload: any,
+              additionalHeaders: Record<string, string>
+            ) => {
               try {
-                const data = JSON.parse(text);
-                return { ok: response.ok, status, isJson: true, data };
-              } catch {
-                return { ok: response.ok, status, isJson: false, textSnippet: text.slice(0, 200) };
+                const headers: Record<string, string> = {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${token}`,
+                  ...additionalHeaders,
+                  Pragma: 'no-cache',
+                };
+
+                const init: RequestInit = {
+                  method,
+                  credentials: 'include',
+                  headers,
+                };
+
+                if (method === 'POST' && payload) {
+                  init.body = JSON.stringify(payload);
+                }
+
+                const response = await fetch(apiUrl, init);
+                const status = response.status;
+                const text = await response.text();
+
+                try {
+                  const data = JSON.parse(text);
+                  return { ok: response.ok, status, isJson: true, data };
+                } catch {
+                  return {
+                    ok: response.ok,
+                    status,
+                    isJson: false,
+                    textSnippet: text.slice(0, 200),
+                  };
+                }
+              } catch (err: any) {
+                return { ok: false, status: 0, isJson: false, error: err?.message || String(err) };
               }
-            } catch (err: any) {
-              return { ok: false, status: 0, isJson: false, error: err?.message || String(err) };
-            }
-          },
-          candidate.url,
-          accessToken,
-          candidate.method,
-          candidate.body || null,
-          userIdHeaders
+            },
+            candidate.url,
+            accessToken,
+            candidate.method,
+            candidate.body || null,
+            userIdHeaders
+          )
         );
 
         Logger.info('📦 [TokenService] 浏览器删除令牌结果:', result);
@@ -1688,44 +2110,46 @@ export class TokenService {
 
       const userIdHeaders = getAllUserIdHeaders(userId);
 
-      const result = await page.evaluate(
-        async (
-          apiUrl: string,
-          token: string,
-          payload: any,
-          additionalHeaders: Record<string, string>
-        ) => {
-          try {
-            const response = await fetch(apiUrl, {
-              method: 'POST',
-              credentials: 'include',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-                ...additionalHeaders,
-                Pragma: 'no-cache',
-              },
-              body: JSON.stringify(payload),
-            });
-
-            const status = response.status;
-            const text = await response.text();
-
-            // 尝试解析 JSON，如果失败则返回文本片段，方便诊断
+      const result = await runOnPageQueue(page, () =>
+        page.evaluate(
+          async (
+            apiUrl: string,
+            token: string,
+            payload: any,
+            additionalHeaders: Record<string, string>
+          ) => {
             try {
-              const data = JSON.parse(text);
-              return { status, ok: response.ok, isJson: true, data };
-            } catch {
-              return { status, ok: response.ok, isJson: false, textSnippet: text.slice(0, 200) };
+              const response = await fetch(apiUrl, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${token}`,
+                  ...additionalHeaders,
+                  Pragma: 'no-cache',
+                },
+                body: JSON.stringify(payload),
+              });
+
+              const status = response.status;
+              const text = await response.text();
+
+              // 尝试解析 JSON，如果失败则返回文本片段，方便诊断
+              try {
+                const data = JSON.parse(text);
+                return { status, ok: response.ok, isJson: true, data };
+              } catch {
+                return { status, ok: response.ok, isJson: false, textSnippet: text.slice(0, 200) };
+              }
+            } catch (err: any) {
+              return { status: 0, ok: false, isJson: false, error: err?.message || String(err) };
             }
-          } catch (err: any) {
-            return { status: 0, ok: false, isJson: false, error: err?.message || String(err) };
-          }
-        },
-        url,
-        accessToken,
-        tokenData,
-        userIdHeaders
+          },
+          url,
+          accessToken,
+          tokenData,
+          userIdHeaders
+        )
       );
 
       Logger.info('📦 [TokenService] 浏览器模式创建令牌结果:', result);
@@ -1876,27 +2300,29 @@ export class TokenService {
     for (const url of urls) {
       try {
         Logger.info(`📡 [TokenService] 浏览器获取用户分组: ${url}`);
-        const result = await page.evaluate(
-          async (apiUrl: string, token: string, additionalHeaders: Record<string, string>) => {
-            const response = await fetch(apiUrl, {
-              method: 'GET',
-              credentials: 'include',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-                ...additionalHeaders,
-              },
-            });
+        const result = await runOnPageQueue(page, () =>
+          page.evaluate(
+            async (apiUrl: string, token: string, additionalHeaders: Record<string, string>) => {
+              const response = await fetch(apiUrl, {
+                method: 'GET',
+                credentials: 'include',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${token}`,
+                  ...additionalHeaders,
+                },
+              });
 
-            if (!response.ok) {
-              throw new Error(`HTTP ${response.status}`);
-            }
+              if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+              }
 
-            return await response.json();
-          },
-          url,
-          accessToken,
-          userIdHeaders
+              return await response.json();
+            },
+            url,
+            accessToken,
+            userIdHeaders
+          )
         );
 
         // New API 格式: { success: true, data: { "default": {...}, "vip": {...} } }
@@ -2140,27 +2566,29 @@ export class TokenService {
     for (const url of urls) {
       try {
         Logger.info(`📡 [TokenService] 浏览器获取模型定价: ${url}`);
-        const result = await page.evaluate(
-          async (apiUrl: string, token: string, additionalHeaders: Record<string, string>) => {
-            const response = await fetch(apiUrl, {
-              method: 'GET',
-              credentials: 'include',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-                ...additionalHeaders,
-              },
-            });
+        const result = await runOnPageQueue(page, () =>
+          page.evaluate(
+            async (apiUrl: string, token: string, additionalHeaders: Record<string, string>) => {
+              const response = await fetch(apiUrl, {
+                method: 'GET',
+                credentials: 'include',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${token}`,
+                  ...additionalHeaders,
+                },
+              });
 
-            if (!response.ok) {
-              throw new Error(`HTTP ${response.status}`);
-            }
+              if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+              }
 
-            return await response.json();
-          },
-          url,
-          accessToken,
-          userIdHeaders
+              return await response.json();
+            },
+            url,
+            accessToken,
+            userIdHeaders
+          )
         );
 
         // 检查响应数据

@@ -1,6 +1,6 @@
 /**
  * 输入: 无 (纯类型定义)
- * 输出: TypeScript 类型和接口 (Site, SiteGroup, SiteStatus, DetectionResult, LdcPaymentInfo 等)
+ * 输出: TypeScript 类型和接口 (Site, SiteGroup, SiteStatus, DetectionResult, CheckinStats, LdcPaymentInfo 等)
  * 定位: 类型定义层 - 定义主进程和渲染进程共享的数据模型
  *
  * 🔄 自引用: 当此文件变更时，更新:
@@ -52,6 +52,18 @@ export interface CliCompatibilityData {
   geminiDetail?: GeminiTestDetail; // Gemini CLI 详细测试结果（native/proxy）
   testedAt: number | null;
   error?: string;
+}
+
+/** 签到统计数据 (New API 格式) */
+export interface CheckinStats {
+  /** 今日签到获得金额 (内部单位，需要 /500000 转换为美元) */
+  todayQuota?: number;
+  /** 当月签到次数 */
+  checkinCount?: number;
+  /** 累计签到次数 */
+  totalCheckins?: number;
+  /** 站点类型 */
+  siteType?: 'veloera' | 'newapi';
 }
 
 // ============= LDC 支付类型 =============
@@ -164,6 +176,16 @@ export interface UnifiedSite {
     // LDC 支付信息
     ldc_payment_supported?: boolean; // 是否支持 LDC 支付
     ldc_exchange_rate?: string; // 兑换比例（LDC:站点余额）
+    // 签到统计数据 (New API)
+    checkin_stats?: {
+      today_quota?: number; // 今日签到金额 (内部单位)
+      checkin_count?: number; // 当月签到次数
+      total_checkins?: number; // 累计签到次数
+      site_type?: 'veloera' | 'newapi';
+    };
+    // 检测状态持久化
+    status?: string; // 检测状态：'成功' | '失败'
+    error?: string; // 错误信息（仅失败时有值）
   };
 
   // === 元数据 ===
@@ -330,6 +352,8 @@ export interface DetectionResult {
   ldcPaymentSupported?: boolean; // 是否支持 LDC 支付
   ldcExchangeRate?: string; // 兑换比例（LDC:站点余额）
   ldcPaymentType?: string; // 支付方式类型，如 "epay"
+  // 签到统计数据 (New API 类型站点)
+  checkinStats?: CheckinStats;
 }
 
 // ============= 辅助类型 =============
@@ -379,6 +403,8 @@ export interface CachedDisplayData {
   ldcPaymentSupported?: boolean; // 是否支持 LDC 支付
   ldcExchangeRate?: string; // 兑换比例（LDC:站点余额）
   ldcPaymentType?: string; // 支付方式类型，如 "epay"
+  // 签到统计数据 (New API)
+  checkinStats?: CheckinStats;
 }
 
 // ============= API 响应类型 =============

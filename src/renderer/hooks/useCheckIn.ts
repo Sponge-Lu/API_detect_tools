@@ -4,8 +4,11 @@
  * 定位: 业务逻辑层 - 管理站点每日签到操作
  *
  * 签到失败时根据站点类型打开对应的手动签到页面:
- * - Veloera: /app/me
+ * - Veloera: /console
  * - New API: /console/personal
+ *
+ * 签到成功后使用原子操作（checkinAndRefresh）复用浏览器页面刷新余额
+ * 签到成功后更新 lastRefresh 时间戳，确保 SiteCardActions 的 isToday 判断正确
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -20,6 +23,8 @@
 
 import Logger from '../utils/logger';
 import type { SiteConfig } from '../../shared/types/site';
+import { useDetectionStore } from '../store/detectionStore';
+import { useConfigStore } from '../store/configStore';
 
 interface UseCheckInOptions {
   showDialog: (options: any) => Promise<boolean>;
@@ -32,12 +37,10 @@ interface UseCheckInOptions {
   detectSingle?: (site: SiteConfig, quickRefresh: boolean) => Promise<void>;
 }
 
-export function useCheckIn({
-  showDialog,
-  showAlert,
-  setCheckingIn,
-  detectSingle,
-}: UseCheckInOptions) {
+export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInOptions) {
+  const { upsertResult, results } = useDetectionStore();
+  const { config } = useConfigStore();
+
   /**
    * 打开站点签到页面
    * @param site 站点配置
@@ -47,9 +50,9 @@ export function useCheckIn({
     try {
       const baseUrl = site.url.replace(/\/$/, '');
       // 根据站点类型选择正确的签到页面路径
-      // Veloera: /app/me
+      // Veloera: /console
       // New API: /console/personal
-      const checkinPath = siteType === 'newapi' ? '/console/personal' : '/app/me';
+      const checkinPath = siteType === 'newapi' ? '/console/personal' : '/console';
       const targetUrl = baseUrl + checkinPath;
       await window.electronAPI.openUrl(targetUrl);
     } catch (error) {
@@ -80,29 +83,57 @@ export function useCheckIn({
     setCheckingIn(site.name);
 
     try {
-      const result = await (window.electronAPI as any).token.checkIn(
-        site.url,
-        parseInt(site.user_id),
-        site.system_token
+      const timeout = config?.settings?.timeout ?? 30;
+
+      // 使用原子操作：签到并刷新余额（复用浏览器页面）
+      const { checkinResult, balanceResult } = await (window.electronAPI as any).checkinAndRefresh(
+        site,
+        timeout
       );
 
-      if (result.success) {
-        showAlert(`签到成功！\n\n${result.message}`, 'success', '签到成功');
-        if (detectSingle) await detectSingle(site, true);
+      if (checkinResult.success) {
+        showAlert(`签到成功！\n\n${checkinResult.message}`, 'success', '签到成功');
+
+        // 更新前端检测结果
+        if (balanceResult?.success) {
+          const existingResult = results.find(r => r.name === site.name);
+          if (existingResult) {
+            upsertResult({
+              ...existingResult,
+              balance: balanceResult.balance,
+              can_check_in: false, // 签到成功后设为已签到
+              checkinStats: balanceResult.checkinStats || checkinResult.checkinStats,
+              lastRefresh: Date.now(), // 更新刷新时间，确保 isToday 判断正确
+            });
+          }
+          Logger.info(`✅ [useCheckIn] 余额刷新成功: ${balanceResult.balance}`);
+        } else {
+          // 余额刷新失败，但签到成功，仍然更新签到状态
+          const existingResult = results.find(r => r.name === site.name);
+          if (existingResult) {
+            upsertResult({
+              ...existingResult,
+              can_check_in: false,
+              checkinStats: checkinResult.checkinStats,
+              lastRefresh: Date.now(), // 更新刷新时间，确保 isToday 判断正确
+            });
+          }
+          Logger.warn(`⚠️ [useCheckIn] 余额刷新失败: ${balanceResult?.error || '未知错误'}`);
+        }
       } else {
-        if (result.needManualCheckIn) {
+        if (checkinResult.needManualCheckIn) {
           const shouldOpenSite = await showDialog({
             type: 'warning',
             title: '自动签到失败',
-            message: `${result.message}\n\n是否打开网站手动签到？\n\n💡 手动签到后，请手动刷新站点数据`,
+            message: `${checkinResult.message}\n\n是否打开网站手动签到？\n\n💡 手动签到后，请手动刷新站点数据`,
             confirmText: '打开网站',
           });
           if (shouldOpenSite) {
             // 使用后端返回的站点类型，默认 veloera
-            await openCheckinPage(site, result.siteType || 'veloera');
+            await openCheckinPage(site, checkinResult.siteType || 'veloera');
           }
         } else {
-          showAlert(result.message, 'alert');
+          showAlert(checkinResult.message, 'alert');
         }
       }
     } catch (error: any) {

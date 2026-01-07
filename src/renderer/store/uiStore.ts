@@ -38,7 +38,8 @@ export type SortField =
   | 'rpm'
   | 'tpm'
   | 'modelCount'
-  | 'lastUpdate';
+  | 'lastUpdate'
+  | 'ldcRatio';
 
 // 排序方向
 export type SortOrder = 'asc' | 'desc';

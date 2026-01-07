@@ -38,13 +38,14 @@
 - `CodexConfigParams` - Codex 配置参数接口（支持 codexDetail）
 - `GeneratedConfig` - 生成的配置结果
 - `generateClaudeCodeConfig()` - 生成 Claude Code 配置
-- `generateCodexConfig()` - 生成 Codex 配置（根据测试结果自动选择 wire_api）
+- `generateCodexConfig()` - 生成 Codex 配置（根据测试结果自动选择 wire_api，支持中文站点名称转换）
 - `generateGeminiCliConfig()` - 生成 Gemini CLI 配置
 
 **新增功能**: 
 - Codex 配置支持传入 `codexDetail` 参数
 - 根据 chat/responses 测试结果自动选择最佳 `wire_api`
 - 生成的配置文件包含测试结果注释
+- 中文站点名称自动转换为拼音（使用 pinyin-pro 库）
 
 ---
 

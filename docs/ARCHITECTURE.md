@@ -248,3 +248,18 @@ const response = await httpGet(url, { headers, timeout });
    - 若有实例：复用连接，创建新 Page。
 4. **任务执行**：导航到目标 URL，注入脚本读取数据，或等待页面跳转。
 5. **资源释放**：任务完成后关闭 Page；若无其他任务，延迟关闭浏览器实例以节省资源。
+
+### 浏览器模式优化
+
+**共享页面复用**：
+- 当站点刷新进入浏览器模式后，后续所有 API 端点请求直接在浏览器上下文中执行，避免每个端点都先尝试 axios 再回退到浏览器的额外延迟。
+- 通过 `sharedPage` 参数在 `fetchWithBrowserFallback` 方法间传递，实现页面复用。
+
+**并发稳定性**：
+- 使用 `page-exec-queue.ts` 对同一 Puppeteer Page 的 `page.evaluate` 调用进行队列串行化。
+- 采用 WeakMap 按 Page 对象分组，FIFO 顺序执行任务。
+- 有效降低并发检测时偶发的 "Execution context destroyed" 或 "Target closed" 错误。
+
+**POST 请求浏览器回退**：
+- POST 请求（如 `/api/user/amount` 获取 LDC 兑换比例）在遇到 401/403 时自动回退到浏览器模式。
+- 浏览器模式下携带站点 Cookie 和会话信息，解决需要认证的 POST 端点问题。

@@ -34,6 +34,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     cachedData?: any,
     forceAcceptEmpty?: boolean
   ) => ipcRenderer.invoke('detect-site', site, timeout, quickRefresh, cachedData, forceAcceptEmpty),
+  // 轻量级余额刷新（签到后使用）
+  refreshBalanceOnly: (site: any, timeout: number, checkinStats?: any) =>
+    ipcRenderer.invoke('refresh-balance-only', site, timeout, checkinStats),
   detectAllSites: (config: any, quickRefresh?: boolean, cachedResults?: any) =>
     ipcRenderer.invoke('detect-all-sites', config, quickRefresh, cachedResults),
   openUrl: (url: string) => ipcRenderer.invoke('open-url', url),
@@ -66,6 +69,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     checkIn: (baseUrl: string, userId: number, accessToken: string) =>
       ipcRenderer.invoke('token:check-in', baseUrl, userId, accessToken),
   },
+
+  // 签到并刷新余额（原子操作，复用浏览器页面）
+  checkinAndRefresh: (site: any, timeout: number) =>
+    ipcRenderer.invoke('checkin-and-refresh', site, timeout),
 
   // 账号存储API
   storage: {

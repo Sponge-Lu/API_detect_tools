@@ -181,16 +181,91 @@ function mergeEnvConfig(existingContent: string, newContent: string): string {
 }
 
 /**
+ * 合并 TOML section 内容
+ * 只更新新配置中存在的参数，保留本地独有参数
+ * @param existingLines - 现有 section 的行（键值对和注释）
+ * @param newLines - 新 section 的行（键值对）
+ * @returns 合并后的行数组
+ */
+function mergeSectionContent(existingLines: string[], newLines: string[]): string[] {
+  // 解析新配置的键值对
+  const newVars = new Map<string, string>();
+  for (const line of newLines) {
+    const eqIndex = line.indexOf('=');
+    if (eqIndex > 0) {
+      const key = line.substring(0, eqIndex).trim();
+      newVars.set(key, line);
+    }
+  }
+
+  // 合并：更新现有的，保留独有的
+  const resultLines: string[] = [];
+  const updatedKeys = new Set<string>();
+
+  for (const line of existingLines) {
+    const trimmedLine = line.trim();
+    // 保留注释和空行
+    if (!trimmedLine || trimmedLine.startsWith('#') || trimmedLine.startsWith('//')) {
+      resultLines.push(line);
+      continue;
+    }
+
+    const eqIndex = trimmedLine.indexOf('=');
+    if (eqIndex > 0) {
+      const key = trimmedLine.substring(0, eqIndex).trim();
+      if (newVars.has(key)) {
+        // 更新现有参数
+        resultLines.push(newVars.get(key)!);
+        updatedKeys.add(key);
+      } else {
+        // 保留本地独有参数
+        resultLines.push(line);
+      }
+    } else {
+      resultLines.push(line);
+    }
+  }
+
+  // 添加新配置中独有的参数
+  for (const [key, value] of newVars) {
+    if (!updatedKeys.has(key)) {
+      resultLines.push(value);
+    }
+  }
+
+  return resultLines;
+}
+
+/**
+ * 获取 section 的父级前缀
+ * 例如: "model_providers.MyProvider" -> "model_providers"
+ * @param section - section 名称
+ * @returns 父级前缀，如果没有则返回 null
+ */
+function getSectionParentPrefix(section: string): string | null {
+  const dotIndex = section.indexOf('.');
+  if (dotIndex > 0) {
+    return section.substring(0, dotIndex);
+  }
+  return null;
+}
+
+/**
  * 合并 TOML 配置文件
- * 简单实现：只更新特定的配置项
+ * 智能合并：
+ * - 顶级参数：只更新新配置中存在的参数，保留本地独有参数
+ * - 普通 section：合并 section 内容
+ * - 嵌套 section（如 model_providers.XXX）：如果新配置有同一父级的 section，
+ *   则移除旧的子 section，只保留新配置中的子 section
  * @param existingContent - 现有文件内容
  * @param newContent - 新配置内容
  * @returns 合并后的 TOML 内容
  */
 function mergeTomlConfig(existingContent: string, newContent: string): string {
-  // 解析新配置中的顶级键值对
+  // 解析新配置中的顶级键值对和 sections
   const newTopLevelVars = new Map<string, string>();
   const newSections = new Map<string, string[]>();
+  const newSectionParents = new Set<string>(); // 新配置中有子 section 的父级前缀
   let currentSection = '';
 
   for (const line of newContent.split('\n')) {
@@ -208,6 +283,11 @@ function mergeTomlConfig(existingContent: string, newContent: string): string {
       if (!newSections.has(currentSection)) {
         newSections.set(currentSection, []);
       }
+      // 记录父级前缀
+      const parent = getSectionParentPrefix(currentSection);
+      if (parent) {
+        newSectionParents.add(parent);
+      }
       continue;
     }
 
@@ -223,14 +303,32 @@ function mergeTomlConfig(existingContent: string, newContent: string): string {
     }
   }
 
-  // 处理现有配置
+  // 解析现有配置，收集每个 section 的内容
+  const existingSections = new Map<string, string[]>();
+  let existingCurrentSection = '';
+  const existingLines = existingContent.split('\n');
+
+  for (const line of existingLines) {
+    const trimmedLine = line.trim();
+    const sectionMatch = trimmedLine.match(/^\[([^\]]+)\]$/);
+    if (sectionMatch) {
+      existingCurrentSection = sectionMatch[1];
+      if (!existingSections.has(existingCurrentSection)) {
+        existingSections.set(existingCurrentSection, []);
+      }
+    } else if (existingCurrentSection) {
+      existingSections.get(existingCurrentSection)!.push(line);
+    }
+  }
+
+  // 处理现有配置，构建结果
   const resultLines: string[] = [];
   const updatedTopLevelKeys = new Set<string>();
-  const updatedSections = new Set<string>();
-  let existingCurrentSection = '';
-  let skipUntilNextSection = false;
+  const processedSections = new Set<string>();
+  const skippedSections = new Set<string>(); // 需要跳过的旧 section
+  existingCurrentSection = '';
 
-  for (const line of existingContent.split('\n')) {
+  for (const line of existingLines) {
     const trimmedLine = line.trim();
 
     // 检测 section 头
@@ -238,35 +336,50 @@ function mergeTomlConfig(existingContent: string, newContent: string): string {
     if (sectionMatch) {
       existingCurrentSection = sectionMatch[1];
 
-      // 如果新配置有这个 section，替换整个 section
-      if (newSections.has(existingCurrentSection)) {
-        resultLines.push(line);
-        for (const sectionLine of newSections.get(existingCurrentSection)!) {
-          resultLines.push(sectionLine);
-        }
-        updatedSections.add(existingCurrentSection);
-        skipUntilNextSection = true;
+      // 检查是否是嵌套 section，且新配置有同一父级的 section
+      const parent = getSectionParentPrefix(existingCurrentSection);
+      if (parent && newSectionParents.has(parent) && !newSections.has(existingCurrentSection)) {
+        // 新配置有同一父级的子 section，但不包含这个具体的子 section
+        // 跳过这个旧的子 section（不保留）
+        skippedSections.add(existingCurrentSection);
         continue;
-      } else {
-        skipUntilNextSection = false;
       }
+
+      resultLines.push(line);
+
+      // 如果新配置有这个 section，合并 section 内容
+      if (newSections.has(existingCurrentSection)) {
+        const existingSectionLines = existingSections.get(existingCurrentSection) || [];
+        const newSectionLines = newSections.get(existingCurrentSection)!;
+        const mergedLines = mergeSectionContent(existingSectionLines, newSectionLines);
+        resultLines.push(...mergedLines);
+        processedSections.add(existingCurrentSection);
+      } else {
+        // 保留原有 section 内容
+        const existingSectionLines = existingSections.get(existingCurrentSection) || [];
+        resultLines.push(...existingSectionLines);
+      }
+      continue;
     }
 
-    if (skipUntilNextSection) {
-      // 跳过被替换 section 的内容
-      if (!sectionMatch) continue;
+    // 如果在被跳过的 section 内，跳过这些行
+    if (skippedSections.has(existingCurrentSection)) {
+      continue;
+    }
+
+    // 如果在 section 内，跳过（已经在上面处理过了）
+    if (existingCurrentSection) {
+      continue;
     }
 
     // 处理顶级键值对
-    if (!existingCurrentSection || sectionMatch) {
-      const eqIndex = trimmedLine.indexOf('=');
-      if (eqIndex > 0 && !existingCurrentSection) {
-        const key = trimmedLine.substring(0, eqIndex).trim();
-        if (newTopLevelVars.has(key)) {
-          resultLines.push(newTopLevelVars.get(key)!);
-          updatedTopLevelKeys.add(key);
-          continue;
-        }
+    const eqIndex = trimmedLine.indexOf('=');
+    if (eqIndex > 0) {
+      const key = trimmedLine.substring(0, eqIndex).trim();
+      if (newTopLevelVars.has(key)) {
+        resultLines.push(newTopLevelVars.get(key)!);
+        updatedTopLevelKeys.add(key);
+        continue;
       }
     }
 
@@ -280,15 +393,17 @@ function mergeTomlConfig(existingContent: string, newContent: string): string {
       const firstSectionIndex = resultLines.findIndex(l => l.trim().startsWith('['));
       if (firstSectionIndex > 0) {
         resultLines.splice(firstSectionIndex, 0, value);
-      } else {
+      } else if (firstSectionIndex === 0) {
         resultLines.unshift(value);
+      } else {
+        resultLines.push(value);
       }
     }
   }
 
-  // 添加新的 sections
+  // 添加新的 sections（不在现有文件中的）
   for (const [section, lines] of newSections) {
-    if (!updatedSections.has(section)) {
+    if (!processedSections.has(section) && !existingSections.has(section)) {
       resultLines.push('');
       resultLines.push(`[${section}]`);
       for (const sectionLine of lines) {
@@ -297,7 +412,28 @@ function mergeTomlConfig(existingContent: string, newContent: string): string {
     }
   }
 
-  return resultLines.join('\n');
+  // 清理多余的连续空白行（保留最多一个空白行）
+  const cleanedLines: string[] = [];
+  let lastWasEmpty = false;
+  for (const line of resultLines) {
+    const isEmpty = line.trim() === '';
+    if (isEmpty && lastWasEmpty) {
+      // 跳过连续的空白行
+      continue;
+    }
+    cleanedLines.push(line);
+    lastWasEmpty = isEmpty;
+  }
+
+  // 移除开头和结尾的空白行
+  while (cleanedLines.length > 0 && cleanedLines[0].trim() === '') {
+    cleanedLines.shift();
+  }
+  while (cleanedLines.length > 0 && cleanedLines[cleanedLines.length - 1].trim() === '') {
+    cleanedLines.pop();
+  }
+
+  return cleanedLines.join('\n');
 }
 
 /**

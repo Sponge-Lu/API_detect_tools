@@ -155,6 +155,17 @@ export function registerTokenHandlers(
       try {
         Logger.info('📝 [IPC] 收到签到请求');
         const result = await tokenService.checkIn(baseUrl, userId, accessToken);
+
+        // 如果签到成功且有浏览器页面，在返回前释放页面
+        // 注意：页面会在 ChromeManager 的延迟清理机制中自动关闭
+        if (result.success && result.pageRelease) {
+          Logger.info('🔒 [IPC] 释放签到使用的浏览器页面引用');
+          result.pageRelease();
+          // 清理返回结果中的页面引用（不能通过 IPC 传递）
+          delete result.browserPage;
+          delete result.pageRelease;
+        }
+
         return result;
       } catch (error: any) {
         Logger.error('❌ [IPC] 签到失败:', error);

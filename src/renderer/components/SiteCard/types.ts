@@ -1,5 +1,12 @@
 /**
- * SiteCard 组件类型定义
+ * 输入: 无 (纯类型定义)
+ * 输出: TypeScript 类型和接口 (SiteCardProps, SiteCardHeaderProps, SiteCardActionsProps)
+ * 定位: 类型定义层 - 定义 SiteCard 组件相关的 Props 类型
+ *
+ * 🔄 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/components/SiteCard/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
 import type { SiteConfig } from '../../../main/types/token';
@@ -106,6 +113,13 @@ export interface SiteCardActionsProps {
   detectingSite: string | null;
   checkingIn: string | null;
   autoRefreshEnabled?: boolean;
+  /** 签到统计数据 (New API 类型站点) */
+  checkinStats?: {
+    todayQuota?: number;
+    checkinCount?: number;
+    totalCheckins?: number;
+    siteType?: 'veloera' | 'newapi';
+  };
 
   onExpand: (name: string) => void;
   onDetect: (site: SiteConfig) => void;

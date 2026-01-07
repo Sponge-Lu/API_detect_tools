@@ -1,5 +1,5 @@
 ﻿/**
- * 输入: ApiService, ChromeManager, ConfigDetectionService
+ * 输入: ApiService, ChromeManager, ConfigDetectionService, TokenService
  * 输出: 注册到 ipcMain 的站点检测和 CLI 配置检测 IPC 事件监听器
  * 定位: 处理器层 - 站点检测和 CLI 配置检测相关 IPC 处理
  *
@@ -13,10 +13,15 @@ import Logger from '../utils/logger';
 import { ipcMain, shell } from 'electron';
 import type { ApiService } from '../api-service';
 import type { ChromeManager } from '../chrome-manager';
+import type { TokenService } from '../token-service';
 import { configDetectionService } from '../config-detection-service';
 import type { SiteInfo, CliType } from '../../shared/types/config-detection';
 
-export function registerDetectionHandlers(apiService: ApiService, chromeManager: ChromeManager) {
+export function registerDetectionHandlers(
+  apiService: ApiService,
+  chromeManager: ChromeManager,
+  tokenService?: TokenService
+) {
   // 启动浏览器供登录
   ipcMain.handle('launch-chrome-for-login', async (_, url: string) => {
     return await chromeManager.launchForLogin(url);
@@ -65,6 +70,73 @@ export function registerDetectionHandlers(apiService: ApiService, chromeManager:
       return await apiService.detectSite(site, timeout, quickRefresh, cachedData, forceAcceptEmpty);
     }
   );
+
+  // 轻量级余额刷新（签到后使用）
+  ipcMain.handle('refresh-balance-only', async (_, site, timeout, checkinStats = undefined) => {
+    return await apiService.refreshBalanceOnly(site, timeout, checkinStats);
+  });
+
+  // 签到并刷新余额（原子操作，复用浏览器页面）
+  ipcMain.handle('checkin-and-refresh', async (_, site, timeout) => {
+    if (!tokenService) {
+      return { success: false, error: 'TokenService 未初始化' };
+    }
+
+    try {
+      Logger.info('📝 [IPC] 收到签到并刷新请求');
+
+      // 执行签到
+      const checkinResult = await tokenService.checkIn(
+        site.url,
+        parseInt(site.user_id),
+        site.system_token
+      );
+
+      // 如果签到失败，直接返回
+      if (!checkinResult.success) {
+        return {
+          checkinResult,
+          balanceResult: null,
+        };
+      }
+
+      // 签到成功，使用浏览器页面刷新余额（如果有）
+      let balanceResult;
+      try {
+        balanceResult = await apiService.refreshBalanceOnly(
+          site,
+          timeout,
+          checkinResult.checkinStats,
+          checkinResult.browserPage // 传入浏览器页面
+        );
+      } catch (balanceError: any) {
+        Logger.warn('⚠️ [IPC] 余额刷新失败:', balanceError.message);
+        balanceResult = { success: false, error: balanceError.message };
+      }
+
+      // 释放浏览器页面引用
+      if (checkinResult.pageRelease) {
+        Logger.info('🔒 [IPC] 释放签到使用的浏览器页面引用');
+        checkinResult.pageRelease();
+      }
+
+      // 清理返回结果中的页面引用（不能通过 IPC 传递）
+      const cleanCheckinResult = { ...checkinResult };
+      delete cleanCheckinResult.browserPage;
+      delete cleanCheckinResult.pageRelease;
+
+      return {
+        checkinResult: cleanCheckinResult,
+        balanceResult,
+      };
+    } catch (error: any) {
+      Logger.error('❌ [IPC] 签到并刷新失败:', error);
+      return {
+        checkinResult: { success: false, message: error.message },
+        balanceResult: null,
+      };
+    }
+  });
 
   // 检测所有站点
   ipcMain.handle(

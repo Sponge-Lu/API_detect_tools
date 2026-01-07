@@ -23,7 +23,7 @@
 
 | 文件 | 职责 | 关键类型 |
 |------|------|--------|
-| **site.ts** | 站点相关类型 | Site, SiteGroup, SiteStatus 等 |
+| **site.ts** | 站点相关类型 | Site, SiteGroup, SiteStatus, CheckinStats, LdcPaymentInfo, cached_data (含 status/error) 等 |
 | **cli-config.ts** | CLI 配置类型 | CliConfig, CliCompatibility 等 |
 | **config-detection.ts** | CLI 配置检测类型 | ConfigSourceType, CliDetectionResult, AllCliDetectionResult 等 |
 | **credit.ts** | Linux Do Credit 积分类型 | CreditInfo, CreditConfig, CreditState, CreditResponse 等 |
@@ -87,6 +87,23 @@ interface DetectionResult {
   // LDC 支付信息
   ldcPaymentSupported?: boolean;  // 是否支持 LDC 支付
   ldcExchangeRate?: string;       // 兑换比例（LDC:站点余额）
+  // 签到统计数据 (New API 类型站点)
+  checkinStats?: CheckinStats;    // 签到统计
+}
+
+// cached_data 扩展字段（站点检测状态持久化）
+interface CachedData {
+  // ... 其他字段
+  status?: string;    // 检测状态：'成功' | '失败'
+  error?: string;     // 错误信息（仅失败时有值）
+}
+
+// 签到统计数据 (New API 格式)
+interface CheckinStats {
+  todayQuota?: number;      // 今日签到金额 (内部单位，需要 /500000 转换为美元)
+  checkinCount?: number;    // 当月签到次数
+  totalCheckins?: number;   // 累计签到次数
+  siteType?: 'veloera' | 'newapi';
 }
 
 // Token 信息
@@ -479,7 +496,20 @@ DetectionResult (检测结果)
 ├── status: 'success' | 'failed' | 'timeout'
 ├── balance?: number
 ├── usage?: number
-└── error?: string
+├── error?: string
+├── ldcPaymentSupported?: boolean
+├── ldcExchangeRate?: string
+└── checkinStats?: CheckinStats
+
+CachedData (缓存数据扩展)
+├── status?: string           // 检测状态：'成功' | '失败'
+└── error?: string            // 错误信息（仅失败时有值）
+
+CheckinStats (签到统计数据)
+├── todayQuota?: number
+├── checkinCount?: number
+├── totalCheckins?: number
+└── siteType?: 'veloera' | 'newapi'
 
 CliConfig (CLI 配置)
 ├── tool: CliTool
@@ -650,5 +680,5 @@ export interface NewType {
 
 ---
 
-**版本**: 2.1.11  
-**更新日期**: 2025-12-30
+**版本**: 2.1.10  
+**更新日期**: 2026-01-07

@@ -2,7 +2,7 @@
 
 > 本文档整理了 One API 系列项目（one-api、new-api、Veloera、one-hub、done-hub、VoAPI、Super-API）的完整接口信息。
 >
-> **最后更新时间**：2025-12-12
+> **最后更新时间**：2026-01-06
 > **版本**：v2.2.0
 
 ---
@@ -66,7 +66,7 @@
 | `/api/user/topup` | POST | 兑换码充值 | 全部 |
 | `/api/user/topup/self` | GET | 充值记录 | new-api |
 | `/api/user/topup/info` | GET | 充值信息（含支付方式列表） | new-api |
-| `/api/user/amount` | POST | 获取 LDC 兑换比例 | new-api (支持 LDC 支付的站点) |
+| `/api/user/amount` | POST | 获取 LDC 兑换比例 | new-api (支持 LDC 支付的站点)，需要站点会话时自动回退浏览器模式 |
 | `/api/user/pay` | POST | 发起 LDC 充值请求 | new-api (支持 LDC 支付的站点) |
 
 ### 4.3 仪表盘 (需用户认证)

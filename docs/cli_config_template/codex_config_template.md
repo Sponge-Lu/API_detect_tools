@@ -1,14 +1,14 @@
 ## Codex 配置模板 ##
 
 ## config.toml (路径：~/.codex/config.toml)
-model_provider = "IkunCoding"               //去提供商获取正确名字
+model_provider = "IkunCoding"
 model = "gpt-5.1-codex-max"
 model_reasoning_effort = "high"
 disable_response_storage = true
 network_access = "enabled"
 
-[model_providers.IkunCoding]                //去提供商获取正确名字
-name = "ikun"                               //去提供商获取正确名字
+[model_providers.IkunCoding]
+name = "ikun"
 base_url = "https://api.ikuncode.cc/v1"
 # wire_api 选项：
 # - "responses": 使用 Responses API (推荐，功能更强，支持 Agent 能力)

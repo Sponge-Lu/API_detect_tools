@@ -209,6 +209,7 @@ export function SiteCard({
             detectingSite={detectingSite}
             checkingIn={checkingIn}
             autoRefreshEnabled={autoRefreshEnabled}
+            checkinStats={siteResult?.checkinStats}
             onExpand={onExpand}
             onDetect={onDetect}
             onEdit={onEdit}

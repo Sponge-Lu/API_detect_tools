@@ -261,7 +261,15 @@ function App() {
   useTheme();
 
   // 软件更新检查
-  const { updateInfo, settings: updateSettings, checkForUpdatesInBackground } = useUpdate();
+  const {
+    updateInfo,
+    settings: updateSettings,
+    checkForUpdatesInBackground,
+    openDownloadUrl,
+  } = useUpdate();
+
+  // 下载更新状态
+  const [isDownloading, setIsDownloading] = useState(false);
 
   // Toast store
   const { toasts, removeToast } = useToastStore();
@@ -792,9 +800,6 @@ function App() {
     showDialog,
     showAlert,
     setCheckingIn,
-    detectSingle: async (site, quickRefresh) => {
-      await detectSingle(site, quickRefresh);
-    },
   });
 
   // 令牌管理 hook
@@ -827,6 +832,24 @@ function App() {
     } catch (error) {
       Logger.error('打开加油站链接失败:', error);
       toast.error('打开加油站链接失败: ' + error);
+    }
+  };
+
+  /**
+   * 处理下载更新按钮点击
+   */
+  const handleDownloadUpdate = async () => {
+    if (isDownloading) return;
+
+    setIsDownloading(true);
+    try {
+      await openDownloadUrl();
+    } catch (error) {
+      Logger.error('打开下载链接失败:', error);
+      toast.error('打开下载链接失败: ' + error);
+    } finally {
+      // 短暂延迟后重置状态，给用户视觉反馈
+      setTimeout(() => setIsDownloading(false), 1000);
     }
   };
 
@@ -1061,6 +1084,13 @@ function App() {
           return modelCount;
         case 'lastUpdate':
           return lastSyncTime ? new Date(lastSyncTime).getTime() : 0;
+        case 'ldcRatio': {
+          // LDC 兑换比例是直接的数值，如 0.60、5.00、2.50
+          const rate = siteResult?.ldcExchangeRate;
+          if (!rate || !siteResult?.ldcPaymentSupported) return -Infinity;
+          const ratio = parseFloat(rate);
+          return isNaN(ratio) ? -Infinity : ratio;
+        }
         default:
           return 0;
       }
@@ -1138,6 +1168,9 @@ function App() {
           hasUpdate={updateInfo?.hasUpdate}
           onOpenSettings={() => setShowSettings(true)}
           ldcSites={ldcSites}
+          updateInfo={updateInfo}
+          onDownloadUpdate={handleDownloadUpdate}
+          isDownloading={isDownloading}
         />
 
         <div className="flex-1 overflow-y-hidden overflow-x-visible flex">
@@ -1384,7 +1417,7 @@ function App() {
                           { label: '模型数', field: 'modelCount' },
                           { label: '更新时间', field: 'lastUpdate' },
                           { label: 'CC-CX-Gemini?', field: null },
-                          { label: 'LDC比例', field: null },
+                          { label: 'LDC比例', field: 'ldcRatio' },
                         ] as { label: string; field: SortField | null }[]
                       ).map(({ label, field }, idx) => {
                         const centerHeader = idx >= 3 && idx <= 12; // 总 Token / 输入 / 输出 / 请求 / RPM / TPM / 模型数 / 更新时间 / CC-CX-Gemini? / LDC比例

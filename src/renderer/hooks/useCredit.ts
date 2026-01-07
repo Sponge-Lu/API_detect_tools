@@ -23,6 +23,7 @@ import type {
   RechargeResponse,
 } from '../../shared/types/credit';
 import { DEFAULT_CREDIT_CONFIG, clampRefreshInterval } from '../../shared/types/credit';
+import { toast } from '../store/toastStore';
 
 /**
  * useCredit Hook 返回值接口
@@ -229,6 +230,9 @@ export function useCredit(): UseCreditReturn {
 
     setIsLoading(true);
     setError(null);
+
+    // 提示用户在浏览器中完成登录
+    toast.info('请在弹出的浏览器窗口中完成 Linux Do 登录', 10000);
 
     try {
       const response = await creditAPI.login();

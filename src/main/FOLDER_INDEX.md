@@ -24,7 +24,7 @@
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
 | **main.ts** | 应用入口、窗口管理 | `createWindow()`, `app.whenReady()` |
-| **api-service.ts** | API 请求服务 | `ApiService` 类 |
+| **api-service.ts** | API 请求服务、检测状态持久化 | `ApiService` 类 |
 | **chrome-manager.ts** | Chrome 浏览器管理 | `ChromeManager` 类 |
 | **token-service.ts** | Token 认证服务 | `TokenService` 类 |
 | **cli-compat-service.ts** | CLI 兼容性测试 | `CliCompatService` 类 |
@@ -86,7 +86,7 @@ main.ts: app.whenReady()
 
 ### ApiService
 
-**职责**: 发送 HTTP 请求到 API 站点
+**职责**: 发送 HTTP 请求到 API 站点，持久化检测状态
 
 **关键方法**:
 - `request(config)` - 发送请求
@@ -94,8 +94,14 @@ main.ts: app.whenReady()
 - `checkStatus(site)` - 检测站点状态
 - `checkSignIn(site)` - 检测签到状态
 - `detectLdcPayment(site, timeout, sharedPage)` - 检测 LDC 支付支持
+- `saveCachedDisplayData(siteUrl, result)` - 保存检测结果到缓存（含状态和错误信息）
+- `saveLastDetectionStatus(siteUrl, status, error)` - 保存失败检测状态到缓存
 
 **依赖**: TokenService (获取 Token)
+
+**浏览器模式说明**:
+- 当检测到 Cloudflare/Bot 防护并进入浏览器模式后，会复用同一 `sharedPage` 继续请求后续端点，避免每个端点重复 “axios → browser”。
+- 共享页面上的请求会被串行化（`runOnPageQueue`），避免并发 `page.evaluate` 导致偶发不稳定。
 
 ### TokenService
 
@@ -108,11 +114,18 @@ main.ts: app.whenReady()
 - `deleteToken(site)` - 删除 Token
 - `checkSiteSupportsCheckIn(baseUrl, page?)` - 检查站点是否支持签到（兼容 Veloera/New API）
 - `fetchCheckInStatus(baseUrl, userId, accessToken, page?)` - 获取签到状态（兼容两种接口）
-- `checkIn(baseUrl, userId, accessToken)` - 执行签到（兼容两种端点和响应格式）
+- `checkIn(baseUrl, userId, accessToken, page?)` - 执行签到（兼容两种端点和响应格式，支持浏览器模式回退）
+- `fetchCheckinStats(baseUrl, userId, accessToken, page?)` - 获取当月签到统计（New API）
+- `checkInWithBrowser(baseUrl, userId, accessToken)` - 浏览器模式签到（绕过 Cloudflare）
 
 **签到功能兼容性**:
 - Veloera: `check_in_enabled`, `/api/user/check_in_status`, `/api/user/check_in`, `reward`
 - New API: `checkin_enabled`, `/api/user/checkin?month=YYYY-MM`, `/api/user/checkin`, `quota_awarded`
+
+**签到统计功能 (New API)**:
+- 签到成功后自动获取签到统计数据
+- 返回 `CheckinStats`: `todayQuota` (今日签到金额), `checkinCount` (当月签到次数), `totalCheckins` (累计签到次数)
+- 支持浏览器模式回退，当 axios 被 Cloudflare 拦截时自动切换
 
 **依赖**: ChromeManager (自动登录)
 
@@ -292,5 +305,5 @@ main.ts: app.whenReady()
 
 ---
 
-**版本**: 2.1.11  
-**更新日期**: 2026-01-04
+**版本**: 2.1.12  
+**更新日期**: 2026-01-07

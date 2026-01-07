@@ -132,13 +132,27 @@ try {
 | `backup:upload` | `{}` | `{ success, url }` | 上传到云端 |
 | `backup:download` | `{}` | `{ success }` | 从云端下载 |
 
-### CLI 处理器 (cli.handler.ts)
+### CLI 处理器 (cli-compat-handlers.ts)
 
 | 事件 | 请求参数 | 响应数据 | 职责 |
 |------|---------|--------|------|
-| `cli:test` | `{ site }` | `{ results: [...] }` | 测试 CLI 兼容性 |
-| `cli:generateConfig` | `{ site, tool }` | `{ config }` | 生成 CLI 配置 |
-| `cli:exportConfig` | `{ format }` | `{ data }` | 导出 CLI 配置 |
+| `cli-compat:test-with-config` | `{ siteUrl, configs }` | `{ results: [...] }` | 测试 CLI 兼容性 |
+| `cli-compat:save-result` | `{ siteUrl, result }` | `{ success }` | 保存测试结果 |
+| `cli-compat:save-config` | `{ siteUrl, cliConfig }` | `{ success }` | 保存 CLI 配置 |
+| `cli-compat:write-config` | `{ cliType, files, applyMode }` | `{ success, writtenPaths }` | 写入配置文件 |
+
+#### 辅助函数
+
+| 函数 | 参数 | 返回值 | 职责 |
+|------|------|--------|------|
+| `resolveConfigPath` | `filePath: string` | `string` | 解析配置路径（~ 替换为主目录） |
+| `ensureDirectoryExists` | `dirPath: string` | `void` | 确保目录存在 |
+| `deepMerge` | `target, source` | `object` | 深度合并对象 |
+| `mergeJsonConfig` | `existingContent, newContent` | `string` | 合并 JSON 配置 |
+| `mergeEnvConfig` | `existingContent, newContent` | `string` | 合并 .env 配置 |
+| `mergeSectionContent` | `existingLines, newLines` | `string[]` | 合并 TOML section 内容（智能合并） |
+| `mergeTomlConfig` | `existingContent, newContent` | `string` | 合并 TOML 配置（智能合并） |
+| `mergeConfigByType` | `filePath, existingContent, newContent` | `string` | 根据文件类型选择合并策略 |
 
 ### 浏览器处理器 (browser.handler.ts)
 
@@ -270,5 +284,5 @@ describe('API Handlers', () => {
 
 ---
 
-**版本**: 2.1.10  
-**更新日期**: 2025-12-30
+**版本**: 2.1.12  
+**更新日期**: 2026-01-07

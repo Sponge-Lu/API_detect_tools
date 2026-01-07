@@ -1,7 +1,7 @@
 /**
  * 输入: TokenService (获取 Token), HttpClient (HTTP 请求), RequestManager (请求管理), UnifiedConfigManager (配置管理), LDC_PAYMENT_NAMES (支付名称常量)
- * 输出: DetectionResult (含 LDC 支付信息), BalanceInfo, StatusInfo, API 响应数据
- * 定位: 服务层 - 处理所有外部站点的 API 请求，管理请求生命周期和错误处理，检测 LDC 支付支持
+ * 输出: DetectionResult (含 LDC 支付信息, 签到统计, 检测状态持久化), BalanceInfo, StatusInfo, API 响应数据
+ * 定位: 服务层 - 处理所有外部站点的 API 请求，管理请求生命周期和错误处理，检测 LDC 支付支持，获取签到统计，持久化检测状态
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -15,6 +15,7 @@ import { requestManager, RequestManager } from './utils/request-manager';
 import { getAllUserIdHeaders } from '../shared/utils/headers';
 import Logger from './utils/logger';
 import { unifiedConfigManager } from './unified-config-manager';
+import { runOnPageQueue } from './utils/page-exec-queue';
 import {
   isModelLog,
   aggregateUsageData as sharedAggregateUsageData,
@@ -25,6 +26,7 @@ import type {
   AmountApiResponse,
   PayMethod,
   LdcPaymentInfo,
+  CheckinStats,
 } from '../shared/types/site';
 import { LDC_PAYMENT_NAMES } from '../shared/constants';
 
@@ -51,6 +53,8 @@ interface DetectionResult {
   ldcPaymentSupported?: boolean; // 是否支持 LDC 支付
   ldcExchangeRate?: string; // 兑换比例（LDC:站点余额）
   ldcPaymentType?: string; // 支付方式类型，如 "epay"
+  // 签到统计数据 (New API 类型站点)
+  checkinStats?: CheckinStats;
 }
 
 // 今日使用统计
@@ -218,6 +222,34 @@ export class ApiService {
         }
       }
 
+      // 获取签到统计数据（仅 New API 且已签到的站点）
+      let checkinStats: CheckinStats | undefined = undefined;
+
+      if (
+        this.tokenService &&
+        site.system_token &&
+        site.user_id &&
+        hasCheckin &&
+        canCheckIn === false
+      ) {
+        try {
+          Logger.info('📊 [ApiService] 获取签到统计数据...');
+          checkinStats = await this.tokenService.fetchCheckinStats(
+            site.url,
+            parseInt(site.user_id),
+            site.system_token,
+            sharedPage
+          );
+          if (checkinStats) {
+            Logger.info(
+              `✅ [ApiService] 签到统计获取成功: 今日=${checkinStats.todayQuota}, 本月=${checkinStats.checkinCount}次`
+            );
+          }
+        } catch (error: any) {
+          Logger.info('⚠️ [ApiService] 获取签到统计失败:', error.message);
+        }
+      }
+
       // 检测是否支持 LDC 支付
       let ldcPaymentSupported = false;
       let ldcExchangeRate: string | undefined = undefined;
@@ -258,6 +290,7 @@ export class ApiService {
         ldcPaymentSupported, // LDC 支付支持状态
         ldcExchangeRate, // LDC 兑换比例
         ldcPaymentType, // LDC 支付方式类型
+        checkinStats, // 签到统计数据 (New API)
       };
 
       // 保存缓存数据到统一配置（成功时）
@@ -297,7 +330,7 @@ export class ApiService {
       if (pageRelease) {
         try {
           Logger.info('🔒 [ApiService] 释放浏览器引用 (getModels)');
-          pageRelease();
+          pageRelease?.();
         } catch (error: any) {
           Logger.error('⚠️ [ApiService] 释放浏览器引用失败:', error.message);
         }
@@ -358,13 +391,101 @@ export class ApiService {
       return results;
     }
 
-    // �ر����: ˳��ִ��
+    // 顺序执行
     for (const site of enabledSites) {
       const cachedData = cachedMap.get(site.name);
       const result = await this.detectSite(site, config.settings.timeout, quickRefresh, cachedData);
       results.push(result);
     }
     return results;
+  }
+
+  /**
+   * 轻量级余额刷新（签到后使用）
+   * 只获取余额和签到统计，不获取模型列表、API Keys 等
+   *
+   * @param site 站点配置
+   * @param timeout 超时时间
+   * @param checkinStats 签到统计数据（签到成功后传入）
+   * @param browserPage 可选的浏览器页面（用于绕过Cloudflare）
+   * @returns 更新后的余额和签到状态
+   */
+  async refreshBalanceOnly(
+    site: SiteConfig,
+    timeout: number,
+    checkinStats?: CheckinStats,
+    browserPage?: any
+  ): Promise<{
+    success: boolean;
+    balance?: number;
+    canCheckIn?: boolean;
+    checkinStats?: CheckinStats;
+    error?: string;
+  }> {
+    Logger.info('💰 [ApiService] 轻量级余额刷新...');
+    Logger.info('📍 [ApiService] 站点:', site.name);
+    if (browserPage) {
+      Logger.info('♻️ [ApiService] 使用浏览器页面刷新余额');
+    }
+
+    const authToken = site.system_token || site.api_key;
+
+    if (!authToken || !site.user_id) {
+      Logger.warn('⚠️ [ApiService] 缺少认证信息');
+      return { success: false, error: '缺少认证信息' };
+    }
+
+    try {
+      // 只获取余额（传入浏览器页面以绕过Cloudflare）
+      const balanceResult = await this.fetchBalance(site, timeout, authToken, browserPage);
+      const balance = balanceResult?.balance;
+
+      Logger.info(`✅ [ApiService] 余额刷新成功: ${balance}`);
+
+      // 更新缓存数据
+      try {
+        const existingSite = unifiedConfigManager.getSiteByUrl(site.url);
+        if (existingSite) {
+          const existingCachedData =
+            existingSite.cached_data || ({} as NonNullable<typeof existingSite.cached_data>);
+
+          // 构建更新的缓存数据
+          const updatedCachedData = {
+            ...existingCachedData,
+            balance: balance,
+            can_check_in: false, // 签到成功后设为已签到
+            last_refresh: Date.now(),
+            // 更新签到统计数据
+            checkin_stats: checkinStats
+              ? {
+                  today_quota: checkinStats.todayQuota,
+                  checkin_count: checkinStats.checkinCount,
+                  total_checkins: checkinStats.totalCheckins,
+                  site_type: checkinStats.siteType,
+                }
+              : existingCachedData.checkin_stats,
+          };
+
+          await unifiedConfigManager.updateSite(existingSite.id, {
+            cached_data: updatedCachedData,
+          });
+
+          Logger.info('✅ [ApiService] 缓存数据已更新');
+        }
+      } catch (cacheError: any) {
+        Logger.warn('⚠️ [ApiService] 更新缓存数据失败:', cacheError.message);
+      }
+
+      return {
+        success: true,
+        balance,
+        canCheckIn: false, // 签到成功后设为已签到
+        checkinStats,
+      };
+    } catch (error: any) {
+      Logger.error('❌ [ApiService] 余额刷新失败:', error.message);
+      return { success: false, error: error.message };
+    }
   }
 
   /**
@@ -392,44 +513,46 @@ export class ApiService {
           }
 
           // 2.1 检测是否仍在验证中
-          const verificationStatus = await page.evaluate(() => {
-            const doc = (globalThis as any).document;
+          const verificationStatus = await runOnPageQueue(page, () =>
+            page.evaluate(() => {
+              const doc = (globalThis as any).document;
 
-            // 检测Cloudflare验证相关元素
-            const cfChallenge = doc.querySelector('[class*="cf-challenge"]');
-            const cfVerifying = doc.querySelector('[class*="cf-browser-verification"]');
-            const cfLoading = doc.querySelector('[id*="challenge-stage"]');
-            const cfSpinner = doc.querySelector('[class*="cf-spinner"]');
+              // 检测Cloudflare验证相关元素
+              const cfChallenge = doc.querySelector('[class*="cf-challenge"]');
+              const cfVerifying = doc.querySelector('[class*="cf-browser-verification"]');
+              const cfLoading = doc.querySelector('[id*="challenge-stage"]');
+              const cfSpinner = doc.querySelector('[class*="cf-spinner"]');
 
-            // 检测标题
-            const titleCheck =
-              doc.title.includes('Just a moment') ||
-              doc.title.includes('Checking your browser') ||
-              doc.title.includes('Please wait');
+              // 检测标题
+              const titleCheck =
+                doc.title.includes('Just a moment') ||
+                doc.title.includes('Checking your browser') ||
+                doc.title.includes('Please wait');
 
-            // 检测body class
-            const bodyCheck =
-              doc.body.className.includes('no-js') || doc.body.className.includes('cf-challenge');
+              // 检测body class
+              const bodyCheck =
+                doc.body.className.includes('no-js') || doc.body.className.includes('cf-challenge');
 
-            // 检测iframe（某些站点使用iframe进行验证）
-            const iframeCheck = doc.querySelector('iframe[src*="challenges.cloudflare.com"]');
+              // 检测iframe（某些站点使用iframe进行验证）
+              const iframeCheck = doc.querySelector('iframe[src*="challenges.cloudflare.com"]');
 
-            const isVerifying = !!(
-              cfChallenge ||
-              cfVerifying ||
-              cfLoading ||
-              cfSpinner ||
-              titleCheck ||
-              bodyCheck ||
-              iframeCheck
-            );
+              const isVerifying = !!(
+                cfChallenge ||
+                cfVerifying ||
+                cfLoading ||
+                cfSpinner ||
+                titleCheck ||
+                bodyCheck ||
+                iframeCheck
+              );
 
-            return {
-              isVerifying,
-              title: doc.title,
-              bodyClass: doc.body.className,
-            };
-          });
+              return {
+                isVerifying,
+                title: doc.title,
+                bodyClass: doc.body.className,
+              };
+            })
+          );
 
           // 每30秒输出一次日志
           const elapsed = Date.now() - startTime;
@@ -605,8 +728,17 @@ export class ApiService {
     try {
       const site = unifiedConfigManager.getSiteByUrl(siteUrl);
       if (!site) return;
+
+      // 获取现有的缓存数据，保留其他字段
+      const existingCachedData = site.cached_data || ({} as NonNullable<typeof site.cached_data>);
+
       await unifiedConfigManager.updateSite(site.id, {
-        // 可以在 UnifiedSite 中添加这些字段，暂时跳过
+        cached_data: {
+          ...existingCachedData,
+          status,
+          error,
+          last_refresh: Date.now(),
+        },
       });
       Logger.info('✅ [ApiService] 最近一次检测状态已保存:', { siteUrl, status });
     } catch (e: any) {
@@ -630,21 +762,136 @@ export class ApiService {
     timeout: number,
     parseResponse: (data: any) => T,
     sharedPage?: any,
-    cacheOptions?: { ttl?: number; skipCache?: boolean }
+    cacheOptions?: { ttl?: number; skipCache?: boolean },
+    requestOptions?: { method?: 'GET' | 'POST'; data?: any }
   ): Promise<{ result: T; page?: any; pageRelease?: () => void }> {
     Logger.info('📡 [ApiService] 发起请求:', url);
 
     // 生成缓存 key（基于 URL 和用户 ID）
     const cacheKey = RequestManager.key(url, site.user_id || 'anonymous');
 
+    const method = requestOptions?.method ?? 'GET';
+
+    const fetchInBrowser = async (): Promise<{
+      result: T;
+      page?: any;
+      pageRelease?: () => void;
+    }> => {
+      // 如果有共享页面，优先复用；否则创建新页面
+      let page = sharedPage;
+      let pageRelease: (() => void) | null = null;
+      let shouldClosePage = false;
+
+      const isClosed =
+        page && typeof page.isClosed === 'function' ? Boolean(page.isClosed()) : false;
+      if (isClosed) page = null;
+
+      if (!page) {
+        if (!this.tokenService) {
+          throw new Error('TokenService 未初始化，无法创建浏览器页面');
+        }
+
+        const chromeManager = (this.tokenService as any).chromeManager;
+        if (!chromeManager) {
+          throw new Error('ChromeManager不可用');
+        }
+
+        Logger.info('🌐 [ApiService] 创建新浏览器页面...');
+        const pageResult = await chromeManager.createPage(site.url);
+        page = pageResult.page;
+        pageRelease = pageResult.release;
+        shouldClosePage = false; // 不在这里关闭，由调用者决定
+
+        await this.waitForCloudflareChallenge(page, 600000); // 10分钟
+      } else {
+        Logger.info('♻️ [ApiService] 复用共享浏览器页面');
+      }
+
+      try {
+        Logger.info('📡 [ApiService] 在浏览器中调用API...');
+        const userIdHeaders = site.user_id ? getAllUserIdHeaders(site.user_id) : {};
+
+        const result = await runOnPageQueue(page, () =>
+          page.evaluate(
+            async (
+              apiUrl: string,
+              requestHeaders: Record<string, string>,
+              additionalHeaders: Record<string, string>,
+              httpMethod: 'GET' | 'POST',
+              body: any
+            ) => {
+              // 构建完整的请求头（包含 User-ID 头和 Authorization）
+              const fullHeaders: Record<string, string> = {
+                ...requestHeaders,
+                ...additionalHeaders,
+              };
+
+              const init: RequestInit = {
+                method: httpMethod,
+                credentials: 'include',
+                headers: fullHeaders,
+              };
+
+              if (httpMethod === 'POST') {
+                init.body = JSON.stringify(body ?? {});
+              }
+
+              const response = await fetch(apiUrl, init);
+
+              if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+              }
+
+              return await response.json();
+            },
+            url,
+            headers,
+            userIdHeaders,
+            method,
+            requestOptions?.data ?? null
+          )
+        );
+
+        Logger.info('✅ [ApiService] 浏览器模式请求成功');
+        return {
+          result: parseResponse(result),
+          page: shouldClosePage ? undefined : page,
+          pageRelease: pageRelease || undefined,
+        };
+      } catch (evalError) {
+        pageRelease?.();
+        if (shouldClosePage && page) await page.close();
+        throw evalError;
+      }
+    };
+
+    // 如果本次站点刷新一开始就已进入浏览器模式（已有 sharedPage），后续端点直接走浏览器模式，
+    // 避免每个端点都先 axios 再 browser 的额外延迟与噪音日志。
+    if (sharedPage) {
+      return await fetchInBrowser();
+    }
+
     try {
-      // 使用 requestManager 包装请求，实现去重和缓存
-      // httpGet 在打包环境自动使用 Electron net 模块（Chromium 网络栈）
-      const response = await requestManager.request(
-        cacheKey,
-        () => httpGet(url, { timeout: timeout * 1000, headers }),
-        { ttl: cacheOptions?.ttl ?? 30000, skipCache: cacheOptions?.skipCache }
-      );
+      const response =
+        method === 'GET'
+          ? // 使用 requestManager 包装请求，实现去重和缓存
+            // httpGet 在打包环境自动使用 Electron net 模块（Chromium 网络栈）
+            await requestManager.request(
+              cacheKey,
+              () => httpGet(url, { timeout: timeout * 1000, headers }),
+              { ttl: cacheOptions?.ttl ?? 30000, skipCache: cacheOptions?.skipCache }
+            )
+          : // POST 一般不做缓存与去重，避免副作用；若遇到站点风控/需要 Cookie，再走浏览器回退
+            await httpPost(url, requestOptions?.data ?? {}, { timeout: timeout * 1000, headers });
+
+      // httpPost 在打包环境会返回状态码而不是抛异常；这里将常见鉴权/风控错误统一转成异常，
+      // 以便触发浏览器回退（携带 Cookie / 站点会话）。
+      if (method === 'POST' && (response.status === 401 || response.status === 403)) {
+        throw {
+          message: `HTTP ${response.status}`,
+          response: { status: response.status, data: response.data },
+        };
+      }
 
       // 检测是否返回了 Bot Detection 页面（200 状态码但内容是 HTML）
       if (this.isBotDetectionPage(response.data)) {
@@ -665,10 +912,22 @@ export class ApiService {
       });
 
       // 第二步：检测是否为Cloudflare保护或Bot Detection
+      const status = error.response?.status;
       const needBrowserFallback =
-        this.isCloudflareProtection(error) || error.isBotDetection === true;
+        this.isCloudflareProtection(error) ||
+        error.isBotDetection === true ||
+        (method === 'POST' && (status === 401 || status === 403));
       if (needBrowserFallback) {
         Logger.info('🛡️ [ApiService] 检测到Bot/Cloudflare保护，切换到浏览器模式...');
+
+        // 已经判定需要浏览器模式：直接使用浏览器请求（优先复用 sharedPage）。
+        // 注：后续旧的 fallback 分支保留作为兜底，但正常情况下不会执行到。
+        try {
+          return await fetchInBrowser();
+        } catch (browserError: any) {
+          Logger.error('❌ [ApiService] 浏览器模式也失败:', browserError.message);
+          throw browserError;
+        }
 
         // 确保有必要的认证信息
         if (!this.tokenService || !site.system_token || !site.user_id) {
@@ -705,33 +964,35 @@ export class ApiService {
             Logger.info('📡 [ApiService] 在浏览器中调用API...');
             // 在浏览器环境中调用API
             const userIdHeaders = getAllUserIdHeaders(site.user_id!);
-            const result = await page.evaluate(
-              async (
-                apiUrl: string,
-                requestHeaders: Record<string, string>,
-                additionalHeaders: Record<string, string>
-              ) => {
-                // 构建完整的请求头（包含所有User-ID头和Authorization）
-                const fullHeaders: Record<string, string> = {
-                  ...requestHeaders,
-                  ...additionalHeaders,
-                };
+            const result = await runOnPageQueue(page, () =>
+              page.evaluate(
+                async (
+                  apiUrl: string,
+                  requestHeaders: Record<string, string>,
+                  additionalHeaders: Record<string, string>
+                ) => {
+                  // 构建完整的请求头（包含所有User-ID头和Authorization）
+                  const fullHeaders: Record<string, string> = {
+                    ...requestHeaders,
+                    ...additionalHeaders,
+                  };
 
-                const response = await fetch(apiUrl, {
-                  method: 'GET',
-                  credentials: 'include',
-                  headers: fullHeaders,
-                });
+                  const response = await fetch(apiUrl, {
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: fullHeaders,
+                  });
 
-                if (!response.ok) {
-                  throw new Error(`HTTP ${response.status}`);
-                }
+                  if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                  }
 
-                return await response.json();
-              },
-              url,
-              headers,
-              userIdHeaders
+                  return await response.json();
+                },
+                url,
+                headers,
+                userIdHeaders
+              )
             );
 
             Logger.info('✅ [ApiService] 浏览器模式请求成功');
@@ -743,9 +1004,7 @@ export class ApiService {
             };
           } catch (evalError) {
             // 如果是我们创建的页面且执行失败，释放引用并关闭页面
-            if (pageRelease) {
-              pageRelease();
-            }
+            pageRelease?.();
             if (shouldClosePage && page) {
               await page.close();
             }
@@ -935,6 +1194,28 @@ export class ApiService {
     // 但如果 forceAcceptEmpty 为 true，则接受空数据（用户确认站点确实没有模型）
     if (hasEmptyResponse && !forceAcceptEmpty) {
       Logger.error('❌ [ApiService] 模型接口返回空数组，可能是session过期');
+      // 该分支会直接 throw，detectSite 无法拿到 pageRelease；需要在这里释放浏览器引用，避免批量检测泄漏
+      if (sharedPageRelease) {
+        try {
+          if (
+            sharedPage &&
+            typeof sharedPage.isClosed === 'function' &&
+            typeof sharedPage.close === 'function' &&
+            !sharedPage.isClosed()
+          ) {
+            await sharedPage.close();
+          }
+        } catch {
+          // ignore
+        }
+
+        try {
+          sharedPageRelease();
+        } catch (e: any) {
+          Logger.warn('[ApiService] getModels empty-response release failed:', e?.message);
+        }
+      }
+
       throw new Error('模型接口返回空数据 (登录可能已过期，请点击"重新获取"登录站点)');
     }
 
@@ -953,6 +1234,28 @@ export class ApiService {
       } else {
         baseMessage = this.formatAuthError(lastError, baseMessage);
       }
+      // 该分支会直接 throw，detectSite 无法拿到 pageRelease；需要在这里释放浏览器引用，避免批量检测泄漏
+      if (sharedPageRelease) {
+        try {
+          if (
+            sharedPage &&
+            typeof sharedPage.isClosed === 'function' &&
+            typeof sharedPage.close === 'function' &&
+            !sharedPage.isClosed()
+          ) {
+            await sharedPage.close();
+          }
+        } catch {
+          // ignore
+        }
+
+        try {
+          sharedPageRelease();
+        } catch (e: any) {
+          Logger.warn('[ApiService] getModels error-path release failed:', e?.message);
+        }
+      }
+
       throw new Error(baseMessage);
     }
 
@@ -1408,21 +1711,19 @@ export class ApiService {
             Logger.info('📡 [ApiService] 发起 POST 请求获取兑换比例:', amountUrl);
 
             // API 需要传递 amount 参数，传递 1 来获取 1 单位的兑换比例
-            const amountResponse = await httpPost(
+            const amountResult = await this.fetchWithBrowserFallback<AmountApiResponse>(
               amountUrl,
-              { amount: 1 },
-              {
-                headers,
-                timeout: timeout * 1000,
-              }
+              headers,
+              site,
+              timeout,
+              (data: any) => data as AmountApiResponse,
+              sharedPage,
+              { ttl: 60000, skipCache: true },
+              { method: 'POST', data: { amount: 1 } }
             );
 
-            Logger.info(
-              '📦 [ApiService] /api/user/amount 原始响应:',
-              JSON.stringify(amountResponse.data)
-            );
-
-            const amountData = amountResponse.data as AmountApiResponse;
+            const amountData = amountResult.result;
+            Logger.info('📦 [ApiService] /api/user/amount 原始响应:', JSON.stringify(amountData));
             // 检查响应是否成功（success 不为 false 且 message 不是 error）
             if (amountData?.data && amountData.message !== 'error') {
               result.ldcExchangeRate = amountData.data;
@@ -1466,7 +1767,7 @@ export class ApiService {
       }
 
       // 获取现有的缓存数据，保留 cli_compatibility 等字段
-      const existingCachedData = site.cached_data || {};
+      const existingCachedData = site.cached_data || ({} as NonNullable<typeof site.cached_data>);
 
       // 构建缓存数据，保留现有的 cli_compatibility
       const cachedData = {
@@ -1486,6 +1787,18 @@ export class ApiService {
         ldc_payment_supported: detectionResult.ldcPaymentSupported,
         ldc_exchange_rate: detectionResult.ldcExchangeRate,
         ldc_payment_type: detectionResult.ldcPaymentType,
+        // 签到统计数据 (New API)
+        checkin_stats: detectionResult.checkinStats
+          ? {
+              today_quota: detectionResult.checkinStats.todayQuota,
+              checkin_count: detectionResult.checkinStats.checkinCount,
+              total_checkins: detectionResult.checkinStats.totalCheckins,
+              site_type: detectionResult.checkinStats.siteType,
+            }
+          : existingCachedData.checkin_stats, // 保留现有数据
+        // 检测状态持久化
+        status: detectionResult.status,
+        error: detectionResult.error,
       };
 
       // 更新站点缓存

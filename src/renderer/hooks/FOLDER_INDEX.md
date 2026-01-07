@@ -32,7 +32,7 @@
 | **useTokenManagement.ts** | Token 管理 | `{ tokens, getToken, saveToken, deleteToken, ... }` |
 | **useCheckIn.ts** | 签到逻辑 | `{ canSignIn, isSigningIn, signIn, ... }` |
 | **useCliCompatTest.ts** | CLI 兼容性测试 | `{ results, isTesting, test, ... }` |
-| **useDataLoader.ts** | 数据加载 | `{ data, isLoading, error, reload, ... }` |
+| **useDataLoader.ts** | 数据加载，支持站点状态持久化 | `{ data, isLoading, error, reload, ... }` |
 | **useSiteDrag.ts** | 站点拖拽排序 | `{ draggedSite, onDragStart, onDrop, ... }` |
 | **useTheme.ts** | 主题管理 | `{ theme, setTheme, isDark, ... }` |
 | **useUpdate.ts** | 应用更新检查 | `{ hasUpdate, isChecking, checkUpdate, ... }` |
@@ -162,7 +162,8 @@ interface UseCheckInReturn {
 - 单个签到
 - 批量签到
 - 签到历史记录
-- 签到失败时根据站点类型打开对应的手动签到页面（Veloera: /app/me, New API: /console/personal）
+- 签到失败时根据站点类型打开对应的手动签到页面（Veloera: /console, New API: /console/personal）
+- 签到成功后更新 lastRefresh 时间戳，确保图标状态正确显示
 
 ### useCliCompatTest
 
@@ -187,7 +188,7 @@ interface UseCliCompatTestReturn {
 
 ### useDataLoader
 
-**职责**: 通用数据加载
+**职责**: 通用数据加载，支持站点检测状态持久化
 
 **返回值**:
 ```typescript
@@ -206,6 +207,11 @@ const { data: sites, isLoading, error, reload } = useDataLoader(
   () => window.ipcRenderer.invoke('api:getSites')
 );
 ```
+
+**特点**:
+- 从 cached_data 读取站点检测状态（status/error）
+- 向后兼容：无 status 字段时默认为 '成功'
+- 支持启动时自动检测 CLI 配置
 
 ### useSiteDrag
 
@@ -448,4 +454,4 @@ export function useNewFeature(): UseNewFeatureReturn {
 ---
 
 **版本**: 2.1.10  
-**更新日期**: 2025-12-30
+**更新日期**: 2026-01-07

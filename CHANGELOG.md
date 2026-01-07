@@ -7,6 +7,11 @@
 ## [v2.1.10]
 
 ### 新增
+- **站点检测状态持久化**：站点检测状态（成功/失败）和错误信息在应用重启后能正确恢复
+  - 扩展 `cached_data` 接口，添加 `status` 和 `error` 字段
+  - 检测成功时保存 `status: '成功'`，失败时保存 `status: '失败'` 和错误信息
+  - 应用启动时从缓存读取状态，向后兼容（无 status 字段时默认为 '成功'）
+- **LDC比例列排序**：站点列表的"LDC比例"列现在支持点击排序
 - **Linux Do Credit 积分监控**：
   - 新增完整用户信息展示：头像、昵称、信任等级徽章
   - 新增收支信息：总收入、总支出、可用余额
@@ -31,9 +36,22 @@
   - 签到状态：支持 `/api/user/check_in_status`（Veloera）和 `/api/user/checkin?month=YYYY-MM`（New API）两种接口
   - 执行签到：支持 `/api/user/check_in`（Veloera）和 `/api/user/checkin`（New API）两种端点
   - 奖励解析：兼容 `reward`（Veloera）和 `quota_awarded`（New API）两种响应格式
-  - 签到失败时根据站点类型打开对应的手动签到页面（Veloera: /app/me, New API: /console/personal）
+  - 签到失败时根据站点类型打开对应的手动签到页面（Veloera: /console, New API: /console/personal）
+- **签到图标悬停提示**：New API 类型站点签到图标悬停显示签到统计
+  - 已签到状态：显示"今日已签到 +$0.0994 | 本月 2 次"
+  - 可签到状态：显示"点击签到 | 本月 1 次"
+  - 无统计数据时显示默认文本
+- **签到统计数据获取**：签到成功后自动获取当月签到统计
+  - 调用 `GET /api/user/checkin?month=YYYY-MM` 获取签到记录
+  - 从 `stats.records` 中查找今日签到金额
+  - 从 `stats.checkin_count` 获取当月签到次数
+- **浏览器模式签到回退**：axios 请求被 Cloudflare 拦截时自动切换到浏览器模式重试
 
 ### 优化
+- **Codex 配置生成器**：中文站点名称自动转换为拼音
+  - 使用 pinyin-pro 库将中文转换为拼音（如 "公益站" → "Gongyizhan"）
+  - 移除其他非英文字符，确保提供商名称仅包含英文字母
+  - 去掉配置模板中的冗余注释
 - **Credit 面板 UI 优化**：
   - 紧凑视图只显示"今日积分变化"差值
   - 展开视图积分信息分两组显示：Linux Do 社区积分（基准值/当前分/今日积分变化）和 Linux Do Credit 积分（收入/支出/可用）
@@ -62,6 +80,9 @@
   - 二级卡片（展开详情）顶部新增站点 URL 和 Access Token 显示
   - URL 和 Access Token 显示在同一行，各带复制按钮
   - Access Token 脱敏显示（前8位 + **** + 后8位），支持显示/隐藏切换
+- **站点刷新浏览器模式优化**：当已进入浏览器模式并拿到共享页面后，后续端点直接在浏览器上下文中请求，减少重复的“axios → browser”回退带来的延迟与噪音日志。
+- **共享页面并发稳定性**：对同一 Puppeteer `Page` 的 `page.evaluate` 增加队列串行化，降低偶发 “Execution context destroyed/Target closed” 风险。
+- **UI 布局调整**：签到图标放在加油站图标后面，保持图标顺序一致性
 
 ### 修复
 - **formatDateToMMDD 函数**：修复对无效日期格式的处理，使用正则验证确保输入格式正确
@@ -89,6 +110,16 @@
   - 只有在实际获取数据失败时才更新登录状态
 - **刷新间隔显示**：修复自动刷新间隔显示单位错误（从"秒"改为"分钟"）
 - **刷新间隔同步**：修复配置加载后输入框显示值与实际配置不一致的问题
+- **LDC 兑换比例接口 403**：`/api/user/amount`（POST）在需要站点会话/Cookie 时自动回退到浏览器模式，请求行为与其它端点保持一致。
+- **签到图标状态更新**：修复签到成功后图标没有变灰的问题
+  - 签到成功后更新 `lastRefresh` 时间戳，确保 `isToday` 判断正确
+  - 图标现在会正确显示为灰色已签到状态
+- **Linux Do Credit 登录优化**：
+  - 修复登录检测逻辑，不再依赖特定的 session cookie 名称，改为通过 API 响应验证登录状态
+  - 登录时显示 toast 提示用户在浏览器中完成登录
+  - 优化 linux.do 积分获取，直接导航到 linux.do 页面避免跨域问题
+  - 添加 Cloudflare 验证等待和重试机制，解决 403 错误
+  - 获取每日统计和交易记录前添加等待时间，确保 Cloudflare 验证完全通过
 
 ## [v2.1.9]
 

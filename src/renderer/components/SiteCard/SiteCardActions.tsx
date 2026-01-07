@@ -1,5 +1,5 @@
 /**
- * 输入: SiteCardActionsProps (操作回调、加载状态、展开状态)
+ * 输入: SiteCardActionsProps (操作回调、加载状态、展开状态、签到统计)
  * 输出: React 组件 (站点卡片操作按钮 UI)
  * 定位: 展示层 - 站点卡片操作按钮组件，包含复制、刷新、编辑、删除等操作
  *
@@ -23,6 +23,60 @@ import {
 } from 'lucide-react';
 import type { SiteCardActionsProps } from './types';
 
+/**
+ * 格式化签到金额 (内部单位 -> 美元)
+ * @param quota 内部单位金额
+ * @returns 格式化后的美元字符串
+ */
+function formatCheckinQuota(quota: number): string {
+  const dollars = quota / 500000;
+  // 根据金额大小选择合适的小数位数
+  if (dollars >= 0.01) {
+    return `$${dollars.toFixed(2)}`;
+  } else if (dollars >= 0.001) {
+    return `$${dollars.toFixed(3)}`;
+  } else {
+    return `$${dollars.toFixed(4)}`;
+  }
+}
+
+/**
+ * 生成签到图标的 tooltip 文本
+ * @param canCheckIn 是否可签到
+ * @param checkinStats 签到统计数据
+ * @returns tooltip 文本
+ */
+function getCheckinTooltip(
+  canCheckIn: boolean | undefined,
+  checkinStats?: {
+    todayQuota?: number;
+    checkinCount?: number;
+    totalCheckins?: number;
+    siteType?: 'veloera' | 'newapi';
+  }
+): string {
+  // 已签到状态
+  if (canCheckIn === false) {
+    if (checkinStats?.todayQuota !== undefined && checkinStats.todayQuota > 0) {
+      const quotaStr = formatCheckinQuota(checkinStats.todayQuota);
+      if (checkinStats.checkinCount !== undefined) {
+        return `今日已签到 +${quotaStr} | 本月 ${checkinStats.checkinCount} 次`;
+      }
+      return `今日已签到 +${quotaStr}`;
+    }
+    if (checkinStats?.checkinCount !== undefined) {
+      return `今日已签到 | 本月 ${checkinStats.checkinCount} 次`;
+    }
+    return '今日已签到';
+  }
+
+  // 可签到状态
+  if (checkinStats?.checkinCount !== undefined) {
+    return `点击签到 | 本月 ${checkinStats.checkinCount} 次`;
+  }
+  return '点击签到';
+}
+
 export function SiteCardActions({
   site,
   index,
@@ -31,6 +85,7 @@ export function SiteCardActions({
   detectingSite,
   checkingIn,
   autoRefreshEnabled,
+  checkinStats,
   onExpand,
   onDetect,
   onEdit,
@@ -41,7 +96,21 @@ export function SiteCardActions({
 }: SiteCardActionsProps) {
   return (
     <div className="flex items-center gap-1 ml-2 flex-shrink-0">
-      {/* 签到按钮 */}
+      {/* 加油站按钮 - 放在签到图标前面 */}
+      {site.extra_links && (
+        <button
+          onClick={e => {
+            e.stopPropagation();
+            onOpenExtraLink(site.extra_links!);
+          }}
+          className="p-1 bg-purple-500/20 hover:bg-purple-500/30 text-purple-700 dark:text-purple-300 rounded transition-all"
+          title={`打开加油站: ${site.extra_links}`}
+        >
+          <Fuel className="w-3.5 h-3.5 animate-pulse" />
+        </button>
+      )}
+
+      {/* 签到按钮 - 放在加油站图标后面 */}
       {(site.force_enable_checkin || siteResult?.has_checkin) && (
         <>
           {/* 判断缓存是否是今天的数据 */}
@@ -69,7 +138,7 @@ export function SiteCardActions({
                     }}
                     disabled={checkingIn === site.name}
                     className="p-1 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-700 dark:text-yellow-300 rounded transition-all disabled:opacity-50"
-                    title="点击签到"
+                    title={getCheckinTooltip(effectiveCanCheckIn, checkinStats)}
                   >
                     {checkingIn === site.name ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -81,7 +150,10 @@ export function SiteCardActions({
 
                 {/* 已签到 - 仅当缓存是今天且明确为false时显示 */}
                 {effectiveCanCheckIn === false && (
-                  <div className="p-1 bg-gray-500/20 text-gray-400 rounded" title="今日已签到">
+                  <div
+                    className="p-1 bg-gray-500/20 text-gray-400 rounded"
+                    title={getCheckinTooltip(false, checkinStats)}
+                  >
                     <CheckCircle className="w-3.5 h-3.5" />
                   </div>
                 )}
@@ -89,20 +161,6 @@ export function SiteCardActions({
             );
           })()}
         </>
-      )}
-
-      {/* 加油站按钮 */}
-      {site.extra_links && (
-        <button
-          onClick={e => {
-            e.stopPropagation();
-            onOpenExtraLink(site.extra_links!);
-          }}
-          className="p-1 bg-purple-500/20 hover:bg-purple-500/30 text-purple-700 dark:text-purple-300 rounded transition-all"
-          title={`打开加油站: ${site.extra_links}`}
-        >
-          <Fuel className="w-3.5 h-3.5 animate-pulse" />
-        </button>
       )}
 
       {/* 展开/收起 */}

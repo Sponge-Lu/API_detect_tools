@@ -68,7 +68,7 @@ export function registerAllHandlers(deps: HandlerDependencies) {
   registerTokenHandlers(tokenService, chromeManager, getMainWindow);
 
   // 站点检测相关
-  registerDetectionHandlers(apiService, chromeManager);
+  registerDetectionHandlers(apiService, chromeManager, tokenService);
 
   // WebDAV 备份相关
   registerWebDAVHandlers();
