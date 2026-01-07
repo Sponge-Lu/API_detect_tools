@@ -150,9 +150,17 @@ try {
 | `deepMerge` | `target, source` | `object` | 深度合并对象 |
 | `mergeJsonConfig` | `existingContent, newContent` | `string` | 合并 JSON 配置 |
 | `mergeEnvConfig` | `existingContent, newContent` | `string` | 合并 .env 配置 |
+| `getSectionParentPrefix` | `section: string` | `string \| null` | 获取 TOML section 的父级前缀 |
 | `mergeSectionContent` | `existingLines, newLines` | `string[]` | 合并 TOML section 内容（智能合并） |
-| `mergeTomlConfig` | `existingContent, newContent` | `string` | 合并 TOML 配置（智能合并） |
+| `mergeTomlConfig` | `existingContent, newContent` | `string` | 合并 TOML 配置（智能合并，嵌套 section 替换） |
 | `mergeConfigByType` | `filePath, existingContent, newContent` | `string` | 根据文件类型选择合并策略 |
+
+#### TOML 智能合并规则
+
+- **顶级参数**：只更新新配置中存在的参数，保留本地独有参数
+- **普通 section**：合并 section 内容（更新重叠参数，保留独有参数）
+- **嵌套 section**（如 `model_providers.XXX`）：如果新配置有同一父级的 section，则移除旧的子 section，只保留新配置中的子 section
+- **空白行清理**：合并后自动清理多余的连续空白行
 
 ### 浏览器处理器 (browser.handler.ts)
 
@@ -284,5 +292,5 @@ describe('API Handlers', () => {
 
 ---
 
-**版本**: 2.1.12  
+**版本**: 2.1.13  
 **更新日期**: 2026-01-07
