@@ -51,7 +51,7 @@ jobs:
         run: npm run build
 
       - name: Build for ${{ matrix.platform }}
-        run: npx electron-builder --${{ matrix.platform }}
+        run: npx electron-builder --${{ matrix.platform }} --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
