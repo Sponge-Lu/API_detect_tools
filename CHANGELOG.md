@@ -4,6 +4,22 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，并且本项目遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
+## [v2.1.11]
+
+### 新增
+- **多平台打包支持**：支持 Windows、macOS、Linux 三平台自动化构建
+  - 新增 GitHub Actions 工作流，推送 tag 自动构建并发布
+  - 支持手动触发构建
+  - 统一使用 `build/icon.png` 作为图标源，自动转换为各平台格式
+  - 新增打包脚本：`dist:win`、`dist:mac`、`dist:linux`
+- **电源管理**：新增 `powerManager` 模块，阻止系统在应用运行时进入休眠/睡眠状态 -- 未验证
+  - 使用 Electron `powerSaveBlocker` API
+  - 采用 `prevent-display-sleep` 模式，同时阻止显示器和系统休眠
+  - 特别适用于远程桌面环境，防止系统误判无用户活动而休眠
+  - 应用启动时自动启用，退出时自动停止
+
+---
+
 ## [v2.1.10]
 
 ### 新增

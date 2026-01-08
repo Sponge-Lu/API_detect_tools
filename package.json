@@ -1,6 +1,6 @@
 {
   "name": "api-hub-management-tools",
-  "version": "2.1.10",
+  "version": "2.1.11",
   "description": "API Hub Management Tools - Professional API management and monitoring tool",
   "author": "API Hub Team",
   "main": "dist/main/main.js",
@@ -12,6 +12,9 @@
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "tsc && vite build",
     "dist": "npm run build && electron-builder --win",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux",
     "lint": "eslint src --ext .ts,.tsx",
     "lint:fix": "eslint src --ext .ts,.tsx --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
@@ -77,7 +80,7 @@
     "vitest": "^4.0.14"
   },
   "build": {
-    "buildVersion": "2.1.10",
+    "buildVersion": "2.1.11",
     "appId": "com.apihub.management",
     "productName": "API Hub Management Tools",
     "directories": {
@@ -119,6 +122,27 @@
     },
     "portable": {
       "artifactName": "${productName}-${buildVersion}-portable.exe"
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "icon": "build/icon.png",
+      "category": "public.app-category.developer-tools",
+      "artifactName": "${productName}-${buildVersion}-mac.${ext}"
+    },
+    "dmg": {
+      "artifactName": "${productName}-${buildVersion}.${ext}"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "build/icon.png",
+      "category": "Development",
+      "artifactName": "${productName}-${buildVersion}-linux.${ext}"
+    },
+    "appImage": {
+      "artifactName": "${productName}-${buildVersion}.AppImage"
+    },
+    "deb": {
+      "artifactName": "${productName}-${buildVersion}.deb"
     },
     "extraResources": [
       {

@@ -42,7 +42,17 @@
 ## 分形索引系统
 - **分形多级索引系统**：https://github.com/Claudate/project-multilevel-index
 
-## 🚀 快速开始 (开发环境)
+## 🚀 快速开始
+
+### 下载安装包
+
+前往 [Releases 页面](https://github.com/Sponge-Lu/API_detect_tools/releases) 下载适合你系统的安装包：
+
+- **Windows**: `API Hub Management Tools Setup x.x.x.exe` (安装版) 或 `API Hub Management Tools-x.x.x-portable.exe` (便携版)
+- **macOS**: `API Hub Management Tools-x.x.x.dmg`
+- **Linux**: `API Hub Management Tools-x.x.x.AppImage` 或 `API Hub Management Tools-x.x.x.deb`
+
+### 开发环境
 
 ```bash
 # 1. 克隆仓库
@@ -55,7 +65,9 @@ npm install
 npm run dev
 
 # 4. 构建应用
-npm run dist
+npm run dist:win    # Windows
+npm run dist:mac    # macOS
+npm run dist:linux  # Linux
 ```
 
 详细的开发说明请参考 [开发指南](docs/DEVELOPMENT.md)。

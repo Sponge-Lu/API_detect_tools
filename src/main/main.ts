@@ -1,5 +1,5 @@
 ﻿/**
- * 输入: Electron app/BrowserWindow, ChromeManager, ApiService, TokenService, BackupManager, UnifiedConfigManager, CreditService, IPC handlers
+ * 输入: Electron app/BrowserWindow, ChromeManager, ApiService, TokenService, BackupManager, UnifiedConfigManager, CreditService, PowerManager, IPC handlers
  * 输出: BrowserWindow 实例, IPC 事件监听器, 应用生命周期管理
  * 定位: 应用入口 - 初始化 Electron 应用，管理主窗口，协调所有服务
  *
@@ -27,6 +27,7 @@ import { registerAllHandlers } from './handlers';
 import { unifiedConfigManager } from './unified-config-manager';
 import { createCloseBehaviorManager, CloseBehaviorManager } from './close-behavior-manager';
 import { createCreditService } from './credit-service';
+import { powerManager } from './power-manager';
 
 // 设置Windows控制台编码为UTF-8，解决中文乱码问题
 if (os.platform() === 'win32') {
@@ -158,6 +159,10 @@ async function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  // 启动电源保护，阻止系统休眠（特别是远程桌面环境）
+  powerManager.start();
+  Logger.info('✅ [Main] 电源保护已启动');
+
   // 初始化统一配置管理器（自动迁移旧格式）
   await unifiedConfigManager.loadConfig();
   Logger.info('✅ [Main] 统一配置管理器已初始化');
@@ -197,6 +202,8 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+  // 停止电源保护
+  powerManager.stop();
   chromeManager.cleanup();
   // 清理托盘资源
   if (closeBehaviorManager) {

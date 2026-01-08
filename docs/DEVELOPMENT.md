@@ -99,25 +99,65 @@ docs: update architecture documentation
 
 ## 构建与打包
 
-本项目使用 **electron-builder** 进行打包。
+本项目使用 **electron-builder** 进行多平台打包，支持 Windows、macOS、Linux。
 
-**Windows 构建**:
+### 本地构建
+
+**Windows**:
 ```bash
-npm run dist
+npm run dist:win
 ```
-产物目录: `release/` (包含安装包 .exe 和免安装版)
+产物：`release/` 目录
+- `API Hub Management Tools Setup x.x.x.exe` - 安装版
+- `API Hub Management Tools-x.x.x-portable.exe` - 便携版
 
-**macOS 构建**:
+**macOS**:
 ```bash
-./run-mac.sh
-# 或
 npm run dist:mac
 ```
+产物：`release/` 目录
+- `API Hub Management Tools-x.x.x.dmg` - 安装包
+- `API Hub Management Tools-x.x.x-mac.zip` - 压缩包
 
-**清理构建缓存**:
+**Linux**:
 ```bash
-npm run clean
+npm run dist:linux
 ```
+产物：`release/` 目录
+- `API Hub Management Tools-x.x.x.AppImage` - 通用格式
+- `API Hub Management Tools-x.x.x.deb` - Debian/Ubuntu
+
+### 自动化构建（GitHub Actions）
+
+项目配置了 GitHub Actions 工作流，可自动构建多平台安装包。
+
+**触发方式**：
+
+1. **推送 tag 自动发布**：
+   ```bash
+   git tag v2.1.11
+   git push origin v2.1.11
+   ```
+   推送 tag 后会自动在 Windows、macOS、Linux 三个平台构建，并创建 GitHub Release。
+
+2. **手动触发**：
+   - 进入 GitHub 仓库的 Actions 页面
+   - 选择 "Build and Release" 工作流
+   - 点击 "Run workflow"
+
+**构建产物**：
+- 所有平台的安装包会自动上传到 GitHub Release
+- 可在 Actions 页面下载构建产物（Artifacts）
+
+### 图标文件
+
+打包需要在 `build/` 目录准备图标文件：
+- `icon.png` - 1024x1024 PNG 图标（通用，electron-builder 会自动转换）
+- `icon.ico` - Windows 图标（可选，优先使用）
+
+**注意**：
+- macOS 打包只能在 macOS 系统上进行（需要代码签名）
+- 推荐使用 GitHub Actions 进行跨平台构建
 
 ---
 

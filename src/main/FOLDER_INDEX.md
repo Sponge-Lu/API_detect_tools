@@ -35,6 +35,7 @@
 | **config-detection-service.ts** | CLI 配置检测服务 | `ConfigDetectionService` 类 |
 | **close-behavior-manager.ts** | 窗口关闭行为管理 | `CloseBehaviorManager` 类 |
 | **credit-service.ts** | Linux Do Credit 积分检测、LDC 充值 | `CreditService` 类 |
+| **power-manager.ts** | 电源管理，阻止系统休眠 | `powerManager` 实例 |
 | **preload.ts** | Preload 脚本 | IPC 上下文隔离 |
 | **api-request-helper.ts** | API 请求辅助函数 | 通用请求逻辑 |
 
@@ -54,6 +55,8 @@
 
 ```
 main.ts: app.whenReady()
+    ↓
+启动电源保护 (powerManager.start)
     ↓
 初始化 UnifiedConfigManager (加载配置)
     ↓
@@ -202,6 +205,21 @@ main.ts: app.whenReady()
 
 **依赖**: ChromeManager (浏览器登录)
 
+### PowerManager
+
+**职责**: 电源管理，阻止系统在应用运行时进入休眠/睡眠状态
+
+**关键方法**:
+- `start()` - 启动电源保护
+- `stop()` - 停止电源保护
+- `isRunning()` - 检查是否正在运行
+- `getStatus()` - 获取当前状态
+
+**特点**:
+- 使用 Electron `powerSaveBlocker` API
+- 采用 `prevent-display-sleep` 模式，同时阻止显示器和系统休眠
+- 特别适用于远程桌面环境，防止系统误判无用户活动而休眠
+
 ### BackupManager
 
 **职责**: 本地备份与恢复
@@ -305,5 +323,5 @@ main.ts: app.whenReady()
 
 ---
 
-**版本**: 2.1.13  
-**更新日期**: 2026-01-07
+**版本**: 2.1.11  
+**更新日期**: 2026-01-08
