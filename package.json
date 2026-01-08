@@ -2,7 +2,10 @@
   "name": "api-hub-management-tools",
   "version": "2.1.11",
   "description": "API Hub Management Tools - Professional API management and monitoring tool",
-  "author": "API Hub Team",
+  "author": {
+    "name": "API Hub Team",
+    "email": "support@apihub.com"
+  },
   "main": "dist/main/main.js",
   "scripts": {
     "dev": "concurrently \"npm run dev:main\" \"npm run dev:renderer\"",
