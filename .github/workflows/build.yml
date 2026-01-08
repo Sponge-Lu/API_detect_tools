@@ -35,6 +35,12 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      - name: Install system dependencies (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils libatspi2.0-0 libdrm2 libgbm1 libxcb-dri3-0
+
       - name: Install dependencies
         run: npm ci
 
