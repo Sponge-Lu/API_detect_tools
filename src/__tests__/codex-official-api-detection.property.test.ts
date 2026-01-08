@@ -27,27 +27,20 @@ import {
 // ============= Arbitraries =============
 
 /**
- * 生成官方 OpenAI API Key (以 sk- 开头)
- */
-const officialApiKeyArb = fc
-  .string({ minLength: 1, maxLength: 100 })
-  .filter(s => /^[a-zA-Z0-9_-]+$/.test(s))
-  .map(s => `sk-${s}`);
-
-/**
  * 生成官方 OpenAI 项目级 API Key (以 sk-proj- 开头)
  */
-const officialProjectApiKeyArb = fc
+const officialApiKeyArb = fc
   .string({ minLength: 1, maxLength: 100 })
   .filter(s => /^[a-zA-Z0-9_-]+$/.test(s))
   .map(s => `sk-proj-${s}`);
 
 /**
- * 生成非官方 API Key (不以 sk- 开头)
+ * 生成非官方 API Key (不以 sk-proj- 开头)
+ * 包括：普通 sk- 开头的（中转站常用）和其他格式
  */
 const nonOfficialApiKeyArb = fc
   .string({ minLength: 1, maxLength: 100 })
-  .filter(s => !s.startsWith('sk-') && s.length > 0);
+  .filter(s => !s.startsWith('sk-proj-') && s.length > 0);
 
 // ============= Property Tests =============
 
@@ -55,20 +48,11 @@ const nonOfficialApiKeyArb = fc
  * **Property 1: 官方 API Key 格式识别**
  * **Validates: Requirements 1.1, 1.2, 1.3**
  *
- * *For any* API Key 字符串，`isOfficialOpenAIApiKey` 函数返回 `true` 当且仅当该字符串以 `sk-` 开头。
+ * *For any* API Key 字符串，`isOfficialOpenAIApiKey` 函数返回 `true` 当且仅当该字符串以 `sk-proj-` 开头。
  */
 describe('Feature: codex-official-api-detection, Property 1: 官方 API Key 格式识别', () => {
   describe('官方 API Key 识别', () => {
     it('以 sk-proj- 开头的 API Key 应返回 true', () => {
-      fc.assert(
-        fc.property(officialProjectApiKeyArb, apiKey => {
-          expect(isOfficialOpenAIApiKey(apiKey)).toBe(true);
-        }),
-        { numRuns: 100 }
-      );
-    });
-
-    it('以 sk- 开头的 API Key 应返回 true', () => {
       fc.assert(
         fc.property(officialApiKeyArb, apiKey => {
           expect(isOfficialOpenAIApiKey(apiKey)).toBe(true);
@@ -79,11 +63,26 @@ describe('Feature: codex-official-api-detection, Property 1: 官方 API Key 格�
   });
 
   describe('非官方 API Key 识别', () => {
-    it('不以 sk- 开头的 API Key 应返回 false', () => {
+    it('不以 sk-proj- 开头的 API Key 应返回 false', () => {
       fc.assert(
         fc.property(nonOfficialApiKeyArb, apiKey => {
           expect(isOfficialOpenAIApiKey(apiKey)).toBe(false);
         }),
+        { numRuns: 100 }
+      );
+    });
+
+    it('以 sk- 开头但不是 sk-proj- 的 API Key 应返回 false', () => {
+      fc.assert(
+        fc.property(
+          fc
+            .string({ minLength: 1, maxLength: 100 })
+            .filter(s => /^[a-zA-Z0-9_-]+$/.test(s) && !s.startsWith('proj-'))
+            .map(s => `sk-${s}`),
+          apiKey => {
+            expect(isOfficialOpenAIApiKey(apiKey)).toBe(false);
+          }
+        ),
         { numRuns: 100 }
       );
     });
@@ -102,16 +101,20 @@ describe('Feature: codex-official-api-detection, Property 1: 官方 API Key 格�
       expect(isOfficialOpenAIApiKey('')).toBe(false);
     });
 
-    it('仅包含 sk- 的字符串应返回 true', () => {
-      expect(isOfficialOpenAIApiKey('sk-')).toBe(true);
+    it('仅包含 sk-proj- 的字符串应返回 true', () => {
+      expect(isOfficialOpenAIApiKey('sk-proj-')).toBe(true);
+    });
+
+    it('仅包含 sk- 的字符串应返回 false', () => {
+      expect(isOfficialOpenAIApiKey('sk-')).toBe(false);
     });
   });
 
   describe('一致性验证', () => {
-    it('isOfficialOpenAIApiKey 返回值应与 startsWith("sk-") 一致', () => {
+    it('isOfficialOpenAIApiKey 返回值应与 startsWith("sk-proj-") 一致', () => {
       fc.assert(
         fc.property(fc.string({ minLength: 0, maxLength: 100 }), apiKey => {
-          const expected = typeof apiKey === 'string' && apiKey.startsWith('sk-');
+          const expected = typeof apiKey === 'string' && apiKey.startsWith('sk-proj-');
           expect(isOfficialOpenAIApiKey(apiKey)).toBe(expected);
         }),
         { numRuns: 100 }

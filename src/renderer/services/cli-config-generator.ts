@@ -298,7 +298,7 @@ export function generateEndpointComment(geminiDetail?: {
  * @param siteName - 原始站点名称（可能包含中文或其他语言）
  * @returns 仅包含英文字母、数字和下划线的提供商名称
  */
-function sanitizeProviderName(siteName: string): string {
+export function sanitizeProviderName(siteName: string): string {
   // 使用 pinyin-pro 将中文转换为拼音（无声调，连续输出）
   let name = pinyin(siteName, { toneType: 'none', type: 'array' }).join('');
 

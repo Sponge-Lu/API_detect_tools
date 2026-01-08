@@ -498,6 +498,7 @@ describe('Property 7: Apply writes correct configuration files', () => {
   let generateCodexConfig: any;
   let normalizeUrl: any;
   let normalizeApiKey: any;
+  let sanitizeProviderName: any;
 
   beforeAll(async () => {
     const module = await import('../renderer/services/cli-config-generator');
@@ -505,6 +506,7 @@ describe('Property 7: Apply writes correct configuration files', () => {
     generateCodexConfig = module.generateCodexConfig;
     normalizeUrl = module.normalizeUrl;
     normalizeApiKey = module.normalizeApiKey;
+    sanitizeProviderName = module.sanitizeProviderName;
   });
 
   /**
@@ -598,7 +600,7 @@ describe('Property 7: Apply writes correct configuration files', () => {
           expect(configTomlFile!.language).toBe('toml');
 
           const tomlContent = configTomlFile!.content;
-          const providerName = siteName.replace(/\s+/g, '_');
+          const providerName = sanitizeProviderName(siteName);
 
           // Verify required fields in TOML
           expect(tomlContent).toContain(`model_provider = "${providerName}"`);

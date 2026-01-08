@@ -48,6 +48,8 @@ function getDifferenceColorClass(difference: number): string {
   }
 }
 
+export { getDifferenceColorClass };
+
 function getDifferenceIcon(difference: number) {
   const colorType = getDifferenceColorType(difference);
   const iconClass = 'w-3 h-3';
