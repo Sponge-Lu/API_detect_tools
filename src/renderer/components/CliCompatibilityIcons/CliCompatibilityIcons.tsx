@@ -3,6 +3,9 @@
  * 输出: CLI 兼容性图标组件，显示各工具支持状态和详细测试结果
  * 定位: UI 组件层 - 显示 Claude Code、Codex、Gemini CLI 的兼容性状态图标
  *
+ * @version 2.1.12
+ * @updated 2025-01-09 - 优化操作按钮组为 iOS 风格，使用 iOS CSS 变量和 1.5px stroke-width
+ *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
  * - src/renderer/components/CliCompatibilityIcons/FOLDER_INDEX.md
@@ -250,8 +253,8 @@ export function CliCompatibilityIcons({
             );
           })}
 
-          {/* 操作按钮组 - 配置/测试/应用 */}
-          <div className="flex items-center gap-0.5 ml-1 px-1 py-0.5 rounded border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700/50">
+          {/* 操作按钮组 - 配置/测试/应用 - iOS 风格 */}
+          <div className="flex items-center gap-0.5 ml-1 px-1 py-0.5 rounded-[var(--radius-sm)] border border-[var(--ios-separator)] bg-[var(--ios-bg-tertiary)]">
             {/* 配置按钮 */}
             {onConfig && (
               <button
@@ -259,11 +262,11 @@ export function CliCompatibilityIcons({
                   e.stopPropagation();
                   onConfig();
                 }}
-                className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                className="p-0.5 rounded-[var(--radius-sm)] hover:bg-[var(--ios-bg-secondary)] active:scale-95 transition-all duration-200"
                 title="配置 CLI"
               >
                 <svg
-                  className="w-[18px] h-[18px] text-slate-500 hover:text-blue-500"
+                  className="w-[18px] h-[18px] text-[var(--ios-gray)] hover:text-[var(--ios-blue)]"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -271,13 +274,13 @@ export function CliCompatibilityIcons({
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
-                    strokeWidth={2}
+                    strokeWidth={1.5}
                     d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
                   />
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
-                    strokeWidth={2}
+                    strokeWidth={1.5}
                     d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
                   />
                 </svg>
@@ -291,11 +294,11 @@ export function CliCompatibilityIcons({
                   e.stopPropagation();
                   onTest();
                 }}
-                className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                className="p-0.5 rounded-[var(--radius-sm)] hover:bg-[var(--ios-bg-secondary)] active:scale-95 transition-all duration-200"
                 title="测试 CLI 兼容性"
               >
                 <svg
-                  className="w-[18px] h-[18px] text-slate-500 hover:text-green-500"
+                  className="w-[18px] h-[18px] text-[var(--ios-gray)] hover:text-[var(--ios-green)]"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -303,13 +306,13 @@ export function CliCompatibilityIcons({
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
-                    strokeWidth={2}
+                    strokeWidth={1.5}
                     d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
                   />
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
-                    strokeWidth={2}
+                    strokeWidth={1.5}
                     d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                   />
                 </svg>
@@ -323,11 +326,11 @@ export function CliCompatibilityIcons({
                   e.stopPropagation();
                   onApply(e);
                 }}
-                className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                className="p-0.5 rounded-[var(--radius-sm)] hover:bg-[var(--ios-bg-secondary)] active:scale-95 transition-all duration-200"
                 title="应用 CLI 配置到本地文件"
               >
                 <svg
-                  className="w-[18px] h-[18px] text-slate-500 hover:text-purple-500"
+                  className="w-[18px] h-[18px] text-[var(--ios-gray)] hover:text-[var(--ios-blue)]"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -335,7 +338,7 @@ export function CliCompatibilityIcons({
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
-                    strokeWidth={2}
+                    strokeWidth={1.5}
                     d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
                   />
                 </svg>

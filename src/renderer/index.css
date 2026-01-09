@@ -1,10 +1,29 @@
+/**
+ * @file src/renderer/index.css
+ * @description 全局样式和 iOS 设计系统变量
+ * 
+ * 包含:
+ * - iOS 设计系统 CSS 变量（颜色、字体、间距、圆角、阴影、模糊）
+ * - 浅色/深色模式主题变量
+ * - 主题切换过渡系统（300ms 平滑过渡）
+ * - 全局样式和动画
+ * - 自定义滚动条样式
+ * - 8px 网格间距系统（所有间距值为 4px 的倍数）
+ * - 响应式布局系统（最小 1024x768，响应式间距和字体）
+ * - 性能优化系统（GPU 加速、will-change、高性能动画）
+ * 
+ * @version 2.1.13
+ * @updated 2025-01-09 - iOS 原生风格优化：更微妙的分隔线颜色和更柔和的阴影
+ */
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  /* iOS 字体系统 - SF Pro 回退链 */
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
@@ -12,16 +31,127 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  
-  /* 浅色模式变量 */
+
+  /* ========== iOS 设计系统 - 浅色模式 ========== */
+
+  /* 背景颜色 */
+  --ios-bg-primary: #f2f2f7;
+  --ios-bg-secondary: #ffffff;
+  --ios-bg-tertiary: #ffffff;
+
+  /* 文字颜色 */
+  --ios-text-primary: #000000;
+  --ios-text-secondary: rgba(60, 60, 67, 0.6);
+  --ios-text-tertiary: rgba(60, 60, 67, 0.3);
+
+  /* 主题色 */
+  --ios-blue: #007aff;
+  --ios-green: #34c759;
+  --ios-red: #ff3b30;
+  --ios-orange: #ff9500;
+  --ios-gray: #8e8e93;
+
+  /* 分隔线 - iOS 原生风格，更微妙 */
+  --ios-separator: rgba(60, 60, 67, 0.12);
+
+  /* 间距系统 (8px 网格) - 所有值为 4px 的倍数 */
+  --spacing-0: 0px;
+  --spacing-1: 4px; /* xs */
+  --spacing-2: 8px; /* sm */
+  --spacing-3: 12px; /* md */
+  --spacing-4: 16px; /* lg */
+  --spacing-5: 20px; /* xl */
+  --spacing-6: 24px; /* 2xl */
+  --spacing-8: 32px; /* 3xl */
+  --spacing-10: 40px; /* 4xl */
+  --spacing-12: 48px;
+  --spacing-16: 64px;
+
+  /* 语义化间距别名 */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 16px;
+  --spacing-xl: 20px;
+  --spacing-2xl: 24px;
+  --spacing-3xl: 32px;
+  --spacing-4xl: 40px;
+
+  /* 组件间距 - 用于组件之间的留白 */
+  --spacing-component-gap: 16px; /* 组件之间的标准间距 */
+  --spacing-section-gap: 24px; /* 区块之间的间距 */
+  --spacing-card-padding: 16px; /* 卡片内边距 */
+  --spacing-button-padding-x: 20px; /* 按钮水平内边距 */
+  --spacing-button-padding-y: 12px; /* 按钮垂直内边距 */
+  --spacing-input-padding-x: 16px; /* 输入框水平内边距 */
+  --spacing-input-padding-y: 12px; /* 输入框垂直内边距 */
+
+  /* 圆角系统 */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+
+  /* 阴影系统 - 浅色模式，iOS 原生风格，更柔和 */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04);
+  --shadow-xl: 0 16px 32px rgba(0, 0, 0, 0.1), 0 4px 12px rgba(0, 0, 0, 0.06);
+
+  /* 模糊效果 */
+  --blur-sm: blur(8px);
+  --blur-md: blur(12px);
+  --blur-lg: blur(20px);
+  --blur-xl: blur(40px);
+
+  /* 动画时长 */
+  --duration-fast: 200ms;
+  --duration-normal: 300ms;
+  --duration-slow: 400ms;
+
+  /* iOS 缓动函数 */
+  --ease-ios: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-ios-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-ios-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.175, 0.885, 0.32, 1.275);
+
+  /* 旧变量（向后兼容） */
   --bg-primary: #fafbfc;
   --bg-secondary: #f8fafc;
   --text-primary: #1e293b;
   --text-secondary: #64748b;
 }
 
-/* 深色模式变量 */
+/* ========== iOS 设计系统 - 深色模式 ========== */
 .dark {
+  /* 背景颜色 */
+  --ios-bg-primary: #000000;
+  --ios-bg-secondary: #1c1c1e;
+  --ios-bg-tertiary: #2c2c2e;
+
+  /* 文字颜色 */
+  --ios-text-primary: #ffffff;
+  --ios-text-secondary: rgba(235, 235, 245, 0.6);
+  --ios-text-tertiary: rgba(235, 235, 245, 0.3);
+
+  /* 主题色 */
+  --ios-blue: #0a84ff;
+  --ios-green: #30d158;
+  --ios-red: #ff453a;
+  --ios-orange: #ff9f0a;
+  --ios-gray: #8e8e93;
+
+  /* 分隔线 - iOS 原生风格，更微妙 */
+  --ios-separator: rgba(84, 84, 88, 0.35);
+
+  /* 阴影系统 - 深色模式，iOS 原生风格，稍微明显但仍然柔和 */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.25), 0 1px 2px rgba(0, 0, 0, 0.15);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-xl: 0 16px 32px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.25);
+
+  /* 旧变量（向后兼容） */
   --bg-primary: #0f172a;
   --bg-secondary: #1e293b;
   --text-primary: #f1f5f9;
@@ -36,14 +166,27 @@ body {
   min-height: 100vh;
   background: var(--bg-primary);
   color: var(--text-primary);
+  overflow: hidden; /* 防止 body 出现滚动条 */
+}
+
+/* 禁用动画过渡（无障碍支持） */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 #root {
   width: 100%;
   height: 100vh;
+  overflow: hidden; /* 防止 #root 出现滚动条，滚动由内部容器控制 */
 }
 
-/* 浅色模式装饰背景 */
+/* 浅色模式装饰背景 - 减弱效果，更接近 iOS 纯净风格 */
 .light-bg-decoration {
   position: fixed;
   inset: 0;
@@ -59,9 +202,10 @@ body {
   left: -10%;
   width: 500px;
   height: 500px;
-  background: radial-gradient(circle, rgba(16, 185, 129, 0.15) 0%, transparent 70%);
-  filter: blur(100px);
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.05) 0%, transparent 70%);
+  filter: blur(150px);
   animation: float 20s ease-in-out infinite;
+  opacity: 0.3;
 }
 
 .light-bg-decoration::after {
@@ -71,12 +215,13 @@ body {
   right: -10%;
   width: 600px;
   height: 600px;
-  background: radial-gradient(circle, rgba(249, 115, 22, 0.12) 0%, transparent 70%);
-  filter: blur(120px);
+  background: radial-gradient(circle, rgba(249, 115, 22, 0.04) 0%, transparent 70%);
+  filter: blur(180px);
   animation: float 25s ease-in-out infinite reverse;
+  opacity: 0.3;
 }
 
-/* 深色模式装饰背景 */
+/* 深色模式装饰背景 - 减弱效果 */
 .dark .dark-bg-decoration {
   position: fixed;
   inset: 0;
@@ -92,9 +237,10 @@ body {
   left: -10%;
   width: 500px;
   height: 500px;
-  background: radial-gradient(circle, rgba(16, 185, 129, 0.08) 0%, transparent 70%);
-  filter: blur(100px);
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.03) 0%, transparent 70%);
+  filter: blur(150px);
   animation: float 20s ease-in-out infinite;
+  opacity: 0.3;
 }
 
 .dark .dark-bg-decoration::after {
@@ -104,13 +250,15 @@ body {
   right: -10%;
   width: 600px;
   height: 600px;
-  background: radial-gradient(circle, rgba(139, 92, 246, 0.06) 0%, transparent 70%);
-  filter: blur(120px);
+  background: radial-gradient(circle, rgba(139, 92, 246, 0.02) 0%, transparent 70%);
+  filter: blur(180px);
   animation: float 25s ease-in-out infinite reverse;
+  opacity: 0.3;
 }
 
 @keyframes float {
-  0%, 100% {
+  0%,
+  100% {
     transform: translate(0, 0) scale(1);
   }
   33% {
@@ -147,9 +295,61 @@ body {
   background: rgba(0, 0, 0, 0.5);
 }
 
-/* 按钮动画 */
+/* ========== iOS 动画系统 ========== */
+
+/* 通用动画 keyframes */
+
+/* 淡入动画 */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 缩放进入动画 */
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 滑入动画 */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 按钮按下动画 */
+@keyframes buttonPress {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(0.97);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* 旧动画（向后兼容） */
 @keyframes pulse-border {
-  0%, 100% {
+  0%,
+  100% {
     box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.7);
   }
   50% {
@@ -159,4 +359,937 @@ body {
 
 .animate-pulse-border {
   animation: pulse-border 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* ========== iOS 图标系统 ========== */
+
+/**
+ * iOS 风格图标样式
+ * - 统一 stroke-width 为 1.5px（更接近 SF Symbols 风格）
+ * - 标准尺寸: 16px (sm), 20px (md), 24px (lg)
+ * - 颜色继承父元素或使用主题色
+ */
+
+/* 基础图标样式 */
+.ios-icon {
+  stroke-width: 1.5px;
+  color: currentColor;
+  flex-shrink: 0;
+}
+
+/* 图标尺寸 */
+.ios-icon-sm {
+  width: 16px;
+  height: 16px;
+}
+
+.ios-icon-md {
+  width: 20px;
+  height: 20px;
+}
+
+.ios-icon-lg {
+  width: 24px;
+  height: 24px;
+}
+
+/* 图标颜色变体 */
+.ios-icon-primary {
+  color: var(--ios-blue);
+}
+
+.ios-icon-success {
+  color: var(--ios-green);
+}
+
+.ios-icon-error {
+  color: var(--ios-red);
+}
+
+.ios-icon-warning {
+  color: var(--ios-orange);
+}
+
+.ios-icon-muted {
+  color: var(--ios-gray);
+}
+
+/* 图标按钮样式 */
+.ios-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-sm);
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-ios),
+    transform var(--duration-fast) var(--ease-ios);
+}
+
+.ios-icon-button:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.dark .ios-icon-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.ios-icon-button:active {
+  transform: scale(0.95);
+}
+
+.ios-icon-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ios-icon-button:disabled:active {
+  transform: none;
+}
+
+/* 确保所有 lucide-react 图标默认使用 1.5px stroke-width（更接近 SF Symbols） */
+svg[class*='lucide'] {
+  stroke-width: 1.5px;
+}
+
+/* ========== 响应式布局系统 ========== */
+
+/**
+ * 响应式布局优化
+ * - 确保最小窗口尺寸（1024x768）下的可用性
+ * - 实现响应式间距和字体大小
+ * - 处理内容溢出（使用滚动而非压缩）
+ * 
+ * Requirements: 10.1, 10.2, 10.3, 10.4
+ * Property 24: Viewport Resize Layout Preservation
+ * Property 25: Responsive Spacing Scaling
+ * Property 26: Content Overflow Handling
+ */
+
+/* 最小窗口尺寸支持 */
+html,
+body,
+#root {
+  min-width: 1024px;
+  min-height: 768px;
+}
+
+/* 响应式间距变量 - 基于视口宽度缩放 */
+:root {
+  /* 响应式间距缩放因子 */
+  --responsive-scale: 1;
+
+  /* 响应式间距 */
+  --responsive-spacing-xs: calc(var(--spacing-xs) * var(--responsive-scale));
+  --responsive-spacing-sm: calc(var(--spacing-sm) * var(--responsive-scale));
+  --responsive-spacing-md: calc(var(--spacing-md) * var(--responsive-scale));
+  --responsive-spacing-lg: calc(var(--spacing-lg) * var(--responsive-scale));
+  --responsive-spacing-xl: calc(var(--spacing-xl) * var(--responsive-scale));
+  --responsive-spacing-2xl: calc(var(--spacing-2xl) * var(--responsive-scale));
+
+  /* 响应式字体大小 */
+  --responsive-font-xs: 11px;
+  --responsive-font-sm: 13px;
+  --responsive-font-base: 15px;
+  --responsive-font-lg: 17px;
+  --responsive-font-xl: 20px;
+  --responsive-font-2xl: 22px;
+}
+
+/* 大屏幕 (>= 1440px) - 标准尺寸 */
+@media (min-width: 1440px) {
+  :root {
+    --responsive-scale: 1;
+    --responsive-font-xs: 12px;
+    --responsive-font-sm: 14px;
+    --responsive-font-base: 16px;
+    --responsive-font-lg: 18px;
+    --responsive-font-xl: 22px;
+    --responsive-font-2xl: 24px;
+  }
+}
+
+/* 中等屏幕 (1280px - 1439px) - 略微缩小 */
+@media (min-width: 1280px) and (max-width: 1439px) {
+  :root {
+    --responsive-scale: 0.95;
+    --responsive-font-xs: 11px;
+    --responsive-font-sm: 13px;
+    --responsive-font-base: 15px;
+    --responsive-font-lg: 17px;
+    --responsive-font-xl: 20px;
+    --responsive-font-2xl: 22px;
+  }
+}
+
+/* 小屏幕 (1024px - 1279px) - 最小支持尺寸 */
+@media (min-width: 1024px) and (max-width: 1279px) {
+  :root {
+    --responsive-scale: 0.9;
+    --responsive-font-xs: 10px;
+    --responsive-font-sm: 12px;
+    --responsive-font-base: 14px;
+    --responsive-font-lg: 16px;
+    --responsive-font-xl: 18px;
+    --responsive-font-2xl: 20px;
+  }
+}
+
+/* 内容溢出处理 - 使用滚动而非压缩 */
+.ios-overflow-container {
+  overflow: auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 水平滚动容器 */
+.ios-scroll-x {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* 垂直滚动容器 */
+.ios-scroll-y {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* 双向滚动容器 */
+.ios-scroll-both {
+  overflow: auto;
+}
+
+/* 防止内容被压缩 - 保持最小宽度 */
+.ios-no-shrink {
+  flex-shrink: 0;
+  min-width: max-content;
+}
+
+/* 响应式容器 - 自动处理溢出 */
+.ios-responsive-container {
+  width: 100%;
+  min-width: 1024px;
+  /* 不设置 overflow，让具体元素自己控制 */
+}
+
+/* 响应式卡片网格 */
+.ios-responsive-grid {
+  display: grid;
+  gap: var(--responsive-spacing-lg);
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+
+/* 响应式表格容器 */
+.ios-responsive-table {
+  width: 100%;
+  min-width: 1024px;
+  overflow-x: auto;
+}
+
+/* 响应式文本 - 防止换行导致布局问题 */
+.ios-text-nowrap {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 响应式文本 - 允许换行但保持最小宽度 */
+.ios-text-wrap {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  min-width: 0;
+}
+
+/* 响应式间距工具类 */
+.ios-p-responsive {
+  padding: var(--responsive-spacing-lg);
+}
+
+.ios-px-responsive {
+  padding-left: var(--responsive-spacing-lg);
+  padding-right: var(--responsive-spacing-lg);
+}
+
+.ios-py-responsive {
+  padding-top: var(--responsive-spacing-lg);
+  padding-bottom: var(--responsive-spacing-lg);
+}
+
+.ios-m-responsive {
+  margin: var(--responsive-spacing-lg);
+}
+
+.ios-mx-responsive {
+  margin-left: var(--responsive-spacing-lg);
+  margin-right: var(--responsive-spacing-lg);
+}
+
+.ios-my-responsive {
+  margin-top: var(--responsive-spacing-lg);
+  margin-bottom: var(--responsive-spacing-lg);
+}
+
+.ios-gap-responsive {
+  gap: var(--responsive-spacing-lg);
+}
+
+/* 响应式字体工具类 */
+.ios-text-responsive-xs {
+  font-size: var(--responsive-font-xs);
+}
+
+.ios-text-responsive-sm {
+  font-size: var(--responsive-font-sm);
+}
+
+.ios-text-responsive-base {
+  font-size: var(--responsive-font-base);
+}
+
+.ios-text-responsive-lg {
+  font-size: var(--responsive-font-lg);
+}
+
+.ios-text-responsive-xl {
+  font-size: var(--responsive-font-xl);
+}
+
+.ios-text-responsive-2xl {
+  font-size: var(--responsive-font-2xl);
+}
+
+/* ========== 性能优化系统 ========== */
+
+/**
+ * 动画性能优化
+ * - 确保动画只使用 transform 和 opacity（避免触发重排）
+ * - 为毛玻璃效果添加 will-change 或 GPU 加速
+ * - 优化首屏渲染时间
+ * 
+ * Requirements: 12.1, 12.2, 12.3, 12.5
+ * Property 33: Animation Frame Rate
+ * Property 34: GPU-Accelerated Animations
+ * Property 35: Blur Effect Performance Optimization
+ * Property 36: First Contentful Paint Time
+ */
+
+/* ========== GPU 加速层 ========== */
+
+/**
+ * 为需要动画的元素启用 GPU 加速
+ * 使用 transform: translateZ(0) 或 will-change 创建新的合成层
+ * 注意：过度使用 will-change 会消耗内存，只在需要时使用
+ */
+
+/* 毛玻璃效果 GPU 加速 */
+.ios-blur-optimized {
+  will-change: backdrop-filter;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+/* 动画元素 GPU 加速 */
+.ios-animate-optimized {
+  will-change: transform, opacity;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+/* 滚动容器 GPU 加速 */
+.ios-scroll-optimized {
+  will-change: scroll-position;
+  transform: translateZ(0);
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ========== 高性能动画类 ========== */
+
+/**
+ * 只使用 transform 和 opacity 的动画
+ * 这些属性不会触发重排（reflow）或重绘（repaint）
+ * 只会触发合成（composite），性能最佳
+ */
+
+/* 淡入动画 - 仅使用 opacity */
+.ios-fade-in {
+  animation: iosFadeIn var(--duration-normal) var(--ease-ios) forwards;
+}
+
+@keyframes iosFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 淡出动画 - 仅使用 opacity */
+.ios-fade-out {
+  animation: iosFadeOut var(--duration-normal) var(--ease-ios) forwards;
+}
+
+@keyframes iosFadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* 缩放进入动画 - 仅使用 transform 和 opacity */
+.ios-scale-in {
+  animation: iosScaleIn var(--duration-normal) var(--ease-ios) forwards;
+}
+
+@keyframes iosScaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 缩放退出动画 - 仅使用 transform 和 opacity */
+.ios-scale-out {
+  animation: iosScaleOut var(--duration-normal) var(--ease-ios) forwards;
+}
+
+@keyframes iosScaleOut {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+
+/* 滑入动画 - 仅使用 transform 和 opacity */
+.ios-slide-up {
+  animation: iosSlideUp var(--duration-normal) var(--ease-ios) forwards;
+}
+
+@keyframes iosSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 滑出动画 - 仅使用 transform 和 opacity */
+.ios-slide-down {
+  animation: iosSlideDown var(--duration-normal) var(--ease-ios) forwards;
+}
+
+@keyframes iosSlideDown {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+/* 按钮按下动画 - 仅使用 transform */
+.ios-press {
+  transition: transform var(--duration-fast) var(--ease-ios);
+}
+
+.ios-press:active {
+  transform: scale(0.97);
+}
+
+/* 悬停提升动画 - 仅使用 transform */
+.ios-hover-lift {
+  transition: transform var(--duration-fast) var(--ease-ios);
+}
+
+.ios-hover-lift:hover {
+  transform: translateY(-2px);
+}
+
+/* ========== 高性能过渡类 ========== */
+
+/**
+ * 预定义的高性能过渡
+ * 只过渡 transform 和 opacity，避免触发重排
+ */
+
+/* 基础高性能过渡 */
+.ios-transition-perf {
+  transition-property: transform, opacity;
+  transition-duration: var(--duration-normal);
+  transition-timing-function: var(--ease-ios);
+}
+
+/* 快速高性能过渡 */
+.ios-transition-perf-fast {
+  transition-property: transform, opacity;
+  transition-duration: var(--duration-fast);
+  transition-timing-function: var(--ease-ios);
+}
+
+/* 慢速高性能过渡 */
+.ios-transition-perf-slow {
+  transition-property: transform, opacity;
+  transition-duration: var(--duration-slow);
+  transition-timing-function: var(--ease-ios);
+}
+
+/* ========== 毛玻璃效果优化 ========== */
+
+/**
+ * 优化的毛玻璃效果
+ * 使用 will-change 和 GPU 加速提升性能
+ */
+
+/* 轻度模糊 - 性能优化版 */
+.ios-blur-sm-optimized {
+  backdrop-filter: var(--blur-sm);
+  -webkit-backdrop-filter: var(--blur-sm);
+  will-change: backdrop-filter;
+  transform: translateZ(0);
+}
+
+/* 中度模糊 - 性能优化版 */
+.ios-blur-md-optimized {
+  backdrop-filter: var(--blur-md);
+  -webkit-backdrop-filter: var(--blur-md);
+  will-change: backdrop-filter;
+  transform: translateZ(0);
+}
+
+/* 重度模糊 - 性能优化版 */
+.ios-blur-lg-optimized {
+  backdrop-filter: var(--blur-lg);
+  -webkit-backdrop-filter: var(--blur-lg);
+  will-change: backdrop-filter;
+  transform: translateZ(0);
+}
+
+/* 超重度模糊 - 性能优化版 */
+.ios-blur-xl-optimized {
+  backdrop-filter: var(--blur-xl);
+  -webkit-backdrop-filter: var(--blur-xl);
+  will-change: backdrop-filter;
+  transform: translateZ(0);
+}
+
+/* ========== 首屏渲染优化 ========== */
+
+/**
+ * 首屏渲染优化
+ * - 关键内容优先渲染
+ * - 延迟加载非关键动画
+ * - 避免阻塞渲染的样式
+ */
+
+/* 关键内容 - 立即渲染 */
+.ios-critical {
+  content-visibility: visible;
+}
+
+/* 非关键内容 - 延迟渲染 */
+.ios-lazy {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 300px;
+}
+
+/* 首屏动画延迟 - 等待首屏渲染完成 */
+.ios-animate-delay-fcp {
+  animation-delay: 100ms;
+}
+
+/* ========== 性能监控辅助类 ========== */
+
+/**
+ * 用于性能监控和调试的辅助类
+ * 在开发环境中可以添加这些类来标记需要监控的元素
+ */
+
+/* 标记为需要性能监控的动画元素 */
+[data-perf-monitor='animation'] {
+  /* 开发时可以添加视觉标记 */
+}
+
+/* 标记为需要性能监控的模糊元素 */
+[data-perf-monitor='blur'] {
+  /* 开发时可以添加视觉标记 */
+}
+
+/* ========== 低性能设备降级 ========== */
+
+/**
+ * 为低性能设备提供降级方案
+ * 当检测到性能问题时，可以添加 .reduce-effects 类到 html 元素
+ */
+
+.reduce-effects .ios-blur-sm-optimized,
+.reduce-effects .ios-blur-md-optimized,
+.reduce-effects .ios-blur-lg-optimized,
+.reduce-effects .ios-blur-xl-optimized {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background-color: var(--ios-bg-secondary);
+}
+
+.reduce-effects .ios-animate-optimized,
+.reduce-effects .ios-fade-in,
+.reduce-effects .ios-fade-out,
+.reduce-effects .ios-scale-in,
+.reduce-effects .ios-scale-out,
+.reduce-effects .ios-slide-up,
+.reduce-effects .ios-slide-down {
+  animation: none;
+  opacity: 1;
+  transform: none;
+}
+
+.reduce-effects .ios-hover-lift:hover {
+  transform: none;
+}
+
+/* ========== 无障碍性系统 ========== */
+
+/**
+ * 无障碍性优化
+ * - 确保所有文字和背景的对比度 >= 4.5:1 (WCAG AA)
+ * - 为所有可聚焦元素添加清晰的焦点指示器
+ * - 确保所有功能可通过键盘访问
+ * - 支持屏幕阅读器
+ * 
+ * Requirements: 13.1, 13.2, 13.3
+ * Property 16: Text Contrast Ratio
+ * Property 37: Focus Indicator Visibility
+ * Property 38: Keyboard Accessibility
+ */
+
+/* ========== 焦点指示器系统 ========== */
+
+/**
+ * 全局焦点指示器
+ * - 使用 2px 宽度的轮廓
+ * - 使用主题色作为焦点颜色
+ * - 添加 2px 偏移以避免与元素边框重叠
+ * - 确保在所有背景上都可见
+ */
+
+/* 基础焦点样式 - 应用于所有可聚焦元素 */
+:focus {
+  outline: none;
+}
+
+/* 键盘焦点样式 - 仅在键盘导航时显示 */
+:focus-visible {
+  outline: 2px solid var(--ios-blue);
+  outline-offset: 2px;
+}
+
+/* 浅色模式焦点样式 */
+:root :focus-visible {
+  outline-color: var(--ios-blue);
+  box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.2);
+}
+
+/* 深色模式焦点样式 */
+.dark :focus-visible {
+  outline-color: var(--ios-blue);
+  box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.3);
+}
+
+/* 按钮焦点样式 */
+button:focus-visible,
+[role='button']:focus-visible {
+  outline: 2px solid var(--ios-blue);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.2);
+}
+
+.dark button:focus-visible,
+.dark [role='button']:focus-visible {
+  box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.3);
+}
+
+/* 输入框焦点样式 */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[contenteditable='true']:focus-visible {
+  outline: 2px solid var(--ios-blue);
+  outline-offset: 0;
+  box-shadow:
+    0 0 0 4px rgba(0, 122, 255, 0.1),
+    inset 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.dark input:focus-visible,
+.dark textarea:focus-visible,
+.dark select:focus-visible,
+.dark [contenteditable='true']:focus-visible {
+  box-shadow:
+    0 0 0 4px rgba(10, 132, 255, 0.15),
+    inset 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+/* 链接焦点样式 */
+a:focus-visible {
+  outline: 2px solid var(--ios-blue);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* 卡片和容器焦点样式 */
+[tabindex]:focus-visible:not(input):not(textarea):not(select):not(button):not(a) {
+  outline: 2px solid var(--ios-blue);
+  outline-offset: 2px;
+  border-radius: var(--radius-md);
+}
+
+/* 表格行焦点样式 */
+[role='row']:focus-visible {
+  outline: 2px solid var(--ios-blue);
+  outline-offset: -2px;
+  background-color: rgba(0, 122, 255, 0.05);
+}
+
+.dark [role='row']:focus-visible {
+  background-color: rgba(10, 132, 255, 0.08);
+}
+
+/* 图标按钮焦点样式 */
+.ios-icon-button:focus-visible {
+  outline: 2px solid var(--ios-blue);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.2);
+}
+
+.dark .ios-icon-button:focus-visible {
+  box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.3);
+}
+
+/* ========== 高对比度文本 ========== */
+
+/**
+ * 确保文本对比度符合 WCAG AA 标准 (4.5:1)
+ * 浅色模式: 黑色文字 (#000000) 在白色背景 (#FFFFFF) 上 = 21:1
+ * 深色模式: 白色文字 (#FFFFFF) 在深色背景 (#1C1C1E) 上 = 12.6:1
+ */
+
+/* 主要文本 - 高对比度 */
+.ios-text-high-contrast {
+  color: var(--ios-text-primary);
+}
+
+/* 次要文本 - 确保对比度 >= 4.5:1 */
+.ios-text-secondary-contrast {
+  color: var(--ios-text-secondary);
+}
+
+/* 浅色模式次要文本调整 - 确保对比度 */
+:root .ios-text-secondary-contrast {
+  color: rgba(60, 60, 67, 0.7); /* 提高不透明度以确保对比度 */
+}
+
+/* 深色模式次要文本调整 - 确保对比度 */
+.dark .ios-text-secondary-contrast {
+  color: rgba(235, 235, 245, 0.7); /* 提高不透明度以确保对比度 */
+}
+
+/* 禁用状态文本 - 保持可读性 */
+.ios-text-disabled {
+  color: var(--ios-gray);
+  opacity: 0.6;
+}
+
+/* ========== 键盘导航支持 ========== */
+
+/**
+ * 确保所有交互元素可通过键盘访问
+ * - Tab 键导航
+ * - Enter/Space 键激活
+ * - 方向键导航（列表、菜单）
+ */
+
+/* 可聚焦元素的基础样式 */
+.ios-focusable {
+  cursor: pointer;
+}
+
+/* 跳过链接 - 用于键盘用户快速跳过导航 */
+.ios-skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: var(--ios-blue);
+  color: white;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-md);
+  z-index: 9999;
+  transition: top var(--duration-fast) var(--ease-ios);
+}
+
+.ios-skip-link:focus {
+  top: var(--spacing-sm);
+}
+
+/* 键盘导航指示器 - 显示当前焦点位置 */
+.ios-keyboard-nav-indicator {
+  position: relative;
+}
+
+.ios-keyboard-nav-indicator::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border: 2px solid transparent;
+  border-radius: inherit;
+  pointer-events: none;
+  transition: border-color var(--duration-fast) var(--ease-ios);
+}
+
+.ios-keyboard-nav-indicator:focus-visible::after {
+  border-color: var(--ios-blue);
+}
+
+/* ========== 屏幕阅读器支持 ========== */
+
+/**
+ * 屏幕阅读器专用样式
+ * - 视觉隐藏但对屏幕阅读器可见
+ * - 实时区域通知
+ */
+
+/* 仅对屏幕阅读器可见 */
+.ios-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* 聚焦时可见（用于跳过链接等） */
+.ios-sr-only-focusable:focus,
+.ios-sr-only-focusable:active {
+  position: static;
+  width: auto;
+  height: auto;
+  padding: inherit;
+  margin: inherit;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+}
+
+/* 实时区域 - 用于动态内容更新通知 */
+.ios-live-region {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ========== 交互状态增强 ========== */
+
+/**
+ * 增强交互状态的可见性
+ * - 悬停状态
+ * - 按下状态
+ * - 禁用状态
+ */
+
+/* 禁用状态 - 视觉反馈 */
+[disabled],
+[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* 选中状态 - 视觉反馈 */
+[aria-selected='true'] {
+  background-color: rgba(0, 122, 255, 0.1);
+}
+
+.dark [aria-selected='true'] {
+  background-color: rgba(10, 132, 255, 0.15);
+}
+
+/* 展开/收起状态 - 视觉反馈 */
+[aria-expanded='true'] {
+  /* 可以添加展开状态的视觉指示 */
+}
+
+/* 当前项状态 */
+[aria-current='true'],
+[aria-current='page'] {
+  font-weight: 600;
+  color: var(--ios-blue);
+}
+
+/* ========== 错误和警告状态 ========== */
+
+/**
+ * 错误和警告状态的无障碍样式
+ * - 不仅依赖颜色，还使用图标和文本
+ */
+
+/* 错误状态 */
+[aria-invalid='true'] {
+  border-color: var(--ios-red) !important;
+}
+
+[aria-invalid='true']:focus-visible {
+  box-shadow: 0 0 0 4px rgba(255, 59, 48, 0.2);
+}
+
+.dark [aria-invalid='true']:focus-visible {
+  box-shadow: 0 0 0 4px rgba(255, 69, 58, 0.25);
+}
+
+/* 必填字段指示 */
+[aria-required='true']::after {
+  content: ' *';
+  color: var(--ios-red);
+}
+
+/* ========== 动画无障碍 ========== */
+
+/**
+ * 尊重用户的动画偏好设置
+ * prefers-reduced-motion 已在主题切换过渡系统中定义
+ */
+
+/* 确保焦点指示器在减少动画模式下仍然可见 */
+@media (prefers-reduced-motion: reduce) {
+  :focus-visible {
+    outline: 2px solid var(--ios-blue);
+    outline-offset: 2px;
+    /* 移除过渡但保持焦点指示器 */
+    transition: none;
+  }
 }

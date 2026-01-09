@@ -1,4 +1,7 @@
 /**
+ * @file src/renderer/components/SiteListHeader/SiteListHeader.tsx
+ * @description 站点列表表头组件
+ *
  * 输入: SiteListHeaderProps (列宽数组、列宽变更回调)
  * 输出: React 组件 (站点列表表头 UI)
  * 定位: 展示层 - 站点列表表头组件，显示各列标题，支持列宽调整
@@ -7,6 +10,9 @@
  * - 本文件头注释
  * - src/renderer/components/SiteListHeader/FOLDER_INDEX.md
  * - PROJECT_INDEX.md
+ *
+ * @version 2.1.13
+ * @updated 2025-01-09 - iOS 原生风格优化：移除渐变背景，使用透明背景
  */
 
 import { useRef, useCallback } from 'react';
@@ -67,7 +73,7 @@ export function SiteListHeader({ columnWidths, onColumnWidthChange }: SiteListHe
 
   return (
     <div
-      className="grid gap-x-1 items-center px-3 py-2 text-xs font-semibold text-slate-500 dark:text-slate-400 bg-gradient-to-r from-emerald-50/60 to-amber-50/60 dark:from-emerald-900/20 dark:to-amber-900/20 rounded-lg mb-2"
+      className="grid gap-x-1 items-center px-3 py-2 text-xs font-medium text-[var(--ios-text-secondary)] uppercase tracking-wide"
       style={{
         gridTemplateColumns: columnWidths.map(w => `${w}px`).join(' ') + ' 1fr',
       }}

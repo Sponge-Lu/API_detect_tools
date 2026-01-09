@@ -1,7 +1,13 @@
 /**
+ * @file src/renderer/components/dialogs/SiteGroupDialog.tsx
+ * @description 站点分组对话框 - 使用 IOSModal 重构
+ *
  * 输入: SiteGroupDialogProps (模式、分组名称、编辑分组、回调函数)
  * 输出: React 组件 (站点分组对话框 UI)
  * 定位: 展示层 - 站点分组对话框，支持创建和编辑分组
+ *
+ * @version 2.1.11
+ * @updated 2025-01-08 - 使用 IOSModal 重构
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -10,7 +16,10 @@
  */
 
 import { useRef, useEffect } from 'react';
-import { XCircle } from 'lucide-react';
+import { FolderPlus, Edit3 } from 'lucide-react';
+import { IOSModal } from '../IOSModal';
+import { IOSButton } from '../IOSButton';
+import { IOSInput } from '../IOSInput';
 
 interface SiteGroup {
   id: string;
@@ -42,69 +51,52 @@ export function SiteGroupDialog({
       setTimeout(() => {
         inputRef.current?.focus();
         if (mode === 'edit') inputRef.current?.select();
-      }, 50);
+      }, 100);
     }
   }, [isOpen, mode]);
 
-  if (!isOpen) return null;
-
   const title = mode === 'create' ? '新建站点分组' : '编辑站点分组';
   const confirmText = mode === 'create' ? '确认创建' : '保存修改';
+  const titleIcon =
+    mode === 'create' ? <FolderPlus className="w-5 h-5" /> : <Edit3 className="w-5 h-5" />;
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      onConfirm();
+    }
+  };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-      onClick={e => {
-        if (e.target === e.currentTarget) onClose();
-      }}
+    <IOSModal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={title}
+      titleIcon={titleIcon}
+      size="sm"
+      footer={
+        <>
+          <IOSButton variant="tertiary" onClick={onClose}>
+            取消
+          </IOSButton>
+          <IOSButton variant="primary" onClick={onConfirm}>
+            {confirmText}
+          </IOSButton>
+        </>
+      }
     >
-      <div className="bg-white dark:bg-slate-900 rounded-lg shadow-xl w-full max-w-sm p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
-          <button
-            onClick={onClose}
-            className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-            title="关闭"
-          >
-            <XCircle className="w-4 h-4 text-slate-400" />
-          </button>
-        </div>
-        <div className="space-y-3">
-          <div>
-            <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">
-              分组名称
-            </label>
-            <input
-              ref={inputRef}
-              type="text"
-              autoFocus
-              value={groupName}
-              onChange={e => onGroupNameChange(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter') onConfirm();
-              }}
-              onClick={e => e.stopPropagation()}
-              onMouseDown={e => e.stopPropagation()}
-              className="w-full px-3 py-2 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-              placeholder="请输入分组名称"
-            />
-          </div>
-          <div className="flex items-center justify-end gap-2 pt-2">
-            <button
-              onClick={onClose}
-              className="px-4 py-2 text-sm rounded border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-            >
-              取消
-            </button>
-            <button
-              onClick={onConfirm}
-              className="px-4 py-2 text-sm rounded bg-primary-500 text-white hover:bg-primary-600 transition-colors"
-            >
-              {confirmText}
-            </button>
-          </div>
-        </div>
+      <div className="space-y-3">
+        <IOSInput
+          ref={inputRef}
+          label="分组名称"
+          value={groupName}
+          onChange={e => onGroupNameChange(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onClick={e => e.stopPropagation()}
+          onMouseDown={e => e.stopPropagation()}
+          placeholder="请输入分组名称"
+          autoFocus
+        />
       </div>
-    </div>
+    </IOSModal>
   );
 }

@@ -1,4 +1,7 @@
 /**
+ * @file src/renderer/components/SiteCard/SiteCard.tsx
+ * @description 站点卡片主组件
+ *
  * 输入: SiteCardProps (站点数据、操作回调), SiteResult (检测结果), 子组件 (Header, Actions, Details)
  * 输出: React 组件, 用户交互事件
  * 定位: 展示层 - 显示站点信息并处理用户交互
@@ -7,244 +10,282 @@
  * - 本文件头注释
  * - src/renderer/components/SiteCard/FOLDER_INDEX.md
  * - PROJECT_INDEX.md
+ *
+ * @version 2.1.12
+ * @updated 2025-01-09 - 添加 React.memo 优化拖拽性能
  */
 
 /**
  * 站点卡片主组件
  * 封装站点的展示和交互逻辑
+ * 使用 IOSCard 组件实现 iOS 风格样式
  */
 
-import { useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { SiteCardHeader } from './SiteCardHeader';
 import { SiteCardActions } from './SiteCardActions';
 import { SiteCardDetails } from './SiteCardDetails';
+import { IOSCard } from '../IOSCard';
 import type { SiteCardProps } from './types';
 
-export function SiteCard({
-  site,
-  index,
-  siteResult,
-  siteAccount,
-  isExpanded,
-  columnWidths,
-  apiKeys,
-  userGroups,
-  modelPricing,
-  detectingSite,
-  checkingIn,
-  dragOverIndex,
-  refreshMessage,
-  // 详情面板状态
-  selectedGroup,
-  modelSearch,
-  globalModelSearch,
-  showTokens,
-  selectedModels,
-  deletingTokenKey,
-  // 回调
-  autoRefreshEnabled,
-  cliCompatibility,
-  cliConfig,
-  isCliTesting,
-  onExpand,
-  onDetect,
-  onEdit,
-  onDelete,
-  onCheckIn,
-  onOpenCheckinPage,
-  onOpenExtraLink,
-  onCopyToClipboard,
-  onToggleAutoRefresh,
-  onOpenCliConfig,
-  onTestCliCompat,
-  onApply,
-  onDragStart,
-  onDragEnd,
-  onDragOver,
-  onDragLeave,
-  onDrop,
-  // 详情面板回调
-  onToggleGroupFilter,
-  onModelSearchChange,
-  onToggleTokenVisibility,
-  onToggleModelSelection,
-  onCopySelectedModels,
-  onOpenCreateTokenDialog,
-  onDeleteToken,
-}: SiteCardProps) {
-  // 计算最后更新时间显示
-  const lastSyncDisplay = useMemo(() => {
-    // 优先使用 siteResult 的数据，其次使用 siteAccount
-    const lastSyncTime = siteResult?.lastRefresh || siteAccount?.last_sync_time;
-    if (!lastSyncTime) return null;
+/**
+ * 站点卡片组件
+ * 使用 React.memo 优化性能，避免拖拽时不必要的重渲染
+ */
+export const SiteCard = React.memo(
+  function SiteCard({
+    site,
+    index,
+    siteResult,
+    siteAccount,
+    isExpanded,
+    columnWidths,
+    apiKeys,
+    userGroups,
+    modelPricing,
+    detectingSite,
+    checkingIn,
+    dragOverIndex,
+    refreshMessage,
+    // 详情面板状态
+    selectedGroup,
+    modelSearch,
+    globalModelSearch,
+    showTokens,
+    selectedModels,
+    deletingTokenKey,
+    // 回调
+    autoRefreshEnabled,
+    cliCompatibility,
+    cliConfig,
+    isCliTesting,
+    onExpand,
+    onDetect,
+    onEdit,
+    onDelete,
+    onCheckIn,
+    onOpenCheckinPage,
+    onOpenExtraLink,
+    onCopyToClipboard,
+    onToggleAutoRefresh,
+    onOpenCliConfig,
+    onTestCliCompat,
+    onApply,
+    onDragStart,
+    onDragEnd,
+    onDragOver,
+    onDragLeave,
+    onDrop,
+    // 详情面板回调
+    onToggleGroupFilter,
+    onModelSearchChange,
+    onToggleTokenVisibility,
+    onToggleModelSelection,
+    onCopySelectedModels,
+    onOpenCreateTokenDialog,
+    onDeleteToken,
+  }: SiteCardProps) {
+    // 计算最后更新时间显示
+    const lastSyncDisplay = useMemo(() => {
+      // 优先使用 siteResult 的数据，其次使用 siteAccount
+      const lastSyncTime = siteResult?.lastRefresh || siteAccount?.last_sync_time;
+      if (!lastSyncTime) return null;
 
-    const dt = new Date(lastSyncTime);
-    const now = new Date();
+      const dt = new Date(lastSyncTime);
+      const now = new Date();
 
-    // 今天
-    if (dt.toDateString() === now.toDateString()) {
-      const hour = String(dt.getHours()).padStart(2, '0');
-      const minute = String(dt.getMinutes()).padStart(2, '0');
-      return `${hour}:${minute}`;
-    }
-
-    const diffMs = now.getTime() - dt.getTime();
-    const diffDays = Math.max(Math.floor(diffMs / (1000 * 60 * 60 * 24)), 1);
-
-    // 非当天时间：x天前，超过7天全部显示7天前
-    return diffDays >= 7 ? '7天前' : `${diffDays}天前`;
-  }, [siteResult?.lastRefresh, siteAccount?.last_sync_time]);
-
-  // 从错误信息中提取 Error Code
-  const errorCode = useMemo(() => {
-    if (!siteResult?.error) return null;
-    const codeMatch = siteResult.error.match(/status code (\d{3})/i);
-    return codeMatch ? codeMatch[1] : null;
-  }, [siteResult?.error]);
-
-  // 从错误信息中提取超时秒数
-  const timeoutSeconds = useMemo(() => {
-    if (!siteResult?.error) return null;
-    const timeoutMatch = siteResult.error.match(/timeout.*?(\d+)\s*ms/i);
-    if (timeoutMatch) {
-      const ms = parseInt(timeoutMatch[1], 10);
-      if (!isNaN(ms) && ms > 0) {
-        return Math.round(ms / 1000);
+      // 今天
+      if (dt.toDateString() === now.toDateString()) {
+        const hour = String(dt.getHours()).padStart(2, '0');
+        const minute = String(dt.getMinutes()).padStart(2, '0');
+        return `${hour}:${minute}`;
       }
+
+      const diffMs = now.getTime() - dt.getTime();
+      const diffDays = Math.max(Math.floor(diffMs / (1000 * 60 * 60 * 24)), 1);
+
+      // 非当天时间：x天前，超过7天全部显示7天前
+      return diffDays >= 7 ? '7天前' : `${diffDays}天前`;
+    }, [siteResult?.lastRefresh, siteAccount?.last_sync_time]);
+
+    // 从错误信息中提取 Error Code
+    const errorCode = useMemo(() => {
+      if (!siteResult?.error) return null;
+      const codeMatch = siteResult.error.match(/status code (\d{3})/i);
+      return codeMatch ? codeMatch[1] : null;
+    }, [siteResult?.error]);
+
+    // 从错误信息中提取超时秒数
+    const timeoutSeconds = useMemo(() => {
+      if (!siteResult?.error) return null;
+      const timeoutMatch = siteResult.error.match(/timeout.*?(\d+)\s*ms/i);
+      if (timeoutMatch) {
+        const ms = parseInt(timeoutMatch[1], 10);
+        if (!isNaN(ms) && ms > 0) {
+          return Math.round(ms / 1000);
+        }
+      }
+      return null;
+    }, [siteResult?.error]);
+
+    // Token 指标计算
+    const todayPromptTokens = siteResult?.todayPromptTokens ?? 0;
+    const todayCompletionTokens = siteResult?.todayCompletionTokens ?? 0;
+    const todayTotalTokens =
+      siteResult?.todayTotalTokens ?? todayPromptTokens + todayCompletionTokens;
+    const todayRequests = siteResult?.todayRequests ?? 0;
+
+    // RPM / TPM 计算
+    const { rpm, tpm } = useMemo(() => {
+      const now = new Date();
+      const dayStart = new Date(now);
+      dayStart.setHours(0, 0, 0, 0);
+      const minutesSinceStart = Math.max((now.getTime() - dayStart.getTime()) / 60000, 1);
+
+      return {
+        rpm: todayRequests > 0 ? todayRequests / minutesSinceStart : 0,
+        tpm: todayTotalTokens > 0 ? todayTotalTokens / minutesSinceStart : 0,
+      };
+    }, [todayRequests, todayTotalTokens]);
+
+    // 模型数量计算
+    const modelCount = useMemo(() => {
+      const apiModelCount = siteResult?.models?.length || 0;
+      const pricingModelCount = modelPricing?.data ? Object.keys(modelPricing.data).length : 0;
+      return Math.max(apiModelCount, pricingModelCount);
+    }, [siteResult?.models, modelPricing]);
+
+    return (
+      <IOSCard
+        variant="standard"
+        blur={true}
+        hoverable={site.enabled}
+        expanded={isExpanded}
+        draggable={true}
+        isDragOver={dragOverIndex === index}
+        disabled={!site.enabled}
+        expandContent={
+          isExpanded ? (
+            <SiteCardDetails
+              site={site}
+              siteResult={siteResult}
+              apiKeys={apiKeys}
+              userGroups={userGroups}
+              modelPricing={modelPricing}
+              selectedGroup={selectedGroup}
+              modelSearch={modelSearch}
+              globalModelSearch={globalModelSearch}
+              showTokens={showTokens}
+              selectedModels={selectedModels}
+              deletingTokenKey={deletingTokenKey}
+              onToggleGroupFilter={onToggleGroupFilter}
+              onModelSearchChange={onModelSearchChange}
+              onToggleTokenVisibility={onToggleTokenVisibility}
+              onToggleModelSelection={onToggleModelSelection}
+              onCopySelectedModels={onCopySelectedModels}
+              onCopyToClipboard={onCopyToClipboard}
+              onOpenCreateTokenDialog={onOpenCreateTokenDialog}
+              onDeleteToken={onDeleteToken}
+            />
+          ) : undefined
+        }
+        onDragStart={e => onDragStart(e, index)}
+        onDragEnd={onDragEnd}
+        onDragOver={e => onDragOver(e, index)}
+        onDragLeave={onDragLeave}
+        onDrop={e => onDrop(e, index)}
+      >
+        {/* 刷新提示消息 */}
+        {refreshMessage && refreshMessage.site === site.name && (
+          <div
+            className={`mx-[var(--spacing-md)] mt-[var(--spacing-sm)] px-[var(--spacing-md)] py-1.5 rounded-[var(--radius-sm)] text-xs font-medium transition-all ${
+              refreshMessage.type === 'success'
+                ? 'bg-[var(--ios-green)]/10 text-[var(--ios-green)] border border-[var(--ios-green)]/30'
+                : 'bg-[var(--ios-blue)]/10 text-[var(--ios-blue)] border border-[var(--ios-blue)]/30'
+            }`}
+          >
+            {refreshMessage.message}
+          </div>
+        )}
+
+        {/* 一级信息 - iOS 风格纯色背景 */}
+        <div className="px-[var(--spacing-md)] py-[var(--spacing-sm)] border-b border-[var(--ios-separator)]">
+          <div className="flex items-center justify-between">
+            {/* 左侧：信息栅格 */}
+            <SiteCardHeader
+              site={site}
+              siteResult={siteResult}
+              lastSyncDisplay={lastSyncDisplay}
+              errorCode={errorCode}
+              timeoutSeconds={timeoutSeconds}
+              columnWidths={columnWidths}
+              todayTotalTokens={todayTotalTokens}
+              todayPromptTokens={todayPromptTokens}
+              todayCompletionTokens={todayCompletionTokens}
+              todayRequests={todayRequests}
+              rpm={rpm}
+              tpm={tpm}
+              modelCount={modelCount}
+              onOpenCheckinPage={onOpenCheckinPage}
+              cliCompatibility={cliCompatibility}
+              cliConfig={cliConfig}
+              isCliTesting={isCliTesting}
+              onOpenCliConfig={onOpenCliConfig}
+              onTestCliCompat={onTestCliCompat}
+              onApply={onApply}
+            />
+
+            {/* 右侧：操作按钮 */}
+            <SiteCardActions
+              site={site}
+              index={index}
+              siteResult={siteResult}
+              isExpanded={isExpanded}
+              detectingSite={detectingSite}
+              checkingIn={checkingIn}
+              autoRefreshEnabled={autoRefreshEnabled}
+              checkinStats={siteResult?.checkinStats}
+              onExpand={onExpand}
+              onDetect={onDetect}
+              onEdit={onEdit}
+              onDelete={onDelete}
+              onCheckIn={onCheckIn}
+              onOpenExtraLink={onOpenExtraLink}
+              onToggleAutoRefresh={onToggleAutoRefresh}
+            />
+          </div>
+        </div>
+      </IOSCard>
+    );
+  },
+  (prevProps, nextProps) => {
+    // 自定义比较函数，只有当关键 props 变化时才重新渲染
+    // 特别优化：dragOverIndex 只比较是否影响当前卡片
+    const prevIsDragOver = prevProps.dragOverIndex === prevProps.index;
+    const nextIsDragOver = nextProps.dragOverIndex === nextProps.index;
+
+    // 如果拖拽状态没有影响当前卡片，跳过这个 prop 的比较
+    if (prevIsDragOver === nextIsDragOver) {
+      // 比较其他关键 props
+      return (
+        prevProps.site === nextProps.site &&
+        prevProps.index === nextProps.index &&
+        prevProps.siteResult === nextProps.siteResult &&
+        prevProps.isExpanded === nextProps.isExpanded &&
+        prevProps.detectingSite === nextProps.detectingSite &&
+        prevProps.checkingIn === nextProps.checkingIn &&
+        prevProps.autoRefreshEnabled === nextProps.autoRefreshEnabled &&
+        prevProps.isCliTesting === nextProps.isCliTesting &&
+        prevProps.refreshMessage === nextProps.refreshMessage &&
+        prevProps.selectedGroup === nextProps.selectedGroup &&
+        prevProps.modelSearch === nextProps.modelSearch &&
+        prevProps.globalModelSearch === nextProps.globalModelSearch &&
+        prevProps.showTokens === nextProps.showTokens &&
+        prevProps.deletingTokenKey === nextProps.deletingTokenKey
+      );
     }
-    return null;
-  }, [siteResult?.error]);
 
-  // Token 指标计算
-  const todayPromptTokens = siteResult?.todayPromptTokens ?? 0;
-  const todayCompletionTokens = siteResult?.todayCompletionTokens ?? 0;
-  const todayTotalTokens =
-    siteResult?.todayTotalTokens ?? todayPromptTokens + todayCompletionTokens;
-  const todayRequests = siteResult?.todayRequests ?? 0;
-
-  // RPM / TPM 计算
-  const { rpm, tpm } = useMemo(() => {
-    const now = new Date();
-    const dayStart = new Date(now);
-    dayStart.setHours(0, 0, 0, 0);
-    const minutesSinceStart = Math.max((now.getTime() - dayStart.getTime()) / 60000, 1);
-
-    return {
-      rpm: todayRequests > 0 ? todayRequests / minutesSinceStart : 0,
-      tpm: todayTotalTokens > 0 ? todayTotalTokens / minutesSinceStart : 0,
-    };
-  }, [todayRequests, todayTotalTokens]);
-
-  // 模型数量计算
-  const modelCount = useMemo(() => {
-    const apiModelCount = siteResult?.models?.length || 0;
-    const pricingModelCount = modelPricing?.data ? Object.keys(modelPricing.data).length : 0;
-    return Math.max(apiModelCount, pricingModelCount);
-  }, [siteResult?.models, modelPricing]);
-
-  return (
-    <div
-      draggable
-      onDragStart={e => onDragStart(e, index)}
-      onDragEnd={onDragEnd}
-      onDragOver={e => onDragOver(e, index)}
-      onDragLeave={onDragLeave}
-      onDrop={e => onDrop(e, index)}
-      className={`bg-white/95 dark:bg-slate-800/95 backdrop-blur-sm rounded-xl border transition-all cursor-move ${
-        site.enabled
-          ? 'border-primary-200/30 dark:border-primary-700/40 hover:border-primary-300/50 dark:hover:border-primary-600/60 shadow-md hover:shadow-lg dark:shadow-slate-900/50 dark:hover:shadow-slate-900/70'
-          : 'border-slate-200/40 dark:border-slate-600/40 opacity-60 shadow-sm dark:shadow-slate-900/30'
-      } ${
-        dragOverIndex === index
-          ? 'border-primary-500/60 border-2 scale-[1.02] shadow-xl dark:shadow-primary-900/50'
-          : ''
-      }`}
-    >
-      {/* 刷新提示消息 */}
-      {refreshMessage && refreshMessage.site === site.name && (
-        <div
-          className={`mx-3 mt-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-            refreshMessage.type === 'success'
-              ? 'bg-green-500/10 text-green-600 dark:text-green-400 border border-green-500/30'
-              : 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/30'
-          }`}
-        >
-          {refreshMessage.message}
-        </div>
-      )}
-
-      {/* 一级信息 - 绿到橙淡渐变 */}
-      <div className="px-3 py-2.5 bg-gradient-to-r from-emerald-50/60 to-amber-50/60 dark:from-emerald-900/40 dark:to-amber-900/40 rounded-t-xl">
-        <div className="flex items-center justify-between">
-          {/* 左侧：信息栅格 */}
-          <SiteCardHeader
-            site={site}
-            siteResult={siteResult}
-            lastSyncDisplay={lastSyncDisplay}
-            errorCode={errorCode}
-            timeoutSeconds={timeoutSeconds}
-            columnWidths={columnWidths}
-            todayTotalTokens={todayTotalTokens}
-            todayPromptTokens={todayPromptTokens}
-            todayCompletionTokens={todayCompletionTokens}
-            todayRequests={todayRequests}
-            rpm={rpm}
-            tpm={tpm}
-            modelCount={modelCount}
-            onOpenCheckinPage={onOpenCheckinPage}
-            cliCompatibility={cliCompatibility}
-            cliConfig={cliConfig}
-            isCliTesting={isCliTesting}
-            onOpenCliConfig={onOpenCliConfig}
-            onTestCliCompat={onTestCliCompat}
-            onApply={onApply}
-          />
-
-          {/* 右侧：操作按钮 */}
-          <SiteCardActions
-            site={site}
-            index={index}
-            siteResult={siteResult}
-            isExpanded={isExpanded}
-            detectingSite={detectingSite}
-            checkingIn={checkingIn}
-            autoRefreshEnabled={autoRefreshEnabled}
-            checkinStats={siteResult?.checkinStats}
-            onExpand={onExpand}
-            onDetect={onDetect}
-            onEdit={onEdit}
-            onDelete={onDelete}
-            onCheckIn={onCheckIn}
-            onOpenExtraLink={onOpenExtraLink}
-            onToggleAutoRefresh={onToggleAutoRefresh}
-          />
-        </div>
-      </div>
-
-      {/* 二级展开面板 */}
-      {isExpanded && (
-        <SiteCardDetails
-          site={site}
-          siteResult={siteResult}
-          apiKeys={apiKeys}
-          userGroups={userGroups}
-          modelPricing={modelPricing}
-          selectedGroup={selectedGroup}
-          modelSearch={modelSearch}
-          globalModelSearch={globalModelSearch}
-          showTokens={showTokens}
-          selectedModels={selectedModels}
-          deletingTokenKey={deletingTokenKey}
-          onToggleGroupFilter={onToggleGroupFilter}
-          onModelSearchChange={onModelSearchChange}
-          onToggleTokenVisibility={onToggleTokenVisibility}
-          onToggleModelSelection={onToggleModelSelection}
-          onCopySelectedModels={onCopySelectedModels}
-          onCopyToClipboard={onCopyToClipboard}
-          onOpenCreateTokenDialog={onOpenCreateTokenDialog}
-          onDeleteToken={onDeleteToken}
-        />
-      )}
-    </div>
-  );
-}
+    // 拖拽状态变化了，需要重新渲染
+    return false;
+  }
+);

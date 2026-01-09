@@ -28,7 +28,7 @@
 | **App.tsx** | 应用根组件、路由 | `App` 组件 |
 | **main.tsx** | 前端入口 | React 应用挂载 |
 | **index.html** | HTML 模板 | 应用入口 HTML |
-| **index.css** | 全局样式 | Tailwind CSS 导入 |
+| **index.css** | 全局样式 | Tailwind CSS 导入、iOS 设计系统变量、响应式布局系统 |
 | **svg.d.ts** | SVG 类型定义 | SVG 导入类型 |
 
 ### 子文件夹
@@ -235,56 +235,12 @@ SiteCard (站点卡片)
 ### 1. 响应式设计
 
 - 使用 Tailwind CSS 响应式类
-- 支持移动端、平板、桌面端
+- iOS 设计系统响应式变量（间距、字体大小）
+- 最小窗口尺寸支持（1024x768）
+- 内容溢出使用滚动而非压缩
 - 深色模式自动切换
 
-### 2. 实时更新
-
-- 自动刷新机制
-- WebSocket 实时推送（可选）
-- 乐观更新
-
-### 3. 错误处理
-
-- 全局错误边界
-- Toast 消息提示
-- 重试机制
-
-### 4. 性能优化
-
-- 虚拟滚动（大列表）
-- 组件懒加载
-- 状态缓存
-
 ---
 
-## 🧪 测试
-
-### 组件测试
-
-```bash
-npm run test -- src/renderer/components
-```
-
-### Hook 测试
-
-```bash
-npm run test -- src/renderer/hooks
-```
-
-### 覆盖率
-
-```bash
-npm run test:coverage
-```
-
----
-
-## 🔄 自指
-
-当此文件夹中的文件变化时，更新本索引和 PROJECT_INDEX.md
-
----
-
-**版本**: 2.1.9  
-**更新日期**: 2025-12-26
+**版本**: 2.1.11  
+**更新日期**: 2025-01-09

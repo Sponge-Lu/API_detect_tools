@@ -42,6 +42,8 @@ import type { CliConfig } from '../shared/types/cli-config';
 import { CreateApiKeyDialog } from './components/CreateApiKeyDialog';
 import { ToastContainer } from './components/Toast';
 import { CliConfigStatusPanel } from './components/CliConfigStatus';
+import { IOSButton } from './components/IOSButton';
+import { IOSTableHeader, IOSTableBody } from './components/IOSTable';
 import {
   useTheme,
   useSiteGroups,
@@ -1145,24 +1147,21 @@ function App() {
         <div className="text-center relative z-10">
           <XCircle className="w-16 h-16 mx-auto mb-4 text-red-500" />
           <p className="text-light-text dark:text-dark-text mb-4">配置加载失败</p>
-          <button
-            onClick={loadConfig}
-            className="px-6 py-2.5 bg-primary-500 hover:bg-primary-600 text-white rounded-lg transition-all shadow-lg hover:shadow-xl"
-          >
+          <IOSButton variant="primary" onClick={loadConfig}>
             重试
-          </button>
+          </IOSButton>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="h-screen flex flex-col bg-light-bg dark:bg-dark-bg text-light-text dark:text-dark-text relative overflow-x-auto overflow-y-hidden">
+    <div className="h-screen flex flex-col bg-light-bg dark:bg-dark-bg text-light-text dark:text-dark-text relative overflow-x-auto overflow-y-hidden ios-responsive-container">
       {/* 装饰背景 */}
       <div className="light-bg-decoration dark:dark-bg-decoration"></div>
 
       {/* 主要内容 */}
-      <div className="relative z-10 h-full flex flex-col">
+      <div className="relative z-10 h-full flex flex-col min-w-[1024px]">
         <Header
           saving={saving}
           hasUpdate={updateInfo?.hasUpdate}
@@ -1175,20 +1174,23 @@ function App() {
 
         <div className="flex-1 overflow-y-hidden overflow-x-visible flex">
           <div className="flex-1 flex flex-col">
-            <div className="px-4 py-3 bg-white/60 dark:bg-dark-card/60 backdrop-blur-sm border-b border-light-border dark:border-dark-border flex items-center justify-between">
+            <div className="px-4 py-2 border-b border-light-border dark:border-dark-border flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <button
+                <IOSButton
+                  variant="primary"
+                  size="sm"
                   onClick={() => {
                     setEditingSite(null);
                     setShowSiteEditor(true);
                   }}
-                  className="px-4 py-2 bg-primary-500 hover:bg-primary-600 text-white rounded-lg transition-all flex items-center gap-2 text-sm font-medium shadow-md hover:shadow-lg"
                 >
                   <Plus className="w-4 h-4" strokeWidth={2.5} />
                   添加站点
-                </button>
+                </IOSButton>
                 {/* 从备份恢复站点按钮 */}
-                <button
+                <IOSButton
+                  variant="secondary"
+                  size="sm"
                   onClick={async () => {
                     setLoadingBackups(true);
                     setShowBackupDialog(true);
@@ -1202,12 +1204,11 @@ function App() {
                       setLoadingBackups(false);
                     }
                   }}
-                  className="px-3 py-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg transition-all flex items-center gap-1.5 text-sm font-medium shadow-md hover:shadow-lg"
                   title="从备份文件恢复站点配置"
                 >
                   <RefreshCw className="w-4 h-4" strokeWidth={2.5} />
                   恢复站点
-                </button>
+                </IOSButton>
               </div>
               <div className="flex items-center gap-3">
                 {/* CLI 配置状态面板 - 显示本地 CLI 工具配置来源 */}
@@ -1217,7 +1218,7 @@ function App() {
 
             {/* 站点分组控制栏：固定在滚动容器外面，始终可见 */}
             {config.sites.length > 0 && (
-              <div className="min-w-[1180px] px-4 pt-2 pb-1 flex items-center justify-between text-[13px] text-slate-500 dark:text-slate-400 bg-light-bg dark:bg-dark-bg border-b border-slate-200/50 dark:border-slate-700/50 flex-shrink-0">
+              <div className="min-w-[1180px] px-4 pt-2 pb-1 flex items-center justify-between text-[13px] text-slate-500 dark:text-slate-400 border-b border-slate-200/50 dark:border-slate-700/50 flex-shrink-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-semibold text-slate-700 dark:text-slate-200">站点分组</span>
                   {/* 显示全部按钮 */}
@@ -1335,14 +1336,15 @@ function App() {
                     );
                   })}
                   {/* 新建分组按钮移到分组标签最后面 (Requirements: 11.2) */}
-                  <button
+                  <IOSButton
+                    variant="tertiary"
+                    size="sm"
                     onClick={openCreateGroupDialog}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-dashed border-slate-300 dark:border-slate-600 text-[13px] text-slate-600 dark:text-slate-200 hover:border-primary-400 hover:text-primary-500"
                     title="新建分组"
                   >
                     <Plus className="w-3 h-3" />
                     新建分组
-                  </button>
+                  </IOSButton>
                 </div>
                 {/* 搜索可用模型移到右侧 (Requirements: 12.1, 12.2) */}
                 <div className="relative">
@@ -1367,14 +1369,15 @@ function App() {
             )}
 
             {/* 站点列表区域：纵向滚动交给内部容器，横向滚动交给整体窗口（根容器 overflow-x-auto） */}
-            <div className="flex-1 overflow-y-auto overflow-x-visible px-4 pb-4 space-y-3 relative z-0">
+            <div className="flex-1 overflow-y-auto overflow-x-visible px-4 pb-4 space-y-3 relative z-0 ios-scroll-y">
               {config.sites.length === 0 ? (
                 <div className="text-center py-16 text-light-text-secondary dark:text-dark-text-secondary">
                   <Server className="w-16 h-16 mx-auto mb-4 opacity-30" strokeWidth={1.5} />
                   <p className="text-lg font-medium mb-2">还没有添加任何站点</p>
                   <p className="text-sm mb-4">点击"添加站点"按钮开始</p>
                   {/* 恢复站点按钮 */}
-                  <button
+                  <IOSButton
+                    variant="secondary"
                     onClick={async () => {
                       setLoadingBackups(true);
                       setShowBackupDialog(true);
@@ -1388,17 +1391,19 @@ function App() {
                         setLoadingBackups(false);
                       }
                     }}
-                    className="px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg transition-all text-sm font-medium shadow-md hover:shadow-lg"
                   >
                     🔄 从备份恢复站点
-                  </button>
+                  </IOSButton>
                   <p className="text-xs mt-2 text-slate-400">从备份目录选择配置文件进行恢复</p>
                 </div>
               ) : (
                 // 为了在窗口变窄时出现横向滚动条，内部内容设置一个最小宽度（由根容器负责横向滚动）
                 <>
-                  {/* 列表表头（固定在滚动容器顶部）：站点名称 / 状态 / 余额 / 今日消费 / 总Token / 输入 / 输出 / 请求 / RPM / TPM / 模型数 / 更新时间 / CC-CX-Gemini? / LDC / 操作 */}
-                  <div className="min-w-[1180px] sticky top-0 z-20 px-4 py-2 bg-gradient-to-r from-emerald-50/60 to-amber-50/60 dark:from-emerald-900/20 dark:to-amber-900/20 backdrop-blur-sm border-b border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-sm font-semibold text-slate-700 dark:text-slate-100">
+                  {/* 列表表头（固定在滚动容器顶部）- iOS 风格 */}
+                  <IOSTableHeader
+                    sticky
+                    className="min-w-[1180px] !px-4 !py-1 flex items-center justify-between !text-[13px] !font-semibold text-[var(--ios-text-secondary)]"
+                  >
                     <div
                       className="grid gap-x-1 flex-1 items-center select-none"
                       style={{ gridTemplateColumns: columnWidths.map(w => `${w}px`).join(' ') }}
@@ -1426,15 +1431,15 @@ function App() {
                         return (
                           <div
                             key={label}
-                            className={`relative flex items-center pr-1 ${
+                            className={`relative flex items-center pr-1 min-h-[44px] ${
                               centerHeader ? 'justify-center text-center' : 'justify-start'
                             }`}
                           >
                             {isSortable ? (
                               <button
                                 onClick={() => toggleSort(field)}
-                                className={`flex items-center gap-0.5 hover:text-primary-500 transition-colors ${
-                                  isActive ? 'text-primary-500' : ''
+                                className={`flex items-center gap-0.5 hover:text-[var(--ios-blue)] transition-colors duration-[var(--duration-fast)] ${
+                                  isActive ? 'text-[var(--ios-blue)]' : ''
                                 } ${centerHeader ? 'justify-center' : ''}`}
                                 title={`点击按${label}排序`}
                               >
@@ -1456,7 +1461,7 @@ function App() {
                               onMouseDown={e => handleColumnResizeMouseDown(e, idx)}
                               className="absolute top-0 right-0 h-full w-1 cursor-col-resize group"
                             >
-                              <div className="w-[3px] h-full mx-auto opacity-0 group-hover:opacity-60 bg-slate-300 dark:bg-slate-500 transition-opacity" />
+                              <div className="w-[3px] h-full mx-auto opacity-0 group-hover:opacity-60 bg-[var(--ios-separator)] transition-opacity duration-[var(--duration-fast)]" />
                             </div>
                           </div>
                         );
@@ -1466,7 +1471,7 @@ function App() {
                       {/* 展开全部按钮 - 对齐到单个站点展开按钮 */}
                       <button
                         onClick={handleToggleAllExpanded}
-                        className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-all"
+                        className="p-1 hover:bg-[rgba(0,0,0,0.05)] dark:hover:bg-[rgba(255,255,255,0.05)] rounded-[var(--radius-sm)] transition-all duration-[var(--duration-fast)]"
                         title={
                           config.sites.every(s => expandedSites.has(s.name))
                             ? '收起全部'
@@ -1479,17 +1484,17 @@ function App() {
                       <button
                         onClick={handleDetectAllSites}
                         disabled={detecting || !config || config.sites.length === 0}
-                        className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="p-1 hover:bg-[rgba(0,0,0,0.05)] dark:hover:bg-[rgba(255,255,255,0.05)] rounded-[var(--radius-sm)] transition-all duration-[var(--duration-fast)] disabled:opacity-50 disabled:cursor-not-allowed"
                         title="检测所有站点"
                       >
                         {detecting ? (
                           <Loader2
-                            className="w-3.5 h-3.5 animate-spin text-primary-500"
+                            className="w-3.5 h-3.5 animate-spin text-[var(--ios-blue)]"
                             strokeWidth={2.5}
                           />
                         ) : (
                           <RefreshCw
-                            className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300 hover:text-primary-500"
+                            className="w-3.5 h-3.5 text-[var(--ios-text-secondary)] hover:text-[var(--ios-blue)]"
                             strokeWidth={2.5}
                           />
                         )}
@@ -1497,9 +1502,9 @@ function App() {
                       {/* 占位 - 对应自动刷新、编辑、删除按钮位置 */}
                       <div className="w-[71px]" />
                     </div>
-                  </div>
+                  </IOSTableHeader>
 
-                  <div className="min-w-[1180px] space-y-3">
+                  <IOSTableBody className="min-w-[1180px] space-y-3">
                     {sortedSites.map(({ site, index, siteResult: cachedResult }) => {
                       // 使用排序时已缓存的结果，或重新查找
                       let siteResult = cachedResult;
@@ -1625,7 +1630,7 @@ function App() {
                         />
                       );
                     })}
-                  </div>
+                  </IOSTableBody>
                 </>
               )}
             </div>

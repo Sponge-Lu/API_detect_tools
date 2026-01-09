@@ -2,6 +2,7 @@
  * 输入: useCredit Hook (积分状态、操作方法)
  * 输出: React 组件 (紧凑版 Linux Do Credit 积分面板 UI)
  * 定位: 展示层 - 在表头区域显示 Linux Do Credit 积分信息，支持展开详情
+ *       刷新按钮会同时刷新积分、每日统计、交易记录
  */
 
 import { useState, useRef, useEffect } from 'react';
@@ -105,9 +106,9 @@ export function CreditPanelCompact({ className = '', ldcSites = [] }: CreditPane
     isLoadingStats,
     isLoadingTransactions,
     isRecharging,
-    fetchCredit,
     fetchDailyStats,
     fetchTransactions,
+    refreshAll,
     login,
     logout,
     updateConfig,
@@ -139,7 +140,8 @@ export function CreditPanelCompact({ className = '', ldcSites = [] }: CreditPane
 
   const handleRefresh = async () => {
     try {
-      await fetchCredit();
+      // 使用 refreshAll 在单个浏览器页面中刷新所有 LDC 数据
+      await refreshAll();
       toast.success('积分数据已刷新');
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : '刷新失败';

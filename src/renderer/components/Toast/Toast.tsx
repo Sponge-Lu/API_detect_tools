@@ -27,10 +27,10 @@ interface ToastProps {
 }
 
 const icons: Record<ToastType, React.ReactNode> = {
-  success: <CheckCircle className="w-5 h-5 text-green-500" />,
-  error: <XCircle className="w-5 h-5 text-red-500" />,
-  warning: <AlertTriangle className="w-5 h-5 text-yellow-500" />,
-  info: <Info className="w-5 h-5 text-blue-500" />,
+  success: <CheckCircle className="w-5 h-5 text-green-500" strokeWidth={2} aria-hidden="true" />,
+  error: <XCircle className="w-5 h-5 text-red-500" strokeWidth={2} aria-hidden="true" />,
+  warning: <AlertTriangle className="w-5 h-5 text-yellow-500" strokeWidth={2} aria-hidden="true" />,
+  info: <Info className="w-5 h-5 text-blue-500" strokeWidth={2} aria-hidden="true" />,
 };
 
 const bgColors: Record<ToastType, string> = {
@@ -56,9 +56,11 @@ export function Toast({ toast, onClose }: ToastProps) {
       <span className="text-sm text-slate-700 dark:text-slate-200 flex-1">{toast.message}</span>
       <button
         onClick={() => onClose(toast.id)}
+        aria-label="关闭通知"
+        title="关闭"
         className="p-1 rounded hover:bg-black/10 dark:hover:bg-white/10 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
       >
-        <X className="w-4 h-4" />
+        <X className="w-4 h-4" strokeWidth={2} aria-hidden="true" />
       </button>
     </div>
   );

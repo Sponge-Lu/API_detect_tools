@@ -216,6 +216,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 获取交易记录
     fetchTransactions: (page?: number, pageSize?: number) =>
       ipcRenderer.invoke('credit:fetch-transactions', page, pageSize),
+    // 刷新所有数据（积分、每日统计、交易记录）- 在单个浏览器页面中完成
+    refreshAll: () => ipcRenderer.invoke('credit:refresh-all'),
     // 启动登录
     login: () => ipcRenderer.invoke('credit:login'),
     // 登出

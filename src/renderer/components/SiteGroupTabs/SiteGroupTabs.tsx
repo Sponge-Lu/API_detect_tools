@@ -130,15 +130,17 @@ export function SiteGroupTabs({
                   onClick={handleSaveEdit}
                   className="p-0.5 hover:bg-green-500/20 rounded"
                   title="保存"
+                  aria-label="保存分组名称"
                 >
-                  <Check className="w-3 h-3 text-green-500" />
+                  <Check className="w-3 h-3 text-green-500" strokeWidth={2} aria-hidden="true" />
                 </button>
                 <button
                   onClick={handleCancelEdit}
                   className="p-0.5 hover:bg-red-500/20 rounded"
                   title="取消"
+                  aria-label="取消编辑"
                 >
-                  <X className="w-3 h-3 text-red-500" />
+                  <X className="w-3 h-3 text-red-500" strokeWidth={2} aria-hidden="true" />
                 </button>
               </div>
             ) : (
@@ -156,8 +158,9 @@ export function SiteGroupTabs({
                       }}
                       className="p-0.5 hover:bg-white/20 rounded opacity-0 group-hover:opacity-100 transition-opacity"
                       title="编辑分组"
+                      aria-label={`编辑分组 ${group.name}`}
                     >
-                      <Pencil className="w-3 h-3" />
+                      <Pencil className="w-3 h-3" strokeWidth={2} aria-hidden="true" />
                     </button>
                     <button
                       onClick={e => {
@@ -166,8 +169,9 @@ export function SiteGroupTabs({
                       }}
                       className="p-0.5 hover:bg-red-500/20 rounded opacity-0 group-hover:opacity-100 transition-opacity"
                       title="删除分组"
+                      aria-label={`删除分组 ${group.name}`}
                     >
-                      <Trash2 className="w-3 h-3 text-red-500" />
+                      <Trash2 className="w-3 h-3 text-red-500" strokeWidth={2} aria-hidden="true" />
                     </button>
                   </div>
                 )}
@@ -181,8 +185,9 @@ export function SiteGroupTabs({
           onClick={onAddGroup}
           className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium bg-slate-200/30 dark:bg-slate-700/30 text-slate-500 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-700/50 transition-all border border-dashed border-slate-300 dark:border-slate-600"
           title="添加分组"
+          aria-label="添加新分组"
         >
-          <Plus className="w-3.5 h-3.5" />
+          <Plus className="w-3.5 h-3.5" strokeWidth={2} aria-hidden="true" />
           <span>添加分组</span>
         </button>
       </div>

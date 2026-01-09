@@ -86,6 +86,43 @@ src/
 
 ## 核心模块设计
 
+### iOS 设计系统
+
+项目采用 Apple Human Interface Guidelines 设计语言，实现了完整的 iOS 风格设计系统：
+
+**CSS 变量体系** (`src/renderer/index.css`):
+- 颜色系统：主色、背景色、文字色、边框色（支持浅色/深色模式）
+- 字体系统：SF Pro 字体族，标准字号和字重
+- 间距系统：8px 网格，所有间距值为 4px 的倍数
+- 圆角系统：标准圆角值（4px、8px、12px、16px、20px）
+- 阴影系统：多层次阴影效果
+- 模糊系统：毛玻璃效果参数
+
+**组件库** (`src/renderer/components/`):
+| 组件 | 文件 | 功能 |
+|------|------|------|
+| IOSButton | `IOSButton/IOSButton.tsx` | Primary/Secondary/Tertiary 变体，支持 ref 转发 |
+| IOSCard | `IOSCard/IOSCard.tsx` | 毛玻璃背景、展开/收起动画 |
+| IOSInput | `IOSInput/IOSInput.tsx` | 聚焦状态、密码显示切换 |
+| IOSModal | `IOSModal/IOSModal.tsx` | 缩放+淡入淡出动画、焦点陷阱 |
+| IOSTable | `IOSTable/IOSTable.tsx` | 分组样式、交错淡入动画 |
+| IOSIcon | `IOSIcon/IOSIcon.tsx` | 统一 1.5px stroke-width、标准尺寸 |
+
+**性能优化**:
+- GPU 加速：`transform: translateZ(0)` 和 `will-change` 属性
+- 高性能动画：仅使用 `transform` 和 `opacity` 属性
+- `prefers-reduced-motion` 支持：尊重用户的动画偏好设置
+
+**无障碍性**:
+- 焦点指示器：清晰的键盘焦点样式
+- 键盘导航：完整的 Tab 键导航支持
+- ARIA 属性：语义化的无障碍标签
+
+**主题切换**:
+- 300ms 平滑过渡
+- 自动检测系统主题偏好
+- 手动切换支持
+
 ### 状态管理 (Zustand)
 
 为了避免 React Context 的性能问题和 Prop Drilling，项目采用 Zustand 进行状态管理，拆分为多个独立的 Store：

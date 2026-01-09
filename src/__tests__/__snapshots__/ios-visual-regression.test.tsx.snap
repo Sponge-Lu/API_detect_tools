@@ -1,0 +1,2851 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Combined Components Visual Regression > Card with Form > should render card with form inputs correctly 1`] = `
+<div
+  aria-disabled="false"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 dark:bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
+  data-perf-monitor="blur"
+  draggable="false"
+>
+  <div
+    class="px-[var(--spacing-lg)] py-[var(--spacing-md)]"
+  >
+    User Information
+  </div>
+  <div
+    class="px-[var(--spacing-lg)] py-[var(--spacing-md)]"
+  >
+    <div
+      style="display: flex; flex-direction: column; gap: 16px;"
+    >
+      <div
+        class="relative "
+      >
+        <label
+          class="block text-sm font-medium text-[var(--ios-text-primary)] mb-[var(--spacing-sm)]"
+          for=":r19:"
+        >
+          Name
+        </label>
+        <div
+          class="relative"
+        >
+          <input
+            aria-invalid="false"
+            class="w-full bg-[var(--ios-bg-tertiary)] text-[var(--ios-text-primary)] placeholder-[var(--ios-text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--ios-separator)]"
+            id=":r19:"
+            placeholder="Enter your name"
+            type="text"
+          />
+        </div>
+      </div>
+      <div
+        class="relative "
+      >
+        <label
+          class="block text-sm font-medium text-[var(--ios-text-primary)] mb-[var(--spacing-sm)]"
+          for=":r1a:"
+        >
+          Email
+        </label>
+        <div
+          class="relative"
+        >
+          <input
+            aria-invalid="false"
+            class="w-full bg-[var(--ios-bg-tertiary)] text-[var(--ios-text-primary)] placeholder-[var(--ios-text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--ios-separator)]"
+            id=":r1a:"
+            placeholder="Enter your email"
+            type="email"
+          />
+        </div>
+      </div>
+      <div
+        class="relative "
+      >
+        <label
+          class="block text-sm font-medium text-[var(--ios-text-primary)] mb-[var(--spacing-sm)]"
+          for=":r1b:"
+        >
+          Password
+        </label>
+        <div
+          class="relative"
+        >
+          <input
+            aria-invalid="false"
+            class="w-full bg-[var(--ios-bg-tertiary)] text-[var(--ios-text-primary)] placeholder-[var(--ios-text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--ios-separator)] pr-10"
+            id=":r1b:"
+            placeholder="Enter password"
+            type="password"
+          />
+          <button
+            aria-label="显示密码"
+            aria-pressed="false"
+            class="absolute right-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--ios-text-tertiary)] hover:text-[var(--ios-text-secondary)] transition-colors p-[var(--spacing-xs)] rounded-[var(--radius-sm)] focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-1"
+            tabindex="0"
+            title="显示密码"
+            type="button"
+          >
+            <svg
+              aria-hidden="true"
+              class="lucide lucide-eye w-5 h-5"
+              fill="none"
+              height="24"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+              width="24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"
+              />
+              <circle
+                cx="12"
+                cy="12"
+                r="3"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div
+    class="px-[var(--spacing-lg)] py-[var(--spacing-md)] border-t border-[var(--ios-separator)]"
+  >
+    <div
+      style="display: flex; gap: 8px; justify-content: flex-end;"
+    >
+      <button
+        aria-busy="false"
+        aria-disabled="false"
+        class="inline-flex items-center justify-center gap-[var(--spacing-sm)] font-semibold border-none [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2 px-[var(--spacing-xl)] py-[var(--spacing-md)] text-base rounded-[12px] bg-[rgba(0,122,255,0.1)] text-[var(--ios-blue)] hover:bg-[rgba(0,122,255,0.15)] transition-[transform,opacity,background-color,box-shadow] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)]"
+        data-perf-monitor="animation"
+      >
+        Cancel
+      </button>
+      <button
+        aria-busy="false"
+        aria-disabled="false"
+        class="inline-flex items-center justify-center gap-[var(--spacing-sm)] font-semibold border-none [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2 px-[var(--spacing-xl)] py-[var(--spacing-md)] text-base rounded-[12px] bg-[var(--ios-blue)] text-white shadow-[var(--shadow-sm)] hover:bg-[#0066CC] hover:shadow-[var(--shadow-md)] active:shadow-[var(--shadow-sm)] transition-[transform,opacity,background-color,box-shadow] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)]"
+        data-perf-monitor="animation"
+      >
+        Save
+      </button>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`Combined Components Visual Regression > Modal with Form > should render modal with form correctly 1`] = `
+<div
+  class="fixed inset-0 z-50 flex items-center justify-center transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] [will-change:opacity] opacity-0"
+  role="presentation"
+>
+  <div
+    aria-hidden="true"
+    class="absolute inset-0 bg-black/40 backdrop-blur-[8px] [-webkit-backdrop-filter:blur(8px)] [will-change:opacity,backdrop-filter] [transform:translateZ(0)] transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] opacity-0"
+    data-perf-monitor="blur"
+  />
+  <div
+    aria-describedby=":r1d:"
+    aria-labelledby=":r1c:"
+    aria-modal="true"
+    class="relative w-full mx-4 max-w-md bg-[var(--ios-bg-secondary)] backdrop-blur-[20px] [-webkit-backdrop-filter:blur(20px)] rounded-[var(--radius-xl)] shadow-[var(--shadow-xl)] overflow-hidden [will-change:transform,opacity,backdrop-filter] [backface-visibility:hidden] [transform-origin:center_center] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] opacity-0 scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ios-blue)] focus-visible:ring-offset-2"
+    data-perf-monitor="blur"
+    role="dialog"
+    tabindex="-1"
+  >
+    <div
+      class="flex items-center justify-between px-[var(--spacing-2xl)] py-[var(--spacing-lg)] border-b border-[var(--ios-separator)]"
+    >
+      <div
+        class="flex items-center gap-[var(--spacing-md)]"
+      >
+        <h2
+          class="text-lg font-semibold text-[var(--ios-text-primary)]"
+          id=":r1c:"
+        >
+          Add New Item
+        </h2>
+      </div>
+      <button
+        aria-label="关闭弹窗"
+        class="p-[var(--spacing-sm)] -mr-[var(--spacing-sm)] rounded-[var(--radius-md)] text-[var(--ios-gray)] hover:bg-[rgba(0,0,0,0.05)] dark:hover:bg-[rgba(255,255,255,0.1)] transition-all duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] active:scale-95 focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2"
+        title="关闭"
+      >
+        <svg
+          aria-hidden="true"
+          class="lucide lucide-x w-5 h-5"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            d="M18 6 6 18"
+          />
+          <path
+            d="m6 6 12 12"
+          />
+        </svg>
+      </button>
+    </div>
+    <div
+      class="px-[var(--spacing-2xl)] py-[var(--spacing-lg)] max-h-[60vh] overflow-y-auto"
+      id=":r1d:"
+    >
+      <div
+        style="display: flex; flex-direction: column; gap: 16px;"
+      >
+        <div
+          class="relative "
+        >
+          <label
+            class="block text-sm font-medium text-[var(--ios-text-primary)] mb-[var(--spacing-sm)]"
+            for=":r1e:"
+          >
+            Item Name
+            <span
+              aria-hidden="true"
+              class="text-[var(--ios-red)] ml-1"
+            >
+              *
+            </span>
+          </label>
+          <div
+            class="relative"
+          >
+            <input
+              aria-invalid="false"
+              aria-required="true"
+              class="w-full bg-[var(--ios-bg-tertiary)] text-[var(--ios-text-primary)] placeholder-[var(--ios-text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--ios-separator)]"
+              id=":r1e:"
+              placeholder="Enter item name"
+              required=""
+              type="text"
+            />
+          </div>
+        </div>
+        <div
+          class="relative "
+        >
+          <label
+            class="block text-sm font-medium text-[var(--ios-text-primary)] mb-[var(--spacing-sm)]"
+            for=":r1f:"
+          >
+            Description
+          </label>
+          <div
+            class="relative"
+          >
+            <input
+              aria-invalid="false"
+              class="w-full bg-[var(--ios-bg-tertiary)] text-[var(--ios-text-primary)] placeholder-[var(--ios-text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--ios-separator)]"
+              id=":r1f:"
+              placeholder="Enter description"
+              type="text"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+    <div
+      class="flex items-center justify-end gap-[var(--spacing-md)] px-[var(--spacing-2xl)] py-[var(--spacing-lg)] border-t border-[var(--ios-separator)] bg-[var(--ios-bg-tertiary)]"
+    >
+      <button
+        aria-busy="false"
+        aria-disabled="false"
+        class="inline-flex items-center justify-center gap-[var(--spacing-sm)] font-semibold border-none [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2 px-[var(--spacing-xl)] py-[var(--spacing-md)] text-base rounded-[12px] bg-[rgba(0,122,255,0.1)] text-[var(--ios-blue)] hover:bg-[rgba(0,122,255,0.15)] transition-[transform,opacity,background-color,box-shadow] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)]"
+        data-perf-monitor="animation"
+      >
+        Cancel
+      </button>
+      <button
+        aria-busy="false"
+        aria-disabled="false"
+        class="inline-flex items-center justify-center gap-[var(--spacing-sm)] font-semibold border-none [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2 px-[var(--spacing-xl)] py-[var(--spacing-md)] text-base rounded-[12px] bg-[var(--ios-blue)] text-white shadow-[var(--shadow-sm)] hover:bg-[#0066CC] hover:shadow-[var(--shadow-md)] active:shadow-[var(--shadow-sm)] transition-[transform,opacity,background-color,box-shadow] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)]"
+        data-perf-monitor="animation"
+      >
+        Add
+      </button>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`Combined Components Visual Regression > Table with Actions > should render table with action buttons correctly 1`] = `
+<div
+  class="ios-table relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [transform:translateZ(0)] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] shadow-[var(--shadow-sm)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 dark:bg-opacity-95 [will-change:backdrop-filter]"
+  role="table"
+>
+  <div
+    class="ios-table-header px-[var(--spacing-lg)] py-[var(--spacing-md)] bg-[rgba(0,0,0,0.03)] dark:bg-[rgba(255,255,255,0.03)] border-b border-[var(--ios-separator)] text-[13px] font-semibold text-[var(--ios-text-secondary)] uppercase tracking-[0.5px] select-none"
+    role="rowgroup"
+  >
+    <div
+      aria-disabled="false"
+      aria-selected="false"
+      class="ios-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--ios-separator)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] hover:bg-[rgba(0,0,0,0.02)] dark:hover:bg-[rgba(255,255,255,0.02)] cursor-pointer"
+      role="row"
+    >
+      <div
+        class="ios-table-cell flex items-center text-left justify-start text-[13px] font-semibold text-[var(--ios-text-secondary)] uppercase tracking-[0.5px]"
+        role="columnheader"
+        style="width: 200px;"
+      >
+        Name
+      </div>
+      <div
+        class="ios-table-cell flex items-center text-left justify-start text-[13px] font-semibold text-[var(--ios-text-secondary)] uppercase tracking-[0.5px]"
+        role="columnheader"
+        style="width: 100px;"
+      >
+        Status
+      </div>
+      <div
+        class="ios-table-cell flex items-center text-right justify-end text-[13px] font-semibold text-[var(--ios-text-secondary)] uppercase tracking-[0.5px]"
+        role="columnheader"
+        style="width: 100px;"
+      >
+        Actions
+      </div>
+    </div>
+  </div>
+  <div
+    class="ios-table-body"
+    role="rowgroup"
+  >
+    <div
+      aria-disabled="false"
+      aria-selected="false"
+      class="ios-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--ios-separator)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] hover:bg-[rgba(0,0,0,0.02)] dark:hover:bg-[rgba(255,255,255,0.02)] cursor-pointer"
+      role="row"
+    >
+      <div
+        class="ios-table-cell flex items-center text-left justify-start text-[15px] text-[var(--ios-text-primary)]"
+        role="cell"
+      >
+        Item 1
+      </div>
+      <div
+        class="ios-table-cell flex items-center text-left justify-start text-[15px] text-[var(--ios-text-primary)]"
+        role="cell"
+      >
+        Active
+      </div>
+      <div
+        class="ios-table-cell flex items-center text-right justify-end text-[15px] text-[var(--ios-text-primary)]"
+        role="cell"
+      >
+        <div
+          style="display: flex; gap: 4px; justify-content: flex-end;"
+        >
+          <button
+            aria-label="Settings"
+            class="ios-icon-button"
+            title="Settings"
+            type="button"
+          >
+            <svg
+              aria-hidden="true"
+              class="lucide lucide-settings ios-icon ios-icon-sm ios-icon-muted"
+              fill="none"
+              height="16"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+              width="16"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+              />
+              <circle
+                cx="12"
+                cy="12"
+                r="3"
+              />
+            </svg>
+          </button>
+          <button
+            aria-label="Delete"
+            class="ios-icon-button"
+            title="Delete"
+            type="button"
+          >
+            <svg
+              aria-hidden="true"
+              class="lucide lucide-trash2 ios-icon ios-icon-sm ios-icon-error"
+              fill="none"
+              height="16"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+              width="16"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M3 6h18"
+              />
+              <path
+                d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"
+              />
+              <path
+                d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+              />
+              <line
+                x1="10"
+                x2="10"
+                y1="11"
+                y2="17"
+              />
+              <line
+                x1="14"
+                x2="14"
+                y1="11"
+                y2="17"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div
+      aria-disabled="false"
+      aria-selected="false"
+      class="ios-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--ios-separator)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] hover:bg-[rgba(0,0,0,0.02)] dark:hover:bg-[rgba(255,255,255,0.02)] cursor-pointer"
+      role="row"
+    >
+      <div
+        class="ios-table-cell flex items-center text-left justify-start text-[15px] text-[var(--ios-text-primary)]"
+        role="cell"
+      >
+        Item 2
+      </div>
+      <div
+        class="ios-table-cell flex items-center text-left justify-start text-[15px] text-[var(--ios-text-primary)]"
+        role="cell"
+      >
+        Inactive
+      </div>
+      <div
+        class="ios-table-cell flex items-center text-right justify-end text-[15px] text-[var(--ios-text-primary)]"
+        role="cell"
+      >
+        <div
+          style="display: flex; gap: 4px; justify-content: flex-end;"
+        >
+          <button
+            aria-label="Settings"
+            class="ios-icon-button"
+            title="Settings"
+            type="button"
+          >
+            <svg
+              aria-hidden="true"
+              class="lucide lucide-settings ios-icon ios-icon-sm ios-icon-muted"
+              fill="none"
+              height="16"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+              width="16"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+              />
+              <circle
+                cx="12"
+                cy="12"
+                r="3"
+              />
+            </svg>
+          </button>
+          <button
+            aria-label="Delete"
+            class="ios-icon-button"
+            title="Delete"
+            type="button"
+          >
+            <svg
+              aria-hidden="true"
+              class="lucide lucide-trash2 ios-icon ios-icon-sm ios-icon-error"
+              fill="none"
+              height="16"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+              width="16"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M3 6h18"
+              />
+              <path
+                d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"
+              />
+              <path
+                d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+              />
+              <line
+                x1="10"
+                x2="10"
+                y1="11"
+                y2="17"
+              />
+              <line
+                x1="14"
+                x2="14"
+                y1="11"
+                y2="17"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`IOSButton Visual Regression > Button Sizes > should render large button correctly 1`] = `
+<button
+  aria-busy="false"
+  aria-disabled="false"
+  class="inline-flex items-center justify-center gap-[var(--spacing-sm)] font-semibold border-none [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2 px-[var(--spacing-2xl)] py-[var(--spacing-lg)] text-lg rounded-[14px] bg-[var(--ios-blue)] text-white shadow-[var(--shadow-sm)] hover:bg-[#0066CC] hover:shadow-[var(--shadow-md)] active:shadow-[var(--shadow-sm)] transition-[transform,opacity,background-color,box-shadow] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)]"
+  data-perf-monitor="animation"
+>
+  Large Button
+</button>
+`;
+
+exports[`IOSButton Visual Regression > Button Sizes > should render medium button correctly 1`] = `
+<button
+  aria-busy="false"
+  aria-disabled="false"
+  class="inline-flex items-center justify-center gap-[var(--spacing-sm)] font-semibold border-none [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2 px-[var(--spacing-xl)] py-[var(--spacing-md)] text-base rounded-[12px] bg-[var(--ios-blue)] text-white shadow-[var(--shadow-sm)] hover:bg-[#0066CC] hover:shadow-[var(--shadow-md)] active:shadow-[var(--shadow-sm)] transition-[transform,opacity,background-color,box-shadow] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)]"
+  data-perf-monitor="animation"
+>
+  Medium Button
+</button>
+`;
+
+exports[`IOSButton Visual Regression > Button Sizes > should render small button correctly 1`] = `
+<button
+  aria-busy="false"
+  aria-disabled="false"
+  class="inline-flex items-center justify-center gap-[var(--spacing-sm)] font-semibold border-none [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2 px-[var(--spacing-md)] py-[var(--spacing-sm)] text-sm rounded-[10px] bg-[var(--ios-blue)] text-white shadow-[var(--shadow-sm)] hover:bg-[#0066CC] hover:shadow-[var(--shadow-md)] active:shadow-[var(--shadow-sm)] transition-[transform,opacity,background-color,box-shadow] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)]"
+  data-perf-monitor="animation"
+>
+  Small Button
+</button>
+`;
+
+exports[`IOSButton Visual Regression > Button States > should render disabled button correctly 1`] = `
+<button
+  aria-busy="false"
+  aria-disabled="true"
+  class="inline-flex items-center justify-center gap-[var(--spacing-sm)] font-semibold border-none [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2 px-[var(--spacing-xl)] py-[var(--spacing-md)] text-base rounded-[12px] bg-[var(--ios-blue)] text-white shadow-[var(--shadow-sm)] hover:bg-[#0066CC] hover:shadow-[var(--shadow-md)] active:shadow-[var(--shadow-sm)] transition-[transform,opacity,background-color,box-shadow] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)]"
+  data-perf-monitor="animation"
+  disabled=""
+>
+  Disabled Button
+</button>
+`;
+
+exports[`IOSButton Visual Regression > Button States > should render loading button correctly 1`] = `
+<button
+  aria-busy="true"
+  aria-disabled="true"
+  class="inline-flex items-center justify-center gap-[var(--spacing-sm)] font-semibold border-none [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2 px-[var(--spacing-xl)] py-[var(--spacing-md)] text-base rounded-[12px] bg-[var(--ios-blue)] text-white shadow-[var(--shadow-sm)] hover:bg-[#0066CC] hover:shadow-[var(--shadow-md)] active:shadow-[var(--shadow-sm)] transition-[transform,opacity,background-color,box-shadow] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)]"
+  data-perf-monitor="animation"
+  disabled=""
+>
+  <span
+    aria-hidden="true"
+    class="inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"
+  />
+  <span
+    class="ios-sr-only"
+  >
+    加载中
+  </span>
+  Loading Button
+</button>
+`;
+
+exports[`IOSButton Visual Regression > Button Variants > should render primary button correctly 1`] = `
+<button
+  aria-busy="false"
+  aria-disabled="false"
+  class="inline-flex items-center justify-center gap-[var(--spacing-sm)] font-semibold border-none [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2 px-[var(--spacing-xl)] py-[var(--spacing-md)] text-base rounded-[12px] bg-[var(--ios-blue)] text-white shadow-[var(--shadow-sm)] hover:bg-[#0066CC] hover:shadow-[var(--shadow-md)] active:shadow-[var(--shadow-sm)] transition-[transform,opacity,background-color,box-shadow] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)]"
+  data-perf-monitor="animation"
+>
+  Primary Button
+</button>
+`;
+
+exports[`IOSButton Visual Regression > Button Variants > should render secondary button correctly 1`] = `
+<button
+  aria-busy="false"
+  aria-disabled="false"
+  class="inline-flex items-center justify-center gap-[var(--spacing-sm)] font-semibold border-none [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2 px-[var(--spacing-xl)] py-[var(--spacing-md)] text-base rounded-[12px] bg-[rgba(0,122,255,0.1)] text-[var(--ios-blue)] hover:bg-[rgba(0,122,255,0.15)] transition-[transform,opacity,background-color,box-shadow] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)]"
+  data-perf-monitor="animation"
+>
+  Secondary Button
+</button>
+`;
+
+exports[`IOSButton Visual Regression > Button Variants > should render tertiary button correctly 1`] = `
+<button
+  aria-busy="false"
+  aria-disabled="false"
+  class="inline-flex items-center justify-center gap-[var(--spacing-sm)] font-semibold border-none [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2 px-[var(--spacing-xl)] py-[var(--spacing-md)] text-base rounded-[12px] bg-transparent text-[var(--ios-blue)] hover:bg-[rgba(0,122,255,0.08)] transition-[transform,opacity,background-color,box-shadow] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)]"
+  data-perf-monitor="animation"
+>
+  Tertiary Button
+</button>
+`;
+
+exports[`IOSCard Visual Regression > Card States > should render disabled card correctly 1`] = `
+<div
+  aria-disabled="true"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 dark:bg-opacity-95 [will-change:backdrop-filter] opacity-60 cursor-not-allowed"
+  data-perf-monitor="blur"
+  draggable="false"
+>
+  <div
+    class="px-[var(--spacing-lg)] py-[var(--spacing-md)]"
+  >
+    Disabled Card
+  </div>
+</div>
+`;
+
+exports[`IOSCard Visual Regression > Card States > should render drag-over card correctly 1`] = `
+<div
+  aria-disabled="false"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 dark:bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5 border-[var(--ios-blue)] border-2 scale-[1.02] shadow-[var(--shadow-xl)] cursor-move"
+  data-perf-monitor="blur"
+  draggable="true"
+>
+  <div
+    class="px-[var(--spacing-lg)] py-[var(--spacing-md)]"
+  >
+    Drag Over Card
+  </div>
+</div>
+`;
+
+exports[`IOSCard Visual Regression > Card States > should render draggable card correctly 1`] = `
+<div
+  aria-disabled="false"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 dark:bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5 cursor-move"
+  data-perf-monitor="blur"
+  draggable="true"
+>
+  <div
+    class="px-[var(--spacing-lg)] py-[var(--spacing-md)]"
+  >
+    Draggable Card
+  </div>
+</div>
+`;
+
+exports[`IOSCard Visual Regression > Card Variants > should render elevated card correctly 1`] = `
+<div
+  aria-disabled="false"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] shadow-[var(--shadow-lg)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 dark:bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
+  data-perf-monitor="blur"
+  draggable="false"
+>
+  <div
+    class="px-[var(--spacing-lg)] py-[var(--spacing-md)]"
+  >
+    Elevated Card Content
+  </div>
+</div>
+`;
+
+exports[`IOSCard Visual Regression > Card Variants > should render grouped card correctly 1`] = `
+<div
+  aria-disabled="false"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-[var(--ios-bg-secondary)] shadow-[var(--shadow-sm)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 dark:bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
+  data-perf-monitor="blur"
+  draggable="false"
+>
+  <div
+    class="px-[var(--spacing-lg)] py-[var(--spacing-md)]"
+  >
+    Grouped Card Content
+  </div>
+</div>
+`;
+
+exports[`IOSCard Visual Regression > Card Variants > should render standard card correctly 1`] = `
+<div
+  aria-disabled="false"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 dark:bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
+  data-perf-monitor="blur"
+  draggable="false"
+>
+  <div
+    class="px-[var(--spacing-lg)] py-[var(--spacing-md)]"
+  >
+    Standard Card Content
+  </div>
+</div>
+`;
+
+exports[`IOSCard Visual Regression > Card with Expand Content > should render collapsed card correctly 1`] = `
+<div
+  aria-controls=":ra:"
+  aria-disabled="false"
+  aria-expanded="false"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 dark:bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
+  data-perf-monitor="blur"
+  draggable="false"
+>
+  <div
+    class="px-[var(--spacing-lg)] py-[var(--spacing-md)]"
+  >
+    Main Content
+  </div>
+  <div
+    aria-hidden="true"
+    class="overflow-hidden transition-[max-height,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] [will-change:max-height,opacity]"
+    id=":ra:"
+    style="max-height: 0px; opacity: 0;"
+  >
+    <div>
+      Expand Content
+    </div>
+  </div>
+</div>
+`;
+
+exports[`IOSCard Visual Regression > Card with Expand Content > should render expanded card correctly 1`] = `
+<div
+  aria-controls=":rb:"
+  aria-disabled="false"
+  aria-expanded="true"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 dark:bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
+  data-perf-monitor="blur"
+  draggable="false"
+>
+  <div
+    class="px-[var(--spacing-lg)] py-[var(--spacing-md)]"
+  >
+    Main Content
+  </div>
+  <div
+    aria-hidden="false"
+    class="overflow-hidden transition-[max-height,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] [will-change:max-height,opacity]"
+    id=":rb:"
+    style="max-height: 0px; opacity: 1;"
+  >
+    <div>
+      Expand Content
+    </div>
+  </div>
+</div>
+`;
+
+exports[`IOSCard Visual Regression > Card with Sub-components > should render card with divider correctly 1`] = `
+<div
+  aria-disabled="false"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 dark:bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
+  data-perf-monitor="blur"
+  draggable="false"
+>
+  <div
+    class="px-[var(--spacing-lg)] py-[var(--spacing-md)]"
+  >
+    Section 1
+  </div>
+  <div
+    aria-orientation="horizontal"
+    class="h-px bg-[var(--ios-separator)] mx-[var(--spacing-lg)]"
+    role="separator"
+  />
+  <div
+    class="px-[var(--spacing-lg)] py-[var(--spacing-md)]"
+  >
+    Section 2
+  </div>
+</div>
+`;
+
+exports[`IOSCard Visual Regression > Card with Sub-components > should render card with footer correctly 1`] = `
+<div
+  aria-disabled="false"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 dark:bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
+  data-perf-monitor="blur"
+  draggable="false"
+>
+  <div
+    class="px-[var(--spacing-lg)] py-[var(--spacing-md)]"
+  >
+    Card Content
+  </div>
+  <div
+    class="px-[var(--spacing-lg)] py-[var(--spacing-md)] border-t border-[var(--ios-separator)]"
+  >
+    Card Footer
+  </div>
+</div>
+`;
+
+exports[`IOSCard Visual Regression > Card with Sub-components > should render card with header correctly 1`] = `
+<div
+  aria-disabled="false"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 dark:bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
+  data-perf-monitor="blur"
+  draggable="false"
+>
+  <div
+    class="px-[var(--spacing-lg)] py-[var(--spacing-md)]"
+  >
+    Card Header
+  </div>
+  <div
+    class="px-[var(--spacing-lg)] py-[var(--spacing-md)]"
+  >
+    Card Content
+  </div>
+</div>
+`;
+
+exports[`IOSCard Visual Regression > Card with Sub-components > should render complete card correctly 1`] = `
+<div
+  aria-disabled="false"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 dark:bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
+  data-perf-monitor="blur"
+  draggable="false"
+>
+  <div
+    class="px-[var(--spacing-lg)] py-[var(--spacing-md)]"
+  >
+    Header
+  </div>
+  <div
+    aria-orientation="horizontal"
+    class="h-px bg-[var(--ios-separator)] mx-[var(--spacing-lg)]"
+    role="separator"
+  />
+  <div
+    class="px-[var(--spacing-lg)] py-[var(--spacing-md)]"
+  >
+    Content
+  </div>
+  <div
+    aria-orientation="horizontal"
+    class="h-px bg-[var(--ios-separator)] mx-[var(--spacing-lg)]"
+    role="separator"
+  />
+  <div
+    class="px-[var(--spacing-lg)] py-[var(--spacing-md)] border-t border-[var(--ios-separator)]"
+  >
+    Footer
+  </div>
+</div>
+`;
+
+exports[`IOSIcon Visual Regression > Icon Sizes > should render large icon correctly 1`] = `
+<svg
+  aria-hidden="true"
+  class="lucide lucide-settings ios-icon ios-icon-lg"
+  fill="none"
+  height="24"
+  stroke="currentColor"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  stroke-width="2"
+  viewBox="0 0 24 24"
+  width="24"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <path
+    d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+  />
+  <circle
+    cx="12"
+    cy="12"
+    r="3"
+  />
+</svg>
+`;
+
+exports[`IOSIcon Visual Regression > Icon Sizes > should render medium icon correctly 1`] = `
+<svg
+  aria-hidden="true"
+  class="lucide lucide-settings ios-icon ios-icon-md"
+  fill="none"
+  height="20"
+  stroke="currentColor"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  stroke-width="2"
+  viewBox="0 0 24 24"
+  width="20"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <path
+    d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+  />
+  <circle
+    cx="12"
+    cy="12"
+    r="3"
+  />
+</svg>
+`;
+
+exports[`IOSIcon Visual Regression > Icon Sizes > should render small icon correctly 1`] = `
+<svg
+  aria-hidden="true"
+  class="lucide lucide-settings ios-icon ios-icon-sm"
+  fill="none"
+  height="16"
+  stroke="currentColor"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  stroke-width="2"
+  viewBox="0 0 24 24"
+  width="16"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <path
+    d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+  />
+  <circle
+    cx="12"
+    cy="12"
+    r="3"
+  />
+</svg>
+`;
+
+exports[`IOSIcon Visual Regression > Icon Variants > should render default icon correctly 1`] = `
+<svg
+  aria-hidden="true"
+  class="lucide lucide-settings ios-icon ios-icon-md"
+  fill="none"
+  height="20"
+  stroke="currentColor"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  stroke-width="2"
+  viewBox="0 0 24 24"
+  width="20"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <path
+    d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+  />
+  <circle
+    cx="12"
+    cy="12"
+    r="3"
+  />
+</svg>
+`;
+
+exports[`IOSIcon Visual Regression > Icon Variants > should render error icon correctly 1`] = `
+<svg
+  aria-hidden="true"
+  class="lucide lucide-x ios-icon ios-icon-md ios-icon-error"
+  fill="none"
+  height="20"
+  stroke="currentColor"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  stroke-width="2"
+  viewBox="0 0 24 24"
+  width="20"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <path
+    d="M18 6 6 18"
+  />
+  <path
+    d="m6 6 12 12"
+  />
+</svg>
+`;
+
+exports[`IOSIcon Visual Regression > Icon Variants > should render muted icon correctly 1`] = `
+<svg
+  aria-hidden="true"
+  class="lucide lucide-settings ios-icon ios-icon-md ios-icon-muted"
+  fill="none"
+  height="20"
+  stroke="currentColor"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  stroke-width="2"
+  viewBox="0 0 24 24"
+  width="20"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <path
+    d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+  />
+  <circle
+    cx="12"
+    cy="12"
+    r="3"
+  />
+</svg>
+`;
+
+exports[`IOSIcon Visual Regression > Icon Variants > should render primary icon correctly 1`] = `
+<svg
+  aria-hidden="true"
+  class="lucide lucide-settings ios-icon ios-icon-md ios-icon-primary"
+  fill="none"
+  height="20"
+  stroke="currentColor"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  stroke-width="2"
+  viewBox="0 0 24 24"
+  width="20"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <path
+    d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+  />
+  <circle
+    cx="12"
+    cy="12"
+    r="3"
+  />
+</svg>
+`;
+
+exports[`IOSIcon Visual Regression > Icon Variants > should render success icon correctly 1`] = `
+<svg
+  aria-hidden="true"
+  class="lucide lucide-check ios-icon ios-icon-md ios-icon-success"
+  fill="none"
+  height="20"
+  stroke="currentColor"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  stroke-width="2"
+  viewBox="0 0 24 24"
+  width="20"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <path
+    d="M20 6 9 17l-5-5"
+  />
+</svg>
+`;
+
+exports[`IOSIcon Visual Regression > Icon Variants > should render warning icon correctly 1`] = `
+<svg
+  aria-hidden="true"
+  class="lucide lucide-settings ios-icon ios-icon-md ios-icon-warning"
+  fill="none"
+  height="20"
+  stroke="currentColor"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  stroke-width="2"
+  viewBox="0 0 24 24"
+  width="20"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <path
+    d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+  />
+  <circle
+    cx="12"
+    cy="12"
+    r="3"
+  />
+</svg>
+`;
+
+exports[`IOSIcon Visual Regression > Icon with ARIA Label > should render icon with aria-label correctly 1`] = `
+<svg
+  aria-hidden="false"
+  aria-label="Delete item"
+  class="lucide lucide-trash2 ios-icon ios-icon-md"
+  fill="none"
+  height="20"
+  stroke="currentColor"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  stroke-width="2"
+  viewBox="0 0 24 24"
+  width="20"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <path
+    d="M3 6h18"
+  />
+  <path
+    d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"
+  />
+  <path
+    d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+  />
+  <line
+    x1="10"
+    x2="10"
+    y1="11"
+    y2="17"
+  />
+  <line
+    x1="14"
+    x2="14"
+    y1="11"
+    y2="17"
+  />
+</svg>
+`;
+
+exports[`IOSIconButton Visual Regression > IconButton Sizes > should render large icon button correctly 1`] = `
+<button
+  aria-label="Add"
+  class="ios-icon-button"
+  title="Add"
+  type="button"
+>
+  <svg
+    aria-hidden="true"
+    class="lucide lucide-plus ios-icon ios-icon-lg"
+    fill="none"
+    height="24"
+    stroke="currentColor"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="2"
+    viewBox="0 0 24 24"
+    width="24"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path
+      d="M5 12h14"
+    />
+    <path
+      d="M12 5v14"
+    />
+  </svg>
+</button>
+`;
+
+exports[`IOSIconButton Visual Regression > IconButton Sizes > should render medium icon button correctly 1`] = `
+<button
+  aria-label="Add"
+  class="ios-icon-button"
+  title="Add"
+  type="button"
+>
+  <svg
+    aria-hidden="true"
+    class="lucide lucide-plus ios-icon ios-icon-md"
+    fill="none"
+    height="20"
+    stroke="currentColor"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="2"
+    viewBox="0 0 24 24"
+    width="20"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path
+      d="M5 12h14"
+    />
+    <path
+      d="M12 5v14"
+    />
+  </svg>
+</button>
+`;
+
+exports[`IOSIconButton Visual Regression > IconButton Sizes > should render small icon button correctly 1`] = `
+<button
+  aria-label="Add"
+  class="ios-icon-button"
+  title="Add"
+  type="button"
+>
+  <svg
+    aria-hidden="true"
+    class="lucide lucide-plus ios-icon ios-icon-sm"
+    fill="none"
+    height="16"
+    stroke="currentColor"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="2"
+    viewBox="0 0 24 24"
+    width="16"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path
+      d="M5 12h14"
+    />
+    <path
+      d="M12 5v14"
+    />
+  </svg>
+</button>
+`;
+
+exports[`IOSIconButton Visual Regression > IconButton States > should render disabled icon button correctly 1`] = `
+<button
+  aria-label="Add"
+  class="ios-icon-button"
+  disabled=""
+  title="Add"
+  type="button"
+>
+  <svg
+    aria-hidden="true"
+    class="lucide lucide-plus ios-icon ios-icon-md"
+    fill="none"
+    height="20"
+    stroke="currentColor"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="2"
+    viewBox="0 0 24 24"
+    width="20"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path
+      d="M5 12h14"
+    />
+    <path
+      d="M12 5v14"
+    />
+  </svg>
+</button>
+`;
+
+exports[`IOSIconButton Visual Regression > IconButton States > should render icon button without tooltip correctly 1`] = `
+<button
+  aria-label="Add"
+  class="ios-icon-button"
+  type="button"
+>
+  <svg
+    aria-hidden="true"
+    class="lucide lucide-plus ios-icon ios-icon-md"
+    fill="none"
+    height="20"
+    stroke="currentColor"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="2"
+    viewBox="0 0 24 24"
+    width="20"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path
+      d="M5 12h14"
+    />
+    <path
+      d="M12 5v14"
+    />
+  </svg>
+</button>
+`;
+
+exports[`IOSIconButton Visual Regression > IconButton Variants > should render default icon button correctly 1`] = `
+<button
+  aria-label="Add"
+  class="ios-icon-button"
+  title="Add"
+  type="button"
+>
+  <svg
+    aria-hidden="true"
+    class="lucide lucide-plus ios-icon ios-icon-md"
+    fill="none"
+    height="20"
+    stroke="currentColor"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="2"
+    viewBox="0 0 24 24"
+    width="20"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path
+      d="M5 12h14"
+    />
+    <path
+      d="M12 5v14"
+    />
+  </svg>
+</button>
+`;
+
+exports[`IOSIconButton Visual Regression > IconButton Variants > should render error icon button correctly 1`] = `
+<button
+  aria-label="Delete"
+  class="ios-icon-button"
+  title="Delete"
+  type="button"
+>
+  <svg
+    aria-hidden="true"
+    class="lucide lucide-trash2 ios-icon ios-icon-md ios-icon-error"
+    fill="none"
+    height="20"
+    stroke="currentColor"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="2"
+    viewBox="0 0 24 24"
+    width="20"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path
+      d="M3 6h18"
+    />
+    <path
+      d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"
+    />
+    <path
+      d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+    />
+    <line
+      x1="10"
+      x2="10"
+      y1="11"
+      y2="17"
+    />
+    <line
+      x1="14"
+      x2="14"
+      y1="11"
+      y2="17"
+    />
+  </svg>
+</button>
+`;
+
+exports[`IOSIconButton Visual Regression > IconButton Variants > should render muted icon button correctly 1`] = `
+<button
+  aria-label="Close"
+  class="ios-icon-button"
+  title="Close"
+  type="button"
+>
+  <svg
+    aria-hidden="true"
+    class="lucide lucide-x ios-icon ios-icon-md ios-icon-muted"
+    fill="none"
+    height="20"
+    stroke="currentColor"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="2"
+    viewBox="0 0 24 24"
+    width="20"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path
+      d="M18 6 6 18"
+    />
+    <path
+      d="m6 6 12 12"
+    />
+  </svg>
+</button>
+`;
+
+exports[`IOSIconButton Visual Regression > IconButton Variants > should render primary icon button correctly 1`] = `
+<button
+  aria-label="Settings"
+  class="ios-icon-button"
+  title="Settings"
+  type="button"
+>
+  <svg
+    aria-hidden="true"
+    class="lucide lucide-settings ios-icon ios-icon-md ios-icon-primary"
+    fill="none"
+    height="20"
+    stroke="currentColor"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="2"
+    viewBox="0 0 24 24"
+    width="20"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path
+      d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+    />
+    <circle
+      cx="12"
+      cy="12"
+      r="3"
+    />
+  </svg>
+</button>
+`;
+
+exports[`IOSIconButton Visual Regression > IconButton Variants > should render success icon button correctly 1`] = `
+<button
+  aria-label="Confirm"
+  class="ios-icon-button"
+  title="Confirm"
+  type="button"
+>
+  <svg
+    aria-hidden="true"
+    class="lucide lucide-check ios-icon ios-icon-md ios-icon-success"
+    fill="none"
+    height="20"
+    stroke="currentColor"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="2"
+    viewBox="0 0 24 24"
+    width="20"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path
+      d="M20 6 9 17l-5-5"
+    />
+  </svg>
+</button>
+`;
+
+exports[`IOSIconButton Visual Regression > IconButton Variants > should render warning icon button correctly 1`] = `
+<button
+  aria-label="Warning"
+  class="ios-icon-button"
+  title="Warning"
+  type="button"
+>
+  <svg
+    aria-hidden="true"
+    class="lucide lucide-settings ios-icon ios-icon-md ios-icon-warning"
+    fill="none"
+    height="20"
+    stroke="currentColor"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="2"
+    viewBox="0 0 24 24"
+    width="20"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path
+      d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+    />
+    <circle
+      cx="12"
+      cy="12"
+      r="3"
+    />
+  </svg>
+</button>
+`;
+
+exports[`IOSInput Visual Regression > Input Sizes > should render large input correctly 1`] = `
+<div
+  class="relative "
+>
+  <div
+    class="relative"
+  >
+    <input
+      aria-invalid="false"
+      class="w-full bg-[var(--ios-bg-tertiary)] text-[var(--ios-text-primary)] placeholder-[var(--ios-text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-lg)] text-lg rounded-[14px] border-[var(--ios-separator)]"
+      id=":re:"
+      placeholder="Large input"
+      type="text"
+    />
+  </div>
+</div>
+`;
+
+exports[`IOSInput Visual Regression > Input Sizes > should render medium input correctly 1`] = `
+<div
+  class="relative "
+>
+  <div
+    class="relative"
+  >
+    <input
+      aria-invalid="false"
+      class="w-full bg-[var(--ios-bg-tertiary)] text-[var(--ios-text-primary)] placeholder-[var(--ios-text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--ios-separator)]"
+      id=":rd:"
+      placeholder="Medium input"
+      type="text"
+    />
+  </div>
+</div>
+`;
+
+exports[`IOSInput Visual Regression > Input Sizes > should render small input correctly 1`] = `
+<div
+  class="relative "
+>
+  <div
+    class="relative"
+  >
+    <input
+      aria-invalid="false"
+      class="w-full bg-[var(--ios-bg-tertiary)] text-[var(--ios-text-primary)] placeholder-[var(--ios-text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-md)] py-[var(--spacing-sm)] text-sm rounded-[10px] border-[var(--ios-separator)]"
+      id=":rc:"
+      placeholder="Small input"
+      type="text"
+    />
+  </div>
+</div>
+`;
+
+exports[`IOSInput Visual Regression > Input States > should render disabled input correctly 1`] = `
+<div
+  class="relative "
+>
+  <div
+    class="relative"
+  >
+    <input
+      aria-invalid="false"
+      class="w-full bg-[var(--ios-bg-tertiary)] text-[var(--ios-text-primary)] placeholder-[var(--ios-text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--ios-separator)] opacity-50 cursor-not-allowed bg-[var(--ios-bg-primary)]"
+      disabled=""
+      id=":ri:"
+      placeholder="Disabled input"
+      type="text"
+    />
+  </div>
+</div>
+`;
+
+exports[`IOSInput Visual Regression > Input States > should render error input correctly 1`] = `
+<div
+  class="relative "
+>
+  <div
+    class="relative"
+  >
+    <input
+      aria-describedby=":rh:-error"
+      aria-invalid="true"
+      class="w-full bg-[var(--ios-bg-tertiary)] text-[var(--ios-text-primary)] placeholder-[var(--ios-text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--ios-red)]"
+      id=":rh:"
+      type="text"
+    />
+  </div>
+  <p
+    class="mt-[var(--spacing-sm)] text-sm text-[var(--ios-red)]"
+    id=":rh:-error"
+    role="alert"
+  >
+    This field is required
+  </p>
+</div>
+`;
+
+exports[`IOSInput Visual Regression > Input States > should render input with help text correctly 1`] = `
+<div
+  class="relative "
+>
+  <div
+    class="relative"
+  >
+    <input
+      aria-describedby=":rj:-help"
+      aria-invalid="false"
+      class="w-full bg-[var(--ios-bg-tertiary)] text-[var(--ios-text-primary)] placeholder-[var(--ios-text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--ios-separator)]"
+      id=":rj:"
+      placeholder="Name"
+      type="text"
+    />
+  </div>
+  <p
+    class="mt-[var(--spacing-sm)] text-sm text-[var(--ios-text-secondary)]"
+    id=":rj:-help"
+  >
+    Enter your full name
+  </p>
+</div>
+`;
+
+exports[`IOSInput Visual Regression > Input with Icons > should render input with left icon correctly 1`] = `
+<div
+  class="relative "
+>
+  <div
+    class="relative"
+  >
+    <div
+      aria-hidden="true"
+      class="absolute left-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--ios-text-tertiary)]"
+    >
+      <svg
+        class="lucide lucide-search"
+        fill="none"
+        height="16"
+        stroke="currentColor"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width="2"
+        viewBox="0 0 24 24"
+        width="16"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <circle
+          cx="11"
+          cy="11"
+          r="8"
+        />
+        <path
+          d="m21 21-4.3-4.3"
+        />
+      </svg>
+    </div>
+    <input
+      aria-invalid="false"
+      class="w-full bg-[var(--ios-bg-tertiary)] text-[var(--ios-text-primary)] placeholder-[var(--ios-text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--ios-separator)] pl-10"
+      id=":rk:"
+      placeholder="Search..."
+      type="text"
+    />
+  </div>
+</div>
+`;
+
+exports[`IOSInput Visual Regression > Input with Icons > should render input with right icon correctly 1`] = `
+<div
+  class="relative "
+>
+  <div
+    class="relative"
+  >
+    <input
+      aria-invalid="false"
+      class="w-full bg-[var(--ios-bg-tertiary)] text-[var(--ios-text-primary)] placeholder-[var(--ios-text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--ios-separator)] pr-10"
+      id=":rl:"
+      placeholder="Verified"
+      type="text"
+    />
+    <div
+      aria-hidden="true"
+      class="absolute right-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--ios-text-tertiary)]"
+    >
+      <svg
+        class="lucide lucide-check"
+        fill="none"
+        height="16"
+        stroke="currentColor"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width="2"
+        viewBox="0 0 24 24"
+        width="16"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <path
+          d="M20 6 9 17l-5-5"
+        />
+      </svg>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`IOSInput Visual Regression > Input with Label > should render input with label correctly 1`] = `
+<div
+  class="relative "
+>
+  <label
+    class="block text-sm font-medium text-[var(--ios-text-primary)] mb-[var(--spacing-sm)]"
+    for=":rf:"
+  >
+    Username
+  </label>
+  <div
+    class="relative"
+  >
+    <input
+      aria-invalid="false"
+      class="w-full bg-[var(--ios-bg-tertiary)] text-[var(--ios-text-primary)] placeholder-[var(--ios-text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--ios-separator)]"
+      id=":rf:"
+      placeholder="Enter username"
+      type="text"
+    />
+  </div>
+</div>
+`;
+
+exports[`IOSInput Visual Regression > Input with Label > should render required input correctly 1`] = `
+<div
+  class="relative "
+>
+  <label
+    class="block text-sm font-medium text-[var(--ios-text-primary)] mb-[var(--spacing-sm)]"
+    for=":rg:"
+  >
+    Email
+    <span
+      aria-hidden="true"
+      class="text-[var(--ios-red)] ml-1"
+    >
+      *
+    </span>
+  </label>
+  <div
+    class="relative"
+  >
+    <input
+      aria-invalid="false"
+      aria-required="true"
+      class="w-full bg-[var(--ios-bg-tertiary)] text-[var(--ios-text-primary)] placeholder-[var(--ios-text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--ios-separator)]"
+      id=":rg:"
+      placeholder="Enter email"
+      required=""
+      type="text"
+    />
+  </div>
+</div>
+`;
+
+exports[`IOSInput Visual Regression > Password Input > should render password input correctly 1`] = `
+<div
+  class="relative "
+>
+  <div
+    class="relative"
+  >
+    <input
+      aria-invalid="false"
+      class="w-full bg-[var(--ios-bg-tertiary)] text-[var(--ios-text-primary)] placeholder-[var(--ios-text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--ios-separator)]"
+      id=":rm:"
+      placeholder="Enter password"
+      type="password"
+    />
+  </div>
+</div>
+`;
+
+exports[`IOSInput Visual Regression > Password Input > should render password input with toggle correctly 1`] = `
+<div
+  class="relative "
+>
+  <div
+    class="relative"
+  >
+    <input
+      aria-invalid="false"
+      class="w-full bg-[var(--ios-bg-tertiary)] text-[var(--ios-text-primary)] placeholder-[var(--ios-text-tertiary)] border [will-change:box-shadow,border-color] [transform:translateZ(0)] transition-[box-shadow,border-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] outline-none [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] px-[var(--spacing-lg)] py-[var(--spacing-md)] text-base rounded-[12px] border-[var(--ios-separator)] pr-10"
+      id=":rn:"
+      placeholder="Enter password"
+      type="password"
+    />
+    <button
+      aria-label="显示密码"
+      aria-pressed="false"
+      class="absolute right-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--ios-text-tertiary)] hover:text-[var(--ios-text-secondary)] transition-colors p-[var(--spacing-xs)] rounded-[var(--radius-sm)] focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-1"
+      tabindex="0"
+      title="显示密码"
+      type="button"
+    >
+      <svg
+        aria-hidden="true"
+        class="lucide lucide-eye w-5 h-5"
+        fill="none"
+        height="24"
+        stroke="currentColor"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width="2"
+        viewBox="0 0 24 24"
+        width="24"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <path
+          d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"
+        />
+        <circle
+          cx="12"
+          cy="12"
+          r="3"
+        />
+      </svg>
+    </button>
+  </div>
+</div>
+`;
+
+exports[`IOSModal Visual Regression > Modal Options > should render modal without close button correctly 1`] = `
+<div
+  class="fixed inset-0 z-50 flex items-center justify-center transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] [will-change:opacity] opacity-0"
+  role="presentation"
+>
+  <div
+    aria-hidden="true"
+    class="absolute inset-0 bg-black/40 backdrop-blur-[8px] [-webkit-backdrop-filter:blur(8px)] [will-change:opacity,backdrop-filter] [transform:translateZ(0)] transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] opacity-0"
+    data-perf-monitor="blur"
+  />
+  <div
+    aria-describedby=":r15:"
+    aria-labelledby=":r14:"
+    aria-modal="true"
+    class="relative w-full mx-4 max-w-md bg-[var(--ios-bg-secondary)] backdrop-blur-[20px] [-webkit-backdrop-filter:blur(20px)] rounded-[var(--radius-xl)] shadow-[var(--shadow-xl)] overflow-hidden [will-change:transform,opacity,backdrop-filter] [backface-visibility:hidden] [transform-origin:center_center] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] opacity-0 scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ios-blue)] focus-visible:ring-offset-2"
+    data-perf-monitor="blur"
+    role="dialog"
+    tabindex="-1"
+  >
+    <div
+      class="flex items-center justify-between px-[var(--spacing-2xl)] py-[var(--spacing-lg)] border-b border-[var(--ios-separator)]"
+    >
+      <div
+        class="flex items-center gap-[var(--spacing-md)]"
+      >
+        <h2
+          class="text-lg font-semibold text-[var(--ios-text-primary)]"
+          id=":r14:"
+        >
+          No Close Button
+        </h2>
+      </div>
+    </div>
+    <div
+      class="px-[var(--spacing-2xl)] py-[var(--spacing-lg)] max-h-[60vh] overflow-y-auto"
+      id=":r15:"
+    >
+      <p>
+        Modal content
+      </p>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`IOSModal Visual Regression > Modal Options > should render modal without title correctly 1`] = `
+<div
+  class="fixed inset-0 z-50 flex items-center justify-center transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] [will-change:opacity] opacity-0"
+  role="presentation"
+>
+  <div
+    aria-hidden="true"
+    class="absolute inset-0 bg-black/40 backdrop-blur-[8px] [-webkit-backdrop-filter:blur(8px)] [will-change:opacity,backdrop-filter] [transform:translateZ(0)] transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] opacity-0"
+    data-perf-monitor="blur"
+  />
+  <div
+    aria-describedby=":r17:"
+    aria-modal="true"
+    class="relative w-full mx-4 max-w-md bg-[var(--ios-bg-secondary)] backdrop-blur-[20px] [-webkit-backdrop-filter:blur(20px)] rounded-[var(--radius-xl)] shadow-[var(--shadow-xl)] overflow-hidden [will-change:transform,opacity,backdrop-filter] [backface-visibility:hidden] [transform-origin:center_center] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] opacity-0 scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ios-blue)] focus-visible:ring-offset-2"
+    data-perf-monitor="blur"
+    role="dialog"
+    tabindex="-1"
+  >
+    <div
+      class="flex items-center justify-between px-[var(--spacing-2xl)] py-[var(--spacing-lg)] border-b border-[var(--ios-separator)]"
+    >
+      <div
+        class="flex items-center gap-[var(--spacing-md)]"
+      />
+      <button
+        aria-label="关闭弹窗"
+        class="p-[var(--spacing-sm)] -mr-[var(--spacing-sm)] rounded-[var(--radius-md)] text-[var(--ios-gray)] hover:bg-[rgba(0,0,0,0.05)] dark:hover:bg-[rgba(255,255,255,0.1)] transition-all duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] active:scale-95 focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2"
+        title="关闭"
+      >
+        <svg
+          aria-hidden="true"
+          class="lucide lucide-x w-5 h-5"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            d="M18 6 6 18"
+          />
+          <path
+            d="m6 6 12 12"
+          />
+        </svg>
+      </button>
+    </div>
+    <div
+      class="px-[var(--spacing-2xl)] py-[var(--spacing-lg)] max-h-[60vh] overflow-y-auto"
+      id=":r17:"
+    >
+      <p>
+        Modal without title
+      </p>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`IOSModal Visual Regression > Modal Sizes > should render extra large modal correctly 1`] = `
+<div
+  class="fixed inset-0 z-50 flex items-center justify-center transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] [will-change:opacity] opacity-0"
+  role="presentation"
+>
+  <div
+    aria-hidden="true"
+    class="absolute inset-0 bg-black/40 backdrop-blur-[8px] [-webkit-backdrop-filter:blur(8px)] [will-change:opacity,backdrop-filter] [transform:translateZ(0)] transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] opacity-0"
+    data-perf-monitor="blur"
+  />
+  <div
+    aria-describedby=":rv:"
+    aria-labelledby=":ru:"
+    aria-modal="true"
+    class="relative w-full mx-4 max-w-3xl bg-[var(--ios-bg-secondary)] backdrop-blur-[20px] [-webkit-backdrop-filter:blur(20px)] rounded-[var(--radius-xl)] shadow-[var(--shadow-xl)] overflow-hidden [will-change:transform,opacity,backdrop-filter] [backface-visibility:hidden] [transform-origin:center_center] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] opacity-0 scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ios-blue)] focus-visible:ring-offset-2"
+    data-perf-monitor="blur"
+    role="dialog"
+    tabindex="-1"
+  >
+    <div
+      class="flex items-center justify-between px-[var(--spacing-2xl)] py-[var(--spacing-lg)] border-b border-[var(--ios-separator)]"
+    >
+      <div
+        class="flex items-center gap-[var(--spacing-md)]"
+      >
+        <h2
+          class="text-lg font-semibold text-[var(--ios-text-primary)]"
+          id=":ru:"
+        >
+          Extra Large Modal
+        </h2>
+      </div>
+      <button
+        aria-label="关闭弹窗"
+        class="p-[var(--spacing-sm)] -mr-[var(--spacing-sm)] rounded-[var(--radius-md)] text-[var(--ios-gray)] hover:bg-[rgba(0,0,0,0.05)] dark:hover:bg-[rgba(255,255,255,0.1)] transition-all duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] active:scale-95 focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2"
+        title="关闭"
+      >
+        <svg
+          aria-hidden="true"
+          class="lucide lucide-x w-5 h-5"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            d="M18 6 6 18"
+          />
+          <path
+            d="m6 6 12 12"
+          />
+        </svg>
+      </button>
+    </div>
+    <div
+      class="px-[var(--spacing-2xl)] py-[var(--spacing-lg)] max-h-[60vh] overflow-y-auto"
+      id=":rv:"
+    >
+      <p>
+        Modal content
+      </p>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`IOSModal Visual Regression > Modal Sizes > should render large modal correctly 1`] = `
+<div
+  class="fixed inset-0 z-50 flex items-center justify-center transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] [will-change:opacity] opacity-0"
+  role="presentation"
+>
+  <div
+    aria-hidden="true"
+    class="absolute inset-0 bg-black/40 backdrop-blur-[8px] [-webkit-backdrop-filter:blur(8px)] [will-change:opacity,backdrop-filter] [transform:translateZ(0)] transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] opacity-0"
+    data-perf-monitor="blur"
+  />
+  <div
+    aria-describedby=":rt:"
+    aria-labelledby=":rs:"
+    aria-modal="true"
+    class="relative w-full mx-4 max-w-lg bg-[var(--ios-bg-secondary)] backdrop-blur-[20px] [-webkit-backdrop-filter:blur(20px)] rounded-[var(--radius-xl)] shadow-[var(--shadow-xl)] overflow-hidden [will-change:transform,opacity,backdrop-filter] [backface-visibility:hidden] [transform-origin:center_center] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] opacity-0 scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ios-blue)] focus-visible:ring-offset-2"
+    data-perf-monitor="blur"
+    role="dialog"
+    tabindex="-1"
+  >
+    <div
+      class="flex items-center justify-between px-[var(--spacing-2xl)] py-[var(--spacing-lg)] border-b border-[var(--ios-separator)]"
+    >
+      <div
+        class="flex items-center gap-[var(--spacing-md)]"
+      >
+        <h2
+          class="text-lg font-semibold text-[var(--ios-text-primary)]"
+          id=":rs:"
+        >
+          Large Modal
+        </h2>
+      </div>
+      <button
+        aria-label="关闭弹窗"
+        class="p-[var(--spacing-sm)] -mr-[var(--spacing-sm)] rounded-[var(--radius-md)] text-[var(--ios-gray)] hover:bg-[rgba(0,0,0,0.05)] dark:hover:bg-[rgba(255,255,255,0.1)] transition-all duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] active:scale-95 focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2"
+        title="关闭"
+      >
+        <svg
+          aria-hidden="true"
+          class="lucide lucide-x w-5 h-5"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            d="M18 6 6 18"
+          />
+          <path
+            d="m6 6 12 12"
+          />
+        </svg>
+      </button>
+    </div>
+    <div
+      class="px-[var(--spacing-2xl)] py-[var(--spacing-lg)] max-h-[60vh] overflow-y-auto"
+      id=":rt:"
+    >
+      <p>
+        Modal content
+      </p>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`IOSModal Visual Regression > Modal Sizes > should render medium modal correctly 1`] = `
+<div
+  class="fixed inset-0 z-50 flex items-center justify-center transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] [will-change:opacity] opacity-0"
+  role="presentation"
+>
+  <div
+    aria-hidden="true"
+    class="absolute inset-0 bg-black/40 backdrop-blur-[8px] [-webkit-backdrop-filter:blur(8px)] [will-change:opacity,backdrop-filter] [transform:translateZ(0)] transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] opacity-0"
+    data-perf-monitor="blur"
+  />
+  <div
+    aria-describedby=":rr:"
+    aria-labelledby=":rq:"
+    aria-modal="true"
+    class="relative w-full mx-4 max-w-md bg-[var(--ios-bg-secondary)] backdrop-blur-[20px] [-webkit-backdrop-filter:blur(20px)] rounded-[var(--radius-xl)] shadow-[var(--shadow-xl)] overflow-hidden [will-change:transform,opacity,backdrop-filter] [backface-visibility:hidden] [transform-origin:center_center] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] opacity-0 scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ios-blue)] focus-visible:ring-offset-2"
+    data-perf-monitor="blur"
+    role="dialog"
+    tabindex="-1"
+  >
+    <div
+      class="flex items-center justify-between px-[var(--spacing-2xl)] py-[var(--spacing-lg)] border-b border-[var(--ios-separator)]"
+    >
+      <div
+        class="flex items-center gap-[var(--spacing-md)]"
+      >
+        <h2
+          class="text-lg font-semibold text-[var(--ios-text-primary)]"
+          id=":rq:"
+        >
+          Medium Modal
+        </h2>
+      </div>
+      <button
+        aria-label="关闭弹窗"
+        class="p-[var(--spacing-sm)] -mr-[var(--spacing-sm)] rounded-[var(--radius-md)] text-[var(--ios-gray)] hover:bg-[rgba(0,0,0,0.05)] dark:hover:bg-[rgba(255,255,255,0.1)] transition-all duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] active:scale-95 focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2"
+        title="关闭"
+      >
+        <svg
+          aria-hidden="true"
+          class="lucide lucide-x w-5 h-5"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            d="M18 6 6 18"
+          />
+          <path
+            d="m6 6 12 12"
+          />
+        </svg>
+      </button>
+    </div>
+    <div
+      class="px-[var(--spacing-2xl)] py-[var(--spacing-lg)] max-h-[60vh] overflow-y-auto"
+      id=":rr:"
+    >
+      <p>
+        Modal content
+      </p>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`IOSModal Visual Regression > Modal Sizes > should render small modal correctly 1`] = `
+<div
+  class="fixed inset-0 z-50 flex items-center justify-center transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] [will-change:opacity] opacity-0"
+  role="presentation"
+>
+  <div
+    aria-hidden="true"
+    class="absolute inset-0 bg-black/40 backdrop-blur-[8px] [-webkit-backdrop-filter:blur(8px)] [will-change:opacity,backdrop-filter] [transform:translateZ(0)] transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] opacity-0"
+    data-perf-monitor="blur"
+  />
+  <div
+    aria-describedby=":rp:"
+    aria-labelledby=":ro:"
+    aria-modal="true"
+    class="relative w-full mx-4 max-w-sm bg-[var(--ios-bg-secondary)] backdrop-blur-[20px] [-webkit-backdrop-filter:blur(20px)] rounded-[var(--radius-xl)] shadow-[var(--shadow-xl)] overflow-hidden [will-change:transform,opacity,backdrop-filter] [backface-visibility:hidden] [transform-origin:center_center] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] opacity-0 scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ios-blue)] focus-visible:ring-offset-2"
+    data-perf-monitor="blur"
+    role="dialog"
+    tabindex="-1"
+  >
+    <div
+      class="flex items-center justify-between px-[var(--spacing-2xl)] py-[var(--spacing-lg)] border-b border-[var(--ios-separator)]"
+    >
+      <div
+        class="flex items-center gap-[var(--spacing-md)]"
+      >
+        <h2
+          class="text-lg font-semibold text-[var(--ios-text-primary)]"
+          id=":ro:"
+        >
+          Small Modal
+        </h2>
+      </div>
+      <button
+        aria-label="关闭弹窗"
+        class="p-[var(--spacing-sm)] -mr-[var(--spacing-sm)] rounded-[var(--radius-md)] text-[var(--ios-gray)] hover:bg-[rgba(0,0,0,0.05)] dark:hover:bg-[rgba(255,255,255,0.1)] transition-all duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] active:scale-95 focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2"
+        title="关闭"
+      >
+        <svg
+          aria-hidden="true"
+          class="lucide lucide-x w-5 h-5"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            d="M18 6 6 18"
+          />
+          <path
+            d="m6 6 12 12"
+          />
+        </svg>
+      </button>
+    </div>
+    <div
+      class="px-[var(--spacing-2xl)] py-[var(--spacing-lg)] max-h-[60vh] overflow-y-auto"
+      id=":rp:"
+    >
+      <p>
+        Modal content
+      </p>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`IOSModal Visual Regression > Modal with Footer > should render modal with footer correctly 1`] = `
+<div
+  class="fixed inset-0 z-50 flex items-center justify-center transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] [will-change:opacity] opacity-0"
+  role="presentation"
+>
+  <div
+    aria-hidden="true"
+    class="absolute inset-0 bg-black/40 backdrop-blur-[8px] [-webkit-backdrop-filter:blur(8px)] [will-change:opacity,backdrop-filter] [transform:translateZ(0)] transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] opacity-0"
+    data-perf-monitor="blur"
+  />
+  <div
+    aria-describedby=":r13:"
+    aria-labelledby=":r12:"
+    aria-modal="true"
+    class="relative w-full mx-4 max-w-md bg-[var(--ios-bg-secondary)] backdrop-blur-[20px] [-webkit-backdrop-filter:blur(20px)] rounded-[var(--radius-xl)] shadow-[var(--shadow-xl)] overflow-hidden [will-change:transform,opacity,backdrop-filter] [backface-visibility:hidden] [transform-origin:center_center] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] opacity-0 scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ios-blue)] focus-visible:ring-offset-2"
+    data-perf-monitor="blur"
+    role="dialog"
+    tabindex="-1"
+  >
+    <div
+      class="flex items-center justify-between px-[var(--spacing-2xl)] py-[var(--spacing-lg)] border-b border-[var(--ios-separator)]"
+    >
+      <div
+        class="flex items-center gap-[var(--spacing-md)]"
+      >
+        <h2
+          class="text-lg font-semibold text-[var(--ios-text-primary)]"
+          id=":r12:"
+        >
+          Confirm Action
+        </h2>
+      </div>
+      <button
+        aria-label="关闭弹窗"
+        class="p-[var(--spacing-sm)] -mr-[var(--spacing-sm)] rounded-[var(--radius-md)] text-[var(--ios-gray)] hover:bg-[rgba(0,0,0,0.05)] dark:hover:bg-[rgba(255,255,255,0.1)] transition-all duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] active:scale-95 focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2"
+        title="关闭"
+      >
+        <svg
+          aria-hidden="true"
+          class="lucide lucide-x w-5 h-5"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            d="M18 6 6 18"
+          />
+          <path
+            d="m6 6 12 12"
+          />
+        </svg>
+      </button>
+    </div>
+    <div
+      class="px-[var(--spacing-2xl)] py-[var(--spacing-lg)] max-h-[60vh] overflow-y-auto"
+      id=":r13:"
+    >
+      <p>
+        Are you sure you want to proceed?
+      </p>
+    </div>
+    <div
+      class="flex items-center justify-end gap-[var(--spacing-md)] px-[var(--spacing-2xl)] py-[var(--spacing-lg)] border-t border-[var(--ios-separator)] bg-[var(--ios-bg-tertiary)]"
+    >
+      <button
+        aria-busy="false"
+        aria-disabled="false"
+        class="inline-flex items-center justify-center gap-[var(--spacing-sm)] font-semibold border-none [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2 px-[var(--spacing-xl)] py-[var(--spacing-md)] text-base rounded-[12px] bg-[rgba(0,122,255,0.1)] text-[var(--ios-blue)] hover:bg-[rgba(0,122,255,0.15)] transition-[transform,opacity,background-color,box-shadow] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)]"
+        data-perf-monitor="animation"
+      >
+        Cancel
+      </button>
+      <button
+        aria-busy="false"
+        aria-disabled="false"
+        class="inline-flex items-center justify-center gap-[var(--spacing-sm)] font-semibold border-none [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2 px-[var(--spacing-xl)] py-[var(--spacing-md)] text-base rounded-[12px] bg-[var(--ios-blue)] text-white shadow-[var(--shadow-sm)] hover:bg-[#0066CC] hover:shadow-[var(--shadow-md)] active:shadow-[var(--shadow-sm)] transition-[transform,opacity,background-color,box-shadow] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)]"
+        data-perf-monitor="animation"
+      >
+        Confirm
+      </button>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`IOSModal Visual Regression > Modal with Title Icon > should render modal with title icon correctly 1`] = `
+<div
+  class="fixed inset-0 z-50 flex items-center justify-center transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] [will-change:opacity] opacity-0"
+  role="presentation"
+>
+  <div
+    aria-hidden="true"
+    class="absolute inset-0 bg-black/40 backdrop-blur-[8px] [-webkit-backdrop-filter:blur(8px)] [will-change:opacity,backdrop-filter] [transform:translateZ(0)] transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] opacity-0"
+    data-perf-monitor="blur"
+  />
+  <div
+    aria-describedby=":r11:"
+    aria-labelledby=":r10:"
+    aria-modal="true"
+    class="relative w-full mx-4 max-w-md bg-[var(--ios-bg-secondary)] backdrop-blur-[20px] [-webkit-backdrop-filter:blur(20px)] rounded-[var(--radius-xl)] shadow-[var(--shadow-xl)] overflow-hidden [will-change:transform,opacity,backdrop-filter] [backface-visibility:hidden] [transform-origin:center_center] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] opacity-0 scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ios-blue)] focus-visible:ring-offset-2"
+    data-perf-monitor="blur"
+    role="dialog"
+    tabindex="-1"
+  >
+    <div
+      class="flex items-center justify-between px-[var(--spacing-2xl)] py-[var(--spacing-lg)] border-b border-[var(--ios-separator)]"
+    >
+      <div
+        class="flex items-center gap-[var(--spacing-md)]"
+      >
+        <span
+          aria-hidden="true"
+          class="text-[var(--ios-blue)]"
+        >
+          <svg
+            class="lucide lucide-settings"
+            fill="none"
+            height="20"
+            stroke="currentColor"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            viewBox="0 0 24 24"
+            width="20"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+            />
+            <circle
+              cx="12"
+              cy="12"
+              r="3"
+            />
+          </svg>
+        </span>
+        <h2
+          class="text-lg font-semibold text-[var(--ios-text-primary)]"
+          id=":r10:"
+        >
+          Settings
+        </h2>
+      </div>
+      <button
+        aria-label="关闭弹窗"
+        class="p-[var(--spacing-sm)] -mr-[var(--spacing-sm)] rounded-[var(--radius-md)] text-[var(--ios-gray)] hover:bg-[rgba(0,0,0,0.05)] dark:hover:bg-[rgba(255,255,255,0.1)] transition-all duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] active:scale-95 focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2"
+        title="关闭"
+      >
+        <svg
+          aria-hidden="true"
+          class="lucide lucide-x w-5 h-5"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            d="M18 6 6 18"
+          />
+          <path
+            d="m6 6 12 12"
+          />
+        </svg>
+      </button>
+    </div>
+    <div
+      class="px-[var(--spacing-2xl)] py-[var(--spacing-lg)] max-h-[60vh] overflow-y-auto"
+      id=":r11:"
+    >
+      <p>
+        Modal content
+      </p>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`IOSSearchInput Visual Regression > should render search input correctly 1`] = `
+<div
+  class="relative "
+>
+  <div
+    class="absolute left-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--ios-text-tertiary)] pointer-events-none"
+  >
+    <svg
+      aria-hidden="true"
+      class="lucide lucide-search w-5 h-5"
+      fill="none"
+      height="24"
+      stroke="currentColor"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      stroke-width="2"
+      viewBox="0 0 24 24"
+      width="24"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <circle
+        cx="11"
+        cy="11"
+        r="8"
+      />
+      <path
+        d="m21 21-4.3-4.3"
+      />
+    </svg>
+  </div>
+  <input
+    class="w-full bg-[var(--ios-bg-tertiary)] text-[var(--ios-text-primary)] placeholder-[var(--ios-text-tertiary)] border-none transition-all duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] outline-none pl-[var(--spacing-10)] pr-[var(--spacing-10)] py-[var(--spacing-md)] text-base rounded-[12px]"
+    placeholder="Search..."
+    type="search"
+    value=""
+  />
+</div>
+`;
+
+exports[`IOSSearchInput Visual Regression > should render search input with clear button correctly 1`] = `
+<div
+  class="relative "
+>
+  <div
+    class="absolute left-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--ios-text-tertiary)] pointer-events-none"
+  >
+    <svg
+      aria-hidden="true"
+      class="lucide lucide-search w-5 h-5"
+      fill="none"
+      height="24"
+      stroke="currentColor"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      stroke-width="2"
+      viewBox="0 0 24 24"
+      width="24"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <circle
+        cx="11"
+        cy="11"
+        r="8"
+      />
+      <path
+        d="m21 21-4.3-4.3"
+      />
+    </svg>
+  </div>
+  <input
+    class="w-full bg-[var(--ios-bg-tertiary)] text-[var(--ios-text-primary)] placeholder-[var(--ios-text-tertiary)] border-none transition-all duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] outline-none pl-[var(--spacing-10)] pr-[var(--spacing-10)] py-[var(--spacing-md)] text-base rounded-[12px]"
+    placeholder="Search..."
+    type="search"
+    value="test"
+  />
+  <button
+    aria-label="清除搜索内容"
+    class="absolute right-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--ios-text-tertiary)] hover:text-[var(--ios-text-secondary)] transition-colors p-[var(--spacing-xs)] rounded-full hover:bg-[var(--ios-separator)]"
+    tabindex="-1"
+    title="清除"
+    type="button"
+  >
+    <svg
+      aria-hidden="true"
+      class="lucide lucide-x w-5 h-5"
+      fill="none"
+      height="24"
+      stroke="currentColor"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      stroke-width="2"
+      viewBox="0 0 24 24"
+      width="24"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path
+        d="M18 6 6 18"
+      />
+      <path
+        d="m6 6 12 12"
+      />
+    </svg>
+  </button>
+</div>
+`;
+
+exports[`IOSSearchInput Visual Regression > should render search input with value correctly 1`] = `
+<div
+  class="relative "
+>
+  <div
+    class="absolute left-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--ios-text-tertiary)] pointer-events-none"
+  >
+    <svg
+      aria-hidden="true"
+      class="lucide lucide-search w-5 h-5"
+      fill="none"
+      height="24"
+      stroke="currentColor"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      stroke-width="2"
+      viewBox="0 0 24 24"
+      width="24"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <circle
+        cx="11"
+        cy="11"
+        r="8"
+      />
+      <path
+        d="m21 21-4.3-4.3"
+      />
+    </svg>
+  </div>
+  <input
+    class="w-full bg-[var(--ios-bg-tertiary)] text-[var(--ios-text-primary)] placeholder-[var(--ios-text-tertiary)] border-none transition-all duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] outline-none pl-[var(--spacing-10)] pr-[var(--spacing-10)] py-[var(--spacing-md)] text-base rounded-[12px]"
+    placeholder="Search..."
+    type="search"
+    value="test query"
+  />
+  <button
+    aria-label="清除搜索内容"
+    class="absolute right-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--ios-text-tertiary)] hover:text-[var(--ios-text-secondary)] transition-colors p-[var(--spacing-xs)] rounded-full hover:bg-[var(--ios-separator)]"
+    tabindex="-1"
+    title="清除"
+    type="button"
+  >
+    <svg
+      aria-hidden="true"
+      class="lucide lucide-x w-5 h-5"
+      fill="none"
+      height="24"
+      stroke="currentColor"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      stroke-width="2"
+      viewBox="0 0 24 24"
+      width="24"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path
+        d="M18 6 6 18"
+      />
+      <path
+        d="m6 6 12 12"
+      />
+    </svg>
+  </button>
+</div>
+`;
+
+exports[`IOSTable Visual Regression > Table Cell Alignment > should render cells with different alignments correctly 1`] = `
+<div
+  class="ios-table relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [transform:translateZ(0)] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] shadow-[var(--shadow-sm)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 dark:bg-opacity-95 [will-change:backdrop-filter]"
+  role="table"
+>
+  <div
+    class="ios-table-body"
+    role="rowgroup"
+  >
+    <div
+      aria-disabled="false"
+      aria-selected="false"
+      class="ios-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--ios-separator)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] hover:bg-[rgba(0,0,0,0.02)] dark:hover:bg-[rgba(255,255,255,0.02)] cursor-pointer"
+      role="row"
+    >
+      <div
+        class="ios-table-cell flex items-center text-left justify-start text-[15px] text-[var(--ios-text-primary)]"
+        role="cell"
+      >
+        Left
+      </div>
+      <div
+        class="ios-table-cell flex items-center text-center justify-center text-[15px] text-[var(--ios-text-primary)]"
+        role="cell"
+      >
+        Center
+      </div>
+      <div
+        class="ios-table-cell flex items-center text-right justify-end text-[15px] text-[var(--ios-text-primary)]"
+        role="cell"
+      >
+        Right
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`IOSTable Visual Regression > Table Empty State > should render empty state correctly 1`] = `
+<div
+  class="ios-table relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [transform:translateZ(0)] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] shadow-[var(--shadow-sm)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 dark:bg-opacity-95 [will-change:backdrop-filter]"
+  role="table"
+>
+  <div
+    aria-live="polite"
+    class="ios-table-empty flex flex-col items-center justify-center py-[var(--spacing-4xl)] px-[var(--spacing-lg)] text-center"
+    role="status"
+  >
+    <div
+      aria-hidden="true"
+      class="mb-[var(--spacing-md)] text-[var(--ios-gray)]"
+    >
+      <svg
+        class="lucide lucide-search"
+        fill="none"
+        height="48"
+        stroke="currentColor"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width="2"
+        viewBox="0 0 24 24"
+        width="48"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <circle
+          cx="11"
+          cy="11"
+          r="8"
+        />
+        <path
+          d="m21 21-4.3-4.3"
+        />
+      </svg>
+    </div>
+    <h3
+      class="text-[17px] font-semibold text-[var(--ios-text-primary)] mb-[var(--spacing-xs)]"
+    >
+      No Data
+    </h3>
+    <p
+      class="text-[15px] text-[var(--ios-text-secondary)] mb-[var(--spacing-lg)]"
+    >
+      There are no items to display
+    </p>
+  </div>
+</div>
+`;
+
+exports[`IOSTable Visual Regression > Table Empty State > should render empty state with action correctly 1`] = `
+<div
+  class="ios-table relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [transform:translateZ(0)] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] shadow-[var(--shadow-sm)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 dark:bg-opacity-95 [will-change:backdrop-filter]"
+  role="table"
+>
+  <div
+    aria-live="polite"
+    class="ios-table-empty flex flex-col items-center justify-center py-[var(--spacing-4xl)] px-[var(--spacing-lg)] text-center"
+    role="status"
+  >
+    <h3
+      class="text-[17px] font-semibold text-[var(--ios-text-primary)] mb-[var(--spacing-xs)]"
+    >
+      No Items
+    </h3>
+    <p
+      class="text-[15px] text-[var(--ios-text-secondary)] mb-[var(--spacing-lg)]"
+    >
+      Add your first item
+    </p>
+    <div>
+      <button
+        aria-busy="false"
+        aria-disabled="false"
+        class="inline-flex items-center justify-center gap-[var(--spacing-sm)] font-semibold border-none [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-2 px-[var(--spacing-xl)] py-[var(--spacing-md)] text-base rounded-[12px] bg-[var(--ios-blue)] text-white shadow-[var(--shadow-sm)] hover:bg-[#0066CC] hover:shadow-[var(--shadow-md)] active:shadow-[var(--shadow-sm)] transition-[transform,opacity,background-color,box-shadow] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)]"
+        data-perf-monitor="animation"
+      >
+        Add Item
+      </button>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`IOSTable Visual Regression > Table Row States > should render disabled row correctly 1`] = `
+<div
+  class="ios-table relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [transform:translateZ(0)] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] shadow-[var(--shadow-sm)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 dark:bg-opacity-95 [will-change:backdrop-filter]"
+  role="table"
+>
+  <div
+    class="ios-table-body"
+    role="rowgroup"
+  >
+    <div
+      aria-disabled="true"
+      aria-selected="false"
+      class="ios-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--ios-separator)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] opacity-50 cursor-not-allowed"
+      role="row"
+    >
+      <div
+        class="ios-table-cell flex items-center text-left justify-start text-[15px] text-[var(--ios-text-primary)]"
+        role="cell"
+      >
+        Disabled Item
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`IOSTable Visual Regression > Table Row States > should render selected row correctly 1`] = `
+<div
+  class="ios-table relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [transform:translateZ(0)] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] shadow-[var(--shadow-sm)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 dark:bg-opacity-95 [will-change:backdrop-filter]"
+  role="table"
+>
+  <div
+    class="ios-table-body"
+    role="rowgroup"
+  >
+    <div
+      aria-disabled="false"
+      aria-selected="true"
+      class="ios-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--ios-separator)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] hover:bg-[rgba(0,0,0,0.02)] dark:hover:bg-[rgba(255,255,255,0.02)] cursor-pointer bg-[rgba(0,122,255,0.08)] dark:bg-[rgba(10,132,255,0.08)]"
+      role="row"
+    >
+      <div
+        class="ios-table-cell flex items-center text-left justify-start text-[15px] text-[var(--ios-text-primary)]"
+        role="cell"
+      >
+        Selected Item
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`IOSTable Visual Regression > Table Variants > should render grouped table correctly 1`] = `
+<div
+  class="ios-table relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [transform:translateZ(0)] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-[var(--ios-bg-secondary)] shadow-[var(--shadow-sm)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 dark:bg-opacity-95 [will-change:backdrop-filter]"
+  role="table"
+>
+  <div
+    class="ios-table-body"
+    role="rowgroup"
+  >
+    <div
+      aria-disabled="false"
+      aria-selected="false"
+      class="ios-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--ios-separator)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] hover:bg-[rgba(0,0,0,0.02)] dark:hover:bg-[rgba(255,255,255,0.02)] cursor-pointer"
+      role="row"
+    >
+      <div
+        class="ios-table-cell flex items-center text-left justify-start text-[15px] text-[var(--ios-text-primary)]"
+        role="cell"
+      >
+        Item 1
+      </div>
+    </div>
+    <div
+      aria-disabled="false"
+      aria-selected="false"
+      class="ios-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--ios-separator)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] hover:bg-[rgba(0,0,0,0.02)] dark:hover:bg-[rgba(255,255,255,0.02)] cursor-pointer"
+      role="row"
+    >
+      <div
+        class="ios-table-cell flex items-center text-left justify-start text-[15px] text-[var(--ios-text-primary)]"
+        role="cell"
+      >
+        Item 2
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`IOSTable Visual Regression > Table Variants > should render inset table correctly 1`] = `
+<div
+  class="ios-table relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [transform:translateZ(0)] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-transparent"
+  role="table"
+>
+  <div
+    class="ios-table-body"
+    role="rowgroup"
+  >
+    <div
+      aria-disabled="false"
+      aria-selected="false"
+      class="ios-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--ios-separator)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] hover:bg-[rgba(0,0,0,0.02)] dark:hover:bg-[rgba(255,255,255,0.02)] cursor-pointer"
+      role="row"
+    >
+      <div
+        class="ios-table-cell flex items-center text-left justify-start text-[15px] text-[var(--ios-text-primary)]"
+        role="cell"
+      >
+        Item 1
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`IOSTable Visual Regression > Table Variants > should render standard table correctly 1`] = `
+<div
+  class="ios-table relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [transform:translateZ(0)] transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] shadow-[var(--shadow-sm)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 dark:bg-opacity-95 [will-change:backdrop-filter]"
+  role="table"
+>
+  <div
+    class="ios-table-header px-[var(--spacing-lg)] py-[var(--spacing-md)] bg-[rgba(0,0,0,0.03)] dark:bg-[rgba(255,255,255,0.03)] border-b border-[var(--ios-separator)] text-[13px] font-semibold text-[var(--ios-text-secondary)] uppercase tracking-[0.5px] select-none"
+    role="rowgroup"
+  >
+    <div
+      aria-disabled="false"
+      aria-selected="false"
+      class="ios-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--ios-separator)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] hover:bg-[rgba(0,0,0,0.02)] dark:hover:bg-[rgba(255,255,255,0.02)] cursor-pointer"
+      role="row"
+    >
+      <div
+        class="ios-table-cell flex items-center text-left justify-start text-[13px] font-semibold text-[var(--ios-text-secondary)] uppercase tracking-[0.5px]"
+        role="columnheader"
+      >
+        Name
+      </div>
+      <div
+        class="ios-table-cell flex items-center text-left justify-start text-[13px] font-semibold text-[var(--ios-text-secondary)] uppercase tracking-[0.5px]"
+        role="columnheader"
+      >
+        Status
+      </div>
+    </div>
+  </div>
+  <div
+    class="ios-table-body"
+    role="rowgroup"
+  >
+    <div
+      aria-disabled="false"
+      aria-selected="false"
+      class="ios-table-row min-h-[44px] px-[var(--spacing-lg)] py-[var(--spacing-md)] border-b border-[var(--ios-separator)] last:border-b-0 [will-change:transform,opacity,background-color] [transform:translateZ(0)] transition-[transform,opacity,background-color] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-ios)] hover:bg-[rgba(0,0,0,0.02)] dark:hover:bg-[rgba(255,255,255,0.02)] cursor-pointer"
+      role="row"
+    >
+      <div
+        class="ios-table-cell flex items-center text-left justify-start text-[15px] text-[var(--ios-text-primary)]"
+        role="cell"
+      >
+        Item 1
+      </div>
+      <div
+        class="ios-table-cell flex items-center text-left justify-start text-[15px] text-[var(--ios-text-primary)]"
+        role="cell"
+      >
+        Active
+      </div>
+    </div>
+  </div>
+</div>
+`;

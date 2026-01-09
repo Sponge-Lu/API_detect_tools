@@ -4,6 +4,7 @@
  * 定位: 业务逻辑层 - 管理 Linux Do Credit 积分检测功能
  *       登录时一次性获取所有数据（积分、每日统计、交易记录）并缓存
  *       初始化时从缓存加载数据，无需 lazy-loading
+ *       refreshAll 方法在单个浏览器页面中刷新所有数据，避免打开多个浏览器窗口
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -49,6 +50,7 @@ export interface UseCreditReturn {
   login: () => Promise<void>;
   logout: () => Promise<void>;
   updateConfig: (config: Partial<CreditConfig>) => Promise<void>;
+  refreshAll: () => Promise<void>;
   initiateRecharge: (
     siteUrl: string,
     amount: number,
@@ -65,6 +67,13 @@ interface CreditAPI {
   fetch: () => Promise<CreditResponse<CreditInfo>>;
   fetchDailyStats: (days?: number) => Promise<CreditResponse<DailyStats>>;
   fetchTransactions: (page?: number, pageSize?: number) => Promise<CreditResponse<TransactionList>>;
+  refreshAll: () => Promise<
+    CreditResponse<{
+      creditInfo: CreditInfo | null;
+      dailyStats: DailyStats | null;
+      transactions: TransactionList | null;
+    }>
+  >;
   login: () => Promise<CreditResponse<CreditLoginResult | void>>;
   logout: () => Promise<CreditResponse<void>>;
   getStatus: () => Promise<CreditResponse<boolean>>;
@@ -252,14 +261,30 @@ export function useCredit(): UseCreditReturn {
         } else if (response.data && 'username' in response.data) {
           // 兼容旧版本：只返回 CreditInfo
           setCreditInfo(response.data as CreditInfo);
-          // 旧版本需要单独获取统计和交易数据
-          await fetchDailyStats();
-          await fetchTransactions();
+          // 使用 refreshAll 在单个浏览器页面中获取统计和交易数据
+          const refreshResponse = await creditAPI.refreshAll();
+          if (refreshResponse.success && refreshResponse.data) {
+            if (refreshResponse.data.dailyStats) {
+              setDailyStats(refreshResponse.data.dailyStats);
+            }
+            if (refreshResponse.data.transactions) {
+              setTransactions(refreshResponse.data.transactions);
+            }
+          }
         } else {
-          // 兼容更旧版本：登录成功后自动获取积分数据
-          await fetchCredit();
-          await fetchDailyStats();
-          await fetchTransactions();
+          // 兼容更旧版本：登录成功后使用 refreshAll 获取所有数据
+          const refreshResponse = await creditAPI.refreshAll();
+          if (refreshResponse.success && refreshResponse.data) {
+            if (refreshResponse.data.creditInfo) {
+              setCreditInfo(refreshResponse.data.creditInfo);
+            }
+            if (refreshResponse.data.dailyStats) {
+              setDailyStats(refreshResponse.data.dailyStats);
+            }
+            if (refreshResponse.data.transactions) {
+              setTransactions(refreshResponse.data.transactions);
+            }
+          }
         }
       } else {
         setError(response.error || '登录失败');
@@ -271,7 +296,7 @@ export function useCredit(): UseCreditReturn {
     } finally {
       setIsLoading(false);
     }
-  }, [fetchCredit, fetchDailyStats, fetchTransactions]);
+  }, []);
 
   /**
    * 登出
@@ -330,6 +355,54 @@ export function useCredit(): UseCreditReturn {
     },
     [config]
   );
+
+  /**
+   * 刷新所有 LDC 数据（积分、每日统计、交易记录）
+   * 在单个浏览器页面中完成所有数据获取，避免打开多个浏览器窗口
+   */
+  const refreshAll = useCallback(async () => {
+    const creditAPI = getCreditAPI();
+    if (!creditAPI) {
+      setError('IPC 接口未初始化');
+      return;
+    }
+
+    setIsRefreshing(true);
+    setError(null);
+
+    try {
+      const response = await creditAPI.refreshAll();
+
+      if (response.success && response.data) {
+        if (response.data.creditInfo) {
+          setCreditInfo(response.data.creditInfo);
+        }
+        if (response.data.dailyStats) {
+          setDailyStats(response.data.dailyStats);
+        }
+        if (response.data.transactions) {
+          setTransactions(response.data.transactions);
+        }
+        setIsLoggedIn(true);
+      } else {
+        setError(response.error || '刷新数据失败');
+        // 如果是认证错误，更新登录状态
+        if (
+          response.error?.includes('未登录') ||
+          response.error?.includes('过期') ||
+          response.error?.includes('重新登录')
+        ) {
+          setIsLoggedIn(false);
+        }
+      }
+    } catch (err: any) {
+      const errorMessage = err?.message || '刷新数据失败';
+      setError(errorMessage);
+      console.error('[useCredit] 刷新所有数据失败:', err);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, []);
 
   /**
    * 发起充值
@@ -500,6 +573,7 @@ export function useCredit(): UseCreditReturn {
     fetchCredit,
     fetchDailyStats,
     fetchTransactions,
+    refreshAll,
     login,
     logout,
     updateConfig,

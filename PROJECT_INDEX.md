@@ -149,7 +149,8 @@ graph TD
 | 模块 | 职责 | 关键组件 |
 |------|------|--------|
 | **App.tsx** | 应用根组件、路由 | 主布局、主题切换 |
-| **Components** | UI 组件库 | 表格、表单、对话框等 |
+| **Components** | UI 组件库 | iOS 风格组件、表格、表单、对话框等 |
+| **iOS 组件** | iOS 设计系统 | IOSButton, IOSCard, IOSInput, IOSModal, IOSTable, IOSIcon |
 | **Hooks** | 业务逻辑 | `useSiteGroups()`, `useAutoRefresh()` |
 | **Store** | 状态管理 | Zustand store，管理全局状态 |
 | **Services** | IPC 通信 | 与主进程通信的服务层 |
@@ -330,6 +331,6 @@ npm run dist         # 打包为 EXE 安装程序
 
 ---
 
-**版本**: 2.1.11  
-**更新日期**: 2026-01-04  
+**版本**: 2.1.12  
+**更新日期**: 2026-01-09  
 **维护者**: API Hub Team

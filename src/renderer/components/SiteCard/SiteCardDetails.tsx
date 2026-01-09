@@ -1,4 +1,7 @@
 /**
+ * @file src/renderer/components/SiteCard/SiteCardDetails.tsx
+ * @description 站点卡片展开详情组件
+ *
  * 输入: SiteCardDetailsProps (站点数据、检测结果、API Keys、用户分组、模型定价)
  * 输出: React 组件 (站点卡片详情 UI)
  * 定位: 展示层 - 站点卡片展开详情组件，包含用户分组、API Keys 列表、模型列表
@@ -7,6 +10,9 @@
  * - 本文件头注释
  * - src/renderer/components/SiteCard/FOLDER_INDEX.md
  * - PROJECT_INDEX.md
+ *
+ * @version 2.1.11
+ * @updated 2025-01-08 - 使用 IOSSearchInput 替换模型搜索框
  */
 
 import { useState, useMemo } from 'react';
@@ -25,6 +31,7 @@ import {
 import type { SiteConfig } from '../../../shared/types/site';
 import type { DetectionResult } from '../../App';
 import { getGroupTextColor, getGroupIcon } from '../../utils/groupStyle';
+import { IOSSearchInput } from '../IOSInput';
 
 // 每页显示的模型数量
 const MODELS_PER_PAGE = 50;
@@ -166,7 +173,7 @@ export function SiteCardDetails({
 
   return (
     <div
-      className="border-t-2 border-slate-300/60 dark:border-slate-500/50 bg-slate-100/90 dark:bg-slate-950/90 px-3 py-1.5 space-y-1 cursor-default"
+      className="border-t border-[var(--ios-separator)] bg-[var(--ios-bg-secondary)]/90 dark:bg-[var(--ios-bg-tertiary)]/90 px-[var(--spacing-md)] py-[var(--spacing-sm)] space-y-[var(--spacing-sm)] cursor-default"
       data-no-drag="true"
     >
       {/* 站点 URL 和 Access Token */}
@@ -231,10 +238,10 @@ export function SiteCardDetails({
             <button
               key={groupName}
               onClick={() => onToggleGroupFilter(site.name, groupName)}
-              className={`px-1.5 py-0.5 rounded text-xs font-medium transition-all flex items-center gap-0.5 ${
+              className={`px-2 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-all flex items-center gap-1 ${
                 selectedGroup === groupName
-                  ? 'bg-primary-600 text-white shadow-lg'
-                  : `${getGroupTextColor(groupName)} hover:opacity-70`
+                  ? 'bg-[var(--ios-blue)] text-white shadow-sm'
+                  : `${getGroupTextColor(groupName)} hover:opacity-80 bg-[var(--ios-bg-secondary)] dark:bg-[var(--ios-bg-tertiary)] border border-[var(--ios-separator)]`
               }`}
               title={`${groupData.desc} (倍率: ${groupData.ratio})`}
             >
@@ -246,7 +253,7 @@ export function SiteCardDetails({
           {selectedGroup && (
             <button
               onClick={() => onToggleGroupFilter(site.name, null)}
-              className="px-1.5 py-0.5 rounded text-xs font-medium text-red-400 hover:text-red-300 transition-all"
+              className="px-2 py-1 rounded-[var(--radius-sm)] text-xs font-medium text-[var(--ios-red)] hover:bg-[var(--ios-red)]/10 transition-all"
             >
               清除
             </button>
@@ -263,7 +270,7 @@ export function SiteCardDetails({
           </span>
           <button
             onClick={() => onOpenCreateTokenDialog(site)}
-            className="px-1.5 py-0.5 bg-primary-600 hover:bg-primary-700 text-white rounded text-xs flex items-center gap-0.5 shadow-sm"
+            className="px-2 py-1 bg-[var(--ios-blue)] hover:bg-[var(--ios-blue)]/90 text-white rounded-[var(--radius-sm)] text-xs flex items-center gap-1 shadow-sm transition-all active:scale-95"
             title="创建新的 API Key"
           >
             <Plus className="w-3 h-3" />
@@ -286,7 +293,7 @@ export function SiteCardDetails({
               return (
                 <div
                   key={idx}
-                  className="px-1.5 py-0.5 bg-white dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-700 transition-all"
+                  className="px-1.5 py-0.5 bg-[var(--ios-bg-secondary)] dark:bg-[var(--ios-bg-tertiary)] rounded-[var(--radius-sm)] border border-[var(--ios-separator)] hover:border-[var(--ios-blue)]/50 transition-all"
                 >
                   <div className="grid grid-cols-[120px_50px_180px_90px_120px_minmax(280px,1fr)_60px] gap-x-3 items-center text-xs">
                     {/* 名称 */}
@@ -406,27 +413,28 @@ export function SiteCardDetails({
                 )}
               </span>
               <div className="ml-7">
-                <input
-                  type="text"
+                <IOSSearchInput
+                  size="sm"
                   placeholder={globalModelSearch ? '全局搜索生效中' : '搜索...'}
                   value={modelSearch}
                   onChange={e => onModelSearchChange(site.name, e.target.value)}
+                  onClear={() => onModelSearchChange(site.name, '')}
                   disabled={!!globalModelSearch}
-                  className="px-1.5 py-0.5 text-xs bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded text-slate-700 dark:text-slate-300 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-primary-400 transition-colors w-[100px] disabled:opacity-60 disabled:cursor-not-allowed"
+                  containerClassName="w-[120px]"
                 />
               </div>
             </div>
             {selectedModels.size > 0 && (
               <button
                 onClick={onCopySelectedModels}
-                className="px-1.5 py-0.5 bg-green-500 hover:bg-green-600 text-white rounded text-xs flex items-center gap-0.5 whitespace-nowrap font-medium shadow-sm"
+                className="px-2 py-1 bg-[var(--ios-green)] hover:bg-[var(--ios-green)]/90 text-white rounded-[var(--radius-sm)] text-xs flex items-center gap-1 whitespace-nowrap font-medium shadow-sm transition-all active:scale-95"
               >
                 <Copy className="w-2.5 h-2.5" />
                 复制
               </button>
             )}
           </div>
-          <div className="max-h-32 overflow-y-auto p-1 bg-slate-50 dark:bg-slate-900/80 rounded border border-slate-200/50 dark:border-slate-700/50">
+          <div className="max-h-32 overflow-y-auto p-1 bg-[var(--ios-bg-tertiary)]/50 dark:bg-[var(--ios-bg-primary)]/50 rounded-[var(--radius-sm)] border border-[var(--ios-separator)]">
             <div className="flex flex-wrap gap-0.5">
               {displayedModels.map((model, idx) => {
                 const pricingData = modelPricing?.data?.[model] || modelPricing?.[model];
@@ -474,15 +482,15 @@ export function SiteCardDetails({
                   <button
                     key={idx}
                     onClick={() => onToggleModelSelection(model)}
-                    className={`px-1.5 py-0.5 rounded border transition-all flex flex-col items-start gap-0 ${
+                    className={`px-1.5 py-0.5 rounded-[var(--radius-sm)] border transition-all flex flex-col items-start gap-0 ${
                       selectedModels.has(model)
-                        ? 'bg-primary-100 dark:bg-primary-900/40 border-primary-500 dark:border-primary-400'
-                        : 'bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-750'
+                        ? 'bg-[var(--ios-blue)]/10 dark:bg-[var(--ios-blue)]/20 border-[var(--ios-blue)] dark:border-[var(--ios-blue)]'
+                        : 'bg-[var(--ios-bg-secondary)] dark:bg-[var(--ios-bg-tertiary)] border-[var(--ios-separator)] hover:border-[var(--ios-blue)]/50'
                     }`}
                     title={model}
                   >
                     <div className="flex items-center gap-0.5 w-full">
-                      <span className="text-xs font-mono text-slate-900 dark:text-slate-50 truncate flex-1 font-medium">
+                      <span className="text-xs font-mono text-[var(--ios-text-primary)] truncate flex-1 font-medium">
                         {model}
                       </span>
                     </div>
@@ -542,10 +550,10 @@ export function SiteCardDetails({
             </div>
             {/* 显示更多/收起按钮 */}
             {hasMoreModels && (
-              <div className="flex justify-center mt-1 pt-1 border-t border-slate-200/50 dark:border-slate-700/50">
+              <div className="flex justify-center mt-1 pt-1 border-t border-[var(--ios-separator)]">
                 <button
                   onClick={() => setShowAllModels(!showAllModels)}
-                  className="px-2 py-0.5 text-xs text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-900/30 rounded flex items-center gap-0.5 transition-colors"
+                  className="px-2 py-0.5 text-xs text-[var(--ios-blue)] hover:bg-[var(--ios-blue)]/10 rounded-[var(--radius-sm)] flex items-center gap-0.5 transition-colors"
                 >
                   {showAllModels ? (
                     <>
@@ -567,8 +575,8 @@ export function SiteCardDetails({
 
       {/* 错误信息 */}
       {siteResult?.error && (
-        <div className="px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg">
-          <p className="text-xs text-red-400">❌ {siteResult.error}</p>
+        <div className="px-3 py-2 bg-[var(--ios-red)]/10 border border-[var(--ios-red)]/30 rounded-[var(--radius-sm)]">
+          <p className="text-xs text-[var(--ios-red)]">❌ {siteResult.error}</p>
         </div>
       )}
     </div>

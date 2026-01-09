@@ -45,6 +45,18 @@
 | **credit-service.property.test.ts** | Credit 服务属性测试 | CreditService 差值计算、错误处理、配置持久化、IPC 响应格式 |
 | **useCredit.property.test.ts** | Credit Hook 属性测试 | useCredit Hook 自动刷新暂停逻辑 |
 | **credit-panel.property.test.ts** | Credit 面板属性测试 | CreditPanel 差值颜色编码、日期格式化、交易状态徽章、交易金额格式化 |
+| **ios-design-system.property.test.tsx** | iOS 设计系统属性测试 | CSS 变量系统、圆角、颜色、间距、阴影、模糊效果、动画系统、IOSButton 组件 |
+| **ios-button.property.test.tsx** | iOS 按钮组件属性测试 | IOSButton 组件样式、交互、状态 |
+| **ios-card.property.test.tsx** | iOS 卡片组件属性测试 | IOSCard 组件样式、交互、状态 |
+| **ios-input.property.test.tsx** | iOS 输入框组件属性测试 | IOSInput、IOSSearchInput 组件样式、交互、状态 |
+| **ios-modal.property.test.tsx** | iOS 弹窗组件属性测试 | IOSModal 组件样式、交互、状态 |
+| **ios-table.property.test.tsx** | iOS 表格组件属性测试 | IOSTable、IOSTableHeader、IOSTableRow、IOSTableCell 组件样式、交互、状态 |
+| **ios-responsive.property.test.tsx** | iOS 响应式布局属性测试 | 响应式布局系统、最小窗口尺寸、响应式间距、内容溢出处理 |
+| **ios-accessibility.property.test.tsx** | iOS 无障碍性属性测试 | 文本对比度、焦点指示器、键盘导航、ARIA 属性、屏幕阅读器支持 |
+| **ios-performance.property.test.tsx** | iOS 性能优化属性测试 | GPU 加速动画、毛玻璃效果优化、动画帧率、首屏渲染时间 |
+| **ios-functional-preservation.property.test.tsx** | iOS 功能保持属性测试 | 按钮点击处理器、数据显示逻辑、表单验证逻辑、状态管理、API 调用、键盘导航 |
+| **ios-icon.property.test.tsx** | iOS 图标组件属性测试 | IOSIcon、IOSIconButton 组件样式、尺寸、变体、无障碍属性 |
+| **ios-visual-regression.test.tsx** | iOS 视觉回归测试 | 所有 iOS 组件的快照测试、CSS 类名验证、ARIA 属性验证 |
 
 ---
 
@@ -295,5 +307,5 @@ it('should call IPC', async () => {
 
 ---
 
-**版本**: 2.1.9  
-**更新日期**: 2025-12-26
+**版本**: 2.1.12  
+**更新日期**: 2025-01-09 - 添加 ios-visual-regression.test.tsx 视觉回归测试套件

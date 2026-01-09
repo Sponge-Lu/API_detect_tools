@@ -1,7 +1,13 @@
 /**
+ * @file src/renderer/components/dialogs/UnifiedCliConfigDialog.tsx
+ * @description 统一 CLI 配置对话框 - 使用 IOSModal 重构
+ *
  * 输入: UnifiedCliConfigDialogProps (站点数据、API Keys、CLI 配置、测试结果)
  * 输出: React 组件 (统一 CLI 配置对话框 UI)
  * 定位: 展示层 - 统一 CLI 配置对话框，支持 CLI 启用/禁用、配置选择、预览编辑和保存
+ *
+ * @version 2.1.12
+ * @updated 2025-01-09 - 修复夜晚模式下代码预览区域的颜色对比度问题，CLI 开关按钮改为蓝色
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -10,7 +16,9 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
-import { X, Copy, Check, Edit2, Eye, ToggleLeft, ToggleRight, RotateCcw } from 'lucide-react';
+import { Copy, Check, Edit2, Eye, RotateCcw, Settings } from 'lucide-react';
+import { IOSModal } from '../IOSModal';
+import { IOSButton } from '../IOSButton';
 import type { CliConfig, ApiKeyInfo } from '../../../shared/types/cli-config';
 import type { CodexTestDetail, GeminiTestDetail } from '../../../shared/types/site';
 import { DEFAULT_CLI_CONFIG } from '../../../shared/types/cli-config';
@@ -29,6 +37,48 @@ import {
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../assets/cli-icons/codex.svg';
 import GeminiIcon from '../../assets/cli-icons/gemini.svg';
+
+/** iOS 风格 Toggle Switch 组件 */
+function IOSToggle({
+  checked,
+  onChange,
+  disabled = false,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={() => !disabled && onChange(!checked)}
+      className={`
+        relative inline-flex h-[24px] w-[44px] shrink-0 cursor-pointer rounded-full
+        border-2 transition-colors duration-200 ease-in-out
+        focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ios-blue)]
+        ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
+        ${
+          checked
+            ? 'bg-[var(--ios-blue)] border-[var(--ios-blue)]'
+            : 'bg-[var(--ios-separator)] border-[var(--ios-separator)]'
+        }
+      `}
+    >
+      <span
+        className={`
+          pointer-events-none inline-block h-[18px] w-[18px] rounded-full
+          bg-white shadow-md ring-0
+          transition-transform duration-200 ease-in-out
+          ${checked ? 'translate-x-[21px]' : 'translate-x-[1px]'}
+          mt-[1px]
+        `}
+      />
+    </button>
+  );
+}
 
 export interface UnifiedCliConfigDialogProps {
   isOpen: boolean;
@@ -87,7 +137,7 @@ function getApiKeyValue(apiKey: ApiKeyInfo): string {
   return apiKey.key || apiKey.token || '';
 }
 
-/** 配置文件显示组件 - 支持预览和编辑模式 */
+/** 配置文件显示组件 - 支持预览和编辑模式 - iOS 风格 */
 function ConfigFileDisplay({
   file,
   onCopy,
@@ -106,29 +156,34 @@ function ConfigFileDisplay({
   const lineCount = file.content.split('\n').length;
   const contentHeight = Math.max(lineCount * 1.5, 8); // 每行约 1.5rem，最小 8rem
 
+  // 代码区域使用统一的深色背景和统一的文字颜色
+  // 所有配置文件使用相同的亮色，确保一致性和高对比度
+  const codeBlockBg = 'bg-[#1e1e1e]';
+  const codeTextColor = 'text-[#d4d4d4]'; // 统一使用浅灰白色，类似 VS Code 默认文字颜色
+
   return (
-    <div className="border border-slate-200 dark:border-slate-600 rounded-lg overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-2 bg-slate-100 dark:bg-slate-700 border-b border-slate-200 dark:border-slate-600">
+    <div className="border border-[var(--ios-separator)] rounded-[var(--radius-md)] overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-2 bg-[var(--ios-bg-tertiary)] border-b border-[var(--ios-separator)]">
         <code
-          className="text-sm font-mono text-slate-700 dark:text-slate-300"
+          className="text-sm font-mono text-[var(--ios-text-primary)]"
           title={`配置文件路径: ${file.path}`}
         >
           {file.path}
         </code>
         <button
           onClick={() => onCopy(file.path, file.content)}
-          className="flex items-center gap-1 px-2 py-1 text-xs rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+          className="flex items-center gap-1 px-2 py-1 text-xs rounded-[var(--radius-sm)] hover:bg-[var(--ios-bg-secondary)] active:scale-95 transition-all"
           title="复制配置内容"
         >
           {isCopied ? (
             <>
-              <Check className="w-3.5 h-3.5 text-green-500" />
-              <span className="text-green-500">已复制</span>
+              <Check className="w-3.5 h-3.5 text-[var(--ios-green)]" />
+              <span className="text-[var(--ios-green)]">已复制</span>
             </>
           ) : (
             <>
-              <Copy className="w-3.5 h-3.5 text-slate-500" />
-              <span className="text-slate-500">复制</span>
+              <Copy className="w-3.5 h-3.5 text-[var(--ios-text-secondary)]" />
+              <span className="text-[var(--ios-text-secondary)]">复制</span>
             </>
           )}
         </button>
@@ -137,24 +192,16 @@ function ConfigFileDisplay({
         <textarea
           value={file.content}
           onChange={e => onContentChange(file.path, e.target.value)}
-          className="w-full p-3 text-sm font-mono bg-slate-50 dark:bg-slate-800 border-none resize-none focus:outline-none focus:ring-2 focus:ring-primary-500"
+          className={`w-full p-3 text-sm font-mono ${codeBlockBg} ${codeTextColor} border-none resize-none focus:outline-none focus:ring-2 focus:ring-[var(--ios-blue)]`}
           style={{ height: `${contentHeight}rem` }}
           spellCheck={false}
         />
       ) : (
         <pre
-          className="p-3 text-sm font-mono bg-slate-50 dark:bg-slate-800 overflow-x-auto whitespace-pre-wrap"
+          className={`p-3 text-sm font-mono ${codeBlockBg} overflow-x-auto whitespace-pre-wrap`}
           style={{ minHeight: `${contentHeight}rem` }}
         >
-          <code
-            className={
-              file.language === 'json'
-                ? 'text-blue-600 dark:text-blue-400'
-                : 'text-amber-600 dark:text-amber-400'
-            }
-          >
-            {file.content}
-          </code>
+          <code className={codeTextColor}>{file.content}</code>
         </pre>
       )}
     </div>
@@ -573,332 +620,292 @@ export function UnifiedCliConfigDialog({
     onSave(newConfig);
   };
 
-  if (!isOpen) return null;
-
   return (
-    <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-      onClick={e => {
-        if (e.target === e.currentTarget) onClose();
-      }}
+    <IOSModal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={`CLI 配置 - ${siteName}`}
+      titleIcon={<Settings className="w-5 h-5" />}
+      size="xl"
+      contentClassName="!p-0 !max-h-[70vh]"
+      footer={
+        <>
+          <IOSButton variant="tertiary" onClick={onClose}>
+            取消
+          </IOSButton>
+          <IOSButton variant="primary" onClick={handleSave}>
+            保存配置
+          </IOSButton>
+        </>
+      }
     >
-      <div
-        className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-3xl mx-4 max-h-[90vh] flex flex-col"
-        onClick={e => e.stopPropagation()}
-      >
-        {/* 头部 */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex-shrink-0">
-          <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-200">
-            CLI 配置 - {siteName}
-          </h2>
-          <button
-            onClick={onClose}
-            className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
-          >
-            <X className="w-5 h-5 text-slate-500" />
-          </button>
+      <div className="px-6 py-4 space-y-4 overflow-y-auto">
+        {/* CLI 开关区域 - 标签和开关在同一行 */}
+        <div className="flex items-center gap-6 flex-wrap">
+          <label className="text-sm font-semibold text-[var(--ios-text-primary)]">CLI 开关</label>
+          <div className="flex items-center gap-5">
+            {CLI_TYPES.map(cli => (
+              <div key={cli.key} className="flex items-center gap-2">
+                <img src={cli.icon} alt={cli.name} className="w-4 h-4" />
+                <span className="text-sm text-[var(--ios-text-primary)]">{cli.name}</span>
+                <IOSToggle
+                  checked={enabledState[cli.key]}
+                  onChange={() => handleToggleEnabled(cli.key)}
+                />
+              </div>
+            ))}
+          </div>
         </div>
 
-        {/* 内容 */}
-        <div className="px-6 py-4 space-y-4 overflow-y-auto flex-1">
-          {/* CLI 开关区域 */}
-          <div className="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">
-              CLI 开关
-            </label>
-            <div className="flex flex-wrap gap-3">
-              {CLI_TYPES.map(cli => (
-                <div
-                  key={cli.key}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-600"
-                >
-                  <img src={cli.icon} alt={cli.name} className="w-4 h-4" />
-                  <span className="text-sm text-slate-700 dark:text-slate-300">{cli.name}</span>
-                  <button
-                    onClick={() => handleToggleEnabled(cli.key)}
-                    className="flex items-center ml-1"
-                    title={enabledState[cli.key] ? '点击禁用' : '点击启用'}
-                  >
-                    {enabledState[cli.key] ? (
-                      <ToggleRight className="w-6 h-6 text-green-500" />
-                    ) : (
-                      <ToggleLeft className="w-6 h-6 text-slate-300 dark:text-slate-500" />
-                    )}
-                  </button>
-                </div>
-              ))}
-            </div>
+        {/* CLI 类型选择 - iOS 风格统一 */}
+        <div>
+          <label className="block text-sm font-semibold text-[var(--ios-text-primary)] mb-2">
+            选择 CLI 类型进行配置
+          </label>
+          <div className="flex gap-2 flex-wrap">
+            {CLI_TYPES.map(cli => (
+              <button
+                key={cli.key}
+                onClick={() => handleCliTypeChange(cli.key)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-[var(--radius-md)] border transition-all active:scale-95 ${
+                  selectedCli === cli.key
+                    ? 'border-[var(--ios-blue)] bg-[var(--ios-blue)]/10'
+                    : 'border-[var(--ios-separator)] bg-[var(--ios-bg-secondary)] hover:border-[var(--ios-gray)]'
+                }`}
+              >
+                <img src={cli.icon} alt={cli.name} className="w-5 h-5" />
+                <span className="text-sm text-[var(--ios-text-primary)]">{cli.name}</span>
+              </button>
+            ))}
           </div>
+        </div>
 
-          {/* CLI 类型选择 */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-              选择 CLI 类型进行配置
-            </label>
-            <div className="flex gap-2 flex-wrap">
-              {CLI_TYPES.map(cli => (
-                <button
-                  key={cli.key}
-                  onClick={() => handleCliTypeChange(cli.key)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition-all ${
-                    selectedCli === cli.key
-                      ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-                      : 'border-slate-200 dark:border-slate-600 hover:border-slate-300 dark:hover:border-slate-500'
-                  }`}
-                >
-                  <img src={cli.icon} alt={cli.name} className="w-5 h-5" />
-                  <span className="text-sm text-slate-700 dark:text-slate-300">{cli.name}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* API Key 和模型选择 - 仅支持的 CLI 显示 */}
-          {selectedCli && currentCliConfig?.supported && (
-            <>
-              {/* API Key 选择 */}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                  选择 API Key
-                </label>
-                {apiKeys.length === 0 ? (
-                  <div className="text-sm text-slate-500 py-2">该站点没有可用的 API Key</div>
-                ) : (
-                  <select
-                    value={cliConfigs[selectedCli]?.apiKeyId ?? ''}
-                    onChange={e =>
-                      handleApiKeyChange(e.target.value ? parseInt(e.target.value, 10) : null)
-                    }
-                    className="w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                  >
-                    <option value="">请选择 API Key</option>
-                    {apiKeys.map(apiKey => {
-                      const id = getApiKeyId(apiKey);
-                      const matchingCount = filterModelsByPrefix(
-                        siteModels,
-                        currentCliConfig.modelPrefix
-                      ).length;
-                      return (
-                        <option key={id} value={id}>
-                          {apiKey.name || `Key #${id}`}
-                          {apiKey.group ? ` [${apiKey.group}]` : ''}
-                          {currentCliConfig.modelPrefix
-                            ? ` (${matchingCount} 个 ${currentCliConfig.modelPrefix}* 模型)`
-                            : ` (${matchingCount} 个模型)`}
-                        </option>
-                      );
-                    })}
-                  </select>
-                )}
-              </div>
-
-              {/* 模型选择 - 分为测试模型和 CLI 模型 */}
-              {cliConfigs[selectedCli]?.apiKeyId && (
-                <div className="grid grid-cols-2 gap-4">
-                  {/* 测试使用模型 */}
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                      测试使用模型
-                    </label>
-                    {availableModels.length > 0 ? (
-                      <select
-                        value={cliConfigs[selectedCli]?.testModel ?? ''}
-                        onChange={e => handleTestModelChange(e.target.value || null)}
-                        className="w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                      >
-                        <option value="">请选择测试模型（请选择较新的模型）</option>
-                        {availableModels.map(model => (
-                          <option key={model} value={model}>
-                            {model}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <div className="text-sm text-slate-500 py-2">
-                        {currentCliConfig.modelPrefix
-                          ? `没有匹配 ${currentCliConfig.modelPrefix}* 前缀的模型`
-                          : '没有可用模型'}
-                      </div>
-                    )}
-                  </div>
-                  {/* CLI 使用模型 */}
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                      CLI 使用模型
-                    </label>
-                    {availableModels.length > 0 ? (
-                      <select
-                        value={cliConfigs[selectedCli]?.model ?? ''}
-                        onChange={e => handleModelChange(e.target.value || null)}
-                        className="w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                      >
-                        <option value="">请选择 CLI 模型</option>
-                        {availableModels.map(model => (
-                          <option key={model} value={model}>
-                            {model}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <div className="text-sm text-slate-500 py-2">
-                        {currentCliConfig.modelPrefix
-                          ? `没有匹配 ${currentCliConfig.modelPrefix}* 前缀的模型`
-                          : '没有可用模型'}
-                      </div>
-                    )}
-                  </div>
+        {/* API Key 和模型选择 - 仅支持的 CLI 显示 */}
+        {selectedCli && currentCliConfig?.supported && (
+          <>
+            {/* API Key 选择 - iOS 风格 */}
+            <div>
+              <label className="block text-sm font-medium text-[var(--ios-text-primary)] mb-2">
+                选择 API Key
+              </label>
+              {apiKeys.length === 0 ? (
+                <div className="text-sm text-[var(--ios-text-secondary)] py-2">
+                  该站点没有可用的 API Key
                 </div>
+              ) : (
+                <select
+                  value={cliConfigs[selectedCli]?.apiKeyId ?? ''}
+                  onChange={e =>
+                    handleApiKeyChange(e.target.value ? parseInt(e.target.value, 10) : null)
+                  }
+                  className="w-full px-3 py-2 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] text-sm text-[var(--ios-text-primary)] focus:ring-2 focus:ring-[var(--ios-blue)] focus:border-transparent transition-all"
+                >
+                  <option value="">请选择 API Key</option>
+                  {apiKeys.map(apiKey => {
+                    const id = getApiKeyId(apiKey);
+                    const matchingCount = filterModelsByPrefix(
+                      siteModels,
+                      currentCliConfig.modelPrefix
+                    ).length;
+                    return (
+                      <option key={id} value={id}>
+                        {apiKey.name || `Key #${id}`}
+                        {apiKey.group ? ` [${apiKey.group}]` : ''}
+                        {currentCliConfig.modelPrefix
+                          ? ` (${matchingCount} 个 ${currentCliConfig.modelPrefix}* 模型)`
+                          : ` (${matchingCount} 个模型)`}
+                      </option>
+                    );
+                  })}
+                </select>
               )}
+            </div>
 
-              {/* 配置预览区域 - 始终显示，实时更新 */}
-              {(selectedCli === 'claudeCode' ||
-                selectedCli === 'codex' ||
-                selectedCli === 'geminiCli') && (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                      配置文件预览
-                      {isShowingTemplate && (
-                        <span className="ml-2 text-xs text-amber-600 dark:text-amber-400">
-                          (模板)
-                        </span>
-                      )}
+            {/* 模型选择 - 分为测试模型和 CLI 模型 - iOS 风格 */}
+            {cliConfigs[selectedCli]?.apiKeyId && (
+              <div className="grid grid-cols-2 gap-4">
+                {/* 测试使用模型 */}
+                <div>
+                  <label className="block text-sm font-medium text-[var(--ios-text-primary)] mb-2">
+                    测试使用模型
+                  </label>
+                  {availableModels.length > 0 ? (
+                    <select
+                      value={cliConfigs[selectedCli]?.testModel ?? ''}
+                      onChange={e => handleTestModelChange(e.target.value || null)}
+                      className="w-full px-3 py-2 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] text-sm text-[var(--ios-text-primary)] focus:ring-2 focus:ring-[var(--ios-blue)] focus:border-transparent transition-all"
+                    >
+                      <option value="">请选择测试模型（请选择较新的模型）</option>
+                      {availableModels.map(model => (
+                        <option key={model} value={model}>
+                          {model}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="text-sm text-[var(--ios-text-secondary)] py-2">
+                      {currentCliConfig.modelPrefix
+                        ? `没有匹配 ${currentCliConfig.modelPrefix}* 前缀的模型`
+                        : '没有可用模型'}
                     </div>
-                    {displayConfig && !isShowingTemplate && (
-                      <div className="flex items-center gap-2">
-                        {/* 应用模式选择 */}
-                        <div className="flex items-center rounded-lg border border-slate-300 dark:border-slate-600 overflow-hidden">
-                          <button
-                            onClick={() => setApplyMode('merge')}
-                            className={`px-2.5 py-1 text-xs transition-colors ${
-                              applyMode === 'merge'
-                                ? 'bg-primary-500 text-white'
-                                : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-600'
-                            }`}
-                            title="合并模式：保留现有配置，只更新相关项"
-                          >
-                            合并
-                          </button>
-                          <button
-                            onClick={() => setApplyMode('overwrite')}
-                            className={`px-2.5 py-1 text-xs transition-colors ${
-                              applyMode === 'overwrite'
-                                ? 'bg-primary-500 text-white'
-                                : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-600'
-                            }`}
-                            title="覆盖模式：完全替换现有配置文件"
-                          >
-                            覆盖
-                          </button>
-                        </div>
-                        {/* 重置按钮 - 仅在有编辑内容时显示 */}
-                        {(editedConfig || savedEditedConfig) && (
-                          <button
-                            onClick={() => setShowResetConfirm(true)}
-                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-amber-300 dark:border-amber-600 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors"
-                            title="重置为默认配置"
-                          >
-                            <RotateCcw className="w-3.5 h-3.5" />
-                            <span>重置</span>
-                          </button>
-                        )}
+                  )}
+                </div>
+                {/* CLI 使用模型 */}
+                <div>
+                  <label className="block text-sm font-medium text-[var(--ios-text-primary)] mb-2">
+                    CLI 使用模型
+                  </label>
+                  {availableModels.length > 0 ? (
+                    <select
+                      value={cliConfigs[selectedCli]?.model ?? ''}
+                      onChange={e => handleModelChange(e.target.value || null)}
+                      className="w-full px-3 py-2 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] text-sm text-[var(--ios-text-primary)] focus:ring-2 focus:ring-[var(--ios-blue)] focus:border-transparent transition-all"
+                    >
+                      <option value="">请选择 CLI 模型</option>
+                      {availableModels.map(model => (
+                        <option key={model} value={model}>
+                          {model}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="text-sm text-[var(--ios-text-secondary)] py-2">
+                      {currentCliConfig.modelPrefix
+                        ? `没有匹配 ${currentCliConfig.modelPrefix}* 前缀的模型`
+                        : '没有可用模型'}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* 配置预览区域 - 始终显示，实时更新 - iOS 风格 */}
+            {(selectedCli === 'claudeCode' ||
+              selectedCli === 'codex' ||
+              selectedCli === 'geminiCli') && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-medium text-[var(--ios-text-primary)]">
+                    配置文件预览
+                    {isShowingTemplate && (
+                      <span className="ml-2 text-xs text-[var(--ios-orange)]">(模板)</span>
+                    )}
+                  </div>
+                  {displayConfig && !isShowingTemplate && (
+                    <div className="flex items-center gap-2">
+                      {/* 应用模式选择 - iOS 风格分段控件 */}
+                      <div className="flex items-center rounded-[var(--radius-md)] border border-[var(--ios-separator)] overflow-hidden">
                         <button
-                          onClick={toggleEditMode}
-                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                          title={isEditing ? '切换到预览模式' : '切换到编辑模式'}
+                          onClick={() => setApplyMode('merge')}
+                          className={`px-2.5 py-1 text-xs transition-all active:scale-95 ${
+                            applyMode === 'merge'
+                              ? 'bg-[var(--ios-blue)] text-white'
+                              : 'bg-[var(--ios-bg-secondary)] text-[var(--ios-text-secondary)] hover:bg-[var(--ios-bg-tertiary)]'
+                          }`}
+                          title="合并模式：保留现有配置，只更新相关项"
                         >
-                          {isEditing ? (
-                            <>
-                              <Eye className="w-3.5 h-3.5" />
-                              <span>预览</span>
-                            </>
-                          ) : (
-                            <>
-                              <Edit2 className="w-3.5 h-3.5" />
-                              <span>编辑</span>
-                            </>
-                          )}
+                          合并
+                        </button>
+                        <button
+                          onClick={() => setApplyMode('overwrite')}
+                          className={`px-2.5 py-1 text-xs transition-all active:scale-95 ${
+                            applyMode === 'overwrite'
+                              ? 'bg-[var(--ios-blue)] text-white'
+                              : 'bg-[var(--ios-bg-secondary)] text-[var(--ios-text-secondary)] hover:bg-[var(--ios-bg-tertiary)]'
+                          }`}
+                          title="覆盖模式：完全替换现有配置文件"
+                        >
+                          覆盖
                         </button>
                       </div>
-                    )}
-                  </div>
-                  {/* 配置确认提醒 - 对所有 CLI 类型显示 */}
-                  <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg">
-                    <span className="text-amber-600 dark:text-amber-400">⚠️</span>
-                    <span className="text-xs text-amber-700 dark:text-amber-300">
-                      请去站点确认配置信息是否正确
-                    </span>
-                  </div>
-                  {isShowingTemplate && (
-                    <div className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 rounded-lg">
-                      请选择 API Key 和 CLI 使用模型以生成实际配置，以下为配置模板
+                      {/* 重置按钮 - 仅在有编辑内容时显示 - iOS 风格 */}
+                      {(editedConfig || savedEditedConfig) && (
+                        <button
+                          onClick={() => setShowResetConfirm(true)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--ios-orange)]/50 text-[var(--ios-orange)] hover:bg-[var(--ios-orange)]/10 active:scale-95 transition-all"
+                          title="重置为默认配置"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>重置</span>
+                        </button>
+                      )}
+                      <button
+                        onClick={toggleEditMode}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--ios-separator)] text-[var(--ios-text-secondary)] hover:bg-[var(--ios-bg-tertiary)] active:scale-95 transition-all"
+                        title={isEditing ? '切换到预览模式' : '切换到编辑模式'}
+                      >
+                        {isEditing ? (
+                          <>
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>预览</span>
+                          </>
+                        ) : (
+                          <>
+                            <Edit2 className="w-3.5 h-3.5" />
+                            <span>编辑</span>
+                          </>
+                        )}
+                      </button>
                     </div>
                   )}
-                  {isEditing && (
-                    <div className="text-xs text-slate-500 dark:text-slate-400">
-                      提示：您可以直接编辑配置内容，修改后点击复制按钮复制最终配置
-                    </div>
-                  )}
-                  {displayConfig?.files.map(file => (
-                    <ConfigFileDisplay
-                      key={file.path}
-                      file={file}
-                      onCopy={handleCopy}
-                      copiedPath={copiedPath}
-                      isEditing={isEditing && !isShowingTemplate}
-                      onContentChange={handleContentChange}
-                    />
-                  ))}
                 </div>
-              )}
-            </>
-          )}
-        </div>
-
-        {/* 底部按钮 */}
-        <div className="flex justify-end gap-3 px-6 py-4 border-t border-slate-200 dark:border-slate-700 flex-shrink-0">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
-          >
-            取消
-          </button>
-          <button
-            onClick={handleSave}
-            className="px-4 py-2 bg-primary-500 hover:bg-primary-600 text-white rounded-lg transition-colors"
-          >
-            保存配置
-          </button>
-        </div>
-
-        {/* 重置确认对话框 */}
-        {showResetConfirm && (
-          <div className="absolute inset-0 bg-black/30 flex items-center justify-center rounded-xl">
-            <div className="bg-white dark:bg-slate-800 rounded-lg shadow-lg p-5 mx-4 max-w-sm">
-              <h3 className="text-base font-medium text-slate-800 dark:text-slate-200 mb-2">
-                确认重置
-              </h3>
-              <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">
-                确定要重置为默认配置吗？您的编辑内容将会丢失。
-              </p>
-              <div className="flex justify-end gap-2">
-                <button
-                  onClick={() => setShowResetConfirm(false)}
-                  className="px-3 py-1.5 text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
-                >
-                  取消
-                </button>
-                <button
-                  onClick={handleResetConfig}
-                  className="px-3 py-1.5 text-sm bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-colors"
-                >
-                  确认重置
-                </button>
+                {/* 配置确认提醒 - 对所有 CLI 类型显示 */}
+                <div className="flex items-center gap-2 px-3 py-2 bg-[var(--ios-orange)]/10 border border-[var(--ios-orange)]/30 rounded-[var(--radius-md)]">
+                  <span className="text-[var(--ios-orange)]">⚠️</span>
+                  <span className="text-xs text-[var(--ios-orange)]">
+                    请去站点确认配置信息是否正确
+                  </span>
+                </div>
+                {isShowingTemplate && (
+                  <div className="text-xs text-[var(--ios-orange)] bg-[var(--ios-orange)]/10 px-3 py-2 rounded-[var(--radius-md)]">
+                    请选择 API Key 和 CLI 使用模型以生成实际配置，以下为配置模板
+                  </div>
+                )}
+                {isEditing && (
+                  <div className="text-xs text-[var(--ios-text-secondary)]">
+                    提示：您可以直接编辑配置内容，修改后点击复制按钮复制最终配置
+                  </div>
+                )}
+                {displayConfig?.files.map(file => (
+                  <ConfigFileDisplay
+                    key={file.path}
+                    file={file}
+                    onCopy={handleCopy}
+                    copiedPath={copiedPath}
+                    isEditing={isEditing && !isShowingTemplate}
+                    onContentChange={handleContentChange}
+                  />
+                ))}
               </div>
-            </div>
-          </div>
+            )}
+          </>
         )}
       </div>
-    </div>
+
+      {/* 重置确认对话框 */}
+      {showResetConfirm && (
+        <div className="absolute inset-0 bg-black/30 flex items-center justify-center rounded-[var(--radius-xl)]">
+          <div className="bg-[var(--ios-bg-secondary)] rounded-[var(--radius-lg)] shadow-[var(--shadow-xl)] p-5 mx-4 max-w-sm">
+            <h3 className="text-base font-medium text-[var(--ios-text-primary)] mb-2">确认重置</h3>
+            <p className="text-sm text-[var(--ios-text-secondary)] mb-4">
+              确定要重置为默认配置吗？您的编辑内容将会丢失。
+            </p>
+            <div className="flex justify-end gap-2">
+              <IOSButton size="sm" variant="tertiary" onClick={() => setShowResetConfirm(false)}>
+                取消
+              </IOSButton>
+              <IOSButton
+                size="sm"
+                variant="primary"
+                onClick={handleResetConfig}
+                className="bg-[var(--ios-orange)] hover:bg-[var(--ios-orange)]/90"
+              >
+                确认重置
+              </IOSButton>
+            </div>
+          </div>
+        </div>
+      )}
+    </IOSModal>
   );
 }

@@ -3,6 +3,7 @@
  * 输出: IPC 事件处理响应 (CreditResponse)
  * 定位: IPC 处理层 - 处理 Linux Do Credit 积分检测相关的 IPC 通信
  *       支持获取缓存的每日统计和交易记录数据
+ *       支持 refreshAll 在单个浏览器页面中刷新所有数据
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -17,6 +18,7 @@ import {
   CREDIT_CHANNELS,
   type CreditConfig,
   type CreditResponse,
+  type CreditInfo,
   type DailyStats,
   type TransactionList,
   type CreditLoginResult,
@@ -59,6 +61,33 @@ export function registerCreditHandlers(): void {
       return createErrorResponse(error.message || '获取积分数据失败');
     }
   });
+
+  // 刷新所有数据（积分、每日统计、交易记录）- 在单个浏览器页面中完成
+  ipcMain.handle(
+    CREDIT_CHANNELS.REFRESH_ALL,
+    async (): Promise<
+      CreditResponse<{
+        creditInfo: CreditInfo | null;
+        dailyStats: DailyStats | null;
+        transactions: TransactionList | null;
+      }>
+    > => {
+      try {
+        Logger.info('🔄 [CreditHandlers] 收到刷新所有数据请求');
+        const creditService = getCreditService();
+
+        if (!creditService) {
+          return createErrorResponse('CreditService 未初始化');
+        }
+
+        const result = await creditService.refreshAllData();
+        return result;
+      } catch (error: any) {
+        Logger.error('❌ [CreditHandlers] 刷新所有数据失败:', error);
+        return createErrorResponse(error.message || '刷新所有数据失败');
+      }
+    }
+  );
 
   // 启动登录
   ipcMain.handle(CREDIT_CHANNELS.LOGIN, async (): Promise<CreditResponse<CreditLoginResult>> => {

@@ -4,6 +4,7 @@
  * 定位: 服务层 - 管理 Linux Do Credit 积分检测功能
  *       登录时一次性获取所有数据（积分、每日统计、交易记录）并缓存到本地
  *       支持从缓存加载数据，减少 API 请求
+ *       refreshAllData 方法在单个浏览器页面中刷新所有数据，避免打开多个浏览器窗口
  *       充值功能使用浏览器模式，通过 localStorage 检测登录状态，
  *       并在 API 请求中添加 New-Api-User header 进行认证
  *
@@ -80,6 +81,285 @@ export class CreditService {
       Logger.info('✅ [CreditService] 服务初始化完成');
     } catch (error) {
       Logger.warn('⚠️ [CreditService] 初始化时加载数据失败，使用默认配置');
+    }
+  }
+
+  /**
+   * 刷新所有 LDC 数据（积分、每日统计、交易记录）
+   * 在单个浏览器页面中完成所有数据获取，避免打开多个浏览器窗口
+   */
+  async refreshAllData(): Promise<
+    CreditResponse<{
+      creditInfo: CreditInfo | null;
+      dailyStats: DailyStats | null;
+      transactions: TransactionList | null;
+    }>
+  > {
+    Logger.info('🔄 [CreditService] 开始刷新所有 LDC 数据...');
+
+    if (!this.cookies) {
+      return {
+        success: false,
+        error: '未登录，请先登录 Linux Do Credit',
+      };
+    }
+
+    let page: any = null;
+    let release: (() => void) | null = null;
+
+    try {
+      Logger.info('🌐 [CreditService] 使用浏览器环境刷新所有数据...');
+      const pageResult = await this.chromeManager.createPage('https://credit.linux.do/home');
+      page = pageResult.page;
+      release = pageResult.release;
+
+      let creditInfo: CreditInfo | null = null;
+      let dailyStats: DailyStats | null = null;
+      let transactions: TransactionList | null = null;
+
+      // 【第一阶段】在 credit.linux.do 页面获取积分、每日统计和交易记录
+      // 步骤1: 获取 credit.linux.do 用户信息（包含基准值和用户名）
+      Logger.info('📡 [CreditService] 获取 credit.linux.do 用户信息...');
+
+      const creditResult = await page.evaluate(async (apiUrl: string) => {
+        try {
+          const response = await fetch(apiUrl, {
+            method: 'GET',
+            credentials: 'include',
+            headers: {
+              Accept: 'application/json, text/plain, */*',
+            },
+          });
+
+          if (!response.ok) {
+            return {
+              success: false,
+              status: response.status,
+              error: response.status === 401 ? '未登录' : '请求失败',
+            };
+          }
+
+          const data = await response.json();
+          return { success: true, data, status: response.status };
+        } catch (e: any) {
+          return { success: false, error: e.message, status: 0 };
+        }
+      }, CREDIT_API_URL);
+
+      Logger.info(`📡 [CreditService] 浏览器 API 响应状态: ${creditResult.status}`);
+
+      if (!creditResult.success) {
+        if (creditResult.status === 401 || creditResult.status === 403) {
+          this.cookies = null;
+          await this.saveStorageData();
+        }
+        return {
+          success: false,
+          error: creditResult.error || '获取数据失败',
+        };
+      }
+
+      const apiData = creditResult.data as CreditApiResponse;
+      if (!apiData || !apiData.data) {
+        return {
+          success: false,
+          error: '数据格式异常，请稍后重试',
+        };
+      }
+
+      const userData = apiData.data;
+      const communityBalance = parseFloat(userData.community_balance) || 0;
+      const username = userData.username;
+
+      Logger.info(`✅ [CreditService] 用户名: ${username}, 基准值: ${communityBalance}`);
+
+      // 步骤2: 获取每日统计数据
+      Logger.info('📡 [CreditService] 获取每日统计数据...');
+      try {
+        const dailyStatsResult = (await page.evaluate(async (url: string) => {
+          try {
+            const response = await fetch(url, {
+              method: 'GET',
+              credentials: 'include',
+              headers: { Accept: 'application/json, text/plain, */*' },
+            });
+            if (!response.ok) return { success: false, status: response.status };
+            const data = await response.json();
+            return { success: true, data, status: response.status };
+          } catch (e: any) {
+            return { success: false, error: e.message, status: 0 };
+          }
+        }, `${DAILY_STATS_API_URL}?days=7`)) as {
+          success: boolean;
+          data?: DailyStatsApiResponse;
+          status: number;
+        };
+
+        if (dailyStatsResult.success && dailyStatsResult.data?.data) {
+          const items = dailyStatsResult.data.data;
+          dailyStats = {
+            items,
+            totalIncome: calculateTotalIncome(items),
+            totalExpense: calculateTotalExpense(items),
+            lastUpdated: Date.now(),
+          };
+          Logger.info(`✅ [CreditService] 每日统计获取成功: ${items.length} 条记录`);
+        } else {
+          Logger.warn(`⚠️ [CreditService] 获取每日统计失败: status=${dailyStatsResult.status}`);
+        }
+      } catch (e: any) {
+        Logger.warn(`⚠️ [CreditService] 获取每日统计失败: ${e.message}`);
+      }
+
+      // 步骤3: 获取交易记录
+      Logger.info('📡 [CreditService] 获取交易记录...');
+      try {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const transactionsResult = (await page.evaluate(
+          async (url: string, body: { page: number; page_size: number }) => {
+            try {
+              const response = await fetch(url, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                  Accept: 'application/json, text/plain, */*',
+                  'Content-Type': 'application/json',
+                  Origin: 'https://credit.linux.do',
+                  Referer: 'https://credit.linux.do/home',
+                },
+                body: JSON.stringify(body),
+              });
+              if (!response.ok) return { success: false, status: response.status };
+              const data = await response.json();
+              return { success: true, data, status: response.status };
+            } catch (e: any) {
+              return { success: false, error: e.message, status: 0 };
+            }
+          },
+          TRANSACTIONS_API_URL,
+          { page: 1, page_size: 10 }
+        )) as { success: boolean; data?: TransactionsApiResponse; status: number };
+
+        if (transactionsResult.success && transactionsResult.data?.data) {
+          const txData = transactionsResult.data.data;
+          transactions = {
+            total: txData.total,
+            page: txData.page,
+            pageSize: txData.page_size,
+            orders: txData.orders || [],
+            lastUpdated: Date.now(),
+          };
+          Logger.info(`✅ [CreditService] 交易记录获取成功: ${transactions.total} 条`);
+        } else {
+          Logger.warn(`⚠️ [CreditService] 获取交易记录失败: status=${transactionsResult.status}`);
+        }
+      } catch (e: any) {
+        Logger.warn(`⚠️ [CreditService] 获取交易记录失败: ${e.message}`);
+      }
+
+      // 【第二阶段】获取 linux.do 用户积分
+      Logger.info('📡 [CreditService] 获取 linux.do 用户积分...');
+      const linuxDoUrl = `${LINUX_DO_USER_URL}/${encodeURIComponent(username)}.json`;
+
+      let gamificationScore = 0;
+      try {
+        await page.goto(`https://linux.do/u/${encodeURIComponent(username)}`, {
+          waitUntil: 'networkidle2',
+          timeout: 30000,
+        });
+
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        const linuxDoData = (await page.evaluate(async (url: string) => {
+          try {
+            const response = await fetch(url, {
+              method: 'GET',
+              credentials: 'include',
+              headers: {
+                Accept: 'application/json',
+              },
+            });
+
+            if (!response.ok) {
+              return { success: false, status: response.status };
+            }
+
+            const data = await response.json();
+            return { success: true, data, status: response.status };
+          } catch (e: any) {
+            return { success: false, error: e.message, status: 0 };
+          }
+        }, linuxDoUrl)) as { success: boolean; data?: any; status: number; error?: string };
+
+        Logger.info(`📡 [CreditService] linux.do 响应状态: ${linuxDoData.status}`);
+
+        if (linuxDoData.success && linuxDoData.data?.user?.gamification_score !== undefined) {
+          gamificationScore = linuxDoData.data.user.gamification_score;
+          Logger.info(`✅ [CreditService] 当前分: ${gamificationScore}`);
+        } else {
+          Logger.warn(
+            `⚠️ [CreditService] 无法获取 linux.do 积分数据: ${linuxDoData.error || linuxDoData.status}`
+          );
+        }
+      } catch (navError: any) {
+        Logger.warn(`⚠️ [CreditService] 导航到 linux.do 失败: ${navError.message}`);
+      }
+
+      // 步骤4: 计算差值并构建积分信息
+      const difference = calculateDifference(gamificationScore, communityBalance);
+      Logger.info(`📊 [CreditService] 差值: ${difference}`);
+
+      creditInfo = {
+        id: userData.id,
+        username: userData.username,
+        nickname: userData.nickname,
+        avatarUrl: userData.avatar_url,
+        trustLevel: userData.trust_level,
+        communityBalance,
+        gamificationScore,
+        difference,
+        totalReceive: userData.total_receive,
+        totalPayment: userData.total_payment,
+        totalTransfer: userData.total_transfer,
+        totalCommunity: userData.total_community,
+        availableBalance: userData.available_balance,
+        payScore: userData.pay_score,
+        payLevel: userData.pay_level,
+        isPayKey: userData.is_pay_key,
+        remainQuota: userData.remain_quota,
+        dailyLimit: userData.daily_limit,
+        isAdmin: userData.is_admin,
+        lastUpdated: Date.now(),
+      };
+
+      // 缓存所有数据
+      this.cachedInfo = creditInfo;
+      this.cachedDailyStats = dailyStats;
+      this.cachedTransactions = transactions;
+      await this.saveStorageData();
+
+      Logger.info('✅ [CreditService] 所有 LDC 数据刷新成功');
+      return {
+        success: true,
+        data: { creditInfo, dailyStats, transactions },
+      };
+    } catch (error: any) {
+      Logger.error('❌ [CreditService] 刷新所有数据失败:', error.message);
+      return {
+        success: false,
+        error: this.formatErrorMessage(error),
+      };
+    } finally {
+      if (page) {
+        try {
+          await page.close();
+        } catch {
+          // 忽略关闭错误
+        }
+      }
+      if (release) {
+        release();
+      }
     }
   }
 

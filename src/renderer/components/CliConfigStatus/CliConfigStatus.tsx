@@ -226,7 +226,7 @@ export function CliConfigStatus({ cliType, result, compact = false }: CliConfigS
   if (compact) {
     // 紧凑模式：仅显示图标和简短状态标签
     return (
-      <div className="flex items-center gap-1.5" title={tooltipText}>
+      <div className="flex items-center gap-[var(--spacing-sm)]" title={tooltipText}>
         <div className={`${cliConfig.sizeClass} flex-shrink-0 ${sourceDisplay.iconOpacity}`}>
           <img src={cliConfig.icon} alt={cliConfig.name} className="w-full h-full" />
         </div>
@@ -248,14 +248,14 @@ export function CliConfigStatus({ cliType, result, compact = false }: CliConfigS
   // 完整模式：显示图标、状态标签和详细信息
   return (
     <div
-      className={`flex items-center gap-2 px-2 py-1 rounded-md ${sourceDisplay.bgClass}`}
+      className={`flex items-center gap-[var(--spacing-sm)] px-[var(--spacing-sm)] py-[var(--spacing-xs)] rounded-md ${sourceDisplay.bgClass}`}
       title={tooltipText}
     >
       <div className={`${cliConfig.sizeClass} flex-shrink-0 ${sourceDisplay.iconOpacity}`}>
         <img src={cliConfig.icon} alt={cliConfig.name} className="w-full h-full" />
       </div>
       <div className="flex flex-col min-w-0">
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-[var(--spacing-xs)]">
           <span className={`text-xs font-medium ${sourceDisplay.colorClass} truncate`}>
             {result.sourceType === 'managed' && result.siteName
               ? result.siteName

@@ -59,16 +59,16 @@ function getAuthTypeLabel(authType?: AuthType): string {
  */
 function DetailRow({ cliType, result }: { cliType: CliType; result: CliDetectionResult }) {
   return (
-    <div className="flex items-center justify-between py-1.5 border-b border-slate-200 dark:border-slate-600 last:border-b-0">
+    <div className="flex items-center justify-between py-[var(--spacing-sm)] border-b border-slate-200 dark:border-slate-600 last:border-b-0">
       <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
         {CLI_NAMES[cliType]}
       </span>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-[var(--spacing-sm)]">
         <span className="text-xs text-slate-500 dark:text-slate-400">
           {getAuthTypeLabel(result.authType)}
         </span>
         {result.hasApiKey && (
-          <span className="text-[10px] px-1.5 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded">
+          <span className="text-[10px] px-[var(--spacing-sm)] py-[var(--spacing-xs)] bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded">
             API Key
           </span>
         )}
@@ -102,7 +102,7 @@ export function CliConfigStatusPanel({
   // 加载状态
   if (isLoading && !detection) {
     return (
-      <div className={`flex items-center gap-2 ${className}`}>
+      <div className={`flex items-center gap-[var(--spacing-sm)] ${className}`}>
         <Loader2 className="w-4 h-4 animate-spin text-slate-500" />
         <span className="text-xs text-slate-500">检测中...</span>
       </div>
@@ -112,12 +112,12 @@ export function CliConfigStatusPanel({
   // 无检测结果
   if (!detection) {
     return (
-      <div className={`flex items-center gap-2 ${className}`}>
+      <div className={`flex items-center gap-[var(--spacing-sm)] ${className}`}>
         <span className="text-xs text-slate-500">未检测</span>
         {showRefresh && (
           <button
             onClick={handleRefresh}
-            className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+            className="p-[var(--spacing-xs)] rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
             title="检测 CLI 配置"
           >
             <RefreshCw className="w-3.5 h-3.5 text-slate-500 hover:text-blue-500" />
@@ -129,11 +129,11 @@ export function CliConfigStatusPanel({
 
   return (
     <div className={`relative ${className}`}>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-[var(--spacing-sm)]">
         {/* CLI 状态列表 */}
-        <div className="flex items-center gap-4 divide-x divide-slate-300 dark:divide-slate-600">
+        <div className="flex items-center gap-[var(--spacing-lg)] divide-x divide-slate-300 dark:divide-slate-600">
           {CLI_TYPES.map((cliType, index) => (
-            <div key={cliType} className={index > 0 ? 'pl-4' : ''}>
+            <div key={cliType} className={index > 0 ? 'pl-[var(--spacing-lg)]' : ''}>
               <CliConfigStatus cliType={cliType} result={detection[cliType]} compact={compact} />
             </div>
           ))}
@@ -143,7 +143,7 @@ export function CliConfigStatusPanel({
         {showDetails && (
           <button
             onClick={toggleDetails}
-            className={`p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors ${
+            className={`p-[var(--spacing-xs)] rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors ${
               showDetailPanel ? 'bg-slate-200 dark:bg-slate-600' : ''
             }`}
             title="查看认证详情"
@@ -157,7 +157,7 @@ export function CliConfigStatusPanel({
           <button
             onClick={handleRefresh}
             disabled={isLoading}
-            className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors disabled:opacity-50"
+            className="p-[var(--spacing-xs)] rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors disabled:opacity-50"
             title="刷新 CLI 配置检测"
           >
             <RefreshCw
@@ -169,8 +169,8 @@ export function CliConfigStatusPanel({
 
       {/* 详情面板 */}
       {showDetails && showDetailPanel && (
-        <div className="absolute top-full left-0 mt-1 z-10 w-64 p-2 bg-white dark:bg-slate-800 rounded-lg shadow-lg border border-slate-200 dark:border-slate-600">
-          <div className="text-xs font-medium text-slate-600 dark:text-slate-300 mb-2">
+        <div className="absolute top-full left-0 mt-[var(--spacing-xs)] z-10 w-64 p-[var(--spacing-sm)] bg-white dark:bg-slate-800 rounded-lg shadow-lg border border-slate-200 dark:border-slate-600">
+          <div className="text-xs font-medium text-slate-600 dark:text-slate-300 mb-[var(--spacing-sm)]">
             认证详情
           </div>
           {CLI_TYPES.map(cliType => (

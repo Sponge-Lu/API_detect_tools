@@ -84,12 +84,13 @@ export function Header({
               onClick={handleDownloadClick}
               disabled={isDownloading}
               title={newVersion ? `新版本: v${newVersion}` : '下载更新'}
+              aria-label={newVersion ? `下载新版本 v${newVersion}` : '下载更新'}
               className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-400 text-white rounded-lg transition-all flex items-center gap-1.5 text-sm shadow-sm disabled:cursor-not-allowed"
             >
               {isDownloading ? (
-                <Loader2 className="w-4 h-4 animate-spin" strokeWidth={2} />
+                <Loader2 className="w-4 h-4 animate-spin" strokeWidth={2} aria-hidden="true" />
               ) : (
-                <Download className="w-4 h-4" strokeWidth={2} />
+                <Download className="w-4 h-4" strokeWidth={2} aria-hidden="true" />
               )}
               <span>{isDownloading ? '打开中...' : '下载更新'}</span>
             </button>
@@ -98,13 +99,15 @@ export function Header({
           <button
             onClick={onOpenSettings}
             className="relative px-3 py-1.5 bg-light-card dark:bg-dark-card hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-all flex items-center gap-1.5 text-sm border border-light-border dark:border-dark-border shadow-sm"
+            aria-label="打开设置"
           >
-            <Settings className="w-4 h-4" strokeWidth={2} />
+            <Settings className="w-4 h-4" strokeWidth={2} aria-hidden="true" />
             设置
             {hasUpdate && (
               <span
                 className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"
                 title="有新版本可用"
+                aria-label="有新版本可用"
               />
             )}
           </button>

@@ -7,6 +7,9 @@
  * - 本文件头注释
  * - src/renderer/components/FOLDER_INDEX.md
  * - PROJECT_INDEX.md
+ *
+ * @version 2.1.11
+ * @updated 2025-01-08 - 使用 IOSInput 替换输入框
  */
 
 import { useState, useRef, useEffect } from 'react';
@@ -19,8 +22,6 @@ import {
   Upload,
   Cloud,
   Loader2,
-  Eye,
-  EyeOff,
   Check,
   AlertCircle,
   FolderOpen,
@@ -34,6 +35,7 @@ import { useUpdate, ReleaseInfo, UpdateCheckResult } from '../hooks/useUpdate';
 import { toast } from '../store/toastStore';
 import { WebDAVConfig, DEFAULT_WEBDAV_CONFIG } from '../../shared/types/site';
 import { WebDAVBackupDialog, UpdateDialog } from './dialogs';
+import { IOSInput } from './IOSInput';
 
 interface SettingsPanelProps {
   settings: Settings;
@@ -76,7 +78,6 @@ export function SettingsPanel({
 
   // WebDAV 设置状态
   const [webdavConfig, setWebdavConfig] = useState<WebDAVConfig>(DEFAULT_WEBDAV_CONFIG);
-  const [showPassword, setShowPassword] = useState(false);
   const [testingConnection, setTestingConnection] = useState(false);
   const [savingWebdav, setSavingWebdav] = useState(false);
   const [connectionTestResult, setConnectionTestResult] = useState<{
@@ -345,16 +346,14 @@ export function SettingsPanel({
             <div className="bg-slate-50 dark:bg-slate-800/80 rounded-lg p-4 space-y-4 border border-slate-200 dark:border-slate-700">
               {/* 超时设置 */}
               <div>
-                <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-2">
-                  请求超时时间 (秒)
-                </label>
-                <input
+                <IOSInput
                   type="number"
-                  min="1"
-                  max="60"
+                  label="请求超时时间 (秒)"
+                  size="md"
                   value={formData.timeout}
                   onChange={e => setFormData({ ...formData, timeout: Number(e.target.value) })}
-                  className="w-full px-4 py-2 bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 outline-none transition-all text-light-text dark:text-dark-text"
+                  min={1}
+                  max={60}
                 />
                 <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
                   每个站点的最大等待时间
@@ -437,15 +436,13 @@ export function SettingsPanel({
 
               {/* 浏览器路径设置 */}
               <div>
-                <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-2">
-                  浏览器路径（可选）
-                </label>
-                <input
+                <IOSInput
                   type="text"
+                  label="浏览器路径（可选）"
+                  size="md"
                   value={formData.browser_path || ''}
                   onChange={e => setFormData({ ...formData, browser_path: e.target.value })}
                   placeholder="例如：C:\PortableApps\Chrome\chrome.exe"
-                  className="w-full px-4 py-2 bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 outline-none transition-all text-light-text dark:text-dark-text text-sm"
                 />
                 <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
                   留空则自动检测 Chrome / Edge
@@ -488,61 +485,41 @@ export function SettingsPanel({
                 <div className="space-y-4 pl-7 border-l-2 border-primary-200 dark:border-primary-800">
                   {/* 服务器地址 */}
                   <div>
-                    <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-1">
-                      服务器地址
-                    </label>
-                    <input
+                    <IOSInput
                       type="text"
+                      label="服务器地址"
+                      size="md"
                       value={webdavConfig.serverUrl}
                       onChange={e =>
                         setWebdavConfig({ ...webdavConfig, serverUrl: e.target.value })
                       }
                       placeholder="https://dav.jianguoyun.com/dav/"
-                      className="w-full px-4 py-2 bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 outline-none transition-all text-light-text dark:text-dark-text text-sm"
                     />
                   </div>
 
                   {/* 用户名 */}
                   <div>
-                    <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-1">
-                      用户名
-                    </label>
-                    <input
+                    <IOSInput
                       type="text"
+                      label="用户名"
+                      size="md"
                       value={webdavConfig.username}
                       onChange={e => setWebdavConfig({ ...webdavConfig, username: e.target.value })}
                       placeholder="your-email@example.com"
-                      className="w-full px-4 py-2 bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 outline-none transition-all text-light-text dark:text-dark-text text-sm"
                     />
                   </div>
 
                   {/* 密码 */}
                   <div>
-                    <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-1">
-                      密码 / 应用密码
-                    </label>
-                    <div className="relative">
-                      <input
-                        type={showPassword ? 'text' : 'password'}
-                        value={webdavConfig.password}
-                        onChange={e =>
-                          setWebdavConfig({ ...webdavConfig, password: e.target.value })
-                        }
-                        placeholder="应用专用密码"
-                        className="w-full px-4 py-2 pr-10 bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 outline-none transition-all text-light-text dark:text-dark-text text-sm"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-light-text-secondary dark:text-dark-text-secondary hover:text-light-text dark:hover:text-dark-text"
-                      >
-                        {showPassword ? (
-                          <EyeOff className="w-4 h-4" />
-                        ) : (
-                          <Eye className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
+                    <IOSInput
+                      type="password"
+                      label="密码 / 应用密码"
+                      size="md"
+                      value={webdavConfig.password}
+                      onChange={e => setWebdavConfig({ ...webdavConfig, password: e.target.value })}
+                      placeholder="应用专用密码"
+                      showPasswordToggle
+                    />
                     <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
                       建议使用应用专用密码而非账户密码
                     </p>
@@ -550,29 +527,24 @@ export function SettingsPanel({
 
                   {/* 远程路径 */}
                   <div>
-                    <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-1">
-                      远程备份路径
-                    </label>
-                    <input
+                    <IOSInput
                       type="text"
+                      label="远程备份路径"
+                      size="md"
                       value={webdavConfig.remotePath}
                       onChange={e =>
                         setWebdavConfig({ ...webdavConfig, remotePath: e.target.value })
                       }
                       placeholder="/api-hub-backups"
-                      className="w-full px-4 py-2 bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 outline-none transition-all text-light-text dark:text-dark-text text-sm"
                     />
                   </div>
 
                   {/* 最大备份数量 */}
                   <div>
-                    <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-1">
-                      最大备份数量
-                    </label>
-                    <input
+                    <IOSInput
                       type="number"
-                      min="1"
-                      max="100"
+                      label="最大备份数量"
+                      size="md"
                       value={webdavConfig.maxBackups}
                       onChange={e =>
                         setWebdavConfig({
@@ -580,7 +552,9 @@ export function SettingsPanel({
                           maxBackups: Math.min(100, Math.max(1, Number(e.target.value) || 10)),
                         })
                       }
-                      className="w-24 px-4 py-2 bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 outline-none transition-all text-light-text dark:text-dark-text text-sm"
+                      min={1}
+                      max={100}
+                      containerClassName="w-32"
                     />
                     <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
                       超过此数量时自动删除最旧的备份

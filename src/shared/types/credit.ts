@@ -20,6 +20,8 @@ export const CREDIT_CHANNELS = {
   FETCH_DAILY_STATS: 'credit:fetch-daily-stats',
   /** 获取交易记录 */
   FETCH_TRANSACTIONS: 'credit:fetch-transactions',
+  /** 刷新所有数据（积分、每日统计、交易记录） */
+  REFRESH_ALL: 'credit:refresh-all',
   /** 启动登录 */
   LOGIN: 'credit:login',
   /** 登出 */

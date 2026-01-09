@@ -7,12 +7,16 @@
  * - 本文件头注释
  * - src/renderer/components/FOLDER_INDEX.md
  * - PROJECT_INDEX.md
+ *
+ * @version 2.1.11
+ * @updated 2025-01-08 - 使用 IOSInput 替换输入框
  */
 
 import { useState, useEffect } from 'react';
 import { X, Loader2, Globe, CheckCircle, AlertTriangle } from 'lucide-react';
 import { SiteConfig } from '../App';
 import { toast } from '../store/toastStore';
+import { IOSInput } from './IOSInput';
 
 interface Props {
   site?: SiteConfig;
@@ -253,22 +257,16 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
           {mode === 'auto' && step === 'input-url' && (
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-light-text dark:text-dark-text mb-2">
-                  站点URL
-                </label>
-                <input
+                <IOSInput
                   type="url"
+                  label="站点URL"
                   value={url}
                   onChange={e => setUrl(e.target.value)}
                   placeholder="https://api.example.com"
-                  className="w-full px-4 py-3 bg-white dark:bg-dark-bg border-2 border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-light-text dark:text-dark-text placeholder-slate-400 dark:placeholder-slate-500"
+                  error={!!error}
+                  errorMessage={error}
                 />
               </div>
-              {error && (
-                <div className="px-4 py-3 bg-red-50 dark:bg-red-900/30 border-2 border-red-400 dark:border-red-600 rounded-lg text-red-700 dark:text-red-300 text-sm font-medium">
-                  {error}
-                </div>
-              )}
               <button
                 onClick={handleUrlSubmit}
                 disabled={loading || !url.trim()}
