@@ -63,10 +63,15 @@ function getStatusBadgeClass(status: TransactionStatus): string {
 }
 
 /**
- * 打开 credit.linux.do 网站
+ * 打开 credit.linux.do 网站（使用系统默认浏览器）
  */
-function openCreditSite() {
-  window.open('https://credit.linux.do', '_blank');
+async function openCreditSite() {
+  try {
+    await window.electronAPI.openUrl('https://credit.linux.do');
+  } catch (error) {
+    // 降级到 window.open
+    window.open('https://credit.linux.do', '_blank');
+  }
 }
 
 /**
@@ -153,7 +158,7 @@ export function TransactionListCard({
         </div>
         {/* 查看全部链接 - 蓝色文字，无图标 (Requirements: 10.6) */}
         <button
-          onClick={openCreditSite}
+          onClick={() => openCreditSite()}
           className="text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 transition-colors"
         >
           查看全部

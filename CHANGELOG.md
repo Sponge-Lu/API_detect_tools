@@ -4,6 +4,13 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，并且本项目遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
+## [v2.1.13]
+
+### 优化
+- **LDC 查看交易记录**：改用系统默认浏览器打开 credit.linux.do，而非 Electron 内置窗口
+
+---
+
 ## [v2.1.12]
 
 ### 新增
