@@ -24,6 +24,7 @@ import {
   ChevronsUpDown,
   ArrowUp,
   ArrowDown,
+  Calendar,
 } from 'lucide-react';
 import { SiteEditor } from './components/SiteEditor';
 import { SettingsPanel } from './components/SettingsPanel';
@@ -798,7 +799,7 @@ function App() {
   };
 
   // 签到逻辑 hook
-  const { handleCheckIn, openCheckinPage } = useCheckIn({
+  const { handleCheckIn, handleCheckInAll, openCheckinPage } = useCheckIn({
     showDialog,
     showAlert,
     setCheckingIn,
@@ -1468,6 +1469,25 @@ function App() {
                       })}
                     </div>
                     <div className="flex items-center gap-1">
+                      {/* 一键签到按钮 - 对齐到单个站点签到图标 */}
+                      <button
+                        onClick={handleCheckInAll}
+                        disabled={!!checkingIn || !config || config.sites.length === 0}
+                        className="p-1 hover:bg-yellow-500/20 rounded-[var(--radius-sm)] transition-all duration-[var(--duration-fast)] disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="一键签到：批量签到所有可签到站点"
+                      >
+                        {checkingIn ? (
+                          <Loader2
+                            className="w-3.5 h-3.5 animate-spin text-yellow-500"
+                            strokeWidth={2.5}
+                          />
+                        ) : (
+                          <Calendar
+                            className="w-3.5 h-3.5 text-yellow-600 dark:text-yellow-400 hover:text-yellow-500"
+                            strokeWidth={2.5}
+                          />
+                        )}
+                      </button>
                       {/* 展开全部按钮 - 对齐到单个站点展开按钮 */}
                       <button
                         onClick={handleToggleAllExpanded}

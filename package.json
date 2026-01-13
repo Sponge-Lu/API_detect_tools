@@ -1,6 +1,6 @@
 {
   "name": "api-hub-management-tools",
-  "version": "2.1.13",
+  "version": "2.1.14",
   "description": "API Hub Management Tools - Professional API management and monitoring tool",
   "author": {
     "name": "API Hub Team",
@@ -83,7 +83,7 @@
     "vitest": "^4.0.14"
   },
   "build": {
-    "buildVersion": "2.1.12",
+    "buildVersion": "2.1.14",
     "appId": "com.apihub.management",
     "productName": "API Hub Management Tools",
     "directories": {
@@ -127,7 +127,10 @@
       "artifactName": "${productName}-${buildVersion}-portable.exe"
     },
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "icon": "build/icon.png",
       "category": "public.app-category.developer-tools",
       "artifactName": "${productName}-${buildVersion}-mac.${ext}"
@@ -136,7 +139,10 @@
       "artifactName": "${productName}-${buildVersion}.${ext}"
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "icon": "build/icon.png",
       "category": "Development",
       "artifactName": "${productName}-${buildVersion}-linux.${ext}"

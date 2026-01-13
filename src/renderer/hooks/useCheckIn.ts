@@ -162,8 +162,138 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
     }
   };
 
+  /**
+   * 一键签到：批量签到所有可签到的站点
+   * @returns 签到结果摘要
+   */
+  const handleCheckInAll = async (): Promise<{
+    success: number;
+    failed: number;
+    skipped: number;
+  }> => {
+    const summary = { success: 0, failed: 0, skipped: 0 };
+    // 收集每个站点的签到结果详情
+    const siteResults: { name: string; success: boolean; quota?: number; message?: string }[] = [];
+
+    if (!config?.sites) {
+      showAlert('没有配置任何站点', 'warning');
+      return summary;
+    }
+
+    // 筛选出所有可以签到的站点
+    const checkablesSites = config.sites.filter(site => {
+      // 必须有认证信息
+      if (!site.system_token || !site.user_id) return false;
+
+      // 必须支持签到
+      const siteResult = results.find(r => r.name === site.name);
+      if (!siteResult?.has_checkin && !site.force_enable_checkin) return false;
+
+      // 检查缓存是否是今天的数据
+      const isToday = siteResult?.lastRefresh
+        ? new Date(siteResult.lastRefresh).toDateString() === new Date().toDateString()
+        : false;
+
+      // 如果是今天的缓存且已签到，则跳过
+      if (isToday && siteResult?.can_check_in === false) return false;
+
+      return true;
+    });
+
+    if (checkablesSites.length === 0) {
+      showAlert('没有可签到的站点', 'warning');
+      return summary;
+    }
+
+    Logger.info(`🚀 [useCheckIn] 开始一键签到，共 ${checkablesSites.length} 个站点`);
+
+    // 顺序签到每个站点
+    for (const site of checkablesSites) {
+      setCheckingIn(site.name);
+
+      try {
+        const timeout = config?.settings?.timeout ?? 30;
+        const { checkinResult, balanceResult } = await (
+          window.electronAPI as any
+        ).checkinAndRefresh(site, timeout);
+
+        if (checkinResult.success) {
+          summary.success++;
+          // 获取签到金额 (从 checkinStats 中提取)
+          const todayQuota =
+            balanceResult?.checkinStats?.todayQuota || checkinResult.checkinStats?.todayQuota;
+          siteResults.push({ name: site.name, success: true, quota: todayQuota });
+          Logger.info(`✅ [useCheckIn] ${site.name} 签到成功, quota=${todayQuota}`);
+
+          // 更新前端检测结果
+          const existingResult = results.find(r => r.name === site.name);
+          if (existingResult) {
+            upsertResult({
+              ...existingResult,
+              balance: balanceResult?.balance ?? existingResult.balance,
+              can_check_in: false,
+              checkinStats: balanceResult?.checkinStats || checkinResult.checkinStats,
+              lastRefresh: Date.now(),
+            });
+          }
+        } else {
+          summary.failed++;
+          siteResults.push({ name: site.name, success: false, message: checkinResult.message });
+          Logger.warn(`❌ [useCheckIn] ${site.name} 签到失败: ${checkinResult.message}`);
+        }
+      } catch (error: any) {
+        summary.failed++;
+        const errorMessage = error?.message || String(error);
+        siteResults.push({ name: site.name, success: false, message: errorMessage });
+        Logger.error(`❌ [useCheckIn] ${site.name} 签到异常:`, error);
+
+        // 如果浏览器已关闭，中断批量签到
+        if (
+          errorMessage.includes('浏览器已关闭') ||
+          errorMessage.includes('操作已取消') ||
+          errorMessage.includes('操作已被取消')
+        ) {
+          showAlert('浏览器已关闭，批量签到已中断', 'warning');
+          setCheckingIn(null);
+          return summary;
+        }
+      }
+    }
+
+    setCheckingIn(null);
+
+    // 构建签到结果详情消息
+    const formatQuota = (quota?: number): string => {
+      if (quota === undefined || quota === 0) return '';
+      const dollars = quota / 500000;
+      if (dollars >= 0.01) return `+$${dollars.toFixed(2)}`;
+      if (dollars >= 0.001) return `+$${dollars.toFixed(3)}`;
+      return `+$${dollars.toFixed(4)}`;
+    };
+
+    const successDetails = siteResults
+      .filter(r => r.success)
+      .map(r => `✅ ${r.name} ${formatQuota(r.quota)}`)
+      .join('\n');
+
+    const failedDetails = siteResults
+      .filter(r => !r.success)
+      .map(r => `❌ ${r.name}`)
+      .join('\n');
+
+    let message = '签到完成！\n\n';
+    if (successDetails) message += successDetails + '\n';
+    if (failedDetails) message += '\n' + failedDetails;
+
+    showAlert(message, summary.failed > 0 ? 'warning' : 'success', '一键签到');
+
+    Logger.info(`🏁 [useCheckIn] 一键签到完成: 成功=${summary.success}, 失败=${summary.failed}`);
+    return summary;
+  };
+
   return {
     handleCheckIn,
+    handleCheckInAll,
     openCheckinPage,
   };
 }
