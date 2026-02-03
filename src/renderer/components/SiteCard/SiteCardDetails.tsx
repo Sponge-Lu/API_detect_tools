@@ -53,6 +53,7 @@ interface SiteCardDetailsProps {
   onToggleTokenVisibility: (key: string) => void;
   onToggleModelSelection: (model: string) => void;
   onCopySelectedModels: () => void;
+  onClearSelectedModels: () => void;
   onCopyToClipboard: (text: string, label: string) => void;
   onOpenCreateTokenDialog: (site: SiteConfig) => void;
   onDeleteToken: (site: SiteConfig, token: any, index: number) => void;
@@ -104,6 +105,7 @@ export function SiteCardDetails({
   onToggleTokenVisibility,
   onToggleModelSelection,
   onCopySelectedModels,
+  onClearSelectedModels,
   onCopyToClipboard,
   onOpenCreateTokenDialog,
   onDeleteToken,
@@ -425,13 +427,22 @@ export function SiteCardDetails({
               </div>
             </div>
             {selectedModels.size > 0 && (
-              <button
-                onClick={onCopySelectedModels}
-                className="px-2 py-1 bg-[var(--ios-green)] hover:bg-[var(--ios-green)]/90 text-white rounded-[var(--radius-sm)] text-xs flex items-center gap-1 whitespace-nowrap font-medium shadow-sm transition-all active:scale-95"
-              >
-                <Copy className="w-2.5 h-2.5" />
-                复制
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={onClearSelectedModels}
+                  className="px-2 py-1 bg-[var(--ios-gray)] hover:bg-[var(--ios-gray)]/80 text-white rounded-[var(--radius-sm)] text-xs flex items-center gap-1 whitespace-nowrap font-medium shadow-sm transition-all active:scale-95"
+                  title="取消选择所有模型"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={onCopySelectedModels}
+                  className="px-2 py-1 bg-[var(--ios-green)] hover:bg-[var(--ios-green)]/90 text-white rounded-[var(--radius-sm)] text-xs flex items-center gap-1 whitespace-nowrap font-medium shadow-sm transition-all active:scale-95"
+                >
+                  <Copy className="w-2.5 h-2.5" />
+                  复制
+                </button>
+              </div>
             )}
           </div>
           <div className="max-h-32 overflow-y-auto p-1 bg-[var(--ios-bg-tertiary)]/50 dark:bg-[var(--ios-bg-primary)]/50 rounded-[var(--radius-sm)] border border-[var(--ios-separator)]">

@@ -319,6 +319,7 @@ function App() {
     toggleSiteExpanded,
     selectedModels,
     toggleModelSelected,
+    clearSelectedModels,
     showTokens,
     toggleTokenVisibility,
     selectedGroup,
@@ -1611,6 +1612,7 @@ function App() {
                           onToggleTokenVisibility={toggleTokenVisibility}
                           onToggleModelSelection={toggleModelSelection}
                           onCopySelectedModels={copySelectedModels}
+                          onClearSelectedModels={clearSelectedModels}
                           onOpenCreateTokenDialog={handleOpenCreateTokenDialog}
                           onDeleteToken={handleDeleteToken}
                           onOpenCliConfig={() => {

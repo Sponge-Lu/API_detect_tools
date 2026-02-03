@@ -82,6 +82,7 @@ export const SiteCard = React.memo(
     onToggleTokenVisibility,
     onToggleModelSelection,
     onCopySelectedModels,
+    onClearSelectedModels,
     onOpenCreateTokenDialog,
     onDeleteToken,
   }: SiteCardProps) {
@@ -183,6 +184,7 @@ export const SiteCard = React.memo(
               onToggleTokenVisibility={onToggleTokenVisibility}
               onToggleModelSelection={onToggleModelSelection}
               onCopySelectedModels={onCopySelectedModels}
+              onClearSelectedModels={onClearSelectedModels}
               onCopyToClipboard={onCopyToClipboard}
               onOpenCreateTokenDialog={onOpenCreateTokenDialog}
               onDeleteToken={onDeleteToken}
@@ -281,7 +283,8 @@ export const SiteCard = React.memo(
         prevProps.modelSearch === nextProps.modelSearch &&
         prevProps.globalModelSearch === nextProps.globalModelSearch &&
         prevProps.showTokens === nextProps.showTokens &&
-        prevProps.deletingTokenKey === nextProps.deletingTokenKey
+        prevProps.deletingTokenKey === nextProps.deletingTokenKey &&
+        prevProps.selectedModels === nextProps.selectedModels
       );
     }
 

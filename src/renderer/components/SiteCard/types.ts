@@ -76,6 +76,7 @@ export interface SiteCardProps {
   onToggleTokenVisibility: (key: string) => void;
   onToggleModelSelection: (model: string) => void;
   onCopySelectedModels: () => void;
+  onClearSelectedModels: () => void;
   onOpenCreateTokenDialog: (site: SiteConfig) => void;
   onDeleteToken: (site: SiteConfig, token: any, index: number) => void;
 }
