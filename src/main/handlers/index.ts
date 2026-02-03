@@ -31,6 +31,7 @@ import { registerUpdateHandlers } from './update-handlers';
 import { registerCliCompatHandlers } from './cli-compat-handlers';
 import { registerCloseBehaviorHandlers } from './close-behavior-handlers';
 import { registerCreditHandlers } from './credit-handlers';
+import { registerCustomCliConfigHandlers } from './custom-cli-config-handlers';
 import type { CloseBehaviorManager } from '../close-behavior-manager';
 
 interface HandlerDependencies {
@@ -87,6 +88,9 @@ export function registerAllHandlers(deps: HandlerDependencies) {
   // Credit 积分检测相关
   registerCreditHandlers();
 
+  // 自定义 CLI 配置相关
+  registerCustomCliConfigHandlers();
+
   Logger.info('✅ [Handlers] 所有 IPC 处理器已注册');
 }
 
@@ -101,3 +105,4 @@ export * from './update-handlers';
 export * from './cli-compat-handlers';
 export * from './close-behavior-handlers';
 export * from './credit-handlers';
+export * from './custom-cli-config-handlers';

@@ -238,4 +238,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     initiateRecharge: (request: { siteUrl: string; amount: number; token: string }) =>
       ipcRenderer.invoke('credit:initiate-recharge', request),
   },
+
+  // 自定义 CLI 配置 API
+  customCliConfig: {
+    // 加载配置
+    load: () => ipcRenderer.invoke('custom-cli-config:load'),
+    // 保存配置
+    save: (data: { configs: any[]; activeConfigId: string | null }) =>
+      ipcRenderer.invoke('custom-cli-config:save', data),
+    // 拉取模型列表
+    fetchModels: (baseUrl: string, apiKey: string) =>
+      ipcRenderer.invoke('custom-cli-config:fetch-models', baseUrl, apiKey),
+  },
 });

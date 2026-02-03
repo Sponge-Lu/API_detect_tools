@@ -13,9 +13,6 @@ import {
   LogOut,
   Loader2,
   Clock,
-  TrendingUp,
-  TrendingDown,
-  Minus,
   Shield,
   Wallet,
   ArrowDownCircle,
@@ -25,7 +22,7 @@ import {
 } from 'lucide-react';
 import { useCredit } from '../../hooks/useCredit';
 import { toast } from '../../store/toastStore';
-import { getDifferenceColorType, MIN_REFRESH_INTERVAL } from '../../../shared/types/credit';
+import { MIN_REFRESH_INTERVAL } from '../../../shared/types/credit';
 import { IncomeStatsCard } from './IncomeStatsCard';
 import { ExpenseStatsCard } from './ExpenseStatsCard';
 import { TransactionListCard } from './TransactionListCard';
@@ -35,33 +32,6 @@ export interface CreditPanelCompactProps {
   className?: string;
   /** 支持 LDC 支付的站点列表 (从外部传入) */
   ldcSites?: LdcSiteInfo[];
-}
-
-function getDifferenceColorClass(difference: number): string {
-  const colorType = getDifferenceColorType(difference);
-  switch (colorType) {
-    case 'positive':
-      return 'text-green-600 dark:text-green-400';
-    case 'negative':
-      return 'text-red-600 dark:text-red-400';
-    default:
-      return 'text-gray-500 dark:text-gray-400';
-  }
-}
-
-export { getDifferenceColorClass };
-
-function getDifferenceIcon(difference: number) {
-  const colorType = getDifferenceColorType(difference);
-  const iconClass = 'w-3 h-3';
-  switch (colorType) {
-    case 'positive':
-      return <TrendingUp className={`${iconClass} text-green-600 dark:text-green-400`} />;
-    case 'negative':
-      return <TrendingDown className={`${iconClass} text-red-600 dark:text-red-400`} />;
-    default:
-      return <Minus className={`${iconClass} text-gray-500 dark:text-gray-400`} />;
-  }
 }
 
 function formatLastUpdated(timestamp: number): string {
@@ -233,17 +203,11 @@ export function CreditPanelCompact({ className = '', ldcSites = [] }: CreditPane
         </div>
         {creditInfo && (
           <div className="flex items-center gap-2 text-xs">
-            {/* 只显示今日积分变化 */}
-            <span className="text-slate-500 dark:text-slate-400">今日积分变化:</span>
-            <div
-              className={`flex items-center gap-0.5 font-medium ${getDifferenceColorClass(creditInfo.difference)}`}
-            >
-              {getDifferenceIcon(creditInfo.difference)}
-              <span>
-                {creditInfo.difference > 0 ? '+' : ''}
-                {creditInfo.difference.toLocaleString()}
-              </span>
-            </div>
+            {/* 显示可用积分 */}
+            <span className="text-slate-500 dark:text-slate-400">可用积分:</span>
+            <span className="font-medium text-primary-600 dark:text-primary-400">
+              {creditInfo.availableBalance}
+            </span>
           </div>
         )}
         <div className="flex items-center gap-1">
@@ -318,65 +282,39 @@ export function CreditPanelCompact({ className = '', ldcSites = [] }: CreditPane
 
           {creditInfo ? (
             <div className="space-y-3">
-              {/* 积分信息区：两组分类显示在同一行 (Requirements: 16.2, 16.3) */}
-              <div className="grid grid-cols-2 gap-4 p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
-                {/* Linux Do 社区积分 */}
-                <div className="space-y-1">
-                  <div className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">
-                    Linux Do 社区积分
-                  </div>
-                  <div className="flex items-center gap-4 text-sm">
-                    <div className="flex items-center gap-1">
-                      <span className="text-slate-500 dark:text-slate-400">基准值:</span>
-                      <span className="font-semibold text-slate-800 dark:text-slate-200">
-                        {creditInfo.communityBalance.toLocaleString()}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span className="text-slate-500 dark:text-slate-400">当前分:</span>
-                      <span className="font-semibold text-slate-800 dark:text-slate-200">
-                        {creditInfo.gamificationScore.toLocaleString()}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span className="text-slate-500 dark:text-slate-400">今日积分变化:</span>
-                      <span
-                        className={`font-semibold flex items-center gap-0.5 ${getDifferenceColorClass(creditInfo.difference)}`}
-                      >
-                        {getDifferenceIcon(creditInfo.difference)}
-                        {creditInfo.difference > 0 ? '+' : ''}
-                        {creditInfo.difference.toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
+              {/* Linux Do Credit 积分信息区 */}
+              <div className="p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
+                <div className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">
+                  Linux Do Credit 积分
                 </div>
-                {/* Linux Do Credit 积分 */}
-                <div className="space-y-1 border-l border-slate-200 dark:border-slate-600 pl-4">
-                  <div className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">
-                    Linux Do Credit 积分
+                <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-1">
+                    <ArrowDownCircle className="w-3.5 h-3.5 text-green-500" />
+                    <span className="text-slate-500 dark:text-slate-400">收入:</span>
+                    <span className="font-semibold text-green-600 dark:text-green-400">
+                      {creditInfo.totalReceive}
+                    </span>
                   </div>
-                  <div className="flex items-center gap-4 text-sm">
-                    <div className="flex items-center gap-1">
-                      <ArrowDownCircle className="w-3.5 h-3.5 text-green-500" />
-                      <span className="text-slate-500 dark:text-slate-400">收入:</span>
-                      <span className="font-semibold text-green-600 dark:text-green-400">
-                        {creditInfo.totalReceive}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <ArrowUpCircle className="w-3.5 h-3.5 text-red-500" />
-                      <span className="text-slate-500 dark:text-slate-400">支出:</span>
-                      <span className="font-semibold text-red-600 dark:text-red-400">
-                        {creditInfo.totalPayment}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Wallet className="w-3.5 h-3.5 text-primary-500" />
-                      <span className="text-slate-500 dark:text-slate-400">可用:</span>
-                      <span className="font-semibold text-primary-600 dark:text-primary-400">
-                        {creditInfo.availableBalance}
-                      </span>
-                    </div>
+                  <div className="flex items-center gap-1">
+                    <ArrowUpCircle className="w-3.5 h-3.5 text-red-500" />
+                    <span className="text-slate-500 dark:text-slate-400">支出:</span>
+                    <span className="font-semibold text-red-600 dark:text-red-400">
+                      {creditInfo.totalPayment}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Wallet className="w-3.5 h-3.5 text-primary-500" />
+                    <span className="text-slate-500 dark:text-slate-400">可用:</span>
+                    <span className="font-semibold text-primary-600 dark:text-primary-400">
+                      {creditInfo.availableBalance}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Coins className="w-3.5 h-3.5 text-amber-500" />
+                    <span className="text-slate-500 dark:text-slate-400">基准值:</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">
+                      {creditInfo.communityBalance.toLocaleString()}
+                    </span>
                   </div>
                 </div>
               </div>

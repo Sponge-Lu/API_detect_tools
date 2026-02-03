@@ -9,10 +9,12 @@
  * - PROJECT_INDEX.md
  */
 
-import { RefreshCw, Loader2, Info } from 'lucide-react';
-import { useState } from 'react';
+import { RefreshCw, Loader2, Info, Settings } from 'lucide-react';
+import { useState, useEffect } from 'react';
 import { CliConfigStatus } from './CliConfigStatus';
 import { useConfigDetection } from '../../hooks/useConfigDetection';
+import { useCustomCliConfigStore } from '../../store/customCliConfigStore';
+import { CustomCliConfigListDialog } from '../dialogs/CustomCliConfigListDialog';
 import type { AuthType, CliType, CliDetectionResult } from '../../../shared/types/config-detection';
 
 export interface CliConfigStatusPanelProps {
@@ -90,6 +92,13 @@ export function CliConfigStatusPanel({
 }: CliConfigStatusPanelProps) {
   const { detection, isLoading, refresh } = useConfigDetection();
   const [showDetailPanel, setShowDetailPanel] = useState(false);
+  const [showCustomConfigDialog, setShowCustomConfigDialog] = useState(false);
+
+  // 加载自定义CLI配置，以便CliConfigStatus能匹配配置名称
+  const { loadConfigs } = useCustomCliConfigStore();
+  useEffect(() => {
+    loadConfigs();
+  }, [loadConfigs]);
 
   const handleRefresh = async () => {
     await refresh();
@@ -139,6 +148,15 @@ export function CliConfigStatusPanel({
           ))}
         </div>
 
+        {/* 自定义配置按钮 */}
+        <button
+          onClick={() => setShowCustomConfigDialog(true)}
+          className="p-[var(--spacing-xs)] rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors text-slate-500 hover:text-blue-500"
+          title="自定义 CLI 配置"
+        >
+          <Settings className="w-3.5 h-3.5" />
+        </button>
+
         {/* 详情按钮 */}
         {showDetails && (
           <button
@@ -178,6 +196,12 @@ export function CliConfigStatusPanel({
           ))}
         </div>
       )}
+
+      {/* 自定义配置对话框 */}
+      <CustomCliConfigListDialog
+        isOpen={showCustomConfigDialog}
+        onClose={() => setShowCustomConfigDialog(false)}
+      />
     </div>
   );
 }

@@ -15,6 +15,7 @@ import type {
   CliType,
   ConfigSourceType,
 } from '../../../shared/types/config-detection';
+import { useCustomCliConfigStore } from '../../store/customCliConfigStore';
 
 // 导入 CLI 图标
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
@@ -215,9 +216,26 @@ export function CliConfigStatus({ cliType, result, compact = false }: CliConfigS
   const statusDetail = getStatusDetail(result);
   const detectedAtText = formatDetectedAt(result.detectedAt);
 
+  // 匹配自定义配置
+  const { configs } = useCustomCliConfigStore();
+  const matchedCustomConfig =
+    result.sourceType === 'other' && result.baseUrl
+      ? configs.find(c => {
+          if (!c.baseUrl) return false;
+          // 标准化 URL 进行比较：移除协议、尾部斜杠、常见路径前缀（如 /v1）
+          const normalizeUrl = (url: string) => {
+            return url
+              .replace(/^https?:\/\//, '') // 移除协议
+              .replace(/\/(v\d+)?\/?$/, '') // 移除尾部 /v1 或 / 等
+              .toLowerCase();
+          };
+          return normalizeUrl(c.baseUrl) === normalizeUrl(result.baseUrl!);
+        })
+      : null;
+
   // 构建 tooltip 文本
   const tooltipParts = [
-    `${cliConfig.name}: ${sourceDisplay.label}`,
+    `${cliConfig.name}: ${matchedCustomConfig ? matchedCustomConfig.name : sourceDisplay.label}`,
     statusDetail,
     `检测时间: ${detectedAtText}`,
   ].filter(Boolean);
@@ -225,16 +243,39 @@ export function CliConfigStatus({ cliType, result, compact = false }: CliConfigS
 
   if (compact) {
     // 紧凑模式：仅显示图标和简短状态标签
+    // 如果匹配到自定义配置，显示配置名称；否则对于 'other' 类型显示 Base URL
+    const showBaseUrl = result.sourceType === 'other' && result.baseUrl && !matchedCustomConfig;
+    const displayLabel = matchedCustomConfig
+      ? matchedCustomConfig.name
+      : result.sourceType === 'managed' && result.siteName
+        ? result.siteName
+        : sourceDisplay.shortLabel;
+
+    // 格式化 Base URL 显示（移除协议前缀，截断过长的 URL）
+    const formatBaseUrl = (url: string): string => {
+      const cleaned = url.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      return cleaned.length > 20 ? cleaned.substring(0, 20) + '...' : cleaned;
+    };
+
+    // 自定义配置使用特殊颜色
+    const labelColorClass = matchedCustomConfig
+      ? 'text-[var(--ios-blue)]'
+      : sourceDisplay.colorClass;
+
     return (
       <div className="flex items-center gap-[var(--spacing-sm)]" title={tooltipText}>
         <div className={`${cliConfig.sizeClass} flex-shrink-0 ${sourceDisplay.iconOpacity}`}>
           <img src={cliConfig.icon} alt={cliConfig.name} className="w-full h-full" />
         </div>
-        <span className={`text-xs font-medium ${sourceDisplay.colorClass}`}>
-          {result.sourceType === 'managed' && result.siteName
-            ? result.siteName
-            : sourceDisplay.shortLabel}
-        </span>
+        <div className="flex items-center gap-1">
+          <span className={`text-xs font-medium ${labelColorClass}`}>{displayLabel}</span>
+          {/* 对于 'other' 类型显示 Base URL（仅在未匹配自定义配置时） */}
+          {showBaseUrl && (
+            <span className="text-[10px] text-slate-500 dark:text-slate-400 truncate max-w-[100px]">
+              {formatBaseUrl(result.baseUrl!)}
+            </span>
+          )}
+        </div>
         {/* 显示认证类型图标 */}
         {authDisplay && (
           <span className="text-xs" title={authDisplay.label}>
@@ -246,9 +287,20 @@ export function CliConfigStatus({ cliType, result, compact = false }: CliConfigS
   }
 
   // 完整模式：显示图标、状态标签和详细信息
+  // 自定义配置使用特殊颜色和背景
+  const fullBgClass = matchedCustomConfig
+    ? 'bg-blue-50 dark:bg-blue-900/20'
+    : sourceDisplay.bgClass;
+  const fullColorClass = matchedCustomConfig ? 'text-[var(--ios-blue)]' : sourceDisplay.colorClass;
+  const fullDisplayLabel = matchedCustomConfig
+    ? matchedCustomConfig.name
+    : result.sourceType === 'managed' && result.siteName
+      ? result.siteName
+      : sourceDisplay.label;
+
   return (
     <div
-      className={`flex items-center gap-[var(--spacing-sm)] px-[var(--spacing-sm)] py-[var(--spacing-xs)] rounded-md ${sourceDisplay.bgClass}`}
+      className={`flex items-center gap-[var(--spacing-sm)] px-[var(--spacing-sm)] py-[var(--spacing-xs)] rounded-md ${fullBgClass}`}
       title={tooltipText}
     >
       <div className={`${cliConfig.sizeClass} flex-shrink-0 ${sourceDisplay.iconOpacity}`}>
@@ -256,10 +308,8 @@ export function CliConfigStatus({ cliType, result, compact = false }: CliConfigS
       </div>
       <div className="flex flex-col min-w-0">
         <div className="flex items-center gap-[var(--spacing-xs)]">
-          <span className={`text-xs font-medium ${sourceDisplay.colorClass} truncate`}>
-            {result.sourceType === 'managed' && result.siteName
-              ? result.siteName
-              : sourceDisplay.label}
+          <span className={`text-xs font-medium ${fullColorClass} truncate`}>
+            {fullDisplayLabel}
           </span>
           {/* 显示认证类型图标 */}
           {authDisplay && (
@@ -268,7 +318,7 @@ export function CliConfigStatus({ cliType, result, compact = false }: CliConfigS
             </span>
           )}
         </div>
-        {result.baseUrl && result.sourceType !== 'unknown' && (
+        {result.baseUrl && result.sourceType !== 'unknown' && !matchedCustomConfig && (
           <span className="text-[10px] text-slate-500 dark:text-slate-400 truncate max-w-[120px]">
             {result.baseUrl}
           </span>

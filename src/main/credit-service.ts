@@ -27,7 +27,6 @@ import type {
   CreditConfig,
   CreditResponse,
   CreditApiResponse,
-  LinuxDoUserResponse,
   CreditStorageData,
   DailyStats,
   DailyStatItem,
@@ -51,7 +50,6 @@ import {
 const CREDIT_API_URL = 'https://credit.linux.do/api/v1/oauth/user-info';
 const DAILY_STATS_API_URL = 'https://credit.linux.do/api/v1/dashboard/stats/daily';
 const TRANSACTIONS_API_URL = 'https://credit.linux.do/api/v1/order/transactions';
-const LINUX_DO_USER_URL = 'https://linux.do/u';
 
 /**
  * Credit 服务类
@@ -257,57 +255,8 @@ export class CreditService {
         Logger.warn(`⚠️ [CreditService] 获取交易记录失败: ${e.message}`);
       }
 
-      // 【第二阶段】获取 linux.do 用户积分
-      Logger.info('📡 [CreditService] 获取 linux.do 用户积分...');
-      const linuxDoUrl = `${LINUX_DO_USER_URL}/${encodeURIComponent(username)}.json`;
-
-      let gamificationScore = 0;
-      try {
-        await page.goto(`https://linux.do/u/${encodeURIComponent(username)}`, {
-          waitUntil: 'networkidle2',
-          timeout: 30000,
-        });
-
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-        const linuxDoData = (await page.evaluate(async (url: string) => {
-          try {
-            const response = await fetch(url, {
-              method: 'GET',
-              credentials: 'include',
-              headers: {
-                Accept: 'application/json',
-              },
-            });
-
-            if (!response.ok) {
-              return { success: false, status: response.status };
-            }
-
-            const data = await response.json();
-            return { success: true, data, status: response.status };
-          } catch (e: any) {
-            return { success: false, error: e.message, status: 0 };
-          }
-        }, linuxDoUrl)) as { success: boolean; data?: any; status: number; error?: string };
-
-        Logger.info(`📡 [CreditService] linux.do 响应状态: ${linuxDoData.status}`);
-
-        if (linuxDoData.success && linuxDoData.data?.user?.gamification_score !== undefined) {
-          gamificationScore = linuxDoData.data.user.gamification_score;
-          Logger.info(`✅ [CreditService] 当前分: ${gamificationScore}`);
-        } else {
-          Logger.warn(
-            `⚠️ [CreditService] 无法获取 linux.do 积分数据: ${linuxDoData.error || linuxDoData.status}`
-          );
-        }
-      } catch (navError: any) {
-        Logger.warn(`⚠️ [CreditService] 导航到 linux.do 失败: ${navError.message}`);
-      }
-
-      // 步骤4: 计算差值并构建积分信息
-      const difference = calculateDifference(gamificationScore, communityBalance);
-      Logger.info(`📊 [CreditService] 差值: ${difference}`);
+      // 注意：不再获取 linux.do 积分（gamificationScore），避免 429 限流问题
+      // gamificationScore 和 difference 保留为 0，前端不再显示相关信息
 
       creditInfo = {
         id: userData.id,
@@ -316,8 +265,8 @@ export class CreditService {
         avatarUrl: userData.avatar_url,
         trustLevel: userData.trust_level,
         communityBalance,
-        gamificationScore,
-        difference,
+        gamificationScore: 0, // 不再获取
+        difference: 0, // 不再计算
         totalReceive: userData.total_receive,
         totalPayment: userData.total_payment,
         totalTransfer: userData.total_transfer,
@@ -443,69 +392,7 @@ export class CreditService {
 
       Logger.info(`✅ [CreditService] 用户名: ${username}, 基准值: ${communityBalance}`);
 
-      // 步骤2: 获取 linux.do 用户积分（直接导航到 linux.do 绕过 Cloudflare 验证）
-      Logger.info('📡 [CreditService] 获取 linux.do 用户积分...');
-      const linuxDoUrl = `${LINUX_DO_USER_URL}/${encodeURIComponent(username)}.json`;
-      Logger.info(`📡 [CreditService] 请求 linux.do 用户数据: ${linuxDoUrl}`);
-
-      let gamificationScore = 0;
-      try {
-        // 直接导航到 linux.do 用户页面（绕过 Cloudflare）
-        await page.goto(`https://linux.do/u/${encodeURIComponent(username)}`, {
-          waitUntil: 'networkidle2',
-          timeout: 30000,
-        });
-
-        // 等待页面加载
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-        // 在 linux.do 页面获取用户数据
-        const linuxDoData = (await page.evaluate(async (url: string) => {
-          try {
-            const response = await fetch(url, {
-              method: 'GET',
-              credentials: 'include',
-              headers: {
-                Accept: 'application/json',
-              },
-            });
-
-            if (!response.ok) {
-              return { success: false, status: response.status };
-            }
-
-            const data = await response.json();
-            return { success: true, data, status: response.status };
-          } catch (e: any) {
-            return { success: false, error: e.message, status: 0 };
-          }
-        }, linuxDoUrl)) as { success: boolean; data?: any; status: number; error?: string };
-
-        Logger.info(`📡 [CreditService] linux.do 响应状态: ${linuxDoData.status}`);
-
-        if (linuxDoData.success && linuxDoData.data?.user?.gamification_score !== undefined) {
-          gamificationScore = linuxDoData.data.user.gamification_score;
-          Logger.info(`✅ [CreditService] 当前分: ${gamificationScore}`);
-        } else {
-          Logger.warn(
-            `⚠️ [CreditService] 无法获取 linux.do 积分数据: ${linuxDoData.error || linuxDoData.status}`
-          );
-          return {
-            success: false,
-            error: '无法获取用户积分数据，请稍后重试',
-          };
-        }
-      } catch (navError: any) {
-        Logger.warn(`⚠️ [CreditService] 导航到 linux.do 失败: ${navError.message}`);
-        return {
-          success: false,
-          error: '无法访问 linux.do，请检查网络连接',
-        };
-      }
-
-      // 步骤3: 计算差值
-      const difference = calculateDifference(gamificationScore, communityBalance);
-      Logger.info(`📊 [CreditService] 差值: ${difference}`);
+      // 注意：不再获取 linux.do 积分（gamificationScore），避免 429 限流问题
 
       // 构建积分信息（包含完整的用户数据）
       const creditInfo: CreditInfo = {
@@ -517,8 +404,8 @@ export class CreditService {
         trustLevel: userData.trust_level,
         // 积分信息
         communityBalance,
-        gamificationScore,
-        difference,
+        gamificationScore: 0, // 不再获取
+        difference: 0, // 不再计算
         // 收支信息
         totalReceive: userData.total_receive,
         totalPayment: userData.total_payment,
@@ -868,59 +755,6 @@ export class CreditService {
         Logger.error(`❌ [CreditService] 响应状态: ${error.response.status}`);
         Logger.error(
           `❌ [CreditService] 响应数据: ${JSON.stringify(error.response.data || {}).substring(0, 200)}`
-        );
-      }
-      return {
-        success: false,
-        error: this.formatErrorMessage(error),
-      };
-    }
-  }
-
-  /**
-   * 从 linux.do 获取用户积分
-   * 注意：linux.do 可能也有 Cloudflare 保护，如果 HTTP 请求失败会返回错误
-   */
-  private async fetchLinuxDoUserData(username: string): Promise<CreditResponse<number>> {
-    try {
-      const url = `${LINUX_DO_USER_URL}/${encodeURIComponent(username)}.json`;
-      Logger.info(`📡 [CreditService] 请求 linux.do 用户数据: ${url}`);
-
-      const response = await httpGet<LinuxDoUserResponse>(url, {
-        headers: {
-          Accept: 'application/json',
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
-        },
-        timeout: 15000,
-      });
-
-      Logger.info(`📡 [CreditService] linux.do 响应状态: ${response.status}`);
-
-      // 解析响应数据
-      const data = response.data;
-      if (!data || !data.user) {
-        Logger.warn(
-          `⚠️ [CreditService] linux.do 响应数据异常: ${JSON.stringify(data).substring(0, 200)}`
-        );
-        return {
-          success: false,
-          error: '无法获取用户积分数据',
-        };
-      }
-
-      const score = data.user.gamification_score ?? 0;
-      Logger.info(`✅ [CreditService] linux.do gamification_score: ${score}`);
-      return {
-        success: true,
-        data: score,
-      };
-    } catch (error: any) {
-      Logger.error(`❌ [CreditService] fetchLinuxDoUserData 异常: ${error.message}`);
-      if (error.response) {
-        Logger.error(`❌ [CreditService] 响应状态: ${error.response.status}`);
-        Logger.error(
-          `❌ [CreditService] 响应数据: ${JSON.stringify(error.response.data || {}).substring(0, 300)}`
         );
       }
       return {

@@ -16,6 +16,3 @@ export type { TransactionListCardProps } from './TransactionListCard';
 
 export { RechargeSection } from './RechargeSection';
 export type { RechargeSectionProps, LdcSiteInfo } from './RechargeSection';
-
-// 导出工具函数供测试使用
-export { getDifferenceColorClass } from './CreditPanelCompact';

@@ -95,6 +95,7 @@ export function ApplyConfigPopover({
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const [applyingCli, setApplyingCli] = useState<SupportedCliType | null>(null);
   const [isPositioned, setIsPositioned] = useState(false);
+  const [applyMode, setApplyMode] = useState<'merge' | 'overwrite'>('merge');
 
   // 获取 CLI 配置检测相关方法 (Requirements 6.2)
   const { clearCliConfigDetection, detectCliConfig } = useDetectionStore();
@@ -207,7 +208,7 @@ export function ApplyConfigPopover({
       const result = await (window.electronAPI as any).cliCompat.writeConfig({
         cliType,
         files: filesToWrite,
-        applyMode: config.applyMode || 'merge',
+        applyMode,
       });
 
       if (result.success) {
@@ -271,6 +272,33 @@ export function ApplyConfigPopover({
         </div>
       ) : (
         <>
+          {/* 合并/覆盖模式切换 */}
+          <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-700">
+            <div className="text-xs text-slate-500 dark:text-slate-400 mb-1.5">应用模式</div>
+            <div className="flex rounded-md overflow-hidden border border-slate-200 dark:border-slate-600">
+              <button
+                onClick={() => setApplyMode('merge')}
+                className={`flex-1 px-3 py-1 text-xs transition-colors ${
+                  applyMode === 'merge'
+                    ? 'bg-[var(--ios-blue)] text-white'
+                    : 'bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-600'
+                }`}
+              >
+                合并
+              </button>
+              <button
+                onClick={() => setApplyMode('overwrite')}
+                className={`flex-1 px-3 py-1 text-xs transition-colors ${
+                  applyMode === 'overwrite'
+                    ? 'bg-[var(--ios-blue)] text-white'
+                    : 'bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-600'
+                }`}
+              >
+                覆盖
+              </button>
+            </div>
+          </div>
+          {/* CLI 选择 */}
           <div className="px-3 py-2 text-xs text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-700">
             选择要应用的 CLI 配置
           </div>
