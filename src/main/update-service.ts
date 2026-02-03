@@ -110,14 +110,45 @@ export class UpdateService {
    */
   private getDownloadUrl(release: any): string {
     let downloadUrl = release.html_url;
-    if (release.assets && release.assets.length > 0) {
-      const windowsAsset = release.assets.find(
+
+    if (!release.assets || release.assets.length === 0) {
+      return downloadUrl;
+    }
+
+    const platform = process.platform;
+    let targetAsset;
+
+    // 根据平台筛选对应的安装包
+    if (platform === 'win32') {
+      // Windows: 查找 Setup.exe
+      targetAsset = release.assets.find(
         (asset: any) => asset.name.endsWith('.exe') && asset.name.includes('Setup')
       );
-      if (windowsAsset) {
-        downloadUrl = windowsAsset.browser_download_url;
+    } else if (platform === 'darwin') {
+      // macOS: 优先查找 dmg，其次 zip (不包含 blockmap)
+      targetAsset = release.assets.find(
+        (asset: any) => asset.name.endsWith('.dmg') && !asset.name.includes('blockmap')
+      );
+      if (!targetAsset) {
+        targetAsset = release.assets.find(
+          (asset: any) => asset.name.endsWith('.zip') && !asset.name.includes('blockmap')
+        );
+      }
+    } else if (platform === 'linux') {
+      // Linux: 优先查找 AppImage，其次 deb
+      targetAsset = release.assets.find((asset: any) => asset.name.endsWith('.AppImage'));
+      if (!targetAsset) {
+        targetAsset = release.assets.find((asset: any) => asset.name.endsWith('.deb'));
       }
     }
+
+    if (targetAsset) {
+      downloadUrl = targetAsset.browser_download_url;
+      Logger.info(`[UpdateService] 已找到适配 ${platform} 的安装包: ${targetAsset.name}`);
+    } else {
+      Logger.warn(`[UpdateService] 未找到适配 ${platform} 的安装包，回退到发布页链接`);
+    }
+
     return downloadUrl;
   }
 
