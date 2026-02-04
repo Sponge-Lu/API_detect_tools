@@ -12,8 +12,19 @@
  * - PROJECT_INDEX.md
  */
 
-import { useState, useEffect, useMemo } from 'react';
-import { Copy, Check, RefreshCw, Loader2, Key, Globe, Settings } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import {
+  Copy,
+  Check,
+  RefreshCw,
+  Loader2,
+  Key,
+  Globe,
+  Settings,
+  ChevronDown,
+  Search,
+  X,
+} from 'lucide-react';
 import { IOSModal } from '../IOSModal';
 import { IOSButton } from '../IOSButton';
 import { useCustomCliConfigStore } from '../../store/customCliConfigStore';
@@ -42,13 +53,12 @@ interface CliTypeConfig {
   key: CliType;
   name: string;
   icon: string;
-  modelPrefix: string;
 }
 
 const CLI_TYPES: CliTypeConfig[] = [
-  { key: 'claudeCode', name: 'Claude Code', icon: ClaudeCodeIcon, modelPrefix: 'claude' },
-  { key: 'codex', name: 'Codex', icon: CodexIcon, modelPrefix: 'gpt' },
-  { key: 'geminiCli', name: 'Gemini CLI', icon: GeminiIcon, modelPrefix: 'gemini' },
+  { key: 'claudeCode', name: 'Claude Code', icon: ClaudeCodeIcon },
+  { key: 'codex', name: 'Codex', icon: CodexIcon },
+  { key: 'geminiCli', name: 'Gemini CLI', icon: GeminiIcon },
 ];
 
 /** iOS 风格 Toggle Switch 组件 */
@@ -157,10 +167,38 @@ export function CustomCliConfigEditorDialog({
   const [selectedCli, setSelectedCli] = useState<CliType>('claudeCode');
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
 
+  // 全局模型选择状态
+  const [selectedModel, setSelectedModel] = useState<string | null>(
+    config.cliSettings.claudeCode?.model ||
+      config.cliSettings.codex?.model ||
+      config.cliSettings.geminiCli?.model ||
+      null
+  );
+  const [modelSearchQuery, setModelSearchQuery] = useState('');
+  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
+  const modelDropdownRef = useRef<HTMLDivElement>(null);
+
   // 获取当前配置的模型列表 (从 store 中实时获取以反映拉取结果)
   const { configs } = useCustomCliConfigStore();
   const currentConfig = configs.find(c => c.id === config.id);
   const models = currentConfig?.models || config.models;
+
+  // 过滤后的模型列表
+  const filteredModels = useMemo(() => {
+    if (!modelSearchQuery) return models;
+    return models.filter(m => m.toLowerCase().includes(modelSearchQuery.toLowerCase()));
+  }, [models, modelSearchQuery]);
+
+  // 点击外部关闭下拉框
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (modelDropdownRef.current && !modelDropdownRef.current.contains(event.target as Node)) {
+        setIsModelDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // 重置状态
   useEffect(() => {
@@ -172,34 +210,26 @@ export function CustomCliConfigEditorDialog({
       setCliSettings(config.cliSettings);
       setSelectedCli('claudeCode');
       setCopiedPath(null);
+      setSelectedModel(
+        config.cliSettings.claudeCode?.model ||
+          config.cliSettings.codex?.model ||
+          config.cliSettings.geminiCli?.model ||
+          null
+      );
+      setModelSearchQuery('');
+      setIsModelDropdownOpen(false);
     }
   }, [isOpen, config]);
 
-  // 过滤匹配前缀的模型
-  const filterModelsByPrefix = (modelList: string[], prefix: string): string[] => {
-    if (!prefix) return modelList;
-    return modelList.filter(m => m.toLowerCase().includes(prefix.toLowerCase()));
-  };
-
-  // 当前 CLI 类型配置
-  const currentCliConfig = useMemo(() => CLI_TYPES.find(c => c.key === selectedCli), [selectedCli]);
-
-  // 可用模型列表
-  const availableModels = useMemo(() => {
-    if (!currentCliConfig) return [];
-    return filterModelsByPrefix(models, currentCliConfig.modelPrefix);
-  }, [currentCliConfig, models]);
-
   // 生成配置预览
   const configPreview = useMemo((): GeneratedConfig | null => {
-    const settings = cliSettings[selectedCli];
-    if (!settings.model || !baseUrl || !apiKey) return null;
+    if (!selectedModel || !baseUrl || !apiKey) return null;
 
     const params = {
       siteUrl: baseUrl,
       siteName: name || '自定义配置',
       apiKey,
-      model: settings.model,
+      model: selectedModel,
     };
 
     if (selectedCli === 'claudeCode') {
@@ -238,14 +268,19 @@ export function CustomCliConfigEditorDialog({
     }
   };
 
-  // 保存配置
+  // 保存配置 - 将选中的模型应用到所有CLI
   const handleSave = async () => {
+    const updatedCliSettings = {
+      claudeCode: { ...cliSettings.claudeCode, model: selectedModel },
+      codex: { ...cliSettings.codex, model: selectedModel },
+      geminiCli: { ...cliSettings.geminiCli, model: selectedModel },
+    };
     updateConfig(config.id, {
       name,
       baseUrl,
       apiKey,
       notes,
-      cliSettings,
+      cliSettings: updatedCliSettings,
     });
     await saveConfigs();
     onClose();
@@ -318,11 +353,77 @@ export function CustomCliConfigEditorDialog({
           </div>
           <div>
             <label className="block text-sm font-medium text-[var(--ios-text-primary)] mb-2">
-              模型数
+              模型{' '}
+              <span className="text-[var(--ios-text-secondary)] font-normal">
+                ({models.length}个)
+              </span>
             </label>
             <div className="flex items-center gap-2">
-              <div className="flex-1 px-3 py-2 bg-[var(--ios-bg-tertiary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] text-sm text-[var(--ios-text-primary)]">
-                {models.length} 个模型
+              <div className="flex-1 relative" ref={modelDropdownRef}>
+                <button
+                  type="button"
+                  onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
+                  className="w-full flex items-center justify-between px-3 py-2 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] text-sm text-[var(--ios-text-primary)] hover:border-[var(--ios-gray)] transition-all"
+                >
+                  <span className={selectedModel ? '' : 'text-[var(--ios-text-tertiary)]'}>
+                    {selectedModel || '请选择模型'}
+                  </span>
+                  <ChevronDown
+                    className={`w-4 h-4 text-[var(--ios-text-secondary)] transition-transform ${isModelDropdownOpen ? 'rotate-180' : ''}`}
+                  />
+                </button>
+                {isModelDropdownOpen && (
+                  <div className="absolute z-50 w-full mt-1 bg-[var(--ios-bg-primary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] shadow-lg overflow-hidden">
+                    <div className="p-2 border-b border-[var(--ios-separator)]">
+                      <div className="relative">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--ios-text-tertiary)]" />
+                        <input
+                          type="text"
+                          value={modelSearchQuery}
+                          onChange={e => setModelSearchQuery(e.target.value)}
+                          placeholder="搜索模型..."
+                          className="w-full pl-8 pr-8 py-1.5 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-sm)] text-sm text-[var(--ios-text-primary)] focus:ring-1 focus:ring-[var(--ios-blue)] focus:border-transparent"
+                          autoFocus
+                        />
+                        {modelSearchQuery && (
+                          <button
+                            type="button"
+                            onClick={() => setModelSearchQuery('')}
+                            className="absolute right-2 top-1/2 -translate-y-1/2"
+                          >
+                            <X className="w-4 h-4 text-[var(--ios-text-tertiary)] hover:text-[var(--ios-text-secondary)]" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="max-h-48 overflow-y-auto">
+                      {filteredModels.length > 0 ? (
+                        filteredModels.map(model => (
+                          <button
+                            key={model}
+                            type="button"
+                            onClick={() => {
+                              setSelectedModel(model);
+                              setIsModelDropdownOpen(false);
+                              setModelSearchQuery('');
+                            }}
+                            className={`w-full px-3 py-2 text-left text-sm transition-colors ${
+                              selectedModel === model
+                                ? 'bg-[var(--ios-blue)]/10 text-[var(--ios-blue)]'
+                                : 'text-[var(--ios-text-primary)] hover:bg-[var(--ios-bg-secondary)]'
+                            }`}
+                          >
+                            {model}
+                          </button>
+                        ))
+                      ) : (
+                        <div className="px-3 py-4 text-sm text-[var(--ios-text-secondary)] text-center">
+                          {models.length === 0 ? '请先拉取模型' : '无匹配结果'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
               <IOSButton
                 variant="secondary"
@@ -395,34 +496,13 @@ export function CustomCliConfigEditorDialog({
           </div>
         </div>
 
-        {/* CLI 使用模型 */}
-        <div>
-          <label className="block text-sm font-medium text-[var(--ios-text-primary)] mb-2">
-            CLI 使用模型
-          </label>
-          {models.length === 0 ? (
-            <div className="text-sm text-[var(--ios-text-secondary)] py-2">请先拉取模型列表</div>
-          ) : availableModels.length > 0 ? (
-            <select
-              value={cliSettings[selectedCli]?.model ?? ''}
-              onChange={e => handleCliSettingChange(selectedCli, { model: e.target.value || null })}
-              className="w-full px-3 py-2 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] text-sm text-[var(--ios-text-primary)] focus:ring-2 focus:ring-[var(--ios-blue)] focus:border-transparent transition-all"
-            >
-              <option value="">请选择 CLI 模型</option>
-              {availableModels.map(model => (
-                <option key={model} value={model}>
-                  {model}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <div className="text-sm text-[var(--ios-text-secondary)] py-2">
-              {currentCliConfig?.modelPrefix
-                ? `没有匹配 ${currentCliConfig.modelPrefix}* 前缀的模型`
-                : '没有可用模型'}
-            </div>
-          )}
-        </div>
+        {/* CLI 使用模型提示 */}
+        {selectedModel && (
+          <div className="px-3 py-2 bg-[var(--ios-blue)]/5 border border-[var(--ios-blue)]/20 rounded-[var(--radius-md)]">
+            <span className="text-sm text-[var(--ios-text-secondary)]">当前选中模型：</span>
+            <span className="text-sm font-medium text-[var(--ios-blue)] ml-1">{selectedModel}</span>
+          </div>
+        )}
 
         {/* 配置预览 */}
         {configPreview && (

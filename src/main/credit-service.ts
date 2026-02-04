@@ -39,7 +39,6 @@ import type {
   PayApiResponse,
 } from '../shared/types/credit';
 import {
-  calculateDifference,
   calculateTotalIncome,
   calculateTotalExpense,
   DEFAULT_CREDIT_CONFIG,
@@ -954,115 +953,8 @@ export class CreditService {
                   Logger.warn(`⚠️ [CreditService] 获取交易记录失败: ${e.message}`);
                 }
 
-                // 【第二阶段】获取 linux.do 用户积分（直接导航到 linux.do 页面）
-                Logger.info('📡 [CreditService] 导航到 linux.do 获取用户积分...');
-                const linuxDoUrl = `https://linux.do/u/${encodeURIComponent(username)}.json`;
-
-                let gamificationScore = 0;
-                try {
-                  // 直接导航到 linux.do 用户页面（避免跨域问题）
-                  await page.goto(`https://linux.do/u/${encodeURIComponent(username)}`, {
-                    waitUntil: 'networkidle2',
-                    timeout: 30000,
-                  });
-
-                  // 等待 Cloudflare 验证通过（检测页面内容）
-                  let retryCount = 0;
-                  const maxRetries = 5;
-                  while (retryCount < maxRetries) {
-                    const html = await page.content().catch(() => '');
-                    const isCloudflare =
-                      html.includes('cf-browser-verification') ||
-                      html.includes('Just a moment') ||
-                      html.includes('Checking your browser');
-
-                    if (!isCloudflare) {
-                      break;
-                    }
-
-                    Logger.info(
-                      `🛡️ [CreditService] 等待 linux.do Cloudflare 验证... (${retryCount + 1}/${maxRetries})`
-                    );
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                    retryCount++;
-                  }
-
-                  // 等待页面稳定
-                  await new Promise(resolve => setTimeout(resolve, 1000));
-
-                  // 在 linux.do 页面获取用户数据（带重试）
-                  let linuxDoResult: {
-                    success: boolean;
-                    data?: any;
-                    status: number;
-                    error?: string;
-                  } = {
-                    success: false,
-                    status: 0,
-                  };
-
-                  for (let attempt = 0; attempt < 3; attempt++) {
-                    linuxDoResult = (await page.evaluate(async (url: string) => {
-                      try {
-                        const response = await fetch(url, {
-                          method: 'GET',
-                          credentials: 'include',
-                          headers: {
-                            Accept: 'application/json',
-                          },
-                        });
-
-                        if (!response.ok) {
-                          return {
-                            success: false,
-                            status: response.status,
-                            error: `HTTP ${response.status}`,
-                          };
-                        }
-
-                        const data = await response.json();
-                        return { success: true, data, status: response.status };
-                      } catch (e: any) {
-                        return { success: false, error: e.message, status: 0 };
-                      }
-                    }, linuxDoUrl)) as {
-                      success: boolean;
-                      data?: any;
-                      status: number;
-                      error?: string;
-                    };
-
-                    if (linuxDoResult.success) {
-                      break;
-                    }
-
-                    // 如果是 403，等待后重试
-                    if (linuxDoResult.status === 403 && attempt < 2) {
-                      Logger.info(
-                        `⏳ [CreditService] linux.do 返回 403，等待后重试... (${attempt + 1}/3)`
-                      );
-                      await new Promise(resolve => setTimeout(resolve, 2000));
-                    }
-                  }
-
-                  if (
-                    linuxDoResult.success &&
-                    linuxDoResult.data?.user?.gamification_score !== undefined
-                  ) {
-                    gamificationScore = linuxDoResult.data.user.gamification_score;
-                    Logger.info(`✅ [CreditService] 当前分: ${gamificationScore}`);
-                  } else {
-                    Logger.warn(
-                      `⚠️ [CreditService] 无法获取 linux.do 积分数据: ${linuxDoResult.error || linuxDoResult.status}`
-                    );
-                  }
-                } catch (navError: any) {
-                  Logger.warn(`⚠️ [CreditService] 导航到 linux.do 失败: ${navError.message}`);
-                }
-
-                // 计算差值
-                const difference = calculateDifference(gamificationScore, communityBalance);
-                Logger.info(`📊 [CreditService] 差值: ${difference}`);
+                // 注意：不再导航到 linux.do 获取论坛积分，避免 Cloudflare 验证和 429 限流问题
+                // gamificationScore 和 difference 已不再使用
 
                 // 构建积分信息（包含完整的用户数据）
                 const creditInfo: CreditInfo = {
@@ -1074,8 +966,8 @@ export class CreditService {
                   trustLevel: userData.trust_level,
                   // 积分信息
                   communityBalance,
-                  gamificationScore,
-                  difference,
+                  gamificationScore: 0, // 不再从 linux.do 获取
+                  difference: 0, // 不再计算差值
                   // 收支信息
                   totalReceive: userData.total_receive,
                   totalPayment: userData.total_payment,
