@@ -240,7 +240,7 @@ export function CustomCliConfigEditorDialog({
       return generateGeminiCliConfig(params);
     }
     return null;
-  }, [selectedCli, cliSettings, baseUrl, apiKey, name]);
+  }, [selectedCli, selectedModel, baseUrl, apiKey, name]);
 
   // 处理 CLI 设置变更
   const handleCliSettingChange = (cliType: CliType, update: Partial<CustomCliSettings>) => {

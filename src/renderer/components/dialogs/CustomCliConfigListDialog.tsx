@@ -354,11 +354,11 @@ export function CustomCliConfigListDialog({ isOpen, onClose }: CustomCliConfigLi
               </p>
             </div>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               {configs.map(config => (
                 <div
                   key={config.id}
-                  className="flex items-center justify-between p-3 rounded-lg border border-[var(--ios-separator)] bg-[var(--ios-bg-secondary)]"
+                  className="flex items-center justify-between px-3 py-1.5 rounded-lg border border-[var(--ios-separator)] bg-[var(--ios-bg-secondary)]"
                 >
                   <div className="w-[140px] shrink-0 mr-3 overflow-hidden">
                     <div className="flex items-center gap-2">
@@ -369,7 +369,7 @@ export function CustomCliConfigListDialog({ isOpen, onClose }: CustomCliConfigLi
                         {config.name || '未命名'}
                       </span>
                     </div>
-                    <div className="flex items-center gap-1 mt-1 text-xs text-[var(--ios-text-secondary)] truncate">
+                    <div className="flex items-center gap-1 mt-0.5 text-xs text-[var(--ios-text-secondary)] truncate">
                       <span className="truncate max-w-[80px]" title={config.baseUrl}>
                         {formatBaseUrl(config.baseUrl)}
                       </span>
@@ -391,7 +391,7 @@ export function CustomCliConfigListDialog({ isOpen, onClose }: CustomCliConfigLi
                     <button
                       onClick={e => handleOpenApplyPopover(config, e)}
                       disabled={!hasValidCli(config) || isApplying}
-                      className={`p-2 rounded-lg transition-colors ${
+                      className={`p-1.5 rounded-lg transition-colors ${
                         hasValidCli(config)
                           ? 'text-[var(--ios-blue)] hover:bg-[var(--ios-blue)]/10'
                           : 'text-[var(--ios-text-tertiary)] cursor-not-allowed'
@@ -406,14 +406,14 @@ export function CustomCliConfigListDialog({ isOpen, onClose }: CustomCliConfigLi
                     </button>
                     <button
                       onClick={() => handleEdit(config)}
-                      className="p-2 rounded-lg text-[var(--ios-text-secondary)] hover:bg-[var(--ios-bg-tertiary)] transition-colors"
+                      className="p-1.5 rounded-lg text-[var(--ios-text-secondary)] hover:bg-[var(--ios-bg-tertiary)] transition-colors"
                       title="编辑配置"
                     >
                       <Edit2 className="w-4 h-4" />
                     </button>
                     <button
                       onClick={() => handleDelete(config)}
-                      className="p-2 rounded-lg text-[var(--ios-red)] hover:bg-[var(--ios-red)]/10 transition-colors"
+                      className="p-1.5 rounded-lg text-[var(--ios-red)] hover:bg-[var(--ios-red)]/10 transition-colors"
                       title="删除配置"
                     >
                       <Trash2 className="w-4 h-4" />
