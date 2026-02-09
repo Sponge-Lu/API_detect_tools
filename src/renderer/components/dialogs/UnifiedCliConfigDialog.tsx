@@ -563,24 +563,21 @@ export function UnifiedCliConfigDialog({
       return null;
     };
 
-    // 获取最新的 editedFiles（优先级：当前编辑 > 已保存编辑 > 实时生成）
+    // 获取用户手动编辑的 editedFiles（仅保存用户实际编辑过的内容，未编辑则返回 null）
+    // 这样下次打开对话框时，未编辑的 CLI 会 fallback 到实时生成的最新配置
     const getEditedFiles = (cliType: 'claudeCode' | 'codex' | 'geminiCli') => {
-      // 1. 当前正在编辑的配置
+      // 1. 当前正在编辑的配置（用户在本次会话中手动编辑过）
       if (selectedCli === cliType && editedConfig) {
         return editedConfig.files.map(f => ({ path: f.path, content: f.content }));
       }
-      // 2. 已保存的编辑配置
+      // 2. 之前保存过的用户编辑配置
       if (cliConfigs[cliType].editedFiles) {
         return cliConfigs[cliType].editedFiles!.files.map(f => ({
           path: f.path,
           content: f.content,
         }));
       }
-      // 3. 实时生成的配置（如果有完整的 apiKeyId 和 model）
-      const generatedConfig = generateConfigForCli(cliType);
-      if (generatedConfig) {
-        return generatedConfig.files.map(f => ({ path: f.path, content: f.content }));
-      }
+      // 3. 未编辑过则不保存，让预览和应用时实时生成
       return null;
     };
 

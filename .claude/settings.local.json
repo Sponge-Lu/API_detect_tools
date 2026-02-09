@@ -1,7 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "mcp__ace-tool__search_context",
+      "mcp__mcp-deepwiki__deepwiki_fetch",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(findstr:*)",
+      "mcp__sequential-thinking__sequentialthinking",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }

@@ -347,8 +347,7 @@ ${wireApiComment}
 wire_api = "${wireApi}"
 requires_openai_auth = true
 
-[features]
-web_search_request = true`;
+web_search = "cached"`;
 
   // 按照模板生成 auth.json
   const authJson = {
@@ -398,8 +397,7 @@ base_url = "https://api.ikuncode.cc/v1"
 wire_api = "responses"
 requires_openai_auth = true
 
-[features]
-web_search_request = true`;
+web_search = "cached"`;
 
   const authJsonTemplate = `{
   "OPENAI_API_KEY": "sk-xxxxxxxxxxxxxxx"

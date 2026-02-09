@@ -39,6 +39,7 @@ import {
   ApplyConfigPopover,
   CloseBehaviorDialog,
 } from './components/dialogs';
+import { DownloadUpdatePanel } from './components/dialogs/DownloadUpdatePanel';
 import type { CliConfig } from '../shared/types/cli-config';
 import { CreateApiKeyDialog } from './components/CreateApiKeyDialog';
 import { ToastContainer } from './components/Toast';
@@ -269,10 +270,19 @@ function App() {
     settings: updateSettings,
     checkForUpdatesInBackground,
     openDownloadUrl,
+    currentVersion,
+    downloadProgress,
+    downloadPhase,
+    downloadedFilePath,
+    downloadError,
+    startDownload,
+    cancelDownload,
+    installUpdate,
   } = useUpdate();
 
   // 下载更新状态
   const [isDownloading, setIsDownloading] = useState(false);
+  const [showDownloadPanel, setShowDownloadPanel] = useState(false);
 
   // Toast store
   const { toasts, removeToast } = useToastStore();
@@ -843,18 +853,8 @@ function App() {
    * 处理下载更新按钮点击
    */
   const handleDownloadUpdate = async () => {
-    if (isDownloading) return;
-
-    setIsDownloading(true);
-    try {
-      await openDownloadUrl();
-    } catch (error) {
-      Logger.error('打开下载链接失败:', error);
-      toast.error('打开下载链接失败: ' + error);
-    } finally {
-      // 短暂延迟后重置状态，给用户视觉反馈
-      setTimeout(() => setIsDownloading(false), 1000);
-    }
+    // 打开下载面板
+    setShowDownloadPanel(true);
   };
 
   const toggleModelSelection = (model: string) => {
@@ -1964,6 +1964,26 @@ function App() {
         open={showCloseBehaviorDialog}
         onClose={() => setShowCloseBehaviorDialog(false)}
       />
+
+      {/* 下载更新面板 */}
+      {updateInfo?.releaseInfo && (
+        <DownloadUpdatePanel
+          isOpen={showDownloadPanel}
+          onClose={() => setShowDownloadPanel(false)}
+          currentVersion={currentVersion}
+          releaseInfo={updateInfo.releaseInfo}
+          downloadPhase={downloadPhase}
+          downloadProgress={downloadProgress}
+          downloadError={downloadError}
+          onStartDownload={() => {
+            if (updateInfo.releaseInfo?.downloadUrl) {
+              startDownload(updateInfo.releaseInfo.downloadUrl);
+            }
+          }}
+          onCancelDownload={cancelDownload}
+          onInstall={installUpdate}
+        />
+      )}
 
       {/* Toast 通知 */}
       <ToastContainer toasts={toasts} onClose={removeToast} />

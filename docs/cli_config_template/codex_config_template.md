@@ -21,8 +21,8 @@ base_url = "https://api.ikuncode.cc/v1"
 wire_api = "responses"
 requires_openai_auth = true
 
-[features]
-web_search_request = true
+# web_search 选项："cached", "live", "disabled"
+web_search = "cached"
 
 ## auth.json (路径：~/.codex/auth.json)
 {

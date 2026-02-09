@@ -141,6 +141,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getSettings: () => ipcRenderer.invoke('update:get-settings'),
     // 保存更新设置
     saveSettings: (settings: any) => ipcRenderer.invoke('update:save-settings', settings),
+    // 开始下载更新
+    startDownload: (url: string) => ipcRenderer.invoke('update:start-download', url),
+    // 取消下载
+    cancelDownload: () => ipcRenderer.invoke('update:cancel-download'),
+    // 安装更新
+    installUpdate: (filePath: string) => ipcRenderer.invoke('update:install', filePath),
+    // 监听下载进度
+    onDownloadProgress: (callback: (progress: any) => void) => {
+      const listener = (_event: any, progress: any) => callback(progress);
+      ipcRenderer.on('update:download-progress', listener);
+      // 返回清理函数
+      return () => ipcRenderer.removeListener('update:download-progress', listener);
+    },
   },
 
   // CLI 兼容性测试 API

@@ -25,6 +25,15 @@ export interface ReleaseInfo {
   isPreRelease: boolean;
 }
 
+export interface DownloadProgress {
+  percent: number;
+  transferred: number;
+  total: number;
+  speed: number; // bytes per second
+}
+
+export type DownloadPhase = 'idle' | 'downloading' | 'completed' | 'error';
+
 export interface UpdateCheckResult {
   hasUpdate: boolean;
   hasPreReleaseUpdate: boolean;
@@ -48,11 +57,20 @@ export interface UseUpdateReturn {
   isChecking: boolean;
   error: string | null;
   settings: UpdateSettings;
+  // 下载相关状态
+  downloadProgress: DownloadProgress | null;
+  downloadPhase: DownloadPhase;
+  downloadedFilePath: string | null;
+  downloadError: string | null;
   // 操作
   checkForUpdates: () => Promise<void>;
   checkForUpdatesInBackground: () => Promise<void>;
   openDownloadUrl: () => Promise<void>;
   updateSettings: (settings: Partial<UpdateSettings>) => Promise<void>;
+  // 下载相关操作
+  startDownload: (url: string) => Promise<void>;
+  cancelDownload: () => Promise<void>;
+  installUpdate: () => Promise<void>;
 }
 
 const DEFAULT_SETTINGS: UpdateSettings = {
@@ -66,6 +84,12 @@ export function useUpdate(): UseUpdateReturn {
   const [isChecking, setIsChecking] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<UpdateSettings>(DEFAULT_SETTINGS);
+
+  // 下载相关状态
+  const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
+  const [downloadPhase, setDownloadPhase] = useState<DownloadPhase>('idle');
+  const [downloadedFilePath, setDownloadedFilePath] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   // 初始化：获取当前版本和设置
   useEffect(() => {
@@ -87,6 +111,19 @@ export function useUpdate(): UseUpdateReturn {
     };
 
     init();
+  }, []);
+
+  // 监听下载进度
+  useEffect(() => {
+    const removeListener = window.electronAPI?.update?.onDownloadProgress(progress => {
+      setDownloadProgress(progress);
+    });
+
+    return () => {
+      if (removeListener) {
+        removeListener();
+      }
+    };
   }, []);
 
   // 检查更新
@@ -149,15 +186,71 @@ export function useUpdate(): UseUpdateReturn {
     [settings]
   );
 
+  // 开始下载更新
+  const startDownload = useCallback(async (url: string) => {
+    setDownloadPhase('downloading');
+    setDownloadProgress(null);
+    setDownloadError(null);
+    setDownloadedFilePath(null);
+
+    try {
+      const filePath = await window.electronAPI?.update?.startDownload(url);
+      if (filePath) {
+        setDownloadedFilePath(filePath);
+        setDownloadPhase('completed');
+      }
+    } catch (err: any) {
+      const errorMessage = err?.message || '下载失败';
+      setDownloadError(errorMessage);
+      setDownloadPhase('error');
+      console.error('[useUpdate] 下载失败:', err);
+    }
+  }, []);
+
+  // 取消下载
+  const cancelDownload = useCallback(async () => {
+    try {
+      await window.electronAPI?.update?.cancelDownload();
+      setDownloadPhase('idle');
+      setDownloadProgress(null);
+      setDownloadError(null);
+    } catch (err) {
+      console.error('[useUpdate] 取消下载失败:', err);
+    }
+  }, []);
+
+  // 安装更新
+  const installUpdate = useCallback(async () => {
+    if (!downloadedFilePath) {
+      console.error('[useUpdate] 没有可安装的文件');
+      return;
+    }
+
+    try {
+      await window.electronAPI?.update?.installUpdate(downloadedFilePath);
+    } catch (err) {
+      console.error('[useUpdate] 安装失败:', err);
+      setDownloadError('安装失败: ' + (err as any)?.message);
+      setDownloadPhase('error');
+    }
+  }, [downloadedFilePath]);
+
   return {
     currentVersion,
     updateInfo,
     isChecking,
     error,
     settings,
+    downloadProgress,
+    downloadPhase,
+    downloadedFilePath,
+    downloadError,
     checkForUpdates,
     checkForUpdatesInBackground,
     openDownloadUrl,
     updateSettings,
+    startDownload,
+    cancelDownload,
+    installUpdate,
   };
 }

@@ -3,7 +3,7 @@
  * 处理更新检查、版本获取、下载链接打开和设置管理
  */
 
-import { ipcMain } from 'electron';
+import { ipcMain, BrowserWindow } from 'electron';
 import { updateService } from '../update-service';
 import Logger from '../utils/logger';
 
@@ -60,6 +60,47 @@ export function registerUpdateHandlers(): void {
       await updateService.saveSettings(settings);
     } catch (error: any) {
       Logger.error('[UpdateHandlers] 保存设置失败:', error.message);
+      throw error;
+    }
+  });
+
+  // 开始下载更新
+  ipcMain.handle('update:start-download', async (event, url: string) => {
+    try {
+      Logger.info('[UpdateHandlers] 开始下载更新:', url);
+      const filePath = await updateService.downloadUpdate(url, progress => {
+        // 通过 IPC 推送下载进度到渲染进程
+        const window = BrowserWindow.fromWebContents(event.sender);
+        if (window && !window.isDestroyed()) {
+          event.sender.send('update:download-progress', progress);
+        }
+      });
+      Logger.info('[UpdateHandlers] 下载完成:', filePath);
+      return filePath;
+    } catch (error: any) {
+      Logger.error('[UpdateHandlers] 下载失败:', error.message);
+      throw error;
+    }
+  });
+
+  // 取消下载
+  ipcMain.handle('update:cancel-download', async () => {
+    try {
+      Logger.info('[UpdateHandlers] 取消下载');
+      updateService.cancelDownload();
+    } catch (error: any) {
+      Logger.error('[UpdateHandlers] 取消下载失败:', error.message);
+      throw error;
+    }
+  });
+
+  // 安装更新
+  ipcMain.handle('update:install', async (_event, filePath: string) => {
+    try {
+      Logger.info('[UpdateHandlers] 安装更新:', filePath);
+      await updateService.installUpdate(filePath);
+    } catch (error: any) {
+      Logger.error('[UpdateHandlers] 安装失败:', error.message);
       throw error;
     }
   });
