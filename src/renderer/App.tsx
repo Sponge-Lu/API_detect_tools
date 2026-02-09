@@ -151,6 +151,17 @@ declare global {
           includePreRelease: boolean;
           lastCheckTime?: string;
         }) => Promise<void>;
+        startDownload: (url: string) => Promise<string>;
+        cancelDownload: () => Promise<void>;
+        installUpdate: (filePath: string) => Promise<void>;
+        onDownloadProgress: (
+          callback: (progress: {
+            percent: number;
+            transferred: number;
+            total: number;
+            speed: number;
+          }) => void
+        ) => () => void;
       };
       cliCompat: {
         testWithConfig: (params: {
@@ -269,11 +280,9 @@ function App() {
     updateInfo,
     settings: updateSettings,
     checkForUpdatesInBackground,
-    openDownloadUrl,
     currentVersion,
     downloadProgress,
     downloadPhase,
-    downloadedFilePath,
     downloadError,
     startDownload,
     cancelDownload,
@@ -281,7 +290,6 @@ function App() {
   } = useUpdate();
 
   // 下载更新状态
-  const [isDownloading, setIsDownloading] = useState(false);
   const [showDownloadPanel, setShowDownloadPanel] = useState(false);
 
   // Toast store

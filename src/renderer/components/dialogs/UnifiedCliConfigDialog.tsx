@@ -538,31 +538,6 @@ export function UnifiedCliConfigDialog({
       }));
     }
 
-    // 为指定 CLI 类型生成配置文件
-    const generateConfigForCli = (cliType: 'claudeCode' | 'codex' | 'geminiCli') => {
-      const config = cliConfigs[cliType];
-      if (!config.apiKeyId || !config.model) return null;
-
-      const apiKey = apiKeys.find(k => getApiKeyId(k) === config.apiKeyId);
-      if (!apiKey) return null;
-
-      const params = {
-        siteUrl,
-        siteName,
-        apiKey: getApiKeyValue(apiKey),
-        model: config.model,
-      };
-
-      if (cliType === 'claudeCode') {
-        return generateClaudeCodeConfig(params);
-      } else if (cliType === 'codex') {
-        return generateCodexConfig({ ...params, codexDetail: codexDetail ?? undefined });
-      } else if (cliType === 'geminiCli') {
-        return generateGeminiCliConfig({ ...params, geminiDetail: geminiDetail ?? undefined });
-      }
-      return null;
-    };
-
     // 获取用户手动编辑的 editedFiles（仅保存用户实际编辑过的内容，未编辑则返回 null）
     // 这样下次打开对话框时，未编辑的 CLI 会 fallback 到实时生成的最新配置
     const getEditedFiles = (cliType: 'claudeCode' | 'codex' | 'geminiCli') => {
