@@ -1179,7 +1179,6 @@ function App() {
           ldcSites={ldcSites}
           updateInfo={updateInfo}
           onDownloadUpdate={handleDownloadUpdate}
-          isDownloading={isDownloading}
         />
 
         <div className="flex-1 overflow-y-hidden overflow-x-visible flex">
