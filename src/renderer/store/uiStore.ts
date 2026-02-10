@@ -26,6 +26,9 @@ interface RefreshMessage {
   type: 'success' | 'info';
 }
 
+// Tab 页面类型
+export type TabId = 'sites' | 'cli' | 'credit' | 'settings';
+
 // 排序字段类型
 export type SortField =
   | 'name'
@@ -59,9 +62,11 @@ interface NewApiTokenForm {
 }
 
 interface UIState {
+  // 当前活跃的 Tab 页面
+  activeTab: TabId;
+
   // 面板状态
   showSiteEditor: boolean;
-  showSettings: boolean;
   editingSite: number | null;
 
   // 站点展开状态
@@ -118,7 +123,6 @@ interface UIState {
 
   // Actions - 面板
   setShowSiteEditor: (show: boolean) => void;
-  setShowSettings: (show: boolean) => void;
   setEditingSite: (index: number | null) => void;
   openSiteEditor: (index?: number) => void;
   closeSiteEditor: () => void;
@@ -192,6 +196,9 @@ interface UIState {
   setSortOrder: (order: SortOrder) => void;
   toggleSort: (field: SortField) => void;
   resetSort: () => void;
+
+  // Actions - Tab 切换
+  setActiveTab: (tab: TabId) => void;
 }
 
 const initialNewTokenForm: NewApiTokenForm = {
@@ -206,8 +213,8 @@ export const useUIStore = create<UIState>()(
   persist(
     (set, get) => ({
       // 初始状态
+      activeTab: 'sites' as TabId,
       showSiteEditor: false,
-      showSettings: false,
       editingSite: null,
       expandedSites: new Set(),
       selectedModels: new Set(),
@@ -238,7 +245,6 @@ export const useUIStore = create<UIState>()(
 
       // 面板 Actions
       setShowSiteEditor: show => set({ showSiteEditor: show }),
-      setShowSettings: show => set({ showSettings: show }),
       setEditingSite: index => set({ editingSite: index }),
 
       openSiteEditor: (index?: number) => {
@@ -442,6 +448,9 @@ export const useUIStore = create<UIState>()(
       },
 
       resetSort: () => set({ sortField: null, sortOrder: 'desc' }),
+
+      // Tab 切换
+      setActiveTab: (tab: TabId) => set({ activeTab: tab }),
     }),
     {
       name: 'api-hub-ui-storage',

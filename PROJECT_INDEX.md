@@ -8,7 +8,8 @@
 - 多站点聚合管理（One API / New API / Veloera / Done Hub 等）
 - 自动认证与 Token 管理
 - 实时监控（余额、消耗、RPM/TPM）
-- CLI 兼容性测试（支持 Codex 双 API 测试、Gemini CLI 双端点测试）
+- CLI 兼容性测试与自定义 CLI 配置（支持 Codex 双 API 测试、Gemini CLI 双端点测试）
+- 软件更新（应用内下载、进度展示、安装触发）
 - WebDAV 云端备份
 - 深色模式支持
 
@@ -139,7 +140,8 @@ graph TD
 | **TokenService** | Token 获取、存储、刷新、签到功能（兼容 Veloera/New API） | `getToken()`, `saveToken()`, `refreshToken()`, `checkIn()` |
 | **ApiService** | API 请求、错误处理、LDC 支付检测 | `request()`, `checkBalance()`, `checkStatus()`, `detectLdcPayment()` |
 | **CliCompatService** | CLI 兼容性测试（支持双 API/双端点测试） | `testCompatibility()`, `testCodexWithDetail()`, `testGeminiWithDetail()` |
-| **CreditService** | Linux Do Credit 积分检测、LDC 充值 | `fetchCreditData()`, `launchLogin()`, `logout()`, `initiateRecharge()` |
+| **CreditService** | Linux Do Credit 积分检测、LDC 充值（基于 credit.linux.do 会话） | `fetchCreditData()`, `launchLogin()`, `logout()`, `initiateRecharge()` |
+| **UpdateService** | 更新检测、应用内下载、安装触发 | `checkForUpdates()`, `downloadUpdate()`, `cancelDownload()`, `installUpdate()` |
 | **BackupManager** | 本地备份、恢复 | `backup()`, `restore()`, `export()` |
 | **WebDAVManager** | 云端备份、同步 | `uploadBackup()`, `downloadBackup()` |
 | **UnifiedConfigManager** | 配置管理、迁移 | `loadConfig()`, `saveConfig()`, `migrate()` |
@@ -191,6 +193,12 @@ graph TD
 - `credit:login` - 启动登录
 - `credit:logout` - 登出
 - `credit:initiate-recharge` - 发起 LDC 充值
+- `update:start-download` - 开始下载更新
+- `update:cancel-download` - 取消更新下载
+- `update:install` - 启动安装更新
+- `custom-cli-config:load` - 加载自定义 CLI 配置
+- `custom-cli-config:save` - 保存自定义 CLI 配置
+- `custom-cli-config:fetch-models` - 拉取模型列表
 
 ---
 
@@ -331,6 +339,6 @@ npm run dist         # 打包为 EXE 安装程序
 
 ---
 
-**版本**: 2.1.12  
-**更新日期**: 2026-01-09  
+**版本**: 2.1.18  
+**更新日期**: 2026-02-10  
 **维护者**: API Hub Team

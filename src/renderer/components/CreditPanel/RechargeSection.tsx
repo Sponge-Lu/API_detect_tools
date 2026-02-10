@@ -140,7 +140,7 @@ export function RechargeSection({
   // 如果没有支持 LDC 支付的站点，显示提示
   if (ldcSites.length === 0) {
     return (
-      <div className="mt-2 pt-2 border-t border-light-border dark:border-dark-border">
+      <div className="bg-white dark:bg-dark-card rounded-xl border border-light-border dark:border-dark-border p-4 shadow-sm">
         <div className="flex items-center gap-2 text-xs text-light-text-secondary dark:text-dark-text-secondary">
           <Wallet className="w-4 h-4" />
           <span>LDC 充值 - 暂无支持 LDC 支付的站点</span>
@@ -150,12 +150,12 @@ export function RechargeSection({
   }
 
   return (
-    <div className="mt-2 pt-2 border-t border-light-border dark:border-dark-border">
+    <div className="bg-white dark:bg-dark-card rounded-xl border border-light-border dark:border-dark-border p-4 shadow-sm">
       {/* 一行布局：标题 | 站点选择 | 金额输入 | 充值按钮 */}
       <div className="flex items-center gap-3">
         {/* 标题 */}
         <div className="flex items-center gap-1.5 text-sm font-medium text-light-text dark:text-dark-text flex-shrink-0">
-          <Wallet className="w-4 h-4 text-amber-500" />
+          <Wallet className="w-4 h-4 text-primary-500" />
           <span>LDC 充值</span>
         </div>
 
@@ -163,7 +163,7 @@ export function RechargeSection({
         <select
           value={selectedSiteUrl}
           onChange={e => setSelectedSiteUrl(e.target.value)}
-          className="flex-1 min-w-0 px-2 py-1 text-sm bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded focus:border-primary-500 focus:ring-1 focus:ring-primary-500/30 outline-none text-light-text dark:text-dark-text"
+          className="flex-1 min-w-0 px-2.5 py-1.5 text-sm bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-1 focus:ring-primary-500/30 outline-none text-light-text dark:text-dark-text"
         >
           <option value="">选择站点</option>
           {ldcSites.map(site => (
@@ -181,13 +181,13 @@ export function RechargeSection({
           value={amount}
           onChange={e => setAmount(e.target.value)}
           placeholder="金额"
-          className="w-20 px-2 py-1 text-sm bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded focus:border-primary-500 focus:ring-1 focus:ring-primary-500/30 outline-none text-light-text dark:text-dark-text"
+          className="w-20 px-2.5 py-1.5 text-sm bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-1 focus:ring-primary-500/30 outline-none text-light-text dark:text-dark-text"
         />
 
         {/* 所需积分显示 */}
         {requiredCredits > 0 && (
           <span
-            className={`text-sm flex-shrink-0 ${isBalanceInsufficient ? 'text-red-500' : 'text-amber-600 dark:text-amber-400'}`}
+            className={`text-sm flex-shrink-0 ${isBalanceInsufficient ? 'text-red-500' : 'text-primary-600 dark:text-primary-400'}`}
           >
             需 {requiredCredits.toFixed(2)} LDC
           </span>
@@ -197,7 +197,7 @@ export function RechargeSection({
         <button
           onClick={handleRecharge}
           disabled={isRechargeDisabled}
-          className="px-3 py-1 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 dark:disabled:bg-amber-700 text-white rounded transition-all flex items-center gap-1.5 text-sm font-medium disabled:cursor-not-allowed flex-shrink-0"
+          className="px-3 py-1.5 bg-primary-500 hover:bg-primary-600 disabled:bg-primary-300 dark:disabled:bg-primary-700 text-white rounded-lg transition-all flex items-center gap-1.5 text-sm font-medium disabled:cursor-not-allowed flex-shrink-0"
         >
           {isRecharging ? (
             <Loader2 className="w-3 h-3 animate-spin" />
@@ -210,7 +210,7 @@ export function RechargeSection({
 
       {/* 余额不足警告 */}
       {isBalanceInsufficient && (
-        <div className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400 mt-1">
+        <div className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400 mt-2">
           <AlertTriangle className="w-3 h-3" />
           <span>余额不足 (可用: {availableBalance.toFixed(2)} LDC)</span>
         </div>

@@ -169,7 +169,7 @@ export function IOSModal({
   return (
     <div
       className={`
-        fixed inset-0 z-50
+        fixed inset-0 z-[200]
         flex items-center justify-center
         transition-opacity duration-[var(--duration-normal)]
         [transition-timing-function:var(--ease-ios)]

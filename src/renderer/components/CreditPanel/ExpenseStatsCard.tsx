@@ -70,10 +70,10 @@ export function ExpenseStatsCard({
 
   return (
     <div
-      className={`bg-white dark:bg-dark-card rounded-lg border border-light-border dark:border-dark-border p-2 h-fit ${className}`}
+      className={`bg-white dark:bg-dark-card rounded-xl border border-light-border dark:border-dark-border p-4 h-fit shadow-sm ${className}`}
     >
       {/* 区域1：标题栏 - 支出统计 + LDC总额 + 刷新按钮 */}
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-light-text dark:text-dark-text">支出统计</span>
           {dailyStats && (
@@ -85,7 +85,7 @@ export function ExpenseStatsCard({
         <button
           onClick={onRefresh}
           disabled={isLoading}
-          className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-all disabled:cursor-not-allowed"
+          className="p-1.5 hover:bg-light-bg dark:hover:bg-dark-bg rounded-md transition-all disabled:cursor-not-allowed"
           title="刷新"
         >
           <RefreshCw
@@ -97,40 +97,37 @@ export function ExpenseStatsCard({
       {/* 区域2：内容区 - 水平条形图 */}
       <div>
         {isLoading && !dailyStats ? (
-          <div className="flex items-center justify-center h-full">
+          <div className="flex items-center justify-center py-6">
             <Loader2 className="w-5 h-5 animate-spin text-light-text-secondary dark:text-dark-text-secondary" />
           </div>
         ) : dailyStats && sortedItems.length > 0 ? (
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             {sortedItems.map((item, index) => {
               const expense = parseFloat(item.expense || '0');
               const widthPercent = maxExpense > 0 ? (expense / maxExpense) * 100 : 0;
               const hasValue = expense > 0;
               return (
-                <div key={index} className="space-y-0.5">
+                <div key={index} className="space-y-1">
                   {/* 日期和数值在条形上方 */}
                   <div className="flex items-center justify-between text-xs">
-                    {/* 左侧日期 (Requirements: 9.9) */}
                     <span className="text-light-text-secondary dark:text-dark-text-secondary">
                       {formatDateToMMDD(item.date)}
                     </span>
-                    {/* 右侧数值 (Requirements: 9.8) */}
                     <span
-                      className={`font-medium ${hasValue ? 'text-red-600 dark:text-red-400' : 'text-slate-400 dark:text-slate-500'}`}
+                      className={`font-medium ${hasValue ? 'text-red-600 dark:text-red-400' : 'text-light-text-secondary dark:text-dark-text-secondary'}`}
                     >
                       {formatDailyExpense(item.expense)}
                     </span>
                   </div>
-                  {/* 水平条形 (Requirements: 16.10 - 红色) */}
-                  <div className="h-2 bg-slate-100 dark:bg-slate-700 rounded overflow-hidden">
+                  {/* 水平条形 */}
+                  <div className="h-2.5 bg-red-50 dark:bg-red-900/20 rounded-full overflow-hidden">
                     {hasValue ? (
                       <div
-                        className="h-full bg-red-500 dark:bg-red-400 rounded transition-all"
-                        style={{ width: `${Math.max(widthPercent, 2)}%` }}
+                        className="h-full bg-red-500 dark:bg-red-400 rounded-full transition-all"
+                        style={{ width: `${Math.max(widthPercent, 3)}%` }}
                       />
                     ) : (
-                      /* 零值显示为灰色细线 (Requirements: 16.8) */
-                      <div className="h-full w-1 bg-slate-300 dark:bg-slate-500 rounded" />
+                      <div className="h-full w-1 bg-light-border dark:bg-dark-border rounded-full" />
                     )}
                   </div>
                 </div>
@@ -138,14 +135,14 @@ export function ExpenseStatsCard({
             })}
           </div>
         ) : (
-          <div className="flex items-center justify-center h-full text-sm text-light-text-secondary dark:text-dark-text-secondary">
+          <div className="flex items-center justify-center py-6 text-sm text-light-text-secondary dark:text-dark-text-secondary">
             暂无数据
           </div>
         )}
       </div>
 
-      {/* 区域3：更新时间 (Requirements: 9.10) */}
-      <div className="flex items-center gap-1 mt-2 pt-1.5 border-t border-slate-100 dark:border-slate-700 text-[10px] text-light-text-secondary dark:text-dark-text-secondary">
+      {/* 区域3：更新时间 */}
+      <div className="flex items-center gap-1 mt-3 pt-2.5 border-t border-light-border dark:border-dark-border text-[10px] text-light-text-secondary dark:text-dark-text-secondary">
         <Clock className="w-3 h-3" />
         <span>更新时间: {formatLastUpdated(dailyStats?.lastUpdated || 0)}</span>
       </div>

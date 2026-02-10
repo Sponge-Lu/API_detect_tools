@@ -89,18 +89,17 @@ export function TransactionListCard({
 }: TransactionListCardProps) {
   return (
     <div
-      className={`bg-white dark:bg-dark-card rounded-lg border border-light-border dark:border-dark-border p-2 h-fit ${className}`}
+      className={`bg-white dark:bg-dark-card rounded-xl border border-light-border dark:border-dark-border p-4 h-fit shadow-sm ${className}`}
     >
-      {/* 区域1：标题栏 - 活动 N + 刷新按钮 (Requirements: 10.2, 16.4) */}
-      <div className="flex items-center justify-between mb-2">
+      {/* 区域1：标题栏 - 活动 N + 刷新按钮 */}
+      <div className="flex items-center justify-between mb-3">
         <span className="text-sm font-medium text-light-text dark:text-dark-text">
           {transactions ? formatTransactionCount(transactions.total) : '活动'}
         </span>
-        {/* 刷新按钮 (Requirements: 10.9) */}
         <button
           onClick={onRefresh}
           disabled={isLoading}
-          className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-all disabled:cursor-not-allowed"
+          className="p-1.5 hover:bg-light-bg dark:hover:bg-dark-bg rounded-md transition-all disabled:cursor-not-allowed"
           title="刷新"
         >
           <RefreshCw
@@ -112,29 +111,25 @@ export function TransactionListCard({
       {/* 区域2：内容区 - 交易列表 */}
       <div>
         {isLoading && !transactions ? (
-          // 加载状态 (Requirements: 10.10)
-          <div className="flex items-center justify-center h-full">
+          <div className="flex items-center justify-center py-6">
             <Loader2 className="w-5 h-5 animate-spin text-light-text-secondary dark:text-dark-text-secondary" />
           </div>
         ) : transactions && transactions.orders.length > 0 ? (
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             {transactions.orders.slice(0, 5).map(order => (
               <div
                 key={order.id}
-                className="flex items-center justify-between text-xs py-1 px-1.5 bg-slate-50 dark:bg-slate-800 rounded"
+                className="flex items-center justify-between text-xs py-1.5 px-2.5 bg-light-bg dark:bg-dark-bg rounded-lg"
               >
-                {/* 订单名称 (Requirements: 10.3) */}
                 <span className="text-light-text dark:text-dark-text truncate flex-1 mr-2">
                   {order.order_name || order.app_name || '未命名订单'}
                 </span>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  {/* 金额 (Requirements: 10.4) */}
                   <span className="text-light-text-secondary dark:text-dark-text-secondary font-medium">
                     {formatTransactionAmount(order.amount)}
                   </span>
-                  {/* 状态徽章 (Requirements: 10.5) */}
                   <span
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${getStatusBadgeClass(order.status)}`}
+                    className={`px-1.5 py-0.5 rounded-md text-[10px] font-medium ${getStatusBadgeClass(order.status)}`}
                   >
                     {getTransactionStatusText(order.status)}
                   </span>
@@ -143,23 +138,21 @@ export function TransactionListCard({
             ))}
           </div>
         ) : (
-          // 空状态 (Requirements: 10.7)
-          <div className="flex items-center justify-center h-full text-sm text-light-text-secondary dark:text-dark-text-secondary">
+          <div className="flex items-center justify-center py-6 text-sm text-light-text-secondary dark:text-dark-text-secondary">
             暂无交易记录
           </div>
         )}
       </div>
 
-      {/* 区域3：更新时间 + 查看全部 (Requirements: 10.6, 10.8) */}
-      <div className="flex items-center justify-between mt-2 pt-1.5 border-t border-slate-100 dark:border-slate-700 text-[10px]">
+      {/* 区域3：更新时间 + 查看全部 */}
+      <div className="flex items-center justify-between mt-3 pt-2.5 border-t border-light-border dark:border-dark-border text-[10px]">
         <div className="flex items-center gap-1 text-light-text-secondary dark:text-dark-text-secondary">
           <Clock className="w-3 h-3" />
           <span>更新时间: {formatLastUpdated(transactions?.lastUpdated || 0)}</span>
         </div>
-        {/* 查看全部链接 - 蓝色文字，无图标 (Requirements: 10.6) */}
         <button
           onClick={() => openCreditSite()}
-          className="text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 transition-colors"
+          className="text-primary-500 hover:text-primary-600 dark:text-primary-400 dark:hover:text-primary-300 transition-colors font-medium"
         >
           查看全部
         </button>
