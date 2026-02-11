@@ -76,7 +76,7 @@ interface CliConfig {
 interface CliCompatibility {
   tool: string;
   supported: boolean;
-  codexDetail?: { chat: boolean | null; responses: boolean | null };
+  codexDetail?: { responses: boolean | null };
   geminiDetail?: { native: boolean | null; proxy: boolean | null };
 }
 

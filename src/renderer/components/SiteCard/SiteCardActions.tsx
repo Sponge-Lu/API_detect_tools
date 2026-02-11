@@ -103,11 +103,11 @@ export function SiteCardActions({
             e.stopPropagation();
             onOpenExtraLink(site.extra_links!);
           }}
-          className="p-1 bg-purple-500/20 hover:bg-purple-500/30 text-purple-700 dark:text-purple-300 rounded transition-all"
+          className="p-1 hover:bg-purple-500/15 text-purple-700 dark:text-purple-300 rounded transition-all"
           title={`打开加油站: ${site.extra_links}`}
           aria-label={`打开加油站: ${site.extra_links}`}
         >
-          <Fuel className="w-3.5 h-3.5 animate-pulse" strokeWidth={2} />
+          <Fuel className="w-3.5 h-3.5" strokeWidth={2} />
         </button>
       )}
 
@@ -138,7 +138,7 @@ export function SiteCardActions({
                       onCheckIn(site);
                     }}
                     disabled={checkingIn === site.name}
-                    className="p-1 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-700 dark:text-yellow-300 rounded transition-all disabled:opacity-50"
+                    className="p-1 hover:bg-yellow-500/15 text-yellow-700 dark:text-yellow-300 rounded transition-all disabled:opacity-50"
                     title={getCheckinTooltip(effectiveCanCheckIn, checkinStats)}
                     aria-label={getCheckinTooltip(effectiveCanCheckIn, checkinStats)}
                   >
@@ -153,7 +153,7 @@ export function SiteCardActions({
                 {/* 已签到 - 仅当缓存是今天且明确为false时显示 */}
                 {effectiveCanCheckIn === false && (
                   <div
-                    className="p-1 bg-gray-500/20 text-gray-400 rounded"
+                    className="p-1 text-gray-400 rounded"
                     title={getCheckinTooltip(false, checkinStats)}
                     aria-label={getCheckinTooltip(false, checkinStats)}
                   >
@@ -169,7 +169,7 @@ export function SiteCardActions({
       {/* 展开/收起 */}
       <button
         onClick={() => onExpand(site.name)}
-        className="p-1 hover:bg-white/10 rounded transition-all"
+        className="p-1 rounded-md text-light-text-secondary dark:text-dark-text-secondary hover:bg-light-border/50 dark:hover:bg-dark-border/50 transition-all"
         title={isExpanded ? '收起详情' : '展开详情'}
         aria-label={isExpanded ? '收起详情' : '展开详情'}
         aria-expanded={isExpanded}
@@ -184,7 +184,7 @@ export function SiteCardActions({
       <button
         onClick={() => onDetect(site)}
         disabled={detectingSite === site.name}
-        className="p-1 hover:bg-primary-500/20 rounded transition-all disabled:opacity-50"
+        className="p-1 rounded-md text-light-text-secondary dark:text-dark-text-secondary hover:bg-primary-500/15 hover:text-primary-500 transition-all disabled:opacity-50"
         title="刷新检测"
         aria-label="刷新检测"
       >
@@ -197,22 +197,22 @@ export function SiteCardActions({
       {/* 自动刷新开关 */}
       <button
         onClick={() => onToggleAutoRefresh?.()}
-        className={`p-1 rounded transition-all ${autoRefreshEnabled ? 'bg-green-500/20 hover:bg-green-500/30' : 'hover:bg-white/10'}`}
+        className={`p-1 rounded-md transition-all ${autoRefreshEnabled ? 'bg-green-500/15 text-green-500 hover:bg-green-500/25' : 'text-light-text-secondary dark:text-dark-text-secondary hover:bg-light-border/50 dark:hover:bg-dark-border/50'}`}
         title={autoRefreshEnabled ? '关闭自动刷新' : '开启自动刷新'}
         aria-label={autoRefreshEnabled ? '关闭自动刷新' : '开启自动刷新'}
         aria-pressed={autoRefreshEnabled}
       >
         {autoRefreshEnabled ? (
-          <Timer className="w-3.5 h-3.5 text-green-500" strokeWidth={2} />
+          <Timer className="w-3.5 h-3.5" strokeWidth={2} />
         ) : (
-          <TimerOff className="w-3.5 h-3.5 text-gray-400" strokeWidth={2} />
+          <TimerOff className="w-3.5 h-3.5" strokeWidth={2} />
         )}
       </button>
 
       {/* 编辑 */}
       <button
         onClick={() => onEdit(index)}
-        className="p-1 hover:bg-white/10 rounded transition-all"
+        className="p-1 rounded-md text-light-text-secondary dark:text-dark-text-secondary hover:bg-light-border/50 dark:hover:bg-dark-border/50 transition-all"
         title="编辑站点"
         aria-label="编辑站点"
       >
@@ -222,11 +222,11 @@ export function SiteCardActions({
       {/* 删除 */}
       <button
         onClick={() => onDelete(index)}
-        className="p-1 hover:bg-red-500/20 rounded transition-all"
+        className="p-1 rounded-md text-light-text-secondary dark:text-dark-text-secondary hover:bg-red-500/15 hover:text-red-500 transition-all"
         title="删除站点"
         aria-label="删除站点"
       >
-        <Trash2 className="w-3.5 h-3.5 text-red-500" strokeWidth={2} />
+        <Trash2 className="w-3.5 h-3.5" strokeWidth={2} />
       </button>
     </div>
   );

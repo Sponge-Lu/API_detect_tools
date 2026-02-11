@@ -181,7 +181,7 @@ function buildClaudeCodeRequest(baseUrl: string, apiKey: string, model: string):
     body: {
       model,
       max_tokens: 1,
-      messages: [{ role: 'user', content: 'hi' }],
+      messages: [{ role: 'user', content: '1+1=?' }],
       tools: [
         {
           name: 'test_tool',
@@ -213,7 +213,7 @@ function buildCodexRequest(baseUrl: string, apiKey: string, model: string): Requ
     body: {
       model,
       max_tokens: 1,
-      messages: [{ role: 'user', content: 'hi' }],
+      messages: [{ role: 'user', content: '1+1=?' }],
       tools: [
         {
           type: 'function',
@@ -245,7 +245,7 @@ function buildGeminiCliRequest(baseUrl: string, apiKey: string, model: string): 
       'Content-Type': 'application/json',
     },
     body: {
-      contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+      contents: [{ role: 'user', parts: [{ text: '1+1=?' }] }],
       tools: [
         {
           functionDeclarations: [
@@ -710,7 +710,7 @@ describe('CLI Compatibility Service Property Tests', () => {
           const codexRequest = buildCodexRequest(baseUrl, apiKey, model);
           const geminiRequest = buildGeminiCliRequest(baseUrl, apiKey, model);
 
-          // Check message content is minimal (e.g., "hi")
+          // Check message content is minimal (e.g., "1+1=?")
           const claudeBody = claudeRequest.body as any;
           const codexBody = codexRequest.body as any;
           const geminiBody = geminiRequest.body as any;

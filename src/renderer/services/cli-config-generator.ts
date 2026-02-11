@@ -16,7 +16,7 @@ import { pinyin } from 'pinyin-pro';
  *
  * 根据站点信息和用户选择的 API Key、模型生成 CLI 配置文件内容
  * 支持 Claude Code、Codex、Gemini CLI 配置生成
- * Codex 配置支持根据测试结果自动选择 wire_api (chat/responses)
+ * Codex 配置固定使用 wire_api = "responses"（chat 模式已废弃）
  * Codex 配置支持中文站点名称自动转换为拼音（ASCII 兼容格式）
  * Gemini CLI 配置支持根据测试结果生成端点注释 (native/proxy)
  * 配置模板参考 docs/cli_config_template/
@@ -32,9 +32,8 @@ export interface ConfigParams {
 
 /** Codex 配置生成参数（扩展） */
 export interface CodexConfigParams extends ConfigParams {
-  /** Codex 详细测试结果，用于自动选择 wire_api */
+  /** Codex 详细测试结果 */
   codexDetail?: {
-    chat: boolean | null;
     responses: boolean | null;
   };
 }
@@ -174,29 +173,10 @@ export function generateClaudeCodeTemplate(): GeneratedConfig {
 }
 
 /**
- * 根据测试结果选择最佳的 wire_api
- * @param codexDetail - Codex 详细测试结果
- * @returns 推荐的 wire_api 值
+ * 返回 wire_api 值（固定为 "responses"，chat 模式已废弃）
+ * @returns 固定返回 'responses'
  */
-function selectWireApi(codexDetail?: { chat: boolean | null; responses: boolean | null }): string {
-  if (!codexDetail) {
-    // 没有测试结果，默认使用 responses（功能更强）
-    return 'responses';
-  }
-
-  const { chat, responses } = codexDetail;
-
-  // 优先使用 responses（功能更强）
-  if (responses === true) {
-    return 'responses';
-  }
-
-  // 如果 responses 不支持但 chat 支持，使用 chat
-  if (chat === true) {
-    return 'chat';
-  }
-
-  // 都不支持或未测试，默认使用 responses
+function selectWireApi(): string {
   return 'responses';
 }
 
@@ -205,19 +185,15 @@ function selectWireApi(codexDetail?: { chat: boolean | null; responses: boolean 
  * @param codexDetail - Codex 详细测试结果
  * @returns 注释文本
  */
-function generateWireApiComment(codexDetail?: {
-  chat: boolean | null;
-  responses: boolean | null;
-}): string {
+function generateWireApiComment(codexDetail?: { responses: boolean | null }): string {
   if (!codexDetail) {
-    return '# wire_api: "responses" (推荐) 或 "chat" (兼容性更好)';
+    return '# wire_api: 固定使用 "responses" (Responses API)';
   }
 
-  const chatStatus = codexDetail.chat === true ? '✓' : codexDetail.chat === false ? '✗' : '?';
   const responsesStatus =
     codexDetail.responses === true ? '✓' : codexDetail.responses === false ? '✗' : '?';
 
-  return `# wire_api 测试结果: chat=${chatStatus}, responses=${responsesStatus}`;
+  return `# wire_api 测试结果: responses=${responsesStatus}`;
 }
 
 /**
@@ -329,8 +305,8 @@ export function generateCodexConfig(params: CodexConfigParams): GeneratedConfig 
   const normalizedApiKey = normalizeApiKey(params.apiKey);
   const providerName = sanitizeProviderName(params.siteName);
 
-  // 根据测试结果选择 wire_api
-  const wireApi = selectWireApi(params.codexDetail);
+  // wire_api 固定为 responses（chat 模式已废弃）
+  const wireApi = selectWireApi();
   const wireApiComment = generateWireApiComment(params.codexDetail);
 
   // 按照模板生成 config.toml，添加测试结果注释
@@ -386,14 +362,7 @@ network_access = "enabled"
 [model_providers.IkunCoding]
 name = "ikun"
 base_url = "https://api.ikuncode.cc/v1"
-# wire_api 选项：
-# - "responses": 使用 Responses API (推荐，功能更强，支持 Agent 能力)
-# - "chat": 使用 Chat Completions API (兼容性更好，大多数中转站支持)
-# 
-# 如何选择：
-# - 如果测试结果显示 responses=✓，优先使用 "responses"
-# - 如果只有 chat=✓，使用 "chat"
-# - 如果都不支持，建议先使用 "chat" 尝试
+# wire_api 固定使用 "responses" (Responses API，chat 模式已废弃)
 wire_api = "responses"
 requires_openai_auth = true
 

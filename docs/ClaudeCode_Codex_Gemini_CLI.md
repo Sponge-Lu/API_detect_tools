@@ -84,7 +84,7 @@ Headers:
 1.  **CLI 参数**: 如 `--model`, `--config`
 2.  **Profile 配置**: `config.toml` 中的 `[profiles.<name>]`
 3.  **根配置**: `~/.codex/config.toml`
-    *   关键设置: `base_url`, `wire_api` (`chat` 或 `responses`)
+    *   关键设置: `base_url`, `wire_api` (固定使用 `"responses"`，`"chat"` 已废弃)
 4.  **默认值**: 内置值。
 
 #### 兼容性测试载荷
@@ -112,11 +112,10 @@ Headers: Authorization: Bearer <API_KEY>
 }
 ```
 
-#### 实现说明: 双 API 支持
-Codex 支持两种 `wire_api` 模式。稳健的实现应该测试两者：
-1.  **Chat**: 标准 `/v1/chat/completions`。
-2.  **Responses**: `/v1/responses` (高保真 completions)。
-    *   *建议*: 同时测试。如果 `responses` 可用，优先使用它，因为它支持更丰富的 Codex 特性。
+#### 实现说明: Responses API
+Codex 仅支持 `wire_api = "responses"` 模式（`"chat"` 已废弃）：
+*   **Responses**: `/v1/responses` (Responses API，支持 Agent 能力)。
+*   测试兼容性时仅需测试 Responses API 端点。
 
 ---
 

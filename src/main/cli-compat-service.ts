@@ -1,7 +1,7 @@
 /**
  * 输入: HttpClient (HTTP 请求), Logger (日志记录)
  * 输出: CliCompatibilityResult, CodexTestDetail, GeminiTestDetail, CliCompatService, 请求构建函数
- * 定位: 服务层 - CLI 工具兼容性测试服务，支持 Claude Code、Codex（双 API）、Gemini CLI（双端点）
+ * 定位: 服务层 - CLI 工具兼容性测试服务，支持 Claude Code、Codex（Responses API）、Gemini CLI（双端点）
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -30,7 +30,6 @@ export enum CliType {
 
 /** Codex 详细测试结果 */
 export interface CodexTestDetail {
-  chat: boolean | null; // Chat Completions API 测试结果
   responses: boolean | null; // Responses API 测试结果
 }
 
@@ -44,7 +43,7 @@ export interface GeminiTestDetail {
 export interface CliCompatibilityResult {
   claudeCode: boolean | null; // true=支持, false=不支持, null=未测试
   codex: boolean | null;
-  codexDetail?: CodexTestDetail; // Codex 详细测试结果（chat/responses）
+  codexDetail?: CodexTestDetail; // Codex 详细测试结果（responses）
   geminiCli: boolean | null;
   geminiDetail?: GeminiTestDetail; // Gemini CLI 详细测试结果（native/proxy）
   testedAt: number | null; // Unix timestamp
@@ -295,7 +294,7 @@ export function buildClaudeCodeRequest(
     body: {
       model,
       max_tokens: 1,
-      messages: [{ role: 'user', content: 'hi' }],
+      messages: [{ role: 'user', content: '1+1=?' }],
       tools: [
         {
           name: 'test_tool',
@@ -306,44 +305,6 @@ export function buildClaudeCodeRequest(
               test: { type: 'string' },
             },
             required: [],
-          },
-        },
-      ],
-    },
-  };
-}
-
-/**
- * 构建 Codex 测试请求 (Chat Completions API)
- * 使用 /v1/chat/completions 端点，Bearer 认证，tools 使用 function.parameters 格式
- */
-export function buildCodexRequest(baseUrl: string, apiKey: string, model: string): RequestFormat {
-  const url = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
-
-  return {
-    url,
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: {
-      model,
-      max_tokens: 1,
-      messages: [{ role: 'user', content: 'hi' }],
-      tools: [
-        {
-          type: 'function',
-          function: {
-            name: 'test_tool',
-            description: 'A test tool',
-            parameters: {
-              type: 'object',
-              properties: {
-                test: { type: 'string' },
-              },
-              required: [],
-            },
           },
         },
       ],
@@ -371,7 +332,7 @@ export function buildCodexResponsesRequest(
     },
     body: {
       model,
-      input: 'hi',
+      input: '1+1=?',
     },
   };
 }
@@ -394,7 +355,7 @@ export function buildGeminiCliRequest(
       'Content-Type': 'application/json',
     },
     body: {
-      contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+      contents: [{ role: 'user', parts: [{ text: '1+1=?' }] }],
       tools: [
         {
           functionDeclarations: [
@@ -440,7 +401,7 @@ export function buildGeminiCliProxyRequest(
     body: {
       model,
       max_tokens: 1,
-      messages: [{ role: 'user', content: 'hi' }],
+      messages: [{ role: 'user', content: '1+1=?' }],
     },
   };
 }
@@ -482,28 +443,6 @@ export class CliCompatService {
   }
 
   /**
-   * 测试 Codex 兼容性（Chat Completions API）
-   */
-  async testCodexChat(url: string, apiKey: string, model: string): Promise<boolean> {
-    try {
-      const request = buildCodexRequest(url, apiKey, model);
-      log.info(`Testing Codex (Chat) compatibility: ${request.url}`);
-
-      const response = await httpPost(request.url, request.body, {
-        headers: request.headers,
-        timeout: this.timeout,
-      });
-
-      const supported = isApiSupported(response.status, response.data);
-      log.info(`Codex (Chat) test result: status=${response.status}, supported=${supported}`);
-      return supported;
-    } catch (error: any) {
-      log.warn(`Codex (Chat) test failed: ${error.message}`);
-      return false;
-    }
-  }
-
-  /**
    * 测试 Codex 兼容性（Responses API）
    */
   async testCodexResponses(url: string, apiKey: string, model: string): Promise<boolean> {
@@ -526,7 +465,7 @@ export class CliCompatService {
   }
 
   /**
-   * 测试 Codex 兼容性（同时测试 Chat 和 Responses API）
+   * 测试 Codex 兼容性（仅测试 Responses API，chat 模式已废弃）
    * @returns 包含详细测试结果的对象
    */
   async testCodexWithDetail(
@@ -534,16 +473,11 @@ export class CliCompatService {
     apiKey: string,
     model: string
   ): Promise<{ supported: boolean; detail: CodexTestDetail }> {
-    // 并发测试两种 API
-    const [chatResult, responsesResult] = await Promise.all([
-      this.testCodexChat(url, apiKey, model),
-      this.testCodexResponses(url, apiKey, model),
-    ]);
+    const responsesResult = await this.testCodexResponses(url, apiKey, model);
 
     return {
-      supported: chatResult || responsesResult, // 任一通过即支持
+      supported: responsesResult,
       detail: {
-        chat: chatResult,
         responses: responsesResult,
       },
     };
@@ -551,7 +485,7 @@ export class CliCompatService {
 
   /**
    * 测试 Codex 兼容性
-   * 同时测试 Chat 和 Responses API，任一通过即支持
+   * 仅测试 Responses API（chat 模式已废弃）
    */
   async testCodex(url: string, apiKey: string, model: string): Promise<boolean> {
     const result = await this.testCodexWithDetail(url, apiKey, model);
@@ -671,7 +605,7 @@ export class CliCompatService {
       claudeModel ? this.testClaudeCode(siteUrl, apiKey, claudeModel) : Promise.resolve(null),
       gptModel
         ? this.testCodexWithDetail(siteUrl, apiKey, gptModel)
-        : Promise.resolve({ supported: null, detail: { chat: null, responses: null } }),
+        : Promise.resolve({ supported: null, detail: { responses: null } }),
       geminiModel
         ? this.testGeminiWithDetail(siteUrl, apiKey, geminiModel)
         : Promise.resolve({ supported: null, detail: { native: null, proxy: null } }),

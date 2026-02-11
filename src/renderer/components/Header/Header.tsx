@@ -1,6 +1,6 @@
 /**
  * 输入: HeaderProps (Tab 导航状态、保存状态、更新状态)
- * 输出: React 组件 (统一导航栏 - iOS 连通式 Tab + 状态区)
+ * 输出: React 组件 (统一导航栏 - macOS 风格 Pill Tab + 状态区)
  * 定位: 展示层 - 提供导航和状态显示
  */
 
@@ -44,10 +44,10 @@ export function Header({
     }
   };
 
-  // Sliding indicator
+  // Sliding pill indicator
   const navRef = useRef<HTMLDivElement>(null);
   const tabRefs = useRef<Map<TabId, HTMLButtonElement>>(new Map());
-  const [indicator, setIndicator] = useState({ left: 0, width: 0 });
+  const [indicator, setIndicator] = useState({ left: 0, width: 0, ready: false });
 
   const setTabRef = useCallback(
     (id: TabId) => (el: HTMLButtonElement | null) => {
@@ -66,13 +66,14 @@ export function Header({
       setIndicator({
         left: tabRect.left - navRect.left,
         width: tabRect.width,
+        ready: true,
       });
     }
   }, [activeTab]);
 
   return (
     <header
-      className="z-[100] shrink-0 h-11 flex items-stretch bg-light-bg dark:bg-dark-bg border-b border-[var(--ios-separator)]"
+      className="z-[100] shrink-0 h-12 flex items-center px-3 bg-gray-50/80 dark:bg-[#1c1c1e]/90 backdrop-blur-md border-b border-gray-200/80 dark:border-white/[0.08] transition-colors duration-300"
       style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
       {/* Tab 导航区 */}
@@ -80,16 +81,18 @@ export function Header({
         ref={navRef}
         role="tablist"
         aria-label="主导航"
-        className="relative flex items-stretch shrink-0"
+        className="relative flex items-center gap-0.5 shrink-0"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
-        {/* Sliding bottom bar indicator */}
+        {/* Sliding pill background indicator */}
         <div
-          className="absolute bottom-0 h-[3px] rounded-full bg-[var(--ios-blue)] transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]"
+          className="absolute top-1/2 -translate-y-1/2 h-[32px] bg-white dark:bg-white/[0.12] rounded-lg shadow-sm dark:shadow-none transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]"
           style={{
             left: indicator.left,
             width: indicator.width,
+            opacity: indicator.ready ? 1 : 0,
           }}
+          aria-hidden="true"
         />
 
         {tabs.map(({ id, label, icon: Icon }) => {
@@ -103,20 +106,20 @@ export function Header({
               aria-controls={`tabpanel-${id}`}
               onClick={() => onTabChange(id)}
               className={`
-                relative flex items-center justify-center gap-1.5
-                px-5 text-[13px] font-medium
-                transition-colors duration-200
+                relative z-10 flex items-center justify-center gap-1.5
+                px-3.5 py-1.5 text-[13px] font-medium rounded-lg
+                transition-all duration-200
                 ${
                   isActive
                     ? 'text-[var(--ios-blue)] font-semibold'
-                    : 'text-[var(--ios-text-secondary)] hover:text-[var(--ios-text-primary)]'
+                    : 'text-gray-500 dark:text-gray-400 hover:bg-black/[0.04] dark:hover:bg-white/[0.06] hover:text-gray-700 dark:hover:text-gray-200'
                 }
               `}
               style={{ WebkitUserSelect: 'none' } as React.CSSProperties}
             >
               <Icon
-                className={`w-4 h-4 transition-colors duration-200 ${
-                  isActive ? 'text-[var(--ios-blue)]' : ''
+                className={`w-4 h-4 transition-all duration-200 ${
+                  isActive ? 'text-[var(--ios-blue)]' : 'opacity-70'
                 }`}
                 strokeWidth={isActive ? 2 : 1.5}
                 aria-hidden="true"
@@ -132,13 +135,13 @@ export function Header({
 
       {/* 右侧状态区 */}
       <div
-        className="flex items-center gap-3 pr-4 shrink-0"
+        className="flex items-center gap-3 pr-1 shrink-0"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
-        <CliConfigStatusPanel compact showRefresh />
+        <CliConfigStatusPanel compact showRefresh showReset />
 
         {saving && (
-          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[var(--ios-blue)]/10 text-[var(--ios-blue)] rounded-lg text-xs">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded-md text-xs font-medium">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
             <span>保存中...</span>
           </div>

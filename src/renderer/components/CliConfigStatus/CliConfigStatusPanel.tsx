@@ -9,9 +9,10 @@
  * - PROJECT_INDEX.md
  */
 
-import { RefreshCw, Loader2, Info } from 'lucide-react';
+import { RefreshCw, Loader2, Info, Eraser } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { CliConfigStatus } from './CliConfigStatus';
+import { ResetCliConfigDialog } from '../dialogs/ResetCliConfigDialog';
 import { useConfigDetection } from '../../hooks/useConfigDetection';
 import { useCustomCliConfigStore } from '../../store/customCliConfigStore';
 import type { AuthType, CliType, CliDetectionResult } from '../../../shared/types/config-detection';
@@ -23,6 +24,8 @@ export interface CliConfigStatusPanelProps {
   showRefresh?: boolean;
   /** 是否显示详情按钮 */
   showDetails?: boolean;
+  /** 是否显示重置按钮 */
+  showReset?: boolean;
   /** 自定义类名 */
   className?: string;
 }
@@ -87,10 +90,12 @@ export function CliConfigStatusPanel({
   compact = false,
   showRefresh = true,
   showDetails = false,
+  showReset = false,
   className = '',
 }: CliConfigStatusPanelProps) {
   const { detection, isLoading, refresh } = useConfigDetection();
   const [showDetailPanel, setShowDetailPanel] = useState(false);
+  const [showResetDialog, setShowResetDialog] = useState(false);
 
   // 加载自定义CLI配置，以便CliConfigStatus能匹配配置名称
   const { loadConfigs } = useCustomCliConfigStore();
@@ -179,6 +184,17 @@ export function CliConfigStatusPanel({
             />
           </button>
         )}
+
+        {/* 重置按钮 */}
+        {showReset && (
+          <button
+            onClick={() => setShowResetDialog(true)}
+            className="p-1 rounded hover:bg-light-bg dark:hover:bg-dark-bg transition-colors"
+            title="重置 CLI 配置"
+          >
+            <Eraser className="w-3.5 h-3.5 text-light-text-secondary dark:text-dark-text-secondary hover:text-[var(--ios-red)]" />
+          </button>
+        )}
       </div>
 
       {/* 详情面板 */}
@@ -191,6 +207,15 @@ export function CliConfigStatusPanel({
             <DetailRow key={cliType} cliType={cliType} result={detection[cliType]} />
           ))}
         </div>
+      )}
+
+      {/* 重置 CLI 配置对话框 */}
+      {showReset && (
+        <ResetCliConfigDialog
+          open={showResetDialog}
+          onClose={() => setShowResetDialog(false)}
+          onResetComplete={refresh}
+        />
       )}
     </div>
   );

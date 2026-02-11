@@ -190,7 +190,7 @@ export function ApplyConfigPopover({
         if (cliType === 'claudeCode') {
           generatedConfig = generateClaudeCodeConfig(params);
         } else if (cliType === 'codex') {
-          // 传递 codexDetail 用于自动选择 wire_api
+          // 传递 codexDetail 用于生成测试结果注释
           generatedConfig = generateCodexConfig({
             ...params,
             codexDetail: cliCompatibility?.codexDetail,

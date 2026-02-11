@@ -103,10 +103,9 @@ function getCodexDetailText(compatibility: CliCompatibilityResult | undefined): 
   const detail = compatibility?.codexDetail;
   if (!detail) return '';
 
-  const chatStatus = detail.chat === true ? '✓' : detail.chat === false ? '✗' : '?';
   const responsesStatus = detail.responses === true ? '✓' : detail.responses === false ? '✗' : '?';
 
-  return ` [chat: ${chatStatus}, responses: ${responsesStatus}]`;
+  return ` [responses: ${responsesStatus}]`;
 }
 
 /**
@@ -245,7 +244,7 @@ export function CliCompatibilityIcons({
             return (
               <div
                 key={key}
-                className={`${sizeClass} flex-shrink-0 transition-all duration-200 ${styleClass}`}
+                className={`${sizeClass} flex-shrink-0 transition-opacity duration-200 ${styleClass}`}
                 title={tooltipText}
               >
                 <img src={icon} alt={name} className="w-full h-full" />

@@ -167,10 +167,10 @@ main.ts: app.whenReady()
 - `testGeminiCli(url, apiKey, model)` - 测试 Gemini CLI
 - `testGeminiWithDetail(url, apiKey, model)` - 测试 Gemini CLI 双端点并返回详细结果
 
-**支持工具**: Claude Code, Codex (Chat/Responses), Gemini CLI (Native/Proxy)
+**支持工具**: Claude Code, Codex (Responses API), Gemini CLI (Native/Proxy)
 
-**双端点测试功能**:
-- Codex: 同时测试 Chat Completions API 和 Responses API，返回 `codexDetail`
+**端点测试功能**:
+- Codex: 测试 Responses API，返回 `codexDetail`（chat 模式已废弃）
 - Gemini CLI: 同时测试 Native 原生格式和 Proxy OpenAI 兼容格式，返回 `geminiDetail`
 - 测试结果包含详细信息用于配置生成和用户提示
 

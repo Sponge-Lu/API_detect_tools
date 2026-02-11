@@ -211,7 +211,7 @@ export const SiteCard = React.memo(
         )}
 
         {/* 一级信息 - iOS 风格纯色背景 */}
-        <div className="px-[var(--spacing-md)] py-[var(--spacing-sm)] border-b border-[var(--ios-separator)]">
+        <div className="px-4 py-[var(--spacing-sm)] border-b border-[var(--ios-separator)]">
           <div className="flex items-center justify-between">
             {/* 左侧：信息栅格 */}
             <SiteCardHeader

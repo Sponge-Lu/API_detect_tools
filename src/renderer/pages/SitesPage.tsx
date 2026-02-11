@@ -727,21 +727,21 @@ export function SitesPage() {
         <div className="flex-1 flex flex-col">
           {/* 站点分组控制栏 */}
           {config.sites.length > 0 && (
-            <div className="min-w-[1180px] px-4 pt-2 pb-1 flex items-center justify-between text-[13px] text-slate-500 dark:text-slate-400 border-b border-slate-200/50 dark:border-slate-700/50 flex-shrink-0">
+            <div className="min-w-[1180px] px-4 pt-2 pb-1 flex items-center justify-between text-[13px] text-light-text-secondary dark:text-dark-text-secondary border-b border-light-border dark:border-dark-border flex-shrink-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-semibold text-slate-700 dark:text-slate-200">站点分组</span>
+                <span className="font-semibold text-light-text dark:text-dark-text">站点分组</span>
                 <button
                   onClick={() => setActiveSiteGroupFilter(null)}
                   className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[13px] transition-all ${
                     activeSiteGroupFilter === null
                       ? 'border-primary-500 bg-primary-500 text-white'
-                      : 'border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-900/60 hover:border-primary-300'
+                      : 'border-light-border dark:border-dark-border bg-white/80 dark:bg-dark-card hover:border-primary-300'
                   }`}
                   title="显示全部站点"
                 >
                   <span className="font-semibold">全部</span>
                   <span
-                    className={`text-xs ${activeSiteGroupFilter === null ? 'text-white/80' : 'text-slate-400 dark:text-slate-500'}`}
+                    className={`text-xs ${activeSiteGroupFilter === null ? 'text-white/80' : 'text-light-text-tertiary dark:text-dark-text-tertiary'}`}
                   >
                     {config.sites.length} 个
                   </span>
@@ -769,7 +769,7 @@ export function SitesPage() {
                             ? 'border-primary-500 bg-primary-100/80 dark:bg-primary-900/50 scale-105'
                             : dragOverGroupId === groupId
                               ? 'border-primary-400 bg-primary-50/80 dark:bg-primary-900/30'
-                              : 'border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-900/60 hover:border-primary-300'
+                              : 'border-light-border dark:border-dark-border bg-white/80 dark:bg-dark-card hover:border-primary-300'
                       }`}
                       onDragOver={e => {
                         e.preventDefault();
@@ -809,7 +809,7 @@ export function SitesPage() {
                         <span className="font-semibold">{group.name}</span>
                       </span>
                       <span
-                        className={`text-xs ${isActive ? 'text-white/80' : 'text-slate-400 dark:text-slate-500'}`}
+                        className={`text-xs ${isActive ? 'text-white/80' : 'text-light-text-tertiary dark:text-dark-text-tertiary'}`}
                       >
                         {groupSitesCount} 个
                       </span>
@@ -818,7 +818,7 @@ export function SitesPage() {
                           e.stopPropagation();
                           openEditGroupDialog(group);
                         }}
-                        className={`hidden group-hover/tag:block p-0.5 rounded transition-colors ${isActive ? 'hover:bg-white/20 text-white/80 hover:text-white' : 'hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-primary-500'}`}
+                        className={`hidden group-hover/tag:block p-0.5 rounded transition-colors ${isActive ? 'hover:bg-white/20 text-white/80 hover:text-white' : 'hover:bg-light-border dark:hover:bg-dark-border text-light-text-tertiary hover:text-primary-500'}`}
                         title="编辑分组名称"
                       >
                         <Pencil className="w-3 h-3" />
@@ -829,7 +829,7 @@ export function SitesPage() {
                             e.stopPropagation();
                             deleteSiteGroup(groupId);
                           }}
-                          className={`hidden group-hover/tag:block p-0.5 rounded transition-colors ${isActive ? 'hover:bg-white/20 text-white/80 hover:text-white' : 'hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-red-500'}`}
+                          className={`hidden group-hover/tag:block p-0.5 rounded transition-colors ${isActive ? 'hover:bg-white/20 text-white/80 hover:text-white' : 'hover:bg-light-border dark:hover:bg-dark-border text-light-text-tertiary hover:text-red-500'}`}
                           title="删除分组"
                         >
                           <Trash2 className="w-3 h-3" />
@@ -850,17 +850,17 @@ export function SitesPage() {
               </div>
               <div className="flex items-center gap-2">
                 <div className="relative">
-                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-light-text-tertiary dark:text-dark-text-tertiary" />
                   <input
                     value={globalModelSearch}
                     onChange={e => handleGlobalModelSearchChange(e.target.value)}
                     placeholder="搜索可用模型（全局）"
-                    className="pl-8 pr-7 py-2 text-sm bg-white/80 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-600 rounded-lg text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-primary-400 shadow-inner"
+                    className="pl-8 pr-7 py-2 text-sm bg-white/80 dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg text-light-text dark:text-dark-text placeholder-light-text-tertiary dark:placeholder-dark-text-tertiary focus:outline-none focus:border-primary-400"
                   />
                   {globalModelSearch && (
                     <button
                       onClick={() => handleGlobalModelSearchChange('')}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-light-text-tertiary hover:text-light-text dark:hover:text-dark-text"
                       title="清空全局搜索"
                     >
                       <X className="w-4 h-4" />
@@ -913,7 +913,9 @@ export function SitesPage() {
                     从备份恢复站点
                   </IOSButton>
                 </div>
-                <p className="text-xs mt-2 text-slate-400">从备份目录选择配置文件进行恢复</p>
+                <p className="text-xs mt-2 text-light-text-tertiary dark:text-dark-text-tertiary">
+                  从备份目录选择配置文件进行恢复
+                </p>
               </div>
             ) : (
               <>
@@ -1132,22 +1134,25 @@ export function SitesPage() {
                           setShowApplyConfigPopover(true);
                         }}
                         onToggleAutoRefresh={() => {
-                          const newSites = [...config.sites];
-                          const interval = site.auto_refresh_interval || 5;
-                          if (site.auto_refresh) {
-                            newSites[index] = {
-                              ...site,
-                              auto_refresh: false,
-                              auto_refresh_interval: interval,
-                            };
-                          } else {
-                            newSites[index] = {
-                              ...site,
-                              auto_refresh: true,
-                              auto_refresh_interval: interval,
-                            };
-                          }
-                          saveConfig({ ...config, sites: newSites });
+                          const latestConfig = useConfigStore.getState().config;
+                          if (!latestConfig) return;
+                          const latestIndex = latestConfig.sites.findIndex(
+                            s => s.name === site.name
+                          );
+                          if (latestIndex === -1) return;
+                          const latestSite = latestConfig.sites[latestIndex];
+                          const newSites = [...latestConfig.sites];
+                          const interval = latestSite.auto_refresh_interval || 5;
+                          newSites[latestIndex] = {
+                            ...latestSite,
+                            auto_refresh: !latestSite.auto_refresh,
+                            auto_refresh_interval: interval,
+                          };
+                          const newConfig = { ...latestConfig, sites: newSites };
+                          setConfig(newConfig);
+                          window.electronAPI.saveConfig(newConfig).catch(err => {
+                            Logger.error('保存自动刷新配置失败:', err);
+                          });
                         }}
                       />
                     );

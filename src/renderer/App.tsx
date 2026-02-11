@@ -151,6 +151,11 @@ declare global {
           sites: Array<{ id: string; name: string; url: string }>
         ) => Promise<import('../shared/types/config-detection').AllCliDetectionResult>;
         clearCache: (cliType?: 'claudeCode' | 'codex' | 'geminiCli') => Promise<void>;
+        resetCliConfig: (cliType: 'claudeCode' | 'codex' | 'geminiCli') => Promise<{
+          success: boolean;
+          deletedPaths: string[];
+          error?: string;
+        }>;
       };
       closeBehavior?: {
         getSettings: () => Promise<{

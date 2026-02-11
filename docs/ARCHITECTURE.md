@@ -162,8 +162,8 @@ src/
 - **UnifiedConfigManager**: 负责 `config.json` 的读写，保证配置数据的原子性和一致性。支持前端兼容层，在保存旧格式配置时自动保留 WebDAV 等扩展配置。
 - **WebDAVManager**: 负责 WebDAV 云端备份功能，包括连接测试、备份上传/下载/删除、自动清理旧备份等。使用动态 import 加载 ESM 模块以兼容 Electron 的 CommonJS 环境。
 - **UpdateService**: 负责软件更新检测与应用内下载安装。通过 GitHub Releases API 获取最新版本信息，支持正式版/预发布检测，支持按平台选择安装包、下载进度上报、取消下载与安装触发。
-- **CliCompatService**: 负责 CLI 兼容性测试功能，支持 Claude Code、Codex、Gemini CLI 三种工具的兼容性检测，通过模拟 API 请求验证站点是否支持特定 CLI 工具。Codex 支持双 API 测试（Chat Completions 和 Responses API），Gemini CLI 支持双端点测试（Native 原生格式和 Proxy OpenAI 兼容格式），测试结果包含详细信息用于配置生成和用户提示。
-- **CliConfigGenerator**: 负责生成 CLI 配置文件内容，支持 Claude Code、Codex 和 Gemini CLI 配置生成，按照 `docs/cli_config_template/` 中的模板格式生成配置。Claude Code 配置包含 HTTPS_PROXY 和 HTTP_PROXY 代理设置。Codex 配置根据双 API 测试结果自动选择 `wire_api` 值并添加测试结果注释。Gemini CLI 配置根据双端点测试结果添加端点说明和使用建议注释。同时提供配置模板函数用于未选择 API Key 和模型时的预览显示。应用配置时采用合并模式，只更新相关配置项，保留用户的其他设置。
+- **CliCompatService**: 负责 CLI 兼容性测试功能，支持 Claude Code、Codex、Gemini CLI 三种工具的兼容性检测，通过模拟 API 请求验证站点是否支持特定 CLI 工具。Codex 仅测试 Responses API（chat 模式已废弃），Gemini CLI 支持双端点测试（Native 原生格式和 Proxy OpenAI 兼容格式），测试结果包含详细信息用于配置生成和用户提示。
+- **CliConfigGenerator**: 负责生成 CLI 配置文件内容，支持 Claude Code、Codex 和 Gemini CLI 配置生成，按照 `docs/cli_config_template/` 中的模板格式生成配置。Claude Code 配置包含 HTTPS_PROXY 和 HTTP_PROXY 代理设置。Codex 配置固定使用 `wire_api = "responses"`（chat 模式已废弃）并添加测试结果注释。Gemini CLI 配置根据双端点测试结果添加端点说明和使用建议注释。同时提供配置模板函数用于未选择 API Key 和模型时的预览显示。应用配置时采用合并模式，只更新相关配置项，保留用户的其他设置。
 - **CustomCliConfigHandlers**: 负责自定义 CLI 配置的 IPC 持久化（load/save）和模型拉取（OpenAI 兼容 `/v1/models`），用于非兼容站点或仅有 Base URL + Key 的场景。
 - **CloseBehaviorManager**: 负责窗口关闭行为管理，支持退出应用或最小化到系统托盘。管理用户偏好设置的持久化，创建和管理系统托盘图标及上下文菜单。
 - **CreditService**: 负责 Linux Do Credit 积分查询和充值功能。通过浏览器自动化在 credit.linux.do 会话中获取积分数据（基准值、余额、收支、交易记录等），并使用 `page.evaluate()` 绕过 Cloudflare 保护。支持登录状态检测、每日统计和交易记录查询。提供 LDC 充值功能，调用站点 `/api/user/pay` 端点获取支付 URL 并在浏览器中打开支付页面。

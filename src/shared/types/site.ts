@@ -33,7 +33,6 @@ export interface UserGroupInfo {
 
 /** Codex 详细测试结果 */
 export interface CodexTestDetail {
-  chat: boolean | null; // Chat Completions API 测试结果
   responses: boolean | null; // Responses API 测试结果
 }
 
@@ -47,7 +46,7 @@ export interface GeminiTestDetail {
 export interface CliCompatibilityData {
   claudeCode: boolean | null;
   codex: boolean | null;
-  codexDetail?: CodexTestDetail; // Codex 详细测试结果（chat/responses）
+  codexDetail?: CodexTestDetail; // Codex 详细测试结果（responses）
   geminiCli: boolean | null;
   geminiDetail?: GeminiTestDetail; // Gemini CLI 详细测试结果（native/proxy）
   testedAt: number | null;

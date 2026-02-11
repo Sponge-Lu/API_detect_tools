@@ -11,11 +11,24 @@
 
 import Logger from '../utils/logger';
 import { ipcMain, shell } from 'electron';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import * as os from 'os';
 import type { ApiService } from '../api-service';
 import type { ChromeManager } from '../chrome-manager';
 import type { TokenService } from '../token-service';
 import { configDetectionService } from '../config-detection-service';
+import { CLI_CONFIG_PATHS } from '../../shared/types/config-detection';
 import type { SiteInfo, CliType } from '../../shared/types/config-detection';
+
+/**
+ * 获取指定 CLI 类型的所有配置文件绝对路径
+ */
+function getCliConfigFilePaths(cliType: CliType): string[] {
+  const home = os.homedir();
+  const paths = CLI_CONFIG_PATHS[cliType];
+  return Object.values(paths).map((relativePath: string) => path.join(home, relativePath));
+}
 
 export function registerDetectionHandlers(
   apiService: ApiService,
@@ -231,6 +244,40 @@ export function registerDetectionHandlers(
     } catch (error: any) {
       Logger.error('❌ [IPC] 清除 CLI 配置缓存失败:', error?.message || error);
       return { success: false, error: error?.message || 'Unknown error' };
+    }
+  });
+
+  // CLI 配置重置：删除指定 CLI 的本地配置文件
+  ipcMain.handle('detection:reset-cli-config', async (_, cliType: CliType) => {
+    try {
+      Logger.info(`[IPC] 重置 ${cliType} 配置 - 删除本地配置文件`);
+
+      const filePaths = getCliConfigFilePaths(cliType);
+      const deletedPaths: string[] = [];
+
+      for (const filePath of filePaths) {
+        try {
+          await fs.access(filePath);
+          await fs.unlink(filePath);
+          deletedPaths.push(filePath);
+          Logger.info(`[IPC] 已删除: ${filePath}`);
+        } catch (err: any) {
+          if (err.code === 'ENOENT') {
+            Logger.info(`[IPC] 文件不存在，跳过: ${filePath}`);
+          } else {
+            Logger.error(`[IPC] 删除文件失败: ${filePath}`, err?.message || err);
+            throw new Error(`删除 ${filePath} 失败: ${err.message}`);
+          }
+        }
+      }
+
+      // 清除该 CLI 的检测缓存
+      configDetectionService.clearCacheFor(cliType);
+
+      return { success: true, deletedPaths };
+    } catch (error: any) {
+      Logger.error(`❌ [IPC] 重置 ${cliType} 配置失败:`, error?.message || error);
+      return { success: false, error: error?.message || 'Unknown error', deletedPaths: [] };
     }
   });
 }

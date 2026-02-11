@@ -4,6 +4,25 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，并且本项目遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
+## [v2.1.20]
+
+### 新增
+- **CLI 配置重置功能**：支持一键删除指定 CLI（Claude Code / Codex / Gemini CLI）的本地配置文件，并自动清除检测缓存
+- **CLI 配置文件内联编辑**：自定义 CLI 配置编辑器支持预览/编辑模式切换，可直接修改配置文件内容
+- **CLI 独立模型选择**：自定义 CLI 配置编辑器中每个 CLI 可独立选择模型，替代原有的全局统一选择
+- **CLI 兼容性测试凭据回退**：测试时若配置文件为空，自动从 apiKeyId + siteUrl 回退生成凭据，无需先生成配置文件
+
+### 变更
+- **Codex 废弃 Chat Completions API 测试**：移除 `/v1/chat/completions` 端点测试，仅保留 Responses API（`/v1/responses`），`wire_api` 固定为 `"responses"`
+
+### 优化
+- **导航栏视觉升级**：Tab 导航从 iOS 底部条样式改为 macOS 风格 Pill 背景指示器，增加毛玻璃效果和平滑过渡动画
+- **站点卡片操作按钮样式统一**：移除彩色背景色块，改为 hover 时轻量高亮，视觉更干净
+- **站点卡片数据列对齐**：数字列启用 `tabular-nums`，使用语义化颜色变量替代硬编码 slate 色值
+- **CLI 兼容性测试提示优化**：配置不完整时的 toast 提示更具指导性
+
+---
+
 ## [v2.1.18]
 
 ### 新增

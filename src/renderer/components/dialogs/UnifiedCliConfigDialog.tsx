@@ -87,7 +87,7 @@ export interface UnifiedCliConfigDialogProps {
   apiKeys: ApiKeyInfo[];
   siteModels: string[];
   currentConfig: CliConfig | null;
-  codexDetail?: CodexTestDetail | null; // Codex 详细测试结果，用于自动选择 wire_api
+  codexDetail?: CodexTestDetail | null; // Codex 详细测试结果
   geminiDetail?: GeminiTestDetail | null; // Gemini CLI 详细测试结果，用于自动选择端点格式
   onClose: () => void;
   onSave: (config: CliConfig) => void;

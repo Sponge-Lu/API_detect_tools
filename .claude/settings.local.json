@@ -28,7 +28,11 @@
       "Bash(npm run build:*)",
       "Bash(C:/Users/Hang/.claude/bin/codeagent-wrapper.exe --backend gemini --gemini-model gemini-3-pro-preview - \"D:\\2_Github_Repository\\API_detect_tools\" <<'EOF'\nROLE_FILE: C:/Users/Hang/.claude/.ccg/prompts/gemini/analyzer.md\n<TASK>\n需求：优化 Electron 桌面应用（API Hub Management Tools）的整体 UI 美观度，特别是 LinuxDoCredit 页面和 Settings 页面的布局需要调整使其与窗口协调。\n\n当前 UI 架构：\n- 技术栈：React 18 + TypeScript + Tailwind CSS 3 + Electron + Zustand + lucide-react\n- 布局：Header(Logo+标题+状态) → TabBar(4个Tab切换) → 页面内容区\n- 设计系统：iOS 风格 CSS 变量系统，翡翠绿主色调(#10b981)，支持亮色/暗色模式\n- 最小窗口：1024x768\n\n当前问题分析：\n1. **TabBar**：使用灰色背景的 pill-style 按钮组，视觉层次感弱，与 Header 之间缺少过渡\n2. **Header**：基本功能完整但较为平淡，Logo 区域未充分利用\n3. **CreditPage（Linux Do Credit）**：\n   - max-w-4xl 限制内容宽度，但整体布局较为松散\n   - 统计卡片 grid-cols-3 在不同窗口大小下可能不协调\n   - 积分概览卡片信息密度高但视觉层次不够清晰\n   - 底部控制区域样式简陋\n4. **SettingsPage/SettingsPanel**：\n   - max-w-2xl 限制过窄，利用率低\n   - 各 section 样式重复，缺乏视觉变化\n   - 表单按钮区域固定在底部不够优雅\n   - asPage 模式下的布局与窗口不够协调\n\n当前组件代码结构：\n- Header.tsx: 单行 header，左Logo+标题，右 CLI状态+保存状态+更新按钮\n- TabBar.tsx: 横向 tab 切换，使用 pill-style 按钮组\n- CreditPage.tsx: 用户信息头部 → 积分概览 → 3列统计卡片 → 支付信息 → 充值区域 → 底部控制\n- SettingsPanel.tsx: 外观设置 → 检测设置 → WebDAV备份 → 软件更新 → 关闭行为 → 数据管理 → 保存/取消按钮\n\n设计约束：\n- 必须使用现有的 Tailwind CSS + iOS 设计系统\n- 保持亮色/暗色模式兼容\n- 保持 lucide-react 图标一致性\n- 最小窗口 1024x768\n</TASK>\nOUTPUT: \n1. UI 可行性分析和现有问题诊断\n2. 至少 2 个推荐优化方案（含设计理念、主要变更点、预期效果）\n3. 用户体验评估和风险点\nEOF)",
       "Bash(C:/Users/Hang/.claude/bin/codeagent-wrapper.exe:*)",
-      "Bash(npm run build)"
+      "Bash(npm run build)",
+      "Bash(if not exist \"D:\\2_Github_Repository\\API_detect_tools\\.claude\\plan\" mkdir \"D:\\2_Github_Repository\\API_detect_tools\\.claude\\plan\")",
+      "Bash(powershell:*)",
+      "mcp__chrome-devtools__list_pages",
+      "Bash(npx vitest run:*)"
     ]
   }
 }

@@ -49,7 +49,7 @@ export function SiteCardHeader({
 }: SiteCardHeaderProps) {
   return (
     <div
-      className="grid gap-x-1 items-center text-[13px]"
+      className="grid gap-x-1 items-center text-[13px] tabular-nums"
       style={{
         gridTemplateColumns: columnWidths.map(w => `${w}px`).join(' '),
       }}
@@ -68,7 +68,7 @@ export function SiteCardHeader({
             <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
           )
         ) : (
-          <div className="w-2 h-2 rounded-full bg-gray-500 flex-shrink-0" />
+          <div className="w-2 h-2 rounded-full bg-light-text-tertiary dark:bg-dark-text-tertiary flex-shrink-0" />
         )}
         <span className="font-bold text-sm md:text-base truncate">{site.name}</span>
         {/* 错误码/超时提示 */}
@@ -95,7 +95,7 @@ export function SiteCardHeader({
             </span>
           )
         ) : (
-          <span className="text-slate-400 dark:text-slate-500">--</span>
+          <span className="text-light-text-tertiary dark:text-dark-text-tertiary">--</span>
         )}
       </div>
 
@@ -112,7 +112,7 @@ export function SiteCardHeader({
             $-{siteResult.todayUsage.toFixed(2)}
           </span>
         ) : (
-          <span className="text-slate-400 dark:text-slate-500">--</span>
+          <span className="text-light-text-tertiary dark:text-dark-text-tertiary">--</span>
         )}
       </div>
 
@@ -121,8 +121,8 @@ export function SiteCardHeader({
         <span
           className={`font-mono font-medium ${
             todayTotalTokens > 0
-              ? 'text-slate-700 dark:text-slate-200'
-              : 'text-slate-400 dark:text-slate-500'
+              ? 'text-light-text dark:text-dark-text'
+              : 'text-light-text-tertiary dark:text-dark-text-tertiary'
           }`}
           title={todayTotalTokens.toLocaleString()}
         >
@@ -135,8 +135,8 @@ export function SiteCardHeader({
         <span
           className={`font-mono font-medium ${
             todayPromptTokens > 0
-              ? 'text-slate-700 dark:text-slate-200'
-              : 'text-slate-400 dark:text-slate-500'
+              ? 'text-light-text dark:text-dark-text'
+              : 'text-light-text-tertiary dark:text-dark-text-tertiary'
           }`}
           title={todayPromptTokens.toLocaleString()}
         >
@@ -149,8 +149,8 @@ export function SiteCardHeader({
         <span
           className={`font-mono font-medium ${
             todayCompletionTokens > 0
-              ? 'text-slate-700 dark:text-slate-200'
-              : 'text-slate-400 dark:text-slate-500'
+              ? 'text-light-text dark:text-dark-text'
+              : 'text-light-text-tertiary dark:text-dark-text-tertiary'
           }`}
           title={todayCompletionTokens.toLocaleString()}
         >
@@ -163,8 +163,8 @@ export function SiteCardHeader({
         <span
           className={`font-mono font-medium ${
             todayRequests > 0
-              ? 'text-slate-700 dark:text-slate-200'
-              : 'text-slate-400 dark:text-slate-500'
+              ? 'text-light-text dark:text-dark-text'
+              : 'text-light-text-tertiary dark:text-dark-text-tertiary'
           }`}
           title={todayRequests.toLocaleString()}
         >
@@ -176,7 +176,9 @@ export function SiteCardHeader({
       <div className="flex flex-col items-center justify-center text-[13px]">
         <span
           className={`font-mono font-medium ${
-            rpm > 0 ? 'text-slate-700 dark:text-slate-200' : 'text-slate-400 dark:text-slate-500'
+            rpm > 0
+              ? 'text-light-text dark:text-dark-text'
+              : 'text-light-text-tertiary dark:text-dark-text-tertiary'
           }`}
         >
           {rpm.toFixed(2)}
@@ -187,7 +189,9 @@ export function SiteCardHeader({
       <div className="flex flex-col items-center justify-center text-[13px]">
         <span
           className={`font-mono font-medium ${
-            tpm > 0 ? 'text-slate-700 dark:text-slate-200' : 'text-slate-400 dark:text-slate-500'
+            tpm > 0
+              ? 'text-light-text dark:text-dark-text'
+              : 'text-light-text-tertiary dark:text-dark-text-tertiary'
           }`}
         >
           {formatNumber(Math.round(tpm))}
@@ -195,12 +199,12 @@ export function SiteCardHeader({
       </div>
 
       {/* 10. 模型数 */}
-      <div className="flex flex-col items-center justify-center text-[13px] text-slate-600 dark:text-slate-300">
+      <div className="flex flex-col items-center justify-center text-[13px] text-light-text-secondary dark:text-dark-text-secondary">
         <span
           className={`font-medium ${
             modelCount > 0
               ? 'text-blue-600 dark:text-blue-400'
-              : 'text-slate-400 dark:text-slate-500'
+              : 'text-light-text-tertiary dark:text-dark-text-tertiary'
           }`}
         >
           {modelCount}
@@ -208,11 +212,11 @@ export function SiteCardHeader({
       </div>
 
       {/* 11. 更新时间 */}
-      <div className="flex flex-col items-center justify-center text-[13px] text-slate-600 dark:text-slate-300">
+      <div className="flex flex-col items-center justify-center text-[13px] text-light-text-secondary dark:text-dark-text-secondary">
         {lastSyncDisplay ? (
           <span className="font-medium">{lastSyncDisplay}</span>
         ) : (
-          <span className="text-slate-400 dark:text-slate-500">--</span>
+          <span className="text-light-text-tertiary dark:text-dark-text-tertiary">--</span>
         )}
       </div>
 
@@ -238,7 +242,7 @@ export function SiteCardHeader({
             {siteResult.ldcExchangeRate}
           </span>
         ) : (
-          <span className="text-slate-400 dark:text-slate-500">-</span>
+          <span className="text-light-text-tertiary dark:text-dark-text-tertiary">-</span>
         )}
       </div>
     </div>

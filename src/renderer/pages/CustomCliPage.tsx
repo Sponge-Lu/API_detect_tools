@@ -310,7 +310,7 @@ export function CustomCliPage() {
   return (
     <div className="flex-1 overflow-y-auto">
       {/* 工具栏 */}
-      <div className="px-6 py-3 border-b border-light-border dark:border-dark-border flex items-center justify-between">
+      <div className="px-4 py-3 border-b border-light-border dark:border-dark-border flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <Settings className="w-5 h-5 text-light-text-secondary dark:text-dark-text-secondary" />
           <h2 className="text-sm font-semibold text-light-text dark:text-dark-text">
@@ -329,152 +329,134 @@ export function CustomCliPage() {
       </div>
 
       {/* 配置列表 */}
-      <div className="px-6 py-4">
-        <div className="max-w-5xl mx-auto">
-          {loading ? (
-            <div className="text-center py-16 text-light-text-secondary dark:text-dark-text-secondary">
-              <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
-              加载中...
+      <div className="px-4 py-4">
+        {loading ? (
+          <div className="text-center py-16 text-light-text-secondary dark:text-dark-text-secondary">
+            <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
+            加载中...
+          </div>
+        ) : configs.length === 0 ? (
+          <div className="text-center py-16">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-primary-50 dark:bg-primary-900/20 flex items-center justify-center">
+              <Globe className="w-8 h-8 text-primary-400 dark:text-primary-500" />
             </div>
-          ) : configs.length === 0 ? (
-            <div className="text-center py-16">
-              <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-primary-50 dark:bg-primary-900/20 flex items-center justify-center">
-                <Globe className="w-8 h-8 text-primary-400 dark:text-primary-500" />
-              </div>
-              <p className="text-light-text dark:text-dark-text font-medium mb-1">暂无自定义配置</p>
-              <p className="text-sm text-light-text-secondary dark:text-dark-text-secondary mb-4">
-                创建自定义 API 端点，管理不同 CLI 工具的配置
-              </p>
-              <IOSButton variant="primary" size="sm" onClick={handleAdd}>
-                <Plus className="w-4 h-4" />
-                添加第一个配置
-              </IOSButton>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {configs.map(config => (
-                <div
-                  key={config.id}
-                  className="bg-white dark:bg-dark-card rounded-xl border border-light-border dark:border-dark-border p-4 shadow-sm hover:border-primary-500/40 dark:hover:border-primary-500/30 transition-colors"
-                >
-                  {/* 卡片头部：名称 + 操作 */}
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="min-w-0 flex-1 mr-3">
-                      <h3
-                        className="font-semibold text-light-text dark:text-dark-text truncate"
-                        title={config.name}
+            <p className="text-light-text dark:text-dark-text font-medium mb-1">暂无自定义配置</p>
+            <p className="text-sm text-light-text-secondary dark:text-dark-text-secondary mb-4">
+              创建自定义 API 端点，管理不同 CLI 工具的配置
+            </p>
+            <IOSButton variant="primary" size="sm" onClick={handleAdd}>
+              <Plus className="w-4 h-4" />
+              添加第一个配置
+            </IOSButton>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {configs.map(config => (
+              <div
+                key={config.id}
+                className="bg-white dark:bg-dark-card rounded-xl border border-light-border dark:border-dark-border p-4 shadow-sm hover:border-primary-500/40 dark:hover:border-primary-500/30 transition-colors"
+              >
+                {/* 卡片头部：名称 + 操作 */}
+                <div className="flex items-start justify-between mb-3">
+                  <div className="min-w-0 flex-1 mr-3">
+                    <h3
+                      className="font-semibold text-light-text dark:text-dark-text truncate"
+                      title={config.name}
+                    >
+                      {config.name || '未命名'}
+                    </h3>
+                    {/* URL + 复制按钮 + 模型数 */}
+                    <div className="mt-1 flex items-center gap-1 min-w-0">
+                      <div
+                        className="flex-1 min-w-0 font-mono text-xs text-light-text-secondary dark:text-dark-text-secondary bg-light-bg dark:bg-dark-bg px-2 py-1 rounded-md truncate"
+                        title={config.baseUrl}
                       >
-                        {config.name || '未命名'}
-                      </h3>
-                      {/* URL 完整显示 + 复制按钮 */}
-                      <div className="mt-1 flex items-center gap-1 min-w-0">
-                        <div
-                          className="flex-1 min-w-0 font-mono text-xs text-light-text-secondary dark:text-dark-text-secondary bg-light-bg dark:bg-dark-bg px-2 py-1 rounded-md truncate"
-                          title={config.baseUrl}
-                        >
-                          {config.baseUrl || '未设置 URL'}
-                        </div>
-                        {config.baseUrl && <CopyButton text={config.baseUrl} />}
+                        {config.baseUrl || '未设置 URL'}
                       </div>
-                    </div>
-                    <div className="flex items-center gap-0.5 shrink-0">
-                      <button
-                        onClick={e => handleOpenApplyPopover(config, e)}
-                        disabled={!hasValidCli(config) || isApplying}
-                        className={`p-2 rounded-lg transition-colors ${
-                          hasValidCli(config)
-                            ? 'text-primary-500 hover:bg-primary-500/10'
-                            : 'text-light-text-secondary/30 dark:text-dark-text-secondary/30 cursor-not-allowed'
-                        }`}
-                        title={hasValidCli(config) ? '应用配置到 CLI' : '请先配置并启用 CLI'}
-                      >
-                        {isApplying && applyPopoverConfig?.id === config.id ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Download className="w-4 h-4" />
-                        )}
-                      </button>
-                      <button
-                        onClick={() => handleEdit(config)}
-                        className="p-2 rounded-lg text-light-text-secondary dark:text-dark-text-secondary hover:bg-light-bg dark:hover:bg-dark-bg transition-colors"
-                        title="编辑配置"
-                      >
-                        <Edit2 className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(config)}
-                        className="p-2 rounded-lg text-red-500 hover:bg-red-500/10 transition-colors"
-                        title="删除配置"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {config.baseUrl && <CopyButton text={config.baseUrl} />}
+                      {config.models.length > 0 && (
+                        <span className="shrink-0 text-xs px-1.5 py-0.5 rounded-md bg-light-bg dark:bg-dark-bg text-light-text-secondary dark:text-dark-text-secondary">
+                          {config.models.length} 模型
+                        </span>
+                      )}
                     </div>
                   </div>
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <button
+                      onClick={e => handleOpenApplyPopover(config, e)}
+                      disabled={!hasValidCli(config) || isApplying}
+                      className={`p-2 rounded-lg transition-colors ${
+                        hasValidCli(config)
+                          ? 'text-primary-500 hover:bg-primary-500/10'
+                          : 'text-light-text-secondary/30 dark:text-dark-text-secondary/30 cursor-not-allowed'
+                      }`}
+                      title={hasValidCli(config) ? '应用配置到 CLI' : '请先配置并启用 CLI'}
+                    >
+                      {isApplying && applyPopoverConfig?.id === config.id ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Download className="w-4 h-4" />
+                      )}
+                    </button>
+                    <button
+                      onClick={() => handleEdit(config)}
+                      className="p-2 rounded-lg text-light-text-secondary dark:text-dark-text-secondary hover:bg-light-bg dark:hover:bg-dark-bg transition-colors"
+                      title="编辑配置"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(config)}
+                      className="p-2 rounded-lg text-red-500 hover:bg-red-500/10 transition-colors"
+                      title="删除配置"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
 
-                  {/* 选中的模型 + 模型数 */}
-                  {(() => {
-                    const enabledModels = CLI_OPTIONS.filter(
-                      opt =>
-                        config.cliSettings[opt.key].enabled && config.cliSettings[opt.key].model
-                    ).map(opt => config.cliSettings[opt.key].model!);
-                    const uniqueModels = [...new Set(enabledModels)];
+                {/* CLI 图标 + 所选模型 */}
+                <div className="flex flex-col gap-1.5">
+                  {CLI_OPTIONS.map(opt => {
+                    const settings = config.cliSettings[opt.key];
+                    const isEnabled = settings.enabled && !!settings.model;
                     return (
-                      <div className="flex items-center gap-1.5">
-                        <div className="flex items-center gap-1.5 flex-wrap flex-1 min-w-0">
-                          {uniqueModels.map(model => (
-                            <span
-                              key={model}
-                              className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-mono bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400"
-                            >
-                              {model}
-                            </span>
-                          ))}
-                        </div>
-                        {config.models.length > 0 && (
-                          <span className="shrink-0 text-xs px-1.5 py-0.5 rounded-md bg-light-bg dark:bg-dark-bg text-light-text-secondary dark:text-dark-text-secondary ml-auto">
-                            {config.models.length} 模型
+                      <div
+                        key={opt.key}
+                        className={`flex items-center gap-1.5 text-xs ${isEnabled ? 'opacity-100' : 'opacity-30 grayscale'}`}
+                        title={isEnabled ? `${opt.name}: ${settings.model}` : `${opt.name}: 未启用`}
+                      >
+                        <img src={opt.icon} alt={opt.name} className="w-4 h-4 shrink-0" />
+                        <span className="shrink-0 w-[72px] text-light-text-secondary dark:text-dark-text-secondary">
+                          {opt.name}
+                        </span>
+                        {isEnabled ? (
+                          <span className="font-mono truncate text-primary-600 dark:text-primary-400">
+                            {settings.model}
+                          </span>
+                        ) : (
+                          <span className="text-light-text-tertiary dark:text-dark-text-tertiary">
+                            --
                           </span>
                         )}
                       </div>
                     );
-                  })()}
-
-                  {/* CLI 图标 + 名称 */}
-                  <div className="flex items-center gap-3 mt-2">
-                    {CLI_OPTIONS.map(opt => {
-                      const settings = config.cliSettings[opt.key];
-                      const isEnabled = settings.enabled && !!settings.model;
-                      return (
-                        <div
-                          key={opt.key}
-                          className={`flex items-center gap-1 text-xs ${isEnabled ? 'opacity-100' : 'opacity-30 grayscale'}`}
-                          title={
-                            isEnabled ? `${opt.name}: ${settings.model}` : `${opt.name}: 未启用`
-                          }
-                        >
-                          <img src={opt.icon} alt={opt.name} className="w-4 h-4 shrink-0" />
-                          <span className="text-light-text-secondary dark:text-dark-text-secondary">
-                            {opt.name}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* 备注 */}
-                  {config.notes && (
-                    <div
-                      className="mt-2.5 text-xs text-light-text-secondary dark:text-dark-text-secondary line-clamp-2 break-all"
-                      title={config.notes}
-                    >
-                      {config.notes}
-                    </div>
-                  )}
+                  })}
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+
+                {/* 备注 */}
+                {config.notes && (
+                  <div
+                    className="mt-2.5 text-xs text-light-text-secondary dark:text-dark-text-secondary line-clamp-2 break-all"
+                    title={config.notes}
+                  >
+                    {config.notes}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 应用 CLI 弹窗 */}

@@ -13,6 +13,8 @@
 export interface CustomCliSettings {
   enabled: boolean;
   model: string | null;
+  /** 用户编辑后的配置文件内容（null 表示未编辑，使用自动生成的配置） */
+  editedFiles?: { path: string; content: string }[] | null;
 }
 
 /** 自定义 CLI 配置 */

@@ -22,7 +22,6 @@ import type { AllCliDetectionResult, SiteInfo } from '../../shared/types/config-
 
 /** Codex 详细测试结果 */
 export interface CodexTestDetail {
-  chat: boolean | null; // Chat Completions API 测试结果
   responses: boolean | null; // Responses API 测试结果
 }
 
@@ -36,7 +35,7 @@ export interface GeminiTestDetail {
 export interface CliCompatibilityResult {
   claudeCode: boolean | null; // true=支持, false=不支持, null=未测试
   codex: boolean | null;
-  codexDetail?: CodexTestDetail; // Codex 详细测试结果（chat/responses）
+  codexDetail?: CodexTestDetail; // Codex 详细测试结果（responses）
   geminiCli: boolean | null;
   geminiDetail?: GeminiTestDetail; // Gemini CLI 详细测试结果（native/proxy）
   testedAt: number | null; // Unix timestamp

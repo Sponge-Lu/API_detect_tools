@@ -7,7 +7,7 @@
 **特点**:
 - 工具图标显示（Claude Code、Codex、Gemini CLI）
 - 支持状态指示（支持/不支持/待测试/未配置）
-- 详细测试结果 tooltip（Codex 双 API、Gemini CLI 双端点）
+- 详细测试结果 tooltip（Codex Responses API、Gemini CLI 双端点）
 - 响应式布局
 
 **依赖关系**:
@@ -29,7 +29,7 @@
 
 ### 详细测试结果显示
 
-- **Codex**: 显示 Chat Completions API 和 Responses API 的测试结果
+- **Codex**: 显示 Responses API 的测试结果
 - **Gemini CLI**: 显示 Native 原生格式和 Proxy 兼容格式的测试结果
 - 鼠标悬停时显示详细状态和使用建议
 

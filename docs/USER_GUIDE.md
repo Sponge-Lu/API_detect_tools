@@ -195,9 +195,9 @@
     - 浅灰色 = 已配置待测试
     - 非常淡 = 未配置
 - **自动配置更新**：
-  - 测试完成后自动更新 Codex 配置文件中的 `wire_api` 值
-  - 根据测试结果自动选择最佳 API（优先 responses，其次 chat）
-  - 配置文件包含测试结果注释（如 `# wire_api 测试结果: chat=✗, responses=✓`）
+  - 测试完成后自动更新 Codex 配置文件中的 `wire_api` 值（固定为 `"responses"`）
+  - Codex 仅测试 Responses API（`"chat"` 模式已废弃）
+  - 配置文件包含测试结果注释（如 `# wire_api 测试结果: responses=✓`）
   - Gemini CLI 配置文件包含端点测试结果注释和使用建议
 - **生成 CLI 配置文件**：
   - 选择 API Key 和 CLI 使用模型后，配置预览会实时更新。

@@ -99,7 +99,7 @@ const codexConfigArb: fc.Arbitrary<CodexConfig> = fc.record({
       fc.record({
         name: fc.option(fc.string({ minLength: 1, maxLength: 30 }), { nil: undefined }),
         base_url: fc.option(urlArb, { nil: undefined }),
-        wire_api: fc.option(fc.constantFrom('responses', 'chat'), { nil: undefined }),
+        wire_api: fc.option(fc.constant('responses'), { nil: undefined }),
       })
     ),
     { nil: undefined }

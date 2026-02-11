@@ -792,7 +792,7 @@ const codexConfigWithCustomProviderArb: fc.Arbitrary<CodexConfig> = fc
       .record({
         name: fc.option(fc.string({ minLength: 1, maxLength: 30 }), { nil: undefined }),
         base_url: urlArb,
-        wire_api: fc.option(fc.constantFrom('chat', 'responses'), { nil: undefined }),
+        wire_api: fc.option(fc.constant('responses'), { nil: undefined }),
       })
       .map(provider => ({
         ...base,

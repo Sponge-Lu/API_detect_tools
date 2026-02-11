@@ -12,7 +12,7 @@
 /**
  * CLI 兼容性测试 Hook
  * 封装 CLI 兼容性测试相关的业务逻辑
- * 测试完成后自动更新 Codex 配置文件中的 wire_api 值
+ * 测试完成后自动更新 Codex 配置文件中的 wire_api 值（固定为 responses）
  */
 
 import { useCallback, useMemo } from 'react';
@@ -145,16 +145,54 @@ function parseGeminiCliConfig(
 }
 
 /**
+ * 从 editedFiles 解析凭据，若为空则从 apiKeyId + siteUrl 回退生成
+ */
+function resolveCliCredentials(
+  editedFiles: Array<{ path: string; content: string }> | null | undefined,
+  parseFn: (files: Array<{ path: string; content: string }> | null | undefined) => {
+    apiKey: string | null;
+    baseUrl: string | null;
+  },
+  apiKeyId: number | null,
+  apiKeys: any[],
+  siteUrl: string
+): { apiKey: string | null; baseUrl: string | null } {
+  // 1. Try parsing from editedFiles
+  if (editedFiles && editedFiles.length > 0) {
+    const parsed = parseFn(editedFiles);
+    if (parsed.apiKey && parsed.baseUrl) {
+      return parsed;
+    }
+  }
+
+  // 2. Fallback: derive from apiKeyId + siteUrl
+  if (apiKeyId != null) {
+    const found = apiKeys.find((k: any) => (k.id ?? k.token_id ?? 0) === apiKeyId);
+    if (found) {
+      const keyValue = found.key || found.token || '';
+      if (keyValue) {
+        return {
+          apiKey: keyValue,
+          baseUrl: siteUrl.replace(/\/+$/, ''),
+        };
+      }
+    }
+  }
+
+  return { apiKey: null, baseUrl: null };
+}
+
+/**
  * 更新 Codex 配置文件中的 wire_api 值
  * @param editedFiles - 当前配置文件列表
- * @param wireApi - 新的 wire_api 值
+ * @param wireApi - 新的 wire_api 值（固定为 "responses"）
  * @param codexDetail - 测试结果详情（用于生成注释）
  * @returns 更新后的配置文件列表，如果无法更新则返回 null
  */
 function updateCodexWireApi(
   editedFiles: Array<{ path: string; content: string }>,
   wireApi: string,
-  codexDetail: { chat: boolean | null; responses: boolean | null }
+  codexDetail: { responses: boolean | null }
 ): Array<{ path: string; content: string }> | null {
   const configFile = editedFiles.find(f => f.path.includes('config.toml'));
   if (!configFile) {
@@ -162,10 +200,9 @@ function updateCodexWireApi(
   }
 
   // 生成测试结果注释
-  const chatStatus = codexDetail.chat === true ? '✓' : codexDetail.chat === false ? '✗' : '?';
   const responsesStatus =
     codexDetail.responses === true ? '✓' : codexDetail.responses === false ? '✗' : '?';
-  const testComment = `# wire_api 测试结果: chat=${chatStatus}, responses=${responsesStatus}`;
+  const testComment = `# wire_api 测试结果: responses=${responsesStatus}`;
 
   let content = configFile.content;
 
@@ -242,9 +279,15 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
 
         // Claude Code - 从配置文件中读取 API Key 和 Base URL
         if (cc?.enabled && cc?.testModel) {
-          const { apiKey, baseUrl } = parseClaudeCodeConfig(cc.editedFiles);
+          const { apiKey, baseUrl } = resolveCliCredentials(
+            cc.editedFiles,
+            parseClaudeCodeConfig,
+            cc.apiKeyId,
+            _apiKeys,
+            siteUrl
+          );
           if (!apiKey || !baseUrl) {
-            toast.warning('Claude Code 配置文件为空，请先生成或编辑配置文件');
+            toast.warning('Claude Code 配置不完整，请先选择 API Key 和测试模型');
           } else {
             testConfigs.push({
               cliType: 'claudeCode',
@@ -257,9 +300,15 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
 
         // Codex - 从配置文件中读取 API Key 和 Base URL
         if (cx?.enabled && cx?.testModel) {
-          const { apiKey, baseUrl } = parseCodexConfig(cx.editedFiles);
+          const { apiKey, baseUrl } = resolveCliCredentials(
+            cx.editedFiles,
+            parseCodexConfig,
+            cx.apiKeyId,
+            _apiKeys,
+            siteUrl
+          );
           if (!apiKey || !baseUrl) {
-            toast.warning('Codex 配置文件为空，请先生成或编辑配置文件');
+            toast.warning('Codex 配置不完整，请先选择 API Key 和测试模型');
           } else {
             testConfigs.push({
               cliType: 'codex',
@@ -272,9 +321,15 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
 
         // Gemini CLI - 从配置文件中读取 API Key 和 Base URL
         if (gc?.enabled && gc?.testModel) {
-          const { apiKey, baseUrl } = parseGeminiCliConfig(gc.editedFiles);
+          const { apiKey, baseUrl } = resolveCliCredentials(
+            gc.editedFiles,
+            parseGeminiCliConfig,
+            gc.apiKeyId,
+            _apiKeys,
+            siteUrl
+          );
           if (!apiKey || !baseUrl) {
-            toast.warning('Gemini CLI 配置文件为空，请先生成或编辑配置文件');
+            toast.warning('Gemini CLI 配置不完整，请先选择 API Key 和测试模型');
           } else {
             testConfigs.push({
               cliType: 'geminiCli',
@@ -332,16 +387,14 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
 
         // 如果测试了 Codex，显示结果并自动更新配置文件中的 wire_api
         if (response.data.codexDetail && cx?.editedFiles) {
-          const { chat, responses } = response.data.codexDetail;
-          const chatStatus = chat === true ? '✓' : chat === false ? '✗' : '?';
+          const { responses } = response.data.codexDetail;
           const responsesStatus = responses === true ? '✓' : responses === false ? '✗' : '?';
-          const newWireApi = responses === true ? 'responses' : chat === true ? 'chat' : null;
 
-          if (newWireApi) {
-            // 更新配置文件中的 wire_api
+          if (responses === true) {
+            // 更新配置文件中的 wire_api（固定为 responses）
             const updatedEditedFiles = updateCodexWireApi(
               cx.editedFiles,
-              newWireApi,
+              'responses',
               response.data.codexDetail
             );
             if (updatedEditedFiles) {
@@ -354,14 +407,11 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
               };
               setCliConfig(siteName, updatedCliConfig);
             }
-            // 有可用 API，显示成功
-            toast.success(
-              `Codex: wire_api="${newWireApi}" [chat: ${chatStatus}, responses: ${responsesStatus}]`,
-              6000
-            );
+            // Responses API 可用，显示成功
+            toast.success(`Codex: wire_api="responses" [responses: ${responsesStatus}]`, 6000);
           } else if (response.data.codex === false) {
-            // 两种 API 都不支持，显示错误
-            toast.error(`Codex: 不兼容 [chat: ${chatStatus}, responses: ${responsesStatus}]`, 6000);
+            // Responses API 不支持，显示错误
+            toast.error(`Codex: 不兼容 [responses: ${responsesStatus}]`, 6000);
           }
         }
 

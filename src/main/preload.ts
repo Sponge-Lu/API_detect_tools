@@ -196,6 +196,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 清除 CLI 配置检测缓存
     clearCache: (cliType?: 'claudeCode' | 'codex' | 'geminiCli') =>
       ipcRenderer.invoke('detection:clear-cli-config-cache', cliType),
+    // 重置 CLI 配置：删除本地配置文件
+    resetCliConfig: (cliType: 'claudeCode' | 'codex' | 'geminiCli') =>
+      ipcRenderer.invoke('detection:reset-cli-config', cliType),
   },
 
   // 窗口关闭行为 API
