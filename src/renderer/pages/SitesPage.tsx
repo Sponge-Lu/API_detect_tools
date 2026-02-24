@@ -1,6 +1,8 @@
 /**
  * 站点管理独立页面
  * 从 App.tsx 提取的站点管理核心逻辑和 UI
+ *
+ * 并发刷新: 使用 detectingSites (Set) 为每个 SiteCard 计算独立的 isDetecting 布尔值
  */
 
 import Logger from '../utils/logger';
@@ -313,7 +315,7 @@ export function SitesPage() {
   } = useSiteDrag({ config, saveConfig });
 
   // 站点检测 hook
-  const { detecting, detectingSite, results, setResults, detectSingle, detectAllSites } =
+  const { detecting, detectingSites, results, setResults, detectSingle, detectAllSites } =
     useSiteDetection({
       onAuthError: sites => {
         setAuthErrorSites(sites);
@@ -1080,7 +1082,7 @@ export function SitesPage() {
                         apiKeys={apiKeys[siteResult?.name || site.name] || []}
                         userGroups={userGroups[siteResult?.name || site.name] || {}}
                         modelPricing={modelPricing[site.name]}
-                        detectingSite={detectingSite}
+                        isDetecting={detectingSites.has(site.name)}
                         checkingIn={checkingIn}
                         dragOverIndex={dragOverIndex}
                         refreshMessage={refreshMessage}

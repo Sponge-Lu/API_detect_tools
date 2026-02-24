@@ -2,7 +2,7 @@
  * @file src/renderer/components/SiteCard/SiteCard.tsx
  * @description 站点卡片主组件
  *
- * 输入: SiteCardProps (站点数据、操作回调), SiteResult (检测结果), 子组件 (Header, Actions, Details)
+ * 输入: SiteCardProps (站点数据、操作回调, isDetecting), SiteResult (检测结果), 子组件 (Header, Actions, Details)
  * 输出: React 组件, 用户交互事件
  * 定位: 展示层 - 显示站点信息并处理用户交互
  *
@@ -44,7 +44,7 @@ export const SiteCard = React.memo(
     apiKeys,
     userGroups,
     modelPricing,
-    detectingSite,
+    isDetecting,
     checkingIn,
     dragOverIndex,
     refreshMessage,
@@ -247,7 +247,7 @@ export const SiteCard = React.memo(
               index={index}
               siteResult={siteResult}
               isExpanded={isExpanded}
-              detectingSite={detectingSite}
+              isDetecting={isDetecting}
               checkingIn={checkingIn}
               autoRefreshEnabled={autoRefreshEnabled}
               checkinStats={siteResult?.checkinStats}
@@ -278,7 +278,7 @@ export const SiteCard = React.memo(
         prevProps.index === nextProps.index &&
         prevProps.siteResult === nextProps.siteResult &&
         prevProps.isExpanded === nextProps.isExpanded &&
-        prevProps.detectingSite === nextProps.detectingSite &&
+        prevProps.isDetecting === nextProps.isDetecting &&
         prevProps.checkingIn === nextProps.checkingIn &&
         prevProps.autoRefreshEnabled === nextProps.autoRefreshEnabled &&
         prevProps.isCliTesting === nextProps.isCliTesting &&

@@ -1,7 +1,10 @@
 /**
- * 输入: DetectionStore (检测状态), ConfigStore (配置), IPC 调用
- * 输出: 检测方法 (detect, detectAll), 检测状态
+ * 输入: DetectionStore (检测状态), ConfigStore (配置), UIStore (刷新消息), IPC 调用
+ * 输出: 检测方法 (detectSingle, detectAllSites), 检测状态 (detectingSites Set)
  * 定位: 业务逻辑层 - 管理站点检测操作和结果处理
+ *
+ * 并发安全: 使用 detectingSites (Set) 独立跟踪每个站点的刷新状态；
+ * refreshMessage 的 setTimeout 清除前检查站点名匹配，避免误清其他站点消息
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -86,6 +89,7 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
     detecting,
     setDetecting,
     detectingSite,
+    detectingSites,
     setDetectingSite,
     addDetectingSite,
     removeDetectingSite,
@@ -134,7 +138,11 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
             message: hasChanges ? '✅ 数据已更新' : 'ℹ️ 数据无变化',
             type: hasChanges ? 'success' : 'info',
           });
-          setTimeout(() => setRefreshMessage(null), 3000);
+          setTimeout(() => {
+            if (useUIStore.getState().refreshMessage?.site === site.name) {
+              setRefreshMessage(null);
+            }
+          }, 3000);
         }
 
         // 使用 upsertResult 安全地更新结果，避免并发刷新时的覆盖问题
@@ -171,7 +179,11 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
           displayMessage = '⚠️ 浏览器已关闭，操作已取消。请重新打开浏览器后重试。';
         }
         setRefreshMessage({ site: site.name, message: displayMessage, type: 'info' });
-        setTimeout(() => setRefreshMessage(null), 5000);
+        setTimeout(() => {
+          if (useUIStore.getState().refreshMessage?.site === site.name) {
+            setRefreshMessage(null);
+          }
+        }, 5000);
       } finally {
         removeDetectingSite(site.name);
       }
@@ -322,6 +334,7 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
   return {
     detecting,
     detectingSite,
+    detectingSites,
     results,
     setResults,
     detectSingle,

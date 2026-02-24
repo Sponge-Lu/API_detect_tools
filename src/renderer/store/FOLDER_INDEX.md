@@ -26,7 +26,7 @@
 |------|------|--------|
 | **index.ts** | Store 导出入口 | 所有 Store 的统一导出 |
 | **configStore.ts** | 配置管理 | 站点列表、分组、设置 |
-| **detectionStore.ts** | 检测结果 | 检测状态、结果数据 |
+| **detectionStore.ts** | 检测结果 | 检测状态、结果数据、detectingSites (Set) 并发跟踪 |
 | **uiStore.ts** | UI 状态 | 主题、模态框、菜单 |
 | **toastStore.ts** | 消息提示 | 消息队列、通知 |
 
@@ -427,5 +427,5 @@ export const useNewStore = create<NewState>((set) => ({
 
 ---
 
-**版本**: 2.1.21
+**版本**: 2.1.22
 **更新日期**: 2026-02-24

@@ -4,6 +4,17 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，并且本项目遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
+## [v2.1.22]
+
+### 修复
+- **并发刷新竞态修复**：两个站点依次点击"单独刷新"时，第一个站点不再因页面被关闭而失败
+  - `cleanupOldPages` 在存在并发检测任务（`browserRefCount > 1`）时跳过页面清理，避免关闭其他任务正在使用的浏览器页面
+  - `fetchWithBrowserFallback` 在 `sharedPage` 被并发任务关闭时（`Target closed` 等异常），自动创建新页面重试
+- **刷新状态指示器修复**：将 `detectingSite`（单值字符串）替换为 `isDetecting`（布尔值），基于 `detectingSites`（Set）独立计算每个站点的加载状态，多站点并发刷新时 spinner 不再丢失
+- **刷新消息定时器竞态修复**：`refreshMessage` 的 `setTimeout` 清除前检查当前消息是否属于本站点，避免误清其他站点的提示消息
+
+---
+
 ## [v2.1.20]
 
 ### 新增

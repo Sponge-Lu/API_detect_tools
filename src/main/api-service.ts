@@ -3,6 +3,9 @@
  * 输出: DetectionResult (含 LDC 支付信息, 签到统计, 检测状态持久化), BalanceInfo, StatusInfo, API 响应数据
  * 定位: 服务层 - 处理所有外部站点的 API 请求，管理请求生命周期和错误处理，检测 LDC 支付支持，获取签到统计，持久化检测状态
  *
+ * 并发安全: fetchWithBrowserFallback 在 sharedPage 被并发任务关闭时
+ * 自动检测 Target closed 等异常并重试创建新页面
+ *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
  * - src/main/FOLDER_INDEX.md
@@ -868,7 +871,22 @@ export class ApiService {
     // 如果本次站点刷新一开始就已进入浏览器模式（已有 sharedPage），后续端点直接走浏览器模式，
     // 避免每个端点都先 axios 再 browser 的额外延迟与噪音日志。
     if (sharedPage) {
-      return await fetchInBrowser();
+      try {
+        return await fetchInBrowser();
+      } catch (error: any) {
+        const msg = String(error?.message || '');
+        const isPageClosed =
+          msg.includes('Target closed') ||
+          msg.includes('Session closed') ||
+          msg.includes('Execution context was destroyed') ||
+          msg.includes('Cannot find context');
+        if (isPageClosed) {
+          Logger.warn('⚠️ [ApiService] 共享页面已失效，置空后重试');
+          sharedPage = undefined;
+          return await fetchInBrowser();
+        }
+        throw error;
+      }
     }
 
     try {

@@ -3,6 +3,9 @@
  * 输出: React 组件 (站点卡片操作按钮 UI)
  * 定位: 展示层 - 站点卡片操作按钮组件，包含复制、刷新、编辑、删除等操作
  *
+ * 并发刷新: 使用 isDetecting (boolean) 替代 detectingSite (string) 控制按钮禁用和 spinner，
+ * 支持多站点同时刷新
+ *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
  * - src/renderer/components/SiteCard/FOLDER_INDEX.md
@@ -82,7 +85,7 @@ export function SiteCardActions({
   index,
   siteResult,
   isExpanded,
-  detectingSite,
+  isDetecting,
   checkingIn,
   autoRefreshEnabled,
   checkinStats,
@@ -183,15 +186,12 @@ export function SiteCardActions({
       {/* 刷新检测 */}
       <button
         onClick={() => onDetect(site)}
-        disabled={detectingSite === site.name}
+        disabled={isDetecting}
         className="p-1 rounded-md text-light-text-secondary dark:text-dark-text-secondary hover:bg-primary-500/15 hover:text-primary-500 transition-all disabled:opacity-50"
         title="刷新检测"
         aria-label="刷新检测"
       >
-        <RefreshCw
-          className={`w-3.5 h-3.5 ${detectingSite === site.name ? 'animate-spin' : ''}`}
-          strokeWidth={2}
-        />
+        <RefreshCw className={`w-3.5 h-3.5 ${isDetecting ? 'animate-spin' : ''}`} strokeWidth={2} />
       </button>
 
       {/* 自动刷新开关 */}

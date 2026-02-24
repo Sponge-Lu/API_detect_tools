@@ -106,19 +106,18 @@ interface UseAutoRefreshReturn {
 ```typescript
 interface UseSiteDetectionReturn {
   results: DetectionResult[];
-  isDetecting: boolean;
-  progress: number;
-  detect: (siteIds?: string[]) => Promise<void>;
-  cancel: () => void;
-  clear: () => void;
+  detecting: boolean;
+  detectingSites: Set<string>;
+  detectSingle: (site: SiteConfig, quickRefresh?: boolean, config?: Config) => Promise<DetectionResult | undefined>;
+  detectAllSites: (config: Config) => Promise<DetectionResult[]>;
 }
 ```
 
 **特点**:
-- 批量检测
-- 进度显示
-- 支持取消
-- 结果缓存
+- 批量检测与单站点刷新
+- `detectingSites` (Set) 独立跟踪每个站点的刷新状态
+- `refreshMessage` 清除前校验站点名匹配，避免并发定时器竞态
+- 结果通过 `upsertResult` 安全更新，避免并发覆盖
 
 ### useTokenManagement
 
@@ -453,5 +452,5 @@ export function useNewFeature(): UseNewFeatureReturn {
 
 ---
 
-**版本**: 2.1.10  
-**更新日期**: 2026-01-07
+**版本**: 2.1.22
+**更新日期**: 2026-02-24

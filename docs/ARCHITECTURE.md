@@ -270,7 +270,7 @@ const response = await httpGet(url, { headers, timeout });
    - 错误处理：处理 401/403 认证错误，识别 Cloudflare 拦截。
 4. **结果处理**：格式化数据（如统一价格单位），计算统计指标（RPM/TPM）。
 5. **缓存更新**：将结果写入内存缓存并持久化到磁盘。
-6. **UI 更新**：通过 `upsertResult` 安全更新单个站点结果，支持多站点并发刷新。
+6. **UI 更新**：通过 `upsertResult` 安全更新单个站点结果，支持多站点并发刷新。使用 `isDetecting`（布尔值）独立跟踪每个站点的刷新 spinner 状态。
 
 ### 自动刷新流程
 
@@ -300,6 +300,8 @@ const response = await httpGet(url, { headers, timeout });
 - 使用 `page-exec-queue.ts` 对同一 Puppeteer Page 的 `page.evaluate` 调用进行队列串行化。
 - 采用 WeakMap 按 Page 对象分组，FIFO 顺序执行任务。
 - 有效降低并发检测时偶发的 "Execution context destroyed" 或 "Target closed" 错误。
+- `cleanupOldPages` 在 `browserRefCount > 1` 时跳过清理，避免关闭并发任务正在使用的页面（v2.1.22+）。
+- `fetchWithBrowserFallback` 在 `sharedPage` 被关闭时自动检测异常并重试创建新页面（v2.1.22+）。
 
 **POST 请求浏览器回退**：
 - POST 请求（如 `/api/user/amount` 获取 LDC 兑换比例）在遇到 401/403 时自动回退到浏览器模式。

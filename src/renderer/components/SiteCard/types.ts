@@ -3,6 +3,9 @@
  * 输出: TypeScript 类型和接口 (SiteCardProps, SiteCardHeaderProps, SiteCardActionsProps)
  * 定位: 类型定义层 - 定义 SiteCard 组件相关的 Props 类型
  *
+ * 并发刷新: isDetecting (boolean) 替代 detectingSite (string|null)，
+ * 支持多站点同时刷新时各自独立的加载状态
+ *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
  * - src/renderer/components/SiteCard/FOLDER_INDEX.md
@@ -28,7 +31,7 @@ export interface SiteCardProps {
   modelPricing: any;
 
   // 状态
-  detectingSite: string | null;
+  isDetecting: boolean;
   checkingIn: string | null;
   dragOverIndex: number | null;
   refreshMessage: { site: string; message: string; type: 'success' | 'info' } | null;
@@ -111,7 +114,7 @@ export interface SiteCardActionsProps {
   index: number;
   siteResult?: DetectionResult;
   isExpanded: boolean;
-  detectingSite: string | null;
+  isDetecting: boolean;
   checkingIn: string | null;
   autoRefreshEnabled?: boolean;
   /** 签到统计数据 (New API 类型站点) */

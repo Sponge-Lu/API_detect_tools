@@ -31,7 +31,7 @@
 | **SiteCardHeader.tsx** | 卡片头部 (站点名称、状态、余额、消费、Token、RPM/TPM、模型数、更新时间、CLI兼容性、LDC 支付状态) | `SiteCardHeader` 组件 |
 | **SiteCardDetails.tsx** | 卡片详情（URL、Access Token、用户分组、API Keys、模型列表），使用 iOS 风格分隔线 | `SiteCardDetails` 组件 |
 | **SiteCardActions.tsx** | 卡片操作按钮（加油站、签到(含统计tooltip)、展开、刷新、自动刷新、编辑、删除） | `SiteCardActions` 组件 |
-| **types.ts** | 类型定义 | `SiteCardProps`, `SiteCardActionsProps` 等 |
+| **types.ts** | 类型定义（isDetecting 布尔值支持并发刷新） | `SiteCardProps`, `SiteCardActionsProps` 等 |
 
 ---
 
@@ -41,5 +41,5 @@
 
 ---
 
-**版本**: 2.1.12  
-**更新日期**: 2025-01-09
+**版本**: 2.1.22
+**更新日期**: 2026-02-24

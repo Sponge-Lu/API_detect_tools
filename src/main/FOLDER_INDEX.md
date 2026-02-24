@@ -103,8 +103,9 @@ main.ts: app.whenReady()
 **依赖**: TokenService (获取 Token)
 
 **浏览器模式说明**:
-- 当检测到 Cloudflare/Bot 防护并进入浏览器模式后，会复用同一 `sharedPage` 继续请求后续端点，避免每个端点重复 “axios → browser”。
+- 当检测到 Cloudflare/Bot 防护并进入浏览器模式后，会复用同一 `sharedPage` 继续请求后续端点，避免每个端点重复 "axios → browser"。
 - 共享页面上的请求会被串行化（`runOnPageQueue`），避免并发 `page.evaluate` 导致偶发不稳定。
+- **并发安全**: `sharedPage` 被其他任务关闭时，自动检测 `Target closed` 异常并重试创建新页面。
 
 ### TokenService
 
@@ -143,6 +144,9 @@ main.ts: app.whenReady()
 - `getLocalStorageData(url, waitForLogin, maxWaitTime, onStatus)` - 获取 localStorage 数据（含签到状态）
 - `createPage(url)` - 创建页面（支持同域名页面复用）
 - `findExistingPageForUrl(url)` - 查找可复用的同域名页面
+
+**并发安全**:
+- `cleanupOldPages` 在 `browserRefCount > 1` 时跳过清理，避免关闭其他并发检测任务正在使用的页面
 
 **LocalStorageData 签到字段**:
 - Veloera: `check_in_enabled`, `can_check_in`
@@ -323,5 +327,5 @@ main.ts: app.whenReady()
 
 ---
 
-**版本**: 2.1.11  
-**更新日期**: 2026-01-08
+**版本**: 2.1.22
+**更新日期**: 2026-02-24

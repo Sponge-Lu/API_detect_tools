@@ -9,6 +9,9 @@
  *
  * cleanupSessionFiles 清理的目录包括 Cookies，用于解决旧 Cookie 导致的 401 问题
  *
+ * 并发安全: cleanupOldPages 在 browserRefCount > 1 时跳过清理，
+ * 避免关闭其他并发检测任务正在使用的页面
+ *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
  * - src/main/FOLDER_INDEX.md
@@ -241,6 +244,14 @@ export class ChromeManager {
    */
   private async cleanupOldPages(targetUrl: string): Promise<void> {
     if (!this.browser) return;
+
+    // 并发检测时跳过清理，避免关闭其他任务正在使用的页面
+    if (this.browserRefCount > 1) {
+      Logger.info(
+        `⏭️ [ChromeManager] 跳过旧页面清理：存在并发任务 (refCount: ${this.browserRefCount})`
+      );
+      return;
+    }
 
     try {
       const pages = await this.browser.pages();
