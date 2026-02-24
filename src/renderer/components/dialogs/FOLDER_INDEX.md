@@ -31,7 +31,7 @@
 | **CloseBehaviorDialog.tsx** | 窗口关闭行为对话框 | `CloseBehaviorDialog` 组件，用户选择退出或最小化到托盘 |
 | **BackupSelectDialog.tsx** | 备份选择对话框 | `BackupSelectDialog` 组件，从备份目录选择配置文件进行恢复 |
 | **AutoRefreshDialog.tsx** | 自动刷新配置对话框 | `AutoRefreshDialog` 组件 |
-| **UpdateDialog.tsx** | 更新对话框 | `UpdateDialog` 组件 |
+| **DownloadUpdatePanel.tsx** | 下载更新面板 | `DownloadUpdatePanel` 组件，显示 changelog、下载进度和安装按钮 |
 | **WebDAVBackupDialog.tsx** | WebDAV 备份对话框 | `WebDAVBackupDialog` 组件 |
 | **index.ts** | 导出文件 | 导出所有对话框组件 |
 
@@ -56,5 +56,5 @@
 
 ---
 
-**版本**: 2.1.11  
-**更新日期**: 2025-01-08
+**版本**: 2.1.21
+**更新日期**: 2026-02-24

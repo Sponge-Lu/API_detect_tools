@@ -2,7 +2,7 @@ export { AuthErrorDialog } from './AuthErrorDialog';
 export { SiteGroupDialog } from './SiteGroupDialog';
 export { BackupSelectDialog } from './BackupSelectDialog';
 export { WebDAVBackupDialog } from './WebDAVBackupDialog';
-export { UpdateDialog } from './UpdateDialog';
+export { DownloadUpdatePanel } from './DownloadUpdatePanel';
 export { AutoRefreshDialog } from './AutoRefreshDialog';
 export { UnifiedCliConfigDialog } from './UnifiedCliConfigDialog';
 export { ApplyConfigPopover, filterValidCliConfigs } from './ApplyConfigPopover';

@@ -220,14 +220,21 @@ export function CliCompatibilityIcons({
         </div>
       ) : (
         <>
-          {/* CLI 图标 - 仅通过 enabled 字段判断是否显示 */}
+          {/* CLI 图标 - 始终显示，未启用时使用最淡样式 */}
           {CLI_TYPES.map(({ key, configKey, name, icon, sizeClass }) => {
-            // 仅通过 enabled 字段判断是否显示图标
             const enabled = isCliEnabled(cliConfig, configKey);
 
-            // 禁用则不显示图标
+            // 未启用：最淡样式
             if (!enabled) {
-              return null;
+              return (
+                <div
+                  key={key}
+                  className={`${sizeClass} flex-shrink-0 transition-opacity duration-200 opacity-15 grayscale`}
+                  title={`${name}: 未启用`}
+                >
+                  <img src={icon} alt={name} className="w-full h-full" />
+                </div>
+              );
             }
 
             const status = compatibility?.[key];
@@ -235,9 +242,7 @@ export function CliCompatibilityIcons({
             const styleClass = getIconStyleClass(status, configured);
             const statusText = getStatusText(status, configured);
 
-            // 为 Codex 添加详细测试结果
             const codexDetailText = key === 'codex' ? getCodexDetailText(compatibility) : '';
-            // 为 Gemini CLI 添加详细测试结果
             const geminiDetailText = key === 'geminiCli' ? getGeminiDetailText(compatibility) : '';
             const tooltipText = `${name}: ${statusText}${codexDetailText}${geminiDetailText}${testedAtText && configured ? ` (${testedAtText})` : ''}`;
 

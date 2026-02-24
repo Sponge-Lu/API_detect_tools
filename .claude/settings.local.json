@@ -32,7 +32,24 @@
       "Bash(if not exist \"D:\\2_Github_Repository\\API_detect_tools\\.claude\\plan\" mkdir \"D:\\2_Github_Repository\\API_detect_tools\\.claude\\plan\")",
       "Bash(powershell:*)",
       "mcp__chrome-devtools__list_pages",
-      "Bash(npx vitest run:*)"
+      "Bash(npx vitest run:*)",
+      "Bash(codex --version:*)",
+      "Bash(codex auth:*)",
+      "Bash(codex --help:*)",
+      "Bash(codex debug)",
+      "Bash(# Try running codex exec directly \\(the same way wrapper does, but without wrapper\\)\ncodex e --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check -C \"\"D:/2_Github_Repository/API_detect_tools\"\" --json - <<'EOF'\nreply with: pong\nEOF)",
+      "Bash(powershell.exe:*)",
+      "Bash(codex e:*)",
+      "Bash(env)",
+      "Bash(unset:*)",
+      "Bash(cping)",
+      "Bash(ccb up:*)",
+      "Bash(cmd.exe:*)",
+      "Bash(\"C:/Users/Hang/AppData/Local/codex-dual/bin/ccb.cmd\" up codex)",
+      "Bash(codeagent-wrapper:*)",
+      "Bash(openspec list --json)",
+      "Bash(del:*)",
+      "Bash(git status:*)"
     ]
   }
 }

@@ -161,7 +161,7 @@ export const DEFAULT_COLUMN_WIDTHS = [
   50, // TPM
   60, // 模型数
   80, // 更新时间
-  170, // CLI兼容性（配置按钮、测试按钮、CLI 图标）
+  160, // CLI兼容性（配置按钮、测试按钮、CLI 图标）
   65, // LDC 支付
 ] as const;
 

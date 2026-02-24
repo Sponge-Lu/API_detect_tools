@@ -20,6 +20,8 @@ import type { SiteConfig } from '../App';
 import { DialogState, DialogType, initialDialogState } from '../components/ConfirmDialog';
 import { DEFAULT_COLUMN_WIDTHS } from '../../shared/constants';
 
+import type { ReleaseInfo } from '../hooks/useUpdate';
+
 interface RefreshMessage {
   site: string;
   message: string;
@@ -121,6 +123,10 @@ interface UIState {
   sortField: SortField | null;
   sortOrder: SortOrder;
 
+  // 下载更新面板
+  showDownloadPanel: boolean;
+  downloadPanelRelease: ReleaseInfo | null;
+
   // Actions - 面板
   setShowSiteEditor: (show: boolean) => void;
   setEditingSite: (index: number | null) => void;
@@ -199,6 +205,10 @@ interface UIState {
 
   // Actions - Tab 切换
   setActiveTab: (tab: TabId) => void;
+
+  // Actions - 下载面板
+  openDownloadPanel: (release: ReleaseInfo) => void;
+  closeDownloadPanel: () => void;
 }
 
 const initialNewTokenForm: NewApiTokenForm = {
@@ -242,6 +252,8 @@ export const useUIStore = create<UIState>()(
       columnWidths: [...DEFAULT_COLUMN_WIDTHS],
       sortField: null,
       sortOrder: 'desc',
+      showDownloadPanel: false,
+      downloadPanelRelease: null,
 
       // 面板 Actions
       setShowSiteEditor: show => set({ showSiteEditor: show }),
@@ -451,6 +463,11 @@ export const useUIStore = create<UIState>()(
 
       // Tab 切换
       setActiveTab: (tab: TabId) => set({ activeTab: tab }),
+
+      // 下载面板
+      openDownloadPanel: (release: ReleaseInfo) =>
+        set({ showDownloadPanel: true, downloadPanelRelease: release }),
+      closeDownloadPanel: () => set({ showDownloadPanel: false, downloadPanelRelease: null }),
     }),
     {
       name: 'api-hub-ui-storage',

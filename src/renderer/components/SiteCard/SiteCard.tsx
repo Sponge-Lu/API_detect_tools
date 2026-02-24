@@ -26,6 +26,7 @@ import { SiteCardHeader } from './SiteCardHeader';
 import { SiteCardActions } from './SiteCardActions';
 import { SiteCardDetails } from './SiteCardDetails';
 import { IOSCard } from '../IOSCard';
+import { useDateString } from '../../hooks';
 import type { SiteCardProps } from './types';
 
 /**
@@ -86,6 +87,9 @@ export const SiteCard = React.memo(
     onOpenCreateTokenDialog,
     onDeleteToken,
   }: SiteCardProps) {
+    // 跨天时触发重算，避免长时间运行后时间显示过期
+    const dateStr = useDateString();
+
     // 计算最后更新时间显示
     const lastSyncDisplay = useMemo(() => {
       // 优先使用 siteResult 的数据，其次使用 siteAccount
@@ -107,7 +111,7 @@ export const SiteCard = React.memo(
 
       // 非当天时间：x天前，超过7天全部显示7天前
       return diffDays >= 7 ? '7天前' : `${diffDays}天前`;
-    }, [siteResult?.lastRefresh, siteAccount?.last_sync_time]);
+    }, [siteResult?.lastRefresh, siteAccount?.last_sync_time, dateStr]);
 
     // 从错误信息中提取 Error Code
     const errorCode = useMemo(() => {

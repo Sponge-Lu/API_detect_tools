@@ -24,10 +24,11 @@ import {
 } from 'lucide-react';
 import { Settings, Config } from '../App';
 import { useTheme } from '../hooks/useTheme';
-import { useUpdate, ReleaseInfo, UpdateCheckResult } from '../hooks/useUpdate';
+import { useUpdate, UpdateCheckResult } from '../hooks/useUpdate';
 import { toast } from '../store/toastStore';
+import { useUIStore } from '../store/uiStore';
 import { WebDAVConfig, DEFAULT_WEBDAV_CONFIG } from '../../shared/types/site';
-import { WebDAVBackupDialog, UpdateDialog } from './dialogs';
+import { WebDAVBackupDialog } from './dialogs';
 import { IOSInput } from './IOSInput';
 
 // 设置分类定义
@@ -78,6 +79,7 @@ export function SettingsPanel({
   } = useUpdate();
 
   const updateInfo = hookUpdateInfo || initialUpdateInfo;
+  const { openDownloadPanel } = useUIStore();
 
   const [webdavConfig, setWebdavConfig] = useState<WebDAVConfig>(DEFAULT_WEBDAV_CONFIG);
   const [testingConnection, setTestingConnection] = useState(false);
@@ -87,8 +89,6 @@ export function SettingsPanel({
     message: string;
   } | null>(null);
   const [showBackupDialog, setShowBackupDialog] = useState(false);
-  const [showUpdateDialog, setShowUpdateDialog] = useState(false);
-  const [selectedRelease, setSelectedRelease] = useState<ReleaseInfo | null>(null);
 
   const [closeBehavior, setCloseBehavior] = useState<'ask' | 'quit' | 'minimize'>('ask');
   const [loadingCloseBehavior, setLoadingCloseBehavior] = useState(true);
@@ -693,10 +693,7 @@ export function SettingsPanel({
             {updateInfo.hasUpdate && updateInfo.releaseInfo && (
               <button
                 type="button"
-                onClick={() => {
-                  setSelectedRelease(updateInfo.releaseInfo!);
-                  setShowUpdateDialog(true);
-                }}
+                onClick={() => openDownloadPanel(updateInfo.releaseInfo!)}
                 className="text-xs px-2 py-1 bg-green-500 hover:bg-green-600 text-white rounded transition-colors"
               >
                 查看详情
@@ -721,10 +718,7 @@ export function SettingsPanel({
               {updateInfo.hasPreReleaseUpdate && updateInfo.preReleaseInfo && (
                 <button
                   type="button"
-                  onClick={() => {
-                    setSelectedRelease(updateInfo.preReleaseInfo!);
-                    setShowUpdateDialog(true);
-                  }}
+                  onClick={() => openDownloadPanel(updateInfo.preReleaseInfo!)}
                   className="text-xs px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded transition-colors"
                 >
                   查看详情
@@ -840,25 +834,7 @@ export function SettingsPanel({
   };
 
   const dialogs = (
-    <>
-      <WebDAVBackupDialog isOpen={showBackupDialog} onClose={() => setShowBackupDialog(false)} />
-      {selectedRelease && (
-        <UpdateDialog
-          isOpen={showUpdateDialog}
-          onClose={() => {
-            setShowUpdateDialog(false);
-            setSelectedRelease(null);
-          }}
-          currentVersion={currentVersion}
-          releaseInfo={selectedRelease}
-          onDownload={() => {
-            if (selectedRelease?.downloadUrl) {
-              window.electronAPI?.update?.openDownload(selectedRelease.downloadUrl);
-            }
-          }}
-        />
-      )}
-    </>
+    <WebDAVBackupDialog isOpen={showBackupDialog} onClose={() => setShowBackupDialog(false)} />
   );
 
   // ===== 页面模式：左右分栏 =====

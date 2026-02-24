@@ -9,8 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import { XCircle, Loader2 } from 'lucide-react';
 import { ConfirmDialog, initialDialogState } from './components/ConfirmDialog';
 import { Header } from './components/Header';
-import { AuthErrorDialog, CloseBehaviorDialog } from './components/dialogs';
-import { DownloadUpdatePanel } from './components/dialogs/DownloadUpdatePanel';
+import { AuthErrorDialog, CloseBehaviorDialog, DownloadUpdatePanel } from './components/dialogs';
 import { ToastContainer } from './components/Toast';
 import { IOSButton } from './components/IOSButton';
 import { useTheme, useDataLoader, useUpdate, useSiteDetection } from './hooks';
@@ -236,9 +235,6 @@ function App() {
     installUpdate,
   } = useUpdate();
 
-  // 下载更新状态
-  const [showDownloadPanel, setShowDownloadPanel] = useState(false);
-
   // Toast store
   const { toasts, removeToast } = useToastStore();
 
@@ -262,6 +258,10 @@ function App() {
     setShowSiteEditor,
     setSortField,
     setSortOrder,
+    showDownloadPanel,
+    downloadPanelRelease,
+    openDownloadPanel,
+    closeDownloadPanel,
   } = useUIStore();
 
   // 窗口关闭行为对话框状态
@@ -373,7 +373,9 @@ function App() {
   };
 
   const handleDownloadUpdate = async () => {
-    setShowDownloadPanel(true);
+    if (updateInfo?.releaseInfo) {
+      openDownloadPanel(updateInfo.releaseInfo);
+    }
   };
 
   if (loading) {
@@ -531,18 +533,18 @@ function App() {
       />
 
       {/* 下载更新面板 */}
-      {updateInfo?.releaseInfo && (
+      {downloadPanelRelease && (
         <DownloadUpdatePanel
           isOpen={showDownloadPanel}
-          onClose={() => setShowDownloadPanel(false)}
+          onClose={closeDownloadPanel}
           currentVersion={currentVersion}
-          releaseInfo={updateInfo.releaseInfo}
+          releaseInfo={downloadPanelRelease}
           downloadPhase={downloadPhase}
           downloadProgress={downloadProgress}
           downloadError={downloadError}
           onStartDownload={() => {
-            if (updateInfo.releaseInfo?.downloadUrl) {
-              startDownload(updateInfo.releaseInfo.downloadUrl);
+            if (downloadPanelRelease.downloadUrl) {
+              startDownload(downloadPanelRelease.downloadUrl);
             }
           }}
           onCancelDownload={cancelDownload}
