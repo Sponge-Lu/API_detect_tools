@@ -4,6 +4,29 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，并且本项目遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
+## [v2.1.23]
+
+### 新增
+- **连接失败检测与中断**：任何站点连接失败时立即中断后续所有检测，统一弹窗显示失败站点及原因
+  - `api-service.ts` 新增 `isIpBlockedResponse` 检测，优先级高于浏览器回退
+  - 并发/顺序检测模式均支持连接失败中断（泛化原 IP 封锁专用逻辑）
+  - 弹窗列出所有导致中断的站点名称和具体错误信息
+
+### 变更
+- **自动刷新配置入口统一**：移除站点编辑器中的自动刷新配置卡片，统一由站点卡片的切换按钮 + `AutoRefreshDialog` 对话框管理
+  - 开启自动刷新时弹出对话框，默认间隔 30 分钟，不再复用旧的间隔值
+  - 关闭自动刷新时直接禁用，无需弹窗
+  - `SiteEditor` 不再包含自动刷新相关状态和 UI
+
+### 修复
+- **更新下载 ECONNRESET 修复**：修复应用内下载更新时报 `网络请求出错: read ECONNRESET` 的问题
+  - 根因：`downloadUpdate` 使用 Node.js 原生 `https.get`，不走系统代理，直连 GitHub CDN 被连接重置
+  - 将下载网络栈从 Node.js `https.get` 迁移到 Electron `net.request`（Chromium 网络栈），自动继承系统代理
+  - 使用 `redirect: 'follow'` 自动处理 GitHub 302 重定向，移除手动重定向逻辑
+  - 增加 ECONNRESET/ETIMEDOUT/ENETUNREACH/EPIPE 有限重试机制（最多 3 次，递增延迟）
+
+---
+
 ## [v2.1.22]
 
 ### 修复
@@ -445,7 +468,7 @@
   - 每个站点有独立的自动刷新开关（Timer 图标）
   - 状态保存在站点配置中，持久化到 config.json
 - **自动刷新间隔设置**：
-  - 在站点编辑器中配置自动刷新开关和刷新间隔（最小 3 分钟）
+  - 在站点编辑器中配置自动刷新开关和刷新间隔（最小 15 分钟）
   - 站点卡片上的刷新按钮可快速切换开关状态
   - 间隔时间持久化保存到站点配置
 - **自动刷新定时器实现**：

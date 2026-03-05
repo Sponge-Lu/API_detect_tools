@@ -27,8 +27,8 @@ interface SiteConfig {
 
 // ============= Timer Manager (Pure Logic Extraction) =============
 
-const DEFAULT_INTERVAL = 5;
-const MIN_INTERVAL = 3;
+const DEFAULT_INTERVAL = 30;
+const MIN_INTERVAL = 15;
 
 /**
  * Get valid interval in minutes
@@ -138,7 +138,7 @@ describe('useAutoRefresh Property Tests', () => {
    *
    * *For any* set of sites, the system SHALL create a timer for each site
    * where auto_refresh=true, and the timer interval SHALL match the site's
-   * auto_refresh_interval (or default to 5 minutes)
+   * auto_refresh_interval (or default to 30 minutes)
    */
   describe('Property 1: Timer scheduling for enabled sites', () => {
     it('should identify correct sites for timer creation', () => {
@@ -166,7 +166,7 @@ describe('useAutoRefresh Property Tests', () => {
       );
     });
 
-    it('should calculate correct intervals (default 5, min 3)', () => {
+    it('should calculate correct intervals (default 30, min 15)', () => {
       fc.assert(
         fc.property(sitesArrayArb, sites => {
           const intervals = getExpectedIntervals(sites);

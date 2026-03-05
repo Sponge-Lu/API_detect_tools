@@ -131,6 +131,8 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
 
         if (rawResult.status === '失败' && isAuthenticationError(rawResult.error)) {
           options.onAuthError?.([{ name: site.name, url: site.url, error: rawResult.error || '' }]);
+        } else if (rawResult.status === '失败') {
+          toast.error(`${site.name} 连接失败: ${rawResult.error || '未知错误'}`);
         } else {
           const hasChanges = hasSignificantChanges(cachedResult, result);
           setRefreshMessage({
@@ -225,6 +227,8 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
         let cursor = 0;
         const resultsBuffer: DetectionResult[] = [];
         const authErrors: { name: string; url: string; error: string }[] = [];
+        let aborted = false;
+        const interruptedSites: { name: string; error: string }[] = [];
         const upsertAuthError = (site: SiteConfig, error: string) => {
           const idx = authErrors.findIndex(a => a.name === site.name);
           if (idx >= 0) {
@@ -269,6 +273,9 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
 
           if (rawResult.status === '失败' && isAuthenticationError(rawResult.error)) {
             upsertAuthError(site, rawResult.error || '');
+          } else if (rawResult.status === '失败') {
+            interruptedSites.push({ name: site.name, error: rawResult.error || '未知错误' });
+            aborted = true;
           }
 
           // 即时更新前端结果
@@ -292,6 +299,7 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
 
         const worker = async () => {
           while (true) {
+            if (aborted) break;
             const index = cursor++;
             if (index >= enabledSites.length) break;
             const site = enabledSites[index];
@@ -304,6 +312,18 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
 
         if (authErrors.length > 0) {
           options.onAuthError?.(authErrors);
+        }
+
+        // 连接失败提醒
+        if (interruptedSites.length > 0) {
+          const siteList = interruptedSites.map(s => `• ${s.name}：${s.error}`).join('\n');
+          toast.error(`检测中断，以下站点连接失败：\n${siteList}`);
+          options.showDialog?.({
+            type: 'warning',
+            title: '检测中断',
+            message: `以下站点连接失败，已中断后续检测：\n\n${siteList}`,
+            confirmText: '知道了',
+          });
         }
 
         return resultsBuffer;

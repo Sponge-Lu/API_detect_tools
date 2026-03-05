@@ -79,12 +79,120 @@ interface LogResponse {
   message?: string;
 }
 
+// 端点缓存条目
+interface EndpointCacheEntry {
+  authFingerprint: string;
+  modelsEndpoint?: string;
+  balanceEndpoint?: string;
+  updatedAt: number;
+}
+
 export class ApiService {
   private tokenService: any;
+  /** 端点缓存：记住每个站点上次成功的 models/balance 端点 */
+  private endpointCache = new Map<string, EndpointCacheEntry>();
+  private static readonly EP_CACHE_TTL = 30 * 60 * 1000; // 30 分钟
+  private static readonly EP_CACHE_MAX = 500;
 
   constructor(tokenService?: any, _tokenStorage?: any) {
     this.tokenService = tokenService;
     // tokenStorage 参数已废弃，使用 unifiedConfigManager 替代
+  }
+
+  // ============= 端点缓存方法 =============
+
+  private epCacheKey(site: SiteConfig): string {
+    return `${site.url.replace(/\/$/, '').toLowerCase()}|${site.user_id || 'anon'}`;
+  }
+
+  private epAuthFP(site: SiteConfig): string {
+    const ak = site.api_key || '';
+    const st = site.system_token || '';
+    const combined = ak + '|' + st;
+    let h = 0;
+    for (let i = 0; i < combined.length; i++) h = ((h << 5) - h + combined.charCodeAt(i)) | 0;
+    return `${site.user_id || ''}|${combined.length}|${h}`;
+  }
+
+  /** 读取端点缓存（内存 → 持久化回填） */
+  private getEpCache(site: SiteConfig, type: 'models' | 'balance'): string | undefined {
+    const key = this.epCacheKey(site);
+    const fp = this.epAuthFP(site);
+
+    // 1. 内存缓存命中
+    const e = this.endpointCache.get(key);
+    if (e && e.authFingerprint === fp && Date.now() - e.updatedAt <= ApiService.EP_CACHE_TTL) {
+      e.updatedAt = Date.now();
+      return type === 'models' ? e.modelsEndpoint : e.balanceEndpoint;
+    }
+    if (e) this.endpointCache.delete(key);
+
+    // 2. 持久化回填（应用重启后恢复）
+    const hints = unifiedConfigManager.getSiteByUrl(site.url)?.cached_data?.endpoint_hints;
+    if (hints) {
+      const ep = type === 'models' ? hints.models_endpoint : hints.balance_endpoint;
+      if (ep) {
+        this.endpointCache.set(key, {
+          authFingerprint: fp,
+          modelsEndpoint: hints.models_endpoint,
+          balanceEndpoint: hints.balance_endpoint,
+          updatedAt: Date.now(),
+        });
+        return ep;
+      }
+    }
+    return undefined;
+  }
+
+  /** 写入端点缓存（内存 + 持久化） */
+  private setEpCache(site: SiteConfig, type: 'models' | 'balance', ep: string): void {
+    const key = this.epCacheKey(site);
+    const fp = this.epAuthFP(site);
+    const prev = this.endpointCache.get(key);
+    this.endpointCache.set(key, {
+      authFingerprint: fp,
+      modelsEndpoint: type === 'models' ? ep : prev?.modelsEndpoint,
+      balanceEndpoint: type === 'balance' ? ep : prev?.balanceEndpoint,
+      updatedAt: Date.now(),
+    });
+    // LRU 淘汰
+    if (this.endpointCache.size > ApiService.EP_CACHE_MAX) {
+      const oldest = Array.from(this.endpointCache.entries()).sort(
+        (a, b) => a[1].updatedAt - b[1].updatedAt
+      );
+      for (let i = 0; i < this.endpointCache.size - ApiService.EP_CACHE_MAX; i++) {
+        this.endpointCache.delete(oldest[i][0]);
+      }
+    }
+    // 持久化（fire-and-forget）
+    this.persistEpHints(site);
+  }
+
+  /** 清除端点缓存（内存 + 持久化） */
+  private invalidateEpCache(site: SiteConfig): void {
+    this.endpointCache.delete(this.epCacheKey(site));
+    this.persistEpHints(site, true);
+  }
+
+  /** 持久化端点提示到 config.json */
+  private persistEpHints(site: SiteConfig, clear = false): void {
+    const u = unifiedConfigManager.getSiteByUrl(site.url);
+    if (!u) return;
+    const existing = u.cached_data || ({} as NonNullable<typeof u.cached_data>);
+    unifiedConfigManager
+      .updateSite(u.id, {
+        cached_data: {
+          ...existing,
+          endpoint_hints: clear ? undefined : this.getEpHintsSnapshot(site),
+        },
+      })
+      .catch(() => {});
+  }
+
+  private getEpHintsSnapshot(site: SiteConfig) {
+    const e = this.endpointCache.get(this.epCacheKey(site));
+    if (!e) return undefined;
+    return { models_endpoint: e.modelsEndpoint, balance_endpoint: e.balanceEndpoint };
   }
 
   async detectSite(
@@ -370,22 +478,29 @@ export class ApiService {
     }
 
     if (config.settings.concurrent) {
-      // ��������������ͻ�����������������ĳ�����룬Ĭ��3��
+      // 并发检测
       const maxConcurrent = Math.max(1, config.settings.max_concurrent || 3);
       let cursor = 0;
+      let aborted = false;
 
       const worker = async () => {
         while (true) {
+          if (aborted) break;
           const index = cursor++;
           if (index >= enabledSites.length) break;
           const site = enabledSites[index];
           const cachedData = cachedMap.get(site.name);
-          results[index] = await this.detectSite(
+          const result = await this.detectSite(
             site,
             config.settings.timeout,
             quickRefresh,
             cachedData
           );
+          results[index] = result;
+          if (result.status === '失败') {
+            Logger.error(`🚫 [ApiService] ${site.name}: 检测失败(${result.error})，中断后续请求`);
+            aborted = true;
+          }
         }
       };
 
@@ -399,6 +514,10 @@ export class ApiService {
       const cachedData = cachedMap.get(site.name);
       const result = await this.detectSite(site, config.settings.timeout, quickRefresh, cachedData);
       results.push(result);
+      if (result.status === '失败') {
+        Logger.error(`🚫 [ApiService] ${site.name}: 检测失败(${result.error})，中断后续请求`);
+        break;
+      }
     }
     return results;
   }
@@ -634,8 +753,16 @@ export class ApiService {
   }
 
   /**
-   * 检测响应数据是否为 Bot Detection 页面（返回200但内容是HTML）
+   * 检测响应数据是否包含 IP 封锁信息
    */
+  private isIpBlockedResponse(data: any): boolean {
+    if (typeof data === 'string') {
+      return data.includes('IP已被封锁') || data.includes('IP has been blocked');
+    }
+    const msg = data?.message || data?.error?.message || '';
+    return msg.includes('IP已被封锁') || msg.includes('IP has been blocked');
+  }
+
   private isBotDetectionPage(data: any): boolean {
     if (typeof data === 'string') {
       const lowerData = data.toLowerCase();
@@ -687,6 +814,18 @@ export class ApiService {
       msg.includes('certificate has expired') ||
       msg.includes('certificate expired') ||
       msg.includes('unable to verify the first certificate')
+    );
+  }
+
+  /** 站点级不可用错误（5xx / 连接失败），不应继续尝试其他端点 */
+  private isSiteUnavailableError(error: any): boolean {
+    const msg = error?.message || '';
+    const codeMatch = msg.match(/HTTP\s+(\d{3})/i);
+    if (codeMatch && parseInt(codeMatch[1]) >= 500) return true;
+    const code = error?.code || '';
+    return (
+      /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|EAI_AGAIN/.test(code) ||
+      /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|EAI_AGAIN/.test(msg)
     );
   }
 
@@ -911,6 +1050,13 @@ export class ApiService {
         };
       }
 
+      // 检测 IP 封锁（优先级最高，直接中断，不走浏览器回退）
+      if (this.isIpBlockedResponse(response.data)) {
+        const err: any = new Error('IP已被封锁，停止后续请求');
+        err.isIpBlocked = true;
+        throw err;
+      }
+
       // 检测是否返回了 Bot Detection 页面（200 状态码但内容是 HTML）
       if (this.isBotDetectionPage(response.data)) {
         Logger.info('🛡️ [ApiService] 检测到 Bot Detection 页面，需要浏览器验证...');
@@ -928,6 +1074,9 @@ export class ApiService {
         message: error.message,
         status: error.response?.status,
       });
+
+      // IP 封锁：直接抛出，不走浏览器回退
+      if (error.isIpBlocked) throw error;
 
       // 第二步：检测是否为Cloudflare保护或Bot Detection
       const status = error.response?.status;
@@ -1061,6 +1210,11 @@ export class ApiService {
           '/api/available_model', // Done Hub (返回对象格式)
         ];
 
+    // 端点缓存：站点类型固定，缓存命中直接用，失败才全量尝试
+    const cachedModelsEp = hasApiKey ? undefined : this.getEpCache(site, 'models');
+    let currentEndpoints = cachedModelsEp ? [cachedModelsEp] : endpoints;
+    let epCacheRetried = false;
+
     const headers: any = {
       Authorization: `Bearer ${authToken}`,
       'Content-Type': 'application/json',
@@ -1072,146 +1226,167 @@ export class ApiService {
       Object.assign(headers, userIdHeaders);
     }
 
-    // 尝试所有端点
+    // 尝试端点（缓存命中 → 单端点；未命中/失败 → 全量）
     let lastError: any = null;
     let sharedPage: any = null;
     let sharedPageRelease: (() => void) | undefined = undefined;
-    let hasEmptyResponse = false; // 跟踪是否有端点返回空数组（session可能过期）
+    let hasEmptyResponse = false;
 
-    for (const endpoint of endpoints) {
-      const url = `${site.url.replace(/\/$/, '')}${endpoint}`;
+    while (true) {
+      for (const endpoint of currentEndpoints) {
+        const url = `${site.url.replace(/\/$/, '')}${endpoint}`;
 
-      try {
-        Logger.info('📡 [ApiService] 尝试获取模型列表:', {
-          url,
-          authMethod: hasApiKey ? 'api_key' : 'system_token (access_token)',
-          endpoint,
-        });
+        try {
+          Logger.info('📡 [ApiService] 尝试获取模型列表:', {
+            url,
+            authMethod: hasApiKey ? 'api_key' : 'system_token (access_token)',
+            endpoint,
+          });
 
-        const result = await this.fetchWithBrowserFallback(
-          url,
-          headers,
-          site,
-          timeout,
-          (data: any) => {
-            // 打印完整响应结构用于调试
-            Logger.info('📦 [ApiService] 模型列表响应结构:', {
-              hasSuccess: 'success' in data,
-              hasData: 'data' in data,
-              isDataArray: Array.isArray(data?.data),
-              dataType: typeof data?.data,
-              topLevelKeys: Object.keys(data || {}),
-              dataKeys: data?.data ? Object.keys(data.data) : [],
-            });
+          const result = await this.fetchWithBrowserFallback(
+            url,
+            headers,
+            site,
+            timeout,
+            (data: any) => {
+              // 打印完整响应结构用于调试
+              Logger.info('📦 [ApiService] 模型列表响应结构:', {
+                hasSuccess: 'success' in data,
+                hasData: 'data' in data,
+                isDataArray: Array.isArray(data?.data),
+                dataType: typeof data?.data,
+                topLevelKeys: Object.keys(data || {}),
+                dataKeys: data?.data ? Object.keys(data.data) : [],
+              });
 
-            // 某些站点可能返回 { success: true, message: "..." } 没有data字段
-            // 这不一定是认证问题，可能只是该端点不适用于此站点类型
-            // 返回空数组，继续尝试其他端点
-            if (!data || !('data' in data)) {
-              Logger.info('ℹ️ [ApiService] 响应中没有data字段，尝试下一个端点');
-              return [];
-            }
+              // 某些站点可能返回 { success: true, message: "..." } 没有data字段
+              // 这不一定是认证问题，可能只是该端点不适用于此站点类型
+              // 返回空数组，继续尝试其他端点
+              if (!data || !('data' in data)) {
+                Logger.info('ℹ️ [ApiService] 响应中没有data字段，尝试下一个端点');
+                return [];
+              }
 
-            // 格式1: Done Hub嵌套data { success: true, data: { data: [...], total_count } }
-            if (data?.data?.data && Array.isArray(data.data.data)) {
-              const models = data.data.data.map((m: any) => m.id || m.name || m);
-              Logger.info(
-                `✅ [ApiService] 成功获取 ${models.length} 个模型 (data.data.data格式) ✅`
-              );
-              return models;
-            }
+              // 格式1: Done Hub嵌套data { success: true, data: { data: [...], total_count } }
+              if (data?.data?.data && Array.isArray(data.data.data)) {
+                const models = data.data.data.map((m: any) => m.id || m.name || m);
+                Logger.info(
+                  `✅ [ApiService] 成功获取 ${models.length} 个模型 (data.data.data格式) ✅`
+                );
+                return models;
+              }
 
-            // 格式2: { success: true, data: [...] } 或 { data: [...] }
-            if (data?.data && Array.isArray(data.data)) {
-              const models = data.data.map((m: any) => m.id || m.name || m);
-              Logger.info(`✅ [ApiService] 成功获取 ${models.length} 个模型 (data数组格式)`);
-              return models;
-            }
+              // 格式2: { success: true, data: [...] } 或 { data: [...] }
+              if (data?.data && Array.isArray(data.data)) {
+                const models = data.data.map((m: any) => m.id || m.name || m);
+                Logger.info(`✅ [ApiService] 成功获取 ${models.length} 个模型 (data数组格式)`);
+                return models;
+              }
 
-            // 格式3: { success: true, data: { models: [...] } }
-            if (data?.data?.models && Array.isArray(data.data.models)) {
-              const models = data.data.models.map((m: any) => m.id || m.name || m);
-              Logger.info(`✅ [ApiService] 成功获取 ${models.length} 个模型 (data.models格式)`);
-              return models;
-            }
+              // 格式3: { success: true, data: { models: [...] } }
+              if (data?.data?.models && Array.isArray(data.data.models)) {
+                const models = data.data.models.map((m: any) => m.id || m.name || m);
+                Logger.info(`✅ [ApiService] 成功获取 ${models.length} 个模型 (data.models格式)`);
+                return models;
+              }
 
-            // 格式4: 直接数组 [...]
-            if (Array.isArray(data)) {
-              const models = data.map((m: any) => m.id || m.name || m);
-              Logger.info(`✅ [ApiService] 成功获取 ${models.length} 个模型 (直接数组格式)`);
-              return models;
-            }
+              // 格式4: 直接数组 [...]
+              if (Array.isArray(data)) {
+                const models = data.map((m: any) => m.id || m.name || m);
+                Logger.info(`✅ [ApiService] 成功获取 ${models.length} 个模型 (直接数组格式)`);
+                return models;
+              }
 
-            // 格式5: { models: [...] } 直接字段
-            if (data?.models && Array.isArray(data.models)) {
-              const models = data.models.map((m: any) => m.id || m.name || m);
-              Logger.info(`✅ [ApiService] 成功获取 ${models.length} 个模型 (models字段)`);
-              return models;
-            }
+              // 格式5: { models: [...] } 直接字段
+              if (data?.models && Array.isArray(data.models)) {
+                const models = data.models.map((m: any) => m.id || m.name || m);
+                Logger.info(`✅ [ApiService] 成功获取 ${models.length} 个模型 (models字段)`);
+                return models;
+              }
 
-            // 格式6: Done Hub /api/available_model 对象格式
-            // { success: true, data: { "ModelName1": {...}, "ModelName2": {...} } }
-            if (
-              data?.success &&
-              data?.data &&
-              typeof data.data === 'object' &&
-              !Array.isArray(data.data)
-            ) {
-              // 检查是否为 Done Hub 格式（对象的值包含 price 或 groups 字段）
-              const values = Object.values(data.data);
-              if (values.length > 0) {
-                const firstValue = values[0] as any;
-                if (firstValue && (firstValue.price || firstValue.groups)) {
-                  // 模型名称就是对象的 keys
-                  const models = Object.keys(data.data);
-                  Logger.info(
-                    `✅ [ApiService] 成功获取 ${models.length} 个模型 (Done Hub对象格式)`
-                  );
-                  return models;
+              // 格式6: Done Hub /api/available_model 对象格式
+              // { success: true, data: { "ModelName1": {...}, "ModelName2": {...} } }
+              if (
+                data?.success &&
+                data?.data &&
+                typeof data.data === 'object' &&
+                !Array.isArray(data.data)
+              ) {
+                // 检查是否为 Done Hub 格式（对象的值包含 price 或 groups 字段）
+                const values = Object.values(data.data);
+                if (values.length > 0) {
+                  const firstValue = values[0] as any;
+                  if (firstValue && (firstValue.price || firstValue.groups)) {
+                    // 模型名称就是对象的 keys
+                    const models = Object.keys(data.data);
+                    Logger.info(
+                      `✅ [ApiService] 成功获取 ${models.length} 个模型 (Done Hub对象格式)`
+                    );
+                    return models;
+                  }
                 }
               }
+
+              Logger.warn('⚠️ [ApiService] 未识别的响应格式，返回空数组');
+              Logger.info('   完整响应:', JSON.stringify(data).substring(0, 200));
+              return [];
             }
+          );
 
-            Logger.warn('⚠️ [ApiService] 未识别的响应格式，返回空数组');
-            Logger.info('   完整响应:', JSON.stringify(data).substring(0, 200));
-            return [];
+          // 如果成功获取到模型，返回结果
+          if (result.result && result.result.length > 0) {
+            if (!hasApiKey) this.setEpCache(site, 'models', endpoint);
+            return {
+              models: result.result,
+              page: result.page,
+              pageRelease: result.pageRelease,
+            };
           }
-        );
 
-        // 如果成功获取到模型，返回结果
-        if (result.result && result.result.length > 0) {
-          return {
-            models: result.result,
-            page: result.page,
-            pageRelease: result.pageRelease,
-          };
-        }
+          // 如果返回空数组，标记并继续尝试下一个端点（不存在站点没有模型的情况，空数组可能是session过期）
+          hasEmptyResponse = true;
+          Logger.info(`ℹ️ [ApiService] 端点 ${endpoint} 返回空模型列表，尝试下一个端点...`);
 
-        // 如果返回空数组，标记并继续尝试下一个端点（不存在站点没有模型的情况，空数组可能是session过期）
-        hasEmptyResponse = true;
-        Logger.info(`ℹ️ [ApiService] 端点 ${endpoint} 返回空模型列表，尝试下一个端点...`);
+          // 保存 page 和 pageRelease 以便后续复用
+          // 注意：只在有新的 pageRelease 时覆盖，避免丢失首次创建页面时的释放函数，防止引用计数泄漏
+          if (result.page) {
+            sharedPage = result.page;
+          }
+          if (result.pageRelease) {
+            sharedPageRelease = result.pageRelease;
+          }
+        } catch (error: any) {
+          // IP 封锁：直接向上抛出，不尝试其他端点
+          if (error.isIpBlocked) throw error;
+          // 站点不可用（5xx / 连接失败）：直接向上抛出，不尝试其他端点
+          if (this.isSiteUnavailableError(error)) throw error;
+          if (!hasApiKey && this.isAuthError(error)) this.invalidateEpCache(site);
+          Logger.warn(`⚠️ [ApiService] 端点 ${endpoint} 失败:`, error.message);
+          lastError = error;
+          // 继续尝试下一个端点，不提前终止
+          continue;
+        }
+      }
 
-        // 保存 page 和 pageRelease 以便后续复用
-        // 注意：只在有新的 pageRelease 时覆盖，避免丢失首次创建页面时的释放函数，防止引用计数泄漏
-        if (result.page) {
-          sharedPage = result.page;
-        }
-        if (result.pageRelease) {
-          sharedPageRelease = result.pageRelease;
-        }
-      } catch (error: any) {
-        Logger.warn(`⚠️ [ApiService] 端点 ${endpoint} 失败:`, error.message);
-        lastError = error;
-        // 继续尝试下一个端点，不提前终止
+      // 缓存端点失败 → 清缓存，回退全量扫描（仅重试一次）
+      if (cachedModelsEp && !epCacheRetried && !hasApiKey) {
+        Logger.info('ℹ️ [ApiService] 缓存端点失败，回退全量扫描');
+        this.invalidateEpCache(site);
+        epCacheRetried = true;
+        currentEndpoints = endpoints;
+        lastError = null;
+        hasEmptyResponse = false;
         continue;
       }
-    }
+      break;
+    } // end while
 
     // 所有端点都尝试完毕，综合判断结果
     // 优先处理空响应（不存在站点没有模型的情况，空数组意味着session过期）
     // 但如果 forceAcceptEmpty 为 true，则接受空数据（用户确认站点确实没有模型）
     if (hasEmptyResponse && !forceAcceptEmpty) {
       Logger.error('❌ [ApiService] 模型接口返回空数组，可能是session过期');
+      if (!hasApiKey) this.invalidateEpCache(site);
       // 该分支会直接 throw，detectSite 无法拿到 pageRelease；需要在这里释放浏览器引用，避免批量检测泄漏
       if (sharedPageRelease) {
         try {
@@ -1341,46 +1516,68 @@ export class ApiService {
     let lastError: any = null;
     let pageRelease: (() => void) | undefined = undefined;
 
-    for (const endpoint of endpoints) {
-      try {
-        const url = `${site.url.replace(/\/$/, '')}${endpoint}`;
-        const headers: any = {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`,
-          Pragma: 'no-cache',
-        };
+    // 端点缓存：站点类型固定，缓存命中直接用，失败才全量尝试
+    const cachedBalanceEp = this.getEpCache(site, 'balance');
+    let currentEndpoints = cachedBalanceEp ? [cachedBalanceEp] : endpoints;
+    let epCacheRetried = false;
 
-        // 添加所有User-ID头（兼容各种站点）
-        const userIdHeaders = getAllUserIdHeaders(site.user_id!);
-        Object.assign(headers, userIdHeaders);
+    while (true) {
+      for (const endpoint of currentEndpoints) {
+        try {
+          const url = `${site.url.replace(/\/$/, '')}${endpoint}`;
+          const headers: any = {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authToken}`,
+            Pragma: 'no-cache',
+          };
 
-        // 使用通用的带回退的请求方法，传入共享页面
-        const result = await this.fetchWithBrowserFallback(
-          url,
-          headers,
-          site,
-          timeout,
-          (data: any) => this.extractBalance(data),
-          sharedPage
-        );
+          // 添加所有User-ID头（兼容各种站点）
+          const userIdHeaders = getAllUserIdHeaders(site.user_id!);
+          Object.assign(headers, userIdHeaders);
 
-        // 保存 pageRelease（如果有）
-        if (result.pageRelease) {
-          pageRelease = result.pageRelease;
+          // 使用通用的带回退的请求方法，传入共享页面
+          const result = await this.fetchWithBrowserFallback(
+            url,
+            headers,
+            site,
+            timeout,
+            (data: any) => this.extractBalance(data),
+            sharedPage
+          );
+
+          // 保存 pageRelease（如果有）
+          if (result.pageRelease) {
+            pageRelease = result.pageRelease;
+          }
+
+          const balance = result.result;
+
+          if (balance !== undefined) {
+            this.setEpCache(site, 'balance', endpoint);
+            return { balance, pageRelease };
+          }
+        } catch (error: any) {
+          // 站点不可用（5xx / 连接失败）：直接向上抛出，不尝试其他端点
+          if (error.isIpBlocked || this.isSiteUnavailableError(error)) throw error;
+          if (this.isAuthError(error)) this.invalidateEpCache(site);
+          Logger.info(`⚠️ [ApiService] 端点 ${endpoint} 获取余额失败，尝试下一个...`);
+          lastError = error;
+          // 继续尝试下一个端点，不提前终止
+          continue;
         }
+      }
 
-        const balance = result.result;
-
-        if (balance !== undefined) {
-          return { balance, pageRelease };
-        }
-      } catch (error: any) {
-        Logger.info(`⚠️ [ApiService] 端点 ${endpoint} 获取余额失败，尝试下一个...`);
-        lastError = error;
-        // 继续尝试下一个端点，不提前终止
+      // 缓存端点失败 → 清缓存，回退全量扫描（仅重试一次）
+      if (cachedBalanceEp && !epCacheRetried) {
+        Logger.info('ℹ️ [ApiService] 余额缓存端点失败，回退全量扫描');
+        this.invalidateEpCache(site);
+        epCacheRetried = true;
+        currentEndpoints = endpoints;
+        lastError = null;
         continue;
       }
-    }
+      break;
+    } // end while
 
     // 所有端点都失败，抛出错误结束当前站点检测
     if (lastError) {

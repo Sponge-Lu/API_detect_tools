@@ -27,12 +27,12 @@ export function AutoRefreshDialog({
   onConfirm,
   onCancel,
 }: AutoRefreshDialogProps) {
-  const [interval, setInterval] = useState(currentInterval || 5);
+  const [interval, setInterval] = useState(currentInterval || 30);
 
   if (!isOpen) return null;
 
   const handleConfirm = () => {
-    const validInterval = Math.max(3, interval);
+    const validInterval = Math.max(15, interval);
     onConfirm(validInterval);
   };
 
@@ -62,13 +62,19 @@ export function AutoRefreshDialog({
             </label>
             <input
               type="number"
-              min={3}
+              min={1}
               value={interval}
-              onChange={e => setInterval(Math.max(3, Number(e.target.value) || 3))}
+              onChange={e => {
+                const val = Number(e.target.value);
+                setInterval(isNaN(val) ? 1 : Math.max(1, val));
+              }}
+              onBlur={() => {
+                if (interval < 15) setInterval(15);
+              }}
               className="w-full px-4 py-2 bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:border-primary-500 focus:ring-2 focus:ring-primary-500/30 outline-none transition-all text-light-text dark:text-dark-text"
             />
             <p className="text-xs text-light-text-secondary dark:text-dark-text-secondary mt-1">
-              最小间隔为 3 分钟
+              最小间隔为 15 分钟
             </p>
           </div>
 

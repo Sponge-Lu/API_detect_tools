@@ -13,6 +13,7 @@ npm-debug.log*
 # OS
 .DS_Store
 Thumbs.db
+*.stackdump
 # Windows 保留设备名，避免误建或误加
 nul
 con
@@ -30,6 +31,7 @@ lpt2
 .kiro/
 .agent/
 .claude/
+.claude/settings.local.json
 
 # Secrets & env
 .env*

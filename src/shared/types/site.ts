@@ -153,7 +153,7 @@ export interface UnifiedSite {
   has_checkin?: boolean; // 是否支持签到（检测结果）
   force_enable_checkin?: boolean; // 强制启用签到
   auto_refresh?: boolean; // 站点独立的自动刷新开关
-  auto_refresh_interval?: number; // 自动刷新间隔（分钟），最小3分钟
+  auto_refresh_interval?: number; // 自动刷新间隔（分钟），最小15分钟
 
   // === CLI 配置（保存在站点配置中，备份时不会丢失） ===
   cli_config?: CliConfigData;
@@ -185,6 +185,11 @@ export interface UnifiedSite {
     // 检测状态持久化
     status?: string; // 检测状态：'成功' | '失败'
     error?: string; // 错误信息（仅失败时有值）
+    // 端点缓存（记住站点类型对应的成功端点）
+    endpoint_hints?: {
+      models_endpoint?: string;
+      balance_endpoint?: string;
+    };
   };
 
   // === 元数据 ===
@@ -286,7 +291,7 @@ export interface SiteConfig {
   force_enable_checkin?: boolean;
   extra_links?: string;
   auto_refresh?: boolean; // 站点独立的自动刷新开关
-  auto_refresh_interval?: number; // 自动刷新间隔（分钟），最小3分钟
+  auto_refresh_interval?: number; // 自动刷新间隔（分钟），最小15分钟
 }
 
 /**

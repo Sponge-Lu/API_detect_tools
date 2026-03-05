@@ -78,25 +78,15 @@ return (
 
 ### useAutoRefresh
 
-**职责**: 自动刷新站点数据
+**职责**: 自动刷新站点数据（按站点独立配置的间隔定时触发检测）
 
-**返回值**:
-```typescript
-interface UseAutoRefreshReturn {
-  isRefreshing: boolean;
-  refreshInterval: number;
-  setRefreshInterval: (interval: number) => void;
-  startRefresh: () => void;
-  stopRefresh: () => void;
-  manualRefresh: () => Promise<void>;
-}
-```
+**返回值**: 无（副作用 Hook，内部管理定时器）
 
 **特点**:
-- 定时刷新
-- 手动刷新
-- 刷新间隔可配置
-- 自动停止和启动
+- 按站点独立配置：每个站点可单独开启/关闭及设置间隔
+- 默认刷新间隔 30 分钟，最小 15 分钟
+- 配置入口统一在 SitesPage 的 AutoRefreshDialog 对话框
+- 页面隐藏时暂停，可见时恢复
 
 ### useSiteDetection
 
@@ -305,7 +295,7 @@ interface UseCreditReturn {
 - 每日统计数据获取
 - 交易记录获取
 - 登录/登出管理
-- 自动刷新（可配置间隔，最小30秒）
+- 自动刷新（可配置间隔，最小15分钟）
 - 页面隐藏时暂停自动刷新
 - 配置持久化
 
@@ -452,5 +442,5 @@ export function useNewFeature(): UseNewFeatureReturn {
 
 ---
 
-**版本**: 2.1.22
-**更新日期**: 2026-02-24
+**版本**: 2.1.23
+**更新日期**: 2026-02-27

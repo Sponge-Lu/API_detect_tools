@@ -30,7 +30,7 @@
 | **UnifiedCliConfigDialog.tsx** | 统一 CLI 配置对话框 | `UnifiedCliConfigDialog` 组件，支持 CLI 启用/禁用、配置选择、预览编辑和保存 |
 | **CloseBehaviorDialog.tsx** | 窗口关闭行为对话框 | `CloseBehaviorDialog` 组件，用户选择退出或最小化到托盘 |
 | **BackupSelectDialog.tsx** | 备份选择对话框 | `BackupSelectDialog` 组件，从备份目录选择配置文件进行恢复 |
-| **AutoRefreshDialog.tsx** | 自动刷新配置对话框 | `AutoRefreshDialog` 组件 |
+| **AutoRefreshDialog.tsx** | 自动刷新配置对话框 | `AutoRefreshDialog` 组件，由 SitesPage 调用，是自动刷新的唯一配置入口（默认30分钟） |
 | **DownloadUpdatePanel.tsx** | 下载更新面板 | `DownloadUpdatePanel` 组件，显示 changelog、下载进度和安装按钮 |
 | **WebDAVBackupDialog.tsx** | WebDAV 备份对话框 | `WebDAVBackupDialog` 组件 |
 | **index.ts** | 导出文件 | 导出所有对话框组件 |
@@ -56,5 +56,5 @@
 
 ---
 
-**版本**: 2.1.22
-**更新日期**: 2026-02-24
+**版本**: 2.1.23
+**更新日期**: 2026-02-27

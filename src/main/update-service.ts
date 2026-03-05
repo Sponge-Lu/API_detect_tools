@@ -18,9 +18,7 @@ import Logger from './utils/logger';
 import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
 import * as path from 'path';
-import * as https from 'https';
-import * as http from 'http';
-import { app, shell } from 'electron';
+import { app, net, shell } from 'electron';
 import { spawn } from 'child_process';
 import axios from 'axios';
 
@@ -70,7 +68,7 @@ const DEFAULT_SETTINGS: UpdateSettings = {
 export class UpdateService {
   private settingsPath: string;
   private settings: UpdateSettings | null = null;
-  private currentRequest: http.ClientRequest | null = null;
+  private currentRequest: Electron.ClientRequest | null = null;
   private downloadCancelled = false;
 
   constructor() {
@@ -269,15 +267,43 @@ export class UpdateService {
 
   /**
    * 下载更新文件
-   * 支持 GitHub 302 重定向，流式写入，进度回调
+   * 使用 Electron net 模块（Chromium 网络栈），自动继承系统代理
+   * 支持 GitHub 302 重定向，流式写入，进度回调，失败重试
    */
   async downloadUpdate(
     url: string,
     onProgress: (progress: DownloadProgress) => void
   ): Promise<string> {
+    const MAX_RETRIES = 3;
+    const RETRY_CODES = ['ECONNRESET', 'ETIMEDOUT', 'ENETUNREACH', 'EPIPE'];
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        return await this.doDownload(url, onProgress);
+      } catch (err: any) {
+        const isRetryable =
+          !this.downloadCancelled &&
+          attempt < MAX_RETRIES &&
+          RETRY_CODES.some(code => err.message?.includes(code));
+
+        if (!isRetryable) throw err;
+
+        const delay = attempt * 2000;
+        Logger.warn(
+          `[UpdateService] 下载失败 (第${attempt}次): ${err.message}，${delay / 1000}s 后重试...`
+        );
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+    throw new Error('下载失败：已达最大重试次数');
+  }
+
+  private async doDownload(
+    url: string,
+    onProgress: (progress: DownloadProgress) => void
+  ): Promise<string> {
     this.downloadCancelled = false;
 
-    // 从 URL 提取文件名
     const urlObj = new URL(url);
     const fileName = path.basename(urlObj.pathname) || 'update-installer';
     const tempDir = app.getPath('temp');
@@ -286,7 +312,6 @@ export class UpdateService {
     Logger.info(`[UpdateService] 开始下载: ${url}`);
     Logger.info(`[UpdateService] 保存到: ${filePath}`);
 
-    // 如果已有同名文件，先删除
     try {
       await fs.unlink(filePath);
     } catch {
@@ -294,114 +319,100 @@ export class UpdateService {
     }
 
     return new Promise<string>((resolve, reject) => {
-      const doRequest = (requestUrl: string, redirectCount = 0) => {
-        if (redirectCount > 5) {
-          reject(new Error('重定向次数过多'));
+      let settled = false;
+      const settle = (fn: () => void) => {
+        if (!settled) {
+          settled = true;
+          fn();
+        }
+      };
+
+      const req = net.request({
+        method: 'GET',
+        url,
+        redirect: 'follow',
+      });
+      req.setHeader('User-Agent', 'API-Hub-Management-Tools');
+      this.currentRequest = req;
+
+      req.on('response', response => {
+        const statusCode = response.statusCode;
+        if (statusCode !== 200) {
+          settle(() => reject(new Error(`下载失败，HTTP 状态码: ${statusCode}`)));
           return;
         }
 
-        const parsedUrl = new URL(requestUrl);
-        const protocol = parsedUrl.protocol === 'https:' ? https : http;
-
-        const req = protocol.get(
-          requestUrl,
-          {
-            headers: {
-              'User-Agent': 'API-Hub-Management-Tools',
-            },
-          },
-          response => {
-            // 处理重定向
-            if (response.statusCode && [301, 302, 303, 307, 308].includes(response.statusCode)) {
-              const redirectUrl = response.headers.location;
-              if (!redirectUrl) {
-                reject(new Error('重定向缺少 Location 头'));
-                return;
-              }
-              Logger.info(`[UpdateService] 重定向到: ${redirectUrl}`);
-              response.resume(); // 消耗响应体
-              doRequest(redirectUrl, redirectCount + 1);
-              return;
-            }
-
-            if (response.statusCode !== 200) {
-              reject(new Error(`下载失败，HTTP 状态码: ${response.statusCode}`));
-              return;
-            }
-
-            const totalBytes = parseInt(response.headers['content-length'] || '0', 10);
-            let downloadedBytes = 0;
-            let lastTime = Date.now();
-            let lastBytes = 0;
-
-            const fileStream = fsSync.createWriteStream(filePath);
-
-            response.on('data', (chunk: Buffer) => {
-              if (this.downloadCancelled) {
-                response.destroy();
-                fileStream.close();
-                fs.unlink(filePath).catch(() => {});
-                reject(new Error('下载已取消'));
-                return;
-              }
-
-              downloadedBytes += chunk.length;
-
-              // 计算速度（每 500ms 更新一次）
-              const now = Date.now();
-              const timeDiff = (now - lastTime) / 1000;
-              let speed = 0;
-              if (timeDiff >= 0.5) {
-                speed = (downloadedBytes - lastBytes) / timeDiff;
-                lastTime = now;
-                lastBytes = downloadedBytes;
-              }
-
-              const percent = totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0;
-
-              onProgress({
-                percent: Math.round(percent * 10) / 10,
-                transferred: downloadedBytes,
-                total: totalBytes,
-                speed,
-              });
-            });
-
-            response.on('error', err => {
-              fileStream.close();
-              fs.unlink(filePath).catch(() => {});
-              reject(new Error(`下载出错: ${err.message}`));
-            });
-
-            response.pipe(fileStream);
-
-            fileStream.on('finish', () => {
-              fileStream.close();
-              if (!this.downloadCancelled) {
-                Logger.info(`[UpdateService] 下载完成: ${filePath}`);
-                resolve(filePath);
-              }
-            });
-
-            fileStream.on('error', err => {
-              fs.unlink(filePath).catch(() => {});
-              reject(new Error(`写入文件出错: ${err.message}`));
-            });
-          }
+        const contentLength = response.headers['content-length'];
+        const totalBytes = parseInt(
+          Array.isArray(contentLength) ? contentLength[0] : contentLength || '0',
+          10
         );
+        let downloadedBytes = 0;
+        let lastTime = Date.now();
+        let lastBytes = 0;
 
-        req.on('error', err => {
+        const fileStream = fsSync.createWriteStream(filePath);
+
+        response.on('data', (chunk: Buffer) => {
           if (this.downloadCancelled) {
-            reject(new Error('下载已取消'));
-          } else {
-            reject(new Error(`网络请求出错: ${err.message}`));
+            req.abort();
+            fileStream.close();
+            fs.unlink(filePath).catch(() => {});
+            settle(() => reject(new Error('下载已取消')));
+            return;
           }
+
+          fileStream.write(chunk);
+          downloadedBytes += chunk.length;
+
+          const now = Date.now();
+          const timeDiff = (now - lastTime) / 1000;
+          let speed = 0;
+          if (timeDiff >= 0.5) {
+            speed = (downloadedBytes - lastBytes) / timeDiff;
+            lastTime = now;
+            lastBytes = downloadedBytes;
+          }
+
+          const percent = totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0;
+          onProgress({
+            percent: Math.round(percent * 10) / 10,
+            transferred: downloadedBytes,
+            total: totalBytes,
+            speed,
+          });
         });
 
-        this.currentRequest = req;
-      };
+        response.on('end', () => {
+          fileStream.end(() => {
+            if (!this.downloadCancelled) {
+              Logger.info(`[UpdateService] 下载完成: ${filePath}`);
+              settle(() => resolve(filePath));
+            }
+          });
+        });
 
-      doRequest(url);
+        response.on('error', (err: Error) => {
+          fileStream.close();
+          fs.unlink(filePath).catch(() => {});
+          settle(() => reject(new Error(`下载出错: ${err.message}`)));
+        });
+
+        fileStream.on('error', err => {
+          fs.unlink(filePath).catch(() => {});
+          settle(() => reject(new Error(`写入文件出错: ${err.message}`)));
+        });
+      });
+
+      req.on('error', (err: Error) => {
+        if (this.downloadCancelled) {
+          settle(() => reject(new Error('下载已取消')));
+        } else {
+          settle(() => reject(new Error(`网络请求出错: ${err.message}`)));
+        }
+      });
+
+      req.end();
     });
   }
 
@@ -411,7 +422,7 @@ export class UpdateService {
   cancelDownload(): void {
     this.downloadCancelled = true;
     if (this.currentRequest) {
-      this.currentRequest.destroy();
+      this.currentRequest.abort();
       this.currentRequest = null;
       Logger.info('[UpdateService] 下载已取消');
     }

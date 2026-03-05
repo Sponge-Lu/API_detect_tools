@@ -49,8 +49,8 @@ function buildSiteConfigOnSave(
     user_id: baseSite.user_id || '123',
     enabled: true,
     auto_refresh: autoRefresh,
-    // Interval is always persisted (min 3) to preserve user preference for next enable
-    auto_refresh_interval: Math.max(3, autoRefreshInterval),
+    // Interval is always persisted (min 15) to preserve user preference for next enable
+    auto_refresh_interval: Math.max(15, autoRefreshInterval),
     group: baseSite.group || 'default',
   };
 }
@@ -60,8 +60,8 @@ function buildSiteConfigOnSave(
  * This is the core logic we're testing for Property 2
  */
 function toggleAutoRefresh(site: SiteConfig): SiteConfig {
-  // Get current interval or use default 5 minutes
-  const interval = site.auto_refresh_interval || 5;
+  // Get current interval or use default 10 minutes
+  const interval = site.auto_refresh_interval || 30;
   if (site.auto_refresh) {
     // Disable auto-refresh, but preserve interval
     return {
@@ -86,10 +86,10 @@ describe('Auto-Refresh Configuration Property Tests', () => {
    *
    * *For any* site configuration saved with auto-refresh enabled,
    * the persisted configuration SHALL contain auto_refresh=true
-   * AND a valid auto_refresh_interval >= 3
+   * AND a valid auto_refresh_interval >= 15
    */
   describe('Property 1: Auto-refresh configuration persistence', () => {
-    it('should persist auto_refresh=true with interval >= 3 when enabled', () => {
+    it('should persist auto_refresh=true with interval >= 15 when enabled', () => {
       fc.assert(
         fc.property(
           // Generate random interval values (including edge cases)
@@ -102,9 +102,9 @@ describe('Auto-Refresh Configuration Property Tests', () => {
               url: `https://${siteUrl}.com`,
             });
 
-            // When auto_refresh is true, interval must be >= 3
+            // When auto_refresh is true, interval must be >= 15
             expect(result.auto_refresh).toBe(true);
-            expect(result.auto_refresh_interval).toBeGreaterThanOrEqual(3);
+            expect(result.auto_refresh_interval).toBeGreaterThanOrEqual(15);
           }
         ),
         { numRuns: 100 }
@@ -119,10 +119,10 @@ describe('Auto-Refresh Configuration Property Tests', () => {
           (interval, siteName) => {
             const result = buildSiteConfigOnSave(false, interval, { name: siteName });
 
-            // When auto_refresh is false, interval should still be persisted (>= 3)
+            // When auto_refresh is false, interval should still be persisted (>= 15)
             // This allows restoring the user's preference when re-enabling
             expect(result.auto_refresh).toBe(false);
-            expect(result.auto_refresh_interval).toBeGreaterThanOrEqual(3);
+            expect(result.auto_refresh_interval).toBeGreaterThanOrEqual(15);
           }
         ),
         { numRuns: 100 }

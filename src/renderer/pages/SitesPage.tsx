@@ -28,6 +28,7 @@ import {
   BackupSelectDialog,
   UnifiedCliConfigDialog,
   ApplyConfigPopover,
+  AutoRefreshDialog,
 } from '../components/dialogs';
 import type { CliConfig } from '../../shared/types/cli-config';
 import { CreateApiKeyDialog } from '../components/CreateApiKeyDialog';
@@ -140,6 +141,9 @@ export function SitesPage() {
   const [showApplyConfigPopover, setShowApplyConfigPopover] = useState(false);
   const [applyConfigAnchorEl, setApplyConfigAnchorEl] = useState<HTMLElement | null>(null);
   const [applyConfigSite, setApplyConfigSite] = useState<SiteConfig | null>(null);
+
+  // 自动刷新对话框状态
+  const [autoRefreshDialogSite, setAutoRefreshDialogSite] = useState<SiteConfig | null>(null);
 
   // 兼容层
   const setNewTokenForm = (form: NewApiTokenForm | ((p: NewApiTokenForm) => NewApiTokenForm)) => {
@@ -1143,18 +1147,20 @@ export function SitesPage() {
                           );
                           if (latestIndex === -1) return;
                           const latestSite = latestConfig.sites[latestIndex];
-                          const newSites = [...latestConfig.sites];
-                          const interval = latestSite.auto_refresh_interval || 5;
-                          newSites[latestIndex] = {
-                            ...latestSite,
-                            auto_refresh: !latestSite.auto_refresh,
-                            auto_refresh_interval: interval,
-                          };
-                          const newConfig = { ...latestConfig, sites: newSites };
-                          setConfig(newConfig);
-                          window.electronAPI.saveConfig(newConfig).catch(err => {
-                            Logger.error('保存自动刷新配置失败:', err);
-                          });
+
+                          if (latestSite.auto_refresh) {
+                            // 关闭：直接禁用
+                            const newSites = [...latestConfig.sites];
+                            newSites[latestIndex] = { ...latestSite, auto_refresh: false };
+                            const newConfig = { ...latestConfig, sites: newSites };
+                            setConfig(newConfig);
+                            window.electronAPI.saveConfig(newConfig).catch(err => {
+                              Logger.error('保存自动刷新配置失败:', err);
+                            });
+                          } else {
+                            // 开启：弹出对话框让用户确认间隔
+                            setAutoRefreshDialogSite(site);
+                          }
                         }}
                       />
                     );
@@ -1338,6 +1344,33 @@ export function SitesPage() {
           }
         }}
         onClose={() => setShowBackupDialog(false)}
+      />
+
+      {/* 自动刷新设置对话框 */}
+      <AutoRefreshDialog
+        isOpen={!!autoRefreshDialogSite}
+        siteName={autoRefreshDialogSite?.name || ''}
+        currentInterval={30}
+        onConfirm={intervalMinutes => {
+          if (!autoRefreshDialogSite) return;
+          const latestConfig = useConfigStore.getState().config;
+          if (!latestConfig) return;
+          const idx = latestConfig.sites.findIndex(s => s.name === autoRefreshDialogSite.name);
+          if (idx === -1) return;
+          const newSites = [...latestConfig.sites];
+          newSites[idx] = {
+            ...latestConfig.sites[idx],
+            auto_refresh: true,
+            auto_refresh_interval: intervalMinutes,
+          };
+          const newConfig = { ...latestConfig, sites: newSites };
+          setConfig(newConfig);
+          window.electronAPI.saveConfig(newConfig).catch(err => {
+            Logger.error('保存自动刷新配置失败:', err);
+          });
+          setAutoRefreshDialogSite(null);
+        }}
+        onCancel={() => setAutoRefreshDialogSite(null)}
       />
     </>
   );

@@ -1,6 +1,14 @@
 /**
  * 自定义 CLI 配置独立页面
  * 基于 CustomCliConfigListDialog 内容改造为全页面布局
+ *
+ * Input: useCustomCliConfigStore (配置数据), useDetectionStore (检测), useConfigStore (应用配置)
+ * Output: CustomCliPage 组件 (卡片列表 + 编辑器弹窗 + 应用 CLI 弹窗)
+ * Pos: 渲染进程 - 页面级组件，由 App.tsx TabBar 路由挂载
+ *
+ * 辅助函数:
+ * - handleOpenUrl: 通过 electronAPI.openUrl 在默认浏览器打开链接
+ * - renderTextWithLinks: 解析文本中的 URL 并渲染为可点击超链接
  */
 
 import { useState, useEffect, useRef } from 'react';
@@ -172,6 +180,44 @@ function CopyButton({ text }: { text: string }) {
       )}
     </button>
   );
+}
+
+/** 在系统默认浏览器中打开 URL */
+const handleOpenUrl = async (url: string) => {
+  try {
+    await window.electronAPI.openUrl(url);
+  } catch {
+    window.open(url, '_blank');
+  }
+};
+
+/** URL 正则 */
+const URL_RE = /https?:\/\/[^\s<>"')\]，。、；：！？）】}]+/g;
+
+/** 将文本中的 URL 渲染为可点击链接 */
+function renderTextWithLinks(text: string) {
+  const parts: (string | JSX.Element)[] = [];
+  let last = 0;
+  for (const m of text.matchAll(URL_RE)) {
+    const idx = m.index!;
+    if (idx > last) parts.push(text.slice(last, idx));
+    const url = m[0];
+    parts.push(
+      <span
+        key={idx}
+        className="text-primary-600 dark:text-primary-400 hover:underline cursor-pointer"
+        onClick={e => {
+          e.stopPropagation();
+          handleOpenUrl(url);
+        }}
+      >
+        {url}
+      </span>
+    );
+    last = idx + url.length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
 }
 
 export function CustomCliPage() {
@@ -368,8 +414,13 @@ export function CustomCliPage() {
                     {/* URL + 复制按钮 + 模型数 */}
                     <div className="mt-1 flex items-center gap-1 min-w-0">
                       <div
-                        className="flex-1 min-w-0 font-mono text-xs text-light-text-secondary dark:text-dark-text-secondary bg-light-bg dark:bg-dark-bg px-2 py-1 rounded-md truncate"
+                        className={`flex-1 min-w-0 font-mono text-xs bg-light-bg dark:bg-dark-bg px-2 py-1 rounded-md truncate ${
+                          config.baseUrl
+                            ? 'text-primary-600 dark:text-primary-400 hover:underline cursor-pointer'
+                            : 'text-light-text-secondary dark:text-dark-text-secondary'
+                        }`}
                         title={config.baseUrl}
+                        onClick={() => config.baseUrl && handleOpenUrl(config.baseUrl)}
                       >
                         {config.baseUrl || '未设置 URL'}
                       </div>
@@ -450,7 +501,7 @@ export function CustomCliPage() {
                     className="mt-2.5 text-xs text-light-text-secondary dark:text-dark-text-secondary line-clamp-2 break-all"
                     title={config.notes}
                   >
-                    {config.notes}
+                    {renderTextWithLinks(config.notes)}
                   </div>
                 )}
               </div>

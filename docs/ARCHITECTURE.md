@@ -222,6 +222,10 @@ import { httpGet, httpPost, httpRequest } from './utils/http-client';
 const response = await httpGet(url, { headers, timeout });
 ```
 
+**更新下载**：
+- `update-service.ts` 的 `downloadUpdate` 直接使用 Electron `net.request`（`redirect: 'follow'`），自动继承系统代理并处理 GitHub 302 重定向（v2.1.23+）
+- 内置 ECONNRESET/ETIMEDOUT 等网络错误的有限重试机制（最多 3 次，递增延迟）
+
 ### 认证与安全
 
 **认证策略**：

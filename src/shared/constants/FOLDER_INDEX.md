@@ -85,8 +85,8 @@ export const RETRY_CONFIG = {
 ```typescript
 // 自动刷新配置
 export const AUTO_REFRESH = {
-  DEFAULT_INTERVAL: 60000,    // 默认刷新间隔 (毫秒)
-  MIN_INTERVAL: 10000,        // 最小刷新间隔
+  DEFAULT_INTERVAL: 1800000,  // 默认刷新间隔 (30分钟，毫秒)
+  MIN_INTERVAL: 900000,       // 最小刷新间隔 (15分钟)
   MAX_INTERVAL: 600000,       // 最大刷新间隔
 } as const;
 

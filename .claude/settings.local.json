@@ -49,7 +49,19 @@
       "Bash(codeagent-wrapper:*)",
       "Bash(openspec list --json)",
       "Bash(del:*)",
-      "Bash(git status:*)"
+      "Bash(git status:*)",
+      "Bash(node:*)",
+      "mcp__grok-search__switch_model",
+      "mcp__grok-search__web_search",
+      "mcp__grok-search__web_fetch",
+      "Bash(where:*)",
+      "Bash(\"C:\\\\Program Files\\\\Git\\\\bin\\\\bash.exe\" \"C:\\\\Users\\\\Hang\\\\.claude\\\\statusline.sh\")",
+      "Bash(\"C:\\\\Program Files\\\\Git\\\\bin\\\\bash.exe\" -c \"echo test\")",
+      "WebFetch(domain:medium.com)",
+      "WebFetch(domain:harishgarg.com)",
+      "Bash(xxd:*)",
+      "Bash(\"C:\\\\Program Files\\\\Git\\\\bin\\\\bash.exe\":*)",
+      "Bash(printf:*)"
     ]
   }
 }

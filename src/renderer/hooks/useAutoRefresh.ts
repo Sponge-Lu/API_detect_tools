@@ -43,9 +43,9 @@ export interface UseAutoRefreshReturn {
 }
 
 /** 默认刷新间隔（分钟） */
-const DEFAULT_INTERVAL = 5;
+const DEFAULT_INTERVAL = 30;
 /** 最小刷新间隔（分钟） */
-const MIN_INTERVAL = 3;
+const MIN_INTERVAL = 15;
 
 /**
  * 获取有效的刷新间隔（分钟）
