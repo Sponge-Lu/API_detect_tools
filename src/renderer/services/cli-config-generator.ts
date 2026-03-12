@@ -90,22 +90,21 @@ export function generateClaudeCodeConfig(params: ConfigParams): GeneratedConfig 
   const normalizedUrl = normalizeUrl(params.siteUrl);
   const normalizedApiKey = normalizeApiKey(params.apiKey);
 
-  // 按照模板生成 settings.json
+  // 按照模板生成 settings.json（对齐 Claude Code 最新配置规范）
   const settingsJson = {
+    model: params.model,
+    language: 'zh-CN',
     env: {
       ANTHROPIC_AUTH_TOKEN: normalizedApiKey,
       ANTHROPIC_BASE_URL: normalizedUrl,
       ANTHROPIC_DEFAULT_HAIKU_MODEL: params.model,
       ANTHROPIC_DEFAULT_OPUS_MODEL: params.model,
       ANTHROPIC_DEFAULT_SONNET_MODEL: params.model,
-      ANTHROPIC_MODEL: params.model,
       CLAUDE_CODE_ATTRIBUTION_HEADER: '0',
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 'true',
-      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
       HTTPS_PROXY: 'http://127.0.0.1:7890',
       HTTP_PROXY: 'http://127.0.0.1:7890',
     },
-    includeCoAuthoredBy: false,
   };
 
   // 按照模板生成 config.json
@@ -135,23 +134,22 @@ export function generateClaudeCodeConfig(params: ConfigParams): GeneratedConfig 
  * @returns 配置模板内容
  */
 export function generateClaudeCodeTemplate(): GeneratedConfig {
-  // 完全照搬模板文件内容，包含注释
+  // 完全照搬模板文件内容，包含注释（对齐 Claude Code 最新配置规范）
   const settingsContent = `{
+  "model": "claude-opus-4-6",
+  "language": "zh-CN",
   "env": {
     "ANTHROPIC_BASE_URL": "https://anyrouter.top",   # URL需要去对应的站点确认
     "ANTHROPIC_AUTH_TOKEN": "sk-xxxxxxxxxxxxxxxx",   # 中转站使用这个，默认使用
     #"ANTHROPIC_API_KEY": "sk-xxxxxxxxxxxxxxxxxx",   # 标准 Anthropic 形式接口使用这个
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-opus-4-5-20251101",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-5-20251101",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-opus-4-5-20251101",
-    "ANTHROPIC_MODEL": "claude-opus-4-5-20251101",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-opus-4-6",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-6",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-opus-4-6",
     "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "true",
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
     "HTTPS_PROXY": "http://127.0.0.1:7890",
     "HTTP_PROXY": "http://127.0.0.1:7890"
-  },
-  "includeCoAuthoredBy": false
+  }
 }`;
 
   const configContent = `## config.json (路径：~/.claude/config.json)

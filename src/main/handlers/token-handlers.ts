@@ -1,11 +1,15 @@
 import Logger from '../utils/logger';
 /**
- * 令牌管理相关 IPC 处理器
+ * 输入: TokenService, ChromeManager, UnifiedConfigManager
+ * 输出: IPC 事件处理 (token:*)
+ * 定位: IPC 层 - 令牌管理接口，支持多账户凭证初始化
  */
 
 import { ipcMain, BrowserWindow } from 'electron';
 import type { TokenService } from '../token-service';
 import type { ChromeManager } from '../chrome-manager';
+import { unifiedConfigManager } from '../unified-config-manager';
+import type { AccountAuthSource } from '../../shared/types/site';
 
 // 发送站点初始化状态到渲染进程
 function sendSiteInitStatus(mainWindow: BrowserWindow | null, status: string) {
@@ -170,6 +174,61 @@ export function registerTokenHandlers(
       } catch (error: any) {
         Logger.error('❌ [IPC] 签到失败:', error);
         return { success: false, message: error.message };
+      }
+    }
+  );
+
+  // 初始化并保存为 AccountCredential（多账户流程）
+  ipcMain.handle(
+    'token:initialize-account',
+    async (
+      _,
+      params: {
+        siteId: string;
+        baseUrl: string;
+        accountName?: string;
+        authSource: AccountAuthSource;
+        profilePath?: string;
+      }
+    ) => {
+      try {
+        const mainWindow = getMainWindow();
+        const siteAccount = await tokenService.initializeSiteAccount(
+          params.baseUrl,
+          true,
+          600000,
+          (status: string) => sendSiteInitStatus(mainWindow, status)
+        );
+
+        if (!siteAccount.user_id || !siteAccount.access_token) {
+          return { success: false, error: '未能获取有效凭证' };
+        }
+
+        // 直接创建 AccountCredential 并保存
+        const account = await unifiedConfigManager.addAccount({
+          site_id: params.siteId,
+          account_name: params.accountName || siteAccount.username || `账户${siteAccount.user_id}`,
+          user_id: String(siteAccount.user_id),
+          username: siteAccount.username || undefined,
+          access_token: siteAccount.access_token,
+          auth_source: params.authSource,
+          status: 'active',
+          browser_profile_path: params.profilePath,
+          metadata: {
+            supports_checkin: (siteAccount as any).supportsCheckIn,
+          },
+        });
+
+        Logger.info(`✅ [TokenHandlers] 账户已创建并保存: ${account.id} (${account.account_name})`);
+        return { success: true, data: account };
+      } catch (error: any) {
+        Logger.error('❌ [TokenHandlers] 初始化账户失败:', error);
+        try {
+          await chromeManager.forceCleanup();
+        } catch {
+          // ignore
+        }
+        return { success: false, error: error.message };
       }
     }
   );

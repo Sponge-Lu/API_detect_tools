@@ -27,6 +27,7 @@ export interface ConfirmDialogProps {
   type?: DialogType;
   title?: string;
   message: string;
+  content?: React.ReactNode;
   confirmText?: string;
   cancelText?: string;
   onConfirm: () => void;
@@ -54,6 +55,7 @@ export function ConfirmDialog({
   type = 'confirm',
   title,
   message,
+  content,
   confirmText,
   cancelText = '取消',
   onConfirm,
@@ -122,6 +124,7 @@ export function ConfirmDialog({
       <p className="text-sm text-[var(--ios-text-secondary)] whitespace-pre-wrap leading-relaxed">
         {message}
       </p>
+      {content}
     </IOSModal>
   );
 }
@@ -132,6 +135,7 @@ export interface DialogState {
   type: DialogType;
   title?: string;
   message: string;
+  content?: React.ReactNode;
   confirmText?: string;
   cancelText?: string;
   onConfirm?: () => void;

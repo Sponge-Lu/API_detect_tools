@@ -103,6 +103,7 @@ interface UIState {
 
   // 创建 API Key 弹窗
   creatingTokenSite: SiteConfig | null;
+  creatingTokenCardKey: string | null;
   tokenDialogVersion: number;
   newTokenForm: NewApiTokenForm;
   creatingToken: boolean;
@@ -169,7 +170,7 @@ interface UIState {
   resetDragState: () => void;
 
   // Actions - 创建 API Key
-  openCreateTokenDialog: (site: SiteConfig) => void;
+  openCreateTokenDialog: (site: SiteConfig, cardKey?: string) => void;
   closeCreateTokenDialog: () => void;
   setNewTokenForm: (form: Partial<NewApiTokenForm>) => void;
   setCreatingToken: (creating: boolean) => void;
@@ -241,6 +242,7 @@ export const useUIStore = create<UIState>()(
       draggedGroupIndex: null,
       dragOverGroupIndex: null,
       creatingTokenSite: null,
+      creatingTokenCardKey: null,
       tokenDialogVersion: 0,
       newTokenForm: initialNewTokenForm,
       creatingToken: false,
@@ -361,9 +363,10 @@ export const useUIStore = create<UIState>()(
         }),
 
       // 创建 API Key Actions
-      openCreateTokenDialog: site => {
+      openCreateTokenDialog: (site, cardKey?) => {
         set({
           creatingTokenSite: site,
+          creatingTokenCardKey: cardKey || site.name,
           tokenDialogVersion: get().tokenDialogVersion + 1,
           newTokenForm: initialNewTokenForm,
           creatingToken: false,
@@ -373,6 +376,7 @@ export const useUIStore = create<UIState>()(
       closeCreateTokenDialog: () => {
         set({
           creatingTokenSite: null,
+          creatingTokenCardKey: null,
           newTokenForm: initialNewTokenForm,
         });
       },

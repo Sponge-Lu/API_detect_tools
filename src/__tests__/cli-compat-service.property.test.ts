@@ -121,7 +121,16 @@ function findModelByType(models: string[], type: 'claude' | 'gpt' | 'gemini'): s
 /**
  * 检查响应是否表示 API 支持
  */
-function isApiSupported(status: number, data: any): boolean {
+function isApiSupported(
+  status: number,
+  data: any,
+  contentType?: string,
+  firstChunk?: string
+): boolean {
+  if (status === 200) {
+    if (contentType?.toLowerCase().includes('text/event-stream')) return true;
+    if (firstChunk?.includes('data: {')) return true;
+  }
   if (status >= 200 && status < 300) {
     if (data?.error) {
       const errorType = data.error.type || data.error.code || '';
@@ -143,6 +152,13 @@ function isApiSupported(status: number, data: any): boolean {
 
   if (status === 401 || status === 403 || status === 429) {
     return true;
+  }
+
+  // 500 - 中转站返回 JSON 表示端点存在，上游失败
+  if (status === 500) {
+    if (contentType?.toLowerCase().includes('application/json')) {
+      return true;
+    }
   }
 
   if (status === 400) {
@@ -176,11 +192,14 @@ function buildClaudeCodeRequest(baseUrl: string, apiKey: string, model: string):
     headers: {
       'Content-Type': 'application/json',
       'x-api-key': apiKey,
+      'User-Agent': 'claude-code/1.0.6',
       'anthropic-version': '2023-06-01',
+      'anthropic-beta': 'output-128k-2025-02-19',
     },
     body: {
       model,
       max_tokens: 1,
+      stream: true,
       messages: [{ role: 'user', content: '1+1=?' }],
       tools: [
         {
@@ -198,10 +217,10 @@ function buildClaudeCodeRequest(baseUrl: string, apiKey: string, model: string):
 }
 
 /**
- * 构建 Codex 测试请求
+ * 构建 Codex Responses API 测试请求
  */
-function buildCodexRequest(baseUrl: string, apiKey: string, model: string): RequestFormat {
-  const url = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
+function buildCodexResponsesRequest(baseUrl: string, apiKey: string, model: string): RequestFormat {
+  const url = `${baseUrl.replace(/\/$/, '')}/v1/responses`;
 
   return {
     url,
@@ -209,25 +228,12 @@ function buildCodexRequest(baseUrl: string, apiKey: string, model: string): Requ
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
+      'User-Agent': 'codex-cli/0.1.2504092',
     },
     body: {
       model,
-      max_tokens: 1,
-      messages: [{ role: 'user', content: '1+1=?' }],
-      tools: [
-        {
-          type: 'function',
-          function: {
-            name: 'test_tool',
-            description: 'A test tool',
-            parameters: {
-              type: 'object',
-              properties: { test: { type: 'string' } },
-              required: [],
-            },
-          },
-        },
-      ],
+      input: '1+1=?',
+      stream: true,
     },
   };
 }
@@ -236,13 +242,15 @@ function buildCodexRequest(baseUrl: string, apiKey: string, model: string): Requ
  * 构建 Gemini CLI 测试请求
  */
 function buildGeminiCliRequest(baseUrl: string, apiKey: string, model: string): RequestFormat {
-  const url = `${baseUrl.replace(/\/$/, '')}/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const url = `${baseUrl.replace(/\/$/, '')}/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
 
   return {
     url,
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'User-Agent': 'GeminiCLI/0.1.0 google-api-nodejs-client/9.15.1',
+      'x-goog-api-client': 'gl-node/22.0.0',
     },
     body: {
       contents: [{ role: 'user', parts: [{ text: '1+1=?' }] }],
@@ -463,11 +471,22 @@ describe('CLI Compatibility Service Property Tests', () => {
       expect(isApiSupported(400, { error: { code: 'model_not_found' } })).toBe(true);
     });
 
-    it('should return false for 404/500 errors', () => {
+    it('should return false for 404/502/503 errors', () => {
       expect(isApiSupported(404, {})).toBe(false);
-      expect(isApiSupported(500, {})).toBe(false);
       expect(isApiSupported(502, {})).toBe(false);
       expect(isApiSupported(503, {})).toBe(false);
+    });
+
+    it('should return true for 500 with JSON contentType (relay/proxy upstream error)', () => {
+      // 500 + application/json contentType = endpoint exists, upstream failed
+      expect(
+        isApiSupported(500, { error: { message: 'upstream error' } }, 'application/json')
+      ).toBe(true);
+      expect(isApiSupported(500, {}, 'application/json; charset=utf-8')).toBe(true);
+      // 500 without JSON contentType = truly broken
+      expect(isApiSupported(500, { error: { message: 'upstream error' } })).toBe(false);
+      expect(isApiSupported(500, null)).toBe(false);
+      expect(isApiSupported(500, null, 'text/html')).toBe(false);
     });
 
     it('should return true for 200 with rate_limit_error in body', () => {
@@ -477,6 +496,16 @@ describe('CLI Compatibility Service Property Tests', () => {
 
     it('should return false for 200 with unknown error in body', () => {
       expect(isApiSupported(200, { error: { type: 'unknown_error' } })).toBe(false);
+    });
+
+    it('should return true for streaming SSE responses', () => {
+      expect(isApiSupported(200, null, 'text/event-stream', 'data: {"type":"message_start"}')).toBe(
+        true
+      );
+      expect(isApiSupported(200, null, 'application/json', 'data: {"id":"resp_123"}')).toBe(true);
+      expect(
+        isApiSupported(200, null, 'text/event-stream; charset=utf-8', 'data: {"candidates":[]}')
+      ).toBe(true);
     });
   });
 
@@ -517,8 +546,20 @@ describe('CLI Compatibility Service Property Tests', () => {
       fc.assert(
         fc.property(urlArb, apiKeyArb, modelNameArb('claude-'), (baseUrl, apiKey, model) => {
           const request = buildClaudeCodeRequest(baseUrl, apiKey, model);
-          expect(request.headers['anthropic-version']).toBeDefined();
           expect(request.headers['anthropic-version']).toBe('2023-06-01');
+          expect(request.headers['anthropic-beta']).toBeDefined();
+          expect(request.headers['User-Agent']).toContain('claude-code');
+        }),
+        { numRuns: 100 }
+      );
+    });
+
+    it('should include stream: true in body', () => {
+      fc.assert(
+        fc.property(urlArb, apiKeyArb, modelNameArb('claude-'), (baseUrl, apiKey, model) => {
+          const request = buildClaudeCodeRequest(baseUrl, apiKey, model);
+          const body = request.body as any;
+          expect(body.stream).toBe(true);
         }),
         { numRuns: 100 }
       );
@@ -549,48 +590,41 @@ describe('CLI Compatibility Service Property Tests', () => {
    * **Validates: Requirements 4.2**
    *
    * *For any* Codex test request, the request SHALL:
-   * - Target endpoint /v1/chat/completions
+   * - Target endpoint /v1/responses
    * - Include Authorization: Bearer header
-   * - Include tools array with function.parameters format
+   * - Include User-Agent header
+   * - Include stream: true in body
    */
   describe('Property 4: Codex Request Format', () => {
-    it('should target /v1/chat/completions endpoint', () => {
+    it('should target /v1/responses endpoint', () => {
       fc.assert(
         fc.property(urlArb, apiKeyArb, modelNameArb('gpt-'), (baseUrl, apiKey, model) => {
-          const request = buildCodexRequest(baseUrl, apiKey, model);
-          expect(request.url).toContain('/v1/chat/completions');
+          const request = buildCodexResponsesRequest(baseUrl, apiKey, model);
+          expect(request.url).toContain('/v1/responses');
         }),
         { numRuns: 100 }
       );
     });
 
-    it('should use Authorization Bearer header', () => {
+    it('should use Authorization Bearer header and User-Agent', () => {
       fc.assert(
         fc.property(urlArb, apiKeyArb, modelNameArb('gpt-'), (baseUrl, apiKey, model) => {
-          const request = buildCodexRequest(baseUrl, apiKey, model);
+          const request = buildCodexResponsesRequest(baseUrl, apiKey, model);
           expect(request.headers['Authorization']).toBe(`Bearer ${apiKey}`);
           expect(request.headers['x-api-key']).toBeUndefined();
+          expect(request.headers['User-Agent']).toContain('codex-cli');
         }),
         { numRuns: 100 }
       );
     });
 
-    it('should include tools array with function.parameters format', () => {
+    it('should use input field with stream: true', () => {
       fc.assert(
         fc.property(urlArb, apiKeyArb, modelNameArb('gpt-'), (baseUrl, apiKey, model) => {
-          const request = buildCodexRequest(baseUrl, apiKey, model);
+          const request = buildCodexResponsesRequest(baseUrl, apiKey, model);
           const body = request.body as any;
-
-          expect(body.tools).toBeDefined();
-          expect(Array.isArray(body.tools)).toBe(true);
-          expect(body.tools.length).toBeGreaterThan(0);
-
-          // Check function.parameters format (not input_schema)
-          const tool = body.tools[0];
-          expect(tool.type).toBe('function');
-          expect(tool.function).toBeDefined();
-          expect(tool.function.parameters).toBeDefined();
-          expect(tool.input_schema).toBeUndefined();
+          expect(body.input).toBeDefined();
+          expect(body.stream).toBe(true);
         }),
         { numRuns: 100 }
       );
@@ -602,17 +636,19 @@ describe('CLI Compatibility Service Property Tests', () => {
    * **Validates: Requirements 4.3**
    *
    * *For any* Gemini CLI test request, the request SHALL:
-   * - Target endpoint /v1beta/models/{model}:generateContent
+   * - Target endpoint /v1beta/models/{model}:streamGenerateContent
    * - Include functionDeclarations array format
    * - Use generationConfig.maxOutputTokens for token limit
+   * - Include User-Agent and x-goog-api-client headers
    */
   describe('Property 5: Gemini CLI Request Format', () => {
-    it('should target /v1beta/models/{model}:generateContent endpoint', () => {
+    it('should target /v1beta/models/{model}:streamGenerateContent endpoint', () => {
       fc.assert(
         fc.property(urlArb, apiKeyArb, modelNameArb('gemini-'), (baseUrl, apiKey, model) => {
           const request = buildGeminiCliRequest(baseUrl, apiKey, model);
           expect(request.url).toContain('/v1beta/models/');
-          expect(request.url).toContain(':generateContent');
+          expect(request.url).toContain(':streamGenerateContent');
+          expect(request.url).toContain('alt=sse');
           expect(request.url).toContain(model);
         }),
         { numRuns: 100 }
@@ -624,6 +660,17 @@ describe('CLI Compatibility Service Property Tests', () => {
         fc.property(urlArb, apiKeyArb, modelNameArb('gemini-'), (baseUrl, apiKey, model) => {
           const request = buildGeminiCliRequest(baseUrl, apiKey, model);
           expect(request.url).toContain(`key=${apiKey}`);
+        }),
+        { numRuns: 100 }
+      );
+    });
+
+    it('should include User-Agent and x-goog-api-client headers', () => {
+      fc.assert(
+        fc.property(urlArb, apiKeyArb, modelNameArb('gemini-'), (baseUrl, apiKey, model) => {
+          const request = buildGeminiCliRequest(baseUrl, apiKey, model);
+          expect(request.headers['User-Agent']).toContain('GeminiCLI');
+          expect(request.headers['x-goog-api-client']).toBeDefined();
         }),
         { numRuns: 100 }
       );
@@ -681,12 +728,12 @@ describe('CLI Compatibility Service Property Tests', () => {
       );
     });
 
-    it('should set max_tokens to 1 for Codex requests', () => {
+    it('should use minimal input for Codex requests', () => {
       fc.assert(
         fc.property(urlArb, apiKeyArb, modelNameArb('gpt-'), (baseUrl, apiKey, model) => {
-          const request = buildCodexRequest(baseUrl, apiKey, model);
+          const request = buildCodexResponsesRequest(baseUrl, apiKey, model);
           const body = request.body as any;
-          expect(body.max_tokens).toBe(1);
+          expect(body.input.length).toBeLessThanOrEqual(10);
         }),
         { numRuns: 100 }
       );
@@ -707,16 +754,15 @@ describe('CLI Compatibility Service Property Tests', () => {
       fc.assert(
         fc.property(urlArb, apiKeyArb, modelNameArb('claude-'), (baseUrl, apiKey, model) => {
           const claudeRequest = buildClaudeCodeRequest(baseUrl, apiKey, model);
-          const codexRequest = buildCodexRequest(baseUrl, apiKey, model);
+          const codexRequest = buildCodexResponsesRequest(baseUrl, apiKey, model);
           const geminiRequest = buildGeminiCliRequest(baseUrl, apiKey, model);
 
-          // Check message content is minimal (e.g., "1+1=?")
           const claudeBody = claudeRequest.body as any;
           const codexBody = codexRequest.body as any;
           const geminiBody = geminiRequest.body as any;
 
           expect(claudeBody.messages[0].content.length).toBeLessThanOrEqual(10);
-          expect(codexBody.messages[0].content.length).toBeLessThanOrEqual(10);
+          expect(codexBody.input.length).toBeLessThanOrEqual(10);
           expect(geminiBody.contents[0].parts[0].text.length).toBeLessThanOrEqual(10);
         }),
         { numRuns: 100 }

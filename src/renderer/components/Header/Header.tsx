@@ -138,7 +138,7 @@ export function Header({
         className="flex items-center gap-3 pr-1 shrink-0"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
-        <CliConfigStatusPanel compact showRefresh showReset />
+        <CliConfigStatusPanel compact showRefresh showEdit showReset />
 
         {saving && (
           <div className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded-md text-xs font-medium">

@@ -24,6 +24,7 @@ import { useConfigStore } from '../store/configStore';
 import { useUIStore } from '../store/uiStore';
 import { toast } from '../store/toastStore';
 import type { Config, DetectionResult, SiteConfig } from '../App';
+import { BUILTIN_GROUP_IDS } from '../../shared/types/site';
 import type { DialogState } from '../components/ConfirmDialog';
 
 interface UseSiteDetectionOptions {
@@ -102,18 +103,25 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
   const { siteAccounts, setSiteAccounts } = useConfigStore();
   const { setRefreshMessage } = useUIStore();
 
-  // 检测单个站点
+  // 生成 per-account 复合 key（用于 detectingSites、store 数据键等）
+  const cardKey = useCallback(
+    (siteName: string, accountId?: string) => (accountId ? `${siteName}::${accountId}` : siteName),
+    []
+  );
+
+  // 检测单个站点（支持指定 accountId 进行 per-account 检测）
   const detectSingle = useCallback(
-    async (site: SiteConfig, quickRefresh: boolean = true, config?: Config) => {
-      // 使用 store 的方法检查，支持多站点并发
-      if (isDetectingSite(site.name)) {
+    async (site: SiteConfig, quickRefresh: boolean = true, config?: Config, accountId?: string) => {
+      const key = cardKey(site.name, accountId);
+
+      if (isDetectingSite(key)) {
         Logger.info('⚠️ 站点正在刷新中，请稍候...');
         return;
       }
-      addDetectingSite(site.name);
+      addDetectingSite(key);
 
       try {
-        const existingResult = results.find(r => r.name === site.name);
+        const existingResult = results.find(r => r.name === site.name && r.accountId === accountId);
         const cachedResult = quickRefresh ? existingResult : undefined;
         const timeout = config?.settings?.timeout ?? 30;
 
@@ -121,12 +129,19 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
           site,
           timeout,
           quickRefresh,
-          cachedResult
+          cachedResult,
+          false,
+          accountId
         );
+
+        // 标记结果所属的 accountId
+        if (accountId) {
+          rawResult.accountId = accountId;
+        }
 
         const result: DetectionResult =
           rawResult.status === '失败' && existingResult
-            ? { ...existingResult, status: rawResult.status, error: rawResult.error }
+            ? { ...existingResult, status: rawResult.status, error: rawResult.error, accountId }
             : rawResult;
 
         if (rawResult.status === '失败' && isAuthenticationError(rawResult.error)) {
@@ -136,18 +151,17 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
         } else {
           const hasChanges = hasSignificantChanges(cachedResult, result);
           setRefreshMessage({
-            site: site.name,
+            site: key,
             message: hasChanges ? '✅ 数据已更新' : 'ℹ️ 数据无变化',
             type: hasChanges ? 'success' : 'info',
           });
           setTimeout(() => {
-            if (useUIStore.getState().refreshMessage?.site === site.name) {
+            if (useUIStore.getState().refreshMessage?.site === key) {
               setRefreshMessage(null);
             }
           }, 3000);
         }
 
-        // 使用 upsertResult 安全地更新结果，避免并发刷新时的覆盖问题
         upsertResult(result);
 
         if (rawResult.status === '成功') {
@@ -158,13 +172,13 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
               [site.name]: { ...acc, last_sync_time: Date.now() },
             });
           }
-          if (rawResult.apiKeys) setApiKeys(site.name, rawResult.apiKeys);
-          if (rawResult.userGroups) setUserGroups(site.name, rawResult.userGroups);
+          if (rawResult.apiKeys) setApiKeys(key, rawResult.apiKeys);
+          if (rawResult.userGroups) setUserGroups(key, rawResult.userGroups);
           if (rawResult.modelPricing) {
             Logger.info(
-              `💾 [useSiteDetection] 保存 ${site.name} 的定价数据，模型数: ${rawResult.modelPricing?.data ? Object.keys(rawResult.modelPricing.data).length : 0}`
+              `💾 [useSiteDetection] 保存 ${key} 的定价数据，模型数: ${rawResult.modelPricing?.data ? Object.keys(rawResult.modelPricing.data).length : 0}`
             );
-            setModelPricing(site.name, rawResult.modelPricing);
+            setModelPricing(key, rawResult.modelPricing);
           }
         }
 
@@ -180,19 +194,20 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
         ) {
           displayMessage = '⚠️ 浏览器已关闭，操作已取消。请重新打开浏览器后重试。';
         }
-        setRefreshMessage({ site: site.name, message: displayMessage, type: 'info' });
+        setRefreshMessage({ site: key, message: displayMessage, type: 'info' });
         setTimeout(() => {
-          if (useUIStore.getState().refreshMessage?.site === site.name) {
+          if (useUIStore.getState().refreshMessage?.site === key) {
             setRefreshMessage(null);
           }
         }, 5000);
       } finally {
-        removeDetectingSite(site.name);
+        removeDetectingSite(key);
       }
     },
     [
       results,
       siteAccounts,
+      cardKey,
       isDetectingSite,
       addDetectingSite,
       removeDetectingSite,
@@ -206,10 +221,15 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
     ]
   );
 
-  // 检测所有站点
+  // 检测所有站点（per-account 展开）
   const detectAllSites = useCallback(
-    async (config: Config) => {
-      const enabledSites = config.sites.filter(s => s.enabled);
+    async (
+      config: Config,
+      accountsBySite?: Record<string, { id: string; account_name: string }[]>
+    ) => {
+      const enabledSites = config.sites.filter(
+        s => s.enabled && (s.group || 'default') !== BUILTIN_GROUP_IDS.UNAVAILABLE
+      );
       if (enabledSites.length === 0) return [];
 
       setDetecting(true);
@@ -220,78 +240,90 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
           5,
           Math.max(1, config.settings?.max_concurrent ?? (config.settings?.concurrent ? 3 : 1))
         );
-        const workerCount = config.settings?.concurrent
-          ? Math.min(maxConcurrent, enabledSites.length)
-          : 1;
+
+        // 构建扁平任务队列：每个账户一个任务
+        interface DetectionTask {
+          site: SiteConfig;
+          accountId?: string;
+          accountName?: string;
+          key: string; // cardKey
+        }
+        const tasks: DetectionTask[] = [];
+        enabledSites.forEach(site => {
+          const accounts = site.id && accountsBySite ? accountsBySite[site.id] : undefined;
+          if (accounts && accounts.length > 0) {
+            accounts.forEach(acc => {
+              tasks.push({
+                site,
+                accountId: acc.id,
+                accountName: acc.account_name,
+                key: cardKey(site.name, acc.id),
+              });
+            });
+          } else {
+            tasks.push({ site, key: site.name });
+          }
+        });
+
+        const workerCount = config.settings?.concurrent ? Math.min(maxConcurrent, tasks.length) : 1;
 
         let cursor = 0;
         const resultsBuffer: DetectionResult[] = [];
         const authErrors: { name: string; url: string; error: string }[] = [];
-        let aborted = false;
-        const interruptedSites: { name: string; error: string }[] = [];
-        const upsertAuthError = (site: SiteConfig, error: string) => {
-          const idx = authErrors.findIndex(a => a.name === site.name);
-          if (idx >= 0) {
-            authErrors[idx] = { ...authErrors[idx], error };
-          } else {
-            authErrors.push({ name: site.name, url: site.url, error });
-          }
-        };
+        const failedSites: { name: string; error: string }[] = [];
 
-        const runForSite = async (site: SiteConfig) => {
+        const runForTask = async (task: DetectionTask) => {
+          const { site, accountId, accountName, key } = task;
           const currentResults = useDetectionStore.getState().results;
-          const existingResult = currentResults.find(r => r.name === site.name);
+          const existingResult = currentResults.find(
+            r => r.name === site.name && r.accountId === accountId
+          );
           const cachedResult = existingResult;
-
-          const execDetect = async (quickRefresh: boolean) =>
-            await window.electronAPI.detectSite(site, timeoutSeconds, quickRefresh, cachedResult);
 
           let rawResult: any;
           try {
-            setDetectingSite(site.name);
-            rawResult = await execDetect(true);
-            // 认证错误不再立即弹窗，只收集错误，最后统一提醒
+            addDetectingSite(key);
+            rawResult = await window.electronAPI.detectSite(
+              site,
+              timeoutSeconds,
+              true,
+              cachedResult,
+              false,
+              accountId
+            );
+            if (accountId) rawResult.accountId = accountId;
           } catch (error: any) {
             rawResult = {
               name: site.name,
               url: site.url,
+              accountId,
               status: '失败',
               error: error?.message || String(error),
               models: [],
-              balance: '-',
-              todayUsage: '-',
               apiKeys: [],
             };
           } finally {
-            setDetectingSite(null);
+            removeDetectingSite(key);
           }
 
           const result: DetectionResult =
             rawResult.status === '失败' && existingResult
-              ? { ...existingResult, status: rawResult.status, error: rawResult.error }
+              ? { ...existingResult, status: rawResult.status, error: rawResult.error, accountId }
               : rawResult;
 
           if (rawResult.status === '失败' && isAuthenticationError(rawResult.error)) {
-            upsertAuthError(site, rawResult.error || '');
+            authErrors.push({ name: site.name, url: site.url, error: rawResult.error || '' });
           } else if (rawResult.status === '失败') {
-            interruptedSites.push({ name: site.name, error: rawResult.error || '未知错误' });
-            aborted = true;
+            const displayName = accountName ? `${site.name} (${accountName})` : site.name;
+            failedSites.push({ name: displayName, error: rawResult.error || '未知错误' });
           }
 
-          // 即时更新前端结果
-          const latest = useDetectionStore.getState().results;
-          const filtered = latest.filter(r => r.name !== site.name);
-          setResults([...filtered, result]);
+          upsertResult(result);
 
-          // 更新时间戳
           if (result.status === '成功') {
-            const latestAccounts = useConfigStore.getState().siteAccounts;
-            if (latestAccounts[site.name]) {
-              setSiteAccounts({
-                ...latestAccounts,
-                [site.name]: { ...latestAccounts[site.name], last_sync_time: Date.now() },
-              });
-            }
+            if (result.apiKeys) setApiKeys(key, result.apiKeys);
+            if (result.userGroups) setUserGroups(key, result.userGroups);
+            if (result.modelPricing) setModelPricing(key, result.modelPricing);
           }
 
           return result;
@@ -299,11 +331,9 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
 
         const worker = async () => {
           while (true) {
-            if (aborted) break;
             const index = cursor++;
-            if (index >= enabledSites.length) break;
-            const site = enabledSites[index];
-            const res = await runForSite(site);
+            if (index >= tasks.length) break;
+            const res = await runForTask(tasks[index]);
             resultsBuffer[index] = res;
           }
         };
@@ -314,16 +344,9 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
           options.onAuthError?.(authErrors);
         }
 
-        // 连接失败提醒
-        if (interruptedSites.length > 0) {
-          const siteList = interruptedSites.map(s => `• ${s.name}：${s.error}`).join('\n');
-          toast.error(`检测中断，以下站点连接失败：\n${siteList}`);
-          options.showDialog?.({
-            type: 'warning',
-            title: '检测中断',
-            message: `以下站点连接失败，已中断后续检测：\n\n${siteList}`,
-            confirmText: '知道了',
-          });
+        if (failedSites.length > 0) {
+          const siteList = failedSites.map(s => `• ${s.name}：${s.error}`).join('\n');
+          toast.error(`以下站点检测失败：\n${siteList}`);
         }
 
         return resultsBuffer;
@@ -334,7 +357,6 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
       } finally {
         setDetecting(false);
         setDetectingSite(null);
-        // 检测完成后关闭浏览器（如果有站点开启了自动刷新则保持浏览器开启）
         const hasAutoRefreshSite = config.sites.some(s => s.enabled && s.auto_refresh);
         if (hasAutoRefreshSite) {
           Logger.info('ℹ️ [useSiteDetection] 检测完成，有站点开启自动刷新，保持浏览器开启');
@@ -348,7 +370,18 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
         }
       }
     },
-    [setDetecting, setDetectingSite, setResults, setSiteAccounts, options]
+    [
+      setDetecting,
+      setDetectingSite,
+      addDetectingSite,
+      removeDetectingSite,
+      cardKey,
+      upsertResult,
+      setApiKeys,
+      setUserGroups,
+      setModelPricing,
+      options,
+    ]
   );
 
   return {

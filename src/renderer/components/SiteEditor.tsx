@@ -105,7 +105,6 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
     setStep('fetching');
 
     try {
-      // 启动浏览器
       const result = await window.electronAPI.launchChromeForLogin(finalUrl);
       if (!result.success) {
         setError(result.message);

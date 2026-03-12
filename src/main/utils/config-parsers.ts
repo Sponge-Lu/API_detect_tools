@@ -34,6 +34,8 @@ const log = {
 
 /** Claude Code settings.json 配置结构 */
 export interface ClaudeCodeConfig {
+  /** 顶级 model 字段（最新规范，优先于 env.ANTHROPIC_MODEL） */
+  model?: string;
   env?: {
     ANTHROPIC_BASE_URL?: string;
     ANTHROPIC_AUTH_TOKEN?: string;

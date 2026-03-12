@@ -3,6 +3,10 @@
  * 输出: DetectionResult (含 LDC 支付信息, 签到统计, 检测状态持久化), BalanceInfo, StatusInfo, API 响应数据
  * 定位: 服务层 - 处理所有外部站点的 API 请求，管理请求生命周期和错误处理，检测 LDC 支付支持，获取签到统计，持久化检测状态
  *
+ * DetectionRequestContext: 多账户检测上下文
+ * - accountId: 账户 ID，用于账户级缓存写入
+ * - browserSlot: 浏览器槽位索引（0=主浏览器，N=隔离浏览器），由账户在站点中的位置决定
+ *
  * 并发安全: fetchWithBrowserFallback 在 sharedPage 被并发任务关闭时
  * 自动检测 Target closed 等异常并重试创建新页面
  *
@@ -13,6 +17,7 @@
  */
 
 import type { SiteConfig } from './types/token';
+import { BUILTIN_GROUP_IDS } from '../shared/types/site';
 import { httpGet, httpPost } from './utils/http-client';
 import { requestManager, RequestManager } from './utils/request-manager';
 import { getAllUserIdHeaders } from '../shared/utils/headers';
@@ -30,6 +35,7 @@ import type {
   PayMethod,
   LdcPaymentInfo,
   CheckinStats,
+  DetectionCacheData,
 } from '../shared/types/site';
 import { LDC_PAYMENT_NAMES } from '../shared/constants';
 
@@ -39,25 +45,30 @@ interface DetectionResult {
   status: string;
   models: string[];
   balance?: number;
-  todayUsage?: number; // 今日消费（美元）
-  todayPromptTokens?: number; // 今日输入 Token
-  todayCompletionTokens?: number; // 今日输出 Token
-  todayTotalTokens?: number; // 今日总 Token
-  todayRequests?: number; // 今日请求次数
+  todayUsage?: number;
+  todayPromptTokens?: number;
+  todayCompletionTokens?: number;
+  todayTotalTokens?: number;
+  todayRequests?: number;
   error?: string;
-  has_checkin: boolean; // 是否支持签到功能
-  can_check_in?: boolean; // 今日是否可签到（true=可签到, false=已签到）
-  // 新增：缓存的扩展数据
+  has_checkin: boolean;
+  can_check_in?: boolean;
   apiKeys?: any[];
   userGroups?: Record<string, { desc: string; ratio: number }>;
   modelPricing?: any;
-  lastRefresh?: number; // 最后刷新时间
-  // LDC 支付信息
-  ldcPaymentSupported?: boolean; // 是否支持 LDC 支付
-  ldcExchangeRate?: string; // 兑换比例（LDC:站点余额）
-  ldcPaymentType?: string; // 支付方式类型，如 "epay"
-  // 签到统计数据 (New API 类型站点)
+  lastRefresh?: number;
+  accountId?: string;
+  ldcPaymentSupported?: boolean;
+  ldcExchangeRate?: string;
+  ldcPaymentType?: string;
   checkinStats?: CheckinStats;
+}
+
+/** 检测请求上下文（多账户支持） */
+export interface DetectionRequestContext {
+  accountId?: string;
+  /** 浏览器槽位索引（0=主浏览器，N=第N+1个账号的隔离浏览器） */
+  browserSlot?: number;
 }
 
 // 今日使用统计
@@ -89,6 +100,8 @@ interface EndpointCacheEntry {
 
 export class ApiService {
   private tokenService: any;
+  /** 同站点检测串行队列 */
+  private siteDetectionTails = new Map<string, Promise<void>>();
   /** 端点缓存：记住每个站点上次成功的 models/balance 端点 */
   private endpointCache = new Map<string, EndpointCacheEntry>();
   private static readonly EP_CACHE_TTL = 30 * 60 * 1000; // 30 分钟
@@ -97,6 +110,52 @@ export class ApiService {
   constructor(tokenService?: any, _tokenStorage?: any) {
     this.tokenService = tokenService;
     // tokenStorage 参数已废弃，使用 unifiedConfigManager 替代
+  }
+
+  // ============= 多账户缓存辅助 =============
+
+  private resolveCacheOwner(siteUrl: string, explicitAccountId?: string) {
+    const site = unifiedConfigManager.getSiteByUrl(siteUrl);
+    if (!site) return { site: undefined, account: undefined };
+    const resolvedAccountId = explicitAccountId || site.active_account_id;
+    if (!resolvedAccountId) return { site, account: undefined };
+    const account = unifiedConfigManager.getAccountById(resolvedAccountId);
+    if (!account || account.site_id !== site.id) return { site, account: undefined };
+    return { site, account };
+  }
+
+  private async updateDetectionCache(
+    siteUrl: string,
+    accountId: string | undefined,
+    updater: (current?: DetectionCacheData) => DetectionCacheData
+  ): Promise<void> {
+    const { site, account } = this.resolveCacheOwner(siteUrl, accountId);
+    if (!site) return;
+    if (account) {
+      await unifiedConfigManager.updateAccountCachedData(account.id, updater);
+      return;
+    }
+    await unifiedConfigManager.updateSite(site.id, { cached_data: updater(site.cached_data) });
+  }
+
+  private async runSerializedForSite<T>(site: SiteConfig, task: () => Promise<T>): Promise<T> {
+    const siteKey = (site.id || site.url.replace(/\/$/, '').toLowerCase()).toString();
+    const previous = this.siteDetectionTails.get(siteKey) || Promise.resolve();
+    let releaseCurrent = () => {};
+    const current = new Promise<void>(resolve => {
+      releaseCurrent = resolve;
+    });
+    const tail = previous.catch(() => {}).then(() => current);
+    this.siteDetectionTails.set(siteKey, tail);
+    await previous.catch(() => {});
+    try {
+      return await task();
+    } finally {
+      releaseCurrent();
+      if (this.siteDetectionTails.get(siteKey) === tail) {
+        this.siteDetectionTails.delete(siteKey);
+      }
+    }
   }
 
   // ============= 端点缓存方法 =============
@@ -200,267 +259,284 @@ export class ApiService {
     timeout: number,
     quickRefresh: boolean = false,
     cachedData?: DetectionResult,
-    forceAcceptEmpty: boolean = false
+    forceAcceptEmpty: boolean = false,
+    context?: DetectionRequestContext
   ): Promise<DetectionResult> {
-    let sharedPage: any = null;
-    let pageRelease: (() => void) | undefined = undefined;
-    let balancePageRelease: (() => void) | undefined = undefined;
+    const shouldSerialize = Boolean(context?.accountId);
 
-    try {
-      // 获取模型列表（可能会创建浏览器页面）
-      const modelsResult = await this.getModels(site, timeout, forceAcceptEmpty);
-      const models = modelsResult.models;
-      sharedPage = modelsResult.page;
-      pageRelease = modelsResult.pageRelease;
-
-      // 如果创建了浏览器页面，确保Cloudflare验证完成
-      if (sharedPage) {
-        Logger.info('🛡️ [ApiService] 检测到使用浏览器页面，确保Cloudflare验证完成...');
-        await this.waitForCloudflareChallenge(sharedPage, 600000);
-      }
-
-      // 获取余额和今日消费，复用浏览器页面
-      const balanceData = await this.getBalanceAndUsage(site, timeout, sharedPage);
-
-      // 如果 getBalanceAndUsage 创建了新的浏览器页面，需要在最后释放
-      balancePageRelease = balanceData?.pageRelease;
-
-      // 获取扩展数据，复用浏览器页面
-      let apiKeys, userGroups, modelPricing;
-
-      if (this.tokenService && site.system_token && site.user_id) {
-        try {
-          Logger.info('📦 [ApiService] 获取扩展数据...');
-
-          // 并行获取所有扩展数据，传入共享的浏览器页面
-          const [apiKeysResult, userGroupsResult, modelPricingResult] = await Promise.allSettled([
-            this.tokenService.fetchApiTokens(
-              site.url,
-              parseInt(site.user_id),
-              site.system_token,
-              sharedPage
-            ),
-            this.tokenService.fetchUserGroups(
-              site.url,
-              parseInt(site.user_id),
-              site.system_token,
-              sharedPage
-            ),
-            this.tokenService.fetchModelPricing(
-              site.url,
-              parseInt(site.user_id),
-              site.system_token,
-              sharedPage
-            ),
-          ]);
-
-          if (apiKeysResult.status === 'fulfilled' && apiKeysResult.value) {
-            apiKeys = apiKeysResult.value;
-            Logger.info(`✅ [ApiService] 获取到 ${apiKeys?.length || 0} 个API Keys`);
-          }
-
-          if (userGroupsResult.status === 'fulfilled' && userGroupsResult.value) {
-            userGroups = userGroupsResult.value;
-            Logger.info(
-              `✅ [ApiService] 获取到 ${Object.keys(userGroups || {}).length} 个用户分组`
-            );
-          }
-
-          if (modelPricingResult.status === 'fulfilled' && modelPricingResult.value) {
-            modelPricing = modelPricingResult.value;
-            Logger.info(`✅ [ApiService] 获取到模型定价信息`);
-          }
-        } catch (error: any) {
-          Logger.error('⚠️ [ApiService] 获取扩展数据失败:', error.message);
-        }
-      }
-
-      Logger.info('📤 [ApiService] 准备返回结果:');
-      Logger.info('   - name:', site.name);
-      Logger.info('   - apiKeys:', apiKeys ? `${apiKeys.length}个` : '无');
-      Logger.info('   - userGroups:', userGroups ? `${Object.keys(userGroups).length}个` : '无');
-      Logger.info('   - modelPricing:', modelPricing ? '有' : '无');
-
-      // 检测是否支持签到功能（智能两步检测）
-      let hasCheckin = false;
-      let canCheckIn: boolean | undefined = undefined;
-
-      if (this.tokenService && site.system_token && site.user_id) {
-        try {
-          Logger.info('🔍 [ApiService] 开始签到功能检测...');
-
-          // 步骤1：检查站点配置（/api/status 的 check_in_enabled）
-          let siteConfigSupports = false;
-
-          if (site.force_enable_checkin) {
-            // 用户强制启用，跳过所有检查
-            Logger.info('⚙️ [ApiService] 用户强制启用签到，跳过站点配置检查');
-            siteConfigSupports = true;
-          } else {
-            // 检查站点配置（传入共享页面以绕过Cloudflare）
-            siteConfigSupports = await this.tokenService.checkSiteSupportsCheckIn(
-              site.url,
-              sharedPage
-            );
-          }
-
-          // 步骤2：获取签到状态（仅当站点配置支持或用户强制启用时）
-          if (siteConfigSupports) {
-            // 站点配置支持签到（或用户强制启用），获取签到状态
-            const checkInStatus = await this.tokenService.fetchCheckInStatus(
-              site.url,
-              parseInt(site.user_id),
-              site.system_token,
-              sharedPage // 传入共享页面以绕过Cloudflare
-            );
-
-            // 如果签到状态接口返回了有效数据
-            if (checkInStatus !== undefined) {
-              hasCheckin = true;
-              canCheckIn = checkInStatus;
-              Logger.info(`✅ [ApiService] 签到功能检测: 支持=${hasCheckin}, 可签到=${canCheckIn}`);
-            } else {
-              // 签到状态接口不可用
-              Logger.info('⚠️ [ApiService] 站点配置支持签到，但签到状态接口不可用');
-            }
-          } else {
-            // 站点配置不支持签到，且用户未强制启用
-            Logger.info('ℹ️ [ApiService] 站点不支持签到功能 (check_in_enabled=false)');
-            Logger.info('💡 [ApiService] 如需强制启用，请在站点配置中勾选"强制启用签到"');
-          }
-        } catch (error: any) {
-          Logger.info('⚠️ [ApiService] 签到功能检测失败:', error.message);
-        }
-      }
-
-      // 获取签到统计数据（仅 New API 且已签到的站点）
-      let checkinStats: CheckinStats | undefined = undefined;
-
-      if (
-        this.tokenService &&
-        site.system_token &&
-        site.user_id &&
-        hasCheckin &&
-        canCheckIn === false
-      ) {
-        try {
-          Logger.info('📊 [ApiService] 获取签到统计数据...');
-          checkinStats = await this.tokenService.fetchCheckinStats(
-            site.url,
-            parseInt(site.user_id),
-            site.system_token,
-            sharedPage
-          );
-          if (checkinStats) {
-            Logger.info(
-              `✅ [ApiService] 签到统计获取成功: 今日=${checkinStats.todayQuota}, 本月=${checkinStats.checkinCount}次`
-            );
-          }
-        } catch (error: any) {
-          Logger.info('⚠️ [ApiService] 获取签到统计失败:', error.message);
-        }
-      }
-
-      // 检测是否支持 LDC 支付
-      let ldcPaymentSupported = false;
-      let ldcExchangeRate: string | undefined = undefined;
-      let ldcPaymentType: string | undefined = undefined;
+    const run = async (): Promise<DetectionResult> => {
+      let sharedPage: any = null;
+      let pageRelease: (() => void) | undefined = undefined;
+      let balancePageRelease: (() => void) | undefined = undefined;
 
       try {
-        Logger.info('💰 [ApiService] 开始 LDC 支付检测...');
-        const ldcPaymentInfo = await this.detectLdcPayment(site, timeout, sharedPage);
-        ldcPaymentSupported = ldcPaymentInfo.ldcPaymentSupported;
-        ldcExchangeRate = ldcPaymentInfo.ldcExchangeRate;
-        ldcPaymentType = ldcPaymentInfo.ldcPaymentType;
-        Logger.info(
-          `✅ [ApiService] LDC 支付检测完成: 支持=${ldcPaymentSupported}, 比例=${ldcExchangeRate || '未知'}, 类型=${ldcPaymentType || '未知'}`
-        );
+        // 获取模型列表（可能会创建浏览器页面）
+        const modelsResult = await this.getModels(site, timeout, forceAcceptEmpty, context);
+        const models = modelsResult.models;
+        sharedPage = modelsResult.page;
+        pageRelease = modelsResult.pageRelease;
+
+        // 如果创建了浏览器页面，确保Cloudflare验证完成
+        if (sharedPage) {
+          Logger.info('🛡️ [ApiService] 检测到使用浏览器页面，确保Cloudflare验证完成...');
+          await this.waitForCloudflareChallenge(sharedPage, 600000);
+        }
+
+        // 获取余额和今日消费，复用浏览器页面
+        const balanceData = await this.getBalanceAndUsage(site, timeout, sharedPage, context);
+
+        // 如果 getBalanceAndUsage 创建了新的浏览器页面，需要在最后释放
+        balancePageRelease = balanceData?.pageRelease;
+
+        // 获取扩展数据，复用浏览器页面
+        let apiKeys, userGroups, modelPricing;
+
+        if (this.tokenService && site.system_token && site.user_id) {
+          try {
+            Logger.info('📦 [ApiService] 获取扩展数据...');
+
+            // 并行获取所有扩展数据，传入共享的浏览器页面
+            const [apiKeysResult, userGroupsResult, modelPricingResult] = await Promise.allSettled([
+              this.tokenService.fetchApiTokens(
+                site.url,
+                parseInt(site.user_id),
+                site.system_token,
+                sharedPage
+              ),
+              this.tokenService.fetchUserGroups(
+                site.url,
+                parseInt(site.user_id),
+                site.system_token,
+                sharedPage
+              ),
+              this.tokenService.fetchModelPricing(
+                site.url,
+                parseInt(site.user_id),
+                site.system_token,
+                sharedPage
+              ),
+            ]);
+
+            if (apiKeysResult.status === 'fulfilled' && apiKeysResult.value) {
+              apiKeys = apiKeysResult.value;
+              Logger.info(`✅ [ApiService] 获取到 ${apiKeys?.length || 0} 个API Keys`);
+            }
+
+            if (userGroupsResult.status === 'fulfilled' && userGroupsResult.value) {
+              userGroups = userGroupsResult.value;
+              Logger.info(
+                `✅ [ApiService] 获取到 ${Object.keys(userGroups || {}).length} 个用户分组`
+              );
+            }
+
+            if (modelPricingResult.status === 'fulfilled' && modelPricingResult.value) {
+              modelPricing = modelPricingResult.value;
+              Logger.info(`✅ [ApiService] 获取到模型定价信息`);
+            }
+          } catch (error: any) {
+            Logger.error('⚠️ [ApiService] 获取扩展数据失败:', error.message);
+          }
+        }
+
+        Logger.info('📤 [ApiService] 准备返回结果:');
+        Logger.info('   - name:', site.name);
+        Logger.info('   - apiKeys:', apiKeys ? `${apiKeys.length}个` : '无');
+        Logger.info('   - userGroups:', userGroups ? `${Object.keys(userGroups).length}个` : '无');
+        Logger.info('   - modelPricing:', modelPricing ? '有' : '无');
+
+        // 检测是否支持签到功能（智能两步检测）
+        let hasCheckin = false;
+        let canCheckIn: boolean | undefined = undefined;
+
+        if (this.tokenService && site.system_token && site.user_id) {
+          try {
+            Logger.info('🔍 [ApiService] 开始签到功能检测...');
+
+            // 步骤1：检查站点配置（/api/status 的 check_in_enabled）
+            let siteConfigSupports = false;
+
+            if (site.force_enable_checkin) {
+              // 用户强制启用，跳过所有检查
+              Logger.info('⚙️ [ApiService] 用户强制启用签到，跳过站点配置检查');
+              siteConfigSupports = true;
+            } else {
+              // 检查站点配置（传入共享页面以绕过Cloudflare）
+              siteConfigSupports = await this.tokenService.checkSiteSupportsCheckIn(
+                site.url,
+                sharedPage
+              );
+            }
+
+            // 步骤2：获取签到状态（仅当站点配置支持或用户强制启用时）
+            if (siteConfigSupports) {
+              // 站点配置支持签到（或用户强制启用），获取签到状态
+              const checkInStatus = await this.tokenService.fetchCheckInStatus(
+                site.url,
+                parseInt(site.user_id),
+                site.system_token,
+                sharedPage // 传入共享页面以绕过Cloudflare
+              );
+
+              // 如果签到状态接口返回了有效数据
+              if (checkInStatus !== undefined) {
+                hasCheckin = true;
+                canCheckIn = checkInStatus;
+                Logger.info(
+                  `✅ [ApiService] 签到功能检测: 支持=${hasCheckin}, 可签到=${canCheckIn}`
+                );
+              } else {
+                // 签到状态接口不可用
+                Logger.info('⚠️ [ApiService] 站点配置支持签到，但签到状态接口不可用');
+              }
+            } else {
+              // 站点配置不支持签到，且用户未强制启用
+              Logger.info('ℹ️ [ApiService] 站点不支持签到功能 (check_in_enabled=false)');
+              Logger.info('💡 [ApiService] 如需强制启用，请在站点配置中勾选"强制启用签到"');
+            }
+          } catch (error: any) {
+            Logger.info('⚠️ [ApiService] 签到功能检测失败:', error.message);
+          }
+        }
+
+        // 获取签到统计数据（仅 New API 且已签到的站点）
+        let checkinStats: CheckinStats | undefined = undefined;
+
+        if (
+          this.tokenService &&
+          site.system_token &&
+          site.user_id &&
+          hasCheckin &&
+          canCheckIn === false
+        ) {
+          try {
+            Logger.info('📊 [ApiService] 获取签到统计数据...');
+            checkinStats = await this.tokenService.fetchCheckinStats(
+              site.url,
+              parseInt(site.user_id),
+              site.system_token,
+              sharedPage
+            );
+            if (checkinStats) {
+              Logger.info(
+                `✅ [ApiService] 签到统计获取成功: 今日=${checkinStats.todayQuota}, 本月=${checkinStats.checkinCount}次`
+              );
+            }
+          } catch (error: any) {
+            Logger.info('⚠️ [ApiService] 获取签到统计失败:', error.message);
+          }
+        }
+
+        // 检测是否支持 LDC 支付
+        let ldcPaymentSupported = false;
+        let ldcExchangeRate: string | undefined = undefined;
+        let ldcPaymentType: string | undefined = undefined;
+
+        try {
+          Logger.info('💰 [ApiService] 开始 LDC 支付检测...');
+          const ldcPaymentInfo = await this.detectLdcPayment(site, timeout, sharedPage, context);
+          ldcPaymentSupported = ldcPaymentInfo.ldcPaymentSupported;
+          ldcExchangeRate = ldcPaymentInfo.ldcExchangeRate;
+          ldcPaymentType = ldcPaymentInfo.ldcPaymentType;
+          Logger.info(
+            `✅ [ApiService] LDC 支付检测完成: 支持=${ldcPaymentSupported}, 比例=${ldcExchangeRate || '未知'}, 类型=${ldcPaymentType || '未知'}`
+          );
+        } catch (error: any) {
+          Logger.info('⚠️ [ApiService] LDC 支付检测失败:', error.message);
+          // 检测失败不影响整体检测流程
+        }
+
+        const result = {
+          name: site.name,
+          url: site.url,
+          status: '成功',
+          models,
+          balance: balanceData?.balance,
+          todayUsage: balanceData?.todayUsage,
+          todayPromptTokens: balanceData?.todayPromptTokens,
+          todayCompletionTokens: balanceData?.todayCompletionTokens,
+          todayTotalTokens: balanceData?.todayTotalTokens,
+          todayRequests: balanceData?.todayRequests,
+          error: undefined,
+          has_checkin: hasCheckin,
+          can_check_in: canCheckIn, // 添加签到状态
+          apiKeys,
+          userGroups,
+          modelPricing,
+          lastRefresh: Date.now(), // 添加最后刷新时间
+          ldcPaymentSupported, // LDC 支付支持状态
+          ldcExchangeRate, // LDC 兑换比例
+          ldcPaymentType, // LDC 支付方式类型
+          checkinStats, // 签到统计数据 (New API)
+          accountId: context?.accountId,
+        };
+
+        // 保存缓存数据到统一配置（成功时）
+        if (site.system_token && site.user_id) {
+          try {
+            await this.saveCachedDisplayData(site.url, result, context);
+          } catch (error: any) {
+            Logger.error('⚠️ [ApiService] 保存缓存数据失败:', error.message);
+          }
+        }
+
+        return result;
       } catch (error: any) {
-        Logger.info('⚠️ [ApiService] LDC 支付检测失败:', error.message);
-        // 检测失败不影响整体检测流程
-      }
+        // 失败时保留上次成功的展示数据（cachedData），仅更新 status/error
+        const failedResult: DetectionResult = {
+          ...(cachedData || {}),
+          name: site.name,
+          url: site.url,
+          status: '失败',
+          error: error.message,
+          models: cachedData?.models || [],
+          balance: cachedData?.balance,
+          todayUsage: cachedData?.todayUsage,
+          has_checkin: cachedData?.has_checkin || false,
+        };
 
-      const result = {
-        name: site.name,
-        url: site.url,
-        status: '成功',
-        models,
-        balance: balanceData?.balance,
-        todayUsage: balanceData?.todayUsage,
-        todayPromptTokens: balanceData?.todayPromptTokens,
-        todayCompletionTokens: balanceData?.todayCompletionTokens,
-        todayTotalTokens: balanceData?.todayTotalTokens,
-        todayRequests: balanceData?.todayRequests,
-        error: undefined,
-        has_checkin: hasCheckin,
-        can_check_in: canCheckIn, // 添加签到状态
-        apiKeys,
-        userGroups,
-        modelPricing,
-        lastRefresh: Date.now(), // 添加最后刷新时间
-        ldcPaymentSupported, // LDC 支付支持状态
-        ldcExchangeRate, // LDC 兑换比例
-        ldcPaymentType, // LDC 支付方式类型
-        checkinStats, // 签到统计数据 (New API)
-      };
-
-      // 保存缓存数据到统一配置（成功时）
-      if (site.system_token && site.user_id) {
-        try {
-          await this.saveCachedDisplayData(site.url, result);
-        } catch (error: any) {
-          Logger.error('⚠️ [ApiService] 保存缓存数据失败:', error.message);
+        // 失败时也记录检测状态与错误信息，但不覆盖已有的缓存展示数据
+        if (site.system_token && site.user_id) {
+          try {
+            await this.saveLastDetectionStatus(
+              site.url,
+              failedResult.status,
+              failedResult.error,
+              context
+            );
+          } catch (e: any) {
+            Logger.error('⚠️ [ApiService] 保存失败检测状态失败:', e.message);
+          }
         }
-      }
 
-      return result;
-    } catch (error: any) {
-      const failedResult: DetectionResult = {
-        name: site.name,
-        url: site.url,
-        status: '失败',
-        models: [],
-        balance: undefined,
-        todayUsage: undefined,
-        error: error.message,
-        has_checkin: false,
-      };
-
-      // 失败时也记录检测状态与错误信息，但不覆盖已有的缓存展示数据
-      if (site.system_token && site.user_id) {
-        try {
-          await this.saveLastDetectionStatus(site.url, failedResult.status, failedResult.error);
-        } catch (e: any) {
-          Logger.error('⚠️ [ApiService] 保存失败检测状态失败:', e.message);
+        return failedResult;
+      } finally {
+        // 释放浏览器引用（如果创建了页面）
+        if (pageRelease) {
+          try {
+            Logger.info('🔒 [ApiService] 释放浏览器引用 (getModels)');
+            pageRelease?.();
+          } catch (error: any) {
+            Logger.error('⚠️ [ApiService] 释放浏览器引用失败:', error.message);
+          }
         }
-      }
 
-      return failedResult;
-    } finally {
-      // 释放浏览器引用（如果创建了页面）
-      if (pageRelease) {
-        try {
-          Logger.info('🔒 [ApiService] 释放浏览器引用 (getModels)');
-          pageRelease?.();
-        } catch (error: any) {
-          Logger.error('⚠️ [ApiService] 释放浏览器引用失败:', error.message);
+        // 释放 getBalanceAndUsage 可能创建的浏览器引用
+        if (balancePageRelease) {
+          try {
+            Logger.info('🔒 [ApiService] 释放浏览器引用 (getBalanceAndUsage)');
+            balancePageRelease();
+          } catch (error: any) {
+            Logger.error('⚠️ [ApiService] 释放浏览器引用失败:', error.message);
+          }
         }
-      }
 
-      // 释放 getBalanceAndUsage 可能创建的浏览器引用
-      if (balancePageRelease) {
-        try {
-          Logger.info('🔒 [ApiService] 释放浏览器引用 (getBalanceAndUsage)');
-          balancePageRelease();
-        } catch (error: any) {
-          Logger.error('⚠️ [ApiService] 释放浏览器引用失败:', error.message);
-        }
+        // ❗ 不再在这里主动关闭共享页面，交由 ChromeManager 统一管理生命周期
+        // 原因：并发检测时多个站点可能复用同一个 Page，过早关闭会影响其他正在进行的检测任务
+        // 如果需要彻底关闭浏览器，将由 ChromeManager 的引用计数与 cleanup 定时器负责清理
       }
+    }; // end of run()
 
-      // ❗ 不再在这里主动关闭共享页面，交由 ChromeManager 统一管理生命周期
-      // 原因：并发检测时多个站点可能复用同一个 Page，过早关闭会影响其他正在进行的检测任务
-      // 如果需要彻底关闭浏览器，将由 ChromeManager 的引用计数与 cleanup 定时器负责清理
-    }
+    return shouldSerialize ? this.runSerializedForSite(site, run) : run();
   }
 
   async detectAllSites(
@@ -468,7 +544,9 @@ export class ApiService {
     quickRefresh: boolean = false,
     cachedResults?: DetectionResult[]
   ): Promise<DetectionResult[]> {
-    const enabledSites = config.sites.filter((s: SiteConfig) => s.enabled);
+    const enabledSites = config.sites.filter(
+      (s: SiteConfig) => s.enabled && (s.group || 'default') !== BUILTIN_GROUP_IDS.UNAVAILABLE
+    );
     const results: DetectionResult[] = [];
 
     // 创建缓存数据映射（按站点名称索引）
@@ -481,11 +559,9 @@ export class ApiService {
       // 并发检测
       const maxConcurrent = Math.max(1, config.settings.max_concurrent || 3);
       let cursor = 0;
-      let aborted = false;
 
       const worker = async () => {
         while (true) {
-          if (aborted) break;
           const index = cursor++;
           if (index >= enabledSites.length) break;
           const site = enabledSites[index];
@@ -498,8 +574,7 @@ export class ApiService {
           );
           results[index] = result;
           if (result.status === '失败') {
-            Logger.error(`🚫 [ApiService] ${site.name}: 检测失败(${result.error})，中断后续请求`);
-            aborted = true;
+            Logger.error(`🚫 [ApiService] ${site.name}: 检测失败(${result.error})`);
           }
         }
       };
@@ -515,8 +590,7 @@ export class ApiService {
       const result = await this.detectSite(site, config.settings.timeout, quickRefresh, cachedData);
       results.push(result);
       if (result.status === '失败') {
-        Logger.error(`🚫 [ApiService] ${site.name}: 检测失败(${result.error})，中断后续请求`);
-        break;
+        Logger.error(`🚫 [ApiService] ${site.name}: 检测失败(${result.error})`);
       }
     }
     return results;
@@ -536,7 +610,8 @@ export class ApiService {
     site: SiteConfig,
     timeout: number,
     checkinStats?: CheckinStats,
-    browserPage?: any
+    browserPage?: any,
+    accountId?: string
   ): Promise<{
     success: boolean;
     balance?: number;
@@ -545,7 +620,7 @@ export class ApiService {
     error?: string;
   }> {
     Logger.info('💰 [ApiService] 轻量级余额刷新...');
-    Logger.info('📍 [ApiService] 站点:', site.name);
+    Logger.info(`📍 [ApiService] 站点: ${site.name}${accountId ? ` (account: ${accountId})` : ''}`);
     if (browserPage) {
       Logger.info('♻️ [ApiService] 使用浏览器页面刷新余额');
     }
@@ -564,36 +639,25 @@ export class ApiService {
 
       Logger.info(`✅ [ApiService] 余额刷新成功: ${balance}`);
 
-      // 更新缓存数据
+      // 更新缓存数据（账户级或站点级）
       try {
-        const existingSite = unifiedConfigManager.getSiteByUrl(site.url);
-        if (existingSite) {
-          const existingCachedData =
-            existingSite.cached_data || ({} as NonNullable<typeof existingSite.cached_data>);
+        const checkinStatsCache = checkinStats
+          ? {
+              today_quota: checkinStats.todayQuota,
+              checkin_count: checkinStats.checkinCount,
+              total_checkins: checkinStats.totalCheckins,
+              site_type: checkinStats.siteType,
+            }
+          : undefined;
 
-          // 构建更新的缓存数据
-          const updatedCachedData = {
-            ...existingCachedData,
-            balance: balance,
-            can_check_in: false, // 签到成功后设为已签到
-            last_refresh: Date.now(),
-            // 更新签到统计数据
-            checkin_stats: checkinStats
-              ? {
-                  today_quota: checkinStats.todayQuota,
-                  checkin_count: checkinStats.checkinCount,
-                  total_checkins: checkinStats.totalCheckins,
-                  site_type: checkinStats.siteType,
-                }
-              : existingCachedData.checkin_stats,
-          };
-
-          await unifiedConfigManager.updateSite(existingSite.id, {
-            cached_data: updatedCachedData,
-          });
-
-          Logger.info('✅ [ApiService] 缓存数据已更新');
-        }
+        await this.updateDetectionCache(site.url, accountId, current => ({
+          ...(current || {}),
+          balance: balance,
+          can_check_in: false,
+          last_refresh: Date.now(),
+          checkin_stats: checkinStatsCache || current?.checkin_stats,
+        }));
+        Logger.info('✅ [ApiService] 缓存数据已更新');
       } catch (cacheError: any) {
         Logger.warn('⚠️ [ApiService] 更新缓存数据失败:', cacheError.message);
       }
@@ -819,6 +883,9 @@ export class ApiService {
 
   /** 站点级不可用错误（5xx / 连接失败），不应继续尝试其他端点 */
   private isSiteUnavailableError(error: any): boolean {
+    // 直接检查 axios 响应状态码（覆盖 521 等 Cloudflare 错误）
+    const status = error?.response?.status;
+    if (status && status >= 500) return true;
     const msg = error?.message || '';
     const codeMatch = msg.match(/HTTP\s+(\d{3})/i);
     if (codeMatch && parseInt(codeMatch[1]) >= 500) return true;
@@ -861,28 +928,38 @@ export class ApiService {
 
   /**
    * 仅保存最近一次检测状态和错误信息（不更新展示数据）
+   * 当检测到认证失败（401）时，自动标记活跃账户为 expired
    */
   private async saveLastDetectionStatus(
     siteUrl: string,
     status: string,
-    error?: string
+    error?: string,
+    context?: DetectionRequestContext
   ): Promise<void> {
     try {
-      const site = unifiedConfigManager.getSiteByUrl(siteUrl);
+      const { site, account } = this.resolveCacheOwner(siteUrl, context?.accountId);
       if (!site) return;
 
-      // 获取现有的缓存数据，保留其他字段
-      const existingCachedData = site.cached_data || ({} as NonNullable<typeof site.cached_data>);
-
-      await unifiedConfigManager.updateSite(site.id, {
-        cached_data: {
-          ...existingCachedData,
-          status,
-          error,
-          last_refresh: Date.now(),
-        },
+      await this.updateDetectionCache(siteUrl, context?.accountId, existing => ({
+        ...existing,
+        status,
+        error,
+        last_refresh: Date.now(),
+      }));
+      Logger.info('✅ [ApiService] 最近一次检测状态已保存:', {
+        siteUrl,
+        status,
+        accountId: account?.id,
       });
-      Logger.info('✅ [ApiService] 最近一次检测状态已保存:', { siteUrl, status });
+
+      // 401 认证失败时，标记实际检测账户为 expired
+      if (error && (error.includes('登录已过期') || error.includes('401'))) {
+        const targetAccountId = account?.id || site.active_account_id;
+        if (targetAccountId) {
+          await unifiedConfigManager.updateAccount(targetAccountId, { status: 'expired' });
+          Logger.warn(`⚠️ [ApiService] 检测账户已标记为 expired: ${targetAccountId}`);
+        }
+      }
     } catch (e: any) {
       Logger.error('❌ [ApiService] 保存最近检测状态失败:', e.message);
     }
@@ -905,7 +982,8 @@ export class ApiService {
     parseResponse: (data: any) => T,
     sharedPage?: any,
     cacheOptions?: { ttl?: number; skipCache?: boolean },
-    requestOptions?: { method?: 'GET' | 'POST'; data?: any }
+    requestOptions?: { method?: 'GET' | 'POST'; data?: any },
+    context?: DetectionRequestContext
   ): Promise<{ result: T; page?: any; pageRelease?: () => void }> {
     Logger.info('📡 [ApiService] 发起请求:', url);
 
@@ -939,7 +1017,9 @@ export class ApiService {
         }
 
         Logger.info('🌐 [ApiService] 创建新浏览器页面...');
-        const pageResult = await chromeManager.createPage(site.url);
+        const pageResult = await chromeManager.createPage(site.url, {
+          slot: context?.browserSlot,
+        });
         page = pageResult.page;
         pageRelease = pageResult.release;
         shouldClosePage = false; // 不在这里关闭，由调用者决定
@@ -1191,7 +1271,8 @@ export class ApiService {
   private async getModels(
     site: SiteConfig,
     timeout: number,
-    forceAcceptEmpty: boolean = false
+    forceAcceptEmpty: boolean = false,
+    context?: DetectionRequestContext
   ): Promise<{ models: string[]; page?: any; pageRelease?: () => void }> {
     const hasApiKey = !!site.api_key;
     const authToken = site.api_key || site.system_token;
@@ -1330,7 +1411,11 @@ export class ApiService {
               Logger.warn('⚠️ [ApiService] 未识别的响应格式，返回空数组');
               Logger.info('   完整响应:', JSON.stringify(data).substring(0, 200));
               return [];
-            }
+            },
+            undefined,
+            undefined,
+            undefined,
+            context
           );
 
           // 如果成功获取到模型，返回结果
@@ -1458,7 +1543,8 @@ export class ApiService {
   private async getBalanceAndUsage(
     site: SiteConfig,
     timeout: number,
-    sharedPage?: any
+    sharedPage?: any,
+    context?: DetectionRequestContext
   ): Promise<
     | {
         balance?: number;
@@ -1483,8 +1569,8 @@ export class ApiService {
     try {
       // 并行获取余额和今日消费，传入共享页面
       const [balanceResult, usageStats] = await Promise.all([
-        this.fetchBalance(site, timeout, authToken, sharedPage),
-        this.fetchTodayUsageFromLogs(site, timeout, sharedPage),
+        this.fetchBalance(site, timeout, authToken, sharedPage, context),
+        this.fetchTodayUsageFromLogs(site, timeout, sharedPage, context),
       ]);
 
       return {
@@ -1510,7 +1596,8 @@ export class ApiService {
     site: SiteConfig,
     timeout: number,
     authToken: string,
-    sharedPage?: any
+    sharedPage?: any,
+    context?: DetectionRequestContext
   ): Promise<{ balance?: number; pageRelease?: () => void } | undefined> {
     const endpoints = ['/api/user/self', '/api/user/dashboard'];
     let lastError: any = null;
@@ -1542,7 +1629,10 @@ export class ApiService {
             site,
             timeout,
             (data: any) => this.extractBalance(data),
-            sharedPage
+            sharedPage,
+            undefined,
+            undefined,
+            context
           );
 
           // 保存 pageRelease（如果有）
@@ -1697,7 +1787,8 @@ export class ApiService {
   private async fetchTodayUsageFromLogs(
     site: SiteConfig,
     timeout: number,
-    sharedPage?: any
+    sharedPage?: any,
+    context?: DetectionRequestContext
   ): Promise<TodayUsageStats> {
     const emptyStats: TodayUsageStats = {
       todayUsage: 0,
@@ -1779,7 +1870,10 @@ export class ApiService {
               const { items, total } = normalize(data);
               return { success: true, data: { items, total } } as LogResponse;
             },
-            sharedPage
+            sharedPage,
+            undefined,
+            undefined,
+            context
           );
 
           const logData = result.result as LogResponse;
@@ -1863,7 +1957,8 @@ export class ApiService {
   private async detectLdcPayment(
     site: SiteConfig,
     timeout: number,
-    sharedPage?: any
+    sharedPage?: any,
+    context?: DetectionRequestContext
   ): Promise<LdcPaymentInfo> {
     const result: LdcPaymentInfo = {
       ldcPaymentSupported: false,
@@ -1900,7 +1995,9 @@ export class ApiService {
           timeout,
           (data: any) => data as TopupInfoApiResponse,
           sharedPage,
-          { ttl: 60000 } // 缓存1分钟
+          { ttl: 60000 }, // 缓存1分钟
+          undefined,
+          context
         );
 
         const topupInfo = topupInfoResult.result;
@@ -1934,7 +2031,8 @@ export class ApiService {
               (data: any) => data as AmountApiResponse,
               sharedPage,
               { ttl: 60000, skipCache: true },
-              { method: 'POST', data: { amount: 1 } }
+              { method: 'POST', data: { amount: 1 } },
+              context
             );
 
             const amountData = amountResult.result;
@@ -1972,21 +2070,18 @@ export class ApiService {
    */
   private async saveCachedDisplayData(
     siteUrl: string,
-    detectionResult: DetectionResult
+    detectionResult: DetectionResult,
+    context?: DetectionRequestContext
   ): Promise<void> {
     try {
-      const site = unifiedConfigManager.getSiteByUrl(siteUrl);
+      const { site } = this.resolveCacheOwner(siteUrl, context?.accountId);
       if (!site) {
         Logger.info('⚠️ [ApiService] 未找到对应站点，跳过缓存保存');
         return;
       }
 
-      // 获取现有的缓存数据，保留 cli_compatibility 等字段
-      const existingCachedData = site.cached_data || ({} as NonNullable<typeof site.cached_data>);
-
-      // 构建缓存数据，保留现有的 cli_compatibility
-      const cachedData = {
-        ...existingCachedData, // 保留现有字段（如 cli_compatibility）
+      await this.updateDetectionCache(siteUrl, context?.accountId, existing => ({
+        ...existing,
         models: detectionResult.models || [],
         balance: detectionResult.balance,
         today_usage: detectionResult.todayUsage,
@@ -1998,11 +2093,9 @@ export class ApiService {
         model_pricing: detectionResult.modelPricing,
         last_refresh: Date.now(),
         can_check_in: detectionResult.can_check_in,
-        // LDC 支付信息
         ldc_payment_supported: detectionResult.ldcPaymentSupported,
         ldc_exchange_rate: detectionResult.ldcExchangeRate,
         ldc_payment_type: detectionResult.ldcPaymentType,
-        // 签到统计数据 (New API)
         checkin_stats: detectionResult.checkinStats
           ? {
               today_quota: detectionResult.checkinStats.todayQuota,
@@ -2010,20 +2103,20 @@ export class ApiService {
               total_checkins: detectionResult.checkinStats.totalCheckins,
               site_type: detectionResult.checkinStats.siteType,
             }
-          : existingCachedData.checkin_stats, // 保留现有数据
-        // 检测状态持久化
+          : existing?.checkin_stats,
         status: detectionResult.status,
         error: detectionResult.error,
-      };
+      }));
 
-      // 更新站点缓存
+      // 站点级 legacy 字段更新
       await unifiedConfigManager.updateSite(site.id, {
-        cached_data: cachedData,
         has_checkin: detectionResult.has_checkin,
         last_sync_time: Date.now(),
       });
 
-      Logger.info('✅ [ApiService] 缓存数据已保存到 config.json');
+      Logger.info('✅ [ApiService] 缓存数据已保存到 config.json', {
+        accountId: context?.accountId,
+      });
     } catch (error: any) {
       Logger.error('❌ [ApiService] 保存缓存数据失败:', error.message);
     }

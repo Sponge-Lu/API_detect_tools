@@ -133,24 +133,21 @@ interface UseTokenManagementReturn {
 
 ### useCheckIn
 
-**职责**: 处理签到逻辑
+**职责**: 处理签到逻辑（支持多账户）
 
 **返回值**:
 ```typescript
 interface UseCheckInReturn {
-  canSignIn: (siteId: string) => boolean;
-  isSigningIn: boolean;
-  lastSignIn: Record<string, Date>;
-  signIn: (siteId: string) => Promise<SignInResult>;
-  signInAll: () => Promise<SignInResult[]>;
+  handleCheckIn: (site: SiteConfig, accountId?: string) => Promise<void>;
+  handleCheckInAll: () => Promise<{ success: number; failed: number; skipped: number }>;
+  openCheckinPage: (site: SiteConfig, siteType?: 'veloera' | 'newapi') => Promise<void>;
 }
 ```
 
 **特点**:
-- 检测签到状态
-- 单个签到
-- 批量签到
-- 签到历史记录
+- 单站点签到：传入 accountId 实现账户级签到
+- 批量签到：遍历所有 DetectionResult（含 accountId），逐账户签到
+- 签到结果按 (name, accountId) 精确匹配更新前端状态
 - 签到失败时根据站点类型打开对应的手动签到页面（Veloera: /console, New API: /console/personal）
 - 签到成功后更新 lastRefresh 时间戳，确保图标状态正确显示
 
@@ -442,5 +439,5 @@ export function useNewFeature(): UseNewFeatureReturn {
 
 ---
 
-**版本**: 2.1.23
-**更新日期**: 2026-02-27
+**版本**: 2.1.24
+**更新日期**: 2026-03-11

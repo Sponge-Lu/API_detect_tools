@@ -32,6 +32,8 @@ import { registerCliCompatHandlers } from './cli-compat-handlers';
 import { registerCloseBehaviorHandlers } from './close-behavior-handlers';
 import { registerCreditHandlers } from './credit-handlers';
 import { registerCustomCliConfigHandlers } from './custom-cli-config-handlers';
+import { registerAccountHandlers } from './account-handlers';
+import { registerBrowserProfileHandlers } from './browser-profile-handlers';
 import type { CloseBehaviorManager } from '../close-behavior-manager';
 
 interface HandlerDependencies {
@@ -91,6 +93,12 @@ export function registerAllHandlers(deps: HandlerDependencies) {
   // 自定义 CLI 配置相关
   registerCustomCliConfigHandlers();
 
+  // 多账户管理相关
+  registerAccountHandlers();
+
+  // 浏览器 Profile 管理相关
+  registerBrowserProfileHandlers(chromeManager, getMainWindow);
+
   Logger.info('✅ [Handlers] 所有 IPC 处理器已注册');
 }
 
@@ -106,3 +114,5 @@ export * from './cli-compat-handlers';
 export * from './close-behavior-handlers';
 export * from './credit-handlers';
 export * from './custom-cli-config-handlers';
+export * from './account-handlers';
+export * from './browser-profile-handlers';

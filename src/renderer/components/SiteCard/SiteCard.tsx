@@ -41,6 +41,9 @@ export const SiteCard = React.memo(
     siteAccount,
     isExpanded,
     columnWidths,
+    // 多账户
+    accountName,
+    cardKey: cardKeyProp,
     apiKeys,
     userGroups,
     modelPricing,
@@ -72,6 +75,7 @@ export const SiteCard = React.memo(
     onOpenCliConfig,
     onTestCliCompat,
     onApply,
+    onAddAccount,
     onDragStart,
     onDragEnd,
     onDragOver,
@@ -160,6 +164,9 @@ export const SiteCard = React.memo(
       return Math.max(apiModelCount, pricingModelCount);
     }, [siteResult?.models, modelPricing]);
 
+    // 用于 refreshMessage 匹配的 key
+    const effectiveCardKey = cardKeyProp || site.name;
+
     return (
       <IOSCard
         variant="standard"
@@ -202,7 +209,7 @@ export const SiteCard = React.memo(
         onDrop={e => onDrop(e, index)}
       >
         {/* 刷新提示消息 */}
-        {refreshMessage && refreshMessage.site === site.name && (
+        {refreshMessage && refreshMessage.site === effectiveCardKey && (
           <div
             className={`mx-[var(--spacing-md)] mt-[var(--spacing-sm)] px-[var(--spacing-md)] py-1.5 rounded-[var(--radius-sm)] text-xs font-medium transition-all ${
               refreshMessage.type === 'success'
@@ -232,6 +239,7 @@ export const SiteCard = React.memo(
               rpm={rpm}
               tpm={tpm}
               modelCount={modelCount}
+              accountName={accountName}
               onOpenCheckinPage={onOpenCheckinPage}
               cliCompatibility={cliCompatibility}
               cliConfig={cliConfig}
@@ -258,6 +266,7 @@ export const SiteCard = React.memo(
               onCheckIn={onCheckIn}
               onOpenExtraLink={onOpenExtraLink}
               onToggleAutoRefresh={onToggleAutoRefresh}
+              onAddAccount={onAddAccount}
             />
           </div>
         </div>
@@ -278,6 +287,7 @@ export const SiteCard = React.memo(
         prevProps.index === nextProps.index &&
         prevProps.siteResult === nextProps.siteResult &&
         prevProps.isExpanded === nextProps.isExpanded &&
+        prevProps.columnWidths === nextProps.columnWidths &&
         prevProps.isDetecting === nextProps.isDetecting &&
         prevProps.checkingIn === nextProps.checkingIn &&
         prevProps.autoRefreshEnabled === nextProps.autoRefreshEnabled &&
@@ -288,7 +298,9 @@ export const SiteCard = React.memo(
         prevProps.globalModelSearch === nextProps.globalModelSearch &&
         prevProps.showTokens === nextProps.showTokens &&
         prevProps.deletingTokenKey === nextProps.deletingTokenKey &&
-        prevProps.selectedModels === nextProps.selectedModels
+        prevProps.selectedModels === nextProps.selectedModels &&
+        prevProps.accountId === nextProps.accountId &&
+        prevProps.accountName === nextProps.accountName
       );
     }
 

@@ -32,11 +32,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     timeout: number,
     quickRefresh?: boolean,
     cachedData?: any,
-    forceAcceptEmpty?: boolean
-  ) => ipcRenderer.invoke('detect-site', site, timeout, quickRefresh, cachedData, forceAcceptEmpty),
+    forceAcceptEmpty?: boolean,
+    accountId?: string
+  ) =>
+    ipcRenderer.invoke(
+      'detect-site',
+      site,
+      timeout,
+      quickRefresh,
+      cachedData,
+      forceAcceptEmpty,
+      accountId
+    ),
   // 轻量级余额刷新（签到后使用）
-  refreshBalanceOnly: (site: any, timeout: number, checkinStats?: any) =>
-    ipcRenderer.invoke('refresh-balance-only', site, timeout, checkinStats),
+  refreshBalanceOnly: (site: any, timeout: number, checkinStats?: any, accountId?: string) =>
+    ipcRenderer.invoke('refresh-balance-only', site, timeout, checkinStats, accountId),
   detectAllSites: (config: any, quickRefresh?: boolean, cachedResults?: any) =>
     ipcRenderer.invoke('detect-all-sites', config, quickRefresh, cachedResults),
   openUrl: (url: string) => ipcRenderer.invoke('open-url', url),
@@ -46,6 +56,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   token: {
     // 初始化站点账号（一次性从浏览器获取所有数据）
     initializeSite: (baseUrl: string) => ipcRenderer.invoke('token:initialize-site', baseUrl),
+    // 初始化并保存为 AccountCredential（多账户流程）
+    initializeAccount: (params: {
+      siteId: string;
+      baseUrl: string;
+      accountName?: string;
+      authSource: 'main_profile' | 'isolated_profile' | 'manual';
+      profilePath?: string;
+    }) => ipcRenderer.invoke('token:initialize-account', params),
     // 刷新显示数据（使用access_token获取余额、使用量等）
     refreshDisplayData: (account: any) => ipcRenderer.invoke('token:refresh-display-data', account),
     // 验证令牌有效性
@@ -71,8 +89,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // 签到并刷新余额（原子操作，复用浏览器页面）
-  checkinAndRefresh: (site: any, timeout: number) =>
-    ipcRenderer.invoke('checkin-and-refresh', site, timeout),
+  checkinAndRefresh: (site: any, timeout: number, accountId?: string) =>
+    ipcRenderer.invoke('checkin-and-refresh', site, timeout, accountId),
 
   // 账号存储API
   storage: {
@@ -199,6 +217,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 重置 CLI 配置：删除本地配置文件
     resetCliConfig: (cliType: 'claudeCode' | 'codex' | 'geminiCli') =>
       ipcRenderer.invoke('detection:reset-cli-config', cliType),
+    // 读取 CLI 配置文件内容
+    readCliConfigFiles: (cliType: 'claudeCode' | 'codex' | 'geminiCli') =>
+      ipcRenderer.invoke('detection:read-cli-config-files', cliType),
+    // 保存单个 CLI 配置文件
+    saveCliConfigFile: (absolutePath: string, content: string) =>
+      ipcRenderer.invoke('detection:save-cli-config-file', absolutePath, content),
   },
 
   // 窗口关闭行为 API
@@ -265,5 +289,36 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 拉取模型列表
     fetchModels: (baseUrl: string, apiKey: string) =>
       ipcRenderer.invoke('custom-cli-config:fetch-models', baseUrl, apiKey),
+  },
+
+  // 多账户管理 API
+  accounts: {
+    list: (siteId: string) => ipcRenderer.invoke('accounts:list', siteId),
+    getActive: (siteId: string) => ipcRenderer.invoke('accounts:get-active', siteId),
+    setActive: (siteId: string, accountId: string) =>
+      ipcRenderer.invoke('accounts:set-active', siteId, accountId),
+    add: (data: {
+      site_id: string;
+      account_name: string;
+      user_id: string;
+      username?: string;
+      access_token: string;
+      auth_source: string;
+      browser_profile_path?: string;
+    }) => ipcRenderer.invoke('accounts:add', data),
+    update: (accountId: string, updates: any) =>
+      ipcRenderer.invoke('accounts:update', accountId, updates),
+    delete: (accountId: string) => ipcRenderer.invoke('accounts:delete', accountId),
+  },
+
+  // 浏览器 Profile 管理 API
+  browserProfile: {
+    detect: () => ipcRenderer.invoke('browser-profile:detect'),
+    isChromeRunning: () => ipcRenderer.invoke('browser-profile:is-chrome-running'),
+    loginMain: (siteUrl: string) => ipcRenderer.invoke('browser-profile:login-main', siteUrl),
+    loginIsolated: (siteId: string, siteUrl: string, accountId: string) =>
+      ipcRenderer.invoke('browser-profile:login-isolated', siteId, siteUrl, accountId),
+    deleteProfile: (siteId: string, accountId: string) =>
+      ipcRenderer.invoke('browser-profile:delete-profile', siteId, accountId),
   },
 });

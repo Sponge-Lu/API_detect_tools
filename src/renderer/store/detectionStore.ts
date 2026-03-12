@@ -145,17 +145,17 @@ export const useDetectionStore = create<DetectionState>()((set, get) => ({
     });
   },
 
-  // 安全地更新或插入单个结果（支持并发刷新）
+  // 安全地更新或插入单个结果（支持并发刷新和多账户）
   upsertResult: result => {
     const { results } = get();
-    const existingIndex = results.findIndex(r => r.name === result.name);
+    const existingIndex = results.findIndex(
+      r => r.name === result.name && r.accountId === result.accountId
+    );
     if (existingIndex >= 0) {
-      // 更新现有结果
       const newResults = [...results];
       newResults[existingIndex] = result;
       set({ results: newResults });
     } else {
-      // 插入新结果
       set({ results: [...results, result] });
     }
   },

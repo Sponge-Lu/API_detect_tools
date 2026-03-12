@@ -127,6 +127,17 @@ export function SiteCardDetails({
         if (!modelData || !modelData.enable_groups) return false;
         return modelData.enable_groups.includes(selectedGroup);
       });
+    } else if (globalModelSearch && modelPricing?.data) {
+      // 全局搜索时排除用户无权访问的模型
+      const groupKeys =
+        Object.keys(userGroups).length > 0 ? new Set(Object.keys(userGroups)) : null;
+      filtered = filtered.filter(modelName => {
+        const modelData = modelPricing.data?.[modelName] || modelPricing[modelName];
+        if (!modelData) return true;
+        const eg = modelData.enable_groups;
+        if (!eg || eg.length === 0) return false;
+        return !groupKeys || eg.some((g: string) => groupKeys.has(g));
+      });
     }
 
     if (searchTerm) {

@@ -39,6 +39,7 @@ export function SiteCardHeader({
   rpm,
   tpm,
   modelCount,
+  accountName,
   onOpenCheckinPage,
   cliCompatibility,
   cliConfig,
@@ -54,35 +55,47 @@ export function SiteCardHeader({
         gridTemplateColumns: columnWidths.map(w => `${w}px`).join(' '),
       }}
     >
-      {/* 1. 站点名称（带状态图标） */}
-      <button
-        onClick={() => onOpenCheckinPage(site)}
-        className="flex items-center gap-1.5 hover:text-primary-400 transition-colors group min-w-0"
-        title={`打开 ${site.name}${siteResult ? (siteResult.status === '成功' ? ' (在线)' : ' (离线)') : ' (未检测)'}`}
-      >
-        {/* 状态图标 */}
-        {siteResult ? (
-          siteResult.status === '成功' ? (
-            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse flex-shrink-0" />
-          ) : (
-            <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
-          )
-        ) : (
-          <div className="w-2 h-2 rounded-full bg-light-text-tertiary dark:bg-dark-text-tertiary flex-shrink-0" />
-        )}
-        <span className="font-bold text-sm md:text-base truncate">{site.name}</span>
-        {/* 错误码/超时提示 */}
-        {errorCode && (
-          <span className="text-red-500 dark:text-red-400 text-[10px] font-semibold flex-shrink-0">
-            {errorCode}
-          </span>
-        )}
-        {!errorCode && timeoutSeconds !== null && (
-          <span className="text-red-500 dark:text-red-400 text-[10px] font-semibold flex-shrink-0">
-            T/O
-          </span>
-        )}
-      </button>
+      {/* 1. 站点名称 + 账户名 */}
+      <div className="flex items-center min-w-0">
+        <div className="flex flex-col min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <button
+              onClick={() => onOpenCheckinPage(site)}
+              className="flex items-center gap-1.5 hover:text-primary-400 transition-colors group min-w-0"
+              title={`打开 ${site.name}${siteResult ? (siteResult.status === '成功' ? ' (在线)' : ' (离线)') : ' (未检测)'}`}
+            >
+              {/* 状态图标 */}
+              {siteResult ? (
+                siteResult.status === '成功' ? (
+                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse flex-shrink-0" />
+                ) : (
+                  <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
+                )
+              ) : (
+                <div className="w-2 h-2 rounded-full bg-light-text-tertiary dark:bg-dark-text-tertiary flex-shrink-0" />
+              )}
+              <span className="font-bold text-sm md:text-base truncate">{site.name}</span>
+            </button>
+            {/* 错误码/超时提示 */}
+            {errorCode && (
+              <span className="text-red-500 dark:text-red-400 text-[10px] font-semibold flex-shrink-0">
+                {errorCode}
+              </span>
+            )}
+            {!errorCode && timeoutSeconds !== null && (
+              <span className="text-red-500 dark:text-red-400 text-[10px] font-semibold flex-shrink-0">
+                T/O
+              </span>
+            )}
+          </div>
+          {/* 账户名（小字显示在站点名下方） */}
+          {accountName && (
+            <span className="text-[10px] text-light-text-tertiary dark:text-dark-text-tertiary truncate pl-[14px]">
+              {accountName}
+            </span>
+          )}
+        </div>
+      </div>
 
       {/* 2. 余额 */}
       <div className="flex flex-col">

@@ -1,7 +1,13 @@
-﻿/**
+/**
  * 输入: Puppeteer (浏览器自动化), Electron app (应用路径), Logger (日志记录)
  * 输出: Browser 实例, Page 实例, LocalStorageData (含签到状态), 自动登录结果
- * 定位: 基础设施层 - 管理 Chrome 浏览器自动化，处理自动登录和数据提取
+ * 定位: 基础设施层 - 多槽位浏览器池管理，处理自动登录和数据提取
+ *
+ * 多槽位架构:
+ * - slot 0 = 主浏览器 (api-detector-chrome)，所有站点的第 1 个账号共用
+ * - slot N = 隔离浏览器 N (api-detector-chrome-isolated-N)，所有站点的第 N+1 个账号共用
+ * - 每个槽位独立管理: browser, chromeProcess, debugPort, refCount, cleanupTimer
+ * - 向后兼容属性代理: 旧代码通过 getter/setter 透明访问 slot 0
  *
  * LocalStorageData 签到字段支持两种站点类型:
  * - Veloera: check_in_enabled, can_check_in
@@ -37,15 +43,99 @@ interface LocalStorageData {
   canCheckIn?: boolean; // 当前是否可签到
 }
 
+/** 单个浏览器槽位的状态 */
+interface BrowserSlot {
+  browser: Browser | null;
+  chromeProcess: any;
+  debugPort: number;
+  refCount: number;
+  lock: Promise<void> | null;
+  cleanupTimer: NodeJS.Timeout | null;
+  isClosed: boolean;
+  abortController: AbortController | null;
+}
+
+/** 创建空槽位 */
+function createEmptySlot(): BrowserSlot {
+  return {
+    browser: null,
+    chromeProcess: null,
+    debugPort: 0,
+    refCount: 0,
+    lock: null,
+    cleanupTimer: null,
+    isClosed: false,
+    abortController: null,
+  };
+}
+
 export class ChromeManager {
-  private browser: Browser | null = null;
-  private chromeProcess: any = null;
-  private debugPort = 0;
-  private browserRefCount: number = 0; // 浏览器引用计数
-  private browserLock: Promise<void> | null = null; // 浏览器启动锁，防止并发启动
-  private cleanupTimer: NodeJS.Timeout | null = null; // 延迟关闭定时器
-  private isBrowserClosed: boolean = false; // 浏览器是否已关闭标志
-  private abortController: AbortController | null = null; // 用于取消正在进行的操作
+  /**
+   * 多槽位浏览器池
+   * slot 0 = 主浏览器（所有站点的第一个账号）
+   * slot N = 隔离浏览器 N（所有站点的第 N+1 个账号）
+   */
+  private slots = new Map<number, BrowserSlot>();
+
+  /** 获取或创建指定槽位 */
+  private getSlot(index: number): BrowserSlot {
+    let slot = this.slots.get(index);
+    if (!slot) {
+      slot = createEmptySlot();
+      this.slots.set(index, slot);
+    }
+    return slot;
+  }
+
+  // ============= 向后兼容属性（代理到 slot 0） =============
+  private get browser() {
+    return this.getSlot(0).browser;
+  }
+  private set browser(v: Browser | null) {
+    this.getSlot(0).browser = v;
+  }
+  private get chromeProcess() {
+    return this.getSlot(0).chromeProcess;
+  }
+  private set chromeProcess(v: any) {
+    this.getSlot(0).chromeProcess = v;
+  }
+  private get debugPort() {
+    return this.getSlot(0).debugPort;
+  }
+  private set debugPort(v: number) {
+    this.getSlot(0).debugPort = v;
+  }
+  private get browserRefCount() {
+    return this.getSlot(0).refCount;
+  }
+  private set browserRefCount(v: number) {
+    this.getSlot(0).refCount = v;
+  }
+  private get browserLock() {
+    return this.getSlot(0).lock;
+  }
+  private set browserLock(v: Promise<void> | null) {
+    this.getSlot(0).lock = v;
+  }
+  private get cleanupTimer() {
+    return this.getSlot(0).cleanupTimer;
+  }
+  private set cleanupTimer(v: NodeJS.Timeout | null) {
+    this.getSlot(0).cleanupTimer = v;
+  }
+  private get isBrowserClosed() {
+    return this.getSlot(0).isClosed;
+  }
+  private set isBrowserClosed(v: boolean) {
+    this.getSlot(0).isClosed = v;
+  }
+  private get abortController() {
+    return this.getSlot(0).abortController;
+  }
+  private set abortController(v: AbortController | null) {
+    this.getSlot(0).abortController = v;
+  }
 
   /**
    * 获取浏览器引用（增加引用计数）
@@ -115,9 +205,22 @@ export class ChromeManager {
    * 创建一个新页面并导航到指定URL
    * 自动管理引用计数
    * @param url 目标URL
+   * @param options 可选参数（slot: 浏览器槽位索引，0=主浏览器，N=隔离浏览器N）
    * @returns 包含页面和释放函数的对象
    */
-  async createPage(url: string): Promise<{ page: Page; release: () => void }> {
+  async createPage(
+    url: string,
+    options?: { slot?: number }
+  ): Promise<{ page: Page; release: () => void }> {
+    const slotIndex = options?.slot ?? 0;
+
+    // 非零槽位走独立的浏览器管理路径
+    if (slotIndex > 0) {
+      return this.createPageForSlot(url, slotIndex);
+    }
+
+    // slot 0: 走原有逻辑（向后兼容）
+
     // 如果浏览器已关闭，则重置状态以允许重新启动
     // 说明：理论上浏览器关闭后不应再有有效引用，如果引用计数仍大于0，说明之前有引用泄漏
     // 为了保证后续检测可以继续工作，这里进行容错处理：强制将引用计数重置为0，并重新启动浏览器
@@ -303,8 +406,12 @@ export class ChromeManager {
   /**
    * 启动浏览器（内部方法）
    * @param url 初始URL
+   * @param options 启动选项（可自定义 userDataDir 和 profileDirectory）
    */
-  private async launchBrowser(url: string): Promise<void> {
+  private async launchBrowser(
+    url: string,
+    options?: { userDataDir?: string; profileDirectory?: string }
+  ): Promise<void> {
     Logger.info('🚀 [ChromeManager] 启动浏览器...');
 
     // 1. 检查引用计数，如果 > 0，不应该清理（保持复用逻辑）
@@ -369,7 +476,7 @@ export class ChromeManager {
 
     // 2. 准备启动参数
     const chromePath = this.getChromePath();
-    const userDataDir = path.join(os.tmpdir(), 'api-detector-chrome');
+    const userDataDir = options?.userDataDir || path.join(os.tmpdir(), 'api-detector-chrome');
 
     // 2.5 清理会话恢复相关文件，防止打开历史页面
     this.cleanupSessionFiles(userDataDir);
@@ -383,6 +490,7 @@ export class ChromeManager {
     const args = [
       `--remote-debugging-port=${debugPort}`,
       `--user-data-dir=${userDataDir}`,
+      ...(options?.profileDirectory ? [`--profile-directory=${options.profileDirectory}`] : []),
       '--no-first-run', // 跳过首次运行向导
       '--no-default-browser-check', // 跳过默认浏览器检查
       '--disable-session-crashed-bubble', // 禁用会话崩溃恢复提示
@@ -583,14 +691,18 @@ export class ChromeManager {
   /**
    * 启动浏览器供用户登录
    * @param url 目标URL
+   * @param options 启动选项（可自定义 userDataDir 和 profileDirectory）
    * @returns 启动结果
    */
-  async launchForLogin(url: string): Promise<{ success: boolean; message: string }> {
+  async launchForLogin(
+    url: string,
+    options?: { userDataDir?: string; profileDirectory?: string }
+  ): Promise<{ success: boolean; message: string }> {
     try {
       Logger.info('🚀 [ChromeManager] 启动浏览器供用户登录...');
 
       // 使用统一的启动流程
-      await this.launchBrowser(url);
+      await this.launchBrowser(url, options);
 
       return { success: true, message: '浏览器已启动，请在浏览器中完成登录' };
     } catch (error: any) {
@@ -1593,65 +1705,245 @@ export class ChromeManager {
       '?? [ChromeManager] Skip killing processes by port to avoid terminating external browsers'
     );
   }
-  cleanup() {
-    // 检查引用计数
-    if (this.browserRefCount > 0) {
-      Logger.warn(
-        `⚠️ [ChromeManager] 浏览器正在使用中（引用计数: ${this.browserRefCount}），跳过清理`
-      );
+
+  // ============= 多槽位浏览器管理 =============
+
+  /** 获取隔离槽位的 userDataDir */
+  private getSlotUserDataDir(slotIndex: number): string {
+    if (slotIndex === 0) {
+      return path.join(os.tmpdir(), 'api-detector-chrome');
+    }
+    return path.join(os.tmpdir(), `api-detector-chrome-isolated-${slotIndex}`);
+  }
+
+  /** 为指定槽位创建页面（独立浏览器实例） */
+  private async createPageForSlot(
+    url: string,
+    slotIndex: number
+  ): Promise<{ page: Page; release: () => void }> {
+    const slot = this.getSlot(slotIndex);
+    const tag = `[slot-${slotIndex}]`;
+
+    // 如果浏览器已关闭，重置状态
+    if (slot.isClosed) {
+      if (slot.refCount > 0) {
+        Logger.warn(`⚠️ ${tag} 浏览器已关闭但引用计数仍为 ${slot.refCount}，强制重置`);
+        slot.refCount = 0;
+      }
+      slot.isClosed = false;
+      if (slot.browser) {
+        try {
+          slot.browser.removeAllListeners('disconnected');
+          slot.browser.disconnect();
+        } catch (_e) {
+          /* ignore */
+        }
+        slot.browser = null;
+      }
+      slot.abortController = new AbortController();
+    }
+
+    // 获取引用
+    slot.refCount++;
+    Logger.info(`📊 ${tag} 引用计数: ${slot.refCount}`);
+
+    // 取消延迟关闭
+    if (slot.cleanupTimer) {
+      clearTimeout(slot.cleanupTimer);
+      slot.cleanupTimer = null;
+    }
+
+    // 启动浏览器（如果未启动）
+    if (!slot.browser) {
+      if (slot.lock) await slot.lock;
+      if (!slot.browser) {
+        let resolveLock: () => void;
+        slot.lock = new Promise(r => {
+          resolveLock = r;
+        });
+        try {
+          await this.launchBrowserForSlot(slotIndex, 'about:blank');
+        } finally {
+          slot.lock = null;
+          resolveLock!();
+        }
+      }
+    }
+
+    if (!slot.browser) {
+      slot.refCount--;
+      throw new Error(`${tag} 浏览器启动失败`);
+    }
+
+    try {
+      const page = await slot.browser.newPage();
+      Logger.info(`📄 ${tag} 创建新页面`);
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+
+      const release = () => {
+        this.releaseSlot(slotIndex);
+      };
+      return { page, release };
+    } catch (error: any) {
+      slot.refCount--;
+      Logger.error(`❌ ${tag} createPage 失败: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /** 释放槽位引用 */
+  private releaseSlot(slotIndex: number): void {
+    const slot = this.getSlot(slotIndex);
+    const tag = `[slot-${slotIndex}]`;
+    if (slot.refCount > 0) {
+      slot.refCount--;
+      Logger.info(`📊 ${tag} 引用计数: ${slot.refCount}`);
+      if (slot.refCount === 0) {
+        if (slot.cleanupTimer) clearTimeout(slot.cleanupTimer);
+        slot.cleanupTimer = setTimeout(() => {
+          if (slot.refCount === 0) {
+            Logger.info(`⏰ ${tag} 引用为 0，关闭浏览器`);
+            this.cleanupSlot(slotIndex);
+          }
+        }, 5000);
+      }
+    }
+  }
+
+  /** 启动指定槽位的浏览器 */
+  private async launchBrowserForSlot(slotIndex: number, url: string): Promise<void> {
+    const slot = this.getSlot(slotIndex);
+    const tag = `[slot-${slotIndex}]`;
+    const userDataDir = this.getSlotUserDataDir(slotIndex);
+
+    // 清理旧实例
+    if (slot.browser) {
+      try {
+        slot.browser.removeAllListeners('disconnected');
+        slot.browser.disconnect();
+      } catch (_e) {
+        /* ignore */
+      }
+      slot.browser = null;
+    }
+    if (slot.chromeProcess) {
+      try {
+        slot.chromeProcess.kill();
+      } catch (_e) {
+        /* ignore */
+      }
+      slot.chromeProcess = null;
+    }
+
+    const debugPort = await this.pickDebugPort();
+    slot.debugPort = debugPort;
+    await this.waitForPortFree(debugPort);
+
+    const chromePath = this.getChromePath();
+    this.cleanupSessionFiles(userDataDir);
+
+    const { spawn } = require('child_process');
+    const args = [
+      `--remote-debugging-port=${debugPort}`,
+      `--user-data-dir=${userDataDir}`,
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-session-crashed-bubble',
+      '--hide-crash-restore-bubble',
+      '--disable-features=SessionRestore,InfiniteSessionRestore',
+      '--disable-restore-session-state',
+      '--noerrdialogs',
+      '--disable-infobars',
+      url,
+    ];
+
+    Logger.info(`🚀 ${tag} 启动浏览器 (port: ${debugPort}, profile: ${userDataDir})`);
+    slot.chromeProcess = spawn(chromePath, args, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    slot.chromeProcess.on('error', (err: any) =>
+      Logger.error(`❌ ${tag} Chrome 进程错误:`, err.message)
+    );
+
+    await this.waitForPortReady(debugPort);
+
+    slot.browser = await puppeteer.connect({
+      browserURL: `http://127.0.0.1:${debugPort}`,
+      protocolTimeout: 60000,
+    });
+    slot.isClosed = false;
+    slot.abortController = new AbortController();
+
+    slot.browser.on('disconnected', () => {
+      Logger.info(`⚠️ ${tag} 浏览器已断开`);
+      slot.isClosed = true;
+      slot.browser = null;
+      if (slot.abortController) {
+        slot.abortController.abort();
+        slot.abortController = null;
+      }
+    });
+
+    Logger.info(`✅ ${tag} 浏览器启动成功`);
+  }
+
+  /** 清理指定槽位 */
+  private cleanupSlot(slotIndex: number): void {
+    const slot = this.getSlot(slotIndex);
+    const tag = `[slot-${slotIndex}]`;
+
+    if (slot.refCount > 0) {
+      Logger.warn(`⚠️ ${tag} 浏览器正在使用中（引用: ${slot.refCount}），跳过清理`);
       return;
     }
 
-    Logger.info('🧹 [ChromeManager] 开始清理浏览器资源...');
-
-    // 标记浏览器已关闭
-    this.isBrowserClosed = true;
-
-    // 取消所有正在进行的操作
-    if (this.abortController) {
-      this.abortController.abort();
-      this.abortController = null;
+    Logger.info(`🧹 ${tag} 清理浏览器资源`);
+    slot.isClosed = true;
+    if (slot.abortController) {
+      slot.abortController.abort();
+      slot.abortController = null;
+    }
+    if (slot.cleanupTimer) {
+      clearTimeout(slot.cleanupTimer);
+      slot.cleanupTimer = null;
     }
 
-    // 清除延迟关闭定时器
-    if (this.cleanupTimer) {
-      clearTimeout(this.cleanupTimer);
-      this.cleanupTimer = null;
-    }
-
-    if (this.browser) {
+    if (slot.browser) {
       try {
-        // 移除事件监听器，避免重复触发
-        this.browser.removeAllListeners('disconnected');
-        // 尝试正常关闭浏览器（通过 DevTools Protocol）
-        this.browser.close().catch(() => {});
-        Logger.info('✅ [ChromeManager] 浏览器已关闭');
-      } catch (e) {
-        Logger.warn('⚠️ [ChromeManager] 关闭浏览器失败:', e);
+        slot.browser.removeAllListeners('disconnected');
+        slot.browser.close().catch(() => {});
+      } catch (_e) {
+        /* ignore */
       }
-      this.browser = null;
+      slot.browser = null;
     }
-
-    // 清理Chrome进程（通过端口查找）
-
-    Logger.info('✅ [ChromeManager] 资源清理完成');
+    if (slot.chromeProcess) {
+      try {
+        slot.chromeProcess.kill();
+      } catch (_e) {
+        /* ignore */
+      }
+      slot.chromeProcess = null;
+    }
+  }
+  cleanup() {
+    Logger.info('🧹 [ChromeManager] 开始清理所有浏览器槽位...');
+    for (const [index] of this.slots) {
+      this.cleanupSlot(index);
+    }
+    Logger.info('✅ [ChromeManager] 所有槽位清理完成');
   }
 
-  /**
-   * 强制清理浏览器资源（忽略引用计数）
-   * 用于检测完成后确保浏览器被关闭
-   */
   forceCleanup() {
-    Logger.info(`🔧 [ChromeManager] 强制清理浏览器资源（当前引用计数: ${this.browserRefCount}）`);
-
-    // 重置引用计数
-    if (this.browserRefCount > 0) {
-      Logger.warn(`⚠️ [ChromeManager] 强制重置引用计数从 ${this.browserRefCount} 到 0`);
-      this.browserRefCount = 0;
+    Logger.info('🔧 [ChromeManager] 强制清理所有浏览器槽位');
+    for (const [index, slot] of this.slots) {
+      if (slot.refCount > 0) {
+        Logger.warn(`⚠️ [slot-${index}] 强制重置引用计数 ${slot.refCount} → 0`);
+        slot.refCount = 0;
+      }
+      this.cleanupSlot(index);
     }
-
-    // 调用正常清理逻辑
-    this.cleanup();
   }
 
   /**

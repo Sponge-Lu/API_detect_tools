@@ -22,6 +22,7 @@ import {
   Calendar,
 } from 'lucide-react';
 import { SiteEditor } from '../components/SiteEditor';
+import { AddAccountDialog } from '../components/AddAccountDialog';
 import { SiteCard } from '../components/SiteCard';
 import {
   SiteGroupDialog,
@@ -60,6 +61,31 @@ interface BackupInfo {
   path: string;
   timestamp: Date;
   size: number;
+}
+
+// 账户信息（来自 accounts:list IPC）
+interface AccountInfo {
+  id: string;
+  account_name: string;
+  user_id: string;
+  username?: string;
+  status: string;
+  auth_source: string;
+}
+
+/** 生成 per-account 复合 key */
+function makeCardKey(siteName: string, accountId?: string): string {
+  return accountId ? `${siteName}::${accountId}` : siteName;
+}
+
+/** 展平后的卡片条目 */
+interface FlattenedCardItem {
+  site: SiteConfig;
+  index: number;
+  siteResult?: DetectionResult;
+  account: AccountInfo | null;
+  cardKey: string;
+  isActiveAccount?: boolean;
 }
 
 export function SitesPage() {
@@ -106,6 +132,7 @@ export function SitesPage() {
     dragOverGroupIndex,
     setDragOverGroupIndex,
     creatingTokenSite,
+    creatingTokenCardKey,
     openCreateTokenDialog,
     closeCreateTokenDialog,
     tokenDialogVersion,
@@ -136,14 +163,22 @@ export function SitesPage() {
   // CLI 配置对话框状态
   const [showCliConfigDialog, setShowCliConfigDialog] = useState(false);
   const [cliConfigSite, setCliConfigSite] = useState<SiteConfig | null>(null);
+  const [cliConfigCardKey, setCliConfigCardKey] = useState<string | null>(null);
 
   // 应用配置弹出菜单状态
   const [showApplyConfigPopover, setShowApplyConfigPopover] = useState(false);
   const [applyConfigAnchorEl, setApplyConfigAnchorEl] = useState<HTMLElement | null>(null);
   const [applyConfigSite, setApplyConfigSite] = useState<SiteConfig | null>(null);
+  const [applyConfigCardKey, setApplyConfigCardKey] = useState<string | null>(null);
 
   // 自动刷新对话框状态
   const [autoRefreshDialogSite, setAutoRefreshDialogSite] = useState<SiteConfig | null>(null);
+  const [addAccountSite, setAddAccountSite] = useState<SiteConfig | null>(null);
+
+  // 多账户: 按站点 ID 预加载的账户列表
+  const [accountsBySite, setAccountsBySite] = useState<Record<string, AccountInfo[]>>({});
+  // 多账户: 按站点 ID 缓存的活跃账户 ID
+  const [activeAccountBySite, setActiveAccountBySite] = useState<Record<string, string>>({});
 
   // 兼容层
   const setNewTokenForm = (form: NewApiTokenForm | ((p: NewApiTokenForm) => NewApiTokenForm)) => {
@@ -199,6 +234,46 @@ export function SitesPage() {
     };
   }, [sortField, sortOrder, setConfig]);
 
+  // 多账户: 预加载所有站点的账户列表
+  const loadAllAccounts = useCallback(
+    async (overrideSites?: SiteConfig[]) => {
+      const sites = overrideSites || config?.sites;
+      if (!sites) return;
+      const sitesWithId = sites.filter(s => s.id);
+      if (sitesWithId.length === 0) return;
+
+      const newAccountsBySite: Record<string, AccountInfo[]> = {};
+      const newActiveBySite: Record<string, string> = {};
+
+      await Promise.all(
+        sitesWithId.map(async site => {
+          try {
+            const [listRes, activeRes] = await Promise.all([
+              window.electronAPI.accounts?.list(site.id!),
+              window.electronAPI.accounts?.getActive(site.id!),
+            ]);
+            if (listRes?.success && listRes.data) {
+              newAccountsBySite[site.id!] = listRes.data;
+            }
+            if (activeRes?.success && activeRes.data?.id) {
+              newActiveBySite[site.id!] = activeRes.data.id;
+            }
+          } catch {
+            // ignore per-site errors
+          }
+        })
+      );
+
+      setAccountsBySite(newAccountsBySite);
+      setActiveAccountBySite(newActiveBySite);
+    },
+    [config?.sites]
+  );
+
+  useEffect(() => {
+    loadAllAccounts();
+  }, [loadAllAccounts]);
+
   // 列宽调整
   const handleColumnResizeMouseDown = (event: React.MouseEvent, index: number) => {
     event.preventDefault();
@@ -237,12 +312,12 @@ export function SitesPage() {
     setSelectedGroup(siteName, current === groupName ? null : groupName);
   };
 
-  const handleOpenCreateTokenDialog = (site: SiteConfig) => {
+  const handleOpenCreateTokenDialog = (site: SiteConfig, cardKey?: string) => {
     if (!site.system_token || !site.user_id) {
       toast.warning('当前站点未配置系统 Token 或用户 ID，请先在"编辑站点"中填写。');
       return;
     }
-    openCreateTokenDialog(site);
+    openCreateTokenDialog(site, cardKey);
   };
 
   const copyToClipboard = async (text: string, label: string) => {
@@ -294,13 +369,15 @@ export function SitesPage() {
   const showAlert = (
     message: string,
     type: 'success' | 'error' | 'alert' | 'warning' = 'alert',
-    title?: string
+    title?: string,
+    content?: React.ReactNode
   ) => {
     setDialogState({
       isOpen: true,
       type,
       title,
       message,
+      content,
       onConfirm: () => setDialogState(initialDialogState),
     });
   };
@@ -423,7 +500,7 @@ export function SitesPage() {
 
   const handleDetectAllSites = async () => {
     if (!config) return;
-    await detectAllSites(config);
+    await detectAllSites(config, accountsBySite);
   };
 
   // 签到逻辑 hook
@@ -443,13 +520,24 @@ export function SitesPage() {
       showAlert,
     });
 
-  const handleDeleteToken = (site: SiteConfig, token: any, tokenIndex: number) => {
-    deleteToken(site, token, tokenIndex, setDeletingTokenKey);
+  const handleDeleteToken = (
+    site: SiteConfig,
+    token: any,
+    tokenIndex: number,
+    cardKey?: string
+  ) => {
+    deleteToken(site, token, tokenIndex, setDeletingTokenKey, cardKey);
   };
 
   const handleCreateTokenSubmit = () => {
     if (!creatingTokenSite) return;
-    createToken(creatingTokenSite, newTokenForm, setCreatingToken, closeCreateTokenDialog);
+    createToken(
+      creatingTokenSite,
+      newTokenForm,
+      setCreatingToken,
+      closeCreateTokenDialog,
+      creatingTokenCardKey || undefined
+    );
   };
 
   const openExtraLink = async (url: string) => {
@@ -482,47 +570,6 @@ export function SitesPage() {
 
   // 全局模型搜索
   const expandDebounceRef = useRef<NodeJS.Timeout | null>(null);
-
-  const handleGlobalModelSearchChange = useCallback(
-    (value: string) => {
-      if (Object.values(modelSearch).some(text => text && text.trim() !== '')) {
-        clearAllModelSearch();
-      }
-
-      setGlobalModelSearch(value);
-
-      if (expandDebounceRef.current) {
-        clearTimeout(expandDebounceRef.current);
-      }
-
-      if (!value) {
-        setExpandedSites(new Set());
-      } else if (config?.sites?.length) {
-        expandDebounceRef.current = setTimeout(() => {
-          config.sites.forEach(site => {
-            const siteResult = results.find(r => r.name === site.name);
-            if (siteResult) {
-              setApiKeys(site.name, siteResult.apiKeys || []);
-              setUserGroups(site.name, siteResult.userGroups || {});
-              setModelPricing(site.name, siteResult.modelPricing || { data: {} });
-            }
-          });
-          setExpandedSites(new Set(config.sites.map(site => site.name)));
-        }, 100);
-      }
-    },
-    [
-      modelSearch,
-      clearAllModelSearch,
-      setGlobalModelSearch,
-      setExpandedSites,
-      config?.sites,
-      results,
-      setApiKeys,
-      setUserGroups,
-      setModelPricing,
-    ]
-  );
 
   // 分组标签拖拽排序
   const handleGroupDragStart = (e: React.DragEvent, index: number) => {
@@ -572,38 +619,39 @@ export function SitesPage() {
     setDragOverGroupIndex(null);
   };
 
-  // 展开站点
-  const handleExpandSite = (siteName: string) => {
-    const isExpanding = !expandedSites.has(siteName);
-    toggleSiteExpanded(siteName);
+  // 展开站点（cardKey 可以是 siteName 或 siteName::accountId）
+  const handleExpandSite = (cardKey: string) => {
+    const isExpanding = !expandedSites.has(cardKey);
+    toggleSiteExpanded(cardKey);
 
     if (isExpanding) {
-      const siteResult = results.find(r => r.name === siteName);
+      // 尝试从 flattenedCards 找到对应的检测结果
+      const card = flattenedCards.find(c => c.cardKey === cardKey);
+      const siteResult = card?.siteResult;
       if (siteResult) {
-        setApiKeys(siteName, siteResult.apiKeys || []);
-        setUserGroups(siteName, siteResult.userGroups || {});
-        setModelPricing(siteName, siteResult.modelPricing || { data: {} });
+        setApiKeys(cardKey, siteResult.apiKeys || []);
+        setUserGroups(cardKey, siteResult.userGroups || {});
+        setModelPricing(cardKey, siteResult.modelPricing || { data: {} });
       }
     }
   };
 
   const handleToggleAllExpanded = () => {
     if (!config) return;
-    const allSiteNames = config.sites.map(s => s.name);
-    const allExpanded = allSiteNames.every(name => expandedSites.has(name));
+    const allCardKeys = flattenedCards.map(c => c.cardKey);
+    const allExpanded = allCardKeys.every(key => expandedSites.has(key));
 
     if (allExpanded) {
       setExpandedSites(new Set());
     } else {
-      allSiteNames.forEach(siteName => {
-        const siteResult = results.find(r => r.name === siteName);
-        if (siteResult) {
-          setApiKeys(siteName, siteResult.apiKeys || []);
-          setUserGroups(siteName, siteResult.userGroups || {});
-          setModelPricing(siteName, siteResult.modelPricing || { data: {} });
+      flattenedCards.forEach(card => {
+        if (card.siteResult) {
+          setApiKeys(card.cardKey, card.siteResult.apiKeys || []);
+          setUserGroups(card.cardKey, card.siteResult.userGroups || {});
+          setModelPricing(card.cardKey, card.siteResult.modelPricing || { data: {} });
         }
       });
-      setExpandedSites(new Set(allSiteNames));
+      setExpandedSites(new Set(allCardKeys));
     }
   };
 
@@ -618,6 +666,17 @@ export function SitesPage() {
       if (pricingModels.length > models.length) {
         models = pricingModels;
       }
+      // 排除用户无权访问的模型（enable_groups 须与 userGroups 有交集）
+      const siteGroups = userGroups[site.name];
+      const groupKeys =
+        siteGroups && Object.keys(siteGroups).length > 0 ? new Set(Object.keys(siteGroups)) : null;
+      models = models.filter(m => {
+        const modelData = pricing.data[m];
+        if (!modelData) return true;
+        const eg = modelData.enable_groups;
+        if (!eg || eg.length === 0) return false;
+        return !groupKeys || eg.some((g: string) => groupKeys.has(g));
+      });
     }
     return models.some(m => m.toLowerCase().includes(searchTerm));
   };
@@ -688,7 +747,14 @@ export function SitesPage() {
     if (!config?.sites) return [];
 
     const sitesWithIndex = config.sites.map((site, index) => {
-      const siteResult = results.find(r => r.name === site.name);
+      // 聚合站点所有账户的结果，取余额最大的作为排序依据
+      const siteResults = results.filter(r => r.name === site.name);
+      const siteResult =
+        siteResults.length > 0
+          ? siteResults.reduce((best, r) =>
+              (r.balance ?? -Infinity) > (best.balance ?? -Infinity) ? r : best
+            )
+          : undefined;
       return { site, index, siteResult };
     });
 
@@ -708,6 +774,100 @@ export function SitesPage() {
       return sortOrder === 'asc' ? comparison : -comparison;
     });
   }, [config?.sites, results, sortField, sortOrder, getSortValue]);
+
+  // 展平为 per-account 卡片列表
+  const flattenedCards: FlattenedCardItem[] = useMemo(() => {
+    const items: FlattenedCardItem[] = [];
+
+    for (const { site, index, siteResult } of sortedSites) {
+      const siteId = site.id;
+      const accounts = siteId ? accountsBySite[siteId] : undefined;
+      const activeId = siteId ? activeAccountBySite[siteId] : undefined;
+
+      if (accounts && accounts.length > 0) {
+        // 站点有账户：每个账户一张卡片
+        for (const account of accounts) {
+          const key = makeCardKey(site.name, account.id);
+          // 查找该账户的检测结果
+          const accountResult = results.find(
+            r => r.name === site.name && r.accountId === account.id
+          ); // 严格 per-account 查找，不 fallback 到站点级结果
+          items.push({
+            site,
+            index,
+            siteResult: accountResult,
+            account,
+            cardKey: key,
+            isActiveAccount: account.id === activeId,
+          });
+        }
+      } else {
+        // 站点没有账户：保持单张卡片
+        items.push({
+          site,
+          index,
+          siteResult,
+          account: null,
+          cardKey: site.name,
+        });
+      }
+    }
+
+    return items;
+  }, [sortedSites, accountsBySite, activeAccountBySite, results]);
+
+  // 每个站点的首张卡片 key（用于仅在默认账户卡片上显示「添加账户」按钮）
+  const firstCardKeyPerSite = useMemo(() => {
+    const seen = new Set<string>();
+    const first = new Set<string>();
+    for (const { site, cardKey } of flattenedCards) {
+      const siteId = site.id || site.name;
+      if (!seen.has(siteId)) {
+        seen.add(siteId);
+        first.add(cardKey);
+      }
+    }
+    return first;
+  }, [flattenedCards]);
+
+  // 全局模型搜索（需要放在 flattenedCards 之后）
+  const handleGlobalModelSearchChange = useCallback(
+    (value: string) => {
+      if (Object.values(modelSearch).some(text => text && text.trim() !== '')) {
+        clearAllModelSearch();
+      }
+
+      setGlobalModelSearch(value);
+
+      if (expandDebounceRef.current) {
+        clearTimeout(expandDebounceRef.current);
+      }
+
+      if (!value) {
+        setExpandedSites(new Set());
+      } else if (flattenedCards.length > 0) {
+        expandDebounceRef.current = setTimeout(() => {
+          flattenedCards.forEach(card => {
+            if (card.siteResult) {
+              setApiKeys(card.cardKey, card.siteResult.apiKeys || []);
+              setUserGroups(card.cardKey, card.siteResult.userGroups || {});
+              setModelPricing(card.cardKey, card.siteResult.modelPricing || { data: {} });
+            }
+          });
+        }, 100);
+      }
+    },
+    [
+      modelSearch,
+      clearAllModelSearch,
+      setGlobalModelSearch,
+      setExpandedSites,
+      flattenedCards,
+      setApiKeys,
+      setUserGroups,
+      setModelPricing,
+    ]
+  );
 
   // 打开备份列表
   const handleOpenBackupDialog = async () => {
@@ -1014,7 +1174,10 @@ export function SitesPage() {
                       onClick={handleToggleAllExpanded}
                       className="p-1 hover:bg-[rgba(0,0,0,0.05)] dark:hover:bg-[rgba(255,255,255,0.05)] rounded-[var(--radius-sm)] transition-all duration-[var(--duration-fast)]"
                       title={
-                        config.sites.every(s => expandedSites.has(s.name)) ? '收起全部' : '展开全部'
+                        flattenedCards.length > 0 &&
+                        flattenedCards.every(c => expandedSites.has(c.cardKey))
+                          ? '收起全部'
+                          : '展开全部'
                       }
                     >
                       <ChevronsUpDown className="w-3.5 h-3.5" />
@@ -1042,129 +1205,148 @@ export function SitesPage() {
                 </IOSTableHeader>
 
                 <IOSTableBody className="min-w-[1180px] space-y-3">
-                  {sortedSites.map(({ site, index, siteResult: cachedResult }) => {
-                    let siteResult = cachedResult;
-                    if (!siteResult) {
-                      siteResult = results.find(r => r.name === site.name);
-                      if (!siteResult) {
-                        try {
-                          const siteOrigin = new URL(site.url).origin;
-                          siteResult = results.find(r => {
-                            try {
-                              return new URL(r.url).origin === siteOrigin;
-                            } catch {
-                              return false;
-                            }
-                          });
-                        } catch {
-                          // ignore url parse error
-                        }
+                  {flattenedCards.map(
+                    ({ site, index, siteResult, account, cardKey: ck, isActiveAccount }) => {
+                      const groupId = site.group || defaultGroupId;
+                      if (activeSiteGroupFilter !== null && groupId !== activeSiteGroupFilter) {
+                        return null;
                       }
-                    }
 
-                    const groupId = site.group || defaultGroupId;
-                    if (activeSiteGroupFilter !== null && groupId !== activeSiteGroupFilter) {
-                      return null;
-                    }
+                      if (!siteHasMatchingModels(site, siteResult)) {
+                        return null;
+                      }
 
-                    if (!siteHasMatchingModels(site, siteResult)) {
-                      return null;
-                    }
+                      const isExpanded = expandedSites.has(ck);
 
-                    const isExpanded = expandedSites.has(site.name);
-                    const siteAccount = null;
-
-                    return (
-                      <SiteCard
-                        key={site.name}
-                        site={site}
-                        index={index}
-                        siteResult={siteResult}
-                        siteAccount={siteAccount}
-                        isExpanded={isExpanded}
-                        columnWidths={columnWidths}
-                        apiKeys={apiKeys[siteResult?.name || site.name] || []}
-                        userGroups={userGroups[siteResult?.name || site.name] || {}}
-                        modelPricing={modelPricing[site.name]}
-                        isDetecting={detectingSites.has(site.name)}
-                        checkingIn={checkingIn}
-                        dragOverIndex={dragOverIndex}
-                        refreshMessage={refreshMessage}
-                        selectedGroup={selectedGroup[site.name] || null}
-                        modelSearch={modelSearch[site.name] || ''}
-                        globalModelSearch={globalModelSearch}
-                        showTokens={showTokens}
-                        selectedModels={selectedModels}
-                        deletingTokenKey={deletingTokenKey}
-                        autoRefreshEnabled={site.auto_refresh ?? false}
-                        cliCompatibility={getCompatibility(site.name)}
-                        cliConfig={getCliConfig(site.name)}
-                        isCliTesting={isCliTestingSite(site.name)}
-                        onExpand={handleExpandSite}
-                        onDetect={detectSingle}
-                        onEdit={idx => {
-                          setEditingSite(idx);
-                          setShowSiteEditor(true);
-                        }}
-                        onDelete={deleteSite}
-                        onCheckIn={handleCheckIn}
-                        onOpenCheckinPage={openCheckinPage}
-                        onOpenExtraLink={openExtraLink}
-                        onCopyToClipboard={copyToClipboard}
-                        onDragStart={handleDragStart}
-                        onDragEnd={handleDragEnd}
-                        onDragOver={handleDragOver}
-                        onDragLeave={handleDragLeave}
-                        onDrop={handleDrop}
-                        onToggleGroupFilter={toggleGroupFilter}
-                        onModelSearchChange={(siteName, search) =>
-                          setModelSearchStore(siteName, search)
-                        }
-                        onToggleTokenVisibility={toggleTokenVisibility}
-                        onToggleModelSelection={toggleModelSelection}
-                        onCopySelectedModels={copySelectedModels}
-                        onClearSelectedModels={clearSelectedModels}
-                        onOpenCreateTokenDialog={handleOpenCreateTokenDialog}
-                        onDeleteToken={handleDeleteToken}
-                        onOpenCliConfig={() => {
-                          setCliConfigSite(site);
-                          setShowCliConfigDialog(true);
-                        }}
-                        onTestCliCompat={() => {
-                          const siteApiKeys = apiKeys[siteResult?.name || site.name] || [];
-                          testCliCompatSite(site.name, site.url, siteApiKeys);
-                        }}
-                        onApply={(e?: React.MouseEvent<HTMLButtonElement>) => {
-                          setApplyConfigSite(site);
-                          setApplyConfigAnchorEl(e?.currentTarget || null);
-                          setShowApplyConfigPopover(true);
-                        }}
-                        onToggleAutoRefresh={() => {
-                          const latestConfig = useConfigStore.getState().config;
-                          if (!latestConfig) return;
-                          const latestIndex = latestConfig.sites.findIndex(
-                            s => s.name === site.name
-                          );
-                          if (latestIndex === -1) return;
-                          const latestSite = latestConfig.sites[latestIndex];
-
-                          if (latestSite.auto_refresh) {
-                            // 关闭：直接禁用
-                            const newSites = [...latestConfig.sites];
-                            newSites[latestIndex] = { ...latestSite, auto_refresh: false };
-                            const newConfig = { ...latestConfig, sites: newSites };
-                            setConfig(newConfig);
-                            window.electronAPI.saveConfig(newConfig).catch(err => {
-                              Logger.error('保存自动刷新配置失败:', err);
-                            });
-                          } else {
-                            // 开启：弹出对话框让用户确认间隔
-                            setAutoRefreshDialogSite(site);
+                      return (
+                        <SiteCard
+                          key={ck}
+                          site={site}
+                          index={index}
+                          siteResult={siteResult}
+                          siteAccount={null}
+                          isExpanded={isExpanded}
+                          columnWidths={columnWidths}
+                          accountId={account?.id}
+                          accountName={account?.account_name}
+                          isActiveAccount={isActiveAccount}
+                          cardKey={ck}
+                          apiKeys={apiKeys[ck] || apiKeys[site.name] || []}
+                          userGroups={userGroups[ck] || userGroups[site.name] || {}}
+                          modelPricing={modelPricing[ck] || modelPricing[site.name]}
+                          isDetecting={detectingSites.has(ck)}
+                          checkingIn={checkingIn}
+                          dragOverIndex={dragOverIndex}
+                          refreshMessage={refreshMessage}
+                          selectedGroup={selectedGroup[ck] || selectedGroup[site.name] || null}
+                          modelSearch={modelSearch[ck] || modelSearch[site.name] || ''}
+                          globalModelSearch={globalModelSearch}
+                          showTokens={showTokens}
+                          selectedModels={selectedModels}
+                          deletingTokenKey={deletingTokenKey}
+                          autoRefreshEnabled={site.auto_refresh ?? false}
+                          cliCompatibility={getCompatibility(site.name)}
+                          cliConfig={getCliConfig(site.name)}
+                          isCliTesting={isCliTestingSite(site.name)}
+                          onExpand={() => handleExpandSite(ck)}
+                          onDetect={(s, accountId) =>
+                            detectSingle(s, true, undefined, accountId || account?.id)
                           }
-                        }}
-                      />
-                    );
-                  })}
+                          onEdit={idx => {
+                            setEditingSite(idx);
+                            setShowSiteEditor(true);
+                          }}
+                          onDelete={async (_idx: number) => {
+                            if (account) {
+                              // 多账户卡片：删除该账户而非整个站点
+                              const confirmed = await showDialog({
+                                type: 'warning',
+                                title: '删除账户',
+                                message: `确定要删除「${site.name}」的账户「${account.account_name}」吗？\n此操作不可恢复。`,
+                                confirmText: '删除',
+                              });
+                              if (!confirmed) return;
+                              try {
+                                await window.electronAPI.accounts?.delete(account.id);
+                                // 重新加载配置和账户列表
+                                const cfg = await window.electronAPI.loadConfig();
+                                setConfig(cfg);
+                                await loadAllAccounts(cfg?.sites);
+                              } catch (err: any) {
+                                Logger.error('删除账户失败:', err);
+                                toast.error('删除账户失败: ' + err?.message);
+                              }
+                            } else {
+                              // 无账户卡片：删除整个站点
+                              deleteSite(index);
+                            }
+                          }}
+                          onCheckIn={(s, aid) => handleCheckIn(s, aid || account?.id)}
+                          onOpenCheckinPage={openCheckinPage}
+                          onOpenExtraLink={openExtraLink}
+                          onCopyToClipboard={copyToClipboard}
+                          onDragStart={handleDragStart}
+                          onDragEnd={handleDragEnd}
+                          onDragOver={handleDragOver}
+                          onDragLeave={handleDragLeave}
+                          onDrop={handleDrop}
+                          onToggleGroupFilter={toggleGroupFilter}
+                          onModelSearchChange={(siteName, search) =>
+                            setModelSearchStore(siteName, search)
+                          }
+                          onToggleTokenVisibility={toggleTokenVisibility}
+                          onToggleModelSelection={toggleModelSelection}
+                          onCopySelectedModels={copySelectedModels}
+                          onClearSelectedModels={clearSelectedModels}
+                          onOpenCreateTokenDialog={s => handleOpenCreateTokenDialog(s, ck)}
+                          onDeleteToken={(s, t, i) => handleDeleteToken(s, t, i, ck)}
+                          onOpenCliConfig={() => {
+                            setCliConfigSite(site);
+                            setCliConfigCardKey(ck);
+                            setShowCliConfigDialog(true);
+                          }}
+                          onTestCliCompat={() => {
+                            const siteApiKeys = apiKeys[ck] || apiKeys[site.name] || [];
+                            testCliCompatSite(site.name, site.url, siteApiKeys);
+                          }}
+                          onApply={(e?: React.MouseEvent<HTMLButtonElement>) => {
+                            setApplyConfigSite(site);
+                            setApplyConfigCardKey(ck);
+                            setApplyConfigAnchorEl(e?.currentTarget || null);
+                            setShowApplyConfigPopover(true);
+                          }}
+                          onAddAccount={
+                            firstCardKeyPerSite.has(ck)
+                              ? () => {
+                                  setAddAccountSite(site);
+                                }
+                              : undefined
+                          }
+                          onToggleAutoRefresh={() => {
+                            const latestConfig = useConfigStore.getState().config;
+                            if (!latestConfig) return;
+                            const latestIndex = latestConfig.sites.findIndex(
+                              s => s.name === site.name
+                            );
+                            if (latestIndex === -1) return;
+                            const latestSite = latestConfig.sites[latestIndex];
+
+                            if (latestSite.auto_refresh) {
+                              const newSites = [...latestConfig.sites];
+                              newSites[latestIndex] = { ...latestSite, auto_refresh: false };
+                              const newConfig = { ...latestConfig, sites: newSites };
+                              setConfig(newConfig);
+                              window.electronAPI.saveConfig(newConfig).catch(err => {
+                                Logger.error('保存自动刷新配置失败:', err);
+                              });
+                            } else {
+                              setAutoRefreshDialogSite(site);
+                            }
+                          }}
+                        />
+                      );
+                    }
+                  )}
                 </IOSTableBody>
               </>
             )}
@@ -1272,7 +1454,9 @@ export function SitesPage() {
           isOpen={showCliConfigDialog}
           siteName={cliConfigSite.name}
           siteUrl={cliConfigSite.url}
-          apiKeys={apiKeys[cliConfigSite.name] || []}
+          apiKeys={
+            apiKeys[cliConfigCardKey ?? cliConfigSite.name] || apiKeys[cliConfigSite.name] || []
+          }
           siteModels={results.find(r => r.name === cliConfigSite.name)?.models || []}
           currentConfig={getCliConfig(cliConfigSite.name)}
           codexDetail={getCompatibility(cliConfigSite.name)?.codexDetail}
@@ -1280,6 +1464,7 @@ export function SitesPage() {
           onClose={() => {
             setShowCliConfigDialog(false);
             setCliConfigSite(null);
+            setCliConfigCardKey(null);
           }}
           onSave={async (newConfig: CliConfig) => {
             setCliConfig(cliConfigSite.name, newConfig);
@@ -1291,6 +1476,7 @@ export function SitesPage() {
             }
             setShowCliConfigDialog(false);
             setCliConfigSite(null);
+            setCliConfigCardKey(null);
           }}
         />
       )}
@@ -1304,11 +1490,16 @@ export function SitesPage() {
           cliCompatibility={getCompatibility(applyConfigSite.name)}
           siteUrl={applyConfigSite.url}
           siteName={applyConfigSite.name}
-          apiKeys={apiKeys[applyConfigSite.name] || []}
+          apiKeys={
+            apiKeys[applyConfigCardKey ?? applyConfigSite.name] ||
+            apiKeys[applyConfigSite.name] ||
+            []
+          }
           onClose={() => {
             setShowApplyConfigPopover(false);
             setApplyConfigAnchorEl(null);
             setApplyConfigSite(null);
+            setApplyConfigCardKey(null);
           }}
         />
       )}
@@ -1345,6 +1536,36 @@ export function SitesPage() {
         }}
         onClose={() => setShowBackupDialog(false)}
       />
+
+      {/* 添加账户对话框 */}
+      {addAccountSite?.id && (
+        <AddAccountDialog
+          isOpen={!!addAccountSite}
+          siteId={addAccountSite.id}
+          siteName={addAccountSite.name}
+          siteUrl={addAccountSite.url}
+          onSuccess={async () => {
+            const cfg = await window.electronAPI.loadConfig();
+            setConfig(cfg);
+            await loadAllAccounts(cfg?.sites);
+            if (cfg) {
+              const refreshedSite = cfg.sites.find(s => s.url === addAccountSite.url);
+              if (refreshedSite?.id) {
+                // 只刷新新添加的账户（列表末尾），不影响已有账户
+                const listRes = await window.electronAPI.accounts?.list(refreshedSite.id);
+                const accounts = listRes?.success ? listRes.data : undefined;
+                if (accounts && accounts.length > 0) {
+                  const newAccount = accounts[accounts.length - 1];
+                  detectSingle(refreshedSite, false, undefined, newAccount.id);
+                } else {
+                  detectSingle(refreshedSite);
+                }
+              }
+            }
+          }}
+          onClose={() => setAddAccountSite(null)}
+        />
+      )}
 
       {/* 自动刷新设置对话框 */}
       <AutoRefreshDialog

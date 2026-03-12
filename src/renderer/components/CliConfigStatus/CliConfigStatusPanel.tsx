@@ -9,10 +9,11 @@
  * - PROJECT_INDEX.md
  */
 
-import { RefreshCw, Loader2, Info, Eraser } from 'lucide-react';
+import { Loader2, Info } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { CliConfigStatus } from './CliConfigStatus';
 import { ResetCliConfigDialog } from '../dialogs/ResetCliConfigDialog';
+import { EditCliConfigDialog } from '../dialogs/EditCliConfigDialog';
 import { useConfigDetection } from '../../hooks/useConfigDetection';
 import { useCustomCliConfigStore } from '../../store/customCliConfigStore';
 import type { AuthType, CliType, CliDetectionResult } from '../../../shared/types/config-detection';
@@ -26,6 +27,8 @@ export interface CliConfigStatusPanelProps {
   showDetails?: boolean;
   /** 是否显示重置按钮 */
   showReset?: boolean;
+  /** 是否显示编辑按钮 */
+  showEdit?: boolean;
   /** 自定义类名 */
   className?: string;
 }
@@ -91,11 +94,13 @@ export function CliConfigStatusPanel({
   showRefresh = true,
   showDetails = false,
   showReset = false,
+  showEdit = false,
   className = '',
 }: CliConfigStatusPanelProps) {
   const { detection, isLoading, refresh } = useConfigDetection();
   const [showDetailPanel, setShowDetailPanel] = useState(false);
   const [showResetDialog, setShowResetDialog] = useState(false);
+  const [showEditDialog, setShowEditDialog] = useState(false);
 
   // 加载自定义CLI配置，以便CliConfigStatus能匹配配置名称
   const { loadConfigs } = useCustomCliConfigStore();
@@ -133,10 +138,10 @@ export function CliConfigStatusPanel({
         {showRefresh && (
           <button
             onClick={handleRefresh}
-            className="p-1 rounded hover:bg-light-bg dark:hover:bg-dark-bg transition-colors"
+            className="px-1.5 py-0.5 rounded text-[11px] text-light-text-secondary dark:text-dark-text-secondary hover:text-primary-500 hover:bg-light-bg dark:hover:bg-dark-bg transition-colors"
             title="检测 CLI 配置"
           >
-            <RefreshCw className="w-3.5 h-3.5 text-light-text-secondary dark:text-dark-text-secondary hover:text-primary-500" />
+            刷新
           </button>
         )}
       </div>
@@ -176,12 +181,21 @@ export function CliConfigStatusPanel({
           <button
             onClick={handleRefresh}
             disabled={isLoading}
-            className="p-1 rounded hover:bg-light-bg dark:hover:bg-dark-bg transition-colors disabled:opacity-50"
+            className="px-1.5 py-0.5 rounded text-[11px] text-light-text-secondary dark:text-dark-text-secondary hover:text-primary-500 hover:bg-light-bg dark:hover:bg-dark-bg transition-colors disabled:opacity-50"
             title="刷新 CLI 配置检测"
           >
-            <RefreshCw
-              className={`w-3.5 h-3.5 text-light-text-secondary dark:text-dark-text-secondary hover:text-primary-500 ${isLoading ? 'animate-spin' : ''}`}
-            />
+            {isLoading ? <Loader2 className="w-3 h-3 animate-spin inline" /> : '刷新'}
+          </button>
+        )}
+
+        {/* 编辑按钮 */}
+        {showEdit && (
+          <button
+            onClick={() => setShowEditDialog(true)}
+            className="px-1.5 py-0.5 rounded text-[11px] text-light-text-secondary dark:text-dark-text-secondary hover:text-[var(--ios-blue)] hover:bg-light-bg dark:hover:bg-dark-bg transition-colors"
+            title="编辑 CLI 配置文件"
+          >
+            编辑
           </button>
         )}
 
@@ -189,10 +203,10 @@ export function CliConfigStatusPanel({
         {showReset && (
           <button
             onClick={() => setShowResetDialog(true)}
-            className="p-1 rounded hover:bg-light-bg dark:hover:bg-dark-bg transition-colors"
+            className="px-1.5 py-0.5 rounded text-[11px] text-light-text-secondary dark:text-dark-text-secondary hover:text-[var(--ios-red)] hover:bg-light-bg dark:hover:bg-dark-bg transition-colors"
             title="重置 CLI 配置"
           >
-            <Eraser className="w-3.5 h-3.5 text-light-text-secondary dark:text-dark-text-secondary hover:text-[var(--ios-red)]" />
+            重置
           </button>
         )}
       </div>
@@ -215,6 +229,15 @@ export function CliConfigStatusPanel({
           open={showResetDialog}
           onClose={() => setShowResetDialog(false)}
           onResetComplete={refresh}
+        />
+      )}
+
+      {/* 编辑 CLI 配置对话框 */}
+      {showEdit && (
+        <EditCliConfigDialog
+          open={showEditDialog}
+          onClose={() => setShowEditDialog(false)}
+          onSaveComplete={refresh}
         />
       )}
     </div>

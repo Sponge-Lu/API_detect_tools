@@ -1,7 +1,7 @@
 /**
  * 输入: HttpClient (HTTP 请求), Logger (日志记录)
  * 输出: CliCompatibilityResult, CodexTestDetail, GeminiTestDetail, CliCompatService, 请求构建函数
- * 定位: 服务层 - CLI 工具兼容性测试服务，支持 Claude Code、Codex（Responses API）、Gemini CLI（双端点）
+ * 定位: 服务层 - CLI 工具兼容性测试服务，使用与真实 CLI 一致的流式请求格式（User-Agent/stream/beta headers）
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -14,7 +14,7 @@
  * 用于检测站点是否支持 Claude Code、Codex、Gemini CLI 等 CLI 工具
  */
 
-import { httpPost } from './utils/http-client';
+import { httpPostStream } from './utils/http-client';
 import { Logger } from './utils/logger';
 
 const log = Logger.scope('CliCompatService');
@@ -137,12 +137,52 @@ export function findModelByType(
 }
 
 /**
+ * 从 SSE 首包中提取 JSON 数据，用于复用 isApiSupported 的错误判定逻辑
+ */
+export function parseStreamResponseData(contentType?: string, firstChunk?: string): any {
+  if (!firstChunk?.trim()) return null;
+
+  let payload = firstChunk.trim();
+  const ct = contentType?.toLowerCase() || '';
+
+  // SSE 格式：提取第一个 data: 行的 JSON 内容
+  if (ct.includes('text/event-stream') || payload.includes('data: ')) {
+    payload =
+      payload
+        .split(/\r?\n/)
+        .find(line => line.startsWith('data: '))
+        ?.slice('data: '.length)
+        .trim() || '';
+  }
+
+  if (!payload || payload === '[DONE]') return null;
+
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 检查响应是否表示 API 支持
  * @param status HTTP 状态码
- * @param data 响应数据
+ * @param data 响应数据（非流式）或从 SSE 首包解析的 JSON
+ * @param contentType 响应 Content-Type（流式探测时传入）
+ * @param firstChunk 流式响应的首个 chunk（流式探测时传入）
  * @returns true 表示 API 支持，false 表示不支持
  */
-export function isApiSupported(status: number, data: any): boolean {
+export function isApiSupported(
+  status: number,
+  data: any,
+  contentType?: string,
+  firstChunk?: string
+): boolean {
+  // 流式响应快速判定：200 + SSE 格式 = 支持
+  if (status === 200) {
+    if (contentType?.toLowerCase().includes('text/event-stream')) return true;
+    if (firstChunk?.includes('data: {')) return true;
+  }
   // 2xx 状态码通常表示成功
   if (status >= 200 && status < 300) {
     // 检查响应体是否包含错误
@@ -179,21 +219,9 @@ export function isApiSupported(status: number, data: any): boolean {
     return true;
   }
 
-  // 500 内部服务器错误 - 检查是否是中转站的内容验证错误
-  // 这种错误说明请求格式正确，只是模型响应有问题
+  // 500 内部服务器错误 - 中转站返回 JSON 表示端点存在，上游失败
   if (status === 500) {
-    // 检查是否是内容验证错误（中转站特有的错误）
-    const errorMessage = data?.error?.message || data?.message || '';
-    const errorCode = data?.error?.code || data?.code || '';
-
-    // 这些错误表示 API 格式正确，只是响应内容有问题
-    const contentValidationErrors = [
-      'content_validation_error',
-      'EMPTY_RESPONSE',
-      'Response content validation failed',
-    ];
-
-    if (contentValidationErrors.some(e => errorMessage.includes(e) || errorCode.includes(e))) {
+    if (contentType?.toLowerCase().includes('application/json')) {
       return true;
     }
   }
@@ -275,6 +303,7 @@ export function compareVersions(a: number[], b: number[]): number {
 /**
  * 构建 Claude Code 测试请求
  * 使用 /v1/messages 端点，x-api-key 认证，tools 使用 input_schema 格式
+ * 请求格式与真实 Claude Code CLI 一致（stream + User-Agent + anthropic-beta）
  */
 export function buildClaudeCodeRequest(
   baseUrl: string,
@@ -289,11 +318,14 @@ export function buildClaudeCodeRequest(
     headers: {
       'Content-Type': 'application/json',
       'x-api-key': apiKey,
+      'User-Agent': 'claude-code/1.0.6',
       'anthropic-version': '2023-06-01',
+      'anthropic-beta': 'output-128k-2025-02-19',
     },
     body: {
       model,
       max_tokens: 1,
+      stream: true,
       messages: [{ role: 'user', content: '1+1=?' }],
       tools: [
         {
@@ -314,7 +346,7 @@ export function buildClaudeCodeRequest(
 
 /**
  * 构建 Codex Responses API 测试请求
- * 使用 /v1/responses 端点，Bearer 认证
+ * 使用 /v1/responses 端点，Bearer 认证，与真实 Codex CLI 一致
  */
 export function buildCodexResponsesRequest(
   baseUrl: string,
@@ -329,30 +361,34 @@ export function buildCodexResponsesRequest(
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
+      'User-Agent': 'codex-cli/0.1.2504092',
     },
     body: {
       model,
       input: '1+1=?',
+      stream: true,
     },
   };
 }
 
 /**
  * 构建 Gemini CLI 测试请求
- * 使用 /v1beta/models/{model}:generateContent 端点，functionDeclarations 格式
+ * 使用 /v1beta/models/{model}:streamGenerateContent?alt=sse 端点（与真实 Gemini CLI 一致）
  */
 export function buildGeminiCliRequest(
   baseUrl: string,
   apiKey: string,
   model: string
 ): RequestFormat {
-  const url = `${baseUrl.replace(/\/$/, '')}/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const url = `${baseUrl.replace(/\/$/, '')}/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
 
   return {
     url,
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'User-Agent': 'GeminiCLI/0.1.0 google-api-nodejs-client/9.15.1',
+      'x-goog-api-client': 'gl-node/22.0.0',
     },
     body: {
       contents: [{ role: 'user', parts: [{ text: '1+1=?' }] }],
@@ -382,7 +418,7 @@ export function buildGeminiCliRequest(
 
 /**
  * 构建 Gemini CLI 测试请求（OpenAI 兼容格式，用于中转站）
- * 使用 /v1/chat/completions 端点
+ * 使用 /v1/chat/completions 端点，与真实 Gemini CLI proxy 模式一致
  */
 export function buildGeminiCliProxyRequest(
   baseUrl: string,
@@ -397,10 +433,12 @@ export function buildGeminiCliProxyRequest(
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
+      'User-Agent': 'GeminiCLI/0.1.0 google-api-nodejs-client/9.15.1',
     },
     body: {
       model,
       max_tokens: 1,
+      stream: true,
       messages: [{ role: 'user', content: '1+1=?' }],
     },
   };
@@ -418,26 +456,37 @@ export class CliCompatService {
     this.timeout = timeout;
   }
 
+  /** 统一的流式兼容性探测：发送 stream 请求 → 读首包 → abort → 判定 */
+  private async runStreamTest(label: string, request: RequestFormat): Promise<boolean> {
+    log.info(`Testing ${label} compatibility: ${request.url}`);
+
+    const response = await httpPostStream(request.url, request.body, {
+      headers: request.headers,
+      timeout: this.timeout,
+    });
+
+    const data = parseStreamResponseData(response.contentType, response.firstChunk);
+    const supported = isApiSupported(
+      response.status,
+      data,
+      response.contentType,
+      response.firstChunk
+    );
+
+    log.info(
+      `${label} test result: status=${response.status}, contentType=${response.contentType}, supported=${supported}`
+    );
+    return supported;
+  }
+
   /**
    * 测试 Claude Code 兼容性
    */
   async testClaudeCode(url: string, apiKey: string, model: string): Promise<boolean> {
     try {
-      const request = buildClaudeCodeRequest(url, apiKey, model);
-      log.info(`Testing Claude Code compatibility: ${request.url}`);
-
-      const response = await httpPost(request.url, request.body, {
-        headers: request.headers,
-        timeout: this.timeout,
-      });
-
-      // 使用改进的响应验证
-      const supported = isApiSupported(response.status, response.data);
-      log.info(`Claude Code test result: status=${response.status}, supported=${supported}`);
-      return supported;
+      return await this.runStreamTest('Claude Code', buildClaudeCodeRequest(url, apiKey, model));
     } catch (error: any) {
       log.warn(`Claude Code test failed: ${error.message}`);
-      // 网络错误等不代表不支持，返回 null 更合适，但为了兼容性返回 false
       return false;
     }
   }
@@ -447,17 +496,10 @@ export class CliCompatService {
    */
   async testCodexResponses(url: string, apiKey: string, model: string): Promise<boolean> {
     try {
-      const request = buildCodexResponsesRequest(url, apiKey, model);
-      log.info(`Testing Codex (Responses) compatibility: ${request.url}`);
-
-      const response = await httpPost(request.url, request.body, {
-        headers: request.headers,
-        timeout: this.timeout,
-      });
-
-      const supported = isApiSupported(response.status, response.data);
-      log.info(`Codex (Responses) test result: status=${response.status}, supported=${supported}`);
-      return supported;
+      return await this.runStreamTest(
+        'Codex (Responses)',
+        buildCodexResponsesRequest(url, apiKey, model)
+      );
     } catch (error: any) {
       log.warn(`Codex (Responses) test failed: ${error.message}`);
       return false;
@@ -497,19 +539,10 @@ export class CliCompatService {
    */
   async testGeminiNative(url: string, apiKey: string, model: string): Promise<boolean> {
     try {
-      const request = buildGeminiCliRequest(url, apiKey, model);
-      log.info(`Testing Gemini CLI (Native) compatibility: ${request.url}`);
-
-      const response = await httpPost(request.url, request.body, {
-        headers: request.headers,
-        timeout: this.timeout,
-      });
-
-      const supported = isApiSupported(response.status, response.data);
-      log.info(
-        `Gemini CLI (Native) test result: status=${response.status}, supported=${supported}`
+      return await this.runStreamTest(
+        'Gemini CLI (Native)',
+        buildGeminiCliRequest(url, apiKey, model)
       );
-      return supported;
     } catch (error: any) {
       log.warn(`Gemini CLI (Native) test failed: ${error.message}`);
       return false;
@@ -521,17 +554,10 @@ export class CliCompatService {
    */
   async testGeminiProxy(url: string, apiKey: string, model: string): Promise<boolean> {
     try {
-      const request = buildGeminiCliProxyRequest(url, apiKey, model);
-      log.info(`Testing Gemini CLI (Proxy) compatibility: ${request.url}`);
-
-      const response = await httpPost(request.url, request.body, {
-        headers: request.headers,
-        timeout: this.timeout,
-      });
-
-      const supported = isApiSupported(response.status, response.data);
-      log.info(`Gemini CLI (Proxy) test result: status=${response.status}, supported=${supported}`);
-      return supported;
+      return await this.runStreamTest(
+        'Gemini CLI (Proxy)',
+        buildGeminiCliProxyRequest(url, apiKey, model)
+      );
     } catch (error: any) {
       log.warn(`Gemini CLI (Proxy) test failed: ${error.message}`);
       return false;

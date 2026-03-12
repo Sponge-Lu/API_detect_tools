@@ -1,7 +1,9 @@
 /**
  * 输入: 无 (纯类型定义)
- * 输出: TypeScript 类型和接口 (Site, SiteGroup, SiteStatus, DetectionResult, CheckinStats, LdcPaymentInfo 等)
+ * 输出: TypeScript 类型和接口 (Site, SiteGroup, AccountCredential, DetectionResult, CheckinStats, LdcPaymentInfo 等)
  * 定位: 类型定义层 - 定义主进程和渲染进程共享的数据模型
+ *
+ * 多账户支持: AccountCredential 存储多账户凭证，UnifiedSite.active_account_id 指向当前激活账户
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -125,6 +127,75 @@ export const DEFAULT_CLI_CONFIG_DATA: CliConfigData = {
   geminiCli: { apiKeyId: null, model: null, enabled: true },
 };
 
+// ============= 多账户类型 =============
+
+/** 账户认证来源 */
+export type AccountAuthSource = 'main_profile' | 'isolated_profile' | 'manual';
+
+/** 账户状态 */
+export type AccountStatus = 'active' | 'expired' | 'revoked';
+
+/**
+ * 账户凭证 - 存储在 config.json 的多账户数据
+ * 与 SiteAccount（TokenService 运行时 DTO）不同，这是持久化存储格式
+ */
+export interface AccountCredential {
+  id: string;
+  site_id: string; // 关联 UnifiedSite.id
+  account_name: string; // UI 显示名
+  user_id: string;
+  username?: string;
+  access_token: string;
+  auth_source: AccountAuthSource;
+  status: AccountStatus;
+  browser_profile_path?: string; // isolated profile 持久化路径
+  cached_data?: DetectionCacheData; // 账户级检测缓存
+  metadata?: {
+    oauth_provider?: 'github' | 'linuxdo';
+    supports_checkin?: boolean;
+  };
+  created_at: number;
+  updated_at: number;
+}
+
+/** 生成唯一账户ID */
+export function generateAccountId(): string {
+  return `acct_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+}
+
+// ============= 检测缓存数据 =============
+
+/** 检测结果缓存（账户级或站点级） */
+export interface DetectionCacheData {
+  models?: string[];
+  balance?: number;
+  today_usage?: number;
+  today_prompt_tokens?: number;
+  today_completion_tokens?: number;
+  today_requests?: number;
+  api_keys?: ApiKeyInfo[];
+  user_groups?: Record<string, UserGroupInfo>;
+  model_pricing?: ModelPricingData;
+  last_refresh?: number;
+  can_check_in?: boolean;
+  cli_compatibility?: CliCompatibilityData;
+  ldc_payment_supported?: boolean;
+  ldc_exchange_rate?: string;
+  ldc_payment_type?: string;
+  checkin_stats?: {
+    today_quota?: number;
+    checkin_count?: number;
+    total_checkins?: number;
+    site_type?: 'veloera' | 'newapi';
+  };
+  status?: string;
+  error?: string;
+  endpoint_hints?: {
+    models_endpoint?: string;
+    balance_endpoint?: string;
+  };
+}
+
 // ============= 统一站点类型 =============
 
 /**
@@ -141,7 +212,10 @@ export interface UnifiedSite {
   enabled: boolean;
   group: string; // 分组ID，默认 "default"
 
-  // === 认证信息（原 token-storage） ===
+  // === 多账户 ===
+  active_account_id?: string; // 当前激活的账户 ID
+
+  // === 认证信息（legacy projection，始终同步为 active account 的值） ===
   access_token?: string; // 系统访问令牌
   user_id?: string; // 用户ID
 
@@ -158,39 +232,8 @@ export interface UnifiedSite {
   // === CLI 配置（保存在站点配置中，备份时不会丢失） ===
   cli_config?: CliConfigData;
 
-  // === 检测结果缓存 ===
-  cached_data?: {
-    models: string[];
-    balance?: number;
-    today_usage?: number;
-    today_prompt_tokens?: number;
-    today_completion_tokens?: number;
-    today_requests?: number;
-    api_keys?: ApiKeyInfo[];
-    user_groups?: Record<string, UserGroupInfo>;
-    model_pricing?: ModelPricingData;
-    last_refresh: number;
-    can_check_in?: boolean;
-    cli_compatibility?: CliCompatibilityData;
-    // LDC 支付信息
-    ldc_payment_supported?: boolean; // 是否支持 LDC 支付
-    ldc_exchange_rate?: string; // 兑换比例（LDC:站点余额）
-    // 签到统计数据 (New API)
-    checkin_stats?: {
-      today_quota?: number; // 今日签到金额 (内部单位)
-      checkin_count?: number; // 当月签到次数
-      total_checkins?: number; // 累计签到次数
-      site_type?: 'veloera' | 'newapi';
-    };
-    // 检测状态持久化
-    status?: string; // 检测状态：'成功' | '失败'
-    error?: string; // 错误信息（仅失败时有值）
-    // 端点缓存（记住站点类型对应的成功端点）
-    endpoint_hints?: {
-      models_endpoint?: string;
-      balance_endpoint?: string;
-    };
-  };
+  // === 检测结果缓存（无账户站点的 legacy fallback） ===
+  cached_data?: DetectionCacheData;
 
   // === 元数据 ===
   created_at?: number;
@@ -204,6 +247,12 @@ export interface SiteGroup {
   name: string;
 }
 
+/** 内建分组 ID */
+export const BUILTIN_GROUP_IDS = {
+  DEFAULT: 'default',
+  UNAVAILABLE: 'unavailable',
+} as const;
+
 /** 应用设置 */
 export interface Settings {
   timeout: number;
@@ -212,6 +261,10 @@ export interface Settings {
   show_disabled: boolean;
   browser_path?: string;
   webdav?: WebDAVConfig;
+  browser_profile?: {
+    main_profile_path?: string; // 用户主 Chrome Profile 路径（自动检测或手动配置）
+    isolated_root_dir?: string; // 隔离 Profile 存储根目录
+  };
 }
 
 // ============= WebDAV 类型 =============
@@ -269,6 +322,7 @@ export function fillWebDAVConfigDefaults(partial: Partial<WebDAVConfig>): WebDAV
 export interface UnifiedConfig {
   version: string;
   sites: UnifiedSite[];
+  accounts: AccountCredential[]; // 多账户凭证存储
   siteGroups: SiteGroup[];
   settings: Settings;
   last_updated: number;
@@ -280,6 +334,7 @@ export interface UnifiedConfig {
  * 站点配置 - 前端使用的格式
  */
 export interface SiteConfig {
+  id?: string; // 站点 ID（从统一配置传入，多账户操作需要）
   name: string;
   url: string;
   api_key: string;
@@ -351,11 +406,13 @@ export interface DetectionResult {
   apiKeys?: ApiKeyInfo[];
   userGroups?: Record<string, UserGroupInfo>;
   modelPricing?: ModelPricingData;
-  lastRefresh?: number; // 最后刷新时间
+  lastRefresh?: number;
+  // 多账户: 标识此结果属于哪个账户（per-account 检测）
+  accountId?: string;
   // LDC 支付信息
-  ldcPaymentSupported?: boolean; // 是否支持 LDC 支付
-  ldcExchangeRate?: string; // 兑换比例（LDC:站点余额）
-  ldcPaymentType?: string; // 支付方式类型，如 "epay"
+  ldcPaymentSupported?: boolean;
+  ldcExchangeRate?: string;
+  ldcPaymentType?: string;
   // 签到统计数据 (New API 类型站点)
   checkinStats?: CheckinStats;
 }

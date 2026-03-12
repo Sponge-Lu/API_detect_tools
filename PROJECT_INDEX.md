@@ -63,6 +63,7 @@ graph TD
     
     subgraph MainProcess["主进程 (Backend)"]
         ChromeMgr["ChromeManager<br/>(浏览器管理)"]
+        ProfileMgr["BrowserProfileManager<br/>(Profile 槽位管理)"]
         TokenSvc["TokenService<br/>(Token 认证)"]
         ApiSvc["ApiService<br/>(API 请求)"]
         CliCompat["CliCompatService<br/>(CLI 兼容性)"]
@@ -88,6 +89,7 @@ graph TD
     end
     
     Main --> ChromeMgr
+    Main --> ProfileMgr
     Main --> TokenSvc
     Main --> ApiSvc
     Main --> ConfigMgr
@@ -101,6 +103,7 @@ graph TD
     WebDAVMgr --> ConfigMgr
     
     Handlers --> ApiSvc
+    Handlers --> ProfileMgr
     Handlers --> TokenSvc
     Handlers --> BackupMgr
     Handlers --> WebDAVMgr
@@ -136,10 +139,11 @@ graph TD
 | 模块 | 职责 | 关键方法 |
 |------|------|--------|
 | **main.ts** | 应用入口、窗口管理 | `createWindow()`, `app.whenReady()` |
-| **ChromeManager** | 浏览器启动、自动登录、localStorage 读取（含签到状态） | `launch()`, `login()`, `cleanup()`, `getLocalStorageData()` |
+| **ChromeManager** | 多槽位浏览器池管理（slot 0=主浏览器, slot N=隔离浏览器N），自动登录、localStorage 读取（含签到状态） | `createPage({slot})`, `cleanup()`, `forceCleanup()`, `getLocalStorageData()` |
+| **BrowserProfileManager** | 主/隔离浏览器 Profile 管理，多账户按槽位共享隔离 Profile，首次创建时仅复制 Extensions 并清理登录态 | `detectMainChromeProfile()`, `prepareIsolatedProfile()`, `deleteIsolatedProfile()` |
 | **TokenService** | Token 获取、存储、刷新、签到功能（兼容 Veloera/New API） | `getToken()`, `saveToken()`, `refreshToken()`, `checkIn()` |
 | **ApiService** | API 请求、错误处理、LDC 支付检测 | `request()`, `checkBalance()`, `checkStatus()`, `detectLdcPayment()` |
-| **CliCompatService** | CLI 兼容性测试（支持双 API/双端点测试） | `testCompatibility()`, `testCodexWithDetail()`, `testGeminiWithDetail()` |
+| **CliCompatService** | CLI 兼容性测试（流式首包探测，与真实 CLI 请求格式一致；500+JSON 判定中转站上游失败） | `testSite()`, `testCodexWithDetail()`, `testGeminiWithDetail()` |
 | **CreditService** | Linux Do Credit 积分检测、LDC 充值（基于 credit.linux.do 会话） | `fetchCreditData()`, `launchLogin()`, `logout()`, `initiateRecharge()` |
 | **UpdateService** | 更新检测、应用内下载、安装触发 | `checkForUpdates()`, `downloadUpdate()`, `cancelDownload()`, `installUpdate()` |
 | **BackupManager** | 本地备份、恢复 | `backup()`, `restore()`, `export()` |
@@ -199,6 +203,17 @@ graph TD
 - `custom-cli-config:load` - 加载自定义 CLI 配置
 - `custom-cli-config:save` - 保存自定义 CLI 配置
 - `custom-cli-config:fetch-models` - 拉取模型列表
+- `accounts:list` - 获取站点账户列表
+- `accounts:get-active` - 获取活跃账户
+- `accounts:set-active` - 切换活跃账户
+- `accounts:add` - 添加账户
+- `accounts:update` - 更新账户信息
+- `accounts:delete` - 删除账户
+- `browser-profile:detect` - 检测主 Chrome Profile 路径
+- `browser-profile:is-chrome-running` - 检测 Chrome 是否正在运行
+- `browser-profile:login-main` - 使用主浏览器登录
+- `browser-profile:login-isolated` - 使用隔离浏览器登录
+- `browser-profile:delete-profile` - 删除隔离 Profile
 
 ---
 
@@ -339,6 +354,6 @@ npm run dist         # 打包为 EXE 安装程序
 
 ---
 
-**版本**: 2.1.23
-**更新日期**: 2026-02-27
+**版本**: 2.1.24
+**更新日期**: 2026-03-12
 **维护者**: API Hub Team

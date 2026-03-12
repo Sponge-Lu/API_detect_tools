@@ -23,6 +23,7 @@ import {
   Fuel,
   Timer,
   TimerOff,
+  Plus,
 } from 'lucide-react';
 import type { SiteCardActionsProps } from './types';
 
@@ -96,6 +97,7 @@ export function SiteCardActions({
   onCheckIn,
   onOpenExtraLink,
   onToggleAutoRefresh,
+  onAddAccount,
 }: SiteCardActionsProps) {
   return (
     <div className="flex items-center gap-1 ml-2 flex-shrink-0">
@@ -228,6 +230,21 @@ export function SiteCardActions({
       >
         <Trash2 className="w-3.5 h-3.5" strokeWidth={2} />
       </button>
+
+      {/* 添加账户 - 仅默认账户卡片显示 */}
+      {onAddAccount && (
+        <button
+          onClick={e => {
+            e.stopPropagation();
+            onAddAccount();
+          }}
+          className="p-1 rounded-md text-[var(--ios-blue)] hover:bg-[var(--ios-blue)]/15 transition-all"
+          title="添加账户"
+          aria-label="添加账户"
+        >
+          <Plus className="w-3.5 h-3.5" strokeWidth={2} />
+        </button>
+      )}
     </div>
   );
 }

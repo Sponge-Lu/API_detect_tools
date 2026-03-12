@@ -25,6 +25,13 @@ export interface SiteCardProps {
   isExpanded: boolean;
   columnWidths: number[];
 
+  // 多账户: 卡片所属账户信息
+  accountId?: string;
+  accountName?: string;
+  isActiveAccount?: boolean;
+  /** 复合 key（site.name::accountId），用于 expandedSites / detectingSites 等 */
+  cardKey?: string;
+
   // 扩展数据
   apiKeys: any[];
   userGroups: Record<string, { desc: string; ratio: number }>;
@@ -54,10 +61,10 @@ export interface SiteCardProps {
 
   // 回调函数
   onExpand: (name: string) => void;
-  onDetect: (site: SiteConfig) => void;
+  onDetect: (site: SiteConfig, accountId?: string) => void;
   onEdit: (index: number) => void;
   onDelete: (index: number) => void;
-  onCheckIn: (site: SiteConfig) => void;
+  onCheckIn: (site: SiteConfig, accountId?: string) => void;
   onOpenCheckinPage: (site: SiteConfig) => void;
   onOpenExtraLink: (link: string) => void;
   onCopyToClipboard: (text: string, label: string) => void;
@@ -65,6 +72,8 @@ export interface SiteCardProps {
   onOpenCliConfig?: () => void;
   onTestCliCompat?: () => void;
   onApply?: (e?: React.MouseEvent<HTMLButtonElement>) => void;
+  // 多账户回调
+  onAddAccount?: () => void;
 
   // 拖拽回调
   onDragStart: (e: React.DragEvent, index: number) => void;
@@ -98,6 +107,8 @@ export interface SiteCardHeaderProps {
   rpm: number;
   tpm: number;
   modelCount: number;
+  /** 账户名（多账户时显示在站点名下方） */
+  accountName?: string;
   onOpenCheckinPage: (site: SiteConfig) => void;
   // CLI 兼容性相关
   cliCompatibility?: CliCompatibilityResult;
@@ -129,7 +140,8 @@ export interface SiteCardActionsProps {
   onDetect: (site: SiteConfig) => void;
   onEdit: (index: number) => void;
   onDelete: (index: number) => void;
-  onCheckIn: (site: SiteConfig) => void;
+  onCheckIn: (site: SiteConfig, accountId?: string) => void;
   onOpenExtraLink: (link: string) => void;
   onToggleAutoRefresh?: () => void;
+  onAddAccount?: () => void;
 }

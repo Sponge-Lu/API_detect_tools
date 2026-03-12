@@ -18,6 +18,7 @@
  */
 
 import React, { useEffect, useRef, useCallback, useId } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 export interface IOSModalProps {
@@ -166,11 +167,12 @@ export function IOSModal({
 
   if (!shouldRender) return null;
 
-  return (
+  return createPortal(
     <div
       className={`
         fixed inset-0 z-[200]
         flex items-center justify-center
+        p-4 overflow-y-auto
         transition-opacity duration-[var(--duration-normal)]
         [transition-timing-function:var(--ease-ios)]
         [will-change:opacity]
@@ -210,7 +212,7 @@ export function IOSModal({
         tabIndex={-1}
         className={`
           relative
-          w-full mx-4
+          w-full mx-4 my-auto
           ${sizeStyles[size]}
           bg-[var(--ios-bg-secondary)]
           backdrop-blur-[20px]
@@ -310,6 +312,7 @@ export function IOSModal({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

@@ -31,6 +31,7 @@
 | **backup-manager.ts** | 本地备份管理 | `backupManager` 实例 |
 | **webdav-manager.ts** | WebDAV 云端备份 | `WebDAVManager` 类 |
 | **unified-config-manager.ts** | 统一配置管理 | `unifiedConfigManager` 实例 |
+| **browser-profile-manager.ts** | 主/隔离浏览器 Profile 管理，多账户共享槽位 | `BrowserProfileManager` 类 |
 | **update-service.ts** | 应用更新服务 | `UpdateService` 类 |
 | **config-detection-service.ts** | CLI 配置检测服务 | `ConfigDetectionService` 类 |
 | **close-behavior-manager.ts** | 窗口关闭行为管理 | `CloseBehaviorManager` 类 |
@@ -99,6 +100,11 @@ main.ts: app.whenReady()
 - `detectLdcPayment(site, timeout, sharedPage)` - 检测 LDC 支付支持
 - `saveCachedDisplayData(siteUrl, result)` - 保存检测结果到缓存（含状态和错误信息）
 - `saveLastDetectionStatus(siteUrl, status, error)` - 保存失败检测状态到缓存
+- `refreshBalanceOnly(site, timeout, checkinStats, page, accountId)` - 轻量级余额刷新（支持账户级缓存）
+
+**DetectionRequestContext（多账户上下文）**:
+- `accountId` - 账户 ID，用于账户级缓存读写
+- `browserSlot` - 浏览器槽位索引（0=主浏览器，N=隔离浏览器），由账户位置决定
 
 **依赖**: TokenService (获取 Token)
 
@@ -135,14 +141,22 @@ main.ts: app.whenReady()
 
 ### ChromeManager
 
-**职责**: 启动 Chrome 浏览器，自动登录获取 Token，读取 localStorage 数据
+**职责**: 多槽位浏览器池管理，自动登录获取 Token，读取 localStorage 数据
+
+**多槽位架构**:
+- slot 0 = 主浏览器 (`api-detector-chrome`)，所有站点的第 1 个账号共用
+- slot N = 隔离浏览器 N (`api-detector-chrome-isolated-N`)，所有站点的第 N+1 个账号共用
+- 每个槽位独立管理生命周期：browser / chromeProcess / debugPort / refCount / cleanupTimer
+- 向后兼容：旧代码通过 getter/setter 代理透明访问 slot 0
 
 **关键方法**:
 - `launch()` - 启动浏览器
 - `login(site)` - 自动登录
-- `cleanup()` - 清理资源
+- `cleanup()` - 清理所有槽位资源
+- `forceCleanup()` - 强制清理所有槽位（重置引用计数）
 - `getLocalStorageData(url, waitForLogin, maxWaitTime, onStatus)` - 获取 localStorage 数据（含签到状态）
-- `createPage(url)` - 创建页面（支持同域名页面复用）
+- `createPage(url, { slot })` - 创建页面（slot 0 走原有逻辑，slot N 走隔离浏览器）
+- `createPageForSlot(url, slotIndex)` - 为指定隔离槽位创建页面
 - `findExistingPageForUrl(url)` - 查找可复用的同域名页面
 
 **并发安全**:
@@ -161,22 +175,32 @@ main.ts: app.whenReady()
 
 ### CliCompatService
 
-**职责**: 测试站点对 CLI 工具的兼容性
+**职责**: 测试站点对 CLI 工具的兼容性，使用与真实 CLI 一致的流式请求格式
 
 **关键方法**:
 - `testSite(config)` - 测试站点所有 CLI 兼容性
 - `testClaudeCode(url, apiKey, model)` - 测试 Claude Code
-- `testCodex(url, apiKey, model)` - 测试 Codex (Chat + Responses API)
+- `testCodex(url, apiKey, model)` - 测试 Codex (Responses API)
 - `testCodexWithDetail(url, apiKey, model)` - 测试 Codex 并返回详细结果
 - `testGeminiCli(url, apiKey, model)` - 测试 Gemini CLI
 - `testGeminiWithDetail(url, apiKey, model)` - 测试 Gemini CLI 双端点并返回详细结果
 
 **支持工具**: Claude Code, Codex (Responses API), Gemini CLI (Native/Proxy)
 
-**端点测试功能**:
-- Codex: 测试 Responses API，返回 `codexDetail`（chat 模式已废弃）
-- Gemini CLI: 同时测试 Native 原生格式和 Proxy OpenAI 兼容格式，返回 `geminiDetail`
-- 测试结果包含详细信息用于配置生成和用户提示
+**请求格式对齐**: 所有测试请求与真实 CLI 工具完全一致
+- Claude Code: stream + User-Agent + anthropic-beta + x-api-key
+- Codex: stream + User-Agent + Bearer + /v1/responses
+- Gemini CLI Native: streamGenerateContent + User-Agent + x-goog-api-client
+- Gemini CLI Proxy: stream + User-Agent + /v1/chat/completions
+
+**流式首包探测**: 发送 stream 请求后只读取首个 SSE chunk 即 abort，最小化 token 消耗
+
+**API 支持判定 (`isApiSupported`)**:
+- 200 + SSE/`data: {` → 支持
+- 2xx/401/403/429 → 支持（端点存在）
+- 400 + 已知错误类型（invalid_request_error 等）→ 支持
+- 500 + `application/json` contentType → 支持（中转站上游失败，端点本身存在）
+- 其他 → 不支持
 
 ### ConfigDetectionService
 
@@ -327,5 +351,5 @@ main.ts: app.whenReady()
 
 ---
 
-**版本**: 2.1.22
-**更新日期**: 2026-02-24
+**版本**: 2.1.24
+**更新日期**: 2026-03-11

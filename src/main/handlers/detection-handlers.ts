@@ -1,7 +1,12 @@
-﻿/**
- * 输入: ApiService, ChromeManager, ConfigDetectionService, TokenService
+/**
+ * 输入: ApiService, ChromeManager, ConfigDetectionService, TokenService, UnifiedConfigManager
  * 输出: 注册到 ipcMain 的站点检测和 CLI 配置检测 IPC 事件监听器
  * 定位: 处理器层 - 站点检测和 CLI 配置检测相关 IPC 处理
+ *
+ * 多账户支持:
+ * - detect-site: accountId → 凭证替换 + browserSlot 计算（基于账户在站点列表中的位置）
+ * - checkin-and-refresh: accountId → 凭证替换 + 账户级缓存写入
+ * - refresh-balance-only: accountId → 账户级缓存写入
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -17,6 +22,7 @@ import * as os from 'os';
 import type { ApiService } from '../api-service';
 import type { ChromeManager } from '../chrome-manager';
 import type { TokenService } from '../token-service';
+import { unifiedConfigManager } from '../unified-config-manager';
 import { configDetectionService } from '../config-detection-service';
 import { CLI_CONFIG_PATHS } from '../../shared/types/config-detection';
 import type { SiteInfo, CliType } from '../../shared/types/config-detection';
@@ -69,7 +75,7 @@ export function registerDetectionHandlers(
     }
   });
 
-  // 检测单个站点
+  // 检测单个站点（支持指定账户凭证）
   ipcMain.handle(
     'detect-site',
     async (
@@ -78,21 +84,63 @@ export function registerDetectionHandlers(
       timeout,
       quickRefresh = false,
       cachedData = undefined,
-      forceAcceptEmpty = false
+      forceAcceptEmpty = false,
+      accountId?: string
     ) => {
-      return await apiService.detectSite(site, timeout, quickRefresh, cachedData, forceAcceptEmpty);
+      // 如果指定了 accountId，用该账户的凭证覆盖站点配置
+      let detectionContext: { accountId: string; browserSlot?: number } | undefined;
+      if (accountId) {
+        const account = unifiedConfigManager.getAccountById(accountId);
+        if (!account) {
+          throw new Error(`Account not found: ${accountId}`);
+        }
+        if (site?.id && account.site_id !== site.id) {
+          throw new Error(`Account ${accountId} does not belong to site ${site.id}`);
+        }
+        site = {
+          ...site,
+          system_token: account.access_token,
+          user_id: account.user_id,
+        };
+        // 根据账户在站点账户列表中的位置确定浏览器槽位
+        const siteAccounts = unifiedConfigManager.getAccountsBySiteId(account.site_id);
+        const slotIndex = siteAccounts.findIndex(a => a.id === accountId);
+        detectionContext = {
+          accountId: account.id,
+          browserSlot: slotIndex >= 0 ? slotIndex : 0,
+        };
+      }
+      return await apiService.detectSite(
+        site,
+        timeout,
+        quickRefresh,
+        cachedData,
+        forceAcceptEmpty,
+        detectionContext
+      );
     }
   );
 
-  // 轻量级余额刷新（签到后使用）
-  ipcMain.handle('refresh-balance-only', async (_, site, timeout, checkinStats = undefined) => {
-    return await apiService.refreshBalanceOnly(site, timeout, checkinStats);
-  });
+  // 轻量级余额刷新（签到后使用，支持账户级缓存）
+  ipcMain.handle(
+    'refresh-balance-only',
+    async (_, site, timeout, checkinStats = undefined, accountId?: string) => {
+      return await apiService.refreshBalanceOnly(site, timeout, checkinStats, undefined, accountId);
+    }
+  );
 
   // 签到并刷新余额（原子操作，复用浏览器页面）
-  ipcMain.handle('checkin-and-refresh', async (_, site, timeout) => {
+  ipcMain.handle('checkin-and-refresh', async (_, site, timeout, accountId?: string) => {
     if (!tokenService) {
       return { success: false, error: 'TokenService 未初始化' };
+    }
+
+    // 如果指定了 accountId，用该账户的凭证覆盖站点配置
+    if (accountId) {
+      const account = unifiedConfigManager.getAccountById(accountId);
+      if (account) {
+        site = { ...site, system_token: account.access_token, user_id: account.user_id };
+      }
     }
 
     try {
@@ -120,7 +168,8 @@ export function registerDetectionHandlers(
           site,
           timeout,
           checkinResult.checkinStats,
-          checkinResult.browserPage // 传入浏览器页面
+          checkinResult.browserPage,
+          accountId
         );
       } catch (balanceError: any) {
         Logger.warn('⚠️ [IPC] 余额刷新失败:', balanceError.message);
@@ -246,6 +295,55 @@ export function registerDetectionHandlers(
       return { success: false, error: error?.message || 'Unknown error' };
     }
   });
+
+  // CLI 配置编辑：读取指定 CLI 的所有配置文件内容
+  ipcMain.handle('detection:read-cli-config-files', async (_, cliType: CliType) => {
+    try {
+      const home = os.homedir();
+      const pathEntries = CLI_CONFIG_PATHS[cliType];
+      const files: {
+        key: string;
+        relativePath: string;
+        absolutePath: string;
+        content: string | null;
+        exists: boolean;
+      }[] = [];
+
+      for (const [key, relativePath] of Object.entries(pathEntries)) {
+        const absolutePath = path.join(home, relativePath as string);
+        let content: string | null = null;
+        let exists = false;
+        try {
+          content = await fs.readFile(absolutePath, 'utf-8');
+          exists = true;
+        } catch {
+          // 文件不存在
+        }
+        files.push({ key, relativePath: `~/${relativePath}`, absolutePath, content, exists });
+      }
+
+      return { success: true, files };
+    } catch (error: any) {
+      return { success: false, error: error?.message, files: [] };
+    }
+  });
+
+  // CLI 配置编辑：保存单个配置文件
+  ipcMain.handle(
+    'detection:save-cli-config-file',
+    async (_, absolutePath: string, content: string) => {
+      try {
+        const dir = path.dirname(absolutePath);
+        await fs.mkdir(dir, { recursive: true });
+        await fs.writeFile(absolutePath, content, 'utf-8');
+        Logger.info(`[IPC] 配置文件已保存: ${absolutePath}`);
+        return { success: true };
+      } catch (error: any) {
+        Logger.error(`[IPC] 保存配置文件失败: ${absolutePath}`, error?.message);
+        return { success: false, error: error?.message };
+      }
+    }
+  );
 
   // CLI 配置重置：删除指定 CLI 的本地配置文件
   ipcMain.handle('detection:reset-cli-config', async (_, cliType: CliType) => {

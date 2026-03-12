@@ -14,7 +14,7 @@ import { ToastContainer } from './components/Toast';
 import { IOSButton } from './components/IOSButton';
 import { useTheme, useDataLoader, useUpdate, useSiteDetection } from './hooks';
 // 从共享的types文件导入并重新导出类型
-import type { SiteConfig, DetectionResult } from '../shared/types/site';
+import type { SiteConfig, DetectionResult, AccountCredential } from '../shared/types/site';
 export type { SiteConfig, DetectionResult } from '../shared/types/site';
 
 // 导入页面组件
@@ -46,7 +46,8 @@ declare global {
         timeout: number,
         quickRefresh?: boolean,
         cachedData?: DetectionResult,
-        forceAcceptEmpty?: boolean
+        forceAcceptEmpty?: boolean,
+        accountId?: string
       ) => Promise<DetectionResult>;
       detectAllSites: (
         config: Config,
@@ -155,6 +156,24 @@ declare global {
           deletedPaths: string[];
           error?: string;
         }>;
+        readCliConfigFiles: (cliType: 'claudeCode' | 'codex' | 'geminiCli') => Promise<{
+          success: boolean;
+          files: Array<{
+            key: string;
+            relativePath: string;
+            absolutePath: string;
+            content: string | null;
+            exists: boolean;
+          }>;
+          error?: string;
+        }>;
+        saveCliConfigFile: (
+          absolutePath: string,
+          content: string
+        ) => Promise<{
+          success: boolean;
+          error?: string;
+        }>;
       };
       closeBehavior?: {
         getSettings: () => Promise<{
@@ -181,6 +200,61 @@ declare global {
         saveConfig: (config: any) => Promise<{ success: boolean; error?: string }>;
         loadConfig: () => Promise<{ success: boolean; data?: any; error?: string }>;
         getCached: () => Promise<{ success: boolean; data?: any; error?: string }>;
+      };
+      accounts?: {
+        list: (siteId: string) => Promise<{ success: boolean; data?: any[]; error?: string }>;
+        getActive: (siteId: string) => Promise<{ success: boolean; data?: any; error?: string }>;
+        setActive: (
+          siteId: string,
+          accountId: string
+        ) => Promise<{ success: boolean; error?: string }>;
+        add: (data: {
+          site_id: string;
+          account_name: string;
+          user_id: string;
+          username?: string;
+          access_token: string;
+          auth_source: string;
+          browser_profile_path?: string;
+        }) => Promise<{ success: boolean; data?: any; error?: string }>;
+        update: (
+          accountId: string,
+          updates: { account_name?: string; status?: string }
+        ) => Promise<{ success: boolean; error?: string }>;
+        delete: (accountId: string) => Promise<{ success: boolean; error?: string }>;
+      };
+      browserProfile?: {
+        detect: () => Promise<{ success: boolean; data?: string | null; error?: string }>;
+        isChromeRunning: () => Promise<{ success: boolean; data?: boolean; error?: string }>;
+        loginMain: (siteUrl: string) => Promise<{
+          success: boolean;
+          data?: {
+            userId: number;
+            username: string;
+            accessToken: string;
+            authSource: 'main_profile';
+          };
+          error?: string;
+        }>;
+        loginIsolated: (
+          siteId: string,
+          siteUrl: string,
+          accountId: string
+        ) => Promise<{
+          success: boolean;
+          data?: {
+            userId: number;
+            username: string;
+            accessToken: string;
+            authSource: 'isolated_profile';
+            profilePath: string;
+          };
+          error?: string;
+        }>;
+        deleteProfile: (
+          siteId: string,
+          accountId: string
+        ) => Promise<{ success: boolean; error?: string }>;
       };
     };
   }
@@ -213,6 +287,7 @@ export interface SiteGroup {
 
 export interface Config {
   sites: SiteConfig[];
+  accounts?: AccountCredential[];
   settings: Settings;
   siteGroups?: SiteGroup[];
 }
@@ -520,6 +595,7 @@ function App() {
         type={dialogState.type}
         title={dialogState.title}
         message={dialogState.message}
+        content={dialogState.content}
         confirmText={dialogState.confirmText}
         cancelText={dialogState.cancelText}
         onConfirm={dialogState.onConfirm || (() => setDialogState(initialDialogState))}

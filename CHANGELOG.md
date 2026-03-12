@@ -4,6 +4,26 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，并且本项目遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
+## [v2.1.24]
+
+### 新增
+- **多账户管理系统**：每个站点支持绑定多个登录账户，可随时切换活跃账户
+  - `account-handlers.ts` 新增 IPC 接口：`accounts:list`、`accounts:get-active`、`accounts:set-active`、`accounts:add`、`accounts:update`、`accounts:delete`
+  - `AddAccountDialog.tsx` 新增添加账户对话框（启动隔离浏览器登录 → 保存凭证）
+  - `AccountSelector.tsx` 新增站点卡片账户选择器组件
+- **BrowserProfileManager**：新增独立的浏览器 Profile 管理模块
+  - 主浏览器（slot 0）复用用户真实 Chrome User Data 目录（保留插件）
+  - 隔离浏览器（slot N）按槽位共享隔离 Profile，首次创建时仅复制 Extensions、清理登录态
+  - 支持自动检测系统默认 Chrome/Edge/Chromium User Data 路径
+  - 新增 IPC 接口：`browser-profile:detect`、`browser-profile:is-chrome-running`、`browser-profile:login-main`、`browser-profile:login-isolated`、`browser-profile:delete-profile`
+- **ChromeManager 多槽位架构**：重构为多槽位浏览器池
+  - slot 0 = 主浏览器，所有站点第 1 个账号共用（向后兼容）
+  - slot N = 隔离浏览器 N，所有站点第 N+1 个账号独立管理
+  - 每个槽位独立管理 browser、debugPort、refCount、cleanupTimer
+- **CLI 配置内联编辑对话框**：新增 `EditCliConfigDialog.tsx`，支持直接编辑指定 CLI 配置文件内容
+
+---
+
 ## [v2.1.23]
 
 ### 新增
