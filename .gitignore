@@ -70,3 +70,5 @@ LINUX DO Credit.user.js
 # 文档
 docs/archive/
 .ace-tool/
+
+.worktrees/
