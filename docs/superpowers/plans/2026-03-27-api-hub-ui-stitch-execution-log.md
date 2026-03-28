@@ -18,7 +18,7 @@
 - screenRoute: 6104642c182e4be8b4e4a34f440c4eb2 — 标题"API Hub Theme Kit Comparison"（原屏幕被Route生成复用），已精炼为单一工具面板语言，分段模式切换和检查器系统已整合。
 - screenCustomCli: 24dfdf4034a94a439c8c26b29bf02f28 — 标题"API Workbench - High Density Registry"，已精炼为注册表优先视图，列逻辑清晰，右侧检查器承载配置详情。
 - screenCredit: ef7a6695655f45108a9e5f7152b6eb6e — 标题"Unified Workbench Instrument Panel"，已精炼移除英雄卡/渐变效果，余额KPI区域改为工作台语言中的高对比度KPI块。
-- screenSettings:
+- screenSettings: 567e6b2a48e9456b88bbdc0895bfdb3c — 标题"API Hub Settings - Theme B Baseline"，已精炼移除堆叠卡片，改为双列工作台表格布局，类别标题为紧凑水平分隔线，每行单行设置控件。
 
 ## Review Notes
 - Theme B baseline status: Theme B基准设计系统资产已就绪，项目中已有1个设计系统。
