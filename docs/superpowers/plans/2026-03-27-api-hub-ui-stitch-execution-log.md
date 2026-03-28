@@ -15,7 +15,7 @@
 - screenShell: e1b83752da724be19d6a37dfe34595eb
 - screenThemeKit: 2eab3e65338b454898b17b5b0fde606d — 主题对比套件屏幕已生成，标题"Theme Comparison Kit"，包含四列主题对比结构，已完成结构规范化编辑。
 - screenSites: bfecc4b8cf28487fb4781416fa646198 — 标题"API Workbench - High Density"，已精炼编辑，中央注册表密度已提升，包含左侧筛选栏、中央数据行和右侧检查器结构，比卡片式布局更紧凑。
-- screenRoute:
+- screenRoute: 6104642c182e4be8b4e4a34f440c4eb2 — 标题"API Hub Theme Kit Comparison"（原屏幕被Route生成复用），已精炼为单一工具面板语言，分段模式切换和检查器系统已整合。
 - screenCustomCli:
 - screenCredit:
 - screenSettings:
@@ -27,3 +27,4 @@
 - Gradient removal review:
 - Open issues:
 - screenShell review: Shell屏幕标题为"API Registry Shell"，已生成并完成精炼编辑，表达了左侧导航栏/顶部页眉/右侧检查器工作台布局模式。尺寸1280×1024（2560×2048原始分辨率），桌面设备类型。
+- screenRoute review: Route屏幕已精炼，分段模式切换与检查器系统一体化，感觉像一个连续的控制面板。
