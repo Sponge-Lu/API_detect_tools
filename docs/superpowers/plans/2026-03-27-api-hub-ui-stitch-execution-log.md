@@ -12,7 +12,7 @@
 - designSystemDark: 15598062122585952042
 
 ## Screens
-- screenShell:
+- screenShell: e1b83752da724be19d6a37dfe34595eb
 - screenThemeKit:
 - screenSites:
 - screenRoute:
@@ -26,3 +26,4 @@
 - Density review:
 - Gradient removal review:
 - Open issues:
+- screenShell review: Shell屏幕标题为"API Registry Shell"，已生成并完成精炼编辑，表达了左侧导航栏/顶部页眉/右侧检查器工作台布局模式。尺寸1280×1024（2560×2048原始分辨率），桌面设备类型。
