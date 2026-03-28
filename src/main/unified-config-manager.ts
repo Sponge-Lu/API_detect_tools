@@ -3,7 +3,7 @@
  * 输出: UnifiedConfig (统一配置), 配置操作方法, 账户 CRUD
  * 定位: 数据层 - 管理统一配置作为单一数据源，支持多账户存储与切换
  *
- * 多账户: accounts[] 存储 AccountCredential，site.active_account_id 指向当前活跃账户
+ * 多账户: accounts[] 存储 AccountCredential，站点不再持久化当前活跃账户
  * 迁移: v2 → v3 自动迁移，为已有站点创建默认账户
  *
  * 🔄 自引用: 当此文件变更时，更新:
@@ -20,6 +20,7 @@
 import Logger from './utils/logger';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { randomBytes } from 'crypto';
 import { app } from 'electron';
 import { backupManager } from './backup-manager';
 import type {
@@ -32,6 +33,29 @@ import type {
   DetectionCacheData,
 } from '../shared/types/site';
 import { generateSiteId, generateAccountId } from '../shared/types/site';
+import type {
+  RoutingConfig,
+  RouteRule,
+  RouteChannelKey,
+  RouteChannelStats,
+  RouteChannelHealth,
+  RouteOutcome,
+  RouteCliType,
+  RouteModelRegistryConfig,
+  RouteModelMappingOverride,
+  RouteCliProbeConfig,
+  RouteCliProbeSample,
+  RouteCliProbeLatest,
+  RouteAnalyticsConfig,
+  RouteAnalyticsBucket,
+} from '../shared/types/route-proxy';
+import {
+  DEFAULT_ROUTING_CONFIG,
+  DEFAULT_CLI_PROBE_CONFIG,
+  DEFAULT_ANALYTICS_CONFIG,
+  DEFAULT_MODEL_REGISTRY_CONFIG,
+  buildStatsKey,
+} from '../shared/types/route-proxy';
 
 const CONFIG_VERSION = '3.0';
 
@@ -64,31 +88,124 @@ export class UnifiedConfigManager {
    * 加载配置
    */
   async loadConfig(): Promise<UnifiedConfig> {
+    let loadError: any = null;
+
     try {
-      const data = await fs.readFile(this.configPath, 'utf-8');
-      let config: UnifiedConfig = JSON.parse(data);
-
-      // v2 → v3 自动迁移
-      if (config.version !== CONFIG_VERSION) {
-        config = await this.migrateToV3(config);
-      }
-
-      this.config = this.normalizeConfig(config);
+      this.config = await this.readConfigFromPath(this.configPath);
       Logger.info(
         `✅ [UnifiedConfigManager] 加载配置成功，${this.config.sites.length} 个站点，${this.config.accounts.length} 个账户`
       );
       return this.config;
     } catch (error: any) {
+      loadError = error;
       if (error.code !== 'ENOENT') {
         Logger.error('❌ [UnifiedConfigManager] 加载配置失败:', error.message);
+      } else {
+        Logger.warn(`⚠️ [UnifiedConfigManager] 配置文件不存在: ${this.configPath}`);
       }
     }
 
-    // 配置不存在，创建默认配置
+    const recoveredConfig = await this.tryRestoreFromBackup();
+    if (recoveredConfig) {
+      this.config = recoveredConfig;
+      Logger.warn(
+        `♻️ [UnifiedConfigManager] 已从备份恢复配置，${this.config.sites.length} 个站点，${this.config.accounts.length} 个账户`
+      );
+      return this.config;
+    }
+
+    if (loadError?.code !== 'ENOENT') {
+      await this.preserveCorruptedConfig();
+    }
+
     Logger.info('📝 [UnifiedConfigManager] 创建默认配置...');
     this.config = this.createDefaultConfig();
     await this.saveConfig();
     return this.config;
+  }
+
+  /**
+   * 从指定路径读取并规范化配置
+   */
+  private async readConfigFromPath(configPath: string): Promise<UnifiedConfig> {
+    const data = await fs.readFile(configPath, 'utf-8');
+    const parsed = JSON.parse(data);
+
+    this.assertConfigShape(parsed, configPath);
+
+    let config: UnifiedConfig = parsed;
+
+    // v2 → v3 自动迁移
+    if (config.version !== CONFIG_VERSION) {
+      config = await this.migrateToV3(config);
+    }
+
+    return this.normalizeConfig(config);
+  }
+
+  /**
+   * 校验配置文件根结构，避免将损坏文件静默规范化为空配置
+   */
+  private assertConfigShape(config: any, configPath: string): void {
+    if (!config || typeof config !== 'object' || Array.isArray(config)) {
+      throw new Error(`配置文件根对象无效: ${configPath}`);
+    }
+
+    if (!Array.isArray(config.sites)) {
+      throw new Error(`配置文件缺少有效的 sites 数组: ${configPath}`);
+    }
+  }
+
+  /**
+   * 尝试从最近的有效备份恢复
+   */
+  private async tryRestoreFromBackup(): Promise<UnifiedConfig | null> {
+    const backups = backupManager.listBackups();
+
+    for (const backup of backups) {
+      try {
+        const recoveredConfig = await this.readConfigFromPath(backup.path);
+        const restored = await backupManager.restoreFromBackup(backup.filename, this.configPath);
+
+        if (!restored) {
+          Logger.warn(
+            `⚠️ [UnifiedConfigManager] 恢复备份失败，继续尝试更早备份: ${backup.filename}`
+          );
+          continue;
+        }
+
+        Logger.warn(`♻️ [UnifiedConfigManager] 使用备份恢复配置: ${backup.filename}`);
+        return recoveredConfig;
+      } catch (error: any) {
+        Logger.warn(
+          `⚠️ [UnifiedConfigManager] 跳过无效备份 ${backup.filename}: ${error?.message || error}`
+        );
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * 保留损坏配置副本，避免空配置覆盖现场
+   */
+  private async preserveCorruptedConfig(): Promise<void> {
+    try {
+      await fs.access(this.configPath);
+    } catch {
+      return;
+    }
+
+    const ext = path.extname(this.configPath);
+    const base = this.configPath.slice(0, this.configPath.length - ext.length);
+    const corruptedPath = `${base}.corrupted.${Date.now()}${ext}`;
+
+    try {
+      await fs.rename(this.configPath, corruptedPath);
+      Logger.warn(`🧯 [UnifiedConfigManager] 已保留损坏配置副本: ${corruptedPath}`);
+    } catch (error: any) {
+      Logger.warn(`⚠️ [UnifiedConfigManager] 保留损坏配置副本失败: ${error.message}`);
+    }
   }
 
   /**
@@ -101,12 +218,17 @@ export class UnifiedConfigManager {
     }
 
     // 确保每个站点有 ID
-    config.sites = config.sites.map(site => ({
-      ...site,
-      id: site.id || generateSiteId(),
-      group: site.group || 'default',
-      enabled: site.enabled !== false,
-    }));
+    config.sites = config.sites.map(site => {
+      const { active_account_id: _legacyActiveAccountId, ...rest } = site as UnifiedSite & {
+        active_account_id?: string;
+      };
+      return {
+        ...rest,
+        id: rest.id || generateSiteId(),
+        group: rest.group || 'default',
+        enabled: rest.enabled !== false,
+      };
+    });
 
     // 确保 accounts 数组存在
     if (!Array.isArray(config.accounts)) {
@@ -133,11 +255,9 @@ export class UnifiedConfigManager {
     const timeoutSeconds = config.settings.timeout ?? DEFAULT_SETTINGS.timeout!;
     config.settings.timeout = Math.max(5, timeoutSeconds);
 
-    // 迁移：site.cached_data → account.cached_data（首次加载一次性复制）
-    const accountById = new Map<string, AccountCredential>();
+    // 迁移：site.cached_data / site.cli_config → account（首次加载一次性复制）
     const accountsBySite = new Map<string, AccountCredential[]>();
     config.accounts.forEach(account => {
-      accountById.set(account.id, account);
       const list = accountsBySite.get(account.site_id) || [];
       list.push(account);
       accountsBySite.set(account.site_id, list);
@@ -146,16 +266,75 @@ export class UnifiedConfigManager {
       if (!site.cached_data) return;
       const siteAccounts = accountsBySite.get(site.id) || [];
       if (siteAccounts.length === 0) return;
-      const targetAccount =
-        (site.active_account_id && accountById.get(site.active_account_id)) ||
-        (siteAccounts.length === 1 ? siteAccounts[0] : undefined);
+      const targetAccount = this.getPreferredAccountFromList(siteAccounts);
       if (targetAccount && !targetAccount.cached_data) {
         targetAccount.cached_data = { ...site.cached_data };
         targetAccount.updated_at = Date.now();
       }
     });
+    config.sites.forEach(site => {
+      if (!site.cli_config) return;
+      const siteAccounts = accountsBySite.get(site.id) || [];
+      if (siteAccounts.length === 0) return;
+      const targetAccount = this.getPreferredAccountFromList(siteAccounts);
+      if (targetAccount && !targetAccount.cli_config) {
+        targetAccount.cli_config = { ...site.cli_config };
+        targetAccount.updated_at = Date.now();
+      }
+    });
+
+    // 规范化路由配置
+    this.normalizeRoutingConfig(config);
 
     return config;
+  }
+
+  private getPreferredAccountFromList(
+    accounts: AccountCredential[]
+  ): AccountCredential | undefined {
+    return accounts.find(account => account.account_name === '默认账户') || accounts[0];
+  }
+
+  /**
+   * 规范化 routing 字段，补全缺失的默认值
+   */
+  private normalizeRoutingConfig(config: UnifiedConfig): void {
+    if (!config.routing) {
+      config.routing = { ...DEFAULT_ROUTING_CONFIG };
+      return;
+    }
+    const r = config.routing;
+    if (!r.server) r.server = { ...DEFAULT_ROUTING_CONFIG.server };
+    if (!r.rules) r.rules = [];
+    if (!r.stats) r.stats = {};
+    if (!r.health) r.health = {};
+    if (!r.cliModelSelections)
+      r.cliModelSelections = { claudeCode: null, codex: null, geminiCli: null };
+    if (!r.modelRegistry) r.modelRegistry = { ...DEFAULT_MODEL_REGISTRY_CONFIG };
+    if (!r.cliProbe) {
+      r.cliProbe = { config: { ...DEFAULT_CLI_PROBE_CONFIG }, latest: {}, history: {} };
+    } else {
+      if (!r.cliProbe.config) r.cliProbe.config = { ...DEFAULT_CLI_PROBE_CONFIG };
+      if (!r.cliProbe.latest) r.cliProbe.latest = {};
+      if (!r.cliProbe.history) r.cliProbe.history = {};
+    }
+    if (!r.analytics) {
+      r.analytics = { config: { ...DEFAULT_ANALYTICS_CONFIG }, buckets: {} };
+    } else {
+      if (!r.analytics.config) r.analytics.config = { ...DEFAULT_ANALYTICS_CONFIG };
+      if (!r.analytics.buckets) r.analytics.buckets = {};
+    }
+    // 补全 server 字段
+    const s = r.server;
+    if (!s.host) s.host = '127.0.0.1';
+    if (!s.port) s.port = 3210;
+    if (!s.unifiedApiKey) {
+      s.unifiedApiKey = `sk-route-${randomBytes(16).toString('hex')}`;
+    }
+    if (!s.requestTimeoutMs) s.requestTimeoutMs = 300000;
+    if (s.retryCount === undefined || s.retryCount === null) s.retryCount = 1;
+    if (!s.healthCheckIntervalMinutes) s.healthCheckIntervalMinutes = 60;
+    if (s.enabled === undefined) s.enabled = false;
   }
 
   /**
@@ -177,14 +356,15 @@ export class UnifiedConfigManager {
    */
   async saveConfig(config?: UnifiedConfig): Promise<void> {
     if (config) {
-      this.config = config;
+      this.assertConfigShape(config, this.configPath);
+      this.config = this.normalizeConfig(config);
     }
     if (!this.config) {
       throw new Error('No config to save');
     }
 
     this.config.last_updated = Date.now();
-    await fs.writeFile(this.configPath, JSON.stringify(this.config, null, 2), 'utf-8');
+    await this.writeConfigAtomically(this.configPath, JSON.stringify(this.config, null, 2));
     Logger.info('💾 [UnifiedConfigManager] 配置已保存');
 
     // 自动备份
@@ -192,6 +372,31 @@ export class UnifiedConfigManager {
       await backupManager.backupFile(this.configPath);
     } catch (error) {
       Logger.error('⚠️ [UnifiedConfigManager] 自动备份失败:', error);
+    }
+  }
+
+  /**
+   * 原子写入配置文件，避免应用异常退出时产生半截 JSON
+   */
+  private async writeConfigAtomically(targetPath: string, content: string): Promise<void> {
+    const dir = path.dirname(targetPath);
+    const tempPath = path.join(
+      dir,
+      `${path.basename(targetPath)}.${process.pid}.${Date.now()}.tmp`
+    );
+
+    await fs.mkdir(dir, { recursive: true });
+
+    try {
+      await fs.writeFile(tempPath, content, 'utf-8');
+      await fs.rename(tempPath, targetPath);
+    } catch (error) {
+      try {
+        await fs.unlink(tempPath);
+      } catch {
+        // 忽略清理临时文件失败
+      }
+      throw error;
     }
   }
 
@@ -219,14 +424,13 @@ export class UnifiedConfigManager {
     for (const site of sites) {
       // 确保 site.id 存在（legacy 配置可能没有）
       if (!site.id) site.id = generateSiteId();
-      // 跳过已有 active_account_id 的站点（幂等）
-      if (site.active_account_id) continue;
+      const existingAccounts = accounts.filter(account => account.site_id === site.id);
+      if (existingAccounts.length > 0) continue;
 
       // 仅当站点有认证信息时创建默认账户
       if (site.access_token && site.user_id) {
-        const accountId = generateAccountId();
         accounts.push({
-          id: accountId,
+          id: generateAccountId(),
           site_id: site.id,
           account_name: '默认账户',
           user_id: site.user_id,
@@ -237,7 +441,6 @@ export class UnifiedConfigManager {
           created_at: Date.now(),
           updated_at: Date.now(),
         });
-        site.active_account_id = accountId;
       }
     }
 
@@ -378,16 +581,7 @@ export class UnifiedConfigManager {
   }
 
   /**
-   * 获取站点的活跃账户
-   */
-  getActiveAccount(siteId: string): AccountCredential | null {
-    const site = this.getSiteById(siteId);
-    if (!site?.active_account_id) return null;
-    return this.config?.accounts.find(a => a.id === site.active_account_id) || null;
-  }
-
-  /**
-   * 添加账户并设为活跃（同步更新站点 legacy 字段）
+   * 添加账户
    */
   async addAccount(
     account: Omit<AccountCredential, 'id' | 'created_at' | 'updated_at'> & { id?: string }
@@ -414,7 +608,6 @@ export class UnifiedConfigManager {
           updated_at: now,
         };
         this.config!.accounts.push(defaultAccount);
-        site.active_account_id = defaultAccount.id;
         Logger.info(
           `🔄 [UnifiedConfigManager] 自动补建默认账户: ${defaultAccount.id} (site=${account.site_id})`
         );
@@ -430,11 +623,6 @@ export class UnifiedConfigManager {
 
     this.config!.accounts.push(newAccount);
 
-    // 新增账户后切换为活跃账户，确保后续刷新使用最新登录凭证
-    if (site) {
-      this.syncActiveAccount(site, newAccount);
-    }
-
     await this.saveConfig();
     return newAccount;
   }
@@ -445,7 +633,16 @@ export class UnifiedConfigManager {
   async updateAccount(
     accountId: string,
     updates: Partial<
-      Pick<AccountCredential, 'account_name' | 'status' | 'access_token' | 'user_id'>
+      Pick<
+        AccountCredential,
+        | 'account_name'
+        | 'status'
+        | 'access_token'
+        | 'user_id'
+        | 'auto_refresh'
+        | 'auto_refresh_interval'
+        | 'cli_config'
+      >
     >
   ): Promise<boolean> {
     if (!this.config) return false;
@@ -458,13 +655,6 @@ export class UnifiedConfigManager {
       ...updates,
       updated_at: Date.now(),
     };
-
-    // 如果更新的是活跃账户的 token/user_id，同步到站点 legacy 字段
-    const account = this.config.accounts[index];
-    const site = this.config.sites.find(s => s.active_account_id === accountId);
-    if (site && (updates.access_token || updates.user_id)) {
-      this.syncActiveAccount(site, account);
-    }
 
     await this.saveConfig();
     return true;
@@ -505,45 +695,8 @@ export class UnifiedConfigManager {
 
     this.config.accounts = this.config.accounts.filter(a => a.id !== accountId);
 
-    // 如果删除的是活跃账户，切换到同站点的另一个账户
-    const site = this.config.sites.find(s => s.active_account_id === accountId);
-    if (site) {
-      const remaining = this.config.accounts.filter(a => a.site_id === site.id);
-      if (remaining.length > 0) {
-        this.syncActiveAccount(site, remaining[0]);
-      } else {
-        site.active_account_id = undefined;
-        site.access_token = undefined;
-        site.user_id = undefined;
-      }
-    }
-
     await this.saveConfig();
     return true;
-  }
-
-  /**
-   * 切换站点的活跃账户
-   */
-  async setActiveAccount(siteId: string, accountId: string): Promise<boolean> {
-    if (!this.config) return false;
-
-    const site = this.config.sites.find(s => s.id === siteId);
-    const account = this.config.accounts.find(a => a.id === accountId && a.site_id === siteId);
-    if (!site || !account) return false;
-
-    this.syncActiveAccount(site, account);
-    await this.saveConfig();
-    return true;
-  }
-
-  /**
-   * 同步活跃账户到站点 legacy 字段
-   */
-  private syncActiveAccount(site: UnifiedSite, account: AccountCredential): void {
-    site.active_account_id = account.id;
-    site.access_token = account.access_token;
-    site.user_id = account.user_id;
   }
 
   // ============= 兼容层（供前端使用） =============
@@ -642,20 +795,6 @@ export class UnifiedConfigManager {
           updated_at: Date.now(),
         };
 
-        // 同步 legacy token 变更到活跃账户
-        if (updated.active_account_id && (oldSite.system_token || oldSite.user_id)) {
-          const acctIdx = this.config!.accounts.findIndex(a => a.id === updated.active_account_id);
-          if (acctIdx !== -1) {
-            if (oldSite.system_token) {
-              this.config!.accounts[acctIdx].access_token = oldSite.system_token;
-            }
-            if (oldSite.user_id) {
-              this.config!.accounts[acctIdx].user_id = oldSite.user_id;
-            }
-            this.config!.accounts[acctIdx].updated_at = Date.now();
-          }
-        }
-
         return updated;
       } else {
         // 新站点
@@ -705,8 +844,302 @@ export class UnifiedConfigManager {
     }
 
     // 新格式
+    this.assertConfigShape(data, 'imported config');
     this.config = this.normalizeConfig(data);
     await this.saveConfig();
+  }
+
+  // ============= 路由配置操作 =============
+
+  /**
+   * 获取路由配置
+   */
+  getRoutingConfig(): RoutingConfig {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    return this.config.routing!;
+  }
+
+  /**
+   * 更新路由服务器配置
+   */
+  async updateRouteServerConfig(updates: Partial<RoutingConfig['server']>): Promise<void> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    this.config.routing!.server = { ...this.config.routing!.server, ...updates };
+    await this.saveConfig();
+  }
+
+  /**
+   * 插入或更新路由规则
+   */
+  async upsertRouteRule(rule: RouteRule): Promise<RouteRule> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    const rules = this.config.routing!.rules;
+    const idx = rules.findIndex(r => r.id === rule.id);
+    if (idx >= 0) {
+      rules[idx] = { ...rule, updatedAt: Date.now() };
+    } else {
+      rules.push({ ...rule, createdAt: Date.now(), updatedAt: Date.now() });
+    }
+    await this.saveConfig();
+    return idx >= 0 ? rules[idx] : rules[rules.length - 1];
+  }
+
+  /**
+   * 删除路由规则
+   */
+  async deleteRouteRule(ruleId: string): Promise<boolean> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    const before = this.config.routing!.rules.length;
+    this.config.routing!.rules = this.config.routing!.rules.filter(r => r.id !== ruleId);
+    if (this.config.routing!.rules.length < before) {
+      await this.saveConfig();
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * 记录通道成功率统计
+   */
+  async recordRouteStats(
+    key: RouteChannelKey,
+    outcome: RouteOutcome,
+    meta?: { statusCode?: number; latencyMs?: number }
+  ): Promise<void> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    const statsKey = buildStatsKey(key);
+    const existing: RouteChannelStats = this.config.routing!.stats[statsKey] || {
+      ...key,
+      successCount: 0,
+      failureCount: 0,
+      neutralCount: 0,
+      consecutiveFailures: 0,
+    };
+    const now = Date.now();
+    if (outcome === 'success') {
+      existing.successCount++;
+      existing.consecutiveFailures = 0;
+      existing.lastSuccessAt = now;
+    } else if (outcome === 'failure') {
+      existing.failureCount++;
+      existing.consecutiveFailures++;
+      existing.lastFailureAt = now;
+    } else {
+      existing.neutralCount++;
+    }
+    existing.lastUsedAt = now;
+    if (meta?.statusCode !== undefined) existing.lastStatusCode = meta.statusCode;
+    if (meta?.latencyMs !== undefined) existing.lastLatencyMs = meta.latencyMs;
+    this.config.routing!.stats[statsKey] = existing;
+    await this.saveConfig();
+  }
+
+  /**
+   * 更新通道健康状态
+   */
+  async updateRouteHealth(healthList: RouteChannelHealth[]): Promise<void> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    for (const h of healthList) {
+      this.config.routing!.health[buildStatsKey(h)] = h;
+    }
+    await this.saveConfig();
+  }
+
+  /**
+   * 重置统计数据
+   */
+  async resetRouteStats(ruleId?: string): Promise<void> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    if (ruleId) {
+      for (const k of Object.keys(this.config.routing!.stats)) {
+        if (k.startsWith(`${ruleId}:`)) {
+          delete this.config.routing!.stats[k];
+        }
+      }
+    } else {
+      this.config.routing!.stats = {};
+    }
+    await this.saveConfig();
+  }
+
+  // ============= CLI 模型选择 =============
+
+  async updateRouteCliModelSelections(
+    selections: Partial<Record<RouteCliType, string | null>>
+  ): Promise<Record<RouteCliType, string | null>> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    this.config.routing!.cliModelSelections = {
+      ...this.config.routing!.cliModelSelections,
+      ...selections,
+    };
+    await this.saveConfig();
+    return this.config.routing!.cliModelSelections;
+  }
+
+  // ============= 模型注册表 =============
+
+  async updateRouteModelRegistry(registry: RouteModelRegistryConfig): Promise<void> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    this.config.routing!.modelRegistry = registry;
+    await this.saveConfig();
+  }
+
+  async upsertRouteModelMappingOverride(
+    override: RouteModelMappingOverride
+  ): Promise<RouteModelMappingOverride> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    const overrides = this.config.routing!.modelRegistry.overrides;
+    const idx = overrides.findIndex(o => o.id === override.id);
+    if (idx >= 0) {
+      overrides[idx] = { ...override, updatedAt: Date.now() };
+    } else {
+      overrides.push({ ...override, createdAt: Date.now(), updatedAt: Date.now() });
+    }
+    await this.saveConfig();
+    return idx >= 0 ? overrides[idx] : overrides[overrides.length - 1];
+  }
+
+  async deleteRouteModelMappingOverride(overrideId: string): Promise<boolean> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    const overrides = this.config.routing!.modelRegistry.overrides;
+    const before = overrides.length;
+    this.config.routing!.modelRegistry.overrides = overrides.filter(o => o.id !== overrideId);
+    if (this.config.routing!.modelRegistry.overrides.length < before) {
+      await this.saveConfig();
+      return true;
+    }
+    return false;
+  }
+
+  // ============= CLI 探测 =============
+
+  async updateRouteCliProbeConfig(
+    updates: Partial<RouteCliProbeConfig>
+  ): Promise<RouteCliProbeConfig> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    this.config.routing!.cliProbe.config = {
+      ...this.config.routing!.cliProbe.config,
+      ...updates,
+    };
+    await this.saveConfig();
+    return this.config.routing!.cliProbe.config;
+  }
+
+  async appendRouteCliProbeSamples(samples: RouteCliProbeSample[]): Promise<void> {
+    if (!this.config || samples.length === 0) return;
+    this.normalizeRoutingConfig(this.config);
+    const history = this.config.routing!.cliProbe.history;
+    for (const s of samples) {
+      if (!history[s.probeKey]) history[s.probeKey] = [];
+      history[s.probeKey].push(s);
+    }
+    await this.saveConfig();
+  }
+
+  async upsertRouteCliProbeLatest(latestList: RouteCliProbeLatest[]): Promise<void> {
+    if (!this.config || latestList.length === 0) return;
+    this.normalizeRoutingConfig(this.config);
+    for (const l of latestList) {
+      this.config.routing!.cliProbe.latest[l.probeKey] = l;
+    }
+    await this.saveConfig();
+  }
+
+  async pruneRouteCliProbeHistory(retentionDays?: number, now?: number): Promise<number> {
+    if (!this.config) return 0;
+    this.normalizeRoutingConfig(this.config);
+    const days = retentionDays ?? this.config.routing!.cliProbe.config.retentionDays;
+    const cutoff = (now ?? Date.now()) - days * 24 * 60 * 60 * 1000;
+    const history = this.config.routing!.cliProbe.history;
+    let pruned = 0;
+    for (const key of Object.keys(history)) {
+      const before = history[key].length;
+      history[key] = history[key].filter(s => s.testedAt >= cutoff);
+      pruned += before - history[key].length;
+      if (history[key].length === 0) delete history[key];
+    }
+    if (pruned > 0) await this.saveConfig();
+    return pruned;
+  }
+
+  // ============= 分析统计 =============
+
+  async updateRouteAnalyticsConfig(
+    updates: Partial<RouteAnalyticsConfig>
+  ): Promise<RouteAnalyticsConfig> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    this.config.routing!.analytics.config = {
+      ...this.config.routing!.analytics.config,
+      ...updates,
+    };
+    await this.saveConfig();
+    return this.config.routing!.analytics.config;
+  }
+
+  async upsertRouteAnalyticsBuckets(buckets: RouteAnalyticsBucket[]): Promise<void> {
+    if (!this.config || buckets.length === 0) return;
+    this.normalizeRoutingConfig(this.config);
+    for (const b of buckets) {
+      this.config.routing!.analytics.buckets[b.bucketKey] = b;
+    }
+    await this.saveConfig();
+  }
+
+  async resetRouteAnalytics(params?: {
+    cliType?: RouteCliType;
+    routeRuleId?: string;
+  }): Promise<void> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    if (!params?.cliType && !params?.routeRuleId) {
+      this.config.routing!.analytics.buckets = {};
+    } else {
+      const buckets = this.config.routing!.analytics.buckets;
+      for (const key of Object.keys(buckets)) {
+        const b = buckets[key];
+        if (params?.cliType && b.cliType !== params.cliType) continue;
+        if (params?.routeRuleId && b.routeRuleId !== params.routeRuleId) continue;
+        delete buckets[key];
+      }
+    }
+    await this.saveConfig();
+  }
+
+  async pruneRouteAnalyticsBuckets(retentionDays?: number, now?: number): Promise<number> {
+    if (!this.config) return 0;
+    this.normalizeRoutingConfig(this.config);
+    const days = retentionDays ?? this.config.routing!.analytics.config.retentionDays;
+    const cutoff = (now ?? Date.now()) - days * 24 * 60 * 60 * 1000;
+    const buckets = this.config.routing!.analytics.buckets;
+    let pruned = 0;
+    for (const key of Object.keys(buckets)) {
+      if (buckets[key].bucketStart < cutoff) {
+        delete buckets[key];
+        pruned++;
+      }
+    }
+    if (pruned > 0) await this.saveConfig();
+    return pruned;
+  }
+
+  /**
+   * 同步获取当前内存中的完整配置（不触发 IO）
+   */
+  exportConfigSync() {
+    return this.config;
   }
 }
 

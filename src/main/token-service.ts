@@ -39,6 +39,155 @@ import { getAllUserIdHeaders } from '../shared/utils/headers';
 import Logger from './utils/logger';
 import { runOnPageQueue } from './utils/page-exec-queue';
 
+type CreateApiTokenPayload = {
+  name: string;
+  remain_quota: number;
+  expired_time: number;
+  unlimited_quota: boolean;
+  model_limits_enabled: boolean;
+  model_limits: string;
+  allow_ips: string;
+  group: string;
+};
+
+type TokenRequestContext = {
+  browserSlot?: number;
+  allowBrowserFallback?: boolean;
+  challengeWaitMs?: number;
+};
+
+function normalizeApiKeyValue(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const normalized = value.trim();
+  return normalized || null;
+}
+
+export function isMaskedApiKeyValue(value: unknown): boolean {
+  const normalized = normalizeApiKeyValue(value);
+  if (!normalized) {
+    return false;
+  }
+
+  return normalized.includes('*') || normalized.includes('...') || normalized.includes('…');
+}
+
+function resolveApiKeyValue(apiKey: any): string | null {
+  return normalizeApiKeyValue(apiKey?.key) || normalizeApiKeyValue(apiKey?.token);
+}
+
+function resolveApiKeyFetchId(apiKey: any): string | null {
+  if (!apiKey || typeof apiKey !== 'object') {
+    return null;
+  }
+
+  if (apiKey.id !== undefined && apiKey.id !== null) {
+    return String(apiKey.id);
+  }
+
+  if (apiKey.token_id !== undefined && apiKey.token_id !== null) {
+    return String(apiKey.token_id);
+  }
+
+  return null;
+}
+
+function withResolvedApiKeyValue(apiKey: any, rawValue: string): any {
+  if ('token' in apiKey && !('key' in apiKey)) {
+    return { ...apiKey, token: rawValue };
+  }
+
+  return { ...apiKey, key: rawValue };
+}
+
+function normalizeApiKeyGroup(group: unknown): string {
+  if (typeof group !== 'string') {
+    return 'default';
+  }
+
+  const normalized = group.trim();
+  return normalized || 'default';
+}
+
+function resolveCachedApiKeyIdentity(apiKey: any): string | null {
+  if (!apiKey || typeof apiKey !== 'object') {
+    return null;
+  }
+
+  if (apiKey.id !== undefined && apiKey.id !== null) {
+    return `id:${String(apiKey.id)}`;
+  }
+
+  if (apiKey.token_id !== undefined && apiKey.token_id !== null) {
+    return `token_id:${String(apiKey.token_id)}`;
+  }
+
+  const name = normalizeApiKeyValue(apiKey.name ?? apiKey.token_name);
+  if (name) {
+    return `name:${name}|group:${normalizeApiKeyGroup(apiKey.group)}`;
+  }
+
+  const rawValue = resolveApiKeyValue(apiKey);
+  if (rawValue && !isMaskedApiKeyValue(rawValue)) {
+    return `key:${rawValue}`;
+  }
+
+  return null;
+}
+
+export function mergeApiKeysPreservingRawValue(
+  existingApiKeys: any[] | undefined,
+  incomingApiKeys: any[] | undefined
+): any[] | undefined {
+  if (!Array.isArray(incomingApiKeys)) {
+    return incomingApiKeys;
+  }
+
+  if (!Array.isArray(existingApiKeys) || existingApiKeys.length === 0) {
+    return incomingApiKeys;
+  }
+
+  const preservedRawByIdentity = new Map<string, string>();
+
+  for (const existingApiKey of existingApiKeys) {
+    const identity = resolveCachedApiKeyIdentity(existingApiKey);
+    const rawValue = resolveApiKeyValue(existingApiKey);
+    if (!identity || !rawValue || isMaskedApiKeyValue(rawValue)) {
+      continue;
+    }
+    preservedRawByIdentity.set(identity, rawValue);
+  }
+
+  if (preservedRawByIdentity.size === 0) {
+    return incomingApiKeys;
+  }
+
+  return incomingApiKeys.map(apiKey => {
+    const identity = resolveCachedApiKeyIdentity(apiKey);
+    if (!identity) {
+      return apiKey;
+    }
+
+    const incomingValue = resolveApiKeyValue(apiKey);
+    if (incomingValue && !isMaskedApiKeyValue(incomingValue)) {
+      return apiKey;
+    }
+
+    const preservedRaw = preservedRawByIdentity.get(identity);
+    if (!preservedRaw) {
+      return apiKey;
+    }
+
+    if ('token' in apiKey && !('key' in apiKey)) {
+      return { ...apiKey, token: preservedRaw };
+    }
+
+    return { ...apiKey, key: preservedRaw };
+  });
+}
+
 export class TokenService {
   private chromeManager: ChromeManager;
 
@@ -453,28 +602,31 @@ export class TokenService {
         validateStatus: (status: number) => status < 500,
       });
 
-      // 检查是否返回HTML（Cloudflare拦截）
-      if (typeof response.data === 'string' && response.data.includes('<!DOCTYPE')) {
+      const rawData = response.data;
+
+      // 检查是否返回HTML/挑战页（Cloudflare 或其他站点防护）
+      if (this.isBrowserChallengeResponse(rawData)) {
         Logger.info('🛡️ [TokenService] 检测到Cloudflare拦截，无法获取站点配置');
         return false;
       }
 
+      const data = rawData && typeof rawData === 'object' ? rawData : null;
+
       // 调试：打印完整响应结构
       Logger.info('📦 [TokenService] /api/status 响应结构:', {
-        hasSuccess: 'success' in response.data,
-        successValue: response.data?.success,
-        hasData: 'data' in response.data,
-        dataType: typeof response.data?.data,
-        checkInEnabledValue: response.data?.data?.check_in_enabled,
-        checkinEnabledValue: response.data?.data?.checkin_enabled,
+        hasSuccess: !!data && 'success' in data,
+        successValue: data?.success,
+        hasData: !!data && 'data' in data,
+        dataType: typeof data?.data,
+        checkInEnabledValue: data?.data?.check_in_enabled,
+        checkinEnabledValue: data?.data?.checkin_enabled,
       });
 
       // 兼容两种站点类型：Veloera (check_in_enabled) 和 New API (checkin_enabled)
       const checkInEnabled =
-        response.data?.data?.check_in_enabled === true ||
-        response.data?.data?.checkin_enabled === true;
+        data?.data?.check_in_enabled === true || data?.data?.checkin_enabled === true;
       Logger.info(
-        `${checkInEnabled ? '✅' : 'ℹ️'} [TokenService] 站点${checkInEnabled ? '支持' : '不支持'}签到功能 (check_in_enabled=${response.data?.data?.check_in_enabled}, checkin_enabled=${response.data?.data?.checkin_enabled})`
+        `${checkInEnabled ? '✅' : 'ℹ️'} [TokenService] 站点${checkInEnabled ? '支持' : '不支持'}签到功能 (check_in_enabled=${data?.data?.check_in_enabled}, checkin_enabled=${data?.data?.checkin_enabled})`
       );
       return checkInEnabled;
     } catch (error: any) {
@@ -584,8 +736,8 @@ export class TokenService {
           validateStatus: (status: number) => status < 500,
         });
 
-        // 检查是否返回HTML（Cloudflare拦截）
-        if (typeof response.data === 'string' && response.data.includes('<!DOCTYPE')) {
+        // 检查是否返回HTML/挑战页（Cloudflare 或其他站点防护）
+        if (this.isBrowserChallengeResponse(response.data)) {
           Logger.info('🛡️ [TokenService] 检测到Cloudflare拦截签到状态接口');
           continue;
         }
@@ -693,8 +845,8 @@ export class TokenService {
           }
         );
 
-        // 检测 Cloudflare 拦截（响应是 HTML 而不是 JSON）
-        if (typeof response.data === 'string' && response.data.includes('<!DOCTYPE')) {
+        // 检测 Cloudflare/挑战页拦截（响应是 HTML 而不是 JSON）
+        if (this.isBrowserChallengeResponse(response.data)) {
           Logger.info(`🛡️ [TokenService] 检测到 Cloudflare 拦截签到接口 (${endpoint.type})`);
           cloudflareDetected = true;
           continue; // 尝试下一个端点
@@ -955,7 +1107,7 @@ export class TokenService {
           Logger.info('📦 [TokenService] 浏览器签到结果:', result);
 
           // 检查是否返回 HTML（仍然被 Cloudflare 拦截）
-          if (!result.isJson && result.textSnippet?.includes('<!DOCTYPE')) {
+          if (!result.isJson && this.isBrowserChallengeResponse(result.textSnippet)) {
             Logger.warn('⚠️ [TokenService] 浏览器模式仍被 Cloudflare 拦截，尝试下一个端点');
             continue;
           }
@@ -1171,8 +1323,8 @@ export class TokenService {
         validateStatus: (status: number) => status < 500,
       });
 
-      // 检查是否返回HTML（Cloudflare拦截）
-      if (typeof response.data === 'string' && response.data.includes('<!DOCTYPE')) {
+      // 检查是否返回HTML/挑战页（Cloudflare 或其他站点防护）
+      if (this.isBrowserChallengeResponse(response.data)) {
         Logger.info('🛡️ [TokenService] 检测到Cloudflare拦截签到统计接口');
         return undefined;
       }
@@ -1260,15 +1412,9 @@ export class TokenService {
     baseUrl: string,
     userId: number,
     accessToken: string,
-    page?: any
+    context?: TokenRequestContext
   ): Promise<any[]> {
-    Logger.info('🔑 [TokenService] 获取API Keys...', { hasPage: !!page });
-
-    // 如果提供了page，优先使用浏览器环境
-    if (page) {
-      Logger.info('♻️ [TokenService] 使用共享浏览器页面获取API Keys');
-      return await this.fetchApiTokensInBrowser(baseUrl, userId, accessToken, page);
-    }
+    Logger.info('🔑 [TokenService] 获取API Keys...', { browserSlot: context?.browserSlot ?? 0 });
 
     // 否则使用axios
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
@@ -1285,6 +1431,7 @@ export class TokenService {
 
     let lastError: any = null;
     let lastStatus: number | undefined = undefined;
+    let needBrowserFallback = false;
 
     for (const url of urls) {
       try {
@@ -1293,52 +1440,63 @@ export class TokenService {
           timeout: 10000,
         });
 
+        const rawData = response.data;
+        const data = rawData && typeof rawData === 'object' ? rawData : null;
+
+        if (this.isBrowserChallengeResponse(rawData)) {
+          Logger.warn(`🛡️ [TokenService] URL ${url} 返回挑战页，改用浏览器模式获取 API Keys`);
+          lastStatus = response.status;
+          lastError = new Error('Browser challenge response');
+          needBrowserFallback = true;
+          break;
+        }
+
         // 打印完整响应结构用于调试
         Logger.info('📦 [TokenService] API Keys响应结构:', {
-          hasSuccess: 'success' in response.data,
-          successValue: response.data?.success,
-          hasData: 'data' in response.data,
-          isDataArray: Array.isArray(response.data?.data),
-          dataType: typeof response.data?.data,
-          hasItems: !!response.data?.data?.items,
-          topLevelKeys: Object.keys(response.data || {}),
-          dataKeys: response.data?.data ? Object.keys(response.data.data) : [],
+          hasSuccess: !!data && 'success' in data,
+          successValue: data?.success,
+          hasData: !!data && 'data' in data,
+          isDataArray: Array.isArray(data?.data),
+          dataType: typeof data?.data,
+          hasItems: !!data?.data?.items,
+          topLevelKeys: Object.keys(data || {}),
+          dataKeys: data?.data && typeof data.data === 'object' ? Object.keys(data.data) : [],
         });
 
         let tokens: any[] = [];
 
         // 格式1: 直接数组
-        if (Array.isArray(response.data)) {
-          tokens = response.data;
+        if (Array.isArray(rawData)) {
+          tokens = rawData;
           Logger.info('   响应格式: 直接数组');
         }
         // 格式2: Done Hub嵌套data { success: true, data: { data: [...], page, size, total_count } }
-        else if (response.data?.data?.data && Array.isArray(response.data.data.data)) {
-          tokens = response.data.data.data;
+        else if (data?.data?.data && Array.isArray(data.data.data)) {
+          tokens = data.data.data;
           Logger.info('   响应格式: Done Hub嵌套data (data.data.data数组) ✅');
         }
         // 格式3: Done Hub分页items { data: { items: [...], total: N } }
-        else if (response.data?.data?.items && Array.isArray(response.data.data.items)) {
-          tokens = response.data.data.items;
+        else if (data?.data?.items && Array.isArray(data.data.items)) {
+          tokens = data.data.items;
           Logger.info('   响应格式: Done Hub分页items (data.items)');
         }
         // 格式4: New API简单包装 { data: [...] }
-        else if (response.data?.data && Array.isArray(response.data.data)) {
-          tokens = response.data.data;
+        else if (data?.data && Array.isArray(data.data)) {
+          tokens = data.data;
           Logger.info('   响应格式: New API简单包装 (data数组)');
         }
         // 格式5: 嵌套list { success: true, data: { list: [...] } }
-        else if (response.data?.data?.list && Array.isArray(response.data.data.list)) {
-          tokens = response.data.data.list;
+        else if (data?.data?.list && Array.isArray(data.data.list)) {
+          tokens = data.data.list;
           Logger.info('   响应格式: 嵌套list (data.list)');
         }
         // 格式6: tokens字段 { data: { tokens: [...] } }
-        else if (response.data?.data?.tokens && Array.isArray(response.data.data.tokens)) {
-          tokens = response.data.data.tokens;
+        else if (data?.data?.tokens && Array.isArray(data.data.tokens)) {
+          tokens = data.data.tokens;
           Logger.info('   响应格式: tokens字段 (data.tokens)');
         }
         // 格式7: { data: { data: null/[] } } - 空数据
-        else if (response.data?.data && typeof response.data.data === 'object') {
+        else if (data?.data && typeof data.data === 'object') {
           Logger.info('   响应格式: 对象格式（可能为空）');
           tokens = [];
         }
@@ -1355,7 +1513,11 @@ export class TokenService {
 
         // 如果获取到数据或已是最后一个URL，返回结果
         if (tokens.length > 0 || url === urls[urls.length - 1]) {
-          return tokens;
+          return await this.enrichMaskedApiKeys(baseUrl, userId, accessToken, tokens, undefined, {
+            browserSlot: context?.browserSlot,
+            allowBrowserFallback: true,
+            challengeWaitMs: 10000,
+          });
         }
       } catch (error: any) {
         lastError = error;
@@ -1366,27 +1528,23 @@ export class TokenService {
           message: error.message,
         });
 
-        // 如果调用方已经提供了共享页面，则在403时直接切换到浏览器模式
-        if (lastStatus === 403 && page) {
-          Logger.info('🛡️ [TokenService] 检测到403错误，使用共享浏览器页面获取API Keys...');
-          try {
-            return await this.fetchApiTokensInBrowser(baseUrl, userId, accessToken, page);
-          } catch (browserError: any) {
-            Logger.error('❌ [TokenService] 浏览器模式获取API Keys失败:', browserError.message);
-          }
-        }
         continue;
       }
     }
 
-    // 如果 axios 全部失败且没有提供共享页面，但错误看起来像 Cloudflare/403 场景，则自动回退到浏览器模式
-    if (!page && lastError && (lastStatus === 403 || this.isCloudflareError(lastError))) {
+    // 如果 axios 全部失败且错误看起来像 Cloudflare/403 场景，则自动回退到浏览器模式
+    if (
+      needBrowserFallback ||
+      (lastError && (lastStatus === 403 || this.isCloudflareError(lastError)))
+    ) {
       Logger.info(
-        '🛡️ [TokenService] axios 获取 API Keys 失败且疑似 Cloudflare，尝试使用浏览器模式重新获取...'
+        '🛡️ [TokenService] axios 获取 API Keys 失败且疑似挑战页/Cloudflare，尝试使用浏览器模式重新获取...'
       );
       try {
         // 通过 ChromeManager 创建页面（自动管理引用计数与生命周期）
-        const { page: browserPage, release } = await this.chromeManager.createPage(cleanBaseUrl);
+        const { page: browserPage, release } = await this.chromeManager.createPage(cleanBaseUrl, {
+          slot: context?.browserSlot,
+        });
         try {
           // 等待 Cloudflare 验证通过（如果存在）
           await this.waitForCloudflareChallengeToPass(browserPage);
@@ -1522,7 +1680,9 @@ export class TokenService {
 
         // 如果获取到数据或已是最后一个URL，返回结果
         if (tokens.length > 0 || url === urls[urls.length - 1]) {
-          return tokens;
+          return await this.enrichMaskedApiKeys(baseUrl, userId, accessToken, tokens, page, {
+            allowBrowserFallback: false,
+          });
         }
       } catch (error: any) {
         Logger.error(`❌ [TokenService] URL ${url} 失败:`, error.message);
@@ -1532,6 +1692,391 @@ export class TokenService {
 
     Logger.warn('⚠️ [TokenService] 所有URL都失败，返回空数组');
     return [];
+  }
+
+  private async enrichMaskedApiKeys(
+    baseUrl: string,
+    userId: number,
+    accessToken: string,
+    tokens: any[],
+    page?: any,
+    context?: TokenRequestContext
+  ): Promise<any[]> {
+    if (!Array.isArray(tokens) || tokens.length === 0) {
+      return tokens;
+    }
+
+    const maskedEntries = tokens
+      .map((token, index) => ({
+        index,
+        token,
+        tokenId: resolveApiKeyFetchId(token),
+        rawValue: resolveApiKeyValue(token),
+      }))
+      .filter(entry => entry.tokenId && entry.rawValue && isMaskedApiKeyValue(entry.rawValue));
+
+    if (maskedEntries.length === 0) {
+      return tokens;
+    }
+
+    Logger.info(
+      `🔍 [TokenService] 检测到 ${maskedEntries.length} 个脱敏 API Key，尝试按 ID 获取明文`
+    );
+
+    const resolvedValues = new Map<number, string>();
+
+    await Promise.all(
+      maskedEntries.map(async entry => {
+        try {
+          const resolvedValue = await this.resolveUsableApiKeyValue(
+            baseUrl,
+            userId,
+            accessToken,
+            entry.token,
+            {
+              ...context,
+              page,
+            }
+          );
+
+          if (!resolvedValue || isMaskedApiKeyValue(resolvedValue)) {
+            return;
+          }
+
+          resolvedValues.set(entry.index, resolvedValue);
+        } catch (error: any) {
+          Logger.warn(
+            `⚠️ [TokenService] API Key ${entry.tokenId} 明文获取失败，保留列表中的脱敏值:`,
+            error?.message || error
+          );
+        }
+      })
+    );
+
+    if (resolvedValues.size === 0) {
+      return tokens;
+    }
+
+    return tokens.map((token, index) => {
+      const resolvedValue = resolvedValues.get(index);
+      if (!resolvedValue) {
+        return token;
+      }
+
+      return withResolvedApiKeyValue(token, resolvedValue);
+    });
+  }
+
+  private extractRawApiKeyValue(payload: unknown): string | null {
+    const directValue = normalizeApiKeyValue(payload);
+    if (directValue && !isMaskedApiKeyValue(directValue)) {
+      return directValue;
+    }
+
+    if (!payload || typeof payload !== 'object') {
+      return null;
+    }
+
+    const record = payload as Record<string, any>;
+    const nestedData = record.data;
+    const nestedNestedData =
+      nestedData && typeof nestedData === 'object'
+        ? (nestedData as Record<string, any>).data
+        : undefined;
+
+    const candidates = [
+      record.key,
+      record.token,
+      nestedData,
+      nestedData?.key,
+      nestedData?.token,
+      nestedNestedData,
+      nestedNestedData?.key,
+      nestedNestedData?.token,
+    ];
+
+    for (const candidate of candidates) {
+      const normalized = normalizeApiKeyValue(candidate);
+      if (normalized && !isMaskedApiKeyValue(normalized)) {
+        return normalized;
+      }
+    }
+
+    return null;
+  }
+
+  private async fetchRawApiKeyValue(
+    baseUrl: string,
+    userId: number,
+    accessToken: string,
+    tokenId: string,
+    page?: any
+  ): Promise<string | null> {
+    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    const url = `${cleanBaseUrl}/api/token/${encodeURIComponent(tokenId)}/key`;
+    const methods: Array<'POST' | 'GET'> = ['POST', 'GET'];
+    const preferRawApiKeyError = (
+      current: (Error & { status?: number }) | null,
+      next: Error & { status?: number }
+    ) => {
+      if (!current) {
+        return next;
+      }
+
+      const currentStatus = current.status;
+      const currentMessage = current.message || '';
+      if (
+        currentStatus === 401 ||
+        currentStatus === 403 ||
+        currentStatus === 0 ||
+        currentMessage.includes('Browser challenge response')
+      ) {
+        return current;
+      }
+
+      return next;
+    };
+
+    if (page) {
+      const userIdHeaders = getAllUserIdHeaders(userId);
+      let lastError: (Error & { status?: number }) | null = null;
+
+      for (const method of methods) {
+        const result = await runOnPageQueue(page, () =>
+          page.evaluate(
+            async (
+              apiUrl: string,
+              token: string,
+              requestMethod: 'POST' | 'GET',
+              additionalHeaders: Record<string, string>
+            ) => {
+              try {
+                const headers: Record<string, string> = {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${token}`,
+                  ...additionalHeaders,
+                  Pragma: 'no-cache',
+                };
+
+                const requestInit: RequestInit = {
+                  method: requestMethod,
+                  credentials: 'include',
+                  headers,
+                };
+
+                if (requestMethod === 'POST') {
+                  requestInit.body = JSON.stringify({});
+                }
+
+                const response = await fetch(apiUrl, requestInit);
+
+                const status = response.status;
+                const text = await response.text();
+
+                try {
+                  return { ok: response.ok, status, isJson: true, data: JSON.parse(text) };
+                } catch {
+                  return {
+                    ok: response.ok,
+                    status,
+                    isJson: false,
+                    textSnippet: text.slice(0, 500),
+                  };
+                }
+              } catch (err: any) {
+                return {
+                  ok: false,
+                  status: 0,
+                  isJson: false,
+                  error: err?.message || String(err),
+                };
+              }
+            },
+            url,
+            accessToken,
+            method,
+            userIdHeaders
+          )
+        );
+
+        if (!result.ok || result.status < 200 || result.status >= 300) {
+          const reason = result.isJson
+            ? result.data?.message || `HTTP ${result.status}`
+            : result.error || result.textSnippet || `HTTP ${result.status}`;
+          const error = new Error(reason) as Error & { status?: number };
+          error.status = result.status;
+          lastError = preferRawApiKeyError(lastError, error);
+          continue;
+        }
+
+        if (!result.isJson && this.isBrowserChallengeResponse(result.textSnippet)) {
+          lastError = preferRawApiKeyError(
+            lastError,
+            new Error('Browser challenge response') as Error & { status?: number }
+          );
+          continue;
+        }
+
+        const extracted = this.extractRawApiKeyValue(
+          result.isJson ? result.data : result.textSnippet
+        );
+        if (extracted) {
+          return extracted;
+        }
+      }
+
+      if (lastError) {
+        throw lastError;
+      }
+
+      throw new Error('Failed to resolve raw API key');
+    }
+
+    let lastError: (Error & { status?: number }) | null = null;
+
+    for (const method of methods) {
+      try {
+        const response =
+          method === 'POST'
+            ? await httpPost(
+                url,
+                {},
+                {
+                  headers: this.createRequestHeaders(userId, accessToken, baseUrl),
+                  timeout: 10000,
+                  validateStatus: (status: number) => status < 500,
+                }
+              )
+            : await httpGet(url, {
+                headers: this.createRequestHeaders(userId, accessToken, baseUrl),
+                timeout: 10000,
+                validateStatus: (status: number) => status < 500,
+              });
+
+        if (this.isBrowserChallengeResponse(response.data)) {
+          lastError = new Error('Browser challenge response');
+          continue;
+        }
+
+        if (response.status < 200 || response.status >= 300) {
+          const error = new Error(response.data?.message || `HTTP ${response.status}`) as Error & {
+            status?: number;
+          };
+          error.status = response.status;
+          lastError = preferRawApiKeyError(lastError, error);
+          continue;
+        }
+
+        const extracted = this.extractRawApiKeyValue(response.data);
+        if (extracted) {
+          return extracted;
+        }
+      } catch (error: any) {
+        lastError = preferRawApiKeyError(lastError, error);
+      }
+    }
+
+    if (lastError) {
+      throw lastError;
+    }
+
+    throw new Error('Failed to resolve raw API key');
+  }
+
+  async resolveUsableApiKeyValue(
+    baseUrl: string,
+    userId: number,
+    accessToken: string,
+    apiKey: any,
+    context?: TokenRequestContext & { page?: any }
+  ): Promise<string | null> {
+    const currentValue = resolveApiKeyValue(apiKey);
+    if (currentValue && !isMaskedApiKeyValue(currentValue)) {
+      return currentValue;
+    }
+
+    const tokenId = resolveApiKeyFetchId(apiKey);
+    if (!tokenId) {
+      return null;
+    }
+
+    if (context?.page) {
+      try {
+        const resolvedValue = await this.fetchRawApiKeyValue(
+          baseUrl,
+          userId,
+          accessToken,
+          tokenId,
+          context.page
+        );
+        return resolvedValue && !isMaskedApiKeyValue(resolvedValue) ? resolvedValue : null;
+      } catch (error: any) {
+        Logger.warn(
+          `⚠️ [TokenService] 通过页面解析 API Key ${tokenId} 失败:`,
+          error?.message || error
+        );
+        return null;
+      }
+    }
+
+    try {
+      const resolvedValue = await this.fetchRawApiKeyValue(baseUrl, userId, accessToken, tokenId);
+      return resolvedValue && !isMaskedApiKeyValue(resolvedValue) ? resolvedValue : null;
+    } catch (error: any) {
+      if (!this.shouldFallbackToBrowserForRawApiKey(error, context)) {
+        Logger.warn(`⚠️ [TokenService] 解析 API Key ${tokenId} 失败:`, error?.message || error);
+        return null;
+      }
+    }
+
+    try {
+      const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+      const { page, release } = await this.chromeManager.createPage(cleanBaseUrl, {
+        slot: context?.browserSlot,
+      });
+
+      try {
+        await page.bringToFront().catch(() => {});
+        await this.waitForCloudflareChallengeToPass(page, context?.challengeWaitMs ?? 10000);
+        const resolvedValue = await this.fetchRawApiKeyValue(
+          baseUrl,
+          userId,
+          accessToken,
+          tokenId,
+          page
+        );
+        return resolvedValue && !isMaskedApiKeyValue(resolvedValue) ? resolvedValue : null;
+      } finally {
+        try {
+          await page.close();
+        } catch {
+          // ignore close errors
+        }
+        release();
+      }
+    } catch (error: any) {
+      Logger.warn(
+        `⚠️ [TokenService] 浏览器回退解析 API Key ${tokenId} 失败:`,
+        error?.message || error
+      );
+      return null;
+    }
+  }
+
+  private shouldFallbackToBrowserForRawApiKey(error: any, context?: TokenRequestContext): boolean {
+    if (context?.allowBrowserFallback === false) {
+      return false;
+    }
+
+    const status = error?.status ?? error?.response?.status;
+    if (status === 401 || status === 403 || status === 0) {
+      return true;
+    }
+
+    return (
+      this.isCloudflareError(error) ||
+      String(error?.message || '').includes('Browser challenge response')
+    );
   }
 
   /**
@@ -1549,7 +2094,8 @@ export class TokenService {
     baseUrl: string,
     userId: number,
     accessToken: string,
-    tokenIdentifier: { id?: number | string; key?: string }
+    tokenIdentifier: { id?: number | string; key?: string },
+    context?: TokenRequestContext
   ): Promise<{ success: boolean; data?: any[] }> {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
     const id = tokenIdentifier.id != null ? String(tokenIdentifier.id) : undefined;
@@ -1644,11 +2190,9 @@ export class TokenService {
 
         const rawData = response.data;
 
-        // 如果返回的是 HTML，很可能被 Cloudflare 拦截，后续使用浏览器模式重试
-        if (typeof rawData === 'string' && rawData.includes('<!DOCTYPE html')) {
-          Logger.warn(
-            '🛡️ [TokenService] 删除令牌遇到 HTML 响应（可能是 Cloudflare），准备回退到浏览器模式'
-          );
+        // 如果返回的是 HTML/挑战页，很可能被站点防护拦截，后续使用浏览器模式重试
+        if (this.isBrowserChallengeResponse(rawData)) {
+          Logger.warn('🛡️ [TokenService] 删除令牌遇到挑战页响应，准备回退到浏览器模式');
           needBrowserFallback = true;
           break;
         }
@@ -1714,7 +2258,7 @@ export class TokenService {
     }
 
     // ===== 2. 浏览器模式（Cloudflare 场景 / axios 不可用时）=====
-    return await this.deleteApiTokenInBrowser(baseUrl, userId, accessToken, { id, key });
+    return await this.deleteApiTokenInBrowser(baseUrl, userId, accessToken, { id, key }, context);
   }
 
   /**
@@ -1729,7 +2273,8 @@ export class TokenService {
     baseUrl: string,
     userId: number,
     accessToken: string,
-    tokenIdentifier: { id?: string; key?: string }
+    tokenIdentifier: { id?: string; key?: string },
+    context?: TokenRequestContext
   ): Promise<{ success: boolean; data?: any[] }> {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
     const id = tokenIdentifier.id;
@@ -1745,7 +2290,9 @@ export class TokenService {
       hasKey: !!key,
     });
 
-    const { page, release } = await this.chromeManager.createPage(cleanBaseUrl);
+    const { page, release } = await this.chromeManager.createPage(cleanBaseUrl, {
+      slot: context?.browserSlot,
+    });
 
     try {
       // 确保页面前置，方便用户在 Cloudflare 页面中进行验证
@@ -1976,6 +2523,171 @@ export class TokenService {
     );
   }
 
+  private normalizeTokenGroup(group: unknown): string {
+    return normalizeApiKeyGroup(group);
+  }
+
+  private getTokenIdentity(token: any): string | null {
+    const candidates = [token?.id, token?.token_id, token?.key, token?.token];
+
+    for (const candidate of candidates) {
+      if (candidate === undefined || candidate === null) {
+        continue;
+      }
+
+      const value = String(candidate).trim();
+      if (value) {
+        return value;
+      }
+    }
+
+    return null;
+  }
+
+  private isCreatedTokenMatch(token: any, tokenData: CreateApiTokenPayload): boolean {
+    if (!token || typeof token !== 'object') {
+      return false;
+    }
+
+    const tokenName = String(token.name ?? token.token_name ?? '').trim();
+    if (tokenName !== tokenData.name) {
+      return false;
+    }
+
+    if (this.normalizeTokenGroup(token.group) !== this.normalizeTokenGroup(tokenData.group)) {
+      return false;
+    }
+
+    if (Boolean(token.unlimited_quota) !== tokenData.unlimited_quota) {
+      return false;
+    }
+
+    const remainQuota = Number(
+      token.remain_quota ?? token.remainQuota ?? token.quota ?? token.quota_remain
+    );
+    if (
+      !tokenData.unlimited_quota &&
+      Number.isFinite(remainQuota) &&
+      remainQuota !== tokenData.remain_quota
+    ) {
+      return false;
+    }
+
+    const expiredTime = Number(token.expired_time ?? token.expire_time ?? token.expiredTime);
+    if (
+      tokenData.expired_time > 0 &&
+      Number.isFinite(expiredTime) &&
+      expiredTime !== tokenData.expired_time
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private hasVerifiedCreatedToken(
+    beforeTokens: any[],
+    afterTokens: any[],
+    tokenData: CreateApiTokenPayload
+  ): boolean {
+    const beforeIds = new Set(
+      beforeTokens
+        .map(token => this.getTokenIdentity(token))
+        .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    );
+
+    return afterTokens.some(token => {
+      if (!this.isCreatedTokenMatch(token, tokenData)) {
+        return false;
+      }
+
+      const identity = this.getTokenIdentity(token);
+      if (identity) {
+        return !beforeIds.has(identity);
+      }
+
+      return afterTokens.length > beforeTokens.length;
+    });
+  }
+
+  private extractCreatedRawApiKey(createResponseData: any): string | null {
+    const containers = [
+      createResponseData,
+      createResponseData?.data,
+      createResponseData?.data?.data,
+    ];
+
+    for (const container of containers) {
+      if (typeof container === 'string') {
+        const normalized = normalizeApiKeyValue(container);
+        if (normalized && !isMaskedApiKeyValue(normalized)) {
+          return normalized;
+        }
+        continue;
+      }
+
+      if (!container || typeof container !== 'object') {
+        continue;
+      }
+
+      for (const field of ['key', 'token', 'value']) {
+        const normalized = normalizeApiKeyValue((container as any)[field]);
+        if (normalized && !isMaskedApiKeyValue(normalized)) {
+          return normalized;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  private mergeCreatedRawKeyIntoTokens(
+    beforeTokens: any[],
+    afterTokens: any[],
+    tokenData: CreateApiTokenPayload,
+    createResponseData: any
+  ): any[] {
+    const rawKey = this.extractCreatedRawApiKey(createResponseData);
+    if (!rawKey || afterTokens.length === 0) {
+      return afterTokens;
+    }
+
+    const beforeIds = new Set(
+      beforeTokens
+        .map(token => this.getTokenIdentity(token))
+        .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    );
+
+    const createdToken =
+      afterTokens.find(token => {
+        if (!this.isCreatedTokenMatch(token, tokenData)) {
+          return false;
+        }
+
+        const identity = this.getTokenIdentity(token);
+        return identity ? !beforeIds.has(identity) : afterTokens.length > beforeTokens.length;
+      }) || afterTokens.find(token => this.isCreatedTokenMatch(token, tokenData));
+
+    if (!createdToken) {
+      return afterTokens;
+    }
+
+    return (
+      mergeApiKeysPreservingRawValue(
+        [
+          {
+            id: createdToken.id,
+            token_id: createdToken.token_id,
+            name: createdToken.name ?? tokenData.name,
+            group: createdToken.group ?? tokenData.group,
+            key: rawKey,
+          },
+        ],
+        afterTokens
+      ) || afterTokens
+    );
+  }
+
   /**
    * 创建新的 API 令牌
    *
@@ -1992,16 +2704,8 @@ export class TokenService {
     baseUrl: string,
     userId: number,
     accessToken: string,
-    tokenData: {
-      name: string;
-      remain_quota: number;
-      expired_time: number;
-      unlimited_quota: boolean;
-      model_limits_enabled: boolean;
-      model_limits: string;
-      allow_ips: string;
-      group: string;
-    }
+    tokenData: CreateApiTokenPayload,
+    context?: TokenRequestContext
   ): Promise<{ success: boolean; data?: any[] }> {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
     const url = `${cleanBaseUrl}/api/token/`;
@@ -2016,6 +2720,7 @@ export class TokenService {
     });
 
     try {
+      const beforeTokens = await this.fetchApiTokens(baseUrl, userId, accessToken, context);
       const response = await httpPost(url, tokenData, {
         headers: this.createRequestHeaders(userId, accessToken, baseUrl),
         timeout: 15000,
@@ -2025,10 +2730,10 @@ export class TokenService {
       const status = response.status;
       const rawData = response.data;
 
-      // 如果返回的是 HTML（例如 Cloudflare "Just a moment..."），直接切换到浏览器模式
-      if (typeof rawData === 'string' && rawData.includes('<!DOCTYPE html')) {
-        Logger.warn('🛡️ [TokenService] 创建令牌遇到 Cloudflare HTML 响应，切换到浏览器模式重试...');
-        return await this.createApiTokenInBrowser(baseUrl, userId, accessToken, tokenData);
+      // 如果返回的是 HTML/挑战页，直接切换到浏览器模式
+      if (this.isBrowserChallengeResponse(rawData)) {
+        Logger.warn('🛡️ [TokenService] 创建令牌遇到挑战页响应，切换到浏览器模式重试...');
+        return await this.createApiTokenInBrowser(baseUrl, userId, accessToken, tokenData, context);
       }
 
       const data = rawData && typeof rawData === 'object' ? rawData : {};
@@ -2051,16 +2756,33 @@ export class TokenService {
         throw new Error((data as any).message || '创建令牌失败');
       }
 
-      // axios 模式创建成功，不额外获取列表，前端后续用 axios 刷新 API Key 列表
-      return { success: true };
+      const tokens = this.mergeCreatedRawKeyIntoTokens(
+        beforeTokens,
+        await this.fetchApiTokens(baseUrl, userId, accessToken, context),
+        tokenData,
+        rawData
+      );
+      const verified = this.hasVerifiedCreatedToken(beforeTokens, tokens, tokenData);
+
+      Logger.info('🔍 [TokenService] 创建令牌后核验结果:', {
+        beforeCount: beforeTokens.length,
+        afterCount: tokens.length,
+        verified,
+        name: tokenData.name,
+        group: tokenData.group,
+      });
+
+      if (!verified) {
+        throw new Error('创建请求已返回成功，但未在当前账户下查询到新 API Key');
+      }
+
+      return { success: true, data: tokens };
     } catch (error: any) {
-      // 如果是 axios 错误且响应体是 Cloudflare HTML，同样尝试浏览器模式
+      // 如果是挑战页/Cloudflare 错误，同样尝试浏览器模式
       const html = error?.response?.data;
-      if (typeof html === 'string' && html.includes('<!DOCTYPE html')) {
-        Logger.warn(
-          '🛡️ [TokenService] axios 创建令牌遇到 Cloudflare HTML 响应，切换到浏览器模式重试...'
-        );
-        return await this.createApiTokenInBrowser(baseUrl, userId, accessToken, tokenData);
+      if (this.isBrowserChallengeResponse(html) || this.isCloudflareError(error)) {
+        Logger.warn('🛡️ [TokenService] axios 创建令牌遇到挑战页响应，切换到浏览器模式重试...');
+        return await this.createApiTokenInBrowser(baseUrl, userId, accessToken, tokenData, context);
       }
 
       Logger.error('❌ [TokenService] 创建 API 令牌失败:', error.message || error);
@@ -2078,16 +2800,8 @@ export class TokenService {
     baseUrl: string,
     userId: number,
     accessToken: string,
-    tokenData: {
-      name: string;
-      remain_quota: number;
-      expired_time: number;
-      unlimited_quota: boolean;
-      model_limits_enabled: boolean;
-      model_limits: string;
-      allow_ips: string;
-      group: string;
-    }
+    tokenData: CreateApiTokenPayload,
+    context?: TokenRequestContext
   ): Promise<{ success: boolean; data?: any[] }> {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
     const url = `${cleanBaseUrl}/api/token/`;
@@ -2099,7 +2813,9 @@ export class TokenService {
     });
 
     // 通过 ChromeManager 创建页面（自动管理引用计数与生命周期）
-    const { page, release } = await this.chromeManager.createPage(cleanBaseUrl);
+    const { page, release } = await this.chromeManager.createPage(cleanBaseUrl, {
+      slot: context?.browserSlot,
+    });
 
     try {
       // 确保页面前置，方便用户在 Cloudflare 页面中进行验证
@@ -2109,6 +2825,7 @@ export class TokenService {
       await this.waitForCloudflareChallengeToPass(page);
 
       const userIdHeaders = getAllUserIdHeaders(userId);
+      const beforeTokens = await this.fetchApiTokensInBrowser(baseUrl, userId, accessToken, page);
 
       const result = await runOnPageQueue(page, () =>
         page.evaluate(
@@ -2166,7 +2883,12 @@ export class TokenService {
       }
 
       // 创建成功后，直接在同一浏览器页面中获取最新 API Key 列表
-      const tokens = await this.fetchApiTokensInBrowser(baseUrl, userId, accessToken, page);
+      const tokens = this.mergeCreatedRawKeyIntoTokens(
+        beforeTokens,
+        await this.fetchApiTokensInBrowser(baseUrl, userId, accessToken, page),
+        tokenData,
+        result.data
+      );
       Logger.info(
         `✅ [TokenService] 浏览器模式创建令牌后已获取最新 API Keys，数量: ${tokens.length}`
       );
@@ -2409,28 +3131,33 @@ export class TokenService {
           timeout: 10000,
         });
 
+        const rawData = response.data;
+        const data = rawData && typeof rawData === 'object' ? rawData : null;
+
+        if (this.isBrowserChallengeResponse(rawData)) {
+          Logger.info(`🛡️ [TokenService] 模型定价接口返回挑战页，跳过当前 URL: ${url}`);
+          continue;
+        }
+
         Logger.info(`📦 [TokenService] 模型定价响应结构:`, {
           url,
-          hasSuccess: 'success' in response.data,
-          successValue: response.data?.success,
-          hasData: 'data' in response.data,
-          dataType: typeof response.data?.data,
-          isDataArray: Array.isArray(response.data?.data),
-          dataLength: Array.isArray(response.data?.data) ? response.data.data.length : 'N/A',
-          firstKey:
-            response.data?.data && typeof response.data.data === 'object'
-              ? Object.keys(response.data.data)[0]
-              : 'N/A',
+          hasSuccess: !!data && 'success' in data,
+          successValue: data?.success,
+          hasData: !!data && 'data' in data,
+          dataType: typeof data?.data,
+          isDataArray: Array.isArray(data?.data),
+          dataLength: Array.isArray(data?.data) ? data.data.length : 'N/A',
+          firstKey: data?.data && typeof data.data === 'object' ? Object.keys(data.data)[0] : 'N/A',
         });
 
         // 检查响应数据是否存在
-        if (response.data) {
+        if (data) {
           // New API /api/pricing 格式: { success: true, data: [...数组] }
-          if (response.data?.success && response.data?.data && Array.isArray(response.data.data)) {
+          if (data?.success && data?.data && Array.isArray(data.data)) {
             Logger.info('✅ [TokenService] 模型定价获取成功 (New API数组格式)');
             // 将数组转换为以model_name为key的对象
             const pricing: any = { data: {} };
-            response.data.data.forEach((model: any) => {
+            data.data.forEach((model: any) => {
               const modelName = model.model_name || model.model;
               if (modelName) {
                 // 保留原始字段，不在后端计算价格
@@ -2449,18 +3176,18 @@ export class TokenService {
 
           // Done Hub /api/available_model 格式: { success: true, data: { "GLM-4.5": { price: {...}, groups: [...] } } }
           if (
-            response.data?.success &&
-            response.data?.data &&
-            typeof response.data.data === 'object' &&
-            !Array.isArray(response.data.data)
+            data?.success &&
+            data?.data &&
+            typeof data.data === 'object' &&
+            !Array.isArray(data.data)
           ) {
-            const firstValue = Object.values(response.data.data)[0] as any;
+            const firstValue = Object.values(data.data)[0] as any;
 
             // 判断是否为Done Hub/One Hub格式（有price对象）
             if (firstValue && firstValue.price) {
               Logger.info('✅ [TokenService] 模型定价获取成功 (Done Hub/One Hub对象格式)');
               Logger.info('📝 [TokenService] 示例模型数据:', {
-                firstModelName: Object.keys(response.data.data)[0],
+                firstModelName: Object.keys(data.data)[0],
                 firstModelData: firstValue,
               });
 
@@ -2468,7 +3195,7 @@ export class TokenService {
               const pricing: any = { data: {} };
               let sampleConverted: any = null;
 
-              for (const [modelName, modelInfo] of Object.entries(response.data.data)) {
+              for (const [modelName, modelInfo] of Object.entries(data.data)) {
                 const info = modelInfo as any;
                 if (info.price) {
                   // quota_type: 'times' = 1 (按次), 'tokens' = 0 (按量)
@@ -2668,7 +3395,33 @@ export class TokenService {
   /**
    * 检测是否为Cloudflare保护错误
    */
+  private isBrowserChallengeResponse(data: unknown): boolean {
+    if (typeof data !== 'string') {
+      return false;
+    }
+
+    const normalized = data.toLowerCase();
+    return (
+      normalized.includes('<!doctype html') ||
+      normalized.includes('<html') ||
+      normalized.includes('<script') ||
+      normalized.includes('just a moment') ||
+      normalized.includes('cf-mitigated') ||
+      normalized.includes('cf-browser-verification') ||
+      normalized.includes('document.cookie') ||
+      normalized.includes('acw_sc__v2') ||
+      normalized.includes('var arg1=')
+    );
+  }
+
   private isCloudflareError(error: any): boolean {
+    if (
+      this.isBrowserChallengeResponse(error?.response?.data) ||
+      this.isBrowserChallengeResponse(error?.message)
+    ) {
+      return true;
+    }
+
     if (error.response?.status === 403) {
       const data = error.response?.data || '';
       const dataStr = typeof data === 'string' ? data : JSON.stringify(data);

@@ -25,12 +25,12 @@
 |------|------|--------|
 | **main.ts** | 应用入口、窗口管理 | `createWindow()`, `app.whenReady()` |
 | **api-service.ts** | API 请求服务、检测状态持久化 | `ApiService` 类 |
-| **chrome-manager.ts** | Chrome 浏览器管理 | `ChromeManager` 类 |
+| **chrome-manager.ts** | Chrome 浏览器管理、多槽位架构、独立登录浏览器（loginBrowserState） | `ChromeManager` 类 |
 | **token-service.ts** | Token 认证服务 | `TokenService` 类 |
 | **cli-compat-service.ts** | CLI 兼容性测试 | `CliCompatService` 类 |
 | **backup-manager.ts** | 本地备份管理 | `backupManager` 实例 |
 | **webdav-manager.ts** | WebDAV 云端备份 | `WebDAVManager` 类 |
-| **unified-config-manager.ts** | 统一配置管理 | `unifiedConfigManager` 实例 |
+| **unified-config-manager.ts** | 统一配置管理、损坏恢复、原子写入 | `unifiedConfigManager` 实例 |
 | **browser-profile-manager.ts** | 主/隔离浏览器 Profile 管理，多账户共享槽位 | `BrowserProfileManager` 类 |
 | **update-service.ts** | 应用更新服务 | `UpdateService` 类 |
 | **config-detection-service.ts** | CLI 配置检测服务 | `ConfigDetectionService` 类 |
@@ -141,7 +141,7 @@ main.ts: app.whenReady()
 
 ### ChromeManager
 
-**职责**: 多槽位浏览器池管理，自动登录获取 Token，读取 localStorage 数据
+**职责**: 多槽位浏览器池管理，自动登录获取 Token，读取 localStorage 数据，并支持按账户 Profile 直接打开站点
 
 **多槽位架构**:
 - slot 0 = 主浏览器 (`api-detector-chrome`)，所有站点的第 1 个账号共用
@@ -158,6 +158,7 @@ main.ts: app.whenReady()
 - `createPage(url, { slot })` - 创建页面（slot 0 走原有逻辑，slot N 走隔离浏览器）
 - `createPageForSlot(url, slotIndex)` - 为指定隔离槽位创建页面
 - `findExistingPageForUrl(url)` - 查找可复用的同域名页面
+- `openSiteWithProfile(url, options)` - 使用指定 Profile 直接打开站点
 
 **并发安全**:
 - `cleanupOldPages` 在 `browserRefCount > 1` 时跳过清理，避免关闭其他并发检测任务正在使用的页面
@@ -271,11 +272,11 @@ main.ts: app.whenReady()
 
 ### UnifiedConfigManager
 
-**职责**: 统一管理应用配置，自动迁移旧格式
+**职责**: 统一管理应用配置，自动迁移旧格式，并在配置损坏时优先从本地备份恢复
 
 **关键方法**:
 - `loadConfig()` - 加载配置
-- `saveConfig()` - 保存配置
+- `saveConfig()` - 原子保存配置
 - `migrate()` - 迁移旧格式
 
 ---
@@ -351,5 +352,5 @@ main.ts: app.whenReady()
 
 ---
 
-**版本**: 2.1.24
-**更新日期**: 2026-03-11
+**版本**: 3.0.1
+**更新日期**: 2026-03-18

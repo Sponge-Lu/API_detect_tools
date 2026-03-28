@@ -28,8 +28,19 @@ interface RefreshMessage {
   type: 'success' | 'info';
 }
 
-// Tab 页面类型
-export type TabId = 'sites' | 'cli' | 'credit' | 'settings';
+// Tab 页面类型（路由子页面扁平化为一级 tab）
+export type TabId =
+  | 'sites'
+  | 'cli'
+  | 'redirection'
+  | 'usability'
+  | 'proxystats'
+  | 'credit'
+  | 'settings';
+
+// 路由相关的 TabId
+export const ROUTE_TAB_IDS: TabId[] = ['redirection', 'usability', 'proxystats'];
+export const isRouteTab = (id: TabId) => ROUTE_TAB_IDS.includes(id);
 
 // 排序字段类型
 export type SortField =

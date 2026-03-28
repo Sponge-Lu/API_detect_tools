@@ -357,7 +357,21 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
       } finally {
         setDetecting(false);
         setDetectingSite(null);
-        const hasAutoRefreshSite = config.sites.some(s => s.enabled && s.auto_refresh);
+        const hasAutoRefreshSite = config.sites.some(site => {
+          if (!site.enabled) return false;
+          const siteAccounts =
+            site.id && Array.isArray(config.accounts)
+              ? config.accounts.filter(account => account.site_id === site.id)
+              : [];
+
+          if (siteAccounts.length > 0) {
+            return siteAccounts.some(
+              account => (account.auto_refresh ?? site.auto_refresh) === true
+            );
+          }
+
+          return site.auto_refresh === true;
+        });
         if (hasAutoRefreshSite) {
           Logger.info('ℹ️ [useSiteDetection] 检测完成，有站点开启自动刷新，保持浏览器开启');
         } else {

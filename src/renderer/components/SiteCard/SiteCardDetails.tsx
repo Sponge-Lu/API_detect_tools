@@ -38,7 +38,10 @@ const MODELS_PER_PAGE = 50;
 
 interface SiteCardDetailsProps {
   site: SiteConfig;
+  cardKey: string;
   siteResult?: DetectionResult;
+  accountAccessToken?: string;
+  accountUserId?: string;
   apiKeys: any[];
   userGroups: Record<string, { desc: string; ratio: number }>;
   modelPricing: any;
@@ -90,7 +93,10 @@ const addSkPrefix = (key: string): string => {
 
 export function SiteCardDetails({
   site,
+  cardKey,
   siteResult,
+  accountAccessToken,
+  accountUserId,
   apiKeys,
   userGroups,
   modelPricing,
@@ -189,7 +195,7 @@ export function SiteCardDetails({
       className="border-t border-[var(--ios-separator)] bg-[var(--ios-bg-secondary)]/90 dark:bg-[var(--ios-bg-tertiary)]/90 px-[var(--spacing-md)] py-[var(--spacing-sm)] space-y-[var(--spacing-sm)] cursor-default"
       data-no-drag="true"
     >
-      {/* 站点 URL 和 Access Token */}
+      {/* 站点 URL、User ID、Access Token */}
       <div className="flex items-center gap-4 py-0.5">
         {/* 站点 URL */}
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -209,36 +215,57 @@ export function SiteCardDetails({
           </button>
         </div>
 
-        {/* Access Token */}
-        {site.system_token && (
-          <div className="flex items-center gap-1.5 min-w-0 flex-1">
-            <Key className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-shrink-0">
-              Token:
-            </span>
-            <span className="text-xs font-mono text-amber-600 dark:text-amber-400 truncate">
-              {showAccessToken ? site.system_token : maskAccessToken(site.system_token)}
+        {/* User ID（优先账户级） */}
+        {(accountUserId || site.user_id) && (
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">UID:</span>
+            <span className="text-xs font-mono text-slate-600 dark:text-slate-300">
+              {accountUserId || site.user_id}
             </span>
             <button
-              onClick={() => setShowAccessToken(!showAccessToken)}
+              onClick={() => onCopyToClipboard(accountUserId || site.user_id || '', 'User ID')}
               className="p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-all flex-shrink-0"
-              title={showAccessToken ? '隐藏 Token' : '显示 Token'}
-            >
-              {showAccessToken ? (
-                <EyeOff className="w-3 h-3 text-gray-400" />
-              ) : (
-                <Eye className="w-3 h-3 text-gray-400" />
-              )}
-            </button>
-            <button
-              onClick={() => onCopyToClipboard(site.system_token!, 'Access Token')}
-              className="p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-all flex-shrink-0"
-              title="复制 Access Token"
+              title="复制 User ID"
             >
               <Copy className="w-3 h-3 text-gray-400" />
             </button>
           </div>
         )}
+
+        {/* Access Token（优先账户级） */}
+        {(() => {
+          const token = accountAccessToken || site.system_token;
+          if (!token) return null;
+          return (
+            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+              <Key className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-shrink-0">
+                Token:
+              </span>
+              <span className="text-xs font-mono text-amber-600 dark:text-amber-400 truncate">
+                {showAccessToken ? token : maskAccessToken(token)}
+              </span>
+              <button
+                onClick={() => setShowAccessToken(!showAccessToken)}
+                className="p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-all flex-shrink-0"
+                title={showAccessToken ? '隐藏 Token' : '显示 Token'}
+              >
+                {showAccessToken ? (
+                  <EyeOff className="w-3 h-3 text-gray-400" />
+                ) : (
+                  <Eye className="w-3 h-3 text-gray-400" />
+                )}
+              </button>
+              <button
+                onClick={() => onCopyToClipboard(token, 'Access Token')}
+                className="p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-all flex-shrink-0"
+                title="复制 Access Token"
+              >
+                <Copy className="w-3 h-3 text-gray-400" />
+              </button>
+            </div>
+          );
+        })()}
       </div>
 
       {/* 用户分组 */}
@@ -250,7 +277,7 @@ export function SiteCardDetails({
           {Object.entries(userGroups).map(([groupName, groupData], index) => (
             <button
               key={groupName}
-              onClick={() => onToggleGroupFilter(site.name, groupName)}
+              onClick={() => onToggleGroupFilter(cardKey, groupName)}
               className={`px-2 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-all flex items-center gap-1 ${
                 selectedGroup === groupName
                   ? 'bg-[var(--ios-blue)] text-white shadow-sm'
@@ -265,7 +292,7 @@ export function SiteCardDetails({
           ))}
           {selectedGroup && (
             <button
-              onClick={() => onToggleGroupFilter(site.name, null)}
+              onClick={() => onToggleGroupFilter(cardKey, null)}
               className="px-2 py-1 rounded-[var(--radius-sm)] text-xs font-medium text-[var(--ios-red)] hover:bg-[var(--ios-red)]/10 transition-all"
             >
               清除
@@ -299,9 +326,10 @@ export function SiteCardDetails({
           <div className="space-y-0.5 max-h-40 overflow-y-auto">
             {filteredApiKeys.map((token, idx) => {
               const quotaInfo = token.unlimited_quota ? null : getQuotaTypeInfo(token.type || 0);
-              const tokenKey = `${site.name}_key_${idx}`;
+              const tokenKey = `${cardKey}_key_${idx}`;
               const isVisible = showTokens[tokenKey] || false;
               const fullKey = addSkPrefix(token.key);
+              const deletingKeyId = `${cardKey}_${token.id ?? token.key ?? idx}`;
 
               return (
                 <div
@@ -389,13 +417,11 @@ export function SiteCardDetails({
                       </button>
                       <button
                         onClick={() => onDeleteToken(site, token, idx)}
-                        disabled={
-                          deletingTokenKey === `${site.name}_${token.id ?? token.key ?? idx}`
-                        }
+                        disabled={deletingTokenKey === deletingKeyId}
                         className="p-0.5 hover:bg-red-500/20 rounded transition-all disabled:opacity-60"
                         title="删除该 API Key"
                       >
-                        {deletingTokenKey === `${site.name}_${token.id ?? token.key ?? idx}` ? (
+                        {deletingTokenKey === deletingKeyId ? (
                           <Loader2 className="w-3 h-3 text-red-500 animate-spin" />
                         ) : (
                           <Trash2 className="w-3 h-3 text-red-500" />
@@ -430,8 +456,8 @@ export function SiteCardDetails({
                   size="sm"
                   placeholder={globalModelSearch ? '全局搜索生效中' : '搜索...'}
                   value={modelSearch}
-                  onChange={e => onModelSearchChange(site.name, e.target.value)}
-                  onClear={() => onModelSearchChange(site.name, '')}
+                  onChange={e => onModelSearchChange(cardKey, e.target.value)}
+                  onClear={() => onModelSearchChange(cardKey, '')}
                   disabled={!!globalModelSearch}
                   containerClassName="w-[120px]"
                 />

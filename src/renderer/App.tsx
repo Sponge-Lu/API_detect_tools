@@ -9,10 +9,11 @@ import { useEffect, useRef, useState } from 'react';
 import { XCircle, Loader2 } from 'lucide-react';
 import { ConfirmDialog, initialDialogState } from './components/ConfirmDialog';
 import { Header } from './components/Header';
+import { VerticalSidebar } from './components/Sidebar';
 import { AuthErrorDialog, CloseBehaviorDialog, DownloadUpdatePanel } from './components/dialogs';
 import { ToastContainer } from './components/Toast';
 import { IOSButton } from './components/IOSButton';
-import { useTheme, useDataLoader, useUpdate, useSiteDetection } from './hooks';
+import { useTheme, useDataLoader, useUpdate, useSiteDetection, useAutoRefresh } from './hooks';
 // 从共享的types文件导入并重新导出类型
 import type { SiteConfig, DetectionResult, AccountCredential } from '../shared/types/site';
 export type { SiteConfig, DetectionResult } from '../shared/types/site';
@@ -22,11 +23,16 @@ import { SitesPage } from './pages/SitesPage';
 import { CustomCliPage } from './pages/CustomCliPage';
 import { CreditPage } from './pages/CreditPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { ModelRedirectionTab } from './components/Route/Redirection/ModelRedirectionTab';
+import { CliUsabilityTab } from './components/Route/Usability/CliUsabilityTab';
+import { ProxyStatsTab } from './components/Route/ProxyStats/ProxyStatsTab';
+import { LDC_UI_VISIBILITY } from '../shared/constants';
 
 // 导入 Zustand Store
 import { useConfigStore } from './store/configStore';
 import { useDetectionStore } from './store/detectionStore';
 import { useUIStore, SortField } from './store/uiStore';
+import { useRouteStore } from './store/routeStore';
 import { useToastStore, toast } from './store/toastStore';
 
 declare global {
@@ -129,6 +135,7 @@ declare global {
             cliType: 'claudeCode' | 'codex' | 'geminiCli';
             apiKey: string;
             model: string;
+            baseUrl?: string;
           }>;
         }) => Promise<{
           success: boolean;
@@ -139,8 +146,16 @@ declare global {
           };
           error?: string;
         }>;
-        saveResult: (siteUrl: string, result: any) => Promise<{ success: boolean; error?: string }>;
-        saveConfig: (siteUrl: string, config: any) => Promise<{ success: boolean; error?: string }>;
+        saveResult: (
+          siteUrl: string,
+          result: any,
+          accountId?: string
+        ) => Promise<{ success: boolean; error?: string }>;
+        saveConfig: (
+          siteUrl: string,
+          config: any,
+          accountId?: string
+        ) => Promise<{ success: boolean; error?: string }>;
       };
       configDetection: {
         detectCliConfig: (
@@ -203,11 +218,6 @@ declare global {
       };
       accounts?: {
         list: (siteId: string) => Promise<{ success: boolean; data?: any[]; error?: string }>;
-        getActive: (siteId: string) => Promise<{ success: boolean; data?: any; error?: string }>;
-        setActive: (
-          siteId: string,
-          accountId: string
-        ) => Promise<{ success: boolean; error?: string }>;
         add: (data: {
           site_id: string;
           account_name: string;
@@ -219,7 +229,14 @@ declare global {
         }) => Promise<{ success: boolean; data?: any; error?: string }>;
         update: (
           accountId: string,
-          updates: { account_name?: string; status?: string }
+          updates: {
+            account_name?: string;
+            status?: string;
+            access_token?: string;
+            user_id?: string;
+            auto_refresh?: boolean;
+            auto_refresh_interval?: number;
+          }
         ) => Promise<{ success: boolean; error?: string }>;
         delete: (accountId: string) => Promise<{ success: boolean; error?: string }>;
       };
@@ -251,10 +268,61 @@ declare global {
           };
           error?: string;
         }>;
+        openSite: (
+          siteId: string | undefined,
+          siteUrl: string,
+          accountId?: string
+        ) => Promise<{ success: boolean; message?: string; error?: string }>;
         deleteProfile: (
           siteId: string,
           accountId: string
         ) => Promise<{ success: boolean; error?: string }>;
+      };
+      route?: {
+        getConfig: () => Promise<{ success: boolean; data?: any; error?: string }>;
+        saveServerConfig: (updates: any) => Promise<{ success: boolean; error?: string }>;
+        listRules: () => Promise<{ success: boolean; data?: any[]; error?: string }>;
+        upsertRule: (rule: any) => Promise<{ success: boolean; data?: any; error?: string }>;
+        deleteRule: (ruleId: string) => Promise<{ success: boolean; data?: any; error?: string }>;
+        listStats: () => Promise<{ success: boolean; data?: any; error?: string }>;
+        resetStats: (ruleId?: string) => Promise<{ success: boolean; error?: string }>;
+        getHealth: () => Promise<{ success: boolean; data?: any; error?: string }>;
+        runHealthCheck: () => Promise<{ success: boolean; error?: string }>;
+        getRuntimeStatus: () => Promise<{ success: boolean; data?: any; error?: string }>;
+        startServer: () => Promise<{ success: boolean; error?: string }>;
+        stopServer: () => Promise<{ success: boolean; error?: string }>;
+        regenerateApiKey: () => Promise<{ success: boolean; data?: any; error?: string }>;
+        getModelRegistry: () => Promise<{ success: boolean; data?: any; error?: string }>;
+        rebuildModelRegistry: (params?: {
+          force?: boolean;
+        }) => Promise<{ success: boolean; data?: any; error?: string }>;
+        upsertModelMappingOverride: (
+          override: any
+        ) => Promise<{ success: boolean; data?: any; error?: string }>;
+        deleteModelMappingOverride: (
+          overrideId: string
+        ) => Promise<{ success: boolean; data?: any; error?: string }>;
+        saveCliModelSelections: (selections: any) => Promise<{ success: boolean; error?: string }>;
+        saveCliProbeConfig: (updates: any) => Promise<{ success: boolean; error?: string }>;
+        runCliProbeNow: (params?: any) => Promise<{ success: boolean; data?: any; error?: string }>;
+        getCliProbeLatest: (
+          params?: any
+        ) => Promise<{ success: boolean; data?: any; error?: string }>;
+        getCliProbeHistory: (
+          params: any
+        ) => Promise<{ success: boolean; data?: any; error?: string }>;
+        getCliProbeView: (params: any) => Promise<{ success: boolean; data?: any; error?: string }>;
+        getAnalyticsSummary: (
+          params: any
+        ) => Promise<{ success: boolean; data?: any; error?: string }>;
+        getAnalyticsDistribution: (
+          params: any
+        ) => Promise<{ success: boolean; data?: any; error?: string }>;
+        resetAnalytics: (params?: any) => Promise<{ success: boolean; error?: string }>;
+        fetchLatestLog: (params: {
+          siteId: string;
+          model?: string;
+        }) => Promise<{ success: boolean; data?: any; error?: string }>;
       };
     };
   }
@@ -316,8 +384,14 @@ function App() {
   // ========== 从 Store 读取状态 ==========
   const { config, setConfig, saving, loading, setLoading } = useConfigStore();
 
-  const { setApiKeys, setUserGroups, setModelPricing, setCliCompatibility, detectCliConfig } =
-    useDetectionStore();
+  const {
+    setApiKeys,
+    setUserGroups,
+    setModelPricing,
+    setCliCompatibility,
+    detectCliConfig,
+    cliConfigDetection,
+  } = useDetectionStore();
 
   const {
     activeTab,
@@ -339,14 +413,17 @@ function App() {
     closeDownloadPanel,
   } = useUIStore();
 
+  const visibleActiveTab =
+    !LDC_UI_VISIBILITY.showCreditTab && activeTab === 'credit' ? 'sites' : activeTab;
+
   // 窗口关闭行为对话框状态
   const [showCloseBehaviorDialog, setShowCloseBehaviorDialog] = useState(false);
 
   // 用于存储初始化状态的 ref
   const initRef = useRef(false);
 
-  // 站点检测 hook - 仅用于获取 setResults 给 useDataLoader
-  const { results, setResults } = useSiteDetection({
+  // 站点检测 hook
+  const { results, setResults, detectSingle } = useSiteDetection({
     onAuthError: sites => {
       setAuthErrorSites(sites);
       setShowAuthErrorDialog(true);
@@ -390,6 +467,72 @@ function App() {
   const loadCachedDataRef = useRef(loadCachedData);
   loadCachedDataRef.current = loadCachedData;
 
+  // 自动刷新（全局级，不随 Tab 切换卸载）
+  useAutoRefresh({
+    sites: config?.sites || [],
+    accounts: config?.accounts || [],
+    detectSingle,
+    enabled: true,
+    onRefresh: (siteName: string) => {
+      toast.success(`${siteName} 自动刷新完成`);
+    },
+    onError: (siteName: string, error: Error) => {
+      Logger.error(`[AutoRefresh] ${siteName} 刷新失败:`, error);
+    },
+  });
+
+  // 跟踪上一次 CLI 检测的 managed 站点名
+  const prevManagedSitesRef = useRef<Set<string>>(new Set());
+
+  // CLI 检测变化时，同步自动刷新状态
+  useEffect(() => {
+    if (!cliConfigDetection) return;
+
+    const currentConfig = useConfigStore.getState().config;
+    if (!currentConfig) return;
+
+    const managedSiteNames = new Set<string>();
+    Object.values(cliConfigDetection).forEach(result => {
+      if (result.sourceType === 'managed' && result.siteName) {
+        managedSiteNames.add(result.siteName);
+      }
+    });
+
+    const prevManaged = prevManagedSitesRef.current;
+
+    let hasChanges = false;
+    const newSites = currentConfig.sites.map(site => {
+      const isManaged = managedSiteNames.has(site.name);
+      const wasManaged = prevManaged.has(site.name);
+
+      if (isManaged && !site.auto_refresh) {
+        // 新 managed 或之前被关闭的 managed 站点 → 开启
+        hasChanges = true;
+        return {
+          ...site,
+          auto_refresh: true,
+          auto_refresh_interval: site.auto_refresh_interval ?? 30,
+        };
+      }
+      if (!isManaged && wasManaged && site.auto_refresh) {
+        // 不再 managed 的站点 → 关闭
+        hasChanges = true;
+        return { ...site, auto_refresh: false };
+      }
+      return site;
+    });
+
+    prevManagedSitesRef.current = managedSiteNames;
+
+    if (hasChanges) {
+      const newConfig = { ...currentConfig, sites: newSites };
+      setConfig(newConfig);
+      window.electronAPI.saveConfig(newConfig).catch(err => {
+        Logger.error('保存自动刷新配置失败:', err);
+      });
+    }
+  }, [cliConfigDetection]);
+
   // 启动时自动检查更新
   useEffect(() => {
     if (updateSettings.autoCheckEnabled) {
@@ -414,6 +557,12 @@ function App() {
     init();
   }, []);
 
+  // 路由 store 初始化
+  useEffect(() => {
+    useRouteStore.getState().fetchConfig();
+    useRouteStore.getState().fetchRuntimeStatus();
+  }, []);
+
   // 监听主进程的关闭行为对话框显示事件
   useEffect(() => {
     const unsubscribe = window.electronAPI?.closeBehavior?.onShowDialog(() => {
@@ -423,6 +572,12 @@ function App() {
       unsubscribe?.();
     };
   }, []);
+
+  useEffect(() => {
+    if (activeTab !== visibleActiveTab) {
+      setActiveTab(visibleActiveTab);
+    }
+  }, [activeTab, visibleActiveTab, setActiveTab]);
 
   const loadConfig = async (): Promise<Config | null> => {
     try {
@@ -486,21 +641,75 @@ function App() {
       <div className="light-bg-decoration dark:dark-bg-decoration"></div>
 
       {/* 主要内容 */}
-      <div className="relative z-10 h-full flex flex-col min-w-[1024px]">
-        <Header
-          activeTab={activeTab}
+      <div className="relative z-10 h-full flex min-w-[1024px]">
+        <VerticalSidebar
+          activeTab={visibleActiveTab}
           onTabChange={setActiveTab}
           saving={saving}
-          hasUpdate={updateInfo?.hasUpdate}
           updateInfo={updateInfo}
           onDownloadUpdate={handleDownloadUpdate}
         />
 
-        {/* 页面内容区域 */}
-        {activeTab === 'sites' && <SitesPage />}
-        {activeTab === 'cli' && <CustomCliPage />}
-        {activeTab === 'credit' && <CreditPage />}
-        {activeTab === 'settings' && <SettingsPage />}
+        {/* 页面内容区域 - CSS 显隐保活 */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* 顶栏（拖拽区 + 状态） */}
+          <Header
+            activeTab={visibleActiveTab}
+            onTabChange={setActiveTab}
+            saving={saving}
+            hasUpdate={updateInfo?.hasUpdate}
+            updateInfo={updateInfo}
+            onDownloadUpdate={handleDownloadUpdate}
+          />
+
+          <div
+            className={
+              visibleActiveTab === 'sites' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
+            }
+          >
+            <SitesPage />
+          </div>
+          <div
+            className={
+              visibleActiveTab === 'cli' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
+            }
+          >
+            <CustomCliPage />
+          </div>
+          <div
+            className={
+              visibleActiveTab === 'redirection' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
+            }
+          >
+            <ModelRedirectionTab />
+          </div>
+          <div
+            className={
+              visibleActiveTab === 'usability' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
+            }
+          >
+            <CliUsabilityTab />
+          </div>
+          <div
+            className={
+              visibleActiveTab === 'proxystats' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
+            }
+          >
+            <ProxyStatsTab />
+          </div>
+          {LDC_UI_VISIBILITY.showCreditTab && visibleActiveTab === 'credit' && (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <CreditPage />
+            </div>
+          )}
+          <div
+            className={
+              visibleActiveTab === 'settings' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
+            }
+          >
+            <SettingsPage />
+          </div>
+        </div>
       </div>
 
       {/* ===== 全局弹窗 ===== */}

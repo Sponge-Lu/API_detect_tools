@@ -50,7 +50,7 @@ src/
 │   ├── schemas/            # Zod 数据验证
 │   ├── types/              # 共享类型
 │   └── utils/              # 共享工具
-└── __tests__/              # 测试文件
+└── __tests__/              # 测试文件（含 UnifiedConfigManager 配置恢复、CLI 探测账户选择、API Key 原始值保留回归）
 ```
 
 ---
@@ -139,7 +139,7 @@ graph TD
 | 模块 | 职责 | 关键方法 |
 |------|------|--------|
 | **main.ts** | 应用入口、窗口管理 | `createWindow()`, `app.whenReady()` |
-| **ChromeManager** | 多槽位浏览器池管理（slot 0=主浏览器, slot N=隔离浏览器N），自动登录、localStorage 读取（含签到状态） | `createPage({slot})`, `cleanup()`, `forceCleanup()`, `getLocalStorageData()` |
+| **ChromeManager** | 多槽位浏览器池管理（slot 0=主浏览器, slot N=隔离浏览器N），自动登录、localStorage 读取，并支持按账户 Profile 直接打开站点 | `createPage({slot})`, `cleanup()`, `forceCleanup()`, `getLocalStorageData()`, `openSiteWithProfile()` |
 | **BrowserProfileManager** | 主/隔离浏览器 Profile 管理，多账户按槽位共享隔离 Profile，首次创建时仅复制 Extensions 并清理登录态 | `detectMainChromeProfile()`, `prepareIsolatedProfile()`, `deleteIsolatedProfile()` |
 | **TokenService** | Token 获取、存储、刷新、签到功能（兼容 Veloera/New API） | `getToken()`, `saveToken()`, `refreshToken()`, `checkIn()` |
 | **ApiService** | API 请求、错误处理、LDC 支付检测 | `request()`, `checkBalance()`, `checkStatus()`, `detectLdcPayment()` |
@@ -148,7 +148,7 @@ graph TD
 | **UpdateService** | 更新检测、应用内下载、安装触发 | `checkForUpdates()`, `downloadUpdate()`, `cancelDownload()`, `installUpdate()` |
 | **BackupManager** | 本地备份、恢复 | `backup()`, `restore()`, `export()` |
 | **WebDAVManager** | 云端备份、同步 | `uploadBackup()`, `downloadBackup()` |
-| **UnifiedConfigManager** | 配置管理、迁移 | `loadConfig()`, `saveConfig()`, `migrate()` |
+| **UnifiedConfigManager** | 配置管理、迁移、损坏恢复 | `loadConfig()`, `saveConfig()`, `tryRestoreFromBackup()` |
 
 ### 渲染进程 (Frontend)
 
@@ -157,7 +157,7 @@ graph TD
 | **App.tsx** | 应用根组件、路由 | 主布局、主题切换 |
 | **Components** | UI 组件库 | iOS 风格组件、表格、表单、对话框等 |
 | **iOS 组件** | iOS 设计系统 | IOSButton, IOSCard, IOSInput, IOSModal, IOSTable, IOSIcon |
-| **Hooks** | 业务逻辑 | `useSiteGroups()`, `useAutoRefresh()` |
+| **Hooks** | 业务逻辑 | `useSiteGroups()`, `useAutoRefresh()`（含多账户自动刷新） |
 | **Store** | 状态管理 | Zustand store，管理全局状态 |
 | **Services** | IPC 通信 | 与主进程通信的服务层 |
 
@@ -204,8 +204,6 @@ graph TD
 - `custom-cli-config:save` - 保存自定义 CLI 配置
 - `custom-cli-config:fetch-models` - 拉取模型列表
 - `accounts:list` - 获取站点账户列表
-- `accounts:get-active` - 获取活跃账户
-- `accounts:set-active` - 切换活跃账户
 - `accounts:add` - 添加账户
 - `accounts:update` - 更新账户信息
 - `accounts:delete` - 删除账户
@@ -213,6 +211,7 @@ graph TD
 - `browser-profile:is-chrome-running` - 检测 Chrome 是否正在运行
 - `browser-profile:login-main` - 使用主浏览器登录
 - `browser-profile:login-isolated` - 使用隔离浏览器登录
+- `browser-profile:open-site` - 使用账户对应浏览器打开站点
 - `browser-profile:delete-profile` - 删除隔离 Profile
 
 ---
@@ -308,6 +307,7 @@ npm run dist         # 打包为 EXE 安装程序
 - **[💻 开发指南](docs/DEVELOPMENT.md)** - 开发环境、代码规范
 - **[🏗️ 架构文档](docs/ARCHITECTURE.md)** - 系统设计、模块说明
 - **[🔌 API 参考](docs/API_REFERENCE.md)** - API 接口定义
+- **[metapi 站点检测与路由参考](docs/METAPI_SITE_DETECTION_REFERENCE.md)** - 基于 `metapi` 项目的站点类型检测、不同站点 API 端点、sub2api 细节、全站路由和可视化实现整理
 - **[📝 更新日志](CHANGELOG.md)** - 版本历史
 
 ---
@@ -354,6 +354,6 @@ npm run dist         # 打包为 EXE 安装程序
 
 ---
 
-**版本**: 2.1.24
-**更新日期**: 2026-03-12
+**版本**: 3.0.1
+**更新日期**: 2026-03-18
 **维护者**: API Hub Team

@@ -102,6 +102,7 @@ export function generateClaudeCodeConfig(params: ConfigParams): GeneratedConfig 
       ANTHROPIC_DEFAULT_SONNET_MODEL: params.model,
       CLAUDE_CODE_ATTRIBUTION_HEADER: '0',
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 'true',
+      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
       HTTPS_PROXY: 'http://127.0.0.1:7890',
       HTTP_PROXY: 'http://127.0.0.1:7890',
     },
@@ -147,6 +148,7 @@ export function generateClaudeCodeTemplate(): GeneratedConfig {
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-opus-4-6",
     "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "true",
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
     "HTTPS_PROXY": "http://127.0.0.1:7890",
     "HTTP_PROXY": "http://127.0.0.1:7890"
   }

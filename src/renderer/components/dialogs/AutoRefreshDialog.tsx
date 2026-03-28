@@ -9,7 +9,7 @@
  * - PROJECT_INDEX.md
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { X, AlertTriangle } from 'lucide-react';
 
 interface AutoRefreshDialogProps {
@@ -28,6 +28,12 @@ export function AutoRefreshDialog({
   onCancel,
 }: AutoRefreshDialogProps) {
   const [interval, setInterval] = useState(currentInterval || 30);
+
+  useEffect(() => {
+    if (isOpen) {
+      setInterval(Math.max(15, currentInterval || 30));
+    }
+  }, [currentInterval, isOpen, siteName]);
 
   if (!isOpen) return null;
 

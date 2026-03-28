@@ -29,6 +29,13 @@ export interface NewApiTokenForm {
   expiredTime: string;
 }
 
+export interface TokenOperationContext {
+  cardKey?: string;
+  accountId?: string;
+  accessToken?: string;
+  userId?: string;
+}
+
 interface UseTokenManagementOptions {
   results: DetectionResult[];
   setResults: (results: DetectionResult[]) => void;
@@ -48,26 +55,55 @@ export function useTokenManagement({
   showDialog,
   showAlert,
 }: UseTokenManagementOptions) {
+  const getStoreKey = (site: SiteConfig, context?: TokenOperationContext) =>
+    context?.cardKey || (context?.accountId ? `${site.name}::${context.accountId}` : site.name);
+
+  const updateScopedResults = (
+    site: SiteConfig,
+    tokens: any[],
+    context?: TokenOperationContext
+  ) => {
+    const nextResults = results.map(result => {
+      if (result.name !== site.name) {
+        return result;
+      }
+
+      if (context?.accountId) {
+        return result.accountId === context.accountId ? { ...result, apiKeys: tokens } : result;
+      }
+
+      return result.accountId ? result : { ...result, apiKeys: tokens };
+    });
+
+    setResults(nextResults);
+  };
+
   /**
    * 刷新指定站点的 API Key 列表
    */
-  const refreshSiteApiKeys = async (site: SiteConfig, cardKey?: string) => {
-    if (!site.system_token || !site.user_id) {
+  const refreshSiteApiKeys = async (
+    site: SiteConfig,
+    context?: TokenOperationContext
+  ): Promise<any[]> => {
+    const accessToken = context?.accessToken ?? site.system_token;
+    const userId = context?.userId ?? site.user_id;
+    if (!accessToken || !userId) {
       Logger.warn('⚠️ [useTokenManagement] 当前站点未配置系统 Token 或用户 ID');
-      return;
+      return [];
     }
 
-    const userIdNum = parseInt(site.user_id || '0', 10);
+    const userIdNum = parseInt(userId || '0', 10);
     if (!userIdNum) {
       Logger.warn('⚠️ [useTokenManagement] 当前站点用户 ID 无效');
-      return;
+      return [];
     }
 
     try {
       const resp = await window.electronAPI.token?.fetchApiTokens?.(
         site.url,
         userIdNum,
-        site.system_token!
+        accessToken,
+        context?.accountId
       );
 
       if (!resp || resp.success !== true) {
@@ -75,13 +111,14 @@ export function useTokenManagement({
       }
 
       const tokens: any[] = Array.isArray(resp.data) ? resp.data : [];
-      const storeKey = cardKey || site.name;
+      const storeKey = getStoreKey(site, context);
       setApiKeys(storeKey, tokens);
-      if (cardKey && cardKey !== site.name) setApiKeys(site.name, tokens);
-      setResults(results.map(r => (r.name === site.name ? { ...r, apiKeys: tokens } : r)));
+      updateScopedResults(site, tokens, context);
       Logger.info(`✅ [useTokenManagement] 已刷新站点 ${site.name} 的 API Key 列表`);
+      return tokens;
     } catch (error: any) {
       Logger.error('❌ [useTokenManagement] 刷新 API Key 列表失败:', error);
+      return [];
     }
   };
 
@@ -93,9 +130,11 @@ export function useTokenManagement({
     form: NewApiTokenForm,
     setCreatingToken: (v: boolean) => void,
     closeDialog: () => void,
-    cardKey?: string
+    context?: TokenOperationContext
   ) => {
-    if (!site.system_token || !site.user_id) {
+    const accessToken = context?.accessToken ?? site.system_token;
+    const userId = context?.userId ?? site.user_id;
+    if (!accessToken || !userId) {
       toast.warning('当前站点未配置系统 Token 或用户 ID');
       return;
     }
@@ -145,7 +184,7 @@ export function useTokenManagement({
 
     try {
       setCreatingToken(true);
-      const userIdNum = parseInt(site.user_id || '0', 10);
+      const userIdNum = parseInt(userId || '0', 10);
       if (!userIdNum) {
         toast.error('当前站点用户 ID 无效');
         return;
@@ -154,8 +193,9 @@ export function useTokenManagement({
       const resp = await window.electronAPI.token?.createApiToken?.(
         site.url,
         userIdNum,
-        site.system_token!,
-        tokenPayload
+        accessToken,
+        tokenPayload,
+        context?.accountId
       );
 
       if (!resp || resp.success !== true) {
@@ -163,12 +203,11 @@ export function useTokenManagement({
       }
 
       if (resp.data && Array.isArray(resp.data)) {
-        const storeKey = cardKey || site.name;
+        const storeKey = getStoreKey(site, context);
         setApiKeys(storeKey, resp.data);
-        if (cardKey && cardKey !== site.name) setApiKeys(site.name, resp.data);
-        setResults(results.map(r => (r.name === site.name ? { ...r, apiKeys: resp.data } : r)));
+        updateScopedResults(site, resp.data, context);
       } else {
-        await refreshSiteApiKeys(site, cardKey);
+        await refreshSiteApiKeys(site, context);
       }
 
       toast.success('API Key 创建成功');
@@ -189,9 +228,11 @@ export function useTokenManagement({
     token: any,
     tokenIndex: number,
     setDeletingTokenKey: (key: string | null) => void,
-    cardKey?: string
+    context?: TokenOperationContext
   ) => {
-    if (!site.system_token || !site.user_id) {
+    const accessToken = context?.accessToken ?? site.system_token;
+    const userId = context?.userId ?? site.user_id;
+    if (!accessToken || !userId) {
       showAlert('当前站点未配置系统 Token 或用户 ID', 'error');
       return;
     }
@@ -205,24 +246,26 @@ export function useTokenManagement({
     });
     if (!confirmed) return;
 
-    const userIdNum = parseInt(site.user_id || '0', 10);
+    const userIdNum = parseInt(userId || '0', 10);
     if (!userIdNum) {
       showAlert('当前站点用户 ID 无效', 'error');
       return;
     }
 
-    const deletingKeyId = `${site.name}_${token.id ?? token.key ?? tokenIndex}`;
+    const storeKey = getStoreKey(site, context);
+    const deletingKeyId = `${storeKey}_${token.id ?? token.key ?? tokenIndex}`;
     setDeletingTokenKey(deletingKeyId);
 
     try {
       const resp = await window.electronAPI.token?.deleteApiToken?.(
         site.url,
         userIdNum,
-        site.system_token!,
+        accessToken,
         {
           id: token.id ?? token.token_id ?? undefined,
           key: token.key ?? token.token ?? undefined,
-        }
+        },
+        context?.accountId
       );
 
       if (!resp || resp.success !== true) {
@@ -230,12 +273,10 @@ export function useTokenManagement({
       }
 
       if (resp.data && Array.isArray(resp.data)) {
-        const storeKey = cardKey || site.name;
         setApiKeys(storeKey, resp.data);
-        if (cardKey && cardKey !== site.name) setApiKeys(site.name, resp.data);
-        setResults(results.map(r => (r.name === site.name ? { ...r, apiKeys: resp.data } : r)));
+        updateScopedResults(site, resp.data, context);
       } else {
-        await refreshSiteApiKeys(site, cardKey);
+        await refreshSiteApiKeys(site, context);
       }
       showAlert(`API Key「${displayName}」已删除`, 'success');
     } catch (error: any) {

@@ -11,6 +11,7 @@
 
 import type { SiteCardHeaderProps } from './types';
 import { CliCompatibilityIcons } from '../CliCompatibilityIcons';
+import { LDC_UI_VISIBILITY } from '../../../shared/constants';
 
 /**
  * 格式化数字为 K/M 单位
@@ -39,8 +40,9 @@ export function SiteCardHeader({
   rpm,
   tpm,
   modelCount,
+  accountId,
   accountName,
-  onOpenCheckinPage,
+  onOpenSite,
   cliCompatibility,
   cliConfig,
   isCliTesting,
@@ -48,11 +50,16 @@ export function SiteCardHeader({
   onTestCliCompat,
   onApply,
 }: SiteCardHeaderProps) {
+  const visibleColumnWidths =
+    !LDC_UI_VISIBILITY.showRatioColumn && columnWidths.length > 12
+      ? columnWidths.slice(0, -1)
+      : columnWidths;
+
   return (
     <div
       className="grid gap-x-1 items-center text-[13px] tabular-nums"
       style={{
-        gridTemplateColumns: columnWidths.map(w => `${w}px`).join(' '),
+        gridTemplateColumns: visibleColumnWidths.map(w => `${w}px`).join(' '),
       }}
     >
       {/* 1. 站点名称 + 账户名 */}
@@ -60,9 +67,9 @@ export function SiteCardHeader({
         <div className="flex flex-col min-w-0">
           <div className="flex items-center gap-1.5 min-w-0">
             <button
-              onClick={() => onOpenCheckinPage(site)}
+              onClick={() => onOpenSite(site, accountId)}
               className="flex items-center gap-1.5 hover:text-primary-400 transition-colors group min-w-0"
-              title={`打开 ${site.name}${siteResult ? (siteResult.status === '成功' ? ' (在线)' : ' (离线)') : ' (未检测)'}`}
+              title={`打开站点 ${site.name}${siteResult ? (siteResult.status === '成功' ? ' (在线)' : ' (离线)') : ' (未检测)'}`}
             >
               {/* 状态图标 */}
               {siteResult ? (
@@ -245,19 +252,20 @@ export function SiteCardHeader({
         />
       </div>
 
-      {/* 13. LDC 支付比例 */}
-      <div className="flex items-center justify-center text-[13px]">
-        {siteResult?.ldcPaymentSupported && siteResult?.ldcExchangeRate ? (
-          <span
-            className="font-mono font-medium text-amber-600 dark:text-amber-400 cursor-help"
-            title={`支持 LDC 支付，比例: ${siteResult.ldcExchangeRate}:1`}
-          >
-            {siteResult.ldcExchangeRate}
-          </span>
-        ) : (
-          <span className="text-light-text-tertiary dark:text-dark-text-tertiary">-</span>
-        )}
-      </div>
+      {LDC_UI_VISIBILITY.showRatioColumn && (
+        <div className="flex items-center justify-center text-[13px]">
+          {siteResult?.ldcPaymentSupported && siteResult?.ldcExchangeRate ? (
+            <span
+              className="font-mono font-medium text-amber-600 dark:text-amber-400 cursor-help"
+              title={`支持 LDC 支付，比例: ${siteResult.ldcExchangeRate}:1`}
+            >
+              {siteResult.ldcExchangeRate}
+            </span>
+          ) : (
+            <span className="text-light-text-tertiary dark:text-dark-text-tertiary">-</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

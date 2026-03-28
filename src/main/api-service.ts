@@ -20,6 +20,7 @@ import type { SiteConfig } from './types/token';
 import { BUILTIN_GROUP_IDS } from '../shared/types/site';
 import { httpGet, httpPost } from './utils/http-client';
 import { requestManager, RequestManager } from './utils/request-manager';
+import { mergeApiKeysPreservingRawValue } from './token-service';
 import { getAllUserIdHeaders } from '../shared/utils/headers';
 import Logger from './utils/logger';
 import { unifiedConfigManager } from './unified-config-manager';
@@ -117,9 +118,8 @@ export class ApiService {
   private resolveCacheOwner(siteUrl: string, explicitAccountId?: string) {
     const site = unifiedConfigManager.getSiteByUrl(siteUrl);
     if (!site) return { site: undefined, account: undefined };
-    const resolvedAccountId = explicitAccountId || site.active_account_id;
-    if (!resolvedAccountId) return { site, account: undefined };
-    const account = unifiedConfigManager.getAccountById(resolvedAccountId);
+    if (!explicitAccountId) return { site, account: undefined };
+    const account = unifiedConfigManager.getAccountById(explicitAccountId);
     if (!account || account.site_id !== site.id) return { site, account: undefined };
     return { site, account };
   }
@@ -928,7 +928,7 @@ export class ApiService {
 
   /**
    * 仅保存最近一次检测状态和错误信息（不更新展示数据）
-   * 当检测到认证失败（401）时，自动标记活跃账户为 expired
+   * 当检测到认证失败（401）时，自动标记当前检测账户为 expired
    */
   private async saveLastDetectionStatus(
     siteUrl: string,
@@ -954,7 +954,7 @@ export class ApiService {
 
       // 401 认证失败时，标记实际检测账户为 expired
       if (error && (error.includes('登录已过期') || error.includes('401'))) {
-        const targetAccountId = account?.id || site.active_account_id;
+        const targetAccountId = account?.id;
         if (targetAccountId) {
           await unifiedConfigManager.updateAccount(targetAccountId, { status: 'expired' });
           Logger.warn(`⚠️ [ApiService] 检测账户已标记为 expired: ${targetAccountId}`);
@@ -2088,7 +2088,7 @@ export class ApiService {
         today_prompt_tokens: detectionResult.todayPromptTokens,
         today_completion_tokens: detectionResult.todayCompletionTokens,
         today_requests: detectionResult.todayRequests,
-        api_keys: detectionResult.apiKeys,
+        api_keys: mergeApiKeysPreservingRawValue(existing?.api_keys, detectionResult.apiKeys),
         user_groups: detectionResult.userGroups,
         model_pricing: detectionResult.modelPricing,
         last_refresh: Date.now(),

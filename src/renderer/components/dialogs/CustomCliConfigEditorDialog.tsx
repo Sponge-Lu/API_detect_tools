@@ -25,6 +25,7 @@ import {
 import { IOSModal } from '../IOSModal';
 import { IOSButton } from '../IOSButton';
 import { useCustomCliConfigStore } from '../../store/customCliConfigStore';
+import { toast } from '../../store/toastStore';
 import type { CustomCliConfig, CustomCliSettings } from '../../../shared/types/custom-cli-config';
 import {
   generateClaudeCodeConfig,
@@ -57,6 +58,34 @@ const CLI_TYPES: CliTypeConfig[] = [
   { key: 'codex', name: 'Codex', icon: CodexIcon },
   { key: 'geminiCli', name: 'Gemini CLI', icon: GeminiIcon },
 ];
+
+type CliTestOutcome = {
+  model: string;
+  success: boolean;
+  message?: string;
+  timestamp: number;
+};
+
+type TestSummaries = Record<CliType, CliTestOutcome[]>;
+
+const createInitialTestSummaries = (): TestSummaries => ({
+  claudeCode: [],
+  codex: [],
+  geminiCli: [],
+});
+
+const normalizeCliSetting = (setting: CustomCliSettings): CustomCliSettings => ({
+  ...setting,
+  testModels: setting.testModels ?? [],
+});
+
+const normalizeCliSettings = (
+  settings: CustomCliConfig['cliSettings']
+): CustomCliConfig['cliSettings'] => ({
+  claudeCode: normalizeCliSetting(settings.claudeCode),
+  codex: normalizeCliSetting(settings.codex),
+  geminiCli: normalizeCliSetting(settings.geminiCli),
+});
 
 /** iOS 风格 Toggle Switch 组件 */
 function IOSToggle({
@@ -268,6 +297,104 @@ function CliModelSelector({
   );
 }
 
+/** 用于添加测试模型的列表 */
+function CliTestModelSelector({
+  models,
+  onAdd,
+  disabled,
+}: {
+  models: string[];
+  onAdd: (model: string) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const filtered = useMemo(() => {
+    if (!query) return models;
+    return models.filter(m => m.toLowerCase().includes(query.toLowerCase()));
+  }, [models, query]);
+
+  const handleSelect = (model: string) => {
+    onAdd(model);
+    setOpen(false);
+    setQuery('');
+  };
+
+  return (
+    <div className="relative flex-shrink-0" ref={ref}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => !disabled && setOpen(o => !o)}
+        className={`flex items-center gap-1 px-2.5 py-1.5 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] text-xs transition-all ${
+          disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-[var(--ios-gray)]'
+        }`}
+      >
+        <span className="text-[var(--ios-text-primary)]">添加测试模型</span>
+        <ChevronDown
+          className={`w-3.5 h-3.5 text-[var(--ios-text-secondary)] transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {open && (
+        <div className="absolute z-50 right-0 w-56 mt-1 bg-[var(--ios-bg-primary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] shadow-lg overflow-hidden">
+          <div className="p-1.5 border-b border-[var(--ios-separator)]">
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--ios-text-tertiary)]" />
+              <input
+                type="text"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder="搜索模型..."
+                className="w-full pl-7 pr-7 py-1 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-sm)] text-xs text-[var(--ios-text-primary)] focus:ring-1 focus:ring-[var(--ios-blue)] focus:border-transparent"
+                autoFocus
+              />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery('')}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2"
+                >
+                  <X className="w-3.5 h-3.5 text-[var(--ios-text-tertiary)] hover:text-[var(--ios-text-secondary)]" />
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="max-h-40 overflow-y-auto">
+            {filtered.length > 0 ? (
+              filtered.map(model => (
+                <button
+                  key={model}
+                  type="button"
+                  onClick={() => handleSelect(model)}
+                  className="w-full px-3 py-1.5 text-left text-xs text-[var(--ios-text-primary)] hover:bg-[var(--ios-bg-secondary)] transition-colors"
+                >
+                  {model}
+                </button>
+              ))
+            ) : (
+              <div className="px-3 py-3 text-xs text-[var(--ios-text-secondary)] text-center">
+                {models.length === 0 ? '请先拉取模型' : '无匹配结果'}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * 自定义 CLI 配置编辑器对话框
  */
@@ -283,7 +410,9 @@ export function CustomCliConfigEditorDialog({
   const [baseUrl, setBaseUrl] = useState(config.baseUrl);
   const [apiKey, setApiKey] = useState(config.apiKey);
   const [notes, setNotes] = useState(config.notes || '');
-  const [cliSettings, setCliSettings] = useState(config.cliSettings);
+  const [cliSettings, setCliSettings] = useState<CustomCliConfig['cliSettings']>(() =>
+    normalizeCliSettings(config.cliSettings)
+  );
   const [selectedCli, setSelectedCli] = useState<CliType>('claudeCode');
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
 
@@ -297,6 +426,8 @@ export function CustomCliConfigEditorDialog({
     codex: null,
     geminiCli: null,
   });
+  const [testSummaries, setTestSummaries] = useState<TestSummaries>(createInitialTestSummaries);
+  const [isTesting, setIsTesting] = useState(false);
 
   // 获取当前配置的模型列表 (从 store 中实时获取以反映拉取结果)
   const { configs } = useCustomCliConfigStore();
@@ -310,9 +441,11 @@ export function CustomCliConfigEditorDialog({
       setBaseUrl(config.baseUrl);
       setApiKey(config.apiKey);
       setNotes(config.notes || '');
-      setCliSettings(config.cliSettings);
+      setCliSettings(normalizeCliSettings(config.cliSettings));
       setSelectedCli('claudeCode');
       setCopiedPath(null);
+      setTestSummaries(createInitialTestSummaries());
+      setIsTesting(false);
       setEditedConfig(null);
       setIsEditing(false);
       setShowResetConfirm(false);
@@ -360,6 +493,129 @@ export function CustomCliConfigEditorDialog({
       ...prev,
       [cliType]: { ...prev[cliType], ...update },
     }));
+  };
+
+  const getTestModelsForSetting = (setting: CustomCliSettings) => {
+    const candidates =
+      setting.testModels && setting.testModels.length > 0
+        ? setting.testModels
+        : setting.model
+          ? [setting.model]
+          : [];
+    return candidates
+      .map(m => m.trim())
+      .filter(Boolean)
+      .slice(0, 3);
+  };
+
+  const cliTestTargets = useMemo(() => {
+    return CLI_TYPES.flatMap(cli => {
+      const setting = cliSettings[cli.key];
+      if (!setting.enabled) return [];
+      return getTestModelsForSetting(setting).map(model => ({
+        cliType: cli.key,
+        model,
+      }));
+    });
+  }, [cliSettings]);
+
+  const canRunTests = Boolean(baseUrl && apiKey && cliTestTargets.length > 0);
+
+  const recordTestResult = (cliType: CliType, summary: CliTestOutcome) => {
+    setTestSummaries(prev => ({
+      ...prev,
+      [cliType]: [summary, ...prev[cliType]].slice(0, 3),
+    }));
+  };
+
+  const handleAddTestModel = (cliType: CliType, model: string) => {
+    const nextModel = model.trim();
+    if (!nextModel) return;
+
+    setCliSettings(prev => {
+      const current = prev[cliType];
+      const currentModels = current.testModels ?? [];
+      if (currentModels.includes(nextModel) || currentModels.length >= 3) return prev;
+      return {
+        ...prev,
+        [cliType]: {
+          ...current,
+          testModels: [...currentModels, nextModel],
+        },
+      };
+    });
+  };
+
+  const handleRemoveTestModel = (cliType: CliType, model: string) => {
+    setCliSettings(prev => {
+      const current = prev[cliType];
+      const nextModels = (current.testModels ?? []).filter(m => m !== model);
+      return {
+        ...prev,
+        [cliType]: {
+          ...current,
+          testModels: nextModels,
+        },
+      };
+    });
+  };
+
+  const handleRunTests = async () => {
+    if (!baseUrl || !apiKey) {
+      toast.error('请先填写 Base URL 和 API Key');
+      return;
+    }
+    if (cliTestTargets.length === 0) {
+      toast.error('请启用 CLI 并添加测试模型');
+      return;
+    }
+
+    setIsTesting(true);
+    let hadError = false;
+    try {
+      for (const target of cliTestTargets) {
+        try {
+          const response = await window.electronAPI.cliCompat.testWithConfig({
+            siteUrl: baseUrl,
+            configs: [
+              {
+                cliType: target.cliType,
+                apiKey,
+                model: target.model,
+                baseUrl,
+              },
+            ],
+          });
+          const success = response.success && response.data?.[target.cliType] === true;
+          const message = success ? undefined : (response.error ?? '未通过');
+          recordTestResult(target.cliType, {
+            model: target.model,
+            success,
+            message,
+            timestamp: Date.now(),
+          });
+          if (!success) {
+            hadError = true;
+          }
+        } catch (error: any) {
+          hadError = true;
+          recordTestResult(target.cliType, {
+            model: target.model,
+            success: false,
+            message: error?.message,
+            timestamp: Date.now(),
+          });
+        }
+      }
+    } finally {
+      setIsTesting(false);
+    }
+
+    if (hadError) {
+      toast.error('部分测试未通过，请查看结果');
+    } else {
+      toast.success('CLI 测试已完成');
+    }
   };
 
   // 处理拉取模型
@@ -451,6 +707,7 @@ export function CustomCliConfigEditorDialog({
       const edited = finalPerCliEdited[key];
       finalCliSettings[key] = {
         ...finalCliSettings[key],
+        testModels: finalCliSettings[key].testModels ?? [],
         editedFiles: edited ? edited.files.map(f => ({ path: f.path, content: f.content })) : null,
       };
     }
@@ -581,6 +838,7 @@ export function CustomCliConfigEditorDialog({
           <div className="grid grid-cols-3 gap-3">
             {CLI_TYPES.map(cli => {
               const setting = cliSettings[cli.key];
+              const selectedTestModels = setting.testModels ?? [];
               return (
                 <div
                   key={cli.key}
@@ -606,6 +864,40 @@ export function CustomCliConfigEditorDialog({
                     onSelect={model => handleCliSettingChange(cli.key, { model })}
                     disabled={!setting.enabled}
                   />
+                  <div className="space-y-2 text-[var(--ios-text-secondary)] text-[var(--ios-text-xs)]">
+                    <div className="flex items-center justify-between">
+                      <span>测试模型（最多 3 个）</span>
+                      <span>{selectedTestModels.length}/3</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedTestModels.length > 0 ? (
+                        selectedTestModels.map(model => (
+                          <span
+                            key={model}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-[var(--ios-separator)] bg-[var(--ios-bg-primary)] text-[var(--ios-text-primary)] text-[var(--ios-text-xs)]"
+                          >
+                            <span className="max-w-[120px] truncate">{model}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveTestModel(cli.key, model)}
+                              className="flex items-center justify-center w-4 h-4 rounded-full hover:bg-[var(--ios-bg-secondary)]"
+                            >
+                              <X className="w-3 h-3 text-[var(--ios-text-tertiary)]" />
+                            </button>
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-[var(--ios-text-secondary)]">尚未选择测试模型</span>
+                      )}
+                      <CliTestModelSelector
+                        models={models}
+                        onAdd={model => handleAddTestModel(cli.key, model)}
+                        disabled={
+                          !setting.enabled || selectedTestModels.length >= 3 || models.length === 0
+                        }
+                      />
+                    </div>
+                  </div>
                 </div>
               );
             })}
@@ -735,6 +1027,65 @@ export function CustomCliConfigEditorDialog({
           </div>
         </div>
       )}
+
+      {/* CLI 测试 */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-semibold text-[var(--ios-text-primary)]">CLI 测试</p>
+            <p className="text-xs text-[var(--ios-text-secondary)]">
+              每个启用的 CLI 至多测试 3 个模型，测试结果会在此展示。
+            </p>
+          </div>
+          <IOSButton
+            variant="secondary"
+            size="sm"
+            onClick={handleRunTests}
+            disabled={!canRunTests || isTesting}
+          >
+            {isTesting ? <Loader2 className="w-4 h-4 animate-spin" /> : '测试当前配置'}
+          </IOSButton>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+          {CLI_TYPES.map(cli => {
+            const summaries = testSummaries[cli.key];
+            const latest = summaries[0];
+            return (
+              <div
+                key={`${cli.key}-test`}
+                className="p-3 rounded-[var(--radius-md)] border border-[var(--ios-separator)] bg-[var(--ios-bg-tertiary)] space-y-2"
+              >
+                <div className="flex items-center justify-between text-[var(--ios-text-primary)]">
+                  <span>{cli.name}</span>
+                  <span className="text-[var(--ios-text-secondary)] text-[0.65rem]">
+                    {latest ? new Date(latest.timestamp).toLocaleTimeString() : '未测试'}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {summaries.length > 0 ? (
+                    summaries.map(outcome => (
+                      <span
+                        key={`${cli.key}-${outcome.model}-${outcome.timestamp}`}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border ${
+                          outcome.success
+                            ? 'border-[var(--ios-blue)] bg-[var(--ios-blue)]/10 text-[var(--ios-blue)]'
+                            : 'border-red-200 bg-red-50 text-red-600'
+                        }`}
+                        title={outcome.message}
+                      >
+                        <span className="font-mono truncate max-w-[90px]">{outcome.model}</span>
+                        <span>{outcome.success ? '通过' : '失败'}</span>
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-[var(--ios-text-secondary)]">暂无测试记录</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </IOSModal>
   );
 }

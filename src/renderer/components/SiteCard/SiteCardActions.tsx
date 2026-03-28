@@ -89,6 +89,7 @@ export function SiteCardActions({
   isDetecting,
   checkingIn,
   autoRefreshEnabled,
+  editAccount,
   checkinStats,
   onExpand,
   onDetect,
@@ -213,7 +214,7 @@ export function SiteCardActions({
 
       {/* 编辑 */}
       <button
-        onClick={() => onEdit(index)}
+        onClick={() => onEdit(index, editAccount)}
         className="p-1 rounded-md text-light-text-secondary dark:text-dark-text-secondary hover:bg-light-border/50 dark:hover:bg-dark-border/50 transition-all"
         title="编辑站点"
         aria-label="编辑站点"

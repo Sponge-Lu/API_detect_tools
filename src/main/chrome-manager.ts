@@ -8,6 +8,7 @@
  * - slot N = 隔离浏览器 N (api-detector-chrome-isolated-N)，所有站点的第 N+1 个账号共用
  * - 每个槽位独立管理: browser, chromeProcess, debugPort, refCount, cleanupTimer
  * - 向后兼容属性代理: 旧代码通过 getter/setter 透明访问 slot 0
+ * - loginBrowserState: 独立登录浏览器，不占用任何槽位，避免与检测任务冲突
  *
  * LocalStorageData 签到字段支持两种站点类型:
  * - Veloera: check_in_enabled, can_check_in
@@ -76,6 +77,15 @@ export class ChromeManager {
    * slot N = 隔离浏览器 N（所有站点的第 N+1 个账号）
    */
   private slots = new Map<number, BrowserSlot>();
+
+  /** 独立的登录浏览器状态（不占用任何槽位，避免与检测任务冲突） */
+  private loginBrowserState: {
+    browser: Browser | null;
+    chromeProcess: any;
+    debugPort: number;
+    isClosed: boolean;
+    abortController: AbortController | null;
+  } | null = null;
 
   /** 获取或创建指定槽位 */
   private getSlot(index: number): BrowserSlot {
@@ -699,15 +709,230 @@ export class ChromeManager {
     options?: { userDataDir?: string; profileDirectory?: string }
   ): Promise<{ success: boolean; message: string }> {
     try {
-      Logger.info('🚀 [ChromeManager] 启动浏览器供用户登录...');
+      Logger.info('🚀 [ChromeManager] 启动独立登录浏览器...');
 
-      // 使用统一的启动流程
-      await this.launchBrowser(url, options);
+      // 清理上一次的登录浏览器
+      this.cleanupLoginBrowser();
 
+      const debugPort = await this.pickDebugPort();
+      await this.waitForPortFree(debugPort);
+
+      const chromePath = this.getChromePath();
+      const userDataDir =
+        options?.userDataDir || path.join(os.tmpdir(), 'api-detector-chrome-login');
+      this.cleanupSessionFiles(userDataDir);
+
+      const { spawn } = require('child_process');
+      const args = [
+        `--remote-debugging-port=${debugPort}`,
+        `--user-data-dir=${userDataDir}`,
+        ...(options?.profileDirectory ? [`--profile-directory=${options.profileDirectory}`] : []),
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-session-crashed-bubble',
+        '--hide-crash-restore-bubble',
+        '--disable-features=SessionRestore,InfiniteSessionRestore',
+        '--disable-restore-session-state',
+        '--noerrdialogs',
+        '--disable-infobars',
+        url,
+      ];
+
+      const chromeProcess = spawn(chromePath, args, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'ignore', 'ignore'],
+      });
+      chromeProcess.on('error', (error: any) => {
+        Logger.error('❌ [ChromeManager] 登录浏览器进程错误:', error.message);
+      });
+
+      await this.waitForPortReady(debugPort);
+
+      const browser = await puppeteer.connect({
+        browserURL: `http://127.0.0.1:${debugPort}`,
+        protocolTimeout: 60000,
+      });
+
+      // 等待初始页面就绪（CDP 注册有延迟）
+      let pages = await browser.pages();
+      for (let i = 0; i < 10 && pages.length === 0; i++) {
+        await new Promise(r => setTimeout(r, 500));
+        pages = await browser.pages();
+      }
+      if (pages.length === 0) {
+        browser.disconnect();
+        throw new Error('浏览器已启动但没有打开的页面');
+      }
+
+      this.loginBrowserState = {
+        browser,
+        chromeProcess,
+        debugPort,
+        isClosed: false,
+        abortController: new AbortController(),
+      };
+
+      browser.on('disconnected', () => {
+        Logger.info('⚠️ [ChromeManager] 登录浏览器已关闭');
+        if (this.loginBrowserState) {
+          this.loginBrowserState.isClosed = true;
+          this.loginBrowserState.browser = null;
+          if (this.loginBrowserState.abortController) {
+            this.loginBrowserState.abortController.abort();
+          }
+        }
+      });
+
+      Logger.info('✅ [ChromeManager] 独立登录浏览器启动成功');
       return { success: true, message: '浏览器已启动，请在浏览器中完成登录' };
     } catch (error: any) {
-      Logger.error('❌ [ChromeManager] 启动浏览器失败:', error.message);
+      Logger.error('❌ [ChromeManager] 启动登录浏览器失败:', error.message);
+      this.cleanupLoginBrowser();
       return { success: false, message: `启动失败: ${error.message}` };
+    }
+  }
+
+  /**
+   * 清理独立的登录浏览器
+   */
+  cleanupLoginBrowser(): void {
+    if (!this.loginBrowserState) return;
+    const state = this.loginBrowserState;
+    this.loginBrowserState = null;
+    Logger.info('🧹 [ChromeManager] 清理登录浏览器');
+
+    if (state.abortController) {
+      state.abortController.abort();
+    }
+    if (state.browser) {
+      try {
+        state.browser.removeAllListeners('disconnected');
+        state.browser.close().catch(() => {});
+      } catch (_e) {
+        /* ignore */
+      }
+    }
+    if (state.chromeProcess) {
+      const pid = state.chromeProcess.pid;
+      try {
+        state.chromeProcess.kill();
+      } catch (_e) {
+        /* ignore */
+      }
+      // Windows 下 SIGTERM/SIGKILL 不可靠，用 taskkill 强制终止进程树
+      if (pid && process.platform === 'win32') {
+        try {
+          require('child_process').exec(`taskkill /F /T /PID ${pid}`, () => {});
+        } catch (_e) {
+          /* ignore */
+        }
+      }
+    }
+  }
+
+  /**
+   * 清除登录浏览器中指定站点的认证数据（cookies + localStorage）
+   * 仅影响目标域名，不影响同 Profile 下其他站点
+   */
+  async clearSiteDataForLogin(url: string): Promise<void> {
+    if (!this.loginBrowserState?.browser) return;
+
+    try {
+      const pages = await this.loginBrowserState.browser.pages();
+      if (pages.length === 0) return;
+      const page = pages[0];
+
+      // 1. 通过 CDP 删除目标域名的 cookies
+      const { hostname } = new URL(url);
+      const client = await page.createCDPSession();
+      const { cookies } = await client.send('Network.getAllCookies');
+      const siteCookies = cookies.filter(
+        (c: any) => c.domain === hostname || c.domain === `.${hostname}`
+      );
+      if (siteCookies.length > 0) {
+        for (const cookie of siteCookies) {
+          await client.send('Network.deleteCookies', {
+            name: cookie.name,
+            domain: cookie.domain,
+            path: cookie.path,
+          });
+        }
+        Logger.info(`🧹 [ChromeManager] 已清理 ${siteCookies.length} 个站点 cookies`);
+      }
+      await client.detach();
+
+      // 2. 清除页面 localStorage
+      await page.evaluate(() => {
+        try {
+          (globalThis as any).localStorage.clear();
+        } catch (_e) {
+          /* ignore */
+        }
+      });
+      Logger.info('🧹 [ChromeManager] 已清理站点 localStorage');
+
+      // 3. 导航回站点（不用 reload，避免 chrome-error）
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
+      Logger.info('✅ [ChromeManager] 站点认证数据清理完成');
+    } catch (error: any) {
+      Logger.warn('⚠️ [ChromeManager] 清理站点数据失败:', error.message);
+    }
+  }
+
+  /**
+   * 在登录浏览器中创建 access token（通过浏览器上下文调用 /api/user/token）
+   * 与 TokenService.createAccessToken 逻辑一致，但使用 loginBrowserState
+   */
+  async createAccessTokenForLogin(baseUrl: string, userId: number): Promise<string | null> {
+    if (!this.loginBrowserState?.browser) return null;
+
+    const pages = await this.loginBrowserState.browser.pages();
+    if (pages.length === 0) return null;
+    const page = pages[0];
+    if (page.isClosed()) return null;
+
+    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    const apiUrl = `${cleanBaseUrl}/api/user/token`;
+
+    Logger.info('🔧 [ChromeManager] 通过登录浏览器创建 access token...');
+
+    try {
+      const token = await page.evaluate(
+        async (url: string, uid: number) => {
+          const response = await fetch(url, {
+            method: 'GET',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+              'New-API-User': uid.toString(),
+              'Veloera-User': uid.toString(),
+              'voapi-user': uid.toString(),
+              'User-id': uid.toString(),
+              'Cache-Control': 'no-store',
+              Pragma: 'no-cache',
+            },
+          });
+
+          if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`HTTP ${response.status}: ${text.substring(0, 200)}`);
+          }
+
+          const data = JSON.parse(await response.text());
+          if (!data.success || !data.data) {
+            throw new Error(data.message || '创建令牌失败');
+          }
+          return data.data as string;
+        },
+        apiUrl,
+        userId
+      );
+
+      Logger.info('✅ [ChromeManager] access token 创建成功');
+      return token;
+    } catch (error: any) {
+      Logger.warn('⚠️ [ChromeManager] 创建 access token 失败:', error.message);
+      return null;
     }
   }
 
@@ -724,16 +949,21 @@ export class ChromeManager {
     url: string,
     waitForLogin: boolean = false,
     maxWaitTime: number = 60000,
-    onStatus?: (status: string) => void
+    onStatus?: (status: string) => void,
+    options?: { loginMode?: boolean }
   ): Promise<LocalStorageData> {
-    // 检查浏览器是否已关闭
-    this.checkBrowserClosed();
+    const loginMode = options?.loginMode;
 
-    if (!this.browser) {
-      throw new Error('浏览器未启动');
+    // 选择正确的浏览器实例
+    const activeBrowser = loginMode ? this.loginBrowserState?.browser : this.browser;
+
+    this.checkBrowserClosed(loginMode);
+
+    if (!activeBrowser) {
+      throw new Error(loginMode ? '登录浏览器未启动' : '浏览器未启动');
     }
 
-    const pages = await this.browser.pages();
+    const pages = await activeBrowser.pages();
     if (pages.length === 0) {
       throw new Error('没有打开的页面');
     }
@@ -742,7 +972,7 @@ export class ChromeManager {
 
     // 等待页面稳定并读取 localStorage（处理重定向、Cloudflare 验证等）
     onStatus?.('等待页面加载...');
-    let localData = await this.waitAndReadLocalStorage(page, url, onStatus);
+    let localData = await this.waitAndReadLocalStorage(page, url, onStatus, loginMode);
 
     // 判断是否需要等待登录：没有 userId，或者有 userId 但没有 accessToken（可能是残留数据）
     const needsLoginCheck = !localData.userId || (!localData.accessToken && waitForLogin);
@@ -756,8 +986,8 @@ export class ChromeManager {
       // 先尝试一次API验证（用户可能已经登录）
       Logger.info('🔄 [ChromeManager] 尝试通过API验证登录状态...');
       try {
-        this.checkBrowserClosed(); // 检查浏览器状态
-        const apiData = await this.getUserDataFromApi(page, url);
+        this.checkBrowserClosed(loginMode);
+        const apiData = await this.getUserDataFromApi(page, url, loginMode);
         if (apiData.userId) {
           Logger.info(`✅ [ChromeManager] 通过API检测到用户已登录！用户ID: ${apiData.userId}`);
           // 合并数据，API数据优先
@@ -765,7 +995,7 @@ export class ChromeManager {
         } else {
           // API也没有数据，进入等待循环
           onStatus?.('未检测到登录，请在浏览器中登录账号...');
-          localData = await this.waitForUserLogin(page, url, maxWaitTime, onStatus);
+          localData = await this.waitForUserLogin(page, url, maxWaitTime, onStatus, loginMode);
         }
       } catch (apiError: any) {
         // 如果是浏览器关闭错误，直接抛出
@@ -778,7 +1008,7 @@ export class ChromeManager {
         Logger.info(`ℹ️ [ChromeManager] API验证失败: ${apiError.message}，进入等待循环...`);
         // API失败（可能401/403），进入等待循环
         onStatus?.('登录状态无效，请在浏览器中登录账号...');
-        localData = await this.waitForUserLogin(page, url, maxWaitTime, onStatus);
+        localData = await this.waitForUserLogin(page, url, maxWaitTime, onStatus, loginMode);
       }
 
       Logger.info('✅ [ChromeManager] 用户已登录，继续获取数据');
@@ -794,8 +1024,8 @@ export class ChromeManager {
     if (needsApiFallback) {
       Logger.info('⚠️ [ChromeManager] 信息不完整，尝试通过API补全...');
       try {
-        this.checkBrowserClosed(); // 检查浏览器状态
-        const apiData = await this.getUserDataFromApi(page, url);
+        this.checkBrowserClosed(loginMode);
+        const apiData = await this.getUserDataFromApi(page, url, loginMode);
         // 合并数据，localStorage优先
         const merged = { ...apiData, ...localData };
         Logger.info('✅ [ChromeManager] API补全完成');
@@ -824,7 +1054,7 @@ export class ChromeManager {
         if (isAuthError && waitForLogin) {
           Logger.info('🔄 [ChromeManager] 检测到登录状态无效，等待用户重新登录...');
           onStatus?.('登录状态已过期，请在浏览器中重新登录...');
-          localData = await this.waitForUserLogin(page, url, maxWaitTime, onStatus);
+          localData = await this.waitForUserLogin(page, url, maxWaitTime, onStatus, loginMode);
           return localData;
         }
 
@@ -835,7 +1065,7 @@ export class ChromeManager {
     }
 
     // 最后检查一次浏览器状态
-    this.checkBrowserClosed();
+    this.checkBrowserClosed(loginMode);
 
     return localData;
   }
@@ -865,12 +1095,19 @@ export class ChromeManager {
    * 检查浏览器是否已关闭
    * @throws 如果浏览器已关闭，抛出错误
    */
-  private checkBrowserClosed(): void {
+  private checkBrowserClosed(loginMode?: boolean): void {
+    if (loginMode) {
+      if (!this.loginBrowserState || this.loginBrowserState.isClosed) {
+        throw new Error('浏览器已关闭，操作已取消');
+      }
+      if (this.loginBrowserState.abortController?.signal.aborted) {
+        throw new Error('操作已被取消（浏览器已关闭）');
+      }
+      return;
+    }
     if (this.isBrowserClosed) {
       throw new Error('浏览器已关闭，操作已取消');
     }
-
-    // 检查 AbortController 信号
     if (this.abortController?.signal.aborted) {
       throw new Error('操作已被取消（浏览器已关闭）');
     }
@@ -889,7 +1126,8 @@ export class ChromeManager {
     page: Page,
     baseUrl: string,
     maxWaitTime: number,
-    onStatus?: (status: string) => void
+    onStatus?: (status: string) => void,
+    loginMode?: boolean
   ): Promise<LocalStorageData> {
     const startTime = Date.now();
     const checkInterval = 2000; // 每2秒检查一次
@@ -898,13 +1136,13 @@ export class ChromeManager {
 
     while (Date.now() - startTime < maxWaitTime) {
       // 检查浏览器是否已关闭
-      this.checkBrowserClosed();
+      this.checkBrowserClosed(loginMode);
 
       // 等待一段时间再检查（使用可中断的等待）
-      await this.sleepWithAbort(checkInterval);
+      await this.sleepWithAbort(checkInterval, loginMode);
 
       // 再次检查（可能在等待期间浏览器关闭了）
-      this.checkBrowserClosed();
+      this.checkBrowserClosed(loginMode);
 
       checkCount++;
       const elapsedTime = Math.floor((Date.now() - startTime) / 1000);
@@ -927,8 +1165,8 @@ export class ChromeManager {
         if (localData.userId && !localData.accessToken) {
           Logger.info('🔄 [ChromeManager] 检测到userId但无accessToken，验证登录状态...');
           try {
-            this.checkBrowserClosed();
-            const apiData = await this.getUserDataFromApi(page, baseUrl);
+            this.checkBrowserClosed(loginMode);
+            const apiData = await this.getUserDataFromApi(page, baseUrl, loginMode);
             if (apiData.userId) {
               Logger.info(`✅ [ChromeManager] 登录状态有效！用户ID: ${apiData.userId}`);
               return { ...localData, ...apiData };
@@ -951,8 +1189,8 @@ export class ChromeManager {
         if (checkCount % apiCheckInterval === 0) {
           Logger.info('🔄 [ChromeManager] 尝试通过API检查登录状态...');
           try {
-            this.checkBrowserClosed(); // 在API调用前检查
-            const apiData = await this.getUserDataFromApi(page, baseUrl);
+            this.checkBrowserClosed(loginMode);
+            const apiData = await this.getUserDataFromApi(page, baseUrl, loginMode);
             if (apiData.userId) {
               Logger.info(`✅ [ChromeManager] 通过API检测到用户登录！用户ID: ${apiData.userId}`);
               // 合并数据，API数据优先（因为localStorage可能没有）
@@ -981,11 +1219,11 @@ export class ChromeManager {
     }
 
     // 超时前，最后尝试一次API回退
-    this.checkBrowserClosed(); // 检查浏览器是否已关闭
+    this.checkBrowserClosed(loginMode);
 
     Logger.info('⏰ [ChromeManager] 等待超时，最后尝试API回退...');
     try {
-      const apiData = await this.getUserDataFromApi(page, baseUrl);
+      const apiData = await this.getUserDataFromApi(page, baseUrl, loginMode);
       if (apiData.userId) {
         Logger.info(`✅ [ChromeManager] 通过API检测到用户登录！用户ID: ${apiData.userId}`);
         const localData = await this.tryGetFromLocalStorage(page);
@@ -1000,7 +1238,7 @@ export class ChromeManager {
     }
 
     // 最后检查一次浏览器状态
-    this.checkBrowserClosed();
+    this.checkBrowserClosed(loginMode);
 
     // 超时
     throw new Error(`等待登录超时（${maxWaitTime / 1000}秒），请确保已在浏览器中完成登录`);
@@ -1017,13 +1255,14 @@ export class ChromeManager {
   private async waitAndReadLocalStorage(
     page: Page,
     url: string,
-    onStatus?: (status: string) => void
+    onStatus?: (status: string) => void,
+    loginMode?: boolean
   ): Promise<LocalStorageData> {
     const maxRetries = 10;
     const retryDelay = 2000;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      this.checkBrowserClosed();
+      this.checkBrowserClosed(loginMode);
 
       try {
         // 检查页面 URL，确保在目标域名上
@@ -1040,7 +1279,7 @@ export class ChromeManager {
         if (isCloudflare) {
           Logger.info('🛡️ [ChromeManager] 检测到 Cloudflare 验证页面，等待验证通过...');
           onStatus?.('正在等待 Cloudflare 验证...');
-          await this.sleepWithAbort(retryDelay);
+          await this.sleepWithAbort(retryDelay, loginMode);
           continue;
         }
 
@@ -1048,7 +1287,7 @@ export class ChromeManager {
         await page.waitForNetworkIdle({ timeout: 3000 }).catch(() => {});
 
         // 短暂等待让页面稳定
-        await this.sleepWithAbort(500);
+        await this.sleepWithAbort(500, loginMode);
 
         // 尝试读取 localStorage
         Logger.info('🔍 [ChromeManager] 尝试读取 localStorage...');
@@ -1080,7 +1319,7 @@ export class ChromeManager {
             `⚠️ [ChromeManager] 页面正在导航中 (${attempt}/${maxRetries})，等待页面稳定...`
           );
           onStatus?.(`页面加载中... (${attempt}/${maxRetries})`);
-          await this.sleepWithAbort(retryDelay);
+          await this.sleepWithAbort(retryDelay, loginMode);
           continue;
         }
 
@@ -1090,7 +1329,7 @@ export class ChromeManager {
           error.message
         );
         if (attempt < maxRetries) {
-          await this.sleepWithAbort(retryDelay);
+          await this.sleepWithAbort(retryDelay, loginMode);
           continue;
         }
         throw error;
@@ -1105,15 +1344,15 @@ export class ChromeManager {
    * 可中断的睡眠函数
    * @param ms 等待时间（毫秒）
    */
-  private async sleepWithAbort(ms: number): Promise<void> {
+  private async sleepWithAbort(ms: number, loginMode?: boolean): Promise<void> {
+    const ac = loginMode ? this.loginBrowserState?.abortController : this.abortController;
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         resolve();
       }, ms);
 
-      // 监听 AbortSignal
-      if (this.abortController) {
-        this.abortController.signal.addEventListener(
+      if (ac) {
+        ac.signal.addEventListener(
           'abort',
           () => {
             clearTimeout(timeout);
@@ -1422,9 +1661,13 @@ export class ChromeManager {
    * @param baseUrl 站点URL
    * @returns 用户数据
    */
-  private async getUserDataFromApi(page: any, baseUrl: string): Promise<LocalStorageData> {
+  private async getUserDataFromApi(
+    page: any,
+    baseUrl: string,
+    loginMode?: boolean
+  ): Promise<LocalStorageData> {
     // 检查浏览器是否已关闭
-    this.checkBrowserClosed();
+    this.checkBrowserClosed(loginMode);
 
     // 检查页面是否已关闭
     if (page.isClosed()) {
@@ -1444,7 +1687,7 @@ export class ChromeManager {
 
     for (const endpoint of endpoints) {
       // 在每次循环前检查浏览器状态
-      this.checkBrowserClosed();
+      this.checkBrowserClosed(loginMode);
       if (page.isClosed()) {
         throw new Error('浏览器已关闭，操作已取消');
       }
@@ -1570,14 +1813,14 @@ export class ChromeManager {
         // 如果成功获取到userId，返回结果
         if (result.userId) {
           // 再次检查浏览器状态
-          this.checkBrowserClosed();
+          this.checkBrowserClosed(loginMode);
           if (page.isClosed()) {
             throw new Error('浏览器已关闭，操作已取消');
           }
 
           // 尝试获取system_name
           try {
-            const systemName = await this.getSystemNameFromApi(page, cleanBaseUrl);
+            const systemName = await this.getSystemNameFromApi(page, cleanBaseUrl, loginMode);
             if (systemName) {
               result.systemName = systemName;
             }
@@ -1616,9 +1859,13 @@ export class ChromeManager {
    * @param baseUrl 站点URL
    * @returns 系统名称
    */
-  private async getSystemNameFromApi(page: any, baseUrl: string): Promise<string | null> {
+  private async getSystemNameFromApi(
+    page: any,
+    baseUrl: string,
+    loginMode?: boolean
+  ): Promise<string | null> {
     // 检查浏览器是否已关闭
-    this.checkBrowserClosed();
+    this.checkBrowserClosed(loginMode);
 
     // 检查页面是否已关闭
     if (page.isClosed()) {
@@ -1929,6 +2176,7 @@ export class ChromeManager {
   }
   cleanup() {
     Logger.info('🧹 [ChromeManager] 开始清理所有浏览器槽位...');
+    this.cleanupLoginBrowser();
     for (const [index] of this.slots) {
       this.cleanupSlot(index);
     }
@@ -1937,12 +2185,66 @@ export class ChromeManager {
 
   forceCleanup() {
     Logger.info('🔧 [ChromeManager] 强制清理所有浏览器槽位');
+    this.cleanupLoginBrowser();
     for (const [index, slot] of this.slots) {
       if (slot.refCount > 0) {
         Logger.warn(`⚠️ [slot-${index}] 强制重置引用计数 ${slot.refCount} → 0`);
         slot.refCount = 0;
       }
       this.cleanupSlot(index);
+    }
+  }
+
+  /**
+   * 使用指定 Profile 直接打开站点页面
+   * 不接入自动化浏览器池，仅负责启动外部 Chromium 浏览器
+   */
+  async openSiteWithProfile(
+    url: string,
+    options?: { userDataDir?: string; profileDirectory?: string }
+  ): Promise<{ success: boolean; message?: string; error?: string }> {
+    try {
+      const chromePath = this.getChromePath();
+      if (!chromePath || !fs.existsSync(chromePath)) {
+        throw new Error(`浏览器可执行文件不存在: ${chromePath}`);
+      }
+
+      const { spawn } = require('child_process');
+      const args = [
+        ...(options?.userDataDir ? [`--user-data-dir=${options.userDataDir}`] : []),
+        ...(options?.profileDirectory ? [`--profile-directory=${options.profileDirectory}`] : []),
+        '--no-first-run',
+        '--no-default-browser-check',
+        url,
+      ];
+
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn(chromePath, args, {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+
+        proc.once('error', (error: Error) => {
+          reject(error);
+        });
+
+        proc.once('spawn', () => {
+          proc.unref();
+          resolve();
+        });
+      });
+
+      return {
+        success: true,
+        message: '已使用账户对应浏览器打开站点',
+      };
+    } catch (error: any) {
+      Logger.error('❌ [ChromeManager] 使用 Profile 打开站点失败:', error?.message || error);
+      return {
+        success: false,
+        error: error?.message || '打开站点失败',
+      };
     }
   }
 

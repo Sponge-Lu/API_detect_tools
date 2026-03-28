@@ -69,8 +69,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 验证令牌有效性
     validate: (account: any) => ipcRenderer.invoke('token:validate', account),
     // 获取API令牌列表（兼容旧接口）
-    fetchApiTokens: (baseUrl: string, userId: number, accessToken: string) =>
-      ipcRenderer.invoke('token:fetch-api-tokens', baseUrl, userId, accessToken),
+    fetchApiTokens: (baseUrl: string, userId: number, accessToken: string, accountId?: string) =>
+      ipcRenderer.invoke('token:fetch-api-tokens', baseUrl, userId, accessToken, accountId),
+    resolveApiKeyValue: (siteUrl: string, apiKeyId: string | number, accountId?: string) =>
+      ipcRenderer.invoke('token:resolve-api-key-value', siteUrl, apiKeyId, accountId),
     // 获取用户分组（兼容旧接口）
     fetchUserGroups: (baseUrl: string, userId: number, accessToken: string) =>
       ipcRenderer.invoke('token:fetch-user-groups', baseUrl, userId, accessToken),
@@ -78,11 +80,37 @@ contextBridge.exposeInMainWorld('electronAPI', {
     fetchModelPricing: (baseUrl: string, userId: number, accessToken: string) =>
       ipcRenderer.invoke('token:fetch-model-pricing', baseUrl, userId, accessToken),
     // 创建新的 API 令牌
-    createApiToken: (baseUrl: string, userId: number, accessToken: string, tokenData: any) =>
-      ipcRenderer.invoke('token:create-api-token', baseUrl, userId, accessToken, tokenData),
+    createApiToken: (
+      baseUrl: string,
+      userId: number,
+      accessToken: string,
+      tokenData: any,
+      accountId?: string
+    ) =>
+      ipcRenderer.invoke(
+        'token:create-api-token',
+        baseUrl,
+        userId,
+        accessToken,
+        tokenData,
+        accountId
+      ),
     // 删除 API 令牌
-    deleteApiToken: (baseUrl: string, userId: number, accessToken: string, tokenIdentifier: any) =>
-      ipcRenderer.invoke('token:delete-api-token', baseUrl, userId, accessToken, tokenIdentifier),
+    deleteApiToken: (
+      baseUrl: string,
+      userId: number,
+      accessToken: string,
+      tokenIdentifier: any,
+      accountId?: string
+    ) =>
+      ipcRenderer.invoke(
+        'token:delete-api-token',
+        baseUrl,
+        userId,
+        accessToken,
+        tokenIdentifier,
+        accountId
+      ),
     // 执行签到
     checkIn: (baseUrl: string, userId: number, accessToken: string) =>
       ipcRenderer.invoke('token:check-in', baseUrl, userId, accessToken),
@@ -183,14 +211,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
         cliType: 'claudeCode' | 'codex' | 'geminiCli';
         apiKey: string;
         model: string;
+        baseUrl?: string;
       }>;
     }) => ipcRenderer.invoke('cli-compat:test-with-config', params),
     // 保存 CLI 兼容性结果到缓存
-    saveResult: (siteUrl: string, result: any) =>
-      ipcRenderer.invoke('cli-compat:save-result', siteUrl, result),
+    saveResult: (siteUrl: string, result: any, accountId?: string) =>
+      ipcRenderer.invoke('cli-compat:save-result', siteUrl, result, accountId),
     // 保存 CLI 配置
-    saveConfig: (siteUrl: string, config: any) =>
-      ipcRenderer.invoke('cli-compat:save-config', siteUrl, config),
+    saveConfig: (siteUrl: string, config: any, accountId?: string) =>
+      ipcRenderer.invoke('cli-compat:save-config', siteUrl, config, accountId),
     // 写入 CLI 配置文件到文件系统
     writeConfig: (params: {
       cliType: 'claudeCode' | 'codex';
@@ -294,9 +323,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 多账户管理 API
   accounts: {
     list: (siteId: string) => ipcRenderer.invoke('accounts:list', siteId),
-    getActive: (siteId: string) => ipcRenderer.invoke('accounts:get-active', siteId),
-    setActive: (siteId: string, accountId: string) =>
-      ipcRenderer.invoke('accounts:set-active', siteId, accountId),
     add: (data: {
       site_id: string;
       account_name: string;
@@ -318,7 +344,47 @@ contextBridge.exposeInMainWorld('electronAPI', {
     loginMain: (siteUrl: string) => ipcRenderer.invoke('browser-profile:login-main', siteUrl),
     loginIsolated: (siteId: string, siteUrl: string, accountId: string) =>
       ipcRenderer.invoke('browser-profile:login-isolated', siteId, siteUrl, accountId),
+    openSite: (siteId: string | undefined, siteUrl: string, accountId?: string) =>
+      ipcRenderer.invoke('browser-profile:open-site', siteId, siteUrl, accountId),
     deleteProfile: (siteId: string, accountId: string) =>
       ipcRenderer.invoke('browser-profile:delete-profile', siteId, accountId),
+  },
+
+  // 路由代理 API
+  route: {
+    getConfig: () => ipcRenderer.invoke('route:get-config'),
+    saveServerConfig: (updates: any) => ipcRenderer.invoke('route:save-server-config', updates),
+    listRules: () => ipcRenderer.invoke('route:list-rules'),
+    upsertRule: (rule: any) => ipcRenderer.invoke('route:upsert-rule', rule),
+    deleteRule: (ruleId: string) => ipcRenderer.invoke('route:delete-rule', ruleId),
+    listStats: () => ipcRenderer.invoke('route:list-stats'),
+    resetStats: (ruleId?: string) => ipcRenderer.invoke('route:reset-stats', ruleId),
+    getHealth: () => ipcRenderer.invoke('route:get-health'),
+    runHealthCheck: () => ipcRenderer.invoke('route:run-health-check'),
+    getRuntimeStatus: () => ipcRenderer.invoke('route:get-runtime-status'),
+    startServer: () => ipcRenderer.invoke('route:start-server'),
+    stopServer: () => ipcRenderer.invoke('route:stop-server'),
+    regenerateApiKey: () => ipcRenderer.invoke('route:regenerate-api-key'),
+    getModelRegistry: () => ipcRenderer.invoke('route:get-model-registry'),
+    rebuildModelRegistry: (params?: { force?: boolean }) =>
+      ipcRenderer.invoke('route:rebuild-model-registry', params),
+    upsertModelMappingOverride: (override: any) =>
+      ipcRenderer.invoke('route:upsert-model-mapping-override', override),
+    deleteModelMappingOverride: (overrideId: string) =>
+      ipcRenderer.invoke('route:delete-model-mapping-override', { overrideId }),
+    saveCliModelSelections: (selections: any) =>
+      ipcRenderer.invoke('route:save-cli-model-selections', { selections }),
+    saveCliProbeConfig: (updates: any) =>
+      ipcRenderer.invoke('route:save-cli-probe-config', updates),
+    runCliProbeNow: (params?: any) => ipcRenderer.invoke('route:run-cli-probe-now', params),
+    getCliProbeLatest: (params?: any) => ipcRenderer.invoke('route:get-cli-probe-latest', params),
+    getCliProbeHistory: (params: any) => ipcRenderer.invoke('route:get-cli-probe-history', params),
+    getCliProbeView: (params: any) => ipcRenderer.invoke('route:get-cli-probe-view', params),
+    getAnalyticsSummary: (params: any) => ipcRenderer.invoke('route:get-analytics-summary', params),
+    getAnalyticsDistribution: (params: any) =>
+      ipcRenderer.invoke('route:get-analytics-distribution', params),
+    resetAnalytics: (params?: any) => ipcRenderer.invoke('route:reset-analytics', params),
+    fetchLatestLog: (params: { siteId: string; model?: string }) =>
+      ipcRenderer.invoke('route:fetch-latest-log', params),
   },
 });

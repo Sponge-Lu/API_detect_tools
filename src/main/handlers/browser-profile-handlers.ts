@@ -4,7 +4,7 @@
  * 定位: IPC 层 - 浏览器 Profile 管理和多账户登录接口
  */
 
-import { ipcMain } from 'electron';
+import { ipcMain, shell } from 'electron';
 import { browserProfileManager } from '../browser-profile-manager';
 import { unifiedConfigManager } from '../unified-config-manager';
 import type { ChromeManager } from '../chrome-manager';
@@ -15,6 +15,14 @@ export function registerBrowserProfileHandlers(
   chromeManager: ChromeManager,
   getMainWindow: () => BrowserWindow | null
 ): void {
+  const openExternalSite = async (siteUrl: string) => {
+    await shell.openExternal(siteUrl);
+    return {
+      success: true,
+      message: '已使用默认浏览器打开站点',
+    };
+  };
+
   // 检测主 Chrome Profile 路径
   ipcMain.handle('browser-profile:detect', async () => {
     try {
@@ -43,39 +51,62 @@ export function registerBrowserProfileHandlers(
         return { success: false, error: result.error };
       }
 
-      // 使用主 Profile 启动浏览器
+      // 使用主 Profile 启动独立登录浏览器
       const launchResult = await chromeManager.launchForLogin(siteUrl, result.options);
       if (!launchResult.success) {
         return { success: false, error: launchResult.message };
       }
 
-      // 等待用户登录并获取 localStorage 数据
+      // 等待用户登录并获取 localStorage 数据（使用登录浏览器）
       const mainWindow = getMainWindow();
       const onStatus = mainWindow
         ? (status: string) => mainWindow.webContents.send('site-init-status', status)
         : undefined;
 
-      const data = await chromeManager.getLocalStorageData(siteUrl, true, 120000, onStatus);
-      if (!data.userId || !data.accessToken) {
-        return { success: false, error: '未能获取登录凭证' };
-      }
+      try {
+        const data = await chromeManager.getLocalStorageData(siteUrl, true, 120000, onStatus, {
+          loginMode: true,
+        });
+        if (!data.userId) {
+          return { success: false, error: '未能获取用户ID，请确保已登录' };
+        }
 
-      return {
-        success: true,
-        data: {
-          userId: data.userId,
-          username: data.username,
-          accessToken: data.accessToken,
-          authSource: 'main_profile' as const,
-        },
-      };
+        // accessToken 缺失时尝试创建
+        let accessToken = data.accessToken;
+        if (!accessToken) {
+          Logger.info('[BrowserProfileHandlers] accessToken 缺失，尝试创建...');
+          onStatus?.('正在创建访问令牌...');
+          accessToken = await chromeManager.createAccessTokenForLogin(siteUrl, data.userId);
+        }
+
+        if (!accessToken) {
+          return {
+            success: false,
+            error: '无法获取访问令牌，请在站点中手动生成 Token 后重试',
+          };
+        }
+
+        return {
+          success: true,
+          data: {
+            userId: data.userId,
+            username: data.username,
+            accessToken,
+            authSource: 'main_profile' as const,
+          },
+        };
+      } finally {
+        chromeManager.cleanupLoginBrowser();
+      }
     } catch (error: any) {
       Logger.error('[BrowserProfileHandlers] 主浏览器登录失败:', error.message);
+      chromeManager.cleanupLoginBrowser();
       return { success: false, error: error.message };
     }
   });
 
   // 使用隔离浏览器 Profile 登录（追加账号）
+  // 完整流程：清理站点残留 → 等待用户登录 → 获取 userId → 创建 accessToken
   ipcMain.handle(
     'browser-profile:login-isolated',
     async (_, siteId: string, siteUrl: string, accountId: string) => {
@@ -88,35 +119,60 @@ export function registerBrowserProfileHandlers(
           return { success: false, error: result.error };
         }
 
-        // 使用隔离 Profile 启动浏览器
+        // 使用隔离 Profile 启动独立登录浏览器
         const launchResult = await chromeManager.launchForLogin(siteUrl, result.options);
         if (!launchResult.success) {
           return { success: false, error: launchResult.message };
         }
 
-        // 等待用户登录并获取 localStorage 数据
+        // 清理目标站点的残留登录态（仅该域名，不影响同 Profile 下其他站点）
+        await chromeManager.clearSiteDataForLogin(siteUrl);
+
+        // 等待用户登录并获取 localStorage 数据（使用登录浏览器）
         const mainWindow = getMainWindow();
         const onStatus = mainWindow
           ? (status: string) => mainWindow.webContents.send('site-init-status', status)
           : undefined;
 
-        const data = await chromeManager.getLocalStorageData(siteUrl, true, 120000, onStatus);
-        if (!data.userId || !data.accessToken) {
-          return { success: false, error: '未能获取登录凭证' };
-        }
+        try {
+          const data = await chromeManager.getLocalStorageData(siteUrl, true, 120000, onStatus, {
+            loginMode: true,
+          });
+          if (!data.userId) {
+            return { success: false, error: '未能获取用户ID，请确保已登录' };
+          }
 
-        return {
-          success: true,
-          data: {
-            userId: data.userId,
-            username: data.username,
-            accessToken: data.accessToken,
-            authSource: 'isolated_profile' as const,
-            profilePath: result.options!.userDataDir,
-          },
-        };
+          // accessToken 缺失时尝试创建（与第一账号流程一致）
+          let accessToken = data.accessToken;
+          if (!accessToken) {
+            Logger.info('[BrowserProfileHandlers] accessToken 缺失，尝试创建...');
+            onStatus?.('正在创建访问令牌...');
+            accessToken = await chromeManager.createAccessTokenForLogin(siteUrl, data.userId);
+          }
+
+          if (!accessToken) {
+            return {
+              success: false,
+              error: '无法获取访问令牌，请在站点中手动生成 Token 后重试',
+            };
+          }
+
+          return {
+            success: true,
+            data: {
+              userId: data.userId,
+              username: data.username,
+              accessToken,
+              authSource: 'isolated_profile' as const,
+              profilePath: result.options!.userDataDir,
+            },
+          };
+        } finally {
+          chromeManager.cleanupLoginBrowser();
+        }
       } catch (error: any) {
         Logger.error('[BrowserProfileHandlers] 隔离浏览器登录失败:', error.message);
+        chromeManager.cleanupLoginBrowser();
         return { success: false, error: error.message };
       }
     }
@@ -131,4 +187,60 @@ export function registerBrowserProfileHandlers(
       return { success: false, error: error.message };
     }
   });
+
+  // 使用账户对应浏览器打开站点
+  ipcMain.handle(
+    'browser-profile:open-site',
+    async (_, siteId: string | undefined, siteUrl: string, accountId?: string) => {
+      try {
+        if (!siteId || !accountId) {
+          return await openExternalSite(siteUrl);
+        }
+
+        await unifiedConfigManager.loadConfig();
+        const account = unifiedConfigManager.getAccountById(accountId);
+
+        if (!account || account.site_id !== siteId) {
+          return await openExternalSite(siteUrl);
+        }
+
+        if (account.auth_source === 'isolated_profile') {
+          const profileOptions = account.browser_profile_path
+            ? { success: true, options: { userDataDir: account.browser_profile_path } }
+            : await browserProfileManager.getIsolatedProfileLaunchOptions(siteId, accountId);
+
+          if (!profileOptions.success || !profileOptions.options?.userDataDir) {
+            return {
+              success: false,
+              error: profileOptions.error || '未找到隔离浏览器 Profile',
+            };
+          }
+
+          return await chromeManager.openSiteWithProfile(siteUrl, {
+            userDataDir: profileOptions.options.userDataDir,
+          });
+        }
+
+        if (account.auth_source === 'main_profile') {
+          const mainProfilePath = await browserProfileManager.detectMainChromeProfile();
+          if (!mainProfilePath) {
+            return {
+              success: false,
+              error: '未检测到主浏览器 Profile',
+            };
+          }
+
+          return await chromeManager.openSiteWithProfile(siteUrl, {
+            userDataDir: mainProfilePath,
+            profileDirectory: 'Default',
+          });
+        }
+
+        return await openExternalSite(siteUrl);
+      } catch (error: any) {
+        Logger.error('[BrowserProfileHandlers] 使用账户浏览器打开站点失败:', error.message);
+        return { success: false, error: error.message };
+      }
+    }
+  );
 }

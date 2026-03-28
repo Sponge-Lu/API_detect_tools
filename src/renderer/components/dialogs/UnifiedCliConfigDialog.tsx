@@ -21,7 +21,12 @@ import { IOSModal } from '../IOSModal';
 import { IOSButton } from '../IOSButton';
 import type { CliConfig, ApiKeyInfo } from '../../../shared/types/cli-config';
 import type { CodexTestDetail, GeminiTestDetail } from '../../../shared/types/site';
-import { DEFAULT_CLI_CONFIG } from '../../../shared/types/cli-config';
+import {
+  CLI_TEST_MODEL_SLOT_COUNT,
+  DEFAULT_CLI_CONFIG,
+  normalizeCliTestModels,
+  sanitizeCliTestModels,
+} from '../../../shared/types/cli-config';
 import {
   generateClaudeCodeConfig,
   generateCodexConfig,
@@ -120,6 +125,13 @@ const CLI_TYPES: CliTypeConfig[] = [
     supported: true,
   },
 ];
+
+function toTestModelSlots(
+  configItem?: Pick<NonNullable<CliConfig[CliType]>, 'testModel' | 'testModels'> | null
+): string[] {
+  const normalized = normalizeCliTestModels(configItem, CLI_TEST_MODEL_SLOT_COUNT);
+  return Array.from({ length: CLI_TEST_MODEL_SLOT_COUNT }, (_, index) => normalized[index] || '');
+}
 
 /** 过滤匹配前缀的模型 */
 function filterModelsByPrefix(models: string[], prefix: string): string[] {
@@ -240,14 +252,24 @@ export function UnifiedCliConfigDialog({
       {
         apiKeyId: number | null;
         model: string | null;
-        testModel: string | null;
+        testModels: string[];
         editedFiles: GeneratedConfig | null;
       }
     >
   >({
-    claudeCode: { apiKeyId: null, model: null, testModel: null, editedFiles: null },
-    codex: { apiKeyId: null, model: null, testModel: null, editedFiles: null },
-    geminiCli: { apiKeyId: null, model: null, testModel: null, editedFiles: null },
+    claudeCode: {
+      apiKeyId: null,
+      model: null,
+      testModels: toTestModelSlots(null),
+      editedFiles: null,
+    },
+    codex: { apiKeyId: null, model: null, testModels: toTestModelSlots(null), editedFiles: null },
+    geminiCli: {
+      apiKeyId: null,
+      model: null,
+      testModels: toTestModelSlots(null),
+      editedFiles: null,
+    },
   });
 
   // 生成的配置内容（可编辑）- 用于保存编辑后的内容
@@ -274,7 +296,7 @@ export function UnifiedCliConfigDialog({
         claudeCode: {
           apiKeyId: currentConfig.claudeCode?.apiKeyId ?? null,
           model: currentConfig.claudeCode?.model ?? null,
-          testModel: currentConfig.claudeCode?.testModel ?? null,
+          testModels: toTestModelSlots(currentConfig.claudeCode),
           editedFiles: currentConfig.claudeCode?.editedFiles
             ? {
                 files: currentConfig.claudeCode.editedFiles.map(f => ({
@@ -287,7 +309,7 @@ export function UnifiedCliConfigDialog({
         codex: {
           apiKeyId: currentConfig.codex?.apiKeyId ?? null,
           model: currentConfig.codex?.model ?? null,
-          testModel: currentConfig.codex?.testModel ?? null,
+          testModels: toTestModelSlots(currentConfig.codex),
           editedFiles: currentConfig.codex?.editedFiles
             ? {
                 files: currentConfig.codex.editedFiles.map(f => ({
@@ -300,7 +322,7 @@ export function UnifiedCliConfigDialog({
         geminiCli: {
           apiKeyId: currentConfig.geminiCli?.apiKeyId ?? null,
           model: currentConfig.geminiCli?.model ?? null,
-          testModel: currentConfig.geminiCli?.testModel ?? null,
+          testModels: toTestModelSlots(currentConfig.geminiCli),
           editedFiles: currentConfig.geminiCli?.editedFiles
             ? {
                 files: currentConfig.geminiCli.editedFiles.map(f => ({
@@ -319,9 +341,24 @@ export function UnifiedCliConfigDialog({
         geminiCli: DEFAULT_CLI_CONFIG.geminiCli.enabled,
       });
       setCliConfigs({
-        claudeCode: { apiKeyId: null, model: null, testModel: null, editedFiles: null },
-        codex: { apiKeyId: null, model: null, testModel: null, editedFiles: null },
-        geminiCli: { apiKeyId: null, model: null, testModel: null, editedFiles: null },
+        claudeCode: {
+          apiKeyId: null,
+          model: null,
+          testModels: toTestModelSlots(null),
+          editedFiles: null,
+        },
+        codex: {
+          apiKeyId: null,
+          model: null,
+          testModels: toTestModelSlots(null),
+          editedFiles: null,
+        },
+        geminiCli: {
+          apiKeyId: null,
+          model: null,
+          testModels: toTestModelSlots(null),
+          editedFiles: null,
+        },
       });
     }
 
@@ -447,7 +484,7 @@ export function UnifiedCliConfigDialog({
         ...prev[selectedCli],
         apiKeyId,
         model: null,
-        testModel: null,
+        testModels: toTestModelSlots(null),
         editedFiles: null,
       },
     }));
@@ -469,11 +506,16 @@ export function UnifiedCliConfigDialog({
   };
 
   // 处理测试模型选择变化
-  const handleTestModelChange = (testModel: string | null) => {
+  const handleTestModelChange = (slotIndex: number, testModel: string | null) => {
     if (!selectedCli) return;
     setCliConfigs(prev => ({
       ...prev,
-      [selectedCli]: { ...prev[selectedCli], testModel },
+      [selectedCli]: {
+        ...prev[selectedCli],
+        testModels: prev[selectedCli].testModels.map((current, index) => {
+          return index === slotIndex ? testModel || '' : current;
+        }),
+      },
     }));
   };
 
@@ -560,7 +602,8 @@ export function UnifiedCliConfigDialog({
       claudeCode: {
         apiKeyId: cliConfigs.claudeCode.apiKeyId,
         model: cliConfigs.claudeCode.model,
-        testModel: cliConfigs.claudeCode.testModel,
+        testModel: sanitizeCliTestModels(cliConfigs.claudeCode.testModels)[0] ?? null,
+        testModels: sanitizeCliTestModels(cliConfigs.claudeCode.testModels),
         enabled: enabledState.claudeCode,
         editedFiles: getEditedFiles('claudeCode'),
         applyMode:
@@ -571,7 +614,8 @@ export function UnifiedCliConfigDialog({
       codex: {
         apiKeyId: cliConfigs.codex.apiKeyId,
         model: cliConfigs.codex.model,
-        testModel: cliConfigs.codex.testModel,
+        testModel: sanitizeCliTestModels(cliConfigs.codex.testModels)[0] ?? null,
+        testModels: sanitizeCliTestModels(cliConfigs.codex.testModels),
         enabled: enabledState.codex,
         editedFiles: getEditedFiles('codex'),
         applyMode:
@@ -580,7 +624,8 @@ export function UnifiedCliConfigDialog({
       geminiCli: {
         apiKeyId: cliConfigs.geminiCli.apiKeyId,
         model: cliConfigs.geminiCli.model,
-        testModel: cliConfigs.geminiCli.testModel,
+        testModel: sanitizeCliTestModels(cliConfigs.geminiCli.testModels)[0] ?? null,
+        testModels: sanitizeCliTestModels(cliConfigs.geminiCli.testModels),
         enabled: enabledState.geminiCli,
         editedFiles: getEditedFiles('geminiCli'),
         applyMode:
@@ -702,18 +747,28 @@ export function UnifiedCliConfigDialog({
                     测试使用模型
                   </label>
                   {availableModels.length > 0 ? (
-                    <select
-                      value={cliConfigs[selectedCli]?.testModel ?? ''}
-                      onChange={e => handleTestModelChange(e.target.value || null)}
-                      className="w-full px-3 py-2 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] text-sm text-[var(--ios-text-primary)] focus:ring-2 focus:ring-[var(--ios-blue)] focus:border-transparent transition-all"
-                    >
-                      <option value="">请选择测试模型（请选择较新的模型）</option>
-                      {availableModels.map(model => (
-                        <option key={model} value={model}>
-                          {model}
-                        </option>
+                    <div className="space-y-2">
+                      {cliConfigs[selectedCli]?.testModels.map((selectedModel, index) => (
+                        <select
+                          key={index}
+                          value={selectedModel}
+                          onChange={e => handleTestModelChange(index, e.target.value || null)}
+                          className="w-full px-3 py-2 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] text-sm text-[var(--ios-text-primary)] focus:ring-2 focus:ring-[var(--ios-blue)] focus:border-transparent transition-all"
+                        >
+                          <option value="">{`请选择测试模型 ${index + 1}`}</option>
+                          {availableModels
+                            .filter(model => {
+                              const selectedModels = cliConfigs[selectedCli]?.testModels || [];
+                              return model === selectedModel || !selectedModels.includes(model);
+                            })
+                            .map(model => (
+                              <option key={model} value={model}>
+                                {model}
+                              </option>
+                            ))}
+                        </select>
                       ))}
-                    </select>
+                    </div>
                   ) : (
                     <div className="text-sm text-[var(--ios-text-secondary)] py-2">
                       {currentCliConfig.modelPrefix

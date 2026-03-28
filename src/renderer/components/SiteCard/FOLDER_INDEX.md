@@ -28,10 +28,10 @@
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
 | **SiteCard.tsx** | 站点卡片主组件（使用 IOSCard 包装） | `SiteCard` 组件 |
-| **SiteCardHeader.tsx** | 卡片头部 (站点名称、状态、余额、消费、Token、RPM/TPM、模型数、更新时间、CLI兼容性、LDC 支付状态) | `SiteCardHeader` 组件 |
+| **SiteCardHeader.tsx** | 卡片头部 (站点名称点击按当前账户浏览器打开站点、状态、余额、消费、Token、RPM/TPM、模型数、更新时间、CLI兼容性、LDC 支付状态) | `SiteCardHeader` 组件 |
 | **SiteCardDetails.tsx** | 卡片详情（URL、Access Token、用户分组、API Keys、模型列表），使用 iOS 风格分隔线 | `SiteCardDetails` 组件 |
 | **SiteCardActions.tsx** | 卡片操作按钮（加油站、签到(含统计tooltip)、展开、刷新、自动刷新、编辑、删除） | `SiteCardActions` 组件 |
-| **types.ts** | 类型定义（isDetecting 布尔值支持并发刷新） | `SiteCardProps`, `SiteCardActionsProps` 等 |
+| **types.ts** | 类型定义（isDetecting 布尔值支持并发刷新，区分打开站点与签到页回调） | `SiteCardProps`, `SiteCardActionsProps` 等 |
 
 ---
 

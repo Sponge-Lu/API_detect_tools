@@ -2,7 +2,7 @@
 
  * 输入: UnifiedConfigManager (配置管理)
 
- * 输出: IPC 事件处理 (accounts:list, accounts:set-active, accounts:delete, accounts:update)
+ * 输出: IPC 事件处理 (accounts:list, accounts:delete, accounts:update, accounts:add)
 
  * 定位: IPC 层 - 多账户管理接口
 
@@ -27,42 +27,24 @@ export function registerAccountHandlers(): void {
     }
   });
 
-  // 获取站点的活跃账户
-
-  ipcMain.handle('accounts:get-active', async (_, siteId: string) => {
-    try {
-      return { success: true, data: unifiedConfigManager.getActiveAccount(siteId) };
-    } catch (error: any) {
-      return { success: false, error: error.message };
-    }
-  });
-
-  // 切换活跃账户
-
-  ipcMain.handle('accounts:set-active', async (_, siteId: string, accountId: string) => {
-    try {
-      const result = await unifiedConfigManager.setActiveAccount(siteId, accountId);
-
-      if (!result) {
-        return { success: false, error: '站点或账户不存在' };
-      }
-
-      Logger.info(`✅ [AccountHandlers] 切换账户: site=${siteId}, account=${accountId}`);
-
-      return { success: true };
-    } catch (error: any) {
-      Logger.error('❌ [AccountHandlers] 切换账户失败:', error.message);
-
-      return { success: false, error: error.message };
-    }
-  });
-
   // 更新账户信息
 
   ipcMain.handle(
     'accounts:update',
 
-    async (_, accountId: string, updates: { account_name?: string; status?: string }) => {
+    async (
+      _,
+      accountId: string,
+      updates: {
+        account_name?: string;
+        status?: string;
+        access_token?: string;
+        user_id?: string;
+        auto_refresh?: boolean;
+        auto_refresh_interval?: number;
+        cli_config?: any;
+      }
+    ) => {
       try {
         const result = await unifiedConfigManager.updateAccount(accountId, updates as any);
 

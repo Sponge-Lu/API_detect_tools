@@ -53,6 +53,7 @@ export interface CliConfigItem {
   apiKeyId: number | null;
   model: string | null; // CLI 使用模型
   testModel?: string | null; // 测试使用模型
+  testModels?: string[] | null; // 测试使用模型（最多 3 个）
   enabled?: boolean; // 是否启用（控制图标显示和测试），可选以兼容旧数据
   editedFiles?: EditedConfigFile[] | null; // 用户编辑后的配置文件内容
   applyMode?: 'merge' | 'overwrite'; // 应用配置模式：合并或覆盖，默认合并

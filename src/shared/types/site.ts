@@ -3,7 +3,7 @@
  * 输出: TypeScript 类型和接口 (Site, SiteGroup, AccountCredential, DetectionResult, CheckinStats, LdcPaymentInfo 等)
  * 定位: 类型定义层 - 定义主进程和渲染进程共享的数据模型
  *
- * 多账户支持: AccountCredential 存储多账户凭证，UnifiedSite.active_account_id 指向当前激活账户
+ * 多账户支持: AccountCredential 存储多账户凭证，站点级字段仅保留无账户场景所需的兼容信息
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -15,6 +15,9 @@
  * 统一站点数据模型
  * 单一数据源：config.json
  */
+
+import type { CliConfig } from './cli-config';
+import type { RoutingConfig } from './route-proxy';
 
 // ============= 基础类型 =============
 
@@ -150,10 +153,13 @@ export interface AccountCredential {
   status: AccountStatus;
   browser_profile_path?: string; // isolated profile 持久化路径
   cached_data?: DetectionCacheData; // 账户级检测缓存
+  cli_config?: CliConfig; // 账户级 CLI 配置
   metadata?: {
     oauth_provider?: 'github' | 'linuxdo';
     supports_checkin?: boolean;
   };
+  auto_refresh?: boolean; // 账户级自动刷新开关，未设置时继承站点配置
+  auto_refresh_interval?: number; // 账户级自动刷新间隔（分钟），最小15分钟
   created_at: number;
   updated_at: number;
 }
@@ -212,10 +218,7 @@ export interface UnifiedSite {
   enabled: boolean;
   group: string; // 分组ID，默认 "default"
 
-  // === 多账户 ===
-  active_account_id?: string; // 当前激活的账户 ID
-
-  // === 认证信息（legacy projection，始终同步为 active account 的值） ===
+  // === 认证信息（legacy site-level fallback，用于无账户或站点级操作） ===
   access_token?: string; // 系统访问令牌
   user_id?: string; // 用户ID
 
@@ -230,7 +233,7 @@ export interface UnifiedSite {
   auto_refresh_interval?: number; // 自动刷新间隔（分钟），最小15分钟
 
   // === CLI 配置（保存在站点配置中，备份时不会丢失） ===
-  cli_config?: CliConfigData;
+  cli_config?: CliConfig;
 
   // === 检测结果缓存（无账户站点的 legacy fallback） ===
   cached_data?: DetectionCacheData;
@@ -326,6 +329,8 @@ export interface UnifiedConfig {
   siteGroups: SiteGroup[];
   settings: Settings;
   last_updated: number;
+  /** 路由代理模块配置（可选，缺失时使用默认值） */
+  routing?: RoutingConfig;
 }
 
 // ============= 前端兼容类型 =============

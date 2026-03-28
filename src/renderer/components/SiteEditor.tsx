@@ -18,9 +18,17 @@ import { SiteConfig } from '../App';
 import { toast } from '../store/toastStore';
 import { IOSInput } from './IOSInput';
 
+interface EditingAccountInfo {
+  id: string;
+  account_name?: string;
+  user_id?: string;
+  access_token?: string;
+}
+
 interface Props {
   site?: SiteConfig;
-  onSave: (site: SiteConfig) => void;
+  editingAccount?: EditingAccountInfo | null;
+  onSave: (site: SiteConfig, auth: { systemToken: string; userId: string }) => void | Promise<void>;
   onCancel: () => void;
   // 站点分组列表（来自 config.siteGroups）
   groups: { id: string; name: string }[];
@@ -32,7 +40,26 @@ type Step = 'input-url' | 'fetching' | 'confirm';
 // 新增：添加方式模式，auto=智能添加，manual=手动添加
 type Mode = 'auto' | 'manual';
 
-export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: Props) {
+function buildInitialAutoInfo(site?: SiteConfig, editingAccount?: EditingAccountInfo | null) {
+  return {
+    name: site?.name || '',
+    apiKey: site?.api_key || '',
+    systemToken: editingAccount?.access_token || site?.system_token || '',
+    userId: editingAccount?.user_id || site?.user_id || '',
+    balance: null as number | null,
+    extraLinks: site?.extra_links || '',
+    enableCheckin: site?.force_enable_checkin || false,
+  };
+}
+
+export function SiteEditor({
+  site,
+  editingAccount,
+  onSave,
+  onCancel,
+  groups,
+  defaultGroupId,
+}: Props) {
   // 编辑模式下直接跳到确认步骤，新增模式从输入URL开始
   const [step, setStep] = useState<Step>(site ? 'confirm' : 'input-url');
   const [mode, setMode] = useState<Mode>('auto'); // 当前添加模式
@@ -43,15 +70,7 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
   const [showToken, setShowToken] = useState(false); // 控制令牌显示/隐藏
   const isEditing = !!site; // 判断是否为编辑模式
   // 自动/手动共用的信息结构
-  const [autoInfo, setAutoInfo] = useState({
-    name: site?.name || '',
-    apiKey: site?.api_key || '',
-    systemToken: site?.system_token || '',
-    userId: site?.user_id || '',
-    balance: null as number | null,
-    extraLinks: site?.extra_links || '', // 加油站链接
-    enableCheckin: site?.force_enable_checkin || false, // 启用签到功能
-  });
+  const [autoInfo, setAutoInfo] = useState(() => buildInitialAutoInfo(site, editingAccount));
   // 站点分组选择
   const [selectedGroupId, setSelectedGroupId] = useState<string>(site?.group || defaultGroupId);
 
@@ -171,7 +190,7 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     // 构建站点配置，包含签到与加油站配置
     const newSite: SiteConfig = {
       name: autoInfo.name || extractDomainName(url),
@@ -179,14 +198,17 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
       api_key: autoInfo.apiKey,
       system_token: autoInfo.systemToken,
       user_id: autoInfo.userId,
-      enabled: true,
-      has_checkin: false,
+      enabled: site?.enabled ?? true,
+      has_checkin: site?.has_checkin ?? false,
       extra_links: autoInfo.extraLinks, // 加油站链接
       force_enable_checkin: autoInfo.enableCheckin, // 用户勾选的签到功能
       // 分组信息（如果用户未选择则归入默认分组）
       group: selectedGroupId || defaultGroupId,
     };
-    onSave(newSite);
+    await onSave(newSite, {
+      systemToken: autoInfo.systemToken,
+      userId: autoInfo.userId,
+    });
   };
 
   return (
@@ -379,6 +401,11 @@ export function SiteEditor({ site, onSave, onCancel, groups, defaultGroupId }: P
                     </div>
                   )}
                 </div>
+                {site && editingAccount && (
+                  <div className="px-3 py-2 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900 rounded-lg text-xs text-blue-700 dark:text-blue-300">
+                    当前优先编辑账户级凭证：{editingAccount.account_name || editingAccount.id}
+                  </div>
+                )}
                 <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-2">
                   <div className="text-sm text-slate-700 dark:text-slate-300 font-semibold whitespace-nowrap">
                     用户ID

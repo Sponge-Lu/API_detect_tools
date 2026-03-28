@@ -476,56 +476,90 @@ export function registerCliCompatHandlers() {
         geminiDetail: undefined,
       };
 
-      // 并发测试所有配置的 CLI
-      await Promise.all(
+      const testResults = await Promise.all(
         params.configs.map(async config => {
           try {
-            let success = false;
-            // 优先使用配置中的 baseUrl，否则使用 siteUrl
             const testUrl = config.baseUrl || params.siteUrl;
 
             switch (config.cliType) {
-              case 'claudeCode':
-                success = await cliCompatService.testClaudeCode(
+              case 'claudeCode': {
+                const success = await cliCompatService.testClaudeCode(
                   testUrl,
                   config.apiKey,
                   config.model
                 );
-                results.claudeCode = success;
-                break;
+                log.info(
+                  `CLI test ${config.cliType} (${config.model}, ${testUrl}): ${success ? 'passed' : 'failed'}`
+                );
+                return {
+                  cliType: config.cliType,
+                  success,
+                };
+              }
               case 'codex': {
-                // 使用 testCodexWithDetail 获取详细测试结果
                 const codexResult = await cliCompatService.testCodexWithDetail(
                   testUrl,
                   config.apiKey,
                   config.model
                 );
-                results.codex = codexResult.supported;
-                results.codexDetail = codexResult.detail;
-                success = codexResult.supported ?? false;
-                break;
+                log.info(
+                  `CLI test ${config.cliType} (${config.model}, ${testUrl}): ${codexResult.supported ? 'passed' : 'failed'}`
+                );
+                return {
+                  cliType: config.cliType,
+                  success: codexResult.supported ?? false,
+                  codexDetail: codexResult.detail,
+                };
               }
               case 'geminiCli': {
-                // 使用 testGeminiWithDetail 获取详细测试结果
                 const geminiResult = await cliCompatService.testGeminiWithDetail(
                   testUrl,
                   config.apiKey,
                   config.model
                 );
-                results.geminiCli = geminiResult.supported;
-                results.geminiDetail = geminiResult.detail;
-                success = geminiResult.supported ?? false;
-                break;
+                log.info(
+                  `CLI test ${config.cliType} (${config.model}, ${testUrl}): ${geminiResult.supported ? 'passed' : 'failed'}`
+                );
+                return {
+                  cliType: config.cliType,
+                  success: geminiResult.supported ?? false,
+                  geminiDetail: geminiResult.detail,
+                };
               }
             }
-
-            log.info(`CLI test ${config.cliType} (${testUrl}): ${success ? 'passed' : 'failed'}`);
           } catch (error: any) {
-            log.warn(`CLI test ${config.cliType} error: ${error.message}`);
-            results[config.cliType] = false;
+            log.warn(`CLI test ${config.cliType} (${config.model}) error: ${error.message}`);
+            return {
+              cliType: config.cliType,
+              success: false,
+            };
           }
+
+          return null;
         })
       );
+
+      for (const testResult of testResults) {
+        if (!testResult) continue;
+
+        switch (testResult.cliType) {
+          case 'claudeCode':
+            results.claudeCode = results.claudeCode === true ? true : testResult.success;
+            break;
+          case 'codex':
+            results.codex = results.codex === true ? true : testResult.success;
+            if (testResult.codexDetail && (testResult.success || !results.codexDetail)) {
+              results.codexDetail = testResult.codexDetail;
+            }
+            break;
+          case 'geminiCli':
+            results.geminiCli = results.geminiCli === true ? true : testResult.success;
+            if (testResult.geminiDetail && (testResult.success || !results.geminiDetail)) {
+              results.geminiDetail = testResult.geminiDetail;
+            }
+            break;
+        }
+      }
 
       return { success: true, data: results };
     } catch (error: any) {
@@ -537,9 +571,40 @@ export function registerCliCompatHandlers() {
   // 保存 CLI 兼容性结果到缓存
   ipcMain.handle(
     'cli-compat:save-result',
-    async (_, siteUrl: string, result: CliCompatibilityResult) => {
+    async (_, siteUrl: string, result: CliCompatibilityResult, accountId?: string) => {
       try {
-        log.info(`Saving CLI compatibility result for site: ${siteUrl}`);
+        log.info(
+          `Saving CLI compatibility result for ${accountId ? `account: ${accountId}` : `site: ${siteUrl}`}`
+        );
+
+        if (accountId) {
+          const updated = await unifiedConfigManager.updateAccountCachedData(
+            accountId,
+            current => ({
+              ...(current || {
+                models: [],
+                last_refresh: Date.now(),
+              }),
+              cli_compatibility: {
+                claudeCode: result.claudeCode,
+                codex: result.codex,
+                codexDetail: result.codexDetail,
+                geminiCli: result.geminiCli,
+                geminiDetail: result.geminiDetail,
+                testedAt: result.testedAt,
+                error: result.error,
+              },
+            })
+          );
+
+          if (!updated) {
+            log.warn(`Account not found for id: ${accountId}`);
+            return { success: false, error: 'Account not found' };
+          }
+
+          log.info(`CLI compatibility result saved for account ${accountId}`);
+          return { success: true };
+        }
 
         const site = unifiedConfigManager.getSiteByUrl(siteUrl);
         if (!site) {
@@ -578,28 +643,47 @@ export function registerCliCompatHandlers() {
   );
 
   // 保存 CLI 配置到站点配置（不是 cached_data，这样备份时不会丢失）
-  ipcMain.handle('cli-compat:save-config', async (_, siteUrl: string, cliConfig: any) => {
-    try {
-      log.info(`Saving CLI config for site: ${siteUrl}`);
+  ipcMain.handle(
+    'cli-compat:save-config',
+    async (_, siteUrl: string, cliConfig: any, accountId?: string) => {
+      try {
+        log.info(
+          `Saving CLI config for ${accountId ? `account: ${accountId}` : `site: ${siteUrl}`}`
+        );
 
-      const site = unifiedConfigManager.getSiteByUrl(siteUrl);
-      if (!site) {
-        log.warn(`Site not found for URL: ${siteUrl}`);
-        return { success: false, error: 'Site not found' };
+        if (accountId) {
+          const updated = await unifiedConfigManager.updateAccount(accountId, {
+            cli_config: cliConfig,
+          });
+
+          if (!updated) {
+            log.warn(`Account not found for id: ${accountId}`);
+            return { success: false, error: 'Account not found' };
+          }
+
+          log.info(`CLI config saved for account ${accountId}`);
+          return { success: true };
+        }
+
+        const site = unifiedConfigManager.getSiteByUrl(siteUrl);
+        if (!site) {
+          log.warn(`Site not found for URL: ${siteUrl}`);
+          return { success: false, error: 'Site not found' };
+        }
+
+        // 直接更新站点的 cli_config 字段（不是 cached_data）
+        await unifiedConfigManager.updateSite(site.id, {
+          cli_config: cliConfig,
+        });
+
+        log.info(`CLI config saved for ${siteUrl}`);
+        return { success: true };
+      } catch (error: any) {
+        log.error(`Failed to save CLI config: ${error.message}`);
+        return { success: false, error: error.message };
       }
-
-      // 直接更新站点的 cli_config 字段（不是 cached_data）
-      await unifiedConfigManager.updateSite(site.id, {
-        cli_config: cliConfig,
-      });
-
-      log.info(`CLI config saved for ${siteUrl}`);
-      return { success: true };
-    } catch (error: any) {
-      log.error(`Failed to save CLI config: ${error.message}`);
-      return { success: false, error: error.message };
     }
-  });
+  );
 
   // 写入 CLI 配置文件到文件系统（支持合并和覆盖模式）
   ipcMain.handle(

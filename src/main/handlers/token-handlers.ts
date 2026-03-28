@@ -7,6 +7,7 @@ import Logger from '../utils/logger';
 
 import { ipcMain, BrowserWindow } from 'electron';
 import type { TokenService } from '../token-service';
+import { isMaskedApiKeyValue, mergeApiKeysPreservingRawValue } from '../token-service';
 import type { ChromeManager } from '../chrome-manager';
 import { unifiedConfigManager } from '../unified-config-manager';
 import type { AccountAuthSource } from '../../shared/types/site';
@@ -23,6 +24,107 @@ export function registerTokenHandlers(
   chromeManager: ChromeManager,
   getMainWindow: () => BrowserWindow | null
 ) {
+  const persistApiKeysCache = async (
+    siteUrl: string,
+    apiKeys: any[] | undefined,
+    accountId?: string
+  ): Promise<void> => {
+    if (!Array.isArray(apiKeys)) {
+      return;
+    }
+
+    if (accountId) {
+      await unifiedConfigManager.updateAccountCachedData(accountId, current => ({
+        ...(current || {}),
+        api_keys: mergeApiKeysPreservingRawValue(current?.api_keys, apiKeys),
+        last_refresh: Date.now(),
+      }));
+      return;
+    }
+
+    const site = unifiedConfigManager.getSiteByUrl(siteUrl);
+    if (!site) {
+      return;
+    }
+
+    await unifiedConfigManager.updateSite(site.id, {
+      cached_data: {
+        ...(site.cached_data || {}),
+        api_keys: mergeApiKeysPreservingRawValue(site.cached_data?.api_keys, apiKeys),
+        last_refresh: Date.now(),
+      },
+    });
+  };
+
+  const persistResolvedApiKeyValue = async (
+    siteUrl: string,
+    apiKeyId: string,
+    rawValue: string,
+    accountId?: string
+  ): Promise<void> => {
+    const applyResolvedValue = (apiKeys: any[] | undefined) => {
+      if (!Array.isArray(apiKeys)) {
+        return apiKeys;
+      }
+
+      return apiKeys.map(item => {
+        const itemId =
+          item?.id !== undefined && item?.id !== null
+            ? String(item.id)
+            : item?.token_id !== undefined && item?.token_id !== null
+              ? String(item.token_id)
+              : null;
+        if (itemId !== apiKeyId) {
+          return item;
+        }
+
+        if ('token' in item && !('key' in item)) {
+          return { ...item, token: rawValue };
+        }
+
+        return { ...item, key: rawValue };
+      });
+    };
+
+    if (accountId) {
+      await unifiedConfigManager.updateAccountCachedData(accountId, current => ({
+        ...(current || {}),
+        api_keys: applyResolvedValue(current?.api_keys),
+        last_refresh: Date.now(),
+      }));
+      return;
+    }
+
+    const site = unifiedConfigManager.getSiteByUrl(siteUrl);
+    if (!site) {
+      return;
+    }
+
+    await unifiedConfigManager.updateSite(site.id, {
+      cached_data: {
+        ...(site.cached_data || {}),
+        api_keys: applyResolvedValue(site.cached_data?.api_keys),
+        last_refresh: Date.now(),
+      },
+    });
+  };
+
+  const resolveBrowserSlot = async (accountId?: string): Promise<number | undefined> => {
+    if (!accountId) {
+      return undefined;
+    }
+
+    await unifiedConfigManager.loadConfig();
+    const account = unifiedConfigManager.getAccountById(accountId);
+    if (!account) {
+      throw new Error(`Account not found: ${accountId}`);
+    }
+
+    const siteAccounts = unifiedConfigManager.getAccountsBySiteId(account.site_id);
+    const slotIndex = siteAccounts.findIndex(item => item.id === accountId);
+    return slotIndex >= 0 ? slotIndex : 0;
+  };
+
   // 初始化站点账号
   ipcMain.handle('token:initialize-site', async (_, baseUrl: string) => {
     try {
@@ -75,10 +177,14 @@ export function registerTokenHandlers(
   // 获取 API 令牌列表
   ipcMain.handle(
     'token:fetch-api-tokens',
-    async (_, baseUrl: string, userId: number, accessToken: string) => {
+    async (_, baseUrl: string, userId: number, accessToken: string, accountId?: string) => {
       try {
         Logger.info('📡 [IPC] 收到获取API令牌列表请求');
-        const tokens = await tokenService.fetchApiTokens(baseUrl, userId, accessToken);
+        const browserSlot = await resolveBrowserSlot(accountId);
+        const tokens = await tokenService.fetchApiTokens(baseUrl, userId, accessToken, {
+          browserSlot,
+        });
+        await persistApiKeysCache(baseUrl, tokens, accountId);
         return { success: true, data: tokens };
       } catch (error: any) {
         Logger.error('❌ [IPC] 获取API令牌列表失败:', error);
@@ -87,13 +193,118 @@ export function registerTokenHandlers(
     }
   );
 
+  ipcMain.handle(
+    'token:resolve-api-key-value',
+    async (_, siteUrl: string, apiKeyId: string | number, accountId?: string) => {
+      try {
+        const normalizedApiKeyId = String(apiKeyId);
+        const site = unifiedConfigManager.getSiteByUrl(siteUrl);
+        if (!site) {
+          throw new Error(`Site not found: ${siteUrl}`);
+        }
+
+        const browserSlot = await resolveBrowserSlot(accountId);
+
+        if (accountId) {
+          const account = unifiedConfigManager.getAccountById(accountId);
+          if (!account || account.site_id !== site.id) {
+            throw new Error(`Account not found: ${accountId}`);
+          }
+
+          const apiKey = (account.cached_data?.api_keys || []).find(item => {
+            const itemId =
+              item?.id !== undefined && item?.id !== null
+                ? String(item.id)
+                : item?.token_id !== undefined && item?.token_id !== null
+                  ? String(item.token_id)
+                  : null;
+            return itemId === normalizedApiKeyId;
+          });
+          if (!apiKey) {
+            throw new Error(`API key not found: ${normalizedApiKeyId}`);
+          }
+
+          const rawValue = await tokenService.resolveUsableApiKeyValue(
+            site.url,
+            Number(account.user_id),
+            account.access_token,
+            apiKey,
+            {
+              browserSlot,
+              allowBrowserFallback: true,
+              challengeWaitMs: 10000,
+            }
+          );
+
+          if (!rawValue || isMaskedApiKeyValue(rawValue)) {
+            return { success: false, error: '无法解析 API Key 明文' };
+          }
+
+          await persistResolvedApiKeyValue(site.url, normalizedApiKeyId, rawValue, accountId);
+          return { success: true, data: rawValue };
+        }
+
+        const apiKey = (site.cached_data?.api_keys || []).find(item => {
+          const itemId =
+            item?.id !== undefined && item?.id !== null
+              ? String(item.id)
+              : item?.token_id !== undefined && item?.token_id !== null
+                ? String(item.token_id)
+                : null;
+          return itemId === normalizedApiKeyId;
+        });
+        if (!apiKey) {
+          throw new Error(`API key not found: ${normalizedApiKeyId}`);
+        }
+
+        const siteAccessToken = site.access_token || (site as any).system_token;
+        if (!site.user_id || !siteAccessToken) {
+          return { success: false, error: '当前站点缺少 system token 或 user id' };
+        }
+
+        const rawValue = await tokenService.resolveUsableApiKeyValue(
+          site.url,
+          Number(site.user_id),
+          siteAccessToken,
+          apiKey,
+          {
+            browserSlot,
+            allowBrowserFallback: true,
+            challengeWaitMs: 10000,
+          }
+        );
+
+        if (!rawValue || isMaskedApiKeyValue(rawValue)) {
+          return { success: false, error: '无法解析 API Key 明文' };
+        }
+
+        await persistResolvedApiKeyValue(site.url, normalizedApiKeyId, rawValue);
+        return { success: true, data: rawValue };
+      } catch (error: any) {
+        Logger.error('❌ [IPC] 解析 API Key 明文失败:', error);
+        return { success: false, error: error.message };
+      }
+    }
+  );
+
   // 创建新的 API 令牌
   ipcMain.handle(
     'token:create-api-token',
-    async (_, baseUrl: string, userId: number, accessToken: string, tokenData: any) => {
+    async (
+      _,
+      baseUrl: string,
+      userId: number,
+      accessToken: string,
+      tokenData: any,
+      accountId?: string
+    ) => {
       try {
         Logger.info('🆕 [IPC] 收到创建 API 令牌请求');
-        const result = await tokenService.createApiToken(baseUrl, userId, accessToken, tokenData);
+        const browserSlot = await resolveBrowserSlot(accountId);
+        const result = await tokenService.createApiToken(baseUrl, userId, accessToken, tokenData, {
+          browserSlot,
+        });
+        await persistApiKeysCache(baseUrl, result.data, accountId);
         return { success: result.success, data: result.data };
       } catch (error: any) {
         Logger.error('❌ [IPC] 创建 API 令牌失败:', error);
@@ -105,14 +316,23 @@ export function registerTokenHandlers(
   // 删除 API 令牌
   ipcMain.handle(
     'token:delete-api-token',
-    async (_, baseUrl: string, userId: number, accessToken: string, tokenIdentifier: any) => {
+    async (
+      _,
+      baseUrl: string,
+      userId: number,
+      accessToken: string,
+      tokenIdentifier: any,
+      accountId?: string
+    ) => {
       try {
         Logger.info('🗑 [IPC] 收到删除 API 令牌请求');
+        const browserSlot = await resolveBrowserSlot(accountId);
         const result = await tokenService.deleteApiToken(
           baseUrl,
           userId,
           accessToken,
-          tokenIdentifier
+          tokenIdentifier,
+          { browserSlot }
         );
         return { success: result.success, data: result.data };
       } catch (error: any) {

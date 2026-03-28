@@ -26,9 +26,12 @@
 | **setup.ts** | 测试环境配置 | Vitest 配置 |
 | **example.test.ts** | 示例测试 | 测试模板 |
 | **schemas.test.ts** | Schema 验证测试 | Zod Schema |
+| **token-service.test.ts** | API Key 原始值保留回归测试 | TokenService 创建后原始 key 回填、ApiService 缓存持久化保留原始 key |
 | **groupStyle.test.tsx** | 分组样式测试 | groupStyle 工具 |
 | **useSiteGroups.test.ts** | Hook 测试 | useSiteGroups Hook |
 | **webdav-config.test.ts** | WebDAV 配置测试 | WebDAV 配置 |
+| **unified-config-manager.test.ts** | 配置恢复回归测试 | UnifiedConfigManager 损坏恢复、备份回滚、原子保存 |
+| **route-cli-probe-service.test.ts** | CLI 探测账户选择回归测试 | 默认账户优先、余额不足回退、旧配置兼容 |
 | **webdav-manager.test.ts** | WebDAV 管理器测试 | WebDAVManager 类 |
 | **update-service.test.ts** | 更新服务测试 | UpdateService 类 |
 | **auto-refresh.property.test.ts** | 自动刷新属性测试 | 自动刷新逻辑 |

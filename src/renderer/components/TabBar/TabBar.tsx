@@ -1,6 +1,7 @@
 import { useRef, useLayoutEffect, useState, useCallback } from 'react';
 import { Server, Terminal, Coins, Settings } from 'lucide-react';
 import type { TabId } from '../../store/uiStore';
+import { LDC_UI_VISIBILITY } from '../../../shared/constants';
 
 interface TabBarProps {
   activeTab: TabId;
@@ -15,6 +16,9 @@ const tabs: { id: TabId; label: string; icon: typeof Server }[] = [
 ];
 
 export function TabBar({ activeTab, onTabChange }: TabBarProps) {
+  const visibleTabs = tabs.filter(tab => LDC_UI_VISIBILITY.showCreditTab || tab.id !== 'credit');
+  const visibleActiveTab =
+    !LDC_UI_VISIBILITY.showCreditTab && activeTab === 'credit' ? 'sites' : activeTab;
   const navRef = useRef<HTMLDivElement>(null);
   const tabRefs = useRef<Map<TabId, HTMLButtonElement>>(new Map());
   const [indicator, setIndicator] = useState({ left: 0, width: 0 });
@@ -28,7 +32,7 @@ export function TabBar({ activeTab, onTabChange }: TabBarProps) {
   );
 
   useLayoutEffect(() => {
-    const activeEl = tabRefs.current.get(activeTab);
+    const activeEl = tabRefs.current.get(visibleActiveTab);
     const navEl = navRef.current;
     if (activeEl && navEl) {
       const navRect = navEl.getBoundingClientRect();
@@ -38,7 +42,7 @@ export function TabBar({ activeTab, onTabChange }: TabBarProps) {
         width: tabRect.width,
       });
     }
-  }, [activeTab]);
+  }, [visibleActiveTab]);
 
   return (
     <div
@@ -53,8 +57,8 @@ export function TabBar({ activeTab, onTabChange }: TabBarProps) {
           width: indicator.width,
         }}
       />
-      {tabs.map(({ id, label, icon: Icon }) => {
-        const isActive = activeTab === id;
+      {visibleTabs.map(({ id, label, icon: Icon }) => {
+        const isActive = visibleActiveTab === id;
         return (
           <button
             key={id}

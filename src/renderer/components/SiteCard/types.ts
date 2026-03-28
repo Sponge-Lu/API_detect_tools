@@ -17,6 +17,13 @@ import type { DetectionResult } from '../../App';
 import type { CliCompatibilityResult } from '../../store/detectionStore';
 import type { CliConfig } from '../../../shared/types/cli-config';
 
+export interface SiteCardEditAccount {
+  id: string;
+  account_name?: string;
+  access_token?: string;
+  user_id?: string;
+}
+
 export interface SiteCardProps {
   site: SiteConfig;
   index: number;
@@ -28,7 +35,8 @@ export interface SiteCardProps {
   // 多账户: 卡片所属账户信息
   accountId?: string;
   accountName?: string;
-  isActiveAccount?: boolean;
+  accountAccessToken?: string;
+  accountUserId?: string;
   /** 复合 key（site.name::accountId），用于 expandedSites / detectingSites 等 */
   cardKey?: string;
 
@@ -62,10 +70,10 @@ export interface SiteCardProps {
   // 回调函数
   onExpand: (name: string) => void;
   onDetect: (site: SiteConfig, accountId?: string) => void;
-  onEdit: (index: number) => void;
+  onEdit: (index: number, account?: SiteCardEditAccount | null) => void;
   onDelete: (index: number) => void;
   onCheckIn: (site: SiteConfig, accountId?: string) => void;
-  onOpenCheckinPage: (site: SiteConfig) => void;
+  onOpenSite: (site: SiteConfig, accountId?: string) => void;
   onOpenExtraLink: (link: string) => void;
   onCopyToClipboard: (text: string, label: string) => void;
   onToggleAutoRefresh?: () => void;
@@ -107,9 +115,10 @@ export interface SiteCardHeaderProps {
   rpm: number;
   tpm: number;
   modelCount: number;
+  accountId?: string;
   /** 账户名（多账户时显示在站点名下方） */
   accountName?: string;
-  onOpenCheckinPage: (site: SiteConfig) => void;
+  onOpenSite: (site: SiteConfig, accountId?: string) => void;
   // CLI 兼容性相关
   cliCompatibility?: CliCompatibilityResult;
   cliConfig?: CliConfig | null;
@@ -128,6 +137,7 @@ export interface SiteCardActionsProps {
   isDetecting: boolean;
   checkingIn: string | null;
   autoRefreshEnabled?: boolean;
+  editAccount?: SiteCardEditAccount | null;
   /** 签到统计数据 (New API 类型站点) */
   checkinStats?: {
     todayQuota?: number;
@@ -138,7 +148,7 @@ export interface SiteCardActionsProps {
 
   onExpand: (name: string) => void;
   onDetect: (site: SiteConfig) => void;
-  onEdit: (index: number) => void;
+  onEdit: (index: number, account?: SiteCardEditAccount | null) => void;
   onDelete: (index: number) => void;
   onCheckIn: (site: SiteConfig, accountId?: string) => void;
   onOpenExtraLink: (link: string) => void;

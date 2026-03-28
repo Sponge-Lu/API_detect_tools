@@ -93,6 +93,12 @@ export const DEFAULT_WINDOW_WIDTH = 1280;
 /** 默认窗口高度 */
 export const DEFAULT_WINDOW_HEIGHT = 800;
 
+/** 前端临时隐藏的 LDC 相关 UI 开关 */
+export const LDC_UI_VISIBILITY = {
+  showRatioColumn: false,
+  showCreditTab: false,
+} as const;
+
 // ============= 分页相关 =============
 
 /** 日志查询每页条数 */

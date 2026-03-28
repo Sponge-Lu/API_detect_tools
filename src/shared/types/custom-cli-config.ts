@@ -13,6 +13,8 @@
 export interface CustomCliSettings {
   enabled: boolean;
   model: string | null;
+  /** 用于测试的模型（优先级高于 model，但最多保留 3 个） */
+  testModels?: string[];
   /** 用户编辑后的配置文件内容（null 表示未编辑，使用自动生成的配置） */
   editedFiles?: { path: string; content: string }[] | null;
 }
@@ -49,6 +51,7 @@ export interface CustomCliConfig {
 export const DEFAULT_CUSTOM_CLI_SETTINGS: CustomCliSettings = {
   enabled: true,
   model: null,
+  testModels: [],
 };
 
 /** 创建新自定义配置的默认值 */

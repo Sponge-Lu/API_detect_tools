@@ -1,0 +1,69 @@
+[mcp_servers.context7]
+command = "cmd"
+args = ["/c", "npx", "-y", "@upstash/context7-mcp"]
+startup_timeout_sec = 60
+
+[mcp_servers.memory]
+command = "cmd"
+args = ["/c", "npx", "-y", "@modelcontextprotocol/server-memory"]
+startup_timeout_sec = 60
+
+[mcp_servers.playwright]
+command = "cmd"
+args = ["/c", "npx", "@playwright/mcp@latest"]
+startup_timeout_sec = 60
+
+[mcp_servers.mcp-deepwiki]
+command = "cmd"
+args = ["/c", "npx", "-y", "mcp-deepwiki@latest"]
+startup_timeout_sec = 60
+
+[mcp_servers.fetch]
+command = "cmd"
+args = ["/c", "uvx", "mcp-server-fetch"]
+startup_timeout_sec = 60
+
+[mcp_servers.ace-tool]
+command = "cmd"
+args = [
+  "/c",
+  "npx",
+  "-y",
+  "ace-tool@latest",
+  "--base-url",
+  "https://acemcp.heroman.wtf/relay/",
+  "--token",
+  "ace_2ed6768658e7b06ab5017931a6df1d96dc172297"
+]
+startup_timeout_sec = 60
+
+[mcp_servers.chrome-devtools]
+command = "cmd"
+args = ["/c", "npx", "-y", "chrome-devtools-mcp@latest"]
+startup_timeout_sec = 60
+
+[mcp_servers.grok-search]
+command = "cmd"
+args = [
+  "/c",
+  "uvx",
+  "--from",
+  "git+https://github.com/GuDaStudio/GrokSearch@grok-with-tavily",
+  "grok-search"
+]
+startup_timeout_sec = 60
+
+[mcp_servers.grok-search.env]
+GROK_API_URL = "https://ai.huan666.de/v1"
+GROK_API_KEY = "sk-sFApZMBwt5xcy2HZZ9tnhIEEHR0VVLxPYUnK1NFcDnvcu8O5"
+TAVILY_API_KEY = "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"
+TAVILY_API_URL = "https://api.tavily.com"
+
+[mcp_servers.stitch]
+command = "npx"
+args = ["-y", "@_davideast/stitch-mcp", "proxy"]
+enabled = true
+startup_timeout_sec = 60
+
+[mcp_servers.stitch.env]
+STITCH_API_KEY = "AQ.Ab8RN6IMzZL4SueAPCZPqZ2f91EDfExGgKxJM8NyvNPWSwwjKA"

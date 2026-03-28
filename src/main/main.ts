@@ -28,6 +28,9 @@ import { unifiedConfigManager } from './unified-config-manager';
 import { createCloseBehaviorManager, CloseBehaviorManager } from './close-behavior-manager';
 import { createCreditService } from './credit-service';
 import { powerManager } from './power-manager';
+import { initializeRouteProxy } from './route-proxy-service';
+import { startCliProbeTimer } from './route-cli-probe-service';
+import { configureRouteApiKeyResolver } from './route-channel-resolver';
 
 // 设置Windows控制台编码为UTF-8，解决中文乱码问题
 if (os.platform() === 'win32') {
@@ -173,6 +176,7 @@ app.whenReady().then(async () => {
   // 初始化其他服务
   tokenService = new TokenService(chromeManager);
   apiService = new ApiService(tokenService, null as any); // tokenStorage 不再需要
+  configureRouteApiKeyResolver(tokenService);
 
   // 创建窗口
   await createWindow();
@@ -198,6 +202,14 @@ app.whenReady().then(async () => {
     getMainWindow: () => mainWindow,
     closeBehaviorManager: closeBehaviorManager || undefined,
   });
+
+  // 初始化路由代理服务（如已启用则启动本地代理）
+  await initializeRouteProxy();
+  Logger.info('✅ [Main] 路由代理服务已初始化');
+
+  // 启动 CLI 探测定时器（独立于代理服务器）
+  startCliProbeTimer();
+  Logger.info('✅ [Main] CLI 探测定时器已初始化');
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

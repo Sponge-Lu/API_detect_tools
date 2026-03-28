@@ -11,8 +11,17 @@
  * 使用 fast-check 进行属性测试，验证设计文档中定义的正确性属性
  */
 
+import { createElement } from 'react';
+import { render, renderHook, screen, act, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fc from 'fast-check';
+import { useAutoRefresh } from '../renderer/hooks/useAutoRefresh';
+import { AutoRefreshDialog } from '../renderer/components/dialogs/AutoRefreshDialog';
+import type {
+  AccountCredential as HookAccountCredential,
+  DetectionResult as HookDetectionResult,
+  SiteConfig as HookSiteConfig,
+} from '../shared/types/site';
 
 // ============= Type Definitions =============
 
@@ -302,10 +311,11 @@ describe('useAutoRefresh Property Tests', () => {
             sites.forEach(site => {
               if (site.auto_refresh === true) {
                 const oldInterval = getValidInterval(site.auto_refresh_interval);
-                if (oldInterval !== newInterval) {
+                const expectedNewInterval = getValidInterval(newInterval);
+                if (oldInterval !== expectedNewInterval) {
                   expect(toRemove.has(site.name)).toBe(true);
                   expect(toCreate.has(site.name)).toBe(true);
-                  expect(toCreate.get(site.name)).toBe(newInterval);
+                  expect(toCreate.get(site.name)).toBe(expectedNewInterval);
                 }
               }
             });
@@ -408,5 +418,204 @@ describe('useAutoRefresh Property Tests', () => {
         { numRuns: 100 }
       );
     });
+  });
+});
+
+describe('useAutoRefresh implementation regressions', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('should refresh each account result for auto-refresh enabled sites', async () => {
+    const detectSingle = vi.fn(
+      async (
+        site: HookSiteConfig,
+        _quickRefresh: boolean,
+        _config?: unknown,
+        accountId?: string
+      ): Promise<HookDetectionResult> => ({
+        name: site.name,
+        url: site.url,
+        status: '成功',
+        models: [],
+        has_checkin: false,
+        accountId,
+      })
+    );
+    const onRefresh = vi.fn();
+    const site: HookSiteConfig = {
+      id: 'site-1',
+      name: 'Site A',
+      url: 'https://example.com',
+      api_key: '',
+      enabled: true,
+      auto_refresh: true,
+      auto_refresh_interval: 15,
+    };
+    const accounts: HookAccountCredential[] = [
+      {
+        id: 'acct-1',
+        site_id: 'site-1',
+        account_name: 'Account 1',
+        user_id: '1',
+        access_token: 'token-1',
+        auth_source: 'manual',
+        status: 'active',
+        created_at: 1,
+        updated_at: 1,
+      },
+      {
+        id: 'acct-2',
+        site_id: 'site-1',
+        account_name: 'Account 2',
+        user_id: '2',
+        access_token: 'token-2',
+        auth_source: 'manual',
+        status: 'active',
+        created_at: 1,
+        updated_at: 1,
+      },
+    ];
+
+    renderHook(() =>
+      useAutoRefresh({
+        sites: [site],
+        accounts,
+        detectSingle,
+        onRefresh,
+      })
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(15 * 60 * 1000);
+      await Promise.resolve();
+    });
+
+    expect(detectSingle).toHaveBeenCalledTimes(2);
+    expect(detectSingle).toHaveBeenNthCalledWith(1, site, true, undefined, 'acct-1');
+    expect(detectSingle).toHaveBeenNthCalledWith(2, site, true, undefined, 'acct-2');
+    expect(onRefresh).toHaveBeenCalledTimes(2);
+    expect(onRefresh).toHaveBeenNthCalledWith(1, 'Site A (Account 1)');
+    expect(onRefresh).toHaveBeenNthCalledWith(2, 'Site A (Account 2)');
+  });
+
+  it('should allow accounts under the same site to control auto-refresh independently', async () => {
+    const detectSingle = vi.fn(
+      async (
+        site: HookSiteConfig,
+        _quickRefresh: boolean,
+        _config?: unknown,
+        accountId?: string
+      ): Promise<HookDetectionResult> => ({
+        name: site.name,
+        url: site.url,
+        status: '成功',
+        models: [],
+        has_checkin: false,
+        accountId,
+      })
+    );
+    const onRefresh = vi.fn();
+    const site: HookSiteConfig = {
+      id: 'site-1',
+      name: 'Site A',
+      url: 'https://example.com',
+      api_key: '',
+      enabled: true,
+      auto_refresh: false,
+      auto_refresh_interval: 15,
+    };
+    const accounts: HookAccountCredential[] = [
+      {
+        id: 'acct-1',
+        site_id: 'site-1',
+        account_name: 'Account 1',
+        user_id: '1',
+        access_token: 'token-1',
+        auth_source: 'manual',
+        status: 'active',
+        auto_refresh: true,
+        auto_refresh_interval: 20,
+        created_at: 1,
+        updated_at: 1,
+      },
+      {
+        id: 'acct-2',
+        site_id: 'site-1',
+        account_name: 'Account 2',
+        user_id: '2',
+        access_token: 'token-2',
+        auth_source: 'manual',
+        status: 'active',
+        auto_refresh: false,
+        auto_refresh_interval: 20,
+        created_at: 1,
+        updated_at: 1,
+      },
+    ];
+
+    renderHook(() =>
+      useAutoRefresh({
+        sites: [site],
+        accounts,
+        detectSingle,
+        onRefresh,
+      })
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(20 * 60 * 1000);
+      await Promise.resolve();
+    });
+
+    expect(detectSingle).toHaveBeenCalledTimes(1);
+    expect(detectSingle).toHaveBeenCalledWith(site, true, undefined, 'acct-1');
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(onRefresh).toHaveBeenCalledWith('Site A (Account 1)');
+  });
+});
+
+describe('AutoRefreshDialog regressions', () => {
+  it('should reset the interval input when reopened for another site', () => {
+    const onConfirm = vi.fn();
+    const onCancel = vi.fn();
+    const { rerender } = render(
+      createElement(AutoRefreshDialog, {
+        isOpen: true,
+        siteName: 'Site A',
+        currentInterval: 30,
+        onConfirm,
+        onCancel,
+      })
+    );
+
+    const input = screen.getByRole('spinbutton') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '45' } });
+    expect(input.value).toBe('45');
+
+    rerender(
+      createElement(AutoRefreshDialog, {
+        isOpen: false,
+        siteName: 'Site A',
+        currentInterval: 30,
+        onConfirm,
+        onCancel,
+      })
+    );
+    rerender(
+      createElement(AutoRefreshDialog, {
+        isOpen: true,
+        siteName: 'Site B',
+        currentInterval: 15,
+        onConfirm,
+        onCancel,
+      })
+    );
+
+    expect((screen.getByRole('spinbutton') as HTMLInputElement).value).toBe('15');
   });
 });

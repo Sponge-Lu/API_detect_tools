@@ -151,10 +151,61 @@ export function useDataLoader({
           if (result.userGroups) setUserGroups(key, result.userGroups);
         }
 
-        // 加载 CLI 兼容性数据和配置（站点级，不按账户拆分）
+        // 加载 CLI 兼容性数据和配置（优先账户级，其次无账户站点的站点级 fallback）
         let cliCompatCount = 0;
         let cliConfigCount = 0;
         sites.forEach((site: any) => {
+          const siteId = site.id as string | undefined;
+          const siteAccounts = siteId ? accountsBySiteId.get(siteId) : undefined;
+
+          if (siteAccounts && siteAccounts.length > 0) {
+            siteAccounts.forEach(acct => {
+              const key = makeStoreKey(site.name, acct.id);
+              const cliCompatibility = acct.cached_data?.cli_compatibility;
+              if (setCliCompatibility && cliCompatibility) {
+                const isValid =
+                  typeof cliCompatibility === 'object' &&
+                  cliCompatibility !== null &&
+                  ('claudeCode' in cliCompatibility ||
+                    'codex' in cliCompatibility ||
+                    'geminiCli' in cliCompatibility);
+
+                if (isValid) {
+                  const normalizedResult: CliCompatibilityResult = {
+                    claudeCode:
+                      typeof cliCompatibility.claudeCode === 'boolean'
+                        ? cliCompatibility.claudeCode
+                        : null,
+                    codex:
+                      typeof cliCompatibility.codex === 'boolean' ? cliCompatibility.codex : null,
+                    codexDetail: cliCompatibility.codexDetail || undefined,
+                    geminiCli:
+                      typeof cliCompatibility.geminiCli === 'boolean'
+                        ? cliCompatibility.geminiCli
+                        : null,
+                    geminiDetail: cliCompatibility.geminiDetail || undefined,
+                    testedAt:
+                      typeof cliCompatibility.testedAt === 'number'
+                        ? cliCompatibility.testedAt
+                        : null,
+                    error:
+                      typeof cliCompatibility.error === 'string'
+                        ? cliCompatibility.error
+                        : undefined,
+                  };
+                  setCliCompatibility(key, normalizedResult);
+                  cliCompatCount++;
+                }
+              }
+
+              if (setCliConfig && acct.cli_config) {
+                setCliConfig(key, acct.cli_config as CliConfig);
+                cliConfigCount++;
+              }
+            });
+            return;
+          }
+
           const cliCompatibility = site.cached_data?.cli_compatibility || site.cli_compatibility;
           if (setCliCompatibility && cliCompatibility) {
             const isValid =

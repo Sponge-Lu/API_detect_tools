@@ -42,7 +42,10 @@ export const SiteCard = React.memo(
     isExpanded,
     columnWidths,
     // 多账户
+    accountId,
     accountName,
+    accountAccessToken,
+    accountUserId,
     cardKey: cardKeyProp,
     apiKeys,
     userGroups,
@@ -68,7 +71,7 @@ export const SiteCard = React.memo(
     onEdit,
     onDelete,
     onCheckIn,
-    onOpenCheckinPage,
+    onOpenSite,
     onOpenExtraLink,
     onCopyToClipboard,
     onToggleAutoRefresh,
@@ -166,6 +169,15 @@ export const SiteCard = React.memo(
 
     // 用于 refreshMessage 匹配的 key
     const effectiveCardKey = cardKeyProp || site.name;
+    const editAccount =
+      accountId && (accountAccessToken || accountUserId || accountName)
+        ? {
+            id: accountId,
+            account_name: accountName,
+            access_token: accountAccessToken,
+            user_id: accountUserId,
+          }
+        : null;
 
     return (
       <IOSCard
@@ -180,7 +192,10 @@ export const SiteCard = React.memo(
           isExpanded ? (
             <SiteCardDetails
               site={site}
+              cardKey={effectiveCardKey}
               siteResult={siteResult}
+              accountAccessToken={accountAccessToken}
+              accountUserId={accountUserId}
               apiKeys={apiKeys}
               userGroups={userGroups}
               modelPricing={modelPricing}
@@ -239,8 +254,9 @@ export const SiteCard = React.memo(
               rpm={rpm}
               tpm={tpm}
               modelCount={modelCount}
+              accountId={accountId}
               accountName={accountName}
-              onOpenCheckinPage={onOpenCheckinPage}
+              onOpenSite={onOpenSite}
               cliCompatibility={cliCompatibility}
               cliConfig={cliConfig}
               isCliTesting={isCliTesting}
@@ -258,6 +274,7 @@ export const SiteCard = React.memo(
               isDetecting={isDetecting}
               checkingIn={checkingIn}
               autoRefreshEnabled={autoRefreshEnabled}
+              editAccount={editAccount}
               checkinStats={siteResult?.checkinStats}
               onExpand={onExpand}
               onDetect={onDetect}

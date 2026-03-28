@@ -22,21 +22,28 @@ import {
   type CliConfig,
 } from '../store/detectionStore';
 import { toast } from '../store/toastStore';
+import { normalizeCliTestModels } from '../../shared/types/cli-config';
 
 /** Hook 返回类型 */
 export interface UseCliCompatTestReturn {
   /** 测试单个站点的 CLI 兼容性（基于配置） */
-  testSite: (siteName: string, siteUrl: string, apiKeys: any[]) => Promise<void>;
-  /** 检查指定站点是否正在测试中 */
-  isTestingSite: (siteName: string) => boolean;
+  testSite: (
+    storeKey: string,
+    siteLabel: string,
+    siteUrl: string,
+    apiKeys: any[],
+    accountId?: string
+  ) => Promise<void>;
+  /** 检查指定卡片是否正在测试中 */
+  isTestingSite: (storeKey: string) => boolean;
   /** 是否有任何站点正在测试中 */
   isTesting: boolean;
-  /** 获取站点的 CLI 兼容性结果 */
-  getCompatibility: (siteName: string) => CliCompatibilityResult | undefined;
-  /** 获取站点的 CLI 配置 */
-  getCliConfig: (siteName: string) => CliConfig | null;
-  /** 设置站点的 CLI 配置 */
-  setCliConfig: (siteName: string, config: CliConfig) => void;
+  /** 获取卡片的 CLI 兼容性结果 */
+  getCompatibility: (storeKey: string) => CliCompatibilityResult | undefined;
+  /** 获取卡片的 CLI 配置 */
+  getCliConfig: (storeKey: string) => CliConfig | null;
+  /** 设置卡片的 CLI 配置 */
+  setCliConfig: (storeKey: string, config: CliConfig) => void;
 }
 
 /**
@@ -156,12 +163,19 @@ function resolveCliCredentials(
   apiKeyId: number | null,
   apiKeys: any[],
   siteUrl: string
-): { apiKey: string | null; baseUrl: string | null } {
+): {
+  apiKey: string | null;
+  baseUrl: string | null;
+  source: 'file' | 'selectedApiKey' | 'none';
+} {
   // 1. Try parsing from editedFiles
   if (editedFiles && editedFiles.length > 0) {
     const parsed = parseFn(editedFiles);
     if (parsed.apiKey && parsed.baseUrl) {
-      return parsed;
+      if (apiKeyId != null && parsed.apiKey.includes('*')) {
+        return { ...parsed, source: 'selectedApiKey' };
+      }
+      return { ...parsed, source: 'file' };
     }
   }
 
@@ -174,12 +188,13 @@ function resolveCliCredentials(
         return {
           apiKey: keyValue,
           baseUrl: siteUrl.replace(/\/+$/, ''),
+          source: 'selectedApiKey',
         };
       }
     }
   }
 
-  return { apiKey: null, baseUrl: null };
+  return { apiKey: null, baseUrl: null, source: 'none' };
 }
 
 /**
@@ -247,16 +262,22 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
    * 测试单个站点的 CLI 兼容性（基于配置文件）
    */
   const testSite = useCallback(
-    async (siteName: string, siteUrl: string, _apiKeys: any[]) => {
+    async (
+      storeKey: string,
+      siteLabel: string,
+      siteUrl: string,
+      availableApiKeys: any[],
+      accountId?: string
+    ) => {
       // 检查是否已在测试中
-      if (isCliTestingSite(siteName)) {
+      if (isCliTestingSite(storeKey)) {
         return;
       }
 
       // 获取 CLI 配置
-      const cliConfig = getCliConfig(siteName);
+      const cliConfig = getCliConfig(storeKey);
       if (!cliConfig) {
-        toast.error(`请先配置 ${siteName} 的 CLI 设置`);
+        toast.error(`请先配置 ${siteLabel} 的 CLI 设置`);
         return;
       }
 
@@ -264,9 +285,12 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
       const cc = cliConfig.claudeCode;
       const cx = cliConfig.codex;
       const gc = cliConfig.geminiCli;
+      const ccTestModels = normalizeCliTestModels(cc);
+      const cxTestModels = normalizeCliTestModels(cx);
+      const gcTestModels = normalizeCliTestModels(gc);
 
       // 标记为测试中
-      addCliTestingSite(siteName);
+      addCliTestingSite(storeKey);
 
       try {
         // 构建测试配置
@@ -278,64 +302,121 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
         }> = [];
 
         // Claude Code - 从配置文件中读取 API Key 和 Base URL
-        if (cc?.enabled && cc?.testModel) {
-          const { apiKey, baseUrl } = resolveCliCredentials(
+        if (cc?.enabled && ccTestModels.length > 0) {
+          const credential = resolveCliCredentials(
             cc.editedFiles,
             parseClaudeCodeConfig,
             cc.apiKeyId,
-            _apiKeys,
+            availableApiKeys,
             siteUrl
           );
+          let apiKey = credential.apiKey;
+          const baseUrl = credential.baseUrl;
+
+          if (credential.source === 'selectedApiKey' && cc.apiKeyId != null) {
+            const resolved = await window.electronAPI.token?.resolveApiKeyValue?.(
+              siteUrl,
+              cc.apiKeyId,
+              accountId
+            );
+            if (!resolved || resolved.success !== true || !resolved.data) {
+              toast.warning('Claude Code 所选 API Key 无法解析明文，请先刷新站点或重新选择');
+              apiKey = null;
+            } else {
+              apiKey = resolved.data;
+            }
+          }
+
           if (!apiKey || !baseUrl) {
             toast.warning('Claude Code 配置不完整，请先选择 API Key 和测试模型');
           } else {
-            testConfigs.push({
-              cliType: 'claudeCode',
-              apiKey,
-              model: cc.testModel,
-              baseUrl,
+            ccTestModels.forEach(model => {
+              testConfigs.push({
+                cliType: 'claudeCode',
+                apiKey,
+                model,
+                baseUrl,
+              });
             });
           }
         }
 
         // Codex - 从配置文件中读取 API Key 和 Base URL
-        if (cx?.enabled && cx?.testModel) {
-          const { apiKey, baseUrl } = resolveCliCredentials(
+        if (cx?.enabled && cxTestModels.length > 0) {
+          const credential = resolveCliCredentials(
             cx.editedFiles,
             parseCodexConfig,
             cx.apiKeyId,
-            _apiKeys,
+            availableApiKeys,
             siteUrl
           );
+          let apiKey = credential.apiKey;
+          const baseUrl = credential.baseUrl;
+
+          if (credential.source === 'selectedApiKey' && cx.apiKeyId != null) {
+            const resolved = await window.electronAPI.token?.resolveApiKeyValue?.(
+              siteUrl,
+              cx.apiKeyId,
+              accountId
+            );
+            if (!resolved || resolved.success !== true || !resolved.data) {
+              toast.warning('Codex 所选 API Key 无法解析明文，请先刷新站点或重新选择');
+              apiKey = null;
+            } else {
+              apiKey = resolved.data;
+            }
+          }
+
           if (!apiKey || !baseUrl) {
             toast.warning('Codex 配置不完整，请先选择 API Key 和测试模型');
           } else {
-            testConfigs.push({
-              cliType: 'codex',
-              apiKey,
-              model: cx.testModel,
-              baseUrl,
+            cxTestModels.forEach(model => {
+              testConfigs.push({
+                cliType: 'codex',
+                apiKey,
+                model,
+                baseUrl,
+              });
             });
           }
         }
 
         // Gemini CLI - 从配置文件中读取 API Key 和 Base URL
-        if (gc?.enabled && gc?.testModel) {
-          const { apiKey, baseUrl } = resolveCliCredentials(
+        if (gc?.enabled && gcTestModels.length > 0) {
+          const credential = resolveCliCredentials(
             gc.editedFiles,
             parseGeminiCliConfig,
             gc.apiKeyId,
-            _apiKeys,
+            availableApiKeys,
             siteUrl
           );
+          let apiKey = credential.apiKey;
+          const baseUrl = credential.baseUrl;
+
+          if (credential.source === 'selectedApiKey' && gc.apiKeyId != null) {
+            const resolved = await window.electronAPI.token?.resolveApiKeyValue?.(
+              siteUrl,
+              gc.apiKeyId,
+              accountId
+            );
+            if (!resolved || resolved.success !== true || !resolved.data) {
+              toast.warning('Gemini CLI 所选 API Key 无法解析明文，请先刷新站点或重新选择');
+              apiKey = null;
+            } else {
+              apiKey = resolved.data;
+            }
+          }
+
           if (!apiKey || !baseUrl) {
             toast.warning('Gemini CLI 配置不完整，请先选择 API Key 和测试模型');
           } else {
-            testConfigs.push({
-              cliType: 'geminiCli',
-              apiKey,
-              model: gc.testModel,
-              baseUrl,
+            gcTestModels.forEach(model => {
+              testConfigs.push({
+                cliType: 'geminiCli',
+                apiKey,
+                model,
+                baseUrl,
+              });
             });
           }
         }
@@ -365,16 +446,16 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
           testedAt: Date.now(),
         };
 
-        setCliCompatibility(siteName, result);
+        setCliCompatibility(storeKey, result);
 
         // 保存结果到缓存
         try {
-          await (window.electronAPI as any).cliCompat.saveResult(siteUrl, result);
+          await (window.electronAPI as any).cliCompat.saveResult(siteUrl, result, accountId);
         } catch {
           // 忽略保存错误
         }
 
-        toast.info(`${siteName} CLI 兼容性测试完成`);
+        toast.info(`${siteLabel} CLI 兼容性测试完成`);
 
         // 显示 Claude Code 测试结果
         if (cc?.enabled && response.data.claudeCode !== undefined) {
@@ -405,7 +486,7 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
                   editedFiles: updatedEditedFiles,
                 },
               };
-              setCliConfig(siteName, updatedCliConfig);
+              setCliConfig(storeKey, updatedCliConfig);
             }
             // Responses API 可用，显示成功
             toast.success(`Codex: wire_api="responses" [responses: ${responsesStatus}]`, 6000);
@@ -442,10 +523,10 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
           }
         }
       } catch (error: any) {
-        toast.error(`${siteName} CLI 兼容性测试失败: ${error.message}`);
+        toast.error(`${siteLabel} CLI 兼容性测试失败: ${error.message}`);
 
         // 设置错误结果
-        setCliCompatibility(siteName, {
+        setCliCompatibility(storeKey, {
           claudeCode: null,
           codex: null,
           codexDetail: undefined,
@@ -455,17 +536,24 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
           error: error.message,
         });
       } finally {
-        removeCliTestingSite(siteName);
+        removeCliTestingSite(storeKey);
       }
     },
-    [isCliTestingSite, getCliConfig, addCliTestingSite, removeCliTestingSite, setCliCompatibility]
+    [
+      isCliTestingSite,
+      getCliConfig,
+      addCliTestingSite,
+      removeCliTestingSite,
+      setCliCompatibility,
+      setCliConfig,
+    ]
   );
 
   /**
    * 获取站点的 CLI 兼容性结果
    */
   const getCompatibility = useCallback(
-    (siteName: string) => cliCompatibility[siteName],
+    (storeKey: string) => cliCompatibility[storeKey],
     [cliCompatibility]
   );
 
@@ -473,7 +561,7 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
    * 获取站点的 CLI 配置
    */
   const getCliConfigCallback = useCallback(
-    (siteName: string) => cliConfigs[siteName] ?? null,
+    (storeKey: string) => cliConfigs[storeKey] ?? null,
     [cliConfigs]
   );
 
