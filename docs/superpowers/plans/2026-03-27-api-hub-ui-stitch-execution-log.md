@@ -25,6 +25,6 @@
 - Theme variants status: 所有非基准设计系统资产已创建，项目共有4个设计系统（Theme B、Theme A、Theme C、Unified Dark）。
 - Density review: Sites页面screenSites(bfecc4b8cf28487fb4781416fa646198)中央注册表区域采用紧凑行，比当前卡片优先布局密度更高；已完成精炼去除装饰性间距。Custom CLI屏幕(24dfdf4034a94a439c8c26b29bf02f28)默认为注册表优先视图，支持跨配置扫描对比。
 - Gradient removal review: Credit屏幕(ef7a6695655f45108a9e5f7152b6eb6e)已明确移除渐变英雄卡处理，所有屏幕提示均指定"NO gradients"规则。
-- Open issues:
+- Open issues: 全局润色完成。跨7个核心屏幕执行了最终精炼通行，目标：(1)移除残留渐变/光泽效果；(2)将英雄卡/营销布局转为紧凑工作台行；(3)收紧不一致间距；(4)确认左侧导航栏在所有屏幕上存在且安静。Task 10完成。
 - screenShell review: Shell屏幕标题为"API Registry Shell"，已生成并完成精炼编辑，表达了左侧导航栏/顶部页眉/右侧检查器工作台布局模式。尺寸1280×1024（2560×2048原始分辨率），桌面设备类型。
 - screenRoute review: Route屏幕已精炼，分段模式切换与检查器系统一体化，感觉像一个连续的控制面板。
