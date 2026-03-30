@@ -31,7 +31,12 @@ lpt2
 .kiro/
 .agent/
 .claude/
+
+# 本地配置（含敏感信息，不提交）
 .claude/settings.local.json
+.codex/config.toml
+.codex/
+.superpowers/
 
 # Secrets & env
 .env*
@@ -70,6 +75,4 @@ LINUX DO Credit.user.js
 # 文档
 docs/archive/
 .ace-tool/
-.worktrees/
-
 .worktrees/
