@@ -555,7 +555,7 @@ function App() {
       }
     };
     init();
-  }, [loadConfig]);
+  }, []);
 
   // 路由 store 初始化
   useEffect(() => {
@@ -839,3 +839,4 @@ function App() {
 }
 
 export default App;
+

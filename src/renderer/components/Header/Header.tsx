@@ -5,23 +5,9 @@
  */
 
 import { GlobalCommandBar, type GlobalCommandBarProps } from '../AppShell/GlobalCommandBar';
-import type { TabId } from '../../store/uiStore';
 
-interface HeaderProps extends GlobalCommandBarProps {
-  activeTab: TabId;
-  onTabChange: (tab: TabId) => void;
-  hasUpdate?: boolean;
-}
+export type HeaderProps = GlobalCommandBarProps;
 
 export function Header(props: HeaderProps) {
-  const { saving, updateInfo, onDownloadUpdate, isDownloading } = props;
-
-  return (
-    <GlobalCommandBar
-      saving={saving}
-      updateInfo={updateInfo}
-      onDownloadUpdate={onDownloadUpdate}
-      isDownloading={isDownloading}
-    />
-  );
+  return <GlobalCommandBar {...props} />;
 }
