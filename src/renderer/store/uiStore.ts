@@ -28,7 +28,7 @@ interface RefreshMessage {
   type: 'success' | 'info';
 }
 
-// Tab 页面类型（路由子页面扁平化为一级 tab）
+// Tab 页面类型（保留 credit 兼容性；可导航一级页面由 page metadata registry 定义）
 export type TabId =
   | 'sites'
   | 'cli'
@@ -37,6 +37,8 @@ export type TabId =
   | 'proxystats'
   | 'credit'
   | 'settings';
+
+export type VisibleTabId = Exclude<TabId, 'credit'>;
 
 // 路由相关的 TabId
 export const ROUTE_TAB_IDS: TabId[] = ['redirection', 'usability', 'proxystats'];
@@ -492,3 +494,4 @@ export const useUIStore = create<UIState>()(
     }
   )
 );
+

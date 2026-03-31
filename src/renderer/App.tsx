@@ -5,10 +5,12 @@
  */
 
 import Logger from './utils/logger';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { XCircle, Loader2 } from 'lucide-react';
 import { ConfirmDialog, initialDialogState } from './components/ConfirmDialog';
-import { Header } from './components/Header';
+import { GlobalCommandBar } from './components/AppShell/GlobalCommandBar';
+import { PageHeader } from './components/AppShell/PageHeader';
+import { APP_PAGE_META } from './components/AppShell/pageMeta';
 import { VerticalSidebar } from './components/Sidebar';
 import { AuthErrorDialog, CloseBehaviorDialog, DownloadUpdatePanel } from './components/dialogs';
 import { ToastContainer } from './components/Toast';
@@ -21,17 +23,16 @@ export type { SiteConfig, DetectionResult } from '../shared/types/site';
 // 导入页面组件
 import { SitesPage } from './pages/SitesPage';
 import { CustomCliPage } from './pages/CustomCliPage';
-import { CreditPage } from './pages/CreditPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ModelRedirectionTab } from './components/Route/Redirection/ModelRedirectionTab';
 import { CliUsabilityTab } from './components/Route/Usability/CliUsabilityTab';
 import { ProxyStatsTab } from './components/Route/ProxyStats/ProxyStatsTab';
-import { LDC_UI_VISIBILITY } from '../shared/constants';
 
 // 导入 Zustand Store
 import { useConfigStore } from './store/configStore';
 import { useDetectionStore } from './store/detectionStore';
 import { useUIStore, SortField } from './store/uiStore';
+import type { VisibleTabId } from './store/uiStore';
 import { useRouteStore } from './store/routeStore';
 import { useToastStore, toast } from './store/toastStore';
 
@@ -413,8 +414,7 @@ function App() {
     closeDownloadPanel,
   } = useUIStore();
 
-  const visibleActiveTab =
-    !LDC_UI_VISIBILITY.showCreditTab && activeTab === 'credit' ? 'sites' : activeTab;
+  const visibleActiveTab: VisibleTabId = activeTab === 'credit' ? 'sites' : activeTab;
 
   // 窗口关闭行为对话框状态
   const [showCloseBehaviorDialog, setShowCloseBehaviorDialog] = useState(false);
@@ -531,7 +531,7 @@ function App() {
         Logger.error('保存自动刷新配置失败:', err);
       });
     }
-  }, [cliConfigDetection]);
+  }, [cliConfigDetection, setConfig]);
 
   // 启动时自动检查更新
   useEffect(() => {
@@ -555,7 +555,7 @@ function App() {
       }
     };
     init();
-  }, []);
+  }, [loadConfig]);
 
   // 路由 store 初始化
   useEffect(() => {
@@ -579,7 +579,7 @@ function App() {
     }
   }, [activeTab, visibleActiveTab, setActiveTab]);
 
-  const loadConfig = async (): Promise<Config | null> => {
+  const loadConfig = useCallback(async (): Promise<Config | null> => {
     try {
       setLoading(true);
       const cfg = await window.electronAPI.loadConfig();
@@ -600,13 +600,15 @@ function App() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [setConfig, setLoading, setSortField, setSortOrder]);
 
   const handleDownloadUpdate = async () => {
     if (updateInfo?.releaseInfo) {
       openDownloadPanel(updateInfo.releaseInfo);
     }
   };
+
+  const pageMeta = APP_PAGE_META[visibleActiveTab];
 
   if (loading) {
     return (
@@ -652,15 +654,12 @@ function App() {
 
         {/* 页面内容区域 - CSS 显隐保活 */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* 顶栏（拖拽区 + 状态） */}
-          <Header
-            activeTab={visibleActiveTab}
-            onTabChange={setActiveTab}
+          <GlobalCommandBar
             saving={saving}
-            hasUpdate={updateInfo?.hasUpdate}
             updateInfo={updateInfo}
             onDownloadUpdate={handleDownloadUpdate}
           />
+          <PageHeader title={pageMeta.title} description={pageMeta.description} />
 
           <div
             className={
@@ -697,11 +696,7 @@ function App() {
           >
             <ProxyStatsTab />
           </div>
-          {LDC_UI_VISIBILITY.showCreditTab && visibleActiveTab === 'credit' && (
-            <div className="flex-1 flex flex-col overflow-hidden">
-              <CreditPage />
-            </div>
-          )}
+
           <div
             className={
               visibleActiveTab === 'settings' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
