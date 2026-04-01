@@ -1,27 +1,19 @@
-/**
- * @file src/renderer/components/IOSTable/index.ts
- * @description IOSTable 组件导出入口
- *
- * @version 2.1.11
- * @updated 2025-01-08 - 创建 IOSTable 组件导出
- */
-
 export {
-  IOSTable,
-  IOSTableHeader,
-  IOSTableRow,
-  IOSTableCell,
-  IOSTableBody,
-  IOSTableDivider,
-  IOSTableEmpty,
-} from './IOSTable';
+  DataTable as IOSTable,
+  DataTableHeader as IOSTableHeader,
+  DataTableRow as IOSTableRow,
+  DataTableCell as IOSTableCell,
+  DataTableBody as IOSTableBody,
+  DataTableDivider as IOSTableDivider,
+  DataTableEmpty as IOSTableEmpty,
+} from '../DataTable/DataTable';
 
 export type {
-  IOSTableProps,
-  IOSTableHeaderProps,
-  IOSTableRowProps,
-  IOSTableCellProps,
-  IOSTableBodyProps,
-  IOSTableDividerProps,
-  IOSTableEmptyProps,
-} from './IOSTable';
+  DataTableProps as IOSTableProps,
+  DataTableHeaderProps as IOSTableHeaderProps,
+  DataTableRowProps as IOSTableRowProps,
+  DataTableCellProps as IOSTableCellProps,
+  DataTableBodyProps as IOSTableBodyProps,
+  DataTableDividerProps as IOSTableDividerProps,
+  DataTableEmptyProps as IOSTableEmptyProps,
+} from '../DataTable/DataTable';

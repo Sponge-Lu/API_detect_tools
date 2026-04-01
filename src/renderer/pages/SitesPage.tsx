@@ -17,24 +17,22 @@ import {
   Search,
   X,
   ChevronsUpDown,
-  ArrowUp,
-  ArrowDown,
   Calendar,
 } from 'lucide-react';
 import { SiteEditor } from '../components/SiteEditor';
 import { AddAccountDialog } from '../components/AddAccountDialog';
 import { SiteCard } from '../components/SiteCard';
+import { SiteListHeader } from '../components/SiteListHeader';
 import {
   SiteGroupDialog,
   BackupSelectDialog,
   UnifiedCliConfigDialog,
-  ApplyConfigPopover,
   AutoRefreshDialog,
 } from '../components/dialogs';
 import type { CliConfig } from '../../shared/types/cli-config';
 import { CreateApiKeyDialog } from '../components/CreateApiKeyDialog';
-import { IOSButton } from '../components/IOSButton';
-import { IOSTableHeader, IOSTableBody } from '../components/IOSTable';
+import { AppButton } from '../components/AppButton/AppButton';
+import { DataTableBody } from '../components/DataTable/DataTable';
 import {
   useSiteGroups,
   useCheckIn,
@@ -45,12 +43,13 @@ import {
 } from '../hooks';
 import type { NewApiTokenForm } from '../hooks';
 import { getGroupTextColor } from '../utils/groupStyle';
+import { normalizeSiteSortField } from '../utils/siteSort';
 import type { SiteConfig, DetectionResult } from '../../shared/types/site';
 import type { Config, SiteGroup } from '../App';
 
 import { useConfigStore } from '../store/configStore';
 import { useDetectionStore } from '../store/detectionStore';
-import { useUIStore, SortField } from '../store/uiStore';
+import { useUIStore } from '../store/uiStore';
 import { toast } from '../store/toastStore';
 import { DialogState, initialDialogState } from '../components/ConfirmDialog';
 import { LDC_UI_VISIBILITY } from '../../shared/constants';
@@ -105,22 +104,6 @@ function makeCardKey(siteName: string, accountId?: string): string {
 }
 
 const EMPTY_SELECTED_MODELS = new Set<string>();
-
-const SITE_TABLE_COLUMNS = [
-  { label: '站点', field: 'name' },
-  { label: '余额', field: 'balance' },
-  { label: '今日消费', field: 'todayUsage' },
-  { label: '总 Token', field: 'totalTokens' },
-  { label: '输入', field: 'promptTokens' },
-  { label: '输出', field: 'completionTokens' },
-  { label: '请求', field: 'requests' },
-  { label: 'RPM', field: 'rpm' },
-  { label: 'TPM', field: 'tpm' },
-  { label: '模型数', field: 'modelCount' },
-  { label: '更新时间', field: 'lastUpdate' },
-  { label: 'CC-CX-Gemini?', field: null },
-  { label: 'LDC比例', field: 'ldcRatio' },
-] as { label: string; field: SortField | null }[];
 
 /** 展平后的卡片条目 */
 interface FlattenedCardItem {
@@ -189,10 +172,10 @@ export function SitesPage() {
     processingAuthErrorSite,
     setProcessingAuthErrorSite,
     columnWidths,
-    setColumnWidth,
     sortField,
     sortOrder,
     toggleSort,
+    resetSort,
   } = useUIStore();
 
   // 备份选择对话框状态
@@ -206,12 +189,6 @@ export function SitesPage() {
   const [cliConfigCardKey, setCliConfigCardKey] = useState<string | null>(null);
   const [cliConfigAccountId, setCliConfigAccountId] = useState<string | null>(null);
   const [cliConfigSiteResult, setCliConfigSiteResult] = useState<DetectionResult | null>(null);
-
-  // 应用配置弹出菜单状态
-  const [showApplyConfigPopover, setShowApplyConfigPopover] = useState(false);
-  const [applyConfigAnchorEl, setApplyConfigAnchorEl] = useState<HTMLElement | null>(null);
-  const [applyConfigSite, setApplyConfigSite] = useState<SiteConfig | null>(null);
-  const [applyConfigCardKey, setApplyConfigCardKey] = useState<string | null>(null);
   const [tokenOperationContext, setTokenOperationContext] = useState<CardOperationContext | null>(
     null
   );
@@ -234,34 +211,14 @@ export function SitesPage() {
       setNewTokenFormStore(form);
     }
   };
-  const setColumnWidths = (widths: number[] | ((p: number[]) => number[])) => {
-    if (typeof widths === 'function') {
-      const newWidths = widths(columnWidths);
-      newWidths.forEach((w, i) => setColumnWidth(i, w));
-    } else {
-      widths.forEach((w, i) => setColumnWidth(i, w));
-    }
-  };
-
-  const columnWidthsRef = useRef<number[]>(columnWidths);
-  useEffect(() => {
-    columnWidthsRef.current = columnWidths;
-  }, [columnWidths]);
 
   const visibleColumnWidths = useMemo(
     () => (LDC_UI_VISIBILITY.showRatioColumn ? columnWidths : columnWidths.slice(0, -1)),
     [columnWidths]
   );
 
-  const effectiveSortField =
-    !LDC_UI_VISIBILITY.showRatioColumn && sortField === 'ldcRatio' ? null : sortField;
-
-  const visibleSiteTableColumns = useMemo(
-    () =>
-      SITE_TABLE_COLUMNS.filter(
-        column => LDC_UI_VISIBILITY.showRatioColumn || column.field !== 'ldcRatio'
-      ),
-    []
+  const effectiveSortField = normalizeSiteSortField(
+    !LDC_UI_VISIBILITY.showRatioColumn && sortField === 'ldcRatio' ? null : sortField
   );
 
   // 排序设置变化时保存到 config
@@ -332,38 +289,6 @@ export function SitesPage() {
 
   const resolvedEditingAccount = editingAccount ?? null;
 
-  // 列宽调整
-  const handleColumnResizeMouseDown = (event: React.MouseEvent, index: number) => {
-    event.preventDefault();
-    event.stopPropagation();
-
-    const startX = event.clientX;
-    const startWidth = columnWidthsRef.current[index];
-    const minWidth = 50;
-    const maxWidth = 320;
-
-    const onMouseMove = (e: MouseEvent) => {
-      const delta = e.clientX - startX;
-      let nextWidth = startWidth + delta;
-      if (nextWidth < minWidth) nextWidth = minWidth;
-      if (nextWidth > maxWidth) nextWidth = maxWidth;
-
-      setColumnWidths(prev => {
-        const next = [...prev];
-        next[index] = nextWidth;
-        return next;
-      });
-    };
-
-    const onMouseUp = () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-    };
-
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-  };
-
   // 切换分组选择
   const toggleGroupFilter = (siteName: string, groupName: string | null) => {
     const current = selectedGroup[siteName];
@@ -383,12 +308,6 @@ export function SitesPage() {
       accessToken: account?.access_token,
       userId: account?.user_id,
     }),
-    []
-  );
-
-  const getCardLabel = useCallback(
-    (site: SiteConfig, account?: AccountInfo | null) =>
-      account?.account_name ? `${site.name} / ${account.account_name}` : site.name,
     []
   );
 
@@ -1067,7 +986,7 @@ export function SitesPage() {
         <div className="flex-1 flex flex-col">
           {/* 站点分组控制栏 */}
           {config.sites.length > 0 && (
-            <div className="min-w-[1180px] px-4 pt-2 pb-1 flex items-center justify-between text-[13px] text-light-text-secondary dark:text-dark-text-secondary border-b border-light-border dark:border-dark-border flex-shrink-0">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-light-border px-4 pt-2 pb-1 text-[13px] text-light-text-secondary dark:border-dark-border dark:text-dark-text-secondary flex-shrink-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-semibold text-light-text dark:text-dark-text">站点分组</span>
                 <button
@@ -1158,7 +1077,7 @@ export function SitesPage() {
                           e.stopPropagation();
                           openEditGroupDialog(group);
                         }}
-                        className={`hidden group-hover/tag:block p-0.5 rounded transition-colors ${isActive ? 'hover:bg-white/20 text-white/80 hover:text-white' : 'hover:bg-light-border dark:hover:bg-dark-border text-light-text-tertiary hover:text-primary-500'}`}
+                        className={`hidden rounded p-0.5 transition-colors group-hover/tag:block ${isActive ? 'text-white/80 hover:bg-white/20 hover:text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent)]'}`}
                         title="编辑分组名称"
                       >
                         <Pencil className="w-3 h-3" />
@@ -1169,7 +1088,7 @@ export function SitesPage() {
                             e.stopPropagation();
                             deleteSiteGroup(groupId);
                           }}
-                          className={`hidden group-hover/tag:block p-0.5 rounded transition-colors ${isActive ? 'hover:bg-white/20 text-white/80 hover:text-white' : 'hover:bg-light-border dark:hover:bg-dark-border text-light-text-tertiary hover:text-red-500'}`}
+                          className={`hidden rounded p-0.5 transition-colors group-hover/tag:block ${isActive ? 'text-white/80 hover:bg-white/20 hover:text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--accent-soft)] hover:text-[var(--danger)]'}`}
                           title="删除分组"
                         >
                           <Trash2 className="w-3 h-3" />
@@ -1178,7 +1097,7 @@ export function SitesPage() {
                     </div>
                   );
                 })}
-                <IOSButton
+                <AppButton
                   variant="tertiary"
                   size="sm"
                   onClick={openCreateGroupDialog}
@@ -1186,9 +1105,9 @@ export function SitesPage() {
                 >
                   <Plus className="w-3 h-3" />
                   新建分组
-                </IOSButton>
+                </AppButton>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 <div className="relative">
                   <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-light-text-tertiary dark:text-dark-text-tertiary" />
                   <input
@@ -1207,7 +1126,7 @@ export function SitesPage() {
                     </button>
                   )}
                 </div>
-                <IOSButton
+                <AppButton
                   variant="primary"
                   size="sm"
                   onClick={() => {
@@ -1218,8 +1137,8 @@ export function SitesPage() {
                 >
                   <Plus className="w-4 h-4" strokeWidth={2.5} />
                   添加站点
-                </IOSButton>
-                <IOSButton
+                </AppButton>
+                <AppButton
                   variant="secondary"
                   size="sm"
                   onClick={handleOpenBackupDialog}
@@ -1227,7 +1146,7 @@ export function SitesPage() {
                 >
                   <RefreshCw className="w-4 h-4" strokeWidth={2.5} />
                   恢复站点
-                </IOSButton>
+                </AppButton>
               </div>
             </div>
           )}
@@ -1240,7 +1159,7 @@ export function SitesPage() {
                 <p className="text-lg font-medium mb-2">还没有添加任何站点</p>
                 <p className="text-sm mb-4">点击"添加站点"按钮开始</p>
                 <div className="flex items-center justify-center gap-2">
-                  <IOSButton
+                  <AppButton
                     variant="primary"
                     onClick={() => {
                       setEditingSite(null);
@@ -1250,10 +1169,10 @@ export function SitesPage() {
                   >
                     <Plus className="w-4 h-4" strokeWidth={2.5} />
                     添加站点
-                  </IOSButton>
-                  <IOSButton variant="secondary" onClick={handleOpenBackupDialog}>
+                  </AppButton>
+                  <AppButton variant="secondary" onClick={handleOpenBackupDialog}>
                     从备份恢复站点
-                  </IOSButton>
+                  </AppButton>
                 </div>
                 <p className="text-xs mt-2 text-light-text-tertiary dark:text-dark-text-tertiary">
                   从备份目录选择配置文件进行恢复
@@ -1261,112 +1180,67 @@ export function SitesPage() {
               </div>
             ) : (
               <>
-                <IOSTableHeader
-                  sticky
-                  className="min-w-[1180px] !px-4 !py-1 flex items-center justify-between !text-[13px] !font-semibold text-[var(--ios-text-secondary)]"
-                >
-                  <div
-                    className="grid gap-x-1 flex-1 items-center select-none"
-                    style={{
-                      gridTemplateColumns: visibleColumnWidths.map(w => `${w}px`).join(' '),
-                    }}
-                  >
-                    {visibleSiteTableColumns.map(({ label, field }, idx) => {
-                      const centerHeader = idx >= 3;
-                      const isActive = field && effectiveSortField === field;
-                      const isSortable = field !== null;
-                      return (
-                        <div
-                          key={label}
-                          className={`relative flex items-center pr-1 min-h-[44px] ${
-                            centerHeader ? 'justify-center text-center' : 'justify-start'
-                          }`}
-                        >
-                          {isSortable ? (
-                            <button
-                              onClick={() => toggleSort(field)}
-                              className={`flex items-center gap-0.5 hover:text-[var(--ios-blue)] transition-colors duration-[var(--duration-fast)] ${
-                                isActive ? 'text-[var(--ios-blue)]' : ''
-                              } ${centerHeader ? 'justify-center' : ''}`}
-                              title={`点击按${label}排序`}
-                            >
-                              <span>{label}</span>
-                              {isActive &&
-                                (sortOrder === 'desc' ? (
-                                  <ArrowDown className="w-3 h-3" />
-                                ) : (
-                                  <ArrowUp className="w-3 h-3" />
-                                ))}
-                            </button>
-                          ) : (
-                            <span className={centerHeader ? 'text-center w-full' : ''}>
-                              {label}
-                            </span>
-                          )}
-                          <div
-                            onMouseDown={e => handleColumnResizeMouseDown(e, idx)}
-                            className="absolute top-0 right-0 h-full w-1 cursor-col-resize group"
-                          >
-                            <div className="w-[3px] h-full mx-auto opacity-0 group-hover:opacity-60 bg-[var(--ios-separator)] transition-opacity duration-[var(--duration-fast)]" />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={handleCheckInAll}
-                      disabled={!!checkingIn || !config || config.sites.length === 0}
-                      className="p-1 hover:bg-yellow-500/20 rounded-[var(--radius-sm)] transition-all duration-[var(--duration-fast)] disabled:opacity-50 disabled:cursor-not-allowed"
-                      title="一键签到：批量签到所有可签到站点"
-                    >
-                      {checkingIn ? (
-                        <Loader2
-                          className="w-3.5 h-3.5 animate-spin text-yellow-500"
-                          strokeWidth={2.5}
-                        />
-                      ) : (
-                        <Calendar
-                          className="w-3.5 h-3.5 text-yellow-600 dark:text-yellow-400 hover:text-yellow-500"
-                          strokeWidth={2.5}
-                        />
-                      )}
-                    </button>
-                    <button
-                      onClick={handleToggleAllExpanded}
-                      className="p-1 hover:bg-[rgba(0,0,0,0.05)] dark:hover:bg-[rgba(255,255,255,0.05)] rounded-[var(--radius-sm)] transition-all duration-[var(--duration-fast)]"
-                      title={
-                        flattenedCards.length > 0 &&
-                        flattenedCards.every(c => expandedSites.has(c.cardKey))
-                          ? '收起全部'
-                          : '展开全部'
-                      }
-                    >
-                      <ChevronsUpDown className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={handleDetectAllSites}
-                      disabled={detecting || !config || config.sites.length === 0}
-                      className="p-1 hover:bg-[rgba(0,0,0,0.05)] dark:hover:bg-[rgba(255,255,255,0.05)] rounded-[var(--radius-sm)] transition-all duration-[var(--duration-fast)] disabled:opacity-50 disabled:cursor-not-allowed"
-                      title="检测所有站点"
-                    >
-                      {detecting ? (
-                        <Loader2
-                          className="w-3.5 h-3.5 animate-spin text-[var(--ios-blue)]"
-                          strokeWidth={2.5}
-                        />
-                      ) : (
-                        <RefreshCw
-                          className="w-3.5 h-3.5 text-[var(--ios-text-secondary)] hover:text-[var(--ios-blue)]"
-                          strokeWidth={2.5}
-                        />
-                      )}
-                    </button>
-                    <div className="w-[71px]" />
-                  </div>
-                </IOSTableHeader>
+                <SiteListHeader
+                  sortField={effectiveSortField}
+                  sortOrder={sortOrder}
+                  onToggleSort={toggleSort}
+                  onResetSort={resetSort}
+                  actions={
+                    <>
+                      <button
+                        onClick={handleCheckInAll}
+                        disabled={!!checkingIn || !config || config.sites.length === 0}
+                        className="rounded-[var(--radius-sm)] p-1 transition-all duration-[var(--duration-fast)] hover:bg-[var(--warning-soft)] disabled:cursor-not-allowed disabled:opacity-50"
+                        title="一键签到：批量签到所有可签到站点"
+                      >
+                        {checkingIn ? (
+                          <Loader2
+                            className="h-3.5 w-3.5 animate-spin text-[var(--warning)]"
+                            strokeWidth={2.5}
+                          />
+                        ) : (
+                          <Calendar
+                            className="h-3.5 w-3.5 text-[var(--warning)] hover:opacity-80"
+                            strokeWidth={2.5}
+                          />
+                        )}
+                      </button>
+                      <button
+                        onClick={handleToggleAllExpanded}
+                        className="rounded-[var(--radius-sm)] p-1 transition-all duration-[var(--duration-fast)] hover:bg-[var(--surface-2)]"
+                        title={
+                          flattenedCards.length > 0 &&
+                          flattenedCards.every(c => expandedSites.has(c.cardKey))
+                            ? '收起全部'
+                            : '展开全部'
+                        }
+                      >
+                        <ChevronsUpDown className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={handleDetectAllSites}
+                        disabled={detecting || !config || config.sites.length === 0}
+                        className="rounded-[var(--radius-sm)] p-1 transition-all duration-[var(--duration-fast)] hover:bg-[var(--surface-2)] disabled:cursor-not-allowed disabled:opacity-50"
+                        title="检测所有站点"
+                      >
+                        {detecting ? (
+                          <Loader2
+                            className="w-3.5 h-3.5 animate-spin text-[var(--accent)]"
+                            strokeWidth={2.5}
+                          />
+                        ) : (
+                          <RefreshCw
+                            className="w-3.5 h-3.5 text-[var(--text-secondary)] hover:text-[var(--accent)]"
+                            strokeWidth={2.5}
+                          />
+                        )}
+                      </button>
+                      <div className="w-[71px]" />
+                    </>
+                  }
+                />
 
-                <IOSTableBody className="min-w-[1180px] space-y-3">
+                <DataTableBody className="space-y-3">
                   {flattenedCards.map(({ site, index, siteResult, account, cardKey: ck }) => {
                     const groupId = site.group || defaultGroupId;
                     if (activeSiteGroupFilter !== null && groupId !== activeSiteGroupFilter) {
@@ -1378,9 +1252,7 @@ export function SitesPage() {
                     }
 
                     const isExpanded = expandedSites.has(ck);
-                    const siteApiKeys = apiKeys[ck] || apiKeys[site.name] || [];
                     const cardContext = getCardContext(ck, account);
-                    const siteLabel = getCardLabel(site, account);
 
                     return (
                       <SiteCard
@@ -1477,24 +1349,6 @@ export function SitesPage() {
                           setCliConfigSiteResult(siteResult || null);
                           setShowCliConfigDialog(true);
                         }}
-                        onTestCliCompat={() => {
-                          void (async () => {
-                            const refreshedApiKeys = await refreshSiteApiKeys(site, cardContext);
-                            await testCliCompatSite(
-                              ck,
-                              siteLabel,
-                              site.url,
-                              refreshedApiKeys.length > 0 ? refreshedApiKeys : siteApiKeys,
-                              account?.id
-                            );
-                          })();
-                        }}
-                        onApply={(e?: React.MouseEvent<HTMLButtonElement>) => {
-                          setApplyConfigSite(site);
-                          setApplyConfigCardKey(ck);
-                          setApplyConfigAnchorEl(e?.currentTarget || null);
-                          setShowApplyConfigPopover(true);
-                        }}
                         onAddAccount={
                           firstCardKeyPerSite.has(ck)
                             ? () => {
@@ -1547,7 +1401,7 @@ export function SitesPage() {
                       />
                     );
                   })}
-                </IOSTableBody>
+                </DataTableBody>
               </>
             )}
           </div>
@@ -1692,6 +1546,12 @@ export function SitesPage() {
         <UnifiedCliConfigDialog
           isOpen={showCliConfigDialog}
           siteName={cliConfigSite.name}
+          accountName={
+            cliConfigAccountId
+              ? accountsBySite[cliConfigSite.id || '']?.find(a => a.id === cliConfigAccountId)
+                  ?.account_name
+              : undefined
+          }
           siteUrl={cliConfigSite.url}
           apiKeys={
             apiKeys[cliConfigCardKey ?? cliConfigSite.name] || apiKeys[cliConfigSite.name] || []
@@ -1700,6 +1560,34 @@ export function SitesPage() {
           currentConfig={getCliConfig(cliConfigCardKey ?? cliConfigSite.name)}
           codexDetail={getCompatibility(cliConfigCardKey ?? cliConfigSite.name)?.codexDetail}
           geminiDetail={getCompatibility(cliConfigCardKey ?? cliConfigSite.name)?.geminiDetail}
+          compatibility={getCompatibility(cliConfigCardKey ?? cliConfigSite.name) ?? null}
+          isTestingCompatibility={isCliTestingSite(cliConfigCardKey ?? cliConfigSite.name)}
+          onTestCompatibility={() => {
+            void (async () => {
+              const cardKey = cliConfigCardKey ?? cliConfigSite.name;
+              const account = cliConfigAccountId
+                ? accountsBySite[cliConfigSite.id || '']?.find(a => a.id === cliConfigAccountId) ||
+                  null
+                : null;
+              const refreshedApiKeys = await refreshSiteApiKeys(cliConfigSite, {
+                cardKey,
+                accountId: account?.id,
+                accessToken: account?.access_token,
+                userId: account?.user_id,
+              });
+              await testCliCompatSite(
+                cardKey,
+                account?.account_name
+                  ? `${cliConfigSite.name} / ${account.account_name}`
+                  : cliConfigSite.name,
+                cliConfigSite.url,
+                refreshedApiKeys.length > 0
+                  ? refreshedApiKeys
+                  : apiKeys[cardKey] || apiKeys[cliConfigSite.name] || [],
+                account?.id
+              );
+            })();
+          }}
           onClose={() => {
             setShowCliConfigDialog(false);
             setCliConfigSite(null);
@@ -1725,31 +1613,8 @@ export function SitesPage() {
             setCliConfigAccountId(null);
             setCliConfigSiteResult(null);
           }}
-        />
-      )}
-
-      {/* 应用配置弹出菜单 */}
-      {applyConfigSite && (
-        <ApplyConfigPopover
-          isOpen={showApplyConfigPopover}
-          anchorEl={applyConfigAnchorEl}
-          cliConfig={getCliConfig(applyConfigCardKey ?? applyConfigSite.name)}
-          cliCompatibility={getCompatibility(applyConfigCardKey ?? applyConfigSite.name)}
-          siteUrl={applyConfigSite.url}
-          siteName={applyConfigSite.name}
-          apiKeys={
-            apiKeys[applyConfigCardKey ?? applyConfigSite.name] ||
-            apiKeys[applyConfigSite.name] ||
-            []
-          }
-          onClose={() => {
-            setShowApplyConfigPopover(false);
-            setApplyConfigAnchorEl(null);
-            setApplyConfigSite(null);
-            setApplyConfigCardKey(null);
-          }}
-        />
-      )}
+          />
+        )}
 
       {/* 备份选择对话框 */}
       <BackupSelectDialog

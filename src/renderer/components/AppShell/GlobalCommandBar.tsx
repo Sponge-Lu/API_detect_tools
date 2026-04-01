@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react';
 import { Download, Loader2 } from 'lucide-react';
 import { CliConfigStatusPanel } from '../CliConfigStatus';
 import type { UpdateCheckResult } from '../../hooks/useUpdate';
-import { IOSButton } from '../IOSButton';
+import { AppButton } from '../AppButton/AppButton';
 
 export interface GlobalCommandBarProps {
   saving: boolean;
@@ -47,7 +47,7 @@ export function GlobalCommandBar({
         )}
 
         {showDownloadButton && (
-          <IOSButton
+          <AppButton
             onClick={handleDownloadClick}
             disabled={isDownloading}
             title={newVersion ? `新版本: v${newVersion}` : '下载更新'}
@@ -60,7 +60,7 @@ export function GlobalCommandBar({
               <Download className="w-4 h-4" strokeWidth={2} aria-hidden="true" />
             )}
             <span>{isDownloading ? '打开中...' : '下载更新'}</span>
-          </IOSButton>
+          </AppButton>
         )}
       </div>
     </header>

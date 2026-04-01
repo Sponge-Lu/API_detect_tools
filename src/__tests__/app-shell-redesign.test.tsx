@@ -110,7 +110,18 @@ describe('app shell redesign', () => {
         loadCachedData: vi.fn().mockResolvedValue(undefined),
       }),
       useUpdate: () => ({
-        updateInfo: null,
+        updateInfo: {
+          hasUpdate: true,
+          latestVersion: '3.0.2',
+          releaseInfo: {
+            version: '3.0.2',
+            releaseDate: '2026-04-01',
+            releaseNotes: 'notes',
+            downloadUrl: 'https://example.com/download',
+            htmlUrl: 'https://example.com/release',
+            isPreRelease: false,
+          },
+        },
         settings: { autoCheckEnabled: false },
         checkForUpdatesInBackground: vi.fn(),
         currentVersion: '3.0.1',
@@ -155,7 +166,18 @@ describe('app shell redesign', () => {
     }));
 
     vi.doMock('../renderer/components/IOSButton', () => ({
-      IOSButton: ({ children }: { children: React.ReactNode }) => <button>{children}</button>,
+      IOSButton: () => {
+        throw new Error('legacy IOSButton import should not be used in app shell');
+      },
+    }));
+
+    vi.doMock('../renderer/components/AppButton/AppButton', () => ({
+      AppButton: ({
+        children,
+        ...props
+      }: React.ButtonHTMLAttributes<HTMLButtonElement> & { children: React.ReactNode }) => (
+        <button {...props}>{children}</button>
+      ),
     }));
 
     vi.doMock('../renderer/components/CliConfigStatus', () => ({
@@ -236,6 +258,7 @@ describe('app shell redesign', () => {
     render(<App />);
 
     expect(screen.getByText('Mock CLI Status')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '下载新版本 v3.0.2' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: APP_PAGE_META.sites.title })).toBeInTheDocument();
     expect(screen.getByText(APP_PAGE_META.sites.description)).toBeInTheDocument();
     expect(screen.getByText('Mock Sites Page')).toBeInTheDocument();
@@ -243,5 +266,217 @@ describe('app shell redesign', () => {
     await waitFor(() => {
       expect(mockSetActiveTab).toHaveBeenCalledWith('sites');
     });
+  });
+
+  it('does not render a global page header for non-site tabs', async () => {
+    vi.resetModules();
+
+    const mockSetConfig = vi.fn();
+    const mockSetLoading = vi.fn();
+
+    const mockConfig = {
+      sites: [],
+      accounts: [],
+      settings: {
+        timeout: 30,
+        concurrent: false,
+        show_disabled: true,
+      },
+    };
+
+    const detectionState = {
+      setApiKeys: vi.fn(),
+      setUserGroups: vi.fn(),
+      setModelPricing: vi.fn(),
+      setCliCompatibility: vi.fn(),
+      detectCliConfig: vi.fn(),
+      cliConfigDetection: null,
+      setCliConfig: vi.fn(),
+    };
+
+    vi.doMock('../renderer/utils/logger', () => ({
+      default: {
+        error: vi.fn(),
+        warn: vi.fn(),
+        info: vi.fn(),
+      },
+    }));
+
+    vi.doMock('../renderer/hooks', () => ({
+      useTheme: vi.fn(),
+      useDataLoader: () => ({
+        loadCachedData: vi.fn().mockResolvedValue(undefined),
+      }),
+      useUpdate: () => ({
+        updateInfo: null,
+        settings: { autoCheckEnabled: false },
+        checkForUpdatesInBackground: vi.fn(),
+        currentVersion: '3.0.1',
+        downloadProgress: null,
+        downloadPhase: 'idle',
+        downloadError: null,
+        startDownload: vi.fn(),
+        cancelDownload: vi.fn(),
+        installUpdate: vi.fn(),
+      }),
+      useSiteDetection: () => ({
+        results: [],
+        setResults: vi.fn(),
+        detectSingle: vi.fn(),
+      }),
+      useAutoRefresh: vi.fn(),
+    }));
+
+    vi.doMock('../renderer/components/ConfirmDialog', () => ({
+      ConfirmDialog: () => null,
+      initialDialogState: {
+        isOpen: false,
+        type: 'confirm',
+        title: '',
+        message: '',
+        content: null,
+        confirmText: '确定',
+        cancelText: '取消',
+        onConfirm: undefined,
+        onCancel: undefined,
+      },
+    }));
+
+    vi.doMock('../renderer/components/dialogs', () => ({
+      AuthErrorDialog: () => null,
+      CloseBehaviorDialog: () => null,
+      DownloadUpdatePanel: () => null,
+    }));
+
+    vi.doMock('../renderer/components/Toast', () => ({
+      ToastContainer: () => null,
+    }));
+
+    vi.doMock('../renderer/components/IOSButton', () => ({
+      IOSButton: () => {
+        throw new Error('legacy IOSButton import should not be used in app shell');
+      },
+    }));
+
+    vi.doMock('../renderer/components/AppButton/AppButton', () => ({
+      AppButton: ({
+        children,
+        ...props
+      }: React.ButtonHTMLAttributes<HTMLButtonElement> & { children: React.ReactNode }) => (
+        <button {...props}>{children}</button>
+      ),
+    }));
+
+    vi.doMock('../renderer/components/CliConfigStatus', () => ({
+      CliConfigStatusPanel: () => <div>Mock CLI Status</div>,
+    }));
+
+    vi.doMock('../renderer/pages/SitesPage', () => ({
+      SitesPage: () => <div>Mock Sites Page</div>,
+    }));
+
+    vi.doMock('../renderer/pages/CustomCliPage', () => ({
+      CustomCliPage: () => <div>Mock CLI Page</div>,
+    }));
+
+    vi.doMock('../renderer/pages/SettingsPage', () => ({
+      SettingsPage: () => <div>Mock Settings Page</div>,
+    }));
+
+    vi.doMock('../renderer/components/Route/Redirection/ModelRedirectionTab', () => ({
+      ModelRedirectionTab: () => <div>Mock Redirection Tab</div>,
+    }));
+
+    vi.doMock('../renderer/components/Route/Usability/CliUsabilityTab', () => ({
+      CliUsabilityTab: () => <div>Mock Usability Tab</div>,
+    }));
+
+    vi.doMock('../renderer/components/Route/ProxyStats/ProxyStatsTab', () => ({
+      ProxyStatsTab: () => <div>Mock Proxy Stats Tab</div>,
+    }));
+
+    vi.doMock('../renderer/store/configStore', () => ({
+      useConfigStore: () => ({
+        config: mockConfig,
+        setConfig: mockSetConfig,
+        saving: false,
+        loading: false,
+        setLoading: mockSetLoading,
+      }),
+    }));
+
+    vi.doMock('../renderer/store/detectionStore', () => ({
+      useDetectionStore: (selector?: (state: typeof detectionState) => unknown) =>
+        selector ? selector(detectionState) : detectionState,
+    }));
+
+    vi.doMock('../renderer/store/uiStore', async () => {
+      const actual = await vi.importActual('../renderer/store/uiStore');
+      return {
+        ...actual,
+        useUIStore: () => ({
+          activeTab: 'cli',
+          setActiveTab: vi.fn(),
+          dialogState: {
+            isOpen: false,
+            type: 'confirm',
+            title: '',
+            message: '',
+            content: null,
+            confirmText: '确定',
+            cancelText: '取消',
+            onConfirm: undefined,
+            onCancel: undefined,
+          },
+          setDialogState: vi.fn(),
+          authErrorSites: [],
+          setAuthErrorSites: vi.fn(),
+          showAuthErrorDialog: false,
+          setShowAuthErrorDialog: vi.fn(),
+          setProcessingAuthErrorSite: vi.fn(),
+          setEditingSite: vi.fn(),
+          setShowSiteEditor: vi.fn(),
+          setSortField: vi.fn(),
+          setSortOrder: vi.fn(),
+          showDownloadPanel: false,
+          downloadPanelRelease: null,
+          openDownloadPanel: vi.fn(),
+          closeDownloadPanel: vi.fn(),
+        }),
+      };
+    });
+
+    vi.doMock('../renderer/store/routeStore', () => ({
+      useRouteStore: Object.assign(() => ({}), {
+        getState: () => ({
+          fetchConfig: vi.fn(),
+          fetchRuntimeStatus: vi.fn(),
+        }),
+      }),
+    }));
+
+    vi.doMock('../renderer/store/toastStore', () => ({
+      useToastStore: () => ({
+        toasts: [],
+        removeToast: vi.fn(),
+      }),
+      toast: {
+        success: vi.fn(),
+        error: vi.fn(),
+      },
+    }));
+
+    if (window.electronAPI) {
+      window.electronAPI.loadConfig = vi.fn().mockResolvedValue(mockConfig);
+      window.electronAPI.saveConfig = vi.fn().mockResolvedValue(undefined);
+    }
+
+    const { default: App } = await import('../renderer/App');
+
+    render(<App />);
+
+    expect(screen.getByText('Mock CLI Page')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: APP_PAGE_META.cli.title })).not.toBeInTheDocument();
+    expect(screen.queryByText(APP_PAGE_META.cli.description)).not.toBeInTheDocument();
   });
 });

@@ -14,10 +14,11 @@ import { APP_PAGE_META } from './components/AppShell/pageMeta';
 import { VerticalSidebar } from './components/Sidebar';
 import { AuthErrorDialog, CloseBehaviorDialog, DownloadUpdatePanel } from './components/dialogs';
 import { ToastContainer } from './components/Toast';
-import { IOSButton } from './components/IOSButton';
+import { AppButton } from './components/AppButton/AppButton';
 import { useTheme, useDataLoader, useUpdate, useSiteDetection, useAutoRefresh } from './hooks';
 // 从共享的types文件导入并重新导出类型
 import type { SiteConfig, DetectionResult, AccountCredential } from '../shared/types/site';
+import type { ThemeMode } from '../shared/theme/themePresets';
 export type { SiteConfig, DetectionResult } from '../shared/types/site';
 
 // 导入页面组件
@@ -27,11 +28,12 @@ import { SettingsPage } from './pages/SettingsPage';
 import { ModelRedirectionTab } from './components/Route/Redirection/ModelRedirectionTab';
 import { CliUsabilityTab } from './components/Route/Usability/CliUsabilityTab';
 import { ProxyStatsTab } from './components/Route/ProxyStats/ProxyStatsTab';
+import { normalizeSiteSortField } from './utils/siteSort';
 
 // 导入 Zustand Store
 import { useConfigStore } from './store/configStore';
 import { useDetectionStore } from './store/detectionStore';
-import { useUIStore, SortField } from './store/uiStore';
+import { useUIStore } from './store/uiStore';
 import type { VisibleTabId } from './store/uiStore';
 import { useRouteStore } from './store/routeStore';
 import { useToastStore, toast } from './store/toastStore';
@@ -66,8 +68,8 @@ declare global {
       token?: any;
       storage?: any;
       theme?: {
-        save: (themeMode: 'light' | 'dark' | 'system') => Promise<{ success: boolean }>;
-        load: () => Promise<{ success: boolean; data?: 'light' | 'dark' | 'system' }>;
+        save: (themeMode: ThemeMode) => Promise<{ success: boolean }>;
+        load: () => Promise<{ success: boolean; data?: ThemeMode }>;
       };
       webdav?: {
         testConnection: (config: any) => Promise<{ success: boolean; error?: string }>;
@@ -583,17 +585,30 @@ function App() {
     try {
       setLoading(true);
       const cfg = await window.electronAPI.loadConfig();
-      setConfig(cfg);
+      const normalizedField = normalizeSiteSortField(cfg?.settings?.sort?.field ?? null);
+      const normalizedCfg =
+        cfg?.settings?.sort
+          ? {
+              ...cfg,
+              settings: {
+                ...cfg.settings,
+                sort: {
+                  field: normalizedField,
+                  order: cfg.settings.sort.order,
+                },
+              },
+            }
+          : cfg;
+
+      setConfig(normalizedCfg);
       if (cfg?.settings?.sort) {
-        const { field, order } = cfg.settings.sort;
-        if (field) {
-          setSortField(field as SortField);
-        }
+        const { order } = cfg.settings.sort;
+        setSortField(normalizedField);
         if (order) {
           setSortOrder(order);
         }
       }
-      return cfg;
+      return normalizedCfg;
     } catch (error) {
       Logger.error('加载配置失败:', error);
       return null;
@@ -629,9 +644,9 @@ function App() {
         <div className="text-center relative z-10">
           <XCircle className="w-16 h-16 mx-auto mb-4 text-red-500" />
           <p className="text-light-text dark:text-dark-text mb-4">配置加载失败</p>
-          <IOSButton variant="primary" onClick={loadConfig}>
+          <AppButton variant="primary" onClick={loadConfig}>
             重试
-          </IOSButton>
+          </AppButton>
         </div>
       </div>
     );
@@ -659,7 +674,9 @@ function App() {
             updateInfo={updateInfo}
             onDownloadUpdate={handleDownloadUpdate}
           />
-          <PageHeader title={pageMeta.title} description={pageMeta.description} />
+          {visibleActiveTab === 'sites' ? (
+            <PageHeader title={pageMeta.title} description={pageMeta.description} />
+          ) : null}
 
           <div
             className={

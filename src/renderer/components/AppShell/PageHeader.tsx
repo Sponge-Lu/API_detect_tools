@@ -5,15 +5,15 @@ interface PageHeaderProps {
 
 export function PageHeader({ title, description }: PageHeaderProps) {
   return (
-    <section className="shrink-0 px-6 py-5 border-b border-gray-200/80 dark:border-white/[0.08] bg-white/70 dark:bg-[#161618]/70 backdrop-blur-sm">
-      <div className="max-w-5xl">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-gray-400 dark:text-gray-500">
-          Workspace
-        </p>
-        <h1 className="mt-2 text-[24px] font-semibold tracking-tight text-gray-900 dark:text-gray-100">
+    <section className="shrink-0 border-b border-[var(--line-soft)] bg-[var(--surface-1)]/78 px-4 py-3 backdrop-blur-sm">
+      <div
+        data-testid="page-header-row"
+        className="flex min-h-[40px] min-w-0 items-center gap-3 overflow-hidden"
+      >
+        <h1 className="shrink-0 text-[20px] font-semibold tracking-[-0.01em] text-[var(--text-primary)]">
           {title}
         </h1>
-        <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-400">{description}</p>
+        <p className="truncate text-[13px] text-[var(--text-secondary)]">{description}</p>
       </div>
     </section>
   );
