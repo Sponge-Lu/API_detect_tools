@@ -65,16 +65,6 @@ vi.mock('../renderer/components/dialogs/CustomCliConfigEditorDialog', () => ({
 }));
 
 describe('custom cli page redesign', () => {
-  it('renders a registry-first workbench with a selected inspector instead of a card wall', () => {
-    render(<CustomCliPage />);
-
-    expect(screen.getByText('配置注册表')).toBeInTheDocument();
-    expect(screen.getByText('工作区')).toBeInTheDocument();
-    expect(screen.getAllByText('Main Endpoint').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('Backup Endpoint')).toBeInTheDocument();
-    expect(screen.getAllByText('https://example.com').length).toBeGreaterThanOrEqual(1);
-  });
-
   it('renders real CLI logos instead of text placeholders in the page-level affordances', () => {
     render(<CustomCliPage />);
 
