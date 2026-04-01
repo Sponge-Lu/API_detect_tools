@@ -81,6 +81,23 @@ function StatefulWebDAVDialog() {
   return <WebDAVBackupDialog isOpen={isOpen} onClose={() => setIsOpen(false)} />;
 }
 
+function StatefulUnifiedCliDialog() {
+  const [isOpen, setIsOpen] = useState(true);
+
+  return (
+    <UnifiedCliConfigDialog
+      isOpen={isOpen}
+      siteName="Claude Hub"
+      siteUrl="https://example.com"
+      apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
+      siteModels={['claude-3-5-sonnet']}
+      currentConfig={editedCliConfig}
+      onClose={() => setIsOpen(false)}
+      onSave={vi.fn()}
+    />
+  );
+}
+
 describe('overlay family redesign', () => {
   it('shares the same chrome markers across modal and drawer', () => {
     render(
@@ -280,6 +297,23 @@ describe('overlay family redesign', () => {
     });
 
     expect(screen.getByRole('dialog', { name: 'WebDAV 云端备份' })).toBeInTheDocument();
+    expect(screen.getAllByTestId('overlay-title')).toHaveLength(1);
+  });
+
+  it('lets Escape close only the nested confirm while keeping the parent drawer open', async () => {
+    render(<StatefulUnifiedCliDialog />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '重置' }));
+    expect(await screen.findByRole('dialog', { name: '确认重置' })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: '确认重置' })).not.toBeInTheDocument();
+    });
+
+    const drawerDialog = screen.getByRole('dialog', { name: 'CLI 工作台 - Claude Hub' });
+    expect(drawerDialog).toHaveClass('translate-x-0', 'opacity-100');
     expect(screen.getAllByTestId('overlay-title')).toHaveLength(1);
   });
 });

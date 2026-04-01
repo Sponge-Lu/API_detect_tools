@@ -2,26 +2,26 @@ import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
-const openModalStack: string[] = [];
+const openOverlayStack: string[] = [];
 
-function registerOpenModal(modalId: string) {
-  const existingIndex = openModalStack.indexOf(modalId);
+export function registerOpenOverlay(overlayId: string) {
+  const existingIndex = openOverlayStack.indexOf(overlayId);
   if (existingIndex !== -1) {
-    openModalStack.splice(existingIndex, 1);
+    openOverlayStack.splice(existingIndex, 1);
   }
 
-  openModalStack.push(modalId);
+  openOverlayStack.push(overlayId);
 }
 
-function unregisterOpenModal(modalId: string) {
-  const existingIndex = openModalStack.indexOf(modalId);
+export function unregisterOpenOverlay(overlayId: string) {
+  const existingIndex = openOverlayStack.indexOf(overlayId);
   if (existingIndex !== -1) {
-    openModalStack.splice(existingIndex, 1);
+    openOverlayStack.splice(existingIndex, 1);
   }
 }
 
-function isTopmostModal(modalId: string) {
-  return openModalStack[openModalStack.length - 1] === modalId;
+export function isTopmostOverlay(overlayId: string) {
+  return openOverlayStack[openOverlayStack.length - 1] === overlayId;
 }
 
 export interface AppModalProps {
@@ -74,14 +74,14 @@ export function AppModal({
 
   useEffect(() => {
     if (!isOpen) {
-      unregisterOpenModal(modalInstanceId);
+      unregisterOpenOverlay(modalInstanceId);
       return;
     }
 
-    registerOpenModal(modalInstanceId);
+    registerOpenOverlay(modalInstanceId);
 
     return () => {
-      unregisterOpenModal(modalInstanceId);
+      unregisterOpenOverlay(modalInstanceId);
     };
   }, [isOpen, modalInstanceId]);
 
@@ -112,7 +112,7 @@ export function AppModal({
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && isTopmostModal(modalInstanceId)) {
+      if (event.key === 'Escape' && isTopmostOverlay(modalInstanceId)) {
         onClose();
       }
     };
