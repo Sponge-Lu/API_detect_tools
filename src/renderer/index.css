@@ -544,125 +544,125 @@ body,
 }
 
 /* 内容溢出处理 - 使用滚动而非压缩 */
-.ios-overflow-container {
+.app-overflow-container {
   overflow: auto;
   min-width: 0;
   min-height: 0;
 }
 
 /* 水平滚动容器 */
-.ios-scroll-x {
+.app-scroll-x {
   overflow-x: auto;
   overflow-y: hidden;
 }
 
 /* 垂直滚动容器 */
-.ios-scroll-y {
+.app-scroll-y {
   overflow-x: hidden;
   overflow-y: auto;
 }
 
 /* 双向滚动容器 */
-.ios-scroll-both {
+.app-scroll-both {
   overflow: auto;
 }
 
 /* 防止内容被压缩 - 保持最小宽度 */
-.ios-no-shrink {
+.app-no-shrink {
   flex-shrink: 0;
   min-width: max-content;
 }
 
 /* 响应式容器 - 自动处理溢出 */
-.ios-responsive-container {
+.app-responsive-container {
   width: 100%;
   min-width: 1024px;
   /* 不设置 overflow，让具体元素自己控制 */
 }
 
 /* 响应式卡片网格 */
-.ios-responsive-grid {
+.app-responsive-grid {
   display: grid;
   gap: var(--responsive-spacing-lg);
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
 }
 
 /* 响应式表格容器 */
-.ios-responsive-table {
+.app-responsive-table {
   width: 100%;
   min-width: 1024px;
   overflow-x: auto;
 }
 
 /* 响应式文本 - 防止换行导致布局问题 */
-.ios-text-nowrap {
+.app-text-nowrap {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 /* 响应式文本 - 允许换行但保持最小宽度 */
-.ios-text-wrap {
+.app-text-wrap {
   word-wrap: break-word;
   overflow-wrap: break-word;
   min-width: 0;
 }
 
 /* 响应式间距工具类 */
-.ios-p-responsive {
+.app-p-responsive {
   padding: var(--responsive-spacing-lg);
 }
 
-.ios-px-responsive {
+.app-px-responsive {
   padding-left: var(--responsive-spacing-lg);
   padding-right: var(--responsive-spacing-lg);
 }
 
-.ios-py-responsive {
+.app-py-responsive {
   padding-top: var(--responsive-spacing-lg);
   padding-bottom: var(--responsive-spacing-lg);
 }
 
-.ios-m-responsive {
+.app-m-responsive {
   margin: var(--responsive-spacing-lg);
 }
 
-.ios-mx-responsive {
+.app-mx-responsive {
   margin-left: var(--responsive-spacing-lg);
   margin-right: var(--responsive-spacing-lg);
 }
 
-.ios-my-responsive {
+.app-my-responsive {
   margin-top: var(--responsive-spacing-lg);
   margin-bottom: var(--responsive-spacing-lg);
 }
 
-.ios-gap-responsive {
+.app-gap-responsive {
   gap: var(--responsive-spacing-lg);
 }
 
 /* 响应式字体工具类 */
-.ios-text-responsive-xs {
+.app-text-responsive-xs {
   font-size: var(--responsive-font-xs);
 }
 
-.ios-text-responsive-sm {
+.app-text-responsive-sm {
   font-size: var(--responsive-font-sm);
 }
 
-.ios-text-responsive-base {
+.app-text-responsive-base {
   font-size: var(--responsive-font-base);
 }
 
-.ios-text-responsive-lg {
+.app-text-responsive-lg {
   font-size: var(--responsive-font-lg);
 }
 
-.ios-text-responsive-xl {
+.app-text-responsive-xl {
   font-size: var(--responsive-font-xl);
 }
 
-.ios-text-responsive-2xl {
+.app-text-responsive-2xl {
   font-size: var(--responsive-font-2xl);
 }
 
@@ -690,21 +690,21 @@ body,
  */
 
 /* 毛玻璃效果 GPU 加速 */
-.ios-blur-optimized {
+.app-blur-optimized {
   will-change: backdrop-filter;
   transform: translateZ(0);
   backface-visibility: hidden;
 }
 
 /* 动画元素 GPU 加速 */
-.ios-animate-optimized {
+.app-animate-optimized {
   will-change: transform, opacity;
   transform: translateZ(0);
   backface-visibility: hidden;
 }
 
 /* 滚动容器 GPU 加速 */
-.ios-scroll-optimized {
+.app-scroll-optimized {
   will-change: scroll-position;
   transform: translateZ(0);
   -webkit-overflow-scrolling: touch;
@@ -719,7 +719,7 @@ body,
  */
 
 /* 淡入动画 - 仅使用 opacity */
-.ios-fade-in {
+.app-fade-in {
   animation: iosFadeIn var(--duration-normal) var(--ease-ios) forwards;
 }
 
@@ -733,7 +733,7 @@ body,
 }
 
 /* 淡出动画 - 仅使用 opacity */
-.ios-fade-out {
+.app-fade-out {
   animation: iosFadeOut var(--duration-normal) var(--ease-ios) forwards;
 }
 
@@ -747,7 +747,7 @@ body,
 }
 
 /* 缩放进入动画 - 仅使用 transform 和 opacity */
-.ios-scale-in {
+.app-scale-in {
   animation: iosScaleIn var(--duration-normal) var(--ease-ios) forwards;
 }
 
@@ -763,7 +763,7 @@ body,
 }
 
 /* 缩放退出动画 - 仅使用 transform 和 opacity */
-.ios-scale-out {
+.app-scale-out {
   animation: iosScaleOut var(--duration-normal) var(--ease-ios) forwards;
 }
 
@@ -779,7 +779,7 @@ body,
 }
 
 /* 滑入动画 - 仅使用 transform 和 opacity */
-.ios-slide-up {
+.app-slide-up {
   animation: iosSlideUp var(--duration-normal) var(--ease-ios) forwards;
 }
 
@@ -795,7 +795,7 @@ body,
 }
 
 /* 滑出动画 - 仅使用 transform 和 opacity */
-.ios-slide-down {
+.app-slide-down {
   animation: iosSlideDown var(--duration-normal) var(--ease-ios) forwards;
 }
 
@@ -811,20 +811,20 @@ body,
 }
 
 /* 按钮按下动画 - 仅使用 transform */
-.ios-press {
+.app-press {
   transition: transform var(--duration-fast) var(--ease-ios);
 }
 
-.ios-press:active {
+.app-press:active {
   transform: scale(0.97);
 }
 
 /* 悬停提升动画 - 仅使用 transform */
-.ios-hover-lift {
+.app-hover-lift {
   transition: transform var(--duration-fast) var(--ease-ios);
 }
 
-.ios-hover-lift:hover {
+.app-hover-lift:hover {
   transform: translateY(-2px);
 }
 
@@ -836,21 +836,21 @@ body,
  */
 
 /* 基础高性能过渡 */
-.ios-transition-perf {
+.app-transition-perf {
   transition-property: transform, opacity;
   transition-duration: var(--duration-normal);
   transition-timing-function: var(--ease-ios);
 }
 
 /* 快速高性能过渡 */
-.ios-transition-perf-fast {
+.app-transition-perf-fast {
   transition-property: transform, opacity;
   transition-duration: var(--duration-fast);
   transition-timing-function: var(--ease-ios);
 }
 
 /* 慢速高性能过渡 */
-.ios-transition-perf-slow {
+.app-transition-perf-slow {
   transition-property: transform, opacity;
   transition-duration: var(--duration-slow);
   transition-timing-function: var(--ease-ios);
@@ -864,7 +864,7 @@ body,
  */
 
 /* 轻度模糊 - 性能优化版 */
-.ios-blur-sm-optimized {
+.app-blur-sm-optimized {
   backdrop-filter: var(--blur-sm);
   -webkit-backdrop-filter: var(--blur-sm);
   will-change: backdrop-filter;
@@ -872,7 +872,7 @@ body,
 }
 
 /* 中度模糊 - 性能优化版 */
-.ios-blur-md-optimized {
+.app-blur-md-optimized {
   backdrop-filter: var(--blur-md);
   -webkit-backdrop-filter: var(--blur-md);
   will-change: backdrop-filter;
@@ -880,7 +880,7 @@ body,
 }
 
 /* 重度模糊 - 性能优化版 */
-.ios-blur-lg-optimized {
+.app-blur-lg-optimized {
   backdrop-filter: var(--blur-lg);
   -webkit-backdrop-filter: var(--blur-lg);
   will-change: backdrop-filter;
@@ -888,7 +888,7 @@ body,
 }
 
 /* 超重度模糊 - 性能优化版 */
-.ios-blur-xl-optimized {
+.app-blur-xl-optimized {
   backdrop-filter: var(--blur-xl);
   -webkit-backdrop-filter: var(--blur-xl);
   will-change: backdrop-filter;
@@ -905,18 +905,18 @@ body,
  */
 
 /* 关键内容 - 立即渲染 */
-.ios-critical {
+.app-critical {
   content-visibility: visible;
 }
 
 /* 非关键内容 - 延迟渲染 */
-.ios-lazy {
+.app-lazy {
   content-visibility: auto;
   contain-intrinsic-size: auto 300px;
 }
 
 /* 首屏动画延迟 - 等待首屏渲染完成 */
-.ios-animate-delay-fcp {
+.app-animate-delay-fcp {
   animation-delay: 100ms;
 }
 
@@ -944,28 +944,28 @@ body,
  * 当检测到性能问题时，可以添加 .reduce-effects 类到 html 元素
  */
 
-.reduce-effects .ios-blur-sm-optimized,
-.reduce-effects .ios-blur-md-optimized,
-.reduce-effects .ios-blur-lg-optimized,
-.reduce-effects .ios-blur-xl-optimized {
+.reduce-effects .app-blur-sm-optimized,
+.reduce-effects .app-blur-md-optimized,
+.reduce-effects .app-blur-lg-optimized,
+.reduce-effects .app-blur-xl-optimized {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   background-color: var(--surface-1);
 }
 
-.reduce-effects .ios-animate-optimized,
-.reduce-effects .ios-fade-in,
-.reduce-effects .ios-fade-out,
-.reduce-effects .ios-scale-in,
-.reduce-effects .ios-scale-out,
-.reduce-effects .ios-slide-up,
-.reduce-effects .ios-slide-down {
+.reduce-effects .app-animate-optimized,
+.reduce-effects .app-fade-in,
+.reduce-effects .app-fade-out,
+.reduce-effects .app-scale-in,
+.reduce-effects .app-scale-out,
+.reduce-effects .app-slide-up,
+.reduce-effects .app-slide-down {
   animation: none;
   opacity: 1;
   transform: none;
 }
 
-.reduce-effects .ios-hover-lift:hover {
+.reduce-effects .app-hover-lift:hover {
   transform: none;
 }
 
@@ -1068,27 +1068,27 @@ a:focus-visible {
  */
 
 /* 主要文本 - 高对比度 */
-.ios-text-high-contrast {
+.app-text-high-contrast {
   color: var(--text-primary);
 }
 
 /* 次要文本 - 确保对比度 >= 4.5:1 */
-.ios-text-secondary-contrast {
+.app-text-secondary-contrast {
   color: var(--text-secondary);
 }
 
 /* 浅色模式次要文本调整 - 确保对比度 */
-:root .ios-text-secondary-contrast {
+:root .app-text-secondary-contrast {
   color: rgba(60, 60, 67, 0.7); /* 提高不透明度以确保对比度 */
 }
 
 /* 深色模式次要文本调整 - 确保对比度 */
-.dark .ios-text-secondary-contrast {
+.dark .app-text-secondary-contrast {
   color: rgba(235, 235, 245, 0.7); /* 提高不透明度以确保对比度 */
 }
 
 /* 禁用状态文本 - 保持可读性 */
-.ios-text-disabled {
+.app-text-disabled {
   color: var(--text-tertiary);
   opacity: 0.6;
 }
@@ -1103,12 +1103,12 @@ a:focus-visible {
  */
 
 /* 可聚焦元素的基础样式 */
-.ios-focusable {
+.app-focusable {
   cursor: pointer;
 }
 
 /* 跳过链接 - 用于键盘用户快速跳过导航 */
-.ios-skip-link {
+.app-skip-link {
   position: absolute;
   top: -40px;
   left: 0;
@@ -1120,16 +1120,16 @@ a:focus-visible {
   transition: top var(--duration-fast) var(--ease-ios);
 }
 
-.ios-skip-link:focus {
+.app-skip-link:focus {
   top: var(--spacing-sm);
 }
 
 /* 键盘导航指示器 - 显示当前焦点位置 */
-.ios-keyboard-nav-indicator {
+.app-keyboard-nav-indicator {
   position: relative;
 }
 
-.ios-keyboard-nav-indicator::after {
+.app-keyboard-nav-indicator::after {
   content: '';
   position: absolute;
   inset: -2px;
@@ -1139,7 +1139,7 @@ a:focus-visible {
   transition: border-color var(--duration-fast) var(--ease-ios);
 }
 
-.ios-keyboard-nav-indicator:focus-visible::after {
+.app-keyboard-nav-indicator:focus-visible::after {
   border-color: var(--accent);
 }
 
@@ -1152,7 +1152,7 @@ a:focus-visible {
  */
 
 /* 仅对屏幕阅读器可见 */
-.ios-sr-only {
+.app-sr-only {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -1165,8 +1165,8 @@ a:focus-visible {
 }
 
 /* 聚焦时可见（用于跳过链接等） */
-.ios-sr-only-focusable:focus,
-.ios-sr-only-focusable:active {
+.app-sr-only-focusable:focus,
+.app-sr-only-focusable:active {
   position: static;
   width: auto;
   height: auto;
@@ -1178,7 +1178,7 @@ a:focus-visible {
 }
 
 /* 实时区域 - 用于动态内容更新通知 */
-.ios-live-region {
+.app-live-region {
   position: absolute;
   width: 1px;
   height: 1px;

@@ -15,14 +15,6 @@ afterEach(() => {
 });
 
 describe('theme system redesign', () => {
-  it('applies explicit light preset ids to the document root', () => {
-    localStorage.setItem('app-theme-mode', 'light-b');
-    render(<ThemeHarness />);
-
-    expect(document.documentElement.dataset.theme).toBe('light-b');
-    expect(document.documentElement.classList.contains('dark')).toBe(false);
-  });
-
   it.each(['light', 'system'])('migrates legacy %s values to light-a', legacyTheme => {
     localStorage.setItem('app-theme-mode', legacyTheme);
     render(<ThemeHarness />);

@@ -10,6 +10,7 @@ vi.mock('../renderer/components/CliConfigStatus', () => ({
 
 const globalCss = readFileSync(resolve(process.cwd(), 'src/renderer/index.css'), 'utf8');
 const topLevelRootBlock = globalCss.match(/:root\s*\{[\s\S]*?\n\}/)?.[0] ?? '';
+const iosUtilityDefinitions = globalCss.match(/^\s*(?:\.reduce-effects\s+)?\.ios-[A-Za-z0-9_-]+/gm) ?? [];
 
 describe('theme visual consistency', () => {
   it('defines a neutral global token contract instead of the legacy ios token layer', () => {
@@ -44,6 +45,7 @@ describe('theme visual consistency', () => {
     expect(globalCss).not.toContain("[class~='ios-icon-warning']");
     expect(globalCss).not.toContain("[class~='ios-icon-muted']");
     expect(globalCss).not.toContain("[class~='ios-icon-button']");
+    expect(iosUtilityDefinitions).toHaveLength(0);
   });
 
   it('keeps the global command bar on theme tokens instead of hardcoded gray and blue utilities', () => {
