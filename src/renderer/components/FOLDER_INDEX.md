@@ -35,9 +35,11 @@
 | 文件夹 | 职责 | 关键组件 |
 |--------|------|--------|
 | **Header/** | 顶部导航栏 | Header, Menu, ThemeToggle |
+| **AppShell/** | 页面壳层组件 | GlobalCommandBar, PageHeader |
 | **SiteCard/** | 站点卡片 | SiteCard, SiteCardActions |
 | **SiteGroupTabs/** | 站点分组标签 | SiteGroupTabs, GroupTab |
 | **SiteListHeader/** | 站点列表头部 | SiteListHeader, SearchBar, FilterBar |
+| **Route/** | Route 页面组件 | RouteWorkbenchHeader, ModelRedirectionTab, CliUsabilityTab, ProxyStatsTab |
 | **dialogs/** | 对话框组件 | 各类对话框 |
 | **Skeleton/** | 骨架屏 | SkeletonLoader, SkeletonCard |
 | **Toast/** | 消息提示 | Toast, ToastContainer |
@@ -45,11 +47,12 @@
 | **CliConfigStatus/** | CLI 配置状态显示 | CliConfigStatus, CliConfigStatusPanel |
 | **CreateApiKeyDialog/** | API Key 创建对话框 | CreateApiKeyDialog |
 | **CreditPanel/** | Linux Do Credit 积分面板 | CreditPanelCompact |
-| **IOSButton/** | iOS 风格按钮 | IOSButton |
-| **IOSCard/** | iOS 风格卡片 | IOSCard, IOSCardDivider, IOSCardHeader, IOSCardContent, IOSCardFooter |
-| **IOSInput/** | iOS 风格输入框 | IOSInput, IOSSearchInput |
-| **IOSModal/** | iOS 风格弹窗 | IOSModal |
-| **IOSTable/** | iOS 风格表格 | IOSTable, IOSTableHeader, IOSTableRow, IOSTableCell, IOSTableBody, IOSTableDivider, IOSTableEmpty |
+| **IOSButton/** | AppButton 兼容目录 | AppButton, IOSButton |
+| **IOSCard/** | 卡片原语目录（legacy 命名保留） | IOSCard, IOSCardDivider, IOSCardHeader, IOSCardContent, IOSCardFooter |
+| **IOSInput/** | AppInput 兼容目录 | AppInput, AppSearchInput, IOSInput, IOSSearchInput |
+| **IOSModal/** | AppModal 兼容目录 | AppModal, IOSModal |
+| **IOSTable/** | DataTable 兼容目录 | DataTable, DataTableHeader, DataTableRow, DataTableCell, DataTableBody, DataTableDivider, DataTableEmpty |
+| **overlays/** | 统一 overlay 家族基础件 | OverlayFrame, OverlayDrawer |
 
 ---
 
@@ -121,25 +124,44 @@ interface SiteGroupTabsProps {
 
 ### SiteListHeader 组件
 
-**职责**: 站点列表头部（搜索、筛选、排序）
+**职责**: 站点列表固定排序条（主排序、更多排序、当前排序摘要、右侧批量动作）
 
 **Props**:
 ```typescript
 interface SiteListHeaderProps {
-  searchText?: string;
-  onSearchChange?: (text: string) => void;
-  sortBy?: 'name' | 'balance' | 'usage';
-  onSortChange?: (sortBy: string) => void;
-  filterStatus?: 'all' | 'online' | 'offline';
-  onFilterChange?: (status: string) => void;
+  sortField: SortField | null;
+  sortOrder: SortOrder;
+  onToggleSort: (field: SortField) => void;
+  onResetSort: () => void;
+  actions?: React.ReactNode;
 }
 ```
 
 **特点**:
-- 搜索框
-- 排序选择
-- 状态筛选
-- 批量操作
+- 固定显示 `余额 / 今日消费 / 总 Token`
+- 通过 `更多排序` 保留次级排序项
+- 将 `当前排序 / 清除排序` 并入同一行工具条
+- 支持右侧批量操作槽位
+- 允许默认窗口宽度下自动换行，不再依赖固定大宽度
+
+### RouteWorkbenchHeader 组件
+
+**职责**: 旧版 route 头带组件，保留作兼容参考，当前 live route 页面默认不再挂载
+
+**Props**:
+```typescript
+interface RouteWorkbenchHeaderProps {
+  title: string;
+  summary: string;
+  meta?: React.ReactNode;
+  actions?: React.ReactNode;
+}
+```
+
+**特点**:
+- 当前 live route 页面默认不渲染该组件
+- 如需恢复独立 header，可复用标题、摘要、meta 与动作的一行信息带语法
+- 不改业务逻辑，只负责展示层封装
 
 ### SiteEditor 组件
 
@@ -183,7 +205,7 @@ interface SettingsPanelProps {
 
 ### IOSCard 组件
 
-**职责**: iOS 风格卡片组件
+**职责**: 卡片原语（当前仍使用 legacy 目录名）
 
 **Props**:
 ```typescript
@@ -201,19 +223,19 @@ interface IOSCardProps {
 ```
 
 **特点**:
-- iOS 风格样式（圆角、毛玻璃背景、阴影）
+- 使用统一主题 token 的卡片样式（圆角、毛玻璃背景、阴影）
 - 悬停状态（阴影增强、轻微上移）
 - 展开/收起动画
 - 拖拽支持
 - 多种变体（standard, elevated, grouped）
 
-### IOSInput 组件
+### AppInput / IOSInput 兼容导出
 
-**职责**: iOS 风格输入框组件
+**职责**: 中性输入原语与 legacy 兼容导出
 
 **Props**:
 ```typescript
-interface IOSInputProps {
+interface AppInputProps {
   size?: 'sm' | 'md' | 'lg';
   error?: boolean;
   errorMessage?: string;
@@ -226,7 +248,7 @@ interface IOSInputProps {
 ```
 
 **特点**:
-- iOS 风格样式（圆角、内阴影、背景色）
+- 统一主题 token 驱动的输入样式（圆角、内阴影、背景色）
 - 聚焦状态（边框高亮、box-shadow）
 - 支持多种输入类型（text, password, url, number, email）
 - 支持密码显示/隐藏切换
@@ -235,7 +257,7 @@ interface IOSInputProps {
 
 ### IOSSearchInput 组件
 
-**职责**: iOS 风格搜索输入框组件
+**职责**: 中性搜索输入原语与 legacy 兼容导出
 
 **Props**:
 ```typescript
@@ -248,18 +270,18 @@ interface IOSSearchInputProps {
 ```
 
 **特点**:
-- iOS 风格搜索框样式（圆角、背景色、搜索图标）
+- 统一主题 token 驱动的搜索框样式（圆角、背景色、搜索图标）
 - 聚焦状态（背景色变化、box-shadow）
 - 支持清除按钮
 - 保持原有的 onChange 和搜索逻辑
 
-### IOSModal 组件
+### AppModal / IOSModal 兼容导出
 
-**职责**: iOS 风格弹窗组件
+**职责**: 中性弹窗原语与 legacy 兼容导出
 
 **Props**:
 ```typescript
-interface IOSModalProps {
+interface AppModalProps {
   isOpen: boolean;
   onClose: () => void;
   title?: React.ReactNode;
@@ -274,20 +296,20 @@ interface IOSModalProps {
 ```
 
 **特点**:
-- iOS 风格样式（圆角、毛玻璃背景、居中）
+- 统一主题 token 驱动的弹窗样式（圆角、遮罩、居中）
 - 遮罩层（半透明黑色背景 + 模糊）
 - 打开/关闭动画（缩放 + 淡入淡出）
 - 按钮布局（底部横向排列，主要操作在右侧）
 - 支持 ESC 键关闭
 - 支持点击遮罩关闭
 
-### IOSTable 组件
+### DataTable / IOSTable 兼容导出
 
-**职责**: iOS 风格表格组件
+**职责**: 中性表格原语与 legacy 兼容导出
 
 **Props**:
 ```typescript
-interface IOSTableProps {
+interface DataTableProps {
   variant?: 'standard' | 'grouped' | 'inset';
   blur?: boolean;
   staggerAnimation?: boolean;
@@ -296,9 +318,9 @@ interface IOSTableProps {
 ```
 
 **特点**:
-- iOS 风格样式（分组、圆角、背景色）
+- 统一主题 token 驱动的表格样式（分组、圆角、背景色）
 - 增加行高和内边距（至少 44px 高度）
-- iOS 风格的分隔线（1px, 低对比度）
+- 统一分隔线语义（1px, 低对比度）
 - 悬停状态（背景色变化）
 - 优化表头样式（13px, 大写, 0.5px 字间距）
 - 支持列表项交错淡入动画
@@ -306,12 +328,12 @@ interface IOSTableProps {
 - 完整的 ARIA 角色支持
 
 **子组件**:
-- `IOSTableHeader`: 表头组件，支持 sticky 定位
-- `IOSTableRow`: 表格行组件，支持悬停、选中、禁用状态
-- `IOSTableCell`: 单元格组件，支持对齐和宽度设置
-- `IOSTableBody`: 表体容器组件
-- `IOSTableDivider`: 分隔线组件
-- `IOSTableEmpty`: 空状态组件
+- `DataTableHeader`: 表头组件，支持 sticky 定位
+- `DataTableRow`: 表格行组件，支持悬停、选中、禁用状态
+- `DataTableCell`: 单元格组件，支持对齐和宽度设置
+- `DataTableBody`: 表体容器组件
+- `DataTableDivider`: 分隔线组件
+- `DataTableEmpty`: 空状态组件
 
 ### Toast 组件
 
@@ -481,4 +503,4 @@ describe('SiteCard', () => {
 ---
 
 **版本**: 2.1.11  
-**更新日期**: 2025-01-08
+**更新日期**: 2026-04-01

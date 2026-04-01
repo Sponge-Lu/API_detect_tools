@@ -88,42 +88,41 @@ src/
 
 ## 核心模块设计
 
-### iOS 设计系统
+### 统一产品级设计系统
 
-项目采用 Apple Human Interface Guidelines 设计语言，实现了完整的 iOS 风格设计系统：
+项目当前采用统一产品级设计系统，而不是平台品牌化的单一视觉语言。渲染层通过共享主题 token、统一 overlay chrome 和中性原语命名来保持界面一致性。
 
-**CSS 变量体系** (`src/renderer/index.css`):
-- 颜色系统：主色、背景色、文字色、边框色（支持浅色/深色模式）
-- 字体系统：SF Pro 字体族，标准字号和字重
-- 间距系统：8px 网格，所有间距值为 4px 的倍数
-- 圆角系统：标准圆角值（4px、8px、12px、16px、20px）
-- 阴影系统：多层次阴影效果
-- 模糊系统：毛玻璃效果参数
+**主题 token 体系** (`src/renderer/index.css`, `src/shared/theme/themePresets.ts`):
+- 四主题模式：`Light A / Light B / Light C / Dark`
+- 中性语义 token：`app-bg`、`surface-*`、`text-*`、`accent*`、`line-*`
+- 8px 网格间距：所有间距值为 4px 的倍数
+- 圆角/阴影/模糊：由统一 token 合约驱动
+- 旧主题值（如 `light`、`system`）会归一化到新的浅色默认主题
 
-**组件库** (`src/renderer/components/`):
-| 组件 | 文件 | 功能 |
+**原语与兼容层** (`src/renderer/components/`):
+| 对外方向 | 主要文件 | 说明 |
 |------|------|------|
-| IOSButton | `IOSButton/IOSButton.tsx` | Primary/Secondary/Tertiary 变体，支持 ref 转发 |
-| IOSCard | `IOSCard/IOSCard.tsx` | 毛玻璃背景、展开/收起动画 |
-| IOSInput | `IOSInput/IOSInput.tsx` | 聚焦状态、密码显示切换 |
-| IOSModal | `IOSModal/IOSModal.tsx` | 缩放+淡入淡出动画、焦点陷阱 |
-| IOSTable | `IOSTable/IOSTable.tsx` | 分组样式、交错淡入动画 |
-| IOSIcon | `IOSIcon/IOSIcon.tsx` | 统一 1.5px stroke-width、标准尺寸 |
+| AppButton | `AppButton/AppButton.tsx` | 中性按钮原语；`IOSButton` 目录保留兼容导出 |
+| AppInput | `IOSInput/IOSInput.tsx` | 中性输入原语；同目录继续兼容 `IOSInput` / `IOSSearchInput` |
+| AppModal | `AppModal/AppModal.tsx` | 中性弹窗原语；`IOSModal` 目录保留兼容导出 |
+| DataTable | `DataTable/DataTable.tsx` | 中性表格原语；`IOSTable` 目录保留兼容导出 |
+| Card primitive | `IOSCard/IOSCard.tsx` | 当前仍位于 legacy 目录名下的被动原语，行为保持不变 |
+| Icon primitive | `IOSIcon/IOSIcon.tsx` | 当前仍位于 legacy 目录名下的图标原语 |
 
 **性能优化**:
-- GPU 加速：`transform: translateZ(0)` 和 `will-change` 属性
-- 高性能动画：仅使用 `transform` 和 `opacity` 属性
-- `prefers-reduced-motion` 支持：尊重用户的动画偏好设置
+- GPU 加速：`transform: translateZ(0)` 与 `will-change`
+- 高性能动画：优先只使用 `transform` 和 `opacity`
+- `prefers-reduced-motion` 支持：尊重用户动画偏好
 
 **无障碍性**:
-- 焦点指示器：清晰的键盘焦点样式
-- 键盘导航：完整的 Tab 键导航支持
-- ARIA 属性：语义化的无障碍标签
+- 焦点指示器：统一键盘焦点样式
+- 键盘导航：完整的 Tab / Escape / Enter 行为
+- ARIA 属性：对话框、输入、表格与按钮均具备语义标签
 
 **主题切换**:
-- 300ms 平滑过渡
-- 自动检测系统主题偏好
-- 手动切换支持
+- 四主题模式在渲染进程与主进程窗口背景之间保持同步
+- 旧存储值自动迁移到当前支持的主题模式
+- 手动切换与持久化由共享主题预设层统一管理
 
 ### 状态管理 (Zustand)
 

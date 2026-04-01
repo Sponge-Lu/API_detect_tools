@@ -1,72 +1,61 @@
-# IOSModal 组件
+# IOSModal 兼容目录
 
 ## 概述
 
-iOS 风格弹窗组件，提供统一的弹窗样式和交互体验。
+该目录保留 legacy `IOSModal` 路径；当前对外推荐原语为 `AppModal`。
 
 ## 文件结构
 
 | 文件 | 描述 |
 |------|------|
-| `IOSModal.tsx` | iOS 风格弹窗组件实现 |
-| `index.ts` | 组件导出 |
+| `index.ts` | 将 `AppModal` 重新导出为 `IOSModal` 兼容别名 |
+| `IOSModal.tsx` | 历史实现文件，保留供兼容/参考 |
 | `FOLDER_INDEX.md` | 本文件 |
 
-## 组件特性
+## 当前弹窗契约
 
-- iOS 风格样式（圆角、毛玻璃背景、居中）
-- 遮罩层（半透明黑色背景 + 模糊）
-- 打开/关闭动画（缩放 + 淡入淡出）
-- 按钮布局（底部横向排列，主要操作在右侧）
-- 支持 ESC 键关闭
-- 支持点击遮罩关闭
+- 统一使用主题 token 驱动的弹窗表面、边框和阴影
+- 遮罩、标题栏、正文区、底部操作区与 overlay family 保持同一结构语言
+- 支持 ESC 键关闭、点击遮罩关闭和关闭按钮
+- 通过 `overlay-title` / `overlay-body` / `overlay-footer` 测试标记与抽屉类 overlay 对齐
 
 ## 使用示例
 
 ```tsx
-import { IOSModal } from './IOSModal';
-import { IOSButton } from '../IOSButton';
+import { AppModal } from '../AppModal/AppModal';
+import { AppButton } from '../AppButton/AppButton';
 
 function MyDialog() {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
-    <IOSModal
+    <AppModal
       isOpen={isOpen}
       onClose={() => setIsOpen(false)}
       title="确认操作"
       footer={
         <>
-          <IOSButton variant="tertiary" onClick={() => setIsOpen(false)}>
+          <AppButton variant="tertiary" onClick={() => setIsOpen(false)}>
             取消
-          </IOSButton>
-          <IOSButton variant="primary" onClick={handleConfirm}>
+          </AppButton>
+          <AppButton variant="primary" onClick={handleConfirm}>
             确认
-          </IOSButton>
+          </AppButton>
         </>
       }
     >
       <p>确定要执行此操作吗？</p>
-    </IOSModal>
+    </AppModal>
   );
 }
 ```
 
-## Props
+## 使用建议
 
-| 属性 | 类型 | 默认值 | 描述 |
-|------|------|--------|------|
-| `isOpen` | `boolean` | - | 是否打开 |
-| `onClose` | `() => void` | - | 关闭回调 |
-| `title` | `ReactNode` | - | 标题 |
-| `titleIcon` | `ReactNode` | - | 标题图标 |
-| `children` | `ReactNode` | - | 内容 |
-| `footer` | `ReactNode` | - | 底部操作按钮 |
-| `size` | `'sm' \| 'md' \| 'lg' \| 'xl'` | `'md'` | 弹窗尺寸 |
-| `showCloseButton` | `boolean` | `true` | 是否显示关闭按钮 |
-| `closeOnOverlayClick` | `boolean` | `true` | 是否点击遮罩关闭 |
-| `closeOnEsc` | `boolean` | `true` | 是否按 ESC 键关闭 |
+- 新代码优先直接使用 `AppModal`
+- 旧代码仍可通过 `IOSModal` 路径工作
 
 ## 更新日志
 
-- 2025-01-08: 创建 IOSModal 组件
+- 2025-01-08: 创建弹窗兼容目录
+- 2026-03-31: 与统一 overlay family 对齐共享 chrome 标记

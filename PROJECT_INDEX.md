@@ -155,8 +155,8 @@ graph TD
 | 模块 | 职责 | 关键组件 |
 |------|------|--------|
 | **App.tsx** | 应用根组件、路由 | 主布局、主题切换 |
-| **Components** | UI 组件库 | iOS 风格组件、表格、表单、对话框等 |
-| **iOS 组件** | iOS 设计系统 | IOSButton, IOSCard, IOSInput, IOSModal, IOSTable, IOSIcon |
+| **Components** | UI 组件库 | 产品级原语、表格、表单、对话框与兼容层 |
+| **设计系统原语** | 四主题 + 中性原语 | AppButton, AppInput, AppModal, DataTable, legacy Card/Icon primitives |
 | **Hooks** | 业务逻辑 | `useSiteGroups()`, `useAutoRefresh()`（含多账户自动刷新） |
 | **Store** | 状态管理 | Zustand store，管理全局状态 |
 | **Services** | IPC 通信 | 与主进程通信的服务层 |
@@ -301,6 +301,17 @@ npm run dist         # 打包为 EXE 安装程序
 
 ---
 
+## 近期结构更新
+
+- `src/shared/theme/`：新增主题预设层，承载 `Light A / Light B / Light C / Dark` 四套主题模式与兼容旧值的归一化逻辑。
+- `src/renderer/components/overlays/`：新增统一 overlay 家族基础件，供 `AppModal`（以及 legacy `IOSModal` 兼容导出）、CLI 工作抽屉等共享标题栏、正文区和底部操作区结构。
+- `src/renderer/components/AppShell/PageHeader.tsx`：仅站点页保留全局单行 header，统一回到主题字重与色彩语法；其他顶层 tab 不再额外挂载 PageHeader。
+- `src/renderer/components/Route/Redirection/ModelRedirectionTab.tsx`、`src/renderer/components/Route/Usability/CliUsabilityTab.tsx` 与 `src/renderer/components/Route/ProxyStats/ProxyStatsTab.tsx`：移除 live route 页面的顶部 workbench header，把操作控件回收到内容区内部。
+- `src/renderer/pages/SitesPage.tsx`、`src/renderer/components/SiteCard/SiteCard.tsx`、`src/renderer/components/SiteCard/SiteCardHeader.tsx`、`src/renderer/components/SiteCard/SiteCardCliEntry.tsx` 与 `src/renderer/components/SiteListHeader/SiteListHeader.tsx`：站点页排序摘要并入同一行工具条，站点主行改为固定宽度信息列 + 模型后 CLI 可用性图标列 + CLI 工作台槽位 + 普通操作区，压缩元信息并提升上下对齐稳定性。
+- `src/__tests__/custom-cli-page-redesign.test.tsx` 与 `src/__tests__/route-workbench-redesign.test.tsx`：补齐自定义 CLI 页与 route 工作台重设计回归测试。
+
+---
+
 ## 📚 文档导航
 
 - **[📖 用户指南](docs/USER_GUIDE.md)** - 功能介绍、使用教程
@@ -355,5 +366,5 @@ npm run dist         # 打包为 EXE 安装程序
 ---
 
 **版本**: 3.0.1
-**更新日期**: 2026-03-18
+**更新日期**: 2026-04-01
 **维护者**: API Hub Team

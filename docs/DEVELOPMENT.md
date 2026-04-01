@@ -186,24 +186,24 @@ npm run test src/__tests__/example.test.ts
 npm run test src/__tests__/*.property.test.ts
 ```
 
-**iOS 组件测试**:
-iOS 风格组件有专门的测试文件，覆盖设计系统、组件行为和无障碍性：
+**设计系统与原语测试**:
+产品级设计系统和兼容原语有专门的测试文件，覆盖四主题 token、组件行为和无障碍性：
 
 ```bash
-# 运行 iOS 组件相关测试
+# 运行设计系统相关测试
 npm run test src/__tests__/ios-*.test.ts
 npm run test src/__tests__/ios-*.property.test.ts
 ```
 
 测试覆盖范围：
-- `ios-button.property.test.ts` - IOSButton 组件属性测试
-- `ios-card.property.test.ts` - IOSCard 组件属性测试
-- `ios-input.property.test.ts` - IOSInput 组件属性测试
-- `ios-modal.property.test.ts` - IOSModal 组件属性测试
-- `ios-table.property.test.ts` - IOSTable 组件属性测试
-- `ios-icon.property.test.ts` - IOSIcon 组件属性测试
-- `ios-design-system.property.test.ts` - 设计系统 CSS 变量测试
-- `ios-accessibility.property.test.ts` - 无障碍性测试
+- `app-button.property.test.tsx` - AppButton 原语属性测试
+- `ios-card.property.test.ts` - 卡片原语兼容属性测试
+- `ios-input.property.test.ts` - 输入原语兼容属性测试
+- `app-modal.property.test.tsx` - AppModal 原语属性测试
+- `ios-table.property.test.ts` - 表格原语兼容属性测试
+- `ios-icon.property.test.ts` - 图标原语兼容属性测试
+- `theme-token-contract.property.test.tsx` - 四主题 token 与兼容归一化测试
+- `ios-accessibility.property.test.ts` - 产品级无障碍性测试
 - `ios-responsive.property.test.ts` - 响应式布局测试
 - `ios-performance.property.test.ts` - 性能优化测试
 
