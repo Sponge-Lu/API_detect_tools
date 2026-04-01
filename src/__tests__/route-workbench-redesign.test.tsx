@@ -103,4 +103,31 @@ describe('route workbench redesign', () => {
     expect(usabilitySource).toMatch(/from ['"].*AppModal\/AppModal['"]/);
     expect(usabilitySource).not.toMatch(/from ['"].*IOSModal['"]/);
   });
+
+  it('keeps route pages on the original content skeleton instead of adding sticky workbench shells', () => {
+    const redirectionSource = readFileSync(
+      join(process.cwd(), 'src/renderer/components/Route/Redirection/ModelRedirectionTab.tsx'),
+      'utf8'
+    );
+    const usabilitySource = readFileSync(
+      join(process.cwd(), 'src/renderer/components/Route/Usability/CliUsabilityTab.tsx'),
+      'utf8'
+    );
+    const proxyStatsSource = readFileSync(
+      join(process.cwd(), 'src/renderer/components/Route/ProxyStats/ProxyStatsTab.tsx'),
+      'utf8'
+    );
+
+    expect(redirectionSource).not.toContain('sticky top-0');
+    expect(redirectionSource).not.toContain(
+      'rounded-[var(--radius-xl)] border border-[var(--line-soft)] bg-[var(--surface-1)]'
+    );
+    expect(redirectionSource).toContain('return (\n    <div className="flex-1 overflow-hidden">');
+
+    expect(usabilitySource).toContain('return (\n    <div className="flex-1 overflow-y-auto px-6 py-3">');
+    expect(usabilitySource).not.toContain('return (\n    <div className="flex-1 flex flex-col overflow-hidden">');
+
+    expect(proxyStatsSource).toContain('return (\n    <div className="flex-1 overflow-y-auto px-6 py-2">');
+    expect(proxyStatsSource).not.toContain('return (\n    <div className="flex-1 flex flex-col overflow-hidden">');
+  });
 });

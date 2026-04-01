@@ -39,7 +39,7 @@ export interface IOSInputProps extends Omit<React.InputHTMLAttributes<HTMLInputE
   helpText?: string;
 }
 
-export const IOSInput = forwardRef<HTMLInputElement, IOSInputProps>(
+const AppInputImpl = forwardRef<HTMLInputElement, IOSInputProps>(
   (
     {
       size = 'md',
@@ -89,9 +89,9 @@ export const IOSInput = forwardRef<HTMLInputElement, IOSInputProps>(
     // 基础输入框样式 - 添加 GPU 加速
     const baseInputStyles = `
       w-full
-      bg-[var(--ios-bg-tertiary)]
-      text-[var(--ios-text-primary)]
-      placeholder-[var(--ios-text-tertiary)]
+      bg-[var(--surface-2)]
+      text-[var(--text-primary)]
+      placeholder-[var(--text-tertiary)]
       border
       [will-change:box-shadow,border-color]
       [transform:translateZ(0)]
@@ -106,10 +106,10 @@ export const IOSInput = forwardRef<HTMLInputElement, IOSInputProps>(
 
     // 边框样式（根据状态变化）- iOS 原生风格，更微妙
     const borderStyles = error
-      ? 'border-[var(--ios-red)]'
+      ? 'border-[var(--danger)]'
       : isFocused
-        ? 'border-[var(--ios-blue)]'
-        : 'border-[var(--ios-separator)]';
+        ? 'border-[var(--accent)]'
+        : 'border-[var(--line-soft)]';
 
     // 聚焦时的 box-shadow
     const focusStyles =
@@ -121,7 +121,7 @@ export const IOSInput = forwardRef<HTMLInputElement, IOSInputProps>(
 
     // 禁用状态
     const disabledStyles = disabled
-      ? 'opacity-50 cursor-not-allowed bg-[var(--ios-bg-primary)]'
+      ? 'opacity-50 cursor-not-allowed bg-[var(--surface-1)]'
       : '';
 
     // 左侧图标的 padding 调整
@@ -149,11 +149,11 @@ export const IOSInput = forwardRef<HTMLInputElement, IOSInputProps>(
         {label && (
           <label
             htmlFor={inputId}
-            className="block text-sm font-medium text-[var(--ios-text-primary)] mb-[var(--spacing-sm)]"
+            className="mb-[var(--spacing-sm)] block text-sm font-medium text-[var(--text-primary)]"
           >
             {label}
             {required && (
-              <span className="text-[var(--ios-red)] ml-1" aria-hidden="true">
+              <span className="ml-1 text-[var(--danger)]" aria-hidden="true">
                 *
               </span>
             )}
@@ -165,7 +165,7 @@ export const IOSInput = forwardRef<HTMLInputElement, IOSInputProps>(
           {/* 左侧图标 */}
           {leftIcon && (
             <div
-              className="absolute left-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--ios-text-tertiary)]"
+              className="absolute left-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
               aria-hidden="true"
             >
               {leftIcon}
@@ -202,7 +202,7 @@ export const IOSInput = forwardRef<HTMLInputElement, IOSInputProps>(
               aria-label={showPassword ? '隐藏密码' : '显示密码'}
               title={showPassword ? '隐藏密码' : '显示密码'}
               aria-pressed={showPassword}
-              className="absolute right-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--ios-text-tertiary)] hover:text-[var(--ios-text-secondary)] transition-colors p-[var(--spacing-xs)] rounded-[var(--radius-sm)] focus-visible:outline-2 focus-visible:outline-[var(--ios-blue)] focus-visible:outline-offset-1"
+              className="absolute right-[var(--spacing-md)] top-1/2 -translate-y-1/2 rounded-[var(--radius-sm)] p-[var(--spacing-xs)] text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-secondary)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-1"
               tabIndex={0}
             >
               {showPassword ? (
@@ -213,7 +213,7 @@ export const IOSInput = forwardRef<HTMLInputElement, IOSInputProps>(
             </button>
           ) : rightIcon ? (
             <div
-              className="absolute right-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--ios-text-tertiary)]"
+              className="absolute right-[var(--spacing-md)] top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
               aria-hidden="true"
             >
               {rightIcon}
@@ -225,7 +225,7 @@ export const IOSInput = forwardRef<HTMLInputElement, IOSInputProps>(
         {helpText && !error && (
           <p
             id={helpId}
-            className="mt-[var(--spacing-sm)] text-sm text-[var(--ios-text-secondary)]"
+            className="mt-[var(--spacing-sm)] text-sm text-[var(--text-secondary)]"
           >
             {helpText}
           </p>
@@ -235,7 +235,7 @@ export const IOSInput = forwardRef<HTMLInputElement, IOSInputProps>(
         {error && errorMessage && (
           <p
             id={errorId}
-            className="mt-[var(--spacing-sm)] text-sm text-[var(--ios-red)]"
+            className="mt-[var(--spacing-sm)] text-sm text-[var(--danger)]"
             role="alert"
           >
             {errorMessage}
@@ -246,4 +246,7 @@ export const IOSInput = forwardRef<HTMLInputElement, IOSInputProps>(
   }
 );
 
-IOSInput.displayName = 'IOSInput';
+AppInputImpl.displayName = 'AppInput';
+
+export const AppInput = AppInputImpl;
+export const IOSInput = AppInputImpl;

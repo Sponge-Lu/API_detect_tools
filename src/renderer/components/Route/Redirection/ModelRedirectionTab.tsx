@@ -224,8 +224,8 @@ export function ModelRedirectionTab() {
   const activeEntries = grouped[activeVendor] || [];
 
   return (
-    <div className="flex-1 flex overflow-hidden px-6 py-3">
-      <div className="flex-1 flex overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line-soft)] bg-[var(--surface-1)]">
+    <div className="flex-1 overflow-hidden">
+      <div className="flex h-full overflow-hidden px-6 py-3">
         {/* 左侧：厂商导航 */}
         <div className="flex w-[168px] shrink-0 flex-col border-r border-[var(--line-soft)]">
           <div className="flex items-center justify-between gap-2 border-b border-[var(--line-soft)] px-3 py-2.5">
@@ -294,7 +294,7 @@ export function ModelRedirectionTab() {
             {/* 三栏表头 */}
             {activeEntries.length > 0 && (
               <>
-                <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-1.5">
+                <div className="flex items-center gap-2 border-b border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-1.5">
                   <VendorIcon
                     vendor={activeVendor}
                     className="w-3.5 h-3.5 text-[var(--icon-muted)]"
@@ -306,12 +306,12 @@ export function ModelRedirectionTab() {
                     ({activeEntries.length})
                   </span>
                 </div>
-                <div className="sticky top-0 z-10 border-b border-[var(--line-soft)] bg-[var(--surface-2)] py-1.5">
+                <div className="border-b border-[var(--line-soft)] bg-[var(--surface-2)] py-1.5">
                   <span className="text-[11px] font-medium text-[var(--text-secondary)]">
                     原始名称
                   </span>
                 </div>
-                <div className="sticky top-0 z-10 border-b border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-1.5">
+                <div className="border-b border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-1.5">
                   <span className="pr-4 text-[11px] font-medium text-[var(--text-secondary)]">
                     来源
                   </span>

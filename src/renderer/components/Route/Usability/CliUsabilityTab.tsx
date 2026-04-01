@@ -405,29 +405,33 @@ export function CliUsabilityTab() {
   const probeConfig = config?.cliProbe?.config || { enabled: false, intervalMinutes: 60 };
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="flex-1 overflow-y-auto px-6 py-3">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-1">
-            {CLI_PROBE_TIME_RANGES.map(r => (
-              <IOSButton
-                key={r}
-                variant={timeRange === r ? 'primary' : 'secondary'}
-                size="sm"
-                onClick={() => setTimeRange(r)}
-              >
-                {r}
-              </IOSButton>
-            ))}
-            <button
-              onClick={() => setShowSettings(true)}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
-              aria-label="打开检测设置"
-              title="检测设置"
+    <div className="flex-1 overflow-y-auto px-6 py-3">
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-1">
+          {CLI_PROBE_TIME_RANGES.map(r => (
+            <IOSButton
+              key={r}
+              variant={timeRange === r ? 'primary' : 'secondary'}
+              size="sm"
+              onClick={() => setTimeRange(r)}
             >
-              <Settings2 className="h-4 w-4" />
-            </button>
-          </div>
+              {r}
+            </IOSButton>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          <span
+            className={`text-xs ${probeConfig.enabled ? 'text-[var(--success)]' : 'text-[var(--text-secondary)]'}`}
+          >
+            {probeConfig.enabled ? `每 ${probeConfig.intervalMinutes} 分钟` : '未启用'}
+          </span>
+          <button
+            onClick={() => setShowSettings(true)}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
+            aria-label="打开检测设置"
+          >
+            <Settings2 className="h-4 w-4" />
+          </button>
           <IOSButton variant="primary" size="sm" onClick={handleProbeNow} disabled={probing}>
             {probing ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -437,70 +441,67 @@ export function CliUsabilityTab() {
             <span className="ml-1">立即探测</span>
           </IOSButton>
         </div>
+      </div>
 
-        {/* 内容区 */}
-        {loading && !cliProbeLoaded ? (
-          <div className="flex items-center justify-center py-16">
-            <Loader2 className="w-6 h-6 animate-spin text-[var(--accent)]" />
-          </div>
-        ) : cliProbeView.length === 0 ? (
-          <IOSCard className="p-8 text-center">
-            <p className="text-sm text-[var(--text-secondary)]">
-              暂无探测数据，请先启用 CLI 探测或点击「立即探测」
-            </p>
-          </IOSCard>
-        ) : (
-          <IOSCard>
-            <IOSCardContent className="p-0">
-              {/* 表头 */}
-              <div className="grid grid-cols-[140px_1fr_1fr_1fr] border-b border-[var(--line-soft)]">
-                <div className="bg-[var(--surface-2)] px-4 py-2.5 text-xs font-medium text-[var(--text-secondary)]">
-                  站点
-                </div>
-                {CLI_TYPES.map(cli => (
-                  <div
-                    key={cli}
-                    className={`px-4 py-2.5 text-xs font-semibold text-center ${CLI_META[cli].accent} ${CLI_META[cli].headerBg}`}
-                  >
-                    {CLI_META[cli].label}
-                  </div>
-                ))}
+      {/* 内容区 */}
+      {loading && !cliProbeLoaded ? (
+        <div className="flex items-center justify-center py-16">
+          <Loader2 className="w-6 h-6 animate-spin text-[var(--accent)]" />
+        </div>
+      ) : cliProbeView.length === 0 ? (
+        <IOSCard className="p-8 text-center">
+          <p className="text-sm text-[var(--text-secondary)]">
+            暂无探测数据，请先启用 CLI 探测或点击「立即探测」
+          </p>
+        </IOSCard>
+      ) : (
+        <IOSCard>
+          <IOSCardContent className="p-0">
+            {/* 表头 */}
+            <div className="grid grid-cols-[140px_1fr_1fr_1fr] border-b border-[var(--line-soft)]">
+              <div className="bg-[var(--surface-2)] px-4 py-2.5 text-xs font-medium text-[var(--text-secondary)]">
+                站点
               </div>
-
-              {/* 数据行 */}
-              {cliProbeView.map((siteView, idx) => (
+              {CLI_TYPES.map(cli => (
                 <div
-                  key={siteView.siteId}
-                  className={`grid grid-cols-[140px_1fr_1fr_1fr] ${idx < cliProbeView.length - 1 ? 'border-b border-[var(--line-soft)]' : ''}`}
+                  key={cli}
+                  className={`px-4 py-2.5 text-xs font-semibold text-center ${CLI_META[cli].accent} ${CLI_META[cli].headerBg}`}
                 >
-                  <div className="flex flex-col justify-center gap-0.5 border-r border-[var(--line-soft)] px-4 py-3">
-                    <span className="truncate text-[13px] font-medium text-[var(--text-primary)]">
-                      {siteView.siteName}
-                    </span>
-                    <div className="min-w-0">
-                      <span className="truncate text-[10px] text-[var(--text-secondary)]">
-                        {siteView.accountName
-                          ? `测试账户: ${siteView.accountName}`
-                          : '未选择可用账户'}
-                      </span>
-                    </div>
-                  </div>
-                  {CLI_TYPES.map((cli, ci) => {
-                    return (
-                      <div
-                        key={cli}
-                        className={ci < 2 ? 'border-r border-[var(--line-soft)]' : ''}
-                      >
-                        <CliCell cliView={siteView.clis[cli]} />
-                      </div>
-                    );
-                  })}
+                  {CLI_META[cli].label}
                 </div>
               ))}
-            </IOSCardContent>
-          </IOSCard>
-        )}
-      </div>
+            </div>
+
+            {/* 数据行 */}
+            {cliProbeView.map((siteView, idx) => (
+              <div
+                key={siteView.siteId}
+                className={`grid grid-cols-[140px_1fr_1fr_1fr] ${idx < cliProbeView.length - 1 ? 'border-b border-[var(--line-soft)]' : ''}`}
+              >
+                <div className="flex flex-col justify-center gap-0.5 border-r border-[var(--line-soft)] px-4 py-3">
+                  <span className="truncate text-[13px] font-medium text-[var(--text-primary)]">
+                    {siteView.siteName}
+                  </span>
+                  <div className="min-w-0">
+                    <span className="truncate text-[10px] text-[var(--text-secondary)]">
+                      {siteView.accountName
+                        ? `测试账户: ${siteView.accountName}`
+                        : '未选择可用账户'}
+                    </span>
+                  </div>
+                </div>
+                {CLI_TYPES.map((cli, ci) => {
+                  return (
+                    <div key={cli} className={ci < 2 ? 'border-r border-[var(--line-soft)]' : ''}>
+                      <CliCell cliView={siteView.clis[cli]} />
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </IOSCardContent>
+        </IOSCard>
+      )}
 
       <ProbeSettingsModal
         isOpen={showSettings}

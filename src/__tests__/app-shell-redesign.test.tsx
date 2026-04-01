@@ -1,4 +1,6 @@
 import React from 'react';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { GlobalCommandBar } from '../renderer/components/AppShell/GlobalCommandBar';
@@ -499,5 +501,19 @@ describe('app shell redesign', () => {
     expect(screen.getByText('Mock CLI Page')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: APP_PAGE_META.cli.title })).not.toBeInTheDocument();
     expect(screen.queryByText(APP_PAGE_META.cli.description)).not.toBeInTheDocument();
+  });
+
+  it('keeps SettingsPanel on neutral surface tokens and neutral input primitives', () => {
+    const settingsPanelSource = readFileSync(
+      join(process.cwd(), 'src/renderer/components/SettingsPanel.tsx'),
+      'utf8'
+    );
+
+    expect(settingsPanelSource).not.toContain('bg-white');
+    expect(settingsPanelSource).not.toContain('dark:bg-dark-card');
+    expect(settingsPanelSource).not.toContain('border-light-border');
+    expect(settingsPanelSource).not.toContain('text-light-text');
+    expect(settingsPanelSource).toContain("import { AppInput } from './IOSInput';");
+    expect(settingsPanelSource).not.toContain('import { IOSInput } from \'./IOSInput\'');
   });
 });

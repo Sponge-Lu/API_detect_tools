@@ -28,7 +28,7 @@ export interface IOSSearchInputProps
   containerClassName?: string;
 }
 
-export const IOSSearchInput = forwardRef<HTMLInputElement, IOSSearchInputProps>(
+const AppSearchInputImpl = forwardRef<HTMLInputElement, IOSSearchInputProps>(
   (
     {
       size = 'md',
@@ -78,9 +78,9 @@ export const IOSSearchInput = forwardRef<HTMLInputElement, IOSSearchInputProps>(
     // 基础输入框样式
     const baseInputStyles = `
       w-full
-      bg-[var(--ios-bg-tertiary)]
-      text-[var(--ios-text-primary)]
-      placeholder-[var(--ios-text-tertiary)]
+      bg-[var(--surface-2)]
+      text-[var(--text-primary)]
+      placeholder-[var(--text-tertiary)]
       border-none
       transition-all
       duration-[var(--duration-fast)]
@@ -92,7 +92,7 @@ export const IOSSearchInput = forwardRef<HTMLInputElement, IOSSearchInputProps>(
 
     // 聚焦状态样式
     const focusStyles = isFocused
-      ? 'bg-[var(--ios-bg-secondary)] [box-shadow:0_0_0_4px_rgba(0,122,255,0.1)]'
+      ? 'bg-[var(--surface-1)] [box-shadow:0_0_0_4px_var(--focus-ring)]'
       : '';
 
     // 禁用状态
@@ -126,7 +126,7 @@ export const IOSSearchInput = forwardRef<HTMLInputElement, IOSSearchInputProps>(
       <div className={`relative ${containerClassName}`}>
         {/* 搜索图标 */}
         <div
-          className={`absolute ${iconPositions[size]} top-1/2 -translate-y-1/2 text-[var(--ios-text-tertiary)] pointer-events-none`}
+          className={`absolute ${iconPositions[size]} top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] pointer-events-none`}
         >
           <Search className={iconSizes[size]} strokeWidth={2} aria-hidden="true" />
         </div>
@@ -157,7 +157,7 @@ export const IOSSearchInput = forwardRef<HTMLInputElement, IOSSearchInputProps>(
             onClick={handleClear}
             aria-label="清除搜索内容"
             title="清除"
-            className={`absolute ${clearPositions[size]} top-1/2 -translate-y-1/2 text-[var(--ios-text-tertiary)] hover:text-[var(--ios-text-secondary)] transition-colors p-[var(--spacing-xs)] rounded-full hover:bg-[var(--ios-separator)]`}
+            className={`absolute ${clearPositions[size]} top-1/2 -translate-y-1/2 rounded-full p-[var(--spacing-xs)] text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-secondary)]`}
             tabIndex={-1}
           >
             <X className={iconSizes[size]} strokeWidth={2} aria-hidden="true" />
@@ -168,4 +168,7 @@ export const IOSSearchInput = forwardRef<HTMLInputElement, IOSSearchInputProps>(
   }
 );
 
-IOSSearchInput.displayName = 'IOSSearchInput';
+AppSearchInputImpl.displayName = 'AppSearchInput';
+
+export const AppSearchInput = AppSearchInputImpl;
+export const IOSSearchInput = AppSearchInputImpl;

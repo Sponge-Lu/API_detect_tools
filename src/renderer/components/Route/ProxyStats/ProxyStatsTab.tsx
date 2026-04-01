@@ -321,12 +321,10 @@ function formatNumber(n: number): string {
 
 export function ProxyStatsTab() {
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="flex-1 overflow-y-auto px-6 py-3">
-        <ServerSection />
-        <CliModelSection />
-        <StatsDashboard />
-      </div>
+    <div className="flex-1 overflow-y-auto px-6 py-2">
+      <ServerSection />
+      <CliModelSection />
+      <StatsDashboard />
     </div>
   );
 }

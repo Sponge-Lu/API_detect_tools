@@ -6,8 +6,12 @@
  * @updated 2025-01-08 - 创建 IOSInput 组件导出
  */
 
+export { AppInput } from './IOSInput';
+export type { IOSInputProps as AppInputProps } from './IOSInput';
 export { IOSInput } from './IOSInput';
 export type { IOSInputProps } from './IOSInput';
 
+export { AppSearchInput } from './IOSSearchInput';
+export type { IOSSearchInputProps as AppSearchInputProps } from './IOSSearchInput';
 export { IOSSearchInput } from './IOSSearchInput';
 export type { IOSSearchInputProps } from './IOSSearchInput';
