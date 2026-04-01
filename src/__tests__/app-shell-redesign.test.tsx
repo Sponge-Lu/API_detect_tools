@@ -1,10 +1,26 @@
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { PageHeader } from '../renderer/components/AppShell/PageHeader';
 import { APP_PAGE_META } from '../renderer/components/AppShell/pageMeta';
 import { VerticalSidebar } from '../renderer/components/Sidebar/VerticalSidebar';
 
 describe('app shell redesign', () => {
+  it('renders the site page header as a compact row with shared theme typography tokens', () => {
+    const { container, queryByText } = render(
+      <PageHeader title="站点管理" description="集中维护站点配置、账号、检测结果与日常操作。" />
+    );
+
+    expect(screen.getByRole('heading', { name: '站点管理' })).toHaveClass(
+      'text-[var(--text-primary)]'
+    );
+    expect(screen.getByText('集中维护站点配置、账号、检测结果与日常操作。')).toHaveClass(
+      'text-[var(--text-secondary)]'
+    );
+    expect(container.querySelector('[data-testid="page-header-row"]')).toHaveClass('min-h-[40px]');
+    expect(queryByText('Workspace')).not.toBeInTheDocument();
+  });
+
   it('renders flattened top-level sidebar destinations without a route parent entry', () => {
     render(<VerticalSidebar activeTab="sites" onTabChange={vi.fn()} saving={false} />);
 
