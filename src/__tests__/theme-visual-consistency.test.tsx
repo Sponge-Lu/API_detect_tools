@@ -21,11 +21,17 @@ describe('theme visual consistency', () => {
     expect(globalCss).toContain('--accent:');
     expect(globalCss).toContain('--overlay-mask:');
     expect(globalCss).toContain('--code-bg:');
+    expect(globalCss).toContain('--ease-standard:');
+    expect(globalCss).toContain('--ease-enter:');
+    expect(globalCss).toContain('--ease-exit:');
     expect(globalCss).toContain("html[data-theme='light-b']");
     expect(globalCss).toContain("html[data-theme='light-c']");
     expect(globalCss).toContain("html[data-theme='dark']");
     expect(globalCss).toContain('.app-icon');
     expect(topLevelRootBlock).not.toContain('--ios-');
+    expect(topLevelRootBlock).not.toContain('--ease-ios');
+    expect(topLevelRootBlock).not.toContain('--ease-ios-in');
+    expect(topLevelRootBlock).not.toContain('--ease-ios-out');
     expect(globalCss).not.toContain('.ios-icon {');
     expect(globalCss).not.toContain('.ios-icon-sm {');
     expect(globalCss).not.toContain('.ios-icon-md {');

@@ -114,9 +114,9 @@
   --duration-slow: 400ms;
 
   /* 缓动函数 */
-  --ease-ios: cubic-bezier(0.4, 0, 0.2, 1);
-  --ease-ios-in: cubic-bezier(0.4, 0, 1, 1);
-  --ease-ios-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-enter: cubic-bezier(0.4, 0, 1, 1);
+  --ease-exit: cubic-bezier(0, 0, 0.2, 1);
   --ease-spring: cubic-bezier(0.175, 0.885, 0.32, 1.275);
 
   /* 兼容旧语义变量 */
@@ -434,8 +434,8 @@ body {
   border: none;
   cursor: pointer;
   transition:
-    background-color var(--duration-fast) var(--ease-ios),
-    transform var(--duration-fast) var(--ease-ios);
+    background-color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
 }
 
 .app-icon-button:hover {
@@ -720,7 +720,7 @@ body,
 
 /* 淡入动画 - 仅使用 opacity */
 .app-fade-in {
-  animation: iosFadeIn var(--duration-normal) var(--ease-ios) forwards;
+  animation: iosFadeIn var(--duration-normal) var(--ease-standard) forwards;
 }
 
 @keyframes iosFadeIn {
@@ -734,7 +734,7 @@ body,
 
 /* 淡出动画 - 仅使用 opacity */
 .app-fade-out {
-  animation: iosFadeOut var(--duration-normal) var(--ease-ios) forwards;
+  animation: iosFadeOut var(--duration-normal) var(--ease-standard) forwards;
 }
 
 @keyframes iosFadeOut {
@@ -748,7 +748,7 @@ body,
 
 /* 缩放进入动画 - 仅使用 transform 和 opacity */
 .app-scale-in {
-  animation: iosScaleIn var(--duration-normal) var(--ease-ios) forwards;
+  animation: iosScaleIn var(--duration-normal) var(--ease-standard) forwards;
 }
 
 @keyframes iosScaleIn {
@@ -764,7 +764,7 @@ body,
 
 /* 缩放退出动画 - 仅使用 transform 和 opacity */
 .app-scale-out {
-  animation: iosScaleOut var(--duration-normal) var(--ease-ios) forwards;
+  animation: iosScaleOut var(--duration-normal) var(--ease-standard) forwards;
 }
 
 @keyframes iosScaleOut {
@@ -780,7 +780,7 @@ body,
 
 /* 滑入动画 - 仅使用 transform 和 opacity */
 .app-slide-up {
-  animation: iosSlideUp var(--duration-normal) var(--ease-ios) forwards;
+  animation: iosSlideUp var(--duration-normal) var(--ease-standard) forwards;
 }
 
 @keyframes iosSlideUp {
@@ -796,7 +796,7 @@ body,
 
 /* 滑出动画 - 仅使用 transform 和 opacity */
 .app-slide-down {
-  animation: iosSlideDown var(--duration-normal) var(--ease-ios) forwards;
+  animation: iosSlideDown var(--duration-normal) var(--ease-standard) forwards;
 }
 
 @keyframes iosSlideDown {
@@ -812,7 +812,7 @@ body,
 
 /* 按钮按下动画 - 仅使用 transform */
 .app-press {
-  transition: transform var(--duration-fast) var(--ease-ios);
+  transition: transform var(--duration-fast) var(--ease-standard);
 }
 
 .app-press:active {
@@ -821,7 +821,7 @@ body,
 
 /* 悬停提升动画 - 仅使用 transform */
 .app-hover-lift {
-  transition: transform var(--duration-fast) var(--ease-ios);
+  transition: transform var(--duration-fast) var(--ease-standard);
 }
 
 .app-hover-lift:hover {
@@ -839,21 +839,21 @@ body,
 .app-transition-perf {
   transition-property: transform, opacity;
   transition-duration: var(--duration-normal);
-  transition-timing-function: var(--ease-ios);
+  transition-timing-function: var(--ease-standard);
 }
 
 /* 快速高性能过渡 */
 .app-transition-perf-fast {
   transition-property: transform, opacity;
   transition-duration: var(--duration-fast);
-  transition-timing-function: var(--ease-ios);
+  transition-timing-function: var(--ease-standard);
 }
 
 /* 慢速高性能过渡 */
 .app-transition-perf-slow {
   transition-property: transform, opacity;
   transition-duration: var(--duration-slow);
-  transition-timing-function: var(--ease-ios);
+  transition-timing-function: var(--ease-standard);
 }
 
 /* ========== 毛玻璃效果优化 ========== */
@@ -1117,7 +1117,7 @@ a:focus-visible {
   padding: var(--spacing-sm) var(--spacing-md);
   border-radius: var(--radius-md);
   z-index: 9999;
-  transition: top var(--duration-fast) var(--ease-ios);
+  transition: top var(--duration-fast) var(--ease-standard);
 }
 
 .app-skip-link:focus {
@@ -1136,7 +1136,7 @@ a:focus-visible {
   border: 2px solid transparent;
   border-radius: inherit;
   pointer-events: none;
-  transition: border-color var(--duration-fast) var(--ease-ios);
+  transition: border-color var(--duration-fast) var(--ease-standard);
 }
 
 .app-keyboard-nav-indicator:focus-visible::after {
