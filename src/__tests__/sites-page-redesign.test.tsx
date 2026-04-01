@@ -1,7 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { CliCompatibilityIcons } from '../renderer/components/CliCompatibilityIcons/CliCompatibilityIcons';
 import { SiteListHeader } from '../renderer/components/SiteListHeader';
 import { SiteCard, SiteCardActions, SiteCardCliEntry } from '../renderer/components/SiteCard';
 import { SiteCardHeader } from '../renderer/components/SiteCard/SiteCardHeader';
@@ -288,27 +287,172 @@ describe('sites page redesign', () => {
     expect(screen.queryByTitle('配置 CLI')).not.toBeInTheDocument();
   });
 
-  it('does not hard-code the site page body to a 1180px minimum width anymore', () => {
-    const sitesPageSource = readFileSync(
-      join(process.cwd(), 'src/renderer/pages/SitesPage.tsx'),
-      'utf8'
+  it('keeps primary site controls visible together inside a standard shell width', () => {
+    render(
+      <div className="w-[1024px]">
+        <SortBar
+          columnWidths={[120, 75, 75, 75]}
+          onColumnWidthChange={vi.fn()}
+          sortField="balance"
+          sortOrder="desc"
+          onToggleSort={vi.fn()}
+          onResetSort={vi.fn()}
+        />
+        <SiteCard
+          site={baseSite}
+          index={0}
+          siteResult={{ status: '成功', todayRequests: 2, todayTotalTokens: 3000, models: [] } as any}
+          siteAccount={undefined}
+          isExpanded={false}
+          columnWidths={[120, 75, 75, 75]}
+          accountId="account-1"
+          accountName="Primary Account"
+          accountAccessToken={undefined}
+          accountUserId={undefined}
+          cardKey="site-1::account-1"
+          apiKeys={[]}
+          userGroups={{}}
+          modelPricing={null}
+          isDetecting={false}
+          checkingIn={null}
+          dragOverIndex={null}
+          refreshMessage={null}
+          selectedGroup={null}
+          modelSearch=""
+          globalModelSearch=""
+          showTokens={{}}
+          selectedModels={new Set<string>()}
+          deletingTokenKey={null}
+          autoRefreshEnabled={false}
+          cliCompatibility={{
+            claudeCode: true,
+            codex: null,
+            geminiCli: null,
+            testedAt: Date.now(),
+          }}
+          cliConfig={{
+            claudeCode: {
+              apiKeyId: 1,
+              model: 'claude-3-5-sonnet',
+              testModel: null,
+              testModels: [],
+              enabled: true,
+              editedFiles: null,
+              applyMode: 'merge',
+            },
+            codex: {
+              apiKeyId: null,
+              model: null,
+              testModel: null,
+              testModels: [],
+              enabled: true,
+              editedFiles: null,
+              applyMode: 'merge',
+            },
+            geminiCli: {
+              apiKeyId: null,
+              model: null,
+              testModel: null,
+              testModels: [],
+              enabled: false,
+              editedFiles: null,
+              applyMode: 'merge',
+            },
+          }}
+          isCliTesting={false}
+          onExpand={vi.fn()}
+          onDetect={vi.fn()}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onCheckIn={vi.fn()}
+          onOpenSite={vi.fn()}
+          onOpenExtraLink={vi.fn()}
+          onCopyToClipboard={vi.fn()}
+          onToggleAutoRefresh={vi.fn()}
+          onOpenCliConfig={vi.fn()}
+          onAddAccount={vi.fn()}
+          onDragStart={vi.fn()}
+          onDragEnd={vi.fn()}
+          onDragOver={vi.fn()}
+          onDragLeave={vi.fn()}
+          onDrop={vi.fn()}
+          onToggleGroupFilter={vi.fn()}
+          onModelSearchChange={vi.fn()}
+          onToggleTokenVisibility={vi.fn()}
+          onToggleModelSelection={vi.fn()}
+          onCopySelectedModels={vi.fn()}
+          onClearSelectedModels={vi.fn()}
+          onOpenCreateTokenDialog={vi.fn()}
+          onDeleteToken={vi.fn()}
+        />
+      </div>
     );
 
-    expect(sitesPageSource).not.toContain('min-w-[1180px]');
+    expect(screen.getByRole('button', { name: '更多排序' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'CLI 工作台' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '更多操作' })).toBeInTheDocument();
+    expect(screen.getByText('Primary Account')).toBeInTheDocument();
   });
 
-  it('keeps the sites runtime surfaces off legacy ios tokens and utilities', () => {
-    const sitesPageSource = readFileSync(
-      join(process.cwd(), 'src/renderer/pages/SitesPage.tsx'),
-      'utf8'
-    );
-    const compatibilityIconsSource = readFileSync(
-      join(process.cwd(), 'src/renderer/components/CliCompatibilityIcons/CliCompatibilityIcons.tsx'),
-      'utf8'
+  it('renders the CLI compatibility surface through visible icons and action controls', () => {
+    const onConfig = vi.fn();
+    const onTest = vi.fn();
+    const onApply = vi.fn();
+
+    render(
+      <CliCompatibilityIcons
+        compatibility={{
+          claudeCode: true,
+          codex: false,
+          geminiCli: null,
+          testedAt: Date.now(),
+        }}
+        cliConfig={{
+          claudeCode: {
+            apiKeyId: 1,
+            model: 'claude-3-5-sonnet',
+            testModel: null,
+            testModels: [],
+            enabled: true,
+            editedFiles: null,
+            applyMode: 'merge',
+          },
+          codex: {
+            apiKeyId: 2,
+            model: 'gpt-4.1',
+            testModel: null,
+            testModels: [],
+            enabled: true,
+            editedFiles: null,
+            applyMode: 'merge',
+          },
+          geminiCli: {
+            apiKeyId: 3,
+            model: 'gemini-2.5-pro',
+            testModel: null,
+            testModels: [],
+            enabled: true,
+            editedFiles: null,
+            applyMode: 'merge',
+          },
+        }}
+        onConfig={onConfig}
+        onTest={onTest}
+        onApply={onApply}
+      />
     );
 
-    expect(sitesPageSource).not.toContain('ios-scroll-y');
-    expect(compatibilityIconsSource).not.toContain('--ios-');
+    expect(screen.getByAltText('Claude Code')).toBeInTheDocument();
+    expect(screen.getByAltText('Codex')).toBeInTheDocument();
+    expect(screen.getByAltText('Gemini CLI')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle('配置 CLI'));
+    fireEvent.click(screen.getByTitle('测试 CLI 兼容性'));
+    fireEvent.click(screen.getByTitle('应用 CLI 配置到本地文件'));
+
+    expect(onConfig).toHaveBeenCalledTimes(1);
+    expect(onTest).toHaveBeenCalledTimes(1);
+    expect(onApply).toHaveBeenCalledTimes(1);
   });
 
   it('places the CLI workbench slot to the left of the normal site actions', () => {

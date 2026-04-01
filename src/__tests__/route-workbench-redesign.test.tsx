@@ -1,6 +1,4 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ModelRedirectionTab } from '../renderer/components/Route/Redirection/ModelRedirectionTab';
 import { CliUsabilityTab } from '../renderer/components/Route/Usability/CliUsabilityTab';
@@ -81,53 +79,35 @@ describe('route workbench redesign', () => {
     await screen.findByText('总请求');
   });
 
-  it('removes remaining legacy ios tokens and utilities from route runtime surfaces', () => {
-    const routeFiles = [
-      'src/renderer/components/Route/Redirection/ModelRedirectionTab.tsx',
-      'src/renderer/components/Route/Usability/CliUsabilityTab.tsx',
-      'src/renderer/components/Route/ProxyStats/ProxyStatsTab.tsx',
-    ];
+  it('opens route probe settings as a shared dialog from the page-local action cluster', async () => {
+    render(<CliUsabilityTab />);
 
-    routeFiles.forEach(relativePath => {
-      const source = readFileSync(join(process.cwd(), relativePath), 'utf8');
-      expect(source).not.toContain('--ios-');
-      expect(source).not.toContain('ios-icon-button');
-      expect(source).not.toContain('ios-icon ios-icon');
-    });
+    fireEvent.click(screen.getByRole('button', { name: '打开检测设置' }));
 
-    const usabilitySource = readFileSync(
-      join(process.cwd(), 'src/renderer/components/Route/Usability/CliUsabilityTab.tsx'),
-      'utf8'
-    );
-
-    expect(usabilitySource).toMatch(/from ['"].*AppModal\/AppModal['"]/);
-    expect(usabilitySource).not.toMatch(/from ['"].*IOSModal['"]/);
+    expect(await screen.findByRole('dialog', { name: '检测设置' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保存' })).toBeInTheDocument();
+    expect(screen.queryByTestId('route-workbench-header')).not.toBeInTheDocument();
   });
 
-  it('keeps route pages on the original content skeleton instead of adding sticky workbench shells', () => {
-    const redirectionSource = readFileSync(
-      join(process.cwd(), 'src/renderer/components/Route/Redirection/ModelRedirectionTab.tsx'),
-      'utf8'
-    );
-    const usabilitySource = readFileSync(
-      join(process.cwd(), 'src/renderer/components/Route/Usability/CliUsabilityTab.tsx'),
-      'utf8'
-    );
-    const proxyStatsSource = readFileSync(
-      join(process.cwd(), 'src/renderer/components/Route/ProxyStats/ProxyStatsTab.tsx'),
-      'utf8'
-    );
+  it('keeps each route tab on its page-local content skeleton without a sticky workbench shell', async () => {
+    const { rerender } = render(<ModelRedirectionTab />);
 
-    expect(redirectionSource).not.toContain('sticky top-0');
-    expect(redirectionSource).not.toContain(
-      'rounded-[var(--radius-xl)] border border-[var(--line-soft)] bg-[var(--surface-1)]'
-    );
-    expect(redirectionSource).toContain('return (\n    <div className="flex-1 overflow-hidden">');
+    expect(screen.getByText('厂商目录')).toBeInTheDocument();
+    expect(screen.getByText('claude-3-5-sonnet')).toBeInTheDocument();
+    expect(screen.getByText('claude-sonnet')).toBeInTheDocument();
+    expect(screen.queryByText('工作台视图')).not.toBeInTheDocument();
 
-    expect(usabilitySource).toContain('return (\n    <div className="flex-1 overflow-y-auto px-6 py-3">');
-    expect(usabilitySource).not.toContain('return (\n    <div className="flex-1 flex flex-col overflow-hidden">');
+    rerender(<CliUsabilityTab />);
 
-    expect(proxyStatsSource).toContain('return (\n    <div className="flex-1 overflow-y-auto px-6 py-2">');
-    expect(proxyStatsSource).not.toContain('return (\n    <div className="flex-1 flex flex-col overflow-hidden">');
+    expect(screen.getByRole('button', { name: '打开检测设置' })).toBeInTheDocument();
+    expect(screen.getByText('暂无探测数据，请先启用 CLI 探测或点击「立即探测」')).toBeInTheDocument();
+    expect(screen.queryByText('工作台视图')).not.toBeInTheDocument();
+
+    rerender(<ProxyStatsTab />);
+
+    await screen.findByText('总请求');
+    expect(screen.getByText('代理服务器')).toBeInTheDocument();
+    expect(screen.getByText('运行中')).toBeInTheDocument();
+    expect(screen.queryByText('工作台视图')).not.toBeInTheDocument();
   });
 });

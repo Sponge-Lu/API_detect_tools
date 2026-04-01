@@ -11,7 +11,6 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
-  X,
   Cloud,
   Upload,
   Download,
@@ -24,7 +23,9 @@ import {
   AlertCircle,
   CheckCircle,
 } from 'lucide-react';
-import { WebDAVBackupInfo } from '../../../shared/types/site';
+import type { WebDAVBackupInfo } from '../../../shared/types/site';
+import { AppModal } from '../AppModal/AppModal';
+import { ConfirmDialog } from '../ConfirmDialog';
 
 interface WebDAVBackupDialogProps {
   isOpen: boolean;
@@ -211,211 +212,171 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-dark-card rounded-xl shadow-2xl w-full max-w-2xl mx-4 overflow-hidden">
-        {/* 标题栏 */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-light-border dark:border-dark-border">
-          <div className="flex items-center gap-2">
-            <Cloud className="w-5 h-5 text-primary-500" />
-            <h2 className="text-lg font-semibold text-light-text dark:text-dark-text">
-              WebDAV 云端备份
-            </h2>
-          </div>
+    <>
+      <AppModal
+        isOpen={isOpen}
+        onClose={onClose}
+        title="WebDAV 云端备份"
+        titleIcon={<Cloud className="h-5 w-5" />}
+        size="xl"
+        className="max-w-2xl"
+        contentClassName="space-y-4"
+        footer={
+          <p className="w-full text-center text-xs text-[var(--text-secondary)]">
+            备份文件存储在 WebDAV 服务器的配置路径中。恢复前会自动备份当前配置。
+          </p>
+        }
+      >
+        <div className="flex flex-wrap items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)]/72 p-3">
           <button
-            onClick={onClose}
-            className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
-          >
-            <X className="w-5 h-5 text-slate-500" />
-          </button>
-        </div>
-
-        {/* 操作栏 */}
-        <div className="px-6 py-3 border-b border-light-border dark:border-dark-border bg-slate-50 dark:bg-slate-800/50 flex items-center gap-3">
-          <button
+            type="button"
             onClick={handleUpload}
             disabled={uploading || loading}
-            className="px-4 py-2 bg-primary-500 hover:bg-primary-600 disabled:bg-primary-300 dark:disabled:bg-primary-700 text-white rounded-lg transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed"
+            className="inline-flex items-center gap-2 rounded-[var(--radius-md)] bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {uploading ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin" />
                 上传中...
               </>
             ) : (
               <>
-                <Upload className="w-4 h-4" />
+                <Upload className="h-4 w-4" />
                 上传备份
               </>
             )}
           </button>
           <button
+            type="button"
             onClick={loadBackups}
             disabled={loading}
-            className="px-4 py-2 bg-slate-500 hover:bg-slate-600 disabled:bg-slate-300 dark:disabled:bg-slate-700 text-white rounded-lg transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed"
+            className="inline-flex items-center gap-2 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-4 py-2 text-sm font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-3)] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {loading ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <RefreshCw className="w-4 h-4" />
-            )}
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             刷新
           </button>
         </div>
 
-        {/* 操作结果提示 */}
-        {operationResult && (
+        {operationResult ? (
           <div
-            className={`mx-6 mt-4 flex items-center gap-2 px-4 py-3 rounded-lg text-sm ${
+            className={`flex items-center gap-2 rounded-[var(--radius-lg)] px-4 py-3 text-sm ${
               operationResult.success
                 ? 'bg-[var(--success-soft)] text-[var(--success)]'
                 : 'bg-[var(--danger-soft)] text-[var(--danger)]'
             }`}
           >
             {operationResult.success ? (
-              <CheckCircle className="w-4 h-4 flex-shrink-0" />
+              <CheckCircle className="h-4 w-4 flex-shrink-0" />
             ) : (
-              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <AlertCircle className="h-4 w-4 flex-shrink-0" />
             )}
             {operationResult.message}
           </div>
-        )}
+        ) : null}
 
-        {/* 备份列表 */}
-        <div className="p-6">
-          {loading ? (
-            <div className="py-12 text-center text-[var(--text-secondary)]">
-              <Loader2 className="mx-auto mb-3 h-8 w-8 animate-spin text-[var(--accent)]" />
-              <p>加载备份列表中...</p>
-            </div>
-          ) : error ? (
-            <div className="py-12 text-center">
-              <AlertCircle className="mx-auto mb-3 h-12 w-12 text-[var(--danger)]" />
-              <p className="text-[var(--danger)]">{error}</p>
-              <p className="mt-2 text-sm text-[var(--text-secondary)]">请检查 WebDAV 配置是否正确</p>
-            </div>
-          ) : backups.length === 0 ? (
-            <div className="text-center py-12 text-slate-500">
-              <FileJson className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p>没有找到云端备份</p>
-              <p className="text-sm mt-1">点击"上传备份"将当前配置备份到云端</p>
-            </div>
-          ) : (
-            <div className="space-y-2 max-h-80 overflow-y-auto">
-              {backups.map((backup, index) => (
-                <div
-                  key={backup.filename}
-                  className="flex items-center gap-3 p-3 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-700 transition-all group"
-                >
-                  <FileJson className="w-8 h-8 text-primary-500 flex-shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-slate-800 dark:text-slate-200 truncate">
-                        {backup.filename}
+        {loading ? (
+          <div className="py-12 text-center text-[var(--text-secondary)]">
+            <Loader2 className="mx-auto mb-3 h-8 w-8 animate-spin text-[var(--accent)]" />
+            <p>加载备份列表中...</p>
+          </div>
+        ) : error ? (
+          <div className="py-12 text-center">
+            <AlertCircle className="mx-auto mb-3 h-12 w-12 text-[var(--danger)]" />
+            <p className="text-[var(--danger)]">{error}</p>
+            <p className="mt-2 text-sm text-[var(--text-secondary)]">请检查 WebDAV 配置是否正确</p>
+          </div>
+        ) : backups.length === 0 ? (
+          <div className="py-12 text-center text-[var(--text-secondary)]">
+            <FileJson className="mx-auto mb-3 h-12 w-12 opacity-30" />
+            <p>没有找到云端备份</p>
+            <p className="mt-1 text-sm">点击"上传备份"将当前配置备份到云端</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {backups.map((backup, index) => (
+              <div
+                key={backup.filename}
+                className="group flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-1)] p-3 transition-colors hover:border-[var(--accent)]/35 hover:bg-[var(--surface-2)]"
+              >
+                <FileJson className="h-8 w-8 flex-shrink-0 text-[var(--accent)]" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate font-medium text-[var(--text-primary)]">
+                      {backup.filename}
+                    </span>
+                    {index === 0 ? (
+                      <span className="rounded bg-[var(--success-soft)] px-2 py-0.5 text-xs text-[var(--success)]">
+                        最新
                       </span>
-                      {index === 0 && (
-                        <span className="rounded bg-[var(--success-soft)] px-2 py-0.5 text-xs text-[var(--success)]">
-                          最新
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-4 text-xs text-slate-500 mt-1">
-                      <span className="flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        {formatDate(backup.lastModified)}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <HardDrive className="w-3 h-3" />
-                        {formatSize(backup.size)}
-                      </span>
-                    </div>
+                    ) : null}
                   </div>
-                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                      onClick={() => openConfirm('restore', backup)}
-                      disabled={processingBackup === backup.filename}
-                      className="rounded-lg p-2 text-[var(--accent)] transition-colors hover:bg-[var(--accent-soft)] disabled:opacity-50"
-                      title="恢复此备份"
-                    >
-                      {processingBackup === backup.filename ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Download className="w-4 h-4" />
-                      )}
-                    </button>
-                    <button
-                      onClick={() => openConfirm('delete', backup)}
-                      disabled={processingBackup === backup.filename}
-                      className="rounded-lg p-2 text-[var(--danger)] transition-colors hover:bg-[var(--danger-soft)] disabled:opacity-50"
-                      title="删除此备份"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                  <div className="mt-1 flex items-center gap-4 text-xs text-[var(--text-secondary)]">
+                    <span className="flex items-center gap-1">
+                      <Clock className="h-3 w-3" />
+                      {formatDate(backup.lastModified)}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <HardDrive className="h-3 w-3" />
+                      {formatSize(backup.size)}
+                    </span>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* 底部提示 */}
-        <div className="px-6 py-4 border-t border-light-border dark:border-dark-border bg-slate-50 dark:bg-slate-800/50">
-          <p className="text-xs text-slate-500 text-center">
-            备份文件存储在 WebDAV 服务器的配置路径中。恢复前会自动备份当前配置。
-          </p>
-        </div>
-      </div>
-
-      {/* 确认对话框 */}
-      {confirm.isOpen && confirm.backup && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/50" onClick={closeConfirm} />
-          <div className="relative bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
-            <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-200 dark:border-slate-700">
-              <AlertCircle
-                className={`w-6 h-6 ${confirm.type === 'delete' ? 'text-[var(--danger)]' : 'text-[var(--accent)]'}`}
-              />
-              <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                {confirm.type === 'restore' ? '确认恢复' : '确认删除'}
-              </h3>
-            </div>
-            <div className="px-5 py-4">
-              <p className="text-sm text-slate-600 dark:text-slate-300">
-                {confirm.type === 'restore' ? (
-                  <>
-                    确定要恢复备份 <strong>{confirm.backup.filename}</strong> 吗？
-                    <br />
-                    <span className="text-slate-500">当前配置将被覆盖，但会先自动备份。</span>
-                  </>
-                ) : (
-                  <>
-                    确定要删除备份 <strong>{confirm.backup.filename}</strong> 吗？
-                    <br />
-                    <span className="text-slate-500">此操作无法撤销。</span>
-                  </>
-                )}
-              </p>
-            </div>
-            <div className="flex items-center justify-end gap-3 px-5 py-4 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-200 dark:border-slate-700">
-              <button
-                onClick={closeConfirm}
-                className="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-600 transition-all"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleConfirm}
-                className={`px-4 py-2 text-sm font-medium text-white rounded-lg transition-all ${
-                  confirm.type === 'delete'
-                    ? 'bg-[var(--danger)] hover:opacity-90'
-                    : 'bg-[var(--accent)] hover:opacity-90'
-                }`}
-              >
-                {confirm.type === 'restore' ? '确认恢复' : '确认删除'}
-              </button>
-            </div>
+                <div className="flex items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                  <button
+                    type="button"
+                    onClick={() => openConfirm('restore', backup)}
+                    disabled={processingBackup === backup.filename}
+                    className="rounded-[var(--radius-md)] p-2 text-[var(--accent)] transition-colors hover:bg-[var(--accent-soft)] disabled:opacity-50"
+                    aria-label="恢复此备份"
+                    title="恢复此备份"
+                  >
+                    {processingBackup === backup.filename ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openConfirm('delete', backup)}
+                    disabled={processingBackup === backup.filename}
+                    className="rounded-[var(--radius-md)] p-2 text-[var(--danger)] transition-colors hover:bg-[var(--danger-soft)] disabled:opacity-50"
+                    aria-label="删除此备份"
+                    title="删除此备份"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </AppModal>
+
+      {confirm.isOpen && confirm.backup ? (
+        <ConfirmDialog
+          isOpen={confirm.isOpen}
+          type={confirm.type === 'delete' ? 'warning' : 'confirm'}
+          title={confirm.type === 'restore' ? '确认恢复' : '确认删除'}
+          message={
+            confirm.type === 'restore'
+              ? `确定要恢复备份 ${confirm.backup.filename} 吗？`
+              : `确定要删除备份 ${confirm.backup.filename} 吗？`
+          }
+          content={
+            <p className="mt-3 text-sm text-[var(--text-secondary)]">
+              {confirm.type === 'restore'
+                ? '当前配置将被覆盖，但会先自动备份。'
+                : '此操作无法撤销。'}
+            </p>
+          }
+          confirmText={confirm.type === 'restore' ? '确认恢复' : '确认删除'}
+          cancelText="取消"
+          overlayZIndexClassName="z-[220]"
+          onConfirm={handleConfirm}
+          onCancel={closeConfirm}
+        />
+      ) : null}
+    </>
   );
 }

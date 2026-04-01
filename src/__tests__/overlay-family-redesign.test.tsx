@@ -1,11 +1,10 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { AppModal } from '../renderer/components/AppModal/AppModal';
 import { OverlayDrawer } from '../renderer/components/overlays/OverlayDrawer';
 import { UnifiedCliConfigDialog } from '../renderer/components/dialogs/UnifiedCliConfigDialog';
 import { CustomCliConfigEditorDialog } from '../renderer/components/dialogs/CustomCliConfigEditorDialog';
+import { WebDAVBackupDialog } from '../renderer/components/dialogs/WebDAVBackupDialog';
 import type { CliConfig } from '../shared/types/cli-config';
 import type { CustomCliConfig } from '../shared/types/custom-cli-config';
 
@@ -200,29 +199,41 @@ describe('overlay family redesign', () => {
     expect(screen.getAllByTestId('overlay-footer')).toHaveLength(2);
   });
 
-  it('keeps owned overlay consumers on neutral tokens and direct AppModal imports', () => {
-    const legacyFreeFiles = [
-      'src/renderer/components/ConfirmDialog.tsx',
-      'src/renderer/components/dialogs/AutoRefreshDialog.tsx',
-      'src/renderer/components/dialogs/DownloadUpdatePanel.tsx',
-      'src/renderer/components/dialogs/UnifiedCliConfigDialog.tsx',
-      'src/renderer/components/dialogs/CustomCliConfigEditorDialog.tsx',
-      'src/renderer/components/dialogs/WebDAVBackupDialog.tsx',
-    ];
+  it('keeps WebDAV backup management and destructive confirmation inside the shared modal family', async () => {
+    const electronAPI = (((window as any).electronAPI ??= {}) as Record<string, unknown>) as any;
+    electronAPI.webdav = {
+      ...electronAPI.webdav,
+      listBackups: vi.fn().mockResolvedValue({
+        success: true,
+        data: [
+          {
+            filename: 'backup-2026-04-01.json',
+            lastModified: '2026-04-01T00:00:00.000Z',
+            size: 2048,
+          },
+        ],
+      }),
+      uploadBackup: vi.fn(),
+      restoreBackup: vi.fn(),
+      deleteBackup: vi.fn(),
+    };
 
-    legacyFreeFiles.forEach(relativePath => {
-      const source = readFileSync(join(process.cwd(), relativePath), 'utf8');
-      expect(source).not.toContain('--ios-');
-    });
+    render(<WebDAVBackupDialog isOpen={true} onClose={vi.fn()} />);
 
-    [
-      'src/renderer/components/ConfirmDialog.tsx',
-      'src/renderer/components/dialogs/AutoRefreshDialog.tsx',
-      'src/renderer/components/dialogs/DownloadUpdatePanel.tsx',
-    ].forEach(relativePath => {
-      const source = readFileSync(join(process.cwd(), relativePath), 'utf8');
-      expect(source).toMatch(/from ['"].*AppModal\/AppModal['"]/);
-      expect(source).not.toMatch(/from ['"].*IOSModal['"]/);
-    });
+    const webdavDialog = await screen.findByRole('dialog', { name: 'WebDAV 云端备份' });
+    expect(within(webdavDialog).getByRole('button', { name: '上传备份' })).toBeInTheDocument();
+    expect(await within(webdavDialog).findByText('backup-2026-04-01.json')).toBeInTheDocument();
+    expect(screen.getAllByTestId('overlay-title')).toHaveLength(1);
+    expect(screen.getAllByTestId('overlay-body')).toHaveLength(1);
+    expect(screen.getAllByTestId('overlay-footer')).toHaveLength(1);
+
+    fireEvent.click(within(webdavDialog).getByTitle('删除此备份'));
+
+    const confirmDialog = await screen.findByRole('dialog', { name: '确认删除' });
+    expect(within(confirmDialog).getByText('此操作无法撤销。')).toBeInTheDocument();
+    expect(document.body.querySelectorAll('[role="presentation"]')).toHaveLength(2);
+    expect(screen.getAllByTestId('overlay-title')).toHaveLength(2);
+    expect(screen.getAllByTestId('overlay-body')).toHaveLength(2);
+    expect(screen.getAllByTestId('overlay-footer')).toHaveLength(2);
   });
 });

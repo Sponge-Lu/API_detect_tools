@@ -1,7 +1,5 @@
 import React from 'react';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { GlobalCommandBar } from '../renderer/components/AppShell/GlobalCommandBar';
 import { PageHeader } from '../renderer/components/AppShell/PageHeader';
@@ -503,17 +501,128 @@ describe('app shell redesign', () => {
     expect(screen.queryByText(APP_PAGE_META.cli.description)).not.toBeInTheDocument();
   });
 
-  it('keeps SettingsPanel on neutral surface tokens and neutral input primitives', () => {
-    const settingsPanelSource = readFileSync(
-      join(process.cwd(), 'src/renderer/components/SettingsPanel.tsx'),
-      'utf8'
+  it('renders SettingsPanel detection and sync inputs through the neutral AppInput primitives', async () => {
+    vi.resetModules();
+
+    vi.doMock('../renderer/hooks/useTheme', () => ({
+      useTheme: () => ({
+        themeMode: 'light-a',
+        changeThemeMode: vi.fn(),
+      }),
+    }));
+
+    vi.doMock('../renderer/hooks/useUpdate', () => ({
+      useUpdate: () => ({
+        currentVersion: '3.0.1',
+        updateInfo: null,
+        isChecking: false,
+        error: null,
+        settings: { autoCheckEnabled: false },
+        checkForUpdates: vi.fn(),
+        updateSettings: vi.fn(),
+      }),
+    }));
+
+    vi.doMock('../renderer/store/toastStore', () => ({
+      toast: {
+        success: vi.fn(),
+        error: vi.fn(),
+      },
+    }));
+
+    vi.doMock('../renderer/store/uiStore', () => ({
+      useUIStore: () => ({
+        openDownloadPanel: vi.fn(),
+      }),
+    }));
+
+    vi.doMock('../renderer/components/dialogs', () => ({
+      WebDAVBackupDialog: () => null,
+    }));
+
+    vi.doMock('../renderer/components/IOSInput', async () => {
+      const actual = await vi.importActual<typeof import('../renderer/components/IOSInput')>(
+        '../renderer/components/IOSInput'
+      );
+      return {
+        ...actual,
+        IOSInput: () => {
+          throw new Error('legacy IOSInput import should not be used in SettingsPanel');
+        },
+      };
+    });
+
+    const electronAPI = (((window as any).electronAPI ??= {}) as Record<string, unknown>) as any;
+    electronAPI.webdav = {
+      ...electronAPI.webdav,
+      getConfig: vi.fn().mockResolvedValue({
+        success: true,
+        data: {
+          enabled: true,
+          serverUrl: 'https://dav.example.com',
+          username: 'user@example.com',
+          password: 'secret',
+          remotePath: '/api-hub-backups',
+          maxBackups: 10,
+        },
+      }),
+    };
+    electronAPI.closeBehavior = {
+      ...electronAPI.closeBehavior,
+      getSettings: vi.fn().mockResolvedValue({
+        success: true,
+        data: { behavior: 'ask' },
+      }),
+      saveSettings: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const { SettingsPanel } = await import('../renderer/components/SettingsPanel');
+
+    render(
+      <SettingsPanel
+        settings={
+          {
+            timeout: 30,
+            concurrent: false,
+            show_disabled: true,
+            browser_path: '',
+          } as any
+        }
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+        config={
+          {
+            sites: [],
+            siteGroups: [],
+            settings: {
+              timeout: 30,
+              concurrent: false,
+              show_disabled: true,
+              browser_path: '',
+            },
+          } as any
+        }
+        asPage={true}
+      />
     );
 
-    expect(settingsPanelSource).not.toContain('bg-white');
-    expect(settingsPanelSource).not.toContain('dark:bg-dark-card');
-    expect(settingsPanelSource).not.toContain('border-light-border');
-    expect(settingsPanelSource).not.toContain('text-light-text');
-    expect(settingsPanelSource).toContain("import { AppInput } from './IOSInput';");
-    expect(settingsPanelSource).not.toContain('import { IOSInput } from \'./IOSInput\'');
+    fireEvent.click(screen.getByRole('button', { name: '检测设置' }));
+
+    const timeoutInput = screen.getByLabelText('请求超时时间 (秒)');
+    expect(timeoutInput).toHaveClass(
+      'bg-[var(--surface-2)]',
+      'border-[var(--line-soft)]',
+      'text-[var(--text-primary)]'
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '云端备份' }));
+
+    const serverInput = await screen.findByLabelText('服务器地址');
+    expect(serverInput).toHaveClass(
+      'bg-[var(--surface-2)]',
+      'border-[var(--line-soft)]',
+      'text-[var(--text-primary)]'
+    );
+    expect(screen.getByRole('button', { name: '显示密码' })).toBeInTheDocument();
   });
 });
