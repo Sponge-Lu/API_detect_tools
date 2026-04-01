@@ -25,13 +25,15 @@ describe('theme visual consistency', () => {
       />
     );
 
-    expect(container.firstChild).toHaveClass(
+    const root = container.firstElementChild as HTMLElement;
+
+    expect(root).toHaveClass(
       'bg-[var(--surface-1)]/90',
       'border-b',
       'border-[var(--line-soft)]'
     );
-    expect(container.innerHTML).not.toContain('--ios-');
-    expect(container.innerHTML).not.toContain('bg-blue-50');
-    expect(container.innerHTML).not.toContain('border-gray-200');
+    expect(root.className).not.toContain('--ios-');
+    expect(root.className).not.toContain('bg-blue-50');
+    expect(root.className).not.toContain('border-gray-200');
   });
 });

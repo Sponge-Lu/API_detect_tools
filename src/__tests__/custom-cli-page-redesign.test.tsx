@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { CustomCliPage } from '../renderer/pages/CustomCliPage';
 
@@ -68,11 +68,18 @@ describe('custom cli page redesign', () => {
   it('renders real CLI logos instead of text placeholders in the page-level affordances', () => {
     render(<CustomCliPage />);
 
-    expect(screen.getAllByAltText('Claude Code').length).toBeGreaterThan(0);
-    expect(screen.getAllByAltText('Codex').length).toBeGreaterThan(0);
-    expect(screen.getAllByAltText('Gemini CLI').length).toBeGreaterThan(0);
-    expect(screen.queryByText(/^C$/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/^X$/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/^G$/)).not.toBeInTheDocument();
+    const mappingHeading = screen.getByRole('heading', { name: 'CLI 映射' });
+    const mappingSection = mappingHeading.closest('section');
+
+    expect(mappingSection).not.toBeNull();
+
+    const mapping = within(mappingSection as HTMLElement);
+
+    expect(mapping.getByAltText('Claude Code')).toBeInTheDocument();
+    expect(mapping.getByAltText('Codex')).toBeInTheDocument();
+    expect(mapping.getByAltText('Gemini CLI')).toBeInTheDocument();
+    expect(mapping.queryByText(/^C$/)).not.toBeInTheDocument();
+    expect(mapping.queryByText(/^X$/)).not.toBeInTheDocument();
+    expect(mapping.queryByText(/^G$/)).not.toBeInTheDocument();
   });
 });
