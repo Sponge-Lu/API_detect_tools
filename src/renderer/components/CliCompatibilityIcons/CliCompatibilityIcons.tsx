@@ -28,6 +28,8 @@ export interface CliCompatibilityIconsProps {
   cliConfig: CliConfig | null;
   /** 是否正在加载 */
   isLoading?: boolean;
+  /** 是否显示配置/测试/应用动作组 */
+  showActionButtons?: boolean;
   /** 配置按钮点击回调 */
   onConfig?: () => void;
   /** 测试按钮点击回调 */
@@ -204,6 +206,7 @@ export function CliCompatibilityIcons({
   compatibility,
   cliConfig,
   isLoading = false,
+  showActionButtons = true,
   onConfig,
   onTest,
   onApply,
@@ -257,98 +260,99 @@ export function CliCompatibilityIcons({
             );
           })}
 
-          {/* 操作按钮组 - 配置/测试/应用 - iOS 风格 */}
-          <div className="flex items-center gap-0.5 ml-1 px-1 py-0.5 rounded-[var(--radius-sm)] border border-[var(--ios-separator)] bg-[var(--ios-bg-tertiary)]">
-            {/* 配置按钮 */}
-            {onConfig && (
-              <button
-                onClick={e => {
-                  e.stopPropagation();
-                  onConfig();
-                }}
-                className="p-0.5 rounded-[var(--radius-sm)] hover:bg-[var(--ios-bg-secondary)] active:scale-95 transition-all duration-200"
-                title="配置 CLI"
-              >
-                <svg
-                  className="w-[18px] h-[18px] text-[var(--ios-gray)] hover:text-[var(--ios-blue)]"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
+          {showActionButtons && (
+            <div className="flex items-center gap-0.5 ml-1 px-1 py-0.5 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)]">
+              {/* 配置按钮 */}
+              {onConfig && (
+                <button
+                  onClick={e => {
+                    e.stopPropagation();
+                    onConfig();
+                  }}
+                  className="p-0.5 rounded-[var(--radius-sm)] hover:bg-[var(--surface-1)] active:scale-95 transition-all duration-200"
+                  title="配置 CLI"
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-                  />
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                  />
-                </svg>
-              </button>
-            )}
+                  <svg
+                    className="w-[18px] h-[18px] text-[var(--icon-muted)] hover:text-[var(--accent)]"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.5}
+                      d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+                    />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.5}
+                      d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                    />
+                  </svg>
+                </button>
+              )}
 
-            {/* 测试按钮 - 始终显示 */}
-            {onTest && (
-              <button
-                onClick={e => {
-                  e.stopPropagation();
-                  onTest();
-                }}
-                className="p-0.5 rounded-[var(--radius-sm)] hover:bg-[var(--ios-bg-secondary)] active:scale-95 transition-all duration-200"
-                title="测试 CLI 兼容性"
-              >
-                <svg
-                  className="w-[18px] h-[18px] text-[var(--ios-gray)] hover:text-[var(--ios-green)]"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
+              {/* 测试按钮 - 始终显示 */}
+              {onTest && (
+                <button
+                  onClick={e => {
+                    e.stopPropagation();
+                    onTest();
+                  }}
+                  className="p-0.5 rounded-[var(--radius-sm)] hover:bg-[var(--surface-1)] active:scale-95 transition-all duration-200"
+                  title="测试 CLI 兼容性"
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
-                  />
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                  />
-                </svg>
-              </button>
-            )}
+                  <svg
+                    className="w-[18px] h-[18px] text-[var(--icon-muted)] hover:text-[var(--success)]"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.5}
+                      d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
+                    />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.5}
+                      d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                </button>
+              )}
 
-            {/* 应用配置按钮 */}
-            {onApply && (
-              <button
-                onClick={e => {
-                  e.stopPropagation();
-                  onApply(e);
-                }}
-                className="p-0.5 rounded-[var(--radius-sm)] hover:bg-[var(--ios-bg-secondary)] active:scale-95 transition-all duration-200"
-                title="应用 CLI 配置到本地文件"
-              >
-                <svg
-                  className="w-[18px] h-[18px] text-[var(--ios-gray)] hover:text-[var(--ios-blue)]"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
+              {/* 应用配置按钮 */}
+              {onApply && (
+                <button
+                  onClick={e => {
+                    e.stopPropagation();
+                    onApply(e);
+                  }}
+                  className="p-0.5 rounded-[var(--radius-sm)] hover:bg-[var(--surface-1)] active:scale-95 transition-all duration-200"
+                  title="应用 CLI 配置到本地文件"
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-                  />
-                </svg>
-              </button>
-            )}
-          </div>
+                  <svg
+                    className="w-[18px] h-[18px] text-[var(--icon-muted)] hover:text-[var(--accent)]"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.5}
+                      d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                    />
+                  </svg>
+                </button>
+              )}
+            </div>
+          )}
         </>
       )}
     </div>

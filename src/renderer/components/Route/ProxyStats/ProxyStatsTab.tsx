@@ -66,17 +66,17 @@ function ServerSection() {
       <IOSCardContent className="p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <Activity className="w-4 h-4 text-[var(--ios-blue)]" />
+            <Activity className="w-4 h-4 text-[var(--accent)]" />
             <span className="font-medium text-sm">代理服务器</span>
             <span
               className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${
                 serverRunning
-                  ? 'bg-green-50 dark:bg-green-500/10 text-green-600 dark:text-green-400'
-                  : 'bg-gray-100 dark:bg-gray-800 text-gray-500'
+                  ? 'bg-[var(--success-soft)] text-[var(--success)]'
+                  : 'bg-[var(--surface-2)] text-[var(--text-secondary)]'
               }`}
             >
               <span
-                className={`w-1.5 h-1.5 rounded-full ${serverRunning ? 'bg-green-500' : 'bg-gray-400'}`}
+                className={`h-1.5 w-1.5 rounded-full ${serverRunning ? 'bg-[var(--success)]' : 'bg-[var(--icon-muted)]'}`}
               />
               {serverRunning ? '运行中' : '已停止'}
             </span>
@@ -100,7 +100,7 @@ function ServerSection() {
 
         <div className="grid grid-cols-2 gap-3 text-sm">
           <div>
-            <label className="text-xs text-gray-500 dark:text-gray-400 mb-1 block">端口</label>
+            <label className="mb-1 block text-xs text-[var(--text-secondary)]">端口</label>
             <IOSInput
               type="number"
               defaultValue={server.port}
@@ -113,24 +113,24 @@ function ServerSection() {
             />
           </div>
           <div>
-            <label className="text-xs text-gray-500 dark:text-gray-400 mb-1 block">Base URL</label>
-            <div className="text-xs font-mono bg-gray-50 dark:bg-gray-800 rounded px-2 py-1.5 text-gray-600 dark:text-gray-300">
+            <label className="mb-1 block text-xs text-[var(--text-secondary)]">Base URL</label>
+            <div className="rounded bg-[var(--surface-2)] px-2 py-1.5 font-mono text-xs text-[var(--text-secondary)]">
               http://{server.host}:{server.port}
             </div>
           </div>
         </div>
 
         <div className="mt-3">
-          <label className="text-xs text-gray-500 dark:text-gray-400 mb-1 block">
+          <label className="mb-1 block text-xs text-[var(--text-secondary)]">
             路由 API Key
           </label>
           <div className="flex items-center gap-2">
-            <div className="flex-1 text-xs font-mono bg-gray-50 dark:bg-gray-800 rounded px-2 py-1.5 text-gray-600 dark:text-gray-300 truncate">
+            <div className="flex-1 truncate rounded bg-[var(--surface-2)] px-2 py-1.5 font-mono text-xs text-[var(--text-secondary)]">
               {showKey ? server.unifiedApiKey : '••••••••••••••••'}
             </div>
             <button
               onClick={() => setShowKey(!showKey)}
-              className="text-xs text-[var(--ios-blue)] hover:underline"
+              className="text-xs text-[var(--accent)] hover:underline"
             >
               {showKey ? '隐藏' : '显示'}
             </button>
@@ -140,8 +140,9 @@ function ServerSection() {
                 toast.success('已复制');
               }}
               title="复制"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
             >
-              <Copy className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" />
+              <Copy className="h-4 w-4" />
             </button>
             <button
               onClick={async () => {
@@ -149,8 +150,9 @@ function ServerSection() {
                 if (k) toast.success('已重新生成');
               }}
               title="重新生成"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
             >
-              <KeyRound className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" />
+              <KeyRound className="h-4 w-4" />
             </button>
           </div>
         </div>
@@ -180,20 +182,20 @@ function CliModelSection() {
     <IOSCard className="mb-4">
       <IOSCardContent className="p-4">
         <div className="flex items-center gap-2 mb-3">
-          <BarChart3 className="w-4 h-4 text-[var(--ios-blue)]" />
+          <BarChart3 className="w-4 h-4 text-[var(--accent)]" />
           <span className="font-medium text-sm">CLI 默认模型</span>
         </div>
 
         <div className="grid grid-cols-3 gap-3">
           {(['claudeCode', 'codex', 'geminiCli'] as RouteCliType[]).map(cli => (
             <div key={cli}>
-              <label className="text-xs text-gray-500 dark:text-gray-400 mb-1 block">
+              <label className="mb-1 block text-xs text-[var(--text-secondary)]">
                 {CLI_LABELS[cli]}
               </label>
               <select
                 value={cliModelSelections?.[cli] || ''}
                 onChange={e => handleChange(cli, e.target.value)}
-                className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1.5 text-xs"
+                className="w-full rounded-lg border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1.5 text-xs text-[var(--text-primary)]"
               >
                 <option value="">未选择</option>
                 {canonicalModels.map(m => (
@@ -243,7 +245,7 @@ function StatsDashboard() {
       <IOSCardContent className="p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <BarChart3 className="w-4 h-4 text-[var(--ios-blue)]" />
+            <BarChart3 className="w-4 h-4 text-[var(--accent)]" />
             <span className="font-medium text-sm">数据统计</span>
           </div>
           <div className="flex gap-1">
@@ -262,7 +264,7 @@ function StatsDashboard() {
 
         {loading ? (
           <div className="flex justify-center py-6">
-            <Loader2 className="w-5 h-5 animate-spin text-[var(--ios-blue)]" />
+            <Loader2 className="w-5 h-5 animate-spin text-[var(--accent)]" />
           </div>
         ) : summary ? (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -278,7 +280,7 @@ function StatsDashboard() {
             <StatCard label="Completion Tokens" value={formatNumber(summary.completionTokens)} />
           </div>
         ) : (
-          <div className="text-center py-6 text-sm text-gray-400">暂无统计数据</div>
+          <div className="py-6 text-center text-sm text-[var(--text-secondary)]">暂无统计数据</div>
         )}
       </IOSCardContent>
     </IOSCard>
@@ -296,16 +298,16 @@ function StatCard({
 }) {
   const colorClass =
     color === 'green'
-      ? 'text-green-600 dark:text-green-400'
+      ? 'text-[var(--success)]'
       : color === 'red'
-        ? 'text-red-500'
+        ? 'text-[var(--danger)]'
         : color === 'yellow'
-          ? 'text-yellow-600 dark:text-yellow-400'
-          : 'text-gray-800 dark:text-gray-200';
+          ? 'text-[var(--warning)]'
+          : 'text-[var(--text-primary)]';
 
   return (
-    <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-3 text-center">
-      <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">{label}</div>
+    <div className="rounded-lg bg-[var(--surface-2)] p-3 text-center">
+      <div className="mb-1 text-xs text-[var(--text-secondary)]">{label}</div>
       <div className={`text-lg font-semibold ${colorClass}`}>{value}</div>
     </div>
   );
@@ -319,10 +321,12 @@ function formatNumber(n: number): string {
 
 export function ProxyStatsTab() {
   return (
-    <div className="flex-1 overflow-y-auto px-6 py-2">
-      <ServerSection />
-      <CliModelSection />
-      <StatsDashboard />
+    <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 overflow-y-auto px-6 py-3">
+        <ServerSection />
+        <CliModelSection />
+        <StatsDashboard />
+      </div>
     </div>
   );
 }

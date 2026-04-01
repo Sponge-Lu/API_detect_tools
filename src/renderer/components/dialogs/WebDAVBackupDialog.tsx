@@ -267,8 +267,8 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
           <div
             className={`mx-6 mt-4 flex items-center gap-2 px-4 py-3 rounded-lg text-sm ${
               operationResult.success
-                ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'
-                : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400'
+                ? 'bg-[var(--success-soft)] text-[var(--success)]'
+                : 'bg-[var(--danger-soft)] text-[var(--danger)]'
             }`}
           >
             {operationResult.success ? (
@@ -283,15 +283,15 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
         {/* 备份列表 */}
         <div className="p-6">
           {loading ? (
-            <div className="text-center py-12 text-slate-500">
-              <Loader2 className="w-8 h-8 mx-auto mb-3 animate-spin text-primary-500" />
+            <div className="py-12 text-center text-[var(--text-secondary)]">
+              <Loader2 className="mx-auto mb-3 h-8 w-8 animate-spin text-[var(--accent)]" />
               <p>加载备份列表中...</p>
             </div>
           ) : error ? (
-            <div className="text-center py-12">
-              <AlertCircle className="w-12 h-12 mx-auto mb-3 text-red-400" />
-              <p className="text-red-500 dark:text-red-400">{error}</p>
-              <p className="text-sm text-slate-500 mt-2">请检查 WebDAV 配置是否正确</p>
+            <div className="py-12 text-center">
+              <AlertCircle className="mx-auto mb-3 h-12 w-12 text-[var(--danger)]" />
+              <p className="text-[var(--danger)]">{error}</p>
+              <p className="mt-2 text-sm text-[var(--text-secondary)]">请检查 WebDAV 配置是否正确</p>
             </div>
           ) : backups.length === 0 ? (
             <div className="text-center py-12 text-slate-500">
@@ -313,7 +313,7 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
                         {backup.filename}
                       </span>
                       {index === 0 && (
-                        <span className="px-2 py-0.5 text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 rounded">
+                        <span className="rounded bg-[var(--success-soft)] px-2 py-0.5 text-xs text-[var(--success)]">
                           最新
                         </span>
                       )}
@@ -333,7 +333,7 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
                     <button
                       onClick={() => openConfirm('restore', backup)}
                       disabled={processingBackup === backup.filename}
-                      className="p-2 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors disabled:opacity-50"
+                      className="rounded-lg p-2 text-[var(--accent)] transition-colors hover:bg-[var(--accent-soft)] disabled:opacity-50"
                       title="恢复此备份"
                     >
                       {processingBackup === backup.filename ? (
@@ -345,7 +345,7 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
                     <button
                       onClick={() => openConfirm('delete', backup)}
                       disabled={processingBackup === backup.filename}
-                      className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors disabled:opacity-50"
+                      className="rounded-lg p-2 text-[var(--danger)] transition-colors hover:bg-[var(--danger-soft)] disabled:opacity-50"
                       title="删除此备份"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -372,7 +372,7 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
           <div className="relative bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
             <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-200 dark:border-slate-700">
               <AlertCircle
-                className={`w-6 h-6 ${confirm.type === 'delete' ? 'text-red-500' : 'text-primary-500'}`}
+                className={`w-6 h-6 ${confirm.type === 'delete' ? 'text-[var(--danger)]' : 'text-[var(--accent)]'}`}
               />
               <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
                 {confirm.type === 'restore' ? '确认恢复' : '确认删除'}
@@ -406,8 +406,8 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
                 onClick={handleConfirm}
                 className={`px-4 py-2 text-sm font-medium text-white rounded-lg transition-all ${
                   confirm.type === 'delete'
-                    ? 'bg-red-500 hover:bg-red-600'
-                    : 'bg-primary-500 hover:bg-primary-600'
+                    ? 'bg-[var(--danger)] hover:opacity-90'
+                    : 'bg-[var(--accent)] hover:opacity-90'
                 }`}
               >
                 {confirm.type === 'restore' ? '确认恢复' : '确认删除'}

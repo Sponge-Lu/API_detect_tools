@@ -5,7 +5,7 @@ interface PageHeaderProps {
 
 export function PageHeader({ title, description }: PageHeaderProps) {
   return (
-    <section className="shrink-0 border-b border-[var(--line-soft)] bg-[var(--surface-1)]/78 px-4 py-3 backdrop-blur-sm">
+    <section className="shrink-0 border-b border-[var(--line-soft)] bg-[var(--surface-1)]/90 px-4 py-2.5 backdrop-blur-sm">
       <div
         data-testid="page-header-row"
         className="flex min-h-[40px] min-w-0 items-center gap-3 overflow-hidden"

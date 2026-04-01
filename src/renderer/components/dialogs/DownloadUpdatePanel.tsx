@@ -10,7 +10,6 @@
  */
 
 import {
-  X,
   Download,
   Calendar,
   Tag,
@@ -20,6 +19,8 @@ import {
   Loader2,
 } from 'lucide-react';
 import type { ReleaseInfo, DownloadProgress, DownloadPhase } from '../../hooks/useUpdate';
+import { IOSButton } from '../IOSButton';
+import { AppModal } from '../AppModal/AppModal';
 
 interface DownloadUpdatePanelProps {
   isOpen: boolean;
@@ -83,20 +84,20 @@ export function DownloadUpdatePanel({
       return (
         <>
           {/* 版本信息 */}
-          <div className="px-6 py-4 border-b border-light-border dark:border-dark-border bg-slate-50 dark:bg-slate-800/50">
+          <div className="border-b border-[var(--line-soft)] bg-[var(--surface-2)] px-6 py-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <span className="text-sm text-slate-500 dark:text-slate-400">当前版本</span>
-                <span className="px-2 py-1 text-sm font-mono bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded">
+                <span className="text-sm text-[var(--text-secondary)]">当前版本</span>
+                <span className="rounded bg-[var(--surface-3)] px-2 py-1 text-sm font-mono text-[var(--text-secondary)]">
                   v{currentVersion}
                 </span>
               </div>
-              <div className="flex items-center gap-2 text-primary-500">
+              <div className="flex items-center gap-2 text-[var(--accent)]">
                 <span className="text-lg">→</span>
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-sm text-slate-500 dark:text-slate-400">最新版本</span>
-                <span className="px-2 py-1 text-sm font-mono bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400 rounded font-semibold">
+                <span className="text-sm text-[var(--text-secondary)]">最新版本</span>
+                <span className="rounded bg-[var(--accent-soft)] px-2 py-1 text-sm font-mono font-semibold text-[var(--accent)]">
                   v{releaseInfo.version}
                 </span>
               </div>
@@ -104,42 +105,26 @@ export function DownloadUpdatePanel({
           </div>
 
           {/* 发布日期 */}
-          <div className="px-6 py-3 flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 border-b border-light-border dark:border-dark-border">
+          <div className="flex items-center gap-2 border-b border-[var(--line-soft)] px-6 py-3 text-sm text-[var(--text-secondary)]">
             <Calendar className="w-4 h-4" />
             <span>发布日期：{formatDate(releaseInfo.releaseDate)}</span>
           </div>
 
           {/* 更新说明 */}
           <div className="px-6 py-4 flex-1 overflow-hidden flex flex-col">
-            <div className="flex items-center gap-2 mb-3 text-sm font-medium text-slate-700 dark:text-slate-300">
+            <div className="mb-3 flex items-center gap-2 text-sm font-medium text-[var(--text-primary)]">
               <FileText className="w-4 h-4" />
               <span>更新说明</span>
             </div>
             <div className="flex-1 overflow-y-auto">
-              <div className="prose prose-sm dark:prose-invert prose-slate max-w-none">
-                <pre className="whitespace-pre-wrap text-sm text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg border border-slate-200 dark:border-slate-700 font-sans leading-relaxed">
+              <div className="max-w-none">
+                <pre className="whitespace-pre-wrap rounded-lg border border-[var(--line-soft)] bg-[var(--surface-2)] p-4 font-sans text-sm leading-relaxed text-[var(--text-secondary)]">
                   {releaseInfo.releaseNotes || '暂无更新说明'}
                 </pre>
               </div>
             </div>
           </div>
 
-          {/* 操作按钮 */}
-          <div className="flex items-center justify-end gap-3 px-6 py-4 bg-slate-50 dark:bg-slate-800/50 border-t border-light-border dark:border-dark-border">
-            <button
-              onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-600 transition-all"
-            >
-              稍后再说
-            </button>
-            <button
-              onClick={onStartDownload}
-              className="px-4 py-2 text-sm font-medium text-white bg-primary-500 hover:bg-primary-600 rounded-lg transition-all flex items-center gap-2"
-            >
-              <Download className="w-4 h-4" />
-              开始更新
-            </button>
-          </div>
         </>
       );
     }
@@ -153,25 +138,25 @@ export function DownloadUpdatePanel({
               {/* 下载图标 */}
               <div className="flex justify-center mb-6">
                 <div className="relative">
-                  <Download className="w-16 h-16 text-primary-500" />
-                  <Loader2 className="w-6 h-6 text-primary-500 animate-spin absolute -bottom-1 -right-1" />
+                  <Download className="w-16 h-16 text-[var(--accent)]" />
+                  <Loader2 className="absolute -bottom-1 -right-1 w-6 h-6 animate-spin text-[var(--accent)]" />
                 </div>
               </div>
 
               {/* 下载进度 */}
               <div className="mb-6">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                  <span className="text-sm font-medium text-[var(--text-primary)]">
                     正在下载更新...
                   </span>
-                  <span className="text-sm font-mono font-semibold text-primary-600 dark:text-primary-400">
+                  <span className="text-sm font-mono font-semibold text-[var(--accent)]">
                     {downloadProgress?.percent.toFixed(1) || 0}%
                   </span>
                 </div>
                 {/* 进度条 */}
-                <div className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--surface-3)]">
                   <div
-                    className="h-full bg-gradient-to-r from-primary-500 to-primary-600 transition-all duration-300 ease-out"
+                    className="h-full bg-[var(--accent)] transition-all duration-300 ease-out"
                     style={{ width: `${downloadProgress?.percent || 0}%` }}
                   />
                 </div>
@@ -179,7 +164,7 @@ export function DownloadUpdatePanel({
 
               {/* 下载详情 */}
               {downloadProgress && (
-                <div className="space-y-2 text-sm text-slate-600 dark:text-slate-400">
+                <div className="space-y-2 text-sm text-[var(--text-secondary)]">
                   <div className="flex justify-between">
                     <span>已下载</span>
                     <span className="font-mono">
@@ -198,15 +183,6 @@ export function DownloadUpdatePanel({
             </div>
           </div>
 
-          {/* 取消按钮 */}
-          <div className="flex items-center justify-center px-6 py-4 bg-slate-50 dark:bg-slate-800/50 border-t border-light-border dark:border-dark-border">
-            <button
-              onClick={onCancelDownload}
-              className="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-600 transition-all"
-            >
-              取消下载
-            </button>
-          </div>
         </>
       );
     }
@@ -219,45 +195,29 @@ export function DownloadUpdatePanel({
             <div className="w-full max-w-md text-center">
               {/* 成功图标 */}
               <div className="flex justify-center mb-6">
-                <div className="w-20 h-20 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex items-center justify-center">
-                  <CheckCircle2 className="w-12 h-12 text-emerald-500" />
+                <div className="flex h-20 w-20 items-center justify-center rounded-full bg-[var(--success-soft)]">
+                  <CheckCircle2 className="w-12 h-12 text-[var(--success)]" />
                 </div>
               </div>
 
               {/* 成功提示 */}
-              <h3 className="text-xl font-semibold text-slate-800 dark:text-slate-200 mb-2">
+              <h3 className="mb-2 text-xl font-semibold text-[var(--text-primary)]">
                 下载完成
               </h3>
-              <p className="text-sm text-slate-600 dark:text-slate-400 mb-6">
+              <p className="mb-6 text-sm text-[var(--text-secondary)]">
                 更新包已下载完成，点击下方按钮开始安装
               </p>
 
               {/* 版本信息 */}
-              <div className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg text-sm">
-                <Tag className="w-4 h-4 text-primary-500" />
-                <span className="text-slate-700 dark:text-slate-300">
+              <div className="inline-flex items-center gap-2 rounded-lg bg-[var(--surface-2)] px-4 py-2 text-sm">
+                <Tag className="w-4 h-4 text-[var(--accent)]" />
+                <span className="text-[var(--text-primary)]">
                   v{currentVersion} → v{releaseInfo.version}
                 </span>
               </div>
             </div>
           </div>
 
-          {/* 安装按钮 */}
-          <div className="flex items-center justify-center gap-3 px-6 py-4 bg-slate-50 dark:bg-slate-800/50 border-t border-light-border dark:border-dark-border">
-            <button
-              onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-600 transition-all"
-            >
-              稍后安装
-            </button>
-            <button
-              onClick={onInstall}
-              className="px-4 py-2 text-sm font-medium text-white bg-emerald-500 hover:bg-emerald-600 rounded-lg transition-all flex items-center gap-2"
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              立即安装
-            </button>
-          </div>
         </>
       );
     }
@@ -270,37 +230,21 @@ export function DownloadUpdatePanel({
             <div className="w-full max-w-md text-center">
               {/* 错误图标 */}
               <div className="flex justify-center mb-6">
-                <div className="w-20 h-20 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center">
-                  <AlertCircle className="w-12 h-12 text-red-500" />
+                <div className="flex h-20 w-20 items-center justify-center rounded-full bg-[var(--danger-soft)]">
+                  <AlertCircle className="w-12 h-12 text-[var(--danger)]" />
                 </div>
               </div>
 
               {/* 错误提示 */}
-              <h3 className="text-xl font-semibold text-slate-800 dark:text-slate-200 mb-2">
+              <h3 className="mb-2 text-xl font-semibold text-[var(--text-primary)]">
                 下载失败
               </h3>
-              <p className="text-sm text-red-600 dark:text-red-400 mb-6">
+              <p className="mb-6 text-sm text-[var(--danger)]">
                 {downloadError || '未知错误'}
               </p>
             </div>
           </div>
 
-          {/* 重试按钮 */}
-          <div className="flex items-center justify-center gap-3 px-6 py-4 bg-slate-50 dark:bg-slate-800/50 border-t border-light-border dark:border-dark-border">
-            <button
-              onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-600 transition-all"
-            >
-              关闭
-            </button>
-            <button
-              onClick={onStartDownload}
-              className="px-4 py-2 text-sm font-medium text-white bg-primary-500 hover:bg-primary-600 rounded-lg transition-all flex items-center gap-2"
-            >
-              <Download className="w-4 h-4" />
-              重试
-            </button>
-          </div>
         </>
       );
     }
@@ -308,35 +252,95 @@ export function DownloadUpdatePanel({
     return null;
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-dark-card rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-        {/* 标题栏 */}
-        <div
-          className={`flex items-center justify-between px-6 py-4 border-b border-light-border dark:border-dark-border bg-gradient-to-r ${
-            releaseInfo.isPreRelease
-              ? 'from-amber-500 to-amber-600'
-              : 'from-primary-500 to-primary-600'
-          }`}
-        >
-          <div className="flex items-center gap-2 text-white">
-            <Tag className="w-5 h-5" />
-            <h2 className="text-lg font-semibold">
-              {downloadPhase === 'idle' &&
-                (releaseInfo.isPreRelease ? '发现预发布版本' : '发现新版本')}
-              {downloadPhase === 'downloading' && '正在下载更新'}
-              {downloadPhase === 'completed' && '下载完成'}
-              {downloadPhase === 'error' && '下载失败'}
-            </h2>
-          </div>
-          <button onClick={onClose} className="p-1 hover:bg-white/20 rounded-lg transition-colors">
-            <X className="w-5 h-5 text-white" />
-          </button>
-        </div>
+  const renderFooter = () => {
+    if (downloadPhase === 'idle') {
+      return (
+        <>
+          <IOSButton variant="tertiary" onClick={onClose}>
+            稍后再说
+          </IOSButton>
+          <IOSButton variant="primary" onClick={onStartDownload}>
+            <Download className="w-4 h-4" />
+            开始更新
+          </IOSButton>
+        </>
+      );
+    }
 
-        {/* 动态内容 */}
-        {renderContent()}
-      </div>
-    </div>
+    if (downloadPhase === 'downloading') {
+      return (
+        <IOSButton variant="tertiary" onClick={onCancelDownload}>
+          取消下载
+        </IOSButton>
+      );
+    }
+
+    if (downloadPhase === 'completed') {
+      return (
+        <>
+          <IOSButton variant="tertiary" onClick={onClose}>
+            稍后安装
+          </IOSButton>
+          <IOSButton variant="primary" onClick={onInstall} className="bg-[var(--success)] hover:opacity-90">
+            <CheckCircle2 className="w-4 h-4" />
+            立即安装
+          </IOSButton>
+        </>
+      );
+    }
+
+    if (downloadPhase === 'error') {
+      return (
+        <>
+          <IOSButton variant="tertiary" onClick={onClose}>
+            关闭
+          </IOSButton>
+          <IOSButton variant="primary" onClick={onStartDownload}>
+            <Download className="w-4 h-4" />
+            重试
+          </IOSButton>
+        </>
+      );
+    }
+
+    return null;
+  };
+
+  const panelTitle =
+    downloadPhase === 'idle'
+      ? releaseInfo.isPreRelease
+        ? '发现预发布版本'
+        : '发现新版本'
+      : downloadPhase === 'downloading'
+        ? '正在下载更新'
+        : downloadPhase === 'completed'
+          ? '下载完成'
+          : '下载失败';
+
+  const panelIcon =
+    downloadPhase === 'downloading' ? (
+      <Download className="w-5 h-5" />
+    ) : downloadPhase === 'completed' ? (
+      <CheckCircle2 className="w-5 h-5" />
+    ) : downloadPhase === 'error' ? (
+      <AlertCircle className="w-5 h-5" />
+    ) : (
+      <Tag className="w-5 h-5" />
+    );
+
+  return (
+    <AppModal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={panelTitle}
+      titleIcon={panelIcon}
+      footer={renderFooter()}
+      size="lg"
+      closeOnOverlayClick={false}
+      closeOnEsc={false}
+      contentClassName="!p-0 !max-h-[72vh] flex flex-col"
+    >
+      {renderContent()}
+    </AppModal>
   );
 }

@@ -10,9 +10,9 @@ import { Play, Loader2, Settings2 } from 'lucide-react';
 import { useShallow } from 'zustand/shallow';
 import { useRouteStore } from '../../../store/routeStore';
 import { toast } from '../../../store/toastStore';
+import { AppModal } from '../../AppModal/AppModal';
 import { IOSCard, IOSCardContent } from '../../IOSCard';
 import { IOSButton } from '../../IOSButton';
-import { IOSModal } from '../../IOSModal';
 import { IOSInput } from '../../IOSInput';
 import type {
   RouteCliType,
@@ -30,21 +30,21 @@ const CLI_META: Record<
 > = {
   claudeCode: {
     label: 'Claude Code',
-    accent: 'text-orange-600 dark:text-orange-400',
-    headerBg: 'bg-orange-50/80 dark:bg-orange-900/20',
-    cellBg: 'bg-orange-50/20 dark:bg-orange-950/10',
+    accent: 'text-[var(--warning)]',
+    headerBg: 'bg-[var(--warning-soft)]',
+    cellBg: 'bg-[var(--warning-soft)]',
   },
   codex: {
     label: 'Codex',
-    accent: 'text-emerald-600 dark:text-emerald-400',
-    headerBg: 'bg-emerald-50/80 dark:bg-emerald-900/20',
-    cellBg: 'bg-emerald-50/20 dark:bg-emerald-950/10',
+    accent: 'text-[var(--success)]',
+    headerBg: 'bg-[var(--success-soft)]',
+    cellBg: 'bg-[var(--success-soft)]',
   },
   geminiCli: {
     label: 'Gemini CLI',
-    accent: 'text-blue-600 dark:text-blue-400',
-    headerBg: 'bg-blue-50/80 dark:bg-blue-900/20',
-    cellBg: 'bg-blue-50/20 dark:bg-blue-950/10',
+    accent: 'text-[var(--accent)]',
+    headerBg: 'bg-[var(--accent-soft)]',
+    cellBg: 'bg-[var(--accent-soft)]',
   },
 };
 
@@ -77,8 +77,8 @@ function formatProbeDateTime(testedAt?: number) {
 }
 
 function getSegmentColor(sample: RouteCliProbeSample | null) {
-  if (!sample) return 'bg-gray-200 dark:bg-gray-700/80';
-  return sample.success ? 'bg-emerald-400 dark:bg-emerald-500' : 'bg-red-400 dark:bg-red-500';
+  if (!sample) return 'bg-[var(--surface-3)]';
+  return sample.success ? 'bg-[var(--success)]' : 'bg-[var(--danger)]';
 }
 
 function formatProbeResult(sample: RouteCliProbeSample | null) {
@@ -159,7 +159,7 @@ const HistoryBars = memo(function HistoryBars({
         {slots.map((slot, slotIndex) => (
           <div
             key={slot.bucketKey ?? `empty-${slotIndex}`}
-            className="flex h-full flex-col gap-px bg-white/60 dark:bg-gray-950/40"
+            className="flex h-full flex-col gap-px bg-[var(--surface-2)]/60"
           >
             {[0, 1, 2].map(index => {
               const model = models[index];
@@ -178,7 +178,7 @@ const HistoryBars = memo(function HistoryBars({
           </div>
         ))}
       </div>
-      <div className="flex justify-between text-[9px] text-gray-400 dark:text-gray-500 mt-0.5 px-0.5">
+      <div className="mt-0.5 flex justify-between px-0.5 text-[9px] text-[var(--text-secondary)]">
         <span>PAST</span>
         <span>{activePointCount} pts</span>
         <span>NOW</span>
@@ -198,16 +198,16 @@ const CliCell = memo(function CliCell({ cliView }: { cliView: RouteCliProbeCliVi
   };
 
   const latencyColor = (ms?: number) => {
-    if (!ms) return 'text-gray-400';
-    if (ms < 3000) return 'text-emerald-600 dark:text-emerald-400';
-    if (ms < 6000) return 'text-amber-600 dark:text-amber-400';
-    return 'text-red-500 dark:text-red-400';
+    if (!ms) return 'text-[var(--text-secondary)]';
+    if (ms < 3000) return 'text-[var(--success)]';
+    if (ms < 6000) return 'text-[var(--warning)]';
+    return 'text-[var(--danger)]';
   };
 
   if (!cliView.accountId) {
     return (
       <div className={`p-3 ${meta.cellBg}`}>
-        <div className="text-[10px] text-gray-400 dark:text-gray-500">未选择可用账户</div>
+        <div className="text-[10px] text-[var(--text-secondary)]">未选择可用账户</div>
       </div>
     );
   }
@@ -219,7 +219,7 @@ const CliCell = memo(function CliCell({ cliView }: { cliView: RouteCliProbeCliVi
   if (cliView.models.length === 0) {
     return (
       <div className={`p-3 ${meta.cellBg}`}>
-        <div className="text-[10px] text-gray-400 dark:text-gray-500">未配置测试模型</div>
+        <div className="text-[10px] text-[var(--text-secondary)]">未配置测试模型</div>
       </div>
     );
   }
@@ -240,21 +240,21 @@ const CliCell = memo(function CliCell({ cliView }: { cliView: RouteCliProbeCliVi
             : '未配置';
           const statusClass =
             model?.success === true
-              ? 'text-emerald-600 dark:text-emerald-400'
+              ? 'text-[var(--success)]'
               : model?.success === false
-                ? 'text-red-500 dark:text-red-400'
-                : 'text-gray-400 dark:text-gray-500';
+                ? 'text-[var(--danger)]'
+                : 'text-[var(--text-secondary)]';
 
           return (
             <div
               key={index}
-              className="border-b border-gray-200/70 px-1 py-1 last:border-b-0 dark:border-gray-700/60"
+              className="border-b border-[var(--line-soft)] px-1 py-1 last:border-b-0"
             >
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <div className="min-w-0 flex-1 text-[10px] font-mono text-gray-700 dark:text-gray-300 truncate">
+                <div className="min-w-0 flex-1 truncate font-mono text-[10px] text-[var(--text-primary)]">
                   {model?.canonicalModel || `模型${index + 1}`}
                 </div>
-                <div className="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
+                <div className="tabular-nums text-[10px] text-[var(--text-secondary)]">
                   {model?.testedAt
                     ? new Date(model.testedAt).toLocaleString(undefined, {
                         month: '2-digit',
@@ -300,21 +300,21 @@ function ProbeSettingsModal({
   }, [cfg, isOpen]);
 
   return (
-    <IOSModal isOpen={isOpen} onClose={onClose} title="检测设置" size="sm">
+    <AppModal isOpen={isOpen} onClose={onClose} title="检测设置" size="sm">
       <div className="space-y-4 p-4">
         <div className="flex items-center justify-between">
           <span className="text-sm">启用定时检测</span>
           <button
             onClick={() => setEnabled(!enabled)}
-            className={`w-10 h-5 rounded-full transition-colors relative ${enabled ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+            className={`relative h-5 w-10 rounded-full transition-colors ${enabled ? 'bg-[var(--accent)]' : 'bg-[var(--surface-3)]'}`}
           >
             <span
-              className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${enabled ? 'left-5' : 'left-0.5'}`}
+              className={`absolute top-0.5 h-4 w-4 rounded-full bg-[var(--surface-1)] shadow transition-transform ${enabled ? 'left-5' : 'left-0.5'}`}
             />
           </button>
         </div>
         <div>
-          <label className="text-sm text-gray-600 dark:text-gray-400 mb-1 block">
+          <label className="mb-1 block text-sm text-[var(--text-secondary)]">
             检测间隔（分钟）
           </label>
           <IOSInput
@@ -325,7 +325,7 @@ function ProbeSettingsModal({
             max={1440}
             size="sm"
           />
-          <p className="text-[10px] text-gray-400 mt-1">最小 10 分钟，推荐 60 分钟</p>
+          <p className="mt-1 text-[10px] text-[var(--text-secondary)]">最小 10 分钟，推荐 60 分钟</p>
         </div>
         <div className="flex justify-end gap-2 pt-2">
           <IOSButton variant="secondary" size="sm" onClick={onClose}>
@@ -343,7 +343,7 @@ function ProbeSettingsModal({
           </IOSButton>
         </div>
       </div>
-    </IOSModal>
+    </AppModal>
   );
 }
 
@@ -405,34 +405,29 @@ export function CliUsabilityTab() {
   const probeConfig = config?.cliProbe?.config || { enabled: false, intervalMinutes: 60 };
 
   return (
-    <div className="flex-1 overflow-y-auto px-6 py-3">
-      {/* 顶栏 */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-1">
-          {CLI_PROBE_TIME_RANGES.map(r => (
-            <IOSButton
-              key={r}
-              variant={timeRange === r ? 'primary' : 'secondary'}
-              size="sm"
-              onClick={() => setTimeRange(r)}
+    <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 overflow-y-auto px-6 py-3">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-1">
+            {CLI_PROBE_TIME_RANGES.map(r => (
+              <IOSButton
+                key={r}
+                variant={timeRange === r ? 'primary' : 'secondary'}
+                size="sm"
+                onClick={() => setTimeRange(r)}
+              >
+                {r}
+              </IOSButton>
+            ))}
+            <button
+              onClick={() => setShowSettings(true)}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
+              aria-label="打开检测设置"
+              title="检测设置"
             >
-              {r}
-            </IOSButton>
-          ))}
-        </div>
-        <div className="flex items-center gap-2">
-          <span
-            className={`text-xs ${probeConfig.enabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400'}`}
-          >
-            {probeConfig.enabled ? `每 ${probeConfig.intervalMinutes} 分钟` : '未启用'}
-          </span>
-          <button
-            onClick={() => setShowSettings(true)}
-            className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
-            aria-label="打开检测设置"
-          >
-            <Settings2 className="w-4 h-4 text-gray-400" />
-          </button>
+              <Settings2 className="h-4 w-4" />
+            </button>
+          </div>
           <IOSButton variant="primary" size="sm" onClick={handleProbeNow} disabled={probing}>
             {probing ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -442,68 +437,70 @@ export function CliUsabilityTab() {
             <span className="ml-1">立即探测</span>
           </IOSButton>
         </div>
-      </div>
 
-      {/* 内容区 */}
-      {loading && !cliProbeLoaded ? (
-        <div className="flex items-center justify-center py-16">
-          <Loader2 className="w-6 h-6 animate-spin text-[var(--ios-blue)]" />
-        </div>
-      ) : cliProbeView.length === 0 ? (
-        <IOSCard className="p-8 text-center">
-          <p className="text-sm text-gray-400">暂无探测数据，请先启用 CLI 探测或点击「立即探测」</p>
-        </IOSCard>
-      ) : (
-        <IOSCard>
-          <IOSCardContent className="p-0">
-            {/* 表头 */}
-            <div className="grid grid-cols-[140px_1fr_1fr_1fr] border-b border-gray-200 dark:border-gray-700">
-              <div className="px-4 py-2.5 text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-50/80 dark:bg-gray-800/50">
-                站点
+        {/* 内容区 */}
+        {loading && !cliProbeLoaded ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-6 h-6 animate-spin text-[var(--accent)]" />
+          </div>
+        ) : cliProbeView.length === 0 ? (
+          <IOSCard className="p-8 text-center">
+            <p className="text-sm text-[var(--text-secondary)]">
+              暂无探测数据，请先启用 CLI 探测或点击「立即探测」
+            </p>
+          </IOSCard>
+        ) : (
+          <IOSCard>
+            <IOSCardContent className="p-0">
+              {/* 表头 */}
+              <div className="grid grid-cols-[140px_1fr_1fr_1fr] border-b border-[var(--line-soft)]">
+                <div className="bg-[var(--surface-2)] px-4 py-2.5 text-xs font-medium text-[var(--text-secondary)]">
+                  站点
+                </div>
+                {CLI_TYPES.map(cli => (
+                  <div
+                    key={cli}
+                    className={`px-4 py-2.5 text-xs font-semibold text-center ${CLI_META[cli].accent} ${CLI_META[cli].headerBg}`}
+                  >
+                    {CLI_META[cli].label}
+                  </div>
+                ))}
               </div>
-              {CLI_TYPES.map(cli => (
+
+              {/* 数据行 */}
+              {cliProbeView.map((siteView, idx) => (
                 <div
-                  key={cli}
-                  className={`px-4 py-2.5 text-xs font-semibold text-center ${CLI_META[cli].accent} ${CLI_META[cli].headerBg}`}
+                  key={siteView.siteId}
+                  className={`grid grid-cols-[140px_1fr_1fr_1fr] ${idx < cliProbeView.length - 1 ? 'border-b border-[var(--line-soft)]' : ''}`}
                 >
-                  {CLI_META[cli].label}
+                  <div className="flex flex-col justify-center gap-0.5 border-r border-[var(--line-soft)] px-4 py-3">
+                    <span className="truncate text-[13px] font-medium text-[var(--text-primary)]">
+                      {siteView.siteName}
+                    </span>
+                    <div className="min-w-0">
+                      <span className="truncate text-[10px] text-[var(--text-secondary)]">
+                        {siteView.accountName
+                          ? `测试账户: ${siteView.accountName}`
+                          : '未选择可用账户'}
+                      </span>
+                    </div>
+                  </div>
+                  {CLI_TYPES.map((cli, ci) => {
+                    return (
+                      <div
+                        key={cli}
+                        className={ci < 2 ? 'border-r border-[var(--line-soft)]' : ''}
+                      >
+                        <CliCell cliView={siteView.clis[cli]} />
+                      </div>
+                    );
+                  })}
                 </div>
               ))}
-            </div>
-
-            {/* 数据行 */}
-            {cliProbeView.map((siteView, idx) => (
-              <div
-                key={siteView.siteId}
-                className={`grid grid-cols-[140px_1fr_1fr_1fr] ${idx < cliProbeView.length - 1 ? 'border-b border-gray-100 dark:border-gray-800/60' : ''}`}
-              >
-                <div className="px-4 py-3 flex flex-col justify-center gap-0.5 border-r border-gray-100 dark:border-gray-800/60">
-                  <span className="text-[13px] font-medium text-gray-800 dark:text-gray-100 truncate">
-                    {siteView.siteName}
-                  </span>
-                  <div className="min-w-0">
-                    <span className="text-[10px] text-gray-500 dark:text-gray-400 truncate">
-                      {siteView.accountName
-                        ? `测试账户: ${siteView.accountName}`
-                        : '未选择可用账户'}
-                    </span>
-                  </div>
-                </div>
-                {CLI_TYPES.map((cli, ci) => {
-                  return (
-                    <div
-                      key={cli}
-                      className={ci < 2 ? 'border-r border-gray-100 dark:border-gray-800/60' : ''}
-                    >
-                      <CliCell cliView={siteView.clis[cli]} />
-                    </div>
-                  );
-                })}
-              </div>
-            ))}
-          </IOSCardContent>
-        </IOSCard>
-      )}
+            </IOSCardContent>
+          </IOSCard>
+        )}
+      </div>
 
       <ProbeSettingsModal
         isOpen={showSettings}

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { AppModal } from '../renderer/components/AppModal/AppModal';
@@ -196,5 +198,31 @@ describe('overlay family redesign', () => {
     expect(screen.getAllByTestId('overlay-title')).toHaveLength(2);
     expect(screen.getAllByTestId('overlay-body')).toHaveLength(2);
     expect(screen.getAllByTestId('overlay-footer')).toHaveLength(2);
+  });
+
+  it('keeps owned overlay consumers on neutral tokens and direct AppModal imports', () => {
+    const legacyFreeFiles = [
+      'src/renderer/components/ConfirmDialog.tsx',
+      'src/renderer/components/dialogs/AutoRefreshDialog.tsx',
+      'src/renderer/components/dialogs/DownloadUpdatePanel.tsx',
+      'src/renderer/components/dialogs/UnifiedCliConfigDialog.tsx',
+      'src/renderer/components/dialogs/CustomCliConfigEditorDialog.tsx',
+      'src/renderer/components/dialogs/WebDAVBackupDialog.tsx',
+    ];
+
+    legacyFreeFiles.forEach(relativePath => {
+      const source = readFileSync(join(process.cwd(), relativePath), 'utf8');
+      expect(source).not.toContain('--ios-');
+    });
+
+    [
+      'src/renderer/components/ConfirmDialog.tsx',
+      'src/renderer/components/dialogs/AutoRefreshDialog.tsx',
+      'src/renderer/components/dialogs/DownloadUpdatePanel.tsx',
+    ].forEach(relativePath => {
+      const source = readFileSync(join(process.cwd(), relativePath), 'utf8');
+      expect(source).toMatch(/from ['"].*AppModal\/AppModal['"]/);
+      expect(source).not.toMatch(/from ['"].*IOSModal['"]/);
+    });
   });
 });

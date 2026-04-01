@@ -17,7 +17,7 @@
 
 import React, { useEffect, useRef } from 'react';
 import { AlertTriangle, CheckCircle, Info, AlertCircle } from 'lucide-react';
-import { IOSModal } from './IOSModal';
+import { AppModal } from './AppModal/AppModal';
 import { IOSButton } from './IOSButton';
 
 export type DialogType = 'confirm' | 'alert' | 'success' | 'warning' | 'error';
@@ -30,16 +30,17 @@ export interface ConfirmDialogProps {
   content?: React.ReactNode;
   confirmText?: string;
   cancelText?: string;
+  overlayZIndexClassName?: string;
   onConfirm: () => void;
   onCancel?: () => void;
 }
 
 const iconMap: Record<DialogType, React.ReactNode> = {
-  confirm: <AlertCircle className="w-6 h-6 text-[var(--ios-blue)]" />,
-  alert: <Info className="w-6 h-6 text-[var(--ios-blue)]" />,
-  success: <CheckCircle className="w-6 h-6 text-[var(--ios-green)]" />,
-  warning: <AlertTriangle className="w-6 h-6 text-[var(--ios-orange)]" />,
-  error: <AlertTriangle className="w-6 h-6 text-[var(--ios-red)]" />,
+  confirm: <AlertCircle className="w-6 h-6 text-[var(--accent)]" />,
+  alert: <Info className="w-6 h-6 text-[var(--accent)]" />,
+  success: <CheckCircle className="w-6 h-6 text-[var(--success)]" />,
+  warning: <AlertTriangle className="w-6 h-6 text-[var(--warning)]" />,
+  error: <AlertTriangle className="w-6 h-6 text-[var(--danger)]" />,
 };
 
 const titleMap: Record<DialogType, string> = {
@@ -58,6 +59,7 @@ export function ConfirmDialog({
   content,
   confirmText,
   cancelText = '取消',
+  overlayZIndexClassName,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -89,10 +91,10 @@ export function ConfirmDialog({
   const defaultConfirmText = isAlertOnly ? '确定' : '确认';
 
   // 根据类型确定确认按钮变体
-  const confirmBtnVariant = type === 'error' || type === 'warning' ? 'primary' : 'primary';
+  const confirmBtnVariant = type === 'error' || type === 'warning' ? 'danger' : 'primary';
 
   return (
-    <IOSModal
+    <AppModal
       isOpen={isOpen}
       onClose={onCancel || onConfirm}
       title={displayTitle}
@@ -101,6 +103,7 @@ export function ConfirmDialog({
       closeOnEsc={!!onCancel}
       closeOnOverlayClick={!!onCancel}
       showCloseButton={false}
+      overlayZIndexClassName={overlayZIndexClassName}
       footer={
         <>
           {!isAlertOnly && onCancel && (
@@ -112,20 +115,17 @@ export function ConfirmDialog({
             ref={confirmBtnRef}
             variant={confirmBtnVariant}
             onClick={onConfirm}
-            className={
-              type === 'error' || type === 'warning' ? 'bg-[var(--ios-red)] hover:bg-[#E53935]' : ''
-            }
           >
             {confirmText || defaultConfirmText}
           </IOSButton>
         </>
       }
     >
-      <p className="text-sm text-[var(--ios-text-secondary)] whitespace-pre-wrap leading-relaxed">
+      <p className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">
         {message}
       </p>
       {content}
-    </IOSModal>
+    </AppModal>
   );
 }
 

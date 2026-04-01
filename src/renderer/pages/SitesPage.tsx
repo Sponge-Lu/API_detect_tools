@@ -1152,7 +1152,7 @@ export function SitesPage() {
           )}
 
           {/* 站点列表区域 */}
-          <div className="flex-1 overflow-y-auto overflow-x-visible px-4 pb-4 space-y-3 relative z-0 ios-scroll-y">
+          <div className="relative z-0 flex-1 space-y-3 overflow-x-visible overflow-y-auto px-4 pb-4">
             {config.sites.length === 0 ? (
               <div className="text-center py-16 text-light-text-secondary dark:text-dark-text-secondary">
                 <Server className="w-16 h-16 mx-auto mb-4 opacity-30" strokeWidth={1.5} />

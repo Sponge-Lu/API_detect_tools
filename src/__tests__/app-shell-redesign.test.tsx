@@ -1,16 +1,37 @@
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { GlobalCommandBar } from '../renderer/components/AppShell/GlobalCommandBar';
 import { PageHeader } from '../renderer/components/AppShell/PageHeader';
 import { APP_PAGE_META } from '../renderer/components/AppShell/pageMeta';
 import { VerticalSidebar } from '../renderer/components/Sidebar/VerticalSidebar';
 
+vi.mock('../renderer/components/CliConfigStatus', () => ({
+  CliConfigStatusPanel: () => <div>Mock CLI Status</div>,
+}));
+
 describe('app shell redesign', () => {
+  it('renders the global command bar as compact neutral chrome', () => {
+    const { container } = render(<GlobalCommandBar saving={false} />);
+
+    expect(screen.getByText('Mock CLI Status')).toBeInTheDocument();
+    expect(container.firstElementChild).toHaveClass(
+      'h-[42px]',
+      'border-[var(--line-soft)]',
+      'bg-[var(--surface-1)]/90',
+      'backdrop-blur-sm'
+    );
+  });
+
   it('renders the site page header as a compact row with shared theme typography tokens', () => {
     const { container, queryByText } = render(
       <PageHeader title="站点管理" description="集中维护站点配置、账号、检测结果与日常操作。" />
     );
 
+    expect(container.firstElementChild).toHaveClass(
+      'border-[var(--line-soft)]',
+      'bg-[var(--surface-1)]/90'
+    );
     expect(screen.getByRole('heading', { name: '站点管理' })).toHaveClass(
       'text-[var(--text-primary)]'
     );

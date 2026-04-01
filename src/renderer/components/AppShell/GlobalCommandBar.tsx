@@ -28,7 +28,7 @@ export function GlobalCommandBar({
 
   return (
     <header
-      className="z-[100] flex h-10 shrink-0 items-center border-b border-[var(--line-soft)] bg-[var(--surface-1)]/90 px-3 backdrop-blur-md transition-colors duration-300"
+      className="z-[100] flex h-[42px] shrink-0 items-center border-b border-[var(--line-soft)] bg-[var(--surface-1)]/90 px-3 backdrop-blur-sm transition-colors duration-200"
       style={{ WebkitAppRegion: 'drag' } as CSSProperties}
     >
       <div className="flex-1 min-w-4" />

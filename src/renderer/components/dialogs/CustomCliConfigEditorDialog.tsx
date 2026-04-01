@@ -22,8 +22,9 @@ import {
   Edit2,
   RotateCcw,
 } from 'lucide-react';
-import { IOSModal } from '../IOSModal';
 import { IOSButton } from '../IOSButton';
+import { ConfirmDialog } from '../ConfirmDialog';
+import { OverlayDrawer } from '../overlays/OverlayDrawer';
 import { useCustomCliConfigStore } from '../../store/customCliConfigStore';
 import { toast } from '../../store/toastStore';
 import type { CustomCliConfig, CustomCliSettings } from '../../../shared/types/custom-cli-config';
@@ -87,8 +88,8 @@ const normalizeCliSettings = (
   geminiCli: normalizeCliSetting(settings.geminiCli),
 });
 
-/** iOS 风格 Toggle Switch 组件 */
-function IOSToggle({
+/** 中性风格 Toggle Switch 组件 */
+function FormSwitch({
   checked,
   onChange,
   disabled = false,
@@ -107,12 +108,12 @@ function IOSToggle({
       className={`
         relative inline-flex h-[24px] w-[44px] shrink-0 cursor-pointer rounded-full
         border-2 transition-colors duration-200 ease-in-out
-        focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ios-blue)]
+        focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]
         ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
         ${
           checked
-            ? 'bg-[var(--ios-blue)] border-[var(--ios-blue)]'
-            : 'bg-[var(--ios-separator)] border-[var(--ios-separator)]'
+            ? 'bg-[var(--accent)] border-[var(--accent)]'
+            : 'bg-[var(--line-soft)] border-[var(--line-soft)]'
         }
       `}
     >
@@ -147,26 +148,26 @@ function ConfigFileDisplay({
   const lineCount = file.content.split('\n').length;
   const contentHeight = Math.max(lineCount * 1.5, 6);
 
-  const codeBlockBg = 'bg-[#1e1e1e]';
-  const codeTextColor = 'text-[#d4d4d4]';
+  const codeBlockBg = 'bg-[var(--code-bg)]';
+  const codeTextColor = 'text-[var(--code-text)]';
 
   return (
-    <div className="border border-[var(--ios-separator)] rounded-[var(--radius-md)] overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-2 bg-[var(--ios-bg-tertiary)] border-b border-[var(--ios-separator)]">
-        <code className="text-sm font-mono text-[var(--ios-text-primary)]">{file.path}</code>
+    <div className="border border-[var(--line-soft)] rounded-[var(--radius-md)] overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-2 bg-[var(--surface-2)] border-b border-[var(--line-soft)]">
+        <code className="text-sm font-mono text-[var(--text-primary)]">{file.path}</code>
         <button
           onClick={() => onCopy(file.path, file.content)}
-          className="flex items-center gap-1 px-2 py-1 text-xs rounded-[var(--radius-sm)] hover:bg-[var(--ios-bg-secondary)] active:scale-95 transition-all"
+          className="flex items-center gap-1 px-2 py-1 text-xs rounded-[var(--radius-sm)] hover:bg-[var(--surface-1)] active:scale-95 transition-all"
         >
           {isCopied ? (
             <>
-              <Check className="w-3.5 h-3.5 text-[var(--ios-green)]" />
-              <span className="text-[var(--ios-green)]">已复制</span>
+              <Check className="w-3.5 h-3.5 text-[var(--success)]" />
+              <span className="text-[var(--success)]">已复制</span>
             </>
           ) : (
             <>
-              <Copy className="w-3.5 h-3.5 text-[var(--ios-text-secondary)]" />
-              <span className="text-[var(--ios-text-secondary)]">复制</span>
+              <Copy className="w-3.5 h-3.5 text-[var(--text-secondary)]" />
+              <span className="text-[var(--text-secondary)]">复制</span>
             </>
           )}
         </button>
@@ -175,7 +176,7 @@ function ConfigFileDisplay({
         <textarea
           value={file.content}
           onChange={e => onContentChange(file.path, e.target.value)}
-          className={`w-full p-3 text-sm font-mono ${codeBlockBg} ${codeTextColor} border-none resize-none focus:outline-none focus:ring-2 focus:ring-[var(--ios-blue)]`}
+          className={`w-full p-3 text-sm font-mono ${codeBlockBg} ${codeTextColor} border-none resize-none focus:outline-none focus:ring-2 focus:ring-[var(--accent)]`}
           style={{ height: `${contentHeight}rem` }}
           spellCheck={false}
         />
@@ -228,30 +229,30 @@ function CliModelSelector({
         type="button"
         disabled={disabled}
         onClick={() => !disabled && setOpen(!open)}
-        className={`w-full flex items-center justify-between px-2.5 py-1.5 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] text-xs transition-all ${
-          disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-[var(--ios-gray)]'
+        className={`w-full flex items-center justify-between px-2.5 py-1.5 bg-[var(--surface-1)] border border-[var(--line-soft)] rounded-[var(--radius-md)] text-xs transition-all ${
+          disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-[var(--icon-muted)]'
         }`}
       >
         <span
-          className={`truncate ${selectedModel ? 'text-[var(--ios-text-primary)]' : 'text-[var(--ios-text-tertiary)]'}`}
+          className={`truncate ${selectedModel ? 'text-[var(--text-primary)]' : 'text-[var(--text-tertiary)]'}`}
         >
           {selectedModel || '选择模型'}
         </span>
         <ChevronDown
-          className={`w-3.5 h-3.5 shrink-0 ml-1 text-[var(--ios-text-secondary)] transition-transform ${open ? 'rotate-180' : ''}`}
+          className={`w-3.5 h-3.5 shrink-0 ml-1 text-[var(--text-secondary)] transition-transform ${open ? 'rotate-180' : ''}`}
         />
       </button>
       {open && (
-        <div className="absolute z-50 w-full mt-1 bg-[var(--ios-bg-primary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] shadow-lg overflow-hidden">
-          <div className="p-1.5 border-b border-[var(--ios-separator)]">
+        <div className="absolute z-50 w-full mt-1 bg-[var(--surface-1)] border border-[var(--line-soft)] rounded-[var(--radius-md)] shadow-lg overflow-hidden">
+          <div className="p-1.5 border-b border-[var(--line-soft)]">
             <div className="relative">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--ios-text-tertiary)]" />
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-tertiary)]" />
               <input
                 type="text"
                 value={query}
                 onChange={e => setQuery(e.target.value)}
                 placeholder="搜索模型..."
-                className="w-full pl-7 pr-7 py-1 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-sm)] text-xs text-[var(--ios-text-primary)] focus:ring-1 focus:ring-[var(--ios-blue)] focus:border-transparent"
+                className="w-full pl-7 pr-7 py-1 bg-[var(--surface-1)] border border-[var(--line-soft)] rounded-[var(--radius-sm)] text-xs text-[var(--text-primary)] focus:ring-1 focus:ring-[var(--accent)] focus:border-transparent"
                 autoFocus
               />
               {query && (
@@ -260,7 +261,7 @@ function CliModelSelector({
                   onClick={() => setQuery('')}
                   className="absolute right-1.5 top-1/2 -translate-y-1/2"
                 >
-                  <X className="w-3.5 h-3.5 text-[var(--ios-text-tertiary)] hover:text-[var(--ios-text-secondary)]" />
+                  <X className="w-3.5 h-3.5 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]" />
                 </button>
               )}
             </div>
@@ -278,15 +279,15 @@ function CliModelSelector({
                   }}
                   className={`w-full px-3 py-1.5 text-left text-xs transition-colors ${
                     selectedModel === model
-                      ? 'bg-[var(--ios-blue)]/10 text-[var(--ios-blue)]'
-                      : 'text-[var(--ios-text-primary)] hover:bg-[var(--ios-bg-secondary)]'
+                      ? 'bg-[var(--accent)]/10 text-[var(--accent)]'
+                      : 'text-[var(--text-primary)] hover:bg-[var(--surface-1)]'
                   }`}
                 >
                   {model}
                 </button>
               ))
             ) : (
-              <div className="px-3 py-3 text-xs text-[var(--ios-text-secondary)] text-center">
+              <div className="px-3 py-3 text-xs text-[var(--text-secondary)] text-center">
                 {models.length === 0 ? '请先拉取模型' : '无匹配结果'}
               </div>
             )}
@@ -338,26 +339,26 @@ function CliTestModelSelector({
         type="button"
         disabled={disabled}
         onClick={() => !disabled && setOpen(o => !o)}
-        className={`flex items-center gap-1 px-2.5 py-1.5 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] text-xs transition-all ${
-          disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-[var(--ios-gray)]'
+        className={`flex items-center gap-1 px-2.5 py-1.5 bg-[var(--surface-1)] border border-[var(--line-soft)] rounded-[var(--radius-md)] text-xs transition-all ${
+          disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-[var(--icon-muted)]'
         }`}
       >
-        <span className="text-[var(--ios-text-primary)]">添加测试模型</span>
+        <span className="text-[var(--text-primary)]">添加测试模型</span>
         <ChevronDown
-          className={`w-3.5 h-3.5 text-[var(--ios-text-secondary)] transition-transform ${open ? 'rotate-180' : ''}`}
+          className={`w-3.5 h-3.5 text-[var(--text-secondary)] transition-transform ${open ? 'rotate-180' : ''}`}
         />
       </button>
       {open && (
-        <div className="absolute z-50 right-0 w-56 mt-1 bg-[var(--ios-bg-primary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] shadow-lg overflow-hidden">
-          <div className="p-1.5 border-b border-[var(--ios-separator)]">
+        <div className="absolute z-50 right-0 w-56 mt-1 bg-[var(--surface-1)] border border-[var(--line-soft)] rounded-[var(--radius-md)] shadow-lg overflow-hidden">
+          <div className="p-1.5 border-b border-[var(--line-soft)]">
             <div className="relative">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--ios-text-tertiary)]" />
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-tertiary)]" />
               <input
                 type="text"
                 value={query}
                 onChange={e => setQuery(e.target.value)}
                 placeholder="搜索模型..."
-                className="w-full pl-7 pr-7 py-1 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-sm)] text-xs text-[var(--ios-text-primary)] focus:ring-1 focus:ring-[var(--ios-blue)] focus:border-transparent"
+                className="w-full pl-7 pr-7 py-1 bg-[var(--surface-1)] border border-[var(--line-soft)] rounded-[var(--radius-sm)] text-xs text-[var(--text-primary)] focus:ring-1 focus:ring-[var(--accent)] focus:border-transparent"
                 autoFocus
               />
               {query && (
@@ -366,7 +367,7 @@ function CliTestModelSelector({
                   onClick={() => setQuery('')}
                   className="absolute right-1.5 top-1/2 -translate-y-1/2"
                 >
-                  <X className="w-3.5 h-3.5 text-[var(--ios-text-tertiary)] hover:text-[var(--ios-text-secondary)]" />
+                  <X className="w-3.5 h-3.5 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]" />
                 </button>
               )}
             </div>
@@ -378,13 +379,13 @@ function CliTestModelSelector({
                   key={model}
                   type="button"
                   onClick={() => handleSelect(model)}
-                  className="w-full px-3 py-1.5 text-left text-xs text-[var(--ios-text-primary)] hover:bg-[var(--ios-bg-secondary)] transition-colors"
+                  className="w-full px-3 py-1.5 text-left text-xs text-[var(--text-primary)] hover:bg-[var(--surface-1)] transition-colors"
                 >
                   {model}
                 </button>
               ))
             ) : (
-              <div className="px-3 py-3 text-xs text-[var(--ios-text-secondary)] text-center">
+              <div className="px-3 py-3 text-xs text-[var(--text-secondary)] text-center">
                 {models.length === 0 ? '请先拉取模型' : '无匹配结果'}
               </div>
             )}
@@ -726,13 +727,13 @@ export function CustomCliConfigEditorDialog({
   const isFetching = fetchingModels[config.id] || false;
 
   return (
-    <IOSModal
+    <OverlayDrawer
       isOpen={isOpen}
       onClose={onClose}
       title={config.name ? `编辑: ${config.name}` : '新建自定义配置'}
       titleIcon={<Settings className="w-5 h-5" />}
-      size="xl"
-      contentClassName="!p-0 !max-h-[70vh]"
+      widthClassName="max-w-[880px]"
+      contentClassName="!p-0 flex-1 min-h-0"
       footer={
         <>
           <IOSButton variant="tertiary" onClick={onClose}>
@@ -748,7 +749,7 @@ export function CustomCliConfigEditorDialog({
         {/* 基本信息 */}
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-[var(--ios-text-primary)] mb-2">
+            <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
               配置名称
             </label>
             <input
@@ -756,11 +757,11 @@ export function CustomCliConfigEditorDialog({
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder="例如: 我的 API"
-              className="w-full px-3 py-2 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] text-sm text-[var(--ios-text-primary)] focus:ring-2 focus:ring-[var(--ios-blue)] focus:border-transparent transition-all"
+              className="w-full px-3 py-2 bg-[var(--surface-1)] border border-[var(--line-soft)] rounded-[var(--radius-md)] text-sm text-[var(--text-primary)] focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-[var(--ios-text-primary)] mb-2">
+            <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
               <Globe className="w-4 h-4 inline mr-1" />
               Base URL
             </label>
@@ -769,14 +770,14 @@ export function CustomCliConfigEditorDialog({
               value={baseUrl}
               onChange={e => setBaseUrl(e.target.value)}
               placeholder="https://api.example.com"
-              className="w-full px-3 py-2 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] text-sm text-[var(--ios-text-primary)] focus:ring-2 focus:ring-[var(--ios-blue)] focus:border-transparent transition-all"
+              className="w-full px-3 py-2 bg-[var(--surface-1)] border border-[var(--line-soft)] rounded-[var(--radius-md)] text-sm text-[var(--text-primary)] focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all"
             />
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-[var(--ios-text-primary)] mb-2">
+            <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
               <Key className="w-4 h-4 inline mr-1" />
               API Key
             </label>
@@ -785,18 +786,18 @@ export function CustomCliConfigEditorDialog({
               value={apiKey}
               onChange={e => setApiKey(e.target.value)}
               placeholder="sk-..."
-              className="w-full px-3 py-2 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] text-sm text-[var(--ios-text-primary)] focus:ring-2 focus:ring-[var(--ios-blue)] focus:border-transparent transition-all"
+              className="w-full px-3 py-2 bg-[var(--surface-1)] border border-[var(--line-soft)] rounded-[var(--radius-md)] text-sm text-[var(--text-primary)] focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-[var(--ios-text-primary)] mb-2">
+            <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
               可用模型{' '}
-              <span className="text-[var(--ios-text-secondary)] font-normal">
+              <span className="text-[var(--text-secondary)] font-normal">
                 ({models.length}个)
               </span>
             </label>
             <div className="flex items-center gap-2">
-              <div className="flex-1 px-3 py-2 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] text-sm text-[var(--ios-text-secondary)]">
+              <div className="flex-1 px-3 py-2 bg-[var(--surface-1)] border border-[var(--line-soft)] rounded-[var(--radius-md)] text-sm text-[var(--text-secondary)]">
                 {models.length > 0 ? `已拉取 ${models.length} 个模型` : '尚未拉取模型'}
               </div>
               <IOSButton
@@ -818,7 +819,7 @@ export function CustomCliConfigEditorDialog({
 
         {/* 备注 */}
         <div>
-          <label className="block text-sm font-medium text-[var(--ios-text-primary)] mb-2">
+          <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
             备注信息
           </label>
           <textarea
@@ -826,13 +827,13 @@ export function CustomCliConfigEditorDialog({
             onChange={e => setNotes(e.target.value)}
             placeholder="在此添加备注信息（可选）..."
             rows={2}
-            className="w-full px-3 py-2 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] text-sm text-[var(--ios-text-primary)] focus:ring-2 focus:ring-[var(--ios-blue)] focus:border-transparent transition-all resize-none"
+            className="w-full px-3 py-2 bg-[var(--surface-1)] border border-[var(--line-soft)] rounded-[var(--radius-md)] text-sm text-[var(--text-primary)] focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition-all resize-none"
           />
         </div>
 
         {/* CLI 配置 — 第一行开关，第二行模型选择 */}
         <div>
-          <label className="block text-sm font-semibold text-[var(--ios-text-primary)] mb-2">
+          <label className="block text-sm font-semibold text-[var(--text-primary)] mb-2">
             CLI 配置
           </label>
           <div className="grid grid-cols-3 gap-3">
@@ -844,16 +845,16 @@ export function CustomCliConfigEditorDialog({
                   key={cli.key}
                   className={`flex flex-col gap-2 px-3 py-2.5 rounded-[var(--radius-md)] border transition-colors ${
                     setting.enabled
-                      ? 'border-[var(--ios-blue)]/30 bg-[var(--ios-blue)]/5'
-                      : 'border-[var(--ios-separator)] bg-[var(--ios-bg-tertiary)]'
+                      ? 'border-[var(--accent)]/30 bg-[var(--accent)]/5'
+                      : 'border-[var(--line-soft)] bg-[var(--surface-2)]'
                   }`}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <img src={cli.icon} alt={cli.name} className="w-4 h-4 shrink-0" />
-                      <span className="text-sm text-[var(--ios-text-primary)]">{cli.name}</span>
+                      <span className="text-sm text-[var(--text-primary)]">{cli.name}</span>
                     </div>
-                    <IOSToggle
+                    <FormSwitch
                       checked={setting.enabled}
                       onChange={checked => handleCliSettingChange(cli.key, { enabled: checked })}
                     />
@@ -864,7 +865,7 @@ export function CustomCliConfigEditorDialog({
                     onSelect={model => handleCliSettingChange(cli.key, { model })}
                     disabled={!setting.enabled}
                   />
-                  <div className="space-y-2 text-[var(--ios-text-secondary)] text-[var(--ios-text-xs)]">
+                  <div className="space-y-2 text-[var(--text-secondary)] text-[11px]">
                     <div className="flex items-center justify-between">
                       <span>测试模型（最多 3 个）</span>
                       <span>{selectedTestModels.length}/3</span>
@@ -874,20 +875,20 @@ export function CustomCliConfigEditorDialog({
                         selectedTestModels.map(model => (
                           <span
                             key={model}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-[var(--ios-separator)] bg-[var(--ios-bg-primary)] text-[var(--ios-text-primary)] text-[var(--ios-text-xs)]"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-[var(--line-soft)] bg-[var(--surface-1)] text-[var(--text-primary)] text-[11px]"
                           >
                             <span className="max-w-[120px] truncate">{model}</span>
                             <button
                               type="button"
                               onClick={() => handleRemoveTestModel(cli.key, model)}
-                              className="flex items-center justify-center w-4 h-4 rounded-full hover:bg-[var(--ios-bg-secondary)]"
+                              className="flex items-center justify-center w-4 h-4 rounded-full hover:bg-[var(--surface-1)]"
                             >
-                              <X className="w-3 h-3 text-[var(--ios-text-tertiary)]" />
+                              <X className="w-3 h-3 text-[var(--text-tertiary)]" />
                             </button>
                           </span>
                         ))
                       ) : (
-                        <span className="text-[var(--ios-text-secondary)]">尚未选择测试模型</span>
+                        <span className="text-[var(--text-secondary)]">尚未选择测试模型</span>
                       )}
                       <CliTestModelSelector
                         models={models}
@@ -906,7 +907,7 @@ export function CustomCliConfigEditorDialog({
 
         {/* CLI 类型选择（预览用） */}
         <div>
-          <label className="block text-sm font-semibold text-[var(--ios-text-primary)] mb-2">
+          <label className="block text-sm font-semibold text-[var(--text-primary)] mb-2">
             配置预览
           </label>
           <div className="flex gap-2 flex-wrap mb-3">
@@ -916,12 +917,12 @@ export function CustomCliConfigEditorDialog({
                 onClick={() => handleCliTypeChange(cli.key)}
                 className={`flex items-center gap-2 px-4 py-2 rounded-[var(--radius-md)] border transition-all active:scale-95 ${
                   selectedCli === cli.key
-                    ? 'border-[var(--ios-blue)] bg-[var(--ios-blue)]/10'
-                    : 'border-[var(--ios-separator)] bg-[var(--ios-bg-secondary)] hover:border-[var(--ios-gray)]'
+                    ? 'border-[var(--accent)] bg-[var(--accent)]/10'
+                    : 'border-[var(--line-soft)] bg-[var(--surface-1)] hover:border-[var(--icon-muted)]'
                 }`}
               >
                 <img src={cli.icon} alt={cli.name} className="w-5 h-5" />
-                <span className="text-sm text-[var(--ios-text-primary)]">{cli.name}</span>
+                <span className="text-sm text-[var(--text-primary)]">{cli.name}</span>
               </button>
             ))}
           </div>
@@ -930,7 +931,7 @@ export function CustomCliConfigEditorDialog({
           {displayConfig ? (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <div className="text-sm font-medium text-[var(--ios-text-primary)]">
+                <div className="text-sm font-medium text-[var(--text-primary)]">
                   配置文件预览
                 </div>
                 <div className="flex items-center gap-2">
@@ -939,14 +940,14 @@ export function CustomCliConfigEditorDialog({
                       {/* 编辑模式：保存和取消按钮 */}
                       <button
                         onClick={handleCancelEdit}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--ios-separator)] text-[var(--ios-text-secondary)] hover:bg-[var(--ios-bg-tertiary)] active:scale-95 transition-all"
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--line-soft)] text-[var(--text-secondary)] hover:bg-[var(--surface-2)] active:scale-95 transition-all"
                       >
                         <X className="w-3.5 h-3.5" />
                         <span>取消</span>
                       </button>
                       <button
                         onClick={handleSaveEdit}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--ios-blue)] bg-[var(--ios-blue)]/10 text-[var(--ios-blue)] hover:bg-[var(--ios-blue)]/20 active:scale-95 transition-all"
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20 active:scale-95 transition-all"
                       >
                         <Check className="w-3.5 h-3.5" />
                         <span>保存</span>
@@ -958,7 +959,7 @@ export function CustomCliConfigEditorDialog({
                       {savedEditedConfig && (
                         <button
                           onClick={() => setShowResetConfirm(true)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--ios-orange)]/50 text-[var(--ios-orange)] hover:bg-[var(--ios-orange)]/10 active:scale-95 transition-all"
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--warning)]/50 text-[var(--warning)] hover:bg-[var(--warning)]/10 active:scale-95 transition-all"
                           title="重置为默认配置"
                         >
                           <RotateCcw className="w-3.5 h-3.5" />
@@ -967,7 +968,7 @@ export function CustomCliConfigEditorDialog({
                       )}
                       <button
                         onClick={toggleEditMode}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--ios-separator)] text-[var(--ios-text-secondary)] hover:bg-[var(--ios-bg-tertiary)] active:scale-95 transition-all"
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--line-soft)] text-[var(--text-secondary)] hover:bg-[var(--surface-2)] active:scale-95 transition-all"
                         title="切换到编辑模式"
                       >
                         <Edit2 className="w-3.5 h-3.5" />
@@ -978,7 +979,7 @@ export function CustomCliConfigEditorDialog({
                 </div>
               </div>
               {isEditing && (
-                <div className="text-xs text-[var(--ios-text-secondary)]">
+                <div className="text-xs text-[var(--text-secondary)]">
                   提示：您可以直接编辑配置内容，修改后会随配置一起保存
                 </div>
               )}
@@ -994,7 +995,7 @@ export function CustomCliConfigEditorDialog({
               ))}
             </div>
           ) : (
-            <div className="px-3 py-4 text-sm text-[var(--ios-text-secondary)] text-center bg-[var(--ios-bg-tertiary)] rounded-[var(--radius-md)] border border-[var(--ios-separator)]">
+            <div className="px-3 py-4 text-sm text-[var(--text-secondary)] text-center bg-[var(--surface-2)] rounded-[var(--radius-md)] border border-[var(--line-soft)]">
               {!cliSettings[selectedCli]?.model
                 ? '请为当前 CLI 选择模型以预览配置'
                 : '请填写 Base URL 和 API Key'}
@@ -1003,37 +1004,24 @@ export function CustomCliConfigEditorDialog({
         </div>
       </div>
 
-      {/* 重置确认对话框 */}
-      {showResetConfirm && (
-        <div className="absolute inset-0 bg-black/30 flex items-center justify-center rounded-[var(--radius-xl)]">
-          <div className="bg-[var(--ios-bg-secondary)] rounded-[var(--radius-lg)] shadow-[var(--shadow-xl)] p-5 mx-4 max-w-sm">
-            <h3 className="text-base font-medium text-[var(--ios-text-primary)] mb-2">确认重置</h3>
-            <p className="text-sm text-[var(--ios-text-secondary)] mb-4">
-              确定要重置为默认配置吗？您的编辑内容将会丢失。
-            </p>
-            <div className="flex justify-end gap-2">
-              <IOSButton size="sm" variant="tertiary" onClick={() => setShowResetConfirm(false)}>
-                取消
-              </IOSButton>
-              <IOSButton
-                size="sm"
-                variant="primary"
-                onClick={handleResetConfig}
-                className="bg-[var(--ios-orange)] hover:bg-[var(--ios-orange)]/90"
-              >
-                确认重置
-              </IOSButton>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        isOpen={showResetConfirm}
+        type="warning"
+        title="确认重置"
+        message="确定要重置为默认配置吗？您的编辑内容将会丢失。"
+        confirmText="确认重置"
+        cancelText="取消"
+        onConfirm={handleResetConfig}
+        onCancel={() => setShowResetConfirm(false)}
+        overlayZIndexClassName="z-[220]"
+      />
 
       {/* CLI 测试 */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm font-semibold text-[var(--ios-text-primary)]">CLI 测试</p>
-            <p className="text-xs text-[var(--ios-text-secondary)]">
+            <p className="text-sm font-semibold text-[var(--text-primary)]">CLI 测试</p>
+            <p className="text-xs text-[var(--text-secondary)]">
               每个启用的 CLI 至多测试 3 个模型，测试结果会在此展示。
             </p>
           </div>
@@ -1053,11 +1041,11 @@ export function CustomCliConfigEditorDialog({
             return (
               <div
                 key={`${cli.key}-test`}
-                className="p-3 rounded-[var(--radius-md)] border border-[var(--ios-separator)] bg-[var(--ios-bg-tertiary)] space-y-2"
+                className="p-3 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] space-y-2"
               >
-                <div className="flex items-center justify-between text-[var(--ios-text-primary)]">
+                <div className="flex items-center justify-between text-[var(--text-primary)]">
                   <span>{cli.name}</span>
-                  <span className="text-[var(--ios-text-secondary)] text-[0.65rem]">
+                  <span className="text-[var(--text-secondary)] text-[0.65rem]">
                     {latest ? new Date(latest.timestamp).toLocaleTimeString() : '未测试'}
                   </span>
                 </div>
@@ -1068,8 +1056,8 @@ export function CustomCliConfigEditorDialog({
                         key={`${cli.key}-${outcome.model}-${outcome.timestamp}`}
                         className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border ${
                           outcome.success
-                            ? 'border-[var(--ios-blue)] bg-[var(--ios-blue)]/10 text-[var(--ios-blue)]'
-                            : 'border-red-200 bg-red-50 text-red-600'
+                            ? 'border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]'
+                            : 'border-[var(--danger)]/25 bg-[var(--danger-soft)] text-[var(--danger)]'
                         }`}
                         title={outcome.message}
                       >
@@ -1078,7 +1066,7 @@ export function CustomCliConfigEditorDialog({
                       </span>
                     ))
                   ) : (
-                    <span className="text-[var(--ios-text-secondary)]">暂无测试记录</span>
+                    <span className="text-[var(--text-secondary)]">暂无测试记录</span>
                   )}
                 </div>
               </div>
@@ -1086,6 +1074,6 @@ export function CustomCliConfigEditorDialog({
           })}
         </div>
       </div>
-    </IOSModal>
+    </OverlayDrawer>
   );
 }
