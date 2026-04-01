@@ -127,33 +127,6 @@
   --panel-border: var(--line-soft);
   --panel-border-strong: var(--line-strong);
 
-  /* 兼容旧 iOS 变量 */
-  --ios-bg-primary: var(--app-bg);
-  --ios-bg-secondary: var(--surface-1);
-  --ios-bg-tertiary: var(--surface-3);
-  --ios-text-primary: var(--text-primary);
-  --ios-text-secondary: var(--text-secondary);
-  --ios-text-tertiary: var(--text-tertiary);
-  --ios-blue: var(--accent);
-  --ios-green: var(--success);
-  --ios-red: var(--danger);
-  --ios-orange: var(--warning);
-  --ios-gray: var(--text-tertiary);
-  --ios-surface-muted: var(--app-bg-muted);
-  --ios-surface-soft: var(--surface-2);
-  --ios-accent-soft: var(--accent-soft);
-  --ios-accent-soft-strong: var(--accent-soft-strong);
-  --ios-accent-strong: var(--accent-strong);
-  --ios-success-soft: var(--success-soft);
-  --ios-warning-soft: var(--warning-soft);
-  --ios-danger-soft: var(--danger-soft);
-  --ios-icon-muted: var(--icon-muted);
-  --ios-hover-overlay: var(--hover-overlay);
-  --ios-focus-ring: var(--focus-ring);
-  --ios-selection-soft: var(--selection-soft);
-  --ios-code-bg: var(--code-bg);
-  --ios-code-text: var(--code-text);
-  --ios-separator: var(--line-soft);
 }
 
 html[data-theme='light-b'] {
@@ -407,61 +380,51 @@ body {
  */
 
 /* 基础图标样式 */
-.app-icon,
-[class~='ios-icon'] {
+.app-icon {
   stroke-width: 1.5px;
   color: currentColor;
   flex-shrink: 0;
 }
 
 /* 图标尺寸 */
-.app-icon-sm,
-[class~='ios-icon-sm'] {
+.app-icon-sm {
   width: 16px;
   height: 16px;
 }
 
-.app-icon-md,
-[class~='ios-icon-md'] {
+.app-icon-md {
   width: 20px;
   height: 20px;
 }
 
-.app-icon-lg,
-[class~='ios-icon-lg'] {
+.app-icon-lg {
   width: 24px;
   height: 24px;
 }
 
 /* 图标颜色变体 */
-.app-icon-primary,
-[class~='ios-icon-primary'] {
+.app-icon-primary {
   color: var(--accent);
 }
 
-.app-icon-success,
-[class~='ios-icon-success'] {
+.app-icon-success {
   color: var(--success);
 }
 
-.app-icon-error,
-[class~='ios-icon-error'] {
+.app-icon-error {
   color: var(--danger);
 }
 
-.app-icon-warning,
-[class~='ios-icon-warning'] {
+.app-icon-warning {
   color: var(--warning);
 }
 
-.app-icon-muted,
-[class~='ios-icon-muted'] {
+.app-icon-muted {
   color: var(--icon-muted);
 }
 
 /* 图标按钮样式 */
-.app-icon-button,
-[class~='ios-icon-button'] {
+.app-icon-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -475,24 +438,20 @@ body {
     transform var(--duration-fast) var(--ease-ios);
 }
 
-.app-icon-button:hover,
-[class~='ios-icon-button']:hover {
+.app-icon-button:hover {
   background: var(--hover-overlay);
 }
 
-.app-icon-button:active,
-[class~='ios-icon-button']:active {
+.app-icon-button:active {
   transform: scale(0.95);
 }
 
-.app-icon-button:disabled,
-[class~='ios-icon-button']:disabled {
+.app-icon-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.app-icon-button:disabled:active,
-[class~='ios-icon-button']:disabled:active {
+.app-icon-button:disabled:active {
   transform: none;
 }
 
@@ -991,7 +950,7 @@ body,
 .reduce-effects .ios-blur-xl-optimized {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  background-color: var(--ios-bg-secondary);
+  background-color: var(--surface-1);
 }
 
 .reduce-effects .ios-animate-optimized,
@@ -1042,22 +1001,22 @@ body,
 
 /* 键盘焦点样式 - 仅在键盘导航时显示 */
 :focus-visible {
-  outline: 2px solid var(--ios-blue);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
 /* 浅色模式焦点样式 */
 :root :focus-visible {
-  outline-color: var(--ios-blue);
-  box-shadow: 0 0 0 4px var(--ios-focus-ring);
+  outline-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--focus-ring);
 }
 
 /* 按钮焦点样式 */
 button:focus-visible,
 [role='button']:focus-visible {
-  outline: 2px solid var(--ios-blue);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
-  box-shadow: 0 0 0 4px var(--ios-focus-ring);
+  box-shadow: 0 0 0 4px var(--focus-ring);
 }
 
 /* 输入框焦点样式 */
@@ -1065,37 +1024,36 @@ input:focus-visible,
 textarea:focus-visible,
 select:focus-visible,
 [contenteditable='true']:focus-visible {
-  outline: 2px solid var(--ios-blue);
+  outline: 2px solid var(--accent);
   outline-offset: 0;
   box-shadow:
-    0 0 0 4px var(--ios-focus-ring),
+    0 0 0 4px var(--focus-ring),
     inset 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
 /* 链接焦点样式 */
 a:focus-visible {
-  outline: 2px solid var(--ios-blue);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 2px;
 }
 
 /* 卡片和容器焦点样式 */
 [tabindex]:focus-visible:not(input):not(textarea):not(select):not(button):not(a) {
-  outline: 2px solid var(--ios-blue);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: var(--radius-md);
 }
 
 /* 表格行焦点样式 */
 [role='row']:focus-visible {
-  outline: 2px solid var(--ios-blue);
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
-  background-color: var(--ios-selection-soft);
+  background-color: var(--selection-soft);
 }
 
 /* 图标按钮焦点样式 */
-.app-icon-button:focus-visible,
-[class~='ios-icon-button']:focus-visible {
+.app-icon-button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   box-shadow: 0 0 0 4px var(--focus-ring);
@@ -1111,12 +1069,12 @@ a:focus-visible {
 
 /* 主要文本 - 高对比度 */
 .ios-text-high-contrast {
-  color: var(--ios-text-primary);
+  color: var(--text-primary);
 }
 
 /* 次要文本 - 确保对比度 >= 4.5:1 */
 .ios-text-secondary-contrast {
-  color: var(--ios-text-secondary);
+  color: var(--text-secondary);
 }
 
 /* 浅色模式次要文本调整 - 确保对比度 */
@@ -1131,7 +1089,7 @@ a:focus-visible {
 
 /* 禁用状态文本 - 保持可读性 */
 .ios-text-disabled {
-  color: var(--ios-gray);
+  color: var(--text-tertiary);
   opacity: 0.6;
 }
 
@@ -1154,7 +1112,7 @@ a:focus-visible {
   position: absolute;
   top: -40px;
   left: 0;
-  background: var(--ios-blue);
+  background: var(--accent);
   color: white;
   padding: var(--spacing-sm) var(--spacing-md);
   border-radius: var(--radius-md);
@@ -1182,7 +1140,7 @@ a:focus-visible {
 }
 
 .ios-keyboard-nav-indicator:focus-visible::after {
-  border-color: var(--ios-blue);
+  border-color: var(--accent);
 }
 
 /* ========== 屏幕阅读器支持 ========== */
@@ -1251,7 +1209,7 @@ a:focus-visible {
 
 /* 选中状态 - 视觉反馈 */
 [aria-selected='true'] {
-  background-color: var(--ios-selection-soft);
+  background-color: var(--selection-soft);
 }
 
 /* 展开/收起状态 - 视觉反馈 */
@@ -1263,7 +1221,7 @@ a:focus-visible {
 [aria-current='true'],
 [aria-current='page'] {
   font-weight: 600;
-  color: var(--ios-blue);
+  color: var(--accent);
 }
 
 /* ========== 错误和警告状态 ========== */
@@ -1275,17 +1233,17 @@ a:focus-visible {
 
 /* 错误状态 */
 [aria-invalid='true'] {
-  border-color: var(--ios-red) !important;
+  border-color: var(--danger) !important;
 }
 
 [aria-invalid='true']:focus-visible {
-  box-shadow: 0 0 0 4px var(--ios-danger-soft);
+  box-shadow: 0 0 0 4px var(--danger-soft);
 }
 
 /* 必填字段指示 */
 [aria-required='true']::after {
   content: ' *';
-  color: var(--ios-red);
+  color: var(--danger);
 }
 
 /* ========== 动画无障碍 ========== */
@@ -1298,7 +1256,7 @@ a:focus-visible {
 /* 确保焦点指示器在减少动画模式下仍然可见 */
 @media (prefers-reduced-motion: reduce) {
   :focus-visible {
-    outline: 2px solid var(--ios-blue);
+    outline: 2px solid var(--accent);
     outline-offset: 2px;
     /* 移除过渡但保持焦点指示器 */
     transition: none;
