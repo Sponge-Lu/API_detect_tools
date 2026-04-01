@@ -2,6 +2,28 @@ import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
+const openModalStack: string[] = [];
+
+function registerOpenModal(modalId: string) {
+  const existingIndex = openModalStack.indexOf(modalId);
+  if (existingIndex !== -1) {
+    openModalStack.splice(existingIndex, 1);
+  }
+
+  openModalStack.push(modalId);
+}
+
+function unregisterOpenModal(modalId: string) {
+  const existingIndex = openModalStack.indexOf(modalId);
+  if (existingIndex !== -1) {
+    openModalStack.splice(existingIndex, 1);
+  }
+}
+
+function isTopmostModal(modalId: string) {
+  return openModalStack[openModalStack.length - 1] === modalId;
+}
+
 export interface AppModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -46,8 +68,22 @@ export function AppModal({
   const previousActiveElement = useRef<HTMLElement | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);
   const [shouldRender, setShouldRender] = useState(false);
+  const modalInstanceId = useId();
   const titleId = useId();
   const descriptionId = useId();
+
+  useEffect(() => {
+    if (!isOpen) {
+      unregisterOpenModal(modalInstanceId);
+      return;
+    }
+
+    registerOpenModal(modalInstanceId);
+
+    return () => {
+      unregisterOpenModal(modalInstanceId);
+    };
+  }, [isOpen, modalInstanceId]);
 
   useEffect(() => {
     if (isOpen) {
@@ -76,14 +112,14 @@ export function AppModal({
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && isTopmostModal(modalInstanceId)) {
         onClose();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [closeOnEsc, isOpen, onClose]);
+  }, [closeOnEsc, isOpen, modalInstanceId, onClose]);
 
   useEffect(() => {
     if (!isOpen || !shouldRender || !modalRef.current) {

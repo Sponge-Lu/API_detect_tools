@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { AppModal } from '../renderer/components/AppModal/AppModal';
 import { OverlayDrawer } from '../renderer/components/overlays/OverlayDrawer';
 import { UnifiedCliConfigDialog } from '../renderer/components/dialogs/UnifiedCliConfigDialog';
@@ -73,6 +74,12 @@ const editedCustomCliConfig: CustomCliConfig = {
   createdAt: 1,
   updatedAt: 1,
 };
+
+function StatefulWebDAVDialog() {
+  const [isOpen, setIsOpen] = useState(true);
+
+  return <WebDAVBackupDialog isOpen={isOpen} onClose={() => setIsOpen(false)} />;
+}
 
 describe('overlay family redesign', () => {
   it('shares the same chrome markers across modal and drawer', () => {
@@ -235,5 +242,44 @@ describe('overlay family redesign', () => {
     expect(screen.getAllByTestId('overlay-title')).toHaveLength(2);
     expect(screen.getAllByTestId('overlay-body')).toHaveLength(2);
     expect(screen.getAllByTestId('overlay-footer')).toHaveLength(2);
+  });
+
+  it('lets Escape close only the nested confirm while keeping the parent WebDAV dialog open', async () => {
+    const electronAPI = (((window as any).electronAPI ??= {}) as Record<string, unknown>) as any;
+    electronAPI.webdav = {
+      ...electronAPI.webdav,
+      listBackups: vi.fn().mockResolvedValue({
+        success: true,
+        data: [
+          {
+            filename: 'backup-2026-04-01.json',
+            lastModified: '2026-04-01T00:00:00.000Z',
+            size: 2048,
+          },
+        ],
+      }),
+      uploadBackup: vi.fn(),
+      restoreBackup: vi.fn(),
+      deleteBackup: vi.fn(),
+    };
+
+    render(<StatefulWebDAVDialog />);
+
+    const webdavDialog = await screen.findByRole('dialog', { name: 'WebDAV 云端备份' });
+    fireEvent.click(within(webdavDialog).getByTitle('删除此备份'));
+    expect(await screen.findByRole('dialog', { name: '确认删除' })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: '确认删除' })).not.toBeInTheDocument();
+    });
+
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 260));
+    });
+
+    expect(screen.getByRole('dialog', { name: 'WebDAV 云端备份' })).toBeInTheDocument();
+    expect(screen.getAllByTestId('overlay-title')).toHaveLength(1);
   });
 });
