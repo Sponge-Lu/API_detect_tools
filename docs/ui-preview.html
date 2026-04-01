@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light-a">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>API Hub UI Preview</title>
+    <style>
+      :root {
+        --font: "Segoe UI", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+        --mono: "JetBrains Mono", "Cascadia Code", monospace;
+        --r1: 10px; --r2: 16px; --r3: 22px;
+        --s1: 0 8px 24px rgba(25,30,36,.08);
+      }
+      html[data-theme='light-a'] { --bg:#f3f0ea; --bg2:#ebe6de; --shell:#f8f5f0e8; --p1:#fbf8f3; --p2:#f1ece5; --p3:#fff; --line:#5750461f; --text:#2c2a27; --muted:#6a635c; --soft:#948d84; --accent:#5b6a62; --accent2:#5b6a621f; --warn:#8b7457; --danger:#8a5d5a; --mask:#1b181633; }
+      html[data-theme='light-b'] { --bg:#eef2f5; --bg2:#e6ebee; --shell:#f6f9fbe8; --p1:#f7f9fb; --p2:#edf1f4; --p3:#fff; --line:#49545d22; --text:#26323c; --muted:#60707d; --soft:#86919a; --accent:#5d6f7d; --accent2:#5d6f7d1f; --warn:#867253; --danger:#875d61; --mask:#18202633; }
+      html[data-theme='light-c'] { --bg:#f2f1ed; --bg2:#e8e5df; --shell:#f7f6f2e8; --p1:#faf8f4; --p2:#f1eee7; --p3:#fff; --line:#56524c1f; --text:#2f2d2a; --muted:#67635c; --soft:#969087; --accent:#66645f; --accent2:#66645f1f; --warn:#8a7659; --danger:#8a5e5a; --mask:#1c191733; }
+      html[data-theme='dark'] { --bg:#17181b; --bg2:#1d1f23; --shell:#1c1e22e8; --p1:#1d1f23; --p2:#252930; --p3:#2b3038; --line:#bcc4ce22; --text:#eef0f3; --muted:#b4bcc5; --soft:#818a94; --accent:#8ea1ad; --accent2:#8ea1ad24; --warn:#b29c80; --danger:#b38c90; --mask:#090b0e80; --s1:0 18px 44px rgba(0,0,0,.32);}
+      * { box-sizing: border-box; }
+      body { margin:0; min-height:100vh; font-family:var(--font); color:var(--text); background:linear-gradient(180deg,var(--bg),var(--bg2)); }
+      button,input,textarea { font:inherit; }
+      .page { width:min(1480px,100%); margin:0 auto; padding:24px; }
+      .top,.row,.between,.actions,.chips,.toolbar,.overlay-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+      .between { justify-content:space-between; }
+      .top { justify-content:space-between; margin-bottom:18px; }
+      .eyebrow { font-size:12px; letter-spacing:.16em; text-transform:uppercase; color:var(--soft); }
+      .hero { font-size:24px; font-weight:600; letter-spacing:-.02em; margin-top:6px; }
+      .chip,.btn,.seg,.icon { border:1px solid var(--line); background:var(--p3); color:var(--muted); border-radius:999px; }
+      .chip,.btn,.seg { height:31px; padding:0 12px; cursor:pointer; }
+      .chip.active,.seg.active,.btn.primary { background:var(--accent2); color:var(--accent); border-color:transparent; }
+      .panel { background:var(--p1); border:1px solid var(--line); border-radius:var(--r3); box-shadow:var(--s1); overflow:hidden; }
+      .pad { padding:18px 20px; }
+      .grid2 { display:grid; grid-template-columns:1.4fr 1fr; gap:16px; margin-bottom:16px; }
+      .list { margin:0; padding-left:18px; line-height:1.7; color:var(--muted); }
+      .list li+li { margin-top:6px; }
+      .swatches { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:14px; }
+      .sw { background:var(--p2); border:1px solid var(--line); border-radius:14px; padding:10px; }
+      .sw b { display:block; margin-top:8px; font-size:13px; }
+      .sample { height:40px; border:1px solid var(--line); border-radius:10px; }
+      .shell { display:grid; grid-template-columns:88px 1fr; }
+      .side { padding:14px 12px; background:#00000008; border-right:1px solid var(--line); }
+      .logo { width:42px; height:42px; border-radius:14px; display:grid; place-items:center; background:var(--p3); border:1px solid var(--line); font-weight:700; color:var(--accent); margin-bottom:18px; }
+      .nav { display:grid; gap:8px; }
+      .nav .seg { height:42px; border-radius:14px; padding:0; display:grid; place-items:center; background:transparent; }
+      .content { background:var(--p2); min-height:930px; }
+      .bar { height:42px; padding:0 14px; border-bottom:1px solid var(--line); background:var(--shell); display:flex; align-items:center; justify-content:space-between; gap:10px; }
+      .search { width:250px; height:30px; border:1px solid var(--line); border-radius:999px; background:var(--p3); color:var(--muted); padding:0 12px; }
+      .badge { height:28px; padding:0 10px; border-radius:999px; background:var(--p3); border:1px solid var(--line); display:inline-flex; align-items:center; color:var(--muted); font-size:12px; }
+      .badge.accent { background:var(--accent2); color:var(--accent); border-color:transparent; }
+      .header { min-height:62px; padding:14px 18px; border-bottom:1px solid var(--line); background:#ffffff30; display:flex; align-items:center; justify-content:space-between; gap:14px; }
+      .title { font-size:20px; font-weight:600; letter-spacing:-.02em; }
+      .desc { margin-top:4px; font-size:12px; color:var(--muted); max-width:760px; }
+      .main { padding:16px; display:grid; gap:16px; }
+      .metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+      .metric { background:var(--p1); border:1px solid var(--line); border-radius:16px; padding:12px 14px; }
+      .metric small { display:block; font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--soft); }
+      .metric strong { display:block; margin-top:10px; font-size:24px; }
+      .subhead { padding:12px 14px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; gap:10px; background:#ffffff12; }
+      .subhead b { font-size:15px; }
+      .toolbar { justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--line); }
+      .row4,.row5,.setrow { display:grid; gap:12px; align-items:center; padding:12px 14px; border-top:1px solid var(--line); }
+      .row4 { grid-template-columns:1.7fr 1fr 1fr 220px; }
+      .row5 { grid-template-columns:1.4fr 1fr 90px 100px 112px; }
+      .setrow { grid-template-columns:1fr 240px; }
+      .entity { font-size:14px; font-weight:600; }
+      .sub { margin-top:4px; font-size:12px; color:var(--muted); }
+      .icon { width:28px; height:28px; border-radius:10px; display:grid; place-items:center; font-size:12px; }
+      .claude { color:#d97757; } .codex { color:#45a6ea; } .gemini { color:#6e7bff; }
+      .split { display:grid; grid-template-columns:1.15fr .9fr; gap:14px; }
+      .stack { display:grid; gap:14px; }
+      .matrix,.code { padding:14px; display:grid; gap:8px; }
+      .mx { display:grid; grid-template-columns:1.4fr .8fr .8fr .8fr .8fr; gap:8px; }
+      .cell,.field input,.field textarea,.face { min-height:38px; border:1px solid var(--line); border-radius:12px; background:var(--p2); display:flex; align-items:center; padding:0 12px; color:var(--muted); }
+      .ok { background:color-mix(in srgb, var(--accent) 12%, transparent); color:var(--accent); border-color:transparent; }
+      .warn { background:color-mix(in srgb, var(--warn) 12%, transparent); color:var(--warn); border-color:transparent; }
+      .field { display:grid; gap:6px; }
+      .field label { font-size:12px; color:var(--muted); }
+      .field textarea,.code .face { min-height:110px; align-items:flex-start; padding:10px 12px; white-space:pre-line; font-family:var(--mono); }
+      .overlay-stage { position:relative; min-height:350px; background:var(--p2); border-top:1px solid var(--line); }
+      .mask { position:absolute; inset:0; background:var(--mask); }
+      .modal,.drawer { position:absolute; background:var(--p1); border:1px solid var(--line); box-shadow:var(--s1); overflow:hidden; }
+      .modal { top:26px; left:26px; width:430px; border-radius:22px; }
+      .drawer { top:16px; right:16px; bottom:16px; width:410px; border-radius:24px; }
+      .oh,.ob,.of { padding:14px 16px; } .oh { border-bottom:1px solid var(--line); } .of { border-top:1px solid var(--line); } .ob { display:grid; gap:12px; }
+      .overlay-actions { justify-content:flex-end; }
+      .summary { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:16px; }
+      @media (max-width: 1180px) { .grid2,.split,.summary { grid-template-columns:1fr; } .metrics { grid-template-columns:repeat(2,1fr); } .row4,.row5,.setrow,.mx { grid-template-columns:1fr; } }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <div class="top">
+        <div>
+          <div class="eyebrow">API Hub / Visual Refresh</div>
+          <div class="hero">方案 B：语义替换 + 简洁 Header 统一</div>
+        </div>
+        <div class="chips">
+          <button class="chip active" data-theme-target="light-a">Light A</button>
+          <button class="chip" data-theme-target="light-b">Light B</button>
+          <button class="chip" data-theme-target="light-c">Light C</button>
+          <button class="chip" data-theme-target="dark">Dark</button>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <section class="panel pad">
+          <div class="eyebrow">Visual Rules</div>
+          <div class="hero" style="font-size:18px;">这版固定的视觉约束</div>
+          <ul class="list">
+            <li>Header 只保留标题、短说明和页面动作，不再使用工作台式大头部。</li>
+            <li>全局命令栏保持薄工具条节奏，只承接全局搜索、保存和更新状态。</li>
+            <li>四主题共享同一套语义 token 和组件层级，只改色相和明度，不改结构。</li>
+            <li>CLI 图标颜色保持原样，不纳入这轮统一替换。</li>
+            <li>不再出现 iOS 命名、蓝紫高亮、强毛玻璃和明显果冻圆角。</li>
+          </ul>
+          <div class="swatches">
+            <div class="sw"><div class="sample" style="background:var(--bg)"></div><b>App Bg</b><div class="sub">主背景</div></div>
+            <div class="sw"><div class="sample" style="background:var(--p1)"></div><b>Surface 1</b><div class="sub">主面板</div></div>
+            <div class="sw"><div class="sample" style="background:var(--p3)"></div><b>Raised</b><div class="sub">抬升层</div></div>
+            <div class="sw"><div class="sample" style="background:var(--accent2)"></div><b>Accent</b><div class="sub">低饱和强调</div></div>
+          </div>
+        </section>
+        <section class="panel pad">
+          <div class="eyebrow">Removal Scope</div>
+          <div class="hero" style="font-size:18px;">这轮会去掉的旧语义</div>
+          <ul class="list">
+            <li>`--ios-*` 全局变量改为中性语义 token。</li>
+            <li>`IOSButton / IOSModal / IOSToggle` 改为新产品级命名。</li>
+            <li>文档和测试中关于 “iOS 风格 / Apple HIG” 的表述全部清理。</li>
+            <li>页面中的蓝色 hover、高亮胶囊、玻璃感背景替换为克制的表面层级。</li>
+          </ul>
+        </section>
+      </div>
+
+      <section class="panel shell">
+        <aside class="side">
+          <div class="logo">AH</div>
+          <div class="nav">
+            <button class="seg active">站点</button>
+            <button class="seg">CLI</button>
+            <button class="seg">映射</button>
+            <button class="seg">可用性</button>
+            <button class="seg">统计</button>
+            <button class="seg">设置</button>
+          </div>
+        </aside>
+        <main class="content">
+          <div class="bar">
+            <div class="actions">
+              <input class="search" placeholder="全局搜索 / 站点 / CLI / 模型" />
+              <span class="badge">保存状态: 已同步</span>
+            </div>
+            <div class="actions">
+              <span class="badge">CLI 配置 3 / 4</span>
+              <span class="badge accent">发现更新 v2.1.31</span>
+              <button class="btn">刷新</button>
+              <button class="btn primary">下载更新</button>
+            </div>
+          </div>
+
+          <section class="header">
+            <div>
+              <div class="title">站点管理</div>
+              <div class="desc">Header 压到单行主节奏，筛选与排序工具回到内容区，不再用“大头部”表达高级感。</div>
+            </div>
+            <div class="actions">
+              <span class="badge">排序: 今日消费 ↓</span>
+              <button class="btn">更多排序</button>
+              <button class="btn primary">添加站点</button>
+            </div>
+          </section>
+
+          <div class="main">
+            <div class="metrics">
+              <div class="metric"><small>Site Accounts</small><strong>28</strong></div>
+              <div class="metric"><small>Health Alerts</small><strong>4</strong></div>
+              <div class="metric"><small>Today Usage</small><strong>$ 428.72</strong></div>
+              <div class="metric"><small>Auto Refresh</small><strong>16 Active</strong></div>
+            </div>
+
+            <section class="panel">
+              <div class="toolbar">
+                <div class="actions"><button class="seg active">余额</button><button class="seg">今日消费</button><button class="seg">总 Token</button></div>
+                <div class="actions"><span class="badge">筛选: 全部站点</span><button class="btn">分组</button><button class="btn">批量操作</button></div>
+              </div>
+              <div class="row4">
+                <div><div class="entity">OpenAI · 主账户</div><div class="sub">production / us-east / 最近刷新 2 分钟前</div></div>
+                <div><div class="entity">$ 328.10</div><div class="sub">今日 $ 42.70</div></div>
+                <div><div class="entity">18.4 M</div><div class="sub">RPM 120 / TPM 86k</div></div>
+                <div class="actions"><div class="icon">签</div><div class="icon">刷</div><div class="icon">自</div><div class="icon claude">C</div><div class="icon codex">X</div><div class="icon gemini">G</div></div>
+              </div>
+              <div class="row4">
+                <div><div class="entity">Anthropic · Team B</div><div class="sub">staging / eu-west / 鉴权需关注</div></div>
+                <div><div class="entity">$ 211.56</div><div class="sub">今日 $ 18.94</div></div>
+                <div><div class="entity">7.9 M</div><div class="sub">RPM 74 / TPM 31k</div></div>
+                <div class="actions"><div class="icon">签</div><div class="icon">刷</div><div class="icon">展</div><div class="icon claude">C</div><div class="icon codex">X</div></div>
+              </div>
+            </section>
+
+            <section class="header panel">
+              <div><div class="title">自定义 CLI</div><div class="desc">保留注册表 + inspector 原型，但页头本身压缩，只表达页面身份。</div></div>
+              <div class="actions"><span class="badge">配置 12</span><button class="btn">导入</button><button class="btn primary">新建配置</button></div>
+            </section>
+
+            <div class="split">
+              <section class="panel">
+                <div class="subhead"><div><div class="eyebrow">Registry</div><b>配置注册表</b></div><span class="badge">选中 1</span></div>
+                <div class="row5">
+                  <div><div class="entity">Main Endpoint</div><div class="sub">https://api.main.example</div></div>
+                  <div><div class="entity">Claude / Codex</div><div class="sub">已映射 2</div></div>
+                  <div class="entity">2</div><div class="entity">03/31 22:18</div>
+                  <div class="actions"><div class="icon">编</div><div class="icon codex">X</div><div class="icon">删</div></div>
+                </div>
+                <div class="row5">
+                  <div><div class="entity">Backup Endpoint</div><div class="sub">https://backup.internal</div></div>
+                  <div><div class="entity">Gemini</div><div class="sub">已映射 1</div></div>
+                  <div class="entity">1</div><div class="entity">03/31 21:54</div>
+                  <div class="actions"><div class="icon">编</div><div class="icon gemini">G</div><div class="icon">删</div></div>
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="subhead"><div><div class="eyebrow">Inspector</div><b>当前配置详情</b></div><button class="btn">写入选中 CLI</button></div>
+                <div class="pad">
+                  <div class="metrics" style="grid-template-columns:repeat(3,1fr);">
+                    <div class="metric"><small>Enabled</small><strong style="font-size:20px;">2</strong></div>
+                    <div class="metric"><small>Mapped</small><strong style="font-size:20px;">2</strong></div>
+                    <div class="metric"><small>Models</small><strong style="font-size:20px;">6</strong></div>
+                  </div>
+                  <div class="code" style="margin-top:12px;">
+                    <div class="field"><label>生成预览</label><div class="face">[profiles.default]
+base_url = "https://api.main.example"
+model = "gpt-5.4"
+
+[claude]
+model = "claude-sonnet-4"</div></div>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <section class="header panel">
+              <div><div class="title">路由相关页面</div><div class="desc">模型重定向、CLI 可用性、代理统计继续保留各自原型，但头部都统一成简洁条带。</div></div>
+              <div class="actions"><button class="btn">筛选</button><button class="btn">时间范围</button><button class="btn primary">运行探测</button></div>
+            </section>
+
+            <div class="split">
+              <section class="panel">
+                <div class="subhead"><div><div class="eyebrow">Redirection</div><b>模型映射目录</b></div><span class="badge">厂商 6 / 覆盖 14</span></div>
+                <div class="row4">
+                  <div><div class="entity">gpt-5.4</div><div class="sub">默认公开别名</div></div>
+                  <div><div class="entity">openai/gpt-5.4</div><div class="sub">主模型</div></div>
+                  <div><div class="entity">api-hub/prod-54</div><div class="sub">已覆盖</div></div>
+                  <div class="actions"><div class="icon">编</div><div class="icon">查</div></div>
+                </div>
+                <div class="row4">
+                  <div><div class="entity">claude-sonnet-4</div><div class="sub">兼容入口</div></div>
+                  <div><div class="entity">anthropic/sonnet-4</div><div class="sub">来源目录</div></div>
+                  <div><div class="entity">保持默认</div><div class="sub">未覆盖</div></div>
+                  <div class="actions"><div class="icon">编</div><div class="icon">史</div></div>
+                </div>
+              </section>
+
+              <section class="stack">
+                <section class="panel">
+                  <div class="subhead"><div><div class="eyebrow">Usability</div><b>CLI 探测矩阵</b></div><span class="badge">24h</span></div>
+                  <div class="matrix">
+                    <div class="mx"><div class="cell">site-prod / team-a</div><div class="cell ok">Claude 98%</div><div class="cell ok">Codex 95%</div><div class="cell warn">Gemini 81%</div><div class="cell">230 ms</div></div>
+                    <div class="mx"><div class="cell">site-backup / team-b</div><div class="cell ok">Claude 92%</div><div class="cell warn">Codex 77%</div><div class="cell ok">Gemini 89%</div><div class="cell">316 ms</div></div>
+                  </div>
+                </section>
+                <section class="panel">
+                  <div class="subhead"><div><div class="eyebrow">Proxy Stats</div><b>代理运行与统计</b></div><span class="badge">Server: Running</span></div>
+                  <div class="matrix">
+                    <div class="mx"><div class="cell">请求成功率</div><div class="cell ok">99.2%</div><div class="cell">峰值 RPM</div><div class="cell">120</div><div class="cell">更新时间 1m</div></div>
+                    <div class="mx"><div class="cell">默认模型</div><div class="cell">gpt-5.4</div><div class="cell">流量占比</div><div class="cell">41%</div><div class="cell">异常 2</div></div>
+                  </div>
+                </section>
+              </section>
+            </div>
+
+            <section class="header panel">
+              <div><div class="title">设置与 Overlay Family</div><div class="desc">设置继续是单页分区表单，确认弹窗与 CLI 抽屉共享同一家族 chrome，但不再带 iOS 语义。</div></div>
+              <div class="actions"><span class="badge">Theme: 4 presets</span><button class="btn primary">保存设置</button></div>
+            </section>
+
+            <div class="split">
+              <section class="panel">
+                <div class="subhead"><div><div class="eyebrow">Settings</div><b>主题与偏好</b></div><button class="btn">恢复默认</button></div>
+                <div class="setrow"><div><div class="entity">界面主题</div><div class="sub">四主题共享同一结构，只调整语义色和明度。</div></div><div class="actions"><button class="seg active">A</button><button class="seg">B</button><button class="seg">C</button><button class="seg">D</button></div></div>
+                <div class="setrow"><div><div class="entity">紧凑密度</div><div class="sub">保留站点页高密效率，不以大留白冒充高级感。</div></div><div class="actions"><button class="seg active">标准</button><button class="seg">更紧凑</button></div></div>
+                <div class="setrow"><div><div class="entity">更新通知</div><div class="sub">继续在全局命令栏显示，不在页面内部重复强调。</div></div><div class="actions"><button class="seg active">开启</button><button class="seg">关闭</button></div></div>
+              </section>
+
+              <section class="panel">
+                <div class="subhead"><div><div class="eyebrow">Overlay Family</div><b>确认弹窗 + CLI 工作抽屉</b></div><span class="badge">统一标题栏 / 正文 / 底部操作区</span></div>
+                <div class="overlay-stage">
+                  <div class="mask"></div>
+                  <div class="modal">
+                    <div class="oh"><div class="entity">删除站点</div><div class="sub">危险动作靠层级与顺序表达，不靠鲜艳红块。</div></div>
+                    <div class="ob"><div class="face">将删除站点、账户以及相关 CLI 配置引用。该操作不可撤销。</div></div>
+                    <div class="of overlay-actions"><button class="btn">取消</button><button class="btn primary" style="background:#8a5d5a1f;color:var(--danger);">确认删除</button></div>
+                  </div>
+                  <div class="drawer">
+                    <div class="oh"><div class="entity">CLI 配置抽屉</div><div class="sub">共享 overlay chrome，但保留 CLI 图标品牌色。</div></div>
+                    <div class="ob">
+                      <div class="field"><label>启用 CLI</label><div class="actions"><div class="icon claude">C</div><div class="icon codex">X</div><div class="icon gemini">G</div></div></div>
+                      <div class="field"><label>配置预览</label><textarea>[codex]
+model = "gpt-5.4"
+base_url = "https://api.main.example"
+
+[claude]
+model = "claude-sonnet-4"</textarea></div>
+                    </div>
+                    <div class="of overlay-actions"><button class="btn">测试</button><button class="btn">关闭</button><button class="btn primary">写入配置</button></div>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </main>
+      </section>
+
+      <div class="summary">
+        <section class="panel pad">
+          <div class="eyebrow">Header Rule</div>
+          <div class="hero" style="font-size:18px;">这版 Header 的尺度</div>
+          <ul class="list">
+            <li>全局命令栏约 42px。</li>
+            <li>页面 Header 约 62px。</li>
+            <li>页面内筛选、概览、工具全部回归内容区。</li>
+          </ul>
+        </section>
+        <section class="panel pad">
+          <div class="eyebrow">Please Confirm</div>
+          <div class="hero" style="font-size:18px;">请重点确认这四项</div>
+          <ul class="list">
+            <li>这种更薄、更克制的 Header 是否就是你要的方向。</li>
+            <li>站点页、CLI 页、路由页、设置页是否保持了足够的原型差异。</li>
+            <li>四主题里默认浅色主题你更偏向 A / B / C 哪一个。</li>
+            <li>overlay 的统一家族感是否还需要继续压缩圆角、边框或按钮强调。</li>
+          </ul>
+        </section>
+      </div>
+    </div>
+    <script>
+      const root = document.documentElement;
+      const chips = document.querySelectorAll('[data-theme-target]');
+      chips.forEach(chip => chip.addEventListener('click', () => {
+        root.dataset.theme = chip.getAttribute('data-theme-target');
+        chips.forEach(item => item.classList.toggle('active', item === chip));
+      }));
+    </script>
+  </body>
+</html>
