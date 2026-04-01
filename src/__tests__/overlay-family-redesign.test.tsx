@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { AppModal } from '../renderer/components/AppModal/AppModal';
 import { OverlayDrawer } from '../renderer/components/overlays/OverlayDrawer';
@@ -99,6 +99,10 @@ function StatefulUnifiedCliDialog() {
 }
 
 describe('overlay family redesign', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('shares the same chrome markers across modal and drawer', () => {
     render(
       <>
@@ -315,5 +319,43 @@ describe('overlay family redesign', () => {
     const drawerDialog = screen.getByRole('dialog', { name: 'CLI 工作台 - Claude Hub' });
     expect(drawerDialog).toHaveClass('translate-x-0', 'opacity-100');
     expect(screen.getAllByTestId('overlay-title')).toHaveLength(1);
+  });
+
+  it('keeps drawer ownership until the child confirm fully unmounts during a rapid double Escape', async () => {
+    render(<StatefulUnifiedCliDialog />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '重置' }));
+    const drawerDialog = screen.getByRole('dialog', { name: 'CLI 工作台 - Claude Hub' });
+    expect(await screen.findByRole('dialog', { name: '确认重置' })).toBeInTheDocument();
+
+    vi.useFakeTimers();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    const closingConfirm = screen.getByRole('dialog', { name: '确认重置' });
+    expect(closingConfirm).toHaveClass('scale-95', 'opacity-0');
+    expect(drawerDialog).toHaveClass('translate-x-0', 'opacity-100');
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(screen.getByRole('dialog', { name: '确认重置' })).toBeInTheDocument();
+    expect(drawerDialog).toHaveClass('translate-x-0', 'opacity-100');
+
+    await act(async () => {
+      vi.advanceTimersByTime(219);
+    });
+
+    expect(screen.getByRole('dialog', { name: '确认重置' })).toBeInTheDocument();
+    expect(drawerDialog).toHaveClass('translate-x-0', 'opacity-100');
+
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+    });
+
+    expect(screen.queryByRole('dialog', { name: '确认重置' })).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'CLI 工作台 - Claude Hub' })).toHaveClass(
+      'translate-x-0',
+      'opacity-100'
+    );
   });
 });

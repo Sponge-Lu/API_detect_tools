@@ -73,19 +73,6 @@ export function AppModal({
   const descriptionId = useId();
 
   useEffect(() => {
-    if (!isOpen) {
-      unregisterOpenOverlay(modalInstanceId);
-      return;
-    }
-
-    registerOpenOverlay(modalInstanceId);
-
-    return () => {
-      unregisterOpenOverlay(modalInstanceId);
-    };
-  }, [isOpen, modalInstanceId]);
-
-  useEffect(() => {
     if (isOpen) {
       previousActiveElement.current = document.activeElement as HTMLElement;
       setShouldRender(true);
@@ -105,6 +92,18 @@ export function AppModal({
 
     return () => clearTimeout(timer);
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!shouldRender) {
+      return;
+    }
+
+    registerOpenOverlay(modalInstanceId);
+
+    return () => {
+      unregisterOpenOverlay(modalInstanceId);
+    };
+  }, [modalInstanceId, shouldRender]);
 
   useEffect(() => {
     if (!isOpen || !closeOnEsc) {

@@ -51,19 +51,6 @@ export function OverlayDrawer({
   const descriptionId = useId();
 
   useEffect(() => {
-    if (!isOpen) {
-      unregisterOpenOverlay(drawerInstanceId);
-      return;
-    }
-
-    registerOpenOverlay(drawerInstanceId);
-
-    return () => {
-      unregisterOpenOverlay(drawerInstanceId);
-    };
-  }, [drawerInstanceId, isOpen]);
-
-  useEffect(() => {
     if (isOpen) {
       previousActiveElement.current = document.activeElement as HTMLElement;
       setShouldRender(true);
@@ -82,6 +69,18 @@ export function OverlayDrawer({
       return () => clearTimeout(timer);
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!shouldRender) {
+      return;
+    }
+
+    registerOpenOverlay(drawerInstanceId);
+
+    return () => {
+      unregisterOpenOverlay(drawerInstanceId);
+    };
+  }, [drawerInstanceId, shouldRender]);
 
   useEffect(() => {
     if (!isOpen || !closeOnEsc) return;
