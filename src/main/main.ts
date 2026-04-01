@@ -31,6 +31,11 @@ import { powerManager } from './power-manager';
 import { initializeRouteProxy } from './route-proxy-service';
 import { startCliProbeTimer } from './route-cli-probe-service';
 import { configureRouteApiKeyResolver } from './route-channel-resolver';
+import {
+  getWindowBackgroundColor,
+  normalizeThemeMode,
+  type ThemeMode,
+} from '../shared/theme/themePresets';
 
 // 设置Windows控制台编码为UTF-8，解决中文乱码问题
 if (os.platform() === 'win32') {
@@ -39,7 +44,7 @@ if (os.platform() === 'win32') {
   try {
     const { execSync } = require('child_process');
     execSync('chcp 65001', { stdio: 'ignore' });
-  } catch (e) {
+  } catch {
     // 忽略错误
   }
 }
@@ -64,34 +69,14 @@ function getThemeSettingsPath() {
 }
 
 // 读取保存的主题设置
-async function getSavedTheme(): Promise<'light' | 'dark' | 'system'> {
+async function getSavedTheme(): Promise<ThemeMode> {
   try {
     const themePath = getThemeSettingsPath();
     const data = await fs.readFile(themePath, 'utf-8');
     const settings = JSON.parse(data);
-    if (
-      settings.themeMode === 'light' ||
-      settings.themeMode === 'dark' ||
-      settings.themeMode === 'system'
-    ) {
-      return settings.themeMode;
-    }
-  } catch (e) {
-    // 文件不存在或解析失败，返回默认值
-  }
-  return 'system';
-}
-
-// 根据主题模式获取窗口背景色
-function getWindowBackgroundColor(themeMode: 'light' | 'dark' | 'system'): string {
-  if (themeMode === 'dark') {
-    return '#1a1b1e'; // 深色主题背景色
-  } else if (themeMode === 'light') {
-    return '#f8fafc'; // 浅色主题背景色
-  } else {
-    // system 模式：根据系统主题决定
-    const { nativeTheme } = require('electron');
-    return nativeTheme.shouldUseDarkColors ? '#1a1b1e' : '#f8fafc';
+    return normalizeThemeMode(settings.themeMode);
+  } catch {
+    return normalizeThemeMode(null);
   }
 }
 
@@ -151,7 +136,7 @@ async function createWindow() {
         await mainWindow.loadURL(url);
         loaded = true;
         break;
-      } catch (e) {
+      } catch {
         Logger.warn(`[Dev] 加载失败，尝试下一个端口: ${url}`);
       }
     }

@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react';
 import { Download, Loader2 } from 'lucide-react';
 import { CliConfigStatusPanel } from '../CliConfigStatus';
 import type { UpdateCheckResult } from '../../hooks/useUpdate';
+import { IOSButton } from '../IOSButton';
 
 export interface GlobalCommandBarProps {
   saving: boolean;
@@ -27,7 +28,7 @@ export function GlobalCommandBar({
 
   return (
     <header
-      className="z-[100] shrink-0 h-10 flex items-center px-3 bg-gray-50/80 dark:bg-[#1c1c1e]/90 backdrop-blur-md border-b border-gray-200/80 dark:border-white/[0.08] transition-colors duration-300"
+      className="z-[100] flex h-10 shrink-0 items-center border-b border-[var(--line-soft)] bg-[var(--surface-1)]/90 px-3 backdrop-blur-md transition-colors duration-300"
       style={{ WebkitAppRegion: 'drag' } as CSSProperties}
     >
       <div className="flex-1 min-w-4" />
@@ -39,19 +40,19 @@ export function GlobalCommandBar({
         <CliConfigStatusPanel compact showRefresh showEdit showReset />
 
         {saving && (
-          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded-md text-xs font-medium">
+          <div className="flex items-center gap-1.5 rounded-md bg-[var(--accent-soft)] px-2.5 py-1 text-xs font-medium text-[var(--accent)]">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
             <span>保存中...</span>
           </div>
         )}
 
         {showDownloadButton && (
-          <button
+          <IOSButton
             onClick={handleDownloadClick}
             disabled={isDownloading}
             title={newVersion ? `新版本: v${newVersion}` : '下载更新'}
             aria-label={newVersion ? `下载新版本 v${newVersion}` : '下载更新'}
-            className="px-3 py-1.5 bg-[var(--ios-blue)] hover:opacity-90 disabled:opacity-50 text-white rounded-lg transition-all flex items-center gap-1.5 text-sm disabled:cursor-not-allowed"
+            size="sm"
           >
             {isDownloading ? (
               <Loader2 className="w-4 h-4 animate-spin" strokeWidth={2} aria-hidden="true" />
@@ -59,7 +60,7 @@ export function GlobalCommandBar({
               <Download className="w-4 h-4" strokeWidth={2} aria-hidden="true" />
             )}
             <span>{isDownloading ? '打开中...' : '下载更新'}</span>
-          </button>
+          </IOSButton>
         )}
       </div>
     </header>
