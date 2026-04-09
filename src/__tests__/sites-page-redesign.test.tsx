@@ -75,6 +75,87 @@ describe('sites page redesign', () => {
     expect(screen.getByText('RPM 0.50 / TPM 350')).toBeInTheDocument();
   });
 
+  it('zeroes stale daily usage before rendering the merged stats cells', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-09T09:00:00'));
+
+    render(
+      <SiteCard
+        site={baseSite}
+        index={0}
+        siteResult={
+          {
+            status: '成功',
+            todayUsage: 12,
+            todayPromptTokens: 9000,
+            todayCompletionTokens: 1000,
+            todayTotalTokens: 10000,
+            todayRequests: 99,
+            lastRefresh: new Date('2026-04-08T23:58:00').getTime(),
+            models: [],
+          } as any
+        }
+        siteAccount={undefined}
+        isExpanded={false}
+        columnWidths={[120, 75, 75, 110, 110, 60, 80, 160]}
+        accountId={undefined}
+        accountName={undefined}
+        accountAccessToken={undefined}
+        accountUserId={undefined}
+        cardKey="site-1"
+        apiKeys={[]}
+        userGroups={{}}
+        modelPricing={null}
+        isDetecting={false}
+        checkingIn={null}
+        dragOverIndex={null}
+        refreshMessage={null}
+        selectedGroup={null}
+        modelSearch=""
+        globalModelSearch=""
+        showTokens={{}}
+        selectedModels={new Set<string>()}
+        deletingTokenKey={null}
+        autoRefreshEnabled={false}
+        cliCompatibility={{ claudeCode: true, codex: null, geminiCli: null, testedAt: Date.now() }}
+        cliConfig={null}
+        isCliTesting={false}
+        onExpand={vi.fn()}
+        onDetect={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onCheckIn={vi.fn()}
+        onOpenSite={vi.fn()}
+        onOpenExtraLink={vi.fn()}
+        onCopyToClipboard={vi.fn()}
+        onToggleAutoRefresh={vi.fn()}
+        onOpenCliConfig={vi.fn()}
+        onTestCliCompat={vi.fn()}
+        onApply={vi.fn()}
+        onAddAccount={vi.fn()}
+        onDragStart={vi.fn()}
+        onDragEnd={vi.fn()}
+        onDragOver={vi.fn()}
+        onDragLeave={vi.fn()}
+        onDrop={vi.fn()}
+        onToggleGroupFilter={vi.fn()}
+        onModelSearchChange={vi.fn()}
+        onToggleTokenVisibility={vi.fn()}
+        onToggleModelSelection={vi.fn()}
+        onCopySelectedModels={vi.fn()}
+        onClearSelectedModels={vi.fn()}
+        onOpenCreateTokenDialog={vi.fn()}
+        onDeleteToken={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('$-0.00')).toBeInTheDocument();
+    expect(screen.getByText('输入 0 / 输出 0')).toBeInTheDocument();
+    expect(screen.getByText('RPM 0.00 / TPM 0')).toBeInTheDocument();
+
+    vi.useRealTimers();
+  });
+
   it('renders a compact column header row with inline sorting and an actions slot', () => {
     const { container } = render(
       <SiteListHeader

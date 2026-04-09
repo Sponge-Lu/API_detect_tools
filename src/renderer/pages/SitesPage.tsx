@@ -40,10 +40,12 @@ import {
   useSiteDrag,
   useSiteDetection,
   useCliCompatTest,
+  useDateString,
 } from '../hooks';
 import type { NewApiTokenForm } from '../hooks';
 import { getGroupTextColor } from '../utils/groupStyle';
 import { normalizeSiteSortField } from '../utils/siteSort';
+import { getSiteDailyStats } from '../utils/siteDailyStats';
 import type { SiteConfig, DetectionResult } from '../../shared/types/site';
 import type { Config, SiteGroup } from '../App';
 
@@ -172,6 +174,7 @@ export function SitesPage() {
     processingAuthErrorSite,
     setProcessingAuthErrorSite,
     columnWidths,
+    setColumnWidth,
     sortField,
     sortOrder,
     toggleSort,
@@ -202,6 +205,7 @@ export function SitesPage() {
   // 多账户: 按站点 ID 预加载的账户列表
   const [accountsBySite, setAccountsBySite] = useState<Record<string, AccountInfo[]>>({});
   const [selectedModelsByCard, setSelectedModelsByCard] = useState<Record<string, Set<string>>>({});
+  const dateStr = useDateString();
 
   // 兼容层
   const setNewTokenForm = (form: NewApiTokenForm | ((p: NewApiTokenForm) => NewApiTokenForm)) => {
@@ -780,18 +784,7 @@ export function SitesPage() {
     (site: SiteConfig, siteResult?: DetectionResult): number | string => {
       if (!effectiveSortField) return 0;
 
-      const todayPromptTokens = siteResult?.todayPromptTokens ?? 0;
-      const todayCompletionTokens = siteResult?.todayCompletionTokens ?? 0;
-      const todayTotalTokens =
-        siteResult?.todayTotalTokens ?? todayPromptTokens + todayCompletionTokens;
-      const todayRequests = siteResult?.todayRequests ?? 0;
-
-      const now = new Date();
-      const dayStart = new Date(now);
-      dayStart.setHours(0, 0, 0, 0);
-      const minutesSinceStart = Math.max((now.getTime() - dayStart.getTime()) / 60000, 1);
-      const rpm = todayRequests > 0 ? todayRequests / minutesSinceStart : 0;
-      const tpm = todayTotalTokens > 0 ? todayTotalTokens / minutesSinceStart : 0;
+      const dailyStats = getSiteDailyStats(siteResult, new Date());
 
       const apiModelCount = siteResult?.models?.length || 0;
       const storeKey = makeCardKey(site.name, siteResult?.accountId);
@@ -807,19 +800,9 @@ export function SitesPage() {
         case 'balance':
           return siteResult?.balance ?? -Infinity;
         case 'todayUsage':
-          return siteResult?.todayUsage ?? -Infinity;
+          return dailyStats.todayUsage;
         case 'totalTokens':
-          return todayTotalTokens;
-        case 'promptTokens':
-          return todayPromptTokens;
-        case 'completionTokens':
-          return todayCompletionTokens;
-        case 'requests':
-          return todayRequests;
-        case 'rpm':
-          return rpm;
-        case 'tpm':
-          return tpm;
+          return dailyStats.todayTotalTokens;
         case 'modelCount':
           return modelCount;
         case 'lastUpdate':
@@ -834,7 +817,7 @@ export function SitesPage() {
           return 0;
       }
     },
-    [effectiveSortField, modelPricing]
+    [effectiveSortField, modelPricing, dateStr]
   );
 
   // 排序后的站点列表
@@ -842,33 +825,29 @@ export function SitesPage() {
     if (!config?.sites) return [];
 
     const sitesWithIndex = config.sites.map((site, index) => {
-      // 聚合站点所有账户的结果，取余额最大的作为排序依据
       const siteResults = results.filter(r => r.name === site.name);
-      const siteResult =
-        siteResults.length > 0
-          ? siteResults.reduce((best, r) =>
-              (r.balance ?? -Infinity) > (best.balance ?? -Infinity) ? r : best
+      const sortMetric =
+        effectiveSortField && effectiveSortField !== 'name'
+          ? siteResults.reduce<number>(
+              (best, result) => Math.max(best, Number(getSortValue(site, result))),
+              Number(getSortValue(site, undefined))
             )
-          : undefined;
-      return { site, index, siteResult };
+          : 0;
+      return { site, index, siteResult: siteResults[0], sortMetric };
     });
 
     if (!effectiveSortField) return sitesWithIndex;
 
     return [...sitesWithIndex].sort((a, b) => {
-      const aValue = getSortValue(a.site, a.siteResult);
-      const bValue = getSortValue(b.site, b.siteResult);
-
-      let comparison = 0;
-      if (typeof aValue === 'string' && typeof bValue === 'string') {
-        comparison = aValue.localeCompare(bValue);
-      } else {
-        comparison = (aValue as number) - (bValue as number);
+      if (effectiveSortField === 'name') {
+        const comparison = a.site.name.toLowerCase().localeCompare(b.site.name.toLowerCase());
+        return sortOrder === 'asc' ? comparison : -comparison;
       }
 
+      const comparison = a.sortMetric - b.sortMetric;
       return sortOrder === 'asc' ? comparison : -comparison;
     });
-  }, [config?.sites, results, effectiveSortField, sortOrder, getSortValue]);
+  }, [config?.sites, results, effectiveSortField, sortOrder, getSortValue, dateStr]);
 
   // 展平为 per-account 卡片列表
   const flattenedCards: FlattenedCardItem[] = useMemo(() => {
@@ -986,21 +965,21 @@ export function SitesPage() {
         <div className="flex-1 flex flex-col">
           {/* 站点分组控制栏 */}
           {config.sites.length > 0 && (
-            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-light-border px-4 pt-2 pb-1 text-[13px] text-light-text-secondary dark:border-dark-border dark:text-dark-text-secondary flex-shrink-0">
+            <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-[var(--line-soft)] px-4 pb-1 pt-2 text-[13px] text-[var(--text-secondary)]">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-semibold text-light-text dark:text-dark-text">站点分组</span>
+                <span className="font-semibold text-[var(--text-primary)]">站点分组</span>
                 <button
                   onClick={() => setActiveSiteGroupFilter(null)}
                   className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[13px] transition-all ${
                     activeSiteGroupFilter === null
-                      ? 'border-primary-500 bg-primary-500 text-white'
-                      : 'border-light-border dark:border-dark-border bg-white/80 dark:bg-dark-card hover:border-primary-300'
+                      ? 'border-[var(--accent)] bg-[var(--accent)] text-white'
+                      : 'border-[var(--line-soft)] bg-[var(--surface-1)]/88 hover:border-[color-mix(in_srgb,var(--accent)_28%,var(--line-soft))]'
                   }`}
                   title="显示全部站点"
                 >
                   <span className="font-semibold">全部</span>
                   <span
-                    className={`text-xs ${activeSiteGroupFilter === null ? 'text-white/80' : 'text-light-text-tertiary dark:text-dark-text-tertiary'}`}
+                    className={`text-xs ${activeSiteGroupFilter === null ? 'text-white/80' : 'text-[var(--text-tertiary)]'}`}
                   >
                     {config.sites.length} 个
                   </span>
@@ -1023,12 +1002,12 @@ export function SitesPage() {
                       onDragEnd={handleGroupDragEnd}
                       className={`group/tag inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[13px] transition-all cursor-grab active:cursor-grabbing ${
                         isActive
-                          ? 'border-primary-500 bg-primary-500 text-white'
+                          ? 'border-[var(--accent)] bg-[var(--accent)] text-white'
                           : isDragOverForSort
-                            ? 'border-primary-500 bg-primary-100/80 dark:bg-primary-900/50 scale-105'
+                            ? 'scale-105 border-[var(--accent)] bg-[var(--accent-soft)]'
                             : dragOverGroupId === groupId
-                              ? 'border-primary-400 bg-primary-50/80 dark:bg-primary-900/30'
-                              : 'border-light-border dark:border-dark-border bg-white/80 dark:bg-dark-card hover:border-primary-300'
+                              ? 'border-[color-mix(in_srgb,var(--accent)_36%,var(--line-soft))] bg-[var(--surface-2)]'
+                              : 'border-[var(--line-soft)] bg-[var(--surface-1)]/88 hover:border-[color-mix(in_srgb,var(--accent)_28%,var(--line-soft))]'
                       }`}
                       onDragOver={e => {
                         e.preventDefault();
@@ -1068,7 +1047,7 @@ export function SitesPage() {
                         <span className="font-semibold">{group.name}</span>
                       </span>
                       <span
-                        className={`text-xs ${isActive ? 'text-white/80' : 'text-light-text-tertiary dark:text-dark-text-tertiary'}`}
+                        className={`text-xs ${isActive ? 'text-white/80' : 'text-[var(--text-tertiary)]'}`}
                       >
                         {groupSitesCount} 个
                       </span>
@@ -1109,17 +1088,17 @@ export function SitesPage() {
               </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
                 <div className="relative">
-                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-light-text-tertiary dark:text-dark-text-tertiary" />
+                  <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-tertiary)]" />
                   <input
                     value={globalModelSearch}
                     onChange={e => handleGlobalModelSearchChange(e.target.value)}
                     placeholder="搜索可用模型（全局）"
-                    className="pl-8 pr-7 py-2 text-sm bg-white/80 dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg text-light-text dark:text-dark-text placeholder-light-text-tertiary dark:placeholder-dark-text-tertiary focus:outline-none focus:border-primary-400"
+                    className="rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-1)]/88 py-2 pl-8 pr-7 text-sm text-[var(--text-primary)] placeholder-[var(--text-tertiary)] focus:border-[var(--accent)] focus:outline-none"
                   />
                   {globalModelSearch && (
                     <button
                       onClick={() => handleGlobalModelSearchChange('')}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-light-text-tertiary hover:text-light-text dark:hover:text-dark-text"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
                       title="清空全局搜索"
                     >
                       <X className="w-4 h-4" />
@@ -1154,7 +1133,7 @@ export function SitesPage() {
           {/* 站点列表区域 */}
           <div className="relative z-0 flex-1 space-y-3 overflow-x-visible overflow-y-auto px-4 pb-4">
             {config.sites.length === 0 ? (
-              <div className="text-center py-16 text-light-text-secondary dark:text-dark-text-secondary">
+              <div className="py-16 text-center text-[var(--text-secondary)]">
                 <Server className="w-16 h-16 mx-auto mb-4 opacity-30" strokeWidth={1.5} />
                 <p className="text-lg font-medium mb-2">还没有添加任何站点</p>
                 <p className="text-sm mb-4">点击"添加站点"按钮开始</p>
@@ -1174,13 +1153,15 @@ export function SitesPage() {
                     从备份恢复站点
                   </AppButton>
                 </div>
-                <p className="text-xs mt-2 text-light-text-tertiary dark:text-dark-text-tertiary">
+                <p className="mt-2 text-xs text-[var(--text-tertiary)]">
                   从备份目录选择配置文件进行恢复
                 </p>
               </div>
             ) : (
               <>
                 <SiteListHeader
+                  columnWidths={visibleColumnWidths}
+                  onColumnWidthChange={setColumnWidth}
                   sortField={effectiveSortField}
                   sortOrder={sortOrder}
                   onToggleSort={toggleSort}
@@ -1613,8 +1594,8 @@ export function SitesPage() {
             setCliConfigAccountId(null);
             setCliConfigSiteResult(null);
           }}
-          />
-        )}
+        />
+      )}
 
       {/* 备份选择对话框 */}
       <BackupSelectDialog

@@ -18,16 +18,17 @@
 /**
  * 站点卡片主组件
  * 封装站点的展示和交互逻辑
- * 使用 IOSCard 组件实现 iOS 风格样式
+ * 使用统一卡片原语实现当前产品风格样式
  */
 
 import React, { useMemo } from 'react';
 import { SiteCardHeader } from './SiteCardHeader';
 import { SiteCardActions } from './SiteCardActions';
 import { SiteCardDetails } from './SiteCardDetails';
-import { IOSCard } from '../IOSCard';
+import { AppCard } from '../AppCard';
 import { useDateString } from '../../hooks';
 import type { SiteCardProps } from './types';
+import { getSiteDailyStats } from '../../utils/siteDailyStats';
 
 /**
  * 站点卡片组件
@@ -140,25 +141,40 @@ export const SiteCard = React.memo(
       return null;
     }, [siteResult?.error]);
 
-    // Token 指标计算
-    const todayPromptTokens = siteResult?.todayPromptTokens ?? 0;
-    const todayCompletionTokens = siteResult?.todayCompletionTokens ?? 0;
-    const todayTotalTokens =
-      siteResult?.todayTotalTokens ?? todayPromptTokens + todayCompletionTokens;
-    const todayRequests = siteResult?.todayRequests ?? 0;
-
-    // RPM / TPM 计算
-    const { rpm, tpm } = useMemo(() => {
-      const now = new Date();
-      const dayStart = new Date(now);
-      dayStart.setHours(0, 0, 0, 0);
-      const minutesSinceStart = Math.max((now.getTime() - dayStart.getTime()) / 60000, 1);
-
-      return {
-        rpm: todayRequests > 0 ? todayRequests / minutesSinceStart : 0,
-        tpm: todayTotalTokens > 0 ? todayTotalTokens / minutesSinceStart : 0,
-      };
-    }, [todayRequests, todayTotalTokens]);
+    const dailyStats = useMemo(
+      () => getSiteDailyStats(siteResult, new Date()),
+      [siteResult, dateStr]
+    );
+    const {
+      todayUsage,
+      todayPromptTokens,
+      todayCompletionTokens,
+      todayTotalTokens,
+      todayRequests,
+      rpm,
+      tpm,
+    } = dailyStats;
+    const normalizedSiteResult = useMemo(
+      () =>
+        siteResult
+          ? {
+              ...siteResult,
+              todayUsage,
+              todayPromptTokens,
+              todayCompletionTokens,
+              todayTotalTokens,
+              todayRequests,
+            }
+          : siteResult,
+      [
+        siteResult,
+        todayUsage,
+        todayPromptTokens,
+        todayCompletionTokens,
+        todayTotalTokens,
+        todayRequests,
+      ]
+    );
 
     // 模型数量计算
     const modelCount = useMemo(() => {
@@ -180,7 +196,7 @@ export const SiteCard = React.memo(
         : null;
 
     return (
-      <IOSCard
+      <AppCard
         variant="standard"
         blur={true}
         hoverable={site.enabled}
@@ -228,21 +244,19 @@ export const SiteCard = React.memo(
           <div
             className={`mx-[var(--spacing-md)] mt-[var(--spacing-sm)] px-[var(--spacing-md)] py-1.5 rounded-[var(--radius-sm)] text-xs font-medium transition-all ${
               refreshMessage.type === 'success'
-                ? 'bg-[var(--ios-green)]/10 text-[var(--ios-green)] border border-[var(--ios-green)]/30'
-                : 'bg-[var(--ios-blue)]/10 text-[var(--ios-blue)] border border-[var(--ios-blue)]/30'
+                ? 'border border-[var(--line-soft)] bg-[var(--success-soft)] text-[var(--success)]'
+                : 'border border-[var(--line-soft)] bg-[var(--accent-soft)] text-[var(--accent)]'
             }`}
           >
             {refreshMessage.message}
           </div>
         )}
 
-        {/* 一级信息 - iOS 风格纯色背景 */}
-        <div className="px-4 py-[var(--spacing-sm)] border-b border-[var(--ios-separator)]">
-          <div className="flex items-center justify-between">
-            {/* 左侧：信息栅格 */}
+        <div className="border-b border-[var(--line-soft)] px-4 py-[var(--spacing-sm)]">
+          <div data-testid="site-card-main-row" className="flex items-center justify-between gap-3">
             <SiteCardHeader
               site={site}
-              siteResult={siteResult}
+              siteResult={normalizedSiteResult}
               lastSyncDisplay={lastSyncDisplay}
               errorCode={errorCode}
               timeoutSeconds={timeoutSeconds}
@@ -265,7 +279,6 @@ export const SiteCard = React.memo(
               onApply={onApply}
             />
 
-            {/* 右侧：操作按钮 */}
             <SiteCardActions
               site={site}
               index={index}
@@ -287,7 +300,7 @@ export const SiteCard = React.memo(
             />
           </div>
         </div>
-      </IOSCard>
+      </AppCard>
     );
   },
   (prevProps, nextProps) => {
