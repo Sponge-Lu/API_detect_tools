@@ -224,6 +224,14 @@ export function registerDetectionHandlers(
     }
   });
 
+  ipcMain.handle('close-login-browser', async () => {
+    try {
+      chromeManager.cleanupLoginBrowser();
+    } catch (error: any) {
+      Logger.error('❌ [IPC] 关闭登录浏览器失败:', error?.message || error);
+    }
+  });
+
   // CLI 配置检测：检测单个 CLI 配置
   ipcMain.handle('detection:detect-cli-config', async (_, cliType: CliType, sites: SiteInfo[]) => {
     try {

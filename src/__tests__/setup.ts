@@ -3,11 +3,13 @@ import { vi } from 'vitest';
 
 // Mock Electron API for renderer tests
 if (typeof window !== 'undefined') {
+  vi.stubGlobal('alert', vi.fn());
   (window as any).electronAPI = {
     loadConfig: vi.fn(),
     saveConfig: vi.fn(),
     launchChromeForLogin: vi.fn(),
     closeBrowser: vi.fn(),
+    closeLoginBrowser: vi.fn(),
     getCookies: vi.fn(),
     fetchWithCookies: vi.fn(),
     detectSite: vi.fn(),

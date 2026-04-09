@@ -133,7 +133,8 @@ export function registerTokenHandlers(
         baseUrl,
         true,
         600000,
-        (status: string) => sendSiteInitStatus(mainWindow, status)
+        (status: string) => sendSiteInitStatus(mainWindow, status),
+        { loginMode: true }
       );
       // 站点初始化完成后，不立即关闭浏览器
       // 让浏览器保持打开状态，以便后续的 API 调用（如获取模型列表）可以复用同一个浏览器会话

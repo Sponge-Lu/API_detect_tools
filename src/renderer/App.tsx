@@ -17,7 +17,12 @@ import { ToastContainer } from './components/Toast';
 import { AppButton } from './components/AppButton/AppButton';
 import { useTheme, useDataLoader, useUpdate, useSiteDetection, useAutoRefresh } from './hooks';
 // 从共享的types文件导入并重新导出类型
-import type { SiteConfig, DetectionResult, AccountCredential } from '../shared/types/site';
+import type {
+  SiteConfig,
+  DetectionResult,
+  AccountCredential,
+  CliCompatibilityData,
+} from '../shared/types/site';
 import type { ThemeMode } from '../shared/theme/themePresets';
 export type { SiteConfig, DetectionResult } from '../shared/types/site';
 
@@ -45,6 +50,7 @@ declare global {
       saveConfig: (config: Config) => Promise<void>;
       launchChromeForLogin: (url: string) => Promise<{ success: boolean; message: string }>;
       closeBrowser: () => Promise<void>;
+      closeLoginBrowser: () => Promise<void>;
       getCookies: (url: string) => Promise<any[]>;
       fetchWithCookies: (
         url: string,
@@ -142,11 +148,7 @@ declare global {
           }>;
         }) => Promise<{
           success: boolean;
-          data?: {
-            claudeCode: boolean | null;
-            codex: boolean | null;
-            geminiCli: boolean | null;
-          };
+          data?: CliCompatibilityData;
           error?: string;
         }>;
         saveResult: (
@@ -159,6 +161,14 @@ declare global {
           config: any,
           accountId?: string
         ) => Promise<{ success: boolean; error?: string }>;
+        writeConfig: (params: {
+          cliType: 'claudeCode' | 'codex' | 'geminiCli';
+          files: Array<{
+            path: string;
+            content: string;
+          }>;
+          applyMode?: 'merge' | 'overwrite';
+        }) => Promise<{ success: boolean; writtenPaths: string[]; error?: string }>;
       };
       configDetection: {
         detectCliConfig: (
@@ -586,19 +596,18 @@ function App() {
       setLoading(true);
       const cfg = await window.electronAPI.loadConfig();
       const normalizedField = normalizeSiteSortField(cfg?.settings?.sort?.field ?? null);
-      const normalizedCfg =
-        cfg?.settings?.sort
-          ? {
-              ...cfg,
-              settings: {
-                ...cfg.settings,
-                sort: {
-                  field: normalizedField,
-                  order: cfg.settings.sort.order,
-                },
+      const normalizedCfg = cfg?.settings?.sort
+        ? {
+            ...cfg,
+            settings: {
+              ...cfg.settings,
+              sort: {
+                field: normalizedField,
+                order: cfg.settings.sort.order,
               },
-            }
-          : cfg;
+            },
+          }
+        : cfg;
 
       setConfig(normalizedCfg);
       if (cfg?.settings?.sort) {
@@ -627,11 +636,11 @@ function App() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-light-bg dark:bg-dark-bg relative">
+      <div className="relative flex h-screen items-center justify-center bg-[var(--app-bg)]">
         <div className="light-bg-decoration dark:dark-bg-decoration"></div>
-        <div className="text-center relative z-10">
-          <Loader2 className="w-12 h-12 mx-auto mb-4 animate-spin text-primary-500" />
-          <p className="text-light-text-secondary dark:text-dark-text-secondary">加载配置中...</p>
+        <div className="relative z-10 text-center">
+          <Loader2 className="mx-auto mb-4 h-12 w-12 animate-spin text-[var(--accent)]" />
+          <p className="text-[var(--text-secondary)]">加载配置中...</p>
         </div>
       </div>
     );
@@ -639,11 +648,11 @@ function App() {
 
   if (!config) {
     return (
-      <div className="flex items-center justify-center h-screen bg-light-bg dark:bg-dark-bg relative">
+      <div className="relative flex h-screen items-center justify-center bg-[var(--app-bg)]">
         <div className="light-bg-decoration dark:dark-bg-decoration"></div>
-        <div className="text-center relative z-10">
-          <XCircle className="w-16 h-16 mx-auto mb-4 text-red-500" />
-          <p className="text-light-text dark:text-dark-text mb-4">配置加载失败</p>
+        <div className="relative z-10 text-center">
+          <XCircle className="mx-auto mb-4 h-16 w-16 text-[var(--danger)]" />
+          <p className="mb-4 text-[var(--text-primary)]">配置加载失败</p>
           <AppButton variant="primary" onClick={loadConfig}>
             重试
           </AppButton>
@@ -653,7 +662,7 @@ function App() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-light-bg dark:bg-dark-bg text-light-text dark:text-dark-text relative overflow-x-auto overflow-y-hidden ios-responsive-container">
+    <div className="app-responsive-container relative flex h-screen flex-col overflow-x-auto overflow-y-hidden bg-[var(--app-bg)] text-[var(--text-primary)]">
       {/* 装饰背景 */}
       <div className="light-bg-decoration dark:dark-bg-decoration"></div>
 
@@ -663,6 +672,7 @@ function App() {
           activeTab={visibleActiveTab}
           onTabChange={setActiveTab}
           saving={saving}
+          currentVersion={currentVersion}
           updateInfo={updateInfo}
           onDownloadUpdate={handleDownloadUpdate}
         />
@@ -674,7 +684,7 @@ function App() {
             updateInfo={updateInfo}
             onDownloadUpdate={handleDownloadUpdate}
           />
-          {visibleActiveTab === 'sites' ? (
+          {visibleActiveTab !== 'cli' ? (
             <PageHeader title={pageMeta.title} description={pageMeta.description} />
           ) : null}
 
@@ -856,4 +866,3 @@ function App() {
 }
 
 export default App;
-

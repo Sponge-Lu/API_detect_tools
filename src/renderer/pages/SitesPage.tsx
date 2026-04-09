@@ -515,9 +515,9 @@ export function SitesPage() {
         Logger.error('新站点数据刷新失败:', error.message);
       } finally {
         try {
-          await window.electronAPI.closeBrowser?.();
+          await window.electronAPI.closeLoginBrowser?.();
         } catch (err) {
-          Logger.warn('自动关闭浏览器失败:', err);
+          Logger.warn('自动关闭登录浏览器失败:', err);
         }
       }
     }, 300);
@@ -1458,9 +1458,9 @@ export function SitesPage() {
                   Logger.error('站点数据刷新失败:', error.message);
                 } finally {
                   try {
-                    await window.electronAPI.closeBrowser?.();
+                    await window.electronAPI.closeLoginBrowser?.();
                   } catch (err) {
-                    Logger.warn('关闭浏览器失败:', err);
+                    Logger.warn('关闭登录浏览器失败:', err);
                   }
                 }
               }, 500);
