@@ -1,12 +1,10 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { CliCompatibilityIcons } from '../renderer/components/CliCompatibilityIcons/CliCompatibilityIcons';
 import { SiteListHeader } from '../renderer/components/SiteListHeader';
-import { SiteCard, SiteCardActions, SiteCardCliEntry } from '../renderer/components/SiteCard';
+import { SiteCard, SiteCardActions } from '../renderer/components/SiteCard';
 import { SiteCardHeader } from '../renderer/components/SiteCard/SiteCardHeader';
 import type { SiteConfig } from '../renderer/App';
-
-const SortBar = SiteListHeader as any;
 
 const baseSite: SiteConfig = {
   id: 'site-1',
@@ -22,56 +20,103 @@ const baseSite: SiteConfig = {
 };
 
 describe('sites page redesign', () => {
-  it('renders a fixed sort bar with three primary sort buttons and a more-sort entry', () => {
+  it('renders a sticky header row with merged token and request statistic columns', () => {
     const { container } = render(
-      <SortBar
+      <SiteListHeader
+        columnWidths={[120, 75, 75, 110, 110, 60, 80, 160]}
+        onColumnWidthChange={vi.fn()}
+        sortField="totalTokens"
+        sortOrder="desc"
+        onToggleSort={vi.fn()}
+      />
+    );
+
+    expect((container.firstElementChild as HTMLDivElement).className).toContain('sticky');
+    expect(screen.getByRole('button', { name: 'Token统计' })).toBeInTheDocument();
+    expect(screen.getByText('请求统计')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '请求统计' })).not.toBeInTheDocument();
+  });
+
+  it('renders token and request statistics as stacked two-line cells', () => {
+    render(
+      <SiteCardHeader
+        site={baseSite}
+        siteResult={undefined}
+        lastSyncDisplay="12:34"
+        errorCode={null}
+        timeoutSeconds={null}
+        columnWidths={[120, 75, 75, 110, 110, 60, 80, 160]}
+        todayTotalTokens={4200}
+        todayPromptTokens={3000}
+        todayCompletionTokens={1200}
+        todayRequests={6}
+        rpm={0.5}
+        tpm={350}
+        modelCount={3}
+        accountId="account-1"
+        accountName="Primary Account"
+        onOpenSite={vi.fn()}
+        cliCompatibility={{
+          claudeCode: true,
+          codex: null,
+          geminiCli: false,
+          testedAt: Date.now(),
+        }}
+        cliConfig={null}
+        isCliTesting={false}
+        onOpenCliConfig={vi.fn()}
+        onTestCliCompat={vi.fn()}
+        onApply={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('4.2K')).toBeInTheDocument();
+    expect(screen.getByText('输入 3.0K / 输出 1.2K')).toBeInTheDocument();
+    expect(screen.getByText('RPM 0.50 / TPM 350')).toBeInTheDocument();
+  });
+
+  it('renders a compact column header row with inline sorting and an actions slot', () => {
+    const { container } = render(
+      <SiteListHeader
         columnWidths={[120, 75, 75, 75]}
         onColumnWidthChange={vi.fn()}
         sortField="balance"
         sortOrder="desc"
         onToggleSort={vi.fn()}
-        onResetSort={vi.fn()}
+        actions={<button type="button">批量检测</button>}
       />
     );
 
+    expect(screen.getByRole('button', { name: '站点' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '余额' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '今日消费' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '总 Token' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '更多排序' })).toBeInTheDocument();
-    expect(screen.getByText('当前排序')).toBeInTheDocument();
-    expect(container.firstElementChild).not.toHaveClass('min-w-[1180px]');
-    expect(screen.getByText('当前排序').parentElement).toContainElement(
-      screen.getByRole('button', { name: '更多排序' })
-    );
-    expect(screen.getByText('当前排序').parentElement).toContainElement(
-      screen.getByRole('button', { name: '清除排序' })
+    expect(screen.getByRole('button', { name: 'Token统计' })).toBeInTheDocument();
+    expect(screen.getByText('批量检测')).toBeInTheDocument();
+    expect((container.firstElementChild as HTMLDivElement).style.gridTemplateColumns).toBe(
+      '120px 75px 75px 75px 1fr'
     );
   });
 
-  it('reveals secondary sort options from the more-sort menu', () => {
+  it('toggles sorting from the visible sortable column labels directly', () => {
     const onToggleSort = vi.fn();
 
     render(
-      <SortBar
-        columnWidths={[120, 75, 75, 75]}
+      <SiteListHeader
+        columnWidths={[120, 75, 75, 75, 50, 50, 50, 50, 50, 60, 80, 160]}
         onColumnWidthChange={vi.fn()}
         sortField={null}
         sortOrder="desc"
         onToggleSort={onToggleSort}
-        onResetSort={vi.fn()}
       />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '更多排序' }));
-    expect(screen.getByRole('button', { name: '请求' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'RPM' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'TPM' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '更新时间' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '模型数' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '名称' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'RPM' }));
+    fireEvent.click(screen.getByRole('button', { name: '余额' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Token统计' }));
+    fireEvent.click(screen.getByRole('button', { name: '更新时间' }));
 
-    expect(onToggleSort).toHaveBeenCalledWith('rpm');
+    expect(onToggleSort).toHaveBeenCalledWith('balance');
+    expect(onToggleSort).toHaveBeenCalledWith('totalTokens');
+    expect(onToggleSort).toHaveBeenCalledWith('lastUpdate');
   });
 
   it('keeps high-frequency actions visible and moves low-frequency actions into a more menu', () => {
@@ -83,11 +128,13 @@ describe('sites page redesign', () => {
       <SiteCardActions
         site={baseSite}
         index={0}
-        siteResult={{
-          status: '成功',
-          can_check_in: true,
-          has_checkin: true,
-        } as any}
+        siteResult={
+          {
+            status: '成功',
+            can_check_in: true,
+            has_checkin: true,
+          } as any
+        }
         isExpanded={false}
         isDetecting={false}
         checkingIn={null}
@@ -160,58 +207,6 @@ describe('sites page redesign', () => {
     expect(screen.getByRole('button', { name: '添加账户' })).toBeInTheDocument();
   });
 
-  it('keeps a dedicated CLI workbench entry visible on the main row', () => {
-    const onOpenCliWorkbench = vi.fn();
-
-    render(
-      <SiteCardCliEntry
-        cliConfig={{
-          claudeCode: {
-            apiKeyId: 1,
-            model: 'claude-3-5-sonnet',
-            testModel: null,
-            testModels: [],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-          codex: {
-            apiKeyId: null,
-            model: null,
-            testModel: null,
-            testModels: [],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-          geminiCli: {
-            apiKeyId: null,
-            model: null,
-            testModel: null,
-            testModels: [],
-            enabled: false,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-        }}
-        compatibility={{
-          claudeCode: true,
-          codex: null,
-          geminiCli: null,
-          testedAt: Date.now(),
-        }}
-        isCliTesting={false}
-        onOpen={onOpenCliWorkbench}
-      />
-    );
-
-    expect(screen.getByRole('button', { name: 'CLI 工作台' })).toBeInTheDocument();
-    expect(screen.getByText('1/2 已通过')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'CLI 工作台' }));
-    expect(onOpenCliWorkbench).toHaveBeenCalledTimes(1);
-  });
-
   it('keeps the site identity column compact enough for the default window width', () => {
     const { container } = render(
       <SiteCardHeader
@@ -267,41 +262,44 @@ describe('sites page redesign', () => {
           },
         }}
         isCliTesting={false}
+        onOpenCliConfig={vi.fn()}
+        onTestCliCompat={vi.fn()}
+        onApply={vi.fn()}
       />
     );
 
     const grid = container.firstElementChild as HTMLDivElement;
     expect(grid.style.gridTemplateColumns).toBe(
-      '196px 168px 120px 88px 96px'
+      '120px 75px 75px 75px 50px 50px 50px 50px 50px 60px 80px 160px'
     );
     expect(screen.getByText('Primary Account')).toBeInTheDocument();
-    expect(screen.getByText('同步 12:34')).toBeInTheDocument();
+    expect(screen.getByText('12:34')).toBeInTheDocument();
     expect(screen.queryByText('default')).not.toBeInTheDocument();
-    expect(screen.queryByText('unavailable')).not.toBeInTheDocument();
-    expect(screen.getByTestId('site-token-inline')).toHaveTextContent('4.2K · 6 请求');
-    expect(screen.getByText('模型')).toBeInTheDocument();
-    expect(screen.queryByText('能力摘要')).not.toBeInTheDocument();
     expect(screen.getByAltText('Claude Code')).toBeInTheDocument();
     expect(screen.getByAltText('Codex')).toBeInTheDocument();
     expect(screen.getByAltText('Gemini CLI')).toBeInTheDocument();
-    expect(screen.queryByTitle('配置 CLI')).not.toBeInTheDocument();
+    expect(screen.getByTitle('配置 CLI')).toBeInTheDocument();
+    expect(screen.getByTitle('测试 CLI 兼容性')).toBeInTheDocument();
+    expect(screen.getByTitle('应用 CLI 配置到本地文件')).toBeInTheDocument();
+    expect(screen.queryByText('CLI 工作台')).not.toBeInTheDocument();
   });
 
   it('keeps primary site controls visible together inside a standard shell width', () => {
     render(
       <div className="w-[1024px]">
-        <SortBar
-          columnWidths={[120, 75, 75, 75]}
+        <SiteListHeader
+          columnWidths={[120, 75, 75, 75, 50, 50, 50, 50, 50, 60, 80, 160]}
           onColumnWidthChange={vi.fn()}
           sortField="balance"
           sortOrder="desc"
           onToggleSort={vi.fn()}
-          onResetSort={vi.fn()}
         />
         <SiteCard
           site={baseSite}
           index={0}
-          siteResult={{ status: '成功', todayRequests: 2, todayTotalTokens: 3000, models: [] } as any}
+          siteResult={
+            { status: '成功', todayRequests: 2, todayTotalTokens: 3000, models: [] } as any
+          }
           siteAccount={undefined}
           isExpanded={false}
           columnWidths={[120, 75, 75, 75]}
@@ -370,6 +368,8 @@ describe('sites page redesign', () => {
           onCopyToClipboard={vi.fn()}
           onToggleAutoRefresh={vi.fn()}
           onOpenCliConfig={vi.fn()}
+          onTestCliCompat={vi.fn()}
+          onApply={vi.fn()}
           onAddAccount={vi.fn()}
           onDragStart={vi.fn()}
           onDragEnd={vi.fn()}
@@ -388,10 +388,11 @@ describe('sites page redesign', () => {
       </div>
     );
 
-    expect(screen.getByRole('button', { name: '更多排序' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'CLI 工作台' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '余额' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '更多操作' })).toBeInTheDocument();
     expect(screen.getByText('Primary Account')).toBeInTheDocument();
+    expect(screen.getByTitle('配置 CLI')).toBeInTheDocument();
+    expect(screen.queryByText('CLI 工作台')).not.toBeInTheDocument();
   });
 
   it('renders the CLI compatibility surface through visible icons and action controls', () => {
@@ -455,7 +456,7 @@ describe('sites page redesign', () => {
     expect(onApply).toHaveBeenCalledTimes(1);
   });
 
-  it('places the CLI workbench slot to the left of the normal site actions', () => {
+  it('keeps CLI icons inline in the header instead of a dedicated workbench slot', () => {
     const { getByTestId } = render(
       <SiteCard
         site={baseSite}
@@ -529,6 +530,8 @@ describe('sites page redesign', () => {
         onCopyToClipboard={vi.fn()}
         onToggleAutoRefresh={vi.fn()}
         onOpenCliConfig={vi.fn()}
+        onTestCliCompat={vi.fn()}
+        onApply={vi.fn()}
         onAddAccount={vi.fn()}
         onDragStart={vi.fn()}
         onDragEnd={vi.fn()}
@@ -547,7 +550,7 @@ describe('sites page redesign', () => {
     );
 
     const mainRow = getByTestId('site-card-main-row');
-    const childTestIds = Array.from(mainRow.children).map(child => child.getAttribute('data-testid'));
-    expect(childTestIds).toEqual(['site-card-header-slot', 'site-card-cli-slot', 'site-card-actions-slot']);
+    expect(within(mainRow).getByTitle('配置 CLI')).toBeInTheDocument();
+    expect(within(mainRow).queryByText('CLI 工作台')).not.toBeInTheDocument();
   });
 });
