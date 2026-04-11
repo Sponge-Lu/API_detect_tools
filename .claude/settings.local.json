@@ -87,7 +87,11 @@
       "Bash(tasklist /fi \"imagename eq node.exe\" /fo csv)",
       "Bash(sort -t, -k5 -rn)",
       "Bash(sort -k2 -rn)",
-      "mcp__stitch__list_projects"
+      "mcp__stitch__list_projects",
+      "Bash(mkdir -p ~/bin)",
+      "Bash(curl -sL \"https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-windows-amd64.exe\" -o ~/bin/jq.exe)",
+      "Bash(chmod +x ~/bin/jq.exe)",
+      "Bash(~/bin/jq --version)"
     ]
   }
 }

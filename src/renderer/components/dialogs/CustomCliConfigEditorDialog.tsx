@@ -27,6 +27,7 @@ import { IOSButton } from '../IOSButton';
 import { useCustomCliConfigStore } from '../../store/customCliConfigStore';
 import { toast } from '../../store/toastStore';
 import type { CustomCliConfig, CustomCliSettings } from '../../../shared/types/custom-cli-config';
+import { CLI_TEST_MODEL_SLOT_COUNT, sanitizeCliTestModels } from '../../../shared/types/cli-config';
 import {
   generateClaudeCodeConfig,
   generateCodexConfig,
@@ -73,6 +74,25 @@ const createInitialTestSummaries = (): TestSummaries => ({
   codex: [],
   geminiCli: [],
 });
+
+const createInitialEditedConfigs = (
+  config: CustomCliConfig
+): Record<CliType, GeneratedConfig | null> => {
+  const initialEdited: Record<CliType, GeneratedConfig | null> = {
+    claudeCode: null,
+    codex: null,
+    geminiCli: null,
+  };
+
+  for (const key of ['claudeCode', 'codex', 'geminiCli'] as CliType[]) {
+    const saved = config.cliSettings[key]?.editedFiles;
+    if (saved && saved.length > 0) {
+      initialEdited[key] = { files: saved.map(file => ({ ...file, language: 'json' as const })) };
+    }
+  }
+
+  return initialEdited;
+};
 
 const normalizeCliSetting = (setting: CustomCliSettings): CustomCliSettings => ({
   ...setting,
@@ -197,11 +217,17 @@ function CliModelSelector({
   selectedModel,
   onSelect,
   disabled,
+  placeholder = '选择模型',
+  allowClear = false,
+  ariaLabel,
 }: {
   models: string[];
   selectedModel: string | null;
   onSelect: (model: string | null) => void;
   disabled?: boolean;
+  placeholder?: string;
+  allowClear?: boolean;
+  ariaLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -227,6 +253,7 @@ function CliModelSelector({
       <button
         type="button"
         disabled={disabled}
+        aria-label={ariaLabel}
         onClick={() => !disabled && setOpen(!open)}
         className={`w-full flex items-center justify-between px-2.5 py-1.5 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] text-xs transition-all ${
           disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-[var(--ios-gray)]'
@@ -235,7 +262,7 @@ function CliModelSelector({
         <span
           className={`truncate ${selectedModel ? 'text-[var(--ios-text-primary)]' : 'text-[var(--ios-text-tertiary)]'}`}
         >
-          {selectedModel || '选择模型'}
+          {selectedModel || placeholder}
         </span>
         <ChevronDown
           className={`w-3.5 h-3.5 shrink-0 ml-1 text-[var(--ios-text-secondary)] transition-transform ${open ? 'rotate-180' : ''}`}
@@ -266,6 +293,19 @@ function CliModelSelector({
             </div>
           </div>
           <div className="max-h-40 overflow-y-auto">
+            {allowClear && selectedModel && (
+              <button
+                type="button"
+                onClick={() => {
+                  onSelect(null);
+                  setOpen(false);
+                  setQuery('');
+                }}
+                className="w-full px-3 py-1.5 text-left text-xs text-[var(--ios-text-secondary)] hover:bg-[var(--ios-bg-secondary)] transition-colors border-b border-[var(--ios-separator)]"
+              >
+                清空选择
+              </button>
+            )}
             {filtered.length > 0 ? (
               filtered.map(model => (
                 <button
@@ -281,104 +321,6 @@ function CliModelSelector({
                       ? 'bg-[var(--ios-blue)]/10 text-[var(--ios-blue)]'
                       : 'text-[var(--ios-text-primary)] hover:bg-[var(--ios-bg-secondary)]'
                   }`}
-                >
-                  {model}
-                </button>
-              ))
-            ) : (
-              <div className="px-3 py-3 text-xs text-[var(--ios-text-secondary)] text-center">
-                {models.length === 0 ? '请先拉取模型' : '无匹配结果'}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** 用于添加测试模型的列表 */
-function CliTestModelSelector({
-  models,
-  onAdd,
-  disabled,
-}: {
-  models: string[];
-  onAdd: (model: string) => void;
-  disabled?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  const filtered = useMemo(() => {
-    if (!query) return models;
-    return models.filter(m => m.toLowerCase().includes(query.toLowerCase()));
-  }, [models, query]);
-
-  const handleSelect = (model: string) => {
-    onAdd(model);
-    setOpen(false);
-    setQuery('');
-  };
-
-  return (
-    <div className="relative flex-shrink-0" ref={ref}>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => !disabled && setOpen(o => !o)}
-        className={`flex items-center gap-1 px-2.5 py-1.5 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] text-xs transition-all ${
-          disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-[var(--ios-gray)]'
-        }`}
-      >
-        <span className="text-[var(--ios-text-primary)]">添加测试模型</span>
-        <ChevronDown
-          className={`w-3.5 h-3.5 text-[var(--ios-text-secondary)] transition-transform ${open ? 'rotate-180' : ''}`}
-        />
-      </button>
-      {open && (
-        <div className="absolute z-50 right-0 w-56 mt-1 bg-[var(--ios-bg-primary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] shadow-lg overflow-hidden">
-          <div className="p-1.5 border-b border-[var(--ios-separator)]">
-            <div className="relative">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--ios-text-tertiary)]" />
-              <input
-                type="text"
-                value={query}
-                onChange={e => setQuery(e.target.value)}
-                placeholder="搜索模型..."
-                className="w-full pl-7 pr-7 py-1 bg-[var(--ios-bg-secondary)] border border-[var(--ios-separator)] rounded-[var(--radius-sm)] text-xs text-[var(--ios-text-primary)] focus:ring-1 focus:ring-[var(--ios-blue)] focus:border-transparent"
-                autoFocus
-              />
-              {query && (
-                <button
-                  type="button"
-                  onClick={() => setQuery('')}
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2"
-                >
-                  <X className="w-3.5 h-3.5 text-[var(--ios-text-tertiary)] hover:text-[var(--ios-text-secondary)]" />
-                </button>
-              )}
-            </div>
-          </div>
-          <div className="max-h-40 overflow-y-auto">
-            {filtered.length > 0 ? (
-              filtered.map(model => (
-                <button
-                  key={model}
-                  type="button"
-                  onClick={() => handleSelect(model)}
-                  className="w-full px-3 py-1.5 text-left text-xs text-[var(--ios-text-primary)] hover:bg-[var(--ios-bg-secondary)] transition-colors"
                 >
                   {model}
                 </button>
@@ -421,13 +363,13 @@ export function CustomCliConfigEditorDialog({
   const [isEditing, setIsEditing] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   // 每个 CLI 的编辑配置缓存（切换 CLI 时保留）
-  const [perCliEdited, setPerCliEdited] = useState<Record<CliType, GeneratedConfig | null>>({
-    claudeCode: null,
-    codex: null,
-    geminiCli: null,
-  });
+  const [perCliEdited, setPerCliEdited] = useState<Record<CliType, GeneratedConfig | null>>(() =>
+    createInitialEditedConfigs(config)
+  );
   const [testSummaries, setTestSummaries] = useState<TestSummaries>(createInitialTestSummaries);
-  const [isTesting, setIsTesting] = useState(false);
+  const [testingCli, setTestingCli] = useState<CliType | null>(null);
+  const [applyingCli, setApplyingCli] = useState<CliType | null>(null);
+  const hasMountedRef = useRef(false);
 
   // 获取当前配置的模型列表 (从 store 中实时获取以反映拉取结果)
   const { configs } = useCustomCliConfigStore();
@@ -436,6 +378,10 @@ export function CustomCliConfigEditorDialog({
 
   // 重置状态
   useEffect(() => {
+    if (!hasMountedRef.current) {
+      hasMountedRef.current = true;
+      return;
+    }
     if (isOpen) {
       setName(config.name);
       setBaseUrl(config.baseUrl);
@@ -445,29 +391,17 @@ export function CustomCliConfigEditorDialog({
       setSelectedCli('claudeCode');
       setCopiedPath(null);
       setTestSummaries(createInitialTestSummaries());
-      setIsTesting(false);
+      setTestingCli(null);
+      setApplyingCli(null);
       setEditedConfig(null);
       setIsEditing(false);
       setShowResetConfirm(false);
-      // 从已保存的 editedFiles 初始化 perCliEdited
-      const initEdited: Record<CliType, GeneratedConfig | null> = {
-        claudeCode: null,
-        codex: null,
-        geminiCli: null,
-      };
-      for (const key of ['claudeCode', 'codex', 'geminiCli'] as CliType[]) {
-        const saved = config.cliSettings[key]?.editedFiles;
-        if (saved && saved.length > 0) {
-          initEdited[key] = { files: saved.map(f => ({ ...f, language: 'json' as const })) };
-        }
-      }
-      setPerCliEdited(initEdited);
+      setPerCliEdited(createInitialEditedConfigs(config));
     }
   }, [isOpen, config]);
 
-  // 生成配置预览 — 使用当前选中 CLI 的独立模型
-  const configPreview = useMemo((): GeneratedConfig | null => {
-    const cliModel = cliSettings[selectedCli]?.model;
+  const generateConfigForCli = (cliType: CliType): GeneratedConfig | null => {
+    const cliModel = cliSettings[cliType]?.model;
     if (!cliModel || !baseUrl || !apiKey) return null;
 
     const params = {
@@ -477,15 +411,25 @@ export function CustomCliConfigEditorDialog({
       model: cliModel,
     };
 
-    if (selectedCli === 'claudeCode') {
+    if (cliType === 'claudeCode') {
       return generateClaudeCodeConfig(params);
-    } else if (selectedCli === 'codex') {
+    } else if (cliType === 'codex') {
       return generateCodexConfig(params);
-    } else if (selectedCli === 'geminiCli') {
+    } else if (cliType === 'geminiCli') {
       return generateGeminiCliConfig(params);
     }
     return null;
-  }, [selectedCli, cliSettings, baseUrl, apiKey, name]);
+  };
+
+  const getEffectiveConfigForCli = (cliType: CliType): GeneratedConfig | null => {
+    if (selectedCli === cliType && editedConfig) {
+      return editedConfig;
+    }
+    return perCliEdited[cliType] || generateConfigForCli(cliType);
+  };
+
+  // 生成配置预览 — 使用当前选中 CLI 的独立模型
+  const configPreview = generateConfigForCli(selectedCli);
 
   // 处理 CLI 设置变更
   const handleCliSettingChange = (cliType: CliType, update: Partial<CustomCliSettings>) => {
@@ -505,91 +449,77 @@ export function CustomCliConfigEditorDialog({
     return candidates
       .map(m => m.trim())
       .filter(Boolean)
-      .slice(0, 3);
+      .slice(0, CLI_TEST_MODEL_SLOT_COUNT);
   };
-
-  const cliTestTargets = useMemo(() => {
-    return CLI_TYPES.flatMap(cli => {
-      const setting = cliSettings[cli.key];
-      if (!setting.enabled) return [];
-      return getTestModelsForSetting(setting).map(model => ({
-        cliType: cli.key,
-        model,
-      }));
-    });
-  }, [cliSettings]);
-
-  const canRunTests = Boolean(baseUrl && apiKey && cliTestTargets.length > 0);
 
   const recordTestResult = (cliType: CliType, summary: CliTestOutcome) => {
     setTestSummaries(prev => ({
       ...prev,
-      [cliType]: [summary, ...prev[cliType]].slice(0, 3),
+      [cliType]: [summary, ...prev[cliType]].slice(0, CLI_TEST_MODEL_SLOT_COUNT),
     }));
   };
 
-  const handleAddTestModel = (cliType: CliType, model: string) => {
-    const nextModel = model.trim();
-    if (!nextModel) return;
+  const getErrorMessage = (error: unknown) => {
+    if (error instanceof Error) {
+      return error.message;
+    }
+    return undefined;
+  };
 
+  const handleTestModelSlotChange = (cliType: CliType, index: number, model: string | null) => {
     setCliSettings(prev => {
       const current = prev[cliType];
-      const currentModels = current.testModels ?? [];
-      if (currentModels.includes(nextModel) || currentModels.length >= 3) return prev;
+      const nextModels = [...getTestModelsForSetting(current)];
+      nextModels[index] = model;
+      const normalized = sanitizeCliTestModels(nextModels, CLI_TEST_MODEL_SLOT_COUNT).filter(
+        (item, itemIndex, array) => array.indexOf(item) === itemIndex
+      );
       return {
         ...prev,
         [cliType]: {
           ...current,
-          testModels: [...currentModels, nextModel],
+          testModels: normalized,
         },
       };
     });
   };
 
-  const handleRemoveTestModel = (cliType: CliType, model: string) => {
-    setCliSettings(prev => {
-      const current = prev[cliType];
-      const nextModels = (current.testModels ?? []).filter(m => m !== model);
-      return {
-        ...prev,
-        [cliType]: {
-          ...current,
-          testModels: nextModels,
-        },
-      };
-    });
-  };
-
-  const handleRunTests = async () => {
+  const handleRunCliTests = async (cliType: CliType) => {
     if (!baseUrl || !apiKey) {
       toast.error('请先填写 Base URL 和 API Key');
       return;
     }
+    const setting = cliSettings[cliType];
+    if (!setting.enabled) {
+      toast.error('请先启用该 CLI');
+      return;
+    }
+    const cliTestTargets = getTestModelsForSetting(setting);
     if (cliTestTargets.length === 0) {
       toast.error('请启用 CLI 并添加测试模型');
       return;
     }
 
-    setIsTesting(true);
+    setTestingCli(cliType);
     let hadError = false;
     try {
-      for (const target of cliTestTargets) {
+      for (const model of cliTestTargets) {
         try {
           const response = await window.electronAPI.cliCompat.testWithConfig({
             siteUrl: baseUrl,
             configs: [
               {
-                cliType: target.cliType,
+                cliType,
                 apiKey,
-                model: target.model,
+                model,
                 baseUrl,
               },
             ],
           });
-          const success = response.success && response.data?.[target.cliType] === true;
+          const success = response.success && response.data?.[cliType] === true;
           const message = success ? undefined : (response.error ?? '未通过');
-          recordTestResult(target.cliType, {
-            model: target.model,
+          recordTestResult(cliType, {
+            model,
             success,
             message,
             timestamp: Date.now(),
@@ -597,18 +527,18 @@ export function CustomCliConfigEditorDialog({
           if (!success) {
             hadError = true;
           }
-        } catch (error: any) {
+        } catch (error: unknown) {
           hadError = true;
-          recordTestResult(target.cliType, {
-            model: target.model,
+          recordTestResult(cliType, {
+            model,
             success: false,
-            message: error?.message,
+            message: getErrorMessage(error),
             timestamp: Date.now(),
           });
         }
       }
     } finally {
-      setIsTesting(false);
+      setTestingCli(null);
     }
 
     if (hadError) {
@@ -632,6 +562,42 @@ export function CustomCliConfigEditorDialog({
       setTimeout(() => setCopiedPath(null), 2000);
     } catch (err) {
       console.error('复制失败:', err);
+    }
+  };
+
+  const handleApplyCliConfig = async (cliType: CliType) => {
+    const setting = cliSettings[cliType];
+    if (!setting.enabled || !setting.model) {
+      toast.error('该 CLI 未启用或未选择模型');
+      return;
+    }
+    const configToApply = getEffectiveConfigForCli(cliType);
+    if (!configToApply) {
+      toast.error('请先填写 Base URL、API Key 和模型');
+      return;
+    }
+
+    setApplyingCli(cliType);
+    try {
+      const result = await window.electronAPI.cliCompat.writeConfig({
+        cliType,
+        files: configToApply.files.map(file => ({
+          path: file.path,
+          content: file.content,
+        })),
+        applyMode: 'merge',
+      });
+
+      if (result.success) {
+        const cliName = CLI_TYPES.find(cli => cli.key === cliType)?.name ?? cliType;
+        toast.success(`${cliName} 配置已写入本地`);
+      } else {
+        toast.error(`写入失败: ${result.error || '未知错误'}`);
+      }
+    } catch (error: unknown) {
+      toast.error(`应用配置失败: ${getErrorMessage(error) || '未知错误'}`);
+    } finally {
+      setApplyingCli(null);
     }
   };
 
@@ -692,6 +658,11 @@ export function CustomCliConfigEditorDialog({
   const savedEditedConfig = perCliEdited[selectedCli];
   const displayConfig =
     isEditing && editedConfig ? editedConfig : savedEditedConfig || configPreview;
+  const selectedCliMeta = CLI_TYPES.find(cli => cli.key === selectedCli) ?? CLI_TYPES[0];
+  const getOutcomeForModel = (cliType: CliType, model: string | null) => {
+    if (!model) return undefined;
+    return testSummaries[cliType].find(summary => summary.model === model);
+  };
 
   // 保存配置 — 每个 CLI 保留各自的模型和编辑内容
   const handleSave = async () => {
@@ -830,100 +801,86 @@ export function CustomCliConfigEditorDialog({
           />
         </div>
 
-        {/* CLI 配置 — 第一行开关，第二行模型选择 */}
+        {/* CLI 配置 */}
         <div>
           <label className="block text-sm font-semibold text-[var(--ios-text-primary)] mb-2">
             CLI 配置
           </label>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="space-y-3">
             {CLI_TYPES.map(cli => {
               const setting = cliSettings[cli.key];
-              const selectedTestModels = setting.testModels ?? [];
               return (
                 <div
                   key={cli.key}
-                  className={`flex flex-col gap-2 px-3 py-2.5 rounded-[var(--radius-md)] border transition-colors ${
+                  className={`grid grid-cols-1 lg:grid-cols-[minmax(0,180px)_auto_minmax(0,1fr)_auto_auto] gap-3 items-center px-4 py-3 rounded-[var(--radius-md)] border transition-colors ${
                     setting.enabled
                       ? 'border-[var(--ios-blue)]/30 bg-[var(--ios-blue)]/5'
                       : 'border-[var(--ios-separator)] bg-[var(--ios-bg-tertiary)]'
                   }`}
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <img src={cli.icon} alt={cli.name} className="w-4 h-4 shrink-0" />
-                      <span className="text-sm text-[var(--ios-text-primary)]">{cli.name}</span>
-                    </div>
-                    <IOSToggle
-                      checked={setting.enabled}
-                      onChange={checked => handleCliSettingChange(cli.key, { enabled: checked })}
-                    />
+                  <div className="flex items-center gap-2 min-w-0">
+                    <img src={cli.icon} alt={cli.name} className="w-4 h-4 shrink-0" />
+                    <span className="text-sm text-[var(--ios-text-primary)] truncate">
+                      {cli.name}
+                    </span>
                   </div>
+                  <IOSToggle
+                    checked={setting.enabled}
+                    onChange={checked => handleCliSettingChange(cli.key, { enabled: checked })}
+                  />
                   <CliModelSelector
                     models={models}
                     selectedModel={setting.model}
                     onSelect={model => handleCliSettingChange(cli.key, { model })}
                     disabled={!setting.enabled}
+                    ariaLabel={`${cli.name} 主模型`}
                   />
-                  <div className="space-y-2 text-[var(--ios-text-secondary)] text-[var(--ios-text-xs)]">
-                    <div className="flex items-center justify-between">
-                      <span>测试模型（最多 3 个）</span>
-                      <span>{selectedTestModels.length}/3</span>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {selectedTestModels.length > 0 ? (
-                        selectedTestModels.map(model => (
-                          <span
-                            key={model}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-[var(--ios-separator)] bg-[var(--ios-bg-primary)] text-[var(--ios-text-primary)] text-[var(--ios-text-xs)]"
-                          >
-                            <span className="max-w-[120px] truncate">{model}</span>
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveTestModel(cli.key, model)}
-                              className="flex items-center justify-center w-4 h-4 rounded-full hover:bg-[var(--ios-bg-secondary)]"
-                            >
-                              <X className="w-3 h-3 text-[var(--ios-text-tertiary)]" />
-                            </button>
-                          </span>
-                        ))
-                      ) : (
-                        <span className="text-[var(--ios-text-secondary)]">尚未选择测试模型</span>
-                      )}
-                      <CliTestModelSelector
-                        models={models}
-                        onAdd={model => handleAddTestModel(cli.key, model)}
-                        disabled={
-                          !setting.enabled || selectedTestModels.length >= 3 || models.length === 0
-                        }
-                      />
-                    </div>
-                  </div>
+                  <IOSButton
+                    variant="secondary"
+                    size="sm"
+                    aria-label={`预览 ${cli.name}`}
+                    onClick={() => handleCliTypeChange(cli.key)}
+                  >
+                    预览
+                  </IOSButton>
+                  <IOSButton
+                    variant="secondary"
+                    size="sm"
+                    aria-label={`应用 ${cli.name}`}
+                    onClick={() => handleApplyCliConfig(cli.key)}
+                    disabled={
+                      !setting.enabled ||
+                      !setting.model ||
+                      !baseUrl ||
+                      !apiKey ||
+                      applyingCli !== null
+                    }
+                  >
+                    {applyingCli === cli.key ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      '应用'
+                    )}
+                  </IOSButton>
                 </div>
               );
             })}
           </div>
         </div>
 
-        {/* CLI 类型选择（预览用） */}
+        {/* CLI 预览 */}
         <div>
           <label className="block text-sm font-semibold text-[var(--ios-text-primary)] mb-2">
             配置预览
           </label>
-          <div className="flex gap-2 flex-wrap mb-3">
-            {CLI_TYPES.map(cli => (
-              <button
-                key={cli.key}
-                onClick={() => handleCliTypeChange(cli.key)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-[var(--radius-md)] border transition-all active:scale-95 ${
-                  selectedCli === cli.key
-                    ? 'border-[var(--ios-blue)] bg-[var(--ios-blue)]/10'
-                    : 'border-[var(--ios-separator)] bg-[var(--ios-bg-secondary)] hover:border-[var(--ios-gray)]'
-                }`}
-              >
-                <img src={cli.icon} alt={cli.name} className="w-5 h-5" />
-                <span className="text-sm text-[var(--ios-text-primary)]">{cli.name}</span>
-              </button>
-            ))}
+          <div className="flex items-center gap-2 flex-wrap mb-3">
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-[var(--radius-md)] border border-[var(--ios-blue)]/30 bg-[var(--ios-blue)]/10">
+              <img src={selectedCliMeta.icon} alt={selectedCliMeta.name} className="w-4 h-4" />
+              <span className="text-sm text-[var(--ios-text-primary)]">{selectedCliMeta.name}</span>
+            </div>
+            <span className="text-xs text-[var(--ios-text-secondary)]">
+              点击上方对应 CLI 的“预览”可切换当前配置预览
+            </span>
           </div>
 
           {/* 配置预览内容 */}
@@ -1030,56 +987,86 @@ export function CustomCliConfigEditorDialog({
 
       {/* CLI 测试 */}
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-semibold text-[var(--ios-text-primary)]">CLI 测试</p>
-            <p className="text-xs text-[var(--ios-text-secondary)]">
-              每个启用的 CLI 至多测试 3 个模型，测试结果会在此展示。
-            </p>
-          </div>
-          <IOSButton
-            variant="secondary"
-            size="sm"
-            onClick={handleRunTests}
-            disabled={!canRunTests || isTesting}
-          >
-            {isTesting ? <Loader2 className="w-4 h-4 animate-spin" /> : '测试当前配置'}
-          </IOSButton>
+        <div>
+          <p className="text-sm font-semibold text-[var(--ios-text-primary)]">CLI 测试</p>
+          <p className="text-xs text-[var(--ios-text-secondary)]">
+            每个 CLI 最多选择 3 个测试模型，点击列标题后的“测试”只会测试当前列。
+          </p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+        <div
+          data-testid="cli-test-columns"
+          className="grid grid-cols-1 md:grid-cols-3 md:divide-x divide-[var(--ios-separator)] text-xs"
+        >
           {CLI_TYPES.map(cli => {
+            const setting = cliSettings[cli.key];
             const summaries = testSummaries[cli.key];
             const latest = summaries[0];
+            const selectedTestModels = getTestModelsForSetting(setting);
+            const canRunCliTests =
+              Boolean(baseUrl && apiKey) && setting.enabled && selectedTestModels.length > 0;
             return (
-              <div
-                key={`${cli.key}-test`}
-                className="p-3 rounded-[var(--radius-md)] border border-[var(--ios-separator)] bg-[var(--ios-bg-tertiary)] space-y-2"
-              >
-                <div className="flex items-center justify-between text-[var(--ios-text-primary)]">
-                  <span>{cli.name}</span>
-                  <span className="text-[var(--ios-text-secondary)] text-[0.65rem]">
+              <div key={`${cli.key}-test`} className="space-y-3 px-4 py-3 first:pl-0 last:pr-0">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <img src={cli.icon} alt={cli.name} className="w-4 h-4 shrink-0" />
+                    <span className="text-sm text-[var(--ios-text-primary)] truncate">
+                      {cli.name}
+                    </span>
+                  </div>
+                  <IOSButton
+                    variant="secondary"
+                    size="sm"
+                    aria-label={`测试 ${cli.name}`}
+                    onClick={() => handleRunCliTests(cli.key)}
+                    disabled={!canRunCliTests || testingCli !== null}
+                  >
+                    {testingCli === cli.key ? <Loader2 className="w-4 h-4 animate-spin" /> : '测试'}
+                  </IOSButton>
+                </div>
+                <div className="text-[0.65rem] text-[var(--ios-text-secondary)]">
+                  {setting.enabled ? '测试模型槽位' : '当前 CLI 未启用'}
+                </div>
+                <div className="space-y-2">
+                  {Array.from({ length: CLI_TEST_MODEL_SLOT_COUNT }, (_, index) => {
+                    const model = selectedTestModels[index] ?? null;
+                    const outcome = getOutcomeForModel(cli.key, model);
+                    return (
+                      <div
+                        key={`${cli.key}-slot-${index}`}
+                        className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 items-center"
+                      >
+                        <CliModelSelector
+                          models={models}
+                          selectedModel={model}
+                          onSelect={nextModel =>
+                            handleTestModelSlotChange(cli.key, index, nextModel)
+                          }
+                          disabled={!setting.enabled || models.length === 0}
+                          placeholder={`测试模型 ${index + 1}`}
+                          allowClear
+                          ariaLabel={`${cli.name} 测试模型 ${index + 1}`}
+                        />
+                        <span
+                          className={`px-2 py-1 rounded-[var(--radius-sm)] border text-[0.65rem] ${
+                            outcome
+                              ? outcome.success
+                                ? 'border-[var(--ios-blue)] bg-[var(--ios-blue)]/10 text-[var(--ios-blue)]'
+                                : 'border-red-200 bg-red-50 text-red-600'
+                              : 'border-[var(--ios-separator)] bg-[var(--ios-bg-tertiary)] text-[var(--ios-text-secondary)]'
+                          }`}
+                          title={outcome?.message}
+                        >
+                          {outcome ? (outcome.success ? '通过' : '失败') : model ? '未测' : '未选'}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="text-[0.65rem] text-[var(--ios-text-secondary)]">
+                  最近结果：
+                  <span className="ml-1">
                     {latest ? new Date(latest.timestamp).toLocaleTimeString() : '未测试'}
                   </span>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {summaries.length > 0 ? (
-                    summaries.map(outcome => (
-                      <span
-                        key={`${cli.key}-${outcome.model}-${outcome.timestamp}`}
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border ${
-                          outcome.success
-                            ? 'border-[var(--ios-blue)] bg-[var(--ios-blue)]/10 text-[var(--ios-blue)]'
-                            : 'border-red-200 bg-red-50 text-red-600'
-                        }`}
-                        title={outcome.message}
-                      >
-                        <span className="font-mono truncate max-w-[90px]">{outcome.model}</span>
-                        <span>{outcome.success ? '通过' : '失败'}</span>
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-[var(--ios-text-secondary)]">暂无测试记录</span>
-                  )}
                 </div>
               </div>
             );

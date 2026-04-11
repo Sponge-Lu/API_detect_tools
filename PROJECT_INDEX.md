@@ -50,7 +50,7 @@ src/
 │   ├── schemas/            # Zod 数据验证
 │   ├── types/              # 共享类型
 │   └── utils/              # 共享工具
-└── __tests__/              # 测试文件（含 UnifiedConfigManager 配置恢复、CLI 探测账户选择、API Key 原始值保留回归）
+└── __tests__/              # 测试文件（含 UnifiedConfigManager 配置恢复、CLI 探测账户选择、API Key 原始值保留回归、自定义 CLI 编辑器交互回归）
 ```
 
 ---

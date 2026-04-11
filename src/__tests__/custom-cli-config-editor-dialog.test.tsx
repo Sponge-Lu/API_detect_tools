@@ -1,0 +1,239 @@
+import type { ReactNode } from 'react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CustomCliConfigEditorDialog } from '../renderer/components/dialogs/CustomCliConfigEditorDialog';
+import { useCustomCliConfigStore } from '../renderer/store/customCliConfigStore';
+import type { CustomCliConfig } from '../shared/types/custom-cli-config';
+
+type MockModalProps = {
+  isOpen: boolean;
+  title?: ReactNode;
+  children: ReactNode;
+  footer?: ReactNode;
+};
+
+type TestWithConfigPayload = {
+  siteUrl: string;
+  configs: Array<{
+    cliType: string;
+    apiKey: string;
+    model: string;
+    baseUrl: string;
+  }>;
+};
+
+type WriteConfigPayload = {
+  cliType: string;
+  files: Array<{ path: string; content: string }>;
+  applyMode?: 'merge' | 'overwrite';
+};
+
+type MockElectronApi = {
+  cliCompat: {
+    testWithConfig: ReturnType<typeof vi.fn<(payload: TestWithConfigPayload) => Promise<unknown>>>;
+    writeConfig: ReturnType<typeof vi.fn<(payload: WriteConfigPayload) => Promise<unknown>>>;
+  };
+  configDetection: {
+    clearCache: ReturnType<typeof vi.fn<() => Promise<void>>>;
+  };
+};
+
+vi.mock('../renderer/store/toastStore', () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+  },
+}));
+
+vi.mock('../renderer/components/IOSModal', () => ({
+  IOSModal: ({ isOpen, title, children, footer }: MockModalProps) =>
+    isOpen ? (
+      <div role="dialog" aria-label={typeof title === 'string' ? title : undefined}>
+        {title ? <h2>{title}</h2> : null}
+        <div>{children}</div>
+        {footer ? <div>{footer}</div> : null}
+      </div>
+    ) : null,
+}));
+
+const createConfig = (): CustomCliConfig => ({
+  id: 'cfg-1',
+  name: '测试配置',
+  baseUrl: 'https://api.example.com',
+  apiKey: 'test-key',
+  models: ['claude-3.7', 'gpt-4.1', 'gpt-4.1-mini', 'gemini-2.5'],
+  notes: '',
+  cliSettings: {
+    claudeCode: {
+      enabled: true,
+      model: 'claude-3.7',
+      testModels: ['claude-3.7'],
+    },
+    codex: {
+      enabled: true,
+      model: 'gpt-4.1',
+      testModels: ['gpt-4.1', 'gpt-4.1-mini'],
+    },
+    geminiCli: {
+      enabled: true,
+      model: 'gemini-2.5',
+      testModels: ['gemini-2.5'],
+    },
+  },
+  createdAt: 1,
+  updatedAt: 1,
+});
+
+describe('CustomCliConfigEditorDialog', () => {
+  const originalState = useCustomCliConfigStore.getState();
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+  const getElectronAPI = () => window.electronAPI as unknown as MockElectronApi;
+
+  const renderDialog = async () => {
+    await act(async () => {
+      render(
+        <CustomCliConfigEditorDialog isOpen={true} config={createConfig()} onClose={vi.fn()} />
+      );
+    });
+
+    return screen.findByRole('dialog', { name: /编辑: 测试配置/ });
+  };
+
+  beforeEach(() => {
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    useCustomCliConfigStore.setState({
+      configs: [createConfig()],
+      activeConfigId: null,
+      loading: false,
+      saving: false,
+      fetchingModels: {},
+      updateConfig: vi.fn((id: string, updates: Partial<CustomCliConfig>) => {
+        const nextConfigs = useCustomCliConfigStore
+          .getState()
+          .configs.map(config =>
+            config.id === id ? { ...config, ...updates, updatedAt: Date.now() } : config
+          );
+        useCustomCliConfigStore.setState({ configs: nextConfigs });
+      }),
+      saveConfigs: vi.fn().mockResolvedValue(undefined),
+      fetchModels: vi.fn().mockResolvedValue(['claude-3.7']),
+    });
+
+    window.electronAPI = {
+      ...window.electronAPI,
+      cliCompat: {
+        testWithConfig: vi.fn().mockResolvedValue({
+          success: true,
+          data: {
+            claudeCode: true,
+            codex: true,
+            geminiCli: true,
+          },
+        }),
+        writeConfig: vi.fn().mockResolvedValue({
+          success: true,
+          writtenPaths: ['~/.codex/config.toml', '~/.codex/auth.json'],
+        }),
+      },
+      configDetection: {
+        clearCache: vi.fn().mockResolvedValue(undefined),
+      },
+    };
+  });
+
+  afterEach(() => {
+    useCustomCliConfigStore.setState({
+      ...originalState,
+      configs: [],
+      activeConfigId: null,
+      loading: false,
+      saving: false,
+      fetchingModels: {},
+      updateConfig: originalState.updateConfig,
+      saveConfigs: originalState.saveConfigs,
+      fetchModels: originalState.fetchModels,
+    });
+    consoleErrorSpy.mockRestore();
+    vi.clearAllMocks();
+  });
+
+  it('renders per-cli preview and apply buttons plus per-column test buttons', async () => {
+    await renderDialog();
+
+    expect(screen.queryByRole('button', { name: '测试当前配置' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '预览 Claude Code' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '应用 Claude Code' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '预览 Codex' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '应用 Codex' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '预览 Gemini CLI' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '应用 Gemini CLI' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '测试 Claude Code' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '测试 Codex' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '测试 Gemini CLI' })).toBeInTheDocument();
+    expect(screen.getByTestId('cli-test-columns')).toHaveClass('md:divide-x');
+  });
+
+  it('runs tests only for the clicked cli column', async () => {
+    const testWithConfig = vi.fn().mockResolvedValue({
+      success: true,
+      data: { codex: true },
+    });
+    getElectronAPI().cliCompat.testWithConfig = testWithConfig;
+
+    await renderDialog();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '测试 Codex' }));
+    });
+
+    await waitFor(() => expect(testWithConfig).toHaveBeenCalledTimes(2));
+    expect(testWithConfig).toHaveBeenNthCalledWith(1, {
+      siteUrl: 'https://api.example.com',
+      configs: [
+        {
+          cliType: 'codex',
+          apiKey: 'test-key',
+          model: 'gpt-4.1',
+          baseUrl: 'https://api.example.com',
+        },
+      ],
+    });
+    expect(testWithConfig).toHaveBeenNthCalledWith(2, {
+      siteUrl: 'https://api.example.com',
+      configs: [
+        {
+          cliType: 'codex',
+          apiKey: 'test-key',
+          model: 'gpt-4.1-mini',
+          baseUrl: 'https://api.example.com',
+        },
+      ],
+    });
+  });
+
+  it('applies the clicked cli configuration to local files', async () => {
+    const writeConfig = vi.fn().mockResolvedValue({
+      success: true,
+      writtenPaths: ['~/.codex/config.toml', '~/.codex/auth.json'],
+    });
+    getElectronAPI().cliCompat.writeConfig = writeConfig;
+
+    await renderDialog();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '应用 Codex' }));
+    });
+
+    await waitFor(() =>
+      expect(writeConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cliType: 'codex',
+          applyMode: 'merge',
+          files: expect.arrayContaining([
+            expect.objectContaining({ path: '~/.codex/config.toml' }),
+            expect.objectContaining({ path: '~/.codex/auth.json' }),
+          ]),
+        })
+      )
+    );
+  });
+});
