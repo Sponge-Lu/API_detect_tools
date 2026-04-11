@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { FileEdit, Loader2, Save } from 'lucide-react';
-import { IOSModal } from '../IOSModal';
+import { AppModal } from '../AppModal/AppModal';
 import type { CliType } from '../../../shared/types/config-detection';
 import { toast } from '../../store/toastStore';
 
@@ -129,7 +129,7 @@ export function EditCliConfigDialog({ open, onClose, onSaveComplete }: EditCliCo
   };
 
   return (
-    <IOSModal
+    <AppModal
       isOpen={open}
       onClose={handleClose}
       title="编辑 CLI 配置"
@@ -139,7 +139,7 @@ export function EditCliConfigDialog({ open, onClose, onSaveComplete }: EditCliCo
     >
       <div className="space-y-3">
         {/* CLI 选择标签 */}
-        <div className="flex gap-1 p-1 bg-[var(--ios-bg-tertiary)] rounded-[var(--radius-md)]">
+        <div className="flex gap-1 rounded-[var(--radius-md)] bg-[var(--surface-2)] p-1">
           {CLI_TABS.map(tab => (
             <button
               key={tab.key}
@@ -149,8 +149,8 @@ export function EditCliConfigDialog({ open, onClose, onSaveComplete }: EditCliCo
               }}
               className={`flex items-center gap-1.5 flex-1 px-3 py-1.5 rounded-[var(--radius-sm)] text-xs font-medium transition-colors ${
                 activeCli === tab.key
-                  ? 'bg-[var(--ios-bg-secondary)] text-[var(--ios-text-primary)] shadow-sm'
-                  : 'text-[var(--ios-text-secondary)] hover:text-[var(--ios-text-primary)]'
+                  ? 'bg-[var(--surface-3)] text-[var(--text-primary)] shadow-sm'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }`}
             >
               <img src={tab.icon} alt="" className="w-3.5 h-3.5" />
@@ -161,31 +161,27 @@ export function EditCliConfigDialog({ open, onClose, onSaveComplete }: EditCliCo
 
         {isLoading ? (
           <div className="flex items-center justify-center py-8">
-            <Loader2 className="w-5 h-5 animate-spin text-[var(--ios-text-secondary)]" />
+            <Loader2 className="h-5 w-5 animate-spin text-[var(--text-secondary)]" />
           </div>
         ) : files.length === 0 ? (
-          <div className="text-center py-8 text-sm text-[var(--ios-text-secondary)]">
-            无配置文件
-          </div>
+          <div className="py-8 text-center text-sm text-[var(--text-secondary)]">无配置文件</div>
         ) : (
           <>
             {/* 文件标签 */}
             {files.length > 1 && (
-              <div className="flex gap-1 border-b border-[var(--ios-separator)]">
+              <div className="flex gap-1 border-b border-[var(--line-soft)]">
                 {files.map((f, idx) => (
                   <button
                     key={f.key}
                     onClick={() => setActiveFileIdx(idx)}
                     className={`px-3 py-1.5 text-xs font-mono transition-colors border-b-2 -mb-px ${
                       idx === activeFileIdx
-                        ? 'border-[var(--ios-blue)] text-[var(--ios-blue)]'
-                        : 'border-transparent text-[var(--ios-text-secondary)] hover:text-[var(--ios-text-primary)]'
+                        ? 'border-[var(--accent)] text-[var(--accent)]'
+                        : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                     }`}
                   >
                     {f.relativePath.split('/').pop()}
-                    {!f.exists && (
-                      <span className="ml-1 text-[var(--ios-text-tertiary)]">(新)</span>
-                    )}
+                    {!f.exists && <span className="ml-1 text-[var(--text-tertiary)]">(新)</span>}
                   </button>
                 ))}
               </div>
@@ -193,7 +189,7 @@ export function EditCliConfigDialog({ open, onClose, onSaveComplete }: EditCliCo
 
             {/* 文件路径 */}
             {currentFile && (
-              <div className="text-[10px] font-mono text-[var(--ios-text-tertiary)] px-1">
+              <div className="px-1 font-mono text-[10px] text-[var(--text-tertiary)]">
                 {currentFile.relativePath}
               </div>
             )}
@@ -203,7 +199,7 @@ export function EditCliConfigDialog({ open, onClose, onSaveComplete }: EditCliCo
               value={currentContent}
               onChange={e => handleContentChange(e.target.value)}
               spellCheck={false}
-              className="w-full h-64 p-3 font-mono text-xs leading-relaxed bg-[var(--ios-bg-tertiary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] resize-y text-[var(--ios-text-primary)] focus:outline-none focus:border-[var(--ios-blue)] focus:ring-1 focus:ring-[var(--ios-blue)]"
+              className="h-64 w-full resize-y rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] p-3 font-mono text-xs leading-relaxed text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]"
               placeholder={currentFile?.exists ? '' : '文件不存在，输入内容后保存将自动创建'}
             />
           </>
@@ -214,14 +210,14 @@ export function EditCliConfigDialog({ open, onClose, onSaveComplete }: EditCliCo
           <button
             onClick={handleClose}
             disabled={isSaving}
-            className="px-4 py-2 text-sm font-medium text-[var(--ios-text-secondary)] bg-[var(--ios-bg-tertiary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] hover:bg-[var(--ios-bg-secondary)] transition-colors disabled:opacity-50"
+            className="rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] px-4 py-2 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] disabled:opacity-50"
           >
             取消
           </button>
           <button
             onClick={handleSave}
             disabled={!hasChanges || isSaving}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-[var(--ios-blue)] rounded-[var(--radius-md)] hover:bg-[var(--ios-blue)]/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 rounded-[var(--radius-md)] border border-transparent bg-[var(--accent-soft)] px-4 py-2 text-sm font-medium text-[var(--accent-strong)] transition-colors hover:bg-[var(--accent-soft-strong)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isSaving ? (
               <>
@@ -237,6 +233,6 @@ export function EditCliConfigDialog({ open, onClose, onSaveComplete }: EditCliCo
           </button>
         </div>
       </div>
-    </IOSModal>
+    </AppModal>
   );
 }

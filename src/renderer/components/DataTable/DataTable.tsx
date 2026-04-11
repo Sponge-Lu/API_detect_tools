@@ -1,19 +1,19 @@
 export {
-  IOSTable as DataTable,
-  IOSTableHeader as DataTableHeader,
-  IOSTableRow as DataTableRow,
-  IOSTableCell as DataTableCell,
-  IOSTableBody as DataTableBody,
-  IOSTableDivider as DataTableDivider,
-  IOSTableEmpty as DataTableEmpty,
-} from '../IOSTable/IOSTable';
+  DataTable,
+  DataTableHeader,
+  DataTableRow,
+  DataTableCell,
+  DataTableBody,
+  DataTableDivider,
+  DataTableEmpty,
+} from './primitives';
 
 export type {
-  IOSTableProps as DataTableProps,
-  IOSTableHeaderProps as DataTableHeaderProps,
-  IOSTableRowProps as DataTableRowProps,
-  IOSTableCellProps as DataTableCellProps,
-  IOSTableBodyProps as DataTableBodyProps,
-  IOSTableDividerProps as DataTableDividerProps,
-  IOSTableEmptyProps as DataTableEmptyProps,
-} from '../IOSTable/IOSTable';
+  DataTableProps,
+  DataTableHeaderProps,
+  DataTableRowProps,
+  DataTableCellProps,
+  DataTableBodyProps,
+  DataTableDividerProps,
+  DataTableEmptyProps,
+} from './primitives';

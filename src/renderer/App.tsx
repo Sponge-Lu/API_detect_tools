@@ -5,7 +5,7 @@
  */
 
 import Logger from './utils/logger';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { XCircle, Loader2 } from 'lucide-react';
 import { ConfirmDialog, initialDialogState } from './components/ConfirmDialog';
 import { GlobalCommandBar } from './components/AppShell/GlobalCommandBar';
@@ -430,6 +430,7 @@ function App() {
 
   // 窗口关闭行为对话框状态
   const [showCloseBehaviorDialog, setShowCloseBehaviorDialog] = useState(false);
+  const [sitesPageHeaderActions, setSitesPageHeaderActions] = useState<ReactNode | null>(null);
 
   // 用于存储初始化状态的 ref
   const initRef = useRef(false);
@@ -646,6 +647,8 @@ function App() {
     );
   }
 
+  const pageHeaderActions = visibleActiveTab === 'sites' ? sitesPageHeaderActions : null;
+
   if (!config) {
     return (
       <div className="relative flex h-screen items-center justify-center bg-[var(--app-bg)]">
@@ -685,7 +688,11 @@ function App() {
             onDownloadUpdate={handleDownloadUpdate}
           />
           {visibleActiveTab !== 'cli' ? (
-            <PageHeader title={pageMeta.title} description={pageMeta.description} />
+            <PageHeader
+              title={pageMeta.title}
+              description={pageMeta.description}
+              actions={pageHeaderActions}
+            />
           ) : null}
 
           <div
@@ -693,7 +700,7 @@ function App() {
               visibleActiveTab === 'sites' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
             }
           >
-            <SitesPage />
+            <SitesPage setPageHeaderActions={setSitesPageHeaderActions} />
           </div>
           <div
             className={

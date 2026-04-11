@@ -14,7 +14,7 @@
 
 ## 设计规则
 
-- 与 `AppModal`（以及 legacy `IOSModal` 兼容导出）共享 `overlay-title`、`overlay-body`、`overlay-footer` 测试标记
+- 与 `AppModal` 共享 `overlay-title`、`overlay-body`、`overlay-footer` 测试标记
 - 共享遮罩逻辑、圆角体系、阴影层级和关闭按钮位置
 - 主要用于 CLI 配置/测试/应用这类独立任务域
 - 保持高信息密度，不通过增加空白换取“高级感”
@@ -23,7 +23,7 @@
 
 - `UnifiedCliConfigDialog.tsx` 使用 `OverlayDrawer` 承载站点级 CLI 工作流
 - `CustomCliConfigEditorDialog.tsx` 使用 `OverlayDrawer` 承载自定义 CLI 配置编辑
-- `AppModal` 未直接依赖本目录，但通过共享 chrome 标记保持同一家族契约；legacy `IOSModal` 目录仅作兼容导出
+- `AppModal` 未直接依赖本目录，但通过共享 chrome 标记保持同一家族契约
 
 ## 更新日志
 

@@ -21,6 +21,7 @@ import { useCredit } from '../hooks/useCredit';
 import { useLdcSites } from '../hooks/useLdcSites';
 import { toast } from '../store/toastStore';
 import { MIN_REFRESH_INTERVAL } from '../../shared/types/credit';
+import { AppButton } from '../components/AppButton/AppButton';
 import { IncomeStatsCard } from '../components/CreditPanel/IncomeStatsCard';
 import { ExpenseStatsCard } from '../components/CreditPanel/ExpenseStatsCard';
 import { TransactionListCard } from '../components/CreditPanel/TransactionListCard';
@@ -49,10 +50,10 @@ function getTrustLevelText(level: number): string {
 }
 
 function getTrustLevelColorClass(level: number): string {
-  if (level >= 4) return 'text-purple-600 dark:text-purple-400';
-  if (level >= 3) return 'text-blue-600 dark:text-blue-400';
-  if (level >= 2) return 'text-green-600 dark:text-green-400';
-  return 'text-gray-600 dark:text-gray-400';
+  if (level >= 4) return 'text-[var(--warning)]';
+  if (level >= 3) return 'text-[var(--accent)]';
+  if (level >= 2) return 'text-[var(--success)]';
+  return 'text-[var(--text-secondary)]';
 }
 
 export function CreditPage() {
@@ -135,8 +136,8 @@ export function CreditPage() {
   // 加载中状态
   if (isLoading) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="flex items-center gap-3 text-slate-500">
+      <div className="flex flex-1 items-center justify-center">
+        <div className="flex items-center gap-3 text-[var(--text-secondary)]">
           <Loader2 className="w-6 h-6 animate-spin" />
           <span>加载中...</span>
         </div>
@@ -147,27 +148,21 @@ export function CreditPage() {
   // 未登录状态
   if (!isLoggedIn) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <Coins className="w-16 h-16 mx-auto text-primary-300 dark:text-primary-700" />
-          <h2 className="text-lg font-semibold text-slate-700 dark:text-slate-300">
-            Linux Do Credit
-          </h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
+      <div className="flex flex-1 items-center justify-center">
+        <div className="space-y-4 text-center">
+          <Coins className="mx-auto h-16 w-16 text-[var(--accent)] opacity-70" />
+          <h2 className="text-lg font-semibold text-[var(--text-primary)]">Linux Do Credit</h2>
+          <p className="text-sm text-[var(--text-secondary)]">
             登录后查看积分信息、收支统计和交易记录
           </p>
-          <button
-            onClick={handleLogin}
-            disabled={isLoading}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-primary-500 hover:bg-primary-600 disabled:bg-primary-300 text-white rounded-lg transition-colors disabled:cursor-not-allowed"
-          >
+          <AppButton onClick={handleLogin} disabled={isLoading} variant="primary" size="md">
             {isLoading ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
               <LogIn className="w-4 h-4" />
             )}
             登录 Linux Do
-          </button>
+          </AppButton>
         </div>
       </div>
     );
@@ -175,23 +170,21 @@ export function CreditPage() {
 
   return (
     <div className="flex-1 overflow-y-auto px-6 py-3">
-      <div className="max-w-6xl mx-auto space-y-4">
+      <div className="mx-auto max-w-6xl space-y-4">
         {/* 用户信息头部 */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="flex flex-col">
-              <span className="font-semibold text-light-text dark:text-dark-text">
+              <span className="font-semibold text-[var(--text-primary)]">
                 {creditInfo?.nickname || 'Linux Do Credit'}
               </span>
               {creditInfo?.username && (
-                <span className="text-xs text-light-text-secondary dark:text-dark-text-secondary">
-                  @{creditInfo.username}
-                </span>
+                <span className="text-xs text-[var(--text-secondary)]">@{creditInfo.username}</span>
               )}
             </div>
             {creditInfo && (
               <span
-                className={`text-xs px-2 py-0.5 rounded-full bg-light-bg dark:bg-dark-bg ${getTrustLevelColorClass(creditInfo.trustLevel)}`}
+                className={`rounded-full bg-[var(--surface-2)] px-2 py-0.5 text-xs ${getTrustLevelColorClass(creditInfo.trustLevel)}`}
               >
                 <Shield className="w-3 h-3 inline mr-0.5" />
                 {getTrustLevelText(creditInfo.trustLevel)}
@@ -200,7 +193,7 @@ export function CreditPage() {
           </div>
           <div className="flex items-center gap-2">
             {creditInfo && (
-              <div className="flex items-center gap-1.5 text-xs text-light-text-secondary dark:text-dark-text-secondary mr-2">
+              <div className="mr-2 flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
                 <Clock className="w-3.5 h-3.5" />
                 <span>{formatLastUpdated(creditInfo.lastUpdated)}</span>
               </div>
@@ -208,19 +201,19 @@ export function CreditPage() {
             <button
               onClick={handleRefresh}
               disabled={isRefreshing}
-              className="p-2 rounded-lg hover:bg-light-bg dark:hover:bg-dark-bg transition-colors disabled:cursor-not-allowed"
+              className="rounded-[var(--radius-md)] p-2 transition-colors hover:bg-[var(--surface-2)] disabled:cursor-not-allowed"
               title="刷新"
             >
               <RefreshCw
-                className={`w-4 h-4 text-light-text-secondary dark:text-dark-text-secondary ${isRefreshing ? 'animate-spin' : ''}`}
+                className={`w-4 h-4 text-[var(--text-secondary)] ${isRefreshing ? 'animate-spin' : ''}`}
               />
             </button>
             <button
               onClick={handleLogout}
-              className="p-2 rounded-lg hover:bg-light-bg dark:hover:bg-dark-bg transition-colors"
+              className="rounded-[var(--radius-md)] p-2 transition-colors hover:bg-[var(--surface-2)]"
               title="登出"
             >
-              <LogOut className="w-4 h-4 text-light-text-secondary dark:text-dark-text-secondary" />
+              <LogOut className="w-4 h-4 text-[var(--text-secondary)]" />
             </button>
           </div>
         </div>
@@ -228,52 +221,47 @@ export function CreditPage() {
         {creditInfo ? (
           <>
             {/* 关键指标卡片 - 主余额突出 + 3列次要指标 */}
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-              {/* 可用积分 - Hero Card with gradient */}
-              <div className="lg:col-span-1 bg-gradient-to-br from-primary-500 to-emerald-600 dark:from-primary-600 dark:to-emerald-700 rounded-xl p-5 shadow-md text-white">
-                <div className="flex items-center gap-2 text-xs text-white/80 mb-3">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+              <div className="lg:col-span-1 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-3)] p-5 shadow-[var(--shadow-md)]">
+                <div className="mb-3 flex items-center gap-2 text-xs text-[var(--text-secondary)]">
                   <Wallet className="w-4 h-4" />
                   <span>可用积分</span>
                 </div>
-                <div className="text-3xl font-bold tracking-tight">
+                <div className="text-3xl font-bold tracking-tight text-[var(--text-primary)]">
                   {creditInfo.availableBalance}
                 </div>
-                <div className="mt-3 pt-3 border-t border-white/20 flex items-center justify-between text-xs text-white/70">
+                <div className="mt-3 flex items-center justify-between border-t border-[var(--line-soft)] pt-3 text-xs text-[var(--text-secondary)]">
                   <span>Lv.{creditInfo.payLevel}</span>
                   <span>评分 {creditInfo.payScore}</span>
                 </div>
               </div>
-              {/* 次要指标 - 3列 */}
-              <div className="lg:col-span-3 grid grid-cols-3 gap-4">
-                {/* 总收入 */}
-                <div className="bg-white dark:bg-dark-card rounded-xl border border-light-border dark:border-dark-border p-4 shadow-sm">
-                  <div className="flex items-center gap-2 text-xs text-light-text-secondary dark:text-dark-text-secondary mb-2">
-                    <ArrowDownCircle className="w-4 h-4 text-primary-500" />
+              <div className="grid grid-cols-3 gap-4 lg:col-span-3">
+                <div className="rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-1)] p-4 shadow-[var(--shadow-sm)]">
+                  <div className="mb-2 flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                    <ArrowDownCircle className="w-4 h-4 text-[var(--accent)]" />
                     <span>总收入</span>
                   </div>
-                  <div className="text-2xl font-bold text-primary-600 dark:text-primary-400">
+                  <div className="text-2xl font-bold text-[var(--accent)]">
                     {creditInfo.totalReceive}
                   </div>
                 </div>
-                {/* 总支出 */}
-                <div className="bg-white dark:bg-dark-card rounded-xl border border-light-border dark:border-dark-border p-4 shadow-sm">
-                  <div className="flex items-center gap-2 text-xs text-light-text-secondary dark:text-dark-text-secondary mb-2">
-                    <ArrowUpCircle className="w-4 h-4 text-red-500" />
+                <div className="rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-1)] p-4 shadow-[var(--shadow-sm)]">
+                  <div className="mb-2 flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                    <ArrowUpCircle className="w-4 h-4 text-[var(--danger)]" />
                     <span>总支出</span>
                   </div>
-                  <div className="text-2xl font-bold text-red-600 dark:text-red-400">
+                  <div className="text-2xl font-bold text-[var(--danger)]">
                     {creditInfo.totalPayment}
                   </div>
                 </div>
-                {/* 配额信息 */}
-                <div className="bg-white dark:bg-dark-card rounded-xl border border-light-border dark:border-dark-border p-4 shadow-sm">
-                  <div className="flex items-center gap-2 text-xs text-light-text-secondary dark:text-dark-text-secondary mb-2">
-                    <Shield className="w-4 h-4 text-amber-500" />
+                <div className="rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-1)] p-4 shadow-[var(--shadow-sm)]">
+                  <div className="mb-2 flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                    <Shield className="w-4 h-4 text-[var(--warning)]" />
                     <span>剩余配额</span>
                   </div>
-                  <div className="text-2xl font-bold text-light-text dark:text-dark-text">
+                  <div className="text-2xl font-bold text-[var(--text-primary)]">
                     {creditInfo.remainQuota}
-                    <span className="text-sm font-medium text-light-text-secondary dark:text-dark-text-secondary ml-2">
+                    <span className="ml-2 text-sm font-medium text-[var(--text-secondary)]">
                       / {creditInfo.dailyLimit}
                     </span>
                   </div>
@@ -281,11 +269,9 @@ export function CreditPage() {
               </div>
             </div>
 
-            {/* 统计 + 交易列表区域 */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {/* 左侧 2/3：收支统计 */}
-              <div className="lg:col-span-2 space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+              <div className="space-y-4 lg:col-span-2">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <IncomeStatsCard
                     dailyStats={dailyStats}
                     isLoading={isLoadingStats}
@@ -307,7 +293,6 @@ export function CreditPage() {
                 />
               </div>
 
-              {/* 右侧 1/3：交易记录 */}
               <div className="lg:col-span-1">
                 <TransactionListCard
                   transactions={transactions}
@@ -317,29 +302,28 @@ export function CreditPage() {
               </div>
             </div>
 
-            {/* 底部：基准值 + 自动刷新控制 */}
-            <div className="bg-white dark:bg-dark-card rounded-xl border border-light-border dark:border-dark-border px-4 py-3 shadow-sm">
+            <div className="rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-4 py-3 shadow-[var(--shadow-sm)]">
               <div className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-4 text-light-text-secondary dark:text-dark-text-secondary">
+                <div className="flex items-center gap-4 text-[var(--text-secondary)]">
                   <span>
                     基准值:{' '}
-                    <strong className="text-light-text dark:text-dark-text">
+                    <strong className="text-[var(--text-primary)]">
                       {creditInfo.communityBalance.toLocaleString()}
                     </strong>
                   </span>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="text-light-text-secondary dark:text-dark-text-secondary">
-                    自动刷新
-                  </span>
+                  <span className="text-[var(--text-secondary)]">自动刷新</span>
                   <button
                     onClick={handleAutoRefreshToggle}
-                    className={`relative w-9 h-5 rounded-full transition-colors ${
-                      config.autoRefresh ? 'bg-primary-500' : 'bg-slate-300 dark:bg-slate-600'
+                    className={`relative h-5 w-9 rounded-full border transition-colors ${
+                      config.autoRefresh
+                        ? 'border-transparent bg-[var(--accent)]'
+                        : 'border-[var(--line-soft)] bg-[var(--surface-2)]'
                     }`}
                   >
                     <span
-                      className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${
+                      className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)] transition-transform ${
                         config.autoRefresh ? 'translate-x-4' : ''
                       }`}
                     />
@@ -352,11 +336,9 @@ export function CreditPage() {
                         value={intervalInput}
                         onChange={e => handleIntervalChange(e.target.value)}
                         onBlur={handleIntervalBlur}
-                        className="w-14 px-2 py-1 text-xs text-right bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-md focus:border-primary-500 focus:ring-1 focus:ring-primary-500/30 outline-none text-light-text dark:text-dark-text"
+                        className="w-14 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 text-right text-xs text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--focus-ring)]"
                       />
-                      <span className="text-light-text-secondary dark:text-dark-text-secondary">
-                        分钟
-                      </span>
+                      <span className="text-[var(--text-secondary)]">分钟</span>
                     </div>
                   )}
                 </div>
@@ -364,12 +346,12 @@ export function CreditPage() {
             </div>
           </>
         ) : (
-          <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">
+          <div className="py-8 text-center text-sm text-[var(--text-secondary)]">
             暂无数据，点击刷新获取
           </div>
         )}
 
-        {error && <p className="text-sm text-red-500 dark:text-red-400 mt-2">{error}</p>}
+        {error && <p className="mt-2 text-sm text-[var(--danger)]">{error}</p>}
       </div>
     </div>
   );

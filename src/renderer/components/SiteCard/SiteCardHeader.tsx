@@ -10,7 +10,6 @@
  */
 
 import { CliCompatibilityIcons } from '../CliCompatibilityIcons';
-import { LDC_UI_VISIBILITY } from '../../../shared/constants';
 import type { SiteCardHeaderProps } from './types';
 
 function formatNumber(num: number): string {
@@ -21,6 +20,16 @@ function formatNumber(num: number): string {
     return (num / 1_000).toFixed(1) + 'K';
   }
   return num.toString();
+}
+
+function formatBalanceDisplay(balance: number): string {
+  if (balance === -1) {
+    return '∞';
+  }
+  if (balance >= 100_000) {
+    return `$${formatNumber(balance)}`;
+  }
+  return `$${balance.toFixed(2)}`;
 }
 
 export function SiteCardHeader({
@@ -47,20 +56,15 @@ export function SiteCardHeader({
   onTestCliCompat,
   onApply,
 }: SiteCardHeaderProps) {
-  const visibleColumnWidths =
-    !LDC_UI_VISIBILITY.showRatioColumn && columnWidths.length > 12
-      ? columnWidths.slice(0, -1)
-      : columnWidths;
-
   return (
     <div
       className="grid items-center gap-x-1 text-[13px] tabular-nums"
       style={{
-        gridTemplateColumns: visibleColumnWidths.map(w => `${w}px`).join(' '),
+        gridTemplateColumns: columnWidths.map(w => `${w}px`).join(' '),
       }}
     >
       <div className="flex min-w-0 items-center">
-        <div className="flex min-w-0 flex-col">
+        <div className="flex min-w-0 flex-col gap-[2px]">
           <div className="flex min-w-0 items-center gap-1.5">
             <button
               onClick={() => onOpenSite(site, accountId)}
@@ -91,23 +95,22 @@ export function SiteCardHeader({
               </span>
             )}
           </div>
-          {accountName && (
-            <span className="truncate pl-[14px] text-[10px] text-[var(--text-tertiary)]">
-              {accountName}
-            </span>
-          )}
+          <div className="flex min-w-0 items-center gap-1.5 pl-[14px] text-[10px] text-[var(--text-tertiary)]">
+            <span className="min-w-0 truncate">{accountName ?? '--'}</span>
+            <span className="shrink-0">{lastSyncDisplay ?? '--'}</span>
+          </div>
         </div>
       </div>
 
       <div className="flex flex-col">
         {siteResult && siteResult.balance !== undefined && siteResult.balance !== null ? (
-          siteResult.balance === -1 ? (
-            <span className="font-mono font-semibold text-[var(--warning)]">∞</span>
-          ) : (
-            <span className="truncate font-mono font-semibold text-[var(--success)]">
-              ${siteResult.balance.toFixed(2)}
-            </span>
-          )
+          <span
+            className={`truncate font-mono font-semibold ${
+              siteResult.balance === -1 ? 'text-[var(--warning)]' : 'text-[var(--success)]'
+            }`}
+          >
+            {formatBalanceDisplay(siteResult.balance)}
+          </span>
         ) : (
           <span className="text-[var(--text-tertiary)]">--</span>
         )}
@@ -136,9 +139,11 @@ export function SiteCardHeader({
         >
           {formatNumber(todayTotalTokens)}
         </span>
-        <span className="mt-1 text-[10px] text-[var(--text-tertiary)]">
-          输入 {formatNumber(todayPromptTokens)} / 输出 {formatNumber(todayCompletionTokens)}
-        </span>
+        {todayTotalTokens > 0 ? (
+          <span className="mt-0.5 text-[10px] text-[var(--text-tertiary)]">
+            输入 {formatNumber(todayPromptTokens)} / 输出 {formatNumber(todayCompletionTokens)}
+          </span>
+        ) : null}
       </div>
 
       <div className="flex flex-col items-center justify-center leading-tight">
@@ -150,9 +155,11 @@ export function SiteCardHeader({
         >
           {formatNumber(todayRequests)}
         </span>
-        <span className="mt-1 text-[10px] text-[var(--text-tertiary)]">
-          RPM {rpm.toFixed(2)} / TPM {formatNumber(Math.round(tpm))}
-        </span>
+        {todayRequests > 0 ? (
+          <span className="mt-0.5 text-[10px] text-[var(--text-tertiary)]">
+            RPM {rpm.toFixed(2)} / TPM {formatNumber(Math.round(tpm))}
+          </span>
+        ) : null}
       </div>
 
       <div className="flex items-center justify-center text-[13px] text-[var(--text-secondary)]">
@@ -165,39 +172,18 @@ export function SiteCardHeader({
         </span>
       </div>
 
-      <div className="flex items-center justify-center text-[13px] text-[var(--text-secondary)]">
-        {lastSyncDisplay ? (
-          <span className="font-medium">{lastSyncDisplay}</span>
-        ) : (
-          <span className="text-[var(--text-tertiary)]">--</span>
-        )}
-      </div>
-
-      <div className="flex items-center justify-start gap-1">
+      <div className="flex items-center justify-center gap-1">
         <CliCompatibilityIcons
           compatibility={cliCompatibility}
           cliConfig={cliConfig ?? null}
           isLoading={isCliTesting}
+          configTrigger="text"
+          configButtonLabel="CLI配置"
           onConfig={onOpenCliConfig}
           onTest={onTestCliCompat}
           onApply={onApply}
         />
       </div>
-
-      {LDC_UI_VISIBILITY.showRatioColumn && (
-        <div className="flex items-center justify-center text-[13px]">
-          {siteResult?.ldcPaymentSupported && siteResult?.ldcExchangeRate ? (
-            <span
-              className="cursor-help font-mono font-medium text-[var(--warning)]"
-              title={`支持 LDC 支付，比例: ${siteResult.ldcExchangeRate}:1`}
-            >
-              {siteResult.ldcExchangeRate}
-            </span>
-          ) : (
-            <span className="text-[var(--text-tertiary)]">-</span>
-          )}
-        </div>
-      )}
     </div>
   );
 }

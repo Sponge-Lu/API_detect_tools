@@ -1,11 +1,7 @@
 import React, { useCallback, useEffect, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { OverlayFrame } from './OverlayFrame';
-import {
-  isTopmostOverlay,
-  registerOpenOverlay,
-  unregisterOpenOverlay,
-} from '../AppModal/AppModal';
+import { isTopmostOverlay, registerOpenOverlay, unregisterOpenOverlay } from '../AppModal/AppModal';
 
 export interface OverlayDrawerProps {
   isOpen: boolean;
@@ -20,6 +16,7 @@ export interface OverlayDrawerProps {
   className?: string;
   contentClassName?: string;
   widthClassName?: string;
+  placement?: 'end' | 'center';
   'aria-describedby'?: string;
 }
 
@@ -40,6 +37,7 @@ export function OverlayDrawer({
   className = '',
   contentClassName = '',
   widthClassName = 'max-w-[760px]',
+  placement = 'end',
   'aria-describedby': ariaDescribedBy,
 }: OverlayDrawerProps) {
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -133,11 +131,21 @@ export function OverlayDrawer({
 
   if (!shouldRender) return null;
 
+  const isCentered = placement === 'center';
+  const motionClass = isCentered
+    ? isAnimating
+      ? 'translate-y-0 opacity-100 scale-100'
+      : 'translate-y-4 opacity-0 scale-[0.98]'
+    : isAnimating
+      ? 'translate-x-0 opacity-100'
+      : 'translate-x-8 opacity-0';
+
   return createPortal(
     <div
       className={joinClasses(
-        'fixed inset-0 z-[210] flex justify-end p-4 overflow-hidden',
-        'transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)] [will-change:opacity]',
+        'fixed inset-0 z-[210] flex p-4 overflow-hidden',
+        isCentered ? 'items-center justify-center' : 'justify-end',
+        'transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] [will-change:opacity]',
         isAnimating ? 'opacity-100' : 'opacity-0'
       )}
       onClick={handleOverlayClick}
@@ -145,9 +153,9 @@ export function OverlayDrawer({
     >
       <div
         className={joinClasses(
-          'absolute inset-0 bg-black/40 backdrop-blur-[8px] [-webkit-backdrop-filter:blur(8px)]',
+          'absolute inset-0 bg-[var(--overlay-mask)] backdrop-blur-[10px] [-webkit-backdrop-filter:blur(10px)]',
           '[will-change:opacity,backdrop-filter] [transform:translateZ(0)]',
-          'transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)]',
+          'transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)]',
           isAnimating ? 'opacity-100' : 'opacity-0'
         )}
         aria-hidden="true"
@@ -162,12 +170,14 @@ export function OverlayDrawer({
         aria-describedby={ariaDescribedBy || descriptionId}
         tabIndex={-1}
         className={joinClasses(
-          'relative z-[1] h-full w-full',
+          'relative z-[1] w-full',
+          isCentered ? 'h-auto max-h-full' : 'h-full',
           widthClassName,
-          'transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-ios)]',
-          '[will-change:transform,opacity] [transform-origin:right_center]',
-          isAnimating ? 'translate-x-0 opacity-100' : 'translate-x-8 opacity-0',
-          'focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ios-blue)] focus-visible:ring-offset-2',
+          'transition-[transform,opacity] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)]',
+          '[will-change:transform,opacity]',
+          isCentered ? '[transform-origin:center_center]' : '[transform-origin:right_center]',
+          motionClass,
+          'focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2',
           className
         )}
         onClick={event => event.stopPropagation()}

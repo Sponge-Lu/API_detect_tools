@@ -11,16 +11,13 @@
 
 // 分组文字颜色池
 const GROUP_TEXT_COLOR_POOL = [
-  'text-red-600 dark:text-red-300',
-  'text-emerald-500 dark:text-emerald-300',
-  'text-blue-600 dark:text-blue-300',
-  'text-amber-500 dark:text-amber-300',
-  'text-violet-500 dark:text-violet-300',
-  'text-cyan-500 dark:text-cyan-300',
-  'text-pink-500 dark:text-pink-300',
-  'text-lime-600 dark:text-lime-300',
-  'text-indigo-500 dark:text-indigo-300',
-  'text-orange-500 dark:text-orange-300',
+  'text-[var(--accent)]',
+  'text-[var(--accent-strong)]',
+  'text-[var(--success)]',
+  'text-[var(--warning)]',
+  'text-[var(--danger)]',
+  'text-[var(--text-primary)]',
+  'text-[var(--text-secondary)]',
 ] as const;
 
 // 带圆框的数字字符
@@ -49,7 +46,7 @@ const groupColorRegistry: Record<string, string> = {};
  * 获取分组的文字颜色
  */
 export function getGroupTextColor(groupName: string): string {
-  if (!groupName) return 'text-slate-400';
+  if (!groupName) return 'text-[var(--text-tertiary)]';
 
   if (groupColorRegistry[groupName]) {
     return groupColorRegistry[groupName];

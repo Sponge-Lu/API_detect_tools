@@ -28,6 +28,7 @@ import {
   BackupSelectDialog,
   UnifiedCliConfigDialog,
   AutoRefreshDialog,
+  ApplyConfigPopover,
 } from '../components/dialogs';
 import type { CliConfig } from '../../shared/types/cli-config';
 import { CreateApiKeyDialog } from '../components/CreateApiKeyDialog';
@@ -54,7 +55,6 @@ import { useDetectionStore } from '../store/detectionStore';
 import { useUIStore } from '../store/uiStore';
 import { toast } from '../store/toastStore';
 import { DialogState, initialDialogState } from '../components/ConfirmDialog';
-import { LDC_UI_VISIBILITY } from '../../shared/constants';
 
 // 备份信息类型
 interface BackupInfo {
@@ -116,7 +116,11 @@ interface FlattenedCardItem {
   cardKey: string;
 }
 
-export function SitesPage() {
+interface SitesPageProps {
+  setPageHeaderActions?: (actions: React.ReactNode | null) => void;
+}
+
+export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
   // ========== 从 Store 读取状态 ==========
   const {
     config,
@@ -192,6 +196,9 @@ export function SitesPage() {
   const [cliConfigCardKey, setCliConfigCardKey] = useState<string | null>(null);
   const [cliConfigAccountId, setCliConfigAccountId] = useState<string | null>(null);
   const [cliConfigSiteResult, setCliConfigSiteResult] = useState<DetectionResult | null>(null);
+  const [cliApplySite, setCliApplySite] = useState<SiteConfig | null>(null);
+  const [cliApplyCardKey, setCliApplyCardKey] = useState<string | null>(null);
+  const [cliApplyAnchorEl, setCliApplyAnchorEl] = useState<HTMLElement | null>(null);
   const [tokenOperationContext, setTokenOperationContext] = useState<CardOperationContext | null>(
     null
   );
@@ -216,14 +223,9 @@ export function SitesPage() {
     }
   };
 
-  const visibleColumnWidths = useMemo(
-    () => (LDC_UI_VISIBILITY.showRatioColumn ? columnWidths : columnWidths.slice(0, -1)),
-    [columnWidths]
-  );
+  const visibleColumnWidths = useMemo(() => columnWidths, [columnWidths]);
 
-  const effectiveSortField = normalizeSiteSortField(
-    !LDC_UI_VISIBILITY.showRatioColumn && sortField === 'ldcRatio' ? null : sortField
-  );
+  const effectiveSortField = normalizeSiteSortField(sortField);
 
   // 排序设置变化时保存到 config
   const sortSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -956,6 +958,40 @@ export function SitesPage() {
     }
   };
 
+  const pageHeaderActions = useMemo(
+    () => (
+      <div className="flex items-center gap-2">
+        <AppButton
+          variant="primary"
+          size="sm"
+          onClick={() => {
+            setEditingSite(null);
+            setEditingAccount(null);
+            setShowSiteEditor(true);
+          }}
+        >
+          <Plus className="w-4 h-4" strokeWidth={2.5} />
+          添加站点
+        </AppButton>
+        <AppButton
+          variant="secondary"
+          size="sm"
+          onClick={handleOpenBackupDialog}
+          title="从备份文件恢复站点配置"
+        >
+          <RefreshCw className="w-4 h-4" strokeWidth={2.5} />
+          恢复站点
+        </AppButton>
+      </div>
+    ),
+    [handleOpenBackupDialog, setEditingSite, setShowSiteEditor]
+  );
+
+  useEffect(() => {
+    setPageHeaderActions?.(pageHeaderActions);
+    return () => setPageHeaderActions?.(null);
+  }, [pageHeaderActions, setPageHeaderActions]);
+
   // 如果没有config，不渲染（由App.tsx保证有config才渲染页面）
   if (!config) return null;
 
@@ -1105,27 +1141,6 @@ export function SitesPage() {
                     </button>
                   )}
                 </div>
-                <AppButton
-                  variant="primary"
-                  size="sm"
-                  onClick={() => {
-                    setEditingSite(null);
-                    setEditingAccount(null);
-                    setShowSiteEditor(true);
-                  }}
-                >
-                  <Plus className="w-4 h-4" strokeWidth={2.5} />
-                  添加站点
-                </AppButton>
-                <AppButton
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleOpenBackupDialog}
-                  title="从备份文件恢复站点配置"
-                >
-                  <RefreshCw className="w-4 h-4" strokeWidth={2.5} />
-                  恢复站点
-                </AppButton>
               </div>
             </div>
           )}
@@ -1167,28 +1182,25 @@ export function SitesPage() {
                   onToggleSort={toggleSort}
                   onResetSort={resetSort}
                   actions={
-                    <>
+                    <div className="ml-1 flex shrink-0 items-center gap-0.5">
                       <button
                         onClick={handleCheckInAll}
                         disabled={!!checkingIn || !config || config.sites.length === 0}
-                        className="rounded-[var(--radius-sm)] p-1 transition-all duration-[var(--duration-fast)] hover:bg-[var(--warning-soft)] disabled:cursor-not-allowed disabled:opacity-50"
+                        className="rounded-[var(--radius-sm)] p-[3px] text-[var(--warning)] transition-colors hover:bg-[var(--warning-soft)] disabled:cursor-not-allowed disabled:opacity-50"
                         title="一键签到：批量签到所有可签到站点"
                       >
                         {checkingIn ? (
                           <Loader2
                             className="h-3.5 w-3.5 animate-spin text-[var(--warning)]"
-                            strokeWidth={2.5}
+                            strokeWidth={2}
                           />
                         ) : (
-                          <Calendar
-                            className="h-3.5 w-3.5 text-[var(--warning)] hover:opacity-80"
-                            strokeWidth={2.5}
-                          />
+                          <Calendar className="h-3.5 w-3.5" strokeWidth={2} />
                         )}
                       </button>
                       <button
                         onClick={handleToggleAllExpanded}
-                        className="rounded-[var(--radius-sm)] p-1 transition-all duration-[var(--duration-fast)] hover:bg-[var(--surface-2)]"
+                        className="rounded-[var(--radius-sm)] p-[3px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
                         title={
                           flattenedCards.length > 0 &&
                           flattenedCards.every(c => expandedSites.has(c.cardKey))
@@ -1196,28 +1208,25 @@ export function SitesPage() {
                             : '展开全部'
                         }
                       >
-                        <ChevronsUpDown className="w-3.5 h-3.5" />
+                        <ChevronsUpDown className="w-3.5 h-3.5" strokeWidth={2} />
                       </button>
                       <button
                         onClick={handleDetectAllSites}
                         disabled={detecting || !config || config.sites.length === 0}
-                        className="rounded-[var(--radius-sm)] p-1 transition-all duration-[var(--duration-fast)] hover:bg-[var(--surface-2)] disabled:cursor-not-allowed disabled:opacity-50"
+                        className="rounded-[var(--radius-sm)] p-[3px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-soft)] hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
                         title="检测所有站点"
                       >
                         {detecting ? (
                           <Loader2
                             className="w-3.5 h-3.5 animate-spin text-[var(--accent)]"
-                            strokeWidth={2.5}
+                            strokeWidth={2}
                           />
                         ) : (
-                          <RefreshCw
-                            className="w-3.5 h-3.5 text-[var(--text-secondary)] hover:text-[var(--accent)]"
-                            strokeWidth={2.5}
-                          />
+                          <RefreshCw className="w-3.5 h-3.5" strokeWidth={2} />
                         )}
                       </button>
-                      <div className="w-[71px]" />
-                    </>
+                      <div className="w-[48px]" aria-hidden="true" />
+                    </div>
                   }
                 />
 
@@ -1329,6 +1338,11 @@ export function SitesPage() {
                           setCliConfigAccountId(account?.id || null);
                           setCliConfigSiteResult(siteResult || null);
                           setShowCliConfigDialog(true);
+                        }}
+                        onApply={event => {
+                          setCliApplySite(site);
+                          setCliApplyCardKey(ck);
+                          setCliApplyAnchorEl(event?.currentTarget ?? null);
                         }}
                         onAddAccount={
                           firstCardKeyPerSite.has(ck)
@@ -1576,17 +1590,33 @@ export function SitesPage() {
             setCliConfigAccountId(null);
             setCliConfigSiteResult(null);
           }}
+          onPersistConfig={async (newConfig: CliConfig) => {
+            const cardKey = cliConfigCardKey ?? cliConfigSite.name;
+            const result = await (window.electronAPI as any).cliCompat.saveConfig(
+              cliConfigSite.url,
+              newConfig,
+              cliConfigAccountId || undefined
+            );
+            if (!result?.success) {
+              throw new Error(result?.error ?? '保存 CLI 配置失败');
+            }
+            setCliConfig(cardKey, newConfig);
+          }}
           onSave={async (newConfig: CliConfig) => {
-            setCliConfig(cliConfigCardKey ?? cliConfigSite.name, newConfig);
             try {
-              await (window.electronAPI as any).cliCompat.saveConfig(
+              const result = await (window.electronAPI as any).cliCompat.saveConfig(
                 cliConfigSite.url,
                 newConfig,
                 cliConfigAccountId || undefined
               );
+              if (!result?.success) {
+                throw new Error(result?.error ?? '保存 CLI 配置失败');
+              }
+              setCliConfig(cliConfigCardKey ?? cliConfigSite.name, newConfig);
               toast.success('CLI 配置已保存');
             } catch {
               toast.error('保存 CLI 配置失败');
+              return;
             }
             setShowCliConfigDialog(false);
             setCliConfigSite(null);
@@ -1596,6 +1626,29 @@ export function SitesPage() {
           }}
         />
       )}
+
+      <ApplyConfigPopover
+        isOpen={Boolean(cliApplySite && cliApplyAnchorEl)}
+        anchorEl={cliApplyAnchorEl}
+        cliConfig={
+          cliApplySite ? (getCliConfig(cliApplyCardKey ?? cliApplySite.name) ?? null) : null
+        }
+        cliCompatibility={
+          cliApplySite ? (getCompatibility(cliApplyCardKey ?? cliApplySite.name) ?? null) : null
+        }
+        siteUrl={cliApplySite?.url ?? ''}
+        siteName={cliApplySite?.name ?? ''}
+        apiKeys={
+          cliApplySite
+            ? apiKeys[cliApplyCardKey ?? cliApplySite.name] || apiKeys[cliApplySite.name] || []
+            : []
+        }
+        onClose={() => {
+          setCliApplySite(null);
+          setCliApplyCardKey(null);
+          setCliApplyAnchorEl(null);
+        }}
+      />
 
       {/* 备份选择对话框 */}
       <BackupSelectDialog

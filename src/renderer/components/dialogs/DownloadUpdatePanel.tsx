@@ -19,7 +19,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import type { ReleaseInfo, DownloadProgress, DownloadPhase } from '../../hooks/useUpdate';
-import { IOSButton } from '../IOSButton';
+import { AppButton } from '../AppButton/AppButton';
 import { AppModal } from '../AppModal/AppModal';
 
 interface DownloadUpdatePanelProps {
@@ -124,7 +124,6 @@ export function DownloadUpdatePanel({
               </div>
             </div>
           </div>
-
         </>
       );
     }
@@ -182,7 +181,6 @@ export function DownloadUpdatePanel({
               )}
             </div>
           </div>
-
         </>
       );
     }
@@ -201,9 +199,7 @@ export function DownloadUpdatePanel({
               </div>
 
               {/* 成功提示 */}
-              <h3 className="mb-2 text-xl font-semibold text-[var(--text-primary)]">
-                下载完成
-              </h3>
+              <h3 className="mb-2 text-xl font-semibold text-[var(--text-primary)]">下载完成</h3>
               <p className="mb-6 text-sm text-[var(--text-secondary)]">
                 更新包已下载完成，点击下方按钮开始安装
               </p>
@@ -217,7 +213,6 @@ export function DownloadUpdatePanel({
               </div>
             </div>
           </div>
-
         </>
       );
     }
@@ -236,15 +231,10 @@ export function DownloadUpdatePanel({
               </div>
 
               {/* 错误提示 */}
-              <h3 className="mb-2 text-xl font-semibold text-[var(--text-primary)]">
-                下载失败
-              </h3>
-              <p className="mb-6 text-sm text-[var(--danger)]">
-                {downloadError || '未知错误'}
-              </p>
+              <h3 className="mb-2 text-xl font-semibold text-[var(--text-primary)]">下载失败</h3>
+              <p className="mb-6 text-sm text-[var(--danger)]">{downloadError || '未知错误'}</p>
             </div>
           </div>
-
         </>
       );
     }
@@ -256,35 +246,39 @@ export function DownloadUpdatePanel({
     if (downloadPhase === 'idle') {
       return (
         <>
-          <IOSButton variant="tertiary" onClick={onClose}>
+          <AppButton variant="tertiary" onClick={onClose}>
             稍后再说
-          </IOSButton>
-          <IOSButton variant="primary" onClick={onStartDownload}>
+          </AppButton>
+          <AppButton variant="primary" onClick={onStartDownload}>
             <Download className="w-4 h-4" />
             开始更新
-          </IOSButton>
+          </AppButton>
         </>
       );
     }
 
     if (downloadPhase === 'downloading') {
       return (
-        <IOSButton variant="tertiary" onClick={onCancelDownload}>
+        <AppButton variant="tertiary" onClick={onCancelDownload}>
           取消下载
-        </IOSButton>
+        </AppButton>
       );
     }
 
     if (downloadPhase === 'completed') {
       return (
         <>
-          <IOSButton variant="tertiary" onClick={onClose}>
+          <AppButton variant="tertiary" onClick={onClose}>
             稍后安装
-          </IOSButton>
-          <IOSButton variant="primary" onClick={onInstall} className="bg-[var(--success)] hover:opacity-90">
+          </AppButton>
+          <AppButton
+            variant="primary"
+            onClick={onInstall}
+            className="bg-[var(--success)] hover:opacity-90"
+          >
             <CheckCircle2 className="w-4 h-4" />
             立即安装
-          </IOSButton>
+          </AppButton>
         </>
       );
     }
@@ -292,13 +286,13 @@ export function DownloadUpdatePanel({
     if (downloadPhase === 'error') {
       return (
         <>
-          <IOSButton variant="tertiary" onClick={onClose}>
+          <AppButton variant="tertiary" onClick={onClose}>
             关闭
-          </IOSButton>
-          <IOSButton variant="primary" onClick={onStartDownload}>
+          </AppButton>
+          <AppButton variant="primary" onClick={onStartDownload}>
             <Download className="w-4 h-4" />
             重试
-          </IOSButton>
+          </AppButton>
         </>
       );
     }

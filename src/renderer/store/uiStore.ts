@@ -39,6 +39,7 @@ export type TabId =
   | 'settings';
 
 export type VisibleTabId = Exclude<TabId, 'credit'>;
+export type SidebarDisplayMode = 'expanded' | 'icon-only';
 
 // 路由相关的 TabId
 export const ROUTE_TAB_IDS: TabId[] = ['redirection', 'usability', 'proxystats'];
@@ -141,6 +142,9 @@ interface UIState {
   showDownloadPanel: boolean;
   downloadPanelRelease: ReleaseInfo | null;
 
+  // 侧边栏显示模式
+  sidebarDisplayMode: SidebarDisplayMode;
+
   // Actions - 面板
   setShowSiteEditor: (show: boolean) => void;
   setEditingSite: (index: number | null) => void;
@@ -223,6 +227,10 @@ interface UIState {
   // Actions - 下载面板
   openDownloadPanel: (release: ReleaseInfo) => void;
   closeDownloadPanel: () => void;
+
+  // Actions - 侧边栏
+  setSidebarDisplayMode: (mode: SidebarDisplayMode) => void;
+  toggleSidebarDisplayMode: () => void;
 }
 
 const initialNewTokenForm: NewApiTokenForm = {
@@ -269,6 +277,7 @@ export const useUIStore = create<UIState>()(
       sortOrder: 'desc',
       showDownloadPanel: false,
       downloadPanelRelease: null,
+      sidebarDisplayMode: 'expanded',
 
       // 面板 Actions
       setShowSiteEditor: show => set({ showSiteEditor: show }),
@@ -485,13 +494,20 @@ export const useUIStore = create<UIState>()(
       openDownloadPanel: (release: ReleaseInfo) =>
         set({ showDownloadPanel: true, downloadPanelRelease: release }),
       closeDownloadPanel: () => set({ showDownloadPanel: false, downloadPanelRelease: null }),
+
+      // 侧边栏
+      setSidebarDisplayMode: mode => set({ sidebarDisplayMode: mode }),
+      toggleSidebarDisplayMode: () =>
+        set(state => ({
+          sidebarDisplayMode: state.sidebarDisplayMode === 'expanded' ? 'icon-only' : 'expanded',
+        })),
     }),
     {
       name: 'api-hub-ui-storage',
-      version: 3,
-      // 不再持久化 columnWidths，让它每次都使用 DEFAULT_COLUMN_WIDTHS
-      partialize: () => ({}),
+      version: 4,
+      partialize: state => ({
+        sidebarDisplayMode: state.sidebarDisplayMode,
+      }),
     }
   )
 );
-

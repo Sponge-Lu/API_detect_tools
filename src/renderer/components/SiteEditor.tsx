@@ -16,7 +16,7 @@ import { useState, useEffect } from 'react';
 import { X, Loader2, Globe, CheckCircle } from 'lucide-react';
 import { SiteConfig } from '../App';
 import { toast } from '../store/toastStore';
-import { IOSInput } from './IOSInput';
+import { AppInput } from './AppInput';
 
 interface EditingAccountInfo {
   id: string;
@@ -212,23 +212,23 @@ export function SiteEditor({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 overflow-y-auto">
-      <div className="bg-light-card dark:bg-dark-card rounded-2xl shadow-2xl w-full max-w-2xl md:max-w-3xl border border-slate-200 dark:border-slate-700 max-h-[85vh] flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-[var(--overlay-mask)] backdrop-blur-sm">
+      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-[var(--radius-xl)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] md:max-w-3xl">
         {/* 头部：标题 + 添加方式切换 */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 dark:border-slate-700">
+        <div className="flex items-center justify-between border-b border-[var(--line-soft)] px-5 py-3">
           <div className="flex flex-col gap-0.5">
-            <h2 className="text-lg font-bold">
+            <h2 className="text-lg font-semibold text-[var(--text-primary)]">
               {site ? '编辑站点' : mode === 'manual' ? '手动添加站点' : '智能添加站点'}
             </h2>
             {/* 新增站点时提供模式切换：智能添加（默认） / 手动添加 */}
             {!site && (
-              <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+              <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
                 <span className="font-medium">添加方式：</span>
                 <button
                   className={`px-2 py-0.5 rounded-full border text-[11px] transition-colors ${
                     mode === 'auto'
-                      ? 'bg-primary-500 text-white border-primary-500'
-                      : 'bg-transparent text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-600'
+                      ? 'border-[var(--accent)] bg-[var(--accent)] text-white'
+                      : 'border-[var(--line-soft)] bg-transparent text-[var(--text-secondary)]'
                   }`}
                   onClick={() => {
                     // 切换回智能添加：回到浏览器引导流程
@@ -242,8 +242,8 @@ export function SiteEditor({
                 <button
                   className={`px-2 py-0.5 rounded-full border text-[11px] transition-colors ${
                     mode === 'manual'
-                      ? 'bg-primary-500 text-white border-primary-500'
-                      : 'bg-transparent text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-600'
+                      ? 'border-[var(--accent)] bg-[var(--accent)] text-white'
+                      : 'border-[var(--line-soft)] bg-transparent text-[var(--text-secondary)]'
                   }`}
                   onClick={() => {
                     // 切换为手动添加：直接进入确认/手动填写步骤
@@ -259,7 +259,7 @@ export function SiteEditor({
           </div>
           <button
             onClick={onCancel}
-            className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+            className="rounded-[var(--radius-md)] p-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
           >
             <X className="w-5 h-5" />
           </button>
@@ -270,7 +270,7 @@ export function SiteEditor({
           {mode === 'auto' && step === 'input-url' && (
             <div className="space-y-4">
               <div>
-                <IOSInput
+                <AppInput
                   type="url"
                   label="站点URL"
                   value={url}
@@ -283,7 +283,7 @@ export function SiteEditor({
               <button
                 onClick={handleUrlSubmit}
                 disabled={loading || !url.trim()}
-                className="w-full px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-semibold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-lg)] bg-[var(--accent)] px-6 py-3 font-semibold text-white transition-colors hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {loading ? (
                   <>
@@ -303,33 +303,33 @@ export function SiteEditor({
           {/* 获取信息中（仅智能添加模式使用） */}
           {mode === 'auto' && step === 'fetching' && (
             <div className="space-y-4">
-              <div className="px-6 py-10 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-300 dark:border-slate-600 text-center space-y-5 shadow-md">
+              <div className="space-y-5 rounded-[var(--radius-xl)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-6 py-10 text-center shadow-[var(--shadow-md)]">
                 {/* 动态状态显示 */}
                 <div className="flex items-center justify-center gap-3">
                   {statusMessage.startsWith('✅') ? (
-                    <CheckCircle className="w-8 h-8 text-green-500" />
+                    <CheckCircle className="h-8 w-8 text-[var(--success)]" />
                   ) : (
-                    <Loader2 className="w-8 h-8 text-primary-500 animate-spin" />
+                    <Loader2 className="h-8 w-8 animate-spin text-[var(--accent)]" />
                   )}
-                  <span className="text-lg font-semibold text-slate-800 dark:text-white">
+                  <span className="text-lg font-semibold text-[var(--text-primary)]">
                     {statusMessage || '准备中...'}
                   </span>
                 </div>
 
                 {/* 站点URL显示 */}
-                <div className="text-sm text-slate-500 dark:text-slate-400">
-                  <span className="text-primary-600 dark:text-primary-400 font-medium">{url}</span>
+                <div className="text-sm text-[var(--text-secondary)]">
+                  <span className="font-medium text-[var(--accent)]">{url}</span>
                 </div>
 
                 {/* 提示信息 */}
                 {!statusMessage.startsWith('✅') && (
-                  <p className="text-xs text-slate-500 dark:text-slate-400 bg-slate-200/50 dark:bg-slate-700/50 px-4 py-2 rounded-lg">
+                  <p className="rounded-[var(--radius-md)] bg-[var(--surface-3)] px-4 py-2 text-xs text-[var(--text-secondary)]">
                     💡 如果账号未登录，请在浏览器中完成登录，系统会自动检测
                   </p>
                 )}
               </div>
               {error && (
-                <div className="px-4 py-3 bg-red-500/30 border border-red-500/60 rounded-lg text-red-700 dark:text-red-200 text-sm font-medium">
+                <div className="rounded-[var(--radius-lg)] border border-[var(--danger)]/35 bg-[var(--danger-soft)] px-4 py-3 text-sm font-medium text-[var(--danger)]">
                   {error}
                 </div>
               )}
@@ -341,35 +341,35 @@ export function SiteEditor({
             <div className="space-y-2">
               {/* 通用错误提示：包括从自动获取流程返回的手动填写提示 */}
               {error && (
-                <div className="px-3 py-2 bg-red-500/20 border border-red-500/60 rounded-lg text-red-100 text-xs whitespace-pre-line">
+                <div className="whitespace-pre-line rounded-[var(--radius-md)] border border-[var(--danger)]/35 bg-[var(--danger-soft)] px-3 py-2 text-xs text-[var(--danger)]">
                   {error}
                 </div>
               )}
 
               <div className="space-y-1.5">
-                <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-2">
-                  <div className="text-sm text-slate-700 dark:text-slate-300 font-semibold whitespace-nowrap">
+                <div className="flex items-center gap-2 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-2">
+                  <div className="whitespace-nowrap text-sm font-semibold text-[var(--text-primary)]">
                     站点名称
                   </div>
                   <input
                     type="text"
                     value={autoInfo.name}
                     onChange={e => setAutoInfo({ ...autoInfo, name: e.target.value })}
-                    className="flex-1 bg-transparent border-none outline-none text-slate-800 dark:text-slate-100 font-medium text-right text-sm"
+                    className="flex-1 bg-transparent text-right text-sm font-medium text-[var(--text-primary)] outline-none"
                     placeholder="输入站点名称"
                   />
                 </div>
 
                 {/* 站点分组选择 */}
-                <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-2">
-                  <div className="text-sm text-slate-700 dark:text-slate-300 font-semibold whitespace-nowrap">
+                <div className="flex items-center gap-2 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-2">
+                  <div className="whitespace-nowrap text-sm font-semibold text-[var(--text-primary)]">
                     站点分组
                   </div>
                   <div className="flex-1 flex justify-end">
                     <select
                       value={selectedGroupId}
                       onChange={e => setSelectedGroupId(e.target.value)}
-                      className="w-32 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded px-2 py-1 text-sm text-slate-800 dark:text-slate-100"
+                      className="w-32 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 py-1 text-sm text-[var(--text-primary)]"
                     >
                       {(groups && groups.length > 0
                         ? groups
@@ -383,8 +383,8 @@ export function SiteEditor({
                   </div>
                 </div>
 
-                <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-2">
-                  <div className="text-sm text-slate-700 dark:text-slate-300 font-semibold whitespace-nowrap">
+                <div className="flex items-center gap-2 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-2">
+                  <div className="whitespace-nowrap text-sm font-semibold text-[var(--text-primary)]">
                     站点URL
                   </div>
                   {isEditing || mode === 'manual' ? (
@@ -392,46 +392,46 @@ export function SiteEditor({
                       type="url"
                       value={url}
                       onChange={e => setUrl(e.target.value)}
-                      className="flex-1 bg-transparent border-none outline-none text-slate-800 dark:text-slate-100 font-medium text-right text-sm"
+                      className="flex-1 bg-transparent text-right text-sm font-medium text-[var(--text-primary)] outline-none"
                       placeholder="https://api.example.com"
                     />
                   ) : (
-                    <div className="flex-1 text-slate-800 dark:text-slate-100 break-all font-medium text-right text-sm">
+                    <div className="flex-1 break-all text-right text-sm font-medium text-[var(--text-primary)]">
                       {url}
                     </div>
                   )}
                 </div>
                 {site && editingAccount && (
-                  <div className="px-3 py-2 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900 rounded-lg text-xs text-blue-700 dark:text-blue-300">
+                  <div className="rounded-[var(--radius-md)] border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-3 py-2 text-xs text-[var(--accent)]">
                     当前优先编辑账户级凭证：{editingAccount.account_name || editingAccount.id}
                   </div>
                 )}
-                <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-2">
-                  <div className="text-sm text-slate-700 dark:text-slate-300 font-semibold whitespace-nowrap">
+                <div className="flex items-center gap-2 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-2">
+                  <div className="whitespace-nowrap text-sm font-semibold text-[var(--text-primary)]">
                     用户ID
                   </div>
                   <input
                     type="text"
                     value={autoInfo.userId}
                     onChange={e => setAutoInfo({ ...autoInfo, userId: e.target.value })}
-                    className="flex-1 bg-transparent border-none outline-none text-slate-800 dark:text-slate-100 font-mono text-sm font-semibold text-right"
+                    className="flex-1 bg-transparent text-right font-mono text-sm font-semibold text-[var(--text-primary)] outline-none"
                     placeholder="输入用户ID"
                   />
                 </div>
-                <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
+                <div className="rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-2">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-slate-700 dark:text-slate-300 font-semibold whitespace-nowrap">
+                    <span className="whitespace-nowrap text-sm font-semibold text-[var(--text-primary)]">
                       Access Token
                     </span>
                     <div className="flex-1 flex justify-end">
                       {autoInfo.systemToken ? (
                         <div className="flex items-center gap-1.5 w-full justify-end">
-                          <div className="flex-1 text-sm text-slate-800 dark:text-slate-100 font-mono bg-white dark:bg-slate-900 px-2 py-1 rounded border border-slate-300 dark:border-slate-600 text-right">
+                          <div className="flex-1 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 py-1 text-right font-mono text-sm text-[var(--text-primary)]">
                             {showToken ? autoInfo.systemToken : maskToken(autoInfo.systemToken)}
                           </div>
                           <button
                             onClick={() => setShowToken(!showToken)}
-                            className="text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors font-medium whitespace-nowrap px-1.5"
+                            className="whitespace-nowrap px-1.5 text-xs font-medium text-[var(--accent)] transition-colors hover:text-[var(--accent-strong)]"
                           >
                             {showToken ? '隐藏' : '显示'}
                           </button>
@@ -440,7 +440,7 @@ export function SiteEditor({
                               navigator.clipboard.writeText(autoInfo.systemToken);
                               toast.success('Access Token 已复制到剪贴板');
                             }}
-                            className="p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-colors text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
+                            className="rounded-[var(--radius-sm)] p-0.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-primary)]"
                             title="复制"
                           >
                             📋
@@ -457,26 +457,24 @@ export function SiteEditor({
                             })
                           }
                           placeholder="请手动填入 Access Token"
-                          className="w-full bg-transparent border-none outline-none text-slate-800 dark:text-slate-100 placeholder-slate-500 dark:placeholder-slate-400 font-medium text-right text-sm"
+                          className="w-full bg-transparent text-right text-sm font-medium text-[var(--text-primary)] placeholder-[var(--text-tertiary)] outline-none"
                         />
                       )}
                     </div>
                   </div>
                   {/* 仅在智能添加模式下提示自动获取失败，手动添加模式不再显示此提醒 */}
                   {!autoInfo.systemToken && mode === 'auto' && (
-                    <div className="text-xs text-yellow-700 dark:text-yellow-400 mt-1.5 bg-yellow-50 dark:bg-yellow-900/20 px-2 py-1 rounded border border-yellow-200 dark:border-yellow-800 font-medium">
+                    <div className="mt-1.5 rounded-[var(--radius-sm)] border border-[var(--warning)]/30 bg-[var(--warning-soft)] px-2 py-1 text-xs font-medium text-[var(--warning)]">
                       ⚠️ 无法自动获取 Access Token，请点击"重新获取"或手动填入
                     </div>
                   )}
                 </div>
 
                 {/* 加油站链接输入区域 */}
-                <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-2">
-                  <div className="text-sm text-slate-700 dark:text-slate-300 font-semibold whitespace-nowrap">
+                <div className="flex items-center gap-2 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-2">
+                  <div className="whitespace-nowrap text-sm font-semibold text-[var(--text-primary)]">
                     加油站链接
-                    <span className="text-slate-400 dark:text-slate-500 font-normal ml-1">
-                      (可选)
-                    </span>
+                    <span className="ml-1 font-normal text-[var(--text-tertiary)]">(可选)</span>
                   </div>
                   <input
                     type="url"
@@ -487,18 +485,16 @@ export function SiteEditor({
                         extraLinks: e.target.value,
                       })
                     }
-                    className="flex-1 bg-transparent border-none outline-none text-light-text dark:text-dark-text font-mono text-sm placeholder-slate-400 dark:placeholder-slate-500 text-right"
+                    className="flex-1 bg-transparent text-right font-mono text-sm text-[var(--text-primary)] placeholder-[var(--text-tertiary)] outline-none"
                     placeholder="https://example.com/lottery"
                   />
                 </div>
 
                 {/* 签到功能开关 */}
-                <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-2">
-                  <div className="text-sm text-slate-700 dark:text-slate-300 font-semibold whitespace-nowrap">
+                <div className="flex items-center gap-2 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-2">
+                  <div className="whitespace-nowrap text-sm font-semibold text-[var(--text-primary)]">
                     启用签到功能
-                    <span className="text-slate-400 dark:text-slate-500 font-normal ml-1">
-                      (可选)
-                    </span>
+                    <span className="ml-1 font-normal text-[var(--text-tertiary)]">(可选)</span>
                   </div>
                   <div className="flex-1 flex justify-end">
                     <select
@@ -509,7 +505,7 @@ export function SiteEditor({
                           enableCheckin: e.target.value === 'enabled',
                         })
                       }
-                      className="w-20 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded px-2 py-1 text-sm text-slate-800 dark:text-slate-100"
+                      className="w-20 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 py-1 text-sm text-[var(--text-primary)]"
                     >
                       <option value="disabled">禁用</option>
                       <option value="enabled">启用</option>
@@ -519,8 +515,8 @@ export function SiteEditor({
 
                 {/* 仅在智能添加模式下展示自动获取状态提示，手动添加模式不显示此文案 */}
                 {!site && mode === 'auto' && (
-                  <div className="px-3 py-2 bg-green-500/20 border border-green-500/50 rounded-lg text-green-700 dark:text-green-300 text-sm flex items-center gap-2">
-                    <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                  <div className="flex items-center gap-2 rounded-[var(--radius-lg)] border border-[var(--success)]/30 bg-[var(--success-soft)] px-3 py-2 text-sm text-[var(--success)]">
+                    <CheckCircle className="h-4 w-4 flex-shrink-0" />
                     <span className="font-semibold">
                       {autoInfo.systemToken ? '信息已自动获取' : '请手动填入 Access Token'}
                       ，点击保存即可完成添加
@@ -537,7 +533,7 @@ export function SiteEditor({
                       setStep('input-url');
                       setError('');
                     }}
-                    className="flex-1 px-4 py-2.5 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg font-semibold flex items-center justify-center gap-2 transition-all text-sm"
+                    className="flex flex-1 items-center justify-center gap-2 rounded-[var(--radius-lg)] bg-[var(--warning)] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:opacity-92"
                   >
                     <Globe className="w-4 h-4" />
                     重新获取信息
@@ -546,7 +542,7 @@ export function SiteEditor({
                 <button
                   onClick={handleSave}
                   disabled={!autoInfo.name || !url || !autoInfo.systemToken || !autoInfo.userId}
-                  className="flex-1 px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all text-sm"
+                  className="flex flex-1 items-center justify-center gap-2 rounded-[var(--radius-lg)] bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <CheckCircle className="w-4 h-4" />
                   {site ? '保存修改' : '保存站点'}

@@ -43,9 +43,9 @@
 | **useAutoRefresh.property.test.ts** | 自动刷新 Hook 测试 | useAutoRefresh Hook |
 | **theme-system-redesign.test.tsx** | 主题系统重设计测试 | 4 主题模式切换、旧主题值迁移 |
 | **overlay-family-redesign.test.tsx** | Overlay 家族重设计测试 | modal 与 drawer 的统一 chrome 标记 |
-| **custom-cli-page-redesign.test.tsx** | 自定义 CLI 页面重设计测试 | registry + workbench/inspector 布局 |
-| **route-workbench-redesign.test.tsx** | Route 工作台重设计测试 | 三张 route 页共享头带语法 |
-| **sites-page-redesign.test.tsx** | 站点页重设计测试 | 固定排序条、高频动作、CLI 入口、右键菜单 parity |
+| **custom-cli-page-redesign.test.tsx** | 自定义 CLI 页面重设计测试 | registry + inspector 双栏布局 |
+| **route-workbench-redesign.test.tsx** | Route 页面页头重设计测试 | 三张 route 页共享紧凑头带语法 |
+| **sites-page-redesign.test.tsx** | 站点页重设计测试 | 多列列头、内联排序、高频动作、CLI 图标内联与右键菜单 parity |
 | **close-behavior-manager.property.test.ts** | 窗口关闭行为测试 | CloseBehaviorManager 设置持久化 |
 | **config-detection.property.test.ts** | 配置检测属性测试 | ConfigDetectionService |
 | **cli-config-priority.property.test.ts** | CLI 配置优先级测试 | CLI 配置优先级逻辑 |
@@ -55,16 +55,16 @@
 | **credit-panel.property.test.ts** | Credit 面板属性测试 | CreditPanel 差值颜色编码、日期格式化、交易状态徽章、交易金额格式化 |
 | **theme-token-contract.property.test.tsx** | 主题 token 合约属性测试 | 四主题模式、主题归一化、中性 token、AppButton 主题接线 |
 | **app-button.property.test.tsx** | AppButton 原语属性测试 | AppButton 样式、交互、状态 |
-| **ios-card.property.test.tsx** | 卡片原语兼容属性测试 | IOSCard 组件样式、交互、状态 |
-| **ios-input.property.test.tsx** | 输入原语兼容属性测试 | AppInput / IOSInput、AppSearchInput / IOSSearchInput 样式、交互、状态 |
+| **card-primitive-compatibility.property.test.tsx** | 卡片原语兼容属性测试 | 以 `AppCard` 契约为主，覆盖样式、交互、状态 |
+| **input-primitive-compatibility.property.test.tsx** | 输入原语兼容属性测试 | `AppInput` / `AppSearchInput` 的样式、交互、状态 |
 | **app-modal.property.test.tsx** | AppModal 原语属性测试 | AppModal 样式、交互、语义标记 |
-| **ios-table.property.test.tsx** | 表格原语兼容属性测试 | DataTable / IOSTable 组件样式、交互、状态 |
-| **ios-responsive.property.test.tsx** | 响应式布局属性测试 | 响应式布局系统、最小窗口尺寸、响应式间距、内容溢出处理 |
-| **ios-accessibility.property.test.tsx** | 产品级无障碍性属性测试 | 文本对比度、焦点指示器、键盘导航、ARIA 属性、屏幕阅读器支持 |
-| **ios-performance.property.test.tsx** | 性能优化属性测试 | GPU 加速动画、毛玻璃效果优化、动画帧率、首屏渲染时间 |
-| **ios-functional-preservation.property.test.tsx** | 原语功能保持属性测试 | 按钮点击处理器、数据显示逻辑、表单验证逻辑、状态管理、API 调用、键盘导航 |
-| **ios-icon.property.test.tsx** | 图标原语兼容属性测试 | IOSIcon、IOSIconButton 组件样式、尺寸、变体、无障碍属性 |
-| **ios-visual-regression.test.tsx** | 视觉回归测试 | legacy primitive 与兼容导出的快照测试、CSS 类名验证、ARIA 属性验证 |
+| **data-table-compatibility.property.test.tsx** | 表格原语兼容属性测试 | `DataTable` 的样式、交互、状态 |
+| **responsive-layout.property.test.tsx** | 响应式布局属性测试 | 覆盖响应式布局系统、最小窗口尺寸、响应式间距、内容溢出处理 |
+| **design-system-accessibility.property.test.tsx** | 产品级无障碍性属性测试 | 覆盖文本对比度、焦点指示器、键盘导航、ARIA 属性、屏幕阅读器支持 |
+| **primitive-performance.property.test.tsx** | 性能优化属性测试 | 覆盖 GPU 加速动画、模糊效果优化、动画帧率、首屏渲染时间 |
+| **ui-functional-preservation.property.test.tsx** | 原语功能保持属性测试 | 覆盖按钮点击处理器、数据显示逻辑、表单验证逻辑、状态管理、API 调用、键盘导航 |
+| **app-icon-compatibility.property.test.tsx** | 图标原语兼容属性测试 | 覆盖 `AppIcon` / `AppIconButton` 与 `.app-icon*` 类名契约 |
+| **primitive-visual-regression.test.tsx** | 视觉回归测试 | 覆盖兼容原语导出的快照测试、CSS 类名验证、ARIA 属性验证 |
 
 ---
 
@@ -316,4 +316,4 @@ it('should call IPC', async () => {
 ---
 
 **版本**: 3.0.1  
-**更新日期**: 2026-03-31 - 添加自定义 CLI、route 工作台与 overlay family 重设计测试
+**更新日期**: 2026-04-02 - 同步自定义 CLI、route 页头与 overlay family 重设计测试说明

@@ -18,7 +18,9 @@ export function SettingsPage() {
 
   if (!config) {
     return (
-      <div className="flex-1 flex items-center justify-center text-slate-500">配置加载中...</div>
+      <div className="flex flex-1 items-center justify-center text-[var(--text-secondary)]">
+        配置加载中...
+      </div>
     );
   }
 

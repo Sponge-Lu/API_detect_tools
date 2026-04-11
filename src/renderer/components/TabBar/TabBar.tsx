@@ -47,11 +47,11 @@ export function TabBar({ activeTab, onTabChange }: TabBarProps) {
   return (
     <div
       ref={navRef}
-      className="relative flex items-stretch h-11 shrink-0 border-b border-[var(--ios-separator)] bg-light-bg dark:bg-dark-bg"
+      className="relative flex h-11 shrink-0 items-stretch border-b border-[var(--line-soft)] bg-[var(--surface-1)]"
     >
       {/* Sliding bottom bar */}
       <div
-        className="absolute bottom-0 h-[3px] rounded-full bg-[var(--ios-blue)] transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]"
+        className="absolute bottom-0 h-[3px] rounded-full bg-[var(--accent)] transition-all duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)]"
         style={{
           left: indicator.left,
           width: indicator.width,
@@ -70,15 +70,15 @@ export function TabBar({ activeTab, onTabChange }: TabBarProps) {
               transition-colors duration-200
               ${
                 isActive
-                  ? 'text-[var(--ios-blue)] font-semibold'
-                  : 'text-[var(--ios-text-secondary)] hover:text-[var(--ios-text-primary)]'
+                  ? 'font-semibold text-[var(--accent)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }
             `}
             style={{ WebkitUserSelect: 'none' } as React.CSSProperties}
           >
             <Icon
               className={`w-4 h-4 transition-colors duration-200 ${
-                isActive ? 'text-[var(--ios-blue)]' : ''
+                isActive ? 'text-[var(--accent)]' : ''
               }`}
               strokeWidth={isActive ? 2 : 1.5}
             />

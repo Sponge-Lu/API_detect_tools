@@ -22,7 +22,7 @@ import {
   Edit2,
   RotateCcw,
 } from 'lucide-react';
-import { IOSButton } from '../IOSButton';
+import { AppButton } from '../AppButton/AppButton';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { OverlayDrawer } from '../overlays/OverlayDrawer';
 import { useCustomCliConfigStore } from '../../store/customCliConfigStore';
@@ -120,7 +120,7 @@ function FormSwitch({
       <span
         className={`
           pointer-events-none inline-block h-[18px] w-[18px] rounded-full
-          bg-white shadow-md ring-0
+          border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)] ring-0
           transition-transform duration-200 ease-in-out
           ${checked ? 'translate-x-[21px]' : 'translate-x-[1px]'}
           mt-[1px]
@@ -736,12 +736,12 @@ export function CustomCliConfigEditorDialog({
       contentClassName="!p-0 flex-1 min-h-0"
       footer={
         <>
-          <IOSButton variant="tertiary" onClick={onClose}>
+          <AppButton variant="tertiary" onClick={onClose}>
             取消
-          </IOSButton>
-          <IOSButton variant="primary" onClick={handleSave}>
+          </AppButton>
+          <AppButton variant="primary" onClick={handleSave}>
             保存配置
-          </IOSButton>
+          </AppButton>
         </>
       }
     >
@@ -792,15 +792,13 @@ export function CustomCliConfigEditorDialog({
           <div>
             <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
               可用模型{' '}
-              <span className="text-[var(--text-secondary)] font-normal">
-                ({models.length}个)
-              </span>
+              <span className="text-[var(--text-secondary)] font-normal">({models.length}个)</span>
             </label>
             <div className="flex items-center gap-2">
               <div className="flex-1 px-3 py-2 bg-[var(--surface-1)] border border-[var(--line-soft)] rounded-[var(--radius-md)] text-sm text-[var(--text-secondary)]">
                 {models.length > 0 ? `已拉取 ${models.length} 个模型` : '尚未拉取模型'}
               </div>
-              <IOSButton
+              <AppButton
                 variant="secondary"
                 size="sm"
                 onClick={handleFetchModels}
@@ -812,7 +810,7 @@ export function CustomCliConfigEditorDialog({
                   <RefreshCw className="w-4 h-4" />
                 )}
                 拉取
-              </IOSButton>
+              </AppButton>
             </div>
           </div>
         </div>
@@ -931,9 +929,7 @@ export function CustomCliConfigEditorDialog({
           {displayConfig ? (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <div className="text-sm font-medium text-[var(--text-primary)]">
-                  配置文件预览
-                </div>
+                <div className="text-sm font-medium text-[var(--text-primary)]">配置文件预览</div>
                 <div className="flex items-center gap-2">
                   {isEditing ? (
                     <>
@@ -1025,14 +1021,14 @@ export function CustomCliConfigEditorDialog({
               每个启用的 CLI 至多测试 3 个模型，测试结果会在此展示。
             </p>
           </div>
-          <IOSButton
+          <AppButton
             variant="secondary"
             size="sm"
             onClick={handleRunTests}
             disabled={!canRunTests || isTesting}
           >
             {isTesting ? <Loader2 className="w-4 h-4 animate-spin" /> : '测试当前配置'}
-          </IOSButton>
+          </AppButton>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
           {CLI_TYPES.map(cli => {

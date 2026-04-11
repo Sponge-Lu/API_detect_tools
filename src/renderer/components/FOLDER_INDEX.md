@@ -39,7 +39,7 @@
 | **SiteCard/** | 站点卡片 | SiteCard, SiteCardActions |
 | **SiteGroupTabs/** | 站点分组标签 | SiteGroupTabs, GroupTab |
 | **SiteListHeader/** | 站点列表头部 | SiteListHeader, SearchBar, FilterBar |
-| **Route/** | Route 页面组件 | RouteWorkbenchHeader, ModelRedirectionTab, CliUsabilityTab, ProxyStatsTab |
+| **Route/** | Route 页面组件 | ModelRedirectionTab, CliUsabilityTab, ProxyStatsTab |
 | **dialogs/** | 对话框组件 | 各类对话框 |
 | **Skeleton/** | 骨架屏 | SkeletonLoader, SkeletonCard |
 | **Toast/** | 消息提示 | Toast, ToastContainer |
@@ -47,11 +47,10 @@
 | **CliConfigStatus/** | CLI 配置状态显示 | CliConfigStatus, CliConfigStatusPanel |
 | **CreateApiKeyDialog/** | API Key 创建对话框 | CreateApiKeyDialog |
 | **CreditPanel/** | Linux Do Credit 积分面板 | CreditPanelCompact |
-| **IOSButton/** | AppButton 兼容目录 | AppButton, IOSButton |
-| **IOSCard/** | 卡片原语目录（legacy 命名保留） | IOSCard, IOSCardDivider, IOSCardHeader, IOSCardContent, IOSCardFooter |
-| **IOSInput/** | AppInput 兼容目录 | AppInput, AppSearchInput, IOSInput, IOSSearchInput |
-| **IOSModal/** | AppModal 兼容目录 | AppModal, IOSModal |
-| **IOSTable/** | DataTable 兼容目录 | DataTable, DataTableHeader, DataTableRow, DataTableCell, DataTableBody, DataTableDivider, DataTableEmpty |
+| **AppCard/** | 中性卡片原语入口 | AppCard, AppCardDivider, AppCardHeader, AppCardContent, AppCardFooter |
+| **AppInput/** | 中性输入原语入口 | AppInput, AppSearchInput |
+| **AppIcon/** | 中性图标原语入口 | AppIcon, AppIconButton |
+| **DataTable/** | 中性表格原语入口 | DataTable, DataTableHeader, DataTableRow, DataTableCell, DataTableBody, DataTableDivider, DataTableEmpty |
 | **overlays/** | 统一 overlay 家族基础件 | OverlayFrame, OverlayDrawer |
 
 ---
@@ -124,44 +123,25 @@ interface SiteGroupTabsProps {
 
 ### SiteListHeader 组件
 
-**职责**: 站点列表固定排序条（主排序、更多排序、当前排序摘要、右侧批量动作）
+**职责**: 站点列表列头（多列标题、内联排序、右侧批量动作）
 
 **Props**:
 ```typescript
 interface SiteListHeaderProps {
+  columnWidths: number[];
+  onColumnWidthChange: (index: number, width: number) => void;
   sortField: SortField | null;
   sortOrder: SortOrder;
   onToggleSort: (field: SortField) => void;
-  onResetSort: () => void;
   actions?: React.ReactNode;
 }
 ```
 
 **特点**:
-- 固定显示 `余额 / 今日消费 / 总 Token`
-- 通过 `更多排序` 保留次级排序项
-- 将 `当前排序 / 清除排序` 并入同一行工具条
+- 保持多列标题和列宽调整
+- 通过点击列头直接切换排序
 - 支持右侧批量操作槽位
-- 允许默认窗口宽度下自动换行，不再依赖固定大宽度
-
-### RouteWorkbenchHeader 组件
-
-**职责**: 旧版 route 头带组件，保留作兼容参考，当前 live route 页面默认不再挂载
-
-**Props**:
-```typescript
-interface RouteWorkbenchHeaderProps {
-  title: string;
-  summary: string;
-  meta?: React.ReactNode;
-  actions?: React.ReactNode;
-}
-```
-
-**特点**:
-- 当前 live route 页面默认不渲染该组件
-- 如需恢复独立 header，可复用标题、摘要、meta 与动作的一行信息带语法
-- 不改业务逻辑，只负责展示层封装
+- 保持站点列表的原有扫描节奏
 
 ### SiteEditor 组件
 
@@ -203,13 +183,13 @@ interface SettingsPanelProps {
 - 超时设置
 - 备份设置
 
-### IOSCard 组件
+### AppCard 原语
 
-**职责**: 卡片原语（当前仍使用 legacy 目录名）
+**职责**: 中性卡片原语
 
 **Props**:
 ```typescript
-interface IOSCardProps {
+interface AppCardProps {
   variant?: 'standard' | 'elevated' | 'grouped';
   blur?: boolean;
   hoverable?: boolean;
@@ -229,9 +209,9 @@ interface IOSCardProps {
 - 拖拽支持
 - 多种变体（standard, elevated, grouped）
 
-### AppInput / IOSInput 兼容导出
+### AppInput 原语
 
-**职责**: 中性输入原语与 legacy 兼容导出
+**职责**: 中性输入原语
 
 **Props**:
 ```typescript
@@ -255,13 +235,13 @@ interface AppInputProps {
 - 支持左右图标
 - 支持错误状态和错误信息显示
 
-### IOSSearchInput 组件
+### AppSearchInput 原语
 
-**职责**: 中性搜索输入原语与 legacy 兼容导出
+**职责**: 中性搜索输入原语
 
 **Props**:
 ```typescript
-interface IOSSearchInputProps {
+interface AppSearchInputProps {
   size?: 'sm' | 'md' | 'lg';
   showClearButton?: boolean;
   onClear?: () => void;
@@ -275,9 +255,9 @@ interface IOSSearchInputProps {
 - 支持清除按钮
 - 保持原有的 onChange 和搜索逻辑
 
-### AppModal / IOSModal 兼容导出
+### AppModal 原语
 
-**职责**: 中性弹窗原语与 legacy 兼容导出
+**职责**: 中性弹窗原语
 
 **Props**:
 ```typescript
@@ -303,9 +283,9 @@ interface AppModalProps {
 - 支持 ESC 键关闭
 - 支持点击遮罩关闭
 
-### DataTable / IOSTable 兼容导出
+### DataTable 原语
 
-**职责**: 中性表格原语与 legacy 兼容导出
+**职责**: 中性表格原语
 
 **Props**:
 ```typescript

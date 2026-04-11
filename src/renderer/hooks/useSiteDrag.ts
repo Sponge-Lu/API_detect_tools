@@ -12,7 +12,7 @@
  * - PROJECT_INDEX.md
  *
  * @version 2.1.13
- * @updated 2025-01-09 - 添加拖拽时自动滚动功能
+ * @updated 2026-04-02 - 对齐中性滚动容器选择器
  */
 
 /**
@@ -52,7 +52,7 @@ export function useSiteDrag({ config, saveConfig, scrollContainerRef }: UseSiteD
   const startAutoScroll = useCallback(() => {
     const scroll = () => {
       const container =
-        scrollContainerRef?.current || (document.querySelector('.ios-scroll-y') as HTMLElement);
+        scrollContainerRef?.current || (document.querySelector('.app-scroll-y') as HTMLElement);
       if (!container) {
         autoScrollRef.current = requestAnimationFrame(scroll);
         return;

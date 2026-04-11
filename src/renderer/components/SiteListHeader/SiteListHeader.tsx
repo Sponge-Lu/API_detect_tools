@@ -27,9 +27,7 @@ const ALL_COLUMNS: SiteListColumn[] = [
   { label: 'Token统计', field: 'totalTokens', centered: true },
   { label: '请求统计', centered: true },
   { label: '模型数', field: 'modelCount', centered: true },
-  { label: '更新时间', field: 'lastUpdate', centered: true },
-  { label: 'CC-CX-Gemini?', centered: true },
-  { label: 'LDC比例', field: 'ldcRatio', centered: true },
+  { label: 'CLI可用性', centered: true },
 ];
 
 function SortIndicator({ order }: { order: SortOrder }) {
@@ -123,7 +121,7 @@ export function SiteListHeader({
         );
       })}
 
-      <div className="flex items-center justify-end gap-1">{actions ?? <span>操作</span>}</div>
+      <div className="flex items-center justify-end gap-0.5">{actions ?? <span>操作</span>}</div>
     </div>
   );
 }

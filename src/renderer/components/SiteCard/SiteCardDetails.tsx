@@ -12,7 +12,7 @@
  * - PROJECT_INDEX.md
  *
  * @version 2.1.11
- * @updated 2025-01-08 - 使用 IOSSearchInput 替换模型搜索框
+ * @updated 2026-04-02 - 统一站点详情面板的中性主题 token
  */
 
 import { useState, useMemo } from 'react';
@@ -31,7 +31,7 @@ import {
 import type { SiteConfig } from '../../../shared/types/site';
 import type { DetectionResult } from '../../App';
 import { getGroupTextColor, getGroupIcon } from '../../utils/groupStyle';
-import { IOSSearchInput } from '../IOSInput';
+import { AppSearchInput } from '../AppInput';
 
 // 每页显示的模型数量
 const MODELS_PER_PAGE = 50;
@@ -66,16 +66,15 @@ interface SiteCardDetailsProps {
 const getQuotaTypeInfo = (quotaType: number) => {
   if (quotaType === 1) {
     return {
-      icon: <span className="text-xs font-bold text-orange-700 dark:text-orange-100">次</span>,
+      icon: <span className="text-xs font-bold text-[var(--warning)]">次</span>,
       text: '按次',
-      color:
-        'bg-orange-500/10 dark:bg-orange-500/30 text-orange-700 dark:text-orange-100 border-orange-500/40',
+      color: 'bg-[var(--warning-soft)] text-[var(--warning)] border-[var(--warning)]/30',
     };
   }
   return {
-    icon: <span className="text-xs font-bold text-blue-700 dark:text-blue-100">量</span>,
+    icon: <span className="text-xs font-bold text-[var(--accent)]">量</span>,
     text: '按量',
-    color: 'bg-blue-500/10 dark:bg-blue-500/30 text-blue-700 dark:text-blue-100 border-blue-500/40',
+    color: 'bg-[var(--accent-soft)] text-[var(--accent)] border-[var(--accent)]/30',
   };
 };
 
@@ -90,6 +89,12 @@ const addSkPrefix = (key: string): string => {
   if (!key) return '';
   return key.startsWith('sk-') ? key : `sk-${key}`;
 };
+
+const iconButtonClass =
+  'flex h-5 w-5 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-primary)]';
+
+const tokenActionButtonClass =
+  'flex h-5 w-5 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-primary)]';
 
 export function SiteCardDetails({
   site,
@@ -192,42 +197,38 @@ export function SiteCardDetails({
 
   return (
     <div
-      className="border-t border-[var(--ios-separator)] bg-[var(--ios-bg-secondary)]/90 dark:bg-[var(--ios-bg-tertiary)]/90 px-[var(--spacing-md)] py-[var(--spacing-sm)] space-y-[var(--spacing-sm)] cursor-default"
+      className="cursor-default space-y-[var(--spacing-sm)] border-t border-[var(--line-soft)] bg-[var(--surface-2)]/92 px-[var(--spacing-md)] py-[var(--spacing-sm)]"
       data-no-drag="true"
     >
       {/* 站点 URL、User ID、Access Token */}
       <div className="flex items-center gap-4 py-0.5">
         {/* 站点 URL */}
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
-          <Link className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-          <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-shrink-0">
-            URL:
-          </span>
-          <span className="text-xs font-mono text-blue-600 dark:text-blue-400 truncate">
-            {site.url}
-          </span>
+          <Link className="h-3.5 w-3.5 flex-shrink-0 text-[var(--text-secondary)]" />
+          <span className="shrink-0 text-xs font-medium text-[var(--text-secondary)]">URL:</span>
+          <span className="truncate text-xs font-mono text-[var(--accent-strong)]">{site.url}</span>
           <button
             onClick={() => onCopyToClipboard(site.url, 'URL')}
-            className="p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-all flex-shrink-0"
+            className={iconButtonClass}
             title="复制 URL"
           >
-            <Copy className="w-3 h-3 text-gray-400" />
+            <Copy className="h-3 w-3" />
           </button>
         </div>
 
         {/* User ID（优先账户级） */}
         {(accountUserId || site.user_id) && (
           <div className="flex items-center gap-1.5 flex-shrink-0">
-            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">UID:</span>
-            <span className="text-xs font-mono text-slate-600 dark:text-slate-300">
+            <span className="text-xs font-medium text-[var(--text-secondary)]">UID:</span>
+            <span className="text-xs font-mono text-[var(--text-primary)]">
               {accountUserId || site.user_id}
             </span>
             <button
               onClick={() => onCopyToClipboard(accountUserId || site.user_id || '', 'User ID')}
-              className="p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-all flex-shrink-0"
+              className={iconButtonClass}
               title="复制 User ID"
             >
-              <Copy className="w-3 h-3 text-gray-400" />
+              <Copy className="h-3 w-3" />
             </button>
           </div>
         )}
@@ -238,30 +239,26 @@ export function SiteCardDetails({
           if (!token) return null;
           return (
             <div className="flex items-center gap-1.5 min-w-0 flex-1">
-              <Key className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex-shrink-0">
+              <Key className="h-3.5 w-3.5 flex-shrink-0 text-[var(--text-secondary)]" />
+              <span className="shrink-0 text-xs font-medium text-[var(--text-secondary)]">
                 Token:
               </span>
-              <span className="text-xs font-mono text-amber-600 dark:text-amber-400 truncate">
+              <span className="truncate text-xs font-mono text-[var(--warning)]">
                 {showAccessToken ? token : maskAccessToken(token)}
               </span>
               <button
                 onClick={() => setShowAccessToken(!showAccessToken)}
-                className="p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-all flex-shrink-0"
+                className={iconButtonClass}
                 title={showAccessToken ? '隐藏 Token' : '显示 Token'}
               >
-                {showAccessToken ? (
-                  <EyeOff className="w-3 h-3 text-gray-400" />
-                ) : (
-                  <Eye className="w-3 h-3 text-gray-400" />
-                )}
+                {showAccessToken ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
               </button>
               <button
                 onClick={() => onCopyToClipboard(token, 'Access Token')}
-                className="p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-all flex-shrink-0"
+                className={iconButtonClass}
                 title="复制 Access Token"
               >
-                <Copy className="w-3 h-3 text-gray-400" />
+                <Copy className="h-3 w-3" />
               </button>
             </div>
           );
@@ -271,17 +268,17 @@ export function SiteCardDetails({
       {/* 用户分组 */}
       {Object.keys(userGroups).length > 0 && (
         <div className="flex items-center gap-1 flex-wrap py-0">
-          <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold whitespace-nowrap">
+          <span className="whitespace-nowrap text-xs font-semibold text-[var(--text-secondary)]">
             用户分组
           </span>
           {Object.entries(userGroups).map(([groupName, groupData], index) => (
             <button
               key={groupName}
               onClick={() => onToggleGroupFilter(cardKey, groupName)}
-              className={`px-2 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-all flex items-center gap-1 ${
+              className={`flex items-center gap-1 rounded-[var(--radius-sm)] border px-2 py-1 text-xs font-medium transition-colors ${
                 selectedGroup === groupName
-                  ? 'bg-[var(--ios-blue)] text-white shadow-sm'
-                  : `${getGroupTextColor(groupName)} hover:opacity-80 bg-[var(--ios-bg-secondary)] dark:bg-[var(--ios-bg-tertiary)] border border-[var(--ios-separator)]`
+                  ? 'border-transparent bg-[var(--accent-soft)] text-[var(--accent-strong)]'
+                  : `${getGroupTextColor(groupName)} border-[var(--line-soft)] bg-[var(--surface-3)] hover:bg-[var(--surface-1)]`
               }`}
               title={`${groupData.desc} (倍率: ${groupData.ratio})`}
             >
@@ -293,7 +290,7 @@ export function SiteCardDetails({
           {selectedGroup && (
             <button
               onClick={() => onToggleGroupFilter(cardKey, null)}
-              className="px-2 py-1 rounded-[var(--radius-sm)] text-xs font-medium text-[var(--ios-red)] hover:bg-[var(--ios-red)]/10 transition-all"
+              className="rounded-[var(--radius-sm)] px-2 py-1 text-xs font-medium text-[var(--danger)] transition-colors hover:bg-[var(--danger-soft)]"
             >
               清除
             </button>
@@ -304,22 +301,22 @@ export function SiteCardDetails({
       {/* 令牌管理 */}
       <div className="space-y-0.5">
         <div className="flex items-center gap-1 justify-between">
-          <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold">
+          <span className="text-xs font-semibold text-[var(--text-secondary)]">
             令牌管理 ({filteredApiKeys.length}/{apiKeys.length})
-            {selectedGroup && <span className="ml-1 text-primary-400">· {selectedGroup}</span>}
+            {selectedGroup && <span className="ml-1 text-[var(--accent)]">· {selectedGroup}</span>}
           </span>
           <button
             onClick={() => onOpenCreateTokenDialog(site)}
-            className="px-2 py-1 bg-[var(--ios-blue)] hover:bg-[var(--ios-blue)]/90 text-white rounded-[var(--radius-sm)] text-xs flex items-center gap-1 shadow-sm transition-all active:scale-95"
+            className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-transparent bg-[var(--accent-soft)] px-2 py-1 text-xs font-medium text-[var(--accent-strong)] transition-colors hover:bg-[var(--accent-soft-strong)]"
             title="创建新的 API Key"
           >
-            <Plus className="w-3 h-3" />
+            <Plus className="h-3 w-3" />
             <span>添加令牌</span>
           </button>
         </div>
 
         {apiKeys.length === 0 ? (
-          <div className="px-1 text-[11px] text-slate-400 dark:text-slate-500">
+          <div className="px-1 text-[11px] text-[var(--text-secondary)]/80">
             暂无 API Key，可点击右侧"添加令牌"创建。
           </div>
         ) : (
@@ -334,17 +331,17 @@ export function SiteCardDetails({
               return (
                 <div
                   key={idx}
-                  className="px-1.5 py-0.5 bg-[var(--ios-bg-secondary)] dark:bg-[var(--ios-bg-tertiary)] rounded-[var(--radius-sm)] border border-[var(--ios-separator)] hover:border-[var(--ios-blue)]/50 transition-all"
+                  className="rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-1.5 py-0.5 transition-colors hover:border-[color-mix(in_srgb,var(--accent)_40%,var(--line-soft))]"
                 >
                   <div className="grid grid-cols-[120px_50px_180px_90px_120px_minmax(280px,1fr)_60px] gap-x-3 items-center text-xs">
                     {/* 名称 */}
-                    <div className="font-semibold text-slate-800 dark:text-slate-100 truncate">
+                    <div className="truncate font-semibold text-[var(--text-primary)]">
                       {token.name || `Key #${idx + 1}`}
                     </div>
 
                     {/* 状态 */}
                     <div
-                      className={`font-medium ${token.status === 1 ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-400'}`}
+                      className={`font-medium ${token.status === 1 ? 'text-[var(--success)]' : 'text-[var(--text-secondary)]'}`}
                     >
                       {token.status === 1 ? '✓ 启用' : '✕ 禁用'}
                     </div>
@@ -359,37 +356,37 @@ export function SiteCardDetails({
                           <span>{token.group}</span>
                         </span>
                       ) : (
-                        <span className="text-slate-400 dark:text-slate-500">--</span>
+                        <span className="text-[var(--text-secondary)]/80">--</span>
                       )}
                     </div>
 
                     {/* 标签 */}
-                    <div className="text-slate-800 dark:text-slate-100">
+                    <div className="text-[var(--text-primary)]">
                       {token.unlimited_quota ? (
                         <span className="font-medium">限额: ∞</span>
                       ) : quotaInfo ? (
                         <span className="font-medium">限额: {quotaInfo.text}</span>
                       ) : (
-                        <span className="text-slate-400 dark:text-slate-500">--</span>
+                        <span className="text-[var(--text-secondary)]/80">--</span>
                       )}
                     </div>
 
                     {/* 已使用 */}
-                    <div className="text-slate-600 dark:text-slate-400">
+                    <div className="text-[var(--text-secondary)]">
                       {token.used_quota !== undefined ? (
                         <>
                           已使用:{' '}
-                          <span className="text-orange-600 dark:text-orange-400 font-semibold">
+                          <span className="font-semibold text-[var(--warning)]">
                             ${(token.used_quota / 500000).toFixed(2)}
                           </span>
                         </>
                       ) : (
-                        <span className="text-slate-400 dark:text-slate-500">已使用: --</span>
+                        <span className="text-[var(--text-secondary)]/80">已使用: --</span>
                       )}
                     </div>
 
                     {/* API Key */}
-                    <div className="font-mono text-blue-600 dark:text-blue-400 truncate pl-[100px]">
+                    <div className="truncate pl-[100px] font-mono text-[var(--accent-strong)]">
                       {isVisible
                         ? fullKey
                         : fullKey.length > 25
@@ -401,30 +398,26 @@ export function SiteCardDetails({
                     <div className="flex items-center gap-0.5 justify-end">
                       <button
                         onClick={() => onToggleTokenVisibility(tokenKey)}
-                        className="p-0.5 hover:bg-white/10 rounded transition-all"
+                        className={tokenActionButtonClass}
                       >
-                        {isVisible ? (
-                          <EyeOff className="w-3 h-3 text-gray-400" />
-                        ) : (
-                          <Eye className="w-3 h-3 text-gray-400" />
-                        )}
+                        {isVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
                       </button>
                       <button
                         onClick={() => onCopyToClipboard(fullKey, `API Key: ${token.name}`)}
-                        className="p-0.5 hover:bg-white/10 rounded transition-all"
+                        className={tokenActionButtonClass}
                       >
-                        <Copy className="w-3 h-3 text-gray-400" />
+                        <Copy className="h-3 w-3" />
                       </button>
                       <button
                         onClick={() => onDeleteToken(site, token, idx)}
                         disabled={deletingTokenKey === deletingKeyId}
-                        className="p-0.5 hover:bg-red-500/20 rounded transition-all disabled:opacity-60"
+                        className="flex h-5 w-5 items-center justify-center rounded-[var(--radius-sm)] text-[var(--danger)] transition-colors hover:bg-[var(--danger-soft)] disabled:opacity-60"
                         title="删除该 API Key"
                       >
                         {deletingTokenKey === deletingKeyId ? (
-                          <Loader2 className="w-3 h-3 text-red-500 animate-spin" />
+                          <Loader2 className="h-3 w-3 animate-spin" />
                         ) : (
-                          <Trash2 className="w-3 h-3 text-red-500" />
+                          <Trash2 className="h-3 w-3" />
                         )}
                       </button>
                     </div>
@@ -441,18 +434,22 @@ export function SiteCardDetails({
         <div className="space-y-0.5">
           <div className="flex items-center justify-between gap-1">
             <div className="flex items-center gap-1 flex-1">
-              <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold whitespace-nowrap">
+              <span className="whitespace-nowrap text-xs font-semibold text-[var(--text-secondary)]">
                 可用模型 ({filteredModels.length}/{allModels.length})
                 {selectedModels.size > 0 && (
-                  <span className="ml-1 text-primary-400">· 已选{selectedModels.size}</span>
+                  <span className="ml-1 text-[var(--accent)]">· 已选{selectedModels.size}</span>
                 )}
-                {selectedGroup && <span className="ml-1 text-primary-400">· {selectedGroup}</span>}
+                {selectedGroup && (
+                  <span className="ml-1 text-[var(--accent)]">· {selectedGroup}</span>
+                )}
                 {globalModelSearch && (
-                  <span className="ml-1 text-primary-500">· 全局: {globalModelSearch}</span>
+                  <span className="ml-1 text-[var(--accent-strong)]">
+                    · 全局: {globalModelSearch}
+                  </span>
                 )}
               </span>
               <div className="ml-7">
-                <IOSSearchInput
+                <AppSearchInput
                   size="sm"
                   placeholder={globalModelSearch ? '全局搜索生效中' : '搜索...'}
                   value={modelSearch}
@@ -467,22 +464,22 @@ export function SiteCardDetails({
               <div className="flex items-center gap-1">
                 <button
                   onClick={onClearSelectedModels}
-                  className="px-2 py-1 bg-[var(--ios-gray)] hover:bg-[var(--ios-gray)]/80 text-white rounded-[var(--radius-sm)] text-xs flex items-center gap-1 whitespace-nowrap font-medium shadow-sm transition-all active:scale-95"
+                  className="rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-3)] px-2 py-1 text-xs font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-1)]"
                   title="取消选择所有模型"
                 >
                   取消
                 </button>
                 <button
                   onClick={onCopySelectedModels}
-                  className="px-2 py-1 bg-[var(--ios-green)] hover:bg-[var(--ios-green)]/90 text-white rounded-[var(--radius-sm)] text-xs flex items-center gap-1 whitespace-nowrap font-medium shadow-sm transition-all active:scale-95"
+                  className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-transparent bg-[var(--success-soft)] px-2 py-1 text-xs font-medium whitespace-nowrap text-[var(--success)] transition-colors hover:bg-[color-mix(in_srgb,var(--success)_20%,transparent)]"
                 >
-                  <Copy className="w-2.5 h-2.5" />
+                  <Copy className="h-2.5 w-2.5" />
                   复制
                 </button>
               </div>
             )}
           </div>
-          <div className="max-h-32 overflow-y-auto p-1 bg-[var(--ios-bg-tertiary)]/50 dark:bg-[var(--ios-bg-primary)]/50 rounded-[var(--radius-sm)] border border-[var(--ios-separator)]">
+          <div className="max-h-32 overflow-y-auto rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)]/72 p-1">
             <div className="flex flex-wrap gap-0.5">
               {displayedModels.map((model, idx) => {
                 const pricingData = modelPricing?.data?.[model] || modelPricing?.[model];
@@ -530,15 +527,15 @@ export function SiteCardDetails({
                   <button
                     key={idx}
                     onClick={() => onToggleModelSelection(model)}
-                    className={`px-1.5 py-0.5 rounded-[var(--radius-sm)] border transition-all flex flex-col items-start gap-0 ${
+                    className={`flex flex-col items-start gap-0 rounded-[var(--radius-sm)] border px-1.5 py-0.5 transition-colors ${
                       selectedModels.has(model)
-                        ? 'bg-[var(--ios-blue)]/10 dark:bg-[var(--ios-blue)]/20 border-[var(--ios-blue)] dark:border-[var(--ios-blue)]'
-                        : 'bg-[var(--ios-bg-secondary)] dark:bg-[var(--ios-bg-tertiary)] border-[var(--ios-separator)] hover:border-[var(--ios-blue)]/50'
+                        ? 'border-[color-mix(in_srgb,var(--accent)_50%,transparent)] bg-[var(--accent-soft)]'
+                        : 'border-[var(--line-soft)] bg-[var(--surface-3)] hover:border-[color-mix(in_srgb,var(--accent)_40%,var(--line-soft))] hover:bg-[var(--surface-1)]'
                     }`}
                     title={model}
                   >
                     <div className="flex items-center gap-0.5 w-full">
-                      <span className="text-xs font-mono text-[var(--ios-text-primary)] truncate flex-1 font-medium">
+                      <span className="flex-1 truncate text-xs font-mono font-medium text-[var(--text-primary)]">
                         {model}
                       </span>
                     </div>
@@ -564,7 +561,7 @@ export function SiteCardDetails({
                         <>
                           {quotaType === 1 ? (
                             <span
-                              className="text-yellow-700 dark:text-yellow-400 font-semibold"
+                              className="font-semibold text-[var(--warning)]"
                               title="单次调用价格"
                             >
                               ${typeof inputPrice === 'number' ? formatPrice(inputPrice) : '0'}/次
@@ -573,7 +570,7 @@ export function SiteCardDetails({
                             <>
                               {inputPrice !== undefined && (
                                 <span
-                                  className="text-green-700 dark:text-green-400 font-semibold"
+                                  className="font-semibold text-[var(--success)]"
                                   title="输入价格(/1M tokens)"
                                 >
                                   ↑${formatPrice(inputPrice)}
@@ -581,7 +578,7 @@ export function SiteCardDetails({
                               )}
                               {outputPrice !== undefined && (
                                 <span
-                                  className="text-orange-700 dark:text-orange-400 font-semibold"
+                                  className="font-semibold text-[var(--accent)]"
                                   title={`输出价格(/1M tokens) ×${completionRatio}`}
                                 >
                                   ↓${formatPrice(outputPrice)}
@@ -598,10 +595,10 @@ export function SiteCardDetails({
             </div>
             {/* 显示更多/收起按钮 */}
             {hasMoreModels && (
-              <div className="flex justify-center mt-1 pt-1 border-t border-[var(--ios-separator)]">
+              <div className="mt-1 flex justify-center border-t border-[var(--line-soft)] pt-1">
                 <button
                   onClick={() => setShowAllModels(!showAllModels)}
-                  className="px-2 py-0.5 text-xs text-[var(--ios-blue)] hover:bg-[var(--ios-blue)]/10 rounded-[var(--radius-sm)] flex items-center gap-0.5 transition-colors"
+                  className="flex items-center gap-0.5 rounded-[var(--radius-sm)] px-2 py-0.5 text-xs text-[var(--accent-strong)] transition-colors hover:bg-[var(--accent-soft)]"
                 >
                   {showAllModels ? (
                     <>
@@ -623,8 +620,8 @@ export function SiteCardDetails({
 
       {/* 错误信息 */}
       {siteResult?.error && (
-        <div className="px-3 py-2 bg-[var(--ios-red)]/10 border border-[var(--ios-red)]/30 rounded-[var(--radius-sm)]">
-          <p className="text-xs text-[var(--ios-red)]">❌ {siteResult.error}</p>
+        <div className="rounded-[var(--radius-sm)] border border-[color-mix(in_srgb,var(--danger)_30%,transparent)] bg-[var(--danger-soft)] px-3 py-2">
+          <p className="text-xs text-[var(--danger)]">❌ {siteResult.error}</p>
         </div>
       )}
     </div>

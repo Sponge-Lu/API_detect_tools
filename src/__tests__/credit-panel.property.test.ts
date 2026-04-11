@@ -49,18 +49,18 @@ const negativeDiffArb = fc.integer({ min: -10000000, max: -1 });
  * **Validates: Requirements 3.3**
  *
  * *For any* difference value, the CreditPanel SHALL apply the correct CSS class:
- * - 'positive' (green) for diff > 0
- * - 'negative' (red) for diff < 0
- * - 'neutral' (gray) for diff === 0
+ * - success token for diff > 0
+ * - danger token for diff < 0
+ * - text-secondary token for diff === 0
  */
 describe('Property 6: Difference Color Coding (CreditPanel)', () => {
   it('should return green color class for positive differences', () => {
     fc.assert(
       fc.property(positiveDiffArb, positiveDiff => {
         const result = getDifferenceColorClass(positiveDiff);
-        expect(result).toContain('green');
-        expect(result).not.toContain('red');
-        expect(result).not.toContain('gray');
+        expect(result).toContain('text-[var(--success)]');
+        expect(result).not.toContain('text-[var(--danger)]');
+        expect(result).not.toContain('text-[var(--text-secondary)]');
       }),
       { numRuns: 100 }
     );
@@ -70,9 +70,9 @@ describe('Property 6: Difference Color Coding (CreditPanel)', () => {
     fc.assert(
       fc.property(negativeDiffArb, negativeDiff => {
         const result = getDifferenceColorClass(negativeDiff);
-        expect(result).toContain('red');
-        expect(result).not.toContain('green');
-        expect(result).not.toContain('gray');
+        expect(result).toContain('text-[var(--danger)]');
+        expect(result).not.toContain('text-[var(--success)]');
+        expect(result).not.toContain('text-[var(--text-secondary)]');
       }),
       { numRuns: 100 }
     );
@@ -80,9 +80,9 @@ describe('Property 6: Difference Color Coding (CreditPanel)', () => {
 
   it('should return gray color class for zero difference', () => {
     const result = getDifferenceColorClass(0);
-    expect(result).toContain('gray');
-    expect(result).not.toContain('green');
-    expect(result).not.toContain('red');
+    expect(result).toContain('text-[var(--text-secondary)]');
+    expect(result).not.toContain('text-[var(--success)]');
+    expect(result).not.toContain('text-[var(--danger)]');
   });
 
   it('should always return a non-empty string', () => {
@@ -104,13 +104,13 @@ describe('Property 6: Difference Color Coding (CreditPanel)', () => {
 
         switch (colorType) {
           case 'positive':
-            expect(colorClass).toContain('green');
+            expect(colorClass).toContain('text-[var(--success)]');
             break;
           case 'negative':
-            expect(colorClass).toContain('red');
+            expect(colorClass).toContain('text-[var(--danger)]');
             break;
           case 'neutral':
-            expect(colorClass).toContain('gray');
+            expect(colorClass).toContain('text-[var(--text-secondary)]');
             break;
         }
       }),
@@ -122,9 +122,7 @@ describe('Property 6: Difference Color Coding (CreditPanel)', () => {
     fc.assert(
       fc.property(differenceArb, diff => {
         const result = getDifferenceColorClass(diff);
-        // Should have both light mode (text-*-600) and dark mode (dark:text-*-400) classes
-        expect(result).toMatch(/text-\w+-\d+/);
-        expect(result).toMatch(/dark:text-\w+-\d+/);
+        expect(result).toMatch(/text-\[var\(--[a-z-]+\)\]/);
       }),
       { numRuns: 100 }
     );

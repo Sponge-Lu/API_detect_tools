@@ -179,11 +179,11 @@ npm run test src/__tests__/example.test.ts
 测试文件位于 `src/__tests__/` 目录。建议为核心业务逻辑 (如 Hooks, Utils) 编写测试用例。
 
 **属性测试 (Property-Based Testing)**:
-本项目使用 fast-check 进行属性测试，验证代码在各种输入下的正确性。属性测试文件以 `.property.test.ts` 结尾。
+本项目使用 fast-check 进行属性测试，验证代码在各种输入下的正确性。属性测试文件以 `.property.test.ts` 或 `.property.test.tsx` 结尾。
 
 ```bash
 # 运行所有属性测试
-npm run test src/__tests__/*.property.test.ts
+npm run test src/__tests__/*.property.test.ts*
 ```
 
 **设计系统与原语测试**:
@@ -191,21 +191,21 @@ npm run test src/__tests__/*.property.test.ts
 
 ```bash
 # 运行设计系统相关测试
-npm run test src/__tests__/ios-*.test.ts
-npm run test src/__tests__/ios-*.property.test.ts
+npm run test src/__tests__/app-button.property.test.tsx src/__tests__/card-primitive-compatibility.property.test.tsx src/__tests__/input-primitive-compatibility.property.test.tsx src/__tests__/app-modal.property.test.tsx src/__tests__/data-table-compatibility.property.test.tsx src/__tests__/app-icon-compatibility.property.test.tsx src/__tests__/theme-token-contract.property.test.tsx src/__tests__/design-system-accessibility.property.test.tsx src/__tests__/responsive-layout.property.test.tsx src/__tests__/primitive-performance.property.test.tsx src/__tests__/ui-functional-preservation.property.test.tsx
 ```
 
 测试覆盖范围：
 - `app-button.property.test.tsx` - AppButton 原语属性测试
-- `ios-card.property.test.ts` - 卡片原语兼容属性测试
-- `ios-input.property.test.ts` - 输入原语兼容属性测试
+- `card-primitive-compatibility.property.test.tsx` - 卡片原语兼容属性测试（默认站在 `AppCard` 入口视角）
+- `input-primitive-compatibility.property.test.tsx` - 输入原语兼容属性测试（覆盖 `AppInput` / `AppSearchInput` 与兼容导出）
 - `app-modal.property.test.tsx` - AppModal 原语属性测试
-- `ios-table.property.test.ts` - 表格原语兼容属性测试
-- `ios-icon.property.test.ts` - 图标原语兼容属性测试
+- `data-table-compatibility.property.test.tsx` - 表格原语兼容属性测试（默认站在 `DataTable` 入口视角，同时覆盖兼容导出）
+- `app-icon-compatibility.property.test.tsx` - 图标原语兼容属性测试（覆盖 `AppIcon` / `AppIconButton` 与当前 `.app-icon*` 类名契约）
 - `theme-token-contract.property.test.tsx` - 四主题 token 与兼容归一化测试
-- `ios-accessibility.property.test.ts` - 产品级无障碍性测试
-- `ios-responsive.property.test.ts` - 响应式布局测试
-- `ios-performance.property.test.ts` - 性能优化测试
+- `design-system-accessibility.property.test.tsx` - 产品级无障碍性测试
+- `responsive-layout.property.test.tsx` - 响应式布局测试
+- `primitive-performance.property.test.tsx` - 性能优化测试
+- `ui-functional-preservation.property.test.tsx` - 原语功能保持测试
 
 ---
 

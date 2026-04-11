@@ -1,13 +1,13 @@
 /**
  * @file src/renderer/components/dialogs/SiteGroupDialog.tsx
- * @description 站点分组对话框 - 使用 IOSModal 重构
+ * @description 站点分组对话框 - 使用统一弹窗原语实现
  *
  * 输入: SiteGroupDialogProps (模式、分组名称、编辑分组、回调函数)
  * 输出: React 组件 (站点分组对话框 UI)
  * 定位: 展示层 - 站点分组对话框，支持创建和编辑分组
  *
  * @version 2.1.11
- * @updated 2025-01-08 - 使用 IOSModal 重构
+ * @updated 2026-04-02 - 对齐统一弹窗原语说明
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -17,9 +17,9 @@
 
 import { useRef, useEffect } from 'react';
 import { FolderPlus, Edit3 } from 'lucide-react';
-import { IOSModal } from '../IOSModal';
-import { IOSButton } from '../IOSButton';
-import { IOSInput } from '../IOSInput';
+import { AppModal } from '../AppModal/AppModal';
+import { AppButton } from '../AppButton/AppButton';
+import { AppInput } from '../AppInput';
 
 interface SiteGroup {
   id: string;
@@ -67,7 +67,7 @@ export function SiteGroupDialog({
   };
 
   return (
-    <IOSModal
+    <AppModal
       isOpen={isOpen}
       onClose={onClose}
       title={title}
@@ -75,17 +75,17 @@ export function SiteGroupDialog({
       size="sm"
       footer={
         <>
-          <IOSButton variant="tertiary" onClick={onClose}>
+          <AppButton variant="tertiary" onClick={onClose}>
             取消
-          </IOSButton>
-          <IOSButton variant="primary" onClick={onConfirm}>
+          </AppButton>
+          <AppButton variant="primary" onClick={onConfirm}>
             {confirmText}
-          </IOSButton>
+          </AppButton>
         </>
       }
     >
       <div className="space-y-3">
-        <IOSInput
+        <AppInput
           ref={inputRef}
           label="分组名称"
           value={groupName}
@@ -97,6 +97,6 @@ export function SiteGroupDialog({
           autoFocus
         />
       </div>
-    </IOSModal>
+    </AppModal>
   );
 }

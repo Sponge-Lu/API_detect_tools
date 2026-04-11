@@ -59,7 +59,7 @@ src/
 │   └── webdav-manager.ts  # WebDAV 云端备份
 ├── renderer/              # React 前端 (ESM, Vite 构建)
 │   ├── App.tsx            # 根组件
-│   ├── components/        # UI 组件 (iOS 设计系统: IOSButton/Card/Input/Modal/Table/Icon)
+│   ├── components/        # UI 组件（当前统一使用 AppButton/AppCard/AppInput/AppModal/DataTable/AppIcon 等中性原语）
 │   ├── hooks/             # 业务逻辑 hooks (useSiteGroups, useAutoRefresh, useCliCompatTest, useCredit, useUpdate 等)
 │   ├── store/             # Zustand stores (configStore, detectionStore, uiStore, toastStore, customCliConfigStore)
 │   ├── services/          # 前端服务层 (cli-config-generator)
@@ -76,7 +76,7 @@ src/
 - **IPC 通信**: 渲染进程通过 `window.electronAPI.xxx()` 调用，preload.ts 桥接到主进程 handler。新增 IPC 接口需同步修改 preload.ts + 对应 handler 文件 + handlers/index.ts 注册。
 - **服务层依赖链**: TokenService → ChromeManager, ApiService → TokenService, CliCompatService → ApiService, CreditService → ChromeManager。
 - **状态管理**: Zustand store 拆分为 config (站点配置)、detection (检测结果)、ui (UI 状态)、toast (通知)、customCliConfig (CLI 配置)。
-- **UI 组件**: 基于 iOS 设计语言的自定义组件库，统一使用 IOS 前缀。
+- **UI 组件**: 基于当前产品级中性设计系统的自定义组件库，统一使用 `App*` / `DataTable` 等公共原语入口。
 - **测试**: 大量使用 fast-check 属性测试 (`*.property.test.ts`)，测试文件位于 `src/__tests__/`，setup 文件 `src/__tests__/setup.ts`。
 - **配置文件路径**: Electron `app.getPath('userData')` 存储配置、Token、主题设置等。
 

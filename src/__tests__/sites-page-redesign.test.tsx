@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { DEFAULT_COLUMN_WIDTHS } from '../shared/constants';
 import { CliCompatibilityIcons } from '../renderer/components/CliCompatibilityIcons/CliCompatibilityIcons';
 import { SiteListHeader } from '../renderer/components/SiteListHeader';
 import { SiteCard, SiteCardActions } from '../renderer/components/SiteCard';
@@ -20,10 +23,18 @@ const baseSite: SiteConfig = {
 };
 
 describe('sites page redesign', () => {
-  it('renders a sticky header row with merged token and request statistic columns', () => {
+  it('keeps the header action spacer at 48px for icon alignment', () => {
+    const source = readFileSync(join(process.cwd(), 'src/renderer/pages/SitesPage.tsx'), 'utf8');
+
+    expect(source).toContain('<div className="w-[48px]" aria-hidden="true" />');
+  });
+
+  it('renders only the visible folded-row columns inside the sticky header', () => {
+    expect(DEFAULT_COLUMN_WIDTHS).toEqual([168, 100, 82, 96, 92, 64, 180]);
+
     const { container } = render(
       <SiteListHeader
-        columnWidths={[120, 75, 75, 110, 110, 60, 80, 160]}
+        columnWidths={[168, 100, 82, 96, 92, 64, 180]}
         onColumnWidthChange={vi.fn()}
         sortField="totalTokens"
         sortOrder="desc"
@@ -32,9 +43,16 @@ describe('sites page redesign', () => {
     );
 
     expect((container.firstElementChild as HTMLDivElement).className).toContain('sticky');
+    expect(screen.getByRole('button', { name: '站点' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '余额' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '今日消费' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Token统计' })).toBeInTheDocument();
     expect(screen.getByText('请求统计')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '模型数' })).toBeInTheDocument();
+    expect(screen.getByText('CLI可用性')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '请求统计' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '更新时间' })).not.toBeInTheDocument();
+    expect(screen.queryByText('LDC比例')).not.toBeInTheDocument();
   });
 
   it('renders token and request statistics as stacked two-line cells', () => {
@@ -45,7 +63,7 @@ describe('sites page redesign', () => {
         lastSyncDisplay="12:34"
         errorCode={null}
         timeoutSeconds={null}
-        columnWidths={[120, 75, 75, 110, 110, 60, 80, 160]}
+        columnWidths={[168, 100, 82, 96, 92, 64, 180]}
         todayTotalTokens={4200}
         todayPromptTokens={3000}
         todayCompletionTokens={1200}
@@ -75,6 +93,123 @@ describe('sites page redesign', () => {
     expect(screen.getByText('RPM 0.50 / TPM 350')).toBeInTheDocument();
   });
 
+  it('renders the site secondary row with account and time inline under the site name', () => {
+    render(
+      <SiteCardHeader
+        site={baseSite}
+        siteResult={{ status: '成功', balance: 1234.56, models: [] } as any}
+        lastSyncDisplay="7天"
+        errorCode={null}
+        timeoutSeconds={null}
+        columnWidths={[168, 100, 82, 96, 92, 64, 180]}
+        todayTotalTokens={0}
+        todayPromptTokens={0}
+        todayCompletionTokens={0}
+        todayRequests={0}
+        rpm={0}
+        tpm={0}
+        modelCount={3}
+        accountId="account-1"
+        accountName="Primary Account"
+        onOpenSite={vi.fn()}
+        cliCompatibility={{
+          claudeCode: true,
+          codex: null,
+          geminiCli: false,
+          testedAt: Date.now(),
+        }}
+        cliConfig={null}
+        isCliTesting={false}
+        onOpenCliConfig={vi.fn()}
+        onTestCliCompat={vi.fn()}
+        onApply={vi.fn()}
+      />
+    );
+
+    const accountLabel = screen.getByText('Primary Account');
+    const timeLabel = screen.getByText('7天');
+    const secondaryRow = accountLabel.parentElement as HTMLDivElement;
+
+    expect(accountLabel).toBeInTheDocument();
+    expect(timeLabel).toBeInTheDocument();
+    expect(timeLabel.parentElement).toBe(secondaryRow);
+    expect(secondaryRow).toHaveClass('gap-1.5');
+    expect(secondaryRow).not.toHaveClass('justify-between');
+    expect(screen.queryByText('输入 0 / 输出 0')).not.toBeInTheDocument();
+    expect(screen.queryByText('RPM 0.00 / TPM 0')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'CLI配置' })).toBeInTheDocument();
+  });
+
+  it('formats balances below and above the 100000 threshold differently', () => {
+    const { rerender } = render(
+      <SiteCardHeader
+        site={baseSite}
+        siteResult={{ status: '成功', balance: 99999.99, models: [] } as any}
+        lastSyncDisplay="12:34"
+        errorCode={null}
+        timeoutSeconds={null}
+        columnWidths={[168, 100, 82, 96, 92, 64, 180]}
+        todayTotalTokens={4200}
+        todayPromptTokens={3000}
+        todayCompletionTokens={1200}
+        todayRequests={6}
+        rpm={0.5}
+        tpm={350}
+        modelCount={3}
+        accountId="account-1"
+        accountName="Primary Account"
+        onOpenSite={vi.fn()}
+        cliCompatibility={{
+          claudeCode: true,
+          codex: null,
+          geminiCli: false,
+          testedAt: Date.now(),
+        }}
+        cliConfig={null}
+        isCliTesting={false}
+        onOpenCliConfig={vi.fn()}
+        onTestCliCompat={vi.fn()}
+        onApply={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('$99999.99')).toBeInTheDocument();
+
+    rerender(
+      <SiteCardHeader
+        site={baseSite}
+        siteResult={{ status: '成功', balance: 123456.78, models: [] } as any}
+        lastSyncDisplay="12:34"
+        errorCode={null}
+        timeoutSeconds={null}
+        columnWidths={[168, 100, 82, 96, 92, 64, 180]}
+        todayTotalTokens={4200}
+        todayPromptTokens={3000}
+        todayCompletionTokens={1200}
+        todayRequests={6}
+        rpm={0.5}
+        tpm={350}
+        modelCount={3}
+        accountId="account-1"
+        accountName="Primary Account"
+        onOpenSite={vi.fn()}
+        cliCompatibility={{
+          claudeCode: true,
+          codex: null,
+          geminiCli: false,
+          testedAt: Date.now(),
+        }}
+        cliConfig={null}
+        isCliTesting={false}
+        onOpenCliConfig={vi.fn()}
+        onTestCliCompat={vi.fn()}
+        onApply={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('$123.5K')).toBeInTheDocument();
+  });
+
   it('zeroes stale daily usage before rendering the merged stats cells', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-04-09T09:00:00'));
@@ -97,7 +232,7 @@ describe('sites page redesign', () => {
         }
         siteAccount={undefined}
         isExpanded={false}
-        columnWidths={[120, 75, 75, 110, 110, 60, 80, 160]}
+        columnWidths={[168, 100, 82, 96, 92, 64, 180]}
         accountId={undefined}
         accountName={undefined}
         accountAccessToken={undefined}
@@ -150,8 +285,8 @@ describe('sites page redesign', () => {
     );
 
     expect(screen.getByText('$-0.00')).toBeInTheDocument();
-    expect(screen.getByText('输入 0 / 输出 0')).toBeInTheDocument();
-    expect(screen.getByText('RPM 0.00 / TPM 0')).toBeInTheDocument();
+    expect(screen.queryByText('输入 0 / 输出 0')).not.toBeInTheDocument();
+    expect(screen.queryByText('RPM 0.00 / TPM 0')).not.toBeInTheDocument();
 
     vi.useRealTimers();
   });
@@ -173,9 +308,10 @@ describe('sites page redesign', () => {
     expect(screen.getByRole('button', { name: '今日消费' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Token统计' })).toBeInTheDocument();
     expect(screen.getByText('批量检测')).toBeInTheDocument();
-    expect((container.firstElementChild as HTMLDivElement).style.gridTemplateColumns).toBe(
-      '120px 75px 75px 75px 1fr'
-    );
+    const header = container.firstElementChild as HTMLDivElement;
+    expect(header.style.gridTemplateColumns).toBe('120px 75px 75px 75px 1fr');
+    expect(header).toHaveClass('px-3');
+    expect(header.lastElementChild).toHaveClass('items-center', 'justify-end', 'gap-0.5');
   });
 
   it('toggles sorting from the visible sortable column labels directly', () => {
@@ -183,7 +319,7 @@ describe('sites page redesign', () => {
 
     render(
       <SiteListHeader
-        columnWidths={[120, 75, 75, 75, 50, 50, 50, 50, 50, 60, 80, 160]}
+        columnWidths={[168, 100, 82, 96, 92, 64, 180]}
         onColumnWidthChange={vi.fn()}
         sortField={null}
         sortOrder="desc"
@@ -193,11 +329,11 @@ describe('sites page redesign', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '余额' }));
     fireEvent.click(screen.getByRole('button', { name: 'Token统计' }));
-    fireEvent.click(screen.getByRole('button', { name: '更新时间' }));
+    expect(screen.queryByRole('button', { name: '更新时间' })).not.toBeInTheDocument();
 
     expect(onToggleSort).toHaveBeenCalledWith('balance');
     expect(onToggleSort).toHaveBeenCalledWith('totalTokens');
-    expect(onToggleSort).toHaveBeenCalledWith('lastUpdate');
+    expect(onToggleSort).toHaveBeenCalledTimes(2);
   });
 
   it('keeps high-frequency actions visible and moves low-frequency actions into a more menu', () => {
@@ -296,7 +432,7 @@ describe('sites page redesign', () => {
         lastSyncDisplay="12:34"
         errorCode={null}
         timeoutSeconds={null}
-        columnWidths={[120, 75, 75, 75, 50, 50, 50, 50, 50, 60, 80, 160]}
+        columnWidths={[168, 100, 82, 96, 92, 64, 180]}
         todayTotalTokens={4200}
         todayPromptTokens={0}
         todayCompletionTokens={0}
@@ -350,18 +486,18 @@ describe('sites page redesign', () => {
     );
 
     const grid = container.firstElementChild as HTMLDivElement;
-    expect(grid.style.gridTemplateColumns).toBe(
-      '120px 75px 75px 75px 50px 50px 50px 50px 50px 60px 80px 160px'
-    );
+    expect(grid.style.gridTemplateColumns).toBe('168px 100px 82px 96px 92px 64px 180px');
+    expect(grid.lastElementChild).toHaveClass('justify-center');
     expect(screen.getByText('Primary Account')).toBeInTheDocument();
     expect(screen.getByText('12:34')).toBeInTheDocument();
     expect(screen.queryByText('default')).not.toBeInTheDocument();
     expect(screen.getByAltText('Claude Code')).toBeInTheDocument();
     expect(screen.getByAltText('Codex')).toBeInTheDocument();
     expect(screen.getByAltText('Gemini CLI')).toBeInTheDocument();
-    expect(screen.getByTitle('配置 CLI')).toBeInTheDocument();
-    expect(screen.getByTitle('测试 CLI 兼容性')).toBeInTheDocument();
-    expect(screen.getByTitle('应用 CLI 配置到本地文件')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'CLI配置' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'CLI应用' })).toBeInTheDocument();
+    expect(screen.queryByTitle('测试 CLI 兼容性')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('应用 CLI 配置到本地文件')).not.toBeInTheDocument();
     expect(screen.queryByText('CLI 工作台')).not.toBeInTheDocument();
   });
 
@@ -369,7 +505,7 @@ describe('sites page redesign', () => {
     render(
       <div className="w-[1024px]">
         <SiteListHeader
-          columnWidths={[120, 75, 75, 75, 50, 50, 50, 50, 50, 60, 80, 160]}
+          columnWidths={[168, 100, 82, 96, 92, 64, 180]}
           onColumnWidthChange={vi.fn()}
           sortField="balance"
           sortOrder="desc"
@@ -472,13 +608,12 @@ describe('sites page redesign', () => {
     expect(screen.getByRole('button', { name: '余额' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '更多操作' })).toBeInTheDocument();
     expect(screen.getByText('Primary Account')).toBeInTheDocument();
-    expect(screen.getByTitle('配置 CLI')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'CLI配置' })).toBeInTheDocument();
     expect(screen.queryByText('CLI 工作台')).not.toBeInTheDocument();
   });
 
-  it('renders the CLI compatibility surface through visible icons and action controls', () => {
+  it('renders the CLI compatibility surface through visible icons and config/apply entry buttons', () => {
     const onConfig = vi.fn();
-    const onTest = vi.fn();
     const onApply = vi.fn();
 
     render(
@@ -518,8 +653,9 @@ describe('sites page redesign', () => {
             applyMode: 'merge',
           },
         }}
+        configTrigger="text"
+        configButtonLabel="CLI配置"
         onConfig={onConfig}
-        onTest={onTest}
         onApply={onApply}
       />
     );
@@ -528,13 +664,74 @@ describe('sites page redesign', () => {
     expect(screen.getByAltText('Codex')).toBeInTheDocument();
     expect(screen.getByAltText('Gemini CLI')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTitle('配置 CLI'));
-    fireEvent.click(screen.getByTitle('测试 CLI 兼容性'));
-    fireEvent.click(screen.getByTitle('应用 CLI 配置到本地文件'));
+    expect(screen.getByRole('button', { name: 'CLI配置' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'CLI应用' })).toBeInTheDocument();
+    expect(screen.queryByTitle('测试 CLI 兼容性')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('应用 CLI 配置到本地文件')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'CLI配置' }));
+    fireEvent.click(screen.getByRole('button', { name: 'CLI应用' }));
 
     expect(onConfig).toHaveBeenCalledTimes(1);
-    expect(onTest).toHaveBeenCalledTimes(1);
     expect(onApply).toHaveBeenCalledTimes(1);
+  });
+
+  it('lights up a CLI icon when persisted test results contain at least one successful model', () => {
+    render(
+      <CliCompatibilityIcons
+        compatibility={{
+          claudeCode: null,
+          codex: null,
+          geminiCli: null,
+          testedAt: null,
+        }}
+        cliConfig={{
+          claudeCode: {
+            apiKeyId: 1,
+            model: 'claude-3-5-sonnet',
+            testModel: null,
+            testModels: [],
+            enabled: true,
+            editedFiles: null,
+            applyMode: 'merge',
+          },
+          codex: {
+            apiKeyId: 2,
+            model: 'gpt-4.1',
+            testModel: 'gpt-4.1',
+            testModels: ['gpt-4.1'],
+            testResults: [
+              {
+                model: 'gpt-4.1',
+                success: true,
+                timestamp: Date.now(),
+              },
+              null,
+              null,
+            ],
+            enabled: true,
+            editedFiles: null,
+            applyMode: 'merge',
+          },
+          geminiCli: {
+            apiKeyId: 3,
+            model: 'gemini-2.5-pro',
+            testModel: null,
+            testModels: [],
+            enabled: true,
+            editedFiles: null,
+            applyMode: 'merge',
+          },
+        }}
+        configTrigger="text"
+        configButtonLabel="CLI配置"
+        onConfig={vi.fn()}
+        onApply={vi.fn()}
+      />
+    );
+
+    expect(screen.getByAltText('Codex').parentElement?.className).toContain('opacity-100');
+    expect(screen.getByAltText('Codex').parentElement?.title).toContain('支持');
   });
 
   it('keeps CLI icons inline in the header instead of a dedicated workbench slot', () => {
@@ -631,7 +828,7 @@ describe('sites page redesign', () => {
     );
 
     const mainRow = getByTestId('site-card-main-row');
-    expect(within(mainRow).getByTitle('配置 CLI')).toBeInTheDocument();
+    expect(within(mainRow).getByRole('button', { name: 'CLI配置' })).toBeInTheDocument();
     expect(within(mainRow).queryByText('CLI 工作台')).not.toBeInTheDocument();
   });
 });

@@ -10,6 +10,7 @@
  */
 
 import { pinyin } from 'pinyin-pro';
+import { normalizeCodexFeatureFlagsToml } from '../../shared/types/cli-config';
 
 /**
  * CLI 配置生成器服务
@@ -307,27 +308,27 @@ export function sanitizeProviderName(siteName: string): string {
 export function generateCodexConfig(params: CodexConfigParams): GeneratedConfig {
   const normalizedUrl = normalizeUrl(params.siteUrl);
   const normalizedApiKey = normalizeApiKey(params.apiKey);
-  const providerName = sanitizeProviderName(params.siteName);
+  const providerName = 'OpenAI';
 
   // wire_api 固定为 responses（chat 模式已废弃）
   const wireApi = selectWireApi();
   const wireApiComment = generateWireApiComment(params.codexDetail);
 
   // 按照模板生成 config.toml，添加测试结果注释
-  const configToml = `model_provider = "${providerName}"
+  const configToml = normalizeCodexFeatureFlagsToml(`model_provider = "${providerName}"
 model = "${params.model}"
 model_reasoning_effort = "high"
 disable_response_storage = true
 network_access = "enabled"
 
 [model_providers.${providerName}]
-name = "${providerName.toLowerCase()}"
+name = "openai"
 base_url = "${normalizedUrl}/v1"
 ${wireApiComment}
 wire_api = "${wireApi}"
 requires_openai_auth = true
 
-web_search = "cached"`;
+web_search = "cached"`);
 
   // 按照模板生成 auth.json
   const authJson = {
@@ -357,20 +358,20 @@ web_search = "cached"`;
  */
 export function generateCodexTemplate(): GeneratedConfig {
   // 完全照搬模板文件内容，包含注释和 wire_api 说明
-  const configTomlTemplate = `model_provider = "IkunCoding"
+  const configTomlTemplate = normalizeCodexFeatureFlagsToml(`model_provider = "OpenAI"
 model = "gpt-5.1-codex-max"
 model_reasoning_effort = "high"
 disable_response_storage = true
 network_access = "enabled"
 
-[model_providers.IkunCoding]
-name = "ikun"
+[model_providers.OpenAI]
+name = "openai"
 base_url = "https://api.ikuncode.cc/v1"
 # wire_api 固定使用 "responses" (Responses API，chat 模式已废弃)
 wire_api = "responses"
 requires_openai_auth = true
 
-web_search = "cached"`;
+web_search = "cached"`);
 
   const authJsonTemplate = `{
   "OPENAI_API_KEY": "sk-xxxxxxxxxxxxxxx"

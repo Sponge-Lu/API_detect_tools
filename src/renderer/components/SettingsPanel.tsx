@@ -29,7 +29,7 @@ import { toast } from '../store/toastStore';
 import { useUIStore } from '../store/uiStore';
 import { WebDAVConfig, DEFAULT_WEBDAV_CONFIG } from '../../shared/types/site';
 import { WebDAVBackupDialog } from './dialogs';
-import { AppInput } from './IOSInput';
+import { AppInput } from './AppInput';
 import { THEME_PRESETS, type ThemeMode } from '../../shared/theme/themePresets';
 
 // 设置分类定义
@@ -44,9 +44,7 @@ const sections: { id: SettingsSection; label: string; icon: LucideIcon }[] = [
 ];
 
 const themeIcons: Record<ThemeMode, LucideIcon> = {
-  'light-a': Sun,
   'light-b': Sun,
-  'light-c': Sun,
   dark: Moon,
 };
 
@@ -302,7 +300,7 @@ export function SettingsPanel({
                   {[preset.appBackground, preset.panelBackground, preset.panelRaised].map(color => (
                     <span
                       key={`${preset.id}-${color}`}
-                      className="h-2.5 flex-1 rounded-full border border-black/5 dark:border-white/10"
+                      className="h-2.5 flex-1 rounded-full border border-[var(--line-soft)]"
                       style={{ backgroundColor: color }}
                     />
                   ))}
@@ -311,9 +309,6 @@ export function SettingsPanel({
             );
           })}
         </div>
-        <p className="text-xs text-[var(--text-secondary)] mt-2">
-          三套浅色主题与一套统一暗色主题共用布局密度，只调整基底色温与视觉重心。
-        </p>
       </div>
 
       {/* 关闭行为 */}
@@ -339,9 +334,7 @@ export function SettingsPanel({
                 className="mt-1 h-4 w-4 border-[var(--line-soft)] text-[var(--accent)] focus:ring-[var(--accent)]"
               />
               <div className="flex-1">
-                <span className="text-sm font-medium text-[var(--text-primary)]">
-                  每次询问
-                </span>
+                <span className="text-sm font-medium text-[var(--text-primary)]">每次询问</span>
                 <p className="text-xs text-[var(--text-secondary)] mt-0.5">
                   每次关闭窗口时询问是退出还是最小化到托盘
                 </p>
@@ -358,9 +351,7 @@ export function SettingsPanel({
                 className="mt-1 h-4 w-4 border-[var(--line-soft)] text-[var(--accent)] focus:ring-[var(--accent)]"
               />
               <div className="flex-1">
-                <span className="text-sm font-medium text-[var(--text-primary)]">
-                  直接退出
-                </span>
+                <span className="text-sm font-medium text-[var(--text-primary)]">直接退出</span>
                 <p className="text-xs text-[var(--text-secondary)] mt-0.5">
                   关闭窗口时直接退出应用程序
                 </p>
@@ -377,9 +368,7 @@ export function SettingsPanel({
                 className="mt-1 h-4 w-4 border-[var(--line-soft)] text-[var(--accent)] focus:ring-[var(--accent)]"
               />
               <div className="flex-1">
-                <span className="text-sm font-medium text-[var(--text-primary)]">
-                  最小化到托盘
-                </span>
+                <span className="text-sm font-medium text-[var(--text-primary)]">最小化到托盘</span>
                 <p className="text-xs text-[var(--text-secondary)] mt-0.5">
                   关闭窗口时最小化到系统托盘，可通过托盘图标恢复
                 </p>
@@ -409,9 +398,7 @@ export function SettingsPanel({
           min={1}
           max={60}
         />
-        <p className="text-xs text-[var(--text-secondary)] mt-1">
-          每个站点的最大等待时间
-        </p>
+        <p className="text-xs text-[var(--text-secondary)] mt-1">每个站点的最大等待时间</p>
       </div>
 
       <div className="flex items-start gap-3">
@@ -480,9 +467,7 @@ export function SettingsPanel({
           >
             显示禁用的站点
           </label>
-          <p className="text-xs text-[var(--text-secondary)] mt-1">
-            在检测时也包含已禁用的站点
-          </p>
+          <p className="text-xs text-[var(--text-secondary)] mt-1">在检测时也包含已禁用的站点</p>
         </div>
       </div>
 
@@ -495,9 +480,7 @@ export function SettingsPanel({
           onChange={e => setFormData({ ...formData, browser_path: e.target.value })}
           placeholder="例如：C:\PortableApps\Chrome\chrome.exe"
         />
-        <p className="text-xs text-[var(--text-secondary)] mt-1">
-          留空则自动检测 Chrome / Edge
-        </p>
+        <p className="text-xs text-[var(--text-secondary)] mt-1">留空则自动检测 Chrome / Edge</p>
       </div>
     </div>
   );
@@ -815,9 +798,7 @@ export function SettingsPanel({
           </p>
         </>
       ) : (
-        <p className="text-sm text-[var(--text-secondary)]">
-          暂无可用的数据管理操作
-        </p>
+        <p className="text-sm text-[var(--text-secondary)]">暂无可用的数据管理操作</p>
       )}
     </div>
   );

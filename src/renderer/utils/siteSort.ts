@@ -9,11 +9,11 @@ export function normalizeSiteSortField(
     case 'todayUsage':
     case 'totalTokens':
     case 'modelCount':
-    case 'lastUpdate':
       return field;
     case 'promptTokens':
     case 'completionTokens':
       return 'totalTokens';
+    case 'lastUpdate':
     case 'requests':
     case 'rpm':
     case 'tpm':

@@ -1,9 +1,9 @@
-export type ThemeMode = 'light-a' | 'light-b' | 'light-c' | 'dark';
+export type ThemeMode = 'light-b' | 'dark';
 export type LegacyThemeMode = 'light' | 'dark' | 'system';
 export type AnyThemeMode = ThemeMode | LegacyThemeMode | string | null | undefined;
 
 export const THEME_STORAGE_KEY = 'app-theme-mode';
-export const DEFAULT_LIGHT_THEME: ThemeMode = 'light-a';
+export const DEFAULT_LIGHT_THEME: ThemeMode = 'light-b';
 
 export interface ThemePresetDefinition {
   id: ThemeMode;
@@ -18,34 +18,14 @@ export interface ThemePresetDefinition {
 
 export const THEME_PRESETS: ThemePresetDefinition[] = [
   {
-    id: 'light-a',
-    label: 'Light A',
-    description: '暖灰纸面',
-    appBackground: '#f3f0ea',
-    panelBackground: '#fbf8f3',
-    panelRaised: '#ffffff',
-    accentColor: '#5b6a62',
-    softAccent: 'rgba(91, 106, 98, 0.12)',
-  },
-  {
     id: 'light-b',
-    label: 'Light B',
+    label: 'Light',
     description: '冷灰矿物',
     appBackground: '#eef2f5',
     panelBackground: '#f7f9fb',
     panelRaised: '#ffffff',
     accentColor: '#5c6b78',
     softAccent: 'rgba(92, 107, 120, 0.12)',
-  },
-  {
-    id: 'light-c',
-    label: 'Light C',
-    description: '中性工作室',
-    appBackground: '#f3f1ed',
-    panelBackground: '#faf8f4',
-    panelRaised: '#ffffff',
-    accentColor: '#66645f',
-    softAccent: 'rgba(102, 100, 95, 0.12)',
   },
   {
     id: 'dark',
@@ -59,7 +39,7 @@ export const THEME_PRESETS: ThemePresetDefinition[] = [
   },
 ];
 
-const VALID_THEME_MODES = new Set<ThemeMode>(['light-a', 'light-b', 'light-c', 'dark']);
+const VALID_THEME_MODES = new Set<ThemeMode>(['light-b', 'dark']);
 
 export function normalizeThemeMode(value: AnyThemeMode): ThemeMode {
   if (typeof value !== 'string') {
@@ -68,10 +48,6 @@ export function normalizeThemeMode(value: AnyThemeMode): ThemeMode {
 
   if (VALID_THEME_MODES.has(value as ThemeMode)) {
     return value as ThemeMode;
-  }
-
-  if (value === 'dark') {
-    return 'dark';
   }
 
   return DEFAULT_LIGHT_THEME;

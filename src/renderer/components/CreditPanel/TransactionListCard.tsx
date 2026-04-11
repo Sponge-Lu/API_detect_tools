@@ -52,13 +52,13 @@ function getStatusBadgeClass(status: TransactionStatus): string {
   const colorType = getTransactionStatusColor(status);
   switch (colorType) {
     case 'success':
-      return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400';
+      return 'bg-[var(--success-soft)] text-[var(--success)]';
     case 'error':
-      return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400';
+      return 'bg-[var(--danger-soft)] text-[var(--danger)]';
     case 'warning':
-      return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400';
+      return 'bg-[var(--warning-soft)] text-[var(--warning)]';
     default:
-      return 'bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400';
+      return 'bg-[var(--surface-2)] text-[var(--text-secondary)]';
   }
 }
 
@@ -89,21 +89,21 @@ export function TransactionListCard({
 }: TransactionListCardProps) {
   return (
     <div
-      className={`bg-white dark:bg-dark-card rounded-xl border border-light-border dark:border-dark-border p-4 h-fit shadow-sm ${className}`}
+      className={`h-fit rounded-[var(--radius-xl)] border border-[var(--line-soft)] bg-[var(--surface-1)] p-4 shadow-[var(--shadow-sm)] ${className}`}
     >
       {/* 区域1：标题栏 - 活动 N + 刷新按钮 */}
       <div className="flex items-center justify-between mb-3">
-        <span className="text-sm font-medium text-light-text dark:text-dark-text">
+        <span className="text-sm font-medium text-[var(--text-primary)]">
           {transactions ? formatTransactionCount(transactions.total) : '活动'}
         </span>
         <button
           onClick={onRefresh}
           disabled={isLoading}
-          className="p-1.5 hover:bg-light-bg dark:hover:bg-dark-bg rounded-md transition-all disabled:cursor-not-allowed"
+          className="rounded-[var(--radius-sm)] p-1.5 transition-colors hover:bg-[var(--surface-2)] disabled:cursor-not-allowed"
           title="刷新"
         >
           <RefreshCw
-            className={`w-3.5 h-3.5 text-light-text-secondary dark:text-dark-text-secondary ${isLoading ? 'animate-spin' : ''}`}
+            className={`h-3.5 w-3.5 text-[var(--text-secondary)] ${isLoading ? 'animate-spin' : ''}`}
           />
         </button>
       </div>
@@ -112,20 +112,20 @@ export function TransactionListCard({
       <div>
         {isLoading && !transactions ? (
           <div className="flex items-center justify-center py-6">
-            <Loader2 className="w-5 h-5 animate-spin text-light-text-secondary dark:text-dark-text-secondary" />
+            <Loader2 className="h-5 w-5 animate-spin text-[var(--text-secondary)]" />
           </div>
         ) : transactions && transactions.orders.length > 0 ? (
           <div className="space-y-1.5">
             {transactions.orders.slice(0, 5).map(order => (
               <div
                 key={order.id}
-                className="flex items-center justify-between text-xs py-1.5 px-2.5 bg-light-bg dark:bg-dark-bg rounded-lg"
+                className="flex items-center justify-between rounded-[var(--radius-lg)] bg-[var(--surface-2)] px-2.5 py-1.5 text-xs"
               >
-                <span className="text-light-text dark:text-dark-text truncate flex-1 mr-2">
+                <span className="mr-2 flex-1 truncate text-[var(--text-primary)]">
                   {order.order_name || order.app_name || '未命名订单'}
                 </span>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="text-light-text-secondary dark:text-dark-text-secondary font-medium">
+                  <span className="font-medium text-[var(--text-secondary)]">
                     {formatTransactionAmount(order.amount)}
                   </span>
                   <span
@@ -138,21 +138,21 @@ export function TransactionListCard({
             ))}
           </div>
         ) : (
-          <div className="flex items-center justify-center py-6 text-sm text-light-text-secondary dark:text-dark-text-secondary">
+          <div className="flex items-center justify-center py-6 text-sm text-[var(--text-secondary)]">
             暂无交易记录
           </div>
         )}
       </div>
 
       {/* 区域3：更新时间 + 查看全部 */}
-      <div className="flex items-center justify-between mt-3 pt-2.5 border-t border-light-border dark:border-dark-border text-[10px]">
-        <div className="flex items-center gap-1 text-light-text-secondary dark:text-dark-text-secondary">
+      <div className="mt-3 flex items-center justify-between border-t border-[var(--line-soft)] pt-2.5 text-[10px]">
+        <div className="flex items-center gap-1 text-[var(--text-secondary)]">
           <Clock className="w-3 h-3" />
           <span>更新时间: {formatLastUpdated(transactions?.lastUpdated || 0)}</span>
         </div>
         <button
           onClick={() => openCreditSite()}
-          className="text-primary-500 hover:text-primary-600 dark:text-primary-400 dark:hover:text-primary-300 transition-colors font-medium"
+          className="font-medium text-[var(--accent)] transition-colors hover:text-[var(--accent-strong)]"
         >
           查看全部
         </button>

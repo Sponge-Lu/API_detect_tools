@@ -10,9 +10,9 @@ import { Play, Square, Copy, KeyRound, Loader2, Activity, BarChart3 } from 'luci
 import { useShallow } from 'zustand/shallow';
 import { useRouteStore } from '../../../store/routeStore';
 import { toast } from '../../../store/toastStore';
-import { IOSCard, IOSCardContent } from '../../IOSCard';
-import { IOSButton } from '../../IOSButton';
-import { IOSInput } from '../../IOSInput';
+import { AppCard, AppCardContent } from '../../AppCard';
+import { AppButton } from '../../AppButton/AppButton';
+import { AppInput } from '../../AppInput';
 import type { RouteCliType } from '../../../../shared/types/route-proxy';
 
 const CLI_LABELS: Record<RouteCliType, string> = {
@@ -62,8 +62,8 @@ function ServerSection() {
   };
 
   return (
-    <IOSCard className="mb-4">
-      <IOSCardContent className="p-4">
+    <AppCard className="mb-4">
+      <AppCardContent className="p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <Activity className="w-4 h-4 text-[var(--accent)]" />
@@ -81,7 +81,7 @@ function ServerSection() {
               {serverRunning ? '运行中' : '已停止'}
             </span>
           </div>
-          <IOSButton
+          <AppButton
             variant={serverRunning ? 'secondary' : 'primary'}
             size="sm"
             onClick={handleToggle}
@@ -95,13 +95,13 @@ function ServerSection() {
               <Play className="w-3.5 h-3.5" />
             )}
             <span className="ml-1">{serverRunning ? '停止' : '启动'}</span>
-          </IOSButton>
+          </AppButton>
         </div>
 
         <div className="grid grid-cols-2 gap-3 text-sm">
           <div>
             <label className="mb-1 block text-xs text-[var(--text-secondary)]">端口</label>
-            <IOSInput
+            <AppInput
               type="number"
               defaultValue={server.port}
               onBlur={e => {
@@ -121,9 +121,7 @@ function ServerSection() {
         </div>
 
         <div className="mt-3">
-          <label className="mb-1 block text-xs text-[var(--text-secondary)]">
-            路由 API Key
-          </label>
+          <label className="mb-1 block text-xs text-[var(--text-secondary)]">路由 API Key</label>
           <div className="flex items-center gap-2">
             <div className="flex-1 truncate rounded bg-[var(--surface-2)] px-2 py-1.5 font-mono text-xs text-[var(--text-secondary)]">
               {showKey ? server.unifiedApiKey : '••••••••••••••••'}
@@ -156,8 +154,8 @@ function ServerSection() {
             </button>
           </div>
         </div>
-      </IOSCardContent>
-    </IOSCard>
+      </AppCardContent>
+    </AppCard>
   );
 }
 
@@ -179,8 +177,8 @@ function CliModelSection() {
   };
 
   return (
-    <IOSCard className="mb-4">
-      <IOSCardContent className="p-4">
+    <AppCard className="mb-4">
+      <AppCardContent className="p-4">
         <div className="flex items-center gap-2 mb-3">
           <BarChart3 className="w-4 h-4 text-[var(--accent)]" />
           <span className="font-medium text-sm">CLI 默认模型</span>
@@ -207,8 +205,8 @@ function CliModelSection() {
             </div>
           ))}
         </div>
-      </IOSCardContent>
-    </IOSCard>
+      </AppCardContent>
+    </AppCard>
   );
 }
 
@@ -241,8 +239,8 @@ function StatsDashboard() {
   };
 
   return (
-    <IOSCard>
-      <IOSCardContent className="p-4">
+    <AppCard>
+      <AppCardContent className="p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <BarChart3 className="w-4 h-4 text-[var(--accent)]" />
@@ -250,14 +248,14 @@ function StatsDashboard() {
           </div>
           <div className="flex gap-1">
             {STATS_TIME_RANGES.map(r => (
-              <IOSButton
+              <AppButton
                 key={r}
                 variant={timeRange === r ? 'primary' : 'secondary'}
                 size="sm"
                 onClick={() => setTimeRange(r)}
               >
                 {r}
-              </IOSButton>
+              </AppButton>
             ))}
           </div>
         </div>
@@ -282,8 +280,8 @@ function StatsDashboard() {
         ) : (
           <div className="py-6 text-center text-sm text-[var(--text-secondary)]">暂无统计数据</div>
         )}
-      </IOSCardContent>
-    </IOSCard>
+      </AppCardContent>
+    </AppCard>
   );
 }
 

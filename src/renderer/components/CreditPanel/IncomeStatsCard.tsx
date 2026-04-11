@@ -70,14 +70,14 @@ export function IncomeStatsCard({
 
   return (
     <div
-      className={`bg-white dark:bg-dark-card rounded-xl border border-light-border dark:border-dark-border p-4 h-fit shadow-sm ${className}`}
+      className={`h-fit rounded-[var(--radius-xl)] border border-[var(--line-soft)] bg-[var(--surface-1)] p-4 shadow-[var(--shadow-sm)] ${className}`}
     >
       {/* 区域1：标题栏 - 收入统计 + LDC总额 + 刷新按钮 */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-light-text dark:text-dark-text">收入统计</span>
+          <span className="text-sm font-medium text-[var(--text-primary)]">收入统计</span>
           {dailyStats && (
-            <span className="text-sm font-bold text-primary-600 dark:text-primary-400">
+            <span className="text-sm font-bold text-[var(--accent)]">
               LDC {dailyStats.totalIncome.toFixed(2)}
             </span>
           )}
@@ -85,11 +85,11 @@ export function IncomeStatsCard({
         <button
           onClick={onRefresh}
           disabled={isLoading}
-          className="p-1.5 hover:bg-light-bg dark:hover:bg-dark-bg rounded-md transition-all disabled:cursor-not-allowed"
+          className="rounded-[var(--radius-sm)] p-1.5 transition-colors hover:bg-[var(--surface-2)] disabled:cursor-not-allowed"
           title="刷新"
         >
           <RefreshCw
-            className={`w-3.5 h-3.5 text-light-text-secondary dark:text-dark-text-secondary ${isLoading ? 'animate-spin' : ''}`}
+            className={`h-3.5 w-3.5 text-[var(--text-secondary)] ${isLoading ? 'animate-spin' : ''}`}
           />
         </button>
       </div>
@@ -98,7 +98,7 @@ export function IncomeStatsCard({
       <div>
         {isLoading && !dailyStats ? (
           <div className="flex items-center justify-center py-6">
-            <Loader2 className="w-5 h-5 animate-spin text-light-text-secondary dark:text-dark-text-secondary" />
+            <Loader2 className="h-5 w-5 animate-spin text-[var(--text-secondary)]" />
           </div>
         ) : dailyStats && sortedItems.length > 0 ? (
           <div className="space-y-2">
@@ -110,24 +110,24 @@ export function IncomeStatsCard({
                 <div key={index} className="space-y-1">
                   {/* 日期和数值在条形上方 */}
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-light-text-secondary dark:text-dark-text-secondary">
+                    <span className="text-[var(--text-secondary)]">
                       {formatDateToMMDD(item.date)}
                     </span>
                     <span
-                      className={`font-medium ${hasValue ? 'text-primary-600 dark:text-primary-400' : 'text-light-text-secondary dark:text-dark-text-secondary'}`}
+                      className={`font-medium ${hasValue ? 'text-[var(--accent)]' : 'text-[var(--text-secondary)]'}`}
                     >
                       {formatDailyIncome(item.income)}
                     </span>
                   </div>
                   {/* 水平条形 */}
-                  <div className="h-2.5 bg-primary-50 dark:bg-primary-900/20 rounded-full overflow-hidden">
+                  <div className="h-2.5 overflow-hidden rounded-full bg-[var(--accent-soft)]">
                     {hasValue ? (
                       <div
-                        className="h-full bg-primary-500 dark:bg-primary-400 rounded-full transition-all"
+                        className="h-full rounded-full bg-[var(--accent)] transition-all"
                         style={{ width: `${Math.max(widthPercent, 3)}%` }}
                       />
                     ) : (
-                      <div className="h-full w-1 bg-light-border dark:bg-dark-border rounded-full" />
+                      <div className="h-full w-1 rounded-full bg-[var(--line-soft)]" />
                     )}
                   </div>
                 </div>
@@ -135,15 +135,15 @@ export function IncomeStatsCard({
             })}
           </div>
         ) : (
-          <div className="flex items-center justify-center py-6 text-sm text-light-text-secondary dark:text-dark-text-secondary">
+          <div className="flex items-center justify-center py-6 text-sm text-[var(--text-secondary)]">
             暂无数据
           </div>
         )}
       </div>
 
       {/* 区域3：更新时间 */}
-      <div className="flex items-center gap-1 mt-3 pt-2.5 border-t border-light-border dark:border-dark-border text-[10px] text-light-text-secondary dark:text-dark-text-secondary">
-        <Clock className="w-3 h-3" />
+      <div className="mt-3 flex items-center gap-1 border-t border-[var(--line-soft)] pt-2.5 text-[10px] text-[var(--text-secondary)]">
+        <Clock className="h-3 w-3" />
         <span>更新时间: {formatLastUpdated(dailyStats?.lastUpdated || 0)}</span>
       </div>
     </div>

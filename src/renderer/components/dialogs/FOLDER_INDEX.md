@@ -5,7 +5,7 @@
 **职责**: 提供各类对话框组件
 
 **特点**:
-- 使用 `AppModal`（兼容导出仍可经 `IOSModal` 引用）和 `OverlayDrawer` 组成统一 overlay 家族
+- 使用 `AppModal` 和 `OverlayDrawer` 组成统一 overlay 家族
 - 模态对话框与侧边工作抽屉共用标题栏、正文间距和底部操作区语义
 - 表单验证
 - 错误提示
@@ -14,7 +14,7 @@
 **依赖关系**:
 - 被 `App.tsx` 和其他组件使用
 - 依赖 `AppModal` 与 `overlays/OverlayDrawer` 提供统一的 overlay 样式
-- 依赖 `AppButton` / legacy `IOSButton` 兼容导出提供统一的按钮样式
+- 依赖 `AppButton` 提供统一的按钮样式
 - 依赖 `store/uiStore` 管理对话框状态
 - 依赖 `utils/` 工具函数
 

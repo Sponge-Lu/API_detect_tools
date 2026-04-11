@@ -1,9 +1,9 @@
 /**
  * @file src/renderer/index.css
- * @description 全局样式和 iOS 设计系统变量
+ * @description 全局样式与统一主题 token
  * 
  * 包含:
- * - iOS 设计系统 CSS 变量（颜色、字体、间距、圆角、阴影、模糊）
+ * - 统一主题 CSS 变量（颜色、字体、间距、圆角、阴影、模糊）
  * - 浅色/深色模式主题变量
  * - 主题切换过渡系统（300ms 平滑过渡）
  * - 全局样式和动画
@@ -13,7 +13,7 @@
  * - 性能优化系统（GPU 加速、will-change、高性能动画）
  * 
  * @version 2.1.13
- * @updated 2025-01-09 - iOS 原生风格优化：更微妙的分隔线颜色和更柔和的阴影
+ * @updated 2026-04-02 - 更新为统一主题 token 说明
  */
 
 @tailwind base;
@@ -37,33 +37,33 @@
   --radius-xl: 20px;
   --radius-full: 9999px;
 
-  --app-bg: #f3f0ea;
-  --app-bg-muted: #ebe6de;
-  --surface-1: #fbf8f3;
-  --surface-2: #f1ece5;
+  --app-bg: #eef2f5;
+  --app-bg-muted: #e6ebf0;
+  --surface-1: #f7f9fb;
+  --surface-2: #edf2f6;
   --surface-3: #ffffff;
-  --line-soft: rgba(87, 80, 70, 0.12);
-  --line-strong: rgba(87, 80, 70, 0.2);
-  --text-primary: #2c2a27;
-  --text-secondary: #6a635c;
-  --text-tertiary: #948d84;
-  --accent: #5b6a62;
-  --accent-soft: rgba(91, 106, 98, 0.12);
-  --accent-soft-strong: rgba(91, 106, 98, 0.18);
-  --accent-strong: #4d5952;
-  --success: #58705d;
-  --success-soft: rgba(88, 112, 93, 0.14);
-  --warning: #8b7457;
-  --warning-soft: rgba(139, 116, 87, 0.16);
-  --danger: #8a5d5a;
-  --danger-soft: rgba(138, 93, 90, 0.14);
-  --overlay-mask: rgba(27, 24, 22, 0.24);
-  --hover-overlay: rgba(27, 24, 22, 0.05);
-  --focus-ring: rgba(91, 106, 98, 0.16);
-  --selection-soft: rgba(91, 106, 98, 0.08);
-  --icon-muted: rgba(106, 99, 92, 0.72);
-  --code-bg: #1f2329;
-  --code-text: #d7dbe0;
+  --line-soft: rgba(58, 68, 79, 0.12);
+  --line-strong: rgba(58, 68, 79, 0.2);
+  --text-primary: #1f2429;
+  --text-secondary: #65717c;
+  --text-tertiary: #8b96a0;
+  --accent: #5c6b78;
+  --accent-soft: rgba(92, 107, 120, 0.12);
+  --accent-soft-strong: rgba(92, 107, 120, 0.18);
+  --accent-strong: #4f5f6c;
+  --success: #5d7d72;
+  --success-soft: rgba(93, 125, 114, 0.14);
+  --warning: #b28a57;
+  --warning-soft: rgba(178, 138, 87, 0.16);
+  --danger: #a55e63;
+  --danger-soft: rgba(165, 94, 99, 0.14);
+  --overlay-mask: rgba(24, 31, 39, 0.24);
+  --hover-overlay: rgba(31, 36, 41, 0.05);
+  --focus-ring: rgba(92, 107, 120, 0.16);
+  --selection-soft: rgba(92, 107, 120, 0.08);
+  --icon-muted: rgba(101, 113, 124, 0.72);
+  --code-bg: #1e2328;
+  --code-text: #d8dde2;
 
   /* 间距系统 (8px 网格) - 所有值为 4px 的倍数 */
   --spacing-0: 0px;
@@ -97,10 +97,10 @@
   --spacing-input-padding-x: 16px; /* 输入框水平内边距 */
   --spacing-input-padding-y: 12px; /* 输入框垂直内边距 */
 
-  --shadow-sm: 0 1px 2px rgba(33, 31, 27, 0.04);
-  --shadow-md: 0 2px 8px rgba(33, 31, 27, 0.06), 0 1px 2px rgba(33, 31, 27, 0.04);
-  --shadow-lg: 0 8px 24px rgba(33, 31, 27, 0.08), 0 2px 8px rgba(33, 31, 27, 0.04);
-  --shadow-xl: 0 16px 32px rgba(33, 31, 27, 0.1), 0 4px 12px rgba(33, 31, 27, 0.06);
+  --shadow-sm: 0 1px 2px rgba(31, 36, 41, 0.04);
+  --shadow-md: 0 2px 8px rgba(31, 36, 41, 0.06), 0 1px 2px rgba(31, 36, 41, 0.04);
+  --shadow-lg: 0 8px 24px rgba(31, 36, 41, 0.08), 0 2px 8px rgba(31, 36, 41, 0.04);
+  --shadow-xl: 0 16px 32px rgba(31, 36, 41, 0.1), 0 4px 12px rgba(31, 36, 41, 0.06);
 
   /* 模糊效果 */
   --blur-sm: blur(8px);
@@ -126,7 +126,6 @@
   --panel-raised: var(--surface-3);
   --panel-border: var(--line-soft);
   --panel-border-strong: var(--line-strong);
-
 }
 
 html[data-theme='light-b'] {
@@ -163,42 +162,6 @@ html[data-theme='light-b'] {
   --shadow-md: 0 2px 8px rgba(31, 36, 41, 0.06), 0 1px 2px rgba(31, 36, 41, 0.04);
   --shadow-lg: 0 8px 24px rgba(31, 36, 41, 0.08), 0 2px 8px rgba(31, 36, 41, 0.04);
   --shadow-xl: 0 16px 32px rgba(31, 36, 41, 0.1), 0 4px 12px rgba(31, 36, 41, 0.06);
-}
-
-html[data-theme='light-c'] {
-  color-scheme: light;
-  --app-bg: #f3f1ed;
-  --app-bg-muted: #ece8e1;
-  --surface-1: #faf8f4;
-  --surface-2: #f1eee8;
-  --surface-3: #ffffff;
-  --line-soft: rgba(77, 73, 66, 0.12);
-  --line-strong: rgba(77, 73, 66, 0.2);
-  --text-primary: #25231f;
-  --text-secondary: #726c64;
-  --text-tertiary: #979088;
-  --accent: #66645f;
-  --accent-soft: rgba(102, 100, 95, 0.12);
-  --accent-soft-strong: rgba(102, 100, 95, 0.18);
-  --accent-strong: #595752;
-  --success: #68766d;
-  --success-soft: rgba(104, 118, 109, 0.14);
-  --warning: #af8456;
-  --warning-soft: rgba(175, 132, 86, 0.16);
-  --danger: #a15e57;
-  --danger-soft: rgba(161, 94, 87, 0.14);
-  --overlay-mask: rgba(25, 23, 19, 0.24);
-  --hover-overlay: rgba(37, 35, 31, 0.05);
-  --focus-ring: rgba(102, 100, 95, 0.16);
-  --selection-soft: rgba(102, 100, 95, 0.08);
-  --icon-muted: rgba(114, 108, 100, 0.72);
-  --code-bg: #201f1b;
-  --code-text: #dbd6cf;
-
-  --shadow-sm: 0 1px 2px rgba(37, 35, 31, 0.04);
-  --shadow-md: 0 2px 8px rgba(37, 35, 31, 0.06), 0 1px 2px rgba(37, 35, 31, 0.04);
-  --shadow-lg: 0 8px 24px rgba(37, 35, 31, 0.08), 0 2px 8px rgba(37, 35, 31, 0.04);
-  --shadow-xl: 0 16px 32px rgba(37, 35, 31, 0.1), 0 4px 12px rgba(37, 35, 31, 0.06);
 }
 
 html[data-theme='dark'] {
@@ -304,7 +267,7 @@ body {
   background: rgba(0, 0, 0, 0.5);
 }
 
-/* ========== iOS 动画系统 ========== */
+/* ========== 应用动画系统 ========== */
 
 /* 通用动画 keyframes */
 
@@ -370,10 +333,10 @@ body {
   animation: pulse-border 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
-/* ========== iOS 图标系统 ========== */
+/* ========== 应用图标系统 ========== */
 
 /**
- * iOS 风格图标样式
+ * 统一图标样式
  * - 统一 stroke-width 为 1.5px（更接近 SF Symbols 风格）
  * - 标准尺寸: 16px (sm), 20px (md), 24px (lg)
  * - 颜色继承父元素或使用主题色
@@ -720,10 +683,10 @@ body,
 
 /* 淡入动画 - 仅使用 opacity */
 .app-fade-in {
-  animation: iosFadeIn var(--duration-normal) var(--ease-standard) forwards;
+  animation: appFadeIn var(--duration-normal) var(--ease-standard) forwards;
 }
 
-@keyframes iosFadeIn {
+@keyframes appFadeIn {
   from {
     opacity: 0;
   }
@@ -734,10 +697,10 @@ body,
 
 /* 淡出动画 - 仅使用 opacity */
 .app-fade-out {
-  animation: iosFadeOut var(--duration-normal) var(--ease-standard) forwards;
+  animation: appFadeOut var(--duration-normal) var(--ease-standard) forwards;
 }
 
-@keyframes iosFadeOut {
+@keyframes appFadeOut {
   from {
     opacity: 1;
   }
@@ -748,10 +711,10 @@ body,
 
 /* 缩放进入动画 - 仅使用 transform 和 opacity */
 .app-scale-in {
-  animation: iosScaleIn var(--duration-normal) var(--ease-standard) forwards;
+  animation: appScaleIn var(--duration-normal) var(--ease-standard) forwards;
 }
 
-@keyframes iosScaleIn {
+@keyframes appScaleIn {
   from {
     opacity: 0;
     transform: scale(0.95);
@@ -764,10 +727,10 @@ body,
 
 /* 缩放退出动画 - 仅使用 transform 和 opacity */
 .app-scale-out {
-  animation: iosScaleOut var(--duration-normal) var(--ease-standard) forwards;
+  animation: appScaleOut var(--duration-normal) var(--ease-standard) forwards;
 }
 
-@keyframes iosScaleOut {
+@keyframes appScaleOut {
   from {
     opacity: 1;
     transform: scale(1);
@@ -780,10 +743,10 @@ body,
 
 /* 滑入动画 - 仅使用 transform 和 opacity */
 .app-slide-up {
-  animation: iosSlideUp var(--duration-normal) var(--ease-standard) forwards;
+  animation: appSlideUp var(--duration-normal) var(--ease-standard) forwards;
 }
 
-@keyframes iosSlideUp {
+@keyframes appSlideUp {
   from {
     opacity: 0;
     transform: translateY(10px);
@@ -796,10 +759,10 @@ body,
 
 /* 滑出动画 - 仅使用 transform 和 opacity */
 .app-slide-down {
-  animation: iosSlideDown var(--duration-normal) var(--ease-standard) forwards;
+  animation: appSlideDown var(--duration-normal) var(--ease-standard) forwards;
 }
 
-@keyframes iosSlideDown {
+@keyframes appSlideDown {
   from {
     opacity: 1;
     transform: translateY(0);

@@ -11,9 +11,9 @@ import { useShallow } from 'zustand/shallow';
 import { useRouteStore } from '../../../store/routeStore';
 import { toast } from '../../../store/toastStore';
 import { AppModal } from '../../AppModal/AppModal';
-import { IOSCard, IOSCardContent } from '../../IOSCard';
-import { IOSButton } from '../../IOSButton';
-import { IOSInput } from '../../IOSInput';
+import { AppCard, AppCardContent } from '../../AppCard';
+import { AppButton } from '../../AppButton/AppButton';
+import { AppInput } from '../../AppInput';
 import type {
   RouteCliType,
   RouteCliProbeSample,
@@ -317,7 +317,7 @@ function ProbeSettingsModal({
           <label className="mb-1 block text-sm text-[var(--text-secondary)]">
             检测间隔（分钟）
           </label>
-          <IOSInput
+          <AppInput
             type="number"
             value={interval}
             onChange={e => setIntervalVal(Math.max(10, parseInt(e.target.value) || 60))}
@@ -325,13 +325,15 @@ function ProbeSettingsModal({
             max={1440}
             size="sm"
           />
-          <p className="mt-1 text-[10px] text-[var(--text-secondary)]">最小 10 分钟，推荐 60 分钟</p>
+          <p className="mt-1 text-[10px] text-[var(--text-secondary)]">
+            最小 10 分钟，推荐 60 分钟
+          </p>
         </div>
         <div className="flex justify-end gap-2 pt-2">
-          <IOSButton variant="secondary" size="sm" onClick={onClose}>
+          <AppButton variant="secondary" size="sm" onClick={onClose}>
             取消
-          </IOSButton>
-          <IOSButton
+          </AppButton>
+          <AppButton
             variant="primary"
             size="sm"
             onClick={() => {
@@ -340,7 +342,7 @@ function ProbeSettingsModal({
             }}
           >
             保存
-          </IOSButton>
+          </AppButton>
         </div>
       </div>
     </AppModal>
@@ -409,14 +411,14 @@ export function CliUsabilityTab() {
       <div className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-1">
           {CLI_PROBE_TIME_RANGES.map(r => (
-            <IOSButton
+            <AppButton
               key={r}
               variant={timeRange === r ? 'primary' : 'secondary'}
               size="sm"
               onClick={() => setTimeRange(r)}
             >
               {r}
-            </IOSButton>
+            </AppButton>
           ))}
         </div>
         <div className="flex items-center gap-2">
@@ -432,14 +434,14 @@ export function CliUsabilityTab() {
           >
             <Settings2 className="h-4 w-4" />
           </button>
-          <IOSButton variant="primary" size="sm" onClick={handleProbeNow} disabled={probing}>
+          <AppButton variant="primary" size="sm" onClick={handleProbeNow} disabled={probing}>
             {probing ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
             ) : (
               <Play className="w-3.5 h-3.5" />
             )}
             <span className="ml-1">立即探测</span>
-          </IOSButton>
+          </AppButton>
         </div>
       </div>
 
@@ -449,14 +451,14 @@ export function CliUsabilityTab() {
           <Loader2 className="w-6 h-6 animate-spin text-[var(--accent)]" />
         </div>
       ) : cliProbeView.length === 0 ? (
-        <IOSCard className="p-8 text-center">
+        <AppCard className="p-8 text-center">
           <p className="text-sm text-[var(--text-secondary)]">
             暂无探测数据，请先启用 CLI 探测或点击「立即探测」
           </p>
-        </IOSCard>
+        </AppCard>
       ) : (
-        <IOSCard>
-          <IOSCardContent className="p-0">
+        <AppCard>
+          <AppCardContent className="p-0">
             {/* 表头 */}
             <div className="grid grid-cols-[140px_1fr_1fr_1fr] border-b border-[var(--line-soft)]">
               <div className="bg-[var(--surface-2)] px-4 py-2.5 text-xs font-medium text-[var(--text-secondary)]">
@@ -499,8 +501,8 @@ export function CliUsabilityTab() {
                 })}
               </div>
             ))}
-          </IOSCardContent>
-        </IOSCard>
+          </AppCardContent>
+        </AppCard>
       )}
 
       <ProbeSettingsModal

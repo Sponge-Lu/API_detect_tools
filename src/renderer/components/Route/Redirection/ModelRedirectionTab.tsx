@@ -8,7 +8,7 @@ import { RefreshCw, ChevronDown, ChevronUp, Edit3, Loader2 } from 'lucide-react'
 import { useShallow } from 'zustand/shallow';
 import { useRouteStore } from '../../../store/routeStore';
 import { toast } from '../../../store/toastStore';
-import { IOSButton } from '../../IOSButton';
+import { AppButton } from '../../AppButton/AppButton';
 import { VendorIcon, getVendorLabel } from '../../../assets/vendor-icons';
 import type {
   RouteModelVendor,
@@ -109,7 +109,9 @@ function ModelMappingRow({ entry }: { entry: RouteModelRegistryEntry }) {
       </div>
 
       {/* 第二栏: 原始模型名 */}
-      <div className={`scrollbar-hide flex min-w-0 items-center gap-1 overflow-x-auto ${rowCellClass}`}>
+      <div
+        className={`scrollbar-hide flex min-w-0 items-center gap-1 overflow-x-auto ${rowCellClass}`}
+      >
         {entry.aliases.map(alias => (
           <span
             key={alias}
@@ -237,13 +239,13 @@ export function ModelRedirectionTab() {
                 {entries.length} 模型 / {availableVendors.length} 厂商
               </div>
             </div>
-            <IOSButton variant="secondary" size="sm" onClick={handleRebuild} disabled={rebuilding}>
+            <AppButton variant="secondary" size="sm" onClick={handleRebuild} disabled={rebuilding}>
               {rebuilding ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
                 <RefreshCw className="w-3.5 h-3.5" />
               )}
-            </IOSButton>
+            </AppButton>
           </div>
 
           {/* 厂商列表 */}
@@ -268,7 +270,9 @@ export function ModelRedirectionTab() {
                     vendor={vendor}
                     className={`w-4 h-4 shrink-0 ${isActive ? 'text-[var(--accent)]' : 'text-[var(--icon-muted)]'}`}
                   />
-                  <span className={`text-xs truncate ${isActive ? 'font-semibold' : 'font-medium'}`}>
+                  <span
+                    className={`text-xs truncate ${isActive ? 'font-semibold' : 'font-medium'}`}
+                  >
                     {getVendorLabel(vendor)}
                   </span>
                   <span

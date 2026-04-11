@@ -5,8 +5,9 @@
  */
 
 import { useState } from 'react';
-import { RotateCcw, AlertTriangle, Loader2 } from 'lucide-react';
-import { IOSModal } from '../IOSModal';
+import { RotateCcw, AlertTriangle } from 'lucide-react';
+import { AppButton } from '../AppButton/AppButton';
+import { AppModal } from '../AppModal/AppModal';
 import { CLI_CONFIG_PATHS } from '../../../shared/types/config-detection';
 import type { CliType } from '../../../shared/types/config-detection';
 import { toast } from '../../store/toastStore';
@@ -126,7 +127,7 @@ export function ResetCliConfigDialog({
   };
 
   return (
-    <IOSModal
+    <AppModal
       isOpen={open}
       onClose={handleClose}
       title="重置 CLI 配置"
@@ -136,7 +137,7 @@ export function ResetCliConfigDialog({
     >
       <div className="space-y-4">
         {/* 说明 */}
-        <p className="text-sm text-[var(--ios-text-secondary)]">
+        <p className="text-sm text-[var(--text-secondary)]">
           选择要重置的 CLI，将删除其本地配置文件使其恢复到未配置状态。
         </p>
 
@@ -146,29 +147,30 @@ export function ResetCliConfigDialog({
             const isSelected = selectedClis.has(cli.key);
             return (
               <button
+                type="button"
                 key={cli.key}
                 onClick={() => toggleCli(cli.key)}
                 disabled={isResetting}
                 className={`flex items-center gap-3 w-full px-4 py-3 text-left border rounded-[var(--radius-md)] transition-all duration-[var(--duration-fast)] disabled:opacity-50 disabled:cursor-not-allowed ${
                   isSelected
-                    ? 'bg-[var(--ios-red)]/10 border-[var(--ios-red)]/30'
-                    : 'bg-[var(--ios-bg-tertiary)] border-[var(--ios-separator)] hover:bg-[var(--ios-bg-secondary)]'
+                    ? 'border-[var(--danger)]/25 bg-[var(--danger-soft)]'
+                    : 'border-[var(--line-soft)] bg-[var(--surface-1)] hover:border-[var(--accent)]/30 hover:bg-[var(--surface-2)]'
                 }`}
               >
                 <div className="w-5 h-5 flex-shrink-0">
                   <img src={cli.icon} alt={cli.name} className="w-full h-full" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="font-medium text-[var(--ios-text-primary)]">{cli.name}</div>
-                  <div className="text-xs text-[var(--ios-text-tertiary)] truncate">
+                  <div className="font-medium text-[var(--text-primary)]">{cli.name}</div>
+                  <div className="text-xs text-[var(--text-tertiary)] truncate">
                     {cli.files.join(', ')}
                   </div>
                 </div>
                 <div
                   className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
                     isSelected
-                      ? 'bg-[var(--ios-red)] border-[var(--ios-red)]'
-                      : 'border-[var(--ios-separator)]'
+                      ? 'border-[var(--danger)] bg-[var(--danger)]'
+                      : 'border-[var(--line-soft)] bg-[var(--surface-3)]'
                   }`}
                 >
                   {isSelected && (
@@ -190,14 +192,14 @@ export function ResetCliConfigDialog({
 
         {/* 将要删除的文件列表 */}
         {selectedFiles.length > 0 && (
-          <div className="p-3 bg-[var(--ios-red)]/5 border border-[var(--ios-red)]/20 rounded-[var(--radius-md)]">
+          <div className="rounded-[var(--radius-md)] border border-[var(--danger)]/20 bg-[var(--danger-soft)] p-3">
             <div className="flex items-center gap-2 mb-2">
-              <AlertTriangle className="w-4 h-4 text-[var(--ios-red)]" />
-              <span className="text-xs font-medium text-[var(--ios-red)]">将要删除的文件</span>
+              <AlertTriangle className="w-4 h-4 text-[var(--danger)]" />
+              <span className="text-xs font-medium text-[var(--danger)]">将要删除的文件</span>
             </div>
             <ul className="space-y-1">
               {selectedFiles.map(file => (
-                <li key={file} className="text-xs text-[var(--ios-text-secondary)] font-mono pl-6">
+                <li key={file} className="pl-6 font-mono text-xs text-[var(--text-secondary)]">
                   {file}
                 </li>
               ))}
@@ -207,32 +209,27 @@ export function ResetCliConfigDialog({
 
         {/* 操作按钮 */}
         <div className="flex justify-end gap-3 pt-2">
-          <button
-            onClick={handleClose}
-            disabled={isResetting}
-            className="px-4 py-2 text-sm font-medium text-[var(--ios-text-secondary)] bg-[var(--ios-bg-tertiary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] hover:bg-[var(--ios-bg-secondary)] transition-colors disabled:opacity-50"
-          >
+          <AppButton type="button" variant="secondary" onClick={handleClose} disabled={isResetting}>
             取消
-          </button>
-          <button
+          </AppButton>
+          <AppButton
+            type="button"
+            variant="danger"
             onClick={handleReset}
             disabled={selectedClis.size === 0 || isResetting}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-[var(--ios-red)] rounded-[var(--radius-md)] hover:bg-[var(--ios-red)]/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            loading={isResetting}
           >
             {isResetting ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                重置中...
-              </>
+              '重置中...'
             ) : (
               <>
                 <RotateCcw className="w-4 h-4" />
                 确认重置
               </>
             )}
-          </button>
+          </AppButton>
         </div>
       </div>
-    </IOSModal>
+    </AppModal>
   );
 }

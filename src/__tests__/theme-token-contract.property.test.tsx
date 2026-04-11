@@ -76,19 +76,17 @@ describe('neutral theme token contract', () => {
   let styleElement: HTMLStyleElement;
 
   beforeEach(() => {
-    const lightA = getThemePreset('light-a');
     const lightB = getThemePreset('light-b');
-    const lightC = getThemePreset('light-c');
     const dark = getThemePreset('dark');
 
     styleElement = document.createElement('style');
     styleElement.textContent = `
       :root {
-        --app-bg: ${lightA.appBackground};
-        --surface-1: ${lightA.panelBackground};
-        --surface-3: ${lightA.panelRaised};
-        --accent: ${lightA.accentColor};
-        --accent-soft: ${lightA.softAccent};
+        --app-bg: ${lightB.appBackground};
+        --surface-1: ${lightB.panelBackground};
+        --surface-3: ${lightB.panelRaised};
+        --accent: ${lightB.accentColor};
+        --accent-soft: ${lightB.softAccent};
         --line-soft: rgba(87, 80, 70, 0.12);
         --text-primary: #2c2a27;
         --text-secondary: #6a635c;
@@ -120,22 +118,6 @@ describe('neutral theme token contract', () => {
         --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
       }
 
-      html[data-theme='light-b'] {
-        --app-bg: ${lightB.appBackground};
-        --surface-1: ${lightB.panelBackground};
-        --surface-3: ${lightB.panelRaised};
-        --accent: ${lightB.accentColor};
-        --accent-soft: ${lightB.softAccent};
-      }
-
-      html[data-theme='light-c'] {
-        --app-bg: ${lightC.appBackground};
-        --surface-1: ${lightC.panelBackground};
-        --surface-3: ${lightC.panelRaised};
-        --accent: ${lightC.accentColor};
-        --accent-soft: ${lightC.softAccent};
-      }
-
       html[data-theme='dark'] {
         --app-bg: ${dark.appBackground};
         --surface-1: ${dark.panelBackground};
@@ -156,7 +138,7 @@ describe('neutral theme token contract', () => {
   it('surfaces the correct app, surface, and accent tokens for every theme preset', () => {
     fc.assert(
       fc.property(fc.constantFrom(...themeModes), mode => {
-        if (mode === 'light-a') {
+        if (mode === DEFAULT_LIGHT_THEME) {
           delete document.documentElement.dataset.theme;
         } else {
           document.documentElement.dataset.theme = mode;
@@ -243,7 +225,9 @@ describe('AppButton theme integration contract', () => {
   it('uses neutral theme token classes across all supported button variants', () => {
     fc.assert(
       fc.property(fc.constantFrom(...buttonVariants), variant => {
-        const { container, unmount } = render(<AppButton variant={variant}>Theme Button</AppButton>);
+        const { container, unmount } = render(
+          <AppButton variant={variant}>Theme Button</AppButton>
+        );
         const button = container.querySelector('button');
 
         expect(button).not.toBeNull();

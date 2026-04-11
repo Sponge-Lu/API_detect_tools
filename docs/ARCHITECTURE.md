@@ -102,12 +102,12 @@ src/
 **原语与兼容层** (`src/renderer/components/`):
 | 对外方向 | 主要文件 | 说明 |
 |------|------|------|
-| AppButton | `AppButton/AppButton.tsx` | 中性按钮原语；`IOSButton` 目录保留兼容导出 |
-| AppInput | `IOSInput/IOSInput.tsx` | 中性输入原语；同目录继续兼容 `IOSInput` / `IOSSearchInput` |
-| AppModal | `AppModal/AppModal.tsx` | 中性弹窗原语；`IOSModal` 目录保留兼容导出 |
-| DataTable | `DataTable/DataTable.tsx` | 中性表格原语；`IOSTable` 目录保留兼容导出 |
-| Card primitive | `IOSCard/IOSCard.tsx` | 当前仍位于 legacy 目录名下的被动原语，行为保持不变 |
-| Icon primitive | `IOSIcon/IOSIcon.tsx` | 当前仍位于 legacy 目录名下的图标原语 |
+| AppButton | `AppButton/AppButton.tsx` | 中性按钮原语入口 |
+| AppInput | `AppInput/index.ts` | 中性输入原语入口 |
+| AppModal | `AppModal/AppModal.tsx` | 中性弹窗原语入口 |
+| DataTable | `DataTable/DataTable.tsx` | 中性表格原语入口 |
+| AppCard | `AppCard/index.ts` | 中性卡片原语入口 |
+| AppIcon / AppIconButton | `AppIcon/index.ts` | 中性图标原语入口 |
 
 **性能优化**:
 - GPU 加速：`transform: translateZ(0)` 与 `will-change`

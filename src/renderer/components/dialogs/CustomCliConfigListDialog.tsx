@@ -14,8 +14,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { Plus, Settings, Download, Trash2, Edit2, Globe, Loader2 } from 'lucide-react';
-import { IOSModal } from '../IOSModal';
-import { IOSButton } from '../IOSButton';
+import { AppModal } from '../AppModal/AppModal';
+import { AppButton } from '../AppButton/AppButton';
 import { useCustomCliConfigStore } from '../../store/customCliConfigStore';
 import { useDetectionStore } from '../../store/detectionStore';
 import { useConfigStore } from '../../store/configStore';
@@ -106,25 +106,23 @@ function ApplyCliPopover({
   return (
     <div
       ref={popoverRef}
-      className="fixed z-[9999] bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 py-1 min-w-[180px]"
+      className="fixed z-[9999] min-w-[180px] rounded-lg border border-[var(--line-soft)] bg-[var(--surface-1)] py-1 shadow-xl"
       style={{ top: position.top, left: position.left }}
     >
       {validCliOptions.length === 0 ? (
-        <div className="px-4 py-3 text-sm text-slate-500 dark:text-slate-400">
-          请先配置并启用 CLI
-        </div>
+        <div className="px-4 py-3 text-sm text-[var(--text-secondary)]">请先配置并启用 CLI</div>
       ) : (
         <>
           {/* 合并/覆盖模式切换 */}
-          <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-700">
-            <div className="text-xs text-slate-500 dark:text-slate-400 mb-1.5">应用模式</div>
-            <div className="flex rounded-md overflow-hidden border border-slate-200 dark:border-slate-600">
+          <div className="border-b border-[var(--line-soft)] px-3 py-2">
+            <div className="mb-1.5 text-xs text-[var(--text-secondary)]">应用模式</div>
+            <div className="flex overflow-hidden rounded-md border border-[var(--line-soft)]">
               <button
                 onClick={() => setApplyMode('merge')}
                 className={`flex-1 px-3 py-1 text-xs transition-colors ${
                   applyMode === 'merge'
-                    ? 'bg-[var(--ios-blue)] text-white'
-                    : 'bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-600'
+                    ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                    : 'bg-[var(--surface-2)] text-[var(--text-secondary)] hover:bg-[var(--surface-3)]'
                 }`}
               >
                 合并
@@ -133,8 +131,8 @@ function ApplyCliPopover({
                 onClick={() => setApplyMode('overwrite')}
                 className={`flex-1 px-3 py-1 text-xs transition-colors ${
                   applyMode === 'overwrite'
-                    ? 'bg-[var(--ios-blue)] text-white'
-                    : 'bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-600'
+                    ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                    : 'bg-[var(--surface-2)] text-[var(--text-secondary)] hover:bg-[var(--surface-3)]'
                 }`}
               >
                 覆盖
@@ -142,17 +140,17 @@ function ApplyCliPopover({
             </div>
           </div>
           {/* CLI 选择 */}
-          <div className="px-3 py-2 text-xs text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-700">
+          <div className="border-b border-[var(--line-soft)] px-3 py-2 text-xs text-[var(--text-secondary)]">
             选择要应用的 CLI
           </div>
           {validCliOptions.map(option => (
             <button
               key={option.key}
               onClick={() => onApply(option.key, applyMode)}
-              className="w-full px-4 py-2.5 flex items-center gap-3 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+              className="flex w-full items-center gap-3 px-4 py-2.5 transition-colors hover:bg-[var(--surface-2)]"
             >
               <img src={option.icon} alt={option.name} className="w-5 h-5" />
-              <span className="text-sm text-slate-700 dark:text-slate-300">{option.name}</span>
+              <span className="text-sm text-[var(--text-primary)]">{option.name}</span>
             </button>
           ))}
         </>
@@ -323,7 +321,7 @@ export function CustomCliConfigListDialog({ isOpen, onClose }: CustomCliConfigLi
 
   return (
     <>
-      <IOSModal
+      <AppModal
         isOpen={isOpen && !showEditor}
         onClose={onClose}
         title="自定义 CLI 配置"
@@ -332,24 +330,24 @@ export function CustomCliConfigListDialog({ isOpen, onClose }: CustomCliConfigLi
         contentClassName="!p-0"
         footer={
           <>
-            <IOSButton variant="tertiary" onClick={onClose}>
+            <AppButton variant="tertiary" onClick={onClose}>
               关闭
-            </IOSButton>
-            <IOSButton variant="primary" onClick={handleAdd}>
+            </AppButton>
+            <AppButton variant="primary" onClick={handleAdd}>
               <Plus className="w-4 h-4" />
               添加配置
-            </IOSButton>
+            </AppButton>
           </>
         }
       >
         <div className="px-6 py-4">
           {loading ? (
-            <div className="text-center py-8 text-[var(--ios-text-secondary)]">加载中...</div>
+            <div className="py-8 text-center text-[var(--text-secondary)]">加载中...</div>
           ) : configs.length === 0 ? (
             <div className="text-center py-8">
-              <Globe className="w-12 h-12 mx-auto mb-3 text-[var(--ios-text-tertiary)]" />
-              <p className="text-[var(--ios-text-secondary)] mb-2">暂无自定义配置</p>
-              <p className="text-sm text-[var(--ios-text-tertiary)]">
+              <Globe className="mx-auto mb-3 h-12 w-12 text-[var(--text-tertiary)]" />
+              <p className="mb-2 text-[var(--text-secondary)]">暂无自定义配置</p>
+              <p className="text-sm text-[var(--text-tertiary)]">
                 点击"添加配置"创建自定义 API 端点
               </p>
             </div>
@@ -358,18 +356,18 @@ export function CustomCliConfigListDialog({ isOpen, onClose }: CustomCliConfigLi
               {configs.map(config => (
                 <div
                   key={config.id}
-                  className="flex items-center justify-between px-3 py-1.5 rounded-lg border border-[var(--ios-separator)] bg-[var(--ios-bg-secondary)]"
+                  className="flex items-center justify-between rounded-lg border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-1.5"
                 >
                   <div className="w-[140px] shrink-0 mr-3 overflow-hidden">
                     <div className="flex items-center gap-2">
                       <span
-                        className="font-medium text-[var(--ios-text-primary)] truncate"
+                        className="truncate font-medium text-[var(--text-primary)]"
                         title={config.name}
                       >
                         {config.name || '未命名'}
                       </span>
                     </div>
-                    <div className="flex items-center gap-1 mt-0.5 text-xs text-[var(--ios-text-secondary)] truncate">
+                    <div className="mt-0.5 flex items-center gap-1 truncate text-xs text-[var(--text-secondary)]">
                       <span className="truncate max-w-[80px]" title={config.baseUrl}>
                         {formatBaseUrl(config.baseUrl)}
                       </span>
@@ -380,7 +378,7 @@ export function CustomCliConfigListDialog({ isOpen, onClose }: CustomCliConfigLi
                   <div className="flex-1 min-w-0 mr-4">
                     {config.notes && (
                       <div
-                        className="text-xs text-[var(--ios-text-tertiary)] line-clamp-2 break-all"
+                        className="line-clamp-2 break-all text-xs text-[var(--text-tertiary)]"
                         title={config.notes}
                       >
                         {config.notes}
@@ -393,8 +391,8 @@ export function CustomCliConfigListDialog({ isOpen, onClose }: CustomCliConfigLi
                       disabled={!hasValidCli(config) || isApplying}
                       className={`p-1.5 rounded-lg transition-colors ${
                         hasValidCli(config)
-                          ? 'text-[var(--ios-blue)] hover:bg-[var(--ios-blue)]/10'
-                          : 'text-[var(--ios-text-tertiary)] cursor-not-allowed'
+                          ? 'text-[var(--accent)] hover:bg-[var(--accent-soft)]'
+                          : 'cursor-not-allowed text-[var(--text-tertiary)]'
                       }`}
                       title={hasValidCli(config) ? '应用配置到 CLI' : '请先配置并启用 CLI'}
                     >
@@ -406,14 +404,14 @@ export function CustomCliConfigListDialog({ isOpen, onClose }: CustomCliConfigLi
                     </button>
                     <button
                       onClick={() => handleEdit(config)}
-                      className="p-1.5 rounded-lg text-[var(--ios-text-secondary)] hover:bg-[var(--ios-bg-tertiary)] transition-colors"
+                      className="rounded-lg p-1.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-primary)]"
                       title="编辑配置"
                     >
                       <Edit2 className="w-4 h-4" />
                     </button>
                     <button
                       onClick={() => handleDelete(config)}
-                      className="p-1.5 rounded-lg text-[var(--ios-red)] hover:bg-[var(--ios-red)]/10 transition-colors"
+                      className="rounded-lg p-1.5 text-[var(--danger)] transition-colors hover:bg-[var(--danger-soft)]"
                       title="删除配置"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -424,7 +422,7 @@ export function CustomCliConfigListDialog({ isOpen, onClose }: CustomCliConfigLi
             </div>
           )}
         </div>
-      </IOSModal>
+      </AppModal>
 
       {/* 应用 CLI 弹窗 */}
       {applyPopoverConfig && applyPopoverAnchor && (

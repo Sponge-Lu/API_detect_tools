@@ -10,7 +10,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { Check, AlertCircle, Loader2 } from 'lucide-react';
+import { AlertCircle, Loader2 } from 'lucide-react';
 import type { CliConfig, ApiKeyInfo } from '../../../shared/types/cli-config';
 import type { CliCompatibilityData } from '../../../shared/types/site';
 import {
@@ -95,7 +95,6 @@ export function ApplyConfigPopover({
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const [applyingCli, setApplyingCli] = useState<SupportedCliType | null>(null);
   const [isPositioned, setIsPositioned] = useState(false);
-  const [applyMode, setApplyMode] = useState<'merge' | 'overwrite'>('merge');
 
   // 获取 CLI 配置检测相关方法 (Requirements 6.2)
   const { clearCliConfigDetection, detectCliConfig } = useDetectionStore();
@@ -156,7 +155,7 @@ export function ApplyConfigPopover({
   const validCliTypes = filterValidCliConfigs(cliConfig);
 
   // 处理应用配置
-  const handleApply = async (cliType: SupportedCliType) => {
+  const handleApply = async (cliType: SupportedCliType, applyMode: 'merge' | 'overwrite') => {
     if (!cliConfig || applyingCli) return;
 
     const config = cliConfig[cliType];
@@ -260,67 +259,55 @@ export function ApplyConfigPopover({
   return (
     <div
       ref={popoverRef}
-      className={`fixed z-50 bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 py-1 min-w-[180px] transition-opacity duration-100 ${
+      className={`fixed z-50 min-w-[180px] rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-1)] py-1 shadow-[var(--shadow-xl)] transition-opacity duration-100 ${
         isPositioned ? 'opacity-100' : 'opacity-0'
       }`}
       style={{ top: position.top, left: position.left }}
     >
       {validCliTypes.length === 0 ? (
-        <div className="px-4 py-3 text-sm text-slate-500 dark:text-slate-400 flex items-center gap-2">
-          <AlertCircle className="w-4 h-4" />
+        <div className="flex items-center gap-2 px-4 py-3 text-sm text-[var(--text-secondary)]">
+          <AlertCircle className="h-4 w-4" />
           <span>没有可应用的配置</span>
         </div>
       ) : (
         <>
-          {/* 合并/覆盖模式切换 */}
-          <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-700">
-            <div className="text-xs text-slate-500 dark:text-slate-400 mb-1.5">应用模式</div>
-            <div className="flex rounded-md overflow-hidden border border-slate-200 dark:border-slate-600">
-              <button
-                onClick={() => setApplyMode('merge')}
-                className={`flex-1 px-3 py-1 text-xs transition-colors ${
-                  applyMode === 'merge'
-                    ? 'bg-[var(--ios-blue)] text-white'
-                    : 'bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-600'
-                }`}
-              >
-                合并
-              </button>
-              <button
-                onClick={() => setApplyMode('overwrite')}
-                className={`flex-1 px-3 py-1 text-xs transition-colors ${
-                  applyMode === 'overwrite'
-                    ? 'bg-[var(--ios-blue)] text-white'
-                    : 'bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-600'
-                }`}
-              >
-                覆盖
-              </button>
-            </div>
-          </div>
-          {/* CLI 选择 */}
-          <div className="px-3 py-2 text-xs text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-700">
-            选择要应用的 CLI 配置
+          <div className="border-b border-[var(--line-soft)] px-3 py-2 text-xs text-[var(--text-secondary)]">
+            选择要应用的 CLI 以及写入方式
           </div>
           {CLI_OPTIONS.filter(opt => validCliTypes.includes(opt.key)).map(option => {
             const isApplying = applyingCli === option.key;
             return (
-              <button
+              <div
                 key={option.key}
-                onClick={() => handleApply(option.key)}
-                disabled={applyingCli !== null}
-                className="w-full px-4 py-2.5 flex items-center gap-3 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-[var(--surface-2)]"
               >
                 <img src={option.icon} alt={option.name} className="w-5 h-5" />
-                <span className="text-sm text-slate-700 dark:text-slate-300 flex-1 text-left">
+                <span className="flex-1 text-left text-sm text-[var(--text-primary)]">
                   {option.name}
                 </span>
                 {isApplying ? (
-                  <Loader2 className="w-4 h-4 text-primary-500 animate-spin" />
+                  <Loader2 className="h-4 w-4 animate-spin text-[var(--accent)]" />
                 ) : (
-                  <Check className="w-4 h-4 text-slate-400 opacity-0 group-hover:opacity-100" />
+                  <div className="flex items-center overflow-hidden rounded-md border border-[var(--line-soft)] bg-[var(--surface-2)]">
+                    <button
+                      type="button"
+                      onClick={() => handleApply(option.key, 'merge')}
+                      disabled={applyingCli !== null}
+                      className="px-3 py-1 text-xs text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      合并
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleApply(option.key, 'overwrite')}
+                      disabled={applyingCli !== null}
+                      className="border-l border-[var(--line-soft)] px-3 py-1 text-xs text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      覆盖
+                    </button>
+                  </div>
                 )}
-              </button>
+              </div>
             );
           })}
         </>
