@@ -10,6 +10,7 @@
  */
 
 import { contextBridge, ipcRenderer } from 'electron';
+import type { ThemeMode } from '../shared/theme/themePresets';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // 原有的API
@@ -25,6 +26,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   // 主动关闭浏览器（用于添加站点后的自动刷新完成后关闭登录浏览器）
   closeBrowser: () => ipcRenderer.invoke('close-browser'),
+  closeLoginBrowser: () => ipcRenderer.invoke('close-login-browser'),
   fetchWithCookies: (url: string, options: any) =>
     ipcRenderer.invoke('fetch-with-cookies', url, options),
   detectSite: (
@@ -152,7 +154,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 主题设置 API
   theme: {
     // 保存主题设置到主进程存储（用于下次启动时设置窗口背景色）
-    save: (themeMode: 'light' | 'dark' | 'system') => ipcRenderer.invoke('theme:save', themeMode),
+    save: (themeMode: ThemeMode) => ipcRenderer.invoke('theme:save', themeMode),
     // 加载保存的主题设置
     load: () => ipcRenderer.invoke('theme:load'),
   },
@@ -222,11 +224,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('cli-compat:save-config', siteUrl, config, accountId),
     // 写入 CLI 配置文件到文件系统
     writeConfig: (params: {
-      cliType: 'claudeCode' | 'codex';
+      cliType: 'claudeCode' | 'codex' | 'geminiCli';
       files: Array<{
         path: string;
         content: string;
       }>;
+      applyMode?: 'merge' | 'overwrite';
     }) => ipcRenderer.invoke('cli-compat:write-config', params),
   },
 

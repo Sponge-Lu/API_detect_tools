@@ -146,7 +146,7 @@ describe('Property 3: URL normalization removes trailing slashes', () => {
  *
  * *For any* valid site URL, API key, and model combination, generating Claude Code
  * configuration SHALL produce:
- * - A valid JSON settings.json containing ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, and ANTHROPIC_MODEL fields
+ * - A valid JSON settings.json containing top-level model plus ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, and the three ANTHROPIC_DEFAULT_* model fields
  * - A valid JSON config.json containing primaryApiKey field
  */
 describe('Property 1: Claude Code config generation produces valid output', () => {
@@ -162,10 +162,13 @@ describe('Property 1: Claude Code config generation produces valid output', () =
 
         // Parse and validate JSON
         const settings = JSON.parse(settingsFile!.content);
+        expect(settings.model).toBe(params.model);
         expect(settings.env).toBeDefined();
         expect(settings.env.ANTHROPIC_AUTH_TOKEN).toBe(normalizeApiKey(params.apiKey));
         expect(settings.env.ANTHROPIC_BASE_URL).toBe(normalizeUrl(params.siteUrl));
-        expect(settings.env.ANTHROPIC_MODEL).toBe(params.model);
+        expect(settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe(params.model);
+        expect(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe(params.model);
+        expect(settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(params.model);
       }),
       { numRuns: 100 }
     );
@@ -331,6 +334,37 @@ describe('Property 2: Codex config generation produces valid output', () => {
 
         // Verify model is included
         expect(content).toContain(`model = "${params.model}"`);
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  it('should use multi_agent instead of the deprecated collab feature flag', () => {
+    fc.assert(
+      fc.property(configParamsArb, params => {
+        const config = generateCodexConfig(params);
+        const configFile = config.files.find(f => f.path.includes('config.toml'));
+        const content = configFile!.content;
+
+        expect(content).toContain('[features]');
+        expect(content).toContain('multi_agent = true');
+        expect(content).not.toContain('collab =');
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  it('should always use OpenAI as the Codex provider name', () => {
+    fc.assert(
+      fc.property(configParamsArb, params => {
+        const config = generateCodexConfig(params);
+
+        const configFile = config.files.find(f => f.path.includes('config.toml'));
+        const content = configFile!.content;
+
+        expect(content).toContain('model_provider = "OpenAI"');
+        expect(content).toContain('[model_providers.OpenAI]');
+        expect(content).toContain('name = "openai"');
       }),
       { numRuns: 100 }
     );

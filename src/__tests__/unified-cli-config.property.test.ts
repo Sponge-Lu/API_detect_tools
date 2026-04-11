@@ -498,7 +498,6 @@ describe('Property 7: Apply writes correct configuration files', () => {
   let generateCodexConfig: any;
   let normalizeUrl: any;
   let normalizeApiKey: any;
-  let sanitizeProviderName: any;
 
   beforeAll(async () => {
     const module = await import('../renderer/services/cli-config-generator');
@@ -506,7 +505,6 @@ describe('Property 7: Apply writes correct configuration files', () => {
     generateCodexConfig = module.generateCodexConfig;
     normalizeUrl = module.normalizeUrl;
     normalizeApiKey = module.normalizeApiKey;
-    sanitizeProviderName = module.sanitizeProviderName;
   });
 
   /**
@@ -561,9 +559,9 @@ describe('Property 7: Apply writes correct configuration files', () => {
           expect(settingsFile!.language).toBe('json');
 
           const settings = JSON.parse(settingsFile!.content);
+          expect(settings.model).toBe(model);
           expect(settings.env.ANTHROPIC_AUTH_TOKEN).toBe(normalizeApiKey(apiKey));
           expect(settings.env.ANTHROPIC_BASE_URL).toBe(normalizeUrl(siteUrl));
-          expect(settings.env.ANTHROPIC_MODEL).toBe(model);
           expect(settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe(model);
           expect(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe(model);
           expect(settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(model);
@@ -600,13 +598,13 @@ describe('Property 7: Apply writes correct configuration files', () => {
           expect(configTomlFile!.language).toBe('toml');
 
           const tomlContent = configTomlFile!.content;
-          const providerName = sanitizeProviderName(siteName);
 
           // Verify required fields in TOML
-          expect(tomlContent).toContain(`model_provider = "${providerName}"`);
+          expect(tomlContent).toContain('model_provider = "OpenAI"');
           expect(tomlContent).toContain(`model = "${model}"`);
           expect(tomlContent).toContain(`base_url = "${normalizeUrl(siteUrl)}/v1"`);
-          expect(tomlContent).toContain(`[model_providers.${providerName}]`);
+          expect(tomlContent).toContain('[model_providers.OpenAI]');
+          expect(tomlContent).toContain('name = "openai"');
 
           // Check auth.json
           const authFile = config.files.find((f: any) => f.path === '~/.codex/auth.json');

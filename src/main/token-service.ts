@@ -209,13 +209,16 @@ export class TokenService {
     baseUrl: string,
     waitForLogin: boolean = true,
     maxWaitTime: number = 600000,
-    onStatus?: (status: string) => void
+    onStatus?: (status: string) => void,
+    options?: { loginMode?: boolean }
   ): Promise<SiteAccount> {
     Logger.info('🚀 [TokenService] ========== 开始初始化站点账号 ==========');
     Logger.info('📍 [TokenService] 站点URL:', baseUrl);
     Logger.info('⏳ [TokenService] 等待登录:', waitForLogin ? '是' : '否');
 
     try {
+      const loginMode = options?.loginMode === true;
+
       // 步骤1: 从localStorage获取核心数据（支持API回退）
       Logger.info('📖 [TokenService] 步骤1: 读取用户数据（localStorage优先，API回退）...');
       onStatus?.('正在检测登录状态...');
@@ -223,7 +226,8 @@ export class TokenService {
         baseUrl,
         waitForLogin,
         maxWaitTime,
-        onStatus
+        onStatus,
+        { loginMode }
       );
 
       if (!localData.userId) {
@@ -247,7 +251,12 @@ export class TokenService {
         onStatus?.('正在创建访问令牌...');
 
         try {
-          accessToken = await this.createAccessToken(baseUrl, localData.userId);
+          accessToken = loginMode
+            ? await this.chromeManager.createAccessTokenForLogin(baseUrl, localData.userId)
+            : await this.createAccessToken(baseUrl, localData.userId);
+          if (!accessToken) {
+            throw new Error('浏览器未返回有效访问令牌');
+          }
           Logger.info('✅ [TokenService] 令牌创建成功');
         } catch (error: any) {
           // 如果创建失败，记录错误但继续（某些站点可能需要手动生成token）

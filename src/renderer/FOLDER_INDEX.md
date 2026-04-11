@@ -28,7 +28,7 @@
 | **App.tsx** | 应用根组件、路由 | `App` 组件 |
 | **main.tsx** | 前端入口 | React 应用挂载 |
 | **index.html** | HTML 模板 | 应用入口 HTML |
-| **index.css** | 全局样式 | Tailwind CSS 导入、iOS 设计系统变量、响应式布局系统 |
+| **index.css** | 全局样式 | Tailwind CSS 导入、四主题 token、响应式布局系统 |
 | **svg.d.ts** | SVG 类型定义 | SVG 导入类型 |
 
 ### 子文件夹
@@ -235,7 +235,7 @@ SiteCard (站点卡片)
 ### 1. 响应式设计
 
 - 使用 Tailwind CSS 响应式类
-- iOS 设计系统响应式变量（间距、字体大小）
+- 统一主题 token 的响应式变量（间距、字体大小）
 - 最小窗口尺寸支持（1024x768）
 - 内容溢出使用滚动而非压缩
 - 深色模式自动切换

@@ -35,14 +35,14 @@
 
 ## 界面设计
 
-### iOS 风格 UI
+### 统一产品级 UI
 
-应用采用 Apple Human Interface Guidelines 设计语言，提供现代化的视觉体验：
+应用采用统一产品级设计系统，界面视觉由共享主题 token 和中性原语驱动：
 
-- **设计系统**：完整的 iOS 设计系统，包含颜色、字体、间距、圆角、阴影、模糊效果
-- **组件库**：IOSButton、IOSCard、IOSInput、IOSModal、IOSTable 等组件
-- **图标风格**：统一 1.5px stroke-width，更接近 SF Symbols 风格
-- **主题支持**：浅色/深色模式，300ms 平滑过渡
+- **设计系统**：统一的主题 token 合约，覆盖颜色、间距、圆角、阴影、模糊与响应式尺寸
+- **组件库**：AppButton、AppInput、AppModal、DataTable 等中性原语；部分 legacy 目录名继续作为兼容别名存在
+- **图标风格**：统一 1.5px stroke-width 与尺寸层级
+- **主题支持**：`Light A / Light B / Light C / Dark` 四主题模式
 - **响应式布局**：最小支持 1024x768，响应式间距和字体
 - **无障碍性**：焦点指示器、键盘导航、ARIA 属性支持
 - **性能优化**：GPU 加速、will-change、高性能动画

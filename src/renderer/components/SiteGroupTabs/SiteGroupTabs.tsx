@@ -75,15 +75,15 @@ export function SiteGroupTabs({
   };
 
   return (
-    <div className="sticky top-0 z-10 bg-light-bg/95 dark:bg-dark-bg/95 backdrop-blur-sm py-2 -mx-4 px-4">
+    <div className="-mx-4 sticky top-0 z-10 bg-[var(--app-bg)]/95 px-4 py-2 backdrop-blur-sm">
       <div className="flex items-center gap-2 flex-wrap">
         {/* 全部标签 */}
         <button
           onClick={() => onSelectGroup(null)}
           className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
             activeGroupId === null
-              ? 'bg-primary-500 text-white shadow-md'
-              : 'bg-slate-200/50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 hover:bg-slate-300/50 dark:hover:bg-slate-600/50'
+              ? 'bg-[var(--accent)] text-white shadow-[var(--shadow-sm)]'
+              : 'bg-[var(--surface-2)] text-[var(--text-secondary)] hover:bg-[var(--surface-3)]'
           }`}
         >
           全部
@@ -106,10 +106,12 @@ export function SiteGroupTabs({
             onDragLeave={() => onSiteDragOverGroup('')}
             className={`relative flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
               activeGroupId === group.id
-                ? 'bg-primary-500 text-white shadow-md'
-                : 'bg-slate-200/50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 hover:bg-slate-300/50 dark:hover:bg-slate-600/50'
-            } ${dragOverGroupIndex === index ? 'ring-2 ring-primary-500 scale-105' : ''} ${
-              dragOverGroupId === group.id ? 'ring-2 ring-accent-500 bg-accent-500/20' : ''
+                ? 'bg-[var(--accent)] text-white shadow-[var(--shadow-sm)]'
+                : 'bg-[var(--surface-2)] text-[var(--text-secondary)] hover:bg-[var(--surface-3)]'
+            } ${dragOverGroupIndex === index ? 'scale-105 ring-2 ring-[var(--accent)]' : ''} ${
+              dragOverGroupId === group.id
+                ? 'bg-[var(--accent-soft)] ring-2 ring-[var(--accent)]'
+                : ''
             } ${editingGroupId !== group.id ? 'cursor-grab active:cursor-grabbing' : ''}`}
           >
             {editingGroupId === group.id ? (
@@ -119,7 +121,7 @@ export function SiteGroupTabs({
                   type="text"
                   value={editingName}
                   onChange={e => setEditingName(e.target.value)}
-                  className="w-20 px-1 py-0.5 text-xs bg-white dark:bg-slate-800 rounded border border-slate-300 dark:border-slate-600 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                  className="w-20 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-1 py-0.5 text-xs text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]"
                   autoFocus
                   onKeyDown={e => {
                     if (e.key === 'Enter') handleSaveEdit();
@@ -128,19 +130,23 @@ export function SiteGroupTabs({
                 />
                 <button
                   onClick={handleSaveEdit}
-                  className="p-0.5 hover:bg-green-500/20 rounded"
+                  className="rounded-[var(--radius-sm)] p-0.5 hover:bg-[var(--success-soft)]"
                   title="保存"
                   aria-label="保存分组名称"
                 >
-                  <Check className="w-3 h-3 text-green-500" strokeWidth={2} aria-hidden="true" />
+                  <Check
+                    className="h-3 w-3 text-[var(--success)]"
+                    strokeWidth={2}
+                    aria-hidden="true"
+                  />
                 </button>
                 <button
                   onClick={handleCancelEdit}
-                  className="p-0.5 hover:bg-red-500/20 rounded"
+                  className="rounded-[var(--radius-sm)] p-0.5 hover:bg-[var(--danger-soft)]"
                   title="取消"
                   aria-label="取消编辑"
                 >
-                  <X className="w-3 h-3 text-red-500" strokeWidth={2} aria-hidden="true" />
+                  <X className="h-3 w-3 text-[var(--danger)]" strokeWidth={2} aria-hidden="true" />
                 </button>
               </div>
             ) : (
@@ -156,7 +162,7 @@ export function SiteGroupTabs({
                         e.stopPropagation();
                         handleStartEdit(group);
                       }}
-                      className="p-0.5 hover:bg-white/20 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="rounded-[var(--radius-sm)] p-0.5 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[var(--hover-overlay)]"
                       title="编辑分组"
                       aria-label={`编辑分组 ${group.name}`}
                     >
@@ -167,11 +173,15 @@ export function SiteGroupTabs({
                         e.stopPropagation();
                         onDeleteGroup(group.id);
                       }}
-                      className="p-0.5 hover:bg-red-500/20 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="rounded-[var(--radius-sm)] p-0.5 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[var(--danger-soft)]"
                       title="删除分组"
                       aria-label={`删除分组 ${group.name}`}
                     >
-                      <Trash2 className="w-3 h-3 text-red-500" strokeWidth={2} aria-hidden="true" />
+                      <Trash2
+                        className="h-3 w-3 text-[var(--danger)]"
+                        strokeWidth={2}
+                        aria-hidden="true"
+                      />
                     </button>
                   </div>
                 )}
@@ -183,7 +193,7 @@ export function SiteGroupTabs({
         {/* 添加分组按钮 */}
         <button
           onClick={onAddGroup}
-          className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium bg-slate-200/30 dark:bg-slate-700/30 text-slate-500 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-700/50 transition-all border border-dashed border-slate-300 dark:border-slate-600"
+          className="flex items-center gap-1 rounded-lg border border-dashed border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-1.5 text-sm font-medium text-[var(--text-secondary)] transition-all hover:bg-[var(--surface-3)]"
           title="添加分组"
           aria-label="添加新分组"
         >

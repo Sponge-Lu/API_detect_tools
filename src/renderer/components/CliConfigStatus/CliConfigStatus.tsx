@@ -73,36 +73,36 @@ const SOURCE_TYPE_DISPLAYS: Record<ConfigSourceType, SourceTypeDisplay> = {
   managed: {
     label: '应用管理',
     shortLabel: '管理',
-    colorClass: 'text-green-600 dark:text-green-400',
-    bgClass: 'bg-green-50 dark:bg-green-900/20',
+    colorClass: 'text-[var(--success)]',
+    bgClass: 'bg-[var(--success-soft)]',
     iconOpacity: 'opacity-100',
   },
   official: {
     label: '官方 API',
     shortLabel: '官方',
-    colorClass: 'text-blue-600 dark:text-blue-400',
-    bgClass: 'bg-blue-50 dark:bg-blue-900/20',
+    colorClass: 'text-[var(--accent)]',
+    bgClass: 'bg-[var(--accent-soft)]',
     iconOpacity: 'opacity-100',
   },
   subscription: {
     label: '订阅账号',
     shortLabel: '订阅',
-    colorClass: 'text-purple-600 dark:text-purple-400',
-    bgClass: 'bg-purple-50 dark:bg-purple-900/20',
+    colorClass: 'text-[var(--warning)]',
+    bgClass: 'bg-[var(--warning-soft)]',
     iconOpacity: 'opacity-100',
   },
   other: {
     label: '其他中转站',
     shortLabel: '其他',
-    colorClass: 'text-orange-600 dark:text-orange-400',
-    bgClass: 'bg-orange-50 dark:bg-orange-900/20',
+    colorClass: 'text-[var(--danger)]',
+    bgClass: 'bg-[var(--danger-soft)]',
     iconOpacity: 'opacity-80',
   },
   unknown: {
     label: '未配置',
     shortLabel: '未配置',
-    colorClass: 'text-slate-500 dark:text-slate-400',
-    bgClass: 'bg-slate-100 dark:bg-slate-700/50',
+    colorClass: 'text-[var(--text-secondary)]',
+    bgClass: 'bg-[var(--surface-2)]',
     iconOpacity: 'opacity-40 grayscale',
   },
 };
@@ -258,20 +258,22 @@ export function CliConfigStatus({ cliType, result, compact = false }: CliConfigS
     };
 
     // 自定义配置使用特殊颜色
-    const labelColorClass = matchedCustomConfig
-      ? 'text-[var(--ios-blue)]'
-      : sourceDisplay.colorClass;
+    const labelColorClass = matchedCustomConfig ? 'text-[var(--accent)]' : sourceDisplay.colorClass;
 
     return (
-      <div className="flex items-center gap-[var(--spacing-sm)]" title={tooltipText}>
+      <div className="flex items-start gap-[var(--spacing-sm)]" title={tooltipText}>
         <div className={`${cliConfig.sizeClass} flex-shrink-0 ${sourceDisplay.iconOpacity}`}>
           <img src={cliConfig.icon} alt={cliConfig.name} className="w-full h-full" />
         </div>
-        <div className="flex items-center gap-1">
-          <span className={`text-xs font-medium ${labelColorClass}`}>{displayLabel}</span>
+        <div className="min-w-0 flex-1">
+          <span
+            className={`block text-xs font-medium leading-4 ${labelColorClass} [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden break-all`}
+          >
+            {displayLabel}
+          </span>
           {/* 对于 'other' 类型显示 Base URL（仅在未匹配自定义配置时） */}
           {showBaseUrl && (
-            <span className="text-[10px] text-slate-500 dark:text-slate-400 truncate max-w-[100px]">
+            <span className="block max-w-[100px] truncate text-[10px] text-[var(--text-secondary)]">
               {formatBaseUrl(result.baseUrl!)}
             </span>
           )}
@@ -288,10 +290,8 @@ export function CliConfigStatus({ cliType, result, compact = false }: CliConfigS
 
   // 完整模式：显示图标、状态标签和详细信息
   // 自定义配置使用特殊颜色和背景
-  const fullBgClass = matchedCustomConfig
-    ? 'bg-blue-50 dark:bg-blue-900/20'
-    : sourceDisplay.bgClass;
-  const fullColorClass = matchedCustomConfig ? 'text-[var(--ios-blue)]' : sourceDisplay.colorClass;
+  const fullBgClass = matchedCustomConfig ? 'bg-[var(--accent-soft)]' : sourceDisplay.bgClass;
+  const fullColorClass = matchedCustomConfig ? 'text-[var(--accent)]' : sourceDisplay.colorClass;
   const fullDisplayLabel = matchedCustomConfig
     ? matchedCustomConfig.name
     : result.sourceType === 'managed' && result.siteName
@@ -319,7 +319,7 @@ export function CliConfigStatus({ cliType, result, compact = false }: CliConfigS
           )}
         </div>
         {result.baseUrl && result.sourceType !== 'unknown' && !matchedCustomConfig && (
-          <span className="text-[10px] text-slate-500 dark:text-slate-400 truncate max-w-[120px]">
+          <span className="text-[10px] text-[var(--text-secondary)] truncate max-w-[120px]">
             {result.baseUrl}
           </span>
         )}

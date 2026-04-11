@@ -27,17 +27,21 @@ interface ToastProps {
 }
 
 const icons: Record<ToastType, React.ReactNode> = {
-  success: <CheckCircle className="w-5 h-5 text-green-500" strokeWidth={2} aria-hidden="true" />,
-  error: <XCircle className="w-5 h-5 text-red-500" strokeWidth={2} aria-hidden="true" />,
-  warning: <AlertTriangle className="w-5 h-5 text-yellow-500" strokeWidth={2} aria-hidden="true" />,
-  info: <Info className="w-5 h-5 text-blue-500" strokeWidth={2} aria-hidden="true" />,
+  success: (
+    <CheckCircle className="h-5 w-5 text-[var(--success)]" strokeWidth={2} aria-hidden="true" />
+  ),
+  error: <XCircle className="h-5 w-5 text-[var(--danger)]" strokeWidth={2} aria-hidden="true" />,
+  warning: (
+    <AlertTriangle className="h-5 w-5 text-[var(--warning)]" strokeWidth={2} aria-hidden="true" />
+  ),
+  info: <Info className="h-5 w-5 text-[var(--accent)]" strokeWidth={2} aria-hidden="true" />,
 };
 
 const bgColors: Record<ToastType, string> = {
-  success: 'bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-800',
-  error: 'bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800',
-  warning: 'bg-yellow-50 dark:bg-yellow-900/30 border-yellow-200 dark:border-yellow-800',
-  info: 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800',
+  success: 'bg-[var(--success-soft)] border-[var(--success)]/25',
+  error: 'bg-[var(--danger-soft)] border-[var(--danger)]/25',
+  warning: 'bg-[var(--warning-soft)] border-[var(--warning)]/25',
+  info: 'bg-[var(--accent-soft)] border-[var(--accent)]/25',
 };
 
 export function Toast({ toast, onClose }: ToastProps) {
@@ -50,17 +54,17 @@ export function Toast({ toast, onClose }: ToastProps) {
 
   return (
     <div
-      className={`flex items-center gap-3 px-4 py-3 rounded-lg border shadow-lg ${bgColors[toast.type]} animate-in slide-in-from-top-full duration-300`}
+      className={`animate-in slide-in-from-top-full flex items-center gap-3 rounded-[var(--radius-lg)] border px-4 py-3 shadow-[var(--shadow-lg)] duration-300 ${bgColors[toast.type]}`}
     >
       {icons[toast.type]}
-      <span className="text-sm text-slate-700 dark:text-slate-200 flex-1">{toast.message}</span>
+      <span className="flex-1 text-sm text-[var(--text-primary)]">{toast.message}</span>
       <button
         onClick={() => onClose(toast.id)}
         aria-label="关闭通知"
         title="关闭"
-        className="p-1 rounded hover:bg-black/10 dark:hover:bg-white/10 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+        className="rounded-[var(--radius-sm)] p-1 text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-1)]/55 hover:text-[var(--text-primary)]"
       >
-        <X className="w-4 h-4" strokeWidth={2} aria-hidden="true" />
+        <X className="h-4 w-4" strokeWidth={2} aria-hidden="true" />
       </button>
     </div>
   );

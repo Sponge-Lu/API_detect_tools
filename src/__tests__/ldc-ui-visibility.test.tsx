@@ -128,8 +128,8 @@ vi.mock('../renderer/components/Toast', () => ({
   ToastContainer: () => null,
 }));
 
-vi.mock('../renderer/components/IOSButton', () => ({
-  IOSButton: ({ children }: { children: React.ReactNode }) => <button>{children}</button>,
+vi.mock('../renderer/components/AppButton/AppButton', () => ({
+  AppButton: ({ children }: { children: React.ReactNode }) => <button>{children}</button>,
 }));
 
 vi.mock('../renderer/pages/SitesPage', () => ({

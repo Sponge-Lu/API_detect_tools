@@ -1,7 +1,7 @@
 /**
  * 输入: SiteCardActionsProps (操作回调、加载状态、展开状态、签到统计)
  * 输出: React 组件 (站点卡片操作按钮 UI)
- * 定位: 展示层 - 站点卡片操作按钮组件，包含复制、刷新、编辑、删除等操作
+ * 定位: 展示层 - 站点卡片操作按钮组件，承载主行高频动作与低频动作菜单
  *
  * 并发刷新: 使用 isDetecting (boolean) 替代 detectingSite (string) 控制按钮禁用和 spinner，
  * 支持多站点同时刷新
@@ -12,18 +12,21 @@
  * - PROJECT_INDEX.md
  */
 
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
-  ChevronDown,
-  RefreshCw,
-  CheckCircle,
-  Edit,
-  Trash2,
   Calendar,
-  Loader2,
+  CheckCircle,
+  ChevronDown,
+  Ellipsis,
   Fuel,
+  Loader2,
+  Pencil,
+  RefreshCw,
   Timer,
   TimerOff,
-  Plus,
+  Trash2,
+  UserPlus,
 } from 'lucide-react';
 import type { SiteCardActionsProps } from './types';
 
@@ -34,14 +37,13 @@ import type { SiteCardActionsProps } from './types';
  */
 function formatCheckinQuota(quota: number): string {
   const dollars = quota / 500000;
-  // 根据金额大小选择合适的小数位数
   if (dollars >= 0.01) {
     return `$${dollars.toFixed(2)}`;
-  } else if (dollars >= 0.001) {
-    return `$${dollars.toFixed(3)}`;
-  } else {
-    return `$${dollars.toFixed(4)}`;
   }
+  if (dollars >= 0.001) {
+    return `$${dollars.toFixed(3)}`;
+  }
+  return `$${dollars.toFixed(4)}`;
 }
 
 /**
@@ -59,7 +61,6 @@ function getCheckinTooltip(
     siteType?: 'veloera' | 'newapi';
   }
 ): string {
-  // 已签到状态
   if (canCheckIn === false) {
     if (checkinStats?.todayQuota !== undefined && checkinStats.todayQuota > 0) {
       const quotaStr = formatCheckinQuota(checkinStats.todayQuota);
@@ -74,7 +75,6 @@ function getCheckinTooltip(
     return '今日已签到';
   }
 
-  // 可签到状态
   if (checkinStats?.checkinCount !== undefined) {
     return `点击签到 | 本月 ${checkinStats.checkinCount} 次`;
   }
@@ -100,16 +100,129 @@ export function SiteCardActions({
   onToggleAutoRefresh,
   onAddAccount,
 }: SiteCardActionsProps) {
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<'button' | 'cursor'>('button');
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+
+  const lowFrequencyActions = useMemo(
+    () => [
+      {
+        key: 'edit',
+        label: '编辑站点',
+        destructive: false,
+        onClick: () => onEdit(index, editAccount),
+      },
+      {
+        key: 'delete',
+        label: '删除站点',
+        destructive: true,
+        onClick: () => onDelete(index),
+      },
+      ...(onAddAccount
+        ? [
+            {
+              key: 'add-account',
+              label: '添加账户',
+              destructive: false,
+              onClick: onAddAccount,
+            },
+          ]
+        : []),
+    ],
+    [editAccount, index, onAddAccount, onDelete, onEdit]
+  );
+
+  useEffect(() => {
+    if (!isMoreMenuOpen) return;
+
+    const updateMenuPosition = () => {
+      if (menuAnchor !== 'button') return;
+      const rect = moreButtonRef.current?.getBoundingClientRect();
+      if (!rect) return;
+
+      setMenuPosition({
+        top: rect.bottom + 8,
+        left: Math.max(rect.right - 180, 12),
+      });
+    };
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (
+        moreMenuRef.current &&
+        !moreMenuRef.current.contains(event.target as Node) &&
+        moreButtonRef.current &&
+        !moreButtonRef.current.contains(event.target as Node)
+      ) {
+        setIsMoreMenuOpen(false);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsMoreMenuOpen(false);
+      }
+    };
+
+    if (menuAnchor === 'button') {
+      updateMenuPosition();
+      window.addEventListener('resize', updateMenuPosition);
+      window.addEventListener('scroll', updateMenuPosition, true);
+    }
+    document.addEventListener('mousedown', handlePointerDown);
+    window.addEventListener('keydown', handleEscape);
+
+    return () => {
+      if (menuAnchor === 'button') {
+        window.removeEventListener('resize', updateMenuPosition);
+        window.removeEventListener('scroll', updateMenuPosition, true);
+      }
+      document.removeEventListener('mousedown', handlePointerDown);
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, [isMoreMenuOpen, menuAnchor]);
+
+  const openButtonMenu = () => {
+    const rect = moreButtonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    setMenuAnchor('button');
+    setMenuPosition({
+      top: rect.bottom + 8,
+      left: Math.max(rect.right - 180, 12),
+    });
+    setIsMoreMenuOpen(true);
+  };
+
+  const openCursorMenu = (clientX: number, clientY: number) => {
+    const maxLeft = Math.max(window.innerWidth - 196, 12);
+    const maxTop = Math.max(window.innerHeight - 220, 12);
+
+    setMenuAnchor('cursor');
+    setMenuPosition({
+      left: Math.max(12, Math.min(clientX, maxLeft)),
+      top: Math.max(12, Math.min(clientY, maxTop)),
+    });
+    setIsMoreMenuOpen(true);
+  };
+
   return (
-    <div className="flex items-center gap-1 ml-2 flex-shrink-0">
-      {/* 加油站按钮 - 放在签到图标前面 */}
+    <div
+      className="ml-1 flex shrink-0 items-center gap-0.5"
+      onContextMenu={event => {
+        event.preventDefault();
+        event.stopPropagation();
+        openCursorMenu(event.clientX, event.clientY);
+      }}
+    >
       {site.extra_links && (
         <button
           onClick={e => {
             e.stopPropagation();
             onOpenExtraLink(site.extra_links!);
           }}
-          className="p-1 hover:bg-purple-500/15 text-purple-700 dark:text-purple-300 rounded transition-all"
+          className="rounded-[var(--radius-sm)] p-[3px] text-[var(--warning)] transition-colors hover:bg-[var(--warning-soft)]"
           title={`打开加油站: ${site.extra_links}`}
           aria-label={`打开加油站: ${site.extra_links}`}
         >
@@ -117,15 +230,12 @@ export function SiteCardActions({
         </button>
       )}
 
-      {/* 签到按钮 - 放在加油站图标后面 */}
       {(site.force_enable_checkin || siteResult?.has_checkin) && (
         <>
-          {/* 判断缓存是否是今天的数据 */}
           {(() => {
             const isToday = siteResult?.lastRefresh
               ? new Date(siteResult.lastRefresh).toDateString() === new Date().toDateString()
               : false;
-            // 如果缓存不是今天的，忽略 can_check_in=false 状态
             const effectiveCanCheckIn = isToday
               ? siteResult?.can_check_in
               : siteResult?.can_check_in === false
@@ -134,7 +244,6 @@ export function SiteCardActions({
 
             return (
               <>
-                {/* 可签到 */}
                 {(effectiveCanCheckIn === true ||
                   effectiveCanCheckIn === undefined ||
                   (site.force_enable_checkin && effectiveCanCheckIn !== false)) && (
@@ -144,7 +253,7 @@ export function SiteCardActions({
                       onCheckIn(site);
                     }}
                     disabled={checkingIn === site.name}
-                    className="p-1 hover:bg-yellow-500/15 text-yellow-700 dark:text-yellow-300 rounded transition-all disabled:opacity-50"
+                    className="rounded-[var(--radius-sm)] p-[3px] text-[var(--warning)] transition-colors hover:bg-[var(--warning-soft)] disabled:opacity-50"
                     title={getCheckinTooltip(effectiveCanCheckIn, checkinStats)}
                     aria-label={getCheckinTooltip(effectiveCanCheckIn, checkinStats)}
                   >
@@ -156,10 +265,9 @@ export function SiteCardActions({
                   </button>
                 )}
 
-                {/* 已签到 - 仅当缓存是今天且明确为false时显示 */}
                 {effectiveCanCheckIn === false && (
                   <div
-                    className="p-1 text-gray-400 rounded"
+                    className="rounded-[var(--radius-sm)] p-[3px] text-[var(--text-tertiary)]"
                     title={getCheckinTooltip(false, checkinStats)}
                     aria-label={getCheckinTooltip(false, checkinStats)}
                   >
@@ -172,10 +280,9 @@ export function SiteCardActions({
         </>
       )}
 
-      {/* 展开/收起 */}
       <button
         onClick={() => onExpand(site.name)}
-        className="p-1 rounded-md text-light-text-secondary dark:text-dark-text-secondary hover:bg-light-border/50 dark:hover:bg-dark-border/50 transition-all"
+        className="rounded-[var(--radius-sm)] p-[3px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
         title={isExpanded ? '收起详情' : '展开详情'}
         aria-label={isExpanded ? '收起详情' : '展开详情'}
         aria-expanded={isExpanded}
@@ -186,21 +293,23 @@ export function SiteCardActions({
         />
       </button>
 
-      {/* 刷新检测 */}
       <button
         onClick={() => onDetect(site)}
         disabled={isDetecting}
-        className="p-1 rounded-md text-light-text-secondary dark:text-dark-text-secondary hover:bg-primary-500/15 hover:text-primary-500 transition-all disabled:opacity-50"
+        className="rounded-[var(--radius-sm)] p-[3px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-soft)] hover:text-[var(--accent)] disabled:opacity-50"
         title="刷新检测"
         aria-label="刷新检测"
       >
         <RefreshCw className={`w-3.5 h-3.5 ${isDetecting ? 'animate-spin' : ''}`} strokeWidth={2} />
       </button>
 
-      {/* 自动刷新开关 */}
       <button
         onClick={() => onToggleAutoRefresh?.()}
-        className={`p-1 rounded-md transition-all ${autoRefreshEnabled ? 'bg-green-500/15 text-green-500 hover:bg-green-500/25' : 'text-light-text-secondary dark:text-dark-text-secondary hover:bg-light-border/50 dark:hover:bg-dark-border/50'}`}
+        className={`rounded-[var(--radius-sm)] p-[3px] transition-colors ${
+          autoRefreshEnabled
+            ? 'bg-[var(--success-soft)] text-[var(--success)] hover:opacity-90'
+            : 'text-[var(--text-secondary)] hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]'
+        }`}
         title={autoRefreshEnabled ? '关闭自动刷新' : '开启自动刷新'}
         aria-label={autoRefreshEnabled ? '关闭自动刷新' : '开启自动刷新'}
         aria-pressed={autoRefreshEnabled}
@@ -212,40 +321,63 @@ export function SiteCardActions({
         )}
       </button>
 
-      {/* 编辑 */}
       <button
-        onClick={() => onEdit(index, editAccount)}
-        className="p-1 rounded-md text-light-text-secondary dark:text-dark-text-secondary hover:bg-light-border/50 dark:hover:bg-dark-border/50 transition-all"
-        title="编辑站点"
-        aria-label="编辑站点"
+        ref={moreButtonRef}
+        type="button"
+        onClick={event => {
+          event.stopPropagation();
+          if (isMoreMenuOpen && menuAnchor === 'button') {
+            setIsMoreMenuOpen(false);
+            return;
+          }
+          openButtonMenu();
+        }}
+        className={`rounded-[var(--radius-sm)] p-[3px] transition-colors ${
+          isMoreMenuOpen
+            ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+            : 'text-[var(--text-secondary)] hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]'
+        }`}
+        title="更多操作"
+        aria-label="更多操作"
+        aria-expanded={isMoreMenuOpen}
       >
-        <Edit className="w-3.5 h-3.5" strokeWidth={2} />
+        <Ellipsis className="w-3.5 h-3.5" strokeWidth={2} />
       </button>
 
-      {/* 删除 */}
-      <button
-        onClick={() => onDelete(index)}
-        className="p-1 rounded-md text-light-text-secondary dark:text-dark-text-secondary hover:bg-red-500/15 hover:text-red-500 transition-all"
-        title="删除站点"
-        aria-label="删除站点"
-      >
-        <Trash2 className="w-3.5 h-3.5" strokeWidth={2} />
-      </button>
-
-      {/* 添加账户 - 仅默认账户卡片显示 */}
-      {onAddAccount && (
-        <button
-          onClick={e => {
-            e.stopPropagation();
-            onAddAccount();
-          }}
-          className="p-1 rounded-md text-[var(--ios-blue)] hover:bg-[var(--ios-blue)]/15 transition-all"
-          title="添加账户"
-          aria-label="添加账户"
-        >
-          <Plus className="w-3.5 h-3.5" strokeWidth={2} />
-        </button>
-      )}
+      {isMoreMenuOpen &&
+        createPortal(
+          <div
+            ref={moreMenuRef}
+            className="fixed z-[80] min-w-[180px] rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-1)]/98 p-1.5 shadow-[var(--shadow-lg)] backdrop-blur-[14px]"
+            style={{ top: menuPosition.top, left: menuPosition.left }}
+            role="menu"
+          >
+            {lowFrequencyActions.map(action => (
+              <button
+                key={action.key}
+                type="button"
+                onClick={event => {
+                  event.stopPropagation();
+                  action.onClick();
+                  setIsMoreMenuOpen(false);
+                }}
+                className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-[13px] transition-colors ${
+                  action.destructive
+                    ? 'text-[var(--danger)] hover:bg-[var(--danger-soft)]'
+                    : 'text-[var(--text-secondary)] hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                {action.key === 'edit' && <Pencil className="w-3.5 h-3.5" strokeWidth={2} />}
+                {action.key === 'delete' && <Trash2 className="w-3.5 h-3.5" strokeWidth={2} />}
+                {action.key === 'add-account' && (
+                  <UserPlus className="w-3.5 h-3.5" strokeWidth={2} />
+                )}
+                <span>{action.label}</span>
+              </button>
+            ))}
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

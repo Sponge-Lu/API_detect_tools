@@ -1,9 +1,9 @@
 /**
  * @file src/renderer/index.css
- * @description 全局样式和 iOS 设计系统变量
+ * @description 全局样式与统一主题 token
  * 
  * 包含:
- * - iOS 设计系统 CSS 变量（颜色、字体、间距、圆角、阴影、模糊）
+ * - 统一主题 CSS 变量（颜色、字体、间距、圆角、阴影、模糊）
  * - 浅色/深色模式主题变量
  * - 主题切换过渡系统（300ms 平滑过渡）
  * - 全局样式和动画
@@ -13,7 +13,7 @@
  * - 性能优化系统（GPU 加速、will-change、高性能动画）
  * 
  * @version 2.1.13
- * @updated 2025-01-09 - iOS 原生风格优化：更微妙的分隔线颜色和更柔和的阴影
+ * @updated 2026-04-02 - 更新为统一主题 token 说明
  */
 
 @tailwind base;
@@ -21,38 +21,49 @@
 @tailwind utilities;
 
 :root {
-  /* iOS 字体系统 - SF Pro 回退链 */
-  font-family:
-    -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif;
+  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI', system-ui, sans-serif;
   line-height: 1.5;
   font-weight: 400;
+  color-scheme: light;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  /* ========== iOS 设计系统 - 浅色模式 ========== */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
 
-  /* 背景颜色 */
-  --ios-bg-primary: #f2f2f7;
-  --ios-bg-secondary: #ffffff;
-  --ios-bg-tertiary: #ffffff;
-
-  /* 文字颜色 */
-  --ios-text-primary: #000000;
-  --ios-text-secondary: rgba(60, 60, 67, 0.6);
-  --ios-text-tertiary: rgba(60, 60, 67, 0.3);
-
-  /* 主题色 */
-  --ios-blue: #007aff;
-  --ios-green: #34c759;
-  --ios-red: #ff3b30;
-  --ios-orange: #ff9500;
-  --ios-gray: #8e8e93;
-
-  /* 分隔线 - iOS 原生风格，更微妙 */
-  --ios-separator: rgba(60, 60, 67, 0.12);
+  --app-bg: #eef2f5;
+  --app-bg-muted: #e6ebf0;
+  --surface-1: #f7f9fb;
+  --surface-2: #edf2f6;
+  --surface-3: #ffffff;
+  --line-soft: rgba(58, 68, 79, 0.12);
+  --line-strong: rgba(58, 68, 79, 0.2);
+  --text-primary: #1f2429;
+  --text-secondary: #65717c;
+  --text-tertiary: #8b96a0;
+  --accent: #5c6b78;
+  --accent-soft: rgba(92, 107, 120, 0.12);
+  --accent-soft-strong: rgba(92, 107, 120, 0.18);
+  --accent-strong: #4f5f6c;
+  --success: #5d7d72;
+  --success-soft: rgba(93, 125, 114, 0.14);
+  --warning: #b28a57;
+  --warning-soft: rgba(178, 138, 87, 0.16);
+  --danger: #a55e63;
+  --danger-soft: rgba(165, 94, 99, 0.14);
+  --overlay-mask: rgba(24, 31, 39, 0.24);
+  --hover-overlay: rgba(31, 36, 41, 0.05);
+  --focus-ring: rgba(92, 107, 120, 0.16);
+  --selection-soft: rgba(92, 107, 120, 0.08);
+  --icon-muted: rgba(101, 113, 124, 0.72);
+  --code-bg: #1e2328;
+  --code-text: #d8dde2;
 
   /* 间距系统 (8px 网格) - 所有值为 4px 的倍数 */
   --spacing-0: 0px;
@@ -86,18 +97,10 @@
   --spacing-input-padding-x: 16px; /* 输入框水平内边距 */
   --spacing-input-padding-y: 12px; /* 输入框垂直内边距 */
 
-  /* 圆角系统 */
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 20px;
-  --radius-full: 9999px;
-
-  /* 阴影系统 - 浅色模式，iOS 原生风格，更柔和 */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04);
-  --shadow-xl: 0 16px 32px rgba(0, 0, 0, 0.1), 0 4px 12px rgba(0, 0, 0, 0.06);
+  --shadow-sm: 0 1px 2px rgba(31, 36, 41, 0.04);
+  --shadow-md: 0 2px 8px rgba(31, 36, 41, 0.06), 0 1px 2px rgba(31, 36, 41, 0.04);
+  --shadow-lg: 0 8px 24px rgba(31, 36, 41, 0.08), 0 2px 8px rgba(31, 36, 41, 0.04);
+  --shadow-xl: 0 16px 32px rgba(31, 36, 41, 0.1), 0 4px 12px rgba(31, 36, 41, 0.06);
 
   /* 模糊效果 */
   --blur-sm: blur(8px);
@@ -110,52 +113,91 @@
   --duration-normal: 300ms;
   --duration-slow: 400ms;
 
-  /* iOS 缓动函数 */
-  --ease-ios: cubic-bezier(0.4, 0, 0.2, 1);
-  --ease-ios-in: cubic-bezier(0.4, 0, 1, 1);
-  --ease-ios-out: cubic-bezier(0, 0, 0.2, 1);
+  /* 缓动函数 */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-enter: cubic-bezier(0.4, 0, 1, 1);
+  --ease-exit: cubic-bezier(0, 0, 0.2, 1);
   --ease-spring: cubic-bezier(0.175, 0.885, 0.32, 1.275);
 
-  /* 旧变量（向后兼容） */
-  --bg-primary: #fafbfc;
-  --bg-secondary: #f8fafc;
-  --text-primary: #1e293b;
-  --text-secondary: #64748b;
+  /* 兼容旧语义变量 */
+  --bg-primary: var(--app-bg);
+  --bg-secondary: var(--surface-1);
+  --panel-bg: var(--surface-1);
+  --panel-raised: var(--surface-3);
+  --panel-border: var(--line-soft);
+  --panel-border-strong: var(--line-strong);
 }
 
-/* ========== iOS 设计系统 - 深色模式 ========== */
-.dark {
-  /* 背景颜色 */
-  --ios-bg-primary: #000000;
-  --ios-bg-secondary: #1c1c1e;
-  --ios-bg-tertiary: #2c2c2e;
+html[data-theme='light-b'] {
+  color-scheme: light;
+  --app-bg: #eef2f5;
+  --app-bg-muted: #e6ebf0;
+  --surface-1: #f7f9fb;
+  --surface-2: #edf2f6;
+  --surface-3: #ffffff;
+  --line-soft: rgba(58, 68, 79, 0.12);
+  --line-strong: rgba(58, 68, 79, 0.2);
+  --text-primary: #1f2429;
+  --text-secondary: #65717c;
+  --text-tertiary: #8b96a0;
+  --accent: #5c6b78;
+  --accent-soft: rgba(92, 107, 120, 0.12);
+  --accent-soft-strong: rgba(92, 107, 120, 0.18);
+  --accent-strong: #4f5f6c;
+  --success: #5d7d72;
+  --success-soft: rgba(93, 125, 114, 0.14);
+  --warning: #b28a57;
+  --warning-soft: rgba(178, 138, 87, 0.16);
+  --danger: #a55e63;
+  --danger-soft: rgba(165, 94, 99, 0.14);
+  --overlay-mask: rgba(24, 31, 39, 0.24);
+  --hover-overlay: rgba(31, 36, 41, 0.05);
+  --focus-ring: rgba(92, 107, 120, 0.16);
+  --selection-soft: rgba(92, 107, 120, 0.08);
+  --icon-muted: rgba(101, 113, 124, 0.72);
+  --code-bg: #1e2328;
+  --code-text: #d8dde2;
 
-  /* 文字颜色 */
-  --ios-text-primary: #ffffff;
-  --ios-text-secondary: rgba(235, 235, 245, 0.6);
-  --ios-text-tertiary: rgba(235, 235, 245, 0.3);
+  --shadow-sm: 0 1px 2px rgba(31, 36, 41, 0.04);
+  --shadow-md: 0 2px 8px rgba(31, 36, 41, 0.06), 0 1px 2px rgba(31, 36, 41, 0.04);
+  --shadow-lg: 0 8px 24px rgba(31, 36, 41, 0.08), 0 2px 8px rgba(31, 36, 41, 0.04);
+  --shadow-xl: 0 16px 32px rgba(31, 36, 41, 0.1), 0 4px 12px rgba(31, 36, 41, 0.06);
+}
 
-  /* 主题色 */
-  --ios-blue: #0a84ff;
-  --ios-green: #30d158;
-  --ios-red: #ff453a;
-  --ios-orange: #ff9f0a;
-  --ios-gray: #8e8e93;
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --app-bg: #17181b;
+  --app-bg-muted: #1d1f23;
+  --surface-1: #1d1f23;
+  --surface-2: #252830;
+  --surface-3: #2b2f37;
+  --line-soft: rgba(142, 161, 173, 0.18);
+  --line-strong: rgba(142, 161, 173, 0.28);
+  --text-primary: #f3f5f7;
+  --text-secondary: #aab4bc;
+  --text-tertiary: #7f8a93;
+  --accent: #8ea1ad;
+  --accent-soft: rgba(142, 161, 173, 0.18);
+  --accent-soft-strong: rgba(142, 161, 173, 0.24);
+  --accent-strong: #a4b4be;
+  --success: #87a597;
+  --success-soft: rgba(135, 165, 151, 0.18);
+  --warning: #d1a16d;
+  --warning-soft: rgba(209, 161, 109, 0.2);
+  --danger: #d27a72;
+  --danger-soft: rgba(210, 122, 114, 0.18);
+  --overlay-mask: rgba(5, 7, 10, 0.42);
+  --hover-overlay: rgba(255, 255, 255, 0.08);
+  --focus-ring: rgba(142, 161, 173, 0.24);
+  --selection-soft: rgba(142, 161, 173, 0.12);
+  --icon-muted: rgba(170, 180, 188, 0.72);
+  --code-bg: #101317;
+  --code-text: #dde4ea;
 
-  /* 分隔线 - iOS 原生风格，更微妙 */
-  --ios-separator: rgba(84, 84, 88, 0.35);
-
-  /* 阴影系统 - 深色模式，iOS 原生风格，稍微明显但仍然柔和 */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
-  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.25), 0 1px 2px rgba(0, 0, 0, 0.15);
-  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.2);
-  --shadow-xl: 0 16px 32px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.25);
-
-  /* 旧变量（向后兼容） */
-  --bg-primary: #0f172a;
-  --bg-secondary: #1e293b;
-  --text-primary: #f1f5f9;
-  --text-secondary: #94a3b8;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.18);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.34), 0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-xl: 0 16px 32px rgba(0, 0, 0, 0.42), 0 4px 12px rgba(0, 0, 0, 0.24);
 }
 
 body {
@@ -164,7 +206,7 @@ body {
   place-items: center;
   min-width: 320px;
   min-height: 100vh;
-  background: var(--bg-primary);
+  background: var(--app-bg, var(--bg-primary));
   color: var(--text-primary);
   overflow: hidden; /* 防止 body 出现滚动条 */
 }
@@ -184,76 +226,6 @@ body {
   width: 100%;
   height: 100vh;
   overflow: hidden; /* 防止 #root 出现滚动条，滚动由内部容器控制 */
-}
-
-/* 浅色模式装饰背景 - 减弱效果，更接近 iOS 纯净风格 */
-.light-bg-decoration {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  overflow: hidden;
-}
-
-.light-bg-decoration::before {
-  content: '';
-  position: absolute;
-  top: -10%;
-  left: -10%;
-  width: 500px;
-  height: 500px;
-  background: radial-gradient(circle, rgba(16, 185, 129, 0.05) 0%, transparent 70%);
-  filter: blur(150px);
-  animation: float 20s ease-in-out infinite;
-  opacity: 0.3;
-}
-
-.light-bg-decoration::after {
-  content: '';
-  position: absolute;
-  bottom: -10%;
-  right: -10%;
-  width: 600px;
-  height: 600px;
-  background: radial-gradient(circle, rgba(249, 115, 22, 0.04) 0%, transparent 70%);
-  filter: blur(180px);
-  animation: float 25s ease-in-out infinite reverse;
-  opacity: 0.3;
-}
-
-/* 深色模式装饰背景 - 减弱效果 */
-.dark .dark-bg-decoration {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  overflow: hidden;
-}
-
-.dark .dark-bg-decoration::before {
-  content: '';
-  position: absolute;
-  top: -10%;
-  left: -10%;
-  width: 500px;
-  height: 500px;
-  background: radial-gradient(circle, rgba(16, 185, 129, 0.03) 0%, transparent 70%);
-  filter: blur(150px);
-  animation: float 20s ease-in-out infinite;
-  opacity: 0.3;
-}
-
-.dark .dark-bg-decoration::after {
-  content: '';
-  position: absolute;
-  bottom: -10%;
-  right: -10%;
-  width: 600px;
-  height: 600px;
-  background: radial-gradient(circle, rgba(139, 92, 246, 0.02) 0%, transparent 70%);
-  filter: blur(180px);
-  animation: float 25s ease-in-out infinite reverse;
-  opacity: 0.3;
 }
 
 @keyframes float {
@@ -295,7 +267,7 @@ body {
   background: rgba(0, 0, 0, 0.5);
 }
 
-/* ========== iOS 动画系统 ========== */
+/* ========== 应用动画系统 ========== */
 
 /* 通用动画 keyframes */
 
@@ -361,61 +333,61 @@ body {
   animation: pulse-border 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
-/* ========== iOS 图标系统 ========== */
+/* ========== 应用图标系统 ========== */
 
 /**
- * iOS 风格图标样式
+ * 统一图标样式
  * - 统一 stroke-width 为 1.5px（更接近 SF Symbols 风格）
  * - 标准尺寸: 16px (sm), 20px (md), 24px (lg)
  * - 颜色继承父元素或使用主题色
  */
 
 /* 基础图标样式 */
-.ios-icon {
+.app-icon {
   stroke-width: 1.5px;
   color: currentColor;
   flex-shrink: 0;
 }
 
 /* 图标尺寸 */
-.ios-icon-sm {
+.app-icon-sm {
   width: 16px;
   height: 16px;
 }
 
-.ios-icon-md {
+.app-icon-md {
   width: 20px;
   height: 20px;
 }
 
-.ios-icon-lg {
+.app-icon-lg {
   width: 24px;
   height: 24px;
 }
 
 /* 图标颜色变体 */
-.ios-icon-primary {
-  color: var(--ios-blue);
+.app-icon-primary {
+  color: var(--accent);
 }
 
-.ios-icon-success {
-  color: var(--ios-green);
+.app-icon-success {
+  color: var(--success);
 }
 
-.ios-icon-error {
-  color: var(--ios-red);
+.app-icon-error {
+  color: var(--danger);
 }
 
-.ios-icon-warning {
-  color: var(--ios-orange);
+.app-icon-warning {
+  color: var(--warning);
 }
 
-.ios-icon-muted {
-  color: var(--ios-gray);
+.app-icon-muted {
+  color: var(--icon-muted);
 }
 
 /* 图标按钮样式 */
-.ios-icon-button {
+.app-icon-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -425,28 +397,24 @@ body {
   border: none;
   cursor: pointer;
   transition:
-    background-color var(--duration-fast) var(--ease-ios),
-    transform var(--duration-fast) var(--ease-ios);
+    background-color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
 }
 
-.ios-icon-button:hover {
-  background: rgba(0, 0, 0, 0.05);
+.app-icon-button:hover {
+  background: var(--hover-overlay);
 }
 
-.dark .ios-icon-button:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.ios-icon-button:active {
+.app-icon-button:active {
   transform: scale(0.95);
 }
 
-.ios-icon-button:disabled {
+.app-icon-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.ios-icon-button:disabled:active {
+.app-icon-button:disabled:active {
   transform: none;
 }
 
@@ -539,125 +507,125 @@ body,
 }
 
 /* 内容溢出处理 - 使用滚动而非压缩 */
-.ios-overflow-container {
+.app-overflow-container {
   overflow: auto;
   min-width: 0;
   min-height: 0;
 }
 
 /* 水平滚动容器 */
-.ios-scroll-x {
+.app-scroll-x {
   overflow-x: auto;
   overflow-y: hidden;
 }
 
 /* 垂直滚动容器 */
-.ios-scroll-y {
+.app-scroll-y {
   overflow-x: hidden;
   overflow-y: auto;
 }
 
 /* 双向滚动容器 */
-.ios-scroll-both {
+.app-scroll-both {
   overflow: auto;
 }
 
 /* 防止内容被压缩 - 保持最小宽度 */
-.ios-no-shrink {
+.app-no-shrink {
   flex-shrink: 0;
   min-width: max-content;
 }
 
 /* 响应式容器 - 自动处理溢出 */
-.ios-responsive-container {
+.app-responsive-container {
   width: 100%;
   min-width: 1024px;
   /* 不设置 overflow，让具体元素自己控制 */
 }
 
 /* 响应式卡片网格 */
-.ios-responsive-grid {
+.app-responsive-grid {
   display: grid;
   gap: var(--responsive-spacing-lg);
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
 }
 
 /* 响应式表格容器 */
-.ios-responsive-table {
+.app-responsive-table {
   width: 100%;
   min-width: 1024px;
   overflow-x: auto;
 }
 
 /* 响应式文本 - 防止换行导致布局问题 */
-.ios-text-nowrap {
+.app-text-nowrap {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 /* 响应式文本 - 允许换行但保持最小宽度 */
-.ios-text-wrap {
+.app-text-wrap {
   word-wrap: break-word;
   overflow-wrap: break-word;
   min-width: 0;
 }
 
 /* 响应式间距工具类 */
-.ios-p-responsive {
+.app-p-responsive {
   padding: var(--responsive-spacing-lg);
 }
 
-.ios-px-responsive {
+.app-px-responsive {
   padding-left: var(--responsive-spacing-lg);
   padding-right: var(--responsive-spacing-lg);
 }
 
-.ios-py-responsive {
+.app-py-responsive {
   padding-top: var(--responsive-spacing-lg);
   padding-bottom: var(--responsive-spacing-lg);
 }
 
-.ios-m-responsive {
+.app-m-responsive {
   margin: var(--responsive-spacing-lg);
 }
 
-.ios-mx-responsive {
+.app-mx-responsive {
   margin-left: var(--responsive-spacing-lg);
   margin-right: var(--responsive-spacing-lg);
 }
 
-.ios-my-responsive {
+.app-my-responsive {
   margin-top: var(--responsive-spacing-lg);
   margin-bottom: var(--responsive-spacing-lg);
 }
 
-.ios-gap-responsive {
+.app-gap-responsive {
   gap: var(--responsive-spacing-lg);
 }
 
 /* 响应式字体工具类 */
-.ios-text-responsive-xs {
+.app-text-responsive-xs {
   font-size: var(--responsive-font-xs);
 }
 
-.ios-text-responsive-sm {
+.app-text-responsive-sm {
   font-size: var(--responsive-font-sm);
 }
 
-.ios-text-responsive-base {
+.app-text-responsive-base {
   font-size: var(--responsive-font-base);
 }
 
-.ios-text-responsive-lg {
+.app-text-responsive-lg {
   font-size: var(--responsive-font-lg);
 }
 
-.ios-text-responsive-xl {
+.app-text-responsive-xl {
   font-size: var(--responsive-font-xl);
 }
 
-.ios-text-responsive-2xl {
+.app-text-responsive-2xl {
   font-size: var(--responsive-font-2xl);
 }
 
@@ -685,21 +653,21 @@ body,
  */
 
 /* 毛玻璃效果 GPU 加速 */
-.ios-blur-optimized {
+.app-blur-optimized {
   will-change: backdrop-filter;
   transform: translateZ(0);
   backface-visibility: hidden;
 }
 
 /* 动画元素 GPU 加速 */
-.ios-animate-optimized {
+.app-animate-optimized {
   will-change: transform, opacity;
   transform: translateZ(0);
   backface-visibility: hidden;
 }
 
 /* 滚动容器 GPU 加速 */
-.ios-scroll-optimized {
+.app-scroll-optimized {
   will-change: scroll-position;
   transform: translateZ(0);
   -webkit-overflow-scrolling: touch;
@@ -714,11 +682,11 @@ body,
  */
 
 /* 淡入动画 - 仅使用 opacity */
-.ios-fade-in {
-  animation: iosFadeIn var(--duration-normal) var(--ease-ios) forwards;
+.app-fade-in {
+  animation: appFadeIn var(--duration-normal) var(--ease-standard) forwards;
 }
 
-@keyframes iosFadeIn {
+@keyframes appFadeIn {
   from {
     opacity: 0;
   }
@@ -728,11 +696,11 @@ body,
 }
 
 /* 淡出动画 - 仅使用 opacity */
-.ios-fade-out {
-  animation: iosFadeOut var(--duration-normal) var(--ease-ios) forwards;
+.app-fade-out {
+  animation: appFadeOut var(--duration-normal) var(--ease-standard) forwards;
 }
 
-@keyframes iosFadeOut {
+@keyframes appFadeOut {
   from {
     opacity: 1;
   }
@@ -742,11 +710,11 @@ body,
 }
 
 /* 缩放进入动画 - 仅使用 transform 和 opacity */
-.ios-scale-in {
-  animation: iosScaleIn var(--duration-normal) var(--ease-ios) forwards;
+.app-scale-in {
+  animation: appScaleIn var(--duration-normal) var(--ease-standard) forwards;
 }
 
-@keyframes iosScaleIn {
+@keyframes appScaleIn {
   from {
     opacity: 0;
     transform: scale(0.95);
@@ -758,11 +726,11 @@ body,
 }
 
 /* 缩放退出动画 - 仅使用 transform 和 opacity */
-.ios-scale-out {
-  animation: iosScaleOut var(--duration-normal) var(--ease-ios) forwards;
+.app-scale-out {
+  animation: appScaleOut var(--duration-normal) var(--ease-standard) forwards;
 }
 
-@keyframes iosScaleOut {
+@keyframes appScaleOut {
   from {
     opacity: 1;
     transform: scale(1);
@@ -774,11 +742,11 @@ body,
 }
 
 /* 滑入动画 - 仅使用 transform 和 opacity */
-.ios-slide-up {
-  animation: iosSlideUp var(--duration-normal) var(--ease-ios) forwards;
+.app-slide-up {
+  animation: appSlideUp var(--duration-normal) var(--ease-standard) forwards;
 }
 
-@keyframes iosSlideUp {
+@keyframes appSlideUp {
   from {
     opacity: 0;
     transform: translateY(10px);
@@ -790,11 +758,11 @@ body,
 }
 
 /* 滑出动画 - 仅使用 transform 和 opacity */
-.ios-slide-down {
-  animation: iosSlideDown var(--duration-normal) var(--ease-ios) forwards;
+.app-slide-down {
+  animation: appSlideDown var(--duration-normal) var(--ease-standard) forwards;
 }
 
-@keyframes iosSlideDown {
+@keyframes appSlideDown {
   from {
     opacity: 1;
     transform: translateY(0);
@@ -806,20 +774,20 @@ body,
 }
 
 /* 按钮按下动画 - 仅使用 transform */
-.ios-press {
-  transition: transform var(--duration-fast) var(--ease-ios);
+.app-press {
+  transition: transform var(--duration-fast) var(--ease-standard);
 }
 
-.ios-press:active {
+.app-press:active {
   transform: scale(0.97);
 }
 
 /* 悬停提升动画 - 仅使用 transform */
-.ios-hover-lift {
-  transition: transform var(--duration-fast) var(--ease-ios);
+.app-hover-lift {
+  transition: transform var(--duration-fast) var(--ease-standard);
 }
 
-.ios-hover-lift:hover {
+.app-hover-lift:hover {
   transform: translateY(-2px);
 }
 
@@ -831,24 +799,24 @@ body,
  */
 
 /* 基础高性能过渡 */
-.ios-transition-perf {
+.app-transition-perf {
   transition-property: transform, opacity;
   transition-duration: var(--duration-normal);
-  transition-timing-function: var(--ease-ios);
+  transition-timing-function: var(--ease-standard);
 }
 
 /* 快速高性能过渡 */
-.ios-transition-perf-fast {
+.app-transition-perf-fast {
   transition-property: transform, opacity;
   transition-duration: var(--duration-fast);
-  transition-timing-function: var(--ease-ios);
+  transition-timing-function: var(--ease-standard);
 }
 
 /* 慢速高性能过渡 */
-.ios-transition-perf-slow {
+.app-transition-perf-slow {
   transition-property: transform, opacity;
   transition-duration: var(--duration-slow);
-  transition-timing-function: var(--ease-ios);
+  transition-timing-function: var(--ease-standard);
 }
 
 /* ========== 毛玻璃效果优化 ========== */
@@ -859,7 +827,7 @@ body,
  */
 
 /* 轻度模糊 - 性能优化版 */
-.ios-blur-sm-optimized {
+.app-blur-sm-optimized {
   backdrop-filter: var(--blur-sm);
   -webkit-backdrop-filter: var(--blur-sm);
   will-change: backdrop-filter;
@@ -867,7 +835,7 @@ body,
 }
 
 /* 中度模糊 - 性能优化版 */
-.ios-blur-md-optimized {
+.app-blur-md-optimized {
   backdrop-filter: var(--blur-md);
   -webkit-backdrop-filter: var(--blur-md);
   will-change: backdrop-filter;
@@ -875,7 +843,7 @@ body,
 }
 
 /* 重度模糊 - 性能优化版 */
-.ios-blur-lg-optimized {
+.app-blur-lg-optimized {
   backdrop-filter: var(--blur-lg);
   -webkit-backdrop-filter: var(--blur-lg);
   will-change: backdrop-filter;
@@ -883,7 +851,7 @@ body,
 }
 
 /* 超重度模糊 - 性能优化版 */
-.ios-blur-xl-optimized {
+.app-blur-xl-optimized {
   backdrop-filter: var(--blur-xl);
   -webkit-backdrop-filter: var(--blur-xl);
   will-change: backdrop-filter;
@@ -900,18 +868,18 @@ body,
  */
 
 /* 关键内容 - 立即渲染 */
-.ios-critical {
+.app-critical {
   content-visibility: visible;
 }
 
 /* 非关键内容 - 延迟渲染 */
-.ios-lazy {
+.app-lazy {
   content-visibility: auto;
   contain-intrinsic-size: auto 300px;
 }
 
 /* 首屏动画延迟 - 等待首屏渲染完成 */
-.ios-animate-delay-fcp {
+.app-animate-delay-fcp {
   animation-delay: 100ms;
 }
 
@@ -939,28 +907,28 @@ body,
  * 当检测到性能问题时，可以添加 .reduce-effects 类到 html 元素
  */
 
-.reduce-effects .ios-blur-sm-optimized,
-.reduce-effects .ios-blur-md-optimized,
-.reduce-effects .ios-blur-lg-optimized,
-.reduce-effects .ios-blur-xl-optimized {
+.reduce-effects .app-blur-sm-optimized,
+.reduce-effects .app-blur-md-optimized,
+.reduce-effects .app-blur-lg-optimized,
+.reduce-effects .app-blur-xl-optimized {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  background-color: var(--ios-bg-secondary);
+  background-color: var(--surface-1);
 }
 
-.reduce-effects .ios-animate-optimized,
-.reduce-effects .ios-fade-in,
-.reduce-effects .ios-fade-out,
-.reduce-effects .ios-scale-in,
-.reduce-effects .ios-scale-out,
-.reduce-effects .ios-slide-up,
-.reduce-effects .ios-slide-down {
+.reduce-effects .app-animate-optimized,
+.reduce-effects .app-fade-in,
+.reduce-effects .app-fade-out,
+.reduce-effects .app-scale-in,
+.reduce-effects .app-scale-out,
+.reduce-effects .app-slide-up,
+.reduce-effects .app-slide-down {
   animation: none;
   opacity: 1;
   transform: none;
 }
 
-.reduce-effects .ios-hover-lift:hover {
+.reduce-effects .app-hover-lift:hover {
   transform: none;
 }
 
@@ -996,33 +964,22 @@ body,
 
 /* 键盘焦点样式 - 仅在键盘导航时显示 */
 :focus-visible {
-  outline: 2px solid var(--ios-blue);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
 /* 浅色模式焦点样式 */
 :root :focus-visible {
-  outline-color: var(--ios-blue);
-  box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.2);
-}
-
-/* 深色模式焦点样式 */
-.dark :focus-visible {
-  outline-color: var(--ios-blue);
-  box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.3);
+  outline-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--focus-ring);
 }
 
 /* 按钮焦点样式 */
 button:focus-visible,
 [role='button']:focus-visible {
-  outline: 2px solid var(--ios-blue);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
-  box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.2);
-}
-
-.dark button:focus-visible,
-.dark [role='button']:focus-visible {
-  box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.3);
+  box-shadow: 0 0 0 4px var(--focus-ring);
 }
 
 /* 输入框焦点样式 */
@@ -1030,56 +987,39 @@ input:focus-visible,
 textarea:focus-visible,
 select:focus-visible,
 [contenteditable='true']:focus-visible {
-  outline: 2px solid var(--ios-blue);
+  outline: 2px solid var(--accent);
   outline-offset: 0;
   box-shadow:
-    0 0 0 4px rgba(0, 122, 255, 0.1),
+    0 0 0 4px var(--focus-ring),
     inset 0 1px 2px rgba(0, 0, 0, 0.05);
-}
-
-.dark input:focus-visible,
-.dark textarea:focus-visible,
-.dark select:focus-visible,
-.dark [contenteditable='true']:focus-visible {
-  box-shadow:
-    0 0 0 4px rgba(10, 132, 255, 0.15),
-    inset 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
 /* 链接焦点样式 */
 a:focus-visible {
-  outline: 2px solid var(--ios-blue);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 2px;
 }
 
 /* 卡片和容器焦点样式 */
 [tabindex]:focus-visible:not(input):not(textarea):not(select):not(button):not(a) {
-  outline: 2px solid var(--ios-blue);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: var(--radius-md);
 }
 
 /* 表格行焦点样式 */
 [role='row']:focus-visible {
-  outline: 2px solid var(--ios-blue);
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
-  background-color: rgba(0, 122, 255, 0.05);
-}
-
-.dark [role='row']:focus-visible {
-  background-color: rgba(10, 132, 255, 0.08);
+  background-color: var(--selection-soft);
 }
 
 /* 图标按钮焦点样式 */
-.ios-icon-button:focus-visible {
-  outline: 2px solid var(--ios-blue);
+.app-icon-button:focus-visible {
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
-  box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.2);
-}
-
-.dark .ios-icon-button:focus-visible {
-  box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.3);
+  box-shadow: 0 0 0 4px var(--focus-ring);
 }
 
 /* ========== 高对比度文本 ========== */
@@ -1091,28 +1031,28 @@ a:focus-visible {
  */
 
 /* 主要文本 - 高对比度 */
-.ios-text-high-contrast {
-  color: var(--ios-text-primary);
+.app-text-high-contrast {
+  color: var(--text-primary);
 }
 
 /* 次要文本 - 确保对比度 >= 4.5:1 */
-.ios-text-secondary-contrast {
-  color: var(--ios-text-secondary);
+.app-text-secondary-contrast {
+  color: var(--text-secondary);
 }
 
 /* 浅色模式次要文本调整 - 确保对比度 */
-:root .ios-text-secondary-contrast {
+:root .app-text-secondary-contrast {
   color: rgba(60, 60, 67, 0.7); /* 提高不透明度以确保对比度 */
 }
 
 /* 深色模式次要文本调整 - 确保对比度 */
-.dark .ios-text-secondary-contrast {
+.dark .app-text-secondary-contrast {
   color: rgba(235, 235, 245, 0.7); /* 提高不透明度以确保对比度 */
 }
 
 /* 禁用状态文本 - 保持可读性 */
-.ios-text-disabled {
-  color: var(--ios-gray);
+.app-text-disabled {
+  color: var(--text-tertiary);
   opacity: 0.6;
 }
 
@@ -1126,44 +1066,44 @@ a:focus-visible {
  */
 
 /* 可聚焦元素的基础样式 */
-.ios-focusable {
+.app-focusable {
   cursor: pointer;
 }
 
 /* 跳过链接 - 用于键盘用户快速跳过导航 */
-.ios-skip-link {
+.app-skip-link {
   position: absolute;
   top: -40px;
   left: 0;
-  background: var(--ios-blue);
+  background: var(--accent);
   color: white;
   padding: var(--spacing-sm) var(--spacing-md);
   border-radius: var(--radius-md);
   z-index: 9999;
-  transition: top var(--duration-fast) var(--ease-ios);
+  transition: top var(--duration-fast) var(--ease-standard);
 }
 
-.ios-skip-link:focus {
+.app-skip-link:focus {
   top: var(--spacing-sm);
 }
 
 /* 键盘导航指示器 - 显示当前焦点位置 */
-.ios-keyboard-nav-indicator {
+.app-keyboard-nav-indicator {
   position: relative;
 }
 
-.ios-keyboard-nav-indicator::after {
+.app-keyboard-nav-indicator::after {
   content: '';
   position: absolute;
   inset: -2px;
   border: 2px solid transparent;
   border-radius: inherit;
   pointer-events: none;
-  transition: border-color var(--duration-fast) var(--ease-ios);
+  transition: border-color var(--duration-fast) var(--ease-standard);
 }
 
-.ios-keyboard-nav-indicator:focus-visible::after {
-  border-color: var(--ios-blue);
+.app-keyboard-nav-indicator:focus-visible::after {
+  border-color: var(--accent);
 }
 
 /* ========== 屏幕阅读器支持 ========== */
@@ -1175,7 +1115,7 @@ a:focus-visible {
  */
 
 /* 仅对屏幕阅读器可见 */
-.ios-sr-only {
+.app-sr-only {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -1188,8 +1128,8 @@ a:focus-visible {
 }
 
 /* 聚焦时可见（用于跳过链接等） */
-.ios-sr-only-focusable:focus,
-.ios-sr-only-focusable:active {
+.app-sr-only-focusable:focus,
+.app-sr-only-focusable:active {
   position: static;
   width: auto;
   height: auto;
@@ -1201,7 +1141,7 @@ a:focus-visible {
 }
 
 /* 实时区域 - 用于动态内容更新通知 */
-.ios-live-region {
+.app-live-region {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -1232,11 +1172,7 @@ a:focus-visible {
 
 /* 选中状态 - 视觉反馈 */
 [aria-selected='true'] {
-  background-color: rgba(0, 122, 255, 0.1);
-}
-
-.dark [aria-selected='true'] {
-  background-color: rgba(10, 132, 255, 0.15);
+  background-color: var(--selection-soft);
 }
 
 /* 展开/收起状态 - 视觉反馈 */
@@ -1248,7 +1184,7 @@ a:focus-visible {
 [aria-current='true'],
 [aria-current='page'] {
   font-weight: 600;
-  color: var(--ios-blue);
+  color: var(--accent);
 }
 
 /* ========== 错误和警告状态 ========== */
@@ -1260,21 +1196,17 @@ a:focus-visible {
 
 /* 错误状态 */
 [aria-invalid='true'] {
-  border-color: var(--ios-red) !important;
+  border-color: var(--danger) !important;
 }
 
 [aria-invalid='true']:focus-visible {
-  box-shadow: 0 0 0 4px rgba(255, 59, 48, 0.2);
-}
-
-.dark [aria-invalid='true']:focus-visible {
-  box-shadow: 0 0 0 4px rgba(255, 69, 58, 0.25);
+  box-shadow: 0 0 0 4px var(--danger-soft);
 }
 
 /* 必填字段指示 */
 [aria-required='true']::after {
   content: ' *';
-  color: var(--ios-red);
+  color: var(--danger);
 }
 
 /* ========== 动画无障碍 ========== */
@@ -1287,7 +1219,7 @@ a:focus-visible {
 /* 确保焦点指示器在减少动画模式下仍然可见 */
 @media (prefers-reduced-motion: reduce) {
   :focus-visible {
-    outline: 2px solid var(--ios-blue);
+    outline: 2px solid var(--accent);
     outline-offset: 2px;
     /* 移除过渡但保持焦点指示器 */
     transition: none;

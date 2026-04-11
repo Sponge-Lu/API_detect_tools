@@ -20,10 +20,10 @@ interface DetectionResultsProps {
 export function DetectionResults({ results, detecting }: DetectionResultsProps) {
   if (detecting) {
     return (
-      <div className="flex-1 flex items-center justify-center">
+      <div className="flex flex-1 items-center justify-center">
         <div className="text-center">
-          <Loader2 className="w-12 h-12 mx-auto mb-4 animate-spin text-primary-400" />
-          <p className="text-gray-300">正在检测站点...</p>
+          <Loader2 className="mx-auto mb-4 h-12 w-12 animate-spin text-[var(--accent)]" />
+          <p className="text-[var(--text-secondary)]">正在检测站点...</p>
         </div>
       </div>
     );
@@ -31,9 +31,9 @@ export function DetectionResults({ results, detecting }: DetectionResultsProps) 
 
   if (results.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-center text-gray-400">
-          <Server className="w-12 h-12 mx-auto mb-4 opacity-50" />
+      <div className="flex flex-1 items-center justify-center">
+        <div className="text-center text-[var(--text-secondary)]">
+          <Server className="mx-auto mb-4 h-12 w-12 opacity-50" />
           <p>暂无检测结果</p>
           <p className="text-sm mt-2">点击左上角"检测所有站点"开始</p>
         </div>
@@ -43,37 +43,37 @@ export function DetectionResults({ results, detecting }: DetectionResultsProps) 
 
   return (
     <>
-      <div className="px-6 py-4 bg-black/10 backdrop-blur-sm border-b border-white/10">
-        <h2 className="text-lg font-semibold">检测结果</h2>
-        <p className="text-sm text-gray-400">共检测 {results.length} 个站点</p>
+      <div className="border-b border-[var(--line-soft)] bg-[var(--surface-1)]/88 px-6 py-4 backdrop-blur-sm">
+        <h2 className="text-lg font-semibold text-[var(--text-primary)]">检测结果</h2>
+        <p className="text-sm text-[var(--text-secondary)]">共检测 {results.length} 个站点</p>
       </div>
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+      <div className="flex-1 space-y-4 overflow-y-auto p-6">
         {results.map((result, index) => (
           <div
             key={index}
-            className={`bg-white/5 backdrop-blur-sm rounded-lg p-4 border transition-all ${
+            className={`rounded-[var(--radius-lg)] border bg-[var(--surface-1)]/82 p-4 backdrop-blur-sm transition-colors ${
               result.status === '成功'
-                ? 'border-green-500/30 hover:border-green-500/50'
-                : 'border-red-500/30 hover:border-red-500/50'
+                ? 'border-[var(--success)]/28 hover:border-[var(--success)]/45'
+                : 'border-[var(--danger)]/28 hover:border-[var(--danger)]/45'
             }`}
           >
             <div className="flex items-start justify-between mb-3">
               <div className="flex items-center gap-2">
                 {result.status === '成功' ? (
-                  <CheckCircle className="w-5 h-5 text-green-500" />
+                  <CheckCircle className="h-5 w-5 text-[var(--success)]" />
                 ) : (
-                  <XCircle className="w-5 h-5 text-red-500" />
+                  <XCircle className="h-5 w-5 text-[var(--danger)]" />
                 )}
                 <div>
-                  <h3 className="font-semibold">{result.name}</h3>
-                  <p className="text-sm text-gray-400">{result.url}</p>
+                  <h3 className="font-semibold text-[var(--text-primary)]">{result.name}</h3>
+                  <p className="text-sm text-[var(--text-secondary)]">{result.url}</p>
                 </div>
               </div>
               <span
-                className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                className={`rounded-full px-3 py-1 text-xs font-semibold ${
                   result.status === '成功'
-                    ? 'bg-green-500/20 text-green-500'
-                    : 'bg-red-500/20 text-red-500'
+                    ? 'bg-[var(--success-soft)] text-[var(--success)]'
+                    : 'bg-[var(--danger-soft)] text-[var(--danger)]'
                 }`}
               >
                 {result.status}
@@ -81,35 +81,35 @@ export function DetectionResults({ results, detecting }: DetectionResultsProps) 
             </div>
 
             {result.error && (
-              <div className="mb-3 p-3 bg-red-500/10 rounded-lg border border-red-500/20">
-                <p className="text-sm text-red-400">{result.error}</p>
+              <div className="mb-3 rounded-[var(--radius-md)] border border-[var(--danger)]/22 bg-[var(--danger-soft)] p-3">
+                <p className="text-sm text-[var(--danger)]">{result.error}</p>
               </div>
             )}
 
             {result.balance !== undefined && result.balance !== null && (
-              <div className="mb-3 flex items-center gap-2 text-primary-400">
-                <DollarSign className="w-4 h-4" />
+              <div className="mb-3 flex items-center gap-2 text-[var(--accent)]">
+                <DollarSign className="h-4 w-4" />
                 <span className="font-semibold">余额: ${result.balance.toFixed(2)}</span>
               </div>
             )}
 
             {result.models.length > 0 && (
               <div>
-                <div className="flex items-center gap-2 mb-2 text-gray-400">
-                  <Box className="w-4 h-4" />
+                <div className="mb-2 flex items-center gap-2 text-[var(--text-secondary)]">
+                  <Box className="h-4 w-4" />
                   <span className="text-sm font-medium">可用模型 ({result.models.length})</span>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {result.models.slice(0, 10).map((model, idx) => (
                     <span
                       key={idx}
-                      className="px-2 py-1 bg-white/5 rounded text-xs font-mono border border-white/10"
+                      className="rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 font-mono text-xs text-[var(--text-primary)]"
                     >
                       {model}
                     </span>
                   ))}
                   {result.models.length > 10 && (
-                    <span className="px-2 py-1 text-xs text-gray-400">
+                    <span className="px-2 py-1 text-xs text-[var(--text-secondary)]">
                       +{result.models.length - 10} 更多...
                     </span>
                   )}

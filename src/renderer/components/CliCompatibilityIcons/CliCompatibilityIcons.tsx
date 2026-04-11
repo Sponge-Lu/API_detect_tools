@@ -4,7 +4,7 @@
  * 定位: UI 组件层 - 显示 Claude Code、Codex、Gemini CLI 的兼容性状态图标
  *
  * @version 2.1.12
- * @updated 2025-01-09 - 优化操作按钮组为 iOS 风格，使用 iOS CSS 变量和 1.5px stroke-width
+ * @updated 2026-04-02 - 对齐当前中性操作按钮组说明
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -14,7 +14,12 @@
 
 import type { CliCompatibilityResult } from '../../store/detectionStore';
 import type { CliConfig } from '../../../shared/types/cli-config';
-import { DEFAULT_CLI_CONFIG } from '../../../shared/types/cli-config';
+import {
+  DEFAULT_CLI_CONFIG,
+  getCliTestResultStatus,
+  getCliTestResultTestedAt,
+} from '../../../shared/types/cli-config';
+import { buildCliCompatibilityTooltip, getCliCompatibilityIconClass } from './cliCompatibilityMeta';
 
 // 导入 CLI 图标
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
@@ -28,6 +33,12 @@ export interface CliCompatibilityIconsProps {
   cliConfig: CliConfig | null;
   /** 是否正在加载 */
   isLoading?: boolean;
+  /** 是否显示配置/测试/应用动作组 */
+  showActionButtons?: boolean;
+  /** 配置按钮形态 */
+  configTrigger?: 'icon' | 'text';
+  /** 文本配置按钮文案 */
+  configButtonLabel?: string;
   /** 配置按钮点击回调 */
   onConfig?: () => void;
   /** 测试按钮点击回调 */
@@ -64,99 +75,12 @@ const CLI_TYPES: CliTypeConfig[] = [
 ];
 
 /**
- * 获取图标样式类名
- * @param status - 兼容性状态: true=支持, false=不支持, null/undefined=未测试
- * @param isConfigured - 是否已配置（有 API Key 和 Model）
- */
-export function getIconStyleClass(
-  status: boolean | null | undefined,
-  isConfigured: boolean
-): string {
-  // 根据测试结果显示
-  if (status === true) {
-    return 'opacity-100'; // 全彩色 - 测试通过，支持
-  }
-  if (status === false) {
-    return 'opacity-70 grayscale brightness-75'; // 深灰色 - 测试失败，不支持
-  }
-  // status === null 或 undefined 表示未测试
-  if (isConfigured) {
-    return 'opacity-50 grayscale'; // 灰度半透明 - 已配置但未测试
-  }
-  return 'opacity-25 grayscale'; // 非常淡灰色 - 未配置
-}
-
-/**
- * 获取状态文本
- */
-function getStatusText(status: boolean | null | undefined, isConfigured: boolean): string {
-  if (!isConfigured) return '未配置';
-  if (status === true) return '支持';
-  if (status === false) return '不支持';
-  return '已配置，待测试';
-}
-
-/**
- * 获取 Codex 详细状态文本
- */
-function getCodexDetailText(compatibility: CliCompatibilityResult | undefined): string {
-  const detail = compatibility?.codexDetail;
-  if (!detail) return '';
-
-  const responsesStatus = detail.responses === true ? '✓' : detail.responses === false ? '✗' : '?';
-
-  return ` [responses: ${responsesStatus}]`;
-}
-
-/**
- * 获取 Gemini CLI 详细状态文本
- * native: Google 原生格式 (/v1beta/models/{model}:generateContent) - Gemini CLI 实际使用此格式
- * proxy: OpenAI 兼容格式 (/v1/chat/completions) - 仅供参考，Gemini CLI 不使用此格式
- */
-function getGeminiDetailText(compatibility: CliCompatibilityResult | undefined): string {
-  const detail = compatibility?.geminiDetail;
-  if (!detail) return '';
-
-  const nativeStatus = detail.native === true ? '✓' : detail.native === false ? '✗' : '?';
-  const proxyStatus = detail.proxy === true ? '✓' : detail.proxy === false ? '✗' : '?';
-
-  // 添加更详细的说明
-  let hint = '';
-  if (detail.native === true) {
-    hint = ' (原生格式可用)';
-  } else if (detail.native === false && detail.proxy === true) {
-    hint = ' (仅兼容格式可用，CLI可能不工作)';
-  } else if (detail.native === false && detail.proxy === false) {
-    hint = ' (均不可用)';
-  }
-
-  return ` [native: ${nativeStatus}, proxy: ${proxyStatus}]${hint}`;
-}
-
-/**
- * 格式化测试时间
- */
-function formatTestedAt(timestamp: number | null | undefined): string {
-  if (!timestamp) return '';
-  const now = Date.now();
-  const diff = now - timestamp;
-  const minutes = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-
-  if (minutes < 1) return '刚刚测试';
-  if (minutes < 60) return `${minutes} 分钟前测试`;
-  if (hours < 24) return `${hours} 小时前测试`;
-  return `${days} 天前测试`;
-}
-
-/**
  * 加载动画组件
  */
 function LoadingSpinner() {
   return (
     <svg
-      className="animate-spin h-4 w-4 text-blue-500"
+      className="h-4 w-4 animate-spin text-[var(--accent)]"
       xmlns="http://www.w3.org/2000/svg"
       fill="none"
       viewBox="0 0 24 24"
@@ -204,19 +128,19 @@ export function CliCompatibilityIcons({
   compatibility,
   cliConfig,
   isLoading = false,
+  showActionButtons = true,
+  configTrigger = 'icon',
+  configButtonLabel = 'CLI配置',
   onConfig,
-  onTest,
   onApply,
 }: CliCompatibilityIconsProps) {
-  const testedAtText = formatTestedAt(compatibility?.testedAt);
-
   return (
-    <div className="flex items-center gap-1 pl-2">
+    <div className="flex shrink-0 items-center justify-center gap-0.5">
       {/* 加载状态 */}
       {isLoading ? (
         <div className="flex items-center gap-1 px-1">
           <LoadingSpinner />
-          <span className="text-xs text-slate-500">测试中...</span>
+          <span className="text-xs text-[var(--text-secondary)]">测试中...</span>
         </div>
       ) : (
         <>
@@ -237,14 +161,25 @@ export function CliCompatibilityIcons({
               );
             }
 
-            const status = compatibility?.[key];
+            const configItem = cliConfig?.[configKey] ?? null;
+            const persistedStatus = getCliTestResultStatus(configItem);
+            const persistedTestedAt = getCliTestResultTestedAt(configItem);
+            const status = persistedStatus ?? compatibility?.[key];
             const configured = isCliConfigured(cliConfig, configKey);
-            const styleClass = getIconStyleClass(status, configured);
-            const statusText = getStatusText(status, configured);
-
-            const codexDetailText = key === 'codex' ? getCodexDetailText(compatibility) : '';
-            const geminiDetailText = key === 'geminiCli' ? getGeminiDetailText(compatibility) : '';
-            const tooltipText = `${name}: ${statusText}${codexDetailText}${geminiDetailText}${testedAtText && configured ? ` (${testedAtText})` : ''}`;
+            const styleClass = getCliCompatibilityIconClass({
+              enabled,
+              configured,
+              status,
+            });
+            const tooltipText = buildCliCompatibilityTooltip({
+              name,
+              enabled,
+              configured,
+              status,
+              testedAt: persistedTestedAt ?? compatibility?.testedAt,
+              codexDetail: compatibility?.codexDetail,
+              geminiDetail: compatibility?.geminiDetail,
+            });
 
             return (
               <div
@@ -257,98 +192,97 @@ export function CliCompatibilityIcons({
             );
           })}
 
-          {/* 操作按钮组 - 配置/测试/应用 - iOS 风格 */}
-          <div className="flex items-center gap-0.5 ml-1 px-1 py-0.5 rounded-[var(--radius-sm)] border border-[var(--ios-separator)] bg-[var(--ios-bg-tertiary)]">
-            {/* 配置按钮 */}
-            {onConfig && (
-              <button
-                onClick={e => {
-                  e.stopPropagation();
-                  onConfig();
-                }}
-                className="p-0.5 rounded-[var(--radius-sm)] hover:bg-[var(--ios-bg-secondary)] active:scale-95 transition-all duration-200"
-                title="配置 CLI"
-              >
-                <svg
-                  className="w-[18px] h-[18px] text-[var(--ios-gray)] hover:text-[var(--ios-blue)]"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
+          {showActionButtons && (
+            <div className="ml-0.5 flex shrink-0 items-center gap-0.5">
+              {onConfig && configTrigger === 'text' && (
+                <button
+                  type="button"
+                  onClick={e => {
+                    e.stopPropagation();
+                    onConfig();
+                  }}
+                  className="h-7 shrink-0 whitespace-nowrap rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-1.5 text-[10px] font-medium text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+                  title="配置 CLI"
+                  aria-label={configButtonLabel}
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-                  />
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                  />
-                </svg>
-              </button>
-            )}
+                  {configButtonLabel}
+                </button>
+              )}
 
-            {/* 测试按钮 - 始终显示 */}
-            {onTest && (
-              <button
-                onClick={e => {
-                  e.stopPropagation();
-                  onTest();
-                }}
-                className="p-0.5 rounded-[var(--radius-sm)] hover:bg-[var(--ios-bg-secondary)] active:scale-95 transition-all duration-200"
-                title="测试 CLI 兼容性"
-              >
-                <svg
-                  className="w-[18px] h-[18px] text-[var(--ios-gray)] hover:text-[var(--ios-green)]"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
+              {onApply && configTrigger === 'text' && (
+                <button
+                  type="button"
+                  onClick={e => {
+                    e.stopPropagation();
+                    onApply(e);
+                  }}
+                  className="h-7 shrink-0 whitespace-nowrap rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-1.5 text-[10px] font-medium text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+                  title="CLI应用"
+                  aria-label="CLI应用"
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
-                  />
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                  />
-                </svg>
-              </button>
-            )}
+                  CLI应用
+                </button>
+              )}
 
-            {/* 应用配置按钮 */}
-            {onApply && (
-              <button
-                onClick={e => {
-                  e.stopPropagation();
-                  onApply(e);
-                }}
-                className="p-0.5 rounded-[var(--radius-sm)] hover:bg-[var(--ios-bg-secondary)] active:scale-95 transition-all duration-200"
-                title="应用 CLI 配置到本地文件"
-              >
-                <svg
-                  className="w-[18px] h-[18px] text-[var(--ios-gray)] hover:text-[var(--ios-blue)]"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
+              {onConfig && configTrigger === 'icon' && (
+                <button
+                  type="button"
+                  onClick={e => {
+                    e.stopPropagation();
+                    onConfig();
+                  }}
+                  className="p-0.5 rounded-[var(--radius-sm)] hover:bg-[var(--surface-1)] active:scale-95 transition-all duration-200"
+                  title="配置 CLI"
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-                  />
-                </svg>
-              </button>
-            )}
-          </div>
+                  <svg
+                    className="w-[18px] h-[18px] text-[var(--icon-muted)] hover:text-[var(--accent)]"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.5}
+                      d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+                    />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.5}
+                      d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                    />
+                  </svg>
+                </button>
+              )}
+
+              {onApply && configTrigger === 'icon' && (
+                <button
+                  type="button"
+                  onClick={e => {
+                    e.stopPropagation();
+                    onApply(e);
+                  }}
+                  className="p-0.5 rounded-[var(--radius-sm)] hover:bg-[var(--surface-1)] active:scale-95 transition-all duration-200"
+                  title="应用 CLI 配置到本地文件"
+                >
+                  <svg
+                    className="w-[18px] h-[18px] text-[var(--icon-muted)] hover:text-[var(--accent)]"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.5}
+                      d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                    />
+                  </svg>
+                </button>
+              )}
+            </div>
+          )}
         </>
       )}
     </div>

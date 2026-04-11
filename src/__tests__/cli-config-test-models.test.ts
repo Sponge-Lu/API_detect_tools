@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   CLI_TEST_MODEL_SLOT_COUNT,
+  DEFAULT_CLI_CONFIG,
   normalizeCliTestModels,
+  normalizeCodexFeatureFlagsToml,
   sanitizeCliTestModels,
 } from '../shared/types/cli-config';
 
@@ -35,5 +37,33 @@ describe('CLI test model helpers', () => {
         testModels: ['m1', 'm2', 'm3', 'm4'],
       })
     ).toHaveLength(CLI_TEST_MODEL_SLOT_COUNT);
+  });
+
+  it('initializes default CLI configs with empty persisted test result slots', () => {
+    expect(DEFAULT_CLI_CONFIG.claudeCode.testResults).toEqual([]);
+    expect(DEFAULT_CLI_CONFIG.codex.testResults).toEqual([]);
+    expect(DEFAULT_CLI_CONFIG.geminiCli.testResults).toEqual([]);
+  });
+
+  it('migrates deprecated Codex collab flags to multi_agent', () => {
+    const migrated = normalizeCodexFeatureFlagsToml(`[features]
+collab = true
+other_flag = false`);
+
+    expect(migrated).toContain('multi_agent = true');
+    expect(migrated).not.toContain('collab =');
+    expect(migrated).toContain('other_flag = false');
+  });
+
+  it('adds multi_agent to an existing Codex features section when it is missing', () => {
+    const migrated = normalizeCodexFeatureFlagsToml(`[features]
+other_flag = false
+
+[model_providers.OpenAI]
+name = "openai"`);
+
+    expect(migrated).toContain('[features]');
+    expect(migrated).toContain('multi_agent = true');
+    expect(migrated).toContain('other_flag = false');
   });
 });

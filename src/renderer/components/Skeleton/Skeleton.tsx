@@ -14,7 +14,7 @@ interface SkeletonProps {
 }
 
 export function Skeleton({ className = '' }: SkeletonProps) {
-  return <div className={`animate-pulse bg-slate-200 dark:bg-slate-700 rounded ${className}`} />;
+  return <div className={`animate-pulse rounded bg-[var(--surface-3)]/80 ${className}`} />;
 }
 
 /**
@@ -22,7 +22,7 @@ export function Skeleton({ className = '' }: SkeletonProps) {
  */
 export function SiteCardSkeleton() {
   return (
-    <div className="bg-white/80 dark:bg-slate-800/80 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+    <div className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-1)]/80 p-4">
       <div className="flex items-center gap-4">
         {/* 站点名称 */}
         <Skeleton className="h-5 w-32" />

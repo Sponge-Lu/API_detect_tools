@@ -13,8 +13,8 @@ import { getGroupTextColor, getGroupIcon } from '../renderer/utils/groupStyle';
 
 describe('groupStyle', () => {
   describe('getGroupTextColor', () => {
-    it('returns slate color for empty group name', () => {
-      expect(getGroupTextColor('')).toBe('text-slate-400');
+    it('returns neutral tertiary token for empty group name', () => {
+      expect(getGroupTextColor('')).toBe('text-[var(--text-tertiary)]');
     });
 
     it('returns consistent color for same group name', () => {
@@ -32,9 +32,9 @@ describe('groupStyle', () => {
       expect(colors.size).toBeGreaterThan(1);
     });
 
-    it('returns valid tailwind color class', () => {
+    it('returns valid token-based text color class', () => {
       const color = getGroupTextColor('my-group');
-      expect(color).toMatch(/^text-\w+-\d+ dark:text-\w+-\d+$/);
+      expect(color).toMatch(/^text-\[var\(--[\w-]+\)\]$/);
     });
   });
 

@@ -9,6 +9,7 @@ import Logger from '../utils/logger';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { normalizeCodexFeatureFlagsToml } from '../../shared/types/cli-config';
 
 const log = Logger.scope('CliCompatHandlers');
 
@@ -450,7 +451,7 @@ function mergeConfigByType(filePath: string, existingContent: string, newContent
   if (ext === '.json') {
     return mergeJsonConfig(existingContent, newContent);
   } else if (ext === '.toml') {
-    return mergeTomlConfig(existingContent, newContent);
+    return normalizeCodexFeatureFlagsToml(mergeTomlConfig(existingContent, newContent));
   } else if (ext === '.env' || basename === '.env') {
     return mergeEnvConfig(existingContent, newContent);
   }
@@ -703,6 +704,9 @@ export function registerCliCompatHandlers() {
           ensureDirectoryExists(dirPath);
 
           let finalContent = file.content;
+          if (path.basename(file.path).toLowerCase() === 'config.toml') {
+            finalContent = normalizeCodexFeatureFlagsToml(finalContent);
+          }
 
           // 如果是合并模式且文件已存在，合并配置
           if (applyMode === 'merge' && fs.existsSync(resolvedPath)) {

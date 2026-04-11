@@ -328,7 +328,7 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
             { key: i, className: 'flex items-center justify-between gap-2' },
             React.createElement(
               'span',
-              { className: 'text-sm text-[var(--ios-text-secondary)]' },
+              { className: 'text-sm text-[var(--text-secondary)]' },
               `❌ ${r.name}`
             ),
             r.site &&
@@ -337,7 +337,7 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
                 {
                   onClick: () => openCheckinPage(r.site!, r.siteType),
                   className:
-                    'text-xs px-2 py-0.5 rounded-md text-[var(--ios-blue)] bg-[var(--ios-blue)]/10 hover:bg-[var(--ios-blue)]/20 transition-colors shrink-0 cursor-pointer',
+                    'shrink-0 cursor-pointer rounded-md bg-[var(--accent-soft)] px-2 py-0.5 text-xs text-[var(--accent-strong)] transition-colors hover:bg-[var(--accent-soft-strong)]',
                 },
                 '手动签到 →'
               )

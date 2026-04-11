@@ -19,6 +19,8 @@ import { useCustomCliConfigStore } from '../../store/customCliConfigStore';
 import type { AuthType, CliType, CliDetectionResult } from '../../../shared/types/config-detection';
 
 export interface CliConfigStatusPanelProps {
+  /** 布局模式 */
+  layout?: 'inline' | 'stacked';
   /** 是否紧凑模式 */
   compact?: boolean;
   /** 是否显示刷新按钮 */
@@ -66,16 +68,14 @@ function getAuthTypeLabel(authType?: AuthType): string {
  */
 function DetailRow({ cliType, result }: { cliType: CliType; result: CliDetectionResult }) {
   return (
-    <div className="flex items-center justify-between py-2 border-b border-light-border dark:border-dark-border last:border-b-0">
-      <span className="text-xs font-medium text-light-text dark:text-dark-text">
-        {CLI_NAMES[cliType]}
-      </span>
+    <div className="flex items-center justify-between border-b border-[var(--line-soft)] py-2 last:border-b-0">
+      <span className="text-xs font-medium text-[var(--text-primary)]">{CLI_NAMES[cliType]}</span>
       <div className="flex items-center gap-2">
-        <span className="text-xs text-light-text-secondary dark:text-dark-text-secondary">
+        <span className="text-xs text-[var(--text-secondary)]">
           {getAuthTypeLabel(result.authType)}
         </span>
         {result.hasApiKey && (
-          <span className="text-[10px] px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded">
+          <span className="rounded-full bg-[var(--success-soft)] px-2 py-0.5 text-[10px] text-[var(--success)]">
             API Key
           </span>
         )}
@@ -90,6 +90,7 @@ function DetailRow({ cliType, result }: { cliType: CliType; result: CliDetection
  * 显示所有 CLI 工具的配置来源状态，并提供刷新按钮
  */
 export function CliConfigStatusPanel({
+  layout = 'inline',
   compact = false,
   showRefresh = true,
   showDetails = false,
@@ -116,33 +117,121 @@ export function CliConfigStatusPanel({
     setShowDetailPanel(!showDetailPanel);
   };
 
+  const actionButtons = (
+    <>
+      {showRefresh && (
+        <button
+          onClick={handleRefresh}
+          disabled={isLoading}
+          className="rounded-[var(--radius-sm)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--accent)] disabled:opacity-50"
+          title="刷新 CLI 配置检测"
+        >
+          {isLoading ? <Loader2 className="w-3 h-3 animate-spin inline" /> : '刷新'}
+        </button>
+      )}
+      {showEdit && (
+        <button
+          onClick={() => setShowEditDialog(true)}
+          className="rounded-[var(--radius-sm)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--accent)]"
+          title="编辑 CLI 配置文件"
+        >
+          编辑
+        </button>
+      )}
+      {showReset && (
+        <button
+          onClick={() => setShowResetDialog(true)}
+          className="rounded-[var(--radius-sm)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--danger)]"
+          title="重置 CLI 配置"
+        >
+          重置
+        </button>
+      )}
+    </>
+  );
+
   // 加载状态
   if (isLoading && !detection) {
+    if (layout === 'stacked') {
+      return (
+        <div className={`space-y-2 ${className}`}>
+          <div className="flex items-center gap-2 rounded-[var(--radius-md)] bg-[var(--surface-1)] px-2 py-1.5">
+            <Loader2 className="h-4 w-4 animate-spin text-[var(--text-secondary)]" />
+            <span className="text-xs text-[var(--text-secondary)]">检测中...</span>
+          </div>
+          <div className="grid grid-cols-3 gap-1.5">{actionButtons}</div>
+        </div>
+      );
+    }
     return (
       <div className={`flex items-center gap-2 ${className}`}>
-        <Loader2 className="w-4 h-4 animate-spin text-light-text-secondary dark:text-dark-text-secondary" />
-        <span className="text-xs text-light-text-secondary dark:text-dark-text-secondary">
-          检测中...
-        </span>
+        <Loader2 className="h-4 w-4 animate-spin text-[var(--text-secondary)]" />
+        <span className="text-xs text-[var(--text-secondary)]">检测中...</span>
       </div>
     );
   }
 
   // 无检测结果
   if (!detection) {
+    if (layout === 'stacked') {
+      return (
+        <div className={`space-y-2 ${className}`}>
+          <div className="space-y-1.5">
+            {CLI_TYPES.map(cliType => (
+              <div key={cliType} className="flex items-center justify-between px-1 py-1">
+                <span className="text-xs font-medium text-[var(--text-primary)]">
+                  {CLI_NAMES[cliType]}
+                </span>
+                <span className="text-[11px] text-[var(--text-secondary)]">未检测</span>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-3 gap-1.5">{actionButtons}</div>
+        </div>
+      );
+    }
     return (
       <div className={`flex items-center gap-2 ${className}`}>
-        <span className="text-xs text-light-text-secondary dark:text-dark-text-secondary">
-          未检测
-        </span>
+        <span className="text-xs text-[var(--text-secondary)]">未检测</span>
         {showRefresh && (
           <button
             onClick={handleRefresh}
-            className="px-1.5 py-0.5 rounded text-[11px] text-light-text-secondary dark:text-dark-text-secondary hover:text-primary-500 hover:bg-light-bg dark:hover:bg-dark-bg transition-colors"
+            className="rounded-[var(--radius-sm)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--accent)]"
             title="检测 CLI 配置"
           >
             刷新
           </button>
+        )}
+      </div>
+    );
+  }
+
+  if (layout === 'stacked') {
+    return (
+      <div className={`relative space-y-2 ${className}`}>
+        <div className="space-y-1.5">
+          {CLI_TYPES.map(cliType => (
+            <div key={cliType} className="px-1 py-1">
+              <CliConfigStatus cliType={cliType} result={detection[cliType]} compact />
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-3 gap-1.5">{actionButtons}</div>
+
+        {showReset && (
+          <ResetCliConfigDialog
+            open={showResetDialog}
+            onClose={() => setShowResetDialog(false)}
+            onResetComplete={refresh}
+          />
+        )}
+
+        {showEdit && (
+          <EditCliConfigDialog
+            open={showEditDialog}
+            onClose={() => setShowEditDialog(false)}
+            onSaveComplete={refresh}
+          />
         )}
       </div>
     );
@@ -167,56 +256,23 @@ export function CliConfigStatusPanel({
         {showDetails && (
           <button
             onClick={toggleDetails}
-            className={`p-1 rounded hover:bg-light-bg dark:hover:bg-dark-bg transition-colors ${
-              showDetailPanel ? 'bg-light-bg dark:bg-dark-bg' : ''
+            className={`rounded-[var(--radius-sm)] p-1 transition-colors hover:bg-[var(--surface-2)] ${
+              showDetailPanel ? 'bg-[var(--surface-2)]' : ''
             }`}
             title="查看认证详情"
           >
-            <Info className="w-3.5 h-3.5 text-light-text-secondary dark:text-dark-text-secondary hover:text-primary-500" />
+            <Info className="h-3.5 w-3.5 text-[var(--text-secondary)] transition-colors hover:text-[var(--accent)]" />
           </button>
         )}
 
         {/* 刷新按钮 */}
-        {showRefresh && (
-          <button
-            onClick={handleRefresh}
-            disabled={isLoading}
-            className="px-1.5 py-0.5 rounded text-[11px] text-light-text-secondary dark:text-dark-text-secondary hover:text-primary-500 hover:bg-light-bg dark:hover:bg-dark-bg transition-colors disabled:opacity-50"
-            title="刷新 CLI 配置检测"
-          >
-            {isLoading ? <Loader2 className="w-3 h-3 animate-spin inline" /> : '刷新'}
-          </button>
-        )}
-
-        {/* 编辑按钮 */}
-        {showEdit && (
-          <button
-            onClick={() => setShowEditDialog(true)}
-            className="px-1.5 py-0.5 rounded text-[11px] text-light-text-secondary dark:text-dark-text-secondary hover:text-[var(--ios-blue)] hover:bg-light-bg dark:hover:bg-dark-bg transition-colors"
-            title="编辑 CLI 配置文件"
-          >
-            编辑
-          </button>
-        )}
-
-        {/* 重置按钮 */}
-        {showReset && (
-          <button
-            onClick={() => setShowResetDialog(true)}
-            className="px-1.5 py-0.5 rounded text-[11px] text-light-text-secondary dark:text-dark-text-secondary hover:text-[var(--ios-red)] hover:bg-light-bg dark:hover:bg-dark-bg transition-colors"
-            title="重置 CLI 配置"
-          >
-            重置
-          </button>
-        )}
+        {actionButtons}
       </div>
 
       {/* 详情面板 */}
       {showDetails && showDetailPanel && (
-        <div className="absolute top-full left-0 mt-1 z-10 w-64 p-2 bg-white dark:bg-dark-card rounded-lg shadow-lg border border-light-border dark:border-dark-border">
-          <div className="text-xs font-medium text-light-text-secondary dark:text-dark-text-secondary mb-2">
-            认证详情
-          </div>
+        <div className="absolute left-0 top-full z-10 mt-1 w-64 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-1)] p-2 shadow-lg">
+          <div className="mb-2 text-xs font-medium text-[var(--text-secondary)]">认证详情</div>
           {CLI_TYPES.map(cliType => (
             <DetailRow key={cliType} cliType={cliType} result={detection[cliType]} />
           ))}

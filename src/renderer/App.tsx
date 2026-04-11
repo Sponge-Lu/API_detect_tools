@@ -5,33 +5,41 @@
  */
 
 import Logger from './utils/logger';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { XCircle, Loader2 } from 'lucide-react';
 import { ConfirmDialog, initialDialogState } from './components/ConfirmDialog';
-import { Header } from './components/Header';
+import { GlobalCommandBar } from './components/AppShell/GlobalCommandBar';
+import { PageHeader } from './components/AppShell/PageHeader';
+import { APP_PAGE_META } from './components/AppShell/pageMeta';
 import { VerticalSidebar } from './components/Sidebar';
 import { AuthErrorDialog, CloseBehaviorDialog, DownloadUpdatePanel } from './components/dialogs';
 import { ToastContainer } from './components/Toast';
-import { IOSButton } from './components/IOSButton';
+import { AppButton } from './components/AppButton/AppButton';
 import { useTheme, useDataLoader, useUpdate, useSiteDetection, useAutoRefresh } from './hooks';
 // 从共享的types文件导入并重新导出类型
-import type { SiteConfig, DetectionResult, AccountCredential } from '../shared/types/site';
+import type {
+  SiteConfig,
+  DetectionResult,
+  AccountCredential,
+  CliCompatibilityData,
+} from '../shared/types/site';
+import type { ThemeMode } from '../shared/theme/themePresets';
 export type { SiteConfig, DetectionResult } from '../shared/types/site';
 
 // 导入页面组件
 import { SitesPage } from './pages/SitesPage';
 import { CustomCliPage } from './pages/CustomCliPage';
-import { CreditPage } from './pages/CreditPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ModelRedirectionTab } from './components/Route/Redirection/ModelRedirectionTab';
 import { CliUsabilityTab } from './components/Route/Usability/CliUsabilityTab';
 import { ProxyStatsTab } from './components/Route/ProxyStats/ProxyStatsTab';
-import { LDC_UI_VISIBILITY } from '../shared/constants';
+import { normalizeSiteSortField } from './utils/siteSort';
 
 // 导入 Zustand Store
 import { useConfigStore } from './store/configStore';
 import { useDetectionStore } from './store/detectionStore';
-import { useUIStore, SortField } from './store/uiStore';
+import { useUIStore } from './store/uiStore';
+import type { VisibleTabId } from './store/uiStore';
 import { useRouteStore } from './store/routeStore';
 import { useToastStore, toast } from './store/toastStore';
 
@@ -42,6 +50,7 @@ declare global {
       saveConfig: (config: Config) => Promise<void>;
       launchChromeForLogin: (url: string) => Promise<{ success: boolean; message: string }>;
       closeBrowser: () => Promise<void>;
+      closeLoginBrowser: () => Promise<void>;
       getCookies: (url: string) => Promise<any[]>;
       fetchWithCookies: (
         url: string,
@@ -65,8 +74,8 @@ declare global {
       token?: any;
       storage?: any;
       theme?: {
-        save: (themeMode: 'light' | 'dark' | 'system') => Promise<{ success: boolean }>;
-        load: () => Promise<{ success: boolean; data?: 'light' | 'dark' | 'system' }>;
+        save: (themeMode: ThemeMode) => Promise<{ success: boolean }>;
+        load: () => Promise<{ success: boolean; data?: ThemeMode }>;
       };
       webdav?: {
         testConnection: (config: any) => Promise<{ success: boolean; error?: string }>;
@@ -139,11 +148,7 @@ declare global {
           }>;
         }) => Promise<{
           success: boolean;
-          data?: {
-            claudeCode: boolean | null;
-            codex: boolean | null;
-            geminiCli: boolean | null;
-          };
+          data?: CliCompatibilityData;
           error?: string;
         }>;
         saveResult: (
@@ -156,6 +161,14 @@ declare global {
           config: any,
           accountId?: string
         ) => Promise<{ success: boolean; error?: string }>;
+        writeConfig: (params: {
+          cliType: 'claudeCode' | 'codex' | 'geminiCli';
+          files: Array<{
+            path: string;
+            content: string;
+          }>;
+          applyMode?: 'merge' | 'overwrite';
+        }) => Promise<{ success: boolean; writtenPaths: string[]; error?: string }>;
       };
       configDetection: {
         detectCliConfig: (
@@ -413,11 +426,11 @@ function App() {
     closeDownloadPanel,
   } = useUIStore();
 
-  const visibleActiveTab =
-    !LDC_UI_VISIBILITY.showCreditTab && activeTab === 'credit' ? 'sites' : activeTab;
+  const visibleActiveTab: VisibleTabId = activeTab === 'credit' ? 'sites' : activeTab;
 
   // 窗口关闭行为对话框状态
   const [showCloseBehaviorDialog, setShowCloseBehaviorDialog] = useState(false);
+  const [sitesPageHeaderActions, setSitesPageHeaderActions] = useState<ReactNode | null>(null);
 
   // 用于存储初始化状态的 ref
   const initRef = useRef(false);
@@ -531,7 +544,7 @@ function App() {
         Logger.error('保存自动刷新配置失败:', err);
       });
     }
-  }, [cliConfigDetection]);
+  }, [cliConfigDetection, setConfig]);
 
   // 启动时自动检查更新
   useEffect(() => {
@@ -579,28 +592,40 @@ function App() {
     }
   }, [activeTab, visibleActiveTab, setActiveTab]);
 
-  const loadConfig = async (): Promise<Config | null> => {
+  const loadConfig = useCallback(async (): Promise<Config | null> => {
     try {
       setLoading(true);
       const cfg = await window.electronAPI.loadConfig();
-      setConfig(cfg);
+      const normalizedField = normalizeSiteSortField(cfg?.settings?.sort?.field ?? null);
+      const normalizedCfg = cfg?.settings?.sort
+        ? {
+            ...cfg,
+            settings: {
+              ...cfg.settings,
+              sort: {
+                field: normalizedField,
+                order: cfg.settings.sort.order,
+              },
+            },
+          }
+        : cfg;
+
+      setConfig(normalizedCfg);
       if (cfg?.settings?.sort) {
-        const { field, order } = cfg.settings.sort;
-        if (field) {
-          setSortField(field as SortField);
-        }
+        const { order } = cfg.settings.sort;
+        setSortField(normalizedField);
         if (order) {
           setSortOrder(order);
         }
       }
-      return cfg;
+      return normalizedCfg;
     } catch (error) {
       Logger.error('加载配置失败:', error);
       return null;
     } finally {
       setLoading(false);
     }
-  };
+  }, [setConfig, setLoading, setSortField, setSortOrder]);
 
   const handleDownloadUpdate = async () => {
     if (updateInfo?.releaseInfo) {
@@ -608,35 +633,39 @@ function App() {
     }
   };
 
+  const pageMeta = APP_PAGE_META[visibleActiveTab];
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-light-bg dark:bg-dark-bg relative">
+      <div className="relative flex h-screen items-center justify-center bg-[var(--app-bg)]">
         <div className="light-bg-decoration dark:dark-bg-decoration"></div>
-        <div className="text-center relative z-10">
-          <Loader2 className="w-12 h-12 mx-auto mb-4 animate-spin text-primary-500" />
-          <p className="text-light-text-secondary dark:text-dark-text-secondary">加载配置中...</p>
+        <div className="relative z-10 text-center">
+          <Loader2 className="mx-auto mb-4 h-12 w-12 animate-spin text-[var(--accent)]" />
+          <p className="text-[var(--text-secondary)]">加载配置中...</p>
         </div>
       </div>
     );
   }
 
+  const pageHeaderActions = visibleActiveTab === 'sites' ? sitesPageHeaderActions : null;
+
   if (!config) {
     return (
-      <div className="flex items-center justify-center h-screen bg-light-bg dark:bg-dark-bg relative">
+      <div className="relative flex h-screen items-center justify-center bg-[var(--app-bg)]">
         <div className="light-bg-decoration dark:dark-bg-decoration"></div>
-        <div className="text-center relative z-10">
-          <XCircle className="w-16 h-16 mx-auto mb-4 text-red-500" />
-          <p className="text-light-text dark:text-dark-text mb-4">配置加载失败</p>
-          <IOSButton variant="primary" onClick={loadConfig}>
+        <div className="relative z-10 text-center">
+          <XCircle className="mx-auto mb-4 h-16 w-16 text-[var(--danger)]" />
+          <p className="mb-4 text-[var(--text-primary)]">配置加载失败</p>
+          <AppButton variant="primary" onClick={loadConfig}>
             重试
-          </IOSButton>
+          </AppButton>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="h-screen flex flex-col bg-light-bg dark:bg-dark-bg text-light-text dark:text-dark-text relative overflow-x-auto overflow-y-hidden ios-responsive-container">
+    <div className="app-responsive-container relative flex h-screen flex-col overflow-x-auto overflow-y-hidden bg-[var(--app-bg)] text-[var(--text-primary)]">
       {/* 装饰背景 */}
       <div className="light-bg-decoration dark:dark-bg-decoration"></div>
 
@@ -646,28 +675,32 @@ function App() {
           activeTab={visibleActiveTab}
           onTabChange={setActiveTab}
           saving={saving}
+          currentVersion={currentVersion}
           updateInfo={updateInfo}
           onDownloadUpdate={handleDownloadUpdate}
         />
 
         {/* 页面内容区域 - CSS 显隐保活 */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* 顶栏（拖拽区 + 状态） */}
-          <Header
-            activeTab={visibleActiveTab}
-            onTabChange={setActiveTab}
+          <GlobalCommandBar
             saving={saving}
-            hasUpdate={updateInfo?.hasUpdate}
             updateInfo={updateInfo}
             onDownloadUpdate={handleDownloadUpdate}
           />
+          {visibleActiveTab !== 'cli' ? (
+            <PageHeader
+              title={pageMeta.title}
+              description={pageMeta.description}
+              actions={pageHeaderActions}
+            />
+          ) : null}
 
           <div
             className={
               visibleActiveTab === 'sites' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
             }
           >
-            <SitesPage />
+            <SitesPage setPageHeaderActions={setSitesPageHeaderActions} />
           </div>
           <div
             className={
@@ -697,11 +730,7 @@ function App() {
           >
             <ProxyStatsTab />
           </div>
-          {LDC_UI_VISIBILITY.showCreditTab && visibleActiveTab === 'credit' && (
-            <div className="flex-1 flex flex-col overflow-hidden">
-              <CreditPage />
-            </div>
-          )}
+
           <div
             className={
               visibleActiveTab === 'settings' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'

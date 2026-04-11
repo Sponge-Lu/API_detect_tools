@@ -1,6 +1,6 @@
 /**
  * @file src/renderer/components/CreateApiKeyDialog/CreateApiKeyDialog.tsx
- * @description 创建 API Key 对话框 - 使用 IOSModal 重构
+ * @description 创建 API Key 对话框 - 使用统一弹窗原语实现
  *
  * 输入: CreateApiKeyDialogProps (站点数据、表单数据、用户分组、回调函数)
  * 输出: React 组件 (创建 API Key 对话框 UI)
@@ -18,9 +18,9 @@
 import { useRef, useEffect } from 'react';
 import { Key } from 'lucide-react';
 import type { SiteConfig } from '../../../shared/types/site';
-import { IOSModal } from '../IOSModal';
-import { IOSButton } from '../IOSButton';
-import { IOSInput } from '../IOSInput';
+import { AppModal } from '../AppModal/AppModal';
+import { AppButton } from '../AppButton/AppButton';
+import { AppInput } from '../AppInput';
 
 export interface NewApiTokenForm {
   name: string;
@@ -65,7 +65,7 @@ export function CreateApiKeyDialog({
   };
 
   return (
-    <IOSModal
+    <AppModal
       isOpen={true}
       onClose={onClose}
       title="创建 API Key"
@@ -73,28 +73,28 @@ export function CreateApiKeyDialog({
       size="md"
       footer={
         <>
-          <IOSButton variant="tertiary" onClick={onClose}>
+          <AppButton variant="tertiary" onClick={onClose}>
             取消
-          </IOSButton>
-          <IOSButton
+          </AppButton>
+          <AppButton
             variant="primary"
             onClick={onSubmit}
             disabled={creating || !form.name.trim()}
             loading={creating}
           >
             {creating ? '创建中...' : '创建'}
-          </IOSButton>
+          </AppButton>
         </>
       }
     >
       <form onSubmit={handleSubmit} className="space-y-[var(--spacing-lg)]">
         {/* 站点信息 */}
-        <div className="text-sm text-[var(--ios-text-secondary)]">
-          站点: <span className="text-[var(--ios-text-primary)] font-medium">{site.name}</span>
+        <div className="text-sm text-[var(--text-secondary)]">
+          站点: <span className="font-medium text-[var(--text-primary)]">{site.name}</span>
         </div>
 
         {/* 名称 */}
-        <IOSInput
+        <AppInput
           ref={nameInputRef}
           label="令牌名称"
           value={form.name}
@@ -105,13 +105,13 @@ export function CreateApiKeyDialog({
 
         {/* 分组选择 */}
         <div>
-          <label className="block text-sm font-medium text-[var(--ios-text-primary)] mb-[var(--spacing-sm)]">
+          <label className="mb-[var(--spacing-sm)] block text-sm font-medium text-[var(--text-primary)]">
             用户分组
           </label>
           <select
             value={form.group}
             onChange={e => onFormChange({ group: e.target.value })}
-            className="w-full px-[var(--spacing-md)] py-[var(--spacing-md)] bg-[var(--ios-bg-tertiary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] text-sm text-[var(--ios-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--ios-blue)]/20 focus:border-[var(--ios-blue)] transition-all duration-[var(--duration-fast)]"
+            className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
           >
             {Object.entries(groups).map(([groupName, groupInfo]) => (
               <option key={groupName} value={groupName}>
@@ -124,7 +124,7 @@ export function CreateApiKeyDialog({
 
         {/* 额度设置 */}
         <div>
-          <label className="block text-sm font-medium text-[var(--ios-text-primary)] mb-[var(--spacing-sm)]">
+          <label className="mb-[var(--spacing-sm)] block text-sm font-medium text-[var(--text-primary)]">
             额度设置
           </label>
           <div className="space-y-[var(--spacing-sm)]">
@@ -133,14 +133,14 @@ export function CreateApiKeyDialog({
                 type="checkbox"
                 checked={form.unlimitedQuota}
                 onChange={e => onFormChange({ unlimitedQuota: e.target.checked })}
-                className="w-4 h-4 text-[var(--ios-blue)] rounded focus:ring-[var(--ios-blue)] border-[var(--ios-separator)]"
+                className="h-4 w-4 rounded border-[var(--line-soft)] text-[var(--accent)] focus:ring-[var(--accent)]"
               />
-              <span className="text-sm text-[var(--ios-text-secondary)]">无限额度</span>
+              <span className="text-sm text-[var(--text-secondary)]">无限额度</span>
             </label>
             {!form.unlimitedQuota && (
               <div className="flex items-center gap-[var(--spacing-sm)]">
-                <span className="text-sm text-[var(--ios-text-secondary)]">$</span>
-                <IOSInput
+                <span className="text-sm text-[var(--text-secondary)]">$</span>
+                <AppInput
                   type="number"
                   value={form.quota}
                   onChange={e => onFormChange({ quota: e.target.value })}
@@ -156,17 +156,17 @@ export function CreateApiKeyDialog({
 
         {/* 过期时间 */}
         <div>
-          <label className="block text-sm font-medium text-[var(--ios-text-primary)] mb-[var(--spacing-sm)]">
-            过期时间 <span className="text-[var(--ios-text-tertiary)] text-xs">(可选)</span>
+          <label className="mb-[var(--spacing-sm)] block text-sm font-medium text-[var(--text-primary)]">
+            过期时间 <span className="text-xs text-[var(--text-tertiary)]">(可选)</span>
           </label>
           <input
             type="datetime-local"
             value={form.expiredTime}
             onChange={e => onFormChange({ expiredTime: e.target.value })}
-            className="w-full px-[var(--spacing-md)] py-[var(--spacing-md)] bg-[var(--ios-bg-tertiary)] border border-[var(--ios-separator)] rounded-[var(--radius-md)] text-sm text-[var(--ios-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--ios-blue)]/20 focus:border-[var(--ios-blue)] transition-all duration-[var(--duration-fast)]"
+            className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
           />
         </div>
       </form>
-    </IOSModal>
+    </AppModal>
   );
 }

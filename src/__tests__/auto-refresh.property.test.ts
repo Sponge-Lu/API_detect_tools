@@ -60,7 +60,7 @@ function buildSiteConfigOnSave(
  * This is the core logic we're testing for Property 2
  */
 function toggleAutoRefresh(site: SiteConfig): SiteConfig {
-  // Get current interval or use default 10 minutes
+  // Get current interval or use the app default (30 minutes)
   const interval = site.auto_refresh_interval || 30;
   if (site.auto_refresh) {
     // Disable auto-refresh, but preserve interval
@@ -70,7 +70,7 @@ function toggleAutoRefresh(site: SiteConfig): SiteConfig {
       auto_refresh_interval: interval,
     };
   } else {
-    // Enable auto-refresh: use existing interval or default to 5
+    // Enable auto-refresh: use existing interval or app default
     return {
       ...site,
       auto_refresh: true,
@@ -136,7 +136,7 @@ describe('Auto-Refresh Configuration Property Tests', () => {
    *
    * *For any* site, clicking the auto-refresh toggle SHALL invert
    * the auto_refresh state, and when enabling, SHALL use the
-   * existing interval or default to 5 minutes
+   * existing interval or default to 30 minutes
    */
   describe('Property 2: Toggle behavior consistency', () => {
     // Arbitrary for generating valid SiteConfig
@@ -163,7 +163,7 @@ describe('Auto-Refresh Configuration Property Tests', () => {
       );
     });
 
-    it('should use existing interval or default to 5 when enabling', () => {
+    it('should use existing interval or default to 30 when enabling', () => {
       fc.assert(
         fc.property(
           siteConfigArb.filter(s => !s.auto_refresh), // Only test sites with auto_refresh=false
@@ -176,8 +176,8 @@ describe('Auto-Refresh Configuration Property Tests', () => {
               // Should use existing interval
               expect(result.auto_refresh_interval).toBe(site.auto_refresh_interval);
             } else {
-              // Should default to 5
-              expect(result.auto_refresh_interval).toBe(5);
+              // Should default to 30
+              expect(result.auto_refresh_interval).toBe(30);
             }
           }
         ),

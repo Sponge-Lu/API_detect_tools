@@ -11,90 +11,55 @@
 
 /**
  * 主题管理 Hook
- * 支持：白天模式、夜晚模式、跟随系统
+ * 支持：1 套浅色主题 + 1 套统一暗色主题
  * 主题设置会同步保存到主进程存储，确保下次启动时窗口背景色正确
  */
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import {
+  normalizeThemeMode,
+  THEME_STORAGE_KEY,
+  type ThemeMode,
+} from '../../shared/theme/themePresets';
 
-export type ThemeMode = 'light' | 'dark' | 'system';
+function applyTheme(theme: ThemeMode) {
+  const root = document.documentElement;
+  root.dataset.theme = theme;
+  root.classList.toggle('dark', theme === 'dark');
+}
 
-const THEME_STORAGE_KEY = 'app-theme-mode';
+function persistThemeMode(mode: ThemeMode) {
+  localStorage.setItem(THEME_STORAGE_KEY, mode);
+  window.electronAPI?.theme?.save?.(mode)?.catch?.(() => {
+    // 静默处理保存失败
+  });
+}
 
 export function useTheme() {
-  // 从 localStorage 读取主题设置，默认跟随系统
+  // 从 localStorage 读取主题设置，并兼容旧值迁移
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
-    const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    const isValid = stored === 'light' || stored === 'dark' || stored === 'system';
-    return isValid ? (stored as ThemeMode) : 'system';
+    return normalizeThemeMode(localStorage.getItem(THEME_STORAGE_KEY));
   });
-
-  // 获取系统主题偏好
-  const getSystemTheme = (): 'light' | 'dark' => {
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      return 'dark';
-    }
-    return 'light';
-  };
-
-  // 计算实际应用的主题
-  const getAppliedTheme = (): 'light' | 'dark' => {
-    if (themeMode === 'system') {
-      return getSystemTheme();
-    }
-    return themeMode;
-  };
-
-  // 应用主题到 DOM
-  const applyTheme = (theme: 'light' | 'dark') => {
-    const root = document.documentElement;
-    if (theme === 'dark') {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-    }
-  };
 
   // 切换主题模式（同时保存到 localStorage 和主进程存储）
   const changeThemeMode = (mode: ThemeMode) => {
     setThemeMode(mode);
-    localStorage.setItem(THEME_STORAGE_KEY, mode);
-    // 同步保存到主进程存储，确保下次启动时窗口背景色正确
-    window.electronAPI?.theme?.save(mode).catch(() => {
-      // 静默处理保存失败
-    });
+    persistThemeMode(mode);
   };
 
-  // 监听主题模式变化
+  // 应用主题并在挂载时完成旧值迁移
   useEffect(() => {
-    const appliedTheme = getAppliedTheme();
-    applyTheme(appliedTheme);
-  }, [themeMode]);
+    const storedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+    applyTheme(themeMode);
 
-  // 监听系统主题变化（仅在 system 模式下生效）
-  useEffect(() => {
-    if (themeMode !== 'system') return;
-
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const handleChange = () => {
-      const newTheme = getSystemTheme();
-      applyTheme(newTheme);
-    };
-
-    // 使用新的 API（如果支持）
-    if (mediaQuery.addEventListener) {
-      mediaQuery.addEventListener('change', handleChange);
-      return () => mediaQuery.removeEventListener('change', handleChange);
-    } else {
-      // 降级到旧的 API
-      mediaQuery.addListener(handleChange);
-      return () => mediaQuery.removeListener(handleChange);
+    if (storedTheme !== themeMode) {
+      persistThemeMode(themeMode);
     }
   }, [themeMode]);
 
   return {
     themeMode,
-    appliedTheme: getAppliedTheme(),
+    appliedTheme: themeMode,
     changeThemeMode,
   };
 }

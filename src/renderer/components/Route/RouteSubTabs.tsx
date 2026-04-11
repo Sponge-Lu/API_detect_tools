@@ -1,5 +1,5 @@
 /**
- * 路由页 Sub-Tab 导航（iOS Segmented Control 风格）
+ * 路由页紧凑子切换条
  */
 
 import { useRef, useLayoutEffect, useState, useCallback } from 'react';
@@ -9,7 +9,7 @@ import type { RouteSubTab } from '../../store/routeStore';
 const subTabs: { id: RouteSubTab; label: string; icon: typeof Layers }[] = [
   { id: 'redirection', label: '模型重定向', icon: Layers },
   { id: 'usability', label: 'CLI 可用性', icon: Activity },
-  { id: 'proxystats', label: '代理&统计', icon: BarChart3 },
+  { id: 'proxystats', label: '代理统计', icon: BarChart3 },
 ];
 
 interface RouteSubTabsProps {
@@ -47,10 +47,10 @@ export function RouteSubTabs({ activeTab, onChange }: RouteSubTabsProps) {
   return (
     <div
       ref={containerRef}
-      className="relative flex items-center gap-0.5 p-0.5 bg-gray-100 dark:bg-gray-800 rounded-lg mx-6 mt-3 mb-4"
+      className="relative mx-6 mb-4 mt-3 flex items-center gap-0.5 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)]/88 p-0.5"
     >
       <div
-        className="absolute top-0.5 h-[calc(100%-4px)] bg-white dark:bg-gray-700 rounded-md shadow-sm transition-all duration-250 ease-[cubic-bezier(0.25,0.1,0.25,1)]"
+        className="absolute top-0.5 h-[calc(100%-4px)] rounded-[var(--radius-md)] bg-[var(--surface-3)] shadow-[var(--shadow-sm)] transition-all duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)]"
         style={{
           left: indicator.left,
           width: indicator.width,
@@ -67,12 +67,12 @@ export function RouteSubTabs({ activeTab, onChange }: RouteSubTabsProps) {
             onClick={() => onChange(id)}
             className={`
               relative z-10 flex-1 flex items-center justify-center gap-1.5
-              px-3 py-1.5 text-[12px] font-medium rounded-md
+              rounded-[var(--radius-md)] px-3 py-1.5 text-[12px] font-medium
               transition-colors duration-200
               ${
                 isActive
-                  ? 'text-[var(--ios-blue)] font-semibold'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                  ? 'font-semibold text-[var(--accent)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }
             `}
           >

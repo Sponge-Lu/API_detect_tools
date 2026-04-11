@@ -6,8 +6,9 @@
 
 import { useState, useEffect } from 'react';
 import { Loader2, UserPlus } from 'lucide-react';
-import { IOSModal } from './IOSModal';
-import { IOSInput } from './IOSInput';
+import { AppButton } from './AppButton/AppButton';
+import { AppModal } from './AppModal/AppModal';
+import { AppInput } from './AppInput';
 import { toast } from '../store/toastStore';
 
 interface AddAccountDialogProps {
@@ -123,14 +124,14 @@ export function AddAccountDialog({
   const isProcessing = step !== 'idle' && step !== 'done';
 
   return (
-    <IOSModal
+    <AppModal
       isOpen={isOpen}
       onClose={isProcessing ? () => {} : onClose}
       title={`添加账户 - ${siteName}`}
       titleIcon={<UserPlus className="w-5 h-5" />}
     >
       <div className="p-5 space-y-4">
-        <IOSInput
+        <AppInput
           label="账户名称"
           value={accountName}
           onChange={e => setAccountName(e.target.value)}
@@ -142,7 +143,7 @@ export function AddAccountDialog({
 
         {/* 状态提示 */}
         {isProcessing && (
-          <div className="flex items-center gap-2 text-sm text-[var(--ios-blue)]">
+          <div className="flex items-center gap-2 text-sm text-[var(--accent)]">
             <Loader2 className="w-4 h-4 animate-spin" />
             <span>{statusMessage}</span>
           </div>
@@ -150,36 +151,27 @@ export function AddAccountDialog({
 
         {/* 错误提示（非 idle 阶段） */}
         {error && step === 'idle' && !accountName && null}
-        {error && step !== 'idle' && <div className="text-sm text-[var(--ios-red)]">{error}</div>}
+        {error && step !== 'idle' && <div className="text-sm text-[var(--danger)]">{error}</div>}
 
         <p className="text-xs text-[var(--text-secondary)]">
           将启动独立浏览器窗口（含主浏览器插件），请用新账号登录站点。
         </p>
 
         <div className="flex justify-end gap-3 pt-2">
-          <button
-            onClick={onClose}
-            disabled={isProcessing}
-            className="px-4 py-2 text-sm rounded-lg border border-[var(--ios-separator)] hover:bg-[var(--ios-fill)] transition-colors disabled:opacity-50"
-          >
+          <AppButton type="button" variant="secondary" onClick={onClose} disabled={isProcessing}>
             取消
-          </button>
-          <button
+          </AppButton>
+          <AppButton
+            type="button"
+            variant="primary"
             onClick={handleStart}
             disabled={isProcessing || !accountName.trim()}
-            className="px-4 py-2 text-sm rounded-lg bg-[var(--ios-blue)] text-white hover:bg-[var(--ios-blue)]/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+            loading={isProcessing}
           >
-            {isProcessing ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                处理中...
-              </>
-            ) : (
-              '启动浏览器登录'
-            )}
-          </button>
+            {isProcessing ? '处理中...' : '启动浏览器登录'}
+          </AppButton>
         </div>
       </div>
-    </IOSModal>
+    </AppModal>
   );
 }

@@ -1,13 +1,13 @@
 /**
  * @file src/renderer/components/ConfirmDialog.tsx
- * @description 确认对话框组件 - 使用 IOSModal 重构
+ * @description 确认对话框组件 - 使用统一弹窗原语实现
  *
  * 输入: ConfirmDialogProps (弹窗状态、类型、标题、消息、回调)
  * 输出: React 组件 (确认弹窗 UI)
  * 定位: 展示层 - 自定义确认弹窗组件，替代原生 confirm/alert
  *
  * @version 2.1.11
- * @updated 2025-01-08 - 使用 IOSModal 重构
+ * @updated 2026-04-02 - 对齐统一弹窗原语说明
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -17,8 +17,8 @@
 
 import React, { useEffect, useRef } from 'react';
 import { AlertTriangle, CheckCircle, Info, AlertCircle } from 'lucide-react';
-import { IOSModal } from './IOSModal';
-import { IOSButton } from './IOSButton';
+import { AppModal } from './AppModal/AppModal';
+import { AppButton } from './AppButton/AppButton';
 
 export type DialogType = 'confirm' | 'alert' | 'success' | 'warning' | 'error';
 
@@ -30,16 +30,17 @@ export interface ConfirmDialogProps {
   content?: React.ReactNode;
   confirmText?: string;
   cancelText?: string;
+  overlayZIndexClassName?: string;
   onConfirm: () => void;
   onCancel?: () => void;
 }
 
 const iconMap: Record<DialogType, React.ReactNode> = {
-  confirm: <AlertCircle className="w-6 h-6 text-[var(--ios-blue)]" />,
-  alert: <Info className="w-6 h-6 text-[var(--ios-blue)]" />,
-  success: <CheckCircle className="w-6 h-6 text-[var(--ios-green)]" />,
-  warning: <AlertTriangle className="w-6 h-6 text-[var(--ios-orange)]" />,
-  error: <AlertTriangle className="w-6 h-6 text-[var(--ios-red)]" />,
+  confirm: <AlertCircle className="w-6 h-6 text-[var(--accent)]" />,
+  alert: <Info className="w-6 h-6 text-[var(--accent)]" />,
+  success: <CheckCircle className="w-6 h-6 text-[var(--success)]" />,
+  warning: <AlertTriangle className="w-6 h-6 text-[var(--warning)]" />,
+  error: <AlertTriangle className="w-6 h-6 text-[var(--danger)]" />,
 };
 
 const titleMap: Record<DialogType, string> = {
@@ -58,6 +59,7 @@ export function ConfirmDialog({
   content,
   confirmText,
   cancelText = '取消',
+  overlayZIndexClassName,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -89,10 +91,10 @@ export function ConfirmDialog({
   const defaultConfirmText = isAlertOnly ? '确定' : '确认';
 
   // 根据类型确定确认按钮变体
-  const confirmBtnVariant = type === 'error' || type === 'warning' ? 'primary' : 'primary';
+  const confirmBtnVariant = type === 'error' || type === 'warning' ? 'danger' : 'primary';
 
   return (
-    <IOSModal
+    <AppModal
       isOpen={isOpen}
       onClose={onCancel || onConfirm}
       title={displayTitle}
@@ -101,31 +103,25 @@ export function ConfirmDialog({
       closeOnEsc={!!onCancel}
       closeOnOverlayClick={!!onCancel}
       showCloseButton={false}
+      overlayZIndexClassName={overlayZIndexClassName}
       footer={
         <>
           {!isAlertOnly && onCancel && (
-            <IOSButton variant="tertiary" onClick={onCancel}>
+            <AppButton variant="tertiary" onClick={onCancel}>
               {cancelText}
-            </IOSButton>
+            </AppButton>
           )}
-          <IOSButton
-            ref={confirmBtnRef}
-            variant={confirmBtnVariant}
-            onClick={onConfirm}
-            className={
-              type === 'error' || type === 'warning' ? 'bg-[var(--ios-red)] hover:bg-[#E53935]' : ''
-            }
-          >
+          <AppButton ref={confirmBtnRef} variant={confirmBtnVariant} onClick={onConfirm}>
             {confirmText || defaultConfirmText}
-          </IOSButton>
+          </AppButton>
         </>
       }
     >
-      <p className="text-sm text-[var(--ios-text-secondary)] whitespace-pre-wrap leading-relaxed">
+      <p className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">
         {message}
       </p>
       {content}
-    </IOSModal>
+    </AppModal>
   );
 }
 

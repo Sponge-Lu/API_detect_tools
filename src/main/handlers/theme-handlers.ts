@@ -6,6 +6,7 @@
 import { ipcMain, app } from 'electron';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { normalizeThemeMode, type ThemeMode } from '../../shared/theme/themePresets';
 
 function getThemeSettingsPath() {
   const userDataPath = app.getPath('userData');
@@ -14,14 +15,16 @@ function getThemeSettingsPath() {
 
 export function registerThemeHandlers() {
   // 保存主题设置
-  ipcMain.handle('theme:save', async (_, themeMode: 'light' | 'dark' | 'system') => {
+  ipcMain.handle('theme:save', async (_, themeMode: ThemeMode) => {
     try {
       const themePath = getThemeSettingsPath();
-      await fs.writeFile(themePath, JSON.stringify({ themeMode }, null, 2), 'utf-8');
+      const normalizedThemeMode = normalizeThemeMode(themeMode);
+      await fs.writeFile(themePath, JSON.stringify({ themeMode: normalizedThemeMode }, null, 2), 'utf-8');
       return { success: true };
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'unknown error';
       Logger.error('保存主题设置失败:', error);
-      return { success: false, error: error.message };
+      return { success: false, error: message };
     }
   });
 
@@ -31,16 +34,9 @@ export function registerThemeHandlers() {
       const themePath = getThemeSettingsPath();
       const data = await fs.readFile(themePath, 'utf-8');
       const settings = JSON.parse(data);
-      if (
-        settings.themeMode === 'light' ||
-        settings.themeMode === 'dark' ||
-        settings.themeMode === 'system'
-      ) {
-        return { success: true, data: settings.themeMode };
-      }
-      return { success: true, data: 'system' };
+      return { success: true, data: normalizeThemeMode(settings.themeMode) };
     } catch {
-      return { success: true, data: 'system' };
+      return { success: true, data: normalizeThemeMode(null) };
     }
   });
 }

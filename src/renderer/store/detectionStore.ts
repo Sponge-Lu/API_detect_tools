@@ -48,12 +48,21 @@ export interface EditedConfigFile {
   content: string;
 }
 
+/** 单个测试模型的持久化结果 */
+export interface CliModelTestResult {
+  model: string;
+  success: boolean;
+  message?: string;
+  timestamp: number;
+}
+
 /** 单个 CLI 配置项 */
 export interface CliConfigItem {
   apiKeyId: number | null;
   model: string | null; // CLI 使用模型
   testModel?: string | null; // 测试使用模型
   testModels?: string[] | null; // 测试使用模型（最多 3 个）
+  testResults?: Array<CliModelTestResult | null> | null; // 测试结果（按槽位持久化）
   enabled?: boolean; // 是否启用（控制图标显示和测试），可选以兼容旧数据
   editedFiles?: EditedConfigFile[] | null; // 用户编辑后的配置文件内容
   applyMode?: 'merge' | 'overwrite'; // 应用配置模式：合并或覆盖，默认合并

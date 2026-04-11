@@ -1,7 +1,7 @@
 /**
  * 输入: SiteCardHeaderProps (站点数据、检测结果、CLI 兼容性)
  * 输出: React 组件 (站点卡片头部 UI)
- * 定位: 展示层 - 站点卡片头部组件，显示站点基本信息（名称、状态、余额、消费、LDC支付比例等）
+ * 定位: 展示层 - 站点卡片头部组件，显示站点基本信息与关键指标
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -9,13 +9,9 @@
  * - PROJECT_INDEX.md
  */
 
-import type { SiteCardHeaderProps } from './types';
 import { CliCompatibilityIcons } from '../CliCompatibilityIcons';
-import { LDC_UI_VISIBILITY } from '../../../shared/constants';
+import type { SiteCardHeaderProps } from './types';
 
-/**
- * 格式化数字为 K/M 单位
- */
 function formatNumber(num: number): string {
   if (num >= 1_000_000) {
     return (num / 1_000_000).toFixed(1) + 'M';
@@ -24,6 +20,16 @@ function formatNumber(num: number): string {
     return (num / 1_000).toFixed(1) + 'K';
   }
   return num.toString();
+}
+
+function formatBalanceDisplay(balance: number): string {
+  if (balance === -1) {
+    return '∞';
+  }
+  if (balance >= 100_000) {
+    return `$${formatNumber(balance)}`;
+  }
+  return `$${balance.toFixed(2)}`;
 }
 
 export function SiteCardHeader({
@@ -50,222 +56,134 @@ export function SiteCardHeader({
   onTestCliCompat,
   onApply,
 }: SiteCardHeaderProps) {
-  const visibleColumnWidths =
-    !LDC_UI_VISIBILITY.showRatioColumn && columnWidths.length > 12
-      ? columnWidths.slice(0, -1)
-      : columnWidths;
-
   return (
     <div
-      className="grid gap-x-1 items-center text-[13px] tabular-nums"
+      className="grid items-center gap-x-1 text-[13px] tabular-nums"
       style={{
-        gridTemplateColumns: visibleColumnWidths.map(w => `${w}px`).join(' '),
+        gridTemplateColumns: columnWidths.map(w => `${w}px`).join(' '),
       }}
     >
-      {/* 1. 站点名称 + 账户名 */}
-      <div className="flex items-center min-w-0">
-        <div className="flex flex-col min-w-0">
-          <div className="flex items-center gap-1.5 min-w-0">
+      <div className="flex min-w-0 items-center">
+        <div className="flex min-w-0 flex-col gap-[2px]">
+          <div className="flex min-w-0 items-center gap-1.5">
             <button
               onClick={() => onOpenSite(site, accountId)}
-              className="flex items-center gap-1.5 hover:text-primary-400 transition-colors group min-w-0"
+              className="group flex min-w-0 items-center gap-1.5 transition-colors hover:text-[var(--accent)]"
               title={`打开站点 ${site.name}${siteResult ? (siteResult.status === '成功' ? ' (在线)' : ' (离线)') : ' (未检测)'}`}
             >
-              {/* 状态图标 */}
               {siteResult ? (
                 siteResult.status === '成功' ? (
-                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse flex-shrink-0" />
+                  <div className="h-2 w-2 rounded-full bg-[var(--success)] animate-pulse flex-shrink-0" />
                 ) : (
-                  <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
+                  <div className="h-2 w-2 rounded-full bg-[var(--danger)] flex-shrink-0" />
                 )
               ) : (
-                <div className="w-2 h-2 rounded-full bg-light-text-tertiary dark:bg-dark-text-tertiary flex-shrink-0" />
+                <div className="h-2 w-2 rounded-full bg-[var(--text-tertiary)] flex-shrink-0" />
               )}
-              <span className="font-bold text-sm md:text-base truncate">{site.name}</span>
+              <span className="truncate text-sm font-semibold text-[var(--text-primary)] md:text-base">
+                {site.name}
+              </span>
             </button>
-            {/* 错误码/超时提示 */}
             {errorCode && (
-              <span className="text-red-500 dark:text-red-400 text-[10px] font-semibold flex-shrink-0">
+              <span className="flex-shrink-0 text-[10px] font-semibold text-[var(--danger)]">
                 {errorCode}
               </span>
             )}
             {!errorCode && timeoutSeconds !== null && (
-              <span className="text-red-500 dark:text-red-400 text-[10px] font-semibold flex-shrink-0">
+              <span className="flex-shrink-0 text-[10px] font-semibold text-[var(--danger)]">
                 T/O
               </span>
             )}
           </div>
-          {/* 账户名（小字显示在站点名下方） */}
-          {accountName && (
-            <span className="text-[10px] text-light-text-tertiary dark:text-dark-text-tertiary truncate pl-[14px]">
-              {accountName}
-            </span>
-          )}
+          <div className="flex min-w-0 items-center gap-1.5 pl-[14px] text-[10px] text-[var(--text-tertiary)]">
+            <span className="min-w-0 truncate">{accountName ?? '--'}</span>
+            <span className="shrink-0">{lastSyncDisplay ?? '--'}</span>
+          </div>
         </div>
       </div>
 
-      {/* 2. 余额 */}
       <div className="flex flex-col">
         {siteResult && siteResult.balance !== undefined && siteResult.balance !== null ? (
-          siteResult.balance === -1 ? (
-            <span className="font-mono font-semibold text-purple-600 dark:text-purple-400">∞</span>
-          ) : (
-            <span className="font-mono font-semibold text-green-600 dark:text-green-400 truncate">
-              ${siteResult.balance.toFixed(2)}
-            </span>
-          )
+          <span
+            className={`truncate font-mono font-semibold ${
+              siteResult.balance === -1 ? 'text-[var(--warning)]' : 'text-[var(--success)]'
+            }`}
+          >
+            {formatBalanceDisplay(siteResult.balance)}
+          </span>
         ) : (
-          <span className="text-light-text-tertiary dark:text-dark-text-tertiary">--</span>
+          <span className="text-[var(--text-tertiary)]">--</span>
         )}
       </div>
 
-      {/* 3. 今日消费 */}
       <div className="flex flex-col">
         {siteResult && siteResult.todayUsage !== undefined ? (
           <span
-            className={`font-mono font-semibold truncate ${
-              siteResult.todayUsage === 0
-                ? 'text-orange-300 dark:text-orange-600'
-                : 'text-orange-600 dark:text-orange-400'
+            className={`truncate font-mono font-semibold ${
+              siteResult.todayUsage === 0 ? 'text-[var(--text-tertiary)]' : 'text-[var(--warning)]'
             }`}
           >
             $-{siteResult.todayUsage.toFixed(2)}
           </span>
         ) : (
-          <span className="text-light-text-tertiary dark:text-dark-text-tertiary">--</span>
+          <span className="text-[var(--text-tertiary)]">--</span>
         )}
       </div>
 
-      {/* 4. 总 Token */}
-      <div className="flex flex-col items-center justify-center text-[13px]">
+      <div className="flex flex-col items-center justify-center leading-tight">
         <span
           className={`font-mono font-medium ${
-            todayTotalTokens > 0
-              ? 'text-light-text dark:text-dark-text'
-              : 'text-light-text-tertiary dark:text-dark-text-tertiary'
+            todayTotalTokens > 0 ? 'text-[var(--text-primary)]' : 'text-[var(--text-tertiary)]'
           }`}
           title={todayTotalTokens.toLocaleString()}
         >
           {formatNumber(todayTotalTokens)}
         </span>
+        {todayTotalTokens > 0 ? (
+          <span className="mt-0.5 text-[10px] text-[var(--text-tertiary)]">
+            输入 {formatNumber(todayPromptTokens)} / 输出 {formatNumber(todayCompletionTokens)}
+          </span>
+        ) : null}
       </div>
 
-      {/* 5. 输入 Token */}
-      <div className="flex flex-col items-center justify-center text-[13px]">
+      <div className="flex flex-col items-center justify-center leading-tight">
         <span
           className={`font-mono font-medium ${
-            todayPromptTokens > 0
-              ? 'text-light-text dark:text-dark-text'
-              : 'text-light-text-tertiary dark:text-dark-text-tertiary'
-          }`}
-          title={todayPromptTokens.toLocaleString()}
-        >
-          {formatNumber(todayPromptTokens)}
-        </span>
-      </div>
-
-      {/* 6. 输出 Token */}
-      <div className="flex flex-col items-center justify-center text-[13px]">
-        <span
-          className={`font-mono font-medium ${
-            todayCompletionTokens > 0
-              ? 'text-light-text dark:text-dark-text'
-              : 'text-light-text-tertiary dark:text-dark-text-tertiary'
-          }`}
-          title={todayCompletionTokens.toLocaleString()}
-        >
-          {formatNumber(todayCompletionTokens)}
-        </span>
-      </div>
-
-      {/* 7. 请求次数 */}
-      <div className="flex flex-col items-center justify-center text-[13px]">
-        <span
-          className={`font-mono font-medium ${
-            todayRequests > 0
-              ? 'text-light-text dark:text-dark-text'
-              : 'text-light-text-tertiary dark:text-dark-text-tertiary'
+            todayRequests > 0 ? 'text-[var(--text-primary)]' : 'text-[var(--text-tertiary)]'
           }`}
           title={todayRequests.toLocaleString()}
         >
           {formatNumber(todayRequests)}
         </span>
+        {todayRequests > 0 ? (
+          <span className="mt-0.5 text-[10px] text-[var(--text-tertiary)]">
+            RPM {rpm.toFixed(2)} / TPM {formatNumber(Math.round(tpm))}
+          </span>
+        ) : null}
       </div>
 
-      {/* 8. RPM */}
-      <div className="flex flex-col items-center justify-center text-[13px]">
-        <span
-          className={`font-mono font-medium ${
-            rpm > 0
-              ? 'text-light-text dark:text-dark-text'
-              : 'text-light-text-tertiary dark:text-dark-text-tertiary'
-          }`}
-        >
-          {rpm.toFixed(2)}
-        </span>
-      </div>
-
-      {/* 9. TPM */}
-      <div className="flex flex-col items-center justify-center text-[13px]">
-        <span
-          className={`font-mono font-medium ${
-            tpm > 0
-              ? 'text-light-text dark:text-dark-text'
-              : 'text-light-text-tertiary dark:text-dark-text-tertiary'
-          }`}
-        >
-          {formatNumber(Math.round(tpm))}
-        </span>
-      </div>
-
-      {/* 10. 模型数 */}
-      <div className="flex flex-col items-center justify-center text-[13px] text-light-text-secondary dark:text-dark-text-secondary">
+      <div className="flex items-center justify-center text-[13px] text-[var(--text-secondary)]">
         <span
           className={`font-medium ${
-            modelCount > 0
-              ? 'text-blue-600 dark:text-blue-400'
-              : 'text-light-text-tertiary dark:text-dark-text-tertiary'
+            modelCount > 0 ? 'text-[var(--accent)]' : 'text-[var(--text-tertiary)]'
           }`}
         >
           {modelCount}
         </span>
       </div>
 
-      {/* 11. 更新时间 */}
-      <div className="flex flex-col items-center justify-center text-[13px] text-light-text-secondary dark:text-dark-text-secondary">
-        {lastSyncDisplay ? (
-          <span className="font-medium">{lastSyncDisplay}</span>
-        ) : (
-          <span className="text-light-text-tertiary dark:text-dark-text-tertiary">--</span>
-        )}
-      </div>
-
-      {/* 12. CLI 兼容性图标 */}
-      <div className="flex items-center justify-start gap-1">
+      <div className="flex items-center justify-center gap-1">
         <CliCompatibilityIcons
           compatibility={cliCompatibility}
           cliConfig={cliConfig ?? null}
           isLoading={isCliTesting}
+          configTrigger="text"
+          configButtonLabel="CLI配置"
           onConfig={onOpenCliConfig}
           onTest={onTestCliCompat}
           onApply={onApply}
         />
       </div>
-
-      {LDC_UI_VISIBILITY.showRatioColumn && (
-        <div className="flex items-center justify-center text-[13px]">
-          {siteResult?.ldcPaymentSupported && siteResult?.ldcExchangeRate ? (
-            <span
-              className="font-mono font-medium text-amber-600 dark:text-amber-400 cursor-help"
-              title={`支持 LDC 支付，比例: ${siteResult.ldcExchangeRate}:1`}
-            >
-              {siteResult.ldcExchangeRate}
-            </span>
-          ) : (
-            <span className="text-light-text-tertiary dark:text-dark-text-tertiary">-</span>
-          )}
-        </div>
-      )}
     </div>
   );
 }

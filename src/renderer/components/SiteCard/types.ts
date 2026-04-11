@@ -125,7 +125,6 @@ export interface SiteCardHeaderProps {
   isCliTesting?: boolean;
   onOpenCliConfig?: () => void;
   onTestCliCompat?: () => void;
-  // CLI 配置应用相关
   onApply?: (e?: React.MouseEvent<HTMLButtonElement>) => void;
 }
 

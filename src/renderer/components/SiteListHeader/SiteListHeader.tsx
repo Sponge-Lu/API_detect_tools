@@ -1,62 +1,73 @@
-/**
- * @file src/renderer/components/SiteListHeader/SiteListHeader.tsx
- * @description 站点列表表头组件
- *
- * 输入: SiteListHeaderProps (列宽数组、列宽变更回调)
- * 输出: React 组件 (站点列表表头 UI)
- * 定位: 展示层 - 站点列表表头组件，显示各列标题，支持列宽调整
- *
- * 🔄 自引用: 当此文件变更时，更新:
- * - 本文件头注释
- * - src/renderer/components/SiteListHeader/FOLDER_INDEX.md
- * - PROJECT_INDEX.md
- *
- * @version 2.1.13
- * @updated 2025-01-09 - iOS 原生风格优化：移除渐变背景，使用透明背景
- */
+import { useCallback, useRef } from 'react';
+import { ArrowDown, ArrowUp } from 'lucide-react';
+import { COLUMN_MAX_WIDTH, COLUMN_MIN_WIDTH } from '../../../shared/constants';
+import type { SortField, SortOrder } from '../../store/uiStore';
 
-import { useRef, useCallback } from 'react';
-import { COLUMN_MIN_WIDTH, COLUMN_MAX_WIDTH } from '../../../shared/constants';
-
-interface SiteListHeaderProps {
-  columnWidths: number[];
-  onColumnWidthChange: (index: number, width: number) => void;
+interface SiteListColumn {
+  label: string;
+  field?: SortField;
+  centered?: boolean;
 }
 
-const COLUMN_LABELS = [
-  '站点',
-  '余额',
-  '今日消费',
-  '总 Token',
-  '输入',
-  '输出',
-  '请求',
-  'RPM',
-  'TPM',
-  '模型数',
-  '更新时间',
-  'CC-CX-Gemini?',
-  'LDC比例',
+export interface SiteListHeaderProps {
+  columnWidths: number[];
+  onColumnWidthChange: (index: number, width: number) => void;
+  sortField?: SortField | null;
+  sortOrder?: SortOrder;
+  onToggleSort?: (field: SortField) => void;
+  onResetSort?: () => void;
+  actions?: React.ReactNode;
+  className?: string;
+}
+
+const ALL_COLUMNS: SiteListColumn[] = [
+  { label: '站点', field: 'name' },
+  { label: '余额', field: 'balance' },
+  { label: '今日消费', field: 'todayUsage' },
+  { label: 'Token统计', field: 'totalTokens', centered: true },
+  { label: '请求统计', centered: true },
+  { label: '模型数', field: 'modelCount', centered: true },
+  { label: 'CLI可用性', centered: true },
 ];
 
-export function SiteListHeader({ columnWidths, onColumnWidthChange }: SiteListHeaderProps) {
+function SortIndicator({ order }: { order: SortOrder }) {
+  return order === 'desc' ? (
+    <ArrowDown className="h-3 w-3" strokeWidth={2.2} />
+  ) : (
+    <ArrowUp className="h-3 w-3" strokeWidth={2.2} />
+  );
+}
+
+export function SiteListHeader({
+  columnWidths,
+  onColumnWidthChange,
+  sortField = null,
+  sortOrder = 'desc',
+  onToggleSort,
+  actions,
+  className = '',
+}: SiteListHeaderProps) {
   const resizingRef = useRef<{ index: number; startX: number; startWidth: number } | null>(null);
+  const columns = ALL_COLUMNS.slice(0, columnWidths.length);
 
   const handleMouseDown = useCallback(
-    (e: React.MouseEvent, index: number) => {
-      e.preventDefault();
+    (event: React.MouseEvent, index: number) => {
+      event.preventDefault();
       resizingRef.current = {
         index,
-        startX: e.clientX,
+        startX: event.clientX,
         startWidth: columnWidths[index],
       };
 
       const handleMouseMove = (moveEvent: MouseEvent) => {
         if (!resizingRef.current) return;
-        const { index, startX, startWidth } = resizingRef.current;
+        const { index: activeIndex, startX, startWidth } = resizingRef.current;
         const delta = moveEvent.clientX - startX;
-        const newWidth = Math.max(COLUMN_MIN_WIDTH, Math.min(COLUMN_MAX_WIDTH, startWidth + delta));
-        onColumnWidthChange(index, newWidth);
+        const nextWidth = Math.max(
+          COLUMN_MIN_WIDTH,
+          Math.min(COLUMN_MAX_WIDTH, startWidth + delta)
+        );
+        onColumnWidthChange(activeIndex, nextWidth);
       };
 
       const handleMouseUp = () => {
@@ -73,27 +84,44 @@ export function SiteListHeader({ columnWidths, onColumnWidthChange }: SiteListHe
 
   return (
     <div
-      className="grid gap-x-1 items-center px-3 py-2 text-xs font-medium text-[var(--ios-text-secondary)] uppercase tracking-wide"
+      className={`sticky top-0 z-20 grid items-center gap-x-1 border-b border-[var(--line-soft)] bg-[var(--surface-1)]/95 px-3 py-2 text-xs font-medium uppercase tracking-wide text-[var(--text-secondary)] backdrop-blur ${className}`.trim()}
       style={{
-        gridTemplateColumns: columnWidths.map(w => `${w}px`).join(' ') + ' 1fr',
+        gridTemplateColumns: `${columnWidths.map(width => `${width}px`).join(' ')} 1fr`,
       }}
     >
-      {COLUMN_LABELS.map((label, index) => (
-        <div key={label} className="relative flex items-center">
-          <span className={index >= 4 || index === 11 || index === 12 ? 'text-center w-full' : ''}>
-            {label}
-          </span>
-          {/* 列宽调整手柄 */}
-          {index < COLUMN_LABELS.length - 1 && (
-            <div
-              className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary-400/50 transition-colors"
-              onMouseDown={e => handleMouseDown(e, index)}
-            />
-          )}
-        </div>
-      ))}
-      {/* 操作列占位 */}
-      <div className="text-right">操作</div>
+      {columns.map((column, index) => {
+        const isActive = column.field !== undefined && sortField === column.field;
+        const clickable = column.field !== undefined && onToggleSort !== undefined;
+
+        return (
+          <div key={column.label} className="relative flex items-center">
+            {clickable ? (
+              <button
+                type="button"
+                onClick={() => onToggleSort?.(column.field!)}
+                className={`flex w-full items-center gap-1 transition-colors hover:text-[var(--text-primary)] ${
+                  column.centered ? 'justify-center' : ''
+                } ${isActive ? 'text-[var(--accent)]' : ''}`.trim()}
+                title={`按${column.label}排序`}
+              >
+                <span>{column.label}</span>
+                {isActive ? <SortIndicator order={sortOrder} /> : null}
+              </button>
+            ) : (
+              <span className={column.centered ? 'w-full text-center' : ''}>{column.label}</span>
+            )}
+
+            {index < columns.length - 1 && (
+              <div
+                className="absolute bottom-0 right-0 top-0 w-1 cursor-col-resize transition-colors hover:bg-[var(--line-strong)]"
+                onMouseDown={moveEvent => handleMouseDown(moveEvent, index)}
+              />
+            )}
+          </div>
+        );
+      })}
+
+      <div className="flex items-center justify-end gap-0.5">{actions ?? <span>操作</span>}</div>
     </div>
   );
 }
