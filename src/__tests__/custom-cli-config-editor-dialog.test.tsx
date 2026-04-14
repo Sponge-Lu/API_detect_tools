@@ -211,6 +211,44 @@ describe('CustomCliConfigEditorDialog', () => {
     });
   });
 
+  it('persists cli test outcomes back into the custom config store after a column run', async () => {
+    const testWithConfig = vi.fn().mockResolvedValue({
+      success: true,
+      data: { codex: true },
+    });
+    const updateConfig = useCustomCliConfigStore.getState().updateConfig as ReturnType<
+      typeof vi.fn
+    >;
+    const saveConfigs = useCustomCliConfigStore.getState().saveConfigs as ReturnType<typeof vi.fn>;
+    getElectronAPI().cliCompat.testWithConfig = testWithConfig;
+
+    await renderDialog();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '测试 Codex' }));
+    });
+
+    await waitFor(() =>
+      expect(updateConfig).toHaveBeenCalledWith(
+        'cfg-1',
+        expect.objectContaining({
+          cliSettings: expect.objectContaining({
+            codex: expect.objectContaining({
+              testState: expect.objectContaining({
+                status: true,
+                slots: [
+                  expect.objectContaining({ model: 'gpt-4.1', success: true }),
+                  expect.objectContaining({ model: 'gpt-4.1-mini', success: true }),
+                  null,
+                ],
+              }),
+            }),
+          }),
+        })
+      )
+    );
+    await waitFor(() => expect(saveConfigs).toHaveBeenCalledTimes(1));
+  });
+
   it('applies the clicked cli configuration to local files', async () => {
     const writeConfig = vi.fn().mockResolvedValue({
       success: true,

@@ -8,7 +8,12 @@ import { useCustomCliConfigStore } from '../store/customCliConfigStore';
 import { useDetectionStore } from '../store/detectionStore';
 import { toast } from '../store/toastStore';
 import type { CodexTestDetail, GeminiTestDetail } from '../store/detectionStore';
-import type { CustomCliConfig } from '../../shared/types/custom-cli-config';
+import {
+  createEmptyCustomCliTestState,
+  normalizeCustomCliTestState,
+  type CustomCliConfig,
+  type CustomCliTestState,
+} from '../../shared/types/custom-cli-config';
 import {
   generateClaudeCodeConfig,
   generateCodexConfig,
@@ -32,23 +37,7 @@ interface CliOption {
   sizeClass: string;
 }
 
-interface CliSlotResult {
-  model: string;
-  success: boolean;
-  message?: string;
-  timestamp: number;
-}
-
-interface CliStatusState {
-  status: boolean | null;
-  testedAt: number | null;
-  codexDetail?: CodexTestDetail;
-  geminiDetail?: GeminiTestDetail;
-  slots: Array<CliSlotResult | null>;
-}
-
-type ConfigCliTestState = Record<CliType, CliStatusState>;
-type ConfigCliTestStateById = Record<string, ConfigCliTestState>;
+type ConfigCliTestState = Record<CliType, CustomCliTestState>;
 type EditedPreviewById = Record<string, Partial<Record<CliType, GeneratedConfig | null>>>;
 
 interface PreviewState {
@@ -62,7 +51,7 @@ interface CustomCliPageProps {
     config: CustomCliConfig,
     cliType: CliType,
     models: string[]
-  ) => Promise<CliStatusState>;
+  ) => Promise<CustomCliTestState>;
 }
 
 const CLI_OPTIONS: CliOption[] = [
@@ -106,28 +95,18 @@ function renderExternalLink(label: string, href: string, linkClassName: string):
   );
 }
 
-function createEmptyCliStatusState(): CliStatusState {
-  return {
-    status: null,
-    testedAt: null,
-    codexDetail: undefined,
-    geminiDetail: undefined,
-    slots: [null, null, null],
-  };
-}
-
 function createEmptyConfigTestState(): ConfigCliTestState {
   return {
-    claudeCode: createEmptyCliStatusState(),
-    codex: createEmptyCliStatusState(),
-    geminiCli: createEmptyCliStatusState(),
+    claudeCode: createEmptyCustomCliTestState(),
+    codex: createEmptyCustomCliTestState(),
+    geminiCli: createEmptyCustomCliTestState(),
   };
 }
 
 function buildGeneratedConfig(
   config: CustomCliConfig,
   cliType: CliType,
-  testState?: CliStatusState
+  testState?: CustomCliTestState
 ): GeneratedConfig | null {
   const setting = config.cliSettings[cliType];
   if (!setting.model || !config.baseUrl || !config.apiKey) return null;
@@ -188,7 +167,7 @@ function resolveEffectiveConfig(
   config: CustomCliConfig,
   cliType: CliType,
   editedPreview: GeneratedConfig | null | undefined,
-  testState?: CliStatusState
+  testState?: CustomCliTestState
 ): GeneratedConfig | null {
   const normalizedEditedPreview = normalizeResolvedConfig(cliType, editedPreview);
   if (normalizedEditedPreview) {
@@ -407,7 +386,6 @@ export function CustomCliPage({ runCliTests }: CustomCliPageProps = {}) {
   const [deleteCandidate, setDeleteCandidate] = useState<CustomCliConfig | null>(null);
   const [previewState, setPreviewState] = useState<PreviewState | null>(null);
   const [editedPreviews, setEditedPreviews] = useState<EditedPreviewById>({});
-  const [testStateByConfig, setTestStateByConfig] = useState<ConfigCliTestStateById>({});
   const [testingCli, setTestingCli] = useState<Record<string, Partial<Record<CliType, boolean>>>>(
     {}
   );
@@ -442,7 +420,11 @@ export function CustomCliPage({ runCliTests }: CustomCliPageProps = {}) {
   );
 
   const currentTestState = selectedConfig
-    ? (testStateByConfig[selectedConfig.id] ?? createEmptyConfigTestState())
+    ? {
+        claudeCode: normalizeCustomCliTestState(selectedConfig.cliSettings.claudeCode.testState),
+        codex: normalizeCustomCliTestState(selectedConfig.cliSettings.codex.testState),
+        geminiCli: normalizeCustomCliTestState(selectedConfig.cliSettings.geminiCli.testState),
+      }
     : createEmptyConfigTestState();
 
   const currentEditedPreviews = selectedConfig ? (editedPreviews[selectedConfig.id] ?? {}) : {};
@@ -517,8 +499,8 @@ export function CustomCliPage({ runCliTests }: CustomCliPageProps = {}) {
     config: CustomCliConfig,
     cliType: CliType,
     models: string[]
-  ): Promise<CliStatusState> => {
-    const slots: Array<CliSlotResult | null> = [null, null, null];
+  ): Promise<CustomCliTestState> => {
+    const slots = createEmptyCustomCliTestState().slots;
     let allSuccess = models.length > 0;
     let testedAt: number | null = null;
     let codexDetail: CodexTestDetail | undefined;
@@ -597,13 +579,8 @@ export function CustomCliPage({ runCliTests }: CustomCliPageProps = {}) {
 
     try {
       const result = await executeCliTests(selectedConfig, cliType, models);
-      setTestStateByConfig(prev => ({
-        ...prev,
-        [selectedConfig.id]: {
-          ...(prev[selectedConfig.id] ?? createEmptyConfigTestState()),
-          [cliType]: result,
-        },
-      }));
+      persistCliSettingPatch(cliType, { testState: result });
+      await saveConfigs();
 
       if (result.status) {
         toast.success(`${CLI_OPTIONS.find(option => option.key === cliType)?.name} 测试通过`);
@@ -833,8 +810,7 @@ export function CustomCliPage({ runCliTests }: CustomCliPageProps = {}) {
                     {CLI_OPTIONS.map(option => {
                       const setting = config.cliSettings[option.key];
                       const configured = Boolean(setting.enabled && setting.model);
-                      const testState = (testStateByConfig[config.id] ??
-                        createEmptyConfigTestState())[option.key];
+                      const testState = normalizeCustomCliTestState(setting.testState);
                       const tooltip = buildCliCompatibilityTooltip({
                         name: option.name,
                         enabled: setting.enabled,

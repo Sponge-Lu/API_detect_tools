@@ -17,6 +17,7 @@ export interface OverlayDrawerProps {
   contentClassName?: string;
   widthClassName?: string;
   placement?: 'end' | 'center';
+  style?: React.CSSProperties;
   'aria-describedby'?: string;
 }
 
@@ -38,6 +39,7 @@ export function OverlayDrawer({
   contentClassName = '',
   widthClassName = 'max-w-[760px]',
   placement = 'end',
+  style,
   'aria-describedby': ariaDescribedBy,
 }: OverlayDrawerProps) {
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -169,6 +171,7 @@ export function OverlayDrawer({
         aria-labelledby={title ? titleId : undefined}
         aria-describedby={ariaDescribedBy || descriptionId}
         tabIndex={-1}
+        style={style}
         className={joinClasses(
           'relative z-[1] w-full',
           isCentered ? 'h-auto max-h-full' : 'h-full',

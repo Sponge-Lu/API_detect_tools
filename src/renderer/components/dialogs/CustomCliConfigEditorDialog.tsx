@@ -27,7 +27,13 @@ import { ConfirmDialog } from '../ConfirmDialog';
 import { OverlayDrawer } from '../overlays/OverlayDrawer';
 import { useCustomCliConfigStore } from '../../store/customCliConfigStore';
 import { toast } from '../../store/toastStore';
-import type { CustomCliConfig, CustomCliSettings } from '../../../shared/types/custom-cli-config';
+import {
+  createEmptyCustomCliTestState,
+  normalizeCustomCliTestState,
+  type CustomCliConfig,
+  type CustomCliSettings,
+  type CustomCliTestState,
+} from '../../../shared/types/custom-cli-config';
 import {
   generateClaudeCodeConfig,
   generateCodexConfig,
@@ -60,24 +66,10 @@ const CLI_TYPES: CliTypeConfig[] = [
   { key: 'geminiCli', name: 'Gemini CLI', icon: GeminiIcon },
 ];
 
-type CliTestOutcome = {
-  model: string;
-  success: boolean;
-  message?: string;
-  timestamp: number;
-};
-
-type TestSummaries = Record<CliType, CliTestOutcome[]>;
-
-const createInitialTestSummaries = (): TestSummaries => ({
-  claudeCode: [],
-  codex: [],
-  geminiCli: [],
-});
-
 const normalizeCliSetting = (setting: CustomCliSettings): CustomCliSettings => ({
   ...setting,
   testModels: setting.testModels ?? [],
+  testState: normalizeCustomCliTestState(setting.testState),
 });
 
 const normalizeCliSettings = (
@@ -430,7 +422,6 @@ export function CustomCliConfigEditorDialog({
     codex: null,
     geminiCli: null,
   });
-  const [testSummaries, setTestSummaries] = useState<TestSummaries>(createInitialTestSummaries);
   const [testingCli, setTestingCli] = useState<CliType | null>(null);
   const [applyingCli, setApplyingCli] = useState<CliType | null>(null);
 
@@ -449,7 +440,6 @@ export function CustomCliConfigEditorDialog({
       setCliSettings(normalizeCliSettings(config.cliSettings));
       setSelectedCli('claudeCode');
       setCopiedPath(null);
-      setTestSummaries(createInitialTestSummaries());
       setTestingCli(null);
       setApplyingCli(null);
       setEditedConfig(null);
@@ -518,13 +508,6 @@ export function CustomCliConfigEditorDialog({
       .slice(0, 3);
   };
 
-  const recordTestResult = (cliType: CliType, summary: CliTestOutcome) => {
-    setTestSummaries(prev => ({
-      ...prev,
-      [cliType]: [summary, ...prev[cliType]].slice(0, 3),
-    }));
-  };
-
   const handleAddTestModel = (cliType: CliType, model: string) => {
     const nextModel = model.trim();
     if (!nextModel) return;
@@ -576,9 +559,13 @@ export function CustomCliConfigEditorDialog({
     }
 
     setTestingCli(cliType);
-    let hadError = false;
+    const slots = createEmptyCustomCliTestState().slots;
+    let allSuccess = cliTestTargets.length > 0;
+    let testedAt: number | null = null;
+    let codexDetail: CustomCliTestState['codexDetail'];
+    let geminiDetail: CustomCliTestState['geminiDetail'];
     try {
-      for (const model of cliTestTargets) {
+      for (const [index, model] of cliTestTargets.entries()) {
         try {
           const response = await window.electronAPI.cliCompat.testWithConfig({
             siteUrl: baseUrl,
@@ -592,34 +579,60 @@ export function CustomCliConfigEditorDialog({
             ],
           });
           const success = response.success && response.data?.[cliType] === true;
-          const message = success ? undefined : (response.error ?? '未通过');
-          recordTestResult(cliType, {
+          testedAt = Date.now();
+          slots[index] = {
             model,
             success,
-            message,
-            timestamp: Date.now(),
-          });
-          if (!success) {
-            hadError = true;
-          }
+            message: success ? undefined : (response.error ?? '未通过'),
+            timestamp: testedAt,
+          };
+          if (!success) allSuccess = false;
+          if (response.data?.codexDetail) codexDetail = response.data.codexDetail;
+          if (response.data?.geminiDetail) geminiDetail = response.data.geminiDetail;
         } catch (error: any) {
-          hadError = true;
-          recordTestResult(cliType, {
+          testedAt = Date.now();
+          slots[index] = {
             model,
             success: false,
             message: error?.message,
-            timestamp: Date.now(),
-          });
+            timestamp: testedAt,
+          };
+          allSuccess = false;
         }
       }
+
+      const nextTestState: CustomCliTestState = {
+        status: cliTestTargets.length > 0 ? allSuccess : null,
+        testedAt,
+        codexDetail,
+        geminiDetail,
+        slots,
+      };
+      const nextCliSettings = {
+        ...(currentConfig?.cliSettings ?? config.cliSettings),
+        [cliType]: {
+          ...(currentConfig?.cliSettings?.[cliType] ?? config.cliSettings[cliType]),
+          ...cliSettings[cliType],
+          testState: nextTestState,
+        },
+      };
+      setCliSettings(prev => ({
+        ...prev,
+        [cliType]: {
+          ...prev[cliType],
+          testState: nextTestState,
+        },
+      }));
+      updateConfig(config.id, { cliSettings: nextCliSettings });
+      await saveConfigs();
     } finally {
       setTestingCli(null);
     }
 
-    if (hadError) {
-      toast.error('部分测试未通过，请查看结果');
-    } else {
+    if (allSuccess) {
       toast.success('CLI 测试已完成');
+    } else {
+      toast.error('部分测试未通过，请查看结果');
     }
   };
 
@@ -631,7 +644,9 @@ export function CustomCliConfigEditorDialog({
     }
 
     const configToApply =
-      (selectedCli === cliType && editedConfig) || perCliEdited[cliType] || generateConfigForCli(cliType);
+      (selectedCli === cliType && editedConfig) ||
+      perCliEdited[cliType] ||
+      generateConfigForCli(cliType);
 
     if (!configToApply) {
       toast.error('请先填写 Base URL、API Key 和模型');
@@ -1100,16 +1115,13 @@ export function CustomCliConfigEditorDialog({
           {CLI_TYPES.map(cli => {
             const setting = cliSettings[cli.key];
             const selectedTestModels = getTestModelsForSetting(setting);
-            const summaries = testSummaries[cli.key];
-            const latest = summaries[0];
+            const summaries = normalizeCustomCliTestState(setting.testState).slots.filter(Boolean);
+            const latest = summaries[0] ?? null;
             const canRunCliTests =
               Boolean(baseUrl && apiKey) && setting.enabled && selectedTestModels.length > 0;
 
             return (
-              <div
-                key={`${cli.key}-test`}
-                className="space-y-3 px-4 py-3 first:pl-0 last:pr-0"
-              >
+              <div key={`${cli.key}-test`} className="space-y-3 px-4 py-3 first:pl-0 last:pr-0">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-2">
                     <img src={cli.icon} alt={cli.name} className="w-4 h-4 shrink-0" />
@@ -1122,11 +1134,7 @@ export function CustomCliConfigEditorDialog({
                     onClick={() => handleRunCliTests(cli.key)}
                     disabled={!canRunCliTests || testingCli !== null}
                   >
-                    {testingCli === cli.key ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      '测试'
-                    )}
+                    {testingCli === cli.key ? <Loader2 className="w-4 h-4 animate-spin" /> : '测试'}
                   </AppButton>
                 </div>
                 <div className="text-[0.65rem] text-[var(--text-secondary)]">
@@ -1135,7 +1143,7 @@ export function CustomCliConfigEditorDialog({
                 <div className="space-y-2">
                   {selectedTestModels.length > 0 ? (
                     selectedTestModels.map(model => {
-                      const outcome = summaries.find(summary => summary.model === model);
+                      const outcome = summaries.find(summary => summary?.model === model);
                       return (
                         <div
                           key={`${cli.key}-${model}`}

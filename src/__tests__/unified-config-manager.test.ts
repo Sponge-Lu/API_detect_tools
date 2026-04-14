@@ -1,7 +1,7 @@
 /**
  * 输入: 临时 config.json、备份文件、Electron userData 模拟路径
  * 输出: UnifiedConfigManager 回归测试结果
- * 定位: 测试层 - 验证配置损坏恢复与原子保存逻辑
+ * 定位: 测试层 - 验证配置损坏恢复、legacy 默认账户修复与原子保存逻辑
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - src/__tests__/FOLDER_INDEX.md
@@ -196,5 +196,74 @@ describe('UnifiedConfigManager', () => {
     await manager.saveConfig(loadedConfig as any);
     const persisted = JSON.parse(await fs.readFile(configPath, 'utf-8'));
     expect(persisted.sites[0].active_account_id).toBeUndefined();
+  });
+
+  it('repairs v3 configs that still have legacy site-level auth without accounts', async () => {
+    const configPath = path.join(userDataDir, 'config.json');
+    const rawConfig = createSampleConfig();
+    rawConfig.sites[0] = {
+      ...rawConfig.sites[0],
+      access_token: 'legacy-token',
+      user_id: 'legacy-user',
+      cached_data: {
+        balance: 12.34,
+      },
+    } as any;
+    await fs.writeFile(configPath, JSON.stringify(rawConfig, null, 2), 'utf-8');
+
+    const manager = await loadManager();
+    const loadedConfig = await manager.loadConfig();
+
+    expect(loadedConfig.accounts).toHaveLength(1);
+    expect(loadedConfig.accounts[0]).toMatchObject({
+      site_id: 'site-1',
+      account_name: '默认账户',
+      user_id: 'legacy-user',
+      access_token: 'legacy-token',
+      status: 'active',
+    });
+    expect(loadedConfig.accounts[0].cached_data).toMatchObject({
+      balance: 12.34,
+    });
+
+    const persisted = JSON.parse(await fs.readFile(configPath, 'utf-8'));
+    expect(persisted.accounts).toHaveLength(1);
+    expect(persisted.accounts[0].account_name).toBe('默认账户');
+    expect(backupManagerMock.backupFile).toHaveBeenCalledWith(configPath);
+
+    const reloadedManager = await loadManager();
+    const reloadedConfig = await reloadedManager.loadConfig();
+    expect(reloadedConfig.accounts).toHaveLength(1);
+  });
+
+  it('reuses existing account when adding the same site_id + user_id again', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as any);
+    await manager.loadConfig();
+
+    const first = await manager.addAccount({
+      site_id: 'site-1',
+      account_name: '默认账户',
+      user_id: '6110',
+      access_token: 'token-old',
+      auth_source: 'manual',
+      status: 'active',
+    } as any);
+
+    const second = await manager.addAccount({
+      site_id: 'site-1',
+      account_name: '焕昭君',
+      user_id: '6110',
+      access_token: 'token-new',
+      auth_source: 'manual',
+      status: 'active',
+    } as any);
+
+    expect(second.id).toBe(first.id);
+
+    const persisted = JSON.parse(await fs.readFile(path.join(userDataDir, 'config.json'), 'utf-8'));
+    expect(persisted.accounts).toHaveLength(1);
+    expect(persisted.accounts[0].account_name).toBe('焕昭君');
+    expect(persisted.accounts[0].access_token).toBe('token-new');
   });
 });

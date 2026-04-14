@@ -9,6 +9,48 @@
  * - PROJECT_INDEX.md
  */
 
+import {
+  CLI_TEST_MODEL_SLOT_COUNT,
+  sanitizeCliTestResults,
+  type CliModelTestResult,
+} from './cli-config';
+import type { CodexTestDetail, GeminiTestDetail } from './site';
+
+export interface CustomCliTestState {
+  status: boolean | null;
+  testedAt: number | null;
+  codexDetail?: CodexTestDetail;
+  geminiDetail?: GeminiTestDetail;
+  slots: Array<CliModelTestResult | null>;
+}
+
+export function createEmptyCustomCliTestState(): CustomCliTestState {
+  return {
+    status: null,
+    testedAt: null,
+    codexDetail: undefined,
+    geminiDetail: undefined,
+    slots: Array.from({ length: CLI_TEST_MODEL_SLOT_COUNT }, () => null),
+  };
+}
+
+export function normalizeCustomCliTestState(state?: CustomCliTestState | null): CustomCliTestState {
+  const slots = sanitizeCliTestResults(state?.slots ?? [], CLI_TEST_MODEL_SLOT_COUNT);
+  const validRows = slots.filter(Boolean) as CliModelTestResult[];
+  const derivedStatus =
+    validRows.length === 0 ? null : validRows.every(result => result.success === true);
+  const derivedTestedAt =
+    validRows.length > 0 ? Math.max(...validRows.map(result => result.timestamp)) : null;
+
+  return {
+    status: typeof state?.status === 'boolean' ? state.status : derivedStatus,
+    testedAt: typeof state?.testedAt === 'number' ? state.testedAt : derivedTestedAt,
+    codexDetail: state?.codexDetail,
+    geminiDetail: state?.geminiDetail,
+    slots,
+  };
+}
+
 /** 单个 CLI 的自定义配置 */
 export interface CustomCliSettings {
   enabled: boolean;
@@ -17,6 +59,8 @@ export interface CustomCliSettings {
   testModels?: string[];
   /** 用户编辑后的配置文件内容（null 表示未编辑，使用自动生成的配置） */
   editedFiles?: { path: string; content: string }[] | null;
+  /** 最近一次 CLI 测试结果 */
+  testState?: CustomCliTestState | null;
 }
 
 /** 自定义 CLI 配置 */
@@ -52,6 +96,7 @@ export const DEFAULT_CUSTOM_CLI_SETTINGS: CustomCliSettings = {
   enabled: true,
   model: null,
   testModels: [],
+  testState: null,
 };
 
 /** 创建新自定义配置的默认值 */

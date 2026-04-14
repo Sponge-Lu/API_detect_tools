@@ -6,8 +6,8 @@
  * 输出: React 组件 (统一 CLI 配置对话框 UI)
  * 定位: 展示层 - 统一 CLI 配置对话框，支持 CLI 启用/禁用、配置选择、预览编辑和保存
  *
- * @version 2.1.12
- * @updated 2025-01-09 - 修复夜晚模式下代码预览区域的颜色对比度问题，CLI 开关按钮改为蓝色
+ * @version 2.1.14
+ * @updated 2026-04-13 - 上调统一 CLI 配置弹窗目标高度，同时继续按当前视口约束避免越界
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -15,7 +15,7 @@
  * - PROJECT_INDEX.md
  */
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, type CSSProperties } from 'react';
 import {
   Copy,
   Check,
@@ -143,6 +143,23 @@ const CLI_TYPES: CliTypeConfig[] = [
     supported: true,
   },
 ];
+
+const CLI_DIALOG_HEIGHT_RATIO = 0.74;
+const CLI_DIALOG_MAX_HEIGHT = 660;
+const CLI_DIALOG_VIEWPORT_MARGIN = 32;
+
+function getDialogViewportHeight(): number {
+  if (typeof window === 'undefined') {
+    return 0;
+  }
+
+  return (
+    window.visualViewport?.height ??
+    window.innerHeight ??
+    document.documentElement.clientHeight ??
+    0
+  );
+}
 
 function toTestModelSlots(
   configItem?: Pick<NonNullable<CliConfig[CliType]>, 'testModel' | 'testModels'> | null
@@ -464,10 +481,36 @@ export function UnifiedCliConfigDialog({
   const [cliModelTests, setCliModelTests] = useState<Record<CliType, CliModelTestState>>(
     createEmptyCliModelTestState()
   );
+  const previousOpenRef = useRef(false);
+  const previousDialogKeyRef = useRef<string | null>(null);
+  const [dialogViewportHeight, setDialogViewportHeight] = useState(() => getDialogViewportHeight());
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const syncDialogViewportHeight = () => {
+      setDialogViewportHeight(getDialogViewportHeight());
+    };
+
+    syncDialogViewportHeight();
+    window.addEventListener('resize', syncDialogViewportHeight);
+    window.visualViewport?.addEventListener('resize', syncDialogViewportHeight);
+
+    return () => {
+      window.removeEventListener('resize', syncDialogViewportHeight);
+      window.visualViewport?.removeEventListener('resize', syncDialogViewportHeight);
+    };
+  }, [isOpen]);
 
   // 初始化配置
   useEffect(() => {
-    if (isOpen && currentConfig) {
+    const dialogKey = `${siteUrl}::${accountName ?? ''}`;
+    const shouldInitialize =
+      isOpen && (!previousOpenRef.current || previousDialogKeyRef.current !== dialogKey);
+
+    if (shouldInitialize && currentConfig) {
       // 初始化启用状态
       const newEnabledState: Record<CliType, boolean> = {
         claudeCode: currentConfig.claudeCode?.enabled ?? DEFAULT_CLI_CONFIG.claudeCode.enabled,
@@ -523,7 +566,7 @@ export function UnifiedCliConfigDialog({
         codex: createCliModelTestStateFromConfig(currentConfig.codex),
         geminiCli: createCliModelTestStateFromConfig(currentConfig.geminiCli),
       });
-    } else if (isOpen) {
+    } else if (shouldInitialize) {
       // 重置为默认状态
       setEnabledState({
         claudeCode: DEFAULT_CLI_CONFIG.claudeCode.enabled,
@@ -553,7 +596,7 @@ export function UnifiedCliConfigDialog({
       setCliModelTests(createEmptyCliModelTestState());
     }
 
-    if (isOpen) {
+    if (shouldInitialize) {
       setSelectedCli('claudeCode');
       setEditedConfig(null);
       setCopiedPath(null);
@@ -561,7 +604,10 @@ export function UnifiedCliConfigDialog({
       setShowResetConfirm(false);
       setIsTestingSelectedModels(false);
     }
-  }, [isOpen, currentConfig]);
+
+    previousOpenRef.current = isOpen;
+    previousDialogKeyRef.current = isOpen ? dialogKey : null;
+  }, [accountName, currentConfig, isOpen, siteUrl]);
 
   // 当 CLI 类型改变时，保存当前编辑的配置并重置编辑状态
   useEffect(() => {
@@ -960,6 +1006,23 @@ export function UnifiedCliConfigDialog({
   };
 
   const selectedCliTestState = selectedCli ? cliModelTests[selectedCli] : null;
+  const dialogStyle = useMemo<CSSProperties | undefined>(() => {
+    if (dialogViewportHeight <= 0) {
+      return undefined;
+    }
+
+    const maxHeight = Math.max(dialogViewportHeight - CLI_DIALOG_VIEWPORT_MARGIN, 0);
+    const preferredHeight = Math.min(
+      dialogViewportHeight * CLI_DIALOG_HEIGHT_RATIO,
+      CLI_DIALOG_MAX_HEIGHT,
+      maxHeight
+    );
+
+    return {
+      height: `${Math.floor(preferredHeight)}px`,
+      maxHeight: `${Math.floor(maxHeight)}px`,
+    };
+  }, [dialogViewportHeight]);
 
   return (
     <OverlayDrawer
@@ -968,7 +1031,8 @@ export function UnifiedCliConfigDialog({
       title={`CLI 配置 - ${siteName}${accountName ? ` / ${accountName}` : ''}`}
       titleIcon={<Settings className="w-5 h-5" />}
       placement="center"
-      className="h-[min(68vh,620px)] max-h-[calc(100vh-5rem)] overflow-hidden"
+      className="overflow-hidden"
+      style={dialogStyle}
       widthClassName="max-w-[920px]"
       contentClassName="!p-0 flex-1 min-h-0"
       footer={

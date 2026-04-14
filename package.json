@@ -15,6 +15,7 @@
     "build": "npm run build:main && npm run build:renderer",
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "node scripts/run-node-module.cjs typescript/bin/tsc && node scripts/run-node-module.cjs vite/bin/vite.js build",
+    "repair:legacy-accounts": "node scripts/repair-legacy-accounts.cjs",
     "dist": "npm run build && electron-builder --win",
     "dist:win": "npm run build && electron-builder --win",
     "dist:mac": "npm run build && electron-builder --mac",

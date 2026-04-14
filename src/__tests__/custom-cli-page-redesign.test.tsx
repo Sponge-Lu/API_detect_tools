@@ -16,7 +16,7 @@ const mockWriteConfig = vi.fn();
 const mockClearCache = vi.fn();
 const mockOpenUrl = vi.fn();
 
-const configs = [
+const createConfigs = () => [
   {
     id: 'cfg-1',
     name: 'Main Endpoint',
@@ -49,6 +49,8 @@ const configs = [
   },
 ];
 
+let configs = createConfigs();
+
 vi.mock('../renderer/store/customCliConfigStore', () => ({
   useCustomCliConfigStore: () => ({
     configs,
@@ -78,6 +80,7 @@ vi.mock('../renderer/store/configStore', () => ({
 
 describe('custom cli page redesign', () => {
   beforeEach(() => {
+    configs = createConfigs();
     mockLoadConfigs.mockReset();
     mockAddConfig.mockReset();
     mockDeleteConfig.mockReset();
@@ -478,6 +481,64 @@ requires_openai_auth = true`,
     await waitFor(() => {
       expect(runCliTests).toHaveBeenCalledWith(configs[0], 'claudeCode', ['claude-3-5-sonnet']);
     });
+  });
+
+  it('persists cli test results back into the selected custom config and refreshes the table column', async () => {
+    const testedAt = Date.now();
+    const runCliTests = vi.fn().mockResolvedValue({
+      status: true,
+      testedAt,
+      slots: [
+        {
+          model: 'claude-3-5-sonnet',
+          success: true,
+          timestamp: testedAt,
+        },
+        null,
+        null,
+      ],
+    });
+    mockUpdateConfig.mockImplementation((id, updates) => {
+      const target = configs.find(config => config.id === id);
+      if (!target) return;
+      Object.assign(target, updates);
+      if (updates.cliSettings) {
+        target.cliSettings = updates.cliSettings;
+      }
+    });
+    mockSaveConfigs.mockResolvedValue(undefined);
+
+    render(<CustomCliPage runCliTests={runCliTests} />);
+
+    const claudeCard = screen.getByRole('heading', { name: 'Claude Code' }).closest('section');
+    fireEvent.click(within(claudeCard as HTMLElement).getByRole('button', { name: '测试' }));
+
+    await waitFor(() =>
+      expect(mockUpdateConfig).toHaveBeenCalledWith(
+        'cfg-1',
+        expect.objectContaining({
+          cliSettings: expect.objectContaining({
+            claudeCode: expect.objectContaining({
+              testState: expect.objectContaining({
+                status: true,
+                testedAt,
+                slots: [
+                  expect.objectContaining({
+                    model: 'claude-3-5-sonnet',
+                    success: true,
+                    timestamp: testedAt,
+                  }),
+                  null,
+                  null,
+                ],
+              }),
+            }),
+          }),
+        })
+      )
+    );
+    await waitFor(() => expect(mockSaveConfigs).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByTitle(/Claude Code: 支持/)).toHaveClass('opacity-100'));
   });
 
   it('opens merge and overwrite choices before applying the selected cli row locally', () => {

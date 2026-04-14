@@ -1,54 +1,100 @@
 # API Hub Management Tools - 开发指南
 
-## 📖 目录
-
-- [环境准备](#环境准备)
-- [快速开始](#快速开始)
-- [开发规范](#开发规范)
-  - [代码风格](#代码风格)
-  - [Git 提交规范](#git-提交规范)
-  - [分支管理](#分支管理)
-- [构建与打包](#构建与打包)
-- [测试指南](#测试指南)
-- [贡献流程](#贡献流程)
-
----
-
 ## 环境准备
 
-在开始开发之前，请确保您的开发环境满足以下要求：
+开发本项目前，请确认本地环境满足：
 
-- **操作系统**: Windows 10/11, macOS, Linux
-- **Node.js**: v18.x 或更高版本
-- **包管理器**: npm (推荐 v9+) 或 pnpm
-- **浏览器**: Google Chrome (开发调试必需)
+- Node.js `>= 18`
+- npm
+- 可用的 Chromium 浏览器，优先推荐 Google Chrome
+- Windows、macOS 或 Linux 任一桌面系统
+
+说明：
+
+- 仓库当前使用 `package-lock.json`，默认以 `npm` 为主。
+- 浏览器路径可通过环境变量或配置文件指定，开发阶段默认会自动探测。
 
 ---
 
 ## 快速开始
 
-1. **克隆仓库**
+```bash
+git clone https://github.com/Sponge-Lu/API_detect_tools.git
+cd API_detect_tools
+npm install
+npm run dev
+```
 
-   ```bash
-   git clone https://github.com/Sponge-Lu/API_detect_tools.git
-   cd API_detect_tools
-   ```
+`npm run dev` 会执行：
 
-2. **安装依赖**
+1. `scripts/dev-cleanup.cjs`
+2. `scripts/dev-main.cjs`
+3. `scripts/dev.cjs`
 
-   ```bash
-   npm install
-   # 或
-   pnpm install
-   ```
+其中 `dev.cjs` 会并行拉起主进程与 Vite 渲染进程，并为日志添加前缀。
 
-3. **启动开发环境**
+---
 
-   ```bash
-   npm run dev
-   ```
+## 常用脚本
 
-   此命令将同时启动 Vite 开发服务器 (渲染进程) 和 Electron (主进程)。
+### 开发
+
+```bash
+npm run dev            # 清理后同时启动主进程与渲染进程
+npm run dev:main       # 仅启动 Electron 主进程
+npm run dev:renderer   # 仅启动 Vite
+```
+
+### 构建
+
+```bash
+npm run build          # 构建全部
+npm run build:main     # 构建主进程
+npm run build:renderer # 构建渲染进程
+```
+
+### 打包
+
+```bash
+npm run dist           # 等价于 Windows 打包
+npm run dist:win
+npm run dist:mac
+npm run dist:linux
+```
+
+### 质量检查
+
+```bash
+npm run lint
+npm run lint:fix
+npm run format
+npm run test
+npm run test:watch
+npm run test:coverage
+```
+
+---
+
+## 当前代码组织
+
+### 主进程
+
+- `src/main/handlers/`：IPC handlers
+- `src/main/route-*.ts`：Route 工作台对应的服务模块
+- `src/main/unified-config-manager.ts`：v3 配置模型核心
+- `src/main/chrome-manager.ts`：浏览器池与独立登录浏览器
+
+### 渲染进程
+
+- `src/renderer/components/`：UI 原语、对话框、工作台组件
+- `src/renderer/pages/`：一级页面与 Route 工作台页面
+- `src/renderer/store/`：`configStore`、`detectionStore`、`uiStore`、`routeStore`
+
+### 共享层
+
+- `src/shared/types/site.ts`
+- `src/shared/types/route-proxy.ts`
+- `src/shared/theme/themePresets.ts`
 
 ---
 
@@ -56,180 +102,128 @@
 
 ### 代码风格
 
-本项目使用 **ESLint** + **Prettier** 强制统一代码风格。
+- 全部新代码使用 TypeScript
+- 2 空格缩进
+- 单引号
+- 分号
+- React 组件使用 PascalCase
+- 变量与函数使用 camelCase
 
-- **Lint 检查**: `npm run lint`
-- **格式化**: `npm run format`
+### 工具链
 
-**核心规则**:
-- 使用 TypeScript 编写所有新代码。
-- 缩进使用 2 个空格。
-- 使用分号。
-- 组件命名使用 PascalCase (如 `SiteCard.tsx`)。
-- 变量和函数命名使用 camelCase (如 `fetchData`)。
+- ESLint：静态检查
+- Prettier：格式化
+- Vitest：测试
 
-### Git 提交规范
+### 提交规范
 
-请遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范：
+推荐沿用 Conventional Commits：
 
-- `feat`: 新功能
-- `fix`: 修复 Bug
-- `docs`: 文档变更
-- `style`: 代码格式调整 (不影响逻辑)
-- `refactor`: 代码重构 (无新功能或 Bug 修复)
-- `perf`: 性能优化
-- `test`: 测试相关
-- `chore`: 构建过程或辅助工具变更
+- `feat:`
+- `fix:`
+- `docs:`
+- `refactor:`
+- `test:`
+- `chore:`
 
-**示例**:
-```
-feat: add dark mode support
-fix: resolve crash when closing browser
-docs: update architecture documentation
-```
-
-### 分支管理
-
-- `main`: 主分支，保持随时可发布状态。
-- `develop`: 开发分支，包含最新特性。
-- `feature/*`: 功能分支，从 develop 分出，完成后合并回 develop。
-- `fix/*`: 修复分支。
+版本发布提交通常会使用 `vX.Y.Z:` 前缀，并同步 `package.json.version` 与 `build.buildVersion`。
 
 ---
 
-## 构建与打包
+## 测试说明
 
-本项目使用 **electron-builder** 进行多平台打包，支持 Windows、macOS、Linux。
+### 基础命令
 
-### 本地构建
-
-**Windows**:
-```bash
-npm run dist:win
-```
-产物：`release/` 目录
-- `API Hub Management Tools Setup x.x.x.exe` - 安装版
-- `API Hub Management Tools-x.x.x-portable.exe` - 便携版
-
-**macOS**:
-```bash
-npm run dist:mac
-```
-产物：`release/` 目录
-- `API Hub Management Tools-x.x.x.dmg` - 安装包
-- `API Hub Management Tools-x.x.x-mac.zip` - 压缩包
-
-**Linux**:
-```bash
-npm run dist:linux
-```
-产物：`release/` 目录
-- `API Hub Management Tools-x.x.x.AppImage` - 通用格式
-- `API Hub Management Tools-x.x.x.deb` - Debian/Ubuntu
-
-### 自动化构建（GitHub Actions）
-
-项目配置了 GitHub Actions 工作流，可自动构建多平台安装包。
-
-**触发方式**：
-
-1. **推送 tag 自动发布**：
-   ```bash
-   git tag v2.1.11
-   git push origin v2.1.11
-   ```
-   推送 tag 后会自动在 Windows、macOS、Linux 三个平台构建，并创建 GitHub Release。
-
-2. **手动触发**：
-   - 进入 GitHub 仓库的 Actions 页面
-   - 选择 "Build and Release" 工作流
-   - 点击 "Run workflow"
-
-**构建产物**：
-- 所有平台的安装包会自动上传到 GitHub Release
-- 可在 Actions 页面下载构建产物（Artifacts）
-
-### 图标文件
-
-打包需要在 `build/` 目录准备图标文件：
-- `icon.png` - 1024x1024 PNG 图标（通用，electron-builder 会自动转换）
-- `icon.ico` - Windows 图标（可选，优先使用）
-
-**注意**：
-- macOS 打包只能在 macOS 系统上进行（需要代码签名）
-- 推荐使用 GitHub Actions 进行跨平台构建
-
----
-
-## 测试指南
-
-本项目使用 **Vitest** 进行单元测试。
-
-**运行所有测试**:
 ```bash
 npm run test
+npm run test:watch
+npm run test:coverage
 ```
 
-**运行特定测试文件**:
-```bash
-npm run test src/__tests__/example.test.ts
-```
+### 测试范围
 
-**编写测试**:
-测试文件位于 `src/__tests__/` 目录。建议为核心业务逻辑 (如 Hooks, Utils) 编写测试用例。
+- 单元测试：工具函数、服务层、store
+- 组件测试：工作台 UI、对话框、页面结构
+- 属性测试：设计系统、布局、交互和稳定性
 
-**属性测试 (Property-Based Testing)**:
-本项目使用 fast-check 进行属性测试，验证代码在各种输入下的正确性。属性测试文件以 `.property.test.ts` 或 `.property.test.tsx` 结尾。
+### 设计系统相关测试
 
-```bash
-# 运行所有属性测试
-npm run test src/__tests__/*.property.test.ts*
-```
+当前设计系统测试覆盖的是 **双主题** 与 `App*` 原语体系，而不是旧的多主题/iOS 原语体系。
 
-**设计系统与原语测试**:
-产品级设计系统和兼容原语有专门的测试文件，覆盖四主题 token、组件行为和无障碍性：
+代表性测试包括：
 
-```bash
-# 运行设计系统相关测试
-npm run test src/__tests__/app-button.property.test.tsx src/__tests__/card-primitive-compatibility.property.test.tsx src/__tests__/input-primitive-compatibility.property.test.tsx src/__tests__/app-modal.property.test.tsx src/__tests__/data-table-compatibility.property.test.tsx src/__tests__/app-icon-compatibility.property.test.tsx src/__tests__/theme-token-contract.property.test.tsx src/__tests__/design-system-accessibility.property.test.tsx src/__tests__/responsive-layout.property.test.tsx src/__tests__/primitive-performance.property.test.tsx src/__tests__/ui-functional-preservation.property.test.tsx
-```
+- `app-button.property.test.tsx`
+- `app-modal.property.test.tsx`
+- `app-icon-compatibility.property.test.tsx`
+- `data-table-compatibility.property.test.tsx`
+- `theme-token-contract.property.test.tsx`
+- `design-system-accessibility.property.test.tsx`
+- `ui-functional-preservation.property.test.tsx`
 
-测试覆盖范围：
-- `app-button.property.test.tsx` - AppButton 原语属性测试
-- `card-primitive-compatibility.property.test.tsx` - 卡片原语兼容属性测试（默认站在 `AppCard` 入口视角）
-- `input-primitive-compatibility.property.test.tsx` - 输入原语兼容属性测试（覆盖 `AppInput` / `AppSearchInput` 与兼容导出）
-- `app-modal.property.test.tsx` - AppModal 原语属性测试
-- `data-table-compatibility.property.test.tsx` - 表格原语兼容属性测试（默认站在 `DataTable` 入口视角，同时覆盖兼容导出）
-- `app-icon-compatibility.property.test.tsx` - 图标原语兼容属性测试（覆盖 `AppIcon` / `AppIconButton` 与当前 `.app-icon*` 类名契约）
-- `theme-token-contract.property.test.tsx` - 四主题 token 与兼容归一化测试
-- `design-system-accessibility.property.test.tsx` - 产品级无障碍性测试
-- `responsive-layout.property.test.tsx` - 响应式布局测试
-- `primitive-performance.property.test.tsx` - 性能优化测试
-- `ui-functional-preservation.property.test.tsx` - 原语功能保持测试
+### Route 与工作台相关测试
+
+当前主线还包含针对 v3 工作台的回归测试，例如：
+
+- `route-cli-probe-service.test.ts`
+- `route-workbench-redesign.test.tsx`
+- `sites-page-redesign.test.tsx`
+- `custom-cli-page-redesign.test.tsx`
+
+---
+
+## 打包说明
+
+打包由 `electron-builder` 负责，产物默认写入 `release/`：
+
+- Windows：安装版与便携版
+- macOS：`dmg`、`zip`
+- Linux：`AppImage`、`deb`
+
+注意：
+
+- `npm run dist` 当前等价于 `npm run dist:win`
+- macOS 打包通常需要在 macOS 环境下完成
 
 ---
 
 ## 贡献流程
 
-1. Fork 本仓库。
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)。
-3. 提交更改 (`git commit -m 'feat: Add some AmazingFeature'`)。
-4. 推送到分支 (`git push origin feature/AmazingFeature`)。
-5. 提交 Pull Request。
+1. 新建分支，例如 `feature/xxx` 或 `fix/xxx`
+2. 编写代码与测试
+3. 运行 `npm run lint` 与 `npm run test`
+4. 提交变更
+5. 发起 Pull Request
+
+如改动涉及模块增删或结构调整，请同步更新：
+
+- `PROJECT_INDEX.md`
+- 对应目录下的 `FOLDER_INDEX.md`
+- 必要的用户/架构/开发文档
 
 ---
 
 ## 常见问题
 
-### 开发时遇到 "Electron failed to install"？
-尝试设置镜像源或使用代理：
+### Electron 安装失败
+
+可尝试切换镜像后重新安装：
+
 ```bash
-npm config set ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
+npm config set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 npm install
 ```
 
-### 启动后白屏？
-检查控制台报错。通常是因为 Vite 服务器未完全启动 Electron 就加载了页面，或者 TypeScript 编译错误。
+### 启动后白屏
 
-### 依赖安装慢？
-推荐使用淘宝镜像源或 `pnpm`。
+优先检查：
+
+- `dev:renderer` 是否已成功启动
+- TypeScript 是否编译通过
+- Electron preload / IPC 是否有报错
+
+### 本地浏览器未探测到
+
+可以通过以下方式指定浏览器：
+
+- 环境变量：`CHROME_PATH` 或 `BROWSER_PATH`
+- 应用配置：`settings.browser_path`

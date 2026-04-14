@@ -30,7 +30,7 @@
 | **cli-compat-service.ts** | CLI 兼容性测试 | `CliCompatService` 类 |
 | **backup-manager.ts** | 本地备份管理 | `backupManager` 实例 |
 | **webdav-manager.ts** | WebDAV 云端备份 | `WebDAVManager` 类 |
-| **unified-config-manager.ts** | 统一配置管理、损坏恢复、原子写入 | `unifiedConfigManager` 实例 |
+| **unified-config-manager.ts** | 统一配置管理、损坏恢复、原子写入、legacy 默认账户自愈修复 | `unifiedConfigManager` 实例 |
 | **browser-profile-manager.ts** | 主/隔离浏览器 Profile 管理，多账户共享槽位 | `BrowserProfileManager` 类 |
 | **update-service.ts** | 应用更新服务 | `UpdateService` 类 |
 | **config-detection-service.ts** | CLI 配置检测服务 | `ConfigDetectionService` 类 |

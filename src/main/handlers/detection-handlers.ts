@@ -36,6 +36,18 @@ function getCliConfigFilePaths(cliType: CliType): string[] {
   return Object.values(paths).map((relativePath: string) => path.join(home, relativePath));
 }
 
+function shouldRetryWithRefreshedToken(error?: string): boolean {
+  if (!error) return false;
+
+  return (
+    error.includes('登录已过期') ||
+    error.includes('登录可能已过期') ||
+    error.includes('模型接口返回空数据') ||
+    /HTTP 401/i.test(error) ||
+    /HTTP 403/i.test(error)
+  );
+}
+
 export function registerDetectionHandlers(
   apiService: ApiService,
   chromeManager: ChromeManager,
@@ -88,17 +100,24 @@ export function registerDetectionHandlers(
       accountId?: string
     ) => {
       // 如果指定了 accountId，用该账户的凭证覆盖站点配置
+      let resolvedSite = site;
       let detectionContext: { accountId: string; browserSlot?: number } | undefined;
       if (accountId) {
+        await unifiedConfigManager.loadConfig();
         const account = unifiedConfigManager.getAccountById(accountId);
         if (!account) {
           throw new Error(`Account not found: ${accountId}`);
         }
+        const canonicalSite = unifiedConfigManager.getSiteById(account.site_id);
+        if (!canonicalSite) {
+          throw new Error(`Site not found for account ${accountId}`);
+        }
         if (site?.id && account.site_id !== site.id) {
           throw new Error(`Account ${accountId} does not belong to site ${site.id}`);
         }
-        site = {
+        resolvedSite = {
           ...site,
+          ...canonicalSite,
           system_token: account.access_token,
           user_id: account.user_id,
         };
@@ -109,9 +128,66 @@ export function registerDetectionHandlers(
           accountId: account.id,
           browserSlot: slotIndex >= 0 ? slotIndex : 0,
         };
+        const firstResult = await apiService.detectSite(
+          resolvedSite,
+          timeout,
+          quickRefresh,
+          cachedData,
+          forceAcceptEmpty,
+          detectionContext
+        );
+
+        if (
+          firstResult.status === '失败' &&
+          tokenService &&
+          shouldRetryWithRefreshedToken(firstResult.error)
+        ) {
+          Logger.info(
+            `🔄 [DetectionHandlers] 检测失败且疑似 token 失效，尝试为账户 ${accountId} 自动补发 access_token`
+          );
+          try {
+            const refreshedToken = await tokenService.recreateAccessTokenFromBrowser(
+              canonicalSite.url,
+              parseInt(account.user_id, 10),
+              {
+                browserSlot: detectionContext.browserSlot,
+                challengeWaitMs: 10000,
+              }
+            );
+
+            await unifiedConfigManager.updateAccount(account.id, {
+              access_token: refreshedToken,
+              status: 'active',
+            });
+
+            resolvedSite = {
+              ...resolvedSite,
+              system_token: refreshedToken,
+              user_id: account.user_id,
+            };
+
+            Logger.info(
+              `✅ [DetectionHandlers] access_token 已刷新，重试站点检测: ${canonicalSite.name}`
+            );
+            return await apiService.detectSite(
+              resolvedSite,
+              timeout,
+              quickRefresh,
+              cachedData,
+              forceAcceptEmpty,
+              detectionContext
+            );
+          } catch (refreshError: any) {
+            Logger.warn(
+              `⚠️ [DetectionHandlers] 自动刷新 access_token 失败，保留原错误: ${refreshError.message}`
+            );
+          }
+        }
+
+        return firstResult;
       }
       return await apiService.detectSite(
-        site,
+        resolvedSite,
         timeout,
         quickRefresh,
         cachedData,

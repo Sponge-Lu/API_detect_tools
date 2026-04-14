@@ -76,3 +76,5 @@ LINUX DO Credit.user.js
 docs/
 .ace-tool/
 .worktrees/
+outputs/
+openspec/

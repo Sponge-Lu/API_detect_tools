@@ -173,6 +173,10 @@ export class ApiService {
     return `${site.user_id || ''}|${combined.length}|${h}`;
   }
 
+  private getPersistedEpHints(site: SiteConfig) {
+    return unifiedConfigManager.getSiteByUrl(site.url)?.cached_data?.endpoint_hints;
+  }
+
   /** 读取端点缓存（内存 → 持久化回填） */
   private getEpCache(site: SiteConfig, type: 'models' | 'balance'): string | undefined {
     const key = this.epCacheKey(site);
@@ -187,7 +191,7 @@ export class ApiService {
     if (e) this.endpointCache.delete(key);
 
     // 2. 持久化回填（应用重启后恢复）
-    const hints = unifiedConfigManager.getSiteByUrl(site.url)?.cached_data?.endpoint_hints;
+    const hints = this.getPersistedEpHints(site);
     if (hints) {
       const ep = type === 'models' ? hints.models_endpoint : hints.balance_endpoint;
       if (ep) {
@@ -228,9 +232,35 @@ export class ApiService {
   }
 
   /** 清除端点缓存（内存 + 持久化） */
-  private invalidateEpCache(site: SiteConfig): void {
-    this.endpointCache.delete(this.epCacheKey(site));
-    this.persistEpHints(site, true);
+  private invalidateEpCache(site: SiteConfig, type?: 'models' | 'balance'): void {
+    const key = this.epCacheKey(site);
+
+    if (!type) {
+      this.endpointCache.delete(key);
+      this.persistEpHints(site, true);
+      return;
+    }
+
+    // 仅清理当前类型，避免余额端点回退把模型端点缓存一并抹掉。
+    const existing = this.endpointCache.get(key);
+    const hints = this.getPersistedEpHints(site);
+    const nextEntry: EndpointCacheEntry = {
+      authFingerprint: this.epAuthFP(site),
+      modelsEndpoint:
+        type === 'models' ? undefined : (existing?.modelsEndpoint ?? hints?.models_endpoint),
+      balanceEndpoint:
+        type === 'balance' ? undefined : (existing?.balanceEndpoint ?? hints?.balance_endpoint),
+      updatedAt: Date.now(),
+    };
+
+    if (!nextEntry.modelsEndpoint && !nextEntry.balanceEndpoint) {
+      this.endpointCache.delete(key);
+      this.persistEpHints(site, true);
+      return;
+    }
+
+    this.endpointCache.set(key, nextEntry);
+    this.persistEpHints(site);
   }
 
   /** 持久化端点提示到 config.json */
@@ -1445,7 +1475,7 @@ export class ApiService {
           if (error.isIpBlocked) throw error;
           // 站点不可用（5xx / 连接失败）：直接向上抛出，不尝试其他端点
           if (this.isSiteUnavailableError(error)) throw error;
-          if (!hasApiKey && this.isAuthError(error)) this.invalidateEpCache(site);
+          if (!hasApiKey && this.isAuthError(error)) this.invalidateEpCache(site, 'models');
           Logger.warn(`⚠️ [ApiService] 端点 ${endpoint} 失败:`, error.message);
           lastError = error;
           // 继续尝试下一个端点，不提前终止
@@ -1456,7 +1486,7 @@ export class ApiService {
       // 缓存端点失败 → 清缓存，回退全量扫描（仅重试一次）
       if (cachedModelsEp && !epCacheRetried && !hasApiKey) {
         Logger.info('ℹ️ [ApiService] 缓存端点失败，回退全量扫描');
-        this.invalidateEpCache(site);
+        this.invalidateEpCache(site, 'models');
         epCacheRetried = true;
         currentEndpoints = endpoints;
         lastError = null;
@@ -1471,7 +1501,7 @@ export class ApiService {
     // 但如果 forceAcceptEmpty 为 true，则接受空数据（用户确认站点确实没有模型）
     if (hasEmptyResponse && !forceAcceptEmpty) {
       Logger.error('❌ [ApiService] 模型接口返回空数组，可能是session过期');
-      if (!hasApiKey) this.invalidateEpCache(site);
+      if (!hasApiKey) this.invalidateEpCache(site, 'models');
       // 该分支会直接 throw，detectSite 无法拿到 pageRelease；需要在这里释放浏览器引用，避免批量检测泄漏
       if (sharedPageRelease) {
         try {
@@ -1649,7 +1679,7 @@ export class ApiService {
         } catch (error: any) {
           // 站点不可用（5xx / 连接失败）：直接向上抛出，不尝试其他端点
           if (error.isIpBlocked || this.isSiteUnavailableError(error)) throw error;
-          if (this.isAuthError(error)) this.invalidateEpCache(site);
+          if (this.isAuthError(error)) this.invalidateEpCache(site, 'balance');
           Logger.info(`⚠️ [ApiService] 端点 ${endpoint} 获取余额失败，尝试下一个...`);
           lastError = error;
           // 继续尝试下一个端点，不提前终止
@@ -1660,7 +1690,7 @@ export class ApiService {
       // 缓存端点失败 → 清缓存，回退全量扫描（仅重试一次）
       if (cachedBalanceEp && !epCacheRetried) {
         Logger.info('ℹ️ [ApiService] 余额缓存端点失败，回退全量扫描');
-        this.invalidateEpCache(site);
+        this.invalidateEpCache(site, 'balance');
         epCacheRetried = true;
         currentEndpoints = endpoints;
         lastError = null;

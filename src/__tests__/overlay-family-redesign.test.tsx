@@ -77,6 +77,16 @@ const editedCustomCliConfig: CustomCliConfig = {
   updatedAt: 1,
 };
 
+const originalWindowInnerHeight = window.innerHeight;
+
+function setWindowInnerHeight(height: number) {
+  Object.defineProperty(window, 'innerHeight', {
+    configurable: true,
+    writable: true,
+    value: height,
+  });
+}
+
 function StatefulWebDAVDialog() {
   const [isOpen, setIsOpen] = useState(true);
 
@@ -103,6 +113,7 @@ function StatefulUnifiedCliDialog() {
 describe('overlay family redesign', () => {
   afterEach(() => {
     vi.useRealTimers();
+    setWindowInnerHeight(originalWindowInnerHeight);
   });
 
   it('shares the same chrome markers across modal and drawer', () => {
@@ -203,6 +214,8 @@ describe('overlay family redesign', () => {
   });
 
   it('keeps the CLI dialog scroller height-constrained so content can scroll vertically', () => {
+    setWindowInnerHeight(900);
+
     render(
       <UnifiedCliConfigDialog
         isOpen={true}
@@ -219,11 +232,53 @@ describe('overlay family redesign', () => {
 
     const scroller = screen.getByTestId('overlay-body').firstElementChild as HTMLDivElement;
     const dialog = screen.getByRole('dialog');
-    expect(dialog.className).toContain('max-h-[calc(100vh-5rem)]');
+    expect(dialog.style.height).toBe('660px');
+    expect(dialog.style.maxHeight).toBe('868px');
     expect(dialog.className).toContain('overflow-hidden');
     expect(scroller.className).toContain('overflow-y-auto');
     expect(scroller.className).toContain('h-full');
     expect(scroller.className).toContain('min-h-0');
+  });
+
+  it('recomputes the CLI dialog height from the current viewport when reopened after restart-like remount', () => {
+    setWindowInnerHeight(900);
+
+    const firstRender = render(
+      <UnifiedCliConfigDialog
+        isOpen={true}
+        siteName="Claude Hub"
+        accountName="Primary"
+        siteUrl="https://example.com"
+        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
+        siteModels={['claude-3-5-sonnet']}
+        currentConfig={editedCliConfig}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole('dialog').style.height).toBe('660px');
+    firstRender.unmount();
+
+    setWindowInnerHeight(640);
+
+    render(
+      <UnifiedCliConfigDialog
+        isOpen={true}
+        siteName="Claude Hub"
+        accountName="Primary"
+        siteUrl="https://example.com"
+        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
+        siteModels={['claude-3-5-sonnet']}
+        currentConfig={editedCliConfig}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />
+    );
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.style.height).toBe('473px');
+    expect(dialog.style.maxHeight).toBe('608px');
   });
 
   it('tests only the selected model rows and renders plain 成功/失败 text on the same row', async () => {
@@ -441,7 +496,7 @@ describe('overlay family redesign', () => {
   });
 
   it('moves CLI switches into each CLI type row and removes the extra labels', () => {
-    const { container } = render(
+    render(
       <UnifiedCliConfigDialog
         isOpen={true}
         siteName="Claude Hub"

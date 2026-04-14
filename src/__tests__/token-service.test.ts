@@ -475,6 +475,43 @@ describe('api-service API key 持久化', () => {
 
     expect(next.api_keys?.[0]?.key).toBe('sk-new-raw-12345678');
   });
+
+  it('余额端点缓存回退后应保留模型端点缓存', async () => {
+    const { ApiService } = await loadApiServiceModule();
+
+    const service = new ApiService();
+    const site = {
+      id: 'site-1',
+      name: 'Demo Site',
+      url: 'https://demo.example.com',
+      user_id: '1',
+      system_token: 'access-token',
+    } as any;
+
+    (service as any).setEpCache(site, 'models', '/api/user/models');
+    (service as any).setEpCache(site, 'balance', '/api/user/self');
+
+    (service as any).fetchWithBrowserFallback = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('HTTP 404'))
+      .mockRejectedValueOnce(new Error('HTTP 404'))
+      .mockResolvedValueOnce({ result: 12.34, pageRelease: undefined });
+
+    const result = await (service as any).fetchBalance(site, 3000, 'access-token');
+
+    expect(result?.balance).toBe(12.34);
+    expect((service as any).fetchWithBrowserFallback.mock.calls[0]?.[0]).toBe(
+      'https://demo.example.com/api/user/self'
+    );
+    expect((service as any).fetchWithBrowserFallback.mock.calls[1]?.[0]).toBe(
+      'https://demo.example.com/api/user/self'
+    );
+    expect((service as any).fetchWithBrowserFallback.mock.calls[2]?.[0]).toBe(
+      'https://demo.example.com/api/user/dashboard'
+    );
+    expect((service as any).getEpCache(site, 'models')).toBe('/api/user/models');
+    expect((service as any).getEpCache(site, 'balance')).toBe('/api/user/dashboard');
+  });
 });
 
 describe('token-handlers API key 持久化', () => {

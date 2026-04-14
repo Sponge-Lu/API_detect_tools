@@ -195,6 +195,55 @@ export class TokenService {
     this.chromeManager = chromeManager;
   }
 
+  private async requestAccessTokenInPage(
+    page: any,
+    baseUrl: string,
+    userId: number
+  ): Promise<string> {
+    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    const apiUrl = `${cleanBaseUrl}/api/user/token`;
+
+    const result = await runOnPageQueue(page, () =>
+      page.evaluate(
+        async (url: string, uid: number) => {
+          const response = await fetch(url, {
+            method: 'GET',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+              'New-API-User': uid.toString(),
+              'Veloera-User': uid.toString(),
+              'voapi-user': uid.toString(),
+              'User-id': uid.toString(),
+              'Cache-Control': 'no-store',
+              Pragma: 'no-cache',
+            },
+          });
+
+          if (!response.ok) {
+            const text = await response.text();
+            throw new Error(
+              `HTTP ${response.status}: ${response.statusText} - ${text.substring(0, 200)}`
+            );
+          }
+
+          const data = JSON.parse(await response.text());
+
+          if (!data.success || !data.data) {
+            throw new Error(data.message || '创建令牌失败');
+          }
+
+          return data.data as string;
+        },
+        apiUrl,
+        userId
+      )
+    );
+
+    Logger.info('✅ [TokenService] 令牌创建成功，长度:', result.length);
+    return result;
+  }
+
   /**
    * 初始化站点账号 - 一次性从浏览器获取所有必要数据
    * 这是添加新站点时的唯一入口
@@ -387,46 +436,7 @@ export class TokenService {
 
     // 在浏览器上下文中调用API
     try {
-      const result = await runOnPageQueue(page, () =>
-        page.evaluate(
-          async (apiUrl: string, uid: number) => {
-            const response = await fetch(apiUrl, {
-              method: 'GET',
-              credentials: 'include', // 携带Cookie
-              headers: {
-                'Content-Type': 'application/json',
-                'New-API-User': uid.toString(),
-                'Veloera-User': uid.toString(),
-                'voapi-user': uid.toString(),
-                'User-id': uid.toString(),
-                'Cache-Control': 'no-store',
-                Pragma: 'no-cache',
-              },
-            });
-
-            if (!response.ok) {
-              const text = await response.text();
-              throw new Error(
-                `HTTP ${response.status}: ${response.statusText} - ${text.substring(0, 200)}`
-              );
-            }
-
-            const responseText = await response.text();
-            const data = JSON.parse(responseText);
-
-            if (!data.success || !data.data) {
-              throw new Error(data.message || '创建令牌失败');
-            }
-
-            return data.data as string;
-          },
-          url,
-          userId
-        )
-      );
-
-      Logger.info('✅ [TokenService] 令牌创建成功，长度:', result.length);
-      return result;
+      return await this.requestAccessTokenInPage(page, cleanBaseUrl, userId);
     } catch (error: any) {
       // 如果是浏览器关闭错误，直接抛出
       if (error.message.includes('浏览器已关闭') || error.message.includes('操作已取消')) {
@@ -452,6 +462,34 @@ export class TokenService {
       } else {
         throw error;
       }
+    }
+  }
+
+  async recreateAccessTokenFromBrowser(
+    baseUrl: string,
+    userId: number,
+    context?: Pick<TokenRequestContext, 'browserSlot' | 'challengeWaitMs'>
+  ): Promise<string> {
+    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    Logger.info('🔄 [TokenService] 尝试通过浏览器会话重新创建 access_token...', {
+      browserSlot: context?.browserSlot ?? 0,
+      userId,
+    });
+
+    const { page, release } = await this.chromeManager.createPage(cleanBaseUrl, {
+      slot: context?.browserSlot,
+    });
+
+    try {
+      await this.waitForCloudflareChallengeToPass(page, context?.challengeWaitMs ?? 10000);
+      return await this.requestAccessTokenInPage(page, cleanBaseUrl, userId);
+    } finally {
+      try {
+        await page.close();
+      } catch {
+        // ignore
+      }
+      release();
     }
   }
 

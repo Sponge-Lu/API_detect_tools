@@ -30,7 +30,7 @@
 | **groupStyle.test.tsx** | 分组样式测试 | groupStyle 工具 |
 | **useSiteGroups.test.ts** | Hook 测试 | useSiteGroups Hook |
 | **webdav-config.test.ts** | WebDAV 配置测试 | WebDAV 配置 |
-| **unified-config-manager.test.ts** | 配置恢复回归测试 | UnifiedConfigManager 损坏恢复、备份回滚、原子保存 |
+| **unified-config-manager.test.ts** | 配置恢复回归测试 | UnifiedConfigManager 损坏恢复、备份回滚、原子保存、legacy 默认账户修复 |
 | **route-cli-probe-service.test.ts** | CLI 探测账户选择回归测试 | 默认账户优先、余额不足回退、旧配置兼容 |
 | **webdav-manager.test.ts** | WebDAV 管理器测试 | WebDAVManager 类 |
 | **update-service.test.ts** | 更新服务测试 | UpdateService 类 |
@@ -39,6 +39,7 @@
 | **cli-compat-service.property.test.ts** | CLI 兼容性服务测试 | CliCompatService（含双端点测试） |
 | **cli-config-generator.property.test.ts** | CLI 配置生成测试 | CLI 配置生成（含端点选择逻辑） |
 | **custom-cli-config-editor-dialog.test.tsx** | 自定义 CLI 编辑器回归测试 | CustomCliConfigEditorDialog 的预览/应用按钮与分列测试流程 |
+| **unified-cli-config-dialog.test.tsx** | 统一 CLI 对话框回归测试 | UnifiedCliConfigDialog 在测试结果持久化后保持当前 CLI 页签 |
 | **filter-model-logs.property.test.ts** | 日志过滤属性测试 | 日志过滤逻辑 |
 | **unified-cli-config.property.test.ts** | 统一 CLI 配置测试 | CLI 配置管理 |
 | **useAutoRefresh.property.test.ts** | 自动刷新 Hook 测试 | useAutoRefresh Hook |

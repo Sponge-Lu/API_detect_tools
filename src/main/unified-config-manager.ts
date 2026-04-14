@@ -1,7 +1,7 @@
 /**
  * 输入: FileSystem (文件系统), Electron app (应用路径), BackupManager (备份管理)
  * 输出: UnifiedConfig (统一配置), 配置操作方法, 账户 CRUD
- * 定位: 数据层 - 管理统一配置作为单一数据源，支持多账户存储与切换
+ * 定位: 数据层 - 管理统一配置作为单一数据源，支持多账户存储与切换，并在加载时修复 legacy 默认账户缺失
  *
  * 多账户: accounts[] 存储 AccountCredential，站点不再持久化当前活跃账户
  * 迁移: v2 → v3 自动迁移，为已有站点创建默认账户
@@ -91,7 +91,16 @@ export class UnifiedConfigManager {
     let loadError: any = null;
 
     try {
-      this.config = await this.readConfigFromPath(this.configPath);
+      const { config, needsSave, repairedLegacyAccounts } = await this.readConfigFromPath(
+        this.configPath
+      );
+      this.config = config;
+      if (needsSave) {
+        Logger.info(
+          `💾 [UnifiedConfigManager] 加载时检测到配置迁移/修复，准备持久化（补建默认账户 ${repairedLegacyAccounts} 个）`
+        );
+        await this.saveConfig();
+      }
       Logger.info(
         `✅ [UnifiedConfigManager] 加载配置成功，${this.config.sites.length} 个站点，${this.config.accounts.length} 个账户`
       );
@@ -127,20 +136,35 @@ export class UnifiedConfigManager {
   /**
    * 从指定路径读取并规范化配置
    */
-  private async readConfigFromPath(configPath: string): Promise<UnifiedConfig> {
+  private async readConfigFromPath(configPath: string): Promise<{
+    config: UnifiedConfig;
+    needsSave: boolean;
+    repairedLegacyAccounts: number;
+  }> {
     const data = await fs.readFile(configPath, 'utf-8');
     const parsed = JSON.parse(data);
 
     this.assertConfigShape(parsed, configPath);
 
     let config: UnifiedConfig = parsed;
+    let needsSave = false;
 
     // v2 → v3 自动迁移
     if (config.version !== CONFIG_VERSION) {
       config = await this.migrateToV3(config);
+      needsSave = true;
     }
 
-    return this.normalizeConfig(config);
+    const repairedLegacyAccounts = this.repairLegacySiteAccounts(config);
+    if (repairedLegacyAccounts > 0) {
+      needsSave = true;
+    }
+
+    return {
+      config: this.normalizeConfig(config),
+      needsSave,
+      repairedLegacyAccounts,
+    };
   }
 
   /**
@@ -164,7 +188,7 @@ export class UnifiedConfigManager {
 
     for (const backup of backups) {
       try {
-        const recoveredConfig = await this.readConfigFromPath(backup.path);
+        const { config: recoveredConfig } = await this.readConfigFromPath(backup.path);
         const restored = await backupManager.restoreFromBackup(backup.filename, this.configPath);
 
         if (!restored) {
@@ -287,6 +311,56 @@ export class UnifiedConfigManager {
     this.normalizeRoutingConfig(config);
 
     return config;
+  }
+
+  /**
+   * 修复“版本已升级但仍保留站点级认证、且缺少默认账户”的残留数据
+   */
+  private repairLegacySiteAccounts(config: UnifiedConfig): number {
+    if (!Array.isArray(config.sites)) {
+      return 0;
+    }
+
+    if (!Array.isArray(config.accounts)) {
+      config.accounts = [];
+    }
+
+    let repairedCount = 0;
+
+    for (const site of config.sites) {
+      if (!site.id) {
+        site.id = generateSiteId();
+      }
+
+      const existingAccounts = config.accounts.filter(account => account.site_id === site.id);
+      if (existingAccounts.length > 0) {
+        continue;
+      }
+
+      const accessToken = site.access_token || (site as any).system_token;
+      const userId = site.user_id;
+      if (!accessToken || !userId) {
+        continue;
+      }
+
+      config.accounts.push({
+        id: generateAccountId(),
+        site_id: site.id,
+        account_name: '默认账户',
+        user_id: userId,
+        access_token: accessToken,
+        auth_source: 'manual',
+        status: 'active',
+        cached_data: site.cached_data ? { ...site.cached_data } : undefined,
+        cli_config: site.cli_config ? { ...site.cli_config } : undefined,
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      });
+      repairedCount++;
+      Logger.info(`🔧 [UnifiedConfigManager] 补建默认账户: ${site.name} (${site.id})`);
+    }
+
+    return repairedCount;
   }
 
   private getPreferredAccountFromList(
@@ -612,6 +686,26 @@ export class UnifiedConfigManager {
           `🔄 [UnifiedConfigManager] 自动补建默认账户: ${defaultAccount.id} (site=${account.site_id})`
         );
       }
+    }
+
+    // 同一站点 + 同一用户只保留一个账户记录，避免重复账户导致自动刷新/Profile 绑定混乱。
+    const duplicateIndex = this.config!.accounts.findIndex(
+      existing => existing.site_id === account.site_id && existing.user_id === account.user_id
+    );
+    if (duplicateIndex >= 0) {
+      const mergedAccount: AccountCredential = {
+        ...this.config!.accounts[duplicateIndex],
+        ...account,
+        id: this.config!.accounts[duplicateIndex].id,
+        created_at: this.config!.accounts[duplicateIndex].created_at,
+        updated_at: now,
+      };
+      this.config!.accounts[duplicateIndex] = mergedAccount;
+      await this.saveConfig();
+      Logger.info(
+        `🔁 [UnifiedConfigManager] 复用已有账户记录: ${mergedAccount.id} (site=${account.site_id}, user=${account.user_id})`
+      );
+      return mergedAccount;
     }
 
     const newAccount: AccountCredential = {

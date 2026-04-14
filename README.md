@@ -3,9 +3,9 @@
 <div align="center">
   <img src="build/icon.png" alt="Logo" width="128" height="128">
   <br><br>
-  
-  **API Hub Management Tools** 是一个现代化的桌面管理客户端，专为管理和监控多个 API 中转站而设计。
-  
+
+  **API Hub Management Tools** 是一个用于管理、检测和运维 API 中转站的桌面客户端。
+
   基于 [Electron](https://www.electronjs.org/) + [React](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/) 构建。
 
   [⬇️ 下载最新版](https://github.com/Sponge-Lu/API_detect_tools/releases)
@@ -13,69 +13,68 @@
 
 ---
 
-## ✨ 核心特性
 
-- **🚀 多站点聚合**：在一个界面统一管理无限数量的 API 站点（One API / New API / Veloera / Done Hub 等）。
-- **🔐 自动认证**：无需手动复制 Token，软件自动启动浏览器并捕获登录凭证，支持 Cloudflare 智能绕过；批量检测时若站点未登录，会提示并等待登录后继续。
-- **📊 实时监控**：一目了然地查看各站点余额、今日消耗、RPM/TPM 速率；批量检测时单站完成即刻刷新显示。
-- **⚙️ 并发/超时可调**：默认超时 30 秒，默认并发 3，可在设置中调整并发开关与最大并发（1–5）。
-- **🧭 浏览器更可控**：启动调试端口随机化、取消隐藏/后台启动，降低被杀软误报和端口冲突的概率。
-- **🎁 一键签到**：自动检测支持签到的站点，一键领取每日额度福利，兼容 Veloera 和 New API 站点类型。
-- **🔑 API Key 管理**：在桌面端直接创建、删除、分组管理 API Key，支持批量操作。
-- **🎨 现代化 UI**：清爽明亮的界面设计，支持深色模式跟随系统自动切换。
-- **🔧 CLI 兼容性测试**：检测站点对 Claude Code、Codex、Gemini CLI 等工具的支持情况，支持 Codex 双 API 测试和 Gemini CLI 双端点测试。
-- **⚙️ CLI 配置管理**：统一配置对话框支持 CLI 开关、模型选择、配置预览和一键应用，配置文件包含测试结果注释和使用建议。
-- **🛡️ 数据安全**：配置信息仅存储在本地，支持加密备份与恢复。
-- **☁️ WebDAV 云端备份**：支持将配置备份到 WebDAV 云存储（坚果云、NextCloud 等），实现跨设备同步。
-- **📈 Linux Do Credit**：查询 Linux Do 论坛积分数据，包括基准值、当前分、差值计算，以及完整账户信息（总收入、总支出、可用余额、信任等级、支付评分等）。展开详情可查看每日收支统计和交易记录。支持 LDC 充值功能，可直接向支持 LDC 支付的站点充值。
 
-## 📚 文档导航
+## 核心特性
 
-我们为您准备了详细的文档：
+- **多站点与多账号管理**：统一维护站点、账号、分组、排序、缓存数据和日常操作。
+- **自动认证与浏览器协作**：支持自动捕获登录凭证、Cloudflare/挑战页回退、按 Profile 打开站点。
+- **Route 工作台**：集中配置模型映射、CLI 路由探测、代理统计与健康检查。
+- **实时检测与统计**：查看余额、今日消费、请求数、RPM/TPM、本地日统计和签到状态。
+- **账号级自动刷新**：支持站点级与账号级自动刷新，适配多账号站点。
+- **CLI 配置与兼容性**：支持 Claude Code、Codex、Gemini CLI 的测试、配置生成、预览、编辑与一键写入。
+- **API Key 与签到工具**：可视化创建/删除 API Key，支持批量签到与福利入口。
+- **Linux Do Credit**：支持 LDC 数据读取、统计查看与充值跳转。
+- **更新与备份**：支持应用内更新、自动备份、本地恢复与 WebDAV 云端备份。
 
-- **[📖 用户指南](docs/USER_GUIDE.md)**：详细的功能介绍、使用教程和常见问题解答。
-- **[💻 开发指南](docs/DEVELOPMENT.md)**：开发环境搭建、代码规范和贡献流程。
-- **[🏗️ 架构文档](docs/ARCHITECTURE.md)**：系统架构设计、核心模块说明和工作流解析。
-- **[🔌 API 参考](docs/API_REFERENCE.md)**：完整的 API 接口定义和兼容性说明。
-- **[📝 更新日志](CHANGELOG.md)**：查看版本更新历史和变更记录。
+---
 
-## 分形索引系统
-- **分形多级索引系统**：https://github.com/Claudate/project-multilevel-index
+## 文档导航
 
-## 🚀 快速开始
+- **[用户指南](docs/USER_GUIDE.md)**：功能说明、使用路径与 FAQ。
+- **[开发指南](docs/DEVELOPMENT.md)**：环境准备、脚本、测试与提交流程。
+- **[架构文档](docs/ARCHITECTURE.md)**：主进程、渲染进程、路由系统与配置模型说明。
+- **[API 参考](docs/API_REFERENCE.md)**：接口与兼容性参考。
+- **[站点检测参考](docs/METAPI_SITE_DETECTION_REFERENCE.md)**：站点类型检测与路由参考资料。
+- **[更新日志](CHANGELOG.md)**：版本历史与变更摘要。
 
-### 下载安装包
+---
 
-前往 [Releases 页面](https://github.com/Sponge-Lu/API_detect_tools/releases) 下载适合你系统的安装包：
+## 快速开始
 
-- **Windows**: `API Hub Management Tools Setup x.x.x.exe` (安装版) 或 `API Hub Management Tools-x.x.x-portable.exe` (便携版)
-- **macOS**: `API Hub Management Tools-x.x.x.dmg`
-- **Linux**: `API Hub Management Tools-x.x.x.AppImage` 或 `API Hub Management Tools-x.x.x.deb`
+### 安装包
 
-### 开发环境
+前往 [Releases 页面](https://github.com/Sponge-Lu/API_detect_tools/releases) 下载对应平台构建：
+
+- **Windows**：`API Hub Management Tools Setup x.x.x.exe` 或 `API Hub Management Tools-x.x.x-portable.exe`
+- **macOS**：`API Hub Management Tools-x.x.x.dmg` 或 `API Hub Management Tools-x.x.x-mac.zip`
+- **Linux**：`API Hub Management Tools-x.x.x.AppImage` 或 `API Hub Management Tools-x.x.x.deb`
+
+### 本地开发
 
 ```bash
-# 1. 克隆仓库
 git clone https://github.com/Sponge-Lu/API_detect_tools.git
-
-# 2. 安装依赖
+cd API_detect_tools
 npm install
-
-# 3. 启动开发环境
 npm run dev
-
-# 4. 构建应用
-npm run dist:win    # Windows
-npm run dist:mac    # macOS
-npm run dist:linux  # Linux
 ```
 
-详细的开发说明请参考 [开发指南](docs/DEVELOPMENT.md)。
+### 常用命令
 
-## 🤝 贡献
+```bash
+npm run dev            # 同时启动 Electron 主进程与 Vite 渲染进程
+npm run build          # 构建 dist/ 与 dist-renderer/
+npm run dist:win       # Windows 打包
+npm run dist:mac       # macOS 打包
+npm run dist:linux     # Linux 打包
+npm run lint           # ESLint
+npm run test           # Vitest
+```
 
-欢迎提交 Issue 和 Pull Request！请在提交前阅读 [开发指南](docs/DEVELOPMENT.md) 中的贡献规范。
+更多细节见 [开发指南](docs/DEVELOPMENT.md)。
 
-## 📄 许可证
+---
+
+## 许可证
 
 [MIT License](LICENSE)
