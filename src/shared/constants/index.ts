@@ -156,10 +156,11 @@ export const LIGHT_THEME_BG_COLOR = '#f8fafc';
 
 /** 站点列表默认列宽（像素） */
 export const DEFAULT_COLUMN_WIDTHS = [
-  168, // 站点（两行：站点名 / 账户名 + 更新时间）
+  142, // 站点（两行：站点名 / 账户名 + 更新时间）
+  100, // 站点类型
   100, // 余额
   82, // 今日消费
-  96, // Token统计
+  92, // Token统计
   92, // 请求统计
   64, // 模型数
   180, // CLI可用性

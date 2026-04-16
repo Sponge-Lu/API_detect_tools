@@ -915,7 +915,7 @@ export function UnifiedCliConfigDialog({
       let rowResult: CliModelTestResult;
 
       try {
-        const response = await (window.electronAPI as any).cliCompat.testWithConfig({
+        const response = await (window.electronAPI as any).cliCompat.testWithWrapper({
           siteUrl,
           configs: [
             {

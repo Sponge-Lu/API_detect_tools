@@ -414,11 +414,13 @@ export function registerTokenHandlers(
     ) => {
       try {
         const mainWindow = getMainWindow();
+        const site = unifiedConfigManager.getSiteById(params.siteId);
         const siteAccount = await tokenService.initializeSiteAccount(
           params.baseUrl,
           true,
           600000,
-          (status: string) => sendSiteInitStatus(mainWindow, status)
+          (status: string) => sendSiteInitStatus(mainWindow, status),
+          { siteType: site?.site_type }
         );
 
         if (!siteAccount.user_id || !siteAccount.access_token) {

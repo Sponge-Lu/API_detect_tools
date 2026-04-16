@@ -47,8 +47,18 @@ import type { NewApiTokenForm } from '../hooks';
 import { getGroupTextColor } from '../utils/groupStyle';
 import { normalizeSiteSortField } from '../utils/siteSort';
 import { getSiteDailyStats } from '../utils/siteDailyStats';
-import type { SiteConfig, DetectionResult } from '../../shared/types/site';
+import {
+  SITE_TYPES,
+  SITE_TYPE_LABELS,
+  type SiteConfig,
+  type DetectionResult,
+} from '../../shared/types/site';
 import type { Config, SiteGroup } from '../App';
+import {
+  UNKNOWN_SITE_TYPE_FILTER,
+  type SiteTypeFilterOption,
+  type SiteTypeFilterValue,
+} from '../components/SiteListHeader/SiteListHeader';
 
 import { useConfigStore } from '../store/configStore';
 import { useDetectionStore } from '../store/detectionStore';
@@ -76,6 +86,12 @@ interface AccountInfo {
   browser_profile_path?: string;
   auto_refresh?: boolean;
   auto_refresh_interval?: number;
+}
+
+interface AddedAccountInfo {
+  id?: string;
+  account_name?: string;
+  user_id?: string;
 }
 
 interface AutoRefreshDialogTarget {
@@ -208,6 +224,9 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     useState<AutoRefreshDialogTarget | null>(null);
   const [addAccountSite, setAddAccountSite] = useState<SiteConfig | null>(null);
   const [editingAccount, setEditingAccount] = useState<EditingAccountInfo | null>(null);
+  const [activeSiteTypeFilter, setActiveSiteTypeFilter] = useState<SiteTypeFilterValue | null>(
+    null
+  );
 
   // 多账户: 按站点 ID 预加载的账户列表
   const [accountsBySite, setAccountsBySite] = useState<Record<string, AccountInfo[]>>({});
@@ -294,6 +313,46 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
   const siteBeingEdited = editingSite !== null ? config?.sites[editingSite] : undefined;
 
   const resolvedEditingAccount = editingAccount ?? null;
+
+  const siteTypeFilterOptions = useMemo<SiteTypeFilterOption[]>(() => {
+    if (!config?.sites?.length) return [];
+
+    const counts = new Map<SiteTypeFilterValue, number>();
+    for (const site of config.sites) {
+      const key = site.site_type ?? UNKNOWN_SITE_TYPE_FILTER;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+
+    const options: SiteTypeFilterOption[] = [];
+    for (const siteType of SITE_TYPES) {
+      const count = counts.get(siteType);
+      if (!count) continue;
+      options.push({
+        value: siteType,
+        label: SITE_TYPE_LABELS[siteType],
+        count,
+      });
+    }
+
+    const unknownCount = counts.get(UNKNOWN_SITE_TYPE_FILTER);
+    if (unknownCount) {
+      options.push({
+        value: UNKNOWN_SITE_TYPE_FILTER,
+        label: '未识别',
+        count: unknownCount,
+      });
+    }
+
+    return options;
+  }, [config?.sites]);
+
+  useEffect(() => {
+    if (activeSiteTypeFilter === null) return;
+    const stillExists = siteTypeFilterOptions.some(option => option.value === activeSiteTypeFilter);
+    if (!stillExists) {
+      setActiveSiteTypeFilter(null);
+    }
+  }, [activeSiteTypeFilter, siteTypeFilterOptions]);
 
   // 切换分组选择
   const toggleGroupFilter = (siteName: string, groupName: string | null) => {
@@ -530,13 +589,36 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     const siteName = config.sites[index]?.name || '该站点';
     const confirmed = await showDialog({
       type: 'warning',
-      title: '删除站点',
-      message: `确定要删除「${siteName}」吗？\n此操作不可恢复。`,
+      title: '删除账户',
+      message: `确定要删除「${siteName}」吗？\n该站点当前无账户记录，删除后将同时移除站点配置。`,
       confirmText: '删除',
     });
     if (!confirmed) return;
     await storeDeleteSite(index);
   };
+
+  const deleteAccount = useCallback(
+    async (site: SiteConfig, account: AccountInfo) => {
+      const confirmed = await showDialog({
+        type: 'warning',
+        title: '删除账户',
+        message: `确定要删除「${site.name}」的账户「${account.account_name}」吗？\n此操作不可恢复。`,
+        confirmText: '删除',
+      });
+      if (!confirmed) return;
+
+      try {
+        await window.electronAPI.accounts?.delete(account.id);
+        const cfg = await window.electronAPI.loadConfig();
+        setConfig(cfg);
+        await loadAllAccounts(cfg?.sites);
+      } catch (err: any) {
+        Logger.error('删除账户失败:', err);
+        toast.error('删除账户失败: ' + err?.message);
+      }
+    },
+    [loadAllAccounts, setConfig, showDialog]
+  );
 
   const handleDetectAllSites = async () => {
     if (!config) return;
@@ -1181,6 +1263,9 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                   sortOrder={sortOrder}
                   onToggleSort={toggleSort}
                   onResetSort={resetSort}
+                  activeSiteTypeFilter={activeSiteTypeFilter}
+                  siteTypeFilterOptions={siteTypeFilterOptions}
+                  onSiteTypeFilterChange={setActiveSiteTypeFilter}
                   actions={
                     <div className="ml-1 flex shrink-0 items-center gap-0.5">
                       <button
@@ -1237,6 +1322,11 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                       return null;
                     }
 
+                    const siteTypeValue = site.site_type ?? UNKNOWN_SITE_TYPE_FILTER;
+                    if (activeSiteTypeFilter !== null && siteTypeValue !== activeSiteTypeFilter) {
+                      return null;
+                    }
+
                     if (!siteHasMatchingModels(site, siteResult, ck)) {
                       return null;
                     }
@@ -1288,31 +1378,9 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                           setEditingAccount(account ?? null);
                           setShowSiteEditor(true);
                         }}
-                        onDelete={async (_idx: number) => {
-                          if (account) {
-                            // 多账户卡片：删除该账户而非整个站点
-                            const confirmed = await showDialog({
-                              type: 'warning',
-                              title: '删除账户',
-                              message: `确定要删除「${site.name}」的账户「${account.account_name}」吗？\n此操作不可恢复。`,
-                              confirmText: '删除',
-                            });
-                            if (!confirmed) return;
-                            try {
-                              await window.electronAPI.accounts?.delete(account.id);
-                              // 重新加载配置和账户列表
-                              const cfg = await window.electronAPI.loadConfig();
-                              setConfig(cfg);
-                              await loadAllAccounts(cfg?.sites);
-                            } catch (err: any) {
-                              Logger.error('删除账户失败:', err);
-                              toast.error('删除账户失败: ' + err?.message);
-                            }
-                          } else {
-                            // 无账户卡片：删除整个站点
-                            deleteSite(index);
-                          }
-                        }}
+                        onDelete={() =>
+                          account ? deleteAccount(site, account) : deleteSite(index)
+                        }
                         onCheckIn={(s, aid) => handleCheckIn(s, aid || account?.id)}
                         onOpenSite={(s, aid) => handleOpenSite(s, aid || account?.id)}
                         onOpenExtraLink={openExtraLink}
@@ -1428,6 +1496,10 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                   const updateResult = await window.electronAPI.accounts?.update(
                     resolvedEditingAccount.id,
                     {
+                      account_name:
+                        auth.accountName?.trim() ||
+                        resolvedEditingAccount.account_name ||
+                        '默认账户',
                       access_token: auth.systemToken,
                       user_id: auth.userId,
                     }
@@ -1690,22 +1762,29 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
           siteId={addAccountSite.id}
           siteName={addAccountSite.name}
           siteUrl={addAccountSite.url}
-          onSuccess={async () => {
+          onSuccess={async (addedAccount?: AddedAccountInfo) => {
             const cfg = await window.electronAPI.loadConfig();
             setConfig(cfg);
             await loadAllAccounts(cfg?.sites);
             if (cfg) {
               const refreshedSite = cfg.sites.find(s => s.url === addAccountSite.url);
               if (refreshedSite?.id) {
-                // 只刷新新添加的账户（列表末尾），不影响已有账户
+                const addedAccountId = addedAccount?.id;
+                if (addedAccountId) {
+                  detectSingle(refreshedSite, false, undefined, addedAccountId);
+                  return;
+                }
+
+                // 回退：旧数据路径仍按最新账户触发一次刷新
                 const listRes = await window.electronAPI.accounts?.list(refreshedSite.id);
                 const accounts = listRes?.success ? listRes.data : undefined;
                 if (accounts && accounts.length > 0) {
                   const newAccount = accounts[accounts.length - 1];
                   detectSingle(refreshedSite, false, undefined, newAccount.id);
-                } else {
-                  detectSingle(refreshedSite);
+                  return;
                 }
+
+                detectSingle(refreshedSite);
               }
             }
           }}

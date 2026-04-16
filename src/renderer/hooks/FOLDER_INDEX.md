@@ -171,6 +171,8 @@ interface UseCliCompatTestReturn {
 - 批量测试
 - 配置生成
 - 结果缓存
+- 统一调用 `window.electronAPI.cliCompat.testWithWrapper()`
+- 测试结果持久化后可直接驱动站点页 CLI 图标刷新
 
 ### useDataLoader
 

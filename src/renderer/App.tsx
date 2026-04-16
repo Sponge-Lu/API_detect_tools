@@ -48,6 +48,14 @@ declare global {
     electronAPI: {
       loadConfig: () => Promise<Config>;
       saveConfig: (config: Config) => Promise<void>;
+      sites?: {
+        add: (site: SiteConfig) => Promise<{ success: boolean; data?: SiteConfig; error?: string }>;
+        update: (
+          id: string,
+          updates: Partial<SiteConfig>
+        ) => Promise<{ success: boolean; error?: string }>;
+        delete: (id: string) => Promise<{ success: boolean; error?: string }>;
+      };
       launchChromeForLogin: (url: string) => Promise<{ success: boolean; message: string }>;
       closeBrowser: () => Promise<void>;
       closeLoginBrowser: () => Promise<void>;
@@ -138,7 +146,7 @@ declare global {
         ) => () => void;
       };
       cliCompat: {
-        testWithConfig: (params: {
+        testWithWrapper: (params: {
           siteUrl: string;
           configs: Array<{
             cliType: 'claudeCode' | 'codex' | 'geminiCli';

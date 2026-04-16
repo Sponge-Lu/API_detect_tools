@@ -17,6 +17,12 @@ import { X, Loader2, Globe, CheckCircle } from 'lucide-react';
 import { SiteConfig } from '../App';
 import { toast } from '../store/toastStore';
 import { AppInput } from './AppInput';
+import {
+  DEFAULT_SITE_TYPE,
+  SITE_TYPE_LABELS,
+  SITE_TYPES,
+  type SiteType,
+} from '../../shared/types/site';
 
 interface EditingAccountInfo {
   id: string;
@@ -28,7 +34,10 @@ interface EditingAccountInfo {
 interface Props {
   site?: SiteConfig;
   editingAccount?: EditingAccountInfo | null;
-  onSave: (site: SiteConfig, auth: { systemToken: string; userId: string }) => void | Promise<void>;
+  onSave: (
+    site: SiteConfig,
+    auth: { systemToken: string; userId: string; accountName?: string }
+  ) => void | Promise<void>;
   onCancel: () => void;
   // 站点分组列表（来自 config.siteGroups）
   groups: { id: string; name: string }[];
@@ -43,6 +52,7 @@ type Mode = 'auto' | 'manual';
 function buildInitialAutoInfo(site?: SiteConfig, editingAccount?: EditingAccountInfo | null) {
   return {
     name: site?.name || '',
+    accountName: editingAccount?.account_name || '',
     apiKey: site?.api_key || '',
     systemToken: editingAccount?.access_token || site?.system_token || '',
     userId: editingAccount?.user_id || site?.user_id || '',
@@ -50,6 +60,28 @@ function buildInitialAutoInfo(site?: SiteConfig, editingAccount?: EditingAccount
     extraLinks: site?.extra_links || '',
     enableCheckin: site?.force_enable_checkin || false,
   };
+}
+
+function extractDetectedApiKey(payload: any): string {
+  const directApiKey = typeof payload?.api_key === 'string' ? payload.api_key.trim() : '';
+  if (directApiKey) {
+    return directApiKey;
+  }
+
+  if (!Array.isArray(payload?.api_keys)) {
+    return '';
+  }
+
+  for (const item of payload.api_keys) {
+    const candidate =
+      (typeof item?.key === 'string' ? item.key.trim() : '') ||
+      (typeof item?.token === 'string' ? item.token.trim() : '');
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return '';
 }
 
 export function SiteEditor({
@@ -73,6 +105,11 @@ export function SiteEditor({
   const [autoInfo, setAutoInfo] = useState(() => buildInitialAutoInfo(site, editingAccount));
   // 站点分组选择
   const [selectedGroupId, setSelectedGroupId] = useState<string>(site?.group || defaultGroupId);
+  const [selectedSiteType, setSelectedSiteType] = useState<SiteType>(
+    site?.site_type || DEFAULT_SITE_TYPE
+  );
+  const [hasDetectedSiteType, setHasDetectedSiteType] = useState<boolean>(!!site?.site_type);
+  const [isSiteTypeEditing, setIsSiteTypeEditing] = useState<boolean>(false);
 
   // 监听后端发送的状态更新事件
   useEffect(() => {
@@ -147,7 +184,9 @@ export function SiteEditor({
 
       setStatusMessage('✅ 信息获取成功！');
 
-      const { user_id, site_name, access_token, supportsCheckIn } = siteAccountResult.data;
+      const { user_id, site_name, access_token, supportsCheckIn, site_type } =
+        siteAccountResult.data;
+      const detectedApiKey = extractDetectedApiKey(siteAccountResult.data);
       if (!user_id) {
         throw new Error('初始化站点返回的数据中缺少用户ID');
       }
@@ -155,13 +194,19 @@ export function SiteEditor({
       // 保留原有的 extraLinks（重新获取信息时不丢失）
       setAutoInfo(prev => ({
         name: site_name || extractDomainName(finalUrl),
-        apiKey: prev.apiKey, // 保留原有 apiKey
+        accountName: prev.accountName,
+        apiKey: detectedApiKey || prev.apiKey,
         systemToken: access_token || '',
         userId: String(user_id),
         balance: null,
         extraLinks: prev.extraLinks, // 保留原有加油站链接
         enableCheckin: supportsCheckIn === true,
       }));
+      if (site_type) {
+        setSelectedSiteType(site_type);
+        setHasDetectedSiteType(true);
+        setIsSiteTypeEditing(false);
+      }
 
       // 短暂显示成功消息后进入确认页
       setTimeout(() => {
@@ -195,6 +240,7 @@ export function SiteEditor({
     const newSite: SiteConfig = {
       name: autoInfo.name || extractDomainName(url),
       url: url.trim(),
+      site_type: selectedSiteType,
       api_key: autoInfo.apiKey,
       system_token: autoInfo.systemToken,
       user_id: autoInfo.userId,
@@ -208,6 +254,11 @@ export function SiteEditor({
     await onSave(newSite, {
       systemToken: autoInfo.systemToken,
       userId: autoInfo.userId,
+      ...(editingAccount
+        ? {
+            accountName: autoInfo.accountName.trim() || editingAccount.account_name || '',
+          }
+        : {}),
     });
   };
 
@@ -235,6 +286,7 @@ export function SiteEditor({
                     setMode('auto');
                     setStep('input-url');
                     setError('');
+                    setIsSiteTypeEditing(false);
                   }}
                 >
                   智能添加（默认）
@@ -250,6 +302,7 @@ export function SiteEditor({
                     setMode('manual');
                     setStep('confirm');
                     setError('');
+                    setIsSiteTypeEditing(true);
                   }}
                 >
                   手动添加站点
@@ -360,6 +413,21 @@ export function SiteEditor({
                   />
                 </div>
 
+                {site && editingAccount && (
+                  <div className="flex items-center gap-2 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-2">
+                    <div className="whitespace-nowrap text-sm font-semibold text-[var(--text-primary)]">
+                      账户名称
+                    </div>
+                    <input
+                      type="text"
+                      value={autoInfo.accountName}
+                      onChange={e => setAutoInfo({ ...autoInfo, accountName: e.target.value })}
+                      className="flex-1 bg-transparent text-right text-sm font-medium text-[var(--text-primary)] outline-none"
+                      placeholder="输入账户名称"
+                    />
+                  </div>
+                )}
+
                 {/* 站点分组选择 */}
                 <div className="flex items-center gap-2 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-2">
                   <div className="whitespace-nowrap text-sm font-semibold text-[var(--text-primary)]">
@@ -380,6 +448,51 @@ export function SiteEditor({
                         </option>
                       ))}
                     </select>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-2">
+                  <div className="whitespace-nowrap text-sm font-semibold text-[var(--text-primary)]">
+                    站点类型
+                  </div>
+                  <div className="flex flex-1 justify-end">
+                    {mode === 'manual' || !hasDetectedSiteType || isSiteTypeEditing ? (
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={selectedSiteType}
+                          onChange={e => setSelectedSiteType(e.target.value as SiteType)}
+                          className="w-36 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 py-1 text-sm text-[var(--text-primary)]"
+                        >
+                          {SITE_TYPES.map(siteType => (
+                            <option key={siteType} value={siteType}>
+                              {SITE_TYPE_LABELS[siteType]}
+                            </option>
+                          ))}
+                        </select>
+                        {hasDetectedSiteType && (
+                          <button
+                            type="button"
+                            onClick={() => setIsSiteTypeEditing(false)}
+                            className="text-xs font-medium text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+                          >
+                            使用识别结果
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-2.5 py-1 text-sm font-medium text-[var(--accent)]">
+                          {SITE_TYPE_LABELS[selectedSiteType]}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setIsSiteTypeEditing(true)}
+                          className="text-xs font-medium text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+                        >
+                          修改类型
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
 

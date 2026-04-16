@@ -508,7 +508,7 @@ export function CustomCliPage({ runCliTests }: CustomCliPageProps = {}) {
 
     for (const [index, model] of models.entries()) {
       try {
-        const response = await window.electronAPI.cliCompat.testWithConfig({
+        const response = await window.electronAPI.cliCompat.testWithWrapper({
           siteUrl: config.baseUrl,
           configs: [
             {

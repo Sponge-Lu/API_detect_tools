@@ -21,13 +21,14 @@
 /**
  * 令牌服务类 - 精简重构版
  * 核心职责：
- * 1. 初始化站点账号（一次性从浏览器获取数据）
+ * 1. 初始化站点账号（先识别站点类型，再从浏览器获取数据）
  * 2. 刷新显示数据（使用access_token调用API）
  * 3. 验证令牌有效性
  */
 
 import { ChromeManager } from './chrome-manager';
 import { httpGet, httpPost, httpRequest } from './utils/http-client';
+import { unifiedConfigManager } from './unified-config-manager';
 import type {
   SiteAccount,
   CachedDisplayData,
@@ -38,6 +39,10 @@ import type { CheckinStats } from '../shared/types/site';
 import { getAllUserIdHeaders } from '../shared/utils/headers';
 import Logger from './utils/logger';
 import { runOnPageQueue } from './utils/page-exec-queue';
+import { getSiteTypeProfile, resolveSiteType } from './site-type-registry';
+import { detectSiteType } from './site-type-detector';
+import type { SiteType } from '../shared/types/site';
+import { QUOTA_CONVERSION_FACTOR } from '../shared/constants';
 
 type CreateApiTokenPayload = {
   name: string;
@@ -54,6 +59,12 @@ type TokenRequestContext = {
   browserSlot?: number;
   allowBrowserFallback?: boolean;
   challengeWaitMs?: number;
+  siteType?: SiteType;
+};
+
+type InitializeSiteAccountOptions = {
+  loginMode?: boolean;
+  siteType?: SiteType;
 };
 
 function normalizeApiKeyValue(value: unknown): string | null {
@@ -259,7 +270,7 @@ export class TokenService {
     waitForLogin: boolean = true,
     maxWaitTime: number = 600000,
     onStatus?: (status: string) => void,
-    options?: { loginMode?: boolean }
+    options?: InitializeSiteAccountOptions
   ): Promise<SiteAccount> {
     Logger.info('🚀 [TokenService] ========== 开始初始化站点账号 ==========');
     Logger.info('📍 [TokenService] 站点URL:', baseUrl);
@@ -267,6 +278,14 @@ export class TokenService {
 
     try {
       const loginMode = options?.loginMode === true;
+      onStatus?.('正在识别站点类型...');
+      const siteTypeDetection =
+        options?.siteType !== undefined
+          ? { siteType: options.siteType, detectionMethod: 'fallback' as const }
+          : await detectSiteType(baseUrl);
+      let siteType = siteTypeDetection.siteType;
+      let siteProfile = getSiteTypeProfile(siteType);
+      Logger.info('🧭 [TokenService] 已识别站点类型:', siteType, siteTypeDetection);
 
       // 步骤1: 从localStorage获取核心数据（支持API回退）
       Logger.info('📖 [TokenService] 步骤1: 读取用户数据（localStorage优先，API回退）...');
@@ -276,8 +295,18 @@ export class TokenService {
         waitForLogin,
         maxWaitTime,
         onStatus,
-        { loginMode }
+        { loginMode, siteType }
       );
+
+      if (siteTypeDetection.detectionMethod === 'fallback' && localData.siteTypeHint) {
+        siteType = localData.siteTypeHint;
+        siteProfile = getSiteTypeProfile(siteType);
+        Logger.info('🧭 [TokenService] 根据登录态线索修正站点类型:', {
+          originalSiteType: siteTypeDetection.siteType,
+          resolvedSiteType: siteType,
+          siteTypeHint: localData.siteTypeHint,
+        });
+      }
 
       if (!localData.userId) {
         throw new Error('无法获取用户ID，请确保已登录并刷新页面');
@@ -295,6 +324,12 @@ export class TokenService {
       let accessToken = localData.accessToken;
 
       if (!accessToken) {
+        if (siteProfile.accessTokenMode !== 'create-if-missing') {
+          throw new Error(
+            `站点类型 ${siteType} 未在 localStorage 中返回有效访问令牌，请确认已完成登录。`
+          );
+        }
+
         Logger.info('⚠️ [TokenService] 未找到access_token，尝试创建...');
         Logger.info('🔧 [TokenService] 步骤2: 调用 /api/user/token 创建令牌');
         onStatus?.('正在创建访问令牌...');
@@ -316,19 +351,43 @@ export class TokenService {
         Logger.info('✅ [TokenService] 使用已有的access_token');
       }
 
+      let apiKeys: any[] | undefined;
+      let primaryApiKey = '';
+
+      if (siteType === 'sub2api') {
+        onStatus?.('正在获取 API Key...');
+        try {
+          apiKeys = await this.fetchApiTokens(baseUrl, localData.userId, accessToken, {
+            siteType,
+          });
+          primaryApiKey = normalizeApiKeyValue(resolveApiKeyValue(apiKeys?.[0])) || '';
+          Logger.info('🔑 [TokenService] sub2api 初始化时预取 API Keys:', {
+            count: apiKeys?.length || 0,
+            hasPrimaryApiKey: !!primaryApiKey,
+          });
+        } catch (error: any) {
+          Logger.warn(
+            '⚠️ [TokenService] sub2api 初始化时获取 API Keys 失败:',
+            error?.message || error
+          );
+        }
+      }
+
       // 步骤3: 构建SiteAccount对象
       const now = Date.now();
       const siteName = localData.systemName || new URL(baseUrl).hostname;
       const siteAccount: SiteAccount & {
         supportsCheckIn?: boolean;
         canCheckIn?: boolean;
+        api_key?: string;
+        api_keys?: any[];
       } = {
         id: `account_${now}_${Math.random().toString(36).substring(2, 11)}`,
         name: siteName,
         url: baseUrl,
         site_name: siteName,
         site_url: baseUrl,
-        site_type: 'newapi', // 默认类型，后续可通过检测API响应判断
+        site_type: siteType,
         user_id: localData.userId,
         username: localData.username || 'unknown',
         access_token: accessToken,
@@ -358,6 +417,13 @@ export class TokenService {
         can_check_in: localData.canCheckIn,
       };
 
+      if (primaryApiKey) {
+        siteAccount.api_key = primaryApiKey;
+      }
+      if (apiKeys?.length) {
+        siteAccount.api_keys = apiKeys;
+      }
+
       Logger.info('🎉 [TokenService] ========== 站点初始化完成 ==========');
       Logger.info('📊 [TokenService] 账号信息:');
       Logger.info('   - ID:', siteAccount.id);
@@ -366,6 +432,7 @@ export class TokenService {
       Logger.info('   - 用户名:', siteAccount.username);
       Logger.info('   - 支持签到:', siteAccount.supportsCheckIn ?? '未知');
       Logger.info('   - 可签到:', siteAccount.canCheckIn ?? '未知');
+      Logger.info('   - API Key:', siteAccount.api_key ? '已获取' : '未获取');
 
       return siteAccount;
     } catch (error: any) {
@@ -1430,6 +1497,31 @@ export class TokenService {
     can_check_in?: boolean;
   }> {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    const siteType = this.resolveSiteTypeByUrl(baseUrl);
+
+    if (siteType === 'sub2api') {
+      const [meResponse, usageResponse] = await Promise.all([
+        httpGet(`${cleanBaseUrl}/api/v1/auth/me`, {
+          headers: this.createRequestHeaders(userId, accessToken, baseUrl),
+          timeout: 10000,
+        }),
+        httpGet(`${cleanBaseUrl}/api/v1/usage/stats`, {
+          headers: this.createRequestHeaders(userId, accessToken, baseUrl),
+          timeout: 10000,
+        }),
+      ]);
+
+      if (meResponse.data?.code !== 0 || !meResponse.data?.data) {
+        throw new Error(meResponse.data?.message || '获取 sub2api 账户信息失败');
+      }
+
+      if (usageResponse.data?.code !== 0 || !usageResponse.data?.data) {
+        throw new Error(usageResponse.data?.message || '获取 sub2api 使用量失败');
+      }
+
+      return this.parseSub2ApiAccountData(meResponse.data.data, usageResponse.data.data);
+    }
+
     const url = `${cleanBaseUrl}/api/user/self`;
 
     const response = await httpGet(url, {
@@ -1452,6 +1544,205 @@ export class TokenService {
     };
   }
 
+  private resolveSub2ApiGroupName(
+    apiKey: any,
+    userGroups?: Record<string, { id?: number | string; desc: string; ratio: number }>
+  ): string {
+    const directGroup = typeof apiKey?.group === 'string' ? apiKey.group.trim() : '';
+    if (directGroup) {
+      return directGroup;
+    }
+
+    const groupId = apiKey?.group_id ?? apiKey?.groupId ?? apiKey?.group?.id;
+    if (groupId !== undefined && groupId !== null && userGroups) {
+      const normalizedGroupId = String(groupId);
+      for (const [groupName, groupInfo] of Object.entries(userGroups)) {
+        if (groupInfo?.id !== undefined && groupInfo?.id !== null) {
+          if (String(groupInfo.id) === normalizedGroupId) {
+            return groupName;
+          }
+        }
+      }
+    }
+
+    const groupNames = Object.keys(userGroups || {});
+    if (groupNames.length === 1) {
+      return groupNames[0];
+    }
+
+    return 'default';
+  }
+
+  private normalizeSub2ApiUsdValue(value: unknown): number | undefined {
+    const normalized = Number(value);
+    if (!Number.isFinite(normalized)) {
+      return undefined;
+    }
+    return normalized;
+  }
+
+  private async fetchSub2ApiApiKeyUsageStats(
+    baseUrl: string,
+    accessToken: string,
+    apiKeyIds: Array<number | string>
+  ): Promise<Record<string, { today_actual_cost?: number; total_actual_cost?: number }>> {
+    const normalizedIds = apiKeyIds
+      .map(id => Number(id))
+      .filter((id): id is number => Number.isFinite(id) && id > 0);
+
+    if (normalizedIds.length === 0) {
+      return {};
+    }
+
+    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    const response = await httpPost(
+      `${cleanBaseUrl}/api/v1/usage/dashboard/api-keys-usage`,
+      {
+        api_key_ids: normalizedIds,
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+          Pragma: 'no-cache',
+        },
+        timeout: 10000,
+      }
+    );
+
+    if (response.data?.code !== 0 || !response.data?.data?.stats) {
+      throw new Error(response.data?.message || '获取 sub2api API Key 用量失败');
+    }
+
+    return response.data.data.stats;
+  }
+
+  private async enrichSub2ApiApiKeys(
+    baseUrl: string,
+    userId: number,
+    accessToken: string,
+    tokens: any[],
+    siteType?: SiteType
+  ): Promise<any[]> {
+    const normalizedTokens = Array.isArray(tokens) ? tokens.map(token => ({ ...token })) : [];
+    if (normalizedTokens.length === 0) {
+      return [];
+    }
+
+    let userGroups: Record<string, { id?: number | string; desc: string; ratio: number }> = {};
+    try {
+      userGroups = await this.fetchUserGroups(baseUrl, userId, accessToken, undefined, siteType);
+    } catch (error: any) {
+      Logger.warn(
+        '⚠️ [TokenService] sub2api API Key 分组映射失败，继续使用原始列表:',
+        error.message
+      );
+    }
+
+    let usageStats: Record<string, { today_actual_cost?: number; total_actual_cost?: number }> = {};
+    try {
+      usageStats = await this.fetchSub2ApiApiKeyUsageStats(
+        baseUrl,
+        accessToken,
+        normalizedTokens
+          .map(token => token?.id ?? token?.token_id)
+          .filter((id): id is number | string => id !== undefined && id !== null)
+      );
+    } catch (error: any) {
+      Logger.warn(
+        '⚠️ [TokenService] sub2api API Key 用量获取失败，继续使用基础列表:',
+        error.message
+      );
+    }
+
+    return normalizedTokens.map(token => {
+      const resolvedGroup = this.resolveSub2ApiGroupName(token, userGroups);
+      const quota = this.normalizeSub2ApiUsdValue(token?.quota);
+      const quotaUsed = this.normalizeSub2ApiUsdValue(token?.quota_used);
+      const usage = usageStats[String(token?.id ?? token?.token_id ?? '')];
+      const totalActualCost = this.normalizeSub2ApiUsdValue(usage?.total_actual_cost);
+      const todayActualCost = this.normalizeSub2ApiUsdValue(usage?.today_actual_cost);
+      const effectiveUsedCost = totalActualCost ?? quotaUsed;
+      const remainQuotaUsd =
+        quota && effectiveUsedCost !== undefined
+          ? Math.max(0, quota - effectiveUsedCost)
+          : undefined;
+      const expiresAt = typeof token?.expires_at === 'string' ? token.expires_at : null;
+      const expiredTime =
+        typeof token?.expired_time === 'number'
+          ? token.expired_time
+          : expiresAt
+            ? Math.floor(Date.parse(expiresAt) / 1000)
+            : -1;
+
+      return {
+        ...token,
+        group_id: token?.group_id ?? token?.group?.id ?? null,
+        group: resolvedGroup,
+        quota,
+        quota_used: quotaUsed,
+        remain_quota:
+          remainQuotaUsd !== undefined
+            ? Math.floor(remainQuotaUsd * QUOTA_CONVERSION_FACTOR)
+            : token?.remain_quota,
+        used_quota:
+          effectiveUsedCost !== undefined
+            ? Math.floor(effectiveUsedCost * QUOTA_CONVERSION_FACTOR)
+            : token?.used_quota,
+        today_actual_cost: todayActualCost,
+        total_actual_cost: totalActualCost,
+        unlimited_quota: quota === 0 || Boolean(token?.unlimited_quota),
+        expires_at: expiresAt,
+        expired_time: Number.isFinite(expiredTime) ? expiredTime : -1,
+      };
+    });
+  }
+
+  private buildSub2ApiCreatePayload(
+    tokenData: CreateApiTokenPayload,
+    userGroups: Record<string, { id?: number | string; desc: string; ratio: number }>
+  ): Record<string, unknown> {
+    const payload: Record<string, unknown> = {
+      name: tokenData.name,
+    };
+
+    const groupName = typeof tokenData.group === 'string' ? tokenData.group.trim() : '';
+    if (groupName) {
+      const groupInfo = userGroups[groupName];
+      if (groupInfo?.id !== undefined && groupInfo?.id !== null) {
+        const normalizedGroupId = Number(groupInfo.id);
+        payload.group_id = Number.isFinite(normalizedGroupId) ? normalizedGroupId : groupInfo.id;
+      }
+    }
+
+    if (!tokenData.unlimited_quota && tokenData.remain_quota > 0) {
+      payload.quota = tokenData.remain_quota / QUOTA_CONVERSION_FACTOR;
+    }
+
+    if (tokenData.expired_time > 0) {
+      const expiresInMs = tokenData.expired_time * 1000 - Date.now();
+      if (expiresInMs > 0) {
+        payload.expires_in_days = Math.max(1, Math.ceil(expiresInMs / (24 * 60 * 60 * 1000)));
+      }
+    }
+
+    return payload;
+  }
+
+  private isSub2ApiTokenExpiredResponse(payload: any): boolean {
+    const code = typeof payload?.code === 'string' ? payload.code.toUpperCase() : '';
+    const message = String(payload?.message || '').toLowerCase();
+
+    return code === 'TOKEN_EXPIRED' || message.includes('token has expired');
+  }
+
+  private buildSub2ApiTokenExpiredError(payload: any): Error {
+    const message = String(payload?.message || 'Token has expired');
+    return new Error(
+      `登录已过期或未登录，请点击"重新获取"登录站点 (sub2api API Key 接口返回: ${message})`
+    );
+  }
+
   /**
    * 获取API令牌列表
    */
@@ -1463,27 +1754,20 @@ export class TokenService {
   ): Promise<any[]> {
     Logger.info('🔑 [TokenService] 获取API Keys...', { browserSlot: context?.browserSlot ?? 0 });
 
-    // 否则使用axios
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
-    const urls = [
-      // Done Hub格式（page参数 + keyword + order）
-      `${cleanBaseUrl}/api/token/?page=1&size=100&keyword=&order=-id`,
-      // New API格式（p参数，页码从1开始）
-      `${cleanBaseUrl}/api/token/?p=1&size=100`,
-      // One Hub格式（p参数，页码从0开始）
-      `${cleanBaseUrl}/api/token/?p=0&size=100`,
-      // 简化格式（无分页参数）
-      `${cleanBaseUrl}/api/token/`,
-    ];
+    const siteType = this.resolveSiteTypeByUrl(baseUrl, context?.siteType);
+    const profile = this.getSiteTypeProfileByUrl(baseUrl, context?.siteType);
+    const urls = profile.apiTokenListEndpoints.map(endpoint => `${cleanBaseUrl}${endpoint}`);
 
     let lastError: any = null;
     let lastStatus: number | undefined = undefined;
     let needBrowserFallback = false;
+    let sub2ApiTokenExpiredError: Error | undefined;
 
     for (const url of urls) {
       try {
         const response = await httpGet(url, {
-          headers: this.createRequestHeaders(userId, accessToken, baseUrl),
+          headers: this.createRequestHeaders(userId, accessToken, baseUrl, context?.siteType),
           timeout: 10000,
         });
 
@@ -1502,6 +1786,8 @@ export class TokenService {
         Logger.info('📦 [TokenService] API Keys响应结构:', {
           hasSuccess: !!data && 'success' in data,
           successValue: data?.success,
+          codeValue: data?.code,
+          messageValue: data?.message,
           hasData: !!data && 'data' in data,
           isDataArray: Array.isArray(data?.data),
           dataType: typeof data?.data,
@@ -1512,8 +1798,21 @@ export class TokenService {
 
         let tokens: any[] = [];
 
+        if (siteType === 'sub2api' && this.isSub2ApiTokenExpiredResponse(data)) {
+          sub2ApiTokenExpiredError = this.buildSub2ApiTokenExpiredError(data);
+        }
+
+        if (siteType === 'sub2api' && data?.code === 0) {
+          if (Array.isArray(data?.data?.items)) {
+            tokens = data.data.items;
+            Logger.info('   响应格式: sub2api 分页 items');
+          } else if (Array.isArray(data?.data)) {
+            tokens = data.data;
+            Logger.info('   响应格式: sub2api 数组');
+          }
+        }
         // 格式1: 直接数组
-        if (Array.isArray(rawData)) {
+        else if (Array.isArray(rawData)) {
           tokens = rawData;
           Logger.info('   响应格式: 直接数组');
         }
@@ -1550,16 +1849,31 @@ export class TokenService {
 
         Logger.info(`📊 [TokenService] URL ${url} axios获取到 ${tokens.length} 个tokens`);
 
-        // 标准化处理：将空的 group 字段设置为 "default"
-        tokens = tokens.map(token => {
-          if (!token.group || token.group.trim() === '') {
-            token.group = 'default';
-          }
-          return token;
-        });
+        if (siteType !== 'sub2api') {
+          // 标准化处理：将空的 group 字段设置为 "default"
+          tokens = tokens.map(token => {
+            if (!token.group || token.group.trim() === '') {
+              token.group = 'default';
+            }
+            return token;
+          });
+        }
+
+        if (siteType === 'sub2api' && sub2ApiTokenExpiredError) {
+          continue;
+        }
 
         // 如果获取到数据或已是最后一个URL，返回结果
         if (tokens.length > 0 || url === urls[urls.length - 1]) {
+          if (siteType === 'sub2api') {
+            return await this.enrichSub2ApiApiKeys(
+              baseUrl,
+              userId,
+              accessToken,
+              tokens,
+              context?.siteType
+            );
+          }
           return await this.enrichMaskedApiKeys(baseUrl, userId, accessToken, tokens, undefined, {
             browserSlot: context?.browserSlot,
             allowBrowserFallback: true,
@@ -1577,6 +1891,10 @@ export class TokenService {
 
         continue;
       }
+    }
+
+    if (sub2ApiTokenExpiredError) {
+      throw sub2ApiTokenExpiredError;
     }
 
     // 如果 axios 全部失败且错误看起来像 Cloudflare/403 场景，则自动回退到浏览器模式
@@ -1599,9 +1917,18 @@ export class TokenService {
             baseUrl,
             userId,
             accessToken,
-            browserPage
+            browserPage,
+            context?.siteType
           );
-          return tokens;
+          return siteType === 'sub2api'
+            ? await this.enrichSub2ApiApiKeys(
+                baseUrl,
+                userId,
+                accessToken,
+                tokens,
+                context?.siteType
+              )
+            : tokens;
         } finally {
           try {
             await browserPage.close();
@@ -1628,21 +1955,19 @@ export class TokenService {
     baseUrl: string,
     userId: number,
     accessToken: string,
-    page: any
+    page: any,
+    explicitSiteType?: SiteType
   ): Promise<any[]> {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
-    const urls = [
-      // Done Hub格式（page参数 + keyword + order）
-      `${cleanBaseUrl}/api/token/?page=1&size=100&keyword=&order=-id`,
-      // New API格式（p参数，页码从1开始）
-      `${cleanBaseUrl}/api/token/?p=1&size=100`,
-      // One Hub格式（p参数，页码从0开始）
-      `${cleanBaseUrl}/api/token/?p=0&size=100`,
-      // 简化格式（无分页参数）
-      `${cleanBaseUrl}/api/token/`,
-    ];
+    const siteType = this.resolveSiteTypeByUrl(baseUrl, explicitSiteType);
+    const urls = this.getSiteTypeProfileByUrl(baseUrl, explicitSiteType).apiTokenListEndpoints.map(
+      endpoint => `${cleanBaseUrl}${endpoint}`
+    );
 
-    const userIdHeaders = getAllUserIdHeaders(userId);
+    const userIdHeaders = this.getSiteTypeProfileByUrl(baseUrl, explicitSiteType)
+      .includeUserIdHeaders
+      ? getAllUserIdHeaders(userId)
+      : {};
     Logger.info(`🔑 [TokenService] 尝试${urls.length}个API Keys URL...`);
 
     for (const url of urls) {
@@ -1676,6 +2001,8 @@ export class TokenService {
 
         Logger.info(`📦 [TokenService] API Keys响应结构:`, {
           isArray: Array.isArray(result),
+          codeValue: result?.code,
+          messageValue: result?.message,
           hasData: !!result?.data,
           dataIsArray: Array.isArray(result?.data),
           hasItems: !!result?.data?.items,
@@ -1684,8 +2011,21 @@ export class TokenService {
 
         let tokens: any[] = [];
 
+        if (siteType === 'sub2api' && this.isSub2ApiTokenExpiredResponse(result)) {
+          throw this.buildSub2ApiTokenExpiredError(result);
+        }
+
+        if (siteType === 'sub2api' && result?.code === 0) {
+          if (Array.isArray(result?.data?.items)) {
+            tokens = result.data.items;
+            Logger.info('   响应格式: sub2api 分页 items');
+          } else if (Array.isArray(result?.data)) {
+            tokens = result.data;
+            Logger.info('   响应格式: sub2api 数组');
+          }
+        }
         // 格式1: 直接数组
-        if (Array.isArray(result)) {
+        else if (Array.isArray(result)) {
           tokens = result;
           Logger.info('   响应格式: 直接数组');
         }
@@ -1717,16 +2057,21 @@ export class TokenService {
 
         Logger.info(`✅ [TokenService] URL ${url} 获取到 ${tokens.length} 个tokens`);
 
-        // 标准化处理：将空的 group 字段设置为 "default"
-        tokens = tokens.map(token => {
-          if (!token.group || token.group.trim() === '') {
-            token.group = 'default';
-          }
-          return token;
-        });
+        if (siteType !== 'sub2api') {
+          // 标准化处理：将空的 group 字段设置为 "default"
+          tokens = tokens.map(token => {
+            if (!token.group || token.group.trim() === '') {
+              token.group = 'default';
+            }
+            return token;
+          });
+        }
 
         // 如果获取到数据或已是最后一个URL，返回结果
         if (tokens.length > 0 || url === urls[urls.length - 1]) {
+          if (siteType === 'sub2api') {
+            return tokens;
+          }
           return await this.enrichMaskedApiKeys(baseUrl, userId, accessToken, tokens, page, {
             allowBrowserFallback: false,
           });
@@ -2126,6 +2471,135 @@ export class TokenService {
     );
   }
 
+  private async deleteSub2ApiApiToken(
+    baseUrl: string,
+    userId: number,
+    accessToken: string,
+    tokenIdentifier: { id?: string; key?: string },
+    context?: TokenRequestContext
+  ): Promise<{ success: boolean; data?: any[] }> {
+    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    if (!tokenIdentifier.id) {
+      throw new Error('sub2api 删除 API Key 需要 id');
+    }
+    const tokenId = tokenIdentifier.id;
+
+    const url = `${cleanBaseUrl}/api/v1/keys/${encodeURIComponent(tokenIdentifier.id)}`;
+    try {
+      const response = await httpRequest({
+        method: 'DELETE',
+        url,
+        headers: this.createRequestHeaders(userId, accessToken, baseUrl),
+        timeout: 15000,
+        validateStatus: (status: number) => status < 500,
+      });
+
+      if (this.isBrowserChallengeResponse(response.data)) {
+        Logger.warn('🛡️ [TokenService] sub2api 删除令牌遇到挑战页响应，准备回退到浏览器模式');
+        return await this.deleteSub2ApiApiTokenInBrowser(
+          baseUrl,
+          userId,
+          accessToken,
+          tokenIdentifier,
+          context
+        );
+      }
+
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error(response.data?.message || `HTTP ${response.status}`);
+      }
+
+      if (typeof response.data?.code === 'number' && response.data.code !== 0) {
+        throw new Error(response.data?.message || '删除 sub2api API Key 失败');
+      }
+
+      return { success: true };
+    } catch (error: any) {
+      if (this.isCloudflareError(error) || this.isBrowserChallengeResponse(error?.response?.data)) {
+        return await this.deleteSub2ApiApiTokenInBrowser(
+          baseUrl,
+          userId,
+          accessToken,
+          tokenIdentifier,
+          context
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async deleteSub2ApiApiTokenInBrowser(
+    baseUrl: string,
+    userId: number,
+    accessToken: string,
+    tokenIdentifier: { id?: string; key?: string },
+    context?: TokenRequestContext
+  ): Promise<{ success: boolean; data?: any[] }> {
+    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    if (!tokenIdentifier.id) {
+      throw new Error('sub2api 删除 API Key 需要 id');
+    }
+    const tokenId = tokenIdentifier.id;
+
+    const { page, release } = await this.chromeManager.createPage(cleanBaseUrl, {
+      slot: context?.browserSlot,
+    });
+
+    try {
+      await page.bringToFront().catch(() => {});
+      await this.waitForCloudflareChallengeToPass(page);
+
+      const additionalHeaders = this.getSiteTypeProfileByUrl(baseUrl).includeUserIdHeaders
+        ? getAllUserIdHeaders(userId)
+        : {};
+      const result = await runOnPageQueue(page, () =>
+        page.evaluate(
+          async (apiUrl: string, token: string, requestHeaders: Record<string, string>) => {
+            try {
+              const response = await fetch(apiUrl, {
+                method: 'DELETE',
+                credentials: 'include',
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  'Content-Type': 'application/json',
+                  ...requestHeaders,
+                  Pragma: 'no-cache',
+                },
+              });
+
+              const status = response.status;
+              const text = await response.text();
+              try {
+                return { ok: response.ok, status, isJson: true, data: JSON.parse(text) };
+              } catch {
+                return { ok: response.ok, status, isJson: false, textSnippet: text.slice(0, 200) };
+              }
+            } catch (err: any) {
+              return { ok: false, status: 0, isJson: false, error: err?.message || String(err) };
+            }
+          },
+          `${cleanBaseUrl}/api/v1/keys/${encodeURIComponent(tokenId)}`,
+          accessToken,
+          additionalHeaders
+        )
+      );
+
+      if (!result.ok || result.status < 200 || result.status >= 300) {
+        throw new Error(
+          result.isJson ? result.data?.message || `HTTP ${result.status}` : result.textSnippet
+        );
+      }
+
+      if (result.isJson && typeof result.data?.code === 'number' && result.data.code !== 0) {
+        throw new Error(result.data?.message || '删除 sub2api API Key 失败(浏览器)');
+      }
+
+      return { success: true };
+    } finally {
+      release();
+    }
+  }
+
   /**
    * 删除 API 令牌
    *
@@ -2150,6 +2624,10 @@ export class TokenService {
 
     if (!id && !key) {
       throw new Error('缺少令牌标识，无法删除 API Key');
+    }
+
+    if (this.resolveSiteTypeByUrl(baseUrl) === 'sub2api') {
+      return await this.deleteSub2ApiApiToken(baseUrl, userId, accessToken, { id, key }, context);
     }
 
     Logger.info('🗑 [TokenService] 删除 API 令牌...', {
@@ -2735,6 +3213,154 @@ export class TokenService {
     );
   }
 
+  private async createSub2ApiApiToken(
+    baseUrl: string,
+    userId: number,
+    accessToken: string,
+    tokenData: CreateApiTokenPayload,
+    context?: TokenRequestContext
+  ): Promise<{ success: boolean; data?: any[] }> {
+    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    const url = `${cleanBaseUrl}/api/v1/keys`;
+    const beforeTokens = await this.fetchApiTokens(baseUrl, userId, accessToken, context);
+    const userGroups = await this.fetchUserGroups(baseUrl, userId, accessToken);
+    const payload = this.buildSub2ApiCreatePayload(tokenData, userGroups);
+
+    try {
+      const response = await httpPost(url, payload, {
+        headers: this.createRequestHeaders(userId, accessToken, baseUrl),
+        timeout: 15000,
+        validateStatus: (status: number) => status < 500,
+      });
+
+      if (this.isBrowserChallengeResponse(response.data)) {
+        Logger.warn('🛡️ [TokenService] sub2api 创建令牌遇到挑战页响应，切换到浏览器模式重试...');
+        return await this.createSub2ApiApiTokenInBrowser(
+          baseUrl,
+          userId,
+          accessToken,
+          tokenData,
+          payload,
+          context
+        );
+      }
+
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error(response.data?.message || `HTTP ${response.status}`);
+      }
+
+      if (response.data?.code !== 0 || !response.data?.data) {
+        throw new Error(response.data?.message || '创建 sub2api API Key 失败');
+      }
+
+      const tokens = this.mergeCreatedRawKeyIntoTokens(
+        beforeTokens,
+        await this.fetchApiTokens(baseUrl, userId, accessToken, context),
+        tokenData,
+        response.data
+      );
+      return { success: true, data: tokens };
+    } catch (error: any) {
+      const html = error?.response?.data;
+      if (this.isBrowserChallengeResponse(html) || this.isCloudflareError(error)) {
+        Logger.warn('🛡️ [TokenService] sub2api 创建令牌遇到挑战页响应，切换到浏览器模式重试...');
+        return await this.createSub2ApiApiTokenInBrowser(
+          baseUrl,
+          userId,
+          accessToken,
+          tokenData,
+          payload,
+          context
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async createSub2ApiApiTokenInBrowser(
+    baseUrl: string,
+    userId: number,
+    accessToken: string,
+    tokenData: CreateApiTokenPayload,
+    payload: Record<string, unknown>,
+    context?: TokenRequestContext
+  ): Promise<{ success: boolean; data?: any[] }> {
+    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    const url = `${cleanBaseUrl}/api/v1/keys`;
+    const { page, release } = await this.chromeManager.createPage(cleanBaseUrl, {
+      slot: context?.browserSlot,
+    });
+
+    try {
+      await page.bringToFront().catch(() => {});
+      await this.waitForCloudflareChallengeToPass(page);
+
+      const beforeTokens = await this.fetchApiTokensInBrowser(baseUrl, userId, accessToken, page);
+      const additionalHeaders = this.getSiteTypeProfileByUrl(baseUrl).includeUserIdHeaders
+        ? getAllUserIdHeaders(userId)
+        : {};
+
+      const result = await runOnPageQueue(page, () =>
+        page.evaluate(
+          async (
+            apiUrl: string,
+            token: string,
+            requestPayload: any,
+            requestHeaders: Record<string, string>
+          ) => {
+            try {
+              const response = await fetch(apiUrl, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${token}`,
+                  ...requestHeaders,
+                  Pragma: 'no-cache',
+                },
+                body: JSON.stringify(requestPayload),
+              });
+
+              const status = response.status;
+              const text = await response.text();
+              try {
+                return { ok: response.ok, status, isJson: true, data: JSON.parse(text) };
+              } catch {
+                return { ok: response.ok, status, isJson: false, textSnippet: text.slice(0, 200) };
+              }
+            } catch (err: any) {
+              return { ok: false, status: 0, isJson: false, error: err?.message || String(err) };
+            }
+          },
+          url,
+          accessToken,
+          payload,
+          additionalHeaders
+        )
+      );
+
+      if (!result.ok || result.status < 200 || result.status >= 300) {
+        throw new Error(
+          result.isJson ? result.data?.message || `HTTP ${result.status}` : result.textSnippet
+        );
+      }
+
+      if (result.isJson && result.data?.code !== 0) {
+        throw new Error(result.data?.message || '创建 sub2api API Key 失败(浏览器)');
+      }
+
+      const tokens = this.mergeCreatedRawKeyIntoTokens(
+        beforeTokens,
+        await this.fetchApiTokens(baseUrl, userId, accessToken, context),
+        tokenData,
+        result.data
+      );
+      return { success: true, data: tokens };
+    } finally {
+      release();
+    }
+  }
+
   /**
    * 创建新的 API 令牌
    *
@@ -2754,6 +3380,10 @@ export class TokenService {
     tokenData: CreateApiTokenPayload,
     context?: TokenRequestContext
   ): Promise<{ success: boolean; data?: any[] }> {
+    if (this.resolveSiteTypeByUrl(baseUrl) === 'sub2api') {
+      return await this.createSub2ApiApiToken(baseUrl, userId, accessToken, tokenData, context);
+    }
+
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
     const url = `${cleanBaseUrl}/api/token/`;
 
@@ -2954,27 +3584,38 @@ export class TokenService {
     baseUrl: string,
     userId: number,
     accessToken: string,
-    page?: any
-  ): Promise<Record<string, { desc: string; ratio: number }>> {
+    page?: any,
+    explicitSiteType?: SiteType
+  ): Promise<Record<string, { id?: number | string; desc: string; ratio: number }>> {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
-    const urls = [
-      `${cleanBaseUrl}/api/user/self/groups`, // New API, Veloera, Super-API
-      `${cleanBaseUrl}/api/user_group_map`, // One Hub, Done Hub
-      `${cleanBaseUrl}/api/group`, // One API (回退)
-    ];
+    const siteType = this.resolveSiteTypeByUrl(baseUrl, explicitSiteType);
+    const urls = this.getSiteTypeProfileByUrl(baseUrl, explicitSiteType).userGroupEndpoints.map(
+      endpoint => `${cleanBaseUrl}${endpoint}`
+    );
 
     // 如果提供了page，使用浏览器环境
     if (page) {
-      return await this.fetchUserGroupsInBrowser(baseUrl, userId, accessToken, page);
+      return await this.fetchUserGroupsInBrowser(
+        baseUrl,
+        userId,
+        accessToken,
+        page,
+        explicitSiteType
+      );
     }
 
     for (const url of urls) {
       try {
         Logger.info(`📡 [TokenService] 尝试获取用户分组: ${url}`);
         const response = await httpGet(url, {
-          headers: this.createRequestHeaders(userId, accessToken, baseUrl),
+          headers: this.createRequestHeaders(userId, accessToken, baseUrl, explicitSiteType),
           timeout: 10000,
         });
+
+        if (siteType === 'sub2api' && response.data?.code === 0) {
+          Logger.info('✅ [TokenService] 用户分组获取成功 (sub2api格式)');
+          return this.parseSub2ApiGroups(response.data);
+        }
 
         // New API 格式: { success: true, data: { "default": {...}, "vip": {...} } }
         if (
@@ -2990,13 +3631,15 @@ export class TokenService {
             // Done Hub 格式: { data: { default: { id, symbol, name, ratio, enable, ... } }, success: true }
             Logger.info('   格式类型: Done Hub');
             Logger.info('   原始分组数据:', response.data.data);
-            const groups: Record<string, { desc: string; ratio: number }> = {};
+            const groups: Record<string, { id?: number | string; desc: string; ratio: number }> =
+              {};
             for (const [key, value] of Object.entries(response.data.data)) {
               const group = value as any;
               // 只添加启用的分组
               if (group.enable !== false) {
                 // undefined 或 true 都算启用
                 groups[key] = {
+                  id: group.id,
                   desc: group.name || group.desc || key,
                   ratio: group.ratio || 1,
                 };
@@ -3014,7 +3657,7 @@ export class TokenService {
         // One API 格式: { success: true, data: ["default", "vip"] } - 只有分组名列表
         if (response.data?.success && Array.isArray(response.data.data)) {
           Logger.info('✅ [TokenService] 用户分组获取成功 (One API格式 - 数组)');
-          const groups: Record<string, { desc: string; ratio: number }> = {};
+          const groups: Record<string, { id?: number | string; desc: string; ratio: number }> = {};
           response.data.data.forEach((groupName: string) => {
             groups[groupName] = {
               desc: groupName,
@@ -3039,7 +3682,13 @@ export class TokenService {
     if (this.isCloudflareError(urls[0]) && page) {
       Logger.info('🛡️ [TokenService] 检测到Cloudflare，使用共享浏览器页面获取用户分组...');
       try {
-        return await this.fetchUserGroupsInBrowser(baseUrl, userId, accessToken, page);
+        return await this.fetchUserGroupsInBrowser(
+          baseUrl,
+          userId,
+          accessToken,
+          page,
+          explicitSiteType
+        );
       } catch (browserError: any) {
         Logger.error('❌ [TokenService] 浏览器模式也失败:', browserError.message);
       }
@@ -3055,16 +3704,19 @@ export class TokenService {
     baseUrl: string,
     userId: number,
     accessToken: string,
-    page: any
-  ): Promise<Record<string, { desc: string; ratio: number }>> {
+    page: any,
+    explicitSiteType?: SiteType
+  ): Promise<Record<string, { id?: number | string; desc: string; ratio: number }>> {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
-    const urls = [
-      `${cleanBaseUrl}/api/user/self/groups`, // New API, Veloera, Super-API
-      `${cleanBaseUrl}/api/user_group_map`, // One Hub, Done Hub
-      `${cleanBaseUrl}/api/group`, // One API (回退)
-    ];
+    const siteType = this.resolveSiteTypeByUrl(baseUrl, explicitSiteType);
+    const urls = this.getSiteTypeProfileByUrl(baseUrl, explicitSiteType).userGroupEndpoints.map(
+      endpoint => `${cleanBaseUrl}${endpoint}`
+    );
 
-    const userIdHeaders = getAllUserIdHeaders(userId);
+    const userIdHeaders = this.getSiteTypeProfileByUrl(baseUrl, explicitSiteType)
+      .includeUserIdHeaders
+      ? getAllUserIdHeaders(userId)
+      : {};
 
     for (const url of urls) {
       try {
@@ -3094,6 +3746,11 @@ export class TokenService {
           )
         );
 
+        if (siteType === 'sub2api' && result?.code === 0) {
+          Logger.info('✅ [TokenService] 浏览器获取成功 (sub2api格式)');
+          return this.parseSub2ApiGroups(result);
+        }
+
         // New API 格式: { success: true, data: { "default": {...}, "vip": {...} } }
         if (result?.success && result?.data && typeof result.data === 'object') {
           Logger.info('✅ [TokenService] 浏览器获取成功 (New API格式)');
@@ -3103,13 +3760,15 @@ export class TokenService {
           if (firstValue && ('name' in firstValue || 'ratio' in firstValue)) {
             // Done Hub 格式
             Logger.info('   格式类型: Done Hub');
-            const groups: Record<string, { desc: string; ratio: number }> = {};
+            const groups: Record<string, { id?: number | string; desc: string; ratio: number }> =
+              {};
             for (const [key, value] of Object.entries(result.data)) {
               const group = value as any;
               // 只添加启用的分组
               if (group.enable !== false) {
                 // undefined 或 true 都算启用
                 groups[key] = {
+                  id: group.id,
                   desc: group.name || group.desc || key,
                   ratio: group.ratio || 1,
                 };
@@ -3126,7 +3785,7 @@ export class TokenService {
         // One API 格式: { success: true, data: ["default", "vip"] } - 只有分组名列表
         if (result?.success && Array.isArray(result.data)) {
           Logger.info('✅ [TokenService] 浏览器获取成功 (One API格式 - 数组)');
-          const groups: Record<string, { desc: string; ratio: number }> = {};
+          const groups: Record<string, { id?: number | string; desc: string; ratio: number }> = {};
           result.data.forEach((groupName: string) => {
             groups[groupName] = {
               desc: groupName,
@@ -3160,10 +3819,14 @@ export class TokenService {
     page?: any
   ): Promise<any> {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
-    const urls = [
-      `${cleanBaseUrl}/api/pricing`, // New API
-      `${cleanBaseUrl}/api/available_model`, // Done Hub, One Hub
-    ];
+    const profile = this.getSiteTypeProfileByUrl(baseUrl);
+    const siteType = this.resolveSiteTypeByUrl(baseUrl);
+    const urls = profile.modelPricingEndpoints.map(endpoint => `${cleanBaseUrl}${endpoint}`);
+
+    if (!profile.supportsModelPricing || urls.length === 0) {
+      Logger.info(`ℹ️ [TokenService] 站点类型 ${siteType} 未提供模型定价接口，返回空定价`);
+      return { data: {} };
+    }
 
     // 如果提供了page，使用浏览器环境
     if (page) {
@@ -3330,10 +3993,12 @@ export class TokenService {
     page: any
   ): Promise<any> {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
-    const urls = [
-      `${cleanBaseUrl}/api/pricing`, // New API
-      `${cleanBaseUrl}/api/available_model`, // Done Hub
-    ];
+    const profile = this.getSiteTypeProfileByUrl(baseUrl);
+    const urls = profile.modelPricingEndpoints.map(endpoint => `${cleanBaseUrl}${endpoint}`);
+
+    if (!profile.supportsModelPricing || urls.length === 0) {
+      return { data: {} };
+    }
 
     const userIdHeaders = getAllUserIdHeaders(userId);
 
@@ -3497,6 +4162,91 @@ export class TokenService {
     }
   }
 
+  private resolveSiteTypeByUrl(baseUrl: string, explicitSiteType?: SiteType) {
+    return explicitSiteType ?? resolveSiteType(unifiedConfigManager.getSiteByUrl(baseUrl));
+  }
+
+  private getSiteTypeProfileByUrl(baseUrl: string, explicitSiteType?: SiteType) {
+    return getSiteTypeProfile(this.resolveSiteTypeByUrl(baseUrl, explicitSiteType));
+  }
+
+  private extractNumberByPaths(
+    data: Record<string, any> | undefined,
+    paths: string[],
+    defaultValue = 0
+  ): number {
+    for (const path of paths) {
+      const value = path.split('.').reduce<any>((current, key) => current?.[key], data);
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return value;
+      }
+    }
+
+    return defaultValue;
+  }
+
+  private parseSub2ApiAccountData(meData?: Record<string, any>, usageData?: Record<string, any>) {
+    return {
+      quota: this.extractNumberByPaths(meData, [
+        'balance',
+        'quota',
+        'remaining_balance',
+        'credit_balance',
+      ]),
+      today_quota_consumption: this.extractNumberByPaths(usageData, [
+        'today_actual_cost',
+        'today_cost',
+        'today_total_cost',
+        'today_usage',
+      ]),
+      today_prompt_tokens: this.extractNumberByPaths(usageData, [
+        'today_prompt_tokens',
+        'prompt_tokens',
+      ]),
+      today_completion_tokens: this.extractNumberByPaths(usageData, [
+        'today_completion_tokens',
+        'completion_tokens',
+      ]),
+      today_requests_count: this.extractNumberByPaths(usageData, ['today_requests', 'requests']),
+      can_check_in: false,
+    };
+  }
+
+  private parseSub2ApiGroups(
+    payload: any
+  ): Record<string, { id?: number | string; desc: string; ratio: number }> {
+    const data = payload?.data;
+
+    if (Array.isArray(data)) {
+      const groups: Record<string, { id?: number | string; desc: string; ratio: number }> = {};
+      for (const group of data) {
+        const key = String(group?.name || group?.id || group?.code || '').trim();
+        if (!key) {
+          continue;
+        }
+        groups[key] = {
+          id: group?.id,
+          desc: group?.display_name || group?.description || group?.desc || group?.name || key,
+          ratio:
+            typeof group?.ratio === 'number'
+              ? group.ratio
+              : typeof group?.rate_multiplier === 'number'
+                ? group.rate_multiplier
+                : typeof group?.multiplier === 'number'
+                  ? group.multiplier
+                  : 1,
+        };
+      }
+      return groups;
+    }
+
+    if (data && typeof data === 'object') {
+      return data;
+    }
+
+    return {};
+  }
+
   /**
    * 创建请求头
    * 兼容多种站点类型
@@ -3506,7 +4256,8 @@ export class TokenService {
   private createRequestHeaders(
     userId: number,
     accessToken: string,
-    siteUrl?: string
+    siteUrl?: string,
+    explicitSiteType?: SiteType
   ): Record<string, string> {
     // 基础请求头（所有站点通用）
     const headers: Record<string, string> = {
@@ -3515,9 +4266,10 @@ export class TokenService {
       Pragma: 'no-cache',
     };
 
-    // 添加所有可能的User-ID头，让服务器选择识别的
-    const userIdHeaders = getAllUserIdHeaders(userId);
-    Object.assign(headers, userIdHeaders);
+    if (!siteUrl || this.getSiteTypeProfileByUrl(siteUrl, explicitSiteType).includeUserIdHeaders) {
+      const userIdHeaders = getAllUserIdHeaders(userId);
+      Object.assign(headers, userIdHeaders);
+    }
 
     return headers;
   }

@@ -25,7 +25,7 @@
 | 文件 | 职责 | 关键状态 |
 |------|------|--------|
 | **index.ts** | Store 导出入口 | 所有 Store 的统一导出 |
-| **configStore.ts** | 配置管理 | 站点列表、分组、设置 |
+| **configStore.ts** | 配置管理 | 站点列表、分组、设置；删除站点优先走统一 `sites:delete` IPC 并回读配置 |
 | **detectionStore.ts** | 检测结果 | 检测状态、结果数据、detectingSites (Set) 并发跟踪 |
 | **uiStore.ts** | UI 状态 | 主题、模态框、菜单 |
 | **toastStore.ts** | 消息提示 | 消息队列、通知 |

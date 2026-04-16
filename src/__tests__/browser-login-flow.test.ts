@@ -18,12 +18,27 @@ describe('browser login flow', () => {
     vi.doMock('../main/utils/page-exec-queue', () => ({
       runOnPageQueue: vi.fn(),
     }));
+    vi.doMock('../main/site-type-detector', () => ({
+      detectSiteType: vi.fn(async () => ({
+        siteType: 'newapi',
+        detectionMethod: 'fallback',
+      })),
+    }));
+    vi.doMock('../main/unified-config-manager', () => ({
+      unifiedConfigManager: {
+        getSiteByUrl: vi.fn(() => ({
+          id: 'site-1',
+          url: 'https://demo.example.com',
+          site_type: 'newapi',
+        })),
+      },
+    }));
 
     const { TokenService } = await import('../main/token-service');
 
     const chromeManager = {
       getLocalStorageData: vi.fn(async (_url, _wait, _max, _status, options) => {
-        expect(options).toEqual({ loginMode: true });
+        expect(options).toEqual({ loginMode: true, siteType: 'newapi' });
         return {
           userId: 7,
           username: 'demo',
@@ -94,6 +109,55 @@ describe('browser login flow', () => {
 
     expect(chromeManager.cleanupLoginBrowser).toHaveBeenCalledTimes(1);
     expect(chromeManager.cleanup).not.toHaveBeenCalled();
+  });
+
+  it('tryGetFromLocalStorage 应从 __APP_CONFIG__.site_subtitle 提取 sub2api 公益站名称', async () => {
+    vi.doMock('puppeteer-core', () => ({
+      default: {},
+    }));
+    vi.doMock('electron', () => ({
+      app: {
+        getPath: vi.fn(() => 'C:/tmp'),
+      },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const { ChromeManager } = await import('../main/chrome-manager');
+    const manager = new ChromeManager();
+
+    const page = {
+      evaluate: vi.fn(async (fn: () => any) => {
+        const originalLocalStorage = (globalThis as any).localStorage;
+        const originalAppConfig = (globalThis as any).__APP_CONFIG__;
+
+        (globalThis as any).localStorage = {
+          getItem: (key: string) => {
+            if (key === 'auth_token') return 'jwt-token';
+            if (key === 'auth_user') return JSON.stringify({ id: 9, username: 'sub-user' });
+            return null;
+          },
+        };
+        (globalThis as any).__APP_CONFIG__ = {
+          site_subtitle: 'AC_公益站',
+          custom_menu_items: [],
+          backend_mode_enabled: false,
+        };
+
+        try {
+          return fn();
+        } finally {
+          (globalThis as any).localStorage = originalLocalStorage;
+          (globalThis as any).__APP_CONFIG__ = originalAppConfig;
+        }
+      }),
+    };
+
+    const result = await (manager as any).tryGetFromLocalStorage(page);
+
+    expect(result.systemName).toBe('AC_公益站');
+    expect(result.siteTypeHint).toBe('sub2api');
   });
 
   it('detect-site for account uses canonical site info and retries once after refreshing token', async () => {
@@ -205,5 +269,87 @@ describe('browser login flow', () => {
       system_token: 'new-token',
     });
     expect(result?.status).toBe('成功');
+  });
+
+  it('detect-site for account should not retry access_token refresh when error points to invalid api_key', async () => {
+    const handlers = new Map<string, (...args: any[]) => any>();
+    const updateAccount = vi.fn(async () => true);
+    const getAccountById = vi.fn(() => ({
+      id: 'acct-1',
+      site_id: 'site-1',
+      user_id: '6173',
+      access_token: 'old-token',
+    }));
+    const getSiteById = vi.fn(() => ({
+      id: 'site-1',
+      name: 'API Site',
+      url: 'https://sub.jlypx.de/',
+      enabled: true,
+      group: 'default',
+      site_type: 'sub2api',
+    }));
+
+    vi.doMock('electron', () => ({
+      ipcMain: {
+        handle: vi.fn((channel: string, handler: (...args: any[]) => any) => {
+          handlers.set(channel, handler);
+        }),
+        on: vi.fn(),
+      },
+      shell: { openExternal: vi.fn() },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+    vi.doMock('../main/unified-config-manager', () => ({
+      unifiedConfigManager: {
+        loadConfig: vi.fn(async () => true),
+        getAccountById,
+        getSiteById,
+        getAccountsBySiteId: vi.fn(() => [{ id: 'acct-1' }]),
+        updateAccount,
+      },
+    }));
+    vi.doMock('../main/config-detection-service', () => ({
+      configDetectionService: {
+        detectClaudeCode: vi.fn(),
+        detectCodex: vi.fn(),
+        detectGeminiCli: vi.fn(),
+        detectAll: vi.fn(),
+      },
+    }));
+
+    const { registerDetectionHandlers } = await import('../main/handlers/detection-handlers');
+    const apiService = {
+      detectSite: vi.fn().mockResolvedValue({
+        name: 'API Site',
+        url: 'https://sub.jlypx.de/',
+        status: '失败',
+        error: '模型接口返回空数据 (API Key 可能已失效或无权访问，请检查或重新同步 API Key)',
+        models: [],
+        has_checkin: false,
+      }),
+    };
+    const tokenService = {
+      recreateAccessTokenFromBrowser: vi.fn(async () => 'new-token'),
+    };
+
+    registerDetectionHandlers(apiService as any, {} as any, tokenService as any);
+
+    const detectHandler = handlers.get('detect-site');
+    const result = await detectHandler?.(
+      {},
+      { id: 'site-1', name: 'stale-name', url: 'https://stale.example.com/' },
+      30,
+      true,
+      undefined,
+      false,
+      'acct-1'
+    );
+
+    expect(apiService.detectSite).toHaveBeenCalledTimes(1);
+    expect(tokenService.recreateAccessTokenFromBrowser).not.toHaveBeenCalled();
+    expect(updateAccount).not.toHaveBeenCalled();
+    expect(result?.status).toBe('失败');
   });
 });

@@ -1,9 +1,9 @@
 # API 接口参考文档
 
-> 本文档整理了 One API 系列项目（one-api、new-api、Veloera、one-hub、done-hub、VoAPI、Super-API）的完整接口信息。
+> 本文档整理了 One API 系列项目（one-api、new-api、Veloera、one-hub、done-hub、VoAPI、Super-API）以及 sub2api 的接口信息。
 >
-> **最后更新时间**：2026-02-26
-> **版本**：v2.1.23
+> **最后更新时间**：2026-04-14
+> **版本**：v3.0.1
 
 ---
 
@@ -18,6 +18,7 @@
 | **done-hub** | one-hub 二开 | 邀请码系统、发票系统、WebAuthn |
 | **VoAPI** | 独立开发 | 规则引擎、多货币、日志分表 |
 | **Super-API** | new-api 二开 | 闭源，UI重构、签到、礼品码 |
+| **sub2api** | 独立开发 | JWT 管理面 + API Key 网关面分离，管理接口走 `/api/v1/*`，模型网关走 `/v1/*` |
 
 ---
 
@@ -27,6 +28,9 @@
 
 1. **Cookie 认证 (Session)** - 适用于 Web 管理界面
 2. **Token 认证 (Bearer Token)** - 请求头：`Authorization: Bearer <token>`
+3. **sub2api 双凭证模式**
+   - JWT: 用于 `/api/v1/auth/me`、`/api/v1/usage/stats`、`/api/v1/keys`、`/api/v1/groups/available`
+   - API Key: 用于 `/v1/models`
 
 ---
 
@@ -115,6 +119,31 @@
 
 ---
 
+## 6.5 sub2api 专用接口
+
+### 6.5.1 管理面 (`/api/v1/*`, 需 JWT)
+
+| 接口 | 方法 | 说明 |
+| :--- | :---: | :--- |
+| `/api/v1/auth/me` | GET | 获取当前用户信息/余额 |
+| `/api/v1/usage/stats` | GET | 获取使用量统计 |
+| `/api/v1/keys?page=1&page_size=100` | GET | 获取 API Key 列表 |
+| `/api/v1/groups/available` | GET | 获取当前用户可用分组 |
+
+### 6.5.2 网关面 (`/v1/*`, 需 API Key)
+
+| 接口 | 方法 | 说明 |
+| :--- | :---: | :--- |
+| `/v1/models` | GET | 获取模型列表 |
+
+### 6.5.3 当前确认范围
+
+- `/api/v1/*` 返回包络为 `{ code, message, data }`
+- `/v1/models` 返回 OpenAI 兼容列表结构 `{ object: "list", data: [...] }`
+- 目前未在 sub2api 官方公开仓库中确认稳定的“普通用户模型价格”接口；实现中按“不支持/未知”处理
+
+---
+
 ## 7. 详细响应结构
 
 ### 7.1 标准响应格式
@@ -135,6 +164,34 @@
 {
   "success": false,
   "message": "错误信息"
+}
+```
+
+**sub2api 管理面成功响应：**
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": { }
+}
+```
+
+**sub2api 管理面错误响应：**
+```json
+{
+  "code": 1000,
+  "message": "error message",
+  "data": null
+}
+```
+
+**sub2api 网关模型响应：**
+```json
+{
+  "object": "list",
+  "data": [
+    { "id": "claude-3-7-sonnet", "object": "model" }
+  ]
 }
 ```
 
@@ -812,11 +869,13 @@
 | one-api | `/api/user/available_models` |
 | new-api, Veloera | `/api/user/models` |
 | one-hub, done-hub | `/api/available_model` (公开) |
+| sub2api | `/v1/models` (需 API Key) |
 
-**端点探测优先级**（代码实现）:
-1. `/api/user/models` - New API, Veloera
-2. `/api/user/available_models` - One API
-3. `/api/available_model` - Done Hub, One Hub
+**按站点类型的主路径**（代码实现）:
+1. `newapi` / `veloera` / `superapi` -> `/api/user/models`
+2. `oneapi` -> `/api/user/available_models`
+3. `onehub` / `donehub` / `voapi` -> `/api/available_model`
+4. `sub2api` -> `/v1/models`
 
 ### 9.2 定价信息
 
@@ -825,10 +884,12 @@
 | new-api, Veloera | `/api/pricing` | 基础价格 + 分组倍率 |
 | one-hub, done-hub | `/api/available_model` | 最终价格(已计算倍率) |
 | one-hub, done-hub | `/api/prices` | 管理员定价列表 |
+| sub2api | 未确认官方公开端点 | 当前按“不支持/未知”处理 |
 
-**端点探测优先级**（代码实现）:
-1. `/api/pricing` - New API, Veloera
-2. `/api/available_model` - Done Hub, One Hub
+**按站点类型的主路径**（代码实现）:
+1. `newapi` / `veloera` / `superapi` -> `/api/pricing`
+2. `onehub` / `donehub` / `voapi` -> `/api/available_model`
+3. `oneapi` / `sub2api` -> 不走模型价格接口
 
 ### 9.3 用户分组信息
 
@@ -836,12 +897,21 @@
 | :--- | :--- |
 | new-api, Veloera | `/api/user/self/groups`, `/api/user/groups` |
 | one-hub, done-hub | `/api/user_group_map` |
+| one-api | `/api/group` |
+| sub2api | `/api/v1/groups/available` |
 
-**端点探测优先级**（代码实现）:
-1. `/api/user/self/groups` - New API, Veloera, Super-API
-2. `/api/user/groups` - New API, Veloera (公开端点)
-3. `/api/user_group_map` - One Hub, Done Hub
-4. `/api/group` - One API (回退)
+**按站点类型的主路径**（代码实现）:
+1. `newapi` / `veloera` / `superapi` -> `/api/user/self/groups`, `/api/user/groups`
+2. `onehub` / `donehub` / `voapi` -> `/api/user_group_map`
+3. `oneapi` -> `/api/group`
+4. `sub2api` -> `/api/v1/groups/available`
+
+### 9.4 用户信息与用量
+
+| 项目 | 接口 |
+| :--- | :--- |
+| one-api / new-api / Veloera / one-hub / done-hub / VoAPI / Super-API | `/api/user/self` + `/api/log/self` |
+| sub2api | `/api/v1/auth/me` + `/api/v1/usage/stats` |
 
 ---
 

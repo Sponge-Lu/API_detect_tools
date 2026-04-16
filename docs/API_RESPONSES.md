@@ -5,6 +5,108 @@
 
 ---
 
+## sub2api 官方响应结构补充
+
+以下结构补充基于 `Wei-Shaw/sub2api` 官方仓库的路由、响应包装器、契约测试与前端 API 调用方式整理。
+
+### 管理面包络 (`/api/v1/*`)
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {}
+}
+```
+
+### `/api/v1/auth/me`
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "id": "user-id",
+    "name": "demo",
+    "balance": 88.5
+  }
+}
+```
+
+说明：
+- `data` 内部字段会随实现演进扩展，当前代码对余额字段按 `balance/quota/remaining_balance` 做兼容解析。
+- 这是基于官方管理面 JSON 包络和前端 `auth/me` 调用路径做的运行时兼容推断。
+
+### `/api/v1/usage/stats`
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "today_actual_cost": 1.25,
+    "today_prompt_tokens": 100,
+    "today_completion_tokens": 50,
+    "today_requests": 3
+  }
+}
+```
+
+### `/api/v1/keys?page=1&page_size=100`
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "items": [
+      {
+        "id": 1,
+        "name": "default-key",
+        "key": "sk-raw-value"
+      }
+    ]
+  }
+}
+```
+
+### `/api/v1/groups/available`
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": [
+    {
+      "name": "default",
+      "display_name": "默认分组",
+      "ratio": 1
+    }
+  ]
+}
+```
+
+### `/v1/models`
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "claude-3-7-sonnet",
+      "object": "model"
+    }
+  ]
+}
+```
+
+### 当前未确认项
+
+- 未在 sub2api 官方公开仓库中确认普通用户可直接查询模型价格的稳定端点。
+- 因此本项目当前将 `sub2api.model_pricing` 视为“未提供/未知”，不臆造接口。
+
+---
+
 ## 随时跑路公益
 
 - **URL**: https://runanytime.hxi.me/
@@ -17635,4 +17737,3 @@ error code: 521
 ```
 
 ---
-

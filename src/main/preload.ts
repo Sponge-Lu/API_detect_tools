@@ -16,6 +16,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 原有的API
   loadConfig: () => ipcRenderer.invoke('load-config'),
   saveConfig: (config: any) => ipcRenderer.invoke('save-config', config),
+  sites: {
+    add: (site: any) => ipcRenderer.invoke('sites:add', site),
+    update: (id: string, updates: any) => ipcRenderer.invoke('sites:update', id, updates),
+    delete: (id: string) => ipcRenderer.invoke('sites:delete', id),
+  },
   launchChromeForLogin: (url: string) => ipcRenderer.invoke('launch-chrome-for-login', url),
 
   // 站点初始化状态事件监听
@@ -206,8 +211,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // CLI 兼容性测试 API
   cliCompat: {
-    // 使用配置测试 CLI 兼容性
-    testWithConfig: (params: {
+    // 使用真实 CLI wrapper 测试 CLI 兼容性
+    testWithWrapper: (params: {
       siteUrl: string;
       configs: Array<{
         cliType: 'claudeCode' | 'codex' | 'geminiCli';
@@ -215,7 +220,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         model: string;
         baseUrl?: string;
       }>;
-    }) => ipcRenderer.invoke('cli-compat:test-with-config', params),
+    }) => ipcRenderer.invoke('cli-compat:test-with-wrapper', params),
     // 保存 CLI 兼容性结果到缓存
     saveResult: (siteUrl: string, result: any, accountId?: string) =>
       ipcRenderer.invoke('cli-compat:save-result', siteUrl, result, accountId),

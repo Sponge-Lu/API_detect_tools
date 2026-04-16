@@ -72,7 +72,7 @@ describe('UnifiedCliConfigDialog', () => {
       ...window.electronAPI,
       cliCompat: {
         ...window.electronAPI?.cliCompat,
-        testWithConfig: vi.fn().mockResolvedValue({
+        testWithWrapper: vi.fn().mockResolvedValue({
           success: true,
           data: {
             codex: true,
@@ -97,7 +97,7 @@ describe('UnifiedCliConfigDialog', () => {
     });
 
     await waitFor(() =>
-      expect(window.electronAPI.cliCompat.testWithConfig).toHaveBeenCalledWith({
+      expect(window.electronAPI.cliCompat.testWithWrapper).toHaveBeenCalledWith({
         siteUrl: 'https://example.com',
         configs: [
           {

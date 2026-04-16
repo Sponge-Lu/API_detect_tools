@@ -567,7 +567,7 @@ export function CustomCliConfigEditorDialog({
     try {
       for (const [index, model] of cliTestTargets.entries()) {
         try {
-          const response = await window.electronAPI.cliCompat.testWithConfig({
+          const response = await window.electronAPI.cliCompat.testWithWrapper({
             siteUrl: baseUrl,
             configs: [
               {

@@ -24,20 +24,23 @@
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
 | **main.ts** | 应用入口、窗口管理 | `createWindow()`, `app.whenReady()` |
-| **api-service.ts** | API 请求服务、检测状态持久化 | `ApiService` 类 |
-| **chrome-manager.ts** | Chrome 浏览器管理、多槽位架构、独立登录浏览器（loginBrowserState） | `ChromeManager` 类 |
-| **token-service.ts** | Token 认证服务 | `TokenService` 类 |
-| **cli-compat-service.ts** | CLI 兼容性测试 | `CliCompatService` 类 |
+| **api-service.ts** | API 请求服务、检测状态持久化、旧站点首次检测时自动写回 `site_type` | `ApiService` 类 |
+| **chrome-manager.ts** | Chrome 浏览器管理、多槽位架构、独立登录浏览器（loginBrowserState）、按 site_type 解析登录态 | `ChromeManager` 类 |
+| **site-type-registry.ts** | 站点类型到初始化/端点/行为的注册表 | `getSiteTypeProfile()`, `resolveSiteType()` |
+| **site-type-detector.ts** | 智能添加初始化前的站点类型自动识别 | `detectSiteType()` |
+| **token-service.ts** | Token 认证服务，初始化阶段按 site_type 选择端点与 access token 策略 | `TokenService` 类 |
+| **cli-compat-service.ts** | 协议级 CLI 兼容性测试，请求格式与真实 CLI 对齐 | `CliCompatService` 类 |
+| **cli-wrapper-compat-service.ts** | 基于真实 CLI wrapper 的兼容性测试；当前 UI 测试主路径，使用临时 HOME/CODEX_HOME/GEMINI_CLI_HOME 隔离环境 | `CliWrapperCompatService` 类 |
 | **backup-manager.ts** | 本地备份管理 | `backupManager` 实例 |
 | **webdav-manager.ts** | WebDAV 云端备份 | `WebDAVManager` 类 |
-| **unified-config-manager.ts** | 统一配置管理、损坏恢复、原子写入、legacy 默认账户自愈修复 | `unifiedConfigManager` 实例 |
+| **unified-config-manager.ts** | 统一配置管理、损坏恢复、原子写入、legacy 默认账户自愈修复、缺失 `site_type` 旧站点保持未决、兼容保存时清理已删站点的孤儿账户、删除最后一个账户时自动移除站点配置 | `unifiedConfigManager` 实例 |
 | **browser-profile-manager.ts** | 主/隔离浏览器 Profile 管理，多账户共享槽位 | `BrowserProfileManager` 类 |
 | **update-service.ts** | 应用更新服务 | `UpdateService` 类 |
 | **config-detection-service.ts** | CLI 配置检测服务 | `ConfigDetectionService` 类 |
 | **close-behavior-manager.ts** | 窗口关闭行为管理 | `CloseBehaviorManager` 类 |
 | **credit-service.ts** | Linux Do Credit 积分检测、LDC 充值 | `CreditService` 类 |
 | **power-manager.ts** | 电源管理，阻止系统休眠 | `powerManager` 实例 |
-| **preload.ts** | Preload 脚本 | IPC 上下文隔离 |
+| **preload.ts** | Preload 脚本 | IPC 上下文隔离，暴露统一站点 CRUD / 账户 / 检测接口 |
 | **api-request-helper.ts** | API 请求辅助函数 | 通用请求逻辑 |
 
 ### 子文件夹
@@ -90,7 +93,7 @@ main.ts: app.whenReady()
 
 ### ApiService
 
-**职责**: 发送 HTTP 请求到 API 站点，持久化检测状态
+**职责**: 发送 HTTP 请求到 API 站点，持久化检测状态，并在旧站点首次检测时自动识别并写回 `site_type`
 
 **关键方法**:
 - `request(config)` - 发送请求
@@ -154,7 +157,7 @@ main.ts: app.whenReady()
 - `login(site)` - 自动登录
 - `cleanup()` - 清理所有槽位资源
 - `forceCleanup()` - 强制清理所有槽位（重置引用计数）
-- `getLocalStorageData(url, waitForLogin, maxWaitTime, onStatus)` - 获取 localStorage 数据（含签到状态）
+- `getLocalStorageData(url, waitForLogin, maxWaitTime, onStatus, { siteType })` - 获取 localStorage 数据（含按类型的 API 回退）
 - `createPage(url, { slot })` - 创建页面（slot 0 走原有逻辑，slot N 走隔离浏览器）
 - `createPageForSlot(url, slotIndex)` - 为指定隔离槽位创建页面
 - `findExistingPageForUrl(url)` - 查找可复用的同域名页面
@@ -162,6 +165,9 @@ main.ts: app.whenReady()
 
 **并发安全**:
 - `cleanupOldPages` 在 `browserRefCount > 1` 时跳过清理，避免关闭其他并发检测任务正在使用的页面
+
+**LocalStorageData 登录态字段**:
+- Sub2API: `auth_user`, `auth_token`
 
 **LocalStorageData 签到字段**:
 - Veloera: `check_in_enabled`, `can_check_in`
@@ -176,7 +182,7 @@ main.ts: app.whenReady()
 
 ### CliCompatService
 
-**职责**: 测试站点对 CLI 工具的兼容性，使用与真实 CLI 一致的流式请求格式
+**职责**: 以协议级方式测试站点对 CLI 工具的兼容性，使用与真实 CLI 一致的流式请求格式
 
 **关键方法**:
 - `testSite(config)` - 测试站点所有 CLI 兼容性
@@ -196,12 +202,39 @@ main.ts: app.whenReady()
 
 **流式首包探测**: 发送 stream 请求后只读取首个 SSE chunk 即 abort，最小化 token 消耗
 
+**当前定位**:
+- 保留为底层协议探测与属性测试能力
+- 当前前端 CLI 可用性测试主路径不直接调用该服务，而是统一走 `CliWrapperCompatService`
+
 **API 支持判定 (`isApiSupported`)**:
 - 200 + SSE/`data: {` → 支持
 - 2xx/401/403/429 → 支持（端点存在）
 - 400 + 已知错误类型（invalid_request_error 等）→ 支持
 - 500 + `application/json` contentType → 支持（中转站上游失败，端点本身存在）
 - 其他 → 不支持
+
+### CliWrapperCompatService
+
+**职责**: 通过真实 CLI wrapper 拉起 Claude Code / Codex / Gemini CLI，在隔离的临时目录中验证站点可用性
+
+**关键方法**:
+- `testClaudeCode(url, apiKey, model)` - 真实执行 Claude Code
+- `testCodexWithDetail(url, apiKey, model)` - 真实执行 Codex 并返回 `responses` 结果
+- `testGeminiWithDetail(url, apiKey, model)` - 真实执行 Gemini CLI 并返回 `native/proxy` 结果
+- `testSite(params)` - 顺序执行多项 wrapper 测试
+
+**隔离策略**:
+- Claude Code: 临时 `HOME` + `~/.claude/settings.json`
+- Codex: 临时 `CODEX_HOME/config.toml` + 自定义 provider + `supports_websockets = false`
+- Gemini CLI: 临时 `GEMINI_CLI_HOME` + 空工作目录 + 环境变量注入
+
+**恢复策略**:
+- 不写入用户真实 CLI 配置目录；测试结束后删除临时目录
+- 因此正常情况下无需“恢复测试前站点配置”
+
+**当前入口**:
+- 主进程 IPC 仅保留 `cli-compat:test-with-wrapper`
+- 站点页、统一 CLI 配置对话框、自定义 CLI 配置编辑器均通过该入口执行真实 CLI 测试
 
 ### ConfigDetectionService
 

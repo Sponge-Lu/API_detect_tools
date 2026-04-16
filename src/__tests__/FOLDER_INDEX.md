@@ -26,17 +26,20 @@
 | **setup.ts** | 测试环境配置 | Vitest 配置 |
 | **example.test.ts** | 示例测试 | 测试模板 |
 | **schemas.test.ts** | Schema 验证测试 | Zod Schema |
-| **token-service.test.ts** | API Key 原始值保留回归测试 | TokenService 创建后原始 key 回填、ApiService 缓存持久化保留原始 key |
+| **token-service.test.ts** | TokenService / ApiService 的 site_type 驱动回归测试 | API Key 原始值保留、sub2api 端点适配、旧站点 `site_type` 首检写回 |
+| **site-type-detector.test.ts** | 站点类型自动识别测试 | title 命中与 `/api/status` 识别 |
+| **site-editor.test.tsx** | SiteEditor 回归测试 | 手动保存站点类型、智能添加回填识别类型 |
 | **groupStyle.test.tsx** | 分组样式测试 | groupStyle 工具 |
 | **useSiteGroups.test.ts** | Hook 测试 | useSiteGroups Hook |
 | **webdav-config.test.ts** | WebDAV 配置测试 | WebDAV 配置 |
-| **unified-config-manager.test.ts** | 配置恢复回归测试 | UnifiedConfigManager 损坏恢复、备份回滚、原子保存、legacy 默认账户修复 |
+| **unified-config-manager.test.ts** | 配置恢复与 legacy `site_type` 未决态回归测试 | UnifiedConfigManager 损坏恢复、备份回滚、原子保存、legacy 默认账户修复、旧站点缺失 `site_type` 不默认补值 |
 | **route-cli-probe-service.test.ts** | CLI 探测账户选择回归测试 | 默认账户优先、余额不足回退、旧配置兼容 |
 | **webdav-manager.test.ts** | WebDAV 管理器测试 | WebDAVManager 类 |
 | **update-service.test.ts** | 更新服务测试 | UpdateService 类 |
 | **auto-refresh.property.test.ts** | 自动刷新属性测试 | 自动刷新逻辑 |
 | **cli-compat-persistence.property.test.ts** | CLI 兼容性持久化测试 | CLI 兼容性数据 |
 | **cli-compat-service.property.test.ts** | CLI 兼容性服务测试 | CliCompatService（含双端点测试） |
+| **cli-wrapper-compat-service.test.ts** | 真实 CLI wrapper 兼容性测试 | CliWrapperCompatService 的临时目录、隔离配置与结果解析 |
 | **cli-config-generator.property.test.ts** | CLI 配置生成测试 | CLI 配置生成（含端点选择逻辑） |
 | **custom-cli-config-editor-dialog.test.tsx** | 自定义 CLI 编辑器回归测试 | CustomCliConfigEditorDialog 的预览/应用按钮与分列测试流程 |
 | **unified-cli-config-dialog.test.tsx** | 统一 CLI 对话框回归测试 | UnifiedCliConfigDialog 在测试结果持久化后保持当前 CLI 页签 |

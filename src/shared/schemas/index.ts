@@ -15,6 +15,7 @@
  */
 
 import { z } from 'zod';
+import { SITE_TYPES } from '../types/site';
 
 // ============= 基础 Schema =============
 
@@ -95,6 +96,7 @@ export const userIdSchema = z
 export const siteConfigSchema = z.object({
   name: siteNameSchema,
   url: urlSchema,
+  site_type: z.enum(SITE_TYPES).optional(),
   api_key: apiKeySchema,
   system_token: systemTokenSchema,
   user_id: userIdSchema,

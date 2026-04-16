@@ -10,6 +10,8 @@ import { unifiedConfigManager } from '../unified-config-manager';
 import type { ChromeManager } from '../chrome-manager';
 import type { BrowserWindow } from 'electron';
 import Logger from '../utils/logger';
+import { detectSiteType } from '../site-type-detector';
+import { getSiteTypeProfile } from '../site-type-registry';
 
 export function registerBrowserProfileHandlers(
   chromeManager: ChromeManager,
@@ -64,8 +66,10 @@ export function registerBrowserProfileHandlers(
         : undefined;
 
       try {
+        const siteType = (await detectSiteType(siteUrl)).siteType;
         const data = await chromeManager.getLocalStorageData(siteUrl, true, 120000, onStatus, {
           loginMode: true,
+          siteType,
         });
         if (!data.userId) {
           return { success: false, error: '未能获取用户ID，请确保已登录' };
@@ -73,7 +77,7 @@ export function registerBrowserProfileHandlers(
 
         // accessToken 缺失时尝试创建
         let accessToken = data.accessToken;
-        if (!accessToken) {
+        if (!accessToken && getSiteTypeProfile(siteType).accessTokenMode === 'create-if-missing') {
           Logger.info('[BrowserProfileHandlers] accessToken 缺失，尝试创建...');
           onStatus?.('正在创建访问令牌...');
           accessToken = await chromeManager.createAccessTokenForLogin(siteUrl, data.userId);
@@ -135,8 +139,10 @@ export function registerBrowserProfileHandlers(
           : undefined;
 
         try {
+          const siteType = (await detectSiteType(siteUrl)).siteType;
           const data = await chromeManager.getLocalStorageData(siteUrl, true, 120000, onStatus, {
             loginMode: true,
+            siteType,
           });
           if (!data.userId) {
             return { success: false, error: '未能获取用户ID，请确保已登录' };
@@ -144,7 +150,10 @@ export function registerBrowserProfileHandlers(
 
           // accessToken 缺失时尝试创建（与第一账号流程一致）
           let accessToken = data.accessToken;
-          if (!accessToken) {
+          if (
+            !accessToken &&
+            getSiteTypeProfile(siteType).accessTokenMode === 'create-if-missing'
+          ) {
             Logger.info('[BrowserProfileHandlers] accessToken 缺失，尝试创建...');
             onStatus?.('正在创建访问令牌...');
             accessToken = await chromeManager.createAccessTokenForLogin(siteUrl, data.userId);

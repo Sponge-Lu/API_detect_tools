@@ -12,6 +12,7 @@
 
 - 配置模型升级为 v3：`sites + accounts + routing`
 - 新增 Route 工作台与对应主进程路由服务
+- CLI 兼容性 UI 测试链路统一切换到真实 wrapper 执行，并通过临时目录隔离本机 CLI 配置
 - UI 原语迁移到 `App*` 中性命名体系
 - 主题系统收敛为 `Light` / `Dark`
 
@@ -154,9 +155,14 @@ interface UnifiedConfig {
 | `TokenService` | 登录初始化、token 校验、签到、access token 自动补建 |
 | `ChromeManager` | 多槽位检测浏览器池、独立登录浏览器、页面复用与清理 |
 | `UnifiedConfigManager` | 配置加载、迁移、原子写入、备份恢复、路由配置持久化 |
-| `CliCompatService` | Claude Code / Codex / Gemini CLI 兼容性测试 |
+| `CliCompatService` | 协议级 CLI 兼容性探测，请求格式与真实 CLI 对齐，用于底层能力判断与属性测试 |
+| `CliWrapperCompatService` | 拉起真实 Claude Code / Codex / Gemini CLI wrapper，在隔离临时目录中执行当前 UI 的 CLI 可用性测试 |
 | `CreditService` | Linux Do Credit 数据读取与充值跳转 |
 | `UpdateService` | 版本检查、应用内下载、安装 |
+
+### CLI 兼容性执行路径
+
+当前前端入口统一走 `cli-compat:test-with-wrapper` IPC，由 `CliWrapperCompatService` 在临时 `HOME` / `CODEX_HOME` / `GEMINI_CLI_HOME` 中生成最小配置并执行真实 CLI。测试结束后删除临时目录，不修改用户真实 CLI 配置目录，因此常规测试流程不需要备份或恢复本机 CLI 配置。
 
 ### 浏览器管理模型
 

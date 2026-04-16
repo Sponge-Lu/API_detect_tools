@@ -58,7 +58,9 @@ describe('UnifiedConfigManager', () => {
     backupFile: ReturnType<typeof vi.fn>;
   };
 
-  const loadManager = async () => {
+  const loadManager = async (options?: {
+    detectSiteTypeResult?: { siteType: string; detectionMethod: string };
+  }) => {
     vi.resetModules();
 
     vi.doMock('electron', () => ({
@@ -77,6 +79,13 @@ describe('UnifiedConfigManager', () => {
 
     vi.doMock('../main/backup-manager', () => ({
       backupManager: backupManagerMock,
+    }));
+
+    vi.doMock('../main/site-type-detector', () => ({
+      detectSiteType: vi.fn(
+        async () =>
+          options?.detectSiteTypeResult || { siteType: 'newapi', detectionMethod: 'fallback' }
+      ),
     }));
 
     const mod = await import('../main/unified-config-manager');
@@ -229,11 +238,116 @@ describe('UnifiedConfigManager', () => {
     const persisted = JSON.parse(await fs.readFile(configPath, 'utf-8'));
     expect(persisted.accounts).toHaveLength(1);
     expect(persisted.accounts[0].account_name).toBe('默认账户');
+    expect(persisted.accounts[0].cached_data).toMatchObject({
+      balance: 12.34,
+    });
     expect(backupManagerMock.backupFile).toHaveBeenCalledWith(configPath);
 
     const reloadedManager = await loadManager();
     const reloadedConfig = await reloadedManager.loadConfig();
     expect(reloadedConfig.accounts).toHaveLength(1);
+  });
+
+  it('persists cached_data directly into config.json when saving', async () => {
+    const manager = await loadManager();
+    const config = createSampleConfig() as any;
+    config.sites[0].cached_data = {
+      balance: 23.45,
+      models: ['gpt-4o-mini'],
+      last_refresh: 1234567890,
+    };
+
+    await manager.saveConfig(config);
+
+    const persisted = JSON.parse(await fs.readFile(path.join(userDataDir, 'config.json'), 'utf-8'));
+    expect(persisted.sites[0].cached_data).toMatchObject({
+      balance: 23.45,
+      models: ['gpt-4o-mini'],
+      last_refresh: 1234567890,
+    });
+  });
+
+  it('hydrates missing legacy site_type during v2 -> v3 migration when detection succeeds', async () => {
+    const configPath = path.join(userDataDir, 'config.json');
+    const rawConfig = createSampleConfig();
+    delete rawConfig.sites[0].site_type;
+    await fs.writeFile(configPath, JSON.stringify(rawConfig, null, 2), 'utf-8');
+
+    const manager = await loadManager({
+      detectSiteTypeResult: { siteType: 'sub2api', detectionMethod: 'html-marker' },
+    });
+    const loadedConfig = await manager.loadConfig();
+
+    expect(loadedConfig.sites[0].site_type).toBe('sub2api');
+    const persisted = JSON.parse(await fs.readFile(configPath, 'utf-8'));
+    expect(persisted.sites[0].site_type).toBe('sub2api');
+  });
+
+  it('drops orphan accounts when legacy save removes a site', async () => {
+    const configPath = path.join(userDataDir, 'config.json');
+    const rawConfig = createSampleConfig();
+    rawConfig.accounts = [
+      {
+        id: 'account-1',
+        site_id: 'site-1',
+        account_name: '默认账户',
+        user_id: 'user-1',
+        access_token: 'token-1',
+        auth_source: 'manual',
+        status: 'active',
+        created_at: 1,
+        updated_at: 1,
+      },
+    ] as any;
+    await fs.writeFile(configPath, JSON.stringify(rawConfig, null, 2), 'utf-8');
+
+    const manager = await loadManager();
+    await manager.loadConfig();
+    await manager.saveLegacyConfig({
+      sites: [],
+      settings: rawConfig.settings as any,
+      siteGroups: rawConfig.siteGroups as any,
+    });
+
+    const persisted = JSON.parse(await fs.readFile(configPath, 'utf-8'));
+    expect(persisted.sites).toHaveLength(0);
+    expect(persisted.accounts).toHaveLength(0);
+  });
+
+  it('keeps legacy sites without site_type unresolved when migration detection only falls back', async () => {
+    const configPath = path.join(userDataDir, 'config.json');
+    const rawConfig = createSampleConfig();
+    delete rawConfig.sites[0].site_type;
+    await fs.writeFile(configPath, JSON.stringify(rawConfig, null, 2), 'utf-8');
+
+    const manager = await loadManager({
+      detectSiteTypeResult: { siteType: 'newapi', detectionMethod: 'fallback' },
+    });
+    const loadedConfig = await manager.loadConfig();
+
+    expect(loadedConfig.sites[0].site_type).toBeUndefined();
+
+    await manager.saveConfig(loadedConfig as any);
+    const persisted = JSON.parse(await fs.readFile(configPath, 'utf-8'));
+    expect(persisted.sites[0].site_type).toBeUndefined();
+  });
+
+  it('does not auto-detect missing site_type on normal load when config is already current version', async () => {
+    const configPath = path.join(userDataDir, 'config.json');
+    const rawConfig = createSampleConfig();
+    rawConfig.version = '3.1';
+    delete rawConfig.sites[0].site_type;
+    await fs.writeFile(configPath, JSON.stringify(rawConfig, null, 2), 'utf-8');
+
+    const manager = await loadManager({
+      detectSiteTypeResult: { siteType: 'sub2api', detectionMethod: 'html-marker' },
+    });
+    const loadedConfig = await manager.loadConfig();
+
+    expect(loadedConfig.sites[0].site_type).toBeUndefined();
+
+    const persisted = JSON.parse(await fs.readFile(configPath, 'utf-8'));
+    expect(persisted.sites[0].site_type).toBeUndefined();
   });
 
   it('reuses existing account when adding the same site_id + user_id again', async () => {
@@ -265,5 +379,59 @@ describe('UnifiedConfigManager', () => {
     expect(persisted.accounts).toHaveLength(1);
     expect(persisted.accounts[0].account_name).toBe('焕昭君');
     expect(persisted.accounts[0].access_token).toBe('token-new');
+  });
+
+  it('removes the site config when deleting the last account of a site', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as any);
+    await manager.loadConfig();
+
+    const account = await manager.addAccount({
+      site_id: 'site-1',
+      account_name: '默认账户',
+      user_id: '6110',
+      access_token: 'token-only',
+      auth_source: 'manual',
+      status: 'active',
+    } as any);
+
+    const deleted = await manager.deleteAccount(account.id);
+    expect(deleted).toBe(true);
+
+    const persisted = JSON.parse(await fs.readFile(path.join(userDataDir, 'config.json'), 'utf-8'));
+    expect(persisted.sites).toHaveLength(0);
+    expect(persisted.accounts).toHaveLength(0);
+  });
+
+  it('keeps the site config when deleting one account but other accounts remain', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as any);
+    await manager.loadConfig();
+
+    const first = await manager.addAccount({
+      site_id: 'site-1',
+      account_name: '账户1',
+      user_id: '6110',
+      access_token: 'token-1',
+      auth_source: 'manual',
+      status: 'active',
+    } as any);
+
+    const second = await manager.addAccount({
+      site_id: 'site-1',
+      account_name: '账户2',
+      user_id: '6220',
+      access_token: 'token-2',
+      auth_source: 'manual',
+      status: 'active',
+    } as any);
+
+    const deleted = await manager.deleteAccount(first.id);
+    expect(deleted).toBe(true);
+
+    const persisted = JSON.parse(await fs.readFile(path.join(userDataDir, 'config.json'), 'utf-8'));
+    expect(persisted.sites).toHaveLength(1);
+    expect(persisted.accounts).toHaveLength(1);
+    expect(persisted.accounts[0].id).toBe(second.id);
   });
 });

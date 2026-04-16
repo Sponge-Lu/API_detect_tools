@@ -42,7 +42,6 @@ function shouldRetryWithRefreshedToken(error?: string): boolean {
   return (
     error.includes('登录已过期') ||
     error.includes('登录可能已过期') ||
-    error.includes('模型接口返回空数据') ||
     /HTTP 401/i.test(error) ||
     /HTTP 403/i.test(error)
   );

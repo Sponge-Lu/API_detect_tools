@@ -23,6 +23,8 @@ import * as path from 'path';
 import { randomBytes } from 'crypto';
 import { app } from 'electron';
 import { backupManager } from './backup-manager';
+import { runtimeCacheManager } from './runtime-cache-manager';
+import { detectSiteType } from './site-type-detector';
 import type {
   UnifiedConfig,
   UnifiedSite,
@@ -31,8 +33,16 @@ import type {
   SiteConfig,
   AccountCredential,
   DetectionCacheData,
+  RuntimeCacheFile,
 } from '../shared/types/site';
-import { generateSiteId, generateAccountId } from '../shared/types/site';
+import {
+  DEFAULT_RUNTIME_CACHE_FILE,
+  DEFAULT_SITE_TYPE,
+  generateSiteId,
+  generateAccountId,
+  mergeDetectionCacheData,
+  splitDetectionCacheData,
+} from '../shared/types/site';
 import type {
   RoutingConfig,
   RouteRule,
@@ -57,7 +67,7 @@ import {
   buildStatsKey,
 } from '../shared/types/route-proxy';
 
-const CONFIG_VERSION = '3.0';
+const CONFIG_VERSION = '3.1';
 
 const DEFAULT_SETTINGS: Settings = {
   timeout: 30,
@@ -69,6 +79,13 @@ const DEFAULT_SETTINGS: Settings = {
 
 const DEFAULT_GROUP: SiteGroup = { id: 'default', name: '默认分组' };
 const UNAVAILABLE_GROUP: SiteGroup = { id: 'unavailable', name: '不可用' };
+
+type ReadConfigResult = {
+  config: UnifiedConfig;
+  runtimeCache: RuntimeCacheFile;
+  needsSave: boolean;
+  repairedLegacyAccounts: number;
+};
 
 export class UnifiedConfigManager {
   private configPath: string;
@@ -91,10 +108,10 @@ export class UnifiedConfigManager {
     let loadError: any = null;
 
     try {
-      const { config, needsSave, repairedLegacyAccounts } = await this.readConfigFromPath(
-        this.configPath
-      );
+      const { config, runtimeCache, needsSave, repairedLegacyAccounts } =
+        await this.readConfigFromPath(this.configPath);
       this.config = config;
+      runtimeCacheManager.setCache(runtimeCache);
       if (needsSave) {
         Logger.info(
           `💾 [UnifiedConfigManager] 加载时检测到配置迁移/修复，准备持久化（补建默认账户 ${repairedLegacyAccounts} 个）`
@@ -116,7 +133,11 @@ export class UnifiedConfigManager {
 
     const recoveredConfig = await this.tryRestoreFromBackup();
     if (recoveredConfig) {
-      this.config = recoveredConfig;
+      this.config = recoveredConfig.config;
+      runtimeCacheManager.setCache(recoveredConfig.runtimeCache);
+      if (recoveredConfig.needsSave) {
+        await this.saveConfig();
+      }
       Logger.warn(
         `♻️ [UnifiedConfigManager] 已从备份恢复配置，${this.config.sites.length} 个站点，${this.config.accounts.length} 个账户`
       );
@@ -129,6 +150,7 @@ export class UnifiedConfigManager {
 
     Logger.info('📝 [UnifiedConfigManager] 创建默认配置...');
     this.config = this.createDefaultConfig();
+    runtimeCacheManager.setCache(this.createEmptyRuntimeCache());
     await this.saveConfig();
     return this.config;
   }
@@ -136,11 +158,7 @@ export class UnifiedConfigManager {
   /**
    * 从指定路径读取并规范化配置
    */
-  private async readConfigFromPath(configPath: string): Promise<{
-    config: UnifiedConfig;
-    needsSave: boolean;
-    repairedLegacyAccounts: number;
-  }> {
+  private async readConfigFromPath(configPath: string): Promise<ReadConfigResult> {
     const data = await fs.readFile(configPath, 'utf-8');
     const parsed = JSON.parse(data);
 
@@ -160,8 +178,17 @@ export class UnifiedConfigManager {
       needsSave = true;
     }
 
+    const runtimeCache = this.createRuntimeCacheSnapshot(
+      runtimeCacheManager.exportCacheSync() || (await runtimeCacheManager.loadCache())
+    );
+    config = this.normalizeConfig(config);
+    if (this.extractLegacyRuntimeCache(config, runtimeCache)) {
+      needsSave = true;
+    }
+
     return {
-      config: this.normalizeConfig(config),
+      config: this.applyRuntimeCacheToConfig(config, runtimeCache),
+      runtimeCache,
       needsSave,
       repairedLegacyAccounts,
     };
@@ -183,12 +210,12 @@ export class UnifiedConfigManager {
   /**
    * 尝试从最近的有效备份恢复
    */
-  private async tryRestoreFromBackup(): Promise<UnifiedConfig | null> {
+  private async tryRestoreFromBackup(): Promise<ReadConfigResult | null> {
     const backups = backupManager.listBackups();
 
     for (const backup of backups) {
       try {
-        const { config: recoveredConfig } = await this.readConfigFromPath(backup.path);
+        const recovered = await this.readConfigFromPath(backup.path);
         const restored = await backupManager.restoreFromBackup(backup.filename, this.configPath);
 
         if (!restored) {
@@ -199,7 +226,7 @@ export class UnifiedConfigManager {
         }
 
         Logger.warn(`♻️ [UnifiedConfigManager] 使用备份恢复配置: ${backup.filename}`);
-        return recoveredConfig;
+        return recovered;
       } catch (error: any) {
         Logger.warn(
           `⚠️ [UnifiedConfigManager] 跳过无效备份 ${backup.filename}: ${error?.message || error}`
@@ -232,6 +259,174 @@ export class UnifiedConfigManager {
     }
   }
 
+  private createEmptyRuntimeCache(): RuntimeCacheFile {
+    return {
+      ...DEFAULT_RUNTIME_CACHE_FILE,
+      site_shared_by_site_id: {},
+      site_runtime_by_site_id: {},
+      account_runtime_by_account_id: {},
+      last_updated: 0,
+    };
+  }
+
+  private createRuntimeCacheSnapshot(cache?: RuntimeCacheFile | null): RuntimeCacheFile {
+    return {
+      version: cache?.version || DEFAULT_RUNTIME_CACHE_FILE.version,
+      site_shared_by_site_id: { ...(cache?.site_shared_by_site_id || {}) },
+      site_runtime_by_site_id: { ...(cache?.site_runtime_by_site_id || {}) },
+      account_runtime_by_account_id: { ...(cache?.account_runtime_by_account_id || {}) },
+      last_updated: cache?.last_updated || 0,
+    };
+  }
+
+  private mergeDefinedCache<T extends object>(current?: T, incoming?: T): T | undefined {
+    if (!current && !incoming) {
+      return undefined;
+    }
+
+    const merged: Record<string, unknown> = {
+      ...((current || {}) as Record<string, unknown>),
+    };
+    for (const [key, value] of Object.entries((incoming || {}) as Record<string, unknown>)) {
+      if (value !== undefined) {
+        merged[key] = value;
+      }
+    }
+
+    return merged as T;
+  }
+
+  private applyRuntimeCacheToConfig(
+    config: UnifiedConfig,
+    runtimeCache: RuntimeCacheFile
+  ): UnifiedConfig {
+    config.sites = config.sites.map(site => ({
+      ...site,
+      cached_data: this.mergeDefinedCache(
+        mergeDetectionCacheData(
+          runtimeCache.site_shared_by_site_id[site.id],
+          runtimeCache.site_runtime_by_site_id[site.id]
+        ),
+        site.cached_data
+      ),
+    }));
+
+    config.accounts = config.accounts.map(account => ({
+      ...account,
+      cached_data: this.mergeDefinedCache(
+        mergeDetectionCacheData(
+          runtimeCache.site_shared_by_site_id[account.site_id],
+          runtimeCache.account_runtime_by_account_id[account.id]
+        ),
+        account.cached_data
+      ),
+    }));
+
+    return config;
+  }
+
+  private extractLegacyRuntimeCache(
+    config: UnifiedConfig,
+    runtimeCache: RuntimeCacheFile
+  ): boolean {
+    let changed = false;
+    const siteIdsWithAccounts = new Set(config.accounts.map(account => account.site_id));
+
+    for (const site of config.sites) {
+      if (!site.cached_data) {
+        continue;
+      }
+
+      const { shared, runtime } = splitDetectionCacheData(site.cached_data);
+      if (shared) {
+        runtimeCache.site_shared_by_site_id[site.id] = this.mergeDefinedCache(
+          runtimeCache.site_shared_by_site_id[site.id],
+          shared
+        )!;
+        changed = true;
+      }
+      if (!siteIdsWithAccounts.has(site.id) && runtime) {
+        runtimeCache.site_runtime_by_site_id[site.id] = this.mergeDefinedCache(
+          runtimeCache.site_runtime_by_site_id[site.id],
+          runtime
+        )!;
+        changed = true;
+      }
+    }
+
+    for (const account of config.accounts) {
+      if (!account.cached_data) {
+        continue;
+      }
+
+      const { shared, runtime } = splitDetectionCacheData(account.cached_data);
+      if (shared) {
+        runtimeCache.site_shared_by_site_id[account.site_id] = this.mergeDefinedCache(
+          runtimeCache.site_shared_by_site_id[account.site_id],
+          shared
+        )!;
+        changed = true;
+      }
+      if (runtime) {
+        runtimeCache.account_runtime_by_account_id[account.id] = this.mergeDefinedCache(
+          runtimeCache.account_runtime_by_account_id[account.id],
+          runtime
+        )!;
+        changed = true;
+      }
+    }
+
+    return changed;
+  }
+
+  private syncRuntimeCacheFromConfig(config: UnifiedConfig): RuntimeCacheFile {
+    const runtimeCache = this.createEmptyRuntimeCache();
+
+    for (const site of config.sites) {
+      const { shared, runtime } = splitDetectionCacheData(site.cached_data);
+      if (shared) {
+        runtimeCache.site_shared_by_site_id[site.id] = this.mergeDefinedCache(
+          runtimeCache.site_shared_by_site_id[site.id],
+          shared
+        )!;
+      }
+      if (runtime && !config.accounts.some(account => account.site_id === site.id)) {
+        runtimeCache.site_runtime_by_site_id[site.id] = runtime;
+      }
+    }
+
+    for (const account of config.accounts) {
+      const { shared, runtime } = splitDetectionCacheData(account.cached_data);
+      if (shared) {
+        runtimeCache.site_shared_by_site_id[account.site_id] = this.mergeDefinedCache(
+          runtimeCache.site_shared_by_site_id[account.site_id],
+          shared
+        )!;
+      }
+      if (runtime) {
+        runtimeCache.account_runtime_by_account_id[account.id] = runtime;
+      }
+    }
+
+    runtimeCache.last_updated = Date.now();
+    return runtimeCache;
+  }
+
+  private createPersistableConfig(config: UnifiedConfig): UnifiedConfig {
+    return {
+      ...config,
+      version: CONFIG_VERSION,
+      sites: config.sites.map(site => ({
+        ...site,
+        cached_data: site.cached_data ? { ...site.cached_data } : undefined,
+      })),
+      accounts: config.accounts.map(account => ({
+        ...account,
+        cached_data: account.cached_data ? { ...account.cached_data } : undefined,
+      })),
+    };
+  }
+
   /**
    * 规范化配置（补全缺失字段）
    */
@@ -249,6 +444,7 @@ export class UnifiedConfigManager {
       return {
         ...rest,
         id: rest.id || generateSiteId(),
+        site_type: rest.site_type,
         group: rest.group || 'default',
         enabled: rest.enabled !== false,
       };
@@ -279,38 +475,44 @@ export class UnifiedConfigManager {
     const timeoutSeconds = config.settings.timeout ?? DEFAULT_SETTINGS.timeout!;
     config.settings.timeout = Math.max(5, timeoutSeconds);
 
-    // 迁移：site.cached_data / site.cli_config → account（首次加载一次性复制）
-    const accountsBySite = new Map<string, AccountCredential[]>();
-    config.accounts.forEach(account => {
-      const list = accountsBySite.get(account.site_id) || [];
-      list.push(account);
-      accountsBySite.set(account.site_id, list);
-    });
-    config.sites.forEach(site => {
-      if (!site.cached_data) return;
-      const siteAccounts = accountsBySite.get(site.id) || [];
-      if (siteAccounts.length === 0) return;
-      const targetAccount = this.getPreferredAccountFromList(siteAccounts);
-      if (targetAccount && !targetAccount.cached_data) {
-        targetAccount.cached_data = { ...site.cached_data };
-        targetAccount.updated_at = Date.now();
-      }
-    });
-    config.sites.forEach(site => {
-      if (!site.cli_config) return;
-      const siteAccounts = accountsBySite.get(site.id) || [];
-      if (siteAccounts.length === 0) return;
-      const targetAccount = this.getPreferredAccountFromList(siteAccounts);
-      if (targetAccount && !targetAccount.cli_config) {
-        targetAccount.cli_config = { ...site.cli_config };
-        targetAccount.updated_at = Date.now();
-      }
-    });
-
     // 规范化路由配置
     this.normalizeRoutingConfig(config);
 
     return config;
+  }
+
+  private async hydrateMissingSiteTypes(config: UnifiedConfig): Promise<number> {
+    let hydratedCount = 0;
+
+    for (const site of config.sites) {
+      if (site.site_type || !site.url) {
+        continue;
+      }
+
+      try {
+        const detection = await detectSiteType(site.url);
+        if (detection.detectionMethod === 'fallback') {
+          Logger.warn(`⚠️ [UnifiedConfigManager] 迁移阶段未能识别站点类型，保持未决: ${site.url}`);
+          continue;
+        }
+
+        site.site_type = detection.siteType;
+        hydratedCount += 1;
+        Logger.info('🧭 [UnifiedConfigManager] 迁移阶段自动识别并写回 site_type', {
+          siteUrl: site.url,
+          siteType: detection.siteType,
+          detectionMethod: detection.detectionMethod,
+        });
+      } catch (error: any) {
+        Logger.warn(
+          `⚠️ [UnifiedConfigManager] 迁移阶段识别站点类型失败，保持未决: ${site.url} - ${
+            error?.message || error
+          }`
+        );
+      }
+    }
+
+    return hydratedCount;
   }
 
   /**
@@ -361,12 +563,6 @@ export class UnifiedConfigManager {
     }
 
     return repairedCount;
-  }
-
-  private getPreferredAccountFromList(
-    accounts: AccountCredential[]
-  ): AccountCredential | undefined {
-    return accounts.find(account => account.account_name === '默认账户') || accounts[0];
   }
 
   /**
@@ -438,7 +634,14 @@ export class UnifiedConfigManager {
     }
 
     this.config.last_updated = Date.now();
-    await this.writeConfigAtomically(this.configPath, JSON.stringify(this.config, null, 2));
+    const runtimeCache = this.syncRuntimeCacheFromConfig(this.config);
+    runtimeCacheManager.setCache(runtimeCache);
+
+    const persistableConfig = this.createPersistableConfig(this.config);
+    persistableConfig.last_updated = this.config.last_updated;
+
+    await this.writeConfigAtomically(this.configPath, JSON.stringify(persistableConfig, null, 2));
+    await runtimeCacheManager.saveCache(runtimeCache);
     Logger.info('💾 [UnifiedConfigManager] 配置已保存');
 
     // 自动备份
@@ -518,6 +721,13 @@ export class UnifiedConfigManager {
       }
     }
 
+    const hydratedSiteTypes = await this.hydrateMissingSiteTypes(config as UnifiedConfig);
+    if (hydratedSiteTypes > 0) {
+      Logger.info(
+        `🧭 [UnifiedConfigManager] v2 → v3 迁移阶段补全 site_type ${hydratedSiteTypes} 个`
+      );
+    }
+
     config.version = CONFIG_VERSION;
     config.accounts = accounts;
     config.sites = sites;
@@ -571,6 +781,7 @@ export class UnifiedConfigManager {
     const newSite: UnifiedSite = {
       ...site,
       id: site.id || generateSiteId(),
+      site_type: site.site_type,
       group: site.group || 'default',
       enabled: site.enabled !== false,
       created_at: Date.now(),
@@ -789,6 +1000,11 @@ export class UnifiedConfigManager {
 
     this.config.accounts = this.config.accounts.filter(a => a.id !== accountId);
 
+    const remainingAccounts = this.config.accounts.filter(a => a.site_id === account.site_id);
+    if (remainingAccounts.length === 0) {
+      this.config.sites = this.config.sites.filter(site => site.id !== account.site_id);
+    }
+
     await this.saveConfig();
     return true;
   }
@@ -818,6 +1034,7 @@ export class UnifiedConfigManager {
       id: site.id, // 站点 ID（多账户操作需要）
       name: site.name,
       url: site.url,
+      site_type: site.site_type,
       api_key: site.api_key || '',
       system_token: site.access_token,
       user_id: site.user_id,
@@ -876,6 +1093,7 @@ export class UnifiedConfigManager {
           ...existing,
           name: oldSite.name,
           url: oldSite.url,
+          site_type: oldSite.site_type ?? existing.site_type,
           api_key: oldSite.api_key,
           access_token: oldSite.system_token || existing.access_token,
           user_id: oldSite.user_id || existing.user_id,
@@ -886,6 +1104,7 @@ export class UnifiedConfigManager {
           extra_links: oldSite.extra_links,
           auto_refresh: oldSite.auto_refresh,
           auto_refresh_interval: oldSite.auto_refresh_interval,
+          cached_data: (oldSite as any).cached_data || existing.cached_data,
           updated_at: Date.now(),
         };
 
@@ -896,6 +1115,7 @@ export class UnifiedConfigManager {
           id: oldSite.id || generateSiteId(),
           name: oldSite.name,
           url: oldSite.url,
+          site_type: oldSite.site_type,
           api_key: oldSite.api_key,
           access_token: oldSite.system_token,
           user_id: oldSite.user_id,
@@ -906,11 +1126,17 @@ export class UnifiedConfigManager {
           extra_links: oldSite.extra_links,
           auto_refresh: oldSite.auto_refresh,
           auto_refresh_interval: oldSite.auto_refresh_interval,
+          cached_data: (oldSite as any).cached_data,
           created_at: Date.now(),
           updated_at: Date.now(),
         };
       }
     });
+
+    const activeSiteIds = new Set(newSites.map(site => site.id));
+    this.config!.accounts = this.config!.accounts.filter(account =>
+      activeSiteIds.has(account.site_id)
+    );
 
     this.config!.sites = newSites;
     await this.saveConfig();

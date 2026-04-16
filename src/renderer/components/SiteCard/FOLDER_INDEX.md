@@ -28,9 +28,9 @@
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
 | **SiteCard.tsx** | 站点卡片主组件（保持主行信息栅格 + 右侧操作区的稳定结构） | `SiteCard` 组件 |
-| **SiteCardHeader.tsx** | 卡片头部（沿用多列信息栅格，CLI 图标与动作保持内联） | `SiteCardHeader` 组件 |
+| **SiteCardHeader.tsx** | 卡片头部（沿用多列信息栅格，在站点列后补充站点类型列，CLI 图标与动作保持内联） | `SiteCardHeader` 组件 |
 | **SiteCardDetails.tsx** | 卡片详情（URL、Access Token、用户分组、API Keys、模型列表），沿用统一分隔线与表面层级 | `SiteCardDetails` 组件 |
-| **SiteCardActions.tsx** | 卡片操作按钮（高频动作直出，低频动作进入更多菜单；更多菜单使用固定定位避免被卡片裁切） | `SiteCardActions` 组件 |
+| **SiteCardActions.tsx** | 卡片操作按钮（高频动作直出，低频动作进入更多菜单；更多菜单会根据视口空间自动上翻/限位，统一保留“删除账户”入口） | `SiteCardActions` 组件 |
 | **types.ts** | 类型定义（isDetecting 布尔值支持并发刷新，区分打开站点与签到页回调） | `SiteCardProps`, `SiteCardActionsProps` 等 |
 
 ---

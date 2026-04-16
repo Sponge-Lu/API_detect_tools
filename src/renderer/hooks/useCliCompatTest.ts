@@ -427,7 +427,7 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
         }
 
         // 调用后端测试，使用配置文件中的 baseUrl
-        const response = await (window.electronAPI as any).cliCompat.testWithConfig({
+        const response = await (window.electronAPI as any).cliCompat.testWithWrapper({
           siteUrl, // 作为备用
           configs: testConfigs,
         });

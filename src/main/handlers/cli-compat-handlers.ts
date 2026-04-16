@@ -3,7 +3,8 @@
  */
 
 import { ipcMain } from 'electron';
-import { cliCompatService, CliCompatibilityResult } from '../cli-compat-service';
+import { CliCompatibilityResult } from '../cli-compat-service';
+import { cliWrapperCompatService } from '../cli-wrapper-compat-service';
 import { unifiedConfigManager } from '../unified-config-manager';
 import Logger from '../utils/logger';
 import * as fs from 'fs';
@@ -24,6 +25,11 @@ interface TestWithConfigParams {
   siteUrl: string;
   configs: CliTestConfig[];
 }
+
+type CliCompatExecutor = Pick<
+  typeof cliWrapperCompatService,
+  'testClaudeCode' | 'testCodexWithDetail' | 'testGeminiWithDetail'
+>;
 
 /** 配置文件写入参数 */
 interface WriteCliConfigParams {
@@ -460,111 +466,124 @@ function mergeConfigByType(filePath: string, existingContent: string, newContent
   return newContent;
 }
 
+async function runCliCompatibilityTests(
+  params: TestWithConfigParams,
+  executor: CliCompatExecutor,
+  options?: { parallel?: boolean }
+): Promise<Partial<CliCompatibilityResult>> {
+  const results: Partial<CliCompatibilityResult> = {
+    claudeCode: null,
+    codex: null,
+    codexDetail: undefined,
+    geminiCli: null,
+    geminiDetail: undefined,
+  };
+
+  const testSingleConfig = async (config: CliTestConfig) => {
+    const testUrl = config.baseUrl || params.siteUrl;
+
+    try {
+      switch (config.cliType) {
+        case 'claudeCode': {
+          const success = await executor.testClaudeCode(testUrl, config.apiKey, config.model);
+          log.info(
+            `CLI test ${config.cliType} (${config.model}, ${testUrl}): ${success ? 'passed' : 'failed'}`
+          );
+          return {
+            cliType: config.cliType,
+            success,
+          };
+        }
+        case 'codex': {
+          const codexResult = await executor.testCodexWithDetail(
+            testUrl,
+            config.apiKey,
+            config.model
+          );
+          log.info(
+            `CLI test ${config.cliType} (${config.model}, ${testUrl}): ${codexResult.supported ? 'passed' : 'failed'}`
+          );
+          return {
+            cliType: config.cliType,
+            success: codexResult.supported ?? false,
+            codexDetail: codexResult.detail,
+          };
+        }
+        case 'geminiCli': {
+          const geminiResult = await executor.testGeminiWithDetail(
+            testUrl,
+            config.apiKey,
+            config.model
+          );
+          log.info(
+            `CLI test ${config.cliType} (${config.model}, ${testUrl}): ${geminiResult.supported ? 'passed' : 'failed'}`
+          );
+          return {
+            cliType: config.cliType,
+            success: geminiResult.supported ?? false,
+            geminiDetail: geminiResult.detail,
+          };
+        }
+      }
+    } catch (error: any) {
+      log.warn(`CLI test ${config.cliType} (${config.model}) error: ${error.message}`);
+      return {
+        cliType: config.cliType,
+        success: false,
+      };
+    }
+
+    return null;
+  };
+
+  const testResults = options?.parallel
+    ? await Promise.all(params.configs.map(testSingleConfig))
+    : await (async () => {
+        const sequentialResults: Array<Awaited<ReturnType<typeof testSingleConfig>>> = [];
+        for (const config of params.configs) {
+          sequentialResults.push(await testSingleConfig(config));
+        }
+        return sequentialResults;
+      })();
+
+  for (const testResult of testResults) {
+    if (!testResult) continue;
+
+    switch (testResult.cliType) {
+      case 'claudeCode':
+        results.claudeCode = results.claudeCode === true ? true : testResult.success;
+        break;
+      case 'codex':
+        results.codex = results.codex === true ? true : testResult.success;
+        if (testResult.codexDetail && (testResult.success || !results.codexDetail)) {
+          results.codexDetail = testResult.codexDetail;
+        }
+        break;
+      case 'geminiCli':
+        results.geminiCli = results.geminiCli === true ? true : testResult.success;
+        if (testResult.geminiDetail && (testResult.success || !results.geminiDetail)) {
+          results.geminiDetail = testResult.geminiDetail;
+        }
+        break;
+    }
+  }
+
+  return results;
+}
+
 /**
  * 注册 CLI 兼容性测试相关的 IPC 处理器
  */
 export function registerCliCompatHandlers() {
-  // 使用配置测试 CLI 兼容性
-  ipcMain.handle('cli-compat:test-with-config', async (_, params: TestWithConfigParams) => {
+  ipcMain.handle('cli-compat:test-with-wrapper', async (_, params: TestWithConfigParams) => {
     try {
-      log.info(`Testing CLI compatibility for site: ${params.siteUrl}`);
-
-      const results: Partial<CliCompatibilityResult> = {
-        claudeCode: null,
-        codex: null,
-        codexDetail: undefined,
-        geminiCli: null,
-        geminiDetail: undefined,
-      };
-
-      const testResults = await Promise.all(
-        params.configs.map(async config => {
-          try {
-            const testUrl = config.baseUrl || params.siteUrl;
-
-            switch (config.cliType) {
-              case 'claudeCode': {
-                const success = await cliCompatService.testClaudeCode(
-                  testUrl,
-                  config.apiKey,
-                  config.model
-                );
-                log.info(
-                  `CLI test ${config.cliType} (${config.model}, ${testUrl}): ${success ? 'passed' : 'failed'}`
-                );
-                return {
-                  cliType: config.cliType,
-                  success,
-                };
-              }
-              case 'codex': {
-                const codexResult = await cliCompatService.testCodexWithDetail(
-                  testUrl,
-                  config.apiKey,
-                  config.model
-                );
-                log.info(
-                  `CLI test ${config.cliType} (${config.model}, ${testUrl}): ${codexResult.supported ? 'passed' : 'failed'}`
-                );
-                return {
-                  cliType: config.cliType,
-                  success: codexResult.supported ?? false,
-                  codexDetail: codexResult.detail,
-                };
-              }
-              case 'geminiCli': {
-                const geminiResult = await cliCompatService.testGeminiWithDetail(
-                  testUrl,
-                  config.apiKey,
-                  config.model
-                );
-                log.info(
-                  `CLI test ${config.cliType} (${config.model}, ${testUrl}): ${geminiResult.supported ? 'passed' : 'failed'}`
-                );
-                return {
-                  cliType: config.cliType,
-                  success: geminiResult.supported ?? false,
-                  geminiDetail: geminiResult.detail,
-                };
-              }
-            }
-          } catch (error: any) {
-            log.warn(`CLI test ${config.cliType} (${config.model}) error: ${error.message}`);
-            return {
-              cliType: config.cliType,
-              success: false,
-            };
-          }
-
-          return null;
-        })
-      );
-
-      for (const testResult of testResults) {
-        if (!testResult) continue;
-
-        switch (testResult.cliType) {
-          case 'claudeCode':
-            results.claudeCode = results.claudeCode === true ? true : testResult.success;
-            break;
-          case 'codex':
-            results.codex = results.codex === true ? true : testResult.success;
-            if (testResult.codexDetail && (testResult.success || !results.codexDetail)) {
-              results.codexDetail = testResult.codexDetail;
-            }
-            break;
-          case 'geminiCli':
-            results.geminiCli = results.geminiCli === true ? true : testResult.success;
-            if (testResult.geminiDetail && (testResult.success || !results.geminiDetail)) {
-              results.geminiDetail = testResult.geminiDetail;
-            }
-            break;
-        }
-      }
-
+      log.info(`Testing CLI compatibility with wrapper for site: ${params.siteUrl}`);
+      const results = await runCliCompatibilityTests(params, cliWrapperCompatService, {
+        parallel: false,
+      });
       return { success: true, data: results };
     } catch (error: any) {
-      log.error(`CLI compatibility test failed: ${error.message}`);
+      log.error(`CLI wrapper compatibility test failed: ${error.message}`);
       return { success: false, error: error.message };
     }
   });

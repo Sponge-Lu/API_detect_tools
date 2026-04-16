@@ -98,13 +98,35 @@ export const useConfigStore = create<ConfigState>()((set, get) => ({
   deleteSite: async index => {
     const { config, saveConfig } = get();
     if (!config) return;
-    set({
-      config: {
-        ...config,
-        sites: config.sites.filter((_, i) => i !== index),
-      },
-    });
-    await saveConfig();
+    const siteToDelete = config.sites[index];
+    if (!siteToDelete) return;
+
+    const nextConfig = {
+      ...config,
+      sites: config.sites.filter((_, i) => i !== index),
+    };
+
+    set({ config: nextConfig, saving: true });
+
+    try {
+      if (siteToDelete.id && window.electronAPI.sites?.delete) {
+        const result = await window.electronAPI.sites.delete(siteToDelete.id);
+        if (!result?.success) {
+          throw new Error(result?.error || '删除站点失败');
+        }
+      } else {
+        await saveConfig();
+      }
+
+      const refreshedConfig = await window.electronAPI.loadConfig();
+      set({ config: refreshedConfig });
+    } catch (error) {
+      Logger.error('删除站点失败:', error);
+      toast.error('删除站点失败');
+      set({ config });
+    } finally {
+      set({ saving: false });
+    }
   },
 
   toggleSiteEnabled: async index => {

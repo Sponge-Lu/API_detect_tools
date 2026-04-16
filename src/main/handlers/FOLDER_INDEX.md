@@ -136,7 +136,7 @@ try {
 
 | 事件 | 请求参数 | 响应数据 | 职责 |
 |------|---------|--------|------|
-| `cli-compat:test-with-config` | `{ siteUrl, configs }` | `{ results: [...] }` | 测试 CLI 兼容性 |
+| `cli-compat:test-with-wrapper` | `{ siteUrl, configs }` | `{ results: [...] }` | 使用真实 CLI wrapper 测试 CLI 兼容性 |
 | `cli-compat:save-result` | `{ siteUrl, result }` | `{ success }` | 保存测试结果 |
 | `cli-compat:save-config` | `{ siteUrl, cliConfig }` | `{ success }` | 保存 CLI 配置 |
 | `cli-compat:write-config` | `{ cliType, files, applyMode }` | `{ success, writtenPaths }` | 写入配置文件 |

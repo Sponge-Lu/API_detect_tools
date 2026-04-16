@@ -10,6 +10,7 @@
  */
 
 import { CliCompatibilityIcons } from '../CliCompatibilityIcons';
+import { SITE_TYPE_LABELS } from '../../../shared/types/site';
 import type { SiteCardHeaderProps } from './types';
 
 function formatNumber(num: number): string {
@@ -56,6 +57,8 @@ export function SiteCardHeader({
   onTestCliCompat,
   onApply,
 }: SiteCardHeaderProps) {
+  const siteTypeLabel = site.site_type ? SITE_TYPE_LABELS[site.site_type] : '未识别';
+
   return (
     <div
       className="grid items-center gap-x-1 text-[13px] tabular-nums"
@@ -100,6 +103,17 @@ export function SiteCardHeader({
             <span className="shrink-0">{lastSyncDisplay ?? '--'}</span>
           </div>
         </div>
+      </div>
+
+      <div className="flex min-w-0 items-center justify-start px-1 text-[12px] text-[var(--text-secondary)]">
+        <span
+          className={`w-full truncate text-left font-medium ${
+            site.site_type ? 'text-[var(--text-primary)]' : 'text-[var(--text-tertiary)]'
+          }`}
+          title={siteTypeLabel}
+        >
+          {siteTypeLabel}
+        </span>
       </div>
 
       <div className="flex flex-col">

@@ -39,6 +39,11 @@ import type {
   DetectionCacheData,
 } from '../shared/types/site';
 import { LDC_PAYMENT_NAMES } from '../shared/constants';
+import {
+  getSiteTypeProfile as getRegisteredSiteTypeProfile,
+  resolveSiteType,
+} from './site-type-registry';
+import { detectSiteType } from './site-type-detector';
 
 interface DetectionResult {
   name: string;
@@ -122,6 +127,52 @@ export class ApiService {
     const account = unifiedConfigManager.getAccountById(explicitAccountId);
     if (!account || account.site_id !== site.id) return { site, account: undefined };
     return { site, account };
+  }
+
+  private resolveSiteType(site: SiteConfig) {
+    return resolveSiteType(site);
+  }
+
+  private getSiteTypeProfile(site: SiteConfig) {
+    return getRegisteredSiteTypeProfile(this.resolveSiteType(site));
+  }
+
+  private async ensureSiteType(site: SiteConfig): Promise<SiteConfig> {
+    if (site.site_type) {
+      return site;
+    }
+
+    const detection = await detectSiteType(site.url);
+    const resolvedSite: SiteConfig = {
+      ...site,
+      site_type: detection.siteType,
+    };
+
+    if (detection.detectionMethod === 'fallback') {
+      Logger.warn('⚠️ [ApiService] 旧站点 site_type 未识别成功，本次运行回退默认类型但不持久化', {
+        siteUrl: site.url,
+      });
+      delete resolvedSite.site_type;
+      return resolvedSite;
+    }
+
+    const persistedSite = site.id
+      ? unifiedConfigManager.getSiteById(site.id)
+      : unifiedConfigManager.getSiteByUrl(site.url);
+
+    if (persistedSite) {
+      await unifiedConfigManager.updateSite(persistedSite.id, {
+        site_type: detection.siteType,
+      });
+    }
+
+    Logger.info('🧭 [ApiService] 首次检测并持久化旧站点 site_type', {
+      siteUrl: site.url,
+      siteType: detection.siteType,
+      detectionMethod: detection.detectionMethod,
+    });
+
+    return resolvedSite;
   }
 
   private async updateDetectionCache(
@@ -295,6 +346,7 @@ export class ApiService {
     const shouldSerialize = Boolean(context?.accountId);
 
     const run = async (): Promise<DetectionResult> => {
+      site = await this.ensureSiteType(site);
       let sharedPage: any = null;
       let pageRelease: (() => void) | undefined = undefined;
       let balancePageRelease: (() => void) | undefined = undefined;
@@ -302,7 +354,7 @@ export class ApiService {
       try {
         // 获取模型列表（可能会创建浏览器页面）
         const modelsResult = await this.getModels(site, timeout, forceAcceptEmpty, context);
-        const models = modelsResult.models;
+        let models = modelsResult.models;
         sharedPage = modelsResult.page;
         pageRelease = modelsResult.pageRelease;
 
@@ -352,6 +404,14 @@ export class ApiService {
               Logger.info(`✅ [ApiService] 获取到 ${apiKeys?.length || 0} 个API Keys`);
             }
 
+            if (
+              this.resolveSiteType(site) === 'sub2api' &&
+              apiKeysResult.status === 'rejected' &&
+              this.isAuthError(apiKeysResult.reason)
+            ) {
+              throw apiKeysResult.reason;
+            }
+
             if (userGroupsResult.status === 'fulfilled' && userGroupsResult.value) {
               userGroups = userGroupsResult.value;
               Logger.info(
@@ -363,7 +423,29 @@ export class ApiService {
               modelPricing = modelPricingResult.value;
               Logger.info(`✅ [ApiService] 获取到模型定价信息`);
             }
+
+            if (
+              this.resolveSiteType(site) === 'sub2api' &&
+              Array.isArray(apiKeys) &&
+              apiKeys.length > 0
+            ) {
+              const groupedModelData = await this.fetchSub2ApiGroupedModels(
+                site,
+                apiKeys,
+                userGroups
+              );
+              if (groupedModelData.models.length > 0) {
+                models = groupedModelData.models;
+                modelPricing = groupedModelData.modelPricing;
+                Logger.info(
+                  `✅ [ApiService] sub2api 已按分组补全模型映射，共 ${models.length} 个模型`
+                );
+              }
+            }
           } catch (error: any) {
+            if (this.resolveSiteType(site) === 'sub2api' && this.isAuthError(error)) {
+              throw error;
+            }
             Logger.error('⚠️ [ApiService] 获取扩展数据失败:', error.message);
           }
         }
@@ -656,8 +738,9 @@ export class ApiService {
     }
 
     const authToken = site.system_token || site.api_key;
+    const siteType = this.resolveSiteType(site);
 
-    if (!authToken || !site.user_id) {
+    if (!authToken || (siteType !== 'sub2api' && !site.user_id)) {
       Logger.warn('⚠️ [ApiService] 缺少认证信息');
       return { success: false, error: '缺少认证信息' };
     }
@@ -893,7 +976,16 @@ export class ApiService {
    */
   private isAuthError(error: any): boolean {
     const status = error?.response?.status;
-    return status === 401 || status === 403;
+    if (status === 401 || status === 403) {
+      return true;
+    }
+
+    const message = String(error?.message || '').toLowerCase();
+    return (
+      message.includes('登录已过期') ||
+      message.includes('token has expired') ||
+      message.includes('token_expired')
+    );
   }
 
   /**
@@ -1061,7 +1153,10 @@ export class ApiService {
 
       try {
         Logger.info('📡 [ApiService] 在浏览器中调用API...');
-        const userIdHeaders = site.user_id ? getAllUserIdHeaders(site.user_id) : {};
+        const userIdHeaders =
+          site.user_id && this.getSiteTypeProfile(site).includeUserIdHeaders
+            ? getAllUserIdHeaders(site.user_id)
+            : {};
 
         const result = await runOnPageQueue(page, () =>
           page.evaluate(
@@ -1240,7 +1335,9 @@ export class ApiService {
           try {
             Logger.info('📡 [ApiService] 在浏览器中调用API...');
             // 在浏览器环境中调用API
-            const userIdHeaders = getAllUserIdHeaders(site.user_id!);
+            const userIdHeaders = this.getSiteTypeProfile(site).includeUserIdHeaders
+              ? getAllUserIdHeaders(site.user_id!)
+              : {};
             const result = await runOnPageQueue(page, () =>
               page.evaluate(
                 async (
@@ -1304,6 +1401,8 @@ export class ApiService {
     forceAcceptEmpty: boolean = false,
     context?: DetectionRequestContext
   ): Promise<{ models: string[]; page?: any; pageRelease?: () => void }> {
+    const siteType = this.resolveSiteType(site);
+    const profile = this.getSiteTypeProfile(site);
     const hasApiKey = !!site.api_key;
     const authToken = site.api_key || site.system_token;
 
@@ -1312,14 +1411,16 @@ export class ApiService {
       throw new Error('缺少认证令牌');
     }
 
-    // 使用api_key时用OpenAI兼容接口，使用system_token时尝试多个用户模型接口
-    const endpoints = hasApiKey
-      ? ['/v1/models']
-      : [
-          '/api/user/models', // New API, One API
-          '/api/user/available_models', // One API
-          '/api/available_model', // Done Hub (返回对象格式)
-        ];
+    if (siteType === 'sub2api' && !site.api_key) {
+      Logger.info('ℹ️ [ApiService] sub2api 未配置 API Key，跳过模型列表获取');
+      return { models: [] };
+    }
+
+    const endpoints = hasApiKey ? profile.apiKeyModelEndpoints : profile.modelEndpoints;
+    if (endpoints.length === 0) {
+      Logger.info(`ℹ️ [ApiService] 站点类型 ${siteType} 未定义模型列表端点`);
+      return { models: [] };
+    }
 
     // 端点缓存：站点类型固定，缓存命中直接用，失败才全量尝试
     const cachedModelsEp = hasApiKey ? undefined : this.getEpCache(site, 'models');
@@ -1331,8 +1432,7 @@ export class ApiService {
       'Content-Type': 'application/json',
     };
 
-    // 如果使用system_token，需要添加所有User-ID headers（兼容各种站点）
-    if (!hasApiKey && site.user_id) {
+    if (!hasApiKey && site.user_id && profile.includeUserIdHeaders) {
       const userIdHeaders = getAllUserIdHeaders(site.user_id);
       Object.assign(headers, userIdHeaders);
     }
@@ -1342,6 +1442,7 @@ export class ApiService {
     let sharedPage: any = null;
     let sharedPageRelease: (() => void) | undefined = undefined;
     let hasEmptyResponse = false;
+    let lastEmptyResponseHint: string | undefined = undefined;
 
     while (true) {
       for (const endpoint of currentEndpoints) {
@@ -1366,6 +1467,8 @@ export class ApiService {
                 hasData: 'data' in data,
                 isDataArray: Array.isArray(data?.data),
                 dataType: typeof data?.data,
+                codeValue: data?.code,
+                messageValue: data?.message,
                 topLevelKeys: Object.keys(data || {}),
                 dataKeys: data?.data ? Object.keys(data.data) : [],
               });
@@ -1374,6 +1477,10 @@ export class ApiService {
               // 这不一定是认证问题，可能只是该端点不适用于此站点类型
               // 返回空数组，继续尝试其他端点
               if (!data || !('data' in data)) {
+                const hintParts = [data?.code, data?.message]
+                  .filter((part: unknown) => typeof part === 'string' && part.trim().length > 0)
+                  .map((part: string) => part.trim());
+                lastEmptyResponseHint = hintParts.length > 0 ? hintParts.join(': ') : undefined;
                 Logger.info('ℹ️ [ApiService] 响应中没有data字段，尝试下一个端点');
                 return [];
               }
@@ -1497,10 +1604,12 @@ export class ApiService {
     } // end while
 
     // 所有端点都尝试完毕，综合判断结果
-    // 优先处理空响应（不存在站点没有模型的情况，空数组意味着session过期）
+    // 优先处理空响应
     // 但如果 forceAcceptEmpty 为 true，则接受空数据（用户确认站点确实没有模型）
     if (hasEmptyResponse && !forceAcceptEmpty) {
-      Logger.error('❌ [ApiService] 模型接口返回空数组，可能是session过期');
+      Logger.error(
+        `❌ [ApiService] 模型接口返回空数组，认证方式=${hasApiKey ? 'api_key' : 'system_token'}`
+      );
       if (!hasApiKey) this.invalidateEpCache(site, 'models');
       // 该分支会直接 throw，detectSite 无法拿到 pageRelease；需要在这里释放浏览器引用，避免批量检测泄漏
       if (sharedPageRelease) {
@@ -1522,6 +1631,12 @@ export class ApiService {
         } catch (e: any) {
           Logger.warn('[ApiService] getModels empty-response release failed:', e?.message);
         }
+      }
+
+      if (hasApiKey) {
+        throw new Error(
+          `模型接口返回空数据 (API Key 可能已失效或无权访问，请检查或重新同步 API Key${lastEmptyResponseHint ? `: ${lastEmptyResponseHint}` : ''})`
+        );
       }
 
       throw new Error('模型接口返回空数据 (登录可能已过期，请点击"重新获取"登录站点)');
@@ -1570,6 +1685,183 @@ export class ApiService {
     return { models: [], page: sharedPage, pageRelease: sharedPageRelease };
   }
 
+  private resolveSub2ApiGroupName(
+    apiKey: any,
+    userGroups?: Record<string, { id?: number | string; desc: string; ratio: number }>
+  ): string {
+    const directGroup = typeof apiKey?.group === 'string' ? apiKey.group.trim() : '';
+    if (directGroup) {
+      return directGroup;
+    }
+
+    const groupId = apiKey?.group_id ?? apiKey?.groupId ?? apiKey?.group?.id;
+    if (groupId !== undefined && groupId !== null && userGroups) {
+      const normalizedGroupId = String(groupId);
+      for (const [groupName, groupInfo] of Object.entries(userGroups)) {
+        if (groupInfo?.id !== undefined && groupInfo?.id !== null) {
+          if (String(groupInfo.id) === normalizedGroupId) {
+            return groupName;
+          }
+        }
+      }
+    }
+
+    const groupNames = Object.keys(userGroups || {});
+    if (groupNames.length === 1) {
+      return groupNames[0];
+    }
+
+    return BUILTIN_GROUP_IDS.DEFAULT;
+  }
+
+  private resolveSub2ApiRepresentativeKeyValue(apiKey: any): string {
+    if (typeof apiKey?.key === 'string') {
+      return apiKey.key.trim();
+    }
+
+    if (typeof apiKey?.token === 'string') {
+      return apiKey.token.trim();
+    }
+
+    return '';
+  }
+
+  private getSub2ApiKeyHealthRank(apiKey: any): number {
+    const status = apiKey?.status ?? apiKey?.state ?? apiKey?.enabled;
+
+    if (status === undefined || status === null || status === '') {
+      return 1;
+    }
+
+    if (typeof status === 'boolean') {
+      return status ? 2 : -1;
+    }
+
+    if (typeof status === 'number') {
+      if (status === 1) {
+        return 2;
+      }
+      if (status === 0) {
+        return -1;
+      }
+      return 1;
+    }
+
+    const normalizedStatus = String(status).trim().toLowerCase();
+    if (!normalizedStatus) {
+      return 1;
+    }
+
+    if (['active', 'enabled', 'available', 'valid', 'ok'].includes(normalizedStatus)) {
+      return 2;
+    }
+
+    if (
+      ['inactive', 'expired', 'quota_exhausted', 'disabled', 'revoked', 'deleted'].includes(
+        normalizedStatus
+      )
+    ) {
+      return -1;
+    }
+
+    return 1;
+  }
+
+  private extractSub2ApiModelIds(payload: any): string[] {
+    if (Array.isArray(payload?.data)) {
+      return payload.data
+        .map((model: any) => String(model?.id || model?.name || model || '').trim())
+        .filter(Boolean);
+    }
+
+    if (Array.isArray(payload)) {
+      return payload
+        .map((model: any) => String(model?.id || model?.name || model || '').trim())
+        .filter(Boolean);
+    }
+
+    return [];
+  }
+
+  private async fetchSub2ApiGroupedModels(
+    site: SiteConfig,
+    apiKeys: any[],
+    userGroups: Record<string, { id?: number | string; desc: string; ratio: number }> | undefined
+  ): Promise<{
+    models: string[];
+    modelPricing: { data: Record<string, { enable_groups: string[] }> };
+  }> {
+    const cleanBaseUrl = site.url.replace(/\/$/, '');
+    const representativeKeys = new Map<string, { value: string; rank: number }>();
+
+    for (const apiKey of apiKeys || []) {
+      const rawValue = this.resolveSub2ApiRepresentativeKeyValue(apiKey);
+
+      if (
+        !rawValue ||
+        rawValue.includes('*') ||
+        rawValue.includes('...') ||
+        rawValue.includes('…')
+      ) {
+        continue;
+      }
+
+      const rank = this.getSub2ApiKeyHealthRank(apiKey);
+      if (rank < 0) {
+        continue;
+      }
+
+      const groupName = this.resolveSub2ApiGroupName(apiKey, userGroups);
+      const current = representativeKeys.get(groupName);
+      if (!current || rank > current.rank) {
+        representativeKeys.set(groupName, { value: rawValue, rank });
+      }
+    }
+
+    const modelGroups = new Map<string, Set<string>>();
+
+    for (const [groupName, representativeKey] of representativeKeys) {
+      try {
+        const response = await httpGet(`${cleanBaseUrl}/v1/models`, {
+          headers: {
+            Authorization: `Bearer ${representativeKey.value}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 10000,
+        });
+
+        if (this.isBotDetectionPage(response.data)) {
+          Logger.warn(`⚠️ [ApiService] sub2api 分组 ${groupName} 的模型接口返回挑战页，已跳过`);
+          continue;
+        }
+
+        const modelIds = this.extractSub2ApiModelIds(response.data);
+        for (const modelId of modelIds) {
+          if (!modelGroups.has(modelId)) {
+            modelGroups.set(modelId, new Set<string>());
+          }
+          modelGroups.get(modelId)?.add(groupName);
+        }
+      } catch (error: any) {
+        Logger.warn(`⚠️ [ApiService] sub2api 分组 ${groupName} 获取模型失败: ${error.message}`);
+      }
+    }
+
+    const modelPricing = {
+      data: Object.fromEntries(
+        Array.from(modelGroups.entries()).map(([modelName, groups]) => [
+          modelName,
+          { enable_groups: Array.from(groups) },
+        ])
+      ),
+    };
+
+    return {
+      models: Array.from(modelGroups.keys()),
+      modelPricing,
+    };
+  }
+
   private async getBalanceAndUsage(
     site: SiteConfig,
     timeout: number,
@@ -1588,6 +1880,10 @@ export class ApiService {
     | undefined
   > {
     Logger.info('💰 [ApiService] 获取余额和今日消费...');
+
+    if (this.resolveSiteType(site) === 'sub2api') {
+      return this.getSub2ApiBalanceAndUsage(site, timeout, sharedPage, context);
+    }
 
     const authToken = site.system_token || site.api_key;
 
@@ -1619,6 +1915,96 @@ export class ApiService {
     }
   }
 
+  private async getSub2ApiBalanceAndUsage(
+    site: SiteConfig,
+    timeout: number,
+    sharedPage?: any,
+    context?: DetectionRequestContext
+  ): Promise<{
+    balance?: number;
+    todayUsage?: number;
+    todayPromptTokens?: number;
+    todayCompletionTokens?: number;
+    todayTotalTokens?: number;
+    todayRequests?: number;
+    pageRelease?: () => void;
+  }> {
+    const authToken = site.system_token;
+    if (!authToken) {
+      throw new Error('sub2api 缺少 JWT 凭证');
+    }
+
+    const baseUrl = site.url.replace(/\/$/, '');
+    const headers = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${authToken}`,
+      Pragma: 'no-cache',
+    };
+
+    const meResult = await this.fetchWithBrowserFallback(
+      `${baseUrl}/api/v1/auth/me`,
+      headers,
+      site,
+      timeout,
+      (data: any) => (data?.code === 0 ? data.data : undefined),
+      sharedPage,
+      undefined,
+      undefined,
+      context
+    );
+
+    let usagePayload: any = {};
+    let usagePageRelease: (() => void) | undefined;
+    try {
+      const usageResult = await this.fetchWithBrowserFallback(
+        `${baseUrl}/api/v1/usage/stats`,
+        headers,
+        site,
+        timeout,
+        (data: any) => (data?.code === 0 ? data.data : undefined),
+        sharedPage,
+        undefined,
+        undefined,
+        context
+      );
+      usagePayload = usageResult.result || {};
+      usagePageRelease = usageResult.pageRelease;
+    } catch (error: any) {
+      Logger.warn(`⚠️ [ApiService] sub2api 使用量接口失败，按 0 处理: ${error.message}`);
+    }
+
+    const balance =
+      this.getNestedValue(meResult.result, 'balance') ??
+      this.getNestedValue(meResult.result, 'quota') ??
+      this.getNestedValue(meResult.result, 'remaining_balance');
+    const todayPromptTokens =
+      this.getNestedValue(usagePayload, 'today_prompt_tokens') ??
+      this.getNestedValue(usagePayload, 'prompt_tokens') ??
+      0;
+    const todayCompletionTokens =
+      this.getNestedValue(usagePayload, 'today_completion_tokens') ??
+      this.getNestedValue(usagePayload, 'completion_tokens') ??
+      0;
+
+    return {
+      balance: typeof balance === 'number' ? balance : undefined,
+      todayUsage:
+        this.getNestedValue(usagePayload, 'today_actual_cost') ??
+        this.getNestedValue(usagePayload, 'today_cost') ??
+        this.getNestedValue(usagePayload, 'today_total_cost') ??
+        this.getNestedValue(usagePayload, 'today_usage') ??
+        0,
+      todayPromptTokens,
+      todayCompletionTokens,
+      todayTotalTokens: todayPromptTokens + todayCompletionTokens,
+      todayRequests:
+        this.getNestedValue(usagePayload, 'today_requests') ??
+        this.getNestedValue(usagePayload, 'requests') ??
+        0,
+      pageRelease: meResult.pageRelease || usagePageRelease,
+    };
+  }
+
   /**
    * 获取账户余额（简化版）
    */
@@ -1629,7 +2015,8 @@ export class ApiService {
     sharedPage?: any,
     context?: DetectionRequestContext
   ): Promise<{ balance?: number; pageRelease?: () => void } | undefined> {
-    const endpoints = ['/api/user/self', '/api/user/dashboard'];
+    const profile = this.getSiteTypeProfile(site);
+    const endpoints = profile.balanceEndpoints;
     let lastError: any = null;
     let pageRelease: (() => void) | undefined = undefined;
 
@@ -1648,9 +2035,10 @@ export class ApiService {
             Pragma: 'no-cache',
           };
 
-          // 添加所有User-ID头（兼容各种站点）
-          const userIdHeaders = getAllUserIdHeaders(site.user_id!);
-          Object.assign(headers, userIdHeaders);
+          if (site.user_id && profile.includeUserIdHeaders) {
+            const userIdHeaders = getAllUserIdHeaders(site.user_id);
+            Object.assign(headers, userIdHeaders);
+          }
 
           // 使用通用的带回退的请求方法，传入共享页面
           const result = await this.fetchWithBrowserFallback(

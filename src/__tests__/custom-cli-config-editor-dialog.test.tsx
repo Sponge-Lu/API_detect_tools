@@ -12,7 +12,7 @@ type MockModalProps = {
   footer?: ReactNode;
 };
 
-type TestWithConfigPayload = {
+type TestWithWrapperPayload = {
   siteUrl: string;
   configs: Array<{
     cliType: string;
@@ -30,7 +30,9 @@ type WriteConfigPayload = {
 
 type MockElectronApi = {
   cliCompat: {
-    testWithConfig: ReturnType<typeof vi.fn<(payload: TestWithConfigPayload) => Promise<unknown>>>;
+    testWithWrapper: ReturnType<
+      typeof vi.fn<(payload: TestWithWrapperPayload) => Promise<unknown>>
+    >;
     writeConfig: ReturnType<typeof vi.fn<(payload: WriteConfigPayload) => Promise<unknown>>>;
   };
   configDetection: {
@@ -123,7 +125,7 @@ describe('CustomCliConfigEditorDialog', () => {
     window.electronAPI = {
       ...window.electronAPI,
       cliCompat: {
-        testWithConfig: vi.fn().mockResolvedValue({
+        testWithWrapper: vi.fn().mockResolvedValue({
           success: true,
           data: {
             claudeCode: true,
@@ -175,19 +177,19 @@ describe('CustomCliConfigEditorDialog', () => {
   });
 
   it('runs tests only for the clicked cli column', async () => {
-    const testWithConfig = vi.fn().mockResolvedValue({
+    const testWithWrapper = vi.fn().mockResolvedValue({
       success: true,
       data: { codex: true },
     });
-    getElectronAPI().cliCompat.testWithConfig = testWithConfig;
+    getElectronAPI().cliCompat.testWithWrapper = testWithWrapper;
 
     await renderDialog();
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '测试 Codex' }));
     });
 
-    await waitFor(() => expect(testWithConfig).toHaveBeenCalledTimes(2));
-    expect(testWithConfig).toHaveBeenNthCalledWith(1, {
+    await waitFor(() => expect(testWithWrapper).toHaveBeenCalledTimes(2));
+    expect(testWithWrapper).toHaveBeenNthCalledWith(1, {
       siteUrl: 'https://api.example.com',
       configs: [
         {
@@ -198,7 +200,7 @@ describe('CustomCliConfigEditorDialog', () => {
         },
       ],
     });
-    expect(testWithConfig).toHaveBeenNthCalledWith(2, {
+    expect(testWithWrapper).toHaveBeenNthCalledWith(2, {
       siteUrl: 'https://api.example.com',
       configs: [
         {
@@ -212,7 +214,7 @@ describe('CustomCliConfigEditorDialog', () => {
   });
 
   it('persists cli test outcomes back into the custom config store after a column run', async () => {
-    const testWithConfig = vi.fn().mockResolvedValue({
+    const testWithWrapper = vi.fn().mockResolvedValue({
       success: true,
       data: { codex: true },
     });
@@ -220,7 +222,7 @@ describe('CustomCliConfigEditorDialog', () => {
       typeof vi.fn
     >;
     const saveConfigs = useCustomCliConfigStore.getState().saveConfigs as ReturnType<typeof vi.fn>;
-    getElectronAPI().cliCompat.testWithConfig = testWithConfig;
+    getElectronAPI().cliCompat.testWithWrapper = testWithWrapper;
 
     await renderDialog();
     await act(async () => {

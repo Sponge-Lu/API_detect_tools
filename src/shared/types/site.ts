@@ -21,6 +21,33 @@ import type { RoutingConfig } from './route-proxy';
 
 // ============= 基础类型 =============
 
+/** 支持的站点类型 */
+export const SITE_TYPES = [
+  'oneapi',
+  'newapi',
+  'veloera',
+  'onehub',
+  'donehub',
+  'voapi',
+  'superapi',
+  'sub2api',
+] as const;
+
+export type SiteType = (typeof SITE_TYPES)[number];
+
+export const DEFAULT_SITE_TYPE: SiteType = 'newapi';
+
+export const SITE_TYPE_LABELS: Record<SiteType, string> = {
+  oneapi: 'One API',
+  newapi: 'New API',
+  veloera: 'Veloera',
+  onehub: 'One Hub',
+  donehub: 'Done Hub',
+  voapi: 'VoAPI',
+  superapi: 'Super API',
+  sub2api: 'Sub2API',
+};
+
 /** 站点健康状态 */
 export type SiteHealthStatus = 'healthy' | 'warning' | 'error' | 'unknown';
 
@@ -32,6 +59,7 @@ export interface HealthStatus {
 
 /** 用户分组信息 */
 export interface UserGroupInfo {
+  id?: number | string;
   desc: string;
   ratio: number;
 }
@@ -202,6 +230,56 @@ export interface DetectionCacheData {
   };
 }
 
+/** 站点级共享检测缓存 */
+export interface SiteSharedDetectionData {
+  models?: string[];
+  user_groups?: Record<string, UserGroupInfo>;
+  model_pricing?: ModelPricingData;
+  last_refresh?: number;
+}
+
+/** 账户级私有检测缓存 */
+export interface AccountRuntimeDetectionData {
+  balance?: number;
+  today_usage?: number;
+  today_prompt_tokens?: number;
+  today_completion_tokens?: number;
+  today_requests?: number;
+  api_keys?: ApiKeyInfo[];
+  last_refresh?: number;
+  can_check_in?: boolean;
+  cli_compatibility?: CliCompatibilityData;
+  ldc_payment_supported?: boolean;
+  ldc_exchange_rate?: string;
+  ldc_payment_type?: string;
+  checkin_stats?: DetectionCacheData['checkin_stats'];
+  status?: string;
+  error?: string;
+  endpoint_hints?: DetectionCacheData['endpoint_hints'];
+}
+
+/** 无账户站点的站点级私有缓存 */
+export type SiteRuntimeDetectionData = AccountRuntimeDetectionData;
+
+/** 独立运行期缓存文件结构 */
+export interface RuntimeCacheFile {
+  version: string;
+  site_shared_by_site_id: Record<string, SiteSharedDetectionData>;
+  site_runtime_by_site_id: Record<string, SiteRuntimeDetectionData>;
+  account_runtime_by_account_id: Record<string, AccountRuntimeDetectionData>;
+  last_updated: number;
+}
+
+export const RUNTIME_CACHE_VERSION = '1';
+
+export const DEFAULT_RUNTIME_CACHE_FILE: RuntimeCacheFile = {
+  version: RUNTIME_CACHE_VERSION,
+  site_shared_by_site_id: {},
+  site_runtime_by_site_id: {},
+  account_runtime_by_account_id: {},
+  last_updated: 0,
+};
+
 // ============= 统一站点类型 =============
 
 /**
@@ -215,6 +293,7 @@ export interface UnifiedSite {
   // === 基础配置 ===
   name: string;
   url: string;
+  site_type?: SiteType;
   enabled: boolean;
   group: string; // 分组ID，默认 "default"
 
@@ -342,6 +421,7 @@ export interface SiteConfig {
   id?: string; // 站点 ID（从统一配置传入，多账户操作需要）
   name: string;
   url: string;
+  site_type?: SiteType;
   api_key: string;
   system_token?: string;
   user_id?: string;
@@ -363,7 +443,7 @@ export interface SiteAccount {
   url: string;
   site_name: string;
   site_url: string;
-  site_type: string;
+  site_type: SiteType;
   user_id: number;
   username: string;
   access_token: string;
@@ -426,18 +506,26 @@ export interface DetectionResult {
 
 /** API Key 信息 */
 export interface ApiKeyInfo {
-  id?: number;
-  token_id?: number;
+  id?: number | string;
+  token_id?: number | string;
   name?: string;
   key?: string;
   token?: string;
+  group_id?: number | string | null;
   remain_quota?: number;
+  quota?: number;
+  quota_used?: number;
+  used_quota?: number;
+  today_actual_cost?: number;
+  total_actual_cost?: number;
   unlimited_quota?: boolean;
   expired_time?: number;
+  expires_at?: string | null;
   created_time?: number;
+  created_at?: string;
   group?: string;
   models?: string;
-  status?: number;
+  status?: number | string;
 }
 
 /** 模型定价数据 */
@@ -450,6 +538,13 @@ export interface ModelPriceInfo {
   input?: number;
   output?: number;
   group_ratio?: number;
+  quota_type?: number;
+  type?: string;
+  model_ratio?: number;
+  model_price?: number | { input?: number; output?: number };
+  completion_ratio?: number;
+  enable_groups?: string[];
+  model_description?: string;
 }
 
 /** 缓存的显示数据 */
@@ -516,4 +611,77 @@ export type CreateSiteInput = Pick<UnifiedSite, 'name' | 'url'> &
 /** 生成唯一站点ID */
 export function generateSiteId(): string {
   return `site_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+}
+
+function hasMeaningfulValues<T extends object>(value: T): boolean {
+  return Object.values(value as Record<string, unknown>).some(item => item !== undefined);
+}
+
+export function splitDetectionCacheData(cache?: DetectionCacheData): {
+  shared?: SiteSharedDetectionData;
+  runtime?: AccountRuntimeDetectionData;
+} {
+  if (!cache) {
+    return {};
+  }
+
+  const shared: SiteSharedDetectionData = {
+    models: cache.models,
+    user_groups: cache.user_groups,
+    model_pricing: cache.model_pricing,
+    last_refresh: cache.last_refresh,
+  };
+
+  const runtime: AccountRuntimeDetectionData = {
+    balance: cache.balance,
+    today_usage: cache.today_usage,
+    today_prompt_tokens: cache.today_prompt_tokens,
+    today_completion_tokens: cache.today_completion_tokens,
+    today_requests: cache.today_requests,
+    api_keys: cache.api_keys,
+    last_refresh: cache.last_refresh,
+    can_check_in: cache.can_check_in,
+    cli_compatibility: cache.cli_compatibility,
+    ldc_payment_supported: cache.ldc_payment_supported,
+    ldc_exchange_rate: cache.ldc_exchange_rate,
+    ldc_payment_type: cache.ldc_payment_type,
+    checkin_stats: cache.checkin_stats,
+    status: cache.status,
+    error: cache.error,
+    endpoint_hints: cache.endpoint_hints,
+  };
+
+  return {
+    shared: hasMeaningfulValues(shared) ? shared : undefined,
+    runtime: hasMeaningfulValues(runtime) ? runtime : undefined,
+  };
+}
+
+export function mergeDetectionCacheData(
+  shared?: SiteSharedDetectionData,
+  runtime?: AccountRuntimeDetectionData
+): DetectionCacheData | undefined {
+  const merged: DetectionCacheData = {
+    models: shared?.models,
+    user_groups: shared?.user_groups,
+    model_pricing: shared?.model_pricing,
+    balance: runtime?.balance,
+    today_usage: runtime?.today_usage,
+    today_prompt_tokens: runtime?.today_prompt_tokens,
+    today_completion_tokens: runtime?.today_completion_tokens,
+    today_requests: runtime?.today_requests,
+    api_keys: runtime?.api_keys,
+    last_refresh: runtime?.last_refresh ?? shared?.last_refresh,
+    can_check_in: runtime?.can_check_in,
+    cli_compatibility: runtime?.cli_compatibility,
+    ldc_payment_supported: runtime?.ldc_payment_supported,
+    ldc_exchange_rate: runtime?.ldc_exchange_rate,
+    ldc_payment_type: runtime?.ldc_payment_type,
+    checkin_stats: runtime?.checkin_stats,
+    status: runtime?.status,
+    error: runtime?.error,
+    endpoint_hints: runtime?.endpoint_hints,
+  };
+
+  return hasMeaningfulValues(merged) ? merged : undefined;
 }

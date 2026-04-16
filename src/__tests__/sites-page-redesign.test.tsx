@@ -13,6 +13,7 @@ const baseSite: SiteConfig = {
   id: 'site-1',
   name: 'Claude Hub',
   url: 'https://example.com',
+  site_type: 'newapi',
   enabled: true,
   group: 'default',
   apiKey: 'sk-test',
@@ -22,6 +23,102 @@ const baseSite: SiteConfig = {
   force_enable_checkin: true,
 };
 
+function buildSiteCardProps(overrides: Record<string, unknown> = {}) {
+  return {
+    site: baseSite,
+    index: 0,
+    siteResult: { status: '成功', todayRequests: 2, todayTotalTokens: 3000, models: [] } as any,
+    siteAccount: undefined,
+    isExpanded: false,
+    columnWidths: [120, 80, 75, 75, 75],
+    accountId: 'account-1',
+    accountName: 'Primary Account',
+    accountAccessToken: undefined,
+    accountUserId: undefined,
+    cardKey: 'site-1::account-1',
+    apiKeys: [],
+    userGroups: {},
+    modelPricing: null,
+    isDetecting: false,
+    checkingIn: null,
+    dragOverIndex: null,
+    refreshMessage: null,
+    selectedGroup: null,
+    modelSearch: '',
+    globalModelSearch: '',
+    showTokens: {},
+    selectedModels: new Set<string>(),
+    deletingTokenKey: null,
+    autoRefreshEnabled: false,
+    cliCompatibility: {
+      claudeCode: null,
+      codex: null,
+      geminiCli: null,
+      testedAt: Date.now(),
+    },
+    cliConfig: {
+      claudeCode: {
+        apiKeyId: 1,
+        model: 'claude-3-5-sonnet',
+        testModel: 'claude-3-5-sonnet',
+        testModels: ['claude-3-5-sonnet'],
+        testResults: [],
+        enabled: true,
+        editedFiles: null,
+        applyMode: 'merge',
+      },
+      codex: {
+        apiKeyId: null,
+        model: null,
+        testModel: null,
+        testModels: [],
+        testResults: [],
+        enabled: true,
+        editedFiles: null,
+        applyMode: 'merge',
+      },
+      geminiCli: {
+        apiKeyId: null,
+        model: null,
+        testModel: null,
+        testModels: [],
+        testResults: [],
+        enabled: false,
+        editedFiles: null,
+        applyMode: 'merge',
+      },
+    },
+    isCliTesting: false,
+    onExpand: vi.fn(),
+    onDetect: vi.fn(),
+    onEdit: vi.fn(),
+    onDelete: vi.fn(),
+    onCheckIn: vi.fn(),
+    onOpenSite: vi.fn(),
+    onOpenExtraLink: vi.fn(),
+    onCopyToClipboard: vi.fn(),
+    onToggleAutoRefresh: vi.fn(),
+    onOpenCliConfig: vi.fn(),
+    onTestCliCompat: vi.fn(),
+    onApply: vi.fn(),
+    onAddAccount: vi.fn(),
+    onDragStart: vi.fn(),
+    onDragEnd: vi.fn(),
+    onDragOver: vi.fn(),
+    onDragLeave: vi.fn(),
+    onDrop: vi.fn(),
+    onToggleGroupFilter: vi.fn(),
+    onModelSearchChange: vi.fn(),
+    onToggleTokenVisibility: vi.fn(),
+    onToggleModelSelection: vi.fn(),
+    onCopySelectedModels: vi.fn(),
+    onClearSelectedModels: vi.fn(),
+    onOpenCreateTokenDialog: vi.fn(),
+    onDeleteToken: vi.fn(),
+    ...overrides,
+  };
+}
+
 describe('sites page redesign', () => {
   it('keeps the header action spacer at 48px for icon alignment', () => {
     const source = readFileSync(join(process.cwd(), 'src/renderer/pages/SitesPage.tsx'), 'utf8');
@@ -30,11 +127,11 @@ describe('sites page redesign', () => {
   });
 
   it('renders only the visible folded-row columns inside the sticky header', () => {
-    expect(DEFAULT_COLUMN_WIDTHS).toEqual([168, 100, 82, 96, 92, 64, 180]);
+    expect(DEFAULT_COLUMN_WIDTHS).toEqual([142, 100, 100, 82, 92, 92, 64, 180]);
 
     const { container } = render(
       <SiteListHeader
-        columnWidths={[168, 100, 82, 96, 92, 64, 180]}
+        columnWidths={[142, 100, 100, 82, 92, 92, 64, 180]}
         onColumnWidthChange={vi.fn()}
         sortField="totalTokens"
         sortOrder="desc"
@@ -44,6 +141,7 @@ describe('sites page redesign', () => {
 
     expect((container.firstElementChild as HTMLDivElement).className).toContain('sticky');
     expect(screen.getByRole('button', { name: '站点' })).toBeInTheDocument();
+    expect(screen.getByText('站点类型')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '余额' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '今日消费' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Token统计' })).toBeInTheDocument();
@@ -63,7 +161,7 @@ describe('sites page redesign', () => {
         lastSyncDisplay="12:34"
         errorCode={null}
         timeoutSeconds={null}
-        columnWidths={[168, 100, 82, 96, 92, 64, 180]}
+        columnWidths={[142, 100, 100, 82, 92, 92, 64, 180]}
         todayTotalTokens={4200}
         todayPromptTokens={3000}
         todayCompletionTokens={1200}
@@ -91,6 +189,49 @@ describe('sites page redesign', () => {
     expect(screen.getByText('4.2K')).toBeInTheDocument();
     expect(screen.getByText('输入 3.0K / 输出 1.2K')).toBeInTheDocument();
     expect(screen.getByText('RPM 0.50 / TPM 350')).toBeInTheDocument();
+    expect(screen.getByText('New API')).toBeInTheDocument();
+  });
+
+  it('renders the site type cell as plain left-aligned text instead of a badge', () => {
+    render(
+      <SiteCardHeader
+        site={baseSite}
+        siteResult={undefined}
+        lastSyncDisplay="12:34"
+        errorCode={null}
+        timeoutSeconds={null}
+        columnWidths={[142, 100, 100, 82, 92, 92, 64, 180]}
+        todayTotalTokens={4200}
+        todayPromptTokens={3000}
+        todayCompletionTokens={1200}
+        todayRequests={6}
+        rpm={0.5}
+        tpm={350}
+        modelCount={3}
+        accountId="account-1"
+        accountName="Primary Account"
+        onOpenSite={vi.fn()}
+        cliCompatibility={{
+          claudeCode: true,
+          codex: null,
+          geminiCli: false,
+          testedAt: Date.now(),
+        }}
+        cliConfig={null}
+        isCliTesting={false}
+        onOpenCliConfig={vi.fn()}
+        onTestCliCompat={vi.fn()}
+        onApply={vi.fn()}
+      />
+    );
+
+    const siteTypeText = screen.getByTitle('New API');
+    const siteTypeCell = siteTypeText.parentElement as HTMLDivElement;
+
+    expect(siteTypeText).toHaveClass('w-full', 'text-left');
+    expect(siteTypeText).not.toHaveClass('rounded-full');
+    expect(siteTypeCell).toHaveClass('justify-start');
+    expect(siteTypeCell).not.toHaveClass('justify-center');
   });
 
   it('renders the site secondary row with account and time inline under the site name', () => {
@@ -101,7 +242,7 @@ describe('sites page redesign', () => {
         lastSyncDisplay="7天"
         errorCode={null}
         timeoutSeconds={null}
-        columnWidths={[168, 100, 82, 96, 92, 64, 180]}
+        columnWidths={[142, 100, 100, 82, 92, 92, 64, 180]}
         todayTotalTokens={0}
         todayPromptTokens={0}
         todayCompletionTokens={0}
@@ -148,7 +289,7 @@ describe('sites page redesign', () => {
         lastSyncDisplay="12:34"
         errorCode={null}
         timeoutSeconds={null}
-        columnWidths={[168, 100, 82, 96, 92, 64, 180]}
+        columnWidths={[142, 100, 100, 82, 92, 92, 64, 180]}
         todayTotalTokens={4200}
         todayPromptTokens={3000}
         todayCompletionTokens={1200}
@@ -182,7 +323,7 @@ describe('sites page redesign', () => {
         lastSyncDisplay="12:34"
         errorCode={null}
         timeoutSeconds={null}
-        columnWidths={[168, 100, 82, 96, 92, 64, 180]}
+        columnWidths={[142, 100, 100, 82, 92, 92, 64, 180]}
         todayTotalTokens={4200}
         todayPromptTokens={3000}
         todayCompletionTokens={1200}
@@ -232,7 +373,7 @@ describe('sites page redesign', () => {
         }
         siteAccount={undefined}
         isExpanded={false}
-        columnWidths={[168, 100, 82, 96, 92, 64, 180]}
+        columnWidths={[142, 100, 100, 82, 92, 92, 64, 180]}
         accountId={undefined}
         accountName={undefined}
         accountAccessToken={undefined}
@@ -294,7 +435,7 @@ describe('sites page redesign', () => {
   it('renders a compact column header row with inline sorting and an actions slot', () => {
     const { container } = render(
       <SiteListHeader
-        columnWidths={[120, 75, 75, 75]}
+        columnWidths={[120, 80, 75, 75, 75]}
         onColumnWidthChange={vi.fn()}
         sortField="balance"
         sortOrder="desc"
@@ -304,14 +445,38 @@ describe('sites page redesign', () => {
     );
 
     expect(screen.getByRole('button', { name: '站点' })).toBeInTheDocument();
+    expect(screen.getByText('站点类型')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '余额' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '今日消费' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Token统计' })).toBeInTheDocument();
     expect(screen.getByText('批量检测')).toBeInTheDocument();
     const header = container.firstElementChild as HTMLDivElement;
-    expect(header.style.gridTemplateColumns).toBe('120px 75px 75px 75px 1fr');
+    expect(header.style.gridTemplateColumns).toBe('120px 80px 75px 75px 75px 1fr');
     expect(header).toHaveClass('px-3');
     expect(header.lastElementChild).toHaveClass('items-center', 'justify-end', 'gap-0.5');
+  });
+
+  it('filters by site type from the header select', () => {
+    const onSiteTypeFilterChange = vi.fn();
+
+    render(
+      <SiteListHeader
+        columnWidths={[120, 80, 75, 75, 75]}
+        onColumnWidthChange={vi.fn()}
+        activeSiteTypeFilter={null}
+        siteTypeFilterOptions={[
+          { value: 'newapi', label: 'New API', count: 2 },
+          { value: 'sub2api', label: 'Sub2API', count: 1 },
+        ]}
+        onSiteTypeFilterChange={onSiteTypeFilterChange}
+      />
+    );
+
+    fireEvent.change(screen.getByRole('combobox', { name: '站点类型筛选' }), {
+      target: { value: 'sub2api' },
+    });
+
+    expect(onSiteTypeFilterChange).toHaveBeenCalledWith('sub2api');
   });
 
   it('toggles sorting from the visible sortable column labels directly', () => {
@@ -319,7 +484,7 @@ describe('sites page redesign', () => {
 
     render(
       <SiteListHeader
-        columnWidths={[168, 100, 82, 96, 92, 64, 180]}
+        columnWidths={[142, 100, 100, 82, 92, 92, 64, 180]}
         onColumnWidthChange={vi.fn()}
         sortField={null}
         sortOrder="desc"
@@ -375,7 +540,7 @@ describe('sites page redesign', () => {
     expect(screen.getByLabelText('开启自动刷新')).toBeInTheDocument();
 
     expect(screen.queryByLabelText('编辑站点')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('删除站点')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('删除账户')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('添加账户')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '更多操作' }));
@@ -383,8 +548,8 @@ describe('sites page redesign', () => {
     expect(screen.queryByRole('button', { name: '编辑站点' })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '更多操作' }));
-    fireEvent.click(screen.getByRole('button', { name: '删除站点' }));
-    expect(screen.queryByRole('button', { name: '删除站点' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '删除账户' }));
+    expect(screen.queryByRole('button', { name: '删除账户' })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '更多操作' }));
     fireEvent.click(screen.getByRole('button', { name: '添加账户' }));
@@ -420,8 +585,99 @@ describe('sites page redesign', () => {
     fireEvent.contextMenu(screen.getByRole('button', { name: '更多操作' }));
 
     expect(screen.getByRole('button', { name: '编辑站点' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '删除站点' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '删除账户' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '添加账户' })).toBeInTheDocument();
+  });
+
+  it('uses a single delete-account action for account cards', () => {
+    const onDelete = vi.fn();
+
+    render(
+      <SiteCardActions
+        site={baseSite}
+        index={0}
+        siteResult={{ status: '成功' } as any}
+        isExpanded={false}
+        isDetecting={false}
+        checkingIn={null}
+        autoRefreshEnabled={false}
+        editAccount={{
+          id: 'account-1',
+          account_name: 'Primary Account',
+          access_token: 'token',
+          user_id: 'user-1',
+        }}
+        onExpand={vi.fn()}
+        onDetect={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={onDelete}
+        onCheckIn={vi.fn()}
+        onOpenExtraLink={vi.fn()}
+        onToggleAutoRefresh={vi.fn()}
+        onAddAccount={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '更多操作' }));
+
+    expect(screen.getByRole('button', { name: '编辑账户' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '删除账户' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '删除站点' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '删除账户' }));
+    expect(onDelete).toHaveBeenCalledWith(0);
+  });
+
+  it('opens the more menu upward when the trigger is near the viewport bottom', () => {
+    const originalInnerHeight = window.innerHeight;
+    const originalInnerWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 820 });
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 });
+
+    render(
+      <SiteCardActions
+        site={baseSite}
+        index={0}
+        siteResult={{ status: '成功' } as any}
+        isExpanded={false}
+        isDetecting={false}
+        checkingIn={null}
+        autoRefreshEnabled={false}
+        editAccount={null}
+        onExpand={vi.fn()}
+        onDetect={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onCheckIn={vi.fn()}
+        onOpenExtraLink={vi.fn()}
+        onToggleAutoRefresh={vi.fn()}
+        onAddAccount={vi.fn()}
+      />
+    );
+
+    const moreButton = screen.getByRole('button', { name: '更多操作' });
+    vi.spyOn(moreButton, 'getBoundingClientRect').mockReturnValue({
+      x: 320,
+      y: 780,
+      width: 24,
+      height: 24,
+      top: 780,
+      right: 344,
+      bottom: 804,
+      left: 320,
+      toJSON: () => ({}),
+    });
+
+    fireEvent.click(moreButton);
+
+    const menu = screen.getByRole('menu');
+    expect(Number.parseFloat((menu as HTMLDivElement).style.top)).toBeLessThan(780);
+
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: originalInnerHeight,
+    });
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalInnerWidth });
   });
 
   it('keeps the site identity column compact enough for the default window width', () => {
@@ -432,7 +688,7 @@ describe('sites page redesign', () => {
         lastSyncDisplay="12:34"
         errorCode={null}
         timeoutSeconds={null}
-        columnWidths={[168, 100, 82, 96, 92, 64, 180]}
+        columnWidths={[142, 100, 100, 82, 92, 92, 64, 180]}
         todayTotalTokens={4200}
         todayPromptTokens={0}
         todayCompletionTokens={0}
@@ -486,10 +742,11 @@ describe('sites page redesign', () => {
     );
 
     const grid = container.firstElementChild as HTMLDivElement;
-    expect(grid.style.gridTemplateColumns).toBe('168px 100px 82px 96px 92px 64px 180px');
+    expect(grid.style.gridTemplateColumns).toBe('142px 100px 100px 82px 92px 92px 64px 180px');
     expect(grid.lastElementChild).toHaveClass('justify-center');
     expect(screen.getByText('Primary Account')).toBeInTheDocument();
     expect(screen.getByText('12:34')).toBeInTheDocument();
+    expect(screen.getByText('New API')).toBeInTheDocument();
     expect(screen.queryByText('default')).not.toBeInTheDocument();
     expect(screen.getByAltText('Claude Code')).toBeInTheDocument();
     expect(screen.getByAltText('Codex')).toBeInTheDocument();
@@ -505,7 +762,7 @@ describe('sites page redesign', () => {
     render(
       <div className="w-[1024px]">
         <SiteListHeader
-          columnWidths={[168, 100, 82, 96, 92, 64, 180]}
+          columnWidths={[142, 100, 100, 82, 92, 92, 64, 180]}
           onColumnWidthChange={vi.fn()}
           sortField="balance"
           sortOrder="desc"
@@ -519,7 +776,7 @@ describe('sites page redesign', () => {
           }
           siteAccount={undefined}
           isExpanded={false}
-          columnWidths={[120, 75, 75, 75]}
+          columnWidths={[120, 80, 75, 75, 75]}
           accountId="account-1"
           accountName="Primary Account"
           accountAccessToken={undefined}
@@ -742,7 +999,7 @@ describe('sites page redesign', () => {
         siteResult={{ status: '成功', todayRequests: 2, todayTotalTokens: 3000, models: [] } as any}
         siteAccount={undefined}
         isExpanded={false}
-        columnWidths={[120, 75, 75, 75]}
+        columnWidths={[120, 80, 75, 75, 75]}
         accountId="account-1"
         accountName="Primary Account"
         accountAccessToken={undefined}
@@ -830,5 +1087,36 @@ describe('sites page redesign', () => {
     const mainRow = getByTestId('site-card-main-row');
     expect(within(mainRow).getByRole('button', { name: 'CLI配置' })).toBeInTheDocument();
     expect(within(mainRow).queryByText('CLI 工作台')).not.toBeInTheDocument();
+  });
+
+  it('rerenders the site card when only cli test results change so the column icons update', () => {
+    const initialProps = buildSiteCardProps();
+    const { rerender } = render(<SiteCard {...initialProps} />);
+
+    const claudeIcon = screen.getByAltText('Claude Code').parentElement as HTMLDivElement;
+    expect(claudeIcon.title).toContain('已配置，待测试');
+    expect(claudeIcon.className).toContain('opacity-50');
+
+    const nextCliConfig = {
+      ...initialProps.cliConfig,
+      claudeCode: {
+        ...initialProps.cliConfig.claudeCode,
+        testResults: [
+          {
+            model: 'claude-3-5-sonnet',
+            success: true,
+            timestamp: Date.now(),
+          },
+          null,
+          null,
+        ],
+      },
+    };
+
+    rerender(<SiteCard {...buildSiteCardProps({ cliConfig: nextCliConfig })} />);
+
+    const updatedClaudeIcon = screen.getByAltText('Claude Code').parentElement as HTMLDivElement;
+    expect(updatedClaudeIcon.title).toContain('支持');
+    expect(updatedClaudeIcon.className).toContain('opacity-100');
   });
 });

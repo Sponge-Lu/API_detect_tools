@@ -282,7 +282,7 @@ describe('overlay family redesign', () => {
   });
 
   it('tests only the selected model rows and renders plain 成功/失败 text on the same row', async () => {
-    const testWithConfig = vi.fn().mockResolvedValueOnce({
+    const testWithWrapper = vi.fn().mockResolvedValueOnce({
       success: true,
       data: { claudeCode: true },
     });
@@ -290,7 +290,7 @@ describe('overlay family redesign', () => {
     const electronAPI = ((window as any).electronAPI ??= {}) as Record<string, unknown> as any;
     electronAPI.cliCompat = {
       ...electronAPI.cliCompat,
-      testWithConfig,
+      testWithWrapper,
     };
 
     render(
@@ -342,8 +342,8 @@ describe('overlay family redesign', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '测试已选模型' }));
 
-    await waitFor(() => expect(testWithConfig).toHaveBeenCalledTimes(1));
-    expect(testWithConfig).toHaveBeenCalledWith({
+    await waitFor(() => expect(testWithWrapper).toHaveBeenCalledTimes(1));
+    expect(testWithWrapper).toHaveBeenCalledWith({
       siteUrl: 'https://example.com',
       configs: [
         {
@@ -363,7 +363,7 @@ describe('overlay family redesign', () => {
   });
 
   it('persists selected-model test results through a config callback so they can be restored later', async () => {
-    const testWithConfig = vi.fn().mockResolvedValueOnce({
+    const testWithWrapper = vi.fn().mockResolvedValueOnce({
       success: true,
       data: { claudeCode: true },
     });
@@ -372,7 +372,7 @@ describe('overlay family redesign', () => {
     const electronAPI = ((window as any).electronAPI ??= {}) as Record<string, unknown> as any;
     electronAPI.cliCompat = {
       ...electronAPI.cliCompat,
-      testWithConfig,
+      testWithWrapper,
     };
 
     render(

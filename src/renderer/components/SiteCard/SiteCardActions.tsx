@@ -30,6 +30,56 @@ import {
 } from 'lucide-react';
 import type { SiteCardActionsProps } from './types';
 
+const MENU_MIN_WIDTH = 180;
+const MENU_FALLBACK_HEIGHT = 196;
+const MENU_GAP = 8;
+const VIEWPORT_MARGIN = 12;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function getMenuDimensions(menuEl: HTMLDivElement | null) {
+  return {
+    width: Math.max(menuEl?.offsetWidth || 0, MENU_MIN_WIDTH),
+    height: Math.max(menuEl?.offsetHeight || 0, MENU_FALLBACK_HEIGHT),
+  };
+}
+
+function getBoundedLeft(preferredLeft: number, width: number) {
+  const maxLeft = Math.max(VIEWPORT_MARGIN, window.innerWidth - width - VIEWPORT_MARGIN);
+  return clamp(preferredLeft, VIEWPORT_MARGIN, maxLeft);
+}
+
+function getBoundedTop(preferredTop: number, height: number) {
+  const maxTop = Math.max(VIEWPORT_MARGIN, window.innerHeight - height - VIEWPORT_MARGIN);
+  return clamp(preferredTop, VIEWPORT_MARGIN, maxTop);
+}
+
+function getButtonMenuPosition(rect: DOMRect, menuEl: HTMLDivElement | null) {
+  const { width, height } = getMenuDimensions(menuEl);
+  const left = getBoundedLeft(rect.right - width, width);
+  const spaceBelow = window.innerHeight - rect.bottom - VIEWPORT_MARGIN;
+  const spaceAbove = rect.top - VIEWPORT_MARGIN;
+  const preferredTop =
+    spaceBelow >= height || spaceBelow >= spaceAbove
+      ? rect.bottom + MENU_GAP
+      : rect.top - height - MENU_GAP;
+
+  return {
+    top: getBoundedTop(preferredTop, height),
+    left,
+  };
+}
+
+function getCursorMenuPosition(clientX: number, clientY: number, menuEl: HTMLDivElement | null) {
+  const { width, height } = getMenuDimensions(menuEl);
+  return {
+    left: getBoundedLeft(clientX, width),
+    top: getBoundedTop(clientY, height),
+  };
+}
+
 /**
  * 格式化签到金额 (内部单位 -> 美元)
  * @param quota 内部单位金额
@@ -105,18 +155,19 @@ export function SiteCardActions({
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  const cursorAnchorRef = useRef({ x: 0, y: 0 });
 
   const lowFrequencyActions = useMemo(
     () => [
       {
         key: 'edit',
-        label: '编辑站点',
+        label: editAccount ? '编辑账户' : '编辑站点',
         destructive: false,
         onClick: () => onEdit(index, editAccount),
       },
       {
-        key: 'delete',
-        label: '删除站点',
+        key: 'delete-account',
+        label: '删除账户',
         destructive: true,
         onClick: () => onDelete(index),
       },
@@ -138,14 +189,20 @@ export function SiteCardActions({
     if (!isMoreMenuOpen) return;
 
     const updateMenuPosition = () => {
-      if (menuAnchor !== 'button') return;
-      const rect = moreButtonRef.current?.getBoundingClientRect();
-      if (!rect) return;
+      if (menuAnchor === 'button') {
+        const rect = moreButtonRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        setMenuPosition(getButtonMenuPosition(rect, moreMenuRef.current));
+        return;
+      }
 
-      setMenuPosition({
-        top: rect.bottom + 8,
-        left: Math.max(rect.right - 180, 12),
-      });
+      setMenuPosition(
+        getCursorMenuPosition(
+          cursorAnchorRef.current.x,
+          cursorAnchorRef.current.y,
+          moreMenuRef.current
+        )
+      );
     };
 
     const handlePointerDown = (event: MouseEvent) => {
@@ -165,17 +222,18 @@ export function SiteCardActions({
       }
     };
 
+    const rafId = window.requestAnimationFrame(updateMenuPosition);
+    window.addEventListener('resize', updateMenuPosition);
     if (menuAnchor === 'button') {
-      updateMenuPosition();
-      window.addEventListener('resize', updateMenuPosition);
       window.addEventListener('scroll', updateMenuPosition, true);
     }
     document.addEventListener('mousedown', handlePointerDown);
     window.addEventListener('keydown', handleEscape);
 
     return () => {
+      window.cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', updateMenuPosition);
       if (menuAnchor === 'button') {
-        window.removeEventListener('resize', updateMenuPosition);
         window.removeEventListener('scroll', updateMenuPosition, true);
       }
       document.removeEventListener('mousedown', handlePointerDown);
@@ -188,22 +246,14 @@ export function SiteCardActions({
     if (!rect) return;
 
     setMenuAnchor('button');
-    setMenuPosition({
-      top: rect.bottom + 8,
-      left: Math.max(rect.right - 180, 12),
-    });
+    setMenuPosition(getButtonMenuPosition(rect, moreMenuRef.current));
     setIsMoreMenuOpen(true);
   };
 
   const openCursorMenu = (clientX: number, clientY: number) => {
-    const maxLeft = Math.max(window.innerWidth - 196, 12);
-    const maxTop = Math.max(window.innerHeight - 220, 12);
-
     setMenuAnchor('cursor');
-    setMenuPosition({
-      left: Math.max(12, Math.min(clientX, maxLeft)),
-      top: Math.max(12, Math.min(clientY, maxTop)),
-    });
+    cursorAnchorRef.current = { x: clientX, y: clientY };
+    setMenuPosition(getCursorMenuPosition(clientX, clientY, moreMenuRef.current));
     setIsMoreMenuOpen(true);
   };
 
@@ -368,7 +418,9 @@ export function SiteCardActions({
                 }`}
               >
                 {action.key === 'edit' && <Pencil className="w-3.5 h-3.5" strokeWidth={2} />}
-                {action.key === 'delete' && <Trash2 className="w-3.5 h-3.5" strokeWidth={2} />}
+                {action.key === 'delete-account' && (
+                  <Trash2 className="w-3.5 h-3.5" strokeWidth={2} />
+                )}
                 {action.key === 'add-account' && (
                   <UserPlus className="w-3.5 h-3.5" strokeWidth={2} />
                 )}

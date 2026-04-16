@@ -16,7 +16,11 @@ interface AddAccountDialogProps {
   siteId: string;
   siteName: string;
   siteUrl: string;
-  onSuccess: () => void;
+  onSuccess: (account?: {
+    id?: string;
+    account_name?: string;
+    user_id?: string;
+  }) => void | Promise<void>;
   onClose: () => void;
 }
 
@@ -112,7 +116,7 @@ export function AddAccountDialog({
         // ignore
       }
 
-      onSuccess();
+      await onSuccess(addResult.data);
       onClose();
     } catch (err: any) {
       setError(err.message);

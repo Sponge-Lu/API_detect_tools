@@ -51,7 +51,8 @@ src/
 │   ├── browser-profile-manager.ts  # Chrome Profile 管理 (主/隔离)
 │   ├── token-service.ts   # Token 获取/刷新/签到
 │   ├── api-service.ts     # HTTP 请求、余额检测、LDC 支付探测
-│   ├── cli-compat-service.ts  # CLI 兼容性流式探测 (Claude Code/Codex/Gemini CLI)
+│   ├── cli-compat-service.ts  # CLI 协议级兼容性流式探测 (请求格式与真实 CLI 对齐)
+│   ├── cli-wrapper-compat-service.ts  # 真实 CLI wrapper 测试 (隔离临时 HOME/CODEX_HOME/GEMINI_CLI_HOME)
 │   ├── credit-service.ts  # Linux Do Credit 积分/充值
 │   ├── update-service.ts  # 应用内更新检测/下载/安装
 │   ├── unified-config-manager.ts  # 配置持久化与迁移
@@ -74,7 +75,8 @@ src/
 ### Key Patterns
 
 - **IPC 通信**: 渲染进程通过 `window.electronAPI.xxx()` 调用，preload.ts 桥接到主进程 handler。新增 IPC 接口需同步修改 preload.ts + 对应 handler 文件 + handlers/index.ts 注册。
-- **服务层依赖链**: TokenService → ChromeManager, ApiService → TokenService, CliCompatService → ApiService, CreditService → ChromeManager。
+- **服务层依赖链**: TokenService → ChromeManager, ApiService → TokenService, CliCompatService → ApiService, CliWrapperCompatService → child_process/fs/os/path, CreditService → ChromeManager。
+- **CLI 兼容性测试链路**: 渲染进程统一通过 `window.electronAPI.cliCompat.testWithWrapper()` 调用主进程真实 wrapper 测试入口；该流程使用临时目录，不写入用户真实 CLI 配置目录。
 - **状态管理**: Zustand store 拆分为 config (站点配置)、detection (检测结果)、ui (UI 状态)、toast (通知)、customCliConfig (CLI 配置)。
 - **UI 组件**: 基于当前产品级中性设计系统的自定义组件库，统一使用 `App*` / `DataTable` 等公共原语入口。
 - **测试**: 大量使用 fast-check 属性测试 (`*.property.test.ts`)，测试文件位于 `src/__tests__/`，setup 文件 `src/__tests__/setup.ts`。

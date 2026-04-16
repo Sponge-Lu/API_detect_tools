@@ -10,6 +10,9 @@
  * - 向后兼容属性代理: 旧代码通过 getter/setter 透明访问 slot 0
  * - loginBrowserState: 独立登录浏览器，不占用任何槽位，避免与检测任务冲突
  *
+ * LocalStorageData 登录态字段支持三类站点:
+ * - Sub2API: auth_user, auth_token
+ *
  * LocalStorageData 签到字段支持两种站点类型:
  * - Veloera: check_in_enabled, can_check_in
  * - New API: checkin_enabled, checkin.stats.checked_in_today (取反)
@@ -31,6 +34,8 @@ import * as os from 'os';
 import * as fs from 'fs';
 import { app } from 'electron';
 import Logger from './utils/logger';
+import type { SiteType } from '../shared/types/site';
+import { getSiteTypeProfile } from './site-type-registry';
 
 /**
  * localStorage数据结构
@@ -40,6 +45,7 @@ interface LocalStorageData {
   username: string | null;
   systemName: string | null;
   accessToken: string | null;
+  siteTypeHint?: SiteType | null;
   supportsCheckIn?: boolean; // 站点是否支持签到
   canCheckIn?: boolean; // 当前是否可签到
 }
@@ -950,9 +956,10 @@ export class ChromeManager {
     waitForLogin: boolean = false,
     maxWaitTime: number = 60000,
     onStatus?: (status: string) => void,
-    options?: { loginMode?: boolean }
+    options?: { loginMode?: boolean; siteType?: SiteType }
   ): Promise<LocalStorageData> {
     const loginMode = options?.loginMode;
+    const siteType = options?.siteType;
 
     // 选择正确的浏览器实例
     const activeBrowser = loginMode ? this.loginBrowserState?.browser : this.browser;
@@ -987,7 +994,7 @@ export class ChromeManager {
       Logger.info('🔄 [ChromeManager] 尝试通过API验证登录状态...');
       try {
         this.checkBrowserClosed(loginMode);
-        const apiData = await this.getUserDataFromApi(page, url, loginMode);
+        const apiData = await this.getUserDataFromApi(page, url, siteType, loginMode);
         if (apiData.userId) {
           Logger.info(`✅ [ChromeManager] 通过API检测到用户已登录！用户ID: ${apiData.userId}`);
           // 合并数据，API数据优先
@@ -995,7 +1002,14 @@ export class ChromeManager {
         } else {
           // API也没有数据，进入等待循环
           onStatus?.('未检测到登录，请在浏览器中登录账号...');
-          localData = await this.waitForUserLogin(page, url, maxWaitTime, onStatus, loginMode);
+          localData = await this.waitForUserLogin(
+            page,
+            url,
+            maxWaitTime,
+            onStatus,
+            loginMode,
+            siteType
+          );
         }
       } catch (apiError: any) {
         // 如果是浏览器关闭错误，直接抛出
@@ -1008,7 +1022,14 @@ export class ChromeManager {
         Logger.info(`ℹ️ [ChromeManager] API验证失败: ${apiError.message}，进入等待循环...`);
         // API失败（可能401/403），进入等待循环
         onStatus?.('登录状态无效，请在浏览器中登录账号...');
-        localData = await this.waitForUserLogin(page, url, maxWaitTime, onStatus, loginMode);
+        localData = await this.waitForUserLogin(
+          page,
+          url,
+          maxWaitTime,
+          onStatus,
+          loginMode,
+          siteType
+        );
       }
 
       Logger.info('✅ [ChromeManager] 用户已登录，继续获取数据');
@@ -1025,7 +1046,7 @@ export class ChromeManager {
       Logger.info('⚠️ [ChromeManager] 信息不完整，尝试通过API补全...');
       try {
         this.checkBrowserClosed(loginMode);
-        const apiData = await this.getUserDataFromApi(page, url, loginMode);
+        const apiData = await this.getUserDataFromApi(page, url, siteType, loginMode);
         // 合并数据，localStorage优先
         const merged = { ...apiData, ...localData };
         Logger.info('✅ [ChromeManager] API补全完成');
@@ -1054,7 +1075,14 @@ export class ChromeManager {
         if (isAuthError && waitForLogin) {
           Logger.info('🔄 [ChromeManager] 检测到登录状态无效，等待用户重新登录...');
           onStatus?.('登录状态已过期，请在浏览器中重新登录...');
-          localData = await this.waitForUserLogin(page, url, maxWaitTime, onStatus, loginMode);
+          localData = await this.waitForUserLogin(
+            page,
+            url,
+            maxWaitTime,
+            onStatus,
+            loginMode,
+            siteType
+          );
           return localData;
         }
 
@@ -1127,7 +1155,8 @@ export class ChromeManager {
     baseUrl: string,
     maxWaitTime: number,
     onStatus?: (status: string) => void,
-    loginMode?: boolean
+    loginMode?: boolean,
+    siteType?: SiteType
   ): Promise<LocalStorageData> {
     const startTime = Date.now();
     const checkInterval = 2000; // 每2秒检查一次
@@ -1166,7 +1195,7 @@ export class ChromeManager {
           Logger.info('🔄 [ChromeManager] 检测到userId但无accessToken，验证登录状态...');
           try {
             this.checkBrowserClosed(loginMode);
-            const apiData = await this.getUserDataFromApi(page, baseUrl, loginMode);
+            const apiData = await this.getUserDataFromApi(page, baseUrl, siteType, loginMode);
             if (apiData.userId) {
               Logger.info(`✅ [ChromeManager] 登录状态有效！用户ID: ${apiData.userId}`);
               return { ...localData, ...apiData };
@@ -1190,7 +1219,7 @@ export class ChromeManager {
           Logger.info('🔄 [ChromeManager] 尝试通过API检查登录状态...');
           try {
             this.checkBrowserClosed(loginMode);
-            const apiData = await this.getUserDataFromApi(page, baseUrl, loginMode);
+            const apiData = await this.getUserDataFromApi(page, baseUrl, siteType, loginMode);
             if (apiData.userId) {
               Logger.info(`✅ [ChromeManager] 通过API检测到用户登录！用户ID: ${apiData.userId}`);
               // 合并数据，API数据优先（因为localStorage可能没有）
@@ -1223,7 +1252,7 @@ export class ChromeManager {
 
     Logger.info('⏰ [ChromeManager] 等待超时，最后尝试API回退...');
     try {
-      const apiData = await this.getUserDataFromApi(page, baseUrl, loginMode);
+      const apiData = await this.getUserDataFromApi(page, baseUrl, siteType, loginMode);
       if (apiData.userId) {
         Logger.info(`✅ [ChromeManager] 通过API检测到用户登录！用户ID: ${apiData.userId}`);
         const localData = await this.tryGetFromLocalStorage(page);
@@ -1298,6 +1327,7 @@ export class ChromeManager {
         Logger.info('   - username:', localData.username || '缺失');
         Logger.info('   - systemName:', localData.systemName || '缺失');
         Logger.info('   - accessToken:', localData.accessToken ? '已获取' : '缺失');
+        Logger.info('   - siteTypeHint:', localData.siteTypeHint || '缺失');
         Logger.info('   - supportsCheckIn:', localData.supportsCheckIn ?? '未知');
         Logger.info('   - canCheckIn:', localData.canCheckIn ?? '未知');
 
@@ -1377,6 +1407,7 @@ export class ChromeManager {
         username: null,
         systemName: null,
         accessToken: null,
+        siteTypeHint: null,
       };
 
       const logParseError = (key: string, error: unknown) => {
@@ -1418,6 +1449,25 @@ export class ChromeManager {
             data.userId = data.userId || userInfo.id || userInfo.user_id || userInfo.userId;
           } catch (error) {
             logParseError('userInfo', error);
+          }
+        }
+
+        const authUserStr = storage.getItem('auth_user');
+        if (authUserStr) {
+          try {
+            const authUser = JSON.parse(authUserStr);
+            data.siteTypeHint = data.siteTypeHint || 'sub2api';
+            data.userId =
+              data.userId || authUser.id || authUser.user_id || authUser.userId || authUser.uid;
+            data.username =
+              data.username ||
+              authUser.username ||
+              authUser.name ||
+              authUser.display_name ||
+              authUser.nickname ||
+              authUser.email;
+          } catch (error) {
+            logParseError('auth_user', error);
           }
         }
 
@@ -1575,6 +1625,35 @@ export class ChromeManager {
           storage.getItem('apiToken') ||
           storage.getItem('bearer_token');
 
+        if (storage.getItem('auth_token')) {
+          data.siteTypeHint = data.siteTypeHint || 'sub2api';
+        }
+
+        const appConfig = (globalThis as any).__APP_CONFIG__;
+        if (appConfig && typeof appConfig === 'object' && !Array.isArray(appConfig)) {
+          const appConfigSystemName = [
+            appConfig.site_subtitle,
+            appConfig.site_name,
+            appConfig.siteName,
+            appConfig.system_name,
+            appConfig.systemName,
+            appConfig.name,
+          ].find((value): value is string => typeof value === 'string' && value.trim().length > 0);
+
+          data.systemName = data.systemName || appConfigSystemName?.trim() || null;
+
+          if (
+            !data.siteTypeHint &&
+            ('site_subtitle' in appConfig ||
+              'custom_menu_items' in appConfig ||
+              'purchase_subscription_enabled' in appConfig ||
+              'linuxdo_oauth_enabled' in appConfig ||
+              'backend_mode_enabled' in appConfig)
+          ) {
+            data.siteTypeHint = 'sub2api';
+          }
+        }
+
         // ===== 签到信息多路径获取 =====
         // 从siteInfo对象获取签到支持状态
         if (siteInfoStr) {
@@ -1664,6 +1743,7 @@ export class ChromeManager {
   private async getUserDataFromApi(
     page: any,
     baseUrl: string,
+    siteType?: SiteType,
     loginMode?: boolean
   ): Promise<LocalStorageData> {
     // 检查浏览器是否已关闭
@@ -1676,12 +1756,7 @@ export class ChromeManager {
 
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
 
-    // 多个API端点尝试
-    const endpoints = [
-      '/api/user/self', // 最常见（所有站点）
-      '/api/user/dashboard', // One Hub, Done Hub (包含更多信息)
-      '/api/user', // 某些简化站点
-    ];
+    const endpoints = getSiteTypeProfile(siteType).initializationUserEndpoints;
 
     let lastError: any = null;
 
@@ -1756,7 +1831,9 @@ export class ChromeManager {
 
             // 兼容多种响应格式
             let userData: any = null;
-            if (data.success && data.data) {
+            if (typeof data?.code === 'number' && data.data) {
+              userData = data.data;
+            } else if (data.success && data.data) {
               userData = data.data;
             } else if (data.data) {
               userData = data.data;
@@ -1799,6 +1876,7 @@ export class ChromeManager {
                 null,
               // System Name - 暂不从此接口获取，后续单独获取
               systemName: null,
+              siteTypeHint: s.getItem('auth_user') || s.getItem('auth_token') ? 'sub2api' : null,
             };
           } catch (error: any) {
             throw new Error(error.message || '请求失败');

@@ -21,7 +21,7 @@
 
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
-| **SiteListHeader.tsx** | 站点列头主组件，显示多列标题、列宽调节与内联排序提示 | `SiteListHeader` 组件 |
+| **SiteListHeader.tsx** | 站点列头主组件，显示多列标题、列宽调节、内联排序提示，并在站点类型列表头提供筛选选择器 | `SiteListHeader` 组件 |
 | **SearchBar.tsx** | 搜索框 | `SearchBar` 组件 |
 | **FilterBar.tsx** | 筛选栏 | `FilterBar` 组件 |
 | **SortMenu.tsx** | 排序菜单 | `SortMenu` 组件 |

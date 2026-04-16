@@ -41,10 +41,13 @@
 | 模块 | 作用 |
 |------|------|
 | `src/main/main.ts` | Electron 生命周期、窗口创建、预加载绑定 |
-| `src/main/unified-config-manager.ts` | v3 配置加载、迁移、legacy 默认账户自愈修复、原子写入、备份恢复、路由配置持久化 |
-| `src/main/chrome-manager.ts` | 多槽位检测浏览器池、独立登录浏览器、Profile 直接打开站点 |
-| `src/main/token-service.ts` | 登录初始化、access token 自动补建、签到、账号数据刷新 |
-| `src/main/api-service.ts` | 站点检测、HTTP 请求、LDC 支付信息探测 |
+| `src/main/unified-config-manager.ts` | v3 配置加载、迁移、legacy 默认账户自愈修复、缺失 `site_type` 旧站点保持未决、原子写入、备份恢复、路由配置持久化，以及兼容保存时清理已删站点的孤儿账户；删除最后一个账户时自动移除站点配置 |
+| `src/main/chrome-manager.ts` | 多槽位检测浏览器池、独立登录浏览器、按 site_type 解析 localStorage / 初始化用户信息 |
+| `src/main/site-type-registry.ts` | 站点类型注册表，统一维护各类型的初始化/模型/余额/API Key/分组/定价端点策略 |
+| `src/main/site-type-detector.ts` | 智能添加与多账户初始化前的站点类型自动识别 |
+| `src/main/token-service.ts` | 登录初始化、按 site_type 选择端点与访问令牌策略、签到、账号数据刷新 |
+| `src/main/api-service.ts` | 站点检测、HTTP 请求、旧站点首次检测时自动识别并写回 `site_type`、LDC 支付信息探测 |
+| `src/main/cli-wrapper-compat-service.ts` | 通过真实 Claude Code / Codex / Gemini CLI wrapper 做兼容性验证；当前 UI 统一通过该服务执行 CLI 可用性测试，使用临时目录隔离本机配置 |
 | `src/main/handlers/*.ts` | `config:*`、`token:*`、`accounts:*`、`route:*` 等 IPC 通道 |
 | `src/main/route-*.ts` | 路由代理服务器、规则解析、模型注册表、CLI 探测、健康检查、统计分析 |
 | `src/main/backup-manager.ts` / `webdav-manager.ts` | 本地备份与 WebDAV 云端备份 |
@@ -96,13 +99,13 @@
 
 1. `main.ts` 启动应用并创建窗口。
 2. `UnifiedConfigManager.loadConfig()` 读取 `config.json`。
-3. 若遇到旧配置，则执行 `v2 -> v3` 迁移；若发现已升级配置仍残留站点级认证且缺少账户记录，则自动补建“默认账户”并持久化；若遇到损坏配置，则保留坏文件并尝试从最近备份恢复。
+3. 若遇到旧配置，则执行 `v2 -> v3` 迁移；若发现已升级配置仍残留站点级认证且缺少账户记录，则自动补建“默认账户”并持久化；若旧站点缺失 `site_type`，加载阶段保持未决而不是默认写成 `newapi`；若遇到损坏配置，则保留坏文件并尝试从最近备份恢复。
 4. `preload.ts` 暴露 IPC API，渲染进程在 `App.tsx` 初始化阶段拉取配置与缓存。
 
 ### 站点检测
 
 1. 渲染进程触发 `detectSite / detectAllSites`。
-2. 主进程通过 `ApiService + TokenService + ChromeManager` 获取站点状态。
+2. 主进程通过 `ApiService + TokenService + ChromeManager` 获取站点状态；旧站点若缺失 `site_type`，会在首次自动检测入口补做判型并写回配置。
 3. 检测结果写回配置缓存，并由 `detectionStore` / 页面组件更新 UI。
 
 ### 自动刷新
@@ -117,10 +120,19 @@
 2. 主进程中的 `route-proxy-service`、`route-cli-probe-service`、`route-analytics-service` 等模块负责运行时行为和统计。
 3. 配置与统计通过 `UnifiedConfigManager` 写回 `config.routing`。
 
+### CLI 兼容性测试
+
+1. 渲染进程中的 `useCliCompatTest`、站点页与 CLI 配置对话框统一调用 `cli-compat:test-with-wrapper`。
+2. 主进程由 `cli-wrapper-compat-service.ts` 在隔离的临时 `HOME` / `CODEX_HOME` / `GEMINI_CLI_HOME` 中拉起真实 CLI。
+3. 测试结果写回站点或账户缓存后，CLI 可用性图标直接根据最新兼容性数据刷新。
+4. 由于真实测试不写入用户 CLI 配置目录，因此正常情况下无需备份或恢复测试前的本机 CLI 配置。
+
 ---
 
 ## 近期结构变化（v3.0.1 相对 v2.1.24）
 
+- 新增 `src/main/cli-wrapper-compat-service.ts`
+- 新增 `src/__tests__/cli-wrapper-compat-service.test.ts`
 - 新增 `src/main/route-analytics-service.ts`
 - 新增 `src/main/route-channel-resolver.ts`
 - 新增 `src/main/route-cli-probe-service.ts`
@@ -164,5 +176,5 @@
 ---
 
 **版本**：3.0.1
-**更新日期**：2026-04-11
+**更新日期**：2026-04-16
 **维护者**：API Hub Team

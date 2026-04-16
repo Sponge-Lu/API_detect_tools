@@ -322,6 +322,8 @@ export const SiteCard = React.memo(
         prevProps.checkingIn === nextProps.checkingIn &&
         prevProps.autoRefreshEnabled === nextProps.autoRefreshEnabled &&
         prevProps.isCliTesting === nextProps.isCliTesting &&
+        prevProps.cliCompatibility === nextProps.cliCompatibility &&
+        prevProps.cliConfig === nextProps.cliConfig &&
         prevProps.refreshMessage === nextProps.refreshMessage &&
         prevProps.selectedGroup === nextProps.selectedGroup &&
         prevProps.modelSearch === nextProps.modelSearch &&
