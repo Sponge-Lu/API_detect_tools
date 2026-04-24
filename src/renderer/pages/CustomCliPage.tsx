@@ -7,7 +7,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useCustomCliConfigStore } from '../store/customCliConfigStore';
 import { useDetectionStore } from '../store/detectionStore';
 import { toast } from '../store/toastStore';
-import type { CodexTestDetail, GeminiTestDetail } from '../store/detectionStore';
+import type { ClaudeTestDetail, CodexTestDetail, GeminiTestDetail } from '../store/detectionStore';
 import {
   createEmptyCustomCliTestState,
   normalizeCustomCliTestState,
@@ -503,6 +503,7 @@ export function CustomCliPage({ runCliTests }: CustomCliPageProps = {}) {
     const slots = createEmptyCustomCliTestState().slots;
     let allSuccess = models.length > 0;
     let testedAt: number | null = null;
+    let claudeDetail: ClaudeTestDetail | undefined;
     let codexDetail: CodexTestDetail | undefined;
     let geminiDetail: GeminiTestDetail | undefined;
 
@@ -529,6 +530,7 @@ export function CustomCliPage({ runCliTests }: CustomCliPageProps = {}) {
           timestamp: testedAt,
         };
         if (!success) allSuccess = false;
+        if (response.data?.claudeDetail) claudeDetail = response.data.claudeDetail;
         if (response.data?.codexDetail) codexDetail = response.data.codexDetail;
         if (response.data?.geminiDetail) geminiDetail = response.data.geminiDetail;
       } catch (error: unknown) {
@@ -546,6 +548,7 @@ export function CustomCliPage({ runCliTests }: CustomCliPageProps = {}) {
     return {
       status: models.length > 0 ? allSuccess : null,
       testedAt,
+      claudeDetail,
       codexDetail,
       geminiDetail,
       slots,
@@ -817,6 +820,7 @@ export function CustomCliPage({ runCliTests }: CustomCliPageProps = {}) {
                         configured,
                         status: testState.status,
                         testedAt: testState.testedAt,
+                        claudeDetail: testState.claudeDetail,
                         codexDetail: testState.codexDetail,
                         geminiDetail: testState.geminiDetail,
                       });

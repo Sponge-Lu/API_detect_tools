@@ -67,6 +67,294 @@ describe('browser login flow', () => {
     expect(result.access_token).toBe('login-browser-token');
   });
 
+  it('createAccessTokenForLogin 应优先复用已回到目标站点的登录页', async () => {
+    vi.doMock('puppeteer-core', () => ({
+      default: {},
+    }));
+    vi.doMock('electron', () => ({
+      app: {
+        getPath: vi.fn(() => 'C:/tmp'),
+      },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const { ChromeManager } = await import('../main/chrome-manager');
+    const manager = new ChromeManager();
+
+    const oauthPage = {
+      url: vi.fn(() => 'https://accounts.example.com/oauth'),
+      goto: vi.fn(async () => undefined),
+      evaluate: vi.fn(),
+      isClosed: vi.fn(() => false),
+    };
+    const sitePage = {
+      url: vi.fn(() => 'https://demo.example.com/dashboard'),
+      goto: vi.fn(async () => undefined),
+      evaluate: vi.fn(async (_fn: any, apiUrl: string, uid: number) => {
+        expect(apiUrl).toBe('https://demo.example.com/api/user/token');
+        expect(uid).toBe(7);
+        return 'login-browser-token';
+      }),
+      isClosed: vi.fn(() => false),
+    };
+
+    (manager as any).loginBrowserState = {
+      browser: {
+        pages: vi.fn(async () => [oauthPage, sitePage]),
+      },
+      chromeProcess: null,
+      debugPort: 0,
+      isClosed: false,
+      abortController: new AbortController(),
+    };
+
+    const token = await manager.createAccessTokenForLogin('https://demo.example.com', 7);
+
+    expect(token).toBe('login-browser-token');
+    expect(sitePage.evaluate).toHaveBeenCalledTimes(1);
+    expect(sitePage.goto).not.toHaveBeenCalled();
+    expect(oauthPage.goto).not.toHaveBeenCalled();
+  });
+
+  it('createAccessTokenForLogin 在当前页不在目标域名时应先导航回站点', async () => {
+    vi.doMock('puppeteer-core', () => ({
+      default: {},
+    }));
+    vi.doMock('electron', () => ({
+      app: {
+        getPath: vi.fn(() => 'C:/tmp'),
+      },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const { ChromeManager } = await import('../main/chrome-manager');
+    const manager = new ChromeManager();
+
+    const page = {
+      url: vi.fn(() => 'https://accounts.example.com/oauth'),
+      goto: vi.fn(async () => undefined),
+      evaluate: vi.fn(async (_fn: any, apiUrl: string, uid: number) => {
+        expect(apiUrl).toBe('https://demo.example.com/api/user/token');
+        expect(uid).toBe(7);
+        return 'login-browser-token';
+      }),
+      isClosed: vi.fn(() => false),
+    };
+
+    (manager as any).loginBrowserState = {
+      browser: {
+        pages: vi.fn(async () => [page]),
+      },
+      chromeProcess: null,
+      debugPort: 0,
+      isClosed: false,
+      abortController: new AbortController(),
+    };
+
+    const token = await manager.createAccessTokenForLogin('https://demo.example.com', 7);
+
+    expect(token).toBe('login-browser-token');
+    expect(page.goto).toHaveBeenCalledWith('https://demo.example.com', {
+      waitUntil: 'networkidle0',
+      timeout: 10000,
+    });
+    expect(page.evaluate).toHaveBeenCalledTimes(1);
+  });
+
+  it('createAccessTokenForLogin 应使用当前页面的 https origin 修正 http 站点基址', async () => {
+    vi.doMock('puppeteer-core', () => ({
+      default: {},
+    }));
+    vi.doMock('electron', () => ({
+      app: {
+        getPath: vi.fn(() => 'C:/tmp'),
+      },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const { ChromeManager } = await import('../main/chrome-manager');
+    const manager = new ChromeManager();
+
+    const page = {
+      url: vi.fn(() => 'https://demo.example.com/dashboard'),
+      goto: vi.fn(async () => undefined),
+      evaluate: vi.fn(async (_fn: any, apiUrl: string, uid: number) => {
+        expect(apiUrl).toBe('https://demo.example.com/api/user/token');
+        expect(uid).toBe(7);
+        return 'login-browser-token';
+      }),
+      isClosed: vi.fn(() => false),
+    };
+
+    (manager as any).loginBrowserState = {
+      browser: {
+        pages: vi.fn(async () => [page]),
+      },
+      chromeProcess: null,
+      debugPort: 0,
+      isClosed: false,
+      abortController: new AbortController(),
+    };
+
+    const token = await manager.createAccessTokenForLogin('http://demo.example.com', 7);
+
+    expect(token).toBe('login-browser-token');
+    expect(page.goto).not.toHaveBeenCalled();
+    expect(page.evaluate).toHaveBeenCalledTimes(1);
+  });
+
+  it('getUserDataFromApi 应在 API 验证阶段使用页面实际的 https origin', async () => {
+    vi.doMock('puppeteer-core', () => ({
+      default: {},
+    }));
+    vi.doMock('electron', () => ({
+      app: {
+        getPath: vi.fn(() => 'C:/tmp'),
+      },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const { ChromeManager } = await import('../main/chrome-manager');
+    const manager = new ChromeManager();
+
+    const page = {
+      url: vi.fn(() => ':'),
+      goto: vi.fn(async () => undefined),
+      evaluate: vi.fn(async (...args: any[]) => {
+        const requestUrl = args[1];
+        if (typeof requestUrl !== 'string') {
+          return 'https://demo.example.com/dashboard';
+        }
+        if (requestUrl === 'https://demo.example.com/api/user/self') {
+          return {
+            userId: 7,
+            username: 'demo',
+            accessToken: null,
+            systemName: null,
+            siteTypeHint: null,
+          };
+        }
+        if (requestUrl === 'https://demo.example.com/api/status') {
+          return 'Demo Site';
+        }
+        throw new Error(`Unexpected URL: ${requestUrl}`);
+      }),
+      isClosed: vi.fn(() => false),
+    };
+
+    (manager as any).loginBrowserState = {
+      browser: null,
+      chromeProcess: null,
+      debugPort: 0,
+      isClosed: false,
+      abortController: new AbortController(),
+    };
+
+    const result = await (manager as any).getUserDataFromApi(
+      page,
+      'http://demo.example.com',
+      'newapi',
+      true
+    );
+
+    expect(result).toMatchObject({
+      userId: 7,
+      username: 'demo',
+      systemName: 'Demo Site',
+    });
+    expect(page.evaluate).toHaveBeenCalledWith(
+      expect.any(Function),
+      'https://demo.example.com/api/user/self'
+    );
+    expect(page.evaluate).toHaveBeenCalledWith(
+      expect.any(Function),
+      'https://demo.example.com/api/status'
+    );
+  });
+
+  it('getLocalStorageData 在首次 API 验证成功后不应重复请求 API 补全', async () => {
+    vi.doMock('puppeteer-core', () => ({
+      default: {},
+    }));
+    vi.doMock('electron', () => ({
+      app: {
+        getPath: vi.fn(() => 'C:/tmp'),
+      },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const { ChromeManager } = await import('../main/chrome-manager');
+    const manager = new ChromeManager();
+
+    const page = {
+      isClosed: vi.fn(() => false),
+    };
+
+    (manager as any).loginBrowserState = {
+      browser: {
+        pages: vi.fn(async () => [page]),
+      },
+      chromeProcess: null,
+      debugPort: 0,
+      isClosed: false,
+      abortController: new AbortController(),
+    };
+
+    vi.spyOn(manager as any, 'waitAndReadLocalStorage').mockResolvedValue({
+      userId: 7,
+      username: 'demo',
+      systemName: 'Demo Site',
+      accessToken: null,
+      siteTypeHint: null,
+      resolvedBaseUrl: null,
+      dataSource: 'localStorage',
+      supportsCheckIn: true,
+      canCheckIn: true,
+    });
+    const getUserDataFromApiSpy = vi.spyOn(manager as any, 'getUserDataFromApi').mockResolvedValue({
+      userId: 7,
+      username: 'demo',
+      systemName: 'Demo Site',
+      accessToken: null,
+      siteTypeHint: null,
+      resolvedBaseUrl: null,
+      dataSource: 'api',
+      supportsCheckIn: true,
+      canCheckIn: true,
+    });
+    vi.spyOn(manager as any, 'resolveEffectiveBaseUrl').mockResolvedValue(
+      'https://demo.example.com'
+    );
+
+    const result = await (manager as any).getLocalStorageData(
+      'http://demo.example.com',
+      true,
+      600000,
+      undefined,
+      {
+        loginMode: true,
+        siteType: 'newapi',
+      }
+    );
+
+    expect(getUserDataFromApiSpy).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      userId: 7,
+      dataSource: 'mixed',
+      resolvedBaseUrl: 'https://demo.example.com',
+    });
+  });
+
   it('close-login-browser only cleans the login browser state', async () => {
     const handlers = new Map<string, (...args: any[]) => any>();
 

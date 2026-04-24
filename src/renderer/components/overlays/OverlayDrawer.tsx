@@ -43,6 +43,7 @@ export function OverlayDrawer({
   'aria-describedby': ariaDescribedBy,
 }: OverlayDrawerProps) {
   const drawerRef = useRef<HTMLDivElement>(null);
+  const overlayPointerDownFromBackdrop = useRef(false);
   const previousActiveElement = useRef<HTMLElement | null>(null);
   const [isAnimating, setIsAnimating] = React.useState(false);
   const [shouldRender, setShouldRender] = React.useState(false);
@@ -124,7 +125,14 @@ export function OverlayDrawer({
 
   const handleOverlayClick = useCallback(
     (event: React.MouseEvent) => {
-      if (closeOnOverlayClick && event.target === event.currentTarget) {
+      const shouldClose =
+        closeOnOverlayClick &&
+        overlayPointerDownFromBackdrop.current &&
+        event.target === event.currentTarget;
+
+      overlayPointerDownFromBackdrop.current = false;
+
+      if (shouldClose) {
         onClose();
       }
     },
@@ -150,6 +158,9 @@ export function OverlayDrawer({
         'transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] [will-change:opacity]',
         isAnimating ? 'opacity-100' : 'opacity-0'
       )}
+      onMouseDown={event => {
+        overlayPointerDownFromBackdrop.current = event.target === event.currentTarget;
+      }}
       onClick={handleOverlayClick}
       role="presentation"
     >

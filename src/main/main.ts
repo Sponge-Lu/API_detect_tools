@@ -55,13 +55,6 @@ let tokenService: TokenService;
 let apiService: ApiService;
 let closeBehaviorManager: CloseBehaviorManager | null = null;
 
-// 发送站点初始化状态到渲染进程
-function sendSiteInitStatus(status: string) {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('site-init-status', status);
-  }
-}
-
 // 主题设置文件路径（与渲染进程保持一致）
 function getThemeSettingsPath() {
   const userDataPath = app.getPath('userData');
@@ -160,7 +153,7 @@ app.whenReady().then(async () => {
 
   // 初始化其他服务
   tokenService = new TokenService(chromeManager);
-  apiService = new ApiService(tokenService, null as any); // tokenStorage 不再需要
+  apiService = new ApiService(tokenService);
   configureRouteApiKeyResolver(tokenService);
 
   // 创建窗口
@@ -193,7 +186,7 @@ app.whenReady().then(async () => {
   Logger.info('✅ [Main] 路由代理服务已初始化');
 
   // 启动 CLI 探测定时器（独立于代理服务器）
-  startCliProbeTimer();
+  startCliProbeTimer({ resumeFromLatest: true });
   Logger.info('✅ [Main] CLI 探测定时器已初始化');
 
   app.on('activate', () => {

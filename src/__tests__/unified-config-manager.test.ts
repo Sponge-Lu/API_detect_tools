@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
+import { buildProbeKey } from '../shared/types/route-proxy';
 
 interface BackupEntry {
   filename: string;
@@ -433,5 +434,172 @@ describe('UnifiedConfigManager', () => {
     expect(persisted.sites).toHaveLength(1);
     expect(persisted.accounts).toHaveLength(1);
     expect(persisted.accounts[0].id).toBe(second.id);
+  });
+
+  it('normalizes legacy cli model selections to canonical names when routing config is loaded', async () => {
+    const configPath = path.join(userDataDir, 'config.json');
+    const rawConfig = createSampleConfig();
+    rawConfig.routing = {
+      server: {
+        enabled: false,
+        host: '127.0.0.1',
+        port: 3210,
+        unifiedApiKey: 'sk-route-test',
+        requestTimeoutMs: 300000,
+        retryCount: 1,
+        healthCheckIntervalMinutes: 60,
+      },
+      rules: [],
+      cliModelSelections: {
+        claudeCode: 'claude-sonnet-4.6-20260201',
+        codex: 'o3-latest',
+        geminiCli: null,
+      },
+      stats: {},
+      health: {},
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        overrides: [],
+        entries: {
+          'claude-sonnet-4-6': {
+            canonicalName: 'claude-sonnet-4-6',
+            vendor: 'claude',
+            aliases: ['claude-sonnet-4.6-20260201'],
+            sources: [],
+            hasOverride: true,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+          o3: {
+            canonicalName: 'o3',
+            vendor: 'gpt',
+            aliases: ['o3-latest'],
+            sources: [],
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+      },
+      cliProbe: {
+        config: {
+          enabled: false,
+          intervalMinutes: 60,
+          modelsPerCli: 3,
+          requestTimeoutMs: 30000,
+          maxConcurrency: 3,
+          retentionDays: 30,
+          runOnStartup: false,
+        },
+        latest: {},
+        history: {},
+      },
+      analytics: {
+        config: {
+          enabled: true,
+          retentionDays: 30,
+          bucketSizeMinutes: 60,
+          recordTokenUsage: true,
+          recordStatusCode: true,
+          recordLatencyHistogram: true,
+          latencyHistogramBuckets: [1000, 3000],
+          firstByteHistogramBuckets: [200, 500],
+        },
+        buckets: {},
+      },
+    } as any;
+    await fs.writeFile(configPath, JSON.stringify(rawConfig, null, 2), 'utf-8');
+
+    const manager = await loadManager();
+    await manager.loadConfig();
+
+    expect(manager.getRoutingConfig().cliModelSelections).toEqual({
+      claudeCode: 'claude-sonnet-4-6',
+      codex: 'o3',
+      geminiCli: null,
+    });
+  });
+
+  it('persists vendor priority config under routing.modelRegistry', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as any);
+    await manager.loadConfig();
+
+    const registry = await manager.updateRouteVendorPriorityConfig('claude' as any, {
+      sitePriorities: {
+        'site-1': 2,
+      },
+      apiKeyPriorities: {
+        'site-1:acc-1:key-1': 1,
+      },
+    });
+
+    expect(registry.vendorPriorities.claude).toEqual({
+      sitePriorities: {
+        'site-1': 2,
+      },
+      apiKeyPriorities: {
+        'site-1:acc-1:key-1': 1,
+      },
+    });
+
+    const persisted = JSON.parse(await fs.readFile(path.join(userDataDir, 'config.json'), 'utf-8'));
+    expect(persisted.routing.modelRegistry.vendorPriorities.claude).toEqual({
+      sitePriorities: {
+        'site-1': 2,
+      },
+      apiKeyPriorities: {
+        'site-1:acc-1:key-1': 1,
+      },
+    });
+  });
+
+  it('migrates legacy cli_compatibility into cliProbe.latest without fabricating history', async () => {
+    const configPath = path.join(userDataDir, 'config.json');
+    const rawConfig = createSampleConfig();
+    rawConfig.version = '3.1';
+    rawConfig.accounts = [
+      {
+        id: 'acct-default',
+        site_id: 'site-1',
+        account_name: '默认账户',
+        user_id: 'user-1',
+        access_token: 'token-1',
+        auth_source: 'manual',
+        status: 'active',
+        cached_data: {
+          cli_compatibility: {
+            codex: true,
+            codexDetail: { responses: true },
+            geminiCli: false,
+            geminiDetail: { native: false, proxy: false },
+            testedAt: 1234567890,
+          },
+        },
+        created_at: 1,
+        updated_at: 1,
+      },
+    ] as any;
+    await fs.writeFile(configPath, JSON.stringify(rawConfig, null, 2), 'utf-8');
+
+    const manager = await loadManager();
+    await manager.loadConfig();
+
+    const routing = manager.getRoutingConfig();
+    const codexKey = buildProbeKey('site-1', 'acct-default', 'codex', '__legacy__compat__');
+    const geminiKey = buildProbeKey('site-1', 'acct-default', 'geminiCli', '__legacy__compat__');
+
+    expect(routing.cliProbe.latest[codexKey]).toBeDefined();
+    expect(routing.cliProbe.latest[codexKey].lastSample.source).toBe('legacyCache');
+    expect(routing.cliProbe.latest[codexKey].lastSample.codexDetail).toEqual({ responses: true });
+    expect(routing.cliProbe.latest[geminiKey].lastSample.geminiDetail).toEqual({
+      native: false,
+      proxy: false,
+    });
+    expect(routing.cliProbe.history).toEqual({});
+
+    const persisted = JSON.parse(await fs.readFile(configPath, 'utf-8'));
+    expect(persisted.accounts[0].cached_data?.cli_compatibility).toBeUndefined();
   });
 });

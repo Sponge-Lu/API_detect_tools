@@ -20,9 +20,10 @@
 import { useCallback } from 'react';
 import Logger from '../utils/logger';
 import type { Config } from '../App';
-import type { DetectionResult, DetectionCacheData } from '../../shared/types/site';
+import type { DetectionResult, DetectionCacheData, UnifiedConfig } from '../../shared/types/site';
 import type { CliCompatibilityResult, CliConfig } from '../store/detectionStore';
 import type { SiteInfo } from '../../shared/types/config-detection';
+import { syncProjectedCliCompatibility } from '../services/cli-compat-projection';
 
 /** 生成 per-account 复合 key */
 const makeStoreKey = (siteName: string, accountId?: string) =>
@@ -51,7 +52,7 @@ function toDetectionResult(
         ? cache.today_prompt_tokens + cache.today_completion_tokens
         : undefined,
     todayRequests: cache.today_requests,
-    has_checkin: typeof cache.can_check_in === 'boolean',
+    has_checkin: cache.has_checkin ?? typeof cache.can_check_in === 'boolean',
     can_check_in: cache.can_check_in,
     apiKeys: cache.api_keys,
     userGroups: cache.user_groups,
@@ -151,9 +152,11 @@ export function useDataLoader({
           if (result.userGroups) setUserGroups(key, result.userGroups);
         }
 
-        // 加载 CLI 兼容性数据和配置（优先账户级，其次无账户站点的站点级 fallback）
-        let cliCompatCount = 0;
+        // 加载基于统一 cliProbe 的 CLI 兼容性投影
         let cliConfigCount = 0;
+        if (setCliCompatibility) {
+          await syncProjectedCliCompatibility(currentConfig as UnifiedConfig, setCliCompatibility);
+        }
         sites.forEach((site: any) => {
           const siteId = site.id as string | undefined;
           const siteAccounts = siteId ? accountsBySiteId.get(siteId) : undefined;
@@ -161,43 +164,6 @@ export function useDataLoader({
           if (siteAccounts && siteAccounts.length > 0) {
             siteAccounts.forEach(acct => {
               const key = makeStoreKey(site.name, acct.id);
-              const cliCompatibility = acct.cached_data?.cli_compatibility;
-              if (setCliCompatibility && cliCompatibility) {
-                const isValid =
-                  typeof cliCompatibility === 'object' &&
-                  cliCompatibility !== null &&
-                  ('claudeCode' in cliCompatibility ||
-                    'codex' in cliCompatibility ||
-                    'geminiCli' in cliCompatibility);
-
-                if (isValid) {
-                  const normalizedResult: CliCompatibilityResult = {
-                    claudeCode:
-                      typeof cliCompatibility.claudeCode === 'boolean'
-                        ? cliCompatibility.claudeCode
-                        : null,
-                    codex:
-                      typeof cliCompatibility.codex === 'boolean' ? cliCompatibility.codex : null,
-                    codexDetail: cliCompatibility.codexDetail || undefined,
-                    geminiCli:
-                      typeof cliCompatibility.geminiCli === 'boolean'
-                        ? cliCompatibility.geminiCli
-                        : null,
-                    geminiDetail: cliCompatibility.geminiDetail || undefined,
-                    testedAt:
-                      typeof cliCompatibility.testedAt === 'number'
-                        ? cliCompatibility.testedAt
-                        : null,
-                    error:
-                      typeof cliCompatibility.error === 'string'
-                        ? cliCompatibility.error
-                        : undefined,
-                  };
-                  setCliCompatibility(key, normalizedResult);
-                  cliCompatCount++;
-                }
-              }
-
               if (setCliConfig && acct.cli_config) {
                 setCliConfig(key, acct.cli_config as CliConfig);
                 cliConfigCount++;
@@ -206,46 +172,12 @@ export function useDataLoader({
             return;
           }
 
-          const cliCompatibility = site.cached_data?.cli_compatibility || site.cli_compatibility;
-          if (setCliCompatibility && cliCompatibility) {
-            const isValid =
-              typeof cliCompatibility === 'object' &&
-              cliCompatibility !== null &&
-              ('claudeCode' in cliCompatibility ||
-                'codex' in cliCompatibility ||
-                'geminiCli' in cliCompatibility);
-
-            if (isValid) {
-              const normalizedResult: CliCompatibilityResult = {
-                claudeCode:
-                  typeof cliCompatibility.claudeCode === 'boolean'
-                    ? cliCompatibility.claudeCode
-                    : null,
-                codex: typeof cliCompatibility.codex === 'boolean' ? cliCompatibility.codex : null,
-                codexDetail: cliCompatibility.codexDetail || undefined,
-                geminiCli:
-                  typeof cliCompatibility.geminiCli === 'boolean'
-                    ? cliCompatibility.geminiCli
-                    : null,
-                geminiDetail: cliCompatibility.geminiDetail || undefined,
-                testedAt:
-                  typeof cliCompatibility.testedAt === 'number' ? cliCompatibility.testedAt : null,
-                error:
-                  typeof cliCompatibility.error === 'string' ? cliCompatibility.error : undefined,
-              };
-              setCliCompatibility(site.name, normalizedResult);
-              cliCompatCount++;
-            }
-          }
           const cliConfig = site.cli_config || site.cached_data?.cli_config;
           if (setCliConfig && cliConfig) {
             setCliConfig(site.name, cliConfig);
             cliConfigCount++;
           }
         });
-        if (cliCompatCount > 0) {
-          Logger.info(`✅ [useDataLoader] 加载了 ${cliCompatCount} 个站点的 CLI 兼容性数据`);
-        }
         if (cliConfigCount > 0) {
           Logger.info(`✅ [useDataLoader] 加载了 ${cliConfigCount} 个站点的 CLI 配置`);
         }

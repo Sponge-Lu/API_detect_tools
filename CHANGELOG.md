@@ -4,6 +4,23 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，并且本项目遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
+## [Unreleased]
+
+### 新增
+- **会话日志页**：新增 `日志` 一级页面，统一展示当前启动周期内的通知历史与关键操作记录，并支持按 `通知 / 操作` 筛选与一键清空
+- **Route 模型注册表增强**：模型注册表新增 `displayItems / vendorPriorities / sources` 结构，支持来源同步、展示项维护与厂商优先级配置
+
+### 变更
+- **一级导航调整**：当前主界面收敛为 `站点管理 / 自定义 CLI / LDC 积分 / 站点检测 / 路由 / 日志 / 设置`，旧的 Route 子页入口并入 `路由` 工作台
+- **CLI 探测投影统一**：站点页与 CLI 可用性页统一消费 `config.routing.cliProbe.latest`，按账户维度投影回兼容性图标，并保留错误码、回答摘要与来源标签
+- **CLI 配置模板更新**：Claude Code 顶层 `model` 对 Claude 4.6+ 自动写入 `sonnet[1m] / opus[1m]` 别名；Codex 模板默认 `model_reasoning_effort = "xhigh"`
+- **签到能力状态拆分**：共享检测缓存补齐 `has_checkin / can_check_in` 双字段，批量签到跳过 `unavailable` 分组，并按 `site_type` 打开对应手动签到页
+
+### 修复
+- **LDC 登录态恢复**：Linux Do Credit 刷新链路不再硬依赖 `cf_clearance`，改为结合持久化 cookies、缓存提示和实时验证恢复页面状态，401/403 时同步清空失效会话
+- **登录浏览器站点回归**：登录浏览器读取用户数据和创建 access token 时会优先回到目标域名，并按当前页面 origin 修正 `baseUrl`，降低登录后站点基址漂移导致的误判
+- **Route 密集界面可用性**：模型重定向对话框与 CLI 可用性矩阵改为更稳定的滚动/内联设置布局，减少弹窗溢出与长列表滚动卡顿
+
 ## [v3.0.1]
 
 ### 新增

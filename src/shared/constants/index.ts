@@ -93,10 +93,10 @@ export const DEFAULT_WINDOW_WIDTH = 1280;
 /** 默认窗口高度 */
 export const DEFAULT_WINDOW_HEIGHT = 800;
 
-/** 前端临时隐藏的 LDC 相关 UI 开关 */
+/** LDC 相关 UI 显示开关（旧导航兼容路径仍会读取） */
 export const LDC_UI_VISIBILITY = {
-  showRatioColumn: false,
-  showCreditTab: false,
+  showRatioColumn: true,
+  showCreditTab: true,
 } as const;
 
 // ============= 分页相关 =============
@@ -157,12 +157,13 @@ export const LIGHT_THEME_BG_COLOR = '#f8fafc';
 /** 站点列表默认列宽（像素） */
 export const DEFAULT_COLUMN_WIDTHS = [
   142, // 站点（两行：站点名 / 账户名 + 更新时间）
-  100, // 站点类型
-  100, // 余额
-  82, // 今日消费
-  92, // Token统计
+  86, // 站点类型
+  88, // 余额
+  78, // 今日消费
+  110, // Token统计
   92, // 请求统计
-  64, // 模型数
+  56, // 模型数
+  72, // LDC
   180, // CLI可用性
 ] as const;
 

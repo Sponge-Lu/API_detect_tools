@@ -33,11 +33,13 @@ describe('custom cli compatibility metadata helpers', () => {
       configured: true,
       status: false,
       testedAt: Date.now() - 60_000,
-      codexDetail: { responses: false },
+      codexDetail: { responses: false, replyText: '答案是 3' },
+      error: '期望包含 2',
     });
 
     expect(tooltip).toContain('Codex: 不支持');
-    expect(tooltip).toContain('[responses: ✗]');
+    expect(tooltip).toContain('[responses: ✗, 回答: 答案是 3]');
     expect(tooltip).toContain('分钟前测试');
+    expect(tooltip).toContain('错误: 期望包含 2');
   });
 });

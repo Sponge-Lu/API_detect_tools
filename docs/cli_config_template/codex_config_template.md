@@ -3,7 +3,7 @@
 ## config.toml (路径：~/.codex/config.toml)
 model_provider = "IkunCoding"
 model = "gpt-5.1-codex-max"
-model_reasoning_effort = "high"
+model_reasoning_effort = "xhigh"
 disable_response_storage = true
 network_access = "enabled"
 

@@ -481,24 +481,28 @@ export class ApiService {
 
             // 步骤2：获取签到状态（仅当站点配置支持或用户强制启用时）
             if (siteConfigSupports) {
+              hasCheckin = true;
+
               // 站点配置支持签到（或用户强制启用），获取签到状态
               const checkInStatus = await this.tokenService.fetchCheckInStatus(
                 site.url,
                 parseInt(site.user_id),
                 site.system_token,
-                sharedPage // 传入共享页面以绕过Cloudflare
+                sharedPage, // 传入共享页面以绕过Cloudflare
+                site.site_type
               );
 
               // 如果签到状态接口返回了有效数据
               if (checkInStatus !== undefined) {
-                hasCheckin = true;
                 canCheckIn = checkInStatus;
                 Logger.info(
                   `✅ [ApiService] 签到功能检测: 支持=${hasCheckin}, 可签到=${canCheckIn}`
                 );
               } else {
                 // 签到状态接口不可用
-                Logger.info('⚠️ [ApiService] 站点配置支持签到，但签到状态接口不可用');
+                Logger.info(
+                  '⚠️ [ApiService] 站点配置支持签到，但签到状态接口不可用，保留支持状态并标记可签到状态未知'
+                );
               }
             } else {
               // 站点配置不支持签到，且用户未强制启用
@@ -2510,6 +2514,7 @@ export class ApiService {
         user_groups: detectionResult.userGroups,
         model_pricing: detectionResult.modelPricing,
         last_refresh: Date.now(),
+        has_checkin: detectionResult.has_checkin,
         can_check_in: detectionResult.can_check_in,
         ldc_payment_supported: detectionResult.ldcPaymentSupported,
         ldc_exchange_rate: detectionResult.ldcExchangeRate,
@@ -2521,7 +2526,7 @@ export class ApiService {
               total_checkins: detectionResult.checkinStats.totalCheckins,
               site_type: detectionResult.checkinStats.siteType,
             }
-          : existing?.checkin_stats,
+          : undefined,
         status: detectionResult.status,
         error: detectionResult.error,
       }));

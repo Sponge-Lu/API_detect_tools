@@ -75,6 +75,7 @@ describe('SiteEditor', () => {
       data: {
         user_id: 9,
         site_name: 'AC_公益站',
+        site_url: 'https://example.com',
         access_token: 'jwt-token',
         api_key: 'sk-sub2api-raw-12345678',
         supportsCheckIn: false,
@@ -122,6 +123,7 @@ describe('SiteEditor', () => {
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'AC_公益站',
+        url: 'https://example.com',
         site_type: 'sub2api',
         api_key: 'sk-sub2api-raw-12345678',
         system_token: 'jwt-token',

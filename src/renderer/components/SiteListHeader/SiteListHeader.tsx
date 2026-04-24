@@ -41,6 +41,7 @@ const ALL_COLUMNS: SiteListColumn[] = [
   { label: 'Token统计', field: 'totalTokens', centered: true },
   { label: '请求统计', centered: true },
   { label: '模型数', field: 'modelCount', centered: true },
+  { label: 'LDC', field: 'ldcRatio', centered: true },
   { label: 'CLI可用性', centered: true },
 ];
 

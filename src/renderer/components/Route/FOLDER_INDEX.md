@@ -2,25 +2,28 @@
 
 ## 架构说明
 
-**职责**: 提供模型重定向、CLI 可用性、代理统计相关的 route 页面组件。
+**职责**: 提供路由总览页所需的模型重定向、CLI 可用性与路由总览区块组件。
 
 **特点**:
-- 三张 route 页面不再额外挂载顶部 header / 说明头带
-- 操作控件回收到各自内容区内部，避免重复的信息层
-- 保持各自原型不变：目录页、矩阵页、运营控制页
-- 不改动 route store / IPC，仅调整展示层层级
+- 模型重定向不再独立成一级页面，而是作为路由总览中的一个可编辑区块
+- 路由总览页采用组合式布局：服务器、CLI 默认模型、统计、最近重定向
+- 每个厂商只显示最近 3 条重定向，并支持新增/编辑全局手工映射
+- `RouteSubTabs.tsx` 仅保留给旧结构兼容，不再是主入口
 
 ## 文件清单
 
 | 文件 | 职责 |
 |------|------|
-| `RouteSubTabs.tsx` | 遗留 route 子页切换条，供旧 RoutePage 使用 |
-| `Redirection/ModelRedirectionTab.tsx` | 模型重定向目录页 |
-| `Usability/CliUsabilityTab.tsx` | CLI 可用性矩阵页 |
-| `ProxyStats/ProxyStatsTab.tsx` | 代理统计控制台 |
+| `RouteSubTabs.tsx` | 遗留 route 子页切换条，供旧结构兼容使用 |
+| `Redirection/ModelRedirectionTab.tsx` | 路由页中的模型重定向卡片区与编辑模态框 |
+| `Usability/CliUsabilityTab.tsx` | CLI 可用性矩阵页（按站点-账户多行展示，模型时间 24 小时制） |
+| `ProxyStats/ProxyStatsTab.tsx` | 路由页复用的代理服务器、CLI 默认模型与统计面板 |
 
 ## 更新日志
 
+- 2026-04-16: 顶层“模型重定向”页面下线，`代理统计` 一级页更名为 `路由`
+- 2026-04-16: 路由总览页增加单列厂商折叠式模型重定向区，默认收起并按厂商内 sourceKey 覆盖保存
+- 2026-04-21: CLI 可用性矩阵改为按“站点-账户”多行展示，站点列缩窄后让三个 CLI history 区域相应放宽，并统一使用 24 小时制测试时间
 - 2026-04-01: 移除三张 live route 页面的顶部说明头带，操作条回收到内容区
 - 2026-04-01: 进一步收紧 route 头带为单行不换行结构，匹配顶层 tab header 节奏
 - 2026-04-01: 移除旧标签行，route 页头带改为更紧凑的单行信息带

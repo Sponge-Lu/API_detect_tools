@@ -58,6 +58,7 @@ export function SiteCardHeader({
   onApply,
 }: SiteCardHeaderProps) {
   const siteTypeLabel = site.site_type ? SITE_TYPE_LABELS[site.site_type] : '未识别';
+  const ldcRatio = siteResult?.ldcPaymentSupported ? siteResult.ldcExchangeRate?.trim() : undefined;
 
   return (
     <div
@@ -155,7 +156,7 @@ export function SiteCardHeader({
         </span>
         {todayTotalTokens > 0 ? (
           <span className="mt-0.5 text-[10px] text-[var(--text-tertiary)]">
-            输入 {formatNumber(todayPromptTokens)} / 输出 {formatNumber(todayCompletionTokens)}
+            In {formatNumber(todayPromptTokens)} / Out {formatNumber(todayCompletionTokens)}
           </span>
         ) : null}
       </div>
@@ -184,6 +185,21 @@ export function SiteCardHeader({
         >
           {modelCount}
         </span>
+      </div>
+
+      <div className="flex items-center justify-center text-[13px] text-[var(--text-secondary)]">
+        {ldcRatio ? (
+          <span
+            className="font-mono font-medium text-[var(--success)]"
+            title={`${ldcRatio} LDC = 1 站点余额`}
+          >
+            {ldcRatio}
+          </span>
+        ) : siteResult?.ldcPaymentSupported ? (
+          <span className="font-medium text-[var(--success)]">支持</span>
+        ) : (
+          <span className="text-[var(--text-tertiary)]">--</span>
+        )}
       </div>
 
       <div className="flex items-center justify-center gap-1">

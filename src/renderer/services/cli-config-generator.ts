@@ -81,6 +81,46 @@ export function normalizeApiKey(apiKey: string): string {
   return `sk-${apiKey}`;
 }
 
+function parseClaudeVersionSegments(
+  model: string
+): { family: 'sonnet' | 'opus'; major: number; minor: number } | null {
+  const normalized = model.trim().toLowerCase();
+  const afterFamilyMatch = normalized.match(/(?:^|[-_])(sonnet|opus)(?:[-_]?)(\d+)(?:[.-](\d+))?/i);
+  if (afterFamilyMatch) {
+    return {
+      family: afterFamilyMatch[1] as 'sonnet' | 'opus',
+      major: Number(afterFamilyMatch[2]),
+      minor: Number(afterFamilyMatch[3] ?? '0'),
+    };
+  }
+
+  const beforeFamilyMatch = normalized.match(
+    /(?:^|[-_])(\d+)(?:[.-](\d+))?[-_](sonnet|opus)(?:[-_]|$)/i
+  );
+  if (!beforeFamilyMatch) {
+    return null;
+  }
+
+  return {
+    family: beforeFamilyMatch[3] as 'sonnet' | 'opus',
+    major: Number(beforeFamilyMatch[1]),
+    minor: Number(beforeFamilyMatch[2] ?? '0'),
+  };
+}
+
+export function resolveClaudeCodeDisplayModel(model: string): string {
+  const parsed = parseClaudeVersionSegments(model);
+  if (!parsed) {
+    return model;
+  }
+
+  if (parsed.major > 4 || (parsed.major === 4 && parsed.minor >= 6)) {
+    return parsed.family === 'sonnet' ? 'sonnet[1m]' : 'opus[1m]';
+  }
+
+  return model;
+}
+
 /**
  * 生成 Claude Code 配置
  * 完全按照 docs/cli_config_template/cc_config_template.md 模板生成
@@ -90,10 +130,11 @@ export function normalizeApiKey(apiKey: string): string {
 export function generateClaudeCodeConfig(params: ConfigParams): GeneratedConfig {
   const normalizedUrl = normalizeUrl(params.siteUrl);
   const normalizedApiKey = normalizeApiKey(params.apiKey);
+  const displayModel = resolveClaudeCodeDisplayModel(params.model);
 
   // 按照模板生成 settings.json（对齐 Claude Code 最新配置规范）
   const settingsJson = {
-    model: params.model,
+    model: displayModel,
     language: 'zh-CN',
     env: {
       ANTHROPIC_AUTH_TOKEN: normalizedApiKey,
@@ -138,7 +179,7 @@ export function generateClaudeCodeConfig(params: ConfigParams): GeneratedConfig 
 export function generateClaudeCodeTemplate(): GeneratedConfig {
   // 完全照搬模板文件内容，包含注释（对齐 Claude Code 最新配置规范）
   const settingsContent = `{
-  "model": "claude-opus-4-6",
+  "model": "opus[1m]",
   "language": "zh-CN",
   "env": {
     "ANTHROPIC_BASE_URL": "https://anyrouter.top",   # URL需要去对应的站点确认
@@ -317,7 +358,7 @@ export function generateCodexConfig(params: CodexConfigParams): GeneratedConfig 
   // 按照模板生成 config.toml，添加测试结果注释
   const configToml = normalizeCodexFeatureFlagsToml(`model_provider = "${providerName}"
 model = "${params.model}"
-model_reasoning_effort = "high"
+model_reasoning_effort = "xhigh"
 disable_response_storage = true
 network_access = "enabled"
 
@@ -360,7 +401,7 @@ export function generateCodexTemplate(): GeneratedConfig {
   // 完全照搬模板文件内容，包含注释和 wire_api 说明
   const configTomlTemplate = normalizeCodexFeatureFlagsToml(`model_provider = "OpenAI"
 model = "gpt-5.1-codex-max"
-model_reasoning_effort = "high"
+model_reasoning_effort = "xhigh"
 disable_response_storage = true
 network_access = "enabled"
 

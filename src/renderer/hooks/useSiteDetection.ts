@@ -23,6 +23,7 @@ import { useDetectionStore } from '../store/detectionStore';
 import { useConfigStore } from '../store/configStore';
 import { useUIStore } from '../store/uiStore';
 import { toast } from '../store/toastStore';
+import { sessionEventLog } from '../services/sessionEventLog';
 import type { Config, DetectionResult, SiteConfig } from '../App';
 import { BUILTIN_GROUP_IDS } from '../../shared/types/site';
 import type { DialogState } from '../components/ConfirmDialog';
@@ -146,8 +147,16 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
 
         if (rawResult.status === '失败' && isAuthenticationError(rawResult.error)) {
           options.onAuthError?.([{ name: site.name, url: site.url, error: rawResult.error || '' }]);
+          sessionEventLog.warning(
+            'detection',
+            `${site.name} 刷新触发认证错误：${rawResult.error || '未知错误'}`
+          );
         } else if (rawResult.status === '失败') {
           toast.error(`${site.name} 连接失败: ${rawResult.error || '未知错误'}`);
+          sessionEventLog.error(
+            'detection',
+            `${site.name} 刷新失败：${rawResult.error || '未知错误'}`
+          );
         } else {
           const hasChanges = hasSignificantChanges(cachedResult, result);
           setRefreshMessage({
@@ -160,6 +169,10 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
               setRefreshMessage(null);
             }
           }, 3000);
+          sessionEventLog.success(
+            'detection',
+            `${site.name}${accountId ? ` (${accountId})` : ''} 刷新完成：${hasChanges ? '数据已更新' : '数据无变化'}`
+          );
         }
 
         upsertResult(result);
@@ -195,6 +208,7 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
           displayMessage = '⚠️ 浏览器已关闭，操作已取消。请重新打开浏览器后重试。';
         }
         setRefreshMessage({ site: key, message: displayMessage, type: 'info' });
+        sessionEventLog.error('detection', `${site.name} 刷新异常：${errorMessage}`);
         setTimeout(() => {
           if (useUIStore.getState().refreshMessage?.site === key) {
             setRefreshMessage(null);
@@ -342,17 +356,25 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
 
         if (authErrors.length > 0) {
           options.onAuthError?.(authErrors);
+          sessionEventLog.warning('detection', `批量检测发现 ${authErrors.length} 个认证异常站点`);
         }
 
         if (failedSites.length > 0) {
           const siteList = failedSites.map(s => `• ${s.name}：${s.error}`).join('\n');
           toast.error(`以下站点检测失败：\n${siteList}`);
+          sessionEventLog.error('detection', `批量检测完成，但有 ${failedSites.length} 个站点失败`);
         }
+
+        sessionEventLog.info(
+          'detection',
+          `批量检测完成：共 ${tasks.length} 个任务，失败 ${failedSites.length} 个`
+        );
 
         return resultsBuffer;
       } catch (error) {
         Logger.error('检测失败:', error);
         toast.error('检测失败: ' + error);
+        sessionEventLog.error('detection', `批量检测异常：${String(error)}`);
         return [];
       } finally {
         setDetecting(false);

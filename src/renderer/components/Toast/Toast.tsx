@@ -54,10 +54,16 @@ export function Toast({ toast, onClose }: ToastProps) {
 
   return (
     <div
-      className={`animate-in slide-in-from-top-full flex items-center gap-3 rounded-[var(--radius-lg)] border px-4 py-3 shadow-[var(--shadow-lg)] duration-300 ${bgColors[toast.type]}`}
+      role={toast.type === 'error' ? 'alert' : 'status'}
+      className={`pointer-events-auto animate-in slide-in-from-top-full flex items-start gap-3 rounded-[var(--radius-lg)] border px-4 py-3 shadow-[var(--shadow-lg)] duration-300 ${bgColors[toast.type]}`}
     >
       {icons[toast.type]}
-      <span className="flex-1 text-sm text-[var(--text-primary)]">{toast.message}</span>
+      <span
+        title={toast.message}
+        className="line-clamp-2 flex-1 whitespace-pre-wrap break-all text-sm leading-5 text-[var(--text-primary)]"
+      >
+        {toast.message}
+      </span>
       <button
         onClick={() => onClose(toast.id)}
         aria-label="关闭通知"
@@ -79,8 +85,11 @@ export function ToastContainer({ toasts, onClose }: ToastContainerProps) {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[200] flex flex-col gap-2 max-w-sm">
-      {toasts.map(toast => (
+    <div
+      className="pointer-events-none fixed left-1/2 top-4 z-[200] flex -translate-x-1/2 flex-col gap-2"
+      style={{ width: 'min(28rem, calc(100vw - 2rem))' }}
+    >
+      {toasts.slice(-3).map(toast => (
         <Toast key={toast.id} toast={toast} onClose={onClose} />
       ))}
     </div>

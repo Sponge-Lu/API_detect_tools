@@ -51,8 +51,12 @@ import type {
   RouteChannelHealth,
   RouteOutcome,
   RouteCliType,
+  RouteCliProbeSource,
   RouteModelRegistryConfig,
   RouteModelMappingOverride,
+  RouteModelDisplayItem,
+  RouteModelVendor,
+  RouteVendorPriorityConfig,
   RouteCliProbeConfig,
   RouteCliProbeSample,
   RouteCliProbeLatest,
@@ -65,6 +69,9 @@ import {
   DEFAULT_ANALYTICS_CONFIG,
   DEFAULT_MODEL_REGISTRY_CONFIG,
   buildStatsKey,
+  buildProbeKey,
+  buildSiteScopedProbeAccountId,
+  normalizeRouteCliSelection,
 } from '../shared/types/route-proxy';
 
 const CONFIG_VERSION = '3.1';
@@ -86,6 +93,39 @@ type ReadConfigResult = {
   needsSave: boolean;
   repairedLegacyAccounts: number;
 };
+
+function normalizePriorityValue(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return Math.max(0, Math.round(value));
+}
+
+function normalizePriorityRecord(
+  value: Record<string, number> | null | undefined
+): Record<string, number> {
+  if (!value) {
+    return {};
+  }
+
+  const normalizedEntries = Object.entries(value)
+    .map(([key, priority]) => [key.trim(), normalizePriorityValue(priority)] as const)
+    .filter(
+      (entry): entry is readonly [string, number] => entry[0].length > 0 && entry[1] !== null
+    );
+
+  return Object.fromEntries(normalizedEntries);
+}
+
+function normalizeVendorPriorityConfig(
+  value: RouteVendorPriorityConfig | null | undefined
+): RouteVendorPriorityConfig {
+  return {
+    sitePriorities: normalizePriorityRecord(value?.sitePriorities),
+    apiKeyPriorities: normalizePriorityRecord(value?.apiKeyPriorities),
+  };
+}
 
 export class UnifiedConfigManager {
   private configPath: string;
@@ -185,9 +225,13 @@ export class UnifiedConfigManager {
     if (this.extractLegacyRuntimeCache(config, runtimeCache)) {
       needsSave = true;
     }
+    const hydratedConfig = this.applyRuntimeCacheToConfig(config, runtimeCache);
+    if (this.migrateLegacyCliCompatibilityToRouteCliProbe(hydratedConfig)) {
+      needsSave = true;
+    }
 
     return {
-      config: this.applyRuntimeCacheToConfig(config, runtimeCache),
+      config: hydratedConfig,
       runtimeCache,
       needsSave,
       repairedLegacyAccounts,
@@ -580,7 +624,44 @@ export class UnifiedConfigManager {
     if (!r.health) r.health = {};
     if (!r.cliModelSelections)
       r.cliModelSelections = { claudeCode: null, codex: null, geminiCli: null };
-    if (!r.modelRegistry) r.modelRegistry = { ...DEFAULT_MODEL_REGISTRY_CONFIG };
+    if (!r.modelRegistry) {
+      r.modelRegistry = { ...DEFAULT_MODEL_REGISTRY_CONFIG };
+    } else {
+      if (!r.modelRegistry.sources) {
+        r.modelRegistry.sources = [];
+      }
+
+      if (!r.modelRegistry.displayItems) {
+        r.modelRegistry.displayItems = [];
+      }
+
+      if (!r.modelRegistry.vendorPriorities) {
+        r.modelRegistry.vendorPriorities = {};
+      }
+    }
+    r.modelRegistry.displayItems = r.modelRegistry.displayItems.map(item => ({
+      ...item,
+      sourceKeys: Array.from(
+        new Set(
+          (item.sourceKeys || [])
+            .map(sourceKey => sourceKey.trim())
+            .filter((sourceKey): sourceKey is string => sourceKey.length > 0)
+        )
+      ),
+      originalModelOrder: Array.from(
+        new Set(
+          (item.originalModelOrder || [])
+            .map(model => model.trim())
+            .filter((model): model is string => model.length > 0)
+        )
+      ),
+    }));
+    r.modelRegistry.vendorPriorities = Object.fromEntries(
+      Object.entries(r.modelRegistry.vendorPriorities || {}).map(([vendor, priorityConfig]) => [
+        vendor,
+        normalizeVendorPriorityConfig(priorityConfig),
+      ])
+    ) as Partial<Record<RouteModelVendor, RouteVendorPriorityConfig>>;
     if (!r.cliProbe) {
       r.cliProbe = { config: { ...DEFAULT_CLI_PROBE_CONFIG }, latest: {}, history: {} };
     } else {
@@ -605,6 +686,155 @@ export class UnifiedConfigManager {
     if (s.retryCount === undefined || s.retryCount === null) s.retryCount = 1;
     if (!s.healthCheckIntervalMinutes) s.healthCheckIntervalMinutes = 60;
     if (s.enabled === undefined) s.enabled = false;
+
+    r.cliModelSelections = {
+      claudeCode: normalizeRouteCliSelection(
+        r.cliModelSelections.claudeCode,
+        r.modelRegistry.entries
+      ),
+      codex: normalizeRouteCliSelection(r.cliModelSelections.codex, r.modelRegistry.entries),
+      geminiCli: normalizeRouteCliSelection(
+        r.cliModelSelections.geminiCli,
+        r.modelRegistry.entries
+      ),
+    };
+  }
+
+  private migrateLegacyCliCompatibilityToRouteCliProbe(config: UnifiedConfig): boolean {
+    this.normalizeRoutingConfig(config);
+
+    const latest = config.routing!.cliProbe.latest;
+    let changed = false;
+    const legacyModel = '__legacy__compat__';
+    const cliTypes: RouteCliType[] = ['claudeCode', 'codex', 'geminiCli'];
+
+    const getExistingLatestAt = (siteId: string, accountId: string, cliType: RouteCliType) =>
+      Object.values(latest)
+        .filter(
+          entry =>
+            entry.siteId === siteId && entry.accountId === accountId && entry.cliType === cliType
+        )
+        .reduce<number | null>(
+          (max, entry) =>
+            max === null || entry.lastSample.testedAt > max ? entry.lastSample.testedAt : max,
+          null
+        );
+
+    const shouldPersistCompat = (compat: any) =>
+      compat &&
+      (typeof compat.testedAt === 'number' ||
+        typeof compat.claudeCode === 'boolean' ||
+        typeof compat.codex === 'boolean' ||
+        typeof compat.geminiCli === 'boolean' ||
+        compat.codexDetail ||
+        compat.geminiDetail ||
+        typeof compat.error === 'string');
+
+    const upsertLegacyLatest = (
+      siteId: string,
+      accountId: string,
+      compat: any,
+      source: RouteCliProbeSource
+    ) => {
+      if (!shouldPersistCompat(compat)) {
+        return;
+      }
+
+      const testedAt =
+        typeof compat.testedAt === 'number' && Number.isFinite(compat.testedAt)
+          ? compat.testedAt
+          : Date.now();
+
+      for (const cliType of cliTypes) {
+        const rawStatus = compat[cliType];
+        const hasStatus = typeof rawStatus === 'boolean';
+        const hasDetail =
+          (cliType === 'codex' && compat.codexDetail) ||
+          (cliType === 'geminiCli' && compat.geminiDetail);
+        if (!hasStatus && !hasDetail && !compat.error) {
+          continue;
+        }
+
+        const existingLatestAt = getExistingLatestAt(siteId, accountId, cliType);
+        if (existingLatestAt !== null && existingLatestAt >= testedAt) {
+          continue;
+        }
+
+        const probeKey = buildProbeKey(siteId, accountId, cliType, legacyModel);
+        latest[probeKey] = {
+          probeKey,
+          siteId,
+          accountId,
+          cliType,
+          canonicalModel: legacyModel,
+          rawModel: legacyModel,
+          healthy: rawStatus === true,
+          lastSample: {
+            sampleId: `legacy_${siteId}_${accountId}_${cliType}`,
+            probeKey,
+            siteId,
+            accountId,
+            cliType,
+            canonicalModel: legacyModel,
+            rawModel: legacyModel,
+            success: rawStatus === true,
+            source,
+            error: typeof compat.error === 'string' ? compat.error : undefined,
+            codexDetail: compat.codexDetail,
+            geminiDetail: compat.geminiDetail,
+            testedAt,
+          },
+          lastSuccessAt: rawStatus === true ? testedAt : undefined,
+          lastFailureAt: rawStatus === false ? testedAt : undefined,
+        };
+        changed = true;
+      }
+    };
+
+    for (const account of config.accounts) {
+      upsertLegacyLatest(
+        account.site_id,
+        account.id,
+        account.cached_data?.cli_compatibility,
+        'legacyCache'
+      );
+      if (account.cached_data?.cli_compatibility !== undefined) {
+        delete account.cached_data.cli_compatibility;
+        changed = true;
+      }
+    }
+
+    const siteIdsWithAccounts = new Set(config.accounts.map(account => account.site_id));
+    for (const site of config.sites) {
+      if (siteIdsWithAccounts.has(site.id)) {
+        if (site.cached_data?.cli_compatibility !== undefined) {
+          delete site.cached_data.cli_compatibility;
+          changed = true;
+        }
+        if ((site as any).cli_compatibility !== undefined) {
+          delete (site as any).cli_compatibility;
+          changed = true;
+        }
+        continue;
+      }
+
+      upsertLegacyLatest(
+        site.id,
+        buildSiteScopedProbeAccountId(site.id),
+        site.cached_data?.cli_compatibility || (site as any).cli_compatibility,
+        'legacyCache'
+      );
+      if (site.cached_data?.cli_compatibility !== undefined) {
+        delete site.cached_data.cli_compatibility;
+        changed = true;
+      }
+      if ((site as any).cli_compatibility !== undefined) {
+        delete (site as any).cli_compatibility;
+        changed = true;
+      }
+    }
+
+    return changed;
   }
 
   /**
@@ -1296,9 +1526,23 @@ export class UnifiedConfigManager {
   ): Promise<Record<RouteCliType, string | null>> {
     if (!this.config) throw new Error('Config not loaded');
     this.normalizeRoutingConfig(this.config);
-    this.config.routing!.cliModelSelections = {
+    const mergedSelections = {
       ...this.config.routing!.cliModelSelections,
       ...selections,
+    };
+    this.config.routing!.cliModelSelections = {
+      claudeCode: normalizeRouteCliSelection(
+        mergedSelections.claudeCode,
+        this.config.routing!.modelRegistry.entries
+      ),
+      codex: normalizeRouteCliSelection(
+        mergedSelections.codex,
+        this.config.routing!.modelRegistry.entries
+      ),
+      geminiCli: normalizeRouteCliSelection(
+        mergedSelections.geminiCli,
+        this.config.routing!.modelRegistry.entries
+      ),
     };
     await this.saveConfig();
     return this.config.routing!.cliModelSelections;
@@ -1310,6 +1554,20 @@ export class UnifiedConfigManager {
     if (!this.config) throw new Error('Config not loaded');
     this.normalizeRoutingConfig(this.config);
     this.config.routing!.modelRegistry = registry;
+    this.config.routing!.cliModelSelections = {
+      claudeCode: normalizeRouteCliSelection(
+        this.config.routing!.cliModelSelections.claudeCode,
+        registry.entries
+      ),
+      codex: normalizeRouteCliSelection(
+        this.config.routing!.cliModelSelections.codex,
+        registry.entries
+      ),
+      geminiCli: normalizeRouteCliSelection(
+        this.config.routing!.cliModelSelections.geminiCli,
+        registry.entries
+      ),
+    };
     await this.saveConfig();
   }
 
@@ -1319,14 +1577,124 @@ export class UnifiedConfigManager {
     if (!this.config) throw new Error('Config not loaded');
     this.normalizeRoutingConfig(this.config);
     const overrides = this.config.routing!.modelRegistry.overrides;
-    const idx = overrides.findIndex(o => o.id === override.id);
+
+    const normalizedSourceKey = override.sourceKey?.trim();
+    const normalizedCanonicalName = override.canonicalName.trim();
+    if (!normalizedSourceKey) {
+      throw new Error('Model mapping override requires sourceKey');
+    }
+
+    const normalizedOverride: RouteModelMappingOverride = {
+      ...override,
+      sourceKey: normalizedSourceKey,
+      canonicalName: normalizedCanonicalName,
+    };
+
+    const idx = overrides.findIndex(existing => {
+      if (existing.id === normalizedOverride.id) {
+        return true;
+      }
+
+      return existing.sourceKey === normalizedSourceKey;
+    });
+
     if (idx >= 0) {
-      overrides[idx] = { ...override, updatedAt: Date.now() };
+      overrides[idx] = {
+        ...overrides[idx],
+        ...normalizedOverride,
+        id: overrides[idx].id,
+        createdAt: overrides[idx].createdAt,
+        updatedAt: Date.now(),
+      };
     } else {
-      overrides.push({ ...override, createdAt: Date.now(), updatedAt: Date.now() });
+      overrides.push({
+        ...normalizedOverride,
+        id: normalizedOverride.id,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
     }
     await this.saveConfig();
     return idx >= 0 ? overrides[idx] : overrides[overrides.length - 1];
+  }
+
+  async upsertRouteModelDisplayItem(
+    displayItem: RouteModelDisplayItem
+  ): Promise<RouteModelDisplayItem> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    const items = this.config.routing!.modelRegistry.displayItems;
+
+    const normalizedSourceKeys = Array.from(
+      new Set(
+        (displayItem.sourceKeys || [])
+          .map(sourceKey => sourceKey.trim())
+          .filter((sourceKey): sourceKey is string => sourceKey.length > 0)
+      )
+    );
+    if (normalizedSourceKeys.length === 0) {
+      throw new Error('Model display item requires sourceKeys');
+    }
+
+    const normalizedDisplayItem: RouteModelDisplayItem = {
+      ...displayItem,
+      canonicalName: displayItem.canonicalName.trim(),
+      sourceKeys: normalizedSourceKeys,
+      originalModelOrder: Array.from(
+        new Set(
+          (displayItem.originalModelOrder || [])
+            .map(model => model.trim())
+            .filter((model): model is string => model.length > 0)
+        )
+      ),
+    };
+
+    const idx = items.findIndex(existing => existing.id === normalizedDisplayItem.id);
+    if (idx >= 0) {
+      items[idx] = {
+        ...items[idx],
+        ...normalizedDisplayItem,
+        createdAt: items[idx].createdAt,
+        updatedAt: Date.now(),
+      };
+    } else {
+      items.push({
+        ...normalizedDisplayItem,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    }
+
+    await this.saveConfig();
+    return idx >= 0 ? items[idx] : items[items.length - 1];
+  }
+
+  async deleteRouteModelDisplayItem(displayItemId: string): Promise<boolean> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    const items = this.config.routing!.modelRegistry.displayItems;
+    const before = items.length;
+    this.config.routing!.modelRegistry.displayItems = items.filter(
+      item => item.id !== displayItemId
+    );
+    if (this.config.routing!.modelRegistry.displayItems.length < before) {
+      await this.saveConfig();
+      return true;
+    }
+
+    return false;
+  }
+
+  async updateRouteVendorPriorityConfig(
+    vendor: RouteModelVendor,
+    priorityConfig: RouteVendorPriorityConfig
+  ): Promise<RouteModelRegistryConfig> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    this.config.routing!.modelRegistry.vendorPriorities[vendor] =
+      normalizeVendorPriorityConfig(priorityConfig);
+    await this.saveConfig();
+    return this.config.routing!.modelRegistry;
   }
 
   async deleteRouteModelMappingOverride(overrideId: string): Promise<boolean> {

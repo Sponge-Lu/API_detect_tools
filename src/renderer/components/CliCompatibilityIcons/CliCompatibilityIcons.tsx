@@ -166,6 +166,12 @@ export function CliCompatibilityIcons({
             const persistedTestedAt = getCliTestResultTestedAt(configItem);
             const status = persistedStatus ?? compatibility?.[key];
             const configured = isCliConfigured(cliConfig, configKey);
+            const cliError =
+              key === 'claudeCode'
+                ? compatibility?.claudeError
+                : key === 'codex'
+                  ? compatibility?.codexError
+                  : compatibility?.geminiError;
             const styleClass = getCliCompatibilityIconClass({
               enabled,
               configured,
@@ -177,8 +183,11 @@ export function CliCompatibilityIcons({
               configured,
               status,
               testedAt: persistedTestedAt ?? compatibility?.testedAt,
+              claudeDetail: compatibility?.claudeDetail,
               codexDetail: compatibility?.codexDetail,
               geminiDetail: compatibility?.geminiDetail,
+              sourceLabel: compatibility?.sourceLabel,
+              error: cliError ?? compatibility?.error,
             });
 
             return (

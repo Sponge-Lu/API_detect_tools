@@ -14,11 +14,12 @@ import {
   sanitizeCliTestResults,
   type CliModelTestResult,
 } from './cli-config';
-import type { CodexTestDetail, GeminiTestDetail } from './site';
+import type { ClaudeTestDetail, CodexTestDetail, GeminiTestDetail } from './site';
 
 export interface CustomCliTestState {
   status: boolean | null;
   testedAt: number | null;
+  claudeDetail?: ClaudeTestDetail;
   codexDetail?: CodexTestDetail;
   geminiDetail?: GeminiTestDetail;
   slots: Array<CliModelTestResult | null>;
@@ -28,6 +29,7 @@ export function createEmptyCustomCliTestState(): CustomCliTestState {
   return {
     status: null,
     testedAt: null,
+    claudeDetail: undefined,
     codexDetail: undefined,
     geminiDetail: undefined,
     slots: Array.from({ length: CLI_TEST_MODEL_SLOT_COUNT }, () => null),
@@ -45,6 +47,7 @@ export function normalizeCustomCliTestState(state?: CustomCliTestState | null): 
   return {
     status: typeof state?.status === 'boolean' ? state.status : derivedStatus,
     testedAt: typeof state?.testedAt === 'number' ? state.testedAt : derivedTestedAt,
+    claudeDetail: state?.claudeDetail,
     codexDetail: state?.codexDetail,
     geminiDetail: state?.geminiDetail,
     slots,

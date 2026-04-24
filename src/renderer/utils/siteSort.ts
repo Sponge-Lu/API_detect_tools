@@ -9,6 +9,7 @@ export function normalizeSiteSortField(
     case 'todayUsage':
     case 'totalTokens':
     case 'modelCount':
+    case 'ldcRatio':
       return field;
     case 'promptTokens':
     case 'completionTokens':
@@ -17,7 +18,6 @@ export function normalizeSiteSortField(
     case 'requests':
     case 'rpm':
     case 'tpm':
-    case 'ldcRatio':
     default:
       return null;
   }

@@ -184,12 +184,13 @@ export function SiteEditor({
 
       setStatusMessage('✅ 信息获取成功！');
 
-      const { user_id, site_name, access_token, supportsCheckIn, site_type } =
+      const { user_id, site_name, access_token, supportsCheckIn, site_type, site_url, url } =
         siteAccountResult.data;
       const detectedApiKey = extractDetectedApiKey(siteAccountResult.data);
       if (!user_id) {
         throw new Error('初始化站点返回的数据中缺少用户ID');
       }
+      const resolvedUrl = site_url || url || finalUrl;
 
       // 保留原有的 extraLinks（重新获取信息时不丢失）
       setAutoInfo(prev => ({
@@ -207,6 +208,7 @@ export function SiteEditor({
         setHasDetectedSiteType(true);
         setIsSiteTypeEditing(false);
       }
+      setUrl(resolvedUrl);
 
       // 短暂显示成功消息后进入确认页
       setTimeout(() => {

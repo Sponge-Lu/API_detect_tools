@@ -23,7 +23,8 @@
 
 | 文件 | 职责 | 关键类型 |
 |------|------|--------|
-| **site.ts** | 站点相关类型 | Site, SiteGroup, SiteStatus, CheckinStats, LdcPaymentInfo, cached_data (含 status/error) 等 |
+| **site.ts** | 站点与检测缓存类型 | Site, UnifiedSite, CheckinStats, CliCompatibilityData, cached_data (含 `has_checkin` / `can_check_in`) |
+| **route-proxy.ts** | 路由工作台类型 | RoutingConfig, RouteModelRegistryConfig, RouteCliProbeSample, RouteCliProbeLatest |
 | **cli-config.ts** | CLI 配置类型 | CliConfig, CliCompatibility 等 |
 | **config-detection.ts** | CLI 配置检测类型 | ConfigSourceType, CliDetectionResult, AllCliDetectionResult 等 |
 | **credit.ts** | Linux Do Credit 积分类型 | CreditInfo, CreditConfig, CreditState, CreditResponse 等 |
@@ -143,6 +144,10 @@ interface LdcPaymentInfo {
 }
 ```
 
+**当前约束**:
+- `has_checkin` 表示站点或账户是否具备签到能力，`can_check_in` 表示当前运行态是否还能执行签到
+- `CliCompatibilityData` 为 Claude / Codex / Gemini 分别保留 detail 和 error 摘要，供站点卡片和日志页展示
+
 **使用示例**:
 ```typescript
 // 创建站点
@@ -177,6 +182,37 @@ const status: SiteStatus = {
   lastChecked: Date.now()
 };
 ```
+
+### route-proxy.ts - 路由工作台类型
+
+**职责**: 定义路由代理、模型注册表、CLI 探测和统计分析相关共享契约
+
+**关键类型**:
+```typescript
+interface RouteModelRegistryConfig {
+  sources: RouteModelSourceRef[];
+  entries: Record<string, RouteModelRegistryEntry>;
+  displayItems: RouteModelDisplayItem[];
+  vendorPriorities: Partial<Record<RouteModelVendor, RouteVendorPriorityConfig>>;
+}
+
+interface RouteCliProbeSample {
+  probeKey: string;
+  siteId: string;
+  accountId: string;
+  cliType: RouteCliType;
+  source: 'routeProbe' | 'siteManual' | 'legacyCache';
+  statusCode?: number;
+  claudeDetail?: ClaudeTestDetail;
+  codexDetail?: CodexTestDetail;
+  geminiDetail?: GeminiTestDetail;
+}
+```
+
+**关键辅助函数**:
+- `buildProbeKey()` / `buildSiteScopedProbeAccountId()` - 构造 CLI 探测索引键
+- `normalizeRouteCliSelection()` - 将 CLI 默认模型统一归一到 canonical 名称
+- `compareRouteModelRegistryEntries()` - 按厂商优先模式、层级词和版本号排序模型
 
 ### cli-config.ts - CLI 配置类型
 

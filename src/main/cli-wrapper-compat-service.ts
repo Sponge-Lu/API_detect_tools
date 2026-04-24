@@ -14,15 +14,14 @@ import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import type {
+  ClaudeTestDetail,
   CliCompatibilityResult,
   CodexTestDetail,
   GeminiTestDetail,
 } from './cli-compat-service';
-import { Logger } from './utils/logger';
 
-const log = Logger.scope('CliWrapperCompatService');
-
-const TEST_PROMPT = 'Do not use tools. Reply exactly OK';
+const TEST_PROMPT = 'What is 1+1? Reply with only 2. Do not use tools.';
+const EXPECTED_ANSWER = '2';
 
 export interface CliWrapperTestConfig {
   cliType: 'claudeCode' | 'codex' | 'geminiCli';
@@ -99,26 +98,56 @@ function parseJsonCandidates(raw: string): any[] {
   return parsed;
 }
 
-function extractClaudeResult(stdout: string): string | null {
-  if (stdout.trim() === 'OK') return 'OK';
-  const parsed = parseJsonCandidates(stdout);
+function normalizeReplyText(value: string | null | undefined): string {
+  return value?.replace(/\s+/g, ' ').trim() ?? '';
+}
+
+function summarizeReplyText(value: string | null | undefined): string | undefined {
+  const normalized = normalizeReplyText(value);
+  if (!normalized) {
+    return undefined;
+  }
+
+  return normalized.length <= 160 ? normalized : `${normalized.slice(0, 157)}...`;
+}
+
+function isExpectedAnswer(value: string | null | undefined): boolean {
+  const normalized = normalizeReplyText(value);
+  if (!normalized) {
+    return false;
+  }
+
+  return normalized === EXPECTED_ANSWER || normalized.includes(EXPECTED_ANSWER);
+}
+
+function extractJsonStringField(raw: string, fieldNames: string[]): string | null {
+  const parsed = parseJsonCandidates(raw);
   for (const item of parsed) {
-    if (typeof item?.result === 'string') {
-      return item.result.trim();
+    for (const fieldName of fieldNames) {
+      if (typeof item?.[fieldName] === 'string') {
+        return item[fieldName].trim();
+      }
     }
   }
   return null;
 }
 
-function extractGeminiResponse(stdout: string): string | null {
-  if (stdout.trim() === 'OK') return 'OK';
-  const parsed = parseJsonCandidates(stdout);
-  for (const item of parsed) {
-    if (typeof item?.response === 'string') {
-      return item.response.trim();
-    }
+function extractClaudeResult(stdout: string): string | null {
+  const directText = normalizeReplyText(stdout);
+  if (directText && !stdout.includes('{')) {
+    return directText;
   }
-  return null;
+
+  return extractJsonStringField(stdout, ['result', 'response', 'content', 'text']);
+}
+
+function extractGeminiResponse(stdout: string): string | null {
+  const directText = normalizeReplyText(stdout);
+  if (directText && !stdout.includes('{')) {
+    return directText;
+  }
+
+  return extractJsonStringField(stdout, ['response', 'result', 'content', 'text']);
 }
 
 function buildFailureMessage(label: string, result: CommandRunResult, fallback?: string): string {
@@ -273,11 +302,19 @@ export class CliWrapperCompatService {
     return result.supported;
   }
 
+  async testClaudeCodeWithDetail(
+    url: string,
+    apiKey: string,
+    model: string
+  ): Promise<{ supported: boolean; detail: ClaudeTestDetail; message?: string }> {
+    return this.testClaudeCodeWithMessage(url, apiKey, model);
+  }
+
   async testClaudeCodeWithMessage(
     url: string,
     apiKey: string,
     model: string
-  ): Promise<{ supported: boolean; message?: string }> {
+  ): Promise<{ supported: boolean; detail: ClaudeTestDetail; message?: string }> {
     return this.withIsolatedWorkspace('api-detect-claude-wrapper', async workspace => {
       const settingsDir = path.join(workspace.homeDir, '.claude');
       await fs.mkdir(settingsDir, { recursive: true });
@@ -308,12 +345,23 @@ export class CliWrapperCompatService {
       });
 
       const content = extractClaudeResult(commandResult.stdout);
-      const supported = commandResult.exitCode === 0 && content === 'OK';
+      const replyText = summarizeReplyText(content);
+      const supported = commandResult.exitCode === 0 && isExpectedAnswer(content);
       const message = supported
         ? undefined
-        : buildFailureMessage('Claude Code', commandResult, `result=${content ?? 'null'}`);
+        : buildFailureMessage(
+            'Claude Code',
+            commandResult,
+            `reply=${replyText ?? (normalizeReplyText(content) || 'null')}`
+          );
 
-      return { supported, message };
+      return {
+        supported,
+        detail: {
+          replyText,
+        },
+        ...(message ? { message } : {}),
+      };
     });
   }
 
@@ -321,14 +369,8 @@ export class CliWrapperCompatService {
     url: string,
     apiKey: string,
     model: string
-  ): Promise<{ supported: boolean; detail: CodexTestDetail }> {
-    const result = await this.testCodexWithMessage(url, apiKey, model);
-    return {
-      supported: result.supported,
-      detail: {
-        responses: result.supported,
-      },
-    };
+  ): Promise<{ supported: boolean; detail: CodexTestDetail; message?: string }> {
+    return this.testCodexWithMessage(url, apiKey, model);
   }
 
   async testCodex(url: string, apiKey: string, model: string): Promise<boolean> {
@@ -340,7 +382,7 @@ export class CliWrapperCompatService {
     url: string,
     apiKey: string,
     model: string
-  ): Promise<{ supported: boolean; message?: string }> {
+  ): Promise<{ supported: boolean; detail: CodexTestDetail; message?: string }> {
     return this.withIsolatedWorkspace('api-detect-codex-wrapper', async workspace => {
       const codexHome = path.join(workspace.homeDir, '.codex');
       await fs.mkdir(codexHome, { recursive: true });
@@ -350,7 +392,7 @@ export class CliWrapperCompatService {
       const configContent = [
         `model = "${escapeTomlString(model)}"`,
         'model_provider = "proxy"',
-        'model_reasoning_effort = "minimal"',
+        'model_reasoning_effort = "xhigh"',
         'forced_login_method = "api"',
         '',
         '[model_providers.proxy]',
@@ -389,12 +431,20 @@ export class CliWrapperCompatService {
       });
 
       const output = (await readFileIfExists(outputFile)) ?? commandResult.stdout;
-      const supported = commandResult.exitCode === 0 && output.trim() === 'OK';
+      const replyText = summarizeReplyText(output);
+      const supported = commandResult.exitCode === 0 && isExpectedAnswer(output);
       const message = supported
         ? undefined
-        : buildFailureMessage('Codex', commandResult, output || 'missing output');
+        : buildFailureMessage('Codex', commandResult, `reply=${replyText ?? 'missing output'}`);
 
-      return { supported, message };
+      return {
+        supported,
+        detail: {
+          responses: supported,
+          replyText,
+        },
+        ...(message ? { message } : {}),
+      };
     });
   }
 
@@ -402,15 +452,8 @@ export class CliWrapperCompatService {
     url: string,
     apiKey: string,
     model: string
-  ): Promise<{ supported: boolean; detail: GeminiTestDetail }> {
-    const result = await this.testGeminiWithMessage(url, apiKey, model);
-    return {
-      supported: result.supported,
-      detail: {
-        native: result.supported,
-        proxy: null,
-      },
-    };
+  ): Promise<{ supported: boolean; detail: GeminiTestDetail; message?: string }> {
+    return this.testGeminiWithMessage(url, apiKey, model);
   }
 
   async testGeminiCli(url: string, apiKey: string, model: string): Promise<boolean> {
@@ -422,7 +465,7 @@ export class CliWrapperCompatService {
     url: string,
     apiKey: string,
     model: string
-  ): Promise<{ supported: boolean; message?: string }> {
+  ): Promise<{ supported: boolean; detail: GeminiTestDetail; message?: string }> {
     return this.withIsolatedWorkspace('api-detect-gemini-wrapper', async workspace => {
       const geminiHome = path.join(workspace.homeDir, '.gemini');
       await fs.mkdir(geminiHome, { recursive: true });
@@ -451,18 +494,32 @@ export class CliWrapperCompatService {
       });
 
       const content = extractGeminiResponse(commandResult.stdout);
-      const supported = commandResult.exitCode === 0 && content === 'OK';
+      const replyText = summarizeReplyText(content);
+      const supported = commandResult.exitCode === 0 && isExpectedAnswer(content);
       const message = supported
         ? undefined
-        : buildFailureMessage('Gemini CLI', commandResult, `response=${content ?? 'null'}`);
+        : buildFailureMessage(
+            'Gemini CLI',
+            commandResult,
+            `reply=${replyText ?? (normalizeReplyText(content) || 'null')}`
+          );
 
-      return { supported, message };
+      return {
+        supported,
+        detail: {
+          native: supported,
+          proxy: null,
+          replyText,
+        },
+        ...(message ? { message } : {}),
+      };
     });
   }
 
   async testSite(params: TestWithWrapperParams): Promise<CliCompatibilityResult> {
     const result: CliCompatibilityResult = {
       claudeCode: null,
+      claudeDetail: undefined,
       codex: null,
       codexDetail: undefined,
       geminiCli: null,
@@ -474,7 +531,9 @@ export class CliWrapperCompatService {
       const testUrl = config.baseUrl || params.siteUrl;
 
       if (config.cliType === 'claudeCode') {
-        result.claudeCode = await this.testClaudeCode(testUrl, config.apiKey, config.model);
+        const claude = await this.testClaudeCodeWithDetail(testUrl, config.apiKey, config.model);
+        result.claudeCode = claude.supported;
+        result.claudeDetail = claude.detail;
       } else if (config.cliType === 'codex') {
         const codex = await this.testCodexWithDetail(testUrl, config.apiKey, config.model);
         result.codex = codex.supported;

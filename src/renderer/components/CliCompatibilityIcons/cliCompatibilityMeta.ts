@@ -1,5 +1,6 @@
 import type {
   CliCompatibilityResult,
+  ClaudeTestDetail,
   CodexTestDetail,
   GeminiTestDetail,
 } from '../../store/detectionStore';
@@ -10,8 +11,11 @@ export interface CliCompatibilityMetaInput {
   configured: boolean;
   status: boolean | null | undefined;
   testedAt?: number | null;
+  claudeDetail?: ClaudeTestDetail;
   codexDetail?: CodexTestDetail;
   geminiDetail?: GeminiTestDetail;
+  sourceLabel?: string;
+  error?: string;
 }
 
 export function getCliCompatibilityIconClass(input: {
@@ -38,12 +42,26 @@ export function getCliCompatibilityStatusText(input: {
   return '已配置，待测试';
 }
 
+function formatReplyText(replyText?: string): string {
+  const normalized = replyText?.replace(/\s+/g, ' ').trim() ?? '';
+  if (!normalized) return '';
+  return normalized.length <= 48 ? normalized : `${normalized.slice(0, 45)}...`;
+}
+
+export function getClaudeDetailText(compatibility: CliCompatibilityResult | undefined): string {
+  const detail = compatibility?.claudeDetail;
+  const replyText = formatReplyText(detail?.replyText);
+  if (!replyText) return '';
+  return ` [回答: ${replyText}]`;
+}
+
 export function getCodexDetailText(compatibility: CliCompatibilityResult | undefined): string {
   const detail = compatibility?.codexDetail;
   if (!detail) return '';
 
   const responsesStatus = detail.responses === true ? '✓' : detail.responses === false ? '✗' : '?';
-  return ` [responses: ${responsesStatus}]`;
+  const replyText = formatReplyText(detail.replyText);
+  return ` [responses: ${responsesStatus}${replyText ? `, 回答: ${replyText}` : ''}]`;
 }
 
 export function getGeminiDetailText(compatibility: CliCompatibilityResult | undefined): string {
@@ -62,7 +80,8 @@ export function getGeminiDetailText(compatibility: CliCompatibilityResult | unde
     hint = ' (均不可用)';
   }
 
-  return ` [native: ${nativeStatus}, proxy: ${proxyStatus}]${hint}`;
+  const replyText = formatReplyText(detail.replyText);
+  return ` [native: ${nativeStatus}, proxy: ${proxyStatus}${replyText ? `, 回答: ${replyText}` : ''}]${hint}`;
 }
 
 export function formatCliCompatibilityTestedAt(timestamp: number | null | undefined): string {
@@ -85,11 +104,16 @@ export function buildCliCompatibilityTooltip(input: CliCompatibilityMetaInput): 
     input.testedAt && input.configured
       ? ` (${formatCliCompatibilityTestedAt(input.testedAt)})`
       : '';
+  const claudeDetailText = input.claudeDetail
+    ? getClaudeDetailText({ claudeDetail: input.claudeDetail } as CliCompatibilityResult)
+    : '';
   const codexDetailText = input.codexDetail
     ? getCodexDetailText({ codexDetail: input.codexDetail } as CliCompatibilityResult)
     : '';
   const geminiDetailText = input.geminiDetail
     ? getGeminiDetailText({ geminiDetail: input.geminiDetail } as CliCompatibilityResult)
     : '';
-  return `${input.name}: ${statusText}${codexDetailText}${geminiDetailText}${testedAtText}`;
+  const sourceText = input.sourceLabel ? ` [${input.sourceLabel}]` : '';
+  const errorText = input.error?.trim() ? `\n错误: ${input.error.trim()}` : '';
+  return `${input.name}: ${statusText}${claudeDetailText}${codexDetailText}${geminiDetailText}${testedAtText}${sourceText}${errorText}`;
 }

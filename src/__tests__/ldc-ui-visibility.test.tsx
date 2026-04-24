@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DetectionResult, SiteConfig } from '../renderer/App';
 
@@ -144,20 +144,20 @@ vi.mock('../renderer/pages/CreditPage', () => ({
   CreditPage: () => <div>Mock Credit Page</div>,
 }));
 
-vi.mock('../renderer/pages/SettingsPage', () => ({
-  SettingsPage: () => <div>Mock Settings Page</div>,
+vi.mock('../renderer/pages/LogsPage', () => ({
+  LogsPage: () => <div>Mock Logs Page</div>,
 }));
 
-vi.mock('../renderer/components/Route/Redirection/ModelRedirectionTab', () => ({
-  ModelRedirectionTab: () => <div>Mock Redirection Tab</div>,
+vi.mock('../renderer/pages/SettingsPage', () => ({
+  SettingsPage: () => <div>Mock Settings Page</div>,
 }));
 
 vi.mock('../renderer/components/Route/Usability/CliUsabilityTab', () => ({
   CliUsabilityTab: () => <div>Mock Usability Tab</div>,
 }));
 
-vi.mock('../renderer/components/Route/ProxyStats/ProxyStatsTab', () => ({
-  ProxyStatsTab: () => <div>Mock Proxy Stats Tab</div>,
+vi.mock('../renderer/pages/RoutePage', () => ({
+  RoutePage: () => <div>Mock Route Page</div>,
 }));
 
 vi.mock('../renderer/store/configStore', () => ({
@@ -177,7 +177,7 @@ vi.mock('../renderer/store/detectionStore', () => ({
 
 vi.mock('../renderer/store/uiStore', () => ({
   useUIStore: () => uiState,
-  isRouteTab: (id: string) => ['redirection', 'usability', 'proxystats'].includes(id),
+  isRouteTab: (id: string) => ['usability', 'route'].includes(id),
 }));
 
 vi.mock('../renderer/store/routeStore', () => ({
@@ -189,7 +189,9 @@ vi.mock('../renderer/store/routeStore', () => ({
 vi.mock('../renderer/store/toastStore', () => ({
   useToastStore: () => ({
     toasts: [],
+    eventHistory: [],
     removeToast: mockRemoveToast,
+    clearEventHistory: vi.fn(),
   }),
   toast: {
     success: vi.fn(),
@@ -215,24 +217,20 @@ describe('LDC UI visibility', () => {
     (window as any).electronAPI.saveConfig = vi.fn().mockResolvedValue(undefined);
   });
 
-  it('hides the LDC credit entry from the sidebar', () => {
+  it('shows the LDC credit entry in the sidebar', () => {
     render(<VerticalSidebar activeTab="sites" onTabChange={vi.fn()} saving={false} />);
 
-    expect(screen.queryByText('LDC 积分')).not.toBeInTheDocument();
+    expect(screen.getByText('LDC 积分')).toBeInTheDocument();
   });
 
-  it('falls back to the sites page when the active tab is credit', async () => {
+  it('renders the credit page when the active tab is credit', async () => {
     render(<App />);
 
-    expect(screen.queryByText('Mock Credit Page')).not.toBeInTheDocument();
-    expect(screen.getByText('Mock Sites Page')).toBeInTheDocument();
-
-    await waitFor(() => {
-      expect(mockSetActiveTab).toHaveBeenCalledWith('sites');
-    });
+    expect(screen.getByText('Mock Credit Page')).toBeInTheDocument();
+    expect(mockSetActiveTab).not.toHaveBeenCalledWith('sites');
   });
 
-  it('does not render the LDC ratio value in the site header row', () => {
+  it('renders the LDC ratio value in the site header row', () => {
     const site = {
       id: 'site-1',
       name: 'Example Site',
@@ -256,7 +254,7 @@ describe('LDC UI visibility', () => {
         lastSyncDisplay="12:34"
         errorCode={null}
         timeoutSeconds={null}
-        columnWidths={[120, 75, 75, 75, 50, 50, 50, 50, 50, 60, 80, 160, 65]}
+        columnWidths={[120, 75, 75, 75, 50, 50, 50, 50, 50, 60, 80, 65, 160]}
         todayTotalTokens={0}
         todayPromptTokens={0}
         todayCompletionTokens={0}
@@ -276,10 +274,10 @@ describe('LDC UI visibility', () => {
       />
     );
 
-    expect(screen.queryByText('9.9')).not.toBeInTheDocument();
+    expect(screen.getByText('9.9')).toBeInTheDocument();
   });
 
-  it('keeps the CLI compatibility column width when widths are already filtered', () => {
+  it('keeps the LDC and CLI column widths when widths are already filtered', () => {
     const site = {
       id: 'site-1',
       name: 'Example Site',
@@ -294,7 +292,7 @@ describe('LDC UI visibility', () => {
         lastSyncDisplay="12:34"
         errorCode={null}
         timeoutSeconds={null}
-        columnWidths={[120, 75, 75, 75, 50, 50, 50, 50, 50, 60, 80, 160]}
+        columnWidths={[120, 75, 75, 75, 50, 50, 50, 50, 50, 60, 80, 65, 160]}
         todayTotalTokens={0}
         todayPromptTokens={0}
         todayCompletionTokens={0}
@@ -316,7 +314,7 @@ describe('LDC UI visibility', () => {
 
     const grid = container.firstElementChild as HTMLDivElement;
     expect(grid.style.gridTemplateColumns).toBe(
-      '120px 75px 75px 75px 50px 50px 50px 50px 50px 60px 80px 160px'
+      '120px 75px 75px 75px 50px 50px 50px 50px 50px 60px 80px 65px 160px'
     );
   });
 });

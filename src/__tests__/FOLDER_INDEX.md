@@ -26,14 +26,17 @@
 | **setup.ts** | 测试环境配置 | Vitest 配置 |
 | **example.test.ts** | 示例测试 | 测试模板 |
 | **schemas.test.ts** | Schema 验证测试 | Zod Schema |
-| **token-service.test.ts** | TokenService / ApiService 的 site_type 驱动回归测试 | API Key 原始值保留、sub2api 端点适配、旧站点 `site_type` 首检写回 |
+| **token-service.test.ts** | TokenService / ApiService 的 site_type 驱动回归测试 | API Key 原始值保留、签到端点按 `site_type` 选择、sub2api 端点适配、旧站点 `site_type` 首检写回 |
+| **useCheckIn.test.ts** | useCheckIn Hook 回归测试 | 一键签到跳过 `unavailable` 分组站点 |
 | **site-type-detector.test.ts** | 站点类型自动识别测试 | title 命中与 `/api/status` 识别 |
 | **site-editor.test.tsx** | SiteEditor 回归测试 | 手动保存站点类型、智能添加回填识别类型 |
 | **groupStyle.test.tsx** | 分组样式测试 | groupStyle 工具 |
 | **useSiteGroups.test.ts** | Hook 测试 | useSiteGroups Hook |
 | **webdav-config.test.ts** | WebDAV 配置测试 | WebDAV 配置 |
 | **unified-config-manager.test.ts** | 配置恢复与 legacy `site_type` 未决态回归测试 | UnifiedConfigManager 损坏恢复、备份回滚、原子保存、legacy 默认账户修复、旧站点缺失 `site_type` 不默认补值 |
-| **route-cli-probe-service.test.ts** | CLI 探测账户选择回归测试 | 默认账户优先、余额不足回退、旧配置兼容 |
+| **route-cli-probe-service.test.ts** | CLI 探测多账户回归测试 | 同站点全部活跃账户覆盖、错误码透传、旧配置兼容 |
+| **route-model-registry-service.test.ts** | 路由模型注册表服务测试 | display item、厂商优先级与 canonical 映射 |
+| **cli-compat-projection.test.ts** | CLI 兼容性投影测试 | `routing.cliProbe.latest` 到站点/账户卡片结果的映射 |
 | **webdav-manager.test.ts** | WebDAV 管理器测试 | WebDAVManager 类 |
 | **update-service.test.ts** | 更新服务测试 | UpdateService 类 |
 | **auto-refresh.property.test.ts** | 自动刷新属性测试 | 自动刷新逻辑 |
@@ -50,13 +53,18 @@
 | **overlay-family-redesign.test.tsx** | Overlay 家族重设计测试 | modal 与 drawer 的统一 chrome 标记 |
 | **custom-cli-page-redesign.test.tsx** | 自定义 CLI 页面重设计测试 | registry + inspector 双栏布局 |
 | **route-workbench-redesign.test.tsx** | Route 页面页头重设计测试 | 三张 route 页共享紧凑头带语法 |
+| **cli-usability-tab.test.tsx** | CLI 可用性页回归测试 | 内联检测设置、账户行渲染与探测结果明细 |
 | **sites-page-redesign.test.tsx** | 站点页重设计测试 | 多列列头、内联排序、高频动作、CLI 图标内联与右键菜单 parity |
-| **close-behavior-manager.property.test.ts** | 窗口关闭行为测试 | CloseBehaviorManager 设置持久化 |
+| **logs-page.test.tsx** | 会话日志页回归测试 | 按通知/操作筛选与清空历史 |
+| **toast-store.test.ts** | Toast Store 回归测试 | 可见队列上限、事件历史记录与清理 |
+| **close-behavior-manager.property.test.ts** | 窗口关闭行为测试 | CloseBehaviorManager 设置持久化、对话框显示条件与设置面板偏好映射 |
 | **config-detection.property.test.ts** | 配置检测属性测试 | ConfigDetectionService |
 | **cli-config-priority.property.test.ts** | CLI 配置优先级测试 | CLI 配置优先级逻辑 |
 | **codex-official-api-detection.property.test.ts** | Codex 官方 API Key 检测测试 | isOfficialOpenAIApiKey 函数 |
 | **credit-service.property.test.ts** | Credit 服务属性测试 | CreditService 差值计算、错误处理、配置持久化、IPC 响应格式 |
+| **credit-service.test.ts** | Credit 服务回归测试 | 登录态提示使用缓存兜底、登录流程不再硬依赖 `cf_clearance` |
 | **useCredit.property.test.ts** | Credit Hook 属性测试 | useCredit Hook 自动刷新暂停逻辑 |
+| **useCredit.test.ts** | Credit Hook 回归测试 | 缓存恢复登录态、刷新失败向 UI 抛错 |
 | **credit-panel.property.test.ts** | Credit 面板属性测试 | CreditPanel 差值颜色编码、日期格式化、交易状态徽章、交易金额格式化 |
 | **theme-token-contract.property.test.tsx** | 主题 token 合约属性测试 | 四主题模式、主题归一化、中性 token、AppButton 主题接线 |
 | **app-button.property.test.tsx** | AppButton 原语属性测试 | AppButton 样式、交互、状态 |

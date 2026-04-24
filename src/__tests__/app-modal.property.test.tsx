@@ -51,12 +51,12 @@ describe('AppModal primitive contract', () => {
 
           expect(dialogClassList).toContain('transition-[transform,opacity]');
           expect(dialogClassList).toContain('duration-200');
-          expect(dialogClassList.includes('opacity-100') || dialogClassList.includes('opacity-0')).toBe(
-            true
-          );
-          expect(dialogClassList.includes('scale-100') || dialogClassList.includes('scale-95')).toBe(
-            true
-          );
+          expect(
+            dialogClassList.includes('opacity-100') || dialogClassList.includes('opacity-0')
+          ).toBe(true);
+          expect(
+            dialogClassList.includes('scale-100') || dialogClassList.includes('scale-95')
+          ).toBe(true);
         }
 
         unmount();
@@ -214,6 +214,8 @@ describe('AppModal primitive contract', () => {
         expect(overlayRoot).not.toBeNull();
 
         if (overlayRoot) {
+          fireEvent.mouseDown(overlayRoot);
+          fireEvent.mouseUp(overlayRoot);
           fireEvent.click(overlayRoot);
 
           if (closeOnOverlayClick) {
@@ -229,10 +231,54 @@ describe('AppModal primitive contract', () => {
     );
   });
 
+  it('clips the dialog surface so nested regions own scrolling instead of the modal shell', () => {
+    const { baseElement, unmount } = render(
+      <AppModal isOpen={true} onClose={vi.fn()} title="Overflow Contract">
+        <div>Modal content</div>
+      </AppModal>
+    );
+
+    const dialog = getDialog(baseElement);
+    expect(dialog).not.toBeNull();
+
+    if (dialog) {
+      expect(dialog.className).toContain('overflow-clip');
+      expect(dialog.className).not.toContain('overflow-hidden');
+    }
+
+    unmount();
+  });
+
+  it('does not close when the pointer press starts inside the dialog and ends on the overlay', () => {
+    const onClose = vi.fn();
+    const { baseElement, unmount } = render(
+      <AppModal isOpen={true} onClose={onClose} title="Drag Guard">
+        <button type="button">Inside</button>
+      </AppModal>
+    );
+
+    const overlayRoot = getOverlayRoot(baseElement);
+    const dialog = getDialog(baseElement);
+
+    expect(overlayRoot).not.toBeNull();
+    expect(dialog).not.toBeNull();
+
+    if (overlayRoot && dialog) {
+      fireEvent.mouseDown(dialog);
+      fireEvent.mouseUp(overlayRoot);
+      fireEvent.click(overlayRoot);
+      expect(onClose).not.toHaveBeenCalled();
+    }
+
+    unmount();
+  });
+
   it('connects the dialog title to aria-labelledby when a title is provided', () => {
     fc.assert(
       fc.property(
-        fc.stringMatching(/^[a-zA-Z0-9 ]+$/).filter(value => value.trim().length >= 3 && value.length <= 30),
+        fc
+          .stringMatching(/^[a-zA-Z0-9 ]+$/)
+          .filter(value => value.trim().length >= 3 && value.length <= 30),
         title => {
           const { baseElement, unmount } = render(
             <AppModal isOpen={true} onClose={vi.fn()} title={title}>

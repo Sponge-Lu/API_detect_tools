@@ -297,6 +297,7 @@ export class TokenService {
         onStatus,
         { loginMode, siteType }
       );
+      const resolvedBaseUrl = localData.resolvedBaseUrl || baseUrl;
 
       if (siteTypeDetection.detectionMethod === 'fallback' && localData.siteTypeHint) {
         siteType = localData.siteTypeHint;
@@ -318,7 +319,14 @@ export class TokenService {
       Logger.info('   - 用户ID:', localData.userId);
       Logger.info('   - 用户名:', localData.username || 'unknown');
       Logger.info('   - 系统名称:', localData.systemName || '未设置');
-      Logger.info('   - 数据来源:', localData.systemName ? 'localStorage' : 'API回退');
+      Logger.info(
+        '   - 数据来源:',
+        localData.dataSource === 'mixed'
+          ? 'localStorage + API回退'
+          : localData.dataSource === 'api'
+            ? 'API回退'
+            : 'localStorage'
+      );
 
       // 步骤2: 如果没有access_token，尝试创建
       let accessToken = localData.accessToken;
@@ -336,8 +344,8 @@ export class TokenService {
 
         try {
           accessToken = loginMode
-            ? await this.chromeManager.createAccessTokenForLogin(baseUrl, localData.userId)
-            : await this.createAccessToken(baseUrl, localData.userId);
+            ? await this.chromeManager.createAccessTokenForLogin(resolvedBaseUrl, localData.userId)
+            : await this.createAccessToken(resolvedBaseUrl, localData.userId);
           if (!accessToken) {
             throw new Error('浏览器未返回有效访问令牌');
           }
@@ -357,7 +365,7 @@ export class TokenService {
       if (siteType === 'sub2api') {
         onStatus?.('正在获取 API Key...');
         try {
-          apiKeys = await this.fetchApiTokens(baseUrl, localData.userId, accessToken, {
+          apiKeys = await this.fetchApiTokens(resolvedBaseUrl, localData.userId, accessToken, {
             siteType,
           });
           primaryApiKey = normalizeApiKeyValue(resolveApiKeyValue(apiKeys?.[0])) || '';
@@ -375,7 +383,7 @@ export class TokenService {
 
       // 步骤3: 构建SiteAccount对象
       const now = Date.now();
-      const siteName = localData.systemName || new URL(baseUrl).hostname;
+      const siteName = localData.systemName || new URL(resolvedBaseUrl).hostname;
       const siteAccount: SiteAccount & {
         supportsCheckIn?: boolean;
         canCheckIn?: boolean;
@@ -384,9 +392,9 @@ export class TokenService {
       } = {
         id: `account_${now}_${Math.random().toString(36).substring(2, 11)}`,
         name: siteName,
-        url: baseUrl,
+        url: resolvedBaseUrl,
         site_name: siteName,
-        site_url: baseUrl,
+        site_url: resolvedBaseUrl,
         site_type: siteType,
         user_id: localData.userId,
         username: localData.username || 'unknown',
@@ -765,16 +773,15 @@ export class TokenService {
     baseUrl: string,
     userId: number,
     accessToken: string,
-    page?: any
+    page?: any,
+    explicitSiteType?: SiteType
   ): Promise<boolean | undefined> {
-    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    const endpoints = this.getCheckInEndpoints(baseUrl, 'status', explicitSiteType);
 
-    // 尝试两种接口：Veloera 和 New API
-    const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM 格式
-    const endpoints = [
-      { url: `${cleanBaseUrl}/api/user/check_in_status`, type: 'veloera' },
-      { url: `${cleanBaseUrl}/api/user/checkin?month=${currentMonth}`, type: 'newapi' },
-    ];
+    if (endpoints.length === 0) {
+      Logger.info('ℹ️ [TokenService] 当前站点类型未注册签到状态端点');
+      return undefined;
+    }
 
     for (const endpoint of endpoints) {
       try {
@@ -917,7 +924,8 @@ export class TokenService {
     baseUrl: string,
     userId: number,
     accessToken: string,
-    page?: any
+    page?: any,
+    explicitSiteType?: SiteType
   ): Promise<{
     success: boolean;
     message: string;
@@ -932,13 +940,15 @@ export class TokenService {
     Logger.info('📍 [TokenService] 站点:', baseUrl);
     Logger.info('🆔 [TokenService] 用户ID:', userId);
 
-    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    const endpoints = this.getCheckInEndpoints(baseUrl, 'action', explicitSiteType);
 
-    // 尝试两种签到端点：Veloera 和 New API
-    const endpoints = [
-      { url: `${cleanBaseUrl}/api/user/check_in`, type: 'veloera' },
-      { url: `${cleanBaseUrl}/api/user/checkin`, type: 'newapi' },
-    ];
+    if (endpoints.length === 0) {
+      return {
+        success: false,
+        message: '当前站点类型未注册签到端点',
+        needManualCheckIn: false,
+      };
+    }
 
     let lastError: any = null;
     let lastEndpointType: 'veloera' | 'newapi' = 'veloera'; // 记录最后尝试的端点类型
@@ -1083,7 +1093,12 @@ export class TokenService {
     if (cloudflareDetected) {
       Logger.info('🛡️ [TokenService] 检测到 Cloudflare 拦截，尝试浏览器模式签到...');
       try {
-        const browserResult = await this.checkInWithBrowser(baseUrl, userId, accessToken);
+        const browserResult = await this.checkInWithBrowser(
+          baseUrl,
+          userId,
+          accessToken,
+          explicitSiteType
+        );
         if (browserResult.success) {
           return browserResult;
         }
@@ -1129,7 +1144,8 @@ export class TokenService {
   private async checkInWithBrowser(
     baseUrl: string,
     userId: number,
-    accessToken: string
+    accessToken: string,
+    explicitSiteType?: SiteType
   ): Promise<{
     success: boolean;
     message: string;
@@ -1141,6 +1157,15 @@ export class TokenService {
     pageRelease?: () => void; // 页面释放函数
   }> {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    const endpoints = this.getCheckInEndpoints(baseUrl, 'action', explicitSiteType);
+
+    if (endpoints.length === 0) {
+      return {
+        success: false,
+        message: '当前站点类型未注册签到端点',
+        needManualCheckIn: false,
+      };
+    }
 
     Logger.info('🧭 [TokenService] 浏览器模式签到...');
     Logger.info('📍 [TokenService] 站点:', cleanBaseUrl);
@@ -1158,12 +1183,6 @@ export class TokenService {
       // 等待 Cloudflare 验证通过（如果存在）
       await this.waitForCloudflareChallengeToPass(page);
       const userIdHeaders = getAllUserIdHeaders(userId);
-
-      // 尝试两种签到端点
-      const endpoints = [
-        { url: `${cleanBaseUrl}/api/user/check_in`, type: 'veloera' },
-        { url: `${cleanBaseUrl}/api/user/checkin`, type: 'newapi' },
-      ];
 
       let lastError: any = null;
       let lastEndpointType: 'veloera' | 'newapi' = 'veloera';
@@ -4164,6 +4183,43 @@ export class TokenService {
 
   private resolveSiteTypeByUrl(baseUrl: string, explicitSiteType?: SiteType) {
     return explicitSiteType ?? resolveSiteType(unifiedConfigManager.getSiteByUrl(baseUrl));
+  }
+
+  private getCheckInEndpoints(
+    baseUrl: string,
+    mode: 'status' | 'action',
+    explicitSiteType?: SiteType
+  ): Array<{ url: string; type: 'veloera' | 'newapi' }> {
+    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const resolvedSiteType = this.resolveSiteTypeByUrl(baseUrl, explicitSiteType);
+    const veloeraEndpoint =
+      mode === 'status'
+        ? { url: `${cleanBaseUrl}/api/user/check_in_status`, type: 'veloera' as const }
+        : { url: `${cleanBaseUrl}/api/user/check_in`, type: 'veloera' as const };
+    const newApiEndpoint =
+      mode === 'status'
+        ? {
+            url: `${cleanBaseUrl}/api/user/checkin?month=${currentMonth}`,
+            type: 'newapi' as const,
+          }
+        : { url: `${cleanBaseUrl}/api/user/checkin`, type: 'newapi' as const };
+
+    switch (resolvedSiteType) {
+      case 'veloera':
+        return [veloeraEndpoint];
+      case 'sub2api':
+        return [];
+      case 'newapi':
+      case 'oneapi':
+      case 'onehub':
+      case 'donehub':
+      case 'voapi':
+      case 'superapi':
+        return [newApiEndpoint];
+      default:
+        return [newApiEndpoint, veloeraEndpoint];
+    }
   }
 
   private getSiteTypeProfileByUrl(baseUrl: string, explicitSiteType?: SiteType) {

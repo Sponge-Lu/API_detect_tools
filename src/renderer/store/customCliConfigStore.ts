@@ -13,6 +13,7 @@ import { create } from 'zustand';
 import type { CustomCliConfig } from '../../shared/types/custom-cli-config';
 import { createDefaultCustomCliConfig } from '../../shared/types/custom-cli-config';
 import { toast } from './toastStore';
+import { sessionEventLog } from '../services/sessionEventLog';
 import Logger from '../utils/logger';
 
 interface CustomCliConfigState {
@@ -95,10 +96,12 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
       if (electronAPI?.customCliConfig?.save) {
         await electronAPI.customCliConfig.save({ configs, activeConfigId });
         Logger.info('✅ [CustomCliConfigStore] 保存配置成功');
+        sessionEventLog.success('custom-cli', '自定义 CLI 配置已保存');
       }
     } catch (error: any) {
       Logger.error('❌ [CustomCliConfigStore] 保存配置失败:', error.message);
       toast.error('保存自定义CLI配置失败');
+      sessionEventLog.error('custom-cli', '自定义 CLI 配置保存失败');
     } finally {
       set({ saving: false });
     }
@@ -124,7 +127,8 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
 
   // 删除配置
   deleteConfig: async (id: string) => {
-    const { activeConfigId, saveConfigs } = get();
+    const { activeConfigId, saveConfigs, configs } = get();
+    const deletedConfig = configs.find(config => config.id === id);
     set(state => ({
       configs: state.configs.filter(c => c.id !== id),
       // 如果删除的是活跃配置，清除活跃状态
@@ -132,6 +136,10 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
     }));
     await saveConfigs();
     toast.success('已删除自定义配置');
+    sessionEventLog.success(
+      'custom-cli',
+      `已删除自定义配置：${deletedConfig?.name || '未命名配置'}`
+    );
   },
 
   // 应用配置
@@ -145,6 +153,7 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
     set({ activeConfigId: id });
     await saveConfigs();
     toast.success(`已应用配置: ${config.name}`);
+    sessionEventLog.success('custom-cli', `已应用自定义 CLI 配置：${config.name}`);
   },
 
   // 取消应用配置
@@ -153,6 +162,7 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
     set({ activeConfigId: null });
     await saveConfigs();
     toast.success('已取消应用自定义配置');
+    sessionEventLog.info('custom-cli', '已取消应用自定义 CLI 配置');
   },
 
   // 拉取模型列表
@@ -185,12 +195,20 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
         await saveConfigs();
 
         toast.success(`成功获取 ${models.length} 个模型`);
+        sessionEventLog.success(
+          'custom-cli',
+          `${config.name || '未命名配置'} 已拉取 ${models.length} 个模型`
+        );
         return models;
       }
       return [];
     } catch (error: any) {
       Logger.error('❌ [CustomCliConfigStore] 拉取模型失败:', error.message);
       toast.error(`拉取模型失败: ${error.message}`);
+      sessionEventLog.error(
+        'custom-cli',
+        `${config.name || '未命名配置'} 拉取模型失败：${error.message}`
+      );
       return [];
     } finally {
       set(state => ({

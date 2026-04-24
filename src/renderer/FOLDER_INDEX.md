@@ -35,6 +35,7 @@
 
 | 文件夹 | 职责 | 关键文件 |
 |--------|------|--------|
+| **pages/** | 页面容器 | SitesPage, RoutePage, LogsPage |
 | **components/** | UI 组件库 | 表格、表单、对话框等 |
 | **hooks/** | 自定义 Hooks | 业务逻辑、状态管理 |
 | **services/** | 前端服务 | IPC 通信、API 调用 |
@@ -67,6 +68,21 @@
 
 - 各类对话框的独立组件
 - 支持表单验证、错误处理
+
+---
+
+## 📄 Pages (页面容器)
+
+### 一级页面
+
+| 页面 | 职责 | 关键内容 |
+|------|------|--------|
+| **SitesPage** | 站点管理主页面 | 站点列表、账户卡片、批量检测/签到 |
+| **CustomCliPage** | 自定义 CLI 配置页面 | 配置预览、真实 CLI 测试、模板导出 |
+| **CreditPage** | Linux Do Credit 页面 | 积分余额、每日统计、交易记录、充值入口 |
+| **RoutePage** | 路由总览页 | 代理服务、模型重定向、CLI 探测、统计分析 |
+| **LogsPage** | 会话日志页 | 通知历史、关键操作记录、筛选与清空 |
+| **SettingsPage** | 设置页 | 应用设置、导入导出、备份入口 |
 
 ---
 
@@ -105,7 +121,7 @@
 | **configStore** | 配置管理 | 站点列表、设置 |
 | **detectionStore** | 检测结果 | 检测状态、结果 |
 | **uiStore** | UI 状态 | 主题、模态框 |
-| **toastStore** | 消息提示 | 消息队列 |
+| **toastStore** | 消息提示 | 可见 Toast 队列、通知历史、会话事件 |
 
 ### Store 特点
 
@@ -128,6 +144,21 @@
 - `generateGeminiCliConfig(params)` - 生成 Gemini CLI 配置（含端点测试结果注释）
 - `selectEndpointFormat(geminiDetail)` - 根据测试结果选择端点格式
 - `generateEndpointComment(geminiDetail)` - 生成端点测试结果注释
+
+### cli-compat-projection.ts
+
+**职责**: 把 `routing.cliProbe.latest` 投影为站点页兼容性图标使用的结果，并补充来源标签。
+
+**关键方法**:
+- `projectCliCompatibilityMap(config)` - 生成站点/账户维度的兼容性映射
+- `syncProjectedCliCompatibility(config, setCliCompatibility)` - 将投影结果同步到 `detectionStore`
+
+### sessionEventLog.ts
+
+**职责**: 会话事件记录
+
+**关键方法**:
+- `success()`, `info()`, `warning()`, `error()` - 将关键操作写入 `toastStore.eventHistory`
 
 ### IPC 通信模式
 

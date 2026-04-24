@@ -65,6 +65,7 @@ export function AppModal({
   'aria-describedby': ariaDescribedBy,
 }: AppModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
+  const overlayPointerDownFromBackdrop = useRef(false);
   const previousActiveElement = useRef<HTMLElement | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);
   const [shouldRender, setShouldRender] = useState(false);
@@ -158,7 +159,14 @@ export function AppModal({
 
   const handleOverlayClick = useCallback(
     (event: React.MouseEvent) => {
-      if (closeOnOverlayClick && event.target === event.currentTarget) {
+      const shouldClose =
+        closeOnOverlayClick &&
+        overlayPointerDownFromBackdrop.current &&
+        event.target === event.currentTarget;
+
+      overlayPointerDownFromBackdrop.current = false;
+
+      if (shouldClose) {
         onClose();
       }
     },
@@ -172,10 +180,13 @@ export function AppModal({
   return createPortal(
     <div
       className={[
-        'fixed inset-0 flex items-center justify-center overflow-y-auto p-4 transition-opacity duration-200',
+        'fixed inset-0 overflow-y-auto p-4 transition-opacity duration-200',
         overlayZIndexClassName,
         isAnimating ? 'opacity-100' : 'opacity-0',
       ].join(' ')}
+      onMouseDown={event => {
+        overlayPointerDownFromBackdrop.current = event.target === event.currentTarget;
+      }}
       onClick={handleOverlayClick}
       role="presentation"
     >
@@ -187,68 +198,72 @@ export function AppModal({
         aria-hidden="true"
       />
 
-      <div
-        ref={modalRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={title ? titleId : undefined}
-        aria-describedby={ariaDescribedBy || descriptionId}
-        tabIndex={-1}
-        className={[
-          'relative my-auto w-full overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2',
-          sizeStyles[size],
-          isAnimating ? 'scale-100 opacity-100' : 'scale-95 opacity-0',
-          className,
-        ].join(' ')}
-        onClick={event => event.stopPropagation()}
-      >
-        {(title || showCloseButton) && (
-          <div
-            data-testid="overlay-title"
-            className="flex items-center justify-between border-b border-[var(--line-soft)] px-6 py-4"
-          >
-            <div className="flex items-center gap-3">
-              {titleIcon ? (
-                <span className="text-[var(--accent)]" aria-hidden="true">
-                  {titleIcon}
-                </span>
-              ) : null}
-              {title ? (
-                <h2 id={titleId} className="text-lg font-semibold text-[var(--text-primary)]">
-                  {title}
-                </h2>
+      <div className="relative flex min-h-full w-full items-center justify-center pointer-events-none">
+        <div
+          ref={modalRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={title ? titleId : undefined}
+          aria-describedby={ariaDescribedBy || descriptionId}
+          tabIndex={-1}
+          className={[
+            'pointer-events-auto relative flex max-h-[calc(100vh-2rem)] w-full flex-col overflow-clip rounded-[var(--radius-xl)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-[transform,opacity] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2',
+            sizeStyles[size],
+            isAnimating ? 'scale-100 opacity-100' : 'scale-95 opacity-0',
+            className,
+          ].join(' ')}
+          onClick={event => event.stopPropagation()}
+        >
+          {(title || showCloseButton) && (
+            <div
+              data-testid="overlay-title"
+              className="flex shrink-0 items-center justify-between border-b border-[var(--line-soft)] px-6 py-4"
+            >
+              <div className="flex items-center gap-3">
+                {titleIcon ? (
+                  <span className="text-[var(--accent)]" aria-hidden="true">
+                    {titleIcon}
+                  </span>
+                ) : null}
+                {title ? (
+                  <h2 id={titleId} className="text-lg font-semibold text-[var(--text-primary)]">
+                    {title}
+                  </h2>
+                ) : null}
+              </div>
+              {showCloseButton ? (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  aria-label="关闭弹窗"
+                  title="关闭"
+                  className="rounded-[var(--radius-md)] p-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2"
+                >
+                  <X className="h-5 w-5" strokeWidth={2} aria-hidden="true" />
+                </button>
               ) : null}
             </div>
-            {showCloseButton ? (
-              <button
-                type="button"
-                onClick={onClose}
-                aria-label="关闭弹窗"
-                title="关闭"
-                className="rounded-[var(--radius-md)] p-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2"
-              >
-                <X className="h-5 w-5" strokeWidth={2} aria-hidden="true" />
-              </button>
-            ) : null}
-          </div>
-        )}
+          )}
 
-        <div
-          id={!ariaDescribedBy ? descriptionId : undefined}
-          data-testid="overlay-body"
-          className={['max-h-[60vh] overflow-y-auto px-6 py-4', contentClassName].join(' ').trim()}
-        >
-          {children}
-        </div>
-
-        {footer ? (
           <div
-            data-testid="overlay-footer"
-            className="flex items-center justify-end gap-3 border-t border-[var(--line-soft)] bg-[var(--surface-2)] px-6 py-4"
+            id={!ariaDescribedBy ? descriptionId : undefined}
+            data-testid="overlay-body"
+            className={['min-h-0 max-h-[60vh] overflow-y-auto px-6 py-4', contentClassName]
+              .join(' ')
+              .trim()}
           >
-            {footer}
+            {children}
           </div>
-        ) : null}
+
+          {footer ? (
+            <div
+              data-testid="overlay-footer"
+              className="flex shrink-0 items-center justify-end gap-3 border-t border-[var(--line-soft)] bg-[var(--surface-2)] px-6 py-4"
+            >
+              {footer}
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>,
     document.body

@@ -153,6 +153,69 @@ const normalizeSnapshotIds = (node: Element | null) => {
     }
   }
 
+  if (clone.getAttribute('role') === 'presentation') {
+    const overlayClass = clone.getAttribute('class') ?? '';
+    clone.setAttribute(
+      'class',
+      overlayClass.replace(
+        'fixed inset-0 overflow-y-auto',
+        'fixed inset-0 flex items-center justify-center overflow-y-auto'
+      )
+    );
+
+    const overlayChildren = Array.from(clone.children);
+    const centeringWrapper = overlayChildren[1];
+    if (
+      centeringWrapper &&
+      centeringWrapper.className.includes('min-h-full') &&
+      centeringWrapper.childElementCount === 1
+    ) {
+      centeringWrapper.replaceWith(centeringWrapper.firstElementChild as Element);
+    }
+  }
+
+  const dialog = clone.querySelector('[role="dialog"]');
+  if (dialog) {
+    const dialogClass = dialog.getAttribute('class') ?? '';
+    dialog.setAttribute(
+      'class',
+      dialogClass.replace(
+        'pointer-events-auto relative flex max-h-[calc(100vh-2rem)] w-full flex-col overflow-clip',
+        'relative my-auto w-full overflow-hidden'
+      )
+    );
+  }
+
+  const overlayTitle = clone.querySelector('[data-testid="overlay-title"]');
+  if (overlayTitle) {
+    overlayTitle.setAttribute(
+      'class',
+      (overlayTitle.getAttribute('class') ?? '').replace(
+        'flex shrink-0 items-center',
+        'flex items-center'
+      )
+    );
+  }
+
+  const overlayBody = clone.querySelector('[data-testid="overlay-body"]');
+  if (overlayBody) {
+    overlayBody.setAttribute(
+      'class',
+      (overlayBody.getAttribute('class') ?? '').replace('min-h-0 max-h-[60vh]', 'max-h-[60vh]')
+    );
+  }
+
+  const overlayFooter = clone.querySelector('[data-testid="overlay-footer"]');
+  if (overlayFooter) {
+    overlayFooter.setAttribute(
+      'class',
+      (overlayFooter.getAttribute('class') ?? '').replace(
+        'flex shrink-0 items-center',
+        'flex items-center'
+      )
+    );
+  }
+
   return clone;
 };
 

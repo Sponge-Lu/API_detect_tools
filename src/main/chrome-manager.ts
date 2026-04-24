@@ -46,6 +46,8 @@ interface LocalStorageData {
   systemName: string | null;
   accessToken: string | null;
   siteTypeHint?: SiteType | null;
+  resolvedBaseUrl?: string | null;
+  dataSource?: 'localStorage' | 'api' | 'mixed';
   supportsCheckIn?: boolean; // 站点是否支持签到
   canCheckIn?: boolean; // 当前是否可签到
 }
@@ -892,17 +894,18 @@ export class ChromeManager {
   async createAccessTokenForLogin(baseUrl: string, userId: number): Promise<string | null> {
     if (!this.loginBrowserState?.browser) return null;
 
-    const pages = await this.loginBrowserState.browser.pages();
-    if (pages.length === 0) return null;
-    const page = pages[0];
-    if (page.isClosed()) return null;
+    const page = await this.resolveBestPageForUrl(this.loginBrowserState.browser, baseUrl);
+    if (!page || page.isClosed()) return null;
 
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
-    const apiUrl = `${cleanBaseUrl}/api/user/token`;
 
     Logger.info('🔧 [ChromeManager] 通过登录浏览器创建 access token...');
 
     try {
+      await this.ensurePageOnTargetSite(page, cleanBaseUrl, true);
+      const effectiveBaseUrl = await this.resolveEffectiveBaseUrl(page, cleanBaseUrl, true);
+      const apiUrl = `${effectiveBaseUrl}/api/user/token`;
+
       const token = await page.evaluate(
         async (url: string, uid: number) => {
           const response = await fetch(url, {
@@ -938,6 +941,177 @@ export class ChromeManager {
       return token;
     } catch (error: any) {
       Logger.warn('⚠️ [ChromeManager] 创建 access token 失败:', error.message);
+      return null;
+    }
+  }
+
+  private async resolveBestPageForUrl(browser: Browser, baseUrl: string): Promise<Page | null> {
+    const pages = await browser.pages();
+    const openPages = pages.filter(page => !page.isClosed());
+    if (openPages.length === 0) {
+      return null;
+    }
+
+    let targetHostname: string;
+    try {
+      targetHostname = new URL(baseUrl).hostname;
+    } catch {
+      return openPages[0];
+    }
+
+    const matchedPage = openPages.find(page => {
+      try {
+        return new URL(page.url()).hostname === targetHostname;
+      } catch {
+        return false;
+      }
+    });
+
+    return matchedPage || openPages[0];
+  }
+
+  private async ensurePageOnTargetSite(
+    page: Page,
+    baseUrl: string,
+    loginMode?: boolean
+  ): Promise<void> {
+    this.checkBrowserClosed(loginMode);
+    if (page.isClosed()) {
+      throw new Error('浏览器已关闭，操作已取消');
+    }
+
+    const targetHostname = new URL(baseUrl).hostname;
+    const currentUrl = await page.url();
+
+    try {
+      if (new URL(currentUrl).hostname === targetHostname) {
+        return;
+      }
+    } catch {
+      // 当前页面可能仍是 about:blank 或三方 OAuth 跳转页，继续导航回目标站点。
+    }
+
+    Logger.info('🔄 [ChromeManager] 登录浏览器当前不在目标站点，导航回目标域名...');
+    await page.goto(baseUrl, { waitUntil: 'networkidle0', timeout: 10000 });
+  }
+
+  private isHttpUrl(value: string | null | undefined): value is string {
+    return typeof value === 'string' && /^https?:\/\//i.test(value);
+  }
+
+  private hasMeaningfulUserData(data?: LocalStorageData | null): boolean {
+    if (!data) {
+      return false;
+    }
+
+    return Boolean(
+      data.userId ||
+        data.username ||
+        data.systemName ||
+        data.accessToken ||
+        data.siteTypeHint ||
+        data.supportsCheckIn !== undefined ||
+        data.canCheckIn !== undefined
+    );
+  }
+
+  private mergeLocalAndApiData(
+    localData: LocalStorageData,
+    apiData: LocalStorageData,
+    options?: { apiWins?: boolean }
+  ): LocalStorageData {
+    const apiWins = options?.apiWins !== false;
+    const merged = apiWins ? { ...localData, ...apiData } : { ...apiData, ...localData };
+    const localHasData = this.hasMeaningfulUserData(localData);
+    const apiHasData = this.hasMeaningfulUserData(apiData);
+
+    return {
+      ...merged,
+      dataSource: localHasData && apiHasData ? 'mixed' : apiHasData ? 'api' : 'localStorage',
+    };
+  }
+
+  private isLikelyAuthError(error: unknown): boolean {
+    const message = String((error as { message?: string } | null | undefined)?.message || '');
+    return message.includes('401') || message.includes('403');
+  }
+
+  private async resolveEffectiveBaseUrl(
+    page: Page,
+    baseUrl: string,
+    loginMode?: boolean
+  ): Promise<string> {
+    const normalizedBaseUrl = baseUrl.replace(/\/$/, '');
+
+    try {
+      const pageUrl = await this.resolveCurrentPageUrl(page, loginMode);
+      if (!pageUrl) {
+        return normalizedBaseUrl;
+      }
+
+      const original = new URL(normalizedBaseUrl);
+      const current = new URL(pageUrl);
+
+      if (!['http:', 'https:'].includes(current.protocol)) {
+        return normalizedBaseUrl;
+      }
+
+      if (current.hostname !== original.hostname) {
+        return normalizedBaseUrl;
+      }
+
+      original.protocol = current.protocol;
+      original.host = current.host;
+      const resolved = original.toString().replace(/\/$/, '');
+
+      if (resolved !== normalizedBaseUrl) {
+        Logger.info('🔄 [ChromeManager] 使用页面实际 origin 修正站点基址:', {
+          originalBaseUrl: normalizedBaseUrl,
+          resolvedBaseUrl: resolved,
+          currentPageUrl: pageUrl,
+        });
+      }
+
+      return resolved;
+    } catch {
+      return normalizedBaseUrl;
+    }
+  }
+
+  private async resolveCurrentPageUrl(page: Page, loginMode?: boolean): Promise<string | null> {
+    this.checkBrowserClosed(loginMode);
+    if (page.isClosed()) {
+      throw new Error('浏览器已关闭，操作已取消');
+    }
+
+    try {
+      const currentUrl = await page.url();
+      if (this.isHttpUrl(currentUrl)) {
+        return currentUrl;
+      }
+    } catch {
+      // ignore and fallback to location.href inside the page
+    }
+
+    try {
+      const href = await page.evaluate(() => {
+        try {
+          const locationRef = (globalThis as any).location;
+          if (typeof locationRef?.href === 'string' && locationRef.href.trim()) {
+            return locationRef.href;
+          }
+          if (typeof locationRef?.origin === 'string' && locationRef.origin.trim()) {
+            return locationRef.origin;
+          }
+        } catch {
+          return null;
+        }
+
+        return null;
+      });
+
+      return this.isHttpUrl(href) ? href : null;
+    } catch {
       return null;
     }
   }
@@ -980,6 +1154,10 @@ export class ChromeManager {
     // 等待页面稳定并读取 localStorage（处理重定向、Cloudflare 验证等）
     onStatus?.('等待页面加载...');
     let localData = await this.waitAndReadLocalStorage(page, url, onStatus, loginMode);
+    localData = {
+      ...localData,
+      dataSource: localData.dataSource || 'localStorage',
+    };
 
     // 判断是否需要等待登录：没有 userId，或者有 userId 但没有 accessToken（可能是残留数据）
     const needsLoginCheck = !localData.userId || (!localData.accessToken && waitForLogin);
@@ -997,8 +1175,7 @@ export class ChromeManager {
         const apiData = await this.getUserDataFromApi(page, url, siteType, loginMode);
         if (apiData.userId) {
           Logger.info(`✅ [ChromeManager] 通过API检测到用户已登录！用户ID: ${apiData.userId}`);
-          // 合并数据，API数据优先
-          localData = { ...localData, ...apiData };
+          localData = this.mergeLocalAndApiData(localData, apiData);
         } else {
           // API也没有数据，进入等待循环
           onStatus?.('未检测到登录，请在浏览器中登录账号...');
@@ -1039,16 +1216,17 @@ export class ChromeManager {
       Logger.info('   - accessToken:', localData.accessToken ? '已获取' : '未获取');
     }
 
+    const hasFreshApiData = localData.dataSource === 'api' || localData.dataSource === 'mixed';
+
     // 第二步：检查是否需要API回退（没有 accessToken 说明需要验证登录状态）
-    const needsApiFallback = !localData.userId || !localData.accessToken;
+    const needsApiFallback = (!localData.userId || !localData.accessToken) && !hasFreshApiData;
 
     if (needsApiFallback) {
       Logger.info('⚠️ [ChromeManager] 信息不完整，尝试通过API补全...');
       try {
         this.checkBrowserClosed(loginMode);
         const apiData = await this.getUserDataFromApi(page, url, siteType, loginMode);
-        // 合并数据，localStorage优先
-        const merged = { ...apiData, ...localData };
+        const merged = this.mergeLocalAndApiData(localData, apiData, { apiWins: false });
         Logger.info('✅ [ChromeManager] API补全完成');
 
         if (!merged.userId) {
@@ -1091,6 +1269,9 @@ export class ChromeManager {
         }
       }
     }
+
+    const resolvedBaseUrl = await this.resolveEffectiveBaseUrl(page, url, loginMode);
+    localData = { ...localData, resolvedBaseUrl };
 
     // 最后检查一次浏览器状态
     this.checkBrowserClosed(loginMode);
@@ -1198,7 +1379,7 @@ export class ChromeManager {
             const apiData = await this.getUserDataFromApi(page, baseUrl, siteType, loginMode);
             if (apiData.userId) {
               Logger.info(`✅ [ChromeManager] 登录状态有效！用户ID: ${apiData.userId}`);
-              return { ...localData, ...apiData };
+              return this.mergeLocalAndApiData(localData, apiData);
             }
           } catch (apiError: any) {
             if (
@@ -1207,10 +1388,15 @@ export class ChromeManager {
             ) {
               throw apiError;
             }
-            // API 返回 401 等错误，说明 session 过期，继续等待
-            Logger.info(
-              'ℹ️ [ChromeManager] localStorage有残留数据但session已过期，继续等待登录...'
-            );
+            if (this.isLikelyAuthError(apiError)) {
+              Logger.info(
+                'ℹ️ [ChromeManager] localStorage有残留数据但登录态已失效，继续等待登录...'
+              );
+            } else {
+              Logger.info(
+                `ℹ️ [ChromeManager] localStorage已读取到用户信息，但API验证失败: ${apiError.message}，继续等待登录...`
+              );
+            }
           }
         }
 
@@ -1222,8 +1408,7 @@ export class ChromeManager {
             const apiData = await this.getUserDataFromApi(page, baseUrl, siteType, loginMode);
             if (apiData.userId) {
               Logger.info(`✅ [ChromeManager] 通过API检测到用户登录！用户ID: ${apiData.userId}`);
-              // 合并数据，API数据优先（因为localStorage可能没有）
-              return { ...localData, ...apiData };
+              return this.mergeLocalAndApiData(localData, apiData);
             }
           } catch (apiError: any) {
             // 如果是浏览器关闭错误，直接抛出
@@ -1256,7 +1441,7 @@ export class ChromeManager {
       if (apiData.userId) {
         Logger.info(`✅ [ChromeManager] 通过API检测到用户登录！用户ID: ${apiData.userId}`);
         const localData = await this.tryGetFromLocalStorage(page);
-        return { ...localData, ...apiData };
+        return this.mergeLocalAndApiData(localData, apiData);
       }
     } catch (apiError: any) {
       // 如果是浏览器关闭错误，直接抛出
@@ -1295,7 +1480,7 @@ export class ChromeManager {
 
       try {
         // 检查页面 URL，确保在目标域名上
-        const currentUrl = page.url();
+        const currentUrl = (await this.resolveCurrentPageUrl(page, loginMode)) || 'unknown';
         Logger.info(`📍 [ChromeManager] 当前页面URL: ${currentUrl}`);
 
         // 检查是否是 Cloudflare 挑战页面
@@ -1408,6 +1593,8 @@ export class ChromeManager {
         systemName: null,
         accessToken: null,
         siteTypeHint: null,
+        resolvedBaseUrl: null,
+        dataSource: 'localStorage',
       };
 
       const logParseError = (key: string, error: unknown) => {
@@ -1754,7 +1941,7 @@ export class ChromeManager {
       throw new Error('浏览器已关闭，操作已取消');
     }
 
-    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    const cleanBaseUrl = await this.resolveEffectiveBaseUrl(page, baseUrl, loginMode);
 
     const endpoints = getSiteTypeProfile(siteType).initializationUserEndpoints;
 
@@ -1877,6 +2064,7 @@ export class ChromeManager {
               // System Name - 暂不从此接口获取，后续单独获取
               systemName: null,
               siteTypeHint: s.getItem('auth_user') || s.getItem('auth_token') ? 'sub2api' : null,
+              dataSource: 'api' as const,
             };
           } catch (error: any) {
             throw new Error(error.message || '请求失败');

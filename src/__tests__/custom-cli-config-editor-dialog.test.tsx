@@ -164,16 +164,16 @@ describe('CustomCliConfigEditorDialog', () => {
     await renderDialog();
 
     expect(screen.queryByRole('button', { name: '测试当前配置' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '预览 Claude Code' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '应用 Claude Code' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '预览 Codex' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '应用 Codex' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '预览 Gemini CLI' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '应用 Gemini CLI' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '测试 Claude Code' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '测试 Codex' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '测试 Gemini CLI' })).toBeInTheDocument();
-    expect(screen.getByTestId('cli-test-columns')).toHaveClass('md:divide-x');
+    expect(screen.getAllByRole('button', { name: /^预览 / })).toHaveLength(3);
+    expect(screen.getAllByRole('button', { name: /^应用 / })).toHaveLength(3);
+    expect(screen.getAllByRole('button', { name: /^测试 / })).toHaveLength(3);
+
+    const cliTestColumns = screen.getByTestId('cli-test-columns');
+    expect(cliTestColumns).toBeInTheDocument();
+    expect(cliTestColumns.className).toContain('md:divide-x');
+    expect(cliTestColumns).toHaveTextContent('Claude Code');
+    expect(cliTestColumns).toHaveTextContent('Codex');
+    expect(cliTestColumns).toHaveTextContent('Gemini CLI');
   });
 
   it('runs tests only for the clicked cli column', async () => {

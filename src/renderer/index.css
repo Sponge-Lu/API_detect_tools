@@ -57,6 +57,9 @@
   --warning-soft: rgba(178, 138, 87, 0.16);
   --danger: #a55e63;
   --danger-soft: rgba(165, 94, 99, 0.14);
+  --cli-history-success: #6f9f86;
+  --cli-history-danger: #b3696d;
+  --cli-history-empty: rgba(58, 68, 79, 0.1);
   --overlay-mask: rgba(24, 31, 39, 0.24);
   --hover-overlay: rgba(31, 36, 41, 0.05);
   --focus-ring: rgba(92, 107, 120, 0.16);
@@ -150,6 +153,9 @@ html[data-theme='light-b'] {
   --warning-soft: rgba(178, 138, 87, 0.16);
   --danger: #a55e63;
   --danger-soft: rgba(165, 94, 99, 0.14);
+  --cli-history-success: #6f9f86;
+  --cli-history-danger: #b3696d;
+  --cli-history-empty: rgba(58, 68, 79, 0.1);
   --overlay-mask: rgba(24, 31, 39, 0.24);
   --hover-overlay: rgba(31, 36, 41, 0.05);
   --focus-ring: rgba(92, 107, 120, 0.16);
@@ -186,6 +192,9 @@ html[data-theme='dark'] {
   --warning-soft: rgba(209, 161, 109, 0.2);
   --danger: #d27a72;
   --danger-soft: rgba(210, 122, 114, 0.18);
+  --cli-history-success: #688776;
+  --cli-history-danger: #e0857c;
+  --cli-history-empty: rgba(142, 161, 173, 0.14);
   --overlay-mask: rgba(5, 7, 10, 0.42);
   --hover-overlay: rgba(255, 255, 255, 0.08);
   --focus-ring: rgba(142, 161, 173, 0.24);

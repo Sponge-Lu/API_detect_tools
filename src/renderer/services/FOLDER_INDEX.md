@@ -24,6 +24,8 @@
 | 文件 | 职责 | 关键方法 |
 |------|------|--------|
 | **cli-config-generator.ts** | CLI 配置生成 | `generateConfig()`, `exportConfig()` |
+| **cli-compat-projection.ts** | 将 `routing.cliProbe.latest` 投影为站点页 CLI 兼容性结果 | `projectCliCompatibilityMap()`, `syncProjectedCliCompatibility()` |
+| **sessionEventLog.ts** | 将关键操作写入会话事件历史 | `success()`, `info()`, `warning()`, `error()` |
 
 ---
 
@@ -46,6 +48,34 @@
 - `wire_api` 固定为 `"responses"`（chat 模式已废弃）
 - 生成的配置文件包含测试结果注释
 - 中文站点名称自动转换为拼音（使用 pinyin-pro 库）
+
+---
+
+### cli-compat-projection.ts - CLI 兼容性投影
+
+**职责**: 将路由层统一保存的 `cliProbe.latest` 转换为站点页/账户卡片可直接消费的兼容性结果。
+
+**关键导出**:
+- `projectCliCompatibilityMap()` - 基于 `sites / accounts / routing` 生成 detection store 需要的兼容性映射
+- `syncProjectedCliCompatibility()` - 将投影结果批量同步到 `detectionStore`
+
+**关键规则**:
+- 账户卡片只使用自身 `accountId` 对应的最新结果，不再复用同站点其他账户的 probe 摘要
+- 无账户卡片时，才允许使用 `site::{siteId}` 的站点级 probe 结果
+- 同一 CLI 的多模型结果按“有一个成功即视为兼容”聚合，同时保留成功样本的细节文本
+- 失败摘要按 CLI 独立保存，优先显示错误码，没有错误码时回落为短错误文本
+
+---
+
+### sessionEventLog.ts - 会话事件记录
+
+**职责**: 将 renderer 侧的关键操作写入 `toastStore.eventHistory`，供日志页统一展示。
+
+**关键导出**:
+- `sessionEventLog.success()` - 记录成功操作
+- `sessionEventLog.info()` - 记录一般操作
+- `sessionEventLog.warning()` - 记录带风险提示的操作
+- `sessionEventLog.error()` - 记录失败操作
 
 ---
 

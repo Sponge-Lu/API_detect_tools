@@ -5,12 +5,14 @@
 import { ipcMain } from 'electron';
 import { CliCompatibilityResult } from '../cli-compat-service';
 import { cliWrapperCompatService } from '../cli-wrapper-compat-service';
+import { persistCliProbeSamples } from '../route-cli-probe-service';
 import { unifiedConfigManager } from '../unified-config-manager';
 import Logger from '../utils/logger';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { normalizeCodexFeatureFlagsToml } from '../../shared/types/cli-config';
+import { buildProbeKey, buildSiteScopedProbeAccountId } from '../../shared/types/route-proxy';
 
 const log = Logger.scope('CliCompatHandlers');
 
@@ -28,8 +30,56 @@ interface TestWithConfigParams {
 
 type CliCompatExecutor = Pick<
   typeof cliWrapperCompatService,
-  'testClaudeCode' | 'testCodexWithDetail' | 'testGeminiWithDetail'
+  'testClaudeCodeWithDetail' | 'testCodexWithDetail' | 'testGeminiWithDetail'
 >;
+
+interface CliCompatibilityTestSample {
+  cliType: 'claudeCode' | 'codex' | 'geminiCli';
+  model: string;
+  success: boolean;
+  testedAt: number;
+  statusCode?: number;
+  error?: string;
+  claudeDetail?: CliCompatibilityResult['claudeDetail'];
+  codexDetail?: CliCompatibilityResult['codexDetail'];
+  geminiDetail?: CliCompatibilityResult['geminiDetail'];
+}
+
+function extractStatusCodeFromMessage(message?: string): number | undefined {
+  if (!message) {
+    return undefined;
+  }
+
+  const patterns = [
+    /status\s+code\s*[:=]?\s*(\d{3})/i,
+    /\bhttp\s*[:=]?\s*(\d{3})\b/i,
+    /"status"\s*:\s*(\d{3})/i,
+    /\b(\d{3})\b(?=\s+(?:bad request|unauthorized|forbidden|not found|too many requests|server error))/i,
+  ];
+
+  for (const pattern of patterns) {
+    const matched = message.match(pattern);
+    const statusCode = matched?.[1] ? Number.parseInt(matched[1], 10) : Number.NaN;
+    if (Number.isInteger(statusCode) && statusCode >= 100 && statusCode <= 599) {
+      return statusCode;
+    }
+  }
+
+  return undefined;
+}
+
+function summarizeCliFailure(message?: string, statusCode?: number): string | undefined {
+  if (statusCode) {
+    return `错误码 ${statusCode}`;
+  }
+
+  const normalized = message?.replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  return normalized.length <= 96 ? normalized : `${normalized.slice(0, 93)}...`;
+}
 
 /** 配置文件写入参数 */
 interface WriteCliConfigParams {
@@ -470,28 +520,46 @@ async function runCliCompatibilityTests(
   params: TestWithConfigParams,
   executor: CliCompatExecutor,
   options?: { parallel?: boolean }
-): Promise<Partial<CliCompatibilityResult>> {
+): Promise<{ summary: Partial<CliCompatibilityResult>; samples: CliCompatibilityTestSample[] }> {
   const results: Partial<CliCompatibilityResult> = {
     claudeCode: null,
+    claudeDetail: undefined,
+    claudeError: undefined,
     codex: null,
     codexDetail: undefined,
+    codexError: undefined,
     geminiCli: null,
     geminiDetail: undefined,
+    geminiError: undefined,
   };
+  const samples: CliCompatibilityTestSample[] = [];
+  const latestFailureSummaryByCli: Partial<
+    Record<CliCompatibilityTestSample['cliType'], string | undefined>
+  > = {};
 
   const testSingleConfig = async (config: CliTestConfig) => {
     const testUrl = config.baseUrl || params.siteUrl;
+    const testedAt = Date.now();
 
     try {
       switch (config.cliType) {
         case 'claudeCode': {
-          const success = await executor.testClaudeCode(testUrl, config.apiKey, config.model);
+          const claudeResult = await executor.testClaudeCodeWithDetail(
+            testUrl,
+            config.apiKey,
+            config.model
+          );
           log.info(
-            `CLI test ${config.cliType} (${config.model}, ${testUrl}): ${success ? 'passed' : 'failed'}`
+            `CLI test ${config.cliType} (${config.model}, ${testUrl}): ${claudeResult.supported ? 'passed' : 'failed'}`
           );
           return {
             cliType: config.cliType,
-            success,
+            model: config.model,
+            success: claudeResult.supported ?? false,
+            testedAt,
+            error: claudeResult.message,
+            statusCode: extractStatusCodeFromMessage(claudeResult.message),
+            claudeDetail: claudeResult.detail,
           };
         }
         case 'codex': {
@@ -505,7 +573,11 @@ async function runCliCompatibilityTests(
           );
           return {
             cliType: config.cliType,
+            model: config.model,
             success: codexResult.supported ?? false,
+            testedAt,
+            error: codexResult.message,
+            statusCode: extractStatusCodeFromMessage(codexResult.message),
             codexDetail: codexResult.detail,
           };
         }
@@ -520,16 +592,25 @@ async function runCliCompatibilityTests(
           );
           return {
             cliType: config.cliType,
+            model: config.model,
             success: geminiResult.supported ?? false,
+            testedAt,
+            error: geminiResult.message,
+            statusCode: extractStatusCodeFromMessage(geminiResult.message),
             geminiDetail: geminiResult.detail,
           };
         }
       }
     } catch (error: any) {
+      const message = error.message;
       log.warn(`CLI test ${config.cliType} (${config.model}) error: ${error.message}`);
       return {
         cliType: config.cliType,
+        model: config.model,
         success: false,
+        testedAt,
+        error: message,
+        statusCode: extractStatusCodeFromMessage(message),
       };
     }
 
@@ -548,10 +629,30 @@ async function runCliCompatibilityTests(
 
   for (const testResult of testResults) {
     if (!testResult) continue;
+    samples.push({
+      cliType: testResult.cliType,
+      model: testResult.model,
+      success: testResult.success,
+      testedAt: testResult.testedAt,
+      statusCode: testResult.statusCode,
+      error: testResult.error,
+      claudeDetail: testResult.claudeDetail,
+      codexDetail: testResult.codexDetail,
+      geminiDetail: testResult.geminiDetail,
+    });
+    if (!testResult.success) {
+      latestFailureSummaryByCli[testResult.cliType] = summarizeCliFailure(
+        testResult.error,
+        testResult.statusCode
+      );
+    }
 
     switch (testResult.cliType) {
       case 'claudeCode':
         results.claudeCode = results.claudeCode === true ? true : testResult.success;
+        if (testResult.claudeDetail && (testResult.success || !results.claudeDetail)) {
+          results.claudeDetail = testResult.claudeDetail;
+        }
         break;
       case 'codex':
         results.codex = results.codex === true ? true : testResult.success;
@@ -568,7 +669,13 @@ async function runCliCompatibilityTests(
     }
   }
 
-  return results;
+  results.claudeError =
+    results.claudeCode === false ? latestFailureSummaryByCli.claudeCode : undefined;
+  results.codexError = results.codex === false ? latestFailureSummaryByCli.codex : undefined;
+  results.geminiError =
+    results.geminiCli === false ? latestFailureSummaryByCli.geminiCli : undefined;
+
+  return { summary: results, samples };
 }
 
 /**
@@ -581,7 +688,7 @@ export function registerCliCompatHandlers() {
       const results = await runCliCompatibilityTests(params, cliWrapperCompatService, {
         parallel: false,
       });
-      return { success: true, data: results };
+      return { success: true, data: results.summary, samples: results.samples };
     } catch (error: any) {
       log.error(`CLI wrapper compatibility test failed: ${error.message}`);
       return { success: false, error: error.message };
@@ -591,40 +698,17 @@ export function registerCliCompatHandlers() {
   // 保存 CLI 兼容性结果到缓存
   ipcMain.handle(
     'cli-compat:save-result',
-    async (_, siteUrl: string, result: CliCompatibilityResult, accountId?: string) => {
+    async (
+      _,
+      siteUrl: string,
+      result: CliCompatibilityResult,
+      accountId?: string,
+      samples?: CliCompatibilityTestSample[]
+    ) => {
       try {
         log.info(
           `Saving CLI compatibility result for ${accountId ? `account: ${accountId}` : `site: ${siteUrl}`}`
         );
-
-        if (accountId) {
-          const updated = await unifiedConfigManager.updateAccountCachedData(
-            accountId,
-            current => ({
-              ...(current || {
-                models: [],
-                last_refresh: Date.now(),
-              }),
-              cli_compatibility: {
-                claudeCode: result.claudeCode,
-                codex: result.codex,
-                codexDetail: result.codexDetail,
-                geminiCli: result.geminiCli,
-                geminiDetail: result.geminiDetail,
-                testedAt: result.testedAt,
-                error: result.error,
-              },
-            })
-          );
-
-          if (!updated) {
-            log.warn(`Account not found for id: ${accountId}`);
-            return { success: false, error: 'Account not found' };
-          }
-
-          log.info(`CLI compatibility result saved for account ${accountId}`);
-          return { success: true };
-        }
 
         const site = unifiedConfigManager.getSiteByUrl(siteUrl);
         if (!site) {
@@ -632,26 +716,41 @@ export function registerCliCompatHandlers() {
           return { success: false, error: 'Site not found' };
         }
 
-        // 更新站点的 cached_data，添加 cli_compatibility
-        const currentCachedData = site.cached_data || {
-          models: [],
-          last_refresh: Date.now(),
-        };
+        if (accountId && !unifiedConfigManager.getAccountById(accountId)) {
+          log.warn(`Account not found for id: ${accountId}`);
+          return { success: false, error: 'Account not found' };
+        }
 
-        await unifiedConfigManager.updateSite(site.id, {
-          cached_data: {
-            ...currentCachedData,
-            cli_compatibility: {
-              claudeCode: result.claudeCode,
-              codex: result.codex,
-              codexDetail: result.codexDetail, // 保存 Codex 详细测试结果
-              geminiCli: result.geminiCli,
-              geminiDetail: result.geminiDetail, // 保存 Gemini CLI 详细测试结果
-              testedAt: result.testedAt,
-              error: result.error,
-            },
-          },
+        const ownerAccountId = accountId || buildSiteScopedProbeAccountId(site.id);
+        const probeSamples = (samples || []).map((sample, index) => {
+          const probeKey = buildProbeKey(site.id, ownerAccountId, sample.cliType, sample.model);
+          return {
+            sampleId: `manual_${Date.now()}_${index}`,
+            probeKey,
+            siteId: site.id,
+            accountId: ownerAccountId,
+            cliType: sample.cliType,
+            canonicalModel: sample.model,
+            rawModel: sample.model,
+            success: sample.success,
+            source: 'siteManual' as const,
+            statusCode: sample.statusCode,
+            error: sample.error,
+            claudeDetail: sample.claudeDetail,
+            codexDetail: sample.codexDetail,
+            geminiDetail: sample.geminiDetail,
+            testedAt:
+              typeof sample.testedAt === 'number'
+                ? sample.testedAt
+                : typeof result.testedAt === 'number'
+                  ? result.testedAt
+                  : Date.now(),
+          };
         });
+
+        if (probeSamples.length > 0) {
+          await persistCliProbeSamples(probeSamples);
+        }
 
         log.info(`CLI compatibility result saved for ${siteUrl}`);
         return { success: true };

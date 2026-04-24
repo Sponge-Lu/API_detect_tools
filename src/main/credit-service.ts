@@ -70,6 +70,68 @@ export class CreditService {
   }
 
   /**
+   * 是否存在可用于恢复 LDC 页面状态的会话线索
+   * 真实会话主要存在于 Chrome 持久化 profile 中；内存里的 cookie 字符串和缓存数据
+   * 只是提示前端是否可以先恢复视图并尝试刷新。
+   */
+  private hasSessionHint(): boolean {
+    return Boolean(
+      this.cookies || this.cachedInfo || this.cachedDailyStats || this.cachedTransactions
+    );
+  }
+
+  /**
+   * 清理失效的登录态和依赖该登录态的缓存，避免 UI 落入“有缓存但被判定已登出”的矛盾状态。
+   */
+  private async clearSessionState(): Promise<void> {
+    this.cookies = null;
+    this.cachedInfo = null;
+    this.cachedDailyStats = null;
+    this.cachedTransactions = null;
+    await this.saveStorageData();
+  }
+
+  /**
+   * 将持久化的 cookie 字符串恢复到当前浏览器页。
+   * 刷新链路不能只依赖 Edge 临时 profile 还保留登录态，否则重启或会话回收后会稳定 403。
+   */
+  private async applyStoredCookiesToPage(page: any, url: string): Promise<void> {
+    if (!this.cookies) {
+      return;
+    }
+
+    const cookies = this.cookies
+      .split(';')
+      .map(part => part.trim())
+      .filter(Boolean)
+      .map(part => {
+        const separatorIndex = part.indexOf('=');
+        if (separatorIndex <= 0) {
+          return null;
+        }
+
+        return {
+          name: part.slice(0, separatorIndex).trim(),
+          value: part.slice(separatorIndex + 1).trim(),
+          url,
+        };
+      })
+      .filter((cookie): cookie is { name: string; value: string; url: string } => Boolean(cookie));
+
+    if (cookies.length === 0) {
+      return;
+    }
+
+    try {
+      await page.setCookie(...cookies);
+      Logger.info(`🍪 [CreditService] 已向浏览器页面恢复 ${cookies.length} 个持久化 cookies`);
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+    } catch (error: any) {
+      Logger.warn(`⚠️ [CreditService] 恢复持久化 cookies 失败: ${error.message}`);
+    }
+  }
+
+  /**
    * 初始化服务：加载配置和缓存数据
    */
   async initialize(): Promise<void> {
@@ -94,7 +156,7 @@ export class CreditService {
   > {
     Logger.info('🔄 [CreditService] 开始刷新所有 LDC 数据...');
 
-    if (!this.cookies) {
+    if (!this.hasSessionHint()) {
       return {
         success: false,
         error: '未登录，请先登录 Linux Do Credit',
@@ -109,6 +171,7 @@ export class CreditService {
       const pageResult = await this.chromeManager.createPage('https://credit.linux.do/home');
       page = pageResult.page;
       release = pageResult.release;
+      await this.applyStoredCookiesToPage(page, 'https://credit.linux.do/home');
 
       let creditInfo: CreditInfo | null = null;
       let dailyStats: DailyStats | null = null;
@@ -132,7 +195,10 @@ export class CreditService {
             return {
               success: false,
               status: response.status,
-              error: response.status === 401 ? '未登录' : '请求失败',
+              error:
+                response.status === 401 || response.status === 403
+                  ? '登录已过期，请重新登录'
+                  : '请求失败',
             };
           }
 
@@ -147,8 +213,7 @@ export class CreditService {
 
       if (!creditResult.success) {
         if (creditResult.status === 401 || creditResult.status === 403) {
-          this.cookies = null;
-          await this.saveStorageData();
+          await this.clearSessionState();
         }
         return {
           success: false,
@@ -318,7 +383,7 @@ export class CreditService {
   async fetchCreditData(): Promise<CreditResponse<CreditInfo>> {
     Logger.info('🔄 [CreditService] 开始获取积分数据...');
 
-    if (!this.cookies) {
+    if (!this.hasSessionHint()) {
       return {
         success: false,
         error: '未登录，请先登录 Linux Do Credit',
@@ -334,6 +399,7 @@ export class CreditService {
       const pageResult = await this.chromeManager.createPage('https://credit.linux.do/home');
       page = pageResult.page;
       release = pageResult.release;
+      await this.applyStoredCookiesToPage(page, 'https://credit.linux.do/home');
 
       // 步骤1: 获取 credit.linux.do 用户信息（包含基准值和用户名）
       Logger.info('📡 [CreditService] 获取 credit.linux.do 用户信息...');
@@ -353,7 +419,10 @@ export class CreditService {
             return {
               success: false,
               status: response.status,
-              error: response.status === 401 ? '未登录' : '请求失败',
+              error:
+                response.status === 401 || response.status === 403
+                  ? '登录已过期，请重新登录'
+                  : '请求失败',
             };
           }
 
@@ -368,8 +437,7 @@ export class CreditService {
 
       if (!creditResult.success) {
         if (creditResult.status === 401 || creditResult.status === 403) {
-          this.cookies = null;
-          await this.saveStorageData();
+          await this.clearSessionState();
         }
         return {
           success: false,
@@ -460,7 +528,7 @@ export class CreditService {
   async fetchDailyStats(days: number = 7): Promise<CreditResponse<DailyStats>> {
     Logger.info(`🔄 [CreditService] 开始获取每日统计数据 (${days} 天)...`);
 
-    if (!this.cookies) {
+    if (!this.hasSessionHint()) {
       return {
         success: false,
         error: '未登录，请先登录 Linux Do Credit',
@@ -475,6 +543,7 @@ export class CreditService {
       const pageResult = await this.chromeManager.createPage('https://credit.linux.do/home');
       page = pageResult.page;
       release = pageResult.release;
+      await this.applyStoredCookiesToPage(page, 'https://credit.linux.do/home');
 
       // 在浏览器中执行 fetch 请求
       const apiUrl = `${DAILY_STATS_API_URL}?days=${days}`;
@@ -492,7 +561,10 @@ export class CreditService {
             return {
               success: false,
               status: response.status,
-              error: response.status === 401 ? '未登录' : '请求失败',
+              error:
+                response.status === 401 || response.status === 403
+                  ? '登录已过期，请重新登录'
+                  : '请求失败',
             };
           }
 
@@ -507,8 +579,7 @@ export class CreditService {
 
       if (!result.success) {
         if (result.status === 401 || result.status === 403) {
-          this.cookies = null;
-          await this.saveStorageData();
+          await this.clearSessionState();
         }
         return {
           success: false,
@@ -574,7 +645,7 @@ export class CreditService {
   ): Promise<CreditResponse<TransactionList>> {
     Logger.info(`🔄 [CreditService] 开始获取交易记录 (页码: ${pageNum}, 每页: ${pageSize})...`);
 
-    if (!this.cookies) {
+    if (!this.hasSessionHint()) {
       return {
         success: false,
         error: '未登录，请先登录 Linux Do Credit',
@@ -589,6 +660,7 @@ export class CreditService {
       const pageResult = await this.chromeManager.createPage('https://credit.linux.do/home');
       page = pageResult.page;
       release = pageResult.release;
+      await this.applyStoredCookiesToPage(page, 'https://credit.linux.do/home');
 
       // 在浏览器中执行 fetch 请求 (POST)
       const result = await page.evaluate(
@@ -608,7 +680,10 @@ export class CreditService {
               return {
                 success: false,
                 status: response.status,
-                error: response.status === 401 ? '未登录' : '请求失败',
+                error:
+                  response.status === 401 || response.status === 403
+                    ? '登录已过期，请重新登录'
+                    : '请求失败',
               };
             }
 
@@ -626,8 +701,7 @@ export class CreditService {
 
       if (!result.success) {
         if (result.status === 401 || result.status === 403) {
-          this.cookies = null;
-          await this.saveStorageData();
+          await this.clearSessionState();
         }
         return {
           success: false,
@@ -794,22 +868,14 @@ export class CreditService {
             const cookieDetails = cookies.map((c: any) => `${c.name}(${c.domain})`).join(', ');
             Logger.info(`🍪 [CreditService] Cookies: ${cookieDetails}`);
 
-            // 查找 cf_clearance cookie (Cloudflare 验证通过的标志)
-            const cfClearanceCookie = cookies.find((c: any) => c.name === 'cf_clearance');
-
-            // 只要有 cf_clearance cookie，就尝试通过 API 验证登录状态
-            // 不再依赖特定的 session cookie 名称，因为网站可能使用不同的 cookie 名称
-            if (cfClearanceCookie) {
-              Logger.info(
-                `🍪 [CreditService] 找到 cf_clearance cookie, 尝试通过 API 验证登录状态...`
-              );
+            if (cookies.length > 0) {
+              Logger.info('📡 [CreditService] 在浏览器会话中验证登录状态...');
 
               // 构建 cookie 字符串（包含所有 cookies）
               const cookieString = cookies.map((c: any) => `${c.name}=${c.value}`).join('; ');
 
               // 在浏览器上下文中调用 API 获取用户数据
-              // 重要：由于 Cloudflare cf_clearance 绑定到浏览器指纹，必须在同一会话中完成
-              Logger.info('📡 [CreditService] 在浏览器会话中获取用户数据...');
+              // 重要：Cloudflare 会话绑定浏览器指纹，因此必须在当前浏览器上下文里验证
               const creditResult = (await page.evaluate(async (apiUrl: string) => {
                 try {
                   const response = await fetch(apiUrl, {
@@ -1043,14 +1109,9 @@ export class CreditService {
    * 只有在实际获取数据失败时才会更新登录状态
    */
   async getLoginStatus(): Promise<boolean> {
-    if (!this.cookies) {
-      return false;
-    }
-
-    // 如果有 cookies，直接返回 true
-    // 实际的登录状态会在 fetchCreditData 等方法中验证
-    // 如果 cookies 过期，这些方法会自动清除 cookies 并返回错误
-    return true;
+    // 如果本地仍有会话线索，允许前端先恢复缓存视图；
+    // 真正的有效性由后续浏览器上下文请求验证，失败时会清掉失效会话。
+    return this.hasSessionHint();
   }
 
   /**
@@ -1058,11 +1119,7 @@ export class CreditService {
    */
   async logout(): Promise<void> {
     Logger.info('🚪 [CreditService] 执行登出...');
-    this.cookies = null;
-    this.cachedInfo = null;
-    this.cachedDailyStats = null;
-    this.cachedTransactions = null;
-    await this.saveStorageData();
+    await this.clearSessionState();
     Logger.info('✅ [CreditService] 登出完成');
   }
 

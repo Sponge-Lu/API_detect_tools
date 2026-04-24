@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { GlobalCommandBar } from '../renderer/components/AppShell/GlobalCommandBar';
 import { PageHeader } from '../renderer/components/AppShell/PageHeader';
@@ -62,15 +62,26 @@ describe('app shell redesign', () => {
     useUIStore.setState({ sidebarDisplayMode: 'expanded' } as Partial<
       ReturnType<typeof useUIStore.getState>
     >);
-    render(<VerticalSidebar activeTab="sites" onTabChange={vi.fn()} saving={false} />);
+    const { container } = render(
+      <VerticalSidebar activeTab="sites" onTabChange={vi.fn()} saving={false} />
+    );
+
+    const nav = container.querySelector('nav');
 
     expect(screen.getByRole('button', { name: '站点管理' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '自定义CLI' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '模型重定向' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'CLI 可用性' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '代理统计' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '站点检测' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'LDC 积分' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '路由' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '日志' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '设置' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '路由' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '模型重定向' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '代理统计' })).not.toBeInTheDocument();
+    expect(
+      within(nav as HTMLElement)
+        .getAllByRole('button')
+        .map(button => button.getAttribute('aria-label'))
+    ).toEqual(['站点管理', '自定义CLI', '站点检测', 'LDC 积分', '路由', '日志', '设置']);
   });
 
   it('supports manual sidebar mode switching and keeps version/update info in the bottom section', () => {
@@ -129,7 +140,7 @@ describe('app shell redesign', () => {
     expect(localStorage.getItem('api-hub-ui-storage')).toContain('icon-only');
   });
 
-  it('binds page header metadata and global command bar to the normalized visible tab', async () => {
+  it('binds page header metadata and global command bar to the active credit tab', async () => {
     vi.resetModules();
 
     const mockSetActiveTab = vi.fn();
@@ -291,20 +302,24 @@ describe('app shell redesign', () => {
       CustomCliPage: () => <div>Mock CLI Page</div>,
     }));
 
+    vi.doMock('../renderer/pages/CreditPage', () => ({
+      CreditPage: () => <div>Mock Credit Page</div>,
+    }));
+
     vi.doMock('../renderer/pages/SettingsPage', () => ({
       SettingsPage: () => <div>Mock Settings Page</div>,
     }));
 
-    vi.doMock('../renderer/components/Route/Redirection/ModelRedirectionTab', () => ({
-      ModelRedirectionTab: () => <div>Mock Redirection Tab</div>,
+    vi.doMock('../renderer/pages/LogsPage', () => ({
+      LogsPage: () => <div>Mock Logs Page</div>,
     }));
 
     vi.doMock('../renderer/components/Route/Usability/CliUsabilityTab', () => ({
       CliUsabilityTab: () => <div>Mock Usability Tab</div>,
     }));
 
-    vi.doMock('../renderer/components/Route/ProxyStats/ProxyStatsTab', () => ({
-      ProxyStatsTab: () => <div>Mock Proxy Stats Tab</div>,
+    vi.doMock('../renderer/pages/RoutePage', () => ({
+      RoutePage: () => <div>Mock Route Page</div>,
     }));
 
     vi.doMock('../renderer/store/configStore', () => ({
@@ -359,15 +374,12 @@ describe('app shell redesign', () => {
     expect(screen.queryByTestId('cli-status-inline')).not.toBeInTheDocument();
     expect(screen.getByTestId('cli-status-stacked')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '更新 v3.0.2' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: APP_PAGE_META.sites.title })).toBeInTheDocument();
-    expect(screen.getByText(APP_PAGE_META.sites.description)).toBeInTheDocument();
-    expect(screen.getByText('Mock Sites Page')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: APP_PAGE_META.credit.title })).toBeInTheDocument();
+    expect(screen.getByText(APP_PAGE_META.credit.description)).toBeInTheDocument();
+    expect(screen.getByText('Mock Credit Page')).toBeInTheDocument();
     expect(container.querySelector('.app-responsive-container')).not.toBeNull();
     expect(container.querySelector('.ios-responsive-container')).toBeNull();
-
-    await waitFor(() => {
-      expect(mockSetActiveTab).toHaveBeenCalledWith('sites');
-    });
+    expect(mockSetActiveTab).not.toHaveBeenCalledWith('sites');
   });
 
   it('surfaces add and restore actions in the shared sites page header', async () => {
@@ -544,16 +556,16 @@ describe('app shell redesign', () => {
       SettingsPage: () => <div>Mock Settings Page</div>,
     }));
 
-    vi.doMock('../renderer/components/Route/Redirection/ModelRedirectionTab', () => ({
-      ModelRedirectionTab: () => <div>Mock Redirection Tab</div>,
+    vi.doMock('../renderer/pages/LogsPage', () => ({
+      LogsPage: () => <div>Mock Logs Page</div>,
     }));
 
     vi.doMock('../renderer/components/Route/Usability/CliUsabilityTab', () => ({
       CliUsabilityTab: () => <div>Mock Usability Tab</div>,
     }));
 
-    vi.doMock('../renderer/components/Route/ProxyStats/ProxyStatsTab', () => ({
-      ProxyStatsTab: () => <div>Mock Proxy Stats Tab</div>,
+    vi.doMock('../renderer/pages/RoutePage', () => ({
+      RoutePage: () => <div>Mock Route Page</div>,
     }));
 
     vi.doMock('../renderer/store/configStore', () => ({
@@ -727,16 +739,16 @@ describe('app shell redesign', () => {
       SettingsPage: () => <div>Mock Settings Page</div>,
     }));
 
-    vi.doMock('../renderer/components/Route/Redirection/ModelRedirectionTab', () => ({
-      ModelRedirectionTab: () => <div>Mock Redirection Tab</div>,
+    vi.doMock('../renderer/pages/LogsPage', () => ({
+      LogsPage: () => <div>Mock Logs Page</div>,
     }));
 
     vi.doMock('../renderer/components/Route/Usability/CliUsabilityTab', () => ({
       CliUsabilityTab: () => <div>Mock Usability Tab</div>,
     }));
 
-    vi.doMock('../renderer/components/Route/ProxyStats/ProxyStatsTab', () => ({
-      ProxyStatsTab: () => <div>Mock Proxy Stats Tab</div>,
+    vi.doMock('../renderer/pages/RoutePage', () => ({
+      RoutePage: () => <div>Mock Route Page</div>,
     }));
 
     vi.doMock('../renderer/store/configStore', () => ({
@@ -759,7 +771,7 @@ describe('app shell redesign', () => {
       return {
         ...actual,
         useUIStore: () => ({
-          activeTab: 'redirection',
+          activeTab: 'route',
           setActiveTab: vi.fn(),
           dialogState: {
             isOpen: false,
@@ -819,12 +831,10 @@ describe('app shell redesign', () => {
 
     render(<App />);
 
-    expect(screen.getByText('Mock Redirection Tab')).toBeInTheDocument();
+    expect(screen.getByText('Mock Route Page')).toBeInTheDocument();
     expect(screen.queryByText('保存中...')).not.toBeInTheDocument();
-    expect(
-      screen.getByRole('heading', { name: APP_PAGE_META.redirection.title })
-    ).toBeInTheDocument();
-    expect(screen.getByText(APP_PAGE_META.redirection.description)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: APP_PAGE_META.route.title })).toBeInTheDocument();
+    expect(screen.getByText(APP_PAGE_META.route.description)).toBeInTheDocument();
   });
 
   it('renders SettingsPanel detection and sync inputs through the neutral AppInput primitives', async () => {

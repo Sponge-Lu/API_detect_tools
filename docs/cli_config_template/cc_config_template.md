@@ -2,7 +2,7 @@
 
 ## settings.json (路径：~/.claude/settings.json)
 {
-  "model": "claude-opus-4-6",
+  "model": "opus[1m]",
   "language": "zh-CN",
   "env": {
     "ANTHROPIC_BASE_URL": "https://anyrouter.top",   # URL需要去对应的站点确认

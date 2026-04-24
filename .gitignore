@@ -78,3 +78,6 @@ docs/
 .worktrees/
 outputs/
 openspec/
+.trellis/
+.agents/
+.playwright-mcp/

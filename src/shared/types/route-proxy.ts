@@ -5,10 +5,15 @@
  * 定位: 类型定义层 - 本地 HTTP 代理 + 模型注册表 + CLI 探测 + 统计分析
  */
 
+import type { ClaudeTestDetail, CodexTestDetail, GeminiTestDetail } from './site';
+
 // ============= 基础枚举 =============
 
 /** CLI 类型 */
 export type RouteCliType = 'claudeCode' | 'codex' | 'geminiCli';
+
+/** CLI 探测来源 */
+export type RouteCliProbeSource = 'routeProbe' | 'siteManual' | 'legacyCache';
 
 /** Pattern 匹配类型 */
 export type RoutePatternType = 'exact' | 'wildcard' | 'regex';
@@ -104,6 +109,30 @@ export interface RouteChannelHealth extends RouteChannelKey {
 
 // ============= 模型注册表 =============
 
+export interface RouteModelSourceApiKeyRef {
+  apiKeyId: string;
+  apiKeyName: string;
+  accountId: string;
+  accountName?: string;
+  group: string;
+}
+
+export interface RouteVendorPriorityConfig {
+  sitePriorities: Record<string, number>;
+  apiKeyPriorities: Record<string, number>;
+}
+
+export const DEFAULT_ROUTE_VENDOR_SITE_PRIORITY = 10;
+export const DEFAULT_ROUTE_VENDOR_API_KEY_PRIORITY = 3;
+
+export function buildRouteVendorApiKeyPriorityKey(
+  siteId: string,
+  accountId: string,
+  apiKeyId: string
+): string {
+  return `${siteId}:${accountId}:${apiKeyId}`;
+}
+
 /** 模型来源引用 */
 export interface RouteModelSourceRef {
   sourceKey: string;
@@ -115,7 +144,10 @@ export interface RouteModelSourceRef {
   originalModel: string;
   vendor: RouteModelVendor;
   apiKeyGroups?: string[];
+  apiKeyNamesByGroup?: Record<string, string[]>;
   userGroupKeys?: string[];
+  availableUserGroups?: string[];
+  availableApiKeys?: RouteModelSourceApiKeyRef[];
   firstSeenAt: number;
   lastSeenAt: number;
   detectedAt?: number;
@@ -143,11 +175,26 @@ export interface RouteModelRegistryEntry {
   updatedAt: number;
 }
 
+/** 路由页模型重定向展示项 */
+export interface RouteModelDisplayItem {
+  id: string;
+  vendor: RouteModelVendor;
+  canonicalName: string;
+  sourceKeys: string[];
+  originalModelOrder?: string[];
+  mode: 'seeded' | 'manual';
+  createdAt: number;
+  updatedAt: number;
+}
+
 /** 模型注册表配置 */
 export interface RouteModelRegistryConfig {
   version: number;
+  sources: RouteModelSourceRef[];
   entries: Record<string, RouteModelRegistryEntry>;
   overrides: RouteModelMappingOverride[];
+  displayItems: RouteModelDisplayItem[];
+  vendorPriorities: Partial<Record<RouteModelVendor, RouteVendorPriorityConfig>>;
   lastAggregatedAt?: number;
 }
 
@@ -174,11 +221,15 @@ export interface RouteCliProbeSample {
   canonicalModel: string;
   rawModel: string;
   success: boolean;
+  source: RouteCliProbeSource;
   statusCode?: number;
   endpointPingMs?: number;
   firstByteLatencyMs?: number;
   totalLatencyMs?: number;
   error?: string;
+  claudeDetail?: ClaudeTestDetail;
+  codexDetail?: CodexTestDetail;
+  geminiDetail?: GeminiTestDetail;
   testedAt: number;
 }
 
@@ -202,8 +253,13 @@ export interface RouteCliProbeModelView {
   rawModel?: string;
   success: boolean | null;
   testedAt?: number;
+  statusCode?: number;
   totalLatencyMs?: number;
   error?: string;
+  source?: RouteCliProbeSource;
+  claudeDetail?: ClaudeTestDetail;
+  codexDetail?: CodexTestDetail;
+  geminiDetail?: GeminiTestDetail;
   history: RouteCliProbeSample[];
 }
 
@@ -322,8 +378,11 @@ export const DEFAULT_ANALYTICS_CONFIG: RouteAnalyticsConfig = {
 
 export const DEFAULT_MODEL_REGISTRY_CONFIG: RouteModelRegistryConfig = {
   version: 1,
+  sources: [],
   entries: {},
   overrides: [],
+  displayItems: [],
+  vendorPriorities: {},
 };
 
 export const DEFAULT_ROUTING_CONFIG: RoutingConfig = {
@@ -370,6 +429,10 @@ export function buildProbeKey(
   return `${siteId}:${accountId}:${cliType}:${canonicalModel}`;
 }
 
+export function buildSiteScopedProbeAccountId(siteId: string): string {
+  return `site::${siteId}`;
+}
+
 export function buildBucketKey(
   bucketStart: number,
   cliType: RouteCliType,
@@ -412,3 +475,235 @@ export const VENDOR_MATCH_RULES: Array<{
   },
   { vendor: 'llama', prefixes: [/^llama/i, /^meta-llama/i], keywords: [/llama/i] },
 ];
+
+export function inferRouteModelVendor(model: string): RouteModelVendor {
+  const name = model.trim().toLowerCase();
+
+  for (const { vendor, prefixes } of VENDOR_MATCH_RULES) {
+    if (prefixes.some(prefix => prefix.test(name))) {
+      return vendor;
+    }
+  }
+
+  for (const { vendor, keywords } of VENDOR_MATCH_RULES) {
+    if (keywords.some(keyword => keyword.test(name))) {
+      return vendor;
+    }
+  }
+
+  return 'unknown';
+}
+
+export function normalizeRouteCliSelection(
+  selectedModel: string | null | undefined,
+  entries: Record<string, RouteModelRegistryEntry>
+): string | null {
+  const normalizedSelection = selectedModel?.trim();
+  if (!normalizedSelection) {
+    return null;
+  }
+
+  for (const entry of Object.values(entries)) {
+    if (
+      entry.canonicalName === normalizedSelection ||
+      entry.aliases.includes(normalizedSelection)
+    ) {
+      return entry.canonicalName;
+    }
+  }
+
+  return normalizedSelection;
+}
+
+export const ROUTE_MODEL_VENDOR_ORDER: RouteModelVendor[] = [
+  'claude',
+  'gpt',
+  'gemini',
+  'grok',
+  'deepseek',
+  'qwen',
+  'glm',
+  'minimax',
+  'mistral',
+  'llama',
+  'unknown',
+];
+
+const ROUTE_MODEL_VENDOR_PRIORITY_PATTERNS: Partial<Record<RouteModelVendor, string[]>> = {
+  gpt: ['gpt-5-4-pro', 'gpt-5-4', 'o3', 'gpt-5', 'gpt-5-4-mini', 'gpt-4-1', 'gpt-4o'],
+  claude: [
+    'claude-opus-4-6',
+    'claude-sonnet-4-6',
+    'claude-haiku-4-5',
+    'claude-opus-4-5',
+    'claude-sonnet-4-5',
+    'claude-haiku-4',
+  ],
+  gemini: [
+    'gemini-3-1-pro',
+    'gemini-3-pro',
+    'gemini-3-flash',
+    'gemini-3-1-flash-live',
+    'gemini-3-1-flash-lite',
+    'gemini-2-5-pro',
+    'gemini-2-5-flash',
+  ],
+  grok: [
+    'grok-4-20-multi-agent',
+    'grok-4-20-reasoning',
+    'grok-4-1-fast-reasoning',
+    'grok-4-20',
+    'grok-4-fast',
+    'grok-4',
+  ],
+  deepseek: ['deepseek-reasoner', 'deepseek-r1', 'deepseek-chat', 'deepseek-v3-2', 'deepseek-v3'],
+  qwen: [
+    'qwen3-max',
+    'qwen3-6-plus',
+    'qwen3-coder-plus',
+    'qwen3-coder-next',
+    'qwen-max',
+    'qwen-plus',
+    'qwen-turbo',
+  ],
+  glm: ['glm-5-1', 'glm-5', 'glm-4-7', 'glm-4-5', 'glm-4-plus', 'glm-4-air', 'glm-4-flash'],
+  minimax: ['minimax-m2-7', 'm2-7', 'minimax-m2-5', 'm2-5', 'minimax-m2-1', 'm2-1', 'm2'],
+  mistral: [
+    'mistral-large-3',
+    'magistral-medium-1-2',
+    'devstral-2',
+    'mistral-medium-3-1',
+    'mistral-small-4',
+    'codestral',
+  ],
+  llama: [
+    'llama-4-maverick',
+    'meta-llama-4-maverick',
+    'llama-4-scout',
+    'meta-llama-4-scout',
+    'llama-3-3',
+    'meta-llama-3-3',
+    'llama-3-1',
+  ],
+};
+
+const ROUTE_MODEL_GENERIC_TIER_KEYWORDS: Array<[string, number]> = [
+  ['multi-agent', 160],
+  ['reasoning', 150],
+  ['opus', 145],
+  ['max', 140],
+  ['ultra', 136],
+  ['pro', 130],
+  ['large', 126],
+  ['maverick', 124],
+  ['sonnet', 120],
+  ['scout', 116],
+  ['plus', 112],
+  ['medium', 108],
+  ['coder', 104],
+  ['haiku', 100],
+  ['mini', 96],
+  ['flash', 92],
+  ['lite', 88],
+  ['small', 84],
+  ['turbo', 80],
+];
+
+export function normalizeComparableRouteModelName(model: string): string {
+  return model
+    .trim()
+    .toLowerCase()
+    .replace(/^[^/]+\//, '')
+    .replace(/@[\w.-]+$/, '')
+    .replace(/:[\w.-]+$/, '')
+    .replace(/(\d)\.(\d)/g, '$1-$2')
+    .replace(/-(\d{8})$/, '')
+    .replace(/-\d{4}-\d{2}-\d{2}$/, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+function getRouteModelPriorityIndex(vendor: RouteModelVendor, model: string): number {
+  const normalized = normalizeComparableRouteModelName(model);
+  const patterns = ROUTE_MODEL_VENDOR_PRIORITY_PATTERNS[vendor] ?? [];
+  const index = patterns.findIndex(
+    pattern =>
+      normalized === pattern || normalized.startsWith(`${pattern}-`) || normalized.includes(pattern)
+  );
+
+  return index === -1 ? Number.POSITIVE_INFINITY : index;
+}
+
+function getRouteModelTierScore(model: string): number {
+  const normalized = normalizeComparableRouteModelName(model);
+  return ROUTE_MODEL_GENERIC_TIER_KEYWORDS.reduce((score, [keyword, weight]) => {
+    return normalized.includes(keyword) ? score + weight : score;
+  }, 0);
+}
+
+function getRouteModelVersionScore(model: string): number {
+  const segments = normalizeComparableRouteModelName(model)
+    .match(/\d+/g)
+    ?.map(segment => Number(segment)) ?? [0];
+
+  return segments.reduce((score, segment, index) => score + segment / 10 ** (index * 2), 0);
+}
+
+function getComparableEntryNames(entry: RouteModelRegistryEntry): string[] {
+  return Array.from(new Set([entry.canonicalName, ...entry.aliases]));
+}
+
+function getBestEntryPriorityIndex(
+  vendor: RouteModelVendor,
+  entry: RouteModelRegistryEntry
+): number {
+  return getComparableEntryNames(entry).reduce((best, modelName) => {
+    return Math.min(best, getRouteModelPriorityIndex(vendor, modelName));
+  }, Number.POSITIVE_INFINITY);
+}
+
+function getBestEntryTierScore(entry: RouteModelRegistryEntry): number {
+  return getComparableEntryNames(entry).reduce((best, modelName) => {
+    return Math.max(best, getRouteModelTierScore(modelName));
+  }, 0);
+}
+
+function getBestEntryVersionScore(entry: RouteModelRegistryEntry): number {
+  return getComparableEntryNames(entry).reduce((best, modelName) => {
+    return Math.max(best, getRouteModelVersionScore(modelName));
+  }, 0);
+}
+
+export function compareRouteModelRegistryEntries(
+  vendor: RouteModelVendor,
+  left: RouteModelRegistryEntry,
+  right: RouteModelRegistryEntry
+): number {
+  const leftPriority = getBestEntryPriorityIndex(vendor, left);
+  const rightPriority = getBestEntryPriorityIndex(vendor, right);
+  if (leftPriority !== rightPriority) {
+    return leftPriority - rightPriority;
+  }
+
+  const leftTier = getBestEntryTierScore(left);
+  const rightTier = getBestEntryTierScore(right);
+  if (leftTier !== rightTier) {
+    return rightTier - leftTier;
+  }
+
+  const leftVersion = getBestEntryVersionScore(left);
+  const rightVersion = getBestEntryVersionScore(right);
+  if (leftVersion !== rightVersion) {
+    return rightVersion - leftVersion;
+  }
+
+  if (left.sources.length !== right.sources.length) {
+    return right.sources.length - left.sources.length;
+  }
+
+  if (left.updatedAt !== right.updatedAt) {
+    return right.updatedAt - left.updatedAt;
+  }
+
+  return left.canonicalName.localeCompare(right.canonicalName);
+}

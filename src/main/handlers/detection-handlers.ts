@@ -225,7 +225,9 @@ export function registerDetectionHandlers(
       const checkinResult = await tokenService.checkIn(
         site.url,
         parseInt(site.user_id),
-        site.system_token
+        site.system_token,
+        undefined,
+        site.site_type
       );
 
       // 如果签到失败，直接返回

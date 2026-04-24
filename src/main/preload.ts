@@ -222,8 +222,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       }>;
     }) => ipcRenderer.invoke('cli-compat:test-with-wrapper', params),
     // 保存 CLI 兼容性结果到缓存
-    saveResult: (siteUrl: string, result: any, accountId?: string) =>
-      ipcRenderer.invoke('cli-compat:save-result', siteUrl, result, accountId),
+    saveResult: (siteUrl: string, result: any, accountId?: string, samples?: any[]) =>
+      ipcRenderer.invoke('cli-compat:save-result', siteUrl, result, accountId, samples),
     // 保存 CLI 配置
     saveConfig: (siteUrl: string, config: any, accountId?: string) =>
       ipcRenderer.invoke('cli-compat:save-config', siteUrl, config, accountId),
@@ -376,8 +376,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getModelRegistry: () => ipcRenderer.invoke('route:get-model-registry'),
     rebuildModelRegistry: (params?: { force?: boolean }) =>
       ipcRenderer.invoke('route:rebuild-model-registry', params),
+    syncModelRegistrySources: (params?: { force?: boolean }) =>
+      ipcRenderer.invoke('route:sync-model-registry-sources', params),
     upsertModelMappingOverride: (override: any) =>
       ipcRenderer.invoke('route:upsert-model-mapping-override', override),
+    upsertModelDisplayItem: (displayItem: any) =>
+      ipcRenderer.invoke('route:upsert-model-display-item', displayItem),
+    deleteModelDisplayItem: (displayItemId: string) =>
+      ipcRenderer.invoke('route:delete-model-display-item', { displayItemId }),
+    saveVendorPriorityConfig: (vendor: string, priorityConfig: any) =>
+      ipcRenderer.invoke('route:save-vendor-priority-config', { vendor, priorityConfig }),
     deleteModelMappingOverride: (overrideId: string) =>
       ipcRenderer.invoke('route:delete-model-mapping-override', { overrideId }),
     saveCliModelSelections: (selections: any) =>

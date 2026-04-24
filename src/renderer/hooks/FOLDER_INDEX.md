@@ -30,9 +30,9 @@
 | **useAutoRefresh.ts** | 自动刷新逻辑 | `{ isRefreshing, startRefresh, stopRefresh, ... }` |
 | **useSiteDetection.ts** | 站点检测 | `{ results, isDetecting, detect, ... }` |
 | **useTokenManagement.ts** | Token 管理 | `{ tokens, getToken, saveToken, deleteToken, ... }` |
-| **useCheckIn.ts** | 签到逻辑 | `{ canSignIn, isSigningIn, signIn, ... }` |
+| **useCheckIn.ts** | 签到逻辑，批量签到时跳过 `unavailable` 分组并按站点类型打开手动签到页 | `{ canSignIn, isSigningIn, signIn, ... }` |
 | **useCliCompatTest.ts** | CLI 兼容性测试 | `{ results, isTesting, test, ... }` |
-| **useDataLoader.ts** | 数据加载，支持站点状态持久化 | `{ data, isLoading, error, reload, ... }` |
+| **useDataLoader.ts** | 数据加载，支持站点状态持久化与签到能力缓存回填 | `{ data, isLoading, error, reload, ... }` |
 | **useSiteDrag.ts** | 站点拖拽排序 | `{ draggedSite, onDragStart, onDrop, ... }` |
 | **useTheme.ts** | 主题管理 | `{ theme, setTheme, isDark, ... }` |
 | **useUpdate.ts** | 应用更新检查 | `{ hasUpdate, isChecking, checkUpdate, ... }` |
@@ -147,6 +147,7 @@ interface UseCheckInReturn {
 **特点**:
 - 单站点签到：传入 accountId 实现账户级签到
 - 批量签到：遍历所有 DetectionResult（含 accountId），逐账户签到
+- 批量签到会跳过禁用站点与 `unavailable` 内建分组，保持与批量检测一致
 - 签到结果按 (name, accountId) 精确匹配更新前端状态
 - 签到失败时根据站点类型打开对应的手动签到页面（Veloera: /console, New API: /console/personal）
 - 签到成功后更新 lastRefresh 时间戳，确保图标状态正确显示
@@ -176,7 +177,7 @@ interface UseCliCompatTestReturn {
 
 ### useDataLoader
 
-**职责**: 通用数据加载，支持站点检测状态持久化
+**职责**: 通用数据加载，支持站点检测状态持久化与签到能力状态回填
 
 **返回值**:
 ```typescript

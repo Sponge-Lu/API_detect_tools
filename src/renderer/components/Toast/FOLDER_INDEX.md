@@ -7,12 +7,13 @@
 **特点**:
 - 多种消息类型 (成功、错误、警告、信息)
 - 自动关闭
-- 堆叠显示
+- 最多显示 3 条
+- 单条消息限制为 2 行摘要
 - 动画效果
 
 **依赖关系**:
 - 被 `App.tsx` 使用
-- 依赖 `store/toastStore` 管理消息队列
+- 依赖 `store/toastStore` 管理可见消息队列与事件历史
 - 依赖 Tailwind CSS 样式
 
 ---
@@ -21,9 +22,7 @@
 
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
-| **Toast.tsx** | 单个消息提示 | `Toast` 组件 |
-| **ToastContainer.tsx** | 消息容器 | `ToastContainer` 组件 |
-| **types.ts** | 类型定义 | `ToastItem`, `ToastType` 等 |
+| **Toast.tsx** | 单个消息提示 + 容器 | `Toast`, `ToastContainer`, `ToastItem`, `ToastType` |
 
 ---
 

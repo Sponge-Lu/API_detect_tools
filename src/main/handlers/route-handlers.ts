@@ -14,7 +14,11 @@ import * as modelRegistry from '../route-model-registry-service';
 import * as cliProbe from '../route-cli-probe-service';
 import * as analytics from '../route-analytics-service';
 import { runHealthCheck } from '../route-health-service';
-import type { RouteRule } from '../../shared/types/route-proxy';
+import type {
+  RouteRule,
+  RouteVendorPriorityConfig,
+  RouteModelVendor,
+} from '../../shared/types/route-proxy';
 
 const log = Logger.scope('RouteHandlers');
 
@@ -186,6 +190,15 @@ export function registerRouteHandlers() {
     }
   });
 
+  ipcMain.handle('route:sync-model-registry-sources', async (_, params?: { force?: boolean }) => {
+    try {
+      const result = await modelRegistry.syncModelRegistrySources(params?.force);
+      return ok(result);
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
   ipcMain.handle('route:upsert-model-mapping-override', async (_, override) => {
     try {
       const result = await modelRegistry.upsertModelMappingOverride(override);
@@ -194,6 +207,42 @@ export function registerRouteHandlers() {
       return err(e.message);
     }
   });
+
+  ipcMain.handle('route:upsert-model-display-item', async (_, displayItem) => {
+    try {
+      const result = await modelRegistry.upsertModelDisplayItem(displayItem);
+      return ok(result);
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
+  ipcMain.handle(
+    'route:delete-model-display-item',
+    async (_, params: { displayItemId: string }) => {
+      try {
+        const result = await modelRegistry.deleteModelDisplayItem(params.displayItemId);
+        return ok(result);
+      } catch (e: any) {
+        return err(e.message);
+      }
+    }
+  );
+
+  ipcMain.handle(
+    'route:save-vendor-priority-config',
+    async (_, params: { vendor: RouteModelVendor; priorityConfig: RouteVendorPriorityConfig }) => {
+      try {
+        const result = await modelRegistry.updateVendorPriorityConfig(
+          params.vendor,
+          params.priorityConfig
+        );
+        return ok(result);
+      } catch (e: any) {
+        return err(e.message);
+      }
+    }
+  );
 
   ipcMain.handle('route:delete-model-mapping-override', async (_, params) => {
     try {

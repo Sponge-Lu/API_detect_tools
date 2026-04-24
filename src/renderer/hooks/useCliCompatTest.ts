@@ -22,6 +22,7 @@ import {
   type CliConfig,
 } from '../store/detectionStore';
 import { toast } from '../store/toastStore';
+import { sessionEventLog } from '../services/sessionEventLog';
 import { normalizeCliTestModels } from '../../shared/types/cli-config';
 
 /** Hook 返回类型 */
@@ -439,10 +440,14 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
 
         const result: CliCompatibilityResult = {
           claudeCode: response.data.claudeCode ?? null,
+          claudeDetail: response.data.claudeDetail,
+          claudeError: response.data.claudeError,
           codex: response.data.codex ?? null,
           codexDetail: response.data.codexDetail, // 保存 Codex 详细测试结果
+          codexError: response.data.codexError,
           geminiCli: response.data.geminiCli ?? null,
           geminiDetail: response.data.geminiDetail, // 保存 Gemini CLI 详细测试结果
+          geminiError: response.data.geminiError,
           testedAt: Date.now(),
         };
 
@@ -450,12 +455,18 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
 
         // 保存结果到缓存
         try {
-          await (window.electronAPI as any).cliCompat.saveResult(siteUrl, result, accountId);
+          await (window.electronAPI as any).cliCompat.saveResult(
+            siteUrl,
+            result,
+            accountId,
+            response.samples
+          );
         } catch {
           // 忽略保存错误
         }
 
         toast.info(`${siteLabel} CLI 兼容性测试完成`);
+        sessionEventLog.info('cli-test', `${siteLabel} CLI 兼容性测试完成`);
 
         // 显示 Claude Code 测试结果
         if (cc?.enabled && response.data.claudeCode !== undefined) {
@@ -524,14 +535,19 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
         }
       } catch (error: any) {
         toast.error(`${siteLabel} CLI 兼容性测试失败: ${error.message}`);
+        sessionEventLog.error('cli-test', `${siteLabel} CLI 兼容性测试失败：${error.message}`);
 
         // 设置错误结果
         setCliCompatibility(storeKey, {
           claudeCode: null,
+          claudeDetail: undefined,
+          claudeError: undefined,
           codex: null,
           codexDetail: undefined,
+          codexError: undefined,
           geminiCli: null,
           geminiDetail: undefined,
+          geminiError: undefined,
           testedAt: Date.now(),
           error: error.message,
         });

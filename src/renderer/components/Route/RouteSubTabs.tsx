@@ -9,7 +9,7 @@ import type { RouteSubTab } from '../../store/routeStore';
 const subTabs: { id: RouteSubTab; label: string; icon: typeof Layers }[] = [
   { id: 'redirection', label: '模型重定向', icon: Layers },
   { id: 'usability', label: 'CLI 可用性', icon: Activity },
-  { id: 'proxystats', label: '代理统计', icon: BarChart3 },
+  { id: 'proxystats', label: '路由', icon: BarChart3 },
 ];
 
 interface RouteSubTabsProps {

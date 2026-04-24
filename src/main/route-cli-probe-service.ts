@@ -1,13 +1,13 @@
 /**
  * CLI 定时探测服务
- * 输入: ModelRegistry (选样本), cliCompatService (执行探测), 配置
+ * 输入: ModelRegistry (选样本), cliWrapperCompatService (执行探测), 配置
  * 输出: 探测历史 (RouteCliProbeSample[]), 最新快照 (RouteCliProbeLatest)
  * 定位: 服务层 - 独立于代理服务器生命周期的定时 CLI 健康探测
  */
 
 import Logger from './utils/logger';
 import { unifiedConfigManager } from './unified-config-manager';
-import { cliCompatService } from './cli-compat-service';
+import { cliWrapperCompatService } from './cli-wrapper-compat-service';
 import { isRouteMaskedApiKeyValue, resolveAccountApiKeyValue } from './route-channel-resolver';
 import type {
   RouteCliType,
@@ -36,6 +36,7 @@ const log = Logger.scope('RouteCliProbe');
 const CLI_PROBE_TYPES: RouteCliType[] = ['claudeCode', 'codex', 'geminiCli'];
 
 let probeTimer: NodeJS.Timeout | null = null;
+let probeStartupTimer: NodeJS.Timeout | null = null;
 
 function generateSampleId(): string {
   return `ps_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -43,6 +44,19 @@ function generateSampleId(): string {
 
 export function getCliProbeConfig(): RouteCliProbeConfig {
   return unifiedConfigManager.getRoutingConfig().cliProbe.config;
+}
+
+function getLatestProbeActivityAt(): number | null {
+  const latestEntries = Object.values(unifiedConfigManager.getRoutingConfig().cliProbe.latest);
+  let latestProbeAt: number | null = null;
+
+  for (const entry of latestEntries) {
+    const candidate = entry.lastSample?.testedAt ?? null;
+    if (candidate === null) continue;
+    latestProbeAt = latestProbeAt === null ? candidate : Math.max(latestProbeAt, candidate);
+  }
+
+  return latestProbeAt;
 }
 
 export async function saveCliProbeConfig(
@@ -104,32 +118,6 @@ function matchesConfiguredApiKey(apiKey: ApiKeyInfo, apiKeyId: number | null | u
   );
 }
 
-function resolveProbeApiKey(
-  site: UnifiedSite,
-  account: AccountCredential,
-  cliType: RouteCliType
-): string | null {
-  const preferredApiKeyId = resolveProbeCliItem(site.id, account.id, cliType)?.apiKeyId;
-  const apiKeys = (account.cached_data?.api_keys || []).filter(apiKey => {
-    return (
-      (apiKey.status === undefined || apiKey.status === 1) && Boolean(apiKey.key || apiKey.token)
-    );
-  });
-
-  if (preferredApiKeyId !== null && preferredApiKeyId !== undefined) {
-    const preferredApiKey = apiKeys.find(apiKey =>
-      matchesConfiguredApiKey(apiKey, preferredApiKeyId)
-    );
-    if (preferredApiKey) return preferredApiKey.key || preferredApiKey.token || null;
-  }
-
-  if (apiKeys.length > 0) {
-    return apiKeys[0].key || apiKeys[0].token || null;
-  }
-
-  return site.api_key && !isRouteMaskedApiKeyValue(site.api_key) ? site.api_key : null;
-}
-
 async function resolveProbeApiKeyForExecution(
   site: UnifiedSite,
   account: AccountCredential,
@@ -158,21 +146,8 @@ async function resolveProbeApiKeyForExecution(
   return site.api_key && !isRouteMaskedApiKeyValue(site.api_key) ? site.api_key : null;
 }
 
-function accountHasProbeCredential(site: UnifiedSite, account: AccountCredential): boolean {
-  const enabledCliTypes = CLI_PROBE_TYPES.filter(cliType =>
-    isProbeCliEnabled(site.id, account.id, cliType)
-  );
-  return enabledCliTypes.some(cliType => Boolean(resolveProbeApiKey(site, account, cliType)));
-}
-
-function isKnownInsufficientBalance(account: AccountCredential): boolean {
-  const balance = account.cached_data?.balance;
-  if (balance === -1) return false;
-  return typeof balance === 'number' && Number.isFinite(balance) && balance <= 0;
-}
-
 function isProbeAccountActive(account: AccountCredential): boolean {
-  // Older configs may not have persisted status yet; treat them as active to preserve default-account behavior.
+  // Older configs may not have persisted status yet; treat them as active for backward compatibility.
   return !account.status || account.status === 'active';
 }
 
@@ -180,89 +155,51 @@ function isCliProbeExcludedSite(site: UnifiedSite): boolean {
   return site.group === BUILTIN_GROUP_IDS.UNAVAILABLE;
 }
 
-function getPreferredProbeAccount(accounts: AccountCredential[]): AccountCredential | null {
-  return accounts.find(account => account.account_name === '默认账户') || accounts[0] || null;
-}
-
-function resolveProbeAccountForSite(params: { siteId: string; explicitAccountId?: string }): {
+function listProbeAccountsForSite(params: { siteId: string; explicitAccountId?: string }): {
   site: UnifiedSite;
-  account: AccountCredential | null;
-  isFallbackAccount: boolean;
-  reason?: string;
+  accounts: AccountCredential[];
 } | null {
   const site = getProbeSite(params.siteId);
   if (!site) return null;
 
-  const siteAccounts = unifiedConfigManager
+  const activeAccounts = unifiedConfigManager
     .getAccountsBySiteId(site.id)
     .filter(account => isProbeAccountActive(account));
 
-  if (siteAccounts.length === 0) {
-    return { site, account: null, isFallbackAccount: false, reason: 'no_account' };
-  }
-
-  const preferredAccount = getPreferredProbeAccount(siteAccounts);
-
-  if (params.explicitAccountId) {
-    const explicitAccount =
-      siteAccounts.find(account => account.id === params.explicitAccountId) || null;
+  if (!params.explicitAccountId) {
     return {
       site,
-      account: explicitAccount,
-      isFallbackAccount: explicitAccount?.id !== preferredAccount?.id,
-      reason: explicitAccount ? 'explicit_account' : 'explicit_account_not_found',
+      accounts: activeAccounts,
     };
   }
 
-  const orderedAccounts = preferredAccount
-    ? [preferredAccount, ...siteAccounts.filter(account => account.id !== preferredAccount.id)]
-    : siteAccounts;
-  const credentialReadyAccounts = orderedAccounts.filter(account =>
-    accountHasProbeCredential(site, account)
-  );
-
-  if (credentialReadyAccounts.length === 0) {
-    return {
-      site,
-      account: preferredAccount || orderedAccounts[0] || null,
-      isFallbackAccount: !preferredAccount,
-      reason: 'no_probe_credential',
-    };
-  }
-
-  if (
-    preferredAccount &&
-    credentialReadyAccounts.some(account => account.id === preferredAccount.id)
-  ) {
-    if (!isKnownInsufficientBalance(preferredAccount)) {
-      return {
-        site,
-        account: preferredAccount,
-        isFallbackAccount: false,
-        reason: 'default_account',
-      };
-    }
-
-    const fallbackAccount = credentialReadyAccounts.find(
-      account => account.id !== preferredAccount.id
-    );
-    if (fallbackAccount) {
-      return {
-        site,
-        account: fallbackAccount,
-        isFallbackAccount: true,
-        reason: 'default_balance_insufficient',
-      };
-    }
-  }
-
-  const selectedAccount = credentialReadyAccounts[0];
   return {
     site,
-    account: selectedAccount,
-    isFallbackAccount: !preferredAccount || selectedAccount.id !== preferredAccount.id,
-    reason: preferredAccount ? 'default_unavailable' : 'first_available_account',
+    accounts: activeAccounts.filter(account => account.id === params.explicitAccountId),
   };
+}
+
+function extractStatusCodeFromError(message?: string): number | undefined {
+  if (!message) {
+    return undefined;
+  }
+
+  const patterns = [
+    /status\s+code\s*[:=]?\s*(\d{3})/i,
+    /\bhttp\s*[:=]?\s*(\d{3})\b/i,
+    /"status"\s*:\s*(\d{3})/i,
+    /\b(\d{3})\b(?=\s+(?:bad request|unauthorized|forbidden|not found|too many requests|server error))/i,
+  ];
+
+  for (const pattern of patterns) {
+    const matched = message.match(pattern);
+    const statusCode = matched?.[1] ? Number.parseInt(matched[1], 10) : Number.NaN;
+    if (Number.isInteger(statusCode) && statusCode >= 100 && statusCode <= 599) {
+      return statusCode;
+    }
+  }
+
+  return undefined;
 }
 
 function buildConfiguredProbeModels(
@@ -312,6 +249,39 @@ function summarizeProbeHistory(samples: RouteCliProbeSample[]): RouteCliProbeSam
     .slice(-60);
 }
 
+function buildLatestListFromSamples(samples: RouteCliProbeSample[]): RouteCliProbeLatest[] {
+  const routing = unifiedConfigManager.getRoutingConfig();
+  const latestMap = new Map<string, RouteCliProbeLatest>();
+
+  for (const sample of samples) {
+    const existing = latestMap.get(sample.probeKey) || routing.cliProbe.latest[sample.probeKey];
+    latestMap.set(sample.probeKey, {
+      probeKey: sample.probeKey,
+      siteId: sample.siteId,
+      accountId: sample.accountId,
+      cliType: sample.cliType,
+      canonicalModel: sample.canonicalModel,
+      rawModel: sample.rawModel,
+      healthy: sample.success,
+      lastSample: sample,
+      lastSuccessAt: sample.success ? sample.testedAt : existing?.lastSuccessAt,
+      lastFailureAt: !sample.success ? sample.testedAt : existing?.lastFailureAt,
+    });
+  }
+
+  return Array.from(latestMap.values());
+}
+
+export async function persistCliProbeSamples(samples: RouteCliProbeSample[]): Promise<void> {
+  if (samples.length === 0) {
+    return;
+  }
+
+  await unifiedConfigManager.appendRouteCliProbeSamples(samples);
+  await unifiedConfigManager.upsertRouteCliProbeLatest(buildLatestListFromSamples(samples));
+  await unifiedConfigManager.pruneRouteCliProbeHistory();
+}
+
 /**
  * 为指定站点/账户/CLI 选出待探测的模型样本
  */
@@ -355,6 +325,7 @@ async function runSingleProbe(
       canonicalModel,
       rawModel,
       success: false,
+      source: 'routeProbe',
       error: 'Config not loaded',
       testedAt: now,
     };
@@ -375,6 +346,7 @@ async function runSingleProbe(
       canonicalModel,
       rawModel,
       success: false,
+      source: 'routeProbe',
       error: 'No API key available',
       testedAt: now,
     };
@@ -400,21 +372,42 @@ async function runSingleProbe(
     let success = false;
     let statusCode: number | undefined;
     let firstByteLatencyMs: number | undefined;
+    let error: string | undefined;
+    let claudeDetail: RouteCliProbeSample['claudeDetail'];
+    let codexDetail: RouteCliProbeSample['codexDetail'];
+    let geminiDetail: RouteCliProbeSample['geminiDetail'];
 
     switch (cliType) {
       case 'claudeCode': {
-        const result = await cliCompatService.testClaudeCode(baseUrl, apiKey, rawModel);
-        success = result;
+        const result = await cliWrapperCompatService.testClaudeCodeWithDetail(
+          baseUrl,
+          apiKey,
+          rawModel
+        );
+        success = result.supported;
+        error = result.message;
+        statusCode = extractStatusCodeFromError(result.message);
+        claudeDetail = result.detail;
         break;
       }
       case 'codex': {
-        const result = await cliCompatService.testCodexWithDetail(baseUrl, apiKey, rawModel);
+        const result = await cliWrapperCompatService.testCodexWithDetail(baseUrl, apiKey, rawModel);
         success = result.supported;
+        error = result.message;
+        statusCode = extractStatusCodeFromError(result.message);
+        codexDetail = result.detail;
         break;
       }
       case 'geminiCli': {
-        const result = await cliCompatService.testGeminiWithDetail(baseUrl, apiKey, rawModel);
+        const result = await cliWrapperCompatService.testGeminiWithDetail(
+          baseUrl,
+          apiKey,
+          rawModel
+        );
         success = result.supported;
+        error = result.message;
+        statusCode = extractStatusCodeFromError(result.message);
+        geminiDetail = result.detail;
         break;
       }
     }
@@ -430,10 +423,15 @@ async function runSingleProbe(
       canonicalModel,
       rawModel,
       success,
+      source: 'routeProbe',
       statusCode,
       endpointPingMs,
       firstByteLatencyMs,
       totalLatencyMs,
+      error,
+      claudeDetail,
+      codexDetail,
+      geminiDetail,
       testedAt: Date.now(),
     };
   } catch (err: unknown) {
@@ -447,6 +445,8 @@ async function runSingleProbe(
       canonicalModel,
       rawModel,
       success: false,
+      source: 'routeProbe',
+      statusCode: extractStatusCodeFromError(message),
       totalLatencyMs: Date.now() - startTime,
       error: message,
       testedAt: Date.now(),
@@ -496,28 +496,30 @@ export async function runCliProbeNow(params?: {
     if (isCliProbeExcludedSite(site)) continue;
     if (params?.siteId && site.id !== params.siteId) continue;
 
-    const selection = resolveProbeAccountForSite({
+    const selection = listProbeAccountsForSite({
       siteId: site.id,
       explicitAccountId: params?.accountId,
     });
-    if (!selection?.account) continue;
+    if (!selection) continue;
 
-    for (const cliType of cliTypes) {
-      if (!isProbeCliEnabled(site.id, selection.account.id, cliType)) continue;
+    for (const account of selection.accounts) {
+      for (const cliType of cliTypes) {
+        if (!isProbeCliEnabled(site.id, account.id, cliType)) continue;
 
-      const models = selectProbeModelsForCli({
-        siteId: site.id,
-        accountId: selection.account.id,
-        cliType,
-        limit: Math.min(probeConfig.modelsPerCli, CLI_TEST_MODEL_SLOT_COUNT),
-      });
-      for (const model of models) {
-        tasks.push({
+        const models = selectProbeModelsForCli({
           siteId: site.id,
-          accountId: selection.account.id,
+          accountId: account.id,
           cliType,
-          ...model,
+          limit: Math.min(probeConfig.modelsPerCli, CLI_TEST_MODEL_SLOT_COUNT),
         });
+        for (const model of models) {
+          tasks.push({
+            siteId: site.id,
+            accountId: account.id,
+            cliType,
+            ...model,
+          });
+        }
       }
     }
   }
@@ -549,32 +551,8 @@ export async function runCliProbeNow(params?: {
 
   // 持久化
   if (samples.length > 0) {
-    await unifiedConfigManager.appendRouteCliProbeSamples(samples);
-
-    // 更新 latest
-    const latestMap = new Map<string, RouteCliProbeLatest>();
-    for (const s of samples) {
-      const existing = latestMap.get(s.probeKey);
-      if (!existing || s.testedAt > existing.lastSample.testedAt) {
-        latestMap.set(s.probeKey, {
-          probeKey: s.probeKey,
-          siteId: s.siteId,
-          accountId: s.accountId,
-          cliType: s.cliType,
-          canonicalModel: s.canonicalModel,
-          rawModel: s.rawModel,
-          healthy: s.success,
-          lastSample: s,
-          lastSuccessAt: s.success ? s.testedAt : undefined,
-          lastFailureAt: !s.success ? s.testedAt : undefined,
-        });
-      }
-    }
-    await unifiedConfigManager.upsertRouteCliProbeLatest(Array.from(latestMap.values()));
+    await persistCliProbeSamples(samples);
   }
-
-  // 惰性清理过期历史
-  await unifiedConfigManager.pruneRouteCliProbeHistory();
 
   const successSamples = samples.filter(s => s.success).length;
   const finishedAt = Date.now();
@@ -643,92 +621,86 @@ export function getCliProbeView(params: { window: '24h' | '7d' | '30d' }): Route
     if (!site.enabled) continue;
     if (isCliProbeExcludedSite(site)) continue;
 
-    const selection = resolveProbeAccountForSite({ siteId: site.id });
-    const selectedAccountId = selection?.account?.id;
-    const selectedAccountName = selection?.account?.account_name;
-    const clis = {} as Record<RouteCliType, RouteCliProbeCliView>;
-    let hasRenderableModels = false;
-    let hasEnabledCli = false;
-
-    for (const cliType of CLI_PROBE_TYPES) {
-      const cliEnabled = selectedAccountId
-        ? isProbeCliEnabled(site.id, selectedAccountId, cliType)
-        : false;
-      if (cliEnabled) {
-        hasEnabledCli = true;
-      }
-      const desiredModels = selectedAccountId
-        ? selectProbeModelsForCli({
-            siteId: site.id,
-            accountId: selectedAccountId,
-            cliType,
-            limit: CLI_TEST_MODEL_SLOT_COUNT,
-          })
-        : [];
-
-      const modelViews: RouteCliProbeModelView[] = desiredModels.map(model => {
-        const probeKey = selectedAccountId
-          ? buildProbeKey(site.id, selectedAccountId, cliType, model.canonicalModel)
-          : '';
-        const latest = probeKey ? routing.cliProbe.latest[probeKey] : undefined;
-        const history = probeKey
-          ? summarizeProbeHistory(
-              (routing.cliProbe.history[probeKey] || []).filter(sample => sample.testedAt >= cutoff)
-            )
-          : [];
-
-        return {
-          canonicalModel: model.canonicalModel,
-          rawModel: latest?.rawModel || model.rawModel,
-          success: latest ? latest.lastSample.success : null,
-          testedAt: latest?.lastSample.testedAt,
-          totalLatencyMs: latest?.lastSample.totalLatencyMs,
-          error: latest?.lastSample.error,
-          history,
-        };
-      });
-
-      if (modelViews.length > 0) {
-        hasRenderableModels = true;
-      }
-
-      clis[cliType] = {
-        cliType,
-        enabled: cliEnabled,
-        accountId: selectedAccountId,
-        accountName: selectedAccountName,
-        isFallbackAccount: Boolean(selection?.isFallbackAccount),
-        accountReason: selection?.reason,
-        models: modelViews,
-      };
-    }
-
-    if (!hasEnabledCli) {
+    const selection = listProbeAccountsForSite({ siteId: site.id });
+    if (!selection || selection.accounts.length === 0) {
       continue;
     }
 
-    if (!hasRenderableModels) continue;
+    for (const account of selection.accounts) {
+      const clis = {} as Record<RouteCliType, RouteCliProbeCliView>;
+      let hasEnabledCli = false;
 
-    siteViews.push({
-      siteId: site.id,
-      siteName: site.name,
-      accountId: selectedAccountId,
-      accountName: selectedAccountName,
-      isFallbackAccount: Boolean(selection?.isFallbackAccount),
-      accountReason: selection?.reason,
-      clis,
-    });
+      for (const cliType of CLI_PROBE_TYPES) {
+        const cliEnabled = isProbeCliEnabled(site.id, account.id, cliType);
+        if (cliEnabled) {
+          hasEnabledCli = true;
+        }
+        const desiredModels = selectProbeModelsForCli({
+          siteId: site.id,
+          accountId: account.id,
+          cliType,
+          limit: CLI_TEST_MODEL_SLOT_COUNT,
+        });
+
+        const modelViews: RouteCliProbeModelView[] = desiredModels.map(model => {
+          const probeKey = buildProbeKey(site.id, account.id, cliType, model.canonicalModel);
+          const latest = routing.cliProbe.latest[probeKey];
+          const history = summarizeProbeHistory(
+            (routing.cliProbe.history[probeKey] || []).filter(sample => sample.testedAt >= cutoff)
+          );
+
+          return {
+            canonicalModel: model.canonicalModel,
+            rawModel: latest?.rawModel || model.rawModel,
+            success: latest ? latest.lastSample.success : null,
+            testedAt: latest?.lastSample.testedAt,
+            statusCode: latest?.lastSample.statusCode,
+            totalLatencyMs: latest?.lastSample.totalLatencyMs,
+            error: latest?.lastSample.error,
+            source: latest?.lastSample.source,
+            claudeDetail: latest?.lastSample.claudeDetail,
+            codexDetail: latest?.lastSample.codexDetail,
+            geminiDetail: latest?.lastSample.geminiDetail,
+            history,
+          };
+        });
+
+        clis[cliType] = {
+          cliType,
+          enabled: cliEnabled,
+          accountId: account.id,
+          accountName: account.account_name,
+          isFallbackAccount: false,
+          models: modelViews,
+        };
+      }
+
+      if (!hasEnabledCli) {
+        continue;
+      }
+
+      siteViews.push({
+        siteId: site.id,
+        siteName: site.name,
+        accountId: account.id,
+        accountName: account.account_name,
+        isFallbackAccount: false,
+        clis,
+      });
+    }
   }
 
-  return siteViews.sort((left, right) => left.siteName.localeCompare(right.siteName));
+  return siteViews.sort((left, right) => {
+    const siteCompare = left.siteName.localeCompare(right.siteName);
+    if (siteCompare !== 0) {
+      return siteCompare;
+    }
+
+    return (left.accountName || '').localeCompare(right.accountName || '');
+  });
 }
 
-export function startCliProbeTimer(): void {
-  stopCliProbeTimer();
-  const config = getCliProbeConfig();
-  if (!config.enabled) return;
-
-  const intervalMs = config.intervalMinutes * 60 * 1000;
+function armCliProbeInterval(intervalMs: number): void {
   probeTimer = setInterval(async () => {
     try {
       await runCliProbeNow();
@@ -736,18 +708,59 @@ export function startCliProbeTimer(): void {
       log.error('Scheduled CLI probe failed:', err);
     }
   }, intervalMs);
+}
+
+function scheduleCliProbeStartupRun(delayMs: number, intervalMs: number): void {
+  probeStartupTimer = setTimeout(() => {
+    probeStartupTimer = null;
+    runCliProbeNow()
+      .catch(err => {
+        log.error('Startup probe failed:', err);
+      })
+      .finally(() => {
+        armCliProbeInterval(intervalMs);
+      });
+  }, delayMs);
+}
+
+export function startCliProbeTimer(options?: { resumeFromLatest?: boolean }): void {
+  stopCliProbeTimer();
+  const config = getCliProbeConfig();
+  if (!config.enabled) return;
+
+  const intervalMs = config.intervalMinutes * 60 * 1000;
   log.info(`CLI probe timer started, interval: ${config.intervalMinutes}min`);
 
-  // 启动时立即执行一次
-  if (config.runOnStartup) {
-    setTimeout(() => runCliProbeNow().catch(e => log.error('Startup probe failed:', e)), 3000);
+  if (options?.resumeFromLatest) {
+    const latestProbeAt = getLatestProbeActivityAt();
+    const elapsedMs =
+      latestProbeAt === null ? Number.POSITIVE_INFINITY : Date.now() - latestProbeAt;
+    const startupDelayMs =
+      latestProbeAt !== null && elapsedMs < intervalMs ? intervalMs - elapsedMs : 3000;
+    scheduleCliProbeStartupRun(startupDelayMs, intervalMs);
+    log.info(
+      `CLI probe startup run scheduled in ${Math.ceil(startupDelayMs / 1000)}s (resume mode)`
+    );
+    return;
   }
+
+  // 手动重启定时器时仍允许显式的启动即跑配置
+  if (config.runOnStartup) {
+    scheduleCliProbeStartupRun(3000, intervalMs);
+    return;
+  }
+
+  armCliProbeInterval(intervalMs);
 }
 
 export function stopCliProbeTimer(): void {
   if (probeTimer) {
     clearInterval(probeTimer);
     probeTimer = null;
+  }
+  if (probeStartupTimer) {
+    clearTimeout(probeStartupTimer);
+    probeStartupTimer = null;
   }
 }
 

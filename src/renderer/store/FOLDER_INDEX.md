@@ -27,8 +27,8 @@
 | **index.ts** | Store 导出入口 | 所有 Store 的统一导出 |
 | **configStore.ts** | 配置管理 | 站点列表、分组、设置；删除站点优先走统一 `sites:delete` IPC 并回读配置 |
 | **detectionStore.ts** | 检测结果 | 检测状态、结果数据、detectingSites (Set) 并发跟踪 |
-| **uiStore.ts** | UI 状态 | 主题、模态框、菜单 |
-| **toastStore.ts** | 消息提示 | 消息队列、通知 |
+| **uiStore.ts** | UI 状态 | 一级页面切换（含 LDC 页）、侧边栏模式、站点列表列宽/排序与弹窗 |
+| **toastStore.ts** | 消息提示 | 可见 Toast 队列、通知历史、会话事件 |
 
 ---
 
@@ -198,7 +198,7 @@ const { theme, setTheme, modals, openModal } = useUiStore();
 
 ### toastStore.ts - 消息提示
 
-**职责**: 管理 Toast 消息队列
+**职责**: 管理 Toast 可见队列与当前会话事件历史
 
 **状态**:
 ```typescript
@@ -211,30 +211,30 @@ interface Toast {
 
 interface ToastState {
   toasts: Toast[];
+  eventHistory: AppEventItem[];
   
   // 操作方法
-  addToast: (toast: Omit<Toast, 'id'>) => string;
+  addToast: (type: ToastType, message: string, duration?: number) => void;
   removeToast: (id: string) => void;
   clearToasts: () => void;
+  logEvent: (event: AppEventPayload) => string;
+  clearEventHistory: () => void;
 }
 ```
 
 **使用示例**:
 ```typescript
-const { addToast, removeToast } = useToastStore();
+const { addToast, logEvent } = useToastStore();
 
 // 显示成功消息
-const toastId = addToast({
-  message: '操作成功',
-  type: 'success',
-  duration: 3000
-});
+addToast('success', '操作成功', 3000);
 
-// 显示错误消息
-addToast({
-  message: '操作失败',
-  type: 'error',
-  duration: 5000
+// 记录关键操作
+logEvent({
+  kind: 'action',
+  level: 'info',
+  source: 'route',
+  message: '已执行路由健康检查',
 });
 ```
 

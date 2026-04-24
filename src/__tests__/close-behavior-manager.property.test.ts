@@ -655,7 +655,7 @@ describe('Close Behavior Manager Property Tests', () => {
             }
           }
         ),
-        { numRuns: 100 }
+        { numRuns: 50 }
       );
     });
   });

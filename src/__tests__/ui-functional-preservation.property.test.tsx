@@ -353,6 +353,8 @@ describe('UI functional preservation contracts', () => {
         expect(overlayRoot).not.toBeNull();
 
         if (overlayRoot) {
+          fireEvent.mouseDown(overlayRoot);
+          fireEvent.mouseUp(overlayRoot);
           fireEvent.click(overlayRoot);
 
           if (closeOnOverlayClick) {

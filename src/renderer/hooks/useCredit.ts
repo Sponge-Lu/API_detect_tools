@@ -233,8 +233,9 @@ export function useCredit(): UseCreditReturn {
   const login = useCallback(async () => {
     const creditAPI = getCreditAPI();
     if (!creditAPI) {
-      setError('IPC 接口未初始化');
-      return;
+      const message = 'IPC 接口未初始化';
+      setError(message);
+      throw new Error(message);
     }
 
     setIsLoading(true);
@@ -287,12 +288,15 @@ export function useCredit(): UseCreditReturn {
           }
         }
       } else {
-        setError(response.error || '登录失败');
+        const message = response.error || '登录失败';
+        setError(message);
+        throw new Error(message);
       }
-    } catch (err: any) {
-      const errorMessage = err?.message || '登录失败';
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : '登录失败';
       setError(errorMessage);
       console.error('[useCredit] 登录失败:', err);
+      throw err instanceof Error ? err : new Error(errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -304,8 +308,9 @@ export function useCredit(): UseCreditReturn {
   const logout = useCallback(async () => {
     const creditAPI = getCreditAPI();
     if (!creditAPI) {
-      setError('IPC 接口未初始化');
-      return;
+      const message = 'IPC 接口未初始化';
+      setError(message);
+      throw new Error(message);
     }
 
     try {
@@ -318,12 +323,15 @@ export function useCredit(): UseCreditReturn {
         setTransactions(null);
         clearAutoRefreshTimer();
       } else {
-        setError(response.error || '登出失败');
+        const message = response.error || '登出失败';
+        setError(message);
+        throw new Error(message);
       }
-    } catch (err: any) {
-      const errorMessage = err?.message || '登出失败';
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : '登出失败';
       setError(errorMessage);
       console.error('[useCredit] 登出失败:', err);
+      throw err instanceof Error ? err : new Error(errorMessage);
     }
   }, [clearAutoRefreshTimer]);
 
@@ -363,8 +371,9 @@ export function useCredit(): UseCreditReturn {
   const refreshAll = useCallback(async () => {
     const creditAPI = getCreditAPI();
     if (!creditAPI) {
-      setError('IPC 接口未初始化');
-      return;
+      const message = 'IPC 接口未初始化';
+      setError(message);
+      throw new Error(message);
     }
 
     setIsRefreshing(true);
@@ -385,7 +394,8 @@ export function useCredit(): UseCreditReturn {
         }
         setIsLoggedIn(true);
       } else {
-        setError(response.error || '刷新数据失败');
+        const message = response.error || '刷新数据失败';
+        setError(message);
         // 如果是认证错误，更新登录状态
         if (
           response.error?.includes('未登录') ||
@@ -394,11 +404,13 @@ export function useCredit(): UseCreditReturn {
         ) {
           setIsLoggedIn(false);
         }
+        throw new Error(message);
       }
-    } catch (err: any) {
-      const errorMessage = err?.message || '刷新数据失败';
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : '刷新数据失败';
       setError(errorMessage);
       console.error('[useCredit] 刷新所有数据失败:', err);
+      throw err instanceof Error ? err : new Error(errorMessage);
     } finally {
       setIsRefreshing(false);
     }
@@ -483,6 +495,8 @@ export function useCredit(): UseCreditReturn {
       isInitializedRef.current = true;
 
       try {
+        let hasCachedData = false;
+
         // 加载配置
         const configResponse = await creditAPI.loadConfig();
         if (configResponse.success && configResponse.data) {
@@ -493,18 +507,25 @@ export function useCredit(): UseCreditReturn {
         const cachedResponse = await creditAPI.getCached();
         if (cachedResponse.success && cachedResponse.data) {
           setCreditInfo(cachedResponse.data);
+          hasCachedData = true;
         }
 
         // 加载缓存的每日统计数据
         const cachedStatsResponse = await creditAPI.getCachedDailyStats();
         if (cachedStatsResponse.success && cachedStatsResponse.data) {
           setDailyStats(cachedStatsResponse.data);
+          hasCachedData = true;
         }
 
         // 加载缓存的交易记录
         const cachedTransactionsResponse = await creditAPI.getCachedTransactions();
         if (cachedTransactionsResponse.success && cachedTransactionsResponse.data) {
           setTransactions(cachedTransactionsResponse.data);
+          hasCachedData = true;
+        }
+
+        if (hasCachedData) {
+          setIsLoggedIn(true);
         }
 
         // 检查登录状态

@@ -1,7 +1,8 @@
 import {
   Activity,
   BarChart3,
-  Layers,
+  Coins,
+  ScrollText,
   Server,
   Settings,
   Terminal,
@@ -20,9 +21,10 @@ export interface AppPageMeta {
 export const APP_PAGE_ORDER: VisibleTabId[] = [
   'sites',
   'cli',
-  'redirection',
   'usability',
-  'proxystats',
+  'credit',
+  'route',
+  'logs',
   'settings',
 ];
 
@@ -41,26 +43,33 @@ export const APP_PAGE_META = {
     description: '管理 CLI 配置、生成结果与相关维护操作。',
     icon: Terminal,
   },
-  redirection: {
-    id: 'redirection',
-    navLabel: '模型重定向',
-    title: '模型重定向',
-    description: '配置模型映射规则、覆盖项与重定向行为。',
-    icon: Layers,
+  credit: {
+    id: 'credit',
+    navLabel: 'LDC 积分',
+    title: 'LDC 积分',
+    description: '查看 Linux Do Credit 账户积分、收支统计与充值入口。',
+    icon: Coins,
   },
   usability: {
     id: 'usability',
-    navLabel: 'CLI 可用性',
-    title: 'CLI 可用性',
-    description: '查看 CLI 探测状态、可用性结果与相关诊断。',
+    navLabel: '站点检测',
+    title: '站点检测',
+    description: '查看站点检测状态、CLI 探测结果与相关诊断。',
     icon: Activity,
   },
-  proxystats: {
-    id: 'proxystats',
-    navLabel: '代理统计',
-    title: '代理统计',
-    description: '查看代理健康状态、流量数据与统计分析。',
+  route: {
+    id: 'route',
+    navLabel: '路由',
+    title: '路由',
+    description: '统一管理代理服务、CLI 默认模型、统计分析与模型重定向。',
     icon: BarChart3,
+  },
+  logs: {
+    id: 'logs',
+    navLabel: '日志',
+    title: '会话日志',
+    description: '查看本次会话中的通知与关键操作记录。',
+    icon: ScrollText,
   },
   settings: {
     id: 'settings',

@@ -30,7 +30,7 @@ function buildSiteCardProps(overrides: Record<string, unknown> = {}) {
     siteResult: { status: '成功', todayRequests: 2, todayTotalTokens: 3000, models: [] } as any,
     siteAccount: undefined,
     isExpanded: false,
-    columnWidths: [120, 80, 75, 75, 75],
+    columnWidths: [...DEFAULT_COLUMN_WIDTHS],
     accountId: 'account-1',
     accountName: 'Primary Account',
     accountAccessToken: undefined,
@@ -127,11 +127,11 @@ describe('sites page redesign', () => {
   });
 
   it('renders only the visible folded-row columns inside the sticky header', () => {
-    expect(DEFAULT_COLUMN_WIDTHS).toEqual([142, 100, 100, 82, 92, 92, 64, 180]);
+    expect(DEFAULT_COLUMN_WIDTHS).toEqual([142, 86, 88, 78, 110, 92, 56, 72, 180]);
 
     const { container } = render(
       <SiteListHeader
-        columnWidths={[142, 100, 100, 82, 92, 92, 64, 180]}
+        columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
         onColumnWidthChange={vi.fn()}
         sortField="totalTokens"
         sortOrder="desc"
@@ -147,10 +147,10 @@ describe('sites page redesign', () => {
     expect(screen.getByRole('button', { name: 'Token统计' })).toBeInTheDocument();
     expect(screen.getByText('请求统计')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '模型数' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'LDC' })).toBeInTheDocument();
     expect(screen.getByText('CLI可用性')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '请求统计' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '更新时间' })).not.toBeInTheDocument();
-    expect(screen.queryByText('LDC比例')).not.toBeInTheDocument();
   });
 
   it('renders token and request statistics as stacked two-line cells', () => {
@@ -161,7 +161,7 @@ describe('sites page redesign', () => {
         lastSyncDisplay="12:34"
         errorCode={null}
         timeoutSeconds={null}
-        columnWidths={[142, 100, 100, 82, 92, 92, 64, 180]}
+        columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
         todayTotalTokens={4200}
         todayPromptTokens={3000}
         todayCompletionTokens={1200}
@@ -187,7 +187,7 @@ describe('sites page redesign', () => {
     );
 
     expect(screen.getByText('4.2K')).toBeInTheDocument();
-    expect(screen.getByText('输入 3.0K / 输出 1.2K')).toBeInTheDocument();
+    expect(screen.getByText('In 3.0K / Out 1.2K')).toBeInTheDocument();
     expect(screen.getByText('RPM 0.50 / TPM 350')).toBeInTheDocument();
     expect(screen.getByText('New API')).toBeInTheDocument();
   });
@@ -200,7 +200,7 @@ describe('sites page redesign', () => {
         lastSyncDisplay="12:34"
         errorCode={null}
         timeoutSeconds={null}
-        columnWidths={[142, 100, 100, 82, 92, 92, 64, 180]}
+        columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
         todayTotalTokens={4200}
         todayPromptTokens={3000}
         todayCompletionTokens={1200}
@@ -242,7 +242,7 @@ describe('sites page redesign', () => {
         lastSyncDisplay="7天"
         errorCode={null}
         timeoutSeconds={null}
-        columnWidths={[142, 100, 100, 82, 92, 92, 64, 180]}
+        columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
         todayTotalTokens={0}
         todayPromptTokens={0}
         todayCompletionTokens={0}
@@ -276,7 +276,7 @@ describe('sites page redesign', () => {
     expect(timeLabel.parentElement).toBe(secondaryRow);
     expect(secondaryRow).toHaveClass('gap-1.5');
     expect(secondaryRow).not.toHaveClass('justify-between');
-    expect(screen.queryByText('输入 0 / 输出 0')).not.toBeInTheDocument();
+    expect(screen.queryByText('In 0 / Out 0')).not.toBeInTheDocument();
     expect(screen.queryByText('RPM 0.00 / TPM 0')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'CLI配置' })).toBeInTheDocument();
   });
@@ -289,7 +289,7 @@ describe('sites page redesign', () => {
         lastSyncDisplay="12:34"
         errorCode={null}
         timeoutSeconds={null}
-        columnWidths={[142, 100, 100, 82, 92, 92, 64, 180]}
+        columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
         todayTotalTokens={4200}
         todayPromptTokens={3000}
         todayCompletionTokens={1200}
@@ -323,7 +323,7 @@ describe('sites page redesign', () => {
         lastSyncDisplay="12:34"
         errorCode={null}
         timeoutSeconds={null}
-        columnWidths={[142, 100, 100, 82, 92, 92, 64, 180]}
+        columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
         todayTotalTokens={4200}
         todayPromptTokens={3000}
         todayCompletionTokens={1200}
@@ -373,7 +373,7 @@ describe('sites page redesign', () => {
         }
         siteAccount={undefined}
         isExpanded={false}
-        columnWidths={[142, 100, 100, 82, 92, 92, 64, 180]}
+        columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
         accountId={undefined}
         accountName={undefined}
         accountAccessToken={undefined}
@@ -426,7 +426,7 @@ describe('sites page redesign', () => {
     );
 
     expect(screen.getByText('$-0.00')).toBeInTheDocument();
-    expect(screen.queryByText('输入 0 / 输出 0')).not.toBeInTheDocument();
+    expect(screen.queryByText('In 0 / Out 0')).not.toBeInTheDocument();
     expect(screen.queryByText('RPM 0.00 / TPM 0')).not.toBeInTheDocument();
 
     vi.useRealTimers();
@@ -484,7 +484,7 @@ describe('sites page redesign', () => {
 
     render(
       <SiteListHeader
-        columnWidths={[142, 100, 100, 82, 92, 92, 64, 180]}
+        columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
         onColumnWidthChange={vi.fn()}
         sortField={null}
         sortOrder="desc"
@@ -494,11 +494,13 @@ describe('sites page redesign', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '余额' }));
     fireEvent.click(screen.getByRole('button', { name: 'Token统计' }));
+    fireEvent.click(screen.getByRole('button', { name: 'LDC' }));
     expect(screen.queryByRole('button', { name: '更新时间' })).not.toBeInTheDocument();
 
     expect(onToggleSort).toHaveBeenCalledWith('balance');
     expect(onToggleSort).toHaveBeenCalledWith('totalTokens');
-    expect(onToggleSort).toHaveBeenCalledTimes(2);
+    expect(onToggleSort).toHaveBeenCalledWith('ldcRatio');
+    expect(onToggleSort).toHaveBeenCalledTimes(3);
   });
 
   it('keeps high-frequency actions visible and moves low-frequency actions into a more menu', () => {
@@ -688,7 +690,7 @@ describe('sites page redesign', () => {
         lastSyncDisplay="12:34"
         errorCode={null}
         timeoutSeconds={null}
-        columnWidths={[142, 100, 100, 82, 92, 92, 64, 180]}
+        columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
         todayTotalTokens={4200}
         todayPromptTokens={0}
         todayCompletionTokens={0}
@@ -742,7 +744,7 @@ describe('sites page redesign', () => {
     );
 
     const grid = container.firstElementChild as HTMLDivElement;
-    expect(grid.style.gridTemplateColumns).toBe('142px 100px 100px 82px 92px 92px 64px 180px');
+    expect(grid.style.gridTemplateColumns).toBe('142px 86px 88px 78px 110px 92px 56px 72px 180px');
     expect(grid.lastElementChild).toHaveClass('justify-center');
     expect(screen.getByText('Primary Account')).toBeInTheDocument();
     expect(screen.getByText('12:34')).toBeInTheDocument();
@@ -762,7 +764,7 @@ describe('sites page redesign', () => {
     render(
       <div className="w-[1024px]">
         <SiteListHeader
-          columnWidths={[142, 100, 100, 82, 92, 92, 64, 180]}
+          columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
           onColumnWidthChange={vi.fn()}
           sortField="balance"
           sortOrder="desc"
@@ -776,7 +778,7 @@ describe('sites page redesign', () => {
           }
           siteAccount={undefined}
           isExpanded={false}
-          columnWidths={[120, 80, 75, 75, 75]}
+          columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
           accountId="account-1"
           accountName="Primary Account"
           accountAccessToken={undefined}
@@ -999,7 +1001,7 @@ describe('sites page redesign', () => {
         siteResult={{ status: '成功', todayRequests: 2, todayTotalTokens: 3000, models: [] } as any}
         siteAccount={undefined}
         isExpanded={false}
-        columnWidths={[120, 80, 75, 75, 75]}
+        columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
         accountId="account-1"
         accountName="Primary Account"
         accountAccessToken={undefined}

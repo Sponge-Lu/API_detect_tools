@@ -17,6 +17,7 @@ import type { CliConfig } from '../shared/types/cli-config';
 import { DEFAULT_CLI_CONFIG } from '../shared/types/cli-config';
 import { filterValidCliConfigs } from '../renderer/components/dialogs/ApplyConfigPopover';
 import { isCliEnabled } from '../renderer/components/CliCompatibilityIcons';
+import { resolveClaudeCodeDisplayModel } from '../renderer/services/cli-config-generator';
 
 // ============= Types =============
 
@@ -559,7 +560,7 @@ describe('Property 7: Apply writes correct configuration files', () => {
           expect(settingsFile!.language).toBe('json');
 
           const settings = JSON.parse(settingsFile!.content);
-          expect(settings.model).toBe(model);
+          expect(settings.model).toBe(resolveClaudeCodeDisplayModel(model));
           expect(settings.env.ANTHROPIC_AUTH_TOKEN).toBe(normalizeApiKey(apiKey));
           expect(settings.env.ANTHROPIC_BASE_URL).toBe(normalizeUrl(siteUrl));
           expect(settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe(model);

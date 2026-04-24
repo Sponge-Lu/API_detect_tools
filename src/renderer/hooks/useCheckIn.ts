@@ -28,7 +28,7 @@
 
 import React from 'react';
 import Logger from '../utils/logger';
-import type { SiteConfig } from '../../shared/types/site';
+import { BUILTIN_GROUP_IDS, type SiteConfig, type SiteType } from '../../shared/types/site';
 import { useDetectionStore } from '../store/detectionStore';
 import { useConfigStore } from '../store/configStore';
 
@@ -48,18 +48,33 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
   const { upsertResult, results } = useDetectionStore();
   const { config } = useConfigStore();
 
+  const resolveManualCheckinSiteType = (siteType?: SiteType): 'veloera' | 'newapi' => {
+    switch (siteType) {
+      case 'newapi':
+      case 'oneapi':
+      case 'onehub':
+      case 'donehub':
+      case 'voapi':
+      case 'superapi':
+        return 'newapi';
+      default:
+        return 'veloera';
+    }
+  };
+
   /**
    * 打开站点签到页面
    * @param site 站点配置
    * @param siteType 站点类型（veloera 或 newapi），用于确定签到页面路径
    */
-  const openCheckinPage = async (site: SiteConfig, siteType?: 'veloera' | 'newapi') => {
+  const openCheckinPage = async (site: SiteConfig, siteType?: SiteType) => {
     try {
       const baseUrl = site.url.replace(/\/$/, '');
+      const manualSiteType = resolveManualCheckinSiteType(siteType);
       // 根据站点类型选择正确的签到页面路径
       // Veloera: /console
       // New API: /console/personal
-      const checkinPath = siteType === 'newapi' ? '/console/personal' : '/console';
+      const checkinPath = manualSiteType === 'newapi' ? '/console/personal' : '/console';
       const targetUrl = baseUrl + checkinPath;
       await window.electronAPI.openUrl(targetUrl);
     } catch (error) {
@@ -81,8 +96,7 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
         confirmText: '打开网站',
       });
       if (shouldOpenSite) {
-        // 缺少认证信息时，默认使用 veloera 路径
-        await openCheckinPage(site, 'veloera');
+        await openCheckinPage(site, site.site_type);
       }
       return;
     }
@@ -140,8 +154,7 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
             confirmText: '打开网站',
           });
           if (shouldOpenSite) {
-            // 使用后端返回的站点类型，默认 veloera
-            await openCheckinPage(site, checkinResult.siteType || 'veloera');
+            await openCheckinPage(site, checkinResult.siteType || site.site_type);
           }
         } else {
           showAlert(checkinResult.message, 'alert');
@@ -164,8 +177,7 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
           confirmText: '打开网站',
         });
         if (shouldOpenSite) {
-          // 异常情况下，默认使用 veloera 路径
-          await openCheckinPage(site, 'veloera');
+          await openCheckinPage(site, site.site_type);
         }
       }
     } finally {
@@ -189,7 +201,7 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
       quota?: number;
       message?: string;
       site?: SiteConfig;
-      siteType?: 'veloera' | 'newapi';
+      siteType?: SiteType;
     }[] = [];
 
     if (!config?.sites) {
@@ -207,6 +219,8 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
     for (const r of results) {
       const site = siteMap.get(r.name);
       if (!site) continue;
+      if (!site.enabled) continue;
+      if ((site.group || BUILTIN_GROUP_IDS.DEFAULT) === BUILTIN_GROUP_IDS.UNAVAILABLE) continue;
 
       // 必须有认证信息（站点级或账户级）
       if (!site.system_token && !site.user_id && !r.accountId) continue;
@@ -268,7 +282,7 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
             success: false,
             message: checkinResult.message,
             site,
-            siteType: checkinResult.siteType || 'veloera',
+            siteType: checkinResult.siteType || site.site_type,
           });
         }
       } catch (error: any) {
@@ -279,7 +293,7 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
           success: false,
           message: errorMessage,
           site,
-          siteType: 'veloera',
+          siteType: site.site_type,
         });
 
         if (

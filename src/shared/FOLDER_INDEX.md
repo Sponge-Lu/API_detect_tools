@@ -23,7 +23,7 @@
 
 | 文件夹 | 职责 | 关键文件 |
 |--------|------|--------|
-| **types/** | TypeScript 类型定义 | site.ts, cli-config.ts |
+| **types/** | TypeScript 类型定义 | site.ts, route-proxy.ts, credit.ts |
 | **schemas/** | Zod 数据验证规则 | index.ts |
 | **constants/** | 常量定义 | index.ts |
 | **theme/** | 主题预设与模式归一化 | themePresets.ts |
@@ -59,6 +59,36 @@ interface SiteStatus {
   rpm: number;
   tpm: number;
 }
+
+interface CliCompatibilityData {
+  claudeCode: boolean | null;
+  claudeDetail?: { replyText?: string };
+  claudeError?: string;
+  codex: boolean | null;
+  codexDetail?: { responses: boolean | null; replyText?: string };
+  geminiCli: boolean | null;
+  geminiDetail?: { native: boolean | null; proxy: boolean | null; replyText?: string };
+}
+```
+
+### route-proxy.ts
+
+**职责**: 路由工作台共享契约，覆盖代理服务、模型注册表、CLI 探测和统计配置
+
+**关键类型**:
+```typescript
+interface RoutingConfig {
+  server: RouteProxyServerConfig;
+  modelRegistry: RouteModelRegistryConfig;
+  cliProbe: RouteCliProbeConfig;
+  analytics: RouteAnalyticsConfig;
+}
+
+interface RouteModelRegistryConfig {
+  sources: RouteModelSourceRef[];
+  displayItems: RouteModelDisplayItem[];
+  vendorPriorities: Partial<Record<RouteModelVendor, RouteVendorPriorityConfig>>;
+}
 ```
 
 ### cli-config.ts
@@ -77,6 +107,7 @@ interface CliConfig {
 interface CliCompatibility {
   tool: string;
   supported: boolean;
+  claudeDetail?: { replyText?: string };
   codexDetail?: { responses: boolean | null };
   geminiDetail?: { native: boolean | null; proxy: boolean | null };
 }

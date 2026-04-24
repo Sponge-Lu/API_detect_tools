@@ -152,6 +152,29 @@ describe('overlay family redesign', () => {
     expect(screen.getByTestId('overlay-body').className).not.toContain('overflow-y-auto');
   });
 
+  it('closes only for real overlay clicks, not for drag-release gestures that start inside the drawer', () => {
+    const onClose = vi.fn();
+
+    render(
+      <OverlayDrawer isOpen={true} onClose={onClose} title="CLI 工作台">
+        <button type="button">body</button>
+      </OverlayDrawer>
+    );
+
+    const overlayRoot = document.body.querySelector('[role="presentation"]') as HTMLElement;
+    const dialog = screen.getByRole('dialog', { name: 'CLI 工作台' });
+
+    fireEvent.mouseDown(dialog);
+    fireEvent.mouseUp(overlayRoot);
+    fireEvent.click(overlayRoot);
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.mouseDown(overlayRoot);
+    fireEvent.mouseUp(overlayRoot);
+    fireEvent.click(overlayRoot);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('opens reset confirmation as another overlay family member from the CLI drawer', () => {
     render(
       <UnifiedCliConfigDialog

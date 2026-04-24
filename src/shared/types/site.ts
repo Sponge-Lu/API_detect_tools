@@ -64,24 +64,35 @@ export interface UserGroupInfo {
   ratio: number;
 }
 
+/** Claude Code 详细测试结果 */
+export interface ClaudeTestDetail {
+  replyText?: string; // CLI 返回的答案摘要
+}
+
 /** Codex 详细测试结果 */
 export interface CodexTestDetail {
   responses: boolean | null; // Responses API 测试结果
+  replyText?: string; // CLI 返回的答案摘要
 }
 
 /** Gemini CLI 详细测试结果 */
 export interface GeminiTestDetail {
   native: boolean | null; // Google 原生格式测试结果
   proxy: boolean | null; // OpenAI 兼容格式测试结果
+  replyText?: string; // CLI 返回的答案摘要
 }
 
 /** CLI 兼容性数据 */
 export interface CliCompatibilityData {
   claudeCode: boolean | null;
+  claudeDetail?: ClaudeTestDetail; // Claude Code 详细测试结果（回答摘要）
+  claudeError?: string; // Claude Code 失败摘要（错误码优先）
   codex: boolean | null;
   codexDetail?: CodexTestDetail; // Codex 详细测试结果（responses）
+  codexError?: string; // Codex 失败摘要（错误码优先）
   geminiCli: boolean | null;
   geminiDetail?: GeminiTestDetail; // Gemini CLI 详细测试结果（native/proxy）
+  geminiError?: string; // Gemini CLI 失败摘要（错误码优先）
   testedAt: number | null;
   error?: string;
 }
@@ -211,6 +222,7 @@ export interface DetectionCacheData {
   user_groups?: Record<string, UserGroupInfo>;
   model_pricing?: ModelPricingData;
   last_refresh?: number;
+  has_checkin?: boolean;
   can_check_in?: boolean;
   cli_compatibility?: CliCompatibilityData;
   ldc_payment_supported?: boolean;
@@ -247,6 +259,7 @@ export interface AccountRuntimeDetectionData {
   today_requests?: number;
   api_keys?: ApiKeyInfo[];
   last_refresh?: number;
+  has_checkin?: boolean;
   can_check_in?: boolean;
   cli_compatibility?: CliCompatibilityData;
   ldc_payment_supported?: boolean;
@@ -640,6 +653,7 @@ export function splitDetectionCacheData(cache?: DetectionCacheData): {
     today_requests: cache.today_requests,
     api_keys: cache.api_keys,
     last_refresh: cache.last_refresh,
+    has_checkin: cache.has_checkin,
     can_check_in: cache.can_check_in,
     cli_compatibility: cache.cli_compatibility,
     ldc_payment_supported: cache.ldc_payment_supported,
@@ -672,6 +686,7 @@ export function mergeDetectionCacheData(
     today_requests: runtime?.today_requests,
     api_keys: runtime?.api_keys,
     last_refresh: runtime?.last_refresh ?? shared?.last_refresh,
+    has_checkin: runtime?.has_checkin,
     can_check_in: runtime?.can_check_in,
     cli_compatibility: runtime?.cli_compatibility,
     ldc_payment_supported: runtime?.ldc_payment_supported,

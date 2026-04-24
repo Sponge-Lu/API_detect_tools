@@ -19,6 +19,7 @@
 import { create } from 'zustand';
 import type { Config, SiteConfig, Settings } from '../App';
 import { toast } from './toastStore';
+import { sessionEventLog } from '../services/sessionEventLog';
 import Logger from '../utils/logger';
 
 interface ConfigState {
@@ -120,9 +121,11 @@ export const useConfigStore = create<ConfigState>()((set, get) => ({
 
       const refreshedConfig = await window.electronAPI.loadConfig();
       set({ config: refreshedConfig });
+      sessionEventLog.success('sites', `已删除站点：${siteToDelete.name}`);
     } catch (error) {
       Logger.error('删除站点失败:', error);
       toast.error('删除站点失败');
+      sessionEventLog.error('sites', `删除站点失败：${siteToDelete.name}`);
       set({ config });
     } finally {
       set({ saving: false });
@@ -183,9 +186,11 @@ export const useConfigStore = create<ConfigState>()((set, get) => ({
     set({ saving: true });
     try {
       await window.electronAPI.saveConfig(config);
+      sessionEventLog.success('sites', '站点配置已保存');
     } catch (error) {
       Logger.error('保存配置失败:', error);
       toast.error('保存配置失败');
+      sessionEventLog.error('sites', '站点配置保存失败');
     } finally {
       set({ saving: false });
     }

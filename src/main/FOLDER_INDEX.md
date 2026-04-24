@@ -28,7 +28,7 @@
 | **chrome-manager.ts** | Chrome 浏览器管理、多槽位架构、独立登录浏览器（loginBrowserState）、按 site_type 解析登录态 | `ChromeManager` 类 |
 | **site-type-registry.ts** | 站点类型到初始化/端点/行为的注册表 | `getSiteTypeProfile()`, `resolveSiteType()` |
 | **site-type-detector.ts** | 智能添加初始化前的站点类型自动识别 | `detectSiteType()` |
-| **token-service.ts** | Token 认证服务，初始化阶段按 site_type 选择端点与 access token 策略 | `TokenService` 类 |
+| **token-service.ts** | Token 认证服务，初始化阶段按 site_type 选择端点与 access token 策略，并按 site_type 驱动签到/浏览器回退端点 | `TokenService` 类 |
 | **cli-compat-service.ts** | 协议级 CLI 兼容性测试，请求格式与真实 CLI 对齐 | `CliCompatService` 类 |
 | **cli-wrapper-compat-service.ts** | 基于真实 CLI wrapper 的兼容性测试；当前 UI 测试主路径，使用临时 HOME/CODEX_HOME/GEMINI_CLI_HOME 隔离环境 | `CliWrapperCompatService` 类 |
 | **backup-manager.ts** | 本地备份管理 | `backupManager` 实例 |
@@ -39,6 +39,10 @@
 | **config-detection-service.ts** | CLI 配置检测服务 | `ConfigDetectionService` 类 |
 | **close-behavior-manager.ts** | 窗口关闭行为管理 | `CloseBehaviorManager` 类 |
 | **credit-service.ts** | Linux Do Credit 积分检测、LDC 充值 | `CreditService` 类 |
+| **route-channel-resolver.ts** | 路由通道解析，结合站点/账户/API Key/厂商优先级选择实际通道 | `resolveChannels()`, `resolveChannelCredentials()` |
+| **route-model-registry-service.ts** | 模型注册表聚合、展示项维护与厂商优先级配置 | `rebuildModelRegistry()`, `syncModelRegistrySources()` |
+| **route-cli-probe-service.ts** | CLI 定时探测、latest/history 维护与视图聚合 | `runCliProbeNow()`, `getCliProbeView()` |
+| **route-stats-service.ts** | 路由调用统计与通道评分排序 | `recordOutcome()`, `sortChannelsByScore()` |
 | **power-manager.ts** | 电源管理，阻止系统休眠 | `powerManager` 实例 |
 | **preload.ts** | Preload 脚本 | IPC 上下文隔离，暴露统一站点 CRUD / 账户 / 检测接口 |
 | **api-request-helper.ts** | API 请求辅助函数 | 通用请求逻辑 |
@@ -126,8 +130,8 @@ main.ts: app.whenReady()
 - `refreshToken(site)` - 刷新 Token
 - `deleteToken(site)` - 删除 Token
 - `checkSiteSupportsCheckIn(baseUrl, page?)` - 检查站点是否支持签到（兼容 Veloera/New API）
-- `fetchCheckInStatus(baseUrl, userId, accessToken, page?)` - 获取签到状态（兼容两种接口）
-- `checkIn(baseUrl, userId, accessToken, page?)` - 执行签到（兼容两种端点和响应格式，支持浏览器模式回退）
+- `fetchCheckInStatus(baseUrl, userId, accessToken, page?, explicitSiteType?)` - 获取签到状态（按 `site_type` 选择端点）
+- `checkIn(baseUrl, userId, accessToken, page?, explicitSiteType?)` - 执行签到（按 `site_type` 选择端点和响应格式，支持浏览器模式回退）
 - `fetchCheckinStats(baseUrl, userId, accessToken, page?)` - 获取当月签到统计（New API）
 - `checkInWithBrowser(baseUrl, userId, accessToken)` - 浏览器模式签到（绕过 Cloudflare）
 
@@ -266,6 +270,16 @@ main.ts: app.whenReady()
 - `getCachedCreditInfo()` - 获取缓存的积分数据
 
 **依赖**: ChromeManager (浏览器登录)
+
+### Route Registry / Probe Services
+
+**职责**: 为 Route 工作台提供模型来源聚合、厂商优先级排序、CLI wrapper 探测和统计评分能力
+
+**关键模块**:
+- `route-model-registry-service.ts` - 聚合站点/账户模型来源，维护 `entries / displayItems / vendorPriorities`
+- `route-cli-probe-service.ts` - 按站点下全部活跃账户执行 CLI wrapper 探测，并维护 `history/latest`
+- `route-channel-resolver.ts` - 解析可用通道、补全真实 API Key、结合厂商优先级选择实际出口
+- `route-stats-service.ts` - 记录运行结果并计算评分，供通道排序和统计视图复用
 
 ### PowerManager
 

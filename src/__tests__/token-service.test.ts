@@ -350,6 +350,113 @@ describe('initializeSiteAccount site_type 驱动', () => {
     expect(result.access_token).toBe('jwt-token');
     expect(chromeManager.createAccessTokenForLogin).not.toHaveBeenCalled();
   });
+
+  it('登录态返回 canonical URL 时，应使用修正后的基址创建 token 并回填站点 URL', async () => {
+    const { TokenService } = await loadTokenServiceModule(null, {
+      siteType: 'newapi',
+    });
+
+    const chromeManager = {
+      getLocalStorageData: vi.fn(async () => ({
+        userId: 7,
+        username: 'demo',
+        systemName: 'Demo Site',
+        accessToken: null,
+        resolvedBaseUrl: 'https://demo.example.com',
+        supportsCheckIn: true,
+        canCheckIn: true,
+      })),
+      createAccessTokenForLogin: vi.fn(async () => 'login-browser-token'),
+    };
+
+    const service = new TokenService(chromeManager as any);
+    const result = await service.initializeSiteAccount(
+      'http://demo.example.com',
+      true,
+      600000,
+      undefined,
+      { loginMode: true }
+    );
+
+    expect(chromeManager.createAccessTokenForLogin).toHaveBeenCalledWith(
+      'https://demo.example.com',
+      7
+    );
+    expect(result.access_token).toBe('login-browser-token');
+    expect(result.url).toBe('https://demo.example.com');
+    expect(result.site_url).toBe('https://demo.example.com');
+  });
+});
+
+describe('签到接口按 site_type 驱动', () => {
+  it('fetchCheckInStatus 对 newapi 站点只请求 newapi 端点', async () => {
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const { TokenService, httpGet } = await loadTokenServiceModule(null, {
+      siteType: 'newapi',
+      httpGetImpl: vi.fn(async () => ({
+        data: {
+          success: true,
+          data: {
+            stats: {
+              checked_in_today: false,
+              total_checkins: 7,
+            },
+          },
+        },
+      })),
+    });
+
+    const service = new TokenService({} as any);
+    const result = await service.fetchCheckInStatus(
+      'https://demo.example.com',
+      1,
+      'access-token',
+      undefined,
+      'newapi'
+    );
+
+    expect(result).toBe(true);
+    expect(httpGet).toHaveBeenCalledTimes(1);
+    expect(httpGet).toHaveBeenCalledWith(
+      `https://demo.example.com/api/user/checkin?month=${currentMonth}`,
+      expect.any(Object)
+    );
+  });
+
+  it('checkIn 对 newapi 站点只请求 newapi 签到端点', async () => {
+    const { TokenService, httpPost } = await loadTokenServiceModule(null, {
+      siteType: 'newapi',
+      httpPostImpl: vi.fn(async () => ({
+        data: {
+          success: true,
+          message: 'ok',
+          data: {
+            quota_awarded: 500000,
+          },
+        },
+      })),
+    });
+
+    const service = new TokenService({} as any);
+    vi.spyOn(service as any, 'fetchCheckinStats').mockResolvedValue(undefined);
+
+    const result = await service.checkIn(
+      'https://demo.example.com',
+      1,
+      'access-token',
+      undefined,
+      'newapi'
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.siteType).toBe('newapi');
+    expect(httpPost).toHaveBeenCalledTimes(1);
+    expect(httpPost).toHaveBeenCalledWith(
+      'https://demo.example.com/api/user/checkin',
+      {},
+      expect.any(Object)
+    );
+  });
 });
 
 describe('token-service API key 保留', () => {
@@ -1188,6 +1295,44 @@ describe('api-service API key 持久化', () => {
     });
 
     expect(next.api_keys?.[0]?.key).toBe('sk-new-raw-12345678');
+  });
+
+  it('保存缓存时应同步持久化 has_checkin，并在站点禁用签到后清空旧统计', async () => {
+    const { ApiService, updateAccountCachedData, updateSite } = await loadApiServiceModule();
+
+    const service = new ApiService();
+
+    await (service as any).saveCachedDisplayData(
+      'https://demo.example.com',
+      {
+        name: 'Demo Site',
+        url: 'https://demo.example.com',
+        status: 'success',
+        models: [],
+        has_checkin: false,
+        can_check_in: undefined,
+      },
+      { accountId: 'acct-1' }
+    );
+
+    const updater = updateAccountCachedData.mock.calls[0][1];
+    const next = updater({
+      has_checkin: true,
+      can_check_in: false,
+      checkin_stats: {
+        today_quota: 1000,
+        checkin_count: 2,
+        total_checkins: 30,
+        site_type: 'newapi',
+      },
+    });
+
+    expect(next.has_checkin).toBe(false);
+    expect(next.checkin_stats).toBeUndefined();
+    expect(updateSite).toHaveBeenCalledWith('site-1', {
+      has_checkin: false,
+      last_sync_time: expect.any(Number),
+    });
   });
 
   it('余额端点缓存回退后应保留模型端点缓存', async () => {

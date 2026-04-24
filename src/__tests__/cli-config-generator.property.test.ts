@@ -19,6 +19,7 @@ import {
   generateClaudeCodeConfig,
   generateCodexConfig,
   generateGeminiCliConfig,
+  resolveClaudeCodeDisplayModel,
   selectEndpointFormat,
   generateEndpointComment,
   ConfigParams,
@@ -162,7 +163,7 @@ describe('Property 1: Claude Code config generation produces valid output', () =
 
         // Parse and validate JSON
         const settings = JSON.parse(settingsFile!.content);
-        expect(settings.model).toBe(params.model);
+        expect(settings.model).toBe(resolveClaudeCodeDisplayModel(params.model));
         expect(settings.env).toBeDefined();
         expect(settings.env.ANTHROPIC_AUTH_TOKEN).toBe(normalizeApiKey(params.apiKey));
         expect(settings.env.ANTHROPIC_BASE_URL).toBe(normalizeUrl(params.siteUrl));
@@ -228,6 +229,25 @@ describe('Property 1: Claude Code config generation produces valid output', () =
       }),
       { numRuns: 100 }
     );
+  });
+
+  it('should map Claude 4.6+ sonnet and opus models to the 1m aliases only for the top-level model field', () => {
+    expect(resolveClaudeCodeDisplayModel('claude-sonnet-4-6')).toBe('sonnet[1m]');
+    expect(resolveClaudeCodeDisplayModel('claude-opus-4.6-20260201')).toBe('opus[1m]');
+    expect(resolveClaudeCodeDisplayModel('claude-3-5-sonnet')).toBe('claude-3-5-sonnet');
+    expect(resolveClaudeCodeDisplayModel('claude-haiku-4-6')).toBe('claude-haiku-4-6');
+
+    const config = generateClaudeCodeConfig({
+      siteUrl: 'https://example.com',
+      siteName: 'Example',
+      apiKey: 'sk-test',
+      model: 'claude-sonnet-4-6',
+    });
+    const settingsFile = config.files.find(f => f.path.includes('settings.json'));
+    const settings = JSON.parse(settingsFile!.content);
+
+    expect(settings.model).toBe('sonnet[1m]');
+    expect(settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-4-6');
   });
 });
 
@@ -379,6 +399,21 @@ describe('Property 2: Codex config generation produces valid output', () => {
         const content = configFile!.content;
 
         expect(content).toContain('wire_api = "responses"');
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  it('should default Codex reasoning effort to xhigh', () => {
+    fc.assert(
+      fc.property(configParamsArb, params => {
+        const config = generateCodexConfig(params);
+
+        const configFile = config.files.find(f => f.path.includes('config.toml'));
+        const content = configFile!.content;
+
+        expect(content).toContain('model_reasoning_effort = "xhigh"');
+        expect(content).not.toContain('model_reasoning_effort = "high"');
       }),
       { numRuns: 100 }
     );

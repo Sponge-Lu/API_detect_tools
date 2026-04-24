@@ -20,26 +20,38 @@ import { create } from 'zustand';
 import type { DetectionResult } from '../App';
 import type { AllCliDetectionResult, SiteInfo } from '../../shared/types/config-detection';
 
+/** Claude Code 详细测试结果 */
+export interface ClaudeTestDetail {
+  replyText?: string; // CLI 返回的答案摘要
+}
+
 /** Codex 详细测试结果 */
 export interface CodexTestDetail {
   responses: boolean | null; // Responses API 测试结果
+  replyText?: string; // CLI 返回的答案摘要
 }
 
 /** Gemini CLI 详细测试结果 */
 export interface GeminiTestDetail {
   native: boolean | null; // Google 原生格式测试结果
   proxy: boolean | null; // OpenAI 兼容格式测试结果
+  replyText?: string; // CLI 返回的答案摘要
 }
 
 /** CLI 兼容性测试结果 */
 export interface CliCompatibilityResult {
   claudeCode: boolean | null; // true=支持, false=不支持, null=未测试
+  claudeDetail?: ClaudeTestDetail; // Claude Code 详细测试结果（回答摘要）
+  claudeError?: string; // Claude Code 失败摘要（错误码优先）
   codex: boolean | null;
   codexDetail?: CodexTestDetail; // Codex 详细测试结果（responses）
+  codexError?: string; // Codex 失败摘要（错误码优先）
   geminiCli: boolean | null;
   geminiDetail?: GeminiTestDetail; // Gemini CLI 详细测试结果（native/proxy）
+  geminiError?: string; // Gemini CLI 失败摘要（错误码优先）
   testedAt: number | null; // Unix timestamp
   error?: string; // 测试错误信息（可选）
+  sourceLabel?: string; // 展示层来源标签（如“来自 CLI 可用性 · 默认账户”）
 }
 
 /** 编辑后的配置文件 */

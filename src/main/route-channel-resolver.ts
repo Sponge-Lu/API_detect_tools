@@ -6,17 +6,119 @@
  */
 
 import { unifiedConfigManager } from './unified-config-manager';
-import { resolveRawModelForChannel } from './route-model-registry-service';
-import type { RouteRule, RouteChannelKey, RouteCliType } from '../shared/types/route-proxy';
+import { resolveApiKeyId } from './route-model-registry-service';
+import type {
+  RouteRule,
+  RouteChannelKey,
+  RouteCliType,
+  RouteModelDisplayItem,
+  RouteModelRegistryConfig,
+  RouteModelRegistryEntry,
+  RouteModelSourceRef,
+} from '../shared/types/route-proxy';
+import {
+  buildRouteVendorApiKeyPriorityKey,
+  DEFAULT_ROUTE_VENDOR_API_KEY_PRIORITY,
+  DEFAULT_ROUTE_VENDOR_SITE_PRIORITY,
+} from '../shared/types/route-proxy';
 import type { AccountCredential, ApiKeyInfo, UnifiedSite } from '../shared/types/site';
-import { createHash } from 'crypto';
 import type { TokenService } from './token-service';
 
 export type ResolvedChannel = RouteChannelKey & {
   cliType: RouteCliType;
   canonicalModel?: string;
   resolvedModel?: string;
+  sitePriority?: number;
+  apiKeyPriority?: number;
+  siteOrder?: number;
+  apiKeyOrder?: number;
+  originalModelIndex?: number;
 };
+
+function getProbeCompatibilityStatus(
+  siteId: string,
+  accountId: string,
+  cliType: RouteCliType
+): boolean | null {
+  const routing = unifiedConfigManager.getRoutingConfig();
+  const latestEntries = Object.values(routing.cliProbe.latest).filter(
+    entry => entry.siteId === siteId && entry.accountId === accountId && entry.cliType === cliType
+  );
+
+  if (latestEntries.length === 0) {
+    return null;
+  }
+
+  return latestEntries.some(entry => entry.lastSample.success);
+}
+
+function getRegistrySourcePool(registry: RouteModelRegistryConfig): RouteModelSourceRef[] {
+  if (registry.sources.length > 0) {
+    return registry.sources;
+  }
+
+  const dedupedSources = new Map<string, RouteModelSourceRef>();
+  for (const entry of Object.values(registry.entries)) {
+    for (const source of entry.sources) {
+      if (!dedupedSources.has(source.sourceKey)) {
+        dedupedSources.set(source.sourceKey, source);
+      }
+    }
+  }
+
+  return Array.from(dedupedSources.values());
+}
+
+function normalizeOriginalModelOrder(
+  originalModelOrder: string[] | undefined,
+  sourceKeys: string[],
+  sourceByKey: Map<string, RouteModelSourceRef>
+): string[] {
+  const availableModels = sourceKeys
+    .map(sourceKey => sourceByKey.get(sourceKey)?.originalModel)
+    .filter((model): model is string => !!model);
+  const availableModelSet = new Set(availableModels);
+  const normalized = Array.from(
+    new Set(
+      (originalModelOrder || [])
+        .map(model => model.trim())
+        .filter(model => model.length > 0 && availableModelSet.has(model))
+    )
+  );
+
+  for (const model of availableModels) {
+    if (!normalized.includes(model)) {
+      normalized.push(model);
+    }
+  }
+
+  return normalized;
+}
+
+function buildCanonicalDisplayItems(
+  registry: RouteModelRegistryConfig,
+  entry: RouteModelRegistryEntry
+): RouteModelDisplayItem[] {
+  const matchedItems = registry.displayItems.filter(
+    item => item.canonicalName === entry.canonicalName
+  );
+  if (matchedItems.length > 0) {
+    return matchedItems;
+  }
+
+  return [
+    {
+      id: `fallback:${entry.vendor}:${entry.canonicalName}`,
+      vendor: entry.vendor,
+      canonicalName: entry.canonicalName,
+      sourceKeys: entry.sources.map(source => source.sourceKey),
+      originalModelOrder: Array.from(new Set(entry.sources.map(source => source.originalModel))),
+      mode: 'seeded',
+      createdAt: entry.createdAt,
+      updatedAt: entry.updatedAt,
+    },
+  ];
+}
 
 let routeTokenService: TokenService | null = null;
 
@@ -35,14 +137,6 @@ export function isRouteMaskedApiKeyValue(value: unknown): boolean {
   }
 
   return normalized.includes('*') || normalized.includes('...') || normalized.includes('…');
-}
-
-export function resolveApiKeyId(info: ApiKeyInfo): string {
-  if (info.id !== undefined && info.id !== null) return String(info.id);
-  if (info.token_id !== undefined && info.token_id !== null) return String(info.token_id);
-  const raw = info.key || info.token || '';
-  if (raw) return createHash('sha256').update(raw).digest('hex').slice(0, 16);
-  return 'unknown';
 }
 
 function getStoredApiKeyValue(info: ApiKeyInfo | null | undefined): string {
@@ -128,65 +222,256 @@ export async function resolveAccountApiKeyValue(
   return resolvedValue;
 }
 
-/**
- * 解析候选通道列表（支持 canonical model 过滤）
- */
-export function resolveChannels(
+function buildCanonicalModelChannels(
   rule: RouteRule,
-  canonicalModel?: string | null
-): ResolvedChannel[] {
-  const unifiedConfig = unifiedConfigManager.exportConfigSync();
-  if (!unifiedConfig) return [];
+  canonicalModel: string,
+  unifiedConfig: ReturnType<typeof unifiedConfigManager.exportConfigSync>
+): ResolvedChannel[] | null {
+  if (!unifiedConfig) {
+    return [];
+  }
 
-  const { sites, accounts } = unifiedConfig;
+  const routing = unifiedConfigManager.getRoutingConfig();
+  const registry = routing.modelRegistry;
+  const entry = registry.entries[canonicalModel];
+  if (!entry) {
+    return null;
+  }
+
+  const sourceByKey = new Map(
+    getRegistrySourcePool(registry).map(source => [source.sourceKey, source] as const)
+  );
+  const displayItems = buildCanonicalDisplayItems(registry, entry);
+  const activeSiteById = new Map(
+    unifiedConfig.sites.filter(site => site.enabled).map(site => [site.id, site] as const)
+  );
+  const activeAccountById = new Map(
+    unifiedConfig.accounts
+      .filter(account => account.status === 'active')
+      .map(account => [account.id, account] as const)
+  );
+  const vendorPriorityConfig = registry.vendorPriorities[entry.vendor] || {
+    sitePriorities: {},
+    apiKeyPriorities: {},
+  };
+
+  const combinedOriginalModelOrder: string[] = [];
+  const siteOrderById = new Map<string, number>();
+  let nextSiteOrder = 0;
+  let nextApiKeyOrder = 0;
+  const channelGroups = new Map<
+    string,
+    {
+      siteId: string;
+      accountId: string;
+      apiKeyId: string;
+      siteOrder: number;
+      apiKeyOrder: number;
+      sitePriority: number;
+      apiKeyPriority: number;
+      originalModels: Set<string>;
+    }
+  >();
+
+  for (const item of displayItems) {
+    const orderedSourceKeys = item.sourceKeys.slice().sort((left, right) => {
+      const originalOrder = normalizeOriginalModelOrder(
+        item.originalModelOrder,
+        item.sourceKeys,
+        sourceByKey
+      );
+      const orderIndex = new Map(originalOrder.map((model, index) => [model, index]));
+      const leftSource = sourceByKey.get(left);
+      const rightSource = sourceByKey.get(right);
+      const leftIndex = leftSource
+        ? (orderIndex.get(leftSource.originalModel) ?? Number.MAX_SAFE_INTEGER)
+        : Number.MAX_SAFE_INTEGER;
+      const rightIndex = rightSource
+        ? (orderIndex.get(rightSource.originalModel) ?? Number.MAX_SAFE_INTEGER)
+        : Number.MAX_SAFE_INTEGER;
+      if (leftIndex !== rightIndex) {
+        return leftIndex - rightIndex;
+      }
+
+      return left.localeCompare(right);
+    });
+
+    for (const model of normalizeOriginalModelOrder(
+      item.originalModelOrder,
+      orderedSourceKeys,
+      sourceByKey
+    )) {
+      if (!combinedOriginalModelOrder.includes(model)) {
+        combinedOriginalModelOrder.push(model);
+      }
+    }
+
+    for (const sourceKey of orderedSourceKeys) {
+      const source = sourceByKey.get(sourceKey);
+      if (!source?.accountId) {
+        continue;
+      }
+
+      const site = activeSiteById.get(source.siteId);
+      const account = activeAccountById.get(source.accountId);
+      if (!site || !account) {
+        continue;
+      }
+
+      if (rule.allowedSiteIds?.length && !rule.allowedSiteIds.includes(site.id)) {
+        continue;
+      }
+
+      if (rule.allowedAccountIds?.length && !rule.allowedAccountIds.includes(account.id)) {
+        continue;
+      }
+
+      const compat = getProbeCompatibilityStatus(site.id, account.id, rule.cliType);
+      if (compat === false) {
+        continue;
+      }
+
+      const availableApiKeys = (source.availableApiKeys || []).filter(apiKey => {
+        if (apiKey.accountId !== account.id) {
+          return false;
+        }
+
+        if (rule.allowedApiKeyGroups?.length && !rule.allowedApiKeyGroups.includes(apiKey.group)) {
+          return false;
+        }
+
+        return true;
+      });
+
+      for (const availableApiKey of availableApiKeys) {
+        if (!siteOrderById.has(site.id)) {
+          siteOrderById.set(site.id, nextSiteOrder++);
+        }
+
+        const channelKey = `${site.id}:${account.id}:${availableApiKey.apiKeyId}`;
+        if (!channelGroups.has(channelKey)) {
+          channelGroups.set(channelKey, {
+            siteId: site.id,
+            accountId: account.id,
+            apiKeyId: availableApiKey.apiKeyId,
+            siteOrder: siteOrderById.get(site.id)!,
+            apiKeyOrder: nextApiKeyOrder++,
+            sitePriority:
+              vendorPriorityConfig.sitePriorities[site.id] ?? DEFAULT_ROUTE_VENDOR_SITE_PRIORITY,
+            apiKeyPriority:
+              vendorPriorityConfig.apiKeyPriorities[
+                buildRouteVendorApiKeyPriorityKey(site.id, account.id, availableApiKey.apiKeyId)
+              ] ?? DEFAULT_ROUTE_VENDOR_API_KEY_PRIORITY,
+            originalModels: new Set<string>(),
+          });
+        }
+
+        channelGroups.get(channelKey)!.originalModels.add(source.originalModel);
+      }
+    }
+  }
+
   const channels: ResolvedChannel[] = [];
+  for (const group of channelGroups.values()) {
+    const orderedOriginalModels = combinedOriginalModelOrder.filter(model =>
+      group.originalModels.has(model)
+    );
 
-  for (const site of sites) {
-    if (!site.enabled) continue;
-    if (rule.allowedSiteIds?.length && !rule.allowedSiteIds.includes(site.id)) continue;
+    for (const model of Array.from(group.originalModels).sort((left, right) =>
+      left.localeCompare(right)
+    )) {
+      if (!orderedOriginalModels.includes(model)) {
+        orderedOriginalModels.push(model);
+      }
+    }
 
-    const siteAccounts = accounts.filter(a => a.site_id === site.id && a.status === 'active');
+    orderedOriginalModels.forEach((resolvedModel, originalModelIndex) => {
+      channels.push({
+        routeRuleId: rule.id,
+        siteId: group.siteId,
+        accountId: group.accountId,
+        apiKeyId: group.apiKeyId,
+        cliType: rule.cliType,
+        canonicalModel,
+        resolvedModel,
+        sitePriority: group.sitePriority,
+        apiKeyPriority: group.apiKeyPriority,
+        siteOrder: group.siteOrder,
+        apiKeyOrder: group.apiKeyOrder,
+        originalModelIndex,
+      });
+    });
+  }
+
+  return channels;
+}
+
+function buildGenericChannels(
+  rule: RouteRule,
+  canonicalModel: string | null | undefined,
+  unifiedConfig: ReturnType<typeof unifiedConfigManager.exportConfigSync>
+): ResolvedChannel[] {
+  if (!unifiedConfig) {
+    return [];
+  }
+
+  const channels: ResolvedChannel[] = [];
+  let nextSiteOrder = 0;
+  let nextApiKeyOrder = 0;
+
+  for (const site of unifiedConfig.sites) {
+    if (!site.enabled) {
+      continue;
+    }
+
+    if (rule.allowedSiteIds?.length && !rule.allowedSiteIds.includes(site.id)) {
+      continue;
+    }
+
+    const siteAccounts = unifiedConfig.accounts.filter(
+      account => account.site_id === site.id && account.status === 'active'
+    );
 
     for (const account of siteAccounts) {
-      if (rule.allowedAccountIds?.length && !rule.allowedAccountIds.includes(account.id)) continue;
+      if (rule.allowedAccountIds?.length && !rule.allowedAccountIds.includes(account.id)) {
+        continue;
+      }
 
-      const compat = account.cached_data?.cli_compatibility;
-      if (compat && compat[rule.cliType] === false) continue;
-
-      // canonical model 过滤：检查该通道是否支持
-      let resolvedModel: string | undefined;
-      if (canonicalModel) {
-        const raw = resolveRawModelForChannel({
-          canonicalName: canonicalModel,
-          siteId: site.id,
-          accountId: account.id,
-          cliType: rule.cliType,
-        });
-        if (!raw) continue; // 通道不支持此 canonical model
-        resolvedModel = raw;
+      const compat = getProbeCompatibilityStatus(site.id, account.id, rule.cliType);
+      if (compat === false) {
+        continue;
       }
 
       const apiKeys: ApiKeyInfo[] = account.cached_data?.api_keys || [];
       if (apiKeys.length === 0) {
         if (site.api_key && !isRouteMaskedApiKeyValue(site.api_key)) {
-          const keyId = createHash('sha256').update(site.api_key).digest('hex').slice(0, 16);
           channels.push({
             routeRuleId: rule.id,
             siteId: site.id,
             accountId: account.id,
-            apiKeyId: keyId,
+            apiKeyId: resolveApiKeyId({ key: site.api_key }),
             cliType: rule.cliType,
             canonicalModel: canonicalModel || undefined,
-            resolvedModel,
+            resolvedModel: canonicalModel || undefined,
+            sitePriority: DEFAULT_ROUTE_VENDOR_SITE_PRIORITY,
+            apiKeyPriority: DEFAULT_ROUTE_VENDOR_API_KEY_PRIORITY,
+            siteOrder: nextSiteOrder,
+            apiKeyOrder: nextApiKeyOrder++,
+            originalModelIndex: 0,
           });
         }
         continue;
       }
 
       for (const apiKey of apiKeys) {
-        if (apiKey.status !== undefined && apiKey.status !== 1) continue;
+        if (apiKey.status !== undefined && Number(apiKey.status) !== 1) {
+          continue;
+        }
+
         if (rule.allowedApiKeyGroups?.length) {
-          if (!apiKey.group || !rule.allowedApiKeyGroups.includes(apiKey.group)) continue;
+          if (!apiKey.group || !rule.allowedApiKeyGroups.includes(apiKey.group)) {
+            continue;
+          }
         }
 
         channels.push({
@@ -196,13 +481,42 @@ export function resolveChannels(
           apiKeyId: resolveApiKeyId(apiKey),
           cliType: rule.cliType,
           canonicalModel: canonicalModel || undefined,
-          resolvedModel,
+          resolvedModel: canonicalModel || undefined,
+          sitePriority: DEFAULT_ROUTE_VENDOR_SITE_PRIORITY,
+          apiKeyPriority: DEFAULT_ROUTE_VENDOR_API_KEY_PRIORITY,
+          siteOrder: nextSiteOrder,
+          apiKeyOrder: nextApiKeyOrder++,
+          originalModelIndex: 0,
         });
       }
     }
+
+    nextSiteOrder += 1;
   }
 
   return channels;
+}
+
+/**
+ * 解析候选通道列表（支持 canonical model 过滤）
+ */
+export function resolveChannels(
+  rule: RouteRule,
+  canonicalModel?: string | null
+): ResolvedChannel[] {
+  const unifiedConfig = unifiedConfigManager.exportConfigSync();
+  if (!unifiedConfig) {
+    return [];
+  }
+
+  if (canonicalModel) {
+    const canonicalChannels = buildCanonicalModelChannels(rule, canonicalModel, unifiedConfig);
+    if (canonicalChannels) {
+      return canonicalChannels;
+    }
+  }
+
+  return buildGenericChannels(rule, canonicalModel, unifiedConfig);
 }
 
 /** 判断通道是否支持某 canonical model */
@@ -212,13 +526,25 @@ export function canChannelServeModel(params: {
   cliType: RouteCliType;
   canonicalModel: string;
 }): boolean {
-  return (
-    resolveRawModelForChannel({
-      canonicalName: params.canonicalModel,
-      siteId: params.siteId,
-      accountId: params.accountId,
-      cliType: params.cliType,
-    }) !== null
+  const registry = unifiedConfigManager.getRoutingConfig().modelRegistry;
+  const entry = registry.entries[params.canonicalModel];
+  if (!entry) {
+    return false;
+  }
+
+  const sourceByKey = new Map(
+    getRegistrySourcePool(registry).map(source => [source.sourceKey, source] as const)
+  );
+
+  return buildCanonicalDisplayItems(registry, entry).some(item =>
+    item.sourceKeys.some(sourceKey => {
+      const source = sourceByKey.get(sourceKey);
+      return (
+        source?.siteId === params.siteId &&
+        source.accountId === params.accountId &&
+        (source.availableApiKeys?.length ?? 0) > 0
+      );
+    })
   );
 }
 
@@ -250,7 +576,7 @@ export async function resolveChannelCredentials(
   }
 
   if (site.api_key) {
-    const keyId = createHash('sha256').update(site.api_key).digest('hex').slice(0, 16);
+    const keyId = resolveApiKeyId({ key: site.api_key });
     if (keyId === apiKeyId && !isRouteMaskedApiKeyValue(site.api_key)) {
       return { baseUrl: site.url, apiKey: site.api_key };
     }

@@ -11,7 +11,7 @@ interface TabBarProps {
 const tabs: { id: TabId; label: string; icon: typeof Server }[] = [
   { id: 'sites', label: '站点管理', icon: Server },
   { id: 'cli', label: '自定义CLI', icon: Terminal },
-  { id: 'credit', label: 'Linux Do Credit', icon: Coins },
+  { id: 'credit', label: 'LDC 积分', icon: Coins },
   { id: 'settings', label: '设置', icon: Settings },
 ];
 

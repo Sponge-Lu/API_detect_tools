@@ -29,10 +29,11 @@ export type { SiteConfig, DetectionResult } from '../shared/types/site';
 // 导入页面组件
 import { SitesPage } from './pages/SitesPage';
 import { CustomCliPage } from './pages/CustomCliPage';
+import { CreditPage } from './pages/CreditPage';
+import { LogsPage } from './pages/LogsPage';
+import { RoutePage } from './pages/RoutePage';
 import { SettingsPage } from './pages/SettingsPage';
-import { ModelRedirectionTab } from './components/Route/Redirection/ModelRedirectionTab';
 import { CliUsabilityTab } from './components/Route/Usability/CliUsabilityTab';
-import { ProxyStatsTab } from './components/Route/ProxyStats/ProxyStatsTab';
 import { normalizeSiteSortField } from './utils/siteSort';
 
 // 导入 Zustand Store
@@ -157,12 +158,23 @@ declare global {
         }) => Promise<{
           success: boolean;
           data?: CliCompatibilityData;
+          samples?: Array<{
+            cliType: 'claudeCode' | 'codex' | 'geminiCli';
+            model: string;
+            success: boolean;
+            testedAt: number;
+            error?: string;
+            claudeDetail?: CliCompatibilityData['claudeDetail'];
+            codexDetail?: CliCompatibilityData['codexDetail'];
+            geminiDetail?: CliCompatibilityData['geminiDetail'];
+          }>;
           error?: string;
         }>;
         saveResult: (
           siteUrl: string,
           result: any,
-          accountId?: string
+          accountId?: string,
+          samples?: any[]
         ) => Promise<{ success: boolean; error?: string }>;
         saveConfig: (
           siteUrl: string,
@@ -317,8 +329,21 @@ declare global {
         rebuildModelRegistry: (params?: {
           force?: boolean;
         }) => Promise<{ success: boolean; data?: any; error?: string }>;
+        syncModelRegistrySources: (params?: {
+          force?: boolean;
+        }) => Promise<{ success: boolean; data?: any; error?: string }>;
         upsertModelMappingOverride: (
           override: any
+        ) => Promise<{ success: boolean; data?: any; error?: string }>;
+        upsertModelDisplayItem: (
+          displayItem: any
+        ) => Promise<{ success: boolean; data?: any; error?: string }>;
+        deleteModelDisplayItem: (
+          displayItemId: string
+        ) => Promise<{ success: boolean; data?: any; error?: string }>;
+        saveVendorPriorityConfig: (
+          vendor: string,
+          priorityConfig: any
         ) => Promise<{ success: boolean; data?: any; error?: string }>;
         deleteModelMappingOverride: (
           overrideId: string
@@ -434,7 +459,11 @@ function App() {
     closeDownloadPanel,
   } = useUIStore();
 
-  const visibleActiveTab: VisibleTabId = activeTab === 'credit' ? 'sites' : activeTab;
+  const rawActiveTab = activeTab as string;
+  const visibleActiveTab: VisibleTabId =
+    rawActiveTab === 'redirection' || rawActiveTab === 'proxystats'
+      ? 'route'
+      : (rawActiveTab as VisibleTabId);
 
   // 窗口关闭行为对话框状态
   const [showCloseBehaviorDialog, setShowCloseBehaviorDialog] = useState(false);
@@ -719,10 +748,10 @@ function App() {
           </div>
           <div
             className={
-              visibleActiveTab === 'redirection' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
+              visibleActiveTab === 'credit' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
             }
           >
-            <ModelRedirectionTab />
+            <CreditPage />
           </div>
           <div
             className={
@@ -733,10 +762,17 @@ function App() {
           </div>
           <div
             className={
-              visibleActiveTab === 'proxystats' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
+              visibleActiveTab === 'route' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
             }
           >
-            <ProxyStatsTab />
+            <RoutePage />
+          </div>
+          <div
+            className={
+              visibleActiveTab === 'logs' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
+            }
+          >
+            <LogsPage />
           </div>
 
           <div

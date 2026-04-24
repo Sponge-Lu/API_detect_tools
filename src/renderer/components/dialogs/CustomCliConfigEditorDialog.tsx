@@ -562,6 +562,7 @@ export function CustomCliConfigEditorDialog({
     const slots = createEmptyCustomCliTestState().slots;
     let allSuccess = cliTestTargets.length > 0;
     let testedAt: number | null = null;
+    let claudeDetail: CustomCliTestState['claudeDetail'];
     let codexDetail: CustomCliTestState['codexDetail'];
     let geminiDetail: CustomCliTestState['geminiDetail'];
     try {
@@ -587,6 +588,7 @@ export function CustomCliConfigEditorDialog({
             timestamp: testedAt,
           };
           if (!success) allSuccess = false;
+          if (response.data?.claudeDetail) claudeDetail = response.data.claudeDetail;
           if (response.data?.codexDetail) codexDetail = response.data.codexDetail;
           if (response.data?.geminiDetail) geminiDetail = response.data.geminiDetail;
         } catch (error: any) {
@@ -604,6 +606,7 @@ export function CustomCliConfigEditorDialog({
       const nextTestState: CustomCliTestState = {
         status: cliTestTargets.length > 0 ? allSuccess : null,
         testedAt,
+        claudeDetail,
         codexDetail,
         geminiDetail,
         slots,

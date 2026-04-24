@@ -110,9 +110,43 @@ export function computeScore(stats: RouteChannelStats): number {
 /**
  * 对候选通道按评分排序
  */
-export function sortChannelsByScore(channels: RouteChannelKey[]): RouteChannelKey[] {
+export function sortChannelsByScore<T extends RouteChannelKey>(channels: T[]): T[] {
   const routing = unifiedConfigManager.getRoutingConfig();
   return [...channels].sort((a, b) => {
+    const aPriority = (a as T & { sitePriority?: number }).sitePriority ?? Number.MAX_SAFE_INTEGER;
+    const bPriority = (b as T & { sitePriority?: number }).sitePriority ?? Number.MAX_SAFE_INTEGER;
+    if (aPriority !== bPriority) {
+      return aPriority - bPriority;
+    }
+
+    const aSiteOrder = (a as T & { siteOrder?: number }).siteOrder ?? Number.MAX_SAFE_INTEGER;
+    const bSiteOrder = (b as T & { siteOrder?: number }).siteOrder ?? Number.MAX_SAFE_INTEGER;
+    if (aSiteOrder !== bSiteOrder) {
+      return aSiteOrder - bSiteOrder;
+    }
+
+    const aApiKeyPriority =
+      (a as T & { apiKeyPriority?: number }).apiKeyPriority ?? Number.MAX_SAFE_INTEGER;
+    const bApiKeyPriority =
+      (b as T & { apiKeyPriority?: number }).apiKeyPriority ?? Number.MAX_SAFE_INTEGER;
+    if (aApiKeyPriority !== bApiKeyPriority) {
+      return aApiKeyPriority - bApiKeyPriority;
+    }
+
+    const aApiKeyOrder = (a as T & { apiKeyOrder?: number }).apiKeyOrder ?? Number.MAX_SAFE_INTEGER;
+    const bApiKeyOrder = (b as T & { apiKeyOrder?: number }).apiKeyOrder ?? Number.MAX_SAFE_INTEGER;
+    if (aApiKeyOrder !== bApiKeyOrder) {
+      return aApiKeyOrder - bApiKeyOrder;
+    }
+
+    const aOriginalModelIndex =
+      (a as T & { originalModelIndex?: number }).originalModelIndex ?? Number.MAX_SAFE_INTEGER;
+    const bOriginalModelIndex =
+      (b as T & { originalModelIndex?: number }).originalModelIndex ?? Number.MAX_SAFE_INTEGER;
+    if (aOriginalModelIndex !== bOriginalModelIndex) {
+      return aOriginalModelIndex - bOriginalModelIndex;
+    }
+
     const aKey = buildStatsKey(a);
     const bKey = buildStatsKey(b);
 

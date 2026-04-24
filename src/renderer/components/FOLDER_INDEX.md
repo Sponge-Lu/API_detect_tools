@@ -36,7 +36,7 @@
 |--------|------|--------|
 | **Header/** | 顶部导航栏 | Header, Menu, ThemeToggle |
 | **AppShell/** | 页面壳层组件 | GlobalCommandBar, PageHeader |
-| **SiteCard/** | 站点卡片 | SiteCard, SiteCardActions |
+| **SiteCard/** | 站点卡片 | SiteCard, SiteCardHeader, SiteCardActions |
 | **SiteGroupTabs/** | 站点分组标签 | SiteGroupTabs, GroupTab |
 | **SiteListHeader/** | 站点列表头部 | SiteListHeader, SearchBar, FilterBar |
 | **Route/** | Route 页面组件 | ModelRedirectionTab, CliUsabilityTab, ProxyStatsTab |

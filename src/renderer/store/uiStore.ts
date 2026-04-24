@@ -28,21 +28,14 @@ interface RefreshMessage {
   type: 'success' | 'info';
 }
 
-// Tab 页面类型（保留 credit 兼容性；可导航一级页面由 page metadata registry 定义）
-export type TabId =
-  | 'sites'
-  | 'cli'
-  | 'redirection'
-  | 'usability'
-  | 'proxystats'
-  | 'credit'
-  | 'settings';
+// Tab 页面类型（一级页面由 page metadata registry 定义；旧 route 子页仍需兼容）
+export type TabId = 'sites' | 'cli' | 'usability' | 'route' | 'logs' | 'credit' | 'settings';
 
-export type VisibleTabId = Exclude<TabId, 'credit'>;
+export type VisibleTabId = TabId;
 export type SidebarDisplayMode = 'expanded' | 'icon-only';
 
 // 路由相关的 TabId
-export const ROUTE_TAB_IDS: TabId[] = ['redirection', 'usability', 'proxystats'];
+export const ROUTE_TAB_IDS: TabId[] = ['usability', 'route'];
 export const isRouteTab = (id: TabId) => ROUTE_TAB_IDS.includes(id);
 
 // 排序字段类型

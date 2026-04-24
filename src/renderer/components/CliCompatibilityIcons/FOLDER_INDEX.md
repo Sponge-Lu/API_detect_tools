@@ -8,6 +8,7 @@
 - 工具图标显示（Claude Code、Codex、Gemini CLI）
 - 支持状态指示（支持/不支持/待测试/未配置）
 - 详细测试结果 tooltip（Codex Responses API、Gemini CLI 双端点）
+- tooltip 按 CLI 独立显示失败摘要（错误码优先）
 - 响应式布局
 
 **依赖关系**:

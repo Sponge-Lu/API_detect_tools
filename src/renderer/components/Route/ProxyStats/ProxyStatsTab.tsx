@@ -5,7 +5,7 @@
  * 定位: 路由页代理统计子面板
  */
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { Play, Square, Copy, KeyRound, Loader2, Activity, BarChart3 } from 'lucide-react';
 import { useShallow } from 'zustand/shallow';
 import { useRouteStore } from '../../../store/routeStore';
@@ -13,7 +13,12 @@ import { toast } from '../../../store/toastStore';
 import { AppCard, AppCardContent } from '../../AppCard';
 import { AppButton } from '../../AppButton/AppButton';
 import { AppInput } from '../../AppInput';
-import type { RouteCliType } from '../../../../shared/types/route-proxy';
+import { buildRecommendedCliModelOptions } from '../Redirection/ModelRedirectionTab';
+import {
+  normalizeRouteCliSelection,
+  type RouteCliType,
+  type RouteModelRegistryEntry,
+} from '../../../../shared/types/route-proxy';
 
 const CLI_LABELS: Record<RouteCliType, string> = {
   claudeCode: 'Claude Code',
@@ -25,23 +30,51 @@ type TimeRange = '24h' | '7d';
 const STATS_TIME_RANGES: TimeRange[] = ['24h', '7d'];
 
 /** 代理服务器状态区 */
-function ServerSection() {
-  const { config, serverRunning, saveServerConfig, regenerateApiKey, startServer, stopServer } =
-    useRouteStore(
-      useShallow(s => ({
-        config: s.config,
-        serverRunning: s.serverRunning,
-        saveServerConfig: s.saveServerConfig,
-        regenerateApiKey: s.regenerateApiKey,
-        startServer: s.startServer,
-        stopServer: s.stopServer,
-      }))
-    );
+interface RoutePanelProps {
+  className?: string;
+}
+
+function resolveCliSelectionDisplayValue(
+  selectedModel: string | null | undefined,
+  entries: RouteModelRegistryEntry[]
+): string {
+  return (
+    normalizeRouteCliSelection(
+      selectedModel,
+      Object.fromEntries(entries.map(entry => [entry.canonicalName, entry]))
+    ) ?? ''
+  );
+}
+
+export function ServerSection({ className = '' }: RoutePanelProps) {
+  const {
+    config,
+    serverRunning,
+    saveServerConfig,
+    regenerateApiKey,
+    startServer,
+    stopServer,
+    saveCliModelSelections,
+  } = useRouteStore(
+    useShallow(s => ({
+      config: s.config,
+      serverRunning: s.serverRunning,
+      saveServerConfig: s.saveServerConfig,
+      regenerateApiKey: s.regenerateApiKey,
+      startServer: s.startServer,
+      stopServer: s.stopServer,
+      saveCliModelSelections: s.saveCliModelSelections,
+    }))
+  );
   const [toggling, setToggling] = useState(false);
   const [showKey, setShowKey] = useState(false);
+  const modelOptions = useMemo(
+    () => buildRecommendedCliModelOptions(config?.modelRegistry),
+    [config?.modelRegistry]
+  );
 
   if (!config) return null;
-  const { server } = config;
+  const { server, cliModelSelections } = config;
 
   const handleToggle = async () => {
     setToggling(true);
@@ -61,8 +94,12 @@ function ServerSection() {
     }
   };
 
+  const handleCliModelChange = (cli: RouteCliType, value: string) => {
+    saveCliModelSelections({ [cli]: value || null });
+  };
+
   return (
-    <AppCard className="mb-4">
+    <AppCard className={className}>
       <AppCardContent className="p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -154,13 +191,37 @@ function ServerSection() {
             </button>
           </div>
         </div>
+
+        <div className="mt-4 border-t border-[var(--line-soft)] pt-4">
+          <div className="grid gap-3 md:grid-cols-3">
+            {(['claudeCode', 'codex', 'geminiCli'] as RouteCliType[]).map(cli => (
+              <div key={cli}>
+                <label className="mb-1 block text-xs text-[var(--text-secondary)]">
+                  {CLI_LABELS[cli]}
+                </label>
+                <select
+                  value={resolveCliSelectionDisplayValue(cliModelSelections?.[cli], modelOptions)}
+                  onChange={e => handleCliModelChange(cli, e.target.value)}
+                  className="w-full rounded-lg border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1.5 text-xs text-[var(--text-primary)]"
+                >
+                  <option value="">未选择</option>
+                  {modelOptions.map(entry => (
+                    <option key={entry.canonicalName} value={entry.canonicalName}>
+                      {entry.canonicalName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+        </div>
       </AppCardContent>
     </AppCard>
   );
 }
 
 /** CLI 模型选择区 */
-function CliModelSection() {
+export function CliModelSection({ className = '' }: RoutePanelProps) {
   const { config, saveCliModelSelections } = useRouteStore(
     useShallow(s => ({
       config: s.config,
@@ -177,7 +238,7 @@ function CliModelSection() {
   };
 
   return (
-    <AppCard className="mb-4">
+    <AppCard className={className}>
       <AppCardContent className="p-4">
         <div className="flex items-center gap-2 mb-3">
           <BarChart3 className="w-4 h-4 text-[var(--accent)]" />
@@ -211,7 +272,7 @@ function CliModelSection() {
 }
 
 /** 统计仪表盘（首次加载后缓存） */
-function StatsDashboard() {
+export function StatsDashboard({ className = '' }: RoutePanelProps) {
   const [timeRange, setTimeRange] = useState<TimeRange>('24h');
   const [summary, setSummary] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -239,7 +300,7 @@ function StatsDashboard() {
   };
 
   return (
-    <AppCard>
+    <AppCard className={`h-fit self-start ${className}`}>
       <AppCardContent className="p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -265,17 +326,21 @@ function StatsDashboard() {
             <Loader2 className="w-5 h-5 animate-spin text-[var(--accent)]" />
           </div>
         ) : summary ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatCard label="总请求" value={summary.totalRequests} />
-            <StatCard
-              label="成功率"
-              value={`${summary.successRate}%`}
-              color={
-                summary.successRate >= 80 ? 'green' : summary.successRate >= 50 ? 'yellow' : 'red'
-              }
-            />
-            <StatCard label="Prompt Tokens" value={formatNumber(summary.promptTokens)} />
-            <StatCard label="Completion Tokens" value={formatNumber(summary.completionTokens)} />
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <StatRow label="总请求" value={summary.totalRequests} />
+              <StatRow
+                label="成功率"
+                value={`${summary.successRate}%`}
+                color={
+                  summary.successRate >= 80 ? 'green' : summary.successRate >= 50 ? 'yellow' : 'red'
+                }
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <StatRow label="Prompt Tokens" value={formatNumber(summary.promptTokens)} />
+              <StatRow label="Completion Tokens" value={formatNumber(summary.completionTokens)} />
+            </div>
           </div>
         ) : (
           <div className="py-6 text-center text-sm text-[var(--text-secondary)]">暂无统计数据</div>
@@ -285,7 +350,7 @@ function StatsDashboard() {
   );
 }
 
-function StatCard({
+function StatRow({
   label,
   value,
   color,
@@ -304,9 +369,9 @@ function StatCard({
           : 'text-[var(--text-primary)]';
 
   return (
-    <div className="rounded-lg bg-[var(--surface-2)] p-3 text-center">
-      <div className="mb-1 text-xs text-[var(--text-secondary)]">{label}</div>
-      <div className={`text-lg font-semibold ${colorClass}`}>{value}</div>
+    <div className="flex items-center justify-between rounded-lg border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-2">
+      <div className="text-xs text-[var(--text-secondary)]">{label}</div>
+      <div className={`text-sm font-semibold ${colorClass}`}>{value}</div>
     </div>
   );
 }
@@ -320,9 +385,10 @@ function formatNumber(n: number): string {
 export function ProxyStatsTab() {
   return (
     <div className="flex-1 overflow-y-auto px-6 py-2">
-      <ServerSection />
-      <CliModelSection />
-      <StatsDashboard />
+      <div className="space-y-4">
+        <ServerSection />
+        <StatsDashboard />
+      </div>
     </div>
   );
 }
