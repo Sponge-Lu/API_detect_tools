@@ -134,6 +134,8 @@ function getCheckinTooltip(
 export function SiteCardActions({
   site,
   index,
+  cardKey,
+  accountId,
   siteResult,
   isExpanded,
   isDetecting,
@@ -300,14 +302,14 @@ export function SiteCardActions({
                   <button
                     onClick={e => {
                       e.stopPropagation();
-                      onCheckIn(site);
+                      onCheckIn(site, accountId);
                     }}
-                    disabled={checkingIn === site.name}
+                    disabled={checkingIn === cardKey}
                     className="rounded-[var(--radius-sm)] p-[3px] text-[var(--warning)] transition-colors hover:bg-[var(--warning-soft)] disabled:opacity-50"
                     title={getCheckinTooltip(effectiveCanCheckIn, checkinStats)}
                     aria-label={getCheckinTooltip(effectiveCanCheckIn, checkinStats)}
                   >
-                    {checkingIn === site.name ? (
+                    {checkingIn === cardKey ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={2} />
                     ) : (
                       <Calendar className="w-3.5 h-3.5" strokeWidth={2} />

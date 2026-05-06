@@ -24,6 +24,7 @@
 | 文件 | 职责 | 关键函数 |
 |------|------|--------|
 | **logger.ts** | 日志记录 | `info()`, `warn()`, `error()`, `debug()` |
+| **atomic-json.ts** | 原子文本/JSON 读写，统一配置、运行态缓存、迁移和备份后续写盘基础能力 | `writeTextFileAtomically()`, `writeJsonFileAtomically()`, `readJsonFile()` |
 | **file-utils.ts** | 文件操作 | `readFile()`, `writeFile()`, `deleteFile()` 等 |
 | **crypto-utils.ts** | 加密解密 | `encrypt()`, `decrypt()`, `hash()` |
 | **retry-utils.ts** | 重试机制 | `retry()`, `withRetry()` |
@@ -36,8 +37,8 @@
 | **site-matcher.ts** | 站点匹配 | `normalizeUrl()`, `matchSite()`, `isOfficialUrl()`, `determineSourceType()` |
 | **page-exec-queue.ts** | 页面执行队列 | `runOnPageQueue()` - 串行化同一 Page 的 evaluate 调用 |
 | **request-manager.ts** | 请求管理 | `RequestManager` - 请求去重和缓存 |
-| **http-client.ts** | HTTP 客户端 | `httpGet()`, `httpPost()`, `httpPostStream()` - 统一 HTTP 请求；流式首包探测 |
-| **electron-fetch.ts** | Electron 网络 | `electronFetch()`, `electronFetchStream()` - Electron net 模块封装；支持流式首包探测 |
+| **http-client.ts** | HTTP 客户端 | `httpGet()`, `httpPost()`, `httpPostStream()`, `httpRawRequest()` - 统一 HTTP 请求；流式首包探测与透明转发 |
+| **electron-fetch.ts** | Electron 网络 | `electronFetch()`, `electronFetchStream()`, `electronFetchRaw()`, `normalizeProxyUrl()` - Electron net 模块封装；支持流式首包探测、raw 响应体和上游代理 session |
 
 ---
 

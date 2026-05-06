@@ -28,7 +28,13 @@
 
 import React from 'react';
 import Logger from '../utils/logger';
-import { BUILTIN_GROUP_IDS, type SiteConfig, type SiteType } from '../../shared/types/site';
+import {
+  BUILTIN_GROUP_IDS,
+  type DetectionCacheData,
+  type DetectionResult,
+  type SiteConfig,
+  type SiteType,
+} from '../../shared/types/site';
 import { useDetectionStore } from '../store/detectionStore';
 import { useConfigStore } from '../store/configStore';
 
@@ -44,9 +50,99 @@ interface UseCheckInOptions {
   detectSingle?: (site: SiteConfig, quickRefresh: boolean) => Promise<void>;
 }
 
+const ANY_ROUTER_SITE_NAME = 'any router';
+const ANY_ROUTER_CHECKIN_QUOTA = 25 * 500000;
+
 export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInOptions) {
   const { upsertResult, results } = useDetectionStore();
   const { config } = useConfigStore();
+
+  const getCheckInKey = (site: SiteConfig, accountId?: string) =>
+    accountId ? `${site.name}::${accountId}` : site.name;
+
+  const isAnyRouterSite = (site: SiteConfig) =>
+    site.name.trim().toLowerCase() === ANY_ROUTER_SITE_NAME;
+
+  const buildManualCheckinCompletedResult = (site: SiteConfig, accountId?: string) => {
+    const existingResult = results.find(r => r.name === site.name && r.accountId === accountId);
+
+    return {
+      ...(existingResult || {
+        name: site.name,
+        url: site.url,
+        status: '成功',
+        models: [],
+        has_checkin: site.has_checkin ?? true,
+        accountId,
+      }),
+      has_checkin: existingResult?.has_checkin ?? site.has_checkin ?? true,
+      can_check_in: false,
+      lastRefresh: Date.now(),
+    };
+  };
+
+  const buildCheckinCompletionCache = (
+    result: DetectionResult
+  ): Pick<
+    DetectionCacheData,
+    'last_refresh' | 'has_checkin' | 'can_check_in' | 'checkin_stats'
+  > => {
+    const cachedData: Pick<
+      DetectionCacheData,
+      'last_refresh' | 'has_checkin' | 'can_check_in' | 'checkin_stats'
+    > = {
+      last_refresh: result.lastRefresh,
+      has_checkin: result.has_checkin ?? true,
+      can_check_in: false,
+    };
+
+    if (result.checkinStats) {
+      cachedData.checkin_stats = {
+        today_quota: result.checkinStats.todayQuota,
+        checkin_count: result.checkinStats.checkinCount,
+        total_checkins: result.checkinStats.totalCheckins,
+        site_type: result.checkinStats.siteType,
+      };
+    }
+
+    return cachedData;
+  };
+
+  const persistCheckinCompletion = async (
+    site: SiteConfig,
+    accountId: string | undefined,
+    result: DetectionResult
+  ) => {
+    if (!window.electronAPI.browserProfile?.persistCheckinCompletion) {
+      return true;
+    }
+
+    if (!site.id) {
+      Logger.warn('⚠️ [useCheckIn] 缺少站点 ID，无法持久化手动签到状态:', site.name);
+      return false;
+    }
+
+    const persistResult = await window.electronAPI.browserProfile.persistCheckinCompletion(
+      site.id,
+      accountId,
+      buildCheckinCompletionCache(result)
+    );
+
+    return persistResult?.success === true;
+  };
+
+  const markManualCheckinCompleted = async (site: SiteConfig, accountId?: string) => {
+    const nextResult = buildManualCheckinCompletedResult(site, accountId);
+    upsertResult(nextResult);
+
+    const persisted = await persistCheckinCompletion(site, accountId, nextResult);
+    if (!persisted) {
+      Logger.warn('⚠️ [useCheckIn] 手动签到状态已更新到界面，但本地缓存保存失败:', {
+        siteId: site.id,
+        accountId,
+      });
+    }
+  };
 
   const resolveManualCheckinSiteType = (siteType?: SiteType): 'veloera' | 'newapi' => {
     switch (siteType) {
@@ -62,12 +158,100 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
     }
   };
 
+  const buildAnyRouterCompletedResult = (site: SiteConfig, accountId?: string) => {
+    const existingResult = results.find(r => r.name === site.name && r.accountId === accountId);
+    if (!existingResult) return null;
+
+    return {
+      ...existingResult,
+      can_check_in: false,
+      checkinStats: {
+        ...existingResult.checkinStats,
+        todayQuota: ANY_ROUTER_CHECKIN_QUOTA,
+        siteType: resolveManualCheckinSiteType(site.site_type),
+      },
+      lastRefresh: Date.now(),
+    };
+  };
+
+  const markAnyRouterCheckinCompleted = (site: SiteConfig, accountId?: string) => {
+    const nextResult = buildAnyRouterCompletedResult(site, accountId);
+    if (!nextResult) return null;
+    upsertResult(nextResult);
+    return nextResult;
+  };
+
+  const performAnyRouterCheckIn = async (
+    site: SiteConfig,
+    accountId?: string
+  ): Promise<{ success: boolean; message: string; quota?: number }> => {
+    if (!accountId) {
+      return {
+        success: false,
+        message: 'Any Router 签到需要账户浏览器登录态，请先为该站点绑定账户。',
+      };
+    }
+
+    if (!window.electronAPI.browserProfile?.openSiteForCheckin) {
+      return {
+        success: false,
+        message: '当前版本缺少 Any Router 浏览器签到能力。',
+      };
+    }
+
+    const result = await window.electronAPI.browserProfile.openSiteForCheckin(
+      site.id,
+      site.url.replace(/\/$/, ''),
+      accountId
+    );
+
+    if (!result?.success) {
+      return {
+        success: false,
+        message: result?.error || 'Any Router 账户浏览器签到失败',
+      };
+    }
+
+    const nextResult = markAnyRouterCheckinCompleted(site, accountId);
+    if (nextResult && window.electronAPI.browserProfile?.persistCheckinCompletion) {
+      const persistResult = await window.electronAPI.browserProfile.persistCheckinCompletion(
+        site.id,
+        accountId,
+        {
+          last_refresh: nextResult.lastRefresh,
+          has_checkin: nextResult.has_checkin ?? true,
+          can_check_in: false,
+          checkin_stats: {
+            today_quota: nextResult.checkinStats?.todayQuota,
+            checkin_count: nextResult.checkinStats?.checkinCount,
+            total_checkins: nextResult.checkinStats?.totalCheckins,
+            site_type: nextResult.checkinStats?.siteType,
+          },
+        }
+      );
+
+      if (!persistResult?.success) {
+        return {
+          success: true,
+          message: `${result.message || '已完成签到'}，但本地签到状态保存失败，重启后可能需要重新刷新`,
+          quota: ANY_ROUTER_CHECKIN_QUOTA,
+        };
+      }
+    }
+
+    return {
+      success: true,
+      message: result.message || '已识别到账户登录状态，等待 2 秒后自动关闭。',
+      quota: ANY_ROUTER_CHECKIN_QUOTA,
+    };
+  };
+
   /**
    * 打开站点签到页面
    * @param site 站点配置
    * @param siteType 站点类型（veloera 或 newapi），用于确定签到页面路径
    */
-  const openCheckinPage = async (site: SiteConfig, siteType?: SiteType) => {
+  const openCheckinPage = async (site: SiteConfig, siteType?: SiteType): Promise<boolean> => {
     try {
       const baseUrl = site.url.replace(/\/$/, '');
       const manualSiteType = resolveManualCheckinSiteType(siteType);
@@ -77,9 +261,11 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
       const checkinPath = manualSiteType === 'newapi' ? '/console/personal' : '/console';
       const targetUrl = baseUrl + checkinPath;
       await window.electronAPI.openUrl(targetUrl);
+      return true;
     } catch (error) {
       Logger.error('打开浏览器失败:', error);
       showAlert('打开浏览器失败: ' + error, 'error');
+      return false;
     }
   };
 
@@ -87,7 +273,28 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
    * 执行签到
    */
   const handleCheckIn = async (site: SiteConfig, accountId?: string) => {
-    if (!site.system_token || !site.user_id) {
+    const checkInKey = getCheckInKey(site, accountId);
+
+    if (isAnyRouterSite(site)) {
+      setCheckingIn(checkInKey);
+      try {
+        const anyRouterResult = await performAnyRouterCheckIn(site, accountId);
+        if (anyRouterResult.success) {
+          showAlert(
+            `签到成功！\n\n${anyRouterResult.message}\n🎁 获得奖励: $25.00`,
+            'success',
+            '签到成功'
+          );
+        } else {
+          showAlert(anyRouterResult.message, 'warning');
+        }
+      } finally {
+        setCheckingIn(null);
+      }
+      return;
+    }
+
+    if (!accountId && (!site.system_token || !site.user_id)) {
       const shouldOpenSite = await showDialog({
         type: 'warning',
         title: '签到失败',
@@ -96,12 +303,15 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
         confirmText: '打开网站',
       });
       if (shouldOpenSite) {
-        await openCheckinPage(site, site.site_type);
+        const opened = await openCheckinPage(site, site.site_type);
+        if (opened) {
+          await markManualCheckinCompleted(site, accountId);
+        }
       }
       return;
     }
 
-    setCheckingIn(site.name);
+    setCheckingIn(checkInKey);
 
     try {
       const timeout = config?.settings?.timeout ?? 30;
@@ -154,7 +364,10 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
             confirmText: '打开网站',
           });
           if (shouldOpenSite) {
-            await openCheckinPage(site, checkinResult.siteType || site.site_type);
+            const opened = await openCheckinPage(site, checkinResult.siteType || site.site_type);
+            if (opened) {
+              await markManualCheckinCompleted(site, accountId);
+            }
           }
         } else {
           showAlert(checkinResult.message, 'alert');
@@ -177,7 +390,10 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
           confirmText: '打开网站',
         });
         if (shouldOpenSite) {
-          await openCheckinPage(site, site.site_type);
+          const opened = await openCheckinPage(site, site.site_type);
+          if (opened) {
+            await markManualCheckinCompleted(site, accountId);
+          }
         }
       }
     } finally {
@@ -202,6 +418,7 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
       message?: string;
       site?: SiteConfig;
       siteType?: SiteType;
+      accountId?: string;
     }[] = [];
 
     if (!config?.sites) {
@@ -249,9 +466,29 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
     Logger.info(`🚀 [useCheckIn] 开始一键签到，共 ${targets.length} 个目标`);
 
     for (const { site, accountId, displayName } of targets) {
-      setCheckingIn(site.name);
+      setCheckingIn(getCheckInKey(site, accountId));
 
       try {
+        if (isAnyRouterSite(site)) {
+          const anyRouterResult = await performAnyRouterCheckIn(site, accountId);
+          if (anyRouterResult.success) {
+            summary.success++;
+            siteResults.push({
+              name: displayName,
+              success: true,
+              quota: anyRouterResult.quota,
+            });
+          } else {
+            summary.failed++;
+            siteResults.push({
+              name: displayName,
+              success: false,
+              message: anyRouterResult.message,
+            });
+          }
+          continue;
+        }
+
         const timeout = config?.settings?.timeout ?? 30;
         const { checkinResult, balanceResult } = await (
           window.electronAPI as any
@@ -283,6 +520,7 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
             message: checkinResult.message,
             site,
             siteType: checkinResult.siteType || site.site_type,
+            accountId,
           });
         }
       } catch (error: any) {
@@ -294,6 +532,7 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
           message: errorMessage,
           site,
           siteType: site.site_type,
+          accountId,
         });
 
         if (
@@ -349,7 +588,12 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
               React.createElement(
                 'button',
                 {
-                  onClick: () => openCheckinPage(r.site!, r.siteType),
+                  onClick: async () => {
+                    const opened = await openCheckinPage(r.site!, r.siteType);
+                    if (opened) {
+                      await markManualCheckinCompleted(r.site!, r.accountId);
+                    }
+                  },
                   className:
                     'shrink-0 cursor-pointer rounded-md bg-[var(--accent-soft)] px-2 py-0.5 text-xs text-[var(--accent-strong)] transition-colors hover:bg-[var(--accent-soft-strong)]',
                 },

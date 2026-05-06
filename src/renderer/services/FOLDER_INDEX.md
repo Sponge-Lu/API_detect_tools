@@ -25,6 +25,7 @@
 |------|------|--------|
 | **cli-config-generator.ts** | CLI 配置生成 | `generateConfig()`, `exportConfig()` |
 | **cli-compat-projection.ts** | 将 `routing.cliProbe.latest` 投影为站点页 CLI 兼容性结果 | `projectCliCompatibilityMap()`, `syncProjectedCliCompatibility()` |
+| **cli-compat-sync.ts** | 手动 CLI 测试结果落盘后的跨视图回灌 | `persistCliCompatibilityResult()`, `refreshPersistedCliProbeState()` |
 | **sessionEventLog.ts** | 将关键操作写入会话事件历史 | `success()`, `info()`, `warning()`, `error()` |
 
 ---
@@ -64,6 +65,20 @@
 - 无账户卡片时，才允许使用 `site::{siteId}` 的站点级 probe 结果
 - 同一 CLI 的多模型结果按“有一个成功即视为兼容”聚合，同时保留成功样本的细节文本
 - 失败摘要按 CLI 独立保存，优先显示错误码，没有错误码时回落为短错误文本
+
+---
+
+### cli-compat-sync.ts - CLI 测试结果同步
+
+**职责**: 统一处理手动 CLI 测试写入 `routing.cliProbe` 后，对站点页兼容性卡片和路由 CLI 可用性视图缓存的刷新。
+
+**关键导出**:
+- `persistCliCompatibilityResult()` - 调用 `cli-compat:save-result`，并在成功后刷新 detection store / route store
+- `refreshPersistedCliProbeState()` - 重新加载配置、重投影站点卡片兼容性结果，并在路由可用性页已加载时强制刷新 history 视图
+
+**关键规则**:
+- 站点管理里的“测试已选模型”和站点页统一兼容性测试都应走同一套持久化刷新链路
+- 每次手动测试结果落盘后都强制刷新一次路由 CLI 可用性视图缓存，避免常驻挂载页面继续显示旧 history
 
 ---
 

@@ -136,6 +136,10 @@ vi.mock('../renderer/pages/SitesPage', () => ({
   SitesPage: () => <div>Mock Sites Page</div>,
 }));
 
+vi.mock('../renderer/pages/DataOverviewPage', () => ({
+  DataOverviewPage: () => <div>Mock Overview Page</div>,
+}));
+
 vi.mock('../renderer/pages/CustomCliPage', () => ({
   CustomCliPage: () => <div>Mock CLI Page</div>,
 }));

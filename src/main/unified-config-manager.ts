@@ -18,13 +18,17 @@
  */
 
 import Logger from './utils/logger';
+import { writeTextFileAtomically } from './utils/atomic-json';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { randomBytes } from 'crypto';
 import { app } from 'electron';
 import { backupManager } from './backup-manager';
+import { notifyAppDataChanged } from './app-data-events';
 import { runtimeCacheManager } from './runtime-cache-manager';
+import { routeStateManager } from './route-state-manager';
 import { detectSiteType } from './site-type-detector';
+import { matchPattern } from './route-rule-engine';
 import type {
   UnifiedConfig,
   UnifiedSite,
@@ -48,6 +52,7 @@ import type {
   RouteRule,
   RouteChannelKey,
   RouteChannelStats,
+  RoutePathState,
   RouteChannelHealth,
   RouteOutcome,
   RouteCliType,
@@ -55,6 +60,7 @@ import type {
   RouteModelRegistryConfig,
   RouteModelMappingOverride,
   RouteModelDisplayItem,
+  RouteDisplayItemPriorityConfig,
   RouteModelVendor,
   RouteVendorPriorityConfig,
   RouteCliProbeConfig,
@@ -68,10 +74,13 @@ import {
   DEFAULT_CLI_PROBE_CONFIG,
   DEFAULT_ANALYTICS_CONFIG,
   DEFAULT_MODEL_REGISTRY_CONFIG,
+  DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME,
   buildStatsKey,
+  buildRoutePathStateKey,
   buildProbeKey,
   buildSiteScopedProbeAccountId,
   normalizeRouteCliSelection,
+  normalizeRouteRuntimeConfig,
 } from '../shared/types/route-proxy';
 
 const CONFIG_VERSION = '3.1';
@@ -86,6 +95,12 @@ const DEFAULT_SETTINGS: Settings = {
 
 const DEFAULT_GROUP: SiteGroup = { id: 'default', name: '默认分组' };
 const UNAVAILABLE_GROUP: SiteGroup = { id: 'unavailable', name: '不可用' };
+const AUTO_CLI_MODEL_ROUTE_RULE_PRIORITY = 0;
+const ROUTE_CLI_LABELS: Record<RouteCliType, string> = {
+  claudeCode: 'Claude Code',
+  codex: 'Codex',
+  geminiCli: 'Gemini CLI',
+};
 
 type ReadConfigResult = {
   config: UnifiedConfig;
@@ -118,6 +133,37 @@ function normalizePriorityRecord(
   return Object.fromEntries(normalizedEntries);
 }
 
+function buildAutoCliModelRouteRuleId(cliType: RouteCliType, canonicalModel: string): string {
+  const modelSlug =
+    canonicalModel
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 80) || 'model';
+  return `auto-cli-model-${cliType}-${modelSlug}`;
+}
+
+function routePatternMatchesModel(rule: RouteRule, canonicalModel: string): boolean {
+  if (!canonicalModel || !rule.pattern) {
+    return false;
+  }
+
+  if (rule.pattern === '*') {
+    return true;
+  }
+
+  return matchPattern(canonicalModel, rule.pattern, rule.patternType);
+}
+
+function routeRuleMatchesCliModel(
+  rule: RouteRule,
+  cliType: RouteCliType,
+  canonicalModel: string
+): boolean {
+  return rule.enabled && rule.cliType === cliType && routePatternMatchesModel(rule, canonicalModel);
+}
+
 function normalizeVendorPriorityConfig(
   value: RouteVendorPriorityConfig | null | undefined
 ): RouteVendorPriorityConfig {
@@ -125,6 +171,85 @@ function normalizeVendorPriorityConfig(
     sitePriorities: normalizePriorityRecord(value?.sitePriorities),
     apiKeyPriorities: normalizePriorityRecord(value?.apiKeyPriorities),
   };
+}
+
+function normalizeDisplayItemPriorityConfig(
+  value: RouteDisplayItemPriorityConfig | null | undefined
+): RouteDisplayItemPriorityConfig {
+  return {
+    sitePriorities: normalizePriorityRecord(value?.sitePriorities),
+    apiKeyPriorities: normalizePriorityRecord(value?.apiKeyPriorities),
+  };
+}
+
+function normalizeRouteModelDisplayItem(displayItem: RouteModelDisplayItem): RouteModelDisplayItem {
+  const runtimeConfig = displayItem.runtimeConfig
+    ? normalizeRouteRuntimeConfig(displayItem.runtimeConfig)
+    : undefined;
+
+  return {
+    ...displayItem,
+    canonicalName: displayItem.canonicalName.trim(),
+    sourceKeys: Array.from(
+      new Set(
+        (displayItem.sourceKeys || [])
+          .map(sourceKey => sourceKey.trim())
+          .filter((sourceKey): sourceKey is string => sourceKey.length > 0)
+      )
+    ),
+    originalModelOrder: Array.from(
+      new Set(
+        (displayItem.originalModelOrder || [])
+          .map(model => model.trim())
+          .filter((model): model is string => model.length > 0)
+      )
+    ),
+    priorityConfig: normalizeDisplayItemPriorityConfig(displayItem.priorityConfig),
+    ...(runtimeConfig ? { runtimeConfig } : {}),
+  };
+}
+
+function shouldReplaceDisplayItem(
+  current: RouteModelDisplayItem,
+  candidate: RouteModelDisplayItem
+): boolean {
+  if (current.mode !== candidate.mode) {
+    return current.mode !== 'manual' && candidate.mode === 'manual';
+  }
+
+  if (current.updatedAt !== candidate.updatedAt) {
+    return candidate.updatedAt > current.updatedAt;
+  }
+
+  if (current.createdAt !== candidate.createdAt) {
+    return candidate.createdAt > current.createdAt;
+  }
+
+  return candidate.id.localeCompare(current.id) < 0;
+}
+
+function normalizeRouteModelDisplayItems(items: RouteModelDisplayItem[]): RouteModelDisplayItem[] {
+  const deduped = new Map<string, RouteModelDisplayItem>();
+
+  for (const item of items) {
+    const normalizedItem = normalizeRouteModelDisplayItem(item);
+    if (!normalizedItem.canonicalName || normalizedItem.sourceKeys.length === 0) {
+      continue;
+    }
+    if (
+      normalizedItem.mode === 'seeded' &&
+      normalizedItem.canonicalName !== DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME
+    ) {
+      continue;
+    }
+
+    const existing = deduped.get(normalizedItem.canonicalName);
+    if (!existing || shouldReplaceDisplayItem(existing, normalizedItem)) {
+      deduped.set(normalizedItem.canonicalName, normalizedItem);
+    }
+  }
+
+  return Array.from(deduped.values()).sort((left, right) => left.createdAt - right.createdAt);
 }
 
 export class UnifiedConfigManager {
@@ -222,6 +347,12 @@ export class UnifiedConfigManager {
       runtimeCacheManager.exportCacheSync() || (await runtimeCacheManager.loadCache())
     );
     config = this.normalizeConfig(config);
+    const routeStateSnapshot = await routeStateManager.loadSnapshot();
+    const hasRouteRuntimePayload = this.hasPersistedRouteRuntimePayload(config);
+    routeStateManager.applySnapshotToRouting(config.routing!, routeStateSnapshot);
+    if (hasRouteRuntimePayload) {
+      needsSave = true;
+    }
     if (this.extractLegacyRuntimeCache(config, runtimeCache)) {
       needsSave = true;
     }
@@ -259,7 +390,7 @@ export class UnifiedConfigManager {
 
     for (const backup of backups) {
       try {
-        const recovered = await this.readConfigFromPath(backup.path);
+        backupManager.readConfigFromBackup?.(backup.path);
         const restored = await backupManager.restoreFromBackup(backup.filename, this.configPath);
 
         if (!restored) {
@@ -269,6 +400,7 @@ export class UnifiedConfigManager {
           continue;
         }
 
+        const recovered = await this.readConfigFromPath(this.configPath);
         Logger.warn(`♻️ [UnifiedConfigManager] 使用备份恢复配置: ${backup.filename}`);
         return recovered;
       } catch (error: any) {
@@ -309,6 +441,7 @@ export class UnifiedConfigManager {
       site_shared_by_site_id: {},
       site_runtime_by_site_id: {},
       account_runtime_by_account_id: {},
+      site_daily_snapshots_by_site_id: {},
       last_updated: 0,
     };
   }
@@ -319,6 +452,7 @@ export class UnifiedConfigManager {
       site_shared_by_site_id: { ...(cache?.site_shared_by_site_id || {}) },
       site_runtime_by_site_id: { ...(cache?.site_runtime_by_site_id || {}) },
       account_runtime_by_account_id: { ...(cache?.account_runtime_by_account_id || {}) },
+      site_daily_snapshots_by_site_id: { ...(cache?.site_daily_snapshots_by_site_id || {}) },
       last_updated: cache?.last_updated || 0,
     };
   }
@@ -424,7 +558,11 @@ export class UnifiedConfigManager {
   }
 
   private syncRuntimeCacheFromConfig(config: UnifiedConfig): RuntimeCacheFile {
+    const currentCache = this.createRuntimeCacheSnapshot(runtimeCacheManager.exportCacheSync());
     const runtimeCache = this.createEmptyRuntimeCache();
+    runtimeCache.site_daily_snapshots_by_site_id = {
+      ...currentCache.site_daily_snapshots_by_site_id,
+    };
 
     for (const site of config.sites) {
       const { shared, runtime } = splitDetectionCacheData(site.cached_data);
@@ -460,15 +598,57 @@ export class UnifiedConfigManager {
     return {
       ...config,
       version: CONFIG_VERSION,
-      sites: config.sites.map(site => ({
-        ...site,
-        cached_data: site.cached_data ? { ...site.cached_data } : undefined,
-      })),
-      accounts: config.accounts.map(account => ({
-        ...account,
-        cached_data: account.cached_data ? { ...account.cached_data } : undefined,
-      })),
+      sites: config.sites.map(site => {
+        const siteCopy: UnifiedSite = { ...site };
+        delete siteCopy.cached_data;
+        return siteCopy;
+      }),
+      accounts: config.accounts.map(account => {
+        const accountCopy: AccountCredential = { ...account };
+        delete accountCopy.cached_data;
+        return accountCopy;
+      }),
+      routing: config.routing
+        ? {
+            ...config.routing,
+            stats: {},
+            routePathStates: {},
+            health: {},
+            modelRegistry: {
+              ...config.routing.modelRegistry,
+              sources: [],
+              lastAggregatedAt: undefined,
+            },
+            cliProbe: {
+              config: { ...config.routing.cliProbe.config },
+              latest: {},
+              history: {},
+            },
+            analytics: {
+              config: { ...config.routing.analytics.config },
+              buckets: {},
+            },
+          }
+        : undefined,
     };
+  }
+
+  private hasPersistedRouteRuntimePayload(config: UnifiedConfig): boolean {
+    const routing = config.routing;
+    if (!routing) {
+      return false;
+    }
+
+    return (
+      Object.keys(routing.stats || {}).length > 0 ||
+      Object.keys(routing.routePathStates || {}).length > 0 ||
+      Object.keys(routing.health || {}).length > 0 ||
+      Object.keys(routing.cliProbe?.latest || {}).length > 0 ||
+      Object.keys(routing.cliProbe?.history || {}).length > 0 ||
+      Object.keys(routing.analytics?.buckets || {}).length > 0 ||
+      (routing.modelRegistry?.sources || []).length > 0 ||
+      routing.modelRegistry?.lastAggregatedAt !== undefined
+    );
   }
 
   /**
@@ -572,6 +752,7 @@ export class UnifiedConfigManager {
     }
 
     let repairedCount = 0;
+    const now = Date.now();
 
     for (const site of config.sites) {
       if (!site.id) {
@@ -599,8 +780,8 @@ export class UnifiedConfigManager {
         status: 'active',
         cached_data: site.cached_data ? { ...site.cached_data } : undefined,
         cli_config: site.cli_config ? { ...site.cli_config } : undefined,
-        created_at: Date.now(),
-        updated_at: Date.now(),
+        created_at: now,
+        updated_at: now,
       });
       repairedCount++;
       Logger.info(`🔧 [UnifiedConfigManager] 补建默认账户: ${site.name} (${site.id})`);
@@ -621,6 +802,7 @@ export class UnifiedConfigManager {
     if (!r.server) r.server = { ...DEFAULT_ROUTING_CONFIG.server };
     if (!r.rules) r.rules = [];
     if (!r.stats) r.stats = {};
+    if (!r.routePathStates) r.routePathStates = {};
     if (!r.health) r.health = {};
     if (!r.cliModelSelections)
       r.cliModelSelections = { claudeCode: null, codex: null, geminiCli: null };
@@ -639,23 +821,7 @@ export class UnifiedConfigManager {
         r.modelRegistry.vendorPriorities = {};
       }
     }
-    r.modelRegistry.displayItems = r.modelRegistry.displayItems.map(item => ({
-      ...item,
-      sourceKeys: Array.from(
-        new Set(
-          (item.sourceKeys || [])
-            .map(sourceKey => sourceKey.trim())
-            .filter((sourceKey): sourceKey is string => sourceKey.length > 0)
-        )
-      ),
-      originalModelOrder: Array.from(
-        new Set(
-          (item.originalModelOrder || [])
-            .map(model => model.trim())
-            .filter((model): model is string => model.length > 0)
-        )
-      ),
-    }));
+    r.modelRegistry.displayItems = normalizeRouteModelDisplayItems(r.modelRegistry.displayItems);
     r.modelRegistry.vendorPriorities = Object.fromEntries(
       Object.entries(r.modelRegistry.vendorPriorities || {}).map(([vendor, priorityConfig]) => [
         vendor,
@@ -685,6 +851,11 @@ export class UnifiedConfigManager {
     if (!s.requestTimeoutMs) s.requestTimeoutMs = 300000;
     if (s.retryCount === undefined || s.retryCount === null) s.retryCount = 1;
     if (!s.healthCheckIntervalMinutes) s.healthCheckIntervalMinutes = 60;
+    if (s.upstreamProxyUrl === undefined || s.upstreamProxyUrl === null) {
+      s.upstreamProxyUrl = '';
+    } else {
+      s.upstreamProxyUrl = String(s.upstreamProxyUrl).trim();
+    }
     if (s.enabled === undefined) s.enabled = false;
 
     r.cliModelSelections = {
@@ -870,8 +1041,11 @@ export class UnifiedConfigManager {
     const persistableConfig = this.createPersistableConfig(this.config);
     persistableConfig.last_updated = this.config.last_updated;
 
-    await this.writeConfigAtomically(this.configPath, JSON.stringify(persistableConfig, null, 2));
+    await writeTextFileAtomically(this.configPath, JSON.stringify(persistableConfig, null, 2));
     await runtimeCacheManager.saveCache(runtimeCache);
+    if (this.config.routing) {
+      await routeStateManager.saveSnapshotFromRouting(this.config.routing);
+    }
     Logger.info('💾 [UnifiedConfigManager] 配置已保存');
 
     // 自动备份
@@ -882,29 +1056,29 @@ export class UnifiedConfigManager {
     }
   }
 
-  /**
-   * 原子写入配置文件，避免应用异常退出时产生半截 JSON
-   */
-  private async writeConfigAtomically(targetPath: string, content: string): Promise<void> {
-    const dir = path.dirname(targetPath);
-    const tempPath = path.join(
-      dir,
-      `${path.basename(targetPath)}.${process.pid}.${Date.now()}.tmp`
-    );
+  private notifySiteConfigChanged(debounceMs: number = 120): void {
+    notifyAppDataChanged('site-config', debounceMs);
+  }
 
-    await fs.mkdir(dir, { recursive: true });
-
-    try {
-      await fs.writeFile(tempPath, content, 'utf-8');
-      await fs.rename(tempPath, targetPath);
-    } catch (error) {
-      try {
-        await fs.unlink(tempPath);
-      } catch {
-        // 忽略清理临时文件失败
-      }
-      throw error;
+  private async saveRouteRuntimeState(): Promise<void> {
+    if (!this.config?.routing) {
+      return;
     }
+    await routeStateManager.saveRuntimeState(this.config.routing);
+  }
+
+  private async saveRouteProbesState(): Promise<void> {
+    if (!this.config?.routing) {
+      return;
+    }
+    await routeStateManager.saveProbesState(this.config.routing);
+  }
+
+  private async saveRouteAnalyticsState(): Promise<void> {
+    if (!this.config?.routing) {
+      return;
+    }
+    await routeStateManager.saveAnalyticsState(this.config.routing);
   }
 
   // ============= 配置迁移 =============
@@ -1020,6 +1194,7 @@ export class UnifiedConfigManager {
 
     this.config!.sites.push(newSite);
     await this.saveConfig();
+    this.notifySiteConfigChanged();
     return newSite;
   }
 
@@ -1040,6 +1215,7 @@ export class UnifiedConfigManager {
     };
 
     await this.saveConfig();
+    this.notifySiteConfigChanged();
     return true;
   }
 
@@ -1056,6 +1232,7 @@ export class UnifiedConfigManager {
       // 删除关联的所有账户
       this.config.accounts = this.config.accounts.filter(a => a.site_id !== id);
       await this.saveConfig();
+      this.notifySiteConfigChanged();
       return true;
     }
     return false;
@@ -1143,6 +1320,7 @@ export class UnifiedConfigManager {
       };
       this.config!.accounts[duplicateIndex] = mergedAccount;
       await this.saveConfig();
+      this.notifySiteConfigChanged();
       Logger.info(
         `🔁 [UnifiedConfigManager] 复用已有账户记录: ${mergedAccount.id} (site=${account.site_id}, user=${account.user_id})`
       );
@@ -1159,6 +1337,7 @@ export class UnifiedConfigManager {
     this.config!.accounts.push(newAccount);
 
     await this.saveConfig();
+    this.notifySiteConfigChanged();
     return newAccount;
   }
 
@@ -1192,6 +1371,7 @@ export class UnifiedConfigManager {
     };
 
     await this.saveConfig();
+    this.notifySiteConfigChanged();
     return true;
   }
 
@@ -1216,6 +1396,7 @@ export class UnifiedConfigManager {
     };
 
     await this.saveConfig();
+    this.notifySiteConfigChanged();
     return true;
   }
 
@@ -1236,6 +1417,7 @@ export class UnifiedConfigManager {
     }
 
     await this.saveConfig();
+    this.notifySiteConfigChanged();
     return true;
   }
 
@@ -1370,6 +1552,7 @@ export class UnifiedConfigManager {
 
     this.config!.sites = newSites;
     await this.saveConfig();
+    this.notifySiteConfigChanged();
   }
 
   // ============= 导入导出 =============
@@ -1397,6 +1580,7 @@ export class UnifiedConfigManager {
     this.assertConfigShape(data, 'imported config');
     this.config = this.normalizeConfig(data);
     await this.saveConfig();
+    this.notifySiteConfigChanged();
   }
 
   // ============= 路由配置操作 =============
@@ -1486,7 +1670,7 @@ export class UnifiedConfigManager {
     if (meta?.statusCode !== undefined) existing.lastStatusCode = meta.statusCode;
     if (meta?.latencyMs !== undefined) existing.lastLatencyMs = meta.latencyMs;
     this.config.routing!.stats[statsKey] = existing;
-    await this.saveConfig();
+    await this.saveRouteRuntimeState();
   }
 
   /**
@@ -1498,7 +1682,7 @@ export class UnifiedConfigManager {
     for (const h of healthList) {
       this.config.routing!.health[buildStatsKey(h)] = h;
     }
-    await this.saveConfig();
+    await this.saveRouteRuntimeState();
   }
 
   /**
@@ -1513,10 +1697,91 @@ export class UnifiedConfigManager {
           delete this.config.routing!.stats[k];
         }
       }
+      for (const k of Object.keys(this.config.routing!.routePathStates)) {
+        if (k.startsWith(`${ruleId}|`)) {
+          delete this.config.routing!.routePathStates[k];
+        }
+      }
     } else {
       this.config.routing!.stats = {};
+      this.config.routing!.routePathStates = {};
     }
+    await this.saveRouteRuntimeState();
+  }
+
+  /**
+   * 更新单条路由路径短窗口运行态
+   */
+  async upsertRoutePathState(state: RoutePathState): Promise<void> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    this.config.routing!.routePathStates[buildRoutePathStateKey(state)] = state;
+    await this.saveRouteRuntimeState();
+  }
+
+  private ensureCliModelRouteRuleInMemory(
+    cliType: RouteCliType,
+    canonicalModel: string | null | undefined
+  ): boolean {
+    const normalizedModel = canonicalModel?.trim();
+    if (!normalizedModel) {
+      return false;
+    }
+
+    const routing = this.config!.routing!;
+    if (routing.rules.some(rule => routeRuleMatchesCliModel(rule, cliType, normalizedModel))) {
+      return false;
+    }
+
+    const now = Date.now();
+    const ruleId = buildAutoCliModelRouteRuleId(cliType, normalizedModel);
+    const idx = routing.rules.findIndex(rule => rule.id === ruleId);
+    const rule: RouteRule = {
+      id: ruleId,
+      name: `${ROUTE_CLI_LABELS[cliType]} / ${normalizedModel}`,
+      enabled: true,
+      priority: AUTO_CLI_MODEL_ROUTE_RULE_PRIORITY,
+      cliType,
+      patternType: 'exact',
+      pattern: normalizedModel,
+      notes: '自动补全：CLI 默认模型需要可匹配路由规则，否则代理会返回 no_matching_rule。',
+      createdAt: idx >= 0 ? routing.rules[idx].createdAt : now,
+      updatedAt: now,
+    };
+
+    if (idx >= 0) {
+      routing.rules[idx] = {
+        ...routing.rules[idx],
+        ...rule,
+        createdAt: routing.rules[idx].createdAt,
+      };
+    } else {
+      routing.rules.push(rule);
+    }
+
+    return true;
+  }
+
+  async ensureRouteRuleForCliModelSelection(
+    cliType: RouteCliType,
+    canonicalModel: string | null | undefined
+  ): Promise<RouteRule | null> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+
+    const normalizedModel = canonicalModel?.trim();
+    if (!normalizedModel) {
+      return null;
+    }
+
+    const changed = this.ensureCliModelRouteRuleInMemory(cliType, normalizedModel);
+    if (!changed) {
+      return null;
+    }
+
     await this.saveConfig();
+    const ruleId = buildAutoCliModelRouteRuleId(cliType, normalizedModel);
+    return this.config.routing!.rules.find(rule => rule.id === ruleId) ?? null;
   }
 
   // ============= CLI 模型选择 =============
@@ -1544,6 +1809,11 @@ export class UnifiedConfigManager {
         this.config.routing!.modelRegistry.entries
       ),
     };
+    for (const [cliType, canonicalModel] of Object.entries(
+      this.config.routing!.cliModelSelections
+    ) as [RouteCliType, string | null][]) {
+      this.ensureCliModelRouteRuleInMemory(cliType, canonicalModel);
+    }
     await this.saveConfig();
     return this.config.routing!.cliModelSelections;
   }
@@ -1625,29 +1895,24 @@ export class UnifiedConfigManager {
     this.normalizeRoutingConfig(this.config);
     const items = this.config.routing!.modelRegistry.displayItems;
 
-    const normalizedSourceKeys = Array.from(
-      new Set(
-        (displayItem.sourceKeys || [])
-          .map(sourceKey => sourceKey.trim())
-          .filter((sourceKey): sourceKey is string => sourceKey.length > 0)
-      )
-    );
-    if (normalizedSourceKeys.length === 0) {
+    const normalizedDisplayItem = normalizeRouteModelDisplayItem(displayItem);
+    if (!normalizedDisplayItem.canonicalName) {
+      throw new Error('Model display item requires canonicalName');
+    }
+    if (normalizedDisplayItem.sourceKeys.length === 0) {
       throw new Error('Model display item requires sourceKeys');
     }
 
-    const normalizedDisplayItem: RouteModelDisplayItem = {
-      ...displayItem,
-      canonicalName: displayItem.canonicalName.trim(),
-      sourceKeys: normalizedSourceKeys,
-      originalModelOrder: Array.from(
-        new Set(
-          (displayItem.originalModelOrder || [])
-            .map(model => model.trim())
-            .filter((model): model is string => model.length > 0)
-        )
-      ),
-    };
+    const duplicate = items.find(
+      existing =>
+        existing.canonicalName === normalizedDisplayItem.canonicalName &&
+        existing.id !== normalizedDisplayItem.id
+    );
+    if (duplicate) {
+      throw new Error(
+        `Model display item already exists for ${normalizedDisplayItem.canonicalName}`
+      );
+    }
 
     const idx = items.findIndex(existing => existing.id === normalizedDisplayItem.id);
     if (idx >= 0) {
@@ -1733,7 +1998,7 @@ export class UnifiedConfigManager {
       if (!history[s.probeKey]) history[s.probeKey] = [];
       history[s.probeKey].push(s);
     }
-    await this.saveConfig();
+    await this.saveRouteProbesState();
   }
 
   async upsertRouteCliProbeLatest(latestList: RouteCliProbeLatest[]): Promise<void> {
@@ -1742,7 +2007,7 @@ export class UnifiedConfigManager {
     for (const l of latestList) {
       this.config.routing!.cliProbe.latest[l.probeKey] = l;
     }
-    await this.saveConfig();
+    await this.saveRouteProbesState();
   }
 
   async pruneRouteCliProbeHistory(retentionDays?: number, now?: number): Promise<number> {
@@ -1758,7 +2023,7 @@ export class UnifiedConfigManager {
       pruned += before - history[key].length;
       if (history[key].length === 0) delete history[key];
     }
-    if (pruned > 0) await this.saveConfig();
+    if (pruned > 0) await this.saveRouteProbesState();
     return pruned;
   }
 
@@ -1783,7 +2048,7 @@ export class UnifiedConfigManager {
     for (const b of buckets) {
       this.config.routing!.analytics.buckets[b.bucketKey] = b;
     }
-    await this.saveConfig();
+    await this.saveRouteAnalyticsState();
   }
 
   async resetRouteAnalytics(params?: {
@@ -1803,7 +2068,7 @@ export class UnifiedConfigManager {
         delete buckets[key];
       }
     }
-    await this.saveConfig();
+    await this.saveRouteAnalyticsState();
   }
 
   async pruneRouteAnalyticsBuckets(retentionDays?: number, now?: number): Promise<number> {
@@ -1819,7 +2084,7 @@ export class UnifiedConfigManager {
         pruned++;
       }
     }
-    if (pruned > 0) await this.saveConfig();
+    if (pruned > 0) await this.saveRouteAnalyticsState();
     return pruned;
   }
 

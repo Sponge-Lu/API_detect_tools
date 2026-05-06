@@ -282,6 +282,8 @@ export const SiteCard = React.memo(
             <SiteCardActions
               site={site}
               index={index}
+              cardKey={effectiveCardKey}
+              accountId={accountId}
               siteResult={siteResult}
               isExpanded={isExpanded}
               isDetecting={isDetecting}

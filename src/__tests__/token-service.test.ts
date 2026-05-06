@@ -9,6 +9,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { DetectionCacheData } from '../shared/types/site';
 
 async function loadTokenServiceModule(
   httpPostResult: any,
@@ -80,7 +81,11 @@ async function loadTokenServiceModule(
   };
 }
 
-async function loadApiServiceModule(options?: { siteType?: 'newapi' | 'sub2api' }) {
+async function loadApiServiceModule(options?: {
+  siteType?: 'newapi' | 'sub2api';
+  accountCachedData?: DetectionCacheData;
+  siteCachedData?: DetectionCacheData;
+}) {
   vi.resetModules();
 
   const updateAccountCachedData = vi.fn(async () => true);
@@ -108,10 +113,12 @@ async function loadApiServiceModule(options?: { siteType?: 'newapi' | 'sub2api' 
         id: 'site-1',
         url: 'https://demo.example.com',
         site_type: options?.siteType || 'newapi',
+        cached_data: options?.siteCachedData,
       })),
       getAccountById: vi.fn(() => ({
         id: 'acct-1',
         site_id: 'site-1',
+        cached_data: options?.accountCachedData,
       })),
       updateAccountCachedData,
       updateSite,
@@ -138,6 +145,10 @@ async function loadApiServiceModule(options?: { siteType?: 'newapi' | 'sub2api' 
       warn: vi.fn(),
       error: vi.fn(),
     },
+  }));
+
+  vi.doMock('../main/overview-service', () => ({
+    captureSiteDailySnapshot: vi.fn(async () => undefined),
   }));
 
   vi.doMock('../main/utils/page-exec-queue', () => ({
@@ -1335,6 +1346,176 @@ describe('api-service API key 持久化', () => {
     });
   });
 
+  it('刷新检测时应保留当天本地已完成的签到状态', async () => {
+    const { ApiService, updateAccountCachedData } = await loadApiServiceModule();
+    const tokenService = {
+      fetchApiTokens: vi.fn(async () => []),
+      fetchUserGroups: vi.fn(async () => ({})),
+      fetchModelPricing: vi.fn(async () => ({ data: {} })),
+      checkSiteSupportsCheckIn: vi.fn(async () => true),
+      fetchCheckInStatus: vi.fn(async () => true),
+      fetchCheckinStats: vi.fn(async () => undefined),
+    };
+    const service = new ApiService(tokenService);
+    const completedAt = Date.now();
+
+    vi.spyOn(service as any, 'getModels').mockResolvedValue({
+      models: ['gpt-5.4'],
+      page: null,
+      pageRelease: undefined,
+    });
+    vi.spyOn(service as any, 'getBalanceAndUsage').mockResolvedValue({
+      balance: 25,
+      todayUsage: 0,
+      todayPromptTokens: 0,
+      todayCompletionTokens: 0,
+      todayTotalTokens: 0,
+      todayRequests: 0,
+      pageRelease: undefined,
+    });
+    vi.spyOn(service as any, 'detectLdcPayment').mockResolvedValue({
+      ldcPaymentSupported: false,
+      ldcExchangeRate: undefined,
+      ldcPaymentType: undefined,
+    });
+
+    const result = await service.detectSite(
+      {
+        id: 'site-1',
+        name: 'Any Router',
+        url: 'https://demo.example.com',
+        system_token: 'access-token',
+        user_id: '1',
+        site_type: 'newapi',
+      } as any,
+      30,
+      true,
+      {
+        name: 'Any Router',
+        url: 'https://demo.example.com',
+        status: '成功',
+        models: ['gpt-5.4'],
+        has_checkin: true,
+        can_check_in: false,
+        lastRefresh: completedAt,
+        checkinStats: {
+          todayQuota: 12500000,
+          checkinCount: 3,
+          siteType: 'newapi',
+        },
+      },
+      false,
+      { accountId: 'acct-1' }
+    );
+
+    expect(tokenService.fetchCheckInStatus).toHaveBeenCalled();
+    expect(result.can_check_in).toBe(false);
+    expect(result.checkinStats).toEqual({
+      todayQuota: 12500000,
+      checkinCount: 3,
+      siteType: 'newapi',
+    });
+
+    const updater = updateAccountCachedData.mock.calls[0][1];
+    const next = updater({
+      has_checkin: true,
+      can_check_in: false,
+      last_refresh: completedAt,
+      checkin_stats: {
+        today_quota: 12500000,
+        checkin_count: 3,
+        site_type: 'newapi',
+      },
+    });
+
+    expect(next.can_check_in).toBe(false);
+    expect(next.checkin_stats).toEqual({
+      today_quota: 12500000,
+      checkin_count: 3,
+      site_type: 'newapi',
+    });
+  });
+
+  it('刷新检测未传入前端缓存时应从账户持久化缓存保留当天本地已完成的签到状态', async () => {
+    const completedAt = Date.now();
+    const accountCachedData: DetectionCacheData = {
+      has_checkin: true,
+      can_check_in: false,
+      last_refresh: completedAt,
+      checkin_stats: {
+        today_quota: 12500000,
+        checkin_count: 3,
+        site_type: 'newapi',
+      },
+    };
+    const { ApiService, updateAccountCachedData } = await loadApiServiceModule({
+      accountCachedData,
+    });
+    const tokenService = {
+      fetchApiTokens: vi.fn(async () => []),
+      fetchUserGroups: vi.fn(async () => ({})),
+      fetchModelPricing: vi.fn(async () => ({ data: {} })),
+      checkSiteSupportsCheckIn: vi.fn(async () => true),
+      fetchCheckInStatus: vi.fn(async () => true),
+      fetchCheckinStats: vi.fn(async () => undefined),
+    };
+    const service = new ApiService(tokenService);
+
+    vi.spyOn(service as any, 'getModels').mockResolvedValue({
+      models: ['gpt-5.4'],
+      page: null,
+      pageRelease: undefined,
+    });
+    vi.spyOn(service as any, 'getBalanceAndUsage').mockResolvedValue({
+      balance: 25,
+      todayUsage: 0,
+      todayPromptTokens: 0,
+      todayCompletionTokens: 0,
+      todayTotalTokens: 0,
+      todayRequests: 0,
+      pageRelease: undefined,
+    });
+    vi.spyOn(service as any, 'detectLdcPayment').mockResolvedValue({
+      ldcPaymentSupported: false,
+      ldcExchangeRate: undefined,
+      ldcPaymentType: undefined,
+    });
+
+    const result = await service.detectSite(
+      {
+        id: 'site-1',
+        name: 'Any Router',
+        url: 'https://demo.example.com',
+        system_token: 'access-token',
+        user_id: '1',
+        site_type: 'newapi',
+      } as any,
+      30,
+      true,
+      undefined,
+      false,
+      { accountId: 'acct-1' }
+    );
+
+    expect(tokenService.fetchCheckInStatus).toHaveBeenCalled();
+    expect(result.can_check_in).toBe(false);
+    expect(result.checkinStats).toEqual({
+      todayQuota: 12500000,
+      checkinCount: 3,
+      siteType: 'newapi',
+    });
+
+    const updater = updateAccountCachedData.mock.calls[0][1];
+    const next = updater(accountCachedData);
+
+    expect(next.can_check_in).toBe(false);
+    expect(next.checkin_stats).toEqual({
+      today_quota: 12500000,
+      checkin_count: 3,
+      site_type: 'newapi',
+    });
+  });
+
   it('余额端点缓存回退后应保留模型端点缓存', async () => {
     const { ApiService } = await loadApiServiceModule();
 
@@ -1414,6 +1595,70 @@ describe('api-service API key 持久化', () => {
         3000
       )
     ).rejects.toThrow('API Key 可能已失效或无权访问');
+  });
+
+  it('模型接口返回非对象响应时不应被 in 操作符 TypeError 掩盖', async () => {
+    const { ApiService } = await loadApiServiceModule({ siteType: 'newapi' });
+    const service = new ApiService();
+    (service as any).fetchWithBrowserFallback = vi.fn(
+      async (
+        _url: string,
+        _headers: unknown,
+        _site: unknown,
+        _timeout: number,
+        parseResponse: (data: unknown) => string[]
+      ) => ({
+        result: parseResponse(''),
+        page: undefined,
+        pageRelease: undefined,
+      })
+    );
+
+    await expect(
+      (service as any).getModels(
+        {
+          id: 'site-1',
+          name: 'New API Site',
+          url: 'https://demo.example.com',
+          site_type: 'newapi',
+          system_token: 'jwt-token',
+          user_id: '1',
+        },
+        3000
+      )
+    ).rejects.toThrow('模型接口返回空数据');
+  });
+
+  it('模型接口直接返回数组时应识别为模型列表', async () => {
+    const { ApiService } = await loadApiServiceModule({ siteType: 'newapi' });
+    const service = new ApiService();
+    (service as any).fetchWithBrowserFallback = vi.fn(
+      async (
+        _url: string,
+        _headers: unknown,
+        _site: unknown,
+        _timeout: number,
+        parseResponse: (data: unknown) => string[]
+      ) => ({
+        result: parseResponse([{ id: 'gpt-4o-mini' }, { name: 'claude-3-7-sonnet' }]),
+        page: undefined,
+        pageRelease: undefined,
+      })
+    );
+
+    const result = await (service as any).getModels(
+      {
+        id: 'site-1',
+        name: 'New API Site',
+        url: 'https://demo.example.com',
+        site_type: 'newapi',
+        system_token: 'jwt-token',
+        user_id: '1',
+      },
+      3000
+    );
+
+    expect(result.models).toEqual(['gpt-4o-mini', 'claude-3-7-sonnet']);
   });
 
   it('sub2api 应按 API Key 所属分组聚合 /v1/models 并生成 enable_groups 映射', async () => {

@@ -27,7 +27,7 @@
 | **index.ts** | Store 导出入口 | 所有 Store 的统一导出 |
 | **configStore.ts** | 配置管理 | 站点列表、分组、设置；删除站点优先走统一 `sites:delete` IPC 并回读配置 |
 | **detectionStore.ts** | 检测结果 | 检测状态、结果数据、detectingSites (Set) 并发跟踪 |
-| **uiStore.ts** | UI 状态 | 一级页面切换（含 LDC 页）、侧边栏模式、站点列表列宽/排序与弹窗 |
+| **uiStore.ts** | UI 状态 | 一级页面切换（默认 `数据总览`）、数据总览子页（站点/路由）、日志子页（会话事件/路由日志）、侧边栏模式、站点列表列宽/排序与弹窗 |
 | **toastStore.ts** | 消息提示 | 可见 Toast 队列、通知历史、会话事件 |
 
 ---
@@ -146,6 +146,10 @@ useDetectionStore.subscribe(
 **状态**:
 ```typescript
 interface UiState {
+  activeTab: 'overview' | 'sites' | 'cli' | 'usability' | 'route' | 'logs' | 'credit' | 'settings';
+  overviewSubtab: 'site' | 'route';
+  logsSubtab: 'session' | 'route';
+
   // 主题
   theme: 'light' | 'dark' | 'system';
   setTheme: (theme: 'light' | 'dark' | 'system') => void;
@@ -221,6 +225,12 @@ interface ToastState {
   clearEventHistory: () => void;
 }
 ```
+
+**当前约束**:
+- 一级导航顺序由 `pageMeta.ts` 驱动，`uiStore.activeTab` 默认值已切到 `overview`
+- `uiStore.overviewSubtab` 负责驱动 `数据总览` 的站点/路由子页、Header 文案和 Header 右侧操作
+- `uiStore.logsSubtab` 负责驱动 `日志` 的会话事件/路由日志子页与 Header 文案
+- `route` 保持为配置/操作页，主统计首页迁移到 `overview`
 
 **使用示例**:
 ```typescript

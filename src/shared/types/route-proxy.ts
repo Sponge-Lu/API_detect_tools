@@ -43,6 +43,7 @@ export interface RouteProxyServerConfig {
   host: '127.0.0.1';
   port: number;
   unifiedApiKey: string;
+  upstreamProxyUrl?: string;
   requestTimeoutMs: number;
   retryCount: number;
   healthCheckIntervalMinutes: number;
@@ -94,6 +95,27 @@ export interface RouteChannelStats extends RouteChannelKey {
   lastFailureAt?: number;
 }
 
+/** 单条路由路径的短窗口运行态（用于临时禁用不可用路径） */
+export interface RoutePathState extends RouteChannelKey {
+  cliType?: RouteCliType;
+  canonicalModel?: string;
+  resolvedModel?: string;
+  windowStartedAt: number;
+  windowRequestCount: number;
+  windowSuccessCount: number;
+  successRate: number;
+  disabledUntil?: number;
+  disabledReason?: 'success_rate_below_threshold';
+  lastOutcome?: RouteOutcome;
+  lastStatusCode?: number;
+  lastLatencyMs?: number;
+  lastError?: string;
+  lastUsedAt?: number;
+  lastSuccessAt?: number;
+  lastFailureAt?: number;
+  updatedAt: number;
+}
+
 /** 通道健康投影（由 probe latest 投影得出） */
 export interface RouteChannelHealth extends RouteChannelKey {
   cliType: RouteCliType;
@@ -122,15 +144,41 @@ export interface RouteVendorPriorityConfig {
   apiKeyPriorities: Record<string, number>;
 }
 
-export const DEFAULT_ROUTE_VENDOR_SITE_PRIORITY = 10;
-export const DEFAULT_ROUTE_VENDOR_API_KEY_PRIORITY = 3;
+export interface RouteDisplayItemPriorityConfig {
+  sitePriorities: Record<string, number>;
+  apiKeyPriorities: Record<string, number>;
+}
+
+export interface RouteRuntimeConfig {
+  maxAttemptsPerRoutePath: number;
+  successRateWindowMinutes: number;
+  disableDurationMinutes: number;
+  minSuccessRate: number;
+}
+
+export const DEFAULT_ROUTE_VENDOR_SITE_PRIORITY = 0;
+export const DEFAULT_ROUTE_VENDOR_API_KEY_PRIORITY = 0;
+export const DEFAULT_ROUTE_RUNTIME_CONFIG: RouteRuntimeConfig = {
+  maxAttemptsPerRoutePath: 1,
+  successRateWindowMinutes: 5,
+  disableDurationMinutes: 30,
+  minSuccessRate: 0.8,
+};
+
+export function buildRouteApiKeyPriorityKey(
+  siteId: string,
+  accountId: string,
+  apiKeyId: string
+): string {
+  return `${siteId}:${accountId}:${apiKeyId}`;
+}
 
 export function buildRouteVendorApiKeyPriorityKey(
   siteId: string,
   accountId: string,
   apiKeyId: string
 ): string {
-  return `${siteId}:${accountId}:${apiKeyId}`;
+  return buildRouteApiKeyPriorityKey(siteId, accountId, apiKeyId);
 }
 
 /** 模型来源引用 */
@@ -140,9 +188,10 @@ export interface RouteModelSourceRef {
   siteName: string;
   accountId?: string;
   accountName?: string;
-  sourceType: 'account' | 'site';
+  sourceType: 'account' | 'site' | 'customCli';
   originalModel: string;
   vendor: RouteModelVendor;
+  availableCliTypes?: RouteCliType[];
   apiKeyGroups?: string[];
   apiKeyNamesByGroup?: Record<string, string[]>;
   userGroupKeys?: string[];
@@ -182,6 +231,8 @@ export interface RouteModelDisplayItem {
   canonicalName: string;
   sourceKeys: string[];
   originalModelOrder?: string[];
+  priorityConfig?: RouteDisplayItemPriorityConfig;
+  runtimeConfig?: RouteRuntimeConfig;
   mode: 'seeded' | 'manual';
   createdAt: number;
   updatedAt: number;
@@ -309,6 +360,7 @@ export interface RouteAnalyticsBucket {
   canonicalModel?: string;
   siteId?: string;
   accountId?: string;
+  apiKeyId?: string;
   requestCount: number;
   successCount: number;
   failureCount: number;
@@ -322,6 +374,72 @@ export interface RouteAnalyticsBucket {
   updatedAt: number;
 }
 
+/** 单条路由请求日志（当前运行会话内存态） */
+export interface RouteRequestLogItem {
+  id: string;
+  requestId: string;
+  attempt: number;
+  cliType: RouteCliType;
+  requestedModel?: string | null;
+  canonicalModel?: string | null;
+  routeRuleId?: string;
+  routeRuleName?: string;
+  siteId?: string;
+  siteName?: string;
+  accountId?: string;
+  accountName?: string;
+  userGroupKey?: string;
+  apiKeyId?: string;
+  apiKeyName?: string;
+  resolvedModel?: string;
+  outcome: RouteOutcome;
+  statusCode?: number;
+  latencyMs?: number;
+  firstByteLatencyMs?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  error?: string;
+  createdAt: number;
+}
+
+/** 路由请求日志查询参数 */
+export interface RouteRequestLogQuery {
+  limit?: number;
+  cliType?: RouteCliType;
+  outcome?: RouteOutcome;
+  routeRuleId?: string;
+  siteId?: string;
+}
+
+export type RouteAnalyticsObjectStatsSort = 'requests' | 'tokens' | 'failureRisk' | 'successRate';
+
+export interface RouteAnalyticsObjectStatsQuery {
+  window: '24h' | '7d' | '30d';
+  limit?: number;
+  sortBy?: RouteAnalyticsObjectStatsSort;
+}
+
+export interface RouteAnalyticsObjectStatsItem {
+  id: string;
+  siteId?: string;
+  siteName: string;
+  accountId?: string;
+  accountName: string;
+  apiKeyId?: string;
+  apiKeyName: string;
+  requestCount: number;
+  successCount: number;
+  failureCount: number;
+  neutralCount: number;
+  successRate: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  lastUsedAt?: number;
+  lastFailureAt?: number;
+}
+
 // ============= 顶层配置 =============
 
 /** 路由模块配置（持久化到 config.json.routing） */
@@ -330,6 +448,7 @@ export interface RoutingConfig {
   rules: RouteRule[];
   cliModelSelections: Record<RouteCliType, string | null>;
   stats: Record<string, RouteChannelStats>;
+  routePathStates: Record<string, RoutePathState>;
   health: Record<string, RouteChannelHealth>;
   modelRegistry: RouteModelRegistryConfig;
   cliProbe: {
@@ -350,6 +469,7 @@ export const DEFAULT_ROUTE_PROXY_SERVER_CONFIG: RouteProxyServerConfig = {
   host: '127.0.0.1',
   port: 3210,
   unifiedApiKey: '',
+  upstreamProxyUrl: '',
   requestTimeoutMs: 300000,
   retryCount: 1,
   healthCheckIntervalMinutes: 60,
@@ -390,6 +510,7 @@ export const DEFAULT_ROUTING_CONFIG: RoutingConfig = {
   rules: [],
   cliModelSelections: { claudeCode: null, codex: null, geminiCli: null },
   stats: {},
+  routePathStates: {},
   health: {},
   modelRegistry: DEFAULT_MODEL_REGISTRY_CONFIG,
   cliProbe: {
@@ -403,10 +524,20 @@ export const DEFAULT_ROUTING_CONFIG: RoutingConfig = {
   },
 };
 
+export const DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME = 'claude-opus-4-6';
+
 // ============= 工具函数 =============
 
 export function buildStatsKey(key: RouteChannelKey): string {
   return `${key.routeRuleId}:${key.siteId}:${key.accountId}:${key.apiKeyId}`;
+}
+
+export function buildRoutePathStateKey(
+  key: RouteChannelKey & { canonicalModel?: string; resolvedModel?: string }
+): string {
+  const canonicalModel = encodeURIComponent(key.canonicalModel || '*');
+  const resolvedModel = encodeURIComponent(key.resolvedModel || '*');
+  return `${key.routeRuleId}|${key.siteId}|${key.accountId}|${key.apiKeyId}|${canonicalModel}|${resolvedModel}`;
 }
 
 export function parseStatsKey(key: string): RouteChannelKey | null {
@@ -438,9 +569,10 @@ export function buildBucketKey(
   cliType: RouteCliType,
   canonicalModel?: string,
   siteId?: string,
-  accountId?: string
+  accountId?: string,
+  apiKeyId?: string
 ): string {
-  return `${bucketStart}:${cliType}:${canonicalModel || '*'}:${siteId || '*'}:${accountId || '*'}`;
+  return `${bucketStart}:${cliType}:${canonicalModel || '*'}:${siteId || '*'}:${accountId || '*'}:${apiKeyId || '*'}`;
 }
 
 /** CLI 类型对应的请求路径前缀 */
@@ -528,6 +660,54 @@ export const ROUTE_MODEL_VENDOR_ORDER: RouteModelVendor[] = [
   'llama',
   'unknown',
 ];
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function normalizeIntegerConfigValue(
+  value: number | null | undefined,
+  fallback: number,
+  min: number,
+  max: number
+): number {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return clampNumber(Math.floor(value as number), min, max);
+}
+
+export function normalizeRouteRuntimeConfig(
+  value: Partial<RouteRuntimeConfig> | null | undefined
+): RouteRuntimeConfig {
+  const minSuccessRateValue = Number(value?.minSuccessRate);
+  const minSuccessRate = Number.isFinite(minSuccessRateValue)
+    ? clampNumber(minSuccessRateValue, 0, 1)
+    : DEFAULT_ROUTE_RUNTIME_CONFIG.minSuccessRate;
+
+  return {
+    maxAttemptsPerRoutePath: normalizeIntegerConfigValue(
+      Number(value?.maxAttemptsPerRoutePath),
+      DEFAULT_ROUTE_RUNTIME_CONFIG.maxAttemptsPerRoutePath,
+      1,
+      10
+    ),
+    successRateWindowMinutes: normalizeIntegerConfigValue(
+      Number(value?.successRateWindowMinutes),
+      DEFAULT_ROUTE_RUNTIME_CONFIG.successRateWindowMinutes,
+      1,
+      24 * 60
+    ),
+    disableDurationMinutes: normalizeIntegerConfigValue(
+      Number(value?.disableDurationMinutes),
+      DEFAULT_ROUTE_RUNTIME_CONFIG.disableDurationMinutes,
+      1,
+      24 * 60
+    ),
+    minSuccessRate,
+  };
+}
 
 const ROUTE_MODEL_VENDOR_PRIORITY_PATTERNS: Partial<Record<RouteModelVendor, string[]>> = {
   gpt: ['gpt-5-4-pro', 'gpt-5-4', 'o3', 'gpt-5', 'gpt-5-4-mini', 'gpt-4-1', 'gpt-4o'],

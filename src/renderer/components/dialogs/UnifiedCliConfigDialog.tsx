@@ -6,8 +6,8 @@
  * 输出: React 组件 (统一 CLI 配置对话框 UI)
  * 定位: 展示层 - 统一 CLI 配置对话框，支持 CLI 启用/禁用、配置选择、预览编辑和保存
  *
- * @version 2.1.14
- * @updated 2026-04-13 - 上调统一 CLI 配置弹窗目标高度，同时继续按当前视口约束避免越界
+ * @version 2.1.15
+ * @updated 2026-04-28 - 新增“列出全部模型”开关，默认按 API Key 所属分组过滤 CLI / 测试模型
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -32,7 +32,12 @@ import { AppButton } from '../AppButton/AppButton';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { OverlayDrawer } from '../overlays/OverlayDrawer';
 import type { CliConfig, ApiKeyInfo, CliModelTestResult } from '../../../shared/types/cli-config';
-import type { CodexTestDetail, GeminiTestDetail } from '../../../shared/types/site';
+import type {
+  ClaudeTestDetail,
+  CodexTestDetail,
+  GeminiTestDetail,
+  ModelPricingData,
+} from '../../../shared/types/site';
 import {
   CLI_TEST_MODEL_SLOT_COUNT,
   DEFAULT_CLI_CONFIG,
@@ -53,6 +58,10 @@ import {
 } from '../../services/cli-config-generator';
 import type { CliCompatibilityResult } from '../../store/detectionStore';
 import { toast } from '../../store/toastStore';
+import {
+  persistCliCompatibilityResult,
+  type PersistedCliCompatibilityTestSample,
+} from '../../services/cli-compat-sync';
 
 // 导入 CLI 图标
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
@@ -63,16 +72,19 @@ function FormSwitch({
   checked,
   onChange,
   disabled = false,
+  ariaLabel,
 }: {
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
+  ariaLabel?: string;
 }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-label={ariaLabel}
       disabled={disabled}
       onClick={() => !disabled && onChange(!checked)}
       className={`
@@ -103,10 +115,12 @@ function FormSwitch({
 export interface UnifiedCliConfigDialogProps {
   isOpen: boolean;
   siteName: string;
+  accountId?: string;
   accountName?: string;
   siteUrl: string;
   apiKeys: ApiKeyInfo[];
   siteModels: string[];
+  siteModelPricing?: ModelPricingData | null;
   currentConfig: CliConfig | null;
   codexDetail?: CodexTestDetail | null; // Codex 详细测试结果
   geminiDetail?: GeminiTestDetail | null; // Gemini CLI 详细测试结果，用于自动选择端点格式
@@ -120,6 +134,95 @@ export interface UnifiedCliConfigDialogProps {
 }
 
 type CliType = 'claudeCode' | 'codex' | 'geminiCli';
+
+function getCliFailureMessage(
+  cliType: CliType,
+  response: {
+    error?: string;
+    data?: {
+      claudeError?: string;
+      codexError?: string;
+      geminiError?: string;
+    };
+  }
+): string | undefined {
+  if (cliType === 'claudeCode') {
+    return response.data?.claudeError ?? response.error;
+  }
+  if (cliType === 'codex') {
+    return response.data?.codexError ?? response.error;
+  }
+  return response.data?.geminiError ?? response.error;
+}
+
+interface CliCompatTestResponse {
+  success?: boolean;
+  error?: string;
+  data?: {
+    claudeCode?: boolean | null;
+    codex?: boolean | null;
+    geminiCli?: boolean | null;
+    claudeDetail?: ClaudeTestDetail;
+    codexDetail?: CodexTestDetail;
+    geminiDetail?: GeminiTestDetail;
+    claudeError?: string;
+    codexError?: string;
+    geminiError?: string;
+  };
+  samples?: PersistedCliCompatibilityTestSample[];
+}
+
+function buildPersistedCompatibilityResult(params: {
+  selectedCli: CliType;
+  compatibility?: CliCompatibilityResult | null;
+  supported: boolean;
+  testedAt: number | null;
+  failureMessage?: string;
+  latestClaudeDetail: ClaudeTestDetail | null;
+  latestCodexDetail: CodexTestDetail | null;
+  latestGeminiDetail: GeminiTestDetail | null;
+}): CliCompatibilityResult {
+  const {
+    selectedCli,
+    compatibility,
+    supported,
+    testedAt,
+    failureMessage,
+    latestClaudeDetail,
+    latestCodexDetail,
+    latestGeminiDetail,
+  } = params;
+
+  const result: CliCompatibilityResult = {
+    claudeCode: compatibility?.claudeCode ?? null,
+    claudeDetail: compatibility?.claudeDetail,
+    claudeError: compatibility?.claudeError,
+    codex: compatibility?.codex ?? null,
+    codexDetail: compatibility?.codexDetail,
+    codexError: compatibility?.codexError,
+    geminiCli: compatibility?.geminiCli ?? null,
+    geminiDetail: compatibility?.geminiDetail,
+    geminiError: compatibility?.geminiError,
+    testedAt: testedAt ?? compatibility?.testedAt ?? Date.now(),
+    sourceLabel: compatibility?.sourceLabel,
+  };
+
+  if (selectedCli === 'claudeCode') {
+    result.claudeCode = supported;
+    result.claudeDetail = latestClaudeDetail ?? result.claudeDetail;
+    result.claudeError = supported ? undefined : failureMessage;
+  } else if (selectedCli === 'codex') {
+    result.codex = supported;
+    result.codexDetail = latestCodexDetail ?? result.codexDetail;
+    result.codexError = supported ? undefined : failureMessage;
+  } else {
+    result.geminiCli = supported;
+    result.geminiDetail = latestGeminiDetail ?? result.geminiDetail;
+    result.geminiError = supported ? undefined : failureMessage;
+  }
+
+  return result;
+}
 
 interface CliTypeConfig {
   key: CliType;
@@ -176,6 +279,131 @@ function getApiKeyId(apiKey: ApiKeyInfo): number {
 /** 获取 API Key 的实际 key 值 */
 function getApiKeyValue(apiKey: ApiKeyInfo): string {
   return apiKey.key || apiKey.token || '';
+}
+
+function collectSiteModelNames(
+  siteModels: string[],
+  siteModelPricing?: ModelPricingData | null
+): string[] {
+  const names = new Set<string>();
+
+  for (const rawModel of siteModels) {
+    if (typeof rawModel === 'string' && rawModel.trim()) {
+      names.add(rawModel.trim());
+    }
+  }
+
+  for (const modelName of Object.keys(siteModelPricing?.data || {})) {
+    if (modelName.trim()) {
+      names.add(modelName.trim());
+    }
+  }
+
+  return Array.from(names);
+}
+
+function filterSiteModelsByGroups(
+  siteModels: string[],
+  siteModelPricing: ModelPricingData | null | undefined,
+  allowedGroups: string[]
+): string[] {
+  const normalizedGroups = allowedGroups.map(group => group.trim()).filter(Boolean);
+  if (normalizedGroups.length === 0 || !siteModelPricing?.data) {
+    return siteModels;
+  }
+
+  const allowedGroupSet = new Set(normalizedGroups);
+  return siteModels.filter(modelName => {
+    const enableGroups = siteModelPricing.data?.[modelName]?.enable_groups;
+    if (!enableGroups || enableGroups.length === 0) {
+      return false;
+    }
+    return enableGroups.some(group => allowedGroupSet.has(group));
+  });
+}
+
+function getScopedSiteModels(params: {
+  siteModels: string[];
+  siteModelPricing?: ModelPricingData | null;
+  apiKey?: ApiKeyInfo | null;
+  listAllModels: boolean;
+}): string[] {
+  const { siteModels, siteModelPricing, apiKey, listAllModels } = params;
+  const allSiteModels = collectSiteModelNames(siteModels, siteModelPricing);
+  if (listAllModels) {
+    return allSiteModels;
+  }
+
+  const apiKeyGroup = apiKey?.group?.trim();
+  if (!apiKeyGroup) {
+    return allSiteModels;
+  }
+
+  return filterSiteModelsByGroups(allSiteModels, siteModelPricing, [apiKeyGroup]);
+}
+
+function normalizeComparableUrl(url: string | null | undefined): string | null {
+  if (!url) {
+    return null;
+  }
+
+  return url
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/:80(\/|$)/, '$1')
+    .replace(/:443(\/|$)/, '$1')
+    .replace(/\/v1\/?$/, '')
+    .replace(/\/+$/, '');
+}
+
+function extractPreviewBaseUrl(
+  cliType: CliType | null,
+  config: GeneratedConfig | null
+): string | null {
+  if (!cliType || !config) {
+    return null;
+  }
+
+  if (cliType === 'claudeCode') {
+    const settingsFile = config.files.find(file => file.path.includes('settings.json'));
+    if (!settingsFile) {
+      return null;
+    }
+
+    try {
+      const settings = JSON.parse(settingsFile.content);
+      return settings?.env?.ANTHROPIC_BASE_URL ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  if (cliType === 'codex') {
+    const configFile = config.files.find(file => file.path.includes('config.toml'));
+    if (!configFile) {
+      return null;
+    }
+
+    const match = configFile.content.match(/base_url\s*=\s*"([^"]+)"/);
+    return match?.[1]?.replace(/\/v1\/?$/, '') ?? null;
+  }
+
+  if (cliType === 'geminiCli') {
+    const envFile = config.files.find(file => file.path.includes('.env'));
+    if (!envFile) {
+      return null;
+    }
+
+    const baseUrlLine = envFile.content
+      .split('\n')
+      .map(line => line.trim())
+      .find(line => line.startsWith('GOOGLE_GEMINI_BASE_URL='));
+
+    return baseUrlLine?.substring('GOOGLE_GEMINI_BASE_URL='.length) ?? null;
+  }
+
+  return null;
 }
 
 interface CliModelTestState {
@@ -424,13 +652,16 @@ function ConfigFileDisplay({
 export function UnifiedCliConfigDialog({
   isOpen,
   siteName,
+  accountId,
   accountName,
   siteUrl,
   apiKeys,
   siteModels,
+  siteModelPricing,
   currentConfig,
   codexDetail,
   geminiDetail,
+  compatibility,
   onPersistConfig,
   onClose,
   onSave,
@@ -441,6 +672,7 @@ export function UnifiedCliConfigDialog({
     codex: true,
     geminiCli: true,
   });
+  const [listAllModels, setListAllModels] = useState(false);
 
   // 当前选中的 CLI 类型
   const [selectedCli, setSelectedCli] = useState<CliType | null>('claudeCode');
@@ -603,6 +835,7 @@ export function UnifiedCliConfigDialog({
       setIsEditing(false);
       setShowResetConfirm(false);
       setIsTestingSelectedModels(false);
+      setListAllModels(false);
     }
 
     previousOpenRef.current = isOpen;
@@ -637,16 +870,6 @@ export function UnifiedCliConfigDialog({
     return CLI_TYPES.find(c => c.key === selectedCli);
   }, [selectedCli]);
 
-  // 获取可用模型列表
-  const availableModels = useMemo(() => {
-    if (!selectedCli) return [];
-    const config = cliConfigs[selectedCli];
-    if (!config.apiKeyId) return [];
-    return Array.from(
-      new Set(siteModels.filter(model => typeof model === 'string' && model.trim()))
-    );
-  }, [selectedCli, cliConfigs, siteModels]);
-
   // 获取选中的 API Key 对象
   const selectedApiKey = useMemo(() => {
     if (!selectedCli) return null;
@@ -654,6 +877,62 @@ export function UnifiedCliConfigDialog({
     if (!config.apiKeyId) return null;
     return apiKeys.find(k => getApiKeyId(k) === config.apiKeyId) || null;
   }, [apiKeys, selectedCli, cliConfigs]);
+
+  // 获取可用模型列表
+  const availableModels = useMemo(() => {
+    if (!selectedCli || !selectedApiKey) {
+      return [];
+    }
+    return getScopedSiteModels({
+      siteModels,
+      siteModelPricing,
+      apiKey: selectedApiKey,
+      listAllModels,
+    });
+  }, [selectedApiKey, selectedCli, siteModelPricing, siteModels, listAllModels]);
+
+  useEffect(() => {
+    if (!selectedCli || listAllModels) {
+      return;
+    }
+
+    const currentConfigState = cliConfigs[selectedCli];
+    if (!currentConfigState.apiKeyId) {
+      return;
+    }
+
+    const availableModelSet = new Set(availableModels);
+    const nextModel =
+      currentConfigState.model && availableModelSet.has(currentConfigState.model)
+        ? currentConfigState.model
+        : null;
+    const nextTestModels = currentConfigState.testModels.map(model =>
+      model && availableModelSet.has(model) ? model : ''
+    );
+    const selectionChanged =
+      nextModel !== currentConfigState.model ||
+      nextTestModels.some((model, index) => model !== currentConfigState.testModels[index]);
+
+    if (!selectionChanged) {
+      return;
+    }
+
+    setCliConfigs(prev => ({
+      ...prev,
+      [selectedCli]: {
+        ...prev[selectedCli],
+        model: nextModel,
+        testModels: nextTestModels,
+        editedFiles: null,
+      },
+    }));
+    setEditedConfig(null);
+    setIsEditing(false);
+    setCliModelTests(prev => ({
+      ...prev,
+      [selectedCli]: createEmptyCliModelTestState()[selectedCli],
+    }));
+  }, [availableModels, cliConfigs, listAllModels, selectedCli]);
 
   const effectiveCodexDetail = cliModelTests.codex.codexDetail ?? codexDetail ?? undefined;
   const effectiveGeminiDetail = cliModelTests.geminiCli.geminiDetail ?? geminiDetail ?? undefined;
@@ -707,9 +986,29 @@ export function UnifiedCliConfigDialog({
     isEditing && editedConfig
       ? editedConfig
       : savedEditedConfig || realtimeConfig || templateConfig;
+  const previewBaseUrl = useMemo(
+    () => extractPreviewBaseUrl(selectedCli, displayConfig),
+    [selectedCli, displayConfig]
+  );
 
   // 是否显示模板（未选择完整配置时）
   const isShowingTemplate = !realtimeConfig && !savedEditedConfig && !!templateConfig;
+  const previewBaseUrlMismatch = useMemo(() => {
+    if (isShowingTemplate || !previewBaseUrl) {
+      return null;
+    }
+
+    const normalizedPreviewUrl = normalizeComparableUrl(previewBaseUrl);
+    const normalizedSiteUrl = normalizeComparableUrl(siteUrl);
+    if (!normalizedPreviewUrl || !normalizedSiteUrl || normalizedPreviewUrl === normalizedSiteUrl) {
+      return null;
+    }
+
+    return {
+      previewBaseUrl: previewBaseUrl.replace(/\/+$/, ''),
+      siteUrl: siteUrl.replace(/\/+$/, ''),
+    };
+  }, [isShowingTemplate, previewBaseUrl, siteUrl]);
 
   // 切换 CLI 启用状态
   const handleToggleEnabled = (cliType: CliType) => {
@@ -907,15 +1206,19 @@ export function UnifiedCliConfigDialog({
 
     let failedCount = 0;
     let latestTestedAt: number | null = null;
+    let selectedCliSupported = false;
+    let latestFailureMessage: string | undefined;
     let latestCodexDetail: CodexTestDetail | null = null;
     let latestGeminiDetail: GeminiTestDetail | null = null;
+    let latestClaudeDetail: ClaudeTestDetail | null = null;
+    const persistedSamples: PersistedCliCompatibilityTestSample[] = [];
     let nextCliTestState = resetCliTestState;
 
     for (const { slotIndex: targetSlotIndex, model } of modelEntries) {
       let rowResult: CliModelTestResult;
 
       try {
-        const response = await (window.electronAPI as any).cliCompat.testWithWrapper({
+        const response = (await (window.electronAPI as any).cliCompat.testWithWrapper({
           siteUrl,
           configs: [
             {
@@ -925,18 +1228,29 @@ export function UnifiedCliConfigDialog({
               baseUrl: siteUrl,
             },
           ],
-        });
+        })) as CliCompatTestResponse;
 
         const success = response.success === true && response.data?.[selectedCli] === true;
         latestTestedAt = Date.now();
+        selectedCliSupported = selectedCliSupported || success;
+        if (response.data?.claudeDetail) latestClaudeDetail = response.data.claudeDetail;
         if (response.data?.codexDetail) latestCodexDetail = response.data.codexDetail;
         if (response.data?.geminiDetail) latestGeminiDetail = response.data.geminiDetail;
+        if (Array.isArray(response.samples) && response.samples.length > 0) {
+          persistedSamples.push(...response.samples);
+        }
         if (!success) failedCount += 1;
+        if (!success) {
+          latestFailureMessage =
+            getCliFailureMessage(selectedCli, response) ?? latestFailureMessage;
+        }
 
         rowResult = {
           model,
           success,
-          message: success ? undefined : (response.error ?? '测试失败'),
+          message: success
+            ? undefined
+            : (getCliFailureMessage(selectedCli, response) ?? '测试失败'),
           timestamp: latestTestedAt,
         };
       } catch (error) {
@@ -972,6 +1286,7 @@ export function UnifiedCliConfigDialog({
       ...cliModelTests,
       [selectedCli]: nextCliTestState,
     };
+
     if (onPersistConfig) {
       try {
         await onPersistConfig(buildConfigPayload(nextTestStates));
@@ -979,6 +1294,35 @@ export function UnifiedCliConfigDialog({
         toast.error('测试结果持久化失败');
       }
     }
+
+    try {
+      const persistResult = await persistCliCompatibilityResult(
+        siteUrl,
+        buildPersistedCompatibilityResult({
+          selectedCli,
+          compatibility,
+          supported: selectedCliSupported,
+          testedAt: latestTestedAt,
+          failureMessage: latestFailureMessage,
+          latestClaudeDetail,
+          latestCodexDetail,
+          latestGeminiDetail,
+        }),
+        {
+          accountId,
+          samples: persistedSamples,
+        }
+      );
+
+      if (!persistResult.success) {
+        toast.error(`测试结果同步到站点检测失败: ${persistResult.error ?? '未知错误'}`);
+      }
+    } catch (error) {
+      toast.error(
+        `测试结果同步到站点检测失败: ${error instanceof Error ? error.message : '未知错误'}`
+      );
+    }
+
     if (failedCount === 0) {
       toast.success(`${CLI_TYPES.find(cli => cli.key === selectedCli)?.name ?? 'CLI'} 测试通过`);
     } else {
@@ -1086,9 +1430,19 @@ export function UnifiedCliConfigDialog({
           <>
             {/* API Key 选择 */}
             <div>
-              <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
-                选择 API Key
-              </label>
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <label className="block text-sm font-medium text-[var(--text-primary)]">
+                  选择 API Key
+                </label>
+                <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                  <span>列出全部模型</span>
+                  <FormSwitch
+                    checked={listAllModels}
+                    onChange={setListAllModels}
+                    ariaLabel="列出全部模型"
+                  />
+                </div>
+              </div>
               {apiKeys.length === 0 ? (
                 <div className="py-2 text-sm text-[var(--text-secondary)]">
                   该站点没有可用的 API Key
@@ -1104,7 +1458,12 @@ export function UnifiedCliConfigDialog({
                   <option value="">请选择 API Key</option>
                   {apiKeys.map(apiKey => {
                     const id = getApiKeyId(apiKey);
-                    const modelCount = siteModels.length;
+                    const modelCount = getScopedSiteModels({
+                      siteModels,
+                      siteModelPricing,
+                      apiKey,
+                      listAllModels,
+                    }).length;
                     return (
                       <option key={id} value={id}>
                         {apiKey.name || `Key #${id}`}
@@ -1245,6 +1604,17 @@ export function UnifiedCliConfigDialog({
                     请去站点确认配置信息是否正确
                   </span>
                 </div>
+                {previewBaseUrlMismatch && (
+                  <div
+                    role="alert"
+                    className="rounded-[var(--radius-md)] border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-3 py-2 text-xs text-[var(--warning)]"
+                  >
+                    检测到当前预览配置中的域名（{previewBaseUrlMismatch.previewBaseUrl}
+                    ）与当前站点（
+                    {previewBaseUrlMismatch.siteUrl}）不一致。站点页测试将优先使用当前站点
+                    URL，建议重新生成并保存配置。
+                  </div>
+                )}
                 {isShowingTemplate && (
                   <div className="rounded-[var(--radius-md)] bg-[var(--warning)]/10 px-3 py-2 text-xs text-[var(--warning)]">
                     请选择 API Key 和 CLI 使用模型以生成实际配置，以下为配置模板

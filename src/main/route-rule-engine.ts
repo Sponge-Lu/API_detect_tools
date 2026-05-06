@@ -33,6 +33,29 @@ export function extractModelFromBody(body: unknown): string | null {
   return null;
 }
 
+/**
+ * 从请求路径提取模型名称
+ * 目前主要用于 Gemini 原生格式：
+ * /v1beta/models/{model}:generateContent
+ * /v1beta/models/{model}:streamGenerateContent
+ */
+export function extractModelFromPath(pathname: string, cliType: RouteCliType): string | null {
+  if (cliType !== 'geminiCli') {
+    return null;
+  }
+
+  const match = pathname.match(/^\/v1beta\/models\/([^/:?]+)(?::[A-Za-z]+)?/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
+}
+
 /** pattern specificity 数值（越高越具体） */
 function patternSpecificity(rule: RouteRule): number {
   switch (rule.patternType) {
@@ -88,7 +111,7 @@ export function matchPattern(model: string, pattern: string, type: RoutePatternT
  * 找出第一条匹配的规则
  * @param rules   已排序的规则列表
  * @param cliType 已识别的 CLI 类型
- * @param model   请求中的 model 字段（可为空）
+ * @param model   用 canonical model 参与匹配；若无 canonical，则可退化为原始 model
  */
 export function findMatchingRule(
   rules: RouteRule[],

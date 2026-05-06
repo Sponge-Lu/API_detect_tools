@@ -16,6 +16,10 @@ if (typeof window !== 'undefined') {
     detectAllSites: vi.fn(),
     openUrl: vi.fn(),
     getAllAccounts: vi.fn(),
+    browserProfile: {
+      openSite: vi.fn(),
+      openSiteForCheckin: vi.fn(),
+    },
     token: {
       initializeSite: vi.fn(),
       refreshDisplayData: vi.fn(),
@@ -39,6 +43,17 @@ if (typeof window !== 'undefined') {
     theme: {
       save: vi.fn(),
       load: vi.fn(),
+    },
+    route: {
+      getConfig: vi.fn(),
+      getAnalyticsSummary: vi.fn(),
+      getAnalyticsDistribution: vi.fn(),
+      getObjectStats: vi.fn(),
+      getRequestLogs: vi.fn(),
+      clearRequestLogs: vi.fn(),
+    },
+    overview: {
+      getSiteDailySnapshots: vi.fn(),
     },
   };
 }

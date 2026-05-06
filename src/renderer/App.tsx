@@ -5,12 +5,16 @@
  */
 
 import Logger from './utils/logger';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { XCircle, Loader2 } from 'lucide-react';
 import { ConfirmDialog, initialDialogState } from './components/ConfirmDialog';
 import { GlobalCommandBar } from './components/AppShell/GlobalCommandBar';
 import { PageHeader } from './components/AppShell/PageHeader';
-import { APP_PAGE_META } from './components/AppShell/pageMeta';
+import {
+  APP_LOGS_SUBPAGE_META,
+  APP_OVERVIEW_SUBPAGE_META,
+  APP_PAGE_META,
+} from './components/AppShell/pageMeta';
 import { VerticalSidebar } from './components/Sidebar';
 import { AuthErrorDialog, CloseBehaviorDialog, DownloadUpdatePanel } from './components/dialogs';
 import { ToastContainer } from './components/Toast';
@@ -22,12 +26,20 @@ import type {
   DetectionResult,
   AccountCredential,
   CliCompatibilityData,
+  SiteDailySnapshot,
 } from '../shared/types/site';
+import type {
+  RouteAnalyticsObjectStatsItem,
+  RouteAnalyticsObjectStatsQuery,
+  RouteRequestLogItem,
+  RouteRequestLogQuery,
+} from '../shared/types/route-proxy';
 import type { ThemeMode } from '../shared/theme/themePresets';
 export type { SiteConfig, DetectionResult } from '../shared/types/site';
 
 // 导入页面组件
 import { SitesPage } from './pages/SitesPage';
+import { DataOverviewPage } from './pages/DataOverviewPage';
 import { CustomCliPage } from './pages/CustomCliPage';
 import { CreditPage } from './pages/CreditPage';
 import { LogsPage } from './pages/LogsPage';
@@ -60,6 +72,14 @@ declare global {
       launchChromeForLogin: (url: string) => Promise<{ success: boolean; message: string }>;
       closeBrowser: () => Promise<void>;
       closeLoginBrowser: () => Promise<void>;
+      appData?: {
+        onChanged: (
+          callback: (payload: {
+            domains: Array<'site-config' | 'site-overview' | 'route-overview'>;
+            emittedAt: number;
+          }) => void
+        ) => () => void;
+      };
       getCookies: (url: string) => Promise<any[]>;
       fetchWithCookies: (
         url: string,
@@ -306,6 +326,26 @@ declare global {
           siteUrl: string,
           accountId?: string
         ) => Promise<{ success: boolean; message?: string; error?: string }>;
+        openSiteForCheckin: (
+          siteId: string | undefined,
+          siteUrl: string,
+          accountId?: string
+        ) => Promise<{ success: boolean; message?: string; error?: string }>;
+        persistCheckinCompletion: (
+          siteId: string | undefined,
+          accountId: string | undefined,
+          cachedData: {
+            last_refresh?: number;
+            has_checkin?: boolean;
+            can_check_in?: boolean;
+            checkin_stats?: {
+              today_quota?: number;
+              checkin_count?: number;
+              total_checkins?: number;
+              site_type?: 'veloera' | 'newapi';
+            };
+          }
+        ) => Promise<{ success: boolean; error?: string }>;
         deleteProfile: (
           siteId: string,
           accountId: string
@@ -328,6 +368,7 @@ declare global {
         getModelRegistry: () => Promise<{ success: boolean; data?: any; error?: string }>;
         rebuildModelRegistry: (params?: {
           force?: boolean;
+          resetDefaults?: boolean;
         }) => Promise<{ success: boolean; data?: any; error?: string }>;
         syncModelRegistrySources: (params?: {
           force?: boolean;
@@ -340,10 +381,6 @@ declare global {
         ) => Promise<{ success: boolean; data?: any; error?: string }>;
         deleteModelDisplayItem: (
           displayItemId: string
-        ) => Promise<{ success: boolean; data?: any; error?: string }>;
-        saveVendorPriorityConfig: (
-          vendor: string,
-          priorityConfig: any
         ) => Promise<{ success: boolean; data?: any; error?: string }>;
         deleteModelMappingOverride: (
           overrideId: string
@@ -364,11 +401,25 @@ declare global {
         getAnalyticsDistribution: (
           params: any
         ) => Promise<{ success: boolean; data?: any; error?: string }>;
+        getObjectStats: (
+          params: RouteAnalyticsObjectStatsQuery
+        ) => Promise<{ success: boolean; data?: RouteAnalyticsObjectStatsItem[]; error?: string }>;
         resetAnalytics: (params?: any) => Promise<{ success: boolean; error?: string }>;
+        getRequestLogs: (
+          params?: RouteRequestLogQuery
+        ) => Promise<{ success: boolean; data?: RouteRequestLogItem[]; error?: string }>;
+        clearRequestLogs: () => Promise<{ success: boolean; error?: string }>;
         fetchLatestLog: (params: {
           siteId: string;
           model?: string;
         }) => Promise<{ success: boolean; data?: any; error?: string }>;
+      };
+      overview?: {
+        getSiteDailySnapshots: (params?: { siteId?: string; days?: number }) => Promise<{
+          success: boolean;
+          data?: Record<string, SiteDailySnapshot[]>;
+          error?: string;
+        }>;
       };
     };
   }
@@ -441,7 +492,11 @@ function App() {
 
   const {
     activeTab,
+    overviewSubtab,
+    logsSubtab,
     setActiveTab,
+    setOverviewSubtab,
+    setLogsSubtab,
     dialogState,
     setDialogState,
     authErrorSites,
@@ -467,6 +522,9 @@ function App() {
 
   // 窗口关闭行为对话框状态
   const [showCloseBehaviorDialog, setShowCloseBehaviorDialog] = useState(false);
+  const [overviewPageHeaderActions, setOverviewPageHeaderActions] = useState<ReactNode | null>(
+    null
+  );
   const [sitesPageHeaderActions, setSitesPageHeaderActions] = useState<ReactNode | null>(null);
 
   // 用于存储初始化状态的 ref
@@ -593,20 +651,6 @@ function App() {
     }
   }, [updateSettings.autoCheckEnabled, checkForUpdatesInBackground]);
 
-  // 应用初始化：加载配置和缓存数据
-  useEffect(() => {
-    if (initRef.current) return;
-    initRef.current = true;
-
-    const init = async () => {
-      const cfg = await loadConfig();
-      if (cfg) {
-        await loadCachedDataRef.current?.(cfg);
-      }
-    };
-    init();
-  }, []);
-
   // 路由 store 初始化
   useEffect(() => {
     useRouteStore.getState().fetchConfig();
@@ -629,40 +673,99 @@ function App() {
     }
   }, [activeTab, visibleActiveTab, setActiveTab]);
 
-  const loadConfig = useCallback(async (): Promise<Config | null> => {
-    try {
-      setLoading(true);
-      const cfg = await window.electronAPI.loadConfig();
-      const normalizedField = normalizeSiteSortField(cfg?.settings?.sort?.field ?? null);
-      const normalizedCfg = cfg?.settings?.sort
-        ? {
-            ...cfg,
-            settings: {
-              ...cfg.settings,
-              sort: {
-                field: normalizedField,
-                order: cfg.settings.sort.order,
+  const loadConfig = useCallback(
+    async (options?: { background?: boolean }): Promise<Config | null> => {
+      try {
+        if (!options?.background) {
+          setLoading(true);
+        }
+        const cfg = await window.electronAPI.loadConfig();
+        const normalizedField = normalizeSiteSortField(cfg?.settings?.sort?.field ?? null);
+        const normalizedCfg = cfg?.settings?.sort
+          ? {
+              ...cfg,
+              settings: {
+                ...cfg.settings,
+                sort: {
+                  field: normalizedField,
+                  order: cfg.settings.sort.order,
+                },
               },
-            },
-          }
-        : cfg;
+            }
+          : cfg;
 
-      setConfig(normalizedCfg);
-      if (cfg?.settings?.sort) {
-        const { order } = cfg.settings.sort;
-        setSortField(normalizedField);
-        if (order) {
-          setSortOrder(order);
+        setConfig(normalizedCfg);
+        if (cfg?.settings?.sort) {
+          const { order } = cfg.settings.sort;
+          setSortField(normalizedField);
+          if (order) {
+            setSortOrder(order);
+          }
+        }
+        return normalizedCfg;
+      } catch (error) {
+        Logger.error('加载配置失败:', error);
+        return null;
+      } finally {
+        if (!options?.background) {
+          setLoading(false);
         }
       }
-      return normalizedCfg;
-    } catch (error) {
-      Logger.error('加载配置失败:', error);
-      return null;
-    } finally {
-      setLoading(false);
-    }
-  }, [setConfig, setLoading, setSortField, setSortOrder]);
+    },
+    [setConfig, setLoading, setSortField, setSortOrder]
+  );
+
+  const reloadConfigRef = useRef<Promise<void> | null>(null);
+
+  const reloadConfigFromMain = useCallback(
+    async (options?: { background?: boolean }) => {
+      if (reloadConfigRef.current) {
+        await reloadConfigRef.current;
+      }
+
+      const task = (async () => {
+        const cfg = await loadConfig(options);
+        if (cfg && !options?.background) {
+          await loadCachedDataRef.current?.(cfg);
+        }
+      })();
+
+      reloadConfigRef.current = task;
+      try {
+        await task;
+      } finally {
+        if (reloadConfigRef.current === task) {
+          reloadConfigRef.current = null;
+        }
+      }
+    },
+    [loadConfig]
+  );
+
+  // 应用初始化：加载配置和缓存数据
+  useEffect(() => {
+    if (initRef.current) return;
+    initRef.current = true;
+
+    const init = async () => {
+      await reloadConfigFromMain();
+    };
+    init();
+  }, [reloadConfigFromMain]);
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.appData?.onChanged?.(({ domains }) => {
+      if (!domains.includes('site-config')) {
+        return;
+      }
+
+      void reloadConfigFromMain({ background: true });
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, [reloadConfigFromMain]);
 
   const handleDownloadUpdate = async () => {
     if (updateInfo?.releaseInfo) {
@@ -670,7 +773,35 @@ function App() {
     }
   };
 
-  const pageMeta = APP_PAGE_META[visibleActiveTab];
+  const activeOverviewSubtab = overviewSubtab ?? 'site';
+  const activeLogsSubtab = logsSubtab ?? 'session';
+  const overviewPageMeta = APP_OVERVIEW_SUBPAGE_META[activeOverviewSubtab];
+  const logsPageMeta = APP_LOGS_SUBPAGE_META[activeLogsSubtab];
+  const pageMeta = useMemo(() => {
+    if (visibleActiveTab === 'overview') {
+      return {
+        ...APP_PAGE_META.overview,
+        title: overviewPageMeta.title,
+        description: overviewPageMeta.description,
+      };
+    }
+
+    if (visibleActiveTab === 'logs') {
+      return {
+        ...APP_PAGE_META.logs,
+        title: logsPageMeta.title,
+        description: logsPageMeta.description,
+      };
+    }
+
+    return APP_PAGE_META[visibleActiveTab];
+  }, [
+    logsPageMeta.description,
+    logsPageMeta.title,
+    overviewPageMeta.description,
+    overviewPageMeta.title,
+    visibleActiveTab,
+  ]);
 
   if (loading) {
     return (
@@ -684,7 +815,12 @@ function App() {
     );
   }
 
-  const pageHeaderActions = visibleActiveTab === 'sites' ? sitesPageHeaderActions : null;
+  const pageHeaderActions =
+    visibleActiveTab === 'overview'
+      ? overviewPageHeaderActions
+      : visibleActiveTab === 'sites'
+        ? sitesPageHeaderActions
+        : null;
 
   if (!config) {
     return (
@@ -693,7 +829,12 @@ function App() {
         <div className="relative z-10 text-center">
           <XCircle className="mx-auto mb-4 h-16 w-16 text-[var(--danger)]" />
           <p className="mb-4 text-[var(--text-primary)]">配置加载失败</p>
-          <AppButton variant="primary" onClick={loadConfig}>
+          <AppButton
+            variant="primary"
+            onClick={() => {
+              void loadConfig();
+            }}
+          >
             重试
           </AppButton>
         </div>
@@ -710,7 +851,11 @@ function App() {
       <div className="relative z-10 h-full flex min-w-[1024px]">
         <VerticalSidebar
           activeTab={visibleActiveTab}
+          overviewSubtab={activeOverviewSubtab}
+          logsSubtab={activeLogsSubtab}
           onTabChange={setActiveTab}
+          onOverviewSubtabChange={setOverviewSubtab}
+          onLogsSubtabChange={setLogsSubtab}
           saving={saving}
           currentVersion={currentVersion}
           updateInfo={updateInfo}
@@ -732,6 +877,13 @@ function App() {
             />
           ) : null}
 
+          <div
+            className={
+              visibleActiveTab === 'overview' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
+            }
+          >
+            <DataOverviewPage setPageHeaderActions={setOverviewPageHeaderActions} />
+          </div>
           <div
             className={
               visibleActiveTab === 'sites' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
@@ -772,7 +924,7 @@ function App() {
               visibleActiveTab === 'logs' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
             }
           >
-            <LogsPage />
+            <LogsPage activeView={activeLogsSubtab} />
           </div>
 
           <div

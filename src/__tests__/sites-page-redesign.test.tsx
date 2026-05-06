@@ -126,6 +126,45 @@ describe('sites page redesign', () => {
     expect(source).toContain('<div className="w-[48px]" aria-hidden="true" />');
   });
 
+  it('defaults the group filter to 默认分组 and does not render an 全部 tab', () => {
+    const source = readFileSync(join(process.cwd(), 'src/renderer/pages/SitesPage.tsx'), 'utf8');
+
+    expect(source).toContain(
+      'const effectiveActiveSiteGroupFilter = activeSiteGroupFilter ?? defaultGroupId;'
+    );
+    expect(source).not.toContain('<span className="font-semibold">全部</span>');
+  });
+
+  it('shows the check-in spinner only for the targeted account card key', () => {
+    render(
+      <>
+        <SiteCardActions
+          {...buildSiteCardProps({
+            cardKey: 'Claude Hub::account-1',
+            accountId: 'account-1',
+            checkingIn: 'Claude Hub::account-1',
+            siteResult: undefined,
+            checkinStats: undefined,
+          })}
+        />
+        <SiteCardActions
+          {...buildSiteCardProps({
+            cardKey: 'Claude Hub::account-2',
+            accountId: 'account-2',
+            checkingIn: 'Claude Hub::account-1',
+            siteResult: undefined,
+            checkinStats: undefined,
+          })}
+        />
+      </>
+    );
+
+    const buttons = screen.getAllByRole('button', { name: '点击签到' });
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0]).toBeDisabled();
+    expect(buttons[1]).not.toBeDisabled();
+  });
+
   it('renders only the visible folded-row columns inside the sticky header', () => {
     expect(DEFAULT_COLUMN_WIDTHS).toEqual([142, 86, 88, 78, 110, 92, 56, 72, 180]);
 

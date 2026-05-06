@@ -535,8 +535,9 @@ describe('overlay family redesign', () => {
 
     expect(screen.queryByText('CLI 开关')).not.toBeInTheDocument();
     expect(screen.queryByText('选择 CLI 类型进行配置')).not.toBeInTheDocument();
-    expect(screen.getAllByRole('switch')).toHaveLength(3);
-    expect(document.body.querySelector('.grid.grid-cols-3')).not.toBeNull();
+    const cliTypeGrid = document.body.querySelector('.grid.grid-cols-3') as HTMLElement;
+    expect(cliTypeGrid).not.toBeNull();
+    expect(within(cliTypeGrid).getAllByRole('switch')).toHaveLength(3);
   });
 
   it('uses a darker selected-state fill so the active CLI row is obvious at a glance', () => {
@@ -686,14 +687,14 @@ describe('overlay family redesign', () => {
 
     render(<WebDAVBackupDialog isOpen={true} onClose={vi.fn()} />);
 
-    const webdavDialog = await screen.findByRole('dialog', { name: 'WebDAV 云端备份' });
-    expect(within(webdavDialog).getByRole('button', { name: '上传备份' })).toBeInTheDocument();
+    const webdavDialog = await screen.findByRole('dialog', { name: 'WebDAV 云端配置包' });
+    expect(within(webdavDialog).getByRole('button', { name: '上传配置包' })).toBeInTheDocument();
     expect(await within(webdavDialog).findByText('backup-2026-04-01.json')).toBeInTheDocument();
     expect(screen.getAllByTestId('overlay-title')).toHaveLength(1);
     expect(screen.getAllByTestId('overlay-body')).toHaveLength(1);
     expect(screen.getAllByTestId('overlay-footer')).toHaveLength(1);
 
-    fireEvent.click(within(webdavDialog).getByTitle('删除此备份'));
+    fireEvent.click(within(webdavDialog).getByTitle('删除此配置包'));
 
     const confirmDialog = await screen.findByRole('dialog', { name: '确认删除' });
     expect(within(confirmDialog).getByText('此操作无法撤销。')).toBeInTheDocument();
@@ -724,8 +725,8 @@ describe('overlay family redesign', () => {
 
     render(<StatefulWebDAVDialog />);
 
-    const webdavDialog = await screen.findByRole('dialog', { name: 'WebDAV 云端备份' });
-    fireEvent.click(within(webdavDialog).getByTitle('删除此备份'));
+    const webdavDialog = await screen.findByRole('dialog', { name: 'WebDAV 云端配置包' });
+    fireEvent.click(within(webdavDialog).getByTitle('删除此配置包'));
     expect(await screen.findByRole('dialog', { name: '确认删除' })).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: 'Escape' });
@@ -738,7 +739,7 @@ describe('overlay family redesign', () => {
       await new Promise(resolve => setTimeout(resolve, 260));
     });
 
-    expect(screen.getByRole('dialog', { name: 'WebDAV 云端备份' })).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'WebDAV 云端配置包' })).toBeInTheDocument();
     expect(screen.getAllByTestId('overlay-title')).toHaveLength(1);
   });
 

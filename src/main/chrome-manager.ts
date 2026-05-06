@@ -714,7 +714,8 @@ export class ChromeManager {
    */
   async launchForLogin(
     url: string,
-    options?: { userDataDir?: string; profileDirectory?: string }
+    options?: { userDataDir?: string; profileDirectory?: string },
+    behavior?: { preserveSession?: boolean }
   ): Promise<{ success: boolean; message: string }> {
     try {
       Logger.info('🚀 [ChromeManager] 启动独立登录浏览器...');
@@ -728,7 +729,9 @@ export class ChromeManager {
       const chromePath = this.getChromePath();
       const userDataDir =
         options?.userDataDir || path.join(os.tmpdir(), 'api-detector-chrome-login');
-      this.cleanupSessionFiles(userDataDir);
+      if (!behavior?.preserveSession) {
+        this.cleanupSessionFiles(userDataDir);
+      }
 
       const { spawn } = require('child_process');
       const args = [
@@ -797,6 +800,55 @@ export class ChromeManager {
       Logger.error('❌ [ChromeManager] 启动登录浏览器失败:', error.message);
       this.cleanupLoginBrowser();
       return { success: false, message: `启动失败: ${error.message}` };
+    }
+  }
+
+  /**
+   * 使用账户对应 Profile 打开站点，并在识别到登录状态后等待一段时间再自动关闭。
+   */
+  async openSiteWithProfileForCheckin(
+    url: string,
+    profileOptions?: { userDataDir?: string; profileDirectory?: string },
+    checkinOptions?: { siteType?: SiteType; maxWaitTimeMs?: number; closeDelayMs?: number }
+  ): Promise<{ success: boolean; message?: string; error?: string }> {
+    const maxWaitTimeMs = checkinOptions?.maxWaitTimeMs ?? 120000;
+    const closeDelayMs = checkinOptions?.closeDelayMs ?? 2000;
+
+    try {
+      const launchResult = await this.launchForLogin(url, profileOptions, {
+        preserveSession: true,
+      });
+      if (!launchResult.success) {
+        return {
+          success: false,
+          error: launchResult.message,
+        };
+      }
+
+      await this.getLocalStorageData(url, true, maxWaitTimeMs, undefined, {
+        loginMode: true,
+        siteType: checkinOptions?.siteType,
+      });
+
+      if (closeDelayMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, closeDelayMs));
+      }
+
+      return {
+        success: true,
+        message: '已识别到账户登录状态并完成签到浏览器流程',
+      };
+    } catch (error: any) {
+      Logger.error(
+        '❌ [ChromeManager] 使用账户 Profile 执行签到浏览器流程失败:',
+        error?.message || error
+      );
+      return {
+        success: false,
+        error: error?.message || '打开站点失败',
+      };
+    } finally {
+      this.cleanupLoginBrowser();
     }
   }
 
@@ -2467,7 +2519,7 @@ export class ChromeManager {
    */
   async openSiteWithProfile(
     url: string,
-    options?: { userDataDir?: string; profileDirectory?: string }
+    options?: { userDataDir?: string; profileDirectory?: string; closeAfterMs?: number }
   ): Promise<{ success: boolean; message?: string; error?: string }> {
     try {
       const chromePath = this.getChromePath();
@@ -2483,6 +2535,7 @@ export class ChromeManager {
         '--no-default-browser-check',
         url,
       ];
+      const closeAfterMs = options?.closeAfterMs;
 
       await new Promise<void>((resolve, reject) => {
         const proc = spawn(chromePath, args, {
@@ -2497,13 +2550,35 @@ export class ChromeManager {
 
         proc.once('spawn', () => {
           proc.unref();
-          resolve();
+          if (!closeAfterMs || closeAfterMs <= 0) {
+            resolve();
+            return;
+          }
+
+          setTimeout(() => {
+            try {
+              proc.kill();
+            } catch (_e) {
+              /* ignore */
+            }
+
+            const pid = proc.pid;
+            if (pid && process.platform === 'win32') {
+              try {
+                require('child_process').exec(`taskkill /F /T /PID ${pid}`, () => {});
+              } catch (_e) {
+                /* ignore */
+              }
+            }
+
+            resolve();
+          }, closeAfterMs);
         });
       });
 
       return {
         success: true,
-        message: '已使用账户对应浏览器打开站点',
+        message: closeAfterMs ? '已完成站点签到浏览器流程' : '已使用账户对应浏览器打开站点',
       };
     } catch (error: any) {
       Logger.error('❌ [ChromeManager] 使用 Profile 打开站点失败:', error?.message || error);

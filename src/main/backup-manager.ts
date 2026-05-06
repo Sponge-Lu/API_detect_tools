@@ -19,23 +19,45 @@ import Logger from './utils/logger';
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { app } from 'electron';
 import * as os from 'os';
+import { createHash } from 'crypto';
+import {
+  createAppStorageBundleContent,
+  extractStableConfigFromBackupContent,
+  restoreAppStorageBackupContent,
+} from './app-storage-bundle';
 
 export interface BackupInfo {
   filename: string;
   path: string;
   timestamp: Date;
   size: number;
+  kind?: 'legacy-config' | 'storage-bundle';
+}
+
+export interface BackupFileOptions {
+  force?: boolean;
+  dedupe?: boolean;
+  minIntervalMs?: number;
+  reason?: string;
+}
+
+export interface BackupManagerOptions {
+  backupDir?: string;
+  maxBackups?: number;
+  minAutoBackupIntervalMs?: number;
 }
 
 export class BackupManager {
   private backupDir: string;
-  private maxBackups: number = 10; // 保留最近10个备份
+  private maxBackups: number; // 保留最近N个备份
+  private minAutoBackupIntervalMs: number;
 
-  constructor() {
+  constructor(options: BackupManagerOptions = {}) {
     // 备份目录在用户主目录下，卸载时不会被清除
-    this.backupDir = path.join(os.homedir(), '.api-hub-management-tools');
+    this.backupDir = options.backupDir || path.join(os.homedir(), '.api-hub-management-tools');
+    this.maxBackups = options.maxBackups ?? 10;
+    this.minAutoBackupIntervalMs = options.minAutoBackupIntervalMs ?? 10 * 60 * 1000;
     this.ensureBackupDir();
   }
 
@@ -65,15 +87,84 @@ export class BackupManager {
    */
   private generateBackupFileName(originalName: string): string {
     const now = new Date();
-    const timestamp = now.toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
+    const timestamp = now.toISOString().replace('T', '_').replace('Z', '').replace(/[:.]/g, '-');
+    const uniqueSuffix = process.hrtime.bigint().toString(36);
     const baseName = path.basename(originalName, '.json');
-    return `${baseName}_${timestamp}.json`;
+    return `${baseName}_${timestamp}_${uniqueSuffix}.json`;
+  }
+
+  private hashBuffer(buffer: Buffer): string {
+    return createHash('sha256').update(buffer).digest('hex');
+  }
+
+  private findLatestBackup(originalFileName: string): BackupInfo | null {
+    const baseName = path.basename(originalFileName, '.json');
+    const backups = this.listBackupsForBaseName(baseName);
+    return backups[0] || null;
+  }
+
+  private listBackupsForBaseName(baseName: string): BackupInfo[] {
+    const files = fs.readdirSync(this.backupDir);
+    return files
+      .filter(f => f.startsWith(baseName + '_') && f.endsWith('.json'))
+      .map(f => {
+        const filePath = path.join(this.backupDir, f);
+        const stat = fs.statSync(filePath);
+        return {
+          filename: f,
+          path: filePath,
+          timestamp: stat.mtime,
+          size: stat.size,
+        };
+      })
+      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  }
+
+  private detectBackupKind(filePath: string): BackupInfo['kind'] {
+    try {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      const parsed = JSON.parse(content);
+      return parsed?.format === 'api-hub-storage-bundle' ? 'storage-bundle' : 'legacy-config';
+    } catch {
+      return 'legacy-config';
+    }
+  }
+
+  private shouldSkipBackup(
+    sourceBuffer: Buffer,
+    latestBackup: BackupInfo | null,
+    options: BackupFileOptions
+  ): boolean {
+    if (options.force || !latestBackup) {
+      return false;
+    }
+
+    const now = Date.now();
+    const minIntervalMs = options.minIntervalMs ?? this.minAutoBackupIntervalMs;
+    if (minIntervalMs > 0 && now - latestBackup.timestamp.getTime() < minIntervalMs) {
+      Logger.info(
+        `⏭️ [BackupManager] 跳过自动备份，距离上次备份不足 ${Math.ceil(
+          minIntervalMs / 1000
+        )} 秒: ${latestBackup.filename}`
+      );
+      return true;
+    }
+
+    if (options.dedupe !== false && fs.existsSync(latestBackup.path)) {
+      const latestBuffer = fs.readFileSync(latestBackup.path);
+      if (this.hashBuffer(sourceBuffer) === this.hashBuffer(latestBuffer)) {
+        Logger.info(`⏭️ [BackupManager] 跳过自动备份，内容未变化: ${latestBackup.filename}`);
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /**
    * 备份单个文件
    */
-  async backupFile(sourcePath: string): Promise<boolean> {
+  async backupFile(sourcePath: string, options: BackupFileOptions = {}): Promise<boolean> {
     try {
       if (!fs.existsSync(sourcePath)) {
         Logger.info(`⚠️ [BackupManager] 源文件不存在，跳过备份: ${sourcePath}`);
@@ -81,12 +172,22 @@ export class BackupManager {
       }
 
       const fileName = path.basename(sourcePath);
+      const sourceBuffer = fs.readFileSync(sourcePath);
+      const latestBackup = this.findLatestBackup(fileName);
+      if (this.shouldSkipBackup(sourceBuffer, latestBackup, options)) {
+        return false;
+      }
+
       const backupFileName = this.generateBackupFileName(fileName);
       const backupPath = path.join(this.backupDir, backupFileName);
 
       // 复制文件
-      fs.copyFileSync(sourcePath, backupPath);
-      Logger.info(`💾 [BackupManager] 已备份: ${fileName} -> ${backupFileName}`);
+      fs.writeFileSync(backupPath, sourceBuffer);
+      Logger.info(
+        `💾 [BackupManager] 已备份: ${fileName} -> ${backupFileName}${
+          options.reason ? ` (${options.reason})` : ''
+        }`
+      );
 
       // 清理旧备份
       await this.cleanupOldBackups(fileName);
@@ -99,17 +200,45 @@ export class BackupManager {
   }
 
   /**
-   * 备份所有配置文件（只备份 config.json）
+   * 创建 manifest 全量备份包。
+   * 备份包只包含 app-storage-manifest 中默认纳入 full-manifest 的文件。
+   */
+  async backupManifestBundle(options: BackupFileOptions = {}): Promise<boolean> {
+    try {
+      const content = await createAppStorageBundleContent();
+      extractStableConfigFromBackupContent(content);
+      const sourceBuffer = Buffer.from(content, 'utf-8');
+      const latestBackup = this.findLatestBackup('config.json');
+      if (this.shouldSkipBackup(sourceBuffer, latestBackup, options)) {
+        return false;
+      }
+
+      const backupFileName = this.generateBackupFileName('config.json');
+      const backupPath = path.join(this.backupDir, backupFileName);
+      fs.writeFileSync(backupPath, sourceBuffer);
+      Logger.info(
+        `💾 [BackupManager] 已创建配置包备份: ${backupFileName}${
+          options.reason ? ` (${options.reason})` : ''
+        }`
+      );
+
+      await this.cleanupOldBackups('config.json');
+      return true;
+    } catch (error) {
+      Logger.error('❌ [BackupManager] 创建配置包备份失败:', error);
+      return false;
+    }
+  }
+
+  /**
+   * 备份所有默认纳入的 manifest 文件。
    */
   async backupAll(): Promise<void> {
-    const userDataPath = app.getPath('userData');
-    const configPath = path.join(userDataPath, 'config.json');
+    Logger.info('🔄 [BackupManager] 开始手动备份...');
 
-    Logger.info('🔄 [BackupManager] 开始自动备份...');
+    await this.backupManifestBundle({ force: true, reason: 'manual' });
 
-    await this.backupFile(configPath);
-
-    Logger.info('✅ [BackupManager] 自动备份完成');
+    Logger.info('✅ [BackupManager] 手动备份完成');
   }
 
   /**
@@ -118,17 +247,11 @@ export class BackupManager {
   private async cleanupOldBackups(originalFileName: string): Promise<void> {
     try {
       const baseName = path.basename(originalFileName, '.json');
-      const files = fs.readdirSync(this.backupDir);
-
-      // 筛选出同类型的备份文件
-      const backupFiles = files
-        .filter(f => f.startsWith(baseName + '_') && f.endsWith('.json'))
-        .map(f => ({
-          name: f,
-          path: path.join(this.backupDir, f),
-          time: fs.statSync(path.join(this.backupDir, f)).mtime.getTime(),
-        }))
-        .sort((a, b) => b.time - a.time); // 按时间降序排列
+      const backupFiles = this.listBackupsForBaseName(baseName).map(info => ({
+        name: info.filename,
+        path: info.path,
+        time: info.timestamp.getTime(),
+      }));
 
       // 删除超过限制的旧备份
       if (backupFiles.length > this.maxBackups) {
@@ -148,28 +271,23 @@ export class BackupManager {
    */
   listBackups(): BackupInfo[] {
     try {
-      const files = fs.readdirSync(this.backupDir);
-
-      // config.json 备份
-      const configBackups: BackupInfo[] = files
-        .filter(f => f.startsWith('config_') && f.endsWith('.json'))
-        .map(f => {
-          const filePath = path.join(this.backupDir, f);
-          const stat = fs.statSync(filePath);
-          return {
-            filename: f,
-            path: filePath,
-            timestamp: stat.mtime,
-            size: stat.size,
-          };
-        })
-        .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-
-      return configBackups;
+      return this.listBackupsForBaseName('config').map(backup => ({
+        ...backup,
+        kind: this.detectBackupKind(backup.path),
+      }));
     } catch (error) {
       Logger.error('❌ [BackupManager] 列出备份失败:', error);
       return [];
     }
+  }
+
+  /**
+   * 从本地备份中读取并校验稳定 config.json。
+   * 支持 legacy config-only 备份和新的 manifest 配置包。
+   */
+  readConfigFromBackup(backupPath: string): unknown {
+    const content = fs.readFileSync(backupPath, 'utf-8');
+    return extractStableConfigFromBackupContent(content);
   }
 
   /**
@@ -194,9 +312,11 @@ export class BackupManager {
         Logger.info(`💾 [BackupManager] 恢复前已备份当前文件: ${currentBackupName}`);
       }
 
-      // 恢复备份
-      fs.copyFileSync(backupPath, targetPath);
-      Logger.info(`✅ [BackupManager] 已从备份恢复: ${backupFileName}`);
+      const content = fs.readFileSync(backupPath, 'utf-8');
+      const restored = await restoreAppStorageBackupContent(content, targetPath);
+      Logger.info(
+        `✅ [BackupManager] 已从备份恢复: ${backupFileName} (${restored.kind}, ${restored.restoredFiles.length} 个文件)`
+      );
 
       return true;
     } catch (error) {

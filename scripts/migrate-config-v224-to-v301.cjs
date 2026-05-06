@@ -6,7 +6,15 @@ const os = require('os');
 
 const CONFIG_VERSION = '3.1';
 const RUNTIME_CACHE_VERSION = '1';
+const ROUTE_RUNTIME_STATE_VERSION = '1';
+const ROUTE_PROBES_STATE_VERSION = '1';
+const ROUTE_ANALYTICS_STATE_VERSION = '1';
+const ROUTE_MODEL_SOURCES_STATE_VERSION = '1';
 const DEFAULT_SITE_TYPE = 'newapi';
+const MAX_ROUTE_RUNTIME_ITEMS = 5000;
+const MAX_ROUTE_PROBE_HISTORY_SAMPLES = 10000;
+const MAX_ROUTE_ANALYTICS_BUCKETS = 50000;
+const MAX_ROUTE_MODEL_SOURCES = 20000;
 
 const DEFAULT_SETTINGS = {
   timeout: 30,
@@ -56,7 +64,52 @@ function createEmptyRuntimeCache() {
     site_shared_by_site_id: {},
     site_runtime_by_site_id: {},
     account_runtime_by_account_id: {},
+    site_daily_snapshots_by_site_id: {},
     last_updated: 0,
+  };
+}
+
+function createEmptyRouteRuntimeState() {
+  return {
+    version: ROUTE_RUNTIME_STATE_VERSION,
+    stats: {},
+    routePathStates: {},
+    health: {},
+    last_updated: 0,
+  };
+}
+
+function createEmptyRouteProbesState() {
+  return {
+    version: ROUTE_PROBES_STATE_VERSION,
+    latest: {},
+    history: {},
+    last_updated: 0,
+  };
+}
+
+function createEmptyRouteAnalyticsState() {
+  return {
+    version: ROUTE_ANALYTICS_STATE_VERSION,
+    buckets: {},
+    last_updated: 0,
+  };
+}
+
+function createEmptyRouteModelSourcesState() {
+  return {
+    version: ROUTE_MODEL_SOURCES_STATE_VERSION,
+    sources: [],
+    last_updated: 0,
+  };
+}
+
+function createEmptyRouteStateSnapshot() {
+  return {
+    runtime: createEmptyRouteRuntimeState(),
+    probes: createEmptyRouteProbesState(),
+    analytics: createEmptyRouteAnalyticsState(),
+    modelSources: createEmptyRouteModelSourcesState(),
   };
 }
 
@@ -83,6 +136,60 @@ function mergeDefined(current, incoming) {
   return merged;
 }
 
+function mergeRecord(current, incoming) {
+  return {
+    ...(current || {}),
+    ...(incoming || {}),
+  };
+}
+
+function keepNewestRecordEntries(record, maxItems, getTimestamp) {
+  const entries = Object.entries(record || {});
+  if (entries.length <= maxItems) {
+    return Object.fromEntries(entries);
+  }
+
+  return Object.fromEntries(
+    entries.sort((left, right) => getTimestamp(right[1]) - getTimestamp(left[1])).slice(0, maxItems)
+  );
+}
+
+function compactProbeHistory(history) {
+  const allSamples = Object.values(history || {})
+    .flat()
+    .filter(sample => sample && typeof sample === 'object')
+    .sort((left, right) => (right.testedAt || 0) - (left.testedAt || 0))
+    .slice(0, MAX_ROUTE_PROBE_HISTORY_SAMPLES);
+  const compacted = {};
+
+  for (const sample of allSamples.sort(
+    (left, right) => (left.testedAt || 0) - (right.testedAt || 0)
+  )) {
+    if (!sample.probeKey) {
+      continue;
+    }
+    if (!compacted[sample.probeKey]) {
+      compacted[sample.probeKey] = [];
+    }
+    compacted[sample.probeKey].push(sample);
+  }
+
+  return compacted;
+}
+
+function compactModelSources(sources) {
+  const byKey = new Map();
+  for (const source of sources || []) {
+    if (!source || typeof source !== 'object') {
+      continue;
+    }
+    const key = source.sourceKey || JSON.stringify(source);
+    byKey.set(key, source);
+  }
+
+  return Array.from(byKey.values()).slice(-MAX_ROUTE_MODEL_SOURCES);
+}
+
 function splitDetectionCacheData(cache) {
   if (!cache || typeof cache !== 'object') {
     return {};
@@ -103,6 +210,7 @@ function splitDetectionCacheData(cache) {
     today_requests: cache.today_requests,
     api_keys: cache.api_keys,
     last_refresh: cache.last_refresh,
+    has_checkin: cache.has_checkin,
     can_check_in: cache.can_check_in,
     cli_compatibility: cache.cli_compatibility,
     ldc_payment_supported: cache.ldc_payment_supported,
@@ -122,8 +230,7 @@ function splitDetectionCacheData(cache) {
 
 function resolveDefaultConfigPath() {
   if (process.platform === 'win32') {
-    const appData =
-      process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+    const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
     return path.join(appData, 'api-hub-management-tools', 'config.json');
   }
 
@@ -177,6 +284,93 @@ function parseArgs(argv) {
   return args;
 }
 
+function readJsonIfExists(filePath, defaultValue, normalize) {
+  if (!fs.existsSync(filePath)) {
+    return defaultValue;
+  }
+
+  const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  return normalize ? normalize(parsed) : parsed;
+}
+
+function normalizeRuntimeCache(value) {
+  const partial = value && typeof value === 'object' ? value : {};
+  return {
+    version: partial.version || RUNTIME_CACHE_VERSION,
+    site_shared_by_site_id: partial.site_shared_by_site_id || {},
+    site_runtime_by_site_id: partial.site_runtime_by_site_id || {},
+    account_runtime_by_account_id: partial.account_runtime_by_account_id || {},
+    site_daily_snapshots_by_site_id: partial.site_daily_snapshots_by_site_id || {},
+    last_updated: partial.last_updated || 0,
+  };
+}
+
+function normalizeRouteRuntimeState(value) {
+  const partial = value && typeof value === 'object' ? value : {};
+  return {
+    version: partial.version || ROUTE_RUNTIME_STATE_VERSION,
+    stats: partial.stats || {},
+    routePathStates: partial.routePathStates || {},
+    health: partial.health || {},
+    last_updated: partial.last_updated || 0,
+  };
+}
+
+function normalizeRouteProbesState(value) {
+  const partial = value && typeof value === 'object' ? value : {};
+  return {
+    version: partial.version || ROUTE_PROBES_STATE_VERSION,
+    latest: partial.latest || {},
+    history: partial.history || {},
+    last_updated: partial.last_updated || 0,
+  };
+}
+
+function normalizeRouteAnalyticsState(value) {
+  const partial = value && typeof value === 'object' ? value : {};
+  return {
+    version: partial.version || ROUTE_ANALYTICS_STATE_VERSION,
+    buckets: partial.buckets || {},
+    last_updated: partial.last_updated || 0,
+  };
+}
+
+function normalizeRouteModelSourcesState(value) {
+  const partial = value && typeof value === 'object' ? value : {};
+  return {
+    version: partial.version || ROUTE_MODEL_SOURCES_STATE_VERSION,
+    sources: Array.isArray(partial.sources) ? partial.sources : [],
+    last_updated: partial.last_updated || 0,
+  };
+}
+
+function buildTempPath(targetPath) {
+  return path.join(
+    path.dirname(targetPath),
+    [
+      path.basename(targetPath),
+      process.pid,
+      Date.now(),
+      Math.random().toString(36).slice(2),
+      'tmp',
+    ].join('.')
+  );
+}
+
+function writeJsonAtomically(filePath, value) {
+  const tempPath = buildTempPath(filePath);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  try {
+    fs.writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, 'utf-8');
+    fs.renameSync(tempPath, filePath);
+  } catch (error) {
+    try {
+      fs.unlinkSync(tempPath);
+    } catch {}
+    throw error;
+  }
+}
+
 function printHelp() {
   console.log(`Usage:
   node scripts/migrate-config-v224-to-v301.cjs [--path <config.json>] [--dry-run]
@@ -188,7 +382,9 @@ Options:
 
 Notes:
   - This migrates legacy v2.1.24-style config data into the v3.0.1 app line format.
-  - The resulting config schema version is ${CONFIG_VERSION}, and runtime cache is split into runtime-cache.json.
+  - The resulting config schema version is ${CONFIG_VERSION}.
+  - Detection cache is split into runtime-cache.json.
+  - Route runtime/probe/analytics/model source payloads are split into state/route-*.json.
 `);
 }
 
@@ -264,14 +460,7 @@ function getStatusMetadata(payload) {
   }
 
   const data = isRecord(payload.data) ? payload.data : payload;
-  return [
-    data.system_name,
-    data.systemName,
-    data.site_name,
-    data.siteName,
-    data.name,
-    data.version,
-  ]
+  return [data.system_name, data.systemName, data.site_name, data.siteName, data.name, data.version]
     .filter(item => typeof item === 'string' && item.trim())
     .join(' ');
 }
@@ -422,7 +611,96 @@ function normalizeAccount(account, now) {
   };
 }
 
-async function migrateConfigShape(config) {
+function buildRouteStateSnapshotFromConfig(config, existingState, now) {
+  const routing = config.routing || {};
+  const modelRegistry = routing.modelRegistry || {};
+  const cliProbe = routing.cliProbe || {};
+  const analytics = routing.analytics || {};
+
+  return {
+    runtime: {
+      version: ROUTE_RUNTIME_STATE_VERSION,
+      stats: keepNewestRecordEntries(
+        mergeRecord(existingState.runtime.stats, routing.stats),
+        MAX_ROUTE_RUNTIME_ITEMS,
+        value => value.lastUsedAt || value.lastSuccessAt || value.lastFailureAt || 0
+      ),
+      routePathStates: keepNewestRecordEntries(
+        mergeRecord(existingState.runtime.routePathStates, routing.routePathStates),
+        MAX_ROUTE_RUNTIME_ITEMS,
+        value => value.updatedAt || value.lastUsedAt || 0
+      ),
+      health: keepNewestRecordEntries(
+        mergeRecord(existingState.runtime.health, routing.health),
+        MAX_ROUTE_RUNTIME_ITEMS,
+        value => value.testedAt || 0
+      ),
+      last_updated: now,
+    },
+    probes: {
+      version: ROUTE_PROBES_STATE_VERSION,
+      latest: keepNewestRecordEntries(
+        mergeRecord(existingState.probes.latest, cliProbe.latest),
+        MAX_ROUTE_RUNTIME_ITEMS,
+        value => value.lastSample?.testedAt || value.lastSuccessAt || value.lastFailureAt || 0
+      ),
+      history: compactProbeHistory(mergeRecord(existingState.probes.history, cliProbe.history)),
+      last_updated: now,
+    },
+    analytics: {
+      version: ROUTE_ANALYTICS_STATE_VERSION,
+      buckets: keepNewestRecordEntries(
+        mergeRecord(existingState.analytics.buckets, analytics.buckets),
+        MAX_ROUTE_ANALYTICS_BUCKETS,
+        value => value.updatedAt || value.bucketStart || 0
+      ),
+      last_updated: now,
+    },
+    modelSources: {
+      version: ROUTE_MODEL_SOURCES_STATE_VERSION,
+      sources: compactModelSources([
+        ...(existingState.modelSources.sources || []),
+        ...(modelRegistry.sources || []),
+      ]),
+      last_updated: now,
+    },
+  };
+}
+
+function createPersistableRouting(routing) {
+  if (!routing) {
+    return undefined;
+  }
+
+  return {
+    ...routing,
+    stats: {},
+    routePathStates: {},
+    health: {},
+    modelRegistry: routing.modelRegistry
+      ? {
+          ...routing.modelRegistry,
+          sources: [],
+          lastAggregatedAt: undefined,
+        }
+      : undefined,
+    cliProbe: routing.cliProbe
+      ? {
+          config: { ...(routing.cliProbe.config || {}) },
+          latest: {},
+          history: {},
+        }
+      : undefined,
+    analytics: routing.analytics
+      ? {
+          config: { ...(routing.analytics.config || {}) },
+          buckets: {},
+        }
+      : undefined,
+  };
+}
+
+async function migrateConfigShape(config, existingRuntimeCache, existingRouteState) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) {
     throw new Error('Config root must be an object');
   }
@@ -444,6 +722,12 @@ async function migrateConfigShape(config) {
     siteSharedCacheEntries: 0,
     siteRuntimeCacheEntries: 0,
     accountRuntimeCacheEntries: 0,
+    routeStatsEntries: 0,
+    routePathStateEntries: 0,
+    routeProbeLatestEntries: 0,
+    routeProbeHistorySamples: 0,
+    routeAnalyticsBucketEntries: 0,
+    routeModelSourceEntries: 0,
   };
 
   const sites = await Promise.all(
@@ -494,7 +778,7 @@ async function migrateConfigShape(config) {
     summary.repairedLegacyAccounts += 1;
   }
 
-  const runtimeCache = createEmptyRuntimeCache();
+  const runtimeCache = normalizeRuntimeCache(existingRuntimeCache || createEmptyRuntimeCache());
   const siteIdsWithAccounts = new Set(accounts.map(account => account.site_id));
 
   for (const site of sites) {
@@ -530,6 +814,11 @@ async function migrateConfigShape(config) {
   }
 
   runtimeCache.last_updated = now;
+  const routeState = buildRouteStateSnapshotFromConfig(
+    config,
+    existingRouteState || createEmptyRouteStateSnapshot(),
+    now
+  );
 
   const persistableConfig = {
     ...config,
@@ -547,6 +836,7 @@ async function migrateConfigShape(config) {
       ...DEFAULT_SETTINGS,
       ...(config.settings || {}),
     },
+    routing: createPersistableRouting(config.routing),
     last_updated: now,
   };
 
@@ -557,16 +847,22 @@ async function migrateConfigShape(config) {
   summary.accountRuntimeCacheEntries = Object.keys(
     runtimeCache.account_runtime_by_account_id
   ).length;
+  summary.routeStatsEntries = Object.keys(routeState.runtime.stats).length;
+  summary.routePathStateEntries = Object.keys(routeState.runtime.routePathStates).length;
+  summary.routeProbeLatestEntries = Object.keys(routeState.probes.latest).length;
+  summary.routeProbeHistorySamples = Object.values(routeState.probes.history).reduce(
+    (total, samples) => total + samples.length,
+    0
+  );
+  summary.routeAnalyticsBucketEntries = Object.keys(routeState.analytics.buckets).length;
+  summary.routeModelSourceEntries = routeState.modelSources.sources.length;
 
   return {
     config: persistableConfig,
     runtimeCache,
+    routeState,
     summary,
   };
-}
-
-function writeJson(filePath, value) {
-  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf-8');
 }
 
 async function main() {
@@ -582,37 +878,94 @@ async function main() {
 
   const raw = fs.readFileSync(args.path, 'utf-8');
   const parsed = JSON.parse(raw);
-  const migrated = await migrateConfigShape(parsed);
+  const configDir = path.dirname(args.path);
   const runtimeCachePath = path.join(path.dirname(args.path), 'runtime-cache.json');
+  const stateDir = path.join(configDir, 'state');
+  const routeRuntimePath = path.join(stateDir, 'route-runtime.json');
+  const routeProbesPath = path.join(stateDir, 'route-probes.json');
+  const routeAnalyticsPath = path.join(stateDir, 'route-analytics.json');
+  const routeModelSourcesPath = path.join(stateDir, 'route-model-sources.json');
+  const existingRuntimeCache = readJsonIfExists(
+    runtimeCachePath,
+    createEmptyRuntimeCache(),
+    normalizeRuntimeCache
+  );
+  const existingRouteState = {
+    runtime: readJsonIfExists(
+      routeRuntimePath,
+      createEmptyRouteRuntimeState(),
+      normalizeRouteRuntimeState
+    ),
+    probes: readJsonIfExists(
+      routeProbesPath,
+      createEmptyRouteProbesState(),
+      normalizeRouteProbesState
+    ),
+    analytics: readJsonIfExists(
+      routeAnalyticsPath,
+      createEmptyRouteAnalyticsState(),
+      normalizeRouteAnalyticsState
+    ),
+    modelSources: readJsonIfExists(
+      routeModelSourcesPath,
+      createEmptyRouteModelSourcesState(),
+      normalizeRouteModelSourcesState
+    ),
+  };
+  const migrated = await migrateConfigShape(parsed, existingRuntimeCache, existingRouteState);
 
   console.log('[migrate-config-v224-to-v301] Migration summary:');
   console.log(JSON.stringify(migrated.summary, null, 2));
   console.log(`Target config path: ${args.path}`);
   console.log(`Target runtime cache path: ${runtimeCachePath}`);
+  console.log(`Target route runtime path: ${routeRuntimePath}`);
+  console.log(`Target route probes path: ${routeProbesPath}`);
+  console.log(`Target route analytics path: ${routeAnalyticsPath}`);
+  console.log(`Target route model sources path: ${routeModelSourcesPath}`);
 
   if (args.dryRun) {
     console.log('Dry run enabled. No files were written.');
     return;
   }
 
-  const backupPath = args.path.replace(/\.json$/i, `.before-v301-migration.${Date.now()}.json`);
+  const timestamp = Date.now();
+  const backupPath = args.path.replace(/\.json$/i, `.before-v301-migration.${timestamp}.json`);
   fs.copyFileSync(args.path, backupPath);
 
-  if (fs.existsSync(runtimeCachePath)) {
-    const runtimeBackupPath = runtimeCachePath.replace(
-      /\.json$/i,
-      `.before-v301-migration.${Date.now()}.json`
-    );
-    fs.copyFileSync(runtimeCachePath, runtimeBackupPath);
-    console.log(`Existing runtime cache backup created: ${runtimeBackupPath}`);
+  const backupExistingFile = filePath => {
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+
+    const backupFilePath = filePath.replace(/\.json$/i, `.before-v301-migration.${timestamp}.json`);
+    fs.copyFileSync(filePath, backupFilePath);
+    return backupFilePath;
+  };
+
+  for (const filePath of [
+    runtimeCachePath,
+    routeRuntimePath,
+    routeProbesPath,
+    routeAnalyticsPath,
+    routeModelSourcesPath,
+  ]) {
+    const backupFilePath = backupExistingFile(filePath);
+    if (backupFilePath) {
+      console.log(`Existing state/cache backup created: ${backupFilePath}`);
+    }
   }
 
-  writeJson(args.path, migrated.config);
-  writeJson(runtimeCachePath, migrated.runtimeCache);
+  writeJsonAtomically(args.path, migrated.config);
+  writeJsonAtomically(runtimeCachePath, migrated.runtimeCache);
+  writeJsonAtomically(routeRuntimePath, migrated.routeState.runtime);
+  writeJsonAtomically(routeProbesPath, migrated.routeState.probes);
+  writeJsonAtomically(routeAnalyticsPath, migrated.routeState.analytics);
+  writeJsonAtomically(routeModelSourcesPath, migrated.routeState.modelSources);
 
   console.log(`Backup created: ${backupPath}`);
   console.log(`Config migrated: ${args.path}`);
   console.log(`Runtime cache written: ${runtimeCachePath}`);
+  console.log(`Route state written: ${stateDir}`);
 }
 
 main().catch(error => {

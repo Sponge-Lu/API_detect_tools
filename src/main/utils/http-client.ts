@@ -1,7 +1,7 @@
 /**
  * 输入: HTTP 请求配置 (AxiosRequestConfig 兼容)
- * 输出: HTTP 响应数据（完整或流式首包）
- * 定位: 工具层 - 统一 HTTP 客户端，打包环境使用 Electron net，开发环境使用 axios；支持流式首包探测
+ * 输出: HTTP 响应数据（JSON/文本、流式首包或 raw Buffer）
+ * 定位: 工具层 - 统一 HTTP 客户端，打包环境使用 Electron net，开发环境使用 axios；支持流式首包探测、raw 透明转发和上游代理
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -11,7 +11,15 @@
 
 import axios, { AxiosRequestConfig } from 'axios';
 import { app } from 'electron';
-import { electronFetch, electronFetchStream, type StreamFetchResponse } from './electron-fetch';
+import {
+  electronFetch,
+  electronFetchRaw,
+  electronFetchStream,
+  isElectronNetAvailable,
+  normalizeProxyUrl,
+  type RawFetchResponse,
+  type StreamFetchResponse,
+} from './electron-fetch';
 import { Logger } from './logger';
 
 const log = Logger.scope('HttpClient');
@@ -19,6 +27,97 @@ const log = Logger.scope('HttpClient');
 interface HttpResponse<T = any> {
   data: T;
   status: number;
+}
+
+interface RawRequestConfig extends Omit<AxiosRequestConfig, 'data' | 'headers' | 'method'> {
+  method?: string;
+  headers?: Record<string, string | string[] | undefined>;
+  body?: Buffer | string;
+  proxyUrl?: string;
+  preferElectronNet?: boolean;
+}
+
+export interface RawHttpResponse {
+  status: number;
+  headers: Record<string, string | string[]>;
+  body: Buffer;
+  firstByteLatencyMs?: number;
+}
+
+function shouldUseElectronNet(preferElectronNet?: boolean): boolean {
+  return isElectronNetAvailable() && (preferElectronNet === true || Boolean(app?.isPackaged));
+}
+
+function compactHeaders(
+  headers: Record<string, string | string[] | undefined> = {}
+): Record<string, string | string[]> {
+  return Object.fromEntries(
+    Object.entries(headers).filter((entry): entry is [string, string | string[]] => {
+      const value = entry[1];
+      return typeof value === 'string' || Array.isArray(value);
+    })
+  );
+}
+
+function buildAxiosProxyConfig(proxyUrl?: string): AxiosRequestConfig['proxy'] | undefined {
+  const normalizedProxyUrl = normalizeProxyUrl(proxyUrl);
+  if (!normalizedProxyUrl) return undefined;
+
+  const parsed = new URL(normalizedProxyUrl);
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    return undefined;
+  }
+
+  return {
+    protocol: parsed.protocol.replace(':', ''),
+    host: parsed.hostname,
+    port: parsed.port ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80,
+    auth:
+      parsed.username || parsed.password
+        ? {
+            username: decodeURIComponent(parsed.username),
+            password: decodeURIComponent(parsed.password),
+          }
+        : undefined,
+  };
+}
+
+function normalizeAxiosResponseBody(data: unknown): Buffer {
+  if (Buffer.isBuffer(data)) return data;
+  if (data instanceof ArrayBuffer) return Buffer.from(data);
+  if (ArrayBuffer.isView(data)) {
+    return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  }
+  if (typeof data === 'string') return Buffer.from(data, 'utf-8');
+  if (data === undefined || data === null) return Buffer.alloc(0);
+  return Buffer.from(String(data), 'utf-8');
+}
+
+function normalizeAxiosResponseHeaders(headers: unknown): Record<string, string | string[]> {
+  if (!headers || typeof headers !== 'object') return {};
+
+  const normalized: Array<[string, string | string[]]> = [];
+
+  for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
+    if (typeof value === 'string') {
+      normalized.push([key, value]);
+    } else if (Array.isArray(value)) {
+      normalized.push([key, value.map(item => String(item))]);
+    } else if (value !== undefined && value !== null) {
+      normalized.push([key, String(value)]);
+    }
+  }
+
+  return Object.fromEntries(normalized);
+}
+
+function toRawHttpResponse(response: RawFetchResponse): RawHttpResponse {
+  return {
+    status: response.status,
+    headers: response.headers,
+    body: response.body,
+    firstByteLatencyMs: response.firstByteLatencyMs,
+  };
 }
 
 /**
@@ -144,6 +243,56 @@ export async function httpPostStream(
     clearTimeout(timeoutId);
     throw error;
   }
+}
+
+/**
+ * Raw HTTP 请求：保留完整响应体与响应头，用于透明转发。
+ */
+export async function httpRawRequest(
+  url: string,
+  config: RawRequestConfig = {}
+): Promise<RawHttpResponse> {
+  const {
+    method = 'GET',
+    headers = {},
+    body,
+    timeout = 30000,
+    proxyUrl,
+    preferElectronNet,
+    ...axiosConfig
+  } = config;
+  const compactedHeaders = compactHeaders(headers);
+
+  if (shouldUseElectronNet(preferElectronNet)) {
+    log.debug(`Using Electron net module for raw ${method}:`, url);
+    const res = await electronFetchRaw(url, {
+      method,
+      headers: compactedHeaders,
+      body,
+      timeout,
+      proxyUrl,
+    });
+    return toRawHttpResponse(res);
+  }
+
+  const res = await axios.request<ArrayBuffer | Buffer>({
+    ...axiosConfig,
+    method,
+    url,
+    data: body,
+    headers: compactedHeaders,
+    timeout,
+    proxy: buildAxiosProxyConfig(proxyUrl),
+    responseType: 'arraybuffer',
+    transformResponse: data => data,
+    validateStatus: () => true,
+  });
+
+  return {
+    status: res.status,
+    headers: normalizeAxiosResponseHeaders(res.headers),
+    body: normalizeAxiosResponseBody(res.data),
+  };
 }
 
 /**

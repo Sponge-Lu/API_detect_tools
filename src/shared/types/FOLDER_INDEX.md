@@ -23,8 +23,8 @@
 
 | 文件 | 职责 | 关键类型 |
 |------|------|--------|
-| **site.ts** | 站点与检测缓存类型 | Site, UnifiedSite, CheckinStats, CliCompatibilityData, cached_data (含 `has_checkin` / `can_check_in`) |
-| **route-proxy.ts** | 路由工作台类型 | RoutingConfig, RouteModelRegistryConfig, RouteCliProbeSample, RouteCliProbeLatest |
+| **site.ts** | 站点、检测缓存与运行期快照类型 | Site, UnifiedSite, CheckinStats, CliCompatibilityData, SiteDailySnapshot, RuntimeCacheFile |
+| **route-proxy.ts** | 路由工作台类型 | RoutingConfig, RouteProxyServerConfig, RouteModelRegistryConfig, RouteCliProbeSample, RouteCliProbeLatest, RouteAnalyticsObjectStatsItem |
 | **cli-config.ts** | CLI 配置类型 | CliConfig, CliCompatibility 等 |
 | **config-detection.ts** | CLI 配置检测类型 | ConfigSourceType, CliDetectionResult, AllCliDetectionResult 等 |
 | **credit.ts** | Linux Do Credit 积分类型 | CreditInfo, CreditConfig, CreditState, CreditResponse 等 |
@@ -147,6 +147,7 @@ interface LdcPaymentInfo {
 **当前约束**:
 - `has_checkin` 表示站点或账户是否具备签到能力，`can_check_in` 表示当前运行态是否还能执行签到
 - `CliCompatibilityData` 为 Claude / Codex / Gemini 分别保留 detail 和 error 摘要，供站点卡片和日志页展示
+- `SiteDailySnapshot` 用于 `数据总览` 页的站点日级历史趋势，存入 `RuntimeCacheFile.site_daily_snapshots_by_site_id`
 
 **使用示例**:
 ```typescript
@@ -189,11 +190,20 @@ const status: SiteStatus = {
 
 **关键类型**:
 ```typescript
+interface RouteProxyServerConfig {
+  upstreamProxyUrl?: string; // Optional upstream-only proxy URL used by the local route proxy
+}
+
 interface RouteModelRegistryConfig {
   sources: RouteModelSourceRef[];
   entries: Record<string, RouteModelRegistryEntry>;
   displayItems: RouteModelDisplayItem[];
   vendorPriorities: Partial<Record<RouteModelVendor, RouteVendorPriorityConfig>>;
+}
+
+interface RouteModelSourceRef {
+  sourceType: 'account' | 'site' | 'customCli';
+  availableCliTypes?: RouteCliType[];
 }
 
 interface RouteCliProbeSample {
@@ -207,10 +217,22 @@ interface RouteCliProbeSample {
   codexDetail?: CodexTestDetail;
   geminiDetail?: GeminiTestDetail;
 }
+
+interface RouteAnalyticsObjectStatsItem {
+  siteId?: string;
+  accountId?: string;
+  apiKeyId?: string;
+  requestCount: number;
+  successRate: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
 ```
 
 **关键辅助函数**:
 - `buildProbeKey()` / `buildSiteScopedProbeAccountId()` - 构造 CLI 探测索引键
+- `buildBucketKey()` - 构造包含 CLI / 模型 / 站点 / 账户 / API Key 的分析桶索引键
 - `normalizeRouteCliSelection()` - 将 CLI 默认模型统一归一到 canonical 名称
 - `compareRouteModelRegistryEntries()` - 按厂商优先模式、层级词和版本号排序模型
 
@@ -546,6 +568,24 @@ CheckinStats (签到统计数据)
 ├── checkinCount?: number
 ├── totalCheckins?: number
 └── siteType?: 'veloera' | 'newapi'
+
+SiteDailySnapshot (站点每日快照)
+├── siteId: string
+├── snapshotDate: string
+├── capturedAt: number
+├── balance: number
+├── todayUsage: number
+├── todayRequests: number
+├── todayPromptTokens: number
+├── todayCompletionTokens: number
+└── totalTokens: number
+
+RuntimeCacheFile (运行期缓存文件)
+├── site_shared_by_site_id: Record<string, SiteSharedDetectionData>
+├── site_runtime_by_site_id: Record<string, SiteRuntimeDetectionData>
+├── account_runtime_by_account_id: Record<string, AccountRuntimeDetectionData>
+├── site_daily_snapshots_by_site_id: Record<string, SiteDailySnapshot[]>
+└── last_updated: number
 
 CliConfig (CLI 配置)
 ├── tool: CliTool

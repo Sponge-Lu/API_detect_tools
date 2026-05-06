@@ -128,12 +128,12 @@ describe('useSiteGroups', () => {
       expect(mockSetActiveSiteGroupFilter).toHaveBeenCalledWith('group-a');
     });
 
-    it('clears filter when clicking same group', () => {
+    it('keeps the current filter when clicking same group', () => {
       const { result } = createHook({ activeSiteGroupFilter: 'group-a' });
       act(() => {
         result.current.toggleSiteGroupFilter('group-a');
       });
-      expect(mockSetActiveSiteGroupFilter).toHaveBeenCalledWith(null);
+      expect(mockSetActiveSiteGroupFilter).not.toHaveBeenCalled();
     });
   });
 
@@ -185,6 +185,14 @@ describe('useSiteGroups', () => {
       const savedConfig = mockSaveConfig.mock.calls[0][0];
       expect(savedConfig.siteGroups).toHaveLength(1);
       expect(savedConfig.sites[1].group).toBe('default'); // Site moved to default
+    });
+
+    it('falls back to default group when deleting the active group', async () => {
+      const { result } = createHook({ activeSiteGroupFilter: 'group-a' });
+      await act(async () => {
+        await result.current.deleteSiteGroup('group-a');
+      });
+      expect(mockSetActiveSiteGroupFilter).toHaveBeenCalledWith('default');
     });
   });
 });

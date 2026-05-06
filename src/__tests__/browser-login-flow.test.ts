@@ -399,6 +399,324 @@ describe('browser login flow', () => {
     expect(chromeManager.cleanup).not.toHaveBeenCalled();
   });
 
+  it('openSiteWithProfileForCheckin 应复用账户 Profile 登录态并在识别后等待关闭', async () => {
+    vi.useFakeTimers();
+
+    try {
+      vi.doMock('puppeteer-core', () => ({
+        default: {},
+      }));
+      vi.doMock('electron', () => ({
+        app: {
+          getPath: vi.fn(() => 'C:/tmp'),
+        },
+      }));
+      vi.doMock('../main/utils/logger', () => ({
+        default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      }));
+
+      const { ChromeManager } = await import('../main/chrome-manager');
+      const manager = new ChromeManager();
+      const launchForLoginSpy = vi
+        .spyOn(manager, 'launchForLogin')
+        .mockResolvedValue({ success: true, message: 'ok' });
+      const getLocalStorageDataSpy = vi.spyOn(manager, 'getLocalStorageData').mockResolvedValue({
+        userId: 7,
+        username: 'demo',
+        systemName: 'Any Router',
+        accessToken: 'token',
+        siteTypeHint: 'newapi',
+        resolvedBaseUrl: 'https://anyrouter.top',
+        dataSource: 'mixed',
+        supportsCheckIn: true,
+        canCheckIn: false,
+      } as any);
+      const cleanupLoginBrowserSpy = vi
+        .spyOn(manager, 'cleanupLoginBrowser')
+        .mockImplementation(() => {});
+
+      const resultPromise = manager.openSiteWithProfileForCheckin(
+        'https://anyrouter.top',
+        { userDataDir: 'C:/profiles/acct-1' },
+        {
+          siteType: 'newapi',
+          maxWaitTimeMs: 30000,
+          closeDelayMs: 2000,
+        }
+      );
+
+      await vi.advanceTimersByTimeAsync(2000);
+      const result = await resultPromise;
+
+      expect(launchForLoginSpy).toHaveBeenCalledWith(
+        'https://anyrouter.top',
+        { userDataDir: 'C:/profiles/acct-1' },
+        { preserveSession: true }
+      );
+      expect(getLocalStorageDataSpy).toHaveBeenCalledWith(
+        'https://anyrouter.top',
+        true,
+        30000,
+        undefined,
+        {
+          loginMode: true,
+          siteType: 'newapi',
+        }
+      );
+      expect(cleanupLoginBrowserSpy).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({
+        success: true,
+        message: '已识别到账户登录状态并完成签到浏览器流程',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('browser-profile:open-site-for-checkin 应按账户 Profile 打开站点并在识别登录后 2 秒关闭', async () => {
+    const handlers = new Map<string, (...args: any[]) => any>();
+    const loadConfig = vi.fn(async () => undefined);
+    const getSiteById = vi.fn(() => ({
+      id: 'site-1',
+      site_type: 'newapi',
+    }));
+    const getAccountById = vi.fn(() => ({
+      id: 'acct-1',
+      site_id: 'site-1',
+      auth_source: 'isolated_profile',
+      browser_profile_path: 'C:/profiles/acct-1',
+    }));
+    const openSiteWithProfileForCheckin = vi.fn(async () => ({ success: true }));
+
+    vi.doMock('electron', () => ({
+      ipcMain: {
+        handle: vi.fn((channel: string, handler: (...args: any[]) => any) => {
+          handlers.set(channel, handler);
+        }),
+      },
+      shell: { openExternal: vi.fn() },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+    vi.doMock('../main/unified-config-manager', () => ({
+      unifiedConfigManager: {
+        loadConfig,
+        getAccountById,
+        getSiteById,
+      },
+    }));
+    vi.doMock('../main/browser-profile-manager', () => ({
+      browserProfileManager: {
+        detectMainChromeProfile: vi.fn(),
+        getIsolatedProfileLaunchOptions: vi.fn(),
+        deleteIsolatedProfile: vi.fn(),
+        getMainProfileLaunchOptions: vi.fn(),
+        isChromeRunning: vi.fn(),
+      },
+    }));
+    vi.doMock('../main/site-type-detector', () => ({
+      detectSiteType: vi.fn(),
+    }));
+    vi.doMock('../main/site-type-registry', () => ({
+      getSiteTypeProfile: vi.fn(() => ({ accessTokenMode: 'create-if-missing' })),
+    }));
+
+    const { registerBrowserProfileHandlers } = await import(
+      '../main/handlers/browser-profile-handlers'
+    );
+    registerBrowserProfileHandlers(
+      {
+        openSiteWithProfileForCheckin,
+      } as any,
+      () => null
+    );
+
+    const result = await handlers.get('browser-profile:open-site-for-checkin')?.(
+      {},
+      'site-1',
+      'https://anyrouter.top',
+      'acct-1'
+    );
+
+    expect(loadConfig).toHaveBeenCalledTimes(3);
+    expect(getAccountById).toHaveBeenCalledWith('acct-1');
+    expect(getSiteById).toHaveBeenCalledWith('site-1');
+    expect(openSiteWithProfileForCheckin).toHaveBeenCalledWith(
+      'https://anyrouter.top',
+      {
+        userDataDir: 'C:/profiles/acct-1',
+      },
+      {
+        siteType: 'newapi',
+        maxWaitTimeMs: 120000,
+        closeDelayMs: 2000,
+      }
+    );
+    expect(result).toEqual({ success: true });
+  });
+
+  it('browser-profile:open-site-for-checkin 应让 manual 默认账户复用默认浏览器链路', async () => {
+    const handlers = new Map<string, (...args: any[]) => any>();
+    const loadConfig = vi.fn(async () => undefined);
+    const getAccountById = vi.fn(() => ({
+      id: 'acct-default',
+      site_id: 'site-1',
+      account_name: '默认账户',
+      auth_source: 'manual',
+    }));
+    const openExternal = vi.fn(async () => undefined);
+    const openSiteWithProfileForCheckin = vi.fn(async () => ({ success: true }));
+
+    vi.doMock('electron', () => ({
+      ipcMain: {
+        handle: vi.fn((channel: string, handler: (...args: any[]) => any) => {
+          handlers.set(channel, handler);
+        }),
+      },
+      shell: { openExternal },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+    vi.doMock('../main/unified-config-manager', () => ({
+      unifiedConfigManager: {
+        loadConfig,
+        getAccountById,
+      },
+    }));
+    vi.doMock('../main/browser-profile-manager', () => ({
+      browserProfileManager: {
+        detectMainChromeProfile: vi.fn(),
+        getIsolatedProfileLaunchOptions: vi.fn(),
+        deleteIsolatedProfile: vi.fn(),
+        getMainProfileLaunchOptions: vi.fn(),
+        isChromeRunning: vi.fn(),
+      },
+    }));
+    vi.doMock('../main/site-type-detector', () => ({
+      detectSiteType: vi.fn(),
+    }));
+    vi.doMock('../main/site-type-registry', () => ({
+      getSiteTypeProfile: vi.fn(() => ({ accessTokenMode: 'create-if-missing' })),
+    }));
+
+    const { registerBrowserProfileHandlers } = await import(
+      '../main/handlers/browser-profile-handlers'
+    );
+    registerBrowserProfileHandlers(
+      {
+        openSiteWithProfileForCheckin,
+      } as any,
+      () => null
+    );
+
+    const result = await handlers.get('browser-profile:open-site-for-checkin')?.(
+      {},
+      'site-1',
+      'https://anyrouter.top',
+      'acct-default'
+    );
+
+    expect(loadConfig).toHaveBeenCalledTimes(2);
+    expect(getAccountById).toHaveBeenCalledWith('acct-default');
+    expect(openExternal).toHaveBeenCalledWith('https://anyrouter.top');
+    expect(openSiteWithProfileForCheckin).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      success: true,
+      message: '已使用默认浏览器打开站点并记为签到完成',
+    });
+  });
+
+  it('browser-profile:persist-checkin-completion 应将签到状态写入账户 cached_data', async () => {
+    const handlers = new Map<string, (...args: any[]) => any>();
+    const loadConfig = vi.fn(async () => undefined);
+    const getAccountById = vi.fn(() => ({
+      id: 'acct-anyrouter',
+      site_id: 'site-1',
+    }));
+    const updateAccountCachedData = vi.fn(async (_accountId: string, updater: any) => {
+      const next = updater({
+        has_checkin: true,
+        can_check_in: true,
+        checkin_stats: {
+          checkin_count: 3,
+        },
+      });
+      expect(next).toEqual({
+        has_checkin: true,
+        can_check_in: false,
+        last_refresh: 1234567890,
+        checkin_stats: {
+          today_quota: 12500000,
+          checkin_count: 3,
+          site_type: 'newapi',
+        },
+      });
+      return true;
+    });
+
+    vi.doMock('electron', () => ({
+      ipcMain: {
+        handle: vi.fn((channel: string, handler: (...args: any[]) => any) => {
+          handlers.set(channel, handler);
+        }),
+      },
+      shell: { openExternal: vi.fn() },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+    vi.doMock('../main/unified-config-manager', () => ({
+      unifiedConfigManager: {
+        loadConfig,
+        getAccountById,
+        updateAccountCachedData,
+      },
+    }));
+    vi.doMock('../main/browser-profile-manager', () => ({
+      browserProfileManager: {
+        detectMainChromeProfile: vi.fn(),
+        getIsolatedProfileLaunchOptions: vi.fn(),
+        deleteIsolatedProfile: vi.fn(),
+        getMainProfileLaunchOptions: vi.fn(),
+        isChromeRunning: vi.fn(),
+      },
+    }));
+    vi.doMock('../main/site-type-detector', () => ({
+      detectSiteType: vi.fn(),
+    }));
+    vi.doMock('../main/site-type-registry', () => ({
+      getSiteTypeProfile: vi.fn(() => ({ accessTokenMode: 'create-if-missing' })),
+    }));
+
+    const { registerBrowserProfileHandlers } = await import(
+      '../main/handlers/browser-profile-handlers'
+    );
+    registerBrowserProfileHandlers({} as any, () => null);
+
+    const result = await handlers.get('browser-profile:persist-checkin-completion')?.(
+      {},
+      'site-1',
+      'acct-anyrouter',
+      {
+        has_checkin: true,
+        can_check_in: false,
+        last_refresh: 1234567890,
+        checkin_stats: {
+          today_quota: 12500000,
+          checkin_count: 3,
+          site_type: 'newapi',
+        },
+      }
+    );
+
+    expect(loadConfig).toHaveBeenCalledTimes(2);
+    expect(getAccountById).toHaveBeenCalledWith('acct-anyrouter');
+    expect(updateAccountCachedData).toHaveBeenCalledWith('acct-anyrouter', expect.any(Function));
+    expect(result).toEqual({ success: true });
+  });
+
   it('tryGetFromLocalStorage 应从 __APP_CONFIG__.site_subtitle 提取 sub2api 公益站名称', async () => {
     vi.doMock('puppeteer-core', () => ({
       default: {},

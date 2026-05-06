@@ -1,12 +1,17 @@
 /**
  * 路由通道解析器
- * 输入: RouteRule + canonicalModel, UnifiedConfig (站点/账户/API Keys)
+ * 输入: RouteRule + canonicalModel, UnifiedConfig (站点/账户/API Keys), 自定义 CLI 配置
  * 输出: 满足约束的候选通道列表（含 resolvedModel）
  * 定位: 服务层 - 候选通道筛选与凭证解析
  */
 
 import { unifiedConfigManager } from './unified-config-manager';
 import { resolveApiKeyId } from './route-model-registry-service';
+import {
+  isCustomCliRouteChannel,
+  loadCustomCliConfigStorage,
+  parseCustomCliRouteConfigId,
+} from './custom-cli-config-service';
 import type {
   RouteRule,
   RouteChannelKey,
@@ -16,11 +21,7 @@ import type {
   RouteModelRegistryEntry,
   RouteModelSourceRef,
 } from '../shared/types/route-proxy';
-import {
-  buildRouteVendorApiKeyPriorityKey,
-  DEFAULT_ROUTE_VENDOR_API_KEY_PRIORITY,
-  DEFAULT_ROUTE_VENDOR_SITE_PRIORITY,
-} from '../shared/types/route-proxy';
+import { buildRouteApiKeyPriorityKey } from '../shared/types/route-proxy';
 import type { AccountCredential, ApiKeyInfo, UnifiedSite } from '../shared/types/site';
 import type { TokenService } from './token-service';
 
@@ -35,21 +36,37 @@ export type ResolvedChannel = RouteChannelKey & {
   originalModelIndex?: number;
 };
 
-function getProbeCompatibilityStatus(
-  siteId: string,
-  accountId: string,
-  cliType: RouteCliType
-): boolean | null {
-  const routing = unifiedConfigManager.getRoutingConfig();
-  const latestEntries = Object.values(routing.cliProbe.latest).filter(
-    entry => entry.siteId === siteId && entry.accountId === accountId && entry.cliType === cliType
-  );
-
-  if (latestEntries.length === 0) {
-    return null;
+function getConfiguredPriority(
+  priorities: Record<string, number> | null | undefined,
+  key: string
+): number | undefined {
+  const value = priorities?.[key];
+  if (!Number.isFinite(value)) {
+    return undefined;
   }
 
-  return latestEntries.some(entry => entry.lastSample.success);
+  return Math.max(0, Math.round(value as number));
+}
+
+function createMissingPriorityAllocator(
+  priorities: Record<string, number> | null | undefined
+): (key: string) => number {
+  const explicitValues = Object.values(priorities || {})
+    .filter((value): value is number => Number.isFinite(value))
+    .map(value => Math.max(0, Math.round(value)));
+  const fallbackBase = explicitValues.length > 0 ? Math.max(...explicitValues) + 1 : 0;
+  const assigned = new Map<string, number>();
+
+  return key => {
+    const existing = assigned.get(key);
+    if (existing !== undefined) {
+      return existing;
+    }
+
+    const nextPriority = fallbackBase + assigned.size;
+    assigned.set(key, nextPriority);
+    return nextPriority;
+  };
 }
 
 function getRegistrySourcePool(registry: RouteModelRegistryConfig): RouteModelSourceRef[] {
@@ -67,6 +84,10 @@ function getRegistrySourcePool(registry: RouteModelRegistryConfig): RouteModelSo
   }
 
   return Array.from(dedupedSources.values());
+}
+
+function sourceSupportsCliType(source: RouteModelSourceRef, cliType: RouteCliType): boolean {
+  return !source.availableCliTypes?.length || source.availableCliTypes.includes(cliType);
 }
 
 function normalizeOriginalModelOrder(
@@ -95,6 +116,30 @@ function normalizeOriginalModelOrder(
   return normalized;
 }
 
+function expandDisplayItemSourceKeys(
+  item: RouteModelDisplayItem,
+  sourceByKey: Map<string, RouteModelSourceRef>
+): string[] {
+  const selectedModels = new Set(
+    (item.originalModelOrder || []).map(model => model.trim()).filter(model => model.length > 0)
+  );
+
+  for (const sourceKey of item.sourceKeys) {
+    const source = sourceByKey.get(sourceKey);
+    if (source?.originalModel) {
+      selectedModels.add(source.originalModel);
+    }
+  }
+
+  if (selectedModels.size === 0) {
+    return item.sourceKeys.filter(sourceKey => sourceByKey.has(sourceKey));
+  }
+
+  return Array.from(sourceByKey.values())
+    .filter(source => selectedModels.has(source.originalModel))
+    .map(source => source.sourceKey);
+}
+
 function buildCanonicalDisplayItems(
   registry: RouteModelRegistryConfig,
   entry: RouteModelRegistryEntry
@@ -103,7 +148,16 @@ function buildCanonicalDisplayItems(
     item => item.canonicalName === entry.canonicalName
   );
   if (matchedItems.length > 0) {
-    return matchedItems;
+    return matchedItems
+      .slice()
+      .sort((left, right) => {
+        if (left.updatedAt !== right.updatedAt) {
+          return right.updatedAt - left.updatedAt;
+        }
+
+        return right.createdAt - left.createdAt;
+      })
+      .slice(0, 1);
   }
 
   return [
@@ -113,6 +167,10 @@ function buildCanonicalDisplayItems(
       canonicalName: entry.canonicalName,
       sourceKeys: entry.sources.map(source => source.sourceKey),
       originalModelOrder: Array.from(new Set(entry.sources.map(source => source.originalModel))),
+      priorityConfig: {
+        sitePriorities: {},
+        apiKeyPriorities: {},
+      },
       mode: 'seeded',
       createdAt: entry.createdAt,
       updatedAt: entry.updatedAt,
@@ -250,15 +308,20 @@ function buildCanonicalModelChannels(
       .filter(account => account.status === 'active')
       .map(account => [account.id, account] as const)
   );
-  const vendorPriorityConfig = registry.vendorPriorities[entry.vendor] || {
-    sitePriorities: {},
-    apiKeyPriorities: {},
-  };
 
   const combinedOriginalModelOrder: string[] = [];
   const siteOrderById = new Map<string, number>();
   let nextSiteOrder = 0;
   let nextApiKeyOrder = 0;
+  const assignMissingSitePriority = createMissingPriorityAllocator(
+    registry.displayItems
+      .filter(item => item.canonicalName === entry.canonicalName)
+      .reduce<Record<string, number>>((acc, item) => {
+        Object.assign(acc, item.priorityConfig?.sitePriorities || {});
+        return acc;
+      }, {})
+  );
+  const assignMissingApiKeyPriorityBySiteId = new Map<string, (key: string) => number>();
   const channelGroups = new Map<
     string,
     {
@@ -274,10 +337,15 @@ function buildCanonicalModelChannels(
   >();
 
   for (const item of displayItems) {
-    const orderedSourceKeys = item.sourceKeys.slice().sort((left, right) => {
+    const itemPriorityConfig = item.priorityConfig ?? {
+      sitePriorities: {},
+      apiKeyPriorities: {},
+    };
+    const expandedSourceKeys = expandDisplayItemSourceKeys(item, sourceByKey);
+    const orderedSourceKeys = expandedSourceKeys.slice().sort((left, right) => {
       const originalOrder = normalizeOriginalModelOrder(
         item.originalModelOrder,
-        item.sourceKeys,
+        expandedSourceKeys,
         sourceByKey
       );
       const orderIndex = new Map(originalOrder.map((model, index) => [model, index]));
@@ -312,27 +380,32 @@ function buildCanonicalModelChannels(
         continue;
       }
 
-      const site = activeSiteById.get(source.siteId);
-      const account = activeAccountById.get(source.accountId);
-      if (!site || !account) {
+      if (!sourceSupportsCliType(source, rule.cliType)) {
         continue;
       }
 
-      if (rule.allowedSiteIds?.length && !rule.allowedSiteIds.includes(site.id)) {
+      const isCustomCliSource = source.sourceType === 'customCli';
+      if (!isCustomCliSource) {
+        const site = activeSiteById.get(source.siteId);
+        const account = activeAccountById.get(source.accountId);
+        if (!site || !account) {
+          continue;
+        }
+      }
+
+      const siteId = source.siteId;
+      const accountId = source.accountId;
+
+      if (rule.allowedSiteIds?.length && !rule.allowedSiteIds.includes(siteId)) {
         continue;
       }
 
-      if (rule.allowedAccountIds?.length && !rule.allowedAccountIds.includes(account.id)) {
-        continue;
-      }
-
-      const compat = getProbeCompatibilityStatus(site.id, account.id, rule.cliType);
-      if (compat === false) {
+      if (rule.allowedAccountIds?.length && !rule.allowedAccountIds.includes(accountId)) {
         continue;
       }
 
       const availableApiKeys = (source.availableApiKeys || []).filter(apiKey => {
-        if (apiKey.accountId !== account.id) {
+        if (apiKey.accountId !== accountId) {
           return false;
         }
 
@@ -344,29 +417,49 @@ function buildCanonicalModelChannels(
       });
 
       for (const availableApiKey of availableApiKeys) {
-        if (!siteOrderById.has(site.id)) {
-          siteOrderById.set(site.id, nextSiteOrder++);
+        let siteOrder = siteOrderById.get(siteId);
+        if (siteOrder === undefined) {
+          siteOrder = nextSiteOrder++;
+          siteOrderById.set(siteId, siteOrder);
         }
 
-        const channelKey = `${site.id}:${account.id}:${availableApiKey.apiKeyId}`;
+        const channelKey = `${siteId}:${accountId}:${availableApiKey.apiKeyId}`;
         if (!channelGroups.has(channelKey)) {
+          const apiKeyOrder = nextApiKeyOrder++;
+          let assignMissingApiKeyPriority = assignMissingApiKeyPriorityBySiteId.get(siteId);
+          if (!assignMissingApiKeyPriority) {
+            const siteScopedApiKeyPriorities = Object.fromEntries(
+              Object.entries(itemPriorityConfig.apiKeyPriorities).filter(([key]) =>
+                key.startsWith(`${siteId}:`)
+              )
+            );
+            assignMissingApiKeyPriority = createMissingPriorityAllocator(
+              siteScopedApiKeyPriorities
+            );
+            assignMissingApiKeyPriorityBySiteId.set(siteId, assignMissingApiKeyPriority);
+          }
+          const apiKeyPriorityKey = buildRouteApiKeyPriorityKey(
+            siteId,
+            accountId,
+            availableApiKey.apiKeyId
+          );
           channelGroups.set(channelKey, {
-            siteId: site.id,
-            accountId: account.id,
+            siteId,
+            accountId,
             apiKeyId: availableApiKey.apiKeyId,
-            siteOrder: siteOrderById.get(site.id)!,
-            apiKeyOrder: nextApiKeyOrder++,
+            siteOrder,
+            apiKeyOrder,
             sitePriority:
-              vendorPriorityConfig.sitePriorities[site.id] ?? DEFAULT_ROUTE_VENDOR_SITE_PRIORITY,
+              getConfiguredPriority(itemPriorityConfig.sitePriorities, siteId) ??
+              assignMissingSitePriority(siteId),
             apiKeyPriority:
-              vendorPriorityConfig.apiKeyPriorities[
-                buildRouteVendorApiKeyPriorityKey(site.id, account.id, availableApiKey.apiKeyId)
-              ] ?? DEFAULT_ROUTE_VENDOR_API_KEY_PRIORITY,
+              getConfiguredPriority(itemPriorityConfig.apiKeyPriorities, apiKeyPriorityKey) ??
+              assignMissingApiKeyPriority(apiKeyPriorityKey),
             originalModels: new Set<string>(),
           });
         }
 
-        channelGroups.get(channelKey)!.originalModels.add(source.originalModel);
+        channelGroups.get(channelKey)?.originalModels.add(source.originalModel);
       }
     }
   }
@@ -437,11 +530,6 @@ function buildGenericChannels(
         continue;
       }
 
-      const compat = getProbeCompatibilityStatus(site.id, account.id, rule.cliType);
-      if (compat === false) {
-        continue;
-      }
-
       const apiKeys: ApiKeyInfo[] = account.cached_data?.api_keys || [];
       if (apiKeys.length === 0) {
         if (site.api_key && !isRouteMaskedApiKeyValue(site.api_key)) {
@@ -453,8 +541,8 @@ function buildGenericChannels(
             cliType: rule.cliType,
             canonicalModel: canonicalModel || undefined,
             resolvedModel: canonicalModel || undefined,
-            sitePriority: DEFAULT_ROUTE_VENDOR_SITE_PRIORITY,
-            apiKeyPriority: DEFAULT_ROUTE_VENDOR_API_KEY_PRIORITY,
+            sitePriority: nextSiteOrder,
+            apiKeyPriority: nextApiKeyOrder,
             siteOrder: nextSiteOrder,
             apiKeyOrder: nextApiKeyOrder++,
             originalModelIndex: 0,
@@ -482,8 +570,8 @@ function buildGenericChannels(
           cliType: rule.cliType,
           canonicalModel: canonicalModel || undefined,
           resolvedModel: canonicalModel || undefined,
-          sitePriority: DEFAULT_ROUTE_VENDOR_SITE_PRIORITY,
-          apiKeyPriority: DEFAULT_ROUTE_VENDOR_API_KEY_PRIORITY,
+          sitePriority: nextSiteOrder,
+          apiKeyPriority: nextApiKeyOrder,
           siteOrder: nextSiteOrder,
           apiKeyOrder: nextApiKeyOrder++,
           originalModelIndex: 0,
@@ -542,6 +630,7 @@ export function canChannelServeModel(params: {
       return (
         source?.siteId === params.siteId &&
         source.accountId === params.accountId &&
+        sourceSupportsCliType(source, params.cliType) &&
         (source.availableApiKeys?.length ?? 0) > 0
       );
     })
@@ -554,6 +643,23 @@ export async function resolveChannelCredentials(
   accountId: string,
   apiKeyId: string
 ): Promise<{ baseUrl: string; apiKey: string } | null> {
+  if (isCustomCliRouteChannel(siteId, accountId, apiKeyId)) {
+    const configId = parseCustomCliRouteConfigId(siteId);
+    if (!configId) {
+      return null;
+    }
+
+    const storage = await loadCustomCliConfigStorage();
+    const config = storage.configs.find(item => item.id === configId);
+    const baseUrl = config?.baseUrl?.trim();
+    const apiKey = config?.apiKey?.trim();
+    if (!baseUrl || !apiKey || isRouteMaskedApiKeyValue(apiKey)) {
+      return null;
+    }
+
+    return { baseUrl, apiKey };
+  }
+
   const unifiedConfig = unifiedConfigManager.exportConfigSync();
   if (!unifiedConfig) return null;
 

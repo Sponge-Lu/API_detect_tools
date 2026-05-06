@@ -5,10 +5,27 @@
 
 import Logger from './utils/logger';
 import { unifiedConfigManager } from './unified-config-manager';
-import type { RouteChannelKey, RouteChannelStats, RouteOutcome } from '../shared/types/route-proxy';
-import { buildStatsKey } from '../shared/types/route-proxy';
+import type {
+  RouteChannelKey,
+  RouteChannelStats,
+  RouteOutcome,
+  RoutePathState,
+  RouteRuntimeConfig,
+} from '../shared/types/route-proxy';
+import {
+  DEFAULT_ROUTE_RUNTIME_CONFIG,
+  buildRoutePathStateKey,
+  buildStatsKey,
+  normalizeRouteRuntimeConfig,
+} from '../shared/types/route-proxy';
 
 const log = Logger.scope('RouteStatsService');
+
+export const ROUTE_PATH_HEALTH_WINDOW_MS =
+  DEFAULT_ROUTE_RUNTIME_CONFIG.successRateWindowMinutes * 60 * 1000;
+export const ROUTE_PATH_DISABLE_MS =
+  DEFAULT_ROUTE_RUNTIME_CONFIG.disableDurationMinutes * 60 * 1000;
+export const ROUTE_PATH_MIN_SUCCESS_RATE = DEFAULT_ROUTE_RUNTIME_CONFIG.minSuccessRate;
 
 /** 等待 flush 的内存缓冲区 */
 const pendingUpdates = new Map<string, RouteChannelStats>();
@@ -92,6 +109,91 @@ export function recordOutcome(
   scheduleFlush();
 }
 
+export function isRoutePathDisabled(
+  key: RouteChannelKey & { canonicalModel?: string; resolvedModel?: string },
+  now: number = Date.now()
+): boolean {
+  const routing = unifiedConfigManager.getRoutingConfig();
+  const state = routing.routePathStates[buildRoutePathStateKey(key)];
+  return Boolean(state?.disabledUntil && state.disabledUntil > now);
+}
+
+export async function recordRoutePathOutcome(
+  key: RouteChannelKey & {
+    cliType?: RoutePathState['cliType'];
+    canonicalModel?: string;
+    resolvedModel?: string;
+  },
+  outcome: RouteOutcome,
+  meta?: { statusCode?: number; latencyMs?: number; error?: string },
+  nowOrRuntimeConfig: number | Partial<RouteRuntimeConfig> = Date.now(),
+  runtimeConfig?: Partial<RouteRuntimeConfig>
+): Promise<RoutePathState> {
+  const routing = unifiedConfigManager.getRoutingConfig();
+  const stateKey = buildRoutePathStateKey(key);
+  const existing = routing.routePathStates[stateKey];
+  const now = typeof nowOrRuntimeConfig === 'number' ? nowOrRuntimeConfig : Date.now();
+  const effectiveRuntimeConfig = normalizeRouteRuntimeConfig(
+    typeof nowOrRuntimeConfig === 'number' ? runtimeConfig : nowOrRuntimeConfig
+  );
+  const healthWindowMs = effectiveRuntimeConfig.successRateWindowMinutes * 60 * 1000;
+  const shouldResetWindow =
+    !existing?.windowStartedAt || now - existing.windowStartedAt >= healthWindowMs;
+
+  const windowStartedAt = shouldResetWindow ? now : existing.windowStartedAt;
+  let windowRequestCount = shouldResetWindow ? 0 : existing.windowRequestCount || 0;
+  let windowSuccessCount = shouldResetWindow ? 0 : existing.windowSuccessCount || 0;
+
+  if (outcome === 'success' || outcome === 'failure') {
+    windowRequestCount += 1;
+    if (outcome === 'success') {
+      windowSuccessCount += 1;
+    }
+  }
+
+  const successRate =
+    windowRequestCount > 0 ? windowSuccessCount / windowRequestCount : (existing?.successRate ?? 1);
+  const stillDisabledUntil =
+    existing?.disabledUntil && existing.disabledUntil > now ? existing.disabledUntil : undefined;
+  const shouldDisable =
+    outcome === 'failure' &&
+    windowRequestCount > 0 &&
+    successRate < effectiveRuntimeConfig.minSuccessRate;
+
+  const nextState: RoutePathState = {
+    routeRuleId: key.routeRuleId,
+    siteId: key.siteId,
+    accountId: key.accountId,
+    apiKeyId: key.apiKeyId,
+    cliType: key.cliType,
+    canonicalModel: key.canonicalModel,
+    resolvedModel: key.resolvedModel,
+    windowStartedAt,
+    windowRequestCount,
+    windowSuccessCount,
+    successRate,
+    disabledUntil: shouldDisable
+      ? now + effectiveRuntimeConfig.disableDurationMinutes * 60 * 1000
+      : stillDisabledUntil,
+    disabledReason: shouldDisable
+      ? 'success_rate_below_threshold'
+      : stillDisabledUntil
+        ? existing?.disabledReason
+        : undefined,
+    lastOutcome: outcome,
+    lastStatusCode: meta?.statusCode,
+    lastLatencyMs: meta?.latencyMs,
+    lastError: meta?.error,
+    lastUsedAt: now,
+    lastSuccessAt: outcome === 'success' ? now : existing?.lastSuccessAt,
+    lastFailureAt: outcome === 'failure' ? now : existing?.lastFailureAt,
+    updatedAt: now,
+  };
+
+  await unifiedConfigManager.upsertRoutePathState(nextState);
+  return nextState;
+}
+
 /**
  * 拉普拉斯平滑评分
  * smoothed = (success+1) / (success+failure+2)
@@ -119,10 +221,10 @@ export function sortChannelsByScore<T extends RouteChannelKey>(channels: T[]): T
       return aPriority - bPriority;
     }
 
-    const aSiteOrder = (a as T & { siteOrder?: number }).siteOrder ?? Number.MAX_SAFE_INTEGER;
-    const bSiteOrder = (b as T & { siteOrder?: number }).siteOrder ?? Number.MAX_SAFE_INTEGER;
-    if (aSiteOrder !== bSiteOrder) {
-      return aSiteOrder - bSiteOrder;
+    const aSiteId = a.siteId || '';
+    const bSiteId = b.siteId || '';
+    if (aSiteId !== bSiteId) {
+      return aSiteId.localeCompare(bSiteId);
     }
 
     const aApiKeyPriority =

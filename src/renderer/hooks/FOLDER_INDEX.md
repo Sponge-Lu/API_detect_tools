@@ -30,7 +30,7 @@
 | **useAutoRefresh.ts** | 自动刷新逻辑 | `{ isRefreshing, startRefresh, stopRefresh, ... }` |
 | **useSiteDetection.ts** | 站点检测 | `{ results, isDetecting, detect, ... }` |
 | **useTokenManagement.ts** | Token 管理 | `{ tokens, getToken, saveToken, deleteToken, ... }` |
-| **useCheckIn.ts** | 签到逻辑，批量签到时跳过 `unavailable` 分组并按站点类型打开手动签到页 | `{ canSignIn, isSigningIn, signIn, ... }` |
+| **useCheckIn.ts** | 签到逻辑，批量签到时跳过 `unavailable` 分组，账户级签到透传 `accountId`，按站点类型打开手动签到页，并持久化同日手动签到完成状态 | `{ canSignIn, isSigningIn, signIn, ... }` |
 | **useCliCompatTest.ts** | CLI 兼容性测试 | `{ results, isTesting, test, ... }` |
 | **useDataLoader.ts** | 数据加载，支持站点状态持久化与签到能力缓存回填 | `{ data, isLoading, error, reload, ... }` |
 | **useSiteDrag.ts** | 站点拖拽排序 | `{ draggedSite, onDragStart, onDrop, ... }` |
@@ -150,7 +150,8 @@ interface UseCheckInReturn {
 - 批量签到会跳过禁用站点与 `unavailable` 内建分组，保持与批量检测一致
 - 签到结果按 (name, accountId) 精确匹配更新前端状态
 - 签到失败时根据站点类型打开对应的手动签到页面（Veloera: /console, New API: /console/personal）
-- 签到成功后更新 lastRefresh 时间戳，确保图标状态正确显示
+- 手动签到完成后调用 `browserProfile.persistCheckinCompletion()` 写入站点/账户缓存
+- 签到成功后更新 lastRefresh 时间戳，确保图标状态正确显示并能跨刷新保持
 
 ### useCliCompatTest
 
@@ -173,7 +174,9 @@ interface UseCliCompatTestReturn {
 - 配置生成
 - 结果缓存
 - 统一调用 `window.electronAPI.cliCompat.testWithWrapper()`
-- 测试结果持久化后可直接驱动站点页 CLI 图标刷新
+- 测试结果持久化后统一走 `cli-compat-sync.ts`，立即重投影 `routing.cliProbe.latest`，并在路由可用性视图已打开时主动刷新缓存
+- 当 `editedFiles` 中的旧域名与当前站点不一致且使用的是已选 API Key 时，会明确告警并优先测试当前站点 URL
+- Gemini CLI 失败时会额外给出明确的失败摘要 toast，而不只藏在图标 tooltip 中
 
 ### useDataLoader
 

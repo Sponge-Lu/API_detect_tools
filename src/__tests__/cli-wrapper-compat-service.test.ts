@@ -59,6 +59,8 @@ describe('CliWrapperCompatService', () => {
       expect(config).toContain('base_url = "https://duckcoding.ai/v1"');
       expect(config).toContain('wire_api = "responses"');
       expect(config).toContain('supports_websockets = false');
+      expect(options.args[options.args.length - 1]).toBe('-');
+      expect(options.stdin).toContain('1+1');
 
       const outputIndex = options.args.indexOf('-o');
       const outputPath = options.args[outputIndex + 1];
@@ -85,9 +87,18 @@ describe('CliWrapperCompatService', () => {
 
   it('maps Gemini wrapper success to native=true and proxy=null', async () => {
     const service = new CliWrapperCompatService(1000, async (options: CommandRunOptions) => {
-      expect(options.env.GEMINI_CLI_HOME).toContain('.gemini');
+      const settingsPath = path.join(options.env.HOME!, '.gemini', 'settings.json');
+      const settings = JSON.parse(await fs.readFile(settingsPath, 'utf-8'));
+
+      expect(settings.security.auth.selectedType).toBe('gemini-api-key');
+      expect(options.env.GEMINI_CLI_HOME).toBeUndefined();
       expect(options.env.GEMINI_API_KEY).toBe('gemini-key');
       expect(options.env.GOOGLE_GEMINI_BASE_URL).toBe('https://duckcoding.ai');
+      expect(options.env.GEMINI_SANDBOX).toBe('false');
+      expect(options.env.GEMINI_CLI_TRUST_WORKSPACE).toBe('true');
+      expect(options.args).toContain('--skip-trust');
+      expect(options.args).not.toContain('-p');
+      expect(options.stdin).toContain('1+1');
 
       return {
         exitCode: 0,

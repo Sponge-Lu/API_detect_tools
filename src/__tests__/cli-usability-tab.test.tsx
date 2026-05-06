@@ -83,7 +83,7 @@ vi.mock('../renderer/store/routeStore', () => ({
                       canonicalModel: 'gpt-4.1',
                       rawModel: 'gpt-4.1',
                       success: true,
-                      source: 'routeProbe',
+                      source: 'siteManual',
                       testedAt: now - 2 * 60 * 60 * 1000,
                     },
                   ],
@@ -222,9 +222,13 @@ describe('CliUsabilityTab', () => {
       'height: 24px;'
     );
 
-    const aggregatedTooltip = screen.getAllByTitle(/gpt-4\.1:[\s\S]*gpt-4\.1-mini:/)[0];
-    expect(aggregatedTooltip).toBeInTheDocument();
-    expect(screen.getByTitle(/模型：gpt-4\.1-mini/)).toBeInTheDocument();
+    expect(screen.getAllByTestId('cli-history-track')[0].children).toHaveLength(32);
+    const codexHistoryTitle = screen.getByTitle(/模型：gpt-4\.1\s+测试时间：.*摘要：/);
+    expect(codexHistoryTitle).toHaveAttribute('title', expect.not.stringContaining('来源：'));
+    expect(screen.getAllByTitle(/模型：gpt-4\.1-mini/).length).toBeGreaterThan(0);
+    expect(screen.getAllByTitle(/模型：gemini-2\.5-pro/).length).toBeGreaterThan(0);
+    expect(codexHistoryTitle).toHaveAttribute('title', expect.stringContaining('结果：兼容'));
+    expect(screen.queryByTestId('cli-history-manual-marker-track')).not.toBeInTheDocument();
 
     fireEvent.change(intervalInput, { target: { value: '' } });
     expect(intervalInput.value).toBe('');

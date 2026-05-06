@@ -54,6 +54,26 @@ export interface CustomCliConfigEditorDialogProps {
 
 type CliType = 'claudeCode' | 'codex' | 'geminiCli';
 
+function getCliFailureMessage(
+  cliType: CliType,
+  response: {
+    error?: string;
+    data?: {
+      claudeError?: string;
+      codexError?: string;
+      geminiError?: string;
+    };
+  }
+): string | undefined {
+  if (cliType === 'claudeCode') {
+    return response.data?.claudeError ?? response.error;
+  }
+  if (cliType === 'codex') {
+    return response.data?.codexError ?? response.error;
+  }
+  return response.data?.geminiError ?? response.error;
+}
+
 interface CliTypeConfig {
   key: CliType;
   name: string;
@@ -584,7 +604,7 @@ export function CustomCliConfigEditorDialog({
           slots[index] = {
             model,
             success,
-            message: success ? undefined : (response.error ?? '未通过'),
+            message: success ? undefined : (getCliFailureMessage(cliType, response) ?? '未通过'),
             timestamp: testedAt,
           };
           if (!success) allSuccess = false;

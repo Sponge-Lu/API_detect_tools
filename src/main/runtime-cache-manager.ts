@@ -1,14 +1,19 @@
 import Logger from './utils/logger';
+import { writeJsonFileAtomically } from './utils/atomic-json';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { app } from 'electron';
 import type {
   AccountRuntimeDetectionData,
   RuntimeCacheFile,
+  SiteDailySnapshot,
   SiteRuntimeDetectionData,
   SiteSharedDetectionData,
 } from '../shared/types/site';
 import { DEFAULT_RUNTIME_CACHE_FILE } from '../shared/types/site';
+
+const SITE_DAILY_SNAPSHOT_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+const MAX_SITE_DAILY_SNAPSHOTS_PER_SITE = 120;
 
 function cloneDefaultRuntimeCache(): RuntimeCacheFile {
   return {
@@ -16,6 +21,7 @@ function cloneDefaultRuntimeCache(): RuntimeCacheFile {
     site_shared_by_site_id: {},
     site_runtime_by_site_id: {},
     account_runtime_by_account_id: {},
+    site_daily_snapshots_by_site_id: {},
     last_updated: 0,
   };
 }
@@ -69,7 +75,7 @@ export class RuntimeCacheManager {
     }
 
     this.cache.last_updated = Date.now();
-    await this.writeAtomically(this.cachePath, JSON.stringify(this.cache, null, 2));
+    await writeJsonFileAtomically(this.cachePath, this.cache);
   }
 
   getSiteShared(siteId: string): SiteSharedDetectionData | undefined {
@@ -82,6 +88,10 @@ export class RuntimeCacheManager {
 
   getAccountRuntime(accountId: string): AccountRuntimeDetectionData | undefined {
     return this.cache?.account_runtime_by_account_id?.[accountId];
+  }
+
+  getSiteDailySnapshots(siteId: string): SiteDailySnapshot[] {
+    return [...(this.cache?.site_daily_snapshots_by_site_id?.[siteId] || [])];
   }
 
   async updateSiteShared(
@@ -126,10 +136,25 @@ export class RuntimeCacheManager {
     await this.saveCache(cache);
   }
 
+  async updateSiteDailySnapshots(
+    siteId: string,
+    updater: (current?: SiteDailySnapshot[]) => SiteDailySnapshot[] | undefined
+  ): Promise<void> {
+    const cache = await this.loadCache();
+    const next = updater(cache.site_daily_snapshots_by_site_id[siteId]);
+    if (next && next.length > 0) {
+      cache.site_daily_snapshots_by_site_id[siteId] = next;
+    } else {
+      delete cache.site_daily_snapshots_by_site_id[siteId];
+    }
+    await this.saveCache(cache);
+  }
+
   async deleteSite(siteId: string): Promise<void> {
     const cache = await this.loadCache();
     delete cache.site_shared_by_site_id[siteId];
     delete cache.site_runtime_by_site_id[siteId];
+    delete cache.site_daily_snapshots_by_site_id[siteId];
     await this.saveCache(cache);
   }
 
@@ -140,34 +165,38 @@ export class RuntimeCacheManager {
   }
 
   private normalizeCache(cache: Partial<RuntimeCacheFile> | undefined | null): RuntimeCacheFile {
+    const now = Date.now();
     return {
       version: cache?.version || DEFAULT_RUNTIME_CACHE_FILE.version,
       site_shared_by_site_id: cache?.site_shared_by_site_id || {},
       site_runtime_by_site_id: cache?.site_runtime_by_site_id || {},
       account_runtime_by_account_id: cache?.account_runtime_by_account_id || {},
+      site_daily_snapshots_by_site_id: this.compactDailySnapshots(
+        cache?.site_daily_snapshots_by_site_id || {},
+        now
+      ),
       last_updated: cache?.last_updated || 0,
     };
   }
 
-  private async writeAtomically(targetPath: string, content: string): Promise<void> {
-    const dir = path.dirname(targetPath);
-    const tempPath = path.join(
-      dir,
-      `${path.basename(targetPath)}.${process.pid}.${Date.now()}.tmp`
-    );
-    await fs.mkdir(dir, { recursive: true });
+  private compactDailySnapshots(
+    snapshotsBySiteId: Record<string, SiteDailySnapshot[]>,
+    now: number
+  ): Record<string, SiteDailySnapshot[]> {
+    const cutoff = now - SITE_DAILY_SNAPSHOT_RETENTION_MS;
 
-    try {
-      await fs.writeFile(tempPath, content, 'utf-8');
-      await fs.rename(tempPath, targetPath);
-    } catch (error) {
-      try {
-        await fs.unlink(tempPath);
-      } catch {
-        // ignore cleanup failure
-      }
-      throw error;
-    }
+    return Object.fromEntries(
+      Object.entries(snapshotsBySiteId)
+        .map(([siteId, snapshots]) => [
+          siteId,
+          [...(Array.isArray(snapshots) ? snapshots : [])]
+            .filter(snapshot => snapshot.capturedAt >= cutoff)
+            .sort((left, right) => right.capturedAt - left.capturedAt)
+            .slice(0, MAX_SITE_DAILY_SNAPSHOTS_PER_SITE)
+            .sort((left, right) => left.snapshotDate.localeCompare(right.snapshotDate)),
+        ])
+        .filter(([, snapshots]) => snapshots.length > 0)
+    );
   }
 }
 

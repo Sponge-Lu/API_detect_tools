@@ -25,7 +25,7 @@
 
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
-| **App.tsx** | 应用根组件、路由 | `App` 组件 |
+| **App.tsx** | 应用根组件、页面壳层 | `App` 组件；根据 `activeTab + overviewSubtab/logsSubtab` 派生数据总览与日志 Header |
 | **main.tsx** | 前端入口 | React 应用挂载 |
 | **index.html** | HTML 模板 | 应用入口 HTML |
 | **index.css** | 全局样式 | Tailwind CSS 导入、四主题 token、响应式布局系统 |
@@ -35,7 +35,7 @@
 
 | 文件夹 | 职责 | 关键文件 |
 |--------|------|--------|
-| **pages/** | 页面容器 | SitesPage, RoutePage, LogsPage |
+| **pages/** | 页面容器 | DataOverviewPage, SitesPage, RoutePage, LogsPage |
 | **components/** | UI 组件库 | 表格、表单、对话框等 |
 | **hooks/** | 自定义 Hooks | 业务逻辑、状态管理 |
 | **services/** | 前端服务 | IPC 通信、API 调用 |
@@ -77,11 +77,12 @@
 
 | 页面 | 职责 | 关键内容 |
 |------|------|--------|
+| **DataOverviewPage** | 数据总览首页 | 左侧 `站点数据 / 路由数据` 子页对应内容、路由健康 KPI、站点余额/消费榜单、每日快照趋势、规则洞察、异常请求 |
 | **SitesPage** | 站点管理主页面 | 站点列表、账户卡片、批量检测/签到 |
 | **CustomCliPage** | 自定义 CLI 配置页面 | 配置预览、真实 CLI 测试、模板导出 |
 | **CreditPage** | Linux Do Credit 页面 | 积分余额、每日统计、交易记录、充值入口 |
-| **RoutePage** | 路由总览页 | 代理服务、模型重定向、CLI 探测、统计分析 |
-| **LogsPage** | 会话日志页 | 通知历史、关键操作记录、筛选与清空 |
+| **RoutePage** | 路由配置/操作页 | 代理服务、模型重定向，以及跳转到数据总览的统计入口 |
+| **LogsPage** | 日志页内容容器 | 按 `logsSubtab` 展示会话事件或路由日志；路由日志使用紧凑请求尝试列表，展示规则、模型、站点优先级、token 与参考金额 |
 | **SettingsPage** | 设置页 | 应用设置、导入导出、备份入口 |
 
 ---
@@ -120,7 +121,7 @@
 |-------|------|--------|
 | **configStore** | 配置管理 | 站点列表、设置 |
 | **detectionStore** | 检测结果 | 检测状态、结果 |
-| **uiStore** | UI 状态 | 主题、模态框 |
+| **uiStore** | UI 状态 | 一级页面切换（默认 `overview`）、`overviewSubtab` / `logsSubtab` 子页切换、主题、模态框 |
 | **toastStore** | 消息提示 | 可见 Toast 队列、通知历史、会话事件 |
 
 ### Store 特点
@@ -188,6 +189,22 @@ const result = await window.ipcRenderer.invoke('api:request', {
 
 **关键方法**:
 - `info()`, `warn()`, `error()` - 日志输出
+
+### siteOverview.ts
+
+**职责**: 基于当前站点/账户缓存生成数据总览页的资源指标
+
+**关键方法**:
+- `buildSiteOverviewMetrics(config, now?)` - 聚合站点余额、消费、请求与模型数量
+
+### routeRulePresentation.ts
+
+**职责**: 将路由规则转换为可解释展示文案
+
+**关键方法**:
+- `buildRouteRuleSummary(rule, context?)` - 生成人类可读摘要
+- `buildRouteRuleSelectionReason(rule)` - 生成“为何命中”说明
+- `buildRouteRuleTags(rule, context?)` - 生成紧凑标签列表
 
 ---
 

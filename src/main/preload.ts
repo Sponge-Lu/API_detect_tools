@@ -12,6 +12,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ThemeMode } from '../shared/theme/themePresets';
 
+const APP_DATA_CHANGED_EVENT = 'app-data:changed';
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // 原有的API
   loadConfig: () => ipcRenderer.invoke('load-config'),
@@ -28,6 +30,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = (_event: any, status: string) => callback(status);
     ipcRenderer.on('site-init-status', handler);
     return () => ipcRenderer.removeListener('site-init-status', handler);
+  },
+  appData: {
+    onChanged: (
+      callback: (payload: {
+        domains: Array<'site-config' | 'site-overview' | 'route-overview'>;
+        emittedAt: number;
+      }) => void
+    ) => {
+      const handler = (_event: any, payload: unknown) =>
+        callback(
+          (payload || {
+            domains: [],
+            emittedAt: Date.now(),
+          }) as {
+            domains: Array<'site-config' | 'site-overview' | 'route-overview'>;
+            emittedAt: number;
+          }
+        );
+      ipcRenderer.on(APP_DATA_CHANGED_EVENT, handler);
+      return () => ipcRenderer.removeListener(APP_DATA_CHANGED_EVENT, handler);
+    },
   },
   // 主动关闭浏览器（用于添加站点后的自动刷新完成后关闭登录浏览器）
   closeBrowser: () => ipcRenderer.invoke('close-browser'),
@@ -354,6 +377,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('browser-profile:login-isolated', siteId, siteUrl, accountId),
     openSite: (siteId: string | undefined, siteUrl: string, accountId?: string) =>
       ipcRenderer.invoke('browser-profile:open-site', siteId, siteUrl, accountId),
+    openSiteForCheckin: (siteId: string | undefined, siteUrl: string, accountId?: string) =>
+      ipcRenderer.invoke('browser-profile:open-site-for-checkin', siteId, siteUrl, accountId),
+    persistCheckinCompletion: (
+      siteId: string | undefined,
+      accountId: string | undefined,
+      cachedData: {
+        last_refresh?: number;
+        has_checkin?: boolean;
+        can_check_in?: boolean;
+        checkin_stats?: {
+          today_quota?: number;
+          checkin_count?: number;
+          total_checkins?: number;
+          site_type?: 'veloera' | 'newapi';
+        };
+      }
+    ) =>
+      ipcRenderer.invoke(
+        'browser-profile:persist-checkin-completion',
+        siteId,
+        accountId,
+        cachedData
+      ),
     deleteProfile: (siteId: string, accountId: string) =>
       ipcRenderer.invoke('browser-profile:delete-profile', siteId, accountId),
   },
@@ -374,7 +420,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     stopServer: () => ipcRenderer.invoke('route:stop-server'),
     regenerateApiKey: () => ipcRenderer.invoke('route:regenerate-api-key'),
     getModelRegistry: () => ipcRenderer.invoke('route:get-model-registry'),
-    rebuildModelRegistry: (params?: { force?: boolean }) =>
+    rebuildModelRegistry: (params?: { force?: boolean; resetDefaults?: boolean }) =>
       ipcRenderer.invoke('route:rebuild-model-registry', params),
     syncModelRegistrySources: (params?: { force?: boolean }) =>
       ipcRenderer.invoke('route:sync-model-registry-sources', params),
@@ -384,8 +430,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('route:upsert-model-display-item', displayItem),
     deleteModelDisplayItem: (displayItemId: string) =>
       ipcRenderer.invoke('route:delete-model-display-item', { displayItemId }),
-    saveVendorPriorityConfig: (vendor: string, priorityConfig: any) =>
-      ipcRenderer.invoke('route:save-vendor-priority-config', { vendor, priorityConfig }),
     deleteModelMappingOverride: (overrideId: string) =>
       ipcRenderer.invoke('route:delete-model-mapping-override', { overrideId }),
     saveCliModelSelections: (selections: any) =>
@@ -399,8 +443,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAnalyticsSummary: (params: any) => ipcRenderer.invoke('route:get-analytics-summary', params),
     getAnalyticsDistribution: (params: any) =>
       ipcRenderer.invoke('route:get-analytics-distribution', params),
+    getObjectStats: (params: unknown) => ipcRenderer.invoke('route:get-object-stats', params),
     resetAnalytics: (params?: any) => ipcRenderer.invoke('route:reset-analytics', params),
+    getRequestLogs: (params?: any) => ipcRenderer.invoke('route:get-request-logs', params),
+    clearRequestLogs: () => ipcRenderer.invoke('route:clear-request-logs'),
     fetchLatestLog: (params: { siteId: string; model?: string }) =>
       ipcRenderer.invoke('route:fetch-latest-log', params),
+  },
+  overview: {
+    getSiteDailySnapshots: (params?: { siteId?: string; days?: number }) =>
+      ipcRenderer.invoke('overview:get-site-daily-snapshots', params),
   },
 });

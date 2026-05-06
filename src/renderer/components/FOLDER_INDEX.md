@@ -40,7 +40,7 @@
 | **SiteGroupTabs/** | 站点分组标签 | SiteGroupTabs, GroupTab |
 | **SiteListHeader/** | 站点列表头部 | SiteListHeader, SearchBar, FilterBar |
 | **Route/** | Route 页面组件 | ModelRedirectionTab, CliUsabilityTab, ProxyStatsTab |
-| **dialogs/** | 对话框组件 | 各类对话框 |
+| **dialogs/** | 对话框组件 | 各类对话框；统一 CLI 配置抽屉支持按 API Key 分组或整站范围切换模型列表 |
 | **Skeleton/** | 骨架屏 | SkeletonLoader, SkeletonCard |
 | **Toast/** | 消息提示 | Toast, ToastContainer |
 | **CliCompatibilityIcons/** | CLI 兼容性图标 | CliIcon, CliIconGroup |
@@ -482,5 +482,5 @@ describe('SiteCard', () => {
 
 ---
 
-**版本**: 2.1.11  
-**更新日期**: 2026-04-01
+**版本**: 2.1.12  
+**更新日期**: 2026-04-28

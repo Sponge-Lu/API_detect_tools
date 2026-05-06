@@ -32,6 +32,10 @@
 | **backup.handler.ts** | 备份管理处理 | `backup:create`, `backup:restore`, `backup:upload` 等 |
 | **cli.handler.ts** | CLI 兼容性处理 | `cli:test`, `cli:generateConfig` 等 |
 | **browser.handler.ts** | 浏览器管理处理 | `browser:launch`, `browser:login` 等 |
+| **detection-handlers.ts** | 站点检测、签到与刷新处理，多账户签到按 `accountId` 解析账户凭证 | `detect-site`, `checkin-and-refresh` |
+| **overview-handlers.ts** | 数据总览处理 | `overview:get-site-daily-snapshots` |
+| **route-handlers.ts** | 路由代理与统计处理 | `route:get-analytics-summary`, `route:get-analytics-distribution`, `route:get-object-stats`, `route:get-request-logs` |
+| **custom-cli-config-handlers.ts** | 自定义 CLI 配置处理 | `custom-cli-config:load`, `custom-cli-config:save`, `custom-cli-config:fetch-models` |
 
 ---
 
@@ -183,6 +187,12 @@ try {
 | `credit:save-config` | `{ config }` | `{ success }` | 保存配置 |
 | `credit:load-config` | `{}` | `{ config }` | 加载配置 |
 | `credit:get-cached` | `{}` | `{ cachedInfo }` | 获取缓存数据 |
+
+### Overview 处理器 (overview-handlers.ts)
+
+| 事件 | 请求参数 | 响应数据 | 职责 |
+|------|---------|--------|------|
+| `overview:get-site-daily-snapshots` | `{ siteId?, days? }` | `{ [siteId]: SiteDailySnapshot[] }` | 返回数据总览页使用的站点每日快照历史 |
 
 ---
 

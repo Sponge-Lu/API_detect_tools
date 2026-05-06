@@ -24,6 +24,7 @@ import { mergeApiKeysPreservingRawValue } from './token-service';
 import { getAllUserIdHeaders } from '../shared/utils/headers';
 import Logger from './utils/logger';
 import { unifiedConfigManager } from './unified-config-manager';
+import { captureSiteDailySnapshot } from './overview-service';
 import { runOnPageQueue } from './utils/page-exec-queue';
 import {
   isModelLog,
@@ -68,6 +69,49 @@ interface DetectionResult {
   ldcExchangeRate?: string;
   ldcPaymentType?: string;
   checkinStats?: CheckinStats;
+}
+
+function isSameLocalDay(
+  timestamp: number | undefined,
+  referenceTime: number = Date.now()
+): boolean {
+  if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
+    return false;
+  }
+  return new Date(timestamp).toDateString() === new Date(referenceTime).toDateString();
+}
+
+function shouldPreserveCompletedCheckin(params: {
+  previousCanCheckIn?: boolean;
+  previousLastRefresh?: number;
+  nextHasCheckin?: boolean;
+  nextCanCheckIn?: boolean;
+}): boolean {
+  return (
+    params.nextHasCheckin !== false &&
+    params.nextCanCheckIn !== false &&
+    params.previousCanCheckIn === false &&
+    isSameLocalDay(params.previousLastRefresh)
+  );
+}
+
+function mapCachedCheckinStats(cache?: DetectionCacheData): CheckinStats | undefined {
+  if (!cache?.checkin_stats) {
+    return undefined;
+  }
+
+  return {
+    todayQuota: cache.checkin_stats.today_quota,
+    checkinCount: cache.checkin_stats.checkin_count,
+    totalCheckins: cache.checkin_stats.total_checkins,
+    siteType: cache.checkin_stats.site_type,
+  };
+}
+
+function asObjectPayload(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 /** 检测请求上下文（多账户支持） */
@@ -187,6 +231,14 @@ export class ApiService {
       return;
     }
     await unifiedConfigManager.updateSite(site.id, { cached_data: updater(site.cached_data) });
+  }
+
+  private getPersistedDetectionCache(
+    siteUrl: string,
+    accountId?: string
+  ): DetectionCacheData | undefined {
+    const { site, account } = this.resolveCacheOwner(siteUrl, accountId);
+    return account?.cached_data ?? site?.cached_data;
   }
 
   private async runSerializedForSite<T>(site: SiteConfig, task: () => Promise<T>): Promise<T> {
@@ -561,6 +613,32 @@ export class ApiService {
           // 检测失败不影响整体检测流程
         }
 
+        const persistedDetectionCache = this.getPersistedDetectionCache(
+          site.url,
+          context?.accountId
+        );
+        const preserveCompletedCheckinFromRuntime = shouldPreserveCompletedCheckin({
+          previousCanCheckIn: cachedData?.can_check_in,
+          previousLastRefresh: cachedData?.lastRefresh,
+          nextHasCheckin: hasCheckin,
+          nextCanCheckIn: canCheckIn,
+        });
+        const preserveCompletedCheckinFromPersistedCache = shouldPreserveCompletedCheckin({
+          previousCanCheckIn: persistedDetectionCache?.can_check_in,
+          previousLastRefresh: persistedDetectionCache?.last_refresh,
+          nextHasCheckin: hasCheckin,
+          nextCanCheckIn: canCheckIn,
+        });
+        const preserveCompletedCheckin =
+          preserveCompletedCheckinFromRuntime || preserveCompletedCheckinFromPersistedCache;
+
+        const effectiveCanCheckIn = preserveCompletedCheckin ? false : canCheckIn;
+        const effectiveCheckinStats =
+          checkinStats ||
+          (preserveCompletedCheckin
+            ? cachedData?.checkinStats || mapCachedCheckinStats(persistedDetectionCache)
+            : undefined);
+
         const result = {
           name: site.name,
           url: site.url,
@@ -574,7 +652,7 @@ export class ApiService {
           todayRequests: balanceData?.todayRequests,
           error: undefined,
           has_checkin: hasCheckin,
-          can_check_in: canCheckIn, // 添加签到状态
+          can_check_in: effectiveCanCheckIn, // 添加签到状态
           apiKeys,
           userGroups,
           modelPricing,
@@ -582,7 +660,7 @@ export class ApiService {
           ldcPaymentSupported, // LDC 支付支持状态
           ldcExchangeRate, // LDC 兑换比例
           ldcPaymentType, // LDC 支付方式类型
-          checkinStats, // 签到统计数据 (New API)
+          checkinStats: effectiveCheckinStats, // 签到统计数据 (New API)
           accountId: context?.accountId,
         };
 
@@ -1465,25 +1543,42 @@ export class ApiService {
             site,
             timeout,
             (data: any) => {
+              const payload = asObjectPayload(data);
+              const payloadData = payload?.data;
+
               // 打印完整响应结构用于调试
               Logger.info('📦 [ApiService] 模型列表响应结构:', {
-                hasSuccess: 'success' in data,
-                hasData: 'data' in data,
-                isDataArray: Array.isArray(data?.data),
-                dataType: typeof data?.data,
-                codeValue: data?.code,
-                messageValue: data?.message,
-                topLevelKeys: Object.keys(data || {}),
-                dataKeys: data?.data ? Object.keys(data.data) : [],
+                hasSuccess: !!payload && 'success' in payload,
+                hasData: !!payload && 'data' in payload,
+                isDataArray: Array.isArray(payloadData),
+                dataType: typeof payloadData,
+                codeValue: payload?.code,
+                messageValue: payload?.message,
+                topLevelKeys: payload
+                  ? Object.keys(payload)
+                  : Array.isArray(data)
+                    ? Object.keys(data)
+                    : [],
+                dataKeys:
+                  payloadData && typeof payloadData === 'object' ? Object.keys(payloadData) : [],
               });
+
+              // 格式4: 直接数组 [...]
+              if (Array.isArray(data)) {
+                const models = data.map((m: any) => m.id || m.name || m);
+                Logger.info(`✅ [ApiService] 成功获取 ${models.length} 个模型 (直接数组格式)`);
+                return models;
+              }
 
               // 某些站点可能返回 { success: true, message: "..." } 没有data字段
               // 这不一定是认证问题，可能只是该端点不适用于此站点类型
               // 返回空数组，继续尝试其他端点
-              if (!data || !('data' in data)) {
-                const hintParts = [data?.code, data?.message]
-                  .filter((part: unknown) => typeof part === 'string' && part.trim().length > 0)
-                  .map((part: string) => part.trim());
+              if (!payload || !('data' in payload)) {
+                const hintParts = [payload?.code, payload?.message]
+                  .filter(
+                    (part): part is string => typeof part === 'string' && part.trim().length > 0
+                  )
+                  .map(part => part.trim());
                 lastEmptyResponseHint = hintParts.length > 0 ? hintParts.join(': ') : undefined;
                 Logger.info('ℹ️ [ApiService] 响应中没有data字段，尝试下一个端点');
                 return [];
@@ -1509,13 +1604,6 @@ export class ApiService {
               if (data?.data?.models && Array.isArray(data.data.models)) {
                 const models = data.data.models.map((m: any) => m.id || m.name || m);
                 Logger.info(`✅ [ApiService] 成功获取 ${models.length} 个模型 (data.models格式)`);
-                return models;
-              }
-
-              // 格式4: 直接数组 [...]
-              if (Array.isArray(data)) {
-                const models = data.map((m: any) => m.id || m.name || m);
-                Logger.info(`✅ [ApiService] 成功获取 ${models.length} 个模型 (直接数组格式)`);
                 return models;
               }
 
@@ -2502,34 +2590,46 @@ export class ApiService {
         return;
       }
 
-      await this.updateDetectionCache(siteUrl, context?.accountId, existing => ({
-        ...existing,
-        models: detectionResult.models || [],
-        balance: detectionResult.balance,
-        today_usage: detectionResult.todayUsage,
-        today_prompt_tokens: detectionResult.todayPromptTokens,
-        today_completion_tokens: detectionResult.todayCompletionTokens,
-        today_requests: detectionResult.todayRequests,
-        api_keys: mergeApiKeysPreservingRawValue(existing?.api_keys, detectionResult.apiKeys),
-        user_groups: detectionResult.userGroups,
-        model_pricing: detectionResult.modelPricing,
-        last_refresh: Date.now(),
-        has_checkin: detectionResult.has_checkin,
-        can_check_in: detectionResult.can_check_in,
-        ldc_payment_supported: detectionResult.ldcPaymentSupported,
-        ldc_exchange_rate: detectionResult.ldcExchangeRate,
-        ldc_payment_type: detectionResult.ldcPaymentType,
-        checkin_stats: detectionResult.checkinStats
+      await this.updateDetectionCache(siteUrl, context?.accountId, existing => {
+        const preserveCompletedCheckin = shouldPreserveCompletedCheckin({
+          previousCanCheckIn: existing?.can_check_in,
+          previousLastRefresh: existing?.last_refresh,
+          nextHasCheckin: detectionResult.has_checkin,
+          nextCanCheckIn: detectionResult.can_check_in,
+        });
+        const nextCheckinStats = detectionResult.checkinStats
           ? {
               today_quota: detectionResult.checkinStats.todayQuota,
               checkin_count: detectionResult.checkinStats.checkinCount,
               total_checkins: detectionResult.checkinStats.totalCheckins,
               site_type: detectionResult.checkinStats.siteType,
             }
-          : undefined,
-        status: detectionResult.status,
-        error: detectionResult.error,
-      }));
+          : preserveCompletedCheckin
+            ? existing?.checkin_stats
+            : undefined;
+
+        return {
+          ...existing,
+          models: detectionResult.models || [],
+          balance: detectionResult.balance,
+          today_usage: detectionResult.todayUsage,
+          today_prompt_tokens: detectionResult.todayPromptTokens,
+          today_completion_tokens: detectionResult.todayCompletionTokens,
+          today_requests: detectionResult.todayRequests,
+          api_keys: mergeApiKeysPreservingRawValue(existing?.api_keys, detectionResult.apiKeys),
+          user_groups: detectionResult.userGroups,
+          model_pricing: detectionResult.modelPricing,
+          last_refresh: Date.now(),
+          has_checkin: detectionResult.has_checkin,
+          can_check_in: preserveCompletedCheckin ? false : detectionResult.can_check_in,
+          ldc_payment_supported: detectionResult.ldcPaymentSupported,
+          ldc_exchange_rate: detectionResult.ldcExchangeRate,
+          ldc_payment_type: detectionResult.ldcPaymentType,
+          checkin_stats: nextCheckinStats,
+          status: detectionResult.status,
+          error: detectionResult.error,
+        };
+      });
 
       // 站点级 legacy 字段更新
       await unifiedConfigManager.updateSite(site.id, {
@@ -2540,6 +2640,9 @@ export class ApiService {
       Logger.info('✅ [ApiService] 缓存数据已保存到 config.json', {
         accountId: context?.accountId,
       });
+      if (site.id) {
+        await captureSiteDailySnapshot(site.id);
+      }
     } catch (error: any) {
       Logger.error('❌ [ApiService] 保存缓存数据失败:', error.message);
     }

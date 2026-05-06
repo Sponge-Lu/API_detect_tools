@@ -131,6 +131,8 @@ export interface SiteCardHeaderProps {
 export interface SiteCardActionsProps {
   site: SiteConfig;
   index: number;
+  cardKey: string;
+  accountId?: string;
   siteResult?: DetectionResult;
   isExpanded: boolean;
   isDetecting: boolean;

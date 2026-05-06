@@ -1,7 +1,7 @@
 /**
  * 输入: DetectionStore (检测状态), IPC 调用, Toast 通知
  * 输出: 测试方法 (testSite), 兼容性结果, 自动更新配置和 Toast 提示
- * 定位: 业务逻辑层 - CLI 兼容性测试 Hook，封装测试逻辑和结果处理
+ * 定位: 业务逻辑层 - CLI 兼容性测试 Hook，封装测试逻辑、持久化回写与探测视图同步
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -24,6 +24,7 @@ import {
 import { toast } from '../store/toastStore';
 import { sessionEventLog } from '../services/sessionEventLog';
 import { normalizeCliTestModels } from '../../shared/types/cli-config';
+import { persistCliCompatibilityResult } from '../services/cli-compat-sync';
 
 /** Hook 返回类型 */
 export interface UseCliCompatTestReturn {
@@ -150,6 +151,45 @@ function parseGeminiCliConfig(
   }
 
   return { apiKey, baseUrl };
+}
+
+function normalizeComparableUrl(url: string | null | undefined): string | null {
+  if (!url) {
+    return null;
+  }
+
+  return url
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/:80(\/|$)/, '$1')
+    .replace(/:443(\/|$)/, '$1')
+    .replace(/\/v1\/?$/, '')
+    .replace(/\/+$/, '');
+}
+
+function maybeWarnPreviewBaseUrlMismatch(
+  cliLabel: string,
+  previewBaseUrl: string | null,
+  siteUrl: string,
+  warnedKeys: Set<string>
+): void {
+  const normalizedPreviewUrl = normalizeComparableUrl(previewBaseUrl);
+  const normalizedSiteUrl = normalizeComparableUrl(siteUrl);
+  if (!normalizedPreviewUrl || !normalizedSiteUrl || normalizedPreviewUrl === normalizedSiteUrl) {
+    return;
+  }
+
+  const warningKey = `${cliLabel}:${normalizedPreviewUrl}->${normalizedSiteUrl}`;
+  if (warnedKeys.has(warningKey)) {
+    return;
+  }
+
+  warnedKeys.add(warningKey);
+  const displayPreviewBaseUrl = (previewBaseUrl ?? '').replace(/\/v1\/?$/, '').replace(/\/+$/, '');
+  toast.warning(
+    `${cliLabel} 预览配置中的站点域名（${displayPreviewBaseUrl}）与当前站点（${siteUrl.replace(/\/+$/, '')}）不一致，站点页测试将优先使用当前站点 URL`
+  );
 }
 
 /**
@@ -282,6 +322,8 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
         return;
       }
 
+      const normalizedSiteUrl = siteUrl.replace(/\/+$/, '');
+
       // 检查是否有任何配置且启用
       const cc = cliConfig.claudeCode;
       const cx = cliConfig.codex;
@@ -295,6 +337,7 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
 
       try {
         // 构建测试配置
+        const mismatchWarnings = new Set<string>();
         const testConfigs: Array<{
           cliType: 'claudeCode' | 'codex' | 'geminiCli';
           apiKey: string;
@@ -312,9 +355,15 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
             siteUrl
           );
           let apiKey = credential.apiKey;
-          const baseUrl = credential.baseUrl;
+          let baseUrl = credential.baseUrl;
 
-          if (credential.source === 'selectedApiKey' && cc.apiKeyId != null) {
+          if (cc.apiKeyId != null) {
+            maybeWarnPreviewBaseUrlMismatch(
+              'Claude Code',
+              credential.baseUrl,
+              normalizedSiteUrl,
+              mismatchWarnings
+            );
             const resolved = await window.electronAPI.token?.resolveApiKeyValue?.(
               siteUrl,
               cc.apiKeyId,
@@ -325,6 +374,9 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
               apiKey = null;
             } else {
               apiKey = resolved.data;
+              // Site-page testing should probe the current managed site URL even if a stale
+              // preview file still contains an older base URL snapshot.
+              baseUrl = normalizedSiteUrl;
             }
           }
 
@@ -352,9 +404,15 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
             siteUrl
           );
           let apiKey = credential.apiKey;
-          const baseUrl = credential.baseUrl;
+          let baseUrl = credential.baseUrl;
 
-          if (credential.source === 'selectedApiKey' && cx.apiKeyId != null) {
+          if (cx.apiKeyId != null) {
+            maybeWarnPreviewBaseUrlMismatch(
+              'Codex',
+              credential.baseUrl,
+              normalizedSiteUrl,
+              mismatchWarnings
+            );
             const resolved = await window.electronAPI.token?.resolveApiKeyValue?.(
               siteUrl,
               cx.apiKeyId,
@@ -365,6 +423,7 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
               apiKey = null;
             } else {
               apiKey = resolved.data;
+              baseUrl = normalizedSiteUrl;
             }
           }
 
@@ -392,9 +451,15 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
             siteUrl
           );
           let apiKey = credential.apiKey;
-          const baseUrl = credential.baseUrl;
+          let baseUrl = credential.baseUrl;
 
-          if (credential.source === 'selectedApiKey' && gc.apiKeyId != null) {
+          if (gc.apiKeyId != null) {
+            maybeWarnPreviewBaseUrlMismatch(
+              'Gemini CLI',
+              credential.baseUrl,
+              normalizedSiteUrl,
+              mismatchWarnings
+            );
             const resolved = await window.electronAPI.token?.resolveApiKeyValue?.(
               siteUrl,
               gc.apiKeyId,
@@ -405,6 +470,7 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
               apiKey = null;
             } else {
               apiKey = resolved.data;
+              baseUrl = normalizedSiteUrl;
             }
           }
 
@@ -455,14 +521,20 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
 
         // 保存结果到缓存
         try {
-          await (window.electronAPI as any).cliCompat.saveResult(
-            siteUrl,
-            result,
+          const persistResult = await persistCliCompatibilityResult(siteUrl, result, {
             accountId,
-            response.samples
-          );
-        } catch {
-          // 忽略保存错误
+            samples: response.samples,
+          });
+
+          if (!persistResult.success) {
+            sessionEventLog.error(
+              'cli-test',
+              `${siteLabel} CLI 测试结果保存失败：${persistResult.error ?? '未知错误'}`
+            );
+          }
+        } catch (persistError) {
+          const message = persistError instanceof Error ? persistError.message : '未知错误';
+          sessionEventLog.error('cli-test', `${siteLabel} CLI 测试结果保存失败：${message}`);
         }
 
         toast.info(`${siteLabel} CLI 兼容性测试完成`);
@@ -532,6 +604,10 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
           } else {
             toast.info(`Gemini CLI: [native: ${nativeStatus}, proxy: ${proxyStatus}]`, 6000);
           }
+        }
+
+        if (response.data.geminiCli === false && response.data.geminiError) {
+          toast.error(`Gemini CLI 失败原因: ${response.data.geminiError}`, 8000);
         }
       } catch (error: any) {
         toast.error(`${siteLabel} CLI 兼容性测试失败: ${error.message}`);

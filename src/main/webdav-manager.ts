@@ -20,6 +20,11 @@ import * as os from 'os';
 import Logger from './utils/logger';
 import { backupManager } from './backup-manager';
 import { unifiedConfigManager } from './unified-config-manager';
+import {
+  createAppStorageBundleContent,
+  extractStableConfigFromBackupContent,
+  restoreAppStorageBackupContent,
+} from './app-storage-bundle';
 import type { WebDAVConfig, WebDAVBackupInfo, WebDAVResult } from '../shared/types/site';
 import { DEFAULT_WEBDAV_CONFIG } from '../shared/types/site';
 
@@ -165,7 +170,7 @@ export class WebDAVManager {
   /**
    * 上传备份到 WebDAV 服务器
    */
-  async uploadBackup(config: WebDAVConfig, localPath: string): Promise<WebDAVResult<string>> {
+  async uploadBackup(config: WebDAVConfig, _localPath?: string): Promise<WebDAVResult<string>> {
     // 验证 URL 格式
     const urlValidation = validateWebDAVUrl(config.serverUrl);
     if (!urlValidation.valid) {
@@ -173,14 +178,13 @@ export class WebDAVManager {
     }
 
     try {
-      // 读取本地配置文件
-      const content = await fs.readFile(localPath, 'utf-8');
+      const content = await createAppStorageBundleContent();
 
-      // 验证 JSON 格式
+      // 验证 JSON 格式和 stable config 内容
       try {
-        JSON.parse(content);
+        extractStableConfigFromBackupContent(content);
       } catch {
-        return { success: false, error: '配置文件不是有效的 JSON 格式' };
+        return { success: false, error: '配置包不是有效的 JSON 格式' };
       }
 
       const client = await this.createWebDAVClient(config);
@@ -194,7 +198,7 @@ export class WebDAVManager {
 
       // 上传文件
       await client.putFileContents(remotePath, content, { overwrite: true });
-      Logger.info(`✅ [WebDAVManager] 备份上传成功: ${filename}`);
+      Logger.info(`✅ [WebDAVManager] 配置包上传成功: ${filename}`);
 
       // 清理旧备份
       await this.cleanupOldBackups(config);
@@ -277,9 +281,9 @@ export class WebDAVManager {
       // 下载文件内容
       const content = (await client.getFileContents(remotePath, { format: 'text' })) as string;
 
-      // 验证 JSON 格式
+      // 验证 JSON 格式，兼容 legacy config-only 和 manifest 配置包
       try {
-        JSON.parse(content);
+        extractStableConfigFromBackupContent(content);
       } catch {
         return { success: false, error: '下载的备份文件不是有效的 JSON 格式' };
       }
@@ -378,7 +382,7 @@ export class WebDAVManager {
     try {
       // 1. 创建本地备份（恢复前）
       Logger.info('💾 [WebDAVManager] 恢复前创建本地备份...');
-      await backupManager.backupFile(configPath);
+      await backupManager.backupFile(configPath, { force: true, reason: 'before-webdav-restore' });
 
       // 2. 下载远程备份到临时文件
       const downloadResult = await this.downloadBackup(config, filename, tempPath);
@@ -389,15 +393,15 @@ export class WebDAVManager {
       // 3. 读取并验证下载的内容
       const content = await fs.readFile(tempPath, 'utf-8');
       try {
-        JSON.parse(content);
+        extractStableConfigFromBackupContent(content);
       } catch {
         // 清理临时文件
         await fs.unlink(tempPath).catch(() => {});
         return { success: false, error: '备份文件格式无效' };
       }
 
-      // 4. 原子性替换配置文件
-      await fs.copyFile(tempPath, configPath);
+      // 4. 恢复 manifest 配置包或 legacy config-only 备份
+      await restoreAppStorageBackupContent(content, configPath);
 
       // 5. 清理临时文件
       await fs.unlink(tempPath).catch(() => {});

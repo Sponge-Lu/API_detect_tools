@@ -7,19 +7,230 @@
 
 import Logger from './utils/logger';
 import { unifiedConfigManager } from './unified-config-manager';
+import { notifyAppDataChanged } from './app-data-events';
 import type {
   RouteCliType,
   RouteOutcome,
   RouteAnalyticsBucket,
   RouteAnalyticsConfig,
+  RouteAnalyticsObjectStatsItem,
+  RouteAnalyticsObjectStatsQuery,
+  RouteModelSourceRef,
+  RouteRequestLogItem,
+  RouteRequestLogQuery,
 } from '../shared/types/route-proxy';
 import { buildBucketKey } from '../shared/types/route-proxy';
+import type { ApiKeyInfo } from '../shared/types/site';
+import { resolveApiKeyId } from './route-model-registry-service';
 
 const log = Logger.scope('RouteAnalytics');
+const MAX_ROUTE_REQUEST_LOGS = 1000;
+const ROUTE_OVERVIEW_DEBOUNCE_MS = 1200;
 
 /** 内存缓冲区，延迟写磁盘 */
 const pendingBuckets = new Map<string, RouteAnalyticsBucket>();
+const routeRequestLogs: RouteRequestLogItem[] = [];
 let flushTimer: NodeJS.Timeout | null = null;
+let routeRequestLogSequence = 0;
+
+function buildRouteRequestLogId(at: number): string {
+  routeRequestLogSequence += 1;
+  return `route-log-${at}-${routeRequestLogSequence}`;
+}
+
+function getApiKeyDisplayName(apiKey: Pick<ApiKeyInfo, 'name' | 'token_id' | 'id'>): string {
+  const trimmedName = apiKey.name?.trim();
+  if (trimmedName) {
+    return trimmedName;
+  }
+
+  return '未命名 Key';
+}
+
+function normalizeCustomCliObjectName(source: RouteModelSourceRef): string {
+  const trimmed = source.siteName?.trim();
+  if (!trimmed) {
+    return source.siteId || '自定义配置';
+  }
+
+  return trimmed.replace(/^自定义\s*CLI\s*\/\s*/, '').trim() || trimmed;
+}
+
+function resolveRouteRegistryIdentity(params: {
+  siteId?: string;
+  accountId?: string;
+  apiKeyId?: string;
+}): {
+  siteName?: string;
+  accountName?: string;
+  userGroupKey?: string;
+  apiKeyName?: string;
+  sourceType?: RouteModelSourceRef['sourceType'];
+} | null {
+  const routingConfig = unifiedConfigManager.getRoutingConfig();
+  const sources = routingConfig?.modelRegistry?.sources || [];
+
+  for (const source of sources) {
+    if (params.siteId && source.siteId !== params.siteId) {
+      continue;
+    }
+
+    const matchedApiKey = source.availableApiKeys?.find(apiKey => {
+      if (params.accountId && apiKey.accountId !== params.accountId) {
+        return false;
+      }
+      return !params.apiKeyId || apiKey.apiKeyId === params.apiKeyId;
+    });
+
+    if (params.apiKeyId && !matchedApiKey) {
+      continue;
+    }
+
+    if (params.accountId && source.accountId && source.accountId !== params.accountId) {
+      continue;
+    }
+
+    if (source.sourceType === 'customCli') {
+      return {
+        siteName: normalizeCustomCliObjectName(source),
+        accountName: '默认',
+        userGroupKey: matchedApiKey?.group,
+        apiKeyName: '默认',
+        sourceType: source.sourceType,
+      };
+    }
+
+    return {
+      siteName: source.siteName,
+      accountName: matchedApiKey?.accountName || source.accountName,
+      userGroupKey: matchedApiKey?.group,
+      apiKeyName: matchedApiKey?.apiKeyName,
+      sourceType: source.sourceType,
+    };
+  }
+
+  return null;
+}
+
+function resolveRouteObjectIdentity(params: {
+  siteId?: string;
+  accountId?: string;
+  apiKeyId?: string;
+}): {
+  siteName?: string;
+  accountName?: string;
+  userGroupKey?: string;
+  apiKeyName?: string;
+  sourceType?: RouteModelSourceRef['sourceType'];
+} {
+  const unifiedConfig = unifiedConfigManager.exportConfigSync();
+  const site = params.siteId
+    ? unifiedConfig?.sites.find(item => item.id === params.siteId)
+    : undefined;
+  const account = params.accountId
+    ? unifiedConfig?.accounts.find(item => item.id === params.accountId)
+    : undefined;
+  const registryIdentity = resolveRouteRegistryIdentity(params);
+  const apiKeyInfo =
+    params.apiKeyId && account
+      ? (account.cached_data?.api_keys || []).find(
+          apiKey => resolveApiKeyId(apiKey) === params.apiKeyId
+        )
+      : undefined;
+
+  return {
+    siteName: site?.name || registryIdentity?.siteName,
+    accountName: account?.account_name || registryIdentity?.accountName,
+    userGroupKey: apiKeyInfo?.group?.trim() || registryIdentity?.userGroupKey || undefined,
+    apiKeyName: apiKeyInfo
+      ? getApiKeyDisplayName(apiKeyInfo)
+      : params.apiKeyId &&
+          site?.api_key &&
+          resolveApiKeyId({ key: site.api_key }) === params.apiKeyId
+        ? '站点默认 Key'
+        : registryIdentity?.apiKeyName,
+    sourceType: registryIdentity?.sourceType,
+  };
+}
+
+function buildRouteObjectStatsGroupKey(item: {
+  rawId: string;
+  sourceType?: RouteModelSourceRef['sourceType'];
+  siteName: string;
+  accountName: string;
+  apiKeyName: string;
+}): string {
+  if (item.sourceType !== 'customCli') {
+    return item.rawId;
+  }
+
+  return [item.siteName, item.accountName, item.apiKeyName].join('\u0000');
+}
+
+function appendRouteRequestLog(params: {
+  requestId: string;
+  attempt: number;
+  cliType: RouteCliType;
+  requestedModel?: string | null;
+  canonicalModel?: string | null;
+  routeRuleId?: string;
+  siteId?: string;
+  accountId?: string;
+  apiKeyId?: string;
+  resolvedModel?: string;
+  outcome: RouteOutcome;
+  statusCode?: number;
+  latencyMs?: number;
+  firstByteLatencyMs?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  error?: string;
+  at: number;
+}): void {
+  const routingConfig = unifiedConfigManager.getRoutingConfig();
+  const routeRule = params.routeRuleId
+    ? routingConfig.rules.find(item => item.id === params.routeRuleId)
+    : undefined;
+  const identity = resolveRouteObjectIdentity({
+    siteId: params.siteId,
+    accountId: params.accountId,
+    apiKeyId: params.apiKeyId,
+  });
+
+  const item: RouteRequestLogItem = {
+    id: buildRouteRequestLogId(params.at),
+    requestId: params.requestId,
+    attempt: params.attempt,
+    cliType: params.cliType,
+    requestedModel: params.requestedModel,
+    canonicalModel: params.canonicalModel,
+    routeRuleId: params.routeRuleId,
+    routeRuleName: routeRule?.name?.trim() || undefined,
+    siteId: params.siteId,
+    siteName: identity.siteName,
+    accountId: params.accountId,
+    accountName: identity.accountName,
+    userGroupKey: identity.userGroupKey,
+    apiKeyId: params.apiKeyId,
+    apiKeyName: identity.apiKeyName,
+    resolvedModel: params.resolvedModel,
+    outcome: params.outcome,
+    statusCode: params.statusCode,
+    latencyMs: params.latencyMs,
+    firstByteLatencyMs: params.firstByteLatencyMs,
+    promptTokens: params.promptTokens,
+    completionTokens: params.completionTokens,
+    totalTokens: params.totalTokens,
+    error: params.error,
+    createdAt: params.at,
+  };
+
+  routeRequestLogs.unshift(item);
+  if (routeRequestLogs.length > MAX_ROUTE_REQUEST_LOGS) {
+    routeRequestLogs.length = MAX_ROUTE_REQUEST_LOGS;
+  }
+}
 
 function scheduleFlush() {
   if (flushTimer) return;
@@ -36,6 +247,7 @@ async function flushPendingBuckets(): Promise<void> {
   pendingBuckets.clear();
   try {
     await unifiedConfigManager.upsertRouteAnalyticsBuckets(Array.from(toFlush.values()));
+    notifyAppDataChanged('route-overview', 120);
   } catch (err) {
     // 失败时将数据合并回 pending（增量不丢失）
     for (const [key, bucket] of toFlush) {
@@ -73,11 +285,16 @@ export async function saveAnalyticsConfig(
 
 /** 记录一次代理请求 */
 export function recordRouteRequest(params: {
-  routeRuleId: string;
+  requestId: string;
+  attempt: number;
   cliType: RouteCliType;
+  requestedModel?: string | null;
   canonicalModel: string | null;
-  siteId: string;
-  accountId: string;
+  routeRuleId?: string;
+  siteId?: string;
+  accountId?: string;
+  apiKeyId?: string;
+  resolvedModel?: string;
   outcome: RouteOutcome;
   statusCode?: number;
   latencyMs?: number;
@@ -85,19 +302,45 @@ export function recordRouteRequest(params: {
   promptTokens?: number;
   completionTokens?: number;
   totalTokens?: number;
+  error?: string;
   at?: number;
 }): void {
+  const at = params.at ?? Date.now();
+  appendRouteRequestLog({
+    requestId: params.requestId,
+    attempt: params.attempt,
+    cliType: params.cliType,
+    requestedModel: params.requestedModel,
+    canonicalModel: params.canonicalModel,
+    routeRuleId: params.routeRuleId,
+    siteId: params.siteId,
+    accountId: params.accountId,
+    apiKeyId: params.apiKeyId,
+    resolvedModel: params.resolvedModel,
+    outcome: params.outcome,
+    statusCode: params.statusCode,
+    latencyMs: params.latencyMs,
+    firstByteLatencyMs: params.firstByteLatencyMs,
+    promptTokens: params.promptTokens,
+    completionTokens: params.completionTokens,
+    totalTokens: params.totalTokens,
+    error: params.error,
+    at,
+  });
+  notifyAppDataChanged('route-overview', ROUTE_OVERVIEW_DEBOUNCE_MS);
+
   const config = getAnalyticsConfig();
   if (!config.enabled) return;
+  if (!params.routeRuleId || !params.siteId || !params.accountId) return;
 
-  const at = params.at ?? Date.now();
   const bucketStart = getBucketStart(at, config.bucketSizeMinutes);
   const bucketKey = buildBucketKey(
     bucketStart,
     params.cliType,
     params.canonicalModel || undefined,
     params.siteId,
-    params.accountId
+    params.accountId,
+    params.apiKeyId
   );
 
   let bucket = pendingBuckets.get(bucketKey);
@@ -116,6 +359,7 @@ export function recordRouteRequest(params: {
           canonicalModel: params.canonicalModel || undefined,
           siteId: params.siteId,
           accountId: params.accountId,
+          apiKeyId: params.apiKeyId,
           requestCount: 0,
           successCount: 0,
           failureCount: 0,
@@ -171,7 +415,17 @@ export function getAnalyticsBuckets(params: {
 }): RouteAnalyticsBucket[] {
   const routing = unifiedConfigManager.getRoutingConfig();
   const cutoff = Date.now() - windowToMs(params.window);
-  return Object.values(routing.analytics.buckets).filter(b => {
+  const mergedBuckets = new Map<string, RouteAnalyticsBucket>();
+
+  for (const bucket of Object.values(routing.analytics.buckets)) {
+    mergedBuckets.set(bucket.bucketKey, bucket);
+  }
+
+  for (const [bucketKey, bucket] of pendingBuckets.entries()) {
+    mergedBuckets.set(bucketKey, bucket);
+  }
+
+  return [...mergedBuckets.values()].filter(b => {
     if (b.bucketStart < cutoff) return false;
     if (params.cliType && b.cliType !== params.cliType) return false;
     if (params.routeRuleId && b.routeRuleId !== params.routeRuleId) return false;
@@ -256,12 +510,160 @@ export function getAnalyticsDistribution(params: {
   };
 }
 
+export function getRouteObjectStats(
+  params: RouteAnalyticsObjectStatsQuery
+): RouteAnalyticsObjectStatsItem[] {
+  const buckets = getAnalyticsBuckets({ window: params.window });
+  const grouped = new Map<string, RouteAnalyticsObjectStatsItem>();
+
+  for (const bucket of buckets) {
+    const id = `${bucket.siteId || '*'}:${bucket.accountId || '*'}:${bucket.apiKeyId || '*'}`;
+    const identity = resolveRouteObjectIdentity({
+      siteId: bucket.siteId,
+      accountId: bucket.accountId,
+      apiKeyId: bucket.apiKeyId,
+    });
+    const siteName = identity.siteName || bucket.siteId || '未知站点';
+    const accountName = identity.accountName || bucket.accountId || '未知账户';
+    const apiKeyName = identity.apiKeyName || '未标记 Key';
+    const groupKey = buildRouteObjectStatsGroupKey({
+      rawId: id,
+      sourceType: identity.sourceType,
+      siteName,
+      accountName,
+      apiKeyName,
+    });
+    const current =
+      grouped.get(groupKey) ||
+      ({
+        id,
+        siteId: bucket.siteId,
+        siteName,
+        accountId: bucket.accountId,
+        accountName,
+        apiKeyId: bucket.apiKeyId,
+        apiKeyName,
+        requestCount: 0,
+        successCount: 0,
+        failureCount: 0,
+        neutralCount: 0,
+        successRate: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+      } satisfies RouteAnalyticsObjectStatsItem);
+
+    current.requestCount += bucket.requestCount;
+    current.successCount += bucket.successCount;
+    current.failureCount += bucket.failureCount;
+    current.neutralCount += bucket.neutralCount;
+    current.promptTokens += bucket.promptTokens || 0;
+    current.completionTokens += bucket.completionTokens || 0;
+    current.totalTokens += bucket.totalTokens || 0;
+    current.lastUsedAt = Math.max(current.lastUsedAt || 0, bucket.updatedAt);
+    grouped.set(groupKey, current);
+  }
+
+  for (const item of grouped.values()) {
+    const denominator = item.successCount + item.failureCount;
+    item.successRate =
+      denominator > 0 ? Math.round((item.successCount / denominator) * 10000) / 100 : 0;
+  }
+
+  const cutoff = Date.now() - windowToMs(params.window);
+  for (const logItem of routeRequestLogs) {
+    if (logItem.createdAt < cutoff || logItem.outcome !== 'failure') continue;
+
+    const identity = resolveRouteObjectIdentity({
+      siteId: logItem.siteId,
+      accountId: logItem.accountId,
+      apiKeyId: logItem.apiKeyId,
+    });
+    const siteName = identity.siteName || logItem.siteId || logItem.siteName || '未知站点';
+    const accountName =
+      identity.accountName || logItem.accountId || logItem.accountName || '未知账户';
+    const apiKeyName =
+      identity.apiKeyName || logItem.apiKeyId || logItem.apiKeyName || '未标记 Key';
+    const rawId = `${logItem.siteId || '*'}:${logItem.accountId || '*'}:${logItem.apiKeyId || '*'}`;
+    const current = grouped.get(
+      buildRouteObjectStatsGroupKey({
+        rawId,
+        sourceType: identity.sourceType,
+        siteName,
+        accountName,
+        apiKeyName,
+      })
+    );
+    if (!current) continue;
+
+    current.lastFailureAt = Math.max(current.lastFailureAt || 0, logItem.createdAt);
+  }
+
+  const sortBy = params.sortBy || 'requests';
+  const sorted = Array.from(grouped.values()).sort((left, right) => {
+    if (sortBy === 'tokens') {
+      return (
+        right.totalTokens - left.totalTokens ||
+        right.requestCount - left.requestCount ||
+        left.successRate - right.successRate
+      );
+    }
+
+    if (sortBy === 'failureRisk') {
+      return (
+        right.failureCount - left.failureCount ||
+        left.successRate - right.successRate ||
+        right.requestCount - left.requestCount
+      );
+    }
+
+    if (sortBy === 'successRate') {
+      return (
+        right.successRate - left.successRate ||
+        right.requestCount - left.requestCount ||
+        right.totalTokens - left.totalTokens
+      );
+    }
+
+    return (
+      right.requestCount - left.requestCount ||
+      right.failureCount - left.failureCount ||
+      left.successRate - right.successRate
+    );
+  });
+
+  const limit = Math.max(1, Math.min(params.limit || 20, 100));
+  return sorted.slice(0, limit);
+}
+
 export async function resetAnalytics(params?: {
   cliType?: RouteCliType;
   routeRuleId?: string;
 }): Promise<void> {
   pendingBuckets.clear();
   await unifiedConfigManager.resetRouteAnalytics(params);
+  notifyAppDataChanged('route-overview', 120);
+}
+
+export function getRouteRequestLogs(params?: RouteRequestLogQuery): RouteRequestLogItem[] {
+  const filtered = routeRequestLogs.filter(item => {
+    if (params?.cliType && item.cliType !== params.cliType) return false;
+    if (params?.outcome && item.outcome !== params.outcome) return false;
+    if (params?.routeRuleId && item.routeRuleId !== params.routeRuleId) return false;
+    if (params?.siteId && item.siteId !== params.siteId) return false;
+    return true;
+  });
+
+  if (!params?.limit || params.limit <= 0) {
+    return filtered.map(item => ({ ...item }));
+  }
+
+  return filtered.slice(0, params.limit).map(item => ({ ...item }));
+}
+
+export function clearRouteRequestLogs(): void {
+  routeRequestLogs.length = 0;
+  notifyAppDataChanged('route-overview', 120);
 }
 
 export async function pruneAnalyticsBuckets(now?: number): Promise<number> {

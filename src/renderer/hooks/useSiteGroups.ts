@@ -151,7 +151,7 @@ export function useSiteGroups({
     );
 
     if (activeSiteGroupFilter === groupId) {
-      setActiveSiteGroupFilter(null);
+      setActiveSiteGroupFilter(defaultGroupId);
     }
 
     await saveConfig({
@@ -162,7 +162,9 @@ export function useSiteGroups({
   };
 
   const toggleSiteGroupFilter = (groupId: string) => {
-    setActiveSiteGroupFilter(activeSiteGroupFilter === groupId ? null : groupId);
+    if (activeSiteGroupFilter !== groupId) {
+      setActiveSiteGroupFilter(groupId);
+    }
   };
 
   return {

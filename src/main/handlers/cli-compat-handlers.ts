@@ -549,9 +549,13 @@ async function runCliCompatibilityTests(
             config.apiKey,
             config.model
           );
-          log.info(
-            `CLI test ${config.cliType} (${config.model}, ${testUrl}): ${claudeResult.supported ? 'passed' : 'failed'}`
-          );
+          if (claudeResult.supported) {
+            log.info(`CLI test ${config.cliType} (${config.model}, ${testUrl}): passed`);
+          } else {
+            log.warn(
+              `CLI test ${config.cliType} (${config.model}, ${testUrl}): failed${claudeResult.message ? ` - ${claudeResult.message}` : ''}`
+            );
+          }
           return {
             cliType: config.cliType,
             model: config.model,
@@ -568,9 +572,13 @@ async function runCliCompatibilityTests(
             config.apiKey,
             config.model
           );
-          log.info(
-            `CLI test ${config.cliType} (${config.model}, ${testUrl}): ${codexResult.supported ? 'passed' : 'failed'}`
-          );
+          if (codexResult.supported) {
+            log.info(`CLI test ${config.cliType} (${config.model}, ${testUrl}): passed`);
+          } else {
+            log.warn(
+              `CLI test ${config.cliType} (${config.model}, ${testUrl}): failed${codexResult.message ? ` - ${codexResult.message}` : ''}`
+            );
+          }
           return {
             cliType: config.cliType,
             model: config.model,
@@ -587,9 +595,13 @@ async function runCliCompatibilityTests(
             config.apiKey,
             config.model
           );
-          log.info(
-            `CLI test ${config.cliType} (${config.model}, ${testUrl}): ${geminiResult.supported ? 'passed' : 'failed'}`
-          );
+          if (geminiResult.supported) {
+            log.info(`CLI test ${config.cliType} (${config.model}, ${testUrl}): passed`);
+          } else {
+            log.warn(
+              `CLI test ${config.cliType} (${config.model}, ${testUrl}): failed${geminiResult.message ? ` - ${geminiResult.message}` : ''}`
+            );
+          }
           return {
             cliType: config.cliType,
             model: config.model,

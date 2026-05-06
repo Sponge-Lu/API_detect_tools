@@ -24,6 +24,7 @@ interface BackupInfo {
   path: string;
   timestamp: Date;
   size: number;
+  kind?: 'legacy-config' | 'storage-bundle';
 }
 
 interface BackupSelectDialogProps {
@@ -62,7 +63,7 @@ export function BackupSelectDialog({
     <AppModal
       isOpen={isOpen}
       onClose={onClose}
-      title="选择备份文件恢复"
+      title="选择备份恢复"
       titleIcon={<FolderOpen className="w-5 h-5" />}
       size="lg"
       footer={
@@ -115,7 +116,7 @@ export function BackupSelectDialog({
             ))}
           </div>
           <p className="mt-4 border-t border-[var(--line-soft)] pt-4 text-center text-xs text-[var(--text-tertiary)]">
-            选择一个备份文件来恢复站点配置。恢复前会自动备份当前配置。
+            配置包会恢复配置与默认运行态；旧版配置备份只恢复 config.json，并清空旧运行态缓存。
           </p>
         </>
       )}

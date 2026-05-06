@@ -26,8 +26,7 @@ export function registerWebDAVHandlers() {
       return { success: false, error: 'WebDAV 未配置或未启用' };
     }
 
-    const configPath = unifiedConfigManager.getConfigPath();
-    return webdavManager.uploadBackup(webdavConfig, configPath);
+    return webdavManager.uploadBackup(webdavConfig);
   });
 
   // 列出 WebDAV 备份

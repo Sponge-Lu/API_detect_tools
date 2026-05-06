@@ -1,7 +1,7 @@
 /**
  * 垂直侧边栏导航
  * 输入: activeTab, onTabChange, saving, updateInfo
- * 输出: 左侧竖向 tab 导航（一级页面导航）
+ * 输出: 左侧竖向 tab 导航（一级页面与子页导航）
  * 定位: 展示层 - 主导航组件
  */
 
@@ -16,13 +16,25 @@ import {
 } from 'lucide-react';
 import { CliConfigStatusPanel } from '../CliConfigStatus';
 import type { UpdateCheckResult } from '../../hooks/useUpdate';
+import { useRouteStore } from '../../store/routeStore';
 import { useUIStore } from '../../store/uiStore';
-import type { SidebarDisplayMode, TabId } from '../../store/uiStore';
-import { APP_PAGE_META, APP_PAGE_ORDER } from '../AppShell/pageMeta';
+import type { LogsSubtab, OverviewSubtab, SidebarDisplayMode, TabId } from '../../store/uiStore';
+import {
+  APP_LOGS_SUBPAGE_META,
+  APP_LOGS_SUBPAGE_ORDER,
+  APP_OVERVIEW_SUBPAGE_META,
+  APP_OVERVIEW_SUBPAGE_ORDER,
+  APP_PAGE_META,
+  APP_PAGE_ORDER,
+} from '../AppShell/pageMeta';
 
 interface VerticalSidebarProps {
   activeTab: TabId;
+  overviewSubtab?: OverviewSubtab;
+  logsSubtab?: LogsSubtab;
   onTabChange: (tab: TabId) => void;
+  onOverviewSubtabChange?: (subtab: OverviewSubtab) => void;
+  onLogsSubtabChange?: (subtab: LogsSubtab) => void;
   saving: boolean;
   currentVersion?: string;
   updateInfo?: UpdateCheckResult | null;
@@ -31,7 +43,11 @@ interface VerticalSidebarProps {
 
 export function VerticalSidebar({
   activeTab,
+  overviewSubtab = 'site',
+  logsSubtab = 'session',
   onTabChange,
+  onOverviewSubtabChange = () => undefined,
+  onLogsSubtabChange = () => undefined,
   saving,
   currentVersion,
   updateInfo,
@@ -48,6 +64,9 @@ export function VerticalSidebar({
   const visibleSidebarItems = APP_PAGE_ORDER.map(id => APP_PAGE_META[id]);
   const showDownloadButton = updateInfo?.hasUpdate && updateInfo?.releaseInfo?.downloadUrl;
   const newVersion = updateInfo?.releaseInfo?.version || updateInfo?.latestVersion;
+  const routeState = useRouteStore() as { serverRunning?: boolean };
+  const serverRunning = routeState.serverRunning === true;
+  const routeServerStatusTitle = serverRunning ? '代理服务器运行中' : '代理服务器已停止';
   const isIconOnly = sidebarDisplayMode === 'icon-only';
   const sidebarWidthClass = isIconOnly ? 'w-[68px]' : 'w-[140px]';
   const versionLabel = currentVersion ? `版本 v${currentVersion}` : '版本信息';
@@ -95,33 +114,151 @@ export function VerticalSidebar({
       >
         {visibleSidebarItems.map(item => {
           const isActive = activeTab === item.id;
+          const isRouteItem = item.id === 'route';
+          const isOverviewItem = item.id === 'overview';
+          const isLogsItem = item.id === 'logs';
+          const itemTitle =
+            isRouteItem && isIconOnly
+              ? `${item.navLabel}（${routeServerStatusTitle}）`
+              : item.navLabel;
 
           return (
-            <button
-              key={item.id}
-              type="button"
-              aria-label={item.navLabel}
-              title={item.navLabel}
-              onClick={() => onTabChange(item.id)}
-              className={`flex w-full items-center rounded-lg py-2 text-[13px] font-medium transition-colors ${
-                isActive
-                  ? 'bg-[var(--accent-soft)] font-semibold text-[var(--accent)]'
-                  : 'text-[var(--text-secondary)] hover:bg-[var(--surface-1)] hover:text-[var(--text-primary)]'
-              } ${isIconOnly ? 'justify-center px-2' : 'px-3'}`}
-            >
-              <item.icon className="w-4 h-4 shrink-0" strokeWidth={isActive ? 2 : 1.5} />
-              <span
-                aria-hidden={isIconOnly}
-                className={`overflow-hidden whitespace-nowrap text-left transition-[max-width,opacity,margin] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] ${
-                  isIconOnly ? 'ml-0 max-w-0 opacity-0' : 'ml-2 max-w-[84px] opacity-100 delay-75'
-                }`}
+            <div key={item.id} className="space-y-1">
+              <button
+                type="button"
+                aria-label={item.navLabel}
+                title={itemTitle}
+                onClick={() => onTabChange(item.id)}
+                className={`flex w-full items-center rounded-lg py-2 text-[13px] font-medium transition-colors ${
+                  isActive
+                    ? 'bg-[var(--accent-soft)] font-semibold text-[var(--accent)]'
+                    : 'text-[var(--text-secondary)] hover:bg-[var(--surface-1)] hover:text-[var(--text-primary)]'
+                } ${isIconOnly ? 'justify-center px-2' : 'px-3'}`}
               >
-                {item.navLabel}
-              </span>
-            </button>
+                {isRouteItem && isIconOnly ? (
+                  <span
+                    data-testid={
+                      serverRunning
+                        ? 'sidebar-route-icon-status-running'
+                        : 'sidebar-route-icon-status-stopped'
+                    }
+                    className={`relative flex h-7 w-7 items-center justify-center rounded-full border bg-[var(--surface-3)] shadow-sm ${
+                      serverRunning
+                        ? 'border-[var(--success)] text-[var(--success)]'
+                        : 'border-[var(--danger)] text-[var(--danger)]'
+                    }`}
+                  >
+                    <item.icon className="h-4 w-4 shrink-0" strokeWidth={isActive ? 2.2 : 1.9} />
+                    <span
+                      aria-hidden="true"
+                      data-testid={
+                        serverRunning
+                          ? 'sidebar-route-icon-badge-running'
+                          : 'sidebar-route-icon-badge-stopped'
+                      }
+                      className={`absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-[var(--surface-2)] ${
+                        serverRunning ? 'bg-[var(--success)]' : 'bg-[var(--danger)]'
+                      }`}
+                    />
+                  </span>
+                ) : (
+                  <item.icon className="w-4 h-4 shrink-0" strokeWidth={isActive ? 2 : 1.5} />
+                )}
+                <span
+                  aria-hidden={isIconOnly}
+                  className={`overflow-hidden whitespace-nowrap text-left transition-[max-width,opacity,margin] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] ${
+                    isIconOnly ? 'ml-0 max-w-0 opacity-0' : 'ml-2 max-w-[84px] opacity-100 delay-75'
+                  }`}
+                >
+                  {item.navLabel}
+                </span>
+              </button>
+
+              {isOverviewItem && !isIconOnly ? (
+                <div className="ml-5 border-l border-[var(--line-soft)] pl-2">
+                  {APP_OVERVIEW_SUBPAGE_ORDER.map(subpageId => {
+                    const subpage = APP_OVERVIEW_SUBPAGE_META[subpageId];
+                    const isActiveSubpage =
+                      activeTab === 'overview' && overviewSubtab === subpageId;
+
+                    return (
+                      <button
+                        key={subpage.id}
+                        type="button"
+                        aria-label={subpage.navLabel}
+                        title={subpage.navLabel}
+                        onClick={() => {
+                          onOverviewSubtabChange(subpage.id);
+                          onTabChange('overview');
+                        }}
+                        className={`mt-1 flex w-full items-center rounded-lg px-3 py-1.5 text-left text-[12px] transition-colors ${
+                          isActiveSubpage
+                            ? 'bg-[var(--surface-1)] font-semibold text-[var(--accent)]'
+                            : 'text-[var(--text-secondary)] hover:bg-[var(--surface-1)] hover:text-[var(--text-primary)]'
+                        }`}
+                      >
+                        <span className="truncate">{subpage.navLabel}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+
+              {isLogsItem && !isIconOnly ? (
+                <div className="ml-5 border-l border-[var(--line-soft)] pl-2">
+                  {APP_LOGS_SUBPAGE_ORDER.map(subpageId => {
+                    const subpage = APP_LOGS_SUBPAGE_META[subpageId];
+                    const isActiveSubpage = activeTab === 'logs' && logsSubtab === subpageId;
+
+                    return (
+                      <button
+                        key={subpage.id}
+                        type="button"
+                        aria-label={subpage.navLabel}
+                        title={subpage.navLabel}
+                        onClick={() => {
+                          onLogsSubtabChange(subpage.id);
+                          onTabChange('logs');
+                        }}
+                        className={`mt-1 flex w-full items-center rounded-lg px-3 py-1.5 text-left text-[12px] transition-colors ${
+                          isActiveSubpage
+                            ? 'bg-[var(--surface-1)] font-semibold text-[var(--accent)]'
+                            : 'text-[var(--text-secondary)] hover:bg-[var(--surface-1)] hover:text-[var(--text-primary)]'
+                        }`}
+                      >
+                        <span className="truncate">{subpage.navLabel}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
           );
         })}
       </nav>
+
+      <div
+        data-testid="sidebar-route-server-status"
+        className={`overflow-hidden px-3 transition-[max-height,opacity,margin,padding] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] ${
+          isIconOnly ? 'mb-0 max-h-0 pb-0 opacity-0' : 'mb-0 max-h-10 pb-2 opacity-100 delay-75'
+        }`}
+      >
+        {!isIconOnly ? (
+          <div className="flex items-center gap-1 text-[11px]">
+            <span className="text-[var(--text-secondary)]">代理服务器：</span>
+            <span
+              data-testid={
+                serverRunning ? 'sidebar-route-server-running' : 'sidebar-route-server-stopped'
+              }
+              className={`font-semibold ${
+                serverRunning ? 'text-[var(--success)]' : 'text-[var(--danger)]'
+              }`}
+            >
+              {serverRunning ? '运行中' : '停止'}
+            </span>
+          </div>
+        ) : null}
+      </div>
 
       <div data-testid="sidebar-footer" className="border-t border-[var(--line-soft)] px-2 py-2">
         <div

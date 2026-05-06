@@ -24,27 +24,35 @@
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
 | **main.ts** | 应用入口、窗口管理 | `createWindow()`, `app.whenReady()` |
-| **api-service.ts** | API 请求服务、检测状态持久化、旧站点首次检测时自动写回 `site_type` | `ApiService` 类 |
-| **chrome-manager.ts** | Chrome 浏览器管理、多槽位架构、独立登录浏览器（loginBrowserState）、按 site_type 解析登录态 | `ChromeManager` 类 |
+| **app-data-events.ts** | 主进程到渲染进程的数据变更通知桥，按域批量广播站点配置/站点总览/路由总览变更 | `notifyAppDataChanged()` |
+| **app-storage-manifest.ts** | 应用本地存储清单，声明 stable config、runtime/cache/statistics、备份、日志、敏感设置与受保护浏览器状态的 owner、路径、retention/cap 和备份边界 | `APP_STORAGE_ENTRIES`, `resolveAppStorageManifest()` |
+| **app-storage-bundle.ts** | manifest 配置包创建/恢复，限定 full-manifest 默认纳入文件，兼容 legacy config-only 恢复并避免浏览器状态被触碰 | `createAppStorageBundleContent()`, `restoreAppStorageBackupContent()` |
+| **api-service.ts** | API 请求服务、模型接口响应格式容错、检测状态持久化、同日手动签到完成状态保留、旧站点首次检测时自动写回 `site_type`，并在缓存更新后触发站点每日快照采集 | `ApiService` 类 |
+| **overview-service.ts** | 数据总览聚合服务，维护站点每日快照的采集、查询和按日期汇总 | `captureSiteDailySnapshot()`, `getSiteDailySnapshots()`, `getSiteSnapshotTotals()` |
+| **chrome-manager.ts** | Chrome 浏览器管理、多槽位架构、独立登录浏览器（loginBrowserState）、按 site_type 解析登录态，并支持复用账户 Profile 打开签到页 | `ChromeManager` 类 |
 | **site-type-registry.ts** | 站点类型到初始化/端点/行为的注册表 | `getSiteTypeProfile()`, `resolveSiteType()` |
 | **site-type-detector.ts** | 智能添加初始化前的站点类型自动识别 | `detectSiteType()` |
 | **token-service.ts** | Token 认证服务，初始化阶段按 site_type 选择端点与 access token 策略，并按 site_type 驱动签到/浏览器回退端点 | `TokenService` 类 |
 | **cli-compat-service.ts** | 协议级 CLI 兼容性测试，请求格式与真实 CLI 对齐 | `CliCompatService` 类 |
-| **cli-wrapper-compat-service.ts** | 基于真实 CLI wrapper 的兼容性测试；当前 UI 测试主路径，使用临时 HOME/CODEX_HOME/GEMINI_CLI_HOME 隔离环境 | `CliWrapperCompatService` 类 |
-| **backup-manager.ts** | 本地备份管理 | `backupManager` 实例 |
-| **webdav-manager.ts** | WebDAV 云端备份 | `WebDAVManager` 类 |
+| **cli-wrapper-compat-service.ts** | 基于真实 CLI wrapper 的兼容性测试；当前 UI 测试主路径，使用临时 HOME/CODEX_HOME 隔离环境，Gemini 仅写隔离 `HOME/.gemini` 并禁用自身 sandbox relaunch | `CliWrapperCompatService` 类 |
+| **custom-cli-config-service.ts** | 自定义 CLI 配置持久化与模型拉取服务，并为路由生成自定义 CLI 虚拟站点/账户/API Key 标识 | `loadCustomCliConfigStorage()`, `buildCustomCliRouteSiteId()` |
+| **backup-manager.ts** | 本地备份管理，自动备份保持 config-only 节流去重，手动备份生成 manifest 配置包 | `backupManager` 实例 |
+| **webdav-manager.ts** | WebDAV 云端配置包上传、列表、删除与恢复，兼容旧 config-only 备份 | `WebDAVManager` 类 |
 | **unified-config-manager.ts** | 统一配置管理、损坏恢复、原子写入、legacy 默认账户自愈修复、缺失 `site_type` 旧站点保持未决、兼容保存时清理已删站点的孤儿账户、删除最后一个账户时自动移除站点配置 | `unifiedConfigManager` 实例 |
 | **browser-profile-manager.ts** | 主/隔离浏览器 Profile 管理，多账户共享槽位 | `BrowserProfileManager` 类 |
 | **update-service.ts** | 应用更新服务 | `UpdateService` 类 |
 | **config-detection-service.ts** | CLI 配置检测服务 | `ConfigDetectionService` 类 |
 | **close-behavior-manager.ts** | 窗口关闭行为管理 | `CloseBehaviorManager` 类 |
 | **credit-service.ts** | Linux Do Credit 积分检测、LDC 充值 | `CreditService` 类 |
-| **route-channel-resolver.ts** | 路由通道解析，结合站点/账户/API Key/厂商优先级选择实际通道 | `resolveChannels()`, `resolveChannelCredentials()` |
-| **route-model-registry-service.ts** | 模型注册表聚合、展示项维护与厂商优先级配置 | `rebuildModelRegistry()`, `syncModelRegistrySources()` |
+| **route-channel-resolver.ts** | 路由通道解析，结合站点/账户/API Key/自定义 CLI 配置与厂商优先级选择实际通道 | `resolveChannels()`, `resolveChannelCredentials()` |
+| **route-proxy-service.ts** | 本地路由代理服务器，按规则选择上游通道，使用 Electron net raw 客户端透明转发，并支持可选上游代理 | `startRouteProxyServer()`, `stopRouteProxyServer()` |
+| **route-model-registry-service.ts** | 模型注册表聚合、展示项维护与厂商优先级配置，聚合站点/账户模型和自定义 CLI 配置模型 | `rebuildModelRegistry()`, `resetModelRegistryDefaults()`, `syncModelRegistrySources()` |
 | **route-cli-probe-service.ts** | CLI 定时探测、latest/history 维护与视图聚合 | `runCliProbeNow()`, `getCliProbeView()` |
+| **route-analytics-service.ts** | 路由请求分析、token/延迟/状态码统计与对象级排行 | `recordRouteRequest()`, `getRouteObjectStats()` |
 | **route-stats-service.ts** | 路由调用统计与通道评分排序 | `recordOutcome()`, `sortChannelsByScore()` |
+| **route-state-manager.ts** | 路由运行态文件管理，维护并裁剪 `state/route-runtime.json`、`route-probes.json`、`route-analytics.json` 与模型来源快照，避免高频路由状态写入 `config.json` | `routeStateManager` |
 | **power-manager.ts** | 电源管理，阻止系统休眠 | `powerManager` 实例 |
-| **preload.ts** | Preload 脚本 | IPC 上下文隔离，暴露统一站点 CRUD / 账户 / 检测接口 |
+| **preload.ts** | Preload 脚本 | IPC 上下文隔离，暴露统一站点 CRUD / 账户 / 检测 / overview 接口，并提供总览数据变更订阅 |
 | **api-request-helper.ts** | API 请求辅助函数 | 通用请求逻辑 |
 
 ### 子文件夹
@@ -148,7 +156,7 @@ main.ts: app.whenReady()
 
 ### ChromeManager
 
-**职责**: 多槽位浏览器池管理，自动登录获取 Token，读取 localStorage 数据，并支持按账户 Profile 直接打开站点
+**职责**: 多槽位浏览器池管理，自动登录获取 Token，读取 localStorage 数据，并支持按账户 Profile 直接打开站点/签到
 
 **多槽位架构**:
 - slot 0 = 主浏览器 (`api-detector-chrome`)，所有站点的第 1 个账号共用
@@ -166,6 +174,7 @@ main.ts: app.whenReady()
 - `createPageForSlot(url, slotIndex)` - 为指定隔离槽位创建页面
 - `findExistingPageForUrl(url)` - 查找可复用的同域名页面
 - `openSiteWithProfile(url, options)` - 使用指定 Profile 直接打开站点
+- `openSiteWithProfileForCheckin(url, profileOptions, checkinOptions)` - 复用账户 Profile 打开站点，识别到登录后等待再自动关闭
 
 **并发安全**:
 - `cleanupOldPages` 在 `browserRefCount > 1` 时跳过清理，避免关闭其他并发检测任务正在使用的页面
@@ -230,7 +239,10 @@ main.ts: app.whenReady()
 **隔离策略**:
 - Claude Code: 临时 `HOME` + `~/.claude/settings.json`
 - Codex: 临时 `CODEX_HOME/config.toml` + 自定义 provider + `supports_websockets = false`
-- Gemini CLI: 临时 `GEMINI_CLI_HOME` + 空工作目录 + 环境变量注入
+- Gemini CLI: 临时 `HOME/.gemini/settings.json` + 空工作目录 + 环境变量注入（不再额外设置 `GEMINI_CLI_HOME`，避免路径被拼成 `.gemini/.gemini`）；同时设置 `GEMINI_SANDBOX=false`、`GEMINI_CLI_TRUST_WORKSPACE=true`，并追加 `--skip-trust`
+
+**命令执行细节**:
+- Codex / Gemini CLI: 测试 prompt 通过 `stdin` 注入，避免 Windows shell 包装下的位置参数拆词
 
 **恢复策略**:
 - 不写入用户真实 CLI 配置目录；测试结束后删除临时目录
@@ -276,9 +288,9 @@ main.ts: app.whenReady()
 **职责**: 为 Route 工作台提供模型来源聚合、厂商优先级排序、CLI wrapper 探测和统计评分能力
 
 **关键模块**:
-- `route-model-registry-service.ts` - 聚合站点/账户模型来源，维护 `entries / displayItems / vendorPriorities`
+- `route-model-registry-service.ts` - 聚合站点/账户和自定义 CLI 配置模型来源，维护 `entries / displayItems / vendorPriorities`
 - `route-cli-probe-service.ts` - 按站点下全部活跃账户执行 CLI wrapper 探测，并维护 `history/latest`
-- `route-channel-resolver.ts` - 解析可用通道、补全真实 API Key、结合厂商优先级选择实际出口
+- `route-channel-resolver.ts` - 解析可用通道、补全真实 API Key 或自定义 CLI 凭证、结合厂商优先级选择实际出口
 - `route-stats-service.ts` - 记录运行结果并计算评分，供通道排序和统计视图复用
 
 ### PowerManager
@@ -326,6 +338,15 @@ main.ts: app.whenReady()
 - `saveConfig()` - 原子保存配置
 - `migrate()` - 迁移旧格式
 
+### OverviewService
+
+**职责**: 为 `数据总览` 页面提供站点级每日历史快照，并在主进程中复用当前检测缓存生成轻量趋势数据
+
+**关键方法**:
+- `captureSiteDailySnapshot(siteId, capturedAt?)` - 从站点/账户当前缓存生成当日快照
+- `getSiteDailySnapshots({ siteId?, days? })` - 查询站点历史快照
+- `getSiteSnapshotTotals({ days? })` - 按日期聚合全站快照总量
+
 ---
 
 ## 📋 IPC 事件列表
@@ -372,6 +393,10 @@ main.ts: app.whenReady()
 - `credit:save-config` - 保存配置
 - `credit:load-config` - 加载配置
 - `credit:get-cached` - 获取缓存数据
+
+### Overview 相关
+
+- `overview:get-site-daily-snapshots` - 获取站点每日快照历史
 
 ---
 

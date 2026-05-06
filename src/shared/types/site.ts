@@ -274,12 +274,26 @@ export interface AccountRuntimeDetectionData {
 /** 无账户站点的站点级私有缓存 */
 export type SiteRuntimeDetectionData = AccountRuntimeDetectionData;
 
+/** 站点级每日快照（用于数据总览历史趋势） */
+export interface SiteDailySnapshot {
+  siteId: string;
+  snapshotDate: string;
+  capturedAt: number;
+  balance: number;
+  todayUsage: number;
+  todayRequests: number;
+  todayPromptTokens: number;
+  todayCompletionTokens: number;
+  totalTokens: number;
+}
+
 /** 独立运行期缓存文件结构 */
 export interface RuntimeCacheFile {
   version: string;
   site_shared_by_site_id: Record<string, SiteSharedDetectionData>;
   site_runtime_by_site_id: Record<string, SiteRuntimeDetectionData>;
   account_runtime_by_account_id: Record<string, AccountRuntimeDetectionData>;
+  site_daily_snapshots_by_site_id: Record<string, SiteDailySnapshot[]>;
   last_updated: number;
 }
 
@@ -290,6 +304,7 @@ export const DEFAULT_RUNTIME_CACHE_FILE: RuntimeCacheFile = {
   site_shared_by_site_id: {},
   site_runtime_by_site_id: {},
   account_runtime_by_account_id: {},
+  site_daily_snapshots_by_site_id: {},
   last_updated: 0,
 };
 

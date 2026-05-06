@@ -1,6 +1,6 @@
 /**
  * 模型注册表服务
- * 输入: UnifiedConfig (站点/账户 cached_data.models), 人工覆盖规则
+ * 输入: UnifiedConfig (站点/账户 cached_data.models), 自定义 CLI 配置, 人工覆盖规则
  * 输出: canonical 模型映射表, 厂商分类, 原始↔canonical 双向解析
  * 定位: 服务层 - 扫描所有站点模型 → 厂商分类 → 映射表管理
  */
@@ -8,6 +8,13 @@
 import Logger from './utils/logger';
 import { unifiedConfigManager } from './unified-config-manager';
 import { createHash } from 'crypto';
+import {
+  buildCustomCliRouteAccountId,
+  buildCustomCliRouteApiKeyId,
+  buildCustomCliRouteSiteId,
+  CUSTOM_CLI_ROUTE_GROUP,
+  loadCustomCliConfigStorage,
+} from './custom-cli-config-service';
 import type {
   RouteModelVendor,
   RouteModelSourceApiKeyRef,
@@ -17,17 +24,18 @@ import type {
   RouteModelRegistryConfig,
   RouteModelDisplayItem,
   RouteCliType,
-  RouteVendorPriorityConfig,
 } from '../shared/types/route-proxy';
 import {
-  compareRouteModelRegistryEntries,
+  DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME,
   inferRouteModelVendor,
-  ROUTE_MODEL_VENDOR_ORDER,
 } from '../shared/types/route-proxy';
 import { BUILTIN_GROUP_IDS } from '../shared/types/site';
 import type { AccountCredential, ApiKeyInfo, ModelPricingData } from '../shared/types/site';
+import type { CustomCliConfig } from '../shared/types/custom-cli-config';
 
 const log = Logger.scope('RouteModelRegistry');
+const ROUTE_CLI_TYPES: RouteCliType[] = ['claudeCode', 'codex', 'geminiCli'];
+type RegistryDisplayMode = 'reseed' | 'preserve' | 'resetDefaults';
 
 function normalizeModelToken(model: string): string {
   return model.trim();
@@ -57,6 +65,31 @@ function normalizeDisplayItemOriginalModelOrder(
   }
 
   return normalized;
+}
+
+function expandDisplayItemSourceKeys(
+  item: RouteModelDisplayItem,
+  sourcePool: RouteModelSourceRef[],
+  sourceByKey: Map<string, RouteModelSourceRef>
+): string[] {
+  const selectedModels = new Set(
+    (item.originalModelOrder || []).map(model => normalizeModelToken(model)).filter(Boolean)
+  );
+
+  for (const sourceKey of item.sourceKeys) {
+    const source = sourceByKey.get(sourceKey);
+    if (source?.originalModel) {
+      selectedModels.add(source.originalModel);
+    }
+  }
+
+  if (selectedModels.size === 0) {
+    return Array.from(new Set(item.sourceKeys.filter(sourceKey => sourceByKey.has(sourceKey))));
+  }
+
+  return sourcePool
+    .filter(source => selectedModels.has(source.originalModel))
+    .map(source => source.sourceKey);
 }
 
 function sortSourceKeysByOriginalModelOrder(
@@ -233,6 +266,58 @@ function collectAvailableApiKeys(
     }));
 }
 
+function addCustomCliModelCandidate(
+  modelsByName: Map<string, Set<RouteCliType>>,
+  model: string | null | undefined,
+  cliTypes: RouteCliType[]
+): void {
+  const normalized = model?.trim();
+  if (!normalized || cliTypes.length === 0) {
+    return;
+  }
+
+  const existing = modelsByName.get(normalized) ?? new Set<RouteCliType>();
+  for (const cliType of cliTypes) {
+    existing.add(cliType);
+  }
+  modelsByName.set(normalized, existing);
+}
+
+function collectCustomCliModelCandidates(
+  config: CustomCliConfig
+): Array<{ model: string; cliTypes: RouteCliType[] }> {
+  const modelsByName = new Map<string, Set<RouteCliType>>();
+  const enabledCliTypes = ROUTE_CLI_TYPES.filter(
+    cliType => config.cliSettings?.[cliType]?.enabled !== false
+  );
+
+  for (const model of config.models || []) {
+    addCustomCliModelCandidate(modelsByName, model, enabledCliTypes);
+  }
+
+  for (const cliType of ROUTE_CLI_TYPES) {
+    const setting = config.cliSettings?.[cliType];
+    if (!setting?.enabled) {
+      continue;
+    }
+
+    addCustomCliModelCandidate(modelsByName, setting.model, [cliType]);
+    for (const model of setting.testModels || []) {
+      addCustomCliModelCandidate(modelsByName, model, [cliType]);
+    }
+    for (const slot of setting.testState?.slots || []) {
+      addCustomCliModelCandidate(modelsByName, slot?.model, [cliType]);
+    }
+  }
+
+  return Array.from(modelsByName.entries())
+    .map(([model, cliTypes]) => ({
+      model,
+      cliTypes: ROUTE_CLI_TYPES.filter(cliType => cliTypes.has(cliType)),
+    }))
+    .filter(item => item.cliTypes.length > 0);
+}
+
 function upsertRegistryEntry(
   entries: Record<string, RouteModelRegistryEntry>,
   canonicalName: string,
@@ -276,37 +361,31 @@ function buildSeededDisplayItems(
   manualDisplayItems: RouteModelDisplayItem[],
   now: number
 ): RouteModelDisplayItem[] {
-  const manualSourceKeys = new Set(manualDisplayItems.flatMap(item => item.sourceKeys));
+  const manualCanonicalNames = new Set(manualDisplayItems.map(item => item.canonicalName));
+  const seededEntry = entries[DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME];
 
-  const entriesByVendor = Object.values(entries).reduce(
-    (acc, entry) => {
-      if (!acc[entry.vendor]) {
-        acc[entry.vendor] = [];
-      }
+  if (!seededEntry || manualCanonicalNames.has(seededEntry.canonicalName)) {
+    return [];
+  }
 
-      acc[entry.vendor]!.push(entry);
-      return acc;
-    },
-    {} as Partial<Record<RouteModelVendor, RouteModelRegistryEntry[]>>
-  );
+  const seededSources = seededEntry.sources.slice();
 
-  return ROUTE_MODEL_VENDOR_ORDER.flatMap(vendor => {
-    const vendorEntries = (entriesByVendor[vendor] ?? [])
-      .filter(entry => !entry.sources.some(source => manualSourceKeys.has(source.sourceKey)))
-      .slice()
-      .sort((left, right) => compareRouteModelRegistryEntries(vendor, left, right));
-
-    return vendorEntries.slice(0, 3).map((entry, index) => ({
-      id: `seeded:${vendor}:${index}`,
-      vendor,
-      canonicalName: entry.canonicalName,
-      sourceKeys: entry.sources.map(source => source.sourceKey),
-      originalModelOrder: Array.from(new Set(entry.sources.map(source => source.originalModel))),
+  return [
+    {
+      id: `seeded:${seededEntry.canonicalName}`,
+      vendor: seededEntry.vendor,
+      canonicalName: seededEntry.canonicalName,
+      sourceKeys: seededSources.map(source => source.sourceKey),
+      originalModelOrder: Array.from(new Set(seededSources.map(source => source.originalModel))),
+      priorityConfig: {
+        sitePriorities: {},
+        apiKeyPriorities: {},
+      },
       mode: 'seeded' as const,
       createdAt: now,
       updatedAt: now,
-    }));
-  });
+    },
+  ];
 }
 
 function buildDisplayItems(
@@ -314,15 +393,25 @@ function buildDisplayItems(
   sourcePool: RouteModelSourceRef[],
   previousDisplayItems: RouteModelDisplayItem[] | undefined,
   now: number,
-  mode: 'reseed' | 'preserve' = 'reseed'
+  mode: RegistryDisplayMode = 'reseed'
 ): RouteModelDisplayItem[] {
   const validSourceKeys = new Set(sourcePool.map(source => source.sourceKey));
   const sourceByKey = new Map(sourcePool.map(source => [source.sourceKey, source]));
+  const previousItems =
+    mode === 'resetDefaults'
+      ? (previousDisplayItems ?? []).filter(
+          item => item.canonicalName !== DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME
+        )
+      : (previousDisplayItems ?? []);
 
-  const persistedDisplayItems = (previousDisplayItems ?? [])
+  const persistedDisplayItems = previousItems
     .map<RouteModelDisplayItem | null>(item => {
       const sourceKeys = Array.from(
-        new Set(item.sourceKeys.filter(sourceKey => validSourceKeys.has(sourceKey)))
+        new Set(
+          expandDisplayItemSourceKeys(item, sourcePool, sourceByKey).filter(sourceKey =>
+            validSourceKeys.has(sourceKey)
+          )
+        )
       );
       if (sourceKeys.length === 0) {
         return null;
@@ -391,7 +480,7 @@ function buildEntriesFromDisplayItems(
 
 async function rebuildModelRegistryInternal(
   force?: boolean,
-  displayMode: 'reseed' | 'preserve' = 'reseed'
+  displayMode: RegistryDisplayMode = 'reseed'
 ): Promise<RouteModelRegistryConfig> {
   const config = unifiedConfigManager.exportConfigSync();
   if (!config) throw new Error('Config not loaded');
@@ -410,7 +499,12 @@ async function rebuildModelRegistryInternal(
   const now = Date.now();
   const detectedEntries: Record<string, RouteModelRegistryEntry> = {};
   const sourcePool: RouteModelSourceRef[] = [];
-  const overrides = existing.overrides;
+  const overrides =
+    displayMode === 'resetDefaults'
+      ? existing.overrides.filter(
+          override => override.canonicalName !== DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME
+        )
+      : existing.overrides;
 
   const overrideBySource = new Map<string, RouteModelMappingOverride>();
   for (const o of overrides) {
@@ -465,6 +559,51 @@ async function rebuildModelRegistryInternal(
           now,
         });
       }
+    }
+  }
+
+  const customCliStorage = await loadCustomCliConfigStorage();
+  for (const customConfig of customCliStorage.configs) {
+    const baseUrl = customConfig.baseUrl?.trim() ?? '';
+    const apiKey = customConfig.apiKey?.trim() ?? '';
+    if (!baseUrl || !apiKey) {
+      continue;
+    }
+
+    const displayName = customConfig.name?.trim() || baseUrl || customConfig.id;
+    const siteId = buildCustomCliRouteSiteId(customConfig.id);
+    const accountId = buildCustomCliRouteAccountId(customConfig.id);
+    const apiKeyId = buildCustomCliRouteApiKeyId(customConfig.id);
+    const siteName = `自定义 CLI / ${displayName}`;
+    const accountName = '自定义 CLI';
+    const apiKeyName = `${displayName} Key`;
+
+    for (const { model, cliTypes } of collectCustomCliModelCandidates(customConfig)) {
+      processModelSource(detectedEntries, sourcePool, overrideBySource, {
+        siteId,
+        siteName,
+        accountId,
+        accountName,
+        sourceType: 'customCli',
+        originalModel: model,
+        availableCliTypes: cliTypes,
+        apiKeyGroups: [CUSTOM_CLI_ROUTE_GROUP],
+        apiKeyNamesByGroup: {
+          [CUSTOM_CLI_ROUTE_GROUP]: [apiKeyName],
+        },
+        userGroupKeys: [CUSTOM_CLI_ROUTE_GROUP],
+        availableUserGroups: [CUSTOM_CLI_ROUTE_GROUP],
+        availableApiKeys: [
+          {
+            apiKeyId,
+            apiKeyName,
+            accountId,
+            accountName,
+            group: CUSTOM_CLI_ROUTE_GROUP,
+          },
+        ],
+        now,
+      });
     }
   }
 
@@ -561,6 +700,15 @@ export async function rebuildModelRegistry(force?: boolean): Promise<RouteModelR
   return rebuildModelRegistryInternal(force, 'reseed');
 }
 
+export async function resetModelRegistryDefaults(): Promise<RouteModelRegistryConfig> {
+  const registry = await rebuildModelRegistryInternal(true, 'resetDefaults');
+  await unifiedConfigManager.ensureRouteRuleForCliModelSelection(
+    'claudeCode',
+    DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME
+  );
+  return registry;
+}
+
 export async function syncModelRegistrySources(force?: boolean): Promise<RouteModelRegistryConfig> {
   return rebuildModelRegistryInternal(force, 'preserve');
 }
@@ -574,8 +722,9 @@ function processModelSource(
     siteName: string;
     accountId?: string;
     accountName?: string;
-    sourceType: 'account' | 'site';
+    sourceType: 'account' | 'site' | 'customCli';
     originalModel: string;
+    availableCliTypes?: RouteCliType[];
     apiKeyGroups?: string[];
     apiKeyNamesByGroup?: Record<string, string[]>;
     userGroupKeys?: string[];
@@ -591,6 +740,7 @@ function processModelSource(
     accountName,
     sourceType,
     originalModel,
+    availableCliTypes,
     apiKeyGroups,
     apiKeyNamesByGroup,
     userGroupKeys,
@@ -622,6 +772,7 @@ function processModelSource(
     sourceType,
     originalModel,
     vendor,
+    availableCliTypes,
     apiKeyGroups,
     apiKeyNamesByGroup: apiKeyNamesByGroup
       ? Object.fromEntries(
@@ -729,14 +880,6 @@ export async function upsertModelDisplayItem(
 ): Promise<RouteModelRegistryConfig> {
   await unifiedConfigManager.upsertRouteModelDisplayItem(displayItem);
   return syncModelRegistrySources(true);
-}
-
-export async function updateVendorPriorityConfig(
-  vendor: RouteModelVendor,
-  priorityConfig: RouteVendorPriorityConfig
-): Promise<RouteModelRegistryConfig> {
-  await unifiedConfigManager.updateRouteVendorPriorityConfig(vendor, priorityConfig);
-  return getModelRegistry();
 }
 
 export async function deleteModelDisplayItem(

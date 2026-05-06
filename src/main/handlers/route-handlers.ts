@@ -15,9 +15,9 @@ import * as cliProbe from '../route-cli-probe-service';
 import * as analytics from '../route-analytics-service';
 import { runHealthCheck } from '../route-health-service';
 import type {
+  RouteAnalyticsObjectStatsQuery,
   RouteRule,
-  RouteVendorPriorityConfig,
-  RouteModelVendor,
+  RouteRequestLogQuery,
 } from '../../shared/types/route-proxy';
 
 const log = Logger.scope('RouteHandlers');
@@ -181,14 +181,19 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:rebuild-model-registry', async (_, params?: { force?: boolean }) => {
-    try {
-      const result = await modelRegistry.rebuildModelRegistry(params?.force);
-      return ok(result);
-    } catch (e: any) {
-      return err(e.message);
+  ipcMain.handle(
+    'route:rebuild-model-registry',
+    async (_, params?: { force?: boolean; resetDefaults?: boolean }) => {
+      try {
+        const result = params?.resetDefaults
+          ? await modelRegistry.resetModelRegistryDefaults()
+          : await modelRegistry.rebuildModelRegistry(params?.force);
+        return ok(result);
+      } catch (e: any) {
+        return err(e.message);
+      }
     }
-  });
+  );
 
   ipcMain.handle('route:sync-model-registry-sources', async (_, params?: { force?: boolean }) => {
     try {
@@ -222,21 +227,6 @@ export function registerRouteHandlers() {
     async (_, params: { displayItemId: string }) => {
       try {
         const result = await modelRegistry.deleteModelDisplayItem(params.displayItemId);
-        return ok(result);
-      } catch (e: any) {
-        return err(e.message);
-      }
-    }
-  );
-
-  ipcMain.handle(
-    'route:save-vendor-priority-config',
-    async (_, params: { vendor: RouteModelVendor; priorityConfig: RouteVendorPriorityConfig }) => {
-      try {
-        const result = await modelRegistry.updateVendorPriorityConfig(
-          params.vendor,
-          params.priorityConfig
-        );
         return ok(result);
       } catch (e: any) {
         return err(e.message);
@@ -315,9 +305,34 @@ export function registerRouteHandlers() {
     }
   });
 
+  ipcMain.handle('route:get-object-stats', async (_, params: RouteAnalyticsObjectStatsQuery) => {
+    try {
+      return ok(analytics.getRouteObjectStats(params));
+    } catch (e: unknown) {
+      return err(e instanceof Error ? e.message : String(e));
+    }
+  });
+
   ipcMain.handle('route:reset-analytics', async (_, params?) => {
     try {
       await analytics.resetAnalytics(params);
+      return ok();
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
+  ipcMain.handle('route:get-request-logs', async (_, params?: RouteRequestLogQuery) => {
+    try {
+      return ok(analytics.getRouteRequestLogs(params));
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
+  ipcMain.handle('route:clear-request-logs', async () => {
+    try {
+      analytics.clearRouteRequestLogs();
       return ok();
     } catch (e: any) {
       return err(e.message);

@@ -26,36 +26,48 @@
 | **setup.ts** | 测试环境配置 | Vitest 配置 |
 | **example.test.ts** | 示例测试 | 测试模板 |
 | **schemas.test.ts** | Schema 验证测试 | Zod Schema |
-| **token-service.test.ts** | TokenService / ApiService 的 site_type 驱动回归测试 | API Key 原始值保留、签到端点按 `site_type` 选择、sub2api 端点适配、旧站点 `site_type` 首检写回 |
-| **useCheckIn.test.ts** | useCheckIn Hook 回归测试 | 一键签到跳过 `unavailable` 分组站点 |
+| **token-service.test.ts** | TokenService / ApiService 的 site_type 驱动回归测试 | API Key 原始值保留、签到端点按 `site_type` 选择、模型响应非对象/直接数组容错、同日手动签到完成状态刷新保留、sub2api 端点适配、旧站点 `site_type` 首检写回 |
+| **useCheckIn.test.ts** | useCheckIn Hook 回归测试 | 一键签到跳过 `unavailable` 分组站点，账户级签到透传 `accountId`，手动签到完成状态写入缓存 |
+| **useCliCompatTest.test.ts** | 站点页 CLI 测试回归测试 | `useCliCompatTest` 在已选 API Key 时优先测试当前站点 URL、保存后立即同步 `routing.cliProbe` 投影，并对 Gemini 失败摘要显式提示 |
 | **site-type-detector.test.ts** | 站点类型自动识别测试 | title 命中与 `/api/status` 识别 |
 | **site-editor.test.tsx** | SiteEditor 回归测试 | 手动保存站点类型、智能添加回填识别类型 |
 | **groupStyle.test.tsx** | 分组样式测试 | groupStyle 工具 |
 | **useSiteGroups.test.ts** | Hook 测试 | useSiteGroups Hook |
 | **webdav-config.test.ts** | WebDAV 配置测试 | WebDAV 配置 |
-| **unified-config-manager.test.ts** | 配置恢复与 legacy `site_type` 未决态回归测试 | UnifiedConfigManager 损坏恢复、备份回滚、原子保存、legacy 默认账户修复、旧站点缺失 `site_type` 不默认补值 |
+| **unified-config-manager.test.ts** | 配置恢复与持久化回归测试 | UnifiedConfigManager 损坏恢复、备份回滚、原子保存、legacy 默认账户修复、旧站点缺失 `site_type` 不默认补值、保存配置不丢站点每日快照 |
+| **atomic-json.test.ts** | 原子 JSON 工具测试 | 原子写入、缺失文件默认值、normalize 读取、失败临时文件清理 |
+| **storage-manifest.test.ts** | 应用存储清单测试 | 本地存储 owner/path/retention/cap/备份边界、受保护浏览器状态不变更约束 |
+| **app-storage-bundle.test.ts** | 应用存储配置包测试 | manifest 配置包纳入/排除边界、bundle 恢复、legacy config-only 恢复清理运行态 |
+| **backup-manager.test.ts** | 本地备份管理测试 | 自动备份节流、内容去重、强制备份与保留数量 |
+| **migrate-config-v224-to-v301-script.test.ts** | 配置迁移脚本测试 | v2.1.24 config 拆分为 clean config、runtime-cache 与 route state，重复运行保留已有 state |
 | **route-cli-probe-service.test.ts** | CLI 探测多账户回归测试 | 同站点全部活跃账户覆盖、错误码透传、旧配置兼容 |
-| **route-model-registry-service.test.ts** | 路由模型注册表服务测试 | display item、厂商优先级与 canonical 映射 |
+| **route-model-registry-service.test.ts** | 路由模型注册表服务测试 | display item、厂商优先级、canonical 映射与自定义 CLI 来源 |
+| **route-proxy-service.test.ts** | 路由代理调度回归测试 | canonical-only 规则命中前提下的 per-rawModel 尝试计划、上游 URL 构造与 Gemini path/key 重写 |
+| **electron-fetch.test.ts** | Electron 网络工具测试 | 上游代理 URL 归一化 |
+| **http-client.test.ts** | HTTP 客户端测试 | raw 上游转发走 Electron net 并传递上游代理配置 |
+| **route-rule-engine.test.ts** | 路由规则引擎回归测试 | canonical-only 模型匹配与规则优先级排序 |
 | **cli-compat-projection.test.ts** | CLI 兼容性投影测试 | `routing.cliProbe.latest` 到站点/账户卡片结果的映射 |
 | **webdav-manager.test.ts** | WebDAV 管理器测试 | WebDAVManager 类 |
 | **update-service.test.ts** | 更新服务测试 | UpdateService 类 |
 | **auto-refresh.property.test.ts** | 自动刷新属性测试 | 自动刷新逻辑 |
 | **cli-compat-persistence.property.test.ts** | CLI 兼容性持久化测试 | CLI 兼容性数据 |
 | **cli-compat-service.property.test.ts** | CLI 兼容性服务测试 | CliCompatService（含双端点测试） |
-| **cli-wrapper-compat-service.test.ts** | 真实 CLI wrapper 兼容性测试 | CliWrapperCompatService 的临时目录、隔离配置与结果解析 |
+| **cli-wrapper-compat-service.test.ts** | 真实 CLI wrapper 兼容性测试 | CliWrapperCompatService 的临时目录、隔离配置、stdin prompt 注入与结果解析 |
 | **cli-config-generator.property.test.ts** | CLI 配置生成测试 | CLI 配置生成（含端点选择逻辑） |
 | **custom-cli-config-editor-dialog.test.tsx** | 自定义 CLI 编辑器回归测试 | CustomCliConfigEditorDialog 的预览/应用按钮与分列测试流程 |
-| **unified-cli-config-dialog.test.tsx** | 统一 CLI 对话框回归测试 | UnifiedCliConfigDialog 在测试结果持久化后保持当前 CLI 页签 |
+| **unified-cli-config-dialog.test.tsx** | 统一 CLI 对话框回归测试 | UnifiedCliConfigDialog 在测试结果持久化后保持当前 CLI 页签，并对预览配置域名不一致显示 warning |
 | **filter-model-logs.property.test.ts** | 日志过滤属性测试 | 日志过滤逻辑 |
 | **unified-cli-config.property.test.ts** | 统一 CLI 配置测试 | CLI 配置管理 |
 | **useAutoRefresh.property.test.ts** | 自动刷新 Hook 测试 | useAutoRefresh Hook |
 | **theme-system-redesign.test.tsx** | 主题系统重设计测试 | 4 主题模式切换、旧主题值迁移 |
 | **overlay-family-redesign.test.tsx** | Overlay 家族重设计测试 | modal 与 drawer 的统一 chrome 标记 |
 | **custom-cli-page-redesign.test.tsx** | 自定义 CLI 页面重设计测试 | registry + inspector 双栏布局 |
-| **route-workbench-redesign.test.tsx** | Route 页面页头重设计测试 | 三张 route 页共享紧凑头带语法 |
-| **cli-usability-tab.test.tsx** | CLI 可用性页回归测试 | 内联检测设置、账户行渲染与探测结果明细 |
+| **data-overview-page.test.tsx** | 数据总览页回归测试 | 首页总览 KPI、站点榜单、规则解释、异常请求与快照趋势 |
+| **route-analytics-service.test.ts** | 路由分析服务回归测试 | 请求日志 token 字段、站点/账户/API Key 对象级 token 聚合 |
+| **route-workbench-redesign.test.tsx** | Route 页面重设计测试 | route 页回退为配置页，并引导到数据总览查看统计 |
+| **cli-usability-tab.test.tsx** | CLI 可用性页回归测试 | 内联检测设置、账户行渲染、history 独立样本条形与探测结果明细 |
 | **sites-page-redesign.test.tsx** | 站点页重设计测试 | 多列列头、内联排序、高频动作、CLI 图标内联与右键菜单 parity |
-| **logs-page.test.tsx** | 会话日志页回归测试 | 按通知/操作筛选与清空历史 |
+| **logs-page.test.tsx** | 日志页回归测试 | 会话事件筛选、外部子页驱动的路由日志详情、紧凑请求尝试列表、token/参考金额与自定义 CLI 显示 |
 | **toast-store.test.ts** | Toast Store 回归测试 | 可见队列上限、事件历史记录与清理 |
 | **close-behavior-manager.property.test.ts** | 窗口关闭行为测试 | CloseBehaviorManager 设置持久化、对话框显示条件与设置面板偏好映射 |
 | **config-detection.property.test.ts** | 配置检测属性测试 | ConfigDetectionService |

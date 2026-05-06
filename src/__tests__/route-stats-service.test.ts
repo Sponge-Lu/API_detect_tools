@@ -1,0 +1,130 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { RoutePathState, RoutingConfig } from '../shared/types/route-proxy';
+
+const mocks = vi.hoisted(() => {
+  const routing = {
+    routePathStates: {},
+  } as Pick<RoutingConfig, 'routePathStates'>;
+
+  return {
+    routing,
+    upsertRoutePathState: vi.fn(async (state: RoutePathState) => {
+      const key = [
+        state.routeRuleId,
+        state.siteId,
+        state.accountId,
+        state.apiKeyId,
+        encodeURIComponent(state.canonicalModel || '*'),
+        encodeURIComponent(state.resolvedModel || '*'),
+      ].join('|');
+      routing.routePathStates[key] = state;
+    }),
+  };
+});
+
+vi.mock('../main/utils/logger', () => ({
+  default: {
+    scope: () => ({
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    }),
+  },
+}));
+
+vi.mock('../main/unified-config-manager', () => ({
+  unifiedConfigManager: {
+    getRoutingConfig: vi.fn(() => mocks.routing),
+    upsertRoutePathState: mocks.upsertRoutePathState,
+    recordRouteStats: vi.fn(),
+  },
+}));
+
+import {
+  isRoutePathDisabled,
+  recordRoutePathOutcome,
+  ROUTE_PATH_DISABLE_MS,
+} from '../main/route-stats-service';
+
+const routePath = {
+  routeRuleId: 'rule-1',
+  siteId: 'site-1',
+  accountId: 'acc-1',
+  apiKeyId: 'key-1',
+  cliType: 'claudeCode' as const,
+  canonicalModel: 'claude-opus-4-6',
+  resolvedModel: 'claude-opus-4.6-20260201',
+};
+
+describe('route-stats-service route path state', () => {
+  beforeEach(() => {
+    mocks.routing.routePathStates = {};
+    mocks.upsertRoutePathState.mockClear();
+  });
+
+  it('disables a failed route path for 30 minutes when the 5 minute success rate is below 80%', async () => {
+    const now = 1_000_000;
+
+    const state = await recordRoutePathOutcome(routePath, 'failure', { statusCode: 502 }, now);
+
+    expect(state.windowRequestCount).toBe(1);
+    expect(state.windowSuccessCount).toBe(0);
+    expect(state.successRate).toBe(0);
+    expect(state.disabledUntil).toBe(now + ROUTE_PATH_DISABLE_MS);
+    expect(isRoutePathDisabled(routePath, now + 1)).toBe(true);
+    expect(isRoutePathDisabled(routePath, now + ROUTE_PATH_DISABLE_MS + 1)).toBe(false);
+  });
+
+  it('does not count neutral responses as route path health samples', async () => {
+    const now = 2_000_000;
+
+    const state = await recordRoutePathOutcome(routePath, 'neutral', { statusCode: 400 }, now);
+
+    expect(state.windowRequestCount).toBe(0);
+    expect(state.windowSuccessCount).toBe(0);
+    expect(state.disabledUntil).toBeUndefined();
+    expect(isRoutePathDisabled(routePath, now + 1)).toBe(false);
+  });
+
+  it('uses route runtime config for disable duration and success rate threshold', async () => {
+    const now = 3_000_000;
+
+    await recordRoutePathOutcome(routePath, 'success', undefined, now);
+    const firstFailure = await recordRoutePathOutcome(routePath, 'failure', undefined, now + 1, {
+      successRateWindowMinutes: 5,
+      disableDurationMinutes: 10,
+      minSuccessRate: 0.4,
+    });
+    expect(firstFailure.successRate).toBe(0.5);
+    expect(firstFailure.disabledUntil).toBeUndefined();
+
+    const secondFailure = await recordRoutePathOutcome(routePath, 'failure', undefined, now + 2, {
+      successRateWindowMinutes: 5,
+      disableDurationMinutes: 10,
+      minSuccessRate: 0.7,
+    });
+    expect(secondFailure.successRate).toBeCloseTo(1 / 3);
+    expect(secondFailure.disabledUntil).toBe(now + 2 + 10 * 60 * 1000);
+  });
+
+  it('uses route runtime config for the success rate calculation window', async () => {
+    const now = 4_000_000;
+    const key = { ...routePath, apiKeyId: 'key-2' };
+
+    await recordRoutePathOutcome(key, 'success', undefined, now, {
+      successRateWindowMinutes: 10,
+      disableDurationMinutes: 30,
+      minSuccessRate: 0.8,
+    });
+    const state = await recordRoutePathOutcome(key, 'failure', undefined, now + 11 * 60 * 1000, {
+      successRateWindowMinutes: 10,
+      disableDurationMinutes: 30,
+      minSuccessRate: 0.8,
+    });
+
+    expect(state.windowStartedAt).toBe(now + 11 * 60 * 1000);
+    expect(state.windowRequestCount).toBe(1);
+    expect(state.windowSuccessCount).toBe(0);
+    expect(state.successRate).toBe(0);
+  });
+});

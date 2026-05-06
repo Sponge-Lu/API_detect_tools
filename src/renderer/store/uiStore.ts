@@ -29,9 +29,19 @@ interface RefreshMessage {
 }
 
 // Tab 页面类型（一级页面由 page metadata registry 定义；旧 route 子页仍需兼容）
-export type TabId = 'sites' | 'cli' | 'usability' | 'route' | 'logs' | 'credit' | 'settings';
+export type TabId =
+  | 'overview'
+  | 'sites'
+  | 'cli'
+  | 'usability'
+  | 'route'
+  | 'logs'
+  | 'credit'
+  | 'settings';
 
 export type VisibleTabId = TabId;
+export type OverviewSubtab = 'site' | 'route';
+export type LogsSubtab = 'session' | 'route';
 export type SidebarDisplayMode = 'expanded' | 'icon-only';
 
 // 路由相关的 TabId
@@ -73,6 +83,8 @@ interface NewApiTokenForm {
 interface UIState {
   // 当前活跃的 Tab 页面
   activeTab: TabId;
+  overviewSubtab: OverviewSubtab;
+  logsSubtab: LogsSubtab;
 
   // 面板状态
   showSiteEditor: boolean;
@@ -216,6 +228,8 @@ interface UIState {
 
   // Actions - Tab 切换
   setActiveTab: (tab: TabId) => void;
+  setOverviewSubtab: (subtab: OverviewSubtab) => void;
+  setLogsSubtab: (subtab: LogsSubtab) => void;
 
   // Actions - 下载面板
   openDownloadPanel: (release: ReleaseInfo) => void;
@@ -238,14 +252,16 @@ export const useUIStore = create<UIState>()(
   persist(
     (set, get) => ({
       // 初始状态
-      activeTab: 'sites' as TabId,
+      activeTab: 'overview' as TabId,
+      overviewSubtab: 'site',
+      logsSubtab: 'session',
       showSiteEditor: false,
       editingSite: null,
       expandedSites: new Set(),
       selectedModels: new Set(),
       showTokens: {},
       selectedGroup: {},
-      activeSiteGroupFilter: null,
+      activeSiteGroupFilter: 'default',
       modelSearch: {},
       globalModelSearch: '',
       refreshMessage: null,
@@ -482,6 +498,8 @@ export const useUIStore = create<UIState>()(
 
       // Tab 切换
       setActiveTab: (tab: TabId) => set({ activeTab: tab }),
+      setOverviewSubtab: (subtab: OverviewSubtab) => set({ overviewSubtab: subtab }),
+      setLogsSubtab: (subtab: LogsSubtab) => set({ logsSubtab: subtab }),
 
       // 下载面板
       openDownloadPanel: (release: ReleaseInfo) =>

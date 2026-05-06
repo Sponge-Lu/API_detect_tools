@@ -78,9 +78,9 @@ const CLI_META: Record<
 // ============= History 条形图 =============
 
 interface HistorySlot {
-  bucketKey: number | null;
-  samples: Array<RouteCliProbeSample | null>;
-  aggregated: RouteCliProbeSample | null;
+  key: string;
+  sample: RouteCliProbeSample | null;
+  modelName: string | null;
 }
 
 interface HistoryTrackLayout {
@@ -173,73 +173,55 @@ function buildModelResultTooltip(
   return lines.join('\n');
 }
 
-function pickAggregatedBucketSample(
-  samples: Array<RouteCliProbeSample | null>
-): RouteCliProbeSample | null {
-  const valid = samples.filter(Boolean) as RouteCliProbeSample[];
-  if (valid.length === 0) {
-    return null;
-  }
-
-  const successful = valid
-    .filter(sample => sample.success)
-    .sort((left, right) => right.testedAt - left.testedAt);
-  if (successful.length > 0) {
-    return successful[0];
-  }
-
-  return [...valid].sort((left, right) => right.testedAt - left.testedAt)[0];
-}
-
 function buildHistorySlots(
-  samplesByModel: Array<RouteCliProbeSample[]>,
-  bucketMs: number,
+  models: RouteCliProbeCliView['models'],
   pointCount: number,
   windowStart: number,
   windowEnd: number
 ): HistorySlot[] {
-  const slots: HistorySlot[] = Array.from({ length: pointCount }, (_, index) => ({
-    bucketKey: windowStart + index * bucketMs,
-    samples: new Array<RouteCliProbeSample | null>(samplesByModel.length).fill(null),
-    aggregated: null,
+  const events = models
+    .flatMap((model, modelIndex) =>
+      (model?.history ?? [])
+        .filter(sample => sample.testedAt >= windowStart && sample.testedAt <= windowEnd)
+        .map((sample, sampleIndex) => ({
+          key: `${sample.sampleId ?? `${sample.testedAt}-${modelIndex}-${sampleIndex}`}`,
+          sample,
+          modelName: model?.canonicalModel || `模型${modelIndex + 1}`,
+        }))
+    )
+    .sort((left, right) => left.sample.testedAt - right.sample.testedAt)
+    .slice(-pointCount);
+
+  const emptyCount = Math.max(0, pointCount - events.length);
+  const emptySlots: HistorySlot[] = Array.from({ length: emptyCount }, (_, index) => ({
+    key: `empty-${index}`,
+    sample: null,
+    modelName: null,
   }));
-  const slotIndexByBucket = new Map(slots.map((slot, index) => [slot.bucketKey, index]));
 
-  samplesByModel.forEach((samples, modelIndex) => {
-    for (const sample of samples) {
-      if (sample.testedAt < windowStart || sample.testedAt > windowEnd) {
-        continue;
-      }
-      const bucketKey = Math.floor(sample.testedAt / bucketMs) * bucketMs;
-      const slotIndex = slotIndexByBucket.get(bucketKey);
-      if (slotIndex === undefined) continue;
+  const eventSlots: HistorySlot[] = events.map(event => ({
+    key: event.key,
+    sample: event.sample,
+    modelName: event.modelName,
+  }));
 
-      const existing = slots[slotIndex].samples[modelIndex];
-      if (!existing || sample.testedAt > existing.testedAt) {
-        slots[slotIndex].samples[modelIndex] = sample;
-      }
-    }
-  });
-
-  slots.forEach(slot => {
-    slot.aggregated = pickAggregatedBucketSample(slot.samples);
-  });
-
-  return slots;
+  return [...emptySlots, ...eventSlots];
 }
 
-function buildAggregatedTooltip(
-  samples: Array<RouteCliProbeSample | null>,
-  models: RouteCliProbeCliView['models']
-) {
-  const lines = models.map((model, index) => {
-    const sample = samples[index] ?? null;
-    const modelName = model?.canonicalModel || `模型${index + 1}`;
-    return `${modelName}: ${formatProbeResult(sample)}`;
-  });
+function buildHistoryTooltip(slot: HistorySlot) {
+  if (!slot.sample) {
+    return '未测试';
+  }
 
-  const latestSample = pickAggregatedBucketSample(samples);
-  return `测试时间：${formatProbeDateTime(latestSample?.testedAt)}\n${lines.join('\n')}`;
+  const lines = [
+    `模型：${slot.modelName || '—'}`,
+    `测试时间：${formatProbeDateTime(slot.sample.testedAt)}`,
+    `对话时间：${formatProbeLatency(slot.sample.totalLatencyMs)}`,
+    `结果：${slot.sample.success ? '兼容' : '失败'}`,
+    `摘要：${formatProbeResult(slot.sample)}`,
+  ];
+
+  return lines.join('\n');
 }
 
 function buildHistoryTrackLayout(
@@ -304,19 +286,13 @@ const HistoryBars = memo(function HistoryBars({
     const bucketMs = Math.floor(windowMs / pointCount);
     const windowEnd = Math.floor(Date.now() / bucketMs) * bucketMs;
     const windowStart = windowEnd - bucketMs * (pointCount - 1);
-    const slots = buildHistorySlots(
-      models.map(model => model?.history ?? []),
-      bucketMs,
-      pointCount,
-      windowStart,
-      windowEnd
-    );
+    const slots = buildHistorySlots(models, pointCount, windowStart, windowEnd);
 
     return {
       pointCount,
       barHeight,
       slots,
-      tooltips: slots.map(slot => buildAggregatedTooltip(slot.samples, models)),
+      tooltips: slots.map(slot => buildHistoryTooltip(slot)),
     };
   }, [models, timeRange]);
   const trackRef = useRef<HTMLDivElement>(null);
@@ -369,8 +345,8 @@ const HistoryBars = memo(function HistoryBars({
         >
           {slots.map((slot, slotIndex) => (
             <div
-              key={slot.bucketKey ?? `empty-${slotIndex}`}
-              className={`h-full cursor-help rounded-[3px] transition-opacity hover:opacity-80 ${getSegmentColor(slot.aggregated)}`}
+              key={slot.key}
+              className={`h-full cursor-help rounded-[3px] transition-opacity hover:opacity-80 ${getSegmentColor(slot.sample)}`}
               title={tooltips[slotIndex]}
               aria-label={tooltips[slotIndex]}
             />

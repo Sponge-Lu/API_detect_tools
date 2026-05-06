@@ -35,7 +35,7 @@
 
 ### site.ts
 
-**职责**: 站点相关的类型定义
+**职责**: 站点相关的类型定义，覆盖配置、检测缓存、运行期缓存和站点每日快照
 
 **关键类型**:
 ```typescript
@@ -60,6 +60,25 @@ interface SiteStatus {
   tpm: number;
 }
 
+interface SiteDailySnapshot {
+  siteId: string;
+  snapshotDate: string;
+  capturedAt: number;
+  balance: number;
+  todayUsage: number;
+  todayRequests: number;
+  todayPromptTokens: number;
+  todayCompletionTokens: number;
+  totalTokens: number;
+}
+
+interface RuntimeCacheFile {
+  site_shared_by_site_id: Record<string, SiteSharedDetectionData>;
+  site_runtime_by_site_id: Record<string, SiteRuntimeDetectionData>;
+  account_runtime_by_account_id: Record<string, AccountRuntimeDetectionData>;
+  site_daily_snapshots_by_site_id: Record<string, SiteDailySnapshot[]>;
+}
+
 interface CliCompatibilityData {
   claudeCode: boolean | null;
   claudeDetail?: { replyText?: string };
@@ -82,6 +101,10 @@ interface RoutingConfig {
   modelRegistry: RouteModelRegistryConfig;
   cliProbe: RouteCliProbeConfig;
   analytics: RouteAnalyticsConfig;
+}
+
+interface RouteProxyServerConfig {
+  upstreamProxyUrl?: string; // Optional upstream-only proxy URL used by the local route proxy
 }
 
 interface RouteModelRegistryConfig {

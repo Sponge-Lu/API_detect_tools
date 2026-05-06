@@ -423,11 +423,12 @@ export class CliWrapperCompatService {
           workspace.workDir,
           '-o',
           outputFile,
-          TEST_PROMPT,
+          '-',
         ],
         cwd: workspace.workDir,
         env,
         timeoutMs: this.timeoutMs,
+        stdin: `${TEST_PROMPT}\n`,
       });
 
       const output = (await readFileIfExists(outputFile)) ?? commandResult.stdout;
@@ -469,28 +470,36 @@ export class CliWrapperCompatService {
     return this.withIsolatedWorkspace('api-detect-gemini-wrapper', async workspace => {
       const geminiHome = path.join(workspace.homeDir, '.gemini');
       await fs.mkdir(geminiHome, { recursive: true });
+      await fs.writeFile(
+        path.join(geminiHome, 'settings.json'),
+        JSON.stringify(
+          {
+            security: {
+              auth: {
+                selectedType: 'gemini-api-key',
+              },
+            },
+          },
+          null,
+          2
+        ),
+        'utf-8'
+      );
 
       const env = this.buildIsolatedEnv(workspace.homeDir, {
-        GEMINI_CLI_HOME: geminiHome,
         GEMINI_API_KEY: apiKey,
         GOOGLE_GEMINI_BASE_URL: normalizeBaseUrl(url),
+        GEMINI_SANDBOX: 'false',
+        GEMINI_CLI_TRUST_WORKSPACE: 'true',
       });
 
       const commandResult = await this.commandRunner({
         command: 'gemini',
-        args: [
-          '-p',
-          TEST_PROMPT,
-          '-m',
-          model,
-          '--output-format',
-          'json',
-          '--approval-mode',
-          'plan',
-        ],
+        args: ['--skip-trust', '-m', model, '--output-format', 'json', '--approval-mode', 'plan'],
         cwd: workspace.workDir,
         env,
         timeoutMs: this.timeoutMs,
+        stdin: `${TEST_PROMPT}\n`,
       });
 
       const content = extractGeminiResponse(commandResult.stdout);

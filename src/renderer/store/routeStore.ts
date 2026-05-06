@@ -11,8 +11,6 @@ import type {
   RouteModelRegistryConfig,
   RouteModelMappingOverride,
   RouteModelDisplayItem,
-  RouteModelVendor,
-  RouteVendorPriorityConfig,
   RouteCliProbeConfig,
   RouteCliProbeLatest,
   RouteCliProbeSample,
@@ -63,7 +61,10 @@ interface RouteState {
 
   // Actions - 模型注册表
   fetchModelRegistry: () => Promise<RouteModelRegistryConfig | null>;
-  rebuildModelRegistry: (force?: boolean) => Promise<RouteModelRegistryConfig | null>;
+  rebuildModelRegistry: (
+    force?: boolean,
+    options?: { resetDefaults?: boolean }
+  ) => Promise<RouteModelRegistryConfig | null>;
   syncModelRegistrySources: (force?: boolean) => Promise<RouteModelRegistryConfig | null>;
   upsertMappingOverride: (
     override: RouteModelMappingOverride
@@ -72,10 +73,6 @@ interface RouteState {
     displayItem: RouteModelDisplayItem
   ) => Promise<RouteModelRegistryConfig | null>;
   deleteDisplayItem: (displayItemId: string) => Promise<RouteModelRegistryConfig | null>;
-  saveVendorPriorityConfig: (
-    vendor: RouteModelVendor,
-    priorityConfig: RouteVendorPriorityConfig
-  ) => Promise<RouteModelRegistryConfig | null>;
   deleteMappingOverride: (overrideId: string) => Promise<boolean>;
 
   // Actions - CLI 模型选择
@@ -220,16 +217,32 @@ export const useRouteStore = create<RouteState>((set, get) => ({
     return null;
   },
 
-  rebuildModelRegistry: async force => {
-    const res = await window.electronAPI.route?.rebuildModelRegistry({ force });
+  rebuildModelRegistry: async (force, options) => {
+    const res = await window.electronAPI.route?.rebuildModelRegistry({
+      force,
+      resetDefaults: options?.resetDefaults,
+    });
     if (res?.success && res.data) {
       set(state => ({
         config: state.config ? { ...state.config, modelRegistry: res.data } : null,
       }));
-      sessionEventLog.success('route', force ? '已强制重建模型重定向目录' : '已重建模型重定向目录');
+      if (options?.resetDefaults) {
+        await get().fetchConfig();
+      }
+      sessionEventLog.success(
+        'route',
+        options?.resetDefaults
+          ? '已重置默认模型重定向'
+          : force
+            ? '已强制重建模型重定向目录'
+            : '已重建模型重定向目录'
+      );
       return res.data;
     }
-    sessionEventLog.error('route', '模型重定向目录重建失败');
+    sessionEventLog.error(
+      'route',
+      options?.resetDefaults ? '默认模型重定向重置失败' : '模型重定向目录重建失败'
+    );
     return null;
   },
 
@@ -281,20 +294,6 @@ export const useRouteStore = create<RouteState>((set, get) => ({
     }
 
     sessionEventLog.error('route', `重定向显示项删除失败：${displayItemId}`);
-    return null;
-  },
-
-  saveVendorPriorityConfig: async (vendor, priorityConfig) => {
-    const res = await window.electronAPI.route?.saveVendorPriorityConfig(vendor, priorityConfig);
-    if (res?.success && res.data) {
-      set(state => ({
-        config: state.config ? { ...state.config, modelRegistry: res.data } : null,
-      }));
-      sessionEventLog.success('route', `厂商优先级已更新：${vendor}`);
-      return res.data;
-    }
-
-    sessionEventLog.error('route', `厂商优先级更新失败：${vendor}`);
     return null;
   },
 

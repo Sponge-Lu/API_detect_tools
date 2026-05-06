@@ -83,7 +83,7 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
       if (result?.success && result.data) {
         setBackups(result.data);
       } else {
-        setError(result?.error || '获取备份列表失败');
+        setError(result?.error || '获取配置包列表失败');
         setBackups([]);
       }
     } catch (err: any) {
@@ -102,7 +102,7 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
     }
   }, [isOpen, loadBackups]);
 
-  // 上传备份
+  // 上传配置包
   const handleUpload = async () => {
     setUploading(true);
     setOperationResult(null);
@@ -111,7 +111,7 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
       if (result?.success) {
         setOperationResult({
           success: true,
-          message: `备份上传成功: ${result.data}`,
+          message: `配置包上传成功: ${result.data}`,
         });
         // 刷新列表
         await loadBackups();
@@ -124,14 +124,14 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
     } catch (err: any) {
       setOperationResult({
         success: false,
-        message: err.message || '上传备份失败',
+        message: err.message || '上传配置包失败',
       });
     } finally {
       setUploading(false);
     }
   };
 
-  // 恢复备份
+  // 恢复配置包
   const handleRestore = async (backup: WebDAVBackupInfo) => {
     setProcessingBackup(backup.filename);
     setOperationResult(null);
@@ -140,7 +140,7 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
       if (result?.success) {
         setOperationResult({
           success: true,
-          message: '配置已恢复，请刷新页面查看更新',
+          message: '配置包已恢复，请刷新页面查看更新',
         });
       } else {
         setOperationResult({
@@ -151,7 +151,7 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
     } catch (err: any) {
       setOperationResult({
         success: false,
-        message: err.message || '恢复备份失败',
+        message: err.message || '恢复配置包失败',
       });
     } finally {
       setProcessingBackup(null);
@@ -159,7 +159,7 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
     }
   };
 
-  // 删除备份
+  // 删除配置包
   const handleDelete = async (backup: WebDAVBackupInfo) => {
     setProcessingBackup(backup.filename);
     setOperationResult(null);
@@ -181,7 +181,7 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
     } catch (err: any) {
       setOperationResult({
         success: false,
-        message: err.message || '删除备份失败',
+        message: err.message || '删除配置包失败',
       });
     } finally {
       setProcessingBackup(null);
@@ -216,14 +216,14 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
       <AppModal
         isOpen={isOpen}
         onClose={onClose}
-        title="WebDAV 云端备份"
+        title="WebDAV 云端配置包"
         titleIcon={<Cloud className="h-5 w-5" />}
         size="xl"
         className="max-w-2xl"
         contentClassName="space-y-4"
         footer={
           <p className="w-full text-center text-xs text-[var(--text-secondary)]">
-            备份文件存储在 WebDAV 服务器的配置路径中。恢复前会自动备份当前配置。
+            配置包存储在 WebDAV 服务器的配置路径中。恢复前会自动备份当前配置。
           </p>
         }
       >
@@ -242,7 +242,7 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
             ) : (
               <>
                 <Upload className="h-4 w-4" />
-                上传备份
+                上传配置包
               </>
             )}
           </button>
@@ -252,7 +252,11 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
             disabled={loading}
             className="inline-flex items-center gap-2 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-4 py-2 text-sm font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-3)] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {loading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
             刷新
           </button>
         </div>
@@ -277,7 +281,7 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
         {loading ? (
           <div className="py-12 text-center text-[var(--text-secondary)]">
             <Loader2 className="mx-auto mb-3 h-8 w-8 animate-spin text-[var(--accent)]" />
-            <p>加载备份列表中...</p>
+            <p>加载配置包列表中...</p>
           </div>
         ) : error ? (
           <div className="py-12 text-center">
@@ -288,8 +292,8 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
         ) : backups.length === 0 ? (
           <div className="py-12 text-center text-[var(--text-secondary)]">
             <FileJson className="mx-auto mb-3 h-12 w-12 opacity-30" />
-            <p>没有找到云端备份</p>
-            <p className="mt-1 text-sm">点击"上传备份"将当前配置备份到云端</p>
+            <p>没有找到云端配置包</p>
+            <p className="mt-1 text-sm">点击"上传配置包"将当前配置与默认运行态备份到云端</p>
           </div>
         ) : (
           <div className="space-y-2">
@@ -327,8 +331,8 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
                     onClick={() => openConfirm('restore', backup)}
                     disabled={processingBackup === backup.filename}
                     className="rounded-[var(--radius-md)] p-2 text-[var(--accent)] transition-colors hover:bg-[var(--accent-soft)] disabled:opacity-50"
-                    aria-label="恢复此备份"
-                    title="恢复此备份"
+                    aria-label="恢复此配置包"
+                    title="恢复此配置包"
                   >
                     {processingBackup === backup.filename ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -341,8 +345,8 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
                     onClick={() => openConfirm('delete', backup)}
                     disabled={processingBackup === backup.filename}
                     className="rounded-[var(--radius-md)] p-2 text-[var(--danger)] transition-colors hover:bg-[var(--danger-soft)] disabled:opacity-50"
-                    aria-label="删除此备份"
-                    title="删除此备份"
+                    aria-label="删除此配置包"
+                    title="删除此配置包"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
@@ -360,13 +364,13 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
           title={confirm.type === 'restore' ? '确认恢复' : '确认删除'}
           message={
             confirm.type === 'restore'
-              ? `确定要恢复备份 ${confirm.backup.filename} 吗？`
-              : `确定要删除备份 ${confirm.backup.filename} 吗？`
+              ? `确定要恢复配置包 ${confirm.backup.filename} 吗？`
+              : `确定要删除配置包 ${confirm.backup.filename} 吗？`
           }
           content={
             <p className="mt-3 text-sm text-[var(--text-secondary)]">
               {confirm.type === 'restore'
-                ? '当前配置将被覆盖，但会先自动备份。'
+                ? '当前配置与默认运行态将被覆盖，但会先自动备份。'
                 : '此操作无法撤销。'}
             </p>
           }

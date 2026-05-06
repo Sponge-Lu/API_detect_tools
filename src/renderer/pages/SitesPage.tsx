@@ -72,6 +72,7 @@ interface BackupInfo {
   path: string;
   timestamp: Date;
   size: number;
+  kind?: 'legacy-config' | 'storage-bundle';
 }
 
 // 账户信息（来自 accounts:list IPC）
@@ -538,6 +539,14 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     return config.siteGroups;
   })();
   const defaultGroupId: string = siteGroups.find(g => g.id === 'default')?.id || siteGroups[0].id;
+  const effectiveActiveSiteGroupFilter = activeSiteGroupFilter ?? defaultGroupId;
+
+  useEffect(() => {
+    const stillExists = siteGroups.some(group => group.id === activeSiteGroupFilter);
+    if (activeSiteGroupFilter === null || !stillExists) {
+      setActiveSiteGroupFilter(defaultGroupId);
+    }
+  }, [activeSiteGroupFilter, defaultGroupId, setActiveSiteGroupFilter, siteGroups]);
 
   // 站点分组管理 hook
   const {
@@ -1086,25 +1095,9 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
             <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-[var(--line-soft)] px-4 pb-1 pt-2 text-[13px] text-[var(--text-secondary)]">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-semibold text-[var(--text-primary)]">站点分组</span>
-                <button
-                  onClick={() => setActiveSiteGroupFilter(null)}
-                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[13px] transition-all ${
-                    activeSiteGroupFilter === null
-                      ? 'border-[var(--accent)] bg-[var(--accent)] text-white'
-                      : 'border-[var(--line-soft)] bg-[var(--surface-1)]/88 hover:border-[color-mix(in_srgb,var(--accent)_28%,var(--line-soft))]'
-                  }`}
-                  title="显示全部站点"
-                >
-                  <span className="font-semibold">全部</span>
-                  <span
-                    className={`text-xs ${activeSiteGroupFilter === null ? 'text-white/80' : 'text-[var(--text-tertiary)]'}`}
-                  >
-                    {config.sites.length} 个
-                  </span>
-                </button>
                 {siteGroups.map((group, groupIndex) => {
                   const groupId = group.id;
-                  const isActive = activeSiteGroupFilter === groupId;
+                  const isActive = effectiveActiveSiteGroupFilter === groupId;
                   const groupSitesCount = config.sites.filter(
                     s => (s.group || defaultGroupId) === groupId
                   ).length;
@@ -1155,7 +1148,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                       onClick={() => toggleSiteGroupFilter(groupId)}
                       title={
                         isActive
-                          ? '点击显示全部站点'
+                          ? `当前显示「${group.name}」分组的站点\n拖动站点卡片到此可移动分组\n拖动分组标签可调整顺序`
                           : `点击只显示「${group.name}」分组的站点\n拖动站点卡片到此可移动分组\n拖动分组标签可调整顺序`
                       }
                     >
@@ -1318,7 +1311,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                 <DataTableBody className="space-y-3">
                   {flattenedCards.map(({ site, index, siteResult, account, cardKey: ck }) => {
                     const groupId = site.group || defaultGroupId;
-                    if (activeSiteGroupFilter !== null && groupId !== activeSiteGroupFilter) {
+                    if (groupId !== effectiveActiveSiteGroupFilter) {
                       return null;
                     }
 
@@ -1613,6 +1606,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
         <UnifiedCliConfigDialog
           isOpen={showCliConfigDialog}
           siteName={cliConfigSite.name}
+          accountId={cliConfigAccountId || undefined}
           accountName={
             cliConfigAccountId
               ? accountsBySite[cliConfigSite.id || '']?.find(a => a.id === cliConfigAccountId)
@@ -1624,6 +1618,11 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
             apiKeys[cliConfigCardKey ?? cliConfigSite.name] || apiKeys[cliConfigSite.name] || []
           }
           siteModels={cliConfigSiteResult?.models || []}
+          siteModelPricing={
+            modelPricing[cliConfigCardKey ?? cliConfigSite.name] ||
+            modelPricing[cliConfigSite.name] ||
+            null
+          }
           currentConfig={getCliConfig(cliConfigCardKey ?? cliConfigSite.name)}
           codexDetail={getCompatibility(cliConfigCardKey ?? cliConfigSite.name)?.codexDetail}
           geminiDetail={getCompatibility(cliConfigCardKey ?? cliConfigSite.name)?.geminiDetail}
@@ -1732,7 +1731,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
           const confirmed = await showDialog({
             type: 'confirm',
             title: '确认恢复',
-            message: `确定要从备份文件「${backup.filename}」恢复配置吗？\n\n恢复前会自动备份当前配置。`,
+            message: `确定要从备份「${backup.filename}」恢复配置吗？\n\n配置包会恢复配置与默认运行态；旧版配置备份只恢复 config.json。恢复前会自动备份当前配置。`,
             confirmText: '恢复',
           });
           if (!confirmed) return;

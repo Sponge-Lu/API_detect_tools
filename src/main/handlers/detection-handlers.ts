@@ -213,9 +213,27 @@ export function registerDetectionHandlers(
     // 如果指定了 accountId，用该账户的凭证覆盖站点配置
     if (accountId) {
       const account = unifiedConfigManager.getAccountById(accountId);
-      if (account) {
-        site = { ...site, system_token: account.access_token, user_id: account.user_id };
+      if (!account) {
+        return {
+          checkinResult: {
+            success: false,
+            message: `未找到指定账户: ${accountId}`,
+            needManualCheckIn: true,
+          },
+          balanceResult: null,
+        };
       }
+      if (!account.access_token || !account.user_id) {
+        return {
+          checkinResult: {
+            success: false,
+            message: '当前账户缺少 access token 或用户 ID，请重新获取站点信息',
+            needManualCheckIn: true,
+          },
+          balanceResult: null,
+        };
+      }
+      site = { ...site, system_token: account.access_token, user_id: account.user_id };
     }
 
     try {

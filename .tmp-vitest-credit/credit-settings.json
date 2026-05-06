@@ -1,0 +1,32 @@
+{
+  "config": {
+    "enabled": true,
+    "autoRefresh": false,
+    "refreshInterval": 5
+  },
+  "cachedInfo": {
+    "id": 1,
+    "username": "tester",
+    "nickname": "Tester",
+    "avatarUrl": "https://example.com/avatar.png",
+    "trustLevel": 2,
+    "communityBalance": 100,
+    "gamificationScore": 0,
+    "difference": 0,
+    "totalReceive": "10",
+    "totalPayment": "3",
+    "totalTransfer": "0",
+    "totalCommunity": "100",
+    "availableBalance": "7",
+    "payScore": 88,
+    "payLevel": 2,
+    "isPayKey": true,
+    "remainQuota": "5",
+    "dailyLimit": 20,
+    "isAdmin": false,
+    "lastUpdated": 1778036832918
+  },
+  "cachedDailyStats": null,
+  "cachedTransactions": null,
+  "cookies": "session=abc; cf_clearance=def"
+}
