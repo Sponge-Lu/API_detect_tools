@@ -74,6 +74,46 @@ const CLI_TYPES: CliTypeConfig[] = [
   },
 ];
 
+function chooseLatestCliStatus(params: {
+  persistedStatus: boolean | null;
+  persistedTestedAt: number | null;
+  compatibilityStatus: boolean | null | undefined;
+  compatibilityTestedAt: number | null | undefined;
+}): { status: boolean | null | undefined; testedAt: number | null; useCompatibility: boolean } {
+  const { persistedStatus, persistedTestedAt, compatibilityStatus, compatibilityTestedAt } = params;
+
+  if (compatibilityStatus === null || compatibilityStatus === undefined) {
+    return {
+      status: persistedStatus,
+      testedAt: persistedTestedAt,
+      useCompatibility: false,
+    };
+  }
+
+  if (persistedStatus === null) {
+    return {
+      status: compatibilityStatus,
+      testedAt: compatibilityTestedAt ?? null,
+      useCompatibility: true,
+    };
+  }
+
+  if (compatibilityTestedAt !== null && compatibilityTestedAt !== undefined) {
+    const useCompatibility = compatibilityTestedAt >= (persistedTestedAt ?? 0);
+    return {
+      status: useCompatibility ? compatibilityStatus : persistedStatus,
+      testedAt: useCompatibility ? compatibilityTestedAt : persistedTestedAt,
+      useCompatibility,
+    };
+  }
+
+  return {
+    status: persistedStatus,
+    testedAt: persistedTestedAt,
+    useCompatibility: false,
+  };
+}
+
 /**
  * 加载动画组件
  */
@@ -164,7 +204,13 @@ export function CliCompatibilityIcons({
             const configItem = cliConfig?.[configKey] ?? null;
             const persistedStatus = getCliTestResultStatus(configItem);
             const persistedTestedAt = getCliTestResultTestedAt(configItem);
-            const status = persistedStatus ?? compatibility?.[key];
+            const latestStatus = chooseLatestCliStatus({
+              persistedStatus,
+              persistedTestedAt,
+              compatibilityStatus: compatibility?.[key],
+              compatibilityTestedAt: compatibility?.testedAt,
+            });
+            const status = latestStatus.status;
             const configured = isCliConfigured(cliConfig, configKey);
             const cliError =
               key === 'claudeCode'
@@ -182,12 +228,12 @@ export function CliCompatibilityIcons({
               enabled,
               configured,
               status,
-              testedAt: persistedTestedAt ?? compatibility?.testedAt,
-              claudeDetail: compatibility?.claudeDetail,
-              codexDetail: compatibility?.codexDetail,
-              geminiDetail: compatibility?.geminiDetail,
-              sourceLabel: compatibility?.sourceLabel,
-              error: cliError ?? compatibility?.error,
+              testedAt: latestStatus.testedAt,
+              claudeDetail: latestStatus.useCompatibility ? compatibility?.claudeDetail : undefined,
+              codexDetail: latestStatus.useCompatibility ? compatibility?.codexDetail : undefined,
+              geminiDetail: latestStatus.useCompatibility ? compatibility?.geminiDetail : undefined,
+              sourceLabel: latestStatus.useCompatibility ? compatibility?.sourceLabel : undefined,
+              error: latestStatus.useCompatibility ? (cliError ?? compatibility?.error) : undefined,
             });
 
             return (

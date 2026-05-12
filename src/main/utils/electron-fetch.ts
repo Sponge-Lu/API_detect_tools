@@ -45,16 +45,28 @@ export interface RawFetchResponse {
 
 const proxySessionCache = new Map<string, Promise<Session>>();
 const ELECTRON_FORBIDDEN_REQUEST_HEADERS = new Set([
+  'accept-charset',
+  'accept-encoding',
+  'access-control-request-headers',
+  'access-control-request-method',
   'connection',
   'content-length',
+  'cookie',
   'cookie2',
+  'date',
+  'dnt',
+  'expect',
   'host',
   'keep-alive',
+  'origin',
+  'permissions-policy',
   'proxy-connection',
+  'referer',
   'te',
   'trailer',
   'transfer-encoding',
   'upgrade',
+  'via',
 ]);
 
 export function isElectronNetAvailable(): boolean {
@@ -130,6 +142,7 @@ function normalizeRequestHeaderValue(value: string | string[]): string {
 function isElectronForbiddenRequestHeader(key: string, value: string | string[]): boolean {
   const normalizedKey = key.toLowerCase();
   if (ELECTRON_FORBIDDEN_REQUEST_HEADERS.has(normalizedKey)) return true;
+  if (normalizedKey.startsWith('proxy-') || normalizedKey.startsWith('sec-')) return true;
   return (
     normalizedKey === 'connection' && normalizeRequestHeaderValue(value).toLowerCase() === 'upgrade'
   );

@@ -31,6 +31,8 @@ import type {
 import type {
   RouteAnalyticsObjectStatsItem,
   RouteAnalyticsObjectStatsQuery,
+  RouteAnalyticsWindowQuery,
+  RoutePathStateResetParams,
   RouteRequestLogItem,
   RouteRequestLogQuery,
 } from '../shared/types/route-proxy';
@@ -359,6 +361,9 @@ declare global {
         deleteRule: (ruleId: string) => Promise<{ success: boolean; data?: any; error?: string }>;
         listStats: () => Promise<{ success: boolean; data?: any; error?: string }>;
         resetStats: (ruleId?: string) => Promise<{ success: boolean; error?: string }>;
+        resetPathStates: (
+          params?: RoutePathStateResetParams
+        ) => Promise<{ success: boolean; data?: { cleared: number }; error?: string }>;
         getHealth: () => Promise<{ success: boolean; data?: any; error?: string }>;
         runHealthCheck: () => Promise<{ success: boolean; error?: string }>;
         getRuntimeStatus: () => Promise<{ success: boolean; data?: any; error?: string }>;
@@ -396,10 +401,10 @@ declare global {
         ) => Promise<{ success: boolean; data?: any; error?: string }>;
         getCliProbeView: (params: any) => Promise<{ success: boolean; data?: any; error?: string }>;
         getAnalyticsSummary: (
-          params: any
+          params: RouteAnalyticsWindowQuery
         ) => Promise<{ success: boolean; data?: any; error?: string }>;
         getAnalyticsDistribution: (
-          params: any
+          params: RouteAnalyticsWindowQuery
         ) => Promise<{ success: boolean; data?: any; error?: string }>;
         getObjectStats: (
           params: RouteAnalyticsObjectStatsQuery
@@ -526,6 +531,9 @@ function App() {
     null
   );
   const [sitesPageHeaderActions, setSitesPageHeaderActions] = useState<ReactNode | null>(null);
+  const [usabilityPageHeaderActions, setUsabilityPageHeaderActions] = useState<ReactNode | null>(
+    null
+  );
 
   // 用于存储初始化状态的 ref
   const initRef = useRef(false);
@@ -820,7 +828,9 @@ function App() {
       ? overviewPageHeaderActions
       : visibleActiveTab === 'sites'
         ? sitesPageHeaderActions
-        : null;
+        : visibleActiveTab === 'usability'
+          ? usabilityPageHeaderActions
+          : null;
 
   if (!config) {
     return (
@@ -910,7 +920,7 @@ function App() {
               visibleActiveTab === 'usability' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
             }
           >
-            <CliUsabilityTab />
+            <CliUsabilityTab setPageHeaderActions={setUsabilityPageHeaderActions} />
           </div>
           <div
             className={

@@ -44,6 +44,7 @@ export interface RouteProxyServerConfig {
   port: number;
   unifiedApiKey: string;
   upstreamProxyUrl?: string;
+  blockGeminiCliInternalUtilityRequests: boolean;
   requestTimeoutMs: number;
   retryCount: number;
   healthCheckIntervalMinutes: number;
@@ -114,6 +115,11 @@ export interface RoutePathState extends RouteChannelKey {
   lastSuccessAt?: number;
   lastFailureAt?: number;
   updatedAt: number;
+}
+
+export interface RoutePathStateResetParams {
+  routeRuleId?: string;
+  canonicalModel?: string;
 }
 
 /** 通道健康投影（由 probe latest 投影得出） */
@@ -238,6 +244,21 @@ export interface RouteModelDisplayItem {
   updatedAt: number;
 }
 
+export const ROUTE_OVERRIDE_DISPLAY_ITEM_ID_PREFIX = 'override:';
+
+export function buildRouteOverrideDisplayItemId(canonicalName: string): string {
+  return `${ROUTE_OVERRIDE_DISPLAY_ITEM_ID_PREFIX}${canonicalName}`;
+}
+
+export function parseRouteOverrideDisplayItemId(displayItemId: string): string | null {
+  if (!displayItemId.startsWith(ROUTE_OVERRIDE_DISPLAY_ITEM_ID_PREFIX)) {
+    return null;
+  }
+
+  const canonicalName = displayItemId.slice(ROUTE_OVERRIDE_DISPLAY_ITEM_ID_PREFIX.length).trim();
+  return canonicalName || null;
+}
+
 /** 模型注册表配置 */
 export interface RouteModelRegistryConfig {
   version: number;
@@ -265,6 +286,7 @@ export interface RouteCliProbeConfig {
 /** 单条 CLI 探测样本 */
 export interface RouteCliProbeSample {
   sampleId: string;
+  probeRunId?: string;
   probeKey: string;
   siteId: string;
   accountId: string;
@@ -368,6 +390,9 @@ export interface RouteAnalyticsBucket {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  cachedTokens?: number;
   statusCodeHistogram: Record<string, number>;
   latencyHistogram: Record<string, number>;
   firstByteHistogram: Record<string, number>;
@@ -399,6 +424,9 @@ export interface RouteRequestLogItem {
   promptTokens?: number;
   completionTokens?: number;
   totalTokens?: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  cachedTokens?: number;
   error?: string;
   createdAt: number;
 }
@@ -414,8 +442,18 @@ export interface RouteRequestLogQuery {
 
 export type RouteAnalyticsObjectStatsSort = 'requests' | 'tokens' | 'failureRisk' | 'successRate';
 
+export type RouteAnalyticsWindow = '24h' | '7d';
+
+export interface RouteAnalyticsWindowQuery {
+  window: RouteAnalyticsWindow;
+  cliType?: RouteCliType;
+  routeRuleId?: string;
+  canonicalModel?: string;
+  siteId?: string;
+}
+
 export interface RouteAnalyticsObjectStatsQuery {
-  window: '24h' | '7d' | '30d';
+  window: RouteAnalyticsWindow;
   limit?: number;
   sortBy?: RouteAnalyticsObjectStatsSort;
 }
@@ -436,6 +474,9 @@ export interface RouteAnalyticsObjectStatsItem {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  cachedTokens?: number;
   lastUsedAt?: number;
   lastFailureAt?: number;
 }
@@ -470,14 +511,15 @@ export const DEFAULT_ROUTE_PROXY_SERVER_CONFIG: RouteProxyServerConfig = {
   port: 3210,
   unifiedApiKey: '',
   upstreamProxyUrl: '',
-  requestTimeoutMs: 300000,
+  blockGeminiCliInternalUtilityRequests: true,
+  requestTimeoutMs: 60000,
   retryCount: 1,
   healthCheckIntervalMinutes: 60,
 };
 
 export const DEFAULT_CLI_PROBE_CONFIG: RouteCliProbeConfig = {
   enabled: false,
-  intervalMinutes: 60,
+  intervalMinutes: 240,
   modelsPerCli: 3,
   requestTimeoutMs: 30000,
   maxConcurrency: 3,

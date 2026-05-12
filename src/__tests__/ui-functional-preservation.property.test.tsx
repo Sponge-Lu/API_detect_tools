@@ -302,6 +302,7 @@ describe('UI functional preservation contracts', () => {
           .stringMatching(/^[a-zA-Z0-9]+$/)
           .filter(value => value.length >= 1 && value.length <= 20),
         (initialValue, nextValue) => {
+          fc.pre(initialValue !== nextValue);
           const stateChanges: string[] = [];
 
           const { container, unmount } = render(

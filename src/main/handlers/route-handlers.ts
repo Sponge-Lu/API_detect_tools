@@ -16,6 +16,8 @@ import * as analytics from '../route-analytics-service';
 import { runHealthCheck } from '../route-health-service';
 import type {
   RouteAnalyticsObjectStatsQuery,
+  RouteAnalyticsWindowQuery,
+  RoutePathStateResetParams,
   RouteRule,
   RouteRequestLogQuery,
 } from '../../shared/types/route-proxy';
@@ -37,6 +39,7 @@ export function registerRouteHandlers() {
         rules: routing.rules,
         cliModelSelections: routing.cliModelSelections,
         stats: routing.stats,
+        routePathStates: routing.routePathStates,
         health: routing.health,
         modelRegistry: routing.modelRegistry,
         cliProbe: {
@@ -138,6 +141,15 @@ export function registerRouteHandlers() {
     try {
       await unifiedConfigManager.resetRouteStats(ruleId);
       return ok();
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
+  ipcMain.handle('route:reset-path-states', async (_, params?: RoutePathStateResetParams) => {
+    try {
+      const cleared = await unifiedConfigManager.resetRoutePathStates(params);
+      return ok({ cleared });
     } catch (e: any) {
       return err(e.message);
     }
@@ -289,7 +301,7 @@ export function registerRouteHandlers() {
 
   // ============= 统计分析 =============
 
-  ipcMain.handle('route:get-analytics-summary', async (_, params) => {
+  ipcMain.handle('route:get-analytics-summary', async (_, params: RouteAnalyticsWindowQuery) => {
     try {
       return ok(analytics.getAnalyticsSummary(params));
     } catch (e: any) {
@@ -297,13 +309,16 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle('route:get-analytics-distribution', async (_, params) => {
-    try {
-      return ok(analytics.getAnalyticsDistribution(params));
-    } catch (e: any) {
-      return err(e.message);
+  ipcMain.handle(
+    'route:get-analytics-distribution',
+    async (_, params: RouteAnalyticsWindowQuery) => {
+      try {
+        return ok(analytics.getAnalyticsDistribution(params));
+      } catch (e: any) {
+        return err(e.message);
+      }
     }
-  });
+  );
 
   ipcMain.handle('route:get-object-stats', async (_, params: RouteAnalyticsObjectStatsQuery) => {
     try {

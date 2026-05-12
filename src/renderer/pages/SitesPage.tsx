@@ -52,6 +52,7 @@ import {
   SITE_TYPE_LABELS,
   type SiteConfig,
   type DetectionResult,
+  type AnyRouterAccountConfig,
 } from '../../shared/types/site';
 import type { Config, SiteGroup } from '../App';
 import {
@@ -87,6 +88,7 @@ interface AccountInfo {
   browser_profile_path?: string;
   auto_refresh?: boolean;
   auto_refresh_interval?: number;
+  anyRouterConfig?: AnyRouterAccountConfig;
 }
 
 interface AddedAccountInfo {
@@ -107,6 +109,7 @@ interface EditingAccountInfo {
   account_name?: string;
   user_id?: string;
   access_token?: string;
+  anyRouterConfig?: AnyRouterAccountConfig;
 }
 
 interface CardOperationContext {
@@ -1340,6 +1343,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                         accountName={account?.account_name}
                         accountAccessToken={account?.access_token}
                         accountUserId={account?.user_id}
+                        accountAnyRouterConfig={account?.anyRouterConfig}
                         cardKey={ck}
                         apiKeys={apiKeys[ck] || apiKeys[site.name] || []}
                         userGroups={userGroups[ck] || userGroups[site.name] || {}}
@@ -1495,6 +1499,8 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                         '默认账户',
                       access_token: auth.systemToken,
                       user_id: auth.userId,
+                      // AnyRouter 配置
+                      ...(auth.anyRouterConfig ? { anyRouterConfig: auth.anyRouterConfig } : {}),
                     }
                   );
 
@@ -1557,6 +1563,12 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
           }}
           groups={siteGroups}
           defaultGroupId={defaultGroupId}
+          onConfigChanged={async () => {
+            // 重新加载配置，以便其他账户也能看到更新的 hash
+            const refreshedConfig = await window.electronAPI.loadConfig();
+            setConfig(refreshedConfig);
+            await loadAllAccounts(refreshedConfig?.sites);
+          }}
         />
       )}
 
@@ -1605,6 +1617,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
       {cliConfigSite && (
         <UnifiedCliConfigDialog
           isOpen={showCliConfigDialog}
+          siteId={cliConfigSite.id}
           siteName={cliConfigSite.name}
           accountId={cliConfigAccountId || undefined}
           accountName={

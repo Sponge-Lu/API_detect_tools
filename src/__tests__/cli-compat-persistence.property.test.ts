@@ -90,7 +90,7 @@ function extractCliCompatibility(site: SiteConfig): CliCompatibilityResult | nul
  * 返回一个 Record<siteName, CliCompatibilityResult>
  */
 function loadCliCompatibilityFromConfig(config: Config): Record<string, CliCompatibilityResult> {
-  const result: Record<string, CliCompatibilityResult> = {};
+  const result: Record<string, CliCompatibilityResult> = Object.create(null);
 
   for (const site of config.sites) {
     const cliCompatibility = extractCliCompatibility(site);

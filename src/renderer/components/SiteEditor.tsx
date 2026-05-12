@@ -22,13 +22,17 @@ import {
   SITE_TYPE_LABELS,
   SITE_TYPES,
   type SiteType,
+  type AnyRouterAccountConfig,
+  isAnyRouterSite,
 } from '../../shared/types/site';
+import { AnyRouterConfigSection } from './AnyRouterConfigSection';
 
 interface EditingAccountInfo {
   id: string;
   account_name?: string;
   user_id?: string;
   access_token?: string;
+  anyRouterConfig?: AnyRouterAccountConfig;
 }
 
 interface Props {
@@ -36,13 +40,20 @@ interface Props {
   editingAccount?: EditingAccountInfo | null;
   onSave: (
     site: SiteConfig,
-    auth: { systemToken: string; userId: string; accountName?: string }
+    auth: {
+      systemToken: string;
+      userId: string;
+      accountName?: string;
+      anyRouterConfig?: AnyRouterAccountConfig;
+    }
   ) => void | Promise<void>;
   onCancel: () => void;
   // 站点分组列表（来自 config.siteGroups）
   groups: { id: string; name: string }[];
   // 默认分组 ID（例如 "default"）
   defaultGroupId: string;
+  // 配置变更回调（用于重新加载配置）
+  onConfigChanged?: () => void;
 }
 
 type Step = 'input-url' | 'fetching' | 'confirm';
@@ -91,6 +102,7 @@ export function SiteEditor({
   onCancel,
   groups,
   defaultGroupId,
+  onConfigChanged,
 }: Props) {
   // 编辑模式下直接跳到确认步骤，新增模式从输入URL开始
   const [step, setStep] = useState<Step>(site ? 'confirm' : 'input-url');
@@ -110,6 +122,10 @@ export function SiteEditor({
   );
   const [hasDetectedSiteType, setHasDetectedSiteType] = useState<boolean>(!!site?.site_type);
   const [isSiteTypeEditing, setIsSiteTypeEditing] = useState<boolean>(false);
+
+  // AnyRouter 配置
+  const [userHash, setUserHash] = useState<string>(editingAccount?.anyRouterConfig?.userHash || '');
+  const isAnyRouter = site ? isAnyRouterSite(site.name) : false;
 
   // 监听后端发送的状态更新事件
   useEffect(() => {
@@ -259,6 +275,12 @@ export function SiteEditor({
       ...(editingAccount
         ? {
             accountName: autoInfo.accountName.trim() || editingAccount.account_name || '',
+          }
+        : {}),
+      // AnyRouter 配置
+      ...(isAnyRouter && userHash
+        ? {
+            anyRouterConfig: { userHash },
           }
         : {}),
     });
@@ -584,6 +606,17 @@ export function SiteEditor({
                     </div>
                   )}
                 </div>
+
+                {/* AnyRouter 专用配置 */}
+                {site && site.id && editingAccount && isAnyRouter && (
+                  <AnyRouterConfigSection
+                    siteId={site.id}
+                    accountId={editingAccount.id}
+                    userHash={userHash}
+                    onUserHashChange={setUserHash}
+                    onConfigChanged={onConfigChanged}
+                  />
+                )}
 
                 {/* 加油站链接输入区域 */}
                 <div className="flex items-center gap-2 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-2">

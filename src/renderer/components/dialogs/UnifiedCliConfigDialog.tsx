@@ -37,6 +37,7 @@ import type {
   CodexTestDetail,
   GeminiTestDetail,
   ModelPricingData,
+  UnifiedConfig,
 } from '../../../shared/types/site';
 import {
   CLI_TEST_MODEL_SLOT_COUNT,
@@ -57,11 +58,17 @@ import {
   type ConfigFile,
 } from '../../services/cli-config-generator';
 import type { CliCompatibilityResult } from '../../store/detectionStore';
+import { useRouteStore } from '../../store/routeStore';
 import { toast } from '../../store/toastStore';
 import {
   persistCliCompatibilityResult,
   type PersistedCliCompatibilityTestSample,
 } from '../../services/cli-compat-sync';
+import {
+  mergeCliProbeLatestRecords,
+  projectCliModelTestResultsFromLatest,
+  resolveCliProbeSiteId,
+} from '../../services/cli-compat-projection';
 
 // 导入 CLI 图标
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
@@ -114,6 +121,7 @@ function FormSwitch({
 
 export interface UnifiedCliConfigDialogProps {
   isOpen: boolean;
+  siteId?: string;
   siteName: string;
   accountId?: string;
   accountName?: string;
@@ -450,6 +458,73 @@ function createCliModelTestStateFromConfig(
   };
 }
 
+function areCliModelTestResultsEqual(
+  left: CliModelTestResult | null,
+  right: CliModelTestResult | null
+): boolean {
+  if (!left || !right) {
+    return left === right;
+  }
+
+  return (
+    left.model === right.model &&
+    left.success === right.success &&
+    left.timestamp === right.timestamp &&
+    left.message === right.message
+  );
+}
+
+function areCliModelTestSlotsEqual(
+  left: Array<CliModelTestResult | null>,
+  right: Array<CliModelTestResult | null>
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((leftSlot, index) => areCliModelTestResultsEqual(leftSlot, right[index] ?? null))
+  );
+}
+
+function getLatestCliModelTestedAt(
+  currentTestedAt: number | null,
+  slots: Array<CliModelTestResult | null>
+): number | null {
+  const timestamps = slots
+    .map(slot => slot?.timestamp)
+    .filter((timestamp): timestamp is number => typeof timestamp === 'number');
+  if (timestamps.length === 0) {
+    return currentTestedAt;
+  }
+
+  return Math.max(currentTestedAt ?? 0, ...timestamps);
+}
+
+function buildProjectionCliConfig(
+  cliType: CliType,
+  currentConfig: CliConfig | null,
+  cliConfigs: Record<
+    CliType,
+    {
+      apiKeyId: number | null;
+      model: string | null;
+      testModels: string[];
+      editedFiles: GeneratedConfig | null;
+    }
+  >,
+  testState: CliModelTestState
+): NonNullable<CliConfig[CliType]> {
+  const persistedConfig = currentConfig?.[cliType] ?? null;
+  return {
+    apiKeyId: persistedConfig?.apiKeyId ?? cliConfigs[cliType].apiKeyId,
+    model: persistedConfig?.model ?? cliConfigs[cliType].model,
+    testModel: persistedConfig?.testModel ?? null,
+    testModels: cliConfigs[cliType].testModels,
+    testResults: testState.slots,
+    enabled: persistedConfig?.enabled ?? true,
+    editedFiles: persistedConfig?.editedFiles ?? null,
+    applyMode: persistedConfig?.applyMode ?? 'merge',
+  };
+}
+
 function SearchableModelSelector({
   models,
   selectedModel,
@@ -651,6 +726,7 @@ function ConfigFileDisplay({
  */
 export function UnifiedCliConfigDialog({
   isOpen,
+  siteId,
   siteName,
   accountId,
   accountName,
@@ -666,6 +742,8 @@ export function UnifiedCliConfigDialog({
   onClose,
   onSave,
 }: UnifiedCliConfigDialogProps) {
+  const routeCliProbeLatest = useRouteStore(state => state.config?.cliProbe?.latest ?? null);
+
   // CLI 启用状态
   const [enabledState, setEnabledState] = useState<Record<CliType, boolean>>({
     claudeCode: true,
@@ -713,6 +791,10 @@ export function UnifiedCliConfigDialog({
   const [cliModelTests, setCliModelTests] = useState<Record<CliType, CliModelTestState>>(
     createEmptyCliModelTestState()
   );
+  const [loadedCliProbeConfig, setLoadedCliProbeConfig] = useState<Pick<
+    UnifiedConfig,
+    'sites' | 'routing'
+  > | null>(null);
   const previousOpenRef = useRef(false);
   const previousDialogKeyRef = useRef<string | null>(null);
   const [dialogViewportHeight, setDialogViewportHeight] = useState(() => getDialogViewportHeight());
@@ -735,6 +817,57 @@ export function UnifiedCliConfigDialog({
       window.visualViewport?.removeEventListener('resize', syncDialogViewportHeight);
     };
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setLoadedCliProbeConfig(null);
+      return;
+    }
+
+    let cancelled = false;
+    const loadConfig = window.electronAPI.loadConfig;
+    if (!loadConfig) {
+      setLoadedCliProbeConfig(null);
+      return;
+    }
+
+    void Promise.resolve()
+      .then(() => loadConfig())
+      .then(config => {
+        if (cancelled) {
+          return;
+        }
+
+        const loadedConfig = config as UnifiedConfig | null | undefined;
+        setLoadedCliProbeConfig({
+          sites: loadedConfig?.sites || [],
+          routing: loadedConfig?.routing,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLoadedCliProbeConfig(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId, isOpen, siteId, siteName, siteUrl]);
+
+  const projectedCliProbeLatest = useMemo(
+    () =>
+      mergeCliProbeLatestRecords(
+        loadedCliProbeConfig?.routing?.cliProbe?.latest,
+        routeCliProbeLatest
+      ),
+    [loadedCliProbeConfig?.routing?.cliProbe?.latest, routeCliProbeLatest]
+  );
+
+  const projectedCliProbeSiteId = useMemo(
+    () => resolveCliProbeSiteId(loadedCliProbeConfig, { siteId, siteName, siteUrl }),
+    [loadedCliProbeConfig, siteId, siteName, siteUrl]
+  );
 
   // 初始化配置
   useEffect(() => {
@@ -841,6 +974,66 @@ export function UnifiedCliConfigDialog({
     previousOpenRef.current = isOpen;
     previousDialogKeyRef.current = isOpen ? dialogKey : null;
   }, [accountName, currentConfig, isOpen, siteUrl]);
+
+  useEffect(() => {
+    if (!isOpen || !projectedCliProbeSiteId || Object.keys(projectedCliProbeLatest).length === 0) {
+      return;
+    }
+
+    setCliModelTests(prev => {
+      const projectionConfig: CliConfig = {
+        claudeCode: buildProjectionCliConfig(
+          'claudeCode',
+          currentConfig,
+          cliConfigs,
+          prev.claudeCode
+        ),
+        codex: buildProjectionCliConfig('codex', currentConfig, cliConfigs, prev.codex),
+        geminiCli: buildProjectionCliConfig('geminiCli', currentConfig, cliConfigs, prev.geminiCli),
+      };
+      const projectedResults = projectCliModelTestResultsFromLatest({
+        latest: projectedCliProbeLatest,
+        siteId: projectedCliProbeSiteId,
+        accountId,
+        cliConfig: projectionConfig,
+      });
+
+      const next: Record<CliType, CliModelTestState> = {
+        claudeCode: {
+          ...prev.claudeCode,
+          slots: projectedResults.claudeCode,
+          testedAt: getLatestCliModelTestedAt(
+            prev.claudeCode.testedAt,
+            projectedResults.claudeCode
+          ),
+        },
+        codex: {
+          ...prev.codex,
+          slots: projectedResults.codex,
+          testedAt: getLatestCliModelTestedAt(prev.codex.testedAt, projectedResults.codex),
+        },
+        geminiCli: {
+          ...prev.geminiCli,
+          slots: projectedResults.geminiCli,
+          testedAt: getLatestCliModelTestedAt(prev.geminiCli.testedAt, projectedResults.geminiCli),
+        },
+      };
+
+      const unchanged =
+        areCliModelTestSlotsEqual(prev.claudeCode.slots, next.claudeCode.slots) &&
+        areCliModelTestSlotsEqual(prev.codex.slots, next.codex.slots) &&
+        areCliModelTestSlotsEqual(prev.geminiCli.slots, next.geminiCli.slots);
+
+      return unchanged ? prev : next;
+    });
+  }, [
+    accountId,
+    cliConfigs,
+    currentConfig,
+    isOpen,
+    projectedCliProbeLatest,
+    projectedCliProbeSiteId,
+  ]);
 
   // 当 CLI 类型改变时，保存当前编辑的配置并重置编辑状态
   useEffect(() => {

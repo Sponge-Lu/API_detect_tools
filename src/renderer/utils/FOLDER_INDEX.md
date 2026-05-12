@@ -25,6 +25,9 @@
 |------|------|--------|
 | **groupStyle.tsx** | 分组样式生成 | `getGroupStyle()`, `getGroupColor()` |
 | **logger.ts** | 日志记录 | `info()`, `warn()`, `error()`, `debug()` |
+| **modelPricing.ts** | 模型计费方式与价格归一化 | `resolveModelPricing()`, `isPerCallPricing()` |
+| **routeLatency.ts** | 路由延迟分位数估算（P90/P99，样本 <20 返 null） | `computeLatencyPercentiles()`, `formatLatency()` |
+| **routeModelDistribution.ts** | 按 canonicalModel 聚合路由桶生成模型热力项 | `buildModelDistribution()` |
 
 ---
 
@@ -134,6 +137,16 @@ Logger.error('错误信息', error);
 [2025-12-24 10:30:45] [INFO] 应用启动
 [2025-12-24 10:30:46] [WARN] 警告信息
 [2025-12-24 10:30:47] [ERROR] 错误信息
+```
+
+### modelPricing.ts - 模型计费解析
+
+**职责**: 将站点模型定价数据归一化为按量 token 价格或按次调用价格，供路由日志与模型重定向显示复用。
+
+**关键函数**:
+```typescript
+resolveModelPricing(pricingData)
+isPerCallPricing(pricingData)
 ```
 
 ---

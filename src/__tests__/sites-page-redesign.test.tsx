@@ -601,6 +601,41 @@ describe('sites page redesign', () => {
     expect(onAddAccount).toHaveBeenCalled();
   });
 
+  it('preserves AnyRouter account config when opening account edit from the site card', () => {
+    const onEdit = vi.fn();
+    const userHash = 'a'.repeat(64);
+
+    render(
+      <SiteCard
+        {...buildSiteCardProps({
+          site: {
+            ...baseSite,
+            id: 'site-anyrouter',
+            name: 'Any Router',
+            url: 'https://anyrouter.top',
+          },
+          accountId: 'account-anyrouter',
+          accountName: 'AnyRouter Account',
+          accountAccessToken: 'sk-anyrouter',
+          accountUserId: 'user-anyrouter',
+          accountAnyRouterConfig: { userHash },
+          onEdit,
+        })}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '更多操作' }));
+    fireEvent.click(screen.getByRole('button', { name: '编辑账户' }));
+
+    expect(onEdit).toHaveBeenCalledWith(
+      0,
+      expect.objectContaining({
+        id: 'account-anyrouter',
+        anyRouterConfig: { userHash },
+      })
+    );
+  });
+
   it('opens the same low-frequency actions from row context menu parity', () => {
     render(
       <SiteCardActions
@@ -1030,6 +1065,69 @@ describe('sites page redesign', () => {
 
     expect(screen.getByAltText('Codex').parentElement?.className).toContain('opacity-100');
     expect(screen.getByAltText('Codex').parentElement?.title).toContain('支持');
+  });
+
+  it('uses newer projected compatibility over stale persisted CLI test results', () => {
+    render(
+      <CliCompatibilityIcons
+        compatibility={{
+          claudeCode: null,
+          codex: false,
+          geminiCli: null,
+          testedAt: 200,
+          codexError: '错误码 503',
+          sourceLabel: '来自站点检测',
+        }}
+        cliConfig={{
+          claudeCode: {
+            apiKeyId: 1,
+            model: 'claude-3-5-sonnet',
+            testModel: null,
+            testModels: [],
+            enabled: true,
+            editedFiles: null,
+            applyMode: 'merge',
+          },
+          codex: {
+            apiKeyId: 2,
+            model: 'gpt-4.1',
+            testModel: 'gpt-4.1',
+            testModels: ['gpt-4.1'],
+            testResults: [
+              {
+                model: 'gpt-4.1',
+                success: true,
+                timestamp: 100,
+              },
+              null,
+              null,
+            ],
+            enabled: true,
+            editedFiles: null,
+            applyMode: 'merge',
+          },
+          geminiCli: {
+            apiKeyId: 3,
+            model: 'gemini-2.5-pro',
+            testModel: null,
+            testModels: [],
+            enabled: true,
+            editedFiles: null,
+            applyMode: 'merge',
+          },
+        }}
+        configTrigger="text"
+        configButtonLabel="CLI配置"
+        onConfig={vi.fn()}
+        onApply={vi.fn()}
+      />
+    );
+
+    const codexIcon = screen.getByAltText('Codex').parentElement;
+    expect(codexIcon?.className).toContain('opacity-70');
+    expect(codexIcon?.title).toContain('不支持');
+    expect(codexIcon?.title).toContain('来自站点检测');
+    expect(codexIcon?.title).toContain('错误码 503');
   });
 
   it('keeps CLI icons inline in the header instead of a dedicated workbench slot', () => {

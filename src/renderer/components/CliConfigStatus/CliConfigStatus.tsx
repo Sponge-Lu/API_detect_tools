@@ -1,6 +1,6 @@
 /**
  * 输入: CliDetectionResult (检测结果), CliType (CLI 类型)
- * 输出: CLI 配置状态组件，显示各 CLI 工具当前使用的配置来源和认证类型
+ * 输出: CLI 配置状态组件，显示各 CLI 工具当前使用的配置来源、认证类型和模型名称
  * 定位: UI 组件层 - 显示 Claude Code、Codex、Gemini CLI 的配置来源状态
  *
  * 🔄 自引用: 当此文件变更时，更新:
@@ -15,7 +15,10 @@ import type {
   CliType,
   ConfigSourceType,
 } from '../../../shared/types/config-detection';
+import type { RouteProxyServerConfig } from '../../../shared/types/route-proxy';
 import { useCustomCliConfigStore } from '../../store/customCliConfigStore';
+import { useDetectionStore, type CliConfig } from '../../store/detectionStore';
+import { useRouteStore } from '../../store/routeStore';
 
 // 导入 CLI 图标
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
@@ -106,6 +109,117 @@ const SOURCE_TYPE_DISPLAYS: Record<ConfigSourceType, SourceTypeDisplay> = {
     iconOpacity: 'opacity-40 grayscale',
   },
 };
+
+const LOCAL_ROUTE_LABEL = '本地路由';
+const LOCAL_ROUTE_HOSTS = new Set(['127.0.0.1', 'localhost']);
+const API_VERSION_PATH_PATTERN = /\/v\d+(?:beta)?(?:\/.*)?$/;
+
+function parseUrlHostPort(url: string): { hostname: string; port: number } | null {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const urlWithProtocol = /^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+
+  try {
+    const parsed = new URL(urlWithProtocol);
+    const port = parsed.port ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80;
+    if (!Number.isFinite(port)) {
+      return null;
+    }
+    return {
+      hostname: parsed.hostname.toLowerCase(),
+      port,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isLocalRouteProxyUrl(
+  baseUrl: string | undefined,
+  server: RouteProxyServerConfig | undefined
+): boolean {
+  if (!baseUrl || !server?.port) {
+    return false;
+  }
+
+  const parsed = parseUrlHostPort(baseUrl);
+  if (!parsed) {
+    return false;
+  }
+
+  const serverHost = server.host.toLowerCase();
+  const hostMatches =
+    parsed.hostname === serverHost ||
+    (LOCAL_ROUTE_HOSTS.has(parsed.hostname) && LOCAL_ROUTE_HOSTS.has(serverHost));
+
+  return hostMatches && parsed.port === server.port;
+}
+
+function normalizeModelLabel(model: string | null | undefined): string | null {
+  const trimmed = model?.trim();
+  return trimmed || null;
+}
+
+function getCliConfigModelLabel(config: CliConfig | undefined, cliType: CliType): string | null {
+  return normalizeModelLabel(config?.[cliType]?.model);
+}
+
+function getManagedCliModelLabel(
+  cliConfigs: Record<string, CliConfig>,
+  siteName: string | undefined,
+  cliType: CliType
+): string | null {
+  if (!siteName) {
+    return null;
+  }
+
+  const exactModel = getCliConfigModelLabel(cliConfigs[siteName], cliType);
+  if (exactModel) {
+    return exactModel;
+  }
+
+  const accountKeyPrefix = `${siteName}::`;
+  const accountModels = new Set(
+    Object.entries(cliConfigs)
+      .filter(([key]) => key.startsWith(accountKeyPrefix))
+      .map(([, config]) => getCliConfigModelLabel(config, cliType))
+      .filter((model): model is string => Boolean(model))
+  );
+
+  return accountModels.size === 1 ? Array.from(accountModels)[0] : null;
+}
+
+function normalizeCustomConfigBaseUrl(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  const urlWithProtocol = /^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+
+  try {
+    const parsed = new URL(urlWithProtocol);
+    const isDefaultPort =
+      (parsed.protocol === 'https:' && parsed.port === '443') ||
+      (parsed.protocol === 'http:' && parsed.port === '80');
+    const host = `${parsed.hostname.toLowerCase()}${parsed.port && !isDefaultPort ? `:${parsed.port}` : ''}`;
+    const pathname = parsed.pathname
+      .toLowerCase()
+      .replace(/\/+$/, '')
+      .replace(API_VERSION_PATH_PATTERN, '');
+
+    return `${host}${pathname}`;
+  } catch {
+    return trimmed
+      .replace(/^https?:\/\//i, '')
+      .replace(API_VERSION_PATH_PATTERN, '')
+      .replace(/\/+$/, '')
+      .toLowerCase();
+  }
+}
 
 /** 认证类型的显示配置 */
 interface AuthTypeDisplay {
@@ -212,6 +326,9 @@ function formatDetectedAt(timestamp: number): string {
 export function CliConfigStatus({ cliType, result, compact = false }: CliConfigStatusProps) {
   const cliConfig = CLI_TYPE_CONFIGS[cliType];
   const sourceDisplay = SOURCE_TYPE_DISPLAYS[result.sourceType];
+  const routeServer = useRouteStore(state => state.config?.server);
+  const routeModel = useRouteStore(state => state.config?.cliModelSelections?.[cliType] ?? null);
+  const cliConfigs = useDetectionStore(state => state.cliConfigs);
   const authDisplay = getAuthTypeDisplay(result.authType);
   const statusDetail = getStatusDetail(result);
   const detectedAtText = formatDetectedAt(result.detectedAt);
@@ -222,20 +339,36 @@ export function CliConfigStatus({ cliType, result, compact = false }: CliConfigS
     result.sourceType === 'other' && result.baseUrl
       ? configs.find(c => {
           if (!c.baseUrl) return false;
-          // 标准化 URL 进行比较：移除协议、尾部斜杠、常见路径前缀（如 /v1）
-          const normalizeUrl = (url: string) => {
-            return url
-              .replace(/^https?:\/\//, '') // 移除协议
-              .replace(/\/(v\d+)?\/?$/, '') // 移除尾部 /v1 或 / 等
-              .toLowerCase();
-          };
-          return normalizeUrl(c.baseUrl) === normalizeUrl(result.baseUrl!);
+          return (
+            normalizeCustomConfigBaseUrl(c.baseUrl) ===
+            normalizeCustomConfigBaseUrl(result.baseUrl ?? '')
+          );
         })
       : null;
 
+  const usesLocalRouteProxy = isLocalRouteProxyUrl(result.baseUrl, routeServer);
+  const effectiveSourceDisplay = usesLocalRouteProxy ? SOURCE_TYPE_DISPLAYS.managed : sourceDisplay;
+  const localRouteModelLabel = usesLocalRouteProxy ? routeModel?.trim() || null : null;
+  const customCliModelLabel = normalizeModelLabel(matchedCustomConfig?.cliSettings[cliType]?.model);
+  const managedCliModelLabel =
+    result.sourceType === 'managed'
+      ? getManagedCliModelLabel(cliConfigs, result.siteName, cliType)
+      : null;
+  const modelLabel = usesLocalRouteProxy
+    ? localRouteModelLabel
+    : matchedCustomConfig
+      ? customCliModelLabel
+      : managedCliModelLabel;
+  const sourceLabel = usesLocalRouteProxy
+    ? LOCAL_ROUTE_LABEL
+    : matchedCustomConfig
+      ? matchedCustomConfig.name
+      : sourceDisplay.label;
+
   // 构建 tooltip 文本
   const tooltipParts = [
-    `${cliConfig.name}: ${matchedCustomConfig ? matchedCustomConfig.name : sourceDisplay.label}`,
+    `${cliConfig.name}: ${sourceLabel}`,
+    modelLabel ? `模型: ${modelLabel}` : null,
     statusDetail,
     `检测时间: ${detectedAtText}`,
   ].filter(Boolean);
@@ -244,25 +377,39 @@ export function CliConfigStatus({ cliType, result, compact = false }: CliConfigS
   if (compact) {
     // 紧凑模式：仅显示图标和简短状态标签
     // 如果匹配到自定义配置，显示配置名称；否则对于 'other' 类型显示 Base URL
-    const showBaseUrl = result.sourceType === 'other' && result.baseUrl && !matchedCustomConfig;
-    const displayLabel = matchedCustomConfig
-      ? matchedCustomConfig.name
-      : result.sourceType === 'managed' && result.siteName
-        ? result.siteName
-        : sourceDisplay.shortLabel;
+    const showBaseUrl =
+      result.sourceType === 'other' &&
+      result.baseUrl &&
+      !matchedCustomConfig &&
+      !usesLocalRouteProxy;
+    const displayLabel = usesLocalRouteProxy
+      ? LOCAL_ROUTE_LABEL
+      : matchedCustomConfig
+        ? matchedCustomConfig.name
+        : result.sourceType === 'managed' && result.siteName
+          ? result.siteName
+          : sourceDisplay.shortLabel;
 
     // 格式化 Base URL 显示（移除协议前缀，截断过长的 URL）
     const formatBaseUrl = (url: string): string => {
       const cleaned = url.replace(/^https?:\/\//, '').replace(/\/$/, '');
       return cleaned.length > 20 ? cleaned.substring(0, 20) + '...' : cleaned;
     };
+    const baseUrlSubtitle =
+      showBaseUrl && typeof result.baseUrl === 'string' ? formatBaseUrl(result.baseUrl) : null;
 
     // 自定义配置使用特殊颜色
-    const labelColorClass = matchedCustomConfig ? 'text-[var(--accent)]' : sourceDisplay.colorClass;
+    const labelColorClass = usesLocalRouteProxy
+      ? effectiveSourceDisplay.colorClass
+      : matchedCustomConfig
+        ? 'text-[var(--accent)]'
+        : sourceDisplay.colorClass;
 
     return (
       <div className="flex items-start gap-[var(--spacing-sm)]" title={tooltipText}>
-        <div className={`${cliConfig.sizeClass} flex-shrink-0 ${sourceDisplay.iconOpacity}`}>
+        <div
+          className={`${cliConfig.sizeClass} flex-shrink-0 ${effectiveSourceDisplay.iconOpacity}`}
+        >
           <img src={cliConfig.icon} alt={cliConfig.name} className="w-full h-full" />
         </div>
         <div className="min-w-0 flex-1">
@@ -271,39 +418,48 @@ export function CliConfigStatus({ cliType, result, compact = false }: CliConfigS
           >
             {displayLabel}
           </span>
-          {/* 对于 'other' 类型显示 Base URL（仅在未匹配自定义配置时） */}
-          {showBaseUrl && (
-            <span className="block max-w-[100px] truncate text-[10px] text-[var(--text-secondary)]">
-              {formatBaseUrl(result.baseUrl!)}
+          {modelLabel ? (
+            <span className="block max-w-[120px] truncate text-[10px] text-[var(--text-secondary)]">
+              {modelLabel}
             </span>
+          ) : (
+            baseUrlSubtitle && (
+              <span className="block max-w-[100px] truncate text-[10px] text-[var(--text-secondary)]">
+                {baseUrlSubtitle}
+              </span>
+            )
           )}
         </div>
-        {/* 显示认证类型图标 */}
-        {authDisplay && (
-          <span className="text-xs" title={authDisplay.label}>
-            {authDisplay.icon}
-          </span>
-        )}
       </div>
     );
   }
 
   // 完整模式：显示图标、状态标签和详细信息
   // 自定义配置使用特殊颜色和背景
-  const fullBgClass = matchedCustomConfig ? 'bg-[var(--accent-soft)]' : sourceDisplay.bgClass;
-  const fullColorClass = matchedCustomConfig ? 'text-[var(--accent)]' : sourceDisplay.colorClass;
-  const fullDisplayLabel = matchedCustomConfig
-    ? matchedCustomConfig.name
-    : result.sourceType === 'managed' && result.siteName
-      ? result.siteName
-      : sourceDisplay.label;
+  const fullBgClass = usesLocalRouteProxy
+    ? effectiveSourceDisplay.bgClass
+    : matchedCustomConfig
+      ? 'bg-[var(--accent-soft)]'
+      : sourceDisplay.bgClass;
+  const fullColorClass = usesLocalRouteProxy
+    ? effectiveSourceDisplay.colorClass
+    : matchedCustomConfig
+      ? 'text-[var(--accent)]'
+      : sourceDisplay.colorClass;
+  const fullDisplayLabel = usesLocalRouteProxy
+    ? LOCAL_ROUTE_LABEL
+    : matchedCustomConfig
+      ? matchedCustomConfig.name
+      : result.sourceType === 'managed' && result.siteName
+        ? result.siteName
+        : sourceDisplay.label;
 
   return (
     <div
       className={`flex items-center gap-[var(--spacing-sm)] px-[var(--spacing-sm)] py-[var(--spacing-xs)] rounded-md ${fullBgClass}`}
       title={tooltipText}
     >
-      <div className={`${cliConfig.sizeClass} flex-shrink-0 ${sourceDisplay.iconOpacity}`}>
+      <div className={`${cliConfig.sizeClass} flex-shrink-0 ${effectiveSourceDisplay.iconOpacity}`}>
         <img src={cliConfig.icon} alt={cliConfig.name} className="w-full h-full" />
       </div>
       <div className="flex flex-col min-w-0">
@@ -318,10 +474,19 @@ export function CliConfigStatus({ cliType, result, compact = false }: CliConfigS
             </span>
           )}
         </div>
-        {result.baseUrl && result.sourceType !== 'unknown' && !matchedCustomConfig && (
-          <span className="text-[10px] text-[var(--text-secondary)] truncate max-w-[120px]">
-            {result.baseUrl}
+        {modelLabel ? (
+          <span className="max-w-[120px] truncate text-[10px] text-[var(--text-secondary)]">
+            {modelLabel}
           </span>
+        ) : (
+          result.baseUrl &&
+          result.sourceType !== 'unknown' &&
+          !matchedCustomConfig &&
+          !usesLocalRouteProxy && (
+            <span className="max-w-[120px] truncate text-[10px] text-[var(--text-secondary)]">
+              {result.baseUrl}
+            </span>
+          )
         )}
       </div>
     </div>

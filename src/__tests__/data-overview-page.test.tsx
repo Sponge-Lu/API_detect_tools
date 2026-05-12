@@ -2,6 +2,8 @@ import { useState, type ReactNode } from 'react';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DataOverviewPage } from '../renderer/pages/DataOverviewPage';
+import type { Config } from '../renderer/App';
+import { buildSiteOverviewMetrics } from '../renderer/utils/siteOverview';
 
 const now = Date.now();
 const todayLabel = new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(
@@ -54,6 +56,21 @@ const mockConfig = {
           total_checkins: 19,
           site_type: 'newapi',
         },
+      },
+    },
+    {
+      id: 'site-negative',
+      name: 'Debt Site',
+      url: 'https://debt.example.com',
+      enabled: true,
+      cached_data: {
+        balance: -5,
+        today_usage: 0,
+        today_prompt_tokens: 0,
+        today_completion_tokens: 0,
+        today_requests: 0,
+        last_refresh: now,
+        models: [],
       },
     },
     {
@@ -294,51 +311,42 @@ describe('DataOverviewPage', () => {
       }),
       getRequestLogs: vi.fn().mockResolvedValue({
         success: true,
-        data: [
-          {
-            id: 'log-1',
-            requestId: 'req-1',
-            attempt: 1,
-            cliType: 'claudeCode',
-            outcome: 'failure',
-            createdAt: now,
-            routeRuleId: 'rule-1',
-            routeRuleName: 'claudeCode / Claude 默认规则',
-            siteName: 'Claude Site',
-            accountName: '主账户',
-            apiKeyName: 'Key-Alpha',
-            statusCode: 502,
-            error: 'upstream_failed',
+        data: [],
+      }),
+      getConfig: vi.fn().mockResolvedValue({
+        success: true,
+        data: {
+          routePathStates: {
+            'rule-1:site-1:account-1:key-alpha': {
+              routeRuleId: 'rule-1',
+              siteId: 'site-1',
+              accountId: 'account-1',
+              apiKeyId: 'key-alpha',
+              cliType: 'claudeCode',
+              canonicalModel: 'claude-opus-4-6',
+              windowStartedAt: now - 60_000,
+              windowRequestCount: 12,
+              windowSuccessCount: 11,
+              successRate: 0.9167,
+              lastOutcome: 'failure',
+              updatedAt: now,
+            },
+            'rule-1:site-2:account-2:key-beta': {
+              routeRuleId: 'rule-1',
+              siteId: 'site-2',
+              accountId: 'account-2',
+              apiKeyId: 'key-beta',
+              cliType: 'geminiCli',
+              canonicalModel: 'gemini-2.5-pro',
+              windowStartedAt: now - 60_000,
+              windowRequestCount: 6,
+              windowSuccessCount: 6,
+              successRate: 1,
+              lastOutcome: 'success',
+              updatedAt: now,
+            },
           },
-          {
-            id: 'log-2',
-            requestId: 'req-2',
-            attempt: 1,
-            cliType: 'claudeCode',
-            outcome: 'success',
-            createdAt: now - 1000,
-            routeRuleId: 'rule-1',
-            routeRuleName: 'Claude 默认规则',
-            siteName: 'Claude Site',
-            accountName: '主账户',
-            apiKeyName: 'Key-Alpha',
-            statusCode: 200,
-          },
-          {
-            id: 'log-3',
-            requestId: 'req-3',
-            attempt: 1,
-            cliType: 'codex',
-            outcome: 'success',
-            createdAt: now - 2000,
-            routeRuleId: 'rule-1',
-            routeRuleName: 'Claude 默认规则',
-            siteName: 'Codex Site',
-            accountName: '备账户',
-            apiKeyName: 'Key-Beta',
-            statusCode: 200,
-          },
-        ],
+        },
       }),
     } as NonNullable<typeof window.electronAPI.route>;
 
@@ -397,6 +405,54 @@ describe('DataOverviewPage', () => {
     };
   });
 
+  it('filters negative account balances when building site overview metrics', () => {
+    const metrics = buildSiteOverviewMetrics({
+      sites: [
+        {
+          id: 'site-accounted',
+          name: 'Accounted Site',
+          url: 'https://accounted.example.com',
+          api_key: '',
+          enabled: true,
+        },
+      ],
+      accounts: [
+        {
+          id: 'account-positive',
+          site_id: 'site-accounted',
+          account_name: '正余额账户',
+          user_id: 'user-1',
+          access_token: 'token-1',
+          auth_source: 'manual',
+          status: 'active',
+          cached_data: { balance: 12 },
+          created_at: now,
+          updated_at: now,
+        },
+        {
+          id: 'account-negative',
+          site_id: 'site-accounted',
+          account_name: '负余额账户',
+          user_id: 'user-2',
+          access_token: 'token-2',
+          auth_source: 'manual',
+          status: 'active',
+          cached_data: { balance: -7 },
+          created_at: now,
+          updated_at: now,
+        },
+      ],
+      settings: {
+        timeout: 30,
+        concurrent: false,
+        show_disabled: true,
+      },
+    } satisfies Config);
+
+    expect(metrics).toHaveLength(1);
+    expect(metrics[0]?.balance).toBe(12);
+  });
+
   it('renders site and route overview panels from shared overview subtab state', async () => {
     const { rerender } = render(<DataOverviewPage />);
 
@@ -405,6 +461,8 @@ describe('DataOverviewPage', () => {
     expect(screen.queryByRole('button', { name: '刷新' })).not.toBeInTheDocument();
     expect(screen.getByText('每日签到概览')).toBeInTheDocument();
     expect(screen.getByText('站点资源概览')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '每日签到概览' })).toHaveClass('xl:h-[248px]');
+    expect(screen.getByRole('region', { name: '站点资源概览' })).toHaveClass('xl:h-[248px]');
     expect(screen.getByText('站点历史趋势')).toBeInTheDocument();
     expect(screen.queryByText('运营趋势')).not.toBeInTheDocument();
     expect(screen.queryByText('最近异常')).not.toBeInTheDocument();
@@ -415,7 +473,13 @@ describe('DataOverviewPage', () => {
     });
 
     expect(screen.getByText('可用站点数')).toBeInTheDocument();
-    expect(screen.getByText('展示站点 2 个 / 模型 2 个')).toBeInTheDocument();
+    expect(screen.getByText('展示站点 3 个 / 模型 2 个')).toBeInTheDocument();
+    const totalBalanceMetric = screen.getByText('站点总余额').parentElement;
+    if (!totalBalanceMetric) {
+      throw new Error('Missing site total balance metric');
+    }
+    expect(totalBalanceMetric).toHaveTextContent('$23.70');
+    expect(totalBalanceMetric).not.toHaveTextContent('$18.70');
     expect(screen.getByText('今日签到收益')).toBeInTheDocument();
     expect(screen.getByText('今日请求 44 · 今日 Tokens 5.0K')).toBeInTheDocument();
     expect(screen.getByText('已签 1 个 / 待签 1 个')).toBeInTheDocument();
@@ -458,37 +522,33 @@ describe('DataOverviewPage', () => {
     expect(screen.getByLabelText('路由数据驾驶舱')).toBeInTheDocument();
     expect(screen.getByText('运营趋势')).toBeInTheDocument();
     expect(screen.getByText('活跃对象')).toBeInTheDocument();
-    expect(screen.getByText('异常摘要')).toBeInTheDocument();
-    expect(screen.getByText('最近异常')).toBeInTheDocument();
-    expect(screen.getByText('按站点 / 账户 / API Key 聚合')).toBeInTheDocument();
+    expect(screen.getByText('模型热力分布')).toBeInTheDocument();
+    expect(screen.getByText('通道健康矩阵')).toBeInTheDocument();
+    expect(screen.queryByText('异常摘要')).not.toBeInTheDocument();
+    expect(screen.queryByText('最近异常')).not.toBeInTheDocument();
+    expect(screen.queryByText('按站点 / 账户 / API Key 聚合')).not.toBeInTheDocument();
     expect(screen.queryByText('峰值请求')).not.toBeInTheDocument();
     expect(screen.queryByText('最低成功率')).not.toBeInTheDocument();
     expect(screen.queryByText('Token 峰值')).not.toBeInTheDocument();
-    expect(screen.queryByText('慢请求占比')).not.toBeInTheDocument();
-    expect(screen.getByLabelText('最近异常请求滚动区域')).toBeInTheDocument();
-    expect(screen.getByLabelText('路由规则洞察滚动区域')).toBeInTheDocument();
+    expect(screen.queryByText('响应体验')).not.toBeInTheDocument();
+    expect(screen.queryByText('慢请求占比，按耗时分桶估算')).not.toBeInTheDocument();
+    expect(screen.getByText('延迟分位数')).toBeInTheDocument();
+    expect(screen.getByLabelText('模型热力分布 treemap')).toBeInTheDocument();
+    expect(screen.getByLabelText('通道健康矩阵')).toBeInTheDocument();
     expect(window.electronAPI.route?.getObjectStats).toHaveBeenCalledWith({
       window: '7d',
       limit: 8,
       sortBy: 'successRate',
     });
+    expect(window.electronAPI.route?.getConfig).toHaveBeenCalled();
     expect(screen.queryByText(/Top\s+\d+/)).not.toBeInTheDocument();
-    const primaryRuleItem = screen.getByLabelText('主要失败规则：Claude Code / claude-opus-4-6');
-    expect(primaryRuleItem).toHaveTextContent(/总请求\s*12\s*失败\s*1\s*站点\s*1\s*来源\s*1/);
-    expect(primaryRuleItem.querySelector('[style="width: 100%;"]')).toBeInTheDocument();
-    expect(screen.getByText('Gemini CLI / gemini-2.5-pro')).toBeInTheDocument();
+    expect(screen.getByLabelText('模型：claude-opus-4-6')).toBeInTheDocument();
+    expect(screen.getByLabelText('模型：gemini-2.5-pro')).toBeInTheDocument();
     expect(screen.getByText('Claude Site / 主账户 / Key-Alpha')).toBeInTheDocument();
     const activeObjectItem = screen.getByLabelText('活跃对象：Claude Site / 主账户 / Key-Alpha');
     expect(activeObjectItem).not.toHaveClass('rounded-[var(--radius-lg)]');
     expect(activeObjectItem).toHaveTextContent(/总请求\s*12\s*失败\s*1/);
     expect(activeObjectItem.querySelector('[style="width: 91.67%;"]')).toBeInTheDocument();
-    expect(screen.getByText('Tokens 1.8K')).toBeInTheDocument();
-    expect(screen.getByText('upstream_failed')).toBeInTheDocument();
-    const recentFailureRegion = screen.getByLabelText('最近异常请求滚动区域');
-    expect(within(recentFailureRegion).queryByText('claudeCode')).not.toBeInTheDocument();
-    expect(
-      screen.getByText('路由对象：Claude 默认规则 / Claude Site / 主账户 / Key-Alpha')
-    ).toBeInTheDocument();
     expect(screen.queryByText('每日签到概览')).not.toBeInTheDocument();
   });
 
@@ -521,7 +581,7 @@ describe('DataOverviewPage', () => {
       expect(within(headerActions).getByRole('button', { name: '24h' })).toBeInTheDocument();
     });
     expect(within(headerActions).getByRole('button', { name: '7d' })).toBeInTheDocument();
-    expect(within(headerActions).getByRole('button', { name: '30d' })).toBeInTheDocument();
+    expect(within(headerActions).queryByRole('button', { name: '30d' })).not.toBeInTheDocument();
   });
 
   it('reloads overview data automatically after route overview change events', async () => {
@@ -589,6 +649,128 @@ describe('DataOverviewPage', () => {
       expect(within(requestTrendCard).getByText('44')).toBeInTheDocument();
       expect(within(requestTrendCard).getByText(`最近记录 ${todayLabel}`)).toBeInTheDocument();
     });
+  });
+
+  it('renders trend markers as fixed-size circles and keeps token matrix dots visible', async () => {
+    window.electronAPI.route = {
+      ...window.electronAPI.route,
+      getAnalyticsDistribution: vi.fn().mockResolvedValue({
+        success: true,
+        data: {
+          buckets: [
+            {
+              bucketKey: 'route-day-1',
+              bucketStart: now - 2 * 24 * 60 * 60 * 1000,
+              bucketSize: 'day',
+              cliType: 'claudeCode',
+              routeRuleId: 'rule-1',
+              canonicalModel: 'claude-opus-4-6',
+              siteId: 'site-1',
+              accountId: 'acct-1',
+              requestCount: 10,
+              successCount: 8,
+              failureCount: 2,
+              neutralCount: 0,
+              promptTokens: 1000,
+              completionTokens: 500,
+              totalTokens: 1500,
+              statusCodeHistogram: { '200': 8, '502': 2 },
+              latencyHistogram: { '0-1000ms': 10 },
+              firstByteHistogram: { '0-200ms': 10 },
+              updatedAt: now - 2 * 24 * 60 * 60 * 1000,
+            },
+            {
+              bucketKey: 'route-day-2',
+              bucketStart: now - 24 * 60 * 60 * 1000,
+              bucketSize: 'day',
+              cliType: 'codex',
+              routeRuleId: 'rule-2',
+              canonicalModel: 'gpt-5.4',
+              siteId: 'site-2',
+              accountId: 'acct-2',
+              requestCount: 20,
+              successCount: 18,
+              failureCount: 2,
+              neutralCount: 0,
+              promptTokens: 2200,
+              completionTokens: 800,
+              totalTokens: 3000,
+              statusCodeHistogram: { '200': 18, '429': 2 },
+              latencyHistogram: { '0-1000ms': 20 },
+              firstByteHistogram: { '0-200ms': 20 },
+              updatedAt: now - 24 * 60 * 60 * 1000,
+            },
+          ],
+          statusCodeHistogram: { '200': 26, '429': 2, '502': 2 },
+          latencyHistogram: { '0-1000ms': 30 },
+          firstByteHistogram: { '0-200ms': 30 },
+        },
+      }),
+    } as NonNullable<typeof window.electronAPI.route>;
+
+    const { rerender } = render(<DataOverviewPage />);
+
+    const requestTrendCard = await screen.findByLabelText('近 7 日请求量 (Reqs) 趋势卡片');
+
+    await waitFor(() => {
+      expect(within(requestTrendCard).getByText('44')).toBeInTheDocument();
+    });
+    expect(within(requestTrendCard).getByText('44')).toHaveClass('text-[18px]');
+    expect(
+      Array.from(requestTrendCard.querySelectorAll('div')).some(div =>
+        div.className.includes('h-[74px]')
+      )
+    ).toBe(true);
+
+    const requestMarkers = Array.from(
+      requestTrendCard.querySelectorAll('span[aria-hidden="true"]')
+    ) as HTMLElement[];
+    const requestMarkerLefts = requestMarkers.map(marker => Number.parseFloat(marker.style.left));
+
+    expect(requestMarkers).toHaveLength(7);
+    expect(requestTrendCard.querySelector('circle')).not.toBeInTheDocument();
+    expect(requestMarkers.every(marker => marker.className.includes('rounded-full'))).toBe(true);
+    expect(requestMarkers.some(marker => marker.className.includes('h-[5.5px]'))).toBe(true);
+    expect(Math.min(...requestMarkerLefts)).toBeGreaterThan(0);
+    expect(Math.max(...requestMarkerLefts)).toBeLessThan(100);
+
+    const tokenTrendCard = screen.getByLabelText('近 7 日 Tokens 趋势卡片');
+    const tokenDots = Array.from(tokenTrendCard.querySelectorAll('span')).filter(
+      dot =>
+        dot.className.includes('h-1.5') &&
+        dot.className.includes('w-1.5') &&
+        dot.className.includes('rounded-full')
+    );
+
+    expect(tokenDots).toHaveLength(42);
+    expect(tokenDots.some(dot => dot.className.includes('bg-[var(--warning)]'))).toBe(true);
+    expect(
+      Array.from(tokenTrendCard.querySelectorAll('div')).some(div =>
+        div.className.includes('h-[78px]')
+      )
+    ).toBe(true);
+
+    mockUIState.overviewSubtab = 'route';
+    rerender(<DataOverviewPage />);
+
+    expect(await screen.findByText('运营趋势')).toBeInTheDocument();
+
+    const routeMarkers = Array.from(
+      document.querySelectorAll('span[aria-hidden="true"]')
+    ) as HTMLElement[];
+    const routeMarkerLefts = routeMarkers.map(marker => Number.parseFloat(marker.style.left));
+
+    expect(routeMarkers.length).toBeGreaterThan(1);
+    expect(document.querySelector('circle')).not.toBeInTheDocument();
+    expect(routeMarkers.every(marker => marker.className.includes('h-[5.5px]'))).toBe(true);
+    expect(Math.min(...routeMarkerLefts)).toBeGreaterThan(0);
+    expect(Math.max(...routeMarkerLefts)).toBeLessThan(100);
+
+    const routeStrokePaths = Array.from(document.querySelectorAll('path[stroke="currentColor"]'));
+    expect(routeStrokePaths.length).toBeGreaterThan(0);
+    expect(
+      routeStrokePaths.every(path => path.getAttribute('vector-effect') === 'non-scaling-stroke')
+    ).toBe(true);
   });
 
   it('truncates long site names in checkin rows to seven chinese-character widths', async () => {

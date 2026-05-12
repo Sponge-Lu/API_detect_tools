@@ -28,6 +28,7 @@ import type {
 import {
   DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME,
   inferRouteModelVendor,
+  parseRouteOverrideDisplayItemId,
 } from '../shared/types/route-proxy';
 import { BUILTIN_GROUP_IDS } from '../shared/types/site';
 import type { AccountCredential, ApiKeyInfo, ModelPricingData } from '../shared/types/site';
@@ -888,7 +889,23 @@ export async function deleteModelDisplayItem(
   const registry = getModelRegistry();
   const displayItem = registry.displayItems.find(item => item.id === displayItemId);
   if (!displayItem) {
-    return null;
+    const canonicalName = parseRouteOverrideDisplayItemId(displayItemId);
+    if (!canonicalName) {
+      return null;
+    }
+
+    const overrides = registry.overrides.filter(
+      override => override.action !== 'exclude' && override.canonicalName === canonicalName
+    );
+    if (overrides.length === 0) {
+      return null;
+    }
+
+    for (const override of overrides) {
+      await unifiedConfigManager.deleteRouteModelMappingOverride(override.id);
+    }
+
+    return syncModelRegistrySources(true);
   }
 
   for (const override of registry.overrides.filter(item =>

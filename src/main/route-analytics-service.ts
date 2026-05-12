@@ -15,6 +15,8 @@ import type {
   RouteAnalyticsConfig,
   RouteAnalyticsObjectStatsItem,
   RouteAnalyticsObjectStatsQuery,
+  RouteAnalyticsWindow,
+  RouteAnalyticsWindowQuery,
   RouteModelSourceRef,
   RouteRequestLogItem,
   RouteRequestLogQuery,
@@ -185,6 +187,9 @@ function appendRouteRequestLog(params: {
   promptTokens?: number;
   completionTokens?: number;
   totalTokens?: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  cachedTokens?: number;
   error?: string;
   at: number;
 }): void {
@@ -222,6 +227,9 @@ function appendRouteRequestLog(params: {
     promptTokens: params.promptTokens,
     completionTokens: params.completionTokens,
     totalTokens: params.totalTokens,
+    cacheCreationTokens: params.cacheCreationTokens,
+    cacheReadTokens: params.cacheReadTokens,
+    cachedTokens: params.cachedTokens,
     error: params.error,
     createdAt: params.at,
   };
@@ -302,6 +310,9 @@ export function recordRouteRequest(params: {
   promptTokens?: number;
   completionTokens?: number;
   totalTokens?: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  cachedTokens?: number;
   error?: string;
   at?: number;
 }): void {
@@ -324,6 +335,9 @@ export function recordRouteRequest(params: {
     promptTokens: params.promptTokens,
     completionTokens: params.completionTokens,
     totalTokens: params.totalTokens,
+    cacheCreationTokens: params.cacheCreationTokens,
+    cacheReadTokens: params.cacheReadTokens,
+    cachedTokens: params.cachedTokens,
     error: params.error,
     at,
   });
@@ -367,6 +381,9 @@ export function recordRouteRequest(params: {
           promptTokens: 0,
           completionTokens: 0,
           totalTokens: 0,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 0,
+          cachedTokens: 0,
           statusCodeHistogram: {},
           latencyHistogram: {},
           firstByteHistogram: {},
@@ -383,6 +400,10 @@ export function recordRouteRequest(params: {
     bucket.promptTokens += params.promptTokens || 0;
     bucket.completionTokens += params.completionTokens || 0;
     bucket.totalTokens += params.totalTokens || 0;
+    bucket.cacheCreationTokens =
+      (bucket.cacheCreationTokens || 0) + (params.cacheCreationTokens || 0);
+    bucket.cacheReadTokens = (bucket.cacheReadTokens || 0) + (params.cacheReadTokens || 0);
+    bucket.cachedTokens = (bucket.cachedTokens || 0) + (params.cachedTokens || 0);
   }
 
   if (config.recordStatusCode && params.statusCode !== undefined) {
@@ -406,13 +427,7 @@ export function recordRouteRequest(params: {
 }
 
 /** 查询指定窗口的原始桶 */
-export function getAnalyticsBuckets(params: {
-  window: '24h' | '7d' | '30d';
-  cliType?: RouteCliType;
-  routeRuleId?: string;
-  canonicalModel?: string;
-  siteId?: string;
-}): RouteAnalyticsBucket[] {
+export function getAnalyticsBuckets(params: RouteAnalyticsWindowQuery): RouteAnalyticsBucket[] {
   const routing = unifiedConfigManager.getRoutingConfig();
   const cutoff = Date.now() - windowToMs(params.window);
   const mergedBuckets = new Map<string, RouteAnalyticsBucket>();
@@ -436,13 +451,7 @@ export function getAnalyticsBuckets(params: {
 }
 
 /** 查询窗口期汇总 */
-export function getAnalyticsSummary(params: {
-  window: '24h' | '7d' | '30d';
-  cliType?: RouteCliType;
-  routeRuleId?: string;
-  canonicalModel?: string;
-  siteId?: string;
-}): {
+export function getAnalyticsSummary(params: RouteAnalyticsWindowQuery): {
   totalRequests: number;
   successCount: number;
   failureCount: number;
@@ -451,6 +460,9 @@ export function getAnalyticsSummary(params: {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  cachedTokens: number;
 } {
   const buckets = getAnalyticsBuckets(params);
   const sum = {
@@ -462,15 +474,21 @@ export function getAnalyticsSummary(params: {
     promptTokens: 0,
     completionTokens: 0,
     totalTokens: 0,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+    cachedTokens: 0,
   };
   for (const b of buckets) {
     sum.totalRequests += b.requestCount;
     sum.successCount += b.successCount;
     sum.failureCount += b.failureCount;
     sum.neutralCount += b.neutralCount;
-    sum.promptTokens += b.promptTokens;
-    sum.completionTokens += b.completionTokens;
-    sum.totalTokens += b.totalTokens;
+    sum.promptTokens += b.promptTokens || 0;
+    sum.completionTokens += b.completionTokens || 0;
+    sum.totalTokens += b.totalTokens || 0;
+    sum.cacheCreationTokens += b.cacheCreationTokens || 0;
+    sum.cacheReadTokens += b.cacheReadTokens || 0;
+    sum.cachedTokens += b.cachedTokens || 0;
   }
   const denominator = sum.successCount + sum.failureCount;
   sum.successRate =
@@ -479,13 +497,7 @@ export function getAnalyticsSummary(params: {
 }
 
 /** 查询窗口期分布 */
-export function getAnalyticsDistribution(params: {
-  window: '24h' | '7d' | '30d';
-  cliType?: RouteCliType;
-  routeRuleId?: string;
-  canonicalModel?: string;
-  siteId?: string;
-}): {
+export function getAnalyticsDistribution(params: RouteAnalyticsWindowQuery): {
   buckets: RouteAnalyticsBucket[];
   statusCodeHistogram: Record<string, number>;
   latencyHistogram: Record<string, number>;
@@ -551,6 +563,9 @@ export function getRouteObjectStats(
         promptTokens: 0,
         completionTokens: 0,
         totalTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+        cachedTokens: 0,
       } satisfies RouteAnalyticsObjectStatsItem);
 
     current.requestCount += bucket.requestCount;
@@ -560,6 +575,10 @@ export function getRouteObjectStats(
     current.promptTokens += bucket.promptTokens || 0;
     current.completionTokens += bucket.completionTokens || 0;
     current.totalTokens += bucket.totalTokens || 0;
+    current.cacheCreationTokens =
+      (current.cacheCreationTokens || 0) + (bucket.cacheCreationTokens || 0);
+    current.cacheReadTokens = (current.cacheReadTokens || 0) + (bucket.cacheReadTokens || 0);
+    current.cachedTokens = (current.cachedTokens || 0) + (bucket.cachedTokens || 0);
     current.lastUsedAt = Math.max(current.lastUsedAt || 0, bucket.updatedAt);
     grouped.set(groupKey, current);
   }
@@ -670,13 +689,16 @@ export async function pruneAnalyticsBuckets(now?: number): Promise<number> {
   return unifiedConfigManager.pruneRouteAnalyticsBuckets(undefined, now);
 }
 
-function windowToMs(window: '24h' | '7d' | '30d'): number {
-  switch (window) {
-    case '24h':
-      return 24 * 60 * 60 * 1000;
-    case '7d':
-      return 7 * 24 * 60 * 60 * 1000;
-    case '30d':
-      return 30 * 24 * 60 * 60 * 1000;
+const ROUTE_ANALYTICS_WINDOW_MS: Record<RouteAnalyticsWindow, number> = {
+  '24h': 24 * 60 * 60 * 1000,
+  '7d': 7 * 24 * 60 * 60 * 1000,
+};
+
+function windowToMs(window: RouteAnalyticsWindow): number {
+  const value = (ROUTE_ANALYTICS_WINDOW_MS as Record<string, number | undefined>)[window];
+  if (!value) {
+    throw new Error(`Unsupported route analytics window: ${String(window)}`);
   }
+
+  return value;
 }

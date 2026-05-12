@@ -34,12 +34,35 @@ import type {
   RoutingConfig,
 } from '../shared/types/route-proxy';
 import { normalizeRouteRuntimeConfig } from '../shared/types/route-proxy';
+import { isAnyRouterSite } from '../shared/types/site';
+import {
+  rewriteForAnyRouter,
+  transformAnyRouterResponse,
+  type AnyRouterResponseAdapter,
+} from './anyrouter-request-rewriter';
+import {
+  isChyApiSiteName,
+  rewriteForChyApi,
+  transformChyApiResponse,
+  type ChyApiResponseAdapter,
+} from './chy-api-request-rewriter';
 
 const log = Logger.scope('RouteProxyService');
 
 let proxyServer: http.Server | null = null;
 let isRunning = false;
 let requestSequence = 0;
+const GEMINI_CLI_INTERNAL_UTILITY_MODELS = new Set([
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-2.5-pro',
+]);
+const GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_ERROR_CODE = 'gemini_cli_internal_utility_blocked';
+const GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_STATUS_CODE = 400;
+const ALL_ROUTE_PATHS_DISABLED_ERROR_CODE = 'all_route_paths_disabled';
+const ALL_ROUTE_PATHS_DISABLED_STATUS_CODE = 400;
+const ALL_ROUTE_PATHS_DISABLED_MESSAGE =
+  'all_route_paths_disabled: All route paths for this rule are temporarily disabled. Restore route paths in the route rule UI or wait for the suspension to expire.';
 
 function nextRequestId(cliType: RouteCliType): string {
   requestSequence += 1;
@@ -215,6 +238,23 @@ function compactHeaders(
   );
 }
 
+export function summarizeUpstreamFailureBodyForLog(body: Buffer, maxChars: number = 1200): string {
+  if (!body.length) {
+    return '';
+  }
+
+  const text = body.toString('utf-8').split('\u0000').join('').trim();
+  if (!text) {
+    return '';
+  }
+
+  if (text.length <= maxChars) {
+    return text;
+  }
+
+  return `${text.slice(0, maxChars)} ...(truncated ${text.length - maxChars} chars)`;
+}
+
 export function buildUpstreamHeaders(
   incomingHeaders: http.IncomingHttpHeaders,
   targetHost: string,
@@ -261,38 +301,321 @@ export function buildUpstreamRequestUrl(
   };
 }
 
-function extractUsageFromBody(
-  body: Buffer
-): { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined {
-  try {
-    const bodyStr = body.toString('utf-8');
-    const parsed = JSON.parse(bodyStr);
-    if (parsed?.usage) {
-      return {
-        promptTokens: parsed.usage.prompt_tokens ?? parsed.usage.input_tokens,
-        completionTokens: parsed.usage.completion_tokens ?? parsed.usage.output_tokens,
-        totalTokens: parsed.usage.total_tokens,
-      };
-    }
-  } catch {
-    // 流式响应，尝试最后一段
-    try {
-      const bodyStr = body.toString('utf-8');
-      const usageMatch = bodyStr.match(/"usage"\s*:\s*\{[^}]+\}/);
-      if (usageMatch) {
-        const u = JSON.parse(`{${usageMatch[0]}}`).usage;
-        return {
-          promptTokens: u.prompt_tokens ?? u.input_tokens,
-          completionTokens: u.completion_tokens ?? u.output_tokens,
-          totalTokens: u.total_tokens,
-        };
-      }
-    } catch {
-      /* ignore */
+export interface RouteUsageStats {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  cachedTokens?: number;
+}
+
+const USAGE_SOURCE_KEYS = [
+  'prompt_tokens',
+  'promptTokens',
+  'input_tokens',
+  'inputTokens',
+  'promptTokenCount',
+  'inputTokenCount',
+  'completion_tokens',
+  'completionTokens',
+  'output_tokens',
+  'outputTokens',
+  'candidatesTokenCount',
+  'responseTokenCount',
+  'total_tokens',
+  'totalTokens',
+  'totalTokenCount',
+  'cache_creation_input_tokens',
+  'cacheCreationInputTokens',
+  'cache_creation',
+  'cacheCreation',
+  'claude_cache_creation_5_m_tokens',
+  'claude_cache_creation_1_h_tokens',
+  'cache_read_input_tokens',
+  'cacheReadInputTokens',
+  'cached_tokens',
+  'cachedTokens',
+  'cachedContentTokenCount',
+] as const;
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+
+  return undefined;
+}
+
+function toFiniteTokenNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  return undefined;
+}
+
+function firstTokenNumber(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    const parsed = toFiniteTokenNumber(value);
+    if (parsed !== undefined) {
+      return parsed;
     }
   }
 
   return undefined;
+}
+
+function sumTokenNumbers(...values: unknown[]): number | undefined {
+  let total = 0;
+  let found = false;
+  for (const value of values) {
+    const parsed = toFiniteTokenNumber(value);
+    if (parsed !== undefined) {
+      total += parsed;
+      found = true;
+    }
+  }
+
+  return found ? total : undefined;
+}
+
+function hasUsageSourceKeys(record: Record<string, unknown>): boolean {
+  return USAGE_SOURCE_KEYS.some(key => key in record);
+}
+
+function sumTokenObjectValues(value: unknown): number | undefined {
+  const record = asRecord(value);
+  if (!record) {
+    return undefined;
+  }
+
+  let total = 0;
+  let found = false;
+  for (const [key, rawValue] of Object.entries(record)) {
+    if (!key.endsWith('_input_tokens') && !key.endsWith('InputTokens')) {
+      continue;
+    }
+
+    const numeric = toFiniteTokenNumber(rawValue);
+    if (numeric !== undefined) {
+      total += numeric;
+      found = true;
+    }
+  }
+
+  return found ? total : undefined;
+}
+
+function hasRouteUsageValues(usage: RouteUsageStats | undefined): usage is RouteUsageStats {
+  if (!usage) {
+    return false;
+  }
+
+  return (
+    usage.promptTokens !== undefined ||
+    usage.completionTokens !== undefined ||
+    usage.totalTokens !== undefined ||
+    usage.cacheCreationTokens !== undefined ||
+    usage.cacheReadTokens !== undefined ||
+    usage.cachedTokens !== undefined
+  );
+}
+
+function mergeRouteUsage(
+  current: RouteUsageStats | undefined,
+  next: RouteUsageStats | undefined
+): RouteUsageStats | undefined {
+  if (!hasRouteUsageValues(next)) {
+    return current;
+  }
+
+  const merged: RouteUsageStats = { ...(current || {}) };
+  for (const key of [
+    'promptTokens',
+    'completionTokens',
+    'totalTokens',
+    'cacheCreationTokens',
+    'cacheReadTokens',
+    'cachedTokens',
+  ] as const) {
+    if (next[key] !== undefined) {
+      merged[key] = next[key];
+    }
+  }
+
+  return merged;
+}
+
+function finalizeRouteUsage(usage: RouteUsageStats | undefined): RouteUsageStats | undefined {
+  if (!hasRouteUsageValues(usage)) {
+    return undefined;
+  }
+
+  if (usage.totalTokens !== undefined) {
+    return usage;
+  }
+
+  const hasAnyTokenValue =
+    usage.promptTokens !== undefined ||
+    usage.completionTokens !== undefined ||
+    usage.cacheCreationTokens !== undefined ||
+    usage.cacheReadTokens !== undefined;
+  if (!hasAnyTokenValue) {
+    return usage;
+  }
+
+  const cacheReadAddsToAnthropicInput =
+    usage.cacheReadTokens !== undefined && usage.cachedTokens === undefined;
+  return {
+    ...usage,
+    totalTokens:
+      (usage.promptTokens || 0) +
+      (usage.completionTokens || 0) +
+      (usage.cacheCreationTokens || 0) +
+      (cacheReadAddsToAnthropicInput ? usage.cacheReadTokens || 0 : 0),
+  };
+}
+
+function normalizeUsageSource(source: Record<string, unknown>): RouteUsageStats | undefined {
+  if (!hasUsageSourceKeys(source)) {
+    return undefined;
+  }
+
+  const promptDetails =
+    asRecord(source.prompt_tokens_details) ||
+    asRecord(source.promptTokensDetails) ||
+    asRecord(source.input_tokens_details) ||
+    asRecord(source.inputTokensDetails) ||
+    asRecord(source.input_token_details) ||
+    asRecord(source.inputTokenDetails);
+  const declaredCacheCreationTokens = firstTokenNumber(
+    source.cache_creation_input_tokens,
+    source.cacheCreationInputTokens
+  );
+  const cacheCreationBreakdownTokens = firstTokenNumber(
+    sumTokenNumbers(
+      source.claude_cache_creation_5_m_tokens,
+      source.claude_cache_creation_1_h_tokens
+    ),
+    sumTokenObjectValues(source.cache_creation),
+    sumTokenObjectValues(source.cacheCreation)
+  );
+  const cacheCreationTokens =
+    declaredCacheCreationTokens !== undefined && declaredCacheCreationTokens > 0
+      ? declaredCacheCreationTokens
+      : firstTokenNumber(cacheCreationBreakdownTokens, declaredCacheCreationTokens);
+  const cachedTokens = firstTokenNumber(
+    source.cached_tokens,
+    source.cachedTokens,
+    source.cachedContentTokenCount,
+    source.cached_content_token_count,
+    promptDetails?.cached_tokens,
+    promptDetails?.cachedTokens
+  );
+  const anthropicCacheReadTokens = firstTokenNumber(
+    source.cache_read_input_tokens,
+    source.cacheReadInputTokens
+  );
+
+  return {
+    promptTokens: firstTokenNumber(
+      source.prompt_tokens,
+      source.promptTokens,
+      source.input_tokens,
+      source.inputTokens,
+      source.promptTokenCount,
+      source.inputTokenCount
+    ),
+    completionTokens: firstTokenNumber(
+      source.completion_tokens,
+      source.completionTokens,
+      source.output_tokens,
+      source.outputTokens,
+      source.candidatesTokenCount,
+      source.responseTokenCount
+    ),
+    totalTokens: firstTokenNumber(source.total_tokens, source.totalTokens, source.totalTokenCount),
+    cacheCreationTokens,
+    cacheReadTokens: firstTokenNumber(anthropicCacheReadTokens, cachedTokens),
+    cachedTokens,
+  };
+}
+
+function extractUsageFromParsed(value: unknown, depth = 0): RouteUsageStats | undefined {
+  if (depth > 3) {
+    return undefined;
+  }
+
+  if (Array.isArray(value)) {
+    return value.reduce<RouteUsageStats | undefined>(
+      (current, item) => mergeRouteUsage(current, extractUsageFromParsed(item, depth + 1)),
+      undefined
+    );
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return undefined;
+  }
+
+  let usage = mergeRouteUsage(
+    undefined,
+    normalizeUsageSource(asRecord(record.usage) || asRecord(record.usageMetadata) || record)
+  );
+
+  for (const key of ['message', 'response', 'delta', 'data', 'event'] as const) {
+    usage = mergeRouteUsage(usage, extractUsageFromParsed(record[key], depth + 1));
+  }
+
+  return usage;
+}
+
+function extractUsageFromSseBody(bodyStr: string): RouteUsageStats | undefined {
+  let usage: RouteUsageStats | undefined;
+
+  for (const line of bodyStr.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) {
+      continue;
+    }
+
+    const payload = trimmed.slice('data:'.length).trim();
+    if (!payload || payload === '[DONE]') {
+      continue;
+    }
+
+    try {
+      usage = mergeRouteUsage(usage, extractUsageFromParsed(JSON.parse(payload)));
+    } catch {
+      /* ignore malformed stream chunk */
+    }
+  }
+
+  return finalizeRouteUsage(usage);
+}
+
+export function extractUsageFromBody(body: Buffer): RouteUsageStats | undefined {
+  const bodyStr = body.toString('utf-8');
+
+  try {
+    return finalizeRouteUsage(extractUsageFromParsed(JSON.parse(bodyStr)));
+  } catch {
+    return extractUsageFromSseBody(bodyStr);
+  }
+}
+
+interface ForwardToUpstreamOptions {
+  upstreamProxyUrl?: string;
+  additionalHeaders?: Record<string, string>;
+  methodOverride?: string;
+  requestUrlOverride?: string;
+  upstreamCliType?: RouteCliType;
 }
 
 /** 转发请求到上游（不直接写 res，返回结果由调用者决定是否透传） */
@@ -304,31 +627,43 @@ async function forwardToUpstream(
   cliType: RouteCliType,
   timeoutMs: number,
   upstreamModel?: string,
-  upstreamProxyUrl?: string
+  options: ForwardToUpstreamOptions = {}
 ): Promise<{
   statusCode: number;
   headers: http.IncomingHttpHeaders;
   body: Buffer;
   latencyMs: number;
   firstByteLatencyMs?: number;
-  usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+  usage?: RouteUsageStats;
 }> {
   const startTime = Date.now();
-  const target = buildUpstreamRequestUrl(targetBaseUrl, req.url, cliType, upstreamModel, apiKey);
+  const upstreamCliType = options.upstreamCliType ?? cliType;
+  const target = buildUpstreamRequestUrl(
+    targetBaseUrl,
+    options.requestUrlOverride ?? req.url,
+    upstreamCliType,
+    upstreamModel,
+    apiKey
+  );
   const forwardHeaders = buildUpstreamHeaders(
     req.headers,
     target.host,
     bodyBuffer.length,
     apiKey,
-    cliType
+    upstreamCliType
   );
 
+  // 合并额外的请求头（如 AnyRouter 改写添加的 anthropic-beta）
+  if (options.additionalHeaders) {
+    Object.assign(forwardHeaders, options.additionalHeaders);
+  }
+
   const response = await httpRawRequest(target.url, {
-    method: req.method || 'GET',
+    method: options.methodOverride ?? req.method ?? 'GET',
     headers: compactHeaders(forwardHeaders),
     body: bodyBuffer,
     timeout: timeoutMs,
-    proxyUrl: upstreamProxyUrl,
+    proxyUrl: options.upstreamProxyUrl,
     preferElectronNet: true,
   });
 
@@ -342,7 +677,94 @@ async function forwardToUpstream(
   };
 }
 
-async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+function hasEnabledRoutePath(channels: ResolvedChannel[]): boolean {
+  return channels.some(channel => !isRoutePathDisabled(channel));
+}
+
+function areAllRoutePathsDisabled(channels: ResolvedChannel[]): boolean {
+  return channels.length > 0 && channels.every(channel => isRoutePathDisabled(channel));
+}
+
+function buildAllRoutePathsDisabledErrorBody(cliType: RouteCliType): unknown {
+  if (cliType === 'claudeCode') {
+    return {
+      type: 'error',
+      error: {
+        type: 'invalid_request_error',
+        message: ALL_ROUTE_PATHS_DISABLED_MESSAGE,
+      },
+    };
+  }
+
+  if (cliType === 'geminiCli') {
+    return {
+      error: {
+        code: ALL_ROUTE_PATHS_DISABLED_STATUS_CODE,
+        message: ALL_ROUTE_PATHS_DISABLED_MESSAGE,
+        status: 'FAILED_PRECONDITION',
+      },
+    };
+  }
+
+  return {
+    error: {
+      message: ALL_ROUTE_PATHS_DISABLED_MESSAGE,
+      type: 'invalid_request_error',
+      param: null,
+      code: ALL_ROUTE_PATHS_DISABLED_ERROR_CODE,
+    },
+  };
+}
+
+function writeAllRoutePathsDisabledResponse(res: http.ServerResponse, cliType: RouteCliType): void {
+  res.writeHead(ALL_ROUTE_PATHS_DISABLED_STATUS_CODE, {
+    'Content-Type': 'application/json',
+    'X-Route-Proxy-Error': ALL_ROUTE_PATHS_DISABLED_ERROR_CODE,
+  });
+  res.end(JSON.stringify(buildAllRoutePathsDisabledErrorBody(cliType)));
+}
+
+function shouldBlockGeminiCliInternalUtilityRequest(params: {
+  routing: RoutingConfig;
+  cliType: RouteCliType;
+  rawModel: string | null;
+  cliSelectedModel: string | null;
+}): boolean {
+  if (params.routing.server.blockGeminiCliInternalUtilityRequests === false) return false;
+  if (params.cliType !== 'geminiCli') return false;
+  if (!params.rawModel || !params.cliSelectedModel) return false;
+  if (params.rawModel === params.cliSelectedModel) return false;
+
+  return GEMINI_CLI_INTERNAL_UTILITY_MODELS.has(params.rawModel);
+}
+
+function buildGeminiCliInternalUtilityBlockedBody(rawModel: string | null): unknown {
+  return {
+    error: {
+      code: GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_STATUS_CODE,
+      status: 'FAILED_PRECONDITION',
+      message: `${GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_ERROR_CODE}: blocked Gemini CLI internal utility model request${
+        rawModel ? ` for ${rawModel}` : ''
+      }. Add an explicit routing rule for this model or disable the route proxy guard to allow it.`,
+    },
+  };
+}
+
+function writeGeminiCliInternalUtilityBlockedResponse(
+  res: http.ServerResponse,
+  rawModel: string | null
+): void {
+  res.writeHead(GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_STATUS_CODE, {
+    'Content-Type': 'application/json',
+    'X-Route-Proxy-Error': GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_ERROR_CODE,
+  });
+  res.end(JSON.stringify(buildGeminiCliInternalUtilityBlockedBody(rawModel)));
+}
+
+export async function handleRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse
+): Promise<void> {
   const routing = unifiedConfigManager.getRoutingConfig();
 
   // 识别 CLI 类型
@@ -396,8 +818,49 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
 
   // 规则匹配只看 canonical model；若当前请求尚未建立 canonical，则退化为 raw
   const sortedRules = sortRules(routing.rules);
-  const matchModel = canonicalModel || rawModel;
-  const rule = findMatchingRule(sortedRules, cliType, matchModel);
+  let matchModel = canonicalModel || rawModel;
+  let rule = findMatchingRule(sortedRules, cliType, matchModel);
+  const cliSelectedModel = routing.cliModelSelections[cliType]?.trim() || null;
+
+  if (
+    !rule &&
+    shouldBlockGeminiCliInternalUtilityRequest({
+      routing,
+      cliType,
+      rawModel,
+      cliSelectedModel,
+    })
+  ) {
+    recordRouteRequest({
+      requestId,
+      attempt: 0,
+      cliType,
+      requestedModel: rawModel,
+      canonicalModel,
+      outcome: 'failure',
+      statusCode: GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_STATUS_CODE,
+      error: GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_ERROR_CODE,
+    });
+    writeGeminiCliInternalUtilityBlockedResponse(res, rawModel);
+    return;
+  }
+
+  // Gemini CLI can emit helper/default path models that differ from the app-selected model.
+  if (
+    !rule &&
+    cliType === 'geminiCli' &&
+    rawModel &&
+    cliSelectedModel &&
+    cliSelectedModel !== matchModel
+  ) {
+    const selectedModelRule = findMatchingRule(sortedRules, cliType, cliSelectedModel);
+    if (selectedModelRule) {
+      canonicalModel = cliSelectedModel;
+      matchModel = cliSelectedModel;
+      rule = selectedModelRule;
+    }
+  }
+
   if (!rule) {
     recordRouteRequest({
       requestId,
@@ -453,23 +916,22 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       canonicalModel,
       routeRuleId: rule.id,
       outcome: 'failure',
-      statusCode: 503,
-      error: 'all_route_paths_disabled',
+      statusCode: ALL_ROUTE_PATHS_DISABLED_STATUS_CODE,
+      error: ALL_ROUTE_PATHS_DISABLED_ERROR_CODE,
     });
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        error: 'all_route_paths_disabled',
-        message: 'All route paths for this rule are temporarily disabled',
-      })
-    );
+    writeAllRoutePathsDisabledResponse(res, cliType);
     return;
   }
   const timeoutMs = routing.server.requestTimeoutMs;
 
+  let attempt = 0;
   for (let i = 0; i < sortedChannels.length; i++) {
     const ch = sortedChannels[i] as ResolvedChannel;
-    const attempt = i + 1;
+    if (isRoutePathDisabled(ch)) {
+      continue;
+    }
+
+    attempt += 1;
     const creds = await resolveChannelCredentials(ch.siteId, ch.accountId, ch.apiKeyId);
     if (!creds) {
       recordRouteRequest({
@@ -495,10 +957,55 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       continue;
     }
 
+    // AnyRouter 站点使用 120 秒超时，其他站点使用配置的超时时间
+    const site = unifiedConfigManager.getSiteById(ch.siteId);
+    const account = unifiedConfigManager.getAccountById(ch.accountId);
+    const effectiveTimeoutMs = site && isAnyRouterSite(site.name) ? 120000 : timeoutMs;
+
     // 重写请求体中的 model 字段
-    const finalBody = ch.resolvedModel
+    let finalBody = ch.resolvedModel
       ? rewriteRequestModel(bodyBuffer, ch.resolvedModel)
       : bodyBuffer;
+
+    // 站点级特殊处理：AnyRouter 走其原生协议约束；CHY 统一改写到 Chat Completions
+    let additionalHeaders: Record<string, string> = {};
+    let methodOverride: string | undefined;
+    let requestUrlOverride: string | undefined;
+    let upstreamCliType: RouteCliType = cliType;
+    let responseAdapter: AnyRouterResponseAdapter = { type: 'transparent' };
+    let chyApiResponseAdapter: ChyApiResponseAdapter = { type: 'transparent' };
+    if (site && account && isAnyRouterSite(site.name)) {
+      const userHash = account.anyRouterConfig?.userHash;
+
+      if (!userHash && cliType === 'claudeCode') {
+        log.warn(`[AnyRouter] Account ${account.account_name} missing userHash configuration`);
+      }
+
+      const rewritten = rewriteForAnyRouter(
+        finalBody,
+        userHash,
+        req.headers,
+        cliType,
+        req.url,
+        ch.resolvedModel
+      );
+
+      finalBody = rewritten.body;
+      additionalHeaders = rewritten.headers;
+      requestUrlOverride = rewritten.upstreamPath;
+      upstreamCliType = rewritten.upstreamCliType;
+      responseAdapter = rewritten.responseAdapter;
+    } else if (site && isChyApiSiteName(site.name)) {
+      const rewritten = rewriteForChyApi(finalBody, cliType, req.url, ch.resolvedModel);
+
+      finalBody = rewritten.body;
+      additionalHeaders = rewritten.headers;
+      methodOverride = rewritten.upstreamMethod;
+      requestUrlOverride = rewritten.upstreamPath;
+      upstreamCliType = rewritten.upstreamCliType;
+      chyApiResponseAdapter = rewritten.responseAdapter;
+    }
+
     const attemptStartedAt = Date.now();
 
     try {
@@ -508,9 +1015,15 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         creds.apiKey,
         finalBody,
         cliType,
-        timeoutMs,
+        effectiveTimeoutMs,
         ch.resolvedModel,
-        routing.server.upstreamProxyUrl
+        {
+          upstreamProxyUrl: routing.server.upstreamProxyUrl,
+          additionalHeaders,
+          methodOverride,
+          requestUrlOverride,
+          upstreamCliType,
+        }
       );
       const outcome = classifyRouteStatusCode(result.statusCode);
 
@@ -545,17 +1058,50 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         promptTokens: result.usage?.promptTokens,
         completionTokens: result.usage?.completionTokens,
         totalTokens: result.usage?.totalTokens,
+        cacheCreationTokens: result.usage?.cacheCreationTokens,
+        cacheReadTokens: result.usage?.cacheReadTokens,
+        cachedTokens: result.usage?.cachedTokens,
       });
 
       // 失败且还有重试机会：不写 res，尝试下一个通道
-      if (outcome === 'failure' && i < sortedChannels.length - 1) {
-        log.warn(`Channel failed (${result.statusCode}), trying next channel`);
-        continue;
+      if (outcome === 'failure') {
+        log.warn('Upstream channel returned failure response', {
+          statusCode: result.statusCode,
+          siteId: ch.siteId,
+          accountId: ch.accountId,
+          apiKeyId: ch.apiKeyId,
+          resolvedModel: ch.resolvedModel,
+          contentType: normalizeHeaderValue(result.headers['content-type']) || 'unknown',
+          bodySnippet: summarizeUpstreamFailureBodyForLog(result.body) || '<empty>',
+        });
+
+        if (hasEnabledRoutePath(sortedChannels.slice(i + 1))) {
+          log.warn(`Channel failed (${result.statusCode}), trying next channel`);
+          continue;
+        }
+
+        if (areAllRoutePathsDisabled(sortedChannels)) {
+          writeAllRoutePathsDisabledResponse(res, cliType);
+          return;
+        }
       }
 
+      const anyRouterTransformed = transformAnyRouterResponse({
+        body: result.body,
+        headers: result.headers,
+        statusCode: result.statusCode,
+        adapter: responseAdapter,
+      });
+      const transformed = transformChyApiResponse({
+        body: anyRouterTransformed.body,
+        headers: anyRouterTransformed.headers,
+        statusCode: result.statusCode,
+        adapter: chyApiResponseAdapter,
+      });
+
       // 成功/neutral/最后一次失败：写 res
-      res.writeHead(result.statusCode, result.headers);
-      res.end(result.body);
+      res.writeHead(result.statusCode, transformed.headers);
+      res.end(transformed.body);
       return;
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'unknown_error';
@@ -590,10 +1136,14 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
   }
 
   if (!res.headersSent) {
-    res.writeHead(502, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({ error: 'all_channels_failed', message: 'All upstream channels failed' })
-    );
+    if (areAllRoutePathsDisabled(sortedChannels)) {
+      writeAllRoutePathsDisabledResponse(res, cliType);
+    } else {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({ error: 'all_channels_failed', message: 'All upstream channels failed' })
+      );
+    }
   }
 }
 

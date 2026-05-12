@@ -413,6 +413,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteRule: (ruleId: string) => ipcRenderer.invoke('route:delete-rule', ruleId),
     listStats: () => ipcRenderer.invoke('route:list-stats'),
     resetStats: (ruleId?: string) => ipcRenderer.invoke('route:reset-stats', ruleId),
+    resetPathStates: (params?: { routeRuleId?: string; canonicalModel?: string }) =>
+      ipcRenderer.invoke('route:reset-path-states', params),
     getHealth: () => ipcRenderer.invoke('route:get-health'),
     runHealthCheck: () => ipcRenderer.invoke('route:run-health-check'),
     getRuntimeStatus: () => ipcRenderer.invoke('route:get-runtime-status'),
@@ -453,5 +455,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   overview: {
     getSiteDailySnapshots: (params?: { siteId?: string; days?: number }) =>
       ipcRenderer.invoke('overview:get-site-daily-snapshots', params),
+  },
+
+  // AnyRouter API
+  anyrouter: {
+    // 自动提取单个账户的 user hash
+    extractUserHash: (params: { siteId: string; accountId: string }) =>
+      ipcRenderer.invoke('anyrouter:extractUserHash', params),
+    // 批量提取站点所有账户的 user hash
+    extractAllUserHashes: (params: { siteId: string }) =>
+      ipcRenderer.invoke('anyrouter:extractAllUserHashes', params),
   },
 });

@@ -53,6 +53,7 @@ import type {
   RouteChannelKey,
   RouteChannelStats,
   RoutePathState,
+  RoutePathStateResetParams,
   RouteChannelHealth,
   RouteOutcome,
   RouteCliType,
@@ -848,13 +849,16 @@ export class UnifiedConfigManager {
     if (!s.unifiedApiKey) {
       s.unifiedApiKey = `sk-route-${randomBytes(16).toString('hex')}`;
     }
-    if (!s.requestTimeoutMs) s.requestTimeoutMs = 300000;
+    if (!s.requestTimeoutMs) s.requestTimeoutMs = 60000;
     if (s.retryCount === undefined || s.retryCount === null) s.retryCount = 1;
     if (!s.healthCheckIntervalMinutes) s.healthCheckIntervalMinutes = 60;
     if (s.upstreamProxyUrl === undefined || s.upstreamProxyUrl === null) {
       s.upstreamProxyUrl = '';
     } else {
       s.upstreamProxyUrl = String(s.upstreamProxyUrl).trim();
+    }
+    if (s.blockGeminiCliInternalUtilityRequests === undefined) {
+      s.blockGeminiCliInternalUtilityRequests = true;
     }
     if (s.enabled === undefined) s.enabled = false;
 
@@ -1356,6 +1360,7 @@ export class UnifiedConfigManager {
         | 'auto_refresh'
         | 'auto_refresh_interval'
         | 'cli_config'
+        | 'anyRouterConfig'
       >
     >
   ): Promise<boolean> {
@@ -1707,6 +1712,42 @@ export class UnifiedConfigManager {
       this.config.routing!.routePathStates = {};
     }
     await this.saveRouteRuntimeState();
+  }
+
+  /**
+   * 重置路由路径禁用状态，不清除常规统计
+   */
+  async resetRoutePathStates(params: RoutePathStateResetParams = {}): Promise<number> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+
+    const routeRuleId = params.routeRuleId?.trim();
+    const canonicalModel = params.canonicalModel?.trim();
+    const routePathStates = this.config.routing!.routePathStates;
+    let cleared = 0;
+
+    if (!routeRuleId && !canonicalModel) {
+      cleared = Object.keys(routePathStates).length;
+      this.config.routing!.routePathStates = {};
+      await this.saveRouteRuntimeState();
+      return cleared;
+    }
+
+    for (const [key, state] of Object.entries(routePathStates)) {
+      if (routeRuleId && state.routeRuleId !== routeRuleId) {
+        continue;
+      }
+
+      if (canonicalModel && state.canonicalModel !== canonicalModel) {
+        continue;
+      }
+
+      delete routePathStates[key];
+      cleared += 1;
+    }
+
+    await this.saveRouteRuntimeState();
+    return cleared;
   }
 
   /**

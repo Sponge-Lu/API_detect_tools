@@ -11,10 +11,10 @@ import {
   ChevronsDown,
   ChevronsUp,
   Edit3,
-  Layers3,
   Loader2,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   SlidersHorizontal,
   Trash2,
@@ -23,14 +23,15 @@ import {
 import { useShallow } from 'zustand/shallow';
 import { useRouteStore } from '../../../store/routeStore';
 import { toast } from '../../../store/toastStore';
+import { resolveModelPricing } from '../../../utils/modelPricing';
 import { AppButton } from '../../AppButton/AppButton';
-import { AppCard, AppCardContent } from '../../AppCard';
 import { AppModal } from '../../AppModal/AppModal';
 import {
   CreateApiKeyDialog,
   type NewApiTokenForm,
 } from '../../CreateApiKeyDialog/CreateApiKeyDialog';
 import {
+  buildRouteOverrideDisplayItemId,
   buildRouteApiKeyPriorityKey,
   DEFAULT_ROUTE_RUNTIME_CONFIG,
   DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME,
@@ -51,6 +52,8 @@ import type {
 } from '../../../../shared/types/route-proxy';
 import type {
   AccountCredential,
+  ModelPriceInfo,
+  ModelPricingData,
   SiteConfig,
   UnifiedConfig,
   UserGroupInfo,
@@ -121,6 +124,7 @@ interface DetailApiKeyRow {
   group: string;
   groupRatio?: number;
   supportedOriginalModels: string[];
+  modelPriceLabels: Record<string, string>;
   modelTestResults: Record<string, string>;
 }
 
@@ -145,6 +149,12 @@ interface DetailSiteGroup {
 interface PriorityDraft {
   sitePriorities: Record<string, string>;
   apiKeyPriorities: Record<string, string>;
+}
+
+interface RoutePathSuspensionLabel {
+  originalModel: string;
+  label: string;
+  title: string;
 }
 
 interface CreateApiKeyDialogState {
@@ -196,6 +206,73 @@ function formatGroupRatio(ratio: number | undefined): string | null {
   return `×${Number.isInteger(ratio) ? ratio : ratio.toFixed(2)}`;
 }
 
+function formatApiKeyAccountName(accountName: string | undefined, accountId: string): string {
+  return accountName?.trim() === '默认账户' ? '默认' : accountName || accountId;
+}
+
+function formatPriceValue(price: number): string {
+  if (price === 0) {
+    return '0';
+  }
+
+  if (Math.abs(price) >= 1) {
+    return Number(price.toFixed(2)).toString();
+  }
+
+  if (Math.abs(price) >= 0.01) {
+    return Number(price.toFixed(4)).toString();
+  }
+
+  return Number(price.toFixed(6)).toString();
+}
+
+function formatInputOutputPrice(
+  inputPrice: number | null,
+  outputPrice: number | null
+): string | null {
+  const parts: string[] = [];
+  if (inputPrice !== null) {
+    parts.push(`↑$${formatPriceValue(inputPrice)}`);
+  }
+  if (outputPrice !== null) {
+    parts.push(`↓$${formatPriceValue(outputPrice)}`);
+  }
+
+  return parts.length > 0 ? parts.join(' ') : null;
+}
+
+function resolveModelPriceLabel(pricingData: ModelPriceInfo | undefined): string | null {
+  if (!pricingData) {
+    return null;
+  }
+
+  const pricing = resolveModelPricing(pricingData);
+  if (pricing.mode === 'perCall') {
+    return pricing.callPrice !== null ? `$${formatPriceValue(pricing.callPrice)}/次` : null;
+  }
+
+  return formatInputOutputPrice(pricing.inputPrice, pricing.outputPrice);
+}
+
+function getModelPriceInfo(
+  modelPricing: ModelPricingData | undefined,
+  originalModel: string
+): ModelPriceInfo | undefined {
+  return modelPricing?.data?.[originalModel];
+}
+
+function addModelPriceLabel(
+  labels: Map<string, string>,
+  originalModel: string,
+  label: string | null
+): void {
+  if (!label || labels.has(originalModel)) {
+    return;
+  }
+
+  labels.set(originalModel, label);
+}
+
 function formatShortTime(timestamp: number | undefined): string {
   if (!timestamp) {
     return '--:--';
@@ -242,51 +319,86 @@ function getModelProbeStatus(params: {
 
 function formatModelListWithProbeStatus(
   models: string[],
-  modelTestResults?: Record<string, string>
+  modelTestResults?: Record<string, string>,
+  modelPriceLabels?: Record<string, string>,
+  modelRoutePathSuspensions?: Record<string, string[]>
 ): string {
   return models
     .map(model => {
-      const status = modelTestResults?.[model];
-      return status ? `${model}（${status}）` : model;
+      const details = [
+        modelPriceLabels?.[model],
+        modelTestResults?.[model],
+        ...(modelRoutePathSuspensions?.[model] || []),
+      ].filter(Boolean);
+      return details.length > 0 ? `${model}（${details.join(' / ')}）` : model;
     })
     .join('、');
 }
 
-function getActiveRoutePathSuspensions(params: {
+function groupSuspensionLabelsByModel(
+  suspensions: RoutePathSuspensionLabel[]
+): Record<string, string[]> {
+  return suspensions.reduce<Record<string, string[]>>((acc, suspension) => {
+    acc[suspension.originalModel] = [...(acc[suspension.originalModel] || []), suspension.label];
+    return acc;
+  }, {});
+}
+
+function getActiveRoutePathSuspensionLabels(params: {
   states: Record<string, RoutePathState> | undefined;
   item: RouteModelDisplayItem;
-  entry: RouteModelRegistryEntry | null;
-  originalModel: string;
+  siteId: string;
+  accountId?: string;
+  apiKeyId?: string;
+  originalModels: string[];
   now: number;
-}): string[] {
-  const { states, item, entry, originalModel, now } = params;
+}): RoutePathSuspensionLabel[] {
+  const { states, item, siteId, accountId, apiKeyId, originalModels, now } = params;
   if (!states) {
     return [];
   }
+
+  const originalModelSet = new Set(originalModels);
+  const runtimeConfig = normalizeRouteRuntimeConfig(item.runtimeConfig);
 
   return Object.values(states)
     .filter(
       state =>
         state.canonicalModel === item.canonicalName &&
-        state.resolvedModel === originalModel &&
+        state.siteId === siteId &&
+        (!accountId || state.accountId === accountId) &&
+        (!apiKeyId || state.apiKeyId === apiKeyId) &&
+        (!state.resolvedModel || originalModelSet.has(state.resolvedModel)) &&
         Boolean(state.disabledUntil && state.disabledUntil > now)
     )
     .sort((left, right) => (left.disabledUntil || 0) - (right.disabledUntil || 0))
     .map(state => {
-      const runtimeConfig = normalizeRouteRuntimeConfig(item.runtimeConfig);
-      const source = entry?.sources.find(
-        current =>
-          current.siteId === state.siteId &&
-          current.accountId === state.accountId &&
-          current.originalModel === originalModel
-      );
-      const apiKey = source?.availableApiKeys?.find(current => current.apiKeyId === state.apiKeyId);
-      const pathName = `${source?.siteName || state.siteId} / ${
-        apiKey?.apiKeyName || state.apiKeyId
-      }`;
       const rate = Math.round((state.successRate ?? 0) * 100);
-      return `${pathName} 暂停至 ${formatShortTime(state.disabledUntil)}（${runtimeConfig.successRateWindowMinutes}分钟成功率 ${rate}%）`;
+      const timeLabel = formatShortTime(state.disabledUntil);
+
+      return {
+        originalModel: state.resolvedModel || item.canonicalName,
+        label: `暂停至 ${timeLabel}`,
+        title: `${state.resolvedModel || item.canonicalName} 暂停至 ${timeLabel}（${runtimeConfig.successRateWindowMinutes}分钟成功率 ${rate}%）`,
+      };
     });
+}
+
+function countActiveRoutePathStatesForItem(params: {
+  states: Record<string, RoutePathState> | undefined;
+  item: RouteModelDisplayItem;
+  now: number;
+}): number {
+  const { states, item, now } = params;
+  if (!states) {
+    return 0;
+  }
+
+  return Object.values(states).filter(
+    state =>
+      state.canonicalModel === item.canonicalName &&
+      Boolean(state.disabledUntil && state.disabledUntil > now)
+  ).length;
 }
 
 function getPriorityValue(value: string | number | undefined): number | null {
@@ -598,6 +710,69 @@ function buildFallbackDisplayItems(registry: RouteModelRegistryConfig): RouteMod
   ];
 }
 
+function buildOverrideDisplayItems(
+  registry: RouteModelRegistryConfig,
+  sourceByKey: Map<string, RouteModelSourceRef>,
+  excludedCanonicalNames: Set<string>
+): RouteModelDisplayItem[] {
+  const groups = new Map<
+    string,
+    {
+      sources: RouteModelSourceRef[];
+      createdAt: number;
+      updatedAt: number;
+    }
+  >();
+
+  for (const override of registry.overrides) {
+    if (override.action === 'exclude' || !override.canonicalName) {
+      continue;
+    }
+
+    const canonicalName = override.canonicalName.trim();
+    if (!canonicalName || excludedCanonicalNames.has(canonicalName)) {
+      continue;
+    }
+
+    const source = sourceByKey.get(override.sourceKey);
+    if (!source) {
+      continue;
+    }
+
+    const group = groups.get(canonicalName) ?? {
+      sources: [],
+      createdAt: override.createdAt,
+      updatedAt: override.updatedAt,
+    };
+    if (!group.sources.some(item => item.sourceKey === source.sourceKey)) {
+      group.sources.push(source);
+    }
+    group.createdAt = Math.min(group.createdAt, override.createdAt);
+    group.updatedAt = Math.max(group.updatedAt, override.updatedAt);
+    groups.set(canonicalName, group);
+  }
+
+  return Array.from(groups.entries()).map(([canonicalName, group]) => {
+    const entry = registry.entries[canonicalName];
+    const sources = entry?.sources.length ? entry.sources : group.sources;
+
+    return {
+      id: buildRouteOverrideDisplayItemId(canonicalName),
+      vendor: entry?.vendor ?? group.sources[0]?.vendor ?? inferRouteModelVendor(canonicalName),
+      canonicalName,
+      sourceKeys: Array.from(new Set(sources.map(source => source.sourceKey))),
+      originalModelOrder: Array.from(new Set(sources.map(source => source.originalModel))),
+      priorityConfig: {
+        sitePriorities: {},
+        apiKeyPriorities: {},
+      },
+      mode: 'manual',
+      createdAt: entry?.createdAt ?? group.createdAt,
+      updatedAt: entry?.updatedAt ?? group.updatedAt,
+    };
+  });
+}
+
 export function buildDisplayItemViews(
   registry?: RouteModelRegistryConfig
 ): RedirectDisplayItemView[] {
@@ -616,8 +791,16 @@ export function buildDisplayItemViews(
       item.mode === 'manual' ||
       item.canonicalName === DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME
   );
-  const displayItems =
+  const baseDisplayItems =
     visibleDisplayItems.length > 0 ? visibleDisplayItems : buildFallbackDisplayItems(registry);
+  const displayItems = [
+    ...baseDisplayItems,
+    ...buildOverrideDisplayItems(
+      registry,
+      sourceByKey,
+      new Set(baseDisplayItems.map(item => item.canonicalName))
+    ),
+  ];
 
   return displayItems.map(item => {
     const expandedSourceKeys = expandDisplayItemSourceKeys(item, sourcePool, sourceByKey);
@@ -654,10 +837,17 @@ export function buildRecommendedCliModelOptions(
   const dedupedEntries = new Map<string, RouteModelRegistryEntry>();
 
   for (const displayItem of buildDisplayItemViews(registry)) {
-    const entry = displayItem.entry;
-    if (!entry) {
-      continue;
-    }
+    const entry =
+      displayItem.entry ??
+      ({
+        canonicalName: displayItem.item.canonicalName,
+        vendor: displayItem.item.vendor,
+        aliases: displayItem.selectedOriginalModels,
+        sources: [],
+        hasOverride: false,
+        createdAt: displayItem.item.createdAt,
+        updatedAt: displayItem.item.updatedAt,
+      } satisfies RouteModelRegistryEntry);
 
     if (!dedupedEntries.has(entry.canonicalName)) {
       dedupedEntries.set(entry.canonicalName, entry);
@@ -745,6 +935,7 @@ function buildDetailSiteAccountGroups(
           group: string;
           groupRatio?: number;
           supportedOriginalModels: Set<string>;
+          modelPriceLabels: Map<string, string>;
           modelTestResults: Map<string, string>;
         }
       >;
@@ -776,6 +967,7 @@ function buildDetailSiteAccountGroups(
               group: string;
               groupRatio?: number;
               supportedOriginalModels: Set<string>;
+              modelPriceLabels: Map<string, string>;
               modelTestResults: Map<string, string>;
             }
           >(),
@@ -787,6 +979,12 @@ function buildDetailSiteAccountGroups(
 
     siteGroup.supportedOriginalModels.add(source.originalModel);
     siteGroup.accountIds.add(source.accountId);
+    const account = accountById.get(source.accountId);
+    const site = siteById.get(source.siteId);
+    const modelPricing = account?.cached_data?.model_pricing ?? site?.cached_data?.model_pricing;
+    const modelPriceLabel = resolveModelPriceLabel(
+      getModelPriceInfo(modelPricing, source.originalModel)
+    );
 
     const eligibleApiKeys = (source.availableApiKeys || []).filter(
       apiKey => apiKey.accountId === source.accountId
@@ -799,8 +997,6 @@ function buildDetailSiteAccountGroups(
     for (const apiKey of eligibleApiKeys) {
       const normalizedGroup = apiKey.group.trim();
       groupsWithApiKeys.add(normalizedGroup);
-      const account = accountById.get(apiKey.accountId);
-      const site = siteById.get(source.siteId);
       const groupRatio =
         account?.cached_data?.user_groups?.[normalizedGroup]?.ratio ??
         site?.cached_data?.user_groups?.[normalizedGroup]?.ratio;
@@ -817,6 +1013,7 @@ function buildDetailSiteAccountGroups(
             group: normalizedGroup,
             groupRatio,
             supportedOriginalModels: new Set<string>(),
+            modelPriceLabels: new Map<string, string>(),
             modelTestResults: new Map<string, string>(),
           };
           siteGroup.apiKeys.set(key, next);
@@ -824,6 +1021,7 @@ function buildDetailSiteAccountGroups(
         })();
 
       apiKeyRow.supportedOriginalModels.add(source.originalModel);
+      addModelPriceLabel(apiKeyRow.modelPriceLabels, source.originalModel, modelPriceLabel);
       apiKeyRow.modelTestResults.set(
         source.originalModel,
         getModelProbeStatus({
@@ -885,6 +1083,7 @@ function buildDetailSiteAccountGroups(
             group: apiKey.group,
             groupRatio: apiKey.groupRatio,
             supportedOriginalModels: Array.from(apiKey.supportedOriginalModels),
+            modelPriceLabels: Object.fromEntries(apiKey.modelPriceLabels),
             modelTestResults: Object.fromEntries(apiKey.modelTestResults),
           }))
           .sort((left, right) => {
@@ -965,6 +1164,7 @@ export function ModelRedirectionTab() {
     upsertDisplayItem,
     deleteDisplayItem,
     deleteMappingOverride,
+    resetPathStates,
   } = useRouteStore(
     useShallow(store => ({
       config: store.config,
@@ -974,11 +1174,14 @@ export function ModelRedirectionTab() {
       upsertDisplayItem: store.upsertDisplayItem,
       deleteDisplayItem: store.deleteDisplayItem,
       deleteMappingOverride: store.deleteMappingOverride,
+      resetPathStates: store.resetPathStates,
     }))
   );
   const [syncingSources, setSyncingSources] = useState(false);
   const [resettingDefaults, setResettingDefaults] = useState(false);
+  const [resettingPathCanonicalName, setResettingPathCanonicalName] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [selectedDisplayItemId, setSelectedDisplayItemId] = useState<string | null>(null);
   const [editorContext, setEditorContext] = useState<RedirectEditorContext | null>(null);
   const [sourceDetailState, setSourceDetailState] = useState<DisplayItemDetailState | null>(null);
   const [priorityDraft, setPriorityDraft] = useState<PriorityDraft>({
@@ -986,6 +1189,9 @@ export function ModelRedirectionTab() {
     apiKeyPriorities: {},
   });
   const [selectedPrioritySiteId, setSelectedPrioritySiteId] = useState<string | null>(null);
+  const [expandedMissingKeySiteIds, setExpandedMissingKeySiteIds] = useState<
+    Record<string, boolean>
+  >({});
   const [draft, setDraft] = useState<RedirectEditorDraft>(createEmptyDraft);
   const [errors, setErrors] = useState<RedirectEditorErrors>({});
   const [candidateQuery, setCandidateQuery] = useState('');
@@ -1005,6 +1211,17 @@ export function ModelRedirectionTab() {
 
   const registry = config?.modelRegistry;
   const displayItems = useMemo(() => buildDisplayItemViews(registry), [registry]);
+  const selectedDisplayItem = useMemo(() => {
+    if (displayItems.length === 0) {
+      return null;
+    }
+
+    return (
+      displayItems.find(displayItem => displayItem.item.id === selectedDisplayItemId) ??
+      displayItems[0] ??
+      null
+    );
+  }, [displayItems, selectedDisplayItemId]);
   const candidateGroups = useMemo(
     () => (registry ? buildRedirectCandidateGroups(getRegistrySourcePool(registry)) : []),
     [registry]
@@ -1035,6 +1252,13 @@ export function ModelRedirectionTab() {
   const sortedDetailSiteGroups = useMemo(() => {
     return sortDetailGroupsByPriority(detailSiteGroups, priorityDraft);
   }, [detailSiteGroups, priorityDraft]);
+
+  useEffect(() => {
+    const nextSelectedId = selectedDisplayItem?.item.id ?? null;
+    if (selectedDisplayItemId !== nextSelectedId) {
+      setSelectedDisplayItemId(nextSelectedId);
+    }
+  }, [selectedDisplayItem, selectedDisplayItemId]);
 
   useEffect(() => {
     if (!sourceDetailState || detailSiteGroups.length === 0) {
@@ -1092,6 +1316,7 @@ export function ModelRedirectionTab() {
       apiKeyPriorities: {},
     });
     setSelectedPrioritySiteId(null);
+    setExpandedMissingKeySiteIds({});
   }, []);
 
   const closeRouteRules = useCallback(() => {
@@ -1104,6 +1329,13 @@ export function ModelRedirectionTab() {
     setCreateApiKeyState(null);
     setNewApiKeyForm(createDefaultNewApiKeyForm());
     setCreatingApiKey(false);
+  }, []);
+
+  const toggleMissingKeyHints = useCallback((siteId: string) => {
+    setExpandedMissingKeySiteIds(current => ({
+      ...current,
+      [siteId]: !current[siteId],
+    }));
   }, []);
 
   const refreshOpenSourceDetails = useCallback(
@@ -1151,6 +1383,7 @@ export function ModelRedirectionTab() {
       setPriorityDetailConfig(null);
       setPriorityDraft(nextPriorityDraft);
       setSelectedPrioritySiteId(initialSortedGroups[0]?.siteId ?? null);
+      setExpandedMissingKeySiteIds({});
 
       void window.electronAPI
         .loadConfig()
@@ -1163,6 +1396,15 @@ export function ModelRedirectionTab() {
     },
     [config]
   );
+
+  useEffect(() => {
+    if (!selectedDisplayItem?.entry) {
+      closeSourceDetails();
+      return;
+    }
+
+    openSourceDetails(selectedDisplayItem.item, selectedDisplayItem.entry);
+  }, [closeSourceDetails, openSourceDetails, selectedDisplayItem]);
 
   const openRouteRules = useCallback((item: RouteModelDisplayItem, displayName: string) => {
     setRouteRuleState({ item, displayName });
@@ -1294,6 +1536,29 @@ export function ModelRedirectionTab() {
       setResettingDefaults(false);
     }
   }, [rebuildModelRegistry]);
+
+  const handleResetRoutePaths = useCallback(
+    async (item: RouteModelDisplayItem, displayName: string) => {
+      setResettingPathCanonicalName(item.canonicalName);
+      try {
+        const cleared = await resetPathStates({ canonicalModel: item.canonicalName });
+        if (cleared === null) {
+          throw new Error('无法恢复路由路径');
+        }
+
+        toast.success(
+          cleared > 0
+            ? `${displayName} 已恢复 ${cleared} 条路由路径`
+            : `${displayName} 没有需要恢复的路由路径`
+        );
+      } catch (error: unknown) {
+        toast.error(`恢复失败: ${getErrorMessage(error)}`);
+      } finally {
+        setResettingPathCanonicalName(null);
+      }
+    },
+    [resetPathStates]
+  );
 
   const handleCreateApiKeySubmit = useCallback(async () => {
     if (!createApiKeyState) {
@@ -1660,13 +1925,12 @@ export function ModelRedirectionTab() {
       }
 
       toast.success('重定向优先级已更新');
-      closeSourceDetails();
     } catch (error: unknown) {
       toast.error(`保存失败: ${getErrorMessage(error)}`);
     } finally {
       setSaving(false);
     }
-  }, [closeSourceDetails, sortedDetailSiteGroups, sourceDetailState, upsertDisplayItem]);
+  }, [sortedDetailSiteGroups, sourceDetailState, upsertDisplayItem]);
 
   const handleSaveRouteRules = useCallback(async () => {
     if (!routeRuleState) {
@@ -1747,6 +2011,17 @@ export function ModelRedirectionTab() {
     ? sortedDetailSiteGroups.findIndex(group => group.siteId === selectedPrioritySiteId)
     : -1;
   const now = Date.now();
+  const selectedEntry = selectedDisplayItem?.entry ?? null;
+  const selectedActiveSuspensionCount = selectedDisplayItem
+    ? countActiveRoutePathStatesForItem({
+        states: config?.routePathStates,
+        item: selectedDisplayItem.item,
+        now,
+      })
+    : 0;
+  const isResettingSelectedRoutePaths = selectedDisplayItem
+    ? resettingPathCanonicalName === selectedDisplayItem.item.canonicalName
+    : false;
 
   if (!config) {
     return null;
@@ -1754,223 +2029,560 @@ export function ModelRedirectionTab() {
 
   return (
     <>
-      <AppCard className="overflow-hidden">
-        <AppCardContent className="p-0">
-          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--line-soft)] px-5 py-4">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 text-[var(--text-primary)]">
-                <Layers3 className="h-4 w-4 text-[var(--accent)]" />
-                <h2 className="text-sm font-semibold">模型重定向</h2>
+      <div
+        data-testid="redirect-workspace"
+        className="overflow-hidden border border-[var(--line-soft)] bg-[var(--surface-1)]"
+      >
+        <div
+          data-testid="redirect-two-pane-layout"
+          className="grid min-h-[520px] xl:grid-cols-[minmax(240px,0.62fr)_minmax(0,1.38fr)]"
+        >
+          <div
+            data-testid="redirect-list-pane"
+            className="flex min-h-0 flex-col border-b border-[var(--line-soft)] xl:border-b-0 xl:border-r"
+          >
+            <div
+              data-testid="redirect-list-toolbar"
+              className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line-soft)] px-3 py-2"
+            >
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-[var(--text-primary)]">重定向模型</div>
+                <div className="text-[11px] text-[var(--text-secondary)]">
+                  {displayItems.length} 项
+                </div>
               </div>
-              <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                同步来源不会覆盖现有规则；重置默认重定向只会恢复 `claude-opus-4-6` 这一条默认示例。
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <AppButton
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={handleSyncSources}
-                disabled={syncingSources || resettingDefaults}
-              >
-                {syncingSources ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-3.5 w-3.5" />
-                )}
-                <span>同步来源</span>
-              </AppButton>
-              <AppButton
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={handleResetDefaults}
-                disabled={resettingDefaults || syncingSources}
-              >
-                {resettingDefaults ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-3.5 w-3.5" />
-                )}
-                <span>重置默认重定向</span>
-              </AppButton>
-              <AppButton
-                type="button"
-                size="sm"
-                variant="secondary"
-                onClick={openCreateEditor}
-                disabled={resettingDefaults || syncingSources || saving}
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span>新增重定向</span>
-              </AppButton>
-            </div>
-          </div>
-
-          {displayItems.length > 0 ? (
-            <div className="space-y-3 p-5">
-              <div className="space-y-3">
-                {displayItems.map(displayItem => {
-                  const entry = displayItem.entry;
-
-                  return (
-                    <article
-                      key={displayItem.item.id}
-                      className="rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)]/70 p-4"
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <code className="font-mono text-[13px] font-semibold text-[var(--text-primary)]">
-                              {displayItem.displayName}
-                            </code>
-                            {displayItem.item.mode === 'manual' ? (
-                              <span className="rounded-full bg-[var(--warning-soft)] px-2 py-1 text-[11px] text-[var(--warning)]">
-                                手工新增
-                              </span>
-                            ) : (
-                              <span className="rounded-full bg-[var(--surface-1)] px-2 py-1 text-[11px] text-[var(--text-secondary)]">
-                                默认示例
-                              </span>
-                            )}
-                            {entry ? (
-                              <span className="rounded-full bg-[var(--surface-1)] px-2 py-1 text-[11px] text-[var(--text-secondary)]">
-                                {formatSourceSummary(entry.sources)}
-                              </span>
-                            ) : (
-                              <span className="rounded-full bg-[var(--surface-1)] px-2 py-1 text-[11px] text-[var(--text-secondary)]">
-                                来源待同步
-                              </span>
-                            )}
-                            <span className="rounded-full bg-[var(--surface-1)] px-2 py-1 text-[11px] text-[var(--text-secondary)]">
-                              {formatRouteRuntimeSummary(displayItem.item.runtimeConfig)}
-                            </span>
-                          </div>
-
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            {displayItem.selectedOriginalModels.length > 0 ? (
-                              displayItem.selectedOriginalModels.map(originalModel => {
-                                const suspensions = getActiveRoutePathSuspensions({
-                                  states: config.routePathStates,
-                                  item: displayItem.item,
-                                  entry,
-                                  originalModel,
-                                  now,
-                                });
-
-                                return (
-                                  <div
-                                    key={`${displayItem.item.id}:${originalModel}`}
-                                    className="max-w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2.5 py-1"
-                                  >
-                                    <code className="font-mono text-[11px] text-[var(--text-secondary)]">
-                                      {originalModel}
-                                    </code>
-                                    {suspensions.length > 0 ? (
-                                      <div className="mt-1 space-y-0.5 font-sans text-[10px] leading-4 text-[var(--warning)]">
-                                        {suspensions.map(label => (
-                                          <div key={label} className="max-w-full truncate">
-                                            {label}
-                                          </div>
-                                        ))}
-                                      </div>
-                                    ) : null}
-                                  </div>
-                                );
-                              })
-                            ) : (
-                              <span className="rounded-full border border-[var(--line-soft)] bg-[var(--surface-1)] px-2.5 py-1 font-mono text-[11px] text-[var(--text-secondary)]">
-                                {displayItem.item.canonicalName}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex shrink-0 items-center gap-2 self-start">
-                          <AppButton
-                            type="button"
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => entry && openSourceDetails(displayItem.item, entry)}
-                            disabled={!entry || saving}
-                          >
-                            <span>优先级排序</span>
-                          </AppButton>
-                          <AppButton
-                            type="button"
-                            size="sm"
-                            variant="secondary"
-                            onClick={() =>
-                              openRouteRules(displayItem.item, displayItem.displayName)
-                            }
-                            disabled={saving}
-                          >
-                            <SlidersHorizontal className="h-3.5 w-3.5" />
-                            <span>路由规则</span>
-                          </AppButton>
-                          <button
-                            type="button"
-                            onClick={() => openEditEditor(displayItem.item, displayItem.entry)}
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
-                            aria-label={`编辑 ${displayItem.displayName}`}
-                            title="编辑模型重定向"
-                            disabled={saving}
-                          >
-                            <Edit3 className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void handleDelete(displayItem.item.id)}
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:border-[var(--danger)] hover:text-[var(--danger)] disabled:cursor-not-allowed disabled:opacity-50"
-                            aria-label={`删除 ${displayItem.displayName}`}
-                            title="删除重定向模型"
-                            disabled={saving}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center gap-3 px-5 py-10 text-center">
-              <div className="text-sm font-medium text-[var(--text-primary)]">暂无模型重定向</div>
-              <p className="max-w-xl text-xs text-[var(--text-secondary)]">
-                先同步来源拉取当前站点模型；默认只保留 `claude-opus-4-6`
-                示例，其他重定向请手动新增。
-              </p>
-              <div className="flex flex-wrap items-center justify-center gap-2">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <AppButton
                   type="button"
                   variant="secondary"
                   size="sm"
+                  className="!h-7 !min-h-7 !px-2"
                   onClick={handleSyncSources}
                   disabled={syncingSources || resettingDefaults}
                 >
-                  立即同步来源
+                  {syncingSources ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  )}
+                  <span>同步来源</span>
                 </AppButton>
                 <AppButton
                   type="button"
-                  variant="secondary"
                   size="sm"
-                  onClick={handleResetDefaults}
-                  disabled={resettingDefaults || syncingSources}
+                  variant="secondary"
+                  className="!h-7 !min-h-7 !px-2"
+                  onClick={openCreateEditor}
+                  disabled={resettingDefaults || syncingSources || saving}
                 >
-                  重置默认重定向
-                </AppButton>
-                <AppButton type="button" variant="secondary" size="sm" onClick={openCreateEditor}>
-                  新增重定向
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>新增重定向</span>
                 </AppButton>
               </div>
             </div>
-          )}
-        </AppCardContent>
-      </AppCard>
+
+            {displayItems.length > 0 ? (
+              <div
+                data-testid="redirect-card-list"
+                className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              >
+                {displayItems.map(displayItem => {
+                  const entry = displayItem.entry;
+                  const isSelected = selectedDisplayItem?.item.id === displayItem.item.id;
+
+                  return (
+                    <button
+                      key={displayItem.item.id}
+                      type="button"
+                      data-testid="redirect-list-row"
+                      data-selected={isSelected ? 'true' : 'false'}
+                      onClick={() => setSelectedDisplayItemId(displayItem.item.id)}
+                      className={`block w-full border-b border-[var(--line-soft)]/80 border-l-2 px-3 py-2 text-left transition-colors ${
+                        isSelected
+                          ? 'border-l-[var(--accent)] bg-[var(--accent-soft-strong)] shadow-[inset_4px_0_0_var(--accent)]'
+                          : 'border-l-transparent hover:bg-[var(--surface-2)]'
+                      }`}
+                    >
+                      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                        <code className="min-w-0 truncate font-mono text-[13px] font-semibold text-[var(--text-primary)]">
+                          {displayItem.displayName}
+                        </code>
+                        {displayItem.item.mode === 'manual' ? (
+                          <span className="shrink-0 rounded-full bg-[var(--warning-soft)] px-1.5 py-0.5 text-[11px] text-[var(--warning)]">
+                            手工新增
+                          </span>
+                        ) : (
+                          <span className="shrink-0 rounded-full bg-[var(--surface-2)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)]">
+                            默认示例
+                          </span>
+                        )}
+                        {entry ? (
+                          <span className="shrink-0 rounded-full bg-[var(--surface-2)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)]">
+                            {formatSourceSummary(entry.sources)}
+                          </span>
+                        ) : (
+                          <span className="shrink-0 rounded-full bg-[var(--surface-2)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)]">
+                            来源待同步
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-1 truncate text-[11px] text-[var(--text-secondary)]">
+                        {formatRouteRuntimeSummary(displayItem.item.runtimeConfig)}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="flex flex-1 flex-col items-center justify-center gap-3 px-5 py-10 text-center">
+                <div className="text-sm font-medium text-[var(--text-primary)]">暂无模型重定向</div>
+                <p className="max-w-sm text-xs text-[var(--text-secondary)]">
+                  先同步来源拉取当前站点模型；其他重定向请手动新增。
+                </p>
+              </div>
+            )}
+          </div>
+
+          <div
+            data-testid="redirect-detail-pane"
+            className="min-h-0 overflow-y-auto bg-[var(--surface-1)]"
+          >
+            {selectedDisplayItem ? (
+              <div className="min-h-full">
+                <div
+                  data-testid="redirect-detail-actions"
+                  className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line-soft)] px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <code className="block truncate font-mono text-sm font-semibold text-[var(--text-primary)]">
+                      {selectedDisplayItem.displayName}
+                    </code>
+                    <div className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
+                      {selectedEntry ? formatSourceSummary(selectedEntry.sources) : '来源待同步'}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-end gap-1.5">
+                    <AppButton
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      className="!h-7 !min-h-7 !px-2"
+                      onClick={() =>
+                        void handleResetRoutePaths(
+                          selectedDisplayItem.item,
+                          selectedDisplayItem.displayName
+                        )
+                      }
+                      disabled={
+                        saving ||
+                        isResettingSelectedRoutePaths ||
+                        selectedActiveSuspensionCount === 0
+                      }
+                      aria-label={`恢复 ${selectedDisplayItem.displayName} 路由路径`}
+                      title={
+                        selectedActiveSuspensionCount > 0
+                          ? `恢复 ${selectedActiveSuspensionCount} 条暂停路径`
+                          : '没有暂停路径'
+                      }
+                    >
+                      {isResettingSelectedRoutePaths ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      )}
+                      <span>恢复路径</span>
+                    </AppButton>
+                    <AppButton
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      className="!h-7 !min-h-7 !px-2"
+                      onClick={() =>
+                        openRouteRules(selectedDisplayItem.item, selectedDisplayItem.displayName)
+                      }
+                      disabled={saving || isResettingSelectedRoutePaths}
+                    >
+                      <SlidersHorizontal className="h-3.5 w-3.5" />
+                      <span>路由规则</span>
+                    </AppButton>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openEditEditor(selectedDisplayItem.item, selectedDisplayItem.entry)
+                      }
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
+                      aria-label={`编辑 ${selectedDisplayItem.displayName}`}
+                      title="编辑模型重定向"
+                      disabled={saving || isResettingSelectedRoutePaths}
+                    >
+                      <Edit3 className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDelete(selectedDisplayItem.item.id)}
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:border-[var(--danger)] hover:text-[var(--danger)] disabled:cursor-not-allowed disabled:opacity-50"
+                      aria-label={`删除 ${selectedDisplayItem.displayName}`}
+                      title="删除重定向模型"
+                      disabled={saving || isResettingSelectedRoutePaths}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="border-b border-[var(--line-soft)] px-3 py-2">
+                  <div className="mb-1.5 text-xs font-semibold text-[var(--text-primary)]">
+                    原始模型
+                  </div>
+                  <div
+                    data-testid="redirect-detail-original-models"
+                    className="flex flex-wrap gap-x-1.5 gap-y-1"
+                  >
+                    {selectedDisplayItem.selectedOriginalModels.length > 0 ? (
+                      selectedDisplayItem.selectedOriginalModels.map(originalModel => (
+                        <div
+                          key={`${selectedDisplayItem.item.id}:${originalModel}`}
+                          className="max-w-full border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-0"
+                        >
+                          <code className="font-mono text-[11px] leading-4 text-[var(--text-secondary)]">
+                            {originalModel}
+                          </code>
+                        </div>
+                      ))
+                    ) : (
+                      <span className="border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-0.5 font-mono text-[11px] text-[var(--text-secondary)]">
+                        {selectedDisplayItem.item.canonicalName}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div data-testid="redirect-detail-priority" className="px-3 py-2">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-semibold text-[var(--text-primary)]">
+                        优先级排序
+                      </div>
+                      <div className="text-[11px] text-[var(--text-secondary)]">
+                        站点与 API Key 按当前顺序尝试。
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <AppButton
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className="h-7 px-2"
+                        onClick={() => moveSelectedPrioritySite('first')}
+                        disabled={selectedPrioritySiteIndex <= 0}
+                      >
+                        <ChevronsUp className="h-3.5 w-3.5" />
+                        <span>移到第一个</span>
+                      </AppButton>
+                      <AppButton
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className="h-7 px-2"
+                        onClick={() => moveSelectedPrioritySite('up')}
+                        disabled={selectedPrioritySiteIndex <= 0}
+                      >
+                        <ChevronUp className="h-3.5 w-3.5" />
+                        <span>上移</span>
+                      </AppButton>
+                      <AppButton
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className="h-7 px-2"
+                        onClick={() => moveSelectedPrioritySite('down')}
+                        disabled={
+                          selectedPrioritySiteIndex < 0 ||
+                          selectedPrioritySiteIndex >= sortedDetailSiteGroups.length - 1
+                        }
+                      >
+                        <ChevronDown className="h-3.5 w-3.5" />
+                        <span>下移</span>
+                      </AppButton>
+                      <AppButton
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className="h-7 px-2"
+                        onClick={() => moveSelectedPrioritySite('last')}
+                        disabled={
+                          selectedPrioritySiteIndex < 0 ||
+                          selectedPrioritySiteIndex >= sortedDetailSiteGroups.length - 1
+                        }
+                      >
+                        <ChevronsDown className="h-3.5 w-3.5" />
+                        <span>移到末尾</span>
+                      </AppButton>
+                      <AppButton
+                        type="button"
+                        size="sm"
+                        onClick={handleSaveDetails}
+                        loading={saving}
+                      >
+                        保存优先级
+                      </AppButton>
+                    </div>
+                  </div>
+
+                  {sortedDetailSiteGroups.length > 0 ? (
+                    <div className="overflow-hidden" data-testid="priority-detail-compact-list">
+                      <div className="grid grid-cols-[minmax(0,calc(43%_+_80px))_minmax(0,calc(57%_-_50px))_118px] gap-2 border-y border-[var(--line-soft)] bg-[var(--surface-2)] px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+                        <span>来源</span>
+                        <span>覆盖模型</span>
+                        <span className="text-right">优先级</span>
+                      </div>
+                      <div>
+                        {sortedDetailSiteGroups.map((siteGroup, siteIndex) => {
+                          const isSelected = selectedPrioritySiteId === siteGroup.siteId;
+                          const missingHintsExpanded = Boolean(
+                            expandedMissingKeySiteIds[siteGroup.siteId]
+                          );
+
+                          return (
+                            <section
+                              key={siteGroup.key}
+                              className="border-t border-[var(--line-soft)] first:border-t-0"
+                              data-testid="priority-detail-site-group"
+                            >
+                              <div
+                                className={`grid cursor-pointer grid-cols-[minmax(0,calc(43%_+_80px))_minmax(0,calc(57%_-_50px))_118px] items-center gap-2 border-l-4 px-2.5 py-1.5 transition-colors ${
+                                  isSelected
+                                    ? 'border-l-[var(--accent)] bg-[var(--accent-soft)]/45'
+                                    : 'border-l-[var(--accent)] bg-[var(--surface-2)]/70 hover:bg-[var(--surface-2)]'
+                                }`}
+                                onClick={() => setSelectedPrioritySiteId(siteGroup.siteId)}
+                              >
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <input
+                                    type="radio"
+                                    name="priority-site-selection"
+                                    className="h-3.5 w-3.5 shrink-0 cursor-pointer"
+                                    style={{ accentColor: 'var(--accent)' }}
+                                    aria-label={`选择 ${siteGroup.siteName}`}
+                                    checked={isSelected}
+                                    onClick={event => event.stopPropagation()}
+                                    onChange={() => setSelectedPrioritySiteId(siteGroup.siteId)}
+                                  />
+                                  <span className="shrink-0 rounded-full border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--accent)]">
+                                    站点
+                                  </span>
+                                  <span className="flex min-w-0 items-center text-[13px] font-semibold text-[var(--text-primary)]">
+                                    <span
+                                      className="min-w-0 max-w-[8em] truncate"
+                                      title={siteGroup.siteName}
+                                    >
+                                      {siteGroup.siteName}
+                                    </span>
+                                    {formatBalanceDisplay(siteGroup.siteBalance) ? (
+                                      <span className="shrink-0">
+                                        （{formatBalanceDisplay(siteGroup.siteBalance)}）
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                </div>
+                                <div className="min-w-0" aria-hidden="true" />
+                                <div className="flex items-center justify-end">
+                                  <span
+                                    className="min-w-7 rounded-full bg-[var(--surface-1)] px-1.5 py-0.5 text-center text-xs font-semibold text-[var(--text-primary)]"
+                                    data-testid="priority-detail-site-priority"
+                                    aria-label={`${siteGroup.siteName} 优先级 ${siteIndex}`}
+                                  >
+                                    {siteIndex}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {siteGroup.apiKeys.map((apiKey, apiKeyIndex) => {
+                                const apiKeySuspensions = getActiveRoutePathSuspensionLabels({
+                                  states: config.routePathStates,
+                                  item: selectedDisplayItem.item,
+                                  siteId: siteGroup.siteId,
+                                  accountId: apiKey.accountId,
+                                  apiKeyId: apiKey.apiKeyId,
+                                  originalModels: apiKey.supportedOriginalModels,
+                                  now,
+                                });
+                                const apiKeySuspensionLabels =
+                                  groupSuspensionLabelsByModel(apiKeySuspensions);
+                                const formattedModelList = formatModelListWithProbeStatus(
+                                  apiKey.supportedOriginalModels,
+                                  apiKey.modelTestResults,
+                                  apiKey.modelPriceLabels,
+                                  apiKeySuspensionLabels
+                                );
+
+                                return (
+                                  <div
+                                    key={apiKey.key}
+                                    className="grid grid-cols-[minmax(0,calc(43%_+_80px))_minmax(0,calc(57%_-_50px))_118px] items-center gap-2 border-t border-[var(--line-soft)]/70 bg-[var(--surface-1)] px-2.5 py-1 text-xs text-[var(--text-secondary)]"
+                                    data-testid="priority-detail-api-key-row"
+                                  >
+                                    <div className="min-w-0 pl-5">
+                                      <div className="flex min-w-0 items-center gap-1">
+                                        <span className="h-5 w-px shrink-0 bg-[var(--line-soft)]" />
+                                        <div className="flex shrink-0 flex-col items-center gap-px">
+                                          <button
+                                            type="button"
+                                            className="rounded-[var(--radius-sm)] p-0 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-35"
+                                            aria-label={`${apiKey.apiKeyName} 上移`}
+                                            title="上移"
+                                            disabled={apiKeyIndex === 0}
+                                            onClick={() =>
+                                              movePriorityApiKey(siteGroup.siteId, apiKey.key, 'up')
+                                            }
+                                          >
+                                            <ChevronUp className="h-2.5 w-2.5" />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="rounded-[var(--radius-sm)] p-0 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-35"
+                                            aria-label={`${apiKey.apiKeyName} 下移`}
+                                            title="下移"
+                                            disabled={apiKeyIndex === siteGroup.apiKeys.length - 1}
+                                            onClick={() =>
+                                              movePriorityApiKey(
+                                                siteGroup.siteId,
+                                                apiKey.key,
+                                                'down'
+                                              )
+                                            }
+                                          >
+                                            <ChevronDown className="h-2.5 w-2.5" />
+                                          </button>
+                                        </div>
+                                        <span className="shrink-0 rounded border border-[var(--line-soft)] bg-[var(--surface-2)] px-1 py-px text-[9px] font-bold leading-3">
+                                          API Key
+                                        </span>
+                                        <span className="min-w-0 truncate">
+                                          {`${apiKey.apiKeyName}（${[
+                                            formatApiKeyAccountName(
+                                              apiKey.accountName,
+                                              apiKey.accountId
+                                            ),
+                                            apiKey.group,
+                                            formatGroupRatio(apiKey.groupRatio),
+                                          ]
+                                            .filter(Boolean)
+                                            .join(' / ')}）`}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <div
+                                      className="min-w-0 truncate"
+                                      title={
+                                        apiKeySuspensions.length > 0
+                                          ? apiKeySuspensions
+                                              .map(suspension => suspension.title)
+                                              .join(' / ')
+                                          : formattedModelList
+                                      }
+                                    >
+                                      {formattedModelList}
+                                    </div>
+                                    <div className="min-w-0" aria-hidden="true" />
+                                  </div>
+                                );
+                              })}
+
+                              {siteGroup.missingGroupHints.length > 0 ? (
+                                <div className="border-t border-[var(--warning)]/25 bg-[var(--warning-soft)]/20 text-xs text-[var(--text-secondary)]">
+                                  <button
+                                    type="button"
+                                    className="grid w-full grid-cols-[minmax(0,calc(43%_+_80px))_minmax(0,calc(57%_-_50px))_118px] items-center gap-2 px-2.5 py-1 text-left transition-colors hover:bg-[var(--warning-soft)]/35 focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-[-2px]"
+                                    aria-expanded={missingHintsExpanded}
+                                    aria-controls={`priority-missing-key-hints-${siteGroup.siteId}`}
+                                    aria-label={`${siteGroup.siteName} ${
+                                      missingHintsExpanded ? '收起' : '展开'
+                                    }缺少 Key`}
+                                    onClick={() => toggleMissingKeyHints(siteGroup.siteId)}
+                                    data-testid="priority-detail-missing-key-toggle"
+                                  >
+                                    <div className="col-span-2 flex min-w-0 items-center gap-2 pl-5">
+                                      <span className="h-5 w-px shrink-0 bg-[var(--warning)]/35" />
+                                      <span className="shrink-0 rounded-full border border-[var(--warning)]/30 bg-[var(--warning-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--warning)]">
+                                        缺少 Key
+                                      </span>
+                                      <span className="min-w-0 truncate">
+                                        {siteGroup.missingGroupHints.length} 个用户组未创建可用 API
+                                        key
+                                      </span>
+                                    </div>
+                                    <span className="flex translate-x-[50px] items-center justify-start gap-1 text-[11px] font-medium text-[var(--warning)]">
+                                      <ChevronDown
+                                        className={`h-3.5 w-3.5 transition-transform ${
+                                          missingHintsExpanded ? '' : '-rotate-90'
+                                        }`}
+                                        aria-hidden="true"
+                                      />
+                                      {missingHintsExpanded ? '收起' : '展开'}
+                                    </span>
+                                  </button>
+                                  {missingHintsExpanded ? (
+                                    <div id={`priority-missing-key-hints-${siteGroup.siteId}`}>
+                                      {siteGroup.missingGroupHints.map(hint => (
+                                        <div
+                                          key={`${siteGroup.key}:${hint.key}`}
+                                          className="grid grid-cols-[minmax(0,calc(43%_+_80px))_minmax(0,calc(57%_-_50px))_118px] items-center gap-2 border-t border-[var(--warning)]/15 px-2.5 py-1"
+                                          data-testid="priority-detail-missing-key-row"
+                                        >
+                                          <div className="col-span-2 flex min-w-0 items-center gap-2 pl-5">
+                                            <span className="h-5 w-px shrink-0 bg-[var(--warning)]/35" />
+                                            <span className="shrink-0 rounded-full border border-[var(--warning)]/30 bg-[var(--warning-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--warning)]">
+                                              缺少 Key
+                                            </span>
+                                            <span className="min-w-0 truncate">
+                                              {hint.accountName || hint.accountId} / {hint.group}（
+                                              {hint.originalModels.join('、')}）未创建可用 API key
+                                            </span>
+                                          </div>
+                                          <AppButton
+                                            type="button"
+                                            size="sm"
+                                            variant="secondary"
+                                            className="!h-6 !min-h-6 w-14 shrink-0 translate-x-[50px] justify-self-start px-0"
+                                            onClick={() =>
+                                              void openCreateApiKeyDialog(siteGroup, hint)
+                                            }
+                                            disabled={creatingApiKey}
+                                          >
+                                            创建
+                                          </AppButton>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <div
+                                      id={`priority-missing-key-hints-${siteGroup.siteId}`}
+                                      hidden
+                                    ></div>
+                                  )}
+                                </div>
+                              ) : null}
+                            </section>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-4 text-sm text-[var(--text-secondary)]">
+                      当前重定向还没有可配置优先级的可用站点、账户或 API key。
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="flex min-h-full items-center justify-center px-5 py-10 text-center text-sm text-[var(--text-secondary)]">
+                请选择左侧重定向模型。
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
 
       <AppModal
         isOpen={editorContext !== null}
@@ -1990,7 +2602,7 @@ export function ModelRedirectionTab() {
           </div>
         }
       >
-        <div className="flex min-h-0 flex-1 basis-0 flex-col gap-4 px-6 py-4">
+        <div className="flex min-h-0 flex-1 basis-0 flex-col gap-3 px-5 py-3">
           <div
             data-testid="redirect-editor-input-row"
             className="grid gap-3 md:grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)] md:items-start"
@@ -2011,7 +2623,7 @@ export function ModelRedirectionTab() {
                   setErrors(current => ({ ...current, canonicalName: undefined }));
                 }}
                 placeholder="例如：claude-sonnet-4-6"
-                className={`w-full rounded-[var(--radius-md)] border bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none transition-colors focus:ring-2 ${
+                className={`w-full rounded-[var(--radius-md)] border bg-[var(--surface-1)] px-2.5 py-1.5 text-sm text-[var(--text-primary)] outline-none transition-colors focus:ring-2 ${
                   errors.canonicalName
                     ? 'border-[var(--danger)] focus:border-[var(--danger)] focus:ring-[var(--danger-soft)]'
                     : 'border-[var(--line-soft)] focus:border-[var(--accent)] focus:ring-[var(--accent-soft)]'
@@ -2038,7 +2650,7 @@ export function ModelRedirectionTab() {
                 onChange={event => setCandidateQuery(event.target.value)}
                 placeholder="搜索模型..."
                 aria-label="搜索原始名称"
-                className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] py-2 pl-9 pr-10 text-sm text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+                className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] py-1.5 pl-9 pr-10 text-sm text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
               />
               {candidateQuery ? (
                 <button
@@ -2053,18 +2665,18 @@ export function ModelRedirectionTab() {
             </div>
           </div>
 
-          <div className="flex min-h-0 flex-1 basis-0 flex-col gap-2">
-            <div className="flex min-h-0 flex-1 basis-0 flex-col gap-3 md:flex-row">
+          <div className="flex min-h-0 flex-1 basis-0 flex-col gap-1.5">
+            <div className="flex min-h-0 flex-1 basis-0 flex-col gap-2 md:flex-row">
               <section className="flex min-h-[12rem] min-w-0 flex-col overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] md:min-h-0 md:w-[38%] md:min-w-[18rem]">
                 <div
                   data-testid="selected-original-models-header"
-                  className="flex min-h-12 items-center justify-between gap-3 border-b border-[var(--line-soft)] px-4 py-3"
+                  className="flex min-h-10 items-center justify-between gap-2 border-b border-[var(--line-soft)] px-3 py-2"
                 >
                   <div className="flex items-center gap-2">
                     <div className="text-sm font-medium text-[var(--text-primary)]">
                       已选原始模型
                     </div>
-                    <span className="rounded-full bg-[var(--surface-1)] px-2 py-1 text-[11px] text-[var(--text-secondary)]">
+                    <span className="rounded-full bg-[var(--surface-1)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)]">
                       已选 {draft.selectedOriginalModels.length}
                     </span>
                   </div>
@@ -2082,15 +2694,15 @@ export function ModelRedirectionTab() {
                 </div>
                 <div
                   data-testid="selected-original-models-list"
-                  className="min-h-[9rem] max-h-56 overflow-y-auto overscroll-contain px-4 py-3 [scrollbar-gutter:stable] md:min-h-0 md:max-h-none md:flex-1 md:basis-0"
+                  className="min-h-[9rem] max-h-56 overflow-y-auto overscroll-contain px-3 py-2 [scrollbar-gutter:stable] md:min-h-0 md:max-h-none md:flex-1 md:basis-0"
                   onWheelCapture={stopNestedScrollPropagation}
                 >
                   {draft.selectedOriginalModels.length > 0 ? (
-                    <div className="flex flex-wrap content-start gap-2">
+                    <div className="flex flex-wrap content-start gap-1.5">
                       {draft.selectedOriginalModels.map(originalModel => (
                         <span
                           key={originalModel}
-                          className="inline-flex max-w-full items-center gap-2 rounded-full border border-[var(--accent)]/20 bg-[var(--accent-soft)]/70 px-2.5 py-1"
+                          className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-[var(--accent)]/20 bg-[var(--accent-soft)]/70 px-2 py-0.5"
                         >
                           <code className="truncate font-mono text-[11px] text-[var(--text-primary)]">
                             {originalModel}
@@ -2107,7 +2719,7 @@ export function ModelRedirectionTab() {
                       ))}
                     </div>
                   ) : (
-                    <div className="flex h-full items-center justify-center rounded-[var(--radius-md)] border border-dashed border-[var(--line-soft)] bg-[var(--surface-1)] px-4 py-6 text-center text-sm text-[var(--text-secondary)]">
+                    <div className="flex h-full items-center justify-center rounded-[var(--radius-md)] border border-dashed border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-4 text-center text-sm text-[var(--text-secondary)]">
                       还没有选择原始模型
                     </div>
                   )}
@@ -2117,7 +2729,7 @@ export function ModelRedirectionTab() {
               <section className="flex min-h-0 min-w-0 flex-1 basis-0 flex-col overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)]">
                 <div
                   data-testid="original-model-candidate-header"
-                  className="flex min-h-12 items-center justify-between gap-3 border-b border-[var(--line-soft)] px-4 py-3"
+                  className="flex min-h-10 items-center justify-between gap-2 border-b border-[var(--line-soft)] px-3 py-2"
                 >
                   <div className="text-sm font-medium text-[var(--text-primary)]">原始模型</div>
                   <div className="text-xs text-[var(--text-secondary)]">
@@ -2126,10 +2738,10 @@ export function ModelRedirectionTab() {
                 </div>
                 <div
                   data-testid="original-model-candidate-list"
-                  className="min-h-0 flex-1 basis-0 overflow-y-auto overscroll-contain p-3"
+                  className="min-h-0 flex-1 basis-0 overflow-y-auto overscroll-contain p-2.5"
                   onWheelCapture={stopNestedScrollPropagation}
                 >
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     {filteredCandidates.length > 0 ? (
                       filteredCandidates.map(candidate => {
                         const checked = draft.selectedOriginalModels.includes(
@@ -2139,7 +2751,7 @@ export function ModelRedirectionTab() {
                         return (
                           <label
                             key={candidate.originalModel}
-                            className={`flex cursor-pointer items-start gap-3 rounded-[var(--radius-md)] border px-3 py-2 transition-colors ${
+                            className={`flex cursor-pointer items-start gap-2 rounded-[var(--radius-md)] border px-2.5 py-1.5 transition-colors ${
                               checked
                                 ? 'border-[var(--accent)] bg-[var(--accent-soft)]/60'
                                 : 'border-[var(--line-soft)] bg-[var(--surface-2)] hover:border-[var(--icon-muted)]'
@@ -2173,7 +2785,7 @@ export function ModelRedirectionTab() {
                         );
                       })
                     ) : (
-                      <div className="px-3 py-8 text-center text-sm text-[var(--text-secondary)]">
+                      <div className="px-3 py-6 text-center text-sm text-[var(--text-secondary)]">
                         无匹配结果
                       </div>
                     )}
@@ -2205,8 +2817,8 @@ export function ModelRedirectionTab() {
           </div>
         }
       >
-        <div className="space-y-4 px-1 py-2">
-          <label className="block space-y-1.5">
+        <div className="space-y-3 px-1 py-1.5">
+          <label className="block space-y-1">
             <span className="text-xs font-medium text-[var(--text-secondary)]">
               每条路由路径尝试次数
             </span>
@@ -2228,7 +2840,7 @@ export function ModelRedirectionTab() {
               }}
               placeholder={String(DEFAULT_ROUTE_RUNTIME_CONFIG.maxAttemptsPerRoutePath)}
               aria-label="每条路由路径尝试次数"
-              className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)]"
+              className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2.5 py-1.5 text-sm text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)]"
             />
             {routeRuleErrors.maxAttemptsPerRoutePath ? (
               <span className="text-xs text-[var(--danger)]">
@@ -2237,7 +2849,7 @@ export function ModelRedirectionTab() {
             ) : null}
           </label>
 
-          <label className="block space-y-1.5">
+          <label className="block space-y-1">
             <span className="text-xs font-medium text-[var(--text-secondary)]">
               禁用路由时间（分钟）
             </span>
@@ -2259,7 +2871,7 @@ export function ModelRedirectionTab() {
               }}
               placeholder={String(DEFAULT_ROUTE_RUNTIME_CONFIG.disableDurationMinutes)}
               aria-label="禁用路由时间（分钟）"
-              className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)]"
+              className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2.5 py-1.5 text-sm text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)]"
             />
             {routeRuleErrors.disableDurationMinutes ? (
               <span className="text-xs text-[var(--danger)]">
@@ -2268,7 +2880,7 @@ export function ModelRedirectionTab() {
             ) : null}
           </label>
 
-          <label className="block space-y-1.5">
+          <label className="block space-y-1">
             <span className="text-xs font-medium text-[var(--text-secondary)]">
               成功率计算时间（分钟）
             </span>
@@ -2290,7 +2902,7 @@ export function ModelRedirectionTab() {
               }}
               placeholder={String(DEFAULT_ROUTE_RUNTIME_CONFIG.successRateWindowMinutes)}
               aria-label="成功率计算时间（分钟）"
-              className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)]"
+              className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2.5 py-1.5 text-sm text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)]"
             />
             {routeRuleErrors.successRateWindowMinutes ? (
               <span className="text-xs text-[var(--danger)]">
@@ -2299,7 +2911,7 @@ export function ModelRedirectionTab() {
             ) : null}
           </label>
 
-          <label className="block space-y-1.5">
+          <label className="block space-y-1">
             <span className="text-xs font-medium text-[var(--text-secondary)]">
               最低成功率（%）
             </span>
@@ -2321,7 +2933,7 @@ export function ModelRedirectionTab() {
               }}
               placeholder={String(Math.round(DEFAULT_ROUTE_RUNTIME_CONFIG.minSuccessRate * 100))}
               aria-label="最低成功率（%）"
-              className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)]"
+              className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2.5 py-1.5 text-sm text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)]"
             />
             {routeRuleErrors.minSuccessRatePercent ? (
               <span className="text-xs text-[var(--danger)]">
@@ -2329,280 +2941,6 @@ export function ModelRedirectionTab() {
               </span>
             ) : null}
           </label>
-        </div>
-      </AppModal>
-
-      <AppModal
-        isOpen={sourceDetailState !== null}
-        onClose={closeSourceDetails}
-        title={
-          sourceDetailState ? `${sourceDetailState.entry.canonicalName} 优先级排序` : '优先级排序'
-        }
-        size="lg"
-        className="!max-w-[56rem]"
-        footer={
-          <div className="flex w-full flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <AppButton
-                type="button"
-                size="sm"
-                variant="secondary"
-                className="h-7 px-2"
-                onClick={() => moveSelectedPrioritySite('first')}
-                disabled={selectedPrioritySiteIndex <= 0}
-              >
-                <ChevronsUp className="h-3.5 w-3.5" />
-                <span>移到第一个</span>
-              </AppButton>
-              <AppButton
-                type="button"
-                size="sm"
-                variant="secondary"
-                className="h-7 px-2"
-                onClick={() => moveSelectedPrioritySite('up')}
-                disabled={selectedPrioritySiteIndex <= 0}
-              >
-                <ChevronUp className="h-3.5 w-3.5" />
-                <span>上移</span>
-              </AppButton>
-              <AppButton
-                type="button"
-                size="sm"
-                variant="secondary"
-                className="h-7 px-2"
-                onClick={() => moveSelectedPrioritySite('down')}
-                disabled={
-                  selectedPrioritySiteIndex < 0 ||
-                  selectedPrioritySiteIndex >= sortedDetailSiteGroups.length - 1
-                }
-              >
-                <ChevronDown className="h-3.5 w-3.5" />
-                <span>下移</span>
-              </AppButton>
-              <AppButton
-                type="button"
-                size="sm"
-                variant="secondary"
-                className="h-7 px-2"
-                onClick={() => moveSelectedPrioritySite('last')}
-                disabled={
-                  selectedPrioritySiteIndex < 0 ||
-                  selectedPrioritySiteIndex >= sortedDetailSiteGroups.length - 1
-                }
-              >
-                <ChevronsDown className="h-3.5 w-3.5" />
-                <span>移到末尾</span>
-              </AppButton>
-            </div>
-            <div className="flex items-center justify-end gap-2">
-              <AppButton type="button" variant="secondary" onClick={closeSourceDetails}>
-                取消
-              </AppButton>
-              <AppButton type="button" onClick={handleSaveDetails} loading={saving}>
-                保存优先级
-              </AppButton>
-            </div>
-          </div>
-        }
-      >
-        <div className="px-1 py-2">
-          {sortedDetailSiteGroups.length > 0 ? (
-            <div className="overflow-hidden" data-testid="priority-detail-compact-list">
-              <div className="grid grid-cols-[minmax(0,1.45fr)_minmax(0,1.2fr)_148px] gap-3 border-y border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
-                <span>来源</span>
-                <span>覆盖模型</span>
-                <span className="text-right">优先级</span>
-              </div>
-              <div>
-                {sortedDetailSiteGroups.map((siteGroup, siteIndex) => {
-                  const isSelected = selectedPrioritySiteId === siteGroup.siteId;
-
-                  return (
-                    <section
-                      key={siteGroup.key}
-                      className="border-t border-[var(--line-soft)] first:border-t-0"
-                      data-testid="priority-detail-site-group"
-                    >
-                      <div
-                        className={`grid cursor-pointer grid-cols-[minmax(0,1.45fr)_minmax(0,1.2fr)_148px] items-center gap-3 border-l-4 px-3 py-2.5 transition-colors ${
-                          isSelected
-                            ? 'border-l-[var(--accent)] bg-[var(--accent-soft)]/45'
-                            : 'border-l-[var(--accent)] bg-[var(--surface-2)]/70 hover:bg-[var(--surface-2)]'
-                        }`}
-                        onClick={() => setSelectedPrioritySiteId(siteGroup.siteId)}
-                      >
-                        <div className="flex min-w-0 items-center gap-2">
-                          <input
-                            type="radio"
-                            name="priority-site-selection"
-                            className="h-3.5 w-3.5 shrink-0 cursor-pointer"
-                            style={{ accentColor: 'var(--accent)' }}
-                            aria-label={`选择 ${siteGroup.siteName}`}
-                            checked={isSelected}
-                            onClick={event => event.stopPropagation()}
-                            onChange={() => setSelectedPrioritySiteId(siteGroup.siteId)}
-                          />
-                          <span className="shrink-0 rounded-full border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--accent)]">
-                            站点
-                          </span>
-                          <span className="min-w-0 truncate text-sm font-semibold text-[var(--text-primary)]">
-                            {siteGroup.siteName}
-                            {formatBalanceDisplay(siteGroup.siteBalance)
-                              ? `（${formatBalanceDisplay(siteGroup.siteBalance)}）`
-                              : ''}
-                          </span>
-                        </div>
-                        <div className="min-w-0 truncate font-mono text-[11px] text-[var(--text-secondary)]">
-                          {siteGroup.supportedOriginalModels.join('、') || '无可用模型'}
-                        </div>
-                        <div className="flex items-center justify-end gap-2">
-                          <span
-                            className="min-w-8 rounded-full bg-[var(--surface-1)] px-2 py-0.5 text-center text-sm font-semibold text-[var(--text-primary)]"
-                            data-testid="priority-detail-site-priority"
-                            aria-label={`${siteGroup.siteName} 优先级 ${siteIndex}`}
-                          >
-                            {siteIndex}
-                          </span>
-                          <div className="flex shrink-0 flex-col items-center gap-0.5">
-                            <button
-                              type="button"
-                              className="rounded-[var(--radius-sm)] p-0.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-1)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-35"
-                              aria-label={`${siteGroup.siteName} 上移`}
-                              title="上移"
-                              disabled={siteIndex === 0}
-                              onClick={event => {
-                                event.stopPropagation();
-                                movePrioritySite(siteGroup.siteId, 'up');
-                              }}
-                            >
-                              <ChevronUp className="h-3 w-3" />
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded-[var(--radius-sm)] p-0.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-1)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-35"
-                              aria-label={`${siteGroup.siteName} 下移`}
-                              title="下移"
-                              disabled={siteIndex === sortedDetailSiteGroups.length - 1}
-                              onClick={event => {
-                                event.stopPropagation();
-                                movePrioritySite(siteGroup.siteId, 'down');
-                              }}
-                            >
-                              <ChevronDown className="h-3 w-3" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      {siteGroup.apiKeys.map((apiKey, apiKeyIndex) => (
-                        <div
-                          key={apiKey.key}
-                          className="grid grid-cols-[minmax(0,1.45fr)_minmax(0,1.2fr)_148px] items-center gap-3 border-t border-[var(--line-soft)]/70 bg-[var(--surface-1)] px-3 py-1.5 text-xs text-[var(--text-secondary)]"
-                          data-testid="priority-detail-api-key-row"
-                        >
-                          <div className="min-w-0 pl-5">
-                            <div className="flex min-w-0 items-center gap-2">
-                              <span className="h-5 w-px shrink-0 bg-[var(--line-soft)]" />
-                              <span className="shrink-0 rounded-full border border-[var(--line-soft)] bg-[var(--surface-2)] px-1.5 py-0.5">
-                                API Key
-                              </span>
-                              <span className="min-w-0 truncate">
-                                {`${apiKey.apiKeyName}（${[
-                                  apiKey.accountName || apiKey.accountId,
-                                  apiKey.group,
-                                  formatGroupRatio(apiKey.groupRatio),
-                                ]
-                                  .filter(Boolean)
-                                  .join(' / ')}）`}
-                              </span>
-                            </div>
-                          </div>
-                          <div
-                            className="min-w-0 truncate"
-                            title={formatModelListWithProbeStatus(
-                              apiKey.supportedOriginalModels,
-                              apiKey.modelTestResults
-                            )}
-                          >
-                            {formatModelListWithProbeStatus(
-                              apiKey.supportedOriginalModels,
-                              apiKey.modelTestResults
-                            )}
-                          </div>
-                          <div className="flex items-center justify-end gap-2">
-                            <span className="min-w-8" aria-hidden="true" />
-                            <div className="flex shrink-0 flex-col items-center gap-0.5">
-                              <button
-                                type="button"
-                                className="rounded-[var(--radius-sm)] p-0.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-35"
-                                aria-label={`${apiKey.apiKeyName} 上移`}
-                                title="上移"
-                                disabled={apiKeyIndex === 0}
-                                onClick={() =>
-                                  movePriorityApiKey(siteGroup.siteId, apiKey.key, 'up')
-                                }
-                              >
-                                <ChevronUp className="h-3 w-3" />
-                              </button>
-                              <button
-                                type="button"
-                                className="rounded-[var(--radius-sm)] p-0.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-35"
-                                aria-label={`${apiKey.apiKeyName} 下移`}
-                                title="下移"
-                                disabled={apiKeyIndex === siteGroup.apiKeys.length - 1}
-                                onClick={() =>
-                                  movePriorityApiKey(siteGroup.siteId, apiKey.key, 'down')
-                                }
-                              >
-                                <ChevronDown className="h-3 w-3" />
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-
-                      {siteGroup.missingGroupHints.length > 0 ? (
-                        <div className="border-t border-[var(--warning)]/25 bg-[var(--warning-soft)]/20 text-xs text-[var(--text-secondary)]">
-                          {siteGroup.missingGroupHints.map(hint => (
-                            <div
-                              key={`${siteGroup.key}:${hint.key}`}
-                              className="grid grid-cols-[minmax(0,1.45fr)_minmax(0,1.2fr)_148px] items-center gap-3 px-3 py-1.5"
-                              data-testid="priority-detail-missing-key-row"
-                            >
-                              <div className="col-span-2 flex min-w-0 items-center gap-2 pl-5">
-                                <span className="h-5 w-px shrink-0 bg-[var(--warning)]/35" />
-                                <span className="shrink-0 rounded-full border border-[var(--warning)]/30 bg-[var(--warning-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--warning)]">
-                                  缺少 Key
-                                </span>
-                                <span className="min-w-0 truncate">
-                                  {hint.accountName || hint.accountId} / {hint.group}（
-                                  {hint.originalModels.join('、')}）未创建可用 API key
-                                </span>
-                              </div>
-                              <AppButton
-                                type="button"
-                                size="sm"
-                                variant="secondary"
-                                className="h-7 shrink-0 px-2"
-                                onClick={() => void openCreateApiKeyDialog(siteGroup, hint)}
-                                disabled={creatingApiKey}
-                              >
-                                创建
-                              </AppButton>
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                    </section>
-                  );
-                })}
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-4 py-6 text-sm text-[var(--text-secondary)]">
-              当前重定向还没有可配置优先级的可用站点、账户或 API key。
-            </div>
-          )}
         </div>
       </AppModal>
 

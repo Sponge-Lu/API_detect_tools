@@ -9,6 +9,7 @@
 - 支持状态指示（支持/不支持/待测试/未配置）
 - 详细测试结果 tooltip（Codex Responses API、Gemini CLI 双端点）
 - tooltip 按 CLI 独立显示失败摘要（错误码优先）
+- 当 `routing.cliProbe.latest` 已投影到兼容性结果时，按测试时间选择 canonical 投影与本地 `cli_config.testResults` 中较新的状态
 - 响应式布局
 
 **依赖关系**:

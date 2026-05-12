@@ -86,6 +86,14 @@ function getRegistrySourcePool(registry: RouteModelRegistryConfig): RouteModelSo
   return Array.from(dedupedSources.values());
 }
 
+function hasModelRegistryRoutingData(registry: RouteModelRegistryConfig): boolean {
+  return (
+    registry.sources.length > 0 ||
+    registry.displayItems.length > 0 ||
+    Object.keys(registry.entries).length > 0
+  );
+}
+
 function sourceSupportsCliType(source: RouteModelSourceRef, cliType: RouteCliType): boolean {
   return !source.availableCliTypes?.length || source.availableCliTypes.includes(cliType);
 }
@@ -601,6 +609,10 @@ export function resolveChannels(
     const canonicalChannels = buildCanonicalModelChannels(rule, canonicalModel, unifiedConfig);
     if (canonicalChannels) {
       return canonicalChannels;
+    }
+
+    if (hasModelRegistryRoutingData(unifiedConfigManager.getRoutingConfig().modelRegistry)) {
+      return [];
     }
   }
 

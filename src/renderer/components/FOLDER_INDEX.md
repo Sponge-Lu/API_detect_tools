@@ -40,11 +40,11 @@
 | **SiteGroupTabs/** | 站点分组标签 | SiteGroupTabs, GroupTab |
 | **SiteListHeader/** | 站点列表头部 | SiteListHeader, SearchBar, FilterBar |
 | **Route/** | Route 页面组件 | ModelRedirectionTab, CliUsabilityTab, ProxyStatsTab |
-| **dialogs/** | 对话框组件 | 各类对话框；统一 CLI 配置抽屉支持按 API Key 分组或整站范围切换模型列表 |
+| **dialogs/** | 对话框组件 | 各类对话框；统一 CLI 配置抽屉支持按 API Key 分组或整站范围切换模型列表，并从 `routing.cliProbe.latest` 回显最新测试模型结果 |
 | **Skeleton/** | 骨架屏 | SkeletonLoader, SkeletonCard |
 | **Toast/** | 消息提示 | Toast, ToastContainer |
-| **CliCompatibilityIcons/** | CLI 兼容性图标 | CliIcon, CliIconGroup |
-| **CliConfigStatus/** | CLI 配置状态显示 | CliConfigStatus, CliConfigStatusPanel |
+| **CliCompatibilityIcons/** | CLI 兼容性图标 | CliIcon, CliIconGroup；按测试时间选择 canonical 投影与本地持久化结果中的较新状态 |
+| **CliConfigStatus/** | CLI 配置状态显示，含本地路由代理识别和当前模型小字 | CliConfigStatus, CliConfigStatusPanel |
 | **CreateApiKeyDialog/** | API Key 创建对话框 | CreateApiKeyDialog |
 | **CreditPanel/** | Linux Do Credit 积分面板 | CreditPanelCompact |
 | **AppCard/** | 中性卡片原语入口 | AppCard, AppCardDivider, AppCardHeader, AppCardContent, AppCardFooter |

@@ -5,7 +5,7 @@ import type {
   RouteModelSourceRef,
   RouteRule,
 } from '../shared/types/route-proxy';
-import { buildProbeKey } from '../shared/types/route-proxy';
+import { buildProbeKey, buildRouteOverrideDisplayItemId } from '../shared/types/route-proxy';
 
 const { unifiedConfigManagerMock, loggerScopeMock, customCliStorageMock } = vi.hoisted(() => ({
   unifiedConfigManagerMock: {
@@ -14,6 +14,7 @@ const { unifiedConfigManagerMock, loggerScopeMock, customCliStorageMock } = vi.h
     updateRouteModelRegistry: vi.fn(),
     ensureRouteRuleForCliModelSelection: vi.fn(),
     upsertRouteModelMappingOverride: vi.fn(),
+    deleteRouteModelDisplayItem: vi.fn(),
     deleteRouteModelMappingOverride: vi.fn(),
     updateRouteVendorPriorityConfig: vi.fn(),
   },
@@ -53,6 +54,7 @@ vi.mock('../main/utils/logger', () => ({
 }));
 
 import {
+  deleteModelDisplayItem,
   rebuildModelRegistry,
   resetModelRegistryDefaults,
   resolveCanonicalName,
@@ -170,6 +172,7 @@ describe('route model registry service', () => {
       .mockReset()
       .mockResolvedValue(undefined);
     unifiedConfigManagerMock.upsertRouteModelMappingOverride.mockReset();
+    unifiedConfigManagerMock.deleteRouteModelDisplayItem.mockReset();
     unifiedConfigManagerMock.deleteRouteModelMappingOverride.mockReset();
     unifiedConfigManagerMock.updateRouteVendorPriorityConfig.mockReset();
     customCliStorageMock.mockReset().mockResolvedValue({
@@ -462,6 +465,61 @@ describe('route model registry service', () => {
     ]);
     expect(result.entries['gpt-5-4']).toBeDefined();
     expect(result.entries['gpt-5']).toBeUndefined();
+  });
+
+  it('deletes override-backed display items that have no persisted display item', async () => {
+    const override = createSourceOverride({
+      id: 'override-deepseek-v4-pro',
+      sourceKey: 'site-1:acc-1:deepseek-v4',
+      canonicalName: 'deepseek-v4-pro',
+    });
+    const registry = createRegistryConfig([override]);
+    registry.entries['deepseek-v4-pro'] = {
+      canonicalName: 'deepseek-v4-pro',
+      vendor: 'deepseek',
+      aliases: ['deepseek-v4'],
+      sources: [
+        createSource({
+          sourceKey: 'site-1:acc-1:deepseek-v4',
+          originalModel: 'deepseek-v4',
+          vendor: 'deepseek',
+        }),
+      ],
+      hasOverride: true,
+      createdAt: 10,
+      updatedAt: 20,
+    };
+
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
+      sites: [{ id: 'site-1', name: 'Site 1', cached_data: undefined }],
+      accounts: [
+        {
+          id: 'acc-1',
+          site_id: 'site-1',
+          account_name: 'Primary',
+          status: 'active',
+          cached_data: {
+            models: ['deepseek-v4'],
+            api_keys: [],
+            user_groups: {},
+          },
+        },
+      ],
+    });
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      modelRegistry: registry,
+    });
+    unifiedConfigManagerMock.deleteRouteModelMappingOverride.mockImplementation(async id => {
+      registry.overrides = registry.overrides.filter(item => item.id !== id);
+    });
+
+    const result = await deleteModelDisplayItem(buildRouteOverrideDisplayItemId('deepseek-v4-pro'));
+
+    expect(unifiedConfigManagerMock.deleteRouteModelMappingOverride).toHaveBeenCalledWith(
+      'override-deepseek-v4-pro'
+    );
+    expect(result).not.toBeNull();
+    expect(result?.entries['deepseek-v4-pro']).toBeUndefined();
   });
 
   it('treats models with empty enable_groups as unavailable for routing groups', async () => {
@@ -764,6 +822,142 @@ describe('route model registry service', () => {
       baseUrl: customConfig.baseUrl,
       apiKey: customConfig.apiKey,
     });
+  });
+
+  it('does not route an unknown requested model through generic channels once registry data exists', () => {
+    const source = createSource({
+      sourceKey: 'site-nhh:acc-nhh:duckcoding',
+      siteId: 'site-nhh',
+      siteName: 'nhh',
+      accountId: 'acc-nhh',
+      accountName: 'NHH Account',
+      originalModel: 'duckcoding',
+      vendor: 'unknown',
+      availableApiKeys: [
+        {
+          apiKeyId: 'key-nhh',
+          apiKeyName: 'NHH Key',
+          accountId: 'acc-nhh',
+          accountName: 'NHH Account',
+          group: 'team-a',
+        },
+      ],
+    });
+
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
+      sites: [{ id: 'site-nhh', name: 'nhh', enabled: true, url: 'https://nhh.example.com' }],
+      accounts: [
+        {
+          id: 'acc-nhh',
+          site_id: 'site-nhh',
+          account_name: 'NHH Account',
+          status: 'active',
+          cached_data: {
+            api_keys: [{ id: 'key-nhh', key: 'sk-nhh', status: 1, group: 'team-a' }],
+          },
+        },
+      ],
+    });
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      cliProbe: { latest: {} },
+      modelRegistry: {
+        version: 1,
+        sources: [source],
+        entries: {
+          duckcoding: {
+            canonicalName: 'duckcoding',
+            vendor: 'unknown',
+            aliases: ['duckcoding'],
+            sources: [source],
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [
+          {
+            id: 'manual:duckcoding',
+            vendor: 'unknown',
+            canonicalName: 'duckcoding',
+            sourceKeys: [source.sourceKey],
+            originalModelOrder: ['duckcoding'],
+            priorityConfig: {
+              sitePriorities: { 'site-nhh': 0 },
+              apiKeyPriorities: {},
+            },
+            mode: 'manual',
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+        vendorPriorities: {},
+      },
+    });
+
+    const channels = resolveChannels(
+      createRouteRule({
+        id: 'rule-gemini',
+        name: 'Gemini wildcard',
+        cliType: 'geminiCli',
+        pattern: '*',
+      }),
+      'gemini-2.5-flash-lite'
+    );
+
+    expect(channels).toEqual([]);
+  });
+
+  it('keeps generic routing available for legacy configs without model registry data', () => {
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
+      sites: [
+        { id: 'site-1', name: 'Legacy Site', enabled: true, url: 'https://site.example.com' },
+      ],
+      accounts: [
+        {
+          id: 'acc-1',
+          site_id: 'site-1',
+          account_name: 'Legacy Account',
+          status: 'active',
+          cached_data: {
+            api_keys: [{ id: 'key-a', key: 'sk-legacy', status: 1, group: 'team-a' }],
+          },
+        },
+      ],
+    });
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      cliProbe: { latest: {} },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {},
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+    });
+
+    const channels = resolveChannels(
+      createRouteRule({
+        id: 'rule-legacy',
+        name: 'Legacy wildcard',
+        cliType: 'geminiCli',
+        pattern: '*',
+      }),
+      'gemini-2.5-flash-lite'
+    );
+
+    expect(channels).toEqual([
+      expect.objectContaining({
+        routeRuleId: 'rule-legacy',
+        siteId: 'site-1',
+        accountId: 'acc-1',
+        apiKeyId: 'key-a',
+        cliType: 'geminiCli',
+        canonicalModel: 'gemini-2.5-flash-lite',
+        resolvedModel: 'gemini-2.5-flash-lite',
+      }),
+    ]);
   });
 
   it('does not let an unrelated failed CLI probe hide the priority zero route channel', () => {

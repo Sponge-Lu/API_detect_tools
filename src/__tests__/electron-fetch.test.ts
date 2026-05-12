@@ -99,4 +99,41 @@ describe('electronFetchRaw request headers', () => {
     expect(mocks.setHeader).not.toHaveBeenCalledWith('host', 'anyrouter.top');
     expect(mocks.setHeader).not.toHaveBeenCalledWith('transfer-encoding', 'chunked');
   });
+
+  it('skips Chromium-managed browser headers commonly sent by Gemini CLI clients', async () => {
+    await electronFetchRaw(
+      'https://generativelanguage.googleapis.com/v1beta/models/raw:streamGenerateContent',
+      {
+        method: 'POST',
+        headers: {
+          'accept-encoding': 'gzip, deflate, br',
+          cookie: 'session=local-client-cookie',
+          origin: 'http://127.0.0.1:48123',
+          'proxy-authorization': 'Basic local-proxy-auth',
+          referer: 'http://127.0.0.1:48123/',
+          'sec-fetch-mode': 'cors',
+          'user-agent': 'GeminiCLI/0.1.0 google-api-nodejs-client/9.15.1',
+          'x-goog-api-client': 'gl-node/22.0.0',
+          'x-goog-api-key': 'sk-upstream',
+        },
+        body: Buffer.from('{"contents":[]}'),
+      }
+    );
+
+    expect(mocks.setHeader).not.toHaveBeenCalledWith('accept-encoding', 'gzip, deflate, br');
+    expect(mocks.setHeader).not.toHaveBeenCalledWith('cookie', 'session=local-client-cookie');
+    expect(mocks.setHeader).not.toHaveBeenCalledWith('origin', 'http://127.0.0.1:48123');
+    expect(mocks.setHeader).not.toHaveBeenCalledWith(
+      'proxy-authorization',
+      'Basic local-proxy-auth'
+    );
+    expect(mocks.setHeader).not.toHaveBeenCalledWith('referer', 'http://127.0.0.1:48123/');
+    expect(mocks.setHeader).not.toHaveBeenCalledWith('sec-fetch-mode', 'cors');
+    expect(mocks.setHeader).toHaveBeenCalledWith(
+      'user-agent',
+      'GeminiCLI/0.1.0 google-api-nodejs-client/9.15.1'
+    );
+    expect(mocks.setHeader).toHaveBeenCalledWith('x-goog-api-client', 'gl-node/22.0.0');
+    expect(mocks.setHeader).toHaveBeenCalledWith('x-goog-api-key', 'sk-upstream');
+  });
 });

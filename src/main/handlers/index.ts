@@ -37,6 +37,7 @@ import { registerBrowserProfileHandlers } from './browser-profile-handlers';
 import type { CloseBehaviorManager } from '../close-behavior-manager';
 import { registerRouteHandlers } from './route-handlers';
 import { registerOverviewHandlers } from './overview-handlers';
+import { registerAnyRouterHandlers } from './anyrouter-handlers';
 
 interface HandlerDependencies {
   chromeManager: ChromeManager;
@@ -107,6 +108,9 @@ export function registerAllHandlers(deps: HandlerDependencies) {
   // 数据总览相关
   registerOverviewHandlers();
 
+  // AnyRouter 相关
+  registerAnyRouterHandlers();
+
   Logger.info('✅ [Handlers] 所有 IPC 处理器已注册');
 }
 
@@ -126,3 +130,4 @@ export * from './account-handlers';
 export * from './browser-profile-handlers';
 export * from './route-handlers';
 export * from './overview-handlers';
+export * from './anyrouter-handlers';

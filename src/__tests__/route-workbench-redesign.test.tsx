@@ -1,7 +1,9 @@
+import { useState, type ReactNode } from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildDisplayItemViews,
+  buildRecommendedCliModelOptions,
   ModelRedirectionTab,
   shouldRefreshRegistrySourceDetails,
 } from '../renderer/components/Route/Redirection/ModelRedirectionTab';
@@ -26,11 +28,20 @@ const mockDeleteDisplayItem = vi.fn();
 const mockDeleteMappingOverride = vi.fn();
 const mockRebuildModelRegistry = vi.fn();
 const mockSyncModelRegistrySources = vi.fn();
+const mockResetPathStates = vi.fn();
 const mockWriteConfig = vi.fn();
 const mockClearCache = vi.fn();
 const mockGetAnalyticsSummary = vi.fn();
 const mockLoadConfig = vi.fn();
 const mockCreateApiToken = vi.fn();
+const mockFetchCliProbeData = vi.fn();
+const mockRunProbeNow = vi.fn();
+const mockSaveCliProbeConfig = vi.fn();
+const mockSaveCliModelSelections = vi.fn();
+const mockSaveServerConfig = vi.fn();
+const mockRegenerateApiKey = vi.fn();
+const mockStartServer = vi.fn();
+const mockStopServer = vi.fn();
 
 let mockConfig: RoutingConfig;
 
@@ -54,24 +65,25 @@ type MockRouteStoreShape = {
   config: RoutingConfig;
   loading: boolean;
   cliProbeView: [];
-  cliProbeTimeRange: '24h';
+  cliProbeTimeRange: '7d';
   cliProbeLoaded: boolean;
   cliProbeError: null;
   serverRunning: boolean;
   rebuildModelRegistry: typeof mockRebuildModelRegistry;
   syncModelRegistrySources: typeof mockSyncModelRegistrySources;
-  fetchCliProbeData: ReturnType<typeof vi.fn>;
-  runProbeNow: ReturnType<typeof vi.fn>;
-  saveCliProbeConfig: ReturnType<typeof vi.fn>;
-  saveCliModelSelections: ReturnType<typeof vi.fn>;
-  saveServerConfig: ReturnType<typeof vi.fn>;
-  regenerateApiKey: ReturnType<typeof vi.fn>;
-  startServer: ReturnType<typeof vi.fn>;
-  stopServer: ReturnType<typeof vi.fn>;
+  fetchCliProbeData: typeof mockFetchCliProbeData;
+  runProbeNow: typeof mockRunProbeNow;
+  saveCliProbeConfig: typeof mockSaveCliProbeConfig;
+  saveCliModelSelections: typeof mockSaveCliModelSelections;
+  saveServerConfig: typeof mockSaveServerConfig;
+  regenerateApiKey: typeof mockRegenerateApiKey;
+  startServer: typeof mockStartServer;
+  stopServer: typeof mockStopServer;
   upsertMappingOverride: typeof mockUpsertMappingOverride;
   upsertDisplayItem: typeof mockUpsertDisplayItem;
   deleteDisplayItem: typeof mockDeleteDisplayItem;
   deleteMappingOverride: typeof mockDeleteMappingOverride;
+  resetPathStates: typeof mockResetPathStates;
 };
 
 vi.mock('zustand/shallow', () => ({
@@ -92,26 +104,55 @@ vi.mock('../renderer/store/routeStore', () => ({
       config: mockConfig,
       loading: false,
       cliProbeView: [],
-      cliProbeTimeRange: '24h',
+      cliProbeTimeRange: '7d',
       cliProbeLoaded: true,
       cliProbeError: null,
       serverRunning: true,
       rebuildModelRegistry: mockRebuildModelRegistry,
       syncModelRegistrySources: mockSyncModelRegistrySources,
-      fetchCliProbeData: vi.fn(),
-      runProbeNow: vi.fn(),
-      saveCliProbeConfig: vi.fn(),
-      saveCliModelSelections: vi.fn(),
-      saveServerConfig: vi.fn(),
-      regenerateApiKey: vi.fn(),
-      startServer: vi.fn(),
-      stopServer: vi.fn(),
+      fetchCliProbeData: mockFetchCliProbeData,
+      runProbeNow: mockRunProbeNow,
+      saveCliProbeConfig: mockSaveCliProbeConfig,
+      saveCliModelSelections: mockSaveCliModelSelections,
+      saveServerConfig: mockSaveServerConfig,
+      regenerateApiKey: mockRegenerateApiKey,
+      startServer: mockStartServer,
+      stopServer: mockStopServer,
       upsertMappingOverride: mockUpsertMappingOverride,
       upsertDisplayItem: mockUpsertDisplayItem,
       deleteDisplayItem: mockDeleteDisplayItem,
       deleteMappingOverride: mockDeleteMappingOverride,
+      resetPathStates: mockResetPathStates,
     }),
 }));
+
+function getRedirectRowByName(displayName: string): HTMLElement {
+  const row = screen
+    .getAllByTestId('redirect-list-row')
+    .find(candidate => within(candidate).queryByText(displayName));
+
+  if (!row) {
+    throw new Error(`Redirect row not found: ${displayName}`);
+  }
+
+  return row;
+}
+
+function selectRedirectRow(displayName: string): void {
+  fireEvent.click(getRedirectRowByName(displayName));
+}
+
+async function findPriorityDetailPane(): Promise<HTMLElement> {
+  const detailPane = await screen.findByTestId('redirect-detail-priority');
+  await within(detailPane).findByTestId('priority-detail-compact-list');
+  return detailPane;
+}
+
+function getPrioritySiteSections(detailPane: HTMLElement): HTMLElement[] {
+  return Array.from(
+    detailPane.querySelectorAll('[data-testid="priority-detail-site-group"]')
+  ) as HTMLElement[];
+}
 
 function createSource(overrides: Partial<RouteModelSourceRef>): RouteModelSourceRef {
   return {
@@ -534,7 +575,7 @@ function createRoutingConfig(): RoutingConfig {
   return {
     modelRegistry: createModelRegistryConfig(),
     cliProbe: {
-      config: { enabled: true, intervalMinutes: 60 },
+      config: { enabled: true, intervalMinutes: 240 },
       latest: {
         [claudeProbeKey]: {
           probeKey: claudeProbeKey,
@@ -619,6 +660,17 @@ function createUnifiedConfigFixture(): UnifiedConfig {
             'team-alpha': { desc: 'Alpha', ratio: 1.2 },
             'team-beta': { desc: 'Beta', ratio: 1.5 },
           },
+          model_pricing: {
+            data: {
+              'claude-opus-4.6-20260201': {
+                model_price: { input: 0.001, output: 0.002 },
+              },
+              'claude-sonnet-4.6-20260201': {
+                input: 0.0008,
+                output: 0.0016,
+              },
+            },
+          },
         },
         created_at: 1,
         updated_at: 1,
@@ -636,6 +688,13 @@ function createUnifiedConfigFixture(): UnifiedConfig {
           user_groups: {
             'team-delta': { desc: 'Delta', ratio: 2 },
           },
+          model_pricing: {
+            data: {
+              'claude-opus-4.6-20260201': {
+                model_price: { input: 0.001, output: 0.002 },
+              },
+            },
+          },
         },
         created_at: 1,
         updated_at: 1,
@@ -652,6 +711,14 @@ function createUnifiedConfigFixture(): UnifiedConfig {
           balance: -1,
           user_groups: {
             'team-gamma': { desc: 'Gamma', ratio: 1 },
+          },
+          model_pricing: {
+            data: {
+              'claude-haiku-4.5-20251001': {
+                model_ratio: 0.5,
+                completion_ratio: 3,
+              },
+            },
           },
         },
         created_at: 1,
@@ -725,6 +792,15 @@ beforeEach(() => {
   mockDeleteMappingOverride.mockReset().mockResolvedValue(true);
   mockRebuildModelRegistry.mockReset().mockResolvedValue(createModelRegistryConfig());
   mockSyncModelRegistrySources.mockReset().mockResolvedValue(createModelRegistryConfig());
+  mockResetPathStates.mockReset().mockResolvedValue(1);
+  mockFetchCliProbeData.mockReset().mockResolvedValue(undefined);
+  mockRunProbeNow.mockReset().mockResolvedValue(null);
+  mockSaveCliProbeConfig.mockReset().mockResolvedValue(undefined);
+  mockSaveCliModelSelections.mockReset().mockResolvedValue(undefined);
+  mockSaveServerConfig.mockReset().mockResolvedValue(undefined);
+  mockRegenerateApiKey.mockReset().mockResolvedValue('sk-route-new');
+  mockStartServer.mockReset().mockResolvedValue(true);
+  mockStopServer.mockReset().mockResolvedValue(true);
   mockLoadConfig.mockReset().mockResolvedValue(createUnifiedConfigFixture());
   mockCreateApiToken.mockReset().mockResolvedValue({
     success: true,
@@ -784,18 +860,88 @@ describe('route workbench redesign', () => {
       'h-fit',
       'self-start'
     );
-    expect(screen.getByRole('button', { name: '预览 Claude Code 路由配置' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '应用 Claude Code 路由配置' })).toBeInTheDocument();
-    expect(screen.getByDisplayValue('claude-opus-4-6')).toBeInTheDocument();
+    const serverPrimaryRow = screen.getByTestId('route-server-primary-config-row');
+    const serverCredentialRow = screen.getByTestId('route-server-credential-row');
+    expect(screen.getByTestId('route-server-section-card').firstElementChild).toHaveClass('p-3');
+    expect(screen.getByTestId('route-cli-model-section-card').firstElementChild).toHaveClass('p-3');
+    expect(serverPrimaryRow).toHaveClass('md:grid-cols-[minmax(150px,0.55fr)_minmax(0,1fr)]');
+    expect(serverCredentialRow).toHaveClass('md:grid-cols-[minmax(150px,0.55fr)_minmax(0,1fr)]');
+    expect(serverPrimaryRow).toHaveClass('gap-2');
+    expect(serverCredentialRow).toHaveClass('mt-2', 'gap-2');
+    expect(within(serverPrimaryRow).getByText('端口')).toBeInTheDocument();
+    const serverFieldLabels = [
+      within(serverPrimaryRow).getByText('端口'),
+      within(serverPrimaryRow).getByText('上游代理'),
+      within(serverCredentialRow).getByText('Base URL'),
+      within(serverCredentialRow).getByText('路由 API Key'),
+    ];
+    serverFieldLabels.forEach(label => {
+      expect(label).toHaveClass('mb-0.5', 'text-xs', 'leading-4', 'text-[var(--text-secondary)]');
+      expect(label).not.toHaveClass('font-medium', 'text-[var(--text-primary)]');
+    });
+    const portInput = screen.getByDisplayValue('3000');
+    expect(portInput).toHaveAttribute('type', 'text');
+    expect(portInput).toHaveAttribute('inputmode', 'numeric');
+    expect(portInput).toHaveClass(
+      'h-6',
+      'rounded',
+      'bg-[var(--surface-2)]',
+      'px-2',
+      'py-1',
+      'font-mono',
+      'text-xs',
+      'leading-4',
+      'text-[var(--text-secondary)]'
+    );
+    const upstreamProxyInput = within(serverPrimaryRow).getByLabelText('上游代理');
+    expect(upstreamProxyInput).toBeInTheDocument();
+    expect(upstreamProxyInput).toHaveClass(
+      'h-6',
+      'rounded',
+      'bg-[var(--surface-2)]',
+      'px-2',
+      'py-1',
+      'font-mono',
+      'text-xs',
+      'leading-4',
+      'text-[var(--text-secondary)]'
+    );
+    expect(within(serverCredentialRow).getByText('Base URL')).toBeInTheDocument();
+    expect(within(serverCredentialRow).getByText('路由 API Key')).toBeInTheDocument();
+    expect(within(serverCredentialRow).getByTestId('route-server-base-url-value')).toHaveClass(
+      'h-6',
+      'rounded',
+      'bg-[var(--surface-2)]',
+      'px-2',
+      'py-1',
+      'font-mono',
+      'text-xs',
+      'leading-4',
+      'text-[var(--text-secondary)]'
+    );
+    expect(within(serverCredentialRow).getByTestId('route-server-api-key-value')).toHaveClass(
+      'h-6',
+      'rounded',
+      'bg-[var(--surface-2)]',
+      'px-2',
+      'py-1',
+      'font-mono',
+      'text-xs',
+      'leading-4',
+      'text-[var(--text-secondary)]'
+    );
+    expect(screen.getByRole('button', { name: '预览 Claude Code 路由配置' })).toHaveClass('h-7');
+    expect(screen.getByRole('button', { name: '应用 Claude Code 路由配置' })).toHaveClass('h-7');
+    expect(screen.getByDisplayValue('claude-opus-4-6')).toHaveClass('h-7', 'py-1', 'rounded-md');
     expect(screen.getByDisplayValue('gpt-5.4')).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'gpt-4.1' })).not.toBeInTheDocument();
     expect(screen.getAllByRole('option', { name: 'claude-opus-4-6' }).length).toBeGreaterThan(0);
     expect(screen.getByText('CLI 路由配置')).toBeInTheDocument();
-    expect(screen.getByText('模型重定向')).toBeInTheDocument();
+    expect(screen.getByTestId('redirect-two-pane-layout')).toBeInTheDocument();
     expect(screen.getAllByText('claude-opus-4-6').length).toBeGreaterThan(0);
     expect(screen.queryByText('统计已迁移到数据总览')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '打开数据总览' })).not.toBeInTheDocument();
-  });
+  }, 15_000);
 
   it('supports previewing and applying route-generated CLI configs from the proxy panel', async () => {
     render(<RoutePage />);
@@ -850,7 +996,7 @@ describe('route workbench redesign', () => {
     expect(settingsFile?.content).toContain('http://127.0.0.1:3000');
     expect(settingsFile?.content).toContain('sk-route-edited');
     expect(mockClearCache).toHaveBeenCalledWith('claudeCode');
-  });
+  }, 15_000);
 
   it('generates Codex and Gemini route configs that target the local route proxy', async () => {
     mockConfig = {
@@ -917,48 +1063,127 @@ describe('route workbench redesign', () => {
     expect(within(previewDialog).getByText(/sk-route-key/)).toBeInTheDocument();
   });
 
-  it('keeps CLI usability as an independent page with the existing local action cluster', async () => {
-    render(<CliUsabilityTab />);
+  it('keeps CLI usability as an independent page with header actions', async () => {
+    function CliUsabilityHarness() {
+      const [actions, setActions] = useState<ReactNode | null>(null);
+
+      return (
+        <>
+          <div data-testid="page-header-actions">{actions}</div>
+          <CliUsabilityTab setPageHeaderActions={setActions} />
+        </>
+      );
+    }
+
+    render(<CliUsabilityHarness />);
 
     expect(screen.queryByRole('dialog', { name: '检测设置' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /开启定时检测|关闭定时检测/ })).toBeInTheDocument();
-    expect(screen.getByRole('spinbutton', { name: '检测间隔（分钟）' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '保存设置' })).toBeInTheDocument();
+    const headerActions = screen.getByTestId('page-header-actions');
+    expect(
+      within(headerActions).getByRole('button', { name: /开启定时检测|关闭定时检测/ })
+    ).toBeInTheDocument();
+    expect(within(headerActions).getByRole('spinbutton', { name: '检测间隔（小时）' })).toHaveValue(
+      4
+    );
+    expect(screen.queryByRole('button', { name: '保存设置' })).not.toBeInTheDocument();
     expect(screen.queryByTestId('route-workbench-header')).not.toBeInTheDocument();
   });
 
-  it('renders a flat redirect card list without vendor grouping', () => {
+  it('renders redirect list and selected detail without vendor grouping', async () => {
     render(<ModelRedirectionTab />);
 
     expect(screen.queryByText('Anthropic')).not.toBeInTheDocument();
     expect(screen.queryByText('OpenAI')).not.toBeInTheDocument();
-    expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
+    expect(screen.getAllByText('claude-opus-4-6').length).toBeGreaterThan(1);
     expect(screen.getByText('gpt-5.4')).toBeInTheDocument();
     expect(screen.queryByText('gpt-5')).not.toBeInTheDocument();
-    expect(screen.getByText(/暂停至/)).toBeInTheDocument();
-    expect(screen.getByText(/5分钟成功率 0%/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '新增重定向' })).toBeInTheDocument();
+    const priorityPane = await screen.findByTestId('redirect-detail-priority');
+    expect(within(priorityPane).getAllByText(/暂停至/).length).toBeGreaterThan(0);
+    expect(priorityPane.querySelector('[title*="5分钟成功率 0%"]')).not.toBeNull();
+    expect(screen.queryByTestId('redirect-card-header')).not.toBeInTheDocument();
+    expect(screen.getByTestId('redirect-two-pane-layout')).toHaveClass(
+      'grid',
+      'xl:grid-cols-[minmax(240px,0.62fr)_minmax(0,1.38fr)]'
+    );
+    const toolbar = screen.getByTestId('redirect-list-toolbar');
+    expect(within(toolbar).getByRole('button', { name: '同步来源' })).toBeInTheDocument();
+    expect(within(toolbar).getByRole('button', { name: '新增重定向' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '重置默认重定向' })).not.toBeInTheDocument();
+
+    const redirectRows = screen.getAllByTestId('redirect-list-row');
+    expect(redirectRows.length).toBeGreaterThan(0);
+    expect(redirectRows[0]).toHaveAttribute('data-selected', 'true');
+    expect(redirectRows[0]).toHaveClass('border-b', 'border-l-2', 'px-3', 'py-2');
+    expect(redirectRows[0]).not.toHaveClass('rounded-[var(--radius-lg)]');
+    expect(redirectRows[0]).not.toHaveClass('bg-[var(--surface-2)]/70');
+
+    const detailActions = screen.getByTestId('redirect-detail-actions');
+    expect(within(detailActions).getByRole('button', { name: '路由规则' })).toBeInTheDocument();
+    expect(
+      within(detailActions).getByRole('button', { name: '恢复 claude-opus-4-6 路由路径' })
+    ).toBeInTheDocument();
+    const editButton = within(detailActions).getByRole('button', {
+      name: '编辑 claude-opus-4-6',
+    });
+    const deleteButton = within(detailActions).getByRole('button', {
+      name: '删除 claude-opus-4-6',
+    });
+    expect(editButton).toHaveClass('h-7', 'w-7');
+    expect(deleteButton).toHaveClass('h-7', 'w-7');
+
+    const originalModelFrame = screen.getByText('claude-opus-4.6-20260201').parentElement;
+    expect(originalModelFrame).not.toBeNull();
+    const originalModelsList = screen.getByTestId('redirect-detail-original-models');
+    const renderedOriginalModels = Array.from(originalModelsList.querySelectorAll('code'));
+    expect(renderedOriginalModels.length).toBeGreaterThan(1);
+    expect(within(originalModelsList).queryByText(',')).not.toBeInTheDocument();
+    expect(within(originalModelsList).queryByText(/暂停至/)).not.toBeInTheDocument();
+    expect(originalModelFrame).toHaveClass('border', 'bg-[var(--surface-2)]', 'px-2', 'py-0');
+    expect(screen.getByText('claude-opus-4.6-20260201')).toHaveClass('leading-4');
+    const defaultBadge = screen.getAllByText('默认示例')[0];
+    expect(defaultBadge).toHaveClass(
+      'rounded-full',
+      'bg-[var(--surface-2)]',
+      'px-1.5',
+      'py-0.5',
+      'text-[11px]',
+      'text-[var(--text-secondary)]'
+    );
+    expect(await screen.findByTestId('priority-detail-compact-list')).toBeInTheDocument();
   });
 
-  it('places the create button after reset defaults in the header actions', () => {
+  it('resets suspended route paths for the selected redirect detail', async () => {
     render(<ModelRedirectionTab />);
 
-    const buttons = screen
-      .getAllByRole('button')
-      .map(button => button.textContent?.trim())
-      .filter(text => text === '同步来源' || text === '重置默认重定向' || text === '新增重定向');
-
-    expect(buttons.slice(0, 3)).toEqual(['同步来源', '重置默认重定向', '新增重定向']);
-  });
-
-  it('resets default redirection through the reset-defaults rebuild mode', async () => {
-    render(<ModelRedirectionTab />);
-
-    fireEvent.click(screen.getByRole('button', { name: '重置默认重定向' }));
+    fireEvent.click(screen.getByRole('button', { name: '恢复 claude-opus-4-6 路由路径' }));
 
     await waitFor(() => {
-      expect(mockRebuildModelRegistry).toHaveBeenCalledWith(true, { resetDefaults: true });
+      expect(mockResetPathStates).toHaveBeenCalledWith({
+        canonicalModel: 'claude-opus-4-6',
+      });
     });
+  });
+
+  it('places sync and create actions above the redirect list without reset defaults', async () => {
+    render(<ModelRedirectionTab />);
+    await findPriorityDetailPane();
+
+    const toolbar = screen.getByTestId('redirect-list-toolbar');
+    const buttons = within(toolbar)
+      .getAllByRole('button')
+      .map(button => button.textContent?.trim())
+      .filter(text => text === '同步来源' || text === '新增重定向');
+
+    expect(buttons).toEqual(['同步来源', '新增重定向']);
+    expect(screen.queryByRole('button', { name: '重置默认重定向' })).not.toBeInTheDocument();
+  });
+
+  it('does not expose reset-defaults rebuild as a visible redirect action', async () => {
+    render(<ModelRedirectionTab />);
+    await findPriorityDetailPane();
+
+    expect(screen.queryByRole('button', { name: '重置默认重定向' })).not.toBeInTheDocument();
+    expect(mockRebuildModelRegistry).not.toHaveBeenCalled();
   });
 
   it('filters out legacy seeded display items that are not the default example', () => {
@@ -984,6 +1209,92 @@ describe('route workbench redesign', () => {
     });
 
     expect(views.map(view => view.displayName)).toEqual(['claude-opus-4-6', 'gpt-5.4']);
+  });
+
+  it('lists manual redirects in local route model options even before their entry is rebuilt', () => {
+    const options = buildRecommendedCliModelOptions({
+      ...createModelRegistryConfig(),
+      displayItems: [
+        ...createModelRegistryConfig().displayItems,
+        {
+          id: 'manual:deepseek-v4-pro',
+          vendor: 'deepseek',
+          canonicalName: 'deepseek-v4-pro',
+          sourceKeys: ['site-9:acc-9:deepseek-v4-pro'],
+          originalModelOrder: ['deepseek-v4-pro'],
+          priorityConfig: {
+            sitePriorities: {},
+            apiKeyPriorities: {},
+          },
+          mode: 'manual',
+          createdAt: 90,
+          updatedAt: 90,
+        },
+      ],
+    });
+
+    expect(options.map(option => option.canonicalName)).toContain('deepseek-v4-pro');
+  });
+
+  it('renders override-backed redirects even when no display item was persisted', async () => {
+    const registry = createModelRegistryConfig();
+    const deepseekSource = createSource({
+      sourceKey: 'site-9:acc-9:deepseek-v4',
+      siteId: 'site-9',
+      siteName: 'DeepSeek Site',
+      accountId: 'acc-9',
+      accountName: 'DeepSeek Main',
+      originalModel: 'deepseek-v4',
+      vendor: 'deepseek',
+      availableUserGroups: ['default'],
+      availableApiKeys: [
+        {
+          apiKeyId: 'deepseek-key-id',
+          apiKeyName: 'deepseek-key',
+          accountId: 'acc-9',
+          accountName: 'DeepSeek Main',
+          group: 'default',
+        },
+      ],
+      firstSeenAt: 90,
+      lastSeenAt: 90,
+    });
+    mockConfig = {
+      ...mockConfig,
+      modelRegistry: {
+        ...registry,
+        sources: [...registry.sources, deepseekSource],
+        entries: {
+          ...registry.entries,
+          'deepseek-v4-pro': {
+            vendor: 'deepseek',
+            canonicalName: 'deepseek-v4-pro',
+            aliases: ['deepseek-v4'],
+            sources: [deepseekSource],
+            hasOverride: true,
+            createdAt: 90,
+            updatedAt: 91,
+          },
+        },
+        overrides: [
+          ...registry.overrides,
+          {
+            id: 'override-deepseek-v4-pro',
+            sourceKey: deepseekSource.sourceKey,
+            canonicalName: 'deepseek-v4-pro',
+            action: 'rename',
+            createdAt: 90,
+            updatedAt: 91,
+          },
+        ],
+        displayItems: registry.displayItems,
+      },
+    };
+
+    render(<ModelRedirectionTab />);
+
+    expect(await screen.findByText('deepseek-v4-pro')).toBeInTheDocument();
+    await findPriorityDetailPane();
   });
 
   it('supports searching and multi-selecting original models when creating a redirect', async () => {
@@ -1034,7 +1345,7 @@ describe('route workbench redesign', () => {
     });
   });
 
-  it('rejects duplicate canonical names across redirect cards', async () => {
+  it('rejects duplicate canonical names across existing redirections', async () => {
     render(<ModelRedirectionTab />);
 
     fireEvent.click(screen.getByRole('button', { name: '新增重定向' }));
@@ -1058,7 +1369,9 @@ describe('route workbench redesign', () => {
   it('allows removing selected original models directly inside the edit dialog', async () => {
     render(<ModelRedirectionTab />);
 
-    fireEvent.click(screen.getByRole('button', { name: '编辑 gpt-5.4' }));
+    selectRedirectRow('gpt-5.4');
+    const detailActions = screen.getByTestId('redirect-detail-actions');
+    fireEvent.click(within(detailActions).getByRole('button', { name: '编辑 gpt-5.4' }));
 
     const dialog = await screen.findByRole('dialog', { name: '编辑模型重定向' });
     expect(
@@ -1119,7 +1432,9 @@ describe('route workbench redesign', () => {
   it('keeps wheel scrolling inside the nested selected and candidate lists', async () => {
     render(<ModelRedirectionTab />);
 
-    fireEvent.click(screen.getByRole('button', { name: '编辑 gpt-5.4' }));
+    selectRedirectRow('gpt-5.4');
+    const detailActions = screen.getByTestId('redirect-detail-actions');
+    fireEvent.click(within(detailActions).getByRole('button', { name: '编辑 gpt-5.4' }));
 
     const dialog = await screen.findByRole('dialog', { name: '编辑模型重定向' });
     const bubbleSpy = vi.fn();
@@ -1164,105 +1479,207 @@ describe('route workbench redesign', () => {
     expect(within(candidateList).getByText('1 站点 / 1 来源')).toBeInTheDocument();
   });
 
-  it('shows grouped site account api key details and missing key reminders in the detail modal', async () => {
+  it('shows grouped site account api key details and missing key reminders in the detail pane', async () => {
     render(<ModelRedirectionTab />);
 
-    fireEvent.click(screen.getAllByRole('button', { name: '优先级排序' })[0]!);
-
-    const dialog = await screen.findByRole('dialog', { name: 'claude-opus-4-6 优先级排序' });
-    const compactList = within(dialog).getByTestId('priority-detail-compact-list');
+    const detailPane = await findPriorityDetailPane();
+    const compactList = within(detailPane).getByTestId('priority-detail-compact-list');
     expect(compactList.className).toContain('overflow-hidden');
     expect(compactList.className).not.toContain('rounded');
     expect(compactList.className).not.toContain('border');
-    expect(within(dialog).getByRole('radio', { name: '选择 Claude Site' })).toBeInTheDocument();
-    expect(within(dialog).getByRole('radio', { name: '选择 Claude Site 2' })).toBeInTheDocument();
-    expect(within(dialog).getByRole('radio', { name: '选择 Claude Site 0' })).toBeInTheDocument();
-    const siteSections = Array.from(dialog.querySelectorAll('section'));
+    expect(within(detailPane).getByRole('radio', { name: '选择 Claude Site' })).toBeInTheDocument();
+    expect(
+      within(detailPane).getByRole('radio', { name: '选择 Claude Site 2' })
+    ).toBeInTheDocument();
+    expect(
+      within(detailPane).getByRole('radio', { name: '选择 Claude Site 0' })
+    ).toBeInTheDocument();
+    const siteSections = getPrioritySiteSections(detailPane);
     expect(siteSections).toHaveLength(3);
     expect(siteSections[0]?.className).not.toContain('rounded');
     expect(siteSections[0]?.className).not.toContain('shadow');
+    expect(siteSections[0]?.firstElementChild).toHaveClass(
+      'grid-cols-[minmax(0,calc(43%_+_80px))_minmax(0,calc(57%_-_50px))_118px]'
+    );
     expect(within(siteSections[0]!).getByRole('radio', { name: '选择 Claude Site' })).toBeChecked();
     const firstSiteHeader = siteSections[0]!.firstElementChild as HTMLElement;
     const firstSiteCells = Array.from(firstSiteHeader.children) as HTMLElement[];
     expect(
       within(firstSiteCells[0]!).queryByRole('button', { name: 'Claude Site 上移' })
     ).not.toBeInTheDocument();
+    expect(within(firstSiteCells[0]!).getByTitle('Claude Site')).toHaveClass(
+      'max-w-[8em]',
+      'truncate'
+    );
+    expect(firstSiteCells[1]!.textContent).toBe('');
+    expect(within(firstSiteCells[1]!).queryByText(/claude-/)).not.toBeInTheDocument();
+    expect(within(firstSiteCells[0]!).queryByText(/暂停至/)).not.toBeInTheDocument();
     expect(
-      within(firstSiteCells[2]!).getByRole('button', { name: 'Claude Site 上移' })
-    ).toBeInTheDocument();
-    expect(within(dialog).getByText('来源')).toBeInTheDocument();
-    expect(within(dialog).getByText('优先级')).toBeInTheDocument();
-    expect(within(dialog).queryByText('站点优先级')).not.toBeInTheDocument();
-    expect(within(dialog).queryByText('API Key 优先级')).not.toBeInTheDocument();
-    expect(within(dialog).queryAllByRole('spinbutton')).toHaveLength(0);
+      within(firstSiteCells[2]!).queryByRole('button', { name: 'Claude Site 上移' })
+    ).not.toBeInTheDocument();
+    expect(within(detailPane).getByText('来源')).toBeInTheDocument();
+    expect(within(detailPane).getByText('优先级')).toBeInTheDocument();
+    expect(within(detailPane).queryByText('站点优先级')).not.toBeInTheDocument();
+    expect(within(detailPane).queryByText('API Key 优先级')).not.toBeInTheDocument();
+    expect(within(detailPane).queryAllByRole('spinbutton')).toHaveLength(0);
     expect(
       within(compactList).queryByRole('button', { name: '移到第一个' })
     ).not.toBeInTheDocument();
-    const priorityFooter = within(dialog).getByTestId('overlay-footer');
-    const priorityFooterContent = priorityFooter.firstElementChild as HTMLElement;
-    expect(priorityFooterContent.className).toContain('w-full');
+    expect(within(detailPane).getByRole('button', { name: '移到第一个' })).toBeInTheDocument();
     expect(
-      within(priorityFooterContent).getByRole('button', { name: '移到第一个' })
-    ).toBeInTheDocument();
-    expect(
-      within(dialog)
+      within(detailPane)
         .getAllByTestId('priority-detail-site-priority')
         .map(node => node.textContent)
     ).toEqual(['0', '1', '2']);
-    expect(within(dialog).getAllByText('站点')).toHaveLength(3);
-    expect(within(dialog).getAllByText('API Key')).toHaveLength(4);
-    expect(within(dialog).getAllByText('缺少 Key')).toHaveLength(2);
+    expect(within(detailPane).getAllByText('站点')).toHaveLength(3);
+    const apiKeyBadges = within(detailPane).getAllByText('API Key');
+    expect(apiKeyBadges).toHaveLength(4);
+    expect(apiKeyBadges[0]).toHaveClass('px-1', 'py-px', 'text-[9px]', 'font-bold');
+    expect(within(detailPane).getAllByText('缺少 Key')).toHaveLength(2);
+    const missingKeyToggles = within(detailPane).getAllByTestId(
+      'priority-detail-missing-key-toggle'
+    );
+    expect(missingKeyToggles).toHaveLength(2);
+    expect(within(detailPane).queryAllByTestId('priority-detail-missing-key-row')).toHaveLength(0);
+    expect(within(detailPane).queryByRole('button', { name: '创建' })).not.toBeInTheDocument();
+    expect(
+      within(detailPane).queryByText(
+        'Main / team-alpha（claude-opus-4.6-20260201、claude-sonnet-4.6-20260201）未创建可用 API key'
+      )
+    ).not.toBeInTheDocument();
+    missingKeyToggles.forEach(toggle => fireEvent.click(toggle));
     await waitFor(() => {
-      expect(within(dialog).getByText('Claude Site（$15.50）')).toBeInTheDocument();
-      expect(within(dialog).getByText('Claude Site 2（无限额度）')).toBeInTheDocument();
+      expect(within(detailPane).getByTitle('Claude Site')).toBeInTheDocument();
+      expect(within(detailPane).getByText('（$15.50）')).toBeInTheDocument();
+      expect(within(detailPane).getByTitle('Claude Site 2')).toBeInTheDocument();
+      expect(within(detailPane).getByText('（无限额度）')).toBeInTheDocument();
       expect(
-        within(dialog).getByText('backup-key（Main / team-beta / ×1.50）')
+        within(detailPane).getByText('backup-key（Main / team-beta / ×1.50）')
       ).toBeInTheDocument();
       expect(
-        within(dialog).getByText('backup-site-key（Backup / team-delta / ×2）')
+        within(detailPane).getByText('backup-site-key（Backup / team-delta / ×2）')
       ).toBeInTheDocument();
       expect(
-        within(dialog).getAllByText('claude-opus-4.6-20260201（测试通过）').length
+        within(detailPane).getAllByText('claude-opus-4.6-20260201（↑$0.001 ↓$0.002 / 测试通过）')
+          .length
       ).toBeGreaterThan(0);
+      expect(
+        within(detailPane).getByText('claude-haiku-4.5-20251001（↑$1 ↓$3 / 未测试）')
+      ).toBeInTheDocument();
     });
-    const apiKeyRows = within(dialog).getAllByTestId('priority-detail-api-key-row');
+    const apiKeyRows = within(detailPane).getAllByTestId('priority-detail-api-key-row');
     expect(apiKeyRows).toHaveLength(4);
+    expect(apiKeyRows[0]).toHaveClass(
+      'grid-cols-[minmax(0,calc(43%_+_80px))_minmax(0,calc(57%_-_50px))_118px]'
+    );
     expect(apiKeyRows[0]?.className).toContain('text-xs');
     expect(apiKeyRows[0]?.className).not.toContain('text-sm');
     expect(within(apiKeyRows[0]!).queryByText('--')).not.toBeInTheDocument();
     const firstApiKeyCells = Array.from(apiKeyRows[0]!.children) as HTMLElement[];
     expect(
-      within(firstApiKeyCells[0]!).queryByRole('button', { name: 'backup-key 下移' })
+      within(firstApiKeyCells[0]!).getByRole('button', { name: 'backup-key 下移' })
+    ).toBeInTheDocument();
+    expect(
+      within(firstApiKeyCells[2]!).queryByRole('button', { name: 'backup-key 下移' })
     ).not.toBeInTheDocument();
+    const firstApiKeyMoveButton = within(firstApiKeyCells[0]!).getByRole('button', {
+      name: 'backup-key 下移',
+    });
+    expect(firstApiKeyMoveButton).toHaveClass('p-0');
+    expect(firstApiKeyMoveButton.querySelector('svg')).toHaveClass('h-2.5', 'w-2.5');
     expect(
-      within(firstApiKeyCells[2]!).getByRole('button', { name: 'backup-key 下移' })
-    ).toBeInTheDocument();
-    expect(within(dialog).getByText('backup-key（Main / team-beta / ×1.50）')).toBeInTheDocument();
-    expect(
-      within(dialog).getByText('backup-site-key（Backup / team-delta / ×2）')
-    ).toBeInTheDocument();
-    expect(within(dialog).getByText('main-key（Main / team-beta / ×1.50）')).toBeInTheDocument();
-    expect(
-      within(dialog).getByText('shared-key（Secondary / team-gamma / ×1）')
+      within(detailPane).getByText('backup-key（Main / team-beta / ×1.50）')
     ).toBeInTheDocument();
     expect(
-      within(dialog).getByText(
+      within(detailPane).getByText('backup-site-key（Backup / team-delta / ×2）')
+    ).toBeInTheDocument();
+    expect(
+      within(detailPane).getByText('main-key（Main / team-beta / ×1.50）')
+    ).toBeInTheDocument();
+    const mainKeyRow = within(detailPane)
+      .getByText('main-key（Main / team-beta / ×1.50）')
+      .closest('[data-testid="priority-detail-api-key-row"]') as HTMLElement;
+    expect(mainKeyRow).not.toBeNull();
+    const mainKeyCells = Array.from(mainKeyRow.children) as HTMLElement[];
+    expect(within(mainKeyCells[0]!).queryByText(/暂停至/)).not.toBeInTheDocument();
+    expect(within(mainKeyCells[1]!).getByText(/claude-opus.*暂停至/)).toBeInTheDocument();
+    expect(mainKeyCells[1]).toHaveAttribute('title', expect.stringContaining('5分钟成功率 0%'));
+    expect(within(mainKeyCells[1]!).getByText(/claude-opus.*暂停至/).textContent).toMatch(
+      /claude-opus-4\.6-20260201（.*暂停至/
+    );
+    expect(
+      within(detailPane).getByText('shared-key（Secondary / team-gamma / ×1）')
+    ).toBeInTheDocument();
+    expect(
+      within(detailPane).getByText(
         'Main / team-alpha（claude-opus-4.6-20260201、claude-sonnet-4.6-20260201）未创建可用 API key'
       )
     ).toBeInTheDocument();
     expect(
-      within(dialog).getByText('Empty / team-zeta（claude-instant-4.5-20251001）未创建可用 API key')
+      within(detailPane).getByText(
+        'Empty / team-zeta（claude-instant-4.5-20251001）未创建可用 API key'
+      )
     ).toBeInTheDocument();
-    expect(within(dialog).getAllByRole('button', { name: '创建' })).toHaveLength(2);
+    const createButtons = within(detailPane).getAllByRole('button', { name: '创建' });
+    expect(createButtons).toHaveLength(2);
+    expect(createButtons[0]?.className).toContain('!h-6');
+    expect(createButtons[0]?.className).toContain('!min-h-6');
+    expect(createButtons[0]?.className).toContain('w-14');
+    expect(createButtons[0]?.className).toContain('translate-x-[50px]');
+    expect(createButtons[0]?.className).toContain('justify-self-start');
+    expect((missingKeyToggles[0]?.children[1] as HTMLElement | undefined)?.className).toContain(
+      'translate-x-[50px]'
+    );
+  });
+
+  it('shortens default account labels in api key rows', async () => {
+    const defaultAccountSourceKey = 'site-1:acc-1:claude-opus-4.6-20260201';
+    const renameDefaultAccount = (source: RouteModelSourceRef): RouteModelSourceRef =>
+      source.sourceKey === defaultAccountSourceKey
+        ? {
+            ...source,
+            accountName: '默认账户',
+            availableApiKeys: source.availableApiKeys.map(apiKey => ({
+              ...apiKey,
+              accountName: '默认账户',
+            })),
+          }
+        : source;
+
+    mockConfig = {
+      ...mockConfig,
+      modelRegistry: {
+        ...mockConfig.modelRegistry,
+        sources: mockConfig.modelRegistry.sources.map(renameDefaultAccount),
+        entries: {
+          ...mockConfig.modelRegistry.entries,
+          'claude-opus-4-6': {
+            ...mockConfig.modelRegistry.entries['claude-opus-4-6']!,
+            sources:
+              mockConfig.modelRegistry.entries['claude-opus-4-6']?.sources.map(
+                renameDefaultAccount
+              ) ?? [],
+          },
+        },
+      },
+    };
+
+    render(<ModelRedirectionTab />);
+
+    const detailPane = await findPriorityDetailPane();
+    expect(
+      within(detailPane).getByText('backup-key（默认 / team-beta / ×1.50）')
+    ).toBeInTheDocument();
+    expect(
+      within(detailPane).queryByText('backup-key（默认账户 / team-beta / ×1.50）')
+    ).not.toBeInTheDocument();
   });
 
   it('places site groups without api keys after sites that have api keys by default', async () => {
     render(<ModelRedirectionTab />);
 
-    fireEvent.click(screen.getAllByRole('button', { name: '优先级排序' })[0]!);
-
-    const dialog = await screen.findByRole('dialog', { name: 'claude-opus-4-6 优先级排序' });
-    const siteSections = Array.from(dialog.querySelectorAll('section'));
+    const detailPane = await findPriorityDetailPane();
+    const siteSections = getPrioritySiteSections(detailPane);
 
     expect(
       within(siteSections[0]!).getByRole('radio', { name: '选择 Claude Site' })
@@ -1275,15 +1692,14 @@ describe('route workbench redesign', () => {
     ).toBeInTheDocument();
   });
 
-  it('creates an api key from the missing hint row and refreshes the detail modal', async () => {
+  it('creates an api key from the missing hint row and refreshes the detail pane', async () => {
     mockSyncModelRegistrySources.mockResolvedValue(createRegistryWithCreatedTeamAlphaKey());
 
     render(<ModelRedirectionTab />);
 
-    fireEvent.click(screen.getAllByRole('button', { name: '优先级排序' })[0]!);
-
-    const detailDialog = await screen.findByRole('dialog', { name: 'claude-opus-4-6 优先级排序' });
-    const missingHint = within(detailDialog).getByText(
+    const detailPane = await findPriorityDetailPane();
+    fireEvent.click(within(detailPane).getByRole('button', { name: 'Claude Site 展开缺少 Key' }));
+    const missingHint = within(detailPane).getByText(
       'Main / team-alpha（claude-opus-4.6-20260201、claude-sonnet-4.6-20260201）未创建可用 API key'
     );
 
@@ -1316,11 +1732,13 @@ describe('route workbench redesign', () => {
 
     await waitFor(() => {
       expect(
-        within(detailDialog).getByText('team-alpha-key（Main / team-alpha / ×1.20）')
+        within(screen.getByTestId('redirect-detail-priority')).getByText(
+          'team-alpha-key（Main / team-alpha / ×1.20）'
+        )
       ).toBeInTheDocument();
     });
     expect(
-      within(detailDialog).queryByText(
+      within(screen.getByTestId('redirect-detail-priority')).queryByText(
         'Main / team-alpha（claude-opus-4.6-20260201、claude-sonnet-4.6-20260201）未创建可用 API key'
       )
     ).not.toBeInTheDocument();
@@ -1329,11 +1747,9 @@ describe('route workbench redesign', () => {
   it('reorders site groups immediately when site priority changes', async () => {
     render(<ModelRedirectionTab />);
 
-    fireEvent.click(screen.getAllByRole('button', { name: '优先级排序' })[0]!);
+    const detailPane = await findPriorityDetailPane();
 
-    const dialog = await screen.findByRole('dialog', { name: 'claude-opus-4-6 优先级排序' });
-
-    let siteSections = Array.from(dialog.querySelectorAll('section'));
+    let siteSections = getPrioritySiteSections(detailPane);
     expect(
       within(siteSections[0]!).getByRole('radio', { name: '选择 Claude Site' })
     ).toBeInTheDocument();
@@ -1345,10 +1761,11 @@ describe('route workbench redesign', () => {
     ).toBeInTheDocument();
 
     await act(async () => {
-      fireEvent.click(within(siteSections[1]!).getByRole('button', { name: 'Claude Site 2 上移' }));
+      fireEvent.click(within(siteSections[1]!).getByRole('radio', { name: '选择 Claude Site 2' }));
+      fireEvent.click(within(detailPane).getByRole('button', { name: '上移' }));
     });
 
-    siteSections = Array.from(dialog.querySelectorAll('section'));
+    siteSections = getPrioritySiteSections(detailPane);
     expect(
       within(siteSections[0]!).getByRole('radio', { name: '选择 Claude Site 2' })
     ).toBeInTheDocument();
@@ -1360,9 +1777,9 @@ describe('route workbench redesign', () => {
     ).toBeInTheDocument();
 
     fireEvent.click(within(siteSections[0]!).getByRole('radio', { name: '选择 Claude Site 2' }));
-    fireEvent.click(within(dialog).getByRole('button', { name: '移到末尾' }));
+    fireEvent.click(within(detailPane).getByRole('button', { name: '移到末尾' }));
 
-    siteSections = Array.from(dialog.querySelectorAll('section'));
+    siteSections = getPrioritySiteSections(detailPane);
     expect(
       within(siteSections[0]!).getByRole('radio', { name: '选择 Claude Site' })
     ).toBeInTheDocument();
@@ -1377,19 +1794,18 @@ describe('route workbench redesign', () => {
   it('saves detail priorities back into the current display item', async () => {
     render(<ModelRedirectionTab />);
 
-    fireEvent.click(screen.getAllByRole('button', { name: '优先级排序' })[0]!);
+    const detailPane = await findPriorityDetailPane();
+    let siteSections = getPrioritySiteSections(detailPane);
 
-    const dialog = await screen.findByRole('dialog', { name: 'claude-opus-4-6 优先级排序' });
-    let siteSections = Array.from(dialog.querySelectorAll('section'));
-
-    fireEvent.click(within(siteSections[1]!).getByRole('button', { name: 'Claude Site 2 上移' }));
-    siteSections = Array.from(dialog.querySelectorAll('section'));
+    fireEvent.click(within(siteSections[1]!).getByRole('radio', { name: '选择 Claude Site 2' }));
+    fireEvent.click(within(detailPane).getByRole('button', { name: '上移' }));
+    siteSections = getPrioritySiteSections(detailPane);
     const primarySite = siteSections.find(section =>
       within(section).queryByRole('radio', { name: '选择 Claude Site' })
     ) as HTMLElement;
     fireEvent.click(within(primarySite).getByRole('button', { name: 'main-key 下移' }));
 
-    fireEvent.click(within(dialog).getByRole('button', { name: '保存优先级' }));
+    fireEvent.click(within(detailPane).getByRole('button', { name: '保存优先级' }));
 
     await waitFor(() => {
       expect(mockUpsertDisplayItem).toHaveBeenCalledWith(
@@ -1414,7 +1830,7 @@ describe('route workbench redesign', () => {
     });
   });
 
-  it('syncs model sources from the header action without rebuilding defaults', async () => {
+  it('syncs model sources from the list toolbar without rebuilding defaults', async () => {
     render(<ModelRedirectionTab />);
 
     fireEvent.click(screen.getByRole('button', { name: '同步来源' }));
@@ -1425,7 +1841,7 @@ describe('route workbench redesign', () => {
     expect(mockRebuildModelRegistry).not.toHaveBeenCalled();
   });
 
-  it('deletes a redirect card through the display item action', async () => {
+  it('deletes a redirect through the selected detail action', async () => {
     render(<ModelRedirectionTab />);
 
     fireEvent.click(screen.getByRole('button', { name: '删除 claude-opus-4-6' }));
@@ -1608,10 +2024,9 @@ describe('route workbench redesign', () => {
   it('saves display-order priorities when the detail draft is unchanged', async () => {
     render(<ModelRedirectionTab />);
 
-    fireEvent.click(screen.getAllByRole('button', { name: '优先级排序' })[0]!);
-    const dialog = await screen.findByRole('dialog', { name: 'claude-opus-4-6 优先级排序' });
+    const detailPane = await findPriorityDetailPane();
 
-    fireEvent.click(within(dialog).getByRole('button', { name: '保存优先级' }));
+    fireEvent.click(within(detailPane).getByRole('button', { name: '保存优先级' }));
 
     await waitFor(() => {
       expect(mockUpsertDisplayItem).toHaveBeenCalledWith(
@@ -1634,7 +2049,7 @@ describe('route workbench redesign', () => {
     });
   });
 
-  it('saves per-model route runtime rules from the redirect card', async () => {
+  it('saves per-model route runtime rules from the selected detail action', async () => {
     render(<ModelRedirectionTab />);
 
     fireEvent.click(screen.getAllByRole('button', { name: '路由规则' })[0]!);

@@ -49,7 +49,7 @@ export async function refreshPersistedCliProbeState(): Promise<void> {
 
   const routeState = useRouteStore.getState();
   await routeState.fetchConfig?.();
-  await routeState.fetchCliProbeData?.(routeState.cliProbeTimeRange, true);
+  await routeState.fetchCliProbeData?.('7d', true);
 }
 
 export async function persistCliCompatibilityResult(

@@ -1,9 +1,12 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useState, type ReactNode } from 'react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { CliUsabilityTab } from '../renderer/components/Route/Usability/CliUsabilityTab';
 
 const now = Date.now();
-const { saveCliProbeConfigMock } = vi.hoisted(() => ({
+const { fetchCliProbeDataMock, runProbeNowMock, saveCliProbeConfigMock } = vi.hoisted(() => ({
+  fetchCliProbeDataMock: vi.fn(),
+  runProbeNowMock: vi.fn(),
   saveCliProbeConfigMock: vi.fn(),
 }));
 
@@ -41,7 +44,7 @@ vi.mock('../renderer/store/routeStore', () => ({
   ) =>
     selector({
       config: {
-        cliProbe: { config: { enabled: true, intervalMinutes: 60 } },
+        cliProbe: { config: { enabled: true, intervalMinutes: 240 } },
       },
       loading: false,
       cliProbeView: [
@@ -76,6 +79,7 @@ vi.mock('../renderer/store/routeStore', () => ({
                   history: [
                     {
                       sampleId: 'sample-1',
+                      probeRunId: 'run-codex-1',
                       probeKey: 'site-1:acct-default:codex:gpt-4.1',
                       siteId: 'site-1',
                       accountId: 'acct-default',
@@ -93,10 +97,11 @@ vi.mock('../renderer/store/routeStore', () => ({
                   success: false,
                   testedAt: now - 60 * 60 * 1000,
                   totalLatencyMs: 1800,
-                  error: 'rate limited',
+                  error: 'rate limited '.repeat(24),
                   history: [
                     {
                       sampleId: 'sample-2',
+                      probeRunId: 'run-codex-1',
                       probeKey: 'site-1:acct-default:codex:gpt-4.1-mini',
                       siteId: 'site-1',
                       accountId: 'acct-default',
@@ -105,7 +110,7 @@ vi.mock('../renderer/store/routeStore', () => ({
                       rawModel: 'gpt-4.1-mini',
                       success: false,
                       source: 'routeProbe',
-                      error: 'rate limited',
+                      error: 'rate limited '.repeat(24),
                       testedAt: now - 60 * 60 * 1000,
                     },
                   ],
@@ -128,6 +133,7 @@ vi.mock('../renderer/store/routeStore', () => ({
                   history: [
                     {
                       sampleId: 'sample-3',
+                      probeRunId: 'run-gemini-1',
                       probeKey: 'site-1:acct-default:geminiCli:gemini-2.5-pro',
                       siteId: 'site-1',
                       accountId: 'acct-default',
@@ -145,17 +151,30 @@ vi.mock('../renderer/store/routeStore', () => ({
           },
         },
       ],
-      cliProbeTimeRange: '24h',
+      cliProbeTimeRange: '7d',
       cliProbeLoaded: true,
       cliProbeError: null,
-      fetchCliProbeData: vi.fn(),
-      runProbeNow: vi.fn(),
+      fetchCliProbeData: fetchCliProbeDataMock,
+      runProbeNow: runProbeNowMock,
       saveCliProbeConfig: saveCliProbeConfigMock,
     }),
 }));
 
+function CliUsabilityHarness() {
+  const [actions, setActions] = useState<ReactNode | null>(null);
+
+  return (
+    <>
+      <div data-testid="page-header-actions">{actions}</div>
+      <CliUsabilityTab setPageHeaderActions={setActions} />
+    </>
+  );
+}
+
 describe('CliUsabilityTab', () => {
   it('renders inline settings, icon headers, availability rate, and disabled reminder text', async () => {
+    fetchCliProbeDataMock.mockReset().mockResolvedValue(undefined);
+    runProbeNowMock.mockReset().mockResolvedValue(null);
     saveCliProbeConfigMock.mockReset().mockResolvedValue(undefined);
     const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
     const rectSpy = vi
@@ -177,11 +196,15 @@ describe('CliUsabilityTab', () => {
 
         return originalGetBoundingClientRect.call(this);
       });
-    render(<CliUsabilityTab />);
+    render(<CliUsabilityHarness />);
 
-    const intervalInput = screen.getByLabelText('检测间隔（分钟）') as HTMLInputElement;
+    const headerActions = screen.getByTestId('page-header-actions');
+    const intervalInput = (await screen.findByLabelText('检测间隔（小时）')) as HTMLInputElement;
     expect(intervalInput).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '保存设置' })).toBeInTheDocument();
+    expect(intervalInput).toHaveValue(4);
+    expect(intervalInput).toHaveAttribute('min', '2');
+    expect(within(headerActions).getByRole('button', { name: '关闭定时检测' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '保存设置' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('打开检测设置')).not.toBeInTheDocument();
 
     expect(screen.getByAltText('Claude Code')).toBeInTheDocument();
@@ -192,13 +215,15 @@ describe('CliUsabilityTab', () => {
     expect(
       screen.queryByText('请先在站点 CLI 配置中开启后再查看可用性结果')
     ).not.toBeInTheDocument();
-    expect(screen.getAllByText('最近24小时可用率')).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: '24h' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '7d' })).not.toBeInTheDocument();
+    expect(screen.getAllByText('最近7天可用率')).toHaveLength(2);
     expect(screen.getByText('50%')).toBeInTheDocument();
     expect(screen.getByText('100%')).toBeInTheDocument();
-    expect(screen.getByTestId('cli-usability-grid-card')).not.toHaveAttribute(
-      'data-perf-monitor',
-      'blur'
-    );
+    const gridCard = screen.getByTestId('cli-usability-grid-card');
+    expect(gridCard).not.toHaveAttribute('data-perf-monitor', 'blur');
+    expect(gridCard).toHaveClass('border-y', 'bg-[var(--surface-1)]', 'shadow-none');
+    expect(gridCard.className).not.toContain('rounded-');
     expect(screen.getByTestId('cli-usability-row-site-1-acct-default').className).toContain(
       '[content-visibility:auto]'
     );
@@ -223,23 +248,29 @@ describe('CliUsabilityTab', () => {
     );
 
     expect(screen.getAllByTestId('cli-history-track')[0].children).toHaveLength(32);
-    const codexHistoryTitle = screen.getByTitle(/模型：gpt-4\.1\s+测试时间：.*摘要：/);
+    const codexHistoryTitle = screen.getByTitle(
+      /检测批次：run-codex-1[\s\S]*模型：gpt-4\.1[\s\S]*模型：gpt-4\.1-mini/
+    );
     expect(codexHistoryTitle).toHaveAttribute('title', expect.not.stringContaining('来源：'));
+    expect(codexHistoryTitle).toHaveClass('bg-[var(--warning)]');
+    const codexHistoryTooltip = codexHistoryTitle.getAttribute('title') ?? '';
+    expect(codexHistoryTooltip).toContain('rate limited '.repeat(22));
+    expect(codexHistoryTooltip).not.toContain('rate limited '.repeat(23));
     expect(screen.getAllByTitle(/模型：gpt-4\.1-mini/).length).toBeGreaterThan(0);
     expect(screen.getAllByTitle(/模型：gemini-2\.5-pro/).length).toBeGreaterThan(0);
     expect(codexHistoryTitle).toHaveAttribute('title', expect.stringContaining('结果：兼容'));
+    expect(codexHistoryTitle).toHaveAttribute('title', expect.stringContaining('结果：失败'));
     expect(screen.queryByTestId('cli-history-manual-marker-track')).not.toBeInTheDocument();
 
     fireEvent.change(intervalInput, { target: { value: '' } });
     expect(intervalInput.value).toBe('');
 
-    fireEvent.change(intervalInput, { target: { value: '120' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存设置' }));
+    fireEvent.change(intervalInput, { target: { value: '6' } });
 
     await waitFor(() =>
       expect(saveCliProbeConfigMock).toHaveBeenCalledWith({
         enabled: true,
-        intervalMinutes: 120,
+        intervalMinutes: 360,
       })
     );
     rectSpy.mockRestore();

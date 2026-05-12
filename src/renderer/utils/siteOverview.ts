@@ -49,6 +49,14 @@ type AccountConfigWithCache = NonNullable<Config['accounts']>[number] & {
 
 type CacheLike = DetectionCacheData;
 
+export function toNonNegativeBalance(balance: number): number {
+  return balance >= 0 ? balance : 0;
+}
+
+export function sumNonNegativeBalances<T extends { balance: number }>(items: readonly T[]): number {
+  return items.reduce((sum, item) => sum + toNonNegativeBalance(item.balance), 0);
+}
+
 function isFreshToday(timestamp: number | undefined, now: Date): boolean {
   return typeof timestamp === 'number' && new Date(timestamp).toDateString() === now.toDateString();
 }
@@ -146,7 +154,7 @@ export function buildSiteOverviewMetrics(
         siteName: site.name,
         enabled: site.enabled !== false,
         accountCount: siteAccounts.length,
-        balance: metrics.reduce((sum, metric) => sum + metric.balance, 0),
+        balance: sumNonNegativeBalances(metrics),
         todayUsage: metrics.reduce((sum, metric) => sum + metric.todayUsage, 0),
         todayRequests: metrics.reduce((sum, metric) => sum + metric.todayRequests, 0),
         todayPromptTokens: metrics.reduce((sum, metric) => sum + metric.todayPromptTokens, 0),

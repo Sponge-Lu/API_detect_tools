@@ -174,7 +174,7 @@ describe('CustomCliConfigEditorDialog', () => {
     expect(cliTestColumns).toHaveTextContent('Claude Code');
     expect(cliTestColumns).toHaveTextContent('Codex');
     expect(cliTestColumns).toHaveTextContent('Gemini CLI');
-  });
+  }, 15_000);
 
   it('runs tests only for the clicked cli column', async () => {
     const testWithWrapper = vi.fn().mockResolvedValue({

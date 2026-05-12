@@ -4,6 +4,13 @@ import { vi } from 'vitest';
 // Mock Electron API for renderer tests
 if (typeof window !== 'undefined') {
   vi.stubGlobal('alert', vi.fn());
+  if (typeof (globalThis as any).ResizeObserver === 'undefined') {
+    (globalThis as any).ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+  }
   (window as any).electronAPI = {
     loadConfig: vi.fn(),
     saveConfig: vi.fn(),
@@ -51,6 +58,7 @@ if (typeof window !== 'undefined') {
       getObjectStats: vi.fn(),
       getRequestLogs: vi.fn(),
       clearRequestLogs: vi.fn(),
+      resetPathStates: vi.fn(),
     },
     overview: {
       getSiteDailySnapshots: vi.fn(),

@@ -67,7 +67,7 @@ async function loadProbeService(config: {
     cliProbe: {
       config: {
         enabled: true,
-        intervalMinutes: 60,
+        intervalMinutes: 240,
         modelsPerCli: 3,
         requestTimeoutMs: 30_000,
         maxConcurrency: 2,
@@ -201,12 +201,16 @@ describe('route-cli-probe-service', () => {
       ],
     };
 
-    const { runCliProbeNow } = await loadProbeService(config);
+    const { runCliProbeNow, unifiedConfigManager } = await loadProbeService(config);
     const result = await runCliProbeNow();
 
     expect(result.totalSamples).toBe(2);
     expect(result.successSamples).toBe(2);
     expect(result.failureSamples).toBe(0);
+    const persistedSamples = vi.mocked(unifiedConfigManager.appendRouteCliProbeSamples).mock
+      .calls[0][0];
+    expect(new Set(persistedSamples.map(sample => sample.probeRunId)).size).toBe(1);
+    expect(persistedSamples[0].probeRunId).toMatch(/^route_/);
   });
 
   it('应用重启后会按最近一次探测时间恢复下一次定时探测', async () => {
@@ -261,7 +265,7 @@ describe('route-cli-probe-service', () => {
 
     expect(unifiedConfigManager.appendRouteCliProbeSamples).not.toHaveBeenCalled();
 
-    await vi.advanceTimersByTimeAsync(29 * 60 * 1000);
+    await vi.advanceTimersByTimeAsync(209 * 60 * 1000);
     expect(unifiedConfigManager.appendRouteCliProbeSamples).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(60 * 1000);

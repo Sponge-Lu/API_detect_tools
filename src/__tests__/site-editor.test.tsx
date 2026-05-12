@@ -184,4 +184,52 @@ describe('SiteEditor', () => {
       }
     );
   });
+
+  it('编辑 AnyRouter 账户时默认部分明文显示 User Hash，并允许显隐切换', () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const userHash = 'b'.repeat(64);
+
+    const site: SiteConfig = {
+      id: 'site-anyrouter',
+      name: 'Any Router',
+      url: 'https://anyrouter.top',
+      site_type: 'newapi',
+      api_key: 'sk-test',
+      system_token: 'token-123',
+      user_id: '42',
+      enabled: true,
+      group: 'default',
+      force_enable_checkin: false,
+    };
+
+    render(
+      <SiteEditor
+        site={site}
+        editingAccount={{
+          id: 'acct-anyrouter',
+          account_name: 'AnyRouter 账户',
+          user_id: '42',
+          access_token: 'token-123',
+          anyRouterConfig: { userHash },
+        }}
+        onSave={onSave}
+        onCancel={vi.fn()}
+        groups={[{ id: 'default', name: '默认分组' }]}
+        defaultGroupId="default"
+      />
+    );
+
+    const hashInput = screen.getByLabelText('User Hash') as HTMLInputElement;
+    expect(hashInput).toHaveValue(`${'b'.repeat(8)}********${'b'.repeat(8)}`);
+    expect(hashInput.type).toBe('text');
+    expect(hashInput).toHaveAttribute('readonly');
+    expect(screen.queryByText(userHash)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '显示完整 User Hash' }));
+    expect(hashInput).toHaveValue(userHash);
+    expect(hashInput).not.toHaveAttribute('readonly');
+
+    fireEvent.click(screen.getByRole('button', { name: '部分显示 User Hash' }));
+    expect(hashInput).toHaveValue(`${'b'.repeat(8)}********${'b'.repeat(8)}`);
+  });
 });

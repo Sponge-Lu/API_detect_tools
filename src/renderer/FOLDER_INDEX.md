@@ -82,7 +82,7 @@
 | **CustomCliPage** | 自定义 CLI 配置页面 | 配置预览、真实 CLI 测试、模板导出 |
 | **CreditPage** | Linux Do Credit 页面 | 积分余额、每日统计、交易记录、充值入口 |
 | **RoutePage** | 路由配置/操作页 | 代理服务、模型重定向，以及跳转到数据总览的统计入口 |
-| **LogsPage** | 日志页内容容器 | 按 `logsSubtab` 展示会话事件或路由日志；路由日志使用紧凑请求尝试列表，展示规则、模型、站点优先级、token 与参考金额 |
+| **LogsPage** | 日志页内容容器 | 按 `logsSubtab` 展示会话事件或路由日志；路由日志使用紧凑请求尝试列表，展示规则、模型、站点优先级、token/cache token 与参考金额 |
 | **SettingsPage** | 设置页 | 应用设置、导入导出、备份入口 |
 
 ---
@@ -196,6 +196,14 @@ const result = await window.ipcRenderer.invoke('api:request', {
 
 **关键方法**:
 - `buildSiteOverviewMetrics(config, now?)` - 聚合站点余额、消费、请求与模型数量
+
+### modelPricing.ts
+
+**职责**: 归一化模型按 token / 按次计费方式与价格，供路由日志预计金额和模型重定向价格标签复用
+
+**关键函数**:
+- `resolveModelPricing(pricingData)` - 返回 `token` 或 `perCall` 模式及对应价格字段
+- `isPerCallPricing(pricingData)` - 判断模型是否显式按次计费
 
 ### routeRulePresentation.ts
 

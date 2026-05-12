@@ -82,6 +82,7 @@ vi.mock('../main/route-model-registry-service', () => ({
 
 import {
   clearRouteRequestLogs,
+  getAnalyticsSummary,
   getRouteObjectStats,
   getRouteRequestLogs,
   recordRouteRequest,
@@ -122,6 +123,9 @@ describe('route-analytics-service token statistics', () => {
       promptTokens: 120,
       completionTokens: 30,
       totalTokens: 150,
+      cacheCreationTokens: 20,
+      cacheReadTokens: 80,
+      cachedTokens: 80,
       at: 1_776_000_000_000,
     });
 
@@ -131,9 +135,18 @@ describe('route-analytics-service token statistics', () => {
         promptTokens: 120,
         completionTokens: 30,
         totalTokens: 150,
+        cacheCreationTokens: 20,
+        cacheReadTokens: 80,
+        cachedTokens: 80,
         apiKeyName: '主 Key',
       },
     ]);
+  });
+
+  it('rejects unsupported 30d route analytics windows at runtime', () => {
+    expect(() => getAnalyticsSummary({ window: '30d' as never })).toThrow(
+      'Unsupported route analytics window: 30d'
+    );
   });
 
   it('aggregates token usage by site account and api key', () => {
@@ -173,6 +186,9 @@ describe('route-analytics-service token statistics', () => {
         promptTokens: 200,
         completionTokens: 80,
         totalTokens: 280,
+        cacheCreationTokens: 30,
+        cacheReadTokens: 90,
+        cachedTokens: 90,
         statusCodeHistogram: { '200': 2 },
         latencyHistogram: {},
         firstByteHistogram: {},
@@ -195,6 +211,9 @@ describe('route-analytics-service token statistics', () => {
         promptTokens: 50,
         completionTokens: 20,
         totalTokens: 70,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 10,
+        cachedTokens: 10,
         statusCodeHistogram: { '500': 1 },
         latencyHistogram: {},
         firstByteHistogram: {},
@@ -219,6 +238,9 @@ describe('route-analytics-service token statistics', () => {
         promptTokens: 250,
         completionTokens: 100,
         totalTokens: 350,
+        cacheCreationTokens: 30,
+        cacheReadTokens: 100,
+        cachedTokens: 100,
         lastUsedAt: bucketStart + 1,
       },
     ]);

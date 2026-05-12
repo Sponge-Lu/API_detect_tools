@@ -24,7 +24,7 @@
 | 文件 | 职责 | 关键方法 |
 |------|------|--------|
 | **cli-config-generator.ts** | CLI 配置生成 | `generateConfig()`, `exportConfig()` |
-| **cli-compat-projection.ts** | 将 `routing.cliProbe.latest` 投影为站点页 CLI 兼容性结果 | `projectCliCompatibilityMap()`, `syncProjectedCliCompatibility()` |
+| **cli-compat-projection.ts** | 将 `routing.cliProbe.latest` 投影为站点页 CLI 兼容性结果与 CLI 配置弹窗测试模型 slot | `projectCliCompatibilityMap()`, `projectCliModelTestResultsFromLatest()`, `mergeCliProbeLatestRecords()`, `syncProjectedCliCompatibility()` |
 | **cli-compat-sync.ts** | 手动 CLI 测试结果落盘后的跨视图回灌 | `persistCliCompatibilityResult()`, `refreshPersistedCliProbeState()` |
 | **sessionEventLog.ts** | 将关键操作写入会话事件历史 | `success()`, `info()`, `warning()`, `error()` |
 
@@ -54,15 +54,19 @@
 
 ### cli-compat-projection.ts - CLI 兼容性投影
 
-**职责**: 将路由层统一保存的 `cliProbe.latest` 转换为站点页/账户卡片可直接消费的兼容性结果。
+**职责**: 将路由层统一保存的 `cliProbe.latest` 转换为站点页/账户卡片可直接消费的兼容性结果，并回灌到 CLI 配置弹窗的测试模型 slot。
 
 **关键导出**:
 - `projectCliCompatibilityMap()` - 基于 `sites / accounts / routing` 生成 detection store 需要的兼容性映射
+- `projectCliModelTestResultsFromLatest()` - 按 `siteId + accountId + cliType + model` 将 canonical latest 结果合并进弹窗测试模型 slot
+- `mergeCliProbeLatestRecords()` - 合并已加载配置与 route store 中的 latest 记录，保留更新的 sample
+- `resolveCliProbeSiteId()` - 在弹窗只有站点名称/URL 时解析对应 `siteId`
 - `syncProjectedCliCompatibility()` - 将投影结果批量同步到 `detectionStore`
 
 **关键规则**:
 - 账户卡片只使用自身 `accountId` 对应的最新结果，不再复用同站点其他账户的 probe 摘要
 - 无账户卡片时，才允许使用 `site::{siteId}` 的站点级 probe 结果
+- 弹窗测试模型 slot 只接收同一 `siteId/accountId/cliType/model` 的 latest 结果，并按 `testedAt` 保留更新值
 - 同一 CLI 的多模型结果按“有一个成功即视为兼容”聚合，同时保留成功样本的细节文本
 - 失败摘要按 CLI 独立保存，优先显示错误码，没有错误码时回落为短错误文本
 

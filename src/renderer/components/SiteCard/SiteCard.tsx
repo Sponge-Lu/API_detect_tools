@@ -47,6 +47,7 @@ export const SiteCard = React.memo(
     accountName,
     accountAccessToken,
     accountUserId,
+    accountAnyRouterConfig,
     cardKey: cardKeyProp,
     apiKeys,
     userGroups,
@@ -192,6 +193,7 @@ export const SiteCard = React.memo(
             account_name: accountName,
             access_token: accountAccessToken,
             user_id: accountUserId,
+            anyRouterConfig: accountAnyRouterConfig,
           }
         : null;
 
@@ -334,7 +336,8 @@ export const SiteCard = React.memo(
         prevProps.deletingTokenKey === nextProps.deletingTokenKey &&
         prevProps.selectedModels === nextProps.selectedModels &&
         prevProps.accountId === nextProps.accountId &&
-        prevProps.accountName === nextProps.accountName
+        prevProps.accountName === nextProps.accountName &&
+        prevProps.accountAnyRouterConfig === nextProps.accountAnyRouterConfig
       );
     }
 

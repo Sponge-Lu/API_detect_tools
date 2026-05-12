@@ -5,7 +5,7 @@
 import { ipcMain } from 'electron';
 import { CliCompatibilityResult } from '../cli-compat-service';
 import { cliWrapperCompatService } from '../cli-wrapper-compat-service';
-import { persistCliProbeSamples } from '../route-cli-probe-service';
+import { generateProbeRunId, persistCliProbeSamples } from '../route-cli-probe-service';
 import { unifiedConfigManager } from '../unified-config-manager';
 import Logger from '../utils/logger';
 import * as fs from 'fs';
@@ -734,10 +734,12 @@ export function registerCliCompatHandlers() {
         }
 
         const ownerAccountId = accountId || buildSiteScopedProbeAccountId(site.id);
+        const probeRunId = generateProbeRunId('manual');
         const probeSamples = (samples || []).map((sample, index) => {
           const probeKey = buildProbeKey(site.id, ownerAccountId, sample.cliType, sample.model);
           return {
             sampleId: `manual_${Date.now()}_${index}`,
+            probeRunId,
             probeKey,
             siteId: site.id,
             accountId: ownerAccountId,

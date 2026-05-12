@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Bell, Eraser, Filter, History, Network, RefreshCw, Wrench } from 'lucide-react';
 import {
+  type RouteCliType,
   type RouteModelDisplayItem,
   type RouteModelRegistryConfig,
   type RouteModelSourceRef,
@@ -13,9 +14,11 @@ import { AppCard, AppCardContent } from '../components/AppCard';
 import { useConfigStore } from '../store/configStore';
 import type { LogsSubtab } from '../store/uiStore';
 import { useToastStore, type AppEventItem } from '../store/toastStore';
+import { resolveModelPricing } from '../utils/modelPricing';
 import { buildRouteRuleSummary } from '../utils/routeRulePresentation';
 
 type EventFilter = 'all' | 'toast' | 'action';
+type RouteCliFilter = 'all' | RouteCliType;
 
 const FILTER_OPTIONS: Array<{
   id: EventFilter;
@@ -92,10 +95,26 @@ const CLI_LABELS: Record<RouteRequestLogItem['cliType'], string> = {
   codex: 'Codex',
   geminiCli: 'Gemini CLI',
 };
+const ROUTE_CLI_FILTER_OPTIONS: Array<{
+  id: RouteCliFilter;
+  label: string;
+}> = [
+  { id: 'all', label: '全部' },
+  { id: 'claudeCode', label: CLI_LABELS.claudeCode },
+  { id: 'codex', label: CLI_LABELS.codex },
+  { id: 'geminiCli', label: CLI_LABELS.geminiCli },
+];
 const UNKNOWN_TEXT = '未知';
 const NONE_TEXT = '无';
 const DEFAULT_API_KEY_NAME = '默认';
 const CUSTOM_CLI_LABEL_PREFIX = /^自定义\s*CLI\s*\/\s*/;
+const TOKEN_PRICE_UNIT = 1_000_000;
+const CACHE_TOKEN_INPUT_PRICE_RATIO = 0.1;
+const ROUTE_TOKEN_COST_TITLE =
+  '仅供参考，不是实际花费金额；模型价格按每 1M token 计，缓存 token 按输入价 1/10 计入。';
+const ROUTE_PER_CALL_COST_TITLE = '仅供参考，不是实际花费金额；按单次调用价格估算。';
+const ROUTE_TOKEN_COST_NOTE = '缓存按输入价 1/10';
+const ROUTE_PER_CALL_COST_NOTE = '按次计费';
 
 interface RouteLogRegistryContext {
   registry: RouteModelRegistryConfig | null;
@@ -106,8 +125,12 @@ interface RouteLogCostInfo {
   totalTokens: string;
   promptTokens: string;
   completionTokens: string;
+  cacheCreationTokens: string;
+  cacheReadTokens: string;
   estimatedCost: string;
   hasEstimatedCost: boolean;
+  estimatedCostTitle?: string;
+  estimatedCostNote?: string;
 }
 
 function RouteLogField({
@@ -311,28 +334,50 @@ function getModelPriceInfo(
   return undefined;
 }
 
-function getInputOutputPrices(
-  pricingData: ModelPriceInfo | undefined
-): { inputPrice: number; outputPrice: number } | null {
-  const directInput = toFiniteNumber(pricingData?.input);
-  const directOutput = toFiniteNumber(pricingData?.output);
-  if (directInput !== null && directOutput !== null) {
-    return { inputPrice: directInput, outputPrice: directOutput };
-  }
+function calculateRouteLogEstimatedCost(params: {
+  promptTokens: number;
+  completionTokens: number;
+  cacheCreationTokens: number | null;
+  cacheReadTokens: number | null;
+  cachedTokens: number | null;
+  inputPrice: number;
+  outputPrice: number;
+  groupMultiplier: number;
+}): number {
+  const cachedReadTokens = params.cacheReadTokens ?? 0;
+  const cacheCreationTokens = params.cacheCreationTokens ?? 0;
+  const promptTokensBilledAsInput =
+    params.cachedTokens !== null
+      ? Math.max(params.promptTokens - cachedReadTokens, 0)
+      : params.promptTokens;
+  const cacheCost =
+    (cacheCreationTokens + cachedReadTokens) * params.inputPrice * CACHE_TOKEN_INPUT_PRICE_RATIO;
 
-  if (
-    pricingData?.model_price &&
-    typeof pricingData.model_price === 'object' &&
-    !Array.isArray(pricingData.model_price)
-  ) {
-    const inputPrice = toFiniteNumber(pricingData.model_price.input);
-    const outputPrice = toFiniteNumber(pricingData.model_price.output);
-    if (inputPrice !== null && outputPrice !== null) {
-      return { inputPrice, outputPrice };
-    }
-  }
+  return (
+    ((promptTokensBilledAsInput * params.inputPrice +
+      params.completionTokens * params.outputPrice +
+      cacheCost) /
+      TOKEN_PRICE_UNIT) *
+    params.groupMultiplier
+  );
+}
 
-  return null;
+function createBaseRouteLogCostInfo(params: {
+  totalTokens: number | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  cacheCreationTokens: number | null;
+  cacheReadTokens: number | null;
+}): RouteLogCostInfo {
+  return {
+    totalTokens: formatTokenCount(params.totalTokens),
+    promptTokens: formatTokenCount(params.promptTokens),
+    completionTokens: formatTokenCount(params.completionTokens),
+    cacheCreationTokens: formatTokenCount(params.cacheCreationTokens),
+    cacheReadTokens: formatTokenCount(params.cacheReadTokens),
+    estimatedCost: NONE_TEXT,
+    hasEstimatedCost: false,
+  };
 }
 
 function resolveRouteLogCostInfo(
@@ -342,20 +387,24 @@ function resolveRouteLogCostInfo(
 ): RouteLogCostInfo {
   const promptTokens = toFiniteNumber(item.promptTokens);
   const completionTokens = toFiniteNumber(item.completionTokens);
+  const cacheCreationTokens = toFiniteNumber(item.cacheCreationTokens);
+  const cachedTokens = toFiniteNumber(item.cachedTokens);
+  const cacheReadTokens = toFiniteNumber(item.cacheReadTokens) ?? cachedTokens;
   const totalTokens =
     toFiniteNumber(item.totalTokens) ??
     (promptTokens !== null || completionTokens !== null
       ? (promptTokens ?? 0) + (completionTokens ?? 0)
       : null);
+  const baseCostInfo = createBaseRouteLogCostInfo({
+    totalTokens,
+    promptTokens,
+    completionTokens,
+    cacheCreationTokens,
+    cacheReadTokens,
+  });
 
   if (customCli) {
-    return {
-      totalTokens: formatTokenCount(totalTokens),
-      promptTokens: formatTokenCount(promptTokens),
-      completionTokens: formatTokenCount(completionTokens),
-      estimatedCost: NONE_TEXT,
-      hasEstimatedCost: false,
-    };
+    return baseCostInfo;
   }
 
   const account = config?.accounts?.find(itemAccount => itemAccount.id === item.accountId);
@@ -365,29 +414,49 @@ function resolveRouteLogCostInfo(
     item.requestedModel,
     item.canonicalModel,
   ]);
-  const prices = getInputOutputPrices(pricingData);
+  const pricing = resolveModelPricing(pricingData);
+  const userGroups: Record<string, UserGroupInfo> | undefined = cache?.user_groups;
+  const groupMultiplier = item.userGroupKey ? (userGroups?.[item.userGroupKey]?.ratio ?? 1) : 1;
 
-  if (promptTokens === null || completionTokens === null || !prices) {
+  if (pricing.mode === 'perCall') {
+    if (item.outcome !== 'success' || pricing.callPrice === null) {
+      return baseCostInfo;
+    }
+
     return {
-      totalTokens: formatTokenCount(totalTokens),
-      promptTokens: formatTokenCount(promptTokens),
-      completionTokens: formatTokenCount(completionTokens),
-      estimatedCost: NONE_TEXT,
-      hasEstimatedCost: false,
+      ...baseCostInfo,
+      estimatedCost: formatEstimatedCost(pricing.callPrice * groupMultiplier),
+      hasEstimatedCost: true,
+      estimatedCostTitle: ROUTE_PER_CALL_COST_TITLE,
+      estimatedCostNote: ROUTE_PER_CALL_COST_NOTE,
     };
   }
 
-  const userGroups: Record<string, UserGroupInfo> | undefined = cache?.user_groups;
-  const groupMultiplier = item.userGroupKey ? (userGroups?.[item.userGroupKey]?.ratio ?? 1) : 1;
-  const estimatedCost =
-    (promptTokens * prices.inputPrice + completionTokens * prices.outputPrice) * groupMultiplier;
+  if (promptTokens === null || completionTokens === null) {
+    return baseCostInfo;
+  }
+
+  if (pricing.inputPrice === null || pricing.outputPrice === null) {
+    return baseCostInfo;
+  }
+
+  const estimatedCost = calculateRouteLogEstimatedCost({
+    promptTokens,
+    completionTokens,
+    cacheCreationTokens,
+    cacheReadTokens,
+    cachedTokens,
+    inputPrice: pricing.inputPrice,
+    outputPrice: pricing.outputPrice,
+    groupMultiplier,
+  });
 
   return {
-    totalTokens: formatTokenCount(totalTokens),
-    promptTokens: formatTokenCount(promptTokens),
-    completionTokens: formatTokenCount(completionTokens),
+    ...baseCostInfo,
     estimatedCost: formatEstimatedCost(estimatedCost),
     hasEstimatedCost: true,
+    estimatedCostTitle: ROUTE_TOKEN_COST_TITLE,
+    estimatedCostNote: ROUTE_TOKEN_COST_NOTE,
   };
 }
 
@@ -430,8 +499,10 @@ function resolveRouteFailureInfo(item: RouteRequestLogItem): string | null {
 function EventCount({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-4 py-3">
-      <div className="text-xs text-[var(--text-secondary)]">{label}</div>
-      <div className="mt-1 text-2xl font-semibold text-[var(--text-primary)]">{value}</div>
+      <div className="flex items-baseline gap-2 text-xs text-[var(--text-secondary)]">
+        <span>{label}</span>
+        <span className="text-lg font-semibold text-[var(--text-primary)]">{value}</span>
+      </div>
     </div>
   );
 }
@@ -455,6 +526,7 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
   const clearEventHistory = useToastStore(state => state.clearEventHistory);
   const view = activeView;
   const [filter, setFilter] = useState<EventFilter>('all');
+  const [routeCliFilter, setRouteCliFilter] = useState<RouteCliFilter>('all');
   const [routeLogs, setRouteLogs] = useState<RouteRequestLogItem[]>([]);
   const [routeLogsLoading, setRouteLogsLoading] = useState(false);
   const [routeLogsError, setRouteLogsError] = useState<string | null>(null);
@@ -541,15 +613,19 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
   );
   const actionCount = eventHistory.length - notificationCount;
 
+  const filteredRouteLogs = useMemo(() => {
+    if (routeCliFilter === 'all') return routeLogs;
+    return routeLogs.filter(item => item.cliType === routeCliFilter);
+  }, [routeCliFilter, routeLogs]);
+
   const routeSuccessCount = useMemo(
-    () => routeLogs.filter(item => item.outcome === 'success').length,
-    [routeLogs]
+    () => filteredRouteLogs.filter(item => item.outcome === 'success').length,
+    [filteredRouteLogs]
   );
   const routeFailureCount = useMemo(
-    () => routeLogs.filter(item => item.outcome === 'failure').length,
-    [routeLogs]
+    () => filteredRouteLogs.filter(item => item.outcome === 'failure').length,
+    [filteredRouteLogs]
   );
-  const routeNeutralCount = routeLogs.length - routeSuccessCount - routeFailureCount;
   const routeLogContext = useMemo(
     () => buildRouteLogRegistryContext(routeModelRegistry),
     [routeModelRegistry]
@@ -611,27 +687,45 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
               </>
             ) : (
               <>
-                <div className="mt-4 grid gap-3 sm:grid-cols-4">
-                  <EventCount label="总尝试" value={routeLogs.length} />
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <EventCount label="总尝试" value={filteredRouteLogs.length} />
                   <EventCount label="成功" value={routeSuccessCount} />
                   <EventCount label="失败" value={routeFailureCount} />
-                  <EventCount label="中性" value={routeNeutralCount} />
                 </div>
 
-                <div className="mt-4 flex flex-wrap justify-end gap-2">
-                  <AppButton variant="secondary" size="sm" onClick={() => void loadRouteLogs()}>
-                    <RefreshCw className="h-4 w-4" />
-                    刷新
-                  </AppButton>
-                  <AppButton
-                    variant="secondary"
-                    size="sm"
-                    disabled={routeLogs.length === 0}
-                    onClick={() => void clearRouteLogs()}
-                  >
-                    <Eraser className="h-4 w-4" />
-                    清空路由日志
-                  </AppButton>
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap gap-2">
+                    {ROUTE_CLI_FILTER_OPTIONS.map(option => {
+                      const selected = routeCliFilter === option.id;
+
+                      return (
+                        <AppButton
+                          key={option.id}
+                          variant={selected ? 'primary' : 'secondary'}
+                          size="sm"
+                          aria-pressed={selected}
+                          onClick={() => setRouteCliFilter(option.id)}
+                        >
+                          {option.label}
+                        </AppButton>
+                      );
+                    })}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <AppButton variant="secondary" size="sm" onClick={() => void loadRouteLogs()}>
+                      <RefreshCw className="h-4 w-4" />
+                      刷新
+                    </AppButton>
+                    <AppButton
+                      variant="secondary"
+                      size="sm"
+                      disabled={routeLogs.length === 0}
+                      onClick={() => void clearRouteLogs()}
+                    >
+                      <Eraser className="h-4 w-4" />
+                      清空路由日志
+                    </AppButton>
+                  </div>
                 </div>
               </>
             )}
@@ -645,7 +739,7 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
                 {view === 'session' ? '事件列表' : '请求尝试列表'}
               </div>
               <span className="rounded-full bg-[var(--surface-2)] px-2.5 py-1 text-[11px] text-[var(--text-secondary)]">
-                {view === 'session' ? filteredEvents.length : routeLogs.length} 条
+                {view === 'session' ? filteredEvents.length : filteredRouteLogs.length} 条
               </span>
             </div>
 
@@ -694,9 +788,9 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
               <div className="flex flex-1 items-center justify-center px-5 py-10 text-sm text-[var(--text-secondary)]">
                 正在加载路由日志...
               </div>
-            ) : routeLogs.length > 0 ? (
+            ) : filteredRouteLogs.length > 0 ? (
               <div className="min-h-0 flex-1 overflow-y-auto">
-                {routeLogs.map((item, index) => {
+                {filteredRouteLogs.map((item, index) => {
                   const outcomeStyle = ROUTE_OUTCOME_STYLES[item.outcome];
                   const routeRule = item.routeRuleId ? routeRulesById[item.routeRuleId] : undefined;
                   const routeSource = findRouteLogSource(item, routeLogContext);
@@ -802,11 +896,13 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
                         <RouteLogField label="总Token" value={costInfo.totalTokens} />
                         <RouteLogField label="输入Token" value={costInfo.promptTokens} />
                         <RouteLogField label="输出Token" value={costInfo.completionTokens} />
+                        <RouteLogField label="缓存创建" value={costInfo.cacheCreationTokens} />
+                        <RouteLogField label="缓存命中" value={costInfo.cacheReadTokens} />
                         <RouteLogField
                           label="预计金额"
                           value={costInfo.estimatedCost}
-                          title="仅供参考，不是实际花费金额；未计入缓存价格。"
-                          note={costInfo.hasEstimatedCost ? '仅供参考，未计缓存价格' : undefined}
+                          title={costInfo.estimatedCostTitle}
+                          note={costInfo.estimatedCostNote}
                         />
                       </div>
 
@@ -826,7 +922,9 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
               </div>
             ) : (
               <div className="flex flex-1 flex-col items-center justify-center gap-2 px-5 py-10 text-center">
-                <div className="text-sm font-medium text-[var(--text-primary)]">暂无路由日志</div>
+                <div className="text-sm font-medium text-[var(--text-primary)]">
+                  {routeLogs.length > 0 ? '当前 CLI 没有路由日志' : '暂无路由日志'}
+                </div>
                 {routeLogsError ? (
                   <div className="mt-2 rounded-[var(--radius-md)] border border-[var(--danger)]/20 bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)]">
                     {routeLogsError}

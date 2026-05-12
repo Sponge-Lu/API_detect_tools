@@ -24,6 +24,7 @@ import {
   type AccountCredential,
   type ApiKeyInfo,
   type UnifiedSite,
+  isAnyRouterSite,
 } from '../shared/types/site';
 import {
   DEFAULT_CLI_CONFIG,
@@ -40,6 +41,10 @@ let probeStartupTimer: NodeJS.Timeout | null = null;
 
 function generateSampleId(): string {
   return `ps_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+export function generateProbeRunId(prefix = 'probe'): string {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
 export function getCliProbeConfig(): RouteCliProbeConfig {
@@ -308,7 +313,8 @@ async function runSingleProbe(
   cliType: RouteCliType,
   canonicalModel: string,
   rawModel: string,
-  _timeoutMs: number
+  _timeoutMs: number,
+  probeRunId: string
 ): Promise<RouteCliProbeSample> {
   const probeKey = buildProbeKey(siteId, accountId, cliType, canonicalModel);
   const now = Date.now();
@@ -318,6 +324,7 @@ async function runSingleProbe(
   if (!config) {
     return {
       sampleId: generateSampleId(),
+      probeRunId,
       probeKey,
       siteId,
       accountId,
@@ -339,6 +346,7 @@ async function runSingleProbe(
   if (!apiKey || !site || !account) {
     return {
       sampleId: generateSampleId(),
+      probeRunId,
       probeKey,
       siteId,
       accountId,
@@ -351,6 +359,9 @@ async function runSingleProbe(
       testedAt: now,
     };
   }
+
+  // AnyRouter 站点使用 120 秒超时，其他站点使用配置的超时时间
+  const timeoutMs = isAnyRouterSite(site.name) ? 120000 : _timeoutMs;
 
   const baseUrl = site.url;
   const startTime = Date.now();
@@ -382,7 +393,8 @@ async function runSingleProbe(
         const result = await cliWrapperCompatService.testClaudeCodeWithDetail(
           baseUrl,
           apiKey,
-          rawModel
+          rawModel,
+          timeoutMs
         );
         success = result.supported;
         error = result.message;
@@ -391,7 +403,12 @@ async function runSingleProbe(
         break;
       }
       case 'codex': {
-        const result = await cliWrapperCompatService.testCodexWithDetail(baseUrl, apiKey, rawModel);
+        const result = await cliWrapperCompatService.testCodexWithDetail(
+          baseUrl,
+          apiKey,
+          rawModel,
+          timeoutMs
+        );
         success = result.supported;
         error = result.message;
         statusCode = extractStatusCodeFromError(result.message);
@@ -402,7 +419,8 @@ async function runSingleProbe(
         const result = await cliWrapperCompatService.testGeminiWithDetail(
           baseUrl,
           apiKey,
-          rawModel
+          rawModel,
+          timeoutMs
         );
         success = result.supported;
         error = result.message;
@@ -416,6 +434,7 @@ async function runSingleProbe(
 
     return {
       sampleId: generateSampleId(),
+      probeRunId,
       probeKey,
       siteId,
       accountId,
@@ -438,6 +457,7 @@ async function runSingleProbe(
     const message = err instanceof Error ? err.message : 'Unknown error';
     return {
       sampleId: generateSampleId(),
+      probeRunId,
       probeKey,
       siteId,
       accountId,
@@ -469,6 +489,7 @@ export async function runCliProbeNow(params?: {
   failureSamples: number;
 }> {
   const startedAt = Date.now();
+  const probeRunId = generateProbeRunId('route');
   const probeConfig = getCliProbeConfig();
   const config = unifiedConfigManager.exportConfigSync();
   if (!config) {
@@ -540,7 +561,8 @@ export async function runCliProbeNow(params?: {
           t.cliType,
           t.canonicalModel,
           t.rawModel,
-          probeConfig.requestTimeoutMs
+          probeConfig.requestTimeoutMs,
+          probeRunId
         )
       )
     );

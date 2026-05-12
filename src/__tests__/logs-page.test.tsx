@@ -48,6 +48,9 @@ function buildRouteLog(
     promptTokens: partial.promptTokens,
     completionTokens: partial.completionTokens,
     totalTokens: partial.totalTokens,
+    cacheCreationTokens: partial.cacheCreationTokens,
+    cacheReadTokens: partial.cacheReadTokens,
+    cachedTokens: partial.cachedTokens,
     error: partial.error,
   };
 }
@@ -93,6 +96,14 @@ describe('LogsPage', () => {
                 data: {
                   'gpt-5.4-2025-02-15': {
                     model_price: { input: 0.001, output: 0.002 },
+                  },
+                  'per-call-direct': {
+                    quota_type: 1,
+                    model_price: 0.25,
+                  },
+                  'per-call-object': {
+                    type: 'times',
+                    model_price: { input: 500, output: 1000 },
                   },
                 },
               },
@@ -300,6 +311,12 @@ describe('LogsPage', () => {
 
     render(<LogsPage />);
 
+    expect(screen.getByText('总记录').parentElement).toHaveTextContent('总记录2');
+    const notificationStat = screen
+      .getAllByText('通知')
+      .find(element => element.parentElement?.textContent === '通知1');
+    expect(notificationStat?.parentElement).toHaveTextContent('通知1');
+    expect(screen.getByText('关键操作').parentElement).toHaveTextContent('关键操作1');
     expect(screen.queryByRole('button', { name: '会话事件' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '路由日志' })).not.toBeInTheDocument();
     expect(
@@ -341,6 +358,8 @@ describe('LogsPage', () => {
           promptTokens: 100,
           completionTokens: 50,
           totalTokens: 150,
+          cacheCreationTokens: 20,
+          cacheReadTokens: 40,
           error: 'no_matching_rule',
         }),
         buildRouteLog({
@@ -391,6 +410,19 @@ describe('LogsPage', () => {
           completionTokens: 1,
           totalTokens: 10,
         }),
+        buildRouteLog({
+          id: 'route-log-4',
+          requestId: 'codex-cache',
+          cliType: 'codex',
+          attempt: 1,
+          outcome: 'success',
+          createdAt: 400,
+          promptTokens: 100,
+          completionTokens: 0,
+          totalTokens: 100,
+          cacheReadTokens: 40,
+          cachedTokens: 40,
+        }),
       ],
     });
 
@@ -409,12 +441,22 @@ describe('LogsPage', () => {
     ).not.toBeInTheDocument();
 
     expect(await screen.findByText('请求 codex-1')).toBeInTheDocument();
+    expect(screen.getByText('总尝试').parentElement).toHaveTextContent('总尝试4');
+    const successStat = screen
+      .getAllByText('成功')
+      .find(element => element.parentElement?.textContent === '成功3');
+    expect(successStat?.parentElement).toHaveTextContent('成功3');
+    const failureStat = screen
+      .getAllByText('失败')
+      .find(element => element.parentElement?.textContent === '失败1');
+    expect(failureStat?.parentElement).toHaveTextContent('失败1');
+    expect(screen.queryByText('中性')).not.toBeInTheDocument();
     const rows = screen.getAllByTestId('route-request-log-row');
     expect(rows[0]).toHaveClass('px-4', 'py-2.5', '[contain-intrinsic-size:104px]');
     expect(rows[0]).not.toHaveClass('py-4');
     expect(screen.getByText('HTTP 502')).toBeInTheDocument();
-    expect(screen.getByText('站点 A')).toBeInTheDocument();
-    expect(screen.getByText('Key Alpha')).toBeInTheDocument();
+    expect(within(rows[0]).getByText('站点 A')).toBeInTheDocument();
+    expect(within(rows[0]).getByText('Key Alpha')).toBeInTheDocument();
     expect(screen.getAllByText('Codex 主路由').length).toBeGreaterThan(0);
     const failureInfo = within(rows[0]).getByTestId('route-request-failure-info');
     expect(failureInfo).toHaveTextContent('失败信息no_matching_rule');
@@ -425,16 +467,25 @@ describe('LogsPage', () => {
     expect(rows[0]).toHaveTextContent('总Token150');
     expect(rows[0]).toHaveTextContent('输入Token100');
     expect(rows[0]).toHaveTextContent('输出Token50');
-    expect(rows[0]).toHaveTextContent('预计金额≈0.4');
-    expect(rows[0]).toHaveTextContent('仅供参考，未计缓存价格');
+    expect(rows[0]).toHaveTextContent('缓存创建20');
+    expect(rows[0]).toHaveTextContent('缓存命中40');
+    expect(rows[0]).toHaveTextContent('预计金额≈4.12e-7');
+    expect(within(rows[0]).getByText('≈4.12e-7')).toHaveAttribute(
+      'title',
+      '仅供参考，不是实际花费金额；模型价格按每 1M token 计，缓存 token 按输入价 1/10 计入。'
+    );
+    expect(rows[0]).toHaveTextContent('缓存按输入价 1/10');
     expect(rows[1]).toHaveTextContent('站点优先级1');
     expect(rows[1]).toHaveTextContent('请求原始模型gpt-5.4-mini');
-    expect(rows[1]).toHaveTextContent('预计金额≈0.0027');
+    expect(rows[1]).toHaveTextContent('预计金额≈2.70e-9');
     expect(rows[2]).toHaveTextContent('站点DuckCoding');
     expect(rows[2]).toHaveTextContent('账户无');
     expect(rows[2]).toHaveTextContent('分组无');
     expect(rows[2]).toHaveTextContent('API Key默认');
     expect(rows[2]).toHaveTextContent('预计金额无');
+    expect(rows[3]).toHaveTextContent('请求 codex-cache');
+    expect(rows[3]).toHaveTextContent('缓存命中40');
+    expect(rows[3]).toHaveTextContent('预计金额≈1.28e-7');
     expect(screen.queryByText(/^规则说明：/)).not.toBeInTheDocument();
     expect(screen.getByText(/用时1\.23s\/首字456ms/)).toBeInTheDocument();
     expect(screen.getByText(/用时789ms\/首字120ms/)).toBeInTheDocument();
@@ -451,5 +502,140 @@ describe('LogsPage', () => {
     });
     expect(screen.getByText('暂无路由日志')).toBeInTheDocument();
     expect(screen.queryByText(/当前运行会话中还没有路由请求/)).not.toBeInTheDocument();
+  });
+
+  it('estimates per-call route costs without usage and skips failed attempts', async () => {
+    vi.mocked(routeApi.getRequestLogs).mockResolvedValue({
+      success: true,
+      data: [
+        buildRouteLog({
+          id: 'route-per-call-success',
+          requestId: 'per-call-success',
+          cliType: 'codex',
+          attempt: 1,
+          outcome: 'success',
+          createdAt: 100,
+          requestedModel: 'per-call-direct',
+          canonicalModel: 'per-call-direct',
+          resolvedModel: 'per-call-direct',
+          statusCode: 200,
+        }),
+        buildRouteLog({
+          id: 'route-per-call-failure',
+          requestId: 'per-call-failure',
+          cliType: 'codex',
+          attempt: 1,
+          outcome: 'failure',
+          createdAt: 200,
+          requestedModel: 'per-call-direct',
+          canonicalModel: 'per-call-direct',
+          resolvedModel: 'per-call-direct',
+          statusCode: 500,
+          error: 'upstream_failed',
+        }),
+        buildRouteLog({
+          id: 'route-per-call-object',
+          requestId: 'per-call-object',
+          cliType: 'codex',
+          attempt: 1,
+          outcome: 'success',
+          createdAt: 300,
+          requestedModel: 'per-call-object',
+          canonicalModel: 'per-call-object',
+          resolvedModel: 'per-call-object',
+          statusCode: 200,
+        }),
+      ],
+    });
+
+    render(<LogsPage activeView="route" />);
+
+    await waitFor(() => {
+      expect(routeApi.getRequestLogs).toHaveBeenCalledWith({ limit: 200 });
+    });
+
+    const rows = screen.getAllByTestId('route-request-log-row');
+    expect(rows[0]).toHaveTextContent('总Token无');
+    expect(rows[0]).toHaveTextContent('预计金额≈0.5');
+    expect(within(rows[0]).getByText('≈0.5')).toHaveAttribute(
+      'title',
+      '仅供参考，不是实际花费金额；按单次调用价格估算。'
+    );
+    expect(rows[0]).toHaveTextContent('按次计费');
+    expect(rows[1]).toHaveTextContent('预计金额无');
+    expect(rows[1]).not.toHaveTextContent('按次计费');
+    expect(rows[2]).toHaveTextContent('预计金额≈1');
+    expect(rows[2]).toHaveTextContent('按次计费');
+  });
+
+  it('filters route request logs by CLI and updates summary counts', async () => {
+    vi.mocked(routeApi.getRequestLogs).mockResolvedValue({
+      success: true,
+      data: [
+        buildRouteLog({
+          id: 'route-filter-codex',
+          requestId: 'codex-filter',
+          cliType: 'codex',
+          attempt: 1,
+          outcome: 'success',
+          createdAt: 100,
+        }),
+        buildRouteLog({
+          id: 'route-filter-claude',
+          requestId: 'claude-filter',
+          cliType: 'claudeCode',
+          attempt: 1,
+          outcome: 'failure',
+          createdAt: 200,
+          error: 'claude_failed',
+        }),
+        buildRouteLog({
+          id: 'route-filter-gemini',
+          requestId: 'gemini-filter',
+          cliType: 'geminiCli',
+          attempt: 1,
+          outcome: 'success',
+          createdAt: 300,
+        }),
+      ],
+    });
+
+    render(<LogsPage activeView="route" />);
+
+    expect(await screen.findByText('请求 codex-filter')).toBeInTheDocument();
+    expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(3);
+    expect(screen.getByText('总尝试').parentElement).toHaveTextContent('总尝试3');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Claude Code' }));
+
+    expect(screen.getByRole('button', { name: 'Claude Code' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+    expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(1);
+    expect(screen.getByText('请求 claude-filter')).toBeInTheDocument();
+    expect(screen.queryByText('请求 codex-filter')).not.toBeInTheDocument();
+    expect(screen.queryByText('请求 gemini-filter')).not.toBeInTheDocument();
+    expect(screen.getByText('总尝试').parentElement).toHaveTextContent('总尝试1');
+    const successStat = screen
+      .getAllByText('成功')
+      .find(element => element.parentElement?.textContent === '成功0');
+    expect(successStat?.parentElement).toHaveTextContent('成功0');
+    const failureStat = screen
+      .getAllByText('失败')
+      .find(element => element.parentElement?.textContent === '失败1');
+    expect(failureStat?.parentElement).toHaveTextContent('失败1');
+    expect(screen.getByText('1 条')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Gemini CLI' }));
+
+    expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(1);
+    expect(screen.getByText('请求 gemini-filter')).toBeInTheDocument();
+    expect(screen.queryByText('请求 claude-filter')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '全部' }));
+
+    expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(3);
+    expect(screen.getByText('3 条')).toBeInTheDocument();
   });
 });

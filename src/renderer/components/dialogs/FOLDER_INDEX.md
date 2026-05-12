@@ -27,7 +27,7 @@
 | **AuthErrorDialog.tsx** | 认证错误对话框 | `AuthErrorDialog` 组件，分析并展示 Session/Token 过期等问题 |
 | **SiteGroupDialog.tsx** | 站点分组对话框 | `SiteGroupDialog` 组件，支持创建和编辑分组 |
 | **ApplyConfigPopover.tsx** | 应用配置弹出菜单 | `ApplyConfigPopover` 组件，支持选择 CLI 并写入配置 |
-| **UnifiedCliConfigDialog.tsx** | 统一 CLI 配置工作抽屉 | `UnifiedCliConfigDialog` 组件，支持 CLI 启用/禁用、按 API Key 分组或整站范围切换模型列表、配置预览编辑和保存，并在预览配置域名与当前站点不一致时显示明确 warning；“测试已选模型”会同步写入 `routing.cliProbe` 并刷新检测页缓存 |
+| **UnifiedCliConfigDialog.tsx** | 统一 CLI 配置工作抽屉 | `UnifiedCliConfigDialog` 组件，支持 CLI 启用/禁用、按 API Key 分组或整站范围切换模型列表、配置预览编辑和保存，并在预览配置域名与当前站点不一致时显示明确 warning；“测试已选模型”会同步写入 `routing.cliProbe` 并刷新检测页缓存，打开或 route store 更新时会把 `routing.cliProbe.latest` 中更新的同模型结果回显到对应测试模型 slot |
 | **CustomCliConfigEditorDialog.tsx** | 自定义 CLI 配置工作抽屉 | `CustomCliConfigEditorDialog` 组件，支持自定义配置编辑、模型拉取与预览 |
 | **CloseBehaviorDialog.tsx** | 窗口关闭行为对话框 | `CloseBehaviorDialog` 组件，用户选择退出或最小化到托盘 |
 | **BackupSelectDialog.tsx** | 备份选择对话框 | `BackupSelectDialog` 组件，从备份目录选择配置包或旧版配置文件进行恢复 |

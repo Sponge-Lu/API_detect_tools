@@ -968,7 +968,6 @@ describe('app shell redesign', () => {
               <>
                 <button type="button">24h</button>
                 <button type="button">7d</button>
-                <button type="button">30d</button>
                 <button type="button">刷新</button>
               </>
             );
@@ -1060,7 +1059,7 @@ describe('app shell redesign', () => {
     expect(screen.getByText(APP_OVERVIEW_SUBPAGE_META.route.description)).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: '24h' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '7d' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '30d' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '30d' })).not.toBeInTheDocument();
     expect(
       within(screen.getByTestId('page-header-row')).getByRole('button', { name: '刷新' })
     ).toBeInTheDocument();

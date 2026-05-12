@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { projectCliCompatibilityMap } from '../renderer/services/cli-compat-projection';
+import {
+  projectCliCompatibilityMap,
+  projectCliModelTestResultsFromLatest,
+} from '../renderer/services/cli-compat-projection';
 import { buildProbeKey } from '../shared/types/route-proxy';
 
 describe('cli compatibility projection', () => {
@@ -237,5 +240,107 @@ describe('cli compatibility projection', () => {
       sourceLabel: '来自站点检测 · 默认账户',
       testedAt: 200,
     });
+  });
+
+  it('projects newer latest probe samples into matching CLI dialog model slots', () => {
+    const staleProbeKey = buildProbeKey('site-1', 'acct-a', 'codex', 'gpt-4.1');
+    const latestProbeKey = buildProbeKey('site-1', 'acct-a', 'codex', 'gpt-4.1-mini');
+    const unrelatedProbeKey = buildProbeKey('site-1', 'acct-b', 'codex', 'gpt-4.1-mini');
+
+    const projection = projectCliModelTestResultsFromLatest({
+      siteId: 'site-1',
+      accountId: 'acct-a',
+      cliConfig: {
+        codex: {
+          apiKeyId: 1,
+          model: 'gpt-4.1',
+          testModels: ['gpt-4.1', 'gpt-4.1-mini', ''],
+          testResults: [
+            { model: 'gpt-4.1', success: true, timestamp: 300 },
+            { model: 'gpt-4.1-mini', success: true, timestamp: 100 },
+            null,
+          ],
+        },
+      },
+      latest: {
+        [staleProbeKey]: {
+          probeKey: staleProbeKey,
+          siteId: 'site-1',
+          accountId: 'acct-a',
+          cliType: 'codex',
+          canonicalModel: 'gpt-4.1',
+          rawModel: 'gpt-4.1',
+          healthy: false,
+          lastSample: {
+            sampleId: 'stale',
+            probeKey: staleProbeKey,
+            siteId: 'site-1',
+            accountId: 'acct-a',
+            cliType: 'codex',
+            canonicalModel: 'gpt-4.1',
+            rawModel: 'gpt-4.1',
+            success: false,
+            source: 'routeProbe',
+            testedAt: 200,
+          },
+        },
+        [latestProbeKey]: {
+          probeKey: latestProbeKey,
+          siteId: 'site-1',
+          accountId: 'acct-a',
+          cliType: 'codex',
+          canonicalModel: 'gpt-4.1-mini',
+          rawModel: 'gpt-4.1-mini',
+          healthy: false,
+          lastSample: {
+            sampleId: 'latest',
+            probeKey: latestProbeKey,
+            siteId: 'site-1',
+            accountId: 'acct-a',
+            cliType: 'codex',
+            canonicalModel: 'gpt-4.1-mini',
+            rawModel: 'gpt-4.1-mini',
+            success: false,
+            source: 'routeProbe',
+            statusCode: 503,
+            testedAt: 400,
+          },
+        },
+        [unrelatedProbeKey]: {
+          probeKey: unrelatedProbeKey,
+          siteId: 'site-1',
+          accountId: 'acct-b',
+          cliType: 'codex',
+          canonicalModel: 'gpt-4.1-mini',
+          rawModel: 'gpt-4.1-mini',
+          healthy: true,
+          lastSample: {
+            sampleId: 'unrelated',
+            probeKey: unrelatedProbeKey,
+            siteId: 'site-1',
+            accountId: 'acct-b',
+            cliType: 'codex',
+            canonicalModel: 'gpt-4.1-mini',
+            rawModel: 'gpt-4.1-mini',
+            success: true,
+            source: 'routeProbe',
+            testedAt: 500,
+          },
+        },
+      },
+    });
+
+    expect(projection.codex[0]).toMatchObject({
+      model: 'gpt-4.1',
+      success: true,
+      timestamp: 300,
+    });
+    expect(projection.codex[1]).toMatchObject({
+      model: 'gpt-4.1-mini',
+      success: false,
+      message: '错误码 503',
+      timestamp: 400,
+    });
+    expect(projection.codex[2]).toBeNull();
   });
 });

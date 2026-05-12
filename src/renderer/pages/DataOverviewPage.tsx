@@ -1,34 +1,52 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import {
   Activity,
-  AlertTriangle,
   Gauge,
+  Layers,
   Loader2,
   RefreshCw,
-  ShieldAlert,
+  Shield,
   Wallet,
   type LucideIcon,
 } from 'lucide-react';
 import type {
   RouteAnalyticsBucket,
   RouteAnalyticsObjectStatsItem,
-  RouteCliType,
-  RouteRequestLogItem,
+  RouteAnalyticsWindow,
+  RoutePathState,
 } from '../../shared/types/route-proxy';
 import type { SiteDailySnapshot } from '../../shared/types/site';
 import { AppButton } from '../components/AppButton/AppButton';
 import { AppCard, AppCardContent } from '../components/AppCard';
 import { useConfigStore } from '../store/configStore';
+import { useCustomCliConfigStore } from '../store/customCliConfigStore';
 import { useUIStore } from '../store/uiStore';
 import { getRouteCliLabel } from '../utils/routeRulePresentation';
 import {
   buildSiteCheckinOverviewRows,
   buildSiteOverviewMetrics,
+  sumNonNegativeBalances,
+  toNonNegativeBalance,
   type SiteCheckinOverviewRow,
   type SiteOverviewMetric,
 } from '../utils/siteOverview';
+import { computeLatencyPercentiles, formatLatency } from '../utils/routeLatency';
+import {
+  buildModelDistribution,
+  squarifiedTreemap,
+  type ModelDistributionItem,
+} from '../utils/routeModelDistribution';
 
-type RouteWindow = '24h' | '7d' | '30d';
+type RouteWindow = RouteAnalyticsWindow;
+const ROUTE_WINDOW_OPTIONS: RouteWindow[] = ['24h', '7d'];
 const AGGREGATED_SITE_OPTION_ID = '__aggregated_site__';
 const AGGREGATED_SITE_OPTION_LABEL = '全部站点（聚合）';
 const CHECKIN_SITE_NAME_MAX_WIDTH = 7;
@@ -42,6 +60,8 @@ interface RouteSummary {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
 }
 
 interface RouteDistribution {
@@ -66,17 +86,6 @@ interface RankedMetricItem {
   label: string;
   value: number;
   sublabel?: string;
-}
-
-interface RouteFailureRuleMetric {
-  id: string;
-  ruleId: string;
-  cliType: RouteCliType;
-  canonicalModel: string;
-  requests: number;
-  failures: number;
-  siteCount: number;
-  sourceCount: number;
 }
 
 type TrendDirection = 'up' | 'down' | 'flat' | 'none';
@@ -137,14 +146,6 @@ function formatSnapshotDayLabel(snapshotDate: string): string {
   return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(
     parseDayKey(snapshotDate)
   );
-}
-
-function formatLogTime(timestamp: number): string {
-  return new Intl.DateTimeFormat('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).format(new Date(timestamp));
 }
 
 function buildRouteTrendPoints(buckets: RouteAnalyticsBucket[], window: RouteWindow): TrendPoint[] {
@@ -415,32 +416,51 @@ function buildSparklineBarHeights(values: Array<number | null>, chartHeight: num
   });
 }
 
-function buildSparklineCoordinates(values: Array<number | null>, width: number, height: number) {
+function buildSparklineCoordinates(
+  values: Array<number | null>,
+  width: number,
+  height: number,
+  padding = 0
+) {
   if (values.length === 0) return [];
   const displayValues = resolveSparklineDisplayValues(values);
   const definedValues = values.filter((value): value is number => value !== null);
+  const plotWidth = Math.max(width - padding * 2, 0);
+  const plotHeight = Math.max(height - padding * 2, 0);
+  const resolveX = (index: number) =>
+    values.length === 1 ? width / 2 : padding + (index / (values.length - 1)) * plotWidth;
+
   if (definedValues.length === 0) {
     return values.map((value, index) => ({
       value,
-      x: values.length === 1 ? width / 2 : (index / (values.length - 1)) * width,
+      x: resolveX(index),
       y: height / 2,
     }));
   }
 
-  const max = Math.max(...displayValues, 1);
-  const min = Math.min(...displayValues, 0);
+  const rawMax = Math.max(...displayValues);
+  const rawMin = Math.min(...displayValues);
+  const max = Math.max(rawMax, 1);
+  const min = Math.min(rawMin, 0);
   const range = max - min || 1;
-  const hasVariance = max !== min;
+  const hasVariance = rawMax !== rawMin;
 
   return displayValues.map((displayValue, index) => {
-    const x = (index / (values.length - 1)) * width;
-    const y = hasVariance ? height - ((displayValue - min) / range) * height : height * 0.45;
+    const x = resolveX(index);
+    const y = hasVariance
+      ? padding + plotHeight - ((displayValue - min) / range) * plotHeight
+      : padding + plotHeight * 0.45;
     return { value: values[index], x, y };
   });
 }
 
-function buildSparklinePath(values: Array<number | null>, width: number, height: number): string {
-  const coordinates = buildSparklineCoordinates(values, width, height);
+function buildSparklinePath(
+  values: Array<number | null>,
+  width: number,
+  height: number,
+  padding = 0
+): string {
+  const coordinates = buildSparklineCoordinates(values, width, height, padding);
   if (coordinates.length === 0) return '';
 
   const definedPointCount = values.filter(value => value !== null).length;
@@ -449,8 +469,8 @@ function buildSparklinePath(values: Array<number | null>, width: number, height:
   if (definedPointCount === 1) {
     const point = coordinates.find(coordinate => coordinate.value !== null);
     if (!point) return '';
-    const startX = Math.max(point.x - 8, 0);
-    const endX = Math.min(point.x + 8, width);
+    const startX = Math.max(point.x - 8, padding);
+    const endX = Math.min(point.x + 8, width - padding);
     return `M ${startX.toFixed(2)} ${point.y.toFixed(2)} L ${endX.toFixed(2)} ${point.y.toFixed(2)}`;
   }
 
@@ -465,10 +485,11 @@ function buildSparklinePath(values: Array<number | null>, width: number, height:
 function buildSparklineAreaPath(
   values: Array<number | null>,
   width: number,
-  height: number
+  height: number,
+  padding = 0
 ): string {
-  const coordinates = buildSparklineCoordinates(values, width, height);
-  const linePath = buildSparklinePath(values, width, height);
+  const coordinates = buildSparklineCoordinates(values, width, height, padding);
+  const linePath = buildSparklinePath(values, width, height, padding);
   if (coordinates.length === 0 || !linePath) return '';
 
   const first = coordinates[0];
@@ -497,21 +518,6 @@ function buildMatrixColumnLevels(values: Array<number | null>, rows: number): nu
   });
 }
 
-function buildRouteObjectLabel(item: RouteRequestLogItem): string {
-  const routeRuleParts =
-    item.routeRuleName
-      ?.split('/')
-      .map(part => part.trim())
-      .filter(Boolean) || [];
-  const cliLabel = getRouteCliLabel(item.cliType);
-  const routeRule =
-    routeRuleParts.find(part => part !== item.cliType && part !== cliLabel) || '未识别规则';
-  const site = item.siteName?.trim() || '未知站点';
-  const account = item.accountName?.trim() || '未知账户';
-  const apiKey = item.apiKeyName?.trim() || item.apiKeyId?.trim() || '未标记 Key';
-  return `${routeRule} / ${site} / ${account} / ${apiKey}`;
-}
-
 function buildAggregatedSiteSnapshots(
   snapshotsById: Record<string, SiteDailySnapshot[]>,
   siteIds: string[]
@@ -538,7 +544,7 @@ function buildAggregatedSiteSnapshots(
       };
 
       current.capturedAt = Math.max(current.capturedAt, snapshot.capturedAt);
-      current.balance += snapshot.balance;
+      current.balance += toNonNegativeBalance(snapshot.balance);
       current.todayUsage += snapshot.todayUsage;
       current.todayRequests += snapshot.todayRequests;
       current.todayPromptTokens += snapshot.todayPromptTokens;
@@ -595,97 +601,109 @@ function Sparkline({
   }
 
   const chartWidth = 160;
-  const coordinates = buildSparklineCoordinates(values, chartWidth, chartHeight);
+  const pointPadding = Math.max(
+    showPointMarkers ? 4 : 0,
+    strokeWidth > 0 ? strokeWidth / 2 + 1 : 0
+  );
+  const coordinates = buildSparklineCoordinates(values, chartWidth, chartHeight, pointPadding);
   const barHeights = buildSparklineBarHeights(values, chartHeight);
   const barWidth = chartWidth / Math.max(values.length, 1);
 
   return (
-    <svg
-      viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-      className={`${heightClass} w-full`}
-      preserveAspectRatio="none"
-    >
-      {showGuides
-        ? [0.18, 0.52, 0.86].map(ratio => {
-            const y = chartHeight * ratio;
-            return (
-              <line
-                key={`guide-${ratio}`}
-                x1="0"
-                y1={y}
-                x2={chartWidth}
-                y2={y}
-                stroke="currentColor"
-                strokeWidth="1"
-                strokeDasharray="3 4"
-                className={guideClass}
-              />
-            );
-          })
-        : null}
-      {showAreaFill ? (
-        <path
-          d={buildSparklineAreaPath(values, chartWidth, chartHeight)}
-          fill="currentColor"
-          className={areaClass}
-        />
-      ) : null}
-      {showBars
-        ? barHeights.map((barHeight, index) => {
-            const isEmpty = values[index] === null;
-            const x = index * barWidth + barWidth * 0.16;
-            const width = barWidth * 0.68;
-            const y = chartHeight - barHeight;
+    <div className={`relative ${heightClass} w-full overflow-visible`}>
+      <svg
+        viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+        className="absolute inset-0 h-full w-full overflow-visible"
+        preserveAspectRatio="none"
+      >
+        {showGuides
+          ? [0.18, 0.52, 0.86].map(ratio => {
+              const y = chartHeight * ratio;
+              return (
+                <line
+                  key={`guide-${ratio}`}
+                  x1="0"
+                  y1={y}
+                  x2={chartWidth}
+                  y2={y}
+                  stroke="currentColor"
+                  strokeWidth="1"
+                  strokeDasharray="3 4"
+                  vectorEffect="non-scaling-stroke"
+                  className={guideClass}
+                />
+              );
+            })
+          : null}
+        {showAreaFill ? (
+          <path
+            d={buildSparklineAreaPath(values, chartWidth, chartHeight, pointPadding)}
+            fill="currentColor"
+            className={areaClass}
+          />
+        ) : null}
+        {showBars
+          ? barHeights.map((barHeight, index) => {
+              const isEmpty = values[index] === null;
+              const x = index * barWidth + barWidth * 0.16;
+              const width = barWidth * 0.68;
+              const y = chartHeight - barHeight;
 
-            return (
-              <rect
-                key={`bar-${index}`}
-                x={x}
-                y={y}
-                width={width}
-                height={barHeight}
-                rx="2"
-                fill={isEmpty ? 'transparent' : 'currentColor'}
-                stroke={isEmpty ? 'currentColor' : 'none'}
-                strokeWidth={isEmpty ? 1 : 0}
-                className={isEmpty ? emptyBarClass : barClass}
-              />
-            );
-          })
-        : null}
-      {!hideLine ? (
-        <path
-          d={buildSparklinePath(values, chartWidth, chartHeight)}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={strokeWidth}
-          className={strokeClass}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeDasharray={strokeDasharray}
-        />
-      ) : null}
+              return (
+                <rect
+                  key={`bar-${index}`}
+                  x={x}
+                  y={y}
+                  width={width}
+                  height={barHeight}
+                  rx="2"
+                  fill={isEmpty ? 'transparent' : 'currentColor'}
+                  stroke={isEmpty ? 'currentColor' : 'none'}
+                  strokeWidth={isEmpty ? 1 : 0}
+                  className={isEmpty ? emptyBarClass : barClass}
+                />
+              );
+            })
+          : null}
+        {!hideLine ? (
+          <path
+            d={buildSparklinePath(values, chartWidth, chartHeight, pointPadding)}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={strokeWidth}
+            className={strokeClass}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeDasharray={strokeDasharray}
+            vectorEffect="non-scaling-stroke"
+          />
+        ) : null}
+      </svg>
       {showPointMarkers
         ? coordinates.map((coordinate, index) => {
             if (coordinate.value === null && !showEmptyPoints) {
               return null;
             }
 
+            const markerClass =
+              coordinate.value === null
+                ? 'h-[5px] w-[5px] border border-current bg-[var(--surface-2)] text-[var(--line-soft)]'
+                : `h-[5.5px] w-[5.5px] bg-current ${strokeClass}`;
+
             return (
-              <circle
+              <span
                 key={`${index}-${coordinate.x}`}
-                cx={coordinate.x}
-                cy={coordinate.y}
-                r={coordinate.value === null ? 2.4 : 2.8}
-                fill={coordinate.value === null ? 'var(--surface-2)' : 'currentColor'}
-                stroke="currentColor"
-                strokeWidth={coordinate.value === null ? 1.2 : 0}
-                className={coordinate.value === null ? 'text-[var(--line-soft)]' : strokeClass}
+                aria-hidden="true"
+                className={`pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-1/2 rounded-full ${markerClass}`}
+                style={{
+                  left: `${(coordinate.x / chartWidth) * 100}%`,
+                  top: `${(coordinate.y / chartHeight) * 100}%`,
+                }}
               />
             );
           })
         : null}
-    </svg>
+    </div>
   );
 }
 
@@ -820,7 +838,6 @@ function RouteTrendHeroCard({
         <SectionTitle
           icon={Activity}
           title="运营趋势"
-          subtitle="请求、成功率与 token 使用走势"
           actions={
             <div className="flex flex-wrap items-center justify-end gap-2">
               <span className="rounded-full bg-[var(--surface-1)] px-2.5 py-1 text-[10px] font-semibold text-[var(--text-secondary)]">
@@ -965,120 +982,160 @@ function RouteObjectStatsList({ items }: { items: RouteAnalyticsObjectStatsItem[
   );
 }
 
-function RouteFailureRuleMetricsList({ items }: { items: RouteFailureRuleMetric[] }) {
+function useContainerSize<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+
+    const update = () => {
+      setSize({ width: element.clientWidth, height: element.clientHeight });
+    };
+    update();
+
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  return { ref, size };
+}
+
+function ModelHeatmapList({ items }: { items: ModelDistributionItem[] }) {
+  const { ref, size } = useContainerSize<HTMLDivElement>();
+
   if (items.length === 0) {
     return (
-      <div className="flex min-h-[96px] items-center justify-center text-sm text-[var(--text-secondary)]">
-        当前时间窗口暂无规则命中数据
+      <div className="flex min-h-[136px] flex-1 items-center justify-center text-sm text-[var(--text-secondary)]">
+        当前时间窗口暂无模型调用
       </div>
     );
   }
 
-  const maxRequests = Math.max(...items.map(item => item.requests), 0);
+  const layoutWidth = size.width > 0 ? size.width : 360;
+  const layoutHeight = size.height > 0 ? size.height : 136;
+  const nodes = squarifiedTreemap(items, item => item.requests, layoutWidth, layoutHeight);
+  const maxFailureRate = Math.max(
+    ...items.map(item => (item.requests > 0 ? item.failureCount / item.requests : 0)),
+    0.0001
+  );
 
   return (
     <div
-      aria-label="路由规则洞察滚动区域"
-      className="max-h-[104px] overflow-y-auto pr-1 [scrollbar-gutter:stable]"
+      ref={ref}
+      aria-label="模型热力分布 treemap"
+      className="relative min-h-[136px] flex-1 overflow-hidden rounded-[var(--radius-md)] bg-[var(--surface-2)]"
     >
-      <div className="divide-y divide-[var(--line-soft)]">
-        {items.map(item => {
-          const cliLabel = getRouteCliLabel(item.cliType);
-          const modelLabel = item.canonicalModel || '未标记模型';
-          const requestBarWidth =
-            maxRequests > 0 ? Math.max(0, Math.min((item.requests / maxRequests) * 100, 100)) : 0;
-          const failureTextClass =
-            item.failures > 0 ? 'text-[var(--danger)]' : 'text-[var(--text-tertiary)]';
-          const requestBarClass = item.failures > 0 ? 'bg-[var(--danger)]' : 'bg-[var(--accent)]';
+      {nodes.map(({ item, x, y, width, height }) => {
+        const failureRate = item.requests > 0 ? item.failureCount / item.requests : 0;
+        const intensity = Math.min(failureRate / maxFailureRate, 1);
+        const background =
+          item.failureCount > 0
+            ? `color-mix(in srgb, var(--danger) ${20 + intensity * 50}%, var(--surface-3))`
+            : `color-mix(in srgb, var(--accent) ${18 + (item.requests > 0 ? 35 : 0)}%, var(--surface-3))`;
+        const textColor =
+          item.failureCount > 0 && intensity > 0.5
+            ? 'var(--text-on-accent, #fff)'
+            : 'var(--text-primary)';
+        const showLabel = width >= 48 && height >= 28;
+        const showSub = width >= 72 && height >= 44;
 
-          return (
-            <div
-              key={item.id}
-              aria-label={`主要失败规则：${cliLabel} / ${modelLabel}`}
-              className="px-1 py-1.5 [contain-intrinsic-size:60px] [content-visibility:auto]"
-            >
-              <div className="truncate text-xs font-semibold leading-tight text-[var(--text-primary)]">
-                {cliLabel} / {modelLabel}
+        return (
+          <div
+            key={item.id}
+            aria-label={`模型：${item.canonicalModel}`}
+            title={`${item.canonicalModel} · ${getRouteCliLabel(item.cliType)} · 请求 ${item.requests} · 失败 ${item.failureCount} · Tokens ${formatCompactNumber(item.totalTokens)}`}
+            className="absolute overflow-hidden border border-[var(--surface-2)] px-1.5 py-1"
+            style={{
+              left: x,
+              top: y,
+              width,
+              height,
+              background,
+              color: textColor,
+            }}
+          >
+            {showLabel ? (
+              <div className="break-all text-[11px] font-semibold leading-tight">
+                {item.canonicalModel}
               </div>
-              <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[10px] leading-none">
-                <span className="font-medium text-[var(--text-secondary)]">
-                  总请求 {formatCompactNumber(item.requests)}
-                </span>
-                <span className={`font-medium ${failureTextClass}`}>
-                  失败 {formatCompactNumber(item.failures)}
-                </span>
-                <span className="font-medium text-[var(--text-secondary)]">
-                  站点 {formatCompactNumber(item.siteCount)}
-                </span>
-                <span className="font-medium text-[var(--text-secondary)]">
-                  来源 {formatCompactNumber(item.sourceCount)}
-                </span>
+            ) : null}
+            {showSub ? (
+              <div className="break-all text-[10px] leading-tight opacity-80">
+                {formatCompactNumber(item.requests)} req
+                {item.failureCount > 0 ? ` · 失败 ${item.failureCount}` : ''}
               </div>
-              <div className="mt-1.5 h-1.5 rounded-full bg-[var(--surface-1)]">
-                <div
-                  className={`h-1.5 rounded-full ${requestBarClass}`}
-                  style={{ width: `${requestBarWidth}%` }}
-                />
-              </div>
-            </div>
-          );
-        })}
-      </div>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-function RouteFailureList({ items }: { items: RouteRequestLogItem[] }) {
+interface ChannelHealthDisplayItem {
+  key: string;
+  label: string;
+  title: string;
+  successRate: number;
+  windowRequestCount: number;
+  isDisabled: boolean;
+}
+
+function resolveChannelHealthTone(
+  successRate: number,
+  isDisabled: boolean
+): { background: string; label: string } {
+  if (isDisabled || successRate < 0.8) {
+    return { background: 'var(--danger)', label: '<80%' };
+  }
+  if (successRate < 0.95) {
+    return { background: 'var(--warning)', label: '80-95%' };
+  }
+  return { background: 'var(--success)', label: '≥95%' };
+}
+
+function ChannelHealthList({ items }: { items: ChannelHealthDisplayItem[] }) {
   if (items.length === 0) {
     return (
-      <div className="flex min-h-[136px] items-center justify-center text-xs text-[var(--text-secondary)]">
-        最近没有失败请求
+      <div className="flex min-h-[136px] flex-1 items-center justify-center text-sm text-[var(--text-secondary)]">
+        暂无活跃通道
       </div>
     );
   }
 
   return (
     <div
-      aria-label="最近异常请求滚动区域"
-      className="max-h-[136px] overflow-y-auto pr-1 [scrollbar-gutter:stable]"
+      aria-label="通道健康矩阵"
+      className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden pr-1 [scrollbar-gutter:stable]"
     >
-      <div className="divide-y divide-[var(--line-soft)]">
+      <div className="grid grid-cols-[minmax(0,1fr)_32px_minmax(40px,auto)] gap-x-2 gap-y-1">
         {items.map(item => {
-          const statusLabel = item.statusCode ? `HTTP ${item.statusCode}` : '失败';
-          const statusClass =
-            typeof item.statusCode === 'number' && item.statusCode < 500
-              ? 'bg-[var(--warning-soft)] text-[var(--warning)]'
-              : 'bg-[var(--danger-soft)] text-[var(--danger)]';
+          const tone = resolveChannelHealthTone(item.successRate, item.isDisabled);
 
           return (
             <div
-              key={item.id}
-              className="px-1 py-1.5 [contain-intrinsic-size:72px] [content-visibility:auto]"
+              key={item.key}
+              aria-label={`通道健康：${item.label}`}
+              className="contents"
+              title={item.title}
             >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-xs font-semibold text-[var(--text-primary)]">
-                      请求 {item.requestId}
-                    </span>
-                  </div>
-                  <div className="mt-1 text-xs leading-snug text-[var(--danger)]">
-                    {item.error || '上游请求失败'}
-                  </div>
-                </div>
-                <div className="flex shrink-0 flex-col items-end gap-1">
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-[9px] font-semibold ${statusClass}`}
-                  >
-                    {statusLabel}
-                  </span>
-                  <span className="text-[9px] text-[var(--text-tertiary)]">
-                    {formatLogTime(item.createdAt)}
-                  </span>
-                </div>
+              <div className="min-w-0 truncate text-[11px] font-medium text-[var(--text-primary)]">
+                {item.label}
               </div>
-              <div className="mt-1 text-[10px] leading-4 text-[var(--text-secondary)]">
-                路由对象：{buildRouteObjectLabel(item)}
+              <div
+                className="h-3.5 rounded-[3px] border"
+                style={{
+                  background: item.isDisabled
+                    ? 'var(--danger-soft)'
+                    : `color-mix(in srgb, ${tone.background} ${Math.max(item.successRate, 0.1) * 100}%, var(--surface-1))`,
+                  borderColor: item.isDisabled ? 'var(--danger)' : 'transparent',
+                }}
+              />
+              <div className="text-[10px] font-semibold text-[var(--text-secondary)]">
+                {formatPercent(item.successRate * 100)}
               </div>
             </div>
           );
@@ -1090,8 +1147,8 @@ function RouteFailureList({ items }: { items: RouteRequestLogItem[] }) {
 
 function DotMatrixChart({
   values,
-  activeClass = 'bg-[var(--accent)]/75',
-  inactiveClass = 'bg-[var(--line-soft)]/35',
+  activeClass = 'bg-[var(--accent)] opacity-75',
+  inactiveClass = 'bg-[var(--line-soft)] opacity-30',
   rows = 6,
 }: {
   values: Array<number | null>;
@@ -1111,14 +1168,14 @@ function DotMatrixChart({
         {levels.map((level, columnIndex) => (
           <div
             key={`matrix-col-${columnIndex}`}
-            className="grid h-full grid-rows-6 gap-1 [contain-intrinsic-size:56px] [content-visibility:auto]"
+            className="grid h-full grid-rows-6 place-items-center gap-1 [contain-intrinsic-size:56px] [content-visibility:auto]"
           >
             {Array.from({ length: rows }, (_, rowIndex) => {
               const active = values[columnIndex] !== null && rows - rowIndex <= level;
               return (
                 <span
                   key={`matrix-dot-${columnIndex}-${rowIndex}`}
-                  className={`rounded-full ${active ? activeClass : inactiveClass}`}
+                  className={`block h-1.5 w-1.5 rounded-full ${active ? activeClass : inactiveClass}`}
                 />
               );
             })}
@@ -1184,9 +1241,9 @@ function SiteTrendCard({
   return (
     <div
       aria-label={`${label} 趋势卡片`}
-      className="relative flex min-h-[208px] flex-col overflow-hidden rounded-[18px] border border-white/70 bg-[var(--surface-3)] px-5 pb-3 pt-5 shadow-[var(--shadow-sm)]"
+      className="relative flex min-h-[208px] flex-col overflow-hidden rounded-[18px] border border-white/70 bg-[var(--surface-3)] px-4 pb-3 pt-4 shadow-[var(--shadow-sm)]"
     >
-      <div className="relative z-10 flex h-full flex-col">
+      <div className="relative z-10 flex flex-col">
         <div className="flex items-start justify-between gap-3">
           <h3 className="min-w-0 text-[11px] font-semibold tracking-[0.06em] text-[var(--text-secondary)]">
             {label}
@@ -1197,28 +1254,28 @@ function SiteTrendCard({
             {badgeLabel}
           </span>
         </div>
-        <div className="mt-3 text-[22px] font-semibold leading-none tracking-[-0.02em] text-[var(--text-primary)] xl:text-[24px]">
+        <div className="mt-2 text-[18px] font-semibold leading-none tracking-[-0.01em] text-[var(--text-primary)] xl:text-[20px]">
           {valueLabel}
         </div>
-        <div className="mt-auto pt-20 text-[10px] leading-none text-[var(--text-tertiary)]">
-          {latestSnapshotLabel ? `最近记录 ${latestSnapshotLabel}` : '等待更多日级快照'}
-        </div>
+      </div>
+      <div className="pointer-events-none absolute bottom-3 left-4 right-4 z-10 text-[10px] leading-none text-[var(--text-tertiary)]">
+        {latestSnapshotLabel ? `最近记录 ${latestSnapshotLabel}` : '等待更多日级快照'}
       </div>
       {chartVariant === 'area' ? (
-        <div className="pointer-events-none absolute inset-x-0 bottom-7 h-[82px] overflow-hidden">
+        <div className="pointer-events-none absolute inset-x-0 bottom-8 h-[104px] overflow-hidden">
           <Sparkline
             values={chartValues}
             strokeClass={strokeClass}
             showAreaFill={showAreaFill}
             areaClass={areaClass}
-            chartHeight={70}
+            chartHeight={86}
             heightClass="h-full"
             strokeWidth={2.2}
           />
         </div>
       ) : null}
       {chartVariant === 'bars' ? (
-        <div className="pointer-events-none absolute bottom-7 left-5 right-5 h-[64px]">
+        <div className="pointer-events-none absolute bottom-8 left-4 right-4 h-[78px]">
           <Sparkline
             values={chartValues}
             strokeClass="text-transparent"
@@ -1226,31 +1283,31 @@ function SiteTrendCard({
             hideLine
             barClass={barClass}
             emptyBarClass="text-[var(--line-soft)]"
-            chartHeight={60}
+            chartHeight={72}
             heightClass="h-full"
             strokeWidth={0}
           />
         </div>
       ) : null}
       {chartVariant === 'line' ? (
-        <div className="pointer-events-none absolute bottom-7 left-5 right-5 h-[56px]">
+        <div className="pointer-events-none absolute bottom-8 left-4 right-4 h-[74px]">
           <Sparkline
             values={chartValues}
             strokeClass={strokeClass}
             showPointMarkers={showPointMarkers}
             showEmptyPoints={showEmptyPoints}
-            chartHeight={48}
+            chartHeight={64}
             heightClass="h-full"
             strokeWidth={strokeWidth}
           />
         </div>
       ) : null}
       {chartVariant === 'matrix' ? (
-        <div className="pointer-events-none absolute bottom-7 left-5 right-5 h-[64px]">
+        <div className="pointer-events-none absolute bottom-8 left-4 right-4 h-[78px]">
           <DotMatrixChart
             values={chartValues}
-            activeClass="bg-[var(--accent)]/72"
-            inactiveClass="bg-[var(--line-soft)]/28"
+            activeClass="bg-[var(--warning)] opacity-75"
+            inactiveClass="bg-[var(--line-soft)] opacity-30"
           />
         </div>
       ) : null}
@@ -1320,39 +1377,6 @@ function RankedList({
               className={`${compact ? 'h-1.5' : 'h-2'} rounded-full bg-[var(--accent)]`}
               style={{ width: `${Math.max((item.value / scaleMax) * 100, 4)}%` }}
             />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function DistributionList({
-  histogram,
-  emptyText,
-}: {
-  histogram: Record<string, number>;
-  emptyText: string;
-}) {
-  const entries = Object.entries(histogram).sort((left, right) => right[1] - left[1]);
-  if (entries.length === 0) {
-    return <div className="py-6 text-center text-sm text-[var(--text-secondary)]">{emptyText}</div>;
-  }
-
-  const max = Math.max(...entries.map(([, value]) => value), 1);
-  return (
-    <div className="space-y-2">
-      {entries.map(([label, value]) => (
-        <div key={label} className="grid grid-cols-[20px_minmax(0,1fr)_38px] items-center gap-1.5">
-          <div className="truncate text-[11px] text-[var(--text-secondary)]">{label}</div>
-          <div className="h-2 rounded-full bg-[var(--surface-1)]">
-            <div
-              className="h-2 rounded-full bg-[var(--accent)]"
-              style={{ width: `${Math.max((value / max) * 100, 4)}%` }}
-            />
-          </div>
-          <div className="text-right text-[11px] font-medium text-[var(--text-primary)]">
-            {value}
           </div>
         </div>
       ))}
@@ -1439,13 +1463,15 @@ export function DataOverviewPage({
   setPageHeaderActions?: (actions: ReactNode | null) => void;
 } = {}) {
   const config = useConfigStore(state => state.config);
+  const customCliConfigs = useCustomCliConfigStore(state => state.configs);
   const activeTab = useUIStore(state => state.activeTab);
   const view = useUIStore(state => state.overviewSubtab);
   const [routeWindow, setRouteWindow] = useState<RouteWindow>('7d');
   const [routeSummary, setRouteSummary] = useState<RouteSummary | null>(null);
   const [routeDistribution, setRouteDistribution] = useState<RouteDistribution | null>(null);
   const [routeObjectStats, setRouteObjectStats] = useState<RouteAnalyticsObjectStatsItem[]>([]);
-  const [recentRouteLogs, setRecentRouteLogs] = useState<RouteRequestLogItem[]>([]);
+  const [routePathStates, setRoutePathStates] = useState<Record<string, RoutePathState>>({});
+  const [routeRulesById, setRouteRulesById] = useState<Record<string, string>>({});
   const [siteSnapshotsById, setSiteSnapshotsById] = useState<Record<string, SiteDailySnapshot[]>>(
     {}
   );
@@ -1481,7 +1507,7 @@ export function DataOverviewPage({
     setLoading(true);
     setError(null);
     try {
-      const [summaryRes, distributionRes, objectStatsRes, logsRes, snapshotsRes] =
+      const [summaryRes, distributionRes, objectStatsRes, configRes, snapshotsRes] =
         await Promise.all([
           window.electronAPI.route.getAnalyticsSummary({ window: routeWindow }),
           window.electronAPI.route.getAnalyticsDistribution({ window: routeWindow }),
@@ -1490,7 +1516,7 @@ export function DataOverviewPage({
             limit: 8,
             sortBy: 'successRate',
           }),
-          window.electronAPI.route.getRequestLogs({ limit: 200 }),
+          window.electronAPI.route.getConfig(),
           window.electronAPI.overview?.getSiteDailySnapshots({ days: 30 }),
         ]);
 
@@ -1504,7 +1530,17 @@ export function DataOverviewPage({
       setRouteSummary(summaryRes.data || null);
       setRouteDistribution(distributionRes.data || null);
       setRouteObjectStats(objectStatsRes?.success ? objectStatsRes.data || [] : []);
-      setRecentRouteLogs(logsRes?.success ? logsRes.data || [] : []);
+      setRoutePathStates(configRes?.success ? configRes.data?.routePathStates || {} : {});
+      const rulesData = configRes?.success ? configRes.data?.rules : null;
+      if (Array.isArray(rulesData)) {
+        const ruleMap: Record<string, string> = {};
+        for (const rule of rulesData as Array<{ id?: string; name?: string }>) {
+          if (rule?.id) ruleMap[rule.id] = rule.name || rule.id;
+        }
+        setRouteRulesById(ruleMap);
+      } else {
+        setRouteRulesById({});
+      }
       setSiteSnapshotsById(snapshotsRes?.success ? snapshotsRes.data || {} : {});
     } catch (nextError: unknown) {
       setError(nextError instanceof Error ? nextError.message : '加载数据总览失败');
@@ -1549,11 +1585,88 @@ export function DataOverviewPage({
     return denominator > 0 ? Number(((point.successCount / denominator) * 100).toFixed(1)) : 0;
   });
   const tokenTrend = trendPoints.map(point => point.totalTokens);
-  const slowTrend = trendPoints.map(point =>
-    point.requestCount > 0
-      ? Number(((point.slowRequestCount / point.requestCount) * 100).toFixed(1))
-      : 0
+
+  const latencyPercentiles = useMemo(
+    () => computeLatencyPercentiles(routeDistribution?.latencyHistogram || {}),
+    [routeDistribution]
   );
+
+  const modelDistribution = useMemo(
+    () => buildModelDistribution(routeDistribution?.buckets || []).slice(0, 8),
+    [routeDistribution]
+  );
+
+  const activePathStates = useMemo<ChannelHealthDisplayItem[]>(() => {
+    const siteNameById = new Map<string, string>();
+    const accountNameById = new Map<string, string>();
+    const apiKeyNameById = new Map<string, string>();
+
+    if (config) {
+      for (const site of config.sites || []) {
+        if (site?.id) siteNameById.set(site.id, site.name || site.id);
+
+        const siteCacheKeys =
+          (site as { cached_data?: { api_keys?: Array<{ id?: string | number; name?: string }> } })
+            ?.cached_data?.api_keys || [];
+        for (const info of siteCacheKeys) {
+          const id = info?.id != null ? String(info.id) : null;
+          if (id) apiKeyNameById.set(id, info.name || id);
+        }
+      }
+
+      for (const account of config.accounts || []) {
+        if (account?.id) accountNameById.set(account.id, account.account_name || account.id);
+
+        const accountCacheKeys = account?.cached_data?.api_keys || [];
+        for (const info of accountCacheKeys) {
+          const id = info?.id != null ? String(info.id) : null;
+          if (id) apiKeyNameById.set(id, info.name || id);
+        }
+      }
+    }
+
+    for (const customCli of customCliConfigs || []) {
+      if (!customCli?.id) continue;
+      const label = customCli.name?.trim() || '自定义 CLI';
+      siteNameById.set(`custom-cli-site-${encodeURIComponent(customCli.id)}`, label);
+      accountNameById.set(`custom-cli-account-${encodeURIComponent(customCli.id)}`, label);
+      apiKeyNameById.set(`custom-cli-key-${encodeURIComponent(customCli.id)}`, 'API Key');
+    }
+
+    const now = Date.now();
+    return Object.values(routePathStates)
+      .filter(state => state.windowRequestCount > 0)
+      .sort((a, b) => b.windowRequestCount - a.windowRequestCount)
+      .slice(0, 8)
+      .map(state => {
+        const siteLabel = state.siteId
+          ? siteNameById.get(state.siteId) || state.siteId
+          : '未知站点';
+        const accountLabel = state.accountId
+          ? accountNameById.get(state.accountId) || state.accountId
+          : null;
+        const apiKeyLabel = state.apiKeyId
+          ? apiKeyNameById.get(state.apiKeyId) || state.apiKeyId
+          : null;
+        const ruleLabel = state.routeRuleId ? routeRulesById[state.routeRuleId] : null;
+        const modelLabel = state.canonicalModel || ruleLabel || '未标记';
+        const isDisabled = Boolean(state.disabledUntil && state.disabledUntil > now);
+        const parts = [modelLabel, siteLabel, accountLabel, apiKeyLabel].filter(
+          Boolean
+        ) as string[];
+        const label = parts.join(' / ');
+        const title = `${label} · 请求 ${state.windowRequestCount} · 成功率 ${formatPercent(state.successRate * 100)}${isDisabled ? ' · 已禁用' : ''}`;
+
+        return {
+          key: `${state.routeRuleId}:${state.siteId}:${state.accountId}:${state.apiKeyId}`,
+          label,
+          title,
+          successRate: state.successRate,
+          windowRequestCount: state.windowRequestCount,
+          isDisabled,
+        };
+      });
+  }, [config, customCliConfigs, routePathStates, routeRulesById]);
 
   const enabledSiteMetrics = useMemo(
     () => siteMetrics.filter(metric => metric.enabled),
@@ -1577,7 +1690,7 @@ export function DataOverviewPage({
   const activeSiteCount = enabledSiteMetrics.length;
   const visibleSiteCount = siteMetrics.length;
   const activeModelCount = siteMetrics.reduce((sum, metric) => sum + metric.modelCount, 0);
-  const totalBalance = siteMetrics.reduce((sum, metric) => sum + metric.balance, 0);
+  const totalBalance = sumNonNegativeBalances(siteMetrics);
   const totalUsage = siteMetrics.reduce((sum, metric) => sum + metric.todayUsage, 0);
   const totalTodayRequestCount = siteMetrics.reduce((sum, metric) => sum + metric.todayRequests, 0);
   const totalTodayPromptTokenCount = siteMetrics.reduce(
@@ -1607,7 +1720,7 @@ export function DataOverviewPage({
       siteName: AGGREGATED_SITE_OPTION_LABEL,
       enabled: true,
       accountCount: siteMetrics.reduce((sum, metric) => sum + metric.accountCount, 0),
-      balance: siteMetrics.reduce((sum, metric) => sum + metric.balance, 0),
+      balance: sumNonNegativeBalances(siteMetrics),
       todayUsage: siteMetrics.reduce((sum, metric) => sum + metric.todayUsage, 0),
       todayRequests: siteMetrics.reduce((sum, metric) => sum + metric.todayRequests, 0),
       todayPromptTokens: siteMetrics.reduce((sum, metric) => sum + metric.todayPromptTokens, 0),
@@ -1698,75 +1811,8 @@ export function DataOverviewPage({
     [enabledSiteMetrics]
   );
 
-  const ruleMetrics = useMemo(() => {
-    const grouped = new Map<
-      string,
-      {
-        id: string;
-        ruleId: string;
-        cliType: RouteCliType;
-        canonicalModel: string;
-        requests: number;
-        failures: number;
-        siteKeys: Set<string>;
-        sourceKeys: Set<string>;
-      }
-    >();
-
-    for (const bucket of routeDistribution?.buckets || []) {
-      if (!bucket.routeRuleId) continue;
-      const canonicalModel = bucket.canonicalModel || '未标记模型';
-      const id = `${bucket.routeRuleId}:${bucket.cliType}:${canonicalModel}`;
-      const current = grouped.get(id) || {
-        id,
-        ruleId: bucket.routeRuleId,
-        cliType: bucket.cliType,
-        canonicalModel,
-        requests: 0,
-        failures: 0,
-        siteKeys: new Set<string>(),
-        sourceKeys: new Set<string>(),
-      };
-      current.requests += bucket.requestCount;
-      current.failures += bucket.failureCount;
-      current.siteKeys.add(bucket.siteId || '*');
-      current.sourceKeys.add(
-        `${bucket.siteId || '*'}:${bucket.accountId || '*'}:${bucket.apiKeyId || '*'}`
-      );
-      grouped.set(id, current);
-    }
-
-    return Array.from(grouped.values())
-      .map(metric => ({
-        id: metric.id,
-        ruleId: metric.ruleId,
-        cliType: metric.cliType,
-        canonicalModel: metric.canonicalModel,
-        requests: metric.requests,
-        failures: metric.failures,
-        siteCount: metric.siteKeys.size,
-        sourceCount: metric.sourceKeys.size,
-      }))
-      .sort(
-        (left, right) =>
-          right.failures - left.failures ||
-          right.requests - left.requests ||
-          left.id.localeCompare(right.id)
-      );
-  }, [routeDistribution]);
-
-  const failingLogs = useMemo(
-    () =>
-      [...recentRouteLogs]
-        .filter(item => item.outcome === 'failure')
-        .sort((left, right) => right.createdAt - left.createdAt)
-        .slice(0, 5),
-    [recentRouteLogs]
-  );
-  const latestSlowRatio = slowTrend.length > 0 ? slowTrend[slowTrend.length - 1] || 0 : 0;
   const requestTrendSummary = useMemo(() => buildTrendDeltaSummary(requestTrend), [requestTrend]);
   const tokenTrendSummary = useMemo(() => buildTrendDeltaSummary(tokenTrend), [tokenTrend]);
-  const slowTrendSummary = useMemo(() => buildTrendDeltaSummary(slowTrend), [slowTrend]);
 
   const pageContainerClassName = 'flex-1 overflow-y-auto px-6 py-4';
   const pageContentClassName = view === 'route' ? 'flex min-h-full flex-col gap-4' : 'space-y-4';
@@ -1774,7 +1820,7 @@ export function DataOverviewPage({
     () => (
       <div className="flex flex-wrap items-center justify-end gap-2">
         {view === 'route'
-          ? (['24h', '7d', '30d'] as RouteWindow[]).map(windowOption => (
+          ? ROUTE_WINDOW_OPTIONS.map(windowOption => (
               <AppButton
                 key={windowOption}
                 variant={routeWindow === windowOption ? 'primary' : 'secondary'}
@@ -1851,7 +1897,13 @@ export function DataOverviewPage({
             </div>
 
             <div className="grid gap-3 xl:grid-cols-[minmax(0,0.4fr)_minmax(0,0.6fr)] xl:items-stretch">
-              <AppCard blur={false} hoverable={false} className="xl:h-[208px]">
+              <AppCard
+                blur={false}
+                hoverable={false}
+                role="region"
+                aria-label="每日签到概览"
+                className="xl:h-[248px]"
+              >
                 <AppCardContent className="flex h-full flex-col p-3.5">
                   <SectionTitle icon={Activity} title="每日签到概览" />
                   <div className="mt-0.5 min-h-0 flex-1">
@@ -1863,7 +1915,13 @@ export function DataOverviewPage({
                 </AppCardContent>
               </AppCard>
 
-              <AppCard blur={false} hoverable={false} className="xl:h-[208px]">
+              <AppCard
+                blur={false}
+                hoverable={false}
+                role="region"
+                aria-label="站点资源概览"
+                className="xl:h-[248px]"
+              >
                 <AppCardContent className="flex h-full flex-col p-3.5">
                   <SectionTitle icon={Wallet} title="站点资源概览" />
                   <div className="grid min-h-0 flex-1 gap-3 md:grid-cols-2">
@@ -2026,7 +2084,7 @@ export function DataOverviewPage({
                 }
                 hint={
                   routeSummary && routeSummary.totalTokens > 0
-                    ? `Prompt ${formatCompactNumber(routeSummary.promptTokens)} / Completion ${formatCompactNumber(routeSummary.completionTokens)}`
+                    ? `Prompt ${formatCompactNumber(routeSummary.promptTokens)} / Completion ${formatCompactNumber(routeSummary.completionTokens)} / Cache ${formatCompactNumber((routeSummary.cacheCreationTokens || 0) + (routeSummary.cacheReadTokens || 0))}`
                     : '上游未返回 usage 或暂无成功请求'
                 }
                 chip={formatTrendDeltaBadge(
@@ -2038,22 +2096,24 @@ export function DataOverviewPage({
                 chipToneClass="bg-[var(--warning-soft)] text-[var(--warning)]"
               />
               <RouteMetricCard
-                label="响应体验"
-                value={formatPercent(latestSlowRatio)}
-                hint="慢请求占比，按耗时分桶估算"
-                chip={formatTrendDeltaBadge(
-                  slowTrendSummary.direction,
-                  slowTrendSummary.deltaPercent,
-                  slowTrendSummary.previousValue
-                )}
+                label="延迟分位数"
+                value={
+                  latencyPercentiles.sampleCount < 20
+                    ? '样本不足'
+                    : formatLatency(latencyPercentiles.p99)
+                }
+                hint={
+                  latencyPercentiles.sampleCount < 20
+                    ? `当前样本 ${latencyPercentiles.sampleCount} < 20`
+                    : `P90 ${formatLatency(latencyPercentiles.p90)} / 样本 ${latencyPercentiles.sampleCount}`
+                }
+                chip="P99"
                 toneClass={
-                  latestSlowRatio >= 20 ? 'text-[var(--danger)]' : 'text-[var(--text-primary)]'
+                  latencyPercentiles.p99 !== null && latencyPercentiles.p99 >= 3000
+                    ? 'text-[var(--danger)]'
+                    : 'text-[var(--text-primary)]'
                 }
-                chipToneClass={
-                  latestSlowRatio >= 20
-                    ? 'bg-[var(--danger-soft)] text-[var(--danger)]'
-                    : 'bg-[var(--surface-1)] text-[var(--text-secondary)]'
-                }
+                chipToneClass="bg-[var(--accent-soft)] text-[var(--accent)]"
               />
             </div>
 
@@ -2072,11 +2132,7 @@ export function DataOverviewPage({
                 className="min-h-[264px] border border-white/70 bg-[var(--surface-3)] shadow-[var(--shadow-sm)]"
               >
                 <AppCardContent className="flex h-full min-h-0 flex-col p-4">
-                  <SectionTitle
-                    icon={Gauge}
-                    title="活跃对象"
-                    subtitle="按站点 / 账户 / API Key 聚合"
-                  />
+                  <SectionTitle icon={Gauge} title="活跃对象" />
                   <RouteObjectStatsList items={routeObjectStats} />
                 </AppCardContent>
               </AppCard>
@@ -2089,22 +2145,8 @@ export function DataOverviewPage({
                 className="h-[216px] border border-white/70 bg-[var(--surface-3)] shadow-[var(--shadow-sm)]"
               >
                 <AppCardContent className="flex h-full min-h-0 flex-col p-3.5">
-                  <SectionTitle icon={ShieldAlert} title="异常摘要" />
-                  <div className="grid min-h-0 flex-1 gap-3 md:grid-cols-[minmax(180px,0.8fr)_minmax(0,1.2fr)]">
-                    <div className="min-h-0 overflow-hidden rounded-[var(--radius-lg)] bg-[var(--surface-2)] px-3.5 py-3">
-                      <div className="mb-2 text-xs text-[var(--text-secondary)]">状态码分布</div>
-                      <DistributionList
-                        histogram={routeDistribution?.statusCodeHistogram || {}}
-                        emptyText="当前时间窗口暂无状态码统计"
-                      />
-                    </div>
-                    <div className="min-h-0 rounded-[var(--radius-lg)] bg-[var(--surface-2)] px-3.5 py-3">
-                      <div className="mb-2 flex items-center justify-between gap-2">
-                        <span className="text-xs text-[var(--text-secondary)]">主要失败规则</span>
-                      </div>
-                      <RouteFailureRuleMetricsList items={ruleMetrics} />
-                    </div>
-                  </div>
+                  <SectionTitle icon={Layers} title="模型热力分布" />
+                  <ModelHeatmapList items={modelDistribution} />
                 </AppCardContent>
               </AppCard>
 
@@ -2114,8 +2156,8 @@ export function DataOverviewPage({
                 className="h-[216px] border border-white/70 bg-[var(--surface-3)] shadow-[var(--shadow-sm)]"
               >
                 <AppCardContent className="flex h-full min-h-0 flex-col p-3.5">
-                  <SectionTitle icon={AlertTriangle} title="最近异常" />
-                  <RouteFailureList items={failingLogs} />
+                  <SectionTitle icon={Shield} title="通道健康矩阵" />
+                  <ChannelHealthList items={activePathStates} />
                 </AppCardContent>
               </AppCard>
             </div>

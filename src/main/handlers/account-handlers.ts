@@ -43,6 +43,7 @@ export function registerAccountHandlers(): void {
         auto_refresh?: boolean;
         auto_refresh_interval?: number;
         cli_config?: any;
+        anyRouterConfig?: { userHash?: string };
       }
     ) => {
       try {

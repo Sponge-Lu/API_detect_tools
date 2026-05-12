@@ -16,12 +16,14 @@ import type { SiteConfig } from '../../../main/types/token';
 import type { DetectionResult } from '../../App';
 import type { CliCompatibilityResult } from '../../store/detectionStore';
 import type { CliConfig } from '../../../shared/types/cli-config';
+import type { AnyRouterAccountConfig } from '../../../shared/types/site';
 
 export interface SiteCardEditAccount {
   id: string;
   account_name?: string;
   access_token?: string;
   user_id?: string;
+  anyRouterConfig?: AnyRouterAccountConfig;
 }
 
 export interface SiteCardProps {
@@ -37,6 +39,7 @@ export interface SiteCardProps {
   accountName?: string;
   accountAccessToken?: string;
   accountUserId?: string;
+  accountAnyRouterConfig?: AnyRouterAccountConfig;
   /** 复合 key（site.name::accountId），用于 expandedSites / detectingSites 等 */
   cardKey?: string;
 

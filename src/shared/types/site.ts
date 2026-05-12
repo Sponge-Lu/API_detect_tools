@@ -178,6 +178,13 @@ export type AccountAuthSource = 'main_profile' | 'isolated_profile' | 'manual';
 export type AccountStatus = 'active' | 'expired' | 'revoked';
 
 /**
+ * AnyRouter 专用配置
+ */
+export interface AnyRouterAccountConfig {
+  userHash?: string; // 64位十六进制哈希，从 Claude Code 抓包或自动提取获取
+}
+
+/**
  * 账户凭证 - 存储在 config.json 的多账户数据
  * 与 SiteAccount（TokenService 运行时 DTO）不同，这是持久化存储格式
  */
@@ -193,6 +200,7 @@ export interface AccountCredential {
   browser_profile_path?: string; // isolated profile 持久化路径
   cached_data?: DetectionCacheData; // 账户级检测缓存
   cli_config?: CliConfig; // 账户级 CLI 配置
+  anyRouterConfig?: AnyRouterAccountConfig; // AnyRouter 专用配置
   metadata?: {
     oauth_provider?: 'github' | 'linuxdo';
     supports_checkin?: boolean;
@@ -206,6 +214,11 @@ export interface AccountCredential {
 /** 生成唯一账户ID */
 export function generateAccountId(): string {
   return `acct_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+}
+
+/** 判断是否为 AnyRouter 站点 */
+export function isAnyRouterSite(siteName: string): boolean {
+  return siteName.trim().toLowerCase() === 'any router';
 }
 
 // ============= 检测缓存数据 =============

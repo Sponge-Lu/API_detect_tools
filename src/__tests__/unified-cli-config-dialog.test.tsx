@@ -5,7 +5,7 @@ import { UnifiedCliConfigDialog } from '../renderer/components/dialogs/UnifiedCl
 import type { CliConfig } from '../shared/types/cli-config';
 import { useDetectionStore } from '../renderer/store/detectionStore';
 import { useRouteStore } from '../renderer/store/routeStore';
-import { buildProbeKey } from '../shared/types/route-proxy';
+import { DEFAULT_ROUTING_CONFIG, buildProbeKey } from '../shared/types/route-proxy';
 import type { ModelPricingData, UnifiedConfig } from '../shared/types/site';
 
 vi.mock('../renderer/store/toastStore', () => ({
@@ -115,7 +115,7 @@ describe('UnifiedCliConfigDialog', () => {
     });
     useRouteStore.setState({
       cliProbeLoaded: false,
-      cliProbeTimeRange: '24h',
+      cliProbeTimeRange: '7d',
       fetchCliProbeData: vi.fn().mockResolvedValue(undefined),
       fetchConfig: vi.fn().mockResolvedValue(undefined),
     });
@@ -261,7 +261,7 @@ describe('UnifiedCliConfigDialog', () => {
     const fetchConfigMock = vi.fn().mockResolvedValue(undefined);
     useRouteStore.setState({
       cliProbeLoaded: true,
-      cliProbeTimeRange: '24h',
+      cliProbeTimeRange: '7d',
       fetchCliProbeData: fetchCliProbeDataMock,
       fetchConfig: fetchConfigMock,
     });
@@ -369,12 +369,79 @@ describe('UnifiedCliConfigDialog', () => {
     );
 
     await waitFor(() => expect(fetchConfigMock).toHaveBeenCalled());
-    expect(fetchCliProbeDataMock).toHaveBeenCalledWith('24h', true);
+    expect(fetchCliProbeDataMock).toHaveBeenCalledWith('7d', true);
     expect(useDetectionStore.getState().cliCompatibility['Claude Hub::acct-1']).toMatchObject({
       codex: true,
       codexDetail: { responses: true },
       sourceLabel: '来自站点管理测试 · Primary',
       testedAt,
+    });
+  });
+
+  it('shows newer route probe results in the matching selected-model slot', async () => {
+    const probeKey = buildProbeKey('site-1', 'acct-1', 'codex', 'gpt-4.1');
+    useRouteStore.setState({
+      config: {
+        ...DEFAULT_ROUTING_CONFIG,
+        cliProbe: {
+          ...DEFAULT_ROUTING_CONFIG.cliProbe,
+          latest: {
+            [probeKey]: {
+              probeKey,
+              siteId: 'site-1',
+              accountId: 'acct-1',
+              cliType: 'codex',
+              canonicalModel: 'gpt-4.1',
+              rawModel: 'gpt-4.1',
+              healthy: false,
+              lastSample: {
+                sampleId: 'route-sample-1',
+                probeKey,
+                siteId: 'site-1',
+                accountId: 'acct-1',
+                cliType: 'codex',
+                canonicalModel: 'gpt-4.1',
+                rawModel: 'gpt-4.1',
+                success: false,
+                source: 'routeProbe',
+                statusCode: 503,
+                testedAt: 1777000000000,
+              },
+              lastFailureAt: 1777000000000,
+            },
+          },
+        },
+      },
+    });
+
+    render(
+      <UnifiedCliConfigDialog
+        isOpen={true}
+        siteId="site-1"
+        siteName="Claude Hub"
+        accountId="acct-1"
+        accountName="Primary"
+        siteUrl="https://example.com"
+        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
+        siteModels={['claude-3-5-sonnet', 'gpt-4.1']}
+        currentConfig={{
+          ...initialConfig,
+          codex: {
+            ...initialConfig.codex!,
+            testResults: [{ model: 'gpt-4.1', success: true, timestamp: 1776000000000 }],
+          },
+        }}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('Codex').closest('button') as HTMLButtonElement);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('失败')).toBeInTheDocument();
     });
   });
 });

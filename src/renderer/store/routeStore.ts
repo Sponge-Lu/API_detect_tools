@@ -16,6 +16,7 @@ import type {
   RouteCliProbeSample,
   RouteCliProbeSiteView,
   RouteCliType,
+  RoutePathStateResetParams,
 } from '../../shared/types/route-proxy';
 import type { UnifiedConfig } from '../../shared/types/site';
 import { useDetectionStore } from './detectionStore';
@@ -52,6 +53,7 @@ interface RouteState {
   upsertRule: (rule: RouteRule) => Promise<RouteRule | null>;
   deleteRule: (ruleId: string) => Promise<boolean>;
   resetStats: (ruleId?: string) => Promise<void>;
+  resetPathStates: (params?: RoutePathStateResetParams) => Promise<number | null>;
 
   // Actions - 服务器
   startServer: () => Promise<boolean>;
@@ -95,7 +97,7 @@ export const useRouteStore = create<RouteState>((set, get) => ({
   cliProbeHistory: [],
   cliProbeLatest: [],
   cliProbeView: [],
-  cliProbeTimeRange: '24h',
+  cliProbeTimeRange: '7d',
   cliProbeLoaded: false,
   cliProbeRequestId: 0,
   cliProbeError: null,
@@ -164,6 +166,26 @@ export const useRouteStore = create<RouteState>((set, get) => ({
     await window.electronAPI.route?.resetStats(ruleId);
     await get().fetchConfig();
     sessionEventLog.info('route', ruleId ? `已重置规则统计：${ruleId}` : '已重置全部路由统计');
+  },
+
+  resetPathStates: async params => {
+    const res = await window.electronAPI.route?.resetPathStates(params);
+    if (res?.success) {
+      await get().fetchConfig();
+      const cleared = res.data?.cleared ?? 0;
+      sessionEventLog.info(
+        'route',
+        params?.canonicalModel
+          ? `已恢复路由路径：${params.canonicalModel}（${cleared}）`
+          : params?.routeRuleId
+            ? `已恢复路由规则路径：${params.routeRuleId}（${cleared}）`
+            : `已恢复全部路由路径（${cleared}）`
+      );
+      return cleared;
+    }
+
+    sessionEventLog.error('route', '路由路径恢复失败');
+    return null;
   },
 
   startServer: async () => {

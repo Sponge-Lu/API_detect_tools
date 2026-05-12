@@ -5,26 +5,57 @@
  * 定位: 路由页 CLI 可用性子面板
  */
 
-import { useEffect, useMemo, useRef, useState, memo } from 'react';
-import type { CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { Play, Loader2 } from 'lucide-react';
 import { useShallow } from 'zustand/shallow';
 import { useRouteStore } from '../../../store/routeStore';
 import { toast } from '../../../store/toastStore';
-import { AppCard, AppCardContent } from '../../AppCard';
+import { AppCard } from '../../AppCard';
 import { AppButton } from '../../AppButton/AppButton';
-import { AppInput } from '../../AppInput';
 import ClaudeCodeIcon from '../../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../../assets/cli-icons/codex.svg';
 import GeminiIcon from '../../../assets/cli-icons/gemini.svg';
-import type {
-  RouteCliType,
-  RouteCliProbeSample,
-  RouteCliProbeCliView,
+import {
+  DEFAULT_CLI_PROBE_CONFIG,
+  type RouteCliType,
+  type RouteCliProbeSample,
+  type RouteCliProbeCliView,
 } from '../../../../shared/types/route-proxy';
 
-type TimeRange = '24h' | '7d';
-const CLI_PROBE_TIME_RANGES: TimeRange[] = ['24h', '7d'];
+interface CliUsabilityTabProps {
+  setPageHeaderActions?: (actions: ReactNode | null) => void;
+}
+
+type ProbeSettingsUpdate = {
+  enabled: boolean;
+  intervalMinutes: number;
+};
+
+type ProbeSettingsDraft = {
+  enabled: boolean;
+  intervalHoursInput: string;
+};
+
+type ProbeSettingsProps = {
+  enabled: boolean;
+  intervalHoursInput: string;
+  intervalError: string | null;
+  saving: boolean;
+  onToggle: () => void;
+  onIntervalChange: (value: string) => void;
+};
+
+type HeaderActionsProps = ProbeSettingsProps & {
+  probing: boolean;
+  onProbeNow: () => void;
+};
+
+type TimeRange = '7d';
+const MIN_CLI_PROBE_INTERVAL_HOURS = 2;
+const MAX_CLI_PROBE_INTERVAL_HOURS = 24;
+const CLI_PROBE_SETTINGS_AUTOSAVE_DELAY_MS = 400;
+const CLI_PROBE_TIME_RANGE: TimeRange = '7d';
 const CLI_TYPES: RouteCliType[] = ['claudeCode', 'codex', 'geminiCli'];
 const CLI_USABILITY_GRID_TEMPLATE = '112px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)';
 const HISTORY_BAR_GAP_PX = 1;
@@ -32,12 +63,6 @@ const HISTORY_CONFIG: Record<
   TimeRange,
   { pointCount: number; windowMs: number; barHeight: number; availabilityLabel: string }
 > = {
-  '24h': {
-    pointCount: 32,
-    windowMs: 24 * 60 * 60 * 1000,
-    barHeight: 24,
-    availabilityLabel: '最近24小时可用率',
-  },
   '7d': {
     pointCount: 32,
     windowMs: 7 * 24 * 60 * 60 * 1000,
@@ -79,8 +104,12 @@ const CLI_META: Record<
 
 interface HistorySlot {
   key: string;
-  sample: RouteCliProbeSample | null;
-  modelName: string | null;
+  probeRunId: string | null;
+  testedAt: number | null;
+  samples: Array<{
+    sample: RouteCliProbeSample;
+    modelName: string;
+  }>;
 }
 
 interface HistoryTrackLayout {
@@ -114,7 +143,8 @@ function getProbeReplyText(
   sample:
     | Pick<RouteCliProbeSample, 'claudeDetail' | 'codexDetail' | 'geminiDetail'>
     | null
-    | undefined
+    | undefined,
+  maxLength = 72
 ): string {
   const replyText =
     sample?.claudeDetail?.replyText ??
@@ -122,30 +152,43 @@ function getProbeReplyText(
     sample?.geminiDetail?.replyText;
   const normalized = replyText?.replace(/\s+/g, ' ').trim() ?? '';
   if (!normalized) return '';
-  return normalized.length <= 72 ? normalized : `${normalized.slice(0, 69)}...`;
+  return normalized.length <= maxLength ? normalized : `${normalized.slice(0, maxLength - 3)}...`;
 }
 
-function getSegmentColor(sample: RouteCliProbeSample | null) {
-  if (!sample) return 'bg-[var(--cli-history-empty)]';
-  return sample.success ? 'bg-[var(--cli-history-success)]' : 'bg-[var(--cli-history-danger)]';
+function truncateSummary(value: string, maxLength: number): string {
+  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 3)}...`;
 }
 
-function formatProbeResult(sample: RouteCliProbeSample | null) {
+function getSegmentColor(slot: HistorySlot) {
+  if (slot.samples.length === 0) return 'bg-[var(--cli-history-empty)]';
+  const successCount = slot.samples.filter(item => item.sample.success).length;
+  if (successCount === slot.samples.length) return 'bg-[var(--cli-history-success)]';
+  if (successCount === 0) return 'bg-[var(--cli-history-danger)]';
+  return 'bg-[var(--warning)]';
+}
+
+function formatProbeResult(
+  sample: RouteCliProbeSample | null,
+  options?: { replyLimit?: number; summaryLimit?: number }
+) {
   if (!sample) return '未测试';
-  const replyText = getProbeReplyText(sample);
+  const replyText = getProbeReplyText(sample, options?.replyLimit ?? 72);
+  let result: string;
   if (sample.success) {
     if (replyText) {
-      return `回答 ${replyText}`;
+      result = `回答 ${replyText}`;
+    } else {
+      result = `对话时间 ${formatProbeLatency(sample.totalLatencyMs)}`;
     }
-    return `对话时间 ${formatProbeLatency(sample.totalLatencyMs)}`;
+  } else if (sample.statusCode !== undefined) {
+    result = `错误码 ${sample.statusCode}`;
+  } else if (sample.error) {
+    result = replyText ? `${sample.error} | 回答 ${replyText}` : sample.error;
+  } else {
+    result = replyText ? `失败 | 回答 ${replyText}` : '失败';
   }
-  if (sample.statusCode !== undefined) {
-    return `错误码 ${sample.statusCode}`;
-  }
-  if (sample.error) {
-    return replyText ? `${sample.error} | 回答 ${replyText}` : sample.error;
-  }
-  return replyText ? `失败 | 回答 ${replyText}` : '失败';
+
+  return options?.summaryLimit ? truncateSummary(result, options.summaryLimit) : result;
 }
 
 function buildModelResultTooltip(
@@ -179,47 +222,70 @@ function buildHistorySlots(
   windowStart: number,
   windowEnd: number
 ): HistorySlot[] {
-  const events = models
-    .flatMap((model, modelIndex) =>
-      (model?.history ?? [])
-        .filter(sample => sample.testedAt >= windowStart && sample.testedAt <= windowEnd)
-        .map((sample, sampleIndex) => ({
-          key: `${sample.sampleId ?? `${sample.testedAt}-${modelIndex}-${sampleIndex}`}`,
-          sample,
-          modelName: model?.canonicalModel || `模型${modelIndex + 1}`,
-        }))
-    )
-    .sort((left, right) => left.sample.testedAt - right.sample.testedAt)
+  const groups = new Map<string, HistorySlot>();
+  models.forEach((model, modelIndex) => {
+    (model?.history ?? [])
+      .filter(sample => sample.testedAt >= windowStart && sample.testedAt <= windowEnd)
+      .forEach(sample => {
+        const probeRunId = sample.probeRunId;
+        if (!probeRunId) return;
+        const existing = groups.get(probeRunId);
+        const modelName = model?.canonicalModel || `模型${modelIndex + 1}`;
+        if (existing) {
+          existing.testedAt = Math.max(existing.testedAt ?? sample.testedAt, sample.testedAt);
+          existing.samples.push({ sample, modelName });
+          return;
+        }
+
+        groups.set(probeRunId, {
+          key: probeRunId,
+          probeRunId,
+          testedAt: sample.testedAt,
+          samples: [{ sample, modelName }],
+        });
+      });
+  });
+
+  const events = Array.from(groups.values())
+    .map(slot => ({
+      ...slot,
+      samples: [...slot.samples].sort((left, right) =>
+        left.modelName.localeCompare(right.modelName)
+      ),
+    }))
+    .sort((left, right) => (left.testedAt ?? 0) - (right.testedAt ?? 0))
     .slice(-pointCount);
 
   const emptyCount = Math.max(0, pointCount - events.length);
   const emptySlots: HistorySlot[] = Array.from({ length: emptyCount }, (_, index) => ({
     key: `empty-${index}`,
-    sample: null,
-    modelName: null,
+    probeRunId: null,
+    testedAt: null,
+    samples: [],
   }));
 
-  const eventSlots: HistorySlot[] = events.map(event => ({
-    key: event.key,
-    sample: event.sample,
-    modelName: event.modelName,
-  }));
-
-  return [...emptySlots, ...eventSlots];
+  return [...emptySlots, ...events];
 }
 
 function buildHistoryTooltip(slot: HistorySlot) {
-  if (!slot.sample) {
+  if (slot.samples.length === 0) {
     return '未测试';
   }
 
   const lines = [
-    `模型：${slot.modelName || '—'}`,
-    `测试时间：${formatProbeDateTime(slot.sample.testedAt)}`,
-    `对话时间：${formatProbeLatency(slot.sample.totalLatencyMs)}`,
-    `结果：${slot.sample.success ? '兼容' : '失败'}`,
-    `摘要：${formatProbeResult(slot.sample)}`,
+    `检测批次：${slot.probeRunId || '—'}`,
+    `测试时间：${formatProbeDateTime(slot.testedAt ?? undefined)}`,
   ];
+
+  slot.samples.forEach(({ sample, modelName }, index) => {
+    lines.push(
+      '',
+      `${index + 1}. 模型：${modelName || '—'}`,
+      `对话时间：${formatProbeLatency(sample.totalLatencyMs)}`,
+      `结果：${sample.success ? '兼容' : '失败'}`,
+      `摘要：${formatProbeResult(sample, { replyLimit: 295, summaryLimit: 295 })}`
+    );
+  });
 
   return lines.join('\n');
 }
@@ -283,9 +349,8 @@ const HistoryBars = memo(function HistoryBars({
 }) {
   const { pointCount, barHeight, slots, tooltips } = useMemo(() => {
     const { pointCount, windowMs, barHeight } = HISTORY_CONFIG[timeRange];
-    const bucketMs = Math.floor(windowMs / pointCount);
-    const windowEnd = Math.floor(Date.now() / bucketMs) * bucketMs;
-    const windowStart = windowEnd - bucketMs * (pointCount - 1);
+    const windowEnd = Date.now();
+    const windowStart = windowEnd - windowMs;
     const slots = buildHistorySlots(models, pointCount, windowStart, windowEnd);
 
     return {
@@ -346,7 +411,7 @@ const HistoryBars = memo(function HistoryBars({
           {slots.map((slot, slotIndex) => (
             <div
               key={slot.key}
-              className={`h-full cursor-help rounded-[3px] transition-opacity hover:opacity-80 ${getSegmentColor(slot.sample)}`}
+              className={`h-full cursor-help rounded-[3px] transition-opacity hover:opacity-80 ${getSegmentColor(slot)}`}
               title={tooltips[slotIndex]}
               aria-label={tooltips[slotIndex]}
             />
@@ -364,7 +429,7 @@ function getAvailabilityMeta(models: RouteCliProbeCliView['models'], timeRange: 
   const rangeStart = Date.now() - windowMs;
   const samples = models
     .flatMap(model => model?.history ?? [])
-    .filter(sample => sample.testedAt >= rangeStart);
+    .filter(sample => sample.probeRunId && sample.testedAt >= rangeStart);
 
   const total = samples.length;
   const passed = samples.filter(sample => sample.success).length;
@@ -388,18 +453,37 @@ function getAvailabilityMeta(models: RouteCliProbeCliView['models'], timeRange: 
   };
 }
 
-function parseIntervalMinutesInput(value: string): number | null {
+function parseIntervalHoursInput(value: string): number | null {
   const trimmed = value.trim();
   if (!trimmed) {
     return null;
   }
 
-  const parsed = Number.parseInt(trimmed, 10);
-  if (!Number.isFinite(parsed)) {
+  const parsed = Number.parseFloat(trimmed);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
     return null;
   }
 
   return parsed;
+}
+
+function normalizeIntervalHoursToMinutes(intervalHours: number): number {
+  const normalizedHours = Math.min(
+    MAX_CLI_PROBE_INTERVAL_HOURS,
+    Math.max(MIN_CLI_PROBE_INTERVAL_HOURS, intervalHours)
+  );
+  return Math.round(normalizedHours * 60);
+}
+
+function formatIntervalHoursInput(intervalMinutes: number): string {
+  const rawHours = intervalMinutes / 60;
+  const normalizedHours = Math.min(
+    MAX_CLI_PROBE_INTERVAL_HOURS,
+    Math.max(MIN_CLI_PROBE_INTERVAL_HOURS, rawHours)
+  );
+  return Number.isInteger(normalizedHours)
+    ? String(normalizedHours)
+    : String(Number(normalizedHours.toFixed(2)));
 }
 
 const CliCell = memo(function CliCell({
@@ -514,25 +598,14 @@ const CliCell = memo(function CliCell({
 
 function InlineProbeSettings({
   enabled,
-  intervalMinutesInput,
+  intervalHoursInput,
   intervalError,
-  dirty,
   saving,
   onToggle,
   onIntervalChange,
-  onSave,
-}: {
-  enabled: boolean;
-  intervalMinutesInput: string;
-  intervalError: string | null;
-  dirty: boolean;
-  saving: boolean;
-  onToggle: () => void;
-  onIntervalChange: (value: string) => void;
-  onSave: () => Promise<void>;
-}) {
+}: ProbeSettingsProps) {
   return (
-    <div className="flex flex-wrap items-center justify-end gap-2">
+    <div className="flex flex-wrap items-center justify-end gap-2" aria-busy={saving}>
       <span className="text-xs text-[var(--text-secondary)]">定时检测</span>
       <button
         type="button"
@@ -546,30 +619,60 @@ function InlineProbeSettings({
         />
       </button>
       <span className="text-xs text-[var(--text-secondary)]">间隔</span>
-      <AppInput
+      <input
         type="number"
-        value={intervalMinutesInput}
+        value={intervalHoursInput}
         onChange={event => onIntervalChange(event.target.value)}
-        min={10}
-        max={1440}
-        size="sm"
-        className="w-20 text-center"
-        containerClassName="w-20"
-        aria-label="检测间隔（分钟）"
-        error={!!intervalError}
-        errorMessage={intervalError ?? undefined}
+        min={MIN_CLI_PROBE_INTERVAL_HOURS}
+        max={MAX_CLI_PROBE_INTERVAL_HOURS}
+        step={1}
+        className={`h-7 w-16 rounded-[8px] border bg-[var(--surface-2)] px-2 text-center text-xs tabular-nums text-[var(--text-primary)] outline-none transition-[border-color,box-shadow] duration-[var(--duration-fast)] [box-shadow:inset_0_1px_2px_rgba(0,0,0,0.05)] ${
+          intervalError
+            ? 'border-[var(--danger)]'
+            : 'border-[var(--line-soft)] focus:border-[var(--accent)] focus:[box-shadow:0_0_0_3px_var(--focus-ring),inset_0_1px_2px_rgba(0,0,0,0.05)]'
+        }`}
+        aria-label="检测间隔（小时）"
+        aria-invalid={!!intervalError}
+        title={intervalError ?? '检测间隔（小时）'}
       />
-      <span className="text-xs text-[var(--text-secondary)]">分钟</span>
-      <AppButton
-        variant={dirty ? 'primary' : 'secondary'}
-        size="sm"
-        onClick={() => {
-          void onSave();
-        }}
-        disabled={!dirty || saving}
-      >
-        {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-        <span className={saving ? 'ml-1' : ''}>保存设置</span>
+      <span className="text-xs text-[var(--text-secondary)]">小时</span>
+      {saving ? (
+        <Loader2
+          className="h-3.5 w-3.5 animate-spin text-[var(--text-secondary)]"
+          aria-label="正在自动保存检测设置"
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function HeaderActions({
+  enabled,
+  intervalHoursInput,
+  intervalError,
+  saving,
+  probing,
+  onToggle,
+  onIntervalChange,
+  onProbeNow,
+}: HeaderActionsProps) {
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-2.5">
+      <InlineProbeSettings
+        enabled={enabled}
+        intervalHoursInput={intervalHoursInput}
+        intervalError={intervalError}
+        saving={saving}
+        onToggle={onToggle}
+        onIntervalChange={onIntervalChange}
+      />
+      <AppButton variant="primary" size="sm" onClick={onProbeNow} disabled={probing}>
+        {probing ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        ) : (
+          <Play className="w-3.5 h-3.5" />
+        )}
+        <span className="ml-1">立即探测</span>
       </AppButton>
     </div>
   );
@@ -577,12 +680,11 @@ function InlineProbeSettings({
 
 // ============= 主组件 =============
 
-export function CliUsabilityTab() {
+export function CliUsabilityTab({ setPageHeaderActions }: CliUsabilityTabProps = {}) {
   const {
     config,
     loading,
     cliProbeView,
-    cliProbeTimeRange,
     cliProbeLoaded,
     cliProbeError,
     fetchCliProbeData,
@@ -593,7 +695,6 @@ export function CliUsabilityTab() {
       config: s.config,
       loading: s.loading,
       cliProbeView: s.cliProbeView,
-      cliProbeTimeRange: s.cliProbeTimeRange,
       cliProbeLoaded: s.cliProbeLoaded,
       cliProbeError: s.cliProbeError,
       fetchCliProbeData: s.fetchCliProbeData,
@@ -601,54 +702,107 @@ export function CliUsabilityTab() {
       saveCliProbeConfig: s.saveCliProbeConfig,
     }))
   );
-  const [timeRange, setTimeRange] = useState<TimeRange>(cliProbeTimeRange);
+  const timeRange = CLI_PROBE_TIME_RANGE;
   const [probing, setProbing] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
-  const probeConfig = config?.cliProbe?.config || { enabled: false, intervalMinutes: 60 };
-  const [draftEnabled, setDraftEnabled] = useState(probeConfig.enabled);
-  const [draftIntervalInput, setDraftIntervalInput] = useState(String(probeConfig.intervalMinutes));
+  const probeConfig = config?.cliProbe?.config || DEFAULT_CLI_PROBE_CONFIG;
+  const [draftSettings, setDraftSettings] = useState<ProbeSettingsDraft>(() => ({
+    enabled: probeConfig.enabled,
+    intervalHoursInput: formatIntervalHoursInput(probeConfig.intervalMinutes),
+  }));
+  const hasUserEditedSettingsRef = useRef(false);
+  const settingsEditVersionRef = useRef(0);
+  const activeSaveVersionRef = useRef(0);
 
   useEffect(() => {
-    setDraftEnabled(probeConfig.enabled);
-    setDraftIntervalInput(String(probeConfig.intervalMinutes));
+    if (hasUserEditedSettingsRef.current) {
+      return;
+    }
+
+    setDraftSettings({
+      enabled: probeConfig.enabled,
+      intervalHoursInput: formatIntervalHoursInput(probeConfig.intervalMinutes),
+    });
   }, [probeConfig.enabled, probeConfig.intervalMinutes]);
 
-  const parsedDraftIntervalMinutes = parseIntervalMinutesInput(draftIntervalInput);
+  const parsedDraftIntervalHours = parseIntervalHoursInput(draftSettings.intervalHoursInput);
   const intervalError =
-    draftIntervalInput.trim().length > 0 && parsedDraftIntervalMinutes === null
-      ? '请输入有效数字'
-      : null;
+    draftSettings.intervalHoursInput.trim().length === 0
+      ? '请输入检测间隔'
+      : parsedDraftIntervalHours === null
+        ? '请输入有效数字'
+        : null;
+  const normalizedDraftIntervalMinutes =
+    parsedDraftIntervalHours === null
+      ? null
+      : normalizeIntervalHoursToMinutes(parsedDraftIntervalHours);
   const settingsDirty =
-    draftEnabled !== probeConfig.enabled ||
-    draftIntervalInput !== String(probeConfig.intervalMinutes);
+    draftSettings.enabled !== probeConfig.enabled ||
+    (normalizedDraftIntervalMinutes !== null &&
+      normalizedDraftIntervalMinutes !== probeConfig.intervalMinutes);
 
-  const handleSaveSettings = async () => {
-    if (!settingsDirty) {
+  const markSettingsEdited = useCallback(() => {
+    hasUserEditedSettingsRef.current = true;
+    settingsEditVersionRef.current += 1;
+  }, []);
+
+  const handleToggleProbe = useCallback(() => {
+    markSettingsEdited();
+    setDraftSettings(current => ({ ...current, enabled: !current.enabled }));
+  }, [markSettingsEdited]);
+
+  const handleIntervalChange = useCallback(
+    (value: string) => {
+      markSettingsEdited();
+      setDraftSettings(current => ({ ...current, intervalHoursInput: value }));
+    },
+    [markSettingsEdited]
+  );
+
+  useEffect(() => {
+    if (
+      !hasUserEditedSettingsRef.current ||
+      !settingsDirty ||
+      normalizedDraftIntervalMinutes === null
+    ) {
       return;
     }
-    if (parsedDraftIntervalMinutes === null) {
-      toast.error('请输入有效的检测间隔');
-      return;
-    }
 
-    const normalizedIntervalMinutes = Math.min(1440, Math.max(10, parsedDraftIntervalMinutes));
-    setSavingSettings(true);
-    try {
-      await saveCliProbeConfig({
-        enabled: draftEnabled,
-        intervalMinutes: normalizedIntervalMinutes,
-      });
-      setDraftIntervalInput(String(normalizedIntervalMinutes));
-      toast.success('检测设置已保存');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : '未知错误';
-      toast.error(`保存设置失败: ${message}`);
-    } finally {
-      setSavingSettings(false);
-    }
-  };
+    const requestVersion = settingsEditVersionRef.current;
+    const updates: ProbeSettingsUpdate = {
+      enabled: draftSettings.enabled,
+      intervalMinutes: normalizedDraftIntervalMinutes,
+    };
+    const timerId = window.setTimeout(() => {
+      activeSaveVersionRef.current = requestVersion;
+      setSavingSettings(true);
+      void saveCliProbeConfig(updates)
+        .then(() => {
+          if (settingsEditVersionRef.current !== requestVersion) {
+            return;
+          }
 
-  // 首次加载或 timeRange 变化时获取数据（有缓存则跳过）
+          hasUserEditedSettingsRef.current = false;
+          setDraftSettings({
+            enabled: updates.enabled,
+            intervalHoursInput: formatIntervalHoursInput(updates.intervalMinutes),
+          });
+        })
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : '未知错误';
+          toast.error(`自动保存检测设置失败: ${message}`);
+        })
+        .finally(() => {
+          if (activeSaveVersionRef.current === requestVersion) {
+            setSavingSettings(false);
+          }
+        });
+    }, CLI_PROBE_SETTINGS_AUTOSAVE_DELAY_MS);
+
+    return () => window.clearTimeout(timerId);
+  }, [draftSettings.enabled, normalizedDraftIntervalMinutes, saveCliProbeConfig, settingsDirty]);
+
+  // 首次加载时获取 7 天数据（有缓存则跳过）
   useEffect(() => {
     fetchCliProbeData(timeRange);
   }, [timeRange, fetchCliProbeData]);
@@ -657,7 +811,7 @@ export function CliUsabilityTab() {
     if (cliProbeError) toast.error(cliProbeError);
   }, [cliProbeError]);
 
-  const handleProbeNow = async () => {
+  const handleProbeNow = useCallback(async () => {
     setProbing(true);
     try {
       const result = await runProbeNow();
@@ -671,45 +825,44 @@ export function CliUsabilityTab() {
     } finally {
       setProbing(false);
     }
-  };
+  }, [fetchCliProbeData, runProbeNow, timeRange]);
+
+  const headerActions = useMemo(
+    () => (
+      <HeaderActions
+        enabled={draftSettings.enabled}
+        intervalHoursInput={draftSettings.intervalHoursInput}
+        intervalError={intervalError}
+        saving={savingSettings}
+        probing={probing}
+        onToggle={handleToggleProbe}
+        onIntervalChange={handleIntervalChange}
+        onProbeNow={handleProbeNow}
+      />
+    ),
+    [
+      draftSettings.enabled,
+      draftSettings.intervalHoursInput,
+      handleIntervalChange,
+      handleProbeNow,
+      handleToggleProbe,
+      intervalError,
+      probing,
+      savingSettings,
+    ]
+  );
+
+  useEffect(() => {
+    if (!setPageHeaderActions) {
+      return;
+    }
+
+    setPageHeaderActions(headerActions);
+    return () => setPageHeaderActions(null);
+  }, [headerActions, setPageHeaderActions]);
 
   return (
-    <div className="flex-1 overflow-y-auto px-6 py-3">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-1">
-          {CLI_PROBE_TIME_RANGES.map(r => (
-            <AppButton
-              key={r}
-              variant={timeRange === r ? 'primary' : 'secondary'}
-              size="sm"
-              onClick={() => setTimeRange(r)}
-            >
-              {r}
-            </AppButton>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-2.5">
-          <InlineProbeSettings
-            enabled={draftEnabled}
-            intervalMinutesInput={draftIntervalInput}
-            intervalError={intervalError}
-            dirty={settingsDirty}
-            saving={savingSettings}
-            onToggle={() => setDraftEnabled(value => !value)}
-            onIntervalChange={setDraftIntervalInput}
-            onSave={handleSaveSettings}
-          />
-          <AppButton variant="primary" size="sm" onClick={handleProbeNow} disabled={probing}>
-            {probing ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Play className="w-3.5 h-3.5" />
-            )}
-            <span className="ml-1">立即探测</span>
-          </AppButton>
-        </div>
-      </div>
-
+    <div className="flex-1 overflow-y-auto px-4 py-3">
       {/* 内容区 */}
       {loading && !cliProbeLoaded ? (
         <div className="flex items-center justify-center py-16">
@@ -722,8 +875,11 @@ export function CliUsabilityTab() {
           </p>
         </AppCard>
       ) : (
-        <AppCard blur={false} hoverable={false} data-testid="cli-usability-grid-card">
-          <AppCardContent className="p-0">
+        <div
+          className="overflow-hidden border-y border-[var(--line-soft)] bg-[var(--surface-1)] shadow-none"
+          data-testid="cli-usability-grid-card"
+        >
+          <div className="p-0">
             {/* 表头 */}
             <div
               className="grid border-b border-[var(--line-soft)]"
@@ -773,8 +929,8 @@ export function CliUsabilityTab() {
                 })}
               </div>
             ))}
-          </AppCardContent>
-        </AppCard>
+          </div>
+        </div>
       )}
     </div>
   );

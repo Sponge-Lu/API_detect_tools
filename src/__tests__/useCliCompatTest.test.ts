@@ -107,7 +107,7 @@ describe('useCliCompatTest', () => {
     });
     useRouteStore.setState({
       cliProbeLoaded: false,
-      cliProbeTimeRange: '24h',
+      cliProbeTimeRange: '7d',
       fetchCliProbeData: vi.fn().mockResolvedValue(undefined),
       fetchConfig: vi.fn().mockResolvedValue(undefined),
     });
@@ -234,7 +234,7 @@ describe('useCliCompatTest', () => {
     const fetchConfigMock = vi.fn().mockResolvedValue(undefined);
     useRouteStore.setState({
       cliProbeLoaded: true,
-      cliProbeTimeRange: '24h',
+      cliProbeTimeRange: '7d',
       fetchCliProbeData: fetchCliProbeDataMock,
       fetchConfig: fetchConfigMock,
     });
@@ -324,7 +324,7 @@ describe('useCliCompatTest', () => {
     expect(electronAPI.cliCompat?.saveResult).toHaveBeenCalled();
     expect(electronAPI.loadConfig).toHaveBeenCalled();
     expect(fetchConfigMock).toHaveBeenCalled();
-    expect(fetchCliProbeDataMock).toHaveBeenCalledWith('24h', true);
+    expect(fetchCliProbeDataMock).toHaveBeenCalledWith('7d', true);
     expect(useDetectionStore.getState().cliCompatibility[STORE_KEY]).toMatchObject({
       geminiCli: false,
       geminiError: '错误码 401',

@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import { buildProbeKey } from '../shared/types/route-proxy';
+import { buildProbeKey, buildRoutePathStateKey } from '../shared/types/route-proxy';
 
 interface BackupEntry {
   filename: string;
@@ -423,6 +423,59 @@ describe('UnifiedConfigManager', () => {
     });
   });
 
+  it('resets route path states by canonical model without clearing stats', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as any);
+    await manager.loadConfig();
+
+    const routeKey = {
+      routeRuleId: 'rule-1',
+      siteId: 'site-1',
+      accountId: 'account-1',
+      apiKeyId: 'key-1',
+    };
+    const matchingPathState = {
+      ...routeKey,
+      cliType: 'codex',
+      canonicalModel: 'gpt-5',
+      resolvedModel: 'gpt-5',
+      windowStartedAt: 100,
+      windowRequestCount: 1,
+      windowSuccessCount: 0,
+      successRate: 0,
+      disabledUntil: 200,
+      updatedAt: 100,
+    } as any;
+    const otherPathState = {
+      ...routeKey,
+      apiKeyId: 'key-2',
+      cliType: 'codex',
+      canonicalModel: 'gpt-4',
+      resolvedModel: 'gpt-4',
+      windowStartedAt: 100,
+      windowRequestCount: 1,
+      windowSuccessCount: 0,
+      successRate: 0,
+      disabledUntil: 200,
+      updatedAt: 100,
+    } as any;
+
+    await manager.recordRouteStats(routeKey, 'failure', { statusCode: 503 });
+    await manager.upsertRoutePathState(matchingPathState);
+    await manager.upsertRoutePathState(otherPathState);
+
+    const cleared = await manager.resetRoutePathStates({ canonicalModel: 'gpt-5' });
+    const routing = manager.getRoutingConfig();
+
+    expect(cleared).toBe(1);
+    expect(routing.routePathStates[buildRoutePathStateKey(matchingPathState)]).toBeUndefined();
+    expect(routing.routePathStates[buildRoutePathStateKey(otherPathState)]).toBeDefined();
+    expect(routing.stats['rule-1:site-1:account-1:key-1']).toMatchObject({
+      failureCount: 1,
+      lastStatusCode: 503,
+    });
+  });
+
   it('hydrates route state files into the compatibility routing view', async () => {
     const configPath = path.join(userDataDir, 'config.json');
     const rawConfig = createSampleConfig();
@@ -791,7 +844,7 @@ describe('UnifiedConfigManager', () => {
         host: '127.0.0.1',
         port: 3210,
         unifiedApiKey: 'sk-route-test',
-        requestTimeoutMs: 300000,
+        requestTimeoutMs: 60000,
         retryCount: 1,
         healthCheckIntervalMinutes: 60,
       },
@@ -831,7 +884,7 @@ describe('UnifiedConfigManager', () => {
       cliProbe: {
         config: {
           enabled: false,
-          intervalMinutes: 60,
+          intervalMinutes: 240,
           modelsPerCli: 3,
           requestTimeoutMs: 30000,
           maxConcurrency: 3,
@@ -1071,7 +1124,7 @@ describe('UnifiedConfigManager', () => {
         host: '127.0.0.1',
         port: 3210,
         unifiedApiKey: 'sk-route-test',
-        requestTimeoutMs: 300000,
+        requestTimeoutMs: 60000,
         retryCount: 1,
         healthCheckIntervalMinutes: 60,
       },
@@ -1137,7 +1190,7 @@ describe('UnifiedConfigManager', () => {
       cliProbe: {
         config: {
           enabled: false,
-          intervalMinutes: 60,
+          intervalMinutes: 240,
           modelsPerCli: 3,
           requestTimeoutMs: 30000,
           maxConcurrency: 3,

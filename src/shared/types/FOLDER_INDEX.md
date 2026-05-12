@@ -227,6 +227,9 @@ interface RouteAnalyticsObjectStatsItem {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  cachedTokens?: number;
 }
 ```
 

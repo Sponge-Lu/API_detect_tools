@@ -305,15 +305,17 @@ export class CliWrapperCompatService {
   async testClaudeCodeWithDetail(
     url: string,
     apiKey: string,
-    model: string
+    model: string,
+    timeoutMs?: number
   ): Promise<{ supported: boolean; detail: ClaudeTestDetail; message?: string }> {
-    return this.testClaudeCodeWithMessage(url, apiKey, model);
+    return this.testClaudeCodeWithMessage(url, apiKey, model, timeoutMs);
   }
 
   async testClaudeCodeWithMessage(
     url: string,
     apiKey: string,
-    model: string
+    model: string,
+    timeoutMs?: number
   ): Promise<{ supported: boolean; detail: ClaudeTestDetail; message?: string }> {
     return this.withIsolatedWorkspace('api-detect-claude-wrapper', async workspace => {
       const settingsDir = path.join(workspace.homeDir, '.claude');
@@ -340,7 +342,7 @@ export class CliWrapperCompatService {
         args: ['--bare', '--print', '--output-format', 'json', '--model', model],
         cwd: workspace.workDir,
         env,
-        timeoutMs: this.timeoutMs,
+        timeoutMs: timeoutMs ?? this.timeoutMs,
         stdin: `${TEST_PROMPT}\n`,
       });
 
@@ -368,9 +370,10 @@ export class CliWrapperCompatService {
   async testCodexWithDetail(
     url: string,
     apiKey: string,
-    model: string
+    model: string,
+    timeoutMs?: number
   ): Promise<{ supported: boolean; detail: CodexTestDetail; message?: string }> {
-    return this.testCodexWithMessage(url, apiKey, model);
+    return this.testCodexWithMessage(url, apiKey, model, timeoutMs);
   }
 
   async testCodex(url: string, apiKey: string, model: string): Promise<boolean> {
@@ -381,7 +384,8 @@ export class CliWrapperCompatService {
   async testCodexWithMessage(
     url: string,
     apiKey: string,
-    model: string
+    model: string,
+    timeoutMs?: number
   ): Promise<{ supported: boolean; detail: CodexTestDetail; message?: string }> {
     return this.withIsolatedWorkspace('api-detect-codex-wrapper', async workspace => {
       const codexHome = path.join(workspace.homeDir, '.codex');
@@ -427,7 +431,7 @@ export class CliWrapperCompatService {
         ],
         cwd: workspace.workDir,
         env,
-        timeoutMs: this.timeoutMs,
+        timeoutMs: timeoutMs ?? this.timeoutMs,
         stdin: `${TEST_PROMPT}\n`,
       });
 
@@ -452,9 +456,10 @@ export class CliWrapperCompatService {
   async testGeminiWithDetail(
     url: string,
     apiKey: string,
-    model: string
+    model: string,
+    timeoutMs?: number
   ): Promise<{ supported: boolean; detail: GeminiTestDetail; message?: string }> {
-    return this.testGeminiWithMessage(url, apiKey, model);
+    return this.testGeminiWithMessage(url, apiKey, model, timeoutMs);
   }
 
   async testGeminiCli(url: string, apiKey: string, model: string): Promise<boolean> {
@@ -465,7 +470,8 @@ export class CliWrapperCompatService {
   async testGeminiWithMessage(
     url: string,
     apiKey: string,
-    model: string
+    model: string,
+    timeoutMs?: number
   ): Promise<{ supported: boolean; detail: GeminiTestDetail; message?: string }> {
     return this.withIsolatedWorkspace('api-detect-gemini-wrapper', async workspace => {
       const geminiHome = path.join(workspace.homeDir, '.gemini');
@@ -498,7 +504,7 @@ export class CliWrapperCompatService {
         args: ['--skip-trust', '-m', model, '--output-format', 'json', '--approval-mode', 'plan'],
         cwd: workspace.workDir,
         env,
-        timeoutMs: this.timeoutMs,
+        timeoutMs: timeoutMs ?? this.timeoutMs,
         stdin: `${TEST_PROMPT}\n`,
       });
 

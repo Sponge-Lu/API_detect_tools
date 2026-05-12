@@ -5,7 +5,7 @@
  * 定位: 路由页代理统计子面板
  */
 
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Play,
@@ -24,7 +24,6 @@ import { useRouteStore } from '../../../store/routeStore';
 import { toast } from '../../../store/toastStore';
 import { AppCard, AppCardContent } from '../../AppCard';
 import { AppButton } from '../../AppButton/AppButton';
-import { AppInput } from '../../AppInput';
 import { buildRecommendedCliModelOptions } from '../Redirection/ModelRedirectionTab';
 import {
   normalizeRouteCliSelection,
@@ -44,6 +43,11 @@ const CLI_LABELS: Record<RouteCliType, string> = {
   geminiCli: 'Gemini CLI',
 };
 const ROUTE_PROXY_DISPLAY_NAME = '本地路由代理';
+const SERVER_FIELD_LABEL_CLASS_NAME = 'mb-0.5 block text-xs leading-4 text-[var(--text-secondary)]';
+const SERVER_FIELD_BASE_CONTROL_CLASS_NAME =
+  'h-6 rounded bg-[var(--surface-2)] px-2 py-1 font-mono text-xs leading-4 text-[var(--text-secondary)]';
+const SERVER_FIELD_INPUT_CLASS_NAME = `${SERVER_FIELD_BASE_CONTROL_CLASS_NAME} w-full border-0 outline-none transition-colors placeholder-[var(--text-tertiary)] focus:text-[var(--text-primary)] focus:ring-2 focus:ring-[var(--focus-ring)]`;
+const SERVER_FIELD_VALUE_CLASS_NAME = `${SERVER_FIELD_BASE_CONTROL_CLASS_NAME} w-full truncate`;
 
 type TimeRange = '24h' | '7d';
 const STATS_TIME_RANGES: TimeRange[] = ['24h', '7d'];
@@ -56,6 +60,15 @@ type RoutePreviewState = {
 /** 代理服务器状态区 */
 interface RoutePanelProps {
   className?: string;
+}
+
+interface RouteAnalyticsSummary {
+  totalRequests: number;
+  successRate: number;
+  promptTokens: number;
+  completionTokens: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
 }
 
 function resolveCliSelectionDisplayValue(
@@ -393,8 +406,8 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
 
   return (
     <AppCard data-testid="route-server-section-card" className={className}>
-      <AppCardContent className="p-4">
-        <div className="mb-3 flex items-center justify-between">
+      <AppCardContent className="p-3">
+        <div className="mb-2 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Activity className="w-4 h-4 text-[var(--accent)]" />
             <span className="font-medium text-sm">代理服务器</span>
@@ -414,6 +427,7 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
           <AppButton
             variant={serverRunning ? 'secondary' : 'primary'}
             size="sm"
+            className="h-7 !min-h-7 px-2"
             onClick={handleToggle}
             disabled={toggling}
           >
@@ -428,73 +442,107 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
           </AppButton>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          <div>
-            <label className="mb-1 block text-xs text-[var(--text-secondary)]">端口</label>
-            <AppInput
-              type="number"
+        <div
+          data-testid="route-server-primary-config-row"
+          className="grid gap-2 text-sm md:grid-cols-[minmax(150px,0.55fr)_minmax(0,1fr)]"
+        >
+          <div className="min-w-0">
+            <label htmlFor="route-server-port" className={SERVER_FIELD_LABEL_CLASS_NAME}>
+              端口
+            </label>
+            <input
+              id="route-server-port"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
               defaultValue={server.port}
               onBlur={e => {
                 const port = parseInt(e.target.value, 10);
                 if (!isNaN(port) && port > 0 && port < 65536) saveServerConfig({ port });
               }}
-              className="w-full"
-              size="sm"
+              className={SERVER_FIELD_INPUT_CLASS_NAME}
             />
           </div>
-          <div>
-            <label className="mb-1 block text-xs text-[var(--text-secondary)]">Base URL</label>
-            <div className="rounded bg-[var(--surface-2)] px-2 py-1.5 font-mono text-xs text-[var(--text-secondary)]">
+          <div className="min-w-0">
+            <label htmlFor="route-server-upstream-proxy" className={SERVER_FIELD_LABEL_CLASS_NAME}>
+              上游代理
+            </label>
+            <input
+              id="route-server-upstream-proxy"
+              type="text"
+              defaultValue={server.upstreamProxyUrl || ''}
+              placeholder="http://127.0.0.1:7890"
+              onBlur={e => saveServerConfig({ upstreamProxyUrl: e.target.value.trim() })}
+              className={SERVER_FIELD_INPUT_CLASS_NAME}
+            />
+          </div>
+        </div>
+
+        <div
+          data-testid="route-server-credential-row"
+          className="mt-2 grid gap-2 text-sm md:grid-cols-[minmax(150px,0.55fr)_minmax(0,1fr)]"
+        >
+          <div className="min-w-0">
+            <label className={SERVER_FIELD_LABEL_CLASS_NAME}>Base URL</label>
+            <div
+              data-testid="route-server-base-url-value"
+              className={SERVER_FIELD_VALUE_CLASS_NAME}
+            >
               http://{server.host}:{server.port}
             </div>
           </div>
-        </div>
-
-        <div className="mt-3">
-          <AppInput
-            label="上游代理"
-            size="sm"
-            defaultValue={server.upstreamProxyUrl || ''}
-            placeholder="http://127.0.0.1:7890"
-            onBlur={e => saveServerConfig({ upstreamProxyUrl: e.target.value.trim() })}
-            className="font-mono text-xs"
-          />
-        </div>
-
-        <div className="mt-3">
-          <label className="mb-1 block text-xs text-[var(--text-secondary)]">路由 API Key</label>
-          <div className="flex items-center gap-2">
-            <div className="flex-1 truncate rounded bg-[var(--surface-2)] px-2 py-1.5 font-mono text-xs text-[var(--text-secondary)]">
-              {showKey ? server.unifiedApiKey : '••••••••••••••••'}
+          <div className="min-w-0">
+            <label className={SERVER_FIELD_LABEL_CLASS_NAME}>路由 API Key</label>
+            <div className="flex min-w-0 items-center gap-2">
+              <div
+                data-testid="route-server-api-key-value"
+                className={`${SERVER_FIELD_VALUE_CLASS_NAME} min-w-0 flex-1`}
+              >
+                {showKey ? server.unifiedApiKey : '••••••••••••••••'}
+              </div>
+              <button
+                onClick={() => setShowKey(!showKey)}
+                className="text-xs text-[var(--accent)] hover:underline"
+              >
+                {showKey ? '隐藏' : '显示'}
+              </button>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(server.unifiedApiKey);
+                  toast.success('已复制');
+                }}
+                title="复制"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
+              >
+                <Copy className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={async () => {
+                  const k = await regenerateApiKey();
+                  if (k) toast.success('已重新生成');
+                }}
+                title="重新生成"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
+              >
+                <KeyRound className="h-3.5 w-3.5" />
+              </button>
             </div>
-            <button
-              onClick={() => setShowKey(!showKey)}
-              className="text-xs text-[var(--accent)] hover:underline"
-            >
-              {showKey ? '隐藏' : '显示'}
-            </button>
-            <button
-              onClick={() => {
-                navigator.clipboard.writeText(server.unifiedApiKey);
-                toast.success('已复制');
-              }}
-              title="复制"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
-            >
-              <Copy className="h-4 w-4" />
-            </button>
-            <button
-              onClick={async () => {
-                const k = await regenerateApiKey();
-                if (k) toast.success('已重新生成');
-              }}
-              title="重新生成"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
-            >
-              <KeyRound className="h-4 w-4" />
-            </button>
           </div>
         </div>
+
+        <label className="mt-3 flex items-center gap-2 text-xs leading-5 text-[var(--text-secondary)]">
+          <input
+            type="checkbox"
+            checked={server.blockGeminiCliInternalUtilityRequests !== false}
+            onChange={e =>
+              saveServerConfig({
+                blockGeminiCliInternalUtilityRequests: e.target.checked,
+              })
+            }
+            className="h-3.5 w-3.5 rounded border-[var(--line-soft)] bg-[var(--surface-2)]"
+          />
+          <span>阻断 Gemini CLI 内部工具/回退模型请求</span>
+        </label>
       </AppCardContent>
     </AppCard>
   );
@@ -679,24 +727,24 @@ export function CliModelSection({ className = '' }: RoutePanelProps) {
   return (
     <>
       <AppCard data-testid="route-cli-model-section-card" className={className}>
-        <AppCardContent className="p-4">
-          <div className="mb-4">
+        <AppCardContent className="p-3">
+          <div className="mb-2">
             <div className="text-sm font-medium text-[var(--text-primary)]">CLI 路由配置</div>
-            <p className="mt-1 text-xs text-[var(--text-secondary)]">
+            <p className="mt-0.5 text-xs leading-4 text-[var(--text-secondary)]">
               为 Claude Code、Codex 和 Gemini CLI 选择默认模型，并预览或写入本地配置。
             </p>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-2 md:grid-cols-3">
             {(['claudeCode', 'codex', 'geminiCli'] as RouteCliType[]).map(cli => (
-              <div key={cli} className="space-y-2">
-                <label className="mb-1 block text-xs text-[var(--text-secondary)]">
+              <div key={cli} className="space-y-1.5">
+                <label className="mb-0.5 block text-xs leading-4 text-[var(--text-secondary)]">
                   {CLI_LABELS[cli]}
                 </label>
                 <select
                   value={normalizedCliSelections[cli]}
                   onChange={e => handleChange(cli, e.target.value)}
-                  className="w-full rounded-lg border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1.5 text-xs text-[var(--text-primary)]"
+                  className="h-7 w-full rounded-md border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 text-xs text-[var(--text-primary)]"
                 >
                   <option value="">未选择</option>
                   {modelOptions.map(entry => (
@@ -709,7 +757,7 @@ export function CliModelSection({ className = '' }: RoutePanelProps) {
                   <AppButton
                     variant="secondary"
                     size="sm"
-                    className="h-8 flex-1"
+                    className="h-7 !min-h-7 flex-1 px-2"
                     onClick={() => handleOpenPreview(cli)}
                     disabled={!generatedConfigs[cli]}
                     aria-label={`预览 ${CLI_LABELS[cli]} 路由配置`}
@@ -723,7 +771,7 @@ export function CliModelSection({ className = '' }: RoutePanelProps) {
                       }}
                       variant="secondary"
                       size="sm"
-                      className="h-8 w-full"
+                      className="h-7 !min-h-7 w-full px-2"
                       onClick={() => {
                         setPreviewState(null);
                         setApplyMenuCli(current => (current === cli ? null : cli));
@@ -787,9 +835,23 @@ export function CliModelSection({ className = '' }: RoutePanelProps) {
 /** 统计仪表盘（首次加载后缓存） */
 export function StatsDashboard({ className = '' }: RoutePanelProps) {
   const [timeRange, setTimeRange] = useState<TimeRange>('24h');
-  const [summary, setSummary] = useState<any>(null);
+  const [summary, setSummary] = useState<RouteAnalyticsSummary | null>(null);
   const [loading, setLoading] = useState(false);
-  const loadedRef = useRef<Record<string, any>>({});
+  const loadedRef = useRef<Partial<Record<TimeRange, RouteAnalyticsSummary>>>({});
+
+  const loadStats = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await window.electronAPI.route?.getAnalyticsSummary({ window: timeRange });
+      if (res?.success) {
+        const nextSummary = res.data as RouteAnalyticsSummary;
+        loadedRef.current[timeRange] = nextSummary;
+        setSummary(nextSummary);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [timeRange]);
 
   useEffect(() => {
     if (loadedRef.current[timeRange]) {
@@ -797,20 +859,7 @@ export function StatsDashboard({ className = '' }: RoutePanelProps) {
       return;
     }
     loadStats();
-  }, [timeRange]);
-
-  const loadStats = async () => {
-    setLoading(true);
-    try {
-      const res = await window.electronAPI.route?.getAnalyticsSummary({ window: timeRange });
-      if (res?.success) {
-        loadedRef.current[timeRange] = res.data;
-        setSummary(res.data);
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [timeRange, loadStats]);
 
   return (
     <AppCard className={`h-fit self-start ${className}`}>
@@ -853,6 +902,16 @@ export function StatsDashboard({ className = '' }: RoutePanelProps) {
             <div className="grid grid-cols-2 gap-2">
               <StatRow label="Prompt Tokens" value={formatNumber(summary.promptTokens)} />
               <StatRow label="Completion Tokens" value={formatNumber(summary.completionTokens)} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <StatRow
+                label="Cache Write Tokens"
+                value={formatNumber(summary.cacheCreationTokens || 0)}
+              />
+              <StatRow
+                label="Cache Hit Tokens"
+                value={formatNumber(summary.cacheReadTokens || 0)}
+              />
             </div>
           </div>
         ) : (

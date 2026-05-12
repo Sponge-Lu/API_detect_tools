@@ -44,7 +44,7 @@
 | `src/main/app-data-events.ts` | 主进程到渲染进程的数据变更通知桥，按域广播站点配置、站点快照和路由总览更新 |
 | `src/main/app-storage-manifest.ts` | 本地存储清单，声明稳定配置、运行态缓存/统计、日志、备份、敏感设置和受保护浏览器状态的路径、owner、retention/cap 与备份边界 |
 | `src/main/app-storage-bundle.ts` | 基于本地存储清单创建/恢复 manifest 配置包，限制默认备份范围并兼容旧版 config-only 备份 |
-| `src/main/unified-config-manager.ts` | v3 配置加载、迁移、legacy 默认账户自愈修复、缺失 `site_type` 旧站点保持未决、原子写入、备份恢复、路由配置持久化，以及兼容保存时清理已删站点的孤儿账户；删除最后一个账户时自动移除站点配置 |
+| `src/main/unified-config-manager.ts` | v3 配置加载、迁移、legacy 默认账户自愈修复、缺失 `site_type` 旧站点保持未决、原子写入、备份恢复、路由配置持久化与路径暂停状态恢复，以及兼容保存时清理已删站点的孤儿账户；删除最后一个账户时自动移除站点配置 |
 | `src/main/runtime-cache-manager.ts` | 运行期缓存持久化，维护站点共享缓存、账户运行态缓存与 90 天/120 条上限的站点每日快照 |
 | `src/main/chrome-manager.ts` | 多槽位检测浏览器池、独立登录浏览器、按 site_type 解析 localStorage / 初始化用户信息，并支持复用账户 Profile 打开签到页 |
 | `src/main/site-type-registry.ts` | 站点类型注册表，统一维护各类型的初始化/模型/余额/API Key/分组/定价端点策略 |
@@ -55,7 +55,7 @@
 | `src/main/cli-wrapper-compat-service.ts` | 通过真实 Claude Code / Codex / Gemini CLI wrapper 做兼容性验证；当前 UI 统一通过该服务执行 CLI 可用性测试，使用临时目录隔离本机配置 |
 | `src/main/custom-cli-config-service.ts` | 自定义 CLI 配置持久化与模型拉取服务，并为路由模型注册表生成自定义 CLI 虚拟通道标识 |
 | `src/main/handlers/*.ts` | `config:*`、`token:*`、`accounts:*`、`route:*`、`overview:*` 等 IPC 通道 |
-| `src/main/route-*.ts` | 路由代理服务器、规则解析、模型注册表、自定义 CLI 路由来源、CLI 探测、健康检查、统计分析；本地路由上游转发使用 Electron net raw 客户端并支持可选上游代理 |
+| `src/main/route-*.ts` / `src/main/anyrouter-request-rewriter.ts` / `src/main/chy-api-request-rewriter.ts` | 路由代理服务器、规则解析、模型注册表、自定义 CLI 路由来源、CLI 探测、健康检查、统计分析；本地路由上游转发使用 Electron net raw 客户端并支持可选上游代理，AnyRouter 通道对 Claude Code 注入 Anthropic 指纹，对 Codex/Gemini 保持原生协议，CHY API 公益站通道统一转 OpenAI Chat Completions |
 | `src/main/route-state-manager.ts` | 路由运行态文件管理，将 stats/path state/health、CLI probe、analytics bucket 和模型来源快照拆到有 TTL/max-items 的 `state/*.json`，避免高频状态写入 `config.json` |
 | `src/main/backup-manager.ts` / `webdav-manager.ts` | 本地备份与 WebDAV 云端配置包；自动备份 config-only 节流去重，手动/WebDAV 备份使用 manifest 包 |
 
@@ -66,28 +66,32 @@
 | `src/renderer/App.tsx` | 侧边栏外壳、全局命令栏、页面切换、全局弹窗，并在收到站点配置变更通知后自动同步 configStore；当位于 `数据总览` 或 `日志` 时会根据对应子页状态派生 Header 标题/说明与右侧操作区 |
 | `src/renderer/components/AppShell/pageMeta.ts` | 注册一级页面、`数据总览` 子页（站点数据 / 路由数据）以及 `日志` 子页（会话事件 / 路由日志）的导航、标题和简述元数据 |
 | `src/renderer/components/Sidebar/VerticalSidebar.tsx` | 左侧导航组件，负责展示一级页面、`数据总览` 子页入口与 `日志` 子页入口 |
+| `src/renderer/components/CliConfigStatus/*` | CLI 配置状态组件，展示 Claude Code / Codex / Gemini CLI 配置来源，并将匹配本地路由代理端口的 Base URL 显示为“本地路由”；本地路由、站点管理和自定义 CLI 均显示当前使用模型小字 |
 | `src/renderer/pages/DataOverviewPage.tsx` | 数据总览首页，按 `overviewSubtab` 切换站点/路由子页视图，聚合路由健康、站点资源、历史快照、规则洞察与异常请求，并向壳层 Header 注入 `刷新` / 时间范围操作 |
-| `src/renderer/pages/SitesPage.tsx` | 站点管理主页面，负责站点/账户卡片、统一 CLI 配置对话框与检测缓存视图透传 |
+| `src/renderer/pages/SitesPage.tsx` | 站点管理主页面，负责站点/账户卡片、统一 CLI 配置对话框与检测缓存视图透传；打开 CLI 配置时透传 `siteId/accountId` 以便按 canonical probe key 回显最新模型测试结果 |
 | `src/renderer/pages/CustomCliPage.tsx` | 自定义 CLI 配置页面 |
 | `src/renderer/pages/CreditPage.tsx` | LDC 积分页面，展示 Linux Do Credit 账户信息、收支统计与充值入口 |
 | `src/renderer/pages/RoutePage.tsx` | 路由配置/操作页，组合代理服务与模型重定向，并引导用户跳转到数据总览查看统计 |
 | `src/renderer/pages/LogsPage.tsx` | 日志页内容容器，按 `logsSubtab` 展示会话事件或路由日志，并压缩展示请求尝试、站点优先级、token 与参考金额明细 |
 | `src/renderer/components/Route/*` | 路由页内部区块（模型重定向、CLI 可用性、服务器/统计面板） |
-| `src/renderer/services/cli-compat-projection.ts` | 将 `routing.cliProbe.latest` 投影为站点页/账户卡片使用的 CLI 兼容性展示结果，并处理来源标记与站点级回退 |
+| `src/renderer/services/cli-compat-projection.ts` | 将 `routing.cliProbe.latest` 投影为站点页/账户卡片兼容性结果与 CLI 配置弹窗 per-model 测试 slot，并处理来源标记、站点级回退和最新时间戳合并 |
 | `src/renderer/services/sessionEventLog.ts` | 将关键操作写入会话事件历史，供日志页展示 |
 | `src/renderer/store/uiStore.ts` | 页面切换、`数据总览` / `日志` 子页切换、侧边栏显示模式、排序、弹窗等 UI 状态 |
 | `src/renderer/store/toastStore.ts` | 管理可见 Toast 队列与会话内事件历史 |
-| `src/renderer/store/routeStore.ts` | Route 工作台的数据抓取与运行状态 |
+| `src/renderer/store/routeStore.ts` | Route 工作台的数据抓取、运行状态与路径暂停恢复动作 |
 | `src/renderer/hooks/useAutoRefresh.ts` | 站点级/账号级自动刷新调度 |
 | `src/renderer/utils/siteOverview.ts` | 将站点/账户最新缓存聚合为首页资源指标 |
+| `src/renderer/utils/modelPricing.ts` | 统一解析模型按 token / 按次计费方式与价格，供路由日志和模型重定向复用 |
 | `src/renderer/utils/routeRulePresentation.ts` | 将路由规则转换为可解释的摘要、命中原因与标签 |
+| `src/renderer/utils/routeLatency.ts` | 从 latencyHistogram 桶估算 P90/P99 延迟分位数，样本 <20 时返回 null |
+| `src/renderer/utils/routeModelDistribution.ts` | 按 canonicalModel 聚合 RouteAnalyticsBucket，生成模型热力分布条目 |
 
 ### 共享层
 
 | 模块 | 作用 |
 |------|------|
 | `src/shared/types/site.ts` | 站点、账户、检测缓存（含 `has_checkin` / `can_check_in` 拆分）、站点每日快照、运行期缓存等核心类型 |
-| `src/shared/types/route-proxy.ts` | 路由规则、服务器配置（含上游代理）、模型来源、CLI 探测、分析统计类型 |
+| `src/shared/types/route-proxy.ts` | 路由规则、服务器配置（含上游代理）、模型来源、路径暂停状态、CLI 探测、分析统计类型 |
 | `src/shared/theme/themePresets.ts` | `Light` / `Dark` 主题预设与旧值归一化 |
 | `src/shared/constants/index.ts` | 列宽、默认值等共享常量 |
 
@@ -110,7 +114,7 @@
 
 - `数据总览` 是新的默认首页，排在第一个入口，承载路由健康、站点余额/消费、历史快照和异常请求。
 - 左侧导航会在 `数据总览` 下显示两个子页：`站点数据` 与 `路由数据`；在 `日志` 下显示两个子页：`会话事件` 与 `路由日志`。
-- `App.tsx` 会结合 `pageMeta.ts` 与 `uiStore.overviewSubtab` / `uiStore.logsSubtab` 在 Header 中显示当前子页标题和简洁说明；Header 右侧操作由 `DataOverviewPage` 注入，站点子页显示 `刷新`，路由子页显示 `24h / 7d / 30d / 刷新`。
+- `App.tsx` 会结合 `pageMeta.ts` 与 `uiStore.overviewSubtab` / `uiStore.logsSubtab` 在 Header 中显示当前子页标题和简洁说明；Header 右侧操作由 `DataOverviewPage` 注入，站点子页显示 `刷新`，路由子页显示 `24h / 7d / 刷新`。
 - `credit` 已恢复为一级导航页，用于 Linux Do Credit 积分视图。
 - 模型重定向不再作为一级导航页，已并入 `本地路由` 总览页。
 - `本地路由` 页现在聚焦代理服务、默认模型和模型重定向配置，不再承载主统计面板。
@@ -154,7 +158,7 @@
 
 1. 渲染进程中的 `useCliCompatTest`、站点页与 CLI 配置对话框统一调用 `cli-compat:test-with-wrapper`。
 2. 主进程由 `cli-wrapper-compat-service.ts` 在隔离的临时 `HOME` / `CODEX_HOME` 中拉起真实 CLI；Codex 与 Gemini 的测试 prompt 统一改走 `stdin`，Gemini 仅依赖隔离 `HOME/.gemini` 而不再覆写 `GEMINI_CLI_HOME`，并显式关闭 Gemini 自身 sandbox relaunch、附带 `--skip-trust` 以避免 `stdin` 被改写成 `--prompt` 或被 trusted workspace 检查拦截。
-3. 站点管理兼容性测试与 CLI 可用性探测统一落到 `config.routing.cliProbe`：主进程保存 `history/latest`，并按站点下全部活跃账户分别探测；站点页手动测试以及统一 CLI 配置抽屉里的“测试已选模型”在保存成功后，渲染进程都会通过 `cli-compat-sync.ts` 重新加载配置、重投影对应账户卡片，并强制刷新一次 route CLI history 视图缓存；可用性页的 history 条形图改为按实际测试样本逐条绘制，一个样本对应一个独立条形，不再按手动/自动来源额外区分；失败摘要按 CLI 独立展示。
+3. 站点管理兼容性测试与 CLI 可用性探测统一落到 `config.routing.cliProbe`：主进程保存 `history/latest`，并按站点下全部活跃账户分别探测；站点页手动测试以及统一 CLI 配置抽屉里的“测试已选模型”在保存成功后，渲染进程都会通过 `cli-compat-sync.ts` 重新加载配置、重投影对应账户卡片，并强制刷新一次 route CLI history 视图缓存；可用性页固定展示 7 天 history，条形图按 `probeRunId` 批次聚合同一次检测的多个模型，批次颜色按全成功/全失败/混合结果区分；站点检测页 Header 右侧提供定时探测开关、小时制间隔自动保存与立即探测。
 4. 由于真实测试不写入用户 CLI 配置目录，因此正常情况下无需备份或恢复测试前的本机 CLI 配置。
 
 ---
@@ -166,6 +170,7 @@
 - 新增 `src/__tests__/cli-wrapper-compat-service.test.ts`
 - 新增 `src/__tests__/useCliCompatTest.test.ts`
 - 新增 `src/__tests__/route-proxy-service.test.ts`
+- 新增 `src/__tests__/chy-api-rewriter.test.ts`
 - 新增 `src/__tests__/route-rule-engine.test.ts`
 - 新增 `src/main/route-analytics-service.ts`
 - 新增 `src/main/route-channel-resolver.ts`
@@ -173,6 +178,7 @@
 - 新增 `src/main/route-health-service.ts`
 - 新增 `src/main/route-model-registry-service.ts`
 - 新增 `src/main/route-proxy-service.ts`
+- 新增 `src/main/chy-api-request-rewriter.ts`
 - 新增 `src/main/route-rule-engine.ts`
 - 新增 `src/main/route-stats-service.ts`
 - 新增 `src/main/handlers/route-handlers.ts`
@@ -185,6 +191,7 @@
 - 新增 `src/renderer/components/AppCard/`、`AppIcon/`、`AppInput/`、`AppModal/`
 - 新增 `src/renderer/pages/DataOverviewPage.tsx`
 - 新增 `src/renderer/utils/siteOverview.ts`
+- 新增 `src/renderer/utils/modelPricing.ts`
 - 新增 `src/renderer/utils/routeRulePresentation.ts`
 - 新增 `src/__tests__/data-overview-page.test.tsx`
 - 新增 `src/__tests__/unified-cli-config-dialog.test.tsx`
@@ -202,6 +209,7 @@
 - [架构文档](docs/ARCHITECTURE.md)
 - [API 参考](docs/API_REFERENCE.md)
 - [站点检测参考](docs/METAPI_SITE_DETECTION_REFERENCE.md)
+- [CLI 请求结构调研](docs/CLI_request.md)
 - [更新日志](CHANGELOG.md)
 
 ---
