@@ -754,7 +754,14 @@ function buildOverrideDisplayItems(
 
   return Array.from(groups.entries()).map(([canonicalName, group]) => {
     const entry = registry.entries[canonicalName];
-    const sources = entry?.sources.length ? entry.sources : group.sources;
+    const sourcesByKey = new Map<string, RouteModelSourceRef>();
+    for (const source of entry?.sources ?? []) {
+      sourcesByKey.set(source.sourceKey, source);
+    }
+    for (const source of group.sources) {
+      sourcesByKey.set(source.sourceKey, source);
+    }
+    const sources = Array.from(sourcesByKey.values());
 
     return {
       id: buildRouteOverrideDisplayItemId(canonicalName),
@@ -785,6 +792,17 @@ export function buildDisplayItemViews(
     registry.overrides.map(override => [override.sourceKey, override])
   );
   const sourceByKey = new Map(sourcePool.map(source => [source.sourceKey, source]));
+  const overrideSourceKeysByCanonicalName = new Map<string, string[]>();
+  for (const override of registry.overrides) {
+    const canonicalName = override.canonicalName.trim();
+    if (override.action === 'exclude' || !canonicalName || !sourceByKey.has(override.sourceKey)) {
+      continue;
+    }
+
+    const sourceKeys = overrideSourceKeysByCanonicalName.get(canonicalName) ?? [];
+    sourceKeys.push(override.sourceKey);
+    overrideSourceKeysByCanonicalName.set(canonicalName, sourceKeys);
+  }
 
   const visibleDisplayItems = registry.displayItems.filter(
     item =>
@@ -803,12 +821,25 @@ export function buildDisplayItemViews(
   ];
 
   return displayItems.map(item => {
-    const expandedSourceKeys = expandDisplayItemSourceKeys(item, sourcePool, sourceByKey);
-    const expandedItem: RouteModelDisplayItem = {
+    const itemWithOverrideSources: RouteModelDisplayItem = {
       ...item,
+      sourceKeys: Array.from(
+        new Set([
+          ...item.sourceKeys,
+          ...(overrideSourceKeysByCanonicalName.get(item.canonicalName) ?? []),
+        ])
+      ),
+    };
+    const expandedSourceKeys = expandDisplayItemSourceKeys(
+      itemWithOverrideSources,
+      sourcePool,
+      sourceByKey
+    );
+    const expandedItem: RouteModelDisplayItem = {
+      ...itemWithOverrideSources,
       sourceKeys: expandedSourceKeys,
       originalModelOrder: normalizeOriginalModelOrder(
-        item.originalModelOrder,
+        itemWithOverrideSources.originalModelOrder,
         expandedSourceKeys,
         sourceByKey
       ),
@@ -1751,22 +1782,6 @@ export function ModelRedirectionTab() {
     setSaving(true);
     try {
       const now = Date.now();
-      for (const sourceKey of selectedSourceKeys) {
-        const existingOverride = overrideBySource.get(sourceKey);
-        const savedOverride = await upsertMappingOverride({
-          id: existingOverride?.id ?? createLocalId(),
-          sourceKey,
-          canonicalName,
-          action: 'rename',
-          note: existingOverride?.note,
-          createdAt: existingOverride?.createdAt ?? now,
-          updatedAt: now,
-        });
-        if (!savedOverride) {
-          throw new Error(`无法保存来源 ${sourceKey} 的重定向`);
-        }
-      }
-
       for (const sourceKey of editorContext.initialSourceKeys) {
         if (selectedSourceKeys.has(sourceKey)) {
           continue;
@@ -1781,23 +1796,39 @@ export function ModelRedirectionTab() {
         }
       }
 
+      const existingDisplayItem = displayItems.find(
+        item => item.item.id === editorContext.displayItemId
+      )?.item;
       const savedRegistry = await upsertDisplayItem({
         id: editorContext.displayItemId ?? createLocalId(),
         vendor: inferRouteModelVendor(canonicalName),
         canonicalName,
         sourceKeys: Array.from(selectedSourceKeys),
         originalModelOrder: [...draft.selectedOriginalModels],
-        priorityConfig:
-          displayItems.find(item => item.item.id === editorContext.displayItemId)?.item
-            .priorityConfig ?? createEmptyPriorityDraft(),
-        runtimeConfig: displayItems.find(item => item.item.id === editorContext.displayItemId)?.item
-          .runtimeConfig,
+        priorityConfig: existingDisplayItem?.priorityConfig ?? createEmptyPriorityDraft(),
+        runtimeConfig: existingDisplayItem?.runtimeConfig,
         mode: editorContext.displayItemMode ?? 'manual',
         createdAt: editorContext.displayItemCreatedAt ?? now,
         updatedAt: now,
       });
       if (!savedRegistry) {
         throw new Error('无法保存重定向展示项');
+      }
+
+      for (const sourceKey of selectedSourceKeys) {
+        const existingOverride = overrideBySource.get(sourceKey);
+        const savedOverride = await upsertMappingOverride({
+          id: existingOverride?.id ?? createLocalId(),
+          sourceKey,
+          canonicalName,
+          action: 'rename',
+          note: existingOverride?.note,
+          createdAt: existingOverride?.createdAt ?? now,
+          updatedAt: now,
+        });
+        if (!savedOverride) {
+          throw new Error(`无法保存来源 ${sourceKey} 的重定向`);
+        }
       }
 
       toast.success(editorContext.mode === 'edit' ? '模型重定向已更新' : '模型重定向已新增');

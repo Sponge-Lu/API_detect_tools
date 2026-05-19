@@ -11,8 +11,10 @@
 
 import {
   CLI_TEST_MODEL_SLOT_COUNT,
+  normalizeCliTargetProtocol,
   sanitizeCliTestResults,
   type CliModelTestResult,
+  type CliTargetProtocol,
 } from './cli-config';
 import type { ClaudeTestDetail, CodexTestDetail, GeminiTestDetail } from './site';
 
@@ -60,6 +62,8 @@ export interface CustomCliSettings {
   model: string | null;
   /** 用于测试的模型（优先级高于 model，但最多保留 3 个） */
   testModels?: string[];
+  /** 上游目标协议 */
+  targetProtocol?: CliTargetProtocol;
   /** 用户编辑后的配置文件内容（null 表示未编辑，使用自动生成的配置） */
   editedFiles?: { path: string; content: string }[] | null;
   /** 最近一次 CLI 测试结果 */
@@ -102,6 +106,17 @@ export const DEFAULT_CUSTOM_CLI_SETTINGS: CustomCliSettings = {
   testState: null,
 };
 
+export function normalizeCustomCliSettings(setting?: CustomCliSettings | null): CustomCliSettings {
+  return {
+    ...DEFAULT_CUSTOM_CLI_SETTINGS,
+    ...(setting || {}),
+    targetProtocol: setting?.targetProtocol
+      ? normalizeCliTargetProtocol(setting.targetProtocol)
+      : undefined,
+    testState: setting?.testState ? normalizeCustomCliTestState(setting.testState) : null,
+  };
+}
+
 /** 创建新自定义配置的默认值 */
 export function createDefaultCustomCliConfig(partial?: Partial<CustomCliConfig>): CustomCliConfig {
   const now = Date.now();
@@ -114,9 +129,9 @@ export function createDefaultCustomCliConfig(partial?: Partial<CustomCliConfig>)
     lastModelFetch: undefined,
     notes: '',
     cliSettings: {
-      claudeCode: { ...DEFAULT_CUSTOM_CLI_SETTINGS },
-      codex: { ...DEFAULT_CUSTOM_CLI_SETTINGS },
-      geminiCli: { ...DEFAULT_CUSTOM_CLI_SETTINGS },
+      claudeCode: normalizeCustomCliSettings(),
+      codex: normalizeCustomCliSettings(),
+      geminiCli: normalizeCustomCliSettings(),
     },
     createdAt: now,
     updatedAt: now,

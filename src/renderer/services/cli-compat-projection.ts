@@ -8,6 +8,7 @@ import type {
 } from '../../shared/types/route-proxy';
 import {
   CLI_TEST_MODEL_SLOT_COUNT,
+  normalizeCliTargetProtocol,
   normalizeCliTestModels,
   normalizeCliTestResults,
 } from '../../shared/types/cli-config';
@@ -168,6 +169,31 @@ function buildSourceLabel(
   return accountName ? `来自站点检测 · ${accountName}` : '来自站点检测';
 }
 
+function resolveConfiguredTargetProtocol(
+  siteCliConfig: CliConfig | null | undefined,
+  accountCliConfig: CliConfig | null | undefined,
+  cliType: RouteCliType
+): ReturnType<typeof normalizeCliTargetProtocol> {
+  return normalizeCliTargetProtocol(
+    accountCliConfig?.[cliType]?.targetProtocol ?? siteCliConfig?.[cliType]?.targetProtocol
+  );
+}
+
+function filterEntriesByCurrentTargetProtocol(
+  entries: RouteCliProbeLatest[],
+  siteCliConfig: CliConfig | null | undefined,
+  accountCliConfig: CliConfig | null | undefined
+): RouteCliProbeLatest[] {
+  return entries.filter(entry => {
+    const currentTargetProtocol = resolveConfiguredTargetProtocol(
+      siteCliConfig,
+      accountCliConfig,
+      entry.cliType
+    );
+    return normalizeCliTargetProtocol(entry.targetProtocol) === currentTargetProtocol;
+  });
+}
+
 export function projectCliCompatibilityMap(
   config: Pick<UnifiedConfig, 'sites' | 'accounts' | 'routing'>
 ): Record<string, CliCompatibilityResult> {
@@ -200,11 +226,16 @@ export function projectCliCompatibilityMap(
       const siteScopedEntries = siteEntries.filter(
         entry => entry.accountId === buildSiteScopedProbeAccountId(site.id)
       );
-      const latestSiteEntry = sortProbeLatest(siteScopedEntries)[0];
+      const currentSiteEntries = filterEntriesByCurrentTargetProtocol(
+        siteScopedEntries,
+        site.cli_config,
+        undefined
+      );
+      const latestSiteEntry = sortProbeLatest(currentSiteEntries)[0];
       const sourceLabel = latestSiteEntry
         ? buildSourceLabel(latestSiteEntry.lastSample.source, undefined)
         : undefined;
-      const siteSummary = summarizeProbeLatest(siteScopedEntries, sourceLabel);
+      const siteSummary = summarizeProbeLatest(currentSiteEntries, sourceLabel);
       if (siteSummary) {
         projection[makeStoreKey(site.name)] = siteSummary;
       }
@@ -212,7 +243,11 @@ export function projectCliCompatibilityMap(
     }
 
     for (const account of siteAccounts) {
-      const accountEntries = siteEntries.filter(entry => entry.accountId === account.id);
+      const accountEntries = filterEntriesByCurrentTargetProtocol(
+        siteEntries.filter(entry => entry.accountId === account.id),
+        site.cli_config,
+        account.cli_config
+      );
       const latestAccountEntry = sortProbeLatest(accountEntries)[0];
       const sourceLabel = latestAccountEntry
         ? buildSourceLabel(latestAccountEntry.lastSample.source, account.account_name)
@@ -309,7 +344,13 @@ export function projectCliModelTestResultsFromLatest(params: {
       }
 
       const newestEntry = sortProbeLatest(
-        entries.filter(entry => entry.cliType === cliType && isSameProbeModel(entry, model))
+        entries.filter(
+          entry =>
+            entry.cliType === cliType &&
+            normalizeCliTargetProtocol(entry.targetProtocol) ===
+              normalizeCliTargetProtocol(item?.targetProtocol) &&
+            isSameProbeModel(entry, model)
+        )
       )[0];
       const projectedResult = newestEntry ? toCliModelTestResult(newestEntry, model) : null;
       return chooseNewestCliModelResult(baseResults[cliType][slotIndex], projectedResult);

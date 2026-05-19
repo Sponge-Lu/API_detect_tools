@@ -1342,6 +1342,9 @@ describe('route workbench redesign', () => {
           },
         })
       );
+      expect(mockUpsertDisplayItem.mock.invocationCallOrder[0]).toBeLessThan(
+        mockUpsertMappingOverride.mock.invocationCallOrder[0]!
+      );
     });
   });
 
@@ -1477,6 +1480,123 @@ describe('route workbench redesign', () => {
     const candidateList = within(dialog).getByTestId('original-model-candidate-list');
     expect(within(candidateList).getByText('duckcoding')).toBeInTheDocument();
     expect(within(candidateList).getByText('1 站点 / 1 来源')).toBeInTheDocument();
+  });
+
+  it('keeps all override-only original models when a stale entry has partial sources', () => {
+    const registry = createModelRegistryConfig();
+    const gptSource = registry.sources.find(source => source.originalModel === 'gpt-5-latest')!;
+    const customCliSource = registry.sources.find(source => source.originalModel === 'duckcoding')!;
+    const staleCanonicalName = 'mixed-route';
+
+    const views = buildDisplayItemViews({
+      ...registry,
+      entries: {
+        ...registry.entries,
+        [staleCanonicalName]: {
+          canonicalName: staleCanonicalName,
+          vendor: 'unknown',
+          aliases: [gptSource.originalModel],
+          sources: [gptSource],
+          hasOverride: true,
+          createdAt: 80,
+          updatedAt: 80,
+        },
+      },
+      overrides: [
+        ...registry.overrides,
+        {
+          id: 'override-mixed-gpt',
+          sourceKey: gptSource.sourceKey,
+          canonicalName: staleCanonicalName,
+          action: 'rename',
+          createdAt: 81,
+          updatedAt: 82,
+        },
+        {
+          id: 'override-mixed-custom-cli',
+          sourceKey: customCliSource.sourceKey,
+          canonicalName: staleCanonicalName,
+          action: 'rename',
+          createdAt: 81,
+          updatedAt: 82,
+        },
+      ],
+      displayItems: [],
+    });
+
+    const mixedRouteView = views.find(view => view.item.canonicalName === staleCanonicalName);
+
+    expect(mixedRouteView?.selectedOriginalModels).toEqual(['gpt-5-latest', 'duckcoding']);
+    expect(mixedRouteView?.entry?.sources.map(source => source.sourceKey)).toEqual([
+      gptSource.sourceKey,
+      customCliSource.sourceKey,
+    ]);
+    expect(mixedRouteView?.item.sourceKeys).toEqual([
+      gptSource.sourceKey,
+      customCliSource.sourceKey,
+    ]);
+  });
+
+  it('keeps override original models on stale persisted display items', () => {
+    const registry = createModelRegistryConfig();
+    const gptSource = registry.sources.find(source => source.originalModel === 'gpt-5-latest')!;
+    const customCliSource = registry.sources.find(source => source.originalModel === 'duckcoding')!;
+    const staleCanonicalName = 'mixed-route';
+
+    const views = buildDisplayItemViews({
+      ...registry,
+      entries: {
+        ...registry.entries,
+        [staleCanonicalName]: {
+          canonicalName: staleCanonicalName,
+          vendor: 'unknown',
+          aliases: [gptSource.originalModel],
+          sources: [gptSource],
+          hasOverride: true,
+          createdAt: 80,
+          updatedAt: 80,
+        },
+      },
+      overrides: [
+        ...registry.overrides,
+        {
+          id: 'override-mixed-custom-cli',
+          sourceKey: customCliSource.sourceKey,
+          canonicalName: staleCanonicalName,
+          action: 'rename',
+          createdAt: 81,
+          updatedAt: 82,
+        },
+      ],
+      displayItems: [
+        {
+          id: 'manual:mixed-route',
+          vendor: 'unknown',
+          canonicalName: staleCanonicalName,
+          sourceKeys: [gptSource.sourceKey],
+          originalModelOrder: [gptSource.originalModel],
+          priorityConfig: {
+            sitePriorities: {},
+            apiKeyPriorities: {},
+          },
+          mode: 'manual',
+          createdAt: 80,
+          updatedAt: 80,
+        },
+      ],
+    });
+
+    const mixedRouteView = views.find(view => view.item.canonicalName === staleCanonicalName);
+
+    expect(mixedRouteView?.selectedOriginalModels).toEqual(['gpt-5-latest', 'duckcoding']);
+    expect(mixedRouteView?.entry?.sources.map(source => source.sourceKey)).toEqual([
+      gptSource.sourceKey,
+      customCliSource.sourceKey,
+    ]);
+    expect(mixedRouteView?.item.sourceKeys).toEqual([
+      gptSource.sourceKey,
+      customCliSource.sourceKey,
+    ]);
   });
 
   it('shows grouped site account api key details and missing key reminders in the detail pane', async () => {

@@ -16,7 +16,7 @@
  * 单一数据源：config.json
  */
 
-import type { CliConfig } from './cli-config';
+import type { CliConfig, CliTargetProtocol } from './cli-config';
 import type { RoutingConfig } from './route-proxy';
 
 // ============= 基础类型 =============
@@ -153,6 +153,7 @@ export interface CliConfigItem {
   apiKeyId: number | null;
   model: string | null;
   enabled: boolean; // 是否启用（控制图标显示和测试）
+  targetProtocol?: CliTargetProtocol;
 }
 
 /** CLI 配置数据 */
@@ -218,7 +219,7 @@ export function generateAccountId(): string {
 
 /** 判断是否为 AnyRouter 站点 */
 export function isAnyRouterSite(siteName: string): boolean {
-  return siteName.trim().toLowerCase() === 'any router';
+  return siteName.replace(/[\s_-]+/g, '').toLowerCase() === 'anyrouter';
 }
 
 // ============= 检测缓存数据 =============

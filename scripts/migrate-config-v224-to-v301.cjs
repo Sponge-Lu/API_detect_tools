@@ -143,6 +143,33 @@ function mergeRecord(current, incoming) {
   };
 }
 
+function normalizeCliConfigItem(item) {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) {
+    return item;
+  }
+
+  const normalized = { ...item };
+  if (typeof normalized.targetProtocol === 'string' && normalized.targetProtocol.trim()) {
+    normalized.targetProtocol = normalized.targetProtocol.trim();
+  } else {
+    delete normalized.targetProtocol;
+  }
+  return normalized;
+}
+
+function normalizeCliConfig(config) {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    return config;
+  }
+
+  return {
+    ...config,
+    claudeCode: normalizeCliConfigItem(config.claudeCode),
+    codex: normalizeCliConfigItem(config.codex),
+    geminiCli: normalizeCliConfigItem(config.geminiCli),
+  };
+}
+
 function keepNewestRecordEntries(record, maxItems, getTimestamp) {
   const entries = Object.entries(record || {});
   if (entries.length <= maxItems) {
@@ -769,7 +796,7 @@ async function migrateConfigShape(config, existingRuntimeCache, existingRouteSta
       auth_source: 'manual',
       status: 'active',
       cached_data: site.cached_data ? { ...site.cached_data } : undefined,
-      cli_config: site.cli_config ? { ...site.cli_config } : undefined,
+      cli_config: normalizeCliConfig(site.cli_config),
       created_at: now,
       updated_at: now,
     };
@@ -825,11 +852,17 @@ async function migrateConfigShape(config, existingRuntimeCache, existingRouteSta
     version: CONFIG_VERSION,
     sites: sites.map(site => {
       const { cached_data: _cachedData, ...persistableSite } = site;
-      return persistableSite;
+      return {
+        ...persistableSite,
+        cli_config: normalizeCliConfig(persistableSite.cli_config),
+      };
     }),
     accounts: accounts.map(account => {
       const { cached_data: _cachedData, ...persistableAccount } = account;
-      return persistableAccount;
+      return {
+        ...persistableAccount,
+        cli_config: normalizeCliConfig(persistableAccount.cli_config),
+      };
     }),
     siteGroups: ensureSiteGroups(config.siteGroups),
     settings: {

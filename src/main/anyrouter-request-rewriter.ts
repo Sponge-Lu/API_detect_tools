@@ -6,8 +6,8 @@
  *
  * 改写内容:
  * 1. 清理 [undefined] 字段
- * 2. Claude Code: 固定 system 为 Claude Code 标识块，生成 metadata.user_id，补齐
- *    thinking/output_config，并添加 1m context beta 支持
+ * 2. Claude Code: 保留原始请求字段和工具语义，生成 metadata.user_id，缺省补齐
+ *    system/thinking/output_config，并添加 1m context beta 支持
  * 3. Codex: 保持 Responses API 原生协议透传，并过滤 AnyRouter 不支持的工具类型
  * 4. Gemini CLI: 保持 Gemini Native 原生协议透传
  *
@@ -28,7 +28,7 @@ interface UsageShape {
 }
 
 /**
- * AnyRouter 固定 system 块
+ * AnyRouter 缺省 system 块
  * 来源: 2026-04-11 抓包验证可用
  */
 const ANYROUTER_FIXED_SYSTEM = [
@@ -177,17 +177,22 @@ function extractTextFromContent(content: unknown): string {
 }
 
 function buildClaudeAnyRouterBody(cleaned: JsonRecord, userHash: string | undefined): JsonRecord {
+  const existingMetadata = normalizeObject(cleaned.metadata);
+  const existingThinking = normalizeObject(cleaned.thinking);
+  const existingOutputConfig = normalizeObject(cleaned.output_config);
+
   return {
-    model: cleaned.model,
-    messages: cleaned.messages,
-    system: ANYROUTER_FIXED_SYSTEM,
+    ...cleaned,
+    system: cleaned.system ?? ANYROUTER_FIXED_SYSTEM,
     metadata: {
+      ...existingMetadata,
       user_id: generateMetadataUserId(userHash || ''),
     },
     max_tokens: cleaned.max_tokens || 32000,
     stream: cleaned.stream !== false,
-    thinking: { type: 'adaptive' },
-    output_config: { effort: 'max' },
+    thinking: Object.keys(existingThinking).length > 0 ? existingThinking : { type: 'adaptive' },
+    output_config:
+      Object.keys(existingOutputConfig).length > 0 ? existingOutputConfig : { effort: 'max' },
   };
 }
 
@@ -284,7 +289,7 @@ export function rewriteForAnyRouter(
   let body: any;
   try {
     body = JSON.parse(bodyBuffer.toString('utf-8'));
-  } catch (error) {
+  } catch {
     log.warn('[AnyRouter] Failed to parse request body as JSON, skipping rewrite');
     return buildTransparentRewriteResult(bodyBuffer, requestUrl, cliType);
   }

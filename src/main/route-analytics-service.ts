@@ -173,6 +173,8 @@ function appendRouteRequestLog(params: {
   requestId: string;
   attempt: number;
   cliType: RouteCliType;
+  targetProtocol?: RouteRequestLogItem['targetProtocol'];
+  targetEndpoint?: RouteRequestLogItem['targetEndpoint'];
   requestedModel?: string | null;
   canonicalModel?: string | null;
   routeRuleId?: string;
@@ -208,6 +210,8 @@ function appendRouteRequestLog(params: {
     requestId: params.requestId,
     attempt: params.attempt,
     cliType: params.cliType,
+    targetProtocol: params.targetProtocol,
+    targetEndpoint: params.targetEndpoint,
     requestedModel: params.requestedModel,
     canonicalModel: params.canonicalModel,
     routeRuleId: params.routeRuleId,
@@ -296,6 +300,8 @@ export function recordRouteRequest(params: {
   requestId: string;
   attempt: number;
   cliType: RouteCliType;
+  targetProtocol?: RouteRequestLogItem['targetProtocol'];
+  targetEndpoint?: RouteRequestLogItem['targetEndpoint'];
   requestedModel?: string | null;
   canonicalModel: string | null;
   routeRuleId?: string;
@@ -321,6 +327,8 @@ export function recordRouteRequest(params: {
     requestId: params.requestId,
     attempt: params.attempt,
     cliType: params.cliType,
+    targetProtocol: params.targetProtocol,
+    targetEndpoint: params.targetEndpoint,
     requestedModel: params.requestedModel,
     canonicalModel: params.canonicalModel,
     routeRuleId: params.routeRuleId,
@@ -351,6 +359,7 @@ export function recordRouteRequest(params: {
   const bucketKey = buildBucketKey(
     bucketStart,
     params.cliType,
+    params.targetProtocol,
     params.canonicalModel || undefined,
     params.siteId,
     params.accountId,
@@ -369,6 +378,7 @@ export function recordRouteRequest(params: {
           bucketStart,
           bucketSize: 'hour',
           cliType: params.cliType,
+          targetProtocol: params.targetProtocol,
           routeRuleId: params.routeRuleId,
           canonicalModel: params.canonicalModel || undefined,
           siteId: params.siteId,

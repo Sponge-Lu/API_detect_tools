@@ -45,9 +45,10 @@
 | **close-behavior-manager.ts** | 窗口关闭行为管理 | `CloseBehaviorManager` 类 |
 | **credit-service.ts** | Linux Do Credit 积分检测、LDC 充值 | `CreditService` 类 |
 | **route-channel-resolver.ts** | 路由通道解析，结合站点/账户/API Key/自定义 CLI 配置与厂商优先级选择实际通道 | `resolveChannels()`, `resolveChannelCredentials()` |
-| **route-proxy-service.ts** | 本地路由代理服务器，按规则选择上游通道，使用 Electron net raw 客户端转发，并在 AnyRouter / CHY API 公益站通道上接入 CLI 协议处理，同时从 JSON/SSE 响应解析 provider usage/cache token | `startRouteProxyServer()`, `stopRouteProxyServer()`, `extractUsageFromBody()` |
-| **anyrouter-request-rewriter.ts** | AnyRouter 请求/响应适配器：Claude Code 注入 Anthropic 指纹，Codex 原生 Responses 透传，Gemini 原生透传 | `rewriteForAnyRouter()`, `transformAnyRouterResponse()` |
-| **chy-api-request-rewriter.ts** | CHY API 公益站请求/响应适配器：三类 CLI 请求统一转 OpenAI Chat Completions，响应再转回调用方协议 | `rewriteForChyApi()`, `transformChyApiResponse()` |
+| **route-proxy-service.ts** | 本地路由代理服务器，按规则选择上游通道，使用 Electron net raw 客户端转发，成功透明 SSE 边收边转发；流式请求首包等待仍受站点/配置超时约束，首个 SSE chunk 后使用 10 分钟活跃流空闲超时下限，同时在 AnyRouter / 通用 CLI 协议适配通道上接入请求/响应转换并从 JSON/SSE 响应解析 provider usage/cache token | `startRouteProxyServer()`, `stopRouteProxyServer()`, `extractUsageFromBody()` |
+| **route-probe-lock.ts** | CLI 探测/手动测试专用的 loopback probe-lock 编解码与本地路由基址构造，支持通过统一路由 Key 将测试精确钉到指定上游目标 | `buildProbeLockRouteApiKey()`, `parseProbeLockRouteApiKey()`, `buildRouteProxyBaseUrl()` |
+| **anyrouter-request-rewriter.ts** | AnyRouter 请求/响应适配器：Claude Code 保留原始工具语义并注入 Anthropic 指纹，Codex 原生 Responses 透传，Gemini 原生透传 | `rewriteForAnyRouter()`, `transformAnyRouterResponse()` |
+| **cli-protocol-adapter.ts** | 通用 CLI 协议适配器：在 Claude/Codex/Gemini 原生协议与 Anthropic / OpenAI 上游协议之间双向转换请求与响应（含 text/tool_use/tool_result/function_call/function_call_output 工具语义、流式 SSE 与非流式 JSON、usage/finish_reason 映射），失败时抛 `CliProtocolAdapterError` 携带 stage 上下文 | `adaptRequestToTargetProtocol()`, `transformTargetProtocolResponse()`, `CliProtocolAdapterError` |
 | **route-model-registry-service.ts** | 模型注册表聚合、展示项维护与厂商优先级配置，聚合站点/账户模型和自定义 CLI 配置模型 | `rebuildModelRegistry()`, `resetModelRegistryDefaults()`, `syncModelRegistrySources()` |
 | **route-cli-probe-service.ts** | CLI 定时探测、latest/history 维护与视图聚合 | `runCliProbeNow()`, `getCliProbeView()` |
 | **route-analytics-service.ts** | 路由请求分析、token/缓存 token/延迟/状态码统计与对象级排行 | `recordRouteRequest()`, `getRouteObjectStats()` |

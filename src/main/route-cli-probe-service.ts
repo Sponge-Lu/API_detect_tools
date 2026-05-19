@@ -9,6 +9,9 @@ import Logger from './utils/logger';
 import { unifiedConfigManager } from './unified-config-manager';
 import { cliWrapperCompatService } from './cli-wrapper-compat-service';
 import { isRouteMaskedApiKeyValue, resolveAccountApiKeyValue } from './route-channel-resolver';
+import { resolveApiKeyId } from './route-model-registry-service';
+import { ensureRouteProxyReady } from './route-proxy-service';
+import { buildProbeLockRouteApiKey } from './route-probe-lock';
 import type {
   RouteCliType,
   RouteCliProbeConfig,
@@ -29,6 +32,8 @@ import {
 import {
   DEFAULT_CLI_CONFIG,
   CLI_TEST_MODEL_SLOT_COUNT,
+  getCliTargetEndpoint,
+  normalizeCliTargetProtocol,
   normalizeCliTestModels,
   type CliConfigItem,
 } from '../shared/types/cli-config';
@@ -108,7 +113,19 @@ function resolveProbeCliItem(
     enabled: accountItem?.enabled ?? siteItem?.enabled ?? fallback.enabled,
     editedFiles: accountItem?.editedFiles ?? siteItem?.editedFiles ?? fallback.editedFiles,
     applyMode: accountItem?.applyMode ?? siteItem?.applyMode ?? fallback.applyMode,
+    targetProtocol:
+      accountItem?.targetProtocol ?? siteItem?.targetProtocol ?? fallback.targetProtocol,
   };
+}
+
+function resolveProbeTargetProtocol(
+  siteId: string,
+  accountId: string,
+  cliType: RouteCliType
+): ReturnType<typeof normalizeCliTargetProtocol> {
+  return normalizeCliTargetProtocol(
+    resolveProbeCliItem(siteId, accountId, cliType)?.targetProtocol
+  );
 }
 
 function isProbeCliEnabled(siteId: string, accountId: string, cliType: RouteCliType): boolean {
@@ -127,7 +144,7 @@ async function resolveProbeApiKeyForExecution(
   site: UnifiedSite,
   account: AccountCredential,
   cliType: RouteCliType
-): Promise<string | null> {
+): Promise<{ apiKeyId: string } | null> {
   const preferredApiKeyId = resolveProbeCliItem(site.id, account.id, cliType)?.apiKeyId;
   const apiKeys = (account.cached_data?.api_keys || []).filter(apiKey => {
     return (
@@ -140,15 +157,29 @@ async function resolveProbeApiKeyForExecution(
       matchesConfiguredApiKey(apiKey, preferredApiKeyId)
     );
     if (preferredApiKey) {
-      return await resolveAccountApiKeyValue(site, account, preferredApiKey);
+      const resolvedApiKey = await resolveAccountApiKeyValue(site, account, preferredApiKey);
+      if (resolvedApiKey) {
+        return {
+          apiKeyId: resolveApiKeyId(preferredApiKey),
+        };
+      }
     }
   }
 
   if (apiKeys.length > 0) {
-    return await resolveAccountApiKeyValue(site, account, apiKeys[0]);
+    const resolvedApiKey = await resolveAccountApiKeyValue(site, account, apiKeys[0]);
+    if (resolvedApiKey) {
+      return {
+        apiKeyId: resolveApiKeyId(apiKeys[0]),
+      };
+    }
   }
 
-  return site.api_key && !isRouteMaskedApiKeyValue(site.api_key) ? site.api_key : null;
+  return site.api_key && !isRouteMaskedApiKeyValue(site.api_key)
+    ? {
+        apiKeyId: resolveApiKeyId({ key: site.api_key }),
+      }
+    : null;
 }
 
 function isProbeAccountActive(account: AccountCredential): boolean {
@@ -265,6 +296,8 @@ function buildLatestListFromSamples(samples: RouteCliProbeSample[]): RouteCliPro
       siteId: sample.siteId,
       accountId: sample.accountId,
       cliType: sample.cliType,
+      targetProtocol: sample.targetProtocol,
+      targetEndpoint: sample.targetEndpoint,
       canonicalModel: sample.canonicalModel,
       rawModel: sample.rawModel,
       healthy: sample.success,
@@ -316,7 +349,9 @@ async function runSingleProbe(
   _timeoutMs: number,
   probeRunId: string
 ): Promise<RouteCliProbeSample> {
-  const probeKey = buildProbeKey(siteId, accountId, cliType, canonicalModel);
+  const targetProtocol = resolveProbeTargetProtocol(siteId, accountId, cliType);
+  const targetEndpoint = getCliTargetEndpoint(cliType, targetProtocol, rawModel || canonicalModel);
+  const probeKey = buildProbeKey(siteId, accountId, cliType, canonicalModel, targetProtocol);
   const now = Date.now();
 
   // 找一个可用的 API Key
@@ -329,6 +364,8 @@ async function runSingleProbe(
       siteId,
       accountId,
       cliType,
+      targetProtocol,
+      targetEndpoint,
       canonicalModel,
       rawModel,
       success: false,
@@ -340,10 +377,10 @@ async function runSingleProbe(
 
   const site = config.sites.find(s => s.id === siteId);
   const account = config.accounts.find(a => a.id === accountId);
-  const apiKey =
+  const routeCredential =
     site && account ? await resolveProbeApiKeyForExecution(site, account, cliType) : null;
 
-  if (!apiKey || !site || !account) {
+  if (!routeCredential || !site || !account) {
     return {
       sampleId: generateSampleId(),
       probeRunId,
@@ -351,6 +388,8 @@ async function runSingleProbe(
       siteId,
       accountId,
       cliType,
+      targetProtocol,
+      targetEndpoint,
       canonicalModel,
       rawModel,
       success: false,
@@ -362,23 +401,19 @@ async function runSingleProbe(
 
   // AnyRouter 站点使用 120 秒超时，其他站点使用配置的超时时间
   const timeoutMs = isAnyRouterSite(site.name) ? 120000 : _timeoutMs;
-
-  const baseUrl = site.url;
   const startTime = Date.now();
 
   try {
-    // Endpoint ping: 简单 HEAD 请求计时
-    let endpointPingMs: number | undefined;
-    try {
-      const pingStart = Date.now();
-      await Promise.race([
-        fetch(`${baseUrl}/v1/models`, { method: 'HEAD', signal: AbortSignal.timeout(5000) }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('ping timeout')), 5000)),
-      ]);
-      endpointPingMs = Date.now() - pingStart;
-    } catch {
-      // ping 失败不阻断探测
-    }
+    const routeRuntime = await ensureRouteProxyReady({ autoEnable: true });
+    const routeApiKey = buildProbeLockRouteApiKey(routeRuntime.unifiedApiKey, {
+      siteId,
+      accountId,
+      apiKeyId: routeCredential.apiKeyId,
+      cliType,
+      canonicalModel,
+      rawModel,
+      targetProtocol,
+    });
 
     let success = false;
     let statusCode: number | undefined;
@@ -391,8 +426,8 @@ async function runSingleProbe(
     switch (cliType) {
       case 'claudeCode': {
         const result = await cliWrapperCompatService.testClaudeCodeWithDetail(
-          baseUrl,
-          apiKey,
+          routeRuntime.baseUrl,
+          routeApiKey,
           rawModel,
           timeoutMs
         );
@@ -404,8 +439,8 @@ async function runSingleProbe(
       }
       case 'codex': {
         const result = await cliWrapperCompatService.testCodexWithDetail(
-          baseUrl,
-          apiKey,
+          routeRuntime.baseUrl,
+          routeApiKey,
           rawModel,
           timeoutMs
         );
@@ -417,8 +452,8 @@ async function runSingleProbe(
       }
       case 'geminiCli': {
         const result = await cliWrapperCompatService.testGeminiWithDetail(
-          baseUrl,
-          apiKey,
+          routeRuntime.baseUrl,
+          routeApiKey,
           rawModel,
           timeoutMs
         );
@@ -439,12 +474,13 @@ async function runSingleProbe(
       siteId,
       accountId,
       cliType,
+      targetProtocol,
+      targetEndpoint,
       canonicalModel,
       rawModel,
       success,
       source: 'routeProbe',
       statusCode,
-      endpointPingMs,
       firstByteLatencyMs,
       totalLatencyMs,
       error,
@@ -462,6 +498,8 @@ async function runSingleProbe(
       siteId,
       accountId,
       cliType,
+      targetProtocol,
+      targetEndpoint,
       canonicalModel,
       rawModel,
       success: false,
@@ -665,7 +703,19 @@ export function getCliProbeView(params: { window: '24h' | '7d' | '30d' }): Route
         });
 
         const modelViews: RouteCliProbeModelView[] = desiredModels.map(model => {
-          const probeKey = buildProbeKey(site.id, account.id, cliType, model.canonicalModel);
+          const targetProtocol = resolveProbeTargetProtocol(site.id, account.id, cliType);
+          const targetEndpoint = getCliTargetEndpoint(
+            cliType,
+            targetProtocol,
+            model.rawModel || model.canonicalModel
+          );
+          const probeKey = buildProbeKey(
+            site.id,
+            account.id,
+            cliType,
+            model.canonicalModel,
+            targetProtocol
+          );
           const latest = routing.cliProbe.latest[probeKey];
           const history = summarizeProbeHistory(
             (routing.cliProbe.history[probeKey] || []).filter(sample => sample.testedAt >= cutoff)
@@ -674,6 +724,8 @@ export function getCliProbeView(params: { window: '24h' | '7d' | '30d' }): Route
           return {
             canonicalModel: model.canonicalModel,
             rawModel: latest?.rawModel || model.rawModel,
+            targetProtocol,
+            targetEndpoint: latest?.targetEndpoint || targetEndpoint,
             success: latest ? latest.lastSample.success : null,
             testedAt: latest?.lastSample.testedAt,
             statusCode: latest?.lastSample.statusCode,

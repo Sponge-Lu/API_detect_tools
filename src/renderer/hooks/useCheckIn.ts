@@ -30,6 +30,7 @@ import React from 'react';
 import Logger from '../utils/logger';
 import {
   BUILTIN_GROUP_IDS,
+  isAnyRouterSite as isAnyRouterSiteName,
   type DetectionCacheData,
   type DetectionResult,
   type SiteConfig,
@@ -50,7 +51,6 @@ interface UseCheckInOptions {
   detectSingle?: (site: SiteConfig, quickRefresh: boolean) => Promise<void>;
 }
 
-const ANY_ROUTER_SITE_NAME = 'any router';
 const ANY_ROUTER_CHECKIN_QUOTA = 25 * 500000;
 
 export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInOptions) {
@@ -60,8 +60,7 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
   const getCheckInKey = (site: SiteConfig, accountId?: string) =>
     accountId ? `${site.name}::${accountId}` : site.name;
 
-  const isAnyRouterSite = (site: SiteConfig) =>
-    site.name.trim().toLowerCase() === ANY_ROUTER_SITE_NAME;
+  const isAnyRouterSiteConfig = (site: SiteConfig) => isAnyRouterSiteName(site.name);
 
   const buildManualCheckinCompletedResult = (site: SiteConfig, accountId?: string) => {
     const existingResult = results.find(r => r.name === site.name && r.accountId === accountId);
@@ -275,7 +274,7 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
   const handleCheckIn = async (site: SiteConfig, accountId?: string) => {
     const checkInKey = getCheckInKey(site, accountId);
 
-    if (isAnyRouterSite(site)) {
+    if (isAnyRouterSiteConfig(site)) {
       setCheckingIn(checkInKey);
       try {
         const anyRouterResult = await performAnyRouterCheckIn(site, accountId);
@@ -469,7 +468,7 @@ export function useCheckIn({ showDialog, showAlert, setCheckingIn }: UseCheckInO
       setCheckingIn(getCheckInKey(site, accountId));
 
       try {
-        if (isAnyRouterSite(site)) {
+        if (isAnyRouterSiteConfig(site)) {
           const anyRouterResult = await performAnyRouterCheckIn(site, accountId);
           if (anyRouterResult.success) {
             summary.success++;

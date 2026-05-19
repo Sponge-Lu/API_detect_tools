@@ -8,7 +8,7 @@
 import * as http from 'http';
 import { URL } from 'url';
 import Logger from './utils/logger';
-import { httpRawRequest } from './utils/http-client';
+import { httpRawRequest, httpRawStreamRequest } from './utils/http-client';
 import { unifiedConfigManager } from './unified-config-manager';
 import {
   detectCliTypeFromPath,
@@ -17,7 +17,11 @@ import {
   sortRules,
   findMatchingRule,
 } from './route-rule-engine';
-import { resolveChannels, resolveChannelCredentials } from './route-channel-resolver';
+import {
+  resolveChannels,
+  resolveChannelCredentials,
+  resolveChannelTarget,
+} from './route-channel-resolver';
 import type { ResolvedChannel } from './route-channel-resolver';
 import {
   sortChannelsByScore,
@@ -35,17 +39,23 @@ import type {
 } from '../shared/types/route-proxy';
 import { normalizeRouteRuntimeConfig } from '../shared/types/route-proxy';
 import { isAnyRouterSite } from '../shared/types/site';
+import { isCliTargetProtocolNativeEquivalent } from '../shared/types/cli-config';
 import {
   rewriteForAnyRouter,
   transformAnyRouterResponse,
   type AnyRouterResponseAdapter,
 } from './anyrouter-request-rewriter';
 import {
-  isChyApiSiteName,
-  rewriteForChyApi,
-  transformChyApiResponse,
-  type ChyApiResponseAdapter,
-} from './chy-api-request-rewriter';
+  adaptRequestToTargetProtocol,
+  transformTargetProtocolResponse,
+  CliProtocolAdapterError,
+  type CliProtocolResponseAdapter,
+} from './cli-protocol-adapter';
+import {
+  buildRouteProxyBaseUrl,
+  isLoopbackAddress,
+  parseProbeLockRouteApiKey,
+} from './route-probe-lock';
 
 const log = Logger.scope('RouteProxyService');
 
@@ -63,6 +73,8 @@ const ALL_ROUTE_PATHS_DISABLED_ERROR_CODE = 'all_route_paths_disabled';
 const ALL_ROUTE_PATHS_DISABLED_STATUS_CODE = 400;
 const ALL_ROUTE_PATHS_DISABLED_MESSAGE =
   'all_route_paths_disabled: All route paths for this rule are temporarily disabled. Restore route paths in the route rule UI or wait for the suspension to expire.';
+const ANYROUTER_REQUEST_TIMEOUT_MS = 120 * 1000;
+const ACTIVE_STREAM_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 
 function nextRequestId(cliType: RouteCliType): string {
   requestSequence += 1;
@@ -236,6 +248,104 @@ function compactHeaders(
       return typeof value === 'string' || Array.isArray(value);
     })
   );
+}
+
+function isEventStreamResponse(headers: http.IncomingHttpHeaders): boolean {
+  return normalizeHeaderValue(headers['content-type']).toLowerCase().includes('text/event-stream');
+}
+
+function isStreamingRequest(bodyJson: unknown, requestUrl: string | undefined): boolean {
+  const record = asRecord(bodyJson);
+  if (record?.stream === true) return true;
+
+  const pathname = (requestUrl || '/').split('?')[0];
+  return pathname.includes(':streamGenerateContent');
+}
+
+function resolveUpstreamTimeouts(params: {
+  siteName?: string;
+  baseTimeoutMs: number;
+  streamingRequest: boolean;
+}): { timeoutMs: number; streamIdleTimeoutMs?: number } {
+  const siteTimeoutMs =
+    params.siteName && isAnyRouterSite(params.siteName)
+      ? ANYROUTER_REQUEST_TIMEOUT_MS
+      : params.baseTimeoutMs;
+
+  if (!params.streamingRequest) {
+    return { timeoutMs: siteTimeoutMs };
+  }
+
+  return {
+    timeoutMs: siteTimeoutMs,
+    streamIdleTimeoutMs: Math.max(siteTimeoutMs, ACTIVE_STREAM_IDLE_TIMEOUT_MS),
+  };
+}
+
+function canStreamResponseAdapters(
+  anyRouterAdapter: AnyRouterResponseAdapter,
+  protocolAdapter: CliProtocolResponseAdapter
+): boolean {
+  return anyRouterAdapter.type === 'transparent' && protocolAdapter.type === 'transparent';
+}
+
+function buildStreamingResponseHeaders(
+  headers: http.IncomingHttpHeaders
+): http.OutgoingHttpHeaders {
+  const outgoing: http.OutgoingHttpHeaders = {};
+  const blocked = new Set([
+    'connection',
+    'content-length',
+    'keep-alive',
+    'proxy-authenticate',
+    'proxy-authorization',
+    'te',
+    'trailer',
+    'transfer-encoding',
+    'upgrade',
+  ]);
+
+  for (const [key, value] of Object.entries(headers)) {
+    if (value === undefined || blocked.has(key.toLowerCase())) continue;
+    outgoing[key] = value;
+  }
+
+  return outgoing;
+}
+
+function writeResponseChunk(res: http.ServerResponse, chunk: Buffer): Promise<void> {
+  if (res.destroyed || res.writableEnded) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      res.off('drain', onDrain);
+      res.off('error', onError);
+    };
+    const onDrain = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+
+    res.once('error', onError);
+
+    try {
+      if (res.write(chunk)) {
+        cleanup();
+        resolve();
+        return;
+      }
+      res.once('drain', onDrain);
+    } catch (error: unknown) {
+      cleanup();
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
 }
 
 export function summarizeUpstreamFailureBodyForLog(body: Buffer, maxChars: number = 1200): string {
@@ -616,6 +726,9 @@ interface ForwardToUpstreamOptions {
   methodOverride?: string;
   requestUrlOverride?: string;
   upstreamCliType?: RouteCliType;
+  streamResponse?: http.ServerResponse;
+  streamResponseBody?: boolean;
+  streamIdleTimeoutMs?: number;
 }
 
 /** 转发请求到上游（不直接写 res，返回结果由调用者决定是否透传） */
@@ -635,6 +748,7 @@ async function forwardToUpstream(
   latencyMs: number;
   firstByteLatencyMs?: number;
   usage?: RouteUsageStats;
+  streamed?: boolean;
 }> {
   const startTime = Date.now();
   const upstreamCliType = options.upstreamCliType ?? cliType;
@@ -658,14 +772,42 @@ async function forwardToUpstream(
     Object.assign(forwardHeaders, options.additionalHeaders);
   }
 
-  const response = await httpRawRequest(target.url, {
+  const requestConfig = {
     method: options.methodOverride ?? req.method ?? 'GET',
     headers: compactHeaders(forwardHeaders),
     body: bodyBuffer,
     timeout: timeoutMs,
     proxyUrl: options.upstreamProxyUrl,
     preferElectronNet: true,
-  });
+  };
+
+  let streamed = false;
+  let streamingStatusCode: number | undefined;
+  let streamingHeaders: http.OutgoingHttpHeaders | undefined;
+  const response =
+    options.streamResponse && options.streamResponseBody
+      ? await httpRawStreamRequest(target.url, {
+          ...requestConfig,
+          onResponse: upstreamResponse => {
+            const statusCode = upstreamResponse.status || 500;
+            if (classifyRouteStatusCode(statusCode) !== 'success') return false;
+            if (!isEventStreamResponse(upstreamResponse.headers)) return false;
+
+            streamingStatusCode = statusCode;
+            streamingHeaders = buildStreamingResponseHeaders(upstreamResponse.headers);
+            return true;
+          },
+          onChunk: chunk => {
+            if (!streamingStatusCode || !streamingHeaders) return;
+            if (!streamed) {
+              streamed = true;
+              options.streamResponse!.writeHead(streamingStatusCode, streamingHeaders);
+            }
+            return writeResponseChunk(options.streamResponse!, chunk);
+          },
+          streamIdleTimeout: options.streamIdleTimeoutMs,
+        })
+      : await httpRawRequest(target.url, requestConfig);
 
   return {
     statusCode: response.status || 500,
@@ -674,6 +816,7 @@ async function forwardToUpstream(
     latencyMs: Date.now() - startTime,
     firstByteLatencyMs: response.firstByteLatencyMs,
     usage: extractUsageFromBody(response.body),
+    streamed,
   };
 }
 
@@ -780,9 +923,30 @@ export async function handleRequest(
 
   // 鉴权
   const token = extractRouteApiKey(req, cliType);
-  if (token !== routing.server.unifiedApiKey) {
+  const probeLock = parseProbeLockRouteApiKey(token, routing.server.unifiedApiKey);
+  if (token !== routing.server.unifiedApiKey && !probeLock) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'invalid_api_key', message: 'Invalid route API key' }));
+    return;
+  }
+  if (probeLock && !isLoopbackAddress(req.socket.remoteAddress)) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        error: 'probe_lock_forbidden',
+        message: 'Probe-lock requests are only allowed from loopback clients',
+      })
+    );
+    return;
+  }
+  if (probeLock && probeLock.cliType !== cliType) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        error: 'probe_lock_cli_mismatch',
+        message: `Probe-lock CLI type ${probeLock.cliType} does not match route ${cliType}`,
+      })
+    );
     return;
   }
   const requestId = nextRequestId(cliType);
@@ -816,165 +980,218 @@ export async function handleRequest(
     canonicalModel = routing.cliModelSelections[cliType] || null;
   }
 
-  // 规则匹配只看 canonical model；若当前请求尚未建立 canonical，则退化为 raw
-  const sortedRules = sortRules(routing.rules);
-  let matchModel = canonicalModel || rawModel;
-  let rule = findMatchingRule(sortedRules, cliType, matchModel);
-  const cliSelectedModel = routing.cliModelSelections[cliType]?.trim() || null;
+  let activeRouteRuleId: string | undefined;
+  let sortedChannels: ResolvedChannel[] = [];
+  let routeRuntimeConfig = resolveRouteRuntimeConfig(routing, canonicalModel);
+  const bypassRoutePathState = Boolean(probeLock);
 
-  if (
-    !rule &&
-    shouldBlockGeminiCliInternalUtilityRequest({
-      routing,
-      cliType,
-      rawModel,
-      cliSelectedModel,
-    })
-  ) {
-    recordRouteRequest({
-      requestId,
-      attempt: 0,
-      cliType,
-      requestedModel: rawModel,
-      canonicalModel,
-      outcome: 'failure',
-      statusCode: GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_STATUS_CODE,
-      error: GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_ERROR_CODE,
-    });
-    writeGeminiCliInternalUtilityBlockedResponse(res, rawModel);
-    return;
-  }
+  if (probeLock) {
+    canonicalModel = probeLock.canonicalModel;
+    routeRuntimeConfig = resolveRouteRuntimeConfig(routing, canonicalModel);
+    sortedChannels = [
+      {
+        routeRuleId: '__probe_lock__',
+        siteId: probeLock.siteId,
+        accountId: probeLock.accountId,
+        apiKeyId: probeLock.apiKeyId,
+        cliType,
+        canonicalModel: probeLock.canonicalModel,
+        resolvedModel: probeLock.rawModel,
+        targetProtocol: probeLock.targetProtocol,
+      },
+    ];
+  } else {
+    // 规则匹配只看 canonical model；若当前请求尚未建立 canonical，则退化为 raw
+    const sortedRules = sortRules(routing.rules);
+    let matchModel = canonicalModel || rawModel;
+    let rule = findMatchingRule(sortedRules, cliType, matchModel);
+    const cliSelectedModel = routing.cliModelSelections[cliType]?.trim() || null;
 
-  // Gemini CLI can emit helper/default path models that differ from the app-selected model.
-  if (
-    !rule &&
-    cliType === 'geminiCli' &&
-    rawModel &&
-    cliSelectedModel &&
-    cliSelectedModel !== matchModel
-  ) {
-    const selectedModelRule = findMatchingRule(sortedRules, cliType, cliSelectedModel);
-    if (selectedModelRule) {
-      canonicalModel = cliSelectedModel;
-      matchModel = cliSelectedModel;
-      rule = selectedModelRule;
+    if (
+      !rule &&
+      shouldBlockGeminiCliInternalUtilityRequest({
+        routing,
+        cliType,
+        rawModel,
+        cliSelectedModel,
+      })
+    ) {
+      recordRouteRequest({
+        requestId,
+        attempt: 0,
+        cliType,
+        requestedModel: rawModel,
+        canonicalModel,
+        outcome: 'failure',
+        statusCode: GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_STATUS_CODE,
+        error: GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_ERROR_CODE,
+      });
+      writeGeminiCliInternalUtilityBlockedResponse(res, rawModel);
+      return;
+    }
+
+    // Gemini CLI can emit helper/default path models that differ from the app-selected model.
+    if (
+      !rule &&
+      cliType === 'geminiCli' &&
+      rawModel &&
+      cliSelectedModel &&
+      cliSelectedModel !== matchModel
+    ) {
+      const selectedModelRule = findMatchingRule(sortedRules, cliType, cliSelectedModel);
+      if (selectedModelRule) {
+        canonicalModel = cliSelectedModel;
+        matchModel = cliSelectedModel;
+        rule = selectedModelRule;
+      }
+    }
+
+    if (!rule) {
+      recordRouteRequest({
+        requestId,
+        attempt: 0,
+        cliType,
+        requestedModel: rawModel,
+        canonicalModel,
+        outcome: 'failure',
+        statusCode: 502,
+        error: 'no_matching_rule',
+      });
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: 'no_matching_rule',
+          message: `No routing rule matched for ${cliType} / ${matchModel || '(empty model)'}`,
+        })
+      );
+      return;
+    }
+
+    activeRouteRuleId = rule.id;
+
+    // 解析候选通道（带 canonical model 过滤）
+    const channels = resolveChannels(rule, canonicalModel);
+    if (channels.length === 0) {
+      recordRouteRequest({
+        requestId,
+        attempt: 0,
+        cliType,
+        requestedModel: rawModel,
+        canonicalModel,
+        routeRuleId: rule.id,
+        outcome: 'failure',
+        statusCode: 503,
+        error: 'no_channels',
+      });
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({ error: 'no_channels', message: 'No available channels for this rule' })
+      );
+      return;
+    }
+    routeRuntimeConfig = resolveRouteRuntimeConfig(routing, canonicalModel);
+    sortedChannels = buildChannelAttemptPlan(
+      sortChannelsByScore(channels),
+      routeRuntimeConfig.maxAttemptsPerRoutePath
+    ).filter(channel => !isRoutePathDisabled(channel)) as ResolvedChannel[];
+    if (sortedChannels.length === 0) {
+      recordRouteRequest({
+        requestId,
+        attempt: 0,
+        cliType,
+        requestedModel: rawModel,
+        canonicalModel,
+        routeRuleId: rule.id,
+        outcome: 'failure',
+        statusCode: ALL_ROUTE_PATHS_DISABLED_STATUS_CODE,
+        error: ALL_ROUTE_PATHS_DISABLED_ERROR_CODE,
+      });
+      writeAllRoutePathsDisabledResponse(res, cliType);
+      return;
     }
   }
-
-  if (!rule) {
-    recordRouteRequest({
-      requestId,
-      attempt: 0,
-      cliType,
-      requestedModel: rawModel,
-      canonicalModel,
-      outcome: 'failure',
-      statusCode: 502,
-      error: 'no_matching_rule',
-    });
-    res.writeHead(502, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        error: 'no_matching_rule',
-        message: `No routing rule matched for ${cliType} / ${matchModel || '(empty model)'}`,
-      })
-    );
-    return;
-  }
-
-  // 解析候选通道（带 canonical model 过滤）
-  const channels = resolveChannels(rule, canonicalModel);
-  if (channels.length === 0) {
-    recordRouteRequest({
-      requestId,
-      attempt: 0,
-      cliType,
-      requestedModel: rawModel,
-      canonicalModel,
-      routeRuleId: rule.id,
-      outcome: 'failure',
-      statusCode: 503,
-      error: 'no_channels',
-    });
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({ error: 'no_channels', message: 'No available channels for this rule' })
-    );
-    return;
-  }
-  const routeRuntimeConfig = resolveRouteRuntimeConfig(routing, canonicalModel);
-  const sortedChannels = buildChannelAttemptPlan(
-    sortChannelsByScore(channels),
-    routeRuntimeConfig.maxAttemptsPerRoutePath
-  ).filter(channel => !isRoutePathDisabled(channel));
-  if (sortedChannels.length === 0) {
-    recordRouteRequest({
-      requestId,
-      attempt: 0,
-      cliType,
-      requestedModel: rawModel,
-      canonicalModel,
-      routeRuleId: rule.id,
-      outcome: 'failure',
-      statusCode: ALL_ROUTE_PATHS_DISABLED_STATUS_CODE,
-      error: ALL_ROUTE_PATHS_DISABLED_ERROR_CODE,
-    });
-    writeAllRoutePathsDisabledResponse(res, cliType);
-    return;
-  }
   const timeoutMs = routing.server.requestTimeoutMs;
+  const requestWantsStreaming = isStreamingRequest(bodyJson, req.url);
 
   let attempt = 0;
   for (let i = 0; i < sortedChannels.length; i++) {
     const ch = sortedChannels[i] as ResolvedChannel;
-    if (isRoutePathDisabled(ch)) {
+    if (!bypassRoutePathState && isRoutePathDisabled(ch)) {
       continue;
     }
 
     attempt += 1;
-    const creds = await resolveChannelCredentials(ch.siteId, ch.accountId, ch.apiKeyId);
+    const resolvedTarget = await resolveChannelTarget(ch);
+    const activeChannel: ResolvedChannel = {
+      ...ch,
+      targetProtocol: resolvedTarget.targetProtocol,
+      targetEndpoint: resolvedTarget.targetEndpoint,
+    };
+    const probeLockCredentials =
+      probeLock?.upstreamBaseUrl && probeLock?.upstreamApiKey
+        ? {
+            baseUrl: probeLock.upstreamBaseUrl,
+            apiKey: probeLock.upstreamApiKey,
+          }
+        : null;
+    const creds =
+      probeLockCredentials ||
+      (await resolveChannelCredentials(ch.siteId, ch.accountId, ch.apiKeyId));
     if (!creds) {
       recordRouteRequest({
         requestId,
         attempt,
         cliType,
+        targetProtocol: activeChannel.targetProtocol,
+        targetEndpoint: activeChannel.targetEndpoint,
         requestedModel: rawModel,
         canonicalModel,
-        routeRuleId: rule.id,
-        siteId: ch.siteId,
-        accountId: ch.accountId,
-        apiKeyId: ch.apiKeyId,
-        resolvedModel: ch.resolvedModel,
+        routeRuleId: activeRouteRuleId,
+        siteId: activeChannel.siteId,
+        accountId: activeChannel.accountId,
+        apiKeyId: activeChannel.apiKeyId,
+        resolvedModel: activeChannel.resolvedModel,
         outcome: 'failure',
         error: 'credentials_unavailable',
       });
-      await recordRoutePathOutcome(
-        ch,
-        'failure',
-        { error: 'credentials_unavailable' },
-        routeRuntimeConfig
-      );
+      if (!bypassRoutePathState) {
+        await recordRoutePathOutcome(
+          activeChannel,
+          'failure',
+          { error: 'credentials_unavailable' },
+          routeRuntimeConfig
+        );
+      }
       continue;
     }
 
-    // AnyRouter 站点使用 120 秒超时，其他站点使用配置的超时时间
-    const site = unifiedConfigManager.getSiteById(ch.siteId);
-    const account = unifiedConfigManager.getAccountById(ch.accountId);
-    const effectiveTimeoutMs = site && isAnyRouterSite(site.name) ? 120000 : timeoutMs;
+    // Keep the initial upstream wait bounded; only active SSE streams get a longer idle window.
+    const site = unifiedConfigManager.getSiteById(activeChannel.siteId);
+    const account = unifiedConfigManager.getAccountById(activeChannel.accountId);
+    const upstreamTimeouts = resolveUpstreamTimeouts({
+      siteName: site?.name,
+      baseTimeoutMs: timeoutMs,
+      streamingRequest: requestWantsStreaming,
+    });
 
     // 重写请求体中的 model 字段
-    let finalBody = ch.resolvedModel
-      ? rewriteRequestModel(bodyBuffer, ch.resolvedModel)
+    let finalBody = activeChannel.resolvedModel
+      ? rewriteRequestModel(bodyBuffer, activeChannel.resolvedModel)
       : bodyBuffer;
 
-    // 站点级特殊处理：AnyRouter 走其原生协议约束；CHY 统一改写到 Chat Completions
+    // 站点级特殊处理：AnyRouter 仅在原生协议透传时保留，其余显式 targetProtocol 走通用适配
     let additionalHeaders: Record<string, string> = {};
     let methodOverride: string | undefined;
     let requestUrlOverride: string | undefined;
     let upstreamCliType: RouteCliType = cliType;
     let responseAdapter: AnyRouterResponseAdapter = { type: 'transparent' };
-    let chyApiResponseAdapter: ChyApiResponseAdapter = { type: 'transparent' };
-    if (site && account && isAnyRouterSite(site.name)) {
+    let protocolResponseAdapter: CliProtocolResponseAdapter = { type: 'transparent' };
+    if (
+      site &&
+      account &&
+      isAnyRouterSite(site.name) &&
+      isCliTargetProtocolNativeEquivalent(cliType, activeChannel.targetProtocol ?? 'native')
+    ) {
       const userHash = account.anyRouterConfig?.userHash;
 
       if (!userHash && cliType === 'claudeCode') {
@@ -987,7 +1204,7 @@ export async function handleRequest(
         req.headers,
         cliType,
         req.url,
-        ch.resolvedModel
+        activeChannel.resolvedModel
       );
 
       finalBody = rewritten.body;
@@ -995,18 +1212,79 @@ export async function handleRequest(
       requestUrlOverride = rewritten.upstreamPath;
       upstreamCliType = rewritten.upstreamCliType;
       responseAdapter = rewritten.responseAdapter;
-    } else if (site && isChyApiSiteName(site.name)) {
-      const rewritten = rewriteForChyApi(finalBody, cliType, req.url, ch.resolvedModel);
+    } else if (
+      !isCliTargetProtocolNativeEquivalent(cliType, activeChannel.targetProtocol ?? 'native')
+    ) {
+      try {
+        const rewritten = adaptRequestToTargetProtocol(
+          finalBody,
+          cliType,
+          activeChannel.targetProtocol as Exclude<
+            typeof activeChannel.targetProtocol,
+            'native' | undefined
+          >,
+          req.url,
+          activeChannel.resolvedModel
+        );
 
-      finalBody = rewritten.body;
-      additionalHeaders = rewritten.headers;
-      methodOverride = rewritten.upstreamMethod;
-      requestUrlOverride = rewritten.upstreamPath;
-      upstreamCliType = rewritten.upstreamCliType;
-      chyApiResponseAdapter = rewritten.responseAdapter;
+        finalBody = rewritten.body;
+        additionalHeaders = rewritten.headers;
+        methodOverride = rewritten.upstreamMethod;
+        requestUrlOverride = rewritten.upstreamPath;
+        upstreamCliType = rewritten.upstreamCliType;
+        protocolResponseAdapter = rewritten.responseAdapter;
+      } catch (err: unknown) {
+        const isAdapterError = err instanceof CliProtocolAdapterError;
+        const stage = isAdapterError ? err.stage : 'request-adapt';
+        const reason = isAdapterError
+          ? err.reason
+          : err instanceof Error
+            ? err.message
+            : 'unknown_error';
+        log.warn('Protocol adapter request-adapt failed', {
+          stage,
+          cliType,
+          sourceEndpoint: pathname,
+          targetProtocol: activeChannel.targetProtocol,
+          targetEndpoint: activeChannel.targetEndpoint,
+          siteId: activeChannel.siteId,
+          accountId: activeChannel.accountId,
+          apiKeyId: activeChannel.apiKeyId,
+          resolvedModel: activeChannel.resolvedModel,
+          reason,
+        });
+        recordRouteRequest({
+          requestId,
+          attempt,
+          routeRuleId: activeRouteRuleId,
+          cliType,
+          targetProtocol: activeChannel.targetProtocol,
+          targetEndpoint: activeChannel.targetEndpoint,
+          requestedModel: rawModel,
+          canonicalModel,
+          siteId: activeChannel.siteId,
+          accountId: activeChannel.accountId,
+          apiKeyId: activeChannel.apiKeyId,
+          resolvedModel: activeChannel.resolvedModel,
+          outcome: 'failure',
+          error: `adapter_${stage}:${reason}`,
+        });
+        if (!bypassRoutePathState) {
+          recordOutcome(activeChannel, 'failure', {});
+          await recordRoutePathOutcome(
+            activeChannel,
+            'failure',
+            { error: `adapter_${stage}:${reason}` },
+            routeRuntimeConfig
+          );
+        }
+        continue;
+      }
     }
 
     const attemptStartedAt = Date.now();
+    const streamResponseBody =
+      requestWantsStreaming && canStreamResponseAdapters(responseAdapter, protocolResponseAdapter);
 
     try {
       const result = await forwardToUpstream(
@@ -1015,75 +1293,92 @@ export async function handleRequest(
         creds.apiKey,
         finalBody,
         cliType,
-        effectiveTimeoutMs,
-        ch.resolvedModel,
+        upstreamTimeouts.timeoutMs,
+        activeChannel.resolvedModel,
         {
           upstreamProxyUrl: routing.server.upstreamProxyUrl,
           additionalHeaders,
           methodOverride,
           requestUrlOverride,
           upstreamCliType,
+          streamResponse: res,
+          streamResponseBody,
+          streamIdleTimeoutMs: upstreamTimeouts.streamIdleTimeoutMs,
         }
       );
       const outcome = classifyRouteStatusCode(result.statusCode);
 
-      // 记录实时选路统计
-      recordOutcome(ch, outcome, { statusCode: result.statusCode, latencyMs: result.latencyMs });
-      await recordRoutePathOutcome(
-        ch,
-        outcome,
-        {
+      if (!bypassRoutePathState) {
+        // 记录实时选路统计
+        recordOutcome(activeChannel, outcome, {
           statusCode: result.statusCode,
           latencyMs: result.latencyMs,
-        },
-        routeRuntimeConfig
-      );
+        });
+        await recordRoutePathOutcome(
+          activeChannel,
+          outcome,
+          {
+            statusCode: result.statusCode,
+            latencyMs: result.latencyMs,
+          },
+          routeRuntimeConfig
+        );
 
-      // 记录分析统计
-      recordRouteRequest({
-        requestId,
-        attempt,
-        routeRuleId: rule.id,
-        cliType,
-        requestedModel: rawModel,
-        canonicalModel,
-        siteId: ch.siteId,
-        accountId: ch.accountId,
-        apiKeyId: ch.apiKeyId,
-        resolvedModel: ch.resolvedModel,
-        outcome,
-        statusCode: result.statusCode,
-        latencyMs: result.latencyMs,
-        firstByteLatencyMs: result.firstByteLatencyMs,
-        promptTokens: result.usage?.promptTokens,
-        completionTokens: result.usage?.completionTokens,
-        totalTokens: result.usage?.totalTokens,
-        cacheCreationTokens: result.usage?.cacheCreationTokens,
-        cacheReadTokens: result.usage?.cacheReadTokens,
-        cachedTokens: result.usage?.cachedTokens,
-      });
+        // 记录分析统计
+        recordRouteRequest({
+          requestId,
+          attempt,
+          routeRuleId: activeRouteRuleId,
+          cliType,
+          targetProtocol: activeChannel.targetProtocol,
+          targetEndpoint: activeChannel.targetEndpoint,
+          requestedModel: rawModel,
+          canonicalModel,
+          siteId: activeChannel.siteId,
+          accountId: activeChannel.accountId,
+          apiKeyId: activeChannel.apiKeyId,
+          resolvedModel: activeChannel.resolvedModel,
+          outcome,
+          statusCode: result.statusCode,
+          latencyMs: result.latencyMs,
+          firstByteLatencyMs: result.firstByteLatencyMs,
+          promptTokens: result.usage?.promptTokens,
+          completionTokens: result.usage?.completionTokens,
+          totalTokens: result.usage?.totalTokens,
+          cacheCreationTokens: result.usage?.cacheCreationTokens,
+          cacheReadTokens: result.usage?.cacheReadTokens,
+          cachedTokens: result.usage?.cachedTokens,
+        });
+      }
 
       // 失败且还有重试机会：不写 res，尝试下一个通道
       if (outcome === 'failure') {
         log.warn('Upstream channel returned failure response', {
           statusCode: result.statusCode,
-          siteId: ch.siteId,
-          accountId: ch.accountId,
-          apiKeyId: ch.apiKeyId,
-          resolvedModel: ch.resolvedModel,
+          siteId: activeChannel.siteId,
+          accountId: activeChannel.accountId,
+          apiKeyId: activeChannel.apiKeyId,
+          resolvedModel: activeChannel.resolvedModel,
           contentType: normalizeHeaderValue(result.headers['content-type']) || 'unknown',
           bodySnippet: summarizeUpstreamFailureBodyForLog(result.body) || '<empty>',
         });
 
-        if (hasEnabledRoutePath(sortedChannels.slice(i + 1))) {
+        if (hasEnabledRoutePath(sortedChannels.slice(i + 1)) && !bypassRoutePathState) {
           log.warn(`Channel failed (${result.statusCode}), trying next channel`);
           continue;
         }
 
-        if (areAllRoutePathsDisabled(sortedChannels)) {
+        if (!bypassRoutePathState && areAllRoutePathsDisabled(sortedChannels)) {
           writeAllRoutePathsDisabledResponse(res, cliType);
           return;
         }
+      }
+
+      if (result.streamed) {
+        if (!res.writableEnded) {
+          res.end();
+        }
+        return;
       }
 
       const anyRouterTransformed = transformAnyRouterResponse({
@@ -1092,12 +1387,44 @@ export async function handleRequest(
         statusCode: result.statusCode,
         adapter: responseAdapter,
       });
-      const transformed = transformChyApiResponse({
-        body: anyRouterTransformed.body,
-        headers: anyRouterTransformed.headers,
-        statusCode: result.statusCode,
-        adapter: chyApiResponseAdapter,
-      });
+      let transformed: { body: Buffer; headers: http.IncomingHttpHeaders };
+      try {
+        transformed = transformTargetProtocolResponse({
+          body: anyRouterTransformed.body,
+          headers: anyRouterTransformed.headers,
+          statusCode: result.statusCode,
+          adapter: protocolResponseAdapter,
+        });
+      } catch (err: unknown) {
+        const isAdapterError = err instanceof CliProtocolAdapterError;
+        const reason = isAdapterError
+          ? err.reason
+          : err instanceof Error
+            ? err.message
+            : 'unknown_error';
+        log.warn('Protocol adapter response-adapt failed', {
+          stage: 'response-adapt',
+          cliType,
+          sourceEndpoint: pathname,
+          targetProtocol: activeChannel.targetProtocol,
+          targetEndpoint: activeChannel.targetEndpoint,
+          siteId: activeChannel.siteId,
+          accountId: activeChannel.accountId,
+          apiKeyId: activeChannel.apiKeyId,
+          resolvedModel: activeChannel.resolvedModel,
+          reason,
+        });
+        if (!bypassRoutePathState) {
+          await recordRoutePathOutcome(
+            activeChannel,
+            'failure',
+            { error: `adapter_response-adapt:${reason}` },
+            routeRuntimeConfig
+          );
+        }
+        // 响应字节尚未写入，可继续尝试下一通道
+        continue;
+      }
 
       // 成功/neutral/最后一次失败：写 res
       res.writeHead(result.statusCode, transformed.headers);
@@ -1105,38 +1432,58 @@ export async function handleRequest(
       return;
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'unknown_error';
-      recordOutcome(ch, 'failure', {});
-      await recordRoutePathOutcome(
-        ch,
-        'failure',
-        {
+      if (!bypassRoutePathState) {
+        recordOutcome(activeChannel, 'failure', {});
+        await recordRoutePathOutcome(
+          activeChannel,
+          'failure',
+          {
+            latencyMs: Date.now() - attemptStartedAt,
+            error: errorMessage,
+          },
+          routeRuntimeConfig
+        );
+        recordRouteRequest({
+          requestId,
+          attempt,
+          routeRuleId: activeRouteRuleId,
+          cliType,
+          targetProtocol: activeChannel.targetProtocol,
+          targetEndpoint: activeChannel.targetEndpoint,
+          requestedModel: rawModel,
+          canonicalModel,
+          siteId: activeChannel.siteId,
+          accountId: activeChannel.accountId,
+          apiKeyId: activeChannel.apiKeyId,
+          resolvedModel: activeChannel.resolvedModel,
+          outcome: 'failure',
           latencyMs: Date.now() - attemptStartedAt,
           error: errorMessage,
-        },
-        routeRuntimeConfig
-      );
-      recordRouteRequest({
-        requestId,
-        attempt,
-        routeRuleId: rule.id,
+        });
+      }
+      log.warn('Upstream channel forwarding failed', {
+        stage: 'upstream',
         cliType,
-        requestedModel: rawModel,
-        canonicalModel,
-        siteId: ch.siteId,
-        accountId: ch.accountId,
-        apiKeyId: ch.apiKeyId,
-        resolvedModel: ch.resolvedModel,
-        outcome: 'failure',
-        latencyMs: Date.now() - attemptStartedAt,
+        sourceEndpoint: pathname,
+        targetProtocol: activeChannel.targetProtocol,
+        targetEndpoint: activeChannel.targetEndpoint,
+        siteId: activeChannel.siteId,
+        accountId: activeChannel.accountId,
+        apiKeyId: activeChannel.apiKeyId,
+        resolvedModel: activeChannel.resolvedModel,
         error: errorMessage,
       });
-      log.warn(`Channel error: ${errorMessage}, trying next`);
-      if (res.headersSent) return;
+      if (res.headersSent) {
+        if (!res.writableEnded) {
+          res.end();
+        }
+        return;
+      }
     }
   }
 
   if (!res.headersSent) {
-    if (areAllRoutePathsDisabled(sortedChannels)) {
+    if (!bypassRoutePathState && areAllRoutePathsDisabled(sortedChannels)) {
       writeAllRoutePathsDisabledResponse(res, cliType);
     } else {
       res.writeHead(502, { 'Content-Type': 'application/json' });
@@ -1172,7 +1519,9 @@ export async function startProxyServer(): Promise<void> {
       log.info(`Route proxy server started on ${host}:${port}`);
       resolve();
     });
-    proxyServer!.on('error', reject);
+    proxyServer!.on('error', err => {
+      reject(formatRouteProxyStartError(err, host, port));
+    });
   });
 
   startHealthCheckTimer();
@@ -1198,6 +1547,44 @@ export function getProxyStatus(): { running: boolean; port: number; host: string
     running: isRunning,
     port: routing.server.port,
     host: routing.server.host,
+  };
+}
+
+function formatRouteProxyStartError(error: unknown, host: string, port: number): Error {
+  if (
+    error &&
+    typeof error === 'object' &&
+    'code' in error &&
+    (error as NodeJS.ErrnoException).code === 'EADDRINUSE'
+  ) {
+    return new Error(
+      `Route proxy port conflict: ${host}:${port} is already in use. Stop the process using this port or change the route proxy port.`
+    );
+  }
+
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+export async function ensureRouteProxyReady(options?: {
+  autoEnable?: boolean;
+}): Promise<{ baseUrl: string; unifiedApiKey: string }> {
+  const autoEnable = options?.autoEnable !== false;
+  let routing = unifiedConfigManager.getRoutingConfig();
+
+  if (!routing.server.enabled && autoEnable) {
+    await unifiedConfigManager.updateRouteServerConfig({ enabled: true });
+    routing = unifiedConfigManager.getRoutingConfig();
+  }
+
+  if (!routing.server.enabled) {
+    throw new Error('Route proxy is disabled');
+  }
+
+  await startProxyServer();
+  routing = unifiedConfigManager.getRoutingConfig();
+  return {
+    baseUrl: buildRouteProxyBaseUrl(routing.server),
+    unifiedApiKey: routing.server.unifiedApiKey,
   };
 }
 

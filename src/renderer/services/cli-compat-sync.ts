@@ -25,6 +25,8 @@ export interface PersistedCliCompatibilityTestSample {
   model: string;
   success: boolean;
   testedAt?: number;
+  targetProtocol?: 'native' | 'anthropic-messages' | 'openai-chat-completions' | 'openai-responses';
+  targetEndpoint?: string;
   statusCode?: number;
   error?: string;
   claudeDetail?: ClaudeTestDetail;

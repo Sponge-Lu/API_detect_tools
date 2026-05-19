@@ -242,6 +242,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
         apiKey: string;
         model: string;
         baseUrl?: string;
+        targetProtocol?:
+          | 'native'
+          | 'anthropic-messages'
+          | 'openai-chat-completions'
+          | 'openai-responses';
       }>;
     }) => ipcRenderer.invoke('cli-compat:test-with-wrapper', params),
     // 保存 CLI 兼容性结果到缓存

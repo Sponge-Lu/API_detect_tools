@@ -71,6 +71,12 @@ import type {
   RouteAnalyticsBucket,
 } from '../shared/types/route-proxy';
 import {
+  CLI_TARGET_PROTOCOLS,
+  getCliTargetEndpoint,
+  normalizeCliTargetProtocol,
+  type CliTargetProtocol,
+} from '../shared/types/cli-config';
+import {
   DEFAULT_ROUTING_CONFIG,
   DEFAULT_CLI_PROBE_CONFIG,
   DEFAULT_ANALYTICS_CONFIG,
@@ -79,6 +85,7 @@ import {
   buildStatsKey,
   buildRoutePathStateKey,
   buildProbeKey,
+  buildBucketKey,
   buildSiteScopedProbeAccountId,
   normalizeRouteCliSelection,
   normalizeRouteRuntimeConfig,
@@ -102,6 +109,7 @@ const ROUTE_CLI_LABELS: Record<RouteCliType, string> = {
   codex: 'Codex',
   geminiCli: 'Gemini CLI',
 };
+const ROUTE_CLI_TYPES: RouteCliType[] = ['claudeCode', 'codex', 'geminiCli'];
 
 type ReadConfigResult = {
   config: UnifiedConfig;
@@ -116,6 +124,31 @@ function normalizePriorityValue(value: unknown): number | null {
   }
 
   return Math.max(0, Math.round(value));
+}
+
+function normalizeCliConfigTargetProtocols(
+  cliConfig?: Partial<
+    Record<RouteCliType, { targetProtocol?: CliTargetProtocol | null } | null>
+  > | null
+): void {
+  if (!cliConfig) {
+    return;
+  }
+
+  for (const cliType of ROUTE_CLI_TYPES) {
+    const item = cliConfig[cliType];
+    if (!item) {
+      continue;
+    }
+    if (
+      typeof item.targetProtocol === 'string' &&
+      CLI_TARGET_PROTOCOLS.includes(item.targetProtocol as CliTargetProtocol)
+    ) {
+      item.targetProtocol = normalizeCliTargetProtocol(item.targetProtocol);
+    } else {
+      delete item.targetProtocol;
+    }
+  }
 }
 
 function normalizePriorityRecord(
@@ -861,6 +894,146 @@ export class UnifiedConfigManager {
       s.blockGeminiCliInternalUtilityRequests = true;
     }
     if (s.enabled === undefined) s.enabled = false;
+
+    for (const site of config.sites || []) {
+      normalizeCliConfigTargetProtocols(
+        site.cli_config as Partial<
+          Record<RouteCliType, { targetProtocol?: CliTargetProtocol | null } | null>
+        >
+      );
+    }
+    for (const account of config.accounts || []) {
+      normalizeCliConfigTargetProtocols(
+        account.cli_config as Partial<
+          Record<RouteCliType, { targetProtocol?: CliTargetProtocol | null } | null>
+        >
+      );
+    }
+
+    r.stats = Object.fromEntries(
+      Object.values(r.stats || {}).map(stats => {
+        const targetProtocol = normalizeCliTargetProtocol(stats?.targetProtocol);
+        const normalizedStats: RouteChannelStats = {
+          ...stats,
+          targetProtocol,
+        };
+        return [buildStatsKey(normalizedStats), normalizedStats];
+      })
+    );
+    r.routePathStates = Object.fromEntries(
+      Object.values(r.routePathStates || {}).map(state => {
+        const targetProtocol = normalizeCliTargetProtocol(state?.targetProtocol);
+        const normalizedState: RoutePathState = {
+          ...state,
+          targetProtocol,
+        };
+        return [buildRoutePathStateKey(normalizedState), normalizedState];
+      })
+    );
+    r.health = Object.fromEntries(
+      Object.values(r.health || {}).map(health => {
+        const targetProtocol = normalizeCliTargetProtocol(health?.targetProtocol);
+        const normalizedHealth: RouteChannelHealth = {
+          ...health,
+          targetProtocol,
+        };
+        return [buildStatsKey(normalizedHealth), normalizedHealth];
+      })
+    );
+
+    const normalizedProbeLatest: Record<string, RouteCliProbeLatest> = {};
+    for (const latest of Object.values(r.cliProbe.latest || {})) {
+      const targetProtocol = normalizeCliTargetProtocol(
+        latest?.targetProtocol ?? latest?.lastSample?.targetProtocol
+      );
+      const normalizedProbeKey = buildProbeKey(
+        latest.siteId,
+        latest.accountId,
+        latest.cliType,
+        latest.canonicalModel,
+        targetProtocol
+      );
+      const normalizedLastSample: RouteCliProbeSample = {
+        ...latest.lastSample,
+        targetProtocol,
+        targetEndpoint:
+          latest.lastSample?.targetEndpoint ||
+          getCliTargetEndpoint(
+            latest.cliType,
+            targetProtocol,
+            latest.lastSample?.rawModel || latest.lastSample?.canonicalModel
+          ),
+        probeKey: normalizedProbeKey,
+      };
+      normalizedProbeLatest[normalizedProbeKey] = {
+        ...latest,
+        targetProtocol,
+        targetEndpoint:
+          latest.targetEndpoint ||
+          normalizedLastSample.targetEndpoint ||
+          getCliTargetEndpoint(
+            latest.cliType,
+            targetProtocol,
+            latest.rawModel || latest.canonicalModel
+          ),
+        probeKey: normalizedProbeKey,
+        lastSample: normalizedLastSample,
+      };
+    }
+    r.cliProbe.latest = normalizedProbeLatest;
+
+    const normalizedProbeHistory: Record<string, RouteCliProbeSample[]> = {};
+    for (const samples of Object.values(r.cliProbe.history || {})) {
+      for (const sample of samples || []) {
+        const targetProtocol = normalizeCliTargetProtocol(sample?.targetProtocol);
+        const normalizedProbeKey = buildProbeKey(
+          sample.siteId,
+          sample.accountId,
+          sample.cliType,
+          sample.canonicalModel,
+          targetProtocol
+        );
+        const normalizedSample: RouteCliProbeSample = {
+          ...sample,
+          targetProtocol,
+          targetEndpoint:
+            sample.targetEndpoint ||
+            getCliTargetEndpoint(
+              sample.cliType,
+              targetProtocol,
+              sample.rawModel || sample.canonicalModel
+            ),
+          probeKey: normalizedProbeKey,
+        };
+        normalizedProbeHistory[normalizedProbeKey] = [
+          ...(normalizedProbeHistory[normalizedProbeKey] || []),
+          normalizedSample,
+        ];
+      }
+    }
+    r.cliProbe.history = normalizedProbeHistory;
+
+    r.analytics.buckets = Object.fromEntries(
+      Object.values(r.analytics.buckets || {}).map(bucket => {
+        const targetProtocol = normalizeCliTargetProtocol(bucket?.targetProtocol);
+        const normalizedBucket: RouteAnalyticsBucket = {
+          ...bucket,
+          targetProtocol,
+        };
+        return [
+          buildBucketKey(
+            normalizedBucket.bucketStart,
+            normalizedBucket.cliType,
+            targetProtocol,
+            normalizedBucket.canonicalModel,
+            normalizedBucket.siteId,
+            normalizedBucket.accountId,
+            normalizedBucket.apiKeyId
+          ),
+          normalizedBucket,
+        ];
+      })
+    );
 
     r.cliModelSelections = {
       claudeCode: normalizeRouteCliSelection(
@@ -1645,7 +1818,7 @@ export class UnifiedConfigManager {
    * 记录通道成功率统计
    */
   async recordRouteStats(
-    key: RouteChannelKey,
+    key: RouteChannelKey & { targetProtocol?: RouteChannelStats['targetProtocol'] },
     outcome: RouteOutcome,
     meta?: { statusCode?: number; latencyMs?: number }
   ): Promise<void> {

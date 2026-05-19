@@ -3,16 +3,31 @@
  */
 
 import { ipcMain } from 'electron';
+import { createHash } from 'crypto';
 import { CliCompatibilityResult } from '../cli-compat-service';
 import { cliWrapperCompatService } from '../cli-wrapper-compat-service';
 import { generateProbeRunId, persistCliProbeSamples } from '../route-cli-probe-service';
+import {
+  buildCustomCliRouteAccountId,
+  buildCustomCliRouteApiKeyId,
+  buildCustomCliRouteSiteId,
+  loadCustomCliConfigStorage,
+} from '../custom-cli-config-service';
+import { resolveApiKeyId } from '../route-model-registry-service';
+import { ensureRouteProxyReady } from '../route-proxy-service';
+import { buildProbeLockRouteApiKey } from '../route-probe-lock';
 import { unifiedConfigManager } from '../unified-config-manager';
 import Logger from '../utils/logger';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { normalizeCodexFeatureFlagsToml } from '../../shared/types/cli-config';
+import {
+  getCliTargetEndpoint,
+  normalizeCodexFeatureFlagsToml,
+  normalizeCliTargetProtocol,
+} from '../../shared/types/cli-config';
 import { buildProbeKey, buildSiteScopedProbeAccountId } from '../../shared/types/route-proxy';
+import type { AccountCredential, ApiKeyInfo, UnifiedSite } from '../../shared/types/site';
 
 const log = Logger.scope('CliCompatHandlers');
 
@@ -21,6 +36,7 @@ interface CliTestConfig {
   apiKey: string;
   model: string;
   baseUrl?: string; // 可选的 baseUrl，如果提供则使用此 URL 而非 siteUrl
+  targetProtocol?: 'native' | 'anthropic-messages' | 'openai-chat-completions' | 'openai-responses';
 }
 
 interface TestWithConfigParams {
@@ -38,11 +54,23 @@ interface CliCompatibilityTestSample {
   model: string;
   success: boolean;
   testedAt: number;
+  targetProtocol?: 'native' | 'anthropic-messages' | 'openai-chat-completions' | 'openai-responses';
+  targetEndpoint?: string;
   statusCode?: number;
   error?: string;
   claudeDetail?: CliCompatibilityResult['claudeDetail'];
   codexDetail?: CliCompatibilityResult['codexDetail'];
   geminiDetail?: CliCompatibilityResult['geminiDetail'];
+}
+
+interface ResolvedCliTestRouteTarget {
+  siteId: string;
+  accountId: string;
+  apiKeyId: string;
+  targetProtocol: NonNullable<CliTestConfig['targetProtocol']>;
+  targetEndpoint: string;
+  upstreamBaseUrl?: string;
+  upstreamApiKey?: string;
 }
 
 function extractStatusCodeFromMessage(message?: string): number | undefined {
@@ -79,6 +107,145 @@ function summarizeCliFailure(message?: string, statusCode?: number): string | un
   }
 
   return normalized.length <= 96 ? normalized : `${normalized.slice(0, 93)}...`;
+}
+
+function normalizeBaseUrl(url: string): string {
+  return url.replace(/\/+$/, '').trim();
+}
+
+function buildDirectProbeFingerprint(baseUrl: string, apiKey: string): string {
+  return createHash('sha256')
+    .update(`${normalizeBaseUrl(baseUrl)}|${apiKey}`)
+    .digest('hex')
+    .slice(0, 12);
+}
+
+function pickPreferredRouteAccount(
+  site: UnifiedSite,
+  accounts: AccountCredential[]
+): AccountCredential | null {
+  const siteAccounts = accounts.filter(account => account.site_id === site.id);
+  if (siteAccounts.length === 0) {
+    return null;
+  }
+
+  return (
+    siteAccounts.find(account => account.status === 'active' || !account.status) || siteAccounts[0]
+  );
+}
+
+function collectMatchingSiteRouteTargets(
+  config: CliTestConfig,
+  siteUrl: string
+): ResolvedCliTestRouteTarget[] {
+  const unifiedConfig = unifiedConfigManager.exportConfigSync();
+  if (!unifiedConfig) {
+    return [];
+  }
+
+  const normalizedBaseUrl = normalizeBaseUrl(config.baseUrl || siteUrl);
+  const targetProtocol = normalizeCliTargetProtocol(config.targetProtocol);
+  const targetEndpoint = getCliTargetEndpoint(config.cliType, targetProtocol, config.model);
+  const candidates = new Map<string, ResolvedCliTestRouteTarget>();
+
+  for (const site of unifiedConfig.sites) {
+    if (normalizeBaseUrl(site.url) !== normalizedBaseUrl) {
+      continue;
+    }
+
+    const siteAccounts = unifiedConfig.accounts.filter(account => account.site_id === site.id);
+    for (const account of siteAccounts) {
+      const apiKeys = (account.cached_data?.api_keys || []) as ApiKeyInfo[];
+      for (const apiKey of apiKeys) {
+        const rawApiKey = apiKey.key || apiKey.token || '';
+        if (rawApiKey !== config.apiKey) {
+          continue;
+        }
+
+        const apiKeyId = resolveApiKeyId(apiKey);
+        candidates.set(`${site.id}:${account.id}:${apiKeyId}`, {
+          siteId: site.id,
+          accountId: account.id,
+          apiKeyId,
+          targetProtocol,
+          targetEndpoint,
+        });
+      }
+    }
+
+    if (site.api_key === config.apiKey) {
+      const ownerAccount = pickPreferredRouteAccount(site, unifiedConfig.accounts);
+      if (!ownerAccount) {
+        continue;
+      }
+
+      const apiKeyId = resolveApiKeyId({ key: site.api_key });
+      candidates.set(`${site.id}:${ownerAccount.id}:${apiKeyId}`, {
+        siteId: site.id,
+        accountId: ownerAccount.id,
+        apiKeyId,
+        targetProtocol,
+        targetEndpoint,
+      });
+    }
+  }
+
+  return Array.from(candidates.values());
+}
+
+async function resolveCliTestRouteTarget(
+  siteUrl: string,
+  config: CliTestConfig
+): Promise<ResolvedCliTestRouteTarget> {
+  const normalizedBaseUrl = normalizeBaseUrl(config.baseUrl || siteUrl);
+  const targetProtocol = normalizeCliTargetProtocol(config.targetProtocol);
+  const targetEndpoint = getCliTargetEndpoint(config.cliType, targetProtocol, config.model);
+
+  const storage = await loadCustomCliConfigStorage();
+  const matchingCustomConfigs = storage.configs.filter(item => {
+    return normalizeBaseUrl(item.baseUrl) === normalizedBaseUrl && item.apiKey === config.apiKey;
+  });
+
+  if (matchingCustomConfigs.length > 1) {
+    throw new Error(
+      `Ambiguous custom CLI config match for ${normalizedBaseUrl}. Narrow the base URL or API key.`
+    );
+  }
+
+  if (matchingCustomConfigs.length === 1) {
+    const customConfig = matchingCustomConfigs[0];
+    return {
+      siteId: buildCustomCliRouteSiteId(customConfig.id),
+      accountId: buildCustomCliRouteAccountId(customConfig.id),
+      apiKeyId: buildCustomCliRouteApiKeyId(customConfig.id),
+      targetProtocol,
+      targetEndpoint,
+      upstreamBaseUrl: customConfig.baseUrl.trim(),
+      upstreamApiKey: customConfig.apiKey.trim(),
+    };
+  }
+
+  const matchingSiteTargets = collectMatchingSiteRouteTargets(config, siteUrl);
+  if (matchingSiteTargets.length > 1) {
+    throw new Error(
+      `Ambiguous site/account/API key match for ${normalizedBaseUrl}. Multiple accounts use the same API key.`
+    );
+  }
+
+  if (matchingSiteTargets.length === 1) {
+    return matchingSiteTargets[0];
+  }
+
+  const fingerprint = buildDirectProbeFingerprint(normalizedBaseUrl, config.apiKey);
+  return {
+    siteId: `probe-direct-site-${fingerprint}`,
+    accountId: `probe-direct-account-${fingerprint}`,
+    apiKeyId: resolveApiKeyId({ key: config.apiKey }),
+    targetProtocol,
+    targetEndpoint,
+    upstreamBaseUrl: normalizedBaseUrl,
+    upstreamApiKey: config.apiKey,
+  };
 }
 
 /** 配置文件写入参数 */
@@ -521,6 +688,7 @@ async function runCliCompatibilityTests(
   executor: CliCompatExecutor,
   options?: { parallel?: boolean }
 ): Promise<{ summary: Partial<CliCompatibilityResult>; samples: CliCompatibilityTestSample[] }> {
+  const routeRuntime = await ensureRouteProxyReady({ autoEnable: true });
   const results: Partial<CliCompatibilityResult> = {
     claudeCode: null,
     claudeDetail: undefined,
@@ -538,15 +706,33 @@ async function runCliCompatibilityTests(
   > = {};
 
   const testSingleConfig = async (config: CliTestConfig) => {
-    const testUrl = config.baseUrl || params.siteUrl;
     const testedAt = Date.now();
+    const fallbackTargetProtocol = normalizeCliTargetProtocol(config.targetProtocol);
+    const fallbackTargetEndpoint = getCliTargetEndpoint(
+      config.cliType,
+      fallbackTargetProtocol,
+      config.model
+    );
 
     try {
+      const routeTarget = await resolveCliTestRouteTarget(params.siteUrl, config);
+      const testUrl = routeRuntime.baseUrl;
+      const routeApiKey = buildProbeLockRouteApiKey(routeRuntime.unifiedApiKey, {
+        siteId: routeTarget.siteId,
+        accountId: routeTarget.accountId,
+        apiKeyId: routeTarget.apiKeyId,
+        cliType: config.cliType,
+        canonicalModel: config.model,
+        rawModel: config.model,
+        targetProtocol: routeTarget.targetProtocol,
+        upstreamBaseUrl: routeTarget.upstreamBaseUrl,
+        upstreamApiKey: routeTarget.upstreamApiKey,
+      });
       switch (config.cliType) {
         case 'claudeCode': {
           const claudeResult = await executor.testClaudeCodeWithDetail(
             testUrl,
-            config.apiKey,
+            routeApiKey,
             config.model
           );
           if (claudeResult.supported) {
@@ -561,6 +747,8 @@ async function runCliCompatibilityTests(
             model: config.model,
             success: claudeResult.supported ?? false,
             testedAt,
+            targetProtocol: routeTarget.targetProtocol,
+            targetEndpoint: routeTarget.targetEndpoint,
             error: claudeResult.message,
             statusCode: extractStatusCodeFromMessage(claudeResult.message),
             claudeDetail: claudeResult.detail,
@@ -569,7 +757,7 @@ async function runCliCompatibilityTests(
         case 'codex': {
           const codexResult = await executor.testCodexWithDetail(
             testUrl,
-            config.apiKey,
+            routeApiKey,
             config.model
           );
           if (codexResult.supported) {
@@ -584,6 +772,8 @@ async function runCliCompatibilityTests(
             model: config.model,
             success: codexResult.supported ?? false,
             testedAt,
+            targetProtocol: routeTarget.targetProtocol,
+            targetEndpoint: routeTarget.targetEndpoint,
             error: codexResult.message,
             statusCode: extractStatusCodeFromMessage(codexResult.message),
             codexDetail: codexResult.detail,
@@ -592,7 +782,7 @@ async function runCliCompatibilityTests(
         case 'geminiCli': {
           const geminiResult = await executor.testGeminiWithDetail(
             testUrl,
-            config.apiKey,
+            routeApiKey,
             config.model
           );
           if (geminiResult.supported) {
@@ -607,6 +797,8 @@ async function runCliCompatibilityTests(
             model: config.model,
             success: geminiResult.supported ?? false,
             testedAt,
+            targetProtocol: routeTarget.targetProtocol,
+            targetEndpoint: routeTarget.targetEndpoint,
             error: geminiResult.message,
             statusCode: extractStatusCodeFromMessage(geminiResult.message),
             geminiDetail: geminiResult.detail,
@@ -621,6 +813,8 @@ async function runCliCompatibilityTests(
         model: config.model,
         success: false,
         testedAt,
+        targetProtocol: fallbackTargetProtocol,
+        targetEndpoint: fallbackTargetEndpoint,
         error: message,
         statusCode: extractStatusCodeFromMessage(message),
       };
@@ -646,6 +840,8 @@ async function runCliCompatibilityTests(
       model: testResult.model,
       success: testResult.success,
       testedAt: testResult.testedAt,
+      targetProtocol: testResult.targetProtocol,
+      targetEndpoint: testResult.targetEndpoint,
       statusCode: testResult.statusCode,
       error: testResult.error,
       claudeDetail: testResult.claudeDetail,
@@ -734,9 +930,24 @@ export function registerCliCompatHandlers() {
         }
 
         const ownerAccountId = accountId || buildSiteScopedProbeAccountId(site.id);
+        const ownerAccount = accountId ? unifiedConfigManager.getAccountById(accountId) : null;
         const probeRunId = generateProbeRunId('manual');
         const probeSamples = (samples || []).map((sample, index) => {
-          const probeKey = buildProbeKey(site.id, ownerAccountId, sample.cliType, sample.model);
+          const configuredTargetProtocol = normalizeCliTargetProtocol(
+            sample.targetProtocol ??
+              ownerAccount?.cli_config?.[sample.cliType]?.targetProtocol ??
+              site.cli_config?.[sample.cliType]?.targetProtocol
+          );
+          const targetEndpoint =
+            sample.targetEndpoint ||
+            getCliTargetEndpoint(sample.cliType, configuredTargetProtocol, sample.model);
+          const probeKey = buildProbeKey(
+            site.id,
+            ownerAccountId,
+            sample.cliType,
+            sample.model,
+            configuredTargetProtocol
+          );
           return {
             sampleId: `manual_${Date.now()}_${index}`,
             probeRunId,
@@ -744,6 +955,8 @@ export function registerCliCompatHandlers() {
             siteId: site.id,
             accountId: ownerAccountId,
             cliType: sample.cliType,
+            targetProtocol: configuredTargetProtocol,
+            targetEndpoint,
             canonicalModel: sample.model,
             rawModel: sample.model,
             success: sample.success,

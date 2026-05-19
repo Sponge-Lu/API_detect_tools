@@ -118,9 +118,28 @@ async function loadProbeService(config: {
     },
   }));
 
+  vi.doMock('../main/route-proxy-service', () => ({
+    ensureRouteProxyReady: vi.fn(async () => ({
+      baseUrl: 'http://127.0.0.1:3210',
+      unifiedApiKey: 'sk-route',
+    })),
+  }));
+
+  vi.doMock('../main/route-probe-lock', () => ({
+    buildProbeLockRouteApiKey: vi.fn(
+      (
+        _unifiedApiKey: string,
+        lock: { cliType: string; apiKeyId: string; canonicalModel: string }
+      ) => `probe-lock:${lock.cliType}:${lock.apiKeyId}:${lock.canonicalModel}`
+    ),
+  }));
+
   vi.doMock('../main/route-model-registry-service', () => ({
     listModelRegistryEntries: vi.fn(() => config.registryEntries || []),
     resolveRawModelForChannel: config.resolveRawModelForChannel || vi.fn(() => null),
+    resolveApiKeyId: vi.fn((apiKey: { id?: number | string; key?: string }) =>
+      apiKey.id !== undefined ? String(apiKey.id) : String(apiKey.key || 'unknown')
+    ),
   }));
 
   const service = await import('../main/route-cli-probe-service');
@@ -177,13 +196,6 @@ describe('route-cli-probe-service', () => {
   });
 
   it('即时探测任务会覆盖同站点的全部活跃账户', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({
-        ok: true,
-      }))
-    );
-
     const config = {
       sites: [createSite()],
       accounts: [
@@ -213,15 +225,54 @@ describe('route-cli-probe-service', () => {
     expect(persistedSamples[0].probeRunId).toMatch(/^route_/);
   });
 
+  it('自动探测通过本地 route proxy 执行真实 CLI 测试', async () => {
+    const config = {
+      sites: [createSite()],
+      accounts: [
+        createAccount('acct-default', {
+          status: undefined,
+          cached_data: {
+            api_keys: [{ id: 7, key: 'sk-default-key', status: 1 }],
+          },
+        }),
+      ],
+    };
+
+    const { runCliProbeNow } = await loadProbeService(config);
+    const { cliWrapperCompatService } = await import('../main/cli-wrapper-compat-service');
+    const { ensureRouteProxyReady } = await import('../main/route-proxy-service');
+    const { buildProbeLockRouteApiKey } = await import('../main/route-probe-lock');
+
+    const result = await runCliProbeNow({
+      siteId: 'site-1',
+      accountId: 'acct-default',
+      cliType: 'codex',
+    });
+
+    expect(result.totalSamples).toBe(1);
+    expect(ensureRouteProxyReady).toHaveBeenCalledWith({ autoEnable: true });
+    expect(buildProbeLockRouteApiKey).toHaveBeenCalledWith(
+      'sk-route',
+      expect.objectContaining({
+        siteId: 'site-1',
+        accountId: 'acct-default',
+        apiKeyId: '7',
+        cliType: 'codex',
+        canonicalModel: 'gpt-4.1-mini',
+        rawModel: 'gpt-4.1-mini',
+      })
+    );
+    expect(cliWrapperCompatService.testCodexWithDetail).toHaveBeenCalledWith(
+      'http://127.0.0.1:3210',
+      'probe-lock:codex:7:gpt-4.1-mini',
+      'gpt-4.1-mini',
+      30000
+    );
+  });
+
   it('应用重启后会按最近一次探测时间恢复下一次定时探测', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-04-23T10:00:00.000Z'));
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({
-        ok: true,
-      }))
-    );
 
     const latestSample = createProbeSample({
       testedAt: Date.now() - 30 * 60 * 1000,
@@ -302,13 +353,6 @@ describe('route-cli-probe-service', () => {
   });
 
   it('不可用分组站点不会进入 CLI 探测任务', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({
-        ok: true,
-      }))
-    );
-
     const config = {
       sites: [
         createSite({

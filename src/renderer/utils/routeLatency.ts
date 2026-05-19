@@ -1,22 +1,29 @@
 /**
  * 路由延迟分位数计算工具
  * 输入: latencyHistogram (Record<string, number>)
- * 输出: { p90, p99, sampleCount }
+ * 输出: { p90, p99, sampleCount } / 内部桶解析与百分位计算（被 routeTtfb 复用）
  * 定位: 工具层 - 从 histogram 桶估算延迟分位数
+ *
+ * 自引用: 当此文件变更时，更新:
+ * - 本文件头注释
+ * - src/renderer/utils/FOLDER_INDEX.md
+ * - PROJECT_INDEX.md
  */
 
-interface LatencyPercentiles {
+export interface LatencyPercentiles {
   p90: number | null;
   p99: number | null;
   sampleCount: number;
 }
 
-interface HistogramBucket {
+export interface HistogramBucket {
   lowerBound: number;
   upperBound: number;
   midpoint: number;
   count: number;
 }
+
+export const MIN_LATENCY_SAMPLE_COUNT = 20;
 
 function parseLatencyBucket(label: string): { lowerBound: number; upperBound: number } | null {
   const rangeMatch = label.match(/^(\d+)-(\d+)ms$/);
@@ -39,7 +46,7 @@ function parseLatencyBucket(label: string): { lowerBound: number; upperBound: nu
   return null;
 }
 
-function buildSortedBuckets(histogram: Record<string, number>): HistogramBucket[] {
+export function buildSortedHistogramBuckets(histogram: Record<string, number>): HistogramBucket[] {
   const buckets: HistogramBucket[] = [];
 
   for (const [label, count] of Object.entries(histogram)) {
@@ -59,7 +66,10 @@ function buildSortedBuckets(histogram: Record<string, number>): HistogramBucket[
   return buckets.sort((a, b) => a.lowerBound - b.lowerBound);
 }
 
-function computePercentile(buckets: HistogramBucket[], percentile: number): number | null {
+export function computePercentileFromBuckets(
+  buckets: HistogramBucket[],
+  percentile: number
+): number | null {
   if (buckets.length === 0) return null;
 
   const totalCount = buckets.reduce((sum, bucket) => sum + bucket.count, 0);
@@ -79,16 +89,16 @@ function computePercentile(buckets: HistogramBucket[], percentile: number): numb
 }
 
 export function computeLatencyPercentiles(histogram: Record<string, number>): LatencyPercentiles {
-  const buckets = buildSortedBuckets(histogram);
+  const buckets = buildSortedHistogramBuckets(histogram);
   const sampleCount = buckets.reduce((sum, bucket) => sum + bucket.count, 0);
 
-  if (sampleCount < 20) {
+  if (sampleCount < MIN_LATENCY_SAMPLE_COUNT) {
     return { p90: null, p99: null, sampleCount };
   }
 
   return {
-    p90: computePercentile(buckets, 0.9),
-    p99: computePercentile(buckets, 0.99),
+    p90: computePercentileFromBuckets(buckets, 0.9),
+    p99: computePercentileFromBuckets(buckets, 0.99),
     sampleCount,
   };
 }

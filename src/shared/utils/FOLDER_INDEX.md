@@ -23,6 +23,7 @@
 
 | 文件 | 职责 | 关键函数 |
 |------|------|--------|
+| **customCliRouteId.ts** | 自定义 CLI 路由通道合成 ID（site/account/apiKey）跨进程命名约定；统一前缀与 encode/decode | `buildCustomCliRouteSiteId()`, `parseCustomCliRouteConfigId()`, `isCustomCliRouteChannel()` |
 | **headers.ts** | HTTP 请求头管理 | `getDefaultHeaders()`, `getAuthHeaders()` |
 | **log-filter.ts** | 日志过滤和格式化 | `filterModelLogs()`, `maskSensitiveInfo()` |
 

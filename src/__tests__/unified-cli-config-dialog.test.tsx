@@ -21,6 +21,7 @@ const initialConfig: CliConfig = {
   claudeCode: {
     apiKeyId: 1,
     model: 'claude-3-5-sonnet',
+    targetProtocol: 'native',
     testModel: 'claude-3-5-sonnet',
     testModels: ['claude-3-5-sonnet', '', ''],
     testResults: [],
@@ -31,6 +32,7 @@ const initialConfig: CliConfig = {
   codex: {
     apiKeyId: 1,
     model: 'gpt-4.1',
+    targetProtocol: 'native',
     testModel: 'gpt-4.1',
     testModels: ['gpt-4.1', '', ''],
     testResults: [],
@@ -41,6 +43,7 @@ const initialConfig: CliConfig = {
   geminiCli: {
     apiKeyId: 1,
     model: 'gemini-2.5-pro',
+    targetProtocol: 'native',
     testModel: 'gemini-2.5-pro',
     testModels: ['gemini-2.5-pro', '', ''],
     testResults: [],
@@ -167,6 +170,7 @@ describe('UnifiedCliConfigDialog', () => {
             apiKey: 'sk-test',
             model: 'gpt-4.1',
             baseUrl: 'https://example.com',
+            targetProtocol: 'native',
           },
         ],
       })
@@ -443,5 +447,48 @@ describe('UnifiedCliConfigDialog', () => {
     await waitFor(() => {
       expect(screen.getByText('失败')).toBeInTheDocument();
     });
+  });
+
+  it('persists the selected target protocol and updates the displayed endpoint', async () => {
+    const onSave = vi.fn();
+
+    render(
+      <UnifiedCliConfigDialog
+        isOpen={true}
+        siteName="Claude Hub"
+        siteUrl="https://example.com"
+        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
+        siteModels={['gpt-4.1']}
+        currentConfig={initialConfig}
+        onClose={vi.fn()}
+        onSave={onSave}
+      />
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('Codex').closest('button') as HTMLButtonElement);
+    });
+
+    expect(screen.getByText('/v1/responses')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText('选择上游端口'), {
+        target: { value: 'openai-chat-completions' },
+      });
+    });
+
+    expect(screen.getByText('/v1/chat/completions')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+    });
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        codex: expect.objectContaining({
+          targetProtocol: 'openai-chat-completions',
+        }),
+      })
+    );
   });
 });

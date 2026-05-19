@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => {
         state.siteId,
         state.accountId,
         state.apiKeyId,
+        encodeURIComponent(state.targetProtocol || 'native'),
         encodeURIComponent(state.canonicalModel || '*'),
         encodeURIComponent(state.resolvedModel || '*'),
       ].join('|');

@@ -60,7 +60,11 @@ import {
   resolveCanonicalName,
   syncModelRegistrySources,
 } from '../main/route-model-registry-service';
-import { resolveChannelCredentials, resolveChannels } from '../main/route-channel-resolver';
+import {
+  resolveChannelCredentials,
+  resolveChannelTarget,
+  resolveChannels,
+} from '../main/route-channel-resolver';
 import { sortChannelsByScore } from '../main/route-stats-service';
 import {
   buildCustomCliRouteAccountId,
@@ -822,6 +826,82 @@ describe('route model registry service', () => {
       baseUrl: customConfig.baseUrl,
       apiKey: customConfig.apiKey,
     });
+  });
+
+  it('preserves customCli configured targetProtocol through resolveChannelTarget', async () => {
+    const customConfig = createCustomCliConfig({
+      cliSettings: {
+        claudeCode: {
+          enabled: false,
+          model: null,
+          testModels: [],
+          testState: null,
+        },
+        codex: {
+          enabled: true,
+          model: 'duckcoding',
+          testModels: [],
+          testState: null,
+          targetProtocol: 'openai-chat-completions',
+        },
+        geminiCli: {
+          enabled: false,
+          model: null,
+          testModels: [],
+          testState: null,
+        },
+      },
+    });
+    const siteId = buildCustomCliRouteSiteId(customConfig.id);
+    const accountId = buildCustomCliRouteAccountId(customConfig.id);
+    const apiKeyId = buildCustomCliRouteApiKeyId(customConfig.id);
+    const sourceKey = `${siteId}:${accountId}:duckcoding`;
+    const registry = createRegistryConfig();
+    registry.displayItems = [
+      {
+        id: 'manual:duckcoding-protocol',
+        vendor: 'unknown',
+        canonicalName: 'duckcoding-route',
+        sourceKeys: [sourceKey],
+        originalModelOrder: ['duckcoding'],
+        priorityConfig: { sitePriorities: {}, apiKeyPriorities: {} },
+        mode: 'manual',
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    ];
+
+    customCliStorageMock.mockResolvedValue({
+      configs: [customConfig],
+      activeConfigId: customConfig.id,
+    });
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
+      sites: [],
+      accounts: [],
+    });
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      modelRegistry: registry,
+    });
+
+    const synced = await syncModelRegistrySources(true);
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      cliProbe: { latest: {} },
+      modelRegistry: synced,
+    });
+
+    const channels = resolveChannels(
+      createRouteRule({ id: 'rule-codex', name: 'Codex', cliType: 'codex' }),
+      'duckcoding-route'
+    );
+
+    expect(channels).toHaveLength(1);
+    // Resolver must NOT pre-set targetProtocol for customCli channels, so
+    // resolveChannelTarget can fall back to the customCli's own cliSettings.
+    expect(channels[0].targetProtocol).toBeUndefined();
+
+    const resolved = await resolveChannelTarget(channels[0]);
+    expect(resolved.targetProtocol).toBe('openai-chat-completions');
+    expect(resolved.targetEndpoint).toBe('/v1/chat/completions');
   });
 
   it('does not route an unknown requested model through generic channels once registry data exists', () => {

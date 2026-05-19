@@ -13,6 +13,7 @@ const mockFetchModels = vi.fn();
 const mockClearCliConfigDetection = vi.fn();
 const mockDetectCliConfig = vi.fn();
 const mockWriteConfig = vi.fn();
+const mockTestWithWrapper = vi.fn();
 const mockClearCache = vi.fn();
 const mockOpenUrl = vi.fn();
 
@@ -48,6 +49,11 @@ const createConfigs = () => [
     updatedAt: 2,
   },
 ];
+
+type ConfigFixture = ReturnType<typeof createConfigs>[number];
+type EndpointSelectableSetting = ConfigFixture['cliSettings']['codex'] & {
+  targetProtocol?: 'native' | 'anthropic-messages' | 'openai-chat-completions' | 'openai-responses';
+};
 
 let configs = createConfigs();
 
@@ -90,12 +96,18 @@ describe('custom cli page redesign', () => {
     mockClearCliConfigDetection.mockReset();
     mockDetectCliConfig.mockReset();
     mockWriteConfig.mockReset();
+    mockTestWithWrapper.mockReset();
     mockClearCache.mockReset();
     mockOpenUrl.mockReset();
     mockWriteConfig.mockResolvedValue({
       success: true,
       writtenPaths: ['C:/Users/test/.claude/settings.json'],
     });
+    mockTestWithWrapper.mockImplementation(async params => ({
+      success: true,
+      data: { [params.configs[0].cliType]: true },
+      samples: [],
+    }));
     mockClearCache.mockResolvedValue({ success: true });
     mockOpenUrl.mockResolvedValue(undefined);
     (window as any).electronAPI = {
@@ -103,6 +115,7 @@ describe('custom cli page redesign', () => {
       openUrl: mockOpenUrl,
       cliCompat: {
         ...((window as any).electronAPI?.cliCompat ?? {}),
+        testWithWrapper: mockTestWithWrapper,
         writeConfig: mockWriteConfig,
       },
       configDetection: {
@@ -296,7 +309,7 @@ describe('custom cli page redesign', () => {
     const cliConfigRow = previewButton.parentElement as HTMLElement | null;
     expect(cliConfigRow).not.toBeNull();
     expect(cliConfigRow?.className).toContain(
-      'grid-cols-[minmax(0,128px)_44px_minmax(0,1fr)_68px_68px]'
+      'grid-cols-[minmax(0,110px)_44px_minmax(0,1fr)_minmax(0,1fr)_68px_68px]'
     );
     expect(cliConfigRow?.className).toContain('px-1');
     expect(cliConfigRow?.className).toContain('py-0.5');
@@ -315,6 +328,43 @@ describe('custom cli page redesign', () => {
     expect(cliTestBlock?.className).toContain('gap-2');
     expect(cliTestBlock?.className).not.toContain('rounded-[var(--radius-lg)]');
     expect(cliTestBlock?.className).not.toContain('border');
+  });
+
+  it('renders an empty per-cli upstream endpoint selector before preview and persists a selected endpoint', () => {
+    render(<CustomCliPage />);
+
+    const claudeEndpointSelect = screen.getByLabelText(
+      'Claude Code 选择上游端口'
+    ) as HTMLSelectElement;
+    const codexEndpointSelect = screen.getByLabelText('Codex 选择上游端口') as HTMLSelectElement;
+    const codexConfigRow = document.querySelector(
+      '[data-cli-config-row="codex"]'
+    ) as HTMLElement | null;
+    const previewButton = within(codexConfigRow as HTMLElement).getByRole('button', {
+      name: '预览',
+    });
+
+    expect(claudeEndpointSelect.value).toBe('');
+    expect(claudeEndpointSelect.className).toContain('text-[var(--text-tertiary)]');
+    expect(screen.getAllByRole('option', { name: '选择上游端口' }).length).toBeGreaterThan(0);
+    expect(codexEndpointSelect.compareDocumentPosition(previewButton)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    );
+
+    fireEvent.change(codexEndpointSelect, {
+      target: { value: 'openai-chat-completions' },
+    });
+
+    expect(mockUpdateConfig).toHaveBeenCalledWith(
+      'cfg-1',
+      expect.objectContaining({
+        cliSettings: expect.objectContaining({
+          codex: expect.objectContaining({
+            targetProtocol: 'openai-chat-completions',
+          }),
+        }),
+      })
+    );
   });
 
   it('switches the editor when clicking another config row, even when clicking the base url cell', () => {
@@ -480,6 +530,33 @@ requires_openai_auth = true`,
 
     await waitFor(() => {
       expect(runCliTests).toHaveBeenCalledWith(configs[0], 'claudeCode', ['claude-3-5-sonnet']);
+    });
+  });
+
+  it('passes the selected upstream endpoint protocol into routed cli tests', async () => {
+    (configs[0].cliSettings.codex as EndpointSelectableSetting).targetProtocol =
+      'openai-chat-completions';
+
+    render(<CustomCliPage />);
+
+    const codexCard = screen.getByRole('heading', { name: 'Codex' }).closest('section');
+    fireEvent.click(within(codexCard as HTMLElement).getByRole('button', { name: '测试' }));
+
+    await waitFor(() => {
+      expect(mockTestWithWrapper).toHaveBeenCalledWith(
+        expect.objectContaining({
+          siteUrl: 'https://example.com',
+          configs: [
+            expect.objectContaining({
+              cliType: 'codex',
+              baseUrl: 'https://example.com',
+              apiKey: 'sk-test',
+              model: 'gpt-4.1',
+              targetProtocol: 'openai-chat-completions',
+            }),
+          ],
+        })
+      );
     });
   });
 

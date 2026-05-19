@@ -43,6 +43,18 @@ export interface RawFetchResponse {
   firstByteLatencyMs?: number;
 }
 
+export interface RawFetchStreamStart {
+  status: number;
+  statusText: string;
+  headers: Record<string, string | string[]>;
+}
+
+interface RawFetchStreamOptions extends FetchOptions {
+  streamIdleTimeout?: number;
+  onResponse?: (response: RawFetchStreamStart) => boolean | void;
+  onData?: (chunk: Buffer) => void | Promise<void>;
+}
+
 const proxySessionCache = new Map<string, Promise<Session>>();
 const ELECTRON_FORBIDDEN_REQUEST_HEADERS = new Set([
   'accept-charset',
@@ -156,6 +168,20 @@ function setElectronRequestHeaders(
     if (isElectronForbiddenRequestHeader(key, value)) continue;
     request.setHeader(key, normalizeRequestHeaderValue(value));
   }
+}
+
+function collectElectronResponseHeaders(
+  response: Electron.IncomingMessage
+): Record<string, string | string[]> {
+  const responseHeaders: Record<string, string | string[]> = {};
+
+  for (const [key, value] of Object.entries(response.headers)) {
+    if (typeof value === 'string' || Array.isArray(value)) {
+      responseHeaders[key] = value;
+    }
+  }
+
+  return responseHeaders;
 }
 
 /**
@@ -319,26 +345,51 @@ export async function electronFetchRaw(
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();
     const request = net.request(createElectronRequestOptions(method, url, proxySession));
+    let settled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
     setElectronRequestHeaders(request, headers);
 
-    const timeoutId = setTimeout(() => {
-      request.abort();
-      reject(new Error(`Request timeout after ${timeout}ms`));
-    }, timeout);
+    const clearRequestTimeout = () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = undefined;
+      }
+    };
+
+    const rejectOnce = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearRequestTimeout();
+      reject(error);
+    };
+
+    const resolveOnce = (response: RawFetchResponse) => {
+      if (settled) return;
+      settled = true;
+      clearRequestTimeout();
+      resolve(response);
+    };
+
+    const armIdleTimeout = () => {
+      if (timeout <= 0 || settled) return;
+      clearRequestTimeout();
+      timeoutId = setTimeout(() => {
+        request.abort();
+        rejectOnce(new Error(`Request timeout after ${timeout}ms`));
+      }, timeout);
+    };
+
+    armIdleTimeout();
 
     request.on('response', response => {
+      armIdleTimeout();
       const chunks: Buffer[] = [];
       let firstByteLatencyMs: number | undefined;
-      const responseHeaders: Record<string, string | string[]> = {};
-
-      for (const [key, value] of Object.entries(response.headers)) {
-        if (typeof value === 'string' || Array.isArray(value)) {
-          responseHeaders[key] = value;
-        }
-      }
+      const responseHeaders = collectElectronResponseHeaders(response);
 
       response.on('data', chunk => {
+        armIdleTimeout();
         if (firstByteLatencyMs === undefined) {
           firstByteLatencyMs = Date.now() - startedAt;
         }
@@ -346,8 +397,7 @@ export async function electronFetchRaw(
       });
 
       response.on('end', () => {
-        clearTimeout(timeoutId);
-        resolve({
+        resolveOnce({
           status: response.statusCode,
           statusText: response.statusMessage || '',
           body: Buffer.concat(chunks),
@@ -357,15 +407,151 @@ export async function electronFetchRaw(
       });
 
       response.on('error', (error: Error) => {
-        clearTimeout(timeoutId);
-        reject(error);
+        rejectOnce(error);
       });
     });
 
     request.on('error', (error: Error) => {
-      clearTimeout(timeoutId);
-      log.error('Raw request error:', error);
+      if (!settled) {
+        log.error('Raw request error:', error);
+      }
+      rejectOnce(error);
+    });
+
+    writeRequestBody(request, body);
+    request.end();
+  });
+}
+
+/**
+ * Raw HTTP 流式请求：边接收边回调，同时保留完整响应体用于统计和日志。
+ */
+export async function electronFetchRawStream(
+  url: string,
+  options: RawFetchStreamOptions = {}
+): Promise<RawFetchResponse> {
+  const {
+    method = 'GET',
+    headers = {},
+    body,
+    timeout = 30000,
+    streamIdleTimeout,
+    proxyUrl,
+    onResponse,
+    onData,
+  } = options;
+  const proxySession = await resolveProxySession(proxyUrl);
+
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+    const request = net.request(createElectronRequestOptions(method, url, proxySession));
+    let settled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    setElectronRequestHeaders(request, headers);
+
+    const clearRequestTimeout = () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = undefined;
+      }
+    };
+
+    const rejectOnce = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearRequestTimeout();
       reject(error);
+    };
+
+    const resolveOnce = (response: RawFetchResponse) => {
+      if (settled) return;
+      settled = true;
+      clearRequestTimeout();
+      resolve(response);
+    };
+
+    const armIdleTimeout = (timeoutMs: number) => {
+      if (timeoutMs <= 0 || settled) return;
+      clearRequestTimeout();
+      timeoutId = setTimeout(() => {
+        request.abort();
+        rejectOnce(new Error(`Request timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
+    };
+
+    armIdleTimeout(timeout);
+
+    request.on('response', response => {
+      armIdleTimeout(timeout);
+      const chunks: Buffer[] = [];
+      let firstByteLatencyMs: number | undefined;
+      const responseHeaders = collectElectronResponseHeaders(response);
+      let shouldStreamChunks = false;
+      const readableResponse = response as typeof response & {
+        pause?: () => void;
+        resume?: () => void;
+      };
+
+      try {
+        shouldStreamChunks =
+          Boolean(onData) &&
+          onResponse?.({
+            status: response.statusCode,
+            statusText: response.statusMessage || '',
+            headers: responseHeaders,
+          }) !== false;
+      } catch (error: unknown) {
+        request.abort();
+        rejectOnce(error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
+
+      response.on('data', chunk => {
+        if (firstByteLatencyMs === undefined) {
+          firstByteLatencyMs = Date.now() - startedAt;
+        }
+        armIdleTimeout(streamIdleTimeout ?? timeout);
+
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        chunks.push(buffer);
+
+        if (!shouldStreamChunks || !onData) return;
+
+        readableResponse.pause?.();
+        Promise.resolve(onData(buffer)).then(
+          () => {
+            if (!settled) {
+              readableResponse.resume?.();
+            }
+          },
+          (error: unknown) => {
+            request.abort();
+            rejectOnce(error instanceof Error ? error : new Error(String(error)));
+          }
+        );
+      });
+
+      response.on('end', () => {
+        resolveOnce({
+          status: response.statusCode,
+          statusText: response.statusMessage || '',
+          body: Buffer.concat(chunks),
+          headers: responseHeaders,
+          firstByteLatencyMs,
+        });
+      });
+
+      response.on('error', (error: Error) => {
+        rejectOnce(error);
+      });
+    });
+
+    request.on('error', (error: Error) => {
+      if (!settled) {
+        log.error('Raw stream request error:', error);
+      }
+      rejectOnce(error);
     });
 
     writeRequestBody(request, body);

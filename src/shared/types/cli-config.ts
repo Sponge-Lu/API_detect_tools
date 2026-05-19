@@ -15,6 +15,61 @@ export interface EditedConfigFile {
   content: string;
 }
 
+export const CLI_TARGET_PROTOCOLS = [
+  'native',
+  'anthropic-messages',
+  'openai-chat-completions',
+  'openai-responses',
+] as const;
+
+export type CliTargetProtocol = (typeof CLI_TARGET_PROTOCOLS)[number];
+
+export const DEFAULT_CLI_TARGET_PROTOCOL: CliTargetProtocol = 'native';
+
+export type CliTargetProtocolCliType = 'claudeCode' | 'codex' | 'geminiCli';
+
+export function getCliTargetEndpoint(
+  cliType: CliTargetProtocolCliType,
+  targetProtocol: CliTargetProtocol,
+  model?: string | null
+): string {
+  const normalized = normalizeCliTargetProtocol(targetProtocol);
+  if (normalized === 'native') {
+    if (cliType === 'claudeCode') {
+      return '/v1/messages';
+    }
+    if (cliType === 'codex') {
+      return '/v1/responses';
+    }
+    const modelSegment = (model || '{model}').trim() || '{model}';
+    return `/v1beta/models/${modelSegment}:streamGenerateContent`;
+  }
+  if (normalized === 'anthropic-messages') {
+    return '/v1/messages';
+  }
+  if (normalized === 'openai-responses') {
+    return '/v1/responses';
+  }
+  return '/v1/chat/completions';
+}
+
+export function isCliTargetProtocolNativeEquivalent(
+  cliType: CliTargetProtocolCliType,
+  targetProtocol: CliTargetProtocol
+): boolean {
+  const normalized = normalizeCliTargetProtocol(targetProtocol);
+  if (normalized === 'native') {
+    return true;
+  }
+  if (cliType === 'claudeCode') {
+    return normalized === 'anthropic-messages';
+  }
+  if (cliType === 'codex') {
+    return normalized === 'openai-responses';
+  }
+  return false;
+}
+
 /** 每个 CLI 保存的测试模型槽位数 */
 export const CLI_TEST_MODEL_SLOT_COUNT = 3;
 
@@ -36,6 +91,7 @@ export interface CliConfigItem {
   enabled?: boolean; // 是否启用（控制图标显示和测试），可选以兼容旧数据
   editedFiles?: EditedConfigFile[] | null; // 用户编辑后的配置文件内容
   applyMode?: 'merge' | 'overwrite'; // 应用配置模式：合并或覆盖，默认合并
+  targetProtocol?: CliTargetProtocol; // 上游目标协议
 }
 
 /** CLI 配置 */
@@ -58,6 +114,7 @@ export const DEFAULT_CLI_CONFIG: Required<{
     enabled: true,
     editedFiles: null,
     applyMode: 'merge',
+    targetProtocol: DEFAULT_CLI_TARGET_PROTOCOL,
   },
   codex: {
     apiKeyId: null,
@@ -68,6 +125,7 @@ export const DEFAULT_CLI_CONFIG: Required<{
     enabled: true,
     editedFiles: null,
     applyMode: 'merge',
+    targetProtocol: DEFAULT_CLI_TARGET_PROTOCOL,
   },
   geminiCli: {
     apiKeyId: null,
@@ -78,8 +136,15 @@ export const DEFAULT_CLI_CONFIG: Required<{
     enabled: true,
     editedFiles: null,
     applyMode: 'merge',
+    targetProtocol: DEFAULT_CLI_TARGET_PROTOCOL,
   },
 };
+
+export function normalizeCliTargetProtocol(value: unknown): CliTargetProtocol {
+  return typeof value === 'string' && CLI_TARGET_PROTOCOLS.includes(value as CliTargetProtocol)
+    ? (value as CliTargetProtocol)
+    : DEFAULT_CLI_TARGET_PROTOCOL;
+}
 
 /**
  * 规范化测试模型列表，兼容 legacy `testModel`

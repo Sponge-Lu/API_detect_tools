@@ -70,6 +70,54 @@ describe('AnyRouter Request Rewriter', () => {
       expect(rewritten.output_config).toEqual({ effort: 'max' });
     });
 
+    it('应该保留 Claude Code 原始工具和请求控制字段', () => {
+      const originalBody = Buffer.from(
+        JSON.stringify({
+          model: 'claude-opus-4-6',
+          messages: [{ role: 'user', content: 'inspect files' }],
+          system: [{ type: 'text', text: 'Original Claude Code system prompt' }],
+          tools: [
+            {
+              name: 'Read',
+              description: 'Read a file',
+              input_schema: { type: 'object', properties: { file_path: { type: 'string' } } },
+            },
+          ],
+          tool_choice: { type: 'auto' },
+          stop_sequences: ['stop-here'],
+          temperature: 0.2,
+          top_p: 0.9,
+          metadata: { source: 'claude-code' },
+          thinking: { type: 'enabled', budget_tokens: 2048 },
+          output_config: { effort: 'medium' },
+          stream: true,
+        })
+      );
+
+      const result = rewriteForAnyRouter(originalBody, validHash, {});
+      const rewritten = JSON.parse(result.body.toString('utf-8'));
+
+      expect(rewritten.system).toEqual([
+        { type: 'text', text: 'Original Claude Code system prompt' },
+      ]);
+      expect(rewritten.tools).toEqual([
+        {
+          name: 'Read',
+          description: 'Read a file',
+          input_schema: { type: 'object', properties: { file_path: { type: 'string' } } },
+        },
+      ]);
+      expect(rewritten.tool_choice).toEqual({ type: 'auto' });
+      expect(rewritten.stop_sequences).toEqual(['stop-here']);
+      expect(rewritten.temperature).toBe(0.2);
+      expect(rewritten.top_p).toBe(0.9);
+      expect(rewritten.metadata.source).toBe('claude-code');
+      expect(rewritten.metadata.user_id).toMatch(/^user_[a-f0-9]{64}_account__session_/);
+      expect(rewritten.thinking).toEqual({ type: 'enabled', budget_tokens: 2048 });
+      expect(rewritten.output_config).toEqual({ effort: 'medium' });
+      expect(rewritten.stream).toBe(true);
+    });
+
     it('应该清理 [undefined] 值', () => {
       const originalBody = Buffer.from(
         JSON.stringify({

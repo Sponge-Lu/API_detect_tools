@@ -40,12 +40,17 @@ import type {
   UnifiedConfig,
 } from '../../../shared/types/site';
 import {
+  CLI_TARGET_PROTOCOLS,
   CLI_TEST_MODEL_SLOT_COUNT,
   DEFAULT_CLI_CONFIG,
+  getCliTargetEndpoint,
+  isCliTargetProtocolNativeEquivalent,
   normalizeCliTestModels,
   normalizeCliTestResults,
+  normalizeCliTargetProtocol,
   sanitizeCliTestResults,
   sanitizeCliTestModels,
+  type CliTargetProtocol,
 } from '../../../shared/types/cli-config';
 import {
   generateClaudeCodeConfig,
@@ -254,6 +259,31 @@ const CLI_TYPES: CliTypeConfig[] = [
     supported: true,
   },
 ];
+
+const CLI_TARGET_PROTOCOL_LABELS: Record<CliTargetProtocol, string> = {
+  native: '原生协议',
+  'anthropic-messages': 'Anthropic Messages',
+  'openai-chat-completions': 'OpenAI Chat Completions',
+  'openai-responses': 'OpenAI Responses',
+};
+
+function buildCliTargetProtocolOptionLabel(
+  cliType: CliType,
+  targetProtocol: CliTargetProtocol,
+  model?: string | null
+): string {
+  return `${CLI_TARGET_PROTOCOL_LABELS[targetProtocol]} · ${getCliTargetEndpoint(
+    cliType,
+    targetProtocol,
+    model
+  )}`;
+}
+
+function normalizeOptionalCliTargetProtocol(value: unknown): CliTargetProtocol | undefined {
+  return typeof value === 'string' && CLI_TARGET_PROTOCOLS.includes(value as CliTargetProtocol)
+    ? normalizeCliTargetProtocol(value)
+    : undefined;
+}
 
 const CLI_DIALOG_HEIGHT_RATIO = 0.74;
 const CLI_DIALOG_MAX_HEIGHT = 660;
@@ -506,6 +536,7 @@ function buildProjectionCliConfig(
     {
       apiKeyId: number | null;
       model: string | null;
+      targetProtocol?: CliTargetProtocol;
       testModels: string[];
       editedFiles: GeneratedConfig | null;
     }
@@ -516,6 +547,9 @@ function buildProjectionCliConfig(
   return {
     apiKeyId: persistedConfig?.apiKeyId ?? cliConfigs[cliType].apiKeyId,
     model: persistedConfig?.model ?? cliConfigs[cliType].model,
+    targetProtocol: normalizeCliTargetProtocol(
+      persistedConfig?.targetProtocol ?? cliConfigs[cliType].targetProtocol
+    ),
     testModel: persistedConfig?.testModel ?? null,
     testModels: cliConfigs[cliType].testModels,
     testResults: testState.slots,
@@ -762,6 +796,7 @@ export function UnifiedCliConfigDialog({
       {
         apiKeyId: number | null;
         model: string | null;
+        targetProtocol?: CliTargetProtocol;
         testModels: string[];
         editedFiles: GeneratedConfig | null;
       }
@@ -770,13 +805,21 @@ export function UnifiedCliConfigDialog({
     claudeCode: {
       apiKeyId: null,
       model: null,
+      targetProtocol: undefined,
       testModels: toTestModelSlots(null),
       editedFiles: null,
     },
-    codex: { apiKeyId: null, model: null, testModels: toTestModelSlots(null), editedFiles: null },
+    codex: {
+      apiKeyId: null,
+      model: null,
+      targetProtocol: undefined,
+      testModels: toTestModelSlots(null),
+      editedFiles: null,
+    },
     geminiCli: {
       apiKeyId: null,
       model: null,
+      targetProtocol: undefined,
       testModels: toTestModelSlots(null),
       editedFiles: null,
     },
@@ -889,6 +932,9 @@ export function UnifiedCliConfigDialog({
         claudeCode: {
           apiKeyId: currentConfig.claudeCode?.apiKeyId ?? null,
           model: currentConfig.claudeCode?.model ?? null,
+          targetProtocol: normalizeOptionalCliTargetProtocol(
+            currentConfig.claudeCode?.targetProtocol
+          ),
           testModels: toTestModelSlots(currentConfig.claudeCode),
           editedFiles: currentConfig.claudeCode?.editedFiles
             ? {
@@ -902,6 +948,7 @@ export function UnifiedCliConfigDialog({
         codex: {
           apiKeyId: currentConfig.codex?.apiKeyId ?? null,
           model: currentConfig.codex?.model ?? null,
+          targetProtocol: normalizeOptionalCliTargetProtocol(currentConfig.codex?.targetProtocol),
           testModels: toTestModelSlots(currentConfig.codex),
           editedFiles: currentConfig.codex?.editedFiles
             ? {
@@ -915,6 +962,9 @@ export function UnifiedCliConfigDialog({
         geminiCli: {
           apiKeyId: currentConfig.geminiCli?.apiKeyId ?? null,
           model: currentConfig.geminiCli?.model ?? null,
+          targetProtocol: normalizeOptionalCliTargetProtocol(
+            currentConfig.geminiCli?.targetProtocol
+          ),
           testModels: toTestModelSlots(currentConfig.geminiCli),
           editedFiles: currentConfig.geminiCli?.editedFiles
             ? {
@@ -942,18 +992,21 @@ export function UnifiedCliConfigDialog({
         claudeCode: {
           apiKeyId: null,
           model: null,
+          targetProtocol: undefined,
           testModels: toTestModelSlots(null),
           editedFiles: null,
         },
         codex: {
           apiKeyId: null,
           model: null,
+          targetProtocol: undefined,
           testModels: toTestModelSlots(null),
           editedFiles: null,
         },
         geminiCli: {
           apiKeyId: null,
           model: null,
+          targetProtocol: undefined,
           testModels: toTestModelSlots(null),
           editedFiles: null,
         },
@@ -1070,6 +1123,30 @@ export function UnifiedCliConfigDialog({
     if (!config.apiKeyId) return null;
     return apiKeys.find(k => getApiKeyId(k) === config.apiKeyId) || null;
   }, [apiKeys, selectedCli, cliConfigs]);
+
+  const selectedTargetProtocol = useMemo<CliTargetProtocol>(() => {
+    if (!selectedCli) {
+      return DEFAULT_CLI_CONFIG.claudeCode.targetProtocol;
+    }
+    return normalizeCliTargetProtocol(cliConfigs[selectedCli].targetProtocol);
+  }, [cliConfigs, selectedCli]);
+  const selectedTargetProtocolValue = selectedCli
+    ? (cliConfigs[selectedCli].targetProtocol ?? '')
+    : '';
+
+  const selectedTargetEndpoint = useMemo(() => {
+    if (!selectedCli) {
+      return '';
+    }
+    return getCliTargetEndpoint(selectedCli, selectedTargetProtocol, cliConfigs[selectedCli].model);
+  }, [cliConfigs, selectedCli, selectedTargetProtocol]);
+
+  const selectedTargetIsNativeEquivalent = useMemo(() => {
+    if (!selectedCli || selectedTargetProtocol === 'native') {
+      return false;
+    }
+    return isCliTargetProtocolNativeEquivalent(selectedCli, selectedTargetProtocol);
+  }, [selectedCli, selectedTargetProtocol]);
 
   // 获取可用模型列表
   const availableModels = useMemo(() => {
@@ -1233,6 +1310,17 @@ export function UnifiedCliConfigDialog({
     }));
   };
 
+  const handleTargetProtocolChange = (value: string) => {
+    if (!selectedCli) return;
+    setCliConfigs(prev => ({
+      ...prev,
+      [selectedCli]: {
+        ...prev[selectedCli],
+        targetProtocol: value ? normalizeOptionalCliTargetProtocol(value) : undefined,
+      },
+    }));
+  };
+
   // 处理 CLI 模型选择变化
   const handleModelChange = (model: string | null) => {
     if (!selectedCli) return;
@@ -1333,6 +1421,9 @@ export function UnifiedCliConfigDialog({
       claudeCode: {
         apiKeyId: cliConfigs.claudeCode.apiKeyId,
         model: cliConfigs.claudeCode.model,
+        targetProtocol: cliConfigs.claudeCode.targetProtocol
+          ? normalizeCliTargetProtocol(cliConfigs.claudeCode.targetProtocol)
+          : undefined,
         testModel: sanitizeCliTestModels(cliConfigs.claudeCode.testModels)[0] ?? null,
         testModels: sanitizeCliTestModels(cliConfigs.claudeCode.testModels),
         testResults: sanitizeCliTestResults(testStates.claudeCode.slots),
@@ -1343,6 +1434,9 @@ export function UnifiedCliConfigDialog({
       codex: {
         apiKeyId: cliConfigs.codex.apiKeyId,
         model: cliConfigs.codex.model,
+        targetProtocol: cliConfigs.codex.targetProtocol
+          ? normalizeCliTargetProtocol(cliConfigs.codex.targetProtocol)
+          : undefined,
         testModel: sanitizeCliTestModels(cliConfigs.codex.testModels)[0] ?? null,
         testModels: sanitizeCliTestModels(cliConfigs.codex.testModels),
         testResults: sanitizeCliTestResults(testStates.codex.slots),
@@ -1353,6 +1447,9 @@ export function UnifiedCliConfigDialog({
       geminiCli: {
         apiKeyId: cliConfigs.geminiCli.apiKeyId,
         model: cliConfigs.geminiCli.model,
+        targetProtocol: cliConfigs.geminiCli.targetProtocol
+          ? normalizeCliTargetProtocol(cliConfigs.geminiCli.targetProtocol)
+          : undefined,
         testModel: sanitizeCliTestModels(cliConfigs.geminiCli.testModels)[0] ?? null,
         testModels: sanitizeCliTestModels(cliConfigs.geminiCli.testModels),
         testResults: sanitizeCliTestResults(testStates.geminiCli.slots),
@@ -1419,6 +1516,7 @@ export function UnifiedCliConfigDialog({
               apiKey: resolvedApiKey,
               model,
               baseUrl: siteUrl,
+              targetProtocol: normalizeCliTargetProtocol(config.targetProtocol),
             },
           ],
         })) as CliCompatTestResponse;
@@ -1622,10 +1720,10 @@ export function UnifiedCliConfigDialog({
         {selectedCli && currentCliConfig?.supported && (
           <>
             {/* API Key 选择 */}
-            <div>
+            <div className="space-y-3">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <label className="block text-sm font-medium text-[var(--text-primary)]">
-                  选择 API Key
+                  连接配置
                 </label>
                 <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
                   <span>列出全部模型</span>
@@ -1636,37 +1734,82 @@ export function UnifiedCliConfigDialog({
                   />
                 </div>
               </div>
-              {apiKeys.length === 0 ? (
-                <div className="py-2 text-sm text-[var(--text-secondary)]">
-                  该站点没有可用的 API Key
+              <div className="grid gap-3 md:grid-cols-2">
+                <div>
+                  <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">
+                    选择 API Key
+                  </label>
+                  {apiKeys.length === 0 ? (
+                    <div className="py-2 text-sm text-[var(--text-secondary)]">
+                      该站点没有可用的 API Key
+                    </div>
+                  ) : (
+                    <select
+                      aria-label="选择 API Key"
+                      value={cliConfigs[selectedCli]?.apiKeyId ?? ''}
+                      onChange={e =>
+                        handleApiKeyChange(e.target.value ? parseInt(e.target.value, 10) : null)
+                      }
+                      className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                    >
+                      <option value="">请选择 API Key</option>
+                      {apiKeys.map(apiKey => {
+                        const id = getApiKeyId(apiKey);
+                        const modelCount = getScopedSiteModels({
+                          siteModels,
+                          siteModelPricing,
+                          apiKey,
+                          listAllModels,
+                        }).length;
+                        return (
+                          <option key={id} value={id}>
+                            {apiKey.name || `Key #${id}`}
+                            {apiKey.group ? ` [${apiKey.group}]` : ''}
+                            {` (${modelCount} 个模型)`}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  )}
                 </div>
-              ) : (
-                <select
-                  value={cliConfigs[selectedCli]?.apiKeyId ?? ''}
-                  onChange={e =>
-                    handleApiKeyChange(e.target.value ? parseInt(e.target.value, 10) : null)
-                  }
-                  className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
-                >
-                  <option value="">请选择 API Key</option>
-                  {apiKeys.map(apiKey => {
-                    const id = getApiKeyId(apiKey);
-                    const modelCount = getScopedSiteModels({
-                      siteModels,
-                      siteModelPricing,
-                      apiKey,
-                      listAllModels,
-                    }).length;
-                    return (
-                      <option key={id} value={id}>
-                        {apiKey.name || `Key #${id}`}
-                        {apiKey.group ? ` [${apiKey.group}]` : ''}
-                        {` (${modelCount} 个模型)`}
+                <div>
+                  <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">
+                    选择上游端口
+                  </label>
+                  <select
+                    aria-label="选择上游端口"
+                    value={selectedTargetProtocolValue}
+                    onChange={event => handleTargetProtocolChange(event.target.value)}
+                    className={`w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)] ${
+                      selectedTargetProtocolValue
+                        ? 'text-[var(--text-primary)]'
+                        : 'text-[var(--text-tertiary)]'
+                    }`}
+                  >
+                    <option value="">选择上游端口</option>
+                    {CLI_TARGET_PROTOCOLS.map(protocol => (
+                      <option key={protocol} value={protocol}>
+                        {buildCliTargetProtocolOptionLabel(
+                          selectedCli,
+                          protocol,
+                          cliConfigs[selectedCli]?.model
+                        )}
                       </option>
-                    );
-                  })}
-                </select>
-              )}
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-2 text-xs text-[var(--text-secondary)]">
+                <div>
+                  当前上游端点:
+                  <code className="ml-1 text-[var(--text-primary)]">{selectedTargetEndpoint}</code>
+                </div>
+                {selectedTargetIsNativeEquivalent ? (
+                  <div className="mt-1 text-[var(--warning)]">
+                    该端点与当前 CLI 原生协议等效，运行时将按 native 透传。
+                  </div>
+                ) : null}
+              </div>
             </div>
 
             {/* 模型选择 - 分为测试模型和 CLI 模型 */}

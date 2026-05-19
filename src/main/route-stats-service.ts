@@ -31,6 +31,16 @@ export const ROUTE_PATH_MIN_SUCCESS_RATE = DEFAULT_ROUTE_RUNTIME_CONFIG.minSucce
 const pendingUpdates = new Map<string, RouteChannelStats>();
 let flushTimer: NodeJS.Timeout | null = null;
 
+type RouteChannelRuntimeKey = RouteChannelKey & {
+  targetProtocol?: RouteChannelStats['targetProtocol'];
+};
+
+type RoutePathRuntimeKey = RouteChannelRuntimeKey & {
+  cliType?: RoutePathState['cliType'];
+  canonicalModel?: string;
+  resolvedModel?: string;
+};
+
 /** 触发延迟 flush（3秒后写磁盘） */
 function scheduleFlush() {
   if (flushTimer) return;
@@ -53,6 +63,7 @@ export async function flushToStorage(): Promise<void> {
           siteId: stats.siteId,
           accountId: stats.accountId,
           apiKeyId: stats.apiKeyId,
+          targetProtocol: stats.targetProtocol,
         },
         'neutral', // 实际值已在内存中预计算，直接覆写
         { statusCode: stats.lastStatusCode, latencyMs: stats.lastLatencyMs }
@@ -67,7 +78,7 @@ export async function flushToStorage(): Promise<void> {
  * 记录一次请求结果（内存立即更新，延迟写磁盘）
  */
 export function recordOutcome(
-  key: RouteChannelKey,
+  key: RouteChannelRuntimeKey,
   outcome: RouteOutcome,
   meta?: { statusCode?: number; latencyMs?: number }
 ): void {
@@ -109,21 +120,14 @@ export function recordOutcome(
   scheduleFlush();
 }
 
-export function isRoutePathDisabled(
-  key: RouteChannelKey & { canonicalModel?: string; resolvedModel?: string },
-  now: number = Date.now()
-): boolean {
+export function isRoutePathDisabled(key: RoutePathRuntimeKey, now: number = Date.now()): boolean {
   const routing = unifiedConfigManager.getRoutingConfig();
   const state = routing.routePathStates[buildRoutePathStateKey(key)];
   return Boolean(state?.disabledUntil && state.disabledUntil > now);
 }
 
 export async function recordRoutePathOutcome(
-  key: RouteChannelKey & {
-    cliType?: RoutePathState['cliType'];
-    canonicalModel?: string;
-    resolvedModel?: string;
-  },
+  key: RoutePathRuntimeKey,
   outcome: RouteOutcome,
   meta?: { statusCode?: number; latencyMs?: number; error?: string },
   nowOrRuntimeConfig: number | Partial<RouteRuntimeConfig> = Date.now(),
@@ -166,6 +170,7 @@ export async function recordRoutePathOutcome(
     accountId: key.accountId,
     apiKeyId: key.apiKeyId,
     cliType: key.cliType,
+    targetProtocol: key.targetProtocol,
     canonicalModel: key.canonicalModel,
     resolvedModel: key.resolvedModel,
     windowStartedAt,

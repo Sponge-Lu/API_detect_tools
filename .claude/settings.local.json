@@ -91,7 +91,14 @@
       "Bash(mkdir -p ~/bin)",
       "Bash(curl -sL \"https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-windows-amd64.exe\" -o ~/bin/jq.exe)",
       "Bash(chmod +x ~/bin/jq.exe)",
-      "Bash(~/bin/jq --version)"
+      "Bash(~/bin/jq --version)",
+      "Bash(npm run *)",
+      "Bash(npm test *)",
+      "Bash(npm test *)",
+      "Bash(npx prettier *)",
+      "Skill(codex:rescue)",
+      "Bash(codex exec *)",
+      "Bash(grep -n \"^export function\\\\|^function\\\\|^}$\" D:/2_Github_Repository/API_detect_tools/src/renderer/pages/DataOverviewPage.tsx)"
     ]
   }
 }

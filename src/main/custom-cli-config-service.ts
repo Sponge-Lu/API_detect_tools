@@ -15,6 +15,14 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import Logger from './utils/logger';
 import type { CustomCliConfig } from '../shared/types/custom-cli-config';
+import {
+  CUSTOM_CLI_ROUTE_GROUP,
+  buildCustomCliRouteAccountId,
+  buildCustomCliRouteApiKeyId,
+  buildCustomCliRouteSiteId,
+  isCustomCliRouteChannel,
+  parseCustomCliRouteConfigId,
+} from '../shared/utils/customCliRouteId';
 
 export interface CustomCliConfigStorage {
   configs: CustomCliConfig[];
@@ -26,62 +34,14 @@ export const DEFAULT_CUSTOM_CLI_CONFIG_STORAGE: CustomCliConfigStorage = {
   activeConfigId: null,
 };
 
-const CUSTOM_CLI_ROUTE_ID_PREFIX = 'custom-cli';
-const CUSTOM_CLI_ROUTE_SITE_PREFIX = `${CUSTOM_CLI_ROUTE_ID_PREFIX}-site-`;
-const CUSTOM_CLI_ROUTE_ACCOUNT_PREFIX = `${CUSTOM_CLI_ROUTE_ID_PREFIX}-account-`;
-const CUSTOM_CLI_ROUTE_API_KEY_PREFIX = `${CUSTOM_CLI_ROUTE_ID_PREFIX}-key-`;
-
-export const CUSTOM_CLI_ROUTE_GROUP = 'custom-cli';
-
-function encodeCustomCliConfigId(configId: string): string {
-  const normalized = configId.trim();
-  return encodeURIComponent(normalized || 'unknown');
-}
-
-function decodeCustomCliConfigId(encoded: string): string | null {
-  try {
-    const decoded = decodeURIComponent(encoded);
-    return decoded.trim() || null;
-  } catch {
-    return null;
-  }
-}
-
-export function buildCustomCliRouteSiteId(configId: string): string {
-  return `${CUSTOM_CLI_ROUTE_SITE_PREFIX}${encodeCustomCliConfigId(configId)}`;
-}
-
-export function buildCustomCliRouteAccountId(configId: string): string {
-  return `${CUSTOM_CLI_ROUTE_ACCOUNT_PREFIX}${encodeCustomCliConfigId(configId)}`;
-}
-
-export function buildCustomCliRouteApiKeyId(configId: string): string {
-  return `${CUSTOM_CLI_ROUTE_API_KEY_PREFIX}${encodeCustomCliConfigId(configId)}`;
-}
-
-export function parseCustomCliRouteConfigId(siteId: string): string | null {
-  if (!siteId.startsWith(CUSTOM_CLI_ROUTE_SITE_PREFIX)) {
-    return null;
-  }
-
-  return decodeCustomCliConfigId(siteId.slice(CUSTOM_CLI_ROUTE_SITE_PREFIX.length));
-}
-
-export function isCustomCliRouteChannel(
-  siteId: string,
-  accountId: string,
-  apiKeyId: string
-): boolean {
-  const configId = parseCustomCliRouteConfigId(siteId);
-  if (!configId) {
-    return false;
-  }
-
-  return (
-    accountId === buildCustomCliRouteAccountId(configId) &&
-    apiKeyId === buildCustomCliRouteApiKeyId(configId)
-  );
-}
+export {
+  CUSTOM_CLI_ROUTE_GROUP,
+  buildCustomCliRouteAccountId,
+  buildCustomCliRouteApiKeyId,
+  buildCustomCliRouteSiteId,
+  isCustomCliRouteChannel,
+  parseCustomCliRouteConfigId,
+};
 
 export function getCustomCliConfigFilePath(): string {
   return path.join(app.getPath('userData'), 'custom-cli-configs.json');

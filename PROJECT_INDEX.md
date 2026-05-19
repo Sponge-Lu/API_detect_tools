@@ -55,7 +55,7 @@
 | `src/main/cli-wrapper-compat-service.ts` | 通过真实 Claude Code / Codex / Gemini CLI wrapper 做兼容性验证；当前 UI 统一通过该服务执行 CLI 可用性测试，使用临时目录隔离本机配置 |
 | `src/main/custom-cli-config-service.ts` | 自定义 CLI 配置持久化与模型拉取服务，并为路由模型注册表生成自定义 CLI 虚拟通道标识 |
 | `src/main/handlers/*.ts` | `config:*`、`token:*`、`accounts:*`、`route:*`、`overview:*` 等 IPC 通道 |
-| `src/main/route-*.ts` / `src/main/anyrouter-request-rewriter.ts` / `src/main/chy-api-request-rewriter.ts` | 路由代理服务器、规则解析、模型注册表、自定义 CLI 路由来源、CLI 探测、健康检查、统计分析；本地路由上游转发使用 Electron net raw 客户端并支持可选上游代理，AnyRouter 通道对 Claude Code 注入 Anthropic 指纹，对 Codex/Gemini 保持原生协议，CHY API 公益站通道统一转 OpenAI Chat Completions |
+| `src/main/route-*.ts` / `src/main/anyrouter-request-rewriter.ts` / `src/main/cli-protocol-adapter.ts` | 路由代理服务器、规则解析、模型注册表、自定义 CLI 路由来源、CLI 探测、probe-lock 定向测试、健康检查、统计分析；本地路由上游转发使用 Electron net raw 客户端并支持可选上游代理，透明成功 SSE 响应可边收边转发，流式首包等待仍受站点/配置超时约束，首个 SSE chunk 后活跃流空闲超时下限为 10 分钟，AnyRouter 通道对 Claude Code 保留原始工具语义并注入 Anthropic 指纹，对 Codex/Gemini 保持原生协议，其余显式协议适配统一走通用 CLI 协议转换器 |
 | `src/main/route-state-manager.ts` | 路由运行态文件管理，将 stats/path state/health、CLI probe、analytics bucket 和模型来源快照拆到有 TTL/max-items 的 `state/*.json`，避免高频状态写入 `config.json` |
 | `src/main/backup-manager.ts` / `webdav-manager.ts` | 本地备份与 WebDAV 云端配置包；自动备份 config-only 节流去重，手动/WebDAV 备份使用 manifest 包 |
 
@@ -67,7 +67,7 @@
 | `src/renderer/components/AppShell/pageMeta.ts` | 注册一级页面、`数据总览` 子页（站点数据 / 路由数据）以及 `日志` 子页（会话事件 / 路由日志）的导航、标题和简述元数据 |
 | `src/renderer/components/Sidebar/VerticalSidebar.tsx` | 左侧导航组件，负责展示一级页面、`数据总览` 子页入口与 `日志` 子页入口 |
 | `src/renderer/components/CliConfigStatus/*` | CLI 配置状态组件，展示 Claude Code / Codex / Gemini CLI 配置来源，并将匹配本地路由代理端口的 Base URL 显示为“本地路由”；本地路由、站点管理和自定义 CLI 均显示当前使用模型小字 |
-| `src/renderer/pages/DataOverviewPage.tsx` | 数据总览首页，按 `overviewSubtab` 切换站点/路由子页视图，聚合路由健康、站点资源、历史快照、规则洞察与异常请求，并向壳层 Header 注入 `刷新` / 时间范围操作 |
+| `src/renderer/pages/DataOverviewPage.tsx` | 数据总览首页，按 `overviewSubtab` 渲染 `SiteOverviewView` 或 `RouteOverviewView`：站点视图展示资源 / 签到 / 历史快照；路由视图三行布局（KPI / 运行趋势 + 模型热力 / 通道散点 + 模型→通道 Sankey），通过路由内容区实际尺寸选择紧凑/常规布局，并用 scope (全部 / 站点 / 自定义 CLI) 控制路由视图范围，用 treemap 的 selectedModel 控制散点高亮；Sankey 独立展示不参与模型联动。KPI 第四张为首字响应 P95 + 会话时间 P99 合并卡。 |
 | `src/renderer/pages/SitesPage.tsx` | 站点管理主页面，负责站点/账户卡片、统一 CLI 配置对话框与检测缓存视图透传；打开 CLI 配置时透传 `siteId/accountId` 以便按 canonical probe key 回显最新模型测试结果 |
 | `src/renderer/pages/CustomCliPage.tsx` | 自定义 CLI 配置页面 |
 | `src/renderer/pages/CreditPage.tsx` | LDC 积分页面，展示 Linux Do Credit 账户信息、收支统计与充值入口 |
@@ -83,17 +83,23 @@
 | `src/renderer/utils/siteOverview.ts` | 将站点/账户最新缓存聚合为首页资源指标 |
 | `src/renderer/utils/modelPricing.ts` | 统一解析模型按 token / 按次计费方式与价格，供路由日志和模型重定向复用 |
 | `src/renderer/utils/routeRulePresentation.ts` | 将路由规则转换为可解释的摘要、命中原因与标签 |
-| `src/renderer/utils/routeLatency.ts` | 从 latencyHistogram 桶估算 P90/P99 延迟分位数，样本 <20 时返回 null |
-| `src/renderer/utils/routeModelDistribution.ts` | 按 canonicalModel 聚合 RouteAnalyticsBucket，生成模型热力分布条目 |
+| `src/renderer/utils/routeLatency.ts` | 从 latencyHistogram 桶估算 P90/P99 延迟分位数，样本 <20 时返回 null；命名导出桶解析与百分位算法供 routeTtfb 复用 |
+| `src/renderer/utils/routeLogAxis.ts` | 散点矩阵首字响应 X 轴 0-120s 分段 value↔pixel 映射 + 默认刻度 (1s/3s/5s/10s/30s/60s/120s) |
+| `src/renderer/utils/routeModelDistribution.ts` | 按 canonicalModel 聚合 RouteAnalyticsBucket 生成模型热力分布项（含成功率），并提供 squarified treemap 布局 |
+| `src/renderer/utils/routeSankey.ts` | 路由数据子页模型 → site/account/apiKey 通道二部图聚合（Top-N + 「其他」合并 + link 成功率三档） |
+| `src/renderer/utils/routeScatter.ts` | 通道散点点位聚合（成功率三档 / 首字响应 / 请求量）+ Top-N 引线候选 + greedy 防重叠布局 |
+| `src/renderer/utils/routeScopeFilter.ts` | 路由数据子页 scope (全部 / 站点 / 自定义 CLI) 过滤 RouteAnalyticsBucket 与作用域比较 |
+| `src/renderer/utils/routeTtfb.ts` | 首字时间 P50/P95/P99 分位数（基于 firstByteHistogram，复用 routeLatency 桶解析） |
 
 ### 共享层
 
 | 模块 | 作用 |
 |------|------|
-| `src/shared/types/site.ts` | 站点、账户、检测缓存（含 `has_checkin` / `can_check_in` 拆分）、站点每日快照、运行期缓存等核心类型 |
+| `src/shared/types/site.ts` | 站点、账户、检测缓存（含 `has_checkin` / `can_check_in` 拆分）、AnyRouter 站点名归一化识别、站点每日快照、运行期缓存等核心类型 |
 | `src/shared/types/route-proxy.ts` | 路由规则、服务器配置（含上游代理）、模型来源、路径暂停状态、CLI 探测、分析统计类型 |
 | `src/shared/theme/themePresets.ts` | `Light` / `Dark` 主题预设与旧值归一化 |
 | `src/shared/constants/index.ts` | 列宽、默认值等共享常量 |
+| `src/shared/utils/customCliRouteId.ts` | 自定义 CLI 路由通道合成 ID（site/account/apiKey）跨进程命名约定 helper |
 
 ---
 
@@ -145,14 +151,15 @@
 ### Route 工作台
 
 1. 渲染进程通过 `route:*` IPC 拉取 `server / rules / modelRegistry / cliProbe / analytics`。
-2. 主进程中的 `route-proxy-service`、`route-cli-probe-service`、`route-analytics-service` 等模块负责运行时行为和统计；本地路由上游转发使用 Electron net raw 客户端，必要时读取 `routing.server.upstreamProxyUrl` 走上游代理；模型注册表会同时聚合站点/账户模型与自定义 CLI 配置模型。
+2. 主进程中的 `route-proxy-service`、`route-cli-probe-service`、`route-analytics-service` 等模块负责运行时行为和统计；本地路由上游转发使用 Electron net raw 客户端，必要时读取 `routing.server.upstreamProxyUrl` 走上游代理；流式请求在上游返回成功 `text/event-stream` 且响应适配器透明时会边收边转发，失败响应仍缓冲以保留 fallback；模型注册表会同时聚合站点/账户模型与自定义 CLI 配置模型。
 3. 配置与统计通过 `UnifiedConfigManager` 写回 `config.routing`。
 
 ### 数据总览
 
-1. 渲染进程首页通过 `route:get-analytics-summary`、`route:get-analytics-distribution`、`route:get-object-stats`、`route:get-request-logs` 拉取路由趋势、分布、对象级 token 统计和异常请求。
-2. 主进程通过 `overview:get-site-daily-snapshots` 返回站点每日快照，渲染进程再结合当前配置缓存聚合站点余额/消费榜单。
-3. `ApiService` 在检测缓存保存成功后触发 `overview-service` 采集当日快照，因此重启应用后仍可看到站点历史趋势。
+1. 渲染进程站点子页通过 `overview:get-site-daily-snapshots` 拉取每日快照并结合 configStore 缓存聚合站点余额/消费榜单。
+2. 路由子页通过 `route:get-analytics-summary`、`route:get-analytics-distribution`、`route:get-config` 拉取路由汇总、桶级分布与运行态；前端按 `scope` 在桶级做过滤后驱动「运行趋势」「模型热力 treemap」「通道散点矩阵」「模型 → 通道 Sankey」四块视图。
+3. selectedModel 由模型热力 treemap 控制，仅影响散点高亮；Sankey 始终按当前 scope 独立展示模型到通道流向，不参与模型联动。切换 scope 自动重置 selectedModel。
+4. `ApiService` 在检测缓存保存成功后触发 `overview-service` 采集当日快照，重启应用后仍可看到站点历史趋势。
 
 ### CLI 兼容性测试
 
@@ -170,7 +177,6 @@
 - 新增 `src/__tests__/cli-wrapper-compat-service.test.ts`
 - 新增 `src/__tests__/useCliCompatTest.test.ts`
 - 新增 `src/__tests__/route-proxy-service.test.ts`
-- 新增 `src/__tests__/chy-api-rewriter.test.ts`
 - 新增 `src/__tests__/route-rule-engine.test.ts`
 - 新增 `src/main/route-analytics-service.ts`
 - 新增 `src/main/route-channel-resolver.ts`
@@ -178,7 +184,8 @@
 - 新增 `src/main/route-health-service.ts`
 - 新增 `src/main/route-model-registry-service.ts`
 - 新增 `src/main/route-proxy-service.ts`
-- 新增 `src/main/chy-api-request-rewriter.ts`
+- 新增 `src/main/route-probe-lock.ts`
+- 新增 `src/main/cli-protocol-adapter.ts`
 - 新增 `src/main/route-rule-engine.ts`
 - 新增 `src/main/route-stats-service.ts`
 - 新增 `src/main/handlers/route-handlers.ts`

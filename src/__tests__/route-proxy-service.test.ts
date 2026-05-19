@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('../main/utils/logger', () => ({
   default: {
     scope: () => ({
+      debug: vi.fn(),
       info: vi.fn(),
       warn: vi.fn(),
       error: vi.fn(),
@@ -26,6 +27,12 @@ vi.mock('../main/route-rule-engine', () => ({
 vi.mock('../main/route-channel-resolver', () => ({
   resolveChannels: vi.fn(),
   resolveChannelCredentials: vi.fn(),
+  resolveChannelTarget: vi.fn(
+    async (channel: { targetProtocol?: string; targetEndpoint?: string }) => ({
+      targetProtocol: channel.targetProtocol ?? 'native',
+      targetEndpoint: channel.targetEndpoint ?? '/mock-endpoint',
+    })
+  ),
 }));
 
 vi.mock('../main/route-stats-service', () => ({
@@ -46,6 +53,7 @@ vi.mock('../main/route-analytics-service', () => ({
 
 vi.mock('../main/utils/http-client', () => ({
   httpRawRequest: vi.fn(),
+  httpRawStreamRequest: vi.fn(),
 }));
 
 import {
@@ -69,7 +77,8 @@ import {
   sortRules,
 } from '../main/route-rule-engine';
 import { resolveChannels, resolveChannelCredentials } from '../main/route-channel-resolver';
-import { httpRawRequest } from '../main/utils/http-client';
+import { buildProbeLockRouteApiKey } from '../main/route-probe-lock';
+import { httpRawRequest, httpRawStreamRequest } from '../main/utils/http-client';
 import { isRoutePathDisabled, recordRoutePathOutcome } from '../main/route-stats-service';
 import { recordRouteRequest } from '../main/route-analytics-service';
 
@@ -82,40 +91,64 @@ function createJsonRequest(
     headers: Record<string, string>;
     method: string;
     url: string;
+    socket: { remoteAddress: string };
   };
 
   request.headers = headers;
   request.method = 'POST';
   request.url = url;
+  request.socket = { remoteAddress: '::1' };
 
   return request as unknown as Parameters<typeof handleRequest>[0];
 }
 
 function createMockResponse(): Parameters<typeof handleRequest>[1] & {
   body: string;
+  end: ReturnType<typeof vi.fn>;
+  headers: Record<string, unknown>;
   statusCode: number;
+  write: ReturnType<typeof vi.fn>;
+  writeHead: ReturnType<typeof vi.fn>;
 } {
   const response = {
     body: '',
+    destroyed: false,
+    headers: {} as Record<string, unknown>,
     headersSent: false,
     statusCode: 0,
-    writeHead: vi.fn((statusCode: number) => {
+    writableEnded: false,
+    writeHead: vi.fn((statusCode: number, headers?: Record<string, unknown>) => {
       response.statusCode = statusCode;
+      response.headers = headers ?? {};
       response.headersSent = true;
       return response;
+    }),
+    write: vi.fn((chunk?: string | Buffer) => {
+      if (chunk !== undefined) {
+        response.body += Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : chunk;
+      }
+      response.headersSent = true;
+      return true;
     }),
     end: vi.fn((chunk?: string | Buffer) => {
       if (chunk !== undefined) {
         response.body += Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : chunk;
       }
       response.headersSent = true;
+      response.writableEnded = true;
       return response;
     }),
+    off: vi.fn(),
+    once: vi.fn(),
   };
 
   return response as unknown as Parameters<typeof handleRequest>[1] & {
     body: string;
+    end: ReturnType<typeof vi.fn>;
+    headers: Record<string, unknown>;
     statusCode: number;
+    write: ReturnType<typeof vi.fn>;
+    writeHead: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -995,6 +1028,616 @@ describe('route-proxy-service auth extraction', () => {
     );
 
     expect(token).toBe('sk-route-789');
+  });
+});
+
+describe('route-proxy-service probe lock', () => {
+  it('allows loopback probe-lock requests to bypass disabled route paths and analytics side effects', async () => {
+    vi.clearAllMocks();
+
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+      },
+      rules: [],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: null,
+        geminiCli: null,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'gpt-4.1-mini': {
+            canonicalName: 'gpt-4.1-mini',
+            aliases: ['gpt-4.1-mini'],
+            sources: [],
+            vendor: 'gpt' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+    };
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn(() => undefined),
+      getAccountById: vi.fn(() => undefined),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(extractModelFromBody).mockReturnValue('gpt-4.1-mini');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(isRoutePathDisabled).mockReturnValue(true);
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://upstream.example.com',
+      apiKey: 'sk-upstream',
+    });
+    vi.mocked(httpRawRequest).mockResolvedValue({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(
+        '{"id":"resp_1","output":[{"content":[{"type":"output_text","text":"2"}]}]}'
+      ),
+    });
+
+    const routeApiKey = buildProbeLockRouteApiKey('sk-route', {
+      siteId: 'site-1',
+      accountId: 'acc-1',
+      apiKeyId: 'key-1',
+      cliType: 'codex',
+      canonicalModel: 'gpt-4.1-mini',
+      rawModel: 'gpt-4.1-mini',
+      targetProtocol: 'openai-responses',
+    });
+    const request = createJsonRequest(
+      '/v1/responses',
+      {
+        authorization: `Bearer ${routeApiKey}`,
+        'content-type': 'application/json',
+      },
+      { model: 'gpt-4.1-mini', input: [] }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.statusCode).toBe(200);
+    expect(resolveChannelCredentials).toHaveBeenCalledWith('site-1', 'acc-1', 'key-1');
+    expect(recordRouteRequest).not.toHaveBeenCalled();
+    expect(recordRoutePathOutcome).not.toHaveBeenCalled();
+    expect(httpRawRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects non-loopback probe-lock requests', async () => {
+    vi.clearAllMocks();
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => ({
+        server: {
+          unifiedApiKey: 'sk-route',
+          requestTimeoutMs: 1000,
+          upstreamProxyUrl: '',
+        },
+        rules: [],
+        cliModelSelections: {
+          claudeCode: null,
+          codex: null,
+          geminiCli: null,
+        },
+        modelRegistry: {
+          version: 1,
+          sources: [],
+          entries: {},
+          overrides: [],
+          displayItems: [],
+          vendorPriorities: {},
+        },
+      })),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('claudeCode');
+
+    const routeApiKey = buildProbeLockRouteApiKey('sk-route', {
+      siteId: 'site-1',
+      accountId: 'acc-1',
+      apiKeyId: 'key-1',
+      cliType: 'claudeCode',
+      canonicalModel: 'claude-sonnet-4',
+      rawModel: 'claude-sonnet-4',
+    });
+    const request = createJsonRequest(
+      '/v1/messages',
+      {
+        'x-api-key': routeApiKey,
+        'content-type': 'application/json',
+      },
+      { model: 'claude-sonnet-4', messages: [] }
+    );
+    Object.defineProperty(request, 'socket', {
+      value: { remoteAddress: '10.0.0.9' },
+    });
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.statusCode).toBe(403);
+    expect(JSON.parse(response.body)).toMatchObject({
+      error: 'probe_lock_forbidden',
+    });
+  });
+});
+
+describe('route-proxy-service SSE streaming passthrough', () => {
+  it('forwards successful transparent SSE responses chunk-by-chunk', async () => {
+    vi.clearAllMocks();
+
+    const rule = {
+      id: 'rule-codex-stream',
+      cliType: 'codex' as const,
+      pattern: 'gpt-4.1-mini',
+      patternType: 'exact' as const,
+    };
+    const channel = {
+      routeRuleId: rule.id,
+      siteId: 'site-openai',
+      accountId: 'account-openai',
+      apiKeyId: 'key-openai',
+      cliType: 'codex' as const,
+      canonicalModel: 'gpt-4.1-mini',
+      resolvedModel: 'gpt-4.1-mini',
+    };
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+      },
+      rules: [rule],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: null,
+        geminiCli: null,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'gpt-4.1-mini': {
+            canonicalName: 'gpt-4.1-mini',
+            aliases: ['gpt-4.1-mini'],
+            sources: [],
+            vendor: 'openai' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+    };
+    const chunks = [
+      Buffer.from('data: {"usage":{"prompt_tokens":5}}\n\n'),
+      Buffer.from('data: {"usage":{"completion_tokens":7,"total_tokens":12}}\n\n'),
+    ];
+    const upstreamHeaders = {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache',
+      'content-length': '999',
+      'transfer-encoding': 'chunked',
+    };
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn(() => ({ id: 'site-openai', name: 'OpenAI-compatible' })),
+      getAccountById: vi.fn(() => ({ id: 'account-openai', account_name: 'default' })),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(extractModelFromBody).mockReturnValue('gpt-4.1-mini');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue([channel]);
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://upstream.example.com',
+      apiKey: 'sk-upstream',
+    });
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockResolvedValue({
+      ...channel,
+      windowStartedAt: 1,
+      windowRequestCount: 1,
+      windowSuccessCount: 1,
+      successRate: 1,
+      updatedAt: 1,
+    });
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
+      const accepted = config.onResponse?.({
+        status: 200,
+        statusText: 'OK',
+        headers: upstreamHeaders,
+      });
+      expect(accepted).toBe(true);
+      expect(response.writeHead).not.toHaveBeenCalled();
+
+      for (const chunk of chunks) {
+        await config.onChunk?.(chunk);
+      }
+
+      return {
+        status: 200,
+        headers: upstreamHeaders,
+        body: Buffer.concat(chunks),
+        firstByteLatencyMs: 3,
+      };
+    });
+
+    const request = createJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+      },
+      { model: 'gpt-4.1-mini', stream: true, input: 'hi' }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(httpRawStreamRequest).toHaveBeenCalledWith(
+      'https://upstream.example.com/v1/responses',
+      expect.objectContaining({
+        method: 'POST',
+        preferElectronNet: true,
+        timeout: 1000,
+        streamIdleTimeout: 600000,
+      })
+    );
+    expect(httpRawRequest).not.toHaveBeenCalled();
+    expect(response.writeHead).toHaveBeenCalledWith(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache',
+    });
+    expect(response.headers).not.toHaveProperty('content-length');
+    expect(response.headers).not.toHaveProperty('transfer-encoding');
+    expect(response.write).toHaveBeenCalledTimes(2);
+    expect(response.writeHead.mock.invocationCallOrder[0]).toBeLessThan(
+      response.write.mock.invocationCallOrder[0]
+    );
+    expect(response.body).toBe(Buffer.concat(chunks).toString('utf-8'));
+    expect(response.end).toHaveBeenCalledTimes(1);
+    expect(response.writableEnded).toBe(true);
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cliType: 'codex',
+        outcome: 'success',
+        statusCode: 200,
+        firstByteLatencyMs: 3,
+        promptTokens: 5,
+        completionTokens: 7,
+        totalTokens: 12,
+      })
+    );
+  });
+
+  it('preserves Claude Code tools when streaming through AnyRouter', async () => {
+    vi.clearAllMocks();
+
+    const validHash = 'a'.repeat(64);
+    const rule = {
+      id: 'rule-claude-anyrouter',
+      cliType: 'claudeCode' as const,
+      pattern: 'claude-opus-4-6',
+      patternType: 'exact' as const,
+    };
+    const channel = {
+      routeRuleId: rule.id,
+      siteId: 'site-anyrouter',
+      accountId: 'account-anyrouter',
+      apiKeyId: 'key-anyrouter',
+      cliType: 'claudeCode' as const,
+      canonicalModel: 'claude-opus-4-6',
+      resolvedModel: 'claude-opus-4-6',
+    };
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+      },
+      rules: [rule],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: null,
+        geminiCli: null,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'claude-opus-4-6': {
+            canonicalName: 'claude-opus-4-6',
+            aliases: ['claude-opus-4-6'],
+            sources: [],
+            vendor: 'claude' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+    };
+    const successChunk = Buffer.from('event: message_delta\ndata: {"type":"message_delta"}\n\n');
+    let upstreamBody: Record<string, unknown> | undefined;
+    let upstreamHeaders: Record<string, string | string[] | undefined> | undefined;
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn(() => ({ id: 'site-anyrouter', name: 'AnyRouter' })),
+      getAccountById: vi.fn(() => ({
+        id: 'account-anyrouter',
+        account_name: 'anyrouter-account',
+        anyRouterConfig: { userHash: validHash },
+      })),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('claudeCode');
+    vi.mocked(extractModelFromBody).mockReturnValue('claude-opus-4-6');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue([channel]);
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://anyrouter.top',
+      apiKey: 'sk-upstream',
+    });
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockResolvedValue({
+      ...channel,
+      windowStartedAt: 1,
+      windowRequestCount: 1,
+      windowSuccessCount: 1,
+      successRate: 1,
+      updatedAt: 1,
+    });
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
+      upstreamHeaders = config.headers;
+      upstreamBody = JSON.parse(
+        Buffer.isBuffer(config.body) ? config.body.toString('utf-8') : String(config.body)
+      );
+      const accepted = config.onResponse?.({
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'text/event-stream' },
+      });
+      expect(accepted).toBe(true);
+      await config.onChunk?.(successChunk);
+      return {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+        body: successChunk,
+        firstByteLatencyMs: 5,
+      };
+    });
+
+    const request = createJsonRequest(
+      '/v1/messages',
+      {
+        'x-api-key': 'sk-route',
+        'content-type': 'application/json',
+        'anthropic-beta': 'existing-beta',
+      },
+      {
+        model: 'claude-opus-4-6',
+        stream: true,
+        messages: [{ role: 'user', content: 'inspect files' }],
+        system: [{ type: 'text', text: 'Original Claude Code system prompt' }],
+        tools: [
+          {
+            name: 'Read',
+            description: 'Read a file',
+            input_schema: { type: 'object', properties: { file_path: { type: 'string' } } },
+          },
+        ],
+        tool_choice: { type: 'auto' },
+        stop_sequences: ['stop-here'],
+        temperature: 0.2,
+        metadata: { source: 'claude-code' },
+      }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(httpRawStreamRequest).toHaveBeenCalledWith(
+      'https://anyrouter.top/v1/messages?beta=true',
+      expect.objectContaining({
+        method: 'POST',
+        preferElectronNet: true,
+        timeout: 120000,
+        streamIdleTimeout: 600000,
+      })
+    );
+    expect(upstreamHeaders?.['x-api-key']).toBe('sk-upstream');
+    expect(String(upstreamHeaders?.['anthropic-beta'])).toContain('existing-beta');
+    expect(String(upstreamHeaders?.['anthropic-beta'])).toContain('context-1m-2025-08-07');
+    expect(upstreamBody).toMatchObject({
+      model: 'claude-opus-4-6',
+      stream: true,
+      messages: [{ role: 'user', content: 'inspect files' }],
+      system: [{ type: 'text', text: 'Original Claude Code system prompt' }],
+      tools: [
+        {
+          name: 'Read',
+          description: 'Read a file',
+          input_schema: { type: 'object', properties: { file_path: { type: 'string' } } },
+        },
+      ],
+      tool_choice: { type: 'auto' },
+      stop_sequences: ['stop-here'],
+      temperature: 0.2,
+      metadata: expect.objectContaining({
+        source: 'claude-code',
+        user_id: expect.stringMatching(/^user_[a-f0-9]{64}_account__session_/),
+      }),
+    });
+    expect(httpRawRequest).not.toHaveBeenCalled();
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe(successChunk.toString('utf-8'));
+  });
+
+  it('buffers failed SSE responses so fallback attempts can stream without leaking failed chunks', async () => {
+    vi.clearAllMocks();
+
+    const rule = {
+      id: 'rule-codex-stream',
+      cliType: 'codex' as const,
+      pattern: 'gpt-4.1-mini',
+      patternType: 'exact' as const,
+    };
+    const firstChannel = {
+      routeRuleId: rule.id,
+      siteId: 'site-first',
+      accountId: 'account-first',
+      apiKeyId: 'key-first',
+      cliType: 'codex' as const,
+      canonicalModel: 'gpt-4.1-mini',
+      resolvedModel: 'gpt-4.1-mini',
+    };
+    const secondChannel = {
+      routeRuleId: rule.id,
+      siteId: 'site-second',
+      accountId: 'account-second',
+      apiKeyId: 'key-second',
+      cliType: 'codex' as const,
+      canonicalModel: 'gpt-4.1-mini',
+      resolvedModel: 'gpt-4.1-mini',
+    };
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+      },
+      rules: [rule],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: null,
+        geminiCli: null,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'gpt-4.1-mini': {
+            canonicalName: 'gpt-4.1-mini',
+            aliases: ['gpt-4.1-mini'],
+            sources: [],
+            vendor: 'openai' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+    };
+    const failureChunk = Buffer.from('data: first-failure\n\n');
+    const successChunk = Buffer.from('data: second-success\n\n');
+    let attempt = 0;
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn(() => undefined),
+      getAccountById: vi.fn(() => undefined),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(extractModelFromBody).mockReturnValue('gpt-4.1-mini');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue([firstChannel, secondChannel]);
+    vi.mocked(resolveChannelCredentials).mockImplementation(
+      async (_siteId, _accountId, apiKeyId) =>
+        apiKeyId === 'key-first'
+          ? { baseUrl: 'https://first.example.com', apiKey: 'sk-first' }
+          : { baseUrl: 'https://second.example.com', apiKey: 'sk-second' }
+    );
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockResolvedValue({
+      ...firstChannel,
+      windowStartedAt: 1,
+      windowRequestCount: 1,
+      windowSuccessCount: 1,
+      successRate: 1,
+      updatedAt: 1,
+    });
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
+      attempt += 1;
+
+      if (attempt === 1) {
+        const headers = { 'content-type': 'text/event-stream' };
+        const accepted = config.onResponse?.({
+          status: 503,
+          statusText: 'Service Unavailable',
+          headers,
+        });
+        expect(accepted).toBe(false);
+        await config.onChunk?.(failureChunk);
+        return {
+          status: 503,
+          headers,
+          body: failureChunk,
+          firstByteLatencyMs: 2,
+        };
+      }
+
+      const headers = { 'content-type': 'text/event-stream' };
+      const accepted = config.onResponse?.({ status: 200, statusText: 'OK', headers });
+      expect(accepted).toBe(true);
+      await config.onChunk?.(successChunk);
+      return {
+        status: 200,
+        headers,
+        body: successChunk,
+        firstByteLatencyMs: 4,
+      };
+    });
+
+    const request = createJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+      },
+      { model: 'gpt-4.1-mini', stream: true, input: 'hi' }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(vi.mocked(httpRawStreamRequest).mock.calls.map(call => call[0])).toEqual([
+      'https://first.example.com/v1/responses',
+      'https://second.example.com/v1/responses',
+    ]);
+    expect(httpRawRequest).not.toHaveBeenCalled();
+    expect(response.statusCode).toBe(200);
+    expect(response.write).toHaveBeenCalledTimes(1);
+    expect(response.body).toBe(successChunk.toString('utf-8'));
+    expect(response.body).not.toContain('first-failure');
+    expect(response.end).toHaveBeenCalledTimes(1);
   });
 });
 

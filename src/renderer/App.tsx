@@ -28,6 +28,7 @@ import type {
   CliCompatibilityData,
   SiteDailySnapshot,
 } from '../shared/types/site';
+import type { CliTargetProtocol } from '../shared/types/cli-config';
 import type {
   RouteAnalyticsObjectStatsItem,
   RouteAnalyticsObjectStatsQuery,
@@ -176,6 +177,7 @@ declare global {
             apiKey: string;
             model: string;
             baseUrl?: string;
+            targetProtocol?: CliTargetProtocol;
           }>;
         }) => Promise<{
           success: boolean;

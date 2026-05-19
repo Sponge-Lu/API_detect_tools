@@ -60,6 +60,12 @@ describe('migrate-config-v224-to-v301 script', () => {
                 has_checkin: true,
                 last_refresh: 1000,
               },
+              cli_config: {
+                codex: {
+                  apiKeyId: 1,
+                  model: 'gpt-4o-mini',
+                },
+              },
             },
           ],
           accounts: [],
@@ -130,8 +136,10 @@ describe('migrate-config-v224-to-v301 script', () => {
 
     expect(config.version).toBe('3.1');
     expect(config.sites[0].cached_data).toBeUndefined();
+    expect(config.sites[0].cli_config.codex.targetProtocol).toBeUndefined();
     expect(config.accounts).toHaveLength(1);
     expect(config.accounts[0].cached_data).toBeUndefined();
+    expect(config.accounts[0].cli_config.codex.targetProtocol).toBeUndefined();
     expect(config.routing.stats).toEqual({});
     expect(config.routing.cliProbe.latest).toEqual({});
     expect(config.routing.analytics.buckets).toEqual({});

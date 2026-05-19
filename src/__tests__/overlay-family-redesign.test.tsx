@@ -374,6 +374,7 @@ describe('overlay family redesign', () => {
           apiKey: 'sk-test',
           model: 'claude-3-7-sonnet',
           baseUrl: 'https://example.com',
+          targetProtocol: 'native',
         },
       ],
     });

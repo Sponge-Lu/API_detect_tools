@@ -12,6 +12,8 @@ import {
   loadCustomCliConfigStorage,
   parseCustomCliRouteConfigId,
 } from './custom-cli-config-service';
+import { getCliTargetEndpoint, normalizeCliTargetProtocol } from '../shared/types/cli-config';
+import { normalizeCustomCliSettings } from '../shared/types/custom-cli-config';
 import type {
   RouteRule,
   RouteChannelKey,
@@ -27,6 +29,8 @@ import type { TokenService } from './token-service';
 
 export type ResolvedChannel = RouteChannelKey & {
   cliType: RouteCliType;
+  targetProtocol?: ReturnType<typeof normalizeCliTargetProtocol>;
+  targetEndpoint?: string;
   canonicalModel?: string;
   resolvedModel?: string;
   sitePriority?: number;
@@ -243,6 +247,16 @@ async function persistResolvedApiKeyValue(
       last_refresh: Date.now(),
     };
   });
+}
+
+function resolveStoredTargetProtocol(
+  site: UnifiedSite | null | undefined,
+  account: AccountCredential | null | undefined,
+  cliType: RouteCliType
+): ReturnType<typeof normalizeCliTargetProtocol> {
+  return normalizeCliTargetProtocol(
+    account?.cli_config?.[cliType]?.targetProtocol ?? site?.cli_config?.[cliType]?.targetProtocol
+  );
 }
 
 export async function resolveAccountApiKeyValue(
@@ -486,6 +500,22 @@ function buildCanonicalModelChannels(
       }
     }
 
+    // 对 customCli 不预设 targetProtocol（合成 siteId 不在 activeSiteById 中，预设会恒为
+    // 'native' 并因 `??` 不回退而覆盖 customCli 自身设置）。
+    // 留空让 resolveChannelTarget 走 customCli 自身 cliSettings 解析路径。
+    const isCustomCliChannel = isCustomCliRouteChannel(
+      group.siteId,
+      group.accountId,
+      group.apiKeyId
+    );
+    const channelTargetProtocol = isCustomCliChannel
+      ? undefined
+      : resolveStoredTargetProtocol(
+          activeSiteById.get(group.siteId),
+          activeAccountById.get(group.accountId),
+          rule.cliType
+        );
+
     orderedOriginalModels.forEach((resolvedModel, originalModelIndex) => {
       channels.push({
         routeRuleId: rule.id,
@@ -493,6 +523,7 @@ function buildCanonicalModelChannels(
         accountId: group.accountId,
         apiKeyId: group.apiKeyId,
         cliType: rule.cliType,
+        targetProtocol: channelTargetProtocol,
         canonicalModel,
         resolvedModel,
         sitePriority: group.sitePriority,
@@ -547,6 +578,7 @@ function buildGenericChannels(
             accountId: account.id,
             apiKeyId: resolveApiKeyId({ key: site.api_key }),
             cliType: rule.cliType,
+            targetProtocol: resolveStoredTargetProtocol(site, account, rule.cliType),
             canonicalModel: canonicalModel || undefined,
             resolvedModel: canonicalModel || undefined,
             sitePriority: nextSiteOrder,
@@ -576,6 +608,7 @@ function buildGenericChannels(
           accountId: account.id,
           apiKeyId: resolveApiKeyId(apiKey),
           cliType: rule.cliType,
+          targetProtocol: resolveStoredTargetProtocol(site, account, rule.cliType),
           canonicalModel: canonicalModel || undefined,
           resolvedModel: canonicalModel || undefined,
           sitePriority: nextSiteOrder,
@@ -701,4 +734,42 @@ export async function resolveChannelCredentials(
   }
 
   return null;
+}
+
+export async function resolveChannelTarget(
+  config: Pick<
+    ResolvedChannel,
+    'siteId' | 'accountId' | 'apiKeyId' | 'cliType' | 'resolvedModel' | 'targetProtocol'
+  >
+): Promise<{
+  targetProtocol: ReturnType<typeof normalizeCliTargetProtocol>;
+  targetEndpoint: string;
+}> {
+  if (isCustomCliRouteChannel(config.siteId, config.accountId, config.apiKeyId)) {
+    const configId = parseCustomCliRouteConfigId(config.siteId);
+    if (configId) {
+      const storage = await loadCustomCliConfigStorage();
+      const customConfig = storage.configs.find(item => item.id === configId);
+      const settings = normalizeCustomCliSettings(customConfig?.cliSettings?.[config.cliType]);
+      const targetProtocol = normalizeCliTargetProtocol(
+        config.targetProtocol ?? settings.targetProtocol
+      );
+      return {
+        targetProtocol,
+        targetEndpoint: getCliTargetEndpoint(config.cliType, targetProtocol, config.resolvedModel),
+      };
+    }
+  }
+
+  const unifiedConfig = unifiedConfigManager.exportConfigSync();
+  const site = unifiedConfig?.sites.find(item => item.id === config.siteId);
+  const account = unifiedConfig?.accounts.find(item => item.id === config.accountId);
+  const targetProtocol = normalizeCliTargetProtocol(
+    config.targetProtocol ?? resolveStoredTargetProtocol(site, account, config.cliType)
+  );
+
+  return {
+    targetProtocol,
+    targetEndpoint: getCliTargetEndpoint(config.cliType, targetProtocol, config.resolvedModel),
+  };
 }

@@ -222,14 +222,14 @@ describe('useCheckIn', () => {
     expect(showAlert).toHaveBeenCalledWith(expect.stringContaining('ok'), 'success', '签到成功');
   });
 
-  it('Any Router 应使用账户浏览器签到并记录固定奖励 25 美元', async () => {
+  it('AnyRouter 命名变体应使用账户浏览器签到并记录固定奖励 25 美元', async () => {
     const showAlert = vi.fn();
     const showDialog = vi.fn(async () => false);
     const setCheckingIn = vi.fn();
 
     mockResults = [
       {
-        name: 'Any Router',
+        name: 'AnyRouter',
         status: '成功',
         has_checkin: true,
         can_check_in: true,
@@ -247,7 +247,7 @@ describe('useCheckIn', () => {
       sites: [
         {
           id: 'site-anyrouter',
-          name: 'Any Router',
+          name: 'AnyRouter',
           url: 'https://anyrouter.top/',
           enabled: true,
           group: BUILTIN_GROUP_IDS.DEFAULT,
@@ -295,7 +295,7 @@ describe('useCheckIn', () => {
     );
     expect(mockUpsertResult).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: 'Any Router',
+        name: 'AnyRouter',
         can_check_in: false,
         checkinStats: expect.objectContaining({
           todayQuota: 12500000,

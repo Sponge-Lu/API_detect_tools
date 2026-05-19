@@ -14,10 +14,12 @@ import { app } from 'electron';
 import {
   electronFetch,
   electronFetchRaw,
+  electronFetchRawStream,
   electronFetchStream,
   isElectronNetAvailable,
   normalizeProxyUrl,
   type RawFetchResponse,
+  type RawFetchStreamStart,
   type StreamFetchResponse,
 } from './electron-fetch';
 import { Logger } from './logger';
@@ -35,6 +37,12 @@ interface RawRequestConfig extends Omit<AxiosRequestConfig, 'data' | 'headers' |
   body?: Buffer | string;
   proxyUrl?: string;
   preferElectronNet?: boolean;
+}
+
+interface RawStreamRequestConfig extends RawRequestConfig {
+  streamIdleTimeout?: number;
+  onResponse?: (response: RawFetchStreamStart) => boolean | void;
+  onChunk?: (chunk: Buffer) => void | Promise<void>;
 }
 
 export interface RawHttpResponse {
@@ -293,6 +301,151 @@ export async function httpRawRequest(
     headers: normalizeAxiosResponseHeaders(res.headers),
     body: normalizeAxiosResponseBody(res.data),
   };
+}
+
+async function consumeAxiosStreamResponse(
+  res: {
+    status: number;
+    statusText?: string;
+    headers: unknown;
+    data: NodeJS.ReadableStream;
+  },
+  options: Pick<RawStreamRequestConfig, 'onResponse' | 'onChunk' | 'timeout' | 'streamIdleTimeout'>
+): Promise<RawHttpResponse> {
+  const startedAt = Date.now();
+  const headers = normalizeAxiosResponseHeaders(res.headers);
+  const shouldStreamChunks =
+    Boolean(options.onChunk) &&
+    options.onResponse?.({ status: res.status, statusText: res.statusText || '', headers }) !==
+      false;
+
+  return await new Promise<RawHttpResponse>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let firstByteLatencyMs: number | undefined;
+    let settled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const initialTimeoutMs = options.timeout ?? 30000;
+    const activeStreamIdleTimeoutMs = options.streamIdleTimeout ?? initialTimeoutMs;
+
+    const clearRequestTimeout = () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = undefined;
+      }
+    };
+
+    const rejectOnce = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearRequestTimeout();
+      reject(error);
+    };
+
+    const resolveOnce = () => {
+      if (settled) return;
+      settled = true;
+      clearRequestTimeout();
+      resolve({
+        status: res.status,
+        headers,
+        body: Buffer.concat(chunks),
+        firstByteLatencyMs,
+      });
+    };
+
+    const armIdleTimeout = (timeoutMs: number) => {
+      if (timeoutMs <= 0 || settled) return;
+      clearRequestTimeout();
+      timeoutId = setTimeout(() => {
+        const error = new Error(`Request timeout after ${timeoutMs}ms`);
+        const destroyableStream = res.data as NodeJS.ReadableStream & {
+          destroy?: (error?: Error) => void;
+        };
+        destroyableStream.destroy?.(error);
+        rejectOnce(error);
+      }, timeoutMs);
+    };
+
+    armIdleTimeout(initialTimeoutMs);
+
+    res.data.on('data', (chunk: Buffer | string) => {
+      if (firstByteLatencyMs === undefined) {
+        firstByteLatencyMs = Date.now() - startedAt;
+      }
+      armIdleTimeout(activeStreamIdleTimeoutMs);
+
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      chunks.push(buffer);
+
+      if (!shouldStreamChunks || !options.onChunk) return;
+
+      res.data.pause();
+      Promise.resolve(options.onChunk(buffer)).then(
+        () => {
+          if (!settled) {
+            res.data.resume();
+          }
+        },
+        (error: unknown) => {
+          rejectOnce(error instanceof Error ? error : new Error(String(error)));
+        }
+      );
+    });
+
+    res.data.once('end', resolveOnce);
+    res.data.once('error', (error: Error) => rejectOnce(error));
+  });
+}
+
+/**
+ * Raw HTTP 流式请求：可在接收 chunk 时回调写下游，同时保留完整 body。
+ */
+export async function httpRawStreamRequest(
+  url: string,
+  config: RawStreamRequestConfig = {}
+): Promise<RawHttpResponse> {
+  const {
+    method = 'GET',
+    headers = {},
+    body,
+    timeout = 30000,
+    streamIdleTimeout,
+    proxyUrl,
+    preferElectronNet,
+    onResponse,
+    onChunk,
+    ...axiosConfig
+  } = config;
+  const compactedHeaders = compactHeaders(headers);
+
+  if (shouldUseElectronNet(preferElectronNet)) {
+    log.debug(`Using Electron net module for raw stream ${method}:`, url);
+    const res = await electronFetchRawStream(url, {
+      method,
+      headers: compactedHeaders,
+      body,
+      timeout,
+      streamIdleTimeout,
+      proxyUrl,
+      onResponse,
+      onData: onChunk,
+    });
+    return toRawHttpResponse(res);
+  }
+
+  const res = await axios.request<NodeJS.ReadableStream>({
+    ...axiosConfig,
+    method,
+    url,
+    data: body,
+    headers: compactedHeaders,
+    timeout,
+    proxy: buildAxiosProxyConfig(proxyUrl),
+    responseType: 'stream',
+    validateStatus: () => true,
+  });
+
+  return consumeAxiosStreamResponse(res, { timeout, streamIdleTimeout, onResponse, onChunk });
 }
 
 /**

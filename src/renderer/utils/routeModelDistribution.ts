@@ -15,6 +15,7 @@ export interface ModelDistributionItem {
   successCount: number;
   failureCount: number;
   totalTokens: number;
+  successRate: number;
 }
 
 export interface TreemapNode<T> {
@@ -41,6 +42,7 @@ export function buildModelDistribution(buckets: RouteAnalyticsBucket[]): ModelDi
       successCount: 0,
       failureCount: 0,
       totalTokens: 0,
+      successRate: 1,
     };
 
     current.requests += bucket.requestCount;
@@ -49,6 +51,11 @@ export function buildModelDistribution(buckets: RouteAnalyticsBucket[]): ModelDi
     current.totalTokens += bucket.totalTokens;
 
     grouped.set(id, current);
+  }
+
+  for (const item of grouped.values()) {
+    const denominator = item.successCount + item.failureCount;
+    item.successRate = denominator > 0 ? item.successCount / denominator : 1;
   }
 
   return Array.from(grouped.values()).sort((a, b) => b.requests - a.requests);

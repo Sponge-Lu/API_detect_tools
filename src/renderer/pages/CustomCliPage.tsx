@@ -15,6 +15,12 @@ import {
   type CustomCliTestState,
 } from '../../shared/types/custom-cli-config';
 import {
+  CLI_TARGET_PROTOCOLS,
+  getCliTargetEndpoint,
+  normalizeCliTargetProtocol,
+  type CliTargetProtocol,
+} from '../../shared/types/cli-config';
+import {
   generateClaudeCodeConfig,
   generateCodexConfig,
   generateGeminiCliConfig,
@@ -79,8 +85,28 @@ const CLI_OPTIONS: CliOption[] = [
   { key: 'codex', name: 'Codex', icon: CodexIcon, sizeClass: 'h-5 w-5' },
   { key: 'geminiCli', name: 'Gemini CLI', icon: GeminiIcon, sizeClass: 'h-5 w-5' },
 ];
+const CLI_TARGET_PROTOCOL_LABELS: Record<CliTargetProtocol, string> = {
+  native: '原生协议',
+  'anthropic-messages': 'Anthropic Messages',
+  'openai-chat-completions': 'OpenAI Chat Completions',
+  'openai-responses': 'OpenAI Responses',
+};
 const URL_PATTERN = /(https?:\/\/[^\s]+)/g;
 const CONFIG_TABLE_GRID_CLASS = 'grid-cols-[96px_minmax(0,1.2fr)_76px_minmax(0,1fr)]';
+const CLI_CONFIG_ROW_GRID_CLASS =
+  'grid-cols-[minmax(0,110px)_44px_minmax(0,1fr)_minmax(0,1fr)_68px_68px]';
+
+function buildCliTargetProtocolOptionLabel(
+  cliType: CliType,
+  targetProtocol: CliTargetProtocol,
+  model?: string | null
+): string {
+  return `${CLI_TARGET_PROTOCOL_LABELS[targetProtocol]} · ${getCliTargetEndpoint(
+    cliType,
+    targetProtocol,
+    model
+  )}`;
+}
 
 async function openExternalUrl(url: string): Promise<void> {
   try {
@@ -537,6 +563,9 @@ export function CustomCliPage({ runCliTests }: CustomCliPageProps = {}) {
               apiKey: config.apiKey,
               model,
               baseUrl: config.baseUrl,
+              targetProtocol: normalizeCliTargetProtocol(
+                config.cliSettings[cliType].targetProtocol
+              ),
             },
           ],
         });
@@ -1002,7 +1031,7 @@ export function CustomCliPage({ runCliTests }: CustomCliPageProps = {}) {
                           <div
                             key={option.key}
                             data-cli-config-row={option.key}
-                            className={`grid min-w-0 grid-cols-[minmax(0,128px)_44px_minmax(0,1fr)_68px_68px] items-center gap-1.5 px-1 py-0.5 transition-opacity ${
+                            className={`grid min-w-0 ${CLI_CONFIG_ROW_GRID_CLASS} items-center gap-1.5 px-1 py-0.5 transition-opacity ${
                               setting.enabled ? '' : 'opacity-60'
                             }`}
                           >
@@ -1036,6 +1065,34 @@ export function CustomCliPage({ runCliTests }: CustomCliPageProps = {}) {
                               {selectedConfig.models.map(model => (
                                 <option key={model} value={model}>
                                   {model}
+                                </option>
+                              ))}
+                            </select>
+                            <select
+                              aria-label={`${option.name} 选择上游端口`}
+                              value={setting.targetProtocol ?? ''}
+                              onChange={event =>
+                                persistCliSettingPatch(option.key, {
+                                  targetProtocol: event.target.value
+                                    ? (event.target.value as CliTargetProtocol)
+                                    : undefined,
+                                })
+                              }
+                              disabled={!setting.enabled}
+                              className={`min-w-0 w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 py-1.5 text-xs disabled:opacity-50 ${
+                                setting.targetProtocol
+                                  ? 'text-[var(--text-primary)]'
+                                  : 'text-[var(--text-tertiary)]'
+                              }`}
+                            >
+                              <option value="">选择上游端口</option>
+                              {CLI_TARGET_PROTOCOLS.map(protocol => (
+                                <option key={protocol} value={protocol}>
+                                  {buildCliTargetProtocolOptionLabel(
+                                    option.key,
+                                    protocol,
+                                    setting.model
+                                  )}
                                 </option>
                               ))}
                             </select>

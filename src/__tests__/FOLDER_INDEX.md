@@ -27,7 +27,7 @@
 | **example.test.ts** | 示例测试 | 测试模板 |
 | **schemas.test.ts** | Schema 验证测试 | Zod Schema |
 | **token-service.test.ts** | TokenService / ApiService 的 site_type 驱动回归测试 | API Key 原始值保留、签到端点按 `site_type` 选择、模型响应非对象/直接数组容错、同日手动签到完成状态刷新保留、sub2api 端点适配、旧站点 `site_type` 首检写回 |
-| **useCheckIn.test.ts** | useCheckIn Hook 回归测试 | 一键签到跳过 `unavailable` 分组站点，账户级签到透传 `accountId`，手动签到完成状态写入缓存 |
+| **useCheckIn.test.ts** | useCheckIn Hook 回归测试 | 一键签到跳过 `unavailable` 分组站点，账户级签到透传 `accountId`，AnyRouter 命名变体走账户浏览器签到，手动签到完成状态写入缓存 |
 | **useCliCompatTest.test.ts** | 站点页 CLI 测试回归测试 | `useCliCompatTest` 在已选 API Key 时优先测试当前站点 URL、保存后立即同步 `routing.cliProbe` 投影，并对 Gemini 失败摘要显式提示 |
 | **site-type-detector.test.ts** | 站点类型自动识别测试 | title 命中与 `/api/status` 识别 |
 | **site-editor.test.tsx** | SiteEditor 回归测试 | 手动保存站点类型、智能添加回填识别类型 |
@@ -42,11 +42,12 @@
 | **migrate-config-v224-to-v301-script.test.ts** | 配置迁移脚本测试 | v2.1.24 config 拆分为 clean config、runtime-cache 与 route state，重复运行保留已有 state |
 | **route-cli-probe-service.test.ts** | CLI 探测多账户回归测试 | 同站点全部活跃账户覆盖、错误码透传、旧配置兼容 |
 | **route-model-registry-service.test.ts** | 路由模型注册表服务测试 | display item、厂商优先级、canonical 映射与自定义 CLI 来源 |
-| **route-proxy-service.test.ts** | 路由代理调度回归测试 | canonical-only 规则命中前提下的 per-rawModel 尝试计划、上游 URL 构造、Gemini path/key 重写、AnyRouter beta path 与 provider usage/cache token 解析 |
+| **route-proxy-service.test.ts** | 路由代理调度回归测试 | canonical-only 规则命中前提下的 per-rawModel 尝试计划、上游 URL 构造、Gemini path/key 重写、AnyRouter beta path、流式请求首包超时与首个 SSE chunk 后 10 分钟活跃流空闲超时下限、provider usage/cache token 解析 |
+| **cli-protocol-adapter.test.ts** | CLI 协议适配器请求/响应转换测试 | Claude/Codex/Gemini 三类源 CLI 与 Anthropic Messages / OpenAI Chat Completions / OpenAI Responses 三类目标协议之间的 text/tool_use/tool_result/function_call 双向转换，流式 SSE 与非流式 JSON 矩阵，empty_conversation / unsupported_content 显式抛 `CliProtocolAdapterError` |
+| **anyrouter-timeout.test.ts** | AnyRouter 站点识别测试 | `Any Router` / `AnyRouter` / 分隔符变体归一化命中，带额外前后缀的站点名不误判 |
 | **anyrouter-rewriter.test.ts** | AnyRouter 协议处理测试 | Claude Code 指纹改写、Codex 原生 Responses 补齐 metadata.user_id、Gemini 原生透传 |
-| **chy-api-rewriter.test.ts** | CHY API 公益站协议处理测试 | Claude/Codex/Gemini 请求转 OpenAI Chat Completions，响应转换回原 CLI 协议 |
-| **electron-fetch.test.ts** | Electron 网络工具测试 | 上游代理 URL 归一化 |
-| **http-client.test.ts** | HTTP 客户端测试 | raw 上游转发走 Electron net 并传递上游代理配置 |
+| **electron-fetch.test.ts** | Electron 网络工具测试 | 上游代理 URL 归一化、受限请求头过滤、raw/streaming 响应空闲超时与首包/活跃流分段超时 |
+| **http-client.test.ts** | HTTP 客户端测试 | raw 上游转发走 Electron net 并传递上游代理、流式回调和活跃流空闲超时配置 |
 | **route-rule-engine.test.ts** | 路由规则引擎回归测试 | canonical-only 模型匹配与规则优先级排序 |
 | **cli-compat-projection.test.ts** | CLI 兼容性投影测试 | `routing.cliProbe.latest` 到站点/账户卡片结果的映射，以及 latest probe 回灌到 CLI 配置弹窗测试模型 slot 的时间戳合并 |
 | **webdav-manager.test.ts** | WebDAV 管理器测试 | WebDAVManager 类 |

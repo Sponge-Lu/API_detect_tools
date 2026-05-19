@@ -116,7 +116,7 @@ export const APP_OVERVIEW_SUBPAGE_META = {
     id: 'route',
     navLabel: '路由数据',
     title: '路由数据',
-    description: '查看路由请求、对象活跃度、Token 使用与近期异常。',
+    description: '查看请求趋势、模型热力、通道健康与模型到通道流向。',
   },
 } satisfies Record<OverviewSubtab, OverviewSubpageMeta>;
 

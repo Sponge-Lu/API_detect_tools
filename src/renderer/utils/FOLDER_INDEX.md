@@ -26,8 +26,17 @@
 | **groupStyle.tsx** | 分组样式生成 | `getGroupStyle()`, `getGroupColor()` |
 | **logger.ts** | 日志记录 | `info()`, `warn()`, `error()`, `debug()` |
 | **modelPricing.ts** | 模型计费方式与价格归一化 | `resolveModelPricing()`, `isPerCallPricing()` |
-| **routeLatency.ts** | 路由延迟分位数估算（P90/P99，样本 <20 返 null） | `computeLatencyPercentiles()`, `formatLatency()` |
-| **routeModelDistribution.ts** | 按 canonicalModel 聚合路由桶生成模型热力项 | `buildModelDistribution()` |
+| **routeLatency.ts** | 路由会话时间分位数估算（P90/P99，样本 <20 返 null）；命名导出桶解析与百分位算法供首字响应复用 | `computeLatencyPercentiles()`, `formatLatency()`, `buildSortedHistogramBuckets()`, `computePercentileFromBuckets()` |
+| **routeLogAxis.ts** | 散点矩阵首字响应 X 轴 0-120s 分段 value↔pixel 映射与默认刻度 | `createSegmentedResponseTimeScale()`, `buildAxisTicks()`, `DEFAULT_FIRST_BYTE_AXIS_TICKS` |
+| **routeModelDistribution.ts** | 按 canonicalModel 聚合路由桶生成模型热力项（含成功率），并提供 squarified treemap 布局 | `buildModelDistribution()`, `squarifiedTreemap()` |
+| **routeRulePresentation.ts** | 路由规则摘要 / 命中原因 / CLI 标签 | `getRouteCliLabel()`, `summarizeRouteRule()` |
+| **routeSankey.ts** | 路由数据子页模型 → site/account/apiKey 通道二部图聚合（含 Top-N + 「其他」合并 + link 成功率） | `buildRouteSankeyGraph()`, `SANKEY_OTHER_MODEL_KEY`, `SANKEY_OTHER_CHANNEL_KEY` |
+| **routeScatter.ts** | 通道散点点位聚合（成功率分桶 / 首字响应 / 请求量）+ 引线候选 + greedy 防重叠 | `buildRouteScatterPoints()`, `buildScatterLabelCandidates()`, `selectScatterLabels()` |
+| **routeScopeFilter.ts** | 路由数据子页 scope (全部 / 站点 / 自定义 CLI) 过滤 RouteAnalyticsBucket 与作用域比较 | `filterBucketsByScope()`, `resolveScopeSiteId()`, `isSameRouteScope()`, `ROUTE_SCOPE_ALL` |
+| **routeTtfb.ts** | 首字时间 P50/P95/P99 分位数（复用 routeLatency 桶解析） | `computeFirstBytePercentiles()`, `formatTtfb()` |
+| **siteDailyStats.ts** | 站点每日快照衍生指标 | `summariseDailySnapshots()` |
+| **siteOverview.ts** | 站点资源 / 签到聚合 | `buildSiteOverviewMetrics()`, `buildSiteCheckinOverviewRows()` |
+| **siteSort.ts** | 站点排序工具 | `compareSitesByName()`, `compareSitesByBalance()` |
 
 ---
 

@@ -1,23 +1,44 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
   const setHeader = vi.fn();
+  const state = {
+    autoRespond: true,
+    requestHandlers: {} as Record<string, (value: unknown) => void>,
+    responseHandlers: {} as Record<string, (value?: unknown) => void>,
+    lastRequest: null as { abort: ReturnType<typeof vi.fn> } | null,
+    lastResponse: null as {
+      pause: ReturnType<typeof vi.fn>;
+      resume: ReturnType<typeof vi.fn>;
+    } | null,
+  };
+
+  const startResponse = () => {
+    const responseHandlers: Record<string, (value?: unknown) => void> = {};
+    const response = {
+      statusCode: 200,
+      statusMessage: 'OK',
+      headers: { 'content-type': 'text/plain' },
+      on: vi.fn((event: string, handler: (value?: unknown) => void) => {
+        responseHandlers[event] = handler;
+      }),
+      pause: vi.fn(),
+      resume: vi.fn(),
+    };
+
+    state.responseHandlers = responseHandlers;
+    state.lastResponse = response;
+    state.requestHandlers.response?.(response);
+    return responseHandlers;
+  };
+
   const netRequest = vi.fn(() => {
     const requestHandlers: Record<string, (value: unknown) => void> = {};
-    return {
+    const request = {
       abort: vi.fn(),
       end: vi.fn(() => {
-        const responseHandlers: Record<string, (value?: unknown) => void> = {};
-        const response = {
-          statusCode: 200,
-          statusMessage: 'OK',
-          headers: { 'content-type': 'text/plain' },
-          on: vi.fn((event: string, handler: (value?: unknown) => void) => {
-            responseHandlers[event] = handler;
-          }),
-        };
-
-        requestHandlers.response?.(response);
+        if (!state.autoRespond) return;
+        const responseHandlers = startResponse();
         responseHandlers.data?.(Buffer.from('ok'));
         responseHandlers.end?.();
       }),
@@ -27,9 +48,13 @@ const mocks = vi.hoisted(() => {
       setHeader,
       write: vi.fn(),
     };
+
+    state.requestHandlers = requestHandlers;
+    state.lastRequest = request;
+    return request;
   });
 
-  return { netRequest, setHeader };
+  return { netRequest, setHeader, startResponse, state };
 });
 
 vi.mock('electron', () => ({
@@ -63,7 +88,20 @@ vi.mock('../main/utils/logger', () => ({
   },
 }));
 
-import { electronFetchRaw, normalizeProxyUrl } from '../main/utils/electron-fetch';
+import {
+  electronFetchRaw,
+  electronFetchRawStream,
+  normalizeProxyUrl,
+} from '../main/utils/electron-fetch';
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.state.autoRespond = true;
+  mocks.state.requestHandlers = {};
+  mocks.state.responseHandlers = {};
+  mocks.state.lastRequest = null;
+  mocks.state.lastResponse = null;
+});
 
 describe('electron-fetch proxy URL normalization', () => {
   it('defaults bare host:port values to an HTTP proxy URL', () => {
@@ -135,5 +173,157 @@ describe('electronFetchRaw request headers', () => {
     );
     expect(mocks.setHeader).toHaveBeenCalledWith('x-goog-api-client', 'gl-node/22.0.0');
     expect(mocks.setHeader).toHaveBeenCalledWith('x-goog-api-key', 'sk-upstream');
+  });
+
+  it('uses idle timeout semantics for active raw streaming responses', async () => {
+    vi.useFakeTimers();
+    mocks.state.autoRespond = false;
+
+    try {
+      const responsePromise = electronFetchRaw('https://generativelanguage.googleapis.com/stream', {
+        method: 'POST',
+        timeout: 1000,
+        body: Buffer.from('{"stream":true}'),
+      });
+
+      await Promise.resolve();
+      const responseHandlers = mocks.startResponse();
+
+      await vi.advanceTimersByTimeAsync(900);
+      expect(mocks.state.lastRequest?.abort).not.toHaveBeenCalled();
+
+      responseHandlers.data?.(Buffer.from('chunk-1'));
+      await vi.advanceTimersByTimeAsync(900);
+      expect(mocks.state.lastRequest?.abort).not.toHaveBeenCalled();
+
+      responseHandlers.data?.(Buffer.from('chunk-2'));
+      await vi.advanceTimersByTimeAsync(900);
+      expect(mocks.state.lastRequest?.abort).not.toHaveBeenCalled();
+
+      responseHandlers.end?.();
+
+      await expect(responsePromise).resolves.toMatchObject({
+        status: 200,
+        body: Buffer.from('chunk-1chunk-2'),
+      });
+    } finally {
+      vi.useRealTimers();
+      mocks.state.autoRespond = true;
+    }
+  });
+
+  it('streams raw chunks to callbacks while retaining the complete response body', async () => {
+    mocks.state.autoRespond = false;
+    const events: string[] = [];
+    const firstChunk = Buffer.from('data: one\n\n');
+    const secondChunk = Buffer.from('data: two\n\n');
+
+    const responsePromise = electronFetchRawStream('https://anyrouter.top/v1/responses', {
+      method: 'POST',
+      body: Buffer.from('{"stream":true}'),
+      onResponse: response => {
+        events.push(`response:${response.status}:${response.headers['content-type']}`);
+        return true;
+      },
+      onData: async chunk => {
+        events.push(`chunk:${chunk.toString('utf-8')}`);
+      },
+    });
+
+    await Promise.resolve();
+    const responseHandlers = mocks.startResponse();
+    responseHandlers.data?.(firstChunk);
+    await Promise.resolve();
+    await Promise.resolve();
+    responseHandlers.data?.(secondChunk);
+    await Promise.resolve();
+    await Promise.resolve();
+    responseHandlers.end?.();
+
+    await expect(responsePromise).resolves.toMatchObject({
+      status: 200,
+      body: Buffer.concat([firstChunk, secondChunk]),
+    });
+    expect(events).toEqual([
+      'response:200:text/plain',
+      'chunk:data: one\n\n',
+      'chunk:data: two\n\n',
+    ]);
+    expect(mocks.state.lastResponse?.pause).toHaveBeenCalledTimes(2);
+    expect(mocks.state.lastResponse?.resume).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses the initial timeout before the first raw stream chunk', async () => {
+    vi.useFakeTimers();
+    mocks.state.autoRespond = false;
+
+    try {
+      const responsePromise = electronFetchRawStream('https://anyrouter.top/v1/messages', {
+        method: 'POST',
+        timeout: 1000,
+        streamIdleTimeout: 600000,
+        body: Buffer.from('{"stream":true}'),
+        onResponse: () => true,
+        onData: vi.fn(),
+      });
+      const rejectionExpectation = expect(responsePromise).rejects.toThrow(
+        'Request timeout after 1000ms'
+      );
+
+      await Promise.resolve();
+      mocks.startResponse();
+
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(mocks.state.lastRequest?.abort).toHaveBeenCalledTimes(1);
+      await rejectionExpectation;
+    } finally {
+      vi.useRealTimers();
+      mocks.state.autoRespond = true;
+    }
+  });
+
+  it('uses the stream idle timeout after the first raw stream chunk', async () => {
+    vi.useFakeTimers();
+    mocks.state.autoRespond = false;
+    const firstChunk = Buffer.from('data: one\n\n');
+    const secondChunk = Buffer.from('data: two\n\n');
+
+    try {
+      const responsePromise = electronFetchRawStream('https://anyrouter.top/v1/messages', {
+        method: 'POST',
+        timeout: 1000,
+        streamIdleTimeout: 5000,
+        body: Buffer.from('{"stream":true}'),
+        onResponse: () => true,
+        onData: vi.fn(),
+      });
+
+      await Promise.resolve();
+      const responseHandlers = mocks.startResponse();
+
+      await vi.advanceTimersByTimeAsync(900);
+      expect(mocks.state.lastRequest?.abort).not.toHaveBeenCalled();
+
+      responseHandlers.data?.(firstChunk);
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(4900);
+      expect(mocks.state.lastRequest?.abort).not.toHaveBeenCalled();
+
+      responseHandlers.data?.(secondChunk);
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(4900);
+      expect(mocks.state.lastRequest?.abort).not.toHaveBeenCalled();
+
+      responseHandlers.end?.();
+
+      await expect(responsePromise).resolves.toMatchObject({
+        status: 200,
+        body: Buffer.concat([firstChunk, secondChunk]),
+      });
+    } finally {
+      vi.useRealTimers();
+      mocks.state.autoRespond = true;
+    }
   });
 });

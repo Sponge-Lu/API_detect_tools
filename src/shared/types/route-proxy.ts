@@ -6,6 +6,11 @@
  */
 
 import type { ClaudeTestDetail, CodexTestDetail, GeminiTestDetail } from './site';
+import {
+  DEFAULT_CLI_TARGET_PROTOCOL,
+  normalizeCliTargetProtocol,
+  type CliTargetProtocol,
+} from './cli-config';
 
 // ============= 基础枚举 =============
 
@@ -86,6 +91,7 @@ export interface RouteChannelStats extends RouteChannelKey {
   neutralCount: number;
   consecutiveFailures: number;
   cliType?: RouteCliType;
+  targetProtocol?: CliTargetProtocol;
   lastCanonicalModel?: string;
   lastResolvedModel?: string;
   lastStatusCode?: number;
@@ -99,6 +105,7 @@ export interface RouteChannelStats extends RouteChannelKey {
 /** 单条路由路径的短窗口运行态（用于临时禁用不可用路径） */
 export interface RoutePathState extends RouteChannelKey {
   cliType?: RouteCliType;
+  targetProtocol?: CliTargetProtocol;
   canonicalModel?: string;
   resolvedModel?: string;
   windowStartedAt: number;
@@ -125,6 +132,7 @@ export interface RoutePathStateResetParams {
 /** 通道健康投影（由 probe latest 投影得出） */
 export interface RouteChannelHealth extends RouteChannelKey {
   cliType: RouteCliType;
+  targetProtocol?: CliTargetProtocol;
   healthy: boolean;
   canonicalModel?: string;
   rawModel?: string;
@@ -291,6 +299,8 @@ export interface RouteCliProbeSample {
   siteId: string;
   accountId: string;
   cliType: RouteCliType;
+  targetProtocol?: CliTargetProtocol;
+  targetEndpoint?: string;
   canonicalModel: string;
   rawModel: string;
   success: boolean;
@@ -312,6 +322,8 @@ export interface RouteCliProbeLatest {
   siteId: string;
   accountId: string;
   cliType: RouteCliType;
+  targetProtocol?: CliTargetProtocol;
+  targetEndpoint?: string;
   canonicalModel: string;
   rawModel: string;
   healthy: boolean;
@@ -324,6 +336,8 @@ export interface RouteCliProbeLatest {
 export interface RouteCliProbeModelView {
   canonicalModel: string;
   rawModel?: string;
+  targetProtocol?: CliTargetProtocol;
+  targetEndpoint?: string;
   success: boolean | null;
   testedAt?: number;
   statusCode?: number;
@@ -378,6 +392,7 @@ export interface RouteAnalyticsBucket {
   bucketStart: number;
   bucketSize: 'hour';
   cliType: RouteCliType;
+  targetProtocol?: CliTargetProtocol;
   routeRuleId?: string;
   canonicalModel?: string;
   siteId?: string;
@@ -405,6 +420,8 @@ export interface RouteRequestLogItem {
   requestId: string;
   attempt: number;
   cliType: RouteCliType;
+  targetProtocol?: CliTargetProtocol;
+  targetEndpoint?: string;
   requestedModel?: string | null;
   canonicalModel?: string | null;
   routeRuleId?: string;
@@ -571,25 +588,36 @@ export const DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME = 'claude-opus-4-6
 // ============= 工具函数 =============
 
 export function buildStatsKey(key: RouteChannelKey): string {
-  return `${key.routeRuleId}:${key.siteId}:${key.accountId}:${key.apiKeyId}`;
+  const targetProtocol = normalizeCliTargetProtocol(
+    (key as RouteChannelKey & { targetProtocol?: CliTargetProtocol }).targetProtocol
+  );
+  return `${key.routeRuleId}:${key.siteId}:${key.accountId}:${key.apiKeyId}:${targetProtocol}`;
 }
 
 export function buildRoutePathStateKey(
-  key: RouteChannelKey & { canonicalModel?: string; resolvedModel?: string }
+  key: RouteChannelKey & {
+    canonicalModel?: string;
+    resolvedModel?: string;
+    targetProtocol?: CliTargetProtocol;
+  }
 ): string {
   const canonicalModel = encodeURIComponent(key.canonicalModel || '*');
   const resolvedModel = encodeURIComponent(key.resolvedModel || '*');
-  return `${key.routeRuleId}|${key.siteId}|${key.accountId}|${key.apiKeyId}|${canonicalModel}|${resolvedModel}`;
+  const targetProtocol = encodeURIComponent(normalizeCliTargetProtocol(key.targetProtocol));
+  return `${key.routeRuleId}|${key.siteId}|${key.accountId}|${key.apiKeyId}|${targetProtocol}|${canonicalModel}|${resolvedModel}`;
 }
 
-export function parseStatsKey(key: string): RouteChannelKey | null {
+export function parseStatsKey(
+  key: string
+): (RouteChannelKey & { targetProtocol?: CliTargetProtocol }) | null {
   const parts = key.split(':');
-  if (parts.length !== 4) return null;
+  if (parts.length !== 4 && parts.length !== 5) return null;
   return {
     routeRuleId: parts[0],
     siteId: parts[1],
     accountId: parts[2],
     apiKeyId: parts[3],
+    ...(parts.length === 5 ? { targetProtocol: normalizeCliTargetProtocol(parts[4]) } : {}),
   };
 }
 
@@ -597,9 +625,10 @@ export function buildProbeKey(
   siteId: string,
   accountId: string,
   cliType: RouteCliType,
-  canonicalModel: string
+  canonicalModel: string,
+  targetProtocol: CliTargetProtocol = DEFAULT_CLI_TARGET_PROTOCOL
 ): string {
-  return `${siteId}:${accountId}:${cliType}:${canonicalModel}`;
+  return `${siteId}:${accountId}:${cliType}:${normalizeCliTargetProtocol(targetProtocol)}:${canonicalModel}`;
 }
 
 export function buildSiteScopedProbeAccountId(siteId: string): string {
@@ -609,12 +638,13 @@ export function buildSiteScopedProbeAccountId(siteId: string): string {
 export function buildBucketKey(
   bucketStart: number,
   cliType: RouteCliType,
+  targetProtocol: CliTargetProtocol = DEFAULT_CLI_TARGET_PROTOCOL,
   canonicalModel?: string,
   siteId?: string,
   accountId?: string,
   apiKeyId?: string
 ): string {
-  return `${bucketStart}:${cliType}:${canonicalModel || '*'}:${siteId || '*'}:${accountId || '*'}:${apiKeyId || '*'}`;
+  return `${bucketStart}:${cliType}:${normalizeCliTargetProtocol(targetProtocol)}:${canonicalModel || '*'}:${siteId || '*'}:${accountId || '*'}:${apiKeyId || '*'}`;
 }
 
 /** CLI 类型对应的请求路径前缀 */

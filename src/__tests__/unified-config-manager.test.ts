@@ -12,7 +12,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import { buildProbeKey, buildRoutePathStateKey } from '../shared/types/route-proxy';
+import {
+  buildBucketKey,
+  buildProbeKey,
+  buildRoutePathStateKey,
+  buildStatsKey,
+} from '../shared/types/route-proxy';
 
 interface BackupEntry {
   filename: string;
@@ -399,7 +404,7 @@ describe('UnifiedConfigManager', () => {
     const runtimeState = JSON.parse(
       await fs.readFile(path.join(userDataDir, 'state', 'route-runtime.json'), 'utf-8')
     );
-    expect(runtimeState.stats['rule-1:site-1:account-1:key-1']).toMatchObject({
+    expect(runtimeState.stats[buildStatsKey(routeKey)]).toMatchObject({
       successCount: 1,
       lastStatusCode: 200,
     });
@@ -470,7 +475,7 @@ describe('UnifiedConfigManager', () => {
     expect(cleared).toBe(1);
     expect(routing.routePathStates[buildRoutePathStateKey(matchingPathState)]).toBeUndefined();
     expect(routing.routePathStates[buildRoutePathStateKey(otherPathState)]).toBeDefined();
-    expect(routing.stats['rule-1:site-1:account-1:key-1']).toMatchObject({
+    expect(routing.stats[buildStatsKey(routeKey)]).toMatchObject({
       failureCount: 1,
       lastStatusCode: 503,
     });
@@ -484,14 +489,21 @@ describe('UnifiedConfigManager', () => {
 
     const stateDir = path.join(userDataDir, 'state');
     await fs.mkdir(stateDir, { recursive: true });
+    const routeKey = {
+      routeRuleId: 'rule-1',
+      siteId: 'site-1',
+      accountId: 'account-1',
+      apiKeyId: 'key-1',
+    };
     const probeKey = buildProbeKey('site-1', 'account-1', 'codex', 'gpt-5');
+    const analyticsBucketKey = buildBucketKey(1, 'codex', 'native');
     await fs.writeFile(
       path.join(stateDir, 'route-runtime.json'),
       JSON.stringify(
         {
           version: '1',
           stats: {
-            'rule-1:site-1:account-1:key-1': {
+            [buildStatsKey(routeKey)]: {
               routeRuleId: 'rule-1',
               siteId: 'site-1',
               accountId: 'account-1',
@@ -554,8 +566,8 @@ describe('UnifiedConfigManager', () => {
         {
           version: '1',
           buckets: {
-            'bucket-1': {
-              bucketKey: 'bucket-1',
+            [analyticsBucketKey]: {
+              bucketKey: analyticsBucketKey,
               bucketStart: 1,
               bucketSize: 'hour',
               cliType: 'codex',
@@ -610,11 +622,11 @@ describe('UnifiedConfigManager', () => {
     await manager.loadConfig();
     const routing = manager.getRoutingConfig();
 
-    expect(routing.stats['rule-1:site-1:account-1:key-1']).toMatchObject({
+    expect(routing.stats[buildStatsKey(routeKey)]).toMatchObject({
       successCount: 1,
     });
     expect(routing.cliProbe.latest[probeKey].healthy).toBe(true);
-    expect(routing.analytics.buckets['bucket-1']).toMatchObject({
+    expect(routing.analytics.buckets[analyticsBucketKey]).toMatchObject({
       totalTokens: 30,
     });
     expect(routing.modelRegistry.sources).toEqual([

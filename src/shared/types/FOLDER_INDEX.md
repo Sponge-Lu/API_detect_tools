@@ -23,7 +23,7 @@
 
 | 文件 | 职责 | 关键类型 |
 |------|------|--------|
-| **site.ts** | 站点、检测缓存与运行期快照类型 | Site, UnifiedSite, CheckinStats, CliCompatibilityData, SiteDailySnapshot, RuntimeCacheFile |
+| **site.ts** | 站点、检测缓存、AnyRouter 站点名归一化识别与运行期快照类型 | Site, UnifiedSite, CheckinStats, CliCompatibilityData, SiteDailySnapshot, RuntimeCacheFile |
 | **route-proxy.ts** | 路由工作台类型 | RoutingConfig, RouteProxyServerConfig, RouteModelRegistryConfig, RouteCliProbeSample, RouteCliProbeLatest, RouteAnalyticsObjectStatsItem |
 | **cli-config.ts** | CLI 配置类型 | CliConfig, CliCompatibility 等 |
 | **config-detection.ts** | CLI 配置检测类型 | ConfigSourceType, CliDetectionResult, AllCliDetectionResult 等 |
