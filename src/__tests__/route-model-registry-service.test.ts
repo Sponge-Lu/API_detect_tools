@@ -655,7 +655,7 @@ describe('route model registry service', () => {
     expect(result.sources.some(source => source.siteName === 'Disabled Site')).toBe(false);
   });
 
-  it('includes custom CLI config models in the route model source pool', async () => {
+  it('limits custom CLI model sources to the fetched model list after models are pulled', async () => {
     const registry = createRegistryConfig();
     const customConfig = createCustomCliConfig({
       models: ['duckcoding', 'gpt-5.4-duck'],
@@ -726,17 +726,115 @@ describe('route model registry service', () => {
           ],
         }),
         expect.objectContaining({
-          sourceKey: `${siteId}:${accountId}:codex-tested`,
-          originalModel: 'codex-tested',
-          availableCliTypes: ['codex'],
-        }),
-        expect.objectContaining({
-          sourceKey: `${siteId}:${accountId}:gemini-duck`,
-          originalModel: 'gemini-duck',
-          availableCliTypes: ['geminiCli'],
+          sourceKey: `${siteId}:${accountId}:gpt-5.4-duck`,
+          originalModel: 'gpt-5.4-duck',
+          availableCliTypes: ['codex', 'geminiCli'],
         }),
       ])
     );
+    expect(result.sources.map(source => source.originalModel)).not.toContain('codex-extra');
+    expect(result.sources.map(source => source.originalModel)).not.toContain('codex-tested');
+    expect(result.sources.map(source => source.originalModel)).not.toContain('gemini-duck');
+  });
+
+  it('falls back to configured custom CLI models before a model list has been fetched', async () => {
+    const registry = createRegistryConfig();
+    const customConfig = createCustomCliConfig({
+      models: [],
+      cliSettings: {
+        claudeCode: {
+          enabled: false,
+          model: null,
+          testModels: [],
+          testState: null,
+        },
+        codex: {
+          enabled: true,
+          model: 'duckcoding',
+          testModels: ['codex-extra'],
+          testState: {
+            status: true,
+            testedAt: 2,
+            slots: [{ model: 'codex-tested', success: true, timestamp: 2 }, null, null],
+          },
+        },
+        geminiCli: {
+          enabled: true,
+          model: 'gemini-duck',
+          testModels: [],
+          testState: null,
+        },
+      },
+    });
+
+    customCliStorageMock.mockResolvedValue({
+      configs: [customConfig],
+      activeConfigId: customConfig.id,
+    });
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
+      sites: [],
+      accounts: [],
+    });
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      modelRegistry: registry,
+    });
+
+    const result = await rebuildModelRegistry(true);
+
+    expect(result.sources.map(source => source.originalModel).sort()).toEqual([
+      'codex-extra',
+      'codex-tested',
+      'duckcoding',
+      'gemini-duck',
+    ]);
+  });
+
+  it('does not fall back to stale custom CLI models after an empty model list was fetched', async () => {
+    const registry = createRegistryConfig();
+    const customConfig = createCustomCliConfig({
+      models: [],
+      lastModelFetch: 100,
+      cliSettings: {
+        claudeCode: {
+          enabled: false,
+          model: null,
+          testModels: [],
+          testState: null,
+        },
+        codex: {
+          enabled: true,
+          model: 'stale-codex',
+          testModels: ['stale-extra'],
+          testState: {
+            status: true,
+            testedAt: 2,
+            slots: [{ model: 'stale-tested', success: true, timestamp: 2 }, null, null],
+          },
+        },
+        geminiCli: {
+          enabled: true,
+          model: 'stale-gemini',
+          testModels: [],
+          testState: null,
+        },
+      },
+    });
+
+    customCliStorageMock.mockResolvedValue({
+      configs: [customConfig],
+      activeConfigId: customConfig.id,
+    });
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
+      sites: [],
+      accounts: [],
+    });
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      modelRegistry: registry,
+    });
+
+    const result = await rebuildModelRegistry(true);
+
+    expect(result.sources).toEqual([]);
   });
 
   it('resolves custom CLI display items to route channels and credentials', async () => {
@@ -854,7 +952,6 @@ describe('route model registry service', () => {
     });
     const siteId = buildCustomCliRouteSiteId(customConfig.id);
     const accountId = buildCustomCliRouteAccountId(customConfig.id);
-    const apiKeyId = buildCustomCliRouteApiKeyId(customConfig.id);
     const sourceKey = `${siteId}:${accountId}:duckcoding`;
     const registry = createRegistryConfig();
     registry.displayItems = [

@@ -1,7 +1,7 @@
 /**
  * 输入: 自定义 CLI 配置数据
  * 输出: IPC 事件处理响应 (配置操作结果)
- * 定位: IPC 处理层 - 处理自定义 CLI 配置的持久化和模型拉取
+ * 定位: IPC 处理层 - 处理自定义 CLI 配置的持久化、模型拉取和保存后的路由模型 registry 同步
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -11,12 +11,14 @@
 
 import { ipcMain } from 'electron';
 import Logger from '../utils/logger';
+import { notifyAppDataChanged } from '../app-data-events';
 import {
   fetchCustomCliModelsFromEndpoint,
   loadCustomCliConfigStorage,
   saveCustomCliConfigStorage,
   type CustomCliConfigStorage,
 } from '../custom-cli-config-service';
+import { syncModelRegistrySources } from '../route-model-registry-service';
 
 /** IPC 通道名 */
 const CHANNELS = {
@@ -46,6 +48,8 @@ export function registerCustomCliConfigHandlers(): void {
     try {
       Logger.info('💾 [CustomCliConfigHandlers] 收到保存配置请求');
       await saveCustomCliConfigStorage(data);
+      await syncModelRegistrySources(true);
+      notifyAppDataChanged('route-overview');
       return { success: true };
     } catch (error: unknown) {
       Logger.error('❌ [CustomCliConfigHandlers] 保存配置失败:', error);

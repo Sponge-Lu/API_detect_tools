@@ -1,7 +1,7 @@
 /**
  * 输入: CustomCliConfig (自定义CLI配置类型)
  * 输出: CustomCliConfigState (状态), 配置操作方法
- * 定位: 状态管理层 - 使用 Zustand 管理自定义CLI配置
+ * 定位: 状态管理层 - 使用 Zustand 管理自定义CLI配置，并以已拉取模型列表约束本地选择状态
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -10,8 +10,16 @@
  */
 
 import { create } from 'zustand';
-import type { CustomCliConfig } from '../../shared/types/custom-cli-config';
-import { createDefaultCustomCliConfig } from '../../shared/types/custom-cli-config';
+import type {
+  CustomCliConfig,
+  CustomCliSettings,
+  CustomCliTestState,
+} from '../../shared/types/custom-cli-config';
+import {
+  createDefaultCustomCliConfig,
+  normalizeCustomCliSettings,
+  normalizeCustomCliTestState,
+} from '../../shared/types/custom-cli-config';
 import { toast } from './toastStore';
 import { sessionEventLog } from '../services/sessionEventLog';
 import Logger from '../utils/logger';
@@ -53,6 +61,150 @@ interface CustomCliConfigState {
   getActiveConfig: () => CustomCliConfig | null;
 }
 
+type CustomCliConfigBridge = {
+  load?: () => Promise<{ configs?: CustomCliConfig[]; activeConfigId?: string | null } | null>;
+  save?: (data: { configs: CustomCliConfig[]; activeConfigId: string | null }) => Promise<unknown>;
+  fetchModels?: (baseUrl: string, apiKey: string) => Promise<string[]>;
+};
+
+type ElectronApiWithCustomCliConfig = Window['electronAPI'] & {
+  customCliConfig?: CustomCliConfigBridge;
+};
+
+function getCustomCliConfigBridge(): CustomCliConfigBridge | undefined {
+  return (window.electronAPI as ElectronApiWithCustomCliConfig | undefined)?.customCliConfig;
+}
+
+function normalizeFetchedModels(models: string[]): string[] {
+  return Array.from(
+    new Set(
+      models
+        .map(model => (typeof model === 'string' ? model.trim() : ''))
+        .filter(model => model.length > 0)
+    )
+  );
+}
+
+function filterCustomCliTestState(
+  testState: CustomCliTestState | null | undefined,
+  availableModels: Set<string>
+): CustomCliTestState | null {
+  if (!testState) {
+    return null;
+  }
+
+  const normalized = normalizeCustomCliTestState(testState);
+  const slots = normalized.slots.map(slot => {
+    if (!slot) {
+      return null;
+    }
+
+    const model = slot.model.trim();
+    return availableModels.has(model) ? { ...slot, model } : null;
+  });
+  const validSlots = slots.filter((slot): slot is NonNullable<(typeof slots)[number]> =>
+    Boolean(slot)
+  );
+  const removedAnySlot = normalized.slots.some((slot, index) => Boolean(slot) && !slots[index]);
+
+  if (validSlots.length === 0) {
+    return null;
+  }
+
+  return {
+    ...normalized,
+    status: validSlots.every(slot => slot.success),
+    testedAt: Math.max(...validSlots.map(slot => slot.timestamp)),
+    claudeDetail: removedAnySlot ? undefined : normalized.claudeDetail,
+    codexDetail: removedAnySlot ? undefined : normalized.codexDetail,
+    geminiDetail: removedAnySlot ? undefined : normalized.geminiDetail,
+    slots,
+  };
+}
+
+function filterCustomCliSettingModels(
+  setting: CustomCliSettings,
+  availableModels: Set<string>
+): CustomCliSettings {
+  const selectedModel = setting.model?.trim() ?? '';
+  const model = selectedModel && availableModels.has(selectedModel) ? selectedModel : null;
+  const testModels = Array.from(
+    new Set(
+      (setting.testModels ?? [])
+        .map(testModel => testModel.trim())
+        .filter(testModel => availableModels.has(testModel))
+    )
+  ).slice(0, 3);
+
+  return {
+    ...setting,
+    model,
+    testModels,
+    editedFiles: model ? setting.editedFiles : null,
+    testState: filterCustomCliTestState(setting.testState, availableModels),
+  };
+}
+
+function filterCustomCliConfigModels(
+  config: CustomCliConfig,
+  models: string[],
+  fetchedAt: number
+): Pick<CustomCliConfig, 'models' | 'lastModelFetch' | 'cliSettings'> {
+  const normalizedModels = normalizeFetchedModels(models);
+  const availableModels = new Set(normalizedModels);
+
+  return {
+    models: normalizedModels,
+    lastModelFetch: fetchedAt,
+    cliSettings: {
+      claudeCode: filterCustomCliSettingModels(config.cliSettings.claudeCode, availableModels),
+      codex: filterCustomCliSettingModels(config.cliSettings.codex, availableModels),
+      geminiCli: filterCustomCliSettingModels(config.cliSettings.geminiCli, availableModels),
+    },
+  };
+}
+
+function normalizeCustomCliConfigModelBoundary(config: CustomCliConfig): CustomCliConfig {
+  const normalizedModels = normalizeFetchedModels(config.models ?? []);
+  const hasFetchedModelList =
+    normalizedModels.length > 0 || typeof config.lastModelFetch === 'number';
+  const cliSettings = {
+    claudeCode: normalizeCustomCliSettings(config.cliSettings?.claudeCode),
+    codex: normalizeCustomCliSettings(config.cliSettings?.codex),
+    geminiCli: normalizeCustomCliSettings(config.cliSettings?.geminiCli),
+  };
+
+  if (!hasFetchedModelList) {
+    return {
+      ...config,
+      models: normalizedModels,
+      cliSettings,
+    };
+  }
+
+  const availableModels = new Set(normalizedModels);
+  return {
+    ...config,
+    models: normalizedModels,
+    cliSettings: {
+      claudeCode: filterCustomCliSettingModels(cliSettings.claudeCode, availableModels),
+      codex: filterCustomCliSettingModels(cliSettings.codex, availableModels),
+      geminiCli: filterCustomCliSettingModels(cliSettings.geminiCli, availableModels),
+    },
+  };
+}
+
+function normalizeCustomCliConfigs(configs: CustomCliConfig[]): CustomCliConfig[] {
+  return configs.map(config => normalizeCustomCliConfigModelBoundary(config));
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return typeof error === 'string' ? error : String(error);
+}
+
 export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get) => ({
   // 初始状态
   configs: [],
@@ -62,26 +214,26 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
   fetchingModels: {},
 
   // 基础 setters
-  setConfigs: configs => set({ configs }),
+  setConfigs: configs => set({ configs: normalizeCustomCliConfigs(configs) }),
   setActiveConfigId: id => set({ activeConfigId: id }),
 
   // 从持久化加载配置
   loadConfigs: async () => {
     set({ loading: true });
     try {
-      const electronAPI = (window as any).electronAPI;
-      if (electronAPI?.customCliConfig?.load) {
-        const data = await electronAPI.customCliConfig.load();
+      const customCliConfig = getCustomCliConfigBridge();
+      if (customCliConfig?.load) {
+        const data = await customCliConfig.load();
         if (data) {
           set({
-            configs: data.configs || [],
+            configs: normalizeCustomCliConfigs(data.configs || []),
             activeConfigId: data.activeConfigId || null,
           });
           Logger.info('✅ [CustomCliConfigStore] 加载配置成功:', data.configs?.length || 0, '个');
         }
       }
-    } catch (error: any) {
-      Logger.error('❌ [CustomCliConfigStore] 加载配置失败:', error.message);
+    } catch (error) {
+      Logger.error('❌ [CustomCliConfigStore] 加载配置失败:', getErrorMessage(error));
     } finally {
       set({ loading: false });
     }
@@ -92,14 +244,14 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
     const { configs, activeConfigId } = get();
     set({ saving: true });
     try {
-      const electronAPI = (window as any).electronAPI;
-      if (electronAPI?.customCliConfig?.save) {
-        await electronAPI.customCliConfig.save({ configs, activeConfigId });
+      const customCliConfig = getCustomCliConfigBridge();
+      if (customCliConfig?.save) {
+        await customCliConfig.save({ configs, activeConfigId });
         Logger.info('✅ [CustomCliConfigStore] 保存配置成功');
         sessionEventLog.success('custom-cli', '自定义 CLI 配置已保存');
       }
-    } catch (error: any) {
-      Logger.error('❌ [CustomCliConfigStore] 保存配置失败:', error.message);
+    } catch (error) {
+      Logger.error('❌ [CustomCliConfigStore] 保存配置失败:', getErrorMessage(error));
       toast.error('保存自定义CLI配置失败');
       sessionEventLog.error('custom-cli', '自定义 CLI 配置保存失败');
     } finally {
@@ -109,7 +261,7 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
 
   // 添加新配置
   addConfig: (partial?: Partial<CustomCliConfig>) => {
-    const newConfig = createDefaultCustomCliConfig(partial);
+    const newConfig = normalizeCustomCliConfigModelBoundary(createDefaultCustomCliConfig(partial));
     set(state => ({
       configs: [...state.configs, newConfig],
     }));
@@ -120,7 +272,9 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
   updateConfig: (id: string, updates: Partial<CustomCliConfig>) => {
     set(state => ({
       configs: state.configs.map(c =>
-        c.id === id ? { ...c, ...updates, updatedAt: Date.now() } : c
+        c.id === id
+          ? normalizeCustomCliConfigModelBoundary({ ...c, ...updates, updatedAt: Date.now() })
+          : c
       ),
     }));
   },
@@ -183,15 +337,12 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
     set({ fetchingModels: { ...fetchingModels, [configId]: true } });
 
     try {
-      const electronAPI = (window as any).electronAPI;
-      if (electronAPI?.customCliConfig?.fetchModels) {
-        const models = await electronAPI.customCliConfig.fetchModels(config.baseUrl, config.apiKey);
+      const customCliConfig = getCustomCliConfigBridge();
+      if (customCliConfig?.fetchModels) {
+        const models = await customCliConfig.fetchModels(config.baseUrl, config.apiKey);
 
-        // 更新配置中的模型列表
-        updateConfig(configId, {
-          models,
-          lastModelFetch: Date.now(),
-        });
+        // 更新配置中的模型列表，并清理旧 Base URL / API Key 遗留的模型选择。
+        updateConfig(configId, filterCustomCliConfigModels(config, models, Date.now()));
         await saveConfigs();
 
         toast.success(`成功获取 ${models.length} 个模型`);
@@ -202,12 +353,13 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
         return models;
       }
       return [];
-    } catch (error: any) {
-      Logger.error('❌ [CustomCliConfigStore] 拉取模型失败:', error.message);
-      toast.error(`拉取模型失败: ${error.message}`);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      Logger.error('❌ [CustomCliConfigStore] 拉取模型失败:', message);
+      toast.error(`拉取模型失败: ${message}`);
       sessionEventLog.error(
         'custom-cli',
-        `${config.name || '未命名配置'} 拉取模型失败：${error.message}`
+        `${config.name || '未命名配置'} 拉取模型失败：${message}`
       );
       return [];
     } finally {

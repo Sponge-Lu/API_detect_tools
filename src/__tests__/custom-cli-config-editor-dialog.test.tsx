@@ -251,6 +251,77 @@ describe('CustomCliConfigEditorDialog', () => {
     await waitFor(() => expect(saveConfigs).toHaveBeenCalledTimes(1));
   });
 
+  it('syncs local model selections after fetching a narrowed model list', async () => {
+    const fetchModels = vi.fn(async (configId: string) => {
+      const currentConfig = useCustomCliConfigStore
+        .getState()
+        .configs.find(config => config.id === configId)!;
+      useCustomCliConfigStore.setState({
+        configs: [
+          {
+            ...currentConfig,
+            models: ['claude-3.7'],
+            cliSettings: {
+              claudeCode: {
+                ...currentConfig.cliSettings.claudeCode,
+                model: 'claude-3.7',
+                testModels: ['claude-3.7'],
+              },
+              codex: {
+                ...currentConfig.cliSettings.codex,
+                model: null,
+                testModels: [],
+                testState: null,
+              },
+              geminiCli: {
+                ...currentConfig.cliSettings.geminiCli,
+                model: null,
+                testModels: [],
+                testState: null,
+              },
+            },
+          },
+        ],
+      });
+      return ['claude-3.7'];
+    });
+    useCustomCliConfigStore.setState({ fetchModels });
+
+    await renderDialog();
+    expect(screen.getByRole('button', { name: 'Codex 主模型' })).toHaveTextContent('gpt-4.1');
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '拉取' }));
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Codex 主模型' })).toHaveTextContent('选择模型')
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+    });
+
+    const updateConfig = useCustomCliConfigStore.getState().updateConfig as ReturnType<
+      typeof vi.fn
+    >;
+    expect(updateConfig).toHaveBeenLastCalledWith(
+      'cfg-1',
+      expect.objectContaining({
+        cliSettings: expect.objectContaining({
+          codex: expect.objectContaining({
+            model: null,
+            testModels: [],
+          }),
+          geminiCli: expect.objectContaining({
+            model: null,
+            testModels: [],
+          }),
+        }),
+      })
+    );
+  });
+
   it('applies the clicked cli configuration to local files', async () => {
     const writeConfig = vi.fn().mockResolvedValue({
       success: true,

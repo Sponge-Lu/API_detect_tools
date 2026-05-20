@@ -1,6 +1,6 @@
 /**
  * 模型注册表服务
- * 输入: UnifiedConfig (站点/账户 cached_data.models), 自定义 CLI 配置, 人工覆盖规则
+ * 输入: UnifiedConfig (站点/账户 cached_data.models), 自定义 CLI 配置及其已拉取模型边界, 人工覆盖规则
  * 输出: canonical 模型映射表, 厂商分类, 原始↔canonical 双向解析
  * 定位: 服务层 - 扫描所有站点模型 → 厂商分类 → 映射表管理
  */
@@ -270,10 +270,14 @@ function collectAvailableApiKeys(
 function addCustomCliModelCandidate(
   modelsByName: Map<string, Set<RouteCliType>>,
   model: string | null | undefined,
-  cliTypes: RouteCliType[]
+  cliTypes: RouteCliType[],
+  allowedModels?: Set<string>
 ): void {
   const normalized = model?.trim();
   if (!normalized || cliTypes.length === 0) {
+    return;
+  }
+  if (allowedModels && !allowedModels.has(normalized)) {
     return;
   }
 
@@ -291,8 +295,13 @@ function collectCustomCliModelCandidates(
   const enabledCliTypes = ROUTE_CLI_TYPES.filter(
     cliType => config.cliSettings?.[cliType]?.enabled !== false
   );
+  const fetchedModelSet = new Set(
+    (config.models || []).map(model => model.trim()).filter(model => model.length > 0)
+  );
+  const hasFetchedModelList = fetchedModelSet.size > 0 || typeof config.lastModelFetch === 'number';
+  const fetchedModelAllowlist = hasFetchedModelList ? fetchedModelSet : undefined;
 
-  for (const model of config.models || []) {
+  for (const model of fetchedModelSet) {
     addCustomCliModelCandidate(modelsByName, model, enabledCliTypes);
   }
 
@@ -302,12 +311,12 @@ function collectCustomCliModelCandidates(
       continue;
     }
 
-    addCustomCliModelCandidate(modelsByName, setting.model, [cliType]);
+    addCustomCliModelCandidate(modelsByName, setting.model, [cliType], fetchedModelAllowlist);
     for (const model of setting.testModels || []) {
-      addCustomCliModelCandidate(modelsByName, model, [cliType]);
+      addCustomCliModelCandidate(modelsByName, model, [cliType], fetchedModelAllowlist);
     }
     for (const slot of setting.testState?.slots || []) {
-      addCustomCliModelCandidate(modelsByName, slot?.model, [cliType]);
+      addCustomCliModelCandidate(modelsByName, slot?.model, [cliType], fetchedModelAllowlist);
     }
   }
 

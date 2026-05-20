@@ -26,6 +26,7 @@ export const ROUTE_PATH_HEALTH_WINDOW_MS =
 export const ROUTE_PATH_DISABLE_MS =
   DEFAULT_ROUTE_RUNTIME_CONFIG.disableDurationMinutes * 60 * 1000;
 export const ROUTE_PATH_MIN_SUCCESS_RATE = DEFAULT_ROUTE_RUNTIME_CONFIG.minSuccessRate;
+export const ROUTE_PATH_MIN_DISABLE_SAMPLES = 2;
 
 /** 等待 flush 的内存缓冲区 */
 const pendingUpdates = new Map<string, RouteChannelStats>();
@@ -161,6 +162,7 @@ export async function recordRoutePathOutcome(
     existing?.disabledUntil && existing.disabledUntil > now ? existing.disabledUntil : undefined;
   const shouldDisable =
     outcome === 'failure' &&
+    windowRequestCount >= ROUTE_PATH_MIN_DISABLE_SAMPLES &&
     windowRequestCount > 0 &&
     successRate < effectiveRuntimeConfig.minSuccessRate;
 

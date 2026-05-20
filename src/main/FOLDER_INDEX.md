@@ -49,7 +49,7 @@
 | **route-probe-lock.ts** | CLI 探测/手动测试专用的 loopback probe-lock 编解码与本地路由基址构造，支持通过统一路由 Key 将测试精确钉到指定上游目标 | `buildProbeLockRouteApiKey()`, `parseProbeLockRouteApiKey()`, `buildRouteProxyBaseUrl()` |
 | **anyrouter-request-rewriter.ts** | AnyRouter 请求/响应适配器：Claude Code 保留原始工具语义并注入 Anthropic 指纹，Codex 原生 Responses 透传，Gemini 原生透传 | `rewriteForAnyRouter()`, `transformAnyRouterResponse()` |
 | **cli-protocol-adapter.ts** | 通用 CLI 协议适配器：在 Claude/Codex/Gemini 原生协议与 Anthropic / OpenAI 上游协议之间双向转换请求与响应（含 text/tool_use/tool_result/function_call/function_call_output 工具语义、流式 SSE 与非流式 JSON、usage/finish_reason 映射），失败时抛 `CliProtocolAdapterError` 携带 stage 上下文 | `adaptRequestToTargetProtocol()`, `transformTargetProtocolResponse()`, `CliProtocolAdapterError` |
-| **route-model-registry-service.ts** | 模型注册表聚合、展示项维护与厂商优先级配置，聚合站点/账户模型和自定义 CLI 配置模型 | `rebuildModelRegistry()`, `resetModelRegistryDefaults()`, `syncModelRegistrySources()` |
+| **route-model-registry-service.ts** | 模型注册表聚合、展示项维护与厂商优先级配置，聚合站点/账户模型和自定义 CLI 配置模型；自定义 CLI 已拉取模型列表会作为候选边界过滤旧测试/选择残留，配置保存后通过 handler 强制刷新持久化 registry | `rebuildModelRegistry()`, `resetModelRegistryDefaults()`, `syncModelRegistrySources()` |
 | **route-cli-probe-service.ts** | CLI 定时探测、latest/history 维护与视图聚合 | `runCliProbeNow()`, `getCliProbeView()` |
 | **route-analytics-service.ts** | 路由请求分析、token/缓存 token/延迟/状态码统计与对象级排行 | `recordRouteRequest()`, `getRouteObjectStats()` |
 | **route-stats-service.ts** | 路由调用统计与通道评分排序 | `recordOutcome()`, `sortChannelsByScore()` |

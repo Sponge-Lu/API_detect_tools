@@ -4,10 +4,10 @@
  *
  * 输入: CustomCliConfigEditorDialogProps (配置对象、回调)
  * 输出: React 组件 (自定义 CLI 配置编辑 UI)
- * 定位: 展示层 - 编辑自定义 CLI 配置，每个 CLI 独立选择模型，配置预览、应用配置
+ * 定位: 展示层 - 编辑自定义 CLI 配置，每个 CLI 独立选择模型，配置预览、应用配置，并在拉取模型后同步本地选择状态
  */
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   Copy,
   Check,
@@ -74,6 +74,16 @@ function getCliFailureMessage(
   return response.data?.geminiError ?? response.error;
 }
 
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  return fallback;
+}
+
 interface CliTypeConfig {
   key: CliType;
   name: string;
@@ -99,6 +109,25 @@ const normalizeCliSettings = (
   codex: normalizeCliSetting(settings.codex),
   geminiCli: normalizeCliSetting(settings.geminiCli),
 });
+
+function buildPerCliEditedFromSettings(
+  cliSettings: CustomCliConfig['cliSettings']
+): Record<CliType, GeneratedConfig | null> {
+  const initEdited: Record<CliType, GeneratedConfig | null> = {
+    claudeCode: null,
+    codex: null,
+    geminiCli: null,
+  };
+
+  for (const key of ['claudeCode', 'codex', 'geminiCli'] as CliType[]) {
+    const saved = cliSettings[key]?.editedFiles;
+    if (saved && saved.length > 0) {
+      initEdited[key] = { files: saved.map(f => ({ ...f, language: 'json' as const })) };
+    }
+  }
+
+  return initEdited;
+}
 
 /** 中性风格 Toggle Switch 组件 */
 function FormSwitch({
@@ -465,47 +494,38 @@ export function CustomCliConfigEditorDialog({
       setEditedConfig(null);
       setIsEditing(false);
       setShowResetConfirm(false);
-      // 从已保存的 editedFiles 初始化 perCliEdited
-      const initEdited: Record<CliType, GeneratedConfig | null> = {
-        claudeCode: null,
-        codex: null,
-        geminiCli: null,
-      };
-      for (const key of ['claudeCode', 'codex', 'geminiCli'] as CliType[]) {
-        const saved = config.cliSettings[key]?.editedFiles;
-        if (saved && saved.length > 0) {
-          initEdited[key] = { files: saved.map(f => ({ ...f, language: 'json' as const })) };
-        }
-      }
-      setPerCliEdited(initEdited);
+      setPerCliEdited(buildPerCliEditedFromSettings(config.cliSettings));
     }
   }, [isOpen, config]);
 
-  const generateConfigForCli = (cliType: CliType): GeneratedConfig | null => {
-    const cliModel = cliSettings[cliType]?.model;
-    if (!cliModel || !baseUrl || !apiKey) return null;
+  const generateConfigForCli = useCallback(
+    (cliType: CliType): GeneratedConfig | null => {
+      const cliModel = cliSettings[cliType]?.model;
+      if (!cliModel || !baseUrl || !apiKey) return null;
 
-    const params = {
-      siteUrl: baseUrl,
-      siteName: name || '自定义配置',
-      apiKey,
-      model: cliModel,
-    };
+      const params = {
+        siteUrl: baseUrl,
+        siteName: name || '自定义配置',
+        apiKey,
+        model: cliModel,
+      };
 
-    if (cliType === 'claudeCode') {
-      return generateClaudeCodeConfig(params);
-    } else if (cliType === 'codex') {
-      return generateCodexConfig(params);
-    } else if (cliType === 'geminiCli') {
-      return generateGeminiCliConfig(params);
-    }
-    return null;
-  };
+      if (cliType === 'claudeCode') {
+        return generateClaudeCodeConfig(params);
+      } else if (cliType === 'codex') {
+        return generateCodexConfig(params);
+      } else if (cliType === 'geminiCli') {
+        return generateGeminiCliConfig(params);
+      }
+      return null;
+    },
+    [apiKey, baseUrl, cliSettings, name]
+  );
 
   // 生成配置预览 — 使用当前选中 CLI 的独立模型
   const configPreview = useMemo((): GeneratedConfig | null => {
     return generateConfigForCli(selectedCli);
-  }, [selectedCli, cliSettings, baseUrl, apiKey, name]);
+  }, [generateConfigForCli, selectedCli]);
 
   // 处理 CLI 设置变更
   const handleCliSettingChange = (cliType: CliType, update: Partial<CustomCliSettings>) => {
@@ -611,12 +631,12 @@ export function CustomCliConfigEditorDialog({
           if (response.data?.claudeDetail) claudeDetail = response.data.claudeDetail;
           if (response.data?.codexDetail) codexDetail = response.data.codexDetail;
           if (response.data?.geminiDetail) geminiDetail = response.data.geminiDetail;
-        } catch (error: any) {
+        } catch (error) {
           testedAt = Date.now();
           slots[index] = {
             model,
             success: false,
-            message: error?.message,
+            message: getErrorMessage(error, '测试失败'),
             timestamp: testedAt,
           };
           allSuccess = false;
@@ -693,8 +713,8 @@ export function CustomCliConfigEditorDialog({
       } else {
         toast.error(result.error ?? '写入配置失败');
       }
-    } catch (error: any) {
-      toast.error(error?.message ?? '写入配置失败');
+    } catch (error) {
+      toast.error(getErrorMessage(error, '写入配置失败'));
     } finally {
       setApplyingCli(null);
     }
@@ -704,6 +724,16 @@ export function CustomCliConfigEditorDialog({
   const handleFetchModels = async () => {
     updateConfig(config.id, { baseUrl, apiKey });
     await fetchModels(config.id);
+    const latestConfig = useCustomCliConfigStore
+      .getState()
+      .configs.find(candidate => candidate.id === config.id);
+    if (latestConfig) {
+      const nextCliSettings = normalizeCliSettings(latestConfig.cliSettings);
+      setCliSettings(nextCliSettings);
+      setPerCliEdited(buildPerCliEditedFromSettings(nextCliSettings));
+      setEditedConfig(null);
+      setIsEditing(false);
+    }
   };
 
   // 复制配置

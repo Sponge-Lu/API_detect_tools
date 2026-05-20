@@ -45,6 +45,7 @@ import {
   isRoutePathDisabled,
   recordRoutePathOutcome,
   ROUTE_PATH_DISABLE_MS,
+  ROUTE_PATH_MIN_DISABLE_SAMPLES,
 } from '../main/route-stats-service';
 
 const routePath = {
@@ -63,7 +64,7 @@ describe('route-stats-service route path state', () => {
     mocks.upsertRoutePathState.mockClear();
   });
 
-  it('disables a failed route path for 30 minutes when the 5 minute success rate is below 80%', async () => {
+  it('keeps the first failed sample enabled so a manual recovery is not immediately undone', async () => {
     const now = 1_000_000;
 
     const state = await recordRoutePathOutcome(routePath, 'failure', { statusCode: 502 }, now);
@@ -71,8 +72,21 @@ describe('route-stats-service route path state', () => {
     expect(state.windowRequestCount).toBe(1);
     expect(state.windowSuccessCount).toBe(0);
     expect(state.successRate).toBe(0);
-    expect(state.disabledUntil).toBe(now + ROUTE_PATH_DISABLE_MS);
-    expect(isRoutePathDisabled(routePath, now + 1)).toBe(true);
+    expect(state.disabledUntil).toBeUndefined();
+    expect(isRoutePathDisabled(routePath, now + 1)).toBe(false);
+  });
+
+  it('disables a repeatedly failed route path for 30 minutes when the 5 minute success rate is below 80%', async () => {
+    const now = 1_100_000;
+
+    await recordRoutePathOutcome(routePath, 'failure', { statusCode: 502 }, now);
+    const state = await recordRoutePathOutcome(routePath, 'failure', { statusCode: 502 }, now + 1);
+
+    expect(state.windowRequestCount).toBe(ROUTE_PATH_MIN_DISABLE_SAMPLES);
+    expect(state.windowSuccessCount).toBe(0);
+    expect(state.successRate).toBe(0);
+    expect(state.disabledUntil).toBe(now + 1 + ROUTE_PATH_DISABLE_MS);
+    expect(isRoutePathDisabled(routePath, now + 2)).toBe(true);
     expect(isRoutePathDisabled(routePath, now + ROUTE_PATH_DISABLE_MS + 1)).toBe(false);
   });
 
