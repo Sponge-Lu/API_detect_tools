@@ -18,6 +18,42 @@ const CLI_TYPES: RouteCliType[] = ['claudeCode', 'codex', 'geminiCli'];
 const makeStoreKey = (siteName: string, accountId?: string) =>
   accountId ? `${siteName}::${accountId}` : siteName;
 
+function truncateProbeFailure(value: string, maxLength: number): string {
+  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 3)}...`;
+}
+
+function normalizeProbeFailureText(error?: string): string | undefined {
+  const normalized = error?.replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  return normalized.replace(
+    /^(?:Claude Code|Codex|Gemini CLI)\s+(?:执行失败|输出异常|启动失败):\s*/i,
+    ''
+  );
+}
+
+function formatProbeFailureSummary(
+  statusCode: number | undefined,
+  error: string | undefined,
+  maxLength?: number
+): string | undefined {
+  const normalized = normalizeProbeFailureText(error);
+  const summary =
+    statusCode !== undefined
+      ? normalized
+        ? `错误码 ${statusCode}: ${normalized}`
+        : `错误码 ${statusCode}`
+      : normalized;
+
+  if (!summary) {
+    return undefined;
+  }
+
+  return maxLength ? truncateProbeFailure(summary, maxLength) : summary;
+}
+
 function sortProbeLatest(entries: RouteCliProbeLatest[]): RouteCliProbeLatest[] {
   return [...entries].sort((left, right) => right.lastSample.testedAt - left.lastSample.testedAt);
 }
@@ -86,17 +122,7 @@ function summarizeProbeLatest(
 }
 
 function summarizeProbeFailure(entry: RouteCliProbeLatest): string | undefined {
-  const statusCode = entry.lastSample.statusCode;
-  if (statusCode) {
-    return `错误码 ${statusCode}`;
-  }
-
-  const normalized = entry.lastSample.error?.replace(/\s+/g, ' ').trim();
-  if (!normalized) {
-    return undefined;
-  }
-
-  return normalized.length <= 96 ? normalized : `${normalized.slice(0, 93)}...`;
+  return formatProbeFailureSummary(entry.lastSample.statusCode, entry.lastSample.error, 96);
 }
 
 function buildCliModelTestMessage(entry: RouteCliProbeLatest): string | undefined {
@@ -104,13 +130,7 @@ function buildCliModelTestMessage(entry: RouteCliProbeLatest): string | undefine
     return undefined;
   }
 
-  const statusCode = entry.lastSample.statusCode;
-  if (statusCode) {
-    return `错误码 ${statusCode}`;
-  }
-
-  const normalized = entry.lastSample.error?.replace(/\s+/g, ' ').trim();
-  return normalized || undefined;
+  return formatProbeFailureSummary(entry.lastSample.statusCode, entry.lastSample.error);
 }
 
 function toCliModelTestResult(

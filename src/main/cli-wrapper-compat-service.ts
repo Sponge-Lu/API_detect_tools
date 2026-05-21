@@ -13,6 +13,7 @@ import { spawn } from 'child_process';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
+import { Logger } from './utils/logger';
 import type {
   ClaudeTestDetail,
   CliCompatibilityResult,
@@ -22,6 +23,9 @@ import type {
 
 const TEST_PROMPT = 'What is 1+1? Reply with only 2. Do not use tools.';
 const EXPECTED_ANSWER = '2';
+const log = Logger.scope('CliWrapperCompatService');
+const WORKSPACE_CLEANUP_RETRY_DELAYS_MS = [50, 150, 500, 1000];
+const TRANSIENT_WORKSPACE_CLEANUP_ERROR_CODES = new Set(['EBUSY', 'ENOTEMPTY', 'EPERM', 'EACCES']);
 
 export interface CliWrapperTestConfig {
   cliType: 'claudeCode' | 'codex' | 'geminiCli';
@@ -53,6 +57,7 @@ export interface CommandRunResult {
 }
 
 type CommandRunner = (options: CommandRunOptions) => Promise<CommandRunResult>;
+type WorkspaceCleaner = (rootDir: string) => Promise<void>;
 
 interface IsolatedWorkspace {
   rootDir: string;
@@ -150,6 +155,61 @@ function extractGeminiResponse(stdout: string): string | null {
   return extractJsonStringField(stdout, ['response', 'result', 'content', 'text']);
 }
 
+function extractJsonErrorSummary(raw: string): string | null {
+  try {
+    const parsed = JSON.parse(raw);
+    const error = parsed?.error;
+    const message =
+      typeof error?.message === 'string'
+        ? error.message.trim()
+        : typeof parsed?.message === 'string'
+          ? parsed.message.trim()
+          : '';
+    const code =
+      typeof error?.code === 'string'
+        ? error.code.trim()
+        : typeof error?.type === 'string'
+          ? error.type.trim()
+          : typeof parsed?.code === 'string'
+            ? parsed.code.trim()
+            : '';
+
+    if (!message) {
+      return null;
+    }
+
+    return code && !message.includes(code) ? `${message} (${code})` : message;
+  } catch {
+    return null;
+  }
+}
+
+function summarizeCliErrorCandidate(raw: string): string | null {
+  const normalized = normalizeReplyText(raw.replace(/^ERROR:\s*/i, ''));
+  if (!normalized || /^Reconnecting\.\.\./i.test(normalized)) {
+    return null;
+  }
+
+  return extractJsonErrorSummary(normalized) ?? normalized;
+}
+
+function summarizeCliErrorOutput(raw: string): string | undefined {
+  const summaries: string[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!/^ERROR:\s*/i.test(trimmed)) {
+      continue;
+    }
+
+    const summary = summarizeCliErrorCandidate(trimmed);
+    if (summary && summaries[summaries.length - 1] !== summary) {
+      summaries.push(summary);
+    }
+  }
+
+  return summaries[summaries.length - 1];
+}
+
 function buildFailureMessage(label: string, result: CommandRunResult, fallback?: string): string {
   if (result.timedOut) {
     return `${label} 测试超时`;
@@ -160,7 +220,7 @@ function buildFailureMessage(label: string, result: CommandRunResult, fallback?:
 
   const stderr = result.stderr.trim();
   if (stderr) {
-    return `${label} 执行失败: ${stderr}`;
+    return `${label} 执行失败: ${summarizeCliErrorOutput(stderr) ?? stderr}`;
   }
 
   const stdout = result.stdout.trim();
@@ -173,6 +233,63 @@ function buildFailureMessage(label: string, result: CommandRunResult, fallback?:
   }
 
   return `${label} 执行失败`;
+}
+
+function getErrorCode(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null || !('code' in error)) {
+    return undefined;
+  }
+
+  const code = (error as NodeJS.ErrnoException).code;
+  return typeof code === 'string' ? code : undefined;
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isTransientWorkspaceCleanupError(error: unknown): boolean {
+  const code = getErrorCode(error);
+  return Boolean(code && TRANSIENT_WORKSPACE_CLEANUP_ERROR_CODES.has(code));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function removeWorkspaceRoot(rootDir: string): Promise<void> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= WORKSPACE_CLEANUP_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      await fs.rm(rootDir, {
+        recursive: true,
+        force: true,
+        maxRetries: process.platform === 'win32' ? 2 : 0,
+        retryDelay: 100,
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      const retryDelay = WORKSPACE_CLEANUP_RETRY_DELAYS_MS[attempt];
+      if (retryDelay === undefined || !isTransientWorkspaceCleanupError(error)) {
+        break;
+      }
+      await sleep(retryDelay);
+    }
+  }
+
+  throw lastError;
+}
+
+async function cleanupWorkspace(rootDir: string): Promise<void> {
+  try {
+    await removeWorkspaceRoot(rootDir);
+  } catch (error) {
+    log.warn(
+      `Failed to remove isolated CLI workspace ${rootDir}; leaving it for OS temp cleanup: ${getErrorMessage(error)}`
+    );
+  }
 }
 
 async function readFileIfExists(filePath: string): Promise<string | null> {
@@ -265,7 +382,8 @@ export async function runCliCommand(options: CommandRunOptions): Promise<Command
 export class CliWrapperCompatService {
   constructor(
     private readonly timeoutMs: number = 60000,
-    private readonly commandRunner: CommandRunner = runCliCommand
+    private readonly commandRunner: CommandRunner = runCliCommand,
+    private readonly workspaceCleaner: WorkspaceCleaner = cleanupWorkspace
   ) {}
 
   private async withIsolatedWorkspace<T>(
@@ -282,7 +400,13 @@ export class CliWrapperCompatService {
     try {
       return await action({ rootDir, homeDir, workDir });
     } finally {
-      await fs.rm(rootDir, { recursive: true, force: true });
+      try {
+        await this.workspaceCleaner(rootDir);
+      } catch (error) {
+        log.warn(
+          `Failed to remove isolated CLI workspace ${rootDir}; leaving it for OS temp cleanup: ${getErrorMessage(error)}`
+        );
+      }
     }
   }
 

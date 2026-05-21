@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RouteRequestLogItem } from '../shared/types/route-proxy';
 import type { Config } from '../renderer/App';
@@ -57,8 +57,16 @@ function buildRouteLog(
 
 describe('LogsPage', () => {
   const routeApi = window.electronAPI.route!;
+  let routeRequestLogListener: ((item: RouteRequestLogItem) => void) | null = null;
 
   beforeEach(() => {
+    routeRequestLogListener = null;
+    routeApi.onRequestLogAppended = vi.fn(callback => {
+      routeRequestLogListener = callback;
+      return vi.fn(() => {
+        routeRequestLogListener = null;
+      });
+    });
     useToastStore.setState({
       toasts: [],
       eventHistory: [],
@@ -452,33 +460,77 @@ describe('LogsPage', () => {
     expect(failureStat?.parentElement).toHaveTextContent('失败1');
     expect(screen.queryByText('中性')).not.toBeInTheDocument();
     const rows = screen.getAllByTestId('route-request-log-row');
-    expect(rows[0]).toHaveClass('px-4', 'py-2.5', '[contain-intrinsic-size:104px]');
+    expect(rows[0]).toHaveClass('px-4', 'py-2.5', '[contain-intrinsic-size:96px]');
     expect(rows[0]).not.toHaveClass('py-4');
     expect(screen.getByText('HTTP 502')).toBeInTheDocument();
-    expect(within(rows[0]).getByText('站点 A')).toBeInTheDocument();
+    const metaLine = within(rows[0]).getByTestId('route-request-meta-line');
+    expect(metaLine).toHaveClass('md:grid-cols-[minmax(0,1fr)_auto]');
+    expect(within(rows[0]).getByText('Codex')).toHaveClass(
+      'border-[#93afa4]',
+      'bg-[#93afa4]',
+      'text-white'
+    );
+    expect(within(rows[0]).getByText('请求 codex-1')).toHaveAttribute(
+      'title',
+      'Codex 请求 通配匹配 gpt-* 时生效；范围：全部站点'
+    );
+    expect(metaLine).toHaveTextContent(/尝试 #1失败信息no_matching_ruleHTTP 502/);
+    const targetLine = within(rows[0]).getByTestId('route-request-target-line');
+    expect(targetLine).toHaveTextContent('重定向模型gpt-5.4');
+    expect(targetLine).toHaveTextContent('请求原始模型gpt-5.4');
+    expect(targetLine).toHaveTextContent('站点站点 A优先级 2');
+    expect(targetLine).toHaveTextContent('账户主账户');
+    expect(targetLine).toHaveTextContent('分组vip');
+    expect(targetLine).toHaveTextContent('API KeyKey Alpha');
+    const sitePriorityPill = within(targetLine).getByTestId('route-request-site-priority');
+    expect(sitePriorityPill).toHaveTextContent('优先级 2');
+    expect(sitePriorityPill).toHaveClass('bg-[var(--accent-soft-strong)]');
+    expect(within(sitePriorityPill).getByText('2')).toHaveClass('text-[var(--text-primary)]');
+    const redirectArrow = within(targetLine).getByLabelText('指向重定向模型');
+    expect(redirectArrow).toHaveTextContent('←');
+    expect(redirectArrow).toHaveClass('h-4', 'text-[var(--text-tertiary)]');
+    expect(within(targetLine).queryByText('<-')).not.toBeInTheDocument();
     expect(within(rows[0]).getByText('Key Alpha')).toBeInTheDocument();
-    expect(screen.getAllByText('Codex 主路由').length).toBeGreaterThan(0);
+    expect(within(rows[0]).getByText('尝试 #1')).toHaveClass('h-5', 'py-0');
     const failureInfo = within(rows[0]).getByTestId('route-request-failure-info');
     expect(failureInfo).toHaveTextContent('失败信息no_matching_rule');
-    expect(failureInfo).toHaveClass('overflow-hidden', 'whitespace-nowrap');
+    expect(failureInfo).toHaveClass('h-5', 'py-0', 'rounded-full', 'md:max-w-[32rem]');
     expect(within(rows[1]).queryByTestId('route-request-failure-info')).not.toBeInTheDocument();
     expect(rows[0]).toHaveTextContent('请求原始模型gpt-5.4');
-    expect(rows[0]).toHaveTextContent('站点优先级2');
+    expect(rows[0]).toHaveTextContent('站点站点 A优先级 2');
     expect(rows[0]).toHaveTextContent('总Token150');
     expect(rows[0]).toHaveTextContent('输入Token100');
     expect(rows[0]).toHaveTextContent('输出Token50');
     expect(rows[0]).toHaveTextContent('缓存创建20');
     expect(rows[0]).toHaveTextContent('缓存命中40');
-    expect(rows[0]).toHaveTextContent('预计金额≈4.12e-7');
-    expect(within(rows[0]).getByText('≈4.12e-7')).toHaveAttribute(
-      'title',
-      '仅供参考，不是实际花费金额；模型价格按每 1M token 计，缓存 token 按输入价 1/10 计入。'
+    expect(targetLine.firstElementChild).toHaveClass('py-0', 'text-[11px]', 'leading-4');
+    expect(within(rows[0]).getByTestId('route-request-token-line').firstElementChild).toHaveClass(
+      'py-0',
+      'text-[11px]',
+      'leading-4'
     );
-    expect(rows[0]).toHaveTextContent('缓存按输入价 1/10');
-    expect(rows[1]).toHaveTextContent('站点优先级1');
+    expect(rows[0]).toHaveTextContent('预计金额≈4.58e-7');
+    const formulaButton = within(rows[0]).getByRole('button', { name: '预计金额计算公式' });
+    fireEvent.mouseEnter(formulaButton);
+    const formulaTooltip = await screen.findByRole('tooltip');
+    expect(formulaTooltip).toHaveTextContent(
+      '仅供参考，不是实际花费金额；模型价格按每 1M token 计，缓存创建按输入价 1.25 倍、缓存命中按输入价 1/10 计入。'
+    );
+    await waitFor(() => {
+      expect(Number.parseFloat(formulaTooltip.style.left)).toBeGreaterThanOrEqual(8);
+      expect(Number.parseFloat(formulaTooltip.style.top)).toBeGreaterThanOrEqual(8);
+      expect(Number.parseFloat(formulaTooltip.style.maxWidth)).toBeLessThanOrEqual(
+        window.innerWidth - 16
+      );
+    });
+    expect(
+      within(rows[0]).queryByText('缓存创建=输入价 1.25 倍，缓存命中=输入价 1/10')
+    ).not.toBeInTheDocument();
+    fireEvent.mouseLeave(formulaButton);
+    expect(rows[1]).toHaveTextContent('站点站点 B优先级 1');
     expect(rows[1]).toHaveTextContent('请求原始模型gpt-5.4-mini');
     expect(rows[1]).toHaveTextContent('预计金额≈2.70e-9');
-    expect(rows[2]).toHaveTextContent('站点DuckCoding');
+    expect(rows[2]).toHaveTextContent('站点DuckCoding优先级 0');
     expect(rows[2]).toHaveTextContent('账户无');
     expect(rows[2]).toHaveTextContent('分组无');
     expect(rows[2]).toHaveTextContent('API Key默认');
@@ -502,6 +554,85 @@ describe('LogsPage', () => {
     });
     expect(screen.getByText('暂无路由日志')).toBeInTheDocument();
     expect(screen.queryByText(/当前运行会话中还没有路由请求/)).not.toBeInTheDocument();
+  });
+
+  it('appends pushed route logs without reloading the snapshot', async () => {
+    vi.mocked(routeApi.getRequestLogs).mockResolvedValue({
+      success: true,
+      data: [
+        buildRouteLog({
+          id: 'route-initial',
+          requestId: 'initial',
+          cliType: 'claudeCode',
+          attempt: 1,
+          outcome: 'success',
+          createdAt: 100,
+        }),
+      ],
+    });
+
+    render(<LogsPage activeView="route" />);
+
+    expect(await screen.findByText('请求 initial')).toBeInTheDocument();
+    expect(routeApi.getRequestLogs).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      routeRequestLogListener?.(
+        buildRouteLog({
+          id: 'route-live',
+          requestId: 'live',
+          cliType: 'claudeCode',
+          attempt: 1,
+          outcome: 'success',
+          createdAt: 200,
+        })
+      );
+      await Promise.resolve();
+    });
+
+    expect(routeApi.getRequestLogs).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('正在加载路由日志...')).not.toBeInTheDocument();
+    expect(await screen.findByText('请求 live')).toBeInTheDocument();
+    const rows = screen.getAllByTestId('route-request-log-row');
+    expect(rows[0]).toHaveTextContent('请求 live');
+    expect(rows[1]).toHaveTextContent('请求 initial');
+  });
+
+  it('keeps pushed route logs visible while switching into the route log subpage', async () => {
+    let resolveSnapshot!: (value: { success: true; data: RouteRequestLogItem[] }) => void;
+    const snapshotPromise = new Promise<{ success: true; data: RouteRequestLogItem[] }>(resolve => {
+      resolveSnapshot = resolve;
+    });
+    vi.mocked(routeApi.getRequestLogs).mockReturnValueOnce(snapshotPromise);
+
+    const { rerender } = render(<LogsPage activeView="session" />);
+
+    await act(async () => {
+      routeRequestLogListener?.(
+        buildRouteLog({
+          id: 'route-hidden-live',
+          requestId: 'hidden-live',
+          cliType: 'codex',
+          attempt: 1,
+          outcome: 'success',
+          createdAt: 300,
+        })
+      );
+      await Promise.resolve();
+    });
+
+    rerender(<LogsPage activeView="route" />);
+
+    await waitFor(() => {
+      expect(routeApi.getRequestLogs).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.queryByText('正在加载路由日志...')).not.toBeInTheDocument();
+    expect(screen.getByText('请求 hidden-live')).toBeInTheDocument();
+
+    await act(async () => {
+      resolveSnapshot({ success: true, data: [] });
+      await snapshotPromise;
+    });
   });
 
   it('estimates per-call route costs without usage and skips failed attempts', async () => {
@@ -557,15 +688,20 @@ describe('LogsPage', () => {
     const rows = screen.getAllByTestId('route-request-log-row');
     expect(rows[0]).toHaveTextContent('总Token无');
     expect(rows[0]).toHaveTextContent('预计金额≈0.5');
-    expect(within(rows[0]).getByText('≈0.5')).toHaveAttribute(
-      'title',
+    const perCallFormulaButton = within(rows[0]).getByRole('button', {
+      name: '预计金额计算公式',
+    });
+    fireEvent.mouseEnter(perCallFormulaButton);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
       '仅供参考，不是实际花费金额；按单次调用价格估算。'
     );
-    expect(rows[0]).toHaveTextContent('按次计费');
+    fireEvent.mouseLeave(perCallFormulaButton);
     expect(rows[1]).toHaveTextContent('预计金额无');
-    expect(rows[1]).not.toHaveTextContent('按次计费');
+    expect(
+      within(rows[1]).queryByRole('button', { name: '预计金额计算公式' })
+    ).not.toBeInTheDocument();
     expect(rows[2]).toHaveTextContent('预计金额≈1');
-    expect(rows[2]).toHaveTextContent('按次计费');
+    expect(within(rows[2]).getByRole('button', { name: '预计金额计算公式' })).toBeInTheDocument();
   });
 
   it('filters route request logs by CLI and updates summary counts', async () => {
@@ -604,6 +740,17 @@ describe('LogsPage', () => {
 
     expect(await screen.findByText('请求 codex-filter')).toBeInTheDocument();
     expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(3);
+    const rows = screen.getAllByTestId('route-request-log-row');
+    expect(within(rows[1]).getByText('Claude Code')).toHaveClass(
+      'border-[#d4a093]',
+      'bg-[#d4a093]',
+      'text-white'
+    );
+    expect(within(rows[2]).getByText('Gemini CLI')).toHaveClass(
+      'border-[#8aa9c7]',
+      'bg-[#8aa9c7]',
+      'text-white'
+    );
     expect(screen.getByText('总尝试').parentElement).toHaveTextContent('总尝试3');
 
     fireEvent.click(screen.getByRole('button', { name: 'Claude Code' }));

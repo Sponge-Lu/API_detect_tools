@@ -24,7 +24,7 @@
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
 | **main.ts** | 应用入口、窗口管理 | `createWindow()`, `app.whenReady()` |
-| **app-data-events.ts** | 主进程到渲染进程的数据变更通知桥，按域批量广播站点配置/站点总览/路由总览变更 | `notifyAppDataChanged()` |
+| **app-data-events.ts** | 主进程到渲染进程的数据变更通知桥，按域批量广播站点配置/站点总览/路由总览变更，并提供即时 renderer 事件广播工具 | `notifyAppDataChanged()`, `broadcastRendererEvent()` |
 | **app-storage-manifest.ts** | 应用本地存储清单，声明 stable config、runtime/cache/statistics、备份、日志、敏感设置与受保护浏览器状态的 owner、路径、retention/cap 和备份边界 | `APP_STORAGE_ENTRIES`, `resolveAppStorageManifest()` |
 | **app-storage-bundle.ts** | manifest 配置包创建/恢复，限定 full-manifest 默认纳入文件，兼容 legacy config-only 恢复并避免浏览器状态被触碰 | `createAppStorageBundleContent()`, `restoreAppStorageBackupContent()` |
 | **api-service.ts** | API 请求服务、模型接口响应格式容错、检测状态持久化、同日手动签到完成状态保留、旧站点首次检测时自动写回 `site_type`，并在缓存更新后触发站点每日快照采集 | `ApiService` 类 |
@@ -34,7 +34,7 @@
 | **site-type-detector.ts** | 智能添加初始化前的站点类型自动识别 | `detectSiteType()` |
 | **token-service.ts** | Token 认证服务，初始化阶段按 site_type 选择端点与 access token 策略，并按 site_type 驱动签到/浏览器回退端点 | `TokenService` 类 |
 | **cli-compat-service.ts** | 协议级 CLI 兼容性测试，请求格式与真实 CLI 对齐 | `CliCompatService` 类 |
-| **cli-wrapper-compat-service.ts** | 基于真实 CLI wrapper 的兼容性测试；当前 UI 测试主路径，使用临时 HOME/CODEX_HOME 隔离环境，Gemini 仅写隔离 `HOME/.gemini` 并禁用自身 sandbox relaunch | `CliWrapperCompatService` 类 |
+| **cli-wrapper-compat-service.ts** | 基于真实 CLI wrapper 的兼容性测试；当前 UI 测试主路径，使用临时 HOME/CODEX_HOME 隔离环境，清理临时目录时会重试并避免 Windows 文件锁覆盖真实测试结果，Gemini 仅写隔离 `HOME/.gemini` 并禁用自身 sandbox relaunch | `CliWrapperCompatService` 类 |
 | **custom-cli-config-service.ts** | 自定义 CLI 配置持久化与模型拉取服务，并为路由生成自定义 CLI 虚拟站点/账户/API Key 标识 | `loadCustomCliConfigStorage()`, `buildCustomCliRouteSiteId()` |
 | **backup-manager.ts** | 本地备份管理，自动备份保持 config-only 节流去重，手动备份生成 manifest 配置包 | `backupManager` 实例 |
 | **webdav-manager.ts** | WebDAV 云端配置包上传、列表、删除与恢复，兼容旧 config-only 备份 | `WebDAVManager` 类 |
@@ -55,7 +55,7 @@
 | **route-stats-service.ts** | 路由调用统计与通道评分排序 | `recordOutcome()`, `sortChannelsByScore()` |
 | **route-state-manager.ts** | 路由运行态文件管理，维护并裁剪 `state/route-runtime.json`、`route-probes.json`、`route-analytics.json` 与模型来源快照，避免高频路由状态写入 `config.json` | `routeStateManager` |
 | **power-manager.ts** | 电源管理，阻止系统休眠 | `powerManager` 实例 |
-| **preload.ts** | Preload 脚本 | IPC 上下文隔离，暴露统一站点 CRUD / 账户 / 检测 / 路由路径恢复 / overview 接口，并提供总览数据变更订阅 |
+| **preload.ts** | Preload 脚本 | IPC 上下文隔离，暴露统一站点 CRUD / 账户 / 检测 / 路由路径恢复 / overview 接口，并提供总览数据变更与路由日志逐条追加订阅 |
 | **api-request-helper.ts** | API 请求辅助函数 | 通用请求逻辑 |
 
 ### 子文件夹
@@ -246,9 +246,11 @@ main.ts: app.whenReady()
 
 **命令执行细节**:
 - Codex / Gemini CLI: 测试 prompt 通过 `stdin` 注入，避免 Windows shell 包装下的位置参数拆词
+- Codex stderr 会优先提取 `ERROR:` 行和 JSON `error.message`，把上游 `429/403/503` 或协议不支持原因放到失败摘要开头，避免被 CLI banner/warning 淹没
 
 **恢复策略**:
 - 不写入用户真实 CLI 配置目录；测试结束后删除临时目录
+- Windows 临时目录清理遇到 `EBUSY` / `EPERM` / `ENOTEMPTY` / `EACCES` 会短重试；清理最终失败只记录 warning，不覆盖 CLI 的真实测试结果
 - 因此正常情况下无需“恢复测试前站点配置”
 
 **当前入口**:

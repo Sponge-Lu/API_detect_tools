@@ -1,10 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { RoutePathState, RoutingConfig } from '../shared/types/route-proxy';
+import type {
+  RouteEndpointCapabilityState,
+  RoutePathState,
+  RoutingConfig,
+} from '../shared/types/route-proxy';
 
 const mocks = vi.hoisted(() => {
   const routing = {
     routePathStates: {},
-  } as Pick<RoutingConfig, 'routePathStates'>;
+    routeEndpointCapabilities: {},
+  } as Pick<RoutingConfig, 'routeEndpointCapabilities' | 'routePathStates'>;
 
   return {
     routing,
@@ -19,6 +24,17 @@ const mocks = vi.hoisted(() => {
         encodeURIComponent(state.resolvedModel || '*'),
       ].join('|');
       routing.routePathStates[key] = state;
+    }),
+    upsertRouteEndpointCapabilityState: vi.fn(async (state: RouteEndpointCapabilityState) => {
+      const key = [
+        state.siteId,
+        state.accountId,
+        state.apiKeyId,
+        state.cliType,
+        encodeURIComponent(state.targetProtocol || 'native'),
+        state.endpoint,
+      ].join('|');
+      routing.routeEndpointCapabilities![key] = state;
     }),
   };
 });
@@ -37,12 +53,15 @@ vi.mock('../main/unified-config-manager', () => ({
   unifiedConfigManager: {
     getRoutingConfig: vi.fn(() => mocks.routing),
     upsertRoutePathState: mocks.upsertRoutePathState,
+    upsertRouteEndpointCapabilityState: mocks.upsertRouteEndpointCapabilityState,
     recordRouteStats: vi.fn(),
   },
 }));
 
 import {
+  isRouteEndpointUnsupported,
   isRoutePathDisabled,
+  recordRouteEndpointUnsupported,
   recordRoutePathOutcome,
   ROUTE_PATH_DISABLE_MS,
   ROUTE_PATH_MIN_DISABLE_SAMPLES,
@@ -61,7 +80,9 @@ const routePath = {
 describe('route-stats-service route path state', () => {
   beforeEach(() => {
     mocks.routing.routePathStates = {};
+    mocks.routing.routeEndpointCapabilities = {};
     mocks.upsertRoutePathState.mockClear();
+    mocks.upsertRouteEndpointCapabilityState.mockClear();
   });
 
   it('keeps the first failed sample enabled so a manual recovery is not immediately undone', async () => {
@@ -141,5 +162,54 @@ describe('route-stats-service route path state', () => {
     expect(state.windowRequestCount).toBe(1);
     expect(state.windowSuccessCount).toBe(0);
     expect(state.successRate).toBe(0);
+  });
+});
+
+describe('route-stats-service route endpoint capabilities', () => {
+  beforeEach(() => {
+    mocks.routing.routePathStates = {};
+    mocks.routing.routeEndpointCapabilities = {};
+    mocks.upsertRoutePathState.mockClear();
+    mocks.upsertRouteEndpointCapabilityState.mockClear();
+  });
+
+  it('records and reads unsupported endpoint capability by site/account/key/cli/protocol', async () => {
+    const now = 5_000_000;
+    const key = { ...routePath, targetProtocol: 'anthropic-messages' as const };
+
+    expect(isRouteEndpointUnsupported(key, 'claude_messages_count_tokens')).toBe(false);
+
+    const state = await recordRouteEndpointUnsupported(
+      key,
+      'claude_messages_count_tokens',
+      {
+        statusCode: 404,
+        error: 'Invalid URL (POST /v1/messages/count_tokens)',
+        reason: 'upstream_unsupported',
+      },
+      now
+    );
+
+    expect(state).toMatchObject({
+      siteId: 'site-1',
+      accountId: 'acc-1',
+      apiKeyId: 'key-1',
+      cliType: 'claudeCode',
+      targetProtocol: 'anthropic-messages',
+      endpoint: 'claude_messages_count_tokens',
+      status: 'unsupported',
+      reason: 'upstream_unsupported',
+      statusCode: 404,
+      firstObservedAt: now,
+      lastObservedAt: now,
+      updatedAt: now,
+    });
+    expect(isRouteEndpointUnsupported(key, 'claude_messages_count_tokens')).toBe(true);
+    expect(
+      isRouteEndpointUnsupported(
+        { ...key, targetProtocol: 'openai-responses' },
+        'claude_messages_count_tokens'
+      )
+    ).toBe(false);
   });
 });

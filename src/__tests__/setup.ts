@@ -58,6 +58,7 @@ if (typeof window !== 'undefined') {
       getObjectStats: vi.fn(),
       getRequestLogs: vi.fn(),
       clearRequestLogs: vi.fn(),
+      onRequestLogAppended: vi.fn(),
       resetPathStates: vi.fn(),
     },
     overview: {

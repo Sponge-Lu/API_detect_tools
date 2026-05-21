@@ -51,6 +51,7 @@ const mocks = vi.hoisted(() => ({
     ],
   },
   notifyAppDataChanged: vi.fn(),
+  broadcastRendererEvent: vi.fn(),
 }));
 
 vi.mock('../main/utils/logger', () => ({
@@ -72,6 +73,7 @@ vi.mock('../main/unified-config-manager', () => ({
 }));
 
 vi.mock('../main/app-data-events', () => ({
+  broadcastRendererEvent: mocks.broadcastRendererEvent,
   notifyAppDataChanged: mocks.notifyAppDataChanged,
 }));
 
@@ -141,6 +143,13 @@ describe('route-analytics-service token statistics', () => {
         apiKeyName: '主 Key',
       },
     ]);
+    expect(mocks.broadcastRendererEvent).toHaveBeenCalledWith(
+      'route:request-log-appended',
+      expect.objectContaining({
+        requestId: 'req-1',
+        apiKeyName: '主 Key',
+      })
+    );
   });
 
   it('rejects unsupported 30d route analytics windows at runtime', () => {

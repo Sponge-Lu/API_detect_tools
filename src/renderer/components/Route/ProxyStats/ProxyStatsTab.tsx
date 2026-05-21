@@ -407,8 +407,8 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
   return (
     <AppCard data-testid="route-server-section-card" className={className}>
       <AppCardContent className="p-3">
-        <div className="mb-2 flex items-center justify-between">
-          <div className="flex items-center gap-2">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
             <Activity className="w-4 h-4 text-[var(--accent)]" />
             <span className="font-medium text-sm">代理服务器</span>
             <span
@@ -424,27 +424,42 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
               {serverRunning ? '运行中' : '已停止'}
             </span>
           </div>
-          <AppButton
-            variant={serverRunning ? 'secondary' : 'primary'}
-            size="sm"
-            className="h-7 !min-h-7 px-2"
-            onClick={handleToggle}
-            disabled={toggling}
-          >
-            {toggling ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : serverRunning ? (
-              <Square className="w-3.5 h-3.5" />
-            ) : (
-              <Play className="w-3.5 h-3.5" />
-            )}
-            <span className="ml-1">{serverRunning ? '停止' : '启动'}</span>
-          </AppButton>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <label className="flex max-w-full items-center gap-2 text-xs leading-5 text-[var(--text-secondary)]">
+              <input
+                type="checkbox"
+                checked={server.blockGeminiCliInternalUtilityRequests !== false}
+                onChange={e =>
+                  saveServerConfig({
+                    blockGeminiCliInternalUtilityRequests: e.target.checked,
+                  })
+                }
+                className="h-3.5 w-3.5 shrink-0 rounded border-[var(--line-soft)] bg-[var(--surface-2)]"
+              />
+              <span className="min-w-0">阻断 Gemini CLI 内部工具/回退模型请求</span>
+            </label>
+            <AppButton
+              variant={serverRunning ? 'secondary' : 'primary'}
+              size="sm"
+              className="h-7 !min-h-7 shrink-0 px-2"
+              onClick={handleToggle}
+              disabled={toggling}
+            >
+              {toggling ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : serverRunning ? (
+                <Square className="w-3.5 h-3.5" />
+              ) : (
+                <Play className="w-3.5 h-3.5" />
+              )}
+              <span className="ml-1">{serverRunning ? '停止' : '启动'}</span>
+            </AppButton>
+          </div>
         </div>
 
         <div
           data-testid="route-server-primary-config-row"
-          className="grid gap-2 text-sm md:grid-cols-[minmax(150px,0.55fr)_minmax(0,1fr)]"
+          className="grid gap-2 text-sm md:grid-cols-2"
         >
           <div className="min-w-0">
             <label htmlFor="route-server-port" className={SERVER_FIELD_LABEL_CLASS_NAME}>
@@ -480,7 +495,7 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
 
         <div
           data-testid="route-server-credential-row"
-          className="mt-2 grid gap-2 text-sm md:grid-cols-[minmax(150px,0.55fr)_minmax(0,1fr)]"
+          className="mt-2 grid gap-2 text-sm md:grid-cols-2"
         >
           <div className="min-w-0">
             <label className={SERVER_FIELD_LABEL_CLASS_NAME}>Base URL</label>
@@ -529,20 +544,6 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
             </div>
           </div>
         </div>
-
-        <label className="mt-3 flex items-center gap-2 text-xs leading-5 text-[var(--text-secondary)]">
-          <input
-            type="checkbox"
-            checked={server.blockGeminiCliInternalUtilityRequests !== false}
-            onChange={e =>
-              saveServerConfig({
-                blockGeminiCliInternalUtilityRequests: e.target.checked,
-              })
-            }
-            className="h-3.5 w-3.5 rounded border-[var(--line-soft)] bg-[var(--surface-2)]"
-          />
-          <span>阻断 Gemini CLI 内部工具/回退模型请求</span>
-        </label>
       </AppCardContent>
     </AppCard>
   );
@@ -753,25 +754,28 @@ export function CliModelSection({ className = '' }: RoutePanelProps) {
                     </option>
                   ))}
                 </select>
-                <div className="flex items-center gap-2">
+                <div
+                  data-testid={`route-cli-actions-${cli}`}
+                  className="grid grid-cols-2 items-center gap-2"
+                >
                   <AppButton
                     variant="secondary"
                     size="sm"
-                    className="h-7 !min-h-7 flex-1 px-2"
+                    className="h-7 !min-h-7 w-full min-w-0 whitespace-nowrap px-2"
                     onClick={() => handleOpenPreview(cli)}
                     disabled={!generatedConfigs[cli]}
                     aria-label={`预览 ${CLI_LABELS[cli]} 路由配置`}
                   >
                     预览
                   </AppButton>
-                  <div className="flex-1">
+                  <div className="min-w-0">
                     <AppButton
                       ref={element => {
                         applyButtonRefs.current[cli] = element;
                       }}
                       variant="secondary"
                       size="sm"
-                      className="h-7 !min-h-7 w-full px-2"
+                      className="h-7 !min-h-7 w-full min-w-0 whitespace-nowrap px-2"
                       onClick={() => {
                         setPreviewState(null);
                         setApplyMenuCli(current => (current === cli ? null : cli));

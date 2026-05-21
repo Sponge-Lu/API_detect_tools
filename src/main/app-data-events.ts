@@ -27,9 +27,13 @@ function flushPendingChanges() {
   };
   pendingDomains.clear();
 
+  broadcastRendererEvent(APP_DATA_CHANGED_CHANNEL, payload);
+}
+
+export function broadcastRendererEvent(channel: string, payload: unknown): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
-      window.webContents.send(APP_DATA_CHANGED_CHANNEL, payload);
+      window.webContents.send(channel, payload);
     }
   }
 }

@@ -55,7 +55,7 @@
 | **auto-refresh.property.test.ts** | 自动刷新属性测试 | 自动刷新逻辑 |
 | **cli-compat-persistence.property.test.ts** | CLI 兼容性持久化测试 | CLI 兼容性数据 |
 | **cli-compat-service.property.test.ts** | CLI 兼容性服务测试 | CliCompatService（含双端点测试） |
-| **cli-wrapper-compat-service.test.ts** | 真实 CLI wrapper 兼容性测试 | CliWrapperCompatService 的临时目录、隔离配置、stdin prompt 注入与结果解析 |
+| **cli-wrapper-compat-service.test.ts** | 真实 CLI wrapper 兼容性测试 | CliWrapperCompatService 的临时目录、隔离配置、stdin prompt 注入、结果解析、Codex 上游错误摘要与临时目录清理重试 |
 | **cli-config-generator.property.test.ts** | CLI 配置生成测试 | CLI 配置生成（含端点选择逻辑） |
 | **cli-config-status.test.tsx** | CLI 配置状态组件回归测试 | 本地路由代理 Base URL 在紧凑状态中显示为“本地路由”，并覆盖本地路由、站点与自定义 CLI 的当前模型小字 |
 | **custom-cli-config-editor-dialog.test.tsx** | 自定义 CLI 编辑器回归测试 | CustomCliConfigEditorDialog 的预览/应用按钮与分列测试流程 |
@@ -71,9 +71,9 @@
 | **data-overview-page.test.tsx** | 数据总览页回归测试 | 首页总览 KPI、站点榜单、规则解释、异常请求与快照趋势 |
 | **route-analytics-service.test.ts** | 路由分析服务回归测试 | 请求日志 token/cache token 字段、站点/账户/API Key 对象级 token 聚合 |
 | **route-workbench-redesign.test.tsx** | Route 页面重设计测试 | route 页回退为配置页，并引导到数据总览查看统计，覆盖重定向卡片路径恢复动作 |
-| **cli-usability-tab.test.tsx** | CLI 可用性页回归测试 | Header 检测设置自动保存、账户行渲染、history 批次聚合条形与探测结果明细 |
+| **cli-usability-tab.test.tsx** | CLI 可用性页回归测试 | Header 检测设置自动保存、账户行渲染、history 批次聚合条形与探测结果明细，失败摘要同时显示错误码和上游错误正文 |
 | **sites-page-redesign.test.tsx** | 站点页重设计测试 | 多列列头、内联排序、高频动作、CLI 图标内联与右键菜单 parity，并覆盖 CLI 图标按时间戳显示最新 projected/persisted 测试状态 |
-| **logs-page.test.tsx** | 日志页回归测试 | 会话事件筛选、外部子页驱动的路由日志详情、紧凑请求尝试列表、token/cache token/按次参考金额与自定义 CLI 显示 |
+| **logs-page.test.tsx** | 日志页回归测试 | 会话事件筛选、外部子页驱动的路由日志详情、逐条 push 追加、紧凑请求尝试列表、token/cache token/按次参考金额与自定义 CLI 显示 |
 | **toast-store.test.ts** | Toast Store 回归测试 | 可见队列上限、事件历史记录与清理 |
 | **close-behavior-manager.property.test.ts** | 窗口关闭行为测试 | CloseBehaviorManager 设置持久化、对话框显示条件与设置面板偏好映射 |
 | **config-detection.property.test.ts** | 配置检测属性测试 | ConfigDetectionService |

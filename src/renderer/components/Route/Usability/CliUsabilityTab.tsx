@@ -159,6 +159,23 @@ function truncateSummary(value: string, maxLength: number): string {
   return value.length <= maxLength ? value : `${value.slice(0, maxLength - 3)}...`;
 }
 
+function normalizeProbeError(error?: string): string {
+  return (
+    error
+      ?.replace(/\s+/g, ' ')
+      .trim()
+      .replace(/^(?:Claude Code|Codex|Gemini CLI)\s+(?:执行失败|输出异常|启动失败):\s*/i, '') ?? ''
+  );
+}
+
+function formatFailureSummary(statusCode?: number, error?: string): string {
+  const normalized = normalizeProbeError(error);
+  if (statusCode !== undefined) {
+    return normalized ? `错误码 ${statusCode}: ${normalized}` : `错误码 ${statusCode}`;
+  }
+  return normalized || '失败';
+}
+
 function getSegmentColor(slot: HistorySlot) {
   if (slot.samples.length === 0) return 'bg-[var(--cli-history-empty)]';
   const successCount = slot.samples.filter(item => item.sample.success).length;
@@ -181,9 +198,10 @@ function formatProbeResult(
       result = `对话时间 ${formatProbeLatency(sample.totalLatencyMs)}`;
     }
   } else if (sample.statusCode !== undefined) {
-    result = `错误码 ${sample.statusCode}`;
+    result = formatFailureSummary(sample.statusCode, sample.error);
   } else if (sample.error) {
-    result = replyText ? `${sample.error} | 回答 ${replyText}` : sample.error;
+    const error = formatFailureSummary(undefined, sample.error);
+    result = replyText ? `${error} | 回答 ${replyText}` : error;
   } else {
     result = replyText ? `失败 | 回答 ${replyText}` : '失败';
   }
@@ -203,9 +221,9 @@ function buildModelResultTooltip(
   ];
 
   if (model.statusCode !== undefined) {
-    lines.push(`失败摘要：错误码 ${model.statusCode}`);
+    lines.push(`失败摘要：${formatFailureSummary(model.statusCode, model.error)}`);
   } else if (model.error?.trim()) {
-    lines.push(`失败摘要：${model.error.trim()}`);
+    lines.push(`失败摘要：${formatFailureSummary(undefined, model.error)}`);
   }
 
   const replyText = getProbeReplyText(model);

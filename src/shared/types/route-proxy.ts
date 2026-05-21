@@ -124,6 +124,25 @@ export interface RoutePathState extends RouteChannelKey {
   updatedAt: number;
 }
 
+export type RouteEndpointCapabilityName = 'claude_messages_count_tokens';
+export type RouteEndpointCapabilityStatus = 'unsupported';
+
+export interface RouteEndpointCapabilityState {
+  siteId: string;
+  accountId: string;
+  apiKeyId: string;
+  cliType: RouteCliType;
+  targetProtocol?: CliTargetProtocol;
+  endpoint: RouteEndpointCapabilityName;
+  status: RouteEndpointCapabilityStatus;
+  reason?: string;
+  statusCode?: number;
+  lastError?: string;
+  firstObservedAt: number;
+  lastObservedAt: number;
+  updatedAt: number;
+}
+
 export interface RoutePathStateResetParams {
   routeRuleId?: string;
   canonicalModel?: string;
@@ -507,6 +526,7 @@ export interface RoutingConfig {
   cliModelSelections: Record<RouteCliType, string | null>;
   stats: Record<string, RouteChannelStats>;
   routePathStates: Record<string, RoutePathState>;
+  routeEndpointCapabilities?: Record<string, RouteEndpointCapabilityState>;
   health: Record<string, RouteChannelHealth>;
   modelRegistry: RouteModelRegistryConfig;
   cliProbe: {
@@ -570,6 +590,7 @@ export const DEFAULT_ROUTING_CONFIG: RoutingConfig = {
   cliModelSelections: { claudeCode: null, codex: null, geminiCli: null },
   stats: {},
   routePathStates: {},
+  routeEndpointCapabilities: {},
   health: {},
   modelRegistry: DEFAULT_MODEL_REGISTRY_CONFIG,
   cliProbe: {
@@ -605,6 +626,16 @@ export function buildRoutePathStateKey(
   const resolvedModel = encodeURIComponent(key.resolvedModel || '*');
   const targetProtocol = encodeURIComponent(normalizeCliTargetProtocol(key.targetProtocol));
   return `${key.routeRuleId}|${key.siteId}|${key.accountId}|${key.apiKeyId}|${targetProtocol}|${canonicalModel}|${resolvedModel}`;
+}
+
+export function buildRouteEndpointCapabilityKey(
+  key: Pick<RouteEndpointCapabilityState, 'siteId' | 'accountId' | 'apiKeyId' | 'cliType'> & {
+    targetProtocol?: CliTargetProtocol;
+    endpoint: RouteEndpointCapabilityName;
+  }
+): string {
+  const targetProtocol = encodeURIComponent(normalizeCliTargetProtocol(key.targetProtocol));
+  return `${key.siteId}|${key.accountId}|${key.apiKeyId}|${key.cliType}|${targetProtocol}|${key.endpoint}`;
 }
 
 export function parseStatsKey(

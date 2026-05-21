@@ -52,6 +52,7 @@ import type {
   RouteRule,
   RouteChannelKey,
   RouteChannelStats,
+  RouteEndpointCapabilityState,
   RoutePathState,
   RoutePathStateResetParams,
   RouteChannelHealth,
@@ -82,6 +83,7 @@ import {
   DEFAULT_ANALYTICS_CONFIG,
   DEFAULT_MODEL_REGISTRY_CONFIG,
   DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME,
+  buildRouteEndpointCapabilityKey,
   buildStatsKey,
   buildRoutePathStateKey,
   buildProbeKey,
@@ -647,6 +649,7 @@ export class UnifiedConfigManager {
             ...config.routing,
             stats: {},
             routePathStates: {},
+            routeEndpointCapabilities: {},
             health: {},
             modelRegistry: {
               ...config.routing.modelRegistry,
@@ -837,6 +840,7 @@ export class UnifiedConfigManager {
     if (!r.rules) r.rules = [];
     if (!r.stats) r.stats = {};
     if (!r.routePathStates) r.routePathStates = {};
+    if (!r.routeEndpointCapabilities) r.routeEndpointCapabilities = {};
     if (!r.health) r.health = {};
     if (!r.cliModelSelections)
       r.cliModelSelections = { claudeCode: null, codex: null, geminiCli: null };
@@ -928,6 +932,16 @@ export class UnifiedConfigManager {
           targetProtocol,
         };
         return [buildRoutePathStateKey(normalizedState), normalizedState];
+      })
+    );
+    r.routeEndpointCapabilities = Object.fromEntries(
+      Object.values(r.routeEndpointCapabilities || {}).map(capability => {
+        const targetProtocol = normalizeCliTargetProtocol(capability?.targetProtocol);
+        const normalizedCapability: RouteEndpointCapabilityState = {
+          ...capability,
+          targetProtocol,
+        };
+        return [buildRouteEndpointCapabilityKey(normalizedCapability), normalizedCapability];
       })
     );
     r.health = Object.fromEntries(
@@ -1883,6 +1897,7 @@ export class UnifiedConfigManager {
     } else {
       this.config.routing!.stats = {};
       this.config.routing!.routePathStates = {};
+      this.config.routing!.routeEndpointCapabilities = {};
     }
     await this.saveRouteRuntimeState();
   }
@@ -1930,6 +1945,16 @@ export class UnifiedConfigManager {
     if (!this.config) throw new Error('Config not loaded');
     this.normalizeRoutingConfig(this.config);
     this.config.routing!.routePathStates[buildRoutePathStateKey(state)] = state;
+    await this.saveRouteRuntimeState();
+  }
+
+  /**
+   * 更新路由端点能力状态（例如某站点/API Key 不支持 Claude count_tokens）。
+   */
+  async upsertRouteEndpointCapabilityState(state: RouteEndpointCapabilityState): Promise<void> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    this.config.routing!.routeEndpointCapabilities![buildRouteEndpointCapabilityKey(state)] = state;
     await this.saveRouteRuntimeState();
   }
 

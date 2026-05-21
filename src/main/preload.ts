@@ -11,8 +11,10 @@
 
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ThemeMode } from '../shared/theme/themePresets';
+import type { RouteRequestLogItem } from '../shared/types/route-proxy';
 
 const APP_DATA_CHANGED_EVENT = 'app-data:changed';
+const ROUTE_REQUEST_LOG_APPENDED_EVENT = 'route:request-log-appended';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // 原有的API
@@ -454,6 +456,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resetAnalytics: (params?: any) => ipcRenderer.invoke('route:reset-analytics', params),
     getRequestLogs: (params?: any) => ipcRenderer.invoke('route:get-request-logs', params),
     clearRequestLogs: () => ipcRenderer.invoke('route:clear-request-logs'),
+    onRequestLogAppended: (callback: (item: RouteRequestLogItem) => void) => {
+      const handler = (_event: any, item: RouteRequestLogItem) => callback(item);
+      ipcRenderer.on(ROUTE_REQUEST_LOG_APPENDED_EVENT, handler);
+      return () => ipcRenderer.removeListener(ROUTE_REQUEST_LOG_APPENDED_EVENT, handler);
+    },
     fetchLatestLog: (params: { siteId: string; model?: string }) =>
       ipcRenderer.invoke('route:fetch-latest-log', params),
   },

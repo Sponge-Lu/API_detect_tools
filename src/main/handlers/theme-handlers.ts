@@ -19,7 +19,11 @@ export function registerThemeHandlers() {
     try {
       const themePath = getThemeSettingsPath();
       const normalizedThemeMode = normalizeThemeMode(themeMode);
-      await fs.writeFile(themePath, JSON.stringify({ themeMode: normalizedThemeMode }, null, 2), 'utf-8');
+      await fs.writeFile(
+        themePath,
+        JSON.stringify({ themeMode: normalizedThemeMode }, null, 2),
+        'utf-8'
+      );
       return { success: true };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'unknown error';

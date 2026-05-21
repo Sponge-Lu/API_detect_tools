@@ -849,23 +849,33 @@ describe('route workbench redesign', () => {
     expect(screen.getByText('Claude Code')).toBeInTheDocument();
     expect(screen.getByText('Codex')).toBeInTheDocument();
     expect(screen.getByText('Gemini CLI')).toBeInTheDocument();
-    expect(screen.getByTestId('route-page-primary-row')).toHaveClass('xl:items-stretch');
-    expect(screen.getByTestId('route-server-section-card')).toHaveClass('h-full', 'self-stretch');
+    const primaryRow = screen.getByTestId('route-page-primary-row');
+    expect(primaryRow).toHaveClass(
+      'xl:grid-cols-[minmax(0,1.07fr)_minmax(360px,0.93fr)]',
+      'xl:items-stretch'
+    );
+    const serverSectionCard = screen.getByTestId('route-server-section-card');
+    expect(serverSectionCard).toHaveClass('h-full', 'self-stretch');
     expect(screen.getByTestId('route-cli-model-section-card')).toHaveClass(
       'h-full',
       'self-stretch'
     );
-    expect(screen.getByTestId('route-server-section-card')).not.toHaveClass('h-fit', 'self-start');
+    expect(serverSectionCard).not.toHaveClass('h-fit', 'self-start');
     expect(screen.getByTestId('route-cli-model-section-card')).not.toHaveClass(
       'h-fit',
       'self-start'
     );
+    const guardToggle = within(serverSectionCard).getByRole('checkbox', {
+      name: '阻断 Gemini CLI 内部工具/回退模型请求',
+    });
+    const stopButton = within(serverSectionCard).getByRole('button', { name: '停止' });
+    expect(guardToggle.compareDocumentPosition(stopButton)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     const serverPrimaryRow = screen.getByTestId('route-server-primary-config-row');
     const serverCredentialRow = screen.getByTestId('route-server-credential-row');
-    expect(screen.getByTestId('route-server-section-card').firstElementChild).toHaveClass('p-3');
+    expect(serverSectionCard.firstElementChild).toHaveClass('p-3');
     expect(screen.getByTestId('route-cli-model-section-card').firstElementChild).toHaveClass('p-3');
-    expect(serverPrimaryRow).toHaveClass('md:grid-cols-[minmax(150px,0.55fr)_minmax(0,1fr)]');
-    expect(serverCredentialRow).toHaveClass('md:grid-cols-[minmax(150px,0.55fr)_minmax(0,1fr)]');
+    expect(serverPrimaryRow).toHaveClass('md:grid-cols-2');
+    expect(serverCredentialRow).toHaveClass('md:grid-cols-2');
     expect(serverPrimaryRow).toHaveClass('gap-2');
     expect(serverCredentialRow).toHaveClass('mt-2', 'gap-2');
     expect(within(serverPrimaryRow).getByText('端口')).toBeInTheDocument();
@@ -930,8 +940,16 @@ describe('route workbench redesign', () => {
       'leading-4',
       'text-[var(--text-secondary)]'
     );
-    expect(screen.getByRole('button', { name: '预览 Claude Code 路由配置' })).toHaveClass('h-7');
-    expect(screen.getByRole('button', { name: '应用 Claude Code 路由配置' })).toHaveClass('h-7');
+    const claudeRouteActions = screen.getByTestId('route-cli-actions-claudeCode');
+    const previewClaudeRouteButton = screen.getByRole('button', {
+      name: '预览 Claude Code 路由配置',
+    });
+    const applyClaudeRouteButton = screen.getByRole('button', {
+      name: '应用 Claude Code 路由配置',
+    });
+    expect(claudeRouteActions).toHaveClass('grid', 'grid-cols-2', 'gap-2');
+    expect(previewClaudeRouteButton).toHaveClass('h-7', 'w-full', 'min-w-0', 'whitespace-nowrap');
+    expect(applyClaudeRouteButton).toHaveClass('h-7', 'w-full', 'min-w-0', 'whitespace-nowrap');
     expect(screen.getByDisplayValue('claude-opus-4-6')).toHaveClass('h-7', 'py-1', 'rounded-md');
     expect(screen.getByDisplayValue('gpt-5.4')).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'gpt-4.1' })).not.toBeInTheDocument();

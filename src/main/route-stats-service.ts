@@ -8,12 +8,15 @@ import { unifiedConfigManager } from './unified-config-manager';
 import type {
   RouteChannelKey,
   RouteChannelStats,
+  RouteEndpointCapabilityName,
+  RouteEndpointCapabilityState,
   RouteOutcome,
   RoutePathState,
   RouteRuntimeConfig,
 } from '../shared/types/route-proxy';
 import {
   DEFAULT_ROUTE_RUNTIME_CONFIG,
+  buildRouteEndpointCapabilityKey,
   buildRoutePathStateKey,
   buildStatsKey,
   normalizeRouteRuntimeConfig,
@@ -40,6 +43,10 @@ type RoutePathRuntimeKey = RouteChannelRuntimeKey & {
   cliType?: RoutePathState['cliType'];
   canonicalModel?: string;
   resolvedModel?: string;
+};
+
+type RouteEndpointCapabilityRuntimeKey = RouteChannelRuntimeKey & {
+  cliType: RouteEndpointCapabilityState['cliType'];
 };
 
 /** 触发延迟 flush（3秒后写磁盘） */
@@ -125,6 +132,44 @@ export function isRoutePathDisabled(key: RoutePathRuntimeKey, now: number = Date
   const routing = unifiedConfigManager.getRoutingConfig();
   const state = routing.routePathStates[buildRoutePathStateKey(key)];
   return Boolean(state?.disabledUntil && state.disabledUntil > now);
+}
+
+export function isRouteEndpointUnsupported(
+  key: RouteEndpointCapabilityRuntimeKey,
+  endpoint: RouteEndpointCapabilityName
+): boolean {
+  const routing = unifiedConfigManager.getRoutingConfig();
+  const capabilityKey = buildRouteEndpointCapabilityKey({ ...key, endpoint });
+  return routing.routeEndpointCapabilities?.[capabilityKey]?.status === 'unsupported';
+}
+
+export async function recordRouteEndpointUnsupported(
+  key: RouteEndpointCapabilityRuntimeKey,
+  endpoint: RouteEndpointCapabilityName,
+  meta: { statusCode?: number; error?: string; reason?: string } = {},
+  now: number = Date.now()
+): Promise<RouteEndpointCapabilityState> {
+  const routing = unifiedConfigManager.getRoutingConfig();
+  const capabilityKey = buildRouteEndpointCapabilityKey({ ...key, endpoint });
+  const existing = routing.routeEndpointCapabilities?.[capabilityKey];
+  const nextState: RouteEndpointCapabilityState = {
+    siteId: key.siteId,
+    accountId: key.accountId,
+    apiKeyId: key.apiKeyId,
+    cliType: key.cliType,
+    targetProtocol: key.targetProtocol,
+    endpoint,
+    status: 'unsupported',
+    reason: meta.reason ?? existing?.reason,
+    statusCode: meta.statusCode ?? existing?.statusCode,
+    lastError: meta.error ?? existing?.lastError,
+    firstObservedAt: existing?.firstObservedAt ?? now,
+    lastObservedAt: now,
+    updatedAt: now,
+  };
+
+  await unifiedConfigManager.upsertRouteEndpointCapabilityState(nextState);
+  return nextState;
 }
 
 export async function recordRoutePathOutcome(

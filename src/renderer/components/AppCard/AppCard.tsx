@@ -43,12 +43,16 @@ export function AppCard({
     relative
     rounded-[var(--radius-lg)]
     overflow-hidden
-    [will-change:transform,opacity]
     [backface-visibility:hidden]
     [transform:translateZ(0)]
   `
     .replace(/\s+/g, ' ')
     .trim();
+
+  const willChangeStyles =
+    (hoverable && !disabled) || draggable
+      ? 'hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity]'
+      : '';
 
   const transitionStyles = `
     transition-[transform,opacity,box-shadow]
@@ -137,6 +141,7 @@ export function AppCard({
 
   const combinedClassName = `
     ${baseStyles}
+    ${willChangeStyles}
     ${transitionStyles}
     ${variantStyles[variant]}
     ${blurStyles}

@@ -6,6 +6,7 @@ import type {
   RouteChannelStats,
   RouteCliProbeLatest,
   RouteCliProbeSample,
+  RouteEndpointCapabilityState,
   RouteModelSourceRef,
   RoutePathState,
   RoutingConfig,
@@ -28,6 +29,7 @@ export interface RouteRuntimeStateFile {
   version: string;
   stats: Record<string, RouteChannelStats>;
   routePathStates: Record<string, RoutePathState>;
+  routeEndpointCapabilities: Record<string, RouteEndpointCapabilityState>;
   health: Record<string, RouteChannelHealth>;
   last_updated: number;
 }
@@ -63,6 +65,7 @@ function emptyRouteRuntimeState(): RouteRuntimeStateFile {
     version: ROUTE_RUNTIME_STATE_VERSION,
     stats: {},
     routePathStates: {},
+    routeEndpointCapabilities: {},
     health: {},
     last_updated: 0,
   };
@@ -99,6 +102,7 @@ function normalizeRouteRuntimeState(value: unknown): RouteRuntimeStateFile {
     version: partial.version || ROUTE_RUNTIME_STATE_VERSION,
     stats: partial.stats || {},
     routePathStates: partial.routePathStates || {},
+    routeEndpointCapabilities: partial.routeEndpointCapabilities || {},
     health: partial.health || {},
     last_updated: partial.last_updated || 0,
   };
@@ -227,6 +231,10 @@ export class RouteStateManager {
       ...snapshot.runtime.routePathStates,
       ...routing.routePathStates,
     };
+    routing.routeEndpointCapabilities = {
+      ...snapshot.runtime.routeEndpointCapabilities,
+      ...(routing.routeEndpointCapabilities || {}),
+    };
     routing.health = { ...snapshot.runtime.health, ...routing.health };
     routing.cliProbe.latest = { ...snapshot.probes.latest, ...routing.cliProbe.latest };
     routing.cliProbe.history = { ...snapshot.probes.history, ...routing.cliProbe.history };
@@ -263,6 +271,12 @@ export class RouteStateManager {
         routing.routePathStates,
         MAX_ROUTE_RUNTIME_ITEMS,
         value => value.updatedAt || value.lastUsedAt || 0,
+        { now, maxAgeMs: ROUTE_RUNTIME_RETENTION_MS }
+      ),
+      routeEndpointCapabilities: keepNewestRecordEntries(
+        routing.routeEndpointCapabilities || {},
+        MAX_ROUTE_RUNTIME_ITEMS,
+        value => value.updatedAt || value.lastObservedAt || 0,
         { now, maxAgeMs: ROUTE_RUNTIME_RETENTION_MS }
       ),
       health: keepNewestRecordEntries(

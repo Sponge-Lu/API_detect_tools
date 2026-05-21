@@ -28,6 +28,8 @@ import {
   recordOutcome,
   isRoutePathDisabled,
   recordRoutePathOutcome,
+  isRouteEndpointUnsupported,
+  recordRouteEndpointUnsupported,
 } from './route-stats-service';
 import { startHealthCheckTimer, stopHealthCheckTimer } from './route-health-service';
 import { recordRouteRequest } from './route-analytics-service';
@@ -75,6 +77,12 @@ const ALL_ROUTE_PATHS_DISABLED_MESSAGE =
   'all_route_paths_disabled: All route paths for this rule are temporarily disabled. Restore route paths in the route rule UI or wait for the suspension to expire.';
 const ANYROUTER_REQUEST_TIMEOUT_MS = 120 * 1000;
 const ACTIVE_STREAM_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+const CLAUDE_COUNT_TOKENS_PATH = '/v1/messages/count_tokens';
+const CLAUDE_MESSAGES_COUNT_TOKENS_ENDPOINT = 'claude_messages_count_tokens';
+const LOCAL_COUNT_TOKENS_IMAGE_ESTIMATE = 2000;
+const LOCAL_COUNT_TOKENS_DOCUMENT_ESTIMATE = 2000;
+const LOCAL_COUNT_TOKENS_MESSAGE_OVERHEAD = 4;
+const LOCAL_COUNT_TOKENS_CONSERVATIVE_MULTIPLIER = 1.15;
 
 function nextRequestId(cliType: RouteCliType): string {
   requestSequence += 1;
@@ -260,6 +268,10 @@ function isStreamingRequest(bodyJson: unknown, requestUrl: string | undefined): 
 
   const pathname = (requestUrl || '/').split('?')[0];
   return pathname.includes(':streamGenerateContent');
+}
+
+function isClaudeCountTokensRequest(pathname: string, cliType: RouteCliType): boolean {
+  return cliType === 'claudeCode' && pathname === CLAUDE_COUNT_TOKENS_PATH;
 }
 
 function resolveUpstreamTimeouts(params: {
@@ -455,6 +467,153 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   }
 
   return undefined;
+}
+
+export interface ClaudeCountTokensEstimate {
+  input_tokens: number;
+  estimated: true;
+  method: 'local';
+}
+
+function estimateTextTokens(text: string): number {
+  let total = 0;
+  let asciiRunLength = 0;
+
+  const flushAsciiRun = () => {
+    if (asciiRunLength > 0) {
+      total += Math.ceil(asciiRunLength / 4);
+      asciiRunLength = 0;
+    }
+  };
+
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code <= 0x7f && /[A-Za-z0-9_]/.test(char)) {
+      asciiRunLength += 1;
+      continue;
+    }
+
+    flushAsciiRun();
+    if (/\s/.test(char)) {
+      total += 0.25;
+    } else if (code >= 0x2e80) {
+      total += 1;
+    } else {
+      total += 0.5;
+    }
+  }
+
+  flushAsciiRun();
+  return Math.ceil(total);
+}
+
+function estimateJsonTokens(value: unknown): number {
+  if (value === undefined || value === null) {
+    return 0;
+  }
+
+  if (typeof value === 'string') {
+    return estimateTextTokens(value);
+  }
+
+  try {
+    return estimateTextTokens(JSON.stringify(value));
+  } catch {
+    return estimateTextTokens(String(value));
+  }
+}
+
+function estimateClaudeContentTokens(content: unknown): number {
+  if (typeof content === 'string') {
+    return estimateTextTokens(content);
+  }
+
+  if (Array.isArray(content)) {
+    return content.reduce((total, block) => {
+      const record = asRecord(block);
+      if (!record) {
+        return total + estimateJsonTokens(block);
+      }
+
+      const type = typeof record.type === 'string' ? record.type : '';
+      if (type === 'text') {
+        return total + estimateJsonTokens(record.text);
+      }
+      if (type === 'image') {
+        return total + LOCAL_COUNT_TOKENS_IMAGE_ESTIMATE + estimateJsonTokens(record.source);
+      }
+      if (type === 'document') {
+        return total + LOCAL_COUNT_TOKENS_DOCUMENT_ESTIMATE + estimateJsonTokens(record.source);
+      }
+      if (type === 'tool_use') {
+        return total + estimateJsonTokens(record.name) + estimateJsonTokens(record.input);
+      }
+      if (type === 'tool_result') {
+        return total + estimateClaudeContentTokens(record.content);
+      }
+      if (type === 'thinking') {
+        return total + estimateJsonTokens(record.thinking);
+      }
+
+      return total + estimateJsonTokens(record);
+    }, 0);
+  }
+
+  return estimateJsonTokens(content);
+}
+
+export function estimateClaudeCountTokens(body: Buffer): ClaudeCountTokensEstimate {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body.toString('utf-8'));
+  } catch {
+    return {
+      input_tokens: Math.max(1, estimateTextTokens(body.toString('utf-8'))),
+      estimated: true,
+      method: 'local',
+    };
+  }
+
+  const request = asRecord(parsed);
+  if (!request) {
+    return {
+      input_tokens: Math.max(1, estimateJsonTokens(parsed)),
+      estimated: true,
+      method: 'local',
+    };
+  }
+
+  let total = 0;
+  total += estimateClaudeContentTokens(request.system);
+  total += estimateJsonTokens(request.thinking);
+  total += estimateJsonTokens(request.tool_choice);
+  total += estimateJsonTokens(request.output_config);
+
+  const messages = Array.isArray(request.messages) ? request.messages : [];
+  for (const message of messages) {
+    const record = asRecord(message);
+    total += LOCAL_COUNT_TOKENS_MESSAGE_OVERHEAD;
+    total += estimateJsonTokens(record?.role);
+    total += estimateClaudeContentTokens(record?.content ?? message);
+  }
+
+  const tools = Array.isArray(request.tools) ? request.tools : [];
+  for (const tool of tools) {
+    const record = asRecord(tool);
+    if (!record) {
+      total += estimateJsonTokens(tool);
+      continue;
+    }
+    total += estimateJsonTokens(record.name);
+    total += estimateJsonTokens(record.description);
+    total += estimateJsonTokens(record.input_schema);
+  }
+
+  return {
+    input_tokens: Math.max(1, Math.ceil(total * LOCAL_COUNT_TOKENS_CONSERVATIVE_MULTIPLIER)),
+    estimated: true,
+    method: 'local',
+  };
 }
 
 function toFiniteTokenNumber(value: unknown): number | undefined {
@@ -718,6 +877,38 @@ export function extractUsageFromBody(body: Buffer): RouteUsageStats | undefined 
   } catch {
     return extractUsageFromSseBody(bodyStr);
   }
+}
+
+function isUnsupportedClaudeCountTokensResponse(result: {
+  statusCode: number;
+  body: Buffer;
+}): boolean {
+  if ([404, 405, 501].includes(result.statusCode)) {
+    return true;
+  }
+
+  if (result.statusCode !== 403) {
+    return false;
+  }
+
+  const body = summarizeUpstreamFailureBodyForLog(result.body, 800).toLowerCase();
+  return (
+    body.includes('count_tokens') ||
+    body.includes('count tokens') ||
+    body.includes('not enabled') ||
+    body.includes('not supported') ||
+    body.includes('unsupported') ||
+    body.includes('not implemented') ||
+    body.includes('invalid url')
+  );
+}
+
+function writeAnthropicCountTokensEstimate(
+  res: http.ServerResponse,
+  estimate: ClaudeCountTokensEstimate
+): void {
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ input_tokens: estimate.input_tokens }));
 }
 
 interface ForwardToUpstreamOptions {
@@ -1112,6 +1303,7 @@ export async function handleRequest(
   }
   const timeoutMs = routing.server.requestTimeoutMs;
   const requestWantsStreaming = isStreamingRequest(bodyJson, req.url);
+  const requestIsClaudeCountTokens = isClaudeCountTokensRequest(pathname, cliType);
 
   let attempt = 0;
   for (let i = 0; i < sortedChannels.length; i++) {
@@ -1127,6 +1319,50 @@ export async function handleRequest(
       targetProtocol: resolvedTarget.targetProtocol,
       targetEndpoint: resolvedTarget.targetEndpoint,
     };
+    const site = unifiedConfigManager.getSiteById(activeChannel.siteId);
+    const account = unifiedConfigManager.getAccountById(activeChannel.accountId);
+
+    if (requestIsClaudeCountTokens && !bypassRoutePathState) {
+      const endpointUnsupported = isRouteEndpointUnsupported(
+        activeChannel,
+        CLAUDE_MESSAGES_COUNT_TOKENS_ENDPOINT
+      );
+      const targetProtocolUnsupported = !isCliTargetProtocolNativeEquivalent(
+        cliType,
+        activeChannel.targetProtocol ?? 'native'
+      );
+
+      if (endpointUnsupported || targetProtocolUnsupported) {
+        const reason = endpointUnsupported ? 'cached_unsupported' : 'target_protocol_unsupported';
+        if (!endpointUnsupported) {
+          await recordRouteEndpointUnsupported(
+            activeChannel,
+            CLAUDE_MESSAGES_COUNT_TOKENS_ENDPOINT,
+            { reason }
+          );
+        }
+        recordRouteRequest({
+          requestId,
+          attempt,
+          routeRuleId: activeRouteRuleId,
+          cliType,
+          targetProtocol: activeChannel.targetProtocol,
+          targetEndpoint: activeChannel.targetEndpoint,
+          requestedModel: rawModel,
+          canonicalModel,
+          siteId: activeChannel.siteId,
+          accountId: activeChannel.accountId,
+          apiKeyId: activeChannel.apiKeyId,
+          resolvedModel: activeChannel.resolvedModel,
+          outcome: 'neutral',
+          statusCode: 200,
+          error: `count_tokens_local_estimate:${reason}`,
+        });
+        writeAnthropicCountTokensEstimate(res, estimateClaudeCountTokens(bodyBuffer));
+        return;
+      }
+    }
+
     const probeLockCredentials =
       probeLock?.upstreamBaseUrl && probeLock?.upstreamApiKey
         ? {
@@ -1166,8 +1402,6 @@ export async function handleRequest(
     }
 
     // Keep the initial upstream wait bounded; only active SSE streams get a longer idle window.
-    const site = unifiedConfigManager.getSiteById(activeChannel.siteId);
-    const account = unifiedConfigManager.getAccountById(activeChannel.accountId);
     const upstreamTimeouts = resolveUpstreamTimeouts({
       siteName: site?.name,
       baseTimeoutMs: timeoutMs,
@@ -1187,6 +1421,7 @@ export async function handleRequest(
     let responseAdapter: AnyRouterResponseAdapter = { type: 'transparent' };
     let protocolResponseAdapter: CliProtocolResponseAdapter = { type: 'transparent' };
     if (
+      !requestIsClaudeCountTokens &&
       site &&
       account &&
       isAnyRouterSite(site.name) &&
@@ -1307,6 +1542,40 @@ export async function handleRequest(
         }
       );
       const outcome = classifyRouteStatusCode(result.statusCode);
+
+      if (
+        requestIsClaudeCountTokens &&
+        !bypassRoutePathState &&
+        isUnsupportedClaudeCountTokensResponse(result)
+      ) {
+        const bodySnippet = summarizeUpstreamFailureBodyForLog(result.body) || '<empty>';
+        await recordRouteEndpointUnsupported(activeChannel, CLAUDE_MESSAGES_COUNT_TOKENS_ENDPOINT, {
+          statusCode: result.statusCode,
+          error: bodySnippet,
+          reason: 'upstream_unsupported',
+        });
+        recordRouteRequest({
+          requestId,
+          attempt,
+          routeRuleId: activeRouteRuleId,
+          cliType,
+          targetProtocol: activeChannel.targetProtocol,
+          targetEndpoint: activeChannel.targetEndpoint,
+          requestedModel: rawModel,
+          canonicalModel,
+          siteId: activeChannel.siteId,
+          accountId: activeChannel.accountId,
+          apiKeyId: activeChannel.apiKeyId,
+          resolvedModel: activeChannel.resolvedModel,
+          outcome: 'neutral',
+          statusCode: 200,
+          latencyMs: result.latencyMs,
+          firstByteLatencyMs: result.firstByteLatencyMs,
+          error: `count_tokens_local_estimate:upstream_${result.statusCode}`,
+        });
+        writeAnthropicCountTokensEstimate(res, estimateClaudeCountTokens(bodyBuffer));
+        return;
+      }
 
       if (!bypassRoutePathState) {
         // 记录实时选路统计

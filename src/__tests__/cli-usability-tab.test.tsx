@@ -97,6 +97,7 @@ vi.mock('../renderer/store/routeStore', () => ({
                   success: false,
                   testedAt: now - 60 * 60 * 1000,
                   totalLatencyMs: 1800,
+                  statusCode: 429,
                   error: 'rate limited '.repeat(24),
                   history: [
                     {
@@ -110,6 +111,7 @@ vi.mock('../renderer/store/routeStore', () => ({
                       rawModel: 'gpt-4.1-mini',
                       success: false,
                       source: 'routeProbe',
+                      statusCode: 429,
                       error: 'rate limited '.repeat(24),
                       testedAt: now - 60 * 60 * 1000,
                     },
@@ -254,8 +256,9 @@ describe('CliUsabilityTab', () => {
     expect(codexHistoryTitle).toHaveAttribute('title', expect.not.stringContaining('来源：'));
     expect(codexHistoryTitle).toHaveClass('bg-[var(--warning)]');
     const codexHistoryTooltip = codexHistoryTitle.getAttribute('title') ?? '';
-    expect(codexHistoryTooltip).toContain('rate limited '.repeat(22));
-    expect(codexHistoryTooltip).not.toContain('rate limited '.repeat(23));
+    expect(codexHistoryTooltip).toContain('错误码 429');
+    expect(codexHistoryTooltip).toContain('rate limited '.repeat(20));
+    expect(codexHistoryTooltip).not.toContain('rate limited '.repeat(22));
     expect(screen.getAllByTitle(/模型：gpt-4\.1-mini/).length).toBeGreaterThan(0);
     expect(screen.getAllByTitle(/模型：gemini-2\.5-pro/).length).toBeGreaterThan(0);
     expect(codexHistoryTitle).toHaveAttribute('title', expect.stringContaining('结果：兼容'));

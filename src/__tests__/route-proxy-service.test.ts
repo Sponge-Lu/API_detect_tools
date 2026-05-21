@@ -40,6 +40,8 @@ vi.mock('../main/route-stats-service', () => ({
   recordOutcome: vi.fn(),
   isRoutePathDisabled: vi.fn(() => false),
   recordRoutePathOutcome: vi.fn(),
+  isRouteEndpointUnsupported: vi.fn(() => false),
+  recordRouteEndpointUnsupported: vi.fn(),
 }));
 
 vi.mock('../main/route-health-service', () => ({
@@ -62,6 +64,7 @@ import {
   buildUpstreamRequestUrl,
   buildUpstreamHeaders,
   classifyRouteStatusCode,
+  estimateClaudeCountTokens,
   extractRouteApiKey,
   extractUsageFromBody,
   handleRequest,
@@ -79,7 +82,12 @@ import {
 import { resolveChannels, resolveChannelCredentials } from '../main/route-channel-resolver';
 import { buildProbeLockRouteApiKey } from '../main/route-probe-lock';
 import { httpRawRequest, httpRawStreamRequest } from '../main/utils/http-client';
-import { isRoutePathDisabled, recordRoutePathOutcome } from '../main/route-stats-service';
+import {
+  isRouteEndpointUnsupported,
+  isRoutePathDisabled,
+  recordRouteEndpointUnsupported,
+  recordRoutePathOutcome,
+} from '../main/route-stats-service';
 import { recordRouteRequest } from '../main/route-analytics-service';
 
 function createJsonRequest(
@@ -517,6 +525,335 @@ describe('route-proxy-service usage extraction', () => {
       cacheReadTokens: 30,
       cachedTokens: undefined,
     });
+  });
+});
+
+describe('route-proxy-service Claude count_tokens fallback', () => {
+  const rule = {
+    id: 'rule-claude-count',
+    cliType: 'claudeCode' as const,
+    pattern: 'claude-opus-4-6',
+    patternType: 'exact' as const,
+  };
+  const routing = {
+    server: {
+      unifiedApiKey: 'sk-route',
+      requestTimeoutMs: 1000,
+      upstreamProxyUrl: '',
+    },
+    rules: [rule],
+    cliModelSelections: {
+      claudeCode: null,
+      codex: null,
+      geminiCli: null,
+    },
+    modelRegistry: {
+      version: 1,
+      sources: [],
+      entries: {
+        'claude-opus-4-6': {
+          canonicalName: 'claude-opus-4-6',
+          aliases: ['claude-opus-4-6'],
+          sources: [],
+          vendor: 'claude' as const,
+          hasOverride: false,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      },
+      overrides: [],
+      displayItems: [],
+      vendorPriorities: {},
+    },
+    routeEndpointCapabilities: {},
+  };
+  const countBody = {
+    model: 'claude-opus-4-6',
+    system: [{ type: 'text', text: 'Use concise answers.' }],
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'Read package.json' }] }],
+    tools: [
+      {
+        name: 'Read',
+        description: 'Read a file',
+        input_schema: { type: 'object', properties: { file_path: { type: 'string' } } },
+      },
+    ],
+  };
+
+  function setupClaudeCountTokensRoute(channels: Array<Record<string, unknown>>) {
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn((siteId: string) => ({ id: siteId, name: siteId })),
+      getAccountById: vi.fn((accountId: string) => ({ id: accountId, account_name: accountId })),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('claudeCode');
+    vi.mocked(extractModelFromBody).mockReturnValue('claude-opus-4-6');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue(channels as never);
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(isRouteEndpointUnsupported).mockReturnValue(false);
+    vi.mocked(recordRouteEndpointUnsupported).mockImplementation(async (channel, endpoint) => ({
+      siteId: channel.siteId,
+      accountId: channel.accountId,
+      apiKeyId: channel.apiKeyId,
+      cliType: channel.cliType,
+      targetProtocol: channel.targetProtocol,
+      endpoint,
+      status: 'unsupported',
+      firstObservedAt: 1,
+      lastObservedAt: 1,
+      updatedAt: 1,
+    }));
+  }
+
+  it('marks unsupported upstream count_tokens and returns a local estimate without trying later channels', async () => {
+    vi.clearAllMocks();
+
+    const firstChannel = {
+      routeRuleId: rule.id,
+      siteId: 'site-a',
+      accountId: 'account-a',
+      apiKeyId: 'key-a',
+      cliType: 'claudeCode' as const,
+      canonicalModel: 'claude-opus-4-6',
+      resolvedModel: 'claude-opus-4-6',
+    };
+    const secondChannel = {
+      ...firstChannel,
+      siteId: 'site-b',
+      accountId: 'account-b',
+      apiKeyId: 'key-b',
+    };
+    setupClaudeCountTokensRoute([firstChannel, secondChannel]);
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://site-a.example.com',
+      apiKey: 'sk-upstream-a',
+    });
+    vi.mocked(httpRawRequest).mockResolvedValue({
+      status: 404,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{"error":{"message":"Invalid URL (POST /v1/messages/count_tokens)"}}'),
+    });
+
+    const request = createJsonRequest(
+      '/v1/messages/count_tokens',
+      { 'x-api-key': 'sk-route', 'content-type': 'application/json' },
+      countBody
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({
+      input_tokens: estimateClaudeCountTokens(Buffer.from(JSON.stringify(countBody))).input_tokens,
+    });
+    expect(httpRawRequest).toHaveBeenCalledTimes(1);
+    expect(resolveChannelCredentials).toHaveBeenCalledTimes(1);
+    expect(recordRouteEndpointUnsupported).toHaveBeenCalledWith(
+      expect.objectContaining({
+        siteId: 'site-a',
+        accountId: 'account-a',
+        apiKeyId: 'key-a',
+      }),
+      'claude_messages_count_tokens',
+      expect.objectContaining({ statusCode: 404, reason: 'upstream_unsupported' })
+    );
+    expect(recordRoutePathOutcome).not.toHaveBeenCalled();
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'neutral',
+        statusCode: 200,
+        error: 'count_tokens_local_estimate:upstream_404',
+      })
+    );
+  });
+
+  it('treats count_tokens not-enabled 403 as endpoint unsupported without route-path failure', async () => {
+    vi.clearAllMocks();
+
+    const channel = {
+      routeRuleId: rule.id,
+      siteId: 'site-forbidden',
+      accountId: 'account-forbidden',
+      apiKeyId: 'key-forbidden',
+      cliType: 'claudeCode' as const,
+      canonicalModel: 'claude-opus-4-6',
+      resolvedModel: 'claude-opus-4-6',
+    };
+    setupClaudeCountTokensRoute([channel]);
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://forbidden.example.com',
+      apiKey: 'sk-upstream-forbidden',
+    });
+    vi.mocked(httpRawRequest).mockResolvedValue({
+      status: 403,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{"error":{"message":"count_tokens is not enabled for this channel"}}'),
+    });
+
+    const request = createJsonRequest(
+      '/v1/messages/count_tokens',
+      { 'x-api-key': 'sk-route', 'content-type': 'application/json' },
+      countBody
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.statusCode).toBe(200);
+    expect(recordRouteEndpointUnsupported).toHaveBeenCalledWith(
+      expect.objectContaining({
+        siteId: 'site-forbidden',
+        accountId: 'account-forbidden',
+        apiKeyId: 'key-forbidden',
+      }),
+      'claude_messages_count_tokens',
+      expect.objectContaining({ statusCode: 403, reason: 'upstream_unsupported' })
+    );
+    expect(recordRoutePathOutcome).not.toHaveBeenCalled();
+  });
+
+  it('passes AnyRouter count_tokens through instead of forcing a local estimate', async () => {
+    vi.clearAllMocks();
+
+    const channel = {
+      routeRuleId: rule.id,
+      siteId: 'site-anyrouter',
+      accountId: 'account-anyrouter',
+      apiKeyId: 'key-anyrouter',
+      cliType: 'claudeCode' as const,
+      canonicalModel: 'claude-opus-4-6',
+      resolvedModel: 'claude-opus-4-6',
+    };
+    setupClaudeCountTokensRoute([channel]);
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn(() => ({ id: 'site-anyrouter', name: 'AnyRouter' })),
+      getAccountById: vi.fn(() => ({
+        id: 'account-anyrouter',
+        account_name: 'anyrouter-account',
+        anyRouterConfig: { userHash: 'a'.repeat(64) },
+      })),
+    });
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://anyrouter.top',
+      apiKey: 'sk-anyrouter',
+    });
+    vi.mocked(recordRoutePathOutcome).mockResolvedValue({
+      ...channel,
+      windowStartedAt: 1,
+      windowRequestCount: 1,
+      windowSuccessCount: 1,
+      successRate: 1,
+      updatedAt: 1,
+    });
+    vi.mocked(httpRawRequest).mockResolvedValue({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{"input_tokens":42}'),
+    });
+
+    const request = createJsonRequest(
+      '/v1/messages/count_tokens',
+      { 'x-api-key': 'sk-route', 'content-type': 'application/json' },
+      countBody
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(httpRawRequest).toHaveBeenCalledWith(
+      'https://anyrouter.top/v1/messages/count_tokens',
+      expect.objectContaining({
+        method: 'POST',
+        preferElectronNet: true,
+        headers: expect.objectContaining({
+          'x-api-key': 'sk-anyrouter',
+        }),
+      })
+    );
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({ input_tokens: 42 });
+    expect(recordRouteEndpointUnsupported).not.toHaveBeenCalled();
+  });
+
+  it('uses a cached unsupported count_tokens marker without calling upstream again', async () => {
+    vi.clearAllMocks();
+
+    const channel = {
+      routeRuleId: rule.id,
+      siteId: 'site-cached',
+      accountId: 'account-cached',
+      apiKeyId: 'key-cached',
+      cliType: 'claudeCode' as const,
+      canonicalModel: 'claude-opus-4-6',
+      resolvedModel: 'claude-opus-4-6',
+    };
+    setupClaudeCountTokensRoute([channel]);
+    vi.mocked(isRouteEndpointUnsupported).mockReturnValue(true);
+
+    const request = createJsonRequest(
+      '/v1/messages/count_tokens',
+      { 'x-api-key': 'sk-route', 'content-type': 'application/json' },
+      countBody
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({
+      input_tokens: estimateClaudeCountTokens(Buffer.from(JSON.stringify(countBody))).input_tokens,
+    });
+    expect(resolveChannelCredentials).not.toHaveBeenCalled();
+    expect(httpRawRequest).not.toHaveBeenCalled();
+    expect(recordRouteEndpointUnsupported).not.toHaveBeenCalled();
+    expect(recordRoutePathOutcome).not.toHaveBeenCalled();
+  });
+
+  it('marks non-Anthropic custom CLI targets as local-only for Claude count_tokens', async () => {
+    vi.clearAllMocks();
+
+    const channel = {
+      routeRuleId: rule.id,
+      siteId: 'custom-cli-site-demo',
+      accountId: 'custom-cli-account-demo',
+      apiKeyId: 'custom-cli-key-demo',
+      cliType: 'claudeCode' as const,
+      targetProtocol: 'openai-responses' as const,
+      canonicalModel: 'claude-opus-4-6',
+      resolvedModel: 'gpt-5.4',
+    };
+    setupClaudeCountTokensRoute([channel]);
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn(() => undefined),
+      getAccountById: vi.fn(() => undefined),
+    });
+
+    const request = createJsonRequest(
+      '/v1/messages/count_tokens',
+      { 'x-api-key': 'sk-route', 'content-type': 'application/json' },
+      countBody
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.statusCode).toBe(200);
+    expect(resolveChannelCredentials).not.toHaveBeenCalled();
+    expect(httpRawRequest).not.toHaveBeenCalled();
+    expect(recordRouteEndpointUnsupported).toHaveBeenCalledWith(
+      expect.objectContaining({
+        siteId: 'custom-cli-site-demo',
+        targetProtocol: 'openai-responses',
+      }),
+      'claude_messages_count_tokens',
+      { reason: 'target_protocol_unsupported' }
+    );
   });
 });
 

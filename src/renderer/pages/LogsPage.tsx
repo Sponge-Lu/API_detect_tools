@@ -1,5 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Bell, Eraser, Filter, History, Network, RefreshCw, Wrench } from 'lucide-react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import {
+  AlertCircle,
+  Bell,
+  Eraser,
+  Filter,
+  History,
+  Network,
+  RefreshCw,
+  Wrench,
+} from 'lucide-react';
 import {
   type RouteCliType,
   type RouteModelDisplayItem,
@@ -95,6 +106,11 @@ const CLI_LABELS: Record<RouteRequestLogItem['cliType'], string> = {
   codex: 'Codex',
   geminiCli: 'Gemini CLI',
 };
+const ROUTE_CLI_STYLES: Record<RouteRequestLogItem['cliType'], string> = {
+  claudeCode: 'border-[#d4a093] bg-[#d4a093] text-white',
+  codex: 'border-[#93afa4] bg-[#93afa4] text-white',
+  geminiCli: 'border-[#8aa9c7] bg-[#8aa9c7] text-white',
+};
 const ROUTE_CLI_FILTER_OPTIONS: Array<{
   id: RouteCliFilter;
   label: string;
@@ -109,12 +125,12 @@ const NONE_TEXT = '无';
 const DEFAULT_API_KEY_NAME = '默认';
 const CUSTOM_CLI_LABEL_PREFIX = /^自定义\s*CLI\s*\/\s*/;
 const TOKEN_PRICE_UNIT = 1_000_000;
-const CACHE_TOKEN_INPUT_PRICE_RATIO = 0.1;
+const CACHE_CREATION_INPUT_PRICE_RATIO = 1.25;
+const CACHE_READ_INPUT_PRICE_RATIO = 0.1;
 const ROUTE_TOKEN_COST_TITLE =
-  '仅供参考，不是实际花费金额；模型价格按每 1M token 计，缓存 token 按输入价 1/10 计入。';
+  '仅供参考，不是实际花费金额；模型价格按每 1M token 计，缓存创建按输入价 1.25 倍、缓存命中按输入价 1/10 计入。';
 const ROUTE_PER_CALL_COST_TITLE = '仅供参考，不是实际花费金额；按单次调用价格估算。';
-const ROUTE_TOKEN_COST_NOTE = '缓存按输入价 1/10';
-const ROUTE_PER_CALL_COST_NOTE = '按次计费';
+const ROUTE_LOG_VIEW_LIMIT = 200;
 
 interface RouteLogRegistryContext {
   registry: RouteModelRegistryConfig | null;
@@ -130,28 +146,169 @@ interface RouteLogCostInfo {
   estimatedCost: string;
   hasEstimatedCost: boolean;
   estimatedCostTitle?: string;
-  estimatedCostNote?: string;
 }
 
-function RouteLogField({
+interface RouteLogTooltipPosition {
+  top: number;
+  left: number;
+  maxWidth: number;
+}
+
+function RouteLogInlineField({
   label,
   value,
   title,
-  note,
+  className,
+  valueClassName,
+  tone = 'neutral',
+  suffix,
 }: {
   label: string;
   value: string;
   title?: string;
-  note?: string;
+  className?: string;
+  valueClassName?: string;
+  tone?: 'model' | 'source' | 'usage' | 'cost' | 'neutral';
+  suffix?: ReactNode;
 }) {
+  const toneClassName = {
+    model: 'border-[var(--accent)]/20 bg-[var(--accent-soft)]',
+    source: 'border-[var(--line-soft)] bg-[var(--surface-2)]',
+    usage: 'border-[var(--line-soft)] bg-[var(--surface-2)]',
+    cost: 'border-[var(--warning)]/20 bg-[var(--warning-soft)]',
+    neutral: 'border-[var(--line-soft)] bg-[var(--surface-2)]',
+  }[tone];
+
   return (
-    <div className="min-w-0">
-      <span className="mr-1 text-[var(--text-tertiary)]">{label}</span>
-      <span className="break-all text-[var(--text-primary)]" title={title}>
+    <span
+      className={`inline-flex min-w-0 items-baseline gap-1 rounded-[var(--radius-md)] border px-1.5 py-0 text-[11px] leading-4 ${toneClassName} ${className ?? ''}`}
+    >
+      <span className="shrink-0 text-[9px] font-medium leading-4 text-[var(--text-tertiary)]">
+        {label}
+      </span>
+      <span
+        className={`min-w-0 break-all text-[var(--text-primary)] ${valueClassName ?? ''}`}
+        title={title}
+      >
         {value}
       </span>
-      {note ? <span className="ml-1 text-[10px] text-[var(--text-tertiary)]">{note}</span> : null}
-    </div>
+      {suffix}
+    </span>
+  );
+}
+
+function RouteLogCostFormulaIcon({ title }: { title?: string }) {
+  const tooltipId = useId();
+  const anchorRef = useRef<HTMLButtonElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const [isPositioned, setIsPositioned] = useState(false);
+  const [position, setPosition] = useState<RouteLogTooltipPosition>({
+    top: 0,
+    left: 0,
+    maxWidth: 320,
+  });
+
+  useEffect(() => {
+    if (!isOpen || !anchorRef.current) {
+      return;
+    }
+
+    const anchorEl = anchorRef.current;
+    let frameId = 0;
+    const updatePosition = () => {
+      const rect = anchorEl.getBoundingClientRect();
+      const offset = 8;
+      const viewportGutter = 8;
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const maxWidth = Math.min(360, Math.max(160, viewportWidth - viewportGutter * 2));
+
+      setPosition({
+        top: rect.bottom + offset,
+        left: Math.max(
+          viewportGutter,
+          Math.min(rect.left, viewportWidth - maxWidth - viewportGutter)
+        ),
+        maxWidth,
+      });
+      setIsPositioned(false);
+
+      frameId = requestAnimationFrame(() => {
+        if (!tooltipRef.current) {
+          return;
+        }
+
+        const tooltipRect = tooltipRef.current.getBoundingClientRect();
+        const tooltipWidth = tooltipRect.width || maxWidth;
+        const tooltipHeight = tooltipRect.height || 48;
+        const spaceBelow = viewportHeight - rect.bottom;
+        const spaceAbove = rect.top;
+        const maxLeft = Math.max(viewportGutter, viewportWidth - tooltipWidth - viewportGutter);
+        const maxTop = Math.max(viewportGutter, viewportHeight - tooltipHeight - viewportGutter);
+        let nextTop = rect.bottom + offset;
+        const nextLeft = rect.left + rect.width / 2 - tooltipWidth / 2;
+
+        if (spaceBelow < tooltipHeight + 16 && spaceAbove > spaceBelow) {
+          nextTop = rect.top - tooltipHeight - offset;
+        }
+
+        setPosition({
+          top: Math.max(viewportGutter, Math.min(nextTop, maxTop)),
+          left: Math.max(viewportGutter, Math.min(nextLeft, maxLeft)),
+          maxWidth,
+        });
+        setIsPositioned(true);
+      });
+    };
+
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+
+    return () => {
+      cancelAnimationFrame(frameId);
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [isOpen]);
+
+  if (!title) {
+    return null;
+  }
+
+  return (
+    <>
+      <button
+        ref={anchorRef}
+        type="button"
+        aria-describedby={isOpen ? tooltipId : undefined}
+        aria-label="预计金额计算公式"
+        className="inline-flex shrink-0 cursor-help rounded-full text-[var(--text-tertiary)] transition-colors hover:text-[var(--accent)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+        onBlur={() => setIsOpen(false)}
+        onFocus={() => setIsOpen(true)}
+        onMouseEnter={() => setIsOpen(true)}
+        onMouseLeave={() => setIsOpen(false)}
+      >
+        <AlertCircle aria-hidden="true" className="h-3.5 w-3.5" />
+      </button>
+      {isOpen
+        ? createPortal(
+            <div
+              ref={tooltipRef}
+              id={tooltipId}
+              role="tooltip"
+              className={`fixed z-[260] rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-xs leading-5 text-[var(--text-secondary)] shadow-[var(--shadow-xl)] transition-opacity duration-100 ${
+                isPositioned ? 'opacity-100' : 'opacity-0'
+              }`}
+              style={{ top: position.top, left: position.left, maxWidth: position.maxWidth }}
+            >
+              {title}
+            </div>,
+            document.body
+          )
+        : null}
+    </>
   );
 }
 
@@ -351,7 +508,8 @@ function calculateRouteLogEstimatedCost(params: {
       ? Math.max(params.promptTokens - cachedReadTokens, 0)
       : params.promptTokens;
   const cacheCost =
-    (cacheCreationTokens + cachedReadTokens) * params.inputPrice * CACHE_TOKEN_INPUT_PRICE_RATIO;
+    cacheCreationTokens * params.inputPrice * CACHE_CREATION_INPUT_PRICE_RATIO +
+    cachedReadTokens * params.inputPrice * CACHE_READ_INPUT_PRICE_RATIO;
 
   return (
     ((promptTokensBilledAsInput * params.inputPrice +
@@ -428,7 +586,6 @@ function resolveRouteLogCostInfo(
       estimatedCost: formatEstimatedCost(pricing.callPrice * groupMultiplier),
       hasEstimatedCost: true,
       estimatedCostTitle: ROUTE_PER_CALL_COST_TITLE,
-      estimatedCostNote: ROUTE_PER_CALL_COST_NOTE,
     };
   }
 
@@ -456,7 +613,6 @@ function resolveRouteLogCostInfo(
     estimatedCost: formatEstimatedCost(estimatedCost),
     hasEstimatedCost: true,
     estimatedCostTitle: ROUTE_TOKEN_COST_TITLE,
-    estimatedCostNote: ROUTE_TOKEN_COST_NOTE,
   };
 }
 
@@ -520,6 +676,21 @@ interface LogsPageProps {
   activeView?: LogsSubtab;
 }
 
+interface LoadRouteLogsOptions {
+  background?: boolean;
+  includeConfig?: boolean;
+}
+
+function prependRouteLogItem(
+  currentLogs: RouteRequestLogItem[],
+  nextLog: RouteRequestLogItem
+): RouteRequestLogItem[] {
+  return [nextLog, ...currentLogs.filter(item => item.id !== nextLog.id)].slice(
+    0,
+    ROUTE_LOG_VIEW_LIMIT
+  );
+}
+
 export function LogsPage({ activeView = 'session' }: LogsPageProps) {
   const appConfig = useConfigStore(state => state.config);
   const eventHistory = useToastStore(state => state.eventHistory);
@@ -535,44 +706,59 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
     null
   );
 
-  const loadRouteLogs = useCallback(async () => {
+  const loadRouteLogs = useCallback(async (options?: LoadRouteLogsOptions) => {
+    const background = options?.background ?? false;
+    const includeConfig = options?.includeConfig ?? true;
     const routeApi = window.electronAPI.route;
     if (!routeApi?.getRequestLogs) {
-      setRouteLogs([]);
+      if (!background) {
+        setRouteLogs([]);
+      }
       setRouteLogsError(getRouteLogsUnavailableMessage());
       return;
     }
 
-    setRouteLogsLoading(true);
-    setRouteLogsError(null);
+    if (!background) {
+      setRouteLogsLoading(true);
+      setRouteLogsError(null);
+    }
     try {
       const [result, routeConfigResult] = await Promise.all([
-        routeApi.getRequestLogs({ limit: 200 }),
-        routeApi.getConfig ? routeApi.getConfig() : Promise.resolve(null),
+        routeApi.getRequestLogs({ limit: ROUTE_LOG_VIEW_LIMIT }),
+        includeConfig && routeApi.getConfig ? routeApi.getConfig() : Promise.resolve(null),
       ]);
       if (!result?.success) {
-        setRouteLogs([]);
+        if (!background) {
+          setRouteLogs([]);
+        }
         setRouteLogsError(result?.error || '加载路由日志失败。');
         return;
       }
       setRouteLogs(result.data || []);
-      if (routeConfigResult?.success) {
-        const routeConfig = routeConfigResult.data as
-          | { rules?: RouteRule[]; modelRegistry?: RouteModelRegistryConfig }
-          | undefined;
-        setRouteRulesById(
-          Object.fromEntries((routeConfig?.rules || []).map((rule: RouteRule) => [rule.id, rule]))
-        );
-        setRouteModelRegistry(routeConfig?.modelRegistry ?? null);
-      } else {
-        setRouteRulesById({});
-        setRouteModelRegistry(null);
+      setRouteLogsError(null);
+      if (includeConfig) {
+        if (routeConfigResult?.success) {
+          const routeConfig = routeConfigResult.data as
+            | { rules?: RouteRule[]; modelRegistry?: RouteModelRegistryConfig }
+            | undefined;
+          setRouteRulesById(
+            Object.fromEntries((routeConfig?.rules || []).map((rule: RouteRule) => [rule.id, rule]))
+          );
+          setRouteModelRegistry(routeConfig?.modelRegistry ?? null);
+        } else {
+          setRouteRulesById({});
+          setRouteModelRegistry(null);
+        }
       }
     } catch (error: unknown) {
-      setRouteLogs([]);
+      if (!background) {
+        setRouteLogs([]);
+      }
       setRouteLogsError(error instanceof Error ? error.message : '加载路由日志失败。');
     } finally {
-      setRouteLogsLoading(false);
+      if (!background) {
+        setRouteLogsLoading(false);
+      }
     }
   }, []);
 
@@ -598,9 +784,20 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
 
   useEffect(() => {
     if (view === 'route') {
-      void loadRouteLogs();
+      void loadRouteLogs({ background: true });
     }
   }, [loadRouteLogs, view]);
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.route?.onRequestLogAppended?.(item => {
+      setRouteLogs(currentLogs => prependRouteLogItem(currentLogs, item));
+      setRouteLogsError(null);
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, []);
 
   const filteredEvents = useMemo(() => {
     if (filter === 'all') return eventHistory;
@@ -712,7 +909,11 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
                     })}
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <AppButton variant="secondary" size="sm" onClick={() => void loadRouteLogs()}>
+                    <AppButton
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void loadRouteLogs({ background: true })}
+                    >
                       <RefreshCw className="h-4 w-4" />
                       刷新
                     </AppButton>
@@ -806,116 +1007,172 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
                   const routeRuleTitle = routeRule ? buildRouteRuleSummary(routeRule) : undefined;
                   const costInfo = resolveRouteLogCostInfo(item, appConfig, customCli);
                   const failureInfo = resolveRouteFailureInfo(item);
+                  const requestedModelName = formatOptionalDisplayName(
+                    item.requestedModel || item.resolvedModel
+                  );
+                  const canonicalModelName = formatOptionalDisplayName(item.canonicalModel);
+                  const sitePriority = resolveSitePriority(item, displayItem, routeLogContext);
+                  const accountDisplayName = customCli
+                    ? NONE_TEXT
+                    : formatOptionalDisplayName(routeSource?.accountName || item.accountName);
+                  const userGroupDisplayName = customCli
+                    ? NONE_TEXT
+                    : formatOptionalDisplayName(item.userGroupKey);
+                  const apiKeyDisplayName = customCli
+                    ? DEFAULT_API_KEY_NAME
+                    : formatOptionalDisplayName(item.apiKeyName);
 
                   return (
                     <article
                       key={item.id}
                       data-testid="route-request-log-row"
-                      className={`px-4 py-2.5 [contain-intrinsic-size:104px] [content-visibility:auto] ${
+                      className={`px-4 py-2.5 [contain-intrinsic-size:96px] [content-visibility:auto] ${
                         index === 0 ? '' : 'border-t border-[var(--line-soft)]'
                       }`}
                     >
-                      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                        <span
-                          className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-medium ${outcomeStyle.badge}`}
-                        >
-                          <span className={`h-1.5 w-1.5 rounded-full ${outcomeStyle.dot}`} />
-                          {outcomeStyle.label}
-                        </span>
-                        <span className="rounded-full bg-[var(--surface-2)] px-2 py-0.5 text-[var(--text-secondary)]">
-                          {CLI_LABELS[item.cliType]}
-                        </span>
-                        <span className="rounded-full bg-[var(--surface-2)] px-2 py-0.5 font-mono text-[var(--text-secondary)]">
-                          请求 {item.requestId}
-                        </span>
-                        <span className="rounded-full bg-[var(--surface-2)] px-2 py-0.5 text-[var(--text-secondary)]">
-                          尝试 #{item.attempt}
-                        </span>
-                        {item.statusCode !== undefined ? (
-                          <span className="rounded-full bg-[var(--surface-2)] px-2 py-0.5 text-[var(--text-secondary)]">
-                            HTTP {item.statusCode}
+                      <div
+                        data-testid="route-request-meta-line"
+                        className="grid grid-cols-1 gap-y-1 text-[11px] md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-3"
+                      >
+                        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                          <span
+                            className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-medium ${outcomeStyle.badge}`}
+                          >
+                            <span className={`h-1.5 w-1.5 rounded-full ${outcomeStyle.dot}`} />
+                            {outcomeStyle.label}
                           </span>
-                        ) : null}
-                        <span className="ml-auto whitespace-nowrap text-[var(--text-tertiary)]">
+                          <span
+                            className={`inline-flex h-5 items-center gap-1.5 rounded-full border px-2 py-0 font-medium ${ROUTE_CLI_STYLES[item.cliType]}`}
+                          >
+                            {CLI_LABELS[item.cliType]}
+                          </span>
+                          <span
+                            className="rounded-full bg-[var(--surface-2)] px-2 py-0.5 font-mono text-[var(--text-secondary)]"
+                            title={routeRuleTitle || item.routeRuleName}
+                          >
+                            请求 {item.requestId}
+                          </span>
+                          <span className="inline-flex h-5 items-center rounded-full bg-[var(--surface-2)] px-2 py-0 text-[var(--text-secondary)]">
+                            尝试 #{item.attempt}
+                          </span>
+                          {failureInfo ? (
+                            <span
+                              data-testid="route-request-failure-info"
+                              className="inline-flex h-5 min-w-0 max-w-full flex-1 items-center gap-1 rounded-full border border-[var(--danger)]/20 bg-[var(--danger-soft)] px-2 py-0 text-[var(--danger)] md:max-w-[32rem] md:flex-none"
+                              title={failureInfo}
+                            >
+                              <span className="shrink-0 text-[var(--danger)]/80">失败信息</span>
+                              <span className="min-w-0 truncate">{failureInfo}</span>
+                            </span>
+                          ) : null}
+                          {item.statusCode !== undefined ? (
+                            <span className="rounded-full bg-[var(--surface-2)] px-2 py-0.5 text-[var(--text-secondary)]">
+                              HTTP {item.statusCode}
+                            </span>
+                          ) : null}
+                        </div>
+                        <span className="whitespace-nowrap text-[var(--text-tertiary)] md:justify-self-end">
                           {formatLatency(item.latencyMs, item.firstByteLatencyMs)} ·{' '}
                           {formatTimestamp(item.createdAt)}
                         </span>
                       </div>
 
-                      <div className="mt-1.5 grid gap-x-4 gap-y-1 text-xs md:grid-cols-2 xl:grid-cols-4">
-                        <RouteLogField
-                          label="规则"
-                          value={formatOptionalDisplayName(item.routeRuleName || routeRule?.name)}
-                          title={routeRuleTitle}
-                        />
-                        <RouteLogField
+                      <div
+                        data-testid="route-request-target-line"
+                        className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5 text-xs"
+                      >
+                        <RouteLogInlineField
                           label="重定向模型"
-                          value={formatOptionalDisplayName(item.canonicalModel)}
+                          value={canonicalModelName}
+                          tone="model"
+                          valueClassName="font-semibold"
                         />
-                        <RouteLogField
-                          label="请求原始模型"
-                          value={formatOptionalDisplayName(
-                            item.requestedModel || item.resolvedModel
-                          )}
-                        />
-                        <RouteLogField
-                          label="站点优先级"
-                          value={resolveSitePriority(item, displayItem, routeLogContext)}
-                        />
-                      </div>
-
-                      <div className="mt-1 grid gap-x-4 gap-y-1 text-xs md:grid-cols-2 xl:grid-cols-4">
-                        <RouteLogField label="站点" value={siteOrConfigName} />
-                        <RouteLogField
-                          label="账户"
-                          value={
-                            customCli
-                              ? NONE_TEXT
-                              : formatOptionalDisplayName(
-                                  routeSource?.accountName || item.accountName
-                                )
-                          }
-                        />
-                        <RouteLogField
-                          label="分组"
-                          value={
-                            customCli ? NONE_TEXT : formatOptionalDisplayName(item.userGroupKey)
-                          }
-                        />
-                        <RouteLogField
-                          label="API Key"
-                          value={
-                            customCli
-                              ? DEFAULT_API_KEY_NAME
-                              : formatOptionalDisplayName(item.apiKeyName)
-                          }
-                        />
-                      </div>
-
-                      <div className="mt-1 grid gap-x-4 gap-y-1 text-xs md:grid-cols-2 xl:grid-cols-4">
-                        <RouteLogField label="总Token" value={costInfo.totalTokens} />
-                        <RouteLogField label="输入Token" value={costInfo.promptTokens} />
-                        <RouteLogField label="输出Token" value={costInfo.completionTokens} />
-                        <RouteLogField label="缓存创建" value={costInfo.cacheCreationTokens} />
-                        <RouteLogField label="缓存命中" value={costInfo.cacheReadTokens} />
-                        <RouteLogField
-                          label="预计金额"
-                          value={costInfo.estimatedCost}
-                          title={costInfo.estimatedCostTitle}
-                          note={costInfo.estimatedCostNote}
-                        />
-                      </div>
-
-                      {failureInfo ? (
-                        <div
-                          data-testid="route-request-failure-info"
-                          className="mt-1.5 flex min-w-0 items-center gap-1 overflow-hidden whitespace-nowrap text-xs text-[var(--danger)]"
-                          title={failureInfo}
+                        <span
+                          aria-label="指向重定向模型"
+                          className="inline-flex h-4 items-center px-0.5 text-[11px] font-semibold leading-4 text-[var(--text-tertiary)]"
                         >
-                          <span className="shrink-0 text-[var(--danger)]/80">失败信息</span>
-                          <span className="min-w-0 truncate">{failureInfo}</span>
-                        </div>
-                      ) : null}
+                          ←
+                        </span>
+                        <RouteLogInlineField
+                          label="请求原始模型"
+                          value={requestedModelName}
+                          tone="model"
+                        />
+                        <RouteLogInlineField
+                          label="站点"
+                          value={siteOrConfigName}
+                          tone="source"
+                          suffix={
+                            <span
+                              data-testid="route-request-site-priority"
+                              className="ml-1 inline-flex shrink-0 items-center rounded-full bg-[var(--accent-soft-strong)] px-1.5 py-0 text-[10px]"
+                            >
+                              <span className="text-[var(--text-tertiary)]">优先级 </span>
+                              <span className="text-[var(--text-primary)]">{sitePriority}</span>
+                            </span>
+                          }
+                        />
+                        <RouteLogInlineField
+                          label="账户"
+                          value={accountDisplayName}
+                          tone="source"
+                        />
+                        <RouteLogInlineField
+                          label="分组"
+                          value={userGroupDisplayName}
+                          tone="source"
+                        />
+                        <RouteLogInlineField
+                          label="API Key"
+                          value={apiKeyDisplayName}
+                          tone="source"
+                        />
+                      </div>
+
+                      <div
+                        data-testid="route-request-token-line"
+                        className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5 text-xs"
+                      >
+                        <RouteLogInlineField
+                          label="总Token"
+                          value={costInfo.totalTokens}
+                          tone="usage"
+                          valueClassName="font-semibold tabular-nums"
+                        />
+                        <RouteLogInlineField
+                          label="输入Token"
+                          value={costInfo.promptTokens}
+                          tone="usage"
+                          valueClassName="tabular-nums"
+                        />
+                        <RouteLogInlineField
+                          label="输出Token"
+                          value={costInfo.completionTokens}
+                          tone="usage"
+                          valueClassName="tabular-nums"
+                        />
+                        <RouteLogInlineField
+                          label="缓存创建"
+                          value={costInfo.cacheCreationTokens}
+                          tone="usage"
+                          valueClassName="tabular-nums"
+                        />
+                        <RouteLogInlineField
+                          label="缓存命中"
+                          value={costInfo.cacheReadTokens}
+                          tone="usage"
+                          valueClassName="tabular-nums"
+                        />
+                        <span className="inline-flex min-w-0 items-center gap-1">
+                          <RouteLogInlineField
+                            label="预计金额"
+                            value={costInfo.estimatedCost}
+                            tone="cost"
+                            valueClassName="font-semibold tabular-nums"
+                          />
+                          <RouteLogCostFormulaIcon title={costInfo.estimatedCostTitle} />
+                        </span>
+                      </div>
                     </article>
                   );
                 })}

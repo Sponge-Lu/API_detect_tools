@@ -7,7 +7,7 @@
 
 import Logger from './utils/logger';
 import { unifiedConfigManager } from './unified-config-manager';
-import { notifyAppDataChanged } from './app-data-events';
+import { broadcastRendererEvent, notifyAppDataChanged } from './app-data-events';
 import type {
   RouteCliType,
   RouteOutcome,
@@ -28,6 +28,7 @@ import { resolveApiKeyId } from './route-model-registry-service';
 const log = Logger.scope('RouteAnalytics');
 const MAX_ROUTE_REQUEST_LOGS = 1000;
 const ROUTE_OVERVIEW_DEBOUNCE_MS = 1200;
+const ROUTE_REQUEST_LOG_APPENDED_EVENT = 'route:request-log-appended';
 
 /** 内存缓冲区，延迟写磁盘 */
 const pendingBuckets = new Map<string, RouteAnalyticsBucket>();
@@ -194,7 +195,7 @@ function appendRouteRequestLog(params: {
   cachedTokens?: number;
   error?: string;
   at: number;
-}): void {
+}): RouteRequestLogItem {
   const routingConfig = unifiedConfigManager.getRoutingConfig();
   const routeRule = params.routeRuleId
     ? routingConfig.rules.find(item => item.id === params.routeRuleId)
@@ -242,6 +243,8 @@ function appendRouteRequestLog(params: {
   if (routeRequestLogs.length > MAX_ROUTE_REQUEST_LOGS) {
     routeRequestLogs.length = MAX_ROUTE_REQUEST_LOGS;
   }
+
+  return { ...item };
 }
 
 function scheduleFlush() {
@@ -323,7 +326,7 @@ export function recordRouteRequest(params: {
   at?: number;
 }): void {
   const at = params.at ?? Date.now();
-  appendRouteRequestLog({
+  const logItem = appendRouteRequestLog({
     requestId: params.requestId,
     attempt: params.attempt,
     cliType: params.cliType,
@@ -349,6 +352,7 @@ export function recordRouteRequest(params: {
     error: params.error,
     at,
   });
+  broadcastRendererEvent(ROUTE_REQUEST_LOG_APPENDED_EVENT, logItem);
   notifyAppDataChanged('route-overview', ROUTE_OVERVIEW_DEBOUNCE_MS);
 
   const config = getAnalyticsConfig();

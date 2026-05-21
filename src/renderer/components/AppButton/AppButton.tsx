@@ -11,7 +11,8 @@ const variantStyles: Record<NonNullable<AppButtonProps['variant']>, string> = {
     'border border-transparent bg-[var(--accent-soft)] text-[var(--accent-strong)] hover:bg-[var(--accent-soft-strong)]',
   secondary:
     'border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] hover:bg-[var(--surface-2)]',
-  tertiary: 'border border-transparent bg-transparent text-[var(--text-secondary)] hover:bg-[var(--surface-2)]',
+  tertiary:
+    'border border-transparent bg-transparent text-[var(--text-secondary)] hover:bg-[var(--surface-2)]',
   danger:
     'border border-transparent bg-[var(--danger-soft)] text-[var(--danger)] hover:bg-[color-mix(in_srgb,var(--danger)_20%,transparent)]',
 };

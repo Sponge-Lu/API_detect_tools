@@ -85,6 +85,91 @@ describe('CliWrapperCompatService', () => {
     });
   });
 
+  it('does not turn Codex workspace cleanup EBUSY into a test failure', async () => {
+    const cleanupError = Object.assign(new Error('resource busy or locked'), { code: 'EBUSY' });
+    const cleanupPaths: string[] = [];
+    const workspaceCleaner = vi.fn(async (rootDir: string) => {
+      cleanupPaths.push(rootDir);
+      throw cleanupError;
+    });
+    const service = new CliWrapperCompatService(
+      1000,
+      async (options: CommandRunOptions) => {
+        const outputIndex = options.args.indexOf('-o');
+        const outputPath = options.args[outputIndex + 1];
+        await fs.writeFile(outputPath, '2', 'utf-8');
+
+        return {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+          timedOut: false,
+        };
+      },
+      workspaceCleaner
+    );
+
+    try {
+      await expect(
+        service.testCodexWithDetail('https://duckcoding.ai', 'codex-key', 'gpt-5.3-codex')
+      ).resolves.toEqual({
+        supported: true,
+        detail: {
+          responses: true,
+          replyText: '2',
+        },
+      });
+
+      expect(workspaceCleaner).toHaveBeenCalledTimes(1);
+    } finally {
+      await Promise.all(
+        cleanupPaths.map(rootDir => fs.rm(rootDir, { recursive: true, force: true }))
+      );
+    }
+  });
+
+  it('surfaces Codex JSON upstream errors before the CLI banner', async () => {
+    const service = new CliWrapperCompatService(1000, async () => ({
+      exitCode: 1,
+      stdout: '',
+      stderr: [
+        'OpenAI Codex v0.130.0',
+        '--------',
+        'ERROR: {"error":{"message":"Responses API is not supported by this provider.","type":"bad_response_status_code","code":"bad_response_status_code"}}',
+      ].join('\n'),
+      timedOut: false,
+    }));
+
+    await expect(
+      service.testCodexWithDetail('https://duckcoding.ai', 'codex-key', 'gpt-5.3-codex')
+    ).resolves.toMatchObject({
+      supported: false,
+      message:
+        'Codex 执行失败: Responses API is not supported by this provider. (bad_response_status_code)',
+    });
+  });
+
+  it('surfaces Codex upstream status errors instead of reconnect noise', async () => {
+    const service = new CliWrapperCompatService(1000, async () => ({
+      exitCode: 1,
+      stdout: '',
+      stderr: [
+        'WARNING: proceeding, even though we could not update PATH',
+        'ERROR: Reconnecting... 1/5',
+        'ERROR: unexpected status 403 Forbidden: 无权访问 codex 分组 (request id: req-1)',
+      ].join('\n'),
+      timedOut: false,
+    }));
+
+    await expect(
+      service.testCodexWithDetail('https://duckcoding.ai', 'codex-key', 'gpt-5.3-codex')
+    ).resolves.toMatchObject({
+      supported: false,
+      message:
+        'Codex 执行失败: unexpected status 403 Forbidden: 无权访问 codex 分组 (request id: req-1)',
+    });
+  });
+
   it('maps Gemini wrapper success to native=true and proxy=null', async () => {
     const service = new CliWrapperCompatService(1000, async (options: CommandRunOptions) => {
       const settingsPath = path.join(options.env.HOME!, '.gemini', 'settings.json');

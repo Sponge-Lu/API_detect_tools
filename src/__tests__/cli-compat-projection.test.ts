@@ -303,6 +303,7 @@ describe('cli compatibility projection', () => {
             success: false,
             source: 'routeProbe',
             statusCode: 503,
+            error: 'Codex 执行失败: No available channel for model gpt-5.4 under group codex',
             testedAt: 400,
           },
         },
@@ -338,7 +339,7 @@ describe('cli compatibility projection', () => {
     expect(projection.codex[1]).toMatchObject({
       model: 'gpt-4.1-mini',
       success: false,
-      message: '错误码 503',
+      message: '错误码 503: No available channel for model gpt-5.4 under group codex',
       timestamp: 400,
     });
     expect(projection.codex[2]).toBeNull();

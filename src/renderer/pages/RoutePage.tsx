@@ -32,7 +32,7 @@ export function RoutePage() {
       <div className="space-y-4">
         <div
           data-testid="route-page-primary-row"
-          className="grid gap-4 xl:grid-cols-[minmax(0,0.92fr)_minmax(360px,1.08fr)] xl:items-stretch"
+          className="grid gap-4 xl:grid-cols-[minmax(0,1.07fr)_minmax(360px,0.93fr)] xl:items-stretch"
         >
           <ServerSection className="h-full self-stretch" />
           <CliModelSection className="h-full self-stretch" />

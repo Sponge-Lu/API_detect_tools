@@ -5,7 +5,16 @@
  */
 
 import Logger from './utils/logger';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  lazy,
+  Suspense,
+  type ReactNode,
+} from 'react';
 import { XCircle, Loader2 } from 'lucide-react';
 import { ConfirmDialog, initialDialogState } from './components/ConfirmDialog';
 import { GlobalCommandBar } from './components/AppShell/GlobalCommandBar';
@@ -40,14 +49,20 @@ import type {
 import type { ThemeMode } from '../shared/theme/themePresets';
 export type { SiteConfig, DetectionResult } from '../shared/types/site';
 
-// 导入页面组件
-import { SitesPage } from './pages/SitesPage';
-import { DataOverviewPage } from './pages/DataOverviewPage';
-import { CustomCliPage } from './pages/CustomCliPage';
-import { CreditPage } from './pages/CreditPage';
-import { LogsPage } from './pages/LogsPage';
-import { RoutePage } from './pages/RoutePage';
-import { SettingsPage } from './pages/SettingsPage';
+// 导入页面组件（懒加载）
+const SitesPage = lazy(() => import('./pages/SitesPage').then(m => ({ default: m.SitesPage })));
+const DataOverviewPage = lazy(() =>
+  import('./pages/DataOverviewPage').then(m => ({ default: m.DataOverviewPage }))
+);
+const CustomCliPage = lazy(() =>
+  import('./pages/CustomCliPage').then(m => ({ default: m.CustomCliPage }))
+);
+const CreditPage = lazy(() => import('./pages/CreditPage').then(m => ({ default: m.CreditPage })));
+const LogsPage = lazy(() => import('./pages/LogsPage').then(m => ({ default: m.LogsPage })));
+const RoutePage = lazy(() => import('./pages/RoutePage').then(m => ({ default: m.RoutePage })));
+const SettingsPage = lazy(() =>
+  import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage }))
+);
 import { CliUsabilityTab } from './components/Route/Usability/CliUsabilityTab';
 import { normalizeSiteSortField } from './utils/siteSort';
 
@@ -416,6 +431,7 @@ declare global {
           params?: RouteRequestLogQuery
         ) => Promise<{ success: boolean; data?: RouteRequestLogItem[]; error?: string }>;
         clearRequestLogs: () => Promise<{ success: boolean; error?: string }>;
+        onRequestLogAppended?: (callback: (item: RouteRequestLogItem) => void) => () => void;
         fetchLatestLog: (params: {
           siteId: string;
           model?: string;
@@ -889,63 +905,71 @@ function App() {
             />
           ) : null}
 
-          <div
-            className={
-              visibleActiveTab === 'overview' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
+          <Suspense
+            fallback={
+              <div className="flex-1 flex items-center justify-center bg-[var(--app-bg)]">
+                <Loader2 className="h-8 w-8 animate-spin text-[var(--accent)]" />
+              </div>
             }
           >
-            <DataOverviewPage setPageHeaderActions={setOverviewPageHeaderActions} />
-          </div>
-          <div
-            className={
-              visibleActiveTab === 'sites' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
-            }
-          >
-            <SitesPage setPageHeaderActions={setSitesPageHeaderActions} />
-          </div>
-          <div
-            className={
-              visibleActiveTab === 'cli' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
-            }
-          >
-            <CustomCliPage />
-          </div>
-          <div
-            className={
-              visibleActiveTab === 'credit' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
-            }
-          >
-            <CreditPage />
-          </div>
-          <div
-            className={
-              visibleActiveTab === 'usability' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
-            }
-          >
-            <CliUsabilityTab setPageHeaderActions={setUsabilityPageHeaderActions} />
-          </div>
-          <div
-            className={
-              visibleActiveTab === 'route' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
-            }
-          >
-            <RoutePage />
-          </div>
-          <div
-            className={
-              visibleActiveTab === 'logs' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
-            }
-          >
-            <LogsPage activeView={activeLogsSubtab} />
-          </div>
+            <div
+              className={
+                visibleActiveTab === 'overview' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
+              }
+            >
+              <DataOverviewPage setPageHeaderActions={setOverviewPageHeaderActions} />
+            </div>
+            <div
+              className={
+                visibleActiveTab === 'sites' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
+              }
+            >
+              <SitesPage setPageHeaderActions={setSitesPageHeaderActions} />
+            </div>
+            <div
+              className={
+                visibleActiveTab === 'cli' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
+              }
+            >
+              <CustomCliPage />
+            </div>
+            <div
+              className={
+                visibleActiveTab === 'credit' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
+              }
+            >
+              <CreditPage />
+            </div>
+            <div
+              className={
+                visibleActiveTab === 'usability' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
+              }
+            >
+              <CliUsabilityTab setPageHeaderActions={setUsabilityPageHeaderActions} />
+            </div>
+            <div
+              className={
+                visibleActiveTab === 'route' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
+              }
+            >
+              <RoutePage />
+            </div>
+            <div
+              className={
+                visibleActiveTab === 'logs' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
+              }
+            >
+              <LogsPage activeView={activeLogsSubtab} />
+            </div>
 
-          <div
-            className={
-              visibleActiveTab === 'settings' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
-            }
-          >
-            <SettingsPage />
-          </div>
+            <div
+              className={
+                visibleActiveTab === 'settings' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
+              }
+            >
+              <SettingsPage />
+            </div>
+          </Suspense>
         </div>
       </div>
 

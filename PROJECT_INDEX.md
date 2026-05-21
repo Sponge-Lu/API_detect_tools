@@ -41,7 +41,7 @@
 | 模块 | 作用 |
 |------|------|
 | `src/main/main.ts` | Electron 生命周期、窗口创建、预加载绑定 |
-| `src/main/app-data-events.ts` | 主进程到渲染进程的数据变更通知桥，按域广播站点配置、站点快照和路由总览更新 |
+| `src/main/app-data-events.ts` | 主进程到渲染进程的数据变更通知桥，按域广播站点配置、站点快照和路由总览更新，并提供即时 renderer 事件广播工具 |
 | `src/main/app-storage-manifest.ts` | 本地存储清单，声明稳定配置、运行态缓存/统计、日志、备份、敏感设置和受保护浏览器状态的路径、owner、retention/cap 与备份边界 |
 | `src/main/app-storage-bundle.ts` | 基于本地存储清单创建/恢复 manifest 配置包，限制默认备份范围并兼容旧版 config-only 备份 |
 | `src/main/unified-config-manager.ts` | v3 配置加载、迁移、legacy 默认账户自愈修复、缺失 `site_type` 旧站点保持未决、原子写入、备份恢复、路由配置持久化与路径暂停状态恢复，以及兼容保存时清理已删站点的孤儿账户；删除最后一个账户时自动移除站点配置 |
@@ -52,7 +52,7 @@
 | `src/main/token-service.ts` | 登录初始化、按 site_type 选择端点与访问令牌策略、按站点类型驱动签到/浏览器回退、账号数据刷新 |
 | `src/main/api-service.ts` | 站点检测、HTTP 请求、模型接口响应格式容错、同日手动签到完成状态保留、旧站点首次检测时自动识别并写回 `site_type`、LDC 支付信息探测，并在检测缓存落盘后触发站点每日快照采集 |
 | `src/main/overview-service.ts` | 数据总览聚合服务，负责站点每日快照采集、查询与按日期汇总 |
-| `src/main/cli-wrapper-compat-service.ts` | 通过真实 Claude Code / Codex / Gemini CLI wrapper 做兼容性验证；当前 UI 统一通过该服务执行 CLI 可用性测试，使用临时目录隔离本机配置 |
+| `src/main/cli-wrapper-compat-service.ts` | 通过真实 Claude Code / Codex / Gemini CLI wrapper 做兼容性验证；当前 UI 统一通过该服务执行 CLI 可用性测试，使用临时目录隔离本机配置，并在 Windows 文件锁导致清理失败时避免覆盖真实检测结果 |
 | `src/main/custom-cli-config-service.ts` | 自定义 CLI 配置持久化与模型拉取服务，并为路由模型注册表生成自定义 CLI 虚拟通道标识 |
 | `src/main/handlers/*.ts` | `config:*`、`token:*`、`accounts:*`、`route:*`、`overview:*` 等 IPC 通道；自定义 CLI 配置保存后会同步路由模型 registry |
 | `src/main/route-*.ts` / `src/main/anyrouter-request-rewriter.ts` / `src/main/cli-protocol-adapter.ts` | 路由代理服务器、规则解析、模型注册表、自定义 CLI 路由来源、CLI 探测、probe-lock 定向测试、健康检查、统计分析；自定义 CLI 已拉取模型列表会过滤旧测试/选择残留；本地路由上游转发使用 Electron net raw 客户端并支持可选上游代理，透明成功 SSE 响应可边收边转发，流式首包等待仍受站点/配置超时约束，首个 SSE chunk 后活跃流空闲超时下限为 10 分钟，AnyRouter 通道对 Claude Code 保留原始工具语义并注入 Anthropic 指纹，对 Codex/Gemini 保持原生协议，其余显式协议适配统一走通用 CLI 协议转换器 |
@@ -72,7 +72,7 @@
 | `src/renderer/pages/CustomCliPage.tsx` | 自定义 CLI 配置页面；拉取模型后以最新模型列表清理该配置的旧 CLI 使用模型、测试模型与测试结果，并阻止旧本地编辑状态重新写回不属于当前配置的模型 |
 | `src/renderer/pages/CreditPage.tsx` | LDC 积分页面，展示 Linux Do Credit 账户信息、收支统计与充值入口 |
 | `src/renderer/pages/RoutePage.tsx` | 路由配置/操作页，组合代理服务与模型重定向，并引导用户跳转到数据总览查看统计 |
-| `src/renderer/pages/LogsPage.tsx` | 日志页内容容器，按 `logsSubtab` 展示会话事件或路由日志，并压缩展示请求尝试、站点优先级、token 与参考金额明细 |
+| `src/renderer/pages/LogsPage.tsx` | 日志页内容容器，按 `logsSubtab` 展示会话事件或路由日志，路由日志通过逐条 push 追加，并压缩展示请求尝试、站点优先级、token 与参考金额明细 |
 | `src/renderer/components/Route/*` | 路由页内部区块（模型重定向、CLI 可用性、服务器/统计面板） |
 | `src/renderer/services/cli-compat-projection.ts` | 将 `routing.cliProbe.latest` 投影为站点页/账户卡片兼容性结果与 CLI 配置弹窗 per-model 测试 slot，并处理来源标记、站点级回退和最新时间戳合并 |
 | `src/renderer/services/sessionEventLog.ts` | 将关键操作写入会话事件历史，供日志页展示 |
@@ -164,7 +164,7 @@
 ### CLI 兼容性测试
 
 1. 渲染进程中的 `useCliCompatTest`、站点页与 CLI 配置对话框统一调用 `cli-compat:test-with-wrapper`。
-2. 主进程由 `cli-wrapper-compat-service.ts` 在隔离的临时 `HOME` / `CODEX_HOME` 中拉起真实 CLI；Codex 与 Gemini 的测试 prompt 统一改走 `stdin`，Gemini 仅依赖隔离 `HOME/.gemini` 而不再覆写 `GEMINI_CLI_HOME`，并显式关闭 Gemini 自身 sandbox relaunch、附带 `--skip-trust` 以避免 `stdin` 被改写成 `--prompt` 或被 trusted workspace 检查拦截。
+2. 主进程由 `cli-wrapper-compat-service.ts` 在隔离的临时 `HOME` / `CODEX_HOME` 中拉起真实 CLI；Codex 与 Gemini 的测试 prompt 统一改走 `stdin`，Codex 会优先从 stderr 的 `ERROR:` / JSON error 中提取上游原因，且临时目录清理遇到 Windows 文件锁时会重试并只记录 warning，Gemini 仅依赖隔离 `HOME/.gemini` 而不再覆写 `GEMINI_CLI_HOME`，并显式关闭 Gemini 自身 sandbox relaunch、附带 `--skip-trust` 以避免 `stdin` 被改写成 `--prompt` 或被 trusted workspace 检查拦截。
 3. 站点管理兼容性测试与 CLI 可用性探测统一落到 `config.routing.cliProbe`：主进程保存 `history/latest`，并按站点下全部活跃账户分别探测；站点页手动测试以及统一 CLI 配置抽屉里的“测试已选模型”在保存成功后，渲染进程都会通过 `cli-compat-sync.ts` 重新加载配置、重投影对应账户卡片，并强制刷新一次 route CLI history 视图缓存；可用性页固定展示 7 天 history，条形图按 `probeRunId` 批次聚合同一次检测的多个模型，批次颜色按全成功/全失败/混合结果区分；站点检测页 Header 右侧提供定时探测开关、小时制间隔自动保存与立即探测。
 4. 由于真实测试不写入用户 CLI 配置目录，因此正常情况下无需备份或恢复测试前的本机 CLI 配置。
 
