@@ -50,6 +50,10 @@ import {
 
 type RouteWindow = RouteAnalyticsWindow;
 const ROUTE_WINDOW_OPTIONS: RouteWindow[] = ['24h', '7d'];
+const ROUTE_WINDOW_POINT_COUNTS: Record<RouteWindow, number> = {
+  '24h': 24,
+  '7d': 7,
+};
 const AGGREGATED_SITE_OPTION_ID = '__aggregated_site__';
 const AGGREGATED_SITE_OPTION_LABEL = '全部站点（聚合）';
 const CHECKIN_SITE_NAME_MAX_WIDTH = 7;
@@ -77,6 +81,7 @@ interface RouteDistribution {
 interface TrendPoint {
   key: string;
   label: string;
+  hasData: boolean;
   requestCount: number;
   successCount: number;
   failureCount: number;
@@ -146,6 +151,48 @@ function formatDateLabel(timestamp: number, window: RouteWindow): string {
   return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(date);
 }
 
+function floorRouteTrendDate(timestamp: number, window: RouteWindow): Date {
+  const date = new Date(timestamp);
+  if (window === '24h') {
+    date.setMinutes(0, 0, 0);
+    return date;
+  }
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function addRouteTrendStep(date: Date, window: RouteWindow, steps: number): Date {
+  const nextDate = new Date(date);
+  if (window === '24h') {
+    nextDate.setHours(nextDate.getHours() + steps);
+    return nextDate;
+  }
+  nextDate.setDate(nextDate.getDate() + steps);
+  return nextDate;
+}
+
+function buildRouteTrendKey(timestamp: number, window: RouteWindow): string {
+  const date = floorRouteTrendDate(timestamp, window);
+  if (window === '24h') {
+    return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}-${date.getHours()}`;
+  }
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+function createEmptyTrendPoint(timestamp: number, window: RouteWindow): TrendPoint {
+  return {
+    key: buildRouteTrendKey(timestamp, window),
+    label: formatDateLabel(timestamp, window),
+    hasData: false,
+    requestCount: 0,
+    successCount: 0,
+    failureCount: 0,
+    totalTokens: 0,
+    slowRequestCount: 0,
+    firstByteHistogram: {},
+  };
+}
+
 function formatSnapshotDayLabel(snapshotDate: string): string {
   return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(
     parseDayKey(snapshotDate)
@@ -154,30 +201,22 @@ function formatSnapshotDayLabel(snapshotDate: string): string {
 
 function buildRouteTrendPoints(buckets: RouteAnalyticsBucket[], window: RouteWindow): TrendPoint[] {
   const grouped = new Map<string, TrendPoint>();
+  const pointCount = ROUTE_WINDOW_POINT_COUNTS[window];
+  const latestTimestamp = Math.max(Date.now(), ...buckets.map(bucket => bucket.bucketStart));
+  const endDate = floorRouteTrendDate(latestTimestamp, window);
+  const startDate = addRouteTrendStep(endDate, window, -(pointCount - 1));
 
-  const toKey = (bucketStart: number) => {
-    const date = new Date(bucketStart);
-    if (window === '24h') {
-      return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}-${date.getHours()}`;
-    }
-    return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
-  };
+  for (let index = 0; index < pointCount; index += 1) {
+    const bucketDate = addRouteTrendStep(startDate, window, index);
+    const point = createEmptyTrendPoint(bucketDate.getTime(), window);
+    grouped.set(point.key, point);
+  }
 
   for (const bucket of [...buckets].sort((left, right) => left.bucketStart - right.bucketStart)) {
-    const key = toKey(bucket.bucketStart);
-    const current =
-      grouped.get(key) ||
-      ({
-        key,
-        label: formatDateLabel(bucket.bucketStart, window),
-        requestCount: 0,
-        successCount: 0,
-        failureCount: 0,
-        totalTokens: 0,
-        slowRequestCount: 0,
-        firstByteHistogram: {},
-      } satisfies TrendPoint);
+    const key = buildRouteTrendKey(bucket.bucketStart, window);
+    const current = grouped.get(key) || createEmptyTrendPoint(bucket.bucketStart, window);
 
+    current.hasData = true;
     current.requestCount += bucket.requestCount;
     current.successCount += bucket.successCount;
     current.failureCount += bucket.failureCount;
@@ -469,7 +508,8 @@ function buildSparklinePath(
   width: number,
   height: number,
   padding = 0,
-  pointLeftPercents?: number[]
+  pointLeftPercents?: number[],
+  startIndex = 0
 ): string {
   const coordinates = buildSparklineCoordinates(values, width, height, padding, pointLeftPercents);
   if (coordinates.length === 0) return '';
@@ -478,6 +518,8 @@ function buildSparklinePath(
   if (definedPointCount === 0) return '';
 
   if (definedPointCount === 1) {
+    if (startIndex > 0) return '';
+
     const point = coordinates.find(coordinate => coordinate.value !== null);
     if (!point) return '';
     const startX = Math.max(point.x - 8, padding);
@@ -486,6 +528,7 @@ function buildSparklinePath(
   }
 
   return coordinates
+    .slice(startIndex)
     .map(
       (coordinate, index) =>
         `${index === 0 ? 'M' : 'L'} ${coordinate.x.toFixed(2)} ${coordinate.y.toFixed(2)}`
@@ -591,6 +634,7 @@ function Sparkline({
   strokeDasharray,
   pointLeftPercents,
   alignBarsToPoints = false,
+  skipLeadingNullDraw = false,
   trendSeries,
 }: {
   values: Array<number | null>;
@@ -612,6 +656,7 @@ function Sparkline({
   strokeDasharray?: string;
   pointLeftPercents?: number[];
   alignBarsToPoints?: boolean;
+  skipLeadingNullDraw?: boolean;
   trendSeries?: string;
 }) {
   if (values.length === 0) {
@@ -644,6 +689,14 @@ function Sparkline({
   const pointLefts = coordinates
     .map(coordinate => `${((coordinate.x / chartWidth) * 100).toFixed(2)}%`)
     .join(',');
+  const firstDefinedIndex = values.findIndex(value => value !== null);
+  const lineStartIndex = skipLeadingNullDraw && firstDefinedIndex > 0 ? firstDefinedIndex : 0;
+  const leadingNullEndIndex =
+    skipLeadingNullDraw && firstDefinedIndex === -1
+      ? values.length
+      : skipLeadingNullDraw
+        ? lineStartIndex
+        : 0;
 
   return (
     <div
@@ -692,6 +745,10 @@ function Sparkline({
         {showBars
           ? barHeights.map((barHeight, index) => {
               const isEmpty = values[index] === null;
+              if (skipLeadingNullDraw && isEmpty && index < leadingNullEndIndex) {
+                return null;
+              }
+
               const coordinate = coordinates[index];
               const width = alignBarsToPoints ? alignedBarWidth : barWidth * 0.68;
               const x =
@@ -703,6 +760,7 @@ function Sparkline({
               return (
                 <rect
                   key={`bar-${index}`}
+                  data-trend-bar-point-index={trendSeries ? index : undefined}
                   data-trend-bar-center-left={
                     trendSeries && coordinate
                       ? `${((coordinate.x / chartWidth) * 100).toFixed(2)}%`
@@ -723,7 +781,14 @@ function Sparkline({
           : null}
         {!hideLine ? (
           <path
-            d={buildSparklinePath(values, chartWidth, chartHeight, pointPadding, pointLeftPercents)}
+            d={buildSparklinePath(
+              values,
+              chartWidth,
+              chartHeight,
+              pointPadding,
+              pointLeftPercents,
+              lineStartIndex
+            )}
             fill="none"
             stroke="currentColor"
             strokeWidth={strokeWidth}
@@ -999,6 +1064,7 @@ function RouteTrendChart({
                 strokeWidth={0}
                 pointLeftPercents={trendPointLeftPercents}
                 alignBarsToPoints
+                skipLeadingNullDraw
                 trendSeries="requests"
               />
             </div>
@@ -1011,6 +1077,7 @@ function RouteTrendChart({
                 heightClass="h-full"
                 strokeWidth={2.2}
                 pointLeftPercents={trendPointLeftPercents}
+                skipLeadingNullDraw
                 trendSeries="success-rate"
               />
             </div>
@@ -1024,6 +1091,7 @@ function RouteTrendChart({
                 heightClass="h-full"
                 strokeWidth={1.8}
                 pointLeftPercents={trendPointLeftPercents}
+                skipLeadingNullDraw
                 trendSeries="ttfb-p95"
               />
             </div>
@@ -1773,7 +1841,7 @@ function ModelHeatmapList({
             }
             className={`absolute box-border overflow-hidden border px-1.5 py-1 transition-[opacity,box-shadow] duration-150 ${
               isSelected
-                ? 'border-white shadow-[0_0_0_2px_var(--surface-3),0_4px_18px_-4px_rgba(0,0,0,0.45)] z-10'
+                ? 'border-[color-mix(in_srgb,var(--accent)_42%,var(--line-muted))] shadow-[0_0_0_2px_var(--surface-3),0_4px_18px_-4px_rgba(0,0,0,0.45)] z-10'
                 : 'border-[var(--surface-2)]'
             } ${dim ? 'opacity-40' : 'opacity-100'} ${onSelectModel ? 'cursor-pointer' : ''}`}
             style={{
@@ -1913,7 +1981,7 @@ function SiteTrendCard({
   return (
     <div
       aria-label={`${label} 趋势卡片`}
-      className="relative flex min-h-[208px] flex-col overflow-hidden rounded-[18px] border border-white/70 bg-[var(--surface-3)] px-4 pb-3 pt-4 shadow-[var(--shadow-sm)]"
+      className="relative flex min-h-[208px] flex-col overflow-hidden rounded-[18px] border border-[var(--line-muted)] bg-[var(--surface-3)] px-4 pb-3 pt-4 shadow-[var(--shadow-sm)]"
     >
       <div className="relative z-10 flex flex-col">
         <div className="flex items-start justify-between gap-3">
@@ -2725,8 +2793,18 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
     () => buildRouteTrendPoints(filteredBuckets, routeWindow),
     [filteredBuckets, routeWindow]
   );
-  const requestTrend = trendPoints.map(point => point.requestCount);
-  const successRateTrend = trendPoints.map(point => {
+  const hasTrendData = trendPoints.some(point => point.hasData);
+  const firstDataTrendIndex = trendPoints.findIndex(point => point.hasData);
+  const isLeadingEmptyTrendPoint = useCallback(
+    (index: number, point: TrendPoint) =>
+      (!hasTrendData || index < firstDataTrendIndex) && !point.hasData,
+    [firstDataTrendIndex, hasTrendData]
+  );
+  const requestTrend = trendPoints.map((point, index) =>
+    isLeadingEmptyTrendPoint(index, point) ? null : point.requestCount
+  );
+  const successRateTrend = trendPoints.map((point, index) => {
+    if (isLeadingEmptyTrendPoint(index, point)) return null;
     const denominator = point.successCount + point.failureCount;
     return denominator > 0 ? Number(((point.successCount / denominator) * 100).toFixed(1)) : null;
   });
@@ -2765,8 +2843,12 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
   );
   const ttfbTrend = useMemo(
     () =>
-      trendPoints.map(point => computeFirstBytePercentiles(point.firstByteHistogram).p95 ?? null),
-    [trendPoints]
+      trendPoints.map((point, index) =>
+        isLeadingEmptyTrendPoint(index, point)
+          ? null
+          : (computeFirstBytePercentiles(point.firstByteHistogram).p95 ?? null)
+      ),
+    [isLeadingEmptyTrendPoint, trendPoints]
   );
 
   const modelDistribution = useMemo(

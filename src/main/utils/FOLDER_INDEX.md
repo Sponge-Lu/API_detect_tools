@@ -24,7 +24,7 @@
 | 文件 | 职责 | 关键函数 |
 |------|------|--------|
 | **logger.ts** | 日志记录 | `info()`, `warn()`, `error()`, `debug()` |
-| **atomic-json.ts** | 原子文本/JSON 读写，统一配置、运行态缓存、迁移和备份后续写盘基础能力 | `writeTextFileAtomically()`, `writeJsonFileAtomically()`, `readJsonFile()` |
+| **atomic-json.ts** | 原子文本/JSON 读写，统一配置、运行态缓存、迁移和备份后续写盘基础能力；同目标写入串行化并对 Windows final rename 临时锁重试 | `writeTextFileAtomically()`, `writeJsonFileAtomically()`, `readJsonFile()` |
 | **file-utils.ts** | 文件操作 | `readFile()`, `writeFile()`, `deleteFile()` 等 |
 | **crypto-utils.ts** | 加密解密 | `encrypt()`, `decrypt()`, `hash()` |
 | **retry-utils.ts** | 重试机制 | `retry()`, `withRetry()` |
@@ -358,5 +358,5 @@ describe('retry-utils', () => {
 
 ---
 
-**版本**: 2.1.11  
-**更新日期**: 2026-01-06
+**版本**: 3.0.3
+**更新日期**: 2026-05-25

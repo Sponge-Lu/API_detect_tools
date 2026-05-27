@@ -35,14 +35,14 @@
 | **useSiteGroups.test.ts** | Hook 测试 | useSiteGroups Hook |
 | **webdav-config.test.ts** | WebDAV 配置测试 | WebDAV 配置 |
 | **unified-config-manager.test.ts** | 配置恢复与持久化回归测试 | UnifiedConfigManager 损坏恢复、备份回滚、原子保存、legacy 默认账户修复、旧站点缺失 `site_type` 不默认补值、保存配置不丢站点每日快照、路由路径暂停状态恢复 |
-| **atomic-json.test.ts** | 原子 JSON 工具测试 | 原子写入、缺失文件默认值、normalize 读取、失败临时文件清理 |
+| **atomic-json.test.ts** | 原子 JSON 工具测试 | 原子写入、缺失文件默认值、normalize 读取、失败临时文件清理、同目标串行写入和 Windows final rename 临时错误重试 |
 | **storage-manifest.test.ts** | 应用存储清单测试 | 本地存储 owner/path/retention/cap/备份边界、受保护浏览器状态不变更约束 |
-| **app-storage-bundle.test.ts** | 应用存储配置包测试 | manifest 配置包纳入/排除边界、bundle 恢复、legacy config-only 恢复清理运行态 |
+| **app-storage-bundle.test.ts** | 应用存储配置包测试 | manifest 配置包纳入/排除边界、bundle 恢复、legacy config-only 恢复保留运行态 sidecar |
 | **backup-manager.test.ts** | 本地备份管理测试 | 自动备份节流、内容去重、强制备份与保留数量 |
 | **migrate-config-v224-to-v301-script.test.ts** | 配置迁移脚本测试 | v2.1.24 config 拆分为 clean config、runtime-cache 与 route state，重复运行保留已有 state |
-| **route-cli-probe-service.test.ts** | CLI 探测多账户回归测试 | 同站点全部活跃账户覆盖、错误码透传、旧配置兼容 |
-| **route-model-registry-service.test.ts** | 路由模型注册表服务测试 | display item、厂商优先级、canonical 映射与自定义 CLI 来源 |
-| **route-proxy-service.test.ts** | 路由代理调度回归测试 | canonical-only 规则命中前提下的 per-rawModel 尝试计划、上游 URL 构造、Gemini path/key 重写、AnyRouter beta path、流式请求首包超时与首个 SSE chunk 后 10 分钟活跃流空闲超时下限、provider usage/cache token 解析 |
+| **route-cli-probe-service.test.ts** | CLI 探测多账户回归测试 | 同站点全部活跃账户覆盖、活跃 API Key 选择、probe-lock `probeRunId` 传递、错误码透传、旧配置兼容 |
+| **route-model-registry-service.test.ts** | 路由模型注册表服务测试 | display item、厂商优先级、canonical 映射与自定义 CLI 来源，覆盖 `manualModels` 手动模型同步 |
+| **route-proxy-service.test.ts** | 路由代理调度回归测试 | canonical-only 规则命中前提下的 per-rawModel 尝试计划、probe-lock loopback 限制/终止失败/单模型上游尝试预算、首次上游结果缓存且不被 budget 覆盖、Gemini 内部辅助模型阻断、上游 URL 构造、Gemini path/key 重写、AnyRouter beta path、流式请求首包超时与首个 SSE chunk 后 10 分钟活跃流空闲超时下限、provider usage/cache token 解析 |
 | **cli-protocol-adapter.test.ts** | CLI 协议适配器请求/响应转换测试 | Claude/Codex/Gemini 三类源 CLI 与 Anthropic Messages / OpenAI Chat Completions / OpenAI Responses 三类目标协议之间的 text/tool_use/tool_result/function_call 双向转换，流式 SSE 与非流式 JSON 矩阵，empty_conversation / unsupported_content 显式抛 `CliProtocolAdapterError` |
 | **anyrouter-timeout.test.ts** | AnyRouter 站点识别测试 | `Any Router` / `AnyRouter` / 分隔符变体归一化命中，带额外前后缀的站点名不误判 |
 | **anyrouter-rewriter.test.ts** | AnyRouter 协议处理测试 | Claude Code 指纹改写、Codex 原生 Responses 补齐 metadata.user_id、Gemini 原生透传 |
@@ -55,11 +55,11 @@
 | **auto-refresh.property.test.ts** | 自动刷新属性测试 | 自动刷新逻辑 |
 | **cli-compat-persistence.property.test.ts** | CLI 兼容性持久化测试 | CLI 兼容性数据 |
 | **cli-compat-service.property.test.ts** | CLI 兼容性服务测试 | CliCompatService（含双端点测试） |
-| **cli-wrapper-compat-service.test.ts** | 真实 CLI wrapper 兼容性测试 | CliWrapperCompatService 的临时目录、隔离配置、stdin prompt 注入、结果解析、Codex 上游错误摘要与临时目录清理重试 |
+| **cli-wrapper-compat-service.test.ts** | 真实 CLI wrapper 兼容性测试 | CliWrapperCompatService 的临时目录、隔离配置、stdin prompt 注入、结果解析、probe-lock 终止失败提前中止、首个上游成功覆盖后续 probe-lock budget noise、未观察到本地路由请求时的诊断提示、Codex 上游错误摘要与临时目录清理重试 |
 | **cli-config-generator.property.test.ts** | CLI 配置生成测试 | CLI 配置生成（含端点选择逻辑） |
 | **cli-config-status.test.tsx** | CLI 配置状态组件回归测试 | 本地路由代理 Base URL 在紧凑状态中显示为“本地路由”，并覆盖本地路由、站点与自定义 CLI 的当前模型小字 |
 | **custom-cli-config-editor-dialog.test.tsx** | 自定义 CLI 编辑器回归测试 | CustomCliConfigEditorDialog 的预览/应用按钮与分列测试流程 |
-| **custom-cli-config-store.test.ts** | 自定义 CLI 配置 Store 回归测试 | 拉取模型后清理旧 Base URL/API Key 遗留的 CLI 使用模型、测试模型与测试结果 |
+| **custom-cli-config-store.test.ts** | 自定义 CLI 配置 Store 回归测试 | 拉取模型后清理旧 Base URL/API Key 遗留的 CLI 使用模型、测试模型与测试结果，并保留 `manualModels` 手动模型 |
 | **custom-cli-config-handlers.test.ts** | 自定义 CLI 配置 IPC 回归测试 | 保存自定义 CLI 配置后同步路由模型 registry，并在同步失败时暴露错误 |
 | **unified-cli-config-dialog.test.tsx** | 统一 CLI 对话框回归测试 | UnifiedCliConfigDialog 在测试结果持久化后保持当前 CLI 页签，对预览配置域名不一致显示 warning，并显示 route/site detection 写入的最新同模型测试结果 |
 | **filter-model-logs.property.test.ts** | 日志过滤属性测试 | 日志过滤逻辑 |
@@ -67,13 +67,13 @@
 | **useAutoRefresh.property.test.ts** | 自动刷新 Hook 测试 | useAutoRefresh Hook |
 | **theme-system-redesign.test.tsx** | 主题系统重设计测试 | 4 主题模式切换、旧主题值迁移 |
 | **overlay-family-redesign.test.tsx** | Overlay 家族重设计测试 | modal 与 drawer 的统一 chrome 标记 |
-| **custom-cli-page-redesign.test.tsx** | 自定义 CLI 页面重设计测试 | registry + inspector 双栏布局 |
-| **data-overview-page.test.tsx** | 数据总览页回归测试 | 首页总览 KPI、站点榜单、规则解释、异常请求与快照趋势 |
+| **custom-cli-page-redesign.test.tsx** | 自定义 CLI 页面重设计测试 | registry + inspector 双栏布局，覆盖 CLI 模型搜索和手动输入 |
+| **data-overview-page.test.tsx** | 数据总览页回归测试 | 首页总览 KPI、站点榜单、规则解释、异常请求、快照趋势，以及路由趋势 `24h` / `7d` 部分数据窗口下的完整 X 轴与前置空桶绘制规则 |
 | **route-analytics-service.test.ts** | 路由分析服务回归测试 | 请求日志 token/cache token 字段、站点/账户/API Key 对象级 token 聚合 |
 | **route-workbench-redesign.test.tsx** | Route 页面重设计测试 | route 页回退为配置页，并引导到数据总览查看统计，覆盖重定向卡片路径恢复动作 |
 | **cli-usability-tab.test.tsx** | CLI 可用性页回归测试 | Header 检测设置自动保存、账户行渲染、history 批次聚合条形与探测结果明细，失败摘要同时显示错误码和上游错误正文 |
 | **sites-page-redesign.test.tsx** | 站点页重设计测试 | 多列列头、内联排序、高频动作、CLI 图标内联与右键菜单 parity，并覆盖 CLI 图标按时间戳显示最新 projected/persisted 测试状态 |
-| **logs-page.test.tsx** | 日志页回归测试 | 会话事件筛选、外部子页驱动的路由日志详情、逐条 push 追加、紧凑请求尝试列表、token/cache token/按次参考金额与自定义 CLI 显示 |
+| **logs-page.test.tsx** | 日志页回归测试 | 会话事件筛选、外部子页驱动的路由日志详情、逐条 push 追加、紧凑请求尝试网格、模型路径、站点路径说明、token/cache token/按次参考金额与自定义 CLI 显示 |
 | **toast-store.test.ts** | Toast Store 回归测试 | 可见队列上限、事件历史记录与清理 |
 | **close-behavior-manager.property.test.ts** | 窗口关闭行为测试 | CloseBehaviorManager 设置持久化、对话框显示条件与设置面板偏好映射 |
 | **config-detection.property.test.ts** | 配置检测属性测试 | ConfigDetectionService |
@@ -84,7 +84,7 @@
 | **useCredit.property.test.ts** | Credit Hook 属性测试 | useCredit Hook 自动刷新暂停逻辑 |
 | **useCredit.test.ts** | Credit Hook 回归测试 | 缓存恢复登录态、刷新失败向 UI 抛错 |
 | **credit-panel.property.test.ts** | Credit 面板属性测试 | CreditPanel 差值颜色编码、日期格式化、交易状态徽章、交易金额格式化 |
-| **theme-token-contract.property.test.tsx** | 主题 token 合约属性测试 | 四主题模式、主题归一化、中性 token、AppButton 主题接线 |
+| **theme-token-contract.property.test.tsx** | 主题 token 合约属性测试 | 浅/暗双主题模式、主题归一化、中性 token、AppButton 主题接线 |
 | **app-button.property.test.tsx** | AppButton 原语属性测试 | AppButton 样式、交互、状态 |
 | **card-primitive-compatibility.property.test.tsx** | 卡片原语兼容属性测试 | 以 `AppCard` 契约为主，覆盖样式、交互、状态 |
 | **input-primitive-compatibility.property.test.tsx** | 输入原语兼容属性测试 | `AppInput` / `AppSearchInput` 的样式、交互、状态 |
@@ -346,5 +346,5 @@ it('should call IPC', async () => {
 
 ---
 
-**版本**: 3.0.1  
-**更新日期**: 2026-05-06 - 同步 CLI 配置状态模型小字测试说明
+**版本**: 3.0.3
+**更新日期**: 2026-05-27 - 同步 probe-lock、API Key 活跃状态、路由日志紧凑展示、存储稳定性测试说明与路由趋势完整时间轴测试说明

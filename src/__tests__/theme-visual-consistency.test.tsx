@@ -106,6 +106,7 @@ describe('theme visual consistency', () => {
   it('defines a neutral global token contract instead of the legacy ios token layer', () => {
     expect(globalCss).toContain('--app-bg:');
     expect(globalCss).toContain('--surface-1:');
+    expect(globalCss).toContain('--line-muted:');
     expect(globalCss).toContain('--line-soft:');
     expect(globalCss).toContain('--text-primary:');
     expect(globalCss).toContain('--accent:');

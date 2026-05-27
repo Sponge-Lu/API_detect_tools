@@ -1,0 +1,53 @@
+{
+  "id": "data-overview-route-view-stitch-redesign",
+  "name": "data-overview-route-view-stitch-redesign",
+  "title": "brainstorm: redesign data overview route view with stitch",
+  "description": "Redesign the route-data view in DataOverviewPage to be simpler, elegant, theme-aligned, and fit without outer-page scrolling at the largest desktop window.",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "hang",
+  "assignee": "hang",
+  "createdAt": "2026-04-28",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "brainstorm"
+    },
+    {
+      "phase": 2,
+      "action": "research"
+    },
+    {
+      "phase": 3,
+      "action": "implement"
+    },
+    {
+      "phase": 4,
+      "action": "check"
+    },
+    {
+      "phase": 5,
+      "action": "update-spec"
+    },
+    {
+      "phase": 6,
+      "action": "record-session"
+    }
+  ],
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "04-25-04-25-route-statistics-page",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

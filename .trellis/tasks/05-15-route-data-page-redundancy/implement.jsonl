@@ -1,0 +1,6 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Row 1-3 子组件拆分需遵循组件规范"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "联动 state（scope/selectedModel）需要走 Zustand 或本地 state 决策"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "拆出 useRouteOverviewState 等 hook 时遵循 hook 规范"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用 Sparkline/squarifiedTreemap/computeLatencyPercentiles 等既有原语"}

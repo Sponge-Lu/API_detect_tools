@@ -141,7 +141,7 @@ try {
 | 事件 | 请求参数 | 响应数据 | 职责 |
 |------|---------|--------|------|
 | `cli-compat:test-with-wrapper` | `{ siteUrl, configs }` | `{ results: [...] }` | 使用真实 CLI wrapper 测试 CLI 兼容性 |
-| `cli-compat:save-result` | `{ siteUrl, result }` | `{ success }` | 保存测试结果 |
+| `cli-compat:save-result` | `{ siteUrl, result }` | `{ success }` | 保存测试结果，并写入 `routing.cliProbe.latest/history` 供站点页、配置抽屉和 CLI 可用性视图共用 |
 | `cli-compat:save-config` | `{ siteUrl, cliConfig }` | `{ success }` | 保存 CLI 配置 |
 | `cli-compat:write-config` | `{ cliType, files, applyMode }` | `{ success, writtenPaths }` | 写入配置文件 |
 
@@ -302,5 +302,5 @@ describe('API Handlers', () => {
 
 ---
 
-**版本**: 2.1.24
-**更新日期**: 2026-03-11
+**版本**: 3.0.3
+**更新日期**: 2026-05-25

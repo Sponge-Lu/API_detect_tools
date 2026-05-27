@@ -97,16 +97,22 @@ function extractStatusCodeFromMessage(message?: string): number | undefined {
 }
 
 function summarizeCliFailure(message?: string, statusCode?: number): string | undefined {
+  const normalized = message?.replace(/\s+/g, ' ').trim();
+  if (statusCode && normalized) {
+    return normalized.length <= 180
+      ? `错误码 ${statusCode}: ${normalized}`
+      : `错误码 ${statusCode}: ${normalized.slice(0, 177)}...`;
+  }
+
   if (statusCode) {
     return `错误码 ${statusCode}`;
   }
 
-  const normalized = message?.replace(/\s+/g, ' ').trim();
   if (!normalized) {
     return undefined;
   }
 
-  return normalized.length <= 96 ? normalized : `${normalized.slice(0, 93)}...`;
+  return normalized.length <= 180 ? normalized : `${normalized.slice(0, 177)}...`;
 }
 
 function normalizeBaseUrl(url: string): string {
@@ -722,6 +728,7 @@ async function runCliCompatibilityTests(
         accountId: routeTarget.accountId,
         apiKeyId: routeTarget.apiKeyId,
         cliType: config.cliType,
+        probeRunId: `manual_${testedAt}_${Math.random().toString(36).slice(2, 7)}`,
         canonicalModel: config.model,
         rawModel: config.model,
         targetProtocol: routeTarget.targetProtocol,

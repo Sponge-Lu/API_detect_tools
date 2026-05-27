@@ -20,12 +20,28 @@ import type {
   CodexTestDetail,
   GeminiTestDetail,
 } from './cli-compat-service';
+import {
+  clearRouteProbeLockTerminalFailure,
+  getRouteProbeLockFirstUpstreamResult,
+  subscribeRouteProbeLockRequest,
+  subscribeRouteProbeLockTerminalFailure,
+  type RouteProbeLockUpstreamResult,
+} from './route-probe-lock';
 
 const TEST_PROMPT = 'What is 1+1? Reply with only 2. Do not use tools.';
 const EXPECTED_ANSWER = '2';
 const log = Logger.scope('CliWrapperCompatService');
 const WORKSPACE_CLEANUP_RETRY_DELAYS_MS = [50, 150, 500, 1000];
 const TRANSIENT_WORKSPACE_CLEANUP_ERROR_CODES = new Set(['EBUSY', 'ENOTEMPTY', 'EPERM', 'EACCES']);
+const EARLY_TERMINATION_GRACE_MS = 2000;
+const TERMINAL_CLI_ERROR_CODE_PATTERN =
+  /\b(?:all_channels_failed|all_route_paths_disabled|bad_response_status_code|invalid_api_key|no_channels|no_matching_rule|probe_lock_cli_mismatch|probe_lock_forbidden)\b/i;
+const TERMINAL_HTTP_STATUS_PATTERN =
+  /\b(?:http(?:\s+status)?|response\s+status|status(?:\s+code)?|unexpected\s+status)\D*([45]\d{2})\b/i;
+const PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_PATTERN =
+  /\bprobe_lock_upstream_attempt_exhausted\b|CLI probe-lock allows onl[yu] one upstream request per model test/i;
+const PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_SUMMARY =
+  'HTTP 400（应用侧 probe-lock 限制）：CLI 在一次模型测试中发起了多次上游请求，应用只允许一次真实上游请求。';
 
 export interface CliWrapperTestConfig {
   cliType: 'claudeCode' | 'codex' | 'geminiCli';
@@ -46,6 +62,7 @@ export interface CommandRunOptions {
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
   stdin?: string;
+  abortSignal?: AbortSignal;
 }
 
 export interface CommandRunResult {
@@ -54,6 +71,9 @@ export interface CommandRunResult {
   stderr: string;
   timedOut: boolean;
   spawnError?: string;
+  terminalError?: string;
+  observedProbeRequest?: boolean;
+  probeLockFirstUpstreamResult?: RouteProbeLockUpstreamResult;
 }
 
 type CommandRunner = (options: CommandRunOptions) => Promise<CommandRunResult>;
@@ -125,6 +145,109 @@ function isExpectedAnswer(value: string | null | undefined): boolean {
   return normalized === EXPECTED_ANSWER || normalized.includes(EXPECTED_ANSWER);
 }
 
+function collectProbeResponseText(value: unknown, keyHint = '', depth = 0): string[] {
+  if (depth > 6 || value === undefined || value === null) {
+    return [];
+  }
+
+  const textLeafKeys = new Set([
+    'result',
+    'response',
+    'content',
+    'text',
+    'output_text',
+    'completion',
+  ]);
+  const textContainerKeys = new Set([
+    'message',
+    'delta',
+    'output',
+    'choices',
+    'candidates',
+    'parts',
+  ]);
+
+  if (typeof value === 'string') {
+    return textLeafKeys.has(keyHint) ? [value] : [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap(item => collectProbeResponseText(item, '', depth + 1));
+  }
+
+  if (typeof value !== 'object') {
+    return [];
+  }
+
+  const texts: string[] = [];
+  for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+    if (textLeafKeys.has(key) || textContainerKeys.has(key)) {
+      texts.push(...collectProbeResponseText(nestedValue, key, depth + 1));
+    }
+  }
+  return texts;
+}
+
+function parseSseDataCandidates(raw: string): unknown[] {
+  const parsed: unknown[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) {
+      continue;
+    }
+
+    const payload = trimmed.slice('data:'.length).trim();
+    if (!payload || payload === '[DONE]') {
+      continue;
+    }
+
+    try {
+      parsed.push(JSON.parse(payload));
+    } catch {
+      parsed.push(payload);
+    }
+  }
+  return parsed;
+}
+
+function extractProbeLockResponseText(raw: string | undefined): string | null {
+  const normalized = normalizeReplyText(raw);
+  if (!normalized) {
+    return null;
+  }
+
+  if (!normalized.includes('{') && !normalized.includes('[')) {
+    return normalized;
+  }
+
+  const candidates = [...parseJsonCandidates(raw || ''), ...parseSseDataCandidates(raw || '')];
+  const texts = candidates.flatMap(candidate => collectProbeResponseText(candidate));
+  return normalizeReplyText(texts.join(' ')) || null;
+}
+
+function getProbeLockExpectedReplyText(result?: RouteProbeLockUpstreamResult): string | null {
+  if (!result?.success) {
+    return null;
+  }
+
+  const responseText = extractProbeLockResponseText(result.responseSummary);
+  return isExpectedAnswer(responseText) ? responseText : null;
+}
+
+function summarizeProbeLockUpstreamFailure(
+  result?: RouteProbeLockUpstreamResult
+): string | undefined {
+  if (!result || result.success) {
+    return undefined;
+  }
+
+  return (
+    summarizeTerminalError(result.error) ??
+    summarizeTerminalError(result.responseSummary) ??
+    (result.statusCode ? `HTTP ${result.statusCode}` : undefined)
+  );
+}
+
 function extractJsonStringField(raw: string, fieldNames: string[]): string | null {
   const parsed = parseJsonCandidates(raw);
   for (const item of parsed) {
@@ -185,42 +308,126 @@ function extractJsonErrorSummary(raw: string): string | null {
 }
 
 function summarizeCliErrorCandidate(raw: string): string | null {
-  const normalized = normalizeReplyText(raw.replace(/^ERROR:\s*/i, ''));
+  const normalized = normalizeReplyText(raw.replace(/^(?:ERROR|API Error):\s*/i, ''));
   if (!normalized || /^Reconnecting\.\.\./i.test(normalized)) {
     return null;
+  }
+
+  if (isProbeLockUpstreamAttemptExhausted(normalized)) {
+    return PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_SUMMARY;
   }
 
   return extractJsonErrorSummary(normalized) ?? normalized;
 }
 
 function summarizeCliErrorOutput(raw: string): string | undefined {
-  const summaries: string[] = [];
+  let latestUpstreamSummary: string | undefined;
+  let latestProbeLockSummary: string | undefined;
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim();
-    if (!/^ERROR:\s*/i.test(trimmed)) {
+    if (!/^(?:ERROR|API Error):\s*/i.test(trimmed)) {
       continue;
     }
 
     const summary = summarizeCliErrorCandidate(trimmed);
-    if (summary && summaries[summaries.length - 1] !== summary) {
-      summaries.push(summary);
+    if (!summary) {
+      continue;
+    }
+
+    if (summary === PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_SUMMARY) {
+      latestProbeLockSummary = summary;
+      continue;
+    }
+
+    latestUpstreamSummary = summary;
+  }
+
+  return latestUpstreamSummary ?? latestProbeLockSummary;
+}
+
+function summarizeTerminalError(raw: string | undefined): string | undefined {
+  if (!raw?.trim()) {
+    return undefined;
+  }
+
+  return summarizeCliErrorCandidate(raw) ?? normalizeReplyText(raw);
+}
+
+export function shouldAbortCliCommandOnOutput(raw: string): boolean {
+  const normalized = normalizeReplyText(raw);
+  if (!normalized) {
+    return false;
+  }
+
+  if (isOnlyProbeLockUpstreamAttemptExhaustedError(raw)) {
+    return false;
+  }
+
+  return (
+    TERMINAL_CLI_ERROR_CODE_PATTERN.test(normalized) ||
+    TERMINAL_HTTP_STATUS_PATTERN.test(normalized)
+  );
+}
+
+function isProbeLockUpstreamAttemptExhausted(raw: string): boolean {
+  return PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_PATTERN.test(raw);
+}
+
+function isOnlyProbeLockUpstreamAttemptExhaustedError(raw: string): boolean {
+  if (!isProbeLockUpstreamAttemptExhausted(raw)) {
+    return false;
+  }
+
+  for (const line of raw.split(/\r?\n/)) {
+    const normalized = normalizeReplyText(line.replace(/^(?:ERROR|API Error):\s*/i, ''));
+    if (!normalized || /^Reconnecting\.\.\./i.test(normalized)) {
+      continue;
+    }
+    if (isProbeLockUpstreamAttemptExhausted(normalized)) {
+      continue;
+    }
+    if (
+      TERMINAL_CLI_ERROR_CODE_PATTERN.test(normalized) ||
+      TERMINAL_HTTP_STATUS_PATTERN.test(normalized)
+    ) {
+      return false;
     }
   }
 
-  return summaries[summaries.length - 1];
+  return true;
 }
 
 function buildFailureMessage(label: string, result: CommandRunResult, fallback?: string): string {
+  const stderr = result.stderr.trim();
+  const stderrSummary = stderr ? summarizeCliErrorOutput(stderr) : undefined;
+  const terminalErrorSummary = summarizeTerminalError(result.terminalError);
+  const upstreamFailureSummary = summarizeProbeLockUpstreamFailure(
+    result.probeLockFirstUpstreamResult
+  );
+
+  if (terminalErrorSummary) {
+    return `${label} 执行失败: ${terminalErrorSummary}`;
+  }
+  if (upstreamFailureSummary) {
+    return `${label} 执行失败: ${upstreamFailureSummary}`;
+  }
+
   if (result.timedOut) {
+    if (stderrSummary) {
+      return `${label} 执行失败: ${stderrSummary}`;
+    }
     return `${label} 测试超时`;
   }
   if (result.spawnError) {
     return `${label} 启动失败: ${result.spawnError}`;
   }
 
-  const stderr = result.stderr.trim();
   if (stderr) {
-    return `${label} 执行失败: ${summarizeCliErrorOutput(stderr) ?? stderr}`;
+    return `${label} 执行失败: ${stderrSummary ?? stderr}`;
+  }
+
+  if (result.observedProbeRequest === false) {
+    return `${label} 执行失败: CLI 未向本地路由代理发起请求，请检查 CLI 是否已登录、是否支持环境变量代理配置，以及本机是否能执行该 CLI。`;
   }
 
   const stdout = result.stdout.trim();
@@ -246,6 +453,24 @@ function getErrorCode(error: unknown): string | undefined {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function getAbortSignalReason(signal: AbortSignal | undefined): string | undefined {
+  if (!signal || !('reason' in signal)) {
+    return undefined;
+  }
+
+  const reason = signal.reason as unknown;
+  if (typeof reason === 'string') {
+    return reason;
+  }
+  if (reason instanceof Error) {
+    return reason.message;
+  }
+  if (reason !== undefined) {
+    return String(reason);
+  }
+  return undefined;
 }
 
 function isTransientWorkspaceCleanupError(error: unknown): boolean {
@@ -324,6 +549,10 @@ export async function runCliCommand(options: CommandRunOptions): Promise<Command
     let stderr = '';
     let timedOut = false;
     let settled = false;
+    let earlyTerminationRequested = false;
+    let earlyTerminationTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    let terminalError: string | undefined;
+    let abortListener: (() => void) | undefined;
 
     const child = spawn(options.command, options.args, {
       cwd: options.cwd,
@@ -337,6 +566,12 @@ export async function runCliCommand(options: CommandRunOptions): Promise<Command
       if (settled) return;
       settled = true;
       clearTimeout(timeoutHandle);
+      if (earlyTerminationTimeoutHandle) {
+        clearTimeout(earlyTerminationTimeoutHandle);
+      }
+      if (abortListener) {
+        options.abortSignal?.removeEventListener('abort', abortListener);
+      }
       resolve(result);
     };
 
@@ -345,12 +580,46 @@ export async function runCliCommand(options: CommandRunOptions): Promise<Command
       terminateChildProcess(child.pid);
     }, options.timeoutMs);
 
+    const requestEarlyTermination = (reason?: string) => {
+      if (settled || timedOut || earlyTerminationRequested) return;
+      terminalError = reason ?? terminalError;
+      earlyTerminationRequested = true;
+      clearTimeout(timeoutHandle);
+      terminateChildProcess(child.pid);
+      earlyTerminationTimeoutHandle = setTimeout(() => {
+        settle({
+          exitCode: null,
+          stdout,
+          stderr,
+          timedOut: false,
+          terminalError,
+        });
+      }, EARLY_TERMINATION_GRACE_MS);
+    };
+
+    const inspectOutputForTerminalError = () => {
+      if (shouldAbortCliCommandOnOutput(`${stdout}\n${stderr}`)) {
+        requestEarlyTermination();
+      }
+    };
+
+    abortListener = () => {
+      requestEarlyTermination(getAbortSignalReason(options.abortSignal));
+    };
+    if (options.abortSignal?.aborted) {
+      abortListener();
+    } else {
+      options.abortSignal?.addEventListener('abort', abortListener, { once: true });
+    }
+
     child.stdout?.on('data', chunk => {
       stdout += chunk.toString();
+      inspectOutputForTerminalError();
     });
 
     child.stderr?.on('data', chunk => {
       stderr += chunk.toString();
+      inspectOutputForTerminalError();
     });
 
     child.on('error', error => {
@@ -360,6 +629,7 @@ export async function runCliCommand(options: CommandRunOptions): Promise<Command
         stderr,
         timedOut,
         spawnError: error.message,
+        terminalError,
       });
     });
 
@@ -369,6 +639,7 @@ export async function runCliCommand(options: CommandRunOptions): Promise<Command
         stdout,
         stderr,
         timedOut,
+        terminalError,
       });
     });
 
@@ -421,6 +692,39 @@ export class CliWrapperCompatService {
     };
   }
 
+  private async runCommandWatchingProbeLockFailure(
+    routeApiKey: string,
+    options: Omit<CommandRunOptions, 'abortSignal'>
+  ): Promise<CommandRunResult> {
+    const abortController = new AbortController();
+    let observedProbeRequest = false;
+    clearRouteProbeLockTerminalFailure(routeApiKey);
+    const unsubscribeRequest = subscribeRouteProbeLockRequest(routeApiKey, () => {
+      observedProbeRequest = true;
+    });
+    const unsubscribe = subscribeRouteProbeLockTerminalFailure(routeApiKey, failure => {
+      if (!abortController.signal.aborted) {
+        abortController.abort(failure.terminalError);
+      }
+    });
+
+    try {
+      const result = await this.commandRunner({
+        ...options,
+        abortSignal: abortController.signal,
+      });
+      const probeLockFirstUpstreamResult = getRouteProbeLockFirstUpstreamResult(routeApiKey);
+      return {
+        ...result,
+        observedProbeRequest,
+        ...(probeLockFirstUpstreamResult ? { probeLockFirstUpstreamResult } : {}),
+      };
+    } finally {
+      unsubscribe();
+      unsubscribeRequest();
+    }
+  }
+
   async testClaudeCode(url: string, apiKey: string, model: string): Promise<boolean> {
     const result = await this.testClaudeCodeWithMessage(url, apiKey, model);
     return result.supported;
@@ -460,8 +764,12 @@ export class CliWrapperCompatService {
         'utf-8'
       );
 
-      const env = this.buildIsolatedEnv(workspace.homeDir, {});
-      const commandResult = await this.commandRunner({
+      const env = this.buildIsolatedEnv(workspace.homeDir, {
+        ANTHROPIC_BASE_URL: normalizeBaseUrl(url),
+        ANTHROPIC_API_KEY: apiKey,
+        ANTHROPIC_AUTH_TOKEN: apiKey,
+      });
+      const commandResult = await this.runCommandWatchingProbeLockFailure(apiKey, {
         command: 'claude',
         args: ['--bare', '--print', '--output-format', 'json', '--model', model],
         cwd: workspace.workDir,
@@ -471,8 +779,12 @@ export class CliWrapperCompatService {
       });
 
       const content = extractClaudeResult(commandResult.stdout);
-      const replyText = summarizeReplyText(content);
-      const supported = commandResult.exitCode === 0 && isExpectedAnswer(content);
+      const probeLockReplyText = getProbeLockExpectedReplyText(
+        commandResult.probeLockFirstUpstreamResult
+      );
+      const replyText = summarizeReplyText(content) ?? summarizeReplyText(probeLockReplyText);
+      const supported =
+        (commandResult.exitCode === 0 && isExpectedAnswer(content)) || Boolean(probeLockReplyText);
       const message = supported
         ? undefined
         : buildFailureMessage(
@@ -539,7 +851,7 @@ export class CliWrapperCompatService {
         OPENAI_API_KEY: apiKey,
       });
 
-      const commandResult = await this.commandRunner({
+      const commandResult = await this.runCommandWatchingProbeLockFailure(apiKey, {
         command: 'codex',
         args: [
           'exec',
@@ -560,8 +872,12 @@ export class CliWrapperCompatService {
       });
 
       const output = (await readFileIfExists(outputFile)) ?? commandResult.stdout;
-      const replyText = summarizeReplyText(output);
-      const supported = commandResult.exitCode === 0 && isExpectedAnswer(output);
+      const probeLockReplyText = getProbeLockExpectedReplyText(
+        commandResult.probeLockFirstUpstreamResult
+      );
+      const replyText = summarizeReplyText(output) ?? summarizeReplyText(probeLockReplyText);
+      const supported =
+        (commandResult.exitCode === 0 && isExpectedAnswer(output)) || Boolean(probeLockReplyText);
       const message = supported
         ? undefined
         : buildFailureMessage('Codex', commandResult, `reply=${replyText ?? 'missing output'}`);
@@ -623,7 +939,7 @@ export class CliWrapperCompatService {
         GEMINI_CLI_TRUST_WORKSPACE: 'true',
       });
 
-      const commandResult = await this.commandRunner({
+      const commandResult = await this.runCommandWatchingProbeLockFailure(apiKey, {
         command: 'gemini',
         args: ['--skip-trust', '-m', model, '--output-format', 'json', '--approval-mode', 'plan'],
         cwd: workspace.workDir,
@@ -633,8 +949,12 @@ export class CliWrapperCompatService {
       });
 
       const content = extractGeminiResponse(commandResult.stdout);
-      const replyText = summarizeReplyText(content);
-      const supported = commandResult.exitCode === 0 && isExpectedAnswer(content);
+      const probeLockReplyText = getProbeLockExpectedReplyText(
+        commandResult.probeLockFirstUpstreamResult
+      );
+      const replyText = summarizeReplyText(content) ?? summarizeReplyText(probeLockReplyText);
+      const supported =
+        (commandResult.exitCode === 0 && isExpectedAnswer(content)) || Boolean(probeLockReplyText);
       const message = supported
         ? undefined
         : buildFailureMessage(

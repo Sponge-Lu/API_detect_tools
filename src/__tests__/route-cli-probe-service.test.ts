@@ -101,6 +101,7 @@ async function loadProbeService(config: {
       getAccountsBySiteId: vi.fn((siteId: string) =>
         config.accounts.filter(account => account.site_id === siteId)
       ),
+      persistRouteCliProbeSamples: vi.fn(),
       appendRouteCliProbeSamples: vi.fn(),
       upsertRouteCliProbeLatest: vi.fn(),
       pruneRouteCliProbeHistory: vi.fn(),
@@ -219,7 +220,7 @@ describe('route-cli-probe-service', () => {
     expect(result.totalSamples).toBe(2);
     expect(result.successSamples).toBe(2);
     expect(result.failureSamples).toBe(0);
-    const persistedSamples = vi.mocked(unifiedConfigManager.appendRouteCliProbeSamples).mock
+    const persistedSamples = vi.mocked(unifiedConfigManager.persistRouteCliProbeSamples).mock
       .calls[0][0];
     expect(new Set(persistedSamples.map(sample => sample.probeRunId)).size).toBe(1);
     expect(persistedSamples[0].probeRunId).toMatch(/^route_/);
@@ -232,7 +233,7 @@ describe('route-cli-probe-service', () => {
         createAccount('acct-default', {
           status: undefined,
           cached_data: {
-            api_keys: [{ id: 7, key: 'sk-default-key', status: 1 }],
+            api_keys: [{ id: 7, key: 'sk-default-key', status: 'active' }],
           },
         }),
       ],
@@ -314,13 +315,13 @@ describe('route-cli-probe-service', () => {
       await loadProbeService(config);
     startCliProbeTimer({ resumeFromLatest: true });
 
-    expect(unifiedConfigManager.appendRouteCliProbeSamples).not.toHaveBeenCalled();
+    expect(unifiedConfigManager.persistRouteCliProbeSamples).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(209 * 60 * 1000);
-    expect(unifiedConfigManager.appendRouteCliProbeSamples).not.toHaveBeenCalled();
+    expect(unifiedConfigManager.persistRouteCliProbeSamples).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(60 * 1000);
-    expect(unifiedConfigManager.appendRouteCliProbeSamples).toHaveBeenCalledTimes(1);
+    expect(unifiedConfigManager.persistRouteCliProbeSamples).toHaveBeenCalledTimes(1);
 
     stopCliProbeTimer();
   });

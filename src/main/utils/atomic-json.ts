@@ -64,22 +64,26 @@ async function delay(ms: number): Promise<void> {
 }
 
 async function renameWithRetries(tempPath: string, targetPath: string): Promise<void> {
+  let lastError: unknown;
+
   for (let attempt = 0; attempt <= RENAME_RETRY_DELAYS_MS.length; attempt += 1) {
     try {
       await fs.rename(tempPath, targetPath);
       return;
     } catch (error) {
+      lastError = error;
       const retryDelay = RENAME_RETRY_DELAYS_MS[attempt];
-      if (
-        !isTransientRenameError(error) ||
-        retryDelay === undefined ||
-        (await targetIsDirectory(targetPath))
-      ) {
+      if (!isTransientRenameError(error) || (await targetIsDirectory(targetPath))) {
         throw error;
+      }
+      if (retryDelay === undefined) {
+        break;
       }
       await delay(retryDelay);
     }
   }
+
+  throw lastError;
 }
 
 async function runWriteForTarget(targetPath: string, write: () => Promise<void>): Promise<void> {

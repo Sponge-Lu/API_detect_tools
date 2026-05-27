@@ -1268,7 +1268,7 @@ exports[`AppModal Compatibility Visual Regression > Modal with Title Icon > shou
 exports[`Card Primitive Compatibility Visual Regression > Card States > should render disabled card correctly 1`] = `
 <div
   aria-disabled="true"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] opacity-60 cursor-not-allowed"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] opacity-60 cursor-not-allowed"
   data-perf-monitor="blur"
   draggable="false"
 >
@@ -1283,7 +1283,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card States > should r
 exports[`Card Primitive Compatibility Visual Regression > Card States > should render drag-over card correctly 1`] = `
 <div
   aria-disabled="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5 border-[var(--accent)] scale-[1.02] shadow-[var(--shadow-xl)] [will-change:transform,border-color] cursor-move"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5 border-[var(--accent)] scale-[1.02] shadow-[var(--shadow-xl)] [will-change:transform,border-color] cursor-move"
   data-perf-monitor="blur"
   draggable="true"
 >
@@ -1298,7 +1298,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card States > should r
 exports[`Card Primitive Compatibility Visual Regression > Card States > should render draggable card correctly 1`] = `
 <div
   aria-disabled="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5 cursor-move"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5 cursor-move"
   data-perf-monitor="blur"
   draggable="true"
 >
@@ -1313,7 +1313,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card States > should r
 exports[`Card Primitive Compatibility Visual Regression > Card Variants > should render elevated card correctly 1`] = `
 <div
   aria-disabled="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-lg)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-lg)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
   data-perf-monitor="blur"
   draggable="false"
 >
@@ -1328,7 +1328,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card Variants > should
 exports[`Card Primitive Compatibility Visual Regression > Card Variants > should render grouped card correctly 1`] = `
 <div
   aria-disabled="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-sm)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-sm)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
   data-perf-monitor="blur"
   draggable="false"
 >
@@ -1343,7 +1343,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card Variants > should
 exports[`Card Primitive Compatibility Visual Regression > Card Variants > should render standard card correctly 1`] = `
 <div
   aria-disabled="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
   data-perf-monitor="blur"
   draggable="false"
 >
@@ -1360,7 +1360,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card with Expand Conte
   aria-controls=":ra:"
   aria-disabled="false"
   aria-expanded="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
   data-perf-monitor="blur"
   draggable="false"
 >
@@ -1387,7 +1387,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card with Expand Conte
   aria-controls=":rb:"
   aria-disabled="false"
   aria-expanded="true"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
   data-perf-monitor="blur"
   draggable="false"
 >
@@ -1412,7 +1412,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card with Expand Conte
 exports[`Card Primitive Compatibility Visual Regression > Card with Sub-components > should render card with divider correctly 1`] = `
 <div
   aria-disabled="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
   data-perf-monitor="blur"
   draggable="false"
 >
@@ -1437,7 +1437,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card with Sub-componen
 exports[`Card Primitive Compatibility Visual Regression > Card with Sub-components > should render card with footer correctly 1`] = `
 <div
   aria-disabled="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
   data-perf-monitor="blur"
   draggable="false"
 >
@@ -1457,7 +1457,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card with Sub-componen
 exports[`Card Primitive Compatibility Visual Regression > Card with Sub-components > should render card with header correctly 1`] = `
 <div
   aria-disabled="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
   data-perf-monitor="blur"
   draggable="false"
 >
@@ -1477,7 +1477,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card with Sub-componen
 exports[`Card Primitive Compatibility Visual Regression > Card with Sub-components > should render complete card correctly 1`] = `
 <div
   aria-disabled="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
   data-perf-monitor="blur"
   draggable="false"
 >
@@ -1512,7 +1512,7 @@ exports[`Card Primitive Compatibility Visual Regression > Card with Sub-componen
 exports[`Combined Components Visual Regression > Card with Form > should render card with form inputs correctly 1`] = `
 <div
   aria-disabled="false"
-  class="relative rounded-[var(--radius-lg)] overflow-hidden [will-change:transform,opacity] [backface-visibility:hidden] [transform:translateZ(0)] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
+  class="relative rounded-[var(--radius-lg)] overflow-hidden [backface-visibility:hidden] [transform:translateZ(0)] hover:[will-change:transform,opacity] focus-within:[will-change:transform,opacity] transition-[transform,opacity,box-shadow] duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] bg-[var(--surface-1)] border-2 border-transparent shadow-[var(--shadow-md)] backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] bg-opacity-95 [will-change:backdrop-filter] hover:shadow-[var(--shadow-lg)] hover:-translate-y-0.5"
   data-perf-monitor="blur"
   draggable="false"
 >

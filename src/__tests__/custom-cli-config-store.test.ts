@@ -9,6 +9,7 @@ function createConfig(): CustomCliConfig {
     baseUrl: 'https://custom.example.com',
     apiKey: 'sk-custom',
     models: ['old-model', 'fresh-model'],
+    manualModels: [],
     notes: '',
     cliSettings: {
       claudeCode: {
@@ -93,9 +94,64 @@ describe('custom cli config store', () => {
     expect(config.cliSettings.codex.editedFiles).toBeNull();
     expect(window.electronAPI.customCliConfig.save).toHaveBeenCalledWith(
       expect.objectContaining({
-        configs: [expect.objectContaining({ id: 'cfg-1', models: ['fresh-model', 'new-test'] })],
+        configs: [
+          expect.objectContaining({
+            id: 'cfg-1',
+            models: ['fresh-model', 'new-test'],
+            manualModels: [],
+          }),
+        ],
       })
     );
+  });
+
+  it('preserves manually entered models after fetching a new custom CLI model list', async () => {
+    useCustomCliConfigStore.setState({
+      configs: [
+        {
+          ...createConfig(),
+          manualModels: ['manual-model'],
+          cliSettings: {
+            ...createConfig().cliSettings,
+            codex: {
+              enabled: true,
+              model: 'manual-model',
+              testModels: ['manual-model', 'new-test'],
+              editedFiles: [{ path: '~/.codex/config.toml', content: 'model = "manual-model"' }],
+              testState: {
+                status: true,
+                testedAt: 40,
+                slots: [
+                  { model: 'manual-model', success: true, timestamp: 40 },
+                  { model: 'new-test', success: true, timestamp: 35 },
+                  null,
+                ],
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    await useCustomCliConfigStore.getState().fetchModels('cfg-1');
+
+    const config = useCustomCliConfigStore.getState().configs[0];
+    expect(config.models).toEqual(['fresh-model', 'new-test']);
+    expect(config.manualModels).toEqual(['manual-model']);
+    expect(config.cliSettings.codex.model).toBe('manual-model');
+    expect(config.cliSettings.codex.testModels).toEqual(['manual-model', 'new-test']);
+    expect(config.cliSettings.codex.editedFiles).toEqual([
+      { path: '~/.codex/config.toml', content: 'model = "manual-model"' },
+    ]);
+    expect(config.cliSettings.codex.testState).toMatchObject({
+      status: true,
+      testedAt: 40,
+      slots: [
+        { model: 'manual-model', success: true, timestamp: 40 },
+        { model: 'new-test', success: true, timestamp: 35 },
+        null,
+      ],
+    });
   });
 
   it('normalizes persisted stale model selections when loading configs', async () => {
@@ -107,10 +163,50 @@ describe('custom cli config store', () => {
     await useCustomCliConfigStore.getState().loadConfigs();
 
     const config = useCustomCliConfigStore.getState().configs[0];
+    expect(config.manualModels).toEqual([]);
     expect(config.cliSettings.codex.model).toBeNull();
     expect(config.cliSettings.codex.testModels).toEqual([]);
     expect(config.cliSettings.codex.testState).toBeNull();
     expect(config.cliSettings.claudeCode.testModels).toEqual(['fresh-model']);
+  });
+
+  it('normalizes persisted manual model selections when loading configs', async () => {
+    window.electronAPI.customCliConfig.load = vi.fn().mockResolvedValue({
+      configs: [
+        {
+          ...createConfig(),
+          manualModels: ['manual-model'],
+          cliSettings: {
+            ...createConfig().cliSettings,
+            codex: {
+              enabled: true,
+              model: 'manual-model',
+              testModels: ['manual-model'],
+              editedFiles: [{ path: '~/.codex/config.toml', content: 'model = "manual-model"' }],
+              testState: {
+                status: true,
+                testedAt: 50,
+                slots: [{ model: 'manual-model', success: true, timestamp: 50 }, null, null],
+              },
+            },
+          },
+        },
+      ],
+      activeConfigId: 'cfg-1',
+    });
+
+    await useCustomCliConfigStore.getState().loadConfigs();
+
+    const config = useCustomCliConfigStore.getState().configs[0];
+    expect(config.models).toEqual(['old-model', 'fresh-model']);
+    expect(config.manualModels).toEqual(['manual-model']);
+    expect(config.cliSettings.codex.model).toBe('manual-model');
+    expect(config.cliSettings.codex.testModels).toEqual(['manual-model']);
+    expect(config.cliSettings.codex.testState).toMatchObject({
+      status: true,
+      testedAt: 50,
+      slots: [{ model: 'manual-model', success: true, timestamp: 50 }, null, null],
+    });
   });
 
   it('prevents stale local editor saves from reintroducing models outside the fetched list', () => {
@@ -136,5 +232,38 @@ describe('custom cli config store', () => {
     expect(config.cliSettings.codex.testModels).toEqual([]);
     expect(config.cliSettings.codex.editedFiles).toBeNull();
     expect(config.cliSettings.codex.testState).toBeNull();
+  });
+
+  it('allows local editor saves to keep models explicitly marked as manual', () => {
+    useCustomCliConfigStore.getState().updateConfig('cfg-1', {
+      manualModels: ['manual-stale-model'],
+      cliSettings: {
+        ...createConfig().cliSettings,
+        codex: {
+          enabled: true,
+          model: 'manual-stale-model',
+          testModels: ['manual-stale-model'],
+          editedFiles: [{ path: '~/.codex/config.toml', content: 'model = "manual-stale-model"' }],
+          testState: {
+            status: true,
+            testedAt: 60,
+            slots: [{ model: 'manual-stale-model', success: true, timestamp: 60 }, null, null],
+          },
+        },
+      },
+    });
+
+    const config = useCustomCliConfigStore.getState().configs[0];
+    expect(config.manualModels).toEqual(['manual-stale-model']);
+    expect(config.cliSettings.codex.model).toBe('manual-stale-model');
+    expect(config.cliSettings.codex.testModels).toEqual(['manual-stale-model']);
+    expect(config.cliSettings.codex.editedFiles).toEqual([
+      { path: '~/.codex/config.toml', content: 'model = "manual-stale-model"' },
+    ]);
+    expect(config.cliSettings.codex.testState).toMatchObject({
+      status: true,
+      testedAt: 60,
+      slots: [{ model: 'manual-stale-model', success: true, timestamp: 60 }, null, null],
+    });
   });
 });

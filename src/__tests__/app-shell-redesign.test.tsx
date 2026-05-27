@@ -547,7 +547,7 @@ describe('app shell redesign', () => {
     expect(screen.getByRole('button', { name: '更新 v3.0.2' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: APP_PAGE_META.credit.title })).toBeInTheDocument();
     expect(screen.getByText(APP_PAGE_META.credit.description)).toBeInTheDocument();
-    expect(screen.getByText('Mock Credit Page')).toBeInTheDocument();
+    expect(await screen.findByText('Mock Credit Page')).toBeInTheDocument();
     expect(container.querySelector('.app-responsive-container')).not.toBeNull();
     expect(container.querySelector('.ios-responsive-container')).toBeNull();
     expect(mockSetActiveTab).not.toHaveBeenCalledWith('sites');
@@ -1052,7 +1052,7 @@ describe('app shell redesign', () => {
 
     render(<App />);
 
-    expect(screen.getByText('Mock Overview Page')).toBeInTheDocument();
+    expect(await screen.findByText('Mock Overview Page')).toBeInTheDocument();
     expect(
       screen.getByRole('heading', { name: APP_OVERVIEW_SUBPAGE_META.route.title })
     ).toBeInTheDocument();
@@ -1283,7 +1283,7 @@ describe('app shell redesign', () => {
 
     render(<App />);
 
-    expect(screen.getByText('Mock Route Page')).toBeInTheDocument();
+    expect(await screen.findByText('Mock Route Page')).toBeInTheDocument();
     expect(screen.queryByText('保存中...')).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: APP_PAGE_META.route.title })).toBeInTheDocument();
     expect(screen.getByText(APP_PAGE_META.route.description)).toBeInTheDocument();

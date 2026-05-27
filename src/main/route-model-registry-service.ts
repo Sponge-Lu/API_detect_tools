@@ -30,7 +30,7 @@ import {
   inferRouteModelVendor,
   parseRouteOverrideDisplayItemId,
 } from '../shared/types/route-proxy';
-import { BUILTIN_GROUP_IDS } from '../shared/types/site';
+import { BUILTIN_GROUP_IDS, isApiKeyActive } from '../shared/types/site';
 import type { AccountCredential, ApiKeyInfo, ModelPricingData } from '../shared/types/site';
 import type { CustomCliConfig } from '../shared/types/custom-cli-config';
 
@@ -165,14 +165,6 @@ export function resolveApiKeyId(apiKey: {
   return 'unknown';
 }
 
-function isActiveApiKey(apiKey: ApiKeyInfo): boolean {
-  if (apiKey.status === undefined || apiKey.status === null) {
-    return true;
-  }
-
-  return Number(apiKey.status) === 1;
-}
-
 function parseApiKeyModelSet(value: string | undefined): Set<string> | null {
   const trimmed = value?.trim();
   if (!trimmed) {
@@ -254,7 +246,7 @@ function collectAvailableApiKeys(
       return (
         !!group &&
         allowedGroups.has(group) &&
-        isActiveApiKey(apiKey) &&
+        isApiKeyActive(apiKey) &&
         apiKeySupportsOriginalModel(apiKey, originalModel)
       );
     })
@@ -298,8 +290,13 @@ function collectCustomCliModelCandidates(
   const fetchedModelSet = new Set(
     (config.models || []).map(model => model.trim()).filter(model => model.length > 0)
   );
+  const manualModelSet = new Set(
+    (config.manualModels || []).map(model => model.trim()).filter(model => model.length > 0)
+  );
   const hasFetchedModelList = fetchedModelSet.size > 0 || typeof config.lastModelFetch === 'number';
-  const fetchedModelAllowlist = hasFetchedModelList ? fetchedModelSet : undefined;
+  const modelAllowlist = hasFetchedModelList
+    ? new Set([...fetchedModelSet, ...manualModelSet])
+    : undefined;
 
   for (const model of fetchedModelSet) {
     addCustomCliModelCandidate(modelsByName, model, enabledCliTypes);
@@ -311,12 +308,12 @@ function collectCustomCliModelCandidates(
       continue;
     }
 
-    addCustomCliModelCandidate(modelsByName, setting.model, [cliType], fetchedModelAllowlist);
+    addCustomCliModelCandidate(modelsByName, setting.model, [cliType], modelAllowlist);
     for (const model of setting.testModels || []) {
-      addCustomCliModelCandidate(modelsByName, model, [cliType], fetchedModelAllowlist);
+      addCustomCliModelCandidate(modelsByName, model, [cliType], modelAllowlist);
     }
     for (const slot of setting.testState?.slots || []) {
-      addCustomCliModelCandidate(modelsByName, slot?.model, [cliType], fetchedModelAllowlist);
+      addCustomCliModelCandidate(modelsByName, slot?.model, [cliType], modelAllowlist);
     }
   }
 
@@ -369,6 +366,7 @@ function upsertRegistryEntry(
 function buildSeededDisplayItems(
   entries: Record<string, RouteModelRegistryEntry>,
   manualDisplayItems: RouteModelDisplayItem[],
+  previousSeededDisplayItems: RouteModelDisplayItem[],
   now: number
 ): RouteModelDisplayItem[] {
   const manualCanonicalNames = new Set(manualDisplayItems.map(item => item.canonicalName));
@@ -379,6 +377,9 @@ function buildSeededDisplayItems(
   }
 
   const seededSources = seededEntry.sources.slice();
+  const previousSeededItem = previousSeededDisplayItems.find(
+    item => item.canonicalName === seededEntry.canonicalName
+  );
 
   return [
     {
@@ -388,11 +389,21 @@ function buildSeededDisplayItems(
       sourceKeys: seededSources.map(source => source.sourceKey),
       originalModelOrder: Array.from(new Set(seededSources.map(source => source.originalModel))),
       priorityConfig: {
-        sitePriorities: {},
-        apiKeyPriorities: {},
+        sitePriorities: previousSeededItem?.priorityConfig?.sitePriorities ?? {},
+        apiKeyPriorities: previousSeededItem?.priorityConfig?.apiKeyPriorities ?? {},
+        ...(previousSeededItem?.priorityConfig?.disabledSiteIds?.length
+          ? { disabledSiteIds: previousSeededItem.priorityConfig.disabledSiteIds }
+          : {}),
+        ...(previousSeededItem?.priorityConfig?.disabledApiKeyPriorityKeys?.length
+          ? {
+              disabledApiKeyPriorityKeys:
+                previousSeededItem.priorityConfig.disabledApiKeyPriorityKeys,
+            }
+          : {}),
       },
+      runtimeConfig: previousSeededItem?.runtimeConfig,
       mode: 'seeded' as const,
-      createdAt: now,
+      createdAt: previousSeededItem?.createdAt ?? now,
       updatedAt: now,
     },
   ];
@@ -413,6 +424,7 @@ function buildDisplayItems(
           item => item.canonicalName !== DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME
         )
       : (previousDisplayItems ?? []);
+  const previousSeededDisplayItems = previousItems.filter(item => item.mode === 'seeded');
 
   const persistedDisplayItems = previousItems
     .map<RouteModelDisplayItem | null>(item => {
@@ -446,7 +458,12 @@ function buildDisplayItems(
 
   const manualDisplayItems = persistedDisplayItems.filter(item => item.mode === 'manual');
   return [
-    ...buildSeededDisplayItems(detectedEntries, manualDisplayItems, now),
+    ...buildSeededDisplayItems(
+      detectedEntries,
+      manualDisplayItems,
+      previousSeededDisplayItems,
+      now
+    ),
     ...manualDisplayItems,
   ];
 }

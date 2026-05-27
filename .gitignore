@@ -31,6 +31,7 @@ lpt2
 .kiro/
 .agent/
 .claude/
+.windsurf/
 
 # 本地配置（含敏感信息，不提交）
 .claude/settings.local.json
@@ -79,6 +80,5 @@ docs/
 outputs/
 output/
 openspec/
-.trellis/
 .agents/
 .playwright-mcp/

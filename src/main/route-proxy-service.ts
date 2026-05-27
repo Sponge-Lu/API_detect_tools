@@ -34,12 +34,19 @@ import {
 import { startHealthCheckTimer, stopHealthCheckTimer } from './route-health-service';
 import { recordRouteRequest } from './route-analytics-service';
 import type {
+  RouteChannelKey,
   RouteCliType,
+  RouteModelRegistryConfig,
   RouteOutcome,
+  RoutePathState,
   RouteRuntimeConfig,
   RoutingConfig,
 } from '../shared/types/route-proxy';
-import { normalizeRouteRuntimeConfig } from '../shared/types/route-proxy';
+import {
+  buildRouteApiKeyPriorityKey,
+  buildRoutePathStateKey,
+  normalizeRouteRuntimeConfig,
+} from '../shared/types/route-proxy';
 import { isAnyRouterSite } from '../shared/types/site';
 import { isCliTargetProtocolNativeEquivalent } from '../shared/types/cli-config';
 import {
@@ -55,8 +62,15 @@ import {
 } from './cli-protocol-adapter';
 import {
   buildRouteProxyBaseUrl,
+  consumeRouteProbeLockUpstreamAttempt,
+  getRouteProbeLockTerminalFailure,
   isLoopbackAddress,
+  notifyRouteProbeLockRequest,
+  notifyRouteProbeLockTerminalFailure,
   parseProbeLockRouteApiKey,
+  recordRouteProbeLockFirstUpstreamResult,
+  type RouteProbeLockTerminalFailure,
+  type RouteProbeLock,
 } from './route-probe-lock';
 
 const log = Logger.scope('RouteProxyService');
@@ -75,8 +89,11 @@ const ALL_ROUTE_PATHS_DISABLED_ERROR_CODE = 'all_route_paths_disabled';
 const ALL_ROUTE_PATHS_DISABLED_STATUS_CODE = 400;
 const ALL_ROUTE_PATHS_DISABLED_MESSAGE =
   'all_route_paths_disabled: All route paths for this rule are temporarily disabled. Restore route paths in the route rule UI or wait for the suspension to expire.';
+const PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_ERROR_CODE = 'probe_lock_upstream_attempt_exhausted';
+const PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_STATUS_CODE = 400;
 const ANYROUTER_REQUEST_TIMEOUT_MS = 120 * 1000;
 const ACTIVE_STREAM_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+export const ROUTE_SUCCESSFUL_PATH_AFFINITY_MS = 30 * 60 * 1000;
 const CLAUDE_COUNT_TOKENS_PATH = '/v1/messages/count_tokens';
 const CLAUDE_MESSAGES_COUNT_TOKENS_ENDPOINT = 'claude_messages_count_tokens';
 const LOCAL_COUNT_TOKENS_IMAGE_ESTIMATE = 2000;
@@ -94,15 +111,64 @@ export function classifyRouteStatusCode(statusCode: number): RouteOutcome {
   return 'failure';
 }
 
+function getEffectiveRouteDisplayItem(
+  registry: Pick<RouteModelRegistryConfig, 'displayItems'> | null | undefined,
+  canonicalModel: string | null | undefined
+): RouteModelRegistryConfig['displayItems'][number] | null {
+  if (!canonicalModel) {
+    return null;
+  }
+
+  return (
+    (registry?.displayItems ?? [])
+      .filter(item => item.canonicalName === canonicalModel)
+      .slice()
+      .sort((left, right) => {
+        if (left.updatedAt !== right.updatedAt) {
+          return right.updatedAt - left.updatedAt;
+        }
+
+        return right.createdAt - left.createdAt;
+      })[0] ?? null
+  );
+}
+
 export function resolveRouteRuntimeConfig(
   routing: Pick<RoutingConfig, 'modelRegistry'> | null | undefined,
   canonicalModel: string | null | undefined
 ): RouteRuntimeConfig {
-  const displayItem = routing?.modelRegistry?.displayItems?.find(
-    item => item.canonicalName === canonicalModel
-  );
+  const displayItem = getEffectiveRouteDisplayItem(routing?.modelRegistry, canonicalModel);
 
   return normalizeRouteRuntimeConfig(displayItem?.runtimeConfig);
+}
+
+function isChannelDisabledByPriorityConfig(
+  channel: Pick<RouteChannelKey, 'siteId' | 'accountId' | 'apiKeyId'>,
+  registry: Pick<RouteModelRegistryConfig, 'displayItems'> | null | undefined,
+  canonicalModel: string | null | undefined
+): boolean {
+  const priorityConfig = getEffectiveRouteDisplayItem(registry, canonicalModel)?.priorityConfig;
+  if (!priorityConfig) {
+    return false;
+  }
+
+  if ((priorityConfig.disabledSiteIds ?? []).includes(channel.siteId)) {
+    return true;
+  }
+
+  return (priorityConfig.disabledApiKeyPriorityKeys ?? []).includes(
+    buildRouteApiKeyPriorityKey(channel.siteId, channel.accountId, channel.apiKeyId)
+  );
+}
+
+function filterChannelsByPriorityConfig(
+  channels: ResolvedChannel[],
+  routing: Pick<RoutingConfig, 'modelRegistry'>,
+  canonicalModel: string | null | undefined
+): ResolvedChannel[] {
+  return channels.filter(
+    channel => !isChannelDisabledByPriorityConfig(channel, routing.modelRegistry, canonicalModel)
+  );
 }
 
 function normalizeHeaderValue(value: string | string[] | undefined): string {
@@ -189,6 +255,53 @@ export function buildChannelAttemptPlan<
     attemptsByRoutePath.set(pathKey, attempts + 1);
     return true;
   });
+}
+
+type RoutePathAffinityCandidate = RouteChannelKey & {
+  canonicalModel?: string;
+  resolvedModel?: string;
+  targetProtocol?: RoutePathState['targetProtocol'];
+};
+
+export function applySuccessfulRoutePathAffinity<T extends RoutePathAffinityCandidate>(
+  channels: T[],
+  routePathStates: Record<string, RoutePathState> | null | undefined,
+  now: number = Date.now()
+): T[] {
+  if (channels.length <= 1 || !routePathStates) {
+    return channels;
+  }
+
+  const affinityCutoff = now - ROUTE_SUCCESSFUL_PATH_AFFINITY_MS;
+  let preferredIndex = -1;
+  let preferredLastSuccessAt = 0;
+
+  channels.forEach((channel, index) => {
+    const state = routePathStates[buildRoutePathStateKey(channel)];
+    const lastSuccessAt = state?.lastSuccessAt ?? 0;
+    if (
+      state?.lastOutcome !== 'success' ||
+      lastSuccessAt <= affinityCutoff ||
+      (state.disabledUntil ?? 0) > now
+    ) {
+      return;
+    }
+
+    if (lastSuccessAt > preferredLastSuccessAt) {
+      preferredIndex = index;
+      preferredLastSuccessAt = lastSuccessAt;
+    }
+  });
+
+  if (preferredIndex <= 0) {
+    return channels;
+  }
+
+  return [
+    channels[preferredIndex],
+    ...channels.slice(preferredIndex + 1),
+    ...channels.slice(0, preferredIndex),
+  ];
 }
 
 function readBody(req: http.IncomingMessage): Promise<Buffer> {
@@ -375,6 +488,73 @@ export function summarizeUpstreamFailureBodyForLog(body: Buffer, maxChars: numbe
   }
 
   return `${text.slice(0, maxChars)} ...(truncated ${text.length - maxChars} chars)`;
+}
+
+function summarizeProbeLockUpstreamBody(body: Buffer): string | undefined {
+  return summarizeUpstreamFailureBodyForLog(body, 2000) || undefined;
+}
+
+function buildRouteProxyErrorText(error: string, message: string): string {
+  return JSON.stringify({ error, message });
+}
+
+function recordProbeLockFirstUpstreamResult(params: {
+  routeApiKey: string;
+  cliType: RouteCliType;
+  lock: RouteProbeLock;
+  success: boolean;
+  statusCode?: number;
+  body?: Buffer;
+  error?: string;
+}): void {
+  recordRouteProbeLockFirstUpstreamResult({
+    routeApiKey: params.routeApiKey,
+    cliType: params.cliType,
+    success: params.success,
+    finishedAt: Date.now(),
+    lock: params.lock,
+    ...(params.statusCode !== undefined ? { statusCode: params.statusCode } : {}),
+    ...(params.body ? { responseSummary: summarizeProbeLockUpstreamBody(params.body) } : {}),
+    ...(params.error ? { error: params.error } : {}),
+  });
+}
+
+function notifyProbeLockTerminalFailure(params: {
+  routeApiKey: string;
+  cliType: RouteCliType;
+  terminalError: string;
+  statusCode?: number;
+  lock?: RouteProbeLock | null;
+}): void {
+  notifyRouteProbeLockTerminalFailure({
+    routeApiKey: params.routeApiKey,
+    cliType: params.cliType,
+    terminalError: params.terminalError,
+    ...(params.statusCode !== undefined ? { statusCode: params.statusCode } : {}),
+    ...(params.lock ? { lock: params.lock } : {}),
+  });
+}
+
+function writeProbeLockTerminalFailureResponse(
+  res: http.ServerResponse,
+  failure: RouteProbeLockTerminalFailure
+): void {
+  const body =
+    failure.terminalError.trim() ||
+    buildRouteProxyErrorText('all_channels_failed', 'CLI probe aborted');
+  const contentType =
+    body.startsWith('{') || body.startsWith('[')
+      ? 'application/json; charset=utf-8'
+      : 'text/plain; charset=utf-8';
+  res.writeHead(failure.statusCode ?? 502, { 'Content-Type': contentType });
+  res.end(body);
+}
+
+function buildProbeLockUpstreamAttemptExhaustedErrorText(): string {
+  return buildRouteProxyErrorText(
+    PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_ERROR_CODE,
+    'CLI probe-lock allows only one upstream request per model test'
+  );
 }
 
 export function buildUpstreamHeaders(
@@ -1115,12 +1295,31 @@ export async function handleRequest(
   // 鉴权
   const token = extractRouteApiKey(req, cliType);
   const probeLock = parseProbeLockRouteApiKey(token, routing.server.unifiedApiKey);
+  if (probeLock) {
+    notifyRouteProbeLockRequest(token);
+  }
   if (token !== routing.server.unifiedApiKey && !probeLock) {
+    notifyProbeLockTerminalFailure({
+      routeApiKey: token,
+      cliType,
+      statusCode: 401,
+      terminalError: buildRouteProxyErrorText('invalid_api_key', 'Invalid route API key'),
+    });
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'invalid_api_key', message: 'Invalid route API key' }));
     return;
   }
   if (probeLock && !isLoopbackAddress(req.socket.remoteAddress)) {
+    notifyProbeLockTerminalFailure({
+      routeApiKey: token,
+      cliType,
+      statusCode: 403,
+      terminalError: buildRouteProxyErrorText(
+        'probe_lock_forbidden',
+        'Probe-lock requests are only allowed from loopback clients'
+      ),
+      lock: probeLock,
+    });
     res.writeHead(403, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
@@ -1131,6 +1330,16 @@ export async function handleRequest(
     return;
   }
   if (probeLock && probeLock.cliType !== cliType) {
+    notifyProbeLockTerminalFailure({
+      routeApiKey: token,
+      cliType,
+      statusCode: 400,
+      terminalError: buildRouteProxyErrorText(
+        'probe_lock_cli_mismatch',
+        `Probe-lock CLI type ${probeLock.cliType} does not match route ${cliType}`
+      ),
+      lock: probeLock,
+    });
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
@@ -1138,6 +1347,19 @@ export async function handleRequest(
         message: `Probe-lock CLI type ${probeLock.cliType} does not match route ${cliType}`,
       })
     );
+    return;
+  }
+  const previousTerminalFailure = probeLock ? getRouteProbeLockTerminalFailure(token) : undefined;
+  if (previousTerminalFailure) {
+    log.warn('Probe-lock request blocked after terminal upstream failure', {
+      cliType,
+      statusCode: previousTerminalFailure.statusCode,
+      siteId: probeLock?.siteId,
+      accountId: probeLock?.accountId,
+      apiKeyId: probeLock?.apiKeyId,
+      rawModel: probeLock?.rawModel,
+    });
+    writeProbeLockTerminalFailureResponse(res, previousTerminalFailure);
     return;
   }
   const requestId = nextRequestId(cliType);
@@ -1151,6 +1373,26 @@ export async function handleRequest(
     /* ignore */
   }
   const rawModel = extractModelFromBody(bodyJson) || extractModelFromPath(pathname, cliType);
+  if (
+    probeLock &&
+    shouldBlockGeminiCliInternalUtilityRequest({
+      routing,
+      cliType,
+      rawModel,
+      cliSelectedModel: probeLock.rawModel,
+    })
+  ) {
+    log.warn('Probe-lock Gemini internal utility request blocked before upstream forwarding', {
+      cliType,
+      siteId: probeLock.siteId,
+      accountId: probeLock.accountId,
+      apiKeyId: probeLock.apiKeyId,
+      rawModel,
+      lockedModel: probeLock.rawModel,
+    });
+    writeGeminiCliInternalUtilityBlockedResponse(res, rawModel);
+    return;
+  }
 
   // 解析 canonical model（代理层无 site 上下文，使用全局 alias 索引）
   let canonicalModel: string | null = null;
@@ -1281,10 +1523,14 @@ export async function handleRequest(
       return;
     }
     routeRuntimeConfig = resolveRouteRuntimeConfig(routing, canonicalModel);
-    sortedChannels = buildChannelAttemptPlan(
-      sortChannelsByScore(channels),
-      routeRuntimeConfig.maxAttemptsPerRoutePath
-    ).filter(channel => !isRoutePathDisabled(channel)) as ResolvedChannel[];
+    const enabledChannels = filterChannelsByPriorityConfig(channels, routing, canonicalModel);
+    sortedChannels = applySuccessfulRoutePathAffinity(
+      buildChannelAttemptPlan(
+        sortChannelsByScore(enabledChannels),
+        routeRuntimeConfig.maxAttemptsPerRoutePath
+      ).filter(channel => !isRoutePathDisabled(channel)) as ResolvedChannel[],
+      routing.routePathStates
+    );
     if (sortedChannels.length === 0) {
       recordRouteRequest({
         requestId,
@@ -1304,6 +1550,10 @@ export async function handleRequest(
   const timeoutMs = routing.server.requestTimeoutMs;
   const requestWantsStreaming = isStreamingRequest(bodyJson, req.url);
   const requestIsClaudeCountTokens = isClaudeCountTokensRequest(pathname, cliType);
+  if (probeLock && requestIsClaudeCountTokens) {
+    writeAnthropicCountTokensEstimate(res, estimateClaudeCountTokens(bodyBuffer));
+    return;
+  }
 
   let attempt = 0;
   for (let i = 0; i < sortedChannels.length; i++) {
@@ -1374,6 +1624,17 @@ export async function handleRequest(
       probeLockCredentials ||
       (await resolveChannelCredentials(ch.siteId, ch.accountId, ch.apiKeyId));
     if (!creds) {
+      if (probeLock) {
+        notifyProbeLockTerminalFailure({
+          routeApiKey: token,
+          cliType,
+          terminalError: buildRouteProxyErrorText(
+            'credentials_unavailable',
+            'Route credentials are unavailable for this probe-lock request'
+          ),
+          lock: probeLock,
+        });
+      }
       recordRouteRequest({
         requestId,
         attempt,
@@ -1476,6 +1737,15 @@ export async function handleRequest(
           : err instanceof Error
             ? err.message
             : 'unknown_error';
+        if (probeLock) {
+          notifyProbeLockTerminalFailure({
+            routeApiKey: token,
+            cliType,
+            statusCode: 502,
+            terminalError: buildRouteProxyErrorText(`adapter_${stage}`, reason),
+            lock: probeLock,
+          });
+        }
         log.warn('Protocol adapter request-adapt failed', {
           stage,
           cliType,
@@ -1522,6 +1792,23 @@ export async function handleRequest(
       requestWantsStreaming && canStreamResponseAdapters(responseAdapter, protocolResponseAdapter);
 
     try {
+      if (probeLock && !consumeRouteProbeLockUpstreamAttempt(token)) {
+        const terminalError = buildProbeLockUpstreamAttemptExhaustedErrorText();
+        log.warn('Probe-lock upstream request blocked after per-model attempt budget exhausted', {
+          cliType,
+          siteId: probeLock.siteId,
+          accountId: probeLock.accountId,
+          apiKeyId: probeLock.apiKeyId,
+          rawModel: probeLock.rawModel,
+        });
+        res.writeHead(PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_STATUS_CODE, {
+          'Content-Type': 'application/json',
+          'X-Route-Proxy-Error': PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_ERROR_CODE,
+        });
+        res.end(terminalError);
+        return;
+      }
+
       const result = await forwardToUpstream(
         req,
         creds.baseUrl,
@@ -1622,6 +1909,14 @@ export async function handleRequest(
 
       // 失败且还有重试机会：不写 res，尝试下一个通道
       if (outcome === 'failure') {
+        const bodySnippet = summarizeUpstreamFailureBodyForLog(result.body) || '<empty>';
+        const terminalError =
+          bodySnippet === '<empty>'
+            ? buildRouteProxyErrorText(
+                'bad_response_status_code',
+                `bad response status code ${result.statusCode}`
+              )
+            : bodySnippet;
         log.warn('Upstream channel returned failure response', {
           statusCode: result.statusCode,
           siteId: activeChannel.siteId,
@@ -1629,8 +1924,27 @@ export async function handleRequest(
           apiKeyId: activeChannel.apiKeyId,
           resolvedModel: activeChannel.resolvedModel,
           contentType: normalizeHeaderValue(result.headers['content-type']) || 'unknown',
-          bodySnippet: summarizeUpstreamFailureBodyForLog(result.body) || '<empty>',
+          bodySnippet,
         });
+
+        if (probeLock) {
+          recordProbeLockFirstUpstreamResult({
+            routeApiKey: token,
+            cliType,
+            lock: probeLock,
+            statusCode: result.statusCode,
+            success: false,
+            body: result.body,
+            error: terminalError,
+          });
+          notifyProbeLockTerminalFailure({
+            routeApiKey: token,
+            cliType,
+            statusCode: result.statusCode,
+            terminalError,
+            lock: probeLock,
+          });
+        }
 
         if (hasEnabledRoutePath(sortedChannels.slice(i + 1)) && !bypassRoutePathState) {
           log.warn(`Channel failed (${result.statusCode}), trying next channel`);
@@ -1644,6 +1958,16 @@ export async function handleRequest(
       }
 
       if (result.streamed) {
+        if (probeLock) {
+          recordProbeLockFirstUpstreamResult({
+            routeApiKey: token,
+            cliType,
+            lock: probeLock,
+            statusCode: result.statusCode,
+            success: outcome === 'success',
+            body: result.body,
+          });
+        }
         if (!res.writableEnded) {
           res.end();
         }
@@ -1671,6 +1995,25 @@ export async function handleRequest(
           : err instanceof Error
             ? err.message
             : 'unknown_error';
+        if (probeLock) {
+          const terminalError = buildRouteProxyErrorText('adapter_response-adapt', reason);
+          recordProbeLockFirstUpstreamResult({
+            routeApiKey: token,
+            cliType,
+            lock: probeLock,
+            statusCode: 502,
+            success: false,
+            body: result.body,
+            error: terminalError,
+          });
+          notifyProbeLockTerminalFailure({
+            routeApiKey: token,
+            cliType,
+            statusCode: 502,
+            terminalError,
+            lock: probeLock,
+          });
+        }
         log.warn('Protocol adapter response-adapt failed', {
           stage: 'response-adapt',
           cliType,
@@ -1696,11 +2039,38 @@ export async function handleRequest(
       }
 
       // 成功/neutral/最后一次失败：写 res
+      if (probeLock) {
+        recordProbeLockFirstUpstreamResult({
+          routeApiKey: token,
+          cliType,
+          lock: probeLock,
+          statusCode: result.statusCode,
+          success: outcome === 'success',
+          body: transformed.body,
+        });
+      }
       res.writeHead(result.statusCode, transformed.headers);
       res.end(transformed.body);
       return;
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'unknown_error';
+      if (probeLock) {
+        recordProbeLockFirstUpstreamResult({
+          routeApiKey: token,
+          cliType,
+          lock: probeLock,
+          statusCode: 502,
+          success: false,
+          error: errorMessage,
+        });
+        notifyProbeLockTerminalFailure({
+          routeApiKey: token,
+          cliType,
+          statusCode: 502,
+          terminalError: buildRouteProxyErrorText('all_channels_failed', errorMessage),
+          lock: probeLock,
+        });
+      }
       if (!bypassRoutePathState) {
         recordOutcome(activeChannel, 'failure', {});
         await recordRoutePathOutcome(

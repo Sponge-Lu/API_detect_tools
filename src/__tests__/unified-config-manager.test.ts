@@ -156,6 +156,23 @@ describe('UnifiedConfigManager', () => {
     expect(restored.sites[0].name).toBe('Recovered Site');
   });
 
+  it('retries transient config read failures before restoring from backup', async () => {
+    const configPath = path.join(userDataDir, 'config.json');
+    const recoveredConfig = { ...createSampleConfig(), version: '3.1' };
+    await fs.writeFile(configPath, '\0'.repeat(64), 'utf-8');
+
+    setTimeout(() => {
+      void fs.writeFile(configPath, JSON.stringify(recoveredConfig, null, 2), 'utf-8');
+    }, 5);
+
+    const manager = await loadManager();
+    const config = await manager.loadConfig();
+
+    expect(config.sites).toHaveLength(1);
+    expect(config.sites[0].name).toBe('Recovered Site');
+    expect(backupManagerMock.restoreFromBackup).not.toHaveBeenCalled();
+  });
+
   it('restores the latest valid backup when config.json has an invalid structure', async () => {
     const configPath = path.join(userDataDir, 'config.json');
     await fs.writeFile(configPath, JSON.stringify({ version: '3.0' }), 'utf-8');

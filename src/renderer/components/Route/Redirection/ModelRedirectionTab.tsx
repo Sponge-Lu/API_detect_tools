@@ -46,6 +46,7 @@ import type {
   RouteModelRegistryConfig,
   RouteModelRegistryEntry,
   RouteModelSourceRef,
+  RouteRequestLogItem,
   RoutePathState,
   RouteRuntimeConfig,
   RoutingConfig,
@@ -149,7 +150,17 @@ interface DetailSiteGroup {
 interface PriorityDraft {
   sitePriorities: Record<string, string>;
   apiKeyPriorities: Record<string, string>;
+  disabledSiteIds?: string[];
+  disabledApiKeyPriorityKeys?: string[];
 }
+
+type PriorityDisableState = Pick<PriorityDraft, 'disabledSiteIds' | 'disabledApiKeyPriorityKeys'>;
+type PriorityDraftInput = Partial<
+  Pick<
+    PriorityDraft,
+    'sitePriorities' | 'apiKeyPriorities' | 'disabledSiteIds' | 'disabledApiKeyPriorityKeys'
+  >
+>;
 
 interface RoutePathSuspensionLabel {
   originalModel: string;
@@ -165,6 +176,10 @@ interface CreateApiKeyDialogState {
 }
 
 const QUOTA_CONVERSION_FACTOR = 500000;
+const PRIORITY_RUNTIME_REFRESH_INTERVAL_MS = 1500;
+const PRIORITY_ROUTE_LOG_LIMIT = 200;
+const PRIORITY_DETAIL_GRID_CLASS =
+  'grid-cols-[minmax(0,calc(43%_+_64px))_minmax(0,calc(57%_-_94px))_76px_44px]';
 
 function createLocalId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -297,7 +312,7 @@ function formatProbeStatus(entry: RouteCliProbeLatest | undefined): string {
 }
 
 function getModelProbeStatus(params: {
-  routingConfig?: RoutingConfig | null;
+  routingConfig?: Pick<RoutingConfig, 'cliProbe'> | null;
   siteId: string;
   accountId: string;
   canonicalName: string;
@@ -401,6 +416,79 @@ function countActiveRoutePathStatesForItem(params: {
   ).length;
 }
 
+function isRouteFirstHitPathLog(item: RouteRequestLogItem): item is RouteRequestLogItem & {
+  canonicalModel: string;
+  siteId: string;
+  accountId: string;
+  apiKeyId: string;
+} {
+  return (
+    item.attempt === 1 &&
+    Boolean(item.canonicalModel?.trim()) &&
+    Boolean(item.siteId?.trim()) &&
+    Boolean(item.accountId?.trim()) &&
+    Boolean(item.apiKeyId?.trim())
+  );
+}
+
+function isNewerRouteRequestLog(
+  candidate: RouteRequestLogItem,
+  current: RouteRequestLogItem | undefined
+): boolean {
+  if (!current) {
+    return true;
+  }
+
+  if (candidate.createdAt !== current.createdAt) {
+    return candidate.createdAt > current.createdAt;
+  }
+
+  return candidate.id.localeCompare(current.id) > 0;
+}
+
+function upsertFirstHitPathLog(
+  current: Record<string, RouteRequestLogItem>,
+  item: RouteRequestLogItem
+): Record<string, RouteRequestLogItem> {
+  if (!isRouteFirstHitPathLog(item)) {
+    return current;
+  }
+
+  const existing = current[item.canonicalModel];
+  if (!isNewerRouteRequestLog(item, existing)) {
+    return current;
+  }
+
+  return {
+    ...current,
+    [item.canonicalModel]: item,
+  };
+}
+
+function buildFirstHitPathLogsByCanonicalName(
+  logs: RouteRequestLogItem[]
+): Record<string, RouteRequestLogItem> {
+  return logs.reduce<Record<string, RouteRequestLogItem>>(
+    (acc, item) => upsertFirstHitPathLog(acc, item),
+    {}
+  );
+}
+
+function getPriorityHitApiKeyKeyFromRouteLog(
+  item: RouteModelDisplayItem,
+  logItem: RouteRequestLogItem | undefined
+): string | null {
+  if (!logItem || !isRouteFirstHitPathLog(logItem)) {
+    return null;
+  }
+
+  if (logItem.canonicalModel !== item.canonicalName) {
+    return null;
+  }
+
+  return buildRouteApiKeyPriorityKey(logItem.siteId, logItem.accountId, logItem.apiKeyId);
+}
+
 function getPriorityValue(value: string | number | undefined): number | null {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
@@ -410,16 +498,80 @@ function getPriorityValue(value: string | number | undefined): number | null {
   return Math.max(0, Math.round(parsed));
 }
 
-function buildDefaultSiteOrderIndex(detailSiteGroups: DetailSiteGroup[]): Map<string, number> {
+function normalizePriorityKeyList(values: string[] | undefined): string[] {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(values.map(value => String(value).trim()).filter(value => value.length > 0))
+  );
+}
+
+function normalizePriorityRecordToDraft(
+  priorities: Record<string, string | number | undefined> | undefined
+): Record<string, string> {
+  if (!priorities) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(priorities)
+      .map(([key, priority]) => [key.trim(), getPriorityValue(priority)] as const)
+      .filter(
+        (entry): entry is readonly [string, number] => entry[0].length > 0 && entry[1] !== null
+      )
+      .map(([key, priority]) => [key, String(priority)])
+  );
+}
+
+function isPrioritySiteDisabled(
+  group: Pick<DetailSiteGroup, 'siteId'>,
+  priorityDraft: Pick<PriorityDisableState, 'disabledSiteIds'>
+): boolean {
+  return normalizePriorityKeyList(priorityDraft.disabledSiteIds).includes(group.siteId);
+}
+
+function isPriorityApiKeyDisabled(
+  apiKey: Pick<DetailApiKeyRow, 'key'>,
+  priorityDraft: Pick<PriorityDisableState, 'disabledApiKeyPriorityKeys'>
+): boolean {
+  return normalizePriorityKeyList(priorityDraft.disabledApiKeyPriorityKeys).includes(apiKey.key);
+}
+
+function getEnabledPriorityApiKeys(
+  group: DetailSiteGroup,
+  priorityDraft: Pick<PriorityDisableState, 'disabledApiKeyPriorityKeys'>
+): DetailApiKeyRow[] {
+  return group.apiKeys.filter(apiKey => !isPriorityApiKeyDisabled(apiKey, priorityDraft));
+}
+
+function hasEnabledPriorityApiKeys(
+  group: DetailSiteGroup,
+  priorityDraft: Pick<PriorityDisableState, 'disabledApiKeyPriorityKeys'>
+): boolean {
+  return getEnabledPriorityApiKeys(group, priorityDraft).length > 0;
+}
+
+function canSortPrioritySite(group: DetailSiteGroup, priorityDraft: PriorityDisableState): boolean {
+  return (
+    !isPrioritySiteDisabled(group, priorityDraft) && hasEnabledPriorityApiKeys(group, priorityDraft)
+  );
+}
+
+function buildDefaultSiteOrderIndex(
+  detailSiteGroups: DetailSiteGroup[],
+  priorityDraft: PriorityDisableState
+): Map<string, number> {
   return new Map(
     detailSiteGroups
       .map((group, index) => ({ group, index }))
       .sort((left, right) => {
-        const leftHasApiKeys = left.group.apiKeys.length > 0;
-        const rightHasApiKeys = right.group.apiKeys.length > 0;
+        const leftSortable = canSortPrioritySite(left.group, priorityDraft);
+        const rightSortable = canSortPrioritySite(right.group, priorityDraft);
 
-        if (leftHasApiKeys !== rightHasApiKeys) {
-          return leftHasApiKeys ? -1 : 1;
+        if (leftSortable !== rightSortable) {
+          return leftSortable ? -1 : 1;
         }
 
         return left.index - right.index;
@@ -447,11 +599,19 @@ function getPrioritySortValue(
 
 function sortApiKeysByPriority(
   apiKeys: DetailApiKeyRow[],
-  apiKeyPriorities: Record<string, string | number | undefined>
+  apiKeyPriorities: Record<string, string | number | undefined>,
+  priorityDraft: PriorityDisableState
 ): DetailApiKeyRow[] {
   const defaultOrderIndex = new Map(apiKeys.map((apiKey, index) => [apiKey.key, index] as const));
 
   return apiKeys.slice().sort((left, right) => {
+    const leftDisabled = isPriorityApiKeyDisabled(left, priorityDraft);
+    const rightDisabled = isPriorityApiKeyDisabled(right, priorityDraft);
+
+    if (leftDisabled !== rightDisabled) {
+      return leftDisabled ? 1 : -1;
+    }
+
     const leftPriority = getPrioritySortValue(left.key, apiKeyPriorities, defaultOrderIndex);
     const rightPriority = getPrioritySortValue(right.key, apiKeyPriorities, defaultOrderIndex);
 
@@ -470,11 +630,18 @@ function sortDetailGroupsByPriority(
   detailSiteGroups: DetailSiteGroup[],
   priorityDraft: PriorityDraft | RouteDisplayItemPriorityConfig
 ): DetailSiteGroup[] {
-  const defaultOrderIndex = buildDefaultSiteOrderIndex(detailSiteGroups);
+  const defaultOrderIndex = buildDefaultSiteOrderIndex(detailSiteGroups, priorityDraft);
 
   return detailSiteGroups
     .slice()
     .sort((left, right) => {
+      const leftSortable = canSortPrioritySite(left, priorityDraft);
+      const rightSortable = canSortPrioritySite(right, priorityDraft);
+
+      if (leftSortable !== rightSortable) {
+        return leftSortable ? -1 : 1;
+      }
+
       const leftPriority = getPrioritySortValue(
         left.siteId,
         priorityDraft.sitePriorities,
@@ -497,28 +664,138 @@ function sortDetailGroupsByPriority(
     })
     .map(group => ({
       ...group,
-      apiKeys: sortApiKeysByPriority(group.apiKeys, priorityDraft.apiKeyPriorities),
+      apiKeys: sortApiKeysByPriority(group.apiKeys, priorityDraft.apiKeyPriorities, priorityDraft),
     }));
 }
 
-function buildSequentialPriorityDraft(detailSiteGroups: DetailSiteGroup[]): PriorityDraft {
+function buildPriorityRecordFromOrderedKeys(
+  orderedKeys: string[],
+  activeKeys: string[],
+  existingPriorities: Record<string, string | number | undefined> | undefined
+): Record<string, string> {
+  const normalizedPriorities = normalizePriorityRecordToDraft(existingPriorities);
+  const activeKeySet = new Set(activeKeys);
+  const reservedPriorities = new Set<number>();
+  const nextPriorities: Record<string, string> = {};
+
+  for (const key of orderedKeys) {
+    if (activeKeySet.has(key)) {
+      continue;
+    }
+
+    const priority = getPriorityValue(normalizedPriorities[key]);
+    if (priority === null) {
+      continue;
+    }
+
+    nextPriorities[key] = String(priority);
+    reservedPriorities.add(priority);
+  }
+
+  let nextPriority = 0;
+  for (const key of activeKeys) {
+    while (reservedPriorities.has(nextPriority)) {
+      nextPriority += 1;
+    }
+
+    nextPriorities[key] = String(nextPriority);
+    reservedPriorities.add(nextPriority);
+    nextPriority += 1;
+  }
+
+  return nextPriorities;
+}
+
+function buildSequentialPriorityDraft(
+  detailSiteGroups: DetailSiteGroup[],
+  currentDraft: PriorityDraftInput = {}
+): PriorityDraft {
+  const disabledSiteIds = normalizePriorityKeyList(currentDraft.disabledSiteIds);
+  const disabledApiKeyPriorityKeys = normalizePriorityKeyList(
+    currentDraft.disabledApiKeyPriorityKeys
+  );
+  const sortableGroups = detailSiteGroups.filter(group =>
+    canSortPrioritySite(group, { disabledSiteIds, disabledApiKeyPriorityKeys })
+  );
+
+  return {
+    sitePriorities: buildPriorityRecordFromOrderedKeys(
+      detailSiteGroups.map(group => group.siteId),
+      sortableGroups.map(group => group.siteId),
+      currentDraft.sitePriorities
+    ),
+    apiKeyPriorities: detailSiteGroups.reduce<Record<string, string>>((acc, group) => {
+      const groupPriorities = buildPriorityRecordFromOrderedKeys(
+        group.apiKeys.map(apiKey => apiKey.key),
+        getEnabledPriorityApiKeys(group, { disabledApiKeyPriorityKeys }).map(apiKey => apiKey.key),
+        currentDraft.apiKeyPriorities
+      );
+
+      return Object.assign(acc, groupPriorities);
+    }, {}),
+    disabledSiteIds,
+    disabledApiKeyPriorityKeys,
+  };
+}
+
+function serializePriorityConfig(draft: PriorityDraft): RouteDisplayItemPriorityConfig {
+  const disabledSiteIds = normalizePriorityKeyList(draft.disabledSiteIds);
+  const disabledApiKeyPriorityKeys = normalizePriorityKeyList(draft.disabledApiKeyPriorityKeys);
+
   return {
     sitePriorities: Object.fromEntries(
-      detailSiteGroups.map((group, index) => [group.siteId, String(index)])
+      Object.entries(draft.sitePriorities).map(([siteId, priority]) => [siteId, Number(priority)])
     ),
     apiKeyPriorities: Object.fromEntries(
-      detailSiteGroups.flatMap(group =>
-        group.apiKeys.map((apiKey, index) => [apiKey.key, String(index)])
-      )
+      Object.entries(draft.apiKeyPriorities).map(([apiKeyKey, priority]) => [
+        apiKeyKey,
+        Number(priority),
+      ])
     ),
+    ...(disabledSiteIds.length > 0 ? { disabledSiteIds } : {}),
+    ...(disabledApiKeyPriorityKeys.length > 0 ? { disabledApiKeyPriorityKeys } : {}),
   };
+}
+
+function priorityDraftMatches(left: PriorityDraft, right: PriorityDraft): boolean {
+  return (
+    JSON.stringify(left.sitePriorities) === JSON.stringify(right.sitePriorities) &&
+    JSON.stringify(left.apiKeyPriorities) === JSON.stringify(right.apiKeyPriorities) &&
+    JSON.stringify(left.disabledSiteIds) ===
+      JSON.stringify(normalizePriorityKeyList(right.disabledSiteIds)) &&
+    JSON.stringify(left.disabledApiKeyPriorityKeys) ===
+      JSON.stringify(normalizePriorityKeyList(right.disabledApiKeyPriorityKeys))
+  );
+}
+
+function getEffectivePriorityDisplayValue(
+  key: string,
+  priorities: Record<string, string | number | undefined>,
+  orderedActiveKeys: string[]
+): number | null {
+  const explicitPriority = getPriorityValue(priorities[key]);
+  if (explicitPriority === null) {
+    const fallbackIndex = orderedActiveKeys.indexOf(key);
+    return fallbackIndex >= 0 ? fallbackIndex : null;
+  }
+
+  const activePriorityValues = orderedActiveKeys
+    .map(activeKey => getPriorityValue(priorities[activeKey]))
+    .filter((value): value is number => value !== null)
+    .sort((left, right) => left - right);
+  const priorityIndex = activePriorityValues.indexOf(explicitPriority);
+
+  return priorityIndex >= 0 ? priorityIndex : null;
 }
 
 function createDisplayOrderPriorityDraft(
   detailSiteGroups: DetailSiteGroup[],
   priorityConfig: RouteDisplayItemPriorityConfig
 ): PriorityDraft {
-  return buildSequentialPriorityDraft(sortDetailGroupsByPriority(detailSiteGroups, priorityConfig));
+  return buildSequentialPriorityDraft(
+    sortDetailGroupsByPriority(detailSiteGroups, priorityConfig),
+    priorityConfig
+  );
 }
 
 function moveArrayItem<T>(items: T[], currentIndex: number, targetIndex: number): T[] {
@@ -931,7 +1208,7 @@ function formatSourceSummary(sources: RouteModelSourceRef[]): string {
 function buildDetailSiteAccountGroups(
   detailState: DisplayItemDetailState | null,
   fullConfig?: UnifiedConfig | null,
-  routingConfig?: RoutingConfig | null
+  routingConfig?: Pick<RoutingConfig, 'cliProbe'> | null
 ): DetailSiteGroup[] {
   if (!detailState) {
     return [];
@@ -1189,6 +1466,7 @@ function createDefaultNewApiKeyForm(group = 'default'): NewApiTokenForm {
 export function ModelRedirectionTab() {
   const {
     config,
+    refreshRuntimeState,
     rebuildModelRegistry,
     syncModelRegistrySources,
     upsertMappingOverride,
@@ -1199,6 +1477,7 @@ export function ModelRedirectionTab() {
   } = useRouteStore(
     useShallow(store => ({
       config: store.config,
+      refreshRuntimeState: store.refreshRuntimeState,
       rebuildModelRegistry: store.rebuildModelRegistry,
       syncModelRegistrySources: store.syncModelRegistrySources,
       upsertMappingOverride: store.upsertMappingOverride,
@@ -1218,11 +1497,14 @@ export function ModelRedirectionTab() {
   const [priorityDraft, setPriorityDraft] = useState<PriorityDraft>({
     sitePriorities: {},
     apiKeyPriorities: {},
+    disabledSiteIds: [],
+    disabledApiKeyPriorityKeys: [],
   });
   const [selectedPrioritySiteId, setSelectedPrioritySiteId] = useState<string | null>(null);
   const [expandedMissingKeySiteIds, setExpandedMissingKeySiteIds] = useState<
     Record<string, boolean>
   >({});
+  const [foldedPrioritySitesExpanded, setFoldedPrioritySitesExpanded] = useState(false);
   const [draft, setDraft] = useState<RedirectEditorDraft>(createEmptyDraft);
   const [errors, setErrors] = useState<RedirectEditorErrors>({});
   const [candidateQuery, setCandidateQuery] = useState('');
@@ -1237,6 +1519,9 @@ export function ModelRedirectionTab() {
     createDefaultNewApiKeyForm()
   );
   const [creatingApiKey, setCreatingApiKey] = useState(false);
+  const [firstHitPathLogsByCanonicalName, setFirstHitPathLogsByCanonicalName] = useState<
+    Record<string, RouteRequestLogItem>
+  >({});
   const redirectNameInputId = useId();
   const searchInputId = useId();
 
@@ -1276,9 +1561,14 @@ export function ModelRedirectionTab() {
       ),
     [registry?.overrides]
   );
+  const routeCliProbe = config?.cliProbe ?? null;
+  const routeProbeContext = useMemo(
+    () => (routeCliProbe ? { cliProbe: routeCliProbe } : null),
+    [routeCliProbe]
+  );
   const detailSiteGroups = useMemo(
-    () => buildDetailSiteAccountGroups(sourceDetailState, priorityDetailConfig, config),
-    [config, priorityDetailConfig, sourceDetailState]
+    () => buildDetailSiteAccountGroups(sourceDetailState, priorityDetailConfig, routeProbeContext),
+    [priorityDetailConfig, routeProbeContext, sourceDetailState]
   );
   const sortedDetailSiteGroups = useMemo(() => {
     return sortDetailGroupsByPriority(detailSiteGroups, priorityDraft);
@@ -1296,25 +1586,29 @@ export function ModelRedirectionTab() {
       return;
     }
 
-    const normalizedDraft = buildSequentialPriorityDraft(sortedDetailSiteGroups);
-    const draftMatches =
-      JSON.stringify(normalizedDraft.sitePriorities) ===
-        JSON.stringify(priorityDraft.sitePriorities) &&
-      JSON.stringify(normalizedDraft.apiKeyPriorities) ===
-        JSON.stringify(priorityDraft.apiKeyPriorities);
+    const normalizedDraft = buildSequentialPriorityDraft(sortedDetailSiteGroups, priorityDraft);
 
-    if (!draftMatches) {
+    if (!priorityDraftMatches(normalizedDraft, priorityDraft)) {
       setPriorityDraft(normalizedDraft);
     }
 
     if (
       !selectedPrioritySiteId ||
-      !detailSiteGroups.some(group => group.siteId === selectedPrioritySiteId)
+      !detailSiteGroups.some(
+        group =>
+          group.siteId === selectedPrioritySiteId && canSortPrioritySite(group, priorityDraft)
+      )
     ) {
-      setSelectedPrioritySiteId(sortedDetailSiteGroups[0]?.siteId ?? null);
+      setSelectedPrioritySiteId(
+        sortedDetailSiteGroups.find(group => canSortPrioritySite(group, priorityDraft))?.siteId ??
+          null
+      );
     }
   }, [
     detailSiteGroups,
+    priorityDraft,
+    priorityDraft.disabledApiKeyPriorityKeys,
+    priorityDraft.disabledSiteIds,
     priorityDraft.apiKeyPriorities,
     priorityDraft.sitePriorities,
     selectedPrioritySiteId,
@@ -1345,9 +1639,12 @@ export function ModelRedirectionTab() {
     setPriorityDraft({
       sitePriorities: {},
       apiKeyPriorities: {},
+      disabledSiteIds: [],
+      disabledApiKeyPriorityKeys: [],
     });
     setSelectedPrioritySiteId(null);
     setExpandedMissingKeySiteIds({});
+    setFoldedPrioritySitesExpanded(false);
   }, []);
 
   const closeRouteRules = useCallback(() => {
@@ -1367,6 +1664,10 @@ export function ModelRedirectionTab() {
       ...current,
       [siteId]: !current[siteId],
     }));
+  }, []);
+
+  const toggleFoldedPrioritySites = useCallback(() => {
+    setFoldedPrioritySitesExpanded(current => !current);
   }, []);
 
   const refreshOpenSourceDetails = useCallback(
@@ -1400,7 +1701,11 @@ export function ModelRedirectionTab() {
   const openSourceDetails = useCallback(
     (item: RouteModelDisplayItem, entry: RouteModelRegistryEntry) => {
       const priorityConfig = item.priorityConfig ?? createEmptyPriorityDraft();
-      const initialDetailGroups = buildDetailSiteAccountGroups({ item, entry }, null, config);
+      const initialDetailGroups = buildDetailSiteAccountGroups(
+        { item, entry },
+        null,
+        routeProbeContext
+      );
       const nextPriorityDraft = createDisplayOrderPriorityDraft(
         initialDetailGroups,
         priorityConfig
@@ -1413,8 +1718,12 @@ export function ModelRedirectionTab() {
       setSourceDetailState({ item, entry });
       setPriorityDetailConfig(null);
       setPriorityDraft(nextPriorityDraft);
-      setSelectedPrioritySiteId(initialSortedGroups[0]?.siteId ?? null);
+      setSelectedPrioritySiteId(
+        initialSortedGroups.find(group => canSortPrioritySite(group, nextPriorityDraft))?.siteId ??
+          null
+      );
       setExpandedMissingKeySiteIds({});
+      setFoldedPrioritySitesExpanded(false);
 
       void window.electronAPI
         .loadConfig()
@@ -1425,7 +1734,7 @@ export function ModelRedirectionTab() {
           setPriorityDetailConfig(null);
         });
     },
-    [config]
+    [routeProbeContext]
   );
 
   useEffect(() => {
@@ -1434,8 +1743,62 @@ export function ModelRedirectionTab() {
       return;
     }
 
+    const isSameDetailItem =
+      sourceDetailState &&
+      (sourceDetailState.item.id === selectedDisplayItem.item.id ||
+        sourceDetailState.item.canonicalName === selectedDisplayItem.item.canonicalName);
+
+    if (isSameDetailItem) {
+      return;
+    }
+
     openSourceDetails(selectedDisplayItem.item, selectedDisplayItem.entry);
-  }, [closeSourceDetails, openSourceDetails, selectedDisplayItem]);
+  }, [closeSourceDetails, openSourceDetails, selectedDisplayItem, sourceDetailState]);
+
+  useEffect(() => {
+    if (!sourceDetailState) {
+      return;
+    }
+
+    void refreshRuntimeState();
+    const intervalId = window.setInterval(() => {
+      void refreshRuntimeState();
+    }, PRIORITY_RUNTIME_REFRESH_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [refreshRuntimeState, sourceDetailState]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    void window.electronAPI.route
+      ?.getRequestLogs?.({ limit: PRIORITY_ROUTE_LOG_LIMIT })
+      .then(result => {
+        if (!isActive || !result?.success) {
+          return;
+        }
+
+        const loadedLogsByCanonicalName = buildFirstHitPathLogsByCanonicalName(result.data ?? []);
+        setFirstHitPathLogsByCanonicalName(current =>
+          Object.values(loadedLogsByCanonicalName).reduce<Record<string, RouteRequestLogItem>>(
+            (acc, item) => upsertFirstHitPathLog(acc, item),
+            current
+          )
+        );
+      })
+      .catch(() => undefined);
+
+    const unsubscribe = window.electronAPI.route?.onRequestLogAppended?.(item => {
+      setFirstHitPathLogsByCanonicalName(current => upsertFirstHitPathLog(current, item));
+    });
+
+    return () => {
+      isActive = false;
+      unsubscribe?.();
+    };
+  }, []);
 
   const openRouteRules = useCallback((item: RouteModelDisplayItem, displayName: string) => {
     setRouteRuleState({ item, displayName });
@@ -1545,13 +1908,14 @@ export function ModelRedirectionTab() {
       if (!syncedRegistry) {
         throw new Error('无法同步模型来源');
       }
+      refreshOpenSourceDetails(syncedRegistry);
       toast.success('模型来源已同步，现有规则未被覆盖');
     } catch (error: unknown) {
       toast.error(`同步失败: ${getErrorMessage(error)}`);
     } finally {
       setSyncingSources(false);
     }
-  }, [syncModelRegistrySources]);
+  }, [refreshOpenSourceDetails, syncModelRegistrySources]);
 
   const handleResetDefaults = useCallback(async () => {
     setResettingDefaults(true);
@@ -1876,21 +2240,34 @@ export function ModelRedirectionTab() {
 
   const movePrioritySite = useCallback(
     (siteId: string, target: 'up' | 'down' | 'first' | 'last') => {
-      const currentIndex = sortedDetailSiteGroups.findIndex(group => group.siteId === siteId);
+      const sortableGroups = sortedDetailSiteGroups.filter(group =>
+        canSortPrioritySite(group, priorityDraft)
+      );
+      const foldedGroups = sortedDetailSiteGroups.filter(
+        group => !canSortPrioritySite(group, priorityDraft)
+      );
+      const currentIndex = sortableGroups.findIndex(group => group.siteId === siteId);
+      if (currentIndex < 0) {
+        return;
+      }
+
       const targetIndex =
         target === 'first'
           ? 0
           : target === 'last'
-            ? sortedDetailSiteGroups.length - 1
+            ? sortableGroups.length - 1
             : target === 'up'
               ? currentIndex - 1
               : currentIndex + 1;
-      const reorderedGroups = moveArrayItem(sortedDetailSiteGroups, currentIndex, targetIndex);
+      const reorderedGroups = [
+        ...moveArrayItem(sortableGroups, currentIndex, targetIndex),
+        ...foldedGroups,
+      ];
 
       setSelectedPrioritySiteId(siteId);
-      setPriorityDraft(buildSequentialPriorityDraft(reorderedGroups));
+      setPriorityDraft(current => buildSequentialPriorityDraft(reorderedGroups, current));
     },
-    [sortedDetailSiteGroups]
+    [priorityDraft, sortedDetailSiteGroups]
   );
 
   const moveSelectedPrioritySite = useCallback(
@@ -1907,25 +2284,97 @@ export function ModelRedirectionTab() {
   const movePriorityApiKey = useCallback(
     (siteId: string, apiKeyKey: string, target: 'up' | 'down') => {
       const siteGroup = sortedDetailSiteGroups.find(group => group.siteId === siteId);
-      if (!siteGroup) {
+      if (!siteGroup || !canSortPrioritySite(siteGroup, priorityDraft)) {
         return;
       }
 
-      const currentIndex = siteGroup.apiKeys.findIndex(apiKey => apiKey.key === apiKeyKey);
-      const targetIndex = target === 'up' ? currentIndex - 1 : currentIndex + 1;
-      const reorderedApiKeys = moveArrayItem(siteGroup.apiKeys, currentIndex, targetIndex);
+      const enabledApiKeys = getEnabledPriorityApiKeys(siteGroup, priorityDraft);
+      const disabledApiKeys = siteGroup.apiKeys.filter(apiKey =>
+        isPriorityApiKeyDisabled(apiKey, priorityDraft)
+      );
+      const currentIndex = enabledApiKeys.findIndex(apiKey => apiKey.key === apiKeyKey);
+      if (currentIndex < 0) {
+        return;
+      }
 
-      setPriorityDraft(current => ({
-        ...current,
-        apiKeyPriorities: {
-          ...current.apiKeyPriorities,
-          ...Object.fromEntries(
-            reorderedApiKeys.map((apiKey, index) => [apiKey.key, String(index)])
-          ),
-        },
-      }));
+      const targetIndex = target === 'up' ? currentIndex - 1 : currentIndex + 1;
+      const reorderedApiKeys = [
+        ...moveArrayItem(enabledApiKeys, currentIndex, targetIndex),
+        ...disabledApiKeys,
+      ];
+      const reorderedGroups = sortedDetailSiteGroups.map(group =>
+        group.siteId === siteId ? { ...group, apiKeys: reorderedApiKeys } : group
+      );
+
+      setPriorityDraft(current => buildSequentialPriorityDraft(reorderedGroups, current));
     },
-    [sortedDetailSiteGroups]
+    [priorityDraft, sortedDetailSiteGroups]
+  );
+
+  const togglePrioritySiteDisabled = useCallback(
+    (siteId: string) => {
+      const currentGroup = sortedDetailSiteGroups.find(group => group.siteId === siteId);
+      setPriorityDraft(current => {
+        const disabledSiteIds = normalizePriorityKeyList(current.disabledSiteIds);
+        const nextDisabledSiteIds = disabledSiteIds.includes(siteId)
+          ? disabledSiteIds.filter(currentSiteId => currentSiteId !== siteId)
+          : [...disabledSiteIds, siteId];
+        const nextInput = {
+          ...current,
+          disabledSiteIds: nextDisabledSiteIds,
+        };
+        const nextDraft = buildSequentialPriorityDraft(
+          sortDetailGroupsByPriority(detailSiteGroups, nextInput),
+          nextInput
+        );
+
+        if (currentGroup && !canSortPrioritySite(currentGroup, nextDraft)) {
+          setSelectedPrioritySiteId(
+            sortedDetailSiteGroups.find(group => canSortPrioritySite(group, nextDraft))?.siteId ??
+              null
+          );
+        } else {
+          setSelectedPrioritySiteId(siteId);
+        }
+
+        return nextDraft;
+      });
+    },
+    [detailSiteGroups, sortedDetailSiteGroups]
+  );
+
+  const togglePriorityApiKeyDisabled = useCallback(
+    (siteId: string, apiKeyKey: string) => {
+      setPriorityDraft(current => {
+        const disabledApiKeyPriorityKeys = normalizePriorityKeyList(
+          current.disabledApiKeyPriorityKeys
+        );
+        const nextDisabledApiKeyPriorityKeys = disabledApiKeyPriorityKeys.includes(apiKeyKey)
+          ? disabledApiKeyPriorityKeys.filter(currentKey => currentKey !== apiKeyKey)
+          : [...disabledApiKeyPriorityKeys, apiKeyKey];
+        const nextInput = {
+          ...current,
+          disabledApiKeyPriorityKeys: nextDisabledApiKeyPriorityKeys,
+        };
+        const nextDraft = buildSequentialPriorityDraft(
+          sortDetailGroupsByPriority(detailSiteGroups, nextInput),
+          nextInput
+        );
+        const siteGroup = sortedDetailSiteGroups.find(group => group.siteId === siteId);
+
+        if (siteGroup && canSortPrioritySite(siteGroup, nextDraft)) {
+          setSelectedPrioritySiteId(siteId);
+        } else {
+          setSelectedPrioritySiteId(
+            sortedDetailSiteGroups.find(group => canSortPrioritySite(group, nextDraft))?.siteId ??
+              null
+          );
+        }
+
+        return nextDraft;
+      });
+    },
+    [detailSiteGroups, sortedDetailSiteGroups]
   );
 
   const handleSaveDetails = useCallback(async () => {
@@ -1933,16 +2382,8 @@ export function ModelRedirectionTab() {
       return;
     }
 
-    const priorityConfig: RouteDisplayItemPriorityConfig = {
-      sitePriorities: Object.fromEntries(
-        sortedDetailSiteGroups.map((group, index) => [group.siteId, index])
-      ),
-      apiKeyPriorities: Object.fromEntries(
-        sortedDetailSiteGroups.flatMap(group =>
-          group.apiKeys.map((apiKey, index) => [apiKey.key, index])
-        )
-      ),
-    };
+    const normalizedDraft = buildSequentialPriorityDraft(sortedDetailSiteGroups, priorityDraft);
+    const priorityConfig = serializePriorityConfig(normalizedDraft);
 
     setSaving(true);
     try {
@@ -1961,7 +2402,7 @@ export function ModelRedirectionTab() {
     } finally {
       setSaving(false);
     }
-  }, [sortedDetailSiteGroups, sourceDetailState, upsertDisplayItem]);
+  }, [priorityDraft, sortedDetailSiteGroups, sourceDetailState, upsertDisplayItem]);
 
   const handleSaveRouteRules = useCallback(async () => {
     if (!routeRuleState) {
@@ -2038,10 +2479,42 @@ export function ModelRedirectionTab() {
     }
   }, [closeRouteRules, routeRuleDraft, routeRuleState, upsertDisplayItem]);
 
+  const sortableDetailSiteGroups = sortedDetailSiteGroups.filter(group =>
+    canSortPrioritySite(group, priorityDraft)
+  );
+  const foldedDetailSiteGroups = sortedDetailSiteGroups.filter(
+    group => !canSortPrioritySite(group, priorityDraft)
+  );
+  const priorityDetailRows: Array<
+    { kind: 'site'; siteGroup: DetailSiteGroup } | { kind: 'folded-sites' }
+  > = [
+    ...sortableDetailSiteGroups.map(siteGroup => ({ kind: 'site' as const, siteGroup })),
+    ...(foldedDetailSiteGroups.length > 0 ? [{ kind: 'folded-sites' as const }] : []),
+    ...(foldedPrioritySitesExpanded
+      ? foldedDetailSiteGroups.map(siteGroup => ({ kind: 'site' as const, siteGroup }))
+      : []),
+  ];
+  const foldedPrioritySiteSummary = [
+    foldedDetailSiteGroups.length > 0 ? `${foldedDetailSiteGroups.length} 个站点已折叠` : null,
+    foldedDetailSiteGroups.filter(group => isPrioritySiteDisabled(group, priorityDraft)).length > 0
+      ? `${
+          foldedDetailSiteGroups.filter(group => isPrioritySiteDisabled(group, priorityDraft))
+            .length
+        } 个站点已禁用`
+      : null,
+  ]
+    .filter(Boolean)
+    .join('，');
   const selectedPrioritySiteIndex = selectedPrioritySiteId
-    ? sortedDetailSiteGroups.findIndex(group => group.siteId === selectedPrioritySiteId)
+    ? sortableDetailSiteGroups.findIndex(group => group.siteId === selectedPrioritySiteId)
     : -1;
   const now = Date.now();
+  const priorityHitApiKeyKey = sourceDetailState
+    ? getPriorityHitApiKeyKeyFromRouteLog(
+        sourceDetailState.item,
+        firstHitPathLogsByCanonicalName[sourceDetailState.item.canonicalName]
+      )
+    : null;
   const selectedEntry = selectedDisplayItem?.entry ?? null;
   const selectedActiveSuspensionCount = selectedDisplayItem
     ? countActiveRoutePathStatesForItem({
@@ -2062,7 +2535,7 @@ export function ModelRedirectionTab() {
     <>
       <div
         data-testid="redirect-workspace"
-        className="overflow-hidden border border-[var(--line-soft)] bg-[var(--surface-1)]"
+        className="overflow-hidden border border-[var(--line-muted)] bg-[var(--surface-1)]"
       >
         <div
           data-testid="redirect-two-pane-layout"
@@ -2070,11 +2543,11 @@ export function ModelRedirectionTab() {
         >
           <div
             data-testid="redirect-list-pane"
-            className="flex min-h-0 flex-col border-b border-[var(--line-soft)] xl:border-b-0 xl:border-r"
+            className="flex min-h-0 flex-col border-b border-[var(--line-muted)] xl:border-b-0 xl:border-r"
           >
             <div
               data-testid="redirect-list-toolbar"
-              className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line-soft)] px-3 py-2"
+              className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line-muted)] px-3 py-2"
             >
               <div className="min-w-0">
                 <div className="text-xs font-semibold text-[var(--text-primary)]">重定向模型</div>
@@ -2128,7 +2601,7 @@ export function ModelRedirectionTab() {
                       data-testid="redirect-list-row"
                       data-selected={isSelected ? 'true' : 'false'}
                       onClick={() => setSelectedDisplayItemId(displayItem.item.id)}
-                      className={`block w-full border-b border-[var(--line-soft)]/80 border-l-2 px-3 py-2 text-left transition-colors ${
+                      className={`block w-full border-b border-[var(--line-muted)] border-l-2 px-3 py-2 text-left transition-colors ${
                         isSelected
                           ? 'border-l-[var(--accent)] bg-[var(--accent-soft-strong)] shadow-[inset_4px_0_0_var(--accent)]'
                           : 'border-l-transparent hover:bg-[var(--surface-2)]'
@@ -2182,7 +2655,7 @@ export function ModelRedirectionTab() {
               <div className="min-h-full">
                 <div
                   data-testid="redirect-detail-actions"
-                  className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line-soft)] px-3 py-2"
+                  className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line-muted)] px-3 py-2"
                 >
                   <div className="min-w-0">
                     <code className="block truncate font-mono text-sm font-semibold text-[var(--text-primary)]">
@@ -2261,7 +2734,7 @@ export function ModelRedirectionTab() {
                   </div>
                 </div>
 
-                <div className="border-b border-[var(--line-soft)] px-3 py-2">
+                <div className="border-b border-[var(--line-muted)] px-3 py-2">
                   <div className="mb-1.5 text-xs font-semibold text-[var(--text-primary)]">
                     原始模型
                   </div>
@@ -2329,7 +2802,7 @@ export function ModelRedirectionTab() {
                         onClick={() => moveSelectedPrioritySite('down')}
                         disabled={
                           selectedPrioritySiteIndex < 0 ||
-                          selectedPrioritySiteIndex >= sortedDetailSiteGroups.length - 1
+                          selectedPrioritySiteIndex >= sortableDetailSiteGroups.length - 1
                         }
                       >
                         <ChevronDown className="h-3.5 w-3.5" />
@@ -2343,7 +2816,7 @@ export function ModelRedirectionTab() {
                         onClick={() => moveSelectedPrioritySite('last')}
                         disabled={
                           selectedPrioritySiteIndex < 0 ||
-                          selectedPrioritySiteIndex >= sortedDetailSiteGroups.length - 1
+                          selectedPrioritySiteIndex >= sortableDetailSiteGroups.length - 1
                         }
                       >
                         <ChevronsDown className="h-3.5 w-3.5" />
@@ -2362,33 +2835,117 @@ export function ModelRedirectionTab() {
 
                   {sortedDetailSiteGroups.length > 0 ? (
                     <div className="overflow-hidden" data-testid="priority-detail-compact-list">
-                      <div className="grid grid-cols-[minmax(0,calc(43%_+_80px))_minmax(0,calc(57%_-_50px))_118px] gap-2 border-y border-[var(--line-soft)] bg-[var(--surface-2)] px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+                      <div
+                        className={`grid ${PRIORITY_DETAIL_GRID_CLASS} gap-2 border-y border-[var(--line-muted)] bg-[var(--surface-2)] px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]`}
+                      >
                         <span>来源</span>
                         <span>覆盖模型</span>
                         <span className="text-right">优先级</span>
+                        <span aria-hidden="true" />
                       </div>
                       <div>
-                        {sortedDetailSiteGroups.map((siteGroup, siteIndex) => {
-                          const isSelected = selectedPrioritySiteId === siteGroup.siteId;
+                        {priorityDetailRows.map(row => {
+                          if (row.kind === 'folded-sites') {
+                            return (
+                              <section
+                                key="folded-sites-divider"
+                                className="border-t border-[var(--line-muted)] bg-[var(--surface-2)] text-xs text-[var(--text-secondary)]"
+                                data-testid="priority-detail-folded-sites"
+                              >
+                                <button
+                                  type="button"
+                                  className={`grid w-full ${PRIORITY_DETAIL_GRID_CLASS} items-center gap-2 px-2.5 py-1 text-left transition-colors hover:bg-[var(--surface-1)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-[-2px]`}
+                                  aria-expanded={foldedPrioritySitesExpanded}
+                                  aria-label={`${foldedPrioritySitesExpanded ? '收起' : '展开'}折叠站点`}
+                                  onClick={toggleFoldedPrioritySites}
+                                  data-testid="priority-detail-folded-sites-toggle"
+                                >
+                                  <div className="col-span-2 flex min-w-0 items-center gap-2">
+                                    <span className="h-5 w-px shrink-0 bg-[var(--line-soft)]" />
+                                    <span className="shrink-0 rounded-full border border-[var(--line-soft)] bg-[var(--surface-1)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--text-secondary)]">
+                                      折叠站点
+                                    </span>
+                                    <span className="min-w-0 truncate">
+                                      {foldedPrioritySiteSummary ||
+                                        `${foldedDetailSiteGroups.length} 个站点不可参与优先级`}
+                                    </span>
+                                  </div>
+                                  <span className="flex items-center justify-end gap-1 text-[11px] font-medium text-[var(--text-secondary)]">
+                                    <ChevronDown
+                                      className={`h-3.5 w-3.5 transition-transform ${
+                                        foldedPrioritySitesExpanded ? '' : '-rotate-90'
+                                      }`}
+                                      aria-hidden="true"
+                                    />
+                                    {foldedPrioritySitesExpanded ? '收起' : '展开'}
+                                  </span>
+                                  <span aria-hidden="true" />
+                                </button>
+                              </section>
+                            );
+                          }
+
+                          const { siteGroup } = row;
+                          const siteDisabled = isPrioritySiteDisabled(siteGroup, priorityDraft);
+                          const siteSortable = canSortPrioritySite(siteGroup, priorityDraft);
+                          const enabledApiKeys = siteDisabled
+                            ? []
+                            : getEnabledPriorityApiKeys(siteGroup, priorityDraft);
+                          const disabledApiKeys = siteDisabled
+                            ? siteGroup.apiKeys
+                            : siteGroup.apiKeys.filter(apiKey =>
+                                isPriorityApiKeyDisabled(apiKey, priorityDraft)
+                              );
+                          const foldedRowCount =
+                            siteGroup.missingGroupHints.length + disabledApiKeys.length;
+                          const sitePriority = siteSortable
+                            ? getEffectivePriorityDisplayValue(
+                                siteGroup.siteId,
+                                priorityDraft.sitePriorities,
+                                sortableDetailSiteGroups.map(group => group.siteId)
+                              )
+                            : null;
+                          const isSelected =
+                            siteSortable && selectedPrioritySiteId === siteGroup.siteId;
                           const missingHintsExpanded = Boolean(
                             expandedMissingKeySiteIds[siteGroup.siteId]
                           );
+                          const foldedSummary = [
+                            disabledApiKeys.length > 0
+                              ? siteDisabled
+                                ? `${disabledApiKeys.length} 个 API key 随站点禁用`
+                                : `${disabledApiKeys.length} 个 API key 已禁用`
+                              : null,
+                            siteGroup.missingGroupHints.length > 0
+                              ? `${siteGroup.missingGroupHints.length} 个用户组未创建可用 API key`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join('，');
 
                           return (
                             <section
                               key={siteGroup.key}
-                              className="border-t border-[var(--line-soft)] first:border-t-0"
+                              className="border-t border-[var(--line-muted)] first:border-t-0"
                               data-testid="priority-detail-site-group"
                             >
                               <div
-                                className={`grid cursor-pointer grid-cols-[minmax(0,calc(43%_+_80px))_minmax(0,calc(57%_-_50px))_118px] items-center gap-2 border-l-4 px-2.5 py-1.5 transition-colors ${
+                                className={`grid ${PRIORITY_DETAIL_GRID_CLASS} items-center gap-2 border-l-4 px-2.5 py-1.5 transition-colors ${
                                   isSelected
                                     ? 'border-l-[var(--accent)] bg-[var(--accent-soft)]/45'
-                                    : 'border-l-[var(--accent)] bg-[var(--surface-2)]/70 hover:bg-[var(--surface-2)]'
+                                    : siteSortable
+                                      ? 'cursor-pointer border-l-[var(--accent)] bg-[var(--surface-2)]/70 hover:bg-[var(--surface-2)]'
+                                      : 'cursor-default border-l-[var(--warning)] bg-[var(--warning-soft)]/15'
                                 }`}
-                                onClick={() => setSelectedPrioritySiteId(siteGroup.siteId)}
+                                data-priority-disabled={siteDisabled ? 'true' : undefined}
+                                data-priority-folded={!siteSortable ? 'true' : undefined}
+                                onClick={() => {
+                                  if (siteSortable) {
+                                    setSelectedPrioritySiteId(siteGroup.siteId);
+                                  }
+                                }}
                               >
-                                <div className="flex min-w-0 items-center gap-2">
+                                <div className="col-span-2 flex min-w-0 items-center gap-2">
                                   <input
                                     type="radio"
                                     name="priority-site-selection"
@@ -2396,15 +2953,20 @@ export function ModelRedirectionTab() {
                                     style={{ accentColor: 'var(--accent)' }}
                                     aria-label={`选择 ${siteGroup.siteName}`}
                                     checked={isSelected}
+                                    disabled={!siteSortable}
                                     onClick={event => event.stopPropagation()}
-                                    onChange={() => setSelectedPrioritySiteId(siteGroup.siteId)}
+                                    onChange={() => {
+                                      if (siteSortable) {
+                                        setSelectedPrioritySiteId(siteGroup.siteId);
+                                      }
+                                    }}
                                   />
                                   <span className="shrink-0 rounded-full border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--accent)]">
                                     站点
                                   </span>
-                                  <span className="flex min-w-0 items-center text-[13px] font-semibold text-[var(--text-primary)]">
+                                  <span className="flex min-w-0 flex-wrap items-center gap-x-1 text-[13px] font-semibold leading-5 text-[var(--text-primary)]">
                                     <span
-                                      className="min-w-0 max-w-[8em] truncate"
+                                      className="min-w-0 max-w-full whitespace-normal break-words"
                                       title={siteGroup.siteName}
                                     >
                                       {siteGroup.siteName}
@@ -2416,19 +2978,39 @@ export function ModelRedirectionTab() {
                                     ) : null}
                                   </span>
                                 </div>
-                                <div className="min-w-0" aria-hidden="true" />
                                 <div className="flex items-center justify-end">
                                   <span
                                     className="min-w-7 rounded-full bg-[var(--surface-1)] px-1.5 py-0.5 text-center text-xs font-semibold text-[var(--text-primary)]"
                                     data-testid="priority-detail-site-priority"
-                                    aria-label={`${siteGroup.siteName} 优先级 ${siteIndex}`}
+                                    aria-label={
+                                      sitePriority === null
+                                        ? `${siteGroup.siteName} 无优先级`
+                                        : `${siteGroup.siteName} 优先级 ${sitePriority}`
+                                    }
                                   >
-                                    {siteIndex}
+                                    {sitePriority ?? '--'}
                                   </span>
                                 </div>
+                                <button
+                                  type="button"
+                                  className={`inline-flex h-6 min-w-10 items-center justify-center justify-self-end rounded-[var(--radius-md)] border px-2 text-[11px] font-semibold leading-none transition-colors ${
+                                    siteDisabled
+                                      ? 'border-[var(--success)]/35 bg-[var(--success-soft)] text-[var(--success)] hover:border-[var(--success)]'
+                                      : 'border-[var(--line-soft)] bg-[var(--surface-1)] text-[var(--text-secondary)] hover:border-[var(--danger)] hover:text-[var(--danger)]'
+                                  }`}
+                                  aria-label={`${siteGroup.siteName} ${siteDisabled ? '启用' : '禁用'}`}
+                                  title={siteDisabled ? '启用站点' : '禁用站点'}
+                                  onClick={event => {
+                                    event.stopPropagation();
+                                    togglePrioritySiteDisabled(siteGroup.siteId);
+                                  }}
+                                  data-testid="priority-detail-site-disable-toggle"
+                                >
+                                  {siteDisabled ? '启用' : '禁用'}
+                                </button>
                               </div>
 
-                              {siteGroup.apiKeys.map((apiKey, apiKeyIndex) => {
+                              {enabledApiKeys.map((apiKey, apiKeyIndex) => {
                                 const apiKeySuspensions = getActiveRoutePathSuspensionLabels({
                                   states: config.routePathStates,
                                   item: selectedDisplayItem.item,
@@ -2446,12 +3028,19 @@ export function ModelRedirectionTab() {
                                   apiKey.modelPriceLabels,
                                   apiKeySuspensionLabels
                                 );
+                                const isPriorityHit = priorityHitApiKeyKey === apiKey.key;
 
                                 return (
                                   <div
                                     key={apiKey.key}
-                                    className="grid grid-cols-[minmax(0,calc(43%_+_80px))_minmax(0,calc(57%_-_50px))_118px] items-center gap-2 border-t border-[var(--line-soft)]/70 bg-[var(--surface-1)] px-2.5 py-1 text-xs text-[var(--text-secondary)]"
+                                    className={`grid ${PRIORITY_DETAIL_GRID_CLASS} items-center gap-2 border-t border-l-4 px-2.5 py-1 text-xs transition-colors ${
+                                      isPriorityHit
+                                        ? 'border-t-[var(--success)]/25 border-l-[var(--success)] bg-[var(--success-soft)] text-[var(--text-primary)] shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--success)_18%,transparent)]'
+                                        : 'border-t-[var(--line-muted)] border-l-transparent bg-[var(--surface-1)] text-[var(--text-secondary)]'
+                                    }`}
                                     data-testid="priority-detail-api-key-row"
+                                    data-priority-hit={isPriorityHit ? 'true' : undefined}
+                                    aria-current={isPriorityHit ? 'true' : undefined}
                                   >
                                     <div className="min-w-0 pl-5">
                                       <div className="flex min-w-0 items-center gap-1">
@@ -2474,7 +3063,7 @@ export function ModelRedirectionTab() {
                                             className="rounded-[var(--radius-sm)] p-0 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-35"
                                             aria-label={`${apiKey.apiKeyName} 下移`}
                                             title="下移"
-                                            disabled={apiKeyIndex === siteGroup.apiKeys.length - 1}
+                                            disabled={apiKeyIndex === enabledApiKeys.length - 1}
                                             onClick={() =>
                                               movePriorityApiKey(
                                                 siteGroup.siteId,
@@ -2486,7 +3075,13 @@ export function ModelRedirectionTab() {
                                             <ChevronDown className="h-2.5 w-2.5" />
                                           </button>
                                         </div>
-                                        <span className="shrink-0 rounded border border-[var(--line-soft)] bg-[var(--surface-2)] px-1 py-px text-[9px] font-bold leading-3">
+                                        <span
+                                          className={`shrink-0 rounded border px-1 py-px text-[9px] font-bold leading-3 ${
+                                            isPriorityHit
+                                              ? 'border-[var(--success)]/35 bg-[var(--success-soft)] text-[var(--success)]'
+                                              : 'border-[var(--line-soft)] bg-[var(--surface-2)]'
+                                          }`}
+                                        >
                                           API Key
                                         </span>
                                         <span className="min-w-0 truncate">
@@ -2515,35 +3110,52 @@ export function ModelRedirectionTab() {
                                     >
                                       {formattedModelList}
                                     </div>
-                                    <div className="min-w-0" aria-hidden="true" />
+                                    <div className="flex min-w-0 items-center justify-end gap-1">
+                                      {isPriorityHit ? (
+                                        <span className="truncate rounded-full border border-[var(--success)]/30 bg-[var(--success-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--success)]">
+                                          当前优先命中
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className="inline-flex h-5 min-w-8 items-center justify-center justify-self-end rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-1.5 text-[10px] font-semibold leading-none text-[var(--text-secondary)] transition-colors hover:border-[var(--danger)] hover:text-[var(--danger)]"
+                                      aria-label={`${apiKey.apiKeyName} 禁用`}
+                                      title="禁用 API key"
+                                      onClick={() =>
+                                        togglePriorityApiKeyDisabled(siteGroup.siteId, apiKey.key)
+                                      }
+                                      data-testid="priority-detail-api-key-disable-toggle"
+                                    >
+                                      禁用
+                                    </button>
                                   </div>
                                 );
                               })}
 
-                              {siteGroup.missingGroupHints.length > 0 ? (
+                              {foldedRowCount > 0 ? (
                                 <div className="border-t border-[var(--warning)]/25 bg-[var(--warning-soft)]/20 text-xs text-[var(--text-secondary)]">
                                   <button
                                     type="button"
-                                    className="grid w-full grid-cols-[minmax(0,calc(43%_+_80px))_minmax(0,calc(57%_-_50px))_118px] items-center gap-2 px-2.5 py-1 text-left transition-colors hover:bg-[var(--warning-soft)]/35 focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-[-2px]"
+                                    className={`grid w-full ${PRIORITY_DETAIL_GRID_CLASS} items-center gap-2 px-2.5 py-1 text-left transition-colors hover:bg-[var(--warning-soft)]/35 focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-[-2px]`}
                                     aria-expanded={missingHintsExpanded}
-                                    aria-controls={`priority-missing-key-hints-${siteGroup.siteId}`}
+                                    aria-controls={`priority-folded-hints-${siteGroup.siteId}`}
                                     aria-label={`${siteGroup.siteName} ${
                                       missingHintsExpanded ? '收起' : '展开'
-                                    }缺少 Key`}
+                                    }折叠项`}
                                     onClick={() => toggleMissingKeyHints(siteGroup.siteId)}
                                     data-testid="priority-detail-missing-key-toggle"
                                   >
                                     <div className="col-span-2 flex min-w-0 items-center gap-2 pl-5">
                                       <span className="h-5 w-px shrink-0 bg-[var(--warning)]/35" />
                                       <span className="shrink-0 rounded-full border border-[var(--warning)]/30 bg-[var(--warning-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--warning)]">
-                                        缺少 Key
+                                        折叠
                                       </span>
                                       <span className="min-w-0 truncate">
-                                        {siteGroup.missingGroupHints.length} 个用户组未创建可用 API
-                                        key
+                                        {foldedSummary || `${foldedRowCount} 项不可参与优先级`}
                                       </span>
                                     </div>
-                                    <span className="flex translate-x-[50px] items-center justify-start gap-1 text-[11px] font-medium text-[var(--warning)]">
+                                    <span className="flex items-center justify-end gap-1 text-[11px] font-medium text-[var(--warning)]">
                                       <ChevronDown
                                         className={`h-3.5 w-3.5 transition-transform ${
                                           missingHintsExpanded ? '' : '-rotate-90'
@@ -2552,13 +3164,73 @@ export function ModelRedirectionTab() {
                                       />
                                       {missingHintsExpanded ? '收起' : '展开'}
                                     </span>
+                                    <span aria-hidden="true" />
                                   </button>
                                   {missingHintsExpanded ? (
-                                    <div id={`priority-missing-key-hints-${siteGroup.siteId}`}>
+                                    <div id={`priority-folded-hints-${siteGroup.siteId}`}>
+                                      {disabledApiKeys.map(apiKey => {
+                                        const formattedModelList = formatModelListWithProbeStatus(
+                                          apiKey.supportedOriginalModels,
+                                          apiKey.modelTestResults,
+                                          apiKey.modelPriceLabels
+                                        );
+
+                                        return (
+                                          <div
+                                            key={`${siteGroup.key}:disabled:${apiKey.key}`}
+                                            className={`grid ${PRIORITY_DETAIL_GRID_CLASS} items-center gap-2 border-t border-[var(--warning)]/15 px-2.5 py-1`}
+                                            data-testid="priority-detail-disabled-api-key-row"
+                                          >
+                                            <div className="flex min-w-0 items-center gap-2 pl-5">
+                                              <span className="h-5 w-px shrink-0 bg-[var(--warning)]/35" />
+                                              <span className="shrink-0 rounded border border-[var(--warning)]/30 bg-[var(--warning-soft)] px-1 py-px text-[9px] font-bold leading-3 text-[var(--warning)]">
+                                                API Key
+                                              </span>
+                                              <span className="min-w-0 truncate">
+                                                {`${apiKey.apiKeyName}（${[
+                                                  formatApiKeyAccountName(
+                                                    apiKey.accountName,
+                                                    apiKey.accountId
+                                                  ),
+                                                  apiKey.group,
+                                                  formatGroupRatio(apiKey.groupRatio),
+                                                ]
+                                                  .filter(Boolean)
+                                                  .join(' / ')}）`}
+                                              </span>
+                                            </div>
+                                            <div
+                                              className="min-w-0 truncate"
+                                              title={formattedModelList}
+                                            >
+                                              {formattedModelList}
+                                            </div>
+                                            <span className="justify-self-end rounded-full bg-[var(--surface-1)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--warning)]">
+                                              {siteDisabled ? '随站点禁用' : '已禁用'}
+                                            </span>
+                                            <button
+                                              type="button"
+                                              className="inline-flex h-5 min-w-8 items-center justify-center justify-self-end rounded-[var(--radius-sm)] border border-[var(--success)]/35 bg-[var(--success-soft)] px-1.5 text-[10px] font-semibold leading-none text-[var(--success)] transition-colors hover:border-[var(--success)] disabled:cursor-not-allowed disabled:opacity-40"
+                                              aria-label={`${apiKey.apiKeyName} 启用`}
+                                              title={siteDisabled ? '先启用站点' : '启用 API key'}
+                                              disabled={siteDisabled}
+                                              onClick={() =>
+                                                togglePriorityApiKeyDisabled(
+                                                  siteGroup.siteId,
+                                                  apiKey.key
+                                                )
+                                              }
+                                              data-testid="priority-detail-api-key-enable-toggle"
+                                            >
+                                              启用
+                                            </button>
+                                          </div>
+                                        );
+                                      })}
                                       {siteGroup.missingGroupHints.map(hint => (
                                         <div
                                           key={`${siteGroup.key}:${hint.key}`}
-                                          className="grid grid-cols-[minmax(0,calc(43%_+_80px))_minmax(0,calc(57%_-_50px))_118px] items-center gap-2 border-t border-[var(--warning)]/15 px-2.5 py-1"
+                                          className={`grid ${PRIORITY_DETAIL_GRID_CLASS} items-center gap-2 border-t border-[var(--warning)]/15 px-2.5 py-1`}
                                           data-testid="priority-detail-missing-key-row"
                                         >
                                           <div className="col-span-2 flex min-w-0 items-center gap-2 pl-5">
@@ -2575,7 +3247,7 @@ export function ModelRedirectionTab() {
                                             type="button"
                                             size="sm"
                                             variant="secondary"
-                                            className="!h-6 !min-h-6 w-14 shrink-0 translate-x-[50px] justify-self-start px-0"
+                                            className="!h-6 !min-h-6 w-14 shrink-0 justify-self-end px-0"
                                             onClick={() =>
                                               void openCreateApiKeyDialog(siteGroup, hint)
                                             }
@@ -2583,12 +3255,13 @@ export function ModelRedirectionTab() {
                                           >
                                             创建
                                           </AppButton>
+                                          <span aria-hidden="true" />
                                         </div>
                                       ))}
                                     </div>
                                   ) : (
                                     <div
-                                      id={`priority-missing-key-hints-${siteGroup.siteId}`}
+                                      id={`priority-folded-hints-${siteGroup.siteId}`}
                                       hidden
                                     ></div>
                                   )}

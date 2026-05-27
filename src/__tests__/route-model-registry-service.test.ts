@@ -5,7 +5,11 @@ import type {
   RouteModelSourceRef,
   RouteRule,
 } from '../shared/types/route-proxy';
-import { buildProbeKey, buildRouteOverrideDisplayItemId } from '../shared/types/route-proxy';
+import {
+  buildProbeKey,
+  buildRouteApiKeyPriorityKey,
+  buildRouteOverrideDisplayItemId,
+} from '../shared/types/route-proxy';
 
 const { unifiedConfigManagerMock, loggerScopeMock, customCliStorageMock } = vi.hoisted(() => ({
   unifiedConfigManagerMock: {
@@ -265,6 +269,161 @@ describe('route model registry service', () => {
     );
   });
 
+  it('treats sub2api string active key states as route-eligible while syncing sources', async () => {
+    const registry = createRegistryConfig();
+
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
+      sites: [{ id: 'site-1', name: 'Alpha 公益站', cached_data: undefined }],
+      accounts: [
+        {
+          id: 'acc-1',
+          site_id: 'site-1',
+          account_name: 'Primary',
+          status: 'active',
+          cached_data: {
+            models: ['gpt-4.1-preview'],
+            api_keys: [
+              {
+                id: 'key-active',
+                name: 'Active Key',
+                group: 'alpha',
+                status: 'active',
+              },
+              {
+                id: 'key-status-str',
+                name: 'Status Str Key',
+                group: 'alpha',
+                status_str: 'active',
+              },
+              {
+                id: 'key-inactive',
+                name: 'Inactive Key',
+                group: 'alpha',
+                status: 'inactive',
+              },
+            ],
+            user_groups: {
+              alpha: {
+                desc: 'Alpha',
+                ratio: 1,
+              },
+            },
+          },
+        },
+      ],
+    });
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      modelRegistry: registry,
+    });
+
+    const result = await syncModelRegistrySources(true);
+
+    expect(result.sources[0]?.availableApiKeys).toEqual([
+      expect.objectContaining({
+        apiKeyId: 'key-active',
+        apiKeyName: 'Active Key',
+        group: 'alpha',
+      }),
+      expect.objectContaining({
+        apiKeyId: 'key-status-str',
+        apiKeyName: 'Status Str Key',
+        group: 'alpha',
+      }),
+    ]);
+    expect(result.sources[0]?.apiKeyNamesByGroup).toEqual({
+      alpha: ['Active Key', 'Status Str Key'],
+    });
+  });
+
+  it('preserves display item disabled priority config while syncing sources', async () => {
+    const apiKeyPriorityKey = buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'key-1');
+    const backupApiKeyPriorityKey = buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'key-2');
+    const registry = createRegistryConfig();
+    registry.displayItems = [
+      {
+        id: 'manual:gpt-4.1',
+        vendor: 'gpt',
+        canonicalName: 'gpt-4.1',
+        sourceKeys: ['site-1:acc-1:gpt-4.1-preview'],
+        originalModelOrder: ['gpt-4.1-preview'],
+        priorityConfig: {
+          sitePriorities: {},
+          apiKeyPriorities: {
+            [backupApiKeyPriorityKey]: 0,
+          },
+          disabledSiteIds: ['site-1'],
+          disabledApiKeyPriorityKeys: [apiKeyPriorityKey],
+        },
+        mode: 'manual',
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    ];
+
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
+      sites: [{ id: 'site-1', name: 'Site 1', cached_data: undefined }],
+      accounts: [
+        {
+          id: 'acc-1',
+          site_id: 'site-1',
+          account_name: 'Primary',
+          status: 'active',
+          cached_data: {
+            models: ['gpt-4.1-preview'],
+            api_keys: [
+              {
+                id: 'key-1',
+                name: 'Main Key',
+                group: 'team-beta',
+              },
+              {
+                id: 'key-2',
+                name: 'Backup Key',
+                group: 'team-beta',
+              },
+            ],
+            user_groups: {
+              'team-beta': {
+                desc: 'Beta Team',
+                ratio: 1,
+              },
+            },
+          },
+        },
+      ],
+    });
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      modelRegistry: registry,
+    });
+
+    const result = await syncModelRegistrySources(true);
+
+    expect(result.displayItems[0]?.priorityConfig).toEqual({
+      sitePriorities: {},
+      apiKeyPriorities: {
+        [backupApiKeyPriorityKey]: 0,
+      },
+      disabledSiteIds: ['site-1'],
+      disabledApiKeyPriorityKeys: [apiKeyPriorityKey],
+    });
+    expect(unifiedConfigManagerMock.updateRouteModelRegistry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        displayItems: [
+          expect.objectContaining({
+            priorityConfig: {
+              sitePriorities: {},
+              apiKeyPriorities: {
+                [backupApiKeyPriorityKey]: 0,
+              },
+              disabledSiteIds: ['site-1'],
+              disabledApiKeyPriorityKeys: [apiKeyPriorityKey],
+            },
+          }),
+        ],
+      })
+    );
+  });
+
   it('prefers a source-scoped manual override when resolving canonical names', () => {
     unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
       modelRegistry: createRegistryConfig([createSourceOverride()]),
@@ -329,6 +488,115 @@ describe('route model registry service', () => {
         },
       }),
     ]);
+  });
+
+  it('preserves seeded default disabled priority config during ordinary rebuild', async () => {
+    const opusModel = 'claude-opus-4.6-20260201';
+    const opusSourceKey = `site-1:acc-1:${opusModel}`;
+    const disabledApiKeyPriorityKey = buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'key-a');
+    const registry = createRegistryConfig();
+    registry.displayItems = [
+      {
+        id: 'seeded:claude-opus-4-6',
+        vendor: 'claude',
+        canonicalName: 'claude-opus-4-6',
+        sourceKeys: [opusSourceKey],
+        originalModelOrder: [opusModel],
+        priorityConfig: {
+          sitePriorities: {
+            'site-1': 4,
+            'site-2': 9,
+          },
+          apiKeyPriorities: {
+            [disabledApiKeyPriorityKey]: 2,
+          },
+          disabledSiteIds: ['site-2'],
+          disabledApiKeyPriorityKeys: [disabledApiKeyPriorityKey],
+        },
+        runtimeConfig: {
+          maxAttemptsPerRoutePath: 2,
+          successRateWindowMinutes: 10,
+          disableDurationMinutes: 45,
+          minSuccessRate: 0.75,
+        },
+        mode: 'seeded',
+        createdAt: 123,
+        updatedAt: 456,
+      },
+    ];
+
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
+      sites: [{ id: 'site-1', name: 'Site 1', cached_data: undefined }],
+      accounts: [
+        {
+          id: 'acc-1',
+          site_id: 'site-1',
+          account_name: 'Primary',
+          status: 'active',
+          cached_data: {
+            models: [opusModel],
+            api_keys: [
+              {
+                id: 'key-a',
+                name: 'Main Key',
+                group: 'team-a',
+              },
+            ],
+            user_groups: {
+              'team-a': {
+                desc: 'Team A',
+                ratio: 1,
+              },
+            },
+          },
+        },
+      ],
+    });
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      modelRegistry: registry,
+    });
+
+    const result = await rebuildModelRegistry(true);
+
+    expect(result.displayItems).toEqual([
+      expect.objectContaining({
+        id: 'seeded:claude-opus-4-6',
+        canonicalName: 'claude-opus-4-6',
+        mode: 'seeded',
+        sourceKeys: [opusSourceKey],
+        originalModelOrder: [opusModel],
+        priorityConfig: {
+          sitePriorities: {
+            'site-1': 4,
+            'site-2': 9,
+          },
+          apiKeyPriorities: {
+            [disabledApiKeyPriorityKey]: 2,
+          },
+          disabledSiteIds: ['site-2'],
+          disabledApiKeyPriorityKeys: [disabledApiKeyPriorityKey],
+        },
+        runtimeConfig: {
+          maxAttemptsPerRoutePath: 2,
+          successRateWindowMinutes: 10,
+          disableDurationMinutes: 45,
+          minSuccessRate: 0.75,
+        },
+        createdAt: 123,
+      }),
+    ]);
+    expect(unifiedConfigManagerMock.updateRouteModelRegistry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        displayItems: [
+          expect.objectContaining({
+            priorityConfig: expect.objectContaining({
+              disabledSiteIds: ['site-2'],
+              disabledApiKeyPriorityKeys: [disabledApiKeyPriorityKey],
+            }),
+          }),
+        ],
+      })
+    );
   });
 
   it('resets the default opus display item without preserving old overrides targeting it', async () => {
@@ -737,6 +1005,73 @@ describe('route model registry service', () => {
     expect(result.sources.map(source => source.originalModel)).not.toContain('gemini-duck');
   });
 
+  it('keeps manual custom CLI model sources outside the fetched model list', async () => {
+    const registry = createRegistryConfig();
+    const customConfig = createCustomCliConfig({
+      models: ['duckcoding'],
+      manualModels: ['manual-duck'],
+      lastModelFetch: 100,
+      cliSettings: {
+        claudeCode: {
+          enabled: false,
+          model: null,
+          testModels: [],
+          testState: null,
+        },
+        codex: {
+          enabled: true,
+          model: 'manual-duck',
+          testModels: ['manual-duck', 'stale-extra'],
+          testState: {
+            status: true,
+            testedAt: 2,
+            slots: [
+              { model: 'manual-duck', success: true, timestamp: 2 },
+              { model: 'stale-tested', success: true, timestamp: 2 },
+              null,
+            ],
+          },
+        },
+        geminiCli: {
+          enabled: true,
+          model: 'stale-gemini',
+          testModels: [],
+          testState: null,
+        },
+      },
+    });
+    const siteId = buildCustomCliRouteSiteId(customConfig.id);
+    const accountId = buildCustomCliRouteAccountId(customConfig.id);
+
+    customCliStorageMock.mockResolvedValue({
+      configs: [customConfig],
+      activeConfigId: customConfig.id,
+    });
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
+      sites: [],
+      accounts: [],
+    });
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      modelRegistry: registry,
+    });
+
+    const result = await rebuildModelRegistry(true);
+
+    expect(result.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceKey: `${siteId}:${accountId}:manual-duck`,
+          originalModel: 'manual-duck',
+          availableCliTypes: ['codex'],
+        }),
+      ])
+    );
+    expect(result.sources.map(source => source.originalModel)).toContain('duckcoding');
+    expect(result.sources.map(source => source.originalModel)).not.toContain('stale-extra');
+    expect(result.sources.map(source => source.originalModel)).not.toContain('stale-tested');
+    expect(result.sources.map(source => source.originalModel)).not.toContain('stale-gemini');
+  });
+
   it('falls back to configured custom CLI models before a model list has been fetched', async () => {
     const registry = createRegistryConfig();
     const customConfig = createCustomCliConfig({
@@ -1097,7 +1432,7 @@ describe('route model registry service', () => {
           account_name: 'Legacy Account',
           status: 'active',
           cached_data: {
-            api_keys: [{ id: 'key-a', key: 'sk-legacy', status: 1, group: 'team-a' }],
+            api_keys: [{ id: 'key-a', key: 'sk-legacy', status: 'active', group: 'team-a' }],
           },
         },
       ],
@@ -1279,6 +1614,267 @@ describe('route model registry service', () => {
     ).toEqual([
       { siteId: 'site-1', apiKeyId: 'key-a', sitePriority: 0 },
       { siteId: 'site-2', apiKeyId: 'key-b', sitePriority: 1 },
+    ]);
+  });
+
+  it('excludes channels from sites disabled in display item priority config', () => {
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
+      sites: [
+        { id: 'site-1', name: 'Disabled Site', enabled: true, url: 'https://site-1.example.com' },
+        { id: 'site-2', name: 'Enabled Site', enabled: true, url: 'https://site-2.example.com' },
+      ],
+      accounts: [
+        { id: 'acc-1', site_id: 'site-1', account_name: 'Primary', status: 'active' },
+        { id: 'acc-2', site_id: 'site-2', account_name: 'Backup', status: 'active' },
+      ],
+    });
+
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      cliProbe: { latest: {} },
+      modelRegistry: {
+        version: 1,
+        sources: [
+          createSource({
+            sourceKey: 'site-1:acc-1:raw-current',
+            siteId: 'site-1',
+            siteName: 'Disabled Site',
+            accountId: 'acc-1',
+            accountName: 'Primary',
+            originalModel: 'raw-current',
+            availableApiKeys: [
+              {
+                apiKeyId: 'key-a',
+                apiKeyName: 'key-a',
+                accountId: 'acc-1',
+                accountName: 'Primary',
+                group: 'team-a',
+              },
+            ],
+          }),
+          createSource({
+            sourceKey: 'site-2:acc-2:raw-current',
+            siteId: 'site-2',
+            siteName: 'Enabled Site',
+            accountId: 'acc-2',
+            accountName: 'Backup',
+            originalModel: 'raw-current',
+            availableApiKeys: [
+              {
+                apiKeyId: 'key-b',
+                apiKeyName: 'key-b',
+                accountId: 'acc-2',
+                accountName: 'Backup',
+                group: 'team-a',
+              },
+            ],
+          }),
+        ],
+        entries: {
+          'claude-route': {
+            canonicalName: 'claude-route',
+            vendor: 'claude',
+            aliases: ['raw-current'],
+            sources: [],
+            hasOverride: true,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [
+          {
+            id: 'manual:claude-route',
+            vendor: 'claude',
+            canonicalName: 'claude-route',
+            sourceKeys: ['site-1:acc-1:raw-current', 'site-2:acc-2:raw-current'],
+            originalModelOrder: ['raw-current'],
+            priorityConfig: {
+              sitePriorities: {
+                'site-1': 0,
+                'site-2': 1,
+              },
+              apiKeyPriorities: {
+                [buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'key-a')]: 0,
+                [buildRouteApiKeyPriorityKey('site-2', 'acc-2', 'key-b')]: 0,
+              },
+              disabledSiteIds: ['site-1'],
+            },
+            mode: 'manual',
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+        vendorPriorities: {},
+      },
+    });
+
+    const channels = resolveChannels(
+      createRouteRule({
+        id: 'rule-1',
+        name: 'Claude',
+        cliType: 'claudeCode',
+      }),
+      'claude-route'
+    );
+
+    expect(
+      channels.map(channel => ({
+        siteId: channel.siteId,
+        accountId: channel.accountId,
+        apiKeyId: channel.apiKeyId,
+      }))
+    ).toEqual([{ siteId: 'site-2', accountId: 'acc-2', apiKeyId: 'key-b' }]);
+  });
+
+  it('excludes channels for api keys disabled in display item priority config', () => {
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
+      sites: [
+        { id: 'site-1', name: 'Primary Site', enabled: true, url: 'https://site-1.example.com' },
+        { id: 'site-2', name: 'Backup Site', enabled: true, url: 'https://site-2.example.com' },
+      ],
+      accounts: [
+        { id: 'acc-1', site_id: 'site-1', account_name: 'Primary', status: 'active' },
+        { id: 'acc-2', site_id: 'site-1', account_name: 'Secondary', status: 'active' },
+        { id: 'acc-3', site_id: 'site-2', account_name: 'Backup', status: 'active' },
+      ],
+    });
+
+    const disabledApiKeyPriorityKey = buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'key-a');
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      cliProbe: { latest: {} },
+      modelRegistry: {
+        version: 1,
+        sources: [
+          createSource({
+            sourceKey: 'site-1:acc-1:raw-current',
+            siteId: 'site-1',
+            siteName: 'Primary Site',
+            accountId: 'acc-1',
+            accountName: 'Primary',
+            originalModel: 'raw-current',
+            availableApiKeys: [
+              {
+                apiKeyId: 'key-a',
+                apiKeyName: 'key-a',
+                accountId: 'acc-1',
+                accountName: 'Primary',
+                group: 'team-a',
+              },
+            ],
+          }),
+          createSource({
+            sourceKey: 'site-1:acc-2:raw-current',
+            siteId: 'site-1',
+            siteName: 'Primary Site',
+            accountId: 'acc-2',
+            accountName: 'Secondary',
+            originalModel: 'raw-current',
+            availableApiKeys: [
+              {
+                apiKeyId: 'key-b',
+                apiKeyName: 'key-b',
+                accountId: 'acc-2',
+                accountName: 'Secondary',
+                group: 'team-a',
+              },
+            ],
+          }),
+          createSource({
+            sourceKey: 'site-2:acc-3:raw-current',
+            siteId: 'site-2',
+            siteName: 'Backup Site',
+            accountId: 'acc-3',
+            accountName: 'Backup',
+            originalModel: 'raw-current',
+            availableApiKeys: [
+              {
+                apiKeyId: 'key-c',
+                apiKeyName: 'key-c',
+                accountId: 'acc-3',
+                accountName: 'Backup',
+                group: 'team-a',
+              },
+            ],
+          }),
+        ],
+        entries: {
+          'claude-route': {
+            canonicalName: 'claude-route',
+            vendor: 'claude',
+            aliases: ['raw-current'],
+            sources: [],
+            hasOverride: true,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [
+          {
+            id: 'manual:claude-route',
+            vendor: 'claude',
+            canonicalName: 'claude-route',
+            sourceKeys: [
+              'site-1:acc-1:raw-current',
+              'site-1:acc-2:raw-current',
+              'site-2:acc-3:raw-current',
+            ],
+            originalModelOrder: ['raw-current'],
+            priorityConfig: {
+              sitePriorities: {
+                'site-1': 0,
+                'site-2': 1,
+              },
+              apiKeyPriorities: {
+                [disabledApiKeyPriorityKey]: 0,
+                [buildRouteApiKeyPriorityKey('site-1', 'acc-2', 'key-b')]: 1,
+                [buildRouteApiKeyPriorityKey('site-2', 'acc-3', 'key-c')]: 0,
+              },
+              disabledApiKeyPriorityKeys: [disabledApiKeyPriorityKey],
+            },
+            mode: 'manual',
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+        vendorPriorities: {},
+      },
+    });
+
+    const channels = sortChannelsByScore(
+      resolveChannels(
+        createRouteRule({
+          id: 'rule-1',
+          name: 'Claude',
+          cliType: 'claudeCode',
+        }),
+        'claude-route'
+      )
+    );
+
+    expect(
+      channels.map(channel => ({
+        siteId: channel.siteId,
+        accountId: channel.accountId,
+        apiKeyId: channel.apiKeyId,
+        sitePriority: channel.sitePriority,
+        apiKeyPriority: channel.apiKeyPriority,
+      }))
+    ).toEqual([
+      {
+        siteId: 'site-1',
+        accountId: 'acc-2',
+        apiKeyId: 'key-b',
+        sitePriority: 0,
+        apiKeyPriority: 1,
+      },
+      {
+        siteId: 'site-2',
+        accountId: 'acc-3',
+        apiKeyId: 'key-c',
+        sitePriority: 1,
+        apiKeyPriority: 0,
+      },
     ]);
   });
 

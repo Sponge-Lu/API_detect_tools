@@ -128,7 +128,7 @@ describe('app storage bundle', () => {
     expect(restoredConfig.sites).toEqual([]);
   });
 
-  it('restores legacy config-only backups while clearing stale runtime/cache state', async () => {
+  it('restores legacy config-only backups while preserving runtime/cache sidecars', async () => {
     const { restoreAppStorageBackupContent } = await import('../main/app-storage-bundle');
     const roots = {
       userData: userDataDir,
@@ -158,10 +158,12 @@ describe('app storage bundle', () => {
     );
 
     expect(result.kind).toBe('legacy-config');
-    await expect(fs.access(path.join(userDataDir, 'runtime-cache.json'))).rejects.toThrow();
+    await expect(fs.readFile(path.join(userDataDir, 'runtime-cache.json'), 'utf-8')).resolves.toBe(
+      '{"version":"1"}'
+    );
     await expect(
-      fs.access(path.join(userDataDir, 'state', 'route-runtime.json'))
-    ).rejects.toThrow();
+      fs.readFile(path.join(userDataDir, 'state', 'route-runtime.json'), 'utf-8')
+    ).resolves.toBe('{"version":"1","stats":{"stale":{}}}');
     await expect(fs.access(path.join(userDataDir, 'config.json'))).resolves.toBeUndefined();
   });
 });

@@ -4,22 +4,28 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，并且本项目遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
-## [Unreleased]
+## [v3.0.4] - 2026-05-27
 
 ### 新增
 - **会话日志页**：新增 `日志` 一级页面，统一展示当前启动周期内的通知历史与关键操作记录，并支持按 `通知 / 操作` 筛选与一键清空
 - **Route 模型注册表增强**：模型注册表新增 `displayItems / vendorPriorities / sources` 结构，支持来源同步、展示项维护与厂商优先级配置
+- **Route probe-lock 诊断链路**：CLI 手动测试与自动探测新增 probe-lock 请求观察、终止失败通知、`probeRunId` 传递和单模型上游尝试预算
 
 ### 变更
-- **一级导航调整**：当前主界面收敛为 `站点管理 / 自定义 CLI / LDC 积分 / 站点检测 / 路由 / 日志 / 设置`，旧的 Route 子页入口并入 `路由` 工作台
+- **一级导航调整**：当前主界面收敛为 `数据总览 / 站点管理 / 自定义 CLI / 站点检测 / LDC 积分 / 本地路由 / 日志 / 设置`，旧的 Route 子页入口并入 `本地路由`、`站点检测` 与 `数据总览`
 - **CLI 探测投影统一**：站点页与 CLI 可用性页统一消费 `config.routing.cliProbe.latest`，按账户维度投影回兼容性图标，并保留错误码、回答摘要与来源标签
 - **CLI 配置模板更新**：Claude Code 顶层 `model` 对 Claude 4.6+ 自动写入 `sonnet[1m] / opus[1m]` 别名；Codex 模板默认 `model_reasoning_effort = "xhigh"`
 - **签到能力状态拆分**：共享检测缓存补齐 `has_checkin / can_check_in` 双字段，批量签到跳过 `unavailable` 分组，并按 `site_type` 打开对应手动签到页
+- **路由日志展示收敛**：路由日志请求尝试从多行标签堆叠改为紧凑网格，集中展示模型路径、命中来源路径、站点优先级、Token/cache token 与参考金额
+- **路由趋势时间轴补齐**：`数据总览 -> 路由数据` 的运行趋势图在 `24h` / `7d` 视窗内固定渲染完整小时/日期刻度，缺失桶按零值参与聚合
 
 ### 修复
 - **LDC 登录态恢复**：Linux Do Credit 刷新链路不再硬依赖 `cf_clearance`，改为结合持久化 cookies、缓存提示和实时验证恢复页面状态，401/403 时同步清空失效会话
 - **登录浏览器站点回归**：登录浏览器读取用户数据和创建 access token 时会优先回到目标域名，并按当前页面 origin 修正 `baseUrl`，降低登录后站点基址漂移导致的误判
 - **Route 密集界面可用性**：模型重定向对话框与 CLI 可用性矩阵改为更稳定的滚动/内联设置布局，减少弹窗溢出与长列表滚动卡顿
+- **API Key 活跃状态兼容**：API Key 状态判断统一支持 `status / status_str / state / enabled` 多种字段，避免非 `status === 1` 的可用密钥被误显示或误排除
+- **配置读写稳定性**：配置读取失败会在备份恢复前短重试，原子写入在 Windows final rename 临时锁场景下重试并保留同目标串行写入语义
+- **路由趋势前置空桶绘制**：当选中窗口只有部分路由桶数据时，首个真实桶之前的空小时/日期只显示 X 轴标签，不再绘制请求柱或成功率 / 首字响应折线段
 
 ## [v3.0.1]
 

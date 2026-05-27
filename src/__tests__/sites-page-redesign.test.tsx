@@ -165,6 +165,40 @@ describe('sites page redesign', () => {
     expect(buttons[1]).not.toBeDisabled();
   });
 
+  it('uses muted borders for model quota badges in site details', () => {
+    render(
+      <SiteCard
+        {...buildSiteCardProps({
+          isExpanded: true,
+          siteResult: {
+            status: '成功',
+            todayRequests: 2,
+            todayTotalTokens: 3000,
+            models: ['call-model', 'token-model'],
+          },
+          modelPricing: {
+            data: {
+              'call-model': {
+                quota_type: 1,
+                model_price: 0.01,
+                enable_groups: [],
+              },
+              'token-model': {
+                quota_type: 0,
+                model_ratio: 1,
+                completion_ratio: 1,
+                enable_groups: [],
+              },
+            },
+          },
+        })}
+      />
+    );
+
+    expect(screen.getByTitle('按次')).toHaveClass('border-[var(--line-muted)]');
+    expect(screen.getByTitle('按量')).toHaveClass('border-[var(--line-muted)]');
+  });
+
   it('renders only the visible folded-row columns inside the sticky header', () => {
     expect(DEFAULT_COLUMN_WIDTHS).toEqual([142, 86, 88, 78, 110, 92, 56, 72, 180]);
 
@@ -1226,6 +1260,40 @@ describe('sites page redesign', () => {
     const mainRow = getByTestId('site-card-main-row');
     expect(within(mainRow).getByRole('button', { name: 'CLI配置' })).toBeInTheDocument();
     expect(within(mainRow).queryByText('CLI 工作台')).not.toBeInTheDocument();
+  });
+
+  it('shows sub2api string active API keys as enabled in site details', () => {
+    render(
+      <SiteCard
+        {...buildSiteCardProps({
+          isExpanded: true,
+          apiKeys: [
+            {
+              id: 1,
+              name: 'Alpha Key',
+              key: 'sk-alpha',
+              group: 'alpha',
+              status: 'active',
+            },
+            {
+              id: 2,
+              name: 'Expired Key',
+              key: 'sk-expired',
+              group: 'alpha',
+              status: 'expired',
+            },
+          ],
+          userGroups: {
+            alpha: { desc: 'Alpha', ratio: 1 },
+          },
+        })}
+      />
+    );
+
+    expect(screen.getByText('Alpha Key')).toBeInTheDocument();
+    expect(screen.getByText('Expired Key')).toBeInTheDocument();
+    expect(screen.getByText('✓ 启用')).toHaveClass('text-[var(--success)]');
+    expect(screen.getByText('✕ 禁用')).toHaveClass('text-[var(--text-secondary)]');
   });
 
   it('rerenders the site card when only cli test results change so the column icons update', () => {

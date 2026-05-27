@@ -24,6 +24,7 @@ const createConfigs = () => [
     baseUrl: 'https://example.com',
     apiKey: 'sk-test',
     models: ['claude-3-5-sonnet', 'gpt-4.1'],
+    manualModels: [],
     notes: 'alpha',
     cliSettings: {
       claudeCode: { enabled: true, model: 'claude-3-5-sonnet', testModels: ['claude-3-5-sonnet'] },
@@ -39,6 +40,7 @@ const createConfigs = () => [
     baseUrl: 'https://backup.example.com',
     apiKey: 'sk-backup',
     models: ['gemini-2.5-pro'],
+    manualModels: [],
     notes: 'beta',
     cliSettings: {
       claudeCode: { enabled: false, model: null, testModels: [] },
@@ -147,6 +149,7 @@ describe('custom cli page redesign', () => {
     const tableHeader = screen.getByText('CLI测试').parentElement as HTMLElement | null;
 
     const table = within(tableSection as HTMLElement);
+    expect(tableSection).toHaveClass('border-[var(--line-muted)]');
     expect(table.getByText('名称')).toBeInTheDocument();
     expect(table.getByText('BaseURL')).toBeInTheDocument();
     expect(table.getByText('CLI测试')).toBeInTheDocument();
@@ -161,6 +164,7 @@ describe('custom cli page redesign', () => {
       name: /Main Endpoint https:\/\/example\.com/i,
     });
     expect(selectedRow.className).toContain('grid-cols-[96px_minmax(0,1.2fr)_76px_minmax(0,1fr)]');
+    expect(selectedRow.className).toContain('border-[var(--line-muted)]');
     expect(selectedRow.className).toContain('shadow-[inset_4px_0_0_var(--accent)]');
     expect(selectedRow.className).toContain('bg-[var(--accent-soft-strong)]');
   });
@@ -361,6 +365,92 @@ describe('custom cli page redesign', () => {
         cliSettings: expect.objectContaining({
           codex: expect.objectContaining({
             targetProtocol: 'openai-chat-completions',
+          }),
+        }),
+      })
+    );
+  });
+
+  it('allows searching fetched models and manually typing a cli model name', () => {
+    configs[0].manualModels = ['manual-existing-model'];
+
+    render(<CustomCliPage />);
+
+    const codexModelInput = screen.getByLabelText('Codex 模型') as HTMLInputElement;
+
+    expect(codexModelInput.tagName).toBe('INPUT');
+    expect(codexModelInput).not.toHaveAttribute('list');
+    expect(codexModelInput).toHaveDisplayValue('gpt-4.1');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Codex 模型 展开模型列表' }));
+
+    const searchInput = screen.getByLabelText('Codex 模型 搜索或手动输入模型');
+    expect(searchInput).toBeInTheDocument();
+    expect(screen.getByRole('listbox', { name: 'Codex 模型 模型候选' })).toBeInTheDocument();
+
+    fireEvent.change(searchInput, {
+      target: { value: 'manual-new-model' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '使用手动模型：manual-new-model' }));
+
+    expect(mockUpdateConfig).toHaveBeenCalledWith(
+      'cfg-1',
+      expect.objectContaining({
+        manualModels: ['manual-existing-model', 'manual-new-model'],
+        cliSettings: expect.objectContaining({
+          codex: expect.objectContaining({
+            model: 'manual-new-model',
+          }),
+        }),
+      })
+    );
+  });
+
+  it('allows filtering and selecting a fetched cli model from the model popover', () => {
+    render(<CustomCliPage />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Codex 模型 展开模型列表' }));
+    fireEvent.change(screen.getByLabelText('Codex 模型 搜索或手动输入模型'), {
+      target: { value: 'claude' },
+    });
+
+    expect(screen.queryByRole('option', { name: 'gpt-4.1' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('option', { name: 'claude-3-5-sonnet' }));
+
+    expect(mockUpdateConfig).toHaveBeenCalledWith(
+      'cfg-1',
+      expect.objectContaining({
+        manualModels: [],
+        cliSettings: expect.objectContaining({
+          codex: expect.objectContaining({
+            model: 'claude-3-5-sonnet',
+          }),
+        }),
+      })
+    );
+  });
+
+  it('allows manually typing a cli test model name', () => {
+    render(<CustomCliPage />);
+
+    const codexTestModelInput = screen.getByLabelText('Codex 测试模型 1') as HTMLInputElement;
+
+    expect(codexTestModelInput.tagName).toBe('INPUT');
+    expect(codexTestModelInput).not.toHaveAttribute('list');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Codex 测试模型 1 展开模型列表' }));
+    fireEvent.change(screen.getByLabelText('Codex 测试模型 1 搜索或手动输入模型'), {
+      target: { value: 'manual-test-model' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '使用手动模型：manual-test-model' }));
+
+    expect(mockUpdateConfig).toHaveBeenCalledWith(
+      'cfg-1',
+      expect.objectContaining({
+        manualModels: ['manual-test-model'],
+        cliSettings: expect.objectContaining({
+          codex: expect.objectContaining({
+            testModels: ['manual-test-model'],
           }),
         }),
       })

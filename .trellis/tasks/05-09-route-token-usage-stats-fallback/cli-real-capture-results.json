@@ -1,0 +1,1217 @@
+{
+  "capturedAt": "2026-05-09T15:03:21.832Z",
+  "method": "CLI -> local redacting proxy -> real upstream. Request and response summaries only; full secrets and full payloads are not persisted.",
+  "configSummary": {
+    "claude": {
+      "baseUrl": "https://ai.prism.uno",
+      "apiKeyLabel": "PrismAI/cherrystudio",
+      "apiKeyFingerprint": "f65ac6d3520f",
+      "model": "claude-sonnet-4-6"
+    },
+    "codex": {
+      "baseUrl": "http://127.0.0.1:8317",
+      "apiKeyLabel": "Custom/CPA",
+      "apiKeyFingerprint": "f9a15a92914b",
+      "model": "gpt-5.5"
+    },
+    "gemini": {
+      "baseUrl": "https://ai.prism.uno",
+      "apiKeyLabel": "PrismAI/222",
+      "apiKeyFingerprint": "886f89232863",
+      "model": "gemini-3.1-pro-preview"
+    }
+  },
+  "results": [
+    {
+      "label": "claude-code",
+      "cliVersion": "2.1.112 (Claude Code)",
+      "model": "claude-sonnet-4-6",
+      "command": "claude --bare --print --output-format json --no-session-persistence --setting-sources \"\" --tools \"\" --model claude-sonnet-4-6 \"Reply with CLI_REAL_CAPTURE_OK only.\"",
+      "durationMs": 6974,
+      "exitCode": 0,
+      "captures": [
+        {
+          "request": {
+            "method": "POST",
+            "url": "/v1/messages?beta=true",
+            "headers": {
+              "host": "127.0.0.1:63040",
+              "user-agent": "claude-cli/2.1.112 (external, sdk-cli)",
+              "content-length": "4067",
+              "accept": "application/json",
+              "accept-encoding": "gzip, deflate, br, zstd",
+              "anthropic-beta": "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24",
+              "anthropic-dangerous-direct-browser-access": "true",
+              "anthropic-version": "2023-06-01",
+              "authorization": {
+                "redacted": true,
+                "length": 32,
+                "fingerprint": "33824e07d898"
+              },
+              "content-type": "application/json",
+              "x-api-key": {
+                "redacted": true,
+                "length": 11,
+                "fingerprint": "ab42b0b5d891"
+              },
+              "x-app": "cli",
+              "x-claude-code-session-id": "ab60b432-325f-4511-8594-a932f6006a2b",
+              "x-stainless-arch": "x64",
+              "x-stainless-lang": "js",
+              "x-stainless-os": "Windows",
+              "x-stainless-package-version": "0.81.0",
+              "x-stainless-retry-count": "0",
+              "x-stainless-runtime": "node",
+              "x-stainless-runtime-version": "v24.3.0",
+              "x-stainless-timeout": "600"
+            },
+            "body": {
+              "json": true,
+              "bytes": 4067,
+              "topLevelKeys": [
+                "model",
+                "messages",
+                "system",
+                "tools",
+                "metadata",
+                "max_tokens",
+                "thinking",
+                "context_management",
+                "output_config",
+                "stream"
+              ],
+              "model": "claude-sonnet-4-6",
+              "stream": true,
+              "max_tokens": 32000,
+              "messagesCount": 1,
+              "toolsCount": 0
+            }
+          },
+          "upstream": {
+            "baseUrl": "https://ai.prism.uno",
+            "forwardedUrl": "https://ai.prism.uno/v1/messages?<redacted-query>",
+            "apiKeyLabel": "PrismAI/cherrystudio",
+            "apiKeyFingerprint": "f65ac6d3520f"
+          },
+          "response": {
+            "status": 200,
+            "contentType": "text/event-stream",
+            "bytes": 1124,
+            "headerKeys": [
+              "date",
+              "content-type",
+              "transfer-encoding",
+              "connection",
+              "cache-control",
+              "x-oneapi-request-id",
+              "cf-cache-status",
+              "nel",
+              "report-to",
+              "server",
+              "cf-ray",
+              "alt-svc"
+            ],
+            "usageCandidates": [
+              {
+                "path": "$event:message_start.message.usage",
+                "keys": [
+                  "input_tokens",
+                  "cache_creation_input_tokens",
+                  "cache_read_input_tokens",
+                  "output_tokens",
+                  "claude_cache_creation_5_m_tokens",
+                  "claude_cache_creation_1_h_tokens"
+                ],
+                "value": {
+                  "input_tokens": 1133,
+                  "cache_creation_input_tokens": 0,
+                  "cache_read_input_tokens": 0,
+                  "output_tokens": 0,
+                  "claude_cache_creation_5_m_tokens": 0,
+                  "claude_cache_creation_1_h_tokens": 0
+                }
+              },
+              {
+                "path": "$event:message_delta.usage",
+                "keys": [
+                  "input_tokens",
+                  "cache_creation_input_tokens",
+                  "cache_read_input_tokens",
+                  "output_tokens",
+                  "claude_cache_creation_5_m_tokens",
+                  "claude_cache_creation_1_h_tokens"
+                ],
+                "value": {
+                  "input_tokens": 1161,
+                  "cache_creation_input_tokens": 0,
+                  "cache_read_input_tokens": 0,
+                  "output_tokens": 12,
+                  "claude_cache_creation_5_m_tokens": 0,
+                  "claude_cache_creation_1_h_tokens": 0
+                }
+              }
+            ],
+            "stream": true,
+            "eventTypes": [
+              "message_start",
+              "content_block_start",
+              "content_block_delta",
+              "content_block_delta",
+              "content_block_stop",
+              "message_delta",
+              "message_stop"
+            ],
+            "eventCount": 7,
+            "jsonEventShapes": [
+              {
+                "event": "message_start",
+                "topLevelKeys": [
+                  "type",
+                  "message"
+                ],
+                "shape": {
+                  "type": "object",
+                  "keys": [
+                    "type",
+                    "message"
+                  ],
+                  "sample": {
+                    "type": "string",
+                    "message": {
+                      "type": "object",
+                      "keys": [
+                        "type",
+                        "model",
+                        "usage",
+                        "role",
+                        "id",
+                        "content"
+                      ],
+                      "sample": {
+                        "type": "string",
+                        "model": "string",
+                        "usage": {
+                          "type": "object",
+                          "keys": [
+                            "input_tokens",
+                            "cache_creation_input_tokens",
+                            "cache_read_input_tokens",
+                            "output_tokens",
+                            "claude_cache_creation_5_m_tokens",
+                            "claude_cache_creation_1_h_tokens"
+                          ]
+                        },
+                        "role": "string",
+                        "id": "string",
+                        "content": {
+                          "type": "array",
+                          "count": 0
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "event": "content_block_start",
+                "topLevelKeys": [
+                  "type",
+                  "index",
+                  "content_block"
+                ],
+                "shape": {
+                  "type": "object",
+                  "keys": [
+                    "type",
+                    "index",
+                    "content_block"
+                  ],
+                  "sample": {
+                    "type": "string",
+                    "index": "number",
+                    "content_block": {
+                      "type": "object",
+                      "keys": [
+                        "type",
+                        "text"
+                      ],
+                      "sample": {
+                        "type": "string",
+                        "text": "string"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "event": "content_block_delta",
+                "topLevelKeys": [
+                  "type",
+                  "index",
+                  "delta"
+                ],
+                "shape": {
+                  "type": "object",
+                  "keys": [
+                    "type",
+                    "index",
+                    "delta"
+                  ],
+                  "sample": {
+                    "type": "string",
+                    "index": "number",
+                    "delta": {
+                      "type": "object",
+                      "keys": [
+                        "type",
+                        "text"
+                      ],
+                      "sample": {
+                        "type": "string",
+                        "text": "string"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "event": "content_block_delta",
+                "topLevelKeys": [
+                  "type",
+                  "index",
+                  "delta"
+                ],
+                "shape": {
+                  "type": "object",
+                  "keys": [
+                    "type",
+                    "index",
+                    "delta"
+                  ],
+                  "sample": {
+                    "type": "string",
+                    "index": "number",
+                    "delta": {
+                      "type": "object",
+                      "keys": [
+                        "type",
+                        "text"
+                      ],
+                      "sample": {
+                        "type": "string",
+                        "text": "string"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "event": "content_block_stop",
+                "topLevelKeys": [
+                  "type",
+                  "index"
+                ],
+                "shape": {
+                  "type": "object",
+                  "keys": [
+                    "type",
+                    "index"
+                  ],
+                  "sample": {
+                    "type": "string",
+                    "index": "number"
+                  }
+                }
+              }
+            ],
+            "durationMs": 6014
+          }
+        }
+      ],
+      "stdoutSummary": {
+        "json": true,
+        "topLevelKeys": [
+          "type",
+          "subtype",
+          "is_error",
+          "api_error_status",
+          "duration_ms",
+          "duration_api_ms",
+          "num_turns",
+          "result",
+          "stop_reason",
+          "session_id",
+          "total_cost_usd",
+          "usage",
+          "modelUsage",
+          "permission_denials",
+          "terminal_reason",
+          "fast_mode_state",
+          "uuid"
+        ],
+        "shape": {
+          "type": "object",
+          "keys": [
+            "type",
+            "subtype",
+            "is_error",
+            "api_error_status",
+            "duration_ms",
+            "duration_api_ms",
+            "num_turns",
+            "result",
+            "stop_reason",
+            "session_id",
+            "total_cost_usd",
+            "usage",
+            "modelUsage",
+            "permission_denials",
+            "terminal_reason",
+            "fast_mode_state",
+            "uuid"
+          ],
+          "sample": {
+            "type": "string",
+            "subtype": "string",
+            "is_error": "boolean",
+            "api_error_status": "null",
+            "duration_ms": "number",
+            "duration_api_ms": "number",
+            "num_turns": "number",
+            "result": "string",
+            "stop_reason": "string",
+            "session_id": "string",
+            "total_cost_usd": "number",
+            "usage": {
+              "type": "object",
+              "keys": [
+                "input_tokens",
+                "cache_creation_input_tokens",
+                "cache_read_input_tokens",
+                "output_tokens",
+                "server_tool_use",
+                "service_tier",
+                "cache_creation",
+                "inference_geo",
+                "iterations",
+                "speed"
+              ],
+              "sample": {
+                "input_tokens": "number",
+                "cache_creation_input_tokens": "number",
+                "cache_read_input_tokens": "number",
+                "output_tokens": "number",
+                "server_tool_use": {
+                  "type": "object",
+                  "keys": [
+                    "web_search_requests",
+                    "web_fetch_requests"
+                  ]
+                },
+                "service_tier": "string",
+                "cache_creation": {
+                  "type": "object",
+                  "keys": [
+                    "ephemeral_1h_input_tokens",
+                    "ephemeral_5m_input_tokens"
+                  ]
+                },
+                "inference_geo": "string",
+                "iterations": {
+                  "type": "array",
+                  "count": 0
+                },
+                "speed": "string"
+              }
+            }
+          }
+        },
+        "usageCandidates": [
+          {
+            "path": "$.usage",
+            "keys": [
+              "input_tokens",
+              "cache_creation_input_tokens",
+              "cache_read_input_tokens",
+              "output_tokens",
+              "server_tool_use",
+              "service_tier",
+              "cache_creation",
+              "inference_geo",
+              "iterations",
+              "speed"
+            ],
+            "value": {
+              "input_tokens": 1161,
+              "cache_creation_input_tokens": 0,
+              "cache_read_input_tokens": 0,
+              "output_tokens": 12,
+              "server_tool_use": {
+                "web_search_requests": 0,
+                "web_fetch_requests": 0
+              },
+              "service_tier": "standard",
+              "cache_creation": {
+                "ephemeral_1h_input_tokens": 0,
+                "ephemeral_5m_input_tokens": 0
+              },
+              "inference_geo": "",
+              "iterations": [],
+              "speed": "standard"
+            }
+          }
+        ]
+      },
+      "stderrPrefix": ""
+    },
+    {
+      "label": "codex-cli",
+      "cliVersion": "codex-cli 0.130.0",
+      "model": "gpt-5.5",
+      "command": "codex exec --ignore-user-config --ephemeral --skip-git-repo-check --sandbox read-only -m gpt-5.5 -c \"model_provider=\\\"local_capture\\\"\" -c \"model_providers.local_capture.name=\\\"Local Capture\\\"\" -c \"model_providers.local_capture.base_url=\\\"http://127.0.0.1:63070/v1\\\"\" -c \"model_providers.local_capture.env_key=\\\"OPENAI_API_KEY\\\"\" -c \"model_providers.local_capture.wire_api=\\\"responses\\\"\" \"Reply with CLI_REAL_CAPTURE_OK only.\"",
+      "durationMs": 7400,
+      "exitCode": 0,
+      "captures": [
+        {
+          "request": {
+            "method": "POST",
+            "url": "/v1/responses",
+            "headers": {
+              "host": "127.0.0.1:63070",
+              "user-agent": "codex_exec/0.130.0 (Windows 10.0.19044; x86_64) unknown (codex_exec; 0.130.0)",
+              "content-length": "95840",
+              "accept": "text/event-stream",
+              "authorization": {
+                "redacted": true,
+                "length": 18,
+                "fingerprint": "4371d5fd1007"
+              },
+              "content-type": "application/json",
+              "originator": "codex_exec",
+              "session_id": "019e0d43-7bf0-7a51-a397-4db9f23ec550",
+              "thread_id": "019e0d43-7bf0-7a51-a397-4db9f23ec550",
+              "x-client-request-id": "019e0d43-7bf0-7a51-a397-4db9f23ec550",
+              "x-codex-beta-features": "terminal_resize_reflow",
+              "x-codex-turn-metadata": "{\"session_id\":\"019e0d43-7bf0-7a51-a397-4db9f23ec550\",\"thread_id\":\"019e0d43-7bf0-7a51-a397-4db9f23ec550\",\"turn_id\":\"019e0d43-7c50-78b3-9d15-58d8ea2ee180\",\"sandbox\":\"none\",\"turn_started_at_unix_ms\":1778338987090}",
+              "x-codex-window-id": "019e0d43-7bf0-7a51-a397-4db9f23ec550:0"
+            },
+            "body": {
+              "json": true,
+              "bytes": 95840,
+              "topLevelKeys": [
+                "model",
+                "instructions",
+                "input",
+                "tools",
+                "tool_choice",
+                "parallel_tool_calls",
+                "reasoning",
+                "store",
+                "stream",
+                "include",
+                "prompt_cache_key",
+                "text",
+                "client_metadata"
+              ],
+              "model": "gpt-5.5",
+              "stream": true,
+              "store": false,
+              "prompt_cache_key": "019e0d43-7bf0-7a51-a397-4db9f23ec550",
+              "inputCount": 3,
+              "toolsCount": 11,
+              "reasoningKeys": [
+                "effort"
+              ]
+            }
+          },
+          "upstream": {
+            "baseUrl": "http://127.0.0.1:8317",
+            "forwardedUrl": "http://127.0.0.1:8317/v1/responses",
+            "apiKeyLabel": "Custom/CPA",
+            "apiKeyFingerprint": "f9a15a92914b"
+          },
+          "response": {
+            "status": 200,
+            "contentType": "text/event-stream",
+            "bytes": 136781,
+            "headerKeys": [
+              "access-control-allow-headers",
+              "access-control-allow-methods",
+              "access-control-allow-origin",
+              "cache-control",
+              "connection",
+              "content-type",
+              "date",
+              "transfer-encoding"
+            ],
+            "usageCandidates": [
+              {
+                "path": "$event:response.completed.response.usage",
+                "keys": [
+                  "input_tokens",
+                  "input_tokens_details",
+                  "output_tokens",
+                  "output_tokens_details",
+                  "total_tokens"
+                ],
+                "value": {
+                  "input_tokens": 21760,
+                  "input_tokens_details": {
+                    "cached_tokens": 21376
+                  },
+                  "output_tokens": 22,
+                  "output_tokens_details": {
+                    "reasoning_tokens": 12
+                  },
+                  "total_tokens": 21782
+                }
+              }
+            ],
+            "stream": true,
+            "eventTypes": [
+              "response.created",
+              "response.in_progress",
+              "response.output_item.added",
+              "response.output_item.done",
+              "response.output_item.added",
+              "response.content_part.added",
+              "response.output_text.delta",
+              "response.output_text.delta",
+              "response.output_text.delta",
+              "response.output_text.delta",
+              "response.output_text.done",
+              "response.content_part.done",
+              "response.output_item.done",
+              "response.completed"
+            ],
+            "eventCount": 14,
+            "jsonEventShapes": [
+              {
+                "event": "response.created",
+                "topLevelKeys": [
+                  "type",
+                  "response",
+                  "sequence_number"
+                ],
+                "shape": {
+                  "type": "object",
+                  "keys": [
+                    "type",
+                    "response",
+                    "sequence_number"
+                  ],
+                  "sample": {
+                    "type": "string",
+                    "response": {
+                      "type": "object",
+                      "keys": [
+                        "id",
+                        "object",
+                        "created_at",
+                        "status",
+                        "background",
+                        "completed_at",
+                        "error",
+                        "frequency_penalty",
+                        "incomplete_details",
+                        "instructions",
+                        "max_output_tokens",
+                        "max_tool_calls",
+                        "model",
+                        "moderation",
+                        "output",
+                        "parallel_tool_calls",
+                        "presence_penalty",
+                        "previous_response_id",
+                        "prompt_cache_key",
+                        "prompt_cache_retention",
+                        "reasoning",
+                        "safety_identifier",
+                        "service_tier",
+                        "store",
+                        "temperature",
+                        "text",
+                        "tool_choice",
+                        "tool_usage",
+                        "tools",
+                        "top_logprobs",
+                        "top_p",
+                        "truncation",
+                        "usage",
+                        "user",
+                        "metadata"
+                      ],
+                      "sample": {
+                        "id": "string",
+                        "object": "string",
+                        "created_at": "number",
+                        "status": "string",
+                        "background": "boolean",
+                        "completed_at": "null",
+                        "error": "null",
+                        "frequency_penalty": "number",
+                        "incomplete_details": "null",
+                        "instructions": "string",
+                        "max_output_tokens": "null",
+                        "max_tool_calls": "null"
+                      }
+                    },
+                    "sequence_number": "number"
+                  }
+                }
+              },
+              {
+                "event": "response.in_progress",
+                "topLevelKeys": [
+                  "type",
+                  "response",
+                  "sequence_number"
+                ],
+                "shape": {
+                  "type": "object",
+                  "keys": [
+                    "type",
+                    "response",
+                    "sequence_number"
+                  ],
+                  "sample": {
+                    "type": "string",
+                    "response": {
+                      "type": "object",
+                      "keys": [
+                        "id",
+                        "object",
+                        "created_at",
+                        "status",
+                        "background",
+                        "completed_at",
+                        "error",
+                        "frequency_penalty",
+                        "incomplete_details",
+                        "instructions",
+                        "max_output_tokens",
+                        "max_tool_calls",
+                        "model",
+                        "moderation",
+                        "output",
+                        "parallel_tool_calls",
+                        "presence_penalty",
+                        "previous_response_id",
+                        "prompt_cache_key",
+                        "prompt_cache_retention",
+                        "reasoning",
+                        "safety_identifier",
+                        "service_tier",
+                        "store",
+                        "temperature",
+                        "text",
+                        "tool_choice",
+                        "tool_usage",
+                        "tools",
+                        "top_logprobs",
+                        "top_p",
+                        "truncation",
+                        "usage",
+                        "user",
+                        "metadata"
+                      ],
+                      "sample": {
+                        "id": "string",
+                        "object": "string",
+                        "created_at": "number",
+                        "status": "string",
+                        "background": "boolean",
+                        "completed_at": "null",
+                        "error": "null",
+                        "frequency_penalty": "number",
+                        "incomplete_details": "null",
+                        "instructions": "string",
+                        "max_output_tokens": "null",
+                        "max_tool_calls": "null"
+                      }
+                    },
+                    "sequence_number": "number"
+                  }
+                }
+              },
+              {
+                "event": "response.output_item.added",
+                "topLevelKeys": [
+                  "type",
+                  "item",
+                  "output_index",
+                  "sequence_number"
+                ],
+                "shape": {
+                  "type": "object",
+                  "keys": [
+                    "type",
+                    "item",
+                    "output_index",
+                    "sequence_number"
+                  ],
+                  "sample": {
+                    "type": "string",
+                    "item": {
+                      "type": "object",
+                      "keys": [
+                        "id",
+                        "type",
+                        "encrypted_content",
+                        "summary"
+                      ],
+                      "sample": {
+                        "id": "string",
+                        "type": "string",
+                        "encrypted_content": "string",
+                        "summary": {
+                          "type": "array",
+                          "count": 0
+                        }
+                      }
+                    },
+                    "output_index": "number",
+                    "sequence_number": "number"
+                  }
+                }
+              },
+              {
+                "event": "response.output_item.done",
+                "topLevelKeys": [
+                  "type",
+                  "item",
+                  "output_index",
+                  "sequence_number"
+                ],
+                "shape": {
+                  "type": "object",
+                  "keys": [
+                    "type",
+                    "item",
+                    "output_index",
+                    "sequence_number"
+                  ],
+                  "sample": {
+                    "type": "string",
+                    "item": {
+                      "type": "object",
+                      "keys": [
+                        "id",
+                        "type",
+                        "encrypted_content",
+                        "summary"
+                      ],
+                      "sample": {
+                        "id": "string",
+                        "type": "string",
+                        "encrypted_content": "string",
+                        "summary": {
+                          "type": "array",
+                          "count": 0
+                        }
+                      }
+                    },
+                    "output_index": "number",
+                    "sequence_number": "number"
+                  }
+                }
+              },
+              {
+                "event": "response.output_item.added",
+                "topLevelKeys": [
+                  "type",
+                  "item",
+                  "output_index",
+                  "sequence_number"
+                ],
+                "shape": {
+                  "type": "object",
+                  "keys": [
+                    "type",
+                    "item",
+                    "output_index",
+                    "sequence_number"
+                  ],
+                  "sample": {
+                    "type": "string",
+                    "item": {
+                      "type": "object",
+                      "keys": [
+                        "id",
+                        "type",
+                        "status",
+                        "content",
+                        "phase",
+                        "role"
+                      ],
+                      "sample": {
+                        "id": "string",
+                        "type": "string",
+                        "status": "string",
+                        "content": {
+                          "type": "array",
+                          "count": 0
+                        },
+                        "phase": "string",
+                        "role": "string"
+                      }
+                    },
+                    "output_index": "number",
+                    "sequence_number": "number"
+                  }
+                }
+              }
+            ],
+            "durationMs": 5700
+          }
+        }
+      ],
+      "stdoutSummary": {
+        "json": false,
+        "textPrefix": "CLI_REAL_CAPTURE_OK\n"
+      },
+      "stderrPrefix": "Reading additional input from stdin...\nOpenAI Codex v0.130.0\n--------\nworkdir: D:\\2_Github_Repository\\API_detect_tools\nmodel: gpt-5.5\nprovider: local_capture\napproval: never\nsandbox: read-only\nreasoning effort: none\nreasoning summaries: none\nsession id: 019e0d43-7bf0-7a51-a397-4db9f23ec550\n--------\nuser\nReply with CLI_REAL_CAPTURE_OK only.\ncodex\nCLI_REAL_CAPTURE_OK\ntokens used\n406\n"
+    },
+    {
+      "label": "gemini-cli",
+      "cliVersion": "0.41.2",
+      "model": "gemini-3.1-pro-preview",
+      "command": "gemini --skip-trust --prompt \"Reply with CLI_REAL_CAPTURE_OK only.\" --model gemini-3.1-pro-preview --output-format json",
+      "durationMs": 13021,
+      "exitCode": 0,
+      "captures": [
+        {
+          "request": {
+            "method": "POST",
+            "url": "/v1beta/models/gemini-3.1-pro-preview:streamGenerateContent?alt=sse",
+            "headers": {
+              "host": "127.0.0.1:63084",
+              "connection": "keep-alive",
+              "user-agent": "GeminiCLI/0.41.2/gemini-3.1-pro-preview (win32; x64; terminal)",
+              "x-goog-api-client": "google-genai-sdk/1.30.0 gl-node/v22.16.0",
+              "content-type": "application/json",
+              "x-gemini-api-privileged-user-id": "f7a15ff5-c7b8-4159-9d79-c0779a95b287",
+              "x-goog-api-key": {
+                "redacted": true,
+                "length": 11,
+                "fingerprint": "ab42b0b5d891"
+              },
+              "accept": "*/*",
+              "accept-language": "*",
+              "sec-fetch-mode": "cors",
+              "accept-encoding": "gzip, deflate",
+              "content-length": "80700"
+            },
+            "body": {
+              "json": true,
+              "bytes": 80700,
+              "topLevelKeys": [
+                "contents",
+                "systemInstruction",
+                "tools",
+                "generationConfig"
+              ],
+              "contentsCount": 2,
+              "toolsCount": 1,
+              "generationConfigKeys": [
+                "temperature",
+                "topP",
+                "topK",
+                "thinkingConfig"
+              ]
+            }
+          },
+          "upstream": {
+            "baseUrl": "https://ai.prism.uno",
+            "forwardedUrl": "https://ai.prism.uno/v1beta/models/gemini-3.1-pro-preview:streamGenerateContent?<redacted-query>",
+            "apiKeyLabel": "PrismAI/222",
+            "apiKeyFingerprint": "886f89232863"
+          },
+          "response": {
+            "status": 200,
+            "contentType": "text/event-stream",
+            "bytes": 2226,
+            "headerKeys": [
+              "date",
+              "content-type",
+              "transfer-encoding",
+              "connection",
+              "cache-control",
+              "x-oneapi-request-id",
+              "cf-cache-status",
+              "nel",
+              "report-to",
+              "server",
+              "cf-ray",
+              "alt-svc"
+            ],
+            "usageCandidates": [
+              {
+                "path": "$event:data.usageMetadata",
+                "keys": [
+                  "trafficType"
+                ],
+                "value": {
+                  "trafficType": "ON_DEMAND"
+                }
+              },
+              {
+                "path": "$event:data.usageMetadata",
+                "keys": [
+                  "trafficType"
+                ],
+                "value": {
+                  "trafficType": "ON_DEMAND"
+                }
+              },
+              {
+                "path": "$event:data.usageMetadata",
+                "keys": [
+                  "promptTokenCount",
+                  "candidatesTokenCount",
+                  "totalTokenCount",
+                  "trafficType",
+                  "promptTokensDetails",
+                  "candidatesTokensDetails",
+                  "thoughtsTokenCount"
+                ],
+                "value": {
+                  "promptTokenCount": 17927,
+                  "candidatesTokenCount": 7,
+                  "totalTokenCount": 18035,
+                  "trafficType": "ON_DEMAND",
+                  "promptTokensDetails": [
+                    {
+                      "modality": "TEXT",
+                      "tokenCount": 17927
+                    }
+                  ],
+                  "candidatesTokensDetails": [
+                    {
+                      "modality": "TEXT",
+                      "tokenCount": 7
+                    }
+                  ],
+                  "thoughtsTokenCount": 101
+                }
+              }
+            ],
+            "stream": true,
+            "eventTypes": [],
+            "eventCount": 3,
+            "jsonEventShapes": [
+              {
+                "event": null,
+                "topLevelKeys": [
+                  "candidates",
+                  "usageMetadata",
+                  "modelVersion",
+                  "createTime",
+                  "responseId"
+                ],
+                "shape": {
+                  "type": "object",
+                  "keys": [
+                    "candidates",
+                    "usageMetadata",
+                    "modelVersion",
+                    "createTime",
+                    "responseId"
+                  ],
+                  "sample": {
+                    "candidates": {
+                      "type": "array",
+                      "count": 1,
+                      "first": {
+                        "type": "object",
+                        "keys": [
+                          "content"
+                        ]
+                      }
+                    },
+                    "usageMetadata": {
+                      "type": "object",
+                      "keys": [
+                        "trafficType"
+                      ],
+                      "sample": {
+                        "trafficType": "string"
+                      }
+                    },
+                    "modelVersion": "string",
+                    "createTime": "string",
+                    "responseId": "string"
+                  }
+                }
+              },
+              {
+                "event": null,
+                "topLevelKeys": [
+                  "candidates",
+                  "usageMetadata",
+                  "modelVersion",
+                  "createTime",
+                  "responseId"
+                ],
+                "shape": {
+                  "type": "object",
+                  "keys": [
+                    "candidates",
+                    "usageMetadata",
+                    "modelVersion",
+                    "createTime",
+                    "responseId"
+                  ],
+                  "sample": {
+                    "candidates": {
+                      "type": "array",
+                      "count": 1,
+                      "first": {
+                        "type": "object",
+                        "keys": [
+                          "content"
+                        ]
+                      }
+                    },
+                    "usageMetadata": {
+                      "type": "object",
+                      "keys": [
+                        "trafficType"
+                      ],
+                      "sample": {
+                        "trafficType": "string"
+                      }
+                    },
+                    "modelVersion": "string",
+                    "createTime": "string",
+                    "responseId": "string"
+                  }
+                }
+              },
+              {
+                "event": null,
+                "topLevelKeys": [
+                  "candidates",
+                  "usageMetadata",
+                  "modelVersion",
+                  "createTime",
+                  "responseId"
+                ],
+                "shape": {
+                  "type": "object",
+                  "keys": [
+                    "candidates",
+                    "usageMetadata",
+                    "modelVersion",
+                    "createTime",
+                    "responseId"
+                  ],
+                  "sample": {
+                    "candidates": {
+                      "type": "array",
+                      "count": 1,
+                      "first": {
+                        "type": "object",
+                        "keys": [
+                          "content",
+                          "finishReason"
+                        ]
+                      }
+                    },
+                    "usageMetadata": {
+                      "type": "object",
+                      "keys": [
+                        "promptTokenCount",
+                        "candidatesTokenCount",
+                        "totalTokenCount",
+                        "trafficType",
+                        "promptTokensDetails",
+                        "candidatesTokensDetails",
+                        "thoughtsTokenCount"
+                      ],
+                      "sample": {
+                        "promptTokenCount": "number",
+                        "candidatesTokenCount": "number",
+                        "totalTokenCount": "number",
+                        "trafficType": "string",
+                        "promptTokensDetails": {
+                          "type": "array",
+                          "count": 1
+                        },
+                        "candidatesTokensDetails": {
+                          "type": "array",
+                          "count": 1
+                        },
+                        "thoughtsTokenCount": "number"
+                      }
+                    },
+                    "modelVersion": "string",
+                    "createTime": "string",
+                    "responseId": "string"
+                  }
+                }
+              }
+            ],
+            "durationMs": 8605
+          }
+        }
+      ],
+      "stdoutSummary": {
+        "json": true,
+        "topLevelKeys": [
+          "session_id",
+          "response",
+          "stats"
+        ],
+        "shape": {
+          "type": "object",
+          "keys": [
+            "session_id",
+            "response",
+            "stats"
+          ],
+          "sample": {
+            "session_id": "string",
+            "response": "string",
+            "stats": {
+              "type": "object",
+              "keys": [
+                "models",
+                "tools",
+                "files"
+              ],
+              "sample": {
+                "models": {
+                  "type": "object",
+                  "keys": [
+                    "gemini-3.1-pro-preview"
+                  ]
+                },
+                "tools": {
+                  "type": "object",
+                  "keys": [
+                    "totalCalls",
+                    "totalSuccess",
+                    "totalFail",
+                    "totalDurationMs",
+                    "totalDecisions",
+                    "byName"
+                  ]
+                },
+                "files": {
+                  "type": "object",
+                  "keys": [
+                    "totalLinesAdded",
+                    "totalLinesRemoved"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "usageCandidates": []
+      },
+      "stderrPrefix": "Warning: Windows 10 detected. Some UI features like smooth scrolling may be degraded. Windows 11 is recommended for the best experience.\nWarning: 256-color support not detected. Using a terminal with at least 256-color support is recommended for a better visual experience.\nBoth GOOGLE_API_KEY and GEMINI_API_KEY are set. Using GOOGLE_API_KEY.\nBoth GOOGLE_API_KEY and GEMINI_API_KEY are set. Using GOOGLE_API_KEY.\nRipgrep is not available. Falling back to GrepTool.\nSkill conflict detected: \"update-spec\" from \"D:\\2_Github_Repository\\API_detect_tools\\.agents\\skills\\update-spec\\SKILL.md\" is overriding the same skill from \"C:\\Users\\Hang\\.agents\\skills\\update-spec\\SKILL.md\".\nSkill conflict detected: \"start\" from \"D:\\2_Github_Repository\\API_detect_tools\\.agents\\skills\\start\\SKILL.md\" is overriding the same skill from \"C:\\Users\\Hang\\.agents\\skills\\start\\SKILL.md\".\nSkill conflict detected: \"record-session\" from \"D:\\2_Github_Repository\\API_detect_tools\\.agents\\skills\\record-session\\SKILL.md\" is ove"
+    }
+  ]
+}

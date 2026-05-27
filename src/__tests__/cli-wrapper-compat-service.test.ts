@@ -16,8 +16,15 @@ vi.mock('../main/utils/logger', () => ({
 
 import {
   CliWrapperCompatService,
+  shouldAbortCliCommandOnOutput,
   type CommandRunOptions,
 } from '../main/cli-wrapper-compat-service';
+import {
+  buildProbeLockRouteApiKey,
+  notifyRouteProbeLockRequest,
+  notifyRouteProbeLockTerminalFailure,
+  recordRouteProbeLockFirstUpstreamResult,
+} from '../main/route-probe-lock';
 
 describe('CliWrapperCompatService', () => {
   it('writes isolated Claude settings and treats replies containing 2 as success', async () => {
@@ -28,6 +35,9 @@ describe('CliWrapperCompatService', () => {
       expect(settings.env.ANTHROPIC_BASE_URL).toBe('https://duckcoding.ai');
       expect(settings.env.ANTHROPIC_API_KEY).toBe('claude-key');
       expect(settings.env.ANTHROPIC_AUTH_TOKEN).toBe('claude-key');
+      expect(options.env.ANTHROPIC_BASE_URL).toBe('https://duckcoding.ai');
+      expect(options.env.ANTHROPIC_API_KEY).toBe('claude-key');
+      expect(options.env.ANTHROPIC_AUTH_TOKEN).toBe('claude-key');
       expect(options.stdin).toContain('1+1');
 
       return {
@@ -167,6 +177,218 @@ describe('CliWrapperCompatService', () => {
       supported: false,
       message:
         'Codex 执行失败: unexpected status 403 Forbidden: 无权访问 codex 分组 (request id: req-1)',
+    });
+  });
+
+  it('detects terminal upstream errors without aborting on reconnect noise alone', () => {
+    expect(shouldAbortCliCommandOnOutput('ERROR: Reconnecting... 1/5')).toBe(false);
+    expect(
+      shouldAbortCliCommandOnOutput('ERROR: unexpected status 403 Forbidden: 无权访问 codex 分组')
+    ).toBe(true);
+    expect(
+      shouldAbortCliCommandOnOutput(
+        'ERROR: {"error":{"message":"Responses API is not supported.","code":"bad_response_status_code"}}'
+      )
+    ).toBe(true);
+    expect(
+      shouldAbortCliCommandOnOutput(
+        'API Error: 400 CLI probe-lock allows onlu one upstream request per model test'
+      )
+    ).toBe(false);
+    expect(
+      shouldAbortCliCommandOnOutput(
+        [
+          'ERROR: unexpected status 403 Forbidden: upstream rejected the model',
+          'API Error: 400 CLI probe-lock allows only one upstream request per model test',
+        ].join('\n')
+      )
+    ).toBe(true);
+  });
+
+  it('surfaces terminal Codex status errors even when the CLI process times out', async () => {
+    const service = new CliWrapperCompatService(1000, async () => ({
+      exitCode: null,
+      stdout: '',
+      stderr: [
+        'ERROR: Reconnecting... 1/5',
+        'ERROR: unexpected status 503 Service Unavailable: upstream overloaded',
+      ].join('\n'),
+      timedOut: true,
+    }));
+
+    await expect(
+      service.testCodexWithDetail('https://duckcoding.ai', 'codex-key', 'gpt-5.3-codex')
+    ).resolves.toMatchObject({
+      supported: false,
+      message: 'Codex 执行失败: unexpected status 503 Service Unavailable: upstream overloaded',
+    });
+  });
+
+  it('keeps the upstream failure ahead of later probe-lock request-budget noise', async () => {
+    const service = new CliWrapperCompatService(1000, async () => ({
+      exitCode: 1,
+      stdout: '',
+      stderr: [
+        'ERROR: unexpected status 403 Forbidden: upstream rejected the model',
+        'API Error: 400 CLI probe-lock allows only one upstream request per model test',
+      ].join('\n'),
+      timedOut: false,
+    }));
+
+    await expect(
+      service.testCodexWithDetail('https://duckcoding.ai', 'codex-key', 'gpt-5.3-codex')
+    ).resolves.toMatchObject({
+      supported: false,
+      message: 'Codex 执行失败: unexpected status 403 Forbidden: upstream rejected the model',
+    });
+  });
+
+  it('explains a standalone probe-lock request-budget failure as an app-side limit', async () => {
+    const service = new CliWrapperCompatService(1000, async () => ({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'API Error: 400 CLI probe-lock allows onlu one upstream request per model test',
+      timedOut: false,
+    }));
+
+    await expect(
+      service.testCodexWithDetail('https://duckcoding.ai', 'codex-key', 'gpt-5.3-codex')
+    ).resolves.toMatchObject({
+      supported: false,
+      message:
+        'Codex 执行失败: HTTP 400（应用侧 probe-lock 限制）：CLI 在一次模型测试中发起了多次上游请求，应用只允许一次真实上游请求。',
+    });
+  });
+
+  it('keeps a successful first probe-lock upstream response when later CLI requests exceed the budget', async () => {
+    const routeApiKey = buildProbeLockRouteApiKey('sk-route', {
+      siteId: 'site-1',
+      accountId: 'acc-1',
+      apiKeyId: 'key-1',
+      cliType: 'codex',
+      canonicalModel: 'gpt-4.1-mini',
+      rawModel: 'gpt-4.1-mini',
+    });
+    const service = new CliWrapperCompatService(1000, async () => {
+      notifyRouteProbeLockRequest(routeApiKey);
+      recordRouteProbeLockFirstUpstreamResult({
+        routeApiKey,
+        cliType: 'codex',
+        statusCode: 200,
+        success: true,
+        responseSummary:
+          '{"id":"resp_1","output":[{"content":[{"type":"output_text","text":"2"}]}]}',
+        finishedAt: Date.now(),
+      });
+      return {
+        exitCode: 1,
+        stdout: '',
+        stderr: 'API Error: 400 CLI probe-lock allows only one upstream request per model test',
+        timedOut: false,
+      };
+    });
+
+    await expect(
+      service.testCodexWithDetail('http://127.0.0.1:3210', routeApiKey, 'gpt-4.1-mini')
+    ).resolves.toEqual({
+      supported: true,
+      detail: {
+        responses: true,
+        replyText: '2',
+      },
+    });
+  });
+
+  it('aborts Claude wrapper when the route proxy reports a probe-lock upstream failure', async () => {
+    const routeApiKey = buildProbeLockRouteApiKey('sk-route', {
+      siteId: 'site-1',
+      accountId: 'acc-1',
+      apiKeyId: 'key-1',
+      cliType: 'claudeCode',
+      canonicalModel: 'claude-sonnet-4-6',
+      rawModel: 'claude-sonnet-4-6',
+    });
+    const terminalError = JSON.stringify({
+      error: {
+        type: 'bad_response_status_code',
+        message: 'bad response status code 503 (request id: req-503)',
+      },
+      type: 'error',
+    });
+    const service = new CliWrapperCompatService(1000, async (options: CommandRunOptions) => {
+      return await new Promise(resolve => {
+        options.abortSignal?.addEventListener('abort', () => {
+          resolve({
+            exitCode: null,
+            stdout: '',
+            stderr: '',
+            timedOut: false,
+            terminalError:
+              typeof options.abortSignal?.reason === 'string'
+                ? options.abortSignal.reason
+                : String(options.abortSignal?.reason),
+          });
+        });
+
+        notifyRouteProbeLockTerminalFailure({
+          routeApiKey,
+          cliType: 'claudeCode',
+          statusCode: 503,
+          terminalError,
+        });
+      });
+    });
+
+    await expect(
+      service.testClaudeCodeWithDetail('http://127.0.0.1:3210', routeApiKey, 'claude-sonnet-4-6')
+    ).resolves.toMatchObject({
+      supported: false,
+      message:
+        'Claude Code 执行失败: bad response status code 503 (request id: req-503) (bad_response_status_code)',
+    });
+  });
+
+  it('explains when Claude Code exits without calling the local route proxy', async () => {
+    const service = new CliWrapperCompatService(1000, async () => ({
+      exitCode: 1,
+      stdout: '',
+      stderr: '',
+      timedOut: false,
+    }));
+
+    await expect(
+      service.testClaudeCodeWithDetail('http://127.0.0.1:3210', 'sk-route', 'claude-sonnet-4-6')
+    ).resolves.toMatchObject({
+      supported: false,
+      message:
+        'Claude Code 执行失败: CLI 未向本地路由代理发起请求，请检查 CLI 是否已登录、是否支持环境变量代理配置，以及本机是否能执行该 CLI。',
+    });
+  });
+
+  it('does not report a missing local route proxy request after the proxy observes the probe-lock key', async () => {
+    const routeApiKey = buildProbeLockRouteApiKey('sk-route', {
+      siteId: 'site-1',
+      accountId: 'acc-1',
+      apiKeyId: 'key-1',
+      cliType: 'claudeCode',
+      canonicalModel: 'claude-sonnet-4-6',
+      rawModel: 'claude-sonnet-4-6',
+    });
+    const service = new CliWrapperCompatService(1000, async () => {
+      notifyRouteProbeLockRequest(routeApiKey);
+      return {
+        exitCode: 1,
+        stdout: '',
+        stderr: '',
+        timedOut: false,
+      };
+    });
+
+    await expect(
+      service.testClaudeCodeWithDetail('http://127.0.0.1:3210', routeApiKey, 'claude-sonnet-4-6')
+    ).resolves.toMatchObject({
+      supported: false,
+      message: 'Claude Code 执行失败: reply=null',
     });
   });
 

@@ -5,6 +5,7 @@ import { UnifiedCliConfigDialog } from '../renderer/components/dialogs/UnifiedCl
 import type { CliConfig } from '../shared/types/cli-config';
 import { useDetectionStore } from '../renderer/store/detectionStore';
 import { useRouteStore } from '../renderer/store/routeStore';
+import { toast } from '../renderer/store/toastStore';
 import { DEFAULT_ROUTING_CONFIG, buildProbeKey } from '../shared/types/route-proxy';
 import type { ModelPricingData, UnifiedConfig } from '../shared/types/site';
 
@@ -380,6 +381,62 @@ describe('UnifiedCliConfigDialog', () => {
       sourceLabel: '来自站点管理测试 · Primary',
       testedAt,
     });
+  });
+
+  it('shows selected-model failure details in the warning toast and row status', async () => {
+    window.electronAPI = {
+      ...window.electronAPI,
+      cliCompat: {
+        ...window.electronAPI?.cliCompat,
+        testWithWrapper: vi.fn().mockResolvedValue({
+          success: true,
+          data: {
+            claudeCode: false,
+            claudeError:
+              'Claude Code 执行失败: CLI 未向本地路由代理发起请求，请检查 CLI 是否已登录、是否支持环境变量代理配置，以及本机是否能执行该 CLI。',
+          },
+          samples: [
+            {
+              cliType: 'claudeCode',
+              model: 'claude-3-5-sonnet',
+              success: false,
+              testedAt: 1777000000000,
+              error:
+                'Claude Code 执行失败: CLI 未向本地路由代理发起请求，请检查 CLI 是否已登录、是否支持环境变量代理配置，以及本机是否能执行该 CLI。',
+            },
+          ],
+        }),
+        saveResult: vi.fn().mockResolvedValue({ success: true }),
+      },
+    };
+
+    render(
+      <UnifiedCliConfigDialog
+        isOpen={true}
+        siteName="HuanAPI"
+        siteUrl="https://example.com"
+        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
+        siteModels={['claude-3-5-sonnet']}
+        currentConfig={initialConfig}
+        onPersistConfig={vi.fn().mockResolvedValue(undefined)}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '测试已选模型' }));
+    });
+
+    await waitFor(() => {
+      expect(toast.warning).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'claude-3-5-sonnet: Claude Code 执行失败: CLI 未向本地路由代理发起请求'
+        ),
+        10000
+      );
+    });
+    expect(screen.getByText(/CLI 未向本地路由代理发起请求/)).toBeInTheDocument();
   });
 
   it('shows newer route probe results in the matching selected-model slot', async () => {

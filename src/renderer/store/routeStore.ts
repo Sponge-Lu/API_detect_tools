@@ -28,6 +28,24 @@ export type RouteSubTab = 'redirection' | 'usability' | 'proxystats';
 
 type CliProbeTimeRange = '24h' | '7d';
 
+interface CliProbeRunParams {
+  siteId?: string;
+  accountId?: string;
+  cliType?: RouteCliType;
+}
+
+interface CliProbeRunResult {
+  startedAt: number;
+  finishedAt: number;
+  totalSamples: number;
+  successSamples: number;
+  failureSamples: number;
+}
+
+interface CliProbeLatestParams extends CliProbeRunParams {
+  canonicalModel?: string;
+}
+
 interface RouteState {
   config: RoutingConfig | null;
   loading: boolean;
@@ -45,6 +63,7 @@ interface RouteState {
 
   // Actions - 配置
   fetchConfig: () => Promise<void>;
+  refreshRuntimeState: () => Promise<void>;
   fetchRuntimeStatus: () => Promise<void>;
   saveServerConfig: (updates: Partial<RouteProxyServerConfig>) => Promise<void>;
   setActiveSubTab: (tab: RouteSubTab) => void;
@@ -84,8 +103,8 @@ interface RouteState {
 
   // Actions - CLI 探测
   saveCliProbeConfig: (updates: Partial<RouteCliProbeConfig>) => Promise<void>;
-  runProbeNow: (params?: any) => Promise<any>;
-  fetchProbeLatest: (params?: any) => Promise<RouteCliProbeLatest[]>;
+  runProbeNow: (params?: CliProbeRunParams) => Promise<CliProbeRunResult | null>;
+  fetchProbeLatest: (params?: CliProbeLatestParams) => Promise<RouteCliProbeLatest[]>;
   fetchCliProbeData: (timeRange: CliProbeTimeRange, force?: boolean) => Promise<void>;
 }
 
@@ -111,6 +130,35 @@ export const useRouteStore = create<RouteState>((set, get) => ({
       }
     } finally {
       set({ loading: false });
+    }
+  },
+
+  refreshRuntimeState: async () => {
+    try {
+      const res = await window.electronAPI.route?.getConfig();
+      if (!res?.success || !res.data) {
+        return;
+      }
+
+      set(state => {
+        if (!state.config) {
+          return { config: res.data };
+        }
+
+        return {
+          config: {
+            ...state.config,
+            server: res.data.server,
+            stats: res.data.stats,
+            routePathStates: res.data.routePathStates,
+            routeEndpointCapabilities: res.data.routeEndpointCapabilities,
+            health: res.data.health,
+            analytics: res.data.analytics,
+          },
+        };
+      });
+    } catch {
+      /* keep the cached runtime view */
     }
   },
 

@@ -1,5 +1,25 @@
-import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
-import { Copy, Globe, Loader2, Plus, RefreshCw, RotateCcw, Save, Trash2, X } from 'lucide-react';
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from 'react';
+import {
+  ChevronDown,
+  Copy,
+  Globe,
+  Loader2,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  Search,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { AppButton } from '../components/AppButton/AppButton';
 import { PageHeader } from '../components/AppShell/PageHeader';
 import { APP_PAGE_META } from '../components/AppShell/pageMeta';
@@ -241,6 +261,28 @@ function getSelectValue(values: string[] | undefined, index: number): string {
   return values?.[index] ?? '';
 }
 
+function mergeManualModelName(
+  manualModels: string[] | undefined,
+  fetchedModels: string[],
+  model: string
+): string[] {
+  const normalizedModel = model.trim();
+  const normalizedFetchedModels = new Set(
+    fetchedModels.map(currentModel => currentModel.trim()).filter(Boolean)
+  );
+  const normalizedManualModels = (manualModels ?? [])
+    .map(currentModel => currentModel.trim())
+    .filter(currentModel => currentModel.length > 0);
+
+  return normalizedModel && !normalizedFetchedModels.has(normalizedModel)
+    ? Array.from(new Set([...normalizedManualModels, normalizedModel]))
+    : Array.from(new Set(normalizedManualModels));
+}
+
+function getModelInputOptions(config: CustomCliConfig): string[] {
+  return Array.from(new Set([...(config.models ?? []), ...(config.manualModels ?? [])]));
+}
+
 function renderLinkedText(text: string | undefined, linkClassName: string) {
   if (!text) return null;
 
@@ -293,6 +335,190 @@ function FormSwitch({
         }`}
       />
     </button>
+  );
+}
+
+function ModelNameInput({
+  ariaLabel,
+  value,
+  options,
+  disabled,
+  placeholder,
+  className,
+  onChange,
+}: {
+  ariaLabel: string;
+  value: string;
+  options: string[];
+  disabled: boolean;
+  placeholder: string;
+  className: string;
+  onChange: (value: string) => void;
+}) {
+  const listboxId = useId();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const rootRef = useRef<HTMLDivElement>(null);
+  const uniqueOptions = useMemo(
+    () => Array.from(new Set(options.map(option => option.trim()).filter(Boolean))),
+    [options]
+  );
+  const filteredOptions = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return uniqueOptions;
+    }
+
+    return uniqueOptions.filter(option => option.toLowerCase().includes(normalizedQuery));
+  }, [query, uniqueOptions]);
+  const manualCandidate = query.trim();
+  const canUseManualCandidate =
+    manualCandidate.length > 0 && !uniqueOptions.includes(manualCandidate);
+
+  useEffect(() => {
+    if (disabled) {
+      setOpen(false);
+      return;
+    }
+
+    const handleDocumentMouseDown = (event: globalThis.MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleDocumentMouseDown);
+    return () => document.removeEventListener('mousedown', handleDocumentMouseDown);
+  }, [disabled]);
+
+  const commitModel = (model: string) => {
+    onChange(model);
+    setQuery('');
+    setOpen(false);
+  };
+
+  return (
+    <div ref={rootRef} className="relative min-w-0 w-full">
+      <input
+        aria-label={ariaLabel}
+        type="text"
+        value={value}
+        onChange={event => {
+          onChange(event.target.value);
+          setQuery(event.target.value);
+          setOpen(true);
+        }}
+        onKeyDown={event => {
+          if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            setOpen(true);
+          }
+          if (event.key === 'Escape') {
+            setOpen(false);
+          }
+        }}
+        disabled={disabled}
+        placeholder={placeholder}
+        autoComplete="off"
+        className={`${className} pr-8`}
+      />
+      <button
+        type="button"
+        aria-label={`${ariaLabel} 展开模型列表`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
+        disabled={disabled}
+        onClick={() => {
+          setQuery('');
+          setOpen(current => !current);
+        }}
+        className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] disabled:pointer-events-none disabled:opacity-50"
+      >
+        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open ? (
+        <div className="absolute left-0 top-[calc(100%+4px)] z-30 w-full min-w-[220px] overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-lg)]">
+          <div className="border-b border-[var(--line-soft)] p-1.5">
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-tertiary)]" />
+              <input
+                aria-label={`${ariaLabel} 搜索或手动输入模型`}
+                type="text"
+                value={query}
+                onChange={event => setQuery(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    if (manualCandidate) {
+                      commitModel(manualCandidate);
+                    }
+                  }
+                  if (event.key === 'Escape') {
+                    setOpen(false);
+                  }
+                }}
+                placeholder="搜索或输入模型名"
+                autoComplete="off"
+                className="w-full rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] py-1 pl-7 pr-7 text-xs text-[var(--text-primary)] focus:border-transparent focus:ring-1 focus:ring-[var(--accent)]"
+                autoFocus
+              />
+              {query ? (
+                <button
+                  type="button"
+                  aria-label={`${ariaLabel} 清空搜索`}
+                  onClick={() => setQuery('')}
+                  className="absolute right-1 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-tertiary)] hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          {canUseManualCandidate ? (
+            <button
+              type="button"
+              onClick={() => commitModel(manualCandidate)}
+              className="w-full border-b border-[var(--line-soft)] px-3 py-2 text-left text-xs text-[var(--accent)] transition-colors hover:bg-[var(--accent-soft)]"
+            >
+              使用手动模型：<span className="font-medium">{manualCandidate}</span>
+            </button>
+          ) : null}
+
+          <div
+            id={listboxId}
+            role="listbox"
+            aria-label={`${ariaLabel} 模型候选`}
+            className="max-h-48 overflow-y-auto py-1"
+          >
+            {filteredOptions.length > 0 ? (
+              filteredOptions.map(model => (
+                <button
+                  key={model}
+                  type="button"
+                  role="option"
+                  aria-selected={model === value}
+                  onClick={() => commitModel(model)}
+                  className={`w-full px-3 py-1.5 text-left text-xs transition-colors ${
+                    model === value
+                      ? 'bg-[var(--accent)]/10 text-[var(--accent)]'
+                      : 'text-[var(--text-primary)] hover:bg-[var(--surface-2)]'
+                  }`}
+                >
+                  {model}
+                </button>
+              ))
+            ) : (
+              <div className="px-3 py-3 text-center text-xs text-[var(--text-secondary)]">
+                {uniqueOptions.length === 0 ? '暂无已拉取模型' : '无匹配模型'}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -530,15 +756,44 @@ export function CustomCliPage({ runCliTests }: CustomCliPageProps = {}) {
     await fetchModels(selectedConfig.id);
   };
 
+  const handleUpdateCliModel = (cliType: CliType, value: string) => {
+    if (!selectedConfig) return;
+    const model = value.trim();
+    const setting = selectedConfig.cliSettings[cliType];
+    persistConfigPatch({
+      manualModels: mergeManualModelName(selectedConfig.manualModels, selectedConfig.models, model),
+      cliSettings: {
+        ...selectedConfig.cliSettings,
+        [cliType]: {
+          ...setting,
+          model: model || null,
+          editedFiles: model ? setting.editedFiles : null,
+        },
+      },
+    });
+  };
+
   const handleUpdateTestModel = (cliType: CliType, slotIndex: number, value: string) => {
     if (!selectedConfig) return;
     const current = [...(selectedConfig.cliSettings[cliType].testModels ?? [])];
-    current[slotIndex] = value;
+    current[slotIndex] = value.trim();
     const sanitized = current
       .map(model => model?.trim() ?? '')
       .filter(Boolean)
       .slice(0, 3);
-    persistCliSettingPatch(cliType, { testModels: sanitized });
+    persistConfigPatch({
+      manualModels: sanitized.reduce(
+        (manualModels, model) => mergeManualModelName(manualModels, selectedConfig.models, model),
+        selectedConfig.manualModels
+      ),
+      cliSettings: {
+        ...selectedConfig.cliSettings,
+        [cliType]: {
+          ...selectedConfig.cliSettings[cliType],
+          testModels: sanitized,
+        },
+      },
+    });
   };
 
   const defaultRunCliTests = async (
@@ -816,8 +1071,8 @@ export function CustomCliPage({ runCliTests }: CustomCliPageProps = {}) {
         </div>
       ) : (
         <div className="flex flex-1 min-h-0 gap-4 p-4">
-          <section className="flex min-h-0 flex-[0_0_48%] flex-col overflow-hidden border border-[var(--line-soft)] bg-[var(--surface-1)]">
-            <div className="border-b border-[var(--line-soft)] px-4 py-3">
+          <section className="flex min-h-0 flex-[0_0_48%] flex-col overflow-hidden border border-[var(--line-muted)] bg-[var(--surface-1)]">
+            <div className="border-b border-[var(--line-muted)] px-4 py-3">
               <div className="flex min-h-8 items-center justify-between gap-3">
                 <h3 className="text-sm font-semibold text-[var(--text-primary)]">配置表</h3>
                 <span className="text-xs text-[var(--text-secondary)]">{configs.length} 项</span>
@@ -825,7 +1080,7 @@ export function CustomCliPage({ runCliTests }: CustomCliPageProps = {}) {
             </div>
 
             <div
-              className={`grid ${CONFIG_TABLE_GRID_CLASS} gap-3 border-b border-[var(--line-soft)] px-4 py-2 text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]`}
+              className={`grid ${CONFIG_TABLE_GRID_CLASS} gap-3 border-b border-[var(--line-muted)] px-4 py-2 text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]`}
             >
               <span>名称</span>
               <span>BaseURL</span>
@@ -843,7 +1098,7 @@ export function CustomCliPage({ runCliTests }: CustomCliPageProps = {}) {
                     setSelectedConfigId(config.id);
                     setApplyMenuCliType(null);
                   }}
-                  className={`grid cursor-pointer ${CONFIG_TABLE_GRID_CLASS} gap-3 border-b border-l-2 border-[var(--line-soft)]/80 border-l-transparent px-4 py-3 transition-colors ${
+                  className={`grid cursor-pointer ${CONFIG_TABLE_GRID_CLASS} gap-3 border-b border-l-2 border-[var(--line-muted)] border-l-transparent px-4 py-3 transition-colors ${
                     config.id === selectedConfigId
                       ? 'border-l-[var(--accent)] bg-[var(--accent-soft-strong)] shadow-[inset_4px_0_0_var(--accent)]'
                       : 'hover:bg-[var(--surface-2)]'
@@ -1051,23 +1306,15 @@ export function CustomCliPage({ runCliTests }: CustomCliPageProps = {}) {
                                 persistCliSettingPatch(option.key, { enabled: checked })
                               }
                             />
-                            <select
+                            <ModelNameInput
+                              ariaLabel={`${option.name} 模型`}
                               value={setting.model ?? ''}
-                              onChange={event =>
-                                persistCliSettingPatch(option.key, {
-                                  model: event.target.value || null,
-                                })
-                              }
+                              onChange={value => handleUpdateCliModel(option.key, value)}
                               disabled={!setting.enabled}
+                              options={getModelInputOptions(selectedConfig)}
+                              placeholder="搜索或输入模型"
                               className="min-w-0 w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 py-1.5 text-xs text-[var(--text-primary)] disabled:opacity-50"
-                            >
-                              <option value="">选择模型</option>
-                              {selectedConfig.models.map(model => (
-                                <option key={model} value={model}>
-                                  {model}
-                                </option>
-                              ))}
-                            </select>
+                            />
                             <select
                               aria-label={`${option.name} 选择上游端口`}
                               value={setting.targetProtocol ?? ''}
@@ -1193,22 +1440,17 @@ export function CustomCliPage({ runCliTests }: CustomCliPageProps = {}) {
                                     className="grid grid-cols-[minmax(0,1fr)_40px] items-center gap-2"
                                   >
                                     <label className="sr-only">{`${option.name} 测试模型 ${index + 1}`}</label>
-                                    <select
-                                      aria-label={`${option.name} 测试模型 ${index + 1}`}
+                                    <ModelNameInput
+                                      ariaLabel={`${option.name} 测试模型 ${index + 1}`}
                                       value={getSelectValue(setting.testModels, index)}
-                                      onChange={event =>
-                                        handleUpdateTestModel(option.key, index, event.target.value)
+                                      onChange={value =>
+                                        handleUpdateTestModel(option.key, index, value)
                                       }
                                       disabled={!setting.enabled}
+                                      options={getModelInputOptions(selectedConfig)}
+                                      placeholder="搜索或输入模型"
                                       className="min-w-0 w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2.5 py-1.5 text-xs text-[var(--text-primary)] disabled:opacity-50"
-                                    >
-                                      <option value="">选择测试模型</option>
-                                      {selectedConfig.models.map(model => (
-                                        <option key={model} value={model}>
-                                          {model}
-                                        </option>
-                                      ))}
-                                    </select>
+                                    />
                                     <span
                                       className={`text-right text-xs ${
                                         slotResult?.success === true

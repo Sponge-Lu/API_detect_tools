@@ -343,5 +343,5 @@ export function newUtilFunction(param1: string): string {
 
 ---
 
-**版本**: 2.1.8  
-**更新日期**: 2025-12-24
+**版本**: 3.0.3
+**更新日期**: 2026-05-27

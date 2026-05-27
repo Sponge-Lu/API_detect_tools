@@ -230,7 +230,7 @@ describe('LDC UI visibility', () => {
   it('renders the credit page when the active tab is credit', async () => {
     render(<App />);
 
-    expect(screen.getByText('Mock Credit Page')).toBeInTheDocument();
+    expect(await screen.findByText('Mock Credit Page')).toBeInTheDocument();
     expect(mockSetActiveTab).not.toHaveBeenCalledWith('sites');
   });
 

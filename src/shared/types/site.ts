@@ -568,6 +568,63 @@ export interface ApiKeyInfo {
   group?: string;
   models?: string;
   status?: number | string;
+  status_str?: string;
+  state?: number | string | boolean;
+  enabled?: number | string | boolean;
+}
+
+export type ApiKeyAvailability = 'active' | 'inactive' | 'unknown';
+
+export function getApiKeyAvailability(
+  apiKey: Pick<ApiKeyInfo, 'status' | 'status_str' | 'state' | 'enabled'>
+): ApiKeyAvailability {
+  const status = apiKey.status ?? apiKey.status_str ?? apiKey.state ?? apiKey.enabled;
+
+  if (status === undefined || status === null || status === '') {
+    return 'unknown';
+  }
+
+  if (typeof status === 'boolean') {
+    return status ? 'active' : 'inactive';
+  }
+
+  if (typeof status === 'number') {
+    if (status === 1) return 'active';
+    if (status === 0) return 'inactive';
+    return 'unknown';
+  }
+
+  const normalizedStatus = String(status).trim().toLowerCase();
+  if (!normalizedStatus) {
+    return 'unknown';
+  }
+
+  if (['1', 'true', 'active', 'enabled', 'available', 'valid', 'ok'].includes(normalizedStatus)) {
+    return 'active';
+  }
+
+  if (
+    [
+      '0',
+      'false',
+      'inactive',
+      'expired',
+      'quota_exhausted',
+      'disabled',
+      'revoked',
+      'deleted',
+    ].includes(normalizedStatus)
+  ) {
+    return 'inactive';
+  }
+
+  return 'unknown';
+}
+
+export function isApiKeyActive(
+  apiKey: Pick<ApiKeyInfo, 'status' | 'status_str' | 'state' | 'enabled'>
+): boolean {
+  return getApiKeyAvailability(apiKey) !== 'inactive';
 }
 
 /** 模型定价数据 */

@@ -24,6 +24,7 @@ import type {
   RouteModelSourceRef,
 } from '../shared/types/route-proxy';
 import { buildRouteApiKeyPriorityKey } from '../shared/types/route-proxy';
+import { isApiKeyActive } from '../shared/types/site';
 import type { AccountCredential, ApiKeyInfo, UnifiedSite } from '../shared/types/site';
 import type { TokenService } from './token-service';
 
@@ -71,6 +72,10 @@ function createMissingPriorityAllocator(
     assigned.set(key, nextPriority);
     return nextPriority;
   };
+}
+
+function buildDisabledPrioritySet(values: string[] | null | undefined): Set<string> {
+  return new Set((values || []).map(value => value.trim()).filter(Boolean));
 }
 
 function getRegistrySourcePool(registry: RouteModelRegistryConfig): RouteModelSourceRef[] {
@@ -363,6 +368,10 @@ function buildCanonicalModelChannels(
       sitePriorities: {},
       apiKeyPriorities: {},
     };
+    const disabledSiteIds = buildDisabledPrioritySet(itemPriorityConfig.disabledSiteIds);
+    const disabledApiKeyPriorityKeys = buildDisabledPrioritySet(
+      itemPriorityConfig.disabledApiKeyPriorityKeys
+    );
     const expandedSourceKeys = expandDisplayItemSourceKeys(item, sourceByKey);
     const orderedSourceKeys = expandedSourceKeys.slice().sort((left, right) => {
       const originalOrder = normalizeOriginalModelOrder(
@@ -418,6 +427,10 @@ function buildCanonicalModelChannels(
       const siteId = source.siteId;
       const accountId = source.accountId;
 
+      if (disabledSiteIds.has(siteId)) {
+        continue;
+      }
+
       if (rule.allowedSiteIds?.length && !rule.allowedSiteIds.includes(siteId)) {
         continue;
       }
@@ -428,6 +441,14 @@ function buildCanonicalModelChannels(
 
       const availableApiKeys = (source.availableApiKeys || []).filter(apiKey => {
         if (apiKey.accountId !== accountId) {
+          return false;
+        }
+
+        if (
+          disabledApiKeyPriorityKeys.has(
+            buildRouteApiKeyPriorityKey(source.siteId, apiKey.accountId, apiKey.apiKeyId)
+          )
+        ) {
           return false;
         }
 
@@ -592,7 +613,7 @@ function buildGenericChannels(
       }
 
       for (const apiKey of apiKeys) {
-        if (apiKey.status !== undefined && Number(apiKey.status) !== 1) {
+        if (!isApiKeyActive(apiKey)) {
           continue;
         }
 

@@ -180,6 +180,8 @@ export interface RouteVendorPriorityConfig {
 export interface RouteDisplayItemPriorityConfig {
   sitePriorities: Record<string, number>;
   apiKeyPriorities: Record<string, number>;
+  disabledSiteIds?: string[];
+  disabledApiKeyPriorityKeys?: string[];
 }
 
 export interface RouteRuntimeConfig {

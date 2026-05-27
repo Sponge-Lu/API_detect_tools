@@ -1,0 +1,9 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Use local page state vs shared stores for overview interactions"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Dense dashboard layout and AppCard/AppButton usage conventions"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Required tests lint build and index maintenance for dashboard changes"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Overview change spans main/shared/renderer and persisted cache boundaries"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Shared IPC/cache contract changes and App electronAPI typing"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse existing unavailable-group and check-in aggregation patterns"}

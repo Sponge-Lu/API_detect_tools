@@ -474,43 +474,52 @@ describe('LogsPage', () => {
       'title',
       'Codex 请求 通配匹配 gpt-* 时生效；范围：全部站点'
     );
-    expect(metaLine).toHaveTextContent(/尝试 #1失败信息no_matching_ruleHTTP 502/);
-    const targetLine = within(rows[0]).getByTestId('route-request-target-line');
-    expect(targetLine).toHaveTextContent('重定向模型gpt-5.4');
-    expect(targetLine).toHaveTextContent('请求原始模型gpt-5.4');
-    expect(targetLine).toHaveTextContent('站点站点 A优先级 2');
-    expect(targetLine).toHaveTextContent('账户主账户');
-    expect(targetLine).toHaveTextContent('分组vip');
-    expect(targetLine).toHaveTextContent('API KeyKey Alpha');
-    const sitePriorityPill = within(targetLine).getByTestId('route-request-site-priority');
-    expect(sitePriorityPill).toHaveTextContent('优先级 2');
-    expect(sitePriorityPill).toHaveClass('bg-[var(--accent-soft-strong)]');
-    expect(within(sitePriorityPill).getByText('2')).toHaveClass('text-[var(--text-primary)]');
-    const redirectArrow = within(targetLine).getByLabelText('指向重定向模型');
-    expect(redirectArrow).toHaveTextContent('←');
-    expect(redirectArrow).toHaveClass('h-4', 'text-[var(--text-tertiary)]');
-    expect(within(targetLine).queryByText('<-')).not.toBeInTheDocument();
-    expect(within(rows[0]).getByText('Key Alpha')).toBeInTheDocument();
+    expect(metaLine).toHaveTextContent(
+      /Codex请求 codex-1尝试 #1失败HTTP 502失败信息no_matching_rule/
+    );
+    const detailGrid = within(rows[0]).getByTestId('route-request-detail-grid');
+    expect(detailGrid).toHaveClass(
+      'grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,1fr)_9rem]',
+      'gap-x-3',
+      'text-xs'
+    );
+    expect(detailGrid).toHaveTextContent('路由');
+    expect(detailGrid).toHaveTextContent('用量');
+    const modelPath = within(rows[0]).getByTestId('route-request-model-path');
+    expect(modelPath).toHaveTextContent('gpt-5.4→gpt-5.4');
+    expect(modelPath).toHaveAttribute('title', 'gpt-5.4 → gpt-5.4');
+    expect(modelPath).toHaveClass('truncate', 'min-w-0');
+    const sitePath = within(rows[0]).getByTestId('route-request-site-path');
+    expect(sitePath).toHaveTextContent('站点 A / 主账户 / vip / Key Alpha');
+    const sitePathText = within(sitePath).getByText('站点 A / 主账户 / vip / Key Alpha');
+    expect(sitePathText).toHaveAttribute('title', '站点 A / 主账户 / vip / Key Alpha');
+    expect(sitePathText).toHaveClass('truncate', 'min-w-0');
+    const sitePriorityCell = within(rows[0]).getByTestId('route-request-site-priority');
+    expect(sitePriorityCell).toHaveTextContent('优先级 2');
+    expect(sitePriorityCell).toHaveClass('justify-self-start', 'whitespace-nowrap');
+    expect(sitePriorityCell).not.toHaveClass('rounded-full');
+    expect(sitePriorityCell.className).not.toMatch(/bg-\[/);
+    expect(within(sitePriorityCell).getByText('2')).toHaveClass('text-[var(--text-primary)]');
+    const redirectArrow = within(modelPath).getByLabelText('指向重定向模型');
+    expect(redirectArrow).toHaveTextContent('→');
+    expect(redirectArrow).toHaveClass('text-[var(--text-tertiary)]');
     expect(within(rows[0]).getByText('尝试 #1')).toHaveClass('h-5', 'py-0');
     const failureInfo = within(rows[0]).getByTestId('route-request-failure-info');
     expect(failureInfo).toHaveTextContent('失败信息no_matching_rule');
     expect(failureInfo).toHaveClass('h-5', 'py-0', 'rounded-full', 'md:max-w-[32rem]');
     expect(within(rows[1]).queryByTestId('route-request-failure-info')).not.toBeInTheDocument();
-    expect(rows[0]).toHaveTextContent('请求原始模型gpt-5.4');
-    expect(rows[0]).toHaveTextContent('站点站点 A优先级 2');
-    expect(rows[0]).toHaveTextContent('总Token150');
-    expect(rows[0]).toHaveTextContent('输入Token100');
-    expect(rows[0]).toHaveTextContent('输出Token50');
-    expect(rows[0]).toHaveTextContent('缓存创建20');
-    expect(rows[0]).toHaveTextContent('缓存命中40');
-    expect(targetLine.firstElementChild).toHaveClass('py-0', 'text-[11px]', 'leading-4');
-    expect(within(rows[0]).getByTestId('route-request-token-line').firstElementChild).toHaveClass(
-      'py-0',
-      'text-[11px]',
-      'leading-4'
-    );
-    expect(rows[0]).toHaveTextContent('预计金额≈4.58e-7');
-    const formulaButton = within(rows[0]).getByRole('button', { name: '预计金额计算公式' });
+    const tokenSummary = within(rows[0]).getByTestId('route-request-token-summary');
+    expect(tokenSummary).toHaveTextContent('Token 150（输入 100，输出 50）');
+    expect(tokenSummary).toHaveClass('truncate', 'tabular-nums');
+    const cacheSummary = within(rows[0]).getByTestId('route-request-cache-summary');
+    expect(cacheSummary).toHaveTextContent('缓存 创建 20 · 命中 40');
+    expect(cacheSummary).toHaveClass('truncate');
+    const costCell = within(rows[0]).getByTestId('route-request-cost');
+    expect(costCell).toHaveTextContent('预计金额 ≈4.58e-7');
+    expect(costCell).toHaveClass('justify-self-start', 'whitespace-nowrap');
+    expect(costCell).not.toHaveClass('rounded-[var(--radius-md)]');
+    expect(costCell.className).not.toMatch(/bg-\[/);
+    const formulaButton = within(costCell).getByRole('button', { name: '预计金额计算公式' });
     fireEvent.mouseEnter(formulaButton);
     const formulaTooltip = await screen.findByRole('tooltip');
     expect(formulaTooltip).toHaveTextContent(
@@ -523,21 +532,49 @@ describe('LogsPage', () => {
         window.innerWidth - 16
       );
     });
-    expect(
-      within(rows[0]).queryByText('缓存创建=输入价 1.25 倍，缓存命中=输入价 1/10')
-    ).not.toBeInTheDocument();
     fireEvent.mouseLeave(formulaButton);
-    expect(rows[1]).toHaveTextContent('站点站点 B优先级 1');
-    expect(rows[1]).toHaveTextContent('请求原始模型gpt-5.4-mini');
-    expect(rows[1]).toHaveTextContent('预计金额≈2.70e-9');
-    expect(rows[2]).toHaveTextContent('站点DuckCoding优先级 0');
-    expect(rows[2]).toHaveTextContent('账户无');
-    expect(rows[2]).toHaveTextContent('分组无');
-    expect(rows[2]).toHaveTextContent('API Key默认');
-    expect(rows[2]).toHaveTextContent('预计金额无');
+    const sitePathInfoButton = within(sitePath).getByRole('button', {
+      name: '路由目标字段说明',
+    });
+    fireEvent.mouseEnter(sitePathInfoButton);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      '依次为：站点 / 账户 / 分组 / API Key（此次请求最终命中的来源链路）'
+    );
+    fireEvent.mouseLeave(sitePathInfoButton);
+    expect(within(rows[1]).getByTestId('route-request-site-path')).toHaveTextContent(
+      '站点 B / 备用账户 / beta / Key Beta'
+    );
+    expect(within(rows[1]).getByTestId('route-request-site-priority')).toHaveTextContent(
+      '优先级 1'
+    );
+    expect(within(rows[1]).getByTestId('route-request-model-path')).toHaveTextContent(
+      'gpt-5.4-mini→gpt-5.4-mini'
+    );
+    expect(within(rows[1]).getByTestId('route-request-cost')).toHaveTextContent(
+      '预计金额 ≈2.70e-9'
+    );
+    expect(within(rows[1]).getByTestId('route-request-cache-summary')).toHaveTextContent('无缓存');
+    const customCliSitePath = within(rows[2]).getByTestId('route-request-site-path');
+    expect(customCliSitePath).toHaveTextContent(/^DuckCoding$/);
+    expect(within(rows[2]).getByTestId('route-request-site-priority')).toHaveTextContent(
+      '优先级 0'
+    );
+    expect(within(rows[2]).getByTestId('route-request-cost')).toHaveTextContent('预计金额 无');
+    const customCliInfoButton = within(customCliSitePath).getByRole('button', {
+      name: '路由目标字段说明',
+    });
+    fireEvent.mouseEnter(customCliInfoButton);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      '自定义 CLI 来源（账户 / 分组 / API Key 不适用）'
+    );
+    fireEvent.mouseLeave(customCliInfoButton);
     expect(rows[3]).toHaveTextContent('请求 codex-cache');
-    expect(rows[3]).toHaveTextContent('缓存命中40');
-    expect(rows[3]).toHaveTextContent('预计金额≈1.28e-7');
+    expect(within(rows[3]).getByTestId('route-request-cache-summary')).toHaveTextContent(
+      '缓存 命中 40'
+    );
+    expect(within(rows[3]).getByTestId('route-request-cost')).toHaveTextContent(
+      '预计金额 ≈1.28e-7'
+    );
     expect(screen.queryByText(/^规则说明：/)).not.toBeInTheDocument();
     expect(screen.getByText(/用时1\.23s\/首字456ms/)).toBeInTheDocument();
     expect(screen.getByText(/用时789ms\/首字120ms/)).toBeInTheDocument();
@@ -686,8 +723,10 @@ describe('LogsPage', () => {
     });
 
     const rows = screen.getAllByTestId('route-request-log-row');
-    expect(rows[0]).toHaveTextContent('总Token无');
-    expect(rows[0]).toHaveTextContent('预计金额≈0.5');
+    expect(within(rows[0]).getByTestId('route-request-token-summary')).toHaveTextContent(
+      'Token 无'
+    );
+    expect(within(rows[0]).getByTestId('route-request-cost')).toHaveTextContent('预计金额 ≈0.5');
     const perCallFormulaButton = within(rows[0]).getByRole('button', {
       name: '预计金额计算公式',
     });
@@ -696,11 +735,11 @@ describe('LogsPage', () => {
       '仅供参考，不是实际花费金额；按单次调用价格估算。'
     );
     fireEvent.mouseLeave(perCallFormulaButton);
-    expect(rows[1]).toHaveTextContent('预计金额无');
+    expect(within(rows[1]).getByTestId('route-request-cost')).toHaveTextContent('预计金额 无');
     expect(
       within(rows[1]).queryByRole('button', { name: '预计金额计算公式' })
     ).not.toBeInTheDocument();
-    expect(rows[2]).toHaveTextContent('预计金额≈1');
+    expect(within(rows[2]).getByTestId('route-request-cost')).toHaveTextContent('预计金额 ≈1');
     expect(within(rows[2]).getByRole('button', { name: '预计金额计算公式' })).toBeInTheDocument();
   });
 

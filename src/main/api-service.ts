@@ -17,7 +17,7 @@
  */
 
 import type { SiteConfig } from './types/token';
-import { BUILTIN_GROUP_IDS } from '../shared/types/site';
+import { BUILTIN_GROUP_IDS, getApiKeyAvailability } from '../shared/types/site';
 import { httpGet, httpPost } from './utils/http-client';
 import { requestManager, RequestManager } from './utils/request-manager';
 import { mergeApiKeysPreservingRawValue } from './token-service';
@@ -1819,43 +1819,9 @@ export class ApiService {
   }
 
   private getSub2ApiKeyHealthRank(apiKey: any): number {
-    const status = apiKey?.status ?? apiKey?.state ?? apiKey?.enabled;
-
-    if (status === undefined || status === null || status === '') {
-      return 1;
-    }
-
-    if (typeof status === 'boolean') {
-      return status ? 2 : -1;
-    }
-
-    if (typeof status === 'number') {
-      if (status === 1) {
-        return 2;
-      }
-      if (status === 0) {
-        return -1;
-      }
-      return 1;
-    }
-
-    const normalizedStatus = String(status).trim().toLowerCase();
-    if (!normalizedStatus) {
-      return 1;
-    }
-
-    if (['active', 'enabled', 'available', 'valid', 'ok'].includes(normalizedStatus)) {
-      return 2;
-    }
-
-    if (
-      ['inactive', 'expired', 'quota_exhausted', 'disabled', 'revoked', 'deleted'].includes(
-        normalizedStatus
-      )
-    ) {
-      return -1;
-    }
-
+    const availability = getApiKeyAvailability(apiKey);
+    if (availability === 'active') return 2;
+    if (availability === 'inactive') return -1;
     return 1;
   }
 

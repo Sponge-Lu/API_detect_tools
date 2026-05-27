@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AlertCircle,
@@ -130,6 +129,11 @@ const CACHE_READ_INPUT_PRICE_RATIO = 0.1;
 const ROUTE_TOKEN_COST_TITLE =
   '仅供参考，不是实际花费金额；模型价格按每 1M token 计，缓存创建按输入价 1.25 倍、缓存命中按输入价 1/10 计入。';
 const ROUTE_PER_CALL_COST_TITLE = '仅供参考，不是实际花费金额；按单次调用价格估算。';
+const SITE_PATH_TOOLTIP_NORMAL =
+  '依次为：站点 / 账户 / 分组 / API Key（此次请求最终命中的来源链路）';
+const SITE_PATH_TOOLTIP_CUSTOM_CLI = '自定义 CLI 来源（账户 / 分组 / API Key 不适用）';
+const ROUTE_COST_FORMULA_LABEL = '预计金额计算公式';
+const ROUTE_SITE_PATH_INFO_LABEL = '路由目标字段说明';
 const ROUTE_LOG_VIEW_LIMIT = 200;
 
 interface RouteLogRegistryContext {
@@ -154,50 +158,7 @@ interface RouteLogTooltipPosition {
   maxWidth: number;
 }
 
-function RouteLogInlineField({
-  label,
-  value,
-  title,
-  className,
-  valueClassName,
-  tone = 'neutral',
-  suffix,
-}: {
-  label: string;
-  value: string;
-  title?: string;
-  className?: string;
-  valueClassName?: string;
-  tone?: 'model' | 'source' | 'usage' | 'cost' | 'neutral';
-  suffix?: ReactNode;
-}) {
-  const toneClassName = {
-    model: 'border-[var(--accent)]/20 bg-[var(--accent-soft)]',
-    source: 'border-[var(--line-soft)] bg-[var(--surface-2)]',
-    usage: 'border-[var(--line-soft)] bg-[var(--surface-2)]',
-    cost: 'border-[var(--warning)]/20 bg-[var(--warning-soft)]',
-    neutral: 'border-[var(--line-soft)] bg-[var(--surface-2)]',
-  }[tone];
-
-  return (
-    <span
-      className={`inline-flex min-w-0 items-baseline gap-1 rounded-[var(--radius-md)] border px-1.5 py-0 text-[11px] leading-4 ${toneClassName} ${className ?? ''}`}
-    >
-      <span className="shrink-0 text-[9px] font-medium leading-4 text-[var(--text-tertiary)]">
-        {label}
-      </span>
-      <span
-        className={`min-w-0 break-all text-[var(--text-primary)] ${valueClassName ?? ''}`}
-        title={title}
-      >
-        {value}
-      </span>
-      {suffix}
-    </span>
-  );
-}
-
-function RouteLogCostFormulaIcon({ title }: { title?: string }) {
+function RouteLogInfoIcon({ title, ariaLabel }: { title?: string; ariaLabel: string }) {
   const tooltipId = useId();
   const anchorRef = useRef<HTMLButtonElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
@@ -283,7 +244,7 @@ function RouteLogCostFormulaIcon({ title }: { title?: string }) {
         ref={anchorRef}
         type="button"
         aria-describedby={isOpen ? tooltipId : undefined}
-        aria-label="预计金额计算公式"
+        aria-label={ariaLabel}
         className="inline-flex shrink-0 cursor-help rounded-full text-[var(--text-tertiary)] transition-colors hover:text-[var(--accent)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
         onBlur={() => setIsOpen(false)}
         onFocus={() => setIsOpen(true)}
@@ -444,6 +405,45 @@ function findRouteLogDisplayItem(
   }
 
   return displayItems.find(displayItem => displayItem.sourceKeys.includes(source.sourceKey));
+}
+
+function formatRouteLogSitePath(params: {
+  customCli: boolean;
+  siteOrConfigName: string;
+  accountDisplayName: string;
+  userGroupDisplayName: string;
+  apiKeyDisplayName: string;
+}): string {
+  if (params.customCli) {
+    return params.siteOrConfigName;
+  }
+  return `${params.siteOrConfigName} / ${params.accountDisplayName} / ${params.userGroupDisplayName} / ${params.apiKeyDisplayName}`;
+}
+
+function formatRouteLogTokenSummary(
+  totalTokens: string,
+  promptTokens: string,
+  completionTokens: string
+): string {
+  if (totalTokens === NONE_TEXT) {
+    return 'Token 无';
+  }
+  return `Token ${totalTokens}（输入 ${promptTokens}，输出 ${completionTokens}）`;
+}
+
+function formatRouteLogCacheSummary(cacheCreationTokens: string, cacheReadTokens: string): string {
+  const hasCreation = cacheCreationTokens !== NONE_TEXT && cacheCreationTokens !== '0';
+  const hasRead = cacheReadTokens !== NONE_TEXT && cacheReadTokens !== '0';
+  if (!hasCreation && !hasRead) {
+    return '无缓存';
+  }
+  if (hasCreation && hasRead) {
+    return `缓存 创建 ${cacheCreationTokens} · 命中 ${cacheReadTokens}`;
+  }
+  if (hasCreation) {
+    return `缓存 创建 ${cacheCreationTokens}`;
+  }
+  return `缓存 命中 ${cacheReadTokens}`;
 }
 
 function resolveSitePriority(
@@ -654,12 +654,10 @@ function resolveRouteFailureInfo(item: RouteRequestLogItem): string | null {
 
 function EventCount({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-4 py-3">
-      <div className="flex items-baseline gap-2 text-xs text-[var(--text-secondary)]">
-        <span>{label}</span>
-        <span className="text-lg font-semibold text-[var(--text-primary)]">{value}</span>
-      </div>
-    </div>
+    <span className="inline-flex items-baseline gap-1 rounded-full bg-[var(--surface-2)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)]">
+      <span>{label}</span>
+      <span className="font-semibold tabular-nums text-[var(--text-primary)]">{value}</span>
+    </span>
   );
 }
 
@@ -830,30 +828,44 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
 
   return (
     <div className="flex flex-1 min-h-0 flex-col overflow-hidden px-6 py-4">
-      <div className="flex min-h-0 flex-1 flex-col gap-4">
-        <AppCard blur={false}>
-          <AppCardContent className="p-5">
-            <div>
-              <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
-                {view === 'session' ? (
-                  <History className="h-4 w-4 text-[var(--accent)]" />
-                ) : (
-                  <Network className="h-4 w-4 text-[var(--accent)]" />
-                )}
-                {view === 'session' ? '当前会话事件' : '路由日志'}
-              </div>
-            </div>
-
-            {view === 'session' ? (
-              <>
-                <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                  <EventCount label="总记录" value={eventHistory.length} />
-                  <EventCount label="通知" value={notificationCount} />
-                  <EventCount label="关键操作" value={actionCount} />
+      <div className="flex min-h-0 flex-1 flex-col">
+        <AppCard className="flex min-h-0 flex-1 flex-col overflow-hidden" blur={false}>
+          <AppCardContent className="flex min-h-0 flex-1 flex-col p-0">
+            <header
+              data-testid="logs-page-header"
+              className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-[var(--line-soft)] px-5 py-3"
+            >
+              <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+                <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
+                  {view === 'session' ? (
+                    <History className="h-4 w-4 text-[var(--accent)]" />
+                  ) : (
+                    <Network className="h-4 w-4 text-[var(--accent)]" />
+                  )}
+                  {view === 'session' ? '当前会话事件' : '路由日志'}
                 </div>
-
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {view === 'session' ? (
+                    <>
+                      <EventCount label="总记录" value={eventHistory.length} />
+                      <EventCount label="通知" value={notificationCount} />
+                      <EventCount label="关键操作" value={actionCount} />
+                    </>
+                  ) : (
+                    <>
+                      <EventCount label="总尝试" value={filteredRouteLogs.length} />
+                      <EventCount label="成功" value={routeSuccessCount} />
+                      <EventCount label="失败" value={routeFailureCount} />
+                    </>
+                  )}
+                  <span className="rounded-full bg-[var(--surface-2)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)]">
+                    {view === 'session' ? filteredEvents.length : filteredRouteLogs.length} 条
+                  </span>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {view === 'session' ? (
+                  <>
                     {FILTER_OPTIONS.map(option => {
                       const Icon = option.icon;
                       const selected = filter === option.id;
@@ -870,28 +882,18 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
                         </AppButton>
                       );
                     })}
-                  </div>
-                  <AppButton
-                    variant="secondary"
-                    size="sm"
-                    disabled={eventHistory.length === 0}
-                    onClick={clearEventHistory}
-                  >
-                    <Eraser className="h-4 w-4" />
-                    清空会话记录
-                  </AppButton>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                  <EventCount label="总尝试" value={filteredRouteLogs.length} />
-                  <EventCount label="成功" value={routeSuccessCount} />
-                  <EventCount label="失败" value={routeFailureCount} />
-                </div>
-
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex flex-wrap gap-2">
+                    <AppButton
+                      variant="secondary"
+                      size="sm"
+                      disabled={eventHistory.length === 0}
+                      onClick={clearEventHistory}
+                    >
+                      <Eraser className="h-4 w-4" />
+                      清空会话记录
+                    </AppButton>
+                  </>
+                ) : (
+                  <>
                     {ROUTE_CLI_FILTER_OPTIONS.map(option => {
                       const selected = routeCliFilter === option.id;
 
@@ -907,8 +909,6 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
                         </AppButton>
                       );
                     })}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
                     <AppButton
                       variant="secondary"
                       size="sm"
@@ -926,23 +926,10 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
                       <Eraser className="h-4 w-4" />
                       清空路由日志
                     </AppButton>
-                  </div>
-                </div>
-              </>
-            )}
-          </AppCardContent>
-        </AppCard>
-
-        <AppCard className="flex min-h-0 flex-1 flex-col overflow-hidden" blur={false}>
-          <AppCardContent className="flex min-h-0 flex-1 flex-col p-0">
-            <div className="flex items-center justify-between border-b border-[var(--line-soft)] px-5 py-4">
-              <div className="text-sm font-semibold text-[var(--text-primary)]">
-                {view === 'session' ? '事件列表' : '请求尝试列表'}
+                  </>
+                )}
               </div>
-              <span className="rounded-full bg-[var(--surface-2)] px-2.5 py-1 text-[11px] text-[var(--text-secondary)]">
-                {view === 'session' ? filteredEvents.length : filteredRouteLogs.length} 条
-              </span>
-            </div>
+            </header>
 
             {view === 'session' ? (
               filteredEvents.length > 0 ? (
@@ -1021,6 +1008,26 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
                   const apiKeyDisplayName = customCli
                     ? DEFAULT_API_KEY_NAME
                     : formatOptionalDisplayName(item.apiKeyName);
+                  const sitePathDisplay = formatRouteLogSitePath({
+                    customCli,
+                    siteOrConfigName,
+                    accountDisplayName,
+                    userGroupDisplayName,
+                    apiKeyDisplayName,
+                  });
+                  const sitePathTooltip = customCli
+                    ? SITE_PATH_TOOLTIP_CUSTOM_CLI
+                    : SITE_PATH_TOOLTIP_NORMAL;
+                  const tokenSummaryText = formatRouteLogTokenSummary(
+                    costInfo.totalTokens,
+                    costInfo.promptTokens,
+                    costInfo.completionTokens
+                  );
+                  const cacheSummaryText = formatRouteLogCacheSummary(
+                    costInfo.cacheCreationTokens,
+                    costInfo.cacheReadTokens
+                  );
+                  const modelPathTitle = `${requestedModelName} → ${canonicalModelName}`;
 
                   return (
                     <article
@@ -1034,13 +1041,7 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
                         data-testid="route-request-meta-line"
                         className="grid grid-cols-1 gap-y-1 text-[11px] md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-3"
                       >
-                        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                          <span
-                            className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-medium ${outcomeStyle.badge}`}
-                          >
-                            <span className={`h-1.5 w-1.5 rounded-full ${outcomeStyle.dot}`} />
-                            {outcomeStyle.label}
-                          </span>
+                        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                           <span
                             className={`inline-flex h-5 items-center gap-1.5 rounded-full border px-2 py-0 font-medium ${ROUTE_CLI_STYLES[item.cliType]}`}
                           >
@@ -1055,6 +1056,17 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
                           <span className="inline-flex h-5 items-center rounded-full bg-[var(--surface-2)] px-2 py-0 text-[var(--text-secondary)]">
                             尝试 #{item.attempt}
                           </span>
+                          <span
+                            className={`inline-flex h-5 items-center gap-1.5 rounded-full border px-2 py-0 font-medium ${outcomeStyle.badge}`}
+                          >
+                            <span className={`h-1.5 w-1.5 rounded-full ${outcomeStyle.dot}`} />
+                            {outcomeStyle.label}
+                            {item.statusCode !== undefined ? (
+                              <span className="text-[var(--text-secondary)]">
+                                HTTP {item.statusCode}
+                              </span>
+                            ) : null}
+                          </span>
                           {failureInfo ? (
                             <span
                               data-testid="route-request-failure-info"
@@ -1065,11 +1077,6 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
                               <span className="min-w-0 truncate">{failureInfo}</span>
                             </span>
                           ) : null}
-                          {item.statusCode !== undefined ? (
-                            <span className="rounded-full bg-[var(--surface-2)] px-2 py-0.5 text-[var(--text-secondary)]">
-                              HTTP {item.statusCode}
-                            </span>
-                          ) : null}
                         </div>
                         <span className="whitespace-nowrap text-[var(--text-tertiary)] md:justify-self-end">
                           {formatLatency(item.latencyMs, item.firstByteLatencyMs)} ·{' '}
@@ -1078,99 +1085,78 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
                       </div>
 
                       <div
-                        data-testid="route-request-target-line"
-                        className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5 text-xs"
+                        data-testid="route-request-detail-grid"
+                        className="mt-1 grid grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,1fr)_9rem] items-center gap-x-3 gap-y-0.5 text-xs"
                       >
-                        <RouteLogInlineField
-                          label="重定向模型"
-                          value={canonicalModelName}
-                          tone="model"
-                          valueClassName="font-semibold"
-                        />
-                        <span
-                          aria-label="指向重定向模型"
-                          className="inline-flex h-4 items-center px-0.5 text-[11px] font-semibold leading-4 text-[var(--text-tertiary)]"
-                        >
-                          ←
+                        <span className="font-medium tracking-wider text-[var(--text-tertiary)]">
+                          路由
                         </span>
-                        <RouteLogInlineField
-                          label="请求原始模型"
-                          value={requestedModelName}
-                          tone="model"
-                        />
-                        <RouteLogInlineField
-                          label="站点"
-                          value={siteOrConfigName}
-                          tone="source"
-                          suffix={
-                            <span
-                              data-testid="route-request-site-priority"
-                              className="ml-1 inline-flex shrink-0 items-center rounded-full bg-[var(--accent-soft-strong)] px-1.5 py-0 text-[10px]"
-                            >
-                              <span className="text-[var(--text-tertiary)]">优先级 </span>
-                              <span className="text-[var(--text-primary)]">{sitePriority}</span>
-                            </span>
-                          }
-                        />
-                        <RouteLogInlineField
-                          label="账户"
-                          value={accountDisplayName}
-                          tone="source"
-                        />
-                        <RouteLogInlineField
-                          label="分组"
-                          value={userGroupDisplayName}
-                          tone="source"
-                        />
-                        <RouteLogInlineField
-                          label="API Key"
-                          value={apiKeyDisplayName}
-                          tone="source"
-                        />
-                      </div>
-
-                      <div
-                        data-testid="route-request-token-line"
-                        className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5 text-xs"
-                      >
-                        <RouteLogInlineField
-                          label="总Token"
-                          value={costInfo.totalTokens}
-                          tone="usage"
-                          valueClassName="font-semibold tabular-nums"
-                        />
-                        <RouteLogInlineField
-                          label="输入Token"
-                          value={costInfo.promptTokens}
-                          tone="usage"
-                          valueClassName="tabular-nums"
-                        />
-                        <RouteLogInlineField
-                          label="输出Token"
-                          value={costInfo.completionTokens}
-                          tone="usage"
-                          valueClassName="tabular-nums"
-                        />
-                        <RouteLogInlineField
-                          label="缓存创建"
-                          value={costInfo.cacheCreationTokens}
-                          tone="usage"
-                          valueClassName="tabular-nums"
-                        />
-                        <RouteLogInlineField
-                          label="缓存命中"
-                          value={costInfo.cacheReadTokens}
-                          tone="usage"
-                          valueClassName="tabular-nums"
-                        />
-                        <span className="inline-flex min-w-0 items-center gap-1">
-                          <RouteLogInlineField
-                            label="预计金额"
-                            value={costInfo.estimatedCost}
-                            tone="cost"
-                            valueClassName="font-semibold tabular-nums"
+                        <span
+                          data-testid="route-request-model-path"
+                          className="min-w-0 truncate text-[var(--text-primary)]"
+                          title={modelPathTitle}
+                        >
+                          {requestedModelName}
+                          <span
+                            aria-label="指向重定向模型"
+                            className="mx-1 text-[var(--text-tertiary)]"
+                          >
+                            →
+                          </span>
+                          <span className="font-semibold">{canonicalModelName}</span>
+                        </span>
+                        <span
+                          data-testid="route-request-site-path"
+                          className="flex min-w-0 items-center gap-1"
+                        >
+                          <span
+                            className="min-w-0 truncate text-[var(--text-primary)]"
+                            title={sitePathDisplay}
+                          >
+                            {sitePathDisplay}
+                          </span>
+                          <RouteLogInfoIcon
+                            ariaLabel={ROUTE_SITE_PATH_INFO_LABEL}
+                            title={sitePathTooltip}
                           />
-                          <RouteLogCostFormulaIcon title={costInfo.estimatedCostTitle} />
+                        </span>
+                        <span
+                          data-testid="route-request-site-priority"
+                          className="justify-self-start whitespace-nowrap"
+                        >
+                          <span className="text-[var(--text-tertiary)]">优先级 </span>
+                          <span className="text-[var(--text-primary)]">{sitePriority}</span>
+                        </span>
+
+                        <span className="font-medium tracking-wider text-[var(--text-tertiary)]">
+                          用量
+                        </span>
+                        <span
+                          data-testid="route-request-token-summary"
+                          className="min-w-0 truncate tabular-nums text-[var(--text-primary)]"
+                          title={tokenSummaryText}
+                        >
+                          {tokenSummaryText}
+                        </span>
+                        <span
+                          data-testid="route-request-cache-summary"
+                          className="min-w-0 truncate tabular-nums text-[var(--text-primary)]"
+                          title={cacheSummaryText}
+                        >
+                          {cacheSummaryText}
+                        </span>
+                        <span
+                          data-testid="route-request-cost"
+                          className="inline-flex min-w-0 items-center gap-1 justify-self-start whitespace-nowrap"
+                        >
+                          <span className="text-[var(--text-tertiary)]">预计金额 </span>
+                          <span className="font-semibold tabular-nums text-[var(--text-primary)]">
+                            {costInfo.estimatedCost}
+                          </span>
+                          <RouteLogInfoIcon
+                            ariaLabel={ROUTE_COST_FORMULA_LABEL}
+                            title={costInfo.estimatedCostTitle}
+                          />
                         </span>
                       </div>
                     </article>

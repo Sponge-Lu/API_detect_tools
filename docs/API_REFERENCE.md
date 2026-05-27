@@ -2,8 +2,8 @@
 
 > 本文档整理了 One API 系列项目（one-api、new-api、Veloera、one-hub、done-hub、VoAPI、Super-API）以及 sub2api 的接口信息。
 >
-> **最后更新时间**：2026-04-14
-> **版本**：v3.0.1
+> **最后更新时间**：2026-05-25
+> **版本**：v3.0.4
 
 ---
 

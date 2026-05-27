@@ -27,7 +27,7 @@
 | **schemas/** | Zod 数据验证规则 | index.ts |
 | **constants/** | 常量定义 | index.ts |
 | **theme/** | 主题预设与模式归一化 | themePresets.ts |
-| **utils/** | 工具函数 | headers.ts, log-filter.ts |
+| **utils/** | 工具函数 | customCliRouteId.ts, headers.ts, log-filter.ts |
 
 ---
 
@@ -35,7 +35,7 @@
 
 ### site.ts
 
-**职责**: 站点相关的类型定义，覆盖配置、检测缓存、运行期缓存和站点每日快照
+**职责**: 站点相关的类型定义，覆盖配置、检测缓存、API Key 活跃状态归一化、运行期缓存和站点每日快照
 
 **关键类型**:
 ```typescript
@@ -88,6 +88,10 @@ interface CliCompatibilityData {
   geminiCli: boolean | null;
   geminiDetail?: { native: boolean | null; proxy: boolean | null; replyText?: string };
 }
+
+type ApiKeyAvailability = 'active' | 'inactive' | 'unknown';
+function getApiKeyAvailability(apiKey): ApiKeyAvailability;
+function isApiKeyActive(apiKey): boolean;
 ```
 
 ### route-proxy.ts
@@ -215,42 +219,37 @@ export const CLI_TOOLS = [
 
 ## 🛠️ Utils (工具函数)
 
-### headers.ts
+### customCliRouteId.ts
 
-**职责**: HTTP 请求头生成和管理
+**职责**: 统一自定义 CLI 在路由分析中的合成 site/account/apiKey ID 命名约定。
 
 **关键函数**:
 ```typescript
-export function getDefaultHeaders(): Record<string, string> {
-  return {
-    'User-Agent': 'API Hub Management Tools/2.1.8',
-    'Content-Type': 'application/json',
-  };
-}
+buildCustomCliRouteSiteId(configId);
+buildCustomCliRouteAccountId(configId);
+buildCustomCliRouteApiKeyId(configId);
+parseCustomCliRouteConfigId(siteId);
+isCustomCliRouteChannel(siteId, accountId, apiKeyId);
+```
 
-export function getAuthHeaders(token: string): Record<string, string> {
-  return {
-    ...getDefaultHeaders(),
-    'Authorization': `Bearer ${token}`,
-  };
-}
+### headers.ts
+
+**职责**: 生成兼容不同中转站大小写习惯的用户 ID 请求头。
+
+**关键函数**:
+```typescript
+getAllUserIdHeaders(userId);
 ```
 
 ### log-filter.ts
 
-**职责**: 日志过滤和格式化
+**职责**: 判断模型调用日志并聚合 usage / quota 指标。
 
 **关键函数**:
 ```typescript
-export function filterModelLogs(logs: string[]): string[] {
-  // 过滤敏感信息（Token、密钥等）
-  return logs.map(log => maskSensitiveInfo(log));
-}
-
-export function formatLogEntry(level: string, message: string): string {
-  // 格式化日志条目
-  return `[${new Date().toISOString()}] [${level}] ${message}`;
-}
+isModelLog(item);
+aggregateUsageData(items);
+filterAndAggregateUsageData(items);
 ```
 
 ---
@@ -393,5 +392,5 @@ npm run test -- src/shared/utils
 
 ---
 
-**版本**: 2.1.9  
-**更新日期**: 2025-12-26
+**版本**: 3.0.3
+**更新日期**: 2026-05-27

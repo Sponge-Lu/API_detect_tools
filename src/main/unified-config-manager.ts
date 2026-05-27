@@ -94,6 +94,7 @@ import {
 } from '../shared/types/route-proxy';
 
 const CONFIG_VERSION = '3.1';
+const CONFIG_READ_RETRY_DELAYS_MS = [50, 100, 200, 400];
 
 const DEFAULT_SETTINGS: Settings = {
   timeout: 30,
@@ -169,6 +170,16 @@ function normalizePriorityRecord(
   return Object.fromEntries(normalizedEntries);
 }
 
+function normalizeStringList(value: string[] | null | undefined): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(value.map(item => String(item).trim()).filter(item => item.length > 0))
+  );
+}
+
 function buildAutoCliModelRouteRuleId(cliType: RouteCliType, canonicalModel: string): string {
   const modelSlug =
     canonicalModel
@@ -212,9 +223,14 @@ function normalizeVendorPriorityConfig(
 function normalizeDisplayItemPriorityConfig(
   value: RouteDisplayItemPriorityConfig | null | undefined
 ): RouteDisplayItemPriorityConfig {
+  const disabledSiteIds = normalizeStringList(value?.disabledSiteIds);
+  const disabledApiKeyPriorityKeys = normalizeStringList(value?.disabledApiKeyPriorityKeys);
+
   return {
     sitePriorities: normalizePriorityRecord(value?.sitePriorities),
     apiKeyPriorities: normalizePriorityRecord(value?.apiKeyPriorities),
+    ...(disabledSiteIds.length > 0 ? { disabledSiteIds } : {}),
+    ...(disabledApiKeyPriorityKeys.length > 0 ? { disabledApiKeyPriorityKeys } : {}),
   };
 }
 
@@ -310,7 +326,7 @@ export class UnifiedConfigManager {
 
     try {
       const { config, runtimeCache, needsSave, repairedLegacyAccounts } =
-        await this.readConfigFromPath(this.configPath);
+        await this.readConfigFromPathWithRetries(this.configPath);
       this.config = config;
       runtimeCacheManager.setCache(runtimeCache);
       if (needsSave) {
@@ -354,6 +370,44 @@ export class UnifiedConfigManager {
     runtimeCacheManager.setCache(this.createEmptyRuntimeCache());
     await this.saveConfig();
     return this.config;
+  }
+
+  /**
+   * 从指定路径读取并规范化配置
+   */
+  private async readConfigFromPathWithRetries(configPath: string): Promise<ReadConfigResult> {
+    let lastError: any = null;
+
+    for (let attempt = 0; attempt <= CONFIG_READ_RETRY_DELAYS_MS.length; attempt += 1) {
+      try {
+        return await this.readConfigFromPath(configPath);
+      } catch (error: any) {
+        lastError = error;
+        if (!this.shouldRetryConfigReadError(error)) {
+          throw error;
+        }
+
+        const retryDelay = CONFIG_READ_RETRY_DELAYS_MS[attempt];
+        if (retryDelay === undefined) {
+          break;
+        }
+
+        Logger.warn(
+          `⚠️ [UnifiedConfigManager] 配置读取失败，${retryDelay}ms 后重试 (${attempt + 1}/${CONFIG_READ_RETRY_DELAYS_MS.length}): ${error?.message || error}`
+        );
+        await this.delay(retryDelay);
+      }
+    }
+
+    throw lastError;
+  }
+
+  private shouldRetryConfigReadError(error: any): boolean {
+    return error?.code !== 'ENOENT';
+  }
+
+  private async delay(ms: number): Promise<void> {
+    await new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /**
@@ -2236,6 +2290,29 @@ export class UnifiedConfigManager {
     for (const s of samples) {
       if (!history[s.probeKey]) history[s.probeKey] = [];
       history[s.probeKey].push(s);
+    }
+    await this.saveRouteProbesState();
+  }
+
+  async persistRouteCliProbeSamples(
+    samples: RouteCliProbeSample[],
+    latestList: RouteCliProbeLatest[]
+  ): Promise<void> {
+    if (!this.config || (samples.length === 0 && latestList.length === 0)) return;
+    this.normalizeRoutingConfig(this.config);
+    const cliProbe = this.config.routing!.cliProbe;
+    const history = cliProbe.history;
+    for (const s of samples) {
+      if (!history[s.probeKey]) history[s.probeKey] = [];
+      history[s.probeKey].push(s);
+    }
+    for (const l of latestList) {
+      cliProbe.latest[l.probeKey] = l;
+    }
+    const cutoff = Date.now() - cliProbe.config.retentionDays * 24 * 60 * 60 * 1000;
+    for (const key of Object.keys(history)) {
+      history[key] = history[key].filter(s => s.testedAt >= cutoff);
+      if (history[key].length === 0) delete history[key];
     }
     await this.saveRouteProbesState();
   }

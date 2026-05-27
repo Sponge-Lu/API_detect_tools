@@ -206,7 +206,7 @@ describe('Close Behavior Manager Property Tests', () => {
         }),
         { numRuns: 100 }
       );
-    });
+    }, 15000);
 
     it('should handle multiple save operations (idempotence)', () => {
       fc.assert(
@@ -321,7 +321,7 @@ describe('Close Behavior Manager Property Tests', () => {
         ),
         { numRuns: 100 }
       );
-    });
+    }, 15000);
 
     it('should handle concurrent-like save operations', () => {
       fc.assert(

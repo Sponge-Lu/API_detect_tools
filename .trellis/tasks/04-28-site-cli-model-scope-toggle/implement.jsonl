@@ -1,0 +1,6 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Dialog control layout and form behavior for UnifiedCliConfigDialog"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Local dialog state vs shared persisted CLI config state"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Shared API key and model pricing contracts used by dialog filtering"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Avoid duplicating enable_groups model filtering logic in a third place"}

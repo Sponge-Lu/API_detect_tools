@@ -1,0 +1,4 @@
+{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
+{"file": ".claude/commands/trellis/check.md", "reason": "Code quality check spec"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "lint/typecheck/test 收敛标准"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Sankey/scatter 工具的类型边界"}

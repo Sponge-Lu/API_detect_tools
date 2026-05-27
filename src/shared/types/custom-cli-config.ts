@@ -82,6 +82,8 @@ export interface CustomCliConfig {
   apiKey: string;
   /** 拉取到的可用模型列表 */
   models: string[];
+  /** 用户手动输入的模型列表，用于拉取端点不可用或模型未出现在端点响应中的配置 */
+  manualModels?: string[];
   /** 最后拉取模型时间戳 */
   lastModelFetch?: number;
   /** 用户备注 */
@@ -126,6 +128,7 @@ export function createDefaultCustomCliConfig(partial?: Partial<CustomCliConfig>)
     baseUrl: '',
     apiKey: '',
     models: [],
+    manualModels: [],
     lastModelFetch: undefined,
     notes: '',
     cliSettings: {

@@ -24,6 +24,7 @@ import type {
 import { buildProbeKey } from '../shared/types/route-proxy';
 import {
   BUILTIN_GROUP_IDS,
+  isApiKeyActive,
   type AccountCredential,
   type ApiKeyInfo,
   type UnifiedSite,
@@ -147,9 +148,7 @@ async function resolveProbeApiKeyForExecution(
 ): Promise<{ apiKeyId: string } | null> {
   const preferredApiKeyId = resolveProbeCliItem(site.id, account.id, cliType)?.apiKeyId;
   const apiKeys = (account.cached_data?.api_keys || []).filter(apiKey => {
-    return (
-      (apiKey.status === undefined || apiKey.status === 1) && Boolean(apiKey.key || apiKey.token)
-    );
+    return isApiKeyActive(apiKey) && Boolean(apiKey.key || apiKey.token);
   });
 
   if (preferredApiKeyId !== null && preferredApiKeyId !== undefined) {
@@ -315,9 +314,10 @@ export async function persistCliProbeSamples(samples: RouteCliProbeSample[]): Pr
     return;
   }
 
-  await unifiedConfigManager.appendRouteCliProbeSamples(samples);
-  await unifiedConfigManager.upsertRouteCliProbeLatest(buildLatestListFromSamples(samples));
-  await unifiedConfigManager.pruneRouteCliProbeHistory();
+  await unifiedConfigManager.persistRouteCliProbeSamples(
+    samples,
+    buildLatestListFromSamples(samples)
+  );
 }
 
 /**
@@ -410,6 +410,7 @@ async function runSingleProbe(
       accountId,
       apiKeyId: routeCredential.apiKeyId,
       cliType,
+      probeRunId,
       canonicalModel,
       rawModel,
       targetProtocol,

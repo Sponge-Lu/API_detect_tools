@@ -59,6 +59,7 @@ vi.mock('../main/utils/http-client', () => ({
 }));
 
 import {
+  applySuccessfulRoutePathAffinity,
   buildChannelAttemptPlan,
   buildGeminiUpstreamPath,
   buildUpstreamRequestUrl,
@@ -70,6 +71,7 @@ import {
   handleRequest,
   resolveRouteRuntimeConfig,
   summarizeUpstreamFailureBodyForLog,
+  ROUTE_SUCCESSFUL_PATH_AFFINITY_MS,
 } from '../main/route-proxy-service';
 import { unifiedConfigManager } from '../main/unified-config-manager';
 import {
@@ -80,7 +82,12 @@ import {
   sortRules,
 } from '../main/route-rule-engine';
 import { resolveChannels, resolveChannelCredentials } from '../main/route-channel-resolver';
-import { buildProbeLockRouteApiKey } from '../main/route-probe-lock';
+import {
+  buildProbeLockRouteApiKey,
+  clearRouteProbeLockTerminalFailure,
+  getRouteProbeLockFirstUpstreamResult,
+  subscribeRouteProbeLockTerminalFailure,
+} from '../main/route-probe-lock';
 import { httpRawRequest, httpRawStreamRequest } from '../main/utils/http-client';
 import {
   isRouteEndpointUnsupported,
@@ -89,6 +96,11 @@ import {
   recordRoutePathOutcome,
 } from '../main/route-stats-service';
 import { recordRouteRequest } from '../main/route-analytics-service';
+import {
+  buildRouteApiKeyPriorityKey,
+  buildRoutePathStateKey,
+  type RoutePathState,
+} from '../shared/types/route-proxy';
 
 function createJsonRequest(
   url: string,
@@ -305,6 +317,191 @@ describe('route-proxy-service attempt planning', () => {
     );
 
     expect(plan).toEqual([duplicatePath, duplicatePath, nextPath]);
+  });
+
+  it('promotes the most recent successful route path and keeps circular fallback order', () => {
+    const now = 1_700_000_000_000;
+    const firstPath = {
+      routeRuleId: 'rule-1',
+      siteId: 'site-1',
+      accountId: 'acc-1',
+      apiKeyId: 'key-a',
+      targetProtocol: 'native' as const,
+      canonicalModel: 'claude-route',
+      resolvedModel: 'raw-a',
+    };
+    const secondPath = {
+      ...firstPath,
+      siteId: 'site-2',
+      accountId: 'acc-2',
+      apiKeyId: 'key-b',
+    };
+    const thirdPath = {
+      ...firstPath,
+      siteId: 'site-3',
+      accountId: 'acc-3',
+      apiKeyId: 'key-c',
+    };
+    const fourthPath = {
+      ...firstPath,
+      siteId: 'site-4',
+      accountId: 'acc-4',
+      apiKeyId: 'key-d',
+    };
+    const routePathStates: Record<string, RoutePathState> = {
+      [buildRoutePathStateKey(secondPath)]: {
+        ...secondPath,
+        windowStartedAt: now,
+        windowRequestCount: 1,
+        windowSuccessCount: 1,
+        successRate: 1,
+        lastOutcome: 'success',
+        lastSuccessAt: now - 120_000,
+        updatedAt: now - 120_000,
+      },
+      [buildRoutePathStateKey(thirdPath)]: {
+        ...thirdPath,
+        windowStartedAt: now,
+        windowRequestCount: 1,
+        windowSuccessCount: 1,
+        successRate: 1,
+        lastOutcome: 'success',
+        lastSuccessAt: now - 30_000,
+        updatedAt: now - 30_000,
+      },
+    };
+
+    const plan = applySuccessfulRoutePathAffinity(
+      [firstPath, secondPath, thirdPath, fourthPath],
+      routePathStates,
+      now
+    );
+
+    expect(plan.map(channel => channel.siteId)).toEqual(['site-3', 'site-4', 'site-1', 'site-2']);
+  });
+
+  it('ignores stale, failed, and disabled route path affinity states', () => {
+    const now = 1_700_000_000_000;
+    const firstPath = {
+      routeRuleId: 'rule-1',
+      siteId: 'site-1',
+      accountId: 'acc-1',
+      apiKeyId: 'key-a',
+      targetProtocol: 'native' as const,
+      canonicalModel: 'claude-route',
+      resolvedModel: 'raw-a',
+    };
+    const stalePath = {
+      ...firstPath,
+      siteId: 'site-stale',
+      accountId: 'acc-stale',
+      apiKeyId: 'key-stale',
+    };
+    const failedPath = {
+      ...firstPath,
+      siteId: 'site-failed',
+      accountId: 'acc-failed',
+      apiKeyId: 'key-failed',
+    };
+    const disabledPath = {
+      ...firstPath,
+      siteId: 'site-disabled',
+      accountId: 'acc-disabled',
+      apiKeyId: 'key-disabled',
+    };
+    const routePathStates: Record<string, RoutePathState> = {
+      [buildRoutePathStateKey(stalePath)]: {
+        ...stalePath,
+        windowStartedAt: now,
+        windowRequestCount: 1,
+        windowSuccessCount: 1,
+        successRate: 1,
+        lastOutcome: 'success',
+        lastSuccessAt: now - ROUTE_SUCCESSFUL_PATH_AFFINITY_MS - 1,
+        updatedAt: now - ROUTE_SUCCESSFUL_PATH_AFFINITY_MS - 1,
+      },
+      [buildRoutePathStateKey(failedPath)]: {
+        ...failedPath,
+        windowStartedAt: now,
+        windowRequestCount: 2,
+        windowSuccessCount: 1,
+        successRate: 0.5,
+        lastOutcome: 'failure',
+        lastSuccessAt: now - 10_000,
+        lastFailureAt: now - 1_000,
+        updatedAt: now - 1_000,
+      },
+      [buildRoutePathStateKey(disabledPath)]: {
+        ...disabledPath,
+        windowStartedAt: now,
+        windowRequestCount: 1,
+        windowSuccessCount: 1,
+        successRate: 1,
+        disabledUntil: now + 60_000,
+        lastOutcome: 'success',
+        lastSuccessAt: now - 10_000,
+        updatedAt: now - 10_000,
+      },
+    };
+
+    const channels = [firstPath, stalePath, failedPath, disabledPath];
+    expect(applySuccessfulRoutePathAffinity(channels, routePathStates, now)).toEqual(channels);
+  });
+
+  it('applies successful route path affinity after max attempts per route path bounding', () => {
+    const now = 1_700_000_000_000;
+    const firstPath = {
+      routeRuleId: 'rule-1',
+      siteId: 'site-1',
+      accountId: 'acc-1',
+      apiKeyId: 'key-a',
+      targetProtocol: 'native' as const,
+      canonicalModel: 'claude-route',
+      resolvedModel: 'raw-a',
+    };
+    const preferredPath = {
+      ...firstPath,
+      siteId: 'site-2',
+      accountId: 'acc-2',
+      apiKeyId: 'key-b',
+    };
+    const thirdPath = {
+      ...firstPath,
+      siteId: 'site-3',
+      accountId: 'acc-3',
+      apiKeyId: 'key-c',
+    };
+    const routePathStates: Record<string, RoutePathState> = {
+      [buildRoutePathStateKey(preferredPath)]: {
+        ...preferredPath,
+        windowStartedAt: now,
+        windowRequestCount: 1,
+        windowSuccessCount: 1,
+        successRate: 1,
+        lastOutcome: 'success',
+        lastSuccessAt: now - 10_000,
+        updatedAt: now - 10_000,
+      },
+    };
+
+    const oncePlan = applySuccessfulRoutePathAffinity(
+      buildChannelAttemptPlan([firstPath, preferredPath, preferredPath, thirdPath], 1),
+      routePathStates,
+      now
+    );
+    expect(oncePlan.map(channel => channel.siteId)).toEqual(['site-2', 'site-3', 'site-1']);
+
+    const twicePlan = applySuccessfulRoutePathAffinity(
+      buildChannelAttemptPlan([firstPath, preferredPath, preferredPath, thirdPath], 2),
+      routePathStates,
+      now
+    );
+    expect(twicePlan.map(channel => channel.siteId)).toEqual([
+      'site-2',
+      'site-2',
+      'site-3',
+      'site-1',
+    ]);
   });
 
   it('resolves per-model route runtime config from display items', () => {
@@ -1053,6 +1250,320 @@ describe('route-proxy-service CLI model fallback', () => {
   });
 });
 
+describe('route-proxy-service successful path affinity', () => {
+  it('starts with the recent successful path then wraps around after later candidates fail', async () => {
+    vi.clearAllMocks();
+
+    const now = Date.now();
+    const rule = {
+      id: 'rule-codex-affinity',
+      cliType: 'codex' as const,
+      pattern: 'gpt-4.1-mini',
+      patternType: 'exact' as const,
+    };
+    const channelA = {
+      routeRuleId: rule.id,
+      siteId: 'site-a',
+      accountId: 'account-a',
+      apiKeyId: 'key-a',
+      cliType: 'codex' as const,
+      targetProtocol: 'native' as const,
+      canonicalModel: 'gpt-4.1-mini',
+      resolvedModel: 'gpt-4.1-mini',
+    };
+    const channelB = {
+      ...channelA,
+      siteId: 'site-b',
+      accountId: 'account-b',
+      apiKeyId: 'key-b',
+    };
+    const channelC = {
+      ...channelA,
+      siteId: 'site-c',
+      accountId: 'account-c',
+      apiKeyId: 'key-c',
+    };
+    const channelD = {
+      ...channelA,
+      siteId: 'site-d',
+      accountId: 'account-d',
+      apiKeyId: 'key-d',
+    };
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+      },
+      rules: [rule],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: null,
+        geminiCli: null,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'gpt-4.1-mini': {
+            canonicalName: 'gpt-4.1-mini',
+            aliases: ['gpt-4.1-mini'],
+            sources: [],
+            vendor: 'gpt' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+      routePathStates: {
+        [buildRoutePathStateKey(channelC)]: {
+          ...channelC,
+          windowStartedAt: now,
+          windowRequestCount: 1,
+          windowSuccessCount: 1,
+          successRate: 1,
+          lastOutcome: 'success' as const,
+          lastSuccessAt: now - 10_000,
+          updatedAt: now - 10_000,
+        },
+      },
+    };
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn((siteId: string) => ({ id: siteId, name: siteId })),
+      getAccountById: vi.fn((accountId: string) => ({ id: accountId, account_name: accountId })),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(extractModelFromBody).mockReturnValue('gpt-4.1-mini');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue([channelA, channelB, channelC, channelD]);
+    vi.mocked(resolveChannelCredentials).mockImplementation(
+      async (_siteId, _accountId, apiKeyId) => ({
+        baseUrl: `https://${apiKeyId}.example.com`,
+        apiKey: `sk-${apiKeyId}`,
+      })
+    );
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockImplementation(async (channel, outcome) => ({
+      ...channel,
+      windowStartedAt: now,
+      windowRequestCount: 1,
+      windowSuccessCount: outcome === 'success' ? 1 : 0,
+      successRate: outcome === 'success' ? 1 : 0,
+      lastOutcome: outcome,
+      updatedAt: now,
+    }));
+    vi.mocked(httpRawRequest)
+      .mockResolvedValueOnce({
+        status: 503,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from('{"error":"preferred failed"}'),
+      })
+      .mockResolvedValueOnce({
+        status: 503,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from('{"error":"later failed"}'),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from('{"ok":true}'),
+      });
+
+    const request = createJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+      },
+      { model: 'gpt-4.1-mini', input: 'hi' }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(vi.mocked(resolveChannelCredentials).mock.calls.map(call => call[2])).toEqual([
+      'key-c',
+      'key-d',
+      'key-a',
+    ]);
+    expect(vi.mocked(httpRawRequest).mock.calls.map(call => call[0])).toEqual([
+      'https://key-c.example.com/v1/responses',
+      'https://key-d.example.com/v1/responses',
+      'https://key-a.example.com/v1/responses',
+    ]);
+    expect(httpRawRequest).toHaveBeenCalledTimes(3);
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({ ok: true });
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: 'key-c' }),
+      'failure',
+      expect.objectContaining({ statusCode: 503 }),
+      expect.any(Object)
+    );
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: 'key-a' }),
+      'success',
+      expect.objectContaining({ statusCode: 200 }),
+      expect.any(Object)
+    );
+  });
+
+  it('does not promote a recent first-hit path after its api key is disabled', async () => {
+    vi.clearAllMocks();
+
+    const now = Date.now();
+    const rule = {
+      id: 'rule-codex-affinity',
+      cliType: 'codex' as const,
+      pattern: 'gpt-4.1-mini',
+      patternType: 'exact' as const,
+    };
+    const channelA = {
+      routeRuleId: rule.id,
+      siteId: 'site-a',
+      accountId: 'account-a',
+      apiKeyId: 'key-a',
+      cliType: 'codex' as const,
+      targetProtocol: 'native' as const,
+      canonicalModel: 'gpt-4.1-mini',
+      resolvedModel: 'gpt-4.1-mini',
+    };
+    const disabledFirstHitChannel = {
+      ...channelA,
+      siteId: 'site-c',
+      accountId: 'account-c',
+      apiKeyId: 'key-c',
+    };
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+      },
+      rules: [rule],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: null,
+        geminiCli: null,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'gpt-4.1-mini': {
+            canonicalName: 'gpt-4.1-mini',
+            aliases: ['gpt-4.1-mini'],
+            sources: [],
+            vendor: 'gpt' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [
+          {
+            id: 'manual:gpt-4.1-mini',
+            vendor: 'gpt' as const,
+            canonicalName: 'gpt-4.1-mini',
+            sourceKeys: [],
+            originalModelOrder: ['gpt-4.1-mini'],
+            priorityConfig: {
+              sitePriorities: {
+                'site-a': 0,
+                'site-c': 1,
+              },
+              apiKeyPriorities: {
+                [buildRouteApiKeyPriorityKey('site-a', 'account-a', 'key-a')]: 0,
+                [buildRouteApiKeyPriorityKey('site-c', 'account-c', 'key-c')]: 0,
+              },
+              disabledApiKeyPriorityKeys: [
+                buildRouteApiKeyPriorityKey('site-c', 'account-c', 'key-c'),
+              ],
+            },
+            mode: 'manual' as const,
+            createdAt: 1,
+            updatedAt: 2,
+          },
+        ],
+        vendorPriorities: {},
+      },
+      routePathStates: {
+        [buildRoutePathStateKey(disabledFirstHitChannel)]: {
+          ...disabledFirstHitChannel,
+          windowStartedAt: now,
+          windowRequestCount: 1,
+          windowSuccessCount: 1,
+          successRate: 1,
+          lastOutcome: 'success' as const,
+          lastSuccessAt: now - 10_000,
+          updatedAt: now - 10_000,
+        },
+      },
+    };
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn((siteId: string) => ({ id: siteId, name: siteId })),
+      getAccountById: vi.fn((accountId: string) => ({ id: accountId, account_name: accountId })),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(extractModelFromBody).mockReturnValue('gpt-4.1-mini');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue([channelA, disabledFirstHitChannel]);
+    vi.mocked(resolveChannelCredentials).mockImplementation(
+      async (_siteId, _accountId, apiKeyId) => ({
+        baseUrl: `https://${apiKeyId}.example.com`,
+        apiKey: `sk-${apiKeyId}`,
+      })
+    );
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockImplementation(async (channel, outcome) => ({
+      ...channel,
+      windowStartedAt: now,
+      windowRequestCount: 1,
+      windowSuccessCount: outcome === 'success' ? 1 : 0,
+      successRate: outcome === 'success' ? 1 : 0,
+      lastOutcome: outcome,
+      updatedAt: now,
+    }));
+    vi.mocked(httpRawRequest).mockResolvedValueOnce({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{"ok":true}'),
+    });
+
+    const request = createJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+      },
+      { model: 'gpt-4.1-mini', input: 'hi' }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(vi.mocked(resolveChannelCredentials).mock.calls.map(call => call[2])).toEqual(['key-a']);
+    expect(vi.mocked(httpRawRequest).mock.calls.map(call => call[0])).toEqual([
+      'https://key-a.example.com/v1/responses',
+    ]);
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({ ok: true });
+  });
+});
+
 describe('route-proxy-service disabled path short-circuit', () => {
   it('stops forwarding when a failed attempt disables the remaining planned route paths', async () => {
     vi.clearAllMocks();
@@ -1181,7 +1692,13 @@ describe('route-proxy-service disabled path short-circuit', () => {
     });
   });
 
-  const disabledResponseCases = [
+  const disabledResponseCases: Array<{
+    cliType: 'claudeCode' | 'codex' | 'geminiCli';
+    url: string;
+    headers: Record<string, string>;
+    body: unknown;
+    expectedBody: object;
+  }> = [
     {
       cliType: 'claudeCode' as const,
       url: '/v1/messages',
@@ -1434,6 +1951,7 @@ describe('route-proxy-service probe lock', () => {
       rawModel: 'gpt-4.1-mini',
       targetProtocol: 'openai-responses',
     });
+    clearRouteProbeLockTerminalFailure(routeApiKey);
     const request = createJsonRequest(
       '/v1/responses',
       {
@@ -1444,13 +1962,346 @@ describe('route-proxy-service probe lock', () => {
     );
     const response = createMockResponse();
 
-    await handleRequest(request, response);
+    try {
+      await handleRequest(request, response);
+    } finally {
+      clearRouteProbeLockTerminalFailure(routeApiKey);
+    }
 
     expect(response.statusCode).toBe(200);
     expect(resolveChannelCredentials).toHaveBeenCalledWith('site-1', 'acc-1', 'key-1');
     expect(recordRouteRequest).not.toHaveBeenCalled();
     expect(recordRoutePathOutcome).not.toHaveBeenCalled();
     expect(httpRawRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows only one upstream forwarding attempt per probe-lock model test', async () => {
+    vi.clearAllMocks();
+
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+      },
+      rules: [],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: null,
+        geminiCli: null,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'gpt-4.1-mini': {
+            canonicalName: 'gpt-4.1-mini',
+            aliases: ['gpt-4.1-mini'],
+            sources: [],
+            vendor: 'gpt' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+    };
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn(() => undefined),
+      getAccountById: vi.fn(() => undefined),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(extractModelFromBody).mockReturnValue('gpt-4.1-mini');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://upstream.example.com',
+      apiKey: 'sk-upstream',
+    });
+
+    let resolveUpstream!: (value: Awaited<ReturnType<typeof httpRawRequest>>) => void;
+    vi.mocked(httpRawRequest).mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveUpstream = resolve;
+        })
+    );
+
+    const routeApiKey = buildProbeLockRouteApiKey('sk-route', {
+      siteId: 'site-1',
+      accountId: 'acc-1',
+      apiKeyId: 'key-1',
+      cliType: 'codex',
+      canonicalModel: 'gpt-4.1-mini',
+      rawModel: 'gpt-4.1-mini',
+      targetProtocol: 'openai-responses',
+    });
+    clearRouteProbeLockTerminalFailure(routeApiKey);
+    const firstRequest = createJsonRequest(
+      '/v1/responses',
+      {
+        authorization: `Bearer ${routeApiKey}`,
+        'content-type': 'application/json',
+      },
+      { model: 'gpt-4.1-mini', input: [] }
+    );
+    const secondRequest = createJsonRequest(
+      '/v1/responses',
+      {
+        authorization: `Bearer ${routeApiKey}`,
+        'content-type': 'application/json',
+      },
+      { model: 'gpt-4.1-mini', input: [] }
+    );
+    const firstResponse = createMockResponse();
+    const secondResponse = createMockResponse();
+
+    try {
+      const firstHandle = handleRequest(firstRequest, firstResponse);
+      await vi.waitFor(() => expect(httpRawRequest).toHaveBeenCalledTimes(1));
+
+      await handleRequest(secondRequest, secondResponse);
+
+      expect(httpRawRequest).toHaveBeenCalledTimes(1);
+      expect(secondResponse.statusCode).toBe(400);
+      expect(secondResponse.body).toContain('probe_lock_upstream_attempt_exhausted');
+
+      resolveUpstream({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from(
+          '{"id":"resp_1","output":[{"content":[{"type":"output_text","text":"2"}]}]}'
+        ),
+      });
+      await firstHandle;
+      expect(getRouteProbeLockFirstUpstreamResult(routeApiKey)).toMatchObject({
+        routeApiKey,
+        cliType: 'codex',
+        statusCode: 200,
+        success: true,
+        responseSummary: expect.stringContaining('"text":"2"'),
+      });
+    } finally {
+      clearRouteProbeLockTerminalFailure(routeApiKey);
+    }
+
+    expect(firstResponse.statusCode).toBe(200);
+  });
+
+  it('does not spend the probe-lock upstream attempt on Claude count_tokens requests', async () => {
+    vi.clearAllMocks();
+
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+      },
+      rules: [],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: null,
+        geminiCli: null,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'claude-sonnet-4-6': {
+            canonicalName: 'claude-sonnet-4-6',
+            aliases: ['claude-sonnet-4-6'],
+            sources: [],
+            vendor: 'claude' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+    };
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn(() => undefined),
+      getAccountById: vi.fn(() => undefined),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('claudeCode');
+    vi.mocked(extractModelFromBody).mockReturnValue('claude-sonnet-4-6');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://upstream.example.com',
+      apiKey: 'sk-upstream',
+    });
+    vi.mocked(httpRawStreamRequest).mockResolvedValue({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: Buffer.from('event: message_delta\ndata: {"delta":{"text":"2"}}\n\n'),
+    });
+
+    const routeApiKey = buildProbeLockRouteApiKey('sk-route', {
+      siteId: 'site-1',
+      accountId: 'acc-1',
+      apiKeyId: 'key-1',
+      cliType: 'claudeCode',
+      canonicalModel: 'claude-sonnet-4-6',
+      rawModel: 'claude-sonnet-4-6',
+    });
+    clearRouteProbeLockTerminalFailure(routeApiKey);
+    const countTokensRequest = createJsonRequest(
+      '/v1/messages/count_tokens',
+      {
+        'x-api-key': routeApiKey,
+        'content-type': 'application/json',
+      },
+      { model: 'claude-sonnet-4-6', messages: [{ role: 'user', content: 'hello' }] }
+    );
+    const mainRequest = createJsonRequest(
+      '/v1/messages?beta=true',
+      {
+        'x-api-key': routeApiKey,
+        'content-type': 'application/json',
+      },
+      { model: 'claude-sonnet-4-6', stream: true, messages: [] }
+    );
+    const countTokensResponse = createMockResponse();
+    const mainResponse = createMockResponse();
+
+    try {
+      await handleRequest(countTokensRequest, countTokensResponse);
+      await handleRequest(mainRequest, mainResponse);
+    } finally {
+      clearRouteProbeLockTerminalFailure(routeApiKey);
+    }
+
+    expect(countTokensResponse.statusCode).toBe(200);
+    expect(JSON.parse(countTokensResponse.body)).toEqual({
+      input_tokens: expect.any(Number),
+    });
+    expect(httpRawRequest).not.toHaveBeenCalled();
+    expect(httpRawStreamRequest).toHaveBeenCalledTimes(1);
+    expect(mainResponse.statusCode).toBe(200);
+  });
+
+  it('notifies probe-lock listeners and blocks retries after an upstream failure response', async () => {
+    vi.clearAllMocks();
+
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+      },
+      rules: [],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: null,
+        geminiCli: null,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'claude-sonnet-4-6': {
+            canonicalName: 'claude-sonnet-4-6',
+            aliases: ['claude-sonnet-4-6'],
+            sources: [],
+            vendor: 'claude' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+    };
+    const terminalError = JSON.stringify({
+      error: {
+        type: 'bad_response_status_code',
+        message: 'bad response status code 503 (request id: req-503)',
+      },
+      type: 'error',
+    });
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn(() => undefined),
+      getAccountById: vi.fn(() => undefined),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('claudeCode');
+    vi.mocked(extractModelFromBody).mockReturnValue('claude-sonnet-4-6');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://upstream.example.com',
+      apiKey: 'sk-upstream',
+    });
+    vi.mocked(httpRawStreamRequest).mockResolvedValue({
+      status: 503,
+      headers: { 'content-type': 'text/event-stream' },
+      body: Buffer.from(terminalError),
+      firstByteLatencyMs: 3,
+    });
+
+    const routeApiKey = buildProbeLockRouteApiKey('sk-route', {
+      siteId: 'site-1',
+      accountId: 'acc-1',
+      apiKeyId: 'key-1',
+      cliType: 'claudeCode',
+      canonicalModel: 'claude-sonnet-4-6',
+      rawModel: 'claude-sonnet-4-6',
+    });
+    clearRouteProbeLockTerminalFailure(routeApiKey);
+    const failures: unknown[] = [];
+    const unsubscribe = subscribeRouteProbeLockTerminalFailure(routeApiKey, failure => {
+      failures.push(failure);
+    });
+    const request = createJsonRequest(
+      '/v1/messages?beta=true',
+      {
+        'x-api-key': routeApiKey,
+        'content-type': 'application/json',
+      },
+      { model: 'claude-sonnet-4-6', stream: true, messages: [] }
+    );
+    const response = createMockResponse();
+    const retryRequest = createJsonRequest(
+      '/v1/messages?beta=true',
+      {
+        'x-api-key': routeApiKey,
+        'content-type': 'application/json',
+      },
+      { model: 'claude-sonnet-4-6', stream: true, messages: [] }
+    );
+    const retryResponse = createMockResponse();
+
+    try {
+      await handleRequest(request, response);
+      await handleRequest(retryRequest, retryResponse);
+    } finally {
+      unsubscribe();
+      clearRouteProbeLockTerminalFailure(routeApiKey);
+    }
+
+    expect(failures).toEqual([
+      expect.objectContaining({
+        routeApiKey,
+        cliType: 'claudeCode',
+        statusCode: 503,
+        terminalError,
+      }),
+    ]);
+    expect(response.statusCode).toBe(503);
+    expect(retryResponse.statusCode).toBe(503);
+    expect(retryResponse.body).toBe(terminalError);
+    expect(httpRawStreamRequest).toHaveBeenCalledTimes(1);
   });
 
   it('rejects non-loopback probe-lock requests', async () => {

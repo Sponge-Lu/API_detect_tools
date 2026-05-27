@@ -521,6 +521,8 @@ describe('DataOverviewPage', () => {
     expect(screen.getAllByText(`最近记录 ${todayLabel}`).length).toBeGreaterThan(0);
     const usageTrendCard = screen.getByLabelText('近 7 日消费趋势 趋势卡片');
     expect(usageTrendCard).toHaveClass('min-h-[208px]');
+    expect(usageTrendCard).toHaveClass('border-[var(--line-muted)]');
+    expect(usageTrendCard.className).not.toContain('border-white');
     expect(
       Array.from(usageTrendCard.querySelectorAll('rect')).some(rect =>
         rect.getAttribute('class')?.includes('text-[var(--accent)]')
@@ -702,11 +704,22 @@ describe('DataOverviewPage', () => {
         ?.getAttribute('data-trend-legend-line')
     ).toBe('dashed');
     const requestSeries = document.querySelector('[data-trend-series="requests"]');
-    const requestBarCenterLefts = Array.from(
+    const requestBars = Array.from(
       requestSeries?.querySelectorAll('[data-trend-bar-center-left]') || []
-    ).map(bar => Number.parseFloat(bar.getAttribute('data-trend-bar-center-left') || ''));
-    expect(requestBarCenterLefts).toEqual(trendAxisLefts.map(value => Number(value.toFixed(2))));
-    expect(failureMarkers[0].style.left).toBe(trendAxisLabels[0].style.left);
+    );
+    const requestBarCenterLefts = requestBars.map(bar =>
+      Number.parseFloat(bar.getAttribute('data-trend-bar-center-left') || '')
+    );
+    const requestBarIndexes = requestBars.map(bar =>
+      Number(bar.getAttribute('data-trend-bar-point-index'))
+    );
+    expect(requestBarIndexes.length).toBeGreaterThan(0);
+    expect(requestBarIndexes[0]).toBeGreaterThan(0);
+    expect(requestBarCenterLefts).toEqual(
+      requestBarIndexes.map(index => Number(trendAxisLefts[index].toFixed(2)))
+    );
+    const successPath = successRateSeries?.querySelector('path[stroke="currentColor"]');
+    expect(successPath?.getAttribute('d')).toBe('');
     for (const marker of failureMarkers) {
       const pointIndex = Number(marker.getAttribute('data-trend-point-index'));
       expect(Number.parseFloat(marker.style.left)).toBe(trendAxisLefts[pointIndex]);
@@ -760,6 +773,70 @@ describe('DataOverviewPage', () => {
     });
     expect(within(headerActions).getByRole('button', { name: '7d' })).toBeInTheDocument();
     expect(within(headerActions).queryByRole('button', { name: '30d' })).not.toBeInTheDocument();
+  });
+
+  it('fills route trend x-axis labels for partial 24h and 7d windows', async () => {
+    mockUIState.overviewSubtab = 'route';
+
+    function HeaderActionHost() {
+      const [actions, setActions] = useState<ReactNode | null>(null);
+
+      return (
+        <>
+          <DataOverviewPage setPageHeaderActions={setActions} />
+          <div data-testid="header-actions">{actions}</div>
+        </>
+      );
+    }
+
+    render(<HeaderActionHost />);
+
+    const trendCard = await screen.findByLabelText('运行趋势图');
+    await waitFor(() => {
+      expect(window.electronAPI.route?.getAnalyticsDistribution).toHaveBeenCalled();
+    });
+
+    expect(trendCard).toHaveAttribute('data-trend-point-count', '7');
+    expect(document.querySelectorAll('[data-trend-axis-label="true"]')).toHaveLength(7);
+    const sevenDayRequestBars = Array.from(
+      document.querySelectorAll('[data-trend-series="requests"] [data-trend-bar-point-index]')
+    );
+    expect(
+      sevenDayRequestBars.map(bar => Number(bar.getAttribute('data-trend-bar-point-index')))
+    ).toEqual([6]);
+
+    fireEvent.click(
+      within(screen.getByTestId('header-actions')).getByRole('button', { name: '24h' })
+    );
+
+    await waitFor(() => {
+      expect(trendCard).toHaveAttribute('data-trend-point-count', '24');
+    });
+    expect(document.querySelectorAll('[data-trend-axis-label="true"]')).toHaveLength(24);
+    const twentyFourHourRequestBars = Array.from(
+      document.querySelectorAll('[data-trend-series="requests"] [data-trend-bar-point-index]')
+    );
+    const twentyFourHourRequestBarIndexes = twentyFourHourRequestBars.map(bar =>
+      Number(bar.getAttribute('data-trend-bar-point-index'))
+    );
+    expect(twentyFourHourRequestBarIndexes.length).toBeGreaterThan(0);
+    const firstTwentyFourHourBarIndex = Math.min(...twentyFourHourRequestBarIndexes);
+    expect(firstTwentyFourHourBarIndex).toBeGreaterThan(0);
+    const axisLefts = Array.from(document.querySelectorAll('[data-trend-axis-label="true"]')).map(
+      label => Number.parseFloat((label as HTMLElement).style.left)
+    );
+    const expectedLineStartX = Number(
+      ((axisLefts[firstTwentyFourHourBarIndex] / 100) * 160).toFixed(2)
+    );
+    const successPath = document.querySelector(
+      '[data-trend-series="success-rate"] path[stroke="currentColor"]'
+    );
+    expect(successPath?.getAttribute('d')?.startsWith(`M ${expectedLineStartX.toFixed(2)} `)).toBe(
+      true
+    );
+    expect(window.electronAPI.route?.getAnalyticsDistribution).toHaveBeenLastCalledWith({
+      window: '24h',
+    });
   });
 
   it('links heatmap model selection to Sankey one way and clears it from card chrome', async () => {

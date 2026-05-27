@@ -23,9 +23,10 @@
 
 | 文件 | 职责 | 关键类型 |
 |------|------|--------|
-| **site.ts** | 站点、检测缓存、AnyRouter 站点名归一化识别与运行期快照类型 | Site, UnifiedSite, CheckinStats, CliCompatibilityData, SiteDailySnapshot, RuntimeCacheFile |
+| **site.ts** | 站点、检测缓存、API Key 活跃状态归一化、AnyRouter 站点名归一化识别与运行期快照类型 | Site, UnifiedSite, CheckinStats, CliCompatibilityData, SiteDailySnapshot, RuntimeCacheFile, ApiKeyAvailability |
 | **route-proxy.ts** | 路由工作台类型 | RoutingConfig, RouteProxyServerConfig, RouteModelRegistryConfig, RouteCliProbeSample, RouteCliProbeLatest, RouteAnalyticsObjectStatsItem |
 | **cli-config.ts** | CLI 配置类型 | CliConfig, CliCompatibility 等 |
+| **custom-cli-config.ts** | 自定义 CLI 配置类型 | CustomCliConfig, CustomCliSettings, CustomCliTestState, manualModels |
 | **config-detection.ts** | CLI 配置检测类型 | ConfigSourceType, CliDetectionResult, AllCliDetectionResult 等 |
 | **credit.ts** | Linux Do Credit 积分类型 | CreditInfo, CreditConfig, CreditState, CreditResponse 等 |
 
@@ -146,6 +147,7 @@ interface LdcPaymentInfo {
 
 **当前约束**:
 - `has_checkin` 表示站点或账户是否具备签到能力，`can_check_in` 表示当前运行态是否还能执行签到
+- `getApiKeyAvailability()` / `isApiKeyActive()` 是 API Key 可用性判断的共享入口；调用方不要只用 `status === 1` 判断，因为不同站点可能返回 `status_str`、`state` 或 `enabled`
 - `CliCompatibilityData` 为 Claude / Codex / Gemini 分别保留 detail 和 error 摘要，供站点卡片和日志页展示
 - `SiteDailySnapshot` 用于 `数据总览` 页的站点日级历史趋势，存入 `RuntimeCacheFile.site_daily_snapshots_by_site_id`
 
@@ -759,5 +761,5 @@ export interface NewType {
 
 ---
 
-**版本**: 2.1.10  
-**更新日期**: 2026-01-07
+**版本**: 3.0.3
+**更新日期**: 2026-05-25

@@ -28,7 +28,7 @@ import {
   Link,
   Key,
 } from 'lucide-react';
-import type { SiteConfig } from '../../../shared/types/site';
+import { isApiKeyActive, type SiteConfig } from '../../../shared/types/site';
 import type { DetectionResult } from '../../App';
 import { getGroupTextColor, getGroupIcon } from '../../utils/groupStyle';
 import { AppSearchInput } from '../AppInput';
@@ -68,13 +68,13 @@ const getQuotaTypeInfo = (quotaType: number) => {
     return {
       icon: <span className="text-xs font-bold text-[var(--warning)]">次</span>,
       text: '按次',
-      color: 'bg-[var(--warning-soft)] text-[var(--warning)] border-[var(--warning)]/30',
+      color: 'border-[var(--line-muted)] bg-[var(--warning-soft)] text-[var(--warning)]',
     };
   }
   return {
     icon: <span className="text-xs font-bold text-[var(--accent)]">量</span>,
     text: '按量',
-    color: 'bg-[var(--accent-soft)] text-[var(--accent)] border-[var(--accent)]/30',
+    color: 'border-[var(--line-muted)] bg-[var(--accent-soft)] text-[var(--accent)]',
   };
 };
 
@@ -327,6 +327,7 @@ export function SiteCardDetails({
               const isVisible = showTokens[tokenKey] || false;
               const fullKey = addSkPrefix(token.key);
               const deletingKeyId = `${cardKey}_${token.id ?? token.key ?? idx}`;
+              const tokenActive = isApiKeyActive(token);
 
               return (
                 <div
@@ -341,9 +342,9 @@ export function SiteCardDetails({
 
                     {/* 状态 */}
                     <div
-                      className={`font-medium ${token.status === 1 ? 'text-[var(--success)]' : 'text-[var(--text-secondary)]'}`}
+                      className={`font-medium ${tokenActive ? 'text-[var(--success)]' : 'text-[var(--text-secondary)]'}`}
                     >
-                      {token.status === 1 ? '✓ 启用' : '✕ 禁用'}
+                      {tokenActive ? '✓ 启用' : '✕ 禁用'}
                     </div>
 
                     {/* 分组 */}

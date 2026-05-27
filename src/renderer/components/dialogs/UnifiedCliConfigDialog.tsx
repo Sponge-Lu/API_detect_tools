@@ -168,6 +168,21 @@ function getCliFailureMessage(
   return response.data?.geminiError ?? response.error;
 }
 
+function summarizeCliModelFailureRows(rows: CliModelTestResult[]): string | undefined {
+  const failedRows = rows.filter(row => !row.success);
+  if (failedRows.length === 0) {
+    return undefined;
+  }
+
+  return failedRows
+    .slice(0, 3)
+    .map(row => {
+      const message = row.message?.replace(/\s+/g, ' ').trim();
+      return message ? `${row.model}: ${message}` : `${row.model}: 测试失败`;
+    })
+    .join('\n');
+}
+
 interface CliCompatTestResponse {
   success?: boolean;
   error?: string;
@@ -1617,8 +1632,11 @@ export function UnifiedCliConfigDialog({
     if (failedCount === 0) {
       toast.success(`${CLI_TYPES.find(cli => cli.key === selectedCli)?.name ?? 'CLI'} 测试通过`);
     } else {
+      const failureRows = nextCliTestState.slots.filter(Boolean) as CliModelTestResult[];
+      const failureDetails = summarizeCliModelFailureRows(failureRows);
       toast.warning(
-        `${CLI_TYPES.find(cli => cli.key === selectedCli)?.name ?? 'CLI'} 有 ${failedCount} 个测试模型未通过`
+        `${CLI_TYPES.find(cli => cli.key === selectedCli)?.name ?? 'CLI'} 有 ${failedCount} 个测试模型未通过${failureDetails ? `\n${failureDetails}` : ''}`,
+        10000
       );
     }
   };
@@ -1849,15 +1867,27 @@ export function UnifiedCliConfigDialog({
                             ariaLabel={`测试模型 ${index + 1}`}
                           />
                           {selectedCliTestState?.slots[index] ? (
-                            <span
-                              className={`shrink-0 text-xs font-medium ${
-                                selectedCliTestState.slots[index]?.success
-                                  ? 'text-[var(--success)]'
-                                  : 'text-[var(--danger)]'
-                              }`}
-                            >
-                              {selectedCliTestState.slots[index]?.success ? '成功' : '失败'}
-                            </span>
+                            <div className="min-w-[4rem] max-w-[16rem] shrink-0 text-right">
+                              <span
+                                title={selectedCliTestState.slots[index]?.message}
+                                className={`text-xs font-medium ${
+                                  selectedCliTestState.slots[index]?.success
+                                    ? 'text-[var(--success)]'
+                                    : 'text-[var(--danger)]'
+                                }`}
+                              >
+                                {selectedCliTestState.slots[index]?.success ? '成功' : '失败'}
+                              </span>
+                              {!selectedCliTestState.slots[index]?.success &&
+                              selectedCliTestState.slots[index]?.message ? (
+                                <div
+                                  title={selectedCliTestState.slots[index]?.message}
+                                  className="mt-1 line-clamp-2 text-xs leading-4 text-[var(--danger)]"
+                                >
+                                  {selectedCliTestState.slots[index]?.message}
+                                </div>
+                              ) : null}
+                            </div>
                           ) : null}
                         </div>
                       ))}

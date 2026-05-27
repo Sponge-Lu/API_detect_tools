@@ -279,12 +279,10 @@ async function restoreBundle(
 
 async function restoreLegacyConfig(
   content: string,
-  targetConfigPath: string,
-  roots: AppStorageRoots
+  targetConfigPath: string
 ): Promise<RestoreStorageBackupResult> {
   const parsed = JSON.parse(content);
   assertConfigShape(parsed);
-  await removeEntries(getRuntimeRestoreEntries(), roots);
   await writeTextFileAtomically(targetConfigPath, `${JSON.stringify(parsed, null, 2)}\n`);
   return { kind: 'legacy-config', restoredFiles: [targetConfigPath] };
 }
@@ -300,5 +298,5 @@ export async function restoreAppStorageBackupContent(
     return restoreBundle(parsed, roots);
   }
 
-  return restoreLegacyConfig(content, targetConfigPath, roots);
+  return restoreLegacyConfig(content, targetConfigPath);
 }

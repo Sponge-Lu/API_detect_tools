@@ -15,6 +15,7 @@ import {
   buildRoutePathStateKey,
 } from '../shared/types/route-proxy';
 import type {
+  RouteRequestLogItem,
   RouteModelDisplayItem,
   RouteModelRegistryConfig,
   RouteModelSourceRef,
@@ -28,10 +29,13 @@ const mockDeleteDisplayItem = vi.fn();
 const mockDeleteMappingOverride = vi.fn();
 const mockRebuildModelRegistry = vi.fn();
 const mockSyncModelRegistrySources = vi.fn();
+const mockRefreshRuntimeState = vi.fn();
 const mockResetPathStates = vi.fn();
 const mockWriteConfig = vi.fn();
 const mockClearCache = vi.fn();
 const mockGetAnalyticsSummary = vi.fn();
+const mockGetRequestLogs = vi.fn();
+const mockOnRequestLogAppended = vi.fn();
 const mockLoadConfig = vi.fn();
 const mockCreateApiToken = vi.fn();
 const mockFetchCliProbeData = vi.fn();
@@ -52,6 +56,8 @@ type MockElectronApi = {
   };
   route: {
     getAnalyticsSummary: typeof mockGetAnalyticsSummary;
+    getRequestLogs?: typeof mockGetRequestLogs;
+    onRequestLogAppended?: typeof mockOnRequestLogAppended;
   };
   cliCompat?: {
     writeConfig?: typeof mockWriteConfig;
@@ -69,6 +75,7 @@ type MockRouteStoreShape = {
   cliProbeLoaded: boolean;
   cliProbeError: null;
   serverRunning: boolean;
+  refreshRuntimeState: typeof mockRefreshRuntimeState;
   rebuildModelRegistry: typeof mockRebuildModelRegistry;
   syncModelRegistrySources: typeof mockSyncModelRegistrySources;
   fetchCliProbeData: typeof mockFetchCliProbeData;
@@ -108,6 +115,7 @@ vi.mock('../renderer/store/routeStore', () => ({
       cliProbeLoaded: true,
       cliProbeError: null,
       serverRunning: true,
+      refreshRuntimeState: mockRefreshRuntimeState,
       rebuildModelRegistry: mockRebuildModelRegistry,
       syncModelRegistrySources: mockSyncModelRegistrySources,
       fetchCliProbeData: mockFetchCliProbeData,
@@ -152,6 +160,29 @@ function getPrioritySiteSections(detailPane: HTMLElement): HTMLElement[] {
   return Array.from(
     detailPane.querySelectorAll('[data-testid="priority-detail-site-group"]')
   ) as HTMLElement[];
+}
+
+function createFirstHitRouteLog(overrides: Partial<RouteRequestLogItem> = {}): RouteRequestLogItem {
+  return {
+    id: 'route-log-live-1',
+    requestId: 'req-live',
+    attempt: 1,
+    cliType: 'claudeCode',
+    requestedModel: 'claude-opus-4.6-20260201',
+    canonicalModel: 'claude-opus-4-6',
+    routeRuleId: 'rule-claude',
+    siteId: 'site-1',
+    siteName: 'Claude Site',
+    accountId: 'acc-1',
+    accountName: 'Main',
+    userGroupKey: 'team-beta',
+    apiKeyId: 'backup-key-id',
+    apiKeyName: 'backup-key',
+    resolvedModel: 'claude-opus-4.6-20260201',
+    outcome: 'success',
+    createdAt: 1_800_000_000_000,
+    ...overrides,
+  };
 }
 
 function createSource(overrides: Partial<RouteModelSourceRef>): RouteModelSourceRef {
@@ -792,6 +823,7 @@ beforeEach(() => {
   mockDeleteMappingOverride.mockReset().mockResolvedValue(true);
   mockRebuildModelRegistry.mockReset().mockResolvedValue(createModelRegistryConfig());
   mockSyncModelRegistrySources.mockReset().mockResolvedValue(createModelRegistryConfig());
+  mockRefreshRuntimeState.mockReset().mockResolvedValue(undefined);
   mockResetPathStates.mockReset().mockResolvedValue(1);
   mockFetchCliProbeData.mockReset().mockResolvedValue(undefined);
   mockRunProbeNow.mockReset().mockResolvedValue(null);
@@ -815,11 +847,15 @@ beforeEach(() => {
       completionTokens: 1024,
     },
   });
+  mockGetRequestLogs.mockReset().mockResolvedValue({ success: true, data: [] });
+  mockOnRequestLogAppended.mockReset().mockReturnValue(vi.fn());
 
   const electronApi = (window as Window & typeof globalThis & { electronAPI: MockElectronApi })
     .electronAPI;
   electronApi.route = {
     getAnalyticsSummary: mockGetAnalyticsSummary,
+    getRequestLogs: mockGetRequestLogs,
+    onRequestLogAppended: mockOnRequestLogAppended,
   };
   electronApi.cliCompat = {
     ...(electronApi.cliCompat || {}),
@@ -1128,10 +1164,12 @@ describe('route workbench redesign', () => {
     expect(within(toolbar).getByRole('button', { name: '新增重定向' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '重置默认重定向' })).not.toBeInTheDocument();
 
+    expect(screen.getByTestId('redirect-workspace')).toHaveClass('border-[var(--line-muted)]');
     const redirectRows = screen.getAllByTestId('redirect-list-row');
     expect(redirectRows.length).toBeGreaterThan(0);
     expect(redirectRows[0]).toHaveAttribute('data-selected', 'true');
     expect(redirectRows[0]).toHaveClass('border-b', 'border-l-2', 'px-3', 'py-2');
+    expect(redirectRows[0]).toHaveClass('border-[var(--line-muted)]');
     expect(redirectRows[0]).not.toHaveClass('rounded-[var(--radius-lg)]');
     expect(redirectRows[0]).not.toHaveClass('bg-[var(--surface-2)]/70');
 
@@ -1621,6 +1659,7 @@ describe('route workbench redesign', () => {
     render(<ModelRedirectionTab />);
 
     const detailPane = await findPriorityDetailPane();
+    await waitFor(() => expect(mockRefreshRuntimeState).toHaveBeenCalled());
     const compactList = within(detailPane).getByTestId('priority-detail-compact-list');
     expect(compactList.className).toContain('overflow-hidden');
     expect(compactList.className).not.toContain('rounded');
@@ -1630,31 +1669,36 @@ describe('route workbench redesign', () => {
       within(detailPane).getByRole('radio', { name: '选择 Claude Site 2' })
     ).toBeInTheDocument();
     expect(
-      within(detailPane).getByRole('radio', { name: '选择 Claude Site 0' })
-    ).toBeInTheDocument();
+      within(detailPane).queryByRole('radio', { name: '选择 Claude Site 0' })
+    ).not.toBeInTheDocument();
     const siteSections = getPrioritySiteSections(detailPane);
-    expect(siteSections).toHaveLength(3);
+    expect(siteSections).toHaveLength(2);
     expect(siteSections[0]?.className).not.toContain('rounded');
     expect(siteSections[0]?.className).not.toContain('shadow');
     expect(siteSections[0]?.firstElementChild).toHaveClass(
-      'grid-cols-[minmax(0,calc(43%_+_80px))_minmax(0,calc(57%_-_50px))_118px]'
+      'grid-cols-[minmax(0,calc(43%_+_64px))_minmax(0,calc(57%_-_94px))_76px_44px]'
     );
     expect(within(siteSections[0]!).getByRole('radio', { name: '选择 Claude Site' })).toBeChecked();
     const firstSiteHeader = siteSections[0]!.firstElementChild as HTMLElement;
     const firstSiteCells = Array.from(firstSiteHeader.children) as HTMLElement[];
+    expect(firstSiteCells).toHaveLength(3);
+    expect(firstSiteCells[0]).toHaveClass('col-span-2');
     expect(
       within(firstSiteCells[0]!).queryByRole('button', { name: 'Claude Site 上移' })
     ).not.toBeInTheDocument();
     expect(within(firstSiteCells[0]!).getByTitle('Claude Site')).toHaveClass(
-      'max-w-[8em]',
-      'truncate'
+      'max-w-full',
+      'whitespace-normal',
+      'break-words'
     );
-    expect(firstSiteCells[1]!.textContent).toBe('');
     expect(within(firstSiteCells[1]!).queryByText(/claude-/)).not.toBeInTheDocument();
     expect(within(firstSiteCells[0]!).queryByText(/暂停至/)).not.toBeInTheDocument();
     expect(
-      within(firstSiteCells[2]!).queryByRole('button', { name: 'Claude Site 上移' })
+      within(firstSiteCells[1]!).queryByRole('button', { name: 'Claude Site 上移' })
     ).not.toBeInTheDocument();
+    expect(firstSiteCells[2]).toHaveAttribute('aria-label', 'Claude Site 禁用');
+    expect(firstSiteCells[2]).toHaveClass('h-6', 'min-w-10', 'text-[11px]');
+    expect(firstSiteCells[2]).toHaveTextContent('禁用');
     expect(within(detailPane).getByText('来源')).toBeInTheDocument();
     expect(within(detailPane).getByText('优先级')).toBeInTheDocument();
     expect(within(detailPane).queryByText('站点优先级')).not.toBeInTheDocument();
@@ -1668,16 +1712,17 @@ describe('route workbench redesign', () => {
       within(detailPane)
         .getAllByTestId('priority-detail-site-priority')
         .map(node => node.textContent)
-    ).toEqual(['0', '1', '2']);
-    expect(within(detailPane).getAllByText('站点')).toHaveLength(3);
+    ).toEqual(['0', '1']);
+    expect(within(detailPane).getAllByText('站点')).toHaveLength(2);
     const apiKeyBadges = within(detailPane).getAllByText('API Key');
     expect(apiKeyBadges).toHaveLength(4);
     expect(apiKeyBadges[0]).toHaveClass('px-1', 'py-px', 'text-[9px]', 'font-bold');
-    expect(within(detailPane).getAllByText('缺少 Key')).toHaveLength(2);
+    expect(within(detailPane).getAllByText('折叠')).toHaveLength(1);
+    expect(within(detailPane).getByRole('button', { name: '展开折叠站点' })).toBeInTheDocument();
     const missingKeyToggles = within(detailPane).getAllByTestId(
       'priority-detail-missing-key-toggle'
     );
-    expect(missingKeyToggles).toHaveLength(2);
+    expect(missingKeyToggles).toHaveLength(1);
     expect(within(detailPane).queryAllByTestId('priority-detail-missing-key-row')).toHaveLength(0);
     expect(within(detailPane).queryByRole('button', { name: '创建' })).not.toBeInTheDocument();
     expect(
@@ -1686,6 +1731,8 @@ describe('route workbench redesign', () => {
       )
     ).not.toBeInTheDocument();
     missingKeyToggles.forEach(toggle => fireEvent.click(toggle));
+    fireEvent.click(within(detailPane).getByRole('button', { name: '展开折叠站点' }));
+    fireEvent.click(within(detailPane).getByRole('button', { name: 'Claude Site 0 展开折叠项' }));
     await waitFor(() => {
       expect(within(detailPane).getByTitle('Claude Site')).toBeInTheDocument();
       expect(within(detailPane).getByText('（$15.50）')).toBeInTheDocument();
@@ -1708,17 +1755,28 @@ describe('route workbench redesign', () => {
     const apiKeyRows = within(detailPane).getAllByTestId('priority-detail-api-key-row');
     expect(apiKeyRows).toHaveLength(4);
     expect(apiKeyRows[0]).toHaveClass(
-      'grid-cols-[minmax(0,calc(43%_+_80px))_minmax(0,calc(57%_-_50px))_118px]'
+      'grid-cols-[minmax(0,calc(43%_+_64px))_minmax(0,calc(57%_-_94px))_76px_44px]'
     );
     expect(apiKeyRows[0]?.className).toContain('text-xs');
     expect(apiKeyRows[0]?.className).not.toContain('text-sm');
     expect(within(apiKeyRows[0]!).queryByText('--')).not.toBeInTheDocument();
+    expect(apiKeyRows[0]).not.toHaveAttribute('data-priority-hit', 'true');
+    expect(apiKeyRows[0]).not.toHaveAttribute('aria-current', 'true');
+    expect(apiKeyRows[0]).not.toHaveClass('bg-[var(--success-soft)]');
+    expect(within(apiKeyRows[0]!).queryByText('当前优先命中')).not.toBeInTheDocument();
+    expect(apiKeyRows.every(row => row.getAttribute('data-priority-hit') !== 'true')).toBe(true);
     const firstApiKeyCells = Array.from(apiKeyRows[0]!.children) as HTMLElement[];
     expect(
       within(firstApiKeyCells[0]!).getByRole('button', { name: 'backup-key 下移' })
     ).toBeInTheDocument();
     expect(
       within(firstApiKeyCells[2]!).queryByRole('button', { name: 'backup-key 下移' })
+    ).not.toBeInTheDocument();
+    expect(firstApiKeyCells[3]).toHaveAttribute('aria-label', 'backup-key 禁用');
+    expect(firstApiKeyCells[3]).toHaveClass('h-5', 'min-w-8', 'text-[10px]');
+    expect(firstApiKeyCells[3]).toHaveTextContent('禁用');
+    expect(
+      within(apiKeyRows[0]!).queryByTestId('priority-detail-api-key-priority')
     ).not.toBeInTheDocument();
     const firstApiKeyMoveButton = within(firstApiKeyCells[0]!).getByRole('button', {
       name: 'backup-key 下移',
@@ -1763,11 +1821,106 @@ describe('route workbench redesign', () => {
     expect(createButtons[0]?.className).toContain('!h-6');
     expect(createButtons[0]?.className).toContain('!min-h-6');
     expect(createButtons[0]?.className).toContain('w-14');
-    expect(createButtons[0]?.className).toContain('translate-x-[50px]');
-    expect(createButtons[0]?.className).toContain('justify-self-start');
+    expect(createButtons[0]?.className).toContain('justify-self-end');
     expect((missingKeyToggles[0]?.children[1] as HTMLElement | undefined)?.className).toContain(
-      'translate-x-[50px]'
+      'justify-end'
     );
+  });
+
+  it('highlights the api key from the latest persisted first-hit route log', async () => {
+    mockGetRequestLogs.mockResolvedValueOnce({
+      success: true,
+      data: [
+        createFirstHitRouteLog({
+          id: 'route-log-retry',
+          attempt: 2,
+          apiKeyId: 'main-key-id',
+          apiKeyName: 'main-key',
+          createdAt: 1_800_000_000_500,
+        }),
+        createFirstHitRouteLog(),
+      ],
+    });
+
+    render(<ModelRedirectionTab />);
+
+    const detailPane = await findPriorityDetailPane();
+    const backupKeyRow = await waitFor(() => {
+      const row = within(detailPane)
+        .getByText('backup-key（Main / team-beta / ×1.50）')
+        .closest('[data-testid="priority-detail-api-key-row"]') as HTMLElement | null;
+      expect(row).not.toBeNull();
+      expect(row).toHaveAttribute('data-priority-hit', 'true');
+      return row!;
+    });
+
+    expect(mockGetRequestLogs).toHaveBeenCalledWith({ limit: 200 });
+    expect(backupKeyRow).toHaveAttribute('aria-current', 'true');
+    expect(backupKeyRow).toHaveClass('bg-[var(--success-soft)]');
+    expect(within(backupKeyRow).getByText('当前优先命中')).toBeInTheDocument();
+
+    const mainKeyRow = within(detailPane)
+      .getByText('main-key（Main / team-beta / ×1.50）')
+      .closest('[data-testid="priority-detail-api-key-row"]') as HTMLElement;
+    expect(mainKeyRow).not.toHaveAttribute('data-priority-hit', 'true');
+  });
+
+  it('updates the highlighted api key from appended first-hit route logs in real time', async () => {
+    let routeLogCallback: ((item: RouteRequestLogItem) => void) | null = null;
+    mockOnRequestLogAppended.mockImplementation(callback => {
+      routeLogCallback = callback;
+      return vi.fn();
+    });
+
+    render(<ModelRedirectionTab />);
+
+    const detailPane = await findPriorityDetailPane();
+    await waitFor(() => expect(mockOnRequestLogAppended).toHaveBeenCalled());
+    const apiKeyRows = within(detailPane).getAllByTestId('priority-detail-api-key-row');
+    expect(apiKeyRows.every(row => row.getAttribute('data-priority-hit') !== 'true')).toBe(true);
+
+    act(() => {
+      routeLogCallback?.(
+        createFirstHitRouteLog({
+          id: 'route-log-ignored-retry',
+          attempt: 2,
+          apiKeyId: 'main-key-id',
+          apiKeyName: 'main-key',
+          createdAt: 1_800_000_000_600,
+        })
+      );
+    });
+    expect(apiKeyRows.every(row => row.getAttribute('data-priority-hit') !== 'true')).toBe(true);
+
+    act(() => {
+      routeLogCallback?.(createFirstHitRouteLog());
+    });
+
+    const backupKeyRow = await waitFor(() => {
+      const row = within(detailPane)
+        .getByText('backup-key（Main / team-beta / ×1.50）')
+        .closest('[data-testid="priority-detail-api-key-row"]') as HTMLElement | null;
+      expect(row).not.toBeNull();
+      expect(row).toHaveAttribute('data-priority-hit', 'true');
+      return row!;
+    });
+    expect(within(backupKeyRow).getByText('当前优先命中')).toBeInTheDocument();
+
+    act(() => {
+      routeLogCallback?.(
+        createFirstHitRouteLog({
+          id: 'route-log-other-model',
+          canonicalModel: 'gpt-5.4',
+          siteId: 'site-3',
+          accountId: 'acc-3',
+          apiKeyId: 'gpt-main-key-id',
+          apiKeyName: 'gpt-main-key',
+          createdAt: 1_800_000_000_800,
+        })
+      );
+    });
+
+    expect(backupKeyRow).toHaveAttribute('data-priority-hit', 'true');
   });
 
   it('shortens default account labels in api key rows', async () => {
@@ -1813,12 +1966,13 @@ describe('route workbench redesign', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('places site groups without api keys after sites that have api keys by default', async () => {
+  it('folds site groups without api keys by default', async () => {
     render(<ModelRedirectionTab />);
 
     const detailPane = await findPriorityDetailPane();
     const siteSections = getPrioritySiteSections(detailPane);
 
+    expect(siteSections).toHaveLength(2);
     expect(
       within(siteSections[0]!).getByRole('radio', { name: '选择 Claude Site' })
     ).toBeInTheDocument();
@@ -1826,8 +1980,20 @@ describe('route workbench redesign', () => {
       within(siteSections[1]!).getByRole('radio', { name: '选择 Claude Site 2' })
     ).toBeInTheDocument();
     expect(
-      within(siteSections[2]!).getByRole('radio', { name: '选择 Claude Site 0' })
-    ).toBeInTheDocument();
+      within(detailPane).queryByRole('radio', { name: '选择 Claude Site 0' })
+    ).not.toBeInTheDocument();
+
+    const foldedSitesRow = within(detailPane).getByTestId('priority-detail-folded-sites');
+    expect(foldedSitesRow).toHaveClass('border-[var(--line-muted)]', 'bg-[var(--surface-2)]');
+    expect(foldedSitesRow).not.toHaveClass('border-[var(--warning)]/25');
+
+    fireEvent.click(within(detailPane).getByRole('button', { name: '展开折叠站点' }));
+
+    const expandedSiteSections = getPrioritySiteSections(detailPane);
+    expect(expandedSiteSections).toHaveLength(3);
+    expect(
+      within(expandedSiteSections[2]!).getByRole('radio', { name: '选择 Claude Site 0' })
+    ).toBeDisabled();
   });
 
   it('creates an api key from the missing hint row and refreshes the detail pane', async () => {
@@ -1836,7 +2002,7 @@ describe('route workbench redesign', () => {
     render(<ModelRedirectionTab />);
 
     const detailPane = await findPriorityDetailPane();
-    fireEvent.click(within(detailPane).getByRole('button', { name: 'Claude Site 展开缺少 Key' }));
+    fireEvent.click(within(detailPane).getByRole('button', { name: 'Claude Site 展开折叠项' }));
     const missingHint = within(detailPane).getByText(
       'Main / team-alpha（claude-opus-4.6-20260201、claude-sonnet-4.6-20260201）未创建可用 API key'
     );
@@ -1895,8 +2061,8 @@ describe('route workbench redesign', () => {
       within(siteSections[1]!).getByRole('radio', { name: '选择 Claude Site 2' })
     ).toBeInTheDocument();
     expect(
-      within(siteSections[2]!).getByRole('radio', { name: '选择 Claude Site 0' })
-    ).toBeInTheDocument();
+      within(detailPane).queryByRole('radio', { name: '选择 Claude Site 0' })
+    ).not.toBeInTheDocument();
 
     await act(async () => {
       fireEvent.click(within(siteSections[1]!).getByRole('radio', { name: '选择 Claude Site 2' }));
@@ -1911,8 +2077,8 @@ describe('route workbench redesign', () => {
       within(siteSections[1]!).getByRole('radio', { name: '选择 Claude Site' })
     ).toBeInTheDocument();
     expect(
-      within(siteSections[2]!).getByRole('radio', { name: '选择 Claude Site 0' })
-    ).toBeInTheDocument();
+      within(detailPane).queryByRole('radio', { name: '选择 Claude Site 0' })
+    ).not.toBeInTheDocument();
 
     fireEvent.click(within(siteSections[0]!).getByRole('radio', { name: '选择 Claude Site 2' }));
     fireEvent.click(within(detailPane).getByRole('button', { name: '移到末尾' }));
@@ -1922,11 +2088,11 @@ describe('route workbench redesign', () => {
       within(siteSections[0]!).getByRole('radio', { name: '选择 Claude Site' })
     ).toBeInTheDocument();
     expect(
-      within(siteSections[1]!).getByRole('radio', { name: '选择 Claude Site 0' })
+      within(siteSections[1]!).getByRole('radio', { name: '选择 Claude Site 2' })
     ).toBeInTheDocument();
     expect(
-      within(siteSections[2]!).getByRole('radio', { name: '选择 Claude Site 2' })
-    ).toBeInTheDocument();
+      within(detailPane).queryByRole('radio', { name: '选择 Claude Site 0' })
+    ).not.toBeInTheDocument();
   });
 
   it('saves detail priorities back into the current display item', async () => {
@@ -1954,7 +2120,6 @@ describe('route workbench redesign', () => {
             sitePriorities: {
               'site-2': 0,
               'site-1': 1,
-              'site-0': 2,
             },
             apiKeyPriorities: {
               [buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'backup-key-id')]: 0,
@@ -1965,6 +2130,301 @@ describe('route workbench redesign', () => {
           },
         })
       );
+    });
+  });
+
+  it('folds a disabled api key and preserves it in saved priority memory', async () => {
+    render(<ModelRedirectionTab />);
+
+    const detailPane = await findPriorityDetailPane();
+    fireEvent.click(within(detailPane).getByRole('button', { name: 'main-key 禁用' }));
+
+    await waitFor(() => {
+      expect(
+        within(detailPane).queryByText('main-key（Main / team-beta / ×1.50）')
+      ).not.toBeInTheDocument();
+      expect(within(detailPane).getByRole('button', { name: 'Claude Site 展开折叠项' }));
+    });
+
+    fireEvent.click(within(detailPane).getByRole('button', { name: 'Claude Site 展开折叠项' }));
+
+    const disabledMainKeyRow = await waitFor(() => {
+      const row = within(detailPane)
+        .getByText('main-key（Main / team-beta / ×1.50）')
+        .closest('[data-testid="priority-detail-disabled-api-key-row"]') as HTMLElement | null;
+      expect(row).not.toBeNull();
+      return row!;
+    });
+    expect(within(disabledMainKeyRow).getByText('已禁用')).toBeInTheDocument();
+    expect(within(disabledMainKeyRow).getByRole('button', { name: 'main-key 启用' })).toHaveClass(
+      'h-5',
+      'min-w-8',
+      'text-[10px]'
+    );
+
+    fireEvent.click(within(detailPane).getByRole('button', { name: '保存优先级' }));
+
+    await waitFor(() => {
+      expect(mockUpsertDisplayItem).toHaveBeenCalledWith(
+        expect.objectContaining({
+          priorityConfig: {
+            sitePriorities: {
+              'site-1': 0,
+              'site-2': 1,
+            },
+            apiKeyPriorities: {
+              [buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'backup-key-id')]: 0,
+              [buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'main-key-id')]: 1,
+              [buildRouteApiKeyPriorityKey('site-1', 'acc-9', 'backup-site-key-id')]: 2,
+              [buildRouteApiKeyPriorityKey('site-2', 'acc-2', 'shared-key-id')]: 0,
+            },
+            disabledApiKeyPriorityKeys: [
+              buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'main-key-id'),
+            ],
+          },
+        })
+      );
+    });
+
+    fireEvent.click(within(disabledMainKeyRow).getByRole('button', { name: 'main-key 启用' }));
+
+    await waitFor(() => {
+      const apiKeyRows = within(detailPane).getAllByTestId('priority-detail-api-key-row');
+      expect(apiKeyRows[0]).toHaveTextContent('backup-key（Main / team-beta / ×1.50）');
+      expect(apiKeyRows[1]).toHaveTextContent('main-key（Main / team-beta / ×1.50）');
+      expect(apiKeyRows[2]).toHaveTextContent('backup-site-key（Backup / team-delta / ×2）');
+    });
+  });
+
+  it('folds a disabled site and preserves its saved priority memory', async () => {
+    render(<ModelRedirectionTab />);
+
+    const detailPane = await findPriorityDetailPane();
+    fireEvent.click(within(detailPane).getByRole('button', { name: 'Claude Site 2 禁用' }));
+
+    await waitFor(() => {
+      expect(
+        within(detailPane)
+          .getAllByTestId('priority-detail-site-priority')
+          .map(node => node.textContent)
+      ).toEqual(['0']);
+      expect(
+        within(detailPane).queryByRole('button', { name: 'Claude Site 2 启用' })
+      ).not.toBeInTheDocument();
+      expect(
+        within(detailPane).queryByText('shared-key（Secondary / team-gamma / ×1）')
+      ).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(within(detailPane).getByRole('button', { name: '展开折叠站点' }));
+    expect(within(detailPane).getByRole('button', { name: 'Claude Site 2 启用' }));
+    fireEvent.click(within(detailPane).getByRole('button', { name: 'Claude Site 2 展开折叠项' }));
+
+    const disabledSharedKeyRow = await waitFor(() => {
+      const row = within(detailPane)
+        .getByText('shared-key（Secondary / team-gamma / ×1）')
+        .closest('[data-testid="priority-detail-disabled-api-key-row"]') as HTMLElement | null;
+      expect(row).not.toBeNull();
+      return row!;
+    });
+    expect(within(disabledSharedKeyRow).getByText('随站点禁用')).toBeInTheDocument();
+    expect(
+      within(disabledSharedKeyRow).getByRole('button', { name: 'shared-key 启用' })
+    ).toBeDisabled();
+
+    fireEvent.click(within(detailPane).getByRole('button', { name: '保存优先级' }));
+
+    await waitFor(() => {
+      expect(mockUpsertDisplayItem).toHaveBeenCalledWith(
+        expect.objectContaining({
+          priorityConfig: {
+            sitePriorities: {
+              'site-1': 0,
+              'site-2': 1,
+            },
+            apiKeyPriorities: {
+              [buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'backup-key-id')]: 0,
+              [buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'main-key-id')]: 1,
+              [buildRouteApiKeyPriorityKey('site-1', 'acc-9', 'backup-site-key-id')]: 2,
+              [buildRouteApiKeyPriorityKey('site-2', 'acc-2', 'shared-key-id')]: 0,
+            },
+            disabledSiteIds: ['site-2'],
+          },
+        })
+      );
+    });
+
+    fireEvent.click(within(detailPane).getByRole('button', { name: 'Claude Site 2 启用' }));
+
+    await waitFor(() => {
+      expect(
+        within(detailPane)
+          .getAllByTestId('priority-detail-site-priority')
+          .map(node => node.textContent)
+          .filter(text => text !== '--')
+      ).toEqual(['0', '1']);
+      expect(
+        within(detailPane).getByText('shared-key（Secondary / team-gamma / ×1）')
+      ).toBeInTheDocument();
+      expect(within(detailPane).queryByText('随站点禁用')).not.toBeInTheDocument();
+    });
+  });
+
+  it('keeps a disabled site folded after syncing sources refreshes the selected detail', async () => {
+    const { rerender } = render(<ModelRedirectionTab />);
+
+    const detailPane = await findPriorityDetailPane();
+    fireEvent.click(within(detailPane).getByRole('button', { name: 'Claude Site 2 禁用' }));
+
+    await waitFor(() => {
+      expect(
+        within(detailPane).queryByRole('button', { name: 'Claude Site 2 启用' })
+      ).not.toBeInTheDocument();
+      expect(
+        within(detailPane).queryByText('shared-key（Secondary / team-gamma / ×1）')
+      ).not.toBeInTheDocument();
+    });
+
+    const syncedRegistry = createModelRegistryConfig();
+    mockSyncModelRegistrySources.mockResolvedValueOnce(syncedRegistry);
+    fireEvent.click(screen.getByRole('button', { name: '同步来源' }));
+
+    await waitFor(() => {
+      expect(mockSyncModelRegistrySources).toHaveBeenCalledWith(true);
+    });
+
+    await act(async () => {
+      mockConfig = {
+        ...mockConfig,
+        modelRegistry: syncedRegistry,
+      };
+      rerender(<ModelRedirectionTab />);
+    });
+
+    await waitFor(() => {
+      expect(
+        within(detailPane).queryByRole('button', { name: 'Claude Site 2 启用' })
+      ).not.toBeInTheDocument();
+      expect(
+        within(detailPane).queryByText('shared-key（Secondary / team-gamma / ×1）')
+      ).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(within(detailPane).getByRole('button', { name: '展开折叠站点' }));
+    expect(within(detailPane).getByRole('button', { name: 'Claude Site 2 启用' }));
+  });
+
+  it('keeps a disabled api key folded after restoring route paths refreshes config', async () => {
+    const { rerender } = render(<ModelRedirectionTab />);
+
+    const detailPane = await findPriorityDetailPane();
+    fireEvent.click(within(detailPane).getByRole('button', { name: 'main-key 禁用' }));
+
+    await waitFor(() => {
+      expect(
+        within(detailPane).queryByText('main-key（Main / team-beta / ×1.50）')
+      ).not.toBeInTheDocument();
+      expect(within(detailPane).getByRole('button', { name: 'Claude Site 展开折叠项' }));
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '恢复 claude-opus-4-6 路由路径' }));
+
+    await waitFor(() => {
+      expect(mockResetPathStates).toHaveBeenCalledWith({
+        canonicalModel: 'claude-opus-4-6',
+      });
+    });
+
+    await act(async () => {
+      mockConfig = {
+        ...mockConfig,
+        modelRegistry: createModelRegistryConfig(),
+        routePathStates: {},
+      };
+      rerender(<ModelRedirectionTab />);
+    });
+
+    await waitFor(() => {
+      expect(
+        within(detailPane).queryByText('main-key（Main / team-beta / ×1.50）')
+      ).not.toBeInTheDocument();
+      expect(within(detailPane).getByRole('button', { name: 'Claude Site 展开折叠项' }));
+    });
+
+    fireEvent.click(within(detailPane).getByRole('button', { name: 'Claude Site 展开折叠项' }));
+    expect(within(detailPane).getByText('main-key（Main / team-beta / ×1.50）'));
+  });
+
+  it('folds a site and preserves its priority when all of its api keys are disabled', async () => {
+    render(<ModelRedirectionTab />);
+
+    const detailPane = await findPriorityDetailPane();
+
+    fireEvent.click(within(detailPane).getByRole('button', { name: 'backup-key 禁用' }));
+    fireEvent.click(within(detailPane).getByRole('button', { name: 'main-key 禁用' }));
+    fireEvent.click(within(detailPane).getByRole('button', { name: 'backup-site-key 禁用' }));
+
+    await waitFor(() => {
+      expect(
+        within(detailPane)
+          .getAllByTestId('priority-detail-site-priority')
+          .map(node => node.textContent)
+      ).toEqual(['0']);
+      expect(within(detailPane).getByRole('button', { name: '展开折叠站点' }));
+      expect(
+        within(detailPane).queryByRole('button', { name: 'Claude Site 展开折叠项' })
+      ).not.toBeInTheDocument();
+      expect(
+        within(detailPane).queryByText('backup-key（Main / team-beta / ×1.50）')
+      ).not.toBeInTheDocument();
+      expect(
+        within(detailPane).queryByText('main-key（Main / team-beta / ×1.50）')
+      ).not.toBeInTheDocument();
+      expect(
+        within(detailPane).queryByText('backup-site-key（Backup / team-delta / ×2）')
+      ).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(within(detailPane).getByRole('button', { name: '保存优先级' }));
+
+    await waitFor(() => {
+      expect(mockUpsertDisplayItem).toHaveBeenCalledWith(
+        expect.objectContaining({
+          priorityConfig: {
+            sitePriorities: {
+              'site-1': 0,
+              'site-2': 1,
+            },
+            apiKeyPriorities: {
+              [buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'backup-key-id')]: 0,
+              [buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'main-key-id')]: 1,
+              [buildRouteApiKeyPriorityKey('site-1', 'acc-9', 'backup-site-key-id')]: 2,
+              [buildRouteApiKeyPriorityKey('site-2', 'acc-2', 'shared-key-id')]: 0,
+            },
+            disabledApiKeyPriorityKeys: [
+              buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'backup-key-id'),
+              buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'main-key-id'),
+              buildRouteApiKeyPriorityKey('site-1', 'acc-9', 'backup-site-key-id'),
+            ],
+          },
+        })
+      );
+    });
+
+    fireEvent.click(within(detailPane).getByRole('button', { name: '展开折叠站点' }));
+    fireEvent.click(within(detailPane).getByRole('button', { name: 'Claude Site 展开折叠项' }));
+    fireEvent.click(within(detailPane).getByRole('button', { name: 'backup-key 启用' }));
+
+    await waitFor(() => {
+      expect(
+        within(detailPane)
+          .getAllByTestId('priority-detail-site-priority')
+          .map(node => node.textContent)
+          .filter(text => text !== '--')
+      ).toEqual(['0', '1']);
+      expect(
+        within(detailPane).getByText('backup-key（Main / team-beta / ×1.50）')
+      ).toBeInTheDocument();
     });
   });
 
@@ -2173,7 +2633,6 @@ describe('route workbench redesign', () => {
             sitePriorities: {
               'site-1': 0,
               'site-2': 1,
-              'site-0': 2,
             },
             apiKeyPriorities: {
               [buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'backup-key-id')]: 0,

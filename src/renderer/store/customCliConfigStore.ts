@@ -75,7 +75,11 @@ function getCustomCliConfigBridge(): CustomCliConfigBridge | undefined {
   return (window.electronAPI as ElectronApiWithCustomCliConfig | undefined)?.customCliConfig;
 }
 
-function normalizeFetchedModels(models: string[]): string[] {
+function normalizeModelNames(models: unknown[] | undefined): string[] {
+  if (!Array.isArray(models)) {
+    return [];
+  }
+
   return Array.from(
     new Set(
       models
@@ -83,6 +87,14 @@ function normalizeFetchedModels(models: string[]): string[] {
         .filter(model => model.length > 0)
     )
   );
+}
+
+function normalizeManualModels(
+  manualModels: unknown[] | undefined,
+  fetchedModels: string[]
+): string[] {
+  const fetchedModelSet = new Set(fetchedModels);
+  return normalizeModelNames(manualModels).filter(model => !fetchedModelSet.has(model));
 }
 
 function filterCustomCliTestState(
@@ -149,12 +161,14 @@ function filterCustomCliConfigModels(
   config: CustomCliConfig,
   models: string[],
   fetchedAt: number
-): Pick<CustomCliConfig, 'models' | 'lastModelFetch' | 'cliSettings'> {
-  const normalizedModels = normalizeFetchedModels(models);
-  const availableModels = new Set(normalizedModels);
+): Pick<CustomCliConfig, 'models' | 'manualModels' | 'lastModelFetch' | 'cliSettings'> {
+  const normalizedModels = normalizeModelNames(models);
+  const manualModels = normalizeManualModels(config.manualModels, normalizedModels);
+  const availableModels = new Set([...normalizedModels, ...manualModels]);
 
   return {
     models: normalizedModels,
+    manualModels,
     lastModelFetch: fetchedAt,
     cliSettings: {
       claudeCode: filterCustomCliSettingModels(config.cliSettings.claudeCode, availableModels),
@@ -165,27 +179,32 @@ function filterCustomCliConfigModels(
 }
 
 function normalizeCustomCliConfigModelBoundary(config: CustomCliConfig): CustomCliConfig {
-  const normalizedModels = normalizeFetchedModels(config.models ?? []);
-  const hasFetchedModelList =
-    normalizedModels.length > 0 || typeof config.lastModelFetch === 'number';
+  const normalizedModels = normalizeModelNames(config.models);
+  const manualModels = normalizeManualModels(config.manualModels, normalizedModels);
+  const hasModelBoundary =
+    normalizedModels.length > 0 ||
+    manualModels.length > 0 ||
+    typeof config.lastModelFetch === 'number';
   const cliSettings = {
     claudeCode: normalizeCustomCliSettings(config.cliSettings?.claudeCode),
     codex: normalizeCustomCliSettings(config.cliSettings?.codex),
     geminiCli: normalizeCustomCliSettings(config.cliSettings?.geminiCli),
   };
 
-  if (!hasFetchedModelList) {
+  if (!hasModelBoundary) {
     return {
       ...config,
       models: normalizedModels,
+      manualModels,
       cliSettings,
     };
   }
 
-  const availableModels = new Set(normalizedModels);
+  const availableModels = new Set([...normalizedModels, ...manualModels]);
   return {
     ...config,
     models: normalizedModels,
+    manualModels,
     cliSettings: {
       claudeCode: filterCustomCliSettingModels(cliSettings.claudeCode, availableModels),
       codex: filterCustomCliSettingModels(cliSettings.codex, availableModels),
