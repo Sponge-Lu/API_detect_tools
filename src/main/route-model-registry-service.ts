@@ -934,9 +934,17 @@ export async function deleteModelDisplayItem(
     return syncModelRegistrySources(true);
   }
 
-  for (const override of registry.overrides.filter(item =>
-    displayItem.sourceKeys.includes(item.sourceKey)
-  )) {
+  const canonicalName = displayItem.canonicalName.trim();
+  const sourceKeys = new Set(displayItem.sourceKeys);
+  const overridesToDelete = registry.overrides.filter(item => {
+    if (sourceKeys.has(item.sourceKey)) {
+      return true;
+    }
+
+    return item.action !== 'exclude' && item.canonicalName.trim() === canonicalName;
+  });
+
+  for (const override of overridesToDelete) {
     await unifiedConfigManager.deleteRouteModelMappingOverride(override.id);
   }
 

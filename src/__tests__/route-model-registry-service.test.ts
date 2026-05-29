@@ -794,6 +794,104 @@ describe('route model registry service', () => {
     expect(result?.entries['deepseek-v4-pro']).toBeUndefined();
   });
 
+  it('deletes same-canonical overrides when a persisted display item has stale source keys', async () => {
+    const canonicalName = 'deepseek-team-pro';
+    const displaySourceKey = 'site-1:acc-1:deepseek-v4';
+    const staleOverrideSourceKey = 'site-1:acc-1:deepseek-v4-chat';
+    const excludedSourceKey = 'site-1:acc-1:deepseek-v4-lite';
+    const unrelatedSourceKey = 'site-1:acc-1:other-model';
+    const registry = createRegistryConfig([
+      createSourceOverride({
+        id: 'override-display-source',
+        sourceKey: displaySourceKey,
+        canonicalName,
+      }),
+      createSourceOverride({
+        id: 'override-stale-source',
+        sourceKey: staleOverrideSourceKey,
+        canonicalName,
+      }),
+      createSourceOverride({
+        id: 'override-excluded-source',
+        sourceKey: excludedSourceKey,
+        canonicalName,
+        action: 'exclude',
+      }),
+      createSourceOverride({
+        id: 'override-unrelated-source',
+        sourceKey: unrelatedSourceKey,
+        canonicalName: 'other-canonical',
+      }),
+    ]);
+    registry.displayItems = [
+      {
+        id: 'manual:deepseek-team-pro',
+        vendor: 'deepseek',
+        canonicalName,
+        sourceKeys: [displaySourceKey],
+        originalModelOrder: ['deepseek-v4'],
+        priorityConfig: {
+          sitePriorities: {},
+          apiKeyPriorities: {},
+        },
+        mode: 'manual',
+        createdAt: 10,
+        updatedAt: 20,
+      },
+    ];
+
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
+      sites: [{ id: 'site-1', name: 'Site 1', cached_data: undefined }],
+      accounts: [
+        {
+          id: 'acc-1',
+          site_id: 'site-1',
+          account_name: 'Primary',
+          status: 'active',
+          cached_data: {
+            models: ['deepseek-v4', 'deepseek-v4-chat', 'deepseek-v4-lite', 'other-model'],
+            api_keys: [],
+            user_groups: {},
+          },
+        },
+      ],
+    });
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      modelRegistry: registry,
+    });
+    unifiedConfigManagerMock.deleteRouteModelMappingOverride.mockImplementation(async id => {
+      registry.overrides = registry.overrides.filter(item => item.id !== id);
+    });
+    unifiedConfigManagerMock.deleteRouteModelDisplayItem.mockImplementation(async id => {
+      registry.displayItems = registry.displayItems.filter(item => item.id !== id);
+      return true;
+    });
+
+    const result = await deleteModelDisplayItem('manual:deepseek-team-pro');
+
+    expect(unifiedConfigManagerMock.deleteRouteModelMappingOverride).toHaveBeenCalledWith(
+      'override-display-source'
+    );
+    expect(unifiedConfigManagerMock.deleteRouteModelMappingOverride).toHaveBeenCalledWith(
+      'override-stale-source'
+    );
+    expect(unifiedConfigManagerMock.deleteRouteModelMappingOverride).not.toHaveBeenCalledWith(
+      'override-excluded-source'
+    );
+    expect(unifiedConfigManagerMock.deleteRouteModelMappingOverride).not.toHaveBeenCalledWith(
+      'override-unrelated-source'
+    );
+    expect(unifiedConfigManagerMock.deleteRouteModelDisplayItem).toHaveBeenCalledWith(
+      'manual:deepseek-team-pro'
+    );
+    expect(result).not.toBeNull();
+    expect(result?.displayItems.some(item => item.canonicalName === canonicalName)).toBe(false);
+    expect(result?.overrides.map(item => item.id).sort()).toEqual([
+      'override-excluded-source',
+      'override-unrelated-source',
+    ]);
+  });
+
   it('treats models with empty enable_groups as unavailable for routing groups', async () => {
     const registry = createRegistryConfig();
 
