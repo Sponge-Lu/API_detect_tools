@@ -26,7 +26,7 @@
 | **setup.ts** | 测试环境配置 | Vitest 配置 |
 | **example.test.ts** | 示例测试 | 测试模板 |
 | **schemas.test.ts** | Schema 验证测试 | Zod Schema |
-| **token-service.test.ts** | TokenService / ApiService 的 site_type 驱动回归测试 | API Key 原始值保留、签到端点按 `site_type` 选择、模型响应非对象/直接数组容错、同日手动签到完成状态刷新保留、sub2api 端点适配、旧站点 `site_type` 首检写回 |
+| **token-service.test.ts** | TokenService / ApiService 的 site_type 驱动回归测试 | API Key 原始值保留、NewAPI 批量明文 key 兼容、签到端点按 `site_type` 选择、模型响应非对象/直接数组容错、同日手动签到完成状态刷新保留、sub2api 端点适配、旧站点 `site_type` 首检写回 |
 | **useCheckIn.test.ts** | useCheckIn Hook 回归测试 | 一键签到跳过 `unavailable` 分组站点，账户级签到透传 `accountId`，AnyRouter 命名变体走账户浏览器签到，手动签到完成状态写入缓存 |
 | **useCliCompatTest.test.ts** | 站点页 CLI 测试回归测试 | `useCliCompatTest` 在已选 API Key 时优先测试当前站点 URL、保存后立即同步 `routing.cliProbe` 投影，并对 Gemini 失败摘要显式提示 |
 | **site-type-detector.test.ts** | 站点类型自动识别测试 | title 命中与 `/api/status` 识别 |
@@ -40,9 +40,10 @@
 | **app-storage-bundle.test.ts** | 应用存储配置包测试 | manifest 配置包纳入/排除边界、bundle 恢复、legacy config-only 恢复保留运行态 sidecar |
 | **backup-manager.test.ts** | 本地备份管理测试 | 自动备份节流、内容去重、强制备份与保留数量 |
 | **migrate-config-v224-to-v301-script.test.ts** | 配置迁移脚本测试 | v2.1.24 config 拆分为 clean config、runtime-cache 与 route state，重复运行保留已有 state |
-| **route-cli-probe-service.test.ts** | CLI 探测多账户回归测试 | 同站点全部活跃账户覆盖、活跃 API Key 选择、probe-lock `probeRunId` 传递、错误码透传、旧配置兼容 |
+| **route-cli-probe-service.test.ts** | CLI 探测多账户回归测试 | 同站点全部活跃账户覆盖、自定义 CLI 配置行/探测任务、活跃 API Key 选择、probe-lock `probeRunId` 与自定义上游信息传递、错误码透传、旧配置兼容 |
 | **route-model-registry-service.test.ts** | 路由模型注册表服务测试 | display item、厂商优先级、canonical 映射与自定义 CLI 来源，覆盖 `manualModels` 手动模型同步 |
-| **route-proxy-service.test.ts** | 路由代理调度回归测试 | canonical-only 规则命中前提下的 per-rawModel 尝试计划、probe-lock loopback 限制/终止失败/单模型上游尝试预算、首次上游结果缓存且不被 budget 覆盖、Gemini 内部辅助模型阻断、上游 URL 构造、Gemini path/key 重写、AnyRouter beta path、流式请求首包超时与首个 SSE chunk 后 10 分钟活跃流空闲超时下限、provider usage/cache token 解析 |
+| **route-proxy-service.test.ts** | 路由代理调度回归测试 | canonical-only 规则命中前提下的 per-rawModel 尝试计划、probe-lock loopback 限制/终止失败/单模型上游尝试预算、首次上游结果缓存且不被 budget 覆盖、瞬时上游错误透传原始响应且记录非终结结果(含非原生 targetProtocol 不被转换劫持)、Gemini 内部辅助模型阻断、上游 URL 构造、Gemini path/key 重写、AnyRouter beta path、流式请求首包超时与首个 SSE chunk 后 10 分钟活跃流空闲超时下限、provider usage/cache token 解析 |
+| **route-probe-lock.test.ts** | probe-lock 首个上游结果记录回归测试 | terminal-wins / transient-overwritable 记录语义、瞬时结果可被后续成功/终结失败覆盖、终结结果 first-wins、waiter 仅在终结结果 resolve |
 | **cli-protocol-adapter.test.ts** | CLI 协议适配器请求/响应转换测试 | Claude/Codex/Gemini 三类源 CLI 与 Anthropic Messages / OpenAI Chat Completions / OpenAI Responses 三类目标协议之间的 text/tool_use/tool_result/function_call 双向转换，流式 SSE 与非流式 JSON 矩阵，empty_conversation / unsupported_content 显式抛 `CliProtocolAdapterError` |
 | **anyrouter-timeout.test.ts** | AnyRouter 站点识别测试 | `Any Router` / `AnyRouter` / 分隔符变体归一化命中，带额外前后缀的站点名不误判 |
 | **anyrouter-rewriter.test.ts** | AnyRouter 协议处理测试 | Claude Code 指纹改写、Codex 原生 Responses 补齐 metadata.user_id、Gemini 原生透传 |
@@ -55,7 +56,7 @@
 | **auto-refresh.property.test.ts** | 自动刷新属性测试 | 自动刷新逻辑 |
 | **cli-compat-persistence.property.test.ts** | CLI 兼容性持久化测试 | CLI 兼容性数据 |
 | **cli-compat-service.property.test.ts** | CLI 兼容性服务测试 | CliCompatService（含双端点测试） |
-| **cli-wrapper-compat-service.test.ts** | 真实 CLI wrapper 兼容性测试 | CliWrapperCompatService 的临时目录、隔离配置、stdin prompt 注入、结果解析、probe-lock 终止失败提前中止、首个上游成功覆盖后续 probe-lock budget noise、未观察到本地路由请求时的诊断提示、Codex 上游错误摘要与临时目录清理重试 |
+| **cli-wrapper-compat-service.test.ts** | 真实 CLI wrapper 兼容性测试 | CliWrapperCompatService 的临时目录、隔离配置、stdin prompt 注入、结果解析、probe-lock 终止失败提前中止、首个上游成功/延迟失败覆盖后续 probe-lock budget noise、Claude JSON 错误摘要、未观察到本地路由请求时的诊断提示、Codex 上游错误摘要与临时目录清理重试 |
 | **cli-config-generator.property.test.ts** | CLI 配置生成测试 | CLI 配置生成（含端点选择逻辑） |
 | **cli-config-status.test.tsx** | CLI 配置状态组件回归测试 | 本地路由代理 Base URL 在紧凑状态中显示为“本地路由”，并覆盖本地路由、站点与自定义 CLI 的当前模型小字 |
 | **custom-cli-config-editor-dialog.test.tsx** | 自定义 CLI 编辑器回归测试 | CustomCliConfigEditorDialog 的预览/应用按钮与分列测试流程 |
@@ -70,7 +71,7 @@
 | **custom-cli-page-redesign.test.tsx** | 自定义 CLI 页面重设计测试 | registry + inspector 双栏布局，覆盖 CLI 模型搜索和手动输入 |
 | **data-overview-page.test.tsx** | 数据总览页回归测试 | 首页总览 KPI、站点榜单、规则解释、异常请求、快照趋势，以及路由趋势 `24h` / `7d` 部分数据窗口下的完整 X 轴与前置空桶绘制规则 |
 | **route-analytics-service.test.ts** | 路由分析服务回归测试 | 请求日志 token/cache token 字段、站点/账户/API Key 对象级 token 聚合 |
-| **route-workbench-redesign.test.tsx** | Route 页面重设计测试 | route 页回退为配置页，并引导到数据总览查看统计，覆盖重定向卡片路径恢复动作 |
+| **route-workbench-redesign.test.tsx** | Route 页面重设计测试 | route 页回退为配置页，并引导到数据总览查看统计，覆盖重定向卡片路径恢复动作与自定义 CLI 覆盖模型测试结果显示 |
 | **cli-usability-tab.test.tsx** | CLI 可用性页回归测试 | Header 检测设置自动保存、账户行渲染、history 批次聚合条形与探测结果明细，失败摘要同时显示错误码和上游错误正文 |
 | **sites-page-redesign.test.tsx** | 站点页重设计测试 | 多列列头、内联排序、高频动作、CLI 图标内联与右键菜单 parity，并覆盖 CLI 图标按时间戳显示最新 projected/persisted 测试状态 |
 | **logs-page.test.tsx** | 日志页回归测试 | 会话事件筛选、外部子页驱动的路由日志详情、逐条 push 追加、紧凑请求尝试网格、模型路径、站点路径说明、token/cache token/按次参考金额与自定义 CLI 显示 |
@@ -346,5 +347,5 @@ it('should call IPC', async () => {
 
 ---
 
-**版本**: 3.0.3
-**更新日期**: 2026-05-27 - 同步 probe-lock、API Key 活跃状态、路由日志紧凑展示、存储稳定性测试说明与路由趋势完整时间轴测试说明
+**版本**: 3.0.5
+**更新日期**: 2026-06-01 - 新增 route-probe-lock 记录语义测试，补充 route-proxy 瞬时错误透传/非终结记录说明

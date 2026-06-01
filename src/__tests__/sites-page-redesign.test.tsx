@@ -49,6 +49,7 @@ function buildSiteCardProps(overrides: Record<string, unknown> = {}) {
     showTokens: {},
     selectedModels: new Set<string>(),
     deletingTokenKey: null,
+    refreshingTokenKey: null,
     autoRefreshEnabled: false,
     cliCompatibility: {
       claudeCode: null,
@@ -114,6 +115,7 @@ function buildSiteCardProps(overrides: Record<string, unknown> = {}) {
     onCopySelectedModels: vi.fn(),
     onClearSelectedModels: vi.fn(),
     onOpenCreateTokenDialog: vi.fn(),
+    onRefreshToken: vi.fn(),
     onDeleteToken: vi.fn(),
     ...overrides,
   };
@@ -465,6 +467,7 @@ describe('sites page redesign', () => {
         showTokens={{}}
         selectedModels={new Set<string>()}
         deletingTokenKey={null}
+        refreshingTokenKey={null}
         autoRefreshEnabled={false}
         cliCompatibility={{ claudeCode: true, codex: null, geminiCli: null, testedAt: Date.now() }}
         cliConfig={null}
@@ -494,6 +497,7 @@ describe('sites page redesign', () => {
         onCopySelectedModels={vi.fn()}
         onClearSelectedModels={vi.fn()}
         onOpenCreateTokenDialog={vi.fn()}
+        onRefreshToken={vi.fn()}
         onDeleteToken={vi.fn()}
       />
     );
@@ -905,6 +909,7 @@ describe('sites page redesign', () => {
           showTokens={{}}
           selectedModels={new Set<string>()}
           deletingTokenKey={null}
+          refreshingTokenKey={null}
           autoRefreshEnabled={false}
           cliCompatibility={{
             claudeCode: true,
@@ -967,6 +972,7 @@ describe('sites page redesign', () => {
           onCopySelectedModels={vi.fn()}
           onClearSelectedModels={vi.fn()}
           onOpenCreateTokenDialog={vi.fn()}
+          onRefreshToken={vi.fn()}
           onDeleteToken={vi.fn()}
         />
       </div>
@@ -1191,6 +1197,7 @@ describe('sites page redesign', () => {
         showTokens={{}}
         selectedModels={new Set<string>()}
         deletingTokenKey={null}
+        refreshingTokenKey={null}
         autoRefreshEnabled={false}
         cliCompatibility={{
           claudeCode: true,
@@ -1253,6 +1260,7 @@ describe('sites page redesign', () => {
         onCopySelectedModels={vi.fn()}
         onClearSelectedModels={vi.fn()}
         onOpenCreateTokenDialog={vi.fn()}
+        onRefreshToken={vi.fn()}
         onDeleteToken={vi.fn()}
       />
     );
@@ -1294,6 +1302,37 @@ describe('sites page redesign', () => {
     expect(screen.getByText('Expired Key')).toBeInTheDocument();
     expect(screen.getByText('✓ 启用')).toHaveClass('text-[var(--success)]');
     expect(screen.getByText('✕ 禁用')).toHaveClass('text-[var(--text-secondary)]');
+  });
+
+  it('renders a per API key refresh button in site details', () => {
+    const onRefreshToken = vi.fn();
+    render(
+      <SiteCard
+        {...buildSiteCardProps({
+          isExpanded: true,
+          apiKeys: [
+            {
+              id: 1,
+              name: 'Alpha Key',
+              key: 'sk-alpha',
+              group: 'alpha',
+              status: 'active',
+            },
+          ],
+          userGroups: {
+            alpha: { desc: 'Alpha', ratio: 1 },
+          },
+          onRefreshToken,
+        })}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '刷新 API Key: Alpha Key' }));
+
+    expect(onRefreshToken).toHaveBeenCalledTimes(1);
+    expect(onRefreshToken.mock.calls[0]?.[0]).toEqual(baseSite);
+    expect(onRefreshToken.mock.calls[0]?.[1]).toMatchObject({ id: 1, name: 'Alpha Key' });
+    expect(onRefreshToken.mock.calls[0]?.[2]).toBe(0);
   });
 
   it('rerenders the site card when only cli test results change so the column icons update', () => {

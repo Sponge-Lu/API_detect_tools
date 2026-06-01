@@ -80,6 +80,7 @@ interface RouteDistribution {
 
 interface TrendPoint {
   key: string;
+  timestamp: number;
   label: string;
   hasData: boolean;
   requestCount: number;
@@ -180,9 +181,12 @@ function buildRouteTrendKey(timestamp: number, window: RouteWindow): string {
 }
 
 function createEmptyTrendPoint(timestamp: number, window: RouteWindow): TrendPoint {
+  const normalizedTimestamp = floorRouteTrendDate(timestamp, window).getTime();
+
   return {
-    key: buildRouteTrendKey(timestamp, window),
-    label: formatDateLabel(timestamp, window),
+    key: buildRouteTrendKey(normalizedTimestamp, window),
+    timestamp: normalizedTimestamp,
+    label: formatDateLabel(normalizedTimestamp, window),
     hasData: false,
     requestCount: 0,
     successCount: 0,
@@ -240,7 +244,7 @@ function buildRouteTrendPoints(buckets: RouteAnalyticsBucket[], window: RouteWin
     grouped.set(key, current);
   }
 
-  return Array.from(grouped.values());
+  return Array.from(grouped.values()).sort((left, right) => left.timestamp - right.timestamp);
 }
 
 function formatDayKey(date: Date): string {

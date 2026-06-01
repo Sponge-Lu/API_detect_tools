@@ -4,6 +4,24 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)，并且本项目遵循 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)。
 
+## [v3.0.5] - 2026-06-01
+
+### 新增
+- **自定义 CLI 探测纳入路由可用性**：CLI 可用性矩阵新增自定义 CLI 虚拟配置行，立即探测会携带自定义上游 Base URL/API Key，并在普通站点行之后展示
+- **API Key 单项刷新**：站点卡片 API Key 列表新增单个状态刷新按钮，可按当前站点/账户刷新列表并回显目标 key 最新状态
+- **NewAPI 批量明文 key 兼容**：NewAPI 脱敏 API Key 列表优先通过 `/api/token/batch/keys` 批量补全明文 key，失败或缺项时回退单个 `/api/token/:id/key`
+
+### 变更
+- **probe-lock 容错策略调整**：探测上游 408/429/5xx 等瞬时错误不再立即定性为 CLI 不兼容，预算内允许后续真实上游请求覆盖瞬时结果，最终仍保留终结结果 first-wins 语义
+- **CLI wrapper 诊断增强**：当后续 CLI 辅助请求先触发 probe-lock budget 噪声时，wrapper 会等待并回看首个真实上游终结结果；Claude JSON `is_error` 输出会摘要化展示
+- **路由优先命中恢复与重置**：模型重定向详情从持久化 `routePathStates` 恢复当前优先命中，并支持按具体站点/账户/API Key/模型/协议重置该命中路径
+- **路由日志细节优化**：上游 HTTP 失败时状态码保留在状态列，失败详情展示上游响应正文摘要；站点优先级显示跟随最新重定向优先级表
+
+### 修复
+- **透明 SSE 流式响应误判**：路由代理现在校验首个 SSE chunk、终止事件与 Claude Code Anthropic 消息结构，HTML/JSON/非 SSE、缺少终止事件、DSML 工具标记、OpenAI 风格事件、坏 tool input JSON、thinking-only 等 malformed 响应会记录明确错误并避免静默成功
+- **AnyRouter Codex 工具兼容**：Codex 走 AnyRouter 原生 Responses 时过滤仍不兼容的工具形态，并在 forced tool 被过滤后同步移除无效 `tool_choice`
+- **优先命中重置回弹**：重置当前优先命中时会写入短期 affinity suppression，避免并发中的旧成功流立即恢复刚被用户清除的路径
+
 ## [v3.0.4] - 2026-05-27
 
 ### 新增

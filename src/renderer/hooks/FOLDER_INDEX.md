@@ -29,7 +29,7 @@
 | **useSiteGroups.ts** | 站点分组管理 | `{ groups, addGroup, deleteGroup, ... }` |
 | **useAutoRefresh.ts** | 自动刷新逻辑 | `{ isRefreshing, startRefresh, stopRefresh, ... }` |
 | **useSiteDetection.ts** | 站点检测 | `{ results, isDetecting, detect, ... }` |
-| **useTokenManagement.ts** | Token 管理 | `{ tokens, getToken, saveToken, deleteToken, ... }` |
+| **useTokenManagement.ts** | Token 管理，支持站点 API Key 列表刷新、单个 API Key 状态刷新、创建与删除 | `{ refreshSiteApiKeys, handleRefreshToken, handleCreateTokenSubmit, handleDeleteToken }` |
 | **useCheckIn.ts** | 签到逻辑，批量签到时跳过 `unavailable` 分组，账户级签到透传 `accountId`，按站点类型打开手动签到页，并持久化同日手动签到完成状态 | `{ canSignIn, isSigningIn, signIn, ... }` |
 | **useCliCompatTest.ts** | CLI 兼容性测试 | `{ results, isTesting, test, ... }` |
 | **useDataLoader.ts** | 数据加载，支持站点状态持久化与签到能力缓存回填 | `{ data, isLoading, error, reload, ... }` |
@@ -445,5 +445,5 @@ export function useNewFeature(): UseNewFeatureReturn {
 
 ---
 
-**版本**: 2.1.24
-**更新日期**: 2026-03-11
+**版本**: 3.0.5
+**更新日期**: 2026-06-01

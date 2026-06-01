@@ -29,6 +29,8 @@ export interface RoutePathState extends RouteChannelKey {
   lastUsedAt?: number;
   lastSuccessAt?: number;
   lastFailureAt?: number;
+  affinitySuppressedUntil?: number;
+  affinitySuppressedAt?: number;
   updatedAt: number;
 }
 
@@ -91,6 +93,11 @@ export function recordRoutePathOutcome(
 export interface RoutePathStateResetParams {
   routeRuleId?: string;
   canonicalModel?: string;
+  siteId?: string;
+  accountId?: string;
+  apiKeyId?: string;
+  resolvedModel?: string;
+  targetProtocol?: CliTargetProtocol;
 }
 
 // src/main/unified-config-manager.ts
@@ -180,9 +187,23 @@ export function getRouteProbeLockFirstUpstreamResult(
   routeApiKey: string
 ): RouteProbeLockUpstreamResult | undefined;
 export function recordRouteProbeLockFirstUpstreamResult(
-  result: RouteProbeLockUpstreamResult
+  result: RouteProbeLockUpstreamResult,
+  opts?: { terminal?: boolean }
 ): RouteProbeLockUpstreamResult;
-export function consumeRouteProbeLockUpstreamAttempt(routeApiKey: string): boolean;
+export function waitForRouteProbeLockFirstUpstreamResult(
+  routeApiKey: string,
+  timeoutMs: number
+): Promise<RouteProbeLockUpstreamResult | undefined>;
+export const MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS = 4;
+export function beginRouteProbeLockUpstreamAttempt(routeApiKey: string): {
+  allowed: boolean;
+  attemptNumber: number;
+  isFinalAttempt: boolean;
+};
+export function settleRouteProbeLockUpstreamAttempt(routeApiKey: string): void;
+
+// src/main/route-proxy-service.ts (probe-lock transient classification)
+export function isTransientUpstreamStatus(statusCode?: number): boolean;
 
 // src/main/cli-protocol-adapter.ts
 export function adaptRequestToTargetProtocol(
@@ -282,7 +303,10 @@ export function electronFetchRawStream(
 - Local route streaming requests must keep the initial upstream wait bounded by the configured/site-specific request timeout. After the first SSE data chunk is received, active streams use an idle timeout of at least 10 minutes so healthy long-running streams are not aborted between chunks.
 - AnyRouter site-name detection must normalize spaces, repeated spaces, hyphens, and underscores so both `Any Router` and `AnyRouter` activate the same AnyRouter request rewrite path. Do not match names with extra prefix/suffix text.
 - Local route SSE passthrough must use `httpRawStreamRequest()` / `electronFetchRawStream()` only when the original request is streaming (`body.stream === true` or a Gemini `:streamGenerateContent` path), the upstream response status is classified as `success`, the upstream `content-type` contains `text/event-stream`, and both the AnyRouter and target-protocol response adapters are `transparent`.
-- For streaming passthrough, `handleRequest()` must validate the upstream `onResponse` callback but defer downstream response headers until the first accepted SSE chunk is about to be forwarded. Hop-by-hop headers plus `content-length` and `transfer-encoding` must be stripped so the downstream response can remain streaming/chunked, and a first-chunk timeout can fail/fallback before any downstream bytes are written.
+- For streaming passthrough, `handleRequest()` must validate the upstream `onResponse` callback but defer downstream response headers until the first accepted SSE chunk is about to be forwarded. Hop-by-hop headers plus `content-encoding`, `content-length`, and `transfer-encoding` must be stripped so the downstream response can remain streaming/chunked, and a first-chunk timeout can fail/fallback before any downstream bytes are written.
+- A successful transparent streaming candidate must have an initial body chunk that looks like SSE (`event:`, `data:`, `id:`, `retry:`, or an SSE comment). Obvious HTML, JSON, empty, or non-SSE 2xx responses must be treated as `invalid_streaming_response` before any downstream bytes are written, allowing fallback to another route path.
+- Claude Code and Codex transparent SSE streams must not silently end on upstream EOF unless a protocol terminal marker has been observed (`message_stop` for Anthropic/Claude Code, `response.completed` or `[DONE]` for OpenAI Responses/Codex). If the upstream connection ends after downstream bytes were written but before the terminal marker, append a protocol-shaped SSE error event, record `incomplete_streaming_response:missing_terminal_event`, and then close the downstream response.
+- Claude Code transparent SSE streams must validate completed Anthropic message structure before accepting a terminal `message_stop` as success. A completed Claude Code stream with OpenAI-style events, leaked DSML/tool-call markup in text deltas, malformed tool input JSON, unclosed content blocks, `tool_use` stop reasons without real `tool_use` blocks, or no visible text/tool_use content (for example thinking-only output) must append a protocol-shaped SSE error when bytes were already written, record `malformed_streaming_response:<reason>`, and close without forwarding the terminal `message_stop`.
 - `httpRawStreamRequest()` and `electronFetchRawStream()` must invoke chunk callbacks as bytes arrive while still retaining the complete response `body` and `firstByteLatencyMs` for analytics, usage extraction, and failure logs.
 - If the upstream streaming candidate is not a success SSE response, no downstream bytes may be written. The proxy must keep buffering the full response so existing failure classification, path suspension, response adaptation, and fallback attempts continue to work.
 - Once downstream streaming bytes have been written, the current request cannot fall back to another channel. Any later upstream or write error must end the downstream response if it is not already ended.
@@ -303,7 +327,7 @@ export function electronFetchRawStream(
 - When `routing.modelRegistry` contains any routing data (`sources`, `entries`, or `displayItems`), `resolveChannels(rule, canonicalModel)` must not fall back to generic site/account/API-key channels if `canonicalModel` has no registry entry. Unknown requested models such as a Gemini CLI default path model must produce no candidates instead of being forwarded through an unrelated site.
 - `RouteModelDisplayItem.runtimeConfig` owns per-redirection runtime behavior. Missing fields normalize to `maxAttemptsPerRoutePath = 1`, `successRateWindowMinutes = 5`, `disableDurationMinutes = 30`, and `minSuccessRate = 0.8`.
 - `handleRequest()` must resolve `RouteRuntimeConfig` from the matched canonical model's display item and pass `runtimeConfig.maxAttemptsPerRoutePath` into `buildChannelAttemptPlan(sortChannelsByScore(channels), ...)`.
-- Successful route path affinity is derived from existing `routing.routePathStates`, not a separate preferred-path pointer. A candidate is eligible only when its route path state has `lastOutcome === 'success'`, `lastSuccessAt` is within `ROUTE_SUCCESSFUL_PATH_AFFINITY_MS`, and `disabledUntil` is not active.
+- Successful route path affinity is derived from existing `routing.routePathStates`, not a separate preferred-path pointer. A candidate is eligible only when its route path state has `lastOutcome === 'success'`, `lastSuccessAt` is within `ROUTE_SUCCESSFUL_PATH_AFFINITY_MS`, `disabledUntil` is not active, and `affinitySuppressedUntil` is not in the future.
 - `handleRequest()` must apply successful path affinity after normal priority sorting, after `buildChannelAttemptPlan(..., maxAttemptsPerRoutePath)`, and after disabled-path filtering. Affinity may reorder the bounded candidate plan but must not add attempts or bypass `maxAttemptsPerRoutePath`.
 - `applySuccessfulRoutePathAffinity()` must promote the most recently successful eligible path to the front, then preserve circular fallback order from that path's original position: promoted path, later candidates, then earlier candidates. If no eligible successful state exists or the eligible path is already first, keep the input order unchanged.
 - Gemini CLI may send path-only requests for its own helper/default model even when the user has
@@ -332,6 +356,12 @@ export function electronFetchRawStream(
 - For AnyRouter sites, `handleRequest()` must route CLI requests through `anyrouter-request-rewriter.ts` using protocol-specific behavior:
   - Claude Code targets `/v1/messages?beta=true`, uses Anthropic-style `x-api-key`, preserves native Claude Code request fields such as `system`, `tools`, `tool_choice`, `stop_sequences`, `temperature`, and `metadata`, and adds the required `anthropic-beta` plus `metadata.user_id` Claude Code fingerprint fields.
   - Codex keeps the native Responses API path/auth/response shape and does not inject AnyRouter hash data.
+    It may filter `tools` only to AnyRouter-compatible Responses tool types:
+    `function`, `custom`, `web_search`, `web_search_preview`, `file_search`, `image_generation`,
+    `apply_patch`, `namespace`, and client `tool_search`. It must drop still-incompatible tool
+    shapes such as name-only legacy tools, `mcp`, `code_interpreter`, `computer_use_preview`,
+    `local_shell`, and unstable `shell`; if filtering removes the selected forced tool, it must also
+    remove the now-invalid `tool_choice`.
   - Gemini CLI keeps the native Gemini path/auth/response shape; route path rewriting still owns model and query-key replacement.
   Non-AnyRouter sites keep their native CLI protocol and path behavior.
 - When a channel's configured `targetProtocol` is not native-equivalent for the current CLI,
@@ -370,9 +400,22 @@ export function electronFetchRawStream(
   clear the terminal-failure cache, first-upstream-result cache, and upstream-attempt budget for
   that token before a new wrapper run.
 - Probe-lock first upstream results are the authoritative single generated-response facts for the
-  current wrapper test. `recordRouteProbeLockFirstUpstreamResult()` must only keep the first real
-  selected-model upstream result for the full route API key during the 5-minute window; later
-  probe-limit responses must not overwrite it.
+  current wrapper test. `recordRouteProbeLockFirstUpstreamResult(result, opts?)` uses
+  **terminal-wins / transient-overwritable** semantics, defaulting `opts.terminal = true` so existing
+  callers keep terminal behavior. A cached **terminal** result (`opts.terminal = true`: success or
+  terminal failure) is first-wins: it is never overwritten and never re-notified by later terminal or
+  transient results during the 5-minute window. A **transient** result (`opts.terminal = false`)
+  updates the cached value so the wrapper can still surface the 503/429 reason if the CLI sends one
+  request and exits without retrying, but it must be overwritable by a later transient or terminal
+  result. Only terminal results notify/resolve waiters; transient results must NOT resolve
+  `waitForRouteProbeLockFirstUpstreamResult()` waiters. The wrapper may wait for that first terminal
+  result only after it has observed a local proxy request, detected that the single upstream-attempt
+  budget has been consumed, and classified the CLI output as only request-budget noise.
+- `waitForRouteProbeLockFirstUpstreamResult(routeApiKey, timeoutMs)` resolves only on a cached or
+  newly recorded **terminal** result. A cached transient-only result does not resolve a waiter; the
+  waiter keeps waiting (until a terminal result arrives or the timeout elapses) so a transient
+  503/429 cannot prematurely settle a wrapper test that may still see a real success or terminal
+  failure.
 - The route proxy must notify a probe-lock terminal failure for non-loopback probe-lock traffic,
   CLI/target protocol mismatch, invalid route API key payloads, unavailable upstream credentials,
   upstream non-success status/body that is returned to the CLI, and thrown terminal aggregate
@@ -380,15 +423,47 @@ export function electronFetchRawStream(
 - When `getRouteProbeLockTerminalFailure(routeApiKey)` returns a cached failure, later requests with
   the same probe-lock token must short-circuit with the cached status/body instead of forwarding to
   upstream again. This keeps wrapper tests deterministic after the first terminal error is known.
-- Probe-lock upstream forwarding has a single real upstream-attempt budget per full route API key for
-  5 minutes. `consumeRouteProbeLockUpstreamAttempt(routeApiKey)` returns `true` only for the first
-  attempt in that window; later attempts must return HTTP `400` with
+- Probe-lock upstream budget is counted by terminal result, not by request, to absorb the fact that
+  real CLIs (Claude Code especially) fire multiple concurrent/retry upstream requests in one test and
+  upstreams are highly transient. A probe-lock token may make up to `MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS`
+  (4) real upstream attempts within the 5-minute window. `beginRouteProbeLockUpstreamAttempt(routeApiKey)`
+  returns `{ allowed, attemptNumber, isFinalAttempt }`; `allowed` is `false` once the budget is settled
+  or the cap is reached, in which case the proxy returns HTTP `400` with
   `X-Route-Proxy-Error: probe_lock_upstream_attempt_exhausted`.
+- A transient upstream status (`isTransientUpstreamStatus()`: 408, 425, 429, 500, 502, 503, 504,
+  520-527, 529, 530) and network exceptions are NOT terminal. When transient and not the final
+  attempt, the proxy must NOT settle the budget and must NOT notify a terminal failure — leaving the
+  budget open so the CLI's next/concurrent request can still reach upstream. For an HTTP transient
+  response it must record a **non-terminal** first upstream result (`opts.terminal = false`,
+  preserving status/body/error) so a single-shot CLI still surfaces the real failure reason instead
+  of `reply=null`, then pass the **raw** upstream response straight back to the CLI (strip hop-by-hop
+  plus `content-length`/`transfer-encoding` via the shared streaming-header sanitizer) and return —
+  it must NOT run AnyRouter or target-protocol response transforms, so a non-native `targetProtocol`
+  conversion failure can never escalate a transient error into a terminal failure. A transient
+  network exception (thrown, no status) must likewise record a **non-terminal** result
+  (`statusCode 502`, `error = exception message`, `opts.terminal = false`) without settling the
+  budget, so a single-shot CLI that hits a connection error/timeout still surfaces the reason and a
+  later success/terminal failure can overwrite it. This is what prevents transient upstream jitter
+  from being misreported as CLI incompatibility.
+- A terminal result settles the budget via `settleRouteProbeLockUpstreamAttempt(routeApiKey)`: a
+  success (2xx/3xx) or a terminal failure status (e.g. 400/401/403/404/405/409/422). Only then is the
+  first upstream result recorded as terminal and, for failures, a terminal failure notified. A
+  transient status on the final attempt escalates to terminal with `upstream_temporarily_unavailable`
+  ("upstream temporarily unavailable, retried N times").
+- Because a cached terminal result is first-wins, a transient `opts.terminal = false` record never
+  overwrites an already-stored terminal success/failure, and a terminal record always overwrites a
+  prior transient one. A CLI retry that finally succeeds therefore replaces the earlier transient
+  reason (wrapper `supported = true`), while a CLI that never retries keeps the transient reason as
+  the surfaced failure detail.
 - Gemini CLI internal utility/default requests that carry a probe-lock token must be blocked before
   upstream forwarding just like ordinary route traffic. The block is terminal for the wrapper run
-  and must not consume the single upstream-attempt budget for the selected model request.
+  and must not consume the upstream-attempt budget for the selected model request.
 - `recordRoutePathOutcome()` must use `runtimeConfig.successRateWindowMinutes`, `runtimeConfig.disableDurationMinutes`, and `runtimeConfig.minSuccessRate` when resetting the health window and deciding whether to suspend a route path.
 - `routing.cliProbe.latest` is a display and diagnostics cache only. Route candidate resolution must not use failed CLI probe samples from `routeProbe`, `siteManual`, or `legacyCache` to suppress sites, accounts, API keys, or original models. Runtime suppression is owned by `routePathStates`.
+- The redirection priority table must display model test status in the covered-model label. For
+  custom CLI sources, merge `routing.cliProbe.latest` with the persisted custom CLI
+  `cliSettings[cliType].testState.slots` fallback by `testedAt`; canonical `routing.cliProbe.latest`
+  remains preferred unless the custom CLI slot is newer or no canonical entry exists.
 - Display item source keys are model selections, not a fixed account allowlist. Runtime and registry rebuilds must expand a selected original model to all current sources with that same `originalModel`, so newly added accounts under the same site are routable without recreating the redirect.
 - Override-backed display items are compatibility projections, not a stronger source of truth than the saved overrides. When reconstructing a card from legacy data, merge `registry.entries[canonicalName].sources`, persisted `displayItem.sourceKeys`, and grouped override sources by `sourceKey`; never let a stale partial entry or stale display item replace the override group and drop other original models or custom CLI sources.
 - The redirection editor save flow must persist the `RouteModelDisplayItem` before writing per-source mapping overrides. `RouteModelDisplayItem` is the routing/display unit, so a long multi-source save that is interrupted after some override writes must not leave the card stuck on the previous single-model `originalModelOrder`.
@@ -398,20 +473,55 @@ export function electronFetchRawStream(
   failure after a manual recovery must stay enabled so the CLI receives the real upstream response
   instead of immediately falling back into `all_route_paths_disabled`.
 - `resetRouteStats(ruleId?)` must clear both `routing.stats` and matching `routing.routePathStates`.
-- `resetRoutePathStates(params?)` must clear only `routing.routePathStates`, never `routing.stats`. When `params.canonicalModel` is provided, clear every path state for that redirection card's canonical model. When `params.routeRuleId` is also provided, both filters must match.
-- `route:get-config` must include `routePathStates` so the redirection UI can show active suspensions and enable the rule-scoped recovery button from current runtime state.
+- `resetRoutePathStates(params?)` must clear only `routing.routePathStates`, never `routing.stats`. When `params.canonicalModel` is provided, clear every path state for that redirection card's canonical model. When `params.routeRuleId`, `siteId`, `accountId`, `apiKeyId`, `resolvedModel`, or `targetProtocol` are also provided, every provided filter must match before a path state is deleted.
+- `route:get-config` must include `routePathStates` so the redirection UI can show active
+  suspensions, restore current successful-path affinity after app restart, and enable the
+  rule-scoped recovery button from current runtime state.
 - `recordRouteRequest()` must broadcast the appended `RouteRequestLogItem` immediately over
   `route:request-log-appended` after it writes the in-memory request log. The debounced
   `route-overview` invalidation remains for dashboards and must not be the route-log page's live
   update mechanism.
+- For upstream HTTP failures, `RouteRequestLogItem.statusCode` owns the HTTP code and
+  `RouteRequestLogItem.error` must store the summarized upstream response body when one exists.
+  Do not store duplicate code-only text such as `HTTP 500`, `upstream_failed`, or
+  `bad_response_status_code` as the route-log failure detail; the renderer already displays the
+  status code separately.
 - `window.electronAPI.route.onRequestLogAppended(callback)` is the renderer bridge for route log
   live updates. The route log page must merge pushed items by log `id` into its 200-row view instead
   of reloading `route:get-request-logs` for each `route-overview` notification.
+- The route log page's compact priority cell must display the same zero-based display rank shown in
+  the redirection priority table for the current canonical display item. When
+  `RouteModelDisplayItem.priorityConfig.sitePriorities[RouteRequestLogItem.siteId]` exists, treat
+  that value as a persisted sort key and map it back to the current ordered rank among the display
+  item's active sites; do not render the raw persisted number directly. If the site has no explicit
+  saved priority, derive the same fallback order from the display item's `sourceKeys`; if no display
+  item or matching site exists, render `--`. This cell must never use `RouteRule.priority`. It is a
+  live projection of the current redirection config, not a historical per-log snapshot; existing log
+  rows are expected to reflect user priority changes.
+- While mounted, the route log page must refresh its route-log display context from the latest
+  renderer route-store `config.modelRegistry` / `config.rules` when that store changes. This keeps
+  already-rendered log rows synchronized after the user saves a redirection priority change on the
+  route page.
 - The redirection UI must display active path suspensions in the priority table's API-key row,
   appended inside the matching original model's parenthesized details. Do not append suspension
   labels to site names, API key names, or original model chips. Suspension tooltip/details may
   include the resolved model and runtime window.
 - The redirection card must expose a rule/path recovery button when the card has active suspensions. Clicking it must call the route path-state reset IPC for the current card's `canonicalName`, refresh route config, and leave route statistics intact.
+- The redirection detail action bar must expose `重置优先命中` before the `恢复路径` button when the
+  selected card has a current successful-affinity path. The UI must derive that path first from
+  `routing.routePathStates` using the same eligibility as route affinity (`lastOutcome ===
+  'success'`, recent `lastSuccessAt`, and no active `disabledUntil`), then fall back to the latest
+  in-memory first-attempt route log for same-session updates. Clicking it must call
+  `resetRoutePathStates()` with the concrete path identity: `routeRuleId`, `canonicalModel`,
+  `siteId`, `accountId`, `apiKeyId`, `resolvedModel`, and `targetProtocol` when present. This clears
+  the successful-path affinity for only that route path and must not reset other API keys under the
+  same redirection card. The reset must leave a short-lived route path state with
+  `affinitySuppressedUntil` for the concrete path, even if no current state was deleted, so an
+  in-flight CLI stream that reports success again cannot immediately restore the same priority hit;
+  the next request should follow normal site priority order and start from the first site. After a
+  successful reset, the renderer must also remove any matching same-session first-attempt route log
+  by the same concrete path identity so a stale in-memory log cannot re-highlight the cleared path
+  after `routePathStates` refreshes.
 
 ### 4. Validation & Error Matrix
 
@@ -427,9 +537,20 @@ export function electronFetchRawStream(
 | All paths disabled | every planned route path has active `disabledUntil > now` | Respond `400` with a non-retryable CLI-native `all_route_paths_disabled` error shape |
 | Path disabled during current request | first planned attempt fails, `recordRoutePathOutcome()` sets `disabledUntil`, and remaining planned attempts target only disabled route paths | Do not make another upstream request; respond `400` with a non-retryable CLI-native `all_route_paths_disabled` error shape |
 | User resets current rule paths | renderer calls `resetRoutePathStates({ canonicalModel })` from a redirection card | Matching `routePathStates` are deleted, `stats` are preserved, redirection config is refreshed |
+| User resets current priority hit path | renderer calls `resetRoutePathStates()` from the detail action bar with concrete first-hit path identity | Only the matching successful-affinity path state is deleted; sibling API keys and resolved-model states remain; the concrete path gets `affinitySuppressedUntil` so the next request starts from normal site priority order |
+| App restarts after a successful route hit | `route:get-config` returns a recent successful `routePathStates` entry but in-memory request logs are empty | Redirection priority table still highlights the matching API-key row as `当前优先命中` and the reset action uses the persisted path identity |
+| User resets persisted priority hit while a matching first-hit log remains in memory | reset deletes the `routePathStates` entry but the renderer still has a same-session first-hit log for the same path | Renderer removes the matching log by path identity and the `当前优先命中` badge disappears |
+| Route log row has a matched display item and explicit site priority | logs page render | Compact priority cell derives the current display rank from the latest `priorityConfig.sitePriorities[siteId]`, even when the matched `RouteRule.priority` differs |
+| User changes redirection site priority while old route logs remain visible | route store update -> logs page render | Existing rows recompute their compact priority cell from the latest route-store `modelRegistry` |
+| Route log row has a matched display item but no explicit site priority | logs page render | Compact priority cell shows the same fallback source order used for display-item site ordering |
+| Route log row has no matching display item/site | logs page render | Compact priority cell shows `--` |
+| Upstream returns HTTP failure with a body | route proxy -> request log -> renderer | Log `statusCode` separately and display the upstream body summary after the failure label |
+| Upstream failure log has only duplicate code text | renderer legacy log defense | Keep the status badge, but do not render another failure-detail pill containing the same code |
 | Upstream TLS fails in Node but succeeds in CLI/Electron | route proxy forwarding | Forward with Electron net raw client before classifying the route attempt, preserving status/body/headers |
 | Long upstream SSE stays active past `requestTimeoutMs` | upstream emits data chunks before each timeout interval | Keep the Electron raw request alive until `end`; do not abort only because total elapsed time exceeded `requestTimeoutMs` |
-| Transparent streaming request receives successful SSE | original request is streaming, adapters are transparent, upstream status is `2xx/3xx`, and `content-type` includes `text/event-stream` | Write downstream headers immediately with hop-by-hop/content-length headers stripped, forward each chunk as it arrives, retain the complete body for analytics, then end the downstream response |
+| Transparent streaming request receives successful SSE | original request is streaming, adapters are transparent, upstream status is `2xx/3xx`, `content-type` includes `text/event-stream`, and the first body bytes validate as SSE | Defer downstream headers until the first accepted SSE chunk, strip hop-by-hop/`content-encoding`/`content-length`/`transfer-encoding` headers, forward buffered and subsequent chunks, retain the complete body for analytics, then end the downstream response |
+| Streaming request receives malformed 2xx body | upstream status is classified as `success`, but the response is not SSE or begins with HTML/JSON/non-SSE content | Do not write downstream bytes; record `invalid_streaming_response`, mark the route path failed, and try the next enabled channel when available |
+| Transparent stream ends without terminal marker | downstream bytes were already written, but no `message_stop`, `response.completed`, or `[DONE]` was observed before upstream EOF | Append SSE `event: error`, record `incomplete_streaming_response:missing_terminal_event`, mark the path failed, and close the downstream response instead of silently ending |
 | Streaming request receives failed SSE | upstream status is not classified as `success` | Do not write downstream bytes; buffer the body, record failure, suspend/update the path, and try the next enabled channel when available |
 | Streaming request requires response adaptation | AnyRouter or protocol response adapter is not `transparent` | Do not stream passthrough; buffer the full body and run the normal response adaptation path before writing downstream |
 | Upstream proxy configured | `routing.server.upstreamProxyUrl = 'http://127.0.0.1:7890'` | Only upstream forwarding uses that proxy; local CLI clients still connect directly to the route proxy |
@@ -440,7 +561,7 @@ export function electronFetchRawStream(
 | Explicit target protocol adaptation | channel `targetProtocol` differs from the CLI's native-equivalent upstream protocol | Convert request/response via `cli-protocol-adapter.ts`; if conversion fails before bytes are written, the current path may fail and the proxy may try fallback paths |
 | Upstream success | HTTP status classified as `success` | Record channel stats and route path state; clear future disable only after the existing disable expires |
 | Recent successful path exists | bounded enabled plan is `A, B, C, D`, and `C` has the most recent successful `routePathStates` entry within 30 minutes | Attempt order becomes `C, D, A, B` for the current request |
-| Stale, failed, or disabled success affinity | route path state is older than `ROUTE_SUCCESSFUL_PATH_AFFINITY_MS`, has `lastOutcome !== 'success'`, or has active `disabledUntil` | Ignore that state and keep normal candidate order unless another eligible successful path exists |
+| Stale, failed, disabled, or reset-suppressed success affinity | route path state is older than `ROUTE_SUCCESSFUL_PATH_AFFINITY_MS`, has `lastOutcome !== 'success'`, has active `disabledUntil`, or has future `affinitySuppressedUntil` | Ignore that state and keep normal candidate order unless another eligible successful path exists |
 | Upstream failure | HTTP status outside 2xx/3xx or thrown error | Record failure, update the 5-minute success rate, and disable the path for 30 minutes only when at least two counted samples are below threshold |
 | Custom runtime config | Display item has `runtimeConfig = { maxAttemptsPerRoutePath: 2, successRateWindowMinutes: 12, disableDurationMinutes: 45, minSuccessRate: 0.75 }` | Try each route path at most twice for the current request, then suspend failed low-success paths for 45 minutes when at least two samples in the 12-minute success-rate window are below 75% |
 | Successful affinity with `maxAttemptsPerRoutePath = 1` | the same route path appears multiple times before affinity is applied | `buildChannelAttemptPlan()` removes extra entries first; affinity reorders only the bounded plan and does not create a second attempt for that route path |
@@ -449,8 +570,11 @@ export function electronFetchRawStream(
 | Probe-lock reaches proxy | parsed probe-lock token and loopback client | Notify request subscribers before upstream forwarding so wrapper diagnostics know the CLI connected to the local proxy |
 | Probe-lock from non-loopback client | parsed probe-lock token and remote address is not loopback | Return `403 probe_lock_forbidden`, notify terminal failure, and do not forward upstream |
 | Probe-lock terminal failure already cached | same full probe-lock route API key within 5 minutes | Replay cached status/error without resolving another upstream route |
-| Probe-lock first selected-model upstream attempt | `consumeRouteProbeLockUpstreamAttempt(routeApiKey) === true` | Allow exactly one real upstream forwarding attempt for that token |
-| Probe-lock second selected-model upstream attempt | same full route API key within the 5-minute attempt window | Return `400` with `X-Route-Proxy-Error: probe_lock_upstream_attempt_exhausted`; do not call upstream |
+| Probe-lock HTTP transient upstream failure, not final attempt | a probe-lock upstream attempt returns `503`/`429` and `attemptNumber < MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS` | Record a non-terminal (`terminal: false`) first upstream result, write the raw upstream response back to the CLI (hop-by-hop/content-length/transfer-encoding stripped) and return without protocol transforms; do NOT settle the budget or notify terminal failure, so the CLI's retry/concurrent request can still reach upstream |
+| Probe-lock transient network exception, not final attempt | `forwardToUpstream()` throws (no status) and `attemptNumber < MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS` | Record a non-terminal (`terminal: false`, `statusCode 502`, `error = exception message`) result without settling or notifying terminal failure; let the loop fall through so the CLI's retry/concurrent request can still reach upstream and a later terminal result can overwrite it |
+| Probe-lock success within cap | a probe-lock upstream attempt returns `2xx/3xx` | `settleRouteProbeLockUpstreamAttempt()`, record the success first upstream result; later probe-lock requests for the token return `400 probe_lock_upstream_attempt_exhausted` |
+| Probe-lock terminal failure status | a probe-lock upstream attempt returns terminal `401/403/404` | Settle, record, and notify terminal failure immediately; no retry |
+| Probe-lock transient failures reach the cap | transient status on the `MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS`-th attempt | Escalate to terminal `upstream_temporarily_unavailable` ("retried N times") and notify terminal failure |
 | Probe-lock Gemini internal utility request | helper/default raw model differs from the locked selected raw model | Return non-retryable internal utility block before upstream forwarding and notify terminal failure |
 
 ### 5. Good/Base/Bad Cases
@@ -460,6 +584,20 @@ export function electronFetchRawStream(
 - Good: if `site-1` already saved API key priorities `key-b => 9`, then newly discovered `key-a` and `key-c` under the same site must be appended as synthetic priorities `10` and `11` in their current source order.
 - Good: a redirect card with `maxAttemptsPerRoutePath = 2` may try `site0/A` twice before moving to `site0/B`, but the same card with the default value tries each path once.
 - Good: if `site2/keyC` was the most recent successful enabled path in the last 30 minutes, the next matching request starts with `site2/keyC`, then continues with candidates after its original position before wrapping to earlier priority candidates.
+- Good: an upstream `503` with body
+  `{"error":"quota_exceeded","message":"upstream quota exhausted"}` renders `HTTP 503` in the status
+  badge and renders that upstream body in the failure-detail pill.
+- Good: a request made when `site-1` was display priority `2` shows `优先级 0` in route logs after
+  the user moves `site-1` to display priority `0` in the redirection card.
+- Good: if the log page is already open, saving a redirection card priority update in the route page
+  updates the existing log row's priority cell without waiting for a new request-log snapshot.
+- Good: after restart, the redirection UI highlights `site2/keyC` as `当前优先命中` from the
+  persisted route path state even though `route:get-request-logs` returns no first-hit log.
+- Good: after resetting a persisted successful path, an older in-memory first-hit log for the same
+  path is cleared by identity, so the UI does not immediately show `当前优先命中` again.
+- Good: while a CLI stream is still active, resetting `site2/keyC` writes an affinity suppression
+  marker for that path; if the stream later records another success, the next matching request still
+  ignores `site2/keyC` affinity and starts with the priority-0 site.
 - Good: if `site0/A` fails and is suspended during the first attempt, the second pre-planned `site0/A` attempt is skipped; route proxy either moves to the next enabled path or returns `all_route_paths_disabled`.
 - Good: a card-level "restore paths" action for `claude-opus-4-6` clears suspended path states whose `canonicalModel` is `claude-opus-4-6` without clearing success/failure counters.
 - Good: a redirect card with `successRateWindowMinutes = 12` resets its success-rate denominator after 12 minutes, not after the default 5-minute window.
@@ -475,6 +613,9 @@ export function electronFetchRawStream(
 - Good: if the first selected-model upstream attempt returns a successful response containing the
   expected probe answer, later CLI auxiliary/retry traffic that hits
   `probe_lock_upstream_attempt_exhausted` does not change the wrapper result to failure.
+- Good: if later CLI auxiliary/retry traffic hits `probe_lock_upstream_attempt_exhausted` before the
+  first selected-model upstream request finishes, the wrapper waits for that first result and reports
+  its real success or failure instead of the request-budget noise.
 - Good: a repeated request with the same probe-lock token within 5 minutes replays the cached
   terminal failure and does not create a second paid upstream request.
 - Base: a path fails once in an empty 5-minute window; success rate is `0%`, but the path remains
@@ -484,6 +625,22 @@ export function electronFetchRawStream(
 - Bad: the same site/account/key/model path appears multiple times because several sources produce it; the attempt planner must keep only one attempt for that path in the current request.
 - Bad: applying successful path affinity before `buildChannelAttemptPlan()` can resurrect duplicate attempts and make `maxAttemptsPerRoutePath = 1` ineffective.
 - Bad: a disabled path remains visible as a warning in the UI but must not be forwarded to until `disabledUntil` expires.
+- Bad: deriving `当前优先命中` only from in-memory route request logs, because those logs disappear on
+  restart while the actual successful-path affinity survives in `state/route-runtime.json`.
+- Bad: deleting only `routePathStates` on reset while leaving a matching renderer-local first-hit
+  log, because the UI will fall back to that stale log and appear unchanged.
+- Bad: deleting only the successful `routePathStates` entry without a suppression marker, because an
+  in-flight CLI stream can record success for the same path again and immediately restore the old
+  priority hit before the user's next request.
+- Bad: showing `RouteRule.priority` in the route log priority cell, because the visible log cell is
+  the matched site's priority-table order, not the route-rule matching order.
+- Bad: rendering raw persisted `priorityConfig.sitePriorities[siteId]` in route logs, because legacy
+  or sparse sort keys such as `1 / 2 / 3` make the log look one larger than the redirection priority
+  table's zero-based display rank.
+- Bad: rendering `HTTP 503` in both the status badge and the failure-detail pill, because the detail
+  slot is reserved for upstream response text or another non-duplicate failure explanation.
+- Bad: storing `RouteRequestLogItem.sitePriority` as a request-time snapshot, because the log page is
+  expected to follow the latest redirection priority table after the user reorders sites.
 - Bad: a stale display item has `sourceKeys` for only `site-1/acc-1/raw-a` while `site-1/acc-2/raw-a` now exists. The route resolver must include both accounts because the selected unit is `raw-a`.
 - Bad: a legacy override-backed card has overrides for `gpt-5-latest` and custom CLI `duckcoding`, while `registry.entries['mixed-route'].sources` or the persisted display item still contains only `gpt-5-latest`. The UI must show both original models and both source groups by unioning entry, display-item, and override sources, not by trusting the stale projection alone.
 - Bad: a Gemini CLI request for `gemini-2.5-flash-lite` has no model redirection entry, but a wildcard Gemini route causes `buildGenericChannels()` to forward it through the first active site.
@@ -518,7 +675,20 @@ export function electronFetchRawStream(
   allows a Gemini path-only raw model with no matching rule to fall back to the configured Gemini CLI
   model rule and rewrite the upstream Gemini path to the selected model.
 - `src/__tests__/unified-config-manager.test.ts`: assert `resetRoutePathStates({ canonicalModel })` deletes only matching path states and preserves `stats`.
+- `src/__tests__/unified-config-manager.test.ts`: assert concrete path reset filters delete only the matching `routeRuleId / siteId / accountId / apiKeyId / canonicalModel / resolvedModel / targetProtocol` state.
+- `src/__tests__/unified-config-manager.test.ts`: assert concrete priority-hit reset writes
+  `affinitySuppressedUntil` for the path, including the case where no existing path state matched.
+- `src/__tests__/route-stats-service.test.ts`: assert a later success outcome for the same path
+  preserves a still-active `affinitySuppressedUntil`.
+- `src/__tests__/route-proxy-service.test.ts`: assert successful path affinity ignores
+  reset-suppressed paths and leaves normal site priority order intact.
 - `src/__tests__/route-workbench-redesign.test.tsx`: assert the card-level recovery button calls the reset action for the current card's `canonicalName`.
+- `src/__tests__/route-workbench-redesign.test.tsx`: assert the detail action bar shows `重置优先命中` before `恢复路径`, calls the reset action with concrete path identity, and clears the local hit highlight after success.
+- `src/__tests__/route-workbench-redesign.test.tsx`: assert an empty request-log response still
+  highlights `当前优先命中` from a recent successful `routePathStates` entry and resets that concrete
+  persisted path identity.
+- `src/__tests__/route-workbench-redesign.test.tsx`: assert resetting a persisted priority-hit path
+  also clears a matching renderer-local first-hit log so the badge disappears after success.
 - `src/__tests__/anyrouter-rewriter.test.ts`: assert AnyRouter Claude Code request rewrites to `/v1/messages?beta=true` with Anthropic beta headers, Codex native Responses requests keep `/v1/responses` without hash injection, and Gemini native requests remain transparent.
 - `src/__tests__/route-proxy-service.test.ts`: assert explicit non-native target protocols invoke
   protocol adaptation and still preserve CLI-native downstream response handling.
@@ -529,15 +699,30 @@ export function electronFetchRawStream(
 - `src/__tests__/http-client.test.ts`: assert raw forwarding uses Electron net when requested and passes `proxyUrl` through to `electronFetchRaw()`.
 - `src/__tests__/http-client.test.ts`: assert raw streaming uses Electron net when requested and passes `proxyUrl`, `onResponse`, and chunk callbacks through to `electronFetchRawStream()`.
 - `src/__tests__/anyrouter-timeout.test.ts`: assert AnyRouter site detection accepts `Any Router`, `AnyRouter`, repeated spaces, hyphens, and underscores while rejecting prefixed/suffixed names.
-- `src/__tests__/route-proxy-service.test.ts`: assert transparent successful SSE route requests use `httpRawStreamRequest()`, write headers before chunks, strip `content-length`/`transfer-encoding`, and record analytics from the retained body.
+- `src/__tests__/route-proxy-service.test.ts`: assert transparent successful SSE route requests use `httpRawStreamRequest()`, write headers before chunks, strip `content-encoding`/`content-length`/`transfer-encoding`, and record analytics from the retained body.
+- `src/__tests__/route-proxy-service.test.ts`: assert malformed 2xx streaming responses are rejected before downstream headers/chunks and can fall back to the next route path.
+- `src/__tests__/route-proxy-service.test.ts`: assert a transparent Claude/Codex stream that reaches upstream EOF without a terminal SSE marker appends an SSE error and records `incomplete_streaming_response:missing_terminal_event`.
 - `src/__tests__/route-proxy-service.test.ts`: assert failed SSE upstream responses are buffered without downstream writes and fallback attempts can still stream successful chunks.
 - `src/__tests__/route-proxy-service.test.ts`: assert Claude Code requests routed through AnyRouter preserve tool schemas and request controls in the upstream body while streaming Anthropic SSE, including bounded initial timeout and the 10-minute active stream idle timeout floor.
 - `src/__tests__/anyrouter-rewriter.test.ts`: assert Claude Code AnyRouter rewrite preserves native tool/request fields and only injects/overrides the required AnyRouter fields.
 - `src/__tests__/route-stats-service.test.ts`: assert 5-minute success-rate tracking and 30-minute disable state.
 - `src/__tests__/route-stats-service.test.ts`: assert custom `successRateWindowMinutes`, `disableDurationMinutes`, and `minSuccessRate` change suspension behavior.
 - `src/__tests__/route-workbench-redesign.test.tsx`: assert redirection cards show path suspension, priority dialog shows balance/ratio/probe status, route-rule dialog saves `runtimeConfig`, and reset defaults calls rebuild with `{ resetDefaults: true }`.
+- `src/__tests__/route-workbench-redesign.test.tsx`: assert custom CLI local slot test results
+  appear after covered models in the redirection priority detail table when no newer
+  `routing.cliProbe.latest` entry exists.
 - `src/__tests__/logs-page.test.tsx`: assert pushed `route:request-log-appended` items are added to
   the route log list without another `route:get-request-logs` snapshot fetch.
+- `src/__tests__/logs-page.test.tsx`: assert the route log priority cell displays the same
+  zero-based rank as the redirection priority table, even when raw
+  `priorityConfig.sitePriorities[siteId]` values are sparse or one-based and the matched
+  `RouteRule.priority` differs.
+- `src/__tests__/logs-page.test.tsx`: assert existing log rows recompute site priority from the
+  latest route store config after a redirection priority change.
+- `src/__tests__/route-proxy-service.test.ts`: assert upstream HTTP failure logs store the
+  summarized upstream response body in `error` while keeping the code in `statusCode`.
+- `src/__tests__/logs-page.test.tsx`: assert route failure details show upstream body text and do
+  not repeat `HTTP xxx` code-only strings that are already visible in the status badge.
 - `src/__tests__/route-workbench-redesign.test.tsx`: assert override-backed display reconstruction preserves every grouped override source even when `registry.entries[canonicalName].sources` or the persisted display item is stale or partial, and assert editor save persists the display item before per-source overrides.
 - `src/__tests__/route-model-registry-service.test.ts`: assert the seeded `claude-opus-4-6` display item maps to the current raw opus source after default reset.
 - `src/__tests__/route-model-registry-service.test.ts`: assert an unknown requested model does not resolve to generic channels when model registry routing data exists, while an empty legacy registry can still use generic routing.
@@ -547,9 +732,24 @@ export function electronFetchRawStream(
   terminal failure and return `403 probe_lock_forbidden` without upstream I/O.
 - `src/__tests__/route-proxy-service.test.ts`: assert cached probe-lock terminal failures
   short-circuit later requests with the same route API key for the 5-minute TTL.
-- `src/__tests__/route-proxy-service.test.ts`: assert a probe-lock token can consume only one real
-  selected-model upstream attempt and later attempts return
-  `probe_lock_upstream_attempt_exhausted` without overwriting the first upstream result.
+- `src/__tests__/route-proxy-service.test.ts`: assert a transient probe-lock upstream failure
+  (`503`/`429`) below the attempt cap passes the raw upstream response back to the CLI, records a
+  non-terminal first upstream result, does not settle the budget or notify terminal failure, and a
+  subsequent attempt still reaches upstream.
+- `src/__tests__/route-proxy-service.test.ts`: assert a non-native `targetProtocol` probe-lock
+  transient failure is passed through raw without running the response transform and is not
+  escalated to a terminal failure by the transform catch.
+- `src/__tests__/route-proxy-service.test.ts`: assert a transient network exception (thrown, no
+  status) records a non-terminal `502` result without settling and is overwritten by a later
+  terminal success.
+- `src/__tests__/route-probe-lock.test.ts`: assert terminal-wins/transient-overwritable recording —
+  a transient result records as non-terminal and is overwritten by a later success; a terminal
+  result locks first-wins; a transient record does not resolve a waiter but a later terminal one
+  does.
+- `src/__tests__/route-proxy-service.test.ts`: assert a probe-lock success settles the budget and
+  later attempts return `probe_lock_upstream_attempt_exhausted`; assert repeated transient failures
+  escalate to terminal `upstream_temporarily_unavailable` at `MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS`, while
+  a terminal `401/403/404` settles immediately and replays from the cached terminal failure.
 - `src/__tests__/route-proxy-service.test.ts`: assert probe-lock Gemini internal utility requests
   are blocked before upstream forwarding and do not consume the selected-model attempt budget.
 - `src/__tests__/cli-wrapper-compat-service.test.ts`: assert the wrapper aborts/returns promptly
@@ -559,6 +759,10 @@ export function electronFetchRawStream(
 - `src/__tests__/cli-wrapper-compat-service.test.ts`: assert a successful first probe-lock upstream
   response remains a successful wrapper result even when later CLI traffic exceeds the probe-lock
   request budget.
+- `src/__tests__/cli-wrapper-compat-service.test.ts`: assert a delayed failed first probe-lock
+  upstream result remains the wrapper failure ahead of later request-budget JSON noise.
+- `src/__tests__/cli-wrapper-compat-service.test.ts`: assert Claude JSON `is_error` request-budget
+  output is summarized instead of being shown as the full payload.
 
 ### 7. Wrong vs Correct
 
@@ -930,6 +1134,14 @@ fetchCliProbeData(timeRange: '24h' | '7d', force?: boolean): Promise<void>;
 - Route probe execution must choose account API keys through shared `isApiKeyActive()` semantics and
   require a real `key` or `token` value. Unknown status is treated as usable for backward
   compatibility, while explicit inactive/disabled/revoked states are excluded.
+- Route probe execution must also expand valid custom CLI configs into synthetic
+  `siteId/accountId/apiKeyId` rows using the shared custom CLI route-id helpers. Custom CLI probe
+  locks must carry `upstreamBaseUrl` and `upstreamApiKey` so the local route proxy targets the
+  custom endpoint instead of a site-management account.
+- `getCliProbeView()` must include custom CLI configs after all normal site/account rows when they
+  have a usable base URL, API key, and at least one enabled CLI setting. Custom CLI rows use
+  `siteName: '自定义 CLI'` and project the config display name into `accountName`. The displayed
+  models come from that custom CLI setting's configured test models.
 - Route probe execution must build a probe-lock route API key with the same `probeRunId` that is
   stored on the produced samples. The proxy/wrapper failure path and persisted history must be
   correlatable by that run id.
@@ -983,6 +1195,8 @@ fetchCliProbeData(timeRange: '24h' | '7d', force?: boolean): Promise<void>;
 | Same model tested through different target protocols | sample keying | latest/history use distinct `probeKey` values because normalized `targetProtocol` is part of the key |
 | Route probe sees API key with `status_str: 'disabled'` | API-key selection | exclude the key from execution even if numeric `status` is absent |
 | Route probe sees legacy API key without status fields | API-key selection | treat availability as unknown/usable if a real key/token value exists |
+| Custom CLI config has usable base URL, API key, enabled CLI, and test models | view/probe task expansion | render a synthetic row after normal sites with `siteName: '自定义 CLI'`, `accountName: <config name>`, and create probe tasks with synthetic route ids |
+| Custom CLI probe task executes | probe-lock boundary | probe-lock payload includes `upstreamBaseUrl`, `upstreamApiKey`, synthetic `apiKeyId`, selected `targetProtocol`, and the same `probeRunId` as the persisted sample |
 | Probe samples are persisted | persistence boundary | update latest and history in one route-probes sidecar write; do not rewrite stable config |
 | Probe history exceeds retention window | persistence boundary | prune old history entries during `persistRouteCliProbeSamples()` |
 | New grouped history contains all successes | renderer history bar | one green bar for the run |
@@ -1014,6 +1228,9 @@ fetchCliProbeData(timeRange: '24h' | '7d', force?: boolean): Promise<void>;
   model write different `probeKey` values and keep separate latest diagnostics.
 - Good: one manual test with three model samples updates route probe history/latest with a single
   sidecar save, so route usability and site-management dialog slots refresh from the same cache.
+- Good: a custom CLI config named `DuckCoding` with Codex test model `duckcoding` appears below
+  normal site rows in route usability as site `自定义 CLI` / account `DuckCoding`, and immediate probe uses
+  `custom-cli-site-duckcoding / custom-cli-account-duckcoding / custom-cli-key-duckcoding`.
 - Base: only one model is tested in a run; the grouped bar still renders as a single-sample group.
 - Bad: grouping by timestamp buckets only. A slow sequential run can be split across buckets, while
   two separate runs close in time can be merged incorrectly.
@@ -1025,6 +1242,8 @@ fetchCliProbeData(timeRange: '24h' | '7d', force?: boolean): Promise<void>;
   ids, and site-scoped entries must use the site-scoped probe account id helper.
 - Bad: filtering active API keys with only `status === 1`; many current site payloads expose
   activity through `status_str`, `state`, or `enabled`.
+- Bad: building custom CLI probe tasks without the custom upstream URL/key in the probe-lock payload,
+  because the proxy would resolve a normal site-management channel or fail credential lookup.
 - Bad: appending history and updating latest through separate writes, because a crash between writes
   can make route usability and site-management display disagree.
 
@@ -1037,6 +1256,9 @@ fetchCliProbeData(timeRange: '24h' | '7d', force?: boolean): Promise<void>;
     status fields while preserving legacy unknown-status keys.
   - Assert target protocol participates in `probeKey` and same model/different protocol probes do
     not overwrite each other's latest result.
+  - Assert custom CLI configs appear as synthetic rows in `getCliProbeView()`.
+  - Assert `runCliProbeNow()` expands custom CLI configs into probe-lock tasks carrying custom
+    upstream URL/key and synthetic route ids.
   - Assert `persistCliProbeSamples()` updates latest/history through one
     `persistRouteCliProbeSamples()` call.
 - `src/__tests__/unified-config-manager.test.ts`

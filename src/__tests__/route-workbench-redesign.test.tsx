@@ -9,6 +9,7 @@ import {
 } from '../renderer/components/Route/Redirection/ModelRedirectionTab';
 import { CliUsabilityTab } from '../renderer/components/Route/Usability/CliUsabilityTab';
 import { RoutePage } from '../renderer/pages/RoutePage';
+import { useCustomCliConfigStore } from '../renderer/store/customCliConfigStore';
 import {
   buildProbeKey,
   buildRouteApiKeyPriorityKey,
@@ -21,6 +22,7 @@ import type {
   RouteModelSourceRef,
   RoutingConfig,
 } from '../shared/types/route-proxy';
+import type { CustomCliConfig } from '../shared/types/custom-cli-config';
 import type { UnifiedConfig } from '../shared/types/site';
 
 const mockUpsertMappingOverride = vi.fn();
@@ -199,6 +201,47 @@ function createSource(overrides: Partial<RouteModelSourceRef>): RouteModelSource
     availableApiKeys: [],
     firstSeenAt: 1,
     lastSeenAt: 1,
+    ...overrides,
+  };
+}
+
+function createCustomCliStoreConfig(overrides: Partial<CustomCliConfig> = {}): CustomCliConfig {
+  const testedAt = 1_800_000_001_000;
+
+  return {
+    id: 'duckcoding',
+    name: 'DuckCoding',
+    baseUrl: 'https://duck.example.com',
+    apiKey: 'sk-duck',
+    models: ['duckcoding'],
+    manualModels: [],
+    notes: '',
+    cliSettings: {
+      claudeCode: {
+        enabled: false,
+        model: null,
+        testModels: [],
+        testState: null,
+      },
+      codex: {
+        enabled: true,
+        model: 'duckcoding',
+        testModels: ['duckcoding'],
+        testState: {
+          status: true,
+          testedAt,
+          slots: [{ model: 'duckcoding', success: true, timestamp: testedAt }, null, null],
+        },
+      },
+      geminiCli: {
+        enabled: false,
+        model: null,
+        testModels: [],
+        testState: null,
+      },
+    },
+    createdAt: 1,
+    updatedAt: 1,
     ...overrides,
   };
 }
@@ -581,7 +624,9 @@ function createModelRegistryConfig(): RouteModelRegistryConfig {
   };
 }
 
-function createRoutingConfig(): RoutingConfig {
+function createRoutingConfig(
+  options: { includeSuccessfulPathState?: boolean } = {}
+): RoutingConfig {
   const claudeProbeKey = buildProbeKey('site-1', 'acc-1', 'claudeCode', 'claude-opus-4-6');
   const disabledPathState = {
     routeRuleId: 'rule-claude',
@@ -603,6 +648,34 @@ function createRoutingConfig(): RoutingConfig {
     lastFailureAt: 100,
     updatedAt: 100,
   };
+  const routePathStates: RoutingConfig['routePathStates'] = {
+    [buildRoutePathStateKey(disabledPathState)]: disabledPathState,
+  };
+
+  if (options.includeSuccessfulPathState) {
+    const now = Date.now();
+    const successfulPathState = {
+      routeRuleId: 'rule-claude',
+      siteId: 'site-1',
+      accountId: 'acc-1',
+      apiKeyId: 'backup-key-id',
+      cliType: 'claudeCode' as const,
+      targetProtocol: 'native' as const,
+      canonicalModel: 'claude-opus-4-6',
+      resolvedModel: 'claude-opus-4.6-20260201',
+      windowStartedAt: now - 120_000,
+      windowRequestCount: 2,
+      windowSuccessCount: 2,
+      successRate: 1,
+      lastOutcome: 'success' as const,
+      lastStatusCode: 200,
+      lastUsedAt: now - 30_000,
+      lastSuccessAt: now - 30_000,
+      updatedAt: now - 30_000,
+    };
+    routePathStates[buildRoutePathStateKey(successfulPathState)] = successfulPathState;
+  }
+
   return {
     modelRegistry: createModelRegistryConfig(),
     cliProbe: {
@@ -638,9 +711,7 @@ function createRoutingConfig(): RoutingConfig {
       codex: 'gpt-5.4',
       geminiCli: null,
     },
-    routePathStates: {
-      [buildRoutePathStateKey(disabledPathState)]: disabledPathState,
-    },
+    routePathStates,
     server: { host: '127.0.0.1', port: 3000, unifiedApiKey: 'route-key' },
   } as RoutingConfig;
 }
@@ -804,6 +875,13 @@ function createRegistryWithCreatedTeamAlphaKey(): RouteModelRegistryConfig {
 
 beforeEach(() => {
   mockConfig = createRoutingConfig();
+  useCustomCliConfigStore.setState({
+    configs: [],
+    activeConfigId: null,
+    loading: false,
+    saving: false,
+    fetchingModels: {},
+  });
 
   mockWriteConfig.mockReset().mockResolvedValue({
     success: true,
@@ -1220,6 +1298,59 @@ describe('route workbench redesign', () => {
     });
   });
 
+  it('resets the current priority hit route path with concrete path identity', async () => {
+    mockGetRequestLogs.mockResolvedValueOnce({
+      success: true,
+      data: [
+        createFirstHitRouteLog({
+          targetProtocol: 'native',
+        }),
+      ],
+    });
+
+    render(<ModelRedirectionTab />);
+
+    const detailPane = await findPriorityDetailPane();
+    const backupKeyRow = await waitFor(() => {
+      const row = within(detailPane)
+        .getByText('backup-key（Main / team-beta / ×1.50）')
+        .closest('[data-testid="priority-detail-api-key-row"]') as HTMLElement | null;
+      expect(row).not.toBeNull();
+      expect(row).toHaveAttribute('data-priority-hit', 'true');
+      return row!;
+    });
+
+    const detailActions = screen.getByTestId('redirect-detail-actions');
+    const actionLabels = within(detailActions)
+      .getAllByRole('button')
+      .map(button => button.textContent?.trim())
+      .filter(Boolean);
+    expect(actionLabels.slice(0, 2)).toEqual(['重置优先命中', '恢复路径']);
+
+    fireEvent.click(
+      within(detailActions).getByRole('button', {
+        name: '重置 claude-opus-4-6 当前优先命中路径',
+      })
+    );
+
+    await waitFor(() => {
+      expect(mockResetPathStates).toHaveBeenCalledWith({
+        routeRuleId: 'rule-claude',
+        canonicalModel: 'claude-opus-4-6',
+        siteId: 'site-1',
+        accountId: 'acc-1',
+        apiKeyId: 'backup-key-id',
+        resolvedModel: 'claude-opus-4.6-20260201',
+        targetProtocol: 'native',
+      });
+    });
+
+    await waitFor(() => {
+      expect(backupKeyRow).not.toHaveAttribute('data-priority-hit', 'true');
+      expect(within(backupKeyRow).queryByText('当前优先命中')).not.toBeInTheDocument();
+    });
+  });
+
   it('places sync and create actions above the redirect list without reset defaults', async () => {
     render(<ModelRedirectionTab />);
     await findPriorityDetailPane();
@@ -1536,6 +1667,106 @@ describe('route workbench redesign', () => {
     const candidateList = within(dialog).getByTestId('original-model-candidate-list');
     expect(within(candidateList).getByText('duckcoding')).toBeInTheDocument();
     expect(within(candidateList).getByText('1 站点 / 1 来源')).toBeInTheDocument();
+  });
+
+  it('shows custom CLI local test results after covered models in priority details', async () => {
+    const registry = createModelRegistryConfig();
+    const customCliSource = registry.sources.find(source => source.originalModel === 'duckcoding')!;
+
+    mockConfig = {
+      ...mockConfig,
+      modelRegistry: {
+        ...registry,
+        entries: {
+          ...registry.entries,
+          'duckcoding-route': {
+            canonicalName: 'duckcoding-route',
+            vendor: 'unknown',
+            aliases: [customCliSource.originalModel],
+            sources: [customCliSource],
+            hasOverride: true,
+            createdAt: 90,
+            updatedAt: 90,
+          },
+        },
+        displayItems: [
+          ...registry.displayItems,
+          {
+            id: 'manual:duckcoding-route',
+            vendor: 'unknown',
+            canonicalName: 'duckcoding-route',
+            sourceKeys: [customCliSource.sourceKey],
+            originalModelOrder: [customCliSource.originalModel],
+            priorityConfig: {
+              sitePriorities: {},
+              apiKeyPriorities: {},
+            },
+            mode: 'manual',
+            createdAt: 90,
+            updatedAt: 90,
+          },
+        ],
+      },
+      cliProbe: {
+        ...mockConfig.cliProbe,
+        latest: {},
+        history: {},
+      },
+    };
+    useCustomCliConfigStore.setState({
+      configs: [createCustomCliStoreConfig()],
+    });
+
+    render(<ModelRedirectionTab />);
+    await screen.findByText('duckcoding-route');
+    selectRedirectRow('duckcoding-route');
+
+    const detailPane = await findPriorityDetailPane();
+
+    await waitFor(() => {
+      expect(within(detailPane).getByText('duckcoding（测试通过）')).toBeInTheDocument();
+    });
+  });
+
+  it('omits failure codes after original model test results in priority details', async () => {
+    const claudeProbeKey = buildProbeKey('site-1', 'acc-1', 'claudeCode', 'claude-opus-4-6');
+    const latestProbe = mockConfig.cliProbe.latest[claudeProbeKey]!;
+
+    mockConfig = {
+      ...mockConfig,
+      cliProbe: {
+        ...mockConfig.cliProbe,
+        latest: {
+          ...mockConfig.cliProbe.latest,
+          [claudeProbeKey]: {
+            ...latestProbe,
+            healthy: false,
+            lastSample: {
+              ...latestProbe.lastSample,
+              success: false,
+              statusCode: 503,
+              error: 'status code 503: upstream unavailable',
+              testedAt: 101,
+            },
+            lastSuccessAt: undefined,
+            lastFailureAt: 101,
+          },
+        },
+      },
+    };
+
+    render(<ModelRedirectionTab />);
+
+    const detailPane = await findPriorityDetailPane();
+
+    await waitFor(() => {
+      expect(
+        within(detailPane).getAllByText('claude-opus-4.6-20260201（↑$0.001 ↓$0.002 / 测试失败）')
+          .length
+      ).toBeGreaterThan(0);
+    });
+    expect(within(detailPane).queryByText(/HTTP503|错误码\s*503/)).not.toBeInTheDocument();
+    expect(within(detailPane).queryByTitle(/HTTP503|错误码\s*503/)).not.toBeInTheDocument();
   });
 
   it('keeps all override-only original models when a stale entry has partial sources', () => {
@@ -1863,6 +2094,86 @@ describe('route workbench redesign', () => {
       .getByText('main-key（Main / team-beta / ×1.50）')
       .closest('[data-testid="priority-detail-api-key-row"]') as HTMLElement;
     expect(mainKeyRow).not.toHaveAttribute('data-priority-hit', 'true');
+  });
+
+  it('restores the priority hit api key from persisted route path state after restart', async () => {
+    mockConfig = createRoutingConfig({ includeSuccessfulPathState: true });
+    mockGetRequestLogs.mockResolvedValueOnce({ success: true, data: [] });
+
+    render(<ModelRedirectionTab />);
+
+    const detailPane = await findPriorityDetailPane();
+    const backupKeyRow = await waitFor(() => {
+      const row = within(detailPane)
+        .getByText('backup-key（Main / team-beta / ×1.50）')
+        .closest('[data-testid="priority-detail-api-key-row"]') as HTMLElement | null;
+      expect(row).not.toBeNull();
+      expect(row).toHaveAttribute('data-priority-hit', 'true');
+      return row!;
+    });
+
+    expect(backupKeyRow).toHaveAttribute('aria-current', 'true');
+    expect(within(backupKeyRow).getByText('当前优先命中')).toBeInTheDocument();
+
+    fireEvent.click(
+      within(screen.getByTestId('redirect-detail-actions')).getByRole('button', {
+        name: '重置 claude-opus-4-6 当前优先命中路径',
+      })
+    );
+
+    await waitFor(() => {
+      expect(mockResetPathStates).toHaveBeenCalledWith({
+        routeRuleId: 'rule-claude',
+        canonicalModel: 'claude-opus-4-6',
+        siteId: 'site-1',
+        accountId: 'acc-1',
+        apiKeyId: 'backup-key-id',
+        resolvedModel: 'claude-opus-4.6-20260201',
+        targetProtocol: 'native',
+      });
+    });
+  });
+
+  it('clears stale first-hit logs after resetting a persisted priority hit path', async () => {
+    mockConfig = createRoutingConfig({ includeSuccessfulPathState: true });
+    mockGetRequestLogs.mockResolvedValueOnce({
+      success: true,
+      data: [createFirstHitRouteLog({ targetProtocol: 'native', createdAt: Date.now() })],
+    });
+    mockResetPathStates.mockImplementationOnce(async () => {
+      mockConfig = {
+        ...mockConfig,
+        routePathStates: Object.fromEntries(
+          Object.entries(mockConfig.routePathStates).filter(
+            ([, state]) => state.lastOutcome !== 'success'
+          )
+        ),
+      };
+      return 1;
+    });
+
+    render(<ModelRedirectionTab />);
+
+    const detailPane = await findPriorityDetailPane();
+    const backupKeyRow = await waitFor(() => {
+      const row = within(detailPane)
+        .getByText('backup-key（Main / team-beta / ×1.50）')
+        .closest('[data-testid="priority-detail-api-key-row"]') as HTMLElement | null;
+      expect(row).not.toBeNull();
+      expect(row).toHaveAttribute('data-priority-hit', 'true');
+      return row!;
+    });
+
+    fireEvent.click(
+      within(screen.getByTestId('redirect-detail-actions')).getByRole('button', {
+        name: '重置 claude-opus-4-6 当前优先命中路径',
+      })
+    );
+
+    await waitFor(() => {
+      expect(backupKeyRow).not.toHaveAttribute('data-priority-hit', 'true');
+      expect(within(backupKeyRow).queryByText('当前优先命中')).not.toBeInTheDocument();
+    });
   });
 
   it('updates the highlighted api key from appended first-hit route logs in real time', async () => {

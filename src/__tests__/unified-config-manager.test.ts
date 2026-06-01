@@ -498,6 +498,115 @@ describe('UnifiedConfigManager', () => {
     });
   });
 
+  it('resets one route path state by concrete priority hit identity', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as any);
+    await manager.loadConfig();
+
+    const baseRouteKey = {
+      routeRuleId: 'rule-1',
+      siteId: 'site-1',
+      accountId: 'account-1',
+    };
+    const matchingPathState = {
+      ...baseRouteKey,
+      apiKeyId: 'key-1',
+      cliType: 'codex',
+      targetProtocol: 'native',
+      canonicalModel: 'gpt-5',
+      resolvedModel: 'gpt-5-mini',
+      windowStartedAt: 100,
+      windowRequestCount: 1,
+      windowSuccessCount: 1,
+      successRate: 1,
+      lastOutcome: 'success',
+      lastSuccessAt: 100,
+      updatedAt: 100,
+    } as any;
+    const otherApiKeyPathState = {
+      ...matchingPathState,
+      apiKeyId: 'key-2',
+    };
+    const otherResolvedModelPathState = {
+      ...matchingPathState,
+      apiKeyId: 'key-3',
+      resolvedModel: 'gpt-5',
+    };
+
+    await manager.upsertRoutePathState(matchingPathState);
+    await manager.upsertRoutePathState(otherApiKeyPathState);
+    await manager.upsertRoutePathState(otherResolvedModelPathState);
+
+    const cleared = await manager.resetRoutePathStates({
+      routeRuleId: 'rule-1',
+      canonicalModel: 'gpt-5',
+      siteId: 'site-1',
+      accountId: 'account-1',
+      apiKeyId: 'key-1',
+      resolvedModel: 'gpt-5-mini',
+      targetProtocol: 'native',
+    });
+    const routing = manager.getRoutingConfig();
+    const suppressedState = routing.routePathStates[buildRoutePathStateKey(matchingPathState)];
+
+    expect(cleared).toBe(1);
+    expect(suppressedState).toMatchObject({
+      routeRuleId: 'rule-1',
+      siteId: 'site-1',
+      accountId: 'account-1',
+      apiKeyId: 'key-1',
+      canonicalModel: 'gpt-5',
+      resolvedModel: 'gpt-5-mini',
+      targetProtocol: 'native',
+      affinitySuppressedAt: expect.any(Number),
+      affinitySuppressedUntil: expect.any(Number),
+    });
+    expect(suppressedState.lastOutcome).toBeUndefined();
+    expect(suppressedState.lastSuccessAt).toBeUndefined();
+    expect(suppressedState.affinitySuppressedUntil).toBeGreaterThan(
+      suppressedState.affinitySuppressedAt!
+    );
+    expect(routing.routePathStates[buildRoutePathStateKey(otherApiKeyPathState)]).toBeDefined();
+    expect(
+      routing.routePathStates[buildRoutePathStateKey(otherResolvedModelPathState)]
+    ).toBeDefined();
+  });
+
+  it('creates priority-hit reset suppression even when no existing path state matches', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as any);
+    await manager.loadConfig();
+
+    const routeKey = {
+      routeRuleId: 'rule-1',
+      siteId: 'site-1',
+      accountId: 'account-1',
+      apiKeyId: 'key-1',
+      cliType: 'codex' as const,
+      targetProtocol: 'native' as const,
+      canonicalModel: 'gpt-5',
+      resolvedModel: 'gpt-5-mini',
+    };
+
+    const cleared = await manager.resetRoutePathStates(routeKey);
+    const suppressedState =
+      manager.getRoutingConfig().routePathStates[buildRoutePathStateKey(routeKey)];
+
+    expect(cleared).toBe(0);
+    expect(suppressedState).toMatchObject({
+      routeRuleId: 'rule-1',
+      siteId: 'site-1',
+      accountId: 'account-1',
+      apiKeyId: 'key-1',
+      canonicalModel: 'gpt-5',
+      resolvedModel: 'gpt-5-mini',
+      targetProtocol: 'native',
+      affinitySuppressedAt: expect.any(Number),
+      affinitySuppressedUntil: expect.any(Number),
+    });
+    expect(suppressedState.lastOutcome).toBeUndefined();
+  });
+
   it('hydrates route state files into the compatibility routing view', async () => {
     const configPath = path.join(userDataDir, 'config.json');
     const rawConfig = createSampleConfig();

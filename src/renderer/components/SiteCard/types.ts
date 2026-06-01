@@ -61,6 +61,7 @@ export interface SiteCardProps {
   showTokens: Record<string, boolean>;
   selectedModels: Set<string>;
   deletingTokenKey: string | null;
+  refreshingTokenKey: string | null;
 
   // 自动刷新状态
   autoRefreshEnabled?: boolean;
@@ -101,6 +102,7 @@ export interface SiteCardProps {
   onCopySelectedModels: () => void;
   onClearSelectedModels: () => void;
   onOpenCreateTokenDialog: (site: SiteConfig) => void;
+  onRefreshToken: (site: SiteConfig, token: any, index: number) => void;
   onDeleteToken: (site: SiteConfig, token: any, index: number) => void;
 }
 

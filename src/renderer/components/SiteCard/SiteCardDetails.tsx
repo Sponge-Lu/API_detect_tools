@@ -23,6 +23,7 @@ import {
   EyeOff,
   Trash2,
   Loader2,
+  RefreshCw,
   ChevronDown,
   ChevronUp,
   Link,
@@ -51,6 +52,7 @@ interface SiteCardDetailsProps {
   showTokens: Record<string, boolean>;
   selectedModels: Set<string>;
   deletingTokenKey: string | null;
+  refreshingTokenKey: string | null;
   onToggleGroupFilter: (siteName: string, groupName: string | null) => void;
   onModelSearchChange: (siteName: string, search: string) => void;
   onToggleTokenVisibility: (key: string) => void;
@@ -59,6 +61,7 @@ interface SiteCardDetailsProps {
   onClearSelectedModels: () => void;
   onCopyToClipboard: (text: string, label: string) => void;
   onOpenCreateTokenDialog: (site: SiteConfig) => void;
+  onRefreshToken: (site: SiteConfig, token: any, index: number) => void;
   onDeleteToken: (site: SiteConfig, token: any, index: number) => void;
 }
 
@@ -111,6 +114,7 @@ export function SiteCardDetails({
   showTokens,
   selectedModels,
   deletingTokenKey,
+  refreshingTokenKey,
   onToggleGroupFilter,
   onModelSearchChange,
   onToggleTokenVisibility,
@@ -119,6 +123,7 @@ export function SiteCardDetails({
   onClearSelectedModels,
   onCopyToClipboard,
   onOpenCreateTokenDialog,
+  onRefreshToken,
   onDeleteToken,
 }: SiteCardDetailsProps) {
   // 筛选 API Keys
@@ -327,6 +332,7 @@ export function SiteCardDetails({
               const isVisible = showTokens[tokenKey] || false;
               const fullKey = addSkPrefix(token.key);
               const deletingKeyId = `${cardKey}_${token.id ?? token.key ?? idx}`;
+              const refreshingKeyId = `${cardKey}_${token.id ?? token.token_id ?? token.key ?? idx}`;
               const tokenActive = isApiKeyActive(token);
 
               return (
@@ -334,7 +340,7 @@ export function SiteCardDetails({
                   key={idx}
                   className="rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-1.5 py-0.5 transition-colors hover:border-[color-mix(in_srgb,var(--accent)_40%,var(--line-soft))]"
                 >
-                  <div className="grid grid-cols-[120px_50px_180px_90px_120px_minmax(280px,1fr)_60px] gap-x-3 items-center text-xs">
+                  <div className="grid grid-cols-[120px_50px_180px_90px_120px_minmax(280px,1fr)_82px] gap-x-3 items-center text-xs">
                     {/* 名称 */}
                     <div className="truncate font-semibold text-[var(--text-primary)]">
                       {token.name || `Key #${idx + 1}`}
@@ -406,8 +412,22 @@ export function SiteCardDetails({
                       <button
                         onClick={() => onCopyToClipboard(fullKey, `API Key: ${token.name}`)}
                         className={tokenActionButtonClass}
+                        title="复制 API Key"
                       >
                         <Copy className="h-3 w-3" />
+                      </button>
+                      <button
+                        onClick={() => onRefreshToken(site, token, idx)}
+                        disabled={refreshingTokenKey === refreshingKeyId}
+                        className="flex h-5 w-5 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-primary)] disabled:opacity-60"
+                        title="刷新该 API Key 状态"
+                        aria-label={`刷新 API Key: ${token.name || `Key #${idx + 1}`}`}
+                      >
+                        {refreshingTokenKey === refreshingKeyId ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3 w-3" />
+                        )}
                       </button>
                       <button
                         onClick={() => onDeleteToken(site, token, idx)}

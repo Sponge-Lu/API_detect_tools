@@ -12,6 +12,13 @@ import { isRouteMaskedApiKeyValue, resolveAccountApiKeyValue } from './route-cha
 import { resolveApiKeyId } from './route-model-registry-service';
 import { ensureRouteProxyReady } from './route-proxy-service';
 import { buildProbeLockRouteApiKey } from './route-probe-lock';
+import {
+  buildCustomCliRouteAccountId,
+  buildCustomCliRouteApiKeyId,
+  buildCustomCliRouteSiteId,
+  loadCustomCliConfigStorage,
+} from './custom-cli-config-service';
+import { isCustomCliRouteSiteId } from '../shared/utils/customCliRouteId';
 import type {
   RouteCliType,
   RouteCliProbeConfig,
@@ -20,6 +27,7 @@ import type {
   RouteCliProbeSiteView,
   RouteCliProbeCliView,
   RouteCliProbeModelView,
+  RoutingConfig,
 } from '../shared/types/route-proxy';
 import { buildProbeKey } from '../shared/types/route-proxy';
 import {
@@ -36,11 +44,17 @@ import {
   getCliTargetEndpoint,
   normalizeCliTargetProtocol,
   normalizeCliTestModels,
+  type CliTargetProtocol,
   type CliConfigItem,
 } from '../shared/types/cli-config';
+import {
+  normalizeCustomCliSettings,
+  type CustomCliConfig,
+} from '../shared/types/custom-cli-config';
 
 const log = Logger.scope('RouteCliProbe');
 const CLI_PROBE_TYPES: RouteCliType[] = ['claudeCode', 'codex', 'geminiCli'];
+const CUSTOM_CLI_PROBE_SITE_NAME = '自定义 CLI';
 
 let probeTimer: NodeJS.Timeout | null = null;
 let probeStartupTimer: NodeJS.Timeout | null = null;
@@ -337,6 +351,95 @@ export function selectProbeModelsForCli(params: {
   return buildConfiguredProbeModels(siteId, accountId, cliType, limit);
 }
 
+function resolveCustomCliDisplayName(config: CustomCliConfig): string {
+  return config.name?.trim() || config.baseUrl?.trim() || config.id;
+}
+
+function resolveCustomCliProbeIds(configId: string): {
+  siteId: string;
+  accountId: string;
+  apiKeyId: string;
+} {
+  return {
+    siteId: buildCustomCliRouteSiteId(configId),
+    accountId: buildCustomCliRouteAccountId(configId),
+    apiKeyId: buildCustomCliRouteApiKeyId(configId),
+  };
+}
+
+function selectCustomCliProbeModelsForCli(params: {
+  config: CustomCliConfig;
+  cliType: RouteCliType;
+  limit: number;
+}): Array<{ canonicalModel: string; rawModel: string }> {
+  const setting = normalizeCustomCliSettings(params.config.cliSettings?.[params.cliType]);
+  if (setting.enabled === false) {
+    return [];
+  }
+
+  const testModels = normalizeCliTestModels(setting, params.limit);
+  const seen = new Set<string>();
+  const results: Array<{ canonicalModel: string; rawModel: string }> = [];
+
+  for (const model of testModels) {
+    if (seen.has(model)) continue;
+    seen.add(model);
+    results.push({
+      canonicalModel: model,
+      rawModel: model,
+    });
+  }
+
+  return results;
+}
+
+function buildProbeModelView(params: {
+  routing: RoutingConfig;
+  cutoff: number;
+  siteId: string;
+  accountId: string;
+  cliType: RouteCliType;
+  canonicalModel: string;
+  rawModel: string;
+  targetProtocol: CliTargetProtocol;
+}): RouteCliProbeModelView {
+  const targetEndpoint = getCliTargetEndpoint(
+    params.cliType,
+    params.targetProtocol,
+    params.rawModel || params.canonicalModel
+  );
+  const probeKey = buildProbeKey(
+    params.siteId,
+    params.accountId,
+    params.cliType,
+    params.canonicalModel,
+    params.targetProtocol
+  );
+  const latest = params.routing.cliProbe.latest[probeKey];
+  const history = summarizeProbeHistory(
+    (params.routing.cliProbe.history[probeKey] || []).filter(
+      sample => sample.testedAt >= params.cutoff
+    )
+  );
+
+  return {
+    canonicalModel: params.canonicalModel,
+    rawModel: latest?.rawModel || params.rawModel,
+    targetProtocol: params.targetProtocol,
+    targetEndpoint: latest?.targetEndpoint || targetEndpoint,
+    success: latest ? latest.lastSample.success : null,
+    testedAt: latest?.lastSample.testedAt,
+    statusCode: latest?.lastSample.statusCode,
+    totalLatencyMs: latest?.lastSample.totalLatencyMs,
+    error: latest?.lastSample.error,
+    source: latest?.lastSample.source,
+    claudeDetail: latest?.lastSample.claudeDetail,
+    codexDetail: latest?.lastSample.codexDetail,
+    geminiDetail: latest?.lastSample.geminiDetail,
+    history,
+  };
+}
+
 /**
  * 执行单个探测样本
  */
@@ -347,9 +450,17 @@ async function runSingleProbe(
   canonicalModel: string,
   rawModel: string,
   _timeoutMs: number,
-  probeRunId: string
+  probeRunId: string,
+  options: {
+    apiKeyId?: string;
+    targetProtocol?: CliTargetProtocol;
+    upstreamBaseUrl?: string;
+    upstreamApiKey?: string;
+  } = {}
 ): Promise<RouteCliProbeSample> {
-  const targetProtocol = resolveProbeTargetProtocol(siteId, accountId, cliType);
+  const targetProtocol = normalizeCliTargetProtocol(
+    options.targetProtocol ?? resolveProbeTargetProtocol(siteId, accountId, cliType)
+  );
   const targetEndpoint = getCliTargetEndpoint(cliType, targetProtocol, rawModel || canonicalModel);
   const probeKey = buildProbeKey(siteId, accountId, cliType, canonicalModel, targetProtocol);
   const now = Date.now();
@@ -377,10 +488,13 @@ async function runSingleProbe(
 
   const site = config.sites.find(s => s.id === siteId);
   const account = config.accounts.find(a => a.id === accountId);
-  const routeCredential =
-    site && account ? await resolveProbeApiKeyForExecution(site, account, cliType) : null;
+  const routeCredential = options.apiKeyId
+    ? { apiKeyId: options.apiKeyId }
+    : site && account
+      ? await resolveProbeApiKeyForExecution(site, account, cliType)
+      : null;
 
-  if (!routeCredential || !site || !account) {
+  if (!routeCredential || (!options.upstreamBaseUrl && (!site || !account))) {
     return {
       sampleId: generateSampleId(),
       probeRunId,
@@ -400,7 +514,7 @@ async function runSingleProbe(
   }
 
   // AnyRouter 站点使用 120 秒超时，其他站点使用配置的超时时间
-  const timeoutMs = isAnyRouterSite(site.name) ? 120000 : _timeoutMs;
+  const timeoutMs = site && isAnyRouterSite(site.name) ? 120000 : _timeoutMs;
   const startTime = Date.now();
 
   try {
@@ -414,6 +528,8 @@ async function runSingleProbe(
       canonicalModel,
       rawModel,
       targetProtocol,
+      upstreamBaseUrl: options.upstreamBaseUrl,
+      upstreamApiKey: options.upstreamApiKey,
     });
 
     let success = false;
@@ -546,9 +662,13 @@ export async function runCliProbeNow(params?: {
   const tasks: Array<{
     siteId: string;
     accountId: string;
+    apiKeyId?: string;
     cliType: RouteCliType;
     canonicalModel: string;
     rawModel: string;
+    targetProtocol?: CliTargetProtocol;
+    upstreamBaseUrl?: string;
+    upstreamApiKey?: string;
   }> = [];
 
   for (const site of config.sites) {
@@ -584,6 +704,39 @@ export async function runCliProbeNow(params?: {
     }
   }
 
+  const customCliStorage = await loadCustomCliConfigStorage();
+  for (const customConfig of customCliStorage.configs) {
+    const baseUrl = customConfig.baseUrl?.trim();
+    const apiKey = customConfig.apiKey?.trim();
+    if (!baseUrl || !apiKey || isRouteMaskedApiKeyValue(apiKey)) continue;
+
+    const ids = resolveCustomCliProbeIds(customConfig.id);
+    if (params?.siteId && ids.siteId !== params.siteId) continue;
+    if (params?.accountId && ids.accountId !== params.accountId) continue;
+
+    for (const cliType of cliTypes) {
+      const setting = normalizeCustomCliSettings(customConfig.cliSettings?.[cliType]);
+      if (setting.enabled === false) continue;
+
+      const models = selectCustomCliProbeModelsForCli({
+        config: customConfig,
+        cliType,
+        limit: Math.min(probeConfig.modelsPerCli, CLI_TEST_MODEL_SLOT_COUNT),
+      });
+
+      for (const model of models) {
+        tasks.push({
+          ...ids,
+          cliType,
+          ...model,
+          targetProtocol: normalizeCliTargetProtocol(setting.targetProtocol),
+          upstreamBaseUrl: baseUrl,
+          upstreamApiKey: apiKey,
+        });
+      }
+    }
+  }
+
   log.info(`CLI probe started: ${tasks.length} tasks`);
 
   // 并发控制
@@ -601,7 +754,13 @@ export async function runCliProbeNow(params?: {
           t.canonicalModel,
           t.rawModel,
           probeConfig.requestTimeoutMs,
-          probeRunId
+          probeRunId,
+          {
+            apiKeyId: t.apiKeyId,
+            targetProtocol: t.targetProtocol,
+            upstreamBaseUrl: t.upstreamBaseUrl,
+            upstreamApiKey: t.upstreamApiKey,
+          }
         )
       )
     );
@@ -670,7 +829,9 @@ export function getCliProbeHistory(params: {
   return results.sort((a, b) => a.testedAt - b.testedAt);
 }
 
-export function getCliProbeView(params: { window: '24h' | '7d' | '30d' }): RouteCliProbeSiteView[] {
+export async function getCliProbeView(params: {
+  window: '24h' | '7d' | '30d';
+}): Promise<RouteCliProbeSiteView[]> {
   const config = unifiedConfigManager.exportConfigSync();
   if (!config) return [];
 
@@ -703,42 +864,18 @@ export function getCliProbeView(params: { window: '24h' | '7d' | '30d' }): Route
           limit: CLI_TEST_MODEL_SLOT_COUNT,
         });
 
-        const modelViews: RouteCliProbeModelView[] = desiredModels.map(model => {
-          const targetProtocol = resolveProbeTargetProtocol(site.id, account.id, cliType);
-          const targetEndpoint = getCliTargetEndpoint(
+        const modelViews: RouteCliProbeModelView[] = desiredModels.map(model =>
+          buildProbeModelView({
+            routing,
+            cutoff,
+            siteId: site.id,
+            accountId: account.id,
             cliType,
-            targetProtocol,
-            model.rawModel || model.canonicalModel
-          );
-          const probeKey = buildProbeKey(
-            site.id,
-            account.id,
-            cliType,
-            model.canonicalModel,
-            targetProtocol
-          );
-          const latest = routing.cliProbe.latest[probeKey];
-          const history = summarizeProbeHistory(
-            (routing.cliProbe.history[probeKey] || []).filter(sample => sample.testedAt >= cutoff)
-          );
-
-          return {
             canonicalModel: model.canonicalModel,
-            rawModel: latest?.rawModel || model.rawModel,
-            targetProtocol,
-            targetEndpoint: latest?.targetEndpoint || targetEndpoint,
-            success: latest ? latest.lastSample.success : null,
-            testedAt: latest?.lastSample.testedAt,
-            statusCode: latest?.lastSample.statusCode,
-            totalLatencyMs: latest?.lastSample.totalLatencyMs,
-            error: latest?.lastSample.error,
-            source: latest?.lastSample.source,
-            claudeDetail: latest?.lastSample.claudeDetail,
-            codexDetail: latest?.lastSample.codexDetail,
-            geminiDetail: latest?.lastSample.geminiDetail,
-            history,
-          };
-        });
+            rawModel: model.rawModel,
+            targetProtocol: resolveProbeTargetProtocol(site.id, account.id, cliType),
+          })
+        );
 
         clis[cliType] = {
           cliType,
@@ -765,7 +902,72 @@ export function getCliProbeView(params: { window: '24h' | '7d' | '30d' }): Route
     }
   }
 
+  const customCliStorage = await loadCustomCliConfigStorage();
+  for (const customConfig of customCliStorage.configs) {
+    const baseUrl = customConfig.baseUrl?.trim();
+    const apiKey = customConfig.apiKey?.trim();
+    if (!baseUrl || !apiKey || isRouteMaskedApiKeyValue(apiKey)) continue;
+
+    const ids = resolveCustomCliProbeIds(customConfig.id);
+    const displayName = resolveCustomCliDisplayName(customConfig);
+    const clis = {} as Record<RouteCliType, RouteCliProbeCliView>;
+    let hasEnabledCli = false;
+
+    for (const cliType of CLI_PROBE_TYPES) {
+      const setting = normalizeCustomCliSettings(customConfig.cliSettings?.[cliType]);
+      const cliEnabled = setting.enabled !== false;
+      if (cliEnabled) {
+        hasEnabledCli = true;
+      }
+      const targetProtocol = normalizeCliTargetProtocol(setting.targetProtocol);
+      const desiredModels = selectCustomCliProbeModelsForCli({
+        config: customConfig,
+        cliType,
+        limit: CLI_TEST_MODEL_SLOT_COUNT,
+      });
+
+      clis[cliType] = {
+        cliType,
+        enabled: cliEnabled,
+        accountId: ids.accountId,
+        accountName: displayName,
+        isFallbackAccount: false,
+        models: desiredModels.map(model =>
+          buildProbeModelView({
+            routing,
+            cutoff,
+            siteId: ids.siteId,
+            accountId: ids.accountId,
+            cliType,
+            canonicalModel: model.canonicalModel,
+            rawModel: model.rawModel,
+            targetProtocol,
+          })
+        ),
+      };
+    }
+
+    if (!hasEnabledCli) {
+      continue;
+    }
+
+    siteViews.push({
+      siteId: ids.siteId,
+      siteName: CUSTOM_CLI_PROBE_SITE_NAME,
+      accountId: ids.accountId,
+      accountName: displayName,
+      isFallbackAccount: false,
+      clis,
+    });
+  }
+
   return siteViews.sort((left, right) => {
+    const leftCustom = isCustomCliRouteSiteId(left.siteId);
+    const rightCustom = isCustomCliRouteSiteId(right.siteId);
+    if (leftCustom !== rightCustom) {
+      return leftCustom ? 1 : -1;
+    }
+
     const siteCompare = left.siteName.localeCompare(right.siteName);
     if (siteCompare !== 0) {
       return siteCompare;

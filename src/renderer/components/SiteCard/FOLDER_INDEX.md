@@ -29,7 +29,7 @@
 |------|------|--------|
 | **SiteCard.tsx** | 站点卡片主组件（保持主行信息栅格 + 右侧操作区的稳定结构） | `SiteCard` 组件 |
 | **SiteCardHeader.tsx** | 卡片头部（沿用多列信息栅格，在主行内依次展示站点类型、LDC 比例和 CLI 可用性） | `SiteCardHeader` 组件 |
-| **SiteCardDetails.tsx** | 卡片详情（URL、Access Token、用户分组、API Keys、模型列表），沿用统一分隔线与表面层级；API Key 启用状态统一通过 shared `isApiKeyActive()` 兼容 `status/status_str/state/enabled` 字段 | `SiteCardDetails` 组件 |
+| **SiteCardDetails.tsx** | 卡片详情（URL、Access Token、用户分组、API Keys、模型列表），沿用统一分隔线与表面层级；API Key 启用状态统一通过 shared `isApiKeyActive()` 兼容 `status/status_str/state/enabled` 字段，并提供单个 API Key 状态刷新按钮 | `SiteCardDetails` 组件 |
 | **SiteCardActions.tsx** | 卡片操作按钮（高频动作直出，低频动作进入更多菜单；更多菜单会根据视口空间自动上翻/限位，统一保留“删除账户”入口） | `SiteCardActions` 组件 |
 | **types.ts** | 类型定义（isDetecting 布尔值支持并发刷新，区分打开站点与签到页回调） | `SiteCardProps`, `SiteCardActionsProps` 等 |
 
@@ -41,5 +41,5 @@
 
 ---
 
-**版本**: 3.0.3
-**更新日期**: 2026-05-25
+**版本**: 3.0.5
+**更新日期**: 2026-06-01

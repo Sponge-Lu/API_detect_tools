@@ -46,6 +46,7 @@ import {
   buildRouteApiKeyPriorityKey,
   buildRoutePathStateKey,
   normalizeRouteRuntimeConfig,
+  ROUTE_SUCCESSFUL_PATH_AFFINITY_MS,
 } from '../shared/types/route-proxy';
 import { isAnyRouterSite } from '../shared/types/site';
 import { isCliTargetProtocolNativeEquivalent } from '../shared/types/cli-config';
@@ -62,7 +63,9 @@ import {
 } from './cli-protocol-adapter';
 import {
   buildRouteProxyBaseUrl,
-  consumeRouteProbeLockUpstreamAttempt,
+  beginRouteProbeLockUpstreamAttempt,
+  settleRouteProbeLockUpstreamAttempt,
+  MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS,
   getRouteProbeLockTerminalFailure,
   isLoopbackAddress,
   notifyRouteProbeLockRequest,
@@ -93,13 +96,14 @@ const PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_ERROR_CODE = 'probe_lock_upstream_at
 const PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_STATUS_CODE = 400;
 const ANYROUTER_REQUEST_TIMEOUT_MS = 120 * 1000;
 const ACTIVE_STREAM_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
-export const ROUTE_SUCCESSFUL_PATH_AFFINITY_MS = 30 * 60 * 1000;
 const CLAUDE_COUNT_TOKENS_PATH = '/v1/messages/count_tokens';
 const CLAUDE_MESSAGES_COUNT_TOKENS_ENDPOINT = 'claude_messages_count_tokens';
 const LOCAL_COUNT_TOKENS_IMAGE_ESTIMATE = 2000;
 const LOCAL_COUNT_TOKENS_DOCUMENT_ESTIMATE = 2000;
 const LOCAL_COUNT_TOKENS_MESSAGE_OVERHEAD = 4;
 const LOCAL_COUNT_TOKENS_CONSERVATIVE_MULTIPLIER = 1.15;
+const INITIAL_STREAM_VALIDATION_MAX_BYTES = 4096;
+const STREAM_TERMINAL_SCAN_MAX_CHARS = 8192;
 
 function nextRequestId(cliType: RouteCliType): string {
   requestSequence += 1;
@@ -282,6 +286,7 @@ export function applySuccessfulRoutePathAffinity<T extends RoutePathAffinityCand
     if (
       state?.lastOutcome !== 'success' ||
       lastSuccessAt <= affinityCutoff ||
+      (state.affinitySuppressedUntil ?? 0) > now ||
       (state.disabledUntil ?? 0) > now
     ) {
       return;
@@ -420,6 +425,7 @@ function buildStreamingResponseHeaders(
   const outgoing: http.OutgoingHttpHeaders = {};
   const blocked = new Set([
     'connection',
+    'content-encoding',
     'content-length',
     'keep-alive',
     'proxy-authenticate',
@@ -436,6 +442,382 @@ function buildStreamingResponseHeaders(
   }
 
   return outgoing;
+}
+
+type InitialEventStreamValidation =
+  | { status: 'accepted' }
+  | { status: 'pending' }
+  | { status: 'rejected'; reason: string };
+
+type StreamingTerminalProtocol = 'anthropic' | 'openaiResponses' | 'none';
+type CompletedStreamValidation = { ok: true } | { ok: false; reason: string; message: string };
+
+interface ParsedSseBlock {
+  event?: string;
+  data: string;
+}
+
+function validateInitialEventStreamChunk(buffer: Buffer): InitialEventStreamValidation {
+  if (!buffer.length) {
+    return { status: 'pending' };
+  }
+
+  const text = buffer.toString('utf-8');
+  const trimmed = text.replace(/^\uFEFF/, '').trimStart();
+  if (!trimmed) {
+    return buffer.length >= INITIAL_STREAM_VALIDATION_MAX_BYTES
+      ? { status: 'rejected', reason: 'empty_initial_stream' }
+      : { status: 'pending' };
+  }
+
+  const firstBytes = trimmed.slice(0, 256).toLowerCase();
+  if (firstBytes.startsWith('<!doctype') || firstBytes.startsWith('<html') || trimmed[0] === '<') {
+    return { status: 'rejected', reason: 'html_response' };
+  }
+  if (trimmed[0] === '{' || trimmed[0] === '[') {
+    return { status: 'rejected', reason: 'json_response' };
+  }
+
+  const hasCompleteLine = /\r?\n/.test(trimmed);
+  const firstLine = trimmed.split(/\r?\n/, 1)[0];
+  if (/^(?::|event\s*:|data\s*:|id\s*:|retry\s*:)/.test(firstLine.trimStart())) {
+    return { status: 'accepted' };
+  }
+
+  if (hasCompleteLine) {
+    return { status: 'rejected', reason: 'non_sse_response' };
+  }
+
+  return buffer.length >= INITIAL_STREAM_VALIDATION_MAX_BYTES
+    ? { status: 'rejected', reason: 'non_sse_response' }
+    : { status: 'pending' };
+}
+
+function getStreamingTerminalProtocol(cliType: RouteCliType): StreamingTerminalProtocol {
+  if (cliType === 'claudeCode') return 'anthropic';
+  if (cliType === 'codex') return 'openaiResponses';
+  return 'none';
+}
+
+function appendStreamingTerminalScanText(current: string, chunk: Buffer): string {
+  const next = `${current}${chunk.toString('utf-8')}`;
+  return next.length > STREAM_TERMINAL_SCAN_MAX_CHARS
+    ? next.slice(-STREAM_TERMINAL_SCAN_MAX_CHARS)
+    : next;
+}
+
+function hasStreamingTerminalMarker(protocol: StreamingTerminalProtocol, text: string): boolean {
+  if (protocol === 'none') return true;
+
+  if (protocol === 'anthropic') {
+    return /event:\s*message_stop/.test(text) || /"type"\s*:\s*"message_stop"/.test(text);
+  }
+
+  return (
+    /data:\s*\[DONE\]/.test(text) ||
+    /event:\s*response\.completed/.test(text) ||
+    /"type"\s*:\s*"response\.completed"/.test(text)
+  );
+}
+
+function hasAnthropicMessageStop(body: Buffer): boolean {
+  for (const block of parseSseBlocks(body.toString('utf-8'))) {
+    const payload = parseSseJsonRecord(block.data);
+    if (readString(payload?.type) === 'message_stop') {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function buildStreamingErrorChunk(cliType: RouteCliType, message: string): Buffer {
+  const payload =
+    cliType === 'claudeCode'
+      ? { type: 'error', error: { type: 'api_error', message } }
+      : { type: 'error', error: { type: 'server_error', message } };
+
+  return Buffer.from(`event: error\ndata: ${JSON.stringify(payload)}\n\n`, 'utf-8');
+}
+
+function buildIncompleteStreamingErrorChunk(cliType: RouteCliType): Buffer {
+  return buildStreamingErrorChunk(cliType, 'upstream stream ended before terminal SSE event');
+}
+
+function buildMalformedStreamingErrorChunk(cliType: RouteCliType, message: string): Buffer {
+  return buildStreamingErrorChunk(cliType, message);
+}
+
+function parseSseBlocks(text: string): ParsedSseBlock[] {
+  const normalized = text.replace(/\r\n/g, '\n');
+  const blocks: ParsedSseBlock[] = [];
+
+  for (const block of normalized.split(/\n\n+/)) {
+    const lines = block.split('\n');
+    const dataLines: string[] = [];
+    let event: string | undefined;
+
+    for (const line of lines) {
+      if (line.startsWith('event:')) {
+        event = line.slice('event:'.length).trim();
+      } else if (line.startsWith('data:')) {
+        dataLines.push(line.slice('data:'.length).trimStart());
+      }
+    }
+
+    if (dataLines.length > 0) {
+      blocks.push({ event, data: dataLines.join('\n').trim() });
+    }
+  }
+
+  return blocks;
+}
+
+function parseSseJsonRecord(data: string): Record<string, unknown> | undefined {
+  try {
+    return asRecord(JSON.parse(data));
+  } catch {
+    return undefined;
+  }
+}
+
+function readString(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function readNumericIndex(value: unknown): number | undefined {
+  const index = Number(value);
+  return Number.isInteger(index) && index >= 0 ? index : undefined;
+}
+
+function buildCompletedStreamFailure(reason: string, message: string): CompletedStreamValidation {
+  return { ok: false, reason, message };
+}
+
+function isForeignOpenAiLikeAnthropicPayload(
+  payload: Record<string, unknown>,
+  eventType: string
+): boolean {
+  if (eventType.startsWith('response.') || eventType.startsWith('chat.completion')) {
+    return true;
+  }
+
+  if (Array.isArray(payload.choices) || Array.isArray(payload.tool_calls)) {
+    return true;
+  }
+
+  const objectType = readString(payload.object);
+  return objectType.startsWith('chat.completion') || objectType.startsWith('response.');
+}
+
+function hasDsmlToolMarkup(text: string): boolean {
+  return /<\/?\s*\|\s*DSML\s*\|\s*(?:parameter|invoke|tool_calls)\s*>/i.test(text);
+}
+
+function validateCompletedAnthropicStream(body: Buffer): CompletedStreamValidation {
+  const raw = body.toString('utf-8');
+  if (hasDsmlToolMarkup(raw)) {
+    return buildCompletedStreamFailure(
+      'foreign_dsml_tool_markup',
+      'upstream emitted non-Anthropic tool markup in Claude Code stream'
+    );
+  }
+
+  const openBlocks = new Map<
+    number,
+    { type: string; inputJson: string; textLength: number; thinkingLength: number }
+  >();
+  let sawMessageStart = false;
+  let sawMessageStop = false;
+  let stopReason = '';
+  let completedTextLength = 0;
+  let completedToolBlocks = 0;
+  let completedThinkingBlocks = 0;
+
+  for (const block of parseSseBlocks(raw)) {
+    if (!block.data || block.data === '[DONE]') {
+      continue;
+    }
+
+    const payload = parseSseJsonRecord(block.data);
+    if (!payload) {
+      return buildCompletedStreamFailure(
+        'malformed_sse_json',
+        'upstream emitted malformed Anthropic SSE JSON'
+      );
+    }
+
+    const payloadType = readString(payload.type);
+    const eventType = payloadType || block.event || '';
+
+    if (isForeignOpenAiLikeAnthropicPayload(payload, eventType)) {
+      return buildCompletedStreamFailure(
+        'foreign_openai_event',
+        'upstream emitted OpenAI-style events in Claude Code stream'
+      );
+    }
+
+    if (eventType === 'message_start') {
+      sawMessageStart = true;
+      continue;
+    }
+
+    if (eventType === 'content_block_start') {
+      const index = readNumericIndex(payload.index);
+      const contentBlock = asRecord(payload.content_block);
+      const blockType = readString(contentBlock?.type);
+      if (index === undefined || !blockType || openBlocks.has(index)) {
+        return buildCompletedStreamFailure(
+          'invalid_content_block_start',
+          'upstream emitted invalid Anthropic content block start'
+        );
+      }
+
+      openBlocks.set(index, {
+        type: blockType,
+        inputJson: '',
+        textLength: readString(contentBlock?.text).length,
+        thinkingLength: readString(contentBlock?.thinking).length,
+      });
+      continue;
+    }
+
+    if (eventType === 'content_block_delta') {
+      const index = readNumericIndex(payload.index);
+      const state = index === undefined ? undefined : openBlocks.get(index);
+      const delta = asRecord(payload.delta);
+      if (!state || !delta) {
+        return buildCompletedStreamFailure(
+          'unexpected_content_block_delta',
+          'upstream emitted Anthropic content delta without an open block'
+        );
+      }
+
+      const deltaType = readString(delta.type);
+      if (state.type === 'text') {
+        state.textLength += readString(delta.text).length;
+      } else if (state.type === 'tool_use' && deltaType === 'input_json_delta') {
+        state.inputJson += readString(delta.partial_json);
+      } else if (state.type === 'thinking') {
+        state.thinkingLength += readString(delta.thinking).length;
+      }
+      continue;
+    }
+
+    if (eventType === 'content_block_stop') {
+      const index = readNumericIndex(payload.index);
+      if (index === undefined) {
+        return buildCompletedStreamFailure(
+          'unexpected_content_block_stop',
+          'upstream emitted Anthropic content block stop without an open block'
+        );
+      }
+
+      const state = openBlocks.get(index);
+      if (!state) {
+        return buildCompletedStreamFailure(
+          'unexpected_content_block_stop',
+          'upstream emitted Anthropic content block stop without an open block'
+        );
+      }
+
+      if (state.type === 'tool_use') {
+        const inputJson = state.inputJson.trim();
+        if (inputJson) {
+          try {
+            if (!asRecord(JSON.parse(inputJson))) {
+              return buildCompletedStreamFailure(
+                'malformed_tool_input_json',
+                'upstream emitted a Claude tool_use with non-object input JSON'
+              );
+            }
+          } catch {
+            return buildCompletedStreamFailure(
+              'malformed_tool_input_json',
+              'upstream emitted an incomplete Claude tool_use input JSON stream'
+            );
+          }
+        }
+        completedToolBlocks += 1;
+      } else if (state.type === 'thinking') {
+        completedThinkingBlocks += 1;
+      } else {
+        completedTextLength += state.textLength;
+      }
+
+      openBlocks.delete(index);
+      continue;
+    }
+
+    if (eventType === 'message_delta') {
+      const delta = asRecord(payload.delta);
+      const nextStopReason = readString(delta?.stop_reason);
+      if (nextStopReason) {
+        stopReason = nextStopReason;
+      }
+      continue;
+    }
+
+    if (eventType === 'message_stop') {
+      sawMessageStop = true;
+    }
+  }
+
+  if (!sawMessageStart) {
+    return buildCompletedStreamFailure(
+      'missing_message_start',
+      'upstream ended Claude Code stream without message_start'
+    );
+  }
+
+  if (!sawMessageStop) {
+    return buildCompletedStreamFailure(
+      'missing_message_stop',
+      'upstream ended Claude Code stream without message_stop'
+    );
+  }
+
+  if (openBlocks.size > 0) {
+    return buildCompletedStreamFailure(
+      'unclosed_content_block',
+      'upstream ended Claude Code stream with an unclosed content block'
+    );
+  }
+
+  if (stopReason === 'tool_use' && completedToolBlocks === 0) {
+    return buildCompletedStreamFailure(
+      'tool_use_stop_without_tool_block',
+      'upstream ended Claude Code stream with tool_use stop_reason but no tool_use block'
+    );
+  }
+
+  if (completedToolBlocks > 0 && stopReason && stopReason !== 'tool_use') {
+    return buildCompletedStreamFailure(
+      'tool_block_without_tool_use_stop',
+      'upstream emitted Claude tool_use blocks without tool_use stop_reason'
+    );
+  }
+
+  if (completedTextLength === 0 && completedToolBlocks === 0) {
+    const reason = completedThinkingBlocks > 0 ? 'thinking_only_message' : 'empty_message';
+    return buildCompletedStreamFailure(
+      reason,
+      'upstream ended Claude Code stream without assistant text or tool_use content'
+    );
+  }
+
+  return { ok: true };
+}
+
+function validateCompletedStreamingBody(
+  protocol: StreamingTerminalProtocol,
+  body: Buffer
+): CompletedStreamValidation {
+  if (protocol === 'anthropic') {
+    return validateCompletedAnthropicStream(body);
+  }
+
+  return { ok: true };
 }
 
 function writeResponseChunk(res: http.ServerResponse, chunk: Buffer): Promise<void> {
@@ -474,6 +856,22 @@ function writeResponseChunk(res: http.ServerResponse, chunk: Buffer): Promise<vo
 }
 
 export function summarizeUpstreamFailureBodyForLog(body: Buffer, maxChars: number = 1200): string {
+  const text = readUpstreamFailureBodyText(body);
+  if (!text) {
+    return '';
+  }
+
+  const summary =
+    summarizeJsonFailureText(text) || summarizeHtmlFailureText(text) || normalizeLogLine(text);
+
+  return truncateUpstreamFailureSummary(summary, maxChars);
+}
+
+function summarizeUpstreamFailureBodyRaw(body: Buffer, maxChars: number = 1200): string {
+  return truncateUpstreamFailureSummary(readUpstreamFailureBodyText(body), maxChars);
+}
+
+function readUpstreamFailureBodyText(body: Buffer): string {
   if (!body.length) {
     return '';
   }
@@ -483,15 +881,129 @@ export function summarizeUpstreamFailureBodyForLog(body: Buffer, maxChars: numbe
     return '';
   }
 
-  if (text.length <= maxChars) {
-    return text;
+  return text;
+}
+
+function truncateUpstreamFailureSummary(value: string, maxChars: number): string {
+  if (!value || value.length <= maxChars) {
+    return value;
   }
 
-  return `${text.slice(0, maxChars)} ...(truncated ${text.length - maxChars} chars)`;
+  return `${value.slice(0, maxChars)} ...(truncated ${value.length - maxChars} chars)`;
+}
+
+function summarizeJsonFailureText(text: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return '';
+  }
+
+  return summarizeJsonFailureValue(parsed);
+}
+
+function summarizeJsonFailureValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return normalizeLogLine(value);
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return '';
+  }
+
+  const error = record.error;
+  const nestedError = asRecord(error);
+  const source = nestedError || record;
+  const stringError = typeof error === 'string' && error.trim() ? error.trim() : '';
+  const message = firstStringValue(source, ['message', 'detail', 'reason', 'description']);
+  const type =
+    firstStringValue(source, ['type', 'code', 'error_code', 'errorCode']) ||
+    (nestedError ? '' : stringError);
+  const param = firstStringValue(source, ['param', 'parameter']);
+
+  if (message) {
+    const normalizedMessage = summarizeNestedJsonMessage(message);
+    const lowerType = type.toLowerCase();
+    const lowerMessage = normalizedMessage.toLowerCase();
+    const prefix =
+      type && lowerMessage !== lowerType && !lowerMessage.startsWith(`${lowerType}:`)
+        ? `${type}: `
+        : '';
+    const suffix = param ? ` (${param})` : '';
+    return normalizeLogLine(`${prefix}${normalizedMessage}${suffix}`);
+  }
+
+  if (stringError) {
+    const topLevelMessage = firstStringValue(record, ['message', 'detail', 'reason']);
+    const suffix = topLevelMessage ? `: ${summarizeNestedJsonMessage(topLevelMessage)}` : '';
+    return normalizeLogLine(`${stringError}${suffix}`);
+  }
+
+  if (type) {
+    return normalizeLogLine(type);
+  }
+
+  return '';
+}
+
+function summarizeNestedJsonMessage(message: string): string {
+  const normalized = normalizeLogLine(message);
+  if (!normalized.startsWith('{') && !normalized.startsWith('[')) {
+    return normalized;
+  }
+
+  return summarizeJsonFailureText(normalized) || normalized;
+}
+
+function firstStringValue(record: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return '';
+}
+
+function summarizeHtmlFailureText(text: string): string {
+  if (!/<[a-z][\s\S]*>/i.test(text)) {
+    return '';
+  }
+
+  const title = decodeBasicHtmlEntities(text.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '');
+  const body = decodeBasicHtmlEntities(
+    text
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+  );
+
+  return normalizeLogLine(title || body);
+}
+
+function decodeBasicHtmlEntities(value: string): string {
+  return value
+    .replace(/&#x([0-9a-f]+);/gi, (_match, code: string) =>
+      String.fromCodePoint(Number.parseInt(code, 16))
+    )
+    .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 10)))
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&amp;/gi, '&');
+}
+
+function normalizeLogLine(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
 }
 
 function summarizeProbeLockUpstreamBody(body: Buffer): string | undefined {
-  return summarizeUpstreamFailureBodyForLog(body, 2000) || undefined;
+  return summarizeUpstreamFailureBodyRaw(body, 2000) || undefined;
 }
 
 function buildRouteProxyErrorText(error: string, message: string): string {
@@ -506,17 +1018,21 @@ function recordProbeLockFirstUpstreamResult(params: {
   statusCode?: number;
   body?: Buffer;
   error?: string;
+  terminal?: boolean;
 }): void {
-  recordRouteProbeLockFirstUpstreamResult({
-    routeApiKey: params.routeApiKey,
-    cliType: params.cliType,
-    success: params.success,
-    finishedAt: Date.now(),
-    lock: params.lock,
-    ...(params.statusCode !== undefined ? { statusCode: params.statusCode } : {}),
-    ...(params.body ? { responseSummary: summarizeProbeLockUpstreamBody(params.body) } : {}),
-    ...(params.error ? { error: params.error } : {}),
-  });
+  recordRouteProbeLockFirstUpstreamResult(
+    {
+      routeApiKey: params.routeApiKey,
+      cliType: params.cliType,
+      success: params.success,
+      finishedAt: Date.now(),
+      lock: params.lock,
+      ...(params.statusCode !== undefined ? { statusCode: params.statusCode } : {}),
+      ...(params.body ? { responseSummary: summarizeProbeLockUpstreamBody(params.body) } : {}),
+      ...(params.error ? { error: params.error } : {}),
+    },
+    { terminal: params.terminal ?? true }
+  );
 }
 
 function notifyProbeLockTerminalFailure(params: {
@@ -553,8 +1069,17 @@ function writeProbeLockTerminalFailureResponse(
 function buildProbeLockUpstreamAttemptExhaustedErrorText(): string {
   return buildRouteProxyErrorText(
     PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_ERROR_CODE,
-    'CLI probe-lock allows only one upstream request per model test'
+    'CLI probe-lock upstream attempt budget exhausted'
   );
+}
+
+// 瞬时(可重试)上游状态：网关抖动/限流/超时，不应被当作 CLI 终结失败。
+const TRANSIENT_UPSTREAM_STATUS_CODES = new Set([
+  408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527, 529, 530,
+]);
+
+export function isTransientUpstreamStatus(statusCode?: number): boolean {
+  return typeof statusCode === 'number' && TRANSIENT_UPSTREAM_STATUS_CODES.has(statusCode);
 }
 
 export function buildUpstreamHeaders(
@@ -1155,6 +1680,13 @@ async function forwardToUpstream(
   let streamed = false;
   let streamingStatusCode: number | undefined;
   let streamingHeaders: http.OutgoingHttpHeaders | undefined;
+  let streamingRejectedBeforeBody: string | undefined;
+  let initialStreamingBuffer = Buffer.alloc(0);
+  let pendingStreamingChunks: Buffer[] = [];
+  const receivedStreamingChunks: Buffer[] = [];
+  const streamingTerminalProtocol = getStreamingTerminalProtocol(cliType);
+  let streamingTerminalScanText = '';
+  let streamingTerminalSeen = streamingTerminalProtocol === 'none';
   const response =
     options.streamResponse && options.streamResponseBody
       ? await httpRawStreamRequest(target.url, {
@@ -1162,23 +1694,131 @@ async function forwardToUpstream(
           onResponse: upstreamResponse => {
             const statusCode = upstreamResponse.status || 500;
             if (classifyRouteStatusCode(statusCode) !== 'success') return false;
-            if (!isEventStreamResponse(upstreamResponse.headers)) return false;
+            if (!isEventStreamResponse(upstreamResponse.headers)) {
+              streamingRejectedBeforeBody = 'unexpected_content_type';
+              return false;
+            }
 
             streamingStatusCode = statusCode;
             streamingHeaders = buildStreamingResponseHeaders(upstreamResponse.headers);
             return true;
           },
-          onChunk: chunk => {
+          onChunk: async chunk => {
             if (!streamingStatusCode || !streamingHeaders) return;
+            receivedStreamingChunks.push(chunk);
+
+            if (streamingTerminalProtocol === 'anthropic' && !streamingTerminalSeen) {
+              streamingTerminalScanText = appendStreamingTerminalScanText(
+                streamingTerminalScanText,
+                chunk
+              );
+              if (
+                hasStreamingTerminalMarker(streamingTerminalProtocol, streamingTerminalScanText)
+              ) {
+                const receivedBody = Buffer.concat(receivedStreamingChunks);
+                if (hasAnthropicMessageStop(receivedBody)) {
+                  streamingTerminalSeen = true;
+                  const completedValidation = validateCompletedStreamingBody(
+                    streamingTerminalProtocol,
+                    receivedBody
+                  );
+                  if (!completedValidation.ok) {
+                    if (streamed) {
+                      await writeResponseChunk(
+                        options.streamResponse!,
+                        buildMalformedStreamingErrorChunk(cliType, completedValidation.message)
+                      );
+                    }
+                    throw new Error(`malformed_streaming_response:${completedValidation.reason}`);
+                  }
+                }
+              }
+            } else if (!streamingTerminalSeen) {
+              streamingTerminalScanText = appendStreamingTerminalScanText(
+                streamingTerminalScanText,
+                chunk
+              );
+              streamingTerminalSeen = hasStreamingTerminalMarker(
+                streamingTerminalProtocol,
+                streamingTerminalScanText
+              );
+            }
+
             if (!streamed) {
+              pendingStreamingChunks.push(chunk);
+              initialStreamingBuffer = Buffer.concat([
+                initialStreamingBuffer,
+                chunk.subarray(
+                  0,
+                  Math.max(
+                    0,
+                    INITIAL_STREAM_VALIDATION_MAX_BYTES + 1 - initialStreamingBuffer.length
+                  )
+                ),
+              ]);
+              const validation = validateInitialEventStreamChunk(initialStreamingBuffer);
+              if (validation.status === 'rejected') {
+                throw new Error(`invalid_streaming_response:${validation.reason}`);
+              }
+              if (validation.status === 'pending') {
+                return;
+              }
+
               streamed = true;
               options.streamResponse!.writeHead(streamingStatusCode, streamingHeaders);
+              const chunksToWrite = pendingStreamingChunks;
+              pendingStreamingChunks = [];
+              for (const pendingChunk of chunksToWrite) {
+                await writeResponseChunk(options.streamResponse!, pendingChunk);
+              }
+              return;
             }
             return writeResponseChunk(options.streamResponse!, chunk);
           },
           streamIdleTimeout: options.streamIdleTimeoutMs,
         })
       : await httpRawRequest(target.url, requestConfig);
+
+  if (
+    options.streamResponse &&
+    options.streamResponseBody &&
+    classifyRouteStatusCode(response.status || 500) === 'success' &&
+    !streamed
+  ) {
+    if (streamingRejectedBeforeBody) {
+      throw new Error(`invalid_streaming_response:${streamingRejectedBeforeBody}`);
+    }
+
+    const validation = validateInitialEventStreamChunk(response.body);
+    if (validation.status !== 'accepted') {
+      const reason =
+        validation.status === 'rejected'
+          ? validation.reason
+          : response.body.length
+            ? 'malformed_sse_response'
+            : 'empty_streaming_response';
+      throw new Error(`invalid_streaming_response:${reason}`);
+    }
+  }
+
+  if (options.streamResponse && options.streamResponseBody && streamed && !streamingTerminalSeen) {
+    await writeResponseChunk(options.streamResponse, buildIncompleteStreamingErrorChunk(cliType));
+    throw new Error('incomplete_streaming_response:missing_terminal_event');
+  }
+
+  if (options.streamResponse && options.streamResponseBody && streamed) {
+    const completedValidation = validateCompletedStreamingBody(
+      streamingTerminalProtocol,
+      response.body
+    );
+    if (!completedValidation.ok) {
+      await writeResponseChunk(
+        options.streamResponse,
+        buildMalformedStreamingErrorChunk(cliType, completedValidation.message)
+      );
+      throw new Error(`malformed_streaming_response:${completedValidation.reason}`);
+    }
+  }
 
   return {
     statusCode: response.status || 500,
@@ -1791,22 +2431,29 @@ export async function handleRequest(
     const streamResponseBody =
       requestWantsStreaming && canStreamResponseAdapters(responseAdapter, protocolResponseAdapter);
 
+    // probe-lock 上游预算：按"终结结果"计，瞬时错误在上限内不消耗预算。
+    let probeLockIsFinalAttempt = false;
+
     try {
-      if (probeLock && !consumeRouteProbeLockUpstreamAttempt(token)) {
-        const terminalError = buildProbeLockUpstreamAttemptExhaustedErrorText();
-        log.warn('Probe-lock upstream request blocked after per-model attempt budget exhausted', {
-          cliType,
-          siteId: probeLock.siteId,
-          accountId: probeLock.accountId,
-          apiKeyId: probeLock.apiKeyId,
-          rawModel: probeLock.rawModel,
-        });
-        res.writeHead(PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_STATUS_CODE, {
-          'Content-Type': 'application/json',
-          'X-Route-Proxy-Error': PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_ERROR_CODE,
-        });
-        res.end(terminalError);
-        return;
+      if (probeLock) {
+        const attempt = beginRouteProbeLockUpstreamAttempt(token);
+        if (!attempt.allowed) {
+          const terminalError = buildProbeLockUpstreamAttemptExhaustedErrorText();
+          log.warn('Probe-lock upstream request blocked after per-model attempt budget exhausted', {
+            cliType,
+            siteId: probeLock.siteId,
+            accountId: probeLock.accountId,
+            apiKeyId: probeLock.apiKeyId,
+            rawModel: probeLock.rawModel,
+          });
+          res.writeHead(PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_STATUS_CODE, {
+            'Content-Type': 'application/json',
+            'X-Route-Proxy-Error': PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_ERROR_CODE,
+          });
+          res.end(terminalError);
+          return;
+        }
+        probeLockIsFinalAttempt = attempt.isFinalAttempt;
       }
 
       const result = await forwardToUpstream(
@@ -1829,6 +2476,8 @@ export async function handleRequest(
         }
       );
       const outcome = classifyRouteStatusCode(result.statusCode);
+      const upstreamFailureBodySnippet =
+        outcome === 'failure' ? summarizeUpstreamFailureBodyForLog(result.body) : '';
 
       if (
         requestIsClaudeCountTokens &&
@@ -1876,6 +2525,7 @@ export async function handleRequest(
           {
             statusCode: result.statusCode,
             latencyMs: result.latencyMs,
+            ...(upstreamFailureBodySnippet ? { error: upstreamFailureBodySnippet } : {}),
           },
           routeRuntimeConfig
         );
@@ -1904,19 +2554,21 @@ export async function handleRequest(
           cacheCreationTokens: result.usage?.cacheCreationTokens,
           cacheReadTokens: result.usage?.cacheReadTokens,
           cachedTokens: result.usage?.cachedTokens,
+          ...(upstreamFailureBodySnippet ? { error: upstreamFailureBodySnippet } : {}),
         });
       }
 
       // 失败且还有重试机会：不写 res，尝试下一个通道
       if (outcome === 'failure') {
-        const bodySnippet = summarizeUpstreamFailureBodyForLog(result.body) || '<empty>';
+        const bodySnippet = upstreamFailureBodySnippet || '<empty>';
+        const rawBodySnippet = summarizeUpstreamFailureBodyRaw(result.body) || '<empty>';
         const terminalError =
-          bodySnippet === '<empty>'
+          rawBodySnippet === '<empty>'
             ? buildRouteProxyErrorText(
                 'bad_response_status_code',
                 `bad response status code ${result.statusCode}`
               )
-            : bodySnippet;
+            : rawBodySnippet;
         log.warn('Upstream channel returned failure response', {
           statusCode: result.statusCode,
           siteId: activeChannel.siteId,
@@ -1928,6 +2580,47 @@ export async function handleRequest(
         });
 
         if (probeLock) {
+          const transient = isTransientUpstreamStatus(result.statusCode);
+          if (transient && !probeLockIsFinalAttempt) {
+            // 瞬时上游错误且未达尝试上限：不消耗预算、不通知终结失败。
+            // 记录一个可被后续成功/终结失败覆盖的非终结结果（保留失败原因），
+            // 并把原始上游响应直接透传回 CLI（剥离 hop-by-hop/content-length/transfer-encoding），
+            // 不走 AnyRouter/协议转换，避免转换异常把瞬时错误劫持成终结失败。
+            log.debug('Probe-lock transient upstream failure passed through without settling', {
+              statusCode: result.statusCode,
+              cliType,
+              siteId: probeLock.siteId,
+              accountId: probeLock.accountId,
+              apiKeyId: probeLock.apiKeyId,
+              rawModel: probeLock.rawModel,
+            });
+            recordProbeLockFirstUpstreamResult({
+              routeApiKey: token,
+              cliType,
+              lock: probeLock,
+              statusCode: result.statusCode,
+              success: false,
+              body: result.body,
+              error: terminalError,
+              terminal: false,
+            });
+            if (!res.headersSent) {
+              res.writeHead(result.statusCode, buildStreamingResponseHeaders(result.headers));
+            }
+            if (!res.writableEnded) {
+              res.end(result.body);
+            }
+            return;
+          }
+
+          const finalError =
+            transient && probeLockIsFinalAttempt
+              ? buildRouteProxyErrorText(
+                  'upstream_temporarily_unavailable',
+                  `upstream temporarily unavailable, retried ${MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS} times (last status ${result.statusCode})`
+                )
+              : terminalError;
+          settleRouteProbeLockUpstreamAttempt(token);
           recordProbeLockFirstUpstreamResult({
             routeApiKey: token,
             cliType,
@@ -1935,13 +2628,13 @@ export async function handleRequest(
             statusCode: result.statusCode,
             success: false,
             body: result.body,
-            error: terminalError,
+            error: finalError,
           });
           notifyProbeLockTerminalFailure({
             routeApiKey: token,
             cliType,
             statusCode: result.statusCode,
-            terminalError,
+            terminalError: finalError,
             lock: probeLock,
           });
         }
@@ -1959,12 +2652,14 @@ export async function handleRequest(
 
       if (result.streamed) {
         if (probeLock) {
+          settleRouteProbeLockUpstreamAttempt(token);
           recordProbeLockFirstUpstreamResult({
             routeApiKey: token,
             cliType,
             lock: probeLock,
             statusCode: result.statusCode,
-            success: outcome === 'success',
+            // forwardToUpstream 只在成功 SSE 时置 streamed，故此处恒为成功。
+            success: true,
             body: result.body,
           });
         }
@@ -1997,6 +2692,7 @@ export async function handleRequest(
             : 'unknown_error';
         if (probeLock) {
           const terminalError = buildRouteProxyErrorText('adapter_response-adapt', reason);
+          settleRouteProbeLockUpstreamAttempt(token);
           recordProbeLockFirstUpstreamResult({
             routeApiKey: token,
             cliType,
@@ -2039,13 +2735,14 @@ export async function handleRequest(
       }
 
       // 成功/neutral/最后一次失败：写 res
-      if (probeLock) {
+      if (probeLock && outcome === 'success') {
+        settleRouteProbeLockUpstreamAttempt(token);
         recordProbeLockFirstUpstreamResult({
           routeApiKey: token,
           cliType,
           lock: probeLock,
           statusCode: result.statusCode,
-          success: outcome === 'success',
+          success: true,
           body: transformed.body,
         });
       }
@@ -2055,21 +2752,50 @@ export async function handleRequest(
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'unknown_error';
       if (probeLock) {
-        recordProbeLockFirstUpstreamResult({
-          routeApiKey: token,
-          cliType,
-          lock: probeLock,
-          statusCode: 502,
-          success: false,
-          error: errorMessage,
-        });
-        notifyProbeLockTerminalFailure({
-          routeApiKey: token,
-          cliType,
-          statusCode: 502,
-          terminalError: buildRouteProxyErrorText('all_channels_failed', errorMessage),
-          lock: probeLock,
-        });
+        // 网络异常无 statusCode，按瞬时错误处理：未达上限则不 settle/不通知，
+        // 透传错误给 CLI,让后续请求继续尝试上游。
+        if (probeLockIsFinalAttempt) {
+          const finalError = buildRouteProxyErrorText(
+            'upstream_temporarily_unavailable',
+            `upstream temporarily unavailable, retried ${MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS} times (${errorMessage})`
+          );
+          settleRouteProbeLockUpstreamAttempt(token);
+          recordProbeLockFirstUpstreamResult({
+            routeApiKey: token,
+            cliType,
+            lock: probeLock,
+            statusCode: 502,
+            success: false,
+            error: finalError,
+          });
+          notifyProbeLockTerminalFailure({
+            routeApiKey: token,
+            cliType,
+            statusCode: 502,
+            terminalError: finalError,
+            lock: probeLock,
+          });
+        } else {
+          // 瞬时网络异常且未达上限：不消耗预算、不通知终结失败，但记录一个可被
+          // 后续成功/终结失败覆盖的非终结结果，避免单发不重试的 CLI 丢失失败原因。
+          log.debug('Probe-lock transient network failure passed through without settling', {
+            cliType,
+            siteId: probeLock.siteId,
+            accountId: probeLock.accountId,
+            apiKeyId: probeLock.apiKeyId,
+            rawModel: probeLock.rawModel,
+            error: errorMessage,
+          });
+          recordProbeLockFirstUpstreamResult({
+            routeApiKey: token,
+            cliType,
+            lock: probeLock,
+            statusCode: 502,
+            success: false,
+            error: errorMessage,
+            terminal: false,
+          });
+        }
       }
       if (!bypassRoutePathState) {
         recordOutcome(activeChannel, 'failure', {});

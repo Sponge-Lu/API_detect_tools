@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DataOverviewPage } from '../renderer/pages/DataOverviewPage';
 import type { Config } from '../renderer/App';
+import type { RouteAnalyticsBucket } from '../shared/types/route-proxy';
 import { buildSiteOverviewMetrics } from '../renderer/utils/siteOverview';
 
 const now = Date.now();
@@ -837,6 +838,79 @@ describe('DataOverviewPage', () => {
     expect(window.electronAPI.route?.getAnalyticsDistribution).toHaveBeenLastCalledWith({
       window: '24h',
     });
+  });
+
+  it('keeps route trend x-axis labels in chronological order across month boundaries', async () => {
+    mockUIState.overviewSubtab = 'route';
+
+    const addDays = (timestamp: number, days: number) => {
+      const date = new Date(timestamp);
+      date.setDate(date.getDate() + days);
+      return date.getTime();
+    };
+    const formatDayLabel = (timestamp: number) =>
+      new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(
+        new Date(timestamp)
+      );
+    const buildBucket = (
+      bucketKey: string,
+      bucketStart: number,
+      requestCount: number
+    ): RouteAnalyticsBucket => ({
+      bucketKey,
+      bucketStart,
+      bucketSize: 'hour',
+      cliType: 'claudeCode',
+      canonicalModel: 'claude-opus-4-6',
+      siteId: 'site-1',
+      accountId: 'acct-1',
+      requestCount,
+      successCount: requestCount,
+      failureCount: 0,
+      neutralCount: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      statusCodeHistogram: { '200': requestCount },
+      latencyHistogram: { '0-1000ms': requestCount },
+      firstByteHistogram: { '0-200ms': requestCount },
+      updatedAt: bucketStart,
+    });
+
+    const newestDay = new Date(2030, 5, 1).getTime();
+    const oldestDay = addDays(newestDay, -7);
+    const expectedLabels = Array.from({ length: 8 }, (_, index) =>
+      formatDayLabel(addDays(oldestDay, index))
+    );
+
+    window.electronAPI.route = {
+      ...window.electronAPI.route,
+      getAnalyticsDistribution: vi.fn().mockResolvedValue({
+        success: true,
+        data: {
+          buckets: [
+            buildBucket('newest-day', newestDay, 2),
+            buildBucket('oldest-boundary-day', oldestDay, 1),
+          ],
+          statusCodeHistogram: { '200': 3 },
+          latencyHistogram: { '0-1000ms': 3 },
+          firstByteHistogram: { '0-200ms': 3 },
+        },
+      }),
+    } as NonNullable<typeof window.electronAPI.route>;
+
+    render(<DataOverviewPage />);
+
+    const trendCard = await screen.findByLabelText('运行趋势图');
+
+    await waitFor(() => {
+      const axisLabels = Array.from(
+        document.querySelectorAll('[data-trend-axis-label="true"]')
+      ).map(label => label.textContent);
+
+      expect(axisLabels).toEqual(expectedLabels);
+    });
+    expect(trendCard).toHaveAttribute('data-trend-point-count', '8');
   });
 
   it('links heatmap model selection to Sankey one way and clears it from card chrome', async () => {

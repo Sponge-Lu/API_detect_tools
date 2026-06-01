@@ -6,7 +6,7 @@
 
   **API Hub Management Tools** 是一个用于管理、检测和运维 API 中转站的桌面客户端。
 
-  当前版本：`v3.0.4`
+  当前版本：`v3.0.5`
 
   基于 [Electron](https://www.electronjs.org/) + [React](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/) 构建。
 
@@ -32,14 +32,14 @@
 
 ---
 
-## v3.0.4 版本重点
+## v3.0.5 版本重点
 
-- **v3 配置模型**：统一为 `sites + accounts + routing` 数据结构，旧配置加载时自动迁移。
-- **工作台导航调整**：一级导航收敛为 `数据总览 / 站点管理 / 自定义 CLI / 站点检测 / LDC 积分 / 本地路由 / 日志 / 设置`。
-- **路由代理增强**：新增模型重定向、CLI 可用性探测、请求日志、通道健康、probe-lock 诊断链路和统计分析。
-- **路由数据页优化**：运行趋势图在 `24h` 与 `7d` 视窗内始终补齐完整 X 轴，缺失桶保持零值且前置空桶只显示时间标签。
-- **CLI 兼容性增强**：真实 Claude Code、Codex、Gemini CLI wrapper 测试与 route probe latest/history 统一，测试使用临时目录隔离本机配置。
-- **站点适配扩展**：新增 AnyRouter/CHY API 请求改写能力，提升中转站兼容性。
+- **路由流式响应加固**：透明 SSE 转发会校验首包、终止事件和 Claude Code 消息结构， malformed / incomplete 响应会记录明确错误并避免静默成功。
+- **probe-lock 探测容错**：瞬时上游错误可在预算内重试，首个终结上游结果优先于 CLI 后续噪声，Claude JSON 错误会摘要化显示。
+- **自定义 CLI 纳入探测**：CLI 可用性页支持自定义 CLI 虚拟配置行，立即探测会携带自定义上游 URL/API Key。
+- **路由优先命中可重置**：模型重定向详情支持重置当前优先命中路径，重启后也能从运行态恢复命中状态。
+- **API Key 兼容增强**：NewAPI 脱敏 key 优先通过批量接口补全明文，站点卡片支持单个 API Key 状态刷新。
+- **日志和统计展示优化**：路由日志展示上游响应摘要、站点优先级排名和更准确的失败细节。
 
 ---
 

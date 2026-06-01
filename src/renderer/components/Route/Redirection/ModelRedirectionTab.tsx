@@ -21,6 +21,7 @@ import {
   X,
 } from 'lucide-react';
 import { useShallow } from 'zustand/shallow';
+import { useCustomCliConfigStore } from '../../../store/customCliConfigStore';
 import { useRouteStore } from '../../../store/routeStore';
 import { toast } from '../../../store/toastStore';
 import { resolveModelPricing } from '../../../utils/modelPricing';
@@ -37,6 +38,7 @@ import {
   DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME,
   inferRouteModelVendor,
   normalizeRouteRuntimeConfig,
+  ROUTE_SUCCESSFUL_PATH_AFFINITY_MS,
 } from '../../../../shared/types/route-proxy';
 import type {
   RouteDisplayItemPriorityConfig,
@@ -51,6 +53,11 @@ import type {
   RouteRuntimeConfig,
   RoutingConfig,
 } from '../../../../shared/types/route-proxy';
+import {
+  normalizeCustomCliSettings,
+  normalizeCustomCliTestState,
+  type CustomCliConfig,
+} from '../../../../shared/types/custom-cli-config';
 import type {
   AccountCredential,
   ModelPriceInfo,
@@ -59,6 +66,9 @@ import type {
   UnifiedConfig,
   UserGroupInfo,
 } from '../../../../shared/types/site';
+import { parseCustomCliRouteConfigId } from '../../../../shared/utils/customCliRouteId';
+
+const ROUTE_CLI_TYPES = ['claudeCode', 'codex', 'geminiCli'] as const;
 
 interface RedirectCandidateGroup {
   originalModel: string;
@@ -155,17 +165,28 @@ interface PriorityDraft {
 }
 
 type PriorityDisableState = Pick<PriorityDraft, 'disabledSiteIds' | 'disabledApiKeyPriorityKeys'>;
-type PriorityDraftInput = Partial<
-  Pick<
-    PriorityDraft,
-    'sitePriorities' | 'apiKeyPriorities' | 'disabledSiteIds' | 'disabledApiKeyPriorityKeys'
-  >
->;
+interface PriorityDraftInput {
+  sitePriorities?: Record<string, string | number | undefined>;
+  apiKeyPriorities?: Record<string, string | number | undefined>;
+  disabledSiteIds?: string[];
+  disabledApiKeyPriorityKeys?: string[];
+}
 
 interface RoutePathSuspensionLabel {
   originalModel: string;
   label: string;
   title: string;
+}
+
+interface PriorityHitRoutePath {
+  routeRuleId?: string;
+  canonicalModel: string;
+  siteId: string;
+  accountId: string;
+  apiKeyId: string;
+  resolvedModel?: string;
+  targetProtocol?: RouteRequestLogItem['targetProtocol'];
+  lastSuccessAt: number;
 }
 
 interface CreateApiKeyDialogState {
@@ -308,28 +329,106 @@ function formatProbeStatus(entry: RouteCliProbeLatest | undefined): string {
     return '测试通过';
   }
 
-  return entry.lastSample.statusCode ? `测试失败 HTTP${entry.lastSample.statusCode}` : '测试失败';
+  return '测试失败';
+}
+
+function formatCustomCliSlotProbeStatus(success: boolean): string {
+  return success ? '测试通过' : '测试失败';
+}
+
+function getCustomCliLocalProbeStatus(params: {
+  source: RouteModelSourceRef;
+  customCliConfigs?: CustomCliConfig[];
+  canonicalName: string;
+  originalModel: string;
+}): { label: string; testedAt: number } | null {
+  if (params.source.sourceType !== 'customCli') {
+    return null;
+  }
+
+  const configId = parseCustomCliRouteConfigId(params.source.siteId);
+  if (!configId) {
+    return null;
+  }
+
+  const config = (params.customCliConfigs || []).find(item => item.id === configId);
+  if (!config) {
+    return null;
+  }
+
+  const cliTypes =
+    params.source.availableCliTypes && params.source.availableCliTypes.length > 0
+      ? params.source.availableCliTypes
+      : ROUTE_CLI_TYPES;
+  const candidateModels = new Set([params.originalModel, params.canonicalName]);
+  let latestSlot: { success: boolean; timestamp: number } | null = null;
+
+  for (const cliType of cliTypes) {
+    const setting = normalizeCustomCliSettings(config.cliSettings?.[cliType]);
+    const testState = normalizeCustomCliTestState(setting.testState);
+    for (const slot of testState.slots) {
+      if (!slot || !candidateModels.has(slot.model)) {
+        continue;
+      }
+
+      if (!latestSlot || slot.timestamp > latestSlot.timestamp) {
+        latestSlot = {
+          success: slot.success,
+          timestamp: slot.timestamp,
+        };
+      }
+    }
+  }
+
+  return latestSlot
+    ? {
+        label: formatCustomCliSlotProbeStatus(latestSlot.success),
+        testedAt: latestSlot.timestamp,
+      }
+    : null;
 }
 
 function getModelProbeStatus(params: {
   routingConfig?: Pick<RoutingConfig, 'cliProbe'> | null;
-  siteId: string;
+  source: RouteModelSourceRef;
   accountId: string;
   canonicalName: string;
   originalModel: string;
+  customCliConfigs?: CustomCliConfig[];
 }): string {
-  const { routingConfig, siteId, accountId, canonicalName, originalModel } = params;
+  const { routingConfig, source, accountId, canonicalName, originalModel } = params;
   const latestEntries = Object.values(routingConfig?.cliProbe?.latest || {})
     .filter(
       entry =>
-        entry.siteId === siteId &&
+        entry.siteId === source.siteId &&
         entry.accountId === accountId &&
         (entry.canonicalModel === canonicalName || entry.rawModel === originalModel)
     )
     .sort((left, right) => right.lastSample.testedAt - left.lastSample.testedAt);
 
   const successfulEntry = latestEntries.find(entry => entry.lastSample.success);
-  return formatProbeStatus(successfulEntry || latestEntries[0]);
+  const routeProbeEntry = successfulEntry || latestEntries[0];
+  const routeProbeStatus = routeProbeEntry
+    ? {
+        label: formatProbeStatus(routeProbeEntry),
+        testedAt: routeProbeEntry.lastSample.testedAt,
+      }
+    : null;
+  const customCliStatus = getCustomCliLocalProbeStatus({
+    source,
+    customCliConfigs: params.customCliConfigs,
+    canonicalName,
+    originalModel,
+  });
+
+  if (
+    customCliStatus &&
+    (!routeProbeStatus || customCliStatus.testedAt > routeProbeStatus.testedAt)
+  ) {
+    return customCliStatus.label;
+  }
+
+  return routeProbeStatus?.label || '未测试';
 }
 
 function formatModelListWithProbeStatus(
@@ -474,6 +573,56 @@ function buildFirstHitPathLogsByCanonicalName(
   );
 }
 
+function getPriorityHitRoutePathFromState(params: {
+  states: Record<string, RoutePathState> | undefined;
+  item: RouteModelDisplayItem;
+  now: number;
+}): PriorityHitRoutePath | null {
+  const { states, item, now } = params;
+  if (!states) {
+    return null;
+  }
+
+  const affinityCutoff = now - ROUTE_SUCCESSFUL_PATH_AFFINITY_MS;
+  let selected: PriorityHitRoutePath | null = null;
+
+  for (const state of Object.values(states)) {
+    const canonicalModel = state.canonicalModel?.trim();
+    const siteId = state.siteId?.trim();
+    const accountId = state.accountId?.trim();
+    const apiKeyId = state.apiKeyId?.trim();
+    const lastSuccessAt = state.lastSuccessAt ?? 0;
+
+    if (
+      canonicalModel !== item.canonicalName ||
+      !siteId ||
+      !accountId ||
+      !apiKeyId ||
+      state.lastOutcome !== 'success' ||
+      lastSuccessAt <= affinityCutoff ||
+      (state.affinitySuppressedUntil ?? 0) > now ||
+      (state.disabledUntil ?? 0) > now
+    ) {
+      continue;
+    }
+
+    if (!selected || lastSuccessAt > selected.lastSuccessAt) {
+      selected = {
+        routeRuleId: state.routeRuleId,
+        canonicalModel: item.canonicalName,
+        siteId,
+        accountId,
+        apiKeyId,
+        resolvedModel: state.resolvedModel,
+        targetProtocol: state.targetProtocol,
+        lastSuccessAt,
+      };
+    }
+  }
+
+  return selected;
+}
+
 function getPriorityHitApiKeyKeyFromRouteLog(
   item: RouteModelDisplayItem,
   logItem: RouteRequestLogItem | undefined
@@ -487,6 +636,81 @@ function getPriorityHitApiKeyKeyFromRouteLog(
   }
 
   return buildRouteApiKeyPriorityKey(logItem.siteId, logItem.accountId, logItem.apiKeyId);
+}
+
+function getPriorityHitApiKeyKey(hitPath: PriorityHitRoutePath | null): string | null {
+  if (!hitPath) {
+    return null;
+  }
+
+  return buildRouteApiKeyPriorityKey(hitPath.siteId, hitPath.accountId, hitPath.apiKeyId);
+}
+
+function getPriorityHitRoutePathFromLog(
+  item: RouteModelDisplayItem,
+  logItem: RouteRequestLogItem | undefined
+): PriorityHitRoutePath | null {
+  if (!logItem || !isRouteFirstHitPathLog(logItem)) {
+    return null;
+  }
+
+  if (logItem.canonicalModel !== item.canonicalName) {
+    return null;
+  }
+
+  return {
+    routeRuleId: logItem.routeRuleId,
+    canonicalModel: item.canonicalName,
+    siteId: logItem.siteId,
+    accountId: logItem.accountId,
+    apiKeyId: logItem.apiKeyId,
+    resolvedModel: logItem.resolvedModel,
+    targetProtocol: logItem.targetProtocol,
+    lastSuccessAt: logItem.createdAt,
+  };
+}
+
+function getPriorityHitRoutePathResetParams(hitPath: PriorityHitRoutePath | null): {
+  routeRuleId?: string;
+  canonicalModel: string;
+  siteId: string;
+  accountId: string;
+  apiKeyId: string;
+  resolvedModel?: string;
+  targetProtocol?: RouteRequestLogItem['targetProtocol'];
+} | null {
+  if (!hitPath) {
+    return null;
+  }
+
+  return {
+    routeRuleId: hitPath.routeRuleId,
+    canonicalModel: hitPath.canonicalModel,
+    siteId: hitPath.siteId,
+    accountId: hitPath.accountId,
+    apiKeyId: hitPath.apiKeyId,
+    resolvedModel: hitPath.resolvedModel,
+    targetProtocol: hitPath.targetProtocol,
+  };
+}
+
+function isSamePriorityHitRoutePath(
+  left: PriorityHitRoutePath | null,
+  right: PriorityHitRoutePath | null
+): boolean {
+  if (!left || !right) {
+    return false;
+  }
+
+  return (
+    left.routeRuleId === right.routeRuleId &&
+    left.canonicalModel === right.canonicalModel &&
+    left.siteId === right.siteId &&
+    left.accountId === right.accountId &&
+    left.apiKeyId === right.apiKeyId &&
+    left.resolvedModel === right.resolvedModel &&
+    left.targetProtocol === right.targetProtocol
+  );
 }
 
 function getPriorityValue(value: string | number | undefined): number | null {
@@ -1208,7 +1432,8 @@ function formatSourceSummary(sources: RouteModelSourceRef[]): string {
 function buildDetailSiteAccountGroups(
   detailState: DisplayItemDetailState | null,
   fullConfig?: UnifiedConfig | null,
-  routingConfig?: Pick<RoutingConfig, 'cliProbe'> | null
+  routingConfig?: Pick<RoutingConfig, 'cliProbe'> | null,
+  customCliConfigs?: CustomCliConfig[]
 ): DetailSiteGroup[] {
   if (!detailState) {
     return [];
@@ -1334,10 +1559,11 @@ function buildDetailSiteAccountGroups(
         source.originalModel,
         getModelProbeStatus({
           routingConfig,
-          siteId: source.siteId,
+          source,
           accountId: apiKey.accountId,
           canonicalName: item.canonicalName,
           originalModel: source.originalModel,
+          customCliConfigs,
         })
       );
     }
@@ -1464,6 +1690,7 @@ function createDefaultNewApiKeyForm(group = 'default'): NewApiTokenForm {
 }
 
 export function ModelRedirectionTab() {
+  const customCliConfigs = useCustomCliConfigStore(state => state.configs);
   const {
     config,
     refreshRuntimeState,
@@ -1567,8 +1794,14 @@ export function ModelRedirectionTab() {
     [routeCliProbe]
   );
   const detailSiteGroups = useMemo(
-    () => buildDetailSiteAccountGroups(sourceDetailState, priorityDetailConfig, routeProbeContext),
-    [priorityDetailConfig, routeProbeContext, sourceDetailState]
+    () =>
+      buildDetailSiteAccountGroups(
+        sourceDetailState,
+        priorityDetailConfig,
+        routeProbeContext,
+        customCliConfigs
+      ),
+    [customCliConfigs, priorityDetailConfig, routeProbeContext, sourceDetailState]
   );
   const sortedDetailSiteGroups = useMemo(() => {
     return sortDetailGroupsByPriority(detailSiteGroups, priorityDraft);
@@ -1704,7 +1937,8 @@ export function ModelRedirectionTab() {
       const initialDetailGroups = buildDetailSiteAccountGroups(
         { item, entry },
         null,
-        routeProbeContext
+        routeProbeContext,
+        customCliConfigs
       );
       const nextPriorityDraft = createDisplayOrderPriorityDraft(
         initialDetailGroups,
@@ -1734,7 +1968,7 @@ export function ModelRedirectionTab() {
           setPriorityDetailConfig(null);
         });
     },
-    [routeProbeContext]
+    [customCliConfigs, routeProbeContext]
   );
 
   useEffect(() => {
@@ -1948,6 +2182,47 @@ export function ModelRedirectionTab() {
         );
       } catch (error: unknown) {
         toast.error(`恢复失败: ${getErrorMessage(error)}`);
+      } finally {
+        setResettingPathCanonicalName(null);
+      }
+    },
+    [resetPathStates]
+  );
+
+  const handleResetPriorityHitPath = useCallback(
+    async (item: RouteModelDisplayItem, displayName: string, hitPath: PriorityHitRoutePath) => {
+      const resetParams = getPriorityHitRoutePathResetParams(hitPath);
+      if (!resetParams) {
+        toast.error('当前优先命中路径已失效');
+        return;
+      }
+
+      setResettingPathCanonicalName(item.canonicalName);
+      try {
+        const cleared = await resetPathStates(resetParams);
+        if (cleared === null) {
+          throw new Error('无法重置当前优先命中路径');
+        }
+
+        setFirstHitPathLogsByCanonicalName(current => {
+          const currentLog = current[item.canonicalName];
+          const currentHitPath = getPriorityHitRoutePathFromLog(item, currentLog);
+          if (!isSamePriorityHitRoutePath(currentHitPath, hitPath)) {
+            return current;
+          }
+
+          const next = { ...current };
+          delete next[item.canonicalName];
+          return next;
+        });
+
+        toast.success(
+          cleared > 0
+            ? `${displayName} 已重置当前优先命中路径`
+            : `${displayName} 当前优先命中路径无需重置`
+        );
+      } catch (error: unknown) {
+        toast.error(`重置失败: ${getErrorMessage(error)}`);
       } finally {
         setResettingPathCanonicalName(null);
       }
@@ -2509,13 +2784,39 @@ export function ModelRedirectionTab() {
     ? sortableDetailSiteGroups.findIndex(group => group.siteId === selectedPrioritySiteId)
     : -1;
   const now = Date.now();
-  const priorityHitApiKeyKey = sourceDetailState
-    ? getPriorityHitApiKeyKeyFromRouteLog(
+  const sourceDetailStatePriorityHitPath = sourceDetailState
+    ? (getPriorityHitRoutePathFromState({
+        states: config?.routePathStates,
+        item: sourceDetailState.item,
+        now,
+      }) ??
+      getPriorityHitRoutePathFromLog(
         sourceDetailState.item,
         firstHitPathLogsByCanonicalName[sourceDetailState.item.canonicalName]
-      )
+      ))
     : null;
+  const priorityHitApiKeyKey =
+    getPriorityHitApiKeyKey(sourceDetailStatePriorityHitPath) ??
+    (sourceDetailState
+      ? getPriorityHitApiKeyKeyFromRouteLog(
+          sourceDetailState.item,
+          firstHitPathLogsByCanonicalName[sourceDetailState.item.canonicalName]
+        )
+      : null);
   const selectedEntry = selectedDisplayItem?.entry ?? null;
+  const selectedPriorityHitPath = selectedDisplayItem
+    ? (getPriorityHitRoutePathFromState({
+        states: config?.routePathStates,
+        item: selectedDisplayItem.item,
+        now,
+      }) ??
+      getPriorityHitRoutePathFromLog(
+        selectedDisplayItem.item,
+        firstHitPathLogsByCanonicalName[selectedDisplayItem.item.canonicalName]
+      ))
+    : null;
+  const selectedPriorityHitResetParams =
+    getPriorityHitRoutePathResetParams(selectedPriorityHitPath);
   const selectedActiveSuspensionCount = selectedDisplayItem
     ? countActiveRoutePathStatesForItem({
         states: config?.routePathStates,
@@ -2666,6 +2967,35 @@ export function ModelRedirectionTab() {
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-1.5">
+                    {selectedPriorityHitResetParams ? (
+                      <AppButton
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className="!h-7 !min-h-7 !px-2"
+                        onClick={() => {
+                          if (!selectedPriorityHitPath) {
+                            return;
+                          }
+
+                          void handleResetPriorityHitPath(
+                            selectedDisplayItem.item,
+                            selectedDisplayItem.displayName,
+                            selectedPriorityHitPath
+                          );
+                        }}
+                        disabled={saving || isResettingSelectedRoutePaths}
+                        aria-label={`重置 ${selectedDisplayItem.displayName} 当前优先命中路径`}
+                        title="重置当前优先命中路径"
+                      >
+                        {isResettingSelectedRoutePaths ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        )}
+                        <span>重置优先命中</span>
+                      </AppButton>
+                    ) : null}
                     <AppButton
                       type="button"
                       size="sm"

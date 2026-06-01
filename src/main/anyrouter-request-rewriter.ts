@@ -227,6 +227,48 @@ function getToolLabel(tool: JsonRecord): string {
   return normalizeText(tool.name ?? tool.server_label ?? tool.type) || '<anonymous>';
 }
 
+const ANYROUTER_SUPPORTED_CODEX_TOOL_TYPES = new Set([
+  'function',
+  'custom',
+  'web_search',
+  'web_search_preview',
+  'file_search',
+  'image_generation',
+  'apply_patch',
+  'namespace',
+  'tool_search',
+]);
+
+function isMatchingCodexToolChoice(tool: JsonRecord, toolChoice: JsonRecord): boolean {
+  if (tool.type !== toolChoice.type) {
+    return false;
+  }
+
+  if (toolChoice.name) {
+    return tool.name === toolChoice.name;
+  }
+
+  if (toolChoice.server_label) {
+    return tool.server_label === toolChoice.server_label;
+  }
+
+  return true;
+}
+
+function isCodexToolChoiceStillValid(toolChoice: unknown, tools: JsonRecord[]): boolean {
+  if (!toolChoice || typeof toolChoice !== 'object' || Array.isArray(toolChoice)) {
+    return true;
+  }
+
+  const record = toolChoice as JsonRecord;
+  const choiceType = normalizeText(record.type);
+  if (!choiceType || choiceType === 'auto' || choiceType === 'none' || choiceType === 'required') {
+    return true;
+  }
+
+  return tools.some(tool => isMatchingCodexToolChoice(tool, record));
+}
+
 function sanitizeCodexToolsForAnyRouter(cleaned: JsonRecord): JsonRecord {
   if (!Array.isArray(cleaned.tools)) {
     return cleaned;
@@ -235,7 +277,7 @@ function sanitizeCodexToolsForAnyRouter(cleaned: JsonRecord): JsonRecord {
   const removed: string[] = [];
   const kept = cleaned.tools.filter(tool => {
     const record = normalizeObject(tool);
-    const isSupportedTool = record.type === 'function' || record.type === 'custom';
+    const isSupportedTool = ANYROUTER_SUPPORTED_CODEX_TOOL_TYPES.has(record.type);
     if (!isSupportedTool) {
       removed.push(getToolLabel(record));
       return false;
@@ -251,6 +293,9 @@ function sanitizeCodexToolsForAnyRouter(cleaned: JsonRecord): JsonRecord {
   const next = { ...cleaned };
   if (kept.length > 0) {
     next.tools = kept;
+    if (!isCodexToolChoiceStillValid(next.tool_choice, kept.map(normalizeObject))) {
+      delete next.tool_choice;
+    }
   } else {
     delete next.tools;
     delete next.tool_choice;

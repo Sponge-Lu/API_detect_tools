@@ -15,8 +15,8 @@
 | 文件 | 职责 |
 |------|------|
 | `RouteSubTabs.tsx` | 遗留 route 子页切换条，供旧结构兼容使用 |
-| `Redirection/ModelRedirectionTab.tsx` | 路由页中的模型重定向卡片区与编辑模态框 |
-| `Usability/CliUsabilityTab.tsx` | CLI 可用性矩阵页（按站点-账户多行展示，7 天 history 按探测批次聚合，页面 Header 右侧提供小时制自动保存探测设置与立即探测） |
+| `Redirection/ModelRedirectionTab.tsx` | 路由页中的模型重定向卡片区与编辑模态框；优先级详情会在覆盖模型后显示 route/custom CLI 测试结果 |
+| `Usability/CliUsabilityTab.tsx` | CLI 可用性矩阵页（按站点-账户和自定义 CLI 虚拟配置多行展示，自定义 CLI 行位于普通站点后且账户列显示配置名称，7 天 history 按探测批次聚合，页面 Header 右侧提供小时制自动保存探测设置与立即探测） |
 | `ProxyStats/ProxyStatsTab.tsx` | 路由页复用的代理服务器、上游代理、CLI 默认模型与统计面板 |
 
 ## 更新日志

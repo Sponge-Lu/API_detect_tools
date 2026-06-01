@@ -121,6 +121,8 @@ export interface RoutePathState extends RouteChannelKey {
   lastUsedAt?: number;
   lastSuccessAt?: number;
   lastFailureAt?: number;
+  affinitySuppressedUntil?: number;
+  affinitySuppressedAt?: number;
   updatedAt: number;
 }
 
@@ -146,6 +148,11 @@ export interface RouteEndpointCapabilityState {
 export interface RoutePathStateResetParams {
   routeRuleId?: string;
   canonicalModel?: string;
+  siteId?: string;
+  accountId?: string;
+  apiKeyId?: string;
+  resolvedModel?: string;
+  targetProtocol?: CliTargetProtocol;
 }
 
 /** 通道健康投影（由 probe latest 投影得出） */
@@ -576,6 +583,8 @@ export const DEFAULT_ANALYTICS_CONFIG: RouteAnalyticsConfig = {
   latencyHistogramBuckets: [1000, 3000, 5000, 8000, 15000, 30000],
   firstByteHistogramBuckets: [200, 500, 1000, 3000, 5000, 10000],
 };
+
+export const ROUTE_SUCCESSFUL_PATH_AFFINITY_MS = 30 * 60 * 1000;
 
 export const DEFAULT_MODEL_REGISTRY_CONFIG: RouteModelRegistryConfig = {
   version: 1,

@@ -205,6 +205,11 @@ export async function recordRoutePathOutcome(
     windowRequestCount > 0 ? windowSuccessCount / windowRequestCount : (existing?.successRate ?? 1);
   const stillDisabledUntil =
     existing?.disabledUntil && existing.disabledUntil > now ? existing.disabledUntil : undefined;
+  const affinitySuppressedUntil =
+    existing?.affinitySuppressedUntil && existing.affinitySuppressedUntil > now
+      ? existing.affinitySuppressedUntil
+      : undefined;
+  const affinitySuppressedAt = affinitySuppressedUntil ? existing?.affinitySuppressedAt : undefined;
   const shouldDisable =
     outcome === 'failure' &&
     windowRequestCount >= ROUTE_PATH_MIN_DISABLE_SAMPLES &&
@@ -239,6 +244,8 @@ export async function recordRoutePathOutcome(
     lastUsedAt: now,
     lastSuccessAt: outcome === 'success' ? now : existing?.lastSuccessAt,
     lastFailureAt: outcome === 'failure' ? now : existing?.lastFailureAt,
+    affinitySuppressedUntil,
+    affinitySuppressedAt,
     updatedAt: now,
   };
 

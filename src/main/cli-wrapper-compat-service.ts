@@ -23,8 +23,10 @@ import type {
 import {
   clearRouteProbeLockTerminalFailure,
   getRouteProbeLockFirstUpstreamResult,
+  hasRouteProbeLockUpstreamAttempt,
   subscribeRouteProbeLockRequest,
   subscribeRouteProbeLockTerminalFailure,
+  waitForRouteProbeLockFirstUpstreamResult,
   type RouteProbeLockUpstreamResult,
 } from './route-probe-lock';
 
@@ -34,6 +36,7 @@ const log = Logger.scope('CliWrapperCompatService');
 const WORKSPACE_CLEANUP_RETRY_DELAYS_MS = [50, 150, 500, 1000];
 const TRANSIENT_WORKSPACE_CLEANUP_ERROR_CODES = new Set(['EBUSY', 'ENOTEMPTY', 'EPERM', 'EACCES']);
 const EARLY_TERMINATION_GRACE_MS = 2000;
+const PROBE_LOCK_FIRST_UPSTREAM_RESULT_WAIT_MS = 120000;
 const TERMINAL_CLI_ERROR_CODE_PATTERN =
   /\b(?:all_channels_failed|all_route_paths_disabled|bad_response_status_code|invalid_api_key|no_channels|no_matching_rule|probe_lock_cli_mismatch|probe_lock_forbidden)\b/i;
 const TERMINAL_HTTP_STATUS_PATTERN =
@@ -281,6 +284,15 @@ function extractGeminiResponse(stdout: string): string | null {
 function extractJsonErrorSummary(raw: string): string | null {
   try {
     const parsed = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      parsed.is_error === true &&
+      typeof parsed.result === 'string'
+    ) {
+      return summarizeCliErrorCandidate(parsed.result) ?? parsed.result.trim();
+    }
+
     const error = parsed?.error;
     const message =
       typeof error?.message === 'string'
@@ -345,6 +357,34 @@ function summarizeCliErrorOutput(raw: string): string | undefined {
   return latestUpstreamSummary ?? latestProbeLockSummary;
 }
 
+function summarizeStructuredCliErrorOutput(raw: string): string | undefined {
+  const parsed = parseJsonCandidates(raw);
+  for (const item of parsed) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      continue;
+    }
+
+    const record = item as Record<string, unknown>;
+    const isStructuredError =
+      record.is_error === true ||
+      record.error !== undefined ||
+      record.api_error_status !== undefined;
+    if (!isStructuredError) {
+      continue;
+    }
+
+    const summary = summarizeCliErrorCandidate(JSON.stringify(record));
+    if (summary) {
+      return summary;
+    }
+  }
+  return undefined;
+}
+
+function summarizeCliFailureOutput(raw: string): string | undefined {
+  return summarizeCliErrorOutput(raw) ?? summarizeStructuredCliErrorOutput(raw);
+}
+
 function summarizeTerminalError(raw: string | undefined): string | undefined {
   if (!raw?.trim()) {
     return undefined;
@@ -374,11 +414,17 @@ function isProbeLockUpstreamAttemptExhausted(raw: string): boolean {
 }
 
 function isOnlyProbeLockUpstreamAttemptExhaustedError(raw: string): boolean {
-  if (!isProbeLockUpstreamAttemptExhausted(raw)) {
+  const candidates = [raw];
+  const jsonResult = extractJsonStringField(raw, ['result']);
+  if (jsonResult) {
+    candidates.push(jsonResult);
+  }
+
+  if (!candidates.some(candidate => isProbeLockUpstreamAttemptExhausted(candidate))) {
     return false;
   }
 
-  for (const line of raw.split(/\r?\n/)) {
+  for (const line of candidates.join('\n').split(/\r?\n/)) {
     const normalized = normalizeReplyText(line.replace(/^(?:ERROR|API Error):\s*/i, ''));
     if (!normalized || /^Reconnecting\.\.\./i.test(normalized)) {
       continue;
@@ -399,11 +445,13 @@ function isOnlyProbeLockUpstreamAttemptExhaustedError(raw: string): boolean {
 
 function buildFailureMessage(label: string, result: CommandRunResult, fallback?: string): string {
   const stderr = result.stderr.trim();
-  const stderrSummary = stderr ? summarizeCliErrorOutput(stderr) : undefined;
+  const stderrSummary = stderr ? summarizeCliFailureOutput(stderr) : undefined;
   const terminalErrorSummary = summarizeTerminalError(result.terminalError);
   const upstreamFailureSummary = summarizeProbeLockUpstreamFailure(
     result.probeLockFirstUpstreamResult
   );
+  const stdout = result.stdout.trim();
+  const stdoutSummary = stdout ? summarizeCliFailureOutput(stdout) : undefined;
 
   if (terminalErrorSummary) {
     return `${label} 执行失败: ${terminalErrorSummary}`;
@@ -430,8 +478,10 @@ function buildFailureMessage(label: string, result: CommandRunResult, fallback?:
     return `${label} 执行失败: CLI 未向本地路由代理发起请求，请检查 CLI 是否已登录、是否支持环境变量代理配置，以及本机是否能执行该 CLI。`;
   }
 
-  const stdout = result.stdout.trim();
   if (stdout) {
+    if (stdoutSummary) {
+      return `${label} 执行失败: ${stdoutSummary}`;
+    }
     return `${label} 输出异常: ${stdout}`;
   }
 
@@ -713,7 +763,18 @@ export class CliWrapperCompatService {
         ...options,
         abortSignal: abortController.signal,
       });
-      const probeLockFirstUpstreamResult = getRouteProbeLockFirstUpstreamResult(routeApiKey);
+      let probeLockFirstUpstreamResult = getRouteProbeLockFirstUpstreamResult(routeApiKey);
+      if (
+        observedProbeRequest &&
+        !probeLockFirstUpstreamResult &&
+        hasRouteProbeLockUpstreamAttempt(routeApiKey) &&
+        isOnlyProbeLockUpstreamAttemptExhaustedError(`${result.stdout}\n${result.stderr}`)
+      ) {
+        probeLockFirstUpstreamResult = await waitForRouteProbeLockFirstUpstreamResult(
+          routeApiKey,
+          PROBE_LOCK_FIRST_UPSTREAM_RESULT_WAIT_MS
+        );
+      }
       return {
         ...result,
         observedProbeRequest,

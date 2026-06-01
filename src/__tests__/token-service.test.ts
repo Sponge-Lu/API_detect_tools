@@ -598,7 +598,7 @@ describe('token-service API key 保留', () => {
     expect(resolved).toBe('sk-get-raw-12345678');
   });
 
-  it('fetchApiTokens 遇到脱敏 key 时应按 id 再获取明文 key', async () => {
+  it('fetchApiTokens 遇到 NewAPI 脱敏 key 时应优先通过批量接口获取明文 key', async () => {
     const { TokenService, httpPost } = await loadTokenServiceModule(null, {
       httpGetImpl: async () => ({
         status: 200,
@@ -614,12 +614,135 @@ describe('token-service API key 保留', () => {
           ],
         },
       }),
+      httpPostImpl: async (url: string, body: any) => {
+        if (url === 'https://demo.example.com/api/token/batch/keys') {
+          expect(body).toEqual({ ids: [55092] });
+          return {
+            status: 200,
+            data: {
+              success: true,
+              data: {
+                keys: {
+                  '55092': 'sk-demo-raw-12345678',
+                },
+              },
+            },
+          };
+        }
+
+        throw new Error(`Unexpected POST ${url}`);
+      },
+    });
+
+    const service = new TokenService({ createPage: vi.fn() } as any);
+
+    const tokens = await service.fetchApiTokens('https://demo.example.com', 1, 'access-token');
+
+    expect(httpPost).toHaveBeenCalledTimes(1);
+    expect(httpPost.mock.calls[0]?.[0]).toBe('https://demo.example.com/api/token/batch/keys');
+    expect(tokens[0]?.key).toBe('sk-demo-raw-12345678');
+  });
+
+  it('fetchApiTokens 在 NewAPI 批量明文接口缺失时应回退到单个 key 接口', async () => {
+    const { TokenService, httpPost } = await loadTokenServiceModule(null, {
+      httpGetImpl: async () => ({
+        status: 200,
+        data: {
+          data: [
+            {
+              id: 55092,
+              name: 'masked-token',
+              group: 'default',
+              key: 'sk-demo****5678',
+              status: 1,
+            },
+          ],
+        },
+      }),
+      httpPostImpl: async (url: string) => {
+        if (url === 'https://demo.example.com/api/token/batch/keys') {
+          return {
+            status: 404,
+            data: {
+              success: false,
+              message: 'not found',
+            },
+          };
+        }
+
+        if (url === 'https://demo.example.com/api/token/55092/key') {
+          return {
+            status: 200,
+            data: {
+              success: true,
+              data: {
+                key: 'sk-demo-raw-12345678',
+              },
+            },
+          };
+        }
+
+        throw new Error(`Unexpected POST ${url}`);
+      },
+    });
+
+    const service = new TokenService({ createPage: vi.fn() } as any);
+
+    const tokens = await service.fetchApiTokens('https://demo.example.com', 1, 'access-token');
+
+    expect(httpPost).toHaveBeenCalledTimes(2);
+    expect(httpPost.mock.calls[0]?.[0]).toBe('https://demo.example.com/api/token/batch/keys');
+    expect(httpPost.mock.calls[1]?.[0]).toBe('https://demo.example.com/api/token/55092/key');
+    expect(tokens[0]?.key).toBe('sk-demo-raw-12345678');
+  });
+
+  it('fetchApiTokens 对非 NewAPI 站点不调用批量明文 key 接口', async () => {
+    const { TokenService, httpPost } = await loadTokenServiceModule(null, {
+      siteType: 'sub2api',
+      httpGetImpl: async (url: string) => {
+        if (url === 'https://demo.example.com/api/v1/keys?page=1&page_size=100') {
+          return {
+            status: 200,
+            data: {
+              code: 0,
+              data: {
+                items: [
+                  {
+                    id: 55092,
+                    name: 'masked-token',
+                    key: 'sk-demo****5678',
+                    status: 'active',
+                  },
+                ],
+              },
+            },
+          };
+        }
+
+        if (url === 'https://demo.example.com/api/v1/groups/available') {
+          return {
+            status: 200,
+            data: {
+              code: 0,
+              data: [{ id: 1, name: 'default', ratio: 1 }],
+            },
+          };
+        }
+
+        return {
+          status: 200,
+          data: {
+            code: 0,
+            data: {},
+          },
+        };
+      },
       httpPostImpl: async () => ({
         status: 200,
         data: {
-          success: true,
+          code: 0,
           data: {
-            key: 'sk-demo-raw-12345678',
+            stats: {},
           },
         },
       }),
@@ -630,8 +753,10 @@ describe('token-service API key 保留', () => {
     const tokens = await service.fetchApiTokens('https://demo.example.com', 1, 'access-token');
 
     expect(httpPost).toHaveBeenCalledTimes(1);
-    expect(httpPost.mock.calls[0]?.[0]).toBe('https://demo.example.com/api/token/55092/key');
-    expect(tokens[0]?.key).toBe('sk-demo-raw-12345678');
+    expect(httpPost.mock.calls[0]?.[0]).toBe(
+      'https://demo.example.com/api/v1/usage/dashboard/api-keys-usage'
+    );
+    expect(tokens[0]?.key).toBe('sk-demo****5678');
   });
 
   it('fetchApiTokens 在明文补拉失败时应保留原脱敏值', async () => {
@@ -659,7 +784,9 @@ describe('token-service API key 保留', () => {
 
     const tokens = await service.fetchApiTokens('https://demo.example.com', 1, 'access-token');
 
-    expect(httpPost).toHaveBeenCalledTimes(1);
+    expect(httpPost).toHaveBeenCalledTimes(2);
+    expect(httpPost.mock.calls[0]?.[0]).toBe('https://demo.example.com/api/token/batch/keys');
+    expect(httpPost.mock.calls[1]?.[0]).toBe('https://demo.example.com/api/token/55092/key');
     expect(tokens[0]?.key).toBe('sk-demo****5678');
   });
 

@@ -11,7 +11,7 @@
 
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ThemeMode } from '../shared/theme/themePresets';
-import type { RouteRequestLogItem } from '../shared/types/route-proxy';
+import type { RoutePathStateResetParams, RouteRequestLogItem } from '../shared/types/route-proxy';
 
 const APP_DATA_CHANGED_EVENT = 'app-data:changed';
 const ROUTE_REQUEST_LOG_APPENDED_EVENT = 'route:request-log-appended';
@@ -420,7 +420,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteRule: (ruleId: string) => ipcRenderer.invoke('route:delete-rule', ruleId),
     listStats: () => ipcRenderer.invoke('route:list-stats'),
     resetStats: (ruleId?: string) => ipcRenderer.invoke('route:reset-stats', ruleId),
-    resetPathStates: (params?: { routeRuleId?: string; canonicalModel?: string }) =>
+    resetPathStates: (params?: RoutePathStateResetParams) =>
       ipcRenderer.invoke('route:reset-path-states', params),
     getHealth: () => ipcRenderer.invoke('route:get-health'),
     runHealthCheck: () => ipcRenderer.invoke('route:run-health-check'),

@@ -22,6 +22,7 @@ import type { ModelPriceInfo, ModelPricingData, UserGroupInfo } from '../../shar
 import { AppButton } from '../components/AppButton/AppButton';
 import { AppCard, AppCardContent } from '../components/AppCard';
 import { useConfigStore } from '../store/configStore';
+import { useRouteStore } from '../store/routeStore';
 import type { LogsSubtab } from '../store/uiStore';
 import { useToastStore, type AppEventItem } from '../store/toastStore';
 import { resolveModelPricing } from '../utils/modelPricing';
@@ -325,6 +326,21 @@ function toFiniteNumber(value: unknown): number | null {
   return value;
 }
 
+function formatPriorityValue(value: unknown): string | null {
+  const numericValue =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim().length > 0
+        ? Number(value)
+        : Number.NaN;
+
+  if (!Number.isFinite(numericValue)) {
+    return null;
+  }
+
+  return String(Math.max(0, Math.round(numericValue)));
+}
+
 function normalizeCustomCliConfigName(name?: string | null): string {
   const normalized = name?.trim();
   if (!normalized) {
@@ -455,20 +471,30 @@ function resolveSitePriority(
     return NONE_TEXT;
   }
 
-  const explicitPriority = displayItem.priorityConfig?.sitePriorities?.[item.siteId];
-  if (typeof explicitPriority === 'number' && Number.isFinite(explicitPriority)) {
-    return String(explicitPriority);
-  }
-
-  const fallbackOrder = new Map<string, number>();
+  const displaySiteOrder = new Map<string, number>();
   for (const sourceKey of displayItem.sourceKeys) {
     const source = context.sourceByKey.get(sourceKey);
-    if (source?.siteId && !fallbackOrder.has(source.siteId)) {
-      fallbackOrder.set(source.siteId, fallbackOrder.size);
+    if (source?.siteId && !displaySiteOrder.has(source.siteId)) {
+      displaySiteOrder.set(source.siteId, displaySiteOrder.size);
     }
   }
 
-  const fallbackPriority = fallbackOrder.get(item.siteId);
+  const displaySiteIds = Array.from(displaySiteOrder.keys());
+  const sitePriorities = displayItem.priorityConfig?.sitePriorities ?? {};
+  const explicitPriority = formatPriorityValue(sitePriorities[item.siteId]);
+
+  if (explicitPriority !== null) {
+    const activePriorityValues = displaySiteIds
+      .map(siteId => formatPriorityValue(sitePriorities[siteId]))
+      .filter((value): value is string => value !== null)
+      .map(value => Number(value))
+      .sort((left, right) => left - right);
+    const priorityIndex = activePriorityValues.indexOf(Number(explicitPriority));
+
+    return priorityIndex >= 0 ? String(priorityIndex) : NONE_TEXT;
+  }
+
+  const fallbackPriority = displaySiteOrder.get(item.siteId);
   return fallbackPriority === undefined ? NONE_TEXT : String(fallbackPriority);
 }
 
@@ -642,14 +668,38 @@ function resolveRouteFailureInfo(item: RouteRequestLogItem): string | null {
 
   const error = item.error?.trim();
   if (error) {
+    if (item.statusCode !== undefined && isDuplicateRouteFailureCode(error, item.statusCode)) {
+      return null;
+    }
+
     return error;
   }
 
   if (item.statusCode !== undefined) {
-    return `HTTP ${item.statusCode}`;
+    return null;
   }
 
   return '未知失败';
+}
+
+function isDuplicateRouteFailureCode(error: string, statusCode: number): boolean {
+  const normalized = error.trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+
+  if (normalized === 'upstream_failed') {
+    return true;
+  }
+
+  const compact = normalized.replace(/\s+/g, '');
+  const statusText = String(statusCode);
+  return (
+    compact === statusText ||
+    compact === `http${statusText}` ||
+    normalized === 'bad_response_status_code' ||
+    normalized === `bad response status code ${statusText}`
+  );
 }
 
 function EventCount({ label, value }: { label: string; value: number }) {
@@ -691,6 +741,7 @@ function prependRouteLogItem(
 
 export function LogsPage({ activeView = 'session' }: LogsPageProps) {
   const appConfig = useConfigStore(state => state.config);
+  const liveRouteConfig = useRouteStore(state => state.config);
   const eventHistory = useToastStore(state => state.eventHistory);
   const clearEventHistory = useToastStore(state => state.clearEventHistory);
   const view = activeView;
@@ -703,6 +754,15 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
   const [routeModelRegistry, setRouteModelRegistry] = useState<RouteModelRegistryConfig | null>(
     null
   );
+
+  useEffect(() => {
+    if (!liveRouteConfig) {
+      return;
+    }
+
+    setRouteRulesById(Object.fromEntries(liveRouteConfig.rules.map(rule => [rule.id, rule])));
+    setRouteModelRegistry(liveRouteConfig.modelRegistry ?? null);
+  }, [liveRouteConfig]);
 
   const loadRouteLogs = useCallback(async (options?: LoadRouteLogsOptions) => {
     const background = options?.background ?? false;
@@ -1070,7 +1130,7 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
                           {failureInfo ? (
                             <span
                               data-testid="route-request-failure-info"
-                              className="inline-flex h-5 min-w-0 max-w-full flex-1 items-center gap-1 rounded-full border border-[var(--danger)]/20 bg-[var(--danger-soft)] px-2 py-0 text-[var(--danger)] md:max-w-[32rem] md:flex-none"
+                              className="inline-flex h-5 min-w-0 max-w-full flex-1 items-center gap-1 overflow-hidden whitespace-nowrap rounded-full border border-[var(--danger)]/20 bg-[var(--danger-soft)] px-2 py-0 text-[var(--danger)] md:max-w-[32rem] md:flex-none"
                               title={failureInfo}
                             >
                               <span className="shrink-0 text-[var(--danger)]/80">失败信息</span>

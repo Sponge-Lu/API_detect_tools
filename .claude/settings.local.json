@@ -98,7 +98,15 @@
       "Bash(npx prettier *)",
       "Skill(codex:rescue)",
       "Bash(codex exec *)",
-      "Bash(grep -n \"^export function\\\\|^function\\\\|^}$\" D:/2_Github_Repository/API_detect_tools/src/renderer/pages/DataOverviewPage.tsx)"
+      "Bash(grep -n \"^export function\\\\|^function\\\\|^}$\" D:/2_Github_Repository/API_detect_tools/src/renderer/pages/DataOverviewPage.tsx)",
+      "Read(//c/Users/Hang/AppData/Roaming/api-hub-management-tools/logs/**)",
+      "Bash(grep 'CLI test' /c/Users/Hang/AppData/Roaming/api-hub-management-tools/logs/main.old.log)",
+      "Bash(grep CliCompatHandlers /c/Users/Hang/AppData/Roaming/api-hub-management-tools/logs/main.log)",
+      "Bash(grep -c 'attempt budget exhausted\\\\|attempt budget' /c/Users/Hang/AppData/Roaming/api-hub-management-tools/logs/main.log)",
+      "Bash(grep -c 'attempt budget exhausted\\\\|attempt budget' /c/Users/Hang/AppData/Roaming/api-hub-management-tools/logs/main.old.log)",
+      "Bash(grep -c 'blocked after terminal' /c/Users/Hang/AppData/Roaming/api-hub-management-tools/logs/main.log)",
+      "Bash(grep -A1 'Upstream channel returned failure' /c/Users/Hang/AppData/Roaming/api-hub-management-tools/logs/main.log)",
+      "Bash(grep -oE \"bodySnippet: '[^']{0,70}\")"
     ]
   }
 }

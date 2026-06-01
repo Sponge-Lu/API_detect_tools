@@ -21,6 +21,8 @@ import {
 } from '../main/cli-wrapper-compat-service';
 import {
   buildProbeLockRouteApiKey,
+  beginRouteProbeLockUpstreamAttempt,
+  settleRouteProbeLockUpstreamAttempt,
   notifyRouteProbeLockRequest,
   notifyRouteProbeLockTerminalFailure,
   recordRouteProbeLockFirstUpstreamResult,
@@ -296,6 +298,89 @@ describe('CliWrapperCompatService', () => {
         responses: true,
         replyText: '2',
       },
+    });
+  });
+
+  it('keeps a delayed first probe-lock upstream failure ahead of Claude request-budget JSON', async () => {
+    const routeApiKey = buildProbeLockRouteApiKey('sk-route', {
+      siteId: 'site-delayed',
+      accountId: 'acc-delayed',
+      apiKeyId: 'key-delayed',
+      cliType: 'claudeCode',
+      probeRunId: 'run-delayed-upstream-failure',
+      canonicalModel: 'glm-5.1',
+      rawModel: 'glm-5.1',
+    });
+    const service = new CliWrapperCompatService(1000, async () => {
+      notifyRouteProbeLockRequest(routeApiKey);
+      beginRouteProbeLockUpstreamAttempt(routeApiKey);
+      setTimeout(() => {
+        settleRouteProbeLockUpstreamAttempt(routeApiKey);
+        recordRouteProbeLockFirstUpstreamResult({
+          routeApiKey,
+          cliType: 'claudeCode',
+          statusCode: 504,
+          success: false,
+          error: 'Gateway timeout from upstream',
+          finishedAt: Date.now(),
+        });
+      }, 10);
+
+      return {
+        exitCode: 0,
+        stdout: JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          is_error: true,
+          api_error_status: 400,
+          result: 'API Error: 400 CLI probe-lock allows only one upstream request per model test',
+        }),
+        stderr: '',
+        timedOut: false,
+      };
+    });
+
+    await expect(
+      service.testClaudeCodeWithDetail('http://127.0.0.1:3210', routeApiKey, 'glm-5.1')
+    ).resolves.toMatchObject({
+      supported: false,
+      message: 'Claude Code 执行失败: Gateway timeout from upstream',
+    });
+  });
+
+  it('summarizes Claude request-budget JSON instead of showing the full result payload', async () => {
+    const routeApiKey = buildProbeLockRouteApiKey('sk-route', {
+      siteId: 'site-json',
+      accountId: 'acc-json',
+      apiKeyId: 'key-json',
+      cliType: 'claudeCode',
+      probeRunId: 'run-structured-json-budget',
+      canonicalModel: 'glm-5.1',
+      rawModel: 'glm-5.1',
+    });
+    const service = new CliWrapperCompatService(1000, async () => {
+      notifyRouteProbeLockRequest(routeApiKey);
+      return {
+        exitCode: 0,
+        stdout: JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          is_error: true,
+          api_error_status: 400,
+          duration_ms: 71,
+          result: 'API Error: 400 CLI probe-lock allows only one upstream request per model test',
+        }),
+        stderr: '',
+        timedOut: false,
+      };
+    });
+
+    await expect(
+      service.testClaudeCodeWithDetail('http://127.0.0.1:3210', routeApiKey, 'glm-5.1')
+    ).resolves.toMatchObject({
+      supported: false,
+      message:
+        'Claude Code 执行失败: HTTP 400（应用侧 probe-lock 限制）：CLI 在一次模型测试中发起了多次上游请求，应用只允许一次真实上游请求。',
     });
   });
 

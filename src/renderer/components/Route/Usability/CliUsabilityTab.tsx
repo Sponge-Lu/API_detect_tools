@@ -21,6 +21,7 @@ import {
   type RouteCliType,
   type RouteCliProbeSample,
   type RouteCliProbeCliView,
+  type RouteCliProbeSiteView,
 } from '../../../../shared/types/route-proxy';
 
 interface CliUsabilityTabProps {
@@ -493,6 +494,19 @@ function normalizeIntervalHoursToMinutes(intervalHours: number): number {
   return Math.round(normalizedHours * 60);
 }
 
+function isCustomCliProbeSite(siteId: string): boolean {
+  return siteId.startsWith('custom-cli-site-');
+}
+
+function shouldEmphasizeCustomCliBoundary(
+  current: RouteCliProbeSiteView,
+  previous: RouteCliProbeSiteView | undefined
+): boolean {
+  return Boolean(
+    previous && isCustomCliProbeSite(current.siteId) && !isCustomCliProbeSite(previous.siteId)
+  );
+}
+
 function formatIntervalHoursInput(intervalMinutes: number): string {
   const rawHours = intervalMinutes / 60;
   const normalizedHours = Math.min(
@@ -921,32 +935,44 @@ export function CliUsabilityTab({ setPageHeaderActions }: CliUsabilityTabProps =
             </div>
 
             {/* 数据行 */}
-            {cliProbeView.map((siteView, idx) => (
-              <div
-                key={`${siteView.siteId}:${siteView.accountId || 'site'}`}
-                data-testid={`cli-usability-row-${siteView.siteId}-${siteView.accountId || 'site'}`}
-                className={`grid [content-visibility:auto] [contain-intrinsic-size:168px] ${idx < cliProbeView.length - 1 ? 'border-b border-[var(--line-soft)]' : ''}`}
-                style={{ gridTemplateColumns: CLI_USABILITY_GRID_TEMPLATE }}
-              >
-                <div className="flex flex-col justify-center gap-0.5 border-r border-[var(--line-soft)] px-4 py-3">
-                  <span className="truncate text-[13px] font-medium text-[var(--text-primary)]">
-                    {siteView.siteName}
-                  </span>
-                  <div className="min-w-0">
-                    <span className="truncate text-[10px] text-[var(--text-secondary)]">
-                      {siteView.accountName ? `账户: ${siteView.accountName}` : '未选择可用账户'}
+            {cliProbeView.map((siteView, idx) => {
+              const isCustomCliBoundary = shouldEmphasizeCustomCliBoundary(
+                siteView,
+                cliProbeView[idx - 1]
+              );
+              const rowSeparatorClass = isCustomCliBoundary
+                ? 'border-t-2 border-t-[var(--line-strong)]'
+                : idx > 0
+                  ? 'border-t border-t-[var(--line-soft)]'
+                  : '';
+
+              return (
+                <div
+                  key={`${siteView.siteId}:${siteView.accountId || 'site'}`}
+                  data-testid={`cli-usability-row-${siteView.siteId}-${siteView.accountId || 'site'}`}
+                  className={`grid [content-visibility:auto] [contain-intrinsic-size:168px] ${rowSeparatorClass}`}
+                  style={{ gridTemplateColumns: CLI_USABILITY_GRID_TEMPLATE }}
+                >
+                  <div className="flex flex-col justify-center gap-0.5 border-r border-[var(--line-soft)] px-4 py-3">
+                    <span className="truncate text-[13px] font-medium text-[var(--text-primary)]">
+                      {siteView.siteName}
                     </span>
-                  </div>
-                </div>
-                {CLI_TYPES.map((cli, ci) => {
-                  return (
-                    <div key={cli} className={ci < 2 ? 'border-r border-[var(--line-soft)]' : ''}>
-                      <CliCell cliView={siteView.clis[cli]} timeRange={timeRange} />
+                    <div className="min-w-0">
+                      <span className="truncate text-[10px] text-[var(--text-secondary)]">
+                        {siteView.accountName ? `账户: ${siteView.accountName}` : '未选择可用账户'}
+                      </span>
                     </div>
-                  );
-                })}
-              </div>
-            ))}
+                  </div>
+                  {CLI_TYPES.map((cli, ci) => {
+                    return (
+                      <div key={cli} className={ci < 2 ? 'border-r border-[var(--line-soft)]' : ''}>
+                        <CliCell cliView={siteView.clis[cli]} timeRange={timeRange} />
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

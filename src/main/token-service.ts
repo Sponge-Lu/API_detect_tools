@@ -2135,9 +2135,45 @@ export class TokenService {
     );
 
     const resolvedValues = new Map<number, string>();
+    const siteType = this.resolveSiteTypeByUrl(baseUrl, context?.siteType);
+
+    if (siteType === 'newapi') {
+      try {
+        const batchValues = await this.fetchRawApiKeyValuesBatch(
+          baseUrl,
+          userId,
+          accessToken,
+          maskedEntries.map(entry => entry.tokenId as string),
+          page,
+          context?.siteType
+        );
+
+        for (const entry of maskedEntries) {
+          const resolvedValue = batchValues.get(entry.tokenId as string);
+          if (resolvedValue && !isMaskedApiKeyValue(resolvedValue)) {
+            resolvedValues.set(entry.index, resolvedValue);
+          }
+        }
+
+        if (batchValues.size > 0) {
+          Logger.info(
+            `✅ [TokenService] NewAPI 批量明文 API Key 获取成功: ${batchValues.size}/${maskedEntries.length}`
+          );
+        }
+      } catch (error: any) {
+        Logger.warn(
+          '⚠️ [TokenService] NewAPI 批量明文 API Key 获取失败，回退到单个接口:',
+          error?.message || error
+        );
+      }
+    }
 
     await Promise.all(
       maskedEntries.map(async entry => {
+        if (resolvedValues.has(entry.index)) {
+          return;
+        }
+
         try {
           const resolvedValue = await this.resolveUsableApiKeyValue(
             baseUrl,
@@ -2176,6 +2212,137 @@ export class TokenService {
 
       return withResolvedApiKeyValue(token, resolvedValue);
     });
+  }
+
+  private extractBatchRawApiKeyValues(payload: unknown): Map<string, string> {
+    const result = new Map<string, string>();
+
+    if (!payload || typeof payload !== 'object') {
+      return result;
+    }
+
+    const record = payload as Record<string, any>;
+    const data = record.data && typeof record.data === 'object' ? record.data : record;
+    const keys = data.keys && typeof data.keys === 'object' ? data.keys : data;
+
+    if (!keys || typeof keys !== 'object' || Array.isArray(keys)) {
+      return result;
+    }
+
+    for (const [tokenId, rawValue] of Object.entries(keys)) {
+      const normalized = normalizeApiKeyValue(rawValue);
+      if (normalized && !isMaskedApiKeyValue(normalized)) {
+        result.set(String(tokenId), normalized);
+      }
+    }
+
+    return result;
+  }
+
+  private async fetchRawApiKeyValuesBatch(
+    baseUrl: string,
+    userId: number,
+    accessToken: string,
+    tokenIds: string[],
+    page?: any,
+    explicitSiteType?: SiteType
+  ): Promise<Map<string, string>> {
+    const numericIds = Array.from(
+      new Set(
+        tokenIds
+          .map(tokenId => Number(tokenId))
+          .filter(tokenId => Number.isInteger(tokenId) && tokenId > 0)
+      )
+    );
+
+    if (numericIds.length === 0) {
+      return new Map();
+    }
+
+    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    const url = `${cleanBaseUrl}/api/token/batch/keys`;
+    const resolvedValues = new Map<string, string>();
+
+    for (let offset = 0; offset < numericIds.length; offset += 100) {
+      const ids = numericIds.slice(offset, offset + 100);
+
+      if (page) {
+        const userIdHeaders = this.getSiteTypeProfileByUrl(baseUrl, explicitSiteType)
+          .includeUserIdHeaders
+          ? getAllUserIdHeaders(userId)
+          : {};
+        const result = await runOnPageQueue(page, () =>
+          page.evaluate(
+            async (
+              apiUrl: string,
+              token: string,
+              requestIds: number[],
+              additionalHeaders: Record<string, string>
+            ) => {
+              const response = await fetch(apiUrl, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${token}`,
+                  ...additionalHeaders,
+                  Pragma: 'no-cache',
+                },
+                body: JSON.stringify({ ids: requestIds }),
+              });
+
+              const status = response.status;
+              const text = await response.text();
+              try {
+                return { ok: response.ok, status, isJson: true, data: JSON.parse(text) };
+              } catch {
+                return { ok: response.ok, status, isJson: false, textSnippet: text.slice(0, 500) };
+              }
+            },
+            url,
+            accessToken,
+            ids,
+            userIdHeaders
+          )
+        );
+
+        if (!result.ok || result.status < 200 || result.status >= 300 || !result.isJson) {
+          const reason = result.isJson
+            ? result.data?.message || `HTTP ${result.status}`
+            : result.textSnippet || `HTTP ${result.status}`;
+          throw new Error(reason);
+        }
+
+        for (const [tokenId, rawValue] of this.extractBatchRawApiKeyValues(result.data)) {
+          resolvedValues.set(tokenId, rawValue);
+        }
+        continue;
+      }
+
+      const response = await httpPost(
+        url,
+        { ids },
+        {
+          headers: this.createRequestHeaders(userId, accessToken, baseUrl, explicitSiteType),
+          timeout: 10000,
+          validateStatus: (status: number) => status < 500,
+        }
+      );
+
+      if (this.isBrowserChallengeResponse(response.data)) {
+        throw new Error('Browser challenge response');
+      }
+
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error(response.data?.message || `HTTP ${response.status}`);
+      }
+
+      for (const [tokenId, rawValue] of this.extractBatchRawApiKeyValues(response.data)) {
+        resolvedValues.set(tokenId, rawValue);
+      }
+    }
+
+    return resolvedValues;
   }
 
   private extractRawApiKeyValue(payload: unknown): string | null {

@@ -235,6 +235,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
   // 多账户: 按站点 ID 预加载的账户列表
   const [accountsBySite, setAccountsBySite] = useState<Record<string, AccountInfo[]>>({});
   const [selectedModelsByCard, setSelectedModelsByCard] = useState<Record<string, Set<string>>>({});
+  const [refreshingTokenKey, setRefreshingTokenKey] = useState<string | null>(null);
   const dateStr = useDateString();
 
   // 兼容层
@@ -647,6 +648,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
   // 令牌管理 hook
   const {
     refreshSiteApiKeys,
+    handleRefreshToken: refreshToken,
     handleDeleteToken: deleteToken,
     handleCreateTokenSubmit: createToken,
   } = useTokenManagement({
@@ -664,6 +666,15 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     context?: CardOperationContext
   ) => {
     deleteToken(site, token, tokenIndex, setDeletingTokenKey, context);
+  };
+
+  const handleRefreshToken = (
+    site: SiteConfig,
+    token: any,
+    tokenIndex: number,
+    context?: CardOperationContext
+  ) => {
+    refreshToken(site, token, tokenIndex, setRefreshingTokenKey, context);
   };
 
   const handleCreateTokenSubmit = () => {
@@ -1358,6 +1369,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                         showTokens={showTokens}
                         selectedModels={getSelectedModelsForCard(ck)}
                         deletingTokenKey={deletingTokenKey}
+                        refreshingTokenKey={refreshingTokenKey}
                         autoRefreshEnabled={
                           account
                             ? (account.auto_refresh ?? site.auto_refresh ?? false)
@@ -1396,6 +1408,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                         onCopySelectedModels={() => copySelectedModels(ck)}
                         onClearSelectedModels={() => clearSelectedModels(ck)}
                         onOpenCreateTokenDialog={s => handleOpenCreateTokenDialog(s, cardContext)}
+                        onRefreshToken={(s, t, i) => handleRefreshToken(s, t, i, cardContext)}
                         onDeleteToken={(s, t, i) => handleDeleteToken(s, t, i, cardContext)}
                         onOpenCliConfig={() => {
                           setCliConfigSite(site);

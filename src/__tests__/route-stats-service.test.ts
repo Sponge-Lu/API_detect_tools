@@ -163,6 +163,30 @@ describe('route-stats-service route path state', () => {
     expect(state.windowSuccessCount).toBe(0);
     expect(state.successRate).toBe(0);
   });
+
+  it('keeps priority-hit reset suppression when the same route path reports success again', async () => {
+    const now = 4_500_000;
+    const key = { ...routePath, targetProtocol: 'native' as const };
+    mocks.routing.routePathStates = {
+      'rule-1|site-1|acc-1|key-1|native|claude-opus-4-6|claude-opus-4.6-20260201': {
+        ...key,
+        windowStartedAt: now - 1_000,
+        windowRequestCount: 0,
+        windowSuccessCount: 0,
+        successRate: 1,
+        affinitySuppressedAt: now - 500,
+        affinitySuppressedUntil: now + 60_000,
+        updatedAt: now - 500,
+      },
+    };
+
+    const state = await recordRoutePathOutcome(key, 'success', { statusCode: 200 }, now);
+
+    expect(state.lastOutcome).toBe('success');
+    expect(state.lastSuccessAt).toBe(now);
+    expect(state.affinitySuppressedAt).toBe(now - 500);
+    expect(state.affinitySuppressedUntil).toBe(now + 60_000);
+  });
 });
 
 describe('route-stats-service route endpoint capabilities', () => {

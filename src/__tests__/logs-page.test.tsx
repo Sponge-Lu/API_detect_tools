@@ -1,9 +1,19 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { RouteRequestLogItem } from '../shared/types/route-proxy';
+import {
+  DEFAULT_ANALYTICS_CONFIG,
+  DEFAULT_CLI_PROBE_CONFIG,
+  DEFAULT_ROUTE_PROXY_SERVER_CONFIG,
+  type RouteDisplayItemPriorityConfig,
+  type RouteModelRegistryConfig,
+  type RouteRequestLogItem,
+  type RouteRule,
+  type RoutingConfig,
+} from '../shared/types/route-proxy';
 import type { Config } from '../renderer/App';
 import { LogsPage } from '../renderer/pages/LogsPage';
 import { useConfigStore } from '../renderer/store/configStore';
+import { useRouteStore } from '../renderer/store/routeStore';
 import { useToastStore, type AppEventItem } from '../renderer/store/toastStore';
 
 function buildEvent(
@@ -55,6 +65,109 @@ function buildRouteLog(
   };
 }
 
+function buildRouteConfigForLogs(params: {
+  rules: RouteRule[];
+  modelRegistry: RouteModelRegistryConfig;
+}): RoutingConfig {
+  return {
+    server: { ...DEFAULT_ROUTE_PROXY_SERVER_CONFIG },
+    rules: params.rules,
+    cliModelSelections: {
+      claudeCode: null,
+      codex: null,
+      geminiCli: null,
+    },
+    stats: {},
+    routePathStates: {},
+    routeEndpointCapabilities: {},
+    health: {},
+    modelRegistry: params.modelRegistry,
+    cliProbe: {
+      config: { ...DEFAULT_CLI_PROBE_CONFIG },
+      latest: {},
+      history: {},
+    },
+    analytics: {
+      config: { ...DEFAULT_ANALYTICS_CONFIG },
+      buckets: {},
+    },
+  };
+}
+
+function buildPriorityRegistry(sitePriorities: Record<string, number>): RouteModelRegistryConfig {
+  return {
+    version: 1,
+    sources: [
+      {
+        sourceKey: 'source-site-b-gpt',
+        siteId: 'site-2',
+        siteName: '站点 B',
+        accountId: 'acct-2',
+        accountName: '备用账户',
+        sourceType: 'account',
+        originalModel: 'gpt-5.4-2025-02-15',
+        vendor: 'gpt',
+        apiKeyGroups: ['beta'],
+        userGroupKeys: ['beta'],
+        availableUserGroups: ['beta'],
+        availableApiKeys: [
+          {
+            apiKeyId: 'key-2',
+            apiKeyName: 'Key Beta',
+            accountId: 'acct-2',
+            accountName: '备用账户',
+            group: 'beta',
+          },
+        ],
+        firstSeenAt: 1,
+        lastSeenAt: 1,
+      },
+      {
+        sourceKey: 'source-site-a-gpt',
+        siteId: 'site-1',
+        siteName: '站点 A',
+        accountId: 'acct-1',
+        accountName: '主账户',
+        sourceType: 'account',
+        originalModel: 'gpt-5.4-2025-02-15',
+        vendor: 'gpt',
+        apiKeyGroups: ['vip'],
+        userGroupKeys: ['vip'],
+        availableUserGroups: ['vip'],
+        availableApiKeys: [
+          {
+            apiKeyId: 'key-1',
+            apiKeyName: 'Key Alpha',
+            accountId: 'acct-1',
+            accountName: '主账户',
+            group: 'vip',
+          },
+        ],
+        firstSeenAt: 1,
+        lastSeenAt: 1,
+      },
+    ],
+    entries: {},
+    overrides: [],
+    displayItems: [
+      {
+        id: 'display-gpt-5.4',
+        vendor: 'gpt',
+        canonicalName: 'gpt-5.4',
+        sourceKeys: ['source-site-b-gpt', 'source-site-a-gpt'],
+        priorityConfig: {
+          sitePriorities,
+          apiKeyPriorities: {},
+        },
+        mode: 'manual',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ],
+    vendorPriorities: {},
+  };
+}
+
 describe('LogsPage', () => {
   const routeApi = window.electronAPI.route!;
   let routeRequestLogListener: ((item: RouteRequestLogItem) => void) | null = null;
@@ -71,6 +184,7 @@ describe('LogsPage', () => {
       toasts: [],
       eventHistory: [],
     });
+    useRouteStore.setState({ config: null });
     useConfigStore.setState({
       config: {
         sites: [
@@ -253,9 +367,9 @@ describe('LogsPage', () => {
                 id: 'display-gpt-5.4',
                 vendor: 'gpt',
                 canonicalName: 'gpt-5.4',
-                sourceKeys: ['source-site-a-gpt'],
+                sourceKeys: ['source-site-b-gpt-mini', 'source-site-a-gpt'],
                 priorityConfig: {
-                  sitePriorities: { 'site-1': 2 },
+                  sitePriorities: { 'site-2': 1, 'site-1': 2 },
                   apiKeyPriorities: {},
                 },
                 mode: 'manual',
@@ -495,11 +609,13 @@ describe('LogsPage', () => {
     expect(sitePathText).toHaveAttribute('title', '站点 A / 主账户 / vip / Key Alpha');
     expect(sitePathText).toHaveClass('truncate', 'min-w-0');
     const sitePriorityCell = within(rows[0]).getByTestId('route-request-site-priority');
-    expect(sitePriorityCell).toHaveTextContent('优先级 2');
+    expect(sitePriorityCell).toHaveTextContent('优先级 1');
+    expect(sitePriorityCell).not.toHaveTextContent('2');
+    expect(sitePriorityCell).not.toHaveTextContent('90');
     expect(sitePriorityCell).toHaveClass('justify-self-start', 'whitespace-nowrap');
     expect(sitePriorityCell).not.toHaveClass('rounded-full');
     expect(sitePriorityCell.className).not.toMatch(/bg-\[/);
-    expect(within(sitePriorityCell).getByText('2')).toHaveClass('text-[var(--text-primary)]');
+    expect(within(sitePriorityCell).getByText('1')).toHaveClass('text-[var(--text-primary)]');
     const redirectArrow = within(modelPath).getByLabelText('指向重定向模型');
     expect(redirectArrow).toHaveTextContent('→');
     expect(redirectArrow).toHaveClass('text-[var(--text-tertiary)]');
@@ -545,7 +661,7 @@ describe('LogsPage', () => {
       '站点 B / 备用账户 / beta / Key Beta'
     );
     expect(within(rows[1]).getByTestId('route-request-site-priority')).toHaveTextContent(
-      '优先级 1'
+      '优先级 0'
     );
     expect(within(rows[1]).getByTestId('route-request-model-path')).toHaveTextContent(
       'gpt-5.4-mini→gpt-5.4-mini'
@@ -576,6 +692,7 @@ describe('LogsPage', () => {
       '预计金额 ≈1.28e-7'
     );
     expect(screen.queryByText(/^规则说明：/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/规则优先级/)).not.toBeInTheDocument();
     expect(screen.getByText(/用时1\.23s\/首字456ms/)).toBeInTheDocument();
     expect(screen.getByText(/用时789ms\/首字120ms/)).toBeInTheDocument();
     expect(
@@ -591,6 +708,190 @@ describe('LogsPage', () => {
     });
     expect(screen.getByText('暂无路由日志')).toBeInTheDocument();
     expect(screen.queryByText(/当前运行会话中还没有路由请求/)).not.toBeInTheDocument();
+  });
+
+  it('uses the matched display item site priority even when the priority is zero', async () => {
+    vi.mocked(routeApi.getRequestLogs).mockResolvedValue({
+      success: true,
+      data: [
+        buildRouteLog({
+          id: 'route-priority-zero',
+          requestId: 'priority-zero',
+          cliType: 'codex',
+          attempt: 1,
+          outcome: 'success',
+          createdAt: 100,
+          siteId: 'site-1',
+          siteName: '站点 A',
+          accountId: 'acct-1',
+          accountName: '主账户',
+          apiKeyId: 'key-1',
+          apiKeyName: 'Key Alpha',
+          requestedModel: 'gpt-5.4',
+          canonicalModel: 'gpt-5.4',
+          resolvedModel: 'gpt-5.4-2025-02-15',
+        }),
+      ],
+    });
+
+    const stringZeroPriority = {
+      sitePriorities: { 'site-1': '0' },
+      apiKeyPriorities: { 'key-1': 99 },
+    } as unknown as RouteDisplayItemPriorityConfig;
+    const modelRegistry: RouteModelRegistryConfig = {
+      version: 1,
+      sources: [
+        {
+          sourceKey: 'source-site-b-gpt',
+          siteId: 'site-2',
+          siteName: '站点 B',
+          accountId: 'acct-2',
+          accountName: '备用账户',
+          sourceType: 'account',
+          originalModel: 'gpt-5.4-2025-02-15',
+          vendor: 'gpt',
+          apiKeyGroups: ['beta'],
+          userGroupKeys: ['beta'],
+          availableUserGroups: ['beta'],
+          availableApiKeys: [
+            {
+              apiKeyId: 'key-2',
+              apiKeyName: 'Key Beta',
+              accountId: 'acct-2',
+              accountName: '备用账户',
+              group: 'beta',
+            },
+          ],
+          firstSeenAt: 1,
+          lastSeenAt: 1,
+        },
+        {
+          sourceKey: 'source-site-a-gpt',
+          siteId: 'site-1',
+          siteName: '站点 A',
+          accountId: 'acct-1',
+          accountName: '主账户',
+          sourceType: 'account',
+          originalModel: 'gpt-5.4-2025-02-15',
+          vendor: 'gpt',
+          apiKeyGroups: ['vip'],
+          userGroupKeys: ['vip'],
+          availableUserGroups: ['vip'],
+          availableApiKeys: [
+            {
+              apiKeyId: 'key-1',
+              apiKeyName: 'Key Alpha',
+              accountId: 'acct-1',
+              accountName: '主账户',
+              group: 'vip',
+            },
+          ],
+          firstSeenAt: 1,
+          lastSeenAt: 1,
+        },
+      ],
+      entries: {},
+      overrides: [],
+      displayItems: [
+        {
+          id: 'display-priority-zero',
+          vendor: 'gpt',
+          canonicalName: 'gpt-5.4',
+          sourceKeys: ['source-site-b-gpt', 'source-site-a-gpt'],
+          priorityConfig: stringZeroPriority,
+          mode: 'manual',
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+      vendorPriorities: {},
+    };
+
+    vi.mocked(routeApi.getConfig).mockResolvedValueOnce({
+      success: true,
+      data: {
+        rules: [
+          {
+            id: 'rule-codex',
+            name: 'Codex 主路由',
+            enabled: true,
+            priority: 90,
+            cliType: 'codex',
+            patternType: 'wildcard',
+            pattern: 'gpt-*',
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+        modelRegistry,
+      },
+    });
+
+    render(<LogsPage activeView="route" />);
+
+    expect(await screen.findByText('请求 priority-zero')).toBeInTheDocument();
+    const sitePriorityCell = screen.getByTestId('route-request-site-priority');
+    expect(sitePriorityCell).toHaveTextContent('优先级 0');
+    expect(sitePriorityCell).not.toHaveTextContent('1');
+    expect(sitePriorityCell).not.toHaveTextContent('90');
+    expect(sitePriorityCell).not.toHaveTextContent('99');
+  });
+
+  it('recomputes existing route log priorities from the latest route config', async () => {
+    vi.mocked(routeApi.getRequestLogs).mockResolvedValue({
+      success: true,
+      data: [
+        buildRouteLog({
+          id: 'route-latest-priority',
+          requestId: 'latest-priority',
+          cliType: 'codex',
+          attempt: 1,
+          outcome: 'success',
+          createdAt: 100,
+          siteId: 'site-1',
+          siteName: '站点 A',
+          accountId: 'acct-1',
+          accountName: '主账户',
+          apiKeyId: 'key-1',
+          apiKeyName: 'Key Alpha',
+          requestedModel: 'gpt-5.4',
+          canonicalModel: 'gpt-5.4',
+          resolvedModel: 'gpt-5.4-2025-02-15',
+        }),
+      ],
+    });
+    const rule: RouteRule = {
+      id: 'rule-codex',
+      name: 'Codex 主路由',
+      enabled: true,
+      priority: 90,
+      cliType: 'codex',
+      patternType: 'wildcard',
+      pattern: 'gpt-*',
+      createdAt: 1,
+      updatedAt: 1,
+    };
+
+    render(<LogsPage activeView="route" />);
+
+    expect(await screen.findByText('请求 latest-priority')).toBeInTheDocument();
+    const sitePriorityCell = screen.getByTestId('route-request-site-priority');
+    expect(sitePriorityCell).toHaveTextContent('优先级 1');
+
+    await act(async () => {
+      useRouteStore.setState({
+        config: buildRouteConfigForLogs({
+          rules: [rule],
+          modelRegistry: buildPriorityRegistry({ 'site-1': 0, 'site-2': 1 }),
+        }),
+      });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(sitePriorityCell).toHaveTextContent('优先级 0');
+    });
+    expect(sitePriorityCell).not.toHaveTextContent('优先级 1');
   });
 
   it('appends pushed route logs without reloading the snapshot', async () => {
@@ -823,5 +1124,60 @@ describe('LogsPage', () => {
 
     expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(3);
     expect(screen.getByText('3 条')).toBeInTheDocument();
+  });
+
+  it('shows upstream failure details without repeating the status code', async () => {
+    vi.mocked(routeApi.getRequestLogs).mockResolvedValue({
+      success: true,
+      data: [
+        buildRouteLog({
+          id: 'route-code-only-failure',
+          requestId: 'code-only-failure',
+          cliType: 'codex',
+          attempt: 1,
+          outcome: 'failure',
+          createdAt: 200,
+          statusCode: 500,
+          error: 'HTTP 500',
+        }),
+        buildRouteLog({
+          id: 'route-upstream-failure',
+          requestId: 'upstream-failure',
+          cliType: 'codex',
+          attempt: 1,
+          outcome: 'failure',
+          createdAt: 100,
+          statusCode: 503,
+          error: 'quota_exceeded: upstream quota exhausted',
+        }),
+      ],
+    });
+
+    render(<LogsPage activeView="route" />);
+
+    await waitFor(() => {
+      expect(routeApi.getRequestLogs).toHaveBeenCalledWith({ limit: 200 });
+    });
+
+    await screen.findByText('请求 code-only-failure');
+    const rows = screen.getAllByTestId('route-request-log-row');
+    const codeOnlyRow = rows.find(row => within(row).queryByText('请求 code-only-failure'));
+    const upstreamRow = rows.find(row => within(row).queryByText('请求 upstream-failure'));
+
+    expect(codeOnlyRow).toBeDefined();
+    expect(upstreamRow).toBeDefined();
+    if (!codeOnlyRow || !upstreamRow) {
+      return;
+    }
+
+    expect(within(codeOnlyRow).getByText('HTTP 500')).toBeInTheDocument();
+    expect(within(codeOnlyRow).queryByTestId('route-request-failure-info')).not.toBeInTheDocument();
+
+    const failureInfo = within(upstreamRow).getByTestId('route-request-failure-info');
+    expect(within(upstreamRow).getByText('HTTP 503')).toBeInTheDocument();
+    expect(failureInfo).toHaveTextContent('失败信息quota_exceeded: upstream quota exhausted');
+    expect(failureInfo).toHaveClass('overflow-hidden', 'whitespace-nowrap');
+    expect(failureInfo).toHaveAttribute('title', 'quota_exceeded: upstream quota exhausted');
+    expect(failureInfo).not.toHaveTextContent('HTTP 503');
   });
 });

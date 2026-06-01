@@ -218,7 +218,7 @@ describe('AnyRouter Request Rewriter', () => {
       expect(rewritten.output_config).toBeUndefined();
     });
 
-    it('应该过滤 AnyRouter 不支持的 Codex 工具类型', () => {
+    it('应该保留 AnyRouter 当前支持的 Codex Responses 工具类型', () => {
       const originalBody = Buffer.from(
         JSON.stringify({
           model: 'gpt-route',
@@ -237,22 +237,36 @@ describe('AnyRouter Request Rewriter', () => {
               format: { type: 'text' },
             },
             {
-              name: 'legacy_name_only',
-            },
-            {
-              type: 'mcp',
-              server_label: 'ace_tool',
+              type: 'web_search',
             },
             {
               type: 'web_search_preview',
             },
             {
-              type: 'code_interpreter',
-              container: { type: 'auto' },
-            },
-            {
               type: 'file_search',
               vector_store_ids: ['vs_123'],
+            },
+            {
+              type: 'image_generation',
+            },
+            {
+              type: 'apply_patch',
+            },
+            {
+              type: 'namespace',
+              name: 'crm',
+              tools: [
+                {
+                  type: 'function',
+                  name: 'lookup_customer',
+                  parameters: { type: 'object', properties: {} },
+                },
+              ],
+            },
+            {
+              type: 'tool_search',
+              execution: 'client',
+              parameters: { type: 'object', properties: {} },
             },
           ],
           tool_choice: 'auto',
@@ -275,12 +289,44 @@ describe('AnyRouter Request Rewriter', () => {
           description: 'Custom grammar shell',
           format: { type: 'text' },
         },
+        {
+          type: 'web_search',
+        },
+        {
+          type: 'web_search_preview',
+        },
+        {
+          type: 'file_search',
+          vector_store_ids: ['vs_123'],
+        },
+        {
+          type: 'image_generation',
+        },
+        {
+          type: 'apply_patch',
+        },
+        {
+          type: 'namespace',
+          name: 'crm',
+          tools: [
+            {
+              type: 'function',
+              name: 'lookup_customer',
+              parameters: { type: 'object', properties: {} },
+            },
+          ],
+        },
+        {
+          type: 'tool_search',
+          execution: 'client',
+          parameters: { type: 'object', properties: {} },
+        },
       ]);
       expect(rewritten.tool_choice).toBe('auto');
       expect(rewritten.parallel_tool_calls).toBe(true);
     });
 
-    it('Codex 工具全部被过滤时应移除工具选择字段', () => {
+    it('应该过滤 AnyRouter 仍不稳定或不支持的 Codex 工具类型', () => {
       const originalBody = Buffer.from(
         JSON.stringify({
           model: 'gpt-route',
@@ -288,7 +334,10 @@ describe('AnyRouter Request Rewriter', () => {
           tools: [
             { type: 'mcp', server_label: 'local_only' },
             { name: 'legacy_name_only' },
-            { type: 'web_search_preview' },
+            { type: 'code_interpreter', container: { type: 'auto' } },
+            { type: 'computer_use_preview', display_width: 1024, display_height: 768 },
+            { type: 'local_shell' },
+            { type: 'shell', environment: { type: 'local' } },
           ],
           tool_choice: 'auto',
           parallel_tool_calls: true,
@@ -301,6 +350,74 @@ describe('AnyRouter Request Rewriter', () => {
       expect(rewritten.tools).toBeUndefined();
       expect(rewritten.tool_choice).toBeUndefined();
       expect(rewritten.parallel_tool_calls).toBeUndefined();
+    });
+
+    it('Codex 强制选择的工具被过滤时应移除无效 tool_choice', () => {
+      const originalBody = Buffer.from(
+        JSON.stringify({
+          model: 'gpt-route',
+          input: 'use a tool',
+          tools: [
+            {
+              type: 'function',
+              name: 'get_weather',
+              parameters: { type: 'object', properties: {} },
+            },
+            {
+              type: 'mcp',
+              server_label: 'local_only',
+            },
+          ],
+          tool_choice: { type: 'mcp', server_label: 'local_only' },
+          parallel_tool_calls: true,
+        })
+      );
+
+      const result = rewriteForAnyRouter(originalBody, validHash, {}, 'codex', '/v1/responses');
+      const rewritten = JSON.parse(result.body.toString('utf-8'));
+
+      expect(rewritten.tools).toEqual([
+        {
+          type: 'function',
+          name: 'get_weather',
+          parameters: { type: 'object', properties: {} },
+        },
+      ]);
+      expect(rewritten.tool_choice).toBeUndefined();
+      expect(rewritten.parallel_tool_calls).toBe(true);
+    });
+
+    it('Codex 强制选择的工具仍保留时应保留 tool_choice', () => {
+      const originalBody = Buffer.from(
+        JSON.stringify({
+          model: 'gpt-route',
+          input: 'use a tool',
+          tools: [
+            {
+              type: 'function',
+              name: 'get_weather',
+              parameters: { type: 'object', properties: {} },
+            },
+            {
+              type: 'mcp',
+              server_label: 'local_only',
+            },
+          ],
+          tool_choice: { type: 'function', name: 'get_weather' },
+        })
+      );
+
+      const result = rewriteForAnyRouter(originalBody, validHash, {}, 'codex', '/v1/responses');
+      const rewritten = JSON.parse(result.body.toString('utf-8'));
+
+      expect(rewritten.tools).toEqual([
+        {
+          type: 'function',
+          name: 'get_weather',
+          parameters: { type: 'object', properties: {} },
+        },
+      ]);
+      expect(rewritten.tool_choice).toEqual({ type: 'function', name: 'get_weather' });
     });
 
     it('应该保持 Gemini Native 原生协议透传', () => {

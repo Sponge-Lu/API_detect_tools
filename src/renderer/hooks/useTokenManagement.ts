@@ -78,6 +78,47 @@ export function useTokenManagement({
     setResults(nextResults);
   };
 
+  const getTokenIdentity = (token: any): string | null => {
+    if (!token || typeof token !== 'object') {
+      return null;
+    }
+
+    if (token.id !== undefined && token.id !== null) {
+      return `id:${String(token.id)}`;
+    }
+
+    if (token.token_id !== undefined && token.token_id !== null) {
+      return `token_id:${String(token.token_id)}`;
+    }
+
+    const rawValue =
+      typeof token.key === 'string' && token.key.trim()
+        ? token.key.trim()
+        : typeof token.token === 'string' && token.token.trim()
+          ? token.token.trim()
+          : '';
+    if (rawValue) {
+      return `key:${rawValue}`;
+    }
+
+    const name = typeof token.name === 'string' ? token.name.trim() : '';
+    const group = typeof token.group === 'string' && token.group.trim() ? token.group.trim() : '';
+    if (name) {
+      return `name:${name}|group:${group || 'default'}`;
+    }
+
+    return null;
+  };
+
+  const findMatchingToken = (tokens: any[], targetToken: any): any | undefined => {
+    const targetIdentity = getTokenIdentity(targetToken);
+    if (!targetIdentity) {
+      return undefined;
+    }
+
+    return tokens.find(token => getTokenIdentity(token) === targetIdentity);
+  };
+
   /**
    * 刷新指定站点的 API Key 列表
    */
@@ -119,6 +160,58 @@ export function useTokenManagement({
     } catch (error: any) {
       Logger.error('❌ [useTokenManagement] 刷新 API Key 列表失败:', error);
       return [];
+    }
+  };
+
+  /**
+   * 刷新单个 API Key 的最新状态。
+   *
+   * 后端兼容由 fetchApiTokens 统一处理；这里保留整站列表作为缓存来源，但只对当前 key
+   * 展示 loading 和结果提示。
+   */
+  const handleRefreshToken = async (
+    site: SiteConfig,
+    token: any,
+    tokenIndex: number,
+    setRefreshingTokenKey: (key: string | null) => void,
+    context?: TokenOperationContext
+  ) => {
+    const accessToken = context?.accessToken ?? site.system_token;
+    const userId = context?.userId ?? site.user_id;
+    if (!accessToken || !userId) {
+      toast.warning('当前账户未配置系统 Token 或用户 ID');
+      return;
+    }
+
+    const userIdNum = parseInt(userId || '0', 10);
+    if (!userIdNum) {
+      toast.error('当前站点用户 ID 无效');
+      return;
+    }
+
+    const storeKey = getStoreKey(site, context);
+    const displayName = token.name || `Key #${tokenIndex + 1}`;
+    const refreshingKeyId = `${storeKey}_${token.id ?? token.token_id ?? token.key ?? tokenIndex}`;
+    setRefreshingTokenKey(refreshingKeyId);
+
+    try {
+      const tokens = await refreshSiteApiKeys(site, context);
+      if (tokens.length === 0) {
+        throw new Error('未获取到 API Key 列表');
+      }
+
+      const refreshedToken = findMatchingToken(tokens, token);
+      if (!refreshedToken) {
+        toast.warning(`已刷新列表，但未找到 API Key「${displayName}」`);
+        return;
+      }
+
+      toast.success(`API Key「${displayName}」状态已刷新`);
+    } catch (error: any) {
+      Logger.error('❌ [useTokenManagement] 刷新单个 API Key 失败:', error);
+      toast.error(`刷新 API Key 失败: ${error.message || error}`);
+    } finally {
+      setRefreshingTokenKey(null);
     }
   };
 
@@ -289,6 +382,7 @@ export function useTokenManagement({
 
   return {
     refreshSiteApiKeys,
+    handleRefreshToken,
     handleCreateTokenSubmit,
     handleDeleteToken,
   };

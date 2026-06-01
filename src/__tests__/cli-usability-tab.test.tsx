@@ -152,6 +152,39 @@ vi.mock('../renderer/store/routeStore', () => ({
             },
           },
         },
+        {
+          siteId: 'custom-cli-site-duckcoding',
+          siteName: '自定义 CLI',
+          accountId: 'custom-cli-account-duckcoding',
+          accountName: 'DuckCoding',
+          isFallbackAccount: false,
+          clis: {
+            claudeCode: {
+              cliType: 'claudeCode',
+              enabled: true,
+              accountId: 'custom-cli-account-duckcoding',
+              accountName: 'DuckCoding',
+              isFallbackAccount: false,
+              models: [],
+            },
+            codex: {
+              cliType: 'codex',
+              enabled: true,
+              accountId: 'custom-cli-account-duckcoding',
+              accountName: 'DuckCoding',
+              isFallbackAccount: false,
+              models: [],
+            },
+            geminiCli: {
+              cliType: 'geminiCli',
+              enabled: true,
+              accountId: 'custom-cli-account-duckcoding',
+              accountName: 'DuckCoding',
+              isFallbackAccount: false,
+              models: [],
+            },
+          },
+        },
       ],
       cliProbeTimeRange: '7d',
       cliProbeLoaded: true,
@@ -226,10 +259,15 @@ describe('CliUsabilityTab', () => {
     expect(gridCard).not.toHaveAttribute('data-perf-monitor', 'blur');
     expect(gridCard).toHaveClass('border-y', 'bg-[var(--surface-1)]', 'shadow-none');
     expect(gridCard.className).not.toContain('rounded-');
-    expect(screen.getByTestId('cli-usability-row-site-1-acct-default').className).toContain(
-      '[content-visibility:auto]'
+    const siteRow = screen.getByTestId('cli-usability-row-site-1-acct-default');
+    const customCliRow = screen.getByTestId(
+      'cli-usability-row-custom-cli-site-duckcoding-custom-cli-account-duckcoding'
     );
+    expect(siteRow.className).toContain('[content-visibility:auto]');
+    expect(siteRow).not.toHaveClass('border-t-2', 'border-t-[var(--line-strong)]');
+    expect(customCliRow).toHaveClass('border-t-2', 'border-t-[var(--line-strong)]');
     expect(screen.getByText('账户: 默认账户')).toBeInTheDocument();
+    expect(screen.getByText('账户: DuckCoding')).toBeInTheDocument();
     expect(screen.queryByText('模型2')).not.toBeInTheDocument();
     expect(screen.queryByText('模型3')).not.toBeInTheDocument();
     expect(screen.queryByText('未配置')).not.toBeInTheDocument();

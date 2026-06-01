@@ -2,8 +2,8 @@
 
 > 本文档整理了 One API 系列项目（one-api、new-api、Veloera、one-hub、done-hub、VoAPI、Super-API）以及 sub2api 的接口信息。
 >
-> **最后更新时间**：2026-05-25
-> **版本**：v3.0.4
+> **最后更新时间**：2026-06-01
+> **版本**：v3.0.5
 
 ---
 
@@ -12,7 +12,7 @@
 | 项目 | 基础框架 | 特点 |
 | :--- | :--- | :--- |
 | **one-api** | 原版 | 基础功能，最稳定 |
-| **new-api** | one-api 二开 | 支持系统初始化、2FA、Passkey、Stripe支付 |
+| **new-api** | one-api 二开 | 支持系统初始化、2FA、Passkey、签到、Stripe/Waffo支付 |
 | **Veloera** | new-api 二开 | 签到功能、消息系统、模型映射 |
 | **one-hub** | one-api 二开 | 用户组管理、渠道标签、数据分析 |
 | **done-hub** | one-hub 二开 | 邀请码系统、发票系统、WebAuthn |
@@ -87,6 +87,8 @@
 | :--- | :---: | :--- | :--- |
 | `/api/user/check_in_status` | GET | 签到状态 | Veloera |
 | `/api/user/check_in` | POST | 每日签到 | Veloera |
+| `/api/user/checkin` | GET | 签到状态与当月统计 | new-api |
+| `/api/user/checkin` | POST | 每日签到 | new-api |
 
 ---
 
@@ -99,10 +101,12 @@
 | `/api/token/` | GET | 获取令牌列表 |
 | `/api/token/search` | GET | 搜索令牌 |
 | `/api/token/:id` | GET | 获取指定令牌 |
+| `/api/token/:id/key` | POST | 获取明文令牌密钥 (new-api) |
 | `/api/token/` | POST | 创建令牌 |
 | `/api/token/` | PUT | 更新令牌 |
 | `/api/token/:id` | DELETE | 删除令牌 |
 | `/api/token/batch` | POST | 批量删除 (new-api) |
+| `/api/token/batch/keys` | POST | 批量获取明文令牌密钥 (new-api) |
 | `/api/token/playground` | GET | 获取Playground令牌 (one-hub, done-hub) |
 
 ---
@@ -112,7 +116,7 @@
 | 接口 | 方法 | 权限 | 说明 |
 | :--- | :---: | :--- | :--- |
 | `/api/log/self` | GET | 用户 | 获取当前用户日志 |
-| `/api/log/self/search` | GET | 用户 | 搜索用户日志 |
+| `/api/log/self/search` | GET | 用户 | 搜索用户日志；new-api v1.0.0-rc.10 已废弃，优先用 `/api/log/self` |
 | `/api/log/self/stat` | GET | 用户 | 用户日志统计 |
 | `/api/log/self/export` | GET | 用户 | 导出用户日志 (done-hub) |
 | `/api/log/token` | GET | 用户 | 按令牌查询日志 (new-api, Veloera) |
@@ -607,6 +611,42 @@
 }
 ```
 
+#### `/api/user/checkin` - 签到状态与当月统计 (new-api)
+```json
+{
+  "success": true,
+  "message": "",
+  "data": {
+    "enabled": true,
+    "min_quota": 1000,
+    "max_quota": 5000,
+    "stats": {
+      "checked_in_today": false,
+      "checkin_count": 3,
+      "total_checkins": 10,
+      "records": [
+        {
+          "checkin_date": "2026-05-27",
+          "quota_awarded": 3000
+        }
+      ]
+    }
+  }
+}
+```
+
+#### `/api/user/checkin` - 每日签到 (new-api)
+```json
+{
+  "success": true,
+  "message": "签到成功",
+  "data": {
+    "quota_awarded": 3000,
+    "checkin_date": "2026-05-27"
+  }
+}
+```
+
 #### `/api/user/topup` - 兑换码充值
 ```json
 {
@@ -705,6 +745,31 @@
 }
 ```
 
+#### `/api/token/:id/key` - 获取明文令牌密钥 (new-api)
+```json
+{
+  "success": true,
+  "message": "",
+  "data": {
+    "key": "sk-xxxxxxxxxxxxxxxxxxxx"
+  }
+}
+```
+
+#### `/api/token/batch/keys` - 批量获取明文令牌密钥 (new-api)
+```json
+{
+  "success": true,
+  "message": "",
+  "data": {
+    "keys": {
+      "1": "sk-xxxxxxxxxxxxxxxxxxxx",
+      "2": "sk-yyyyyyyyyyyyyyyyyyyy"
+    }
+  }
+}
+```
+
 #### `/api/token/playground` - 获取Playground令牌 (one-hub/done-hub)
 ```json
 {
@@ -750,6 +815,8 @@
 ```
 
 #### `/api/log/self/search` - 搜索用户日志
+> new-api v1.0.0-rc.10 已废弃该接口，兼容新站点时应优先使用 `/api/log/self` 并通过 query 参数筛选。
+
 ```json
 {
   "success": true,
@@ -982,10 +1049,24 @@
 | `channel_name` | ❌ | ✅ | ✅ | ✅ | ✅ | 渠道名称 |
 | `type` | ✅ | ✅ | ✅ | ✅ | ✅ | 日志类型 |
 | `content` | ✅ | ✅ | ✅ | ✅ | ✅ | 内容 |
-| `request_id` | ✅ | ❌ | ❌ | ❌ | ❌ | 请求ID |
+| `request_id` | ✅ | ✅ | ✅ | ❌ | ❌ | 请求ID |
+| `upstream_request_id` | ❌ | ✅ | ✅ | ❌ | ❌ | 上游请求ID |
 | `is_stream` | ✅ | ✅ | ✅ | ✅ | ✅ | 是否流式 |
 | `group` | ❌ | ✅ | ✅ | ❌ | ❌ | 用户组 |
 | `ip/source_ip` | ❌ | ✅ | ✅ | ✅ | ✅ | 请求IP |
+
+---
+
+## 11. NewAPI v1.0.0-rc.10 兼容性备注
+
+详细记录见 `docs/NEWAPI_COMPATIBILITY_NOTES.md`。该文件记录了官方 Release、tag 源码和 PR 依据，以及针对本项目的新增点。
+
+本轮需要落到项目代码的新增点：
+
+1. NewAPI 只新增 `/api/token/batch/keys` 批量明文 API Key 查询兼容，用于列表返回脱敏 key 时减少逐个 `/api/token/:id/key` 请求。
+2. 站点管理的每个 API Key 后新增单独刷新按钮，点击后按当前站点类型刷新 API Key 列表并回显该 key 的最新状态。
+
+其余 NewAPI v1.0.0-rc.10 变化仅作为接口事实记录，不在本轮实现范围内。
 
 ---
 

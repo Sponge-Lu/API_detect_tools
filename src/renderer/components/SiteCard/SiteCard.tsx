@@ -63,6 +63,7 @@ export const SiteCard = React.memo(
     showTokens,
     selectedModels,
     deletingTokenKey,
+    refreshingTokenKey,
     // 回调
     autoRefreshEnabled,
     cliCompatibility,
@@ -94,6 +95,7 @@ export const SiteCard = React.memo(
     onCopySelectedModels,
     onClearSelectedModels,
     onOpenCreateTokenDialog,
+    onRefreshToken,
     onDeleteToken,
   }: SiteCardProps) {
     // 跨天时触发重算，避免长时间运行后时间显示过期
@@ -223,6 +225,7 @@ export const SiteCard = React.memo(
               showTokens={showTokens}
               selectedModels={selectedModels}
               deletingTokenKey={deletingTokenKey}
+              refreshingTokenKey={refreshingTokenKey}
               onToggleGroupFilter={onToggleGroupFilter}
               onModelSearchChange={onModelSearchChange}
               onToggleTokenVisibility={onToggleTokenVisibility}
@@ -231,6 +234,7 @@ export const SiteCard = React.memo(
               onClearSelectedModels={onClearSelectedModels}
               onCopyToClipboard={onCopyToClipboard}
               onOpenCreateTokenDialog={onOpenCreateTokenDialog}
+              onRefreshToken={onRefreshToken}
               onDeleteToken={onDeleteToken}
             />
           ) : undefined
@@ -334,6 +338,7 @@ export const SiteCard = React.memo(
         prevProps.globalModelSearch === nextProps.globalModelSearch &&
         prevProps.showTokens === nextProps.showTokens &&
         prevProps.deletingTokenKey === nextProps.deletingTokenKey &&
+        prevProps.refreshingTokenKey === nextProps.refreshingTokenKey &&
         prevProps.selectedModels === nextProps.selectedModels &&
         prevProps.accountId === nextProps.accountId &&
         prevProps.accountName === nextProps.accountName &&

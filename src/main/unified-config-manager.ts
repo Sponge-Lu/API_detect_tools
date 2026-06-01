@@ -129,6 +129,8 @@ function normalizePriorityValue(value: unknown): number | null {
   return Math.max(0, Math.round(value));
 }
 
+const ROUTE_PRIORITY_HIT_RESET_SUPPRESSION_MS = 5 * 60 * 1000;
+
 function normalizeCliConfigTargetProtocols(
   cliConfig?: Partial<
     Record<RouteCliType, { targetProtocol?: CliTargetProtocol | null } | null>
@@ -1965,10 +1967,29 @@ export class UnifiedConfigManager {
 
     const routeRuleId = params.routeRuleId?.trim();
     const canonicalModel = params.canonicalModel?.trim();
+    const siteId = params.siteId?.trim();
+    const accountId = params.accountId?.trim();
+    const apiKeyId = params.apiKeyId?.trim();
+    const resolvedModel = params.resolvedModel?.trim();
+    const targetProtocol = params.targetProtocol
+      ? normalizeCliTargetProtocol(params.targetProtocol)
+      : undefined;
     const routePathStates = this.config.routing!.routePathStates;
     let cleared = 0;
+    const suppressAffinity = Boolean(
+      routeRuleId && canonicalModel && siteId && accountId && apiKeyId && targetProtocol
+    );
+    let suppressedState: RoutePathState | null = null;
 
-    if (!routeRuleId && !canonicalModel) {
+    if (
+      !routeRuleId &&
+      !canonicalModel &&
+      !siteId &&
+      !accountId &&
+      !apiKeyId &&
+      !resolvedModel &&
+      !targetProtocol
+    ) {
       cleared = Object.keys(routePathStates).length;
       this.config.routing!.routePathStates = {};
       await this.saveRouteRuntimeState();
@@ -1984,8 +2005,64 @@ export class UnifiedConfigManager {
         continue;
       }
 
+      if (siteId && state.siteId !== siteId) {
+        continue;
+      }
+
+      if (accountId && state.accountId !== accountId) {
+        continue;
+      }
+
+      if (apiKeyId && state.apiKeyId !== apiKeyId) {
+        continue;
+      }
+
+      if (resolvedModel && state.resolvedModel !== resolvedModel) {
+        continue;
+      }
+
+      if (targetProtocol && normalizeCliTargetProtocol(state.targetProtocol) !== targetProtocol) {
+        continue;
+      }
+
+      if (suppressAffinity) {
+        const now = Date.now();
+        suppressedState = {
+          ...state,
+          lastOutcome: undefined,
+          lastSuccessAt: undefined,
+          affinitySuppressedAt: now,
+          affinitySuppressedUntil: now + ROUTE_PRIORITY_HIT_RESET_SUPPRESSION_MS,
+          updatedAt: now,
+        };
+      }
+
       delete routePathStates[key];
       cleared += 1;
+    }
+
+    if (suppressAffinity && !suppressedState) {
+      const now = Date.now();
+      suppressedState = {
+        routeRuleId: routeRuleId!,
+        siteId: siteId!,
+        accountId: accountId!,
+        apiKeyId: apiKeyId!,
+        targetProtocol,
+        canonicalModel,
+        resolvedModel,
+        windowStartedAt: now,
+        windowRequestCount: 0,
+        windowSuccessCount: 0,
+        successRate: 1,
+        affinitySuppressedAt: now,
+        affinitySuppressedUntil: now + ROUTE_PRIORITY_HIT_RESET_SUPPRESSION_MS,
+        updatedAt: now,
+      };
+    }
+
+    if (suppressedState) {
+      routePathStates[buildRoutePathStateKey(suppressedState)] = suppressedState;
     }
 
     await this.saveRouteRuntimeState();

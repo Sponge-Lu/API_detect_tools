@@ -10,6 +10,12 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildProbeKey } from '../shared/types/route-proxy';
+import {
+  buildCustomCliRouteAccountId,
+  buildCustomCliRouteApiKeyId,
+  buildCustomCliRouteSiteId,
+  isCustomCliRouteSiteId,
+} from '../shared/utils/customCliRouteId';
 
 function createSite(overrides: Record<string, unknown> = {}) {
   return {
@@ -59,6 +65,10 @@ async function loadProbeService(config: {
   };
   registryEntries?: Array<{ canonicalName: string }>;
   resolveRawModelForChannel?: ReturnType<typeof vi.fn>;
+  customCliStorage?: {
+    configs?: Array<Record<string, unknown>>;
+    activeConfigId?: string | null;
+  };
 }) {
   vi.resetModules();
 
@@ -143,6 +153,17 @@ async function loadProbeService(config: {
     ),
   }));
 
+  vi.doMock('../main/custom-cli-config-service', () => ({
+    buildCustomCliRouteAccountId,
+    buildCustomCliRouteApiKeyId,
+    buildCustomCliRouteSiteId,
+    isCustomCliRouteSiteId,
+    loadCustomCliConfigStorage: vi.fn(async () => ({
+      configs: config.customCliStorage?.configs || [],
+      activeConfigId: config.customCliStorage?.activeConfigId ?? null,
+    })),
+  }));
+
   const service = await import('../main/route-cli-probe-service');
   const { unifiedConfigManager } = await import('../main/unified-config-manager');
 
@@ -168,6 +189,30 @@ function createProbeSample(overrides: Record<string, unknown> = {}): Record<stri
   };
 }
 
+function createCustomCliConfig(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'duckcoding',
+    name: 'DuckCoding',
+    baseUrl: 'https://duck.example.com',
+    apiKey: 'sk-duck',
+    models: ['duckcoding'],
+    manualModels: [],
+    cliSettings: {
+      claudeCode: { enabled: false, model: null, testModels: [] },
+      codex: {
+        enabled: true,
+        model: 'duckcoding',
+        testModels: ['duckcoding'],
+        targetProtocol: 'openai-responses',
+      },
+      geminiCli: { enabled: false, model: null, testModels: [] },
+    },
+    createdAt: 1,
+    updatedAt: 1,
+    ...overrides,
+  };
+}
+
 describe('route-cli-probe-service', () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -186,7 +231,7 @@ describe('route-cli-probe-service', () => {
     };
 
     const { getCliProbeView } = await loadProbeService(config);
-    const siteViews = getCliProbeView({ window: '24h' });
+    const siteViews = await getCliProbeView({ window: '24h' });
 
     expect(siteViews).toHaveLength(2);
     expect(siteViews.map(siteView => siteView.accountId).sort()).toEqual([
@@ -346,7 +391,7 @@ describe('route-cli-probe-service', () => {
     };
 
     const { getCliProbeView } = await loadProbeService(config);
-    const siteViews = getCliProbeView({ window: '24h' });
+    const siteViews = await getCliProbeView({ window: '24h' });
 
     expect(siteViews).toHaveLength(1);
     expect(siteViews[0].siteId).toBe('site-1');
@@ -386,7 +431,7 @@ describe('route-cli-probe-service', () => {
     };
 
     const { getCliProbeView } = await loadProbeService(config);
-    const siteViews = getCliProbeView({ window: '24h' });
+    const siteViews = await getCliProbeView({ window: '24h' });
 
     expect(siteViews).toHaveLength(0);
   });
@@ -420,7 +465,7 @@ describe('route-cli-probe-service', () => {
       cliType: 'codex',
       limit: 3,
     });
-    const siteViews = getCliProbeView({ window: '24h' });
+    const siteViews = await getCliProbeView({ window: '24h' });
 
     expect(selectedModels).toEqual([]);
     expect(siteViews).toHaveLength(1);
@@ -478,7 +523,7 @@ describe('route-cli-probe-service', () => {
     };
 
     const { getCliProbeView } = await loadProbeService(config);
-    const siteViews = getCliProbeView({ window: '24h' });
+    const siteViews = await getCliProbeView({ window: '24h' });
 
     expect(siteViews).toHaveLength(1);
     expect(siteViews[0].clis.claudeCode.models).toHaveLength(1);
@@ -526,7 +571,7 @@ describe('route-cli-probe-service', () => {
     };
 
     const { getCliProbeView } = await loadProbeService(config);
-    const siteViews = getCliProbeView({ window: '24h' });
+    const siteViews = await getCliProbeView({ window: '24h' });
 
     expect(siteViews[0].clis.codex.models[0]).toMatchObject({
       source: 'routeProbe',
@@ -577,12 +622,111 @@ describe('route-cli-probe-service', () => {
     };
 
     const { getCliProbeView } = await loadProbeService(config);
-    const siteViews = getCliProbeView({ window: '24h' });
+    const siteViews = await getCliProbeView({ window: '24h' });
 
     expect(siteViews[0].clis.codex.models[0]).toMatchObject({
       statusCode: 429,
       error: 'status code 429: Too Many Requests',
       codexDetail: { responses: false },
+    });
+  });
+
+  it('CLI 可用性视图会加入自定义 CLI 配置行', async () => {
+    const customConfig = createCustomCliConfig();
+    const config = {
+      sites: [
+        createSite(),
+        createSite({
+          id: 'site-2',
+          name: 'ZZZ Site',
+        }),
+      ],
+      accounts: [
+        createAccount('acct-default'),
+        createAccount('acct-site-2', {
+          site_id: 'site-2',
+          account_name: 'Second Account',
+        }),
+      ],
+      customCliStorage: {
+        configs: [customConfig],
+      },
+    };
+
+    const { getCliProbeView } = await loadProbeService(config);
+    const siteViews = await getCliProbeView({ window: '24h' });
+    const customView = siteViews.find(siteView => siteView.siteId === 'custom-cli-site-duckcoding');
+
+    expect(customView).toMatchObject({
+      siteId: 'custom-cli-site-duckcoding',
+      siteName: '自定义 CLI',
+      accountId: 'custom-cli-account-duckcoding',
+      accountName: 'DuckCoding',
+    });
+    const customIndex = siteViews.findIndex(
+      siteView => siteView.siteId === 'custom-cli-site-duckcoding'
+    );
+    const regularIndexes = siteViews
+      .map((siteView, index) => (siteView.siteId.startsWith('custom-cli-site-') ? -1 : index))
+      .filter(index => index >= 0);
+    expect(customIndex).toBeGreaterThan(Math.max(...regularIndexes));
+    expect(customView?.clis.codex.enabled).toBe(true);
+    expect(customView?.clis.codex.accountName).toBe('DuckCoding');
+    expect(customView?.clis.codex.models).toEqual([
+      expect.objectContaining({
+        canonicalModel: 'duckcoding',
+        rawModel: 'duckcoding',
+        targetProtocol: 'openai-responses',
+        targetEndpoint: '/v1/responses',
+        success: null,
+      }),
+    ]);
+    expect(customView?.clis.claudeCode.enabled).toBe(false);
+  });
+
+  it('即时探测会为自定义 CLI 配置生成带上游信息的探测任务', async () => {
+    const config = {
+      sites: [],
+      accounts: [],
+      customCliStorage: {
+        configs: [createCustomCliConfig()],
+      },
+    };
+
+    const { runCliProbeNow, unifiedConfigManager } = await loadProbeService(config);
+    const { buildProbeLockRouteApiKey } = await import('../main/route-probe-lock');
+
+    const result = await runCliProbeNow({
+      siteId: 'custom-cli-site-duckcoding',
+      accountId: 'custom-cli-account-duckcoding',
+      cliType: 'codex',
+    });
+
+    expect(result.totalSamples).toBe(1);
+    expect(buildProbeLockRouteApiKey).toHaveBeenCalledWith(
+      'sk-route',
+      expect.objectContaining({
+        siteId: 'custom-cli-site-duckcoding',
+        accountId: 'custom-cli-account-duckcoding',
+        apiKeyId: 'custom-cli-key-duckcoding',
+        cliType: 'codex',
+        canonicalModel: 'duckcoding',
+        rawModel: 'duckcoding',
+        targetProtocol: 'openai-responses',
+        upstreamBaseUrl: 'https://duck.example.com',
+        upstreamApiKey: 'sk-duck',
+      })
+    );
+
+    const persistedSamples = vi.mocked(unifiedConfigManager.persistRouteCliProbeSamples).mock
+      .calls[0][0];
+    expect(persistedSamples[0]).toMatchObject({
+      siteId: 'custom-cli-site-duckcoding',
+      accountId: 'custom-cli-account-duckcoding',
+      cliType: 'codex',
+      canonicalModel: 'duckcoding',
+      rawModel: 'duckcoding',
+      success: true,
     });
   });
 });

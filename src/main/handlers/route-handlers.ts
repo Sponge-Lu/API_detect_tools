@@ -293,7 +293,7 @@ export function registerRouteHandlers() {
 
   ipcMain.handle('route:get-cli-probe-view', async (_, params) => {
     try {
-      return ok(cliProbe.getCliProbeView(params));
+      return ok(await cliProbe.getCliProbeView(params));
     } catch (e: any) {
       return err(e.message);
     }
