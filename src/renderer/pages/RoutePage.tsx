@@ -10,8 +10,10 @@ import { useShallow } from 'zustand/shallow';
 import { ModelRedirectionTab } from '../components/Route/Redirection/ModelRedirectionTab';
 import { CliModelSection, ServerSection } from '../components/Route/ProxyStats/ProxyStatsTab';
 import { useRouteStore } from '../store/routeStore';
+import { useUIStore } from '../store/uiStore';
 
 export function RoutePage() {
+  const isRoutePageActive = useUIStore(state => state.activeTab === 'route');
   const { config, loading } = useRouteStore(
     useShallow(store => ({
       config: store.config,
@@ -38,7 +40,7 @@ export function RoutePage() {
           <CliModelSection className="h-full self-stretch" />
         </div>
 
-        <ModelRedirectionTab />
+        <ModelRedirectionTab isActive={isRoutePageActive} />
       </div>
     </div>
   );

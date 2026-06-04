@@ -164,137 +164,149 @@ describe('DataOverviewPage', () => {
     mockUIState.activeTab = 'overview';
     mockUIState.overviewSubtab = 'site';
     mockUIState.setOverviewSubtab.mockReset();
+    const routeSummaryData = {
+      totalRequests: 44,
+      successCount: 39,
+      failureCount: 5,
+      neutralCount: 0,
+      successRate: 88.6,
+      promptTokens: 3600,
+      completionTokens: 1400,
+      totalTokens: 5000,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      cachedTokens: 0,
+    };
+    const routeDistributionData = {
+      buckets: [
+        {
+          bucketKey: '1',
+          bucketStart: now - 6 * 60 * 60 * 1000,
+          bucketSize: 'hour',
+          cliType: 'claudeCode',
+          routeRuleId: 'rule-1',
+          canonicalModel: 'claude-opus-4-6',
+          siteId: 'site-1',
+          accountId: 'acct-1',
+          requestCount: 12,
+          successCount: 11,
+          failureCount: 1,
+          neutralCount: 0,
+          promptTokens: 1200,
+          completionTokens: 600,
+          totalTokens: 1800,
+          statusCodeHistogram: { '200': 11, '502': 1 },
+          latencyHistogram: { '0-1000ms': 8, '3000-5000ms': 4 },
+          firstByteHistogram: { '0-200ms': 7 },
+          updatedAt: now,
+        },
+        {
+          bucketKey: '2',
+          bucketStart: now - 3 * 60 * 60 * 1000,
+          bucketSize: 'hour',
+          cliType: 'codex',
+          routeRuleId: undefined,
+          canonicalModel: 'gpt-5.4',
+          siteId: 'site-2',
+          accountId: 'acct-2',
+          requestCount: 20,
+          successCount: 18,
+          failureCount: 2,
+          neutralCount: 0,
+          promptTokens: 2200,
+          completionTokens: 800,
+          totalTokens: 3000,
+          statusCodeHistogram: { '200': 18, '429': 2 },
+          latencyHistogram: { '0-1000ms': 10, '>5000ms': 10 },
+          firstByteHistogram: { '0-200ms': 9 },
+          updatedAt: now,
+        },
+        {
+          bucketKey: '3',
+          bucketStart: now - 2 * 60 * 60 * 1000,
+          bucketSize: 'hour',
+          cliType: 'codex',
+          routeRuleId: 'rule-2',
+          canonicalModel: 'gpt-5.4-mini',
+          siteId: 'site-2',
+          accountId: 'acct-2',
+          apiKeyId: 'key-beta',
+          requestCount: 8,
+          successCount: 7,
+          failureCount: 1,
+          neutralCount: 0,
+          promptTokens: 800,
+          completionTokens: 300,
+          totalTokens: 1100,
+          statusCodeHistogram: { '200': 7, '500': 1 },
+          latencyHistogram: { '0-1000ms': 6, '>5000ms': 2 },
+          firstByteHistogram: { '0-200ms': 5 },
+          updatedAt: now,
+        },
+        {
+          bucketKey: '4',
+          bucketStart: now - 90 * 60 * 1000,
+          bucketSize: 'hour',
+          cliType: 'claudeCode',
+          routeRuleId: 'rule-3',
+          canonicalModel: 'claude-sonnet-4-6',
+          siteId: 'site-1',
+          accountId: 'acct-1',
+          apiKeyId: 'key-alpha',
+          requestCount: 6,
+          successCount: 5,
+          failureCount: 1,
+          neutralCount: 0,
+          promptTokens: 600,
+          completionTokens: 240,
+          totalTokens: 840,
+          statusCodeHistogram: { '200': 5, '502': 1 },
+          latencyHistogram: { '0-1000ms': 4, '3000-5000ms': 2 },
+          firstByteHistogram: { '0-200ms': 4 },
+          updatedAt: now,
+        },
+        {
+          bucketKey: '5',
+          bucketStart: now - 45 * 60 * 1000,
+          bucketSize: 'hour',
+          cliType: 'geminiCli',
+          routeRuleId: 'rule-4',
+          canonicalModel: 'gemini-2.5-pro',
+          siteId: 'site-2',
+          accountId: 'acct-2',
+          apiKeyId: 'key-gamma',
+          requestCount: 4,
+          successCount: 3,
+          failureCount: 1,
+          neutralCount: 0,
+          promptTokens: 400,
+          completionTokens: 120,
+          totalTokens: 520,
+          statusCodeHistogram: { '200': 3, '503': 1 },
+          latencyHistogram: { '0-1000ms': 3, '>5000ms': 1 },
+          firstByteHistogram: { '0-200ms': 3 },
+          updatedAt: now,
+        },
+      ],
+      statusCodeHistogram: { '200': 29, '429': 2, '502': 1 },
+      latencyHistogram: { '0-1000ms': 18, '3000-5000ms': 4, '>5000ms': 10 },
+      firstByteHistogram: { '0-200ms': 16 },
+    };
     window.electronAPI.route = {
       ...(window.electronAPI.route || {}),
       getAnalyticsSummary: vi.fn().mockResolvedValue({
         success: true,
-        data: {
-          totalRequests: 44,
-          successCount: 39,
-          failureCount: 5,
-          neutralCount: 0,
-          successRate: 88.6,
-          promptTokens: 3600,
-          completionTokens: 1400,
-          totalTokens: 5000,
-        },
+        data: routeSummaryData,
       }),
       getAnalyticsDistribution: vi.fn().mockResolvedValue({
         success: true,
+        data: routeDistributionData,
+      }),
+      getAnalyticsOverview: vi.fn().mockResolvedValue({
+        success: true,
         data: {
-          buckets: [
-            {
-              bucketKey: '1',
-              bucketStart: now - 6 * 60 * 60 * 1000,
-              bucketSize: 'hour',
-              cliType: 'claudeCode',
-              routeRuleId: 'rule-1',
-              canonicalModel: 'claude-opus-4-6',
-              siteId: 'site-1',
-              accountId: 'acct-1',
-              requestCount: 12,
-              successCount: 11,
-              failureCount: 1,
-              neutralCount: 0,
-              promptTokens: 1200,
-              completionTokens: 600,
-              totalTokens: 1800,
-              statusCodeHistogram: { '200': 11, '502': 1 },
-              latencyHistogram: { '0-1000ms': 8, '3000-5000ms': 4 },
-              firstByteHistogram: { '0-200ms': 7 },
-              updatedAt: now,
-            },
-            {
-              bucketKey: '2',
-              bucketStart: now - 3 * 60 * 60 * 1000,
-              bucketSize: 'hour',
-              cliType: 'codex',
-              routeRuleId: undefined,
-              canonicalModel: 'gpt-5.4',
-              siteId: 'site-2',
-              accountId: 'acct-2',
-              requestCount: 20,
-              successCount: 18,
-              failureCount: 2,
-              neutralCount: 0,
-              promptTokens: 2200,
-              completionTokens: 800,
-              totalTokens: 3000,
-              statusCodeHistogram: { '200': 18, '429': 2 },
-              latencyHistogram: { '0-1000ms': 10, '>5000ms': 10 },
-              firstByteHistogram: { '0-200ms': 9 },
-              updatedAt: now,
-            },
-            {
-              bucketKey: '3',
-              bucketStart: now - 2 * 60 * 60 * 1000,
-              bucketSize: 'hour',
-              cliType: 'codex',
-              routeRuleId: 'rule-2',
-              canonicalModel: 'gpt-5.4-mini',
-              siteId: 'site-2',
-              accountId: 'acct-2',
-              apiKeyId: 'key-beta',
-              requestCount: 8,
-              successCount: 7,
-              failureCount: 1,
-              neutralCount: 0,
-              promptTokens: 800,
-              completionTokens: 300,
-              totalTokens: 1100,
-              statusCodeHistogram: { '200': 7, '500': 1 },
-              latencyHistogram: { '0-1000ms': 6, '>5000ms': 2 },
-              firstByteHistogram: { '0-200ms': 5 },
-              updatedAt: now,
-            },
-            {
-              bucketKey: '4',
-              bucketStart: now - 90 * 60 * 1000,
-              bucketSize: 'hour',
-              cliType: 'claudeCode',
-              routeRuleId: 'rule-3',
-              canonicalModel: 'claude-sonnet-4-6',
-              siteId: 'site-1',
-              accountId: 'acct-1',
-              apiKeyId: 'key-alpha',
-              requestCount: 6,
-              successCount: 5,
-              failureCount: 1,
-              neutralCount: 0,
-              promptTokens: 600,
-              completionTokens: 240,
-              totalTokens: 840,
-              statusCodeHistogram: { '200': 5, '502': 1 },
-              latencyHistogram: { '0-1000ms': 4, '3000-5000ms': 2 },
-              firstByteHistogram: { '0-200ms': 4 },
-              updatedAt: now,
-            },
-            {
-              bucketKey: '5',
-              bucketStart: now - 45 * 60 * 1000,
-              bucketSize: 'hour',
-              cliType: 'geminiCli',
-              routeRuleId: 'rule-4',
-              canonicalModel: 'gemini-2.5-pro',
-              siteId: 'site-2',
-              accountId: 'acct-2',
-              apiKeyId: 'key-gamma',
-              requestCount: 4,
-              successCount: 3,
-              failureCount: 1,
-              neutralCount: 0,
-              promptTokens: 400,
-              completionTokens: 120,
-              totalTokens: 520,
-              statusCodeHistogram: { '200': 3, '503': 1 },
-              latencyHistogram: { '0-1000ms': 3, '>5000ms': 1 },
-              firstByteHistogram: { '0-200ms': 3 },
-              updatedAt: now,
-            },
-          ],
-          statusCodeHistogram: { '200': 29, '429': 2, '502': 1 },
-          latencyHistogram: { '0-1000ms': 18, '3000-5000ms': 4, '>5000ms': 10 },
-          firstByteHistogram: { '0-200ms': 16 },
+          summary: routeSummaryData,
+          distribution: routeDistributionData,
         },
       }),
       getObjectStats: vi.fn().mockResolvedValue({
@@ -490,9 +502,10 @@ describe('DataOverviewPage', () => {
 
     await waitFor(() => {
       expect(window.electronAPI.overview?.getSiteDailySnapshots).toHaveBeenCalled();
-      expect(window.electronAPI.route?.getAnalyticsSummary).toHaveBeenCalled();
+      expect(window.electronAPI.route?.getAnalyticsOverview).toHaveBeenCalled();
     });
-    expect(window.electronAPI.route?.getAnalyticsDistribution).toHaveBeenCalled();
+    expect(window.electronAPI.route?.getAnalyticsSummary).not.toHaveBeenCalled();
+    expect(window.electronAPI.route?.getAnalyticsDistribution).not.toHaveBeenCalled();
 
     expect(screen.getByText('可用站点数')).toBeInTheDocument();
     expect(screen.getByText('展示站点 3 个 / 模型 2 个')).toBeInTheDocument();
@@ -552,9 +565,10 @@ describe('DataOverviewPage', () => {
     expect(screen.getByTestId('overview-view-route')).toHaveClass('visible', 'opacity-100');
     expect(screen.getByLabelText('路由数据驾驶舱')).toBeInTheDocument();
     await waitFor(() => {
-      expect(window.electronAPI.route?.getAnalyticsSummary).toHaveBeenCalled();
+      expect(window.electronAPI.route?.getAnalyticsOverview).toHaveBeenCalled();
     });
-    expect(window.electronAPI.route?.getAnalyticsDistribution).toHaveBeenCalled();
+    expect(window.electronAPI.route?.getAnalyticsSummary).not.toHaveBeenCalled();
+    expect(window.electronAPI.route?.getAnalyticsDistribution).not.toHaveBeenCalled();
     expect(window.electronAPI.route?.getConfig).toHaveBeenCalled();
     expect(window.electronAPI.route?.getObjectStats).not.toHaveBeenCalled();
 
@@ -794,7 +808,7 @@ describe('DataOverviewPage', () => {
 
     const trendCard = await screen.findByLabelText('运行趋势图');
     await waitFor(() => {
-      expect(window.electronAPI.route?.getAnalyticsDistribution).toHaveBeenCalled();
+      expect(window.electronAPI.route?.getAnalyticsOverview).toHaveBeenCalled();
     });
 
     expect(trendCard).toHaveAttribute('data-trend-point-count', '7');
@@ -835,7 +849,7 @@ describe('DataOverviewPage', () => {
     expect(successPath?.getAttribute('d')?.startsWith(`M ${expectedLineStartX.toFixed(2)} `)).toBe(
       true
     );
-    expect(window.electronAPI.route?.getAnalyticsDistribution).toHaveBeenLastCalledWith({
+    expect(window.electronAPI.route?.getAnalyticsOverview).toHaveBeenLastCalledWith({
       window: '24h',
     });
   });
@@ -897,6 +911,7 @@ describe('DataOverviewPage', () => {
           firstByteHistogram: { '0-200ms': 3 },
         },
       }),
+      getAnalyticsOverview: undefined,
     } as NonNullable<typeof window.electronAPI.route>;
 
     render(<DataOverviewPage />);
@@ -989,7 +1004,7 @@ describe('DataOverviewPage', () => {
     render(<DataOverviewPage />);
 
     await waitFor(() => {
-      expect(window.electronAPI.route?.getAnalyticsSummary).toHaveBeenCalledTimes(1);
+      expect(window.electronAPI.route?.getAnalyticsOverview).toHaveBeenCalledTimes(1);
     });
 
     await act(async () => {
@@ -1000,11 +1015,27 @@ describe('DataOverviewPage', () => {
     });
 
     await waitFor(() => {
-      expect(window.electronAPI.route?.getAnalyticsSummary).toHaveBeenCalledTimes(2);
-      expect(window.electronAPI.route?.getAnalyticsDistribution).toHaveBeenCalledTimes(2);
+      expect(window.electronAPI.route?.getAnalyticsOverview).toHaveBeenCalledTimes(2);
     });
+    expect(window.electronAPI.route?.getAnalyticsSummary).not.toHaveBeenCalled();
+    expect(window.electronAPI.route?.getAnalyticsDistribution).not.toHaveBeenCalled();
     expect(window.electronAPI.route?.getObjectStats).not.toHaveBeenCalled();
     expect(window.electronAPI.overview?.getSiteDailySnapshots).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to separate route analytics calls when the overview bridge is unavailable', async () => {
+    mockUIState.overviewSubtab = 'route';
+    window.electronAPI.route = {
+      ...window.electronAPI.route,
+      getAnalyticsOverview: undefined,
+    } as NonNullable<typeof window.electronAPI.route>;
+
+    render(<DataOverviewPage />);
+
+    await waitFor(() => {
+      expect(window.electronAPI.route?.getAnalyticsSummary).toHaveBeenCalledTimes(1);
+      expect(window.electronAPI.route?.getAnalyticsDistribution).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('uses live today request totals when snapshots lag behind current site metrics', async () => {
@@ -1108,6 +1139,7 @@ describe('DataOverviewPage', () => {
           firstByteHistogram: { '0-200ms': 30 },
         },
       }),
+      getAnalyticsOverview: undefined,
     } as NonNullable<typeof window.electronAPI.route>;
 
     const { rerender } = render(<DataOverviewPage />);

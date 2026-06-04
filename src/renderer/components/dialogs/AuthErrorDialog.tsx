@@ -24,6 +24,7 @@ interface AuthErrorSite {
   name: string;
   url: string;
   error: string;
+  accountId?: string;
 }
 
 /**
@@ -80,7 +81,7 @@ interface AuthErrorDialogProps {
   onClose: () => void;
   onEditSite: (siteIndex: number, siteName: string) => void;
   onProcessAll: () => void;
-  onForceRefresh: (siteIndex: number, siteName: string) => void;
+  onForceRefresh: (siteIndex: number, siteName: string, accountId?: string) => void;
   onOpenSite: (url: string) => void;
 }
 
@@ -149,7 +150,7 @@ export function AuthErrorDialog({
                       <AppButton
                         size="sm"
                         variant="secondary"
-                        onClick={() => onForceRefresh(siteIndex, site.name)}
+                        onClick={() => onForceRefresh(siteIndex, site.name, site.accountId)}
                         className="!px-2.5 !py-1.5 !text-xs"
                         title="确认站点数据确实为空，强制更新（不重新登录）"
                       >

@@ -153,6 +153,22 @@ interface RouteLogCostInfo {
   estimatedCostTitle?: string;
 }
 
+interface RouteLogRowViewModel {
+  item: RouteRequestLogItem;
+  outcomeStyle: (typeof ROUTE_OUTCOME_STYLES)[RouteRequestLogItem['outcome']];
+  routeRuleTitle?: string;
+  failureInfo: string | null;
+  requestedModelName: string;
+  canonicalModelName: string;
+  sitePriority: string;
+  sitePathDisplay: string;
+  sitePathTooltip: string;
+  tokenSummaryText: string;
+  cacheSummaryText: string;
+  modelPathTitle: string;
+  costInfo: RouteLogCostInfo;
+}
+
 interface RouteLogTooltipPosition {
   top: number;
   left: number;
@@ -702,6 +718,62 @@ function isDuplicateRouteFailureCode(error: string, statusCode: number): boolean
   );
 }
 
+function buildRouteLogRowViewModel(params: {
+  item: RouteRequestLogItem;
+  routeRulesById: Record<string, RouteRule>;
+  context: RouteLogRegistryContext;
+  config: ReturnType<typeof useConfigStore.getState>['config'];
+}): RouteLogRowViewModel {
+  const { item, routeRulesById, context, config } = params;
+  const routeRule = item.routeRuleId ? routeRulesById[item.routeRuleId] : undefined;
+  const routeSource = findRouteLogSource(item, context);
+  const displayItem = findRouteLogDisplayItem(item, routeSource, context.registry);
+  const customCli = isCustomCliLog(item, routeSource);
+  const siteOrConfigName = customCli
+    ? normalizeCustomCliConfigName(routeSource?.siteName || item.siteName)
+    : formatDisplayName(routeSource?.siteName || item.siteName);
+  const costInfo = resolveRouteLogCostInfo(item, config, customCli);
+  const requestedModelName = formatOptionalDisplayName(item.requestedModel || item.resolvedModel);
+  const canonicalModelName = formatOptionalDisplayName(item.canonicalModel);
+  const accountDisplayName = customCli
+    ? NONE_TEXT
+    : formatOptionalDisplayName(routeSource?.accountName || item.accountName);
+  const userGroupDisplayName = customCli ? NONE_TEXT : formatOptionalDisplayName(item.userGroupKey);
+  const apiKeyDisplayName = customCli
+    ? DEFAULT_API_KEY_NAME
+    : formatOptionalDisplayName(item.apiKeyName);
+  const sitePathDisplay = formatRouteLogSitePath({
+    customCli,
+    siteOrConfigName,
+    accountDisplayName,
+    userGroupDisplayName,
+    apiKeyDisplayName,
+  });
+
+  return {
+    item,
+    outcomeStyle: ROUTE_OUTCOME_STYLES[item.outcome],
+    routeRuleTitle: routeRule ? buildRouteRuleSummary(routeRule) : undefined,
+    failureInfo: resolveRouteFailureInfo(item),
+    requestedModelName,
+    canonicalModelName,
+    sitePriority: resolveSitePriority(item, displayItem, context),
+    sitePathDisplay,
+    sitePathTooltip: customCli ? SITE_PATH_TOOLTIP_CUSTOM_CLI : SITE_PATH_TOOLTIP_NORMAL,
+    tokenSummaryText: formatRouteLogTokenSummary(
+      costInfo.totalTokens,
+      costInfo.promptTokens,
+      costInfo.completionTokens
+    ),
+    cacheSummaryText: formatRouteLogCacheSummary(
+      costInfo.cacheCreationTokens,
+      costInfo.cacheReadTokens
+    ),
+    modelPathTitle: `${requestedModelName} → ${canonicalModelName}`,
+    costInfo,
+  };
+}
+
 function EventCount({ label, value }: { label: string; value: number }) {
   return (
     <span className="inline-flex items-baseline gap-1 rounded-full bg-[var(--surface-2)] px-2 py-0.5 text-[11px] text-[var(--text-secondary)]">
@@ -847,6 +919,10 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
   }, [loadRouteLogs, view]);
 
   useEffect(() => {
+    if (view !== 'route') {
+      return;
+    }
+
     const unsubscribe = window.electronAPI.route?.onRequestLogAppended?.(item => {
       setRouteLogs(currentLogs => prependRouteLogItem(currentLogs, item));
       setRouteLogsError(null);
@@ -855,7 +931,7 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
     return () => {
       unsubscribe?.();
     };
-  }, []);
+  }, [view]);
 
   const filteredEvents = useMemo(() => {
     if (filter === 'all') return eventHistory;
@@ -868,23 +944,41 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
   );
   const actionCount = eventHistory.length - notificationCount;
 
-  const filteredRouteLogs = useMemo(() => {
-    if (routeCliFilter === 'all') return routeLogs;
-    return routeLogs.filter(item => item.cliType === routeCliFilter);
-  }, [routeCliFilter, routeLogs]);
-
-  const routeSuccessCount = useMemo(
-    () => filteredRouteLogs.filter(item => item.outcome === 'success').length,
-    [filteredRouteLogs]
-  );
-  const routeFailureCount = useMemo(
-    () => filteredRouteLogs.filter(item => item.outcome === 'failure').length,
-    [filteredRouteLogs]
-  );
   const routeLogContext = useMemo(
     () => buildRouteLogRegistryContext(routeModelRegistry),
     [routeModelRegistry]
   );
+  const routeLogRows = useMemo(() => {
+    const rows: RouteLogRowViewModel[] = [];
+    let successCount = 0;
+    let failureCount = 0;
+
+    for (const item of routeLogs) {
+      if (routeCliFilter !== 'all' && item.cliType !== routeCliFilter) {
+        continue;
+      }
+
+      if (item.outcome === 'success') {
+        successCount += 1;
+      } else if (item.outcome === 'failure') {
+        failureCount += 1;
+      }
+
+      rows.push(
+        buildRouteLogRowViewModel({
+          item,
+          routeRulesById,
+          context: routeLogContext,
+          config: appConfig,
+        })
+      );
+    }
+
+    return { rows, successCount, failureCount };
+  }, [appConfig, routeCliFilter, routeLogContext, routeLogs, routeRulesById]);
+  const filteredRouteLogs = routeLogRows.rows;
+  const routeSuccessCount = routeLogRows.successCount;
+  const routeFailureCount = routeLogRows.failureCount;
 
   return (
     <div className="flex flex-1 min-h-0 flex-col overflow-hidden px-6 py-4">
@@ -1038,57 +1132,8 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
               </div>
             ) : filteredRouteLogs.length > 0 ? (
               <div className="min-h-0 flex-1 overflow-y-auto">
-                {filteredRouteLogs.map((item, index) => {
-                  const outcomeStyle = ROUTE_OUTCOME_STYLES[item.outcome];
-                  const routeRule = item.routeRuleId ? routeRulesById[item.routeRuleId] : undefined;
-                  const routeSource = findRouteLogSource(item, routeLogContext);
-                  const displayItem = findRouteLogDisplayItem(
-                    item,
-                    routeSource,
-                    routeLogContext.registry
-                  );
-                  const customCli = isCustomCliLog(item, routeSource);
-                  const siteOrConfigName = customCli
-                    ? normalizeCustomCliConfigName(routeSource?.siteName || item.siteName)
-                    : formatDisplayName(routeSource?.siteName || item.siteName);
-                  const routeRuleTitle = routeRule ? buildRouteRuleSummary(routeRule) : undefined;
-                  const costInfo = resolveRouteLogCostInfo(item, appConfig, customCli);
-                  const failureInfo = resolveRouteFailureInfo(item);
-                  const requestedModelName = formatOptionalDisplayName(
-                    item.requestedModel || item.resolvedModel
-                  );
-                  const canonicalModelName = formatOptionalDisplayName(item.canonicalModel);
-                  const sitePriority = resolveSitePriority(item, displayItem, routeLogContext);
-                  const accountDisplayName = customCli
-                    ? NONE_TEXT
-                    : formatOptionalDisplayName(routeSource?.accountName || item.accountName);
-                  const userGroupDisplayName = customCli
-                    ? NONE_TEXT
-                    : formatOptionalDisplayName(item.userGroupKey);
-                  const apiKeyDisplayName = customCli
-                    ? DEFAULT_API_KEY_NAME
-                    : formatOptionalDisplayName(item.apiKeyName);
-                  const sitePathDisplay = formatRouteLogSitePath({
-                    customCli,
-                    siteOrConfigName,
-                    accountDisplayName,
-                    userGroupDisplayName,
-                    apiKeyDisplayName,
-                  });
-                  const sitePathTooltip = customCli
-                    ? SITE_PATH_TOOLTIP_CUSTOM_CLI
-                    : SITE_PATH_TOOLTIP_NORMAL;
-                  const tokenSummaryText = formatRouteLogTokenSummary(
-                    costInfo.totalTokens,
-                    costInfo.promptTokens,
-                    costInfo.completionTokens
-                  );
-                  const cacheSummaryText = formatRouteLogCacheSummary(
-                    costInfo.cacheCreationTokens,
-                    costInfo.cacheReadTokens
-                  );
-                  const modelPathTitle = `${requestedModelName} → ${canonicalModelName}`;
-
+                {filteredRouteLogs.map((row, index) => {
+                  const { item } = row;
                   return (
                     <article
                       key={item.id}
@@ -1109,7 +1154,7 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
                           </span>
                           <span
                             className="rounded-full bg-[var(--surface-2)] px-2 py-0.5 font-mono text-[var(--text-secondary)]"
-                            title={routeRuleTitle || item.routeRuleName}
+                            title={row.routeRuleTitle || item.routeRuleName}
                           >
                             请求 {item.requestId}
                           </span>
@@ -1117,24 +1162,24 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
                             尝试 #{item.attempt}
                           </span>
                           <span
-                            className={`inline-flex h-5 items-center gap-1.5 rounded-full border px-2 py-0 font-medium ${outcomeStyle.badge}`}
+                            className={`inline-flex h-5 items-center gap-1.5 rounded-full border px-2 py-0 font-medium ${row.outcomeStyle.badge}`}
                           >
-                            <span className={`h-1.5 w-1.5 rounded-full ${outcomeStyle.dot}`} />
-                            {outcomeStyle.label}
+                            <span className={`h-1.5 w-1.5 rounded-full ${row.outcomeStyle.dot}`} />
+                            {row.outcomeStyle.label}
                             {item.statusCode !== undefined ? (
                               <span className="text-[var(--text-secondary)]">
                                 HTTP {item.statusCode}
                               </span>
                             ) : null}
                           </span>
-                          {failureInfo ? (
+                          {row.failureInfo ? (
                             <span
                               data-testid="route-request-failure-info"
                               className="inline-flex h-5 min-w-0 max-w-full flex-1 items-center gap-1 overflow-hidden whitespace-nowrap rounded-full border border-[var(--danger)]/20 bg-[var(--danger-soft)] px-2 py-0 text-[var(--danger)] md:max-w-[32rem] md:flex-none"
-                              title={failureInfo}
+                              title={row.failureInfo}
                             >
                               <span className="shrink-0 text-[var(--danger)]/80">失败信息</span>
-                              <span className="min-w-0 truncate">{failureInfo}</span>
+                              <span className="min-w-0 truncate">{row.failureInfo}</span>
                             </span>
                           ) : null}
                         </div>
@@ -1154,16 +1199,16 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
                         <span
                           data-testid="route-request-model-path"
                           className="min-w-0 truncate text-[var(--text-primary)]"
-                          title={modelPathTitle}
+                          title={row.modelPathTitle}
                         >
-                          {requestedModelName}
+                          {row.requestedModelName}
                           <span
                             aria-label="指向重定向模型"
                             className="mx-1 text-[var(--text-tertiary)]"
                           >
                             →
                           </span>
-                          <span className="font-semibold">{canonicalModelName}</span>
+                          <span className="font-semibold">{row.canonicalModelName}</span>
                         </span>
                         <span
                           data-testid="route-request-site-path"
@@ -1171,13 +1216,13 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
                         >
                           <span
                             className="min-w-0 truncate text-[var(--text-primary)]"
-                            title={sitePathDisplay}
+                            title={row.sitePathDisplay}
                           >
-                            {sitePathDisplay}
+                            {row.sitePathDisplay}
                           </span>
                           <RouteLogInfoIcon
                             ariaLabel={ROUTE_SITE_PATH_INFO_LABEL}
-                            title={sitePathTooltip}
+                            title={row.sitePathTooltip}
                           />
                         </span>
                         <span
@@ -1185,7 +1230,7 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
                           className="justify-self-start whitespace-nowrap"
                         >
                           <span className="text-[var(--text-tertiary)]">优先级 </span>
-                          <span className="text-[var(--text-primary)]">{sitePriority}</span>
+                          <span className="text-[var(--text-primary)]">{row.sitePriority}</span>
                         </span>
 
                         <span className="font-medium tracking-wider text-[var(--text-tertiary)]">
@@ -1194,16 +1239,16 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
                         <span
                           data-testid="route-request-token-summary"
                           className="min-w-0 truncate tabular-nums text-[var(--text-primary)]"
-                          title={tokenSummaryText}
+                          title={row.tokenSummaryText}
                         >
-                          {tokenSummaryText}
+                          {row.tokenSummaryText}
                         </span>
                         <span
                           data-testid="route-request-cache-summary"
                           className="min-w-0 truncate tabular-nums text-[var(--text-primary)]"
-                          title={cacheSummaryText}
+                          title={row.cacheSummaryText}
                         >
-                          {cacheSummaryText}
+                          {row.cacheSummaryText}
                         </span>
                         <span
                           data-testid="route-request-cost"
@@ -1211,11 +1256,11 @@ export function LogsPage({ activeView = 'session' }: LogsPageProps) {
                         >
                           <span className="text-[var(--text-tertiary)]">预计金额 </span>
                           <span className="font-semibold tabular-nums text-[var(--text-primary)]">
-                            {costInfo.estimatedCost}
+                            {row.costInfo.estimatedCost}
                           </span>
                           <RouteLogInfoIcon
                             ariaLabel={ROUTE_COST_FORMULA_LABEL}
-                            title={costInfo.estimatedCostTitle}
+                            title={row.costInfo.estimatedCostTitle}
                           />
                         </span>
                       </div>

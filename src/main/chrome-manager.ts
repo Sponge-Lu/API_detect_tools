@@ -10,8 +10,8 @@
  * - 向后兼容属性代理: 旧代码通过 getter/setter 透明访问 slot 0
  * - loginBrowserState: 独立登录浏览器，不占用任何槽位，避免与检测任务冲突
  *
- * LocalStorageData 登录态字段支持三类站点:
- * - Sub2API: auth_user, auth_token
+ * LocalStorageData 登录态字段支持:
+ * - auth_user / auth_token 可作为登录凭据读取，但不能单独推断为 Sub2API
  *
  * LocalStorageData 签到字段支持两种站点类型:
  * - Veloera: check_in_enabled, can_check_in
@@ -1331,6 +1331,41 @@ export class ChromeManager {
     return localData;
   }
 
+  async readAuthDataFromPage(
+    page: Page,
+    url: string,
+    options?: { siteType?: SiteType; loginMode?: boolean }
+  ): Promise<LocalStorageData> {
+    const loginMode = options?.loginMode;
+    const siteType = options?.siteType;
+
+    let localData = await this.waitAndReadLocalStorage(page, url, undefined, loginMode);
+    localData = {
+      ...localData,
+      dataSource: localData.dataSource || 'localStorage',
+    };
+
+    const needsApiFallback = !localData.userId || !localData.accessToken;
+    if (needsApiFallback) {
+      try {
+        Logger.info('🔄 [ChromeManager] localStorage 登录态不完整，尝试通过API补全...');
+        const apiData = await this.getUserDataFromApi(page, url, siteType, loginMode);
+        localData = this.mergeLocalAndApiData(localData, apiData, { apiWins: false });
+      } catch (error: any) {
+        Logger.warn(
+          '⚠️ [ChromeManager] 页面登录态 API 补全失败，保留 localStorage 结果:',
+          error.message
+        );
+      }
+    }
+
+    const resolvedBaseUrl = await this.resolveEffectiveBaseUrl(page, url, loginMode);
+    return {
+      ...localData,
+      resolvedBaseUrl,
+    };
+  }
+
   /**
    * 处理浏览器断开连接
    */
@@ -1695,7 +1730,6 @@ export class ChromeManager {
         if (authUserStr) {
           try {
             const authUser = JSON.parse(authUserStr);
-            data.siteTypeHint = data.siteTypeHint || 'sub2api';
             data.userId =
               data.userId || authUser.id || authUser.user_id || authUser.userId || authUser.uid;
             data.username =
@@ -1863,10 +1897,6 @@ export class ChromeManager {
           storage.getItem('api_token') ||
           storage.getItem('apiToken') ||
           storage.getItem('bearer_token');
-
-        if (storage.getItem('auth_token')) {
-          data.siteTypeHint = data.siteTypeHint || 'sub2api';
-        }
 
         const appConfig = (globalThis as any).__APP_CONFIG__;
         if (appConfig && typeof appConfig === 'object' && !Array.isArray(appConfig)) {
@@ -2115,7 +2145,7 @@ export class ChromeManager {
                 null,
               // System Name - 暂不从此接口获取，后续单独获取
               systemName: null,
-              siteTypeHint: s.getItem('auth_user') || s.getItem('auth_token') ? 'sub2api' : null,
+              siteTypeHint: null,
               dataSource: 'api' as const,
             };
           } catch (error: any) {

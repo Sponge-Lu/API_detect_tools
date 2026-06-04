@@ -1,6 +1,6 @@
 /**
  * 输入: ChromeManager (浏览器自动化), HttpClient (HTTP 请求), UnifiedConfigManager (配置管理)
- * 输出: SiteAccount, CachedDisplayData, RefreshAccountResult, Token 管理结果, 签到结果, CheckinStats
+ * 输出: SiteAccount, CachedDisplayData, RefreshAccountResult, Token 管理结果, 签到结果, CheckinStats, 认证失败判定
  * 定位: 服务层 - 管理 Token 生命周期，处理所有站点的认证、Token 刷新和签到功能
  *
  * 签到功能支持两种站点类型:
@@ -87,6 +87,78 @@ export function isMaskedApiKeyValue(value: unknown): boolean {
 
 function resolveApiKeyValue(apiKey: any): string | null {
   return normalizeApiKeyValue(apiKey?.key) || normalizeApiKeyValue(apiKey?.token);
+}
+
+function asObjectPayload(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+export function isAuthFailureText(value: unknown): boolean {
+  const text = String(value || '').toLowerCase();
+
+  return (
+    /http\s+(401|403)/i.test(text) ||
+    text.includes('登录已过期') ||
+    text.includes('登录过期') ||
+    text.includes('未登录') ||
+    text.includes('认证失败') ||
+    text.includes('鉴权失败') ||
+    text.includes('token has expired') ||
+    text.includes('token expired') ||
+    text.includes('token_expired') ||
+    text.includes('jwt expired') ||
+    text.includes('access token expired') ||
+    text.includes('invalid access token') ||
+    text.includes('invalid token') ||
+    text.includes('unauthorized') ||
+    text.includes('unauthenticated') ||
+    text.includes('forbidden') ||
+    text.includes('not login') ||
+    text.includes('not logged in')
+  );
+}
+
+export function isAuthFailureResponse(payload: unknown, status?: number): boolean {
+  if (status === 401 || status === 403) {
+    return true;
+  }
+
+  const data = asObjectPayload(payload);
+  if (!data) {
+    return false;
+  }
+
+  const code = String(data.code || data.status || '').toUpperCase();
+  const authCodes = new Set([
+    '401',
+    '403',
+    'TOKEN_EXPIRED',
+    'UNAUTHORIZED',
+    'UNAUTHENTICATED',
+    'FORBIDDEN',
+    'INVALID_TOKEN',
+    'INVALID_ACCESS_TOKEN',
+    'ACCESS_TOKEN_EXPIRED',
+  ]);
+
+  return (
+    authCodes.has(code) ||
+    isAuthFailureText(data.message) ||
+    isAuthFailureText(data.msg) ||
+    isAuthFailureText(data.error)
+  );
+}
+
+function getAuthFailurePayloadMessage(payload: unknown): string {
+  const data = asObjectPayload(payload);
+  const message = data?.message || data?.msg || data?.error || data?.code;
+  return String(message || 'Unauthorized').trim();
+}
+
+export function buildLoginExpiredErrorMessage(source: string, payload?: unknown): string {
+  return `登录已过期或未登录，请点击"重新获取"登录站点 (${source}返回: ${getAuthFailurePayloadMessage(payload)})`;
 }
 
 function resolveApiKeyFetchId(apiKey: any): string | null {
@@ -568,6 +640,121 @@ export class TokenService {
     }
   }
 
+  async recreateSub2ApiAccessTokenFromBrowser(
+    baseUrl: string,
+    userId: number,
+    context?: Pick<TokenRequestContext, 'browserSlot' | 'challengeWaitMs'>
+  ): Promise<string> {
+    const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+    Logger.info('🔄 [TokenService] 尝试通过浏览器会话重新读取 sub2api JWT...', {
+      browserSlot: context?.browserSlot ?? 0,
+      userId,
+    });
+
+    const { page, release } = await this.chromeManager.createPage(cleanBaseUrl, {
+      slot: context?.browserSlot,
+    });
+
+    try {
+      await this.waitForCloudflareChallengeToPass(page, context?.challengeWaitMs ?? 10000);
+      const localData = await this.chromeManager.readAuthDataFromPage(page, cleanBaseUrl, {
+        siteType: 'sub2api',
+      });
+      const accessToken = normalizeApiKeyValue(localData.accessToken);
+      if (!accessToken) {
+        throw new Error('sub2api 浏览器登录态中未找到 JWT 凭证，请重新登录站点');
+      }
+
+      if (localData.userId !== null && String(localData.userId) !== String(userId)) {
+        throw new Error(`sub2api 浏览器登录态用户不匹配，期望 ${userId}，实际 ${localData.userId}`);
+      }
+
+      await this.validateSub2ApiBrowserToken(page, cleanBaseUrl, userId, accessToken);
+      Logger.info('✅ [TokenService] sub2api JWT 已从浏览器登录态重新读取并验证');
+      return accessToken;
+    } finally {
+      try {
+        await page.close();
+      } catch {
+        // ignore
+      }
+      release();
+    }
+  }
+
+  private resolveSub2ApiUserId(data: any): string | undefined {
+    const raw = data?.id ?? data?.user_id ?? data?.userId ?? data?.uid ?? data?.user_ID;
+    if (raw === undefined || raw === null || raw === '') {
+      return undefined;
+    }
+    return String(raw);
+  }
+
+  private async validateSub2ApiBrowserToken(
+    page: any,
+    baseUrl: string,
+    userId: number,
+    accessToken: string
+  ): Promise<void> {
+    const apiUrl = `${baseUrl.replace(/\/$/, '')}/api/v1/auth/me`;
+    const response = await runOnPageQueue(page, () =>
+      page.evaluate(
+        async (url: string, token: string) => {
+          const result = await fetch(url, {
+            method: 'GET',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+              'Cache-Control': 'no-store',
+              Pragma: 'no-cache',
+            },
+          });
+          const text = await result.text();
+          let data: any = null;
+          try {
+            data = text ? JSON.parse(text) : null;
+          } catch {
+            data = null;
+          }
+          return {
+            ok: result.ok,
+            status: result.status,
+            data,
+            text: text.substring(0, 200),
+          };
+        },
+        apiUrl,
+        accessToken
+      )
+    );
+
+    if (!response.ok || isAuthFailureResponse(response.data, response.status)) {
+      throw new Error(
+        buildLoginExpiredErrorMessage(
+          'sub2api 浏览器登录态',
+          response.data || { message: response.text || `HTTP ${response.status}` }
+        )
+      );
+    }
+
+    const payload = asObjectPayload(response.data);
+    const payloadData = payload?.data;
+    const isSub2ApiSuccess = payload?.code === 0 && payloadData;
+    if (!isSub2ApiSuccess) {
+      const message =
+        typeof payload?.message === 'string' && payload.message
+          ? payload.message
+          : 'sub2api 浏览器登录态校验失败';
+      throw new Error(message);
+    }
+
+    const returnedUserId = this.resolveSub2ApiUserId(payloadData);
+    if (returnedUserId && returnedUserId !== String(userId)) {
+      throw new Error(`sub2api 浏览器登录态用户不匹配，期望 ${userId}，实际 ${returnedUserId}`);
+    }
+  }
+
   /**
    * 刷新显示数据
    * 使用access_token调用API获取最新的余额、使用量等信息
@@ -583,10 +770,29 @@ export class TokenService {
     try {
       // 并行获取所有显示数据
       const [accountData, apiKeys, userGroups, modelPricing] = await Promise.allSettled([
-        this.fetchAccountData(account.site_url, account.user_id, account.access_token),
-        this.fetchApiTokens(account.site_url, account.user_id, account.access_token),
-        this.fetchUserGroups(account.site_url, account.user_id, account.access_token),
-        this.fetchModelPricing(account.site_url, account.user_id, account.access_token),
+        this.fetchAccountData(
+          account.site_url,
+          account.user_id,
+          account.access_token,
+          account.site_type
+        ),
+        this.fetchApiTokens(account.site_url, account.user_id, account.access_token, {
+          siteType: account.site_type,
+        }),
+        this.fetchUserGroups(
+          account.site_url,
+          account.user_id,
+          account.access_token,
+          undefined,
+          account.site_type
+        ),
+        this.fetchModelPricing(
+          account.site_url,
+          account.user_id,
+          account.access_token,
+          undefined,
+          account.site_type
+        ),
       ]);
 
       // 构建缓存数据
@@ -666,7 +872,12 @@ export class TokenService {
   async validateToken(account: SiteAccount): Promise<boolean> {
     try {
       // 尝试调用API验证令牌
-      await this.fetchAccountData(account.site_url, account.user_id, account.access_token);
+      await this.fetchAccountData(
+        account.site_url,
+        account.user_id,
+        account.access_token,
+        account.site_type
+      );
       return true;
     } catch (error: any) {
       Logger.error('❌ [TokenService] 令牌验证失败');
@@ -1506,7 +1717,8 @@ export class TokenService {
   private async fetchAccountData(
     baseUrl: string,
     userId: number,
-    accessToken: string
+    accessToken: string,
+    explicitSiteType?: SiteType
   ): Promise<{
     quota: number;
     today_quota_consumption: number;
@@ -1516,16 +1728,16 @@ export class TokenService {
     can_check_in?: boolean;
   }> {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
-    const siteType = this.resolveSiteTypeByUrl(baseUrl);
+    const siteType = this.resolveSiteTypeByUrl(baseUrl, explicitSiteType);
 
     if (siteType === 'sub2api') {
       const [meResponse, usageResponse] = await Promise.all([
         httpGet(`${cleanBaseUrl}/api/v1/auth/me`, {
-          headers: this.createRequestHeaders(userId, accessToken, baseUrl),
+          headers: this.createRequestHeaders(userId, accessToken, baseUrl, explicitSiteType),
           timeout: 10000,
         }),
         httpGet(`${cleanBaseUrl}/api/v1/usage/stats`, {
-          headers: this.createRequestHeaders(userId, accessToken, baseUrl),
+          headers: this.createRequestHeaders(userId, accessToken, baseUrl, explicitSiteType),
           timeout: 10000,
         }),
       ]);
@@ -1544,7 +1756,7 @@ export class TokenService {
     const url = `${cleanBaseUrl}/api/user/self`;
 
     const response = await httpGet(url, {
-      headers: this.createRequestHeaders(userId, accessToken),
+      headers: this.createRequestHeaders(userId, accessToken, baseUrl, explicitSiteType),
       timeout: 10000,
     });
 
@@ -1748,18 +1960,20 @@ export class TokenService {
     return payload;
   }
 
-  private isSub2ApiTokenExpiredResponse(payload: any): boolean {
-    const code = typeof payload?.code === 'string' ? payload.code.toUpperCase() : '';
-    const message = String(payload?.message || '').toLowerCase();
-
-    return code === 'TOKEN_EXPIRED' || message.includes('token has expired');
+  private isSub2ApiAuthFailureResponse(payload: any, status?: number): boolean {
+    return isAuthFailureResponse(payload, status);
   }
 
   private buildSub2ApiTokenExpiredError(payload: any): Error {
-    const message = String(payload?.message || 'Token has expired');
-    return new Error(
-      `登录已过期或未登录，请点击"重新获取"登录站点 (sub2api API Key 接口返回: ${message})`
-    );
+    return new Error(buildLoginExpiredErrorMessage('sub2api API Key 接口', payload));
+  }
+
+  private buildAuthFailureError(payload: any, source: string): Error {
+    return new Error(buildLoginExpiredErrorMessage(source, payload));
+  }
+
+  private isLoginExpiredError(error: any): boolean {
+    return String(error?.message || '').includes('登录已过期或未登录');
   }
 
   /**
@@ -1817,8 +2031,13 @@ export class TokenService {
 
         let tokens: any[] = [];
 
-        if (siteType === 'sub2api' && this.isSub2ApiTokenExpiredResponse(data)) {
-          sub2ApiTokenExpiredError = this.buildSub2ApiTokenExpiredError(data);
+        if (isAuthFailureResponse(data, response.status)) {
+          if (siteType === 'sub2api') {
+            sub2ApiTokenExpiredError = this.buildSub2ApiTokenExpiredError(data);
+            continue;
+          }
+
+          throw this.buildAuthFailureError(data, 'API Key 接口');
         }
 
         if (siteType === 'sub2api' && data?.code === 0) {
@@ -1902,6 +2121,23 @@ export class TokenService {
       } catch (error: any) {
         lastError = error;
         lastStatus = error.response?.status;
+
+        if (this.isLoginExpiredError(error)) {
+          throw error;
+        }
+
+        const errorPayload = error.response?.data || { message: error.message };
+        if (
+          !this.isCloudflareError(error) &&
+          (isAuthFailureResponse(errorPayload, lastStatus) || isAuthFailureText(error.message))
+        ) {
+          if (siteType === 'sub2api') {
+            sub2ApiTokenExpiredError = this.buildSub2ApiTokenExpiredError(errorPayload);
+            continue;
+          }
+
+          throw this.buildAuthFailureError(errorPayload, 'API Key 接口');
+        }
 
         Logger.info(`⚠️ [TokenService] URL ${url} axios失败:`, {
           status: lastStatus,
@@ -2030,8 +2266,10 @@ export class TokenService {
 
         let tokens: any[] = [];
 
-        if (siteType === 'sub2api' && this.isSub2ApiTokenExpiredResponse(result)) {
-          throw this.buildSub2ApiTokenExpiredError(result);
+        if (isAuthFailureResponse(result)) {
+          throw siteType === 'sub2api'
+            ? this.buildSub2ApiTokenExpiredError(result)
+            : this.buildAuthFailureError(result, 'API Key 接口');
         }
 
         if (siteType === 'sub2api' && result?.code === 0) {
@@ -2096,6 +2334,14 @@ export class TokenService {
           });
         }
       } catch (error: any) {
+        if (this.isLoginExpiredError(error)) {
+          throw error;
+        }
+
+        if (isAuthFailureText(error.message)) {
+          throw this.buildAuthFailureError({ message: error.message }, 'API Key 接口');
+        }
+
         Logger.error(`❌ [TokenService] URL ${url} 失败:`, error.message);
         continue;
       }
@@ -3798,6 +4044,10 @@ export class TokenService {
           timeout: 10000,
         });
 
+        if (isAuthFailureResponse(response.data, response.status)) {
+          throw this.buildAuthFailureError(response.data, '用户分组接口');
+        }
+
         if (siteType === 'sub2api' && response.data?.code === 0) {
           Logger.info('✅ [TokenService] 用户分组获取成功 (sub2api格式)');
           return this.parseSub2ApiGroups(response.data);
@@ -3854,11 +4104,29 @@ export class TokenService {
         }
 
         // 直接返回对象格式（无success字段）
-        if (response.data && typeof response.data === 'object' && !response.data.success) {
+        if (
+          response.data &&
+          typeof response.data === 'object' &&
+          !Array.isArray(response.data) &&
+          !('success' in response.data)
+        ) {
           Logger.info('✅ [TokenService] 用户分组获取成功 (直接对象格式)');
           return response.data;
         }
       } catch (error: any) {
+        if (this.isLoginExpiredError(error)) {
+          throw error;
+        }
+
+        const errorPayload = error.response?.data || { message: error.message };
+        if (
+          !this.isCloudflareError(error) &&
+          (isAuthFailureResponse(errorPayload, error.response?.status) ||
+            isAuthFailureText(error.message))
+        ) {
+          throw this.buildAuthFailureError(errorPayload, '用户分组接口');
+        }
+
         Logger.warn(`⚠️ [TokenService] URL ${url} 失败:`, error.message);
         continue;
       }
@@ -3932,6 +4200,10 @@ export class TokenService {
           )
         );
 
+        if (isAuthFailureResponse(result)) {
+          throw this.buildAuthFailureError(result, '用户分组接口');
+        }
+
         if (siteType === 'sub2api' && result?.code === 0) {
           Logger.info('✅ [TokenService] 浏览器获取成功 (sub2api格式)');
           return this.parseSub2ApiGroups(result);
@@ -3982,11 +4254,24 @@ export class TokenService {
         }
 
         // 直接对象格式
-        if (result && typeof result === 'object' && !result.success) {
+        if (
+          result &&
+          typeof result === 'object' &&
+          !Array.isArray(result) &&
+          !('success' in result)
+        ) {
           Logger.info('✅ [TokenService] 浏览器获取成功 (直接对象格式)');
           return result;
         }
       } catch (error: any) {
+        if (this.isLoginExpiredError(error)) {
+          throw error;
+        }
+
+        if (isAuthFailureText(error.message)) {
+          throw this.buildAuthFailureError({ message: error.message }, '用户分组接口');
+        }
+
         Logger.warn(`⚠️ [TokenService] 浏览器URL ${url} 失败:`, error.message);
         continue;
       }
@@ -4002,11 +4287,12 @@ export class TokenService {
     baseUrl: string,
     userId: number,
     accessToken: string,
-    page?: any
+    page?: any,
+    explicitSiteType?: SiteType
   ): Promise<any> {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
-    const profile = this.getSiteTypeProfileByUrl(baseUrl);
-    const siteType = this.resolveSiteTypeByUrl(baseUrl);
+    const profile = this.getSiteTypeProfileByUrl(baseUrl, explicitSiteType);
+    const siteType = this.resolveSiteTypeByUrl(baseUrl, explicitSiteType);
     const urls = profile.modelPricingEndpoints.map(endpoint => `${cleanBaseUrl}${endpoint}`);
 
     if (!profile.supportsModelPricing || urls.length === 0) {
@@ -4016,14 +4302,20 @@ export class TokenService {
 
     // 如果提供了page，使用浏览器环境
     if (page) {
-      return await this.fetchModelPricingInBrowser(baseUrl, userId, accessToken, page);
+      return await this.fetchModelPricingInBrowser(
+        baseUrl,
+        userId,
+        accessToken,
+        page,
+        explicitSiteType
+      );
     }
 
     for (const url of urls) {
       try {
         Logger.info(`📡 [TokenService] 尝试获取模型定价: ${url}`);
         const response = await httpGet(url, {
-          headers: this.createRequestHeaders(userId, accessToken, baseUrl),
+          headers: this.createRequestHeaders(userId, accessToken, baseUrl, explicitSiteType),
           timeout: 10000,
         });
 
@@ -4151,7 +4443,13 @@ export class TokenService {
         try {
           await browserPage.waitForSelector('body', { timeout: 10000 });
           await new Promise(resolve => setTimeout(resolve, 2000));
-          return await this.fetchModelPricingInBrowser(baseUrl, userId, accessToken, browserPage);
+          return await this.fetchModelPricingInBrowser(
+            baseUrl,
+            userId,
+            accessToken,
+            browserPage,
+            explicitSiteType
+          );
         } finally {
           // 释放浏览器引用
           pageRelease();
@@ -4176,17 +4474,18 @@ export class TokenService {
     baseUrl: string,
     userId: number,
     accessToken: string,
-    page: any
+    page: any,
+    explicitSiteType?: SiteType
   ): Promise<any> {
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
-    const profile = this.getSiteTypeProfileByUrl(baseUrl);
+    const profile = this.getSiteTypeProfileByUrl(baseUrl, explicitSiteType);
     const urls = profile.modelPricingEndpoints.map(endpoint => `${cleanBaseUrl}${endpoint}`);
 
     if (!profile.supportsModelPricing || urls.length === 0) {
       return { data: {} };
     }
 
-    const userIdHeaders = getAllUserIdHeaders(userId);
+    const userIdHeaders = profile.includeUserIdHeaders ? getAllUserIdHeaders(userId) : {};
 
     for (const url of urls) {
       try {

@@ -70,6 +70,7 @@ interface AuthErrorSite {
   name: string;
   url: string;
   error: string;
+  accountId?: string;
 }
 
 interface NewApiTokenForm {
@@ -210,7 +211,7 @@ interface UIState {
 
   // Actions - 认证错误
   addAuthErrorSite: (site: AuthErrorSite) => void;
-  removeAuthErrorSite: (name: string) => void;
+  removeAuthErrorSite: (name: string, accountId?: string) => void;
   setAuthErrorSites: (sites: AuthErrorSite[]) => void;
   setShowAuthErrorDialog: (show: boolean) => void;
   setProcessingAuthErrorSite: (name: string | null) => void;
@@ -443,14 +444,20 @@ export const useUIStore = create<UIState>()(
       // 认证错误 Actions
       addAuthErrorSite: site => {
         const { authErrorSites } = get();
-        if (!authErrorSites.some(s => s.name === site.name)) {
+        if (!authErrorSites.some(s => s.name === site.name && s.accountId === site.accountId)) {
           set({ authErrorSites: [...authErrorSites, site] });
         }
       },
 
-      removeAuthErrorSite: name => {
+      removeAuthErrorSite: (name, accountId) => {
         const { authErrorSites } = get();
-        set({ authErrorSites: authErrorSites.filter(s => s.name !== name) });
+        set({
+          authErrorSites: authErrorSites.filter(site => {
+            if (site.name !== name) return true;
+            if (!accountId) return false;
+            return site.accountId !== accountId;
+          }),
+        });
       },
 
       setAuthErrorSites: sites => set({ authErrorSites: sites }),

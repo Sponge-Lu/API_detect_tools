@@ -26,7 +26,8 @@
 | **setup.ts** | 测试环境配置 | Vitest 配置 |
 | **example.test.ts** | 示例测试 | 测试模板 |
 | **schemas.test.ts** | Schema 验证测试 | Zod Schema |
-| **token-service.test.ts** | TokenService / ApiService 的 site_type 驱动回归测试 | API Key 原始值保留、NewAPI 批量明文 key 兼容、签到端点按 `site_type` 选择、模型响应非对象/直接数组容错、同日手动签到完成状态刷新保留、sub2api 端点适配、旧站点 `site_type` 首检写回 |
+| **token-service.test.ts** | TokenService / ApiService 的 site_type 驱动回归测试 | API Key 原始值保留、NewAPI 批量明文 key 兼容、显式 `site_type` 覆盖 URL 反查、Unauthorized envelope 登录过期识别、签到端点按 `site_type` 选择、模型响应非对象/直接数组容错、NewAPI 空模型端点恢复、同日手动签到完成状态刷新保留、sub2api 端点适配、旧站点 `site_type` 首检写回 |
+| **browser-login-flow.test.ts** | 浏览器登录流回归测试 | 登录浏览器模式、账户级 token 重试、Sub2API 浏览器 JWT 续期、localStorage 站点类型线索收紧 |
 | **useCheckIn.test.ts** | useCheckIn Hook 回归测试 | 一键签到跳过 `unavailable` 分组站点，账户级签到透传 `accountId`，AnyRouter 命名变体走账户浏览器签到，手动签到完成状态写入缓存 |
 | **useCliCompatTest.test.ts** | 站点页 CLI 测试回归测试 | `useCliCompatTest` 在已选 API Key 时优先测试当前站点 URL、保存后立即同步 `routing.cliProbe` 投影，并对 Gemini 失败摘要显式提示 |
 | **site-type-detector.test.ts** | 站点类型自动识别测试 | title 命中与 `/api/status` 识别 |

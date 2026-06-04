@@ -55,6 +55,7 @@ if (typeof window !== 'undefined') {
       getConfig: vi.fn(),
       getAnalyticsSummary: vi.fn(),
       getAnalyticsDistribution: vi.fn(),
+      getAnalyticsOverview: vi.fn(),
       getObjectStats: vi.fn(),
       getRequestLogs: vi.fn(),
       clearRequestLogs: vi.fn(),

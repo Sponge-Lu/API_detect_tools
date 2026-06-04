@@ -84,6 +84,8 @@ vi.mock('../main/route-model-registry-service', () => ({
 
 import {
   clearRouteRequestLogs,
+  getAnalyticsDistribution,
+  getAnalyticsOverview,
   getAnalyticsSummary,
   getRouteObjectStats,
   getRouteRequestLogs,
@@ -156,6 +158,84 @@ describe('route-analytics-service token statistics', () => {
     expect(() => getAnalyticsSummary({ window: '30d' as never })).toThrow(
       'Unsupported route analytics window: 30d'
     );
+  });
+
+  it('returns the same analytics overview values as separate summary and distribution queries', () => {
+    const bucketStart = Date.now() - 60_000;
+    const firstKey = buildBucketKey(
+      bucketStart,
+      'geminiCli',
+      'gemini-3.1-pro',
+      'site-1',
+      'account-1',
+      'key-1'
+    );
+    const secondKey = buildBucketKey(
+      bucketStart,
+      'codex',
+      'gpt-5.5',
+      'site-1',
+      'account-1',
+      'key-1'
+    );
+
+    resetRoutingBuckets({
+      [firstKey]: {
+        bucketKey: firstKey,
+        bucketStart,
+        bucketSize: 'hour',
+        cliType: 'geminiCli',
+        routeRuleId: 'rule-1',
+        canonicalModel: 'gemini-3.1-pro',
+        siteId: 'site-1',
+        accountId: 'account-1',
+        apiKeyId: 'key-1',
+        requestCount: 2,
+        successCount: 2,
+        failureCount: 0,
+        neutralCount: 0,
+        promptTokens: 200,
+        completionTokens: 80,
+        totalTokens: 280,
+        cacheCreationTokens: 30,
+        cacheReadTokens: 90,
+        cachedTokens: 90,
+        statusCodeHistogram: { '200': 2 },
+        latencyHistogram: { '<=1000': 1, '<=3000': 1 },
+        firstByteHistogram: { '<=200': 2 },
+        updatedAt: bucketStart,
+      },
+      [secondKey]: {
+        bucketKey: secondKey,
+        bucketStart,
+        bucketSize: 'hour',
+        cliType: 'codex',
+        routeRuleId: 'rule-1',
+        canonicalModel: 'gpt-5.5',
+        siteId: 'site-1',
+        accountId: 'account-1',
+        apiKeyId: 'key-1',
+        requestCount: 1,
+        successCount: 0,
+        failureCount: 1,
+        neutralCount: 0,
+        promptTokens: 50,
+        completionTokens: 20,
+        totalTokens: 70,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 10,
+        cachedTokens: 10,
+        statusCodeHistogram: { '500': 1 },
+        latencyHistogram: { '<=3000': 1 },
+        firstByteHistogram: { '<=1000': 1 },
+        updatedAt: bucketStart + 1,
+      },
+    });
+
+    const overview = getAnalyticsOverview({ window: '24h' });
+
+    expect(overview.summary).toEqual(getAnalyticsSummary({ window: '24h' }));
+    expect(overview.distribution).toEqual(getAnalyticsDistribution({ window: '24h' }));
   });
 
   it('aggregates token usage by site account and api key', () => {

@@ -499,6 +499,7 @@ describe('Property 7: Apply writes correct configuration files', () => {
   let generateCodexConfig: any;
   let normalizeUrl: any;
   let normalizeApiKey: any;
+  let CODEX_PROVIDER_NAME: string;
 
   beforeAll(async () => {
     const module = await import('../renderer/services/cli-config-generator');
@@ -506,6 +507,7 @@ describe('Property 7: Apply writes correct configuration files', () => {
     generateCodexConfig = module.generateCodexConfig;
     normalizeUrl = module.normalizeUrl;
     normalizeApiKey = module.normalizeApiKey;
+    CODEX_PROVIDER_NAME = module.CODEX_PROVIDER_NAME;
   });
 
   /**
@@ -601,11 +603,11 @@ describe('Property 7: Apply writes correct configuration files', () => {
           const tomlContent = configTomlFile!.content;
 
           // Verify required fields in TOML
-          expect(tomlContent).toContain('model_provider = "OpenAI"');
+          expect(tomlContent).toContain(`model_provider = "${CODEX_PROVIDER_NAME}"`);
           expect(tomlContent).toContain(`model = "${model}"`);
           expect(tomlContent).toContain(`base_url = "${normalizeUrl(siteUrl)}/v1"`);
-          expect(tomlContent).toContain('[model_providers.OpenAI]');
-          expect(tomlContent).toContain('name = "openai"');
+          expect(tomlContent).toContain(`[model_providers.${CODEX_PROVIDER_NAME}]`);
+          expect(tomlContent).toContain(`name = "${CODEX_PROVIDER_NAME}"`);
 
           // Check auth.json
           const authFile = config.files.find((f: any) => f.path === '~/.codex/auth.json');

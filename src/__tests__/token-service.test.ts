@@ -85,6 +85,8 @@ async function loadApiServiceModule(options?: {
   siteType?: 'newapi' | 'sub2api';
   accountCachedData?: DetectionCacheData;
   siteCachedData?: DetectionCacheData;
+  accountUserId?: string;
+  accountAccessToken?: string;
 }) {
   vi.resetModules();
 
@@ -118,6 +120,8 @@ async function loadApiServiceModule(options?: {
       getAccountById: vi.fn(() => ({
         id: 'acct-1',
         site_id: 'site-1',
+        user_id: options?.accountUserId,
+        access_token: options?.accountAccessToken,
         cached_data: options?.accountCachedData,
       })),
       updateAccountCachedData,
@@ -1010,6 +1014,102 @@ describe('token-service API key 保留', () => {
     expect(tokens[0]?.group).toBe('vip');
   });
 
+  it('fetchApiTokens 显式 newapi 应覆盖 URL 反查出的 sub2api 类型', async () => {
+    const { TokenService, httpGet } = await loadTokenServiceModule(null, {
+      siteType: 'sub2api',
+      httpGetImpl: async (url: string) => {
+        if (url.includes('/api/v1/')) {
+          throw new Error(`Unexpected sub2api endpoint ${url}`);
+        }
+
+        if (url.includes('/api/token/')) {
+          return {
+            status: 200,
+            data: {
+              success: true,
+              data: [{ id: 1, name: 'newapi-key', key: 'sk-newapi-raw-12345678' }],
+            },
+          };
+        }
+
+        throw new Error(`Unexpected GET ${url}`);
+      },
+    });
+
+    const service = new TokenService({ createPage: vi.fn() } as any);
+    const tokens = await service.fetchApiTokens('https://demo.example.com', 1, 'access-token', {
+      siteType: 'newapi',
+    });
+
+    expect(httpGet.mock.calls[0]?.[0]).toBe(
+      'https://demo.example.com/api/token/?page=1&size=100&keyword=&order=-id'
+    );
+    expect(tokens[0]?.key).toBe('sk-newapi-raw-12345678');
+  });
+
+  it('fetchApiTokens 收到 NewAPI Unauthorized envelope 时应抛出登录过期错误', async () => {
+    const { TokenService, httpGet } = await loadTokenServiceModule(null, {
+      siteType: 'newapi',
+      httpGetImpl: async () => ({
+        status: 200,
+        data: {
+          success: false,
+          message: 'Unauthorized, invalid access token',
+        },
+      }),
+    });
+
+    const service = new TokenService({ createPage: vi.fn() } as any);
+
+    await expect(
+      service.fetchApiTokens('https://demo.example.com', 1, 'expired-access-token', {
+        siteType: 'newapi',
+      })
+    ).rejects.toThrow('登录已过期或未登录');
+    expect(httpGet).toHaveBeenCalledTimes(1);
+  });
+
+  it('fetchModelPricing 显式 newapi 应使用 /api/pricing 而不是 URL 反查出的 sub2api 类型', async () => {
+    const { TokenService, httpGet } = await loadTokenServiceModule(null, {
+      siteType: 'sub2api',
+      httpGetImpl: async (url: string) => {
+        if (url.includes('/api/v1/')) {
+          throw new Error(`Unexpected sub2api endpoint ${url}`);
+        }
+
+        if (url.endsWith('/api/pricing')) {
+          return {
+            status: 200,
+            data: {
+              success: true,
+              data: [
+                {
+                  model_name: 'gpt-4o-mini',
+                  model_ratio: 1,
+                  enable_groups: ['default'],
+                },
+              ],
+            },
+          };
+        }
+
+        throw new Error(`Unexpected GET ${url}`);
+      },
+    });
+
+    const service = new TokenService({ createPage: vi.fn() } as any);
+    const pricing = await service.fetchModelPricing(
+      'https://demo.example.com',
+      1,
+      'access-token',
+      undefined,
+      'newapi'
+    );
+
+    expect(httpGet.mock.calls[0]?.[0]).toBe('https://demo.example.com/api/pricing');
+    expect(Object.keys(pricing.data)).toEqual(['gpt-4o-mini']);
+  });
+
   it('sub2api keys 首个兼容 URL 失败时应继续尝试后续端点', async () => {
     const { TokenService, httpGet, httpPost } = await loadTokenServiceModule(null, {
       siteType: 'sub2api',
@@ -1138,6 +1238,32 @@ describe('token-service API key 保留', () => {
       default: { id: undefined, desc: '默认分组', ratio: 1 },
       vip: { id: 'vip', desc: 'VIP 分组', ratio: 0.8 },
     });
+  });
+
+  it('fetchUserGroups 收到 NewAPI Unauthorized envelope 时应抛出登录过期错误', async () => {
+    const { TokenService, httpGet } = await loadTokenServiceModule(null, {
+      siteType: 'newapi',
+      httpGetImpl: async () => ({
+        status: 200,
+        data: {
+          success: false,
+          message: 'Unauthorized, invalid access token',
+        },
+      }),
+    });
+
+    const service = new TokenService({ createPage: vi.fn() } as any);
+
+    await expect(
+      service.fetchUserGroups(
+        'https://demo.example.com',
+        1,
+        'expired-access-token',
+        undefined,
+        'newapi'
+      )
+    ).rejects.toThrow('登录已过期或未登录');
+    expect(httpGet).toHaveBeenCalledTimes(1);
   });
 
   it('sub2api 创建 API Key 时应提交 group_id/quota/expires_in_days 到 /api/v1/keys', async () => {
@@ -1563,6 +1689,157 @@ describe('api-service API key 持久化', () => {
     });
   });
 
+  it('账号级刷新应使用账户 access_token 获取扩展数据并写入账户缓存', async () => {
+    const { ApiService, updateAccountCachedData } = await loadApiServiceModule({
+      accountUserId: '42',
+      accountAccessToken: 'account-token',
+    });
+    const apiKeys = [{ id: 1, name: 'default', key: 'sk-account', group: 'default' }];
+    const userGroups = { default: { desc: '默认分组', ratio: 1 } };
+    const modelPricing = { data: { 'gpt-4o-mini': { model_ratio: 1 } } };
+    const tokenService = {
+      fetchApiTokens: vi.fn(async () => apiKeys),
+      fetchUserGroups: vi.fn(async () => userGroups),
+      fetchModelPricing: vi.fn(async () => modelPricing),
+      checkSiteSupportsCheckIn: vi.fn(async () => false),
+    };
+    const service = new ApiService(tokenService);
+
+    vi.spyOn(service as any, 'getModels').mockResolvedValue({
+      models: ['gpt-4o-mini'],
+      page: null,
+      pageRelease: undefined,
+    });
+    vi.spyOn(service as any, 'getBalanceAndUsage').mockResolvedValue({
+      balance: 12,
+      todayUsage: 1,
+      todayPromptTokens: 10,
+      todayCompletionTokens: 2,
+      todayTotalTokens: 12,
+      todayRequests: 1,
+      pageRelease: undefined,
+    });
+    vi.spyOn(service as any, 'detectLdcPayment').mockResolvedValue({
+      ldcPaymentSupported: false,
+      ldcExchangeRate: undefined,
+      ldcPaymentType: undefined,
+    });
+
+    const result = await service.detectSite(
+      {
+        id: 'site-1',
+        name: 'NewAPI Site',
+        url: 'https://demo.example.com',
+        site_type: 'newapi',
+        system_token: 'stale-site-token',
+        user_id: '1',
+      } as any,
+      30,
+      true,
+      undefined,
+      false,
+      { accountId: 'acct-1' }
+    );
+
+    expect(tokenService.fetchApiTokens).toHaveBeenCalledWith(
+      'https://demo.example.com',
+      42,
+      'account-token',
+      { siteType: 'newapi' }
+    );
+    expect(tokenService.fetchUserGroups).toHaveBeenCalledWith(
+      'https://demo.example.com',
+      42,
+      'account-token',
+      null,
+      'newapi'
+    );
+    expect(tokenService.fetchModelPricing).toHaveBeenCalledWith(
+      'https://demo.example.com',
+      42,
+      'account-token',
+      null,
+      'newapi'
+    );
+    expect(result.apiKeys).toEqual(apiKeys);
+    expect(result.userGroups).toEqual(userGroups);
+
+    const updater = updateAccountCachedData.mock.calls[0][1];
+    const next = updater(undefined);
+    expect(next.api_keys).toEqual(apiKeys);
+    expect(next.user_groups).toEqual(userGroups);
+    expect(next.model_pricing).toEqual(modelPricing);
+  });
+
+  it('NewAPI 系统模型端点为空时应继续获取扩展数据并从定价恢复模型', async () => {
+    const { ApiService, updateAccountCachedData } = await loadApiServiceModule({
+      siteType: 'newapi',
+      accountUserId: '42',
+      accountAccessToken: 'account-token',
+    });
+    const apiKeys = [{ id: 1, name: 'default', key: 'sk-account', group: 'default' }];
+    const userGroups = { default: { desc: '默认分组', ratio: 1 } };
+    const modelPricing = {
+      data: {
+        'gpt-4o-mini': { model_ratio: 1, enable_groups: ['default'] },
+        'claude-3-5-sonnet': { model_ratio: 1, enable_groups: ['default'] },
+      },
+    };
+    const tokenService = {
+      fetchApiTokens: vi.fn(async () => apiKeys),
+      fetchUserGroups: vi.fn(async () => userGroups),
+      fetchModelPricing: vi.fn(async () => modelPricing),
+      checkSiteSupportsCheckIn: vi.fn(async () => false),
+    };
+    const service = new ApiService(tokenService);
+
+    vi.spyOn(service as any, 'getModels').mockRejectedValueOnce(
+      new Error('模型接口返回空数据 (登录可能已过期，请点击"重新获取"登录站点)')
+    );
+    vi.spyOn(service as any, 'getBalanceAndUsage').mockResolvedValue({
+      balance: 12,
+      todayUsage: 1,
+      todayPromptTokens: 10,
+      todayCompletionTokens: 2,
+      todayTotalTokens: 12,
+      todayRequests: 1,
+      pageRelease: undefined,
+    });
+    vi.spyOn(service as any, 'detectLdcPayment').mockResolvedValue({
+      ldcPaymentSupported: false,
+      ldcExchangeRate: undefined,
+      ldcPaymentType: undefined,
+    });
+
+    const result = await service.detectSite(
+      {
+        id: 'site-1',
+        name: 'NewAPI Empty Model Site',
+        url: 'https://demo.example.com',
+        site_type: 'newapi',
+        system_token: 'stale-site-token',
+        user_id: '1',
+      } as any,
+      30,
+      true,
+      undefined,
+      false,
+      { accountId: 'acct-1' }
+    );
+
+    expect(result.status).toBe('成功');
+    expect(result.error).toBeUndefined();
+    expect(result.models).toEqual(['gpt-4o-mini', 'claude-3-5-sonnet']);
+    expect(result.apiKeys).toEqual(apiKeys);
+    expect(result.userGroups).toEqual(userGroups);
+
+    const updater = updateAccountCachedData.mock.calls[0][1];
+    const next = updater(undefined);
+    expect(next.models).toEqual(['gpt-4o-mini', 'claude-3-5-sonnet']);
+    expect(next.api_keys).toEqual(apiKeys);
+    expect(next.user_groups).toEqual(userGroups);
+  });
+
   it('刷新检测未传入前端缓存时应从账户持久化缓存保留当天本地已完成的签到状态', async () => {
     const completedAt = Date.now();
     const accountCachedData: DetectionCacheData = {
@@ -1754,6 +2031,41 @@ describe('api-service API key 持久化', () => {
         3000
       )
     ).rejects.toThrow('模型接口返回空数据');
+  });
+
+  it('模型接口收到 NewAPI Unauthorized envelope 时应抛出登录过期错误而不是空数据错误', async () => {
+    const { ApiService } = await loadApiServiceModule({ siteType: 'newapi' });
+    const service = new ApiService();
+    (service as any).fetchWithBrowserFallback = vi.fn(
+      async (
+        _url: string,
+        _headers: unknown,
+        _site: unknown,
+        _timeout: number,
+        parseResponse: (data: unknown) => string[]
+      ) => ({
+        result: parseResponse({
+          success: false,
+          message: 'Unauthorized, invalid access token',
+        }),
+        page: undefined,
+        pageRelease: undefined,
+      })
+    );
+
+    await expect(
+      (service as any).getModels(
+        {
+          id: 'site-1',
+          name: 'New API Site',
+          url: 'https://demo.example.com',
+          site_type: 'newapi',
+          system_token: 'expired-access-token',
+          user_id: '1',
+        },
+        3000
+      )
+    ).rejects.toThrow('登录已过期或未登录');
   });
 
   it('模型接口直接返回数组时应识别为模型列表', async () => {
@@ -1986,6 +2298,110 @@ describe('api-service API key 持久化', () => {
 
     expect(result.status).toBe('失败');
     expect(result.error).toContain('登录已过期或未登录');
+  });
+
+  it('NewAPI 扩展数据认证失败时 detectSite 应返回失败状态而不是保存空数据成功', async () => {
+    const { ApiService } = await loadApiServiceModule({ siteType: 'newapi' });
+    const tokenService = {
+      fetchApiTokens: vi.fn(async () => {
+        throw new Error(
+          '登录已过期或未登录，请点击"重新获取"登录站点 (API Key 接口返回: Unauthorized, invalid access token)'
+        );
+      }),
+      fetchUserGroups: vi.fn(async () => ({ default: { desc: '默认分组', ratio: 1 } })),
+      fetchModelPricing: vi.fn(async () => ({
+        data: { 'gpt-4o': { enable_groups: ['default'] } },
+      })),
+      checkSiteSupportsCheckIn: vi.fn(async () => false),
+    };
+    const service = new ApiService(tokenService as any);
+    (service as any).getModels = vi.fn(async () => ({ models: ['gpt-4o'] }));
+    (service as any).getBalanceAndUsage = vi.fn(async () => ({ balance: 1, todayUsage: 0 }));
+
+    const result = await service.detectSite(
+      {
+        id: 'site-1',
+        name: 'NewAPI Site',
+        url: 'https://demo.example.com',
+        site_type: 'newapi',
+        system_token: 'expired-access-token',
+        user_id: '1',
+        enabled: true,
+      },
+      3000,
+      false,
+      undefined,
+      false,
+      { accountId: 'acct-1', browserSlot: 0 }
+    );
+
+    expect(result.status).toBe('失败');
+    expect(result.error).toContain('登录已过期或未登录');
+  });
+
+  it('detectSite 成功但扩展数据为空时应保留已有 API Key 与用户分组缓存', async () => {
+    const existingCache: DetectionCacheData = {
+      api_keys: [{ id: 1, name: 'cached-key', key: 'sk-cached', group: 'default' }],
+      user_groups: { default: { desc: '默认分组', ratio: 1 } },
+      model_pricing: { data: { 'gpt-4o': { enable_groups: ['default'] } } },
+      last_refresh: Date.now() - 1000,
+    };
+    const { ApiService, updateAccountCachedData } = await loadApiServiceModule({
+      siteType: 'newapi',
+      accountCachedData: existingCache,
+    });
+    const tokenService = {
+      fetchApiTokens: vi.fn(async () => []),
+      fetchUserGroups: vi.fn(async () => undefined),
+      fetchModelPricing: vi.fn(async () => ({ data: {} })),
+      checkSiteSupportsCheckIn: vi.fn(async () => false),
+    };
+    const service = new ApiService(tokenService as any);
+    (service as any).getModels = vi.fn(async () => ({ models: ['gpt-4o'] }));
+    (service as any).getBalanceAndUsage = vi.fn(async () => ({ balance: 1, todayUsage: 0 }));
+
+    const result = await service.detectSite(
+      {
+        id: 'site-1',
+        name: 'NewAPI Site',
+        url: 'https://demo.example.com',
+        site_type: 'newapi',
+        system_token: 'fresh-token',
+        user_id: '1',
+        enabled: true,
+      },
+      3000,
+      false,
+      undefined,
+      false,
+      { accountId: 'acct-1', browserSlot: 0 }
+    );
+
+    expect(result.status).toBe('成功');
+    const updater = updateAccountCachedData.mock.calls[0]?.[1];
+    const savedCache = updater?.(existingCache);
+    expect(savedCache.api_keys).toEqual(existingCache.api_keys);
+    expect(savedCache.user_groups).toEqual(existingCache.user_groups);
+    expect(savedCache.model_pricing).toEqual(existingCache.model_pricing);
+  });
+});
+
+describe('sub2api API Key 列表认证失败', () => {
+  it('fetchApiTokens 收到 sub2api 401 响应时应抛出登录过期错误而不是返回空列表', async () => {
+    const { TokenService } = await loadTokenServiceModule(undefined, {
+      siteType: 'sub2api',
+      httpGetImpl: async () => ({
+        status: 401,
+        data: { code: 'UNAUTHORIZED', message: 'Token has expired' },
+      }),
+    });
+    const service = new TokenService({ createPage: vi.fn() } as any);
+
+    await expect(
+      service.fetchApiTokens('https://demo.example.com', 1, 'expired-token', {
+        siteType: 'sub2api',
+      })
+    ).rejects.toThrow('登录已过期或未登录');
   });
 });
 

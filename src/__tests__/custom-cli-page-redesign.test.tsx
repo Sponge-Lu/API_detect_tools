@@ -535,7 +535,7 @@ describe('custom cli page redesign', () => {
     expect(screen.getByRole('button', { name: '编辑' })).toBeInTheDocument();
   });
 
-  it('normalizes legacy codex edited previews back to the default OpenAI provider', () => {
+  it('normalizes legacy codex edited previews back to the default AnyAPI provider', () => {
     const previousEditedFiles = configs[0].cliSettings.codex.editedFiles;
     configs[0].cliSettings.codex.editedFiles = [
       {
@@ -559,8 +559,8 @@ requires_openai_auth = true`,
     fireEvent.click(screen.getAllByRole('button', { name: '预览' })[1]);
 
     expect(screen.getByRole('dialog', { name: 'Codex 配置预览' })).toBeInTheDocument();
-    expect(screen.getByText(/model_provider = "OpenAI"/)).toBeInTheDocument();
-    expect(screen.getByText(/\[model_providers\.OpenAI\]/)).toBeInTheDocument();
+    expect(screen.getByText(/model_provider = "AnyAPI"/)).toBeInTheDocument();
+    expect(screen.getByText(/\[model_providers\.AnyAPI\]/)).toBeInTheDocument();
     expect(screen.queryByText(/model_provider = "Legacy"/)).not.toBeInTheDocument();
 
     configs[0].cliSettings.codex.editedFiles = previousEditedFiles;

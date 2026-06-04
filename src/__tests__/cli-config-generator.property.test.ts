@@ -14,6 +14,7 @@
 import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
 import {
+  CODEX_PROVIDER_NAME,
   normalizeUrl,
   normalizeApiKey,
   generateClaudeCodeConfig,
@@ -374,7 +375,7 @@ describe('Property 2: Codex config generation produces valid output', () => {
     );
   });
 
-  it('should always use OpenAI as the Codex provider name', () => {
+  it('should always use AnyAPI as the Codex provider name', () => {
     fc.assert(
       fc.property(configParamsArb, params => {
         const config = generateCodexConfig(params);
@@ -382,9 +383,9 @@ describe('Property 2: Codex config generation produces valid output', () => {
         const configFile = config.files.find(f => f.path.includes('config.toml'));
         const content = configFile!.content;
 
-        expect(content).toContain('model_provider = "OpenAI"');
-        expect(content).toContain('[model_providers.OpenAI]');
-        expect(content).toContain('name = "openai"');
+        expect(content).toContain(`model_provider = "${CODEX_PROVIDER_NAME}"`);
+        expect(content).toContain(`[model_providers.${CODEX_PROVIDER_NAME}]`);
+        expect(content).toContain(`name = "${CODEX_PROVIDER_NAME}"`);
       }),
       { numRuns: 100 }
     );

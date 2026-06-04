@@ -32,7 +32,7 @@
 | **backup.handler.ts** | 备份管理处理 | `backup:create`, `backup:restore`, `backup:upload` 等 |
 | **cli.handler.ts** | CLI 兼容性处理 | `cli:test`, `cli:generateConfig` 等 |
 | **browser.handler.ts** | 浏览器管理处理 | `browser:launch`, `browser:login` 等 |
-| **detection-handlers.ts** | 站点检测、签到与刷新处理，多账户签到按 `accountId` 解析账户凭证 | `detect-site`, `checkin-and-refresh` |
+| **detection-handlers.ts** | 站点检测、签到与刷新处理，多账户刷新按 `site_type` 选择 token 续期路径，签到按 `accountId` 解析账户凭证 | `detect-site`, `checkin-and-refresh` |
 | **overview-handlers.ts** | 数据总览处理 | `overview:get-site-daily-snapshots` |
 | **route-handlers.ts** | 路由代理与统计处理 | `route:get-analytics-summary`, `route:get-analytics-distribution`, `route:get-object-stats`, `route:get-request-logs` |
 | **custom-cli-config-handlers.ts** | 自定义 CLI 配置处理；保存后强制同步路由模型 registry，避免旧自定义 CLI 模型继续出现在路由模型选择中 | `custom-cli-config:load`, `custom-cli-config:save`, `custom-cli-config:fetch-models` |

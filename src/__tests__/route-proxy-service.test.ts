@@ -3162,6 +3162,131 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     );
   });
 
+  it('accepts a large completed SSE chunk when the terminal marker is outside the retained scan tail', async () => {
+    vi.clearAllMocks();
+
+    const rule = {
+      id: 'rule-codex-stream',
+      cliType: 'codex' as const,
+      pattern: 'gpt-4.1-mini',
+      patternType: 'exact' as const,
+    };
+    const channel = {
+      routeRuleId: rule.id,
+      siteId: 'site-openai',
+      accountId: 'account-openai',
+      apiKeyId: 'key-openai',
+      cliType: 'codex' as const,
+      canonicalModel: 'gpt-4.1-mini',
+      resolvedModel: 'gpt-4.1-mini',
+    };
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+      },
+      rules: [rule],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: null,
+        geminiCli: null,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'gpt-4.1-mini': {
+            canonicalName: 'gpt-4.1-mini',
+            aliases: ['gpt-4.1-mini'],
+            sources: [],
+            vendor: 'openai' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+    };
+    const terminalEvent =
+      'event: response.completed\ndata: {"type":"response.completed","response":{}}\n\n';
+    const largeCompletedChunk = Buffer.from(`${terminalEvent}: ${'x'.repeat(9000)}\n\n`);
+    const upstreamHeaders = { 'content-type': 'text/event-stream; charset=utf-8' };
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn(() => ({ id: 'site-openai', name: 'OpenAI-compatible' })),
+      getAccountById: vi.fn(() => ({ id: 'account-openai', account_name: 'default' })),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(extractModelFromBody).mockReturnValue('gpt-4.1-mini');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue([channel]);
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://upstream.example.com',
+      apiKey: 'sk-upstream',
+    });
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockResolvedValue({
+      ...channel,
+      windowStartedAt: 1,
+      windowRequestCount: 1,
+      windowSuccessCount: 1,
+      successRate: 1,
+      updatedAt: 1,
+    });
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
+      const accepted = config.onResponse?.({
+        status: 200,
+        statusText: 'OK',
+        headers: upstreamHeaders,
+      });
+      expect(accepted).toBe(true);
+
+      await config.onChunk?.(largeCompletedChunk);
+      return {
+        status: 200,
+        headers: upstreamHeaders,
+        body: largeCompletedChunk,
+        firstByteLatencyMs: 3,
+      };
+    });
+
+    const request = createJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+      },
+      { model: 'gpt-4.1-mini', stream: true, input: 'hi' }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe(largeCompletedChunk.toString('utf-8'));
+    expect(response.body).not.toContain('event: error');
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: 'key-openai' }),
+      'success',
+      expect.objectContaining({ statusCode: 200 }),
+      expect.any(Object)
+    );
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKeyId: 'key-openai',
+        outcome: 'success',
+        statusCode: 200,
+      })
+    );
+  });
+
   it('rejects malformed 2xx streaming chunks before downstream writes and falls back', async () => {
     vi.clearAllMocks();
 

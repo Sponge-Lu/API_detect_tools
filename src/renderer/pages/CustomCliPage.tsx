@@ -41,6 +41,7 @@ import {
   type CliTargetProtocol,
 } from '../../shared/types/cli-config';
 import {
+  CODEX_PROVIDER_NAME,
   generateClaudeCodeConfig,
   generateCodexConfig,
   generateGeminiCliConfig,
@@ -205,8 +206,8 @@ function inferConfigLanguage(path: string): 'json' | 'toml' {
 
 function normalizeCodexProviderContent(content: string): string {
   return content
-    .replace(/^model_provider = ".*"$/m, 'model_provider = "OpenAI"')
-    .replace(/^\[model_providers\.[^\]]+\]$/m, '[model_providers.OpenAI]');
+    .replace(/^model_provider = ".*"$/m, `model_provider = "${CODEX_PROVIDER_NAME}"`)
+    .replace(/^\[model_providers\.[^\]]+\]$/m, `[model_providers.${CODEX_PROVIDER_NAME}]`);
 }
 
 function normalizeResolvedConfig(

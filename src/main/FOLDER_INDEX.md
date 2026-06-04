@@ -27,12 +27,12 @@
 | **app-data-events.ts** | 主进程到渲染进程的数据变更通知桥，按域批量广播站点配置/站点总览/路由总览变更，并提供即时 renderer 事件广播工具 | `notifyAppDataChanged()`, `broadcastRendererEvent()` |
 | **app-storage-manifest.ts** | 应用本地存储清单，声明 stable config、runtime/cache/statistics、备份、日志、敏感设置与受保护浏览器状态的 owner、路径、retention/cap 和备份边界 | `APP_STORAGE_ENTRIES`, `resolveAppStorageManifest()` |
 | **app-storage-bundle.ts** | manifest 配置包创建/恢复，限定 full-manifest 默认纳入文件，兼容 legacy config-only 恢复并避免浏览器状态被触碰；旧版 config-only 恢复只写稳定配置并保留已有运行态 sidecar | `createAppStorageBundleContent()`, `restoreAppStorageBackupContent()` |
-| **api-service.ts** | API 请求服务、模型接口响应格式容错、检测状态持久化、同日手动签到完成状态保留、旧站点首次检测时自动写回 `site_type`，并在缓存更新后触发站点每日快照采集 | `ApiService` 类 |
+| **api-service.ts** | API 请求服务、模型接口响应格式容错、NewAPI/Sub2API 认证失败 envelope 识别、检测状态持久化、同日手动签到完成状态保留、旧站点首次检测时自动写回 `site_type`，并在缓存更新后触发站点每日快照采集 | `ApiService` 类 |
 | **overview-service.ts** | 数据总览聚合服务，维护站点每日快照的采集、查询和按日期汇总 | `captureSiteDailySnapshot()`, `getSiteDailySnapshots()`, `getSiteSnapshotTotals()` |
-| **chrome-manager.ts** | Chrome 浏览器管理、多槽位架构、独立登录浏览器（loginBrowserState）、按 site_type 解析登录态，并支持复用账户 Profile 打开签到页 | `ChromeManager` 类 |
+| **chrome-manager.ts** | Chrome 浏览器管理、多槽位架构、独立登录浏览器（loginBrowserState）、按 site_type 解析登录态，提供页面级登录态重读入口，并支持复用账户 Profile 打开签到页 | `ChromeManager` 类 |
 | **site-type-registry.ts** | 站点类型到初始化/端点/行为的注册表 | `getSiteTypeProfile()`, `resolveSiteType()` |
 | **site-type-detector.ts** | 智能添加初始化前的站点类型自动识别 | `detectSiteType()` |
-| **token-service.ts** | Token 认证服务，初始化阶段按 site_type 选择端点与 access token 策略，按 site_type 驱动签到/浏览器回退端点，并在 NewAPI 脱敏 API Key 列表中优先使用 `/api/token/batch/keys` 批量补全明文 key | `TokenService` 类 |
+| **token-service.ts** | Token 认证服务，初始化阶段按 site_type 选择端点与 access token 策略，Sub2API 可从浏览器登录态重读并校验 JWT，显式 `site_type` 可覆盖 URL 反查，按 site_type 驱动签到/浏览器回退端点，统一识别 Unauthorized/invalid access token 失败 envelope，并在 NewAPI 脱敏 API Key 列表中优先使用 `/api/token/batch/keys` 批量补全明文 key | `TokenService` 类 |
 | **cli-compat-service.ts** | 协议级 CLI 兼容性测试，请求格式与真实 CLI 对齐 | `CliCompatService` 类 |
 | **cli-wrapper-compat-service.ts** | 基于真实 CLI wrapper 的兼容性测试；当前 UI 测试主路径，使用临时 HOME/CODEX_HOME 隔离环境，监听 route probe-lock 请求/终止失败以提前停止确定性失败测试，并在 CLI 二次请求先触发 probe-lock 限制时等待/回看首次真实上游结果避免误判，Claude JSON 错误会摘要化，清理临时目录时会重试并避免 Windows 文件锁覆盖真实测试结果，Gemini 仅写隔离 `HOME/.gemini` 并禁用自身 sandbox relaunch | `CliWrapperCompatService` 类 |
 | **custom-cli-config-service.ts** | 自定义 CLI 配置持久化与模型拉取服务，并为路由生成自定义 CLI 虚拟站点/账户/API Key 标识 | `loadCustomCliConfigStorage()`, `buildCustomCliRouteSiteId()` |
@@ -139,6 +139,7 @@ main.ts: app.whenReady()
 - `getToken(site)` - 获取 Token
 - `saveToken(site, token)` - 保存 Token
 - `refreshToken(site)` - 刷新 Token
+- `recreateSub2ApiAccessTokenFromBrowser(baseUrl, userId, context?)` - 从浏览器登录态重读并验证 Sub2API JWT
 - `deleteToken(site)` - 删除 Token
 - `checkSiteSupportsCheckIn(baseUrl, page?)` - 检查站点是否支持签到（兼容 Veloera/New API）
 - `fetchCheckInStatus(baseUrl, userId, accessToken, page?, explicitSiteType?)` - 获取签到状态（按 `site_type` 选择端点）
@@ -173,6 +174,7 @@ main.ts: app.whenReady()
 - `cleanup()` - 清理所有槽位资源
 - `forceCleanup()` - 强制清理所有槽位（重置引用计数）
 - `getLocalStorageData(url, waitForLogin, maxWaitTime, onStatus, { siteType })` - 获取 localStorage 数据（含按类型的 API 回退）
+- `readAuthDataFromPage(page, url, { siteType })` - 在已打开页面上重读 localStorage/API 登录态
 - `createPage(url, { slot })` - 创建页面（slot 0 走原有逻辑，slot N 走隔离浏览器）
 - `createPageForSlot(url, slotIndex)` - 为指定隔离槽位创建页面
 - `findExistingPageForUrl(url)` - 查找可复用的同域名页面
@@ -183,7 +185,7 @@ main.ts: app.whenReady()
 - `cleanupOldPages` 在 `browserRefCount > 1` 时跳过清理，避免关闭其他并发检测任务正在使用的页面
 
 **LocalStorageData 登录态字段**:
-- Sub2API: `auth_user`, `auth_token`
+- `auth_user` / `auth_token` 可作为登录凭据读取，但不能单独推断为 Sub2API
 
 **LocalStorageData 签到字段**:
 - Veloera: `check_in_enabled`, `can_check_in`

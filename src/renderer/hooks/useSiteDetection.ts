@@ -29,7 +29,7 @@ import { BUILTIN_GROUP_IDS } from '../../shared/types/site';
 import type { DialogState } from '../components/ConfirmDialog';
 
 interface UseSiteDetectionOptions {
-  onAuthError?: (sites: { name: string; url: string; error: string }[]) => void;
+  onAuthError?: (sites: { name: string; url: string; error: string; accountId?: string }[]) => void;
   showDialog?: (options: Partial<DialogState> & { message: string }) => Promise<boolean>;
 }
 
@@ -102,7 +102,7 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
   } = useDetectionStore();
 
   const { siteAccounts, setSiteAccounts } = useConfigStore();
-  const { setRefreshMessage } = useUIStore();
+  const { setRefreshMessage, removeAuthErrorSite } = useUIStore();
 
   // 生成 per-account 复合 key（用于 detectingSites、store 数据键等）
   const cardKey = useCallback(
@@ -146,7 +146,9 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
             : rawResult;
 
         if (rawResult.status === '失败' && isAuthenticationError(rawResult.error)) {
-          options.onAuthError?.([{ name: site.name, url: site.url, error: rawResult.error || '' }]);
+          options.onAuthError?.([
+            { name: site.name, url: site.url, error: rawResult.error || '', accountId },
+          ]);
           sessionEventLog.warning(
             'detection',
             `${site.name} 刷新触发认证错误：${rawResult.error || '未知错误'}`
@@ -173,6 +175,7 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
             'detection',
             `${site.name}${accountId ? ` (${accountId})` : ''} 刷新完成：${hasChanges ? '数据已更新' : '数据无变化'}`
           );
+          removeAuthErrorSite(site.name, accountId);
         }
 
         upsertResult(result);
@@ -231,6 +234,7 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
       setUserGroups,
       setModelPricing,
       setRefreshMessage,
+      removeAuthErrorSite,
       options,
     ]
   );
@@ -283,7 +287,7 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
 
         let cursor = 0;
         const resultsBuffer: DetectionResult[] = [];
-        const authErrors: { name: string; url: string; error: string }[] = [];
+        const authErrors: { name: string; url: string; error: string; accountId?: string }[] = [];
         const failedSites: { name: string; error: string }[] = [];
 
         const runForTask = async (task: DetectionTask) => {
@@ -326,7 +330,12 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
               : rawResult;
 
           if (rawResult.status === '失败' && isAuthenticationError(rawResult.error)) {
-            authErrors.push({ name: site.name, url: site.url, error: rawResult.error || '' });
+            authErrors.push({
+              name: site.name,
+              url: site.url,
+              error: rawResult.error || '',
+              accountId,
+            });
           } else if (rawResult.status === '失败') {
             const displayName = accountName ? `${site.name} (${accountName})` : site.name;
             failedSites.push({ name: displayName, error: rawResult.error || '未知错误' });
@@ -335,6 +344,7 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
           upsertResult(result);
 
           if (result.status === '成功') {
+            removeAuthErrorSite(site.name, accountId);
             if (result.apiKeys) setApiKeys(key, result.apiKeys);
             if (result.userGroups) setUserGroups(key, result.userGroups);
             if (result.modelPricing) setModelPricing(key, result.modelPricing);
@@ -416,6 +426,7 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
       setApiKeys,
       setUserGroups,
       setModelPricing,
+      removeAuthErrorSite,
       options,
     ]
   );

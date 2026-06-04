@@ -82,5 +82,6 @@ output/
 openspec/
 .agents/
 .playwright-mcp/
+.codegraph/
 .trellis/
 .tmp-vitest-credit/

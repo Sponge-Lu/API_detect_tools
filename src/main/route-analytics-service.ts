@@ -13,8 +13,11 @@ import type {
   RouteOutcome,
   RouteAnalyticsBucket,
   RouteAnalyticsConfig,
+  RouteAnalyticsDistribution,
   RouteAnalyticsObjectStatsItem,
   RouteAnalyticsObjectStatsQuery,
+  RouteAnalyticsOverview,
+  RouteAnalyticsSummary,
   RouteAnalyticsWindow,
   RouteAnalyticsWindowQuery,
   RouteModelSourceRef,
@@ -464,22 +467,8 @@ export function getAnalyticsBuckets(params: RouteAnalyticsWindowQuery): RouteAna
   });
 }
 
-/** 查询窗口期汇总 */
-export function getAnalyticsSummary(params: RouteAnalyticsWindowQuery): {
-  totalRequests: number;
-  successCount: number;
-  failureCount: number;
-  neutralCount: number;
-  successRate: number;
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-  cacheCreationTokens: number;
-  cacheReadTokens: number;
-  cachedTokens: number;
-} {
-  const buckets = getAnalyticsBuckets(params);
-  const sum = {
+function createEmptyAnalyticsSummary(): RouteAnalyticsSummary {
+  return {
     totalRequests: 0,
     successCount: 0,
     failureCount: 0,
@@ -492,48 +481,109 @@ export function getAnalyticsSummary(params: RouteAnalyticsWindowQuery): {
     cacheReadTokens: 0,
     cachedTokens: 0,
   };
-  for (const b of buckets) {
-    sum.totalRequests += b.requestCount;
-    sum.successCount += b.successCount;
-    sum.failureCount += b.failureCount;
-    sum.neutralCount += b.neutralCount;
-    sum.promptTokens += b.promptTokens || 0;
-    sum.completionTokens += b.completionTokens || 0;
-    sum.totalTokens += b.totalTokens || 0;
-    sum.cacheCreationTokens += b.cacheCreationTokens || 0;
-    sum.cacheReadTokens += b.cacheReadTokens || 0;
-    sum.cachedTokens += b.cachedTokens || 0;
+}
+
+function finalizeAnalyticsSummary(summary: RouteAnalyticsSummary): RouteAnalyticsSummary {
+  const denominator = summary.successCount + summary.failureCount;
+  summary.successRate =
+    denominator > 0 ? Math.round((summary.successCount / denominator) * 10000) / 100 : 0;
+  return summary;
+}
+
+function addBucketToAnalyticsSummary(
+  summary: RouteAnalyticsSummary,
+  bucket: RouteAnalyticsBucket
+): void {
+  summary.totalRequests += bucket.requestCount;
+  summary.successCount += bucket.successCount;
+  summary.failureCount += bucket.failureCount;
+  summary.neutralCount += bucket.neutralCount;
+  summary.promptTokens += bucket.promptTokens || 0;
+  summary.completionTokens += bucket.completionTokens || 0;
+  summary.totalTokens += bucket.totalTokens || 0;
+  summary.cacheCreationTokens += bucket.cacheCreationTokens || 0;
+  summary.cacheReadTokens += bucket.cacheReadTokens || 0;
+  summary.cachedTokens += bucket.cachedTokens || 0;
+}
+
+function buildAnalyticsSummaryFromBuckets(buckets: RouteAnalyticsBucket[]): RouteAnalyticsSummary {
+  const summary = createEmptyAnalyticsSummary();
+
+  for (const bucket of buckets) {
+    addBucketToAnalyticsSummary(summary, bucket);
   }
-  const denominator = sum.successCount + sum.failureCount;
-  sum.successRate =
-    denominator > 0 ? Math.round((sum.successCount / denominator) * 10000) / 100 : 0;
-  return sum;
+
+  return finalizeAnalyticsSummary(summary);
+}
+
+function buildAnalyticsDistributionFromBuckets(
+  buckets: RouteAnalyticsBucket[]
+): RouteAnalyticsDistribution {
+  const distribution: RouteAnalyticsDistribution = {
+    buckets,
+    statusCodeHistogram: {},
+    latencyHistogram: {},
+    firstByteHistogram: {},
+  };
+
+  for (const bucket of buckets) {
+    for (const [k, v] of Object.entries(bucket.statusCodeHistogram)) {
+      distribution.statusCodeHistogram[k] = (distribution.statusCodeHistogram[k] || 0) + v;
+    }
+    for (const [k, v] of Object.entries(bucket.latencyHistogram)) {
+      distribution.latencyHistogram[k] = (distribution.latencyHistogram[k] || 0) + v;
+    }
+    for (const [k, v] of Object.entries(bucket.firstByteHistogram)) {
+      distribution.firstByteHistogram[k] = (distribution.firstByteHistogram[k] || 0) + v;
+    }
+  }
+
+  return distribution;
+}
+
+function buildAnalyticsOverviewFromBuckets(
+  buckets: RouteAnalyticsBucket[]
+): RouteAnalyticsOverview {
+  const summary = createEmptyAnalyticsSummary();
+  const distribution: RouteAnalyticsDistribution = {
+    buckets,
+    statusCodeHistogram: {},
+    latencyHistogram: {},
+    firstByteHistogram: {},
+  };
+
+  for (const bucket of buckets) {
+    addBucketToAnalyticsSummary(summary, bucket);
+
+    for (const [k, v] of Object.entries(bucket.statusCodeHistogram)) {
+      distribution.statusCodeHistogram[k] = (distribution.statusCodeHistogram[k] || 0) + v;
+    }
+    for (const [k, v] of Object.entries(bucket.latencyHistogram)) {
+      distribution.latencyHistogram[k] = (distribution.latencyHistogram[k] || 0) + v;
+    }
+    for (const [k, v] of Object.entries(bucket.firstByteHistogram)) {
+      distribution.firstByteHistogram[k] = (distribution.firstByteHistogram[k] || 0) + v;
+    }
+  }
+
+  return { summary: finalizeAnalyticsSummary(summary), distribution };
+}
+
+/** 查询窗口期汇总 */
+export function getAnalyticsSummary(params: RouteAnalyticsWindowQuery): RouteAnalyticsSummary {
+  return buildAnalyticsSummaryFromBuckets(getAnalyticsBuckets(params));
 }
 
 /** 查询窗口期分布 */
-export function getAnalyticsDistribution(params: RouteAnalyticsWindowQuery): {
-  buckets: RouteAnalyticsBucket[];
-  statusCodeHistogram: Record<string, number>;
-  latencyHistogram: Record<string, number>;
-  firstByteHistogram: Record<string, number>;
-} {
-  const bucketList = getAnalyticsBuckets(params);
-  const sc: Record<string, number> = {};
-  const lat: Record<string, number> = {};
-  const fb: Record<string, number> = {};
+export function getAnalyticsDistribution(
+  params: RouteAnalyticsWindowQuery
+): RouteAnalyticsDistribution {
+  return buildAnalyticsDistributionFromBuckets(getAnalyticsBuckets(params));
+}
 
-  for (const b of bucketList) {
-    for (const [k, v] of Object.entries(b.statusCodeHistogram)) sc[k] = (sc[k] || 0) + v;
-    for (const [k, v] of Object.entries(b.latencyHistogram)) lat[k] = (lat[k] || 0) + v;
-    for (const [k, v] of Object.entries(b.firstByteHistogram)) fb[k] = (fb[k] || 0) + v;
-  }
-
-  return {
-    buckets: bucketList,
-    statusCodeHistogram: sc,
-    latencyHistogram: lat,
-    firstByteHistogram: fb,
-  };
+/** 查询窗口期总览，供 renderer 一次 IPC 拉取汇总与分布 */
+export function getAnalyticsOverview(params: RouteAnalyticsWindowQuery): RouteAnalyticsOverview {
+  return buildAnalyticsOverviewFromBuckets(getAnalyticsBuckets(params));
 }
 
 export function getRouteObjectStats(
@@ -541,10 +591,26 @@ export function getRouteObjectStats(
 ): RouteAnalyticsObjectStatsItem[] {
   const buckets = getAnalyticsBuckets({ window: params.window });
   const grouped = new Map<string, RouteAnalyticsObjectStatsItem>();
+  const identityCache = new Map<string, ReturnType<typeof resolveRouteObjectIdentity>>();
+  const resolveStatsIdentity = (identityParams: {
+    siteId?: string;
+    accountId?: string;
+    apiKeyId?: string;
+  }) => {
+    const cacheKey = `${identityParams.siteId || '*'}:${identityParams.accountId || '*'}:${identityParams.apiKeyId || '*'}`;
+    const cached = identityCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const identity = resolveRouteObjectIdentity(identityParams);
+    identityCache.set(cacheKey, identity);
+    return identity;
+  };
 
   for (const bucket of buckets) {
     const id = `${bucket.siteId || '*'}:${bucket.accountId || '*'}:${bucket.apiKeyId || '*'}`;
-    const identity = resolveRouteObjectIdentity({
+    const identity = resolveStatsIdentity({
       siteId: bucket.siteId,
       accountId: bucket.accountId,
       apiKeyId: bucket.apiKeyId,
@@ -607,7 +673,7 @@ export function getRouteObjectStats(
   for (const logItem of routeRequestLogs) {
     if (logItem.createdAt < cutoff || logItem.outcome !== 'failure') continue;
 
-    const identity = resolveRouteObjectIdentity({
+    const identity = resolveStatsIdentity({
       siteId: logItem.siteId,
       accountId: logItem.accountId,
       apiKeyId: logItem.apiKeyId,

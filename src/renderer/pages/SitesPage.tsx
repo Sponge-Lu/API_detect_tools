@@ -193,6 +193,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     setDeletingTokenKey,
     setDialogState,
     authErrorSites,
+    addAuthErrorSite,
     setAuthErrorSites,
     setShowAuthErrorDialog,
     processingAuthErrorSite,
@@ -516,7 +517,9 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
   const { detecting, detectingSites, results, setResults, detectSingle, detectAllSites } =
     useSiteDetection({
       onAuthError: sites => {
-        setAuthErrorSites(sites);
+        for (const site of sites) {
+          addAuthErrorSite(site);
+        }
         setShowAuthErrorDialog(true);
       },
       showDialog,
@@ -1538,7 +1541,12 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
             setEditingAccount(null);
 
             if (processingAuthErrorSite) {
-              const remaining = authErrorSites.filter(s => s.name !== processingAuthErrorSite);
+              const processedAccountId = resolvedEditingAccount?.id;
+              const remaining = authErrorSites.filter(item => {
+                if (item.name !== processingAuthErrorSite) return true;
+                if (!processedAccountId) return false;
+                return item.accountId !== processedAccountId;
+              });
               setAuthErrorSites(remaining);
               setProcessingAuthErrorSite(null);
               if (remaining.length > 0) {

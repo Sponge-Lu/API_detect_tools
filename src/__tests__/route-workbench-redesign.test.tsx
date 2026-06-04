@@ -2096,6 +2096,16 @@ describe('route workbench redesign', () => {
     expect(mainKeyRow).not.toHaveAttribute('data-priority-hit', 'true');
   });
 
+  it('skips first-hit route log loading and subscription while inactive', async () => {
+    render(<ModelRedirectionTab isActive={false} />);
+
+    await findPriorityDetailPane();
+
+    expect(mockRefreshRuntimeState).not.toHaveBeenCalled();
+    expect(mockGetRequestLogs).not.toHaveBeenCalled();
+    expect(mockOnRequestLogAppended).not.toHaveBeenCalled();
+  });
+
   it('restores the priority hit api key from persisted route path state after restart', async () => {
     mockConfig = createRoutingConfig({ includeSuccessfulPathState: true });
     mockGetRequestLogs.mockResolvedValueOnce({ success: true, data: [] });

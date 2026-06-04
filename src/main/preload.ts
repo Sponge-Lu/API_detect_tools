@@ -11,7 +11,11 @@
 
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ThemeMode } from '../shared/theme/themePresets';
-import type { RoutePathStateResetParams, RouteRequestLogItem } from '../shared/types/route-proxy';
+import type {
+  RouteAnalyticsWindowQuery,
+  RoutePathStateResetParams,
+  RouteRequestLogItem,
+} from '../shared/types/route-proxy';
 
 const APP_DATA_CHANGED_EVENT = 'app-data:changed';
 const ROUTE_REQUEST_LOG_APPENDED_EVENT = 'route:request-log-appended';
@@ -449,9 +453,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getCliProbeLatest: (params?: any) => ipcRenderer.invoke('route:get-cli-probe-latest', params),
     getCliProbeHistory: (params: any) => ipcRenderer.invoke('route:get-cli-probe-history', params),
     getCliProbeView: (params: any) => ipcRenderer.invoke('route:get-cli-probe-view', params),
-    getAnalyticsSummary: (params: any) => ipcRenderer.invoke('route:get-analytics-summary', params),
-    getAnalyticsDistribution: (params: any) =>
+    getAnalyticsSummary: (params: RouteAnalyticsWindowQuery) =>
+      ipcRenderer.invoke('route:get-analytics-summary', params),
+    getAnalyticsDistribution: (params: RouteAnalyticsWindowQuery) =>
       ipcRenderer.invoke('route:get-analytics-distribution', params),
+    getAnalyticsOverview: (params: RouteAnalyticsWindowQuery) =>
+      ipcRenderer.invoke('route:get-analytics-overview', params),
     getObjectStats: (params: unknown) => ipcRenderer.invoke('route:get-object-stats', params),
     resetAnalytics: (params?: any) => ipcRenderer.invoke('route:reset-analytics', params),
     getRequestLogs: (params?: any) => ipcRenderer.invoke('route:get-request-logs', params),

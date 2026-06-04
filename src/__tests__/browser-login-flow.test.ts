@@ -67,6 +67,89 @@ describe('browser login flow', () => {
     expect(result.access_token).toBe('login-browser-token');
   });
 
+  it('recreateSub2ApiAccessTokenFromBrowser reads and validates browser JWT', async () => {
+    const runOnPageQueue = vi.fn(async (_page: any, task: () => Promise<any>) => task());
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+    vi.doMock('../main/utils/http-client', () => ({
+      httpGet: vi.fn(),
+      httpPost: vi.fn(),
+      httpRequest: vi.fn(),
+    }));
+    vi.doMock('../main/utils/page-exec-queue', () => ({
+      runOnPageQueue,
+    }));
+    vi.doMock('../main/site-type-detector', () => ({
+      detectSiteType: vi.fn(async () => ({
+        siteType: 'sub2api',
+        detectionMethod: 'html-marker',
+      })),
+    }));
+    vi.doMock('../main/unified-config-manager', () => ({
+      unifiedConfigManager: {
+        getSiteByUrl: vi.fn(() => ({
+          id: 'site-sub2',
+          url: 'https://sub2.example.com',
+          site_type: 'sub2api',
+        })),
+      },
+    }));
+
+    const { TokenService } = await import('../main/token-service');
+
+    const page = {
+      content: vi.fn(async () => '<html><body>ok</body></html>'),
+      isClosed: vi.fn(() => false),
+      close: vi.fn(async () => undefined),
+      evaluate: vi.fn(async (_fn: any, apiUrl: string, token: string) => {
+        expect(apiUrl).toBe('https://sub2.example.com/api/v1/auth/me');
+        expect(token).toBe('fresh-jwt');
+        return {
+          ok: true,
+          status: 200,
+          data: { code: 0, message: 'success', data: { id: 11154 } },
+          text: '',
+        };
+      }),
+    };
+    const release = vi.fn();
+    const chromeManager = {
+      createPage: vi.fn(async () => ({ page, release })),
+      readAuthDataFromPage: vi.fn(async () => ({
+        userId: 11154,
+        username: 'demo',
+        systemName: 'Sub2 Site',
+        accessToken: 'fresh-jwt',
+        siteTypeHint: 'sub2api',
+        dataSource: 'localStorage',
+      })),
+    };
+
+    const service = new TokenService(chromeManager as any);
+    const token = await service.recreateSub2ApiAccessTokenFromBrowser(
+      'https://sub2.example.com/',
+      11154,
+      {
+        browserSlot: 2,
+        challengeWaitMs: 1,
+      }
+    );
+
+    expect(token).toBe('fresh-jwt');
+    expect(chromeManager.createPage).toHaveBeenCalledWith('https://sub2.example.com', {
+      slot: 2,
+    });
+    expect(chromeManager.readAuthDataFromPage).toHaveBeenCalledWith(
+      page,
+      'https://sub2.example.com',
+      { siteType: 'sub2api' }
+    );
+    expect(runOnPageQueue).toHaveBeenCalledTimes(1);
+    expect(page.close).toHaveBeenCalledTimes(1);
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
   it('createAccessTokenForLogin 应优先复用已回到目标站点的登录页', async () => {
     vi.doMock('puppeteer-core', () => ({
       default: {},
@@ -766,6 +849,52 @@ describe('browser login flow', () => {
     expect(result.siteTypeHint).toBe('sub2api');
   });
 
+  it('tryGetFromLocalStorage 不应仅因 auth_user/auth_token 推断为 sub2api', async () => {
+    vi.doMock('puppeteer-core', () => ({
+      default: {},
+    }));
+    vi.doMock('electron', () => ({
+      app: {
+        getPath: vi.fn(() => 'C:/tmp'),
+      },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const { ChromeManager } = await import('../main/chrome-manager');
+    const manager = new ChromeManager();
+
+    const page = {
+      evaluate: vi.fn(async (fn: () => any) => {
+        const originalLocalStorage = (globalThis as any).localStorage;
+        const originalAppConfig = (globalThis as any).__APP_CONFIG__;
+
+        (globalThis as any).localStorage = {
+          getItem: (key: string) => {
+            if (key === 'auth_token') return 'jwt-token';
+            if (key === 'auth_user') return JSON.stringify({ id: 9, username: 'newapi-user' });
+            return null;
+          },
+        };
+        delete (globalThis as any).__APP_CONFIG__;
+
+        try {
+          return fn();
+        } finally {
+          (globalThis as any).localStorage = originalLocalStorage;
+          (globalThis as any).__APP_CONFIG__ = originalAppConfig;
+        }
+      }),
+    };
+
+    const result = await (manager as any).tryGetFromLocalStorage(page);
+
+    expect(result.userId).toBe(9);
+    expect(result.accessToken).toBe('jwt-token');
+    expect(result.siteTypeHint).toBeNull();
+  });
+
   it('detect-site for account uses canonical site info and retries once after refreshing token', async () => {
     const handlers = new Map<string, (...args: any[]) => any>();
     const updateAccount = vi.fn(async () => true);
@@ -875,6 +1004,199 @@ describe('browser login flow', () => {
       system_token: 'new-token',
     });
     expect(result?.status).toBe('成功');
+  });
+
+  it('detect-site for sub2api account re-reads browser JWT instead of creating access token', async () => {
+    const handlers = new Map<string, (...args: any[]) => any>();
+    const updateAccount = vi.fn(async () => true);
+    const getAccountById = vi.fn(() => ({
+      id: 'acct-sub2',
+      site_id: 'site-sub2',
+      user_id: '11154',
+      access_token: 'old-jwt',
+    }));
+    const getSiteById = vi.fn(() => ({
+      id: 'site-sub2',
+      name: 'Sub2 Site',
+      url: 'https://sub2.example.com/',
+      enabled: true,
+      group: 'default',
+      site_type: 'sub2api',
+    }));
+
+    vi.doMock('electron', () => ({
+      ipcMain: {
+        handle: vi.fn((channel: string, handler: (...args: any[]) => any) => {
+          handlers.set(channel, handler);
+        }),
+        on: vi.fn(),
+      },
+      shell: { openExternal: vi.fn() },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+    vi.doMock('../main/unified-config-manager', () => ({
+      unifiedConfigManager: {
+        loadConfig: vi.fn(async () => true),
+        getAccountById,
+        getSiteById,
+        getAccountsBySiteId: vi.fn(() => [{ id: 'acct-sub2' }]),
+        updateAccount,
+      },
+    }));
+    vi.doMock('../main/config-detection-service', () => ({
+      configDetectionService: {
+        detectClaudeCode: vi.fn(),
+        detectCodex: vi.fn(),
+        detectGeminiCli: vi.fn(),
+        detectAll: vi.fn(),
+      },
+    }));
+
+    const { registerDetectionHandlers } = await import('../main/handlers/detection-handlers');
+    const apiService = {
+      detectSite: vi
+        .fn()
+        .mockResolvedValueOnce({
+          name: 'Sub2 Site',
+          url: 'https://sub2.example.com/',
+          status: '失败',
+          error:
+            '登录已过期或未登录，请点击"重新获取"登录站点 (sub2api API Key 接口返回: Token has expired)',
+          models: [],
+          has_checkin: false,
+        })
+        .mockResolvedValueOnce({
+          name: 'Sub2 Site',
+          url: 'https://sub2.example.com/',
+          status: '成功',
+          models: ['gpt-4o'],
+          has_checkin: false,
+        }),
+    };
+    const tokenService = {
+      recreateSub2ApiAccessTokenFromBrowser: vi.fn(async () => 'fresh-sub2-jwt'),
+      recreateAccessTokenFromBrowser: vi.fn(async () => 'generic-token'),
+    };
+
+    registerDetectionHandlers(apiService as any, {} as any, tokenService as any);
+
+    const detectHandler = handlers.get('detect-site');
+    const result = await detectHandler?.(
+      {},
+      { id: 'site-sub2', name: 'stale-name', url: 'https://stale.example.com/' },
+      30,
+      true,
+      undefined,
+      false,
+      'acct-sub2'
+    );
+
+    expect(tokenService.recreateSub2ApiAccessTokenFromBrowser).toHaveBeenCalledWith(
+      'https://sub2.example.com/',
+      11154,
+      {
+        browserSlot: 0,
+        challengeWaitMs: 10000,
+      }
+    );
+    expect(tokenService.recreateAccessTokenFromBrowser).not.toHaveBeenCalled();
+    expect(updateAccount).toHaveBeenCalledWith('acct-sub2', {
+      access_token: 'fresh-sub2-jwt',
+      status: 'active',
+    });
+    expect(apiService.detectSite.mock.calls[1][0]).toMatchObject({
+      url: 'https://sub2.example.com/',
+      system_token: 'fresh-sub2-jwt',
+      user_id: '11154',
+    });
+    expect(result?.status).toBe('成功');
+  });
+
+  it('detect-site for sub2api account keeps the first failure when browser JWT renewal fails', async () => {
+    const handlers = new Map<string, (...args: any[]) => any>();
+    const updateAccount = vi.fn(async () => true);
+    vi.doMock('electron', () => ({
+      ipcMain: {
+        handle: vi.fn((channel: string, handler: (...args: any[]) => any) => {
+          handlers.set(channel, handler);
+        }),
+        on: vi.fn(),
+      },
+      shell: { openExternal: vi.fn() },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+    vi.doMock('../main/unified-config-manager', () => ({
+      unifiedConfigManager: {
+        loadConfig: vi.fn(async () => true),
+        getAccountById: vi.fn(() => ({
+          id: 'acct-sub2',
+          site_id: 'site-sub2',
+          user_id: '11154',
+          access_token: 'old-jwt',
+        })),
+        getSiteById: vi.fn(() => ({
+          id: 'site-sub2',
+          name: 'Sub2 Site',
+          url: 'https://sub2.example.com/',
+          enabled: true,
+          group: 'default',
+          site_type: 'sub2api',
+        })),
+        getAccountsBySiteId: vi.fn(() => [{ id: 'acct-sub2' }]),
+        updateAccount,
+      },
+    }));
+    vi.doMock('../main/config-detection-service', () => ({
+      configDetectionService: {
+        detectClaudeCode: vi.fn(),
+        detectCodex: vi.fn(),
+        detectGeminiCli: vi.fn(),
+        detectAll: vi.fn(),
+      },
+    }));
+
+    const { registerDetectionHandlers } = await import('../main/handlers/detection-handlers');
+    const firstFailure = {
+      name: 'Sub2 Site',
+      url: 'https://sub2.example.com/',
+      status: '失败',
+      error:
+        '登录已过期或未登录，请点击"重新获取"登录站点 (sub2api API Key 接口返回: Token has expired)',
+      models: [],
+      has_checkin: false,
+    };
+    const apiService = {
+      detectSite: vi.fn().mockResolvedValue(firstFailure),
+    };
+    const tokenService = {
+      recreateSub2ApiAccessTokenFromBrowser: vi.fn(async () => {
+        throw new Error('sub2api 浏览器登录态中未找到 JWT 凭证，请重新登录站点');
+      }),
+      recreateAccessTokenFromBrowser: vi.fn(async () => 'generic-token'),
+    };
+
+    registerDetectionHandlers(apiService as any, {} as any, tokenService as any);
+
+    const detectHandler = handlers.get('detect-site');
+    const result = await detectHandler?.(
+      {},
+      { id: 'site-sub2', name: 'stale-name', url: 'https://stale.example.com/' },
+      30,
+      true,
+      undefined,
+      false,
+      'acct-sub2'
+    );
+
+    expect(apiService.detectSite).toHaveBeenCalledTimes(1);
+    expect(tokenService.recreateSub2ApiAccessTokenFromBrowser).toHaveBeenCalledTimes(1);
+    expect(tokenService.recreateAccessTokenFromBrowser).not.toHaveBeenCalled();
+    expect(updateAccount).not.toHaveBeenCalled();
+    expect(result).toBe(firstFailure);
   });
 
   it('detect-site for account should not retry access_token refresh when error points to invalid api_key', async () => {

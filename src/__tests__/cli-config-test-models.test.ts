@@ -59,8 +59,8 @@ other_flag = false`);
     const migrated = normalizeCodexFeatureFlagsToml(`[features]
 other_flag = false
 
-[model_providers.OpenAI]
-name = "openai"`);
+[model_providers.AnyAPI]
+name = "AnyAPI"`);
 
     expect(migrated).toContain('[features]');
     expect(migrated).toContain('multi_agent = true');

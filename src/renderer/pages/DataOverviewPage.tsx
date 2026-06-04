@@ -2,6 +2,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useState, type ReactN
 import { Activity, Gauge, Layers, Loader2, RefreshCw, Wallet, type LucideIcon } from 'lucide-react';
 import type {
   RouteAnalyticsBucket,
+  RouteAnalyticsDistribution,
+  RouteAnalyticsOverview,
+  RouteAnalyticsSummary,
   RouteAnalyticsWindow,
   RoutePathState,
 } from '../../shared/types/route-proxy';
@@ -58,25 +61,8 @@ const AGGREGATED_SITE_OPTION_ID = '__aggregated_site__';
 const AGGREGATED_SITE_OPTION_LABEL = '全部站点（聚合）';
 const CHECKIN_SITE_NAME_MAX_WIDTH = 7;
 
-interface RouteSummary {
-  totalRequests: number;
-  successCount: number;
-  failureCount: number;
-  neutralCount: number;
-  successRate: number;
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-  cacheCreationTokens?: number;
-  cacheReadTokens?: number;
-}
-
-interface RouteDistribution {
-  buckets: RouteAnalyticsBucket[];
-  statusCodeHistogram: Record<string, number>;
-  latencyHistogram: Record<string, number>;
-  firstByteHistogram: Record<string, number>;
-}
+type RouteSummary = RouteAnalyticsSummary;
+type RouteDistribution = RouteAnalyticsDistribution;
 
 interface TrendPoint {
   key: string;
@@ -2732,28 +2718,50 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
   }, [scope]);
 
   const loadRouteData = useCallback(async () => {
-    if (!window.electronAPI.route) {
+    const routeApi = window.electronAPI.route;
+    if (!routeApi) {
       setError('当前环境未暴露 route IPC 接口。');
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const [summaryRes, distributionRes, configRes] = await Promise.all([
-        window.electronAPI.route.getAnalyticsSummary({ window: routeWindow }),
-        window.electronAPI.route.getAnalyticsDistribution({ window: routeWindow }),
-        window.electronAPI.route.getConfig(),
+      const analyticsPromise: Promise<{
+        summary: RouteAnalyticsOverview['summary'] | null;
+        distribution: RouteAnalyticsOverview['distribution'] | null;
+      }> = routeApi.getAnalyticsOverview
+        ? routeApi.getAnalyticsOverview({ window: routeWindow }).then(overviewRes => {
+            if (!overviewRes?.success) {
+              throw new Error(overviewRes?.error || '加载路由总览失败');
+            }
+            return {
+              summary: overviewRes.data?.summary || null,
+              distribution: overviewRes.data?.distribution || null,
+            };
+          })
+        : Promise.all([
+            routeApi.getAnalyticsSummary({ window: routeWindow }),
+            routeApi.getAnalyticsDistribution({ window: routeWindow }),
+          ]).then(([summaryRes, distributionRes]) => {
+            if (!summaryRes?.success) {
+              throw new Error(summaryRes?.error || '加载路由汇总失败');
+            }
+            if (!distributionRes?.success) {
+              throw new Error(distributionRes?.error || '加载路由分布失败');
+            }
+            return {
+              summary: summaryRes.data || null,
+              distribution: distributionRes.data || null,
+            };
+          });
+
+      const [analyticsData, configRes] = await Promise.all([
+        analyticsPromise,
+        routeApi.getConfig(),
       ]);
 
-      if (!summaryRes?.success) {
-        throw new Error(summaryRes?.error || '加载路由汇总失败');
-      }
-      if (!distributionRes?.success) {
-        throw new Error(distributionRes?.error || '加载路由分布失败');
-      }
-
-      setRouteSummary(summaryRes.data || null);
-      setRouteDistribution(distributionRes.data || null);
+      setRouteSummary(analyticsData.summary);
+      setRouteDistribution(analyticsData.distribution);
       setRoutePathStates(configRes?.success ? configRes.data?.routePathStates || {} : {});
       const rulesData = configRes?.success ? configRes.data?.rules : null;
       if (Array.isArray(rulesData)) {
@@ -2871,6 +2879,7 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
         acc.promptTokens += bucket.promptTokens;
         acc.completionTokens += bucket.completionTokens;
         acc.totalTokens += bucket.totalTokens;
+        acc.cachedTokens += bucket.cachedTokens || 0;
         acc.cacheCreationTokens += bucket.cacheCreationTokens || 0;
         acc.cacheReadTokens += bucket.cacheReadTokens || 0;
         return acc;
@@ -2883,6 +2892,7 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
         promptTokens: 0,
         completionTokens: 0,
         totalTokens: 0,
+        cachedTokens: 0,
         cacheCreationTokens: 0,
         cacheReadTokens: 0,
       }
@@ -3026,6 +3036,25 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
     : 'grid gap-4 xl:grid-cols-[minmax(0,1.10fr)_minmax(0,0.90fr)]';
   const routeThirdRowHeightClass = routeIsCompact ? 'h-[220px]' : 'h-[250px]';
   const routeHeatmapHeightClass = routeIsCompact ? 'min-h-[224px]' : 'min-h-[244px]';
+  const routeOverviewState = useMemo(
+    () =>
+      JSON.stringify({
+        scope,
+        selectedModel,
+        pathStateCount: Object.keys(routePathStates).length,
+        ruleCount: Object.keys(routeRulesById).length,
+        scatterPointCount: scatterPoints.length,
+        sankeyLinkCount: sankeyGraph.links.length,
+      }),
+    [
+      routePathStates,
+      routeRulesById,
+      sankeyGraph.links.length,
+      scatterPoints.length,
+      scope,
+      selectedModel,
+    ]
+  );
 
   return (
     <div
@@ -3183,14 +3212,7 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
         {/* 占位：作用域 / 选中模型 / 路径名称查找等状态保留给后续 PR 使用 */}
         <span
           aria-hidden="true"
-          data-route-overview-state={JSON.stringify({
-            scope,
-            selectedModel,
-            pathStateCount: Object.keys(routePathStates).length,
-            ruleCount: Object.keys(routeRulesById).length,
-            scatterPointCount: scatterPoints.length,
-            sankeyLinkCount: sankeyGraph.links.length,
-          })}
+          data-route-overview-state={routeOverviewState}
           className="hidden"
         />
       </div>

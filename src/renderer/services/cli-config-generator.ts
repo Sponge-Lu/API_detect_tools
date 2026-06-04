@@ -60,6 +60,8 @@ export interface GeneratedConfig {
   files: ConfigFile[];
 }
 
+export const CODEX_PROVIDER_NAME = 'AnyAPI';
+
 /**
  * 规范化 URL，移除尾部斜杠
  * @param url - 原始 URL
@@ -349,7 +351,7 @@ export function sanitizeProviderName(siteName: string): string {
 export function generateCodexConfig(params: CodexConfigParams): GeneratedConfig {
   const normalizedUrl = normalizeUrl(params.siteUrl);
   const normalizedApiKey = normalizeApiKey(params.apiKey);
-  const providerName = 'OpenAI';
+  const providerName = CODEX_PROVIDER_NAME;
 
   // wire_api 固定为 responses（chat 模式已废弃）
   const wireApi = selectWireApi();
@@ -365,7 +367,7 @@ disable_response_storage = true
 network_access = "enabled"
 
 [model_providers.${providerName}]
-name = "openai"
+name = "${providerName}"
 base_url = "${normalizedUrl}/v1"
 ${wireApiComment}
 wire_api = "${wireApi}"
@@ -402,14 +404,15 @@ export function generateCodexTemplate(): GeneratedConfig {
   // 完全照搬模板文件内容，包含注释和 wire_api 说明
   // 注意：移除 requires_openai_auth = true，因为它会强制使用 OpenAI 官方认证流程，
   // 导致无法使用第三方 API。第三方 API 通过 OPENAI_API_KEY 环境变量认证即可。
-  const configTomlTemplate = normalizeCodexFeatureFlagsToml(`model_provider = "OpenAI"
+  const configTomlTemplate =
+    normalizeCodexFeatureFlagsToml(`model_provider = "${CODEX_PROVIDER_NAME}"
 model = "gpt-5.1-codex-max"
 model_reasoning_effort = "xhigh"
 disable_response_storage = true
 network_access = "enabled"
 
-[model_providers.OpenAI]
-name = "openai"
+[model_providers.${CODEX_PROVIDER_NAME}]
+name = "${CODEX_PROVIDER_NAME}"
 base_url = "https://api.ikuncode.cc/v1"
 # wire_api 固定使用 "responses" (Responses API，chat 模式已废弃)
 wire_api = "responses"

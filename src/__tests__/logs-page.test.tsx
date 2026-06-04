@@ -1006,6 +1006,25 @@ describe('LogsPage', () => {
     expect(rows[1]).toHaveTextContent('请求 initial');
   });
 
+  it('subscribes to pushed route logs only while the route log subpage is visible', async () => {
+    const { rerender } = render(<LogsPage activeView="session" />);
+
+    expect(routeApi.onRequestLogAppended).not.toHaveBeenCalled();
+    expect(routeRequestLogListener).toBeNull();
+
+    rerender(<LogsPage activeView="route" />);
+
+    await waitFor(() => {
+      expect(routeApi.getRequestLogs).toHaveBeenCalledWith({ limit: 200 });
+    });
+    expect(routeApi.onRequestLogAppended).toHaveBeenCalledTimes(1);
+    expect(routeRequestLogListener).not.toBeNull();
+
+    rerender(<LogsPage activeView="session" />);
+
+    expect(routeRequestLogListener).toBeNull();
+  });
+
   it('keeps pushed route logs visible while switching into the route log subpage', async () => {
     let resolveSnapshot!: (value: { success: true; data: RouteRequestLogItem[] }) => void;
     const snapshotPromise = new Promise<{ success: true; data: RouteRequestLogItem[] }>(resolve => {
@@ -1015,19 +1034,7 @@ describe('LogsPage', () => {
 
     const { rerender } = render(<LogsPage activeView="session" />);
 
-    await act(async () => {
-      routeRequestLogListener?.(
-        buildRouteLog({
-          id: 'route-hidden-live',
-          requestId: 'hidden-live',
-          cliType: 'codex',
-          attempt: 1,
-          outcome: 'success',
-          createdAt: 300,
-        })
-      );
-      await Promise.resolve();
-    });
+    expect(routeRequestLogListener).toBeNull();
 
     rerender(<LogsPage activeView="route" />);
 
@@ -1035,12 +1042,25 @@ describe('LogsPage', () => {
       expect(routeApi.getRequestLogs).toHaveBeenCalledTimes(1);
     });
     expect(screen.queryByText('正在加载路由日志...')).not.toBeInTheDocument();
-    expect(screen.getByText('请求 hidden-live')).toBeInTheDocument();
 
     await act(async () => {
-      resolveSnapshot({ success: true, data: [] });
+      resolveSnapshot({
+        success: true,
+        data: [
+          buildRouteLog({
+            id: 'route-hidden-live',
+            requestId: 'hidden-live',
+            cliType: 'codex',
+            attempt: 1,
+            outcome: 'success',
+            createdAt: 300,
+          }),
+        ],
+      });
       await snapshotPromise;
     });
+
+    expect(screen.getByText('请求 hidden-live')).toBeInTheDocument();
   });
 
   it('estimates per-call route costs without usage and skips failed attempts', async () => {

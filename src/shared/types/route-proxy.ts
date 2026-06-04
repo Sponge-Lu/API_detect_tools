@@ -497,6 +497,32 @@ export interface RouteAnalyticsWindowQuery {
   siteId?: string;
 }
 
+export interface RouteAnalyticsSummary {
+  totalRequests: number;
+  successCount: number;
+  failureCount: number;
+  neutralCount: number;
+  successRate: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  cachedTokens: number;
+}
+
+export interface RouteAnalyticsDistribution {
+  buckets: RouteAnalyticsBucket[];
+  statusCodeHistogram: Record<string, number>;
+  latencyHistogram: Record<string, number>;
+  firstByteHistogram: Record<string, number>;
+}
+
+export interface RouteAnalyticsOverview {
+  summary: RouteAnalyticsSummary;
+  distribution: RouteAnalyticsDistribution;
+}
+
 export interface RouteAnalyticsObjectStatsQuery {
   window: RouteAnalyticsWindow;
   limit?: number;

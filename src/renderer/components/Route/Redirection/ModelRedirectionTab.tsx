@@ -1689,7 +1689,11 @@ function createDefaultNewApiKeyForm(group = 'default'): NewApiTokenForm {
   };
 }
 
-export function ModelRedirectionTab() {
+interface ModelRedirectionTabProps {
+  isActive?: boolean;
+}
+
+export function ModelRedirectionTab({ isActive = true }: ModelRedirectionTabProps = {}) {
   const customCliConfigs = useCustomCliConfigStore(state => state.configs);
   const {
     config,
@@ -1990,7 +1994,7 @@ export function ModelRedirectionTab() {
   }, [closeSourceDetails, openSourceDetails, selectedDisplayItem, sourceDetailState]);
 
   useEffect(() => {
-    if (!sourceDetailState) {
+    if (!isActive || !sourceDetailState) {
       return;
     }
 
@@ -2002,15 +2006,19 @@ export function ModelRedirectionTab() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [refreshRuntimeState, sourceDetailState]);
+  }, [isActive, refreshRuntimeState, sourceDetailState]);
 
   useEffect(() => {
-    let isActive = true;
+    if (!isActive) {
+      return;
+    }
+
+    let isMounted = true;
 
     void window.electronAPI.route
       ?.getRequestLogs?.({ limit: PRIORITY_ROUTE_LOG_LIMIT })
       .then(result => {
-        if (!isActive || !result?.success) {
+        if (!isMounted || !result?.success) {
           return;
         }
 
@@ -2029,10 +2037,10 @@ export function ModelRedirectionTab() {
     });
 
     return () => {
-      isActive = false;
+      isMounted = false;
       unsubscribe?.();
     };
-  }, []);
+  }, [isActive]);
 
   const openRouteRules = useCallback((item: RouteModelDisplayItem, displayName: string) => {
     setRouteRuleState({ item, displayName });

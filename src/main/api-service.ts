@@ -1,6 +1,6 @@
 /**
  * 输入: TokenService (获取 Token), HttpClient (HTTP 请求), RequestManager (请求管理), UnifiedConfigManager (配置管理), LDC_PAYMENT_NAMES (支付名称常量)
- * 输出: DetectionResult (含 LDC 支付信息, 签到统计, 检测状态持久化), BalanceInfo, StatusInfo, API 响应数据
+ * 输出: DetectionResult (含 LDC 支付信息, 签到统计, 检测状态持久化), BalanceInfo, StatusInfo, API 响应数据与认证失败状态
  * 定位: 服务层 - 处理所有外部站点的 API 请求，管理请求生命周期和错误处理，检测 LDC 支付支持，获取签到统计，持久化检测状态
  *
  * DetectionRequestContext: 多账户检测上下文
@@ -20,7 +20,12 @@ import type { SiteConfig } from './types/token';
 import { BUILTIN_GROUP_IDS, getApiKeyAvailability } from '../shared/types/site';
 import { httpGet, httpPost } from './utils/http-client';
 import { requestManager, RequestManager } from './utils/request-manager';
-import { mergeApiKeysPreservingRawValue } from './token-service';
+import {
+  buildLoginExpiredErrorMessage,
+  isAuthFailureResponse,
+  isAuthFailureText,
+  mergeApiKeysPreservingRawValue,
+} from './token-service';
 import { getAllUserIdHeaders } from '../shared/utils/headers';
 import Logger from './utils/logger';
 import { unifiedConfigManager } from './unified-config-manager';
@@ -108,6 +113,91 @@ function mapCachedCheckinStats(cache?: DetectionCacheData): CheckinStats | undef
   };
 }
 
+function resolveNextApiKeysCache(
+  existingApiKeys: any[] | undefined,
+  incomingApiKeys: any[] | undefined
+): any[] | undefined {
+  if (!Array.isArray(incomingApiKeys)) {
+    return existingApiKeys;
+  }
+
+  if (
+    incomingApiKeys.length === 0 &&
+    Array.isArray(existingApiKeys) &&
+    existingApiKeys.length > 0
+  ) {
+    return existingApiKeys;
+  }
+
+  return mergeApiKeysPreservingRawValue(existingApiKeys, incomingApiKeys);
+}
+
+function resolveNextModelsCache(
+  existingModels: string[] | undefined,
+  incomingModels: string[] | undefined
+): string[] {
+  if (!Array.isArray(incomingModels)) {
+    return Array.isArray(existingModels) ? existingModels : [];
+  }
+
+  if (incomingModels.length === 0 && Array.isArray(existingModels) && existingModels.length > 0) {
+    return existingModels;
+  }
+
+  return incomingModels;
+}
+
+function resolveNextRecordCache<T extends Record<string, unknown>>(
+  existingValue: T | undefined,
+  incomingValue: T | undefined
+): T | undefined {
+  if (!incomingValue) {
+    return existingValue;
+  }
+
+  if (
+    Object.keys(incomingValue).length === 0 &&
+    existingValue &&
+    Object.keys(existingValue).length > 0
+  ) {
+    return existingValue;
+  }
+
+  return incomingValue;
+}
+
+function extractModelIdsFromPricing(modelPricing: any): string[] {
+  if (
+    !modelPricing?.data ||
+    typeof modelPricing.data !== 'object' ||
+    Array.isArray(modelPricing.data)
+  ) {
+    return [];
+  }
+
+  return Object.keys(modelPricing.data)
+    .map(modelId => modelId.trim())
+    .filter(Boolean);
+}
+
+function resolveNextModelPricingCache(
+  existingModelPricing: any | undefined,
+  incomingModelPricing: any | undefined
+): any | undefined {
+  if (!incomingModelPricing) {
+    return existingModelPricing;
+  }
+
+  if (
+    extractModelIdsFromPricing(incomingModelPricing).length === 0 &&
+    extractModelIdsFromPricing(existingModelPricing).length > 0
+  ) {
+    return existingModelPricing;
+  }
+
+  return incomingModelPricing;
+}
+
 function asObjectPayload(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -119,6 +209,11 @@ export interface DetectionRequestContext {
   accountId?: string;
   /** 浏览器槽位索引（0=主浏览器，N=第N+1个账号的隔离浏览器） */
   browserSlot?: number;
+}
+
+interface DetectionAuthContext {
+  userId?: string;
+  accessToken?: string;
 }
 
 // 今日使用统计
@@ -171,6 +266,31 @@ export class ApiService {
     const account = unifiedConfigManager.getAccountById(explicitAccountId);
     if (!account || account.site_id !== site.id) return { site, account: undefined };
     return { site, account };
+  }
+
+  private resolveDetectionAuth(
+    site: SiteConfig,
+    context?: DetectionRequestContext
+  ): DetectionAuthContext {
+    if (context?.accountId) {
+      const { account } = this.resolveCacheOwner(site.url, context.accountId);
+      if (account?.access_token && account.user_id) {
+        return {
+          accessToken: account.access_token,
+          userId: String(account.user_id),
+        };
+      }
+    }
+
+    const legacyAccessToken =
+      typeof (site as { access_token?: unknown }).access_token === 'string'
+        ? (site as { access_token?: string }).access_token
+        : undefined;
+
+    return {
+      accessToken: site.system_token || legacyAccessToken,
+      userId: site.user_id ? String(site.user_id) : undefined,
+    };
   }
 
   private resolveSiteType(site: SiteConfig) {
@@ -387,6 +507,118 @@ export class ApiService {
     return { models_endpoint: e.modelsEndpoint, balance_endpoint: e.balanceEndpoint };
   }
 
+  private isRecoverableEmptySystemModelError(
+    site: SiteConfig,
+    error: any,
+    forceAcceptEmpty: boolean
+  ): boolean {
+    if (forceAcceptEmpty || site.api_key) {
+      return false;
+    }
+
+    const message = String(error?.message || error || '');
+    return (
+      message.includes('模型接口返回空数据') &&
+      message.includes('登录可能已过期') &&
+      this.resolveSiteType(site) !== 'sub2api'
+    );
+  }
+
+  private getCachedModelFallback(
+    site: SiteConfig,
+    cachedData?: DetectionResult,
+    context?: DetectionRequestContext
+  ): string[] {
+    if (Array.isArray(cachedData?.models) && cachedData.models.length > 0) {
+      return cachedData.models;
+    }
+
+    const persistedCache = this.getPersistedDetectionCache(site.url, context?.accountId);
+    return Array.isArray(persistedCache?.models) ? persistedCache.models : [];
+  }
+
+  private resolveRepresentativeApiKeyValue(apiKeys: any[] | undefined): string {
+    let selectedValue = '';
+    let selectedRank = Number.NEGATIVE_INFINITY;
+
+    for (const apiKey of apiKeys || []) {
+      const rawValue = this.resolveSub2ApiRepresentativeKeyValue(apiKey);
+      if (
+        !rawValue ||
+        rawValue.includes('*') ||
+        rawValue.includes('...') ||
+        rawValue.includes('…')
+      ) {
+        continue;
+      }
+
+      const rank = this.getSub2ApiKeyHealthRank(apiKey);
+      if (rank < 0) {
+        continue;
+      }
+
+      if (!selectedValue || rank > selectedRank) {
+        selectedValue = rawValue;
+        selectedRank = rank;
+      }
+    }
+
+    return selectedValue;
+  }
+
+  private async fetchModelsWithRepresentativeApiKey(
+    site: SiteConfig,
+    timeout: number,
+    apiKeys: any[] | undefined,
+    context?: DetectionRequestContext
+  ): Promise<string[]> {
+    const representativeApiKey = this.resolveRepresentativeApiKeyValue(apiKeys);
+    if (!representativeApiKey) {
+      return [];
+    }
+
+    let page: any = null;
+    let pageRelease: (() => void) | undefined;
+    try {
+      const result = await this.getModels(
+        { ...site, api_key: representativeApiKey },
+        timeout,
+        true,
+        context
+      );
+      page = result.page;
+      pageRelease = result.pageRelease;
+      return result.models;
+    } catch (error: any) {
+      Logger.warn('⚠️ [ApiService] 使用代表 API Key 获取模型失败:', error?.message || error);
+      return [];
+    } finally {
+      if (pageRelease) {
+        try {
+          if (
+            page &&
+            typeof page.isClosed === 'function' &&
+            typeof page.close === 'function' &&
+            !page.isClosed()
+          ) {
+            await page.close();
+          }
+        } catch {
+          // ignore
+        }
+
+        try {
+          pageRelease();
+        } catch (error: any) {
+          Logger.warn(
+            '[ApiService] representative API key model page release failed:',
+            error?.message
+          );
+        }
+      }
+    }
+  }
+
   async detectSite(
     site: SiteConfig,
     timeout: number,
@@ -399,16 +631,32 @@ export class ApiService {
 
     const run = async (): Promise<DetectionResult> => {
       site = await this.ensureSiteType(site);
+      const detectionAuth = this.resolveDetectionAuth(site, context);
       let sharedPage: any = null;
       let pageRelease: (() => void) | undefined = undefined;
       let balancePageRelease: (() => void) | undefined = undefined;
 
       try {
         // 获取模型列表（可能会创建浏览器页面）
-        const modelsResult = await this.getModels(site, timeout, forceAcceptEmpty, context);
-        let models = modelsResult.models;
-        sharedPage = modelsResult.page;
-        pageRelease = modelsResult.pageRelease;
+        let models: string[] = [];
+        let deferredModelError: any = null;
+        const siteType = this.resolveSiteType(site);
+        try {
+          const modelsResult = await this.getModels(site, timeout, forceAcceptEmpty, context);
+          models = modelsResult.models;
+          sharedPage = modelsResult.page;
+          pageRelease = modelsResult.pageRelease;
+        } catch (modelError: any) {
+          if (!this.isRecoverableEmptySystemModelError(site, modelError, forceAcceptEmpty)) {
+            throw modelError;
+          }
+
+          deferredModelError = modelError;
+          Logger.warn(
+            '⚠️ [ApiService] 系统 token 模型端点返回空数据，继续获取扩展数据后再恢复模型:',
+            modelError?.message || modelError
+          );
+        }
 
         // 如果创建了浏览器页面，确保Cloudflare验证完成
         if (sharedPage) {
@@ -425,43 +673,49 @@ export class ApiService {
         // 获取扩展数据，复用浏览器页面
         let apiKeys, userGroups, modelPricing;
 
-        if (this.tokenService && site.system_token && site.user_id) {
+        if (this.tokenService && detectionAuth.accessToken && detectionAuth.userId) {
           try {
             Logger.info('📦 [ApiService] 获取扩展数据...');
+            const authUserId = parseInt(detectionAuth.userId, 10);
+            const tokenRequestContext = {
+              siteType,
+              ...(context?.browserSlot !== undefined ? { browserSlot: context.browserSlot } : {}),
+            };
 
             // 并行获取所有扩展数据，传入共享的浏览器页面
             const [apiKeysResult, userGroupsResult, modelPricingResult] = await Promise.allSettled([
               this.tokenService.fetchApiTokens(
                 site.url,
-                parseInt(site.user_id),
-                site.system_token,
-                sharedPage
+                authUserId,
+                detectionAuth.accessToken,
+                tokenRequestContext
               ),
               this.tokenService.fetchUserGroups(
                 site.url,
-                parseInt(site.user_id),
-                site.system_token,
-                sharedPage
+                authUserId,
+                detectionAuth.accessToken,
+                sharedPage,
+                siteType
               ),
               this.tokenService.fetchModelPricing(
                 site.url,
-                parseInt(site.user_id),
-                site.system_token,
-                sharedPage
+                authUserId,
+                detectionAuth.accessToken,
+                sharedPage,
+                siteType
               ),
             ]);
+
+            const authFailureResult = [apiKeysResult, userGroupsResult, modelPricingResult].find(
+              result => result.status === 'rejected' && this.isAuthError(result.reason)
+            );
+            if (authFailureResult?.status === 'rejected') {
+              throw authFailureResult.reason;
+            }
 
             if (apiKeysResult.status === 'fulfilled' && apiKeysResult.value) {
               apiKeys = apiKeysResult.value;
               Logger.info(`✅ [ApiService] 获取到 ${apiKeys?.length || 0} 个API Keys`);
-            }
-
-            if (
-              this.resolveSiteType(site) === 'sub2api' &&
-              apiKeysResult.status === 'rejected' &&
-              this.isAuthError(apiKeysResult.reason)
-            ) {
-              throw apiKeysResult.reason;
             }
 
             if (userGroupsResult.status === 'fulfilled' && userGroupsResult.value) {
@@ -494,11 +748,53 @@ export class ApiService {
                 );
               }
             }
+
+            if (models.length === 0) {
+              const pricingModels = extractModelIdsFromPricing(modelPricing);
+              if (pricingModels.length > 0) {
+                models = pricingModels;
+                Logger.info(
+                  `✅ [ApiService] 已从模型定价数据恢复模型列表，共 ${models.length} 个模型`
+                );
+              }
+            }
+
+            if (
+              models.length === 0 &&
+              this.resolveSiteType(site) !== 'sub2api' &&
+              Array.isArray(apiKeys) &&
+              apiKeys.length > 0
+            ) {
+              const apiKeyModels = await this.fetchModelsWithRepresentativeApiKey(
+                site,
+                timeout,
+                apiKeys,
+                context
+              );
+              if (apiKeyModels.length > 0) {
+                models = apiKeyModels;
+                Logger.info(
+                  `✅ [ApiService] 已通过代表 API Key 恢复模型列表，共 ${models.length} 个模型`
+                );
+              }
+            }
           } catch (error: any) {
-            if (this.resolveSiteType(site) === 'sub2api' && this.isAuthError(error)) {
+            if (this.isAuthError(error)) {
               throw error;
             }
             Logger.error('⚠️ [ApiService] 获取扩展数据失败:', error.message);
+          }
+        }
+
+        if (models.length === 0 && deferredModelError) {
+          const cachedModels = this.getCachedModelFallback(site, cachedData, context);
+          if (cachedModels.length > 0) {
+            models = cachedModels;
+            Logger.info(`ℹ️ [ApiService] 已沿用缓存模型列表，共 ${models.length} 个模型`);
+          } else {
+            Logger.warn(
+              '⚠️ [ApiService] 模型端点为空且无可用模型兜底，保留本次刷新为成功以避免误判登录过期'
+            );
           }
         }
 
@@ -512,7 +808,7 @@ export class ApiService {
         let hasCheckin = false;
         let canCheckIn: boolean | undefined = undefined;
 
-        if (this.tokenService && site.system_token && site.user_id) {
+        if (this.tokenService && detectionAuth.accessToken && detectionAuth.userId) {
           try {
             Logger.info('🔍 [ApiService] 开始签到功能检测...');
 
@@ -538,8 +834,8 @@ export class ApiService {
               // 站点配置支持签到（或用户强制启用），获取签到状态
               const checkInStatus = await this.tokenService.fetchCheckInStatus(
                 site.url,
-                parseInt(site.user_id),
-                site.system_token,
+                parseInt(detectionAuth.userId, 10),
+                detectionAuth.accessToken,
                 sharedPage, // 传入共享页面以绕过Cloudflare
                 site.site_type
               );
@@ -571,8 +867,8 @@ export class ApiService {
 
         if (
           this.tokenService &&
-          site.system_token &&
-          site.user_id &&
+          detectionAuth.accessToken &&
+          detectionAuth.userId &&
           hasCheckin &&
           canCheckIn === false
         ) {
@@ -580,8 +876,8 @@ export class ApiService {
             Logger.info('📊 [ApiService] 获取签到统计数据...');
             checkinStats = await this.tokenService.fetchCheckinStats(
               site.url,
-              parseInt(site.user_id),
-              site.system_token,
+              parseInt(detectionAuth.userId, 10),
+              detectionAuth.accessToken,
               sharedPage
             );
             if (checkinStats) {
@@ -665,7 +961,7 @@ export class ApiService {
         };
 
         // 保存缓存数据到统一配置（成功时）
-        if (site.system_token && site.user_id) {
+        if (detectionAuth.accessToken && detectionAuth.userId) {
           try {
             await this.saveCachedDisplayData(site.url, result, context);
           } catch (error: any) {
@@ -689,7 +985,7 @@ export class ApiService {
         };
 
         // 失败时也记录检测状态与错误信息，但不覆盖已有的缓存展示数据
-        if (site.system_token && site.user_id) {
+        if (detectionAuth.accessToken && detectionAuth.userId) {
           try {
             await this.saveLastDetectionStatus(
               site.url,
@@ -1058,16 +1354,11 @@ export class ApiService {
    */
   private isAuthError(error: any): boolean {
     const status = error?.response?.status;
-    if (status === 401 || status === 403) {
+    if (isAuthFailureResponse(error?.response?.data, status)) {
       return true;
     }
 
-    const message = String(error?.message || '').toLowerCase();
-    return (
-      message.includes('登录已过期') ||
-      message.includes('token has expired') ||
-      message.includes('token_expired')
-    );
+    return isAuthFailureText(error?.message || error);
   }
 
   /**
@@ -1568,6 +1859,11 @@ export class ApiService {
                 const models = data.map((m: any) => m.id || m.name || m);
                 Logger.info(`✅ [ApiService] 成功获取 ${models.length} 个模型 (直接数组格式)`);
                 return models;
+              }
+
+              if (isAuthFailureResponse(payload)) {
+                Logger.warn('⚠️ [ApiService] 模型接口返回认证失败:', payload?.message);
+                throw new Error(buildLoginExpiredErrorMessage('模型接口', payload));
               }
 
               // 某些站点可能返回 { success: true, message: "..." } 没有data字段
@@ -2576,15 +2872,18 @@ export class ApiService {
 
         return {
           ...existing,
-          models: detectionResult.models || [],
+          models: resolveNextModelsCache(existing?.models, detectionResult.models),
           balance: detectionResult.balance,
           today_usage: detectionResult.todayUsage,
           today_prompt_tokens: detectionResult.todayPromptTokens,
           today_completion_tokens: detectionResult.todayCompletionTokens,
           today_requests: detectionResult.todayRequests,
-          api_keys: mergeApiKeysPreservingRawValue(existing?.api_keys, detectionResult.apiKeys),
-          user_groups: detectionResult.userGroups,
-          model_pricing: detectionResult.modelPricing,
+          api_keys: resolveNextApiKeysCache(existing?.api_keys, detectionResult.apiKeys),
+          user_groups: resolveNextRecordCache(existing?.user_groups, detectionResult.userGroups),
+          model_pricing: resolveNextModelPricingCache(
+            existing?.model_pricing,
+            detectionResult.modelPricing
+          ),
           last_refresh: Date.now(),
           has_checkin: detectionResult.has_checkin,
           can_check_in: preserveCompletedCheckin ? false : detectionResult.can_check_in,

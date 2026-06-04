@@ -499,11 +499,19 @@ function getStreamingTerminalProtocol(cliType: RouteCliType): StreamingTerminalP
   return 'none';
 }
 
-function appendStreamingTerminalScanText(current: string, chunk: Buffer): string {
+function appendStreamingTerminalScanText(
+  protocol: StreamingTerminalProtocol,
+  current: string,
+  chunk: Buffer
+): { text: string; terminalSeen: boolean } {
   const next = `${current}${chunk.toString('utf-8')}`;
-  return next.length > STREAM_TERMINAL_SCAN_MAX_CHARS
-    ? next.slice(-STREAM_TERMINAL_SCAN_MAX_CHARS)
-    : next;
+  return {
+    text:
+      next.length > STREAM_TERMINAL_SCAN_MAX_CHARS
+        ? next.slice(-STREAM_TERMINAL_SCAN_MAX_CHARS)
+        : next,
+    terminalSeen: hasStreamingTerminalMarker(protocol, next),
+  };
 }
 
 function hasStreamingTerminalMarker(protocol: StreamingTerminalProtocol, text: string): boolean {
@@ -1708,13 +1716,13 @@ async function forwardToUpstream(
             receivedStreamingChunks.push(chunk);
 
             if (streamingTerminalProtocol === 'anthropic' && !streamingTerminalSeen) {
-              streamingTerminalScanText = appendStreamingTerminalScanText(
+              const terminalScan = appendStreamingTerminalScanText(
+                streamingTerminalProtocol,
                 streamingTerminalScanText,
                 chunk
               );
-              if (
-                hasStreamingTerminalMarker(streamingTerminalProtocol, streamingTerminalScanText)
-              ) {
+              streamingTerminalScanText = terminalScan.text;
+              if (terminalScan.terminalSeen) {
                 const receivedBody = Buffer.concat(receivedStreamingChunks);
                 if (hasAnthropicMessageStop(receivedBody)) {
                   streamingTerminalSeen = true;
@@ -1734,14 +1742,13 @@ async function forwardToUpstream(
                 }
               }
             } else if (!streamingTerminalSeen) {
-              streamingTerminalScanText = appendStreamingTerminalScanText(
+              const terminalScan = appendStreamingTerminalScanText(
+                streamingTerminalProtocol,
                 streamingTerminalScanText,
                 chunk
               );
-              streamingTerminalSeen = hasStreamingTerminalMarker(
-                streamingTerminalProtocol,
-                streamingTerminalScanText
-              );
+              streamingTerminalScanText = terminalScan.text;
+              streamingTerminalSeen = terminalScan.terminalSeen;
             }
 
             if (!streamed) {

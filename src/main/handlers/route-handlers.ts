@@ -320,6 +320,14 @@ export function registerRouteHandlers() {
     }
   );
 
+  ipcMain.handle('route:get-analytics-overview', async (_, params: RouteAnalyticsWindowQuery) => {
+    try {
+      return ok(analytics.getAnalyticsOverview(params));
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
   ipcMain.handle('route:get-object-stats', async (_, params: RouteAnalyticsObjectStatsQuery) => {
     try {
       return ok(analytics.getRouteObjectStats(params));

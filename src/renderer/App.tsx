@@ -39,6 +39,7 @@ import type {
 } from '../shared/types/site';
 import type { CliTargetProtocol } from '../shared/types/cli-config';
 import type {
+  RouteAnalyticsOverview,
   RouteAnalyticsObjectStatsItem,
   RouteAnalyticsObjectStatsQuery,
   RouteAnalyticsWindowQuery,
@@ -423,6 +424,9 @@ declare global {
         getAnalyticsDistribution: (
           params: RouteAnalyticsWindowQuery
         ) => Promise<{ success: boolean; data?: any; error?: string }>;
+        getAnalyticsOverview?: (
+          params: RouteAnalyticsWindowQuery
+        ) => Promise<{ success: boolean; data?: RouteAnalyticsOverview; error?: string }>;
         getObjectStats: (
           params: RouteAnalyticsObjectStatsQuery
         ) => Promise<{ success: boolean; data?: RouteAnalyticsObjectStatsItem[]; error?: string }>;
@@ -523,6 +527,7 @@ function App() {
     dialogState,
     setDialogState,
     authErrorSites,
+    addAuthErrorSite,
     setAuthErrorSites,
     showAuthErrorDialog,
     setShowAuthErrorDialog,
@@ -559,7 +564,9 @@ function App() {
   // 站点检测 hook
   const { results, setResults, detectSingle } = useSiteDetection({
     onAuthError: sites => {
-      setAuthErrorSites(sites);
+      for (const site of sites) {
+        addAuthErrorSite(site);
+      }
       setShowAuthErrorDialog(true);
     },
     showDialog: options => {
@@ -999,11 +1006,15 @@ function App() {
             setShowAuthErrorDialog(false);
             setActiveTab('sites');
           }}
-          onForceRefresh={async (siteIndex, siteName) => {
+          onForceRefresh={async (siteIndex, siteName, accountId) => {
             const site = config.sites[siteIndex];
             if (!site) return;
 
-            const remaining = authErrorSites.filter(s => s.name !== siteName);
+            const remaining = authErrorSites.filter(s => {
+              if (s.name !== siteName) return true;
+              if (!accountId) return false;
+              return s.accountId !== accountId;
+            });
             setAuthErrorSites(remaining);
 
             if (remaining.length === 0) {

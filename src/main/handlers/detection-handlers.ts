@@ -145,14 +145,23 @@ export function registerDetectionHandlers(
             `🔄 [DetectionHandlers] 检测失败且疑似 token 失效，尝试为账户 ${accountId} 自动补发 access_token`
           );
           try {
-            const refreshedToken = await tokenService.recreateAccessTokenFromBrowser(
-              canonicalSite.url,
-              parseInt(account.user_id, 10),
-              {
-                browserSlot: detectionContext.browserSlot,
-                challengeWaitMs: 10000,
-              }
-            );
+            const refreshContext = {
+              browserSlot: detectionContext.browserSlot,
+              challengeWaitMs: 10000,
+            };
+            const accountUserId = parseInt(account.user_id, 10);
+            const refreshedToken =
+              canonicalSite.site_type === 'sub2api'
+                ? await tokenService.recreateSub2ApiAccessTokenFromBrowser(
+                    canonicalSite.url,
+                    accountUserId,
+                    refreshContext
+                  )
+                : await tokenService.recreateAccessTokenFromBrowser(
+                    canonicalSite.url,
+                    accountUserId,
+                    refreshContext
+                  );
 
             await unifiedConfigManager.updateAccount(account.id, {
               access_token: refreshedToken,
