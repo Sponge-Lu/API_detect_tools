@@ -21,6 +21,7 @@
 - **透明 SSE 流式响应误判**：路由代理现在校验首个 SSE chunk、终止事件与 Claude Code Anthropic 消息结构，HTML/JSON/非 SSE、缺少终止事件、DSML 工具标记、OpenAI 风格事件、坏 tool input JSON、thinking-only 等 malformed 响应会记录明确错误并避免静默成功
 - **AnyRouter Codex 工具兼容**：Codex 走 AnyRouter 原生 Responses 时过滤仍不兼容的工具形态，并在 forced tool 被过滤后同步移除无效 `tool_choice`
 - **优先命中重置回弹**：重置当前优先命中时会写入短期 affinity suppression，避免并发中的旧成功流立即恢复刚被用户清除的路径
+- **路由日志优先级实时同步**：保存模型重定向显示项或站点排序后，即使当前路由 store 缺少完整配置，也会重新拉取路由配置，确保已展示的路由日志按最新站点优先级重算显示
 
 ## [v3.0.4] - 2026-05-27
 

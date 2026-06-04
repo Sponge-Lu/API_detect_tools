@@ -59,6 +59,7 @@ if (typeof window !== 'undefined') {
       getRequestLogs: vi.fn(),
       clearRequestLogs: vi.fn(),
       onRequestLogAppended: vi.fn(),
+      upsertModelDisplayItem: vi.fn(),
       resetPathStates: vi.fn(),
     },
     overview: {

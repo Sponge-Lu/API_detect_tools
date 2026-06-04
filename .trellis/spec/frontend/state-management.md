@@ -68,6 +68,12 @@ Current rule:
 - After manual site-management tests or route/site detection probes persist new CLI samples, mounted
   consumers must reload or re-project the affected `routing.cliProbe.latest` data before declaring
   the workflow complete.
+- Route log rows derive site priority from the current `routeStore.config.modelRegistry`, not from
+  the persisted `RouteRequestLogItem`. Any route-store action that receives a fresh model registry
+  from IPC, such as `upsertDisplayItem()` or `syncModelRegistrySources()`, must merge it into the
+  loaded route config; if the full config is currently missing, the action must refetch
+  `route:getConfig` so mounted consumers can recompute display-only route log fields from the latest
+  registry.
 
 ### Local component/page state
 
@@ -157,3 +163,6 @@ Examples:
 - Do not update only the initiating surface after writing a shared runtime cache. Bidirectional
   display expectations need tests for both directions, such as site-management manual CLI test ->
   route usability and route/site detection probe -> CLI config dialog model slot.
+- Do not treat a registry-only route-store update as enough when `routeStore.config` is `null`.
+  Mounted route log consumers need a complete config refresh before display fields such as site
+  priority can update.

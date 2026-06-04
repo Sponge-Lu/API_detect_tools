@@ -108,6 +108,13 @@ interface RouteState {
   fetchCliProbeData: (timeRange: CliProbeTimeRange, force?: boolean) => Promise<void>;
 }
 
+function mergeModelRegistryIntoRouteConfig(
+  config: RoutingConfig | null,
+  modelRegistry: RouteModelRegistryConfig
+): RoutingConfig | null {
+  return config ? { ...config, modelRegistry } : null;
+}
+
 export const useRouteStore = create<RouteState>((set, get) => ({
   config: null,
   loading: false,
@@ -279,9 +286,13 @@ export const useRouteStore = create<RouteState>((set, get) => ({
   fetchModelRegistry: async () => {
     const res = await window.electronAPI.route?.getModelRegistry();
     if (res?.success && res.data) {
+      const needsFullConfig = !get().config;
       set(state => ({
-        config: state.config ? { ...state.config, modelRegistry: res.data } : null,
+        config: mergeModelRegistryIntoRouteConfig(state.config, res.data),
       }));
+      if (needsFullConfig) {
+        await get().fetchConfig();
+      }
       return res.data;
     }
     return null;
@@ -293,9 +304,13 @@ export const useRouteStore = create<RouteState>((set, get) => ({
       resetDefaults: options?.resetDefaults,
     });
     if (res?.success && res.data) {
+      const needsFullConfig = !get().config;
       set(state => ({
-        config: state.config ? { ...state.config, modelRegistry: res.data } : null,
+        config: mergeModelRegistryIntoRouteConfig(state.config, res.data),
       }));
+      if (needsFullConfig) {
+        await get().fetchConfig();
+      }
       if (options?.resetDefaults) {
         await get().fetchConfig();
       }
@@ -319,9 +334,13 @@ export const useRouteStore = create<RouteState>((set, get) => ({
   syncModelRegistrySources: async force => {
     const res = await window.electronAPI.route?.syncModelRegistrySources({ force });
     if (res?.success && res.data) {
+      const needsFullConfig = !get().config;
       set(state => ({
-        config: state.config ? { ...state.config, modelRegistry: res.data } : null,
+        config: mergeModelRegistryIntoRouteConfig(state.config, res.data),
       }));
+      if (needsFullConfig) {
+        await get().fetchConfig();
+      }
       sessionEventLog.success('route', force ? '已强制同步模型来源' : '已同步模型来源');
       return res.data;
     }
@@ -343,9 +362,13 @@ export const useRouteStore = create<RouteState>((set, get) => ({
   upsertDisplayItem: async displayItem => {
     const res = await window.electronAPI.route?.upsertModelDisplayItem(displayItem);
     if (res?.success && res.data) {
+      const needsFullConfig = !get().config;
       set(state => ({
-        config: state.config ? { ...state.config, modelRegistry: res.data } : null,
+        config: mergeModelRegistryIntoRouteConfig(state.config, res.data),
       }));
+      if (needsFullConfig) {
+        await get().fetchConfig();
+      }
       sessionEventLog.success('route', `重定向显示项已保存：${displayItem.canonicalName}`);
       return res.data;
     }
@@ -356,9 +379,13 @@ export const useRouteStore = create<RouteState>((set, get) => ({
   deleteDisplayItem: async displayItemId => {
     const res = await window.electronAPI.route?.deleteModelDisplayItem(displayItemId);
     if (res?.success && res.data) {
+      const needsFullConfig = !get().config;
       set(state => ({
-        config: state.config ? { ...state.config, modelRegistry: res.data } : null,
+        config: mergeModelRegistryIntoRouteConfig(state.config, res.data),
       }));
+      if (needsFullConfig) {
+        await get().fetchConfig();
+      }
       sessionEventLog.success('route', `重定向显示项已删除：${displayItemId}`);
       return res.data;
     }

@@ -266,6 +266,7 @@ describe('LogsPage', () => {
     });
     vi.mocked(routeApi.getRequestLogs).mockReset().mockResolvedValue({ success: true, data: [] });
     vi.mocked(routeApi.clearRequestLogs).mockReset().mockResolvedValue({ success: true });
+    vi.mocked(routeApi.upsertModelDisplayItem).mockReset();
     vi.mocked(routeApi.getConfig)
       .mockReset()
       .mockResolvedValue({
@@ -892,6 +893,75 @@ describe('LogsPage', () => {
       expect(sitePriorityCell).toHaveTextContent('优先级 0');
     });
     expect(sitePriorityCell).not.toHaveTextContent('优先级 1');
+  });
+
+  it('refreshes route config after a display item save when the route store config is missing', async () => {
+    const rule: RouteRule = {
+      id: 'rule-codex',
+      name: 'Codex 主路由',
+      enabled: true,
+      priority: 90,
+      cliType: 'codex',
+      patternType: 'wildcard',
+      pattern: 'gpt-*',
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const staleRegistry = buildPriorityRegistry({ 'site-1': 1, 'site-2': 0 });
+    const savedRegistry = buildPriorityRegistry({ 'site-1': 0, 'site-2': 1 });
+
+    vi.mocked(routeApi.getRequestLogs).mockResolvedValue({
+      success: true,
+      data: [
+        buildRouteLog({
+          id: 'route-save-refresh',
+          requestId: 'save-refresh',
+          cliType: 'codex',
+          attempt: 1,
+          outcome: 'success',
+          createdAt: 100,
+          siteId: 'site-1',
+          siteName: '站点 A',
+          accountId: 'acct-1',
+          accountName: '主账户',
+          apiKeyId: 'key-1',
+          apiKeyName: 'Key Alpha',
+          requestedModel: 'gpt-5.4',
+          canonicalModel: 'gpt-5.4',
+          resolvedModel: 'gpt-5.4-2025-02-15',
+        }),
+      ],
+    });
+    vi.mocked(routeApi.getConfig)
+      .mockResolvedValueOnce({
+        success: true,
+        data: buildRouteConfigForLogs({ rules: [rule], modelRegistry: staleRegistry }),
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: buildRouteConfigForLogs({ rules: [rule], modelRegistry: savedRegistry }),
+      });
+    vi.mocked(routeApi.upsertModelDisplayItem).mockResolvedValue({
+      success: true,
+      data: savedRegistry,
+    });
+
+    render(<LogsPage activeView="route" />);
+
+    expect(await screen.findByText('请求 save-refresh')).toBeInTheDocument();
+    const sitePriorityCell = screen.getByTestId('route-request-site-priority');
+    expect(sitePriorityCell).toHaveTextContent('优先级 1');
+
+    await act(async () => {
+      useRouteStore.setState({ config: null });
+      await useRouteStore.getState().upsertDisplayItem(savedRegistry.displayItems[0]);
+    });
+
+    await waitFor(() => {
+      expect(sitePriorityCell).toHaveTextContent('优先级 0');
+    });
+    expect(routeApi.upsertModelDisplayItem).toHaveBeenCalledWith(savedRegistry.displayItems[0]);
+    expect(routeApi.getConfig).toHaveBeenCalledTimes(2);
   });
 
   it('appends pushed route logs without reloading the snapshot', async () => {
