@@ -453,7 +453,32 @@ function buildDisplayItems(
     .filter((item): item is RouteModelDisplayItem => item !== null);
 
   if (mode === 'preserve') {
-    return persistedDisplayItems;
+    const persistedCanonicalNames = new Set(persistedDisplayItems.map(item => item.canonicalName));
+    const newSeededItems: RouteModelDisplayItem[] = [];
+
+    for (const [canonicalName, entry] of Object.entries(detectedEntries)) {
+      if (persistedCanonicalNames.has(canonicalName)) {
+        continue;
+      }
+
+      const sources = entry.sources.slice();
+      newSeededItems.push({
+        id: `seeded:${canonicalName}`,
+        vendor: entry.vendor,
+        canonicalName,
+        sourceKeys: sources.map(source => source.sourceKey),
+        originalModelOrder: Array.from(new Set(sources.map(source => source.originalModel))),
+        priorityConfig: {
+          sitePriorities: {},
+          apiKeyPriorities: {},
+        },
+        mode: 'seeded' as const,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    return [...persistedDisplayItems, ...newSeededItems];
   }
 
   const manualDisplayItems = persistedDisplayItems.filter(item => item.mode === 'manual');

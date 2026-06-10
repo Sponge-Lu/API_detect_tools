@@ -295,6 +295,38 @@ export function electronFetchRawStream(
 
 ### 3. Contracts
 
+#### Model Registry Rebuild Data Flow
+
+Model registry rebuild follows a three-stage data transformation pipeline:
+
+```
+Stage 1: Scan Sources
+  └─> sourcePool: RouteModelSourceRef[]
+      (all detected site/account/customCli model sources)
+
+Stage 2: Build Display Items
+  └─> displayItems: RouteModelDisplayItem[]
+      (user-visible groupings with priority config, references sourceKeys)
+
+Stage 3: Build Entries
+  └─> entries: Record<string, RouteModelRegistryEntry>
+      (final canonicalName → sources mapping for route resolution)
+```
+
+**Rebuild Modes**:
+- `reseed`: Re-generate seeded items from `detectedEntries`, preserve manual items, used by `rebuildModelRegistry()`
+- `preserve`: Keep all existing displayItems **and create new seeded items for newly detected canonicalNames**, used by `syncModelRegistrySources()`
+- `resetDefaults`: Remove default example item then reseed, used by `resetModelRegistryDefaults()`
+
+**Critical Invariant**: In `preserve` mode, `buildDisplayItems()` must:
+1. Update existing displayItems' sourceKeys to match current sourcePool
+2. Create new seeded displayItems for canonicalNames present in detectedEntries but absent from existing displayItems
+3. Preserve user-configured priorityConfig/runtimeConfig for all retained items
+
+Failing to create new seeded items in preserve mode causes "sync sources" to miss newly added models — the sources are scanned into sourcePool but never referenced by any displayItem, so `buildEntriesFromDisplayItems()` produces entries without the new sources.
+
+#### Route Runtime Contracts
+
 - `normalizeRoutingConfig()` must always backfill `routing.routePathStates = {}` for old config files.
 - `normalizeRoutingConfig()` must always backfill `routing.server.upstreamProxyUrl = ''` for old config files and trim non-empty persisted values.
 - `buildRoutePathStateKey()` must include `routeRuleId`, `siteId`, `accountId`, `apiKeyId`, normalized `targetProtocol`, `canonicalModel`, and `resolvedModel`; target protocol plus canonical and resolved model fields use `encodeURIComponent`.
@@ -328,7 +360,10 @@ export function electronFetchRawStream(
 - When `routing.modelRegistry` contains any routing data (`sources`, `entries`, or `displayItems`), `resolveChannels(rule, canonicalModel)` must not fall back to generic site/account/API-key channels if `canonicalModel` has no registry entry. Unknown requested models such as a Gemini CLI default path model must produce no candidates instead of being forwarded through an unrelated site.
 - `RouteModelDisplayItem.runtimeConfig` owns per-redirection runtime behavior. Missing fields normalize to `maxAttemptsPerRoutePath = 1`, `successRateWindowMinutes = 5`, `disableDurationMinutes = 30`, and `minSuccessRate = 0.8`.
 - `handleRequest()` must resolve `RouteRuntimeConfig` from the matched canonical model's display item and pass `runtimeConfig.maxAttemptsPerRoutePath` into `buildChannelAttemptPlan(sortChannelsByScore(channels), ...)`.
-- Successful route path affinity is derived from existing `routing.routePathStates`, not a separate preferred-path pointer. A candidate is eligible only when its route path state has `lastOutcome === 'success'`, `lastSuccessAt` is within `ROUTE_SUCCESSFUL_PATH_AFFINITY_MS`, `disabledUntil` is not active, and `affinitySuppressedUntil` is not in the future.
+- Successful route path affinity is derived from existing `routing.routePathStates`, not a separate preferred-path pointer. A candidate is eligible only when its concrete route path state has `lastOutcome === 'success'`, `lastSuccessAt` is within `ROUTE_SUCCESSFUL_PATH_AFFINITY_MS`, `disabledUntil` is not active, and neither the concrete state nor the same channel's `resolvedModel: undefined` suppression state has `affinitySuppressedUntil` in the future.
+- Priority-hit reset from the redirection UI is channel-scoped: it sends `routeRuleId + canonicalModel + siteId + accountId + apiKeyId + targetProtocol` and intentionally omits `resolvedModel`. This clears every concrete resolved-model state for the same visible site/API-key hit, so changing site priority and pressing reset once cannot leave another same-channel upstream-model variant preserving the old preferred site.
+- When `resetRoutePathStates()` matches multiple concrete route path states while affinity suppression is enabled, it must write one suppressed state for each cleared concrete key. Keeping only the last suppressed state can make other resolved-model variants immediately eligible for successful-path affinity again.
+- Channel-scoped priority-hit reset must also write a channel-level suppression state with no `resolvedModel`, even when concrete states were cleared. This makes a reset effective when no current concrete state matched and blocks newly observed same-channel resolved-model variants during the suppression window.
 - `handleRequest()` must apply successful path affinity after normal priority sorting, after `buildChannelAttemptPlan(..., maxAttemptsPerRoutePath)`, and after disabled-path filtering. Affinity may reorder the bounded candidate plan but must not add attempts or bypass `maxAttemptsPerRoutePath`.
 - `applySuccessfulRoutePathAffinity()` must promote the most recently successful eligible path to the front, then preserve circular fallback order from that path's original position: promoted path, later candidates, then earlier candidates. If no eligible successful state exists or the eligible path is already first, keep the input order unchanged.
 - Gemini CLI may send path-only requests for its own helper/default model even when the user has
@@ -513,16 +548,18 @@ export function electronFetchRawStream(
   `routing.routePathStates` using the same eligibility as route affinity (`lastOutcome ===
   'success'`, recent `lastSuccessAt`, and no active `disabledUntil`), then fall back to the latest
   in-memory first-attempt route log for same-session updates. Clicking it must call
-  `resetRoutePathStates()` with the concrete path identity: `routeRuleId`, `canonicalModel`,
-  `siteId`, `accountId`, `apiKeyId`, `resolvedModel`, and `targetProtocol` when present. This clears
-  the successful-path affinity for only that route path and must not reset other API keys under the
-  same redirection card. The reset must leave a short-lived route path state with
-  `affinitySuppressedUntil` for the concrete path, even if no current state was deleted, so an
-  in-flight CLI stream that reports success again cannot immediately restore the same priority hit;
-  the next request should follow normal site priority order and start from the first site. After a
-  successful reset, the renderer must also remove any matching same-session first-attempt route log
-  by the same concrete path identity so a stale in-memory log cannot re-highlight the cleared path
-  after `routePathStates` refreshes.
+  `resetRoutePathStates()` with the concrete route channel identity: `routeRuleId`,
+  `canonicalModel`, `siteId`, `accountId`, `apiKeyId`, and `targetProtocol` when present. It must
+  not include `resolvedModel`, because one visible priority hit can have several concrete upstream
+  model variants under the same site/API-key channel. This clears the successful-path affinity for
+  that route channel and must not reset other API keys under the same redirection card. The reset
+  must leave short-lived route path states with `affinitySuppressedUntil` for each cleared concrete
+  path plus a same-channel `resolvedModel: undefined` suppression state, even if no current state was
+  deleted, so an in-flight CLI stream that reports success again cannot immediately restore the same
+  priority hit; the next request should follow normal site priority order and start from the first site.
+  After a successful reset, the renderer must also
+  remove any matching same-session first-attempt route log by the same channel identity so a stale
+  in-memory log cannot re-highlight the cleared path after `routePathStates` refreshes.
 
 ### 4. Validation & Error Matrix
 
@@ -538,9 +575,9 @@ export function electronFetchRawStream(
 | All paths disabled | every planned route path has active `disabledUntil > now` | Respond `400` with a non-retryable CLI-native `all_route_paths_disabled` error shape |
 | Path disabled during current request | first planned attempt fails, `recordRoutePathOutcome()` sets `disabledUntil`, and remaining planned attempts target only disabled route paths | Do not make another upstream request; respond `400` with a non-retryable CLI-native `all_route_paths_disabled` error shape |
 | User resets current rule paths | renderer calls `resetRoutePathStates({ canonicalModel })` from a redirection card | Matching `routePathStates` are deleted, `stats` are preserved, redirection config is refreshed |
-| User resets current priority hit path | renderer calls `resetRoutePathStates()` from the detail action bar with concrete first-hit path identity | Only the matching successful-affinity path state is deleted; sibling API keys and resolved-model states remain; the concrete path gets `affinitySuppressedUntil` so the next request starts from normal site priority order |
+| User resets current priority hit after changing site priority | renderer calls `resetRoutePathStates()` from the detail action bar with channel identity and no `resolvedModel` | Every resolved-model state for that site/account/API-key channel is cleared and suppressed; sibling API keys remain; the next request starts from normal site priority order |
 | App restarts after a successful route hit | `route:get-config` returns a recent successful `routePathStates` entry but in-memory request logs are empty | Redirection priority table still highlights the matching API-key row as `当前优先命中` and the reset action uses the persisted path identity |
-| User resets persisted priority hit while a matching first-hit log remains in memory | reset deletes the `routePathStates` entry but the renderer still has a same-session first-hit log for the same path | Renderer removes the matching log by path identity and the `当前优先命中` badge disappears |
+| User resets persisted priority hit while a matching first-hit log remains in memory | reset deletes the `routePathStates` entry but the renderer still has a same-session first-hit log for the same channel | Renderer removes the matching log by channel identity and the `当前优先命中` badge disappears |
 | Route log row has a matched display item and explicit site priority | logs page render | Compact priority cell derives the current display rank from the latest `priorityConfig.sitePriorities[siteId]`, even when the matched `RouteRule.priority` differs |
 | User changes redirection site priority while old route logs remain visible | route store update -> logs page render | Existing rows recompute their compact priority cell from the latest route-store `modelRegistry` |
 | Route log row has a matched display item but no explicit site priority | logs page render | Compact priority cell shows the same fallback source order used for display-item site ordering |
@@ -679,17 +716,22 @@ export function electronFetchRawStream(
 - `src/__tests__/unified-config-manager.test.ts`: assert concrete path reset filters delete only the matching `routeRuleId / siteId / accountId / apiKeyId / canonicalModel / resolvedModel / targetProtocol` state.
 - `src/__tests__/unified-config-manager.test.ts`: assert concrete priority-hit reset writes
   `affinitySuppressedUntil` for the path, including the case where no existing path state matched.
+- `src/__tests__/unified-config-manager.test.ts`: assert priority-hit reset without `resolvedModel`
+  clears and suppresses every resolved-model state for the same visible route channel and writes a
+  channel-level fallback suppression state.
 - `src/__tests__/route-stats-service.test.ts`: assert a later success outcome for the same path
   preserves a still-active `affinitySuppressedUntil`.
 - `src/__tests__/route-proxy-service.test.ts`: assert successful path affinity ignores
-  reset-suppressed paths and leaves normal site priority order intact.
+  reset-suppressed concrete paths and channel-level suppression states, leaving normal site priority
+  order intact.
 - `src/__tests__/route-workbench-redesign.test.tsx`: assert the card-level recovery button calls the reset action for the current card's `canonicalName`.
-- `src/__tests__/route-workbench-redesign.test.tsx`: assert the detail action bar shows `重置优先命中` before `恢复路径`, calls the reset action with concrete path identity, and clears the local hit highlight after success.
+- `src/__tests__/route-workbench-redesign.test.tsx`: assert the detail action bar shows `重置优先命中` before `恢复路径`, calls the reset action with channel identity and no `resolvedModel`, and clears the local hit highlight after success.
 - `src/__tests__/route-workbench-redesign.test.tsx`: assert an empty request-log response still
   highlights `当前优先命中` from a recent successful `routePathStates` entry and resets that concrete
   persisted path identity.
 - `src/__tests__/route-workbench-redesign.test.tsx`: assert resetting a persisted priority-hit path
-  also clears a matching renderer-local first-hit log so the badge disappears after success.
+  also clears a matching same-channel renderer-local first-hit log, even when its resolved model
+  differs from the persisted path state, so the badge disappears after success.
 - `src/__tests__/anyrouter-rewriter.test.ts`: assert AnyRouter Claude Code request rewrites to `/v1/messages?beta=true` with Anthropic beta headers, Codex native Responses requests keep `/v1/responses` without hash injection, and Gemini native requests remain transparent.
 - `src/__tests__/route-proxy-service.test.ts`: assert explicit non-native target protocols invoke
   protocol adaptation and still preserve CLI-native downstream response handling.
@@ -729,6 +771,7 @@ export function electronFetchRawStream(
 - `src/__tests__/route-model-registry-service.test.ts`: assert the seeded `claude-opus-4-6` display item maps to the current raw opus source after default reset.
 - `src/__tests__/route-model-registry-service.test.ts`: assert an unknown requested model does not resolve to generic channels when model registry routing data exists, while an empty legacy registry can still use generic routing.
 - `src/__tests__/route-model-registry-service.test.ts`: assert missing site priorities append after the highest explicit site priority and missing API key priorities append after the highest explicit site-level API key priority.
+- `src/__tests__/route-model-registry-service.test.ts`: assert `syncModelRegistrySources()` (preserve mode) creates new seeded displayItems for newly detected canonicalNames while preserving existing items' priorityConfig, and assert new sources appear in the final registry.entries.
 - `src/__tests__/unified-config-manager.test.ts`: assert route selections normalize aliases and route rules are ensured for selected CLI models.
 - `src/__tests__/route-proxy-service.test.ts`: assert non-loopback probe-lock requests notify a
   terminal failure and return `403 probe_lock_forbidden` without upstream I/O.
