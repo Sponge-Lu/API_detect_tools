@@ -1410,6 +1410,35 @@ export class ChromeManager {
   }
 
   /**
+   * 检查站点是否有有效的 session Cookie（通过 CDP）
+   */
+  private async checkSessionCookieExists(
+    page: Page,
+    baseUrl: string,
+    loginMode?: boolean
+  ): Promise<boolean> {
+    try {
+      const { hostname } = new URL(baseUrl);
+      const client = await page.createCDPSession();
+      const { cookies } = await client.send('Network.getAllCookies');
+      await client.detach();
+
+      const sessionCookies = cookies.filter(
+        (c: any) =>
+          (c.domain === hostname || c.domain === `.${hostname}`) &&
+          (c.name.toLowerCase().includes('session') ||
+            c.name.toLowerCase().includes('token') ||
+            c.name.toLowerCase().includes('auth'))
+      );
+
+      return sessionCookies.length > 0;
+    } catch (error: any) {
+      Logger.warn(`⚠️ [ChromeManager] 检查 Cookie 失败: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
    * 等待用户登录
    * 轮询检查localStorage中的userId，同时定期尝试API回退，直到检测到登录或超时
    * @param page 浏览器页面
@@ -1458,9 +1487,19 @@ export class ChromeManager {
           return localData;
         }
 
-        // 如果有 userId 但没有 accessToken，需要通过 API 验证登录状态
+        // 如果有 userId 但没有 accessToken，先检查 Cookie 再决定是否需要 API 验证
         if (localData.userId && !localData.accessToken) {
-          Logger.info('🔄 [ChromeManager] 检测到userId但无accessToken，验证登录状态...');
+          Logger.info('🔄 [ChromeManager] 检测到userId但无accessToken，检查Cookie状态...');
+          const hasCookie = await this.checkSessionCookieExists(page, baseUrl, loginMode);
+
+          if (hasCookie) {
+            Logger.info(
+              `✅ [ChromeManager] Cookie 有效，信任登录状态！用户ID: ${localData.userId}`
+            );
+            return localData;
+          }
+
+          Logger.info('🔄 [ChromeManager] Cookie 无效，尝试API验证登录状态...');
           try {
             this.checkBrowserClosed(loginMode);
             const apiData = await this.getUserDataFromApi(page, baseUrl, siteType, loginMode);
