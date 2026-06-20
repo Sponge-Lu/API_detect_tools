@@ -1,16 +1,8 @@
-import type { ReactNode } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CustomCliConfigEditorDialog } from '../renderer/components/dialogs/CustomCliConfigEditorDialog';
+import { DirectCliConfigEditorContent } from '../renderer/components/dialogs/DirectCliConfigEditorContent';
 import { useCustomCliConfigStore } from '../renderer/store/customCliConfigStore';
 import type { CustomCliConfig } from '../shared/types/custom-cli-config';
-
-type MockModalProps = {
-  isOpen: boolean;
-  title?: ReactNode;
-  children: ReactNode;
-  footer?: ReactNode;
-};
 
 type TestWithWrapperPayload = {
   siteUrl: string;
@@ -19,6 +11,7 @@ type TestWithWrapperPayload = {
     apiKey: string;
     model: string;
     baseUrl: string;
+    targetProtocol?: string;
   }>;
 };
 
@@ -48,17 +41,6 @@ vi.mock('../renderer/store/toastStore', () => ({
   },
 }));
 
-vi.mock('../renderer/components/IOSModal', () => ({
-  IOSModal: ({ isOpen, title, children, footer }: MockModalProps) =>
-    isOpen ? (
-      <div role="dialog" aria-label={typeof title === 'string' ? title : undefined}>
-        {title ? <h2>{title}</h2> : null}
-        <div>{children}</div>
-        {footer ? <div>{footer}</div> : null}
-      </div>
-    ) : null,
-}));
-
 const createConfig = (): CustomCliConfig => ({
   id: 'cfg-1',
   name: '测试配置',
@@ -75,7 +57,7 @@ const createConfig = (): CustomCliConfig => ({
     codex: {
       enabled: true,
       model: 'gpt-4.1',
-      testModels: ['gpt-4.1', 'gpt-4.1-mini'],
+      testModels: ['gpt-4.1'],
     },
     geminiCli: {
       enabled: true,
@@ -87,19 +69,23 @@ const createConfig = (): CustomCliConfig => ({
   updatedAt: 1,
 });
 
-describe('CustomCliConfigEditorDialog', () => {
+describe('DirectCliConfigEditorContent', () => {
   const originalState = useCustomCliConfigStore.getState();
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
   const getElectronAPI = () => window.electronAPI as unknown as MockElectronApi;
 
   const renderDialog = async () => {
     await act(async () => {
-      render(
-        <CustomCliConfigEditorDialog isOpen={true} config={createConfig()} onClose={vi.fn()} />
-      );
+      render(<DirectCliConfigEditorContent config={createConfig()} />);
     });
 
-    return screen.findByRole('dialog', { name: /编辑: 测试配置/ });
+    return screen.findByText('直连配置编辑');
+  };
+
+  const openCliSection = async (cliName: string) => {
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${cliName}`) }));
+    });
   };
 
   beforeEach(() => {
@@ -160,20 +146,26 @@ describe('CustomCliConfigEditorDialog', () => {
     vi.clearAllMocks();
   });
 
-  it('renders per-cli preview and apply buttons plus per-column test buttons', async () => {
+  it('renders per-cli operation blocks with apply, test controls, and one preview path', async () => {
     await renderDialog();
 
     expect(screen.queryByRole('button', { name: '测试当前配置' })).not.toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /^预览 / })).toHaveLength(3);
-    expect(screen.getAllByRole('button', { name: /^应用 / })).toHaveLength(3);
-    expect(screen.getAllByRole('button', { name: /^测试 / })).toHaveLength(3);
-
-    const cliTestColumns = screen.getByTestId('cli-test-columns');
-    expect(cliTestColumns).toBeInTheDocument();
-    expect(cliTestColumns.className).toContain('md:divide-x');
-    expect(cliTestColumns).toHaveTextContent('Claude Code');
-    expect(cliTestColumns).toHaveTextContent('Codex');
-    expect(cliTestColumns).toHaveTextContent('Gemini CLI');
+    expect(screen.queryAllByRole('button', { name: /^预览 / })).toHaveLength(0);
+    expect(screen.queryByText('配置预览与编辑')).not.toBeInTheDocument();
+    expect(screen.getByText('配置文件预览')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^应用 / })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /^测试 / })).toHaveLength(1);
+    expect(screen.queryByTestId('cli-test-columns')).not.toBeInTheDocument();
+    expect(screen.getAllByText('测试模型')).toHaveLength(1);
+    expect(screen.queryByText('测试模型（最多 3 个）')).not.toBeInTheDocument();
+    expect(screen.getByText('Claude Code')).toBeInTheDocument();
+    expect(screen.getByText('Codex')).toBeInTheDocument();
+    expect(screen.getByText('Gemini CLI')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Claude Code 主模型' })).toBeInTheDocument();
+    await openCliSection('Codex');
+    expect(screen.getByRole('button', { name: 'Codex 主模型' })).toBeInTheDocument();
+    await openCliSection('Gemini CLI');
+    expect(screen.getByRole('button', { name: 'Gemini CLI 主模型' })).toBeInTheDocument();
   }, 15_000);
 
   it('runs tests only for the clicked cli column', async () => {
@@ -184,11 +176,12 @@ describe('CustomCliConfigEditorDialog', () => {
     getElectronAPI().cliCompat.testWithWrapper = testWithWrapper;
 
     await renderDialog();
+    await openCliSection('Codex');
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '测试 Codex' }));
     });
 
-    await waitFor(() => expect(testWithWrapper).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(testWithWrapper).toHaveBeenCalledTimes(1));
     expect(testWithWrapper).toHaveBeenNthCalledWith(1, {
       siteUrl: 'https://api.example.com',
       configs: [
@@ -197,20 +190,60 @@ describe('CustomCliConfigEditorDialog', () => {
           apiKey: 'test-key',
           model: 'gpt-4.1',
           baseUrl: 'https://api.example.com',
+          targetProtocol: 'native',
         },
       ],
     });
-    expect(testWithWrapper).toHaveBeenNthCalledWith(2, {
-      siteUrl: 'https://api.example.com',
-      configs: [
-        {
-          cliType: 'codex',
-          apiKey: 'test-key',
-          model: 'gpt-4.1-mini',
-          baseUrl: 'https://api.example.com',
-        },
-      ],
+  });
+
+  it('passes the selected target protocol into direct custom cli tests and persistence', async () => {
+    const testWithWrapper = vi.fn().mockResolvedValue({
+      success: true,
+      data: { codex: true },
     });
+    getElectronAPI().cliCompat.testWithWrapper = testWithWrapper;
+
+    await renderDialog();
+    await openCliSection('Codex');
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText('Codex 选择上游端口'), {
+        target: { value: 'openai-chat-completions' },
+      });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '测试 Codex' }));
+    });
+
+    await waitFor(() => expect(testWithWrapper).toHaveBeenCalledTimes(1));
+    expect(testWithWrapper).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        configs: [
+          expect.objectContaining({
+            cliType: 'codex',
+            targetProtocol: 'openai-chat-completions',
+          }),
+        ],
+      })
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+    });
+
+    const updateConfig = useCustomCliConfigStore.getState().updateConfig as ReturnType<
+      typeof vi.fn
+    >;
+    expect(updateConfig).toHaveBeenLastCalledWith(
+      'cfg-1',
+      expect.objectContaining({
+        cliSettings: expect.objectContaining({
+          codex: expect.objectContaining({
+            targetProtocol: 'openai-chat-completions',
+          }),
+        }),
+      })
+    );
   });
 
   it('persists cli test outcomes back into the custom config store after a column run', async () => {
@@ -225,6 +258,7 @@ describe('CustomCliConfigEditorDialog', () => {
     getElectronAPI().cliCompat.testWithWrapper = testWithWrapper;
 
     await renderDialog();
+    await openCliSection('Codex');
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '测试 Codex' }));
     });
@@ -237,11 +271,7 @@ describe('CustomCliConfigEditorDialog', () => {
             codex: expect.objectContaining({
               testState: expect.objectContaining({
                 status: true,
-                slots: [
-                  expect.objectContaining({ model: 'gpt-4.1', success: true }),
-                  expect.objectContaining({ model: 'gpt-4.1-mini', success: true }),
-                  null,
-                ],
+                slots: [expect.objectContaining({ model: 'gpt-4.1', success: true }), null, null],
               }),
             }),
           }),
@@ -288,6 +318,7 @@ describe('CustomCliConfigEditorDialog', () => {
     useCustomCliConfigStore.setState({ fetchModels });
 
     await renderDialog();
+    await openCliSection('Codex');
     expect(screen.getByRole('button', { name: 'Codex 主模型' })).toHaveTextContent('gpt-4.1');
 
     await act(async () => {
@@ -330,6 +361,7 @@ describe('CustomCliConfigEditorDialog', () => {
     getElectronAPI().cliCompat.writeConfig = writeConfig;
 
     await renderDialog();
+    await openCliSection('Codex');
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '应用 Codex' }));
     });
@@ -345,6 +377,46 @@ describe('CustomCliConfigEditorDialog', () => {
           ]),
         })
       )
+    );
+  });
+
+  it('persists manually typed models for direct custom cli configs', async () => {
+    await renderDialog();
+    await openCliSection('Codex');
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Codex 主模型' }));
+    });
+
+    const searchInput = screen.getByPlaceholderText('搜索模型...');
+    await act(async () => {
+      fireEvent.change(searchInput, { target: { value: 'custom-codex-model' } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByText(/使用手动模型/));
+    });
+
+    expect(screen.getByRole('button', { name: 'Codex 主模型' })).toHaveTextContent(
+      'custom-codex-model'
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+    });
+
+    const updateConfig = useCustomCliConfigStore.getState().updateConfig as ReturnType<
+      typeof vi.fn
+    >;
+    expect(updateConfig).toHaveBeenLastCalledWith(
+      'cfg-1',
+      expect.objectContaining({
+        manualModels: ['custom-codex-model'],
+        cliSettings: expect.objectContaining({
+          codex: expect.objectContaining({
+            model: 'custom-codex-model',
+          }),
+        }),
+      })
     );
   });
 });
