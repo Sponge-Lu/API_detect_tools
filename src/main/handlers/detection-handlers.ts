@@ -490,4 +490,163 @@ export function registerDetectionHandlers(
       return { success: false, error: error?.message || 'Unknown error', deletedPaths: [] };
     }
   });
+
+  // 批量刷新所有托管站点账号 + 直连配置模型
+  ipcMain.handle('site:refreshAll', async () => {
+    if (!tokenService) {
+      return {
+        success: false,
+        error: 'TokenService 未初始化',
+        sites: [],
+        customConfigs: [],
+      };
+    }
+
+    try {
+      Logger.info('[IPC] 批量刷新所有托管站点账号 + 直连配置模型');
+      const config = await unifiedConfigManager.exportConfig();
+      const siteResults: Array<{
+        siteId: string;
+        accountId: string;
+        success: boolean;
+        error?: string;
+      }> = [];
+      const customConfigResults: Array<{
+        configId: string;
+        success: boolean;
+        models: string[];
+        error?: string;
+      }> = [];
+
+      // 刷新托管站点账号
+      for (const site of config.sites) {
+        const accounts = config.accounts.filter(acc => acc.site_id === site.id);
+        for (const account of accounts) {
+          if (!account.access_token || !account.user_id) {
+            siteResults.push({
+              siteId: site.id,
+              accountId: account.id,
+              success: false,
+              error: '账号缺少 access token 或用户 ID',
+            });
+            continue;
+          }
+
+          try {
+            const siteAccounts = config.accounts.filter(a => a.site_id === site.id);
+            const slotIndex = siteAccounts.findIndex(a => a.id === account.id);
+            const browserSlot = slotIndex >= 0 ? slotIndex : 0;
+
+            const refreshedToken =
+              site.site_type === 'sub2api'
+                ? await tokenService.recreateSub2ApiAccessTokenFromBrowser(
+                    site.url,
+                    parseInt(account.user_id),
+                    { browserSlot, challengeWaitMs: 10000 }
+                  )
+                : await tokenService.recreateAccessTokenFromBrowser(
+                    site.url,
+                    parseInt(account.user_id),
+                    { browserSlot, challengeWaitMs: 10000 }
+                  );
+
+            await unifiedConfigManager.updateAccount(account.id, {
+              access_token: refreshedToken,
+              status: 'active',
+            });
+
+            siteResults.push({ siteId: site.id, accountId: account.id, success: true });
+            Logger.info(`✅ 刷新成功: ${site.name} / ${account.account_name}`);
+          } catch (error: any) {
+            siteResults.push({
+              siteId: site.id,
+              accountId: account.id,
+              success: false,
+              error: error.message,
+            });
+            Logger.warn(`⚠️ 刷新失败: ${site.name} / ${account.account_name} - ${error.message}`);
+          }
+        }
+      }
+
+      // 刷新直连配置模型
+      const { fetchAllModels } = await import('../custom-cli-model-service');
+      const customResults = await fetchAllModels();
+      customConfigResults.push(...customResults);
+
+      return { success: true, sites: siteResults, customConfigs: customConfigResults };
+    } catch (error: any) {
+      Logger.error('❌ [IPC] 批量刷新失败:', error);
+      return { success: false, error: error.message, sites: [], customConfigs: [] };
+    }
+  });
+
+  // 批量签到所有托管站点账号
+  ipcMain.handle('site:checkinAll', async () => {
+    if (!tokenService) {
+      return { success: false, error: 'TokenService 未初始化', results: [] };
+    }
+
+    try {
+      Logger.info('[IPC] 批量签到所有托管站点账号');
+      const config = await unifiedConfigManager.exportConfig();
+      const checkinSites = config.sites.filter(site => site.has_checkin);
+      const results: Array<{ siteId: string; accountId: string; success: boolean; error?: string }> = [];
+
+      for (const site of checkinSites) {
+        const accounts = config.accounts.filter(acc => acc.site_id === site.id);
+        for (const account of accounts) {
+          if (!account.access_token || !account.user_id) {
+            results.push({
+              siteId: site.id,
+              accountId: account.id,
+              success: false,
+              error: '账号缺少 access token 或用户 ID',
+            });
+            continue;
+          }
+
+          try {
+            const checkinResult = await tokenService.checkIn(
+              site.url,
+              parseInt(account.user_id),
+              account.access_token,
+              undefined,
+              site.site_type
+            );
+
+            if (checkinResult.pageRelease) {
+              checkinResult.pageRelease();
+            }
+
+            if (checkinResult.success) {
+              results.push({ siteId: site.id, accountId: account.id, success: true });
+              Logger.info(`✅ 签到成功: ${site.name} / ${account.account_name}`);
+            } else {
+              results.push({
+                siteId: site.id,
+                accountId: account.id,
+                success: false,
+                error: checkinResult.message || '签到失败',
+              });
+              Logger.warn(`⚠️ 签到失败: ${site.name} / ${account.account_name} - ${checkinResult.message}`);
+            }
+          } catch (error: any) {
+            results.push({
+              siteId: site.id,
+              accountId: account.id,
+              success: false,
+              error: error.message,
+            });
+            Logger.warn(`⚠️ 签到失败: ${site.name} / ${account.account_name} - ${error.message}`);
+          }
+        }
+      }
+
+      return { success: true, results };
+    } catch (error: any) {
+      Logger.error('❌ [IPC] 批量签到失败:', error);
+      return { success: false, error: error.message, results: [] };
+    }
+  });
 }

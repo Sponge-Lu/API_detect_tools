@@ -7,18 +7,7 @@
 
 import Logger from '../utils/logger';
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import {
-  Server,
-  Plus,
-  Trash2,
-  Pencil,
-  Loader2,
-  RefreshCw,
-  Search,
-  X,
-  ChevronsUpDown,
-  Calendar,
-} from 'lucide-react';
+import { Server, Plus, Trash2, Pencil, Search, X } from 'lucide-react';
 import { SiteEditor } from '../components/SiteEditor';
 import { AddAccountDialog } from '../components/AddAccountDialog';
 import { SiteCard } from '../components/SiteCard';
@@ -26,11 +15,14 @@ import { SiteListHeader } from '../components/SiteListHeader';
 import {
   SiteGroupDialog,
   BackupSelectDialog,
-  UnifiedCliConfigDialog,
-  AutoRefreshDialog,
   ApplyConfigPopover,
+  AddAccessPointDialog,
+  AccessPointDetailPanel,
+  OperationRecordDialog,
+  CliProbeSettingsDialog,
 } from '../components/dialogs';
 import type { CliConfig } from '../../shared/types/cli-config';
+import { useRouteStore } from '../store/routeStore';
 import { CreateApiKeyDialog } from '../components/CreateApiKeyDialog';
 import { AppButton } from '../components/AppButton/AppButton';
 import { DataTableBody } from '../components/DataTable/DataTable';
@@ -54,6 +46,10 @@ import {
   type DetectionResult,
   type AnyRouterAccountConfig,
 } from '../../shared/types/site';
+import {
+  DEFAULT_CLI_PROBE_CONFIG,
+  type RouteCliProbeConfig,
+} from '../../shared/types/route-proxy';
 import type { Config, SiteGroup } from '../App';
 import {
   UNKNOWN_SITE_TYPE_FILTER,
@@ -64,8 +60,14 @@ import {
 import { useConfigStore } from '../store/configStore';
 import { useDetectionStore } from '../store/detectionStore';
 import { useUIStore } from '../store/uiStore';
+import { useCustomCliConfigStore } from '../store/customCliConfigStore';
 import { toast } from '../store/toastStore';
 import { DialogState, initialDialogState } from '../components/ConfirmDialog';
+import type { CustomCliConfig } from '../../shared/types/custom-cli-config';
+import {
+  buildCustomCliRouteAccountId,
+  buildCustomCliRouteSiteId,
+} from '../../shared/utils/customCliRouteId';
 
 // 备份信息类型
 interface BackupInfo {
@@ -97,13 +99,6 @@ interface AddedAccountInfo {
   user_id?: string;
 }
 
-interface AutoRefreshDialogTarget {
-  site: SiteConfig;
-  account: AccountInfo | null;
-  label: string;
-  currentInterval: number;
-}
-
 interface EditingAccountInfo {
   id: string;
   account_name?: string;
@@ -125,16 +120,69 @@ function makeCardKey(siteName: string, accountId?: string): string {
   return accountId ? `${siteName}::${accountId}` : siteName;
 }
 
-const EMPTY_SELECTED_MODELS = new Set<string>();
+function getCustomCliDisplayName(config: CustomCliConfig): string {
+  return config.name?.trim() || '未命名直连配置';
+}
+
+function buildCustomCliVirtualSite(config: CustomCliConfig, defaultGroupId: string): SiteConfig {
+  return {
+    id: buildCustomCliRouteSiteId(config.id),
+    name: getCustomCliDisplayName(config),
+    url: config.baseUrl || '',
+    api_key: config.apiKey || '',
+    enabled: true,
+    group: defaultGroupId,
+  };
+}
+
+function buildCustomCliVirtualAccount(config: CustomCliConfig): AccountInfo {
+  return {
+    id: buildCustomCliRouteAccountId(config.id),
+    account_name: '直连配置',
+    user_id: '',
+    access_token: config.apiKey || '',
+    status: config.baseUrl ? 'active' : 'incomplete',
+    auth_source: 'custom-cli',
+  };
+}
+
+function buildCustomCliVirtualResult(config: CustomCliConfig): DetectionResult {
+  return {
+    name: getCustomCliDisplayName(config),
+    url: config.baseUrl || '',
+    status: config.baseUrl && config.apiKey ? '成功' : '未配置',
+    models: config.models || [],
+    has_checkin: false,
+    accountId: buildCustomCliRouteAccountId(config.id),
+    lastRefresh: config.lastModelFetch,
+  };
+}
 
 /** 展平后的卡片条目 */
-interface FlattenedCardItem {
+type ManagedCardItem = {
+  type: 'managed';
   site: SiteConfig;
   index: number;
   siteResult?: DetectionResult;
   account: AccountInfo | null;
   cardKey: string;
-}
+};
+
+type CustomCliCardItem = {
+  type: 'custom-cli';
+  config: CustomCliConfig;
+  index: number;
+  cardKey: string;
+  site: SiteConfig;
+  account: AccountInfo;
+  siteResult: DetectionResult;
+};
+
+type FlattenedCardItem = ManagedCardItem | CustomCliCardItem;
+
+type SelectedSiteItem =
+  | { type: 'managed'; site: SiteConfig; account: AccountInfo | null }
+  | { type: 'custom-cli'; config: CustomCliConfig };
 
 interface SitesPageProps {
   setPageHeaderActions?: (actions: React.ReactNode | null) => void;
@@ -142,28 +190,22 @@ interface SitesPageProps {
 
 export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
   // ========== 从 Store 读取状态 ==========
-  const {
-    config,
-    setConfig,
-    setSaving,
-    addSite: storeAddSite,
-    updateSite: storeUpdateSite,
-    deleteSite: storeDeleteSite,
-  } = useConfigStore();
+  const { config, setConfig, setSaving, updateSite: storeUpdateSite } = useConfigStore();
 
   const { apiKeys, userGroups, modelPricing, setApiKeys, setUserGroups, setModelPricing } =
     useDetectionStore();
+  const {
+    configs: customCliConfigs,
+    loadConfigs: loadCustomCliConfigs,
+    addConfig: addCustomCliConfig,
+    deleteConfig: deleteCustomCliConfig,
+  } = useCustomCliConfigStore();
 
   const {
     showSiteEditor,
     setShowSiteEditor,
     editingSite,
     setEditingSite,
-    expandedSites,
-    setExpandedSites,
-    toggleSiteExpanded,
-    showTokens,
-    toggleTokenVisibility,
     selectedGroup,
     setSelectedGroup,
     activeSiteGroupFilter,
@@ -189,7 +231,6 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     setNewTokenForm: setNewTokenFormStore,
     creatingToken,
     setCreatingToken,
-    deletingTokenKey,
     setDeletingTokenKey,
     setDialogState,
     authErrorSites,
@@ -211,12 +252,20 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
   const [backupList, setBackupList] = useState<BackupInfo[]>([]);
   const [loadingBackups, setLoadingBackups] = useState(false);
 
-  // CLI 配置对话框状态
-  const [showCliConfigDialog, setShowCliConfigDialog] = useState(false);
-  const [cliConfigSite, setCliConfigSite] = useState<SiteConfig | null>(null);
-  const [cliConfigCardKey, setCliConfigCardKey] = useState<string | null>(null);
-  const [cliConfigAccountId, setCliConfigAccountId] = useState<string | null>(null);
-  const [cliConfigSiteResult, setCliConfigSiteResult] = useState<DetectionResult | null>(null);
+  // 添加接入点弹窗状态
+  const [showAddAccessPointDialog, setShowAddAccessPointDialog] = useState(false);
+  const [pendingNewCustomCliConfigId, setPendingNewCustomCliConfigId] = useState<string | null>(
+    null
+  );
+
+  // 一键刷新/签到状态
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isCheckingInAll, setIsCheckingInAll] = useState(false);
+
+  // 侧滑面板状态
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<SelectedSiteItem | null>(null);
+
   const [cliApplySite, setCliApplySite] = useState<SiteConfig | null>(null);
   const [cliApplyCardKey, setCliApplyCardKey] = useState<string | null>(null);
   const [cliApplyAnchorEl, setCliApplyAnchorEl] = useState<HTMLElement | null>(null);
@@ -225,19 +274,25 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
   );
 
   // 自动刷新对话框状态
-  const [autoRefreshDialogTarget, setAutoRefreshDialogTarget] =
-    useState<AutoRefreshDialogTarget | null>(null);
   const [addAccountSite, setAddAccountSite] = useState<SiteConfig | null>(null);
   const [editingAccount, setEditingAccount] = useState<EditingAccountInfo | null>(null);
   const [activeSiteTypeFilter, setActiveSiteTypeFilter] = useState<SiteTypeFilterValue | null>(
     null
   );
+  const [showOperationRecords, setShowOperationRecords] = useState(false);
+  const [showCliProbeSettings, setShowCliProbeSettings] = useState(false);
+  const [savingCliProbeSettings, setSavingCliProbeSettings] = useState(false);
+  const [runningCliProbe, setRunningCliProbe] = useState(false);
 
   // 多账户: 按站点 ID 预加载的账户列表
   const [accountsBySite, setAccountsBySite] = useState<Record<string, AccountInfo[]>>({});
-  const [selectedModelsByCard, setSelectedModelsByCard] = useState<Record<string, Set<string>>>({});
-  const [refreshingTokenKey, setRefreshingTokenKey] = useState<string | null>(null);
+  const [, setRefreshingTokenKey] = useState<string | null>(null);
   const dateStr = useDateString();
+
+  const routeCliProbeConfig = useRouteStore(state => state.config?.cliProbe?.config ?? null);
+  const fetchRouteConfig = useRouteStore(state => state.fetchConfig);
+  const saveRouteCliProbeConfig = useRouteStore(state => state.saveCliProbeConfig);
+  const runRouteProbeNow = useRouteStore(state => state.runProbeNow);
 
   // 兼容层
   const setNewTokenForm = (form: NewApiTokenForm | ((p: NewApiTokenForm) => NewApiTokenForm)) => {
@@ -288,9 +343,9 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
   const loadAllAccounts = useCallback(
     async (overrideSites?: SiteConfig[]) => {
       const sites = overrideSites || config?.sites;
-      if (!sites) return;
+      if (!sites) return {};
       const sitesWithId = sites.filter(s => s.id);
-      if (sitesWithId.length === 0) return;
+      if (sitesWithId.length === 0) return {};
 
       const newAccountsBySite: Record<string, AccountInfo[]> = {};
 
@@ -308,6 +363,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
       );
 
       setAccountsBySite(newAccountsBySite);
+      return newAccountsBySite;
     },
     [config?.sites]
   );
@@ -315,6 +371,10 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
   useEffect(() => {
     loadAllAccounts();
   }, [loadAllAccounts]);
+
+  useEffect(() => {
+    void loadCustomCliConfigs();
+  }, [loadCustomCliConfigs]);
 
   const siteBeingEdited = editingSite !== null ? config?.sites[editingSite] : undefined;
 
@@ -366,11 +426,6 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     setSelectedGroup(siteName, current === groupName ? null : groupName);
   };
 
-  const getSelectedModelsForCard = useCallback(
-    (cardKey: string) => selectedModelsByCard[cardKey] || EMPTY_SELECTED_MODELS,
-    [selectedModelsByCard]
-  );
-
   const getCardContext = useCallback(
     (cardKey: string, account?: AccountInfo | null): CardOperationContext => ({
       cardKey,
@@ -421,46 +476,6 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
       setSaving(false);
     }
   };
-
-  const updateLocalAccountAutoRefresh = useCallback(
-    (
-      siteId: string,
-      accountId: string,
-      updates: Pick<AccountInfo, 'auto_refresh' | 'auto_refresh_interval'>
-    ) => {
-      setAccountsBySite(prev => {
-        const siteAccounts = prev[siteId];
-        if (!siteAccounts) return prev;
-        return {
-          ...prev,
-          [siteId]: siteAccounts.map(account =>
-            account.id === accountId ? { ...account, ...updates } : account
-          ),
-        };
-      });
-
-      const latestConfig = useConfigStore.getState().config;
-      if (!latestConfig?.accounts) return;
-      setConfig({
-        ...latestConfig,
-        accounts: latestConfig.accounts.map(account =>
-          account.id === accountId ? { ...account, ...updates } : account
-        ),
-      });
-    },
-    [setConfig]
-  );
-
-  const openAutoRefreshDialog = useCallback((site: SiteConfig, account?: AccountInfo | null) => {
-    const currentInterval = account?.auto_refresh_interval ?? site.auto_refresh_interval ?? 30;
-    const label = account ? `${site.name} / ${account.account_name}` : site.name;
-    setAutoRefreshDialogTarget({
-      site,
-      account: account || null,
-      label,
-      currentInterval,
-    });
-  }, []);
 
   // 弹窗辅助函数
   const showDialog = (options: Partial<DialogState> & { message: string }): Promise<boolean> => {
@@ -514,7 +529,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
   } = useSiteDrag({ config, saveConfig });
 
   // 站点检测 hook
-  const { detecting, detectingSites, results, setResults, detectSingle, detectAllSites } =
+  const { detectingSites, results, setResults, detectSingle, detectAllSites } =
     useSiteDetection({
       onAuthError: sites => {
         for (const site of sites) {
@@ -527,7 +542,6 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
 
   // CLI 兼容性测试 hook
   const {
-    testSite: testCliCompatSite,
     isTestingSite: isCliTestingSite,
     getCompatibility,
     getCliConfig,
@@ -582,36 +596,78 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     defaultGroupId,
   });
 
-  // 站点操作
-  const addSite = async (site: SiteConfig) => {
-    await storeAddSite(site);
-    setTimeout(async () => {
-      try {
-        await detectSingle(site, false);
-      } catch (error: any) {
-        Logger.error('新站点数据刷新失败:', error.message);
-      } finally {
-        try {
-          await window.electronAPI.closeLoginBrowser?.();
-        } catch (err) {
-          Logger.warn('自动关闭登录浏览器失败:', err);
-        }
-      }
-    }, 300);
-  };
+  const buildSitePayloadForCreate = useCallback(
+    (site: SiteConfig) => ({
+      name: site.name,
+      url: site.url,
+      site_type: site.site_type,
+      enabled: site.enabled,
+      group: site.group || defaultGroupId,
+      api_key: site.api_key,
+      extra_links: site.extra_links,
+      has_checkin: site.has_checkin,
+      force_enable_checkin: site.force_enable_checkin,
+      auto_refresh: site.auto_refresh,
+      auto_refresh_interval: site.auto_refresh_interval,
+    }),
+    [defaultGroupId]
+  );
 
-  const deleteSite = async (index: number) => {
-    if (!config) return;
-    const siteName = config.sites[index]?.name || '该站点';
-    const confirmed = await showDialog({
-      type: 'warning',
-      title: '删除账户',
-      message: `确定要删除「${siteName}」吗？\n该站点当前无账户记录，删除后将同时移除站点配置。`,
-      confirmText: '删除',
-    });
-    if (!confirmed) return;
-    await storeDeleteSite(index);
-  };
+  const createSiteWithDefaultAccount = useCallback(
+    async (
+      site: SiteConfig,
+      auth: {
+        systemToken: string;
+        userId: string;
+        accountName?: string;
+        anyRouterConfig?: AnyRouterAccountConfig;
+      }
+    ) => {
+      const siteResult = await window.electronAPI.sites?.add(buildSitePayloadForCreate(site));
+      if (!siteResult?.success || !siteResult.data?.id) {
+        throw new Error(siteResult?.error || '创建站点失败');
+      }
+
+      const createdSiteId = siteResult.data.id;
+      const createdSite = siteResult.data as SiteConfig;
+
+      const accountResult = await window.electronAPI.accounts?.add({
+        site_id: createdSiteId,
+        account_name: auth.accountName?.trim() || '默认账户',
+        user_id: auth.userId,
+        access_token: auth.systemToken,
+        auth_source: 'manual',
+        ...(auth.anyRouterConfig ? { anyRouterConfig: auth.anyRouterConfig } : {}),
+      });
+
+      if (!accountResult?.success || !accountResult.data?.id) {
+        throw new Error(accountResult?.error || '创建默认账户失败');
+      }
+
+      const refreshedConfig = await window.electronAPI.loadConfig();
+      setConfig(refreshedConfig);
+      await loadAllAccounts(refreshedConfig?.sites);
+
+      const refreshedSite =
+        refreshedConfig?.sites?.find((item: SiteConfig) => item.id === createdSiteId) ||
+        createdSite;
+
+      setTimeout(async () => {
+        try {
+          await detectSingle(refreshedSite, false, undefined, accountResult.data.id);
+        } catch (error: any) {
+          Logger.error('新站点数据刷新失败:', error.message);
+        } finally {
+          try {
+            await window.electronAPI.closeLoginBrowser?.();
+          } catch (err) {
+            Logger.warn('自动关闭登录浏览器失败:', err);
+          }
+        }
+      }, 300);
+    },
+    [buildSitePayloadForCreate, detectSingle, loadAllAccounts, setConfig]
+  );
 
   const deleteAccount = useCallback(
     async (site: SiteConfig, account: AccountInfo) => {
@@ -621,25 +677,106 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
         message: `确定要删除「${site.name}」的账户「${account.account_name}」吗？\n此操作不可恢复。`,
         confirmText: '删除',
       });
-      if (!confirmed) return;
+      if (!confirmed) return false;
 
       try {
         await window.electronAPI.accounts?.delete(account.id);
         const cfg = await window.electronAPI.loadConfig();
         setConfig(cfg);
         await loadAllAccounts(cfg?.sites);
+        toast.success('账户已删除');
+        return true;
       } catch (err: any) {
         Logger.error('删除账户失败:', err);
         toast.error('删除账户失败: ' + err?.message);
+        return false;
       }
     },
     [loadAllAccounts, setConfig, showDialog]
   );
 
-  const handleDetectAllSites = async () => {
-    if (!config) return;
-    await detectAllSites(config, accountsBySite);
-  };
+  const handleSavePanelAccount = useCallback(
+    async (
+      accountId: string,
+      updates: Partial<
+        Pick<
+          AccountInfo,
+          'account_name' | 'user_id' | 'access_token' | 'auto_refresh' | 'auto_refresh_interval'
+        >
+      >
+    ) => {
+      try {
+        const result = await window.electronAPI.accounts?.update(accountId, updates);
+        if (!result?.success) {
+          throw new Error(result?.error || '保存账户配置失败');
+        }
+
+        const refreshedConfig = await window.electronAPI.loadConfig();
+        setConfig(refreshedConfig);
+        const refreshedAccountsBySite = await loadAllAccounts(refreshedConfig?.sites);
+
+        setSelectedItem(prev => {
+          if (prev?.type !== 'managed' || !prev.account || prev.account.id !== accountId) {
+            return prev;
+          }
+          const latestAccount = prev.site.id
+            ? refreshedAccountsBySite[prev.site.id]?.find(account => account.id === accountId)
+            : null;
+          return {
+            ...prev,
+            account: latestAccount ?? {
+              ...prev.account,
+              ...updates,
+            },
+          };
+        });
+
+        toast.success('账户配置已保存');
+      } catch (err: any) {
+        Logger.error('保存账户配置失败:', err);
+        toast.error('保存账户配置失败: ' + (err?.message || err));
+        throw err;
+      }
+    },
+    [loadAllAccounts, setConfig]
+  );
+
+  const handleDetectAllSites = useCallback(async () => {
+    setRunningCliProbe(true);
+    try {
+      await runRouteProbeNow();
+    } catch (error: any) {
+      Logger.error('CLI 可用性即时探测失败:', error);
+      toast.error('CLI 可用性即时探测失败: ' + (error?.message || error));
+    } finally {
+      setRunningCliProbe(false);
+    }
+  }, [runRouteProbeNow]);
+
+  const handleOpenDetectionSettings = useCallback(async () => {
+    try {
+      await fetchRouteConfig();
+    } catch (error) {
+      Logger.warn('加载 CLI 探测设置失败，将使用默认设置:', error);
+    }
+    setShowCliProbeSettings(true);
+  }, [fetchRouteConfig]);
+
+  const handleSaveCliProbeSettings = useCallback(
+    async (nextConfig: RouteCliProbeConfig) => {
+      setSavingCliProbeSettings(true);
+      try {
+        await saveRouteCliProbeConfig(nextConfig);
+        setShowCliProbeSettings(false);
+      } catch (error: any) {
+        Logger.error('保存 CLI 可用性检测设置失败:', error);
+        toast.error('保存 CLI 可用性检测设置失败: ' + (error?.message || error));
+      } finally {
+        setSavingCliProbeSettings(false);
+      }
+    },
+    [saveRouteCliProbeConfig]
+  );
 
   // 签到逻辑 hook
   const { handleCheckIn, handleCheckInAll } = useCheckIn({
@@ -650,7 +787,6 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
 
   // 令牌管理 hook
   const {
-    refreshSiteApiKeys,
     handleRefreshToken: refreshToken,
     handleDeleteToken: deleteToken,
     handleCreateTokenSubmit: createToken,
@@ -726,52 +862,6 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     }
   };
 
-  const toggleModelSelection = useCallback((cardKey: string, model: string) => {
-    setSelectedModelsByCard(prev => {
-      const current = prev[cardKey] || new Set<string>();
-      const next = new Set(current);
-      if (next.has(model)) {
-        next.delete(model);
-      } else {
-        next.add(model);
-      }
-
-      return {
-        ...prev,
-        [cardKey]: next,
-      };
-    });
-  }, []);
-
-  const clearSelectedModels = useCallback((cardKey: string) => {
-    setSelectedModelsByCard(prev => {
-      if (!prev[cardKey] || prev[cardKey].size === 0) {
-        return prev;
-      }
-
-      return {
-        ...prev,
-        [cardKey]: new Set<string>(),
-      };
-    });
-  }, []);
-
-  const copySelectedModels = async (cardKey: string) => {
-    const selectedModels = getSelectedModelsForCard(cardKey);
-    if (selectedModels.size === 0) {
-      toast.warning('请先选择要复制的模型');
-      return;
-    }
-    const modelsText = Array.from(selectedModels).join(',');
-    try {
-      await navigator.clipboard.writeText(modelsText);
-      toast.success(`已复制 ${selectedModels.size} 个模型到剪贴板`);
-    } catch (error) {
-      Logger.error('复制失败:', error);
-      toast.error('复制失败: ' + error);
-    }
-  };
-
   // 全局模型搜索
   const expandDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -821,42 +911,6 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
 
     await saveConfig({ ...config, siteGroups: currentGroups });
     setDragOverGroupIndex(null);
-  };
-
-  // 展开站点（cardKey 可以是 siteName 或 siteName::accountId）
-  const handleExpandSite = (cardKey: string) => {
-    const isExpanding = !expandedSites.has(cardKey);
-    toggleSiteExpanded(cardKey);
-
-    if (isExpanding) {
-      // 尝试从 flattenedCards 找到对应的检测结果
-      const card = flattenedCards.find(c => c.cardKey === cardKey);
-      const siteResult = card?.siteResult;
-      if (siteResult) {
-        setApiKeys(cardKey, siteResult.apiKeys || []);
-        setUserGroups(cardKey, siteResult.userGroups || {});
-        setModelPricing(cardKey, siteResult.modelPricing || { data: {} });
-      }
-    }
-  };
-
-  const handleToggleAllExpanded = () => {
-    if (!config) return;
-    const allCardKeys = flattenedCards.map(c => c.cardKey);
-    const allExpanded = allCardKeys.every(key => expandedSites.has(key));
-
-    if (allExpanded) {
-      setExpandedSites(new Set());
-    } else {
-      flattenedCards.forEach(card => {
-        if (card.siteResult) {
-          setApiKeys(card.cardKey, card.siteResult.apiKeys || []);
-          setUserGroups(card.cardKey, card.siteResult.userGroups || {});
-          setModelPricing(card.cardKey, card.siteResult.modelPricing || { data: {} });
-        }
-      });
-      setExpandedSites(new Set(allCardKeys));
-    }
   };
 
   // 检查站点是否有匹配全局搜索的模型
@@ -976,6 +1030,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
             r => r.name === site.name && r.accountId === account.id
           ); // 严格 per-account 查找，不 fallback 到站点级结果
           items.push({
+            type: 'managed',
             site,
             index,
             siteResult: accountResult,
@@ -986,6 +1041,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
       } else {
         // 站点没有账户：保持单张卡片
         items.push({
+          type: 'managed',
           site,
           index,
           siteResult,
@@ -995,24 +1051,26 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
       }
     }
 
-    return items;
-  }, [sortedSites, accountsBySite, results]);
+    customCliConfigs.forEach((customCliConfig, customIndex) => {
+      const virtualSite = buildCustomCliVirtualSite(customCliConfig, defaultGroupId);
+      const virtualAccount = buildCustomCliVirtualAccount(customCliConfig);
+      items.push({
+        type: 'custom-cli',
+        config: customCliConfig,
+        index: sortedSites.length + customIndex,
+        site: virtualSite,
+        account: virtualAccount,
+        siteResult: buildCustomCliVirtualResult(customCliConfig),
+        cardKey: `custom-cli::${customCliConfig.id}`,
+      });
+    });
 
-  // 每个站点的首张卡片 key（用于仅在默认账户卡片上显示「添加账户」按钮）
-  const firstCardKeyPerSite = useMemo(() => {
-    const seen = new Set<string>();
-    const first = new Set<string>();
-    for (const { site, cardKey } of flattenedCards) {
-      const siteId = site.id || site.name;
-      if (!seen.has(siteId)) {
-        seen.add(siteId);
-        first.add(cardKey);
-      }
-    }
-    return first;
-  }, [flattenedCards]);
+    return items;
+  }, [sortedSites, accountsBySite, results, customCliConfigs, defaultGroupId]);
 
   // 全局模型搜索（需要放在 flattenedCards 之后）
+  const hasAccessPoints = flattenedCards.length > 0;
+
   const handleGlobalModelSearchChange = useCallback(
     (value: string) => {
       if (Object.values(modelSearch).some(text => text && text.trim() !== '')) {
@@ -1025,9 +1083,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
         clearTimeout(expandDebounceRef.current);
       }
 
-      if (!value) {
-        setExpandedSites(new Set());
-      } else if (flattenedCards.length > 0) {
+      if (value && flattenedCards.length > 0) {
         expandDebounceRef.current = setTimeout(() => {
           flattenedCards.forEach(card => {
             if (card.siteResult) {
@@ -1043,7 +1099,6 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
       modelSearch,
       clearAllModelSearch,
       setGlobalModelSearch,
-      setExpandedSites,
       flattenedCards,
       setApiKeys,
       setUserGroups,
@@ -1066,19 +1121,320 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     }
   };
 
+  const refreshAllDirectConfigModels = useCallback(async () => {
+    const currentConfigs = useCustomCliConfigStore.getState().configs;
+    let success = 0;
+    let failed = 0;
+
+    for (const directConfig of currentConfigs) {
+      if (!directConfig.baseUrl || !directConfig.apiKey) {
+        continue;
+      }
+
+      const models = await useCustomCliConfigStore.getState().fetchModels(directConfig.id);
+      if (models.length > 0) {
+        success += 1;
+      } else {
+        failed += 1;
+      }
+    }
+
+    return { success, failed };
+  }, []);
+
+  // 一键刷新继承旧批量检测结果回写，再补充直连配置模型刷新
+  const handleRefreshAll = async () => {
+    if (!config) return;
+    setIsRefreshing(true);
+    try {
+      if (config.sites.length > 0) {
+        await detectAllSites(config, accountsBySite);
+      }
+      const directRefresh = await refreshAllDirectConfigModels();
+
+      const cfg = await window.electronAPI.loadConfig();
+      setConfig(cfg);
+      await loadAllAccounts(cfg?.sites);
+      await loadCustomCliConfigs();
+
+      if (directRefresh.success > 0 || directRefresh.failed > 0) {
+        const message =
+          directRefresh.failed === 0
+            ? `直连配置模型刷新完成：${directRefresh.success} 个`
+            : `直连配置模型刷新完成：${directRefresh.success} 成功，${directRefresh.failed} 失败`;
+        if (directRefresh.failed === 0) {
+          toast.success(message);
+        } else {
+          toast.warning(message);
+        }
+      }
+    } catch (error: any) {
+      Logger.error('刷新失败:', error);
+      toast.error(`刷新失败：${error.message}`);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  // 一键签到继承 useCheckIn 的批量过滤、结果回写和失败手动签到入口
+  const handleCheckInAllSites = async () => {
+    setIsCheckingInAll(true);
+    try {
+      await handleCheckInAll();
+      const cfg = await window.electronAPI.loadConfig();
+      setConfig(cfg);
+      await loadAllAccounts(cfg?.sites);
+    } catch (error: any) {
+      Logger.error('签到失败:', error);
+      toast.error(`签到失败：${error.message}`);
+    } finally {
+      setIsCheckingInAll(false);
+    }
+  };
+
+  // 处理行点击事件 - 打开侧滑面板
+  const handleRowClick = useCallback((cardItem: FlattenedCardItem) => {
+    if (cardItem.type === 'custom-cli') {
+      setSelectedItem({
+        type: 'custom-cli',
+        config: cardItem.config,
+      });
+      setPanelOpen(true);
+      return;
+    }
+
+    setSelectedItem({
+      type: 'managed',
+      site: cardItem.site,
+      account: cardItem.account,
+    });
+    setPanelOpen(true);
+  }, []);
+
+  const refreshSelectedDirectConfig = useCallback(
+    async (configId: string) => {
+      await loadCustomCliConfigs();
+      const latestConfig = useCustomCliConfigStore
+        .getState()
+        .configs.find(config => config.id === configId);
+      if (latestConfig) {
+        setSelectedItem(prev =>
+          prev?.type === 'custom-cli' && prev.config.id === latestConfig.id
+            ? { type: 'custom-cli', config: latestConfig }
+            : prev
+        );
+      }
+    },
+    [loadCustomCliConfigs]
+  );
+
+  // 关闭侧滑面板
+  const handleClosePanel = useCallback(() => {
+    const closingItem = selectedItem;
+    const shouldRollbackPending =
+      closingItem?.type === 'custom-cli' &&
+      pendingNewCustomCliConfigId !== null &&
+      pendingNewCustomCliConfigId === closingItem.config.id;
+
+    const close = () => {
+      setPanelOpen(false);
+      // 延迟清空 selectedItem，避免动画过程中内容消失
+      setTimeout(() => setSelectedItem(null), 300);
+    };
+
+    if (!shouldRollbackPending) {
+      close();
+      return;
+    }
+
+    const rollback = async () => {
+      await deleteCustomCliConfig(closingItem.config.id);
+      setPendingNewCustomCliConfigId(null);
+      close();
+    };
+
+    void rollback();
+  }, [deleteCustomCliConfig, pendingNewCustomCliConfigId, selectedItem]);
+
+  const handleAddDirectConfig = useCallback(() => {
+    const newConfig = addCustomCliConfig({ name: '新建直连配置' });
+    setPendingNewCustomCliConfigId(newConfig.id);
+    setSelectedItem({
+      type: 'custom-cli',
+      config: newConfig,
+    });
+    setPanelOpen(true);
+  }, [addCustomCliConfig]);
+
+  const handleDirectConfigSaved = useCallback(
+    async (configId: string) => {
+      if (pendingNewCustomCliConfigId === configId) {
+        setPendingNewCustomCliConfigId(null);
+      }
+      await refreshSelectedDirectConfig(configId);
+    },
+    [pendingNewCustomCliConfigId, refreshSelectedDirectConfig]
+  );
+
+  const handleDeleteDirectConfig = useCallback(
+    async (config: CustomCliConfig) => {
+      const confirmed = await showDialog({
+        type: 'warning',
+        title: '删除直连配置',
+        message: `确定要删除直连配置「${getCustomCliDisplayName(config)}」吗？此操作不可恢复。`,
+        confirmText: '删除',
+      });
+      if (!confirmed) return;
+
+      await deleteCustomCliConfig(config.id);
+      if (selectedItem?.type === 'custom-cli' && selectedItem.config.id === config.id) {
+        handleClosePanel();
+      }
+    },
+    [deleteCustomCliConfig, handleClosePanel, selectedItem, showDialog]
+  );
+
+  const handleUpdateAnyRouterUserHash = useCallback(
+    async (accountId: string, userHash: string) => {
+      let nextAnyRouterConfig: AnyRouterAccountConfig = { userHash };
+
+      setSelectedItem(prev => {
+        if (prev?.type !== 'managed' || !prev.account || prev.account.id !== accountId) {
+          return prev;
+        }
+        nextAnyRouterConfig = {
+          ...(prev.account.anyRouterConfig || {}),
+          userHash,
+        };
+        return {
+          ...prev,
+          account: {
+            ...prev.account,
+            anyRouterConfig: nextAnyRouterConfig,
+          },
+        };
+      });
+
+      setAccountsBySite(prev => {
+        const nextEntries = Object.entries(prev).map(([siteId, siteAccounts]) => [
+          siteId,
+          siteAccounts.map(account =>
+            account.id === accountId
+              ? {
+                  ...account,
+                  anyRouterConfig: {
+                    ...(account.anyRouterConfig || {}),
+                    userHash,
+                  },
+                }
+              : account
+          ),
+        ]);
+        return Object.fromEntries(nextEntries) as Record<string, AccountInfo[]>;
+      });
+
+      const latestConfig = useConfigStore.getState().config;
+      if (latestConfig?.accounts) {
+        setConfig({
+          ...latestConfig,
+          accounts: latestConfig.accounts.map(account =>
+            account.id === accountId
+              ? {
+                  ...account,
+                  anyRouterConfig: {
+                    ...((account as { anyRouterConfig?: AnyRouterAccountConfig }).anyRouterConfig ||
+                      {}),
+                    userHash,
+                  },
+                }
+              : account
+          ),
+        });
+      }
+
+      try {
+        const result = await window.electronAPI.accounts?.update(accountId, {
+          anyRouterConfig: nextAnyRouterConfig,
+        });
+        if (!result?.success) {
+          throw new Error(result?.error || '保存 User Hash 失败');
+        }
+      } catch (error: any) {
+        Logger.error('保存 AnyRouter User Hash 失败:', error);
+        toast.error(`保存 User Hash 失败: ${error?.message || error}`);
+      }
+    },
+    [setConfig]
+  );
+
+  // 统计数据
+  const activeSitesCount = useMemo(() => {
+    const managedSites = config?.sites.length || 0;
+    const customConfigs = customCliConfigs.length;
+    return managedSites + customConfigs;
+  }, [config, customCliConfigs.length]);
+
   const pageHeaderActions = useMemo(
     () => (
       <div className="flex items-center gap-2">
         <AppButton
+          variant="secondary"
+          size="sm"
+          onClick={handleOpenDetectionSettings}
+          title="打开检测设置"
+          aria-label="探测设置"
+        >
+          探测设置
+        </AppButton>
+        <AppButton
+          variant="secondary"
+          size="sm"
+          onClick={handleDetectAllSites}
+          loading={runningCliProbe}
+          disabled={activeSitesCount === 0}
+          title="立即执行一次站点 CLI 可用性探测"
+          aria-label="立即探测"
+        >
+          立即探测
+        </AppButton>
+        <AppButton
+          variant="secondary"
+          size="sm"
+          onClick={() => setShowOperationRecords(true)}
+          title="查看应用操作记录"
+          aria-label="操作记录"
+        >
+          操作记录
+        </AppButton>
+        <AppButton
+          variant="secondary"
+          size="sm"
+          onClick={handleRefreshAll}
+          loading={isRefreshing}
+          disabled={activeSitesCount === 0}
+          title="一键刷新所有托管站点 Token + 直连配置模型"
+          aria-label="一键刷新"
+        >
+          一键刷新
+        </AppButton>
+        <AppButton
+          variant="secondary"
+          size="sm"
+          onClick={handleCheckInAllSites}
+          loading={isCheckingInAll}
+          disabled={!config || config.sites.length === 0 || Boolean(checkingIn)}
+          title="一键签到所有支持签到的站点"
+          aria-label="一键签到"
+        >
+          一键签到
+        </AppButton>
+        <AppButton
           variant="primary"
           size="sm"
-          onClick={() => {
-            setEditingSite(null);
-            setEditingAccount(null);
-            setShowSiteEditor(true);
-          }}
+          onClick={() => setShowAddAccessPointDialog(true)}
+          title="添加站点"
+          aria-label="添加站点"
         >
-          <Plus className="w-4 h-4" strokeWidth={2.5} />
           添加站点
         </AppButton>
         <AppButton
@@ -1086,13 +1442,25 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
           size="sm"
           onClick={handleOpenBackupDialog}
           title="从备份文件恢复站点配置"
+          aria-label="恢复站点"
         >
-          <RefreshCw className="w-4 h-4" strokeWidth={2.5} />
           恢复站点
         </AppButton>
       </div>
     ),
-    [handleOpenBackupDialog, setEditingSite, setShowSiteEditor]
+    [
+      handleOpenDetectionSettings,
+      handleDetectAllSites,
+      handleOpenBackupDialog,
+      handleRefreshAll,
+      handleCheckInAllSites,
+      runningCliProbe,
+      isRefreshing,
+      isCheckingInAll,
+      activeSitesCount,
+      checkingIn,
+      config,
+    ]
   );
 
   useEffect(() => {
@@ -1108,16 +1476,16 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
       <div className="flex-1 overflow-y-hidden overflow-x-visible flex">
         <div className="flex-1 flex flex-col">
           {/* 站点分组控制栏 */}
-          {config.sites.length > 0 && (
+          {hasAccessPoints && (
             <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-[var(--line-soft)] px-4 pb-1 pt-2 text-[13px] text-[var(--text-secondary)]">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-semibold text-[var(--text-primary)]">站点分组</span>
                 {siteGroups.map((group, groupIndex) => {
                   const groupId = group.id;
                   const isActive = effectiveActiveSiteGroupFilter === groupId;
-                  const groupSitesCount = config.sites.filter(
-                    s => (s.group || defaultGroupId) === groupId
-                  ).length;
+                  const groupSitesCount =
+                    config.sites.filter(s => (s.group || defaultGroupId) === groupId).length +
+                    (groupId === defaultGroupId ? customCliConfigs.length : 0);
                   const colorClass = getGroupTextColor(group.name);
                   const isDefaultGroup = groupId === defaultGroupId;
                   const isDragOverForSort =
@@ -1238,21 +1606,14 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
           )}
 
           {/* 站点列表区域 */}
-          <div className="relative z-0 flex-1 space-y-3 overflow-x-visible overflow-y-auto px-4 pb-4">
-            {config.sites.length === 0 ? (
+          <div className="relative z-0 flex-1 overflow-x-visible overflow-y-auto px-4 pb-4">
+            {!hasAccessPoints ? (
               <div className="py-16 text-center text-[var(--text-secondary)]">
                 <Server className="w-16 h-16 mx-auto mb-4 opacity-30" strokeWidth={1.5} />
-                <p className="text-lg font-medium mb-2">还没有添加任何站点</p>
-                <p className="text-sm mb-4">点击"添加站点"按钮开始</p>
+                <p className="text-lg font-medium mb-2">还没有添加任何接入点</p>
+                <p className="text-sm mb-4">点击"添加站点"按钮开始添加托管站点或直连配置</p>
                 <div className="flex items-center justify-center gap-2">
-                  <AppButton
-                    variant="primary"
-                    onClick={() => {
-                      setEditingSite(null);
-                      setEditingAccount(null);
-                      setShowSiteEditor(true);
-                    }}
-                  >
+                  <AppButton variant="primary" onClick={() => setShowAddAccessPointDialog(true)}>
                     <Plus className="w-4 h-4" strokeWidth={2.5} />
                     添加站点
                   </AppButton>
@@ -1276,57 +1637,11 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                   activeSiteTypeFilter={activeSiteTypeFilter}
                   siteTypeFilterOptions={siteTypeFilterOptions}
                   onSiteTypeFilterChange={setActiveSiteTypeFilter}
-                  actions={
-                    <div className="ml-1 flex shrink-0 items-center gap-0.5">
-                      <button
-                        onClick={handleCheckInAll}
-                        disabled={!!checkingIn || !config || config.sites.length === 0}
-                        className="rounded-[var(--radius-sm)] p-[3px] text-[var(--warning)] transition-colors hover:bg-[var(--warning-soft)] disabled:cursor-not-allowed disabled:opacity-50"
-                        title="一键签到：批量签到所有可签到站点"
-                      >
-                        {checkingIn ? (
-                          <Loader2
-                            className="h-3.5 w-3.5 animate-spin text-[var(--warning)]"
-                            strokeWidth={2}
-                          />
-                        ) : (
-                          <Calendar className="h-3.5 w-3.5" strokeWidth={2} />
-                        )}
-                      </button>
-                      <button
-                        onClick={handleToggleAllExpanded}
-                        className="rounded-[var(--radius-sm)] p-[3px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
-                        title={
-                          flattenedCards.length > 0 &&
-                          flattenedCards.every(c => expandedSites.has(c.cardKey))
-                            ? '收起全部'
-                            : '展开全部'
-                        }
-                      >
-                        <ChevronsUpDown className="w-3.5 h-3.5" strokeWidth={2} />
-                      </button>
-                      <button
-                        onClick={handleDetectAllSites}
-                        disabled={detecting || !config || config.sites.length === 0}
-                        className="rounded-[var(--radius-sm)] p-[3px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-soft)] hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
-                        title="检测所有站点"
-                      >
-                        {detecting ? (
-                          <Loader2
-                            className="w-3.5 h-3.5 animate-spin text-[var(--accent)]"
-                            strokeWidth={2}
-                          />
-                        ) : (
-                          <RefreshCw className="w-3.5 h-3.5" strokeWidth={2} />
-                        )}
-                      </button>
-                      <div className="w-[48px]" aria-hidden="true" />
-                    </div>
-                  }
                 />
 
-                <DataTableBody className="space-y-3">
-                  {flattenedCards.map(({ site, index, siteResult, account, cardKey: ck }) => {
+                <DataTableBody>
+                  {flattenedCards.map(cardItem => {
+                    const { site, index, siteResult, account, cardKey: ck } = cardItem;
                     const groupId = site.group || defaultGroupId;
                     if (groupId !== effectiveActiveSiteGroupFilter) {
                       return null;
@@ -1337,144 +1652,85 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                       return null;
                     }
 
-                    if (!siteHasMatchingModels(site, siteResult, ck)) {
+                    if (cardItem.type === 'custom-cli') {
+                      if (globalModelSearch) {
+                        const searchTerm = globalModelSearch.toLowerCase();
+                        const directModels = [
+                          ...(cardItem.config.models || []),
+                          ...(cardItem.config.manualModels || []),
+                        ];
+                        if (!directModels.some(model => model.toLowerCase().includes(searchTerm))) {
+                          return null;
+                        }
+                      }
+                    } else if (!siteHasMatchingModels(site, siteResult, ck)) {
                       return null;
                     }
 
-                    const isExpanded = expandedSites.has(ck);
-                    const cardContext = getCardContext(ck, account);
-
                     return (
-                      <SiteCard
+                      <div
                         key={ck}
-                        site={site}
-                        index={index}
-                        siteResult={siteResult}
-                        siteAccount={null}
-                        isExpanded={isExpanded}
-                        columnWidths={visibleColumnWidths}
-                        accountId={account?.id}
-                        accountName={account?.account_name}
-                        accountAccessToken={account?.access_token}
-                        accountUserId={account?.user_id}
-                        accountAnyRouterConfig={account?.anyRouterConfig}
-                        cardKey={ck}
-                        apiKeys={apiKeys[ck] || apiKeys[site.name] || []}
-                        userGroups={userGroups[ck] || userGroups[site.name] || {}}
-                        modelPricing={modelPricing[ck] || modelPricing[site.name]}
-                        isDetecting={detectingSites.has(ck)}
-                        checkingIn={checkingIn}
-                        dragOverIndex={dragOverIndex}
-                        refreshMessage={refreshMessage}
-                        selectedGroup={selectedGroup[ck] || null}
-                        modelSearch={modelSearch[ck] || ''}
-                        globalModelSearch={globalModelSearch}
-                        showTokens={showTokens}
-                        selectedModels={getSelectedModelsForCard(ck)}
-                        deletingTokenKey={deletingTokenKey}
-                        refreshingTokenKey={refreshingTokenKey}
-                        autoRefreshEnabled={
-                          account
-                            ? (account.auto_refresh ?? site.auto_refresh ?? false)
-                            : (site.auto_refresh ?? false)
-                        }
-                        cliCompatibility={getCompatibility(ck)}
-                        cliConfig={getCliConfig(ck)}
-                        isCliTesting={isCliTestingSite(ck)}
-                        onExpand={() => handleExpandSite(ck)}
-                        onDetect={(s, accountId) =>
-                          detectSingle(s, true, undefined, accountId || account?.id)
-                        }
-                        onEdit={(idx, account) => {
-                          setEditingSite(idx);
-                          setEditingAccount(account ?? null);
-                          setShowSiteEditor(true);
-                        }}
-                        onDelete={() =>
-                          account ? deleteAccount(site, account) : deleteSite(index)
-                        }
-                        onCheckIn={(s, aid) => handleCheckIn(s, aid || account?.id)}
-                        onOpenSite={(s, aid) => handleOpenSite(s, aid || account?.id)}
-                        onOpenExtraLink={openExtraLink}
-                        onCopyToClipboard={copyToClipboard}
-                        onDragStart={handleDragStart}
-                        onDragEnd={handleDragEnd}
-                        onDragOver={handleDragOver}
-                        onDragLeave={handleDragLeave}
-                        onDrop={handleDrop}
-                        onToggleGroupFilter={toggleGroupFilter}
-                        onModelSearchChange={(siteName, search) =>
-                          setModelSearchStore(siteName, search)
-                        }
-                        onToggleTokenVisibility={toggleTokenVisibility}
-                        onToggleModelSelection={model => toggleModelSelection(ck, model)}
-                        onCopySelectedModels={() => copySelectedModels(ck)}
-                        onClearSelectedModels={() => clearSelectedModels(ck)}
-                        onOpenCreateTokenDialog={s => handleOpenCreateTokenDialog(s, cardContext)}
-                        onRefreshToken={(s, t, i) => handleRefreshToken(s, t, i, cardContext)}
-                        onDeleteToken={(s, t, i) => handleDeleteToken(s, t, i, cardContext)}
-                        onOpenCliConfig={() => {
-                          setCliConfigSite(site);
-                          setCliConfigCardKey(ck);
-                          setCliConfigAccountId(account?.id || null);
-                          setCliConfigSiteResult(siteResult || null);
-                          setShowCliConfigDialog(true);
-                        }}
-                        onApply={event => {
-                          setCliApplySite(site);
-                          setCliApplyCardKey(ck);
-                          setCliApplyAnchorEl(event?.currentTarget ?? null);
-                        }}
-                        onAddAccount={
-                          firstCardKeyPerSite.has(ck)
-                            ? () => {
-                                setAddAccountSite(site);
-                              }
-                            : undefined
-                        }
-                        onToggleAutoRefresh={async () => {
-                          if (account && site.id) {
-                            const accountAutoRefresh = account.auto_refresh ?? site.auto_refresh;
-
-                            if (accountAutoRefresh) {
-                              try {
-                                await window.electronAPI.accounts?.update(account.id, {
-                                  auto_refresh: false,
-                                });
-                                updateLocalAccountAutoRefresh(site.id, account.id, {
-                                  auto_refresh: false,
-                                });
-                              } catch (err) {
-                                Logger.error('保存账户自动刷新配置失败:', err);
-                                toast.error('保存账户自动刷新配置失败');
-                              }
-                            } else {
-                              openAutoRefreshDialog(site, account);
+                        onClick={() => handleRowClick(cardItem)}
+                        className="cursor-pointer"
+                      >
+                        <SiteCard
+                          key={ck}
+                          site={site}
+                          index={index}
+                          siteResult={siteResult}
+                          siteAccount={null}
+                          columnWidths={visibleColumnWidths}
+                          accessPointType={cardItem.type}
+                          draggable={cardItem.type === 'managed'}
+                          accountId={account?.id}
+                          accountName={account?.account_name}
+                          cardKey={ck}
+                          modelPricing={
+                            cardItem.type === 'custom-cli'
+                              ? null
+                              : modelPricing[ck] || modelPricing[site.name]
+                          }
+                          isDetecting={
+                            cardItem.type === 'custom-cli' ? false : detectingSites.has(ck)
+                          }
+                          checkingIn={checkingIn}
+                          dragOverIndex={dragOverIndex}
+                          refreshMessage={refreshMessage}
+                          cliCompatibility={
+                            cardItem.type === 'custom-cli' ? undefined : getCompatibility(ck)
+                          }
+                          cliConfig={cardItem.type === 'custom-cli' ? null : getCliConfig(ck)}
+                          isCliTesting={
+                            cardItem.type === 'custom-cli' ? false : isCliTestingSite(ck)
+                          }
+                          onDetect={(s, accountId) =>
+                            cardItem.type === 'custom-cli'
+                              ? undefined
+                              : detectSingle(s, true, undefined, accountId || account?.id)
+                          }
+                          onCheckIn={(s, aid) => {
+                            if (cardItem.type === 'managed') {
+                              handleCheckIn(s, aid || account?.id);
                             }
-                            return;
-                          }
-
-                          const latestConfig = useConfigStore.getState().config;
-                          if (!latestConfig) return;
-                          const latestIndex = latestConfig.sites.findIndex(s =>
-                            site.id ? s.id === site.id : s.name === site.name
-                          );
-                          if (latestIndex === -1) return;
-                          const latestSite = latestConfig.sites[latestIndex];
-
-                          if (latestSite.auto_refresh) {
-                            const newSites = [...latestConfig.sites];
-                            newSites[latestIndex] = { ...latestSite, auto_refresh: false };
-                            const newConfig = { ...latestConfig, sites: newSites };
-                            setConfig(newConfig);
-                            window.electronAPI.saveConfig(newConfig).catch(err => {
-                              Logger.error('保存自动刷新配置失败:', err);
-                            });
-                          } else {
-                            openAutoRefreshDialog(site);
-                          }
-                        }}
-                      />
+                          }}
+                          onOpenSite={(s, aid) => {
+                            if (cardItem.type === 'managed') {
+                              handleOpenSite(s, aid || account?.id);
+                            }
+                          }}
+                          onOpenExtraLink={openExtraLink}
+                          onDragStart={handleDragStart}
+                          onDragEnd={handleDragEnd}
+                          onDragOver={handleDragOver}
+                          onDragLeave={handleDragLeave}
+                          onDrop={handleDrop}
+                          onApply={event => {
+                            setCliApplySite(site);
+                            setCliApplyCardKey(ck);
+                            setCliApplyAnchorEl(event?.currentTarget ?? null);
+                          }}
+                        />
+                      </div>
                     );
                   })}
                 </DataTableBody>
@@ -1485,6 +1741,11 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
       </div>
 
       {/* ===== 站点相关弹窗 ===== */}
+
+      <OperationRecordDialog
+        open={showOperationRecords}
+        onClose={() => setShowOperationRecords(false)}
+      />
 
       {showSiteEditor && (
         <SiteEditor
@@ -1529,7 +1790,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                 setConfig(refreshedConfig);
                 await loadAllAccounts(refreshedConfig?.sites);
               } else {
-                await addSite(site);
+                await createSiteWithDefaultAccount(site, auth);
               }
             } catch (error: any) {
               Logger.error('保存站点失败:', error);
@@ -1634,103 +1895,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
         />
       )}
 
-      {/* CLI 配置对话框 */}
-      {cliConfigSite && (
-        <UnifiedCliConfigDialog
-          isOpen={showCliConfigDialog}
-          siteId={cliConfigSite.id}
-          siteName={cliConfigSite.name}
-          accountId={cliConfigAccountId || undefined}
-          accountName={
-            cliConfigAccountId
-              ? accountsBySite[cliConfigSite.id || '']?.find(a => a.id === cliConfigAccountId)
-                  ?.account_name
-              : undefined
-          }
-          siteUrl={cliConfigSite.url}
-          apiKeys={
-            apiKeys[cliConfigCardKey ?? cliConfigSite.name] || apiKeys[cliConfigSite.name] || []
-          }
-          siteModels={cliConfigSiteResult?.models || []}
-          siteModelPricing={
-            modelPricing[cliConfigCardKey ?? cliConfigSite.name] ||
-            modelPricing[cliConfigSite.name] ||
-            null
-          }
-          currentConfig={getCliConfig(cliConfigCardKey ?? cliConfigSite.name)}
-          codexDetail={getCompatibility(cliConfigCardKey ?? cliConfigSite.name)?.codexDetail}
-          geminiDetail={getCompatibility(cliConfigCardKey ?? cliConfigSite.name)?.geminiDetail}
-          compatibility={getCompatibility(cliConfigCardKey ?? cliConfigSite.name) ?? null}
-          isTestingCompatibility={isCliTestingSite(cliConfigCardKey ?? cliConfigSite.name)}
-          onTestCompatibility={() => {
-            void (async () => {
-              const cardKey = cliConfigCardKey ?? cliConfigSite.name;
-              const account = cliConfigAccountId
-                ? accountsBySite[cliConfigSite.id || '']?.find(a => a.id === cliConfigAccountId) ||
-                  null
-                : null;
-              const refreshedApiKeys = await refreshSiteApiKeys(cliConfigSite, {
-                cardKey,
-                accountId: account?.id,
-                accessToken: account?.access_token,
-                userId: account?.user_id,
-              });
-              await testCliCompatSite(
-                cardKey,
-                account?.account_name
-                  ? `${cliConfigSite.name} / ${account.account_name}`
-                  : cliConfigSite.name,
-                cliConfigSite.url,
-                refreshedApiKeys.length > 0
-                  ? refreshedApiKeys
-                  : apiKeys[cardKey] || apiKeys[cliConfigSite.name] || [],
-                account?.id
-              );
-            })();
-          }}
-          onClose={() => {
-            setShowCliConfigDialog(false);
-            setCliConfigSite(null);
-            setCliConfigCardKey(null);
-            setCliConfigAccountId(null);
-            setCliConfigSiteResult(null);
-          }}
-          onPersistConfig={async (newConfig: CliConfig) => {
-            const cardKey = cliConfigCardKey ?? cliConfigSite.name;
-            const result = await (window.electronAPI as any).cliCompat.saveConfig(
-              cliConfigSite.url,
-              newConfig,
-              cliConfigAccountId || undefined
-            );
-            if (!result?.success) {
-              throw new Error(result?.error ?? '保存 CLI 配置失败');
-            }
-            setCliConfig(cardKey, newConfig);
-          }}
-          onSave={async (newConfig: CliConfig) => {
-            try {
-              const result = await (window.electronAPI as any).cliCompat.saveConfig(
-                cliConfigSite.url,
-                newConfig,
-                cliConfigAccountId || undefined
-              );
-              if (!result?.success) {
-                throw new Error(result?.error ?? '保存 CLI 配置失败');
-              }
-              setCliConfig(cliConfigCardKey ?? cliConfigSite.name, newConfig);
-              toast.success('CLI 配置已保存');
-            } catch {
-              toast.error('保存 CLI 配置失败');
-              return;
-            }
-            setShowCliConfigDialog(false);
-            setCliConfigSite(null);
-            setCliConfigCardKey(null);
-            setCliConfigAccountId(null);
-            setCliConfigSiteResult(null);
-          }}
-        />
-      )}
+      {/* CLI 应用配置弹出菜单由 ApplyConfigPopover 单独承载 */}
 
       <ApplyConfigPopover
         isOpen={Boolean(cliApplySite && cliApplyAnchorEl)}
@@ -1825,56 +1990,170 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
         />
       )}
 
-      {/* 自动刷新设置对话框 */}
-      <AutoRefreshDialog
-        isOpen={!!autoRefreshDialogTarget}
-        siteName={autoRefreshDialogTarget?.label || ''}
-        currentInterval={autoRefreshDialogTarget?.currentInterval ?? 30}
-        onConfirm={async intervalMinutes => {
-          if (!autoRefreshDialogTarget) return;
 
-          const { site, account } = autoRefreshDialogTarget;
-
-          if (account && site.id) {
-            try {
-              await window.electronAPI.accounts?.update(account.id, {
-                auto_refresh: true,
-                auto_refresh_interval: intervalMinutes,
-              });
-              updateLocalAccountAutoRefresh(site.id, account.id, {
-                auto_refresh: true,
-                auto_refresh_interval: intervalMinutes,
-              });
-            } catch (err) {
-              Logger.error('保存账户自动刷新配置失败:', err);
-              toast.error('保存账户自动刷新配置失败');
-            } finally {
-              setAutoRefreshDialogTarget(null);
-            }
-            return;
+      <CliProbeSettingsDialog
+        isOpen={showCliProbeSettings}
+        config={routeCliProbeConfig ?? DEFAULT_CLI_PROBE_CONFIG}
+        saving={savingCliProbeSettings}
+        onClose={() => {
+          if (!savingCliProbeSettings) {
+            setShowCliProbeSettings(false);
           }
-
-          const latestConfig = useConfigStore.getState().config;
-          if (!latestConfig) return;
-          const idx = latestConfig.sites.findIndex(s =>
-            site.id ? s.id === site.id : s.name === site.name
-          );
-          if (idx === -1) return;
-          const newSites = [...latestConfig.sites];
-          newSites[idx] = {
-            ...latestConfig.sites[idx],
-            auto_refresh: true,
-            auto_refresh_interval: intervalMinutes,
-          };
-          const newConfig = { ...latestConfig, sites: newSites };
-          setConfig(newConfig);
-          window.electronAPI.saveConfig(newConfig).catch(err => {
-            Logger.error('保存自动刷新配置失败:', err);
-          });
-          setAutoRefreshDialogTarget(null);
         }}
-        onCancel={() => setAutoRefreshDialogTarget(null)}
+        onSave={handleSaveCliProbeSettings}
       />
+
+      {/* 添加接入点弹窗 */}
+      <AddAccessPointDialog
+        isOpen={showAddAccessPointDialog}
+        onClose={() => setShowAddAccessPointDialog(false)}
+        onSmartAdd={() => {
+          setEditingSite(null);
+          setEditingAccount(null);
+          setShowSiteEditor(true);
+        }}
+        onManualAdd={() => {
+          setEditingSite(null);
+          setEditingAccount(null);
+          setShowSiteEditor(true);
+        }}
+        onAddDirectConfig={handleAddDirectConfig}
+      />
+
+      {/* 侧滑面板 */}
+      {selectedItem && (
+        <AccessPointDetailPanel
+          open={panelOpen}
+          onClose={handleClosePanel}
+          data={selectedItem}
+          siteResult={results.find(
+            r =>
+              selectedItem.type === 'managed' &&
+              selectedItem.account !== null &&
+              r.name === selectedItem.site.name &&
+              r.accountId === selectedItem.account.id
+          )}
+          allAccounts={
+            selectedItem.type === 'managed' && selectedItem.site.id
+              ? accountsBySite[selectedItem.site.id] || []
+              : []
+          }
+          apiKeys={
+            selectedItem.type === 'managed' && selectedItem.account
+              ? apiKeys[makeCardKey(selectedItem.site.name, selectedItem.account.id)] ||
+                apiKeys[selectedItem.site.name] ||
+                []
+              : []
+          }
+          userGroups={
+            selectedItem.type === 'managed' && selectedItem.account
+              ? userGroups[makeCardKey(selectedItem.site.name, selectedItem.account.id)] ||
+                userGroups[selectedItem.site.name] ||
+                {}
+              : {}
+          }
+          modelPricing={
+            selectedItem.type === 'managed' && selectedItem.account
+              ? modelPricing[makeCardKey(selectedItem.site.name, selectedItem.account.id)] ||
+                modelPricing[selectedItem.site.name]
+              : null
+          }
+          cliConfig={
+            selectedItem.type === 'managed' && selectedItem.account
+              ? getCliConfig(makeCardKey(selectedItem.site.name, selectedItem.account.id))
+              : null
+          }
+          isCliTesting={isCliTestingSite(
+            selectedItem.type === 'managed' && selectedItem.account
+              ? makeCardKey(selectedItem.site.name, selectedItem.account.id)
+              : ''
+          )}
+          cliCompatibility={
+            selectedItem.type === 'managed' && selectedItem.account
+              ? (getCompatibility(makeCardKey(selectedItem.site.name, selectedItem.account.id)) ??
+                null)
+              : null
+          }
+          cliCodexDetail={
+            selectedItem.type === 'managed' && selectedItem.account
+              ? getCompatibility(makeCardKey(selectedItem.site.name, selectedItem.account.id))
+                  ?.codexDetail
+              : null
+          }
+          cliGeminiDetail={
+            selectedItem.type === 'managed' && selectedItem.account
+              ? getCompatibility(makeCardKey(selectedItem.site.name, selectedItem.account.id))
+                  ?.geminiDetail
+              : null
+          }
+          showDialog={showDialog}
+          onAddAccount={() => {
+            if (selectedItem.type === 'managed') {
+              setAddAccountSite(selectedItem.site);
+            }
+          }}
+          onSaveAccount={handleSavePanelAccount}
+          onDeleteAccount={async (accountId: string) => {
+            if (selectedItem.type !== 'managed') return;
+            const account = selectedItem.site.id
+              ? accountsBySite[selectedItem.site.id]?.find(a => a.id === accountId)
+              : null;
+            if (account) {
+              const deleted = await deleteAccount(selectedItem.site, account);
+              if (deleted && selectedItem.account?.id === accountId) {
+                handleClosePanel();
+              }
+            }
+          }}
+          onToggleGroupFilter={toggleGroupFilter}
+          onModelSearchChange={(siteName, search) => setModelSearchStore(siteName, search)}
+          onCopyToClipboard={copyToClipboard}
+          onOpenCreateTokenDialog={(site: SiteConfig) => {
+            if (selectedItem.type !== 'managed' || !selectedItem.account) return;
+            const cardKey = makeCardKey(site.name, selectedItem.account.id);
+            handleOpenCreateTokenDialog(site, getCardContext(cardKey, selectedItem.account));
+          }}
+          onRefreshToken={(site: SiteConfig, token: any, index: number) => {
+            if (selectedItem.type !== 'managed' || !selectedItem.account) return;
+            const cardKey = makeCardKey(site.name, selectedItem.account.id);
+            handleRefreshToken(site, token, index, getCardContext(cardKey, selectedItem.account));
+          }}
+          onDeleteToken={(site: SiteConfig, token: any, index: number) => {
+            if (selectedItem.type !== 'managed' || !selectedItem.account) return;
+            const cardKey = makeCardKey(site.name, selectedItem.account.id);
+            handleDeleteToken(site, token, index, getCardContext(cardKey, selectedItem.account));
+          }}
+          onDeleteDirectConfig={handleDeleteDirectConfig}
+          onUpdateAnyRouterUserHash={handleUpdateAnyRouterUserHash}
+          onSaveCliConfig={async (newConfig: CliConfig) => {
+            if (selectedItem.type !== 'managed') return;
+            try {
+              const cardKey = makeCardKey(selectedItem.site.name, selectedItem.account?.id);
+              const result = await (window.electronAPI as any).cliCompat.saveConfig(
+                selectedItem.site.url,
+                newConfig,
+                selectedItem.account?.id
+              );
+              if (!result?.success) {
+                throw new Error(result?.error ?? '保存 CLI 配置失败');
+              }
+              setCliConfig(cardKey, newConfig);
+              toast.success('CLI 配置已保存');
+            } catch {
+              toast.error('保存 CLI 配置失败');
+            }
+          }}
+          onConfigChanged={async () => {
+            if (selectedItem.type === 'managed') {
+              const refreshedConfig = await window.electronAPI.loadConfig();
+              setConfig(refreshedConfig);
+              await loadAllAccounts(refreshedConfig?.sites);
+            } else {
+              await handleDirectConfigSaved(selectedItem.config.id);
+            }
+          }}
+        />
+      )}
     </>
   );
 }

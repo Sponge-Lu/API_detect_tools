@@ -81,7 +81,7 @@ const cliConfigArb: fc.Arbitrary<CliConfig> = fc.record({
 
 /**
  * Simulates toggling the enabled state for a CLI type
- * This mirrors the logic in UnifiedCliConfigDialog.handleToggleEnabled
+ * This mirrors the logic in ManagedCliConfigEditorContent.handleToggleEnabled
  */
 function toggleEnabledState(
   currentState: Record<CliType, boolean>,
@@ -95,7 +95,7 @@ function toggleEnabledState(
 
 /**
  * Builds a CliConfig from enabled states and config items
- * This mirrors the logic in UnifiedCliConfigDialog.handleSave
+ * This mirrors the logic in ManagedCliConfigEditorContent.handleSave
  */
 function buildCliConfig(
   enabledState: Record<CliType, boolean>,

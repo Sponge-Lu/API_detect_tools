@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { UnifiedCliConfigDialog } from '../renderer/components/dialogs/UnifiedCliConfigDialog';
+import { ManagedCliConfigEditorContent } from '../renderer/components/dialogs/ManagedCliConfigEditorContent';
 import type { CliConfig } from '../shared/types/cli-config';
 import { useDetectionStore } from '../renderer/store/detectionStore';
 import { useRouteStore } from '../renderer/store/routeStore';
@@ -79,8 +79,7 @@ function StatefulDialog() {
   const [currentConfig, setCurrentConfig] = useState<CliConfig>(initialConfig);
 
   return (
-    <UnifiedCliConfigDialog
-      isOpen={true}
+    <ManagedCliConfigEditorContent
       siteName="Claude Hub"
       siteUrl="https://example.com"
       apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
@@ -89,7 +88,6 @@ function StatefulDialog() {
       onPersistConfig={async nextConfig => {
         setCurrentConfig(nextConfig);
       }}
-      onClose={vi.fn()}
       onSave={vi.fn()}
     />
   );
@@ -97,20 +95,41 @@ function StatefulDialog() {
 
 function MismatchDialog() {
   return (
-    <UnifiedCliConfigDialog
-      isOpen={true}
+    <ManagedCliConfigEditorContent
       siteName="DuckCoding"
       siteUrl="https://www.duckcoding.ai"
       apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
       siteModels={['gpt-4.1']}
       currentConfig={mismatchConfig}
-      onClose={vi.fn()}
       onSave={vi.fn()}
     />
   );
 }
 
-describe('UnifiedCliConfigDialog', () => {
+function getCliSectionHeader(label: string): HTMLElement {
+  const header =
+    screen
+      .getAllByText(label)
+      .map(node => node.closest('[role="button"]'))
+      .find((node): node is HTMLElement => node instanceof HTMLElement) ?? null;
+
+  if (!header) {
+    throw new Error(`CLI section header not found: ${label}`);
+  }
+
+  return header;
+}
+
+function getOpenModelMenu(): HTMLElement {
+  const searchInput = screen.getByPlaceholderText('搜索模型...');
+  const menu = searchInput.closest('.absolute');
+  if (!(menu instanceof HTMLElement)) {
+    throw new Error('Open model menu not found');
+  }
+  return menu;
+}
+
+describe('ManagedCliConfigEditorContent', () => {
   beforeEach(() => {
     useDetectionStore.setState({
       cliCompatibility: {},
@@ -151,12 +170,11 @@ describe('UnifiedCliConfigDialog', () => {
   it('keeps the selected codex tab after test-result persistence updates currentConfig', async () => {
     render(<StatefulDialog />);
 
-    const codexTab = screen.getByText('Codex');
     await act(async () => {
-      fireEvent.click(codexTab.closest('button') as HTMLButtonElement);
+      fireEvent.click(getCliSectionHeader('Codex'));
     });
 
-    expect(codexTab).toHaveClass('text-[var(--accent)]');
+    expect(getCliSectionHeader('Codex')).toHaveAttribute('aria-expanded', 'true');
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '测试已选模型' }));
@@ -176,28 +194,31 @@ describe('UnifiedCliConfigDialog', () => {
         ],
       })
     );
-    await waitFor(() => expect(screen.getByText('Codex')).toHaveClass('text-[var(--accent)]'));
-    expect(screen.getByText('Claude Code')).not.toHaveClass('text-[var(--accent)]');
+    await waitFor(() =>
+      expect(getCliSectionHeader('Codex')).toHaveAttribute('aria-expanded', 'true')
+    );
+    expect(getCliSectionHeader('Claude Code')).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('shows a warning when edited codex config points to a different domain than the current site', async () => {
     render(<MismatchDialog />);
 
     await act(async () => {
-      fireEvent.click(screen.getByText('Codex').closest('button') as HTMLButtonElement);
+      fireEvent.click(getCliSectionHeader('Codex'));
     });
 
-    expect(
-      screen.getByText(
-        /检测到当前预览配置中的域名（https:\/\/duckcoding\.com）与当前站点（https:\/\/www\.duckcoding\.ai）不一致/
-      )
-    ).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByText('配置文件预览').closest('[role="button"]') as HTMLElement);
+    });
+
+    const warning = screen.getByRole('alert');
+    expect(warning).toHaveTextContent('https://duckcoding.com');
+    expect(warning).toHaveTextContent('https://www.duckcoding.ai');
   });
 
   it('filters model options to the selected api key group unless list-all-models is enabled', async () => {
     render(
-      <UnifiedCliConfigDialog
-        isOpen={true}
+      <ManagedCliConfigEditorContent
         siteName="Claude Hub"
         siteUrl="https://example.com"
         apiKeys={[
@@ -207,7 +228,6 @@ describe('UnifiedCliConfigDialog', () => {
         siteModels={['claude-3-5-sonnet', 'gpt-4.1', 'gemini-2.5-pro']}
         siteModelPricing={groupedModelPricing}
         currentConfig={initialConfig}
-        onClose={vi.fn()}
         onSave={vi.fn()}
       />
     );
@@ -218,19 +238,18 @@ describe('UnifiedCliConfigDialog', () => {
 
     expect(screen.getAllByText('claude-3-5-sonnet').length).toBeGreaterThan(0);
     expect(screen.getAllByText('gemini-2.5-pro').length).toBeGreaterThan(0);
-    expect(screen.queryByText('gpt-4.1')).not.toBeInTheDocument();
+    expect(within(getOpenModelMenu()).queryByText('gpt-4.1')).not.toBeInTheDocument();
 
     await act(async () => {
       fireEvent.click(screen.getByRole('switch', { name: '列出全部模型' }));
     });
 
-    expect(screen.getAllByText('gpt-4.1').length).toBeGreaterThan(0);
+    expect(within(getOpenModelMenu()).getByText('gpt-4.1')).toBeInTheDocument();
   });
 
   it('clears out-of-group model selections when list-all-models is disabled', async () => {
     render(
-      <UnifiedCliConfigDialog
-        isOpen={true}
+      <ManagedCliConfigEditorContent
         siteName="Claude Hub"
         siteUrl="https://example.com"
         apiKeys={[{ id: 1, name: 'Alpha Key', key: 'sk-alpha', group: 'alpha' }]}
@@ -243,10 +262,9 @@ describe('UnifiedCliConfigDialog', () => {
             apiKeyId: 1,
             model: 'gpt-4.1',
             testModel: 'gpt-4.1',
-            testModels: ['gpt-4.1', '', ''],
+            testModels: ['gpt-4.1'],
           },
         }}
-        onClose={vi.fn()}
         onSave={vi.fn()}
       />
     );
@@ -256,9 +274,8 @@ describe('UnifiedCliConfigDialog', () => {
         '请选择 CLI 模型'
       );
     });
-    expect(screen.getByRole('button', { name: '测试模型 1' })).toHaveTextContent(
-      '请选择测试模型 1'
-    );
+    expect(screen.getByRole('button', { name: '测试模型' })).toHaveTextContent('请选择测试模型');
+    expect(screen.queryByRole('button', { name: '测试模型 2' })).not.toBeInTheDocument();
   });
 
   it('persists selected-model test samples into route CLI history and refreshes the cached view', async () => {
@@ -330,8 +347,7 @@ describe('UnifiedCliConfigDialog', () => {
     };
 
     render(
-      <UnifiedCliConfigDialog
-        isOpen={true}
+      <ManagedCliConfigEditorContent
         siteName="Claude Hub"
         accountId="acct-1"
         accountName="Primary"
@@ -340,13 +356,12 @@ describe('UnifiedCliConfigDialog', () => {
         siteModels={['claude-3-5-sonnet', 'gpt-4.1']}
         currentConfig={initialConfig}
         onPersistConfig={vi.fn().mockResolvedValue(undefined)}
-        onClose={vi.fn()}
         onSave={vi.fn()}
       />
     );
 
     await act(async () => {
-      fireEvent.click(screen.getByText('Codex').closest('button') as HTMLButtonElement);
+      fireEvent.click(getCliSectionHeader('Codex'));
     });
 
     await act(async () => {
@@ -411,15 +426,13 @@ describe('UnifiedCliConfigDialog', () => {
     };
 
     render(
-      <UnifiedCliConfigDialog
-        isOpen={true}
+      <ManagedCliConfigEditorContent
         siteName="HuanAPI"
         siteUrl="https://example.com"
         apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
         siteModels={['claude-3-5-sonnet']}
         currentConfig={initialConfig}
         onPersistConfig={vi.fn().mockResolvedValue(undefined)}
-        onClose={vi.fn()}
         onSave={vi.fn()}
       />
     );
@@ -476,8 +489,7 @@ describe('UnifiedCliConfigDialog', () => {
     });
 
     render(
-      <UnifiedCliConfigDialog
-        isOpen={true}
+      <ManagedCliConfigEditorContent
         siteId="site-1"
         siteName="Claude Hub"
         accountId="acct-1"
@@ -492,13 +504,12 @@ describe('UnifiedCliConfigDialog', () => {
             testResults: [{ model: 'gpt-4.1', success: true, timestamp: 1776000000000 }],
           },
         }}
-        onClose={vi.fn()}
         onSave={vi.fn()}
       />
     );
 
     await act(async () => {
-      fireEvent.click(screen.getByText('Codex').closest('button') as HTMLButtonElement);
+      fireEvent.click(getCliSectionHeader('Codex'));
     });
 
     await waitFor(() => {
@@ -510,20 +521,18 @@ describe('UnifiedCliConfigDialog', () => {
     const onSave = vi.fn();
 
     render(
-      <UnifiedCliConfigDialog
-        isOpen={true}
+      <ManagedCliConfigEditorContent
         siteName="Claude Hub"
         siteUrl="https://example.com"
         apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
         siteModels={['gpt-4.1']}
         currentConfig={initialConfig}
-        onClose={vi.fn()}
         onSave={onSave}
       />
     );
 
     await act(async () => {
-      fireEvent.click(screen.getByText('Codex').closest('button') as HTMLButtonElement);
+      fireEvent.click(getCliSectionHeader('Codex'));
     });
 
     expect(screen.getByText('/v1/responses')).toBeInTheDocument();

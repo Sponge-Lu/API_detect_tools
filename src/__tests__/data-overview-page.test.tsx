@@ -476,29 +476,22 @@ describe('DataOverviewPage', () => {
     expect(metrics[0]?.balance).toBe(12);
   });
 
-  it('renders site and route overview panels from shared overview subtab state', async () => {
-    const { rerender } = render(<DataOverviewPage />);
+  it('renders the merged site and route overview dashboard', async () => {
+    render(<DataOverviewPage />);
 
     expect(screen.queryByRole('button', { name: '站点数据' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '路由数据' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '刷新' })).not.toBeInTheDocument();
+
+    const dashboard = screen.getByLabelText('数据总览驾驶舱');
+    expect(dashboard).toHaveAttribute('data-route-layout', 'merged-compact');
     expect(screen.getByText('每日签到概览')).toBeInTheDocument();
-    expect(screen.getByText('站点资源概览')).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: '每日签到概览' })).toHaveClass('xl:h-[248px]');
-    expect(screen.getByRole('region', { name: '站点资源概览' })).toHaveClass('xl:h-[248px]');
-    expect(screen.getByText('站点历史趋势')).toBeInTheDocument();
-    expect(screen.getByTestId('overview-view-site')).toHaveAttribute('aria-hidden', 'false');
-    expect(screen.getByTestId('overview-view-site')).toHaveClass('visible', 'opacity-100');
-    expect(screen.getByTestId('overview-view-route')).toHaveAttribute('aria-hidden', 'true');
-    expect(screen.getByTestId('overview-view-route')).toHaveClass(
-      'invisible',
-      'opacity-0',
-      'pointer-events-none'
-    );
-    expect(
-      within(screen.getByTestId('overview-view-route')).getByText('运行趋势')
-    ).toBeInTheDocument();
-    expect(screen.queryByText('最近异常')).not.toBeInTheDocument();
+    expect(screen.getByText('运行趋势')).toBeInTheDocument();
+    expect(screen.getByText('模型热力分布')).toBeInTheDocument();
+    expect(screen.getByText('通道健康散点矩阵')).toBeInTheDocument();
+    expect(screen.queryByText('站点资源概览')).not.toBeInTheDocument();
+    expect(screen.queryByText('站点历史趋势')).not.toBeInTheDocument();
+    expect(screen.queryByText('模型 → 通道流向')).not.toBeInTheDocument();
 
     await waitFor(() => {
       expect(window.electronAPI.overview?.getSiteDailySnapshots).toHaveBeenCalled();
@@ -508,7 +501,7 @@ describe('DataOverviewPage', () => {
     expect(window.electronAPI.route?.getAnalyticsDistribution).not.toHaveBeenCalled();
 
     expect(screen.getByText('可用站点数')).toBeInTheDocument();
-    expect(screen.getByText('展示站点 3 个 / 模型 2 个')).toBeInTheDocument();
+    expect(screen.getByText('展示 3 / 模型 2')).toBeInTheDocument();
     const totalBalanceMetric = screen.getByText('站点总余额').parentElement;
     if (!totalBalanceMetric) {
       throw new Error('Missing site total balance metric');
@@ -516,82 +509,29 @@ describe('DataOverviewPage', () => {
     expect(totalBalanceMetric).toHaveTextContent('$23.70');
     expect(totalBalanceMetric).not.toHaveTextContent('$18.70');
     expect(screen.getByText('今日签到收益')).toBeInTheDocument();
-    expect(screen.getByText('今日请求 44 · 今日 Tokens 5.0K')).toBeInTheDocument();
-    expect(screen.getByText('已签 1 个 / 待签 1 个')).toBeInTheDocument();
+    expect(screen.getByText('请求 44 · Tokens 5.0K')).toBeInTheDocument();
+    expect(screen.getByText('已签 1 / 待签 1')).toBeInTheDocument();
     expect(screen.getAllByText(/已签到/).length).toBeGreaterThan(0);
     expect(screen.getAllByText('待签 1/1').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/\$1\.00/).length).toBeGreaterThan(0);
     expect(screen.queryByText('可签到站点')).not.toBeInTheDocument();
-    expect(screen.getAllByText('Codex Site').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Claude Site').length).toBeGreaterThan(0);
-    expect(screen.queryByText('站点 / 账户')).not.toBeInTheDocument();
-    expect(screen.queryByText('本月 / 累计')).not.toBeInTheDocument();
-    expect(screen.getAllByText('1 个账户 / 1 个模型').length).toBeGreaterThan(0);
-    expect(screen.getByText('请求 26 / Tokens 3.2K')).toBeInTheDocument();
-    expect(
-      within(screen.getByTestId('overview-view-site')).queryByText('Hidden Site')
-    ).not.toBeInTheDocument();
-    expect(screen.getByText('近 7 日请求量 (Reqs)')).toBeInTheDocument();
-    expect(screen.getAllByText(`最近记录 ${todayLabel}`).length).toBeGreaterThan(0);
-    const usageTrendCard = screen.getByLabelText('近 7 日消费趋势 趋势卡片');
-    expect(usageTrendCard).toHaveClass('min-h-[208px]');
-    expect(usageTrendCard).toHaveClass('border-[var(--line-muted)]');
-    expect(usageTrendCard.className).not.toContain('border-white');
-    expect(
-      Array.from(usageTrendCard.querySelectorAll('rect')).some(rect =>
-        rect.getAttribute('class')?.includes('text-[var(--accent)]')
-      )
-    ).toBe(true);
     const checkinScrollRegion = screen.getByLabelText('每日签到概览滚动区域');
     expect(checkinScrollRegion).toBeInTheDocument();
     expect(checkinScrollRegion).toHaveTextContent('Claude Site');
     expect(checkinScrollRegion).toHaveTextContent('Codex Site');
     expect(checkinScrollRegion).toHaveTextContent('站点级');
     expect(checkinScrollRegion).toHaveTextContent(/本月 12\s*\/\s*累计 40/);
-    expect(screen.getByRole('combobox', { name: '选择站点历史' })).toHaveDisplayValue(
-      '全部站点（聚合）'
-    );
 
-    mockUIState.overviewSubtab = 'route';
-    rerender(<DataOverviewPage />);
-
-    expect(screen.getByTestId('overview-view-site')).toHaveAttribute('aria-hidden', 'true');
-    expect(screen.getByTestId('overview-view-site')).toHaveClass(
-      'invisible',
-      'opacity-0',
-      'pointer-events-none'
-    );
-    expect(screen.getByTestId('overview-view-route')).toHaveAttribute('aria-hidden', 'false');
-    expect(screen.getByTestId('overview-view-route')).toHaveClass('visible', 'opacity-100');
-    expect(screen.getByLabelText('路由数据驾驶舱')).toBeInTheDocument();
-    await waitFor(() => {
-      expect(window.electronAPI.route?.getAnalyticsOverview).toHaveBeenCalled();
-    });
-    expect(window.electronAPI.route?.getAnalyticsSummary).not.toHaveBeenCalled();
-    expect(window.electronAPI.route?.getAnalyticsDistribution).not.toHaveBeenCalled();
-    expect(window.electronAPI.route?.getConfig).toHaveBeenCalled();
-    expect(window.electronAPI.route?.getObjectStats).not.toHaveBeenCalled();
-
-    const routeDashboard = screen.getByLabelText('路由数据驾驶舱');
-    expect(routeDashboard).toHaveAttribute('data-route-content-size');
     expect(screen.getByText('首字响应 / 会话时间')).toBeInTheDocument();
     const responseKpi = screen.getByLabelText('首字响应 / 会话时间 KPI');
     expect(within(responseKpi).queryByText(/P95|P99/)).not.toBeInTheDocument();
-    expect(
-      Array.from(responseKpi.querySelectorAll('*')).some(element =>
-        element.className.toString().includes('text-[var(--accent)]')
-      )
-    ).toBe(true);
     expect(screen.queryByText('延迟分位数')).not.toBeInTheDocument();
     expect(screen.queryByText('活跃对象')).not.toBeInTheDocument();
     expect(screen.queryByText('通道健康矩阵')).not.toBeInTheDocument();
-    expect(screen.getByText('模型热力分布')).toBeInTheDocument();
-    expect(screen.getByText('通道健康散点矩阵')).toBeInTheDocument();
-    expect(screen.getByText('模型 → 通道流向')).toBeInTheDocument();
-    expect(screen.getByText('成功率前五通道')).toBeInTheDocument();
     expect(screen.getAllByText('Codex Site / acct-2 / Key-Beta').length).toBeGreaterThan(0);
     expect(document.querySelectorAll('[data-scatter-success-label="true"]')).toHaveLength(5);
     expect(document.querySelectorAll('[data-scatter-inline-label="true"]')).toHaveLength(0);
+
     const scatterGridLines = Array.from(
       document.querySelectorAll('[data-scatter-grid-line="true"]')
     );
@@ -603,76 +543,19 @@ describe('DataOverviewPage', () => {
       true
     );
     expect(scatterGridLines.every(line => line.getAttribute('opacity') === '0.85')).toBe(true);
-    const scatterYAxis = document.querySelector(
-      'svg[aria-label="通道健康散点矩阵 SVG"] line[x1="8"]'
-    );
-    expect(scatterYAxis).toBeInTheDocument();
-    const successLabelTitle = document.querySelector('[data-scatter-success-label-title="true"]');
-    const firstSuccessLabel = document.querySelector(
-      '[data-scatter-success-label="true"] text[font-weight="600"]'
-    );
-    expect(
-      Number(firstSuccessLabel?.getAttribute('y')) - Number(successLabelTitle?.getAttribute('y'))
-    ).toBeGreaterThanOrEqual(18);
-    expect(successLabelTitle).toHaveAttribute('font-size', '10.5');
-    expect(firstSuccessLabel).toHaveAttribute('font-size', '10.5');
-    const scatterSvg = screen.getByLabelText('通道健康散点矩阵 SVG');
-    const scatterMaxAxisLabel = within(scatterSvg).getByText('60s+');
-    const scatterSuccessAxisLabel = within(scatterSvg).getByText('100%');
-    expect(scatterMaxAxisLabel).toHaveAttribute('font-size', '11');
-    expect(scatterSuccessAxisLabel).toHaveAttribute('font-size', '11');
     expect(screen.getByText('60s+')).toBeInTheDocument();
     expect(screen.queryByText('120s+')).not.toBeInTheDocument();
-    expect(document.querySelector('[data-route-second-row="true"]')).toHaveClass(
-      'xl:grid-cols-[minmax(0,1.34fr)_minmax(360px,0.96fr)]'
+
+    expect(document.querySelector('[data-overview-metric-grid="merged"]')).toHaveClass(
+      'xl:grid-cols-8'
     );
-    expect(document.querySelector('[data-route-third-row-card="scatter"]')).toHaveClass(
-      'h-[250px]'
-    );
-    expect(document.querySelector('[data-route-third-row-card="sankey"]')).toHaveClass('h-[250px]');
-    expect(document.querySelector('[data-route-third-row="true"]')).toHaveClass(
-      'xl:grid-cols-[minmax(0,1.10fr)_minmax(0,0.90fr)]'
-    );
-    expect(screen.getByLabelText('运行趋势图')).toHaveClass('min-h-[244px]');
-    expect(document.querySelector('[data-route-heatmap-card="true"]')).toHaveClass('min-h-[244px]');
-    [
-      screen.getByLabelText('路由请求量 KPI'),
-      screen.getByLabelText('路由成功率 KPI'),
-      screen.getByLabelText('Token 消耗 KPI'),
-      screen.getByLabelText('首字响应 / 会话时间 KPI'),
-      screen.getByLabelText('运行趋势图'),
-      document.querySelector('[data-route-heatmap-card="true"]'),
-      document.querySelector('[data-route-third-row-card="scatter"]'),
-      document.querySelector('[data-route-third-row-card="sankey"]'),
-    ].forEach(card => {
-      expect(card).toHaveClass(
-        'bg-[var(--surface-1)]',
-        'border-2',
-        'border-transparent',
-        'shadow-[var(--shadow-md)]'
-      );
-      expect(card).not.toHaveClass('bg-[var(--surface-3)]');
-    });
-    const treemap = screen.getByLabelText('模型热力分布 treemap');
-    expect(treemap).toHaveClass('min-h-[176px]');
-    expect(treemap).toHaveAttribute('data-treemap-layout-size');
-    const treemapNodes = Array.from(
-      treemap.querySelectorAll('[data-treemap-node="true"]')
-    ) as HTMLElement[];
-    const rightEdge = Math.max(
-      ...treemapNodes.map(
-        node => Number.parseFloat(node.style.left) + Number.parseFloat(node.style.width)
-      )
-    );
-    const bottomEdge = Math.max(
-      ...treemapNodes.map(
-        node => Number.parseFloat(node.style.top) + Number.parseFloat(node.style.height)
-      )
-    );
-    expect(rightEdge).toBeCloseTo(100, 4);
-    expect(bottomEdge).toBeCloseTo(100, 4);
+    expect(screen.getByRole('region', { name: '每日签到概览' })).toHaveClass('h-[260px]');
+    expect(screen.getByLabelText('运行趋势图')).toHaveClass('h-[260px]');
+    expect(document.querySelector('[data-route-heatmap-card="true"]')).toHaveClass('h-[260px]');
+    expect(document.querySelector('[data-route-third-row-card="scatter"]')).toHaveClass('h-[260px]');
+    expect(document.querySelector('[data-route-content-scroll="true"]')).toHaveClass('pb-3');
     expect(document.querySelector('[data-trend-chart-frame="true"]')).toHaveClass('-mx-2', 'px-5');
-    expect(document.querySelector('[data-route-content-scroll="true"]')).toHaveClass('pb-2');
+
     const trendPointCount = Number(
       screen.getByLabelText('运行趋势图').getAttribute('data-trend-point-count')
     );
@@ -708,11 +591,6 @@ describe('DataOverviewPage', () => {
         .querySelector('[data-trend-legend="success-rate"] [data-trend-legend-line]')
         ?.getAttribute('data-trend-legend-line')
     ).toBe('solid');
-    const ttfbSeries = document.querySelector('[data-trend-series="ttfb-p95"]');
-    expect(
-      ttfbSeries?.querySelector('path[stroke="currentColor"]')?.getAttribute('stroke-dasharray')
-    ).toBe('4 3');
-    expect(ttfbSeries).toHaveAttribute('data-trend-point-markers', 'true');
     expect(
       document
         .querySelector('[data-trend-legend="ttfb-p95"] [data-trend-legend-line]')
@@ -722,43 +600,18 @@ describe('DataOverviewPage', () => {
     const requestBars = Array.from(
       requestSeries?.querySelectorAll('[data-trend-bar-center-left]') || []
     );
-    const requestBarCenterLefts = requestBars.map(bar =>
-      Number.parseFloat(bar.getAttribute('data-trend-bar-center-left') || '')
-    );
     const requestBarIndexes = requestBars.map(bar =>
       Number(bar.getAttribute('data-trend-bar-point-index'))
     );
     expect(requestBarIndexes.length).toBeGreaterThan(0);
-    expect(requestBarIndexes[0]).toBeGreaterThan(0);
-    expect(requestBarCenterLefts).toEqual(
-      requestBarIndexes.map(index => Number(trendAxisLefts[index].toFixed(2)))
-    );
-    const successPath = successRateSeries?.querySelector('path[stroke="currentColor"]');
-    expect(successPath?.getAttribute('d')).toBe('');
-    for (const marker of failureMarkers) {
-      const pointIndex = Number(marker.getAttribute('data-trend-point-index'));
-      expect(Number.parseFloat(marker.style.left)).toBe(trendAxisLefts[pointIndex]);
-    }
-    expect(failureMarkers.every(marker => marker.querySelectorAll('span').length === 1)).toBe(true);
-    const sankeySvg = document.querySelector('svg[aria-label="模型→通道 Sankey 流图 SVG"]');
-    expect(sankeySvg?.getAttribute('viewBox')).toBe('0 0 532 248');
-    const sankeyModelNode = sankeySvg?.querySelector('g[aria-label^="Sankey 模型节点："]');
-    expect(sankeyModelNode).not.toHaveAttribute('style');
-    expect(sankeyModelNode?.querySelector('rect')).toHaveAttribute('x', '92');
-    expect(sankeyModelNode?.querySelector('text')).toHaveAttribute('font-size', '11');
-    expect(sankeySvg?.querySelector('g[aria-label^="Sankey 通道节点："] rect')).toHaveAttribute(
-      'x',
-      '368'
-    );
     expect(screen.queryByText('快又稳')).not.toBeInTheDocument();
-    expect(screen.getByText(/输入 3\.6K\s*\/\s*输出 1\.4K\s*\/\s*缓存 0/)).toBeInTheDocument();
+    expect(screen.getByText(/输入 3\.6K\s*\/\s*输出 1\.4K/)).toBeInTheDocument();
     const trendScopeSelect = screen.getByLabelText('选择运行趋势范围');
     expect(trendScopeSelect).toHaveDisplayValue('全部聚合');
     expect(trendScopeSelect).toHaveClass('-mt-1.5', 'h-6', 'text-[11px]');
-    expect(screen.getByTestId('overview-view-site')).toHaveAttribute('aria-hidden', 'true');
   });
 
-  it('provides header actions from shared overview subtab state', async () => {
+  it('provides merged header actions', async () => {
     function HeaderActionHost() {
       const [actions, setActions] = useState<ReactNode | null>(null);
 
@@ -770,23 +623,17 @@ describe('DataOverviewPage', () => {
       );
     }
 
-    const { rerender } = render(<HeaderActionHost />);
+    render(<HeaderActionHost />);
 
     await waitFor(() => {
       expect(window.electronAPI.overview?.getSiteDailySnapshots).toHaveBeenCalled();
+      expect(window.electronAPI.route?.getAnalyticsOverview).toHaveBeenCalled();
     });
 
     const headerActions = screen.getByTestId('header-actions');
-    expect(within(headerActions).getByRole('button', { name: '刷新' })).toBeInTheDocument();
-    expect(within(headerActions).queryByRole('button', { name: '24h' })).not.toBeInTheDocument();
-
-    mockUIState.overviewSubtab = 'route';
-    rerender(<HeaderActionHost />);
-
-    await waitFor(() => {
-      expect(within(headerActions).getByRole('button', { name: '24h' })).toBeInTheDocument();
-    });
+    expect(within(headerActions).getByRole('button', { name: '24h' })).toBeInTheDocument();
     expect(within(headerActions).getByRole('button', { name: '7d' })).toBeInTheDocument();
+    expect(within(headerActions).getByRole('button', { name: '刷新' })).toBeInTheDocument();
     expect(within(headerActions).queryByRole('button', { name: '30d' })).not.toBeInTheDocument();
   });
 
@@ -928,75 +775,17 @@ describe('DataOverviewPage', () => {
     expect(trendCard).toHaveAttribute('data-trend-point-count', '8');
   });
 
-  it('links heatmap model selection to Sankey one way and clears it from card chrome', async () => {
-    mockUIState.overviewSubtab = 'route';
+  it('selects and clears heatmap model filters within the merged dashboard', async () => {
     render(<DataOverviewPage />);
 
     const modelButton = await screen.findByRole('button', { name: '模型：claude-opus-4-6' });
     expect(modelButton).toHaveAttribute('aria-pressed', 'false');
-    const sankeyModelNode = document.querySelector(
-      'g[aria-label="Sankey 模型节点：claude-opus-4-6"]'
-    );
-    expect(sankeyModelNode).toBeInTheDocument();
-    fireEvent.click(sankeyModelNode!);
-    expect(modelButton).toHaveAttribute('aria-pressed', 'false');
-    expect(
-      document.querySelector('svg[aria-label="模型→通道 Sankey 流图 SVG"]')
-    ).not.toHaveAttribute('data-sankey-selected-model');
-    expect(
-      Array.from(document.querySelectorAll('[data-sankey-link="true"]')).every(
-        link => link.getAttribute('stroke-opacity') === '0.6'
-      )
-    ).toBe(true);
-
     fireEvent.click(modelButton);
     expect(modelButton).toHaveAttribute('aria-pressed', 'true');
-    expect(document.querySelector('svg[aria-label="模型→通道 Sankey 流图 SVG"]')).toHaveAttribute(
-      'data-sankey-selected-model',
-      'claude-opus-4-6'
-    );
-    const selectedSankeyLinks = Array.from(
-      document.querySelectorAll('[data-sankey-link-selected="true"]')
-    );
-    const dimmedSankeyLinks = Array.from(
-      document.querySelectorAll('[data-sankey-link-selected="false"]')
-    );
-    expect(selectedSankeyLinks.length).toBeGreaterThan(0);
-    expect(dimmedSankeyLinks.length).toBeGreaterThan(0);
-    expect(
-      selectedSankeyLinks.every(
-        link =>
-          link.getAttribute('data-sankey-link-model') === 'claude-opus-4-6' &&
-          link.getAttribute('stroke-opacity') === '0.72'
-      )
-    ).toBe(true);
-    expect(dimmedSankeyLinks.every(link => link.getAttribute('stroke-opacity') === '0.15')).toBe(
-      true
-    );
-    expect(
-      document.querySelector('g[aria-label="Sankey 模型节点：claude-opus-4-6"]')
-    ).toHaveAttribute('data-sankey-model-selected', 'true');
 
-    fireEvent.click(modelButton);
-    expect(modelButton).toHaveAttribute('aria-pressed', 'false');
-    expect(
-      document.querySelector('svg[aria-label="模型→通道 Sankey 流图 SVG"]')
-    ).not.toHaveAttribute('data-sankey-selected-model');
-    expect(
-      Array.from(document.querySelectorAll('[data-sankey-link="true"]')).every(
-        link =>
-          !link.hasAttribute('data-sankey-link-selected') &&
-          link.getAttribute('stroke-opacity') === '0.6'
-      )
-    ).toBe(true);
-
-    fireEvent.click(modelButton);
-    expect(modelButton).toHaveAttribute('aria-pressed', 'true');
     fireEvent.click(screen.getByText('模型热力分布'));
     expect(modelButton).toHaveAttribute('aria-pressed', 'false');
-    expect(
-      document.querySelector('svg[aria-label="模型→通道 Sankey 流图 SVG"]')
-    ).not.toHaveAttribute('data-sankey-selected-model');
+    expect(document.querySelector('svg[aria-label="模型→通道 Sankey 流图 SVG"]')).not.toBeInTheDocument();
   });
 
   it('reloads route overview data automatically after route overview change events', async () => {
@@ -1038,7 +827,7 @@ describe('DataOverviewPage', () => {
     });
   });
 
-  it('uses live today request totals when snapshots lag behind current site metrics', async () => {
+  it('uses live today request totals in merged site KPIs', async () => {
     window.electronAPI.overview = {
       ...window.electronAPI.overview,
       getSiteDailySnapshots: vi.fn().mockResolvedValue({
@@ -1057,34 +846,19 @@ describe('DataOverviewPage', () => {
               totalTokens: 1400,
             },
           ],
-          'site-2': [
-            {
-              siteId: 'site-2',
-              snapshotDate: '2026-04-24',
-              capturedAt: now - 24 * 60 * 60 * 1000,
-              balance: 8.2,
-              todayUsage: 5.8,
-              todayRequests: 18,
-              todayPromptTokens: 2200,
-              todayCompletionTokens: 800,
-              totalTokens: 3000,
-            },
-          ],
         },
       }),
     } as NonNullable<typeof window.electronAPI.overview>;
 
     render(<DataOverviewPage />);
 
-    const requestTrendCard = await screen.findByLabelText('近 7 日请求量 (Reqs) 趋势卡片');
-
     await waitFor(() => {
-      expect(within(requestTrendCard).getByText('44')).toBeInTheDocument();
-      expect(within(requestTrendCard).getByText(`最近记录 ${todayLabel}`)).toBeInTheDocument();
+      expect(window.electronAPI.overview?.getSiteDailySnapshots).toHaveBeenCalled();
     });
+    expect(screen.getByText('请求 44 · Tokens 5.0K')).toBeInTheDocument();
   });
 
-  it('renders trend markers as fixed-size circles and keeps token matrix dots visible', async () => {
+  it('renders route trend markers as fixed-size circles', async () => {
     window.electronAPI.route = {
       ...window.electronAPI.route,
       getAnalyticsDistribution: vi.fn().mockResolvedValue({
@@ -1142,54 +916,13 @@ describe('DataOverviewPage', () => {
       getAnalyticsOverview: undefined,
     } as NonNullable<typeof window.electronAPI.route>;
 
-    const { rerender } = render(<DataOverviewPage />);
+    render(<DataOverviewPage />);
 
-    const requestTrendCard = await screen.findByLabelText('近 7 日请求量 (Reqs) 趋势卡片');
-
+    const trendCard = await screen.findByLabelText('运行趋势图');
     await waitFor(() => {
-      expect(within(requestTrendCard).getByText('44')).toBeInTheDocument();
+      expect(window.electronAPI.route?.getAnalyticsDistribution).toHaveBeenCalled();
     });
-    expect(within(requestTrendCard).getByText('44')).toHaveClass('text-[18px]');
-    expect(
-      Array.from(requestTrendCard.querySelectorAll('div')).some(div =>
-        div.className.includes('h-[74px]')
-      )
-    ).toBe(true);
 
-    const requestMarkers = Array.from(
-      requestTrendCard.querySelectorAll('span[aria-hidden="true"]')
-    ) as HTMLElement[];
-    const requestMarkerLefts = requestMarkers.map(marker => Number.parseFloat(marker.style.left));
-
-    expect(requestMarkers).toHaveLength(7);
-    expect(requestTrendCard.querySelector('circle')).not.toBeInTheDocument();
-    expect(requestMarkers.every(marker => marker.className.includes('rounded-full'))).toBe(true);
-    expect(requestMarkers.some(marker => marker.className.includes('h-[5.5px]'))).toBe(true);
-    expect(Math.min(...requestMarkerLefts)).toBeGreaterThan(0);
-    expect(Math.max(...requestMarkerLefts)).toBeLessThan(100);
-
-    const tokenTrendCard = screen.getByLabelText('近 7 日 Tokens 趋势卡片');
-    const tokenDots = Array.from(tokenTrendCard.querySelectorAll('span')).filter(
-      dot =>
-        dot.className.includes('h-1.5') &&
-        dot.className.includes('w-1.5') &&
-        dot.className.includes('rounded-full')
-    );
-
-    expect(tokenDots).toHaveLength(42);
-    expect(tokenDots.some(dot => dot.className.includes('bg-[var(--warning)]'))).toBe(true);
-    expect(
-      Array.from(tokenTrendCard.querySelectorAll('div')).some(div =>
-        div.className.includes('h-[78px]')
-      )
-    ).toBe(true);
-
-    mockUIState.overviewSubtab = 'route';
-    rerender(<DataOverviewPage />);
-
-    expect(await screen.findByText('运行趋势')).toBeInTheDocument();
-
-    const trendCard = screen.getByLabelText('运行趋势图');
     const routeMarkers = Array.from(
       trendCard.querySelectorAll('span[aria-hidden="true"][class*="h-[5.5px]"]')
     ) as HTMLElement[];

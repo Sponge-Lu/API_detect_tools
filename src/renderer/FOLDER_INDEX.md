@@ -25,7 +25,7 @@
 
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
-| **App.tsx** | 应用根组件、页面壳层 | `App` 组件；根据 `activeTab + overviewSubtab/logsSubtab` 派生数据总览与日志 Header |
+| **App.tsx** | 应用根组件、页面壳层 | `App` 组件；根据 `activeTab + overviewSubtab` 派生数据总览 Header |
 | **main.tsx** | 前端入口 | React 应用挂载 |
 | **index.html** | HTML 模板 | 应用入口 HTML |
 | **index.css** | 全局样式 | Tailwind CSS 导入、Light/Dark token、响应式布局系统 |
@@ -78,11 +78,10 @@
 | 页面 | 职责 | 关键内容 |
 |------|------|--------|
 | **DataOverviewPage** | 数据总览首页 | 左侧 `站点数据 / 路由数据` 子页对应内容、路由健康 KPI、站点余额/消费榜单、每日快照趋势、规则洞察、异常请求；路由运行趋势在 `24h` / `7d` 下补齐完整 X 轴 |
-| **SitesPage** | 站点管理主页面 | 站点列表、账户卡片、批量检测/签到 |
-| **CustomCliPage** | 自定义 CLI 配置页面 | 配置预览、模型拉取后的旧模型清理、真实 CLI 测试、模板导出，并阻止旧本地编辑状态重新写回不属于当前配置的模型 |
+| **SitesPage** | 站点管理主页面 | 统一展示托管站点账户行与直连配置接入点；提供操作记录、添加接入点、批量检测/刷新/签到、History 时间桶列与接入点详情侧滑面板 |
 | **CreditPage** | Linux Do Credit 页面 | 积分余额、每日统计、交易记录、充值入口 |
 | **RoutePage** | 路由配置/操作页 | 代理服务、模型重定向，以及跳转到数据总览的统计入口 |
-| **LogsPage** | 日志页内容容器 | 按 `logsSubtab` 展示会话事件或路由日志；路由日志通过逐条 push 追加并使用紧凑请求尝试网格，展示 CLI、尝试序号、HTTP 状态、模型路径、命中来源路径、站点优先级、token/cache token 与参考金额 |
+| **LogsPage** | 日志页内容容器 | 直接展示路由日志；通过逐条 push 追加并使用无卡片、带表头的横向滚动单行表格，展示 CLI 图标、原始模型、路由目标、Token（总/输入/输出/缓存写/缓存读）、参考金额、用时/首字、纯数字状态码与失败第二行 |
 | **SettingsPage** | 设置页 | 应用设置、导入导出、备份入口 |
 
 ---
@@ -121,8 +120,8 @@
 |-------|------|--------|
 | **configStore** | 配置管理 | 站点列表、设置 |
 | **detectionStore** | 检测结果 | 检测状态、结果 |
-| **uiStore** | UI 状态 | 一级页面切换（默认 `overview`）、`overviewSubtab` / `logsSubtab` 子页切换、主题、模态框 |
-| **toastStore** | 消息提示 | 可见 Toast 队列、通知历史、会话事件 |
+| **uiStore** | UI 状态 | 一级页面切换（默认 `overview`）、`overviewSubtab` 子页切换、主题、模态框 |
+| **toastStore** | 消息提示 | 可见 Toast 队列、当前会话事件历史 |
 
 ### Store 特点
 
@@ -156,7 +155,7 @@
 
 ### sessionEventLog.ts
 
-**职责**: 会话事件记录
+**职责**: 当前会话关键操作记录
 
 **关键方法**:
 - `success()`, `info()`, `warning()`, `error()` - 将关键操作写入 `toastStore.eventHistory`
@@ -299,4 +298,4 @@ SiteCard (站点卡片)
 ---
 
 **版本**: 3.0.3
-**更新日期**: 2026-05-27
+**更新日期**: 2026-06-17

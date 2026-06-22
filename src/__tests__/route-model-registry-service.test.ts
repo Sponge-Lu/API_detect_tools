@@ -406,21 +406,24 @@ describe('route model registry service', () => {
       disabledSiteIds: ['site-1'],
       disabledApiKeyPriorityKeys: [apiKeyPriorityKey],
     });
-    expect(unifiedConfigManagerMock.updateRouteModelRegistry).toHaveBeenCalledWith(
-      expect.objectContaining({
-        displayItems: [
-          expect.objectContaining({
-            priorityConfig: {
-              sitePriorities: {},
-              apiKeyPriorities: {
-                [backupApiKeyPriorityKey]: 0,
-              },
-              disabledSiteIds: ['site-1'],
-              disabledApiKeyPriorityKeys: [apiKeyPriorityKey],
+    const savedRegistry = unifiedConfigManagerMock.updateRouteModelRegistry.mock.calls[0]
+      ? (unifiedConfigManagerMock.updateRouteModelRegistry.mock
+          .calls[0][0] as RouteModelRegistryConfig)
+      : null;
+    expect(savedRegistry?.displayItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'manual:gpt-4.1',
+          priorityConfig: {
+            sitePriorities: {},
+            apiKeyPriorities: {
+              [backupApiKeyPriorityKey]: 0,
             },
-          }),
-        ],
-      })
+            disabledSiteIds: ['site-1'],
+            disabledApiKeyPriorityKeys: [apiKeyPriorityKey],
+          },
+        }),
+      ])
     );
   });
 
@@ -685,7 +688,7 @@ describe('route model registry service', () => {
     );
   });
 
-  it('syncs sources without overwriting persisted display items', async () => {
+  it('syncs sources without overwriting persisted display items while seeding newly detected models', async () => {
     const registry = createRegistryConfig();
     registry.displayItems = [
       {
@@ -726,17 +729,26 @@ describe('route model registry service', () => {
       'gpt-5.4-20260101',
       'gpt-5-20260101',
     ]);
-    expect(result.displayItems).toEqual([
-      expect.objectContaining({
-        id: 'seeded:gpt:0',
-        canonicalName: 'gpt-5-4',
-        sourceKeys: ['site-1:acc-1:gpt-5.4-20260101'],
-        originalModelOrder: ['gpt-5.4-20260101'],
-        mode: 'seeded',
-      }),
-    ]);
+    expect(result.displayItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'seeded:gpt:0',
+          canonicalName: 'gpt-5-4',
+          sourceKeys: ['site-1:acc-1:gpt-5.4-20260101'],
+          originalModelOrder: ['gpt-5.4-20260101'],
+          mode: 'seeded',
+        }),
+        expect.objectContaining({
+          id: 'seeded:gpt-5',
+          canonicalName: 'gpt-5',
+          sourceKeys: ['site-1:acc-1:gpt-5-20260101'],
+          originalModelOrder: ['gpt-5-20260101'],
+          mode: 'seeded',
+        }),
+      ])
+    );
     expect(result.entries['gpt-5-4']).toBeDefined();
-    expect(result.entries['gpt-5']).toBeUndefined();
+    expect(result.entries['gpt-5']).toBeDefined();
   });
 
   it('deletes override-backed display items that have no persisted display item', async () => {
@@ -892,6 +904,76 @@ describe('route model registry service', () => {
     ]);
   });
 
+  it('persists excludes when deleting a seeded display item so sync does not recreate it', async () => {
+    const canonicalName = 'claude-opus-4-6';
+    const originalModel = 'claude-opus-4.6-20260201';
+    const sourceKey = `site-1:acc-1:${originalModel}`;
+    const registry = createRegistryConfig();
+    registry.displayItems = [
+      {
+        id: 'seeded:claude-opus-4-6',
+        vendor: 'claude',
+        canonicalName,
+        sourceKeys: [sourceKey],
+        originalModelOrder: [originalModel],
+        priorityConfig: {
+          sitePriorities: {},
+          apiKeyPriorities: {},
+        },
+        mode: 'seeded',
+        createdAt: 10,
+        updatedAt: 20,
+      },
+    ];
+
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
+      sites: [{ id: 'site-1', name: 'Site 1', cached_data: undefined }],
+      accounts: [
+        {
+          id: 'acc-1',
+          site_id: 'site-1',
+          account_name: 'Primary',
+          status: 'active',
+          cached_data: {
+            models: [originalModel],
+            api_keys: [],
+            user_groups: {},
+          },
+        },
+      ],
+    });
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      modelRegistry: registry,
+    });
+    unifiedConfigManagerMock.deleteRouteModelDisplayItem.mockImplementation(async id => {
+      registry.displayItems = registry.displayItems.filter(item => item.id !== id);
+      return true;
+    });
+    unifiedConfigManagerMock.upsertRouteModelMappingOverride.mockImplementation(async override => {
+      registry.overrides = [
+        ...registry.overrides.filter(item => item.sourceKey !== override.sourceKey),
+        override,
+      ];
+      return override;
+    });
+
+    const result = await deleteModelDisplayItem('seeded:claude-opus-4-6');
+
+    expect(unifiedConfigManagerMock.deleteRouteModelDisplayItem).toHaveBeenCalledWith(
+      'seeded:claude-opus-4-6'
+    );
+    expect(unifiedConfigManagerMock.upsertRouteModelMappingOverride).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceKey,
+        canonicalName,
+        action: 'exclude',
+      })
+    );
+    expect(result).not.toBeNull();
+    expect(result?.displayItems.some(item => item.id === 'seeded:claude-opus-4-6')).toBe(false);
+    expect(result?.entries[canonicalName]).toBeUndefined();
+  });
+
   it('treats models with empty enable_groups as unavailable for routing groups', async () => {
     const registry = createRegistryConfig();
 
@@ -943,7 +1025,24 @@ describe('route model registry service', () => {
         apiKeyGroups: [],
       }),
     ]);
-    expect(result.entries).toEqual({});
+    expect(result.entries['claude-opus-4-6']).toEqual(
+      expect.objectContaining({
+        canonicalName: 'claude-opus-4-6',
+        sources: [
+          expect.objectContaining({
+            originalModel: 'claude-opus-4.6-20260201',
+            availableUserGroups: [],
+            availableApiKeys: [],
+            apiKeyGroups: [],
+          }),
+        ],
+      })
+    );
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      modelRegistry: result,
+      cliProbe: { latest: {} },
+    });
+    expect(resolveChannels(createRouteRule(), 'claude-opus-4-6')).toEqual([]);
   });
 
   it('skips disabled or unavailable-group sites when syncing route model sources', async () => {

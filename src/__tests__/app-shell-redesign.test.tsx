@@ -3,11 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { GlobalCommandBar } from '../renderer/components/AppShell/GlobalCommandBar';
 import { PageHeader } from '../renderer/components/AppShell/PageHeader';
-import {
-  APP_LOGS_SUBPAGE_META,
-  APP_OVERVIEW_SUBPAGE_META,
-  APP_PAGE_META,
-} from '../renderer/components/AppShell/pageMeta';
+import { APP_PAGE_META } from '../renderer/components/AppShell/pageMeta';
 import { VerticalSidebar } from '../renderer/components/Sidebar/VerticalSidebar';
 import { useRouteStore } from '../renderer/store/routeStore';
 import { useUIStore } from '../renderer/store/uiStore';
@@ -67,19 +63,14 @@ describe('app shell redesign', () => {
     expect(queryByText('Workspace')).not.toBeInTheDocument();
   });
 
-  it('renders overview child destinations in the sidebar without reintroducing old route subpages', () => {
-    useUIStore.setState({ sidebarDisplayMode: 'expanded' } as Partial<
-      ReturnType<typeof useUIStore.getState>
-    >);
+  it('renders overview as a single sidebar destination without reintroducing old route subpages', () => {
     useRouteStore.setState({ serverRunning: true });
     const { container } = render(
       <VerticalSidebar
         activeTab="sites"
         overviewSubtab="site"
-        logsSubtab="session"
         onTabChange={vi.fn()}
         onOverviewSubtabChange={vi.fn()}
-        onLogsSubtabChange={vi.fn()}
         saving={false}
       />
     );
@@ -87,28 +78,18 @@ describe('app shell redesign', () => {
     const nav = container.querySelector('nav');
 
     expect(screen.getByRole('button', { name: '数据总览' })).toBeInTheDocument();
-    const siteOverviewChildButton = screen.getByRole('button', { name: '站点数据' });
-    const routeOverviewChildButton = screen.getByRole('button', { name: '路由数据' });
-    expect(siteOverviewChildButton).toBeInTheDocument();
-    expect(routeOverviewChildButton).toBeInTheDocument();
-    expect(siteOverviewChildButton.querySelector('svg')).toBeNull();
-    expect(routeOverviewChildButton.querySelector('svg')).toBeNull();
+    expect(screen.queryByRole('button', { name: '站点数据' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '路由数据' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '站点管理' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '自定义CLI' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '站点检测' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'LDC 积分' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '自定义CLI' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '站点检测' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: APP_PAGE_META.credit.navLabel })
+    ).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '本地路由' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '日志' })).toBeInTheDocument();
-    const sessionLogsChildButton = screen.getByRole('button', {
-      name: APP_LOGS_SUBPAGE_META.session.navLabel,
-    });
-    const routeLogsChildButton = screen.getByRole('button', {
-      name: APP_LOGS_SUBPAGE_META.route.navLabel,
-    });
-    expect(sessionLogsChildButton).toBeInTheDocument();
-    expect(routeLogsChildButton).toBeInTheDocument();
-    expect(sessionLogsChildButton.querySelector('svg')).toBeNull();
-    expect(routeLogsChildButton.querySelector('svg')).toBeNull();
+    expect(screen.getByRole('button', { name: '路由日志' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '会话事件' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '日志' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '设置' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '模型重定向' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '代理统计' })).not.toBeInTheDocument();
@@ -118,20 +99,7 @@ describe('app shell redesign', () => {
       within(nav as HTMLElement)
         .getAllByRole('button')
         .map(button => button.getAttribute('aria-label'))
-    ).toEqual([
-      '数据总览',
-      '站点数据',
-      '路由数据',
-      '站点管理',
-      '自定义CLI',
-      '站点检测',
-      'LDC 积分',
-      '本地路由',
-      '日志',
-      APP_LOGS_SUBPAGE_META.session.navLabel,
-      APP_LOGS_SUBPAGE_META.route.navLabel,
-      '设置',
-    ]);
+    ).toEqual(['数据总览', '站点管理', '本地路由', '路由日志', '设置']);
   });
 
   it('supports manual sidebar mode switching and keeps version/update info in the bottom section', () => {
@@ -143,10 +111,8 @@ describe('app shell redesign', () => {
       <VerticalSidebar
         activeTab="sites"
         overviewSubtab="site"
-        logsSubtab="session"
         onTabChange={vi.fn()}
         onOverviewSubtabChange={vi.fn()}
-        onLogsSubtabChange={vi.fn()}
         saving={false}
         currentVersion="3.0.1"
         updateInfo={{
@@ -202,7 +168,7 @@ describe('app shell redesign', () => {
     expect(screen.queryByRole('button', { name: '站点数据' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '路由数据' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '会话事件' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '路由日志' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '路由日志' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '站点管理' })).toBeInTheDocument();
     expect(screen.getByText('站点管理')).toHaveClass('max-w-0', 'opacity-0');
     expect(within(footer).getByRole('button', { name: '更新 v3.0.2' })).toBeInTheDocument();
@@ -220,10 +186,8 @@ describe('app shell redesign', () => {
       <VerticalSidebar
         activeTab="sites"
         overviewSubtab="route"
-        logsSubtab="session"
         onTabChange={vi.fn()}
         onOverviewSubtabChange={vi.fn()}
-        onLogsSubtabChange={vi.fn()}
         saving={false}
       />
     );
@@ -239,11 +203,7 @@ describe('app shell redesign', () => {
     expect(screen.queryByText('代理服务器：')).not.toBeInTheDocument();
   });
 
-  it('uses overview child buttons to switch overview subpages through the shared sidebar state', () => {
-    useUIStore.setState({ sidebarDisplayMode: 'expanded' } as Partial<
-      ReturnType<typeof useUIStore.getState>
-    >);
-
+  it('uses the overview sidebar button as the single overview destination', () => {
     const onTabChange = vi.fn();
     const onOverviewSubtabChange = vi.fn();
 
@@ -251,47 +211,44 @@ describe('app shell redesign', () => {
       <VerticalSidebar
         activeTab="overview"
         overviewSubtab="site"
-        logsSubtab="session"
         onTabChange={onTabChange}
         onOverviewSubtabChange={onOverviewSubtabChange}
-        onLogsSubtabChange={vi.fn()}
         saving={false}
       />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '路由数据' }));
+    fireEvent.click(screen.getByRole('button', { name: '数据总览' }));
 
-    expect(onOverviewSubtabChange).toHaveBeenCalledWith('route');
+    expect(onOverviewSubtabChange).not.toHaveBeenCalled();
     expect(onTabChange).toHaveBeenCalledWith('overview');
   });
 
-  it('uses logs child buttons to switch log subpages through the shared sidebar state', () => {
+  it('keeps logs as a single main sidebar destination', () => {
     useUIStore.setState({ sidebarDisplayMode: 'expanded' } as Partial<
       ReturnType<typeof useUIStore.getState>
     >);
 
     const onTabChange = vi.fn();
-    const onLogsSubtabChange = vi.fn();
 
     render(
       <VerticalSidebar
         activeTab="logs"
         overviewSubtab="site"
-        logsSubtab="session"
         onTabChange={onTabChange}
         onOverviewSubtabChange={vi.fn()}
-        onLogsSubtabChange={onLogsSubtabChange}
         saving={false}
       />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: APP_LOGS_SUBPAGE_META.route.navLabel }));
+    expect(screen.queryByRole('button', { name: '会话事件' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '日志' })).not.toBeInTheDocument();
 
-    expect(onLogsSubtabChange).toHaveBeenCalledWith('route');
+    fireEvent.click(screen.getByRole('button', { name: '路由日志' }));
+
     expect(onTabChange).toHaveBeenCalledWith('logs');
   });
 
-  it('binds page header metadata and global command bar to the active credit tab', async () => {
+  it('falls back to sites metadata when a hidden credit tab is persisted as active', async () => {
     vi.resetModules();
 
     const mockSetActiveTab = vi.fn();
@@ -328,10 +285,8 @@ describe('app shell redesign', () => {
     const uiState = {
       activeTab: 'credit',
       overviewSubtab: 'site',
-      logsSubtab: 'session',
       setActiveTab: mockSetActiveTab,
       setOverviewSubtab: vi.fn(),
-      setLogsSubtab: vi.fn(),
       dialogState: {
         isOpen: false,
         type: 'confirm',
@@ -545,12 +500,12 @@ describe('app shell redesign', () => {
     expect(screen.queryByTestId('cli-status-inline')).not.toBeInTheDocument();
     expect(screen.getByTestId('cli-status-stacked')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '更新 v3.0.2' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: APP_PAGE_META.credit.title })).toBeInTheDocument();
-    expect(screen.getByText(APP_PAGE_META.credit.description)).toBeInTheDocument();
-    expect(await screen.findByText('Mock Credit Page')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: APP_PAGE_META.sites.title })).toBeInTheDocument();
+    expect(screen.getByText(APP_PAGE_META.sites.description)).toBeInTheDocument();
+    expect(await screen.findByText('Mock Sites Page')).toBeInTheDocument();
     expect(container.querySelector('.app-responsive-container')).not.toBeNull();
     expect(container.querySelector('.ios-responsive-container')).toBeNull();
-    expect(mockSetActiveTab).not.toHaveBeenCalledWith('sites');
+    expect(mockSetActiveTab).toHaveBeenCalledWith('sites');
 
     await waitFor(() => {
       expect(window.electronAPI.loadConfig).toHaveBeenCalledTimes(1);
@@ -596,10 +551,8 @@ describe('app shell redesign', () => {
     const uiState = {
       activeTab: 'sites',
       overviewSubtab: 'site',
-      logsSubtab: 'session',
       setActiveTab: vi.fn(),
       setOverviewSubtab: vi.fn(),
-      setLogsSubtab: vi.fn(),
       dialogState: {
         isOpen: false,
         type: 'confirm',
@@ -813,7 +766,7 @@ describe('app shell redesign', () => {
     expect(screen.getByRole('button', { name: '恢复站点' })).toBeInTheDocument();
   });
 
-  it('binds overview subpage metadata and actions through the shared app shell header', async () => {
+  it('binds merged overview metadata and actions through the shared app shell header', async () => {
     vi.resetModules();
 
     const mockSetConfig = vi.fn();
@@ -843,10 +796,8 @@ describe('app shell redesign', () => {
     const uiState = {
       activeTab: 'overview',
       overviewSubtab: 'route',
-      logsSubtab: 'session',
       setActiveTab: vi.fn(),
       setOverviewSubtab: vi.fn(),
-      setLogsSubtab: vi.fn(),
       dialogState: {
         isOpen: false,
         type: 'confirm',
@@ -980,20 +931,12 @@ describe('app shell redesign', () => {
       };
     });
 
-    vi.doMock('../renderer/pages/CustomCliPage', () => ({
-      CustomCliPage: () => <div>Mock CLI Page</div>,
-    }));
-
     vi.doMock('../renderer/pages/SettingsPage', () => ({
       SettingsPage: () => <div>Mock Settings Page</div>,
     }));
 
     vi.doMock('../renderer/pages/LogsPage', () => ({
       LogsPage: () => <div>Mock Logs Page</div>,
-    }));
-
-    vi.doMock('../renderer/components/Route/Usability/CliUsabilityTab', () => ({
-      CliUsabilityTab: () => <div>Mock Usability Tab</div>,
     }));
 
     vi.doMock('../renderer/pages/RoutePage', () => ({
@@ -1053,10 +996,8 @@ describe('app shell redesign', () => {
     render(<App />);
 
     expect(await screen.findByText('Mock Overview Page')).toBeInTheDocument();
-    expect(
-      screen.getByRole('heading', { name: APP_OVERVIEW_SUBPAGE_META.route.title })
-    ).toBeInTheDocument();
-    expect(screen.getByText(APP_OVERVIEW_SUBPAGE_META.route.description)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: APP_PAGE_META.overview.title })).toBeInTheDocument();
+    expect(screen.getByText(APP_PAGE_META.overview.description)).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: '24h' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '7d' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '30d' })).not.toBeInTheDocument();
@@ -1221,10 +1162,8 @@ describe('app shell redesign', () => {
         useUIStore: () => ({
           activeTab: 'route',
           overviewSubtab: 'site',
-          logsSubtab: 'session',
           setActiveTab: vi.fn(),
           setOverviewSubtab: vi.fn(),
-          setLogsSubtab: vi.fn(),
           dialogState: {
             isOpen: false,
             type: 'confirm',
@@ -1318,11 +1257,33 @@ describe('app shell redesign', () => {
       },
     }));
 
-    vi.doMock('../renderer/store/uiStore', () => ({
-      useUIStore: () => ({
+    vi.doMock('../renderer/store/uiStore', () => {
+      const React = require('react');
+      const listeners = new Set<() => void>();
+      let state: any;
+      const setActiveSettingsSection = vi.fn((section: string) => {
+        state = { ...state, activeSettingsSection: section };
+        listeners.forEach(listener => listener());
+      });
+      state = {
         openDownloadPanel: vi.fn(),
-      }),
-    }));
+        activeSettingsSection: 'general',
+        setActiveSettingsSection,
+      };
+      return {
+        useUIStore: (selector?: (state: any) => unknown) => {
+          const snapshot = React.useSyncExternalStore(
+            (listener: () => void) => {
+              listeners.add(listener);
+              return () => listeners.delete(listener);
+            },
+            () => state,
+            () => state
+          );
+          return selector ? selector(snapshot) : snapshot;
+        },
+      };
+    });
 
     vi.doMock('../renderer/components/dialogs', () => ({
       WebDAVBackupDialog: () => null,

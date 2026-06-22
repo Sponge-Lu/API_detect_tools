@@ -60,22 +60,21 @@
 | **cli-wrapper-compat-service.test.ts** | 真实 CLI wrapper 兼容性测试 | CliWrapperCompatService 的临时目录、隔离配置、stdin prompt 注入、结果解析、probe-lock 终止失败提前中止、首个上游成功/延迟失败覆盖后续 probe-lock budget noise、Claude JSON 错误摘要、未观察到本地路由请求时的诊断提示、Codex 上游错误摘要与临时目录清理重试 |
 | **cli-config-generator.property.test.ts** | CLI 配置生成测试 | CLI 配置生成（含端点选择逻辑） |
 | **cli-config-status.test.tsx** | CLI 配置状态组件回归测试 | 本地路由代理 Base URL 在紧凑状态中显示为“本地路由”，并覆盖本地路由、站点与自定义 CLI 的当前模型小字 |
-| **custom-cli-config-editor-dialog.test.tsx** | 自定义 CLI 编辑器回归测试 | CustomCliConfigEditorDialog 的预览/应用按钮与分列测试流程 |
+| **custom-cli-config-editor-dialog.test.tsx** | 直连 CLI 编辑内容回归测试 | DirectCliConfigEditorContent 的身份保存、预览/应用按钮、按 CLI 聚合测试流程、上游协议选择与手动模型写入 `manualModels` |
 | **custom-cli-config-store.test.ts** | 自定义 CLI 配置 Store 回归测试 | 拉取模型后清理旧 Base URL/API Key 遗留的 CLI 使用模型、测试模型与测试结果，并保留 `manualModels` 手动模型 |
 | **custom-cli-config-handlers.test.ts** | 自定义 CLI 配置 IPC 回归测试 | 保存自定义 CLI 配置后同步路由模型 registry，并在同步失败时暴露错误 |
-| **unified-cli-config-dialog.test.tsx** | 统一 CLI 对话框回归测试 | UnifiedCliConfigDialog 在测试结果持久化后保持当前 CLI 页签，对预览配置域名不一致显示 warning，并显示 route/site detection 写入的最新同模型测试结果 |
+| **app-data-events.test.ts** | 主进程数据变更广播回归测试 | 跳过已销毁窗口/webContents、吞掉 Electron disposed-frame 竞态错误并保留非预期 send 失败日志 |
+| **unified-cli-config-dialog.test.tsx** | 托管 CLI 编辑内容回归测试 | ManagedCliConfigEditorContent 在测试结果持久化后保持当前 CLI 页签，对预览配置域名不一致显示 warning，并显示 route/site detection 写入的最新同模型测试结果 |
 | **filter-model-logs.property.test.ts** | 日志过滤属性测试 | 日志过滤逻辑 |
 | **unified-cli-config.property.test.ts** | 统一 CLI 配置测试 | CLI 配置管理 |
 | **useAutoRefresh.property.test.ts** | 自动刷新 Hook 测试 | useAutoRefresh Hook |
 | **theme-system-redesign.test.tsx** | 主题系统重设计测试 | 4 主题模式切换、旧主题值迁移 |
-| **overlay-family-redesign.test.tsx** | Overlay 家族重设计测试 | modal 与 drawer 的统一 chrome 标记 |
-| **custom-cli-page-redesign.test.tsx** | 自定义 CLI 页面重设计测试 | registry + inspector 双栏布局，覆盖 CLI 模型搜索和手动输入 |
+| **overlay-family-redesign.test.tsx** | Overlay 家族重设计测试 | modal 与 drawer 的统一 chrome 标记，以及内嵌 CLI 内容不生成嵌套 overlay |
 | **data-overview-page.test.tsx** | 数据总览页回归测试 | 首页总览 KPI、站点榜单、规则解释、异常请求、快照趋势，以及路由趋势 `24h` / `7d` 部分数据窗口下的完整 X 轴与前置空桶绘制规则 |
 | **route-analytics-service.test.ts** | 路由分析服务回归测试 | 请求日志 token/cache token 字段、站点/账户/API Key 对象级 token 聚合 |
 | **route-workbench-redesign.test.tsx** | Route 页面重设计测试 | route 页回退为配置页，并引导到数据总览查看统计，覆盖重定向卡片路径恢复动作与自定义 CLI 覆盖模型测试结果显示 |
-| **cli-usability-tab.test.tsx** | CLI 可用性页回归测试 | Header 检测设置自动保存、账户行渲染、history 批次聚合条形与探测结果明细，失败摘要同时显示错误码和上游错误正文 |
-| **sites-page-redesign.test.tsx** | 站点页重设计测试 | 多列列头、内联排序、高频动作、CLI 图标内联与右键菜单 parity，并覆盖 CLI 图标按时间戳显示最新 projected/persisted 测试状态 |
-| **logs-page.test.tsx** | 日志页回归测试 | 会话事件筛选、外部子页驱动的路由日志详情、逐条 push 追加、紧凑请求尝试网格、模型路径、站点路径说明、token/cache token/按次参考金额与自定义 CLI 显示 |
+| **sites-page-redesign.test.tsx** | 站点页重设计测试 | 合并后的站点管理页多列列头、内联排序、高频动作、行内旧菜单移除、接入点详情组件复用、History 列、直连配置展示、操作记录弹窗与行内控件冒泡隔离回归 |
+| **logs-page.test.tsx** | 日志页回归测试 | 路由日志主页面、逐条 push 追加、CLI 筛选/清空、无卡片表头单行布局、CLI 图标、纯数字状态码、站点路径截断、失败第二行、token/cache token/按次参考金额与直连配置显示 |
 | **toast-store.test.ts** | Toast Store 回归测试 | 可见队列上限、事件历史记录与清理 |
 | **close-behavior-manager.property.test.ts** | 窗口关闭行为测试 | CloseBehaviorManager 设置持久化、对话框显示条件与设置面板偏好映射 |
 | **config-detection.property.test.ts** | 配置检测属性测试 | ConfigDetectionService |
@@ -349,4 +348,4 @@ it('should call IPC', async () => {
 ---
 
 **版本**: 3.0.5
-**更新日期**: 2026-06-01 - 新增 route-probe-lock 记录语义测试，补充 route-proxy 瞬时错误透传/非终结记录说明
+**更新日期**: 2026-06-17 - 更新站点管理合并页相关测试索引

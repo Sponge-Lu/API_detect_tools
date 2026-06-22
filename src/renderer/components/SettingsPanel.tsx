@@ -26,15 +26,13 @@ import { Settings, Config } from '../App';
 import { useTheme } from '../hooks/useTheme';
 import { useUpdate, UpdateCheckResult } from '../hooks/useUpdate';
 import { toast } from '../store/toastStore';
-import { useUIStore } from '../store/uiStore';
+import { useUIStore, type SettingsSection } from '../store/uiStore';
 import { WebDAVConfig, DEFAULT_WEBDAV_CONFIG } from '../../shared/types/site';
 import { WebDAVBackupDialog } from './dialogs';
 import { AppInput } from './AppInput';
 import { THEME_PRESETS, type ThemeMode } from '../../shared/theme/themePresets';
 
 // 设置分类定义
-type SettingsSection = 'general' | 'detection' | 'sync' | 'update' | 'data';
-
 const sections: { id: SettingsSection; label: string; icon: LucideIcon }[] = [
   { id: 'general', label: '外观与行为', icon: Sun },
   { id: 'detection', label: '检测设置', icon: Monitor },
@@ -70,7 +68,8 @@ export function SettingsPanel({
   asPage = false,
 }: SettingsPanelProps) {
   const [formData, setFormData] = useState<Settings>(settings);
-  const [activeSection, setActiveSection] = useState<SettingsSection>('general');
+  const activeSection = useUIStore(state => state.activeSettingsSection);
+  const setActiveSection = useUIStore(state => state.setActiveSettingsSection);
   const { themeMode, changeThemeMode } = useTheme();
   const fileInputRef = useRef<HTMLInputElement>(null);
 

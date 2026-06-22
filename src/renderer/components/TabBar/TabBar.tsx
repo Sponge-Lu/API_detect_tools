@@ -1,5 +1,5 @@
 import { useRef, useLayoutEffect, useState, useCallback } from 'react';
-import { Server, Terminal, Coins, Settings } from 'lucide-react';
+import { Server, Coins, Settings } from 'lucide-react';
 import type { TabId } from '../../store/uiStore';
 import { LDC_UI_VISIBILITY } from '../../../shared/constants';
 
@@ -10,7 +10,6 @@ interface TabBarProps {
 
 const tabs: { id: TabId; label: string; icon: typeof Server }[] = [
   { id: 'sites', label: '站点管理', icon: Server },
-  { id: 'cli', label: '自定义CLI', icon: Terminal },
   { id: 'credit', label: 'LDC 积分', icon: Coins },
   { id: 'settings', label: '设置', icon: Settings },
 ];

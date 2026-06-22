@@ -201,10 +201,10 @@ export interface RouteRuntimeConfig {
 export const DEFAULT_ROUTE_VENDOR_SITE_PRIORITY = 0;
 export const DEFAULT_ROUTE_VENDOR_API_KEY_PRIORITY = 0;
 export const DEFAULT_ROUTE_RUNTIME_CONFIG: RouteRuntimeConfig = {
-  maxAttemptsPerRoutePath: 1,
-  successRateWindowMinutes: 5,
-  disableDurationMinutes: 30,
-  minSuccessRate: 0.8,
+  maxAttemptsPerRoutePath: 3,
+  successRateWindowMinutes: 60,
+  disableDurationMinutes: 60,
+  minSuccessRate: 0.3,
 };
 
 export function buildRouteApiKeyPriorityKey(
@@ -414,6 +414,25 @@ export interface RouteAnalyticsConfig {
   firstByteHistogramBuckets: number[];
 }
 
+/** History 时间桶数据结构 */
+export interface HistoryBucket {
+  bucketStart: number;
+  bucketEnd: number;
+  successRate: number | null;
+  probeCount: number;
+  routeCount: number;
+}
+
+/** History 时间桶查询参数 */
+export interface RouteHistoryBucketsQuery {
+  window: '48h';
+  bucketSize: '2h';
+  siteId?: string;
+  accountId?: string;
+  cliType: RouteCliType;
+  mode: 'combined' | 'probe-only' | 'route-only';
+}
+
 /** 小时级分析桶 */
 export interface RouteAnalyticsBucket {
   bucketKey: string;
@@ -592,7 +611,7 @@ export const DEFAULT_ROUTE_PROXY_SERVER_CONFIG: RouteProxyServerConfig = {
 export const DEFAULT_CLI_PROBE_CONFIG: RouteCliProbeConfig = {
   enabled: false,
   intervalMinutes: 240,
-  modelsPerCli: 3,
+  modelsPerCli: 1,
   requestTimeoutMs: 30000,
   maxConcurrency: 3,
   retentionDays: 30,

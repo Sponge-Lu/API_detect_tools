@@ -184,3 +184,117 @@ await copyDirectory(app.getPath('userData'), backupDir);
 // Includes only manifest-approved full-manifest files.
 const content = await createAppStorageBundleContent();
 ```
+
+## Scenario: Managed Site Account-Scoped Persistence
+
+### 1. Scope / Trigger
+
+- Trigger: adding a managed site from the renderer collects both site identity and login/account
+  credentials, but only site-shared intent may be written to `config.sites`.
+- Trigger: legacy configs can contain account-private data on a site even after an account record
+  already exists, so main-process load must repair the boundary before normal saves continue.
+- Files: `src/renderer/pages/SitesPage.tsx`, `src/renderer/components/SiteEditor.tsx`,
+  `src/main/handlers/account-handlers.ts`, `src/main/preload.ts`,
+  `src/main/unified-config-manager.ts`, `src/renderer/App.tsx`, and
+  `src/__tests__/unified-config-manager.test.ts`.
+
+### 2. Signatures
+
+```ts
+// Renderer add flow
+window.electronAPI.sites.add(siteSharedPayload);
+window.electronAPI.accounts.add({
+  site_id: string;
+  account_name: string;
+  user_id: string;
+  access_token: string;
+  auth_source: 'manual' | 'main_profile' | 'isolated_profile';
+  browser_profile_path?: string;
+  anyRouterConfig?: { userHash?: string };
+});
+
+// Main load repair
+UnifiedConfigManager.loadConfig(): Promise<UnifiedConfig>;
+```
+
+### 3. Contracts
+
+- New managed-site creation is a two-record write:
+  - `sites.add(...)` receives only site-shared fields such as id/name/url/site type and stable
+    site-level configuration.
+  - `accounts.add(...)` receives account-specific credentials and private account configuration.
+- `SiteEditor` may collect `systemToken`, `userId`, `accountName`, and Any Router user hash for the
+  initial account, but `SitesPage` must strip those fields before calling `sites.add(...)`.
+- `config.sites[]` must not persist account-private fields: `access_token`, `system_token`,
+  `user_id`, `cached_data`, `api_keys`, balance/usage counters, or Any Router user hash.
+- `config.accounts[]` owns stable account intent: account name, credential source, user id, access
+  token, browser profile binding, auto-refresh settings, account-scoped CLI config, and Any Router
+  user hash.
+- Detection/runtime values that differ by account, such as balance, today usage, API keys, check-in
+  state, and request/token counters, are stored in `runtime-cache.json` under the account owner.
+- When a config is loaded and a site has existing accounts plus legacy site-level auth/cache fields,
+  `UnifiedConfigManager` must migrate missing credential/cache values to the matching or first
+  account, then remove the legacy fields from the site before saving.
+
+### 4. Validation & Error Matrix
+
+| Case | Boundary | Expected behavior |
+| --- | --- | --- |
+| Smart/manual add returns `systemToken` and `userId` | renderer -> IPC | Create the site via `sites.add(siteSharedPayload)`, then create the default account via `accounts.add(...)` |
+| `accounts.add(...)` includes `anyRouterConfig.userHash` | IPC -> config manager | Persist the hash on the account record, never on the site |
+| Site add succeeds but account add fails | renderer workflow | Surface the account creation error instead of silently leaving credentials on the site |
+| Legacy site has accounts plus site-level `access_token`/`user_id` | load migration | Copy missing values to the matching account and delete the site-level fields |
+| Legacy site has site-level `cached_data` | load migration | Move owner cache to account runtime cache and delete `site.cached_data` |
+| Legacy site has no accounts but has site-level credentials | load migration | Repair a default account first, then continue with account-scoped persistence |
+| Detection refresh writes balance/API keys/today usage | service -> storage | Persist runtime cache for the account owner; stable `config.json` stays free of detection cache |
+
+### 5. Good/Base/Bad Cases
+
+- Good: a newly added managed site stores only site identity/shared config on `config.sites[]`, while
+  the default account stores the token, user id, auth source, and Any Router user hash.
+- Good: restarting the app after a legacy save removes site-level auth/cache fields and keeps the
+  account usable because the data was migrated to the account owner.
+- Base: `auth_source: 'manual'` is valid for smart-add login flows that used a temporary login
+  browser rather than a persistent main/isolated browser profile.
+- Bad: calling the legacy `addSite(site)` path with `system_token` or `user_id` in the site payload;
+  this recreates site-level credentials and makes multi-account state ambiguous.
+- Bad: saving balance, today usage, or API keys to a site object because those values can differ per
+  account and must survive through account-owned runtime cache instead.
+
+### 6. Tests Required
+
+- `src/__tests__/sites-page-redesign.test.tsx`: assert new managed-site creation calls
+  `sites.add(buildSitePayloadForCreate(site))` and then `accounts.add(...)`, and does not call the
+  legacy store-level site add path with credential fields.
+- `src/__tests__/unified-config-manager.test.ts`: assert loading a config with existing accounts and
+  legacy site-level auth/cache fields migrates those values to the account owner and clears the
+  site-level fields from persisted config.
+- IPC bridge tests or source contract assertions must cover any new `accounts.add(...)` field that
+  crosses preload/main/renderer typing, such as `anyRouterConfig`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+// Persists account credentials on the site and lets the legacy repair path guess later.
+await addSite({
+  ...site,
+  system_token: autoInfo.systemToken,
+  user_id: autoInfo.userId,
+});
+```
+
+#### Correct
+
+```ts
+const siteResult = await window.electronAPI.sites.add(buildSitePayloadForCreate(site));
+await window.electronAPI.accounts.add({
+  site_id: siteResult.data.id,
+  account_name: accountName || '默认账户',
+  user_id: autoInfo.userId,
+  access_token: autoInfo.systemToken,
+  auth_source: 'manual',
+  anyRouterConfig,
+});
+```

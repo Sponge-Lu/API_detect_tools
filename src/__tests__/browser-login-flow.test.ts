@@ -305,62 +305,215 @@ describe('browser login flow', () => {
       default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     }));
 
-    const { ChromeManager } = await import('../main/chrome-manager');
-    const manager = new ChromeManager();
-
-    const page = {
-      url: vi.fn(() => ':'),
-      goto: vi.fn(async () => undefined),
-      evaluate: vi.fn(async (...args: any[]) => {
-        const requestUrl = args[1];
-        if (typeof requestUrl !== 'string') {
-          return 'https://demo.example.com/dashboard';
-        }
-        if (requestUrl === 'https://demo.example.com/api/user/self') {
-          return {
-            userId: 7,
-            username: 'demo',
-            accessToken: null,
-            systemName: null,
-            siteTypeHint: null,
-          };
-        }
-        if (requestUrl === 'https://demo.example.com/api/status') {
-          return 'Demo Site';
-        }
-        throw new Error(`Unexpected URL: ${requestUrl}`);
-      }),
-      isClosed: vi.fn(() => false),
-    };
-
-    (manager as any).loginBrowserState = {
-      browser: null,
-      chromeProcess: null,
-      debugPort: 0,
-      isClosed: false,
-      abortController: new AbortController(),
-    };
-
-    const result = await (manager as any).getUserDataFromApi(
-      page,
-      'http://demo.example.com',
-      'newapi',
-      true
-    );
-
-    expect(result).toMatchObject({
-      userId: 7,
-      username: 'demo',
-      systemName: 'Demo Site',
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === 'https://demo.example.com/api/user/self') {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            data: {
+              id: 7,
+              username: 'demo',
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (url === 'https://demo.example.com/api/status') {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            data: {
+              system_name: 'Demo Site',
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      throw new Error(`Unexpected URL: ${url}`);
     });
-    expect(page.evaluate).toHaveBeenCalledWith(
-      expect.any(Function),
-      'https://demo.example.com/api/user/self'
-    );
-    expect(page.evaluate).toHaveBeenCalledWith(
-      expect.any(Function),
-      'https://demo.example.com/api/status'
-    );
+    globalThis.fetch = fetchMock as any;
+
+    try {
+      const { ChromeManager } = await import('../main/chrome-manager');
+      const manager = new ChromeManager();
+      const page = {
+        url: vi.fn(() => ':'),
+        goto: vi.fn(async () => undefined),
+        evaluate: vi
+          .fn()
+          .mockResolvedValueOnce('https://demo.example.com/dashboard')
+          .mockResolvedValueOnce(7),
+        createCDPSession: vi.fn(async () => ({
+          send: vi.fn(async () => ({
+            cookies: [
+              {
+                name: 'new-api-user',
+                value: 'browser-session',
+                domain: '.demo.example.com',
+                path: '/',
+                secure: true,
+              },
+            ],
+          })),
+          detach: vi.fn(async () => undefined),
+        })),
+        isClosed: vi.fn(() => false),
+      };
+
+      (manager as any).loginBrowserState = {
+        browser: null,
+        chromeProcess: null,
+        debugPort: 0,
+        isClosed: false,
+        abortController: new AbortController(),
+      };
+
+      const result = await (manager as any).getUserDataFromApi(
+        page,
+        'http://demo.example.com',
+        'newapi',
+        true
+      );
+
+      expect(result).toMatchObject({
+        userId: 7,
+        username: 'demo',
+        systemName: 'Demo Site',
+      });
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://demo.example.com/api/user/self',
+        expect.objectContaining({ method: 'GET' })
+      );
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://demo.example.com/api/status',
+        expect.objectContaining({ method: 'GET' })
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('getUserDataFromApi 应使用主进程携带浏览器 Cookie 请求，避免 CSP/CORS 卡住登录检测', async () => {
+    vi.doMock('puppeteer-core', () => ({
+      default: {},
+    }));
+    vi.doMock('electron', () => ({
+      app: {
+        getPath: vi.fn(() => 'C:/tmp'),
+      },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (url === 'https://demo.example.com/api/status') {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            data: {
+              system_name: 'Demo Site',
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (url !== 'https://demo.example.com/api/user/self') {
+        throw new Error(`Unexpected URL: ${url}`);
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          data: {
+            id: 7,
+            username: 'demo',
+            access_token: 'fresh-token',
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    });
+    globalThis.fetch = fetchMock as any;
+
+    try {
+      const { ChromeManager } = await import('../main/chrome-manager');
+      const manager = new ChromeManager();
+      const detach = vi.fn(async () => undefined);
+      const page = {
+        url: vi.fn(() => 'https://demo.example.com/dashboard'),
+        evaluate: vi.fn(async (...args: any[]) => {
+          const fn = args[0];
+          if (typeof fn === 'function' && fn.toString().includes('fetch(')) {
+            throw new Error('page-context fetch should not be used');
+          }
+          return 7;
+        }),
+        createCDPSession: vi.fn(async () => ({
+          send: vi.fn(async (method: string) => {
+            expect(method).toBe('Network.getAllCookies');
+            return {
+              cookies: [
+                {
+                  name: 'new-api-user',
+                  value: 'browser-session',
+                  domain: '.demo.example.com',
+                  path: '/',
+                  secure: true,
+                },
+              ],
+            };
+          }),
+          detach,
+        })),
+        isClosed: vi.fn(() => false),
+      };
+
+      (manager as any).loginBrowserState = {
+        browser: null,
+        chromeProcess: null,
+        debugPort: 0,
+        isClosed: false,
+        abortController: new AbortController(),
+      };
+
+      const result = await (manager as any).getUserDataFromApi(
+        page,
+        'http://demo.example.com',
+        'newapi',
+        true
+      );
+
+      expect(result).toMatchObject({
+        userId: 7,
+        username: 'demo',
+        accessToken: 'fresh-token',
+        systemName: 'Demo Site',
+        dataSource: 'api',
+      });
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://demo.example.com/api/user/self',
+        expect.objectContaining({
+          method: 'GET',
+          headers: expect.objectContaining({
+            Cookie: 'new-api-user=browser-session',
+            'New-API-User': '7',
+            'Veloera-User': '7',
+            'voapi-user': '7',
+            'User-id': '7',
+            Origin: 'https://demo.example.com',
+            Referer: 'https://demo.example.com/',
+          }),
+        })
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(page.evaluate).toHaveBeenCalledTimes(1);
+      expect(detach).toHaveBeenCalledTimes(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('getLocalStorageData 在首次 API 验证成功后不应重复请求 API 补全', async () => {

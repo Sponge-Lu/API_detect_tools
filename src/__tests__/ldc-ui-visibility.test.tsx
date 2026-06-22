@@ -208,6 +208,7 @@ vi.mock('../renderer/components/CliCompatibilityIcons', () => ({
 }));
 
 import App from '../renderer/App';
+import { APP_PAGE_META } from '../renderer/components/AppShell/pageMeta';
 import { VerticalSidebar } from '../renderer/components/Sidebar/VerticalSidebar';
 import { SiteCardHeader } from '../renderer/components/SiteCard/SiteCardHeader';
 
@@ -221,20 +222,23 @@ describe('LDC UI visibility', () => {
     (window as any).electronAPI.saveConfig = vi.fn().mockResolvedValue(undefined);
   });
 
-  it('shows the LDC credit entry in the sidebar', () => {
+  it('hides the LDC credit entry in the sidebar', () => {
     render(<VerticalSidebar activeTab="sites" onTabChange={vi.fn()} saving={false} />);
 
-    expect(screen.getByText('LDC 积分')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: APP_PAGE_META.credit.navLabel })
+    ).not.toBeInTheDocument();
   });
 
-  it('renders the credit page when the active tab is credit', async () => {
+  it('falls back to the sites page when the persisted active tab is credit', async () => {
     render(<App />);
 
-    expect(await screen.findByText('Mock Credit Page')).toBeInTheDocument();
-    expect(mockSetActiveTab).not.toHaveBeenCalledWith('sites');
+    expect(await screen.findByText('Sidebar:sites')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: APP_PAGE_META.sites.title })).toBeInTheDocument();
+    expect(mockSetActiveTab).toHaveBeenCalledWith('sites');
   });
 
-  it('renders the LDC ratio value in the site header row', () => {
+  it('does not render the hidden LDC ratio value in the site header row', () => {
     const site = {
       id: 'site-1',
       name: 'Example Site',
@@ -278,7 +282,7 @@ describe('LDC UI visibility', () => {
       />
     );
 
-    expect(screen.getByText('9.9')).toBeInTheDocument();
+    expect(screen.queryByText('9.9')).not.toBeInTheDocument();
   });
 
   it('keeps the LDC and CLI column widths when widths are already filtered', () => {

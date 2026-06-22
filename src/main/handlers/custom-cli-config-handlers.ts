@@ -25,6 +25,7 @@ const CHANNELS = {
   LOAD: 'custom-cli-config:load',
   SAVE: 'custom-cli-config:save',
   FETCH_MODELS: 'custom-cli-config:fetch-models',
+  FETCH_MODELS_BY_ID: 'customCliConfig:fetchModels',
 } as const;
 
 /**
@@ -66,6 +67,23 @@ export function registerCustomCliConfigHandlers(): void {
     } catch (error: unknown) {
       Logger.error('❌ [CustomCliConfigHandlers] 拉取模型失败:', error);
       throw error;
+    }
+  });
+
+  // 通过配置 ID 拉取模型
+  ipcMain.handle(CHANNELS.FETCH_MODELS_BY_ID, async (_, configId: string) => {
+    try {
+      Logger.info(`📡 [CustomCliConfigHandlers] 收到拉取模型请求 (configId=${configId})`);
+      const { fetchModels } = await import('../custom-cli-model-service');
+      const result = await fetchModels(configId);
+      return result;
+    } catch (error: unknown) {
+      Logger.error(`❌ [CustomCliConfigHandlers] 拉取模型失败 (configId=${configId}):`, error);
+      return {
+        success: false,
+        models: [],
+        error: error instanceof Error ? error.message : '未知错误',
+      };
     }
   });
 

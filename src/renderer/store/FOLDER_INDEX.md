@@ -28,8 +28,8 @@
 | **configStore.ts** | 配置管理 | 站点列表、分组、设置；删除站点优先走统一 `sites:delete` IPC 并回读配置 |
 | **customCliConfigStore.ts** | 自定义 CLI 配置管理 | 配置列表、当前配置、模型拉取状态；拉取模型后按已拉取模型与 `manualModels` 白名单清理旧模型选择、测试模型与测试结果，并在加载/保存本地编辑时守住模型边界 |
 | **detectionStore.ts** | 检测结果 | 检测状态、结果数据、detectingSites (Set) 并发跟踪 |
-| **uiStore.ts** | UI 状态 | 一级页面切换（默认 `数据总览`）、数据总览子页（站点/路由）、日志子页（会话事件/路由日志）、侧边栏模式、站点列表列宽/排序与弹窗 |
-| **toastStore.ts** | 消息提示 | 可见 Toast 队列、通知历史、会话事件 |
+| **uiStore.ts** | UI 状态 | 一级页面切换（默认 `数据总览`）、数据总览子页（站点/路由）、侧边栏模式、站点列表列宽/排序与弹窗 |
+| **toastStore.ts** | 消息提示 | 可见 Toast 队列、当前会话事件历史；操作记录弹窗只读取 `kind: 'action'` |
 
 ---
 
@@ -149,7 +149,6 @@ useDetectionStore.subscribe(
 interface UiState {
   activeTab: 'overview' | 'sites' | 'cli' | 'usability' | 'route' | 'logs' | 'credit' | 'settings';
   overviewSubtab: 'site' | 'route';
-  logsSubtab: 'session' | 'route';
 
   // 主题
   theme: 'light' | 'dark' | 'system';
@@ -230,7 +229,7 @@ interface ToastState {
 **当前约束**:
 - 一级导航顺序由 `pageMeta.ts` 驱动，`uiStore.activeTab` 默认值已切到 `overview`
 - `uiStore.overviewSubtab` 负责驱动 `数据总览` 的站点/路由子页、Header 文案和 Header 右侧操作
-- `uiStore.logsSubtab` 负责驱动 `日志` 的会话事件/路由日志子页与 Header 文案
+- `路由日志` 是单一主入口，直接展示路由日志，不再由 `uiStore` 维护日志子页状态
 - `route` 保持为配置/操作页，主统计首页迁移到 `overview`
 
 **使用示例**:

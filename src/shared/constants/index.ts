@@ -96,7 +96,7 @@ export const DEFAULT_WINDOW_HEIGHT = 800;
 /** LDC 相关 UI 显示开关（旧导航兼容路径仍会读取） */
 export const LDC_UI_VISIBILITY = {
   showRatioColumn: true,
-  showCreditTab: true,
+  showCreditTab: false,
 } as const;
 
 // ============= 分页相关 =============
@@ -154,17 +154,22 @@ export const LIGHT_THEME_BG_COLOR = '#f8fafc';
 
 // ============= 站点列表默认列宽 =============
 
-/** 站点列表默认列宽（像素） */
+/**
+ * 站点列表默认列宽版本号
+ * 当 DEFAULT_COLUMN_WIDTHS 形状发生变化时递增；uiStore 会据此一次性重置已持久化的列宽
+ */
+export const COLUMN_WIDTHS_VERSION = 5;
+
+/** 站点列表默认列宽（像素）— 站点、账户、刷新时间拆列，History 列保留 24 个时间桶展示空间 */
 export const DEFAULT_COLUMN_WIDTHS = [
-  142, // 站点（两行：站点名 / 账户名 + 更新时间）
-  86, // 站点类型
-  88, // 余额
-  78, // 今日消费
-  110, // Token统计
-  92, // 请求统计
-  56, // 模型数
-  72, // LDC
-  180, // CLI可用性
+  180, // 站点名
+  112, // 账户
+  84, // 刷新时间
+  84, // 余额
+  70, // 今日消费（减少约一个汉字宽度）
+  50, // 模型数（减少约一个汉字宽度，保留最小列宽）
+  64, // LDC
+  320, // History（旧 CLI 图标选择器 + 模式切换 + 24个时间桶条形图）
 ] as const;
 
 /** LDC 支付方式名称匹配列表（不同站点可能使用不同名称） */
@@ -181,4 +186,4 @@ export const LDC_PAYMENT_NAMES = [
 export const COLUMN_MIN_WIDTH = 50;
 
 /** 列宽最大值 */
-export const COLUMN_MAX_WIDTH = 320;
+export const COLUMN_MAX_WIDTH = 480;

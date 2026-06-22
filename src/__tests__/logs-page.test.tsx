@@ -14,20 +14,11 @@ import type { Config } from '../renderer/App';
 import { LogsPage } from '../renderer/pages/LogsPage';
 import { useConfigStore } from '../renderer/store/configStore';
 import { useRouteStore } from '../renderer/store/routeStore';
-import { useToastStore, type AppEventItem } from '../renderer/store/toastStore';
 
-function buildEvent(
-  partial: Partial<AppEventItem> & Pick<AppEventItem, 'id' | 'message'>
-): AppEventItem {
-  return {
-    id: partial.id,
-    kind: partial.kind ?? 'toast',
-    level: partial.level ?? 'info',
-    source: partial.source ?? 'notification',
-    message: partial.message,
-    createdAt: partial.createdAt ?? Date.now(),
-  };
-}
+const ROUTE_LOG_RESPONSIVE_GRID_TEMPLATE =
+  'minmax(2rem,2fr) minmax(7rem,7fr) minmax(calc(14rem + 2ch),16fr) minmax(20rem,20fr) minmax(4.5rem,4.5fr) minmax(6rem,6fr) minmax(3rem,3fr) minmax(6rem,6fr)';
+const ROUTE_LOG_TOKEN_GRID_TEMPLATE =
+  'minmax(0,calc(20% - 1ch)) minmax(0,20%) minmax(0,calc(20% - 2ch)) minmax(0,calc(20% + 1ch)) minmax(0,20%)';
 
 function buildRouteLog(
   partial: Partial<RouteRequestLogItem> &
@@ -63,6 +54,18 @@ function buildRouteLog(
     cachedTokens: partial.cachedTokens,
     error: partial.error,
   };
+}
+
+function findRouteLogRowByRequestId(requestId: string): HTMLElement | undefined {
+  return screen
+    .getAllByTestId('route-request-log-row')
+    .find(row => row.getAttribute('data-route-request-id') === requestId);
+}
+
+function getRouteLogRowByRequestId(requestId: string): HTMLElement {
+  const row = findRouteLogRowByRequestId(requestId);
+  expect(row).toBeDefined();
+  return row!;
 }
 
 function buildRouteConfigForLogs(params: {
@@ -179,10 +182,6 @@ describe('LogsPage', () => {
       return vi.fn(() => {
         routeRequestLogListener = null;
       });
-    });
-    useToastStore.setState({
-      toasts: [],
-      eventHistory: [],
     });
     useRouteStore.setState({ config: null });
     useConfigStore.setState({
@@ -410,61 +409,7 @@ describe('LogsPage', () => {
       });
   });
 
-  it('filters session events by notification and action kinds and clears history', () => {
-    useToastStore.setState({
-      eventHistory: [
-        buildEvent({
-          id: 'event-1',
-          kind: 'toast',
-          level: 'error',
-          source: 'notification',
-          message: '通知：模型重定向目录已重建',
-          createdAt: 1,
-        }),
-        buildEvent({
-          id: 'event-2',
-          kind: 'action',
-          level: 'success',
-          source: 'route',
-          message: '操作：模型重定向已更新',
-          createdAt: 2,
-        }),
-      ],
-    });
-
-    render(<LogsPage />);
-
-    expect(screen.getByText('总记录').parentElement).toHaveTextContent('总记录2');
-    const notificationStat = screen
-      .getAllByText('通知')
-      .find(element => element.parentElement?.textContent === '通知1');
-    expect(notificationStat?.parentElement).toHaveTextContent('通知1');
-    expect(screen.getByText('关键操作').parentElement).toHaveTextContent('关键操作1');
-    expect(screen.queryByRole('button', { name: '会话事件' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '路由日志' })).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(
-        '这里会保留本次启动后的通知与关键操作记录。Toast 只显示摘要，完整内容在此页查看。'
-      )
-    ).not.toBeInTheDocument();
-    expect(screen.getByText('通知：模型重定向目录已重建')).toBeInTheDocument();
-    expect(screen.getByText('操作：模型重定向已更新')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: '通知' }));
-    expect(screen.getByText('通知：模型重定向目录已重建')).toBeInTheDocument();
-    expect(screen.queryByText('操作：模型重定向已更新')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: '操作' }));
-    expect(screen.queryByText('通知：模型重定向目录已重建')).not.toBeInTheDocument();
-    expect(screen.getByText('操作：模型重定向已更新')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: '清空会话记录' }));
-    expect(useToastStore.getState().eventHistory).toHaveLength(0);
-    expect(screen.getByText('暂无会话记录')).toBeInTheDocument();
-    expect(screen.queryByText(/当前筛选条件下还没有通知或关键操作/)).not.toBeInTheDocument();
-  });
-
-  it('renders route request details from the route log subpage and clears logs', async () => {
+  it('renders route request details from the logs page and clears logs', async () => {
     vi.mocked(routeApi.getRequestLogs).mockResolvedValue({
       success: true,
       data: [
@@ -549,7 +494,7 @@ describe('LogsPage', () => {
       ],
     });
 
-    render(<LogsPage activeView="route" />);
+    render(<LogsPage />);
 
     await waitFor(() => {
       expect(routeApi.getRequestLogs).toHaveBeenCalledWith({ limit: 200 });
@@ -563,7 +508,19 @@ describe('LogsPage', () => {
       )
     ).not.toBeInTheDocument();
 
-    expect(await screen.findByText('请求 codex-1')).toBeInTheDocument();
+    await waitFor(() => expect(getRouteLogRowByRequestId('codex-1')).toBeInTheDocument());
+    expect(screen.getByTestId('logs-page-surface')).not.toHaveClass(
+      'rounded-[var(--radius-lg)]',
+      'shadow-[var(--shadow-md)]'
+    );
+    const header = screen.getByTestId('route-request-log-header');
+    expect(header).toHaveTextContent(
+      'CLI原始模型路由目标Token（总/输入/输出/缓存写/缓存读）预计金额用时/首字状态时间'
+    );
+    expect(header.parentElement).toHaveClass('w-full');
+    expect(header.parentElement).toHaveStyle({ minWidth: 'calc(62.5rem + 2ch)' });
+    expect(header.style.gridTemplateColumns).toBe(ROUTE_LOG_RESPONSIVE_GRID_TEMPLATE);
+    expect(screen.queryByRole('button', { name: '刷新' })).not.toBeInTheDocument();
     expect(screen.getByText('总尝试').parentElement).toHaveTextContent('总尝试4');
     const successStat = screen
       .getAllByText('成功')
@@ -574,128 +531,110 @@ describe('LogsPage', () => {
       .find(element => element.parentElement?.textContent === '失败1');
     expect(failureStat?.parentElement).toHaveTextContent('失败1');
     expect(screen.queryByText('中性')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(4));
     const rows = screen.getAllByTestId('route-request-log-row');
-    expect(rows[0]).toHaveClass('px-4', 'py-2.5', '[contain-intrinsic-size:96px]');
+    expect(rows[0]).toHaveClass('px-4', 'py-2', '[contain-intrinsic-size:64px]');
     expect(rows[0]).not.toHaveClass('py-4');
-    expect(screen.getByText('HTTP 502')).toBeInTheDocument();
-    const metaLine = within(rows[0]).getByTestId('route-request-meta-line');
-    expect(metaLine).toHaveClass('md:grid-cols-[minmax(0,1fr)_auto]');
-    expect(within(rows[0]).getByText('Codex')).toHaveClass(
-      'border-[#93afa4]',
-      'bg-[#93afa4]',
-      'text-white'
+    expect(screen.queryByText('HTTP 502')).not.toBeInTheDocument();
+    const tableLine = within(rows[0]).getByTestId('route-request-table-line');
+    expect(tableLine.style.gridTemplateColumns).toBe(ROUTE_LOG_RESPONSIVE_GRID_TEMPLATE);
+    expect(tableLine).toHaveClass('gap-x-2');
+    expect(within(rows[0]).getByTestId('route-request-cli-icon')).toHaveAttribute(
+      'aria-label',
+      'Codex'
     );
-    expect(within(rows[0]).getByText('请求 codex-1')).toHaveAttribute(
-      'title',
-      'Codex 请求 通配匹配 gpt-* 时生效；范围：全部站点'
+    expect(within(rows[0]).getByTestId('route-request-cli-icon').className).not.toMatch(
+      /bg-|border/
     );
-    expect(metaLine).toHaveTextContent(
-      /Codex请求 codex-1尝试 #1失败HTTP 502失败信息no_matching_rule/
-    );
-    const detailGrid = within(rows[0]).getByTestId('route-request-detail-grid');
-    expect(detailGrid).toHaveClass(
-      'grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,1fr)_9rem]',
-      'gap-x-3',
-      'text-xs'
-    );
-    expect(detailGrid).toHaveTextContent('路由');
-    expect(detailGrid).toHaveTextContent('用量');
+    expect(within(rows[0]).getByTestId('route-request-cli-icon')).toHaveClass('justify-start');
+    expect(within(rows[0]).queryByTestId('route-request-id-attempt')).not.toBeInTheDocument();
+    expect(rows[0]).toHaveAttribute('data-route-request-id', 'codex-1');
     const modelPath = within(rows[0]).getByTestId('route-request-model-path');
-    expect(modelPath).toHaveTextContent('gpt-5.4→gpt-5.4');
-    expect(modelPath).toHaveAttribute('title', 'gpt-5.4 → gpt-5.4');
+    expect(modelPath).toHaveTextContent('gpt-5.4');
+    expect(modelPath).toHaveAttribute('title', 'gpt-5.4-2025-02-15 → gpt-5.4');
     expect(modelPath).toHaveClass('truncate', 'min-w-0');
     const sitePath = within(rows[0]).getByTestId('route-request-site-path');
     expect(sitePath).toHaveTextContent('站点 A / 主账户 / vip / Key Alpha');
     const sitePathText = within(sitePath).getByText('站点 A / 主账户 / vip / Key Alpha');
-    expect(sitePathText).toHaveAttribute('title', '站点 A / 主账户 / vip / Key Alpha');
+    expect(sitePathText).not.toHaveAttribute('title');
     expect(sitePathText).toHaveClass('truncate', 'min-w-0');
-    const sitePriorityCell = within(rows[0]).getByTestId('route-request-site-priority');
-    expect(sitePriorityCell).toHaveTextContent('优先级 1');
-    expect(sitePriorityCell).not.toHaveTextContent('2');
-    expect(sitePriorityCell).not.toHaveTextContent('90');
-    expect(sitePriorityCell).toHaveClass('justify-self-start', 'whitespace-nowrap');
-    expect(sitePriorityCell).not.toHaveClass('rounded-full');
-    expect(sitePriorityCell.className).not.toMatch(/bg-\[/);
-    expect(within(sitePriorityCell).getByText('1')).toHaveClass('text-[var(--text-primary)]');
-    const redirectArrow = within(modelPath).getByLabelText('指向重定向模型');
-    expect(redirectArrow).toHaveTextContent('→');
-    expect(redirectArrow).toHaveClass('text-[var(--text-tertiary)]');
-    expect(within(rows[0]).getByText('尝试 #1')).toHaveClass('h-5', 'py-0');
+    expect(within(rows[0]).queryByTestId('route-request-site-priority')).not.toBeInTheDocument();
     const failureInfo = within(rows[0]).getByTestId('route-request-failure-info');
-    expect(failureInfo).toHaveTextContent('失败信息no_matching_rule');
-    expect(failureInfo).toHaveClass('h-5', 'py-0', 'rounded-full', 'md:max-w-[32rem]');
+    expect(failureInfo).toHaveTextContent('no_matching_rule');
+    expect(failureInfo.style.gridTemplateColumns).toBe(ROUTE_LOG_RESPONSIVE_GRID_TEMPLATE);
+    expect(failureInfo).toHaveClass('gap-x-2');
     expect(within(rows[1]).queryByTestId('route-request-failure-info')).not.toBeInTheDocument();
     const tokenSummary = within(rows[0]).getByTestId('route-request-token-summary');
-    expect(tokenSummary).toHaveTextContent('Token 150（输入 100，输出 50）');
-    expect(tokenSummary).toHaveClass('truncate', 'tabular-nums');
-    const cacheSummary = within(rows[0]).getByTestId('route-request-cache-summary');
-    expect(cacheSummary).toHaveTextContent('缓存 创建 20 · 命中 40');
-    expect(cacheSummary).toHaveClass('truncate');
+    expect(tokenSummary).toHaveTextContent('T 150IN 100OUT 50C.R 40C.W 20');
+    expect(tokenSummary).toHaveClass('whitespace-nowrap', 'tabular-nums');
+    expect(tokenSummary).not.toHaveAttribute('title');
+    expect(tokenSummary).not.toHaveClass('grid-cols-5');
+    expect(tokenSummary.style.gridTemplateColumns).toBe(ROUTE_LOG_TOKEN_GRID_TEMPLATE);
+    expect(within(tokenSummary).getByText('T')).toHaveClass(
+      'font-mono',
+      'text-[9.5px]',
+      'italic',
+      'text-[var(--text-tertiary)]'
+    );
+    expect(within(tokenSummary).getByText('IN')).toHaveClass(
+      'font-mono',
+      'text-[9.5px]',
+      'italic',
+      'text-[var(--text-tertiary)]'
+    );
+    expect(within(tokenSummary).getByText('C.W')).toHaveClass(
+      'font-mono',
+      'text-[9.5px]',
+      'italic'
+    );
+    expect(
+      within(tokenSummary).getAllByText(/^(T|IN|OUT|C\.R|C\.W)$/)[0].parentElement
+    ).toHaveClass('inline-flex');
+    expect(
+      within(tokenSummary).getAllByText(/^(T|IN|OUT|C\.R|C\.W)$/)[0].parentElement
+    ).not.toHaveClass('gap-px');
     const costCell = within(rows[0]).getByTestId('route-request-cost');
-    expect(costCell).toHaveTextContent('预计金额 ≈4.58e-7');
-    expect(costCell).toHaveClass('justify-self-start', 'whitespace-nowrap');
+    expect(costCell).toHaveTextContent('4.58e-7');
+    expect(costCell).toHaveClass('whitespace-nowrap');
+    expect(within(costCell).getByText('4.58e-7')).not.toHaveClass('font-semibold');
     expect(costCell).not.toHaveClass('rounded-[var(--radius-md)]');
     expect(costCell.className).not.toMatch(/bg-\[/);
-    const formulaButton = within(costCell).getByRole('button', { name: '预计金额计算公式' });
-    fireEvent.mouseEnter(formulaButton);
-    const formulaTooltip = await screen.findByRole('tooltip');
-    expect(formulaTooltip).toHaveTextContent(
-      '仅供参考，不是实际花费金额；模型价格按每 1M token 计，缓存创建按输入价 1.25 倍、缓存命中按输入价 1/10 计入。'
-    );
-    await waitFor(() => {
-      expect(Number.parseFloat(formulaTooltip.style.left)).toBeGreaterThanOrEqual(8);
-      expect(Number.parseFloat(formulaTooltip.style.top)).toBeGreaterThanOrEqual(8);
-      expect(Number.parseFloat(formulaTooltip.style.maxWidth)).toBeLessThanOrEqual(
-        window.innerWidth - 16
-      );
-    });
-    fireEvent.mouseLeave(formulaButton);
-    const sitePathInfoButton = within(sitePath).getByRole('button', {
-      name: '路由目标字段说明',
-    });
-    fireEvent.mouseEnter(sitePathInfoButton);
-    expect(await screen.findByRole('tooltip')).toHaveTextContent(
-      '依次为：站点 / 账户 / 分组 / API Key（此次请求最终命中的来源链路）'
-    );
-    fireEvent.mouseLeave(sitePathInfoButton);
+    expect(within(rows[0]).getByTestId('route-request-status-code')).toHaveTextContent('502');
+    expect(within(rows[0]).getByTestId('route-request-status-code')).not.toHaveAttribute('title');
+    expect(
+      within(costCell).queryByRole('button', { name: '预计金额计算公式' })
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    expect(
+      within(sitePath).queryByRole('button', { name: '路由目标字段说明' })
+    ).not.toBeInTheDocument();
     expect(within(rows[1]).getByTestId('route-request-site-path')).toHaveTextContent(
       '站点 B / 备用账户 / beta / Key Beta'
     );
-    expect(within(rows[1]).getByTestId('route-request-site-priority')).toHaveTextContent(
-      '优先级 0'
-    );
     expect(within(rows[1]).getByTestId('route-request-model-path')).toHaveTextContent(
-      'gpt-5.4-mini→gpt-5.4-mini'
+      'gpt-5.4-mini'
     );
-    expect(within(rows[1]).getByTestId('route-request-cost')).toHaveTextContent(
-      '预计金额 ≈2.70e-9'
+    expect(rows[1]).toHaveAttribute('data-route-request-id', 'codex-2');
+    expect(within(rows[1]).getByTestId('route-request-cost')).toHaveTextContent('2.7e-9');
+    expect(within(rows[1]).getByTestId('route-request-token-summary')).toHaveTextContent(
+      'T 15IN 12OUT 3C.R 0C.W 0'
     );
-    expect(within(rows[1]).getByTestId('route-request-cache-summary')).toHaveTextContent('无缓存');
     const customCliSitePath = within(rows[2]).getByTestId('route-request-site-path');
-    expect(customCliSitePath).toHaveTextContent(/^DuckCoding$/);
-    expect(within(rows[2]).getByTestId('route-request-site-priority')).toHaveTextContent(
-      '优先级 0'
+    expect(customCliSitePath).toHaveTextContent(/^直连配置 \/ DuckCoding$/);
+    expect(customCliSitePath).not.toHaveAttribute('title');
+    expect(within(rows[2]).getByTestId('route-request-cost')).toHaveTextContent('0');
+    expect(
+      within(customCliSitePath).queryByRole('button', { name: '路由目标字段说明' })
+    ).not.toBeInTheDocument();
+    expect(rows[3]).toHaveAttribute('data-route-request-id', 'codex-cache');
+    expect(within(rows[3]).getByTestId('route-request-token-summary')).toHaveTextContent(
+      'T 100IN 100OUT 0C.R 40C.W 0'
     );
-    expect(within(rows[2]).getByTestId('route-request-cost')).toHaveTextContent('预计金额 无');
-    const customCliInfoButton = within(customCliSitePath).getByRole('button', {
-      name: '路由目标字段说明',
-    });
-    fireEvent.mouseEnter(customCliInfoButton);
-    expect(await screen.findByRole('tooltip')).toHaveTextContent(
-      '自定义 CLI 来源（账户 / 分组 / API Key 不适用）'
-    );
-    fireEvent.mouseLeave(customCliInfoButton);
-    expect(rows[3]).toHaveTextContent('请求 codex-cache');
-    expect(within(rows[3]).getByTestId('route-request-cache-summary')).toHaveTextContent(
-      '缓存 命中 40'
-    );
-    expect(within(rows[3]).getByTestId('route-request-cost')).toHaveTextContent(
-      '预计金额 ≈1.28e-7'
-    );
+    expect(within(rows[3]).getByTestId('route-request-cost')).toHaveTextContent('1.28e-7');
     expect(screen.queryByText(/^规则说明：/)).not.toBeInTheDocument();
     expect(screen.queryByText(/规则优先级/)).not.toBeInTheDocument();
-    expect(screen.getByText(/用时1\.23s\/首字456ms/)).toBeInTheDocument();
-    expect(screen.getByText(/用时789ms\/首字120ms/)).toBeInTheDocument();
+    expect(screen.getByText(/1\.23s\/456ms/)).toBeInTheDocument();
+    expect(screen.getByText(/789ms\/120ms/)).toBeInTheDocument();
     expect(
       screen.queryByText(
         '口径：总耗时=代理发出上游请求到响应结束；首字节=代理发出上游请求到收到首个响应数据块。'
@@ -828,14 +767,49 @@ describe('LogsPage', () => {
       },
     });
 
-    render(<LogsPage activeView="route" />);
+    render(<LogsPage />);
 
-    expect(await screen.findByText('请求 priority-zero')).toBeInTheDocument();
-    const sitePriorityCell = screen.getByTestId('route-request-site-priority');
-    expect(sitePriorityCell).toHaveTextContent('优先级 0');
-    expect(sitePriorityCell).not.toHaveTextContent('1');
-    expect(sitePriorityCell).not.toHaveTextContent('90');
-    expect(sitePriorityCell).not.toHaveTextContent('99');
+    await waitFor(() => expect(getRouteLogRowByRequestId('priority-zero')).toBeInTheDocument());
+    const row = getRouteLogRowByRequestId('priority-zero');
+    expect(within(row).getByTestId('route-request-site-path')).toHaveTextContent(
+      '站点 A / 主账户 / vip / Key Alpha'
+    );
+    expect(within(row).queryByTestId('route-request-site-priority')).not.toBeInTheDocument();
+  });
+
+  it('truncates long route path site names without adding hover text', async () => {
+    vi.mocked(routeApi.getRequestLogs).mockResolvedValue({
+      success: true,
+      data: [
+        buildRouteLog({
+          id: 'route-long-site-name',
+          requestId: 'long-site-name',
+          cliType: 'codex',
+          attempt: 1,
+          outcome: 'success',
+          createdAt: 100,
+          siteId: 'site-long',
+          siteName: '超级超级超级超级站点',
+          accountId: 'acct-long',
+          accountName: '长名称账户',
+          apiKeyId: 'key-long',
+          apiKeyName: 'Key Long',
+          userGroupKey: 'vip',
+          requestedModel: 'unregistered-model',
+          canonicalModel: 'unregistered-model',
+          resolvedModel: 'unregistered-model',
+        }),
+      ],
+    });
+
+    render(<LogsPage />);
+
+    await waitFor(() => expect(getRouteLogRowByRequestId('long-site-name')).toBeInTheDocument());
+    const sitePath = within(getRouteLogRowByRequestId('long-site-name')).getByTestId(
+      'route-request-site-path'
+    );
+    expect(sitePath).toHaveTextContent('超级超级… / 长名称账户 / vip / Key Long');
+    expect(sitePath).not.toHaveAttribute('title');
   });
 
   it('recomputes existing route log priorities from the latest route config', async () => {
@@ -873,11 +847,13 @@ describe('LogsPage', () => {
       updatedAt: 1,
     };
 
-    render(<LogsPage activeView="route" />);
+    render(<LogsPage />);
 
-    expect(await screen.findByText('请求 latest-priority')).toBeInTheDocument();
-    const sitePriorityCell = screen.getByTestId('route-request-site-priority');
-    expect(sitePriorityCell).toHaveTextContent('优先级 1');
+    await waitFor(() => expect(getRouteLogRowByRequestId('latest-priority')).toBeInTheDocument());
+    const routePathCell = within(getRouteLogRowByRequestId('latest-priority')).getByTestId(
+      'route-request-site-path'
+    );
+    expect(routePathCell).toHaveTextContent('站点 A / 主账户 / vip / Key Alpha');
 
     await act(async () => {
       useRouteStore.setState({
@@ -890,9 +866,9 @@ describe('LogsPage', () => {
     });
 
     await waitFor(() => {
-      expect(sitePriorityCell).toHaveTextContent('优先级 0');
+      expect(routePathCell).toHaveTextContent('站点 A / 主账户 / vip / Key Alpha');
     });
-    expect(sitePriorityCell).not.toHaveTextContent('优先级 1');
+    expect(screen.queryByTestId('route-request-site-priority')).not.toBeInTheDocument();
   });
 
   it('refreshes route config after a display item save when the route store config is missing', async () => {
@@ -946,11 +922,12 @@ describe('LogsPage', () => {
       data: savedRegistry,
     });
 
-    render(<LogsPage activeView="route" />);
+    render(<LogsPage />);
 
-    expect(await screen.findByText('请求 save-refresh')).toBeInTheDocument();
-    const sitePriorityCell = screen.getByTestId('route-request-site-priority');
-    expect(sitePriorityCell).toHaveTextContent('优先级 1');
+    await waitFor(() => expect(getRouteLogRowByRequestId('save-refresh')).toBeInTheDocument());
+    expect(
+      within(getRouteLogRowByRequestId('save-refresh')).getByTestId('route-request-site-path')
+    ).toHaveTextContent('站点 A / 主账户 / vip / Key Alpha');
 
     await act(async () => {
       useRouteStore.setState({ config: null });
@@ -958,10 +935,9 @@ describe('LogsPage', () => {
     });
 
     await waitFor(() => {
-      expect(sitePriorityCell).toHaveTextContent('优先级 0');
+      expect(routeApi.getConfig).toHaveBeenCalledTimes(2);
     });
     expect(routeApi.upsertModelDisplayItem).toHaveBeenCalledWith(savedRegistry.displayItems[0]);
-    expect(routeApi.getConfig).toHaveBeenCalledTimes(2);
   });
 
   it('appends pushed route logs without reloading the snapshot', async () => {
@@ -979,9 +955,12 @@ describe('LogsPage', () => {
       ],
     });
 
-    render(<LogsPage activeView="route" />);
+    render(<LogsPage />);
 
-    expect(await screen.findByText('请求 initial')).toBeInTheDocument();
+    await waitFor(() => expect(getRouteLogRowByRequestId('initial')).toBeInTheDocument());
+    expect(
+      within(getRouteLogRowByRequestId('initial')).queryByTestId('route-request-id-attempt')
+    ).not.toBeInTheDocument();
     expect(routeApi.getRequestLogs).toHaveBeenCalledTimes(1);
 
     await act(async () => {
@@ -1000,19 +979,14 @@ describe('LogsPage', () => {
 
     expect(routeApi.getRequestLogs).toHaveBeenCalledTimes(1);
     expect(screen.queryByText('正在加载路由日志...')).not.toBeInTheDocument();
-    expect(await screen.findByText('请求 live')).toBeInTheDocument();
+    await waitFor(() => expect(getRouteLogRowByRequestId('live')).toBeInTheDocument());
     const rows = screen.getAllByTestId('route-request-log-row');
-    expect(rows[0]).toHaveTextContent('请求 live');
-    expect(rows[1]).toHaveTextContent('请求 initial');
+    expect(rows[0]).toHaveAttribute('data-route-request-id', 'live');
+    expect(rows[1]).toHaveAttribute('data-route-request-id', 'initial');
   });
 
-  it('subscribes to pushed route logs only while the route log subpage is visible', async () => {
-    const { rerender } = render(<LogsPage activeView="session" />);
-
-    expect(routeApi.onRequestLogAppended).not.toHaveBeenCalled();
-    expect(routeRequestLogListener).toBeNull();
-
-    rerender(<LogsPage activeView="route" />);
+  it('subscribes to pushed route logs while the logs page is mounted', async () => {
+    const { unmount } = render(<LogsPage />);
 
     await waitFor(() => {
       expect(routeApi.getRequestLogs).toHaveBeenCalledWith({ limit: 200 });
@@ -1020,23 +994,19 @@ describe('LogsPage', () => {
     expect(routeApi.onRequestLogAppended).toHaveBeenCalledTimes(1);
     expect(routeRequestLogListener).not.toBeNull();
 
-    rerender(<LogsPage activeView="session" />);
+    unmount();
 
     expect(routeRequestLogListener).toBeNull();
   });
 
-  it('keeps pushed route logs visible while switching into the route log subpage', async () => {
+  it('keeps route logs visible after a delayed initial snapshot resolves', async () => {
     let resolveSnapshot!: (value: { success: true; data: RouteRequestLogItem[] }) => void;
     const snapshotPromise = new Promise<{ success: true; data: RouteRequestLogItem[] }>(resolve => {
       resolveSnapshot = resolve;
     });
     vi.mocked(routeApi.getRequestLogs).mockReturnValueOnce(snapshotPromise);
 
-    const { rerender } = render(<LogsPage activeView="session" />);
-
-    expect(routeRequestLogListener).toBeNull();
-
-    rerender(<LogsPage activeView="route" />);
+    render(<LogsPage />);
 
     await waitFor(() => {
       expect(routeApi.getRequestLogs).toHaveBeenCalledTimes(1);
@@ -1060,7 +1030,7 @@ describe('LogsPage', () => {
       await snapshotPromise;
     });
 
-    expect(screen.getByText('请求 hidden-live')).toBeInTheDocument();
+    expect(getRouteLogRowByRequestId('hidden-live')).toBeInTheDocument();
   });
 
   it('estimates per-call route costs without usage and skips failed attempts', async () => {
@@ -1107,31 +1077,32 @@ describe('LogsPage', () => {
       ],
     });
 
-    render(<LogsPage activeView="route" />);
+    render(<LogsPage />);
 
     await waitFor(() => {
       expect(routeApi.getRequestLogs).toHaveBeenCalledWith({ limit: 200 });
     });
 
+    await waitFor(() => expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(3));
     const rows = screen.getAllByTestId('route-request-log-row');
     expect(within(rows[0]).getByTestId('route-request-token-summary')).toHaveTextContent(
-      'Token 无'
+      'T 0IN 0OUT 0C.R 0C.W 0'
     );
-    expect(within(rows[0]).getByTestId('route-request-cost')).toHaveTextContent('预计金额 ≈0.5');
-    const perCallFormulaButton = within(rows[0]).getByRole('button', {
-      name: '预计金额计算公式',
-    });
-    fireEvent.mouseEnter(perCallFormulaButton);
-    expect(await screen.findByRole('tooltip')).toHaveTextContent(
-      '仅供参考，不是实际花费金额；按单次调用价格估算。'
-    );
-    fireEvent.mouseLeave(perCallFormulaButton);
-    expect(within(rows[1]).getByTestId('route-request-cost')).toHaveTextContent('预计金额 无');
+    expect(within(rows[0]).getByTestId('route-request-cost')).toHaveTextContent('0.5');
+    expect(
+      within(rows[0]).queryByRole('button', {
+        name: '预计金额计算公式',
+      })
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    expect(within(rows[1]).getByTestId('route-request-cost')).toHaveTextContent('0');
     expect(
       within(rows[1]).queryByRole('button', { name: '预计金额计算公式' })
     ).not.toBeInTheDocument();
-    expect(within(rows[2]).getByTestId('route-request-cost')).toHaveTextContent('预计金额 ≈1');
-    expect(within(rows[2]).getByRole('button', { name: '预计金额计算公式' })).toBeInTheDocument();
+    expect(within(rows[2]).getByTestId('route-request-cost')).toHaveTextContent('1');
+    expect(
+      within(rows[2]).queryByRole('button', { name: '预计金额计算公式' })
+    ).not.toBeInTheDocument();
   });
 
   it('filters route request logs by CLI and updates summary counts', async () => {
@@ -1166,20 +1137,24 @@ describe('LogsPage', () => {
       ],
     });
 
-    render(<LogsPage activeView="route" />);
+    render(<LogsPage />);
 
-    expect(await screen.findByText('请求 codex-filter')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(3));
     expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(3);
     const rows = screen.getAllByTestId('route-request-log-row');
-    expect(within(rows[1]).getByText('Claude Code')).toHaveClass(
-      'border-[#d4a093]',
-      'bg-[#d4a093]',
-      'text-white'
+    expect(within(rows[1]).getByTestId('route-request-cli-icon')).toHaveAttribute(
+      'aria-label',
+      'Claude Code'
     );
-    expect(within(rows[2]).getByText('Gemini CLI')).toHaveClass(
-      'border-[#8aa9c7]',
-      'bg-[#8aa9c7]',
-      'text-white'
+    expect(within(rows[1]).getByTestId('route-request-cli-icon').className).not.toMatch(
+      /bg-|border/
+    );
+    expect(within(rows[2]).getByTestId('route-request-cli-icon')).toHaveAttribute(
+      'aria-label',
+      'Gemini CLI'
+    );
+    expect(within(rows[2]).getByTestId('route-request-cli-icon').className).not.toMatch(
+      /bg-|border/
     );
     expect(screen.getByText('总尝试').parentElement).toHaveTextContent('总尝试3');
 
@@ -1190,9 +1165,9 @@ describe('LogsPage', () => {
       'true'
     );
     expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(1);
-    expect(screen.getByText('请求 claude-filter')).toBeInTheDocument();
-    expect(screen.queryByText('请求 codex-filter')).not.toBeInTheDocument();
-    expect(screen.queryByText('请求 gemini-filter')).not.toBeInTheDocument();
+    expect(getRouteLogRowByRequestId('claude-filter')).toBeInTheDocument();
+    expect(findRouteLogRowByRequestId('codex-filter')).toBeUndefined();
+    expect(findRouteLogRowByRequestId('gemini-filter')).toBeUndefined();
     expect(screen.getByText('总尝试').parentElement).toHaveTextContent('总尝试1');
     const successStat = screen
       .getAllByText('成功')
@@ -1207,8 +1182,8 @@ describe('LogsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Gemini CLI' }));
 
     expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(1);
-    expect(screen.getByText('请求 gemini-filter')).toBeInTheDocument();
-    expect(screen.queryByText('请求 claude-filter')).not.toBeInTheDocument();
+    expect(getRouteLogRowByRequestId('gemini-filter')).toBeInTheDocument();
+    expect(findRouteLogRowByRequestId('claude-filter')).toBeUndefined();
 
     fireEvent.click(screen.getByRole('button', { name: '全部' }));
 
@@ -1243,16 +1218,15 @@ describe('LogsPage', () => {
       ],
     });
 
-    render(<LogsPage activeView="route" />);
+    render(<LogsPage />);
 
     await waitFor(() => {
       expect(routeApi.getRequestLogs).toHaveBeenCalledWith({ limit: 200 });
     });
 
-    await screen.findByText('请求 code-only-failure');
-    const rows = screen.getAllByTestId('route-request-log-row');
-    const codeOnlyRow = rows.find(row => within(row).queryByText('请求 code-only-failure'));
-    const upstreamRow = rows.find(row => within(row).queryByText('请求 upstream-failure'));
+    await waitFor(() => expect(getRouteLogRowByRequestId('upstream-failure')).toBeInTheDocument());
+    const codeOnlyRow = findRouteLogRowByRequestId('code-only-failure');
+    const upstreamRow = findRouteLogRowByRequestId('upstream-failure');
 
     expect(codeOnlyRow).toBeDefined();
     expect(upstreamRow).toBeDefined();
@@ -1260,14 +1234,17 @@ describe('LogsPage', () => {
       return;
     }
 
-    expect(within(codeOnlyRow).getByText('HTTP 500')).toBeInTheDocument();
+    expect(within(codeOnlyRow).getByTestId('route-request-status-code')).toHaveTextContent('500');
+    expect(within(codeOnlyRow).queryByText('HTTP 500')).not.toBeInTheDocument();
     expect(within(codeOnlyRow).queryByTestId('route-request-failure-info')).not.toBeInTheDocument();
 
     const failureInfo = within(upstreamRow).getByTestId('route-request-failure-info');
-    expect(within(upstreamRow).getByText('HTTP 503')).toBeInTheDocument();
-    expect(failureInfo).toHaveTextContent('失败信息quota_exceeded: upstream quota exhausted');
-    expect(failureInfo).toHaveClass('overflow-hidden', 'whitespace-nowrap');
-    expect(failureInfo).toHaveAttribute('title', 'quota_exceeded: upstream quota exhausted');
-    expect(failureInfo).not.toHaveTextContent('HTTP 503');
+    expect(within(upstreamRow).getByTestId('route-request-status-code')).toHaveTextContent('503');
+    expect(within(upstreamRow).queryByText('HTTP 503')).not.toBeInTheDocument();
+    expect(failureInfo).toHaveTextContent('quota_exceeded: upstream quota exhausted');
+    expect(failureInfo.style.gridTemplateColumns).toBe(ROUTE_LOG_RESPONSIVE_GRID_TEMPLATE);
+    expect(failureInfo).toHaveClass('gap-x-2');
+    expect(failureInfo).not.toHaveAttribute('title');
+    expect(failureInfo).not.toHaveTextContent('503');
   });
 });

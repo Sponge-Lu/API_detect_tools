@@ -46,6 +46,26 @@ Examples:
 4. `src/renderer/store/routeStore.ts`
    keeps feature-local route workbench state isolated from the rest of the app.
 
+### Zustand selector stability
+
+Zustand selectors used directly in React components must return a stable snapshot unless the
+underlying store value changed. Do not allocate derived arrays or objects inside the selector, such
+as `useToastStore(state => state.eventHistory.filter(...))`; React's `useSyncExternalStore`
+integration can treat each render as a changed snapshot and enter a maximum-update-depth loop.
+
+Preferred pattern:
+
+```tsx
+const eventHistory = useToastStore(state => state.eventHistory);
+const actionEvents = useMemo(
+  () => eventHistory.filter(event => event.kind === 'action'),
+  [eventHistory]
+);
+```
+
+Use this pattern for filtered/sorted store data that is consumed by dialogs, dense lists, or mounted
+page surfaces.
+
 ### Canonical runtime projections
 
 When a runtime result is persisted in a shared canonical cache, renderer state must distinguish the
@@ -158,6 +178,8 @@ Examples:
 - Do not duplicate the same source of truth in both a store and local state unless there is a clear
   synchronization reason.
 - Do not bypass shared stores with ad hoc module-level singletons.
+- Do not return freshly allocated derived arrays/objects from a Zustand selector in a component.
+  Subscribe to the raw store value first, then derive with `useMemo`.
 - Do not forget race protection for async state updates; `routeStore.ts` uses `cliProbeRequestId`
   for a reason.
 - Do not update only the initiating surface after writing a shared runtime cache. Bidirectional

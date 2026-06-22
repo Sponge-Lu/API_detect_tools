@@ -12,6 +12,8 @@
  *
  * LocalStorageData 登录态字段支持:
  * - auth_user / auth_token 可作为登录凭据读取，但不能单独推断为 Sub2API
+ * - 登录验证的 protected API 请求必须由主进程携带浏览器 Cookie 发起，避免 CSP/CORS
+ *   阻断页面内 fetch 后让智能添加卡在“等待登录中”
  *
  * LocalStorageData 签到字段支持两种站点类型:
  * - Veloera: check_in_enabled, can_check_in
@@ -50,6 +52,15 @@ interface LocalStorageData {
   dataSource?: 'localStorage' | 'api' | 'mixed';
   supportsCheckIn?: boolean; // 站点是否支持签到
   canCheckIn?: boolean; // 当前是否可签到
+}
+
+interface BrowserCookie {
+  name: string;
+  value: string;
+  domain: string;
+  path?: string;
+  secure?: boolean;
+  expires?: number;
 }
 
 /** 单个浏览器槽位的状态 */
@@ -1088,6 +1099,16 @@ export class ChromeManager {
     return message.includes('401') || message.includes('403');
   }
 
+  private isBrowserClosureError(error: unknown): boolean {
+    const message = String((error as { message?: string } | null | undefined)?.message || '');
+    return (
+      message.includes('浏览器已关闭') ||
+      message.includes('操作已被取消') ||
+      message.includes('Target closed') ||
+      message.includes('Session closed')
+    );
+  }
+
   private async resolveEffectiveBaseUrl(
     page: Page,
     baseUrl: string,
@@ -1409,32 +1430,57 @@ export class ChromeManager {
     }
   }
 
-  /**
-   * 检查站点是否有有效的 session Cookie（通过 CDP）
-   */
-  private async checkSessionCookieExists(
-    page: Page,
-    baseUrl: string,
-    loginMode?: boolean
-  ): Promise<boolean> {
-    try {
-      const { hostname } = new URL(baseUrl);
-      const client = await page.createCDPSession();
-      const { cookies } = await client.send('Network.getAllCookies');
-      await client.detach();
+  private isCookieVisibleToUrl(cookie: BrowserCookie, target: URL): boolean {
+    const cookieDomain = cookie.domain.startsWith('.') ? cookie.domain.slice(1) : cookie.domain;
+    const hostname = target.hostname.toLowerCase();
+    const domain = cookieDomain.toLowerCase();
+    const domainMatches = hostname === domain || hostname.endsWith(`.${domain}`);
 
-      const sessionCookies = cookies.filter(
-        (c: any) =>
-          (c.domain === hostname || c.domain === `.${hostname}`) &&
-          (c.name.toLowerCase().includes('session') ||
-            c.name.toLowerCase().includes('token') ||
-            c.name.toLowerCase().includes('auth'))
-      );
-
-      return sessionCookies.length > 0;
-    } catch (error: any) {
-      Logger.warn(`⚠️ [ChromeManager] 检查 Cookie 失败: ${error.message}`);
+    if (!domainMatches) {
       return false;
+    }
+
+    if (cookie.secure && target.protocol !== 'https:') {
+      return false;
+    }
+
+    if (
+      typeof cookie.expires === 'number' &&
+      cookie.expires > 0 &&
+      cookie.expires * 1000 < Date.now()
+    ) {
+      return false;
+    }
+
+    const cookiePath = cookie.path || '/';
+    return target.pathname.startsWith(cookiePath) || cookiePath === '/';
+  }
+
+  private async getCookieHeaderForUrl(
+    page: Page,
+    requestUrl: string,
+    loginMode?: boolean
+  ): Promise<string> {
+    try {
+      this.checkBrowserClosed(loginMode);
+      const target = new URL(requestUrl);
+      const client = await page.createCDPSession();
+      try {
+        const { cookies } = await client.send('Network.getAllCookies');
+        const matchingCookies = (cookies as BrowserCookie[]).filter(cookie =>
+          this.isCookieVisibleToUrl(cookie, target)
+        );
+
+        return matchingCookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
+      } finally {
+        await client.detach().catch(() => undefined);
+      }
+    } catch (error: any) {
+      if (this.isBrowserClosureError(error)) {
+        throw error;
+      }
+      Logger.warn(`⚠️ [ChromeManager] 读取浏览器 Cookie 失败: ${error.message}`);
+      return '';
     }
   }
 
@@ -1487,19 +1533,10 @@ export class ChromeManager {
           return localData;
         }
 
-        // 如果有 userId 但没有 accessToken，先检查 Cookie 再决定是否需要 API 验证
+        // 如果有 userId 但没有 accessToken，通过主进程携带浏览器 Cookie 验证登录状态。
+        // 不依赖 Cookie 名称；页面内 fetch 可能被 CSP/CORS 阻断。
         if (localData.userId && !localData.accessToken) {
-          Logger.info('🔄 [ChromeManager] 检测到userId但无accessToken，检查Cookie状态...');
-          const hasCookie = await this.checkSessionCookieExists(page, baseUrl, loginMode);
-
-          if (hasCookie) {
-            Logger.info(
-              `✅ [ChromeManager] Cookie 有效，信任登录状态！用户ID: ${localData.userId}`
-            );
-            return localData;
-          }
-
-          Logger.info('🔄 [ChromeManager] Cookie 无效，尝试API验证登录状态...');
+          Logger.info('🔄 [ChromeManager] 检测到userId但无accessToken，验证浏览器会话...');
           try {
             this.checkBrowserClosed(loginMode);
             const apiData = await this.getUserDataFromApi(page, baseUrl, siteType, loginMode);
@@ -2080,117 +2117,12 @@ export class ChromeManager {
       try {
         Logger.info(`📡 [ChromeManager] 尝试API: ${apiUrl}`);
 
-        const result = await page.evaluate(async (url: string) => {
-          try {
-            const s = (globalThis as any).localStorage;
-            const parseJSON = (str: string | null) => {
-              try {
-                return str ? JSON.parse(str) : null;
-              } catch {
-                return null;
-              }
-            };
-            const user = parseJSON(s.getItem('user')) || {};
-            const siteInfo = parseJSON(s.getItem('siteInfo')) || {};
-            const userInfo = parseJSON(s.getItem('userInfo')) || {};
-            const uid =
-              (user.id ??
-                user.user_id ??
-                user.userId ??
-                user.uid ??
-                user.user_ID ??
-                siteInfo.id ??
-                siteInfo.user_id ??
-                siteInfo.userId ??
-                siteInfo.uid ??
-                userInfo.id ??
-                userInfo.user_id ??
-                userInfo.userId ??
-                s.getItem('user_id') ??
-                s.getItem('userId') ??
-                s.getItem('uid') ??
-                s.getItem('id')) ||
-              null;
-
-            const response = await fetch(url, {
-              method: 'GET',
-              credentials: 'include', // 携带Cookie
-              headers: {
-                Accept: 'application/json, text/plain, */*',
-                'Content-Type': 'application/json',
-                'Cache-Control': 'no-store',
-                Pragma: 'no-cache',
-                ...(uid
-                  ? {
-                      'New-API-User': String(uid),
-                      'Veloera-User': String(uid),
-                      'voapi-user': String(uid),
-                      'User-id': String(uid),
-                    }
-                  : {}),
-              },
-            });
-
-            if (!response.ok) {
-              throw new Error(`HTTP ${response.status}`);
-            }
-
-            const data = (await response.json()) as any;
-
-            // 兼容多种响应格式
-            let userData: any = null;
-            if (typeof data?.code === 'number' && data.data) {
-              userData = data.data;
-            } else if (data.success && data.data) {
-              userData = data.data;
-            } else if (data.data) {
-              userData = data.data;
-            } else if (data.id || data.user_id) {
-              userData = data;
-            }
-
-            if (!userData) {
-              throw new Error('响应格式不正确');
-            }
-
-            return {
-              // User ID 多字段尝试
-              userId:
-                userData.id ||
-                userData.user_id ||
-                userData.userId ||
-                userData.uid ||
-                userData.user_ID ||
-                null,
-              // Username 多字段尝试
-              username:
-                userData.username ||
-                userData.name ||
-                userData.display_name ||
-                userData.displayName ||
-                userData.nickname ||
-                userData.login ||
-                userData.user_name ||
-                null,
-              // Access Token 多字段尝试
-              accessToken:
-                userData.access_token ||
-                userData.accessToken ||
-                userData.token ||
-                userData.auth_token ||
-                userData.authToken ||
-                userData.api_token ||
-                userData.bearer_token ||
-                null,
-              // System Name - 暂不从此接口获取，后续单独获取
-              systemName: null,
-              siteTypeHint: null,
-              dataSource: 'api' as const,
-            };
-          } catch (error: any) {
-            throw new Error(error.message || '请求失败');
-          }
-        }, apiUrl);
+        const result = await this.fetchUserDataWithBrowserSession(
+          page,
+          apiUrl,
+          cleanBaseUrl,
+          loginMode
+        );
 
         Logger.info('📊 [ChromeManager] API返回数据:');
         Logger.info('   - userId:', result.userId);
@@ -2240,6 +2172,179 @@ export class ChromeManager {
     throw new Error('无法从任何API端点获取用户数据');
   }
 
+  private parseUserDataResponse(data: any): LocalStorageData {
+    // 兼容多种响应格式
+    let userData: any = null;
+    if (typeof data?.code === 'number' && data.data) {
+      userData = data.data;
+    } else if (data?.success && data.data) {
+      userData = data.data;
+    } else if (data?.data) {
+      userData = data.data;
+    } else if (data?.id || data?.user_id) {
+      userData = data;
+    }
+
+    if (!userData) {
+      throw new Error('响应格式不正确');
+    }
+
+    return {
+      userId:
+        userData.id ||
+        userData.user_id ||
+        userData.userId ||
+        userData.uid ||
+        userData.user_ID ||
+        null,
+      username:
+        userData.username ||
+        userData.name ||
+        userData.display_name ||
+        userData.displayName ||
+        userData.nickname ||
+        userData.login ||
+        userData.user_name ||
+        null,
+      accessToken:
+        userData.access_token ||
+        userData.accessToken ||
+        userData.token ||
+        userData.auth_token ||
+        userData.authToken ||
+        userData.api_token ||
+        userData.bearer_token ||
+        null,
+      systemName: null,
+      siteTypeHint: null,
+      dataSource: 'api',
+    };
+  }
+
+  private async readUserIdHintFromPage(page: any): Promise<number | string | null> {
+    try {
+      return await page.evaluate(() => {
+        const s = (globalThis as any).localStorage;
+        const parseJSON = (str: string | null) => {
+          try {
+            return str ? JSON.parse(str) : null;
+          } catch {
+            return null;
+          }
+        };
+        const user = parseJSON(s.getItem('user')) || {};
+        const siteInfo = parseJSON(s.getItem('siteInfo')) || {};
+        const userInfo = parseJSON(s.getItem('userInfo')) || {};
+
+        return (
+          user.id ??
+          user.user_id ??
+          user.userId ??
+          user.uid ??
+          user.user_ID ??
+          siteInfo.id ??
+          siteInfo.user_id ??
+          siteInfo.userId ??
+          siteInfo.uid ??
+          userInfo.id ??
+          userInfo.user_id ??
+          userInfo.userId ??
+          s.getItem('user_id') ??
+          s.getItem('userId') ??
+          s.getItem('uid') ??
+          s.getItem('id') ??
+          null
+        );
+      });
+    } catch (error: any) {
+      Logger.info(`ℹ️ [ChromeManager] 读取页面 userId 提示失败: ${error.message}`);
+      return null;
+    }
+  }
+
+  private async fetchJsonWithBrowserSession(
+    page: Page,
+    url: string,
+    userId: number | string | null,
+    loginMode?: boolean
+  ): Promise<any> {
+    this.checkBrowserClosed(loginMode);
+    if (page.isClosed()) {
+      throw new Error('浏览器已关闭，操作已取消');
+    }
+
+    const cookieHeader = await this.getCookieHeaderForUrl(page, url, loginMode);
+    const requestOrigin = new URL(url).origin;
+    const headers: Record<string, string> = {
+      Accept: 'application/json, text/plain, */*',
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+      Pragma: 'no-cache',
+      Origin: requestOrigin,
+      Referer: `${requestOrigin}/`,
+    };
+
+    if (cookieHeader) {
+      headers.Cookie = cookieHeader;
+    }
+
+    if (userId) {
+      const normalizedUserId = String(userId);
+      headers['New-API-User'] = normalizedUserId;
+      headers['Veloera-User'] = normalizedUserId;
+      headers['voapi-user'] = normalizedUserId;
+      headers['User-id'] = normalizedUserId;
+    }
+
+    const response = await fetch(url, { method: 'GET', headers });
+    const text = await response.text();
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${text.substring(0, 200)}`);
+    }
+
+    try {
+      return text ? JSON.parse(text) : null;
+    } catch {
+      throw new Error('响应不是有效 JSON');
+    }
+  }
+
+  private async fetchUserDataWithBrowserSession(
+    page: Page,
+    apiUrl: string,
+    baseUrl: string,
+    loginMode?: boolean
+  ): Promise<LocalStorageData> {
+    const userId = await this.readUserIdHintFromPage(page);
+
+    try {
+      const data = await this.fetchJsonWithBrowserSession(page, apiUrl, userId, loginMode);
+      return this.parseUserDataResponse(data);
+    } catch (firstError: any) {
+      if (this.isBrowserClosureError(firstError)) {
+        throw firstError;
+      }
+
+      if (!userId) {
+        throw firstError;
+      }
+
+      Logger.info('ℹ️ [ChromeManager] 带页面 userId 提示的 API 请求失败，尝试无用户头重试:', {
+        baseUrl,
+        ignoredUserId: userId,
+        error: firstError.message,
+      });
+      const retryData = await this.fetchJsonWithBrowserSession(page, apiUrl, null, loginMode);
+      const parsedRetryData = this.parseUserDataResponse(retryData);
+      Logger.info('✅ [ChromeManager] API 无用户头重试成功，忽略页面 userId 提示:', {
+        baseUrl,
+        ignoredUserId: userId,
+      });
+      return parsedRetryData;
+    }
+  }
+
   /**
    * 从/api/status接口获取系统名称
    * @param page 浏览器页面
@@ -2264,28 +2369,17 @@ export class ChromeManager {
     try {
       Logger.info('🏷️ [ChromeManager] 获取系统名称:', statusUrl);
 
-      const result = await page.evaluate(async (url: string) => {
-        const response = await fetch(url, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        });
+      const data = await this.fetchJsonWithBrowserSession(page, statusUrl, null, loginMode);
 
-        if (!response.ok) return null;
-
-        const data = (await response.json()) as any;
-
-        // 多字段尝试
-        return (
-          data?.data?.system_name ||
-          data?.data?.systemName ||
-          data?.data?.site_name ||
-          data?.data?.name ||
-          data?.system_name ||
-          data?.systemName ||
-          null
-        );
-      }, statusUrl);
+      // 多字段尝试
+      const result =
+        data?.data?.system_name ||
+        data?.data?.systemName ||
+        data?.data?.site_name ||
+        data?.data?.name ||
+        data?.system_name ||
+        data?.systemName ||
+        null;
 
       if (result) {
         Logger.info('✅ [ChromeManager] 系统名称:', result);

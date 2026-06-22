@@ -28,6 +28,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     add: (site: any) => ipcRenderer.invoke('sites:add', site),
     update: (id: string, updates: any) => ipcRenderer.invoke('sites:update', id, updates),
     delete: (id: string) => ipcRenderer.invoke('sites:delete', id),
+    refreshAll: () => ipcRenderer.invoke('site:refreshAll'),
+    checkinAll: () => ipcRenderer.invoke('site:checkinAll'),
   },
   launchChromeForLogin: (url: string) => ipcRenderer.invoke('launch-chrome-for-login', url),
 
@@ -357,9 +359,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 保存配置
     save: (data: { configs: any[]; activeConfigId: string | null }) =>
       ipcRenderer.invoke('custom-cli-config:save', data),
-    // 拉取模型列表
+    // 拉取模型列表（通过 baseUrl + apiKey）
     fetchModels: (baseUrl: string, apiKey: string) =>
       ipcRenderer.invoke('custom-cli-config:fetch-models', baseUrl, apiKey),
+    // 拉取模型列表（通过 configId）
+    fetchModelsById: (configId: string) =>
+      ipcRenderer.invoke('customCliConfig:fetchModels', configId),
   },
 
   // 多账户管理 API
@@ -373,6 +378,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       access_token: string;
       auth_source: string;
       browser_profile_path?: string;
+      anyRouterConfig?: { userHash?: string };
     }) => ipcRenderer.invoke('accounts:add', data),
     update: (accountId: string, updates: any) =>
       ipcRenderer.invoke('accounts:update', accountId, updates),
@@ -470,6 +476,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     fetchLatestLog: (params: { siteId: string; model?: string }) =>
       ipcRenderer.invoke('route:fetch-latest-log', params),
+    getHistoryBuckets: (query: {
+      window: '48h';
+      bucketSize: '2h';
+      siteId?: string;
+      accountId?: string;
+      cliType: 'claudeCode' | 'codex' | 'geminiCli';
+      mode: 'combined' | 'probe-only' | 'route-only';
+    }) => ipcRenderer.invoke('route:getHistoryBuckets', query),
   },
   overview: {
     getSiteDailySnapshots: (params?: { siteId?: string; days?: number }) =>

@@ -35,11 +35,7 @@ import {
   type ChannelNameLookup,
   type ScatterPoint,
 } from '../utils/routeScatter';
-import {
-  buildRouteSankeyGraph,
-  SANKEY_OTHER_CHANNEL_KEY,
-  type SankeyGraph,
-} from '../utils/routeSankey';
+import { SANKEY_OTHER_CHANNEL_KEY, type SankeyGraph } from '../utils/routeSankey';
 import {
   buildAxisTicks,
   createSegmentedResponseTimeScale,
@@ -848,18 +844,45 @@ function MetricCard({
   value,
   hint,
   toneClass = 'text-[var(--text-primary)]',
+  compact = false,
 }: {
   label: string;
   value: string;
   hint?: string;
   toneClass?: string;
+  compact?: boolean;
 }) {
   return (
-    <AppCard blur={false} hoverable={false}>
-      <AppCardContent className="p-4">
-        <div className="text-xs text-[var(--text-secondary)]">{label}</div>
-        <div className={`mt-2 text-2xl font-semibold ${toneClass}`}>{value}</div>
-        {hint ? <div className="mt-2 text-xs text-[var(--text-tertiary)]">{hint}</div> : null}
+    <AppCard blur={false} hoverable={false} className="h-full">
+      <AppCardContent className={compact ? 'flex h-full flex-col p-3' : 'p-4'}>
+        <div
+          className={
+            compact
+              ? 'truncate text-[11px] font-semibold tracking-[0.04em] text-[var(--text-secondary)]'
+              : 'text-xs text-[var(--text-secondary)]'
+          }
+          title={label}
+        >
+          {label}
+        </div>
+        <div
+          className={`${compact ? 'mt-1.5 truncate text-[21px] leading-none tracking-[-0.03em]' : 'mt-2 text-2xl'} font-semibold ${toneClass}`}
+          title={value}
+        >
+          {value}
+        </div>
+        {hint ? (
+          <div
+            className={
+              compact
+                ? 'mt-auto truncate whitespace-nowrap pt-2 text-[11px] leading-4 text-[var(--text-tertiary)]'
+                : 'mt-2 text-xs text-[var(--text-tertiary)]'
+            }
+            title={hint}
+          >
+            {hint}
+          </div>
+        ) : null}
       </AppCardContent>
     </AppCard>
   );
@@ -872,6 +895,7 @@ function RouteMetricCard({
   chip,
   toneClass = 'text-[var(--text-primary)]',
   chipToneClass = 'bg-[var(--surface-1)] text-[var(--text-secondary)]',
+  compact = false,
 }: {
   label: string;
   value: ReactNode;
@@ -879,15 +903,21 @@ function RouteMetricCard({
   chip?: string;
   toneClass?: string;
   chipToneClass?: string;
+  compact?: boolean;
 }) {
   return (
     <AppCard aria-label={`${label} KPI`} blur={false} hoverable={false} className="h-full">
-      <AppCardContent className="flex h-full flex-col p-3.5">
-        <div className="flex items-start justify-between gap-3">
-          <div className="text-[11px] font-semibold tracking-[0.06em] text-[var(--text-secondary)]">
+      <AppCardContent className={`flex h-full flex-col ${compact ? 'p-3' : 'p-3.5'}`}>
+        <div className="flex items-start justify-between gap-2">
+          <div
+            className={`truncate font-semibold text-[var(--text-secondary)] ${
+              compact ? 'text-[11px] tracking-[0.04em]' : 'text-[11px] tracking-[0.06em]'
+            }`}
+            title={label}
+          >
             {label}
           </div>
-          {chip ? (
+          {chip && !compact ? (
             <span
               className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${chipToneClass}`}
             >
@@ -896,13 +926,13 @@ function RouteMetricCard({
           ) : null}
         </div>
         <div
-          className={`mt-2.5 text-[26px] font-semibold leading-none tracking-[-0.03em] ${toneClass}`}
+          className={`${compact ? 'mt-1.5 text-[21px]' : 'mt-2.5 text-[26px]'} font-semibold leading-none tracking-[-0.03em] ${toneClass}`}
         >
           {value}
         </div>
         {hint ? (
           <div
-            className="mt-auto truncate whitespace-nowrap pt-3 text-xs leading-5 text-[var(--text-tertiary)]"
+            className={`${compact ? 'pt-2 text-[11px] leading-4' : 'pt-3 text-xs leading-5'} mt-auto truncate whitespace-nowrap text-[var(--text-tertiary)]`}
             title={typeof hint === 'string' ? hint : undefined}
           >
             {hint}
@@ -927,6 +957,7 @@ function RouteTrendChart({
   scopeValue,
   onScopeChange,
   compact = false,
+  className,
 }: {
   trendPoints: TrendPoint[];
   successRateTrend: Array<number | null>;
@@ -941,6 +972,7 @@ function RouteTrendChart({
   scopeValue: string;
   onScopeChange: (value: string) => void;
   compact?: boolean;
+  className?: string;
 }) {
   const trendChartHeight = compact ? 124 : 132;
   const trendChartMinHeightClass = compact ? 'min-h-[124px]' : 'min-h-[132px]';
@@ -972,7 +1004,7 @@ function RouteTrendChart({
       data-trend-point-count={trendPoints.length}
       blur={false}
       hoverable={false}
-      className={compact ? 'min-h-[224px]' : 'min-h-[244px]'}
+      className={className ?? (compact ? 'min-h-[224px]' : 'min-h-[244px]')}
     >
       <AppCardContent className="flex h-full min-h-0 flex-col p-4">
         <SectionTitle
@@ -1154,13 +1186,20 @@ function useContainerSize<T extends HTMLElement>() {
   return { ref, size };
 }
 
+const MODEL_HEATMAP_BAD_THRESHOLD = 0.6;
+const MODEL_HEATMAP_WARN_THRESHOLD = 0.9;
+
 function modelHealthTone(item: ModelDistributionItem): {
   bg: string;
   tier: 'good' | 'warn' | 'bad';
 } {
   if (item.requests === 0) return { bg: 'var(--surface-2)', tier: 'good' };
-  if (item.successRate < 0.8) return { bg: 'var(--danger)', tier: 'bad' };
-  if (item.successRate < 0.95) return { bg: 'var(--warning)', tier: 'warn' };
+  if (item.successRate < MODEL_HEATMAP_BAD_THRESHOLD) {
+    return { bg: 'var(--danger)', tier: 'bad' };
+  }
+  if (item.successRate < MODEL_HEATMAP_WARN_THRESHOLD) {
+    return { bg: 'var(--warning)', tier: 'warn' };
+  }
   return { bg: 'var(--success)', tier: 'good' };
 }
 
@@ -1791,12 +1830,16 @@ function ModelHeatmapList({
         const isSelected = selectedModel !== null && item.canonicalModel === selectedModel;
         const dim = selectedModel !== null && !isSelected;
         const successPct = Math.round(item.successRate * 100);
-        // 颜色混合比例：成功率越高混入主调越多；失败站点保留 danger 高亮
+        // 颜色混合比例：降低 danger 触发区间与饱和度，避免中等成功率过早发红
         const mixPct =
-          tone.tier === 'bad' ? 38 + Math.min(item.failureCount, 12) * 3 : 24 + successPct / 5;
+          tone.tier === 'bad'
+            ? 30 + Math.min(item.failureCount, 10) * 2
+            : tone.tier === 'warn'
+              ? 22 + Math.max(0, MODEL_HEATMAP_WARN_THRESHOLD * 100 - successPct) / 3
+              : 24 + Math.min(successPct, 100) / 6;
         const background = `color-mix(in srgb, ${tone.bg} ${mixPct}%, var(--surface-3))`;
         const textColor =
-          tone.tier === 'bad' && successPct < 80
+          tone.tier === 'bad' && successPct < MODEL_HEATMAP_BAD_THRESHOLD * 100
             ? 'var(--text-on-accent, #fff)'
             : 'var(--text-primary)';
         const showLabel = width >= 48 && height >= 28;
@@ -2199,43 +2242,15 @@ export function DataOverviewPage({
   setPageHeaderActions?: (actions: ReactNode | null) => void;
 } = {}) {
   const activeTab = useUIStore(state => state.activeTab);
-  const view = useUIStore(state => state.overviewSubtab);
   const isOverviewActive = activeTab === 'overview';
-  const isRouteView = view === 'route';
-  const isSiteView = !isRouteView;
 
   return (
-    <div
-      className="relative min-h-0 flex-1"
-      data-overview-views-keepalive="true"
-      data-overview-active-view={isRouteView ? 'route' : 'site'}
-    >
-      <div
-        data-testid="overview-view-site"
-        aria-hidden={!isSiteView}
-        className={`absolute inset-0 min-h-0 transition-opacity duration-100 ${
-          isSiteView ? 'visible z-10 opacity-100' : 'invisible z-0 opacity-0 pointer-events-none'
-        }`}
-      >
-        <SiteOverviewView
-          setPageHeaderActions={setPageHeaderActions}
-          isOverviewActive={isOverviewActive}
-          isVisible={isSiteView}
-        />
-      </div>
-      <div
-        data-testid="overview-view-route"
-        aria-hidden={!isRouteView}
-        className={`absolute inset-0 min-h-0 transition-opacity duration-100 ${
-          isRouteView ? 'visible z-10 opacity-100' : 'invisible z-0 opacity-0 pointer-events-none'
-        }`}
-      >
-        <RouteOverviewView
-          setPageHeaderActions={setPageHeaderActions}
-          isOverviewActive={isOverviewActive}
-          isVisible={isRouteView}
-        />
-      </div>
+    <div className="relative min-h-0 flex-1" data-overview-active-view="merged">
+      <RouteOverviewView
+        setPageHeaderActions={setPageHeaderActions}
+        isOverviewActive={isOverviewActive}
+        isVisible
+      />
     </div>
   );
 }
@@ -2672,6 +2687,9 @@ interface RouteScopeOption {
   label: string;
 }
 
+void SiteOverviewView;
+void RouteSankeyChart;
+
 function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }: SubViewProps) {
   const config = useConfigStore(state => state.config);
   const customCliConfigs = useCustomCliConfigStore(state => state.configs);
@@ -2683,7 +2701,66 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
   const [routePathStates, setRoutePathStates] = useState<Record<string, RoutePathState>>({});
   const [routeRulesById, setRouteRulesById] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [siteError, setSiteError] = useState<string | null>(null);
+  const [routeError, setRouteError] = useState<string | null>(null);
+
+  const siteMetrics = useMemo(() => (config ? buildSiteOverviewMetrics(config) : []), [config]);
+  const enabledSiteMetrics = useMemo(
+    () => siteMetrics.filter(metric => metric.enabled),
+    [siteMetrics]
+  );
+  const checkinSiteMetrics = useMemo(
+    () => enabledSiteMetrics.filter(metric => metric.supportsCheckin),
+    [enabledSiteMetrics]
+  );
+  const checkinRows = useMemo(() => (config ? buildSiteCheckinOverviewRows(config) : []), [config]);
+  const orderedCheckinRows = useMemo(
+    () =>
+      [...checkinRows].sort(
+        (left, right) =>
+          right.pendingCheckins - left.pendingCheckins ||
+          right.todayCheckinQuota - left.todayCheckinQuota ||
+          right.monthCheckinCount - left.monthCheckinCount
+      ),
+    [checkinRows]
+  );
+  const activeSiteCount = enabledSiteMetrics.length;
+  const visibleSiteCount = siteMetrics.length;
+  const activeModelCount = siteMetrics.reduce((sum, metric) => sum + metric.modelCount, 0);
+  const totalBalance = sumNonNegativeBalances(siteMetrics);
+  const totalUsage = siteMetrics.reduce((sum, metric) => sum + metric.todayUsage, 0);
+  const totalTodayRequestCount = siteMetrics.reduce((sum, metric) => sum + metric.todayRequests, 0);
+  const totalTodayPromptTokenCount = siteMetrics.reduce(
+    (sum, metric) => sum + metric.todayPromptTokens,
+    0
+  );
+  const totalTodayCompletionTokenCount = siteMetrics.reduce(
+    (sum, metric) => sum + metric.todayCompletionTokens,
+    0
+  );
+  const totalTodayTokenCount = totalTodayPromptTokenCount + totalTodayCompletionTokenCount;
+  const totalCheckinQuota = checkinSiteMetrics.reduce(
+    (sum, metric) => sum + metric.todayCheckinQuota,
+    0
+  );
+  const pendingCheckinSiteCount = checkinSiteMetrics.filter(
+    metric => metric.pendingCheckins > 0
+  ).length;
+  const completedCheckinSiteCount = checkinSiteMetrics.filter(
+    metric => metric.pendingCheckins === 0 && metric.completedCheckins > 0
+  ).length;
+
+  const loadSiteOverview = useCallback(async () => {
+    if (!window.electronAPI.overview?.getSiteDailySnapshots) {
+      return;
+    }
+    setSiteError(null);
+    try {
+      await window.electronAPI.overview.getSiteDailySnapshots({ days: 1 });
+    } catch (nextError: unknown) {
+      setSiteError(nextError instanceof Error ? nextError.message : '加载站点数据失败');
+    }
+  }, []);
 
   const scopeOptions = useMemo<RouteScopeOption[]>(() => {
     const siteOptions: RouteScopeOption[] = (config?.sites || [])
@@ -2720,11 +2797,11 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
   const loadRouteData = useCallback(async () => {
     const routeApi = window.electronAPI.route;
     if (!routeApi) {
-      setError('当前环境未暴露 route IPC 接口。');
+      setRouteError('当前环境未暴露 route IPC 接口。');
       return;
     }
     setLoading(true);
-    setError(null);
+    setRouteError(null);
     try {
       const analyticsPromise: Promise<{
         summary: RouteAnalyticsOverview['summary'] | null;
@@ -2774,11 +2851,27 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
         setRouteRulesById({});
       }
     } catch (nextError: unknown) {
-      setError(nextError instanceof Error ? nextError.message : '加载路由数据失败');
+      setRouteError(nextError instanceof Error ? nextError.message : '加载路由数据失败');
     } finally {
       setLoading(false);
     }
   }, [routeWindow]);
+
+  useEffect(() => {
+    if (!isOverviewActive) return;
+    void loadSiteOverview();
+  }, [isOverviewActive, loadSiteOverview]);
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.appData?.onChanged?.(({ domains }) => {
+      if (!isOverviewActive) return;
+      if (!domains.includes('site-overview')) return;
+      void loadSiteOverview();
+    });
+    return () => {
+      unsubscribe?.();
+    };
+  }, [isOverviewActive, loadSiteOverview]);
 
   useEffect(() => {
     if (!isOverviewActive) return;
@@ -2796,11 +2889,48 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
     };
   }, [isOverviewActive, loadRouteData]);
 
+  const headerActions = useMemo(
+    () => (
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {ROUTE_WINDOW_OPTIONS.map(windowOption => (
+          <AppButton
+            key={windowOption}
+            variant={routeWindow === windowOption ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => setRouteWindow(windowOption)}
+          >
+            {windowOption}
+          </AppButton>
+        ))}
+        <AppButton
+          variant="tertiary"
+          size="sm"
+          onClick={() => {
+            void loadSiteOverview();
+            void loadRouteData();
+          }}
+          disabled={loading}
+        >
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          刷新
+        </AppButton>
+      </div>
+    ),
+    [loadRouteData, loadSiteOverview, loading, routeWindow]
+  );
+
+  useEffect(() => {
+    if (!isOverviewActive || !isVisible) return;
+    setPageHeaderActions?.(headerActions);
+    return () => {
+      setPageHeaderActions?.(null);
+    };
+  }, [headerActions, isOverviewActive, isVisible, setPageHeaderActions]);
+
   const filteredBuckets = useMemo(
     () => filterBucketsByScope(routeDistribution?.buckets || [], scope),
     [routeDistribution, scope]
   );
-
   const trendPoints = useMemo(
     () => buildRouteTrendPoints(filteredBuckets, routeWindow),
     [filteredBuckets, routeWindow]
@@ -2925,46 +3055,6 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
       ? 'text-[var(--danger)]'
       : 'text-[var(--accent)]';
 
-  const headerActions = useMemo(
-    () => (
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        {ROUTE_WINDOW_OPTIONS.map(windowOption => (
-          <AppButton
-            key={windowOption}
-            variant={routeWindow === windowOption ? 'primary' : 'secondary'}
-            size="sm"
-            onClick={() => setRouteWindow(windowOption)}
-          >
-            {windowOption}
-          </AppButton>
-        ))}
-        <AppButton
-          variant="tertiary"
-          size="sm"
-          onClick={() => void loadRouteData()}
-          disabled={loading}
-        >
-          {loading ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <RefreshCw className="h-4 w-4" />
-          )}
-          刷新
-        </AppButton>
-      </div>
-    ),
-    [loadRouteData, loading, routeWindow]
-  );
-
-  useEffect(() => {
-    if (!isOverviewActive || !isVisible) return;
-    setPageHeaderActions?.(headerActions);
-    return () => {
-      setPageHeaderActions?.(null);
-    };
-  }, [headerActions, isOverviewActive, isVisible, setPageHeaderActions]);
-
-  // 站点 / 自定义 CLI 友好名称查找
   const channelNameLookup = useMemo<ChannelNameLookup>(() => {
     const siteNameById = new Map<string, string>();
     const accountNameById = new Map<string, string>();
@@ -3007,10 +3097,6 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
     () => buildRouteScatterPoints(filteredBuckets, channelNameLookup),
     [filteredBuckets, channelNameLookup]
   );
-  const sankeyGraph = useMemo(
-    () => buildRouteSankeyGraph(filteredBuckets, { lookup: channelNameLookup }),
-    [filteredBuckets, channelNameLookup]
-  );
 
   const disabledChannelKeys = useMemo(() => {
     const now = Date.now();
@@ -3025,17 +3111,6 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
 
   const scopeSelectValue = serializeRouteScope(scope);
   const { ref: routeContentRef, size: routeContentSize } = useContainerSize<HTMLDivElement>();
-  const routeContentMeasured = routeContentSize.height > 0;
-  const routeIsCompact = routeContentMeasured && routeContentSize.height < 640;
-  const routeGapClass = routeIsCompact ? 'gap-3' : 'gap-4';
-  const routeSecondRowClass = routeIsCompact
-    ? 'grid gap-3 xl:grid-cols-[minmax(0,1.34fr)_minmax(340px,0.96fr)]'
-    : 'grid gap-4 xl:grid-cols-[minmax(0,1.34fr)_minmax(360px,0.96fr)]';
-  const routeThirdRowClass = routeIsCompact
-    ? 'grid gap-3 xl:grid-cols-[minmax(0,1.10fr)_minmax(0,0.90fr)]'
-    : 'grid gap-4 xl:grid-cols-[minmax(0,1.10fr)_minmax(0,0.90fr)]';
-  const routeThirdRowHeightClass = routeIsCompact ? 'h-[220px]' : 'h-[250px]';
-  const routeHeatmapHeightClass = routeIsCompact ? 'min-h-[224px]' : 'min-h-[244px]';
   const routeOverviewState = useMemo(
     () =>
       JSON.stringify({
@@ -3044,38 +3119,59 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
         pathStateCount: Object.keys(routePathStates).length,
         ruleCount: Object.keys(routeRulesById).length,
         scatterPointCount: scatterPoints.length,
-        sankeyLinkCount: sankeyGraph.links.length,
       }),
-    [
-      routePathStates,
-      routeRulesById,
-      sankeyGraph.links.length,
-      scatterPoints.length,
-      scope,
-      selectedModel,
-    ]
+    [routePathStates, routeRulesById, scatterPoints.length, scope, selectedModel]
   );
 
   return (
     <div
       ref={routeContentRef}
       data-route-content-scroll="true"
-      className="flex-1 overflow-y-auto px-6 pb-2 pt-4"
+      className="flex-1 overflow-y-auto px-6 pb-3 pt-4"
     >
       <div
-        aria-label="路由数据驾驶舱"
+        aria-label="数据总览驾驶舱"
         data-route-content-size={`${routeContentSize.width}x${routeContentSize.height}`}
-        data-route-layout={routeIsCompact ? 'compact' : 'regular'}
-        className={`flex min-h-full flex-col ${routeGapClass}`}
+        data-route-layout="merged-compact"
+        className="flex min-h-full flex-col gap-3"
       >
-        {error ? (
+        {siteError || routeError ? (
           <AppCard blur={false} hoverable={false}>
-            <AppCardContent className="p-4 text-sm text-[var(--danger)]">{error}</AppCardContent>
+            <AppCardContent className="space-y-1 p-4 text-sm text-[var(--danger)]">
+              {siteError ? <div>{siteError}</div> : null}
+              {routeError ? <div>{routeError}</div> : null}
+            </AppCardContent>
           </AppCard>
         ) : null}
 
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4 xl:flex-none">
+        <div className="grid gap-2 xl:grid-cols-8 xl:flex-none" data-overview-metric-grid="merged">
+          <MetricCard
+            compact
+            label="可用站点数"
+            value={formatCompactNumber(activeSiteCount)}
+            hint={`展示 ${visibleSiteCount} / 模型 ${formatCompactNumber(activeModelCount)}`}
+          />
+          <MetricCard
+            compact
+            label="站点总余额"
+            value={formatCurrency(totalBalance)}
+            hint="按站点聚合"
+          />
+          <MetricCard
+            compact
+            label="今日消费"
+            value={formatCurrency(totalUsage)}
+            hint={`请求 ${formatCompactNumber(totalTodayRequestCount)} · Tokens ${formatCompactNumber(totalTodayTokenCount)}`}
+            toneClass="text-[var(--warning)]"
+          />
+          <MetricCard
+            compact
+            label="今日签到收益"
+            value={formatCheckinQuota(totalCheckinQuota)}
+            hint={`已签 ${completedCheckinSiteCount} / 待签 ${pendingCheckinSiteCount}`}
+          />
           <RouteMetricCard
+            compact
             label="路由请求量"
             value={scopedRouteSummary ? formatCompactNumber(scopedRouteSummary.totalRequests) : '—'}
             hint={`窗口 ${routeWindow}`}
@@ -3093,6 +3189,7 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
             }
           />
           <RouteMetricCard
+            compact
             label="路由成功率"
             value={scopedRouteSummary ? formatPercent(scopedRouteSummary.successRate) : '—'}
             hint={`失败 ${formatCompactNumber(scopedRouteSummary?.failureCount || 0)} 次`}
@@ -3109,6 +3206,7 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
             }
           />
           <RouteMetricCard
+            compact
             label="Token 消耗"
             value={
               scopedRouteSummary && scopedRouteSummary.totalTokens > 0
@@ -3117,8 +3215,8 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
             }
             hint={
               scopedRouteSummary && scopedRouteSummary.totalTokens > 0
-                ? `输入 ${formatCompactNumber(scopedRouteSummary.promptTokens)} / 输出 ${formatCompactNumber(scopedRouteSummary.completionTokens)} / 缓存 ${formatCompactNumber((scopedRouteSummary.cacheCreationTokens || 0) + (scopedRouteSummary.cacheReadTokens || 0))}`
-                : '上游未返回 usage 或暂无成功请求'
+                ? `输入 ${formatCompactNumber(scopedRouteSummary.promptTokens)} / 输出 ${formatCompactNumber(scopedRouteSummary.completionTokens)}`
+                : '暂无成功请求'
             }
             chip={formatTrendDeltaBadge(
               tokenTrendSummary.direction,
@@ -3129,6 +3227,7 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
             chipToneClass="bg-[var(--warning-soft)] text-[var(--warning)]"
           />
           <RouteMetricCard
+            compact
             label="首字响应 / 会话时间"
             value={firstByteSessionValue}
             hint={ttfbHint}
@@ -3138,7 +3237,25 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
           />
         </div>
 
-        <div data-route-second-row="true" className={routeSecondRowClass}>
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,0.38fr)_minmax(0,0.62fr)] xl:items-stretch">
+          <AppCard
+            blur={false}
+            hoverable={false}
+            role="region"
+            aria-label="每日签到概览"
+            className="h-[260px]"
+          >
+            <AppCardContent className="flex h-full flex-col p-3.5">
+              <SectionTitle icon={Activity} title="每日签到概览" />
+              <div className="mt-0.5 min-h-0 flex-1">
+                <CheckinStatusList
+                  items={orderedCheckinRows}
+                  emptyText="当前没有可展示的签到站点"
+                />
+              </div>
+            </AppCardContent>
+          </AppCard>
+
           <RouteTrendChart
             trendPoints={trendPoints}
             successRateTrend={successRateTrend}
@@ -3152,14 +3269,17 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
             scopeOptions={scopeOptions}
             scopeValue={scopeSelectValue}
             onScopeChange={value => setScope(parseRouteScopeOption(value))}
-            compact={routeIsCompact}
+            compact
+            className="h-[260px]"
           />
+        </div>
 
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,0.48fr)_minmax(0,0.52fr)]">
           <AppCard
             blur={false}
             hoverable={false}
             data-route-heatmap-card="true"
-            className={routeHeatmapHeightClass}
+            className="h-[260px]"
           >
             <AppCardContent className="flex h-full min-h-0 flex-col p-4">
               <div className="flex h-full min-h-0 flex-col" onClick={() => setSelectedModel(null)}>
@@ -3172,14 +3292,12 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
               </div>
             </AppCardContent>
           </AppCard>
-        </div>
 
-        <div data-route-third-row="true" className={routeThirdRowClass}>
           <AppCard
             blur={false}
             hoverable={false}
             data-route-third-row-card="scatter"
-            className={routeThirdRowHeightClass}
+            className="h-[260px]"
           >
             <AppCardContent className="flex h-full min-h-0 flex-col p-3.5">
               <SectionTitle icon={Gauge} title="通道健康散点矩阵" />
@@ -3193,23 +3311,8 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
               </div>
             </AppCardContent>
           </AppCard>
-
-          <AppCard
-            blur={false}
-            hoverable={false}
-            data-route-third-row-card="sankey"
-            className={routeThirdRowHeightClass}
-          >
-            <AppCardContent className="flex h-full min-h-0 flex-col p-3.5">
-              <SectionTitle icon={Activity} title="模型 → 通道流向" />
-              <div className="min-h-0 flex-1">
-                <RouteSankeyChart graph={sankeyGraph} selectedModel={selectedModel} />
-              </div>
-            </AppCardContent>
-          </AppCard>
         </div>
 
-        {/* 占位：作用域 / 选中模型 / 路径名称查找等状态保留给后续 PR 使用 */}
         <span
           aria-hidden="true"
           data-route-overview-state={routeOverviewState}

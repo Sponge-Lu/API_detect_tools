@@ -18,7 +18,9 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { SiteConfig } from '../App';
 import { DialogState, DialogType, initialDialogState } from '../components/ConfirmDialog';
-import { DEFAULT_COLUMN_WIDTHS } from '../../shared/constants';
+import { COLUMN_WIDTHS_VERSION, DEFAULT_COLUMN_WIDTHS } from '../../shared/constants';
+import type { HistoryMode } from '../components/Route/Usability/HistoryBucketBars';
+import type { RouteCliType } from '../../shared/types/route-proxy';
 
 import type { ReleaseInfo } from '../hooks/useUpdate';
 
@@ -29,23 +31,15 @@ interface RefreshMessage {
 }
 
 // Tab 页面类型（一级页面由 page metadata registry 定义；旧 route 子页仍需兼容）
-export type TabId =
-  | 'overview'
-  | 'sites'
-  | 'cli'
-  | 'usability'
-  | 'route'
-  | 'logs'
-  | 'credit'
-  | 'settings';
+export type TabId = 'overview' | 'sites' | 'route' | 'logs' | 'credit' | 'settings';
 
 export type VisibleTabId = TabId;
 export type OverviewSubtab = 'site' | 'route';
-export type LogsSubtab = 'session' | 'route';
 export type SidebarDisplayMode = 'expanded' | 'icon-only';
+export type SettingsSection = 'general' | 'detection' | 'sync' | 'update' | 'data';
 
 // 路由相关的 TabId
-export const ROUTE_TAB_IDS: TabId[] = ['usability', 'route'];
+export const ROUTE_TAB_IDS: TabId[] = ['route'];
 export const isRouteTab = (id: TabId) => ROUTE_TAB_IDS.includes(id);
 
 // 排序字段类型
@@ -85,7 +79,6 @@ interface UIState {
   // 当前活跃的 Tab 页面
   activeTab: TabId;
   overviewSubtab: OverviewSubtab;
-  logsSubtab: LogsSubtab;
 
   // 面板状态
   showSiteEditor: boolean;
@@ -139,6 +132,12 @@ interface UIState {
 
   // 列宽
   columnWidths: number[];
+  /** 已应用列宽默认值的版本；小于 COLUMN_WIDTHS_VERSION 时会在加载时一次性重置 */
+  columnWidthsVersion: number;
+
+  // History 列：CLI 类型与模式（共享于列表头与所有行）
+  historyCliType: RouteCliType;
+  historyMode: HistoryMode;
 
   // 排序状态
   sortField: SortField | null;
@@ -150,6 +149,9 @@ interface UIState {
 
   // 侧边栏显示模式
   sidebarDisplayMode: SidebarDisplayMode;
+
+  // 设置页当前分类
+  activeSettingsSection: SettingsSection;
 
   // Actions - 面板
   setShowSiteEditor: (show: boolean) => void;
@@ -221,6 +223,10 @@ interface UIState {
   setColumnWidth: (index: number, width: number) => void;
   resetColumnWidths: () => void;
 
+  // Actions - History 列选择器
+  setHistoryCliType: (cliType: RouteCliType) => void;
+  setHistoryMode: (mode: HistoryMode) => void;
+
   // Actions - 排序
   setSortField: (field: SortField | null) => void;
   setSortOrder: (order: SortOrder) => void;
@@ -230,7 +236,6 @@ interface UIState {
   // Actions - Tab 切换
   setActiveTab: (tab: TabId) => void;
   setOverviewSubtab: (subtab: OverviewSubtab) => void;
-  setLogsSubtab: (subtab: LogsSubtab) => void;
 
   // Actions - 下载面板
   openDownloadPanel: (release: ReleaseInfo) => void;
@@ -239,6 +244,9 @@ interface UIState {
   // Actions - 侧边栏
   setSidebarDisplayMode: (mode: SidebarDisplayMode) => void;
   toggleSidebarDisplayMode: () => void;
+
+  // Actions - 设置页分类
+  setActiveSettingsSection: (section: SettingsSection) => void;
 }
 
 const initialNewTokenForm: NewApiTokenForm = {
@@ -255,7 +263,6 @@ export const useUIStore = create<UIState>()(
       // 初始状态
       activeTab: 'overview' as TabId,
       overviewSubtab: 'site',
-      logsSubtab: 'session',
       showSiteEditor: false,
       editingSite: null,
       expandedSites: new Set(),
@@ -283,11 +290,15 @@ export const useUIStore = create<UIState>()(
       showAuthErrorDialog: false,
       processingAuthErrorSite: null,
       columnWidths: [...DEFAULT_COLUMN_WIDTHS],
+      columnWidthsVersion: COLUMN_WIDTHS_VERSION,
+      historyCliType: 'claudeCode',
+      historyMode: 'combined',
       sortField: null,
       sortOrder: 'desc',
       showDownloadPanel: false,
       downloadPanelRelease: null,
       sidebarDisplayMode: 'expanded',
+      activeSettingsSection: 'general',
 
       // 面板 Actions
       setShowSiteEditor: show => set({ showSiteEditor: show }),
@@ -479,7 +490,14 @@ export const useUIStore = create<UIState>()(
         set({ columnWidths: newWidths });
       },
 
-      resetColumnWidths: () => set({ columnWidths: [...DEFAULT_COLUMN_WIDTHS] }),
+      resetColumnWidths: () =>
+        set({
+          columnWidths: [...DEFAULT_COLUMN_WIDTHS],
+          columnWidthsVersion: COLUMN_WIDTHS_VERSION,
+        }),
+
+      setHistoryCliType: cliType => set({ historyCliType: cliType }),
+      setHistoryMode: historyMode => set({ historyMode }),
 
       // 排序 Actions
       setSortField: field => set({ sortField: field }),
@@ -506,7 +524,6 @@ export const useUIStore = create<UIState>()(
       // Tab 切换
       setActiveTab: (tab: TabId) => set({ activeTab: tab }),
       setOverviewSubtab: (subtab: OverviewSubtab) => set({ overviewSubtab: subtab }),
-      setLogsSubtab: (subtab: LogsSubtab) => set({ logsSubtab: subtab }),
 
       // 下载面板
       openDownloadPanel: (release: ReleaseInfo) =>
@@ -519,13 +536,74 @@ export const useUIStore = create<UIState>()(
         set(state => ({
           sidebarDisplayMode: state.sidebarDisplayMode === 'expanded' ? 'icon-only' : 'expanded',
         })),
+
+      setActiveSettingsSection: activeSettingsSection => set({ activeSettingsSection }),
     }),
     {
       name: 'api-hub-ui-storage',
-      version: 4,
+      version: 6,
       partialize: state => ({
         sidebarDisplayMode: state.sidebarDisplayMode,
+        columnWidths: state.columnWidths,
+        columnWidthsVersion: state.columnWidthsVersion,
+        historyCliType: state.historyCliType,
+        historyMode: state.historyMode,
       }),
+      merge: (persistedState, currentState) => {
+        const persisted = (persistedState ?? {}) as Partial<UIState>;
+        const persistedVersion = persisted.columnWidthsVersion ?? 1;
+        const currentVersion = COLUMN_WIDTHS_VERSION;
+        const needsReset =
+          !Array.isArray(persisted.columnWidths) ||
+          persisted.columnWidths.length !== DEFAULT_COLUMN_WIDTHS.length ||
+          persistedVersion < currentVersion;
+        const columnWidths = needsReset
+          ? [...DEFAULT_COLUMN_WIDTHS]
+          : (persisted.columnWidths as number[]);
+
+        // 一次性迁移：从旧 localStorage 顶层 key 取出 HistoryCell 的选择
+        const VALID_CLI_TYPES: RouteCliType[] = ['claudeCode', 'codex', 'geminiCli'];
+        const VALID_MODES: HistoryMode[] = ['combined', 'probe', 'route'];
+        const legacyCli =
+          typeof localStorage !== 'undefined'
+            ? (localStorage.getItem('historyCell:selectedCli') as RouteCliType | null)
+            : null;
+        const legacyMode =
+          typeof localStorage !== 'undefined'
+            ? (localStorage.getItem('historyCell:selectedMode') as HistoryMode | null)
+            : null;
+        if (legacyCli && VALID_CLI_TYPES.includes(legacyCli)) {
+          persisted.historyCliType = legacyCli;
+        }
+        if (legacyMode && VALID_MODES.includes(legacyMode)) {
+          persisted.historyMode = legacyMode;
+        }
+        try {
+          if (typeof localStorage !== 'undefined') {
+            localStorage.removeItem('historyCell:selectedCli');
+            localStorage.removeItem('historyCell:selectedMode');
+          }
+        } catch {
+          /* ignore */
+        }
+
+        return {
+          ...currentState,
+          ...persisted,
+          columnWidths,
+          columnWidthsVersion: currentVersion,
+        };
+      },
+      migrate: (persistedState: any, _version: number) => {
+        // 迁移旧的 activeTab 值：'cli' 和 'usability' → 'sites'
+        if (persistedState && typeof persistedState === 'object') {
+          const activeTab = persistedState.activeTab;
+          if (activeTab === 'cli' || activeTab === 'usability') {
+            persistedState.activeTab = 'sites';
+          }
+        }
+        return persistedState as UIState;
+      },
     }
   )
 );

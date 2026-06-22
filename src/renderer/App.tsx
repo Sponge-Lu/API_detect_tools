@@ -19,11 +19,7 @@ import { XCircle, Loader2 } from 'lucide-react';
 import { ConfirmDialog, initialDialogState } from './components/ConfirmDialog';
 import { GlobalCommandBar } from './components/AppShell/GlobalCommandBar';
 import { PageHeader } from './components/AppShell/PageHeader';
-import {
-  APP_LOGS_SUBPAGE_META,
-  APP_OVERVIEW_SUBPAGE_META,
-  APP_PAGE_META,
-} from './components/AppShell/pageMeta';
+import { APP_PAGE_META } from './components/AppShell/pageMeta';
 import { VerticalSidebar } from './components/Sidebar';
 import { AuthErrorDialog, CloseBehaviorDialog, DownloadUpdatePanel } from './components/dialogs';
 import { ToastContainer } from './components/Toast';
@@ -43,11 +39,14 @@ import type {
   RouteAnalyticsObjectStatsItem,
   RouteAnalyticsObjectStatsQuery,
   RouteAnalyticsWindowQuery,
+  RouteHistoryBucketsQuery,
+  HistoryBucket,
   RoutePathStateResetParams,
   RouteRequestLogItem,
   RouteRequestLogQuery,
 } from '../shared/types/route-proxy';
 import type { ThemeMode } from '../shared/theme/themePresets';
+import { LDC_UI_VISIBILITY } from '../shared/constants';
 export type { SiteConfig, DetectionResult } from '../shared/types/site';
 
 // 导入页面组件（懒加载）
@@ -55,16 +54,12 @@ const SitesPage = lazy(() => import('./pages/SitesPage').then(m => ({ default: m
 const DataOverviewPage = lazy(() =>
   import('./pages/DataOverviewPage').then(m => ({ default: m.DataOverviewPage }))
 );
-const CustomCliPage = lazy(() =>
-  import('./pages/CustomCliPage').then(m => ({ default: m.CustomCliPage }))
-);
 const CreditPage = lazy(() => import('./pages/CreditPage').then(m => ({ default: m.CreditPage })));
 const LogsPage = lazy(() => import('./pages/LogsPage').then(m => ({ default: m.LogsPage })));
 const RoutePage = lazy(() => import('./pages/RoutePage').then(m => ({ default: m.RoutePage })));
 const SettingsPage = lazy(() =>
   import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage }))
 );
-import { CliUsabilityTab } from './components/Route/Usability/CliUsabilityTab';
 import { normalizeSiteSortField } from './utils/siteSort';
 
 // 导入 Zustand Store
@@ -299,6 +294,7 @@ declare global {
           access_token: string;
           auth_source: string;
           browser_profile_path?: string;
+          anyRouterConfig?: { userHash?: string };
         }) => Promise<{ success: boolean; data?: any; error?: string }>;
         update: (
           accountId: string,
@@ -309,6 +305,7 @@ declare global {
             user_id?: string;
             auto_refresh?: boolean;
             auto_refresh_interval?: number;
+            anyRouterConfig?: { userHash?: string };
           }
         ) => Promise<{ success: boolean; error?: string }>;
         delete: (accountId: string) => Promise<{ success: boolean; error?: string }>;
@@ -435,6 +432,9 @@ declare global {
           params?: RouteRequestLogQuery
         ) => Promise<{ success: boolean; data?: RouteRequestLogItem[]; error?: string }>;
         clearRequestLogs: () => Promise<{ success: boolean; error?: string }>;
+        getHistoryBuckets: (
+          query: RouteHistoryBucketsQuery
+        ) => Promise<{ success: boolean; data?: HistoryBucket[]; error?: string }>;
         onRequestLogAppended?: (callback: (item: RouteRequestLogItem) => void) => () => void;
         fetchLatestLog: (params: {
           siteId: string;
@@ -520,10 +520,8 @@ function App() {
   const {
     activeTab,
     overviewSubtab,
-    logsSubtab,
     setActiveTab,
     setOverviewSubtab,
-    setLogsSubtab,
     dialogState,
     setDialogState,
     authErrorSites,
@@ -546,7 +544,9 @@ function App() {
   const visibleActiveTab: VisibleTabId =
     rawActiveTab === 'redirection' || rawActiveTab === 'proxystats'
       ? 'route'
-      : (rawActiveTab as VisibleTabId);
+      : !LDC_UI_VISIBILITY.showCreditTab && rawActiveTab === 'credit'
+        ? 'sites'
+        : (rawActiveTab as VisibleTabId);
 
   // 窗口关闭行为对话框状态
   const [showCloseBehaviorDialog, setShowCloseBehaviorDialog] = useState(false);
@@ -554,9 +554,6 @@ function App() {
     null
   );
   const [sitesPageHeaderActions, setSitesPageHeaderActions] = useState<ReactNode | null>(null);
-  const [usabilityPageHeaderActions, setUsabilityPageHeaderActions] = useState<ReactNode | null>(
-    null
-  );
 
   // 用于存储初始化状态的 ref
   const initRef = useRef(false);
@@ -807,34 +804,7 @@ function App() {
   };
 
   const activeOverviewSubtab = overviewSubtab ?? 'site';
-  const activeLogsSubtab = logsSubtab ?? 'session';
-  const overviewPageMeta = APP_OVERVIEW_SUBPAGE_META[activeOverviewSubtab];
-  const logsPageMeta = APP_LOGS_SUBPAGE_META[activeLogsSubtab];
-  const pageMeta = useMemo(() => {
-    if (visibleActiveTab === 'overview') {
-      return {
-        ...APP_PAGE_META.overview,
-        title: overviewPageMeta.title,
-        description: overviewPageMeta.description,
-      };
-    }
-
-    if (visibleActiveTab === 'logs') {
-      return {
-        ...APP_PAGE_META.logs,
-        title: logsPageMeta.title,
-        description: logsPageMeta.description,
-      };
-    }
-
-    return APP_PAGE_META[visibleActiveTab];
-  }, [
-    logsPageMeta.description,
-    logsPageMeta.title,
-    overviewPageMeta.description,
-    overviewPageMeta.title,
-    visibleActiveTab,
-  ]);
+  const pageMeta = useMemo(() => APP_PAGE_META[visibleActiveTab], [visibleActiveTab]);
 
   if (loading) {
     return (
@@ -853,9 +823,7 @@ function App() {
       ? overviewPageHeaderActions
       : visibleActiveTab === 'sites'
         ? sitesPageHeaderActions
-        : visibleActiveTab === 'usability'
-          ? usabilityPageHeaderActions
-          : null;
+        : null;
 
   if (!config) {
     return (
@@ -887,10 +855,8 @@ function App() {
         <VerticalSidebar
           activeTab={visibleActiveTab}
           overviewSubtab={activeOverviewSubtab}
-          logsSubtab={activeLogsSubtab}
           onTabChange={setActiveTab}
           onOverviewSubtabChange={setOverviewSubtab}
-          onLogsSubtabChange={setLogsSubtab}
           saving={saving}
           currentVersion={currentVersion}
           updateInfo={updateInfo}
@@ -904,13 +870,11 @@ function App() {
             updateInfo={updateInfo}
             onDownloadUpdate={handleDownloadUpdate}
           />
-          {visibleActiveTab !== 'cli' ? (
-            <PageHeader
-              title={pageMeta.title}
-              description={pageMeta.description}
-              actions={pageHeaderActions}
-            />
-          ) : null}
+          <PageHeader
+            title={pageMeta.title}
+            description={pageMeta.description}
+            actions={pageHeaderActions}
+          />
 
           <Suspense
             fallback={
@@ -935,24 +899,10 @@ function App() {
             </div>
             <div
               className={
-                visibleActiveTab === 'cli' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
-              }
-            >
-              <CustomCliPage />
-            </div>
-            <div
-              className={
                 visibleActiveTab === 'credit' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
               }
             >
               <CreditPage />
-            </div>
-            <div
-              className={
-                visibleActiveTab === 'usability' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
-              }
-            >
-              <CliUsabilityTab setPageHeaderActions={setUsabilityPageHeaderActions} />
             </div>
             <div
               className={
@@ -966,7 +916,7 @@ function App() {
                 visibleActiveTab === 'logs' ? 'flex-1 flex flex-col overflow-hidden' : 'hidden'
               }
             >
-              <LogsPage activeView={activeLogsSubtab} />
+              <LogsPage />
             </div>
 
             <div

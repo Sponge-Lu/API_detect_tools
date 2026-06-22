@@ -214,6 +214,23 @@ function extractClaudeRouteToken(req: http.IncomingMessage): string {
   return extractBearerToken(req);
 }
 
+function resolveCanonicalModelFromRegistry(
+  routing: Pick<RoutingConfig, 'modelRegistry'>,
+  rawModel: string | null
+): string | null {
+  if (!rawModel) {
+    return null;
+  }
+
+  for (const entry of Object.values(routing.modelRegistry.entries)) {
+    if (entry.aliases.includes(rawModel) || entry.canonicalName === rawModel) {
+      return entry.canonicalName;
+    }
+  }
+
+  return rawModel;
+}
+
 export function extractRouteApiKey(
   req: Pick<http.IncomingMessage, 'headers' | 'url'>,
   cliType: RouteCliType
@@ -282,11 +299,18 @@ export function applySuccessfulRoutePathAffinity<T extends RoutePathAffinityCand
 
   channels.forEach((channel, index) => {
     const state = routePathStates[buildRoutePathStateKey(channel)];
+    const channelSuppressionState = channel.resolvedModel
+      ? routePathStates[buildRoutePathStateKey({ ...channel, resolvedModel: undefined })]
+      : undefined;
+    const affinitySuppressedUntil = Math.max(
+      state?.affinitySuppressedUntil ?? 0,
+      channelSuppressionState?.affinitySuppressedUntil ?? 0
+    );
     const lastSuccessAt = state?.lastSuccessAt ?? 0;
     if (
       state?.lastOutcome !== 'success' ||
       lastSuccessAt <= affinityCutoff ||
-      (state.affinitySuppressedUntil ?? 0) > now ||
+      affinitySuppressedUntil > now ||
       (state.disabledUntil ?? 0) > now
     ) {
       return;
@@ -2041,24 +2065,11 @@ export async function handleRequest(
     return;
   }
 
-  // 解析 canonical model（代理层无 site 上下文，使用全局 alias 索引）
-  let canonicalModel: string | null = null;
-  if (rawModel) {
-    // 在 registry 中查找任意来源包含此 rawModel 的 entry
-    const registry = unifiedConfigManager.getRoutingConfig().modelRegistry;
-    for (const entry of Object.values(registry.entries)) {
-      if (entry.aliases.includes(rawModel) || entry.canonicalName === rawModel) {
-        canonicalModel = entry.canonicalName;
-        break;
-      }
-    }
-    // 若 registry 无匹配，则 canonical = raw（透传原样）
-    if (!canonicalModel) canonicalModel = rawModel;
-  }
-  // fallback: CLI 默认模型选择
-  if (!canonicalModel) {
-    canonicalModel = routing.cliModelSelections[cliType] || null;
-  }
+  // 解析 canonical model（代理层无 site 上下文，使用全局 alias 索引）。
+  // 普通本地路由请求以应用中对应 CLI 选择的模型作为路由意图；外部 CLI 配置/请求模型仅保留为诊断 requestedModel。
+  const rawCanonicalModel = resolveCanonicalModelFromRegistry(routing, rawModel);
+  const cliSelectedModel = routing.cliModelSelections[cliType]?.trim() || null;
+  let canonicalModel: string | null = cliSelectedModel || rawCanonicalModel;
 
   let activeRouteRuleId: string | undefined;
   let sortedChannels: ResolvedChannel[] = [];
@@ -2081,33 +2092,41 @@ export async function handleRequest(
       },
     ];
   } else {
-    // 规则匹配只看 canonical model；若当前请求尚未建立 canonical，则退化为 raw
+    // 规则匹配只看 canonical model；若当前请求尚未建立 canonical，则退化为 raw。
+    // canonicalModel 已优先采用应用内 CLI 选择模型，因此本地路由不再依赖外部 CLI 配置模型。
     const sortedRules = sortRules(routing.rules);
+    const shouldBlockGeminiUtility = shouldBlockGeminiCliInternalUtilityRequest({
+      routing,
+      cliType,
+      rawModel,
+      cliSelectedModel,
+    });
+    let explicitGeminiUtilityRule = null as ReturnType<typeof findMatchingRule>;
+    if (shouldBlockGeminiUtility) {
+      // Preserve the existing billing guard: app-selected model fallback/override must not turn
+      // known Gemini CLI internal utility/fallback models into billable upstream chat requests.
+      // An explicit rule for the observed raw utility model still opts into forwarding it.
+      explicitGeminiUtilityRule = findMatchingRule(sortedRules, cliType, rawCanonicalModel || rawModel);
+      if (!explicitGeminiUtilityRule) {
+        recordRouteRequest({
+          requestId,
+          attempt: 0,
+          cliType,
+          requestedModel: rawModel,
+          canonicalModel,
+          outcome: 'failure',
+          statusCode: GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_STATUS_CODE,
+          error: GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_ERROR_CODE,
+        });
+        writeGeminiCliInternalUtilityBlockedResponse(res, rawModel);
+        return;
+      }
+    }
     let matchModel = canonicalModel || rawModel;
-    let rule = findMatchingRule(sortedRules, cliType, matchModel);
-    const cliSelectedModel = routing.cliModelSelections[cliType]?.trim() || null;
-
-    if (
-      !rule &&
-      shouldBlockGeminiCliInternalUtilityRequest({
-        routing,
-        cliType,
-        rawModel,
-        cliSelectedModel,
-      })
-    ) {
-      recordRouteRequest({
-        requestId,
-        attempt: 0,
-        cliType,
-        requestedModel: rawModel,
-        canonicalModel,
-        outcome: 'failure',
-        statusCode: GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_STATUS_CODE,
-        error: GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_ERROR_CODE,
-      });
-      writeGeminiCliInternalUtilityBlockedResponse(res, rawModel);
-      return;
+    let rule = explicitGeminiUtilityRule || findMatchingRule(sortedRules, cliType, matchModel);
+    if (explicitGeminiUtilityRule) {
+      canonicalModel = rawCanonicalModel;
+      matchModel = rawCanonicalModel || rawModel;
     }
 
     // Gemini CLI can emit helper/default path models that differ from the app-selected model.

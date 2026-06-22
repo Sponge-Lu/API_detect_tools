@@ -69,12 +69,12 @@ const skeletonSource = readFileSync(
   resolve(process.cwd(), 'src/renderer/components/Skeleton/Skeleton.tsx'),
   'utf8'
 );
-const unifiedCliConfigDialogSource = readFileSync(
-  resolve(process.cwd(), 'src/renderer/components/dialogs/UnifiedCliConfigDialog.tsx'),
+const managedCliConfigEditorContentSource = readFileSync(
+  resolve(process.cwd(), 'src/renderer/components/dialogs/ManagedCliConfigEditorContent.tsx'),
   'utf8'
 );
-const customCliConfigEditorDialogSource = readFileSync(
-  resolve(process.cwd(), 'src/renderer/components/dialogs/CustomCliConfigEditorDialog.tsx'),
+const directCliConfigEditorContentSource = readFileSync(
+  resolve(process.cwd(), 'src/renderer/components/dialogs/DirectCliConfigEditorContent.tsx'),
   'utf8'
 );
 const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/App.tsx'), 'utf8');
@@ -271,10 +271,10 @@ describe('theme visual consistency', () => {
     expect(skeletonSource).not.toContain('dark:bg-slate-800/80');
     expect(skeletonSource).not.toContain('border-slate-200');
     expect(skeletonSource).not.toContain('dark:border-slate-700');
-    expect(unifiedCliConfigDialogSource).not.toContain('bg-white');
-    expect(unifiedCliConfigDialogSource).not.toContain('shadow-md');
-    expect(customCliConfigEditorDialogSource).not.toContain('bg-white');
-    expect(customCliConfigEditorDialogSource).not.toContain('shadow-md');
+    expect(managedCliConfigEditorContentSource).not.toContain('bg-white');
+    expect(managedCliConfigEditorContentSource).not.toContain('shadow-md');
+    expect(directCliConfigEditorContentSource).not.toContain('bg-white');
+    expect(directCliConfigEditorContentSource).not.toContain('shadow-md');
   });
 
   it('keeps app shell fallback states and group color helpers on neutral theme tokens', () => {

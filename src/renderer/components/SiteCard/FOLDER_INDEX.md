@@ -1,23 +1,21 @@
-# 📁 src/renderer/components/SiteCard/ - 站点卡片组件
+# 📁 src/renderer/components/SiteCard/ - 站点列表行组件
 
 ## 架构说明
 
-**职责**: 提供站点卡片显示和交互组件
+**职责**: 提供站点列表行显示和交互组件
 
 **特点**:
-- 使用兼容卡片原语承载统一产品级表面样式
+- 使用连续表格行样式承载统一产品级列表表面
 - 使用纯色背景 + 边框分隔（无渐变）
 - 显示站点基本信息
 - 显示检测结果
-- 提供操作按钮
-- 支持拖拽排序
-- 支持展开/收起动画
+- 提供主行高频操作按钮
+- 托管站点支持拖拽排序，直连配置行不参与排序
 - 显示 LDC 支付支持状态
 - 签到图标悬停显示签到统计 (New API 类型站点)
 
 **依赖关系**:
 - 被 `App.tsx` 使用
-- 依赖 `AppCard` 原语提供统一卡片表面
 - 依赖 `hooks/` 处理业务逻辑
 - 依赖 `store/` 管理状态
 
@@ -27,10 +25,10 @@
 
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
-| **SiteCard.tsx** | 站点卡片主组件（保持主行信息栅格 + 右侧操作区的稳定结构） | `SiteCard` 组件 |
-| **SiteCardHeader.tsx** | 卡片头部（沿用多列信息栅格，在主行内依次展示站点类型、LDC 比例和 CLI 可用性） | `SiteCardHeader` 组件 |
-| **SiteCardDetails.tsx** | 卡片详情（URL、Access Token、用户分组、API Keys、模型列表），沿用统一分隔线与表面层级；API Key 启用状态统一通过 shared `isApiKeyActive()` 兼容 `status/status_str/state/enabled` 字段，并提供单个 API Key 状态刷新按钮 | `SiteCardDetails` 组件 |
-| **SiteCardActions.tsx** | 卡片操作按钮（高频动作直出，低频动作进入更多菜单；更多菜单会根据视口空间自动上翻/限位，统一保留“删除账户”入口） | `SiteCardActions` 组件 |
+| **SiteCard.tsx** | 站点列表行主组件（保持主行信息栅格 + 右侧操作区的稳定结构；详情由接入点侧滑面板承载；支持 `custom-cli` 直连轻量行且可关闭拖拽） | `SiteCard` 组件 |
+| **SiteCardHeader.tsx** | 列表行头部（站点、账户、刷新时间、余额、今日消费、模型数量、History 列；模型数按唯一模型去重，History 与站点名按钮不会误触发行选择） | `SiteCardHeader` 组件 |
+| **SiteCardDetails.tsx** | 资源详情区（URL、Access Token、用户分组、API Keys、模型列表），由接入点侧滑面板 Tab2 复用；API Key 启用状态统一通过 shared `isApiKeyActive()` 兼容 `status/status_str/state/enabled` 字段，并提供单个 API Key 状态刷新按钮 | `SiteCardDetails` 组件 |
+| **SiteCardActions.tsx** | 主行高频操作按钮（打开加油站、签到、刷新检测）；编辑/删除/添加账户/自动刷新等低频入口迁移到接入点侧滑面板 | `SiteCardActions` 组件 |
 | **types.ts** | 类型定义（isDetecting 布尔值支持并发刷新，区分打开站点与签到页回调） | `SiteCardProps`, `SiteCardActionsProps` 等 |
 
 ---
@@ -42,4 +40,4 @@
 ---
 
 **版本**: 3.0.5
-**更新日期**: 2026-06-01
+**更新日期**: 2026-06-17

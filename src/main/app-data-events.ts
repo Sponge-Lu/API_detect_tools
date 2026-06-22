@@ -1,4 +1,5 @@
 import { BrowserWindow } from 'electron';
+import logger from './utils/logger';
 
 export type AppDataChangeDomain = 'site-config' | 'site-overview' | 'route-overview';
 
@@ -12,6 +13,11 @@ const APP_DATA_CHANGED_CHANNEL = 'app-data:changed';
 const pendingDomains = new Set<AppDataChangeDomain>();
 let flushTimer: NodeJS.Timeout | null = null;
 let nextFlushAt = 0;
+
+function isDisposedRendererSendError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('Render frame was disposed before WebFrameMain could be accessed');
+}
 
 function flushPendingChanges() {
   flushTimer = null;
@@ -32,8 +38,16 @@ function flushPendingChanges() {
 
 export function broadcastRendererEvent(channel: string, payload: unknown): void {
   for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send(channel, payload);
+    try {
+      if (window.isDestroyed() || window.webContents.isDestroyed()) {
+        continue;
+      }
+
+      window.webContents.mainFrame.send(channel, payload);
+    } catch (error) {
+      if (!isDisposedRendererSendError(error)) {
+        logger.warn('Failed to broadcast renderer event', channel, error);
+      }
     }
   }
 }

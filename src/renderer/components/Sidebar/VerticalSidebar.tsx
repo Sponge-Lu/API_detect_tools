@@ -18,23 +18,15 @@ import { CliConfigStatusPanel } from '../CliConfigStatus';
 import type { UpdateCheckResult } from '../../hooks/useUpdate';
 import { useRouteStore } from '../../store/routeStore';
 import { useUIStore } from '../../store/uiStore';
-import type { LogsSubtab, OverviewSubtab, SidebarDisplayMode, TabId } from '../../store/uiStore';
-import {
-  APP_LOGS_SUBPAGE_META,
-  APP_LOGS_SUBPAGE_ORDER,
-  APP_OVERVIEW_SUBPAGE_META,
-  APP_OVERVIEW_SUBPAGE_ORDER,
-  APP_PAGE_META,
-  APP_PAGE_ORDER,
-} from '../AppShell/pageMeta';
+import type { OverviewSubtab, SidebarDisplayMode, TabId } from '../../store/uiStore';
+import { LDC_UI_VISIBILITY } from '../../../shared/constants';
+import { APP_PAGE_META, APP_PAGE_ORDER } from '../AppShell/pageMeta';
 
 interface VerticalSidebarProps {
   activeTab: TabId;
   overviewSubtab?: OverviewSubtab;
-  logsSubtab?: LogsSubtab;
   onTabChange: (tab: TabId) => void;
   onOverviewSubtabChange?: (subtab: OverviewSubtab) => void;
-  onLogsSubtabChange?: (subtab: LogsSubtab) => void;
   saving: boolean;
   currentVersion?: string;
   updateInfo?: UpdateCheckResult | null;
@@ -43,11 +35,9 @@ interface VerticalSidebarProps {
 
 export function VerticalSidebar({
   activeTab,
-  overviewSubtab = 'site',
-  logsSubtab = 'session',
+  overviewSubtab: _overviewSubtab = 'site',
   onTabChange,
-  onOverviewSubtabChange = () => undefined,
-  onLogsSubtabChange = () => undefined,
+  onOverviewSubtabChange: _onOverviewSubtabChange = () => undefined,
   saving,
   currentVersion,
   updateInfo,
@@ -61,7 +51,9 @@ export function VerticalSidebar({
   const sidebarDisplayMode = uiState.sidebarDisplayMode ?? 'expanded';
   const toggleSidebarDisplayMode = uiState.toggleSidebarDisplayMode ?? (() => undefined);
   const setSidebarDisplayMode = uiState.setSidebarDisplayMode ?? (() => undefined);
-  const visibleSidebarItems = APP_PAGE_ORDER.map(id => APP_PAGE_META[id]);
+  const visibleSidebarItems = APP_PAGE_ORDER.filter(
+    id => LDC_UI_VISIBILITY.showCreditTab || id !== 'credit'
+  ).map(id => APP_PAGE_META[id]);
   const showDownloadButton = updateInfo?.hasUpdate && updateInfo?.releaseInfo?.downloadUrl;
   const newVersion = updateInfo?.releaseInfo?.version || updateInfo?.latestVersion;
   const routeState = useRouteStore() as { serverRunning?: boolean };
@@ -115,8 +107,6 @@ export function VerticalSidebar({
         {visibleSidebarItems.map(item => {
           const isActive = activeTab === item.id;
           const isRouteItem = item.id === 'route';
-          const isOverviewItem = item.id === 'overview';
-          const isLogsItem = item.id === 'logs';
           const itemTitle =
             isRouteItem && isIconOnly
               ? `${item.navLabel}（${routeServerStatusTitle}）`
@@ -174,64 +164,6 @@ export function VerticalSidebar({
                 </span>
               </button>
 
-              {isOverviewItem && !isIconOnly ? (
-                <div className="ml-5 border-l border-[var(--line-soft)] pl-2">
-                  {APP_OVERVIEW_SUBPAGE_ORDER.map(subpageId => {
-                    const subpage = APP_OVERVIEW_SUBPAGE_META[subpageId];
-                    const isActiveSubpage =
-                      activeTab === 'overview' && overviewSubtab === subpageId;
-
-                    return (
-                      <button
-                        key={subpage.id}
-                        type="button"
-                        aria-label={subpage.navLabel}
-                        title={subpage.navLabel}
-                        onClick={() => {
-                          onOverviewSubtabChange(subpage.id);
-                          onTabChange('overview');
-                        }}
-                        className={`mt-1 flex w-full items-center rounded-lg px-3 py-1.5 text-left text-[12px] transition-colors ${
-                          isActiveSubpage
-                            ? 'bg-[var(--surface-1)] font-semibold text-[var(--accent)]'
-                            : 'text-[var(--text-secondary)] hover:bg-[var(--surface-1)] hover:text-[var(--text-primary)]'
-                        }`}
-                      >
-                        <span className="truncate">{subpage.navLabel}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
-
-              {isLogsItem && !isIconOnly ? (
-                <div className="ml-5 border-l border-[var(--line-soft)] pl-2">
-                  {APP_LOGS_SUBPAGE_ORDER.map(subpageId => {
-                    const subpage = APP_LOGS_SUBPAGE_META[subpageId];
-                    const isActiveSubpage = activeTab === 'logs' && logsSubtab === subpageId;
-
-                    return (
-                      <button
-                        key={subpage.id}
-                        type="button"
-                        aria-label={subpage.navLabel}
-                        title={subpage.navLabel}
-                        onClick={() => {
-                          onLogsSubtabChange(subpage.id);
-                          onTabChange('logs');
-                        }}
-                        className={`mt-1 flex w-full items-center rounded-lg px-3 py-1.5 text-left text-[12px] transition-colors ${
-                          isActiveSubpage
-                            ? 'bg-[var(--surface-1)] font-semibold text-[var(--accent)]'
-                            : 'text-[var(--text-secondary)] hover:bg-[var(--surface-1)] hover:text-[var(--text-primary)]'
-                        }`}
-                      >
-                        <span className="truncate">{subpage.navLabel}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
             </div>
           );
         })}

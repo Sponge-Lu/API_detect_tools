@@ -14,12 +14,14 @@ import * as modelRegistry from '../route-model-registry-service';
 import * as cliProbe from '../route-cli-probe-service';
 import * as analytics from '../route-analytics-service';
 import { runHealthCheck } from '../route-health-service';
+import { getHistoryBuckets } from '../route-history-service';
 import type {
   RouteAnalyticsObjectStatsQuery,
   RouteAnalyticsWindowQuery,
   RoutePathStateResetParams,
   RouteRule,
   RouteRequestLogQuery,
+  RouteHistoryBucketsQuery,
 } from '../../shared/types/route-proxy';
 
 const log = Logger.scope('RouteHandlers');
@@ -357,6 +359,17 @@ export function registerRouteHandlers() {
     try {
       analytics.clearRouteRequestLogs();
       return ok();
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
+  // ============= History 时间桶聚合 =============
+
+  ipcMain.handle('route:getHistoryBuckets', async (_, query: RouteHistoryBucketsQuery) => {
+    try {
+      const buckets = getHistoryBuckets(query);
+      return ok(buckets);
     } catch (e: any) {
       return err(e.message);
     }

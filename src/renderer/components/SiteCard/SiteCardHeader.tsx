@@ -1,7 +1,7 @@
 /**
  * 输入: SiteCardHeaderProps (站点数据、检测结果、CLI 兼容性)
- * 输出: React 组件 (站点卡片头部 UI)
- * 定位: 展示层 - 站点卡片头部组件，显示站点基本信息与关键指标
+ * 输出: React 组件 (站点列表行头部 UI)
+ * 定位: 展示层 - 站点列表行头部组件，显示站点基本信息与关键指标
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -9,8 +9,7 @@
  * - PROJECT_INDEX.md
  */
 
-import { CliCompatibilityIcons } from '../CliCompatibilityIcons';
-import { SITE_TYPE_LABELS } from '../../../shared/types/site';
+import { HistoryCell } from '../HistoryCell';
 import type { SiteCardHeaderProps } from './types';
 
 function formatNumber(num: number): string {
@@ -21,6 +20,13 @@ function formatNumber(num: number): string {
     return (num / 1_000).toFixed(1) + 'K';
   }
   return num.toString();
+}
+
+function formatLdcDisplay(siteResult: SiteCardHeaderProps['siteResult']): string {
+  if (!siteResult?.ldcPaymentSupported || !siteResult.ldcExchangeRate) {
+    return '--';
+  }
+  return siteResult.ldcExchangeRate;
 }
 
 function formatBalanceDisplay(balance: number): string {
@@ -40,25 +46,14 @@ export function SiteCardHeader({
   errorCode,
   timeoutSeconds,
   columnWidths,
-  todayTotalTokens,
-  todayPromptTokens,
-  todayCompletionTokens,
-  todayRequests,
-  rpm,
-  tpm,
   modelCount,
+  accessPointType = 'managed',
   accountId,
   accountName,
   onOpenSite,
-  cliCompatibility,
-  cliConfig,
-  isCliTesting,
-  onOpenCliConfig,
-  onTestCliCompat,
-  onApply,
 }: SiteCardHeaderProps) {
-  const siteTypeLabel = site.site_type ? SITE_TYPE_LABELS[site.site_type] : '未识别';
-  const ldcRatio = siteResult?.ldcPaymentSupported ? siteResult.ldcExchangeRate?.trim() : undefined;
+  const isCustomCli = accessPointType === 'custom-cli';
+  const ldcDisplay = isCustomCli ? '--' : formatLdcDisplay(siteResult);
 
   return (
     <div
@@ -67,58 +62,69 @@ export function SiteCardHeader({
         gridTemplateColumns: columnWidths.map(w => `${w}px`).join(' '),
       }}
     >
+      {/* 列 1: 站点名 */}
       <div className="flex min-w-0 items-center">
-        <div className="flex min-w-0 flex-col gap-[2px]">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <button
-              onClick={() => onOpenSite(site, accountId)}
-              className="group flex min-w-0 items-center gap-1.5 transition-colors hover:text-[var(--accent)]"
-              title={`打开站点 ${site.name}${siteResult ? (siteResult.status === '成功' ? ' (在线)' : ' (离线)') : ' (未检测)'}`}
-            >
-              {siteResult ? (
-                siteResult.status === '成功' ? (
-                  <div className="h-2 w-2 rounded-full bg-[var(--success)] animate-pulse flex-shrink-0" />
-                ) : (
-                  <div className="h-2 w-2 rounded-full bg-[var(--danger)] flex-shrink-0" />
-                )
+        <div className="flex min-w-0 items-center gap-1.5">
+          <button
+            onClick={event => {
+              if (isCustomCli) {
+                return;
+              }
+              event.stopPropagation();
+              onOpenSite(site, accountId);
+            }}
+            className={`group flex min-w-0 items-center gap-1.5 transition-colors ${
+              isCustomCli ? 'cursor-default' : 'hover:text-[var(--accent)]'
+            }`}
+            title={
+              isCustomCli
+                ? `直连配置 ${site.name}`
+                : `打开站点 ${site.name}${siteResult ? (siteResult.status === '成功' ? ' (在线)' : ' (离线)') : ' (未检测)'}`
+            }
+            type="button"
+          >
+            {siteResult ? (
+              siteResult.status === '成功' ? (
+                <div className="h-2 w-2 rounded-full bg-[var(--success)] animate-pulse flex-shrink-0" />
               ) : (
-                <div className="h-2 w-2 rounded-full bg-[var(--text-tertiary)] flex-shrink-0" />
-              )}
-              <span className="truncate text-sm font-semibold text-[var(--text-primary)] md:text-base">
-                {site.name}
-              </span>
-            </button>
-            {errorCode && (
-              <span className="flex-shrink-0 text-[10px] font-semibold text-[var(--danger)]">
-                {errorCode}
-              </span>
+                <div className="h-2 w-2 rounded-full bg-[var(--danger)] flex-shrink-0" />
+              )
+            ) : (
+              <div className="h-2 w-2 rounded-full bg-[var(--text-tertiary)] flex-shrink-0" />
             )}
-            {!errorCode && timeoutSeconds !== null && (
-              <span className="flex-shrink-0 text-[10px] font-semibold text-[var(--danger)]">
-                T/O
-              </span>
-            )}
-          </div>
-          <div className="flex min-w-0 items-center gap-1.5 pl-[14px] text-[10px] text-[var(--text-tertiary)]">
-            <span className="min-w-0 truncate">{accountName ?? '--'}</span>
-            <span className="shrink-0">{lastSyncDisplay ?? '--'}</span>
-          </div>
+            <span className="truncate text-sm font-semibold text-[var(--text-primary)] md:text-base">
+              {site.name}
+            </span>
+          </button>
+          {errorCode && (
+            <span className="flex-shrink-0 text-[10px] font-semibold text-[var(--danger)]">
+              {errorCode}
+            </span>
+          )}
+          {!errorCode && timeoutSeconds !== null && (
+            <span className="flex-shrink-0 text-[10px] font-semibold text-[var(--danger)]">
+              T/O
+            </span>
+          )}
         </div>
       </div>
 
-      <div className="flex min-w-0 items-center justify-start px-1 text-[12px] text-[var(--text-secondary)]">
-        <span
-          className={`w-full truncate text-left font-medium ${
-            site.site_type ? 'text-[var(--text-primary)]' : 'text-[var(--text-tertiary)]'
-          }`}
-          title={siteTypeLabel}
-        >
-          {siteTypeLabel}
-        </span>
+      {/* 列 2: 账户 */}
+      <div className="flex min-w-0 items-center text-[13px] text-[var(--text-secondary)]">
+        <span className="truncate">{isCustomCli ? '直连配置' : (accountName ?? '--')}</span>
       </div>
 
+      {/* 列 3: 刷新时间 */}
+      <div className="flex min-w-0 items-center text-[13px] text-[var(--text-tertiary)]">
+        <span className="truncate">{lastSyncDisplay ?? '--'}</span>
+      </div>
+
+      {/* 列 4: 余额 */}
       <div className="flex flex-col">
-        {siteResult && siteResult.balance !== undefined && siteResult.balance !== null ? (
+        {!isCustomCli &&
+        siteResult &&
+        siteResult.balance !== undefined &&
+        siteResult.balance !== null ? (
           <span
             className={`truncate font-mono font-semibold ${
               siteResult.balance === -1 ? 'text-[var(--warning)]' : 'text-[var(--success)]'
@@ -131,8 +137,9 @@ export function SiteCardHeader({
         )}
       </div>
 
+      {/* 列 5: 今日消费 */}
       <div className="flex flex-col">
-        {siteResult && siteResult.todayUsage !== undefined ? (
+        {!isCustomCli && siteResult && siteResult.todayUsage !== undefined ? (
           <span
             className={`truncate font-mono font-semibold ${
               siteResult.todayUsage === 0 ? 'text-[var(--text-tertiary)]' : 'text-[var(--warning)]'
@@ -145,38 +152,7 @@ export function SiteCardHeader({
         )}
       </div>
 
-      <div className="flex flex-col items-center justify-center leading-tight">
-        <span
-          className={`font-mono font-medium ${
-            todayTotalTokens > 0 ? 'text-[var(--text-primary)]' : 'text-[var(--text-tertiary)]'
-          }`}
-          title={todayTotalTokens.toLocaleString()}
-        >
-          {formatNumber(todayTotalTokens)}
-        </span>
-        {todayTotalTokens > 0 ? (
-          <span className="mt-0.5 text-[10px] text-[var(--text-tertiary)]">
-            In {formatNumber(todayPromptTokens)} / Out {formatNumber(todayCompletionTokens)}
-          </span>
-        ) : null}
-      </div>
-
-      <div className="flex flex-col items-center justify-center leading-tight">
-        <span
-          className={`font-mono font-medium ${
-            todayRequests > 0 ? 'text-[var(--text-primary)]' : 'text-[var(--text-tertiary)]'
-          }`}
-          title={todayRequests.toLocaleString()}
-        >
-          {formatNumber(todayRequests)}
-        </span>
-        {todayRequests > 0 ? (
-          <span className="mt-0.5 text-[10px] text-[var(--text-tertiary)]">
-            RPM {rpm.toFixed(2)} / TPM {formatNumber(Math.round(tpm))}
-          </span>
-        ) : null}
-      </div>
-
+      {/* 列 6: 模型数 */}
       <div className="flex items-center justify-center text-[13px] text-[var(--text-secondary)]">
         <span
           className={`font-medium ${
@@ -187,32 +163,25 @@ export function SiteCardHeader({
         </span>
       </div>
 
+      {/* 列 7: LDC */}
       <div className="flex items-center justify-center text-[13px] text-[var(--text-secondary)]">
-        {ldcRatio ? (
-          <span
-            className="font-mono font-medium text-[var(--success)]"
-            title={`${ldcRatio} LDC = 1 站点余额`}
-          >
-            {ldcRatio}
-          </span>
-        ) : siteResult?.ldcPaymentSupported ? (
-          <span className="font-medium text-[var(--success)]">支持</span>
-        ) : (
-          <span className="text-[var(--text-tertiary)]">--</span>
-        )}
+        <span
+          className={`truncate font-mono font-medium ${
+            ldcDisplay === '--' ? 'text-[var(--text-tertiary)]' : 'text-[var(--accent)]'
+          }`}
+          title={ldcDisplay === '--' ? '不支持 LDC' : `LDC 兑换比例: ${ldcDisplay}`}
+        >
+          {ldcDisplay}
+        </span>
       </div>
 
-      <div className="flex items-center justify-center gap-1">
-        <CliCompatibilityIcons
-          compatibility={cliCompatibility}
-          cliConfig={cliConfig ?? null}
-          isLoading={isCliTesting}
-          configTrigger="text"
-          configButtonLabel="CLI配置"
-          onConfig={onOpenCliConfig}
-          onTest={onTestCliCompat}
-          onApply={onApply}
-        />
+      {/* 列 8: History（双控件 + 时间桶条形图）*/}
+      <div
+        className="flex items-center px-2"
+        onClick={event => event.stopPropagation()}
+        onPointerDown={event => event.stopPropagation()}
+      >
+        <HistoryCell siteId={site.id || site.name} accountId={accountId || ''} />
       </div>
     </div>
   );

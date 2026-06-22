@@ -26,6 +26,7 @@ import {
   isAnyRouterSite,
 } from '../../shared/types/site';
 import { AnyRouterConfigSection } from './AnyRouterConfigSection';
+import { isSameApiEndpoint } from '../../shared/utils/url-matcher';
 
 interface EditingAccountInfo {
   id: string;
@@ -171,6 +172,101 @@ export function SiteEditor({
       return;
     }
     setUrl(finalUrl);
+
+    // 检测站点是否已存在（仅在新增模式下检测）
+    if (!site) {
+      const config = await window.electronAPI.loadConfig();
+      const existingSite = config?.sites?.find(s => isSameApiEndpoint(s.url, finalUrl));
+
+      if (existingSite) {
+        // 统计该站点的账号数量
+        const accountCount = config?.accounts
+          ? config.accounts.filter(acc => acc.site_id === existingSite.id).length
+          : 0;
+
+        const confirmed = await new Promise<boolean>(resolve => {
+          const message = `站点「${existingSite.name}」(${existingSite.url}) 已存在，当前有 ${accountCount} 个账号。\n是否为该站点添加新账号？`;
+          resolve(window.confirm(message));
+        });
+
+        if (confirmed) {
+          // 用户确认添加新账号，继续登录流程获取新账号凭证
+          // 流程会在 handleSave 中检测并自动添加账号
+          setLoading(true);
+          setError('');
+          setStatusMessage('正在启动浏览器...');
+          setStep('fetching');
+
+          try {
+            const result = await window.electronAPI.launchChromeForLogin(finalUrl);
+            if (!result.success) {
+              setError(result.message);
+              setStatusMessage('');
+              setStep('input-url');
+              setLoading(false);
+              return;
+            }
+
+            setStatusMessage('浏览器已启动，正在检测登录状态...');
+
+            const siteAccountResult = (await (window.electronAPI as any).token.initializeSite(
+              finalUrl
+            )) as any;
+
+            if (!siteAccountResult.success) {
+              throw new Error(siteAccountResult.error || '初始化站点失败');
+            }
+
+            setStatusMessage('✅ 信息获取成功！');
+
+            const { user_id, site_name, access_token, supportsCheckIn, site_type, site_url, url } =
+              siteAccountResult.data;
+            const detectedApiKey = extractDetectedApiKey(siteAccountResult.data);
+            if (!user_id) {
+              throw new Error('初始化站点返回的数据中缺少用户ID');
+            }
+            const resolvedUrl = site_url || url || finalUrl;
+
+            setAutoInfo(prev => ({
+              name: site_name || extractDomainName(finalUrl),
+              accountName: prev.accountName || '新账号',
+              apiKey: detectedApiKey || prev.apiKey,
+              systemToken: access_token || '',
+              userId: String(user_id),
+              balance: null,
+              extraLinks: prev.extraLinks,
+              enableCheckin: supportsCheckIn === true,
+            }));
+
+            if (site_type) {
+              setSelectedSiteType(site_type);
+              setHasDetectedSiteType(true);
+              setIsSiteTypeEditing(false);
+            }
+            setUrl(resolvedUrl);
+
+            // 标记为添加账号模式
+            (window as any).__addAccountToExistingSite = existingSite;
+
+            setTimeout(() => {
+              setStep('confirm');
+              setStatusMessage('');
+            }, 800);
+          } catch (err: any) {
+            setError('获取站点信息失败: ' + err.message);
+            setStatusMessage('');
+            setStep('input-url');
+            setLoading(false);
+          }
+          return;
+        } else {
+          // 用户取消，停留在当前步骤
+          setError('');
+          return;
+        }
+      }
+    }
+
     setLoading(true);
     setError('');
     setStatusMessage('正在启动浏览器...');
@@ -254,7 +350,55 @@ export function SiteEditor({
   };
 
   const handleSave = async () => {
-    // 构建站点配置，包含签到与加油站配置
+    // 检查是否为添加账号模式（通过全局标记判断）
+    const existingSite = (window as any).__addAccountToExistingSite;
+
+    if (existingSite) {
+      // 添加账号模式：直接调用添加账号接口
+      try {
+        if (!existingSite.id) {
+          throw new Error('站点 ID 缺失');
+        }
+
+        const result = await window.electronAPI.accounts?.add({
+          site_id: existingSite.id,
+          account_name: autoInfo.accountName?.trim() || '新账号',
+          user_id: autoInfo.userId,
+          access_token: autoInfo.systemToken,
+          auth_source: 'browser',
+          ...(isAnyRouter && userHash ? { anyRouterConfig: { userHash } } : {}),
+        } as any);
+
+        if (!result?.success) {
+          throw new Error(result?.error || '添加账号失败');
+        }
+
+        toast.success(`添加账号成功：${autoInfo.accountName || '新账号'}@${existingSite.name}`);
+
+        // 清除全局标记
+        delete (window as any).__addAccountToExistingSite;
+
+        // 关闭浏览器
+        try {
+          await window.electronAPI.closeBrowser?.();
+        } catch {
+          // ignore
+        }
+
+        // 触发配置重新加载
+        if (onConfigChanged) {
+          await onConfigChanged();
+        }
+
+        // 关闭弹窗
+        onCancel();
+      } catch (err: any) {
+        toast.error(`添加账号失败：${err.message || '未知错误'}`);
+      }
+      return;
+    }
+
+    // 正常添加站点模式
     const newSite: SiteConfig = {
       name: autoInfo.name || extractDomainName(url),
       url: url.trim(),
@@ -264,9 +408,8 @@ export function SiteEditor({
       user_id: autoInfo.userId,
       enabled: site?.enabled ?? true,
       has_checkin: site?.has_checkin ?? false,
-      extra_links: autoInfo.extraLinks, // 加油站链接
-      force_enable_checkin: autoInfo.enableCheckin, // 用户勾选的签到功能
-      // 分组信息（如果用户未选择则归入默认分组）
+      extra_links: autoInfo.extraLinks,
+      force_enable_checkin: autoInfo.enableCheckin,
       group: selectedGroupId || defaultGroupId,
     };
     await onSave(newSite, {
@@ -277,7 +420,6 @@ export function SiteEditor({
             accountName: autoInfo.accountName.trim() || editingAccount.account_name || '',
           }
         : {}),
-      // AnyRouter 配置
       ...(isAnyRouter && userHash
         ? {
             anyRouterConfig: { userHash },

@@ -515,6 +515,57 @@ describe('route-proxy-service attempt planning', () => {
     ]);
   });
 
+  it('ignores successful route path affinity when the route channel was reset', () => {
+    const now = 1_700_000_000_000;
+    const firstPath = {
+      routeRuleId: 'rule-1',
+      siteId: 'site-1',
+      accountId: 'acc-1',
+      apiKeyId: 'key-a',
+      targetProtocol: 'native' as const,
+      canonicalModel: 'claude-route',
+      resolvedModel: 'raw-a',
+    };
+    const resetPath = {
+      ...firstPath,
+      siteId: 'site-2',
+      accountId: 'acc-2',
+      apiKeyId: 'key-b',
+      resolvedModel: 'raw-b',
+    };
+    const channelSuppression = {
+      ...resetPath,
+      resolvedModel: undefined,
+    };
+    const routePathStates: Record<string, RoutePathState> = {
+      [buildRoutePathStateKey(resetPath)]: {
+        ...resetPath,
+        windowStartedAt: now,
+        windowRequestCount: 2,
+        windowSuccessCount: 2,
+        successRate: 1,
+        lastOutcome: 'success',
+        lastSuccessAt: now - 10_000,
+        updatedAt: now - 1_000,
+      },
+      [buildRoutePathStateKey(channelSuppression)]: {
+        ...channelSuppression,
+        windowStartedAt: now,
+        windowRequestCount: 0,
+        windowSuccessCount: 0,
+        successRate: 1,
+        affinitySuppressedAt: now - 1_000,
+        affinitySuppressedUntil: now + 60_000,
+        updatedAt: now - 1_000,
+      },
+    };
+
+    expect(applySuccessfulRoutePathAffinity([firstPath, resetPath], routePathStates, now)).toEqual([
+      firstPath,
+      resetPath,
+    ]);
+  });
+
   it('applies successful route path affinity after max attempts per route path bounding', () => {
     const now = 1_700_000_000_000;
     const firstPath = {
@@ -610,10 +661,10 @@ describe('route-proxy-service attempt planning', () => {
       minSuccessRate: 0.75,
     });
     expect(resolveRouteRuntimeConfig(routingConfig, 'missing')).toEqual({
-      maxAttemptsPerRoutePath: 1,
-      successRateWindowMinutes: 5,
-      disableDurationMinutes: 30,
-      minSuccessRate: 0.8,
+      maxAttemptsPerRoutePath: 3,
+      successRateWindowMinutes: 60,
+      disableDurationMinutes: 60,
+      minSuccessRate: 0.3,
     });
   });
 });
@@ -1245,7 +1296,6 @@ describe('route-proxy-service CLI model fallback', () => {
     await handleRequest(request, response);
 
     expect(vi.mocked(findMatchingRule).mock.calls.map(call => call[2])).toEqual([
-      'gemini-2.5-flash-lite',
       'gemini-3.1-pro-preview',
     ]);
     expect(resolveChannels).toHaveBeenCalledWith(selectedRule, 'gemini-3.1-pro-preview');
@@ -1254,6 +1304,128 @@ describe('route-proxy-service CLI model fallback', () => {
       expect.objectContaining({
         method: 'POST',
         preferElectronNet: true,
+      })
+    );
+    expect(response.statusCode).toBe(200);
+  });
+
+  it('routes normal Codex requests through the app-selected CLI model instead of the external request model', async () => {
+    vi.clearAllMocks();
+
+    const selectedRule = {
+      id: 'rule-codex-selected',
+      cliType: 'codex' as const,
+      pattern: 'gpt-5-selected',
+      patternType: 'exact' as const,
+    };
+    const channel = {
+      routeRuleId: selectedRule.id,
+      siteId: 'site-codex',
+      accountId: 'account-default',
+      apiKeyId: 'key-default',
+      cliType: 'codex' as const,
+      canonicalModel: 'gpt-5-selected',
+      resolvedModel: 'gpt-5-selected-upstream',
+    };
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+        blockGeminiCliInternalUtilityRequests: true,
+      },
+      rules: [selectedRule],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: 'gpt-5-selected',
+        geminiCli: null,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'gpt-5-selected': {
+            canonicalName: 'gpt-5-selected',
+            aliases: ['gpt-5-selected'],
+            sources: [],
+            vendor: 'gpt' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+      routePathStates: {},
+    };
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn(() => ({ id: 'site-codex', name: 'codex-site' })),
+      getAccountById: vi.fn(() => ({ id: 'account-default', account_name: '默认账户' })),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(extractModelFromBody).mockReturnValue('gpt-4o-from-external-config');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([selectedRule as never]);
+    vi.mocked(findMatchingRule).mockImplementation((_rules, _cliType, model) =>
+      model === 'gpt-5-selected' ? (selectedRule as never) : null
+    );
+    vi.mocked(resolveChannels).mockReturnValue([channel]);
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://codex.example.com',
+      apiKey: 'sk-upstream',
+    });
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockResolvedValue({
+      ...channel,
+      windowStartedAt: 1,
+      windowRequestCount: 1,
+      windowSuccessCount: 1,
+      successRate: 1,
+      updatedAt: 1,
+    });
+    vi.mocked(httpRawRequest).mockResolvedValue({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{"id":"resp_1"}'),
+    });
+
+    const request = createJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+      },
+      { model: 'gpt-4o-from-external-config', input: 'hello' }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(vi.mocked(findMatchingRule).mock.calls.map(call => call[2])).toEqual([
+      'gpt-5-selected',
+    ]);
+    expect(resolveChannels).toHaveBeenCalledWith(selectedRule, 'gpt-5-selected');
+    expect(httpRawRequest).toHaveBeenCalledWith(
+      'https://codex.example.com/v1/responses',
+      expect.objectContaining({
+        method: 'POST',
+        preferElectronNet: true,
+      })
+    );
+    const forwardedBody = vi.mocked(httpRawRequest).mock.calls[0]?.[1]?.body;
+    expect(JSON.parse(Buffer.from(forwardedBody as Buffer).toString('utf-8'))).toMatchObject({
+      model: 'gpt-5-selected-upstream',
+      input: 'hello',
+    });
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestedModel: 'gpt-4o-from-external-config',
+        canonicalModel: 'gpt-5-selected',
+        resolvedModel: 'gpt-5-selected-upstream',
       })
     );
     expect(response.statusCode).toBe(200);

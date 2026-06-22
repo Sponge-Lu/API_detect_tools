@@ -745,6 +745,27 @@ function buildSourceKey(
   return `${siteId}:${accountId || 'site'}:${normalizeModelToken(originalModel)}`;
 }
 
+function buildDeletedSeededSourceExcludeOverride(
+  displayItem: RouteModelDisplayItem,
+  sourceKey: string,
+  now: number
+): RouteModelMappingOverride {
+  const hash = createHash('sha1')
+    .update(`${displayItem.id}:${displayItem.canonicalName}:${sourceKey}`)
+    .digest('hex')
+    .slice(0, 12);
+
+  return {
+    id: `exclude-deleted-seeded:${hash}`,
+    sourceKey,
+    canonicalName: displayItem.canonicalName,
+    action: 'exclude',
+    note: `Deleted seeded redirect model ${displayItem.canonicalName}`,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 /**
  * 扫描所有站点/账户 cached_data.models 重建 registry
  */
@@ -976,6 +997,15 @@ export async function deleteModelDisplayItem(
   const deleted = await unifiedConfigManager.deleteRouteModelDisplayItem(displayItemId);
   if (!deleted) {
     return null;
+  }
+
+  if (displayItem.mode === 'seeded') {
+    const now = Date.now();
+    for (const sourceKey of sourceKeys) {
+      await unifiedConfigManager.upsertRouteModelMappingOverride(
+        buildDeletedSeededSourceExcludeOverride(displayItem, sourceKey, now)
+      );
+    }
   }
 
   return syncModelRegistrySources(true);

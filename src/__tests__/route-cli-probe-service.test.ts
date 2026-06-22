@@ -78,7 +78,7 @@ async function loadProbeService(config: {
       config: {
         enabled: true,
         intervalMinutes: 240,
-        modelsPerCli: 3,
+        modelsPerCli: 1,
         requestTimeoutMs: 30_000,
         maxConcurrency: 2,
         retentionDays: 7,
@@ -269,6 +269,59 @@ describe('route-cli-probe-service', () => {
       .calls[0][0];
     expect(new Set(persistedSamples.map(sample => sample.probeRunId)).size).toBe(1);
     expect(persistedSamples[0].probeRunId).toMatch(/^route_/);
+  });
+
+
+  it('即时探测只使用每个 CLI 配置中选择的单个测试模型，不受全局 modelsPerCli 影响', async () => {
+    const config = {
+      sites: [
+        createSite({
+          cli_config: {
+            codex: {
+              enabled: true,
+              testModels: ['gpt-4.1-mini', 'gpt-4.1', 'o3-mini'],
+            },
+          },
+        }),
+      ],
+      accounts: [
+        createAccount('acct-default', {
+          cached_data: {
+            api_keys: [{ id: 1, key: 'sk-default-key', status: 1 }],
+          },
+        }),
+      ],
+      routingConfig: {
+        cliProbe: {
+          config: {
+            enabled: true,
+            intervalMinutes: 240,
+            modelsPerCli: 99,
+            requestTimeoutMs: 30_000,
+            maxConcurrency: 2,
+            retentionDays: 7,
+            runOnStartup: false,
+          },
+        },
+      },
+    };
+
+    const { runCliProbeNow, unifiedConfigManager } = await loadProbeService(config);
+    const result = await runCliProbeNow({
+      siteId: 'site-1',
+      accountId: 'acct-default',
+      cliType: 'codex',
+    });
+
+    expect(result.totalSamples).toBe(1);
+    const persistedSamples = vi.mocked(unifiedConfigManager.persistRouteCliProbeSamples).mock
+      .calls[0][0];
+    expect(persistedSamples).toHaveLength(1);
+    expect(persistedSamples[0]).toMatchObject({
+      cliType: 'codex',
+      canonicalModel: 'gpt-4.1-mini',
+      rawModel: 'gpt-4.1-mini',
+    });
   });
 
   it('自动探测通过本地 route proxy 执行真实 CLI 测试', async () => {

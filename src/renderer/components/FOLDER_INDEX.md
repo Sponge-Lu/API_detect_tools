@@ -29,6 +29,7 @@
 | **DetectionResults.tsx** | 检测结果显示 | `results`, `loading`, `onRetry` |
 | **SettingsPanel.tsx** | 设置面板 | `open`, `onClose`, `settings`, `onSave` |
 | **SiteEditor.tsx** | 站点编辑对话框 | `open`, `site`, `onSave`, `onCancel` |
+| **HistoryCell.tsx** | 站点管理 History 列单元格 | `siteId`, `accountId`；按表头共享的 CLI 类型/模式显示时间桶条形图 |
 
 ### 子文件夹
 
@@ -36,11 +37,11 @@
 |--------|------|--------|
 | **Header/** | 顶部导航栏 | Header, Menu, ThemeToggle |
 | **AppShell/** | 页面壳层组件 | GlobalCommandBar, PageHeader |
-| **SiteCard/** | 站点卡片 | SiteCard, SiteCardHeader, SiteCardActions |
+| **SiteCard/** | 站点列表行 | SiteCard, SiteCardHeader, SiteCardActions |
 | **SiteGroupTabs/** | 站点分组标签 | SiteGroupTabs, GroupTab |
-| **SiteListHeader/** | 站点列表头部 | SiteListHeader, SearchBar, FilterBar |
-| **Route/** | Route 页面组件 | ModelRedirectionTab, CliUsabilityTab, ProxyStatsTab |
-| **dialogs/** | 对话框组件 | 各类对话框；统一 CLI 配置抽屉支持按 API Key 分组或整站范围切换模型列表，并从 `routing.cliProbe.latest` 回显最新测试模型结果；自定义 CLI 编辑抽屉拉取模型后同步本地选择状态 |
+| **SiteListHeader/** | 站点列表头部 | SiteListHeader, SearchBar, FilterBar；History 表头内嵌旧 CLI 图标选择器和模式切换 |
+| **Route/** | Route 页面组件 | ModelRedirectionTab, ProxyStatsTab, HistoryBucketBars |
+| **dialogs/** | 对话框组件 | 各类对话框；接入点弹窗/侧滑面板承载站点管理合并后的低频操作和详情，托管/直连 CLI 编辑内容以内嵌组件形式运行并从 `routing.cliProbe.latest` 回显最新测试模型结果；操作记录弹窗展示当前会话关键操作；站点页 CLI 探测设置弹窗编辑 `routing.cliProbe.config`（不含探测模型数量，模型由各接入点 CLI 测试模型决定） |
 | **Skeleton/** | 骨架屏 | SkeletonLoader, SkeletonCard |
 | **Toast/** | 消息提示 | Toast, ToastContainer |
 | **CliCompatibilityIcons/** | CLI 兼容性图标 | CliIcon, CliIconGroup；按测试时间选择 canonical 投影与本地持久化结果中的较新状态 |
@@ -78,7 +79,7 @@ interface HeaderProps {
 
 ### SiteCard 组件
 
-**职责**: 显示单个站点的卡片
+**职责**: 显示单个站点/账户的列表行
 
 **Props**:
 ```typescript
@@ -86,16 +87,20 @@ interface SiteCardProps {
   site: Site;
   status?: SiteStatus;
   loading?: boolean;
-  onEdit?: (site: Site) => void;
-  onDelete?: (siteId: string) => void;
-  onRefresh?: (siteId: string) => void;
-  onSignIn?: (siteId: string) => void;
+  index: number;
+  accountId?: string;
+  accountName?: string;
+  columnWidths: number[];
+  isDetecting: boolean;
+  onDetect: (site: Site, accountId?: string) => void;
+  onCheckIn: (site: Site, accountId?: string) => void;
+  onOpenSite: (site: Site, accountId?: string) => void;
 }
 ```
 
 **特点**:
-- 显示站点信息（名称、余额、消耗等）
-- 操作按钮（编辑、删除、刷新、签到）
+- 显示站点、账户、刷新时间、余额、今日消费、模型数量和 History 时间桶
+- 操作按钮仅保留主行高频动作（打开加油站、签到、刷新检测），低频编辑/删除/添加账户/自动刷新迁移到接入点详情侧滑面板
 - 加载状态显示
 - 错误状态显示
 
@@ -141,6 +146,7 @@ interface SiteListHeaderProps {
 - 保持多列标题和列宽调整
 - 通过点击列头直接切换排序
 - 支持右侧批量操作槽位
+- History 列头提供旧版 CLI 图标选择器和综合/探测/路由模式切换；未传入 actions 时不显示默认“操作”文案
 - 保持站点列表的原有扫描节奏
 
 ### SiteEditor 组件
@@ -348,7 +354,7 @@ interface CreditPanelCompactProps {
 
 **特点**:
 - 紧凑显示核心积分数据（基准值、当前分、差值）
-- 点击展开详情弹出面板
+- 点击面板入口查看完整积分信息
 - 展开面板包含完整积分信息和三栏布局（交易记录、收入统计、支出统计）
 - 点击外部自动关闭展开面板
 - 支持登录/登出、刷新、自动刷新配置
@@ -482,5 +488,5 @@ describe('SiteCard', () => {
 
 ---
 
-**版本**: 2.1.12  
-**更新日期**: 2026-04-28
+**版本**: 3.0.5
+**更新日期**: 2026-06-22

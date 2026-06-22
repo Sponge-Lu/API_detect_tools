@@ -26,7 +26,7 @@
 | **cli-config-generator.ts** | CLI 配置生成 | `generateConfig()`, `exportConfig()` |
 | **cli-compat-projection.ts** | 将 `routing.cliProbe.latest` 投影为站点页 CLI 兼容性结果与 CLI 配置弹窗测试模型 slot | `projectCliCompatibilityMap()`, `projectCliModelTestResultsFromLatest()`, `mergeCliProbeLatestRecords()`, `syncProjectedCliCompatibility()` |
 | **cli-compat-sync.ts** | 手动 CLI 测试结果落盘后的跨视图回灌 | `persistCliCompatibilityResult()`, `refreshPersistedCliProbeState()` |
-| **sessionEventLog.ts** | 将关键操作写入会话事件历史 | `success()`, `info()`, `warning()`, `error()` |
+| **sessionEventLog.ts** | 将关键操作写入当前会话操作记录 | `success()`, `info()`, `warning()`, `error()` |
 
 ---
 
@@ -86,9 +86,9 @@
 
 ---
 
-### sessionEventLog.ts - 会话事件记录
+### sessionEventLog.ts - 操作记录
 
-**职责**: 将 renderer 侧的关键操作写入 `toastStore.eventHistory`，供日志页统一展示。
+**职责**: 将 renderer 侧的关键操作写入 `toastStore.eventHistory`，供站点管理页的操作记录弹窗展示。
 
 **关键导出**:
 - `sessionEventLog.success()` - 记录成功操作

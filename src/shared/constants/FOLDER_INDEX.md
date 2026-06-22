@@ -170,18 +170,19 @@ export const THEME_CONFIG = {
   SYSTEM: 'system'
 } as const;
 
-// 站点列表默认列宽
+// 站点列表默认列宽（v4：站点 / 账户 / 刷新时间 / 余额 / 今日消费 / 模型数 / History）
+export const COLUMN_WIDTHS_VERSION = 4;
 export const DEFAULT_COLUMN_WIDTHS = [
-  142, // 站点（两行：站点名 / 账户名 + 更新时间）
-  86,  // 站点类型
-  88,  // 余额
-  78,  // 今日消费
-  110, // Token统计
-  92,  // 请求统计
-  56,  // 模型数
-  72,  // LDC
-  180, // CLI兼容性
+  180, // 站点名
+  112, // 账户
+  84,  // 刷新时间
+  84,  // 余额
+  84,  // 今日消费
+  64,  // 模型数
+  320, // History（表头 CLI 选择器 + 24个时间桶）
 ] as const;
+
+export const COLUMN_MAX_WIDTH = 480;
 
 // LDC 支付方式名称匹配列表（不同站点可能使用不同名称）
 export const LDC_PAYMENT_NAMES = [
@@ -412,5 +413,5 @@ export const NEW_FEATURE_CONFIG = {
 
 ---
 
-**版本**: 2.1.11  
-**更新日期**: 2025-12-30
+**版本**: 3.0.5
+**更新日期**: 2026-06-18

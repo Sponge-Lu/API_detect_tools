@@ -57,6 +57,7 @@ export interface DirectCliConfigEditorContentProps {
   showHeader?: boolean;
   showSaveAction?: boolean;
   showModelSummary?: boolean;
+  identityFormId?: string;
   onSaved?: () => void | Promise<void>;
   onCancel?: () => void;
   showDialog?: (options: {
@@ -328,14 +329,14 @@ function CliModelSelector({
   const canUseManualCandidate = manualCandidate.length > 0 && !models.includes(manualCandidate);
 
   return (
-    <div className="flex-1 relative" ref={ref}>
+    <div className="relative min-w-0 flex-1" ref={ref}>
       <button
         type="button"
         disabled={disabled}
         aria-label={ariaLabel}
         onClick={() => !disabled && setOpen(!open)}
-        className={`w-full flex items-center justify-between px-2.5 py-1.5 bg-[var(--surface-1)] border border-[var(--line-soft)] rounded-[var(--radius-md)] text-xs transition-all ${
-          disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-[var(--icon-muted)]'
+        className={`flex w-full min-w-0 items-center justify-between rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)] ${
+          disabled ? 'cursor-not-allowed opacity-50' : 'hover:border-[var(--text-tertiary)]'
         }`}
       >
         <span
@@ -344,7 +345,7 @@ function CliModelSelector({
           {selectedModel || '选择模型'}
         </span>
         <ChevronDown
-          className={`w-3.5 h-3.5 shrink-0 ml-1 text-[var(--text-secondary)] transition-transform ${open ? 'rotate-180' : ''}`}
+          className={`ml-2 h-4 w-4 shrink-0 text-[var(--text-secondary)] transition-transform ${open ? 'rotate-180' : ''}`}
         />
       </button>
       {open && (
@@ -436,6 +437,7 @@ export function DirectCliConfigEditorContent({
   showHeader = true,
   showSaveAction = true,
   showModelSummary = true,
+  identityFormId,
   onSaved,
   onCancel,
   showDialog,
@@ -452,7 +454,7 @@ export function DirectCliConfigEditorContent({
   const [cliSettings, setCliSettings] = useState<CustomCliConfig['cliSettings']>(() =>
     normalizeCliSettings(config.cliSettings)
   );
-  const [selectedCli, setSelectedCli] = useState<CliType>('claudeCode');
+  const [selectedCli, setSelectedCli] = useState<CliType | null>(null);
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
 
   // 编辑模式状态
@@ -491,7 +493,7 @@ export function DirectCliConfigEditorContent({
     setManualModels(config.manualModels || []);
     setManualModelInput('');
     setCliSettings(normalizeCliSettings(config.cliSettings));
-    setSelectedCli('claudeCode');
+    setSelectedCli(null);
     setCopiedPath(null);
     setTestingCli(null);
     setApplyingCli(null);
@@ -527,7 +529,7 @@ export function DirectCliConfigEditorContent({
 
   // 生成配置预览 — 使用当前选中 CLI 的独立模型
   const configPreview = useMemo((): GeneratedConfig | null => {
-    return generateConfigForCli(selectedCli);
+    return selectedCli ? generateConfigForCli(selectedCli) : null;
   }, [generateConfigForCli, selectedCli]);
 
   // 处理 CLI 设置变更
@@ -768,6 +770,7 @@ export function DirectCliConfigEditorContent({
 
   // 切换编辑/预览模式
   const toggleEditMode = () => {
+    if (!selectedCli) return;
     const savedEdited = perCliEdited[selectedCli];
     const configToEdit = savedEdited || configPreview;
     if (configToEdit) {
@@ -778,7 +781,7 @@ export function DirectCliConfigEditorContent({
 
   // 保存编辑内容（编辑模式下的保存按钮）
   const handleSaveEdit = () => {
-    if (editedConfig) {
+    if (selectedCli && editedConfig) {
       setPerCliEdited(prev => ({ ...prev, [selectedCli]: editedConfig }));
     }
     setIsEditing(false);
@@ -794,7 +797,9 @@ export function DirectCliConfigEditorContent({
   const handleResetConfig = () => {
     setEditedConfig(null);
     setIsEditing(false);
-    setPerCliEdited(prev => ({ ...prev, [selectedCli]: null }));
+    if (selectedCli) {
+      setPerCliEdited(prev => ({ ...prev, [selectedCli]: null }));
+    }
     setShowResetConfirm(false);
   };
 
@@ -839,8 +844,8 @@ export function DirectCliConfigEditorContent({
   };
 
   // 切换 CLI 类型时保存当前编辑
-  const handleCliTypeChange = (newCli: CliType) => {
-    if (editedConfig) {
+  const handleCliTypeChange = (newCli: CliType | null) => {
+    if (selectedCli && editedConfig) {
       setPerCliEdited(prev => ({ ...prev, [selectedCli]: editedConfig }));
     }
     setSelectedCli(newCli);
@@ -849,7 +854,7 @@ export function DirectCliConfigEditorContent({
   };
 
   // 当前显示的配置（优先级：编辑中 > 已保存编辑 > 自动生成）
-  const savedEditedConfig = perCliEdited[selectedCli];
+  const savedEditedConfig = selectedCli ? perCliEdited[selectedCli] : null;
   const displayConfig =
     isEditing && editedConfig ? editedConfig : savedEditedConfig || configPreview;
 
@@ -857,7 +862,7 @@ export function DirectCliConfigEditorContent({
   const handleSave = async () => {
     // 如果当前 CLI 有编辑中的配置，先合并到 perCliEdited
     const finalPerCliEdited = { ...perCliEdited };
-    if (editedConfig) {
+    if (selectedCli && editedConfig) {
       finalPerCliEdited[selectedCli] = editedConfig;
     }
 
@@ -899,7 +904,8 @@ export function DirectCliConfigEditorContent({
   const sectionDescription =
     section === 'identity' ? '' : section === 'models' ? '' : section === 'cli' ? '' : '';
   const shouldShowHeader = showHeader && section !== 'cli';
-  const shouldShowStandaloneSaveAction = !shouldShowHeader && showSaveAction && section !== 'cli';
+  const shouldShowStandaloneSaveAction =
+    !shouldShowHeader && showSaveAction && section !== 'cli' && section !== 'identity';
 
   return (
     <div className="space-y-4">
@@ -940,7 +946,14 @@ export function DirectCliConfigEditorContent({
       <div className="space-y-4">
         {/* 基本信息 */}
         {showIdentitySection ? (
-          <>
+          <form
+            id={identityFormId}
+            className="space-y-4"
+            onSubmit={event => {
+              event.preventDefault();
+              void handleSave();
+            }}
+          >
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div>
                 <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
@@ -1007,7 +1020,7 @@ export function DirectCliConfigEditorContent({
                 className="w-full resize-none rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
               />
             </div>
-          </>
+          </form>
         ) : null}
 
         {showModelsSection ? (
@@ -1130,22 +1143,14 @@ export function DirectCliConfigEditorContent({
                 const canRunCliTests =
                   Boolean(baseUrl && apiKey) && setting.enabled && selectedTestModels.length > 0;
                 const isOpen = selectedCli === cli.key;
-                const targetProtocol = normalizeCliTargetProtocol(setting.targetProtocol);
-                const selectedTargetEndpoint = getCliTargetEndpoint(
-                  cli.key,
-                  targetProtocol,
-                  setting.model
-                );
-                const selectedTargetIsNativeEquivalent = targetProtocol === 'native';
 
                 return (
                   <PanelSection
                     key={cli.key}
                     collapsible
                     expanded={isOpen}
-                    onExpandedChange={() => {
-                      if (isOpen) return;
-                      handleCliTypeChange(cli.key);
+                    onExpandedChange={expanded => {
+                      handleCliTypeChange(expanded ? cli.key : null);
                     }}
                     title={
                       <span className="flex items-center gap-2">
@@ -1165,10 +1170,32 @@ export function DirectCliConfigEditorContent({
                       )
                     }
                     actions={
-                      <FormSwitch
-                        checked={setting.enabled}
-                        onChange={checked => handleCliSettingChange(cli.key, { enabled: checked })}
-                      />
+                      <>
+                        <AppButton
+                          variant="secondary"
+                          size="sm"
+                          aria-label={`应用 ${cli.name}`}
+                          onClick={() => handleApplyCliConfig(cli.key)}
+                          disabled={
+                            !setting.enabled ||
+                            !setting.model ||
+                            !baseUrl ||
+                            !apiKey ||
+                            applyingCli !== null
+                          }
+                        >
+                          {applyingCli === cli.key ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : null}
+                          应用到本机
+                        </AppButton>
+                        <FormSwitch
+                          checked={setting.enabled}
+                          onChange={checked =>
+                            handleCliSettingChange(cli.key, { enabled: checked })
+                          }
+                        />
+                      </>
                     }
                   >
                     {isOpen ? (
@@ -1226,20 +1253,6 @@ export function DirectCliConfigEditorContent({
                               </select>
                             </div>
                           </div>
-
-                          <div className="rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-2 text-xs text-[var(--text-secondary)]">
-                            <div>
-                              当前上游端点:
-                              <code className="ml-1 text-[var(--text-primary)]">
-                                {selectedTargetEndpoint}
-                              </code>
-                            </div>
-                            {selectedTargetIsNativeEquivalent ? (
-                              <div className="mt-1 text-[var(--warning)]">
-                                该端点与当前 CLI 原生协议等效，运行时将按 native 透传。
-                              </div>
-                            ) : null}
-                          </div>
                         </div>
 
                         <div className="space-y-2 border-t border-[var(--line-soft)] pt-3">
@@ -1274,9 +1287,8 @@ export function DirectCliConfigEditorContent({
                                 ariaLabel={`${cli.name} 测试模型`}
                               />
                               {selectedTestOutcome ? (
-                                <div className="min-w-[4rem] max-w-[12rem] shrink-0 pt-1 text-right">
+                                <div className="min-w-[4rem] shrink-0 pt-2 text-right">
                                   <span
-                                    title={selectedTestOutcome.message}
                                     className={`text-xs font-medium ${
                                       selectedTestOutcome.success
                                         ? 'text-[var(--success)]'
@@ -1285,14 +1297,6 @@ export function DirectCliConfigEditorContent({
                                   >
                                     {selectedTestOutcome.success ? '成功' : '失败'}
                                   </span>
-                                  {!selectedTestOutcome.success && selectedTestOutcome.message ? (
-                                    <div
-                                      title={selectedTestOutcome.message}
-                                      className="mt-1 line-clamp-2 text-xs leading-4 text-[var(--danger)]"
-                                    >
-                                      {selectedTestOutcome.message}
-                                    </div>
-                                  ) : null}
                                 </div>
                               ) : null}
                             </div>
@@ -1303,33 +1307,12 @@ export function DirectCliConfigEditorContent({
                           )}
                         </div>
 
-                        <div className="flex justify-end border-t border-[var(--line-soft)] pt-3">
-                          <AppButton
-                            variant="secondary"
-                            size="sm"
-                            aria-label={`应用 ${cli.name}`}
-                            onClick={() => handleApplyCliConfig(cli.key)}
-                            disabled={
-                              !setting.enabled ||
-                              !setting.model ||
-                              !baseUrl ||
-                              !apiKey ||
-                              applyingCli !== null
-                            }
-                          >
-                            {applyingCli === cli.key ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : null}
-                            应用到本机
-                          </AppButton>
-                        </div>
-
-                        <PanelSection
-                          collapsible
-                          defaultExpanded={false}
-                          title="配置文件预览"
-                          actions={
-                            displayConfig ? (
+                        <div className="space-y-3 border-t border-[var(--line-soft)] pt-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-xs font-medium text-[var(--text-secondary)]">
+                              配置文件预览
+                            </div>
+                            {displayConfig ? (
                               <div className="flex items-center gap-1">
                                 {isEditing ? (
                                   <>
@@ -1377,15 +1360,10 @@ export function DirectCliConfigEditorContent({
                                   </>
                                 )}
                               </div>
-                            ) : null
-                          }
-                          bodyClassName="pt-2"
-                        >
+                            ) : null}
+                          </div>
                           {displayConfig ? (
                             <div className="space-y-3">
-                              <div className="rounded-[var(--radius-sm)] border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-2 py-1.5 text-xs text-[var(--warning)]">
-                                请确认配置信息是否正确
-                              </div>
                               {isEditing ? (
                                 <div className="text-xs text-[var(--text-secondary)]">
                                   提示：您可以直接编辑配置内容，修改后会随配置一起保存
@@ -1405,13 +1383,13 @@ export function DirectCliConfigEditorContent({
                               </div>
                             </div>
                           ) : (
-                            <div className="rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-4 text-center text-sm text-[var(--text-secondary)]">
+                            <div className="px-3 py-4 text-center text-sm text-[var(--text-secondary)]">
                               {!setting.model
                                 ? '请为当前 CLI 选择模型以预览配置'
                                 : '请填写 Base URL 和 API Key'}
                             </div>
                           )}
-                        </PanelSection>
+                        </div>
                       </div>
                     ) : null}
                   </PanelSection>

@@ -78,6 +78,8 @@ export function registerAccountHandlers(): void {
         auth_source: string;
 
         browser_profile_path?: string;
+
+        anyRouterConfig?: { userHash?: string };
       }
     ) => {
       try {
@@ -97,6 +99,8 @@ export function registerAccountHandlers(): void {
           status: 'active',
 
           browser_profile_path: data.browser_profile_path,
+
+          anyRouterConfig: data.anyRouterConfig,
         });
 
         Logger.info(`✅ [AccountHandlers] 添加账户: ${account.id} (${account.account_name})`);

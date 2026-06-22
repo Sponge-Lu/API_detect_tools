@@ -24,7 +24,7 @@
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
 | **main.ts** | 应用入口、窗口管理 | `createWindow()`, `app.whenReady()` |
-| **app-data-events.ts** | 主进程到渲染进程的数据变更通知桥，按域批量广播站点配置/站点总览/路由总览变更，并提供即时 renderer 事件广播工具 | `notifyAppDataChanged()`, `broadcastRendererEvent()` |
+| **app-data-events.ts** | 主进程到渲染进程的数据变更通知桥，按域批量广播站点配置/站点总览/路由总览变更；广播会跳过已销毁窗口/webContents 并吞掉 Electron disposed-frame 竞态错误 | `notifyAppDataChanged()`, `broadcastRendererEvent()` |
 | **app-storage-manifest.ts** | 应用本地存储清单，声明 stable config、runtime/cache/statistics、备份、日志、敏感设置与受保护浏览器状态的 owner、路径、retention/cap 和备份边界 | `APP_STORAGE_ENTRIES`, `resolveAppStorageManifest()` |
 | **app-storage-bundle.ts** | manifest 配置包创建/恢复，限定 full-manifest 默认纳入文件，兼容 legacy config-only 恢复并避免浏览器状态被触碰；旧版 config-only 恢复只写稳定配置并保留已有运行态 sidecar | `createAppStorageBundleContent()`, `restoreAppStorageBackupContent()` |
 | **api-service.ts** | API 请求服务、模型接口响应格式容错、NewAPI/Sub2API 认证失败 envelope 识别、检测状态持久化、同日手动签到完成状态保留、旧站点首次检测时自动写回 `site_type`，并在缓存更新后触发站点每日快照采集 | `ApiService` 类 |
@@ -35,7 +35,8 @@
 | **token-service.ts** | Token 认证服务，初始化阶段按 site_type 选择端点与 access token 策略，Sub2API 可从浏览器登录态重读并校验 JWT，显式 `site_type` 可覆盖 URL 反查，按 site_type 驱动签到/浏览器回退端点，统一识别 Unauthorized/invalid access token 失败 envelope，并在 NewAPI 脱敏 API Key 列表中优先使用 `/api/token/batch/keys` 批量补全明文 key | `TokenService` 类 |
 | **cli-compat-service.ts** | 协议级 CLI 兼容性测试，请求格式与真实 CLI 对齐 | `CliCompatService` 类 |
 | **cli-wrapper-compat-service.ts** | 基于真实 CLI wrapper 的兼容性测试；当前 UI 测试主路径，使用临时 HOME/CODEX_HOME 隔离环境，监听 route probe-lock 请求/终止失败以提前停止确定性失败测试，并在 CLI 二次请求先触发 probe-lock 限制时等待/回看首次真实上游结果避免误判，Claude JSON 错误会摘要化，清理临时目录时会重试并避免 Windows 文件锁覆盖真实测试结果，Gemini 仅写隔离 `HOME/.gemini` 并禁用自身 sandbox relaunch | `CliWrapperCompatService` 类 |
-| **custom-cli-config-service.ts** | 自定义 CLI 配置持久化与模型拉取服务，并为路由生成自定义 CLI 虚拟站点/账户/API Key 标识 | `loadCustomCliConfigStorage()`, `buildCustomCliRouteSiteId()` |
+| **custom-cli-config-service.ts** | 自定义 CLI 配置持久化服务，并为路由生成自定义 CLI 虚拟站点/账户/API Key 标识 | `loadCustomCliConfigStorage()`, `buildCustomCliRouteSiteId()` |
+| **custom-cli-model-service.ts** | 直连配置模型获取服务，通过 `baseUrl + /v1/models` 获取模型列表并写回配置 | `fetchModels()`, `fetchAllModels()` |
 | **backup-manager.ts** | 本地备份管理，自动备份保持 config-only 节流去重，手动备份生成 manifest 配置包 | `backupManager` 实例 |
 | **webdav-manager.ts** | WebDAV 云端配置包上传、列表、删除与恢复，兼容旧 config-only 备份 | `WebDAVManager` 类 |
 | **unified-config-manager.ts** | 统一配置管理、损坏恢复、读取失败短重试、原子写入、legacy 默认账户自愈修复、缺失 `site_type` 旧站点保持未决、路由路径暂停状态恢复、兼容保存时清理已删站点的孤儿账户、删除最后一个账户时自动移除站点配置，并提供 CLI probe samples/latest 一次性 sidecar 写入 | `unifiedConfigManager` 实例 |
@@ -52,6 +53,7 @@
 | **route-model-registry-service.ts** | 模型注册表聚合、展示项维护与厂商优先级配置，聚合站点/账户模型和自定义 CLI 配置模型；自定义 CLI 已拉取模型列表会作为候选边界过滤旧测试/选择残留，`manualModels` 作为用户手动输入模型例外保留，配置保存后通过 handler 强制刷新持久化 registry | `rebuildModelRegistry()`, `resetModelRegistryDefaults()`, `syncModelRegistrySources()` |
 | **route-cli-probe-service.ts** | CLI 定时探测、latest/history 维护与视图聚合；探测覆盖站点账户与自定义 CLI 虚拟配置，站点探测只选择活跃 API Key，并通过 probe-lock 携带 `probeRunId` 精确钉到当前站点/账户/API Key/模型/自定义上游 | `runCliProbeNow()`, `getCliProbeView()` |
 | **route-analytics-service.ts** | 路由请求分析、token/缓存 token/延迟/状态码统计与对象级排行 | `recordRouteRequest()`, `getRouteObjectStats()` |
+| **route-history-service.ts** | History 时间桶聚合服务，将 CLI 探测样本和路由统计按 48h / 2h 桶合并为成功率数据 | `getHistoryBuckets()` |
 | **route-stats-service.ts** | 路由调用统计与通道评分排序 | `recordOutcome()`, `sortChannelsByScore()` |
 | **route-state-manager.ts** | 路由运行态文件管理，维护并裁剪 `state/route-runtime.json`、`route-probes.json`、`route-analytics.json` 与模型来源快照，避免高频路由状态写入 `config.json` | `routeStateManager` |
 | **power-manager.ts** | 电源管理，阻止系统休眠 | `powerManager` 实例 |
@@ -432,4 +434,4 @@ main.ts: app.whenReady()
 ---
 
 **版本**: 3.0.5
-**更新日期**: 2026-06-01
+**更新日期**: 2026-06-17

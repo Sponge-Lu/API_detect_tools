@@ -15,8 +15,10 @@ import { useConfigStore } from '../renderer/store/configStore';
 import { useCustomCliConfigStore } from '../renderer/store/customCliConfigStore';
 import { useUIStore } from '../renderer/store/uiStore';
 import { useToastStore } from '../renderer/store/toastStore';
+import { useRouteStore } from '../renderer/store/routeStore';
 import type { SiteConfig } from '../renderer/App';
 import type { CustomCliConfig } from '../shared/types/custom-cli-config';
+import { DEFAULT_CLI_PROBE_CONFIG } from '../shared/types/route-proxy';
 
 const baseSite: SiteConfig = {
   id: 'site-1',
@@ -153,11 +155,20 @@ function findClickableAction(
   node: ReactNode,
   label: string
 ): ReactElement<{ children?: ReactNode; onClick: () => void }> | null {
-  if (!isValidElement<{ children?: ReactNode; onClick?: () => void }>(node)) {
+  if (
+    !isValidElement<{
+      children?: ReactNode;
+      onClick?: () => void;
+      'aria-label'?: string;
+      title?: string;
+    }>(node)
+  ) {
     return null;
   }
 
-  if (typeof node.props.onClick === 'function' && getReactNodeText(node.props.children) === label) {
+  const actionLabel =
+    node.props['aria-label'] || node.props.title || getReactNodeText(node.props.children);
+  if (typeof node.props.onClick === 'function' && actionLabel === label) {
     return node as ReactElement<{ children?: ReactNode; onClick: () => void }>;
   }
 
@@ -241,13 +252,139 @@ describe('sites page redesign', () => {
       configs: [],
       activeConfigId: null,
     });
+    (window.electronAPI as any).route.getConfig = vi.fn().mockResolvedValue({ success: true, data: null });
+    (window.electronAPI as any).route.saveCliProbeConfig = vi
+      .fn()
+      .mockResolvedValue({ success: true });
+    (window.electronAPI as any).route.runCliProbeNow = vi.fn().mockResolvedValue({
+      success: true,
+      data: { startedAt: 1, finishedAt: 2, totalSamples: 0, successSamples: 0, failureSamples: 0 },
+    });
+    (window.electronAPI as any).loadConfig = vi.fn().mockResolvedValue({
+      sites: [],
+      accounts: [],
+      routing: { cliProbe: { latest: {} } },
+    });
+    useRouteStore.setState({
+      config: null,
+      loading: false,
+      cliProbeHistory: [],
+      cliProbeLatest: [],
+      cliProbeView: [],
+      cliProbeLoaded: false,
+      cliProbeError: null,
+    });
   });
 
-  it('removes the detect-all header action spacer (R11)', () => {
+  it('restores the PRD page-header detection settings and detect-all actions', () => {
     const source = readFileSync(join(process.cwd(), 'src/renderer/pages/SitesPage.tsx'), 'utf8');
 
     expect(source).not.toContain('<div className="w-[48px]" aria-hidden="true" />');
-    expect(source).not.toContain('title="检测所有站点"');
+    expect(source).toContain('handleOpenDetectionSettings');
+    expect(source).toContain('CliProbeSettingsDialog');
+    expect(source).toContain('fetchRouteConfig');
+    expect(source).toContain('setShowCliProbeSettings(true)');
+    expect(source).toContain('runRouteProbeNow');
+    expect(source).not.toContain("setActiveSettingsSection('detection')");
+    expect(source).toContain('handleDetectAllSites');
+    expect(source).toContain('aria-label="探测设置"');
+    expect(source).toContain('aria-label="立即探测"');
+    expect(source).toContain('探测设置');
+    expect(source).toContain('立即探测');
+    expect(source).not.toContain('<SlidersHorizontal className="w-4 h-4"');
+    expect(source).not.toContain('<Play className="w-4 h-4"');
+  });
+
+
+  it('runs route CLI probe from the Sites page header immediate probe action', async () => {
+    useConfigStore.setState({
+      config: {
+        sites: [baseSite],
+        settings: {
+          timeout: 30,
+          concurrent: false,
+          show_disabled: true,
+        },
+        siteGroups: [{ id: 'default', name: '默认分组' }],
+      },
+    });
+
+    let headerActions: ReactNode | null = null;
+    const setPageHeaderActions = vi.fn((actions: ReactNode | null) => {
+      headerActions = actions;
+    });
+
+    render(<SitesPage setPageHeaderActions={setPageHeaderActions} />);
+    await waitFor(() => expect(setPageHeaderActions).toHaveBeenCalled());
+
+    const immediateProbeAction = findClickableAction(headerActions, '立即探测');
+    expect(immediateProbeAction).not.toBeNull();
+
+    await act(async () => {
+      await immediateProbeAction?.props.onClick();
+    });
+
+    expect((window.electronAPI as any).route.runCliProbeNow).toHaveBeenCalledWith(undefined);
+    expect((window.electronAPI as any).detectAllSites).not.toHaveBeenCalled();
+  });
+
+  it('opens and saves route CLI probe settings from the Sites page header', async () => {
+    const routeConfig = {
+      cliProbe: {
+        config: {
+          ...DEFAULT_CLI_PROBE_CONFIG,
+          enabled: true,
+          intervalMinutes: 120,
+        },
+        latest: {},
+        history: {},
+      },
+    };
+    (window.electronAPI as any).route.getConfig = vi.fn().mockResolvedValue({
+      success: true,
+      data: routeConfig,
+    });
+
+    useConfigStore.setState({
+      config: {
+        sites: [],
+        settings: {
+          timeout: 30,
+          concurrent: false,
+          show_disabled: true,
+        },
+        siteGroups: [{ id: 'default', name: '默认分组' }],
+      },
+    });
+
+    let headerActions: ReactNode | null = null;
+    const setPageHeaderActions = vi.fn((actions: ReactNode | null) => {
+      headerActions = actions;
+    });
+
+    render(<SitesPage setPageHeaderActions={setPageHeaderActions} />);
+    await waitFor(() => expect(setPageHeaderActions).toHaveBeenCalled());
+
+    const settingsAction = findClickableAction(headerActions, '探测设置');
+    expect(settingsAction).not.toBeNull();
+
+    await act(async () => {
+      await settingsAction?.props.onClick();
+    });
+
+    expect(await screen.findByRole('dialog', { name: '站点 CLI 探测设置' })).toBeInTheDocument();
+    expect(screen.getByLabelText('探测间隔（分钟）')).toHaveValue(120);
+    expect(screen.queryByLabelText('每个 CLI 探测模型数')).not.toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('保存设置'));
+    });
+
+    await waitFor(() =>
+      expect((window.electronAPI as any).route.saveCliProbeConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ enabled: true, intervalMinutes: 120 })
+      )
+    );
   });
 
   it('defaults the group filter to 默认分组 and does not render an 全部 tab', () => {
@@ -285,6 +422,22 @@ describe('sites page redesign', () => {
     expect(source).not.toContain('checkinableSitesCount');
     expect(source).not.toContain('sites.refreshAll()');
     expect(source).not.toContain('sites.checkinAll()');
+  });
+
+  it('creates new managed sites through site-plus-account persistence instead of site-level legacy credentials', () => {
+    const source = readFileSync(join(process.cwd(), 'src/renderer/pages/SitesPage.tsx'), 'utf8');
+
+    expect(source).toContain('const createSiteWithDefaultAccount = useCallback(');
+    expect(source).toContain('window.electronAPI.sites?.add(buildSitePayloadForCreate(site))');
+    expect(source).toContain('window.electronAPI.accounts?.add({');
+    expect(source).toContain("auth_source: 'manual'");
+    expect(source).toContain(
+      'await detectSingle(refreshedSite, false, undefined, accountResult.data.id)'
+    );
+    expect(source).toContain('await createSiteWithDefaultAccount(site, auth);');
+    expect(source).not.toContain('await storeAddSite(site);');
+    expect(source).not.toContain('system_token: autoInfo.systemToken');
+    expect(source).not.toContain('user_id: autoInfo.userId');
   });
 
   it('opens operation records from the Sites page header and excludes toast-only notifications', async () => {
@@ -433,10 +586,11 @@ describe('sites page redesign', () => {
       />
     );
 
-    const card = container.querySelector('[data-perf-monitor="blur"]') as HTMLDivElement;
-    expect(card).toHaveAttribute('draggable', 'false');
-    expect(card).not.toHaveClass('cursor-move');
-    fireEvent.dragStart(card);
+    const row = screen.getByTestId('site-card-row');
+    expect(container.querySelector('[data-perf-monitor="blur"]')).not.toBeInTheDocument();
+    expect(row).toHaveAttribute('draggable', 'false');
+    expect(row).not.toHaveClass('cursor-move');
+    fireEvent.dragStart(row);
     expect(onDragStart).not.toHaveBeenCalled();
   });
 
@@ -473,12 +627,36 @@ describe('sites page redesign', () => {
 
   it('embeds direct config identity, model, and CLI editors in the side panel', () => {
     const onDeleteDirectConfig = vi.fn();
+    const directFailureMessage = 'direct upstream timeout detail';
+    const directConfigWithFailure: CustomCliConfig = {
+      ...customCliConfig,
+      cliSettings: {
+        ...customCliConfig.cliSettings,
+        claudeCode: {
+          ...customCliConfig.cliSettings.claudeCode,
+          testState: {
+            status: false,
+            testedAt: 123,
+            slots: [
+              {
+                model: 'direct-model',
+                success: false,
+                timestamp: 123,
+                message: directFailureMessage,
+              },
+              null,
+              null,
+            ],
+          },
+        },
+      },
+    };
 
     render(
       <AccessPointDetailPanel
         open={true}
         onClose={vi.fn()}
-        data={{ type: 'custom-cli', config: customCliConfig }}
+        data={{ type: 'custom-cli', config: directConfigWithFailure }}
         onDeleteDirectConfig={onDeleteDirectConfig}
       />
     );
@@ -491,9 +669,10 @@ describe('sites page redesign', () => {
     expect(screen.getByPlaceholderText('例如: 我的 API')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('https://api.example.com')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('sk-...')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: '保存配置' })).toHaveLength(1);
 
     fireEvent.click(screen.getByRole('button', { name: '删除配置' }));
-    expect(onDeleteDirectConfig).toHaveBeenCalledWith(customCliConfig);
+    expect(onDeleteDirectConfig).toHaveBeenCalledWith(directConfigWithFailure);
 
     fireEvent.click(screen.getByRole('button', { name: '模型 & 资源' }));
     expect(screen.getByText('直连模型管理')).toBeInTheDocument();
@@ -503,12 +682,33 @@ describe('sites page redesign', () => {
     expect(screen.getByText('CLI 配置（2/3）')).toBeInTheDocument();
     expect(screen.queryByText('直连 CLI 配置')).not.toBeInTheDocument();
     expect(screen.queryByText('配置预览与编辑')).not.toBeInTheDocument();
+    expect(screen.queryByText('配置文件预览')).not.toBeInTheDocument();
+    expect(screen.getAllByText('应用到本机').length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
+
     expect(screen.getByText('配置文件预览')).toBeInTheDocument();
     expect(screen.queryByText('CLI 测试')).not.toBeInTheDocument();
     expect(screen.getAllByText('测试模型')).toHaveLength(1);
     expect(screen.queryByText('测试模型（最多 3 个）')).not.toBeInTheDocument();
+    expect(screen.queryByText('请确认配置信息是否正确')).not.toBeInTheDocument();
     expect(screen.queryAllByRole('button', { name: /^预览 / })).toHaveLength(0);
-    expect(screen.getAllByText('应用到本机').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Claude Code 主模型' })).toHaveClass(
+      'px-3',
+      'py-2',
+      'text-sm'
+    );
+    expect(screen.getByRole('button', { name: 'Claude Code 测试模型' })).toHaveClass(
+      'px-3',
+      'py-2',
+      'text-sm'
+    );
+    expect(screen.getByText('失败')).toBeInTheDocument();
+    expect(screen.queryByText(directFailureMessage)).not.toBeInTheDocument();
+    expect(screen.queryByTitle(directFailureMessage)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
+    expect(screen.queryByText('配置文件预览')).not.toBeInTheDocument();
 
     expect(screen.queryByText('三 CLI 配置编辑区与测试结果（实现期细化）')).not.toBeInTheDocument();
   });
@@ -532,6 +732,7 @@ describe('sites page redesign', () => {
             access_token: 'sk-managed-access-token',
             status: 'active',
             auth_source: 'manual',
+            browser_profile_path: 'profiles/chrome-primary',
             auto_refresh: true,
             auto_refresh_interval: 30,
           },
@@ -557,6 +758,9 @@ describe('sites page redesign', () => {
     expect(screen.getByDisplayValue('user-1')).toBeInTheDocument();
     expect(screen.getByDisplayValue('sk-managed-access-token')).toBeInTheDocument();
     expect(screen.getByDisplayValue('30')).toBeInTheDocument();
+    expect(screen.getByText('浏览器 Profile')).toBeInTheDocument();
+    expect(screen.getByText('默认 Profile')).toBeInTheDocument();
+    expect(screen.queryByText('profiles/chrome-primary')).not.toBeInTheDocument();
     expect(screen.getByText('其他账户 (1)')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '保存更改' })).toBeDisabled();
 
@@ -591,6 +795,24 @@ describe('sites page redesign', () => {
 
   it('exposes the embedded managed CLI editor from the side panel', () => {
     const onSaveCliConfig = vi.fn();
+    const managedFailureMessage = 'managed upstream timeout detail';
+    const baseCliConfig = buildSiteCardProps().cliConfig;
+    const managedCliConfigWithFailure = {
+      ...baseCliConfig,
+      claudeCode: {
+        ...baseCliConfig.claudeCode,
+        testResults: [
+          {
+            model: 'claude-3-5-sonnet',
+            success: false,
+            timestamp: 123,
+            message: managedFailureMessage,
+          },
+          null,
+          null,
+        ],
+      },
+    };
 
     render(
       <AccessPointDetailPanel
@@ -607,7 +829,7 @@ describe('sites page redesign', () => {
             auth_source: 'manual',
           },
         }}
-        cliConfig={buildSiteCardProps().cliConfig as any}
+        cliConfig={managedCliConfigWithFailure}
         apiKeys={[{ id: 1, name: 'Primary Key', key: 'sk-primary' }]}
         siteResult={{ status: '成功', models: ['claude-3-5-sonnet'] } as any}
         onSaveCliConfig={onSaveCliConfig}
@@ -617,12 +839,25 @@ describe('sites page redesign', () => {
     fireEvent.click(screen.getByRole('button', { name: 'CLI 配置 & 测试' }));
 
     expect(screen.getByRole('button', { name: '保存配置' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '测试已选模型' })).not.toBeInTheDocument();
+    expect(screen.getAllByText('应用到本机').length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
+
     expect(screen.getByRole('button', { name: '测试已选模型' })).toBeInTheDocument();
     expect(screen.getByLabelText('选择 API Key')).toBeInTheDocument();
     expect(screen.getByLabelText('选择上游端口')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'CLI 使用模型' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '测试模型' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '测试模型 2' })).not.toBeInTheDocument();
+    expect(screen.getByText('失败')).toBeInTheDocument();
+    expect(screen.queryByText(managedFailureMessage)).not.toBeInTheDocument();
+    expect(screen.queryByTitle(managedFailureMessage)).not.toBeInTheDocument();
+    expect(screen.getByText('配置文件预览')).toBeInTheDocument();
+    expect(screen.queryByText('请去站点确认配置信息是否正确')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
+    expect(screen.queryByRole('button', { name: '测试已选模型' })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
 
@@ -703,6 +938,8 @@ describe('sites page redesign', () => {
       'utf8'
     );
 
+    expect(source).toContain('const MINIATURE_HEIGHT = 8');
+    expect(source).toContain('const LARGE_HEIGHT = 13');
     expect(source).toContain('getHistoryBuckets');
     expect(source).toContain("window: '48h'");
     expect(source).toContain("bucketSize: '2h'");
@@ -740,6 +977,7 @@ describe('sites page redesign', () => {
       mode: 'probe-only',
     });
     expect(await screen.findAllByLabelText(/CLI: Codex/)).toHaveLength(24);
+    expect(screen.getByTestId('history-bucket-bars-track')).toHaveStyle({ height: '13px' });
   });
 
   it('shows the check-in spinner only for the targeted account card key', () => {
@@ -802,8 +1040,8 @@ describe('sites page redesign', () => {
   });
 
   it('renders only the visible folded-row columns inside the sticky header', () => {
-    // Phase 5/6: 精简为 5 列（站点名/账号 / 余额 / 今日消费 / 模型 / History）
-    expect(DEFAULT_COLUMN_WIDTHS).toEqual([240, 96, 96, 120, 340]);
+    // 站点 / 账户 / 刷新时间 / 余额 / 今日消费 / 模型 / LDC / History
+    expect(DEFAULT_COLUMN_WIDTHS).toEqual([180, 112, 84, 84, 70, 50, 64, 320]);
 
     const { container } = render(
       <SiteListHeader
@@ -816,11 +1054,14 @@ describe('sites page redesign', () => {
     );
 
     expect((container.firstElementChild as HTMLDivElement).className).toContain('sticky');
-    // Phase 5/6: 精简列头，移除 Token统计、请求统计、LDC 等列
+    // Phase 5/6: 精简列头，移除 Token统计、请求统计等列
     expect(screen.getByRole('button', { name: '站点' })).toBeInTheDocument();
+    expect(screen.getByText('账户')).toBeInTheDocument();
+    expect(screen.getByText('刷新时间')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '余额' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '今日消费' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '模型数' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'LDC' })).toBeInTheDocument();
     // R10: History 列头改为内嵌 CLI/模式选择器（不再显示 "History" 文本）
     expect(screen.getByRole('button', { name: '选择 Codex' })).toBeInTheDocument();
     expect(screen.getByAltText('Claude Code')).toBeInTheDocument();
@@ -832,7 +1073,6 @@ describe('sites page redesign', () => {
     expect(screen.queryByText('站点类型')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Token统计' })).not.toBeInTheDocument();
     expect(screen.queryByText('请求统计')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'LDC' })).not.toBeInTheDocument();
     expect(screen.queryByText('CLI可用性')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '更新时间' })).not.toBeInTheDocument();
   });
@@ -853,7 +1093,7 @@ describe('sites page redesign', () => {
     fireEvent.mouseMove(document, { clientX: 180 });
     fireEvent.mouseUp(document);
 
-    expect(onColumnWidthChange).toHaveBeenCalledWith(4, 420);
+    expect(onColumnWidthChange).toHaveBeenCalledWith(7, 400);
   });
 
   it('supports keyboard resizing on the History column handle', () => {
@@ -867,14 +1107,14 @@ describe('sites page redesign', () => {
     );
 
     const historyHandle = screen.getByRole('separator', { name: '调整History列宽' });
-    expect(historyHandle).toHaveAttribute('aria-valuenow', '340');
+    expect(historyHandle).toHaveAttribute('aria-valuenow', '320');
     expect(historyHandle).toHaveAttribute('aria-valuemax', '480');
 
     fireEvent.keyDown(historyHandle, { key: 'ArrowRight' });
     fireEvent.keyDown(historyHandle, { key: 'End' });
 
-    expect(onColumnWidthChange).toHaveBeenCalledWith(4, 350);
-    expect(onColumnWidthChange).toHaveBeenCalledWith(4, 480);
+    expect(onColumnWidthChange).toHaveBeenCalledWith(7, 330);
+    expect(onColumnWidthChange).toHaveBeenCalledWith(7, 480);
   });
 
   it('renders token and request statistics as stacked two-line cells', () => {
@@ -956,8 +1196,8 @@ describe('sites page redesign', () => {
     expect(screen.queryByTitle('New API')).not.toBeInTheDocument();
   });
 
-  it('renders the site secondary row with account and time inline under the site name', () => {
-    render(
+  it('renders account and refresh time in dedicated columns outside the site cell', () => {
+    const { container } = render(
       <SiteCardHeader
         site={baseSite}
         siteResult={{ status: '成功', balance: 1234.56, models: [] } as any}
@@ -991,13 +1231,17 @@ describe('sites page redesign', () => {
 
     const accountLabel = screen.getByText('Primary Account');
     const timeLabel = screen.getByText('7天');
-    const secondaryRow = accountLabel.parentElement as HTMLDivElement;
+    const grid = container.firstElementChild as HTMLDivElement;
+    const siteCell = grid.children[0] as HTMLElement;
+    const accountCell = grid.children[1] as HTMLElement;
+    const refreshCell = grid.children[2] as HTMLElement;
 
     expect(accountLabel).toBeInTheDocument();
     expect(timeLabel).toBeInTheDocument();
-    expect(timeLabel.parentElement).toBe(secondaryRow);
-    expect(secondaryRow).toHaveClass('gap-1.5');
-    expect(secondaryRow).not.toHaveClass('justify-between');
+    expect(within(siteCell).queryByText('Primary Account')).not.toBeInTheDocument();
+    expect(within(siteCell).queryByText('7天')).not.toBeInTheDocument();
+    expect(within(accountCell).getByText('Primary Account')).toBeInTheDocument();
+    expect(within(refreshCell).getByText('7天')).toBeInTheDocument();
     expect(screen.queryByText('In 0 / Out 0')).not.toBeInTheDocument();
     expect(screen.queryByText('RPM 0.00 / TPM 0')).not.toBeInTheDocument();
     // CLI配置按钮已移到侧滑面板中，不再在卡片头部显示
@@ -1129,10 +1373,21 @@ describe('sites page redesign', () => {
     vi.useRealTimers();
   });
 
+  it('renders site rows without the AppCard shell', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/renderer/components/SiteCard/SiteCard.tsx'),
+      'utf8'
+    );
+
+    expect(source).not.toContain("from '../AppCard'");
+    expect(source).not.toContain('<AppCard');
+    expect(source).toContain('border-b border-[var(--line-muted)]');
+  });
+
   it('renders a compact column header row with inline sorting and an actions slot', () => {
     const { container } = render(
       <SiteListHeader
-        columnWidths={[300, 120, 120, 150, 400]}
+        columnWidths={[260, 120, 90, 100, 86, 66, 64, 360]}
         onColumnWidthChange={vi.fn()}
         sortField="balance"
         sortOrder="desc"
@@ -1141,17 +1396,22 @@ describe('sites page redesign', () => {
       />
     );
 
-    // Phase 5/6: 精简为 5 列
+    // 站点列表主列直接展示，账户和刷新时间不参与排序
     expect(screen.getByRole('button', { name: '站点' })).toBeInTheDocument();
+    expect(screen.getByText('账户')).toBeInTheDocument();
+    expect(screen.getByText('刷新时间')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '余额' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '今日消费' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '模型数' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'LDC' })).toBeInTheDocument();
     // R10: History 列头改为内嵌选择器
     expect(screen.getByRole('button', { name: '选择 Claude Code' })).toBeInTheDocument();
     expect(screen.getByAltText('Claude Code')).toBeInTheDocument();
     expect(screen.getByText('批量检测')).toBeInTheDocument();
     const header = container.firstElementChild as HTMLDivElement;
-    expect(header.style.gridTemplateColumns).toBe('300px 120px 120px 150px 400px 1fr');
+    expect(header.style.gridTemplateColumns).toBe(
+      '260px 120px 90px 100px 86px 66px 64px 360px 1fr'
+    );
     expect(header).toHaveClass('px-3');
     expect(header.lastElementChild).toHaveClass('items-center', 'justify-end', 'gap-0.5');
   });
@@ -1162,7 +1422,7 @@ describe('sites page redesign', () => {
     // Phase 5/6: 站点类型筛选已移除
     render(
       <SiteListHeader
-        columnWidths={[300, 120, 120, 150, 400]}
+        columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
         onColumnWidthChange={vi.fn()}
         activeSiteTypeFilter={null}
         siteTypeFilterOptions={[
@@ -1190,18 +1450,19 @@ describe('sites page redesign', () => {
       />
     );
 
-    // Phase 5/6: 仅保留 4 个可排序列（站点、余额、今日消费、模型数）
+    // Phase 5/6: 仅保留 5 个可排序列（站点、余额、今日消费、模型数、LDC）
     fireEvent.click(screen.getByRole('button', { name: '余额' }));
     fireEvent.click(screen.getByRole('button', { name: '今日消费' }));
     fireEvent.click(screen.getByRole('button', { name: '模型数' }));
+    fireEvent.click(screen.getByRole('button', { name: 'LDC' }));
     expect(screen.queryByRole('button', { name: '更新时间' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Token统计' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'LDC' })).not.toBeInTheDocument();
 
     expect(onToggleSort).toHaveBeenCalledWith('balance');
     expect(onToggleSort).toHaveBeenCalledWith('todayUsage');
     expect(onToggleSort).toHaveBeenCalledWith('modelCount');
-    expect(onToggleSort).toHaveBeenCalledTimes(3);
+    expect(onToggleSort).toHaveBeenCalledWith('ldcRatio');
+    expect(onToggleSort).toHaveBeenCalledTimes(4);
   });
 
   it('keeps only high-frequency actions visible in the row action cell', () => {
@@ -1296,8 +1557,7 @@ describe('sites page redesign', () => {
     );
 
     const grid = container.firstElementChild as HTMLDivElement;
-    // Phase 5/6: 精简为 5 列
-    expect(grid.style.gridTemplateColumns).toBe('240px 96px 96px 120px 340px');
+    expect(grid.style.gridTemplateColumns).toBe('180px 112px 84px 84px 70px 50px 64px 320px');
     expect(screen.getByText('Primary Account')).toBeInTheDocument();
     expect(screen.getByText('12:34')).toBeInTheDocument();
     // Phase 5/6: 站点类型列已移除
@@ -1579,6 +1839,42 @@ describe('sites page redesign', () => {
     expect(screen.getByText('Expired Key')).toBeInTheDocument();
     expect(screen.getByText('✓ 启用')).toHaveClass('text-[var(--success)]');
     expect(screen.getByText('✕ 禁用')).toHaveClass('text-[var(--text-secondary)]');
+  });
+
+  it('keeps API key metadata, masked key, and actions in one compact row', () => {
+    renderSiteCardDetails({
+      apiKeys: [
+        {
+          id: 1,
+          name: 'Alpha Key',
+          key: 'sk-abcdefghijklmnopqrstuvwxyz1234567890',
+          group: 'alpha',
+          status: 'active',
+          unlimited_quota: true,
+          used_quota: 500000,
+        },
+      ],
+      userGroups: {
+        alpha: { desc: 'Alpha', ratio: 1 },
+      },
+    });
+
+    const row = screen.getByTestId('site-api-key-row');
+
+    expect(row).toHaveClass('flex', 'items-center');
+    expect(row).not.toHaveClass('flex-wrap');
+    expect(within(row).getByText('Alpha Key')).toBeInTheDocument();
+    expect(within(row).getByText('sk-ab...7890')).toBeInTheDocument();
+    expect(within(row).getByText('Alpha Key')).toHaveClass('w-[4rem]');
+    expect(within(row).getByText('✓ 启用')).toHaveClass('w-[4rem]');
+    expect(within(row).getByText('alpha').closest('div')).toHaveClass('w-[6rem]');
+    expect(within(row).getByText('限额: ∞').parentElement).toHaveClass('w-[4.5rem]');
+    expect(within(row).getByText('$1.00').closest('div')).toHaveClass('w-[6.5rem]');
+    expect(within(row).getByText('sk-ab...7890')).toHaveClass('w-[12ch]');
+    expect(row).toHaveTextContent('限额: ∞');
+    expect(row).toHaveTextContent('已使用: $1.00');
+    expect(within(row).getAllByRole('button')).toHaveLength(4);
+    expect(screen.queryByText('sk-abcdefghi...34567890')).not.toBeInTheDocument();
   });
 
   it('renders a per API key refresh button in site details', () => {

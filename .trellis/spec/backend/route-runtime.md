@@ -322,8 +322,11 @@ Stage 3: Build Entries
 1. Update existing displayItems' sourceKeys to match current sourcePool
 2. Create new seeded displayItems for canonicalNames present in detectedEntries but absent from existing displayItems
 3. Preserve user-configured priorityConfig/runtimeConfig for all retained items
+4. Respect `exclude` overrides as user deletion intent before creating any replacement seeded item
 
 Failing to create new seeded items in preserve mode causes "sync sources" to miss newly added models — the sources are scanned into sourcePool but never referenced by any displayItem, so `buildEntriesFromDisplayItems()` produces entries without the new sources.
+
+Deleting a seeded display item is a stable user intent, not a transient display cleanup. `deleteModelDisplayItem()` must persist `action: 'exclude'` overrides for the deleted seeded item's source keys before it calls `syncModelRegistrySources(true)`; otherwise preserve mode will immediately recreate the same seeded card from the still-detected source.
 
 #### Route Runtime Contracts
 
@@ -772,6 +775,7 @@ Failing to create new seeded items in preserve mode causes "sync sources" to mis
 - `src/__tests__/route-model-registry-service.test.ts`: assert an unknown requested model does not resolve to generic channels when model registry routing data exists, while an empty legacy registry can still use generic routing.
 - `src/__tests__/route-model-registry-service.test.ts`: assert missing site priorities append after the highest explicit site priority and missing API key priorities append after the highest explicit site-level API key priority.
 - `src/__tests__/route-model-registry-service.test.ts`: assert `syncModelRegistrySources()` (preserve mode) creates new seeded displayItems for newly detected canonicalNames while preserving existing items' priorityConfig, and assert new sources appear in the final registry.entries.
+- `src/__tests__/route-model-registry-service.test.ts`: assert deleting a seeded display item writes source-level `exclude` overrides and a forced source sync does not recreate that seeded item or its canonical entry.
 - `src/__tests__/unified-config-manager.test.ts`: assert route selections normalize aliases and route rules are ensured for selected CLI models.
 - `src/__tests__/route-proxy-service.test.ts`: assert non-loopback probe-lock requests notify a
   terminal failure and return `403 probe_lock_forbidden` without upstream I/O.

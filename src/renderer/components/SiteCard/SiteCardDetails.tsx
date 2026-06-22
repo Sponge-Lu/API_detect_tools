@@ -26,8 +26,6 @@ import {
   RefreshCw,
   ChevronDown,
   ChevronUp,
-  Link,
-  Key,
 } from 'lucide-react';
 import { isApiKeyActive, type SiteConfig } from '../../../shared/types/site';
 import type { DetectionResult } from '../../App';
@@ -41,8 +39,6 @@ interface SiteCardDetailsProps {
   site: SiteConfig;
   cardKey: string;
   siteResult?: DetectionResult;
-  accountAccessToken?: string;
-  accountUserId?: string;
   apiKeys: any[];
   userGroups: Record<string, { desc: string; ratio: number }>;
   modelPricing: any;
@@ -93,8 +89,10 @@ const addSkPrefix = (key: string): string => {
   return key.startsWith('sk-') ? key : `sk-${key}`;
 };
 
-const iconButtonClass =
-  'flex h-5 w-5 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-primary)]';
+const maskApiKey = (key: string): string => {
+  if (key.length <= 16) return key;
+  return `${key.slice(0, 5)}...${key.slice(-4)}`;
+};
 
 const tokenActionButtonClass =
   'flex h-5 w-5 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-primary)]';
@@ -103,8 +101,6 @@ export function SiteCardDetails({
   site,
   cardKey,
   siteResult,
-  accountAccessToken,
-  accountUserId,
   apiKeys,
   userGroups,
   modelPricing,
@@ -178,16 +174,6 @@ export function SiteCardDetails({
   // 模型列表分页状态
   const [showAllModels, setShowAllModels] = useState(false);
 
-  // Access Token 显示状态
-  const [showAccessToken, setShowAccessToken] = useState(false);
-
-  // 脱敏显示 access token
-  const maskAccessToken = (token: string | undefined): string => {
-    if (!token) return '--';
-    if (token.length <= 16) return token.slice(0, 4) + '****' + token.slice(-4);
-    return token.slice(0, 8) + '****' + token.slice(-8);
-  };
-
   // 计算显示的模型列表（有搜索时显示全部匹配结果，否则分页）
   const displayedModels = useMemo(() => {
     const hasSearch = globalModelSearch || modelSearch;
@@ -205,71 +191,6 @@ export function SiteCardDetails({
       className="cursor-default space-y-[var(--spacing-sm)] border-t border-[var(--line-soft)] bg-[var(--surface-2)]/92 px-[var(--spacing-md)] py-[var(--spacing-sm)]"
       data-no-drag="true"
     >
-      {/* 站点 URL、User ID、Access Token */}
-      <div className="flex items-center gap-4 py-0.5">
-        {/* 站点 URL */}
-        <div className="flex items-center gap-1.5 min-w-0 flex-1">
-          <Link className="h-3.5 w-3.5 flex-shrink-0 text-[var(--text-secondary)]" />
-          <span className="shrink-0 text-xs font-medium text-[var(--text-secondary)]">URL:</span>
-          <span className="truncate text-xs font-mono text-[var(--accent-strong)]">{site.url}</span>
-          <button
-            onClick={() => onCopyToClipboard(site.url, 'URL')}
-            className={iconButtonClass}
-            title="复制 URL"
-          >
-            <Copy className="h-3 w-3" />
-          </button>
-        </div>
-
-        {/* User ID（优先账户级） */}
-        {(accountUserId || site.user_id) && (
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            <span className="text-xs font-medium text-[var(--text-secondary)]">UID:</span>
-            <span className="text-xs font-mono text-[var(--text-primary)]">
-              {accountUserId || site.user_id}
-            </span>
-            <button
-              onClick={() => onCopyToClipboard(accountUserId || site.user_id || '', 'User ID')}
-              className={iconButtonClass}
-              title="复制 User ID"
-            >
-              <Copy className="h-3 w-3" />
-            </button>
-          </div>
-        )}
-
-        {/* Access Token（优先账户级） */}
-        {(() => {
-          const token = accountAccessToken || site.system_token;
-          if (!token) return null;
-          return (
-            <div className="flex items-center gap-1.5 min-w-0 flex-1">
-              <Key className="h-3.5 w-3.5 flex-shrink-0 text-[var(--text-secondary)]" />
-              <span className="shrink-0 text-xs font-medium text-[var(--text-secondary)]">
-                Token:
-              </span>
-              <span className="truncate text-xs font-mono text-[var(--warning)]">
-                {showAccessToken ? token : maskAccessToken(token)}
-              </span>
-              <button
-                onClick={() => setShowAccessToken(!showAccessToken)}
-                className={iconButtonClass}
-                title={showAccessToken ? '隐藏 Token' : '显示 Token'}
-              >
-                {showAccessToken ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-              </button>
-              <button
-                onClick={() => onCopyToClipboard(token, 'Access Token')}
-                className={iconButtonClass}
-                title="复制 Access Token"
-              >
-                <Copy className="h-3 w-3" />
-              </button>
-            </div>
-          );
-        })()}
-      </div>
-
       {/* 用户分组 */}
       {Object.keys(userGroups).length > 0 && (
         <div className="flex items-center gap-1 flex-wrap py-0">
@@ -338,29 +259,32 @@ export function SiteCardDetails({
               return (
                 <div
                   key={idx}
-                  className="rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-1.5 py-0.5 transition-colors hover:border-[color-mix(in_srgb,var(--accent)_40%,var(--line-soft))]"
+                  className="rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 py-1 transition-colors hover:border-[color-mix(in_srgb,var(--accent)_40%,var(--line-soft))]"
                 >
-                  <div className="grid grid-cols-[120px_50px_180px_90px_120px_minmax(280px,1fr)_82px] gap-x-3 items-center text-xs">
+                  <div
+                    className="flex min-w-0 items-center gap-x-2 overflow-hidden text-xs"
+                    data-testid="site-api-key-row"
+                  >
                     {/* 名称 */}
-                    <div className="truncate font-semibold text-[var(--text-primary)]">
+                    <div className="min-w-0 w-[4rem] shrink-0 truncate font-semibold text-[var(--text-primary)]">
                       {token.name || `Key #${idx + 1}`}
                     </div>
 
                     {/* 状态 */}
                     <div
-                      className={`font-medium ${tokenActive ? 'text-[var(--success)]' : 'text-[var(--text-secondary)]'}`}
+                      className={`w-[4rem] shrink-0 whitespace-nowrap font-medium ${tokenActive ? 'text-[var(--success)]' : 'text-[var(--text-secondary)]'}`}
                     >
                       {tokenActive ? '✓ 启用' : '✕ 禁用'}
                     </div>
 
                     {/* 分组 */}
-                    <div className="min-w-0">
+                    <div className="min-w-0 w-[6rem] shrink-0">
                       {token.group && token.group.trim() ? (
                         <span
                           className={`font-medium flex items-center gap-1 ${getGroupTextColor(token.group)}`}
                         >
                           {getGroupIcon(token.group, Object.keys(userGroups).indexOf(token.group))}
-                          <span>{token.group}</span>
+                          <span className="truncate">{token.group}</span>
                         </span>
                       ) : (
                         <span className="text-[var(--text-secondary)]/80">--</span>
@@ -368,7 +292,7 @@ export function SiteCardDetails({
                     </div>
 
                     {/* 标签 */}
-                    <div className="text-[var(--text-primary)]">
+                    <div className="w-[4.5rem] shrink-0 whitespace-nowrap text-[var(--text-primary)]">
                       {token.unlimited_quota ? (
                         <span className="font-medium">限额: ∞</span>
                       ) : quotaInfo ? (
@@ -379,7 +303,7 @@ export function SiteCardDetails({
                     </div>
 
                     {/* 已使用 */}
-                    <div className="text-[var(--text-secondary)]">
+                    <div className="w-[6.5rem] shrink-0 whitespace-nowrap text-[var(--text-secondary)]">
                       {token.used_quota !== undefined ? (
                         <>
                           已使用:{' '}
@@ -393,16 +317,12 @@ export function SiteCardDetails({
                     </div>
 
                     {/* API Key */}
-                    <div className="truncate pl-[100px] font-mono text-[var(--accent-strong)]">
-                      {isVisible
-                        ? fullKey
-                        : fullKey.length > 25
-                          ? `${fullKey.slice(0, 12)}...${fullKey.slice(-8)}`
-                          : fullKey}
+                    <div className="min-w-0 w-[12ch] shrink truncate font-mono text-[var(--accent-strong)]">
+                      {isVisible ? fullKey : maskApiKey(fullKey)}
                     </div>
 
                     {/* 操作 */}
-                    <div className="flex items-center gap-0.5 justify-end">
+                    <div className="flex shrink-0 items-center justify-end gap-0.5">
                       <button
                         onClick={() => onToggleTokenVisibility(tokenKey)}
                         className={tokenActionButtonClass}
@@ -500,7 +420,7 @@ export function SiteCardDetails({
               </div>
             )}
           </div>
-          <div className="max-h-32 overflow-y-auto rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)]/72 p-1">
+          <div className="max-h-56 overflow-y-auto rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)]/72 p-1">
             <div className="flex flex-wrap gap-0.5">
               {displayedModels.map((model, idx) => {
                 const pricingData = modelPricing?.data?.[model] || modelPricing?.[model];

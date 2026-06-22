@@ -139,6 +139,13 @@ Current styling rules to follow:
   card resizes, producing rounded rectangles or invisible points. Center a fixed-width/fixed-height
   rounded dot inside each cell, and use token classes without unsupported opacity suffixes on CSS
   variable arbitrary colors.
+- For resizable data-list headers, render a resize handle for every user-resizable data column,
+  including the last data column before any flexible actions spacer. The handle should expose
+  `role="separator"`, `aria-orientation="vertical"`, `aria-valuemin`, `aria-valuemax`,
+  `aria-valuenow`, and keyboard resizing (`ArrowLeft`/`ArrowRight` plus `Home`/`End`) using the
+  same min/max clamp as mouse resizing. When the default column shape or default width values
+  change, bump the shared column-width version so persisted widths reset once instead of leaving old
+  layouts active.
 
 Examples:
 
@@ -188,6 +195,28 @@ Examples:
 - Do not copy browser `alert`/`confirm` flows into new UI; use the modal/dialog path instead.
 - Do not expose untyped `any` prop bags on reusable components.
 - Do not forget accessibility wiring when using raw `button`, `input`, or `select` elements.
+
+### Pattern: Content-Only Editors Inside Access Point Panels
+
+**Problem**: `AccessPointDetailPanel` is already an `OverlayDrawer`. Embedding another
+`OverlayDrawer`, `AppModal`, or popover-based editor inside it creates stacked overlays, width
+conflicts, and ambiguous Escape/backdrop behavior.
+
+**Solution**: Components mounted inside `AccessPointDetailPanel` must be content-only editor
+surfaces. If they need destructive confirmation, call the global `showDialog` action from
+`useDialogStore` instead of mounting a local confirm modal.
+
+```tsx
+// Good: one drawer owns the surface; the embedded editor is plain content.
+<AccessPointDetailPanel>
+  <ManagedCliConfigEditorContent showDialog={showDialog} />
+</AccessPointDetailPanel>
+
+// Bad: nested overlay inside the access point drawer.
+<AccessPointDetailPanel>
+  <UnifiedCliConfigDialog isOpen={true} />
+</AccessPointDetailPanel>
+```
 
 Legacy note:
 

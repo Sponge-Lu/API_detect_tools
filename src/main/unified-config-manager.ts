@@ -119,6 +119,7 @@ type ReadConfigResult = {
   runtimeCache: RuntimeCacheFile;
   needsSave: boolean;
   repairedLegacyAccounts: number;
+  migratedManagedSiteLegacyAuth: number;
 };
 
 function normalizePriorityValue(value: unknown): number | null {
@@ -327,13 +328,19 @@ export class UnifiedConfigManager {
     let loadError: any = null;
 
     try {
-      const { config, runtimeCache, needsSave, repairedLegacyAccounts } =
+      const {
+        config,
+        runtimeCache,
+        needsSave,
+        repairedLegacyAccounts,
+        migratedManagedSiteLegacyAuth,
+      } =
         await this.readConfigFromPathWithRetries(this.configPath);
       this.config = config;
       runtimeCacheManager.setCache(runtimeCache);
       if (needsSave) {
         Logger.info(
-          `💾 [UnifiedConfigManager] 加载时检测到配置迁移/修复，准备持久化（补建默认账户 ${repairedLegacyAccounts} 个）`
+          `💾 [UnifiedConfigManager] 加载时检测到配置迁移/修复，准备持久化（补建默认账户 ${repairedLegacyAccounts} 个，迁移站点级认证 ${migratedManagedSiteLegacyAuth} 个）`
         );
         await this.saveConfig();
       }
@@ -435,6 +442,11 @@ export class UnifiedConfigManager {
       needsSave = true;
     }
 
+    const migratedManagedSiteLegacyAuth = this.migrateManagedSiteLegacyAuthToAccounts(config);
+    if (migratedManagedSiteLegacyAuth > 0) {
+      needsSave = true;
+    }
+
     const runtimeCache = this.createRuntimeCacheSnapshot(
       runtimeCacheManager.exportCacheSync() || (await runtimeCacheManager.loadCache())
     );
@@ -458,6 +470,7 @@ export class UnifiedConfigManager {
       runtimeCache,
       needsSave,
       repairedLegacyAccounts,
+      migratedManagedSiteLegacyAuth,
     };
   }
 
@@ -881,6 +894,81 @@ export class UnifiedConfigManager {
     }
 
     return repairedCount;
+  }
+
+  /**
+   * 修复“账户已经存在，但站点级仍残留账户认证字段/账户级私有配置”的旧数据
+   */
+  private migrateManagedSiteLegacyAuthToAccounts(config: UnifiedConfig): number {
+    if (!Array.isArray(config.sites) || !Array.isArray(config.accounts)) {
+      return 0;
+    }
+
+    let migratedCount = 0;
+
+    for (const site of config.sites) {
+      const siteAccounts = config.accounts.filter(account => account.site_id === site.id);
+      if (siteAccounts.length === 0) {
+        continue;
+      }
+
+      const legacyAccessToken =
+        site.access_token || (site as UnifiedSite & { system_token?: string }).system_token;
+      const legacyUserId = site.user_id;
+      const primaryAccount =
+        siteAccounts.find(account => {
+          const sameUser = legacyUserId ? account.user_id === legacyUserId : true;
+          const sameToken = legacyAccessToken ? account.access_token === legacyAccessToken : true;
+          return sameUser && sameToken;
+        }) || siteAccounts[0];
+
+      let changed = false;
+
+      if (legacyAccessToken && !primaryAccount.access_token) {
+        primaryAccount.access_token = legacyAccessToken;
+        changed = true;
+      }
+
+      if (legacyUserId && !primaryAccount.user_id) {
+        primaryAccount.user_id = legacyUserId;
+        changed = true;
+      }
+
+      if (site.cached_data) {
+        primaryAccount.cached_data = this.mergeDefinedCache(primaryAccount.cached_data, site.cached_data);
+        changed = true;
+      }
+
+      if (site.cli_config && !primaryAccount.cli_config) {
+        primaryAccount.cli_config = { ...site.cli_config };
+        changed = true;
+      }
+
+      if (site.access_token !== undefined) {
+        delete site.access_token;
+        changed = true;
+      }
+
+      if (site.user_id !== undefined) {
+        delete site.user_id;
+        changed = true;
+      }
+
+      if (site.cached_data !== undefined) {
+        delete site.cached_data;
+        changed = true;
+      }
+
+      if (changed) {
+        primaryAccount.updated_at = Date.now();
+        migratedCount += 1;
+        Logger.info(
+          `🧹 [UnifiedConfigManager] 迁移站点级认证到账户级: ${site.name} (${site.id}) -> ${primaryAccount.id}`
+        );
+      }
+    }
+
+    return migratedCount;
   }
 
   /**
@@ -1979,7 +2067,7 @@ export class UnifiedConfigManager {
     const suppressAffinity = Boolean(
       routeRuleId && canonicalModel && siteId && accountId && apiKeyId && targetProtocol
     );
-    let suppressedState: RoutePathState | null = null;
+    const suppressedStates: RoutePathState[] = [];
 
     if (
       !routeRuleId &&
@@ -2027,23 +2115,23 @@ export class UnifiedConfigManager {
 
       if (suppressAffinity) {
         const now = Date.now();
-        suppressedState = {
+        suppressedStates.push({
           ...state,
           lastOutcome: undefined,
           lastSuccessAt: undefined,
           affinitySuppressedAt: now,
           affinitySuppressedUntil: now + ROUTE_PRIORITY_HIT_RESET_SUPPRESSION_MS,
           updatedAt: now,
-        };
+        });
       }
 
       delete routePathStates[key];
       cleared += 1;
     }
 
-    if (suppressAffinity && !suppressedState) {
+    if (suppressAffinity && (suppressedStates.length === 0 || !resolvedModel)) {
       const now = Date.now();
-      suppressedState = {
+      suppressedStates.push({
         routeRuleId: routeRuleId!,
         siteId: siteId!,
         accountId: accountId!,
@@ -2058,10 +2146,10 @@ export class UnifiedConfigManager {
         affinitySuppressedAt: now,
         affinitySuppressedUntil: now + ROUTE_PRIORITY_HIT_RESET_SUPPRESSION_MS,
         updatedAt: now,
-      };
+      });
     }
 
-    if (suppressedState) {
+    for (const suppressedState of suppressedStates) {
       routePathStates[buildRoutePathStateKey(suppressedState)] = suppressedState;
     }
 

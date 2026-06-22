@@ -142,3 +142,102 @@ if (Array.isArray(data)) return data.map(model => model.id || model.name || mode
 if (!payload || !('data' in payload)) return [];
 Logger.info({ hasSuccess: 'success' in payload });
 ```
+
+## Scenario: Smart Add Browser Login Verification
+
+### 1. Scope / Trigger
+
+- Trigger: smart site add launches a browser for user login, then main-process services must decide
+  whether the browser profile is authenticated.
+- Files: `src/main/chrome-manager.ts`, `src/main/token-service.ts`,
+  `src/__tests__/browser-login-flow.test.ts`.
+
+### 2. Signatures
+
+```ts
+// src/main/chrome-manager.ts
+async getLocalStorageData(
+  url: string,
+  waitForLogin?: boolean,
+  maxWaitTime?: number,
+  onStatus?: (status: string) => void,
+  options?: { loginMode?: boolean; siteType?: SiteType }
+): Promise<LocalStorageData>;
+
+private async getUserDataFromApi(
+  page: Page,
+  baseUrl: string,
+  siteType?: SiteType,
+  loginMode?: boolean
+): Promise<LocalStorageData>;
+```
+
+### 3. Contracts
+
+- Browser profile/session is the source of truth for smart-add login state.
+- Protected initialization endpoints must be requested from the Electron main process with a
+  `Cookie` header assembled from the active Puppeteer page's CDP cookie jar.
+- Cookie selection is URL-scope based: domain, subdomain, path, secure flag, and expiry. It must not
+  depend on cookie names containing `session`, `token`, `auth`, or any site-specific string.
+- Page-context `fetch` is not a reliable login verifier because site CSP/CORS can block it even when
+  browser cookies are valid. It may still be used to read localStorage hints, but not as the only
+  protected API transport.
+- Main-process protected API requests should include the same user-id headers currently used by
+  compatible NewAPI/Veloera/VOAPI sites when a user id hint is available. If that request fails while
+  a user id hint was present, retry once without those user-id headers before treating the endpoint
+  as failed.
+- Browser-closed and abort errors remain terminal and must not be converted into retryable login
+  polling failures.
+
+### 4. Validation & Error Matrix
+
+| Case | Expected behavior |
+|------|-------------------|
+| localStorage has `userId` but no `accessToken` | Verify by protected API with browser cookies; do not trust or reject solely on cookie name |
+| Browser cookie name is `new-api-user`, framework-specific, or otherwise not auth-like | Cookie is still sent if URL-visible; login can complete |
+| Page-context API fetch would be blocked by CSP/CORS | Login verification still succeeds via main-process request |
+| Stale localStorage user id causes protected endpoint failure | Retry once without user-id headers |
+| Protected endpoint returns 401/403 after cookie request and retry | Continue waiting for login or surface the existing login-expired path |
+| Browser is closed during verification | Throw browser-closed/cancel error immediately |
+
+### 5. Good / Base / Bad Cases
+
+- Good: user completes login in the popup browser, protected `/api/user/self` succeeds with browser
+  cookies, and smart add proceeds within the next polling pass.
+- Base: localStorage is readable and supplies user id / username hints, while browser cookies supply
+  the real authenticated session.
+- Bad: checking only for cookies whose names include `session`, `token`, or `auth` before attempting
+  the protected API; this reintroduces the stuck `等待登录中` bug for valid sessions with different
+  cookie names.
+- Bad: using `page.evaluate(fetch(...))` as the only API verification path; CSP/CORS can make a valid
+  logged-in session look unauthenticated.
+
+### 6. Tests Required
+
+- `src/__tests__/browser-login-flow.test.ts`
+  - Assert `getUserDataFromApi()` uses the page's effective HTTPS origin for protected API requests.
+  - Assert a non-auth-like cookie name is included in the main-process `Cookie` header and login data
+    is parsed without using page-context API fetch.
+  - Assert existing login browser selection and token creation tests continue passing.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const hasCookie = cookies.some(cookie => /session|token|auth/i.test(cookie.name));
+if (localData.userId && hasCookie) return localData;
+await page.evaluate(url => fetch(url, { credentials: 'include' }), apiUrl);
+```
+
+#### Correct
+
+```ts
+const cookieHeader = buildCookieHeaderForUrl(cdpCookies, apiUrl);
+const response = await fetch(apiUrl, {
+  headers: {
+    Cookie: cookieHeader,
+    'New-API-User': String(userId),
+  },
+});
+```

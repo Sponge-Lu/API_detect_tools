@@ -16,36 +16,23 @@ import type { SiteConfig } from '../../../main/types/token';
 import type { DetectionResult } from '../../App';
 import type { CliCompatibilityResult } from '../../store/detectionStore';
 import type { CliConfig } from '../../../shared/types/cli-config';
-import type { AnyRouterAccountConfig } from '../../../shared/types/site';
-
-export interface SiteCardEditAccount {
-  id: string;
-  account_name?: string;
-  access_token?: string;
-  user_id?: string;
-  anyRouterConfig?: AnyRouterAccountConfig;
-}
 
 export interface SiteCardProps {
   site: SiteConfig;
   index: number;
   siteResult?: DetectionResult;
   siteAccount?: any;
-  isExpanded: boolean;
   columnWidths: number[];
+  accessPointType?: 'managed' | 'custom-cli';
+  draggable?: boolean;
 
   // 多账户: 卡片所属账户信息
   accountId?: string;
   accountName?: string;
-  accountAccessToken?: string;
-  accountUserId?: string;
-  accountAnyRouterConfig?: AnyRouterAccountConfig;
   /** 复合 key（site.name::accountId），用于 expandedSites / detectingSites 等 */
   cardKey?: string;
 
   // 扩展数据
-  apiKeys: any[];
-  userGroups: Record<string, { desc: string; ratio: number }>;
   modelPricing: any;
 
   // 状态
@@ -54,38 +41,19 @@ export interface SiteCardProps {
   dragOverIndex: number | null;
   refreshMessage: { site: string; message: string; type: 'success' | 'info' } | null;
 
-  // 详情面板状态
-  selectedGroup: string | null;
-  modelSearch: string;
-  globalModelSearch: string;
-  showTokens: Record<string, boolean>;
-  selectedModels: Set<string>;
-  deletingTokenKey: string | null;
-  refreshingTokenKey: string | null;
-
-  // 自动刷新状态
-  autoRefreshEnabled?: boolean;
-
   // CLI 兼容性状态
   cliCompatibility?: CliCompatibilityResult;
   cliConfig?: CliConfig | null;
   isCliTesting?: boolean;
 
   // 回调函数
-  onExpand: (name: string) => void;
   onDetect: (site: SiteConfig, accountId?: string) => void;
-  onEdit: (index: number, account?: SiteCardEditAccount | null) => void;
-  onDelete: (index: number) => void;
   onCheckIn: (site: SiteConfig, accountId?: string) => void;
   onOpenSite: (site: SiteConfig, accountId?: string) => void;
   onOpenExtraLink: (link: string) => void;
-  onCopyToClipboard: (text: string, label: string) => void;
-  onToggleAutoRefresh?: () => void;
   onOpenCliConfig?: () => void;
   onTestCliCompat?: () => void;
   onApply?: (e?: React.MouseEvent<HTMLButtonElement>) => void;
-  // 多账户回调
-  onAddAccount?: () => void;
 
   // 拖拽回调
   onDragStart: (e: React.DragEvent, index: number) => void;
@@ -93,17 +61,6 @@ export interface SiteCardProps {
   onDragOver: (e: React.DragEvent, index: number) => void;
   onDragLeave: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent, index: number) => void;
-
-  // 详情面板回调
-  onToggleGroupFilter: (siteName: string, groupName: string | null) => void;
-  onModelSearchChange: (siteName: string, search: string) => void;
-  onToggleTokenVisibility: (key: string) => void;
-  onToggleModelSelection: (model: string) => void;
-  onCopySelectedModels: () => void;
-  onClearSelectedModels: () => void;
-  onOpenCreateTokenDialog: (site: SiteConfig) => void;
-  onRefreshToken: (site: SiteConfig, token: any, index: number) => void;
-  onDeleteToken: (site: SiteConfig, token: any, index: number) => void;
 }
 
 export interface SiteCardHeaderProps {
@@ -120,6 +77,7 @@ export interface SiteCardHeaderProps {
   rpm: number;
   tpm: number;
   modelCount: number;
+  accessPointType?: 'managed' | 'custom-cli';
   accountId?: string;
   /** 账户名（多账户时显示在站点名下方） */
   accountName?: string;
@@ -135,15 +93,12 @@ export interface SiteCardHeaderProps {
 
 export interface SiteCardActionsProps {
   site: SiteConfig;
-  index: number;
   cardKey: string;
+  accessPointType?: 'managed' | 'custom-cli';
   accountId?: string;
   siteResult?: DetectionResult;
-  isExpanded: boolean;
   isDetecting: boolean;
   checkingIn: string | null;
-  autoRefreshEnabled?: boolean;
-  editAccount?: SiteCardEditAccount | null;
   /** 签到统计数据 (New API 类型站点) */
   checkinStats?: {
     todayQuota?: number;
@@ -152,12 +107,7 @@ export interface SiteCardActionsProps {
     siteType?: 'veloera' | 'newapi';
   };
 
-  onExpand: (name: string) => void;
   onDetect: (site: SiteConfig) => void;
-  onEdit: (index: number, account?: SiteCardEditAccount | null) => void;
-  onDelete: (index: number) => void;
   onCheckIn: (site: SiteConfig, accountId?: string) => void;
   onOpenExtraLink: (link: string) => void;
-  onToggleAutoRefresh?: () => void;
-  onAddAccount?: () => void;
 }

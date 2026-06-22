@@ -16,13 +16,13 @@
 
 - 与 `AppModal` 共享 `overlay-title`、`overlay-body`、`overlay-footer` 测试标记
 - 共享遮罩逻辑、圆角体系、阴影层级和关闭按钮位置
-- 主要用于 CLI 配置/测试/应用这类独立任务域
+- 主要用于接入点详情、设置与备份这类独立任务域；CLI 编辑内容在接入点详情面板内嵌，不再单独创建二级抽屉
 - 保持高信息密度，不通过增加空白换取“高级感”
 
 ## 使用关系
 
-- `UnifiedCliConfigDialog.tsx` 使用 `OverlayDrawer` 承载站点级 CLI 工作流
-- `CustomCliConfigEditorDialog.tsx` 使用 `OverlayDrawer` 承载自定义 CLI 配置编辑
+- `AccessPointDetailPanel.tsx` 使用 `OverlayDrawer` 承载托管站点与直连配置详情
+- `ManagedCliConfigEditorContent.tsx` / `DirectCliConfigEditorContent.tsx` 嵌入详情面板，不直接依赖 `OverlayDrawer`
 - `AppModal` 未直接依赖本目录，但通过共享 chrome 标记保持同一家族契约
 
 ## 更新日志

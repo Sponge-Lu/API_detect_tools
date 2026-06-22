@@ -1,4 +1,3 @@
-import { useState, type ReactNode } from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -7,7 +6,6 @@ import {
   ModelRedirectionTab,
   shouldRefreshRegistrySourceDetails,
 } from '../renderer/components/Route/Redirection/ModelRedirectionTab';
-import { CliUsabilityTab } from '../renderer/components/Route/Usability/CliUsabilityTab';
 import { RoutePage } from '../renderer/pages/RoutePage';
 import { useCustomCliConfigStore } from '../renderer/store/customCliConfigStore';
 import {
@@ -963,22 +961,18 @@ describe('route workbench redesign', () => {
     expect(screen.getByText('Claude Code')).toBeInTheDocument();
     expect(screen.getByText('Codex')).toBeInTheDocument();
     expect(screen.getByText('Gemini CLI')).toBeInTheDocument();
+    expect(screen.getByTestId('route-page-server-row')).toBeInTheDocument();
     const primaryRow = screen.getByTestId('route-page-primary-row');
-    expect(primaryRow).toHaveClass(
-      'xl:grid-cols-[minmax(0,1.07fr)_minmax(360px,0.93fr)]',
-      'xl:items-stretch'
+    expect(primaryRow).toHaveClass('min-w-0');
+    expect(screen.getByTestId('redirect-leading-pane')).toBeInTheDocument();
+    expect(screen.getByTestId('redirect-two-pane-layout')).toHaveClass(
+      'xl:grid-cols-[minmax(168px,0.176fr)_minmax(192px,0.448fr)_minmax(0,1.676fr)]'
     );
     const serverSectionCard = screen.getByTestId('route-server-section-card');
-    expect(serverSectionCard).toHaveClass('h-full', 'self-stretch');
-    expect(screen.getByTestId('route-cli-model-section-card')).toHaveClass(
-      'h-full',
-      'self-stretch'
-    );
+    expect(serverSectionCard).toHaveClass('w-full');
+    expect(screen.getByTestId('route-cli-model-section-card')).toHaveClass('h-full');
     expect(serverSectionCard).not.toHaveClass('h-fit', 'self-start');
-    expect(screen.getByTestId('route-cli-model-section-card')).not.toHaveClass(
-      'h-fit',
-      'self-start'
-    );
+    expect(screen.getByTestId('route-cli-model-section-card')).not.toHaveClass('h-fit');
     const guardToggle = within(serverSectionCard).getByRole('checkbox', {
       name: '阻断 Gemini CLI 内部工具/回退模型请求',
     });
@@ -987,11 +981,16 @@ describe('route workbench redesign', () => {
     const serverPrimaryRow = screen.getByTestId('route-server-primary-config-row');
     const serverCredentialRow = screen.getByTestId('route-server-credential-row');
     expect(serverSectionCard.firstElementChild).toHaveClass('p-3');
-    expect(screen.getByTestId('route-cli-model-section-card').firstElementChild).toHaveClass('p-3');
-    expect(serverPrimaryRow).toHaveClass('md:grid-cols-2');
-    expect(serverCredentialRow).toHaveClass('md:grid-cols-2');
+    expect(screen.getByTestId('route-cli-model-section-card').firstElementChild).toHaveClass(
+      'px-3',
+      'py-2'
+    );
+    expect(serverPrimaryRow).toHaveClass(
+      'md:grid-cols-4',
+      'xl:grid-cols-[7rem_minmax(10rem,1fr)_minmax(13rem,1.15fr)_minmax(17rem,1.45fr)]'
+    );
+    expect(serverCredentialRow).toHaveClass('contents');
     expect(serverPrimaryRow).toHaveClass('gap-2');
-    expect(serverCredentialRow).toHaveClass('mt-2', 'gap-2');
     expect(within(serverPrimaryRow).getByText('端口')).toBeInTheDocument();
     const serverFieldLabels = [
       within(serverPrimaryRow).getByText('端口'),
@@ -1068,7 +1067,17 @@ describe('route workbench redesign', () => {
     expect(screen.getByDisplayValue('gpt-5.4')).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'gpt-4.1' })).not.toBeInTheDocument();
     expect(screen.getAllByRole('option', { name: 'claude-opus-4-6' }).length).toBeGreaterThan(0);
-    expect(screen.getByText('CLI 路由配置')).toBeInTheDocument();
+    expect(screen.getByText('CLI 路由模型选择')).toBeInTheDocument();
+    expect(screen.getByText(/应用本地路由后，只需修改此处重定向模型即可/)).toHaveClass(
+      'text-[11px]',
+      'text-[var(--text-secondary)]'
+    );
+    const claudeRouteLabel = screen.getByText('Claude Code').closest('label');
+    expect(claudeRouteLabel?.querySelector('img[aria-hidden="true"]')).not.toBeNull();
+    expect(
+      screen.queryByText(/写入 CLI 本地配置时仅生成连接到本地代理的配置/)
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/当 CLI 使用本地应用路由 URL 时/)).not.toBeInTheDocument();
     expect(screen.getByTestId('redirect-two-pane-layout')).toBeInTheDocument();
     expect(screen.getAllByText('claude-opus-4-6').length).toBeGreaterThan(0);
     expect(screen.queryByText('统计已迁移到数据总览')).not.toBeInTheDocument();
@@ -1195,31 +1204,8 @@ describe('route workbench redesign', () => {
     expect(within(previewDialog).getByText(/sk-route-key/)).toBeInTheDocument();
   });
 
-  it('keeps CLI usability as an independent page with header actions', async () => {
-    function CliUsabilityHarness() {
-      const [actions, setActions] = useState<ReactNode | null>(null);
-
-      return (
-        <>
-          <div data-testid="page-header-actions">{actions}</div>
-          <CliUsabilityTab setPageHeaderActions={setActions} />
-        </>
-      );
-    }
-
-    render(<CliUsabilityHarness />);
-
-    expect(screen.queryByRole('dialog', { name: '检测设置' })).not.toBeInTheDocument();
-    const headerActions = screen.getByTestId('page-header-actions');
-    expect(
-      within(headerActions).getByRole('button', { name: /开启定时检测|关闭定时检测/ })
-    ).toBeInTheDocument();
-    expect(within(headerActions).getByRole('spinbutton', { name: '检测间隔（小时）' })).toHaveValue(
-      4
-    );
-    expect(screen.queryByRole('button', { name: '保存设置' })).not.toBeInTheDocument();
-    expect(screen.queryByTestId('route-workbench-header')).not.toBeInTheDocument();
-  });
+  // P0-2: CliUsabilityTab 已合并到 RoutePage，该测试不再需要
+  // 相关功能已在 RoutePage 的集成测试中覆盖
 
   it('renders redirect list and selected detail without vendor grouping', async () => {
     render(<ModelRedirectionTab />);
@@ -1231,15 +1217,23 @@ describe('route workbench redesign', () => {
     expect(screen.queryByText('gpt-5')).not.toBeInTheDocument();
     const priorityPane = await screen.findByTestId('redirect-detail-priority');
     expect(within(priorityPane).getAllByText(/暂停至/).length).toBeGreaterThan(0);
-    expect(priorityPane.querySelector('[title*="5分钟成功率 0%"]')).not.toBeNull();
+    expect(priorityPane.querySelector('[title*="60分钟成功率 0%"]')).not.toBeNull();
     expect(screen.queryByTestId('redirect-card-header')).not.toBeInTheDocument();
     expect(screen.getByTestId('redirect-two-pane-layout')).toHaveClass(
       'grid',
-      'xl:grid-cols-[minmax(240px,0.62fr)_minmax(0,1.38fr)]'
+      'xl:grid-cols-[minmax(192px,0.448fr)_minmax(0,1.632fr)]'
     );
     const toolbar = screen.getByTestId('redirect-list-toolbar');
-    expect(within(toolbar).getByRole('button', { name: '同步来源' })).toBeInTheDocument();
-    expect(within(toolbar).getByRole('button', { name: '新增重定向' })).toBeInTheDocument();
+    const redirectToolbarTitle = within(toolbar).getByText('重定向模型');
+    const redirectToolbarCount = within(toolbar).getByText(/\d+ 项/);
+    expect(redirectToolbarTitle.parentElement).toBe(redirectToolbarCount.parentElement);
+    expect(redirectToolbarTitle.parentElement).toHaveClass('items-baseline', 'gap-1.5');
+    const syncSourcesButton = within(toolbar).getByRole('button', { name: '同步来源' });
+    const createRedirectButton = within(toolbar).getByRole('button', { name: '新增重定向' });
+    expect(syncSourcesButton).toBeInTheDocument();
+    expect(createRedirectButton).toBeInTheDocument();
+    expect(syncSourcesButton.querySelector('svg')).toBeNull();
+    expect(createRedirectButton.querySelector('svg')).toBeNull();
     expect(screen.queryByRole('button', { name: '重置默认重定向' })).not.toBeInTheDocument();
 
     expect(screen.getByTestId('redirect-workspace')).toHaveClass('border-[var(--line-muted)]');
@@ -1250,6 +1244,9 @@ describe('route workbench redesign', () => {
     expect(redirectRows[0]).toHaveClass('border-[var(--line-muted)]');
     expect(redirectRows[0]).not.toHaveClass('rounded-[var(--radius-lg)]');
     expect(redirectRows[0]).not.toHaveClass('bg-[var(--surface-2)]/70');
+    expect(within(redirectRows[0]).queryByText(/\d+ 站点/)).not.toBeInTheDocument();
+    expect(within(redirectRows[0]).queryByText(/来源/)).not.toBeInTheDocument();
+    expect(within(redirectRows[0]).queryByText(/路径 \d+ 次/)).not.toBeInTheDocument();
 
     const detailActions = screen.getByTestId('redirect-detail-actions');
     expect(within(detailActions).getByRole('button', { name: '路由规则' })).toBeInTheDocument();
@@ -1264,6 +1261,7 @@ describe('route workbench redesign', () => {
     });
     expect(editButton).toHaveClass('h-7', 'w-7');
     expect(deleteButton).toHaveClass('h-7', 'w-7');
+    expect(within(detailActions).queryByText(/\d+ 站点/)).not.toBeInTheDocument();
 
     const originalModelFrame = screen.getByText('claude-opus-4.6-20260201').parentElement;
     expect(originalModelFrame).not.toBeNull();
@@ -1274,8 +1272,10 @@ describe('route workbench redesign', () => {
     expect(within(originalModelsList).queryByText(/暂停至/)).not.toBeInTheDocument();
     expect(originalModelFrame).toHaveClass('border', 'bg-[var(--surface-2)]', 'px-2', 'py-0');
     expect(screen.getByText('claude-opus-4.6-20260201')).toHaveClass('leading-4');
-    const defaultBadge = screen.getAllByText('默认示例')[0];
-    expect(defaultBadge).toHaveClass(
+    expect(screen.queryByText('手工新增')).not.toBeInTheDocument();
+    expect(screen.queryByText('默认示例')).not.toBeInTheDocument();
+    const exampleBadge = screen.getAllByText('示例')[0];
+    expect(exampleBadge).toHaveClass(
       'rounded-full',
       'bg-[var(--surface-2)]',
       'px-1.5',
@@ -1283,7 +1283,71 @@ describe('route workbench redesign', () => {
       'text-[11px]',
       'text-[var(--text-secondary)]'
     );
+    expect(
+      within(priorityPane).queryByText('站点与 API Key 按当前顺序尝试。')
+    ).not.toBeInTheDocument();
+    expect(
+      within(priorityPane).getByRole('button', { name: '保存优先级' }).parentElement
+    ).toHaveClass('ml-auto', 'justify-end');
     expect(await screen.findByTestId('priority-detail-compact-list')).toBeInTheDocument();
+  });
+
+  it('warns when selected redirect sources only have site-level model cache', async () => {
+    const siteOnlySource = createSource({
+      sourceKey: 'site-only:site:claude-opus-4-8',
+      siteId: 'site-only',
+      siteName: 'Site Only Claude',
+      accountId: undefined,
+      accountName: undefined,
+      sourceType: 'site',
+      originalModel: 'claude-opus-4-8',
+      availableUserGroups: undefined,
+      availableApiKeys: [],
+      firstSeenAt: 20,
+      lastSeenAt: 20,
+    });
+    const baseRegistry = createModelRegistryConfig();
+    const baseDisplayItem = baseRegistry.displayItems.find(
+      item => item.canonicalName === 'claude-opus-4-6'
+    )!;
+    const nextDisplayItem: RouteModelDisplayItem = {
+      ...baseDisplayItem,
+      sourceKeys: [...baseDisplayItem.sourceKeys, siteOnlySource.sourceKey],
+      originalModelOrder: [
+        ...(baseDisplayItem.originalModelOrder || []),
+        siteOnlySource.originalModel,
+      ],
+    };
+
+    mockConfig = {
+      ...mockConfig,
+      modelRegistry: {
+        ...baseRegistry,
+        sources: [...baseRegistry.sources, siteOnlySource],
+        entries: {
+          ...baseRegistry.entries,
+          'claude-opus-4-6': {
+            ...baseRegistry.entries['claude-opus-4-6']!,
+            aliases: [
+              ...baseRegistry.entries['claude-opus-4-6']!.aliases,
+              siteOnlySource.originalModel,
+            ],
+            sources: [...baseRegistry.entries['claude-opus-4-6']!.sources, siteOnlySource],
+          },
+        },
+        displayItems: baseRegistry.displayItems.map(item =>
+          item.id === baseDisplayItem.id ? nextDisplayItem : item
+        ),
+      },
+    };
+
+    render(<ModelRedirectionTab />);
+
+    const warning = await screen.findByTestId('priority-detail-site-only-warning');
+    expect(warning).toHaveTextContent('部分站点需要重新添加后才能参与本地路由');
+    expect(warning).toHaveTextContent('Site Only Claude');
+    expect(warning).toHaveTextContent('claude-opus-4-8');
+    expect(warning).toHaveTextContent('重新添加或刷新站点账户');
   });
 
   it('resets suspended route paths for the selected redirect detail', async () => {
@@ -1298,7 +1362,7 @@ describe('route workbench redesign', () => {
     });
   });
 
-  it('resets the current priority hit route path with concrete path identity', async () => {
+  it('resets the current priority hit route channel without narrowing to one resolved model', async () => {
     mockGetRequestLogs.mockResolvedValueOnce({
       success: true,
       data: [
@@ -1340,7 +1404,6 @@ describe('route workbench redesign', () => {
         siteId: 'site-1',
         accountId: 'acc-1',
         apiKeyId: 'backup-key-id',
-        resolvedModel: 'claude-opus-4.6-20260201',
         targetProtocol: 'native',
       });
     });
@@ -2030,7 +2093,7 @@ describe('route workbench redesign', () => {
     const mainKeyCells = Array.from(mainKeyRow.children) as HTMLElement[];
     expect(within(mainKeyCells[0]!).queryByText(/暂停至/)).not.toBeInTheDocument();
     expect(within(mainKeyCells[1]!).getByText(/claude-opus.*暂停至/)).toBeInTheDocument();
-    expect(mainKeyCells[1]).toHaveAttribute('title', expect.stringContaining('5分钟成功率 0%'));
+    expect(mainKeyCells[1]).toHaveAttribute('title', expect.stringContaining('60分钟成功率 0%'));
     expect(within(mainKeyCells[1]!).getByText(/claude-opus.*暂停至/).textContent).toMatch(
       /claude-opus-4\.6-20260201（.*暂停至/
     );
@@ -2138,17 +2201,22 @@ describe('route workbench redesign', () => {
         siteId: 'site-1',
         accountId: 'acc-1',
         apiKeyId: 'backup-key-id',
-        resolvedModel: 'claude-opus-4.6-20260201',
         targetProtocol: 'native',
       });
     });
   });
 
-  it('clears stale first-hit logs after resetting a persisted priority hit path', async () => {
+  it('clears stale same-channel first-hit logs after resetting a persisted priority hit path', async () => {
     mockConfig = createRoutingConfig({ includeSuccessfulPathState: true });
     mockGetRequestLogs.mockResolvedValueOnce({
       success: true,
-      data: [createFirstHitRouteLog({ targetProtocol: 'native', createdAt: Date.now() })],
+      data: [
+        createFirstHitRouteLog({
+          targetProtocol: 'native',
+          resolvedModel: 'claude-opus-4.6-alt-20260201',
+          createdAt: Date.now(),
+        }),
+      ],
     });
     mockResetPathStates.mockImplementationOnce(async () => {
       mockConfig = {

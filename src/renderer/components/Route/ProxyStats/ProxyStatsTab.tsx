@@ -1,7 +1,7 @@
 /**
  * 代理服务&统计 Sub-Tab
  * 输入: routeStore (服务器配置/模型选择/统计)
- * 输出: 服务器状态 + CLI 路由配置 + 统计仪表盘
+ * 输出: 服务器状态 + CLI 路由模型选择 + 统计仪表盘
  * 定位: 路由页代理统计子面板
  */
 
@@ -25,6 +25,9 @@ import { toast } from '../../../store/toastStore';
 import { AppCard, AppCardContent } from '../../AppCard';
 import { AppButton } from '../../AppButton/AppButton';
 import { buildRecommendedCliModelOptions } from '../Redirection/ModelRedirectionTab';
+import ClaudeCodeIcon from '../../../assets/cli-icons/claude-code.svg';
+import CodexIcon from '../../../assets/cli-icons/codex.svg';
+import GeminiIcon from '../../../assets/cli-icons/gemini.svg';
 import {
   normalizeRouteCliSelection,
   type RouteCliType,
@@ -41,6 +44,11 @@ const CLI_LABELS: Record<RouteCliType, string> = {
   claudeCode: 'Claude Code',
   codex: 'Codex',
   geminiCli: 'Gemini CLI',
+};
+const CLI_ICON_CONFIGS: Record<RouteCliType, { src: string; className: string }> = {
+  claudeCode: { src: ClaudeCodeIcon, className: 'h-[14px] w-[14px]' },
+  codex: { src: CodexIcon, className: 'h-4 w-4' },
+  geminiCli: { src: GeminiIcon, className: 'h-4 w-4' },
 };
 const ROUTE_PROXY_DISPLAY_NAME = '本地路由代理';
 const SERVER_FIELD_LABEL_CLASS_NAME = 'mb-0.5 block text-xs leading-4 text-[var(--text-secondary)]';
@@ -60,6 +68,7 @@ type RoutePreviewState = {
 /** 代理服务器状态区 */
 interface RoutePanelProps {
   className?: string;
+  variant?: 'card' | 'pane';
 }
 
 interface RouteAnalyticsSummary {
@@ -459,7 +468,7 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
 
         <div
           data-testid="route-server-primary-config-row"
-          className="grid gap-2 text-sm md:grid-cols-2"
+          className="grid gap-2 text-sm md:grid-cols-4 xl:grid-cols-[7rem_minmax(10rem,1fr)_minmax(13rem,1.15fr)_minmax(17rem,1.45fr)]"
         >
           <div className="min-w-0">
             <label htmlFor="route-server-port" className={SERVER_FIELD_LABEL_CLASS_NAME}>
@@ -491,56 +500,52 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
               className={SERVER_FIELD_INPUT_CLASS_NAME}
             />
           </div>
-        </div>
-
-        <div
-          data-testid="route-server-credential-row"
-          className="mt-2 grid gap-2 text-sm md:grid-cols-2"
-        >
-          <div className="min-w-0">
-            <label className={SERVER_FIELD_LABEL_CLASS_NAME}>Base URL</label>
-            <div
-              data-testid="route-server-base-url-value"
-              className={SERVER_FIELD_VALUE_CLASS_NAME}
-            >
-              http://{server.host}:{server.port}
-            </div>
-          </div>
-          <div className="min-w-0">
-            <label className={SERVER_FIELD_LABEL_CLASS_NAME}>路由 API Key</label>
-            <div className="flex min-w-0 items-center gap-2">
+          <div data-testid="route-server-credential-row" className="contents">
+            <div className="min-w-0">
+              <label className={SERVER_FIELD_LABEL_CLASS_NAME}>Base URL</label>
               <div
-                data-testid="route-server-api-key-value"
-                className={`${SERVER_FIELD_VALUE_CLASS_NAME} min-w-0 flex-1`}
+                data-testid="route-server-base-url-value"
+                className={SERVER_FIELD_VALUE_CLASS_NAME}
               >
-                {showKey ? server.unifiedApiKey : '••••••••••••••••'}
+                http://{server.host}:{server.port}
               </div>
-              <button
-                onClick={() => setShowKey(!showKey)}
-                className="text-xs text-[var(--accent)] hover:underline"
-              >
-                {showKey ? '隐藏' : '显示'}
-              </button>
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(server.unifiedApiKey);
-                  toast.success('已复制');
-                }}
-                title="复制"
-                className="inline-flex h-7 w-7 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
-              >
-                <Copy className="h-3.5 w-3.5" />
-              </button>
-              <button
-                onClick={async () => {
-                  const k = await regenerateApiKey();
-                  if (k) toast.success('已重新生成');
-                }}
-                title="重新生成"
-                className="inline-flex h-7 w-7 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
-              >
-                <KeyRound className="h-3.5 w-3.5" />
-              </button>
+            </div>
+            <div className="min-w-0">
+              <label className={SERVER_FIELD_LABEL_CLASS_NAME}>路由 API Key</label>
+              <div className="flex min-w-0 items-center gap-2">
+                <div
+                  data-testid="route-server-api-key-value"
+                  className={`${SERVER_FIELD_VALUE_CLASS_NAME} min-w-0 flex-1`}
+                >
+                  {showKey ? server.unifiedApiKey : '••••••••••••••••'}
+                </div>
+                <button
+                  onClick={() => setShowKey(!showKey)}
+                  className="text-xs text-[var(--accent)] hover:underline"
+                >
+                  {showKey ? '隐藏' : '显示'}
+                </button>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(server.unifiedApiKey);
+                    toast.success('已复制');
+                  }}
+                  title="复制"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={async () => {
+                    const k = await regenerateApiKey();
+                    if (k) toast.success('已重新生成');
+                  }}
+                  title="重新生成"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
+                >
+                  <KeyRound className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -549,8 +554,8 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
   );
 }
 
-/** CLI 路由配置区 */
-export function CliModelSection({ className = '' }: RoutePanelProps) {
+/** CLI 路由模型选择区 */
+export function CliModelSection({ className = '', variant = 'card' }: RoutePanelProps) {
   const { config, saveCliModelSelections } = useRouteStore(
     useShallow(s => ({
       config: s.config,
@@ -725,82 +730,102 @@ export function CliModelSection({ className = '' }: RoutePanelProps) {
     );
   };
 
-  return (
-    <>
-      <AppCard data-testid="route-cli-model-section-card" className={className}>
-        <AppCardContent className="p-3">
-          <div className="mb-2">
-            <div className="text-sm font-medium text-[var(--text-primary)]">CLI 路由配置</div>
-            <p className="mt-0.5 text-xs leading-4 text-[var(--text-secondary)]">
-              为 Claude Code、Codex 和 Gemini CLI 选择默认模型，并预览或写入本地配置。
-            </p>
-          </div>
+  const content = (
+    <div className="px-3 py-2">
+      <div className="mb-2">
+        <div className="text-xs font-semibold text-[var(--text-primary)]">CLI 路由模型选择</div>
+        <p className="text-[11px] text-[var(--text-secondary)]">
+          应用本地路由后，只需修改此处重定向模型即可，无需修改本地配置中的模型
+        </p>
+      </div>
 
-          <div className="grid gap-2 md:grid-cols-3">
-            {(['claudeCode', 'codex', 'geminiCli'] as RouteCliType[]).map(cli => (
-              <div key={cli} className="space-y-1.5">
-                <label className="mb-0.5 block text-xs leading-4 text-[var(--text-secondary)]">
-                  {CLI_LABELS[cli]}
-                </label>
-                <select
-                  value={normalizedCliSelections[cli]}
-                  onChange={e => handleChange(cli, e.target.value)}
-                  className="h-7 w-full rounded-md border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 text-xs text-[var(--text-primary)]"
+      <div className="grid gap-3">
+        {(['claudeCode', 'codex', 'geminiCli'] as RouteCliType[]).map(cli => {
+          const iconConfig = CLI_ICON_CONFIGS[cli];
+
+          return (
+            <div key={cli} className="space-y-1.5">
+              <label className="mb-0.5 flex items-center gap-1.5 text-xs leading-4 text-[var(--text-secondary)]">
+                <img
+                  src={iconConfig.src}
+                  alt=""
+                  aria-hidden="true"
+                  className={`${iconConfig.className} shrink-0`}
+                />
+                <span>{CLI_LABELS[cli]}</span>
+              </label>
+              <select
+                value={normalizedCliSelections[cli]}
+                onChange={e => handleChange(cli, e.target.value)}
+                className="h-7 w-full rounded-md border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 text-xs text-[var(--text-primary)]"
+              >
+                <option value="">未选择</option>
+                {modelOptions.map(entry => (
+                  <option key={entry.canonicalName} value={entry.canonicalName}>
+                    {entry.canonicalName}
+                  </option>
+                ))}
+              </select>
+              <div
+                data-testid={`route-cli-actions-${cli}`}
+                className="grid grid-cols-2 items-center gap-2"
+              >
+                <AppButton
+                  variant="secondary"
+                  size="sm"
+                  className="h-7 !min-h-7 w-full min-w-0 whitespace-nowrap px-2"
+                  onClick={() => handleOpenPreview(cli)}
+                  disabled={!generatedConfigs[cli]}
+                  aria-label={`预览 ${CLI_LABELS[cli]} 路由配置`}
                 >
-                  <option value="">未选择</option>
-                  {modelOptions.map(entry => (
-                    <option key={entry.canonicalName} value={entry.canonicalName}>
-                      {entry.canonicalName}
-                    </option>
-                  ))}
-                </select>
-                <div
-                  data-testid={`route-cli-actions-${cli}`}
-                  className="grid grid-cols-2 items-center gap-2"
-                >
+                  预览
+                </AppButton>
+                <div className="min-w-0">
                   <AppButton
+                    ref={element => {
+                      applyButtonRefs.current[cli] = element;
+                    }}
                     variant="secondary"
                     size="sm"
                     className="h-7 !min-h-7 w-full min-w-0 whitespace-nowrap px-2"
-                    onClick={() => handleOpenPreview(cli)}
-                    disabled={!generatedConfigs[cli]}
-                    aria-label={`预览 ${CLI_LABELS[cli]} 路由配置`}
+                    onClick={() => {
+                      setPreviewState(null);
+                      setApplyMenuCli(current => (current === cli ? null : cli));
+                    }}
+                    disabled={
+                      !(editedPreviews[cli] ?? generatedConfigs[cli]) || applyingCli !== null
+                    }
+                    aria-label={`应用 ${CLI_LABELS[cli]} 路由配置`}
                   >
-                    预览
+                    {applyingCli === cli ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        应用中
+                      </>
+                    ) : (
+                      '应用'
+                    )}
                   </AppButton>
-                  <div className="min-w-0">
-                    <AppButton
-                      ref={element => {
-                        applyButtonRefs.current[cli] = element;
-                      }}
-                      variant="secondary"
-                      size="sm"
-                      className="h-7 !min-h-7 w-full min-w-0 whitespace-nowrap px-2"
-                      onClick={() => {
-                        setPreviewState(null);
-                        setApplyMenuCli(current => (current === cli ? null : cli));
-                      }}
-                      disabled={
-                        !(editedPreviews[cli] ?? generatedConfigs[cli]) || applyingCli !== null
-                      }
-                      aria-label={`应用 ${CLI_LABELS[cli]} 路由配置`}
-                    >
-                      {applyingCli === cli ? (
-                        <>
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          应用中
-                        </>
-                      ) : (
-                        '应用'
-                      )}
-                    </AppButton>
-                  </div>
                 </div>
               </div>
-            ))}
-          </div>
-        </AppCardContent>
-      </AppCard>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      {variant === 'pane' ? (
+        <div data-testid="route-cli-model-section-card" className={className}>
+          {content}
+        </div>
+      ) : (
+        <AppCard data-testid="route-cli-model-section-card" className={className}>
+          {content}
+        </AppCard>
+      )}
 
       <RouteConfigPreviewModal
         previewState={previewState}

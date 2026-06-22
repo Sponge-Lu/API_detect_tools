@@ -348,7 +348,7 @@ export function selectProbeModelsForCli(params: {
     return [];
   }
 
-  return buildConfiguredProbeModels(siteId, accountId, cliType, limit);
+  return buildConfiguredProbeModels(siteId, accountId, cliType, Math.min(limit, 1));
 }
 
 function resolveCustomCliDisplayName(config: CustomCliConfig): string {
@@ -377,7 +377,7 @@ function selectCustomCliProbeModelsForCli(params: {
     return [];
   }
 
-  const testModels = normalizeCliTestModels(setting, params.limit);
+  const testModels = normalizeCliTestModels(setting, Math.min(params.limit, 1));
   const seen = new Set<string>();
   const results: Array<{ canonicalModel: string; rawModel: string }> = [];
 
@@ -690,7 +690,7 @@ export async function runCliProbeNow(params?: {
           siteId: site.id,
           accountId: account.id,
           cliType,
-          limit: Math.min(probeConfig.modelsPerCli, CLI_TEST_MODEL_SLOT_COUNT),
+          limit: 1,
         });
         for (const model of models) {
           tasks.push({
@@ -721,7 +721,7 @@ export async function runCliProbeNow(params?: {
       const models = selectCustomCliProbeModelsForCli({
         config: customConfig,
         cliType,
-        limit: Math.min(probeConfig.modelsPerCli, CLI_TEST_MODEL_SLOT_COUNT),
+        limit: 1,
       });
 
       for (const model of models) {
@@ -861,7 +861,7 @@ export async function getCliProbeView(params: {
           siteId: site.id,
           accountId: account.id,
           cliType,
-          limit: CLI_TEST_MODEL_SLOT_COUNT,
+          limit: 1,
         });
 
         const modelViews: RouteCliProbeModelView[] = desiredModels.map(model =>
@@ -923,7 +923,7 @@ export async function getCliProbeView(params: {
       const desiredModels = selectCustomCliProbeModelsForCli({
         config: customConfig,
         cliType,
-        limit: CLI_TEST_MODEL_SLOT_COUNT,
+        limit: 1,
       });
 
       clis[cliType] = {

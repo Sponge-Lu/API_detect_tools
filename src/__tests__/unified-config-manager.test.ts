@@ -283,6 +283,65 @@ describe('UnifiedConfigManager', () => {
     expect(reloadedConfig.accounts).toHaveLength(1);
   });
 
+  it('migrates legacy site-level auth into the existing managed account and clears site-level auth fields', async () => {
+    const configPath = path.join(userDataDir, 'config.json');
+    const rawConfig = createSampleConfig();
+    rawConfig.version = '3.1';
+    rawConfig.sites[0] = {
+      ...rawConfig.sites[0],
+      access_token: 'legacy-token',
+      user_id: 'legacy-user',
+      cached_data: {
+        balance: 66.6,
+        today_usage: 12.3,
+      },
+    } as any;
+    rawConfig.accounts = [
+      {
+        id: 'acct-existing',
+        site_id: 'site-1',
+        account_name: '现有账户',
+        user_id: 'legacy-user',
+        access_token: 'legacy-token',
+        auth_source: 'manual',
+        status: 'active',
+        created_at: 1,
+        updated_at: 1,
+      },
+    ] as any;
+    await fs.writeFile(configPath, JSON.stringify(rawConfig, null, 2), 'utf-8');
+
+    const manager = await loadManager();
+    const loadedConfig = await manager.loadConfig();
+
+    expect(loadedConfig.accounts).toHaveLength(1);
+    expect(loadedConfig.accounts[0]).toMatchObject({
+      id: 'acct-existing',
+      user_id: 'legacy-user',
+      access_token: 'legacy-token',
+    });
+    expect(loadedConfig.accounts[0].cached_data).toMatchObject({
+      balance: 66.6,
+      today_usage: 12.3,
+    });
+    expect((loadedConfig.sites[0] as any).access_token).toBeUndefined();
+    expect(loadedConfig.sites[0].user_id).toBeUndefined();
+    expect(loadedConfig.sites[0].cached_data).toBeUndefined();
+
+    const persisted = JSON.parse(await fs.readFile(configPath, 'utf-8'));
+    expect(persisted.sites[0].access_token).toBeUndefined();
+    expect(persisted.sites[0].user_id).toBeUndefined();
+    expect(persisted.sites[0].cached_data).toBeUndefined();
+
+    const persistedRuntimeCache = JSON.parse(
+      await fs.readFile(path.join(userDataDir, 'runtime-cache.json'), 'utf-8')
+    );
+    expect(persistedRuntimeCache.account_runtime_by_account_id['acct-existing']).toMatchObject({
+      balance: 66.6,
+      today_usage: 12.3,
+    });
+  });
+
   it('persists cached_data into runtime-cache.json while keeping config.json stable', async () => {
     const manager = await loadManager();
     const config = createSampleConfig() as any;
@@ -570,6 +629,131 @@ describe('UnifiedConfigManager', () => {
     expect(
       routing.routePathStates[buildRoutePathStateKey(otherResolvedModelPathState)]
     ).toBeDefined();
+  });
+
+  it('resets and suppresses every resolved model for a priority-hit route channel', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as any);
+    await manager.loadConfig();
+
+    const firstResolvedPathState = {
+      routeRuleId: 'rule-1',
+      siteId: 'site-1',
+      accountId: 'account-1',
+      apiKeyId: 'key-1',
+      cliType: 'codex' as const,
+      targetProtocol: 'native' as const,
+      canonicalModel: 'gpt-5',
+      resolvedModel: 'gpt-5-mini',
+      windowStartedAt: 100,
+      windowRequestCount: 1,
+      windowSuccessCount: 1,
+      successRate: 1,
+      lastOutcome: 'success' as const,
+      lastSuccessAt: 100,
+      updatedAt: 100,
+    };
+    const secondResolvedPathState = {
+      ...firstResolvedPathState,
+      resolvedModel: 'gpt-5-codex',
+      lastSuccessAt: 200,
+      updatedAt: 200,
+    };
+    const otherApiKeyPathState = {
+      ...firstResolvedPathState,
+      apiKeyId: 'key-2',
+    };
+
+    await manager.upsertRoutePathState(firstResolvedPathState);
+    await manager.upsertRoutePathState(secondResolvedPathState);
+    await manager.upsertRoutePathState(otherApiKeyPathState);
+
+    const cleared = await manager.resetRoutePathStates({
+      routeRuleId: 'rule-1',
+      canonicalModel: 'gpt-5',
+      siteId: 'site-1',
+      accountId: 'account-1',
+      apiKeyId: 'key-1',
+      targetProtocol: 'native',
+    });
+    const routing = manager.getRoutingConfig();
+    const firstSuppressedState =
+      routing.routePathStates[buildRoutePathStateKey(firstResolvedPathState)];
+    const secondSuppressedState =
+      routing.routePathStates[buildRoutePathStateKey(secondResolvedPathState)];
+    const channelSuppressedState =
+      routing.routePathStates[
+        buildRoutePathStateKey({
+          routeRuleId: 'rule-1',
+          siteId: 'site-1',
+          accountId: 'account-1',
+          apiKeyId: 'key-1',
+          targetProtocol: 'native',
+          canonicalModel: 'gpt-5',
+        })
+      ];
+
+    expect(cleared).toBe(2);
+    expect(firstSuppressedState).toMatchObject({
+      routeRuleId: 'rule-1',
+      apiKeyId: 'key-1',
+      resolvedModel: 'gpt-5-mini',
+      affinitySuppressedAt: expect.any(Number),
+      affinitySuppressedUntil: expect.any(Number),
+    });
+    expect(secondSuppressedState).toMatchObject({
+      routeRuleId: 'rule-1',
+      apiKeyId: 'key-1',
+      resolvedModel: 'gpt-5-codex',
+      affinitySuppressedAt: expect.any(Number),
+      affinitySuppressedUntil: expect.any(Number),
+    });
+    expect(channelSuppressedState).toMatchObject({
+      routeRuleId: 'rule-1',
+      apiKeyId: 'key-1',
+      canonicalModel: 'gpt-5',
+      targetProtocol: 'native',
+      affinitySuppressedAt: expect.any(Number),
+      affinitySuppressedUntil: expect.any(Number),
+    });
+    expect(channelSuppressedState.resolvedModel).toBeUndefined();
+    expect(firstSuppressedState.lastOutcome).toBeUndefined();
+    expect(secondSuppressedState.lastOutcome).toBeUndefined();
+    expect(routing.routePathStates[buildRoutePathStateKey(otherApiKeyPathState)]).toBeDefined();
+  });
+
+  it('creates channel-wide priority-hit reset suppression without an existing path state', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as any);
+    await manager.loadConfig();
+
+    const routeKey = {
+      routeRuleId: 'rule-1',
+      siteId: 'site-1',
+      accountId: 'account-1',
+      apiKeyId: 'key-1',
+      cliType: 'codex' as const,
+      targetProtocol: 'native' as const,
+      canonicalModel: 'gpt-5',
+    };
+
+    const cleared = await manager.resetRoutePathStates(routeKey);
+    const suppressedState =
+      manager.getRoutingConfig().routePathStates[buildRoutePathStateKey(routeKey)];
+
+    expect(cleared).toBe(0);
+    expect(suppressedState).toMatchObject({
+      routeRuleId: 'rule-1',
+      siteId: 'site-1',
+      accountId: 'account-1',
+      apiKeyId: 'key-1',
+      canonicalModel: 'gpt-5',
+      targetProtocol: 'native',
+      affinitySuppressedAt: expect.any(Number),
+      affinitySuppressedUntil: expect.any(Number),
+    });
+    expect(suppressedState.resolvedModel).toBeUndefined();
+    expect(suppressedState.lastOutcome).toBeUndefined();
   });
 
   it('creates priority-hit reset suppression even when no existing path state matches', async () => {
@@ -1023,7 +1207,7 @@ describe('UnifiedConfigManager', () => {
         config: {
           enabled: false,
           intervalMinutes: 240,
-          modelsPerCli: 3,
+          modelsPerCli: 1,
           requestTimeoutMs: 30000,
           maxConcurrency: 3,
           retentionDays: 30,
@@ -1329,7 +1513,7 @@ describe('UnifiedConfigManager', () => {
         config: {
           enabled: false,
           intervalMinutes: 240,
-          modelsPerCli: 3,
+          modelsPerCli: 1,
           requestTimeoutMs: 30000,
           maxConcurrency: 3,
           retentionDays: 30,

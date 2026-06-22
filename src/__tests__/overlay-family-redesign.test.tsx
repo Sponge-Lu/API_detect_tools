@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { AppModal } from '../renderer/components/AppModal/AppModal';
 import { OverlayDrawer } from '../renderer/components/overlays/OverlayDrawer';
-import { UnifiedCliConfigDialog } from '../renderer/components/dialogs/UnifiedCliConfigDialog';
-import { CustomCliConfigEditorDialog } from '../renderer/components/dialogs/CustomCliConfigEditorDialog';
+import { ManagedCliConfigEditorContent } from '../renderer/components/dialogs/ManagedCliConfigEditorContent';
+import { DirectCliConfigEditorContent } from '../renderer/components/dialogs/DirectCliConfigEditorContent';
 import { WebDAVBackupDialog } from '../renderer/components/dialogs/WebDAVBackupDialog';
 import type { CliConfig } from '../shared/types/cli-config';
 import type { CustomCliConfig } from '../shared/types/custom-cli-config';
@@ -93,23 +93,6 @@ function StatefulWebDAVDialog() {
   return <WebDAVBackupDialog isOpen={isOpen} onClose={() => setIsOpen(false)} />;
 }
 
-function StatefulUnifiedCliDialog() {
-  const [isOpen, setIsOpen] = useState(true);
-
-  return (
-    <UnifiedCliConfigDialog
-      isOpen={isOpen}
-      siteName="Claude Hub"
-      siteUrl="https://example.com"
-      apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
-      siteModels={['claude-3-5-sonnet']}
-      currentConfig={editedCliConfig}
-      onClose={() => setIsOpen(false)}
-      onSave={vi.fn()}
-    />
-  );
-}
-
 describe('overlay family redesign', () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -133,9 +116,9 @@ describe('overlay family redesign', () => {
       </>
     );
 
-    expect(screen.getAllByTestId('overlay-title').length).toBe(2);
-    expect(screen.getAllByTestId('overlay-body').length).toBe(2);
-    expect(screen.getAllByTestId('overlay-footer').length).toBe(2);
+    expect(screen.getAllByTestId('overlay-title')).toHaveLength(2);
+    expect(screen.getAllByTestId('overlay-body')).toHaveLength(2);
+    expect(screen.getAllByTestId('overlay-footer')).toHaveLength(2);
     expect(screen.getByRole('dialog', { name: '编辑站点' })).toHaveClass(
       'border-[var(--line-soft)]',
       'bg-[var(--surface-1)]'
@@ -150,6 +133,25 @@ describe('overlay family redesign', () => {
     );
 
     expect(screen.getByTestId('overlay-body').className).not.toContain('overflow-y-auto');
+  });
+
+  it('keeps default modal overlays above drawers so drawer-launched dialogs remain operable', () => {
+    render(
+      <>
+        <OverlayDrawer isOpen={true} onClose={vi.fn()} title="站点详情">
+          <button type="button">打开弹窗</button>
+        </OverlayDrawer>
+        <AppModal isOpen={true} onClose={vi.fn()} title="确认操作">
+          <div>确认内容</div>
+        </AppModal>
+      </>
+    );
+
+    const drawerDialog = screen.getByRole('dialog', { name: '站点详情' });
+    const modalDialog = screen.getByRole('dialog', { name: '确认操作' });
+
+    expect(drawerDialog.closest('[role="presentation"]')).toHaveClass('z-[190]');
+    expect(modalDialog.closest('[role="presentation"]')).toHaveClass('z-[200]');
   });
 
   it('closes only for real overlay clicks, not for drag-release gestures that start inside the drawer', () => {
@@ -175,496 +177,76 @@ describe('overlay family redesign', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('opens reset confirmation as another overlay family member from the CLI drawer', () => {
+  it('closes when clicking the drawer backdrop outside the panel', () => {
+    const onClose = vi.fn();
+
     render(
-      <UnifiedCliConfigDialog
-        isOpen={true}
+      <OverlayDrawer isOpen={true} onClose={onClose} title="站点详情">
+        <button type="button">面板内容</button>
+      </OverlayDrawer>
+    );
+
+    const backdrop = document.body.querySelector('[data-perf-monitor="blur"]') as HTMLElement;
+
+    fireEvent.mouseDown(backdrop);
+    fireEvent.mouseUp(backdrop);
+    fireEvent.click(backdrop);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes managed CLI reset confirmation through showDialog without creating nested overlays', async () => {
+    const showDialog = vi.fn().mockResolvedValue(true);
+
+    render(
+      <ManagedCliConfigEditorContent
         siteName="Claude Hub"
         siteUrl="https://example.com"
         apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
         siteModels={['claude-3-5-sonnet']}
         currentConfig={editedCliConfig}
-        onClose={vi.fn()}
+        showDialog={showDialog}
         onSave={vi.fn()}
       />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '重置' }));
+    fireEvent.click(screen.getByTitle('重置为默认配置'));
 
-    const overlayRoots = Array.from(document.body.querySelectorAll('[role="presentation"]'));
-
-    expect(screen.getAllByRole('dialog')).toHaveLength(2);
-    expect(overlayRoots).toHaveLength(2);
-    expect(overlayRoots.some(node => node.className.includes('z-[220]'))).toBe(true);
-    expect(screen.getAllByTestId('overlay-title')).toHaveLength(2);
-    expect(screen.getAllByTestId('overlay-body')).toHaveLength(2);
-    expect(screen.getAllByTestId('overlay-footer')).toHaveLength(2);
+    await waitFor(() =>
+      expect(showDialog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: '确认重置',
+          confirmText: '确认重置',
+        })
+      )
+    );
+    expect(document.body.querySelectorAll('[role="presentation"]')).toHaveLength(0);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it('centers the CLI config dialog and removes the task-domain header card', () => {
-    const onTestCompatibility = vi.fn();
+  it('routes direct CLI reset confirmation through showDialog without creating nested overlays', async () => {
+    const showDialog = vi.fn().mockResolvedValue(true);
 
     render(
-      <UnifiedCliConfigDialog
-        isOpen={true}
-        siteName="Claude Hub"
-        accountName="Primary"
-        siteUrl="https://example.com"
-        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
-        siteModels={['claude-3-5-sonnet']}
-        currentConfig={editedCliConfig}
-        compatibility={{
-          claudeCode: true,
-          codex: null,
-          geminiCli: null,
-          testedAt: Date.now(),
-        }}
-        isTestingCompatibility={false}
-        onTestCompatibility={onTestCompatibility}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
+      <DirectCliConfigEditorContent
+        section="cli"
+        config={editedCustomCliConfig}
+        showDialog={showDialog}
       />
     );
 
-    const overlayRoot = document.body.querySelector('[role="presentation"]') as HTMLElement;
+    fireEvent.click(screen.getByTitle('重置为默认配置'));
 
-    expect(overlayRoot.className).toContain('justify-center');
-    expect(overlayRoot.className).toContain('items-center');
-    expect(screen.queryByText('当前任务域')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '测试兼容性' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '应用当前 CLI' })).not.toBeInTheDocument();
-    expect(onTestCompatibility).not.toHaveBeenCalled();
-  });
-
-  it('keeps the CLI dialog scroller height-constrained so content can scroll vertically', () => {
-    setWindowInnerHeight(900);
-
-    render(
-      <UnifiedCliConfigDialog
-        isOpen={true}
-        siteName="Claude Hub"
-        accountName="Primary"
-        siteUrl="https://example.com"
-        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
-        siteModels={['claude-3-5-sonnet']}
-        currentConfig={editedCliConfig}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-      />
+    await waitFor(() =>
+      expect(showDialog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: '确认重置',
+          confirmText: '确认重置',
+        })
+      )
     );
-
-    const scroller = screen.getByTestId('overlay-body').firstElementChild as HTMLDivElement;
-    const dialog = screen.getByRole('dialog');
-    expect(dialog.style.height).toBe('660px');
-    expect(dialog.style.maxHeight).toBe('868px');
-    expect(dialog.className).toContain('overflow-hidden');
-    expect(scroller.className).toContain('overflow-y-auto');
-    expect(scroller.className).toContain('h-full');
-    expect(scroller.className).toContain('min-h-0');
-  });
-
-  it('recomputes the CLI dialog height from the current viewport when reopened after restart-like remount', () => {
-    setWindowInnerHeight(900);
-
-    const firstRender = render(
-      <UnifiedCliConfigDialog
-        isOpen={true}
-        siteName="Claude Hub"
-        accountName="Primary"
-        siteUrl="https://example.com"
-        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
-        siteModels={['claude-3-5-sonnet']}
-        currentConfig={editedCliConfig}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-      />
-    );
-
-    expect(screen.getByRole('dialog').style.height).toBe('660px');
-    firstRender.unmount();
-
-    setWindowInnerHeight(640);
-
-    render(
-      <UnifiedCliConfigDialog
-        isOpen={true}
-        siteName="Claude Hub"
-        accountName="Primary"
-        siteUrl="https://example.com"
-        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
-        siteModels={['claude-3-5-sonnet']}
-        currentConfig={editedCliConfig}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-      />
-    );
-
-    const dialog = screen.getByRole('dialog');
-    expect(dialog.style.height).toBe('473px');
-    expect(dialog.style.maxHeight).toBe('608px');
-  });
-
-  it('tests only the selected model rows and renders plain 成功/失败 text on the same row', async () => {
-    const testWithWrapper = vi.fn().mockResolvedValueOnce({
-      success: true,
-      data: { claudeCode: true },
-    });
-
-    const electronAPI = ((window as any).electronAPI ??= {}) as Record<string, unknown> as any;
-    electronAPI.cliCompat = {
-      ...electronAPI.cliCompat,
-      testWithWrapper,
-    };
-
-    render(
-      <UnifiedCliConfigDialog
-        isOpen={true}
-        siteName="Claude Hub"
-        accountName="Primary"
-        siteUrl="https://example.com"
-        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
-        siteModels={['claude-3-5-sonnet', 'claude-3-7-sonnet']}
-        currentConfig={{
-          claudeCode: {
-            apiKeyId: 1,
-            model: 'claude-3-5-sonnet',
-            testModel: null,
-            testModels: [],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-          codex: {
-            apiKeyId: null,
-            model: null,
-            testModel: null,
-            testModels: [],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-          geminiCli: {
-            apiKeyId: null,
-            model: null,
-            testModel: null,
-            testModels: [],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-        }}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-      />
-    );
-
-    expect(screen.queryByRole('button', { name: '测试兼容性' })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: '测试模型 1' }));
-    fireEvent.click(await screen.findByText('claude-3-7-sonnet'));
-
-    fireEvent.click(screen.getByRole('button', { name: '测试已选模型' }));
-
-    await waitFor(() => expect(testWithWrapper).toHaveBeenCalledTimes(1));
-    expect(testWithWrapper).toHaveBeenCalledWith({
-      siteUrl: 'https://example.com',
-      configs: [
-        {
-          cliType: 'claudeCode',
-          apiKey: 'sk-test',
-          model: 'claude-3-7-sonnet',
-          baseUrl: 'https://example.com',
-          targetProtocol: 'native',
-        },
-      ],
-    });
-
-    const successText = await screen.findByText('成功');
-    expect(successText).toBeInTheDocument();
-    expect((successText as HTMLElement).className).not.toContain('rounded-full');
-    expect(screen.queryByText('失败')).not.toBeInTheDocument();
-    expect(screen.queryByText('刚刚测试')).not.toBeInTheDocument();
-  });
-
-  it('persists selected-model test results through a config callback so they can be restored later', async () => {
-    const testWithWrapper = vi.fn().mockResolvedValueOnce({
-      success: true,
-      data: { claudeCode: true },
-    });
-    const onPersistConfig = vi.fn();
-
-    const electronAPI = ((window as any).electronAPI ??= {}) as Record<string, unknown> as any;
-    electronAPI.cliCompat = {
-      ...electronAPI.cliCompat,
-      testWithWrapper,
-    };
-
-    render(
-      <UnifiedCliConfigDialog
-        isOpen={true}
-        siteName="Claude Hub"
-        accountName="Primary"
-        siteUrl="https://example.com"
-        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
-        siteModels={['claude-3-5-sonnet', 'claude-3-7-sonnet']}
-        currentConfig={{
-          claudeCode: {
-            apiKeyId: 1,
-            model: 'claude-3-5-sonnet',
-            testModel: null,
-            testModels: [],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-          codex: {
-            apiKeyId: null,
-            model: null,
-            testModel: null,
-            testModels: [],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-          geminiCli: {
-            apiKeyId: null,
-            model: null,
-            testModel: null,
-            testModels: [],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-        }}
-        onPersistConfig={onPersistConfig}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-      />
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: '测试模型 1' }));
-    fireEvent.click(await screen.findByText('claude-3-7-sonnet'));
-    fireEvent.click(screen.getByRole('button', { name: '测试已选模型' }));
-
-    await waitFor(() => expect(onPersistConfig).toHaveBeenCalledTimes(1));
-    expect(onPersistConfig).toHaveBeenCalledWith(
-      expect.objectContaining({
-        claudeCode: expect.objectContaining({
-          testModels: ['claude-3-7-sonnet'],
-          testResults: [
-            expect.objectContaining({
-              model: 'claude-3-7-sonnet',
-              success: true,
-            }),
-            null,
-            null,
-          ],
-        }),
-      })
-    );
-  });
-
-  it('restores persisted per-model test results when reopening the dialog', () => {
-    render(
-      <UnifiedCliConfigDialog
-        isOpen={true}
-        siteName="Claude Hub"
-        accountName="Primary"
-        siteUrl="https://example.com"
-        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
-        siteModels={['claude-3-5-sonnet']}
-        currentConfig={{
-          claudeCode: {
-            apiKeyId: 1,
-            model: 'claude-3-5-sonnet',
-            testModel: 'claude-3-5-sonnet',
-            testModels: ['claude-3-5-sonnet'],
-            testResults: [
-              {
-                model: 'claude-3-5-sonnet',
-                success: true,
-                timestamp: Date.now(),
-              },
-              null,
-              null,
-            ],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-          codex: {
-            apiKeyId: null,
-            model: null,
-            testModel: null,
-            testModels: [],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-          geminiCli: {
-            apiKeyId: null,
-            model: null,
-            testModel: null,
-            testModels: [],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-        }}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-      />
-    );
-
-    expect(screen.getByText('成功')).toBeInTheDocument();
-  });
-
-  it('moves CLI switches into each CLI type row and removes the extra labels', () => {
-    render(
-      <UnifiedCliConfigDialog
-        isOpen={true}
-        siteName="Claude Hub"
-        accountName="Primary"
-        siteUrl="https://example.com"
-        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
-        siteModels={['claude-3-5-sonnet']}
-        currentConfig={editedCliConfig}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-      />
-    );
-
-    expect(screen.queryByText('CLI 开关')).not.toBeInTheDocument();
-    expect(screen.queryByText('选择 CLI 类型进行配置')).not.toBeInTheDocument();
-    const cliTypeGrid = document.body.querySelector('.grid.grid-cols-3') as HTMLElement;
-    expect(cliTypeGrid).not.toBeNull();
-    expect(within(cliTypeGrid).getAllByRole('switch')).toHaveLength(3);
-  });
-
-  it('uses a darker selected-state fill so the active CLI row is obvious at a glance', () => {
-    render(
-      <UnifiedCliConfigDialog
-        isOpen={true}
-        siteName="Claude Hub"
-        accountName="Primary"
-        siteUrl="https://example.com"
-        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
-        siteModels={['claude-3-5-sonnet']}
-        currentConfig={editedCliConfig}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-      />
-    );
-
-    const selectedCliRow = screen.getByText('Claude Code').closest('button')
-      ?.parentElement as HTMLElement;
-    expect(selectedCliRow.className).toContain('bg-[var(--accent-soft-strong)]');
-    expect(selectedCliRow.className).toContain('ring-1');
-  });
-
-  it('uses matching header rows for test models and CLI model so both columns stay top-aligned', () => {
-    render(
-      <UnifiedCliConfigDialog
-        isOpen={true}
-        siteName="Claude Hub"
-        accountName="Primary"
-        siteUrl="https://example.com"
-        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
-        siteModels={['claude-3-5-sonnet']}
-        currentConfig={editedCliConfig}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-      />
-    );
-
-    const testHeaderRow = screen.getByText('测试使用模型').parentElement as HTMLDivElement;
-    const cliHeaderRow = screen.getByText('CLI 使用模型').parentElement as HTMLDivElement;
-
-    expect(testHeaderRow.className).toContain('mb-2');
-    expect(testHeaderRow.className).toContain('flex');
-    expect(testHeaderRow.className).toContain('items-center');
-    expect(testHeaderRow.className).toContain('justify-between');
-    expect(cliHeaderRow.className).toContain('mb-2');
-    expect(cliHeaderRow.className).toContain('flex');
-    expect(cliHeaderRow.className).toContain('items-center');
-    expect(cliHeaderRow.className).toContain('justify-between');
-  });
-
-  it('offers searchable model pickers without filtering by CLI prefix', async () => {
-    render(
-      <UnifiedCliConfigDialog
-        isOpen={true}
-        siteName="Claude Hub"
-        accountName="Primary"
-        siteUrl="https://example.com"
-        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
-        siteModels={['claude-3-5-sonnet', 'gpt-4.1', 'gemini-2.5-pro']}
-        currentConfig={{
-          claudeCode: {
-            apiKeyId: 1,
-            model: 'claude-3-5-sonnet',
-            testModel: null,
-            testModels: [],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-          codex: {
-            apiKeyId: null,
-            model: null,
-            testModel: null,
-            testModels: [],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-          geminiCli: {
-            apiKeyId: null,
-            model: null,
-            testModel: null,
-            testModels: [],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-        }}
-        onClose={vi.fn()}
-        onSave={vi.fn()}
-      />
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: '测试模型 1' }));
-    expect(await screen.findByPlaceholderText('搜索模型...')).toBeInTheDocument();
-    expect(await screen.findByText('gpt-4.1')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'CLI 使用模型' }));
-    expect(await screen.findAllByPlaceholderText('搜索模型...')).toHaveLength(2);
-    expect((await screen.findAllByText('gemini-2.5-pro')).length).toBeGreaterThan(0);
-  });
-
-  it('opens reset confirmation as another overlay family member from the custom CLI drawer', async () => {
-    await act(async () => {
-      render(
-        <CustomCliConfigEditorDialog
-          isOpen={true}
-          config={editedCustomCliConfig}
-          onClose={vi.fn()}
-        />
-      );
-
-      await new Promise(resolve => setTimeout(resolve, 0));
-    });
-
-    fireEvent.click(await screen.findByRole('button', { name: '重置' }));
-
-    const overlayRoots = Array.from(document.body.querySelectorAll('[role="presentation"]'));
-
-    expect(screen.getAllByRole('dialog')).toHaveLength(2);
-    expect(overlayRoots).toHaveLength(2);
-    expect(overlayRoots.some(node => node.className.includes('z-[220]'))).toBe(true);
-    expect(screen.getAllByTestId('overlay-title')).toHaveLength(2);
-    expect(screen.getAllByTestId('overlay-body')).toHaveLength(2);
-    expect(screen.getAllByTestId('overlay-footer')).toHaveLength(2);
+    expect(document.body.querySelectorAll('[role="presentation"]')).toHaveLength(0);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('keeps WebDAV backup management and destructive confirmation inside the shared modal family', async () => {
@@ -742,59 +324,5 @@ describe('overlay family redesign', () => {
 
     expect(screen.getByRole('dialog', { name: 'WebDAV 云端配置包' })).toBeInTheDocument();
     expect(screen.getAllByTestId('overlay-title')).toHaveLength(1);
-  });
-
-  it('lets Escape close only the nested confirm while keeping the parent drawer open', async () => {
-    render(<StatefulUnifiedCliDialog />);
-
-    fireEvent.click(await screen.findByRole('button', { name: '重置' }));
-    expect(await screen.findByRole('dialog', { name: '确认重置' })).toBeInTheDocument();
-
-    fireEvent.keyDown(window, { key: 'Escape' });
-
-    await waitFor(() => {
-      expect(screen.queryByRole('dialog', { name: '确认重置' })).not.toBeInTheDocument();
-    });
-
-    const drawerDialog = screen.getByRole('dialog', { name: 'CLI 配置 - Claude Hub' });
-    expect(drawerDialog).toHaveClass('opacity-100');
-    expect(screen.getAllByTestId('overlay-title')).toHaveLength(1);
-  });
-
-  it('keeps drawer ownership until the child confirm fully unmounts during a rapid double Escape', async () => {
-    render(<StatefulUnifiedCliDialog />);
-
-    fireEvent.click(await screen.findByRole('button', { name: '重置' }));
-    const drawerDialog = screen.getByRole('dialog', { name: 'CLI 配置 - Claude Hub' });
-    expect(await screen.findByRole('dialog', { name: '确认重置' })).toBeInTheDocument();
-
-    vi.useFakeTimers();
-
-    fireEvent.keyDown(window, { key: 'Escape' });
-
-    const closingConfirm = screen.getByRole('dialog', { name: '确认重置' });
-    expect(closingConfirm).toHaveClass('scale-95', 'opacity-0');
-    expect(drawerDialog).toHaveClass('opacity-100');
-
-    fireEvent.keyDown(window, { key: 'Escape' });
-
-    expect(screen.getByRole('dialog', { name: '确认重置' })).toBeInTheDocument();
-    expect(drawerDialog).toHaveClass('opacity-100');
-
-    await act(async () => {
-      vi.advanceTimersByTime(219);
-    });
-
-    expect(screen.getByRole('dialog', { name: '确认重置' })).toBeInTheDocument();
-    expect(drawerDialog).toHaveClass('opacity-100');
-
-    await act(async () => {
-      vi.advanceTimersByTime(1);
-    });
-
-    expect(screen.queryByRole('dialog', { name: '确认重置' })).not.toBeInTheDocument();
-    expect(screen.getByRole('dialog', { name: 'CLI 配置 - Claude Hub' })).toHaveClass(
-      'opacity-100'
-    );
   });
 });

@@ -1,6 +1,6 @@
 /**
  * @file src/renderer/components/SiteCard/SiteCard.tsx
- * @description 站点卡片主组件
+ * @description 站点列表行主组件
  *
  * 输入: SiteCardProps (站点数据、操作回调, isDetecting), SiteResult (检测结果), 子组件 (Header, Actions, Details)
  * 输出: React 组件, 用户交互事件
@@ -16,22 +16,20 @@
  */
 
 /**
- * 站点卡片主组件
+ * 站点列表行主组件
  * 封装站点的展示和交互逻辑
- * 使用统一卡片原语实现当前产品风格样式
+ * 使用连续表格行样式承载当前站点管理列表
  */
 
 import React, { useMemo } from 'react';
 import { SiteCardHeader } from './SiteCardHeader';
 import { SiteCardActions } from './SiteCardActions';
-import { SiteCardDetails } from './SiteCardDetails';
-import { AppCard } from '../AppCard';
 import { useDateString } from '../../hooks';
 import type { SiteCardProps } from './types';
 import { getSiteDailyStats } from '../../utils/siteDailyStats';
 
 /**
- * 站点卡片组件
+ * 站点列表行组件
  * 使用 React.memo 优化性能，避免拖拽时不必要的重渲染
  */
 export const SiteCard = React.memo(
@@ -40,63 +38,32 @@ export const SiteCard = React.memo(
     index,
     siteResult,
     siteAccount,
-    isExpanded,
     columnWidths,
-    // 多账户
+    accessPointType = 'managed',
+    draggable = true,
     accountId,
     accountName,
-    accountAccessToken,
-    accountUserId,
-    accountAnyRouterConfig,
     cardKey: cardKeyProp,
-    apiKeys,
-    userGroups,
     modelPricing,
     isDetecting,
     checkingIn,
     dragOverIndex,
     refreshMessage,
-    // 详情面板状态
-    selectedGroup,
-    modelSearch,
-    globalModelSearch,
-    showTokens,
-    selectedModels,
-    deletingTokenKey,
-    refreshingTokenKey,
-    // 回调
-    autoRefreshEnabled,
     cliCompatibility,
     cliConfig,
     isCliTesting,
-    onExpand,
     onDetect,
-    onEdit,
-    onDelete,
     onCheckIn,
     onOpenSite,
     onOpenExtraLink,
-    onCopyToClipboard,
-    onToggleAutoRefresh,
     onOpenCliConfig,
     onTestCliCompat,
     onApply,
-    onAddAccount,
     onDragStart,
     onDragEnd,
     onDragOver,
     onDragLeave,
     onDrop,
-    // 详情面板回调
-    onToggleGroupFilter,
-    onModelSearchChange,
-    onToggleTokenVisibility,
-    onToggleModelSelection,
-    onCopySelectedModels,
-    onClearSelectedModels,
-    onOpenCreateTokenDialog,
-    onRefreshToken,
-    onDeleteToken,
   }: SiteCardProps) {
     // 跨天时触发重算，避免长时间运行后时间显示过期
     const dateStr = useDateString();
@@ -181,69 +148,26 @@ export const SiteCard = React.memo(
 
     // 模型数量计算
     const modelCount = useMemo(() => {
-      const apiModelCount = siteResult?.models?.length || 0;
+      const uniqueApiModelCount = new Set(siteResult?.models ?? []).size;
       const pricingModelCount = modelPricing?.data ? Object.keys(modelPricing.data).length : 0;
-      return Math.max(apiModelCount, pricingModelCount);
+      return Math.max(uniqueApiModelCount, pricingModelCount);
     }, [siteResult?.models, modelPricing]);
 
     // 用于 refreshMessage 匹配的 key
     const effectiveCardKey = cardKeyProp || site.name;
-    const editAccount =
-      accountId && (accountAccessToken || accountUserId || accountName)
-        ? {
-            id: accountId,
-            account_name: accountName,
-            access_token: accountAccessToken,
-            user_id: accountUserId,
-            anyRouterConfig: accountAnyRouterConfig,
-          }
-        : null;
 
     return (
-      <AppCard
-        variant="standard"
-        blur={true}
-        hoverable={site.enabled}
-        expanded={isExpanded}
-        draggable={true}
-        isDragOver={dragOverIndex === index}
-        disabled={!site.enabled}
-        expandContent={
-          isExpanded ? (
-            <SiteCardDetails
-              site={site}
-              cardKey={effectiveCardKey}
-              siteResult={siteResult}
-              accountAccessToken={accountAccessToken}
-              accountUserId={accountUserId}
-              apiKeys={apiKeys}
-              userGroups={userGroups}
-              modelPricing={modelPricing}
-              selectedGroup={selectedGroup}
-              modelSearch={modelSearch}
-              globalModelSearch={globalModelSearch}
-              showTokens={showTokens}
-              selectedModels={selectedModels}
-              deletingTokenKey={deletingTokenKey}
-              refreshingTokenKey={refreshingTokenKey}
-              onToggleGroupFilter={onToggleGroupFilter}
-              onModelSearchChange={onModelSearchChange}
-              onToggleTokenVisibility={onToggleTokenVisibility}
-              onToggleModelSelection={onToggleModelSelection}
-              onCopySelectedModels={onCopySelectedModels}
-              onClearSelectedModels={onClearSelectedModels}
-              onCopyToClipboard={onCopyToClipboard}
-              onOpenCreateTokenDialog={onOpenCreateTokenDialog}
-              onRefreshToken={onRefreshToken}
-              onDeleteToken={onDeleteToken}
-            />
-          ) : undefined
-        }
-        onDragStart={e => onDragStart(e, index)}
+      <div
+        data-testid="site-card-row"
+        draggable={draggable}
+        className={`border-b border-[var(--line-muted)] bg-[var(--surface-1)] transition-colors ${
+          site.enabled ? 'hover:bg-[var(--surface-2)]' : 'opacity-60'
+        } ${dragOverIndex === index ? 'bg-[var(--accent-soft)]' : ''}`.trim()}
+        onDragStart={draggable ? e => onDragStart(e, index) : undefined}
         onDragEnd={onDragEnd}
-        onDragOver={e => onDragOver(e, index)}
+        onDragOver={draggable ? e => onDragOver(e, index) : undefined}
         onDragLeave={onDragLeave}
-        onDrop={e => onDrop(e, index)}
+        onDrop={draggable ? e => onDrop(e, index) : undefined}
       >
         {/* 刷新提示消息 */}
         {refreshMessage && refreshMessage.site === effectiveCardKey && (
@@ -258,7 +182,7 @@ export const SiteCard = React.memo(
           </div>
         )}
 
-        <div className="border-b border-[var(--line-soft)] px-4 py-[var(--spacing-sm)]">
+        <div className="px-3 py-2">
           <div data-testid="site-card-main-row" className="flex items-center justify-between gap-3">
             <SiteCardHeader
               site={site}
@@ -274,6 +198,7 @@ export const SiteCard = React.memo(
               rpm={rpm}
               tpm={tpm}
               modelCount={modelCount}
+              accessPointType={accessPointType}
               accountId={accountId}
               accountName={accountName}
               onOpenSite={onOpenSite}
@@ -287,28 +212,20 @@ export const SiteCard = React.memo(
 
             <SiteCardActions
               site={site}
-              index={index}
               cardKey={effectiveCardKey}
+              accessPointType={accessPointType}
               accountId={accountId}
               siteResult={siteResult}
-              isExpanded={isExpanded}
               isDetecting={isDetecting}
               checkingIn={checkingIn}
-              autoRefreshEnabled={autoRefreshEnabled}
-              editAccount={editAccount}
               checkinStats={siteResult?.checkinStats}
-              onExpand={onExpand}
               onDetect={onDetect}
-              onEdit={onEdit}
-              onDelete={onDelete}
               onCheckIn={onCheckIn}
               onOpenExtraLink={onOpenExtraLink}
-              onToggleAutoRefresh={onToggleAutoRefresh}
-              onAddAccount={onAddAccount}
             />
           </div>
         </div>
-      </AppCard>
+      </div>
     );
   },
   (prevProps, nextProps) => {
@@ -324,25 +241,17 @@ export const SiteCard = React.memo(
         prevProps.site === nextProps.site &&
         prevProps.index === nextProps.index &&
         prevProps.siteResult === nextProps.siteResult &&
-        prevProps.isExpanded === nextProps.isExpanded &&
         prevProps.columnWidths === nextProps.columnWidths &&
         prevProps.isDetecting === nextProps.isDetecting &&
         prevProps.checkingIn === nextProps.checkingIn &&
-        prevProps.autoRefreshEnabled === nextProps.autoRefreshEnabled &&
         prevProps.isCliTesting === nextProps.isCliTesting &&
         prevProps.cliCompatibility === nextProps.cliCompatibility &&
         prevProps.cliConfig === nextProps.cliConfig &&
         prevProps.refreshMessage === nextProps.refreshMessage &&
-        prevProps.selectedGroup === nextProps.selectedGroup &&
-        prevProps.modelSearch === nextProps.modelSearch &&
-        prevProps.globalModelSearch === nextProps.globalModelSearch &&
-        prevProps.showTokens === nextProps.showTokens &&
-        prevProps.deletingTokenKey === nextProps.deletingTokenKey &&
-        prevProps.refreshingTokenKey === nextProps.refreshingTokenKey &&
-        prevProps.selectedModels === nextProps.selectedModels &&
+        prevProps.accessPointType === nextProps.accessPointType &&
+        prevProps.draggable === nextProps.draggable &&
         prevProps.accountId === nextProps.accountId &&
-        prevProps.accountName === nextProps.accountName &&
-        prevProps.accountAnyRouterConfig === nextProps.accountAnyRouterConfig
+        prevProps.accountName === nextProps.accountName
       );
     }
 

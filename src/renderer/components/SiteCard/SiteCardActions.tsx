@@ -1,7 +1,7 @@
 /**
- * 输入: SiteCardActionsProps (操作回调、加载状态、展开状态、签到统计)
+ * 输入: SiteCardActionsProps (操作回调、加载状态、签到统计)
  * 输出: React 组件 (站点卡片操作按钮 UI)
- * 定位: 展示层 - 站点卡片操作按钮组件，承载主行高频动作与低频动作菜单
+ * 定位: 展示层 - 站点卡片操作按钮组件，仅承载主行高频动作
  *
  * 并发刷新: 使用 isDetecting (boolean) 替代 detectingSite (string) 控制按钮禁用和 spinner，
  * 支持多站点同时刷新
@@ -12,73 +12,8 @@
  * - PROJECT_INDEX.md
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import {
-  Calendar,
-  CheckCircle,
-  ChevronDown,
-  Ellipsis,
-  Fuel,
-  Loader2,
-  Pencil,
-  RefreshCw,
-  Timer,
-  TimerOff,
-  Trash2,
-  UserPlus,
-} from 'lucide-react';
+import { Calendar, CheckCircle, Fuel, Loader2, RefreshCw } from 'lucide-react';
 import type { SiteCardActionsProps } from './types';
-
-const MENU_MIN_WIDTH = 180;
-const MENU_FALLBACK_HEIGHT = 196;
-const MENU_GAP = 8;
-const VIEWPORT_MARGIN = 12;
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
-}
-
-function getMenuDimensions(menuEl: HTMLDivElement | null) {
-  return {
-    width: Math.max(menuEl?.offsetWidth || 0, MENU_MIN_WIDTH),
-    height: Math.max(menuEl?.offsetHeight || 0, MENU_FALLBACK_HEIGHT),
-  };
-}
-
-function getBoundedLeft(preferredLeft: number, width: number) {
-  const maxLeft = Math.max(VIEWPORT_MARGIN, window.innerWidth - width - VIEWPORT_MARGIN);
-  return clamp(preferredLeft, VIEWPORT_MARGIN, maxLeft);
-}
-
-function getBoundedTop(preferredTop: number, height: number) {
-  const maxTop = Math.max(VIEWPORT_MARGIN, window.innerHeight - height - VIEWPORT_MARGIN);
-  return clamp(preferredTop, VIEWPORT_MARGIN, maxTop);
-}
-
-function getButtonMenuPosition(rect: DOMRect, menuEl: HTMLDivElement | null) {
-  const { width, height } = getMenuDimensions(menuEl);
-  const left = getBoundedLeft(rect.right - width, width);
-  const spaceBelow = window.innerHeight - rect.bottom - VIEWPORT_MARGIN;
-  const spaceAbove = rect.top - VIEWPORT_MARGIN;
-  const preferredTop =
-    spaceBelow >= height || spaceBelow >= spaceAbove
-      ? rect.bottom + MENU_GAP
-      : rect.top - height - MENU_GAP;
-
-  return {
-    top: getBoundedTop(preferredTop, height),
-    left,
-  };
-}
-
-function getCursorMenuPosition(clientX: number, clientY: number, menuEl: HTMLDivElement | null) {
-  const { width, height } = getMenuDimensions(menuEl);
-  return {
-    left: getBoundedLeft(clientX, width),
-    top: getBoundedTop(clientY, height),
-  };
-}
 
 /**
  * 格式化签到金额 (内部单位 -> 美元)
@@ -133,141 +68,23 @@ function getCheckinTooltip(
 
 export function SiteCardActions({
   site,
-  index,
   cardKey,
+  accessPointType = 'managed',
   accountId,
   siteResult,
-  isExpanded,
   isDetecting,
   checkingIn,
-  autoRefreshEnabled,
-  editAccount,
   checkinStats,
-  onExpand,
   onDetect,
-  onEdit,
-  onDelete,
   onCheckIn,
   onOpenExtraLink,
-  onToggleAutoRefresh,
-  onAddAccount,
 }: SiteCardActionsProps) {
-  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
-  const [menuAnchor, setMenuAnchor] = useState<'button' | 'cursor'>('button');
-  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
-  const moreButtonRef = useRef<HTMLButtonElement>(null);
-  const moreMenuRef = useRef<HTMLDivElement>(null);
-  const cursorAnchorRef = useRef({ x: 0, y: 0 });
-
-  const lowFrequencyActions = useMemo(
-    () => [
-      {
-        key: 'edit',
-        label: editAccount ? '编辑账户' : '编辑站点',
-        destructive: false,
-        onClick: () => onEdit(index, editAccount),
-      },
-      {
-        key: 'delete-account',
-        label: '删除账户',
-        destructive: true,
-        onClick: () => onDelete(index),
-      },
-      ...(onAddAccount
-        ? [
-            {
-              key: 'add-account',
-              label: '添加账户',
-              destructive: false,
-              onClick: onAddAccount,
-            },
-          ]
-        : []),
-    ],
-    [editAccount, index, onAddAccount, onDelete, onEdit]
-  );
-
-  useEffect(() => {
-    if (!isMoreMenuOpen) return;
-
-    const updateMenuPosition = () => {
-      if (menuAnchor === 'button') {
-        const rect = moreButtonRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        setMenuPosition(getButtonMenuPosition(rect, moreMenuRef.current));
-        return;
-      }
-
-      setMenuPosition(
-        getCursorMenuPosition(
-          cursorAnchorRef.current.x,
-          cursorAnchorRef.current.y,
-          moreMenuRef.current
-        )
-      );
-    };
-
-    const handlePointerDown = (event: MouseEvent) => {
-      if (
-        moreMenuRef.current &&
-        !moreMenuRef.current.contains(event.target as Node) &&
-        moreButtonRef.current &&
-        !moreButtonRef.current.contains(event.target as Node)
-      ) {
-        setIsMoreMenuOpen(false);
-      }
-    };
-
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setIsMoreMenuOpen(false);
-      }
-    };
-
-    const rafId = window.requestAnimationFrame(updateMenuPosition);
-    window.addEventListener('resize', updateMenuPosition);
-    if (menuAnchor === 'button') {
-      window.addEventListener('scroll', updateMenuPosition, true);
-    }
-    document.addEventListener('mousedown', handlePointerDown);
-    window.addEventListener('keydown', handleEscape);
-
-    return () => {
-      window.cancelAnimationFrame(rafId);
-      window.removeEventListener('resize', updateMenuPosition);
-      if (menuAnchor === 'button') {
-        window.removeEventListener('scroll', updateMenuPosition, true);
-      }
-      document.removeEventListener('mousedown', handlePointerDown);
-      window.removeEventListener('keydown', handleEscape);
-    };
-  }, [isMoreMenuOpen, menuAnchor]);
-
-  const openButtonMenu = () => {
-    const rect = moreButtonRef.current?.getBoundingClientRect();
-    if (!rect) return;
-
-    setMenuAnchor('button');
-    setMenuPosition(getButtonMenuPosition(rect, moreMenuRef.current));
-    setIsMoreMenuOpen(true);
-  };
-
-  const openCursorMenu = (clientX: number, clientY: number) => {
-    setMenuAnchor('cursor');
-    cursorAnchorRef.current = { x: clientX, y: clientY };
-    setMenuPosition(getCursorMenuPosition(clientX, clientY, moreMenuRef.current));
-    setIsMoreMenuOpen(true);
-  };
+  if (accessPointType === 'custom-cli') {
+    return <div className="ml-1 w-[48px] shrink-0" aria-hidden="true" />;
+  }
 
   return (
-    <div
-      className="ml-1 flex shrink-0 items-center gap-0.5"
-      onContextMenu={event => {
-        event.preventDefault();
-        event.stopPropagation();
-        openCursorMenu(event.clientX, event.clientY);
-      }}
-    >
+    <div className="ml-1 flex shrink-0 items-center gap-0.5">
       {site.extra_links && (
         <button
           onClick={e => {
@@ -333,20 +150,10 @@ export function SiteCardActions({
       )}
 
       <button
-        onClick={() => onExpand(site.name)}
-        className="rounded-[var(--radius-sm)] p-[3px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
-        title={isExpanded ? '收起详情' : '展开详情'}
-        aria-label={isExpanded ? '收起详情' : '展开详情'}
-        aria-expanded={isExpanded}
-      >
-        <ChevronDown
-          className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
-          strokeWidth={2}
-        />
-      </button>
-
-      <button
-        onClick={() => onDetect(site)}
+        onClick={e => {
+          e.stopPropagation();
+          onDetect(site);
+        }}
         disabled={isDetecting}
         className="rounded-[var(--radius-sm)] p-[3px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-soft)] hover:text-[var(--accent)] disabled:opacity-50"
         title="刷新检测"
@@ -354,84 +161,6 @@ export function SiteCardActions({
       >
         <RefreshCw className={`w-3.5 h-3.5 ${isDetecting ? 'animate-spin' : ''}`} strokeWidth={2} />
       </button>
-
-      <button
-        onClick={() => onToggleAutoRefresh?.()}
-        className={`rounded-[var(--radius-sm)] p-[3px] transition-colors ${
-          autoRefreshEnabled
-            ? 'bg-[var(--success-soft)] text-[var(--success)] hover:opacity-90'
-            : 'text-[var(--text-secondary)] hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]'
-        }`}
-        title={autoRefreshEnabled ? '关闭自动刷新' : '开启自动刷新'}
-        aria-label={autoRefreshEnabled ? '关闭自动刷新' : '开启自动刷新'}
-        aria-pressed={autoRefreshEnabled}
-      >
-        {autoRefreshEnabled ? (
-          <Timer className="w-3.5 h-3.5" strokeWidth={2} />
-        ) : (
-          <TimerOff className="w-3.5 h-3.5" strokeWidth={2} />
-        )}
-      </button>
-
-      <button
-        ref={moreButtonRef}
-        type="button"
-        onClick={event => {
-          event.stopPropagation();
-          if (isMoreMenuOpen && menuAnchor === 'button') {
-            setIsMoreMenuOpen(false);
-            return;
-          }
-          openButtonMenu();
-        }}
-        className={`rounded-[var(--radius-sm)] p-[3px] transition-colors ${
-          isMoreMenuOpen
-            ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
-            : 'text-[var(--text-secondary)] hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]'
-        }`}
-        title="更多操作"
-        aria-label="更多操作"
-        aria-expanded={isMoreMenuOpen}
-      >
-        <Ellipsis className="w-3.5 h-3.5" strokeWidth={2} />
-      </button>
-
-      {isMoreMenuOpen &&
-        createPortal(
-          <div
-            ref={moreMenuRef}
-            className="fixed z-[80] min-w-[180px] rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-1)]/98 p-1.5 shadow-[var(--shadow-lg)] backdrop-blur-[14px]"
-            style={{ top: menuPosition.top, left: menuPosition.left }}
-            role="menu"
-          >
-            {lowFrequencyActions.map(action => (
-              <button
-                key={action.key}
-                type="button"
-                onClick={event => {
-                  event.stopPropagation();
-                  action.onClick();
-                  setIsMoreMenuOpen(false);
-                }}
-                className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-[13px] transition-colors ${
-                  action.destructive
-                    ? 'text-[var(--danger)] hover:bg-[var(--danger-soft)]'
-                    : 'text-[var(--text-secondary)] hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]'
-                }`}
-              >
-                {action.key === 'edit' && <Pencil className="w-3.5 h-3.5" strokeWidth={2} />}
-                {action.key === 'delete-account' && (
-                  <Trash2 className="w-3.5 h-3.5" strokeWidth={2} />
-                )}
-                {action.key === 'add-account' && (
-                  <UserPlus className="w-3.5 h-3.5" strokeWidth={2} />
-                )}
-                <span>{action.label}</span>
-              </button>
-            ))}
-          </div>,
-          document.body
-        )}
     </div>
   );
 }

@@ -3,8 +3,9 @@
  * 平铺展示重定向卡片，并在详情弹窗内维护当前卡片的站点 / API key 优先级
  */
 
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useId, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   Check,
   ChevronDown,
   ChevronUp,
@@ -12,8 +13,6 @@ import {
   ChevronsUp,
   Edit3,
   Loader2,
-  Plus,
-  RefreshCw,
   RotateCcw,
   Search,
   SlidersHorizontal,
@@ -155,6 +154,12 @@ interface DetailSiteGroup {
   supportedOriginalModels: string[];
   apiKeys: DetailApiKeyRow[];
   missingGroupHints: DetailMissingApiKeyHint[];
+}
+
+interface SiteOnlySourceNotice {
+  key: string;
+  siteName: string;
+  originalModels: string[];
 }
 
 interface PriorityDraft {
@@ -676,25 +681,24 @@ function getPriorityHitRoutePathResetParams(hitPath: PriorityHitRoutePath | null
   siteId: string;
   accountId: string;
   apiKeyId: string;
-  resolvedModel?: string;
   targetProtocol?: RouteRequestLogItem['targetProtocol'];
 } | null {
   if (!hitPath) {
     return null;
   }
 
+  // Reset the route channel, not just one upstream model variant under the same channel.
   return {
     routeRuleId: hitPath.routeRuleId,
     canonicalModel: hitPath.canonicalModel,
     siteId: hitPath.siteId,
     accountId: hitPath.accountId,
     apiKeyId: hitPath.apiKeyId,
-    resolvedModel: hitPath.resolvedModel,
     targetProtocol: hitPath.targetProtocol,
   };
 }
 
-function isSamePriorityHitRoutePath(
+function isSamePriorityHitRouteChannel(
   left: PriorityHitRoutePath | null,
   right: PriorityHitRoutePath | null
 ): boolean {
@@ -708,7 +712,6 @@ function isSamePriorityHitRoutePath(
     left.siteId === right.siteId &&
     left.accountId === right.accountId &&
     left.apiKeyId === right.apiKeyId &&
-    left.resolvedModel === right.resolvedModel &&
     left.targetProtocol === right.targetProtocol
   );
 }
@@ -1424,11 +1427,6 @@ export function shouldRefreshRegistryDisplayItems(registry?: RouteModelRegistryC
   });
 }
 
-function formatSourceSummary(sources: RouteModelSourceRef[]): string {
-  const siteCount = new Set(sources.map(source => source.siteId)).size;
-  return `${siteCount} 站点 · ${sources.length} 来源`;
-}
-
 function buildDetailSiteAccountGroups(
   detailState: DisplayItemDetailState | null,
   fullConfig?: UnifiedConfig | null,
@@ -1647,6 +1645,50 @@ function buildDetailSiteAccountGroups(
     .sort((left, right) => left.siteName.localeCompare(right.siteName));
 }
 
+function buildSiteOnlySourceNotices(
+  detailState: DisplayItemDetailState | null
+): SiteOnlySourceNotice[] {
+  if (!detailState) {
+    return [];
+  }
+
+  const { entry, item } = detailState;
+  const sourceByKey = new Map(entry.sources.map(source => [source.sourceKey, source] as const));
+  const selectedOriginalModels = normalizeOriginalModelOrder(
+    item.originalModelOrder,
+    item.sourceKeys,
+    sourceByKey
+  );
+  const selectedModelSet = new Set(selectedOriginalModels);
+  const noticesBySiteId = new Map<string, SiteOnlySourceNotice>();
+
+  for (const source of entry.sources) {
+    if (source.accountId && source.sourceType !== 'site') {
+      continue;
+    }
+
+    if (!selectedModelSet.has(source.originalModel)) {
+      continue;
+    }
+
+    const notice = noticesBySiteId.get(source.siteId) ?? {
+      key: source.siteId,
+      siteName: source.siteName || source.siteId,
+      originalModels: [],
+    };
+
+    if (!notice.originalModels.includes(source.originalModel)) {
+      notice.originalModels.push(source.originalModel);
+    }
+
+    noticesBySiteId.set(source.siteId, notice);
+  }
+
+  return Array.from(noticesBySiteId.values()).sort((left, right) =>
+    left.siteName.localeCompare(right.siteName)
+  );
+}
+
 function createEmptyDraft(): RedirectEditorDraft {
   return {
     canonicalName: '',
@@ -1674,11 +1716,6 @@ function createRouteRuntimeRuleDraft(
   };
 }
 
-function formatRouteRuntimeSummary(runtimeConfig?: Partial<RouteRuntimeConfig> | null): string {
-  const normalized = normalizeRouteRuntimeConfig(runtimeConfig);
-  return `路径 ${normalized.maxAttemptsPerRoutePath} 次 / 窗口 ${normalized.successRateWindowMinutes} 分钟 / 禁用 ${normalized.disableDurationMinutes} 分钟 / ${Math.round(normalized.minSuccessRate * 100)}%`;
-}
-
 function createDefaultNewApiKeyForm(group = 'default'): NewApiTokenForm {
   return {
     name: '',
@@ -1691,9 +1728,15 @@ function createDefaultNewApiKeyForm(group = 'default'): NewApiTokenForm {
 
 interface ModelRedirectionTabProps {
   isActive?: boolean;
+  leadingPane?: ReactNode;
+  className?: string;
 }
 
-export function ModelRedirectionTab({ isActive = true }: ModelRedirectionTabProps = {}) {
+export function ModelRedirectionTab({
+  isActive = true,
+  leadingPane,
+  className = '',
+}: ModelRedirectionTabProps = {}) {
   const customCliConfigs = useCustomCliConfigStore(state => state.configs);
   const {
     config,
@@ -1810,6 +1853,10 @@ export function ModelRedirectionTab({ isActive = true }: ModelRedirectionTabProp
   const sortedDetailSiteGroups = useMemo(() => {
     return sortDetailGroupsByPriority(detailSiteGroups, priorityDraft);
   }, [detailSiteGroups, priorityDraft]);
+  const siteOnlySourceNotices = useMemo(
+    () => buildSiteOnlySourceNotices(sourceDetailState),
+    [sourceDetailState]
+  );
 
   useEffect(() => {
     const nextSelectedId = selectedDisplayItem?.item.id ?? null;
@@ -2215,7 +2262,7 @@ export function ModelRedirectionTab({ isActive = true }: ModelRedirectionTabProp
         setFirstHitPathLogsByCanonicalName(current => {
           const currentLog = current[item.canonicalName];
           const currentHitPath = getPriorityHitRoutePathFromLog(item, currentLog);
-          if (!isSamePriorityHitRoutePath(currentHitPath, hitPath)) {
+          if (!isSamePriorityHitRouteChannel(currentHitPath, hitPath)) {
             return current;
           }
 
@@ -2811,7 +2858,6 @@ export function ModelRedirectionTab({ isActive = true }: ModelRedirectionTabProp
           firstHitPathLogsByCanonicalName[sourceDetailState.item.canonicalName]
         )
       : null);
-  const selectedEntry = selectedDisplayItem?.entry ?? null;
   const selectedPriorityHitPath = selectedDisplayItem
     ? (getPriorityHitRoutePathFromState({
         states: config?.routePathStates,
@@ -2840,16 +2886,31 @@ export function ModelRedirectionTab({ isActive = true }: ModelRedirectionTabProp
     return null;
   }
 
+  const hasLeadingPane = Boolean(leadingPane);
+
   return (
     <>
       <div
         data-testid="redirect-workspace"
-        className="overflow-hidden border border-[var(--line-muted)] bg-[var(--surface-1)]"
+        className={`overflow-hidden border border-[var(--line-muted)] bg-[var(--surface-1)] ${className}`.trim()}
       >
         <div
           data-testid="redirect-two-pane-layout"
-          className="grid min-h-[520px] xl:grid-cols-[minmax(240px,0.62fr)_minmax(0,1.38fr)]"
+          className={
+            hasLeadingPane
+              ? 'grid min-h-[520px] xl:grid-cols-[minmax(168px,0.176fr)_minmax(192px,0.448fr)_minmax(0,1.676fr)]'
+              : 'grid min-h-[520px] xl:grid-cols-[minmax(192px,0.448fr)_minmax(0,1.632fr)]'
+          }
         >
+          {hasLeadingPane ? (
+            <div
+              data-testid="redirect-leading-pane"
+              className="flex min-h-0 flex-col border-b border-[var(--line-muted)] xl:border-b-0 xl:border-r"
+            >
+              {leadingPane}
+            </div>
+          ) : null}
+
           <div
             data-testid="redirect-list-pane"
             className="flex min-h-0 flex-col border-b border-[var(--line-muted)] xl:border-b-0 xl:border-r"
@@ -2858,9 +2919,9 @@ export function ModelRedirectionTab({ isActive = true }: ModelRedirectionTabProp
               data-testid="redirect-list-toolbar"
               className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line-muted)] px-3 py-2"
             >
-              <div className="min-w-0">
+              <div className="flex min-w-0 items-baseline gap-1.5">
                 <div className="text-xs font-semibold text-[var(--text-primary)]">重定向模型</div>
-                <div className="text-[11px] text-[var(--text-secondary)]">
+                <div className="shrink-0 text-[11px] text-[var(--text-secondary)]">
                   {displayItems.length} 项
                 </div>
               </div>
@@ -2873,12 +2934,7 @@ export function ModelRedirectionTab({ isActive = true }: ModelRedirectionTabProp
                   onClick={handleSyncSources}
                   disabled={syncingSources || resettingDefaults}
                 >
-                  {syncingSources ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-3.5 w-3.5" />
-                  )}
-                  <span>同步来源</span>
+                  {syncingSources ? '同步中' : '同步来源'}
                 </AppButton>
                 <AppButton
                   type="button"
@@ -2888,8 +2944,7 @@ export function ModelRedirectionTab({ isActive = true }: ModelRedirectionTabProp
                   onClick={openCreateEditor}
                   disabled={resettingDefaults || syncingSources || saving}
                 >
-                  <Plus className="h-3.5 w-3.5" />
-                  <span>新增重定向</span>
+                  新增重定向
                 </AppButton>
               </div>
             </div>
@@ -2900,7 +2955,6 @@ export function ModelRedirectionTab({ isActive = true }: ModelRedirectionTabProp
                 className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               >
                 {displayItems.map(displayItem => {
-                  const entry = displayItem.entry;
                   const isSelected = selectedDisplayItem?.item.id === displayItem.item.id;
 
                   return (
@@ -2920,27 +2974,11 @@ export function ModelRedirectionTab({ isActive = true }: ModelRedirectionTabProp
                         <code className="min-w-0 truncate font-mono text-[13px] font-semibold text-[var(--text-primary)]">
                           {displayItem.displayName}
                         </code>
-                        {displayItem.item.mode === 'manual' ? (
-                          <span className="shrink-0 rounded-full bg-[var(--warning-soft)] px-1.5 py-0.5 text-[11px] text-[var(--warning)]">
-                            手工新增
-                          </span>
-                        ) : (
+                        {displayItem.item.mode === 'seeded' ? (
                           <span className="shrink-0 rounded-full bg-[var(--surface-2)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)]">
-                            默认示例
+                            示例
                           </span>
-                        )}
-                        {entry ? (
-                          <span className="shrink-0 rounded-full bg-[var(--surface-2)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)]">
-                            {formatSourceSummary(entry.sources)}
-                          </span>
-                        ) : (
-                          <span className="shrink-0 rounded-full bg-[var(--surface-2)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)]">
-                            来源待同步
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-1 truncate text-[11px] text-[var(--text-secondary)]">
-                        {formatRouteRuntimeSummary(displayItem.item.runtimeConfig)}
+                        ) : null}
                       </div>
                     </button>
                   );
@@ -2970,9 +3008,6 @@ export function ModelRedirectionTab({ isActive = true }: ModelRedirectionTabProp
                     <code className="block truncate font-mono text-sm font-semibold text-[var(--text-primary)]">
                       {selectedDisplayItem.displayName}
                     </code>
-                    <div className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
-                      {selectedEntry ? formatSourceSummary(selectedEntry.sources) : '来源待同步'}
-                    </div>
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-1.5">
                     {selectedPriorityHitResetParams ? (
@@ -3101,15 +3136,12 @@ export function ModelRedirectionTab({ isActive = true }: ModelRedirectionTabProp
 
                 <div data-testid="redirect-detail-priority" className="px-3 py-2">
                   <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                    <div>
+                    <div className="min-w-0 flex-1">
                       <div className="text-xs font-semibold text-[var(--text-primary)]">
                         优先级排序
                       </div>
-                      <div className="text-[11px] text-[var(--text-secondary)]">
-                        站点与 API Key 按当前顺序尝试。
-                      </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-1.5">
+                    <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
                       <AppButton
                         type="button"
                         size="sm"
@@ -3170,6 +3202,34 @@ export function ModelRedirectionTab({ isActive = true }: ModelRedirectionTabProp
                       </AppButton>
                     </div>
                   </div>
+
+                  {siteOnlySourceNotices.length > 0 ? (
+                    <div
+                      data-testid="priority-detail-site-only-warning"
+                      className="mb-2 flex gap-2 border border-[var(--warning)]/25 bg-[var(--warning-soft)]/20 px-2.5 py-2 text-xs text-[var(--text-secondary)]"
+                    >
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--warning)]" />
+                      <div className="min-w-0 space-y-1">
+                        <div className="font-semibold text-[var(--warning)]">
+                          部分站点需要重新添加后才能参与本地路由
+                        </div>
+                        <div>
+                          这些来源只有站点级模型缓存，没有可用账户或 API
+                          Key。请重新添加或刷新站点账户后，再同步模型重定向。
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {siteOnlySourceNotices.map(notice => (
+                            <span
+                              key={notice.key}
+                              className="max-w-full truncate border border-[var(--warning)]/20 bg-[var(--surface-1)] px-1.5 py-0.5 text-[11px] text-[var(--text-primary)]"
+                            >
+                              {notice.siteName}（{notice.originalModels.join('、')}）
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
 
                   {sortedDetailSiteGroups.length > 0 ? (
                     <div className="overflow-hidden" data-testid="priority-detail-compact-list">

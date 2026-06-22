@@ -125,10 +125,10 @@ export function OverlayDrawer({
 
   const handleOverlayClick = useCallback(
     (event: React.MouseEvent) => {
+      const target = event.target;
+      const isOutsideDrawer = target instanceof Node && !drawerRef.current?.contains(target);
       const shouldClose =
-        closeOnOverlayClick &&
-        overlayPointerDownFromBackdrop.current &&
-        event.target === event.currentTarget;
+        closeOnOverlayClick && overlayPointerDownFromBackdrop.current && isOutsideDrawer;
 
       overlayPointerDownFromBackdrop.current = false;
 
@@ -153,13 +153,15 @@ export function OverlayDrawer({
   return createPortal(
     <div
       className={joinClasses(
-        'fixed inset-0 z-[210] flex p-4 overflow-hidden',
+        'fixed inset-0 z-[190] flex p-4 overflow-hidden',
         isCentered ? 'items-center justify-center' : 'justify-end',
         'transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] [will-change:opacity]',
         isAnimating ? 'opacity-100' : 'opacity-0'
       )}
       onMouseDown={event => {
-        overlayPointerDownFromBackdrop.current = event.target === event.currentTarget;
+        const target = event.target;
+        overlayPointerDownFromBackdrop.current =
+          target instanceof Node && !drawerRef.current?.contains(target);
       }}
       onClick={handleOverlayClick}
       role="presentation"

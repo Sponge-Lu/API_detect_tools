@@ -384,6 +384,10 @@ const activeKeys = apiKeys.filter(apiKey => {
 - User groups with model access but without an eligible API key must render as reminder text only;
   they do not receive editable priority controls and must not be written into
   `priorityConfig.apiKeyPriorities`.
+- Site-level model sources (`sourceType: 'site'` or missing `accountId`) are diagnostic-only in the
+  redirection detail pane. They may prove that a site advertises the model, but they cannot
+  participate in local routing priority until the site has an account/API-key-backed source. The UI
+  must warn the user to re-add or refresh the site/account instead of silently hiding the reason.
 - The priority table can disable a whole site or an individual API key. Disabled API keys render in
   the folded section and must be listed in `disabledApiKeyPriorityKeys`; disabled sites render in
   the folded site section and must be listed in `disabledSiteIds`. Numeric `sitePriorities` and
@@ -418,6 +422,7 @@ const activeKeys = apiKeys.filter(apiKey => {
 | Same `canonicalName`, different `id` | `upsertRouteModelDisplayItem` | reject duplicate card |
 | `displayItems` empty before first aggregation | renderer fallback | show only `claude-opus-4-6` example when entry exists |
 | Selected model has groups but no API keys | details modal | show reminder text, no priority input |
+| Selected model has only a site-level source for one site | details modal | show a re-add/refresh warning naming that site; do not create priority controls |
 | User disables an API key | details modal -> persistence | move it to the folded section, save it in `disabledApiKeyPriorityKeys`, and keep its numeric priority for later restore |
 | User disables a whole site | details modal -> persistence | fold the site, save it in `disabledSiteIds`, and keep its site/API-key priorities for later restore |
 | All API keys under a site are disabled | details modal -> persistence | treat the site as non-sortable/folded while keeping its site priority memory |
@@ -462,6 +467,7 @@ const activeKeys = apiKeys.filter(apiKey => {
 - Renderer:
   - `src/__tests__/route-workbench-redesign.test.tsx`
   - Assert flat cards, duplicate rejection, site/account/apiKey grouping, missing-key reminders,
+    site-only source re-add/refresh warnings,
     active suspension labels in API-key row covered-model details, no suspension labels in
     site/API-key names or original-model chips, priority save payloads, save ordering with display
     item before overrides, and override-backed cards preserving all grouped original models when an
