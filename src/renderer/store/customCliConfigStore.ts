@@ -15,8 +15,10 @@ import type {
   CustomCliSettings,
   CustomCliTestState,
 } from '../../shared/types/custom-cli-config';
+import type { ModelPriceInfo, ModelPricingData } from '../../shared/types/site';
 import {
   createDefaultCustomCliConfig,
+  normalizeCustomCliGroupMultiplier,
   normalizeCustomCliSettings,
   normalizeCustomCliTestState,
 } from '../../shared/types/custom-cli-config';
@@ -97,6 +99,72 @@ function normalizeManualModels(
   return normalizeModelNames(manualModels).filter(model => !fetchedModelSet.has(model));
 }
 
+function toFinitePricingNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeModelPriceInfo(value: unknown): ModelPriceInfo | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const raw = value as ModelPriceInfo;
+  const normalized: ModelPriceInfo = {};
+  const input = toFinitePricingNumber(raw.input);
+  const output = toFinitePricingNumber(raw.output);
+  const quotaType = toFinitePricingNumber(raw.quota_type);
+  const groupRatio = toFinitePricingNumber(raw.group_ratio);
+  const modelRatio = toFinitePricingNumber(raw.model_ratio);
+  const completionRatio = toFinitePricingNumber(raw.completion_ratio);
+
+  if (input !== undefined) normalized.input = input;
+  if (output !== undefined) normalized.output = output;
+  if (quotaType !== undefined) normalized.quota_type = quotaType;
+  if (groupRatio !== undefined) normalized.group_ratio = groupRatio;
+  if (modelRatio !== undefined) normalized.model_ratio = modelRatio;
+  if (completionRatio !== undefined) normalized.completion_ratio = completionRatio;
+  if (typeof raw.type === 'string') normalized.type = raw.type;
+  if (typeof raw.model_description === 'string') normalized.model_description = raw.model_description;
+  if (Array.isArray(raw.enable_groups)) {
+    normalized.enable_groups = raw.enable_groups.filter(
+      (group): group is string => typeof group === 'string' && group.trim().length > 0
+    );
+  }
+
+  if (typeof raw.model_price === 'number' && Number.isFinite(raw.model_price)) {
+    normalized.model_price = raw.model_price;
+  } else if (raw.model_price && typeof raw.model_price === 'object' && !Array.isArray(raw.model_price)) {
+    const modelPriceInput = toFinitePricingNumber(raw.model_price.input);
+    const modelPriceOutput = toFinitePricingNumber(raw.model_price.output);
+    if (modelPriceInput !== undefined || modelPriceOutput !== undefined) {
+      normalized.model_price = {
+        ...(modelPriceInput !== undefined ? { input: modelPriceInput } : {}),
+        ...(modelPriceOutput !== undefined ? { output: modelPriceOutput } : {}),
+      };
+    }
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : null;
+}
+
+function normalizeModelPricingData(pricingData: ModelPricingData | undefined): ModelPricingData {
+  const rawData = pricingData?.data;
+  if (!rawData || typeof rawData !== 'object') {
+    return { data: {} };
+  }
+
+  const data: Record<string, ModelPriceInfo> = {};
+  for (const [model, priceInfo] of Object.entries(rawData)) {
+    const modelName = model.trim();
+    const normalizedPrice = normalizeModelPriceInfo(priceInfo);
+    if (modelName && normalizedPrice) {
+      data[modelName] = normalizedPrice;
+    }
+  }
+
+  return { data };
+}
+
 function filterCustomCliTestState(
   testState: CustomCliTestState | null | undefined,
   availableModels: Set<string>
@@ -161,7 +229,7 @@ function filterCustomCliConfigModels(
   config: CustomCliConfig,
   models: string[],
   fetchedAt: number
-): Pick<CustomCliConfig, 'models' | 'manualModels' | 'lastModelFetch' | 'cliSettings'> {
+): Pick<CustomCliConfig, 'models' | 'manualModels' | 'groupMultiplier' | 'modelPricing' | 'lastModelFetch' | 'cliSettings'> {
   const normalizedModels = normalizeModelNames(models);
   const manualModels = normalizeManualModels(config.manualModels, normalizedModels);
   const availableModels = new Set([...normalizedModels, ...manualModels]);
@@ -169,6 +237,8 @@ function filterCustomCliConfigModels(
   return {
     models: normalizedModels,
     manualModels,
+    groupMultiplier: normalizeCustomCliGroupMultiplier(config.groupMultiplier),
+    modelPricing: normalizeModelPricingData(config.modelPricing),
     lastModelFetch: fetchedAt,
     cliSettings: {
       claudeCode: filterCustomCliSettingModels(config.cliSettings.claudeCode, availableModels),
@@ -196,6 +266,8 @@ function normalizeCustomCliConfigModelBoundary(config: CustomCliConfig): CustomC
       ...config,
       models: normalizedModels,
       manualModels,
+      groupMultiplier: normalizeCustomCliGroupMultiplier(config.groupMultiplier),
+      modelPricing: normalizeModelPricingData(config.modelPricing),
       cliSettings,
     };
   }
@@ -205,6 +277,8 @@ function normalizeCustomCliConfigModelBoundary(config: CustomCliConfig): CustomC
     ...config,
     models: normalizedModels,
     manualModels,
+    groupMultiplier: normalizeCustomCliGroupMultiplier(config.groupMultiplier),
+    modelPricing: normalizeModelPricingData(config.modelPricing),
     cliSettings: {
       claudeCode: filterCustomCliSettingModels(cliSettings.claudeCode, availableModels),
       codex: filterCustomCliSettingModels(cliSettings.codex, availableModels),
@@ -261,11 +335,12 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
   // 保存配置到持久化
   saveConfigs: async () => {
     const { configs, activeConfigId } = get();
-    set({ saving: true });
+    const normalizedConfigs = normalizeCustomCliConfigs(configs);
+    set({ saving: true, configs: normalizedConfigs });
     try {
       const customCliConfig = getCustomCliConfigBridge();
       if (customCliConfig?.save) {
-        await customCliConfig.save({ configs, activeConfigId });
+        await customCliConfig.save({ configs: normalizedConfigs, activeConfigId });
         Logger.info('✅ [CustomCliConfigStore] 保存配置成功');
         sessionEventLog.success('custom-cli', '自定义 CLI 配置已保存');
       }

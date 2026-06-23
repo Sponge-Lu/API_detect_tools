@@ -113,23 +113,22 @@ function resolveProbeCliItem(
   const site = getProbeSite(siteId);
   const account = getProbeAccount(siteId, accountId);
   const siteItem = site?.cli_config?.[cliType] || null;
-  const accountItem = account?.cli_config?.[cliType] || null;
+  // v3.0.6: 账户级不再有 cli_config
 
-  if (!siteItem && !accountItem) {
+  if (!siteItem) {
     return null;
   }
 
   const fallback = DEFAULT_CLI_CONFIG[cliType];
   return {
-    apiKeyId: accountItem?.apiKeyId ?? siteItem?.apiKeyId ?? fallback.apiKeyId,
-    model: accountItem?.model ?? siteItem?.model ?? fallback.model,
-    testModel: accountItem?.testModel ?? siteItem?.testModel ?? fallback.testModel,
-    testModels: accountItem?.testModels ?? siteItem?.testModels ?? fallback.testModels,
-    enabled: accountItem?.enabled ?? siteItem?.enabled ?? fallback.enabled,
-    editedFiles: accountItem?.editedFiles ?? siteItem?.editedFiles ?? fallback.editedFiles,
-    applyMode: accountItem?.applyMode ?? siteItem?.applyMode ?? fallback.applyMode,
-    targetProtocol:
-      accountItem?.targetProtocol ?? siteItem?.targetProtocol ?? fallback.targetProtocol,
+    apiKeyId: siteItem?.apiKeyId ?? fallback.apiKeyId,
+    model: siteItem?.model ?? fallback.model,
+    testModel: siteItem?.testModel ?? fallback.testModel,
+    testModels: siteItem?.testModels ?? fallback.testModels,
+    enabled: siteItem?.enabled ?? fallback.enabled,
+    editedFiles: siteItem?.editedFiles ?? fallback.editedFiles,
+    applyMode: siteItem?.applyMode ?? fallback.applyMode,
+    targetProtocol: siteItem?.targetProtocol ?? fallback.targetProtocol,
   };
 }
 

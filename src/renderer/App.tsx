@@ -131,6 +131,16 @@ declare global {
       };
       backup?: {
         list: () => Promise<any[]>;
+        exportPackage?: () => Promise<{
+          success: boolean;
+          data?: { filename: string; content: string; kind: string };
+          error?: string;
+        }>;
+        importPackage?: (content: string) => Promise<{
+          success: boolean;
+          data?: { kind: 'storage-bundle' | 'legacy-config'; restoredFiles: string[] };
+          error?: string;
+        }>;
       };
       update?: {
         check: () => Promise<{

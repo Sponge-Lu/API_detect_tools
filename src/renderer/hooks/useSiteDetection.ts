@@ -391,17 +391,7 @@ export function useSiteDetection(options: UseSiteDetectionOptions = {}) {
         setDetectingSite(null);
         const hasAutoRefreshSite = config.sites.some(site => {
           if (!site.enabled) return false;
-          const siteAccounts =
-            site.id && Array.isArray(config.accounts)
-              ? config.accounts.filter(account => account.site_id === site.id)
-              : [];
-
-          if (siteAccounts.length > 0) {
-            return siteAccounts.some(
-              account => (account.auto_refresh ?? site.auto_refresh) === true
-            );
-          }
-
+          // v3.0.6: auto_refresh 只在站点级
           return site.auto_refresh === true;
         });
         if (hasAutoRefreshSite) {

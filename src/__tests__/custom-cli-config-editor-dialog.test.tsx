@@ -46,6 +46,7 @@ const createConfig = (): CustomCliConfig => ({
   name: '测试配置',
   baseUrl: 'https://api.example.com',
   apiKey: 'test-key',
+  groupMultiplier: 1,
   models: ['claude-3.7', 'gpt-4.1', 'gpt-4.1-mini', 'gemini-2.5'],
   notes: '',
   cliSettings: {
@@ -194,6 +195,48 @@ describe('DirectCliConfigEditorContent', () => {
         },
       ],
     });
+  });
+
+  it('persists group multiplier from the identity form', async () => {
+    await renderDialog();
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText('分组倍率'), { target: { value: '2.5' } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+    });
+
+    const updateConfig = useCustomCliConfigStore.getState().updateConfig as ReturnType<
+      typeof vi.fn
+    >;
+    expect(updateConfig).toHaveBeenLastCalledWith(
+      'cfg-1',
+      expect.objectContaining({
+        groupMultiplier: 2.5,
+      })
+    );
+  });
+
+  it('saves blank group multiplier as default 1', async () => {
+    await renderDialog();
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText('分组倍率'), { target: { value: '' } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+    });
+
+    const updateConfig = useCustomCliConfigStore.getState().updateConfig as ReturnType<
+      typeof vi.fn
+    >;
+    expect(updateConfig).toHaveBeenLastCalledWith(
+      'cfg-1',
+      expect.objectContaining({
+        groupMultiplier: 1,
+      })
+    );
   });
 
   it('passes the selected target protocol into direct custom cli tests and persistence', async () => {

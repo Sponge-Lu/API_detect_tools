@@ -53,6 +53,7 @@ import type {
   RoutingConfig,
 } from '../../../../shared/types/route-proxy';
 import {
+  normalizeCustomCliGroupMultiplier,
   normalizeCustomCliSettings,
   normalizeCustomCliTestState,
   type CustomCliConfig,
@@ -133,6 +134,8 @@ interface DetailApiKeyRow {
   accountName?: string;
   group: string;
   groupRatio?: number;
+  groupMultiplier?: number;
+  sourceType?: RouteModelSourceRef['sourceType'];
   supportedOriginalModels: string[];
   modelPriceLabels: Record<string, string>;
   modelTestResults: Record<string, string>;
@@ -150,6 +153,7 @@ interface DetailSiteGroup {
   key: string;
   siteId: string;
   siteName: string;
+  sourceType?: RouteModelSourceRef['sourceType'];
   siteBalance?: number;
   supportedOriginalModels: string[];
   apiKeys: DetailApiKeyRow[];
@@ -314,6 +318,68 @@ function addModelPriceLabel(
   labels.set(originalModel, label);
 }
 
+function getCustomCliConfigForSource(
+  source: RouteModelSourceRef,
+  customCliConfigs?: CustomCliConfig[]
+): CustomCliConfig | null {
+  if (source.sourceType !== 'customCli') {
+    return null;
+  }
+
+  const configId = parseCustomCliRouteConfigId(source.siteId);
+  if (!configId) {
+    return null;
+  }
+
+  return (customCliConfigs || []).find(item => item.id === configId) ?? null;
+}
+
+function resolveCustomCliModelPriceLabel(
+  source: RouteModelSourceRef,
+  customCliConfigs?: CustomCliConfig[]
+): string | null {
+  const config = getCustomCliConfigForSource(source, customCliConfigs);
+  if (!config) {
+    return null;
+  }
+
+  return resolveModelPriceLabel(getModelPriceInfo(config.modelPricing, source.originalModel));
+}
+
+function formatDirectMultiplier(multiplier: number | undefined): string | null {
+  if (multiplier === undefined || multiplier === null || !Number.isFinite(multiplier)) {
+    return null;
+  }
+
+  const normalized = Number(multiplier.toFixed(3));
+  return `×${Number.isInteger(normalized) ? normalized : normalized.toString()}`;
+}
+
+function formatPrioritySiteName(source: RouteModelSourceRef): string {
+  if (source.sourceType !== 'customCli') {
+    return source.siteName;
+  }
+
+  return source.siteName.replace(/^自定义\s*CLI\s*\/\s*/u, '').trim() || source.siteName;
+}
+
+function formatPriorityApiKeyDetails(apiKey: DetailApiKeyRow): string {
+  if (apiKey.sourceType === 'customCli') {
+    const directMultiplier = formatDirectMultiplier(apiKey.groupMultiplier);
+    return directMultiplier ? `${apiKey.apiKeyName}（${directMultiplier}）` : apiKey.apiKeyName;
+  }
+
+  const details = [
+    formatApiKeyAccountName(apiKey.accountName, apiKey.accountId),
+    apiKey.group,
+    formatGroupRatio(apiKey.groupRatio),
+  ]
+    .filter(Boolean)
+    .join(' / ');
+
+  return details ? `${apiKey.apiKeyName}（${details}）` : apiKey.apiKeyName;
+}
+
 function formatShortTime(timestamp: number | undefined): string {
   if (!timestamp) {
     return '--:--';
@@ -351,12 +417,7 @@ function getCustomCliLocalProbeStatus(params: {
     return null;
   }
 
-  const configId = parseCustomCliRouteConfigId(params.source.siteId);
-  if (!configId) {
-    return null;
-  }
-
-  const config = (params.customCliConfigs || []).find(item => item.id === configId);
+  const config = getCustomCliConfigForSource(params.source, params.customCliConfigs);
   if (!config) {
     return null;
   }
@@ -1454,6 +1515,7 @@ function buildDetailSiteAccountGroups(
     {
       siteId: string;
       siteName: string;
+      sourceType?: RouteModelSourceRef['sourceType'];
       accountIds: Set<string>;
       supportedOriginalModels: Set<string>;
       apiKeys: Map<
@@ -1465,6 +1527,8 @@ function buildDetailSiteAccountGroups(
           accountName?: string;
           group: string;
           groupRatio?: number;
+          groupMultiplier?: number;
+          sourceType?: RouteModelSourceRef['sourceType'];
           supportedOriginalModels: Set<string>;
           modelPriceLabels: Map<string, string>;
           modelTestResults: Map<string, string>;
@@ -1485,7 +1549,8 @@ function buildDetailSiteAccountGroups(
       (() => {
         const next = {
           siteId: source.siteId,
-          siteName: source.siteName,
+          siteName: formatPrioritySiteName(source),
+          sourceType: source.sourceType,
           accountIds: new Set<string>(),
           supportedOriginalModels: new Set<string>(),
           apiKeys: new Map<
@@ -1497,6 +1562,8 @@ function buildDetailSiteAccountGroups(
               accountName?: string;
               group: string;
               groupRatio?: number;
+              groupMultiplier?: number;
+              sourceType?: RouteModelSourceRef['sourceType'];
               supportedOriginalModels: Set<string>;
               modelPriceLabels: Map<string, string>;
               modelTestResults: Map<string, string>;
@@ -1513,9 +1580,10 @@ function buildDetailSiteAccountGroups(
     const account = accountById.get(source.accountId);
     const site = siteById.get(source.siteId);
     const modelPricing = account?.cached_data?.model_pricing ?? site?.cached_data?.model_pricing;
-    const modelPriceLabel = resolveModelPriceLabel(
-      getModelPriceInfo(modelPricing, source.originalModel)
-    );
+    const modelPriceLabel =
+      source.sourceType === 'customCli'
+        ? resolveCustomCliModelPriceLabel(source, customCliConfigs)
+        : resolveModelPriceLabel(getModelPriceInfo(modelPricing, source.originalModel));
 
     const eligibleApiKeys = (source.availableApiKeys || []).filter(
       apiKey => apiKey.accountId === source.accountId
@@ -1531,6 +1599,10 @@ function buildDetailSiteAccountGroups(
       const groupRatio =
         account?.cached_data?.user_groups?.[normalizedGroup]?.ratio ??
         site?.cached_data?.user_groups?.[normalizedGroup]?.ratio;
+      const customCliConfig = getCustomCliConfigForSource(source, customCliConfigs);
+      const groupMultiplier = customCliConfig
+        ? normalizeCustomCliGroupMultiplier(customCliConfig.groupMultiplier)
+        : undefined;
 
       const key = buildRouteApiKeyPriorityKey(source.siteId, apiKey.accountId, apiKey.apiKeyId);
       const apiKeyRow =
@@ -1543,6 +1615,8 @@ function buildDetailSiteAccountGroups(
             accountName: apiKey.accountName,
             group: normalizedGroup,
             groupRatio,
+            groupMultiplier,
+            sourceType: source.sourceType,
             supportedOriginalModels: new Set<string>(),
             modelPriceLabels: new Map<string, string>(),
             modelTestResults: new Map<string, string>(),
@@ -1603,6 +1677,7 @@ function buildDetailSiteAccountGroups(
         key,
         siteId: group.siteId,
         siteName: group.siteName,
+        sourceType: group.sourceType,
         siteBalance,
         supportedOriginalModels: Array.from(group.supportedOriginalModels),
         apiKeys: Array.from(group.apiKeys.entries())
@@ -1614,6 +1689,8 @@ function buildDetailSiteAccountGroups(
             accountName: apiKey.accountName,
             group: apiKey.group,
             groupRatio: apiKey.groupRatio,
+            groupMultiplier: apiKey.groupMultiplier,
+            sourceType: apiKey.sourceType,
             supportedOriginalModels: Array.from(apiKey.supportedOriginalModels),
             modelPriceLabels: Object.fromEntries(apiKey.modelPriceLabels),
             modelTestResults: Object.fromEntries(apiKey.modelTestResults),
@@ -3360,7 +3437,7 @@ export function ModelRedirectionTab({
                                     }}
                                   />
                                   <span className="shrink-0 rounded-full border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--accent)]">
-                                    站点
+                                    {siteGroup.sourceType === 'customCli' ? '直连' : '站点'}
                                   </span>
                                   <span className="flex min-w-0 flex-wrap items-center gap-x-1 text-[13px] font-semibold leading-5 text-[var(--text-primary)]">
                                     <span
@@ -3483,16 +3560,7 @@ export function ModelRedirectionTab({
                                           API Key
                                         </span>
                                         <span className="min-w-0 truncate">
-                                          {`${apiKey.apiKeyName}（${[
-                                            formatApiKeyAccountName(
-                                              apiKey.accountName,
-                                              apiKey.accountId
-                                            ),
-                                            apiKey.group,
-                                            formatGroupRatio(apiKey.groupRatio),
-                                          ]
-                                            .filter(Boolean)
-                                            .join(' / ')}）`}
+                                          {formatPriorityApiKeyDetails(apiKey)}
                                         </span>
                                       </div>
                                     </div>
@@ -3585,16 +3653,7 @@ export function ModelRedirectionTab({
                                                 API Key
                                               </span>
                                               <span className="min-w-0 truncate">
-                                                {`${apiKey.apiKeyName}（${[
-                                                  formatApiKeyAccountName(
-                                                    apiKey.accountName,
-                                                    apiKey.accountId
-                                                  ),
-                                                  apiKey.group,
-                                                  formatGroupRatio(apiKey.groupRatio),
-                                                ]
-                                                  .filter(Boolean)
-                                                  .join(' / ')}）`}
+                                                {formatPriorityApiKeyDetails(apiKey)}
                                               </span>
                                             </div>
                                             <div

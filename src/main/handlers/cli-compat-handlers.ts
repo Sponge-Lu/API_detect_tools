@@ -942,8 +942,7 @@ export function registerCliCompatHandlers() {
         const probeSamples = (samples || []).map((sample, index) => {
           const configuredTargetProtocol = normalizeCliTargetProtocol(
             sample.targetProtocol ??
-              ownerAccount?.cli_config?.[sample.cliType]?.targetProtocol ??
-              site.cli_config?.[sample.cliType]?.targetProtocol
+              ownerAccount?.cli_config?.[sample.cliType]?.targetProtocol // v3.0.6: 从账户级获取
           );
           const targetEndpoint =
             sample.targetEndpoint ||
@@ -1004,20 +1003,7 @@ export function registerCliCompatHandlers() {
           `Saving CLI config for ${accountId ? `account: ${accountId}` : `site: ${siteUrl}`}`
         );
 
-        if (accountId) {
-          const updated = await unifiedConfigManager.updateAccount(accountId, {
-            cli_config: cliConfig,
-          });
-
-          if (!updated) {
-            log.warn(`Account not found for id: ${accountId}`);
-            return { success: false, error: 'Account not found' };
-          }
-
-          log.info(`CLI config saved for account ${accountId}`);
-          return { success: true };
-        }
-
+        // v3.0.6: CLI 配置只在站点级，忽略 accountId
         const site = unifiedConfigManager.getSiteByUrl(siteUrl);
         if (!site) {
           log.warn(`Site not found for URL: ${siteUrl}`);

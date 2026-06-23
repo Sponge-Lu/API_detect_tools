@@ -522,6 +522,7 @@ describe('sites page redesign', () => {
 
     expect(screen.getByText('Direct API')).toBeInTheDocument();
     expect(screen.getByText('直连配置')).toBeInTheDocument();
+    expect(screen.queryByText('身份、凭证和备注在此统一编辑')).not.toBeInTheDocument();
     expect(screen.getByText('1')).toBeInTheDocument();
     expect(screen.queryByLabelText('刷新检测')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('点击签到')).not.toBeInTheDocument();
@@ -662,6 +663,7 @@ describe('sites page redesign', () => {
     );
 
     expect(screen.getByText('直连配置')).toBeInTheDocument();
+    expect(screen.queryByText('身份、凭证和备注在此统一编辑')).not.toBeInTheDocument();
     expect(screen.queryByText('直连配置身份')).not.toBeInTheDocument();
     expect(screen.queryByText('配置 ID')).not.toBeInTheDocument();
     expect(screen.queryByText('创建时间')).not.toBeInTheDocument();
@@ -753,10 +755,20 @@ describe('sites page redesign', () => {
     );
 
     expect(screen.getByText('站点与账户')).toBeInTheDocument();
+    expect(
+      screen.queryByText('当前账户的身份、凭证和自动刷新在此统一编辑')
+    ).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '添加账户' })).toBeInTheDocument();
     expect(screen.getByDisplayValue('Primary Account')).toBeInTheDocument();
     expect(screen.getByDisplayValue('user-1')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('sk-managed-access-token')).toBeInTheDocument();
+    expect(
+      screen.getByDisplayValue('sk-managed-access-token').closest('div.md\\:col-span-2')
+    ).toBeInTheDocument();
+    expect(screen.getByDisplayValue('https://fuel.example.com')).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: '启用签到功能' })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
     expect(screen.getByDisplayValue('30')).toBeInTheDocument();
     expect(screen.getByText('浏览器 Profile')).toBeInTheDocument();
     expect(screen.getByText('默认 Profile')).toBeInTheDocument();
@@ -791,6 +803,62 @@ describe('sites page redesign', () => {
     expect(screen.queryByText('立即探测全部 CLI')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '编辑账户' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '自动刷新' })).not.toBeInTheDocument();
+  });
+
+  it('allows managed side-panel tab1 to edit site metadata fields', async () => {
+    const onSaveSiteMeta = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <AccessPointDetailPanel
+        open={true}
+        onClose={vi.fn()}
+        data={{
+          type: 'managed',
+          site: baseSite,
+          account: {
+            id: 'account-1',
+            account_name: 'Primary Account',
+            user_id: 'user-1',
+            access_token: 'sk-managed-access-token',
+            status: 'active',
+            auth_source: 'manual',
+          },
+        }}
+        groups={[
+          { id: 'default', name: '默认分组' },
+          { id: 'priority', name: '优先分组' },
+        ]}
+        onSaveSiteMeta={onSaveSiteMeta}
+      />
+    );
+
+    const siteTypeSelect = screen.getByRole('combobox', { name: '站点类型' });
+    const groupSelect = screen.getByRole('combobox', { name: '分组' });
+    const extraLinksInput = screen.getByRole('textbox', { name: '加油站链接' });
+    const checkinSwitch = screen.getByRole('switch', { name: '启用签到功能' });
+    expect(siteTypeSelect).toHaveValue('newapi');
+    expect(groupSelect).toHaveValue('default');
+    expect(extraLinksInput).toHaveValue('https://fuel.example.com');
+    expect(checkinSwitch).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('option', { name: 'Sub2API' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: '优先分组' })).toBeInTheDocument();
+
+    fireEvent.change(siteTypeSelect, { target: { value: 'sub2api' } });
+    fireEvent.change(groupSelect, { target: { value: 'priority' } });
+    fireEvent.change(extraLinksInput, { target: { value: 'https://fuel-edited.example.com' } });
+    fireEvent.click(checkinSwitch);
+    fireEvent.click(screen.getByRole('button', { name: '保存更改' }));
+
+    await waitFor(() => expect(onSaveSiteMeta).toHaveBeenCalledTimes(1));
+    expect(onSaveSiteMeta).toHaveBeenCalledWith(
+      'site-1',
+      expect.objectContaining({
+        site_type: 'sub2api',
+        group: 'priority',
+        extra_links: 'https://fuel-edited.example.com',
+        force_enable_checkin: false,
+      })
+    );
   });
 
   it('exposes the embedded managed CLI editor from the side panel', () => {

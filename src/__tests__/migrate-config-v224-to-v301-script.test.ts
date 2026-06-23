@@ -136,7 +136,7 @@ describe('migrate-config-v224-to-v301 script', () => {
 
     expect(config.version).toBe('3.1');
     expect(config.sites[0].cached_data).toBeUndefined();
-    expect(config.sites[0].cli_config.codex.targetProtocol).toBeUndefined();
+    expect(config.sites[0].cli_config).toBeUndefined(); // v3.0.6: 站点级不再有 cli_config
     expect(config.accounts).toHaveLength(1);
     expect(config.accounts[0].cached_data).toBeUndefined();
     expect(config.accounts[0].cli_config.codex.targetProtocol).toBeUndefined();

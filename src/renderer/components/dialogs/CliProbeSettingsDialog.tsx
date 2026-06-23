@@ -167,11 +167,6 @@ export function CliProbeSettingsDialog({
       }
     >
       <form id="site-cli-probe-settings-form" className="space-y-4" onSubmit={handleSubmit}>
-        <p className="text-sm leading-6 text-[var(--text-secondary)]">
-          这里配置的是路由模块的站点 CLI 可用性探测。站点管理页的“立即探测”会复用同一套
-          `routing.cliProbe` 配置与最新结果缓存；探测模型由各站点/直连配置的 CLI 测试模型决定。
-        </p>
-
         <div className="grid gap-3 sm:grid-cols-2">
           <SettingsSwitch
             checked={draft.enabled}
@@ -228,7 +223,7 @@ export function CliProbeSettingsDialog({
             label="历史保留天数"
             value={draft.retentionDays}
             disabled={saving}
-            helpText="影响 CLI 探测历史样本清理，范围 1-365。"
+            helpText="影响 CLI 探测历史样本清理，默认 3 天，范围 1-365。"
             onChange={event => updateField('retentionDays', event.target.value)}
           />
         </div>

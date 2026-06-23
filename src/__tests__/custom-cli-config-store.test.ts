@@ -209,6 +209,15 @@ describe('custom cli config store', () => {
     });
   });
 
+
+  it('normalizes invalid group multipliers when updating configs', () => {
+    useCustomCliConfigStore.getState().updateConfig('cfg-1', { groupMultiplier: 0 });
+    expect(useCustomCliConfigStore.getState().configs[0].groupMultiplier).toBe(0.001);
+
+    useCustomCliConfigStore.getState().updateConfig('cfg-1', { groupMultiplier: Number.NaN });
+    expect(useCustomCliConfigStore.getState().configs[0].groupMultiplier).toBe(1);
+  });
+
   it('prevents stale local editor saves from reintroducing models outside the fetched list', () => {
     useCustomCliConfigStore.getState().updateConfig('cfg-1', {
       cliSettings: {

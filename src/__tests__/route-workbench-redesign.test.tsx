@@ -211,9 +211,15 @@ function createCustomCliStoreConfig(overrides: Partial<CustomCliConfig> = {}): C
     name: 'DuckCoding',
     baseUrl: 'https://duck.example.com',
     apiKey: 'sk-duck',
+    groupMultiplier: 0.001,
     models: ['duckcoding'],
     manualModels: [],
     notes: '',
+    modelPricing: {
+      data: {
+        duckcoding: { input: 2, output: 4, quota_type: 0 },
+      },
+    },
     cliSettings: {
       claudeCode: {
         enabled: false,
@@ -446,7 +452,7 @@ function createModelRegistryConfig(): RouteModelRegistryConfig {
   const customCliSource = createSource({
     sourceKey: 'custom-cli-site-duckcoding:custom-cli-account-duckcoding:duckcoding',
     siteId: 'custom-cli-site-duckcoding',
-    siteName: '自定义 CLI / DuckCoding',
+    siteName: 'DuckCoding',
     accountId: 'custom-cli-account-duckcoding',
     accountName: '自定义 CLI',
     sourceType: 'customCli',
@@ -1787,7 +1793,16 @@ describe('route workbench redesign', () => {
     const detailPane = await findPriorityDetailPane();
 
     await waitFor(() => {
-      expect(within(detailPane).getByText('duckcoding（测试通过）')).toBeInTheDocument();
+      expect(within(detailPane).getByText('直连')).toBeInTheDocument();
+      expect(within(detailPane).getByTitle('DuckCoding')).toBeInTheDocument();
+      expect(within(detailPane).queryByText('自定义 CLI / DuckCoding')).not.toBeInTheDocument();
+      expect(within(detailPane).queryByText(/自定义 CLI \/ custom-cli \/ 倍率/u)).not.toBeInTheDocument();
+      expect(
+        within(detailPane).getByText('DuckCoding Key（×0.001）')
+      ).toBeInTheDocument();
+      expect(
+        within(detailPane).getByText('duckcoding（↑$2 ↓$4 / 测试通过）')
+      ).toBeInTheDocument();
     });
   });
 

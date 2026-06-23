@@ -1172,7 +1172,7 @@ describe('route model registry service', () => {
         expect.objectContaining({
           sourceKey: `${siteId}:${accountId}:duckcoding`,
           siteId,
-          siteName: '自定义 CLI / DuckCoding',
+          siteName: 'DuckCoding',
           accountId,
           accountName: '自定义 CLI',
           sourceType: 'customCli',

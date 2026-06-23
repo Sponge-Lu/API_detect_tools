@@ -52,6 +52,7 @@ const mocks = vi.hoisted(() => ({
   },
   notifyAppDataChanged: vi.fn(),
   broadcastRendererEvent: vi.fn(),
+  customCliStorage: { configs: [], activeConfigId: null } as { configs: any[]; activeConfigId: string | null },
 }));
 
 vi.mock('../main/utils/logger', () => ({
@@ -82,6 +83,10 @@ vi.mock('../main/route-model-registry-service', () => ({
     String(apiKey.id ?? apiKey.token_id ?? 'unknown'),
 }));
 
+vi.mock('../main/custom-cli-config-service', () => ({
+  loadCustomCliConfigStorageSync: () => mocks.customCliStorage,
+}));
+
 import {
   clearRouteRequestLogs,
   getAnalyticsDistribution,
@@ -90,6 +95,7 @@ import {
   getRouteObjectStats,
   getRouteRequestLogs,
   recordRouteRequest,
+  resetAnalytics,
 } from '../main/route-analytics-service';
 import { buildBucketKey } from '../shared/types/route-proxy';
 
@@ -98,11 +104,13 @@ function resetRoutingBuckets(buckets: Record<string, RouteAnalyticsBucket> = {})
   mocks.routingConfig.analytics.config.enabled = true;
   mocks.routingConfig.analytics.config.recordTokenUsage = true;
   mocks.routingConfig.modelRegistry.sources = [];
+  mocks.customCliStorage = { configs: [], activeConfigId: null };
 }
 
 describe('route-analytics-service token statistics', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    await resetAnalytics();
     clearRouteRequestLogs();
     resetRoutingBuckets();
     mocks.routingConfig.modelRegistry.sources = [];
@@ -152,6 +160,55 @@ describe('route-analytics-service token statistics', () => {
         apiKeyName: '主 Key',
       })
     );
+  });
+
+  it('records estimated cost snapshots for direct custom cli route requests', () => {
+    const now = Date.now();
+    mocks.customCliStorage = {
+      activeConfigId: null,
+      configs: [
+        {
+          id: 'direct-1',
+          name: 'Direct 1',
+          baseUrl: 'https://direct.example.com',
+          apiKey: 'sk-direct',
+          groupMultiplier: 2.5,
+          models: ['direct-model'],
+          manualModels: [],
+          modelPricing: {
+            data: {
+              'direct-model': { input: 2, output: 4, quota_type: 0 },
+            },
+          },
+          cliSettings: {},
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    };
+
+    recordRouteRequest({
+      requestId: 'req-direct-cost',
+      attempt: 1,
+      cliType: 'codex',
+      requestedModel: 'direct-model',
+      canonicalModel: 'direct-model',
+      routeRuleId: 'rule-1',
+      siteId: 'custom-cli-site-direct-1',
+      accountId: 'custom-cli-account-direct-1',
+      apiKeyId: 'custom-cli-key-direct-1',
+      resolvedModel: 'direct-model',
+      outcome: 'success',
+      statusCode: 200,
+      promptTokens: 1000,
+      completionTokens: 500,
+      totalTokens: 1500,
+      at: now,
+    });
+
+    expect(getRouteRequestLogs()[0].estimatedCostUsd).toBeCloseTo(0.01, 8);
+    expect(getAnalyticsSummary({ window: '24h' }).estimatedCostUsd).toBeCloseTo(0.01, 8);
+    expect(getRouteObjectStats({ window: '24h' })[0].estimatedCostUsd).toBeCloseTo(0.01, 8);
   });
 
   it('rejects unsupported 30d route analytics windows at runtime', () => {

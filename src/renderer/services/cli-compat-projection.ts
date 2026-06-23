@@ -248,7 +248,7 @@ export function projectCliCompatibilityMap(
       );
       const currentSiteEntries = filterEntriesByCurrentTargetProtocol(
         siteScopedEntries,
-        site.cli_config,
+        undefined, // v3.0.6: 站点级不再有 cli_config
         undefined
       );
       const latestSiteEntry = sortProbeLatest(currentSiteEntries)[0];
@@ -265,8 +265,8 @@ export function projectCliCompatibilityMap(
     for (const account of siteAccounts) {
       const accountEntries = filterEntriesByCurrentTargetProtocol(
         siteEntries.filter(entry => entry.accountId === account.id),
-        site.cli_config,
-        account.cli_config
+        undefined, // v3.0.6: 站点级不再有 cli_config
+        account.cli_config // v3.0.6: 从账户级读取 cli_config
       );
       const latestAccountEntry = sortProbeLatest(accountEntries)[0];
       const sourceLabel = latestAccountEntry

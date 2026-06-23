@@ -455,6 +455,7 @@ export interface RouteAnalyticsBucket {
   cacheCreationTokens?: number;
   cacheReadTokens?: number;
   cachedTokens?: number;
+  estimatedCostUsd?: number;
   statusCodeHistogram: Record<string, number>;
   latencyHistogram: Record<string, number>;
   firstByteHistogram: Record<string, number>;
@@ -491,6 +492,7 @@ export interface RouteRequestLogItem {
   cacheCreationTokens?: number;
   cacheReadTokens?: number;
   cachedTokens?: number;
+  estimatedCostUsd?: number;
   error?: string;
   createdAt: number;
 }
@@ -528,7 +530,9 @@ export interface RouteAnalyticsSummary {
   cacheCreationTokens: number;
   cacheReadTokens: number;
   cachedTokens: number;
+  estimatedCostUsd?: number;
 }
+
 
 export interface RouteAnalyticsDistribution {
   buckets: RouteAnalyticsBucket[];
@@ -567,6 +571,7 @@ export interface RouteAnalyticsObjectStatsItem {
   cacheCreationTokens?: number;
   cacheReadTokens?: number;
   cachedTokens?: number;
+  estimatedCostUsd?: number;
   lastUsedAt?: number;
   lastFailureAt?: number;
 }
@@ -614,13 +619,13 @@ export const DEFAULT_CLI_PROBE_CONFIG: RouteCliProbeConfig = {
   modelsPerCli: 1,
   requestTimeoutMs: 30000,
   maxConcurrency: 3,
-  retentionDays: 30,
+  retentionDays: 3,
   runOnStartup: false,
 };
 
 export const DEFAULT_ANALYTICS_CONFIG: RouteAnalyticsConfig = {
   enabled: true,
-  retentionDays: 30,
+  retentionDays: 3,
   bucketSizeMinutes: 60,
   recordTokenUsage: true,
   recordStatusCode: true,

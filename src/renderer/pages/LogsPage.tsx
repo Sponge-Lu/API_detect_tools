@@ -149,7 +149,7 @@ function formatTokenCount(value?: number | null): string {
 
 function formatEstimatedCost(value: number): string {
   if (!Number.isFinite(value)) {
-    return '0';
+    return '—';
   }
 
   if (value === 0) {
@@ -349,7 +349,7 @@ function createBaseRouteLogCostInfo(params: {
     completionTokens: formatTokenCount(params.completionTokens),
     cacheCreationTokens: formatTokenCount(params.cacheCreationTokens),
     cacheReadTokens: formatTokenCount(params.cacheReadTokens),
-    estimatedCost: '0',
+    estimatedCost: '—',
   };
 }
 
@@ -377,7 +377,11 @@ function resolveRouteLogCostInfo(
   });
 
   if (customCli) {
-    return baseCostInfo;
+    return {
+      ...baseCostInfo,
+      estimatedCost:
+        item.estimatedCostUsd !== undefined ? formatEstimatedCost(item.estimatedCostUsd) : '—',
+    };
   }
 
   const account = config?.accounts?.find(itemAccount => itemAccount.id === item.accountId);

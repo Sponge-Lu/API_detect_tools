@@ -626,7 +626,7 @@ async function rebuildModelRegistryInternal(
     const siteId = buildCustomCliRouteSiteId(customConfig.id);
     const accountId = buildCustomCliRouteAccountId(customConfig.id);
     const apiKeyId = buildCustomCliRouteApiKeyId(customConfig.id);
-    const siteName = `自定义 CLI / ${displayName}`;
+    const siteName = displayName;
     const accountName = '自定义 CLI';
     const apiKeyName = `${displayName} Key`;
 

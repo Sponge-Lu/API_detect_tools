@@ -33,6 +33,7 @@ import { encryptConfigFields, decryptConfigFields } from './config-field-crypto'
 import type {
   UnifiedConfig,
   UnifiedSite,
+  Site,
   SiteGroup,
   Settings,
   SiteConfig,
@@ -47,6 +48,8 @@ import {
   generateAccountId,
   mergeDetectionCacheData,
   splitDetectionCacheData,
+  CURRENT_CONFIG_VERSION,
+  detectConfigVersion,
 } from '../shared/types/site';
 import type {
   RoutingConfig,
@@ -94,7 +97,7 @@ import {
   normalizeRouteRuntimeConfig,
 } from '../shared/types/route-proxy';
 
-const CONFIG_VERSION = '3.1';
+const CONFIG_VERSION = '3.0.6';
 const CONFIG_READ_RETRY_DELAYS_MS = [50, 100, 200, 400];
 
 const DEFAULT_SETTINGS: Settings = {
@@ -432,10 +435,29 @@ export class UnifiedConfigManager {
     let config: UnifiedConfig = decryptConfigFields(parsed);
     let needsSave = false;
 
-    // v2 → v3 自动迁移
-    if (config.version !== CONFIG_VERSION) {
-      config = await this.migrateToV3(config);
-      needsSave = true;
+    // 配置版本迁移
+    const currentVersion = config.version || 'unknown';
+    if (currentVersion !== CONFIG_VERSION) {
+      // v2 → v3 迁移
+      if (!config.version || config.version.startsWith('2.')) {
+        config = await this.migrateToV3(config);
+        needsSave = true;
+      }
+
+      // v3.0.5 或更早 → v3.0.6 迁移
+      if (config.version && config.version < CONFIG_VERSION) {
+        config = await this.migrateToV306(config);
+        needsSave = true;
+      }
+
+      // 如果版本仍不匹配，强制更新版本号
+      if (config.version !== CONFIG_VERSION) {
+        Logger.warn(
+          `⚠️ [UnifiedConfigManager] 配置版本不匹配: ${config.version} → ${CONFIG_VERSION}，强制更新`
+        );
+        config.version = CONFIG_VERSION;
+        needsSave = true;
+      }
     }
 
     const repairedLegacyAccounts = this.repairLegacySiteAccounts(config);
@@ -568,6 +590,15 @@ export class UnifiedConfigManager {
       return undefined;
     }
 
+    // 如果只有一个有值，直接返回那个
+    if (!current) {
+      return incoming;
+    }
+    if (!incoming) {
+      return current;
+    }
+
+    // 两个都有值，合并
     const merged: Record<string, unknown> = {
       ...((current || {}) as Record<string, unknown>),
     };
@@ -595,16 +626,19 @@ export class UnifiedConfigManager {
       ),
     }));
 
-    config.accounts = config.accounts.map(account => ({
-      ...account,
-      cached_data: this.mergeDefinedCache(
-        mergeDetectionCacheData(
-          runtimeCache.site_shared_by_site_id[account.site_id],
-          runtimeCache.account_runtime_by_account_id[account.id]
-        ),
-        account.cached_data
-      ),
-    }));
+    config.accounts = config.accounts.map(account => {
+      const hydratedFromRuntime = mergeDetectionCacheData(
+        runtimeCache.site_shared_by_site_id[account.site_id],
+        runtimeCache.account_runtime_by_account_id[account.id]
+      );
+      const merged = this.mergeDefinedCache(hydratedFromRuntime, account.cached_data);
+
+      return {
+        ...account,
+        // 如果合并结果为空但原始账户有 cached_data，保留原始值
+        cached_data: merged || account.cached_data,
+      };
+    });
 
     return config;
   }
@@ -963,6 +997,11 @@ export class UnifiedConfigManager {
         changed = true;
       }
 
+      if (site.cli_config !== undefined) {
+        delete site.cli_config;
+        changed = true;
+      }
+
       if (changed) {
         primaryAccount.updated_at = Date.now();
         migratedCount += 1;
@@ -1047,13 +1086,7 @@ export class UnifiedConfigManager {
     }
     if (s.enabled === undefined) s.enabled = false;
 
-    for (const site of config.sites || []) {
-      normalizeCliConfigTargetProtocols(
-        site.cli_config as Partial<
-          Record<RouteCliType, { targetProtocol?: CliTargetProtocol | null } | null>
-        >
-      );
-    }
+    // v3.0.6: 账户级 cli_config 规范化
     for (const account of config.accounts || []) {
       normalizeCliConfigTargetProtocols(
         account.cli_config as Partial<
@@ -1461,6 +1494,7 @@ export class UnifiedConfigManager {
           auth_source: 'manual',
           status: 'active',
           cached_data: site.cached_data ? { ...site.cached_data } : undefined,
+          cli_config: site.cli_config ? { ...site.cli_config } : undefined,
           created_at: Date.now(),
           updated_at: Date.now(),
         });
@@ -1479,6 +1513,101 @@ export class UnifiedConfigManager {
     config.sites = sites;
 
     Logger.info(`✅ [UnifiedConfigManager] v3 迁移完成，创建了 ${accounts.length} 个默认账户`);
+    return config as UnifiedConfig;
+  }
+
+  /**
+   * v3.0.5 → v3.0.6 迁移：分离站点配置和账户凭证
+   */
+  private async migrateToV306(config: any): Promise<UnifiedConfig> {
+    Logger.info('🔄 [UnifiedConfigManager] 开始 v3.0.5 → v3.0.6 迁移...');
+
+    // 备份旧配置
+    const backupPath = this.configPath.replace('.json', `.v3.0.5.backup.${Date.now()}.json`);
+    try {
+      await fs.writeFile(backupPath, JSON.stringify(config, null, 2), 'utf-8');
+      Logger.info(`📦 [UnifiedConfigManager] 旧配置已备份: ${backupPath}`);
+    } catch (e: any) {
+      Logger.warn(`⚠️ [UnifiedConfigManager] 备份失败: ${e.message}`);
+    }
+
+    const accounts: AccountCredential[] = config.accounts || [];
+    const sites: UnifiedSite[] = config.sites || [];
+    let migratedApiKeys = 0;
+    let migratedLegacyTokens = 0;
+    let migratedSiteCliConfig = 0;
+    let removedAccountAutoRefresh = 0;
+
+    // 1. 迁移站点级敏感字段和配置到账户
+    for (const site of sites) {
+      // 1.1 如果站点有 legacy token，创建默认账户
+      if (site.access_token || site.user_id) {
+        const existingAccount = accounts.find(a => a.site_id === site.id);
+        if (!existingAccount) {
+          const defaultAccount: AccountCredential = {
+            id: generateAccountId(),
+            site_id: site.id,
+            account_name: '默认账户',
+            user_id: site.user_id || 'unknown',
+            access_token: site.access_token || '',
+            api_key: site.api_key, // 同时迁移 api_key
+            cli_config: site.cli_config, // 迁移 CLI 配置到账户
+            auth_source: 'manual',
+            status: 'active',
+            created_at: Date.now(),
+            updated_at: Date.now(),
+          };
+          accounts.push(defaultAccount);
+          migratedLegacyTokens++;
+        }
+      }
+
+      // 1.2 如果站点有 api_key 但已有账户，迁移到第一个账户
+      if (site.api_key && !site.access_token) {
+        const firstAccount = accounts.find(a => a.site_id === site.id);
+        if (firstAccount && !firstAccount.api_key) {
+          firstAccount.api_key = site.api_key;
+          migratedApiKeys++;
+        }
+      }
+
+      // 1.3 如果站点有 cli_config 但已有账户，迁移到第一个账户
+      if (site.cli_config && !site.access_token) {
+        const firstAccount = accounts.find(a => a.site_id === site.id);
+        if (firstAccount && !firstAccount.cli_config) {
+          firstAccount.cli_config = site.cli_config;
+          migratedSiteCliConfig++;
+        }
+      }
+
+      // 1.4 删除站点级 legacy 字段
+      delete site.access_token;
+      delete site.user_id;
+      delete site.api_key;
+      delete site.cli_config; // v3.0.6: CLI 配置移至账户级
+      delete site.cached_data; // 运行时缓存不再保存在站点级
+    }
+
+    // 2. 删除账户级废弃字段（auto_refresh）
+    for (const account of accounts) {
+      if ((account as any).auto_refresh !== undefined) {
+        delete (account as any).auto_refresh;
+        delete (account as any).auto_refresh_interval;
+        removedAccountAutoRefresh++;
+      }
+    }
+
+    config.version = CONFIG_VERSION;
+    config.accounts = accounts;
+    config.sites = sites;
+
+    Logger.info(
+      `✅ [UnifiedConfigManager] v3.0.6 迁移完成: ` +
+        `迁移 ${migratedLegacyTokens} 个 legacy token, ` +
+        `迁移 ${migratedApiKeys} 个 api_key, ` +
+        `迁移 ${migratedSiteCliConfig} 个站点 cli_config, ` +
+        `删除 ${removedAccountAutoRefresh} 个账户 auto_refresh`
+    );
     return config as UnifiedConfig;
   }
 
@@ -1695,9 +1824,6 @@ export class UnifiedConfigManager {
         | 'status'
         | 'access_token'
         | 'user_id'
-        | 'auto_refresh'
-        | 'auto_refresh_interval'
-        | 'cli_config'
         | 'anyRouterConfig'
       >
     >
@@ -1785,14 +1911,15 @@ export class UnifiedConfigManager {
     }
 
     // 转换为旧格式，保留 cached_data 和 cli_config
+    // v3.0.6: api_key/access_token/user_id 已移至账户级，这里返回空字符串以兼容旧接口
     const sites = this.config.sites.map(site => ({
       id: site.id, // 站点 ID（多账户操作需要）
       name: site.name,
       url: site.url,
       site_type: site.site_type,
-      api_key: site.api_key || '',
-      system_token: site.access_token,
-      user_id: site.user_id,
+      api_key: '', // v3.0.6: 已迁移到账户级
+      system_token: undefined, // v3.0.6: 已迁移到账户级
+      user_id: undefined, // v3.0.6: 已迁移到账户级
       enabled: site.enabled,
       group: site.group,
       has_checkin: site.has_checkin,
@@ -1800,8 +1927,7 @@ export class UnifiedConfigManager {
       extra_links: site.extra_links,
       auto_refresh: site.auto_refresh, // 站点独立的自动刷新开关
       auto_refresh_interval: site.auto_refresh_interval, // 自动刷新间隔
-      cached_data: site.cached_data, // 保留缓存数据
-      cli_config: site.cli_config, // 保留 CLI 配置
+      cached_data: undefined, // v3.0.6: 运行时缓存不再保存在配置中
       cli_compatibility: (site as any).cli_compatibility, // 兼容旧版本数据结构（站点根级别）
     }));
 

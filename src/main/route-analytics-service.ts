@@ -25,8 +25,12 @@ import type {
   RouteRequestLogQuery,
 } from '../shared/types/route-proxy';
 import { buildBucketKey } from '../shared/types/route-proxy';
+import { estimateModelCostUsd } from '../shared/utils/modelPricing';
+import { normalizeCustomCliGroupMultiplier } from '../shared/types/custom-cli-config';
+import { parseCustomCliRouteConfigId } from '../shared/utils/customCliRouteId';
 import type { ApiKeyInfo } from '../shared/types/site';
 import { resolveApiKeyId } from './route-model-registry-service';
+import { loadCustomCliConfigStorageSync } from './custom-cli-config-service';
 
 const log = Logger.scope('RouteAnalytics');
 const MAX_ROUTE_REQUEST_LOGS = 1000;
@@ -173,6 +177,66 @@ function buildRouteObjectStatsGroupKey(item: {
   return [item.siteName, item.accountName, item.apiKeyName].join('\u0000');
 }
 
+
+function resolveDirectModelPriceInfo(params: {
+  siteId?: string;
+  resolvedModel?: string;
+  canonicalModel?: string | null;
+  requestedModel?: string | null;
+}): { priceInfo: import('../shared/types/site').ModelPriceInfo; groupMultiplier: number } | undefined {
+  if (!params.siteId) {
+    return undefined;
+  }
+
+  const configId = parseCustomCliRouteConfigId(params.siteId);
+  if (!configId) {
+    return undefined;
+  }
+
+  const directConfig = loadCustomCliConfigStorageSync().configs.find(config => config.id === configId);
+  const pricingData = directConfig?.modelPricing?.data;
+  if (!pricingData) {
+    return undefined;
+  }
+
+  const modelCandidates = [params.resolvedModel, params.canonicalModel, params.requestedModel]
+    .map(model => model?.trim())
+    .filter((model): model is string => Boolean(model));
+
+  for (const model of modelCandidates) {
+    const priceInfo = pricingData[model];
+    if (priceInfo) {
+      return {
+        priceInfo,
+        groupMultiplier: normalizeCustomCliGroupMultiplier(directConfig?.groupMultiplier),
+      };
+    }
+  }
+
+  return undefined;
+}
+
+function resolveRouteEstimatedCostUsd(params: {
+  siteId?: string;
+  resolvedModel?: string;
+  canonicalModel?: string | null;
+  requestedModel?: string | null;
+  promptTokens?: number;
+  completionTokens?: number;
+}): number | undefined {
+  const directPricing = resolveDirectModelPriceInfo(params);
+  if (!directPricing) {
+    return undefined;
+  }
+
+  const estimatedCost = estimateModelCostUsd(directPricing.priceInfo, {
+    promptTokens: params.promptTokens,
+    completionTokens: params.completionTokens,
+  });
+
+  return estimatedCost !== null ? estimatedCost * directPricing.groupMultiplier : undefined;
+}
+
 function appendRouteRequestLog(params: {
   requestId: string;
   attempt: number;
@@ -196,6 +260,7 @@ function appendRouteRequestLog(params: {
   cacheCreationTokens?: number;
   cacheReadTokens?: number;
   cachedTokens?: number;
+  estimatedCostUsd?: number;
   error?: string;
   at: number;
 }): RouteRequestLogItem {
@@ -238,6 +303,7 @@ function appendRouteRequestLog(params: {
     cacheCreationTokens: params.cacheCreationTokens,
     cacheReadTokens: params.cacheReadTokens,
     cachedTokens: params.cachedTokens,
+    estimatedCostUsd: params.estimatedCostUsd,
     error: params.error,
     createdAt: params.at,
   };
@@ -329,6 +395,14 @@ export function recordRouteRequest(params: {
   at?: number;
 }): void {
   const at = params.at ?? Date.now();
+  const estimatedCostUsd = resolveRouteEstimatedCostUsd({
+    siteId: params.siteId,
+    resolvedModel: params.resolvedModel,
+    canonicalModel: params.canonicalModel,
+    requestedModel: params.requestedModel,
+    promptTokens: params.promptTokens,
+    completionTokens: params.completionTokens,
+  });
   const logItem = appendRouteRequestLog({
     requestId: params.requestId,
     attempt: params.attempt,
@@ -352,6 +426,7 @@ export function recordRouteRequest(params: {
     cacheCreationTokens: params.cacheCreationTokens,
     cacheReadTokens: params.cacheReadTokens,
     cachedTokens: params.cachedTokens,
+    estimatedCostUsd,
     error: params.error,
     at,
   });
@@ -421,6 +496,10 @@ export function recordRouteRequest(params: {
       (bucket.cacheCreationTokens || 0) + (params.cacheCreationTokens || 0);
     bucket.cacheReadTokens = (bucket.cacheReadTokens || 0) + (params.cacheReadTokens || 0);
     bucket.cachedTokens = (bucket.cachedTokens || 0) + (params.cachedTokens || 0);
+  }
+
+  if (estimatedCostUsd !== undefined) {
+    bucket.estimatedCostUsd = (bucket.estimatedCostUsd || 0) + estimatedCostUsd;
   }
 
   if (config.recordStatusCode && params.statusCode !== undefined) {
@@ -504,6 +583,9 @@ function addBucketToAnalyticsSummary(
   summary.cacheCreationTokens += bucket.cacheCreationTokens || 0;
   summary.cacheReadTokens += bucket.cacheReadTokens || 0;
   summary.cachedTokens += bucket.cachedTokens || 0;
+  if (bucket.estimatedCostUsd !== undefined) {
+    summary.estimatedCostUsd = (summary.estimatedCostUsd || 0) + bucket.estimatedCostUsd;
+  }
 }
 
 function buildAnalyticsSummaryFromBuckets(buckets: RouteAnalyticsBucket[]): RouteAnalyticsSummary {
@@ -659,6 +741,9 @@ export function getRouteObjectStats(
       (current.cacheCreationTokens || 0) + (bucket.cacheCreationTokens || 0);
     current.cacheReadTokens = (current.cacheReadTokens || 0) + (bucket.cacheReadTokens || 0);
     current.cachedTokens = (current.cachedTokens || 0) + (bucket.cachedTokens || 0);
+    if (bucket.estimatedCostUsd !== undefined) {
+      current.estimatedCostUsd = (current.estimatedCostUsd || 0) + bucket.estimatedCostUsd;
+    }
     current.lastUsedAt = Math.max(current.lastUsedAt || 0, bucket.updatedAt);
     grouped.set(groupKey, current);
   }

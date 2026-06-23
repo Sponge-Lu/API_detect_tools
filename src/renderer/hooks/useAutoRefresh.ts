@@ -77,12 +77,13 @@ function getSiteKey(site: SiteConfig): string {
   return site.id || site.name;
 }
 
-function getResolvedAccountAutoRefresh(site: SiteConfig, account: AccountCredential): boolean {
-  return account.auto_refresh ?? site.auto_refresh ?? false;
+// v3.0.6: auto_refresh 只在站点级，不再支持账户级覆盖
+function getResolvedAccountAutoRefresh(site: SiteConfig): boolean {
+  return site.auto_refresh ?? false;
 }
 
-function getResolvedAccountInterval(site: SiteConfig, account: AccountCredential): number {
-  return getValidInterval(account.auto_refresh_interval ?? site.auto_refresh_interval);
+function getResolvedAccountInterval(site: SiteConfig): number {
+  return getValidInterval(site.auto_refresh_interval);
 }
 
 function buildRefreshTargets(
@@ -98,7 +99,7 @@ function buildRefreshTargets(
 
     if (siteAccounts.length > 0) {
       siteAccounts.forEach(account => {
-        if (!getResolvedAccountAutoRefresh(site, account)) {
+        if (!getResolvedAccountAutoRefresh(site)) {
           return;
         }
         targets.set(`${siteKey}::${account.id}`, {
@@ -107,7 +108,7 @@ function buildRefreshTargets(
           siteName: site.name,
           accountId: account.id,
           accountName: account.account_name,
-          interval: getResolvedAccountInterval(site, account),
+          interval: getResolvedAccountInterval(site),
         });
       });
       return;
@@ -205,8 +206,8 @@ export function useAutoRefresh(options: UseAutoRefreshOptions): UseAutoRefreshRe
             if (!resolvedAccount || resolvedAccount.site_id !== currentSite.id) {
               return;
             }
-            autoRefreshEnabled = getResolvedAccountAutoRefresh(currentSite, resolvedAccount);
-            resolvedInterval = getResolvedAccountInterval(currentSite, resolvedAccount);
+            autoRefreshEnabled = getResolvedAccountAutoRefresh(currentSite);
+            resolvedInterval = getResolvedAccountInterval(currentSite);
           }
 
           if (!autoRefreshEnabled || resolvedInterval !== config.interval) {

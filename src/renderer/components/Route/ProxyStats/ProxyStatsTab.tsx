@@ -78,6 +78,7 @@ interface RouteAnalyticsSummary {
   completionTokens: number;
   cacheCreationTokens?: number;
   cacheReadTokens?: number;
+  estimatedCostUsd?: number;
 }
 
 function resolveCliSelectionDisplayValue(
@@ -942,6 +943,10 @@ export function StatsDashboard({ className = '' }: RoutePanelProps) {
                 value={formatNumber(summary.cacheReadTokens || 0)}
               />
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              <StatRow label="估算成本" value={formatCurrency(summary.estimatedCostUsd)} />
+              <StatRow label="Total Tokens" value={formatNumber(summary.promptTokens + summary.completionTokens)} />
+            </div>
           </div>
         ) : (
           <div className="py-6 text-center text-sm text-[var(--text-secondary)]">暂无统计数据</div>
@@ -981,6 +986,14 @@ function formatNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
+}
+
+function formatCurrency(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "—";
+  if (value === 0) return "$0";
+  if (value >= 1) return `$${value.toFixed(2)}`;
+  if (value >= 0.01) return `$${value.toFixed(4)}`;
+  return `$${value.toFixed(6)}`;
 }
 
 export function ProxyStatsTab() {

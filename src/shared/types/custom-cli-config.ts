@@ -16,7 +16,17 @@ import {
   type CliModelTestResult,
   type CliTargetProtocol,
 } from './cli-config';
-import type { ClaudeTestDetail, CodexTestDetail, GeminiTestDetail } from './site';
+import type { ClaudeTestDetail, CodexTestDetail, GeminiTestDetail, ModelPricingData } from './site';
+
+export const CUSTOM_CLI_GROUP_MULTIPLIER_DEFAULT = 1;
+export const CUSTOM_CLI_GROUP_MULTIPLIER_MIN = 0.001;
+
+export function normalizeCustomCliGroupMultiplier(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return CUSTOM_CLI_GROUP_MULTIPLIER_DEFAULT;
+  }
+  return Math.max(CUSTOM_CLI_GROUP_MULTIPLIER_MIN, value);
+}
 
 export interface CustomCliTestState {
   status: boolean | null;
@@ -80,10 +90,14 @@ export interface CustomCliConfig {
   baseUrl: string;
   /** API Key */
   apiKey: string;
+  /** 直连配置分组倍率，用于估算实际费用 */
+  groupMultiplier?: number;
   /** 拉取到的可用模型列表 */
   models: string[];
   /** 用户手动输入的模型列表，用于拉取端点不可用或模型未出现在端点响应中的配置 */
   manualModels?: string[];
+  /** 按当前直连配置隔离的模型价格，key 为模型名 */
+  modelPricing?: ModelPricingData;
   /** 最后拉取模型时间戳 */
   lastModelFetch?: number;
   /** 用户备注 */
@@ -129,6 +143,7 @@ export function createDefaultCustomCliConfig(partial?: Partial<CustomCliConfig>)
     apiKey: '',
     models: [],
     manualModels: [],
+    modelPricing: { data: {} },
     lastModelFetch: undefined,
     notes: '',
     cliSettings: {
@@ -139,5 +154,6 @@ export function createDefaultCustomCliConfig(partial?: Partial<CustomCliConfig>)
     createdAt: now,
     updatedAt: now,
     ...partial,
+    groupMultiplier: normalizeCustomCliGroupMultiplier(partial?.groupMultiplier),
   };
 }

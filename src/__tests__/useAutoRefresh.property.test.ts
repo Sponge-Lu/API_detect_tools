@@ -503,7 +503,7 @@ describe('useAutoRefresh implementation regressions', () => {
     expect(onRefresh).toHaveBeenNthCalledWith(2, 'Site A (Account 2)');
   });
 
-  it('should allow accounts under the same site to control auto-refresh independently', async () => {
+  it('should refresh all accounts when site-level auto-refresh is enabled (v3.0.6)', async () => {
     const detectSingle = vi.fn(
       async (
         site: HookSiteConfig,
@@ -526,8 +526,8 @@ describe('useAutoRefresh implementation regressions', () => {
       url: 'https://example.com',
       api_key: '',
       enabled: true,
-      auto_refresh: false,
-      auto_refresh_interval: 15,
+      auto_refresh: true, // v3.0.6: 站点级控制，影响所有账户
+      auto_refresh_interval: 20,
     };
     const accounts: HookAccountCredential[] = [
       {
@@ -538,8 +538,6 @@ describe('useAutoRefresh implementation regressions', () => {
         access_token: 'token-1',
         auth_source: 'manual',
         status: 'active',
-        auto_refresh: true,
-        auto_refresh_interval: 20,
         created_at: 1,
         updated_at: 1,
       },
@@ -551,8 +549,6 @@ describe('useAutoRefresh implementation regressions', () => {
         access_token: 'token-2',
         auth_source: 'manual',
         status: 'active',
-        auto_refresh: false,
-        auto_refresh_interval: 20,
         created_at: 1,
         updated_at: 1,
       },
@@ -572,10 +568,11 @@ describe('useAutoRefresh implementation regressions', () => {
       await Promise.resolve();
     });
 
-    expect(detectSingle).toHaveBeenCalledTimes(1);
+    // v3.0.6: 站点级 auto_refresh=true 会刷新该站点的所有账户
+    expect(detectSingle).toHaveBeenCalledTimes(2);
     expect(detectSingle).toHaveBeenCalledWith(site, true, undefined, 'acct-1');
-    expect(onRefresh).toHaveBeenCalledTimes(1);
-    expect(onRefresh).toHaveBeenCalledWith('Site A (Account 1)');
+    expect(detectSingle).toHaveBeenCalledWith(site, true, undefined, 'acct-2');
+    expect(onRefresh).toHaveBeenCalledTimes(2);
   });
 });
 

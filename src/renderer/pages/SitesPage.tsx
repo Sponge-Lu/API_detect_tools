@@ -741,6 +741,38 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     [loadAllAccounts, setConfig]
   );
 
+  const handleSavePanelSiteMeta = useCallback(
+    async (
+      siteId: string,
+      updates: Partial<
+        Pick<SiteConfig, 'site_type' | 'group' | 'extra_links' | 'force_enable_checkin'>
+      >
+    ) => {
+      if (!config) return;
+      const updatedSites = config.sites.map(site =>
+        site.id === siteId
+          ? {
+              ...site,
+              ...updates,
+              group: updates.group ?? site.group ?? defaultGroupId,
+            }
+          : site
+      );
+      const nextConfig = { ...config, sites: updatedSites };
+      await saveConfig(nextConfig);
+
+      setSelectedItem(prev => {
+        if (prev?.type !== 'managed' || prev.site.id !== siteId) {
+          return prev;
+        }
+        const latestSite = updatedSites.find(site => site.id === siteId) ?? prev.site;
+        return { ...prev, site: latestSite };
+      });
+      toast.success('站点信息已保存');
+    },
+    [config, defaultGroupId, saveConfig]
+  );
+
   const handleDetectAllSites = useCallback(async () => {
     setRunningCliProbe(true);
     try {
@@ -2026,6 +2058,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
           open={panelOpen}
           onClose={handleClosePanel}
           data={selectedItem}
+          groups={siteGroups}
           siteResult={results.find(
             r =>
               selectedItem.type === 'managed' &&
@@ -2092,6 +2125,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
               setAddAccountSite(selectedItem.site);
             }
           }}
+          onSaveSiteMeta={handleSavePanelSiteMeta}
           onSaveAccount={handleSavePanelAccount}
           onDeleteAccount={async (accountId: string) => {
             if (selectedItem.type !== 'managed') return;

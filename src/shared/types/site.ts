@@ -186,28 +186,38 @@ export interface AnyRouterAccountConfig {
 }
 
 /**
- * 账户凭证 - 存储在 config.json 的多账户数据
+ * 账户凭证 - 存储在 config.json 的多账户数据（v3.0.6+）
  * 与 SiteAccount（TokenService 运行时 DTO）不同，这是持久化存储格式
  */
 export interface AccountCredential {
   id: string;
-  site_id: string; // 关联 UnifiedSite.id
+  site_id: string; // 关联 Site.id
   account_name: string; // UI 显示名
   user_id: string;
   username?: string;
+
+  // === 敏感凭证（磁盘加密存储） ===
   access_token: string;
+  api_key?: string; // v3.0.6: 从 Site.api_key 迁移过来
+
   auth_source: AccountAuthSource;
   status: AccountStatus;
   browser_profile_path?: string; // isolated profile 持久化路径
   cached_data?: DetectionCacheData; // 账户级检测缓存
-  cli_config?: CliConfig; // 账户级 CLI 配置
+
+  // === 账户级配置 ===
+  cli_config?: CliConfig; // v3.0.6: 账户的 CLI 配置（引用该账户的 api_key）
   anyRouterConfig?: AnyRouterAccountConfig; // AnyRouter 专用配置
+
   metadata?: {
     oauth_provider?: 'github' | 'linuxdo';
     supports_checkin?: boolean;
   };
-  auto_refresh?: boolean; // 账户级自动刷新开关，未设置时继承站点配置
-  auto_refresh_interval?: number; // 账户级自动刷新间隔（分钟），最小15分钟
+
+  // v3.0.6: 以下字段已废弃，迁移时自动删除
+  // auto_refresh?: boolean; // 已废弃：自动刷新只在站点级
+  // auto_refresh_interval?: number; // 已废弃：自动刷新只在站点级
+
   created_at: number;
   updated_at: number;
 }
@@ -322,47 +332,49 @@ export const DEFAULT_RUNTIME_CACHE_FILE: RuntimeCacheFile = {
   last_updated: 0,
 };
 
-// ============= 统一站点类型 =============
+// ============= 站点类型（v3.0.6 重构） =============
 
 /**
- * 统一站点配置 - 合并原 SiteConfig 和 SiteAccount
- * 单一数据源，消除数据不一致问题
+ * 站点配置 - 仅包含站点级共享数据（v3.0.6+）
+ * 所有敏感凭证已迁移到 Account
  */
-export interface UnifiedSite {
+export interface Site {
   // === 唯一标识 ===
-  id: string; // 唯一ID，不再依赖URL匹配
+  id: string;
 
-  // === 基础配置 ===
+  // === 基础配置（共享） ===
   name: string;
   url: string;
   site_type?: SiteType;
   enabled: boolean;
   group: string; // 分组ID，默认 "default"
 
-  // === 认证信息（legacy site-level fallback，用于无账户或站点级操作） ===
-  access_token?: string; // 系统访问令牌
-  user_id?: string; // 用户ID
-
-  // === API 配置 ===
-  api_key?: string; // API Key（可选）
-
   // === 扩展配置 ===
   extra_links?: string; // 加油站链接
   has_checkin?: boolean; // 是否支持签到（检测结果）
   force_enable_checkin?: boolean; // 强制启用签到
-  auto_refresh?: boolean; // 站点独立的自动刷新开关
+  auto_refresh?: boolean; // 站点级自动刷新开关
   auto_refresh_interval?: number; // 自动刷新间隔（分钟），最小15分钟
 
-  // === CLI 配置（保存在站点配置中，备份时不会丢失） ===
-  cli_config?: CliConfig;
-
-  // === 检测结果缓存（无账户站点的 legacy fallback） ===
-  cached_data?: DetectionCacheData;
+  // v3.0.6: CLI 配置已移至账户级
 
   // === 元数据 ===
   created_at?: number;
   updated_at?: number;
   last_sync_time?: number;
+}
+
+/**
+ * @deprecated 使用 Site 替代（v3.0.6+ 已废弃）
+ * 保留此类型仅用于向后兼容和迁移逻辑
+ */
+export interface UnifiedSite extends Site {
+  // Legacy 字段（仅用于迁移检测）
+  access_token?: string;
+  user_id?: string;
+  api_key?: string;
+  cli_config?: CliConfig; // v3.0.6: 已移至账户级
+  cached_data?: DetectionCacheData;
 }
 
 /** 站点分组 */
@@ -785,4 +797,46 @@ export function mergeDetectionCacheData(
   };
 
   return hasMeaningfulValues(merged) ? merged : undefined;
+}
+
+// ============= 配置版本管理（v3.0.6+） =============
+
+/** 当前应用配置版本 */
+export const CURRENT_CONFIG_VERSION = '3.0.6';
+
+/** 应用配置根结构 */
+export interface AppConfig {
+  version?: string; // 配置版本号（v3.0.6+）
+  sites: Site[]; // v3.0.6: 使用 Site 替代 UnifiedSite
+  accounts: AccountCredential[];
+  groups?: SiteGroup[];
+  // ...其他字段由 unified-config-manager 定义
+}
+
+/** 配置版本检测结果 */
+export type ConfigVersion = '3.0.6' | '3.0.5-or-earlier' | 'unknown';
+
+/**
+ * 检测配置版本
+ */
+export function detectConfigVersion(config: any): ConfigVersion {
+  // 1. 如果有 version 字段，直接返回
+  if (config.version === CURRENT_CONFIG_VERSION) return '3.0.6';
+  if (config.version) return 'unknown'; // 未知版本
+
+  // 2. 检测 legacy 特征（v3.0.5 或更早）
+  const hasLegacySiteToken = config.sites?.some(
+    (s: any) => s.access_token || s.user_id || s.api_key
+  );
+  const hasAccountCliConfig = config.accounts?.some((a: any) => a.cli_config);
+  const hasAccountAutoRefresh = config.accounts?.some(
+    (a: any) => a.auto_refresh !== undefined
+  );
+
+  if (hasLegacySiteToken || hasAccountCliConfig || hasAccountAutoRefresh) {
+    return '3.0.5-or-earlier';
+  }
+
+  // 3. 如果没有 version 但也没有 legacy 特征，假定是 3.0.6
+  return '3.0.6';
 }

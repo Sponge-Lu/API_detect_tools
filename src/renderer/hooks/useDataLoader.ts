@@ -157,29 +157,20 @@ export function useDataLoader({
         if (setCliCompatibility) {
           await syncProjectedCliCompatibility(currentConfig as UnifiedConfig, setCliCompatibility);
         }
-        sites.forEach((site: any) => {
-          const siteId = site.id as string | undefined;
-          const siteAccounts = siteId ? accountsBySiteId.get(siteId) : undefined;
-
-          if (siteAccounts && siteAccounts.length > 0) {
-            siteAccounts.forEach(acct => {
-              const key = makeStoreKey(site.name, acct.id);
-              if (setCliConfig && acct.cli_config) {
-                setCliConfig(key, acct.cli_config as CliConfig);
-                cliConfigCount++;
-              }
-            });
-            return;
-          }
-
-          const cliConfig = site.cli_config || site.cached_data?.cli_config;
+        // v3.0.6: cli_config 在账户级，从账户加载
+        const allAccounts = (currentConfig as any).accounts || [];
+        allAccounts.forEach((account: any) => {
+          const cliConfig = account.cli_config || account.cached_data?.cli_config;
           if (setCliConfig && cliConfig) {
-            setCliConfig(site.name, cliConfig);
-            cliConfigCount++;
+            const site = sites.find((s: any) => s.id === account.site_id);
+            if (site) {
+              setCliConfig(site.name, cliConfig);
+              cliConfigCount++;
+            }
           }
         });
         if (cliConfigCount > 0) {
-          Logger.info(`✅ [useDataLoader] 加载了 ${cliConfigCount} 个站点的 CLI 配置`);
+          Logger.info(`✅ [useDataLoader] 加载了 ${cliConfigCount} 个账户的 CLI 配置`);
         }
 
         // 启动时自动检测 CLI 配置（按站点去重）

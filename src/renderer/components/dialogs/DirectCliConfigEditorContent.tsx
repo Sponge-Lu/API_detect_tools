@@ -26,12 +26,15 @@ import { AppButton } from '../AppButton/AppButton';
 import { useCustomCliConfigStore } from '../../store/customCliConfigStore';
 import { toast } from '../../store/toastStore';
 import {
+  CUSTOM_CLI_GROUP_MULTIPLIER_MIN,
   createEmptyCustomCliTestState,
+  normalizeCustomCliGroupMultiplier,
   normalizeCustomCliTestState,
   type CustomCliConfig,
   type CustomCliSettings,
   type CustomCliTestState,
 } from '../../../shared/types/custom-cli-config';
+import type { ModelPriceInfo, ModelPricingData } from '../../../shared/types/site';
 import {
   CLI_TARGET_PROTOCOLS,
   getCliTargetEndpoint,
@@ -45,6 +48,7 @@ import {
   type GeneratedConfig,
 } from '../../services/cli-config-generator';
 import { PanelSection } from './PanelSection';
+import { formatModelPrice, resolveModelPricing } from '../../utils/modelPricing';
 
 // 导入 CLI 图标
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
@@ -154,6 +158,234 @@ function mergeManualModelName(
 
 function getModelInputOptions(config: CustomCliConfig): string[] {
   return Array.from(new Set([...(config.models ?? []), ...(config.manualModels ?? [])]));
+}
+
+function normalizeModelPricingState(pricingData: ModelPricingData | undefined): Record<string, ModelPriceInfo> {
+  return { ...(pricingData?.data ?? {}) };
+}
+
+function getQuotaTypeInfo(quotaType: number) {
+  if (quotaType === 1) {
+    return {
+      icon: <span className="text-[10px] font-bold leading-none text-[var(--warning)]">次</span>,
+      text: '按次',
+      color: 'border-[var(--line-muted)] bg-[var(--warning-soft)] text-[var(--warning)]',
+    };
+  }
+
+  return {
+    icon: <span className="text-[10px] font-bold leading-none text-[var(--accent)]">量</span>,
+    text: '按量',
+    color: 'border-[var(--line-muted)] bg-[var(--accent-soft)] text-[var(--accent)]',
+  };
+}
+
+function buildPriceInputValue(value: number | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value) ? String(value) : '';
+}
+
+function buildGroupMultiplierInputValue(value: unknown): string {
+  return String(normalizeCustomCliGroupMultiplier(value));
+}
+
+function parseGroupMultiplierInput(value: string): number {
+  if (!value.trim()) {
+    return normalizeCustomCliGroupMultiplier(undefined);
+  }
+  return normalizeCustomCliGroupMultiplier(Number(value));
+}
+
+function parseOptionalPrice(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function DirectModelPriceEditor({
+  model,
+  pricing,
+  onChange,
+  onRemove,
+}: {
+  model: string;
+  pricing?: ModelPriceInfo;
+  onChange: (model: string, price: ModelPriceInfo) => void;
+  onRemove: (model: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const resolved = resolveModelPricing(pricing);
+  const isPerCall = resolved.mode === 'perCall';
+  const quotaType = isPerCall ? 1 : 0;
+  const quotaInfo = pricing ? getQuotaTypeInfo(quotaType) : null;
+
+  const updateMode = (nextMode: 'token' | 'perCall') => {
+    if (nextMode === 'perCall') {
+      onChange(model, {
+        quota_type: 1,
+        type: 'times',
+        input: pricing?.input,
+      });
+      return;
+    }
+
+    onChange(model, {
+      quota_type: 0,
+      type: 'tokens',
+      input: pricing?.input,
+      output: pricing?.output,
+    });
+  };
+
+  const updateTokenPrice = (field: 'input' | 'output', value: string) => {
+    const parsed = parseOptionalPrice(value);
+    const next: ModelPriceInfo = {
+      ...(pricing ?? {}),
+      quota_type: 0,
+      type: 'tokens',
+      [field]: parsed,
+    };
+    if (next.input === undefined) delete next.input;
+    if (next.output === undefined) delete next.output;
+    onChange(model, next);
+  };
+
+  const updateCallPrice = (value: string) => {
+    const parsed = parseOptionalPrice(value);
+    const next: ModelPriceInfo = {
+      quota_type: 1,
+      type: 'times',
+      input: parsed,
+    };
+    if (next.input === undefined) delete next.input;
+    onChange(model, next);
+  };
+
+  return (
+    <div className="rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1.5">
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate font-mono text-xs font-medium text-[var(--text-primary)]" title={model}>
+              {model}
+            </span>
+            {quotaInfo ? (
+              <span className={`inline-flex items-center rounded border px-0.5 py-0 leading-none ${quotaInfo.color}`} title={quotaInfo.text}>
+                {quotaInfo.icon}
+              </span>
+            ) : null}
+            {pricing ? (
+              <span className="flex shrink-0 items-center gap-1 text-xs">
+                {isPerCall ? (
+                  <span className="font-semibold text-[var(--warning)]">
+                    ${resolved.callPrice !== null ? formatModelPrice(resolved.callPrice) : '—'}/次
+                  </span>
+                ) : (
+                  <>
+                    {resolved.inputPrice !== null ? (
+                      <span className="font-semibold text-[var(--success)]">
+                        ↑${formatModelPrice(resolved.inputPrice)}
+                      </span>
+                    ) : null}
+                    {resolved.outputPrice !== null ? (
+                      <span className="font-semibold text-[var(--accent)]">
+                        ↓${formatModelPrice(resolved.outputPrice)}
+                      </span>
+                    ) : null}
+                    {resolved.inputPrice === null && resolved.outputPrice === null ? (
+                      <span className="text-[var(--text-tertiary)]">价格未完整</span>
+                    ) : null}
+                  </>
+                )}
+              </span>
+            ) : null}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setExpanded(prev => !prev)}
+            className="rounded-[var(--radius-sm)] px-1.5 py-0.5 text-xs text-[var(--text-secondary)] hover:bg-[var(--surface-1)]"
+          >
+            {expanded ? '收起' : pricing ? '编辑价格' : '添加价格'}
+          </button>
+        </div>
+      </div>
+
+      {expanded ? (
+        <div className="mt-1.5 space-y-2 border-t border-[var(--line-soft)] pt-1.5">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-[var(--text-secondary)]">计费模式</span>
+            <button
+              type="button"
+              onClick={() => updateMode('token')}
+              className={`rounded border px-2 py-1 ${!isPerCall ? 'border-transparent bg-[var(--accent-soft)] text-[var(--accent)]' : 'border-[var(--line-soft)] text-[var(--text-secondary)]'}`}
+            >
+              按量
+            </button>
+            <button
+              type="button"
+              onClick={() => updateMode('perCall')}
+              className={`rounded border px-2 py-1 ${isPerCall ? 'border-transparent bg-[var(--warning-soft)] text-[var(--warning)]' : 'border-[var(--line-soft)] text-[var(--text-secondary)]'}`}
+            >
+              按次
+            </button>
+            {pricing ? (
+              <button
+                type="button"
+                onClick={() => onRemove(model)}
+                className="ml-auto rounded-[var(--radius-sm)] px-1.5 py-0.5 text-xs text-[var(--danger)] hover:bg-[var(--danger-soft)]"
+              >
+                移除价格
+              </button>
+            ) : null}
+          </div>
+
+          {isPerCall ? (
+            <label className="block text-xs text-[var(--text-secondary)]">
+              单次调用价格 ($/次)
+              <input
+                type="number"
+                min="0"
+                step="0.000001"
+                value={buildPriceInputValue(pricing?.input ?? pricing?.output)}
+                onChange={event => updateCallPrice(event.target.value)}
+                placeholder="例如 0.01"
+                className="mt-1 w-full rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 py-1 text-xs text-[var(--text-primary)] focus:ring-1 focus:ring-[var(--accent)]"
+              />
+            </label>
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="block text-xs text-[var(--text-secondary)]">
+                输入价格 ($/1M tokens)
+                <input
+                  type="number"
+                  min="0"
+                  step="0.000001"
+                  value={buildPriceInputValue(pricing?.input)}
+                  onChange={event => updateTokenPrice('input', event.target.value)}
+                  placeholder="例如 3"
+                  className="mt-1 w-full rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 py-1 text-xs text-[var(--text-primary)] focus:ring-1 focus:ring-[var(--accent)]"
+                />
+              </label>
+              <label className="block text-xs text-[var(--text-secondary)]">
+                输出价格 ($/1M tokens)
+                <input
+                  type="number"
+                  min="0"
+                  step="0.000001"
+                  value={buildPriceInputValue(pricing?.output)}
+                  onChange={event => updateTokenPrice('output', event.target.value)}
+                  placeholder="例如 15"
+                  className="mt-1 w-full rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 py-1 text-xs text-[var(--text-primary)] focus:ring-1 focus:ring-[var(--accent)]"
+                />
+              </label>
+            </div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 const normalizeCliSetting = (setting: CustomCliSettings): CustomCliSettings => ({
@@ -448,13 +680,19 @@ export function DirectCliConfigEditorContent({
   const [name, setName] = useState(config.name);
   const [baseUrl, setBaseUrl] = useState(config.baseUrl);
   const [apiKey, setApiKey] = useState(config.apiKey);
+  const [groupMultiplierInput, setGroupMultiplierInput] = useState(() =>
+    buildGroupMultiplierInputValue(config.groupMultiplier)
+  );
   const [notes, setNotes] = useState(config.notes || '');
   const [manualModels, setManualModels] = useState<string[]>(config.manualModels || []);
   const [manualModelInput, setManualModelInput] = useState('');
+  const [modelPricing, setModelPricing] = useState<Record<string, ModelPriceInfo>>(() =>
+    normalizeModelPricingState(config.modelPricing)
+  );
   const [cliSettings, setCliSettings] = useState<CustomCliConfig['cliSettings']>(() =>
     normalizeCliSettings(config.cliSettings)
   );
-  const [selectedCli, setSelectedCli] = useState<CliType | null>(null);
+  const [selectedCli, setSelectedCli] = useState<CliType | null>('claudeCode');
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
 
   // 编辑模式状态
@@ -489,11 +727,13 @@ export function DirectCliConfigEditorContent({
     setName(config.name);
     setBaseUrl(config.baseUrl);
     setApiKey(config.apiKey);
+    setGroupMultiplierInput(buildGroupMultiplierInputValue(config.groupMultiplier));
     setNotes(config.notes || '');
     setManualModels(config.manualModels || []);
     setManualModelInput('');
+    setModelPricing(normalizeModelPricingState(config.modelPricing));
     setCliSettings(normalizeCliSettings(config.cliSettings));
-    setSelectedCli(null);
+    setSelectedCli('claudeCode');
     setCopiedPath(null);
     setTestingCli(null);
     setApplyingCli(null);
@@ -739,6 +979,7 @@ export function DirectCliConfigEditorContent({
     if (latestConfig) {
       const nextCliSettings = normalizeCliSettings(latestConfig.cliSettings);
       setManualModels(latestConfig.manualModels || []);
+      setModelPricing(normalizeModelPricingState(latestConfig.modelPricing));
       setCliSettings(nextCliSettings);
       setPerCliEdited(buildPerCliEditedFromSettings(nextCliSettings));
       setEditedConfig(null);
@@ -827,6 +1068,22 @@ export function DirectCliConfigEditorContent({
     });
   };
 
+
+  const handleUpdateModelPrice = (model: string, price: ModelPriceInfo) => {
+    setModelPricing(prev => ({
+      ...prev,
+      [model]: price,
+    }));
+  };
+
+  const handleRemoveModelPrice = (model: string) => {
+    setModelPricing(prev => {
+      const next = { ...prev };
+      delete next[model];
+      return next;
+    });
+  };
+
   const requestResetConfig = async () => {
     if (showDialog) {
       const confirmed = await showDialog({
@@ -881,8 +1138,10 @@ export function DirectCliConfigEditorContent({
       name,
       baseUrl,
       apiKey,
+      groupMultiplier: parseGroupMultiplierInput(groupMultiplierInput),
       notes,
       manualModels,
+      modelPricing: { data: modelPricing },
       cliSettings: finalCliSettings,
     });
     await saveConfigs();
@@ -980,9 +1239,6 @@ export function DirectCliConfigEditorContent({
                   className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
                 />
               </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div>
                 <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
                   <Key className="mr-1 inline h-4 w-4" />
@@ -996,17 +1252,33 @@ export function DirectCliConfigEditorContent({
                   className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
                 />
               </div>
-              {showModelSummary ? (
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
-                    模型概况
-                  </label>
-                  <div className="rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-secondary)]">
-                    已拉取 {models.length} 个模型，手动模型 {manualModels.length} 个
-                  </div>
-                </div>
-              ) : null}
+              <div>
+                <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
+                  分组倍率
+                </label>
+                <input
+                  aria-label="分组倍率"
+                  type="number"
+                  min={CUSTOM_CLI_GROUP_MULTIPLIER_MIN}
+                  step="0.001"
+                  value={groupMultiplierInput}
+                  onChange={e => setGroupMultiplierInput(e.target.value)}
+                  placeholder="1"
+                  className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                />
+              </div>
             </div>
+
+            {showModelSummary ? (
+              <div>
+                <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
+                  模型概况
+                </label>
+                <div className="rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-secondary)]">
+                  已拉取 {models.length} 个模型，手动模型 {manualModels.length} 个
+                </div>
+              </div>
+            ) : null}
 
             <div>
               <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
@@ -1050,16 +1322,16 @@ export function DirectCliConfigEditorContent({
                   拉取
                 </AppButton>
               </div>
-              {models.length > 0 ? (
-                <div className="mt-3 grid max-h-[280px] grid-cols-1 gap-2 overflow-y-auto md:grid-cols-2">
-                  {models.map(model => (
-                    <div
+              {modelOptions.length > 0 ? (
+                <div className="mt-3 grid max-h-[360px] grid-cols-1 gap-2 overflow-y-auto lg:grid-cols-2">
+                  {modelOptions.map(model => (
+                    <DirectModelPriceEditor
                       key={model}
-                      className="truncate rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--text-primary)]"
-                      title={model}
-                    >
-                      {model}
-                    </div>
+                      model={model}
+                      pricing={modelPricing[model]}
+                      onChange={handleUpdateModelPrice}
+                      onRemove={handleRemoveModelPrice}
+                    />
                   ))}
                 </div>
               ) : null}
@@ -1174,7 +1446,7 @@ export function DirectCliConfigEditorContent({
                         <AppButton
                           variant="secondary"
                           size="sm"
-                          aria-label={`应用 ${cli.name}`}
+                          aria-label={isOpen ? `应用 ${cli.name}` : `应用到本机 ${cli.name}`}
                           onClick={() => handleApplyCliConfig(cli.key)}
                           disabled={
                             !setting.enabled ||

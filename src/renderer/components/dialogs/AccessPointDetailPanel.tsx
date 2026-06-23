@@ -31,7 +31,15 @@ import { SiteCardDetails } from '../SiteCard/SiteCardDetails';
 import { AnyRouterConfigSection } from '../AnyRouterConfigSection';
 import { ManagedCliConfigEditorContent } from './ManagedCliConfigEditorContent';
 import { DirectCliConfigEditorContent } from './DirectCliConfigEditorContent';
-import { isAnyRouterSite, type SiteConfig } from '../../../shared/types/site';
+import {
+  DEFAULT_SITE_TYPE,
+  SITE_TYPE_LABELS,
+  SITE_TYPES,
+  isAnyRouterSite,
+  type SiteConfig,
+  type SiteGroup,
+  type SiteType,
+} from '../../../shared/types/site';
 import type { CustomCliConfig } from '../../../shared/types/custom-cli-config';
 import type { DetectionResult } from '../../App';
 import type { CliConfig } from '../../../shared/types/cli-config';
@@ -76,6 +84,7 @@ export interface AccessPointDetailPanelProps {
   apiKeys?: any[];
   userGroups?: Record<string, { desc: string; ratio: number }>;
   modelPricing?: ModelPricingData | null;
+  groups?: SiteGroup[];
   // CLI 配置与测试
   cliConfig?: CliConfig | null;
   isCliTesting?: boolean;
@@ -100,6 +109,12 @@ export interface AccessPointDetailPanelProps {
   onOpenCreateTokenDialog?: (site: SiteConfig) => void;
   onRefreshToken?: (site: SiteConfig, token: any, index: number) => void;
   onDeleteToken?: (site: SiteConfig, token: any, index: number) => void;
+  onSaveSiteMeta?: (
+    siteId: string,
+    updates: Partial<
+      Pick<SiteConfig, 'site_type' | 'group' | 'extra_links' | 'force_enable_checkin'>
+    >
+  ) => void | Promise<void>;
   onSaveAccount?: (
     accountId: string,
     updates: Partial<
@@ -209,6 +224,25 @@ function InlineSwitch({
   );
 }
 
+interface ManagedSiteDraft {
+  site_type: SiteType;
+  group: string;
+  extra_links: string;
+  force_enable_checkin: boolean;
+}
+
+function buildManagedSiteDraft(
+  site: SiteConfig | null | undefined,
+  defaultGroupId: string
+): ManagedSiteDraft {
+  return {
+    site_type: site?.site_type || DEFAULT_SITE_TYPE,
+    group: site?.group || defaultGroupId,
+    extra_links: site?.extra_links ?? '',
+    force_enable_checkin: Boolean(site?.force_enable_checkin),
+  };
+}
+
 interface ManagedAccountDraft {
   account_name: string;
   user_id: string;
@@ -268,6 +302,7 @@ export function AccessPointDetailPanel({
   apiKeys = [],
   userGroups = {},
   modelPricing,
+  groups = [],
   cliConfig,
   isCliTesting = false,
   cliCompatibility,
@@ -282,6 +317,7 @@ export function AccessPointDetailPanel({
   onOpenCreateTokenDialog,
   onRefreshToken,
   onDeleteToken,
+  onSaveSiteMeta,
   onSaveAccount,
   onSaveCliConfig,
   onPersistCliConfig,
@@ -301,6 +337,12 @@ export function AccessPointDetailPanel({
   const [showTokens, setShowTokens] = useState<Record<string, boolean>>({});
   const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set());
   const [showAccessToken, setShowAccessToken] = useState(false);
+  const defaultGroupId =
+    groups.find(group => group.id === 'default')?.id || groups[0]?.id || 'default';
+  const managedGroups = groups.length > 0 ? groups : [{ id: defaultGroupId, name: '默认分组' }];
+  const [managedSiteDraft, setManagedSiteDraft] = useState<ManagedSiteDraft>(() =>
+    buildManagedSiteDraft(null, defaultGroupId)
+  );
   const [managedAccountDraft, setManagedAccountDraft] = useState<ManagedAccountDraft>(() =>
     buildManagedAccountDraft(null)
   );
@@ -315,18 +357,16 @@ export function AccessPointDetailPanel({
   const isDirectConfig = data?.type === 'custom-cli';
 
   // 获取站点/配置基础信息
-  const { title, siteTypeLabel } = useMemo(() => {
-    if (!data) return { title: '', siteTypeLabel: '' };
+  const { title } = useMemo(() => {
+    if (!data) return { title: '' };
 
     if (data.type === 'managed') {
       return {
         title: data.site.name,
-        siteTypeLabel: data.site.site_type || 'unknown',
       };
     } else {
       return {
         title: data.config.name || '未命名配置',
-        siteTypeLabel: 'customCli',
       };
     }
   }, [data]);
@@ -349,10 +389,22 @@ export function AccessPointDetailPanel({
       : `${token.slice(0, 8)}****${token.slice(-8)}`;
   }, [managedAccountDraft.access_token]);
 
+  const savedManagedSiteDraft = useMemo(
+    () => buildManagedSiteDraft(data?.type === 'managed' ? data.site : null, defaultGroupId),
+    [data, defaultGroupId]
+  );
+
   const savedManagedAccountDraft = useMemo(
     () => buildManagedAccountDraft(currentAccount),
     [currentAccount]
   );
+
+  const isManagedSiteMetaDirty =
+    data?.type === 'managed' &&
+    (managedSiteDraft.site_type !== savedManagedSiteDraft.site_type ||
+      managedSiteDraft.group !== savedManagedSiteDraft.group ||
+      managedSiteDraft.extra_links !== savedManagedSiteDraft.extra_links ||
+      managedSiteDraft.force_enable_checkin !== savedManagedSiteDraft.force_enable_checkin);
 
   const isManagedAccountDirty =
     currentAccount !== null &&
@@ -381,10 +433,20 @@ export function AccessPointDetailPanel({
   useEffect(() => {
     if (open) {
       setActiveTab('info');
+      setManagedSiteDraft(
+        buildManagedSiteDraft(data?.type === 'managed' ? data.site : null, defaultGroupId)
+      );
       setManagedAccountDraft(buildManagedAccountDraft(currentAccount));
       setShowAccessToken(false);
     }
-  }, [currentAccount, open]);
+  }, [currentAccount, data, defaultGroupId, open]);
+
+  const updateManagedSiteDraft = useCallback(
+    <K extends keyof ManagedSiteDraft>(key: K, value: ManagedSiteDraft[K]) => {
+      setManagedSiteDraft(prev => ({ ...prev, [key]: value }));
+    },
+    []
+  );
 
   const updateManagedAccountDraft = useCallback(
     <K extends keyof ManagedAccountDraft>(key: K, value: ManagedAccountDraft[K]) => {
@@ -393,29 +455,55 @@ export function AccessPointDetailPanel({
     []
   );
 
-  const handleSaveManagedAccount = useCallback(async () => {
-    if (!currentAccount || !onSaveAccount) return;
+  const handleSaveManagedInfo = useCallback(async () => {
+    if (data?.type !== 'managed') return;
 
     const normalizedInterval = Math.max(
       1,
       Math.round(Number(managedAccountDraft.auto_refresh_interval) || 30)
     );
-    const updates = {
-      account_name: managedAccountDraft.account_name.trim() || currentAccount.account_name,
-      user_id: managedAccountDraft.user_id.trim(),
-      access_token: managedAccountDraft.access_token,
-      auto_refresh: managedAccountDraft.auto_refresh,
-      auto_refresh_interval: normalizedInterval,
+    const accountUpdates = currentAccount
+      ? {
+          account_name: managedAccountDraft.account_name.trim() || currentAccount.account_name,
+          user_id: managedAccountDraft.user_id.trim(),
+          access_token: managedAccountDraft.access_token,
+          auto_refresh: managedAccountDraft.auto_refresh,
+          auto_refresh_interval: normalizedInterval,
+        }
+      : null;
+    const normalizedSiteDraft: ManagedSiteDraft = {
+      ...managedSiteDraft,
+      extra_links: managedSiteDraft.extra_links.trim(),
     };
 
     setSavingManagedAccount(true);
     try {
-      await onSaveAccount(currentAccount.id, updates);
-      setManagedAccountDraft({ ...updates });
+      if (isManagedSiteMetaDirty && data.site.id && onSaveSiteMeta) {
+        await onSaveSiteMeta(data.site.id, {
+          site_type: normalizedSiteDraft.site_type,
+          group: normalizedSiteDraft.group,
+          extra_links: normalizedSiteDraft.extra_links || undefined,
+          force_enable_checkin: normalizedSiteDraft.force_enable_checkin,
+        });
+        setManagedSiteDraft(normalizedSiteDraft);
+      }
+      if (currentAccount && accountUpdates && isManagedAccountDirty && onSaveAccount) {
+        await onSaveAccount(currentAccount.id, accountUpdates);
+        setManagedAccountDraft({ ...accountUpdates });
+      }
     } finally {
       setSavingManagedAccount(false);
     }
-  }, [currentAccount, managedAccountDraft, onSaveAccount]);
+  }, [
+    currentAccount,
+    data,
+    isManagedAccountDirty,
+    isManagedSiteMetaDirty,
+    managedAccountDraft,
+    managedSiteDraft,
+    onSaveAccount,
+    onSaveSiteMeta,
+  ]);
 
   const handleToggleGroupFilter = useCallback(
     (siteName: string, groupName: string | null) => {
@@ -514,9 +602,6 @@ export function AccessPointDetailPanel({
                     <div className="text-sm font-semibold text-[var(--text-primary)]">
                       站点与账户
                     </div>
-                    <div className="mt-1 text-xs text-[var(--text-secondary)]">
-                      当前账户的身份、凭证和自动刷新在此统一编辑
-                    </div>
                   </div>
                   <AppButton variant="secondary" size="sm" onClick={onAddAccount}>
                     <Plus className="h-4 w-4" />
@@ -527,8 +612,42 @@ export function AccessPointDetailPanel({
                 {currentAccount ? (
                   <>
                     <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-                      <InfoField label="站点类型" value={siteTypeLabel} />
-                      <InfoField label="分组" value={data.site.group || '默认'} />
+                      <div>
+                        <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">
+                          站点类型
+                        </label>
+                        <select
+                          aria-label="站点类型"
+                          value={managedSiteDraft.site_type}
+                          onChange={event =>
+                            updateManagedSiteDraft('site_type', event.target.value as SiteType)
+                          }
+                          className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                        >
+                          {SITE_TYPES.map(siteType => (
+                            <option key={siteType} value={siteType}>
+                              {SITE_TYPE_LABELS[siteType]}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">
+                          分组
+                        </label>
+                        <select
+                          aria-label="分组"
+                          value={managedSiteDraft.group}
+                          onChange={event => updateManagedSiteDraft('group', event.target.value)}
+                          className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                        >
+                          {managedGroups.map(group => (
+                            <option key={group.id} value={group.id}>
+                              {group.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                       <InfoField label="浏览器 Profile" value={currentAccountProfileLabel} />
                     </div>
 
@@ -547,6 +666,21 @@ export function AccessPointDetailPanel({
                             onClick={() => onCopyToClipboard?.(data.site.url, 'URL')}
                           />
                         </div>
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">
+                          加油站链接
+                        </label>
+                        <input
+                          type="url"
+                          aria-label="加油站链接"
+                          value={managedSiteDraft.extra_links}
+                          onChange={event =>
+                            updateManagedSiteDraft('extra_links', event.target.value)
+                          }
+                          placeholder="https://..."
+                          className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                        />
                       </div>
                       <div>
                         <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">
@@ -582,7 +716,7 @@ export function AccessPointDetailPanel({
                           />
                         </div>
                       </div>
-                      <div>
+                      <div className="md:col-span-2">
                         <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">
                           Access Token
                         </label>
@@ -619,7 +753,24 @@ export function AccessPointDetailPanel({
                       </div>
                     </div>
 
-                    <div className="mt-4 grid grid-cols-1 gap-4 border-t border-[var(--line-soft)] pt-4 md:grid-cols-[minmax(0,1fr)_180px]">
+                    <div className="mt-4 grid grid-cols-1 gap-4 border-t border-[var(--line-soft)] pt-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_180px]">
+                      <div className="flex items-center justify-between gap-3 rounded-[var(--radius-md)] bg-[var(--surface-1)] px-3 py-2">
+                        <div className="min-w-0">
+                          <div className="text-xs font-medium text-[var(--text-secondary)]">
+                            启用签到功能
+                          </div>
+                          <div className="mt-0.5 text-xs text-[var(--text-tertiary)]">
+                            保存后按站点生效
+                          </div>
+                        </div>
+                        <InlineSwitch
+                          checked={managedSiteDraft.force_enable_checkin}
+                          onChange={checked =>
+                            updateManagedSiteDraft('force_enable_checkin', checked)
+                          }
+                          ariaLabel="启用签到功能"
+                        />
+                      </div>
                       <div className="flex items-center justify-between gap-3 rounded-[var(--radius-md)] bg-[var(--surface-1)] px-3 py-2">
                         <div className="min-w-0">
                           <div className="text-xs font-medium text-[var(--text-secondary)]">
@@ -722,9 +873,12 @@ export function AccessPointDetailPanel({
                         variant="primary"
                         size="sm"
                         onClick={() => {
-                          void handleSaveManagedAccount();
+                          void handleSaveManagedInfo();
                         }}
-                        disabled={!isManagedAccountDirty || savingManagedAccount}
+                        disabled={
+                          (!isManagedAccountDirty && !isManagedSiteMetaDirty) ||
+                          savingManagedAccount
+                        }
                       >
                         <Save className="h-4 w-4" />
                         {savingManagedAccount ? '保存中...' : '保存更改'}
@@ -744,9 +898,6 @@ export function AccessPointDetailPanel({
                 <div className="border-b border-[var(--line-soft)] pb-4">
                   <div className="min-w-0">
                     <div className="text-sm font-semibold text-[var(--text-primary)]">直连配置</div>
-                    <div className="mt-1 text-xs text-[var(--text-secondary)]">
-                      身份、凭证和备注在此统一编辑
-                    </div>
                   </div>
                 </div>
 

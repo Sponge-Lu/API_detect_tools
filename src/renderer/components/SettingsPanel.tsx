@@ -56,8 +56,6 @@ interface SettingsPanelProps {
   asPage?: boolean;
 }
 
-const EXPORT_VERSION = '1.0';
-
 export function SettingsPanel({
   settings,
   onSave,
@@ -179,59 +177,54 @@ export function SettingsPanel({
     }
   };
 
-  const handleExport = () => {
-    if (!config) {
-      toast.error('无法获取配置');
-      return;
+  const handleExport = async () => {
+    try {
+      const result = await window.electronAPI.backup?.exportPackage?.();
+      if (!result?.success || !result.data?.content) {
+        toast.error(result?.error || '导出配置包失败');
+        return;
+      }
+
+      const blob = new Blob([result.data.content], { type: 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download =
+        result.data.filename ||
+        `api-hub-config-package-${new Date().toISOString().slice(0, 10)}.ahubpkg`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('加密配置包已导出（包含完整认证信息与默认运行态）');
+    } catch (error: any) {
+      toast.error(error?.message || '导出配置包失败');
     }
-    const exportData = {
-      version: EXPORT_VERSION,
-      exportTime: new Date().toISOString(),
-      sites: config.sites.map(s => ({
-        name: s.name,
-        url: s.url,
-        api_key: s.api_key || '',
-        enabled: s.enabled,
-        group: s.group || 'default',
-        has_checkin: s.has_checkin ?? false,
-        force_enable_checkin: s.force_enable_checkin ?? false,
-        extra_links: s.extra_links || '',
-        system_token: s.system_token || '',
-        user_id: s.user_id || '',
-      })),
-      siteGroups: config.siteGroups,
-      settings: config.settings,
-    };
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `api-hub-config-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success('配置已导出（包含完整认证信息）');
   };
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !onImport) return;
+    if (!file) return;
+
     const reader = new FileReader();
-    reader.onload = event => {
+    reader.onload = async event => {
       try {
-        const data = JSON.parse(event.target?.result as string);
-        if (!data.sites || !Array.isArray(data.sites)) {
-          toast.error('无效的配置文件格式');
+        const content = event.target?.result;
+        if (typeof content !== 'string') {
+          toast.error('配置包读取失败');
           return;
         }
-        const newConfig: Config = {
-          sites: data.sites,
-          siteGroups: data.siteGroups || [],
-          settings: data.settings || settings,
-        };
-        onImport(newConfig);
-        toast.success(`已导入 ${data.sites.length} 个站点`);
-      } catch {
-        toast.error('配置文件解析失败');
+
+        const result = await window.electronAPI.backup?.importPackage?.(content);
+        if (!result?.success) {
+          toast.error(result?.error || '导入配置包失败');
+          return;
+        }
+
+        const importedConfig = await window.electronAPI.loadConfig();
+        onImport?.(importedConfig);
+        const restoredCount = result.data?.restoredFiles.length ?? 0;
+        toast.success(`配置包已导入（恢复 ${restoredCount} 个文件）`);
+      } catch (error: any) {
+        toast.error(error?.message || '配置包解析失败');
       }
     };
     reader.readAsText(file);
@@ -765,7 +758,7 @@ export function SettingsPanel({
 
   const renderDataSection = () => (
     <div className="bg-[var(--surface-1)] rounded-xl p-5 border border-[var(--line-soft)] shadow-sm">
-      {config && onImport ? (
+      {config ? (
         <>
           <div className="flex gap-3">
             <button
@@ -787,13 +780,14 @@ export function SettingsPanel({
             <input
               ref={fileInputRef}
               type="file"
-              accept=".json"
+              accept=".ahubpkg,.json"
               onChange={handleImport}
               className="hidden"
             />
           </div>
           <p className="text-xs text-[var(--text-secondary)] mt-2">
-            导出包含完整配置（含认证信息），请妥善保管导出文件
+            导出为主进程生成的加密 manifest
+            配置包（含认证信息与默认运行态），请妥善保管导出文件与本机备份密钥
           </p>
         </>
       ) : (

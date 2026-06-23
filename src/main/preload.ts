@@ -180,6 +180,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getLatestTime: () => ipcRenderer.invoke('backup:get-latest-time'),
     // 手动触发备份
     manual: () => ipcRenderer.invoke('backup:manual'),
+    // 导出 manifest 配置包内容
+    exportPackage: () => ipcRenderer.invoke('backup:export-config-package'),
+    // 导入 manifest 配置包或旧版 config-only JSON
+    importPackage: (content: string) => ipcRenderer.invoke('backup:import-config-package', content),
     // 从备份恢复配置
     restoreConfig: (backupFileName: string) =>
       ipcRenderer.invoke('backup:restore-config', backupFileName),
