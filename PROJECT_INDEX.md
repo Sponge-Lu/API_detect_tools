@@ -43,7 +43,7 @@
 | `src/main/main.ts` | Electron 生命周期、窗口创建、预加载绑定 |
 | `src/main/app-data-events.ts` | 主进程到渲染进程的数据变更通知桥，按域广播站点配置、站点快照和路由总览更新；广播会跳过已销毁窗口/webContents 并吞掉 Electron disposed-frame 竞态错误 |
 | `src/main/app-storage-manifest.ts` | 本地存储清单，声明稳定配置、运行态缓存/统计、日志、备份、敏感设置和受保护浏览器状态的路径、owner、retention/cap 与备份边界 |
-| `src/main/app-storage-bundle.ts` | 基于本地存储清单创建/恢复 manifest 配置包，限制默认备份范围并兼容旧版 config-only 备份；旧版 config-only 恢复只写稳定配置并保留现有运行态 sidecar |
+| `src/main/app-storage-bundle.ts` | 基于本地存储清单创建/恢复 manifest 配置包；用户导出/手动/WebDAV 备份（含 custom CLI 配置），并兼容旧版 config-only 备份 |
 | `src/main/unified-config-manager.ts` | v3 配置加载、迁移、legacy 默认账户自愈修复、缺失 `site_type` 旧站点保持未决、读取失败短重试、原子写入、备份恢复、路由配置持久化与路径暂停状态恢复，以及兼容保存时清理已删站点的孤儿账户；删除最后一个账户时自动移除站点配置；CLI probe latest/history 可一次性写入 sidecar |
 | `src/main/runtime-cache-manager.ts` | 运行期缓存持久化，维护站点共享缓存、账户运行态缓存与 90 天/120 条上限的站点每日快照 |
 | `src/main/chrome-manager.ts` | 多槽位检测浏览器池、独立登录浏览器、按 site_type 解析 localStorage / 初始化用户信息，提供页面级登录态重读入口，收紧 localStorage 站点类型线索，并支持复用账户 Profile 打开签到页 |
@@ -59,7 +59,7 @@
 | `src/main/route-*.ts` / `src/main/anyrouter-request-rewriter.ts` / `src/main/cli-protocol-adapter.ts` | 路由代理服务器、规则解析、模型注册表、自定义 CLI 路由来源、CLI 探测（含自定义 CLI 虚拟配置）、probe-lock 定向测试、健康检查、统计分析；自定义 CLI 已拉取模型列表会过滤旧测试/选择残留，`manualModels` 明确保留用户手动输入模型并同步为路由来源；本地路由上游转发使用 Electron net raw 客户端并支持可选上游代理，透明成功 SSE 响应可边收边转发，流式首包等待仍受站点/配置超时约束，首个 SSE chunk 后活跃流空闲超时下限为 10 分钟，AnyRouter 通道对 Claude Code 保留原始工具语义并注入 Anthropic 指纹，对 Codex/Gemini 保持原生协议，其余显式协议适配统一走通用 CLI 协议转换器；probe-lock 请求只允许 loopback、携带 probeRunId、记录并通知首次真实上游结果、缓存终止失败并限制单模型测试只发起一次真实上游尝试 |
 | `src/main/route-history-service.ts` | 站点管理 History 列时间桶聚合服务，将 CLI 探测样本与路由请求统计按 48h / 2h 桶合并为成功率数据 |
 | `src/main/route-state-manager.ts` | 路由运行态文件管理，将 stats/path state/health、CLI probe、analytics bucket 和模型来源快照拆到有 TTL/max-items 的 `state/*.json`，避免高频状态写入 `config.json` |
-| `src/main/backup-manager.ts` / `webdav-manager.ts` | 本地备份与 WebDAV 云端配置包；自动备份 config-only 节流去重，手动/WebDAV 备份使用 manifest 包 |
+| `src/main/backup-manager.ts` / `webdav-manager.ts` | 本地备份与 WebDAV 云端配置包；自动备份 config-only 节流去重，手动/WebDAV 备份使用加密 `.ahubpkg` manifest 包 |
 
 ### 渲染进程
 
@@ -75,7 +75,7 @@
 | `src/renderer/pages/RoutePage.tsx` | 路由配置/操作页，组合代理服务与模型重定向，并引导用户跳转到数据总览查看统计 |
 | `src/renderer/pages/LogsPage.tsx` | 路由日志主页面，通过逐条 push 追加；使用无卡片横向滚动单行表格展示 CLI 图标、原始模型、路由目标、Token（总/输入/输出/缓存写/缓存读）、参考金额、用时/首字、纯数字状态码与时间，失败信息在第二行展示；直连配置路由目标带 `直连配置 /` 前缀 |
 | `src/renderer/components/HistoryCell.tsx` / `src/renderer/components/Route/Usability/HistoryBucketBars.tsx` / `src/renderer/components/SiteListHeader/SiteListHeader.tsx` | 站点管理 History 列 UI：表头用旧版 CLI SVG 图标提供 Claude Code / Codex / Gemini CLI 选择和综合/探测/路由模式切换；行内只渲染半高 24 个 2h 时间桶成功率条形图，数据来自 `route:getHistoryBuckets` IPC |
-| `src/renderer/components/dialogs/AddAccessPointDialog.tsx` / `AccessPointDetailPanel.tsx` / `OperationRecordDialog.tsx` / `CliProbeSettingsDialog.tsx` | 统一添加接入点弹窗、接入点详情侧滑面板、操作记录弹窗与站点 CLI 探测设置弹窗；侧滑面板固定 720px，Tab 内容区独立滚动；托管站点 Tab1 将账户、站点属性、访问凭证、AnyRouter 与其他账户合并到单一信息面，Tab2 复用 `SiteCardDetails` 展示资源，Tab3 内嵌 `ManagedCliConfigEditorContent`；直连配置 Tab1/Tab2/Tab3 内嵌 `DirectCliConfigEditorContent`；操作记录弹窗显示当前会话内 `kind: action` 的非路由请求操作记录；探测设置弹窗编辑 `routing.cliProbe.config`（不含探测模型数量，模型由各接入点 CLI 测试模型决定） |
+| `src/renderer/components/dialogs/AddAccessPointDialog.tsx` / `AccessPointDetailPanel.tsx` / `OperationRecordDialog.tsx` / `CliProbeSettingsDialog.tsx` | 统一添加接入点弹窗、接入点详情侧滑面板、操作记录弹窗与站点 CLI 探测设置弹窗；侧滑面板固定 720px，Tab 内容区独立滚动；托管站点 Tab1 将账户、站点属性、加油站链接、签到启用、访问凭证、AnyRouter 与其他账户合并到单一信息面，Tab2 复用 `SiteCardDetails` 展示资源，Tab3 内嵌 `ManagedCliConfigEditorContent`；直连配置 Tab1/Tab2/Tab3 内嵌 `DirectCliConfigEditorContent`；操作记录弹窗显示当前会话内 `kind: action` 的非路由请求操作记录；探测设置弹窗编辑 `routing.cliProbe.config`（不含探测模型数量，模型由各接入点 CLI 测试模型决定） |
 | `src/renderer/components/Route/*` | 路由页内部区块（模型重定向、服务器/统计面板，以及站点管理 History 条形图复用组件） |
 | `src/renderer/services/cli-compat-projection.ts` | 将 `routing.cliProbe.latest` 投影为站点页/账户卡片兼容性结果与 CLI 配置弹窗 per-model 测试 slot，并处理来源标记、站点级回退和最新时间戳合并 |
 | `src/renderer/services/sessionEventLog.ts` | 将关键操作写入当前会话事件历史，供站点页操作记录弹窗展示 |

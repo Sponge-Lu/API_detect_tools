@@ -12,6 +12,7 @@
 
 import { app } from 'electron';
 import * as fs from 'fs/promises';
+import * as fsSync from 'fs';
 import * as path from 'path';
 import Logger from './utils/logger';
 import type { CustomCliConfig } from '../shared/types/custom-cli-config';
@@ -23,6 +24,7 @@ import {
   isCustomCliRouteChannel,
   parseCustomCliRouteConfigId,
 } from '../shared/utils/customCliRouteId';
+import { encryptCustomCliConfigs, decryptCustomCliConfigs } from './config-field-crypto';
 
 export interface CustomCliConfigStorage {
   configs: CustomCliConfig[];
@@ -52,8 +54,9 @@ export async function loadCustomCliConfigStorage(): Promise<CustomCliConfigStora
   try {
     const content = await fs.readFile(filePath, 'utf-8');
     const data = JSON.parse(content);
+    const configs = Array.isArray(data.configs) ? data.configs : [];
     return {
-      configs: Array.isArray(data.configs) ? data.configs : [],
+      configs: decryptCustomCliConfigs(configs),
       activeConfigId: typeof data.activeConfigId === 'string' ? data.activeConfigId : null,
     };
   } catch (error: unknown) {
@@ -71,10 +74,38 @@ export async function loadCustomCliConfigStorage(): Promise<CustomCliConfigStora
   }
 }
 
+export function loadCustomCliConfigStorageSync(): CustomCliConfigStorage {
+  const filePath = getCustomCliConfigFilePath();
+  try {
+    const content = fsSync.readFileSync(filePath, 'utf-8');
+    const data = JSON.parse(content);
+    const configs = Array.isArray(data.configs) ? data.configs : [];
+    return {
+      configs: decryptCustomCliConfigs(configs),
+      activeConfigId: typeof data.activeConfigId === 'string' ? data.activeConfigId : null,
+    };
+  } catch (error: unknown) {
+    if (
+      error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error as { code?: string }).code === 'ENOENT'
+    ) {
+      return DEFAULT_CUSTOM_CLI_CONFIG_STORAGE;
+    }
+    Logger.error('[CustomCliConfigService] 同步读取配置文件失败:', error);
+    return DEFAULT_CUSTOM_CLI_CONFIG_STORAGE;
+  }
+}
+
 export async function saveCustomCliConfigStorage(data: CustomCliConfigStorage): Promise<void> {
   const filePath = getCustomCliConfigFilePath();
   try {
-    await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+    const encryptedData = {
+      configs: encryptCustomCliConfigs(data.configs),
+      activeConfigId: data.activeConfigId,
+    };
+    await fs.writeFile(filePath, JSON.stringify(encryptedData, null, 2), 'utf-8');
     Logger.info('[CustomCliConfigService] 配置文件已保存');
   } catch (error: unknown) {
     Logger.error('[CustomCliConfigService] 保存配置文件失败:', error);

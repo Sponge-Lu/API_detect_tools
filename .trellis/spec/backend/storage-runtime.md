@@ -51,12 +51,29 @@ export interface AppStorageBundle {
   files: AppStorageBundleFile[];
 }
 
-export function createAppStorageBundleContent(): Promise<string>;
+export interface CreateAppStorageBundleContentOptions {
+  includeExplicitSensitive?: boolean;
+  explicitSensitiveEntryIds?: string[];
+  encrypt?: boolean;
+}
+
+export function getUserConfigPackageBundleOptions(): CreateAppStorageBundleContentOptions;
+export function createAppStorageBundleContent(
+  roots?: AppStorageRoots,
+  options?: CreateAppStorageBundleContentOptions
+): Promise<string>;
+export function decryptBackupContentIfNeeded(content: string): Promise<string>;
 export function extractStableConfigFromBackupContent(content: string): unknown;
 export function restoreAppStorageBackupContent(
   content: string,
   targetConfigPath: string
 ): Promise<{ kind: 'storage-bundle' | 'legacy-config'; restoredFiles: string[] }>;
+
+// src/main/app-storage-backup-crypto.ts
+export const ENCRYPTED_APP_STORAGE_BACKUP_FORMAT = 'api-hub-encrypted-storage-backup';
+export const ENCRYPTED_APP_STORAGE_BACKUP_EXTENSION = '.ahubpkg';
+export function encryptAppStorageBackupContent(plaintext: string): Promise<string>;
+export function decryptAppStorageBackupContent(content: string): Promise<string>;
 
 // scripts/migrate-config-v224-to-v301.cjs
 node scripts/migrate-config-v224-to-v301.cjs [--path <config.json>] [--dry-run]
@@ -93,16 +110,23 @@ export function writeJsonFileAtomically<T>(targetPath: string, value: T): Promis
   failure. They must not fall back to non-atomic overwrite/copy of the target file, because readers
   can observe a partially replaced file on Windows.
 - Automatic config backup remains lightweight and config-only, with throttle + content dedupe.
-  Manual local backup and WebDAV upload use a `full-manifest` storage bundle.
+  Manual local backup, WebDAV upload, and settings-page export use an encrypted `.ahubpkg` user
+  config package: AES-256-GCM envelope + gzip-compressed manifest plaintext.
+- `getUserConfigPackageBundleOptions()` is the only standard explicit-sensitive package preset. It
+  may include `custom-cli-configs.json`, but must not include `credit-settings.json` or browser
+  operational state.
 - Bundle restore may write only manifest entries where `backup.defaultIncluded === true` and
-  `backup.modes` contains `full-manifest`.
+  `backup.modes` contains `full-manifest`, plus explicitly allowed sensitive entries from the
+  user config package preset.
 - Legacy config-only restore must preserve existing managed runtime/cache/state files. A config-only
   backup has no authority over sidecar state, so preserving sidecars prevents automatic recovery from
   deleting runtime continuity after a transient config read failure.
 - Browser operational state entries are protected: do not migrate, compact, delete, back up by
   default, or restore them from bundles.
 - `custom-cli-configs.json` and `credit-settings.json` are explicitly sensitive and excluded from
-  default bundles until an explicit-sensitive flow exists.
+  default plaintext bundles. The encrypted user config package explicitly includes
+  `custom-cli-configs.json` so direct CLI credentials migrate with user config; `credit-settings.json`
+  remains excluded because credit cookies are not part of the portable config package contract.
 - Logs are excluded from default backups and this storage split does not add log redaction.
 
 ### 4. Validation & Error Matrix
@@ -111,6 +135,9 @@ export function writeJsonFileAtomically<T>(targetPath: string, value: T): Promis
 | --- | --- | --- |
 | Missing `config.json` during bundle upload | bundle creation -> upload | Reject because no `stable-config` can be extracted |
 | Bundle has unknown or protected entry id | restore | Reject before mutating any file |
+| Encrypted package key id does not match this install | decrypt -> restore | Reject before mutating any file with `备份加密密钥不匹配，无法解密该配置包` |
+| User config package contains `custom-cli-configs` | restore | Restore it only from the encrypted explicit-sensitive package flow |
+| User config package omits `credit-settings` | restore | Preserve any existing local `credit-settings.json` because package restore has no authority over credit cookies |
 | Bundle file hash mismatch | restore | Reject before mutating any file |
 | `config.json` contains transient invalid JSON during a write | load -> recovery | Retry before attempting backup restore |
 | Legacy config-only restore with stale `runtime-cache.json` | restore -> load | Preserve managed runtime/cache/state sidecars, then write config |
@@ -125,8 +152,9 @@ export function writeJsonFileAtomically<T>(targetPath: string, value: T): Promis
 
 - Good: saving a site with fresh detection cache hydrates the renderer compatibility view, but the
   persisted `config.json` has no `cached_data`.
-- Good: restoring a WebDAV manifest bundle restores config, runtime cache, route state, and settings
-  included by the manifest while leaving browser profiles intact.
+- Good: restoring a WebDAV/user-export `.ahubpkg` restores config, runtime cache, route state,
+  default settings, and `custom-cli-configs.json` while leaving browser profiles and
+  `credit-settings.json` intact.
 - Base: restoring an old `config_*.json` backup restores only stable config and preserves existing
   runtime sidecars; full-manifest restore is required to replace sidecar state.
 - Bad: adding a new runtime file without an `AppStorageEntry`; backup/restore and migration will
@@ -140,8 +168,10 @@ export function writeJsonFileAtomically<T>(targetPath: string, value: T): Promis
 
 - `src/__tests__/storage-manifest.test.ts`: manifest ids, protected browser entries, sensitive
   explicit backup policy, and retention/cap declarations.
-- `src/__tests__/app-storage-bundle.test.ts`: bundle inclusion/exclusion, bundle restore clearing
-  stale managed files, and legacy config-only restore preserving runtime sidecars.
+- `src/__tests__/app-storage-bundle.test.ts`: bundle inclusion/exclusion, encrypted user config
+  package hides plaintext secrets, includes `custom-cli-configs`, excludes/preserves
+  `credit-settings`, bundle restore clearing stale managed files, and legacy config-only restore
+  preserving runtime sidecars.
 - `src/__tests__/backup-manager.test.ts`: automatic backup throttle/dedupe and forced retention.
 - `src/__tests__/atomic-json.test.ts`: parent directory creation, transient final-rename retry,
   no non-atomic overwrite fallback, same-target write serialization, missing-file defaults, and
@@ -181,8 +211,11 @@ await copyDirectory(app.getPath('userData'), backupDir);
 #### Correct
 
 ```ts
-// Includes only manifest-approved full-manifest files.
-const content = await createAppStorageBundleContent();
+// Uses the package preset: encrypted envelope + only approved explicit-sensitive entries.
+const content = await createAppStorageBundleContent(
+  undefined,
+  getUserConfigPackageBundleOptions()
+);
 ```
 
 ## Scenario: Managed Site Account-Scoped Persistence

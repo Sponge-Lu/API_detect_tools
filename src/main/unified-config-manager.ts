@@ -29,6 +29,7 @@ import { runtimeCacheManager } from './runtime-cache-manager';
 import { routeStateManager } from './route-state-manager';
 import { detectSiteType } from './site-type-detector';
 import { matchPattern } from './route-rule-engine';
+import { encryptConfigFields, decryptConfigFields } from './config-field-crypto';
 import type {
   UnifiedConfig,
   UnifiedSite,
@@ -334,8 +335,7 @@ export class UnifiedConfigManager {
         needsSave,
         repairedLegacyAccounts,
         migratedManagedSiteLegacyAuth,
-      } =
-        await this.readConfigFromPathWithRetries(this.configPath);
+      } = await this.readConfigFromPathWithRetries(this.configPath);
       this.config = config;
       runtimeCacheManager.setCache(runtimeCache);
       if (needsSave) {
@@ -428,7 +428,8 @@ export class UnifiedConfigManager {
 
     this.assertConfigShape(parsed, configPath);
 
-    let config: UnifiedConfig = parsed;
+    // 解密敏感字段
+    let config: UnifiedConfig = decryptConfigFields(parsed);
     let needsSave = false;
 
     // v2 → v3 自动迁移
@@ -495,7 +496,7 @@ export class UnifiedConfigManager {
 
     for (const backup of backups) {
       try {
-        backupManager.readConfigFromBackup?.(backup.path);
+        await backupManager.readConfigFromBackup?.(backup.path);
         const restored = await backupManager.restoreFromBackup(backup.filename, this.configPath);
 
         if (!restored) {
@@ -935,7 +936,10 @@ export class UnifiedConfigManager {
       }
 
       if (site.cached_data) {
-        primaryAccount.cached_data = this.mergeDefinedCache(primaryAccount.cached_data, site.cached_data);
+        primaryAccount.cached_data = this.mergeDefinedCache(
+          primaryAccount.cached_data,
+          site.cached_data
+        );
         changed = true;
       }
 
@@ -1376,7 +1380,10 @@ export class UnifiedConfigManager {
     const persistableConfig = this.createPersistableConfig(this.config);
     persistableConfig.last_updated = this.config.last_updated;
 
-    await writeTextFileAtomically(this.configPath, JSON.stringify(persistableConfig, null, 2));
+    // 加密敏感字段后再序列化
+    const encryptedConfig = encryptConfigFields(persistableConfig);
+
+    await writeTextFileAtomically(this.configPath, JSON.stringify(encryptedConfig, null, 2));
     await runtimeCacheManager.saveCache(runtimeCache);
     if (this.config.routing) {
       await routeStateManager.saveSnapshotFromRouting(this.config.routing);

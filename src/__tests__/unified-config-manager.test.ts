@@ -1097,10 +1097,14 @@ describe('UnifiedConfigManager', () => {
 
     expect(second.id).toBe(first.id);
 
+    // 验证磁盘上的配置：token 应该是加密的
     const persisted = JSON.parse(await fs.readFile(path.join(userDataDir, 'config.json'), 'utf-8'));
     expect(persisted.accounts).toHaveLength(1);
     expect(persisted.accounts[0].account_name).toBe('焕昭君');
-    expect(persisted.accounts[0].access_token).toBe('token-new');
+    expect(persisted.accounts[0].access_token).toMatch(/^encrypted:v1:/); // 磁盘上是加密的
+
+    // 验证内存中的配置：token 应该是明文的（通过返回的账户对象）
+    expect(second.access_token).toBe('token-new'); // addAccount 返回的对象应该包含明文
   });
 
   it('removes the site config when deleting the last account of a site', async () => {
@@ -1210,7 +1214,7 @@ describe('UnifiedConfigManager', () => {
           modelsPerCli: 1,
           requestTimeoutMs: 30000,
           maxConcurrency: 3,
-          retentionDays: 30,
+          retentionDays: 3,
           runOnStartup: false,
         },
         latest: {},
@@ -1219,7 +1223,7 @@ describe('UnifiedConfigManager', () => {
       analytics: {
         config: {
           enabled: true,
-          retentionDays: 30,
+          retentionDays: 3,
           bucketSizeMinutes: 60,
           recordTokenUsage: true,
           recordStatusCode: true,
@@ -1516,7 +1520,7 @@ describe('UnifiedConfigManager', () => {
           modelsPerCli: 1,
           requestTimeoutMs: 30000,
           maxConcurrency: 3,
-          retentionDays: 30,
+          retentionDays: 3,
           runOnStartup: false,
         },
         latest: {},
@@ -1525,7 +1529,7 @@ describe('UnifiedConfigManager', () => {
       analytics: {
         config: {
           enabled: true,
-          retentionDays: 30,
+          retentionDays: 3,
           bucketSizeMinutes: 60,
           recordTokenUsage: true,
           recordStatusCode: true,

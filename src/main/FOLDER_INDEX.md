@@ -26,7 +26,8 @@
 | **main.ts** | 应用入口、窗口管理 | `createWindow()`, `app.whenReady()` |
 | **app-data-events.ts** | 主进程到渲染进程的数据变更通知桥，按域批量广播站点配置/站点总览/路由总览变更；广播会跳过已销毁窗口/webContents 并吞掉 Electron disposed-frame 竞态错误 | `notifyAppDataChanged()`, `broadcastRendererEvent()` |
 | **app-storage-manifest.ts** | 应用本地存储清单，声明 stable config、runtime/cache/statistics、备份、日志、敏感设置与受保护浏览器状态的 owner、路径、retention/cap 和备份边界 | `APP_STORAGE_ENTRIES`, `resolveAppStorageManifest()` |
-| **app-storage-bundle.ts** | manifest 配置包创建/恢复，限定 full-manifest 默认纳入文件，兼容 legacy config-only 恢复并避免浏览器状态被触碰；旧版 config-only 恢复只写稳定配置并保留已有运行态 sidecar | `createAppStorageBundleContent()`, `restoreAppStorageBackupContent()` |
+| **app-storage-bundle.ts** | manifest 配置包创建/恢复，支持加密 `.ahubpkg` 用户配置包（显式纳入 custom CLI 敏感配置、排除 LDC cookie），兼容 legacy config-only 恢复并避免浏览器状态被触碰 | `createAppStorageBundleContent()`, `restoreAppStorageBackupContent()` |
+| **config-field-crypto.ts** | 配置字段 AES-256-GCM 加密/解密，应用固定密钥版本化，在磁盘 I/O 边界透明加解密敏感字段（api_key, access_token, apiKey） | `encryptField()`, `decryptField()`, `encryptConfigFields()`, `decryptConfigFields()`, `encryptCustomCliConfigs()`, `decryptCustomCliConfigs()` |
 | **api-service.ts** | API 请求服务、模型接口响应格式容错、NewAPI/Sub2API 认证失败 envelope 识别、检测状态持久化、同日手动签到完成状态保留、旧站点首次检测时自动写回 `site_type`，并在缓存更新后触发站点每日快照采集 | `ApiService` 类 |
 | **overview-service.ts** | 数据总览聚合服务，维护站点每日快照的采集、查询和按日期汇总 | `captureSiteDailySnapshot()`, `getSiteDailySnapshots()`, `getSiteSnapshotTotals()` |
 | **chrome-manager.ts** | Chrome 浏览器管理、多槽位架构、独立登录浏览器（loginBrowserState）、按 site_type 解析登录态，提供页面级登录态重读入口，并支持复用账户 Profile 打开签到页 | `ChromeManager` 类 |
@@ -37,8 +38,8 @@
 | **cli-wrapper-compat-service.ts** | 基于真实 CLI wrapper 的兼容性测试；当前 UI 测试主路径，使用临时 HOME/CODEX_HOME 隔离环境，监听 route probe-lock 请求/终止失败以提前停止确定性失败测试，并在 CLI 二次请求先触发 probe-lock 限制时等待/回看首次真实上游结果避免误判，Claude JSON 错误会摘要化，清理临时目录时会重试并避免 Windows 文件锁覆盖真实测试结果，Gemini 仅写隔离 `HOME/.gemini` 并禁用自身 sandbox relaunch | `CliWrapperCompatService` 类 |
 | **custom-cli-config-service.ts** | 自定义 CLI 配置持久化服务，并为路由生成自定义 CLI 虚拟站点/账户/API Key 标识 | `loadCustomCliConfigStorage()`, `buildCustomCliRouteSiteId()` |
 | **custom-cli-model-service.ts** | 直连配置模型获取服务，通过 `baseUrl + /v1/models` 获取模型列表并写回配置 | `fetchModels()`, `fetchAllModels()` |
-| **backup-manager.ts** | 本地备份管理，自动备份保持 config-only 节流去重，手动备份生成 manifest 配置包 | `backupManager` 实例 |
-| **webdav-manager.ts** | WebDAV 云端配置包上传、列表、删除与恢复，兼容旧 config-only 备份 | `WebDAVManager` 类 |
+| **backup-manager.ts** | 本地备份管理，自动备份保持 config-only 节流去重，手动备份生成加密 `.ahubpkg` manifest 配置包 | `backupManager` 实例 |
+| **webdav-manager.ts** | WebDAV 云端加密 `.ahubpkg` 配置包上传、列表、删除与恢复，兼容旧 config-only `.json` 备份 | `WebDAVManager` 类 |
 | **unified-config-manager.ts** | 统一配置管理、损坏恢复、读取失败短重试、原子写入、legacy 默认账户自愈修复、缺失 `site_type` 旧站点保持未决、路由路径暂停状态恢复、兼容保存时清理已删站点的孤儿账户、删除最后一个账户时自动移除站点配置，并提供 CLI probe samples/latest 一次性 sidecar 写入 | `unifiedConfigManager` 实例 |
 | **browser-profile-manager.ts** | 主/隔离浏览器 Profile 管理，多账户共享槽位 | `BrowserProfileManager` 类 |
 | **update-service.ts** | 应用更新服务 | `UpdateService` 类 |
