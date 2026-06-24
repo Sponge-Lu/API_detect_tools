@@ -37,3 +37,37 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: 修正 CLI 配置归属 + 规范化测试模型
+
+**Date**: 2026-06-24
+**Task**: 修正 CLI 配置归属 + 规范化测试模型
+**Branch**: `main`
+
+### Summary
+
+1. 修正 CLI 配置归属错误（PRD 决策 2 从站点级改为账户级）\n2. 更新类型定义（Site 删除 cli_config，AccountCredential 恢复 cli_config）\n3. 修正迁移逻辑和代码引用\n4. 新增：规范化测试模型列表（旧版本遗留多个模型，当前只支持 1 个，自动截断）
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e40a08b` | (see git log) |
+| `905c584` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
