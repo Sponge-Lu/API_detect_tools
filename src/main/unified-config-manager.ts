@@ -161,6 +161,36 @@ function normalizeCliConfigTargetProtocols(
   }
 }
 
+/**
+ * 规范化 CLI 配置的测试模型列表（当前版本只支持 1 个测试模型）
+ * 如果发现多个测试模型（旧版本遗留），自动截断为只保留第一个
+ */
+function normalizeCliConfigTestModels(
+  cliConfig?: Partial<
+    Record<RouteCliType, { testModels?: string[] | null } | null>
+  > | null
+): void {
+  if (!cliConfig) {
+    return;
+  }
+
+  for (const cliType of ROUTE_CLI_TYPES) {
+    const item = cliConfig[cliType];
+    if (!item || !Array.isArray(item.testModels)) {
+      continue;
+    }
+
+    // 如果有多个测试模型，只保留第一个
+    if (item.testModels.length > 1) {
+      const originalCount = item.testModels.length;
+      item.testModels = [item.testModels[0]];
+      Logger.info(
+        `🔧 [UnifiedConfigManager] 规范化 CLI 配置: ${cliType} 测试模型从 ${originalCount} 个截断为 1 个`
+      );
+    }
+  }
+}
+
 function normalizePriorityRecord(
   value: Record<string, number> | null | undefined
 ): Record<string, number> {
@@ -1091,6 +1121,11 @@ export class UnifiedConfigManager {
       normalizeCliConfigTargetProtocols(
         account.cli_config as Partial<
           Record<RouteCliType, { targetProtocol?: CliTargetProtocol | null } | null>
+        >
+      );
+      normalizeCliConfigTestModels(
+        account.cli_config as Partial<
+          Record<RouteCliType, { testModels?: string[] | null } | null>
         >
       );
     }

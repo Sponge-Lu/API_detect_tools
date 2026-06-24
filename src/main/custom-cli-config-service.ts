@@ -49,14 +49,44 @@ export function getCustomCliConfigFilePath(): string {
   return path.join(app.getPath('userData'), 'custom-cli-configs.json');
 }
 
+/**
+ * 规范化直连配置的测试模型列表（当前版本只支持 1 个测试模型）
+ * 如果发现多个测试模型（旧版本遗留），自动截断为只保留第一个
+ */
+function normalizeCustomCliConfigTestModels(configs: CustomCliConfig[]): void {
+  for (const config of configs) {
+    const cliTypes = ['claudeCode', 'codex', 'geminiCli'] as const;
+    for (const cliType of cliTypes) {
+      const cliSettings = config.cliSettings?.[cliType];
+      if (!cliSettings || !Array.isArray(cliSettings.testModels)) {
+        continue;
+      }
+
+      // 如果有多个测试模型，只保留第一个
+      if (cliSettings.testModels.length > 1) {
+        const originalCount = cliSettings.testModels.length;
+        cliSettings.testModels = [cliSettings.testModels[0]];
+        Logger.info(
+          `🔧 [CustomCliConfigService] 规范化直连配置 "${config.name}": ${cliType} 测试模型从 ${originalCount} 个截断为 1 个`
+        );
+      }
+    }
+  }
+}
+
 export async function loadCustomCliConfigStorage(): Promise<CustomCliConfigStorage> {
   const filePath = getCustomCliConfigFilePath();
   try {
     const content = await fs.readFile(filePath, 'utf-8');
     const data = JSON.parse(content);
     const configs = Array.isArray(data.configs) ? data.configs : [];
+    const decryptedConfigs = decryptCustomCliConfigs(configs);
+
+    // 规范化测试模型（只保留第一个）
+    normalizeCustomCliConfigTestModels(decryptedConfigs);
+
     return {
-      configs: decryptCustomCliConfigs(configs),
+      configs: decryptedConfigs,
       activeConfigId: typeof data.activeConfigId === 'string' ? data.activeConfigId : null,
     };
   } catch (error: unknown) {
@@ -80,8 +110,13 @@ export function loadCustomCliConfigStorageSync(): CustomCliConfigStorage {
     const content = fsSync.readFileSync(filePath, 'utf-8');
     const data = JSON.parse(content);
     const configs = Array.isArray(data.configs) ? data.configs : [];
+    const decryptedConfigs = decryptCustomCliConfigs(configs);
+
+    // 规范化测试模型（只保留第一个）
+    normalizeCustomCliConfigTestModels(decryptedConfigs);
+
     return {
-      configs: decryptCustomCliConfigs(configs),
+      configs: decryptedConfigs,
       activeConfigId: typeof data.activeConfigId === 'string' ? data.activeConfigId : null,
     };
   } catch (error: unknown) {
