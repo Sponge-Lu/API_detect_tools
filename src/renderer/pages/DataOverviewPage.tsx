@@ -3093,9 +3093,25 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
     };
   }, [config, customCliConfigs]);
 
+  const knownSiteIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (config) {
+      for (const site of config.sites || []) {
+        if (site?.id) ids.add(site.id);
+      }
+    }
+    for (const customCli of customCliConfigs || []) {
+      if (customCli?.id) ids.add(buildCustomCliRouteSiteId(customCli.id));
+    }
+    return ids;
+  }, [config, customCliConfigs]);
+
   const scatterPoints = useMemo(
-    () => buildRouteScatterPoints(filteredBuckets, channelNameLookup),
-    [filteredBuckets, channelNameLookup]
+    () =>
+      buildRouteScatterPoints(filteredBuckets, channelNameLookup).filter(point =>
+        knownSiteIds.has(point.siteId)
+      ),
+    [filteredBuckets, channelNameLookup, knownSiteIds]
   );
 
   const disabledChannelKeys = useMemo(() => {
