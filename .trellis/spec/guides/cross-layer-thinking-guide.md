@@ -238,6 +238,30 @@ Checklist:
 - add a regression at the active workflow boundary so missing UI controls fail where the user sees
   them
 
+### Mistake 11: Migrating A Configuration Owner In Only One Layer
+
+**Bad**: Moving a persisted setting from one owner to another, then updating only the editor or only
+the runtime reader.
+
+Examples:
+- managed-site CLI config moves from `sites[].cli_config` to `accounts[].cli_config`, but the save
+  handler still writes the site record
+- scheduled CLI probes read `site.cli_config` while the side panel saves `account.cli_config`
+- renderer startup loads account CLI config into the bare site-name store key, so an account card
+  cannot see its own saved settings
+- route target protocol resolution reads a different owner than manual CLI tests and probe samples
+
+**Good**: Treat ownership migrations as a full data-flow change and update every producer,
+consumer, projection, and regression test in the same task.
+
+Checklist:
+- identify the canonical persisted owner and any legacy fallback owner
+- update save handlers first, then loaders, projections, scheduled jobs, route resolvers, and bridge
+  typings
+- make fallback order explicit, for example `account.config ?? site.legacyConfig`
+- when a child owner explicitly disables a feature, do not fall back to a parent legacy enable
+- add tests for write path, load projection key, scheduler/runtime selection, and legacy fallback
+
 ---
 
 ## Checklist for Cross-Layer Features
@@ -261,6 +285,8 @@ After implementation:
       stale or partial
 - [ ] Confirmed CLI transport model names are not blindly treated as user routing intent when the
       app has an explicit selected model fallback
+- [ ] Confirmed configuration ownership migrations update save handlers, loaders, projections,
+      scheduled jobs, route resolvers, and tests together
 
 ---
 

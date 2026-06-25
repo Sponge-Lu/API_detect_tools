@@ -40,19 +40,19 @@
 | **custom-cli-model-service.ts** | 直连配置模型获取服务，通过 `baseUrl + /v1/models` 获取模型列表并写回配置 | `fetchModels()`, `fetchAllModels()` |
 | **backup-manager.ts** | 本地备份管理，自动备份保持 config-only 节流去重，手动备份生成加密 `.ahubpkg` manifest 配置包 | `backupManager` 实例 |
 | **webdav-manager.ts** | WebDAV 云端加密 `.ahubpkg` 配置包上传、列表、删除与恢复，兼容旧 config-only `.json` 备份 | `WebDAVManager` 类 |
-| **unified-config-manager.ts** | 统一配置管理、损坏恢复、读取失败短重试、原子写入、legacy 默认账户自愈修复、缺失 `site_type` 旧站点保持未决、路由路径暂停状态恢复、兼容保存时清理已删站点的孤儿账户、删除最后一个账户时自动移除站点配置，并提供 CLI probe samples/latest 一次性 sidecar 写入 | `unifiedConfigManager` 实例 |
+| **unified-config-manager.ts** | 统一配置管理、损坏恢复、读取失败短重试、原子写入、legacy 默认账户自愈修复、缺失 `site_type` 旧站点保持未决、账户级 `cli_config` 更新、路由路径暂停状态恢复、兼容保存时清理已删站点的孤儿账户、删除最后一个账户时自动移除站点配置，并提供 CLI probe samples/latest 一次性 sidecar 写入 | `unifiedConfigManager` 实例 |
 | **browser-profile-manager.ts** | 主/隔离浏览器 Profile 管理，多账户共享槽位 | `BrowserProfileManager` 类 |
 | **update-service.ts** | 应用更新服务 | `UpdateService` 类 |
 | **config-detection-service.ts** | CLI 配置检测服务 | `ConfigDetectionService` 类 |
 | **close-behavior-manager.ts** | 窗口关闭行为管理 | `CloseBehaviorManager` 类 |
 | **credit-service.ts** | Linux Do Credit 积分检测、LDC 充值 | `CreditService` 类 |
-| **route-channel-resolver.ts** | 路由通道解析，结合站点/账户/API Key/自定义 CLI 配置与厂商优先级选择实际通道 | `resolveChannels()`, `resolveChannelCredentials()` |
+| **route-channel-resolver.ts** | 路由通道解析，结合站点/账户/API Key/自定义 CLI 配置与厂商优先级选择实际通道；CLI targetProtocol 按账户级配置优先、站点级旧配置 fallback | `resolveChannels()`, `resolveChannelCredentials()` |
 | **route-proxy-service.ts** | 本地路由代理服务器，按规则选择上游通道，使用 Electron net raw 客户端转发，成功透明 SSE 边收边转发；流式请求首包等待仍受站点/配置超时约束，首个 SSE chunk 后使用 10 分钟活跃流空闲超时下限，同时在 AnyRouter / 通用 CLI 协议适配通道上接入请求/响应转换并从 JSON/SSE 响应解析 provider usage/cache token；probe-lock 请求只允许 loopback，缓存终止失败、记录并通知首次真实上游结果并限制单模型测试只发起一次真实上游尝试 | `startRouteProxyServer()`, `stopRouteProxyServer()`, `extractUsageFromBody()` |
 | **route-probe-lock.ts** | CLI 探测/手动测试专用的 loopback probe-lock 编解码、本地路由基址构造、请求观察、终止失败通知/缓存、首次真实上游结果缓存/通知/等待与单模型上游尝试预算 | `buildProbeLockRouteApiKey()`, `parseProbeLockRouteApiKey()`, `buildRouteProxyBaseUrl()`, `subscribeRouteProbeLockTerminalFailure()` |
 | **anyrouter-request-rewriter.ts** | AnyRouter 请求/响应适配器：Claude Code 保留原始工具语义并注入 Anthropic 指纹，Codex 原生 Responses 透传，Gemini 原生透传 | `rewriteForAnyRouter()`, `transformAnyRouterResponse()` |
 | **cli-protocol-adapter.ts** | 通用 CLI 协议适配器：在 Claude/Codex/Gemini 原生协议与 Anthropic / OpenAI 上游协议之间双向转换请求与响应（含 text/tool_use/tool_result/function_call/function_call_output 工具语义、流式 SSE 与非流式 JSON、usage/finish_reason 映射），失败时抛 `CliProtocolAdapterError` 携带 stage 上下文 | `adaptRequestToTargetProtocol()`, `transformTargetProtocolResponse()`, `CliProtocolAdapterError` |
 | **route-model-registry-service.ts** | 模型注册表聚合、展示项维护与厂商优先级配置，聚合站点/账户模型和自定义 CLI 配置模型；自定义 CLI 已拉取模型列表会作为候选边界过滤旧测试/选择残留，`manualModels` 作为用户手动输入模型例外保留，配置保存后通过 handler 强制刷新持久化 registry | `rebuildModelRegistry()`, `resetModelRegistryDefaults()`, `syncModelRegistrySources()` |
-| **route-cli-probe-service.ts** | CLI 定时探测、latest/history 维护与视图聚合；探测覆盖站点账户与自定义 CLI 虚拟配置，站点探测只选择活跃 API Key，并通过 probe-lock 携带 `probeRunId` 精确钉到当前站点/账户/API Key/模型/自定义上游 | `runCliProbeNow()`, `getCliProbeView()` |
+| **route-cli-probe-service.ts** | CLI 定时探测、latest/history 维护与视图聚合；探测覆盖站点账户与自定义 CLI 虚拟配置，托管站点按账户级 CLI 配置优先选择开关/模型/协议并保留站点级旧配置 fallback，站点探测只选择活跃 API Key，并通过 probe-lock 携带 `probeRunId` 精确钉到当前站点/账户/API Key/模型/自定义上游 | `runCliProbeNow()`, `getCliProbeView()` |
 | **route-analytics-service.ts** | 路由请求分析、token/缓存 token/延迟/状态码统计与对象级排行 | `recordRouteRequest()`, `getRouteObjectStats()` |
 | **route-history-service.ts** | History 时间桶聚合服务，将 CLI 探测样本和路由统计按 48h / 2h 桶合并为成功率数据 | `getHistoryBuckets()` |
 | **route-stats-service.ts** | 路由调用统计与通道评分排序 | `recordOutcome()`, `sortChannelsByScore()` |

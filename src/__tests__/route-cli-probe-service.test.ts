@@ -271,7 +271,6 @@ describe('route-cli-probe-service', () => {
     expect(persistedSamples[0].probeRunId).toMatch(/^route_/);
   });
 
-
   it('即时探测只使用每个 CLI 配置中选择的单个测试模型，不受全局 modelsPerCli 影响', async () => {
     const config = {
       sites: [
@@ -322,6 +321,108 @@ describe('route-cli-probe-service', () => {
       canonicalModel: 'gpt-4.1-mini',
       rawModel: 'gpt-4.1-mini',
     });
+  });
+
+  it('即时探测优先使用账户级 CLI 配置选择模型', async () => {
+    const config = {
+      sites: [
+        createSite({
+          cli_config: {
+            codex: {
+              enabled: false,
+              testModels: ['site-legacy-model'],
+            },
+          },
+        }),
+      ],
+      accounts: [
+        createAccount('acct-default', {
+          cli_config: {
+            codex: {
+              enabled: true,
+              testModels: ['account-model'],
+            },
+          },
+          cached_data: {
+            api_keys: [{ id: 1, key: 'sk-default-key', status: 1 }],
+          },
+        }),
+      ],
+    };
+
+    const { selectProbeModelsForCli } = await loadProbeService(config);
+
+    expect(
+      selectProbeModelsForCli({
+        siteId: 'site-1',
+        accountId: 'acct-default',
+        cliType: 'codex',
+        limit: 3,
+      })
+    ).toEqual([{ canonicalModel: 'account-model', rawModel: 'account-model' }]);
+  });
+
+  it('账户级 CLI 配置关闭时不会退回到站点级旧配置执行探测', async () => {
+    const config = {
+      sites: [
+        createSite({
+          cli_config: {
+            codex: {
+              enabled: true,
+              testModels: ['site-legacy-model'],
+            },
+          },
+        }),
+      ],
+      accounts: [
+        createAccount('acct-default', {
+          cli_config: {
+            codex: {
+              enabled: false,
+              testModels: ['account-model'],
+            },
+          },
+        }),
+      ],
+    };
+
+    const { selectProbeModelsForCli } = await loadProbeService(config);
+
+    expect(
+      selectProbeModelsForCli({
+        siteId: 'site-1',
+        accountId: 'acct-default',
+        cliType: 'codex',
+        limit: 3,
+      })
+    ).toEqual([]);
+  });
+
+  it('账户缺少 CLI 配置时仍兼容站点级旧配置', async () => {
+    const config = {
+      sites: [
+        createSite({
+          cli_config: {
+            codex: {
+              enabled: true,
+              testModels: ['site-legacy-model'],
+            },
+          },
+        }),
+      ],
+      accounts: [createAccount('acct-default')],
+    };
+
+    const { selectProbeModelsForCli } = await loadProbeService(config);
+
+    expect(
+      selectProbeModelsForCli({
+        siteId: 'site-1',
+        accountId: 'acct-default',
+        cliType: 'codex',
+        limit: 3,
+      })
+    ).toEqual([{ canonicalModel: 'site-legacy-model', rawModel: 'site-legacy-model' }]);
   });
 
   it('自动探测通过本地 route proxy 执行真实 CLI 测试', async () => {

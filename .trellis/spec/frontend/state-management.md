@@ -95,6 +95,22 @@ Current rule:
   `route:getConfig` so mounted consumers can recompute display-only route log fields from the latest
   registry.
 
+### Account-scoped CLI config projections
+
+Managed-site CLI config is persisted on accounts, not sites. Renderer startup and config reload
+paths must therefore project `accounts[].cli_config` into the same per-account card identity that
+the site-management list and side panel use.
+
+Current rule:
+
+- Use `siteName::accountId` for account card CLI config entries.
+- Use the bare `siteName` key only for no-account legacy site config fallback.
+- Do not load an account's CLI config into the bare site-name key; doing so makes every account row
+  look like it shares the same CLI settings and can hide account-specific scheduled probe behavior.
+- If an account lacks `cli_config`, renderer loading may fall back to `account.cached_data.cli_config`
+  and then legacy `site.cli_config` for that account row.
+- Tests that cover CLI config loading must assert the exact store key, not only the config object.
+
 ### Local component/page state
 
 Keep local React state when the state is:

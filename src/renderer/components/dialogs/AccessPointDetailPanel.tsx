@@ -24,6 +24,8 @@ import {
   Save,
   Trash2,
   Plus,
+  RefreshCw,
+  Loader2,
 } from 'lucide-react';
 import { OverlayDrawer } from '../overlays/OverlayDrawer';
 import { AppButton } from '../AppButton/AppButton';
@@ -112,7 +114,7 @@ export interface AccessPointDetailPanelProps {
   onSaveSiteMeta?: (
     siteId: string,
     updates: Partial<
-      Pick<SiteConfig, 'site_type' | 'group' | 'extra_links' | 'force_enable_checkin'>
+      Pick<SiteConfig, 'url' | 'site_type' | 'group' | 'extra_links' | 'force_enable_checkin'>
     >
   ) => void | Promise<void>;
   onSaveAccount?: (
@@ -124,6 +126,7 @@ export interface AccessPointDetailPanelProps {
       >
     >
   ) => void | Promise<void>;
+  onRefreshAccountInfo?: (site: SiteConfig, accountId: string) => void | Promise<void>;
   onSaveCliConfig?: (config: CliConfig) => void;
   onPersistCliConfig?: (config: CliConfig) => void | Promise<void>;
   onDeleteDirectConfig?: (config: CustomCliConfig) => void;
@@ -225,6 +228,7 @@ function InlineSwitch({
 }
 
 interface ManagedSiteDraft {
+  url: string;
   site_type: SiteType;
   group: string;
   extra_links: string;
@@ -236,6 +240,7 @@ function buildManagedSiteDraft(
   defaultGroupId: string
 ): ManagedSiteDraft {
   return {
+    url: site?.url ?? '',
     site_type: site?.site_type || DEFAULT_SITE_TYPE,
     group: site?.group || defaultGroupId,
     extra_links: site?.extra_links ?? '',
@@ -319,6 +324,7 @@ export function AccessPointDetailPanel({
   onDeleteToken,
   onSaveSiteMeta,
   onSaveAccount,
+  onRefreshAccountInfo,
   onSaveCliConfig,
   onPersistCliConfig,
   onDeleteDirectConfig,
@@ -347,6 +353,7 @@ export function AccessPointDetailPanel({
     buildManagedAccountDraft(null)
   );
   const [savingManagedAccount, setSavingManagedAccount] = useState(false);
+  const [refreshingAccountInfo, setRefreshingAccountInfo] = useState(false);
 
   // 持久化 activeTab
   useEffect(() => {
@@ -401,7 +408,8 @@ export function AccessPointDetailPanel({
 
   const isManagedSiteMetaDirty =
     data?.type === 'managed' &&
-    (managedSiteDraft.site_type !== savedManagedSiteDraft.site_type ||
+    (managedSiteDraft.url !== savedManagedSiteDraft.url ||
+      managedSiteDraft.site_type !== savedManagedSiteDraft.site_type ||
       managedSiteDraft.group !== savedManagedSiteDraft.group ||
       managedSiteDraft.extra_links !== savedManagedSiteDraft.extra_links ||
       managedSiteDraft.force_enable_checkin !== savedManagedSiteDraft.force_enable_checkin);
@@ -473,6 +481,7 @@ export function AccessPointDetailPanel({
       : null;
     const normalizedSiteDraft: ManagedSiteDraft = {
       ...managedSiteDraft,
+      url: managedSiteDraft.url.trim(),
       extra_links: managedSiteDraft.extra_links.trim(),
     };
 
@@ -480,6 +489,7 @@ export function AccessPointDetailPanel({
     try {
       if (isManagedSiteMetaDirty && data.site.id && onSaveSiteMeta) {
         await onSaveSiteMeta(data.site.id, {
+          url: normalizedSiteDraft.url,
           site_type: normalizedSiteDraft.site_type,
           group: normalizedSiteDraft.group,
           extra_links: normalizedSiteDraft.extra_links || undefined,
@@ -504,6 +514,17 @@ export function AccessPointDetailPanel({
     onSaveAccount,
     onSaveSiteMeta,
   ]);
+
+  const handleRefreshAccountInfo = useCallback(async () => {
+    if (data?.type !== 'managed' || !currentAccount || !onRefreshAccountInfo) return;
+
+    setRefreshingAccountInfo(true);
+    try {
+      await onRefreshAccountInfo(data.site, currentAccount.id);
+    } finally {
+      setRefreshingAccountInfo(false);
+    }
+  }, [currentAccount, data, onRefreshAccountInfo]);
 
   const handleToggleGroupFilter = useCallback(
     (siteName: string, groupName: string | null) => {
@@ -658,12 +679,17 @@ export function AccessPointDetailPanel({
                         </label>
                         <div className="flex min-w-0 items-center gap-2 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2">
                           <Link className="h-4 w-4 flex-shrink-0 text-[var(--text-secondary)]" />
-                          <span className="min-w-0 flex-1 truncate font-mono text-xs text-[var(--accent-strong)]">
-                            {data.site.url}
-                          </span>
+                          <input
+                            type="url"
+                            aria-label="站点 URL"
+                            value={managedSiteDraft.url}
+                            onChange={event => updateManagedSiteDraft('url', event.target.value)}
+                            placeholder="https://..."
+                            className="min-w-0 flex-1 bg-transparent font-mono text-xs text-[var(--accent-strong)] outline-none placeholder:text-[var(--text-tertiary)]"
+                          />
                           <CopyInlineButton
                             title="复制 URL"
-                            onClick={() => onCopyToClipboard?.(data.site.url, 'URL')}
+                            onClick={() => onCopyToClipboard?.(managedSiteDraft.url, 'URL')}
                           />
                         </div>
                       </div>
@@ -859,16 +885,33 @@ export function AccessPointDetailPanel({
                     )}
 
                     <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line-soft)] pt-4">
-                      <AppButton
-                        variant="tertiary"
-                        size="sm"
-                        onClick={() => {
-                          void onDeleteAccount?.(currentAccount.id);
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        删除账户
-                      </AppButton>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <AppButton
+                          variant="tertiary"
+                          size="sm"
+                          onClick={() => {
+                            void onDeleteAccount?.(currentAccount.id);
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          删除账户
+                        </AppButton>
+                        <AppButton
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            void handleRefreshAccountInfo();
+                          }}
+                          disabled={refreshingAccountInfo || savingManagedAccount}
+                        >
+                          {refreshingAccountInfo ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-4 w-4" />
+                          )}
+                          {refreshingAccountInfo ? '获取中...' : '重新获取站点账户信息'}
+                        </AppButton>
+                      </div>
                       <AppButton
                         variant="primary"
                         size="sm"

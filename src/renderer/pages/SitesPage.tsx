@@ -46,10 +46,7 @@ import {
   type DetectionResult,
   type AnyRouterAccountConfig,
 } from '../../shared/types/site';
-import {
-  DEFAULT_CLI_PROBE_CONFIG,
-  type RouteCliProbeConfig,
-} from '../../shared/types/route-proxy';
+import { DEFAULT_CLI_PROBE_CONFIG, type RouteCliProbeConfig } from '../../shared/types/route-proxy';
 import type { Config, SiteGroup } from '../App';
 import {
   UNKNOWN_SITE_TYPE_FILTER,
@@ -529,16 +526,15 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
   } = useSiteDrag({ config, saveConfig });
 
   // 站点检测 hook
-  const { detectingSites, results, setResults, detectSingle, detectAllSites } =
-    useSiteDetection({
-      onAuthError: sites => {
-        for (const site of sites) {
-          addAuthErrorSite(site);
-        }
-        setShowAuthErrorDialog(true);
-      },
-      showDialog,
-    });
+  const { detectingSites, results, setResults, detectSingle, detectAllSites } = useSiteDetection({
+    onAuthError: sites => {
+      for (const site of sites) {
+        addAuthErrorSite(site);
+      }
+      setShowAuthErrorDialog(true);
+    },
+    showDialog,
+  });
 
   // CLI 兼容性测试 hook
   const {
@@ -745,7 +741,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     async (
       siteId: string,
       updates: Partial<
-        Pick<SiteConfig, 'site_type' | 'group' | 'extra_links' | 'force_enable_checkin'>
+        Pick<SiteConfig, 'url' | 'site_type' | 'group' | 'extra_links' | 'force_enable_checkin'>
       >
     ) => {
       if (!config) return;
@@ -771,6 +767,43 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
       toast.success('站点信息已保存');
     },
     [config, defaultGroupId, saveConfig]
+  );
+
+  const handleRefreshPanelAccountInfo = useCallback(
+    async (site: SiteConfig, accountId: string) => {
+      try {
+        await detectSingle(site, true, undefined, accountId);
+
+        const refreshedConfig = await window.electronAPI.loadConfig();
+        setConfig(refreshedConfig);
+        const refreshedAccountsBySite = await loadAllAccounts(refreshedConfig?.sites);
+
+        setSelectedItem(prev => {
+          if (prev?.type !== 'managed' || prev.account?.id !== accountId) {
+            return prev;
+          }
+
+          const latestSite =
+            refreshedConfig?.sites?.find(candidate => candidate.id === prev.site.id) ?? prev.site;
+          const latestAccount = latestSite.id
+            ? refreshedAccountsBySite[latestSite.id]?.find(account => account.id === accountId)
+            : null;
+
+          return {
+            ...prev,
+            site: latestSite,
+            account: latestAccount ?? prev.account,
+          };
+        });
+
+        toast.success('站点账户信息已重新获取');
+      } catch (error: any) {
+        Logger.error('重新获取站点账户信息失败:', error);
+        toast.error('重新获取站点账户信息失败: ' + (error?.message || error));
+        throw error;
+      }
+    },
+    [detectSingle, loadAllAccounts, setConfig]
   );
 
   const handleDetectAllSites = useCallback(async () => {
@@ -2022,7 +2055,6 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
         />
       )}
 
-
       <CliProbeSettingsDialog
         isOpen={showCliProbeSettings}
         config={routeCliProbeConfig ?? DEFAULT_CLI_PROBE_CONFIG}
@@ -2127,6 +2159,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
           }}
           onSaveSiteMeta={handleSavePanelSiteMeta}
           onSaveAccount={handleSavePanelAccount}
+          onRefreshAccountInfo={handleRefreshPanelAccountInfo}
           onDeleteAccount={async (accountId: string) => {
             if (selectedItem.type !== 'managed') return;
             const account = selectedItem.site.id

@@ -166,9 +166,7 @@ function normalizeCliConfigTargetProtocols(
  * 如果发现多个测试模型（旧版本遗留），自动截断为只保留第一个
  */
 function normalizeCliConfigTestModels(
-  cliConfig?: Partial<
-    Record<RouteCliType, { testModels?: string[] | null } | null>
-  > | null
+  cliConfig?: Partial<Record<RouteCliType, { testModels?: string[] | null } | null>> | null
 ): void {
   if (!cliConfig) {
     return;
@@ -1124,9 +1122,7 @@ export class UnifiedConfigManager {
         >
       );
       normalizeCliConfigTestModels(
-        account.cli_config as Partial<
-          Record<RouteCliType, { testModels?: string[] | null } | null>
-        >
+        account.cli_config as Partial<Record<RouteCliType, { testModels?: string[] | null } | null>>
       );
     }
 
@@ -1855,11 +1851,7 @@ export class UnifiedConfigManager {
     updates: Partial<
       Pick<
         AccountCredential,
-        | 'account_name'
-        | 'status'
-        | 'access_token'
-        | 'user_id'
-        | 'anyRouterConfig'
+        'account_name' | 'status' | 'access_token' | 'user_id' | 'cli_config' | 'anyRouterConfig'
       >
     >
   ): Promise<boolean> {

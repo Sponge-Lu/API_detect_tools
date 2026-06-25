@@ -260,7 +260,7 @@ function resolveStoredTargetProtocol(
   cliType: RouteCliType
 ): ReturnType<typeof normalizeCliTargetProtocol> {
   return normalizeCliTargetProtocol(
-    site?.cli_config?.[cliType]?.targetProtocol // v3.0.6: 只从站点级获取
+    account?.cli_config?.[cliType]?.targetProtocol ?? site?.cli_config?.[cliType]?.targetProtocol
   );
 }
 

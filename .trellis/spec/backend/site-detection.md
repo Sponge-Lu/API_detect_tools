@@ -241,3 +241,66 @@ const response = await fetch(apiUrl, {
   },
 });
 ```
+
+## Scenario: Managed Site CLI Config Is Account Scoped
+
+### 1. Scope / Trigger
+
+- Trigger: managed-site CLI config is edited from the site-management side panel and later consumed
+  by manual CLI tests, scheduled route CLI probes, and route-channel target protocol resolution.
+- Files: `src/shared/types/site.ts`, `src/main/handlers/cli-compat-handlers.ts`,
+  `src/main/route-cli-probe-service.ts`, `src/main/route-channel-resolver.ts`,
+  `src/renderer/hooks/useDataLoader.ts`, `src/renderer/services/cli-compat-projection.ts`.
+
+### 2. Contracts
+
+- The durable managed-site CLI config owner is `accounts[].cli_config`.
+- `sites[].cli_config` is legacy migration/fallback data only. New save paths must not write
+  managed-site CLI config back to the site record.
+- `cli-compat:save-config(siteUrl, cliConfig, accountId)` must resolve a target account for the
+  site, validate that it belongs to that site, and update `AccountCredential.cli_config`.
+- Scheduled route CLI probes must resolve CLI settings as
+  `account.cli_config[cliType] ?? site.cli_config[cliType]`.
+- Route channel target protocol resolution must use the same account-first order so manual tests,
+  probes, and live routing agree on `targetProtocol`.
+- When an account-level CLI item exists with `enabled: false`, consumers must treat that as an
+  explicit account-level disable and must not fall back to a site-level legacy item.
+
+### 3. Validation & Error Matrix
+
+| Case | Boundary | Expected behavior |
+|------|----------|-------------------|
+| Save config with valid `accountId` | renderer -> main IPC | `accounts[].cli_config` is updated; `sites[].cli_config` is unchanged |
+| Save config without `accountId` but site has active accounts | main IPC | pick the active/default account and update that account |
+| Save config with account from another site | main IPC | return `Account not found` and do not write site config |
+| Account config enables Codex and legacy site config disables Codex | route CLI probe | Codex probe runs using account models |
+| Account config disables Codex and legacy site config enables Codex | route CLI probe | Codex probe does not run |
+| Account lacks CLI config and legacy site config exists | route CLI probe / resolver | legacy site config is used as fallback only |
+
+### 4. Tests Required
+
+- `src/__tests__/cli-compat-handlers.test.ts`
+  - Assert `cli-compat:save-config` writes to `updateAccount(..., { cli_config })` and not
+    `updateSite(...)`.
+- `src/__tests__/route-cli-probe-service.test.ts`
+  - Assert account-level CLI config controls selected probe models.
+  - Assert account-level disabled settings suppress site-level fallback.
+  - Assert site-level legacy config remains a fallback when the account lacks CLI config.
+- `src/__tests__/useDataLoader.test.ts`
+  - Assert renderer startup loads account CLI config into the account card key.
+
+### 5. Wrong vs Correct
+
+#### Wrong
+
+```ts
+await unifiedConfigManager.updateSite(site.id, { cli_config });
+const item = site.cli_config?.[cliType];
+```
+
+#### Correct
+
+```ts
+await unifiedConfigManager.updateAccount(account.id, { cli_config });
+const item = account.cli_config?.[cliType] ?? site.cli_config?.[cliType];
+```

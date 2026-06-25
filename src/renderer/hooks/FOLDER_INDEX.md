@@ -32,7 +32,7 @@
 | **useTokenManagement.ts** | Token 管理，支持站点 API Key 列表刷新、单个 API Key 状态刷新、创建与删除 | `{ refreshSiteApiKeys, handleRefreshToken, handleCreateTokenSubmit, handleDeleteToken }` |
 | **useCheckIn.ts** | 签到逻辑，批量签到时跳过 `unavailable` 分组，账户级签到透传 `accountId`，按站点类型打开手动签到页，并持久化同日手动签到完成状态 | `{ canSignIn, isSigningIn, signIn, ... }` |
 | **useCliCompatTest.ts** | CLI 兼容性测试 | `{ results, isTesting, test, ... }` |
-| **useDataLoader.ts** | 数据加载，支持站点状态持久化与签到能力缓存回填 | `{ data, isLoading, error, reload, ... }` |
+| **useDataLoader.ts** | 数据加载，支持站点状态持久化、签到能力缓存回填与账户级 CLI 配置按 card key 回填 | `{ data, isLoading, error, reload, ... }` |
 | **useSiteDrag.ts** | 站点拖拽排序 | `{ draggedSite, onDragStart, onDrop, ... }` |
 | **useTheme.ts** | 主题管理 | `{ theme, setTheme, isDark, ... }` |
 | **useUpdate.ts** | 应用更新检查 | `{ hasUpdate, isChecking, checkUpdate, ... }` |
@@ -204,6 +204,7 @@ const { data: sites, isLoading, error, reload } = useDataLoader(
 - 从 cached_data 读取站点检测状态（status/error）
 - 向后兼容：无 status 字段时默认为 '成功'
 - 支持启动时自动检测 CLI 配置
+- 将账户级 `cli_config` 加载到 `siteName::accountId`，仅在无账户 legacy 站点时使用裸 `siteName`
 
 ### useSiteDrag
 

@@ -112,23 +112,22 @@ function resolveProbeCliItem(
 ): CliConfigItem | null {
   const site = getProbeSite(siteId);
   const account = getProbeAccount(siteId, accountId);
-  const siteItem = site?.cli_config?.[cliType] || null;
-  // v3.0.6: 账户级不再有 cli_config
+  const configItem = account?.cli_config?.[cliType] ?? site?.cli_config?.[cliType] ?? null;
 
-  if (!siteItem) {
+  if (!configItem) {
     return null;
   }
 
   const fallback = DEFAULT_CLI_CONFIG[cliType];
   return {
-    apiKeyId: siteItem?.apiKeyId ?? fallback.apiKeyId,
-    model: siteItem?.model ?? fallback.model,
-    testModel: siteItem?.testModel ?? fallback.testModel,
-    testModels: siteItem?.testModels ?? fallback.testModels,
-    enabled: siteItem?.enabled ?? fallback.enabled,
-    editedFiles: siteItem?.editedFiles ?? fallback.editedFiles,
-    applyMode: siteItem?.applyMode ?? fallback.applyMode,
-    targetProtocol: siteItem?.targetProtocol ?? fallback.targetProtocol,
+    apiKeyId: configItem.apiKeyId ?? fallback.apiKeyId,
+    model: configItem.model ?? fallback.model,
+    testModel: configItem.testModel ?? fallback.testModel,
+    testModels: configItem.testModels ?? fallback.testModels,
+    enabled: configItem.enabled ?? fallback.enabled,
+    editedFiles: configItem.editedFiles ?? fallback.editedFiles,
+    applyMode: configItem.applyMode ?? fallback.applyMode,
+    targetProtocol: configItem.targetProtocol ?? fallback.targetProtocol,
   };
 }
 

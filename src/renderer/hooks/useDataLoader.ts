@@ -157,16 +157,26 @@ export function useDataLoader({
         if (setCliCompatibility) {
           await syncProjectedCliCompatibility(currentConfig as UnifiedConfig, setCliCompatibility);
         }
-        // v3.0.6: cli_config 在账户级，从账户加载
+        // v3.0.6: cli_config 在账户级，按账户 card key 加载；站点级仅作为 legacy fallback
         const allAccounts = (currentConfig as any).accounts || [];
+        const accountSiteIds = new Set<string>();
         allAccounts.forEach((account: any) => {
-          const cliConfig = account.cli_config || account.cached_data?.cli_config;
+          const site = sites.find((s: any) => s.id === account.site_id);
+          if (!site) return;
+
+          accountSiteIds.add(account.site_id);
+          const cliConfig =
+            account.cli_config || account.cached_data?.cli_config || (site as any).cli_config;
           if (setCliConfig && cliConfig) {
-            const site = sites.find((s: any) => s.id === account.site_id);
-            if (site) {
-              setCliConfig(site.name, cliConfig);
-              cliConfigCount++;
-            }
+            setCliConfig(makeStoreKey(site.name, account.id), cliConfig);
+            cliConfigCount++;
+          }
+        });
+
+        sites.forEach((site: any) => {
+          if (setCliConfig && site.cli_config && site.id && !accountSiteIds.has(site.id)) {
+            setCliConfig(site.name, site.cli_config);
+            cliConfigCount++;
           }
         });
         if (cliConfigCount > 0) {

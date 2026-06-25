@@ -41,7 +41,7 @@
 | **app-storage-bundle.test.ts** | 应用存储配置包测试 | manifest 配置包纳入/排除边界、bundle 恢复、legacy config-only 恢复保留运行态 sidecar |
 | **backup-manager.test.ts** | 本地备份管理测试 | 自动备份节流、内容去重、强制备份与保留数量 |
 | **migrate-config-v224-to-v301-script.test.ts** | 配置迁移脚本测试 | v2.1.24 config 拆分为 clean config、runtime-cache 与 route state，重复运行保留已有 state |
-| **route-cli-probe-service.test.ts** | CLI 探测多账户回归测试 | 同站点全部活跃账户覆盖、自定义 CLI 配置行/探测任务、活跃 API Key 选择、probe-lock `probeRunId` 与自定义上游信息传递、错误码透传、旧配置兼容 |
+| **route-cli-probe-service.test.ts** | CLI 探测多账户回归测试 | 同站点全部活跃账户覆盖、账户级 CLI 配置优先/禁用/旧站点 fallback、自定义 CLI 配置行/探测任务、活跃 API Key 选择、probe-lock `probeRunId` 与自定义上游信息传递、错误码透传、旧配置兼容 |
 | **route-model-registry-service.test.ts** | 路由模型注册表服务测试 | display item、厂商优先级、canonical 映射与自定义 CLI 来源，覆盖 `manualModels` 手动模型同步 |
 | **route-proxy-service.test.ts** | 路由代理调度回归测试 | canonical-only 规则命中前提下的 per-rawModel 尝试计划、probe-lock loopback 限制/终止失败/单模型上游尝试预算、首次上游结果缓存且不被 budget 覆盖、瞬时上游错误透传原始响应且记录非终结结果(含非原生 targetProtocol 不被转换劫持)、Gemini 内部辅助模型阻断、上游 URL 构造、Gemini path/key 重写、AnyRouter beta path、流式请求首包超时与首个 SSE chunk 后 10 分钟活跃流空闲超时下限、provider usage/cache token 解析 |
 | **route-probe-lock.test.ts** | probe-lock 首个上游结果记录回归测试 | terminal-wins / transient-overwritable 记录语义、瞬时结果可被后续成功/终结失败覆盖、终结结果 first-wins、waiter 仅在终结结果 resolve |
@@ -52,6 +52,7 @@
 | **http-client.test.ts** | HTTP 客户端测试 | raw 上游转发走 Electron net 并传递上游代理、流式回调和活跃流空闲超时配置 |
 | **route-rule-engine.test.ts** | 路由规则引擎回归测试 | canonical-only 模型匹配与规则优先级排序 |
 | **cli-compat-projection.test.ts** | CLI 兼容性投影测试 | `routing.cliProbe.latest` 到站点/账户卡片结果的映射，以及 latest probe 回灌到 CLI 配置弹窗测试模型 slot 的时间戳合并 |
+| **cli-compat-handlers.test.ts** | CLI 兼容性 IPC 回归测试 | 托管站点 CLI 配置保存写入账户级 `cli_config`，避免回写站点级 legacy 字段 |
 | **webdav-manager.test.ts** | WebDAV 管理器测试 | WebDAVManager 类 |
 | **update-service.test.ts** | 更新服务测试 | UpdateService 类 |
 | **auto-refresh.property.test.ts** | 自动刷新属性测试 | 自动刷新逻辑 |
@@ -68,6 +69,7 @@
 | **filter-model-logs.property.test.ts** | 日志过滤属性测试 | 日志过滤逻辑 |
 | **unified-cli-config.property.test.ts** | 统一 CLI 配置测试 | CLI 配置管理 |
 | **useAutoRefresh.property.test.ts** | 自动刷新 Hook 测试 | useAutoRefresh Hook |
+| **useDataLoader.test.ts** | 数据加载 Hook 回归测试 | 启动缓存加载将账户级 CLI 配置回填到 `siteName::accountId` card key，站点级仅作无账户 legacy fallback |
 | **theme-system-redesign.test.tsx** | 主题系统重设计测试 | 4 主题模式切换、旧主题值迁移 |
 | **overlay-family-redesign.test.tsx** | Overlay 家族重设计测试 | modal 与 drawer 的统一 chrome 标记，以及内嵌 CLI 内容不生成嵌套 overlay |
 | **data-overview-page.test.tsx** | 数据总览页回归测试 | 首页总览 KPI、站点榜单、规则解释、异常请求、快照趋势，以及路由趋势 `24h` / `7d` 部分数据窗口下的完整 X 轴与前置空桶绘制规则 |

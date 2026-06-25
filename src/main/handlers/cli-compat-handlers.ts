@@ -25,6 +25,7 @@ import {
   getCliTargetEndpoint,
   normalizeCodexFeatureFlagsToml,
   normalizeCliTargetProtocol,
+  type CliConfig,
 } from '../../shared/types/cli-config';
 import { buildProbeKey, buildSiteScopedProbeAccountId } from '../../shared/types/route-proxy';
 import type { AccountCredential, ApiKeyInfo, UnifiedSite } from '../../shared/types/site';
@@ -941,8 +942,7 @@ export function registerCliCompatHandlers() {
         const probeRunId = generateProbeRunId('manual');
         const probeSamples = (samples || []).map((sample, index) => {
           const configuredTargetProtocol = normalizeCliTargetProtocol(
-            sample.targetProtocol ??
-              ownerAccount?.cli_config?.[sample.cliType]?.targetProtocol // v3.0.6: 从账户级获取
+            sample.targetProtocol ?? ownerAccount?.cli_config?.[sample.cliType]?.targetProtocol // v3.0.6: 从账户级获取
           );
           const targetEndpoint =
             sample.targetEndpoint ||
@@ -994,28 +994,46 @@ export function registerCliCompatHandlers() {
     }
   );
 
-  // 保存 CLI 配置到站点配置（不是 cached_data，这样备份时不会丢失）
+  // 保存 CLI 配置到账户配置（不是 cached_data，这样备份时不会丢失）
   ipcMain.handle(
     'cli-compat:save-config',
-    async (_, siteUrl: string, cliConfig: any, accountId?: string) => {
+    async (_, siteUrl: string, cliConfig: CliConfig, accountId?: string) => {
       try {
         log.info(
           `Saving CLI config for ${accountId ? `account: ${accountId}` : `site: ${siteUrl}`}`
         );
 
-        // v3.0.6: CLI 配置只在站点级，忽略 accountId
         const site = unifiedConfigManager.getSiteByUrl(siteUrl);
         if (!site) {
           log.warn(`Site not found for URL: ${siteUrl}`);
           return { success: false, error: 'Site not found' };
         }
 
-        // 直接更新站点的 cli_config 字段（不是 cached_data）
-        await unifiedConfigManager.updateSite(site.id, {
+        const config = unifiedConfigManager.exportConfigSync();
+        const targetAccount = accountId
+          ? unifiedConfigManager.getAccountById(accountId)
+          : config
+            ? pickPreferredRouteAccount(site, config.accounts)
+            : null;
+
+        if (!targetAccount || targetAccount.site_id !== site.id) {
+          log.warn(
+            `Account not found for CLI config: ${accountId || '(preferred)'} on site ${site.id}`
+          );
+          return {
+            success: false,
+            error: accountId ? 'Account not found' : 'No account found for site',
+          };
+        }
+
+        const updated = await unifiedConfigManager.updateAccount(targetAccount.id, {
           cli_config: cliConfig,
         });
+        if (!updated) {
+          return { success: false, error: 'Account not found' };
+        }
 
-        log.info(`CLI config saved for ${siteUrl}`);
+        log.info(`CLI config saved for account ${targetAccount.id}`);
         return { success: true };
       } catch (error: any) {
         log.error(`Failed to save CLI config: ${error.message}`);

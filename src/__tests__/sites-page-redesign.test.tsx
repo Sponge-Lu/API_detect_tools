@@ -252,7 +252,9 @@ describe('sites page redesign', () => {
       configs: [],
       activeConfigId: null,
     });
-    (window.electronAPI as any).route.getConfig = vi.fn().mockResolvedValue({ success: true, data: null });
+    (window.electronAPI as any).route.getConfig = vi
+      .fn()
+      .mockResolvedValue({ success: true, data: null });
     (window.electronAPI as any).route.saveCliProbeConfig = vi
       .fn()
       .mockResolvedValue({ success: true });
@@ -294,7 +296,6 @@ describe('sites page redesign', () => {
     expect(source).not.toContain('<SlidersHorizontal className="w-4 h-4"');
     expect(source).not.toContain('<Play className="w-4 h-4"');
   });
-
 
   it('runs route CLI probe from the Sites page header immediate probe action', async () => {
     useConfigStore.setState({
@@ -684,17 +685,8 @@ describe('sites page redesign', () => {
     expect(screen.getByText('CLI 配置（2/3）')).toBeInTheDocument();
     expect(screen.queryByText('直连 CLI 配置')).not.toBeInTheDocument();
     expect(screen.queryByText('配置预览与编辑')).not.toBeInTheDocument();
-    expect(screen.queryByText('配置文件预览')).not.toBeInTheDocument();
-    expect(screen.getAllByText('应用到本机').length).toBeGreaterThan(0);
-
-    fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
-
     expect(screen.getByText('配置文件预览')).toBeInTheDocument();
-    expect(screen.queryByText('CLI 测试')).not.toBeInTheDocument();
-    expect(screen.getAllByText('测试模型')).toHaveLength(1);
-    expect(screen.queryByText('测试模型（最多 3 个）')).not.toBeInTheDocument();
-    expect(screen.queryByText('请确认配置信息是否正确')).not.toBeInTheDocument();
-    expect(screen.queryAllByRole('button', { name: /^预览 / })).toHaveLength(0);
+    expect(screen.getAllByText('应用到本机').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: 'Claude Code 主模型' })).toHaveClass(
       'px-3',
       'py-2',
@@ -710,13 +702,23 @@ describe('sites page redesign', () => {
     expect(screen.queryByTitle(directFailureMessage)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
+
     expect(screen.queryByText('配置文件预览')).not.toBeInTheDocument();
+    expect(screen.queryByText('CLI 测试')).not.toBeInTheDocument();
+    expect(screen.queryAllByText('测试模型')).toHaveLength(0);
+    expect(screen.queryByText('测试模型（最多 3 个）')).not.toBeInTheDocument();
+    expect(screen.queryByText('请确认配置信息是否正确')).not.toBeInTheDocument();
+    expect(screen.queryAllByRole('button', { name: /^预览 / })).toHaveLength(0);
+
+    fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
+    expect(screen.getByText('配置文件预览')).toBeInTheDocument();
 
     expect(screen.queryByText('三 CLI 配置编辑区与测试结果（实现期细化）')).not.toBeInTheDocument();
   });
 
   it('merges managed side-panel tab1 into one editable information surface', async () => {
     const onSaveAccount = vi.fn().mockResolvedValue(undefined);
+    const onRefreshAccountInfo = vi.fn().mockResolvedValue(undefined);
     const onAddAccount = vi.fn();
     const onDeleteAccount = vi.fn();
 
@@ -749,6 +751,7 @@ describe('sites page redesign', () => {
           },
         ]}
         onSaveAccount={onSaveAccount}
+        onRefreshAccountInfo={onRefreshAccountInfo}
         onAddAccount={onAddAccount}
         onDeleteAccount={onDeleteAccount}
       />
@@ -793,6 +796,10 @@ describe('sites page redesign', () => {
       })
     );
 
+    fireEvent.click(screen.getByRole('button', { name: '重新获取站点账户信息' }));
+    await waitFor(() => expect(onRefreshAccountInfo).toHaveBeenCalledTimes(1));
+    expect(onRefreshAccountInfo).toHaveBeenCalledWith(baseSite, 'account-1');
+
     fireEvent.click(screen.getByRole('button', { name: '添加账户' }));
     expect(onAddAccount).toHaveBeenCalledTimes(1);
 
@@ -834,10 +841,12 @@ describe('sites page redesign', () => {
 
     const siteTypeSelect = screen.getByRole('combobox', { name: '站点类型' });
     const groupSelect = screen.getByRole('combobox', { name: '分组' });
+    const siteUrlInput = screen.getByRole('textbox', { name: '站点 URL' });
     const extraLinksInput = screen.getByRole('textbox', { name: '加油站链接' });
     const checkinSwitch = screen.getByRole('switch', { name: '启用签到功能' });
     expect(siteTypeSelect).toHaveValue('newapi');
     expect(groupSelect).toHaveValue('default');
+    expect(siteUrlInput).toHaveValue('https://example.com');
     expect(extraLinksInput).toHaveValue('https://fuel.example.com');
     expect(checkinSwitch).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByRole('option', { name: 'Sub2API' })).toBeInTheDocument();
@@ -845,6 +854,7 @@ describe('sites page redesign', () => {
 
     fireEvent.change(siteTypeSelect, { target: { value: 'sub2api' } });
     fireEvent.change(groupSelect, { target: { value: 'priority' } });
+    fireEvent.change(siteUrlInput, { target: { value: 'https://edited.example.com' } });
     fireEvent.change(extraLinksInput, { target: { value: 'https://fuel-edited.example.com' } });
     fireEvent.click(checkinSwitch);
     fireEvent.click(screen.getByRole('button', { name: '保存更改' }));
@@ -853,6 +863,7 @@ describe('sites page redesign', () => {
     expect(onSaveSiteMeta).toHaveBeenCalledWith(
       'site-1',
       expect.objectContaining({
+        url: 'https://edited.example.com',
         site_type: 'sub2api',
         group: 'priority',
         extra_links: 'https://fuel-edited.example.com',
