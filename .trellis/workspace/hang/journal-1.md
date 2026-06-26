@@ -71,3 +71,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: 修复散点矩阵残留已删除通道数据
+
+**Date**: 2026-06-24
+**Task**: 修复散点矩阵残留已删除通道数据
+**Branch**: `main`
+
+### Summary
+
+删除站点/直连配置后，通道健康散点矩阵仍显示截断的残留 ID。新增 knownSiteIds 集合过滤已不存在的通道点。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2dfac9c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

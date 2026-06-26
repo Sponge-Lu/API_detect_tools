@@ -106,7 +106,10 @@
       "Bash(grep -c 'attempt budget exhausted\\\\|attempt budget' /c/Users/Hang/AppData/Roaming/api-hub-management-tools/logs/main.old.log)",
       "Bash(grep -c 'blocked after terminal' /c/Users/Hang/AppData/Roaming/api-hub-management-tools/logs/main.log)",
       "Bash(grep -A1 'Upstream channel returned failure' /c/Users/Hang/AppData/Roaming/api-hub-management-tools/logs/main.log)",
-      "Bash(grep -oE \"bodySnippet: '[^']{0,70}\")"
+      "Bash(grep -oE \"bodySnippet: '[^']{0,70}\")",
+      "Bash(start \"\" \"D:\\\\2_Github_Repository\\\\API_detect_tools\\\\.trellis\\\\tasks\\\\06-12-merge-site-cli-detection\\\\prototype-a1-inline-expand.html\")",
+      "Bash(start \"\" \"D:\\\\2_Github_Repository\\\\API_detect_tools\\\\.trellis\\\\tasks\\\\06-12-merge-site-cli-detection\\\\prototype-a2-side-panel.html\")",
+      "Bash(start *)"
     ]
   }
 }

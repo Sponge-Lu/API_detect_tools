@@ -3,7 +3,7 @@
  * 平铺展示重定向卡片，并在详情弹窗内维护当前卡片的站点 / API key 优先级
  */
 
-import { type ReactNode, useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Check,
@@ -1873,6 +1873,7 @@ export function ModelRedirectionTab({
   const [firstHitPathLogsByCanonicalName, setFirstHitPathLogsByCanonicalName] = useState<
     Record<string, RouteRequestLogItem>
   >({});
+  const refreshingDisplayItemsRef = useRef(false);
   const redirectNameInputId = useId();
   const searchInputId = useId();
 
@@ -2298,6 +2299,28 @@ export function ModelRedirectionTab({
     }
   }, [rebuildModelRegistry]);
 
+  const handleRefreshDisplayItems = useCallback(async () => {
+    if (refreshingDisplayItemsRef.current) {
+      return;
+    }
+
+    refreshingDisplayItemsRef.current = true;
+    setResettingDefaults(true);
+    try {
+      const rebuiltRegistry = await rebuildModelRegistry(true);
+      if (!rebuiltRegistry) {
+        throw new Error('无法刷新默认重定向');
+      }
+      refreshOpenSourceDetails(rebuiltRegistry);
+      toast.success('默认模型重定向已刷新，现有优先级设置已保留');
+    } catch (error: unknown) {
+      toast.error(`刷新失败: ${getErrorMessage(error)}`);
+    } finally {
+      refreshingDisplayItemsRef.current = false;
+      setResettingDefaults(false);
+    }
+  }, [rebuildModelRegistry, refreshOpenSourceDetails]);
+
   const handleResetRoutePaths = useCallback(
     async (item: RouteModelDisplayItem, displayName: string) => {
       setResettingPathCanonicalName(item.canonicalName);
@@ -2459,8 +2482,13 @@ export function ModelRedirectionTab({
       return;
     }
 
-    if (shouldBootstrapRegistry || shouldAutoRefreshDisplayItems) {
+    if (shouldBootstrapRegistry) {
       void handleResetDefaults();
+      return;
+    }
+
+    if (shouldAutoRefreshDisplayItems) {
+      void handleRefreshDisplayItems();
       return;
     }
 
@@ -2469,6 +2497,7 @@ export function ModelRedirectionTab({
     }
   }, [
     config,
+    handleRefreshDisplayItems,
     handleResetDefaults,
     handleSyncSources,
     shouldBootstrapRegistry,

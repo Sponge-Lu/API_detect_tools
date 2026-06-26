@@ -49,7 +49,7 @@
 | `src/main/chrome-manager.ts` | 多槽位检测浏览器池、独立登录浏览器、按 site_type 解析 localStorage / 初始化用户信息，提供页面级登录态重读入口，收紧 localStorage 站点类型线索，并支持复用账户 Profile 打开签到页 |
 | `src/main/site-type-registry.ts` | 站点类型注册表，统一维护各类型的初始化/模型/余额/API Key/分组/定价端点策略 |
 | `src/main/site-type-detector.ts` | 智能添加与多账户初始化前的站点类型自动识别 |
-| `src/main/token-service.ts` | 登录初始化、按 site_type 选择端点与访问令牌策略，Sub2API 可从浏览器登录态重读并校验 JWT，显式 `site_type` 可覆盖 URL 反查，按站点类型驱动签到/浏览器回退、账号数据刷新；统一识别 Unauthorized/invalid access token 失败 envelope；NewAPI 脱敏 API Key 优先通过 `/api/token/batch/keys` 批量补全明文 key |
+| `src/main/token-service.ts` | 登录初始化、按 site_type 选择端点与访问令牌策略，Sub2API 可从浏览器登录态重读并校验 JWT，显式 `site_type` 可覆盖 URL 反查；支持按账户浏览器槽位重新读取基础账号信息并在 access token 无效时重建；按站点类型驱动签到/浏览器回退、账号数据刷新；统一识别 Unauthorized/invalid access token 失败 envelope；NewAPI 脱敏 API Key 优先通过 `/api/token/batch/keys` 批量补全明文 key |
 | `src/main/api-service.ts` | 站点检测、HTTP 请求、模型接口响应格式容错、NewAPI/Sub2API 认证失败 envelope 识别、同日手动签到完成状态保留、旧站点首次检测时自动识别并写回 `site_type`、LDC 支付信息探测，并在检测缓存落盘后触发站点每日快照采集 |
 | `src/main/overview-service.ts` | 数据总览聚合服务，负责站点每日快照采集、查询与按日期汇总 |
 | `src/main/cli-wrapper-compat-service.ts` | 通过真实 Claude Code / Codex / Gemini CLI wrapper 做兼容性验证；当前 UI 统一通过该服务执行 CLI 可用性测试，使用临时目录隔离本机配置，监听 probe-lock 终止失败并在 CLI 二次请求先触发 budget 限制时等待/回看首次真实上游结果，避免后续额外请求的噪声覆盖真实检测结果，并将 Claude JSON 错误摘要化 |
@@ -70,7 +70,7 @@
 | `src/renderer/components/Sidebar/VerticalSidebar.tsx` | 左侧导航组件，负责展示一级页面与 `数据总览` 子页入口 |
 | `src/renderer/components/CliConfigStatus/*` | CLI 配置状态组件，展示 Claude Code / Codex / Gemini CLI 配置来源，并将匹配本地路由代理端口的 Base URL 显示为“本地路由”；本地路由、站点管理和自定义 CLI 均显示当前使用模型小字 |
 | `src/renderer/pages/DataOverviewPage.tsx` | 数据总览首页，按 `overviewSubtab` 渲染 `SiteOverviewView` 或 `RouteOverviewView`：站点视图展示资源 / 签到 / 历史快照；路由视图三行布局（KPI / 运行趋势 + 模型热力 / 通道散点 + 模型→通道 Sankey），通过路由内容区实际尺寸选择紧凑/常规布局，并用 scope (全部 / 站点 / 自定义 CLI) 控制路由视图范围；运行趋势在 `24h` / `7d` 视窗内补齐完整小时/日期 X 轴，前置空桶只显示标签不绘制柱/线；用 treemap 的 selectedModel 控制散点高亮；Sankey 独立展示不参与模型联动。KPI 第四张为首字响应 P95 + 会话时间 P99 合并卡。 |
-| `src/renderer/pages/SitesPage.tsx` | 站点管理主页面，统一承载托管站点与直连配置接入管理；列表按站点/账户行展示余额、今日消费、模型数量与 48h History，点击行打开接入点侧滑面板；页头集中提供探测设置、立即探测、操作记录、一键刷新、一键签到、添加接入点与恢复站点入口，其中探测设置/立即探测接入 `routing.cliProbe`；侧滑面板支持编辑站点 URL 并重新获取当前账户信息；直连配置复用自定义 CLI 编辑器，取消未保存新建会清理临时配置 |
+| `src/renderer/pages/SitesPage.tsx` | 站点管理主页面，统一承载托管站点与直连配置接入管理；列表按站点/账户行展示余额、今日消费、模型数量与 48h History，点击行打开接入点侧滑面板；页头集中提供探测设置、立即探测、操作记录、一键刷新、一键签到、添加接入点与恢复站点入口，其中探测设置/立即探测接入 `routing.cliProbe`；侧滑面板支持编辑站点 URL，并通过浏览器基础信息刷新重新获取当前账户 user_id/username/access_token；直连配置复用自定义 CLI 编辑器，取消未保存新建会清理临时配置 |
 | `src/renderer/pages/CreditPage.tsx` | LDC 积分页面，展示 Linux Do Credit 账户信息、收支统计与充值入口 |
 | `src/renderer/pages/RoutePage.tsx` | 路由配置/操作页，组合代理服务与模型重定向，并引导用户跳转到数据总览查看统计 |
 | `src/renderer/pages/LogsPage.tsx` | 路由日志主页面，通过逐条 push 追加；使用无卡片横向滚动单行表格展示 CLI 图标、原始模型、路由目标、Token（总/输入/输出/缓存写/缓存读）、参考金额、用时/首字、纯数字状态码与时间，失败信息在第二行展示；直连配置路由目标带 `直连配置 /` 前缀 |

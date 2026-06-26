@@ -104,6 +104,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }) => ipcRenderer.invoke('token:initialize-account', params),
     // 刷新显示数据（使用access_token获取余额、使用量等）
     refreshDisplayData: (account: any) => ipcRenderer.invoke('token:refresh-display-data', account),
+    // 从浏览器登录态刷新账户基础信息（user_id / username / access_token）
+    refreshAccountBasicInfo: (accountId: string) =>
+      ipcRenderer.invoke('token:refresh-account-basic-info', accountId),
     // 验证令牌有效性
     validate: (account: any) => ipcRenderer.invoke('token:validate', account),
     // 获取API令牌列表（兼容旧接口）

@@ -1405,9 +1405,7 @@ describe('route-proxy-service CLI model fallback', () => {
 
     await handleRequest(request, response);
 
-    expect(vi.mocked(findMatchingRule).mock.calls.map(call => call[2])).toEqual([
-      'gpt-5-selected',
-    ]);
+    expect(vi.mocked(findMatchingRule).mock.calls.map(call => call[2])).toEqual(['gpt-5-selected']);
     expect(resolveChannels).toHaveBeenCalledWith(selectedRule, 'gpt-5-selected');
     expect(httpRawRequest).toHaveBeenCalledWith(
       'https://codex.example.com/v1/responses',
@@ -3229,6 +3227,9 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     const chunks = [
       Buffer.from('data: {"usage":{"prompt_tokens":5}}\n\n'),
       Buffer.from(
+        'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"ok"}\n\n'
+      ),
+      Buffer.from(
         'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"completion_tokens":7,"total_tokens":12}}}\n\n'
       ),
     ];
@@ -3314,7 +3315,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     expect(response.headers).not.toHaveProperty('content-length');
     expect(response.headers).not.toHaveProperty('content-encoding');
     expect(response.headers).not.toHaveProperty('transfer-encoding');
-    expect(response.write).toHaveBeenCalledTimes(2);
+    expect(response.write).toHaveBeenCalledTimes(3);
     expect(response.writeHead.mock.invocationCallOrder[0]).toBeLessThan(
       response.write.mock.invocationCallOrder[0]
     );
@@ -3384,6 +3385,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       },
     };
     const terminalEvent =
+      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"ok"}\n\n' +
       'event: response.completed\ndata: {"type":"response.completed","response":{}}\n\n';
     const largeCompletedChunk = Buffer.from(`${terminalEvent}: ${'x'.repeat(9000)}\n\n`);
     const upstreamHeaders = { 'content-type': 'text/event-stream; charset=utf-8' };
@@ -3521,7 +3523,8 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       '<!doctype html><html><body>Service Unavailable</body></html>'
     );
     const successChunk = Buffer.from(
-      'event: response.completed\ndata: {"type":"response.completed","response":{}}\n\n'
+      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"ok"}\n\n' +
+        'event: response.completed\ndata: {"type":"response.completed","response":{}}\n\n'
     );
     let attempt = 0;
 
@@ -3718,6 +3721,131 @@ describe('route-proxy-service SSE streaming passthrough', () => {
         apiKeyId: 'key-openai',
         outcome: 'failure',
         error: 'incomplete_streaming_response:missing_terminal_event',
+      })
+    );
+  });
+
+  it('marks a completed Codex SSE stream with zero usage and no output as malformed', async () => {
+    vi.clearAllMocks();
+
+    const rule = {
+      id: 'rule-codex-empty-completed',
+      cliType: 'codex' as const,
+      pattern: 'gpt-4.1-mini',
+      patternType: 'exact' as const,
+    };
+    const channel = {
+      routeRuleId: rule.id,
+      siteId: 'site-openai',
+      accountId: 'account-openai',
+      apiKeyId: 'key-openai',
+      cliType: 'codex' as const,
+      canonicalModel: 'gpt-4.1-mini',
+      resolvedModel: 'gpt-4.1-mini',
+    };
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+      },
+      rules: [rule],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: null,
+        geminiCli: null,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'gpt-4.1-mini': {
+            canonicalName: 'gpt-4.1-mini',
+            aliases: ['gpt-4.1-mini'],
+            sources: [],
+            vendor: 'openai' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+    };
+    const emptyCompletedChunk = Buffer.from(
+      'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}\n\n'
+    );
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn(() => ({ id: 'site-openai', name: 'OpenAI-compatible' })),
+      getAccountById: vi.fn(() => ({ id: 'account-openai', account_name: 'default' })),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(extractModelFromBody).mockReturnValue('gpt-4.1-mini');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue([channel]);
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://upstream.example.com',
+      apiKey: 'sk-upstream',
+    });
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockResolvedValue({
+      ...channel,
+      windowStartedAt: 1,
+      windowRequestCount: 1,
+      windowSuccessCount: 0,
+      successRate: 0,
+      updatedAt: 1,
+    });
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
+      const headers = { 'content-type': 'text/event-stream' };
+      const accepted = config.onResponse?.({ status: 200, statusText: 'OK', headers });
+      expect(accepted).toBe(true);
+      await config.onChunk?.(emptyCompletedChunk);
+      return {
+        status: 200,
+        headers,
+        body: emptyCompletedChunk,
+        firstByteLatencyMs: 4,
+      };
+    });
+
+    const request = createJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+      },
+      { model: 'gpt-4.1-mini', stream: true, input: 'hi' }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('response.completed');
+    expect(response.body).toContain('event: error');
+    expect(response.body).toContain(
+      'without assistant text, function_call, or tool output content'
+    );
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: 'key-openai' }),
+      'failure',
+      expect.objectContaining({
+        error: 'malformed_streaming_response:empty_response_zero_usage',
+      }),
+      expect.any(Object)
+    );
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKeyId: 'key-openai',
+        outcome: 'failure',
+        error: 'malformed_streaming_response:empty_response_zero_usage',
       })
     );
   });
@@ -4247,7 +4375,8 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     };
     const failureChunk = Buffer.from('data: first-failure\n\n');
     const successChunk = Buffer.from(
-      'event: response.completed\ndata: {"type":"response.completed","response":{}}\n\n'
+      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"ok"}\n\n' +
+        'event: response.completed\ndata: {"type":"response.completed","response":{}}\n\n'
     );
     let attempt = 0;
 

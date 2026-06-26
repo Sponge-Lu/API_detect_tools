@@ -164,6 +164,53 @@ export function registerTokenHandlers(
     }
   });
 
+  // 从浏览器登录态刷新账户基础信息（user_id / username / access_token）
+  ipcMain.handle('token:refresh-account-basic-info', async (_, accountId: string) => {
+    try {
+      await unifiedConfigManager.loadConfig();
+      const account = unifiedConfigManager.getAccountById(accountId);
+      if (!account) {
+        return { success: false, error: `Account not found: ${accountId}` };
+      }
+
+      const site = unifiedConfigManager.getSiteById(account.site_id);
+      if (!site) {
+        return { success: false, error: `Site not found: ${account.site_id}` };
+      }
+
+      const mainWindow = getMainWindow();
+      const result = await tokenService.refreshAccountBasicInfo(
+        {
+          site_url: site.url,
+          site_type: site.site_type,
+          user_id: Number(account.user_id || 0),
+          access_token: account.access_token,
+        },
+        (status: string) => sendSiteInitStatus(mainWindow, status)
+      );
+
+      if (!result.success || !result.data) {
+        return {
+          success: false,
+          error: result.healthStatus.message,
+          healthStatus: result.healthStatus,
+        };
+      }
+
+      await unifiedConfigManager.updateAccount(accountId, {
+        user_id: result.data.user_id,
+        username: result.data.username,
+        access_token: result.data.access_token,
+        status: 'active',
+      });
+
+      return { success: true, data: result.data, healthStatus: result.healthStatus };
+    } catch (error: any) {
+      Logger.error('刷新账户基础信息失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   // 验证令牌有效性
   ipcMain.handle('token:validate', async (_, account: any) => {
     try {

@@ -262,6 +262,76 @@ Checklist:
 - when a child owner explicitly disables a feature, do not fall back to a parent legacy enable
 - add tests for write path, load projection key, scheduler/runtime selection, and legacy fallback
 
+### Mistake 12: UI Field Data Source Determines "Refresh" Button Behavior
+
+**Bad**: UI displays fields from one data source (browser localStorage), but "refresh" button calls a
+method that fetches from a completely different source (API with existing token).
+
+Examples:
+- Tab1 displays **account basic info** (user_id, username, access_token from browser localStorage)
+- "重新获取站点账户信息" button calls `refreshDisplayData()`, which fetches **runtime data** (balance,
+  API Keys, user groups from API)
+- **The API data is not even displayed in Tab1!**
+- When access_token expires, button fails silently because it can't create a new token (only uses
+  existing token)
+
+**Root cause**: Frontend button semantic (browser data source) mismatches backend implementation (API
+data source).
+
+**Good**: UI field data source determines which backend method the "refresh" button should call.
+
+Solution:
+1. **Tab1 fields from browser → button calls browser data getter**
+   - Add `TokenService.refreshAccountBasicInfo()`: get user_id/username from localStorage, create
+     token if expired
+   - Button: "从浏览器重新获取"
+
+2. **Tab2 fields from API → button calls API data getter**
+   - Keep `refreshDisplayData()` for balance/API Keys/user groups
+   - Button: "刷新数据"
+
+Data source classification:
+| Source | Methods | Data | Use Case |
+|--------|---------|------|----------|
+| Browser | `getLocalStorageData()`, `createAccessToken()`, `refreshAccountBasicInfo()` | user_id, username, access_token | Tab1 account info |
+| API | `refreshDisplayData()`, `fetchAccountData()`, `fetchApiTokens()` | balance, usage, API Keys, groups | Tab2 runtime data |
+
+Checklist:
+- before adding a "refresh" button, identify data source of displayed fields
+- if fields come from browser localStorage, button should call browser data getter
+- if the refresh is account-scoped, read browser state from that account's Profile/browser slot
+  before validating or recreating the token; do not read the default browser and then write the
+  result into a different account
+- if fields come from API, button should call API data getter
+- button text should clarify data source: "从浏览器重新获取" vs "刷新数据"
+- document data source categories in backend spec (browser vs API)
+- add integration tests covering token expiration scenario for browser data getters
+
+### Mistake 13: Treating Transport Success As Model Success
+
+**Bad**: Collapsing HTTP status, streaming terminal markers, and usage/token fields into one
+"request succeeded" signal.
+
+Examples:
+- a local route receives `HTTP 200` and `text/event-stream`, so it writes success stats before
+  validating the protocol-specific final event
+- a Codex/OpenAI Responses stream contains `response.completed` / `[DONE]`, but no output text,
+  function call, or tool output
+- the upstream reports `input_tokens/output_tokens/total_tokens = 0`, and analytics displays a
+  successful request with all token fields at `0`, while the CLI conversation ended abruptly
+
+**Good**: Separate transport success from model semantic success.
+
+Checklist:
+- classify HTTP status and content type only as transport eligibility
+- for streaming model routes, validate the protocol terminal event and completed response content
+  before recording route-path success
+- treat missing usage as unknown, not `0`; do not fabricate final billing data
+- treat all-zero usage plus no output content as an empty/malformed generation diagnostic
+- when downstream bytes have already been written, append a protocol-shaped error and mark the path
+  failed instead of silently ending the stream
+- add regression tests that include `HTTP 200 + terminal marker + no output + zero usage`
+
 ---
 
 ## Checklist for Cross-Layer Features
@@ -287,6 +357,8 @@ After implementation:
       app has an explicit selected model fallback
 - [ ] Confirmed configuration ownership migrations update save handlers, loaders, projections,
       scheduled jobs, route resolvers, and tests together
+- [ ] Confirmed route/proxy success is not inferred from HTTP status alone; streaming responses have
+      protocol terminal and output-content validation before route-path success is recorded
 
 ---
 

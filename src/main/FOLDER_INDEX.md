@@ -33,7 +33,7 @@
 | **chrome-manager.ts** | Chrome 浏览器管理、多槽位架构、独立登录浏览器（loginBrowserState）、按 site_type 解析登录态，提供页面级登录态重读入口，并支持复用账户 Profile 打开签到页 | `ChromeManager` 类 |
 | **site-type-registry.ts** | 站点类型到初始化/端点/行为的注册表 | `getSiteTypeProfile()`, `resolveSiteType()` |
 | **site-type-detector.ts** | 智能添加初始化前的站点类型自动识别 | `detectSiteType()` |
-| **token-service.ts** | Token 认证服务，初始化阶段按 site_type 选择端点与 access token 策略，Sub2API 可从浏览器登录态重读并校验 JWT，显式 `site_type` 可覆盖 URL 反查，按 site_type 驱动签到/浏览器回退端点，统一识别 Unauthorized/invalid access token 失败 envelope，并在 NewAPI 脱敏 API Key 列表中优先使用 `/api/token/batch/keys` 批量补全明文 key | `TokenService` 类 |
+| **token-service.ts** | Token 认证服务，初始化阶段按 site_type 选择端点与 access token 策略，Sub2API 可从浏览器登录态重读并校验 JWT，显式 `site_type` 可覆盖 URL 反查；支持按账户浏览器槽位刷新 user_id/username/access_token 并在 token 无效时重建；按 site_type 驱动签到/浏览器回退端点，统一识别 Unauthorized/invalid access token 失败 envelope，并在 NewAPI 脱敏 API Key 列表中优先使用 `/api/token/batch/keys` 批量补全明文 key | `TokenService` 类 |
 | **cli-compat-service.ts** | 协议级 CLI 兼容性测试，请求格式与真实 CLI 对齐 | `CliCompatService` 类 |
 | **cli-wrapper-compat-service.ts** | 基于真实 CLI wrapper 的兼容性测试；当前 UI 测试主路径，使用临时 HOME/CODEX_HOME 隔离环境，监听 route probe-lock 请求/终止失败以提前停止确定性失败测试，并在 CLI 二次请求先触发 probe-lock 限制时等待/回看首次真实上游结果避免误判，Claude JSON 错误会摘要化，清理临时目录时会重试并避免 Windows 文件锁覆盖真实测试结果，Gemini 仅写隔离 `HOME/.gemini` 并禁用自身 sandbox relaunch | `CliWrapperCompatService` 类 |
 | **custom-cli-config-service.ts** | 自定义 CLI 配置持久化服务，并为路由生成自定义 CLI 虚拟站点/账户/API Key 标识 | `loadCustomCliConfigStorage()`, `buildCustomCliRouteSiteId()` |
@@ -58,7 +58,7 @@
 | **route-stats-service.ts** | 路由调用统计与通道评分排序 | `recordOutcome()`, `sortChannelsByScore()` |
 | **route-state-manager.ts** | 路由运行态文件管理，维护并裁剪 `state/route-runtime.json`、`route-probes.json`、`route-analytics.json` 与模型来源快照，避免高频路由状态写入 `config.json` | `routeStateManager` |
 | **power-manager.ts** | 电源管理，阻止系统休眠 | `powerManager` 实例 |
-| **preload.ts** | Preload 脚本 | IPC 上下文隔离，暴露统一站点 CRUD / 账户 / 检测 / 路由路径恢复 / overview 接口，并提供总览数据变更与路由日志逐条追加订阅 |
+| **preload.ts** | Preload 脚本 | IPC 上下文隔离，暴露统一站点 CRUD / 账户 / 检测 / token 基础信息刷新 / 路由路径恢复 / overview 接口，并提供总览数据变更与路由日志逐条追加订阅 |
 | **api-request-helper.ts** | API 请求辅助函数 | 通用请求逻辑 |
 
 ### 子文件夹

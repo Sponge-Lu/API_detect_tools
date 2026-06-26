@@ -34,7 +34,13 @@ import puppeteer, { Browser, Page } from 'puppeteer-core';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
-import { app } from 'electron';
+import {
+  app,
+  net,
+  session as electronSession,
+  type CookiesSetDetails,
+  type Session,
+} from 'electron';
 import Logger from './utils/logger';
 import type { SiteType } from '../shared/types/site';
 import { getSiteTypeProfile } from './site-type-registry';
@@ -61,7 +67,17 @@ interface BrowserCookie {
   path?: string;
   secure?: boolean;
   expires?: number;
+  httpOnly?: boolean;
+  sameSite?: string;
 }
+
+interface BrowserSessionTextResponse {
+  status: number;
+  statusText: string;
+  text: string;
+}
+
+const LOGIN_API_REQUEST_TIMEOUT_MS = 10000;
 
 /** 单个浏览器槽位的状态 */
 interface BrowserSlot {
@@ -105,6 +121,9 @@ export class ChromeManager {
     isClosed: boolean;
     abortController: AbortController | null;
   } | null = null;
+
+  /** 按 origin 串行化登录验证请求，避免同一请求会话的 Cookie 同步互相覆盖 */
+  private loginApiSessionLocks = new Map<string, Promise<void>>();
 
   /** 获取或创建指定槽位 */
   private getSlot(index: number): BrowserSlot {
@@ -1456,22 +1475,20 @@ export class ChromeManager {
     return target.pathname.startsWith(cookiePath) || cookiePath === '/';
   }
 
-  private async getCookieHeaderForUrl(
+  private async getCookiesForUrl(
     page: Page,
     requestUrl: string,
     loginMode?: boolean
-  ): Promise<string> {
+  ): Promise<BrowserCookie[]> {
     try {
       this.checkBrowserClosed(loginMode);
       const target = new URL(requestUrl);
       const client = await page.createCDPSession();
       try {
         const { cookies } = await client.send('Network.getAllCookies');
-        const matchingCookies = (cookies as BrowserCookie[]).filter(cookie =>
+        return (cookies as BrowserCookie[]).filter(cookie =>
           this.isCookieVisibleToUrl(cookie, target)
         );
-
-        return matchingCookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
       } finally {
         await client.detach().catch(() => undefined);
       }
@@ -1480,8 +1497,178 @@ export class ChromeManager {
         throw error;
       }
       Logger.warn(`⚠️ [ChromeManager] 读取浏览器 Cookie 失败: ${error.message}`);
-      return '';
+      return [];
     }
+  }
+
+  private buildCookieHeader(cookies: BrowserCookie[]): string {
+    return cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
+  }
+
+  private async withLoginApiSessionLock<T>(origin: string, task: () => Promise<T>): Promise<T> {
+    const previousLock = this.loginApiSessionLocks.get(origin) || Promise.resolve();
+    let releaseCurrentLock!: () => void;
+    const currentLock = new Promise<void>(resolve => {
+      releaseCurrentLock = resolve;
+    });
+    const storedLock = previousLock.catch(() => undefined).then(() => currentLock);
+    this.loginApiSessionLocks.set(origin, storedLock);
+
+    await previousLock.catch(() => undefined);
+
+    try {
+      return await task();
+    } finally {
+      releaseCurrentLock();
+      if (this.loginApiSessionLocks.get(origin) === storedLock) {
+        this.loginApiSessionLocks.delete(origin);
+      }
+    }
+  }
+
+  private async prepareBrowserSessionForRequest(
+    url: string,
+    cookies: BrowserCookie[]
+  ): Promise<Session | null> {
+    if (typeof electronSession?.fromPartition !== 'function') {
+      return null;
+    }
+
+    const target = new URL(url);
+    const partition = `login-api-${Buffer.from(target.origin).toString('base64url').slice(0, 120)}`;
+    const requestSession = electronSession.fromPartition(partition);
+    await requestSession.clearStorageData({
+      origin: target.origin,
+      storages: ['cookies'],
+    });
+
+    await Promise.all(
+      cookies.map(cookie => {
+        const details: CookiesSetDetails = {
+          url: `${target.protocol}//${target.host}${cookie.path || '/'}`,
+          name: cookie.name,
+          value: cookie.value,
+          path: cookie.path || '/',
+          secure: cookie.secure,
+          httpOnly: cookie.httpOnly,
+          expirationDate:
+            typeof cookie.expires === 'number' && cookie.expires > 0 ? cookie.expires : undefined,
+          sameSite: this.normalizeElectronCookieSameSite(cookie.sameSite),
+        };
+
+        if (cookie.domain.startsWith('.')) {
+          details.domain = cookie.domain;
+        }
+
+        return requestSession.cookies.set(details).catch((error: any) => {
+          Logger.warn('⚠️ [ChromeManager] 同步浏览器 Cookie 到主进程请求会话失败:', {
+            name: cookie.name,
+            domain: cookie.domain,
+            error: error?.message || error,
+          });
+        });
+      })
+    );
+
+    return requestSession;
+  }
+
+  private normalizeElectronCookieSameSite(
+    sameSite: string | undefined
+  ): CookiesSetDetails['sameSite'] | undefined {
+    if (!sameSite) return undefined;
+    const normalized = sameSite.toLowerCase();
+    if (normalized === 'no_restriction' || normalized === 'none') return 'no_restriction';
+    if (normalized === 'lax') return 'lax';
+    if (normalized === 'strict') return 'strict';
+    if (normalized === 'unspecified') return 'unspecified';
+    return undefined;
+  }
+
+  private async fetchTextWithBrowserSession(
+    url: string,
+    headers: Record<string, string>,
+    cookies: BrowserCookie[]
+  ): Promise<BrowserSessionTextResponse> {
+    if (typeof net?.request === 'function') {
+      try {
+        const origin = new URL(url).origin;
+        return await this.withLoginApiSessionLock(origin, async () => {
+          const requestSession = await this.prepareBrowserSessionForRequest(url, cookies);
+          if (!requestSession) {
+            throw new Error('Electron session is unavailable for browser-session request');
+          }
+          return await this.fetchTextWithElectronNet(url, headers, requestSession);
+        });
+      } catch (error: any) {
+        Logger.warn('⚠️ [ChromeManager] Electron net 登录验证请求失败，回退到 Node fetch:', {
+          url,
+          error: error?.message || error,
+        });
+      }
+    }
+
+    const response = await fetch(url, { method: 'GET', headers });
+    return {
+      status: response.status,
+      statusText: response.statusText,
+      text: await response.text(),
+    };
+  }
+
+  private fetchTextWithElectronNet(
+    url: string,
+    headers: Record<string, string>,
+    requestSession: Session
+  ): Promise<BrowserSessionTextResponse> {
+    return new Promise((resolve, reject) => {
+      const request = net.request({
+        method: 'GET',
+        url,
+        session: requestSession,
+        credentials: 'include',
+      });
+      let settled = false;
+      const timeoutId = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        request.abort();
+        reject(new Error(`Request timeout after ${LOGIN_API_REQUEST_TIMEOUT_MS}ms`));
+      }, LOGIN_API_REQUEST_TIMEOUT_MS);
+
+      const rejectOnce = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        reject(error);
+      };
+
+      for (const [key, value] of Object.entries(headers)) {
+        if (['cookie', 'origin', 'referer'].includes(key.toLowerCase())) continue;
+        request.setHeader(key, value);
+      }
+
+      request.on('response', response => {
+        const chunks: Buffer[] = [];
+        response.on('data', chunk => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        response.on('end', () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutId);
+          resolve({
+            status: response.statusCode,
+            statusText: response.statusMessage || '',
+            text: Buffer.concat(chunks).toString('utf8'),
+          });
+        });
+        response.on('error', rejectOnce);
+      });
+
+      request.on('error', rejectOnce);
+      request.end();
+    });
   }
 
   /**
@@ -2273,7 +2460,8 @@ export class ChromeManager {
       throw new Error('浏览器已关闭，操作已取消');
     }
 
-    const cookieHeader = await this.getCookieHeaderForUrl(page, url, loginMode);
+    const requestCookies = await this.getCookiesForUrl(page, url, loginMode);
+    const cookieHeader = this.buildCookieHeader(requestCookies);
     const requestOrigin = new URL(url).origin;
     const headers: Record<string, string> = {
       Accept: 'application/json, text/plain, */*',
@@ -2296,10 +2484,10 @@ export class ChromeManager {
       headers['User-id'] = normalizedUserId;
     }
 
-    const response = await fetch(url, { method: 'GET', headers });
-    const text = await response.text();
+    const response = await this.fetchTextWithBrowserSession(url, headers, requestCookies);
+    const text = response.text;
 
-    if (!response.ok) {
+    if (response.status < 200 || response.status >= 300) {
       throw new Error(`HTTP ${response.status}: ${text.substring(0, 200)}`);
     }
 

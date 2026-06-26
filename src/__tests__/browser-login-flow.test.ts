@@ -293,6 +293,60 @@ describe('browser login flow', () => {
   });
 
   it('getUserDataFromApi 应在 API 验证阶段使用页面实际的 https origin', async () => {
+    const electronRequests: any[] = [];
+    const cookieSet = vi.fn(async () => undefined);
+    const clearStorageData = vi.fn(async () => undefined);
+    const fromPartition = vi.fn(() => ({
+      clearStorageData,
+      cookies: {
+        set: cookieSet,
+      },
+    }));
+    const netRequest = vi.fn((options: any) => {
+      electronRequests.push(options);
+      const handlers = new Map<string, (...args: any[]) => void>();
+      const request = {
+        setHeader: vi.fn(),
+        on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+          handlers.set(event, handler);
+          return request;
+        }),
+        end: vi.fn(() => {
+          const responseHandlers = new Map<string, (...args: any[]) => void>();
+          const response =
+            options.url === 'https://demo.example.com/api/status'
+              ? {
+                  success: true,
+                  data: {
+                    system_name: 'Demo Site',
+                  },
+                }
+              : {
+                  success: true,
+                  data: {
+                    id: 7,
+                    username: 'demo',
+                  },
+                };
+          handlers.get('response')?.({
+            statusCode: 200,
+            statusMessage: 'OK',
+            on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+              responseHandlers.set(event, handler);
+              if (event === 'data') {
+                handler(Buffer.from(JSON.stringify(response)));
+              }
+              if (event === 'end') {
+                handler();
+              }
+              return undefined;
+            }),
+          });
+        }),
+        abort: vi.fn(),
+      };
+      return request;
+    });
     vi.doMock('puppeteer-core', () => ({
       default: {},
     }));
@@ -300,52 +354,163 @@ describe('browser login flow', () => {
       app: {
         getPath: vi.fn(() => 'C:/tmp'),
       },
+      net: {
+        request: netRequest,
+      },
+      session: {
+        fromPartition,
+      },
     }));
     vi.doMock('../main/utils/logger', () => ({
       default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     }));
 
-    const originalFetch = globalThis.fetch;
-    const fetchMock = vi.fn(async (url: string) => {
-      if (url === 'https://demo.example.com/api/user/self') {
-        return new Response(
-          JSON.stringify({
-            success: true,
-            data: {
-              id: 7,
-              username: 'demo',
+    const { ChromeManager } = await import('../main/chrome-manager');
+    const manager = new ChromeManager();
+    const page = {
+      url: vi.fn(() => ':'),
+      goto: vi.fn(async () => undefined),
+      evaluate: vi
+        .fn()
+        .mockResolvedValueOnce('https://demo.example.com/dashboard')
+        .mockResolvedValueOnce(7),
+      createCDPSession: vi.fn(async () => ({
+        send: vi.fn(async () => ({
+          cookies: [
+            {
+              name: 'new-api-user',
+              value: 'browser-session',
+              domain: '.demo.example.com',
+              path: '/',
+              secure: true,
             },
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-      if (url === 'https://demo.example.com/api/status') {
-        return new Response(
-          JSON.stringify({
-            success: true,
-            data: {
-              system_name: 'Demo Site',
-            },
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-      throw new Error(`Unexpected URL: ${url}`);
-    });
-    globalThis.fetch = fetchMock as any;
+          ],
+        })),
+        detach: vi.fn(async () => undefined),
+      })),
+      isClosed: vi.fn(() => false),
+    };
 
-    try {
-      const { ChromeManager } = await import('../main/chrome-manager');
-      const manager = new ChromeManager();
-      const page = {
-        url: vi.fn(() => ':'),
-        goto: vi.fn(async () => undefined),
-        evaluate: vi
-          .fn()
-          .mockResolvedValueOnce('https://demo.example.com/dashboard')
-          .mockResolvedValueOnce(7),
-        createCDPSession: vi.fn(async () => ({
-          send: vi.fn(async () => ({
+    (manager as any).loginBrowserState = {
+      browser: null,
+      chromeProcess: null,
+      debugPort: 0,
+      isClosed: false,
+      abortController: new AbortController(),
+    };
+
+    const result = await (manager as any).getUserDataFromApi(
+      page,
+      'http://demo.example.com',
+      'newapi',
+      true
+    );
+
+    expect(result).toMatchObject({
+      userId: 7,
+      username: 'demo',
+      systemName: 'Demo Site',
+    });
+    expect(electronRequests.map(request => request.url)).toEqual([
+      'https://demo.example.com/api/user/self',
+      'https://demo.example.com/api/status',
+    ]);
+    expect(electronRequests.every(request => request.credentials === 'include')).toBe(true);
+  });
+
+  it('getUserDataFromApi 应使用主进程携带浏览器 Cookie 请求，避免 CSP/CORS 卡住登录检测', async () => {
+    const electronRequests: any[] = [];
+    const headerWrites: Array<Record<string, string>> = [];
+    const cookieSet = vi.fn(async () => undefined);
+    const clearStorageData = vi.fn(async () => undefined);
+    const fromPartition = vi.fn(() => ({
+      clearStorageData,
+      cookies: {
+        set: cookieSet,
+      },
+    }));
+    const netRequest = vi.fn((options: any) => {
+      electronRequests.push(options);
+      const writtenHeaders: Record<string, string> = {};
+      headerWrites.push(writtenHeaders);
+      const handlers = new Map<string, (...args: any[]) => void>();
+      const request = {
+        setHeader: vi.fn((key: string, value: string) => {
+          writtenHeaders[key] = value;
+        }),
+        on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+          handlers.set(event, handler);
+          return request;
+        }),
+        end: vi.fn(() => {
+          const response =
+            options.url === 'https://demo.example.com/api/status'
+              ? {
+                  success: true,
+                  data: {
+                    system_name: 'Demo Site',
+                  },
+                }
+              : {
+                  success: true,
+                  data: {
+                    id: 7,
+                    username: 'demo',
+                    access_token: 'fresh-token',
+                  },
+                };
+          handlers.get('response')?.({
+            statusCode: 200,
+            statusMessage: 'OK',
+            on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+              if (event === 'data') {
+                handler(Buffer.from(JSON.stringify(response)));
+              }
+              if (event === 'end') {
+                handler();
+              }
+              return undefined;
+            }),
+          });
+        }),
+        abort: vi.fn(),
+      };
+      return request;
+    });
+    vi.doMock('puppeteer-core', () => ({
+      default: {},
+    }));
+    vi.doMock('electron', () => ({
+      app: {
+        getPath: vi.fn(() => 'C:/tmp'),
+      },
+      net: {
+        request: netRequest,
+      },
+      session: {
+        fromPartition,
+      },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const { ChromeManager } = await import('../main/chrome-manager');
+    const manager = new ChromeManager();
+    const detach = vi.fn(async () => undefined);
+    const page = {
+      url: vi.fn(() => 'https://demo.example.com/dashboard'),
+      evaluate: vi.fn(async (...args: any[]) => {
+        const fn = args[0];
+        if (typeof fn === 'function' && fn.toString().includes('fetch(')) {
+          throw new Error('page-context fetch should not be used');
+        }
+        return 7;
+      }),
+      createCDPSession: vi.fn(async () => ({
+        send: vi.fn(async (method: string) => {
+          expect(method).toBe('Network.getAllCookies');
+          return {
             cookies: [
               {
                 name: 'new-api-user',
@@ -355,165 +520,66 @@ describe('browser login flow', () => {
                 secure: true,
               },
             ],
-          })),
-          detach: vi.fn(async () => undefined),
-        })),
-        isClosed: vi.fn(() => false),
-      };
-
-      (manager as any).loginBrowserState = {
-        browser: null,
-        chromeProcess: null,
-        debugPort: 0,
-        isClosed: false,
-        abortController: new AbortController(),
-      };
-
-      const result = await (manager as any).getUserDataFromApi(
-        page,
-        'http://demo.example.com',
-        'newapi',
-        true
-      );
-
-      expect(result).toMatchObject({
-        userId: 7,
-        username: 'demo',
-        systemName: 'Demo Site',
-      });
-      expect(fetchMock).toHaveBeenCalledWith(
-        'https://demo.example.com/api/user/self',
-        expect.objectContaining({ method: 'GET' })
-      );
-      expect(fetchMock).toHaveBeenCalledWith(
-        'https://demo.example.com/api/status',
-        expect.objectContaining({ method: 'GET' })
-      );
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-
-  it('getUserDataFromApi 应使用主进程携带浏览器 Cookie 请求，避免 CSP/CORS 卡住登录检测', async () => {
-    vi.doMock('puppeteer-core', () => ({
-      default: {},
-    }));
-    vi.doMock('electron', () => ({
-      app: {
-        getPath: vi.fn(() => 'C:/tmp'),
-      },
-    }));
-    vi.doMock('../main/utils/logger', () => ({
-      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-    }));
-
-    const originalFetch = globalThis.fetch;
-    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
-      if (url === 'https://demo.example.com/api/status') {
-        return new Response(
-          JSON.stringify({
-            success: true,
-            data: {
-              system_name: 'Demo Site',
-            },
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-      if (url !== 'https://demo.example.com/api/user/self') {
-        throw new Error(`Unexpected URL: ${url}`);
-      }
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          data: {
-            id: 7,
-            username: 'demo',
-            access_token: 'fresh-token',
-          },
+          };
         }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } }
-      );
+        detach,
+      })),
+      isClosed: vi.fn(() => false),
+    };
+
+    (manager as any).loginBrowserState = {
+      browser: null,
+      chromeProcess: null,
+      debugPort: 0,
+      isClosed: false,
+      abortController: new AbortController(),
+    };
+
+    const result = await (manager as any).getUserDataFromApi(
+      page,
+      'http://demo.example.com',
+      'newapi',
+      true
+    );
+
+    expect(result).toMatchObject({
+      userId: 7,
+      username: 'demo',
+      accessToken: 'fresh-token',
+      systemName: 'Demo Site',
+      dataSource: 'api',
     });
-    globalThis.fetch = fetchMock as any;
-
-    try {
-      const { ChromeManager } = await import('../main/chrome-manager');
-      const manager = new ChromeManager();
-      const detach = vi.fn(async () => undefined);
-      const page = {
-        url: vi.fn(() => 'https://demo.example.com/dashboard'),
-        evaluate: vi.fn(async (...args: any[]) => {
-          const fn = args[0];
-          if (typeof fn === 'function' && fn.toString().includes('fetch(')) {
-            throw new Error('page-context fetch should not be used');
-          }
-          return 7;
-        }),
-        createCDPSession: vi.fn(async () => ({
-          send: vi.fn(async (method: string) => {
-            expect(method).toBe('Network.getAllCookies');
-            return {
-              cookies: [
-                {
-                  name: 'new-api-user',
-                  value: 'browser-session',
-                  domain: '.demo.example.com',
-                  path: '/',
-                  secure: true,
-                },
-              ],
-            };
-          }),
-          detach,
-        })),
-        isClosed: vi.fn(() => false),
-      };
-
-      (manager as any).loginBrowserState = {
-        browser: null,
-        chromeProcess: null,
-        debugPort: 0,
-        isClosed: false,
-        abortController: new AbortController(),
-      };
-
-      const result = await (manager as any).getUserDataFromApi(
-        page,
-        'http://demo.example.com',
-        'newapi',
-        true
-      );
-
-      expect(result).toMatchObject({
-        userId: 7,
-        username: 'demo',
-        accessToken: 'fresh-token',
-        systemName: 'Demo Site',
-        dataSource: 'api',
-      });
-      expect(fetchMock).toHaveBeenCalledWith(
-        'https://demo.example.com/api/user/self',
-        expect.objectContaining({
-          method: 'GET',
-          headers: expect.objectContaining({
-            Cookie: 'new-api-user=browser-session',
-            'New-API-User': '7',
-            'Veloera-User': '7',
-            'voapi-user': '7',
-            'User-id': '7',
-            Origin: 'https://demo.example.com',
-            Referer: 'https://demo.example.com/',
-          }),
-        })
-      );
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-      expect(page.evaluate).toHaveBeenCalledTimes(1);
-      expect(detach).toHaveBeenCalledTimes(2);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    expect(electronRequests[0]).toMatchObject({
+      method: 'GET',
+      url: 'https://demo.example.com/api/user/self',
+      credentials: 'include',
+    });
+    expect(cookieSet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: 'https://demo.example.com/',
+        name: 'new-api-user',
+        value: 'browser-session',
+        domain: '.demo.example.com',
+        path: '/',
+        secure: true,
+      })
+    );
+    expect(headerWrites[0]).toEqual(
+      expect.objectContaining({
+        Accept: 'application/json, text/plain, */*',
+        'Content-Type': 'application/json',
+        'New-API-User': '7',
+        'Veloera-User': '7',
+        'voapi-user': '7',
+        'User-id': '7',
+      })
+    );
+    expect(headerWrites[0]).not.toHaveProperty('Cookie');
+    expect(headerWrites[0]).not.toHaveProperty('Origin');
+    expect(headerWrites[0]).not.toHaveProperty('Referer');
+    expect(netRequest).toHaveBeenCalledTimes(2);
+    expect(page.evaluate).toHaveBeenCalledTimes(1);
+    expect(detach).toHaveBeenCalledTimes(2);
   });
 
   it('getLocalStorageData 在首次 API 验证成功后不应重复请求 API 补全', async () => {

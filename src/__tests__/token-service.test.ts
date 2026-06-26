@@ -401,6 +401,56 @@ describe('initializeSiteAccount site_type 驱动', () => {
     expect(result.url).toBe('https://demo.example.com');
     expect(result.site_url).toBe('https://demo.example.com');
   });
+
+  it('refreshAccountBasicInfo 应复用智能添加流程等待登录并创建 access_token', async () => {
+    const { TokenService } = await loadTokenServiceModule(null, {
+      siteType: 'newapi',
+    });
+    const onStatus = vi.fn();
+
+    const chromeManager = {
+      getLocalStorageData: vi.fn(async () => ({
+        userId: 7,
+        username: 'demo',
+        systemName: 'Demo Site',
+        accessToken: null,
+        resolvedBaseUrl: 'https://demo.example.com',
+        supportsCheckIn: true,
+        canCheckIn: true,
+      })),
+      createAccessTokenForLogin: vi.fn(async () => 'fresh-browser-token'),
+    };
+
+    const service = new TokenService(chromeManager as any);
+    const result = await service.refreshAccountBasicInfo(
+      {
+        site_url: 'https://demo.example.com',
+        site_type: 'newapi',
+        user_id: 7,
+        access_token: 'old-token',
+      },
+      onStatus
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({
+      user_id: '7',
+      username: 'demo',
+      access_token: 'fresh-browser-token',
+      tokenRefreshed: true,
+    });
+    expect(chromeManager.getLocalStorageData).toHaveBeenCalledWith(
+      'https://demo.example.com',
+      true,
+      600000,
+      onStatus,
+      { loginMode: true, siteType: 'newapi' }
+    );
+    expect(chromeManager.createAccessTokenForLogin).toHaveBeenCalledWith(
+      'https://demo.example.com',
+      7
+    );
+  });
 });
 
 describe('签到接口按 site_type 驱动', () => {

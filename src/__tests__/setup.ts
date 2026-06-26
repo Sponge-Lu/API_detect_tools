@@ -30,6 +30,7 @@ if (typeof window !== 'undefined') {
     token: {
       initializeSite: vi.fn(),
       refreshDisplayData: vi.fn(),
+      refreshAccountBasicInfo: vi.fn(),
       validate: vi.fn(),
       fetchApiTokens: vi.fn(),
       createApiToken: vi.fn(),

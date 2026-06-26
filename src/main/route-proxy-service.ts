@@ -626,6 +626,140 @@ function buildCompletedStreamFailure(reason: string, message: string): Completed
   return { ok: false, reason, message };
 }
 
+function hasOpenAiResponsesOutputItem(item: unknown): boolean {
+  const record = asRecord(item);
+  if (!record) {
+    return false;
+  }
+
+  const itemType = readString(record.type);
+  if (itemType === 'function_call' || itemType === 'function_call_output') {
+    return true;
+  }
+
+  if (readString(record.output_text).trim() || readString(record.text).trim()) {
+    return true;
+  }
+
+  const content = Array.isArray(record.content) ? record.content : [];
+  return content.some(part => {
+    const partRecord = asRecord(part);
+    return Boolean(
+      partRecord &&
+        (readString(partRecord.text).trim() || readString(partRecord.output_text).trim())
+    );
+  });
+}
+
+function hasOnlyZeroUsageTokens(usage: Record<string, unknown> | undefined): boolean {
+  if (!usage) {
+    return false;
+  }
+
+  const tokenValues = [
+    usage.input_tokens,
+    usage.inputTokens,
+    usage.prompt_tokens,
+    usage.promptTokens,
+    usage.output_tokens,
+    usage.outputTokens,
+    usage.completion_tokens,
+    usage.completionTokens,
+    usage.total_tokens,
+    usage.totalTokens,
+  ]
+    .map(toFiniteTokenNumber)
+    .filter((value): value is number => value !== undefined);
+
+  return tokenValues.length > 0 && tokenValues.every(value => value === 0);
+}
+
+function validateCompletedOpenAiResponsesStream(body: Buffer): CompletedStreamValidation {
+  let sawCompleted = false;
+  let sawDone = false;
+  let textLength = 0;
+  let outputItems = 0;
+  let explicitZeroUsage = false;
+
+  for (const block of parseSseBlocks(body.toString('utf-8'))) {
+    if (!block.data) {
+      continue;
+    }
+
+    if (block.data === '[DONE]') {
+      sawDone = true;
+      continue;
+    }
+
+    const payload = parseSseJsonRecord(block.data);
+    if (!payload) {
+      return buildCompletedStreamFailure(
+        'malformed_sse_json',
+        'upstream emitted malformed OpenAI Responses SSE JSON'
+      );
+    }
+
+    const payloadType = readString(payload.type) || block.event || '';
+    if (
+      payloadType === 'response.output_text.delta' ||
+      payloadType === 'response.output_text.done'
+    ) {
+      textLength += readString(payload.delta).length + readString(payload.text).length;
+      continue;
+    }
+
+    if (
+      payloadType === 'response.function_call_arguments.delta' ||
+      payloadType === 'response.function_call_arguments.done'
+    ) {
+      if (readString(payload.delta).trim() || readString(payload.arguments).trim()) {
+        outputItems += 1;
+      }
+      continue;
+    }
+
+    if (
+      payloadType === 'response.output_item.added' ||
+      payloadType === 'response.output_item.done'
+    ) {
+      if (hasOpenAiResponsesOutputItem(payload.item)) {
+        outputItems += 1;
+      }
+      continue;
+    }
+
+    if (payloadType === 'response.completed') {
+      sawCompleted = true;
+      const response = asRecord(payload.response);
+      textLength += readString(response?.output_text).length;
+      const output = Array.isArray(response?.output) ? response.output : [];
+      outputItems += output.filter(hasOpenAiResponsesOutputItem).length;
+
+      const usage = asRecord(response?.usage) || asRecord(payload.usage);
+      if (hasOnlyZeroUsageTokens(usage)) {
+        explicitZeroUsage = true;
+      }
+    }
+  }
+
+  if (!sawCompleted && !sawDone) {
+    return buildCompletedStreamFailure(
+      'missing_response_completed',
+      'upstream ended Codex stream without response.completed or [DONE]'
+    );
+  }
+
+  if (textLength === 0 && outputItems === 0) {
+    const reason = explicitZeroUsage ? 'empty_response_zero_usage' : 'empty_response';
+    return buildCompletedStreamFailure(
+      reason,
+      'upstream ended Codex stream without assistant text, function_call, or tool output content'
+    );
+  }
+
+  return { ok: true };
+}
+
 function isForeignOpenAiLikeAnthropicPayload(
   payload: Record<string, unknown>,
   eventType: string
@@ -847,6 +981,10 @@ function validateCompletedStreamingBody(
 ): CompletedStreamValidation {
   if (protocol === 'anthropic') {
     return validateCompletedAnthropicStream(body);
+  }
+
+  if (protocol === 'openaiResponses') {
+    return validateCompletedOpenAiResponsesStream(body);
   }
 
   return { ok: true };
@@ -2106,7 +2244,11 @@ export async function handleRequest(
       // Preserve the existing billing guard: app-selected model fallback/override must not turn
       // known Gemini CLI internal utility/fallback models into billable upstream chat requests.
       // An explicit rule for the observed raw utility model still opts into forwarding it.
-      explicitGeminiUtilityRule = findMatchingRule(sortedRules, cliType, rawCanonicalModel || rawModel);
+      explicitGeminiUtilityRule = findMatchingRule(
+        sortedRules,
+        cliType,
+        rawCanonicalModel || rawModel
+      );
       if (!explicitGeminiUtilityRule) {
         recordRouteRequest({
           requestId,

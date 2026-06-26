@@ -1,6 +1,0 @@
-{"file": ".claude/commands/trellis/finish-work.md", "reason": "Finish work checklist"}
-{"file": ".claude/commands/trellis/check.md", "reason": "Code quality check spec"}
-{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Review file placement"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Review card composition and accessibility"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "Confirm no unnecessary store changes"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Require test updates and validation"}

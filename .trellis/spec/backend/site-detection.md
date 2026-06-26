@@ -175,13 +175,17 @@ private async getUserDataFromApi(
 ### 3. Contracts
 
 - Browser profile/session is the source of truth for smart-add login state.
-- Protected initialization endpoints must be requested from the Electron main process with a
-  `Cookie` header assembled from the active Puppeteer page's CDP cookie jar.
+- Protected initialization endpoints must be requested from the Electron main process with cookies
+  derived from the active Puppeteer page's CDP cookie jar. For Electron net requests, copy those
+  cookies into a request-scoped Electron `Session` and use `credentials: 'include'`; a manual
+  `Cookie` header is only valid for transports that permit caller-managed cookie headers.
 - Cookie selection is URL-scope based: domain, subdomain, path, secure flag, and expiry. It must not
   depend on cookie names containing `session`, `token`, `auth`, or any site-specific string.
 - Page-context `fetch` is not a reliable login verifier because site CSP/CORS can block it even when
-  browser cookies are valid. It may still be used to read localStorage hints, but not as the only
-  protected API transport.
+  browser cookies are valid. Node `fetch` can also fail at the transport layer for sites that the
+  Chromium network stack can reach, so smart-add verification should prefer Electron net with the
+  browser cookies projected into the request session. Page JavaScript may still be used to read
+  localStorage hints, but not as the protected API transport.
 - Main-process protected API requests should include the same user-id headers currently used by
   compatible NewAPI/Veloera/VOAPI sites when a user id hint is available. If that request fails while
   a user id hint was present, retry once without those user-id headers before treating the endpoint
@@ -196,14 +200,16 @@ private async getUserDataFromApi(
 | localStorage has `userId` but no `accessToken` | Verify by protected API with browser cookies; do not trust or reject solely on cookie name |
 | Browser cookie name is `new-api-user`, framework-specific, or otherwise not auth-like | Cookie is still sent if URL-visible; login can complete |
 | Page-context API fetch would be blocked by CSP/CORS | Login verification still succeeds via main-process request |
+| Node `fetch` times out while the login browser can load the site | Login verification still uses Electron net with request-session cookies before falling back |
 | Stale localStorage user id causes protected endpoint failure | Retry once without user-id headers |
 | Protected endpoint returns 401/403 after cookie request and retry | Continue waiting for login or surface the existing login-expired path |
 | Browser is closed during verification | Throw browser-closed/cancel error immediately |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: user completes login in the popup browser, protected `/api/user/self` succeeds with browser
-  cookies, and smart add proceeds within the next polling pass.
+- Good: user completes login in the popup browser, protected `/api/user/self` succeeds through
+  Electron net using request-session browser cookies, and smart add proceeds within the next polling
+  pass.
 - Base: localStorage is readable and supplies user id / username hints, while browser cookies supply
   the real authenticated session.
 - Bad: checking only for cookies whose names include `session`, `token`, or `auth` before attempting
@@ -211,13 +217,16 @@ private async getUserDataFromApi(
   cookie names.
 - Bad: using `page.evaluate(fetch(...))` as the only API verification path; CSP/CORS can make a valid
   logged-in session look unauthenticated.
+- Bad: using bare Node `fetch` as the only main-process transport; a site can be reachable in
+  Chromium/Electron while Undici reports `fetch failed` or connect timeout.
 
 ### 6. Tests Required
 
 - `src/__tests__/browser-login-flow.test.ts`
   - Assert `getUserDataFromApi()` uses the page's effective HTTPS origin for protected API requests.
-  - Assert a non-auth-like cookie name is included in the main-process `Cookie` header and login data
-    is parsed without using page-context API fetch.
+  - Assert a non-auth-like cookie name is copied into the main-process request session, the protected
+    request uses `credentials: 'include'`, and login data is parsed without using page-context API
+    fetch.
   - Assert existing login browser selection and token creation tests continue passing.
 
 ### 7. Wrong vs Correct
@@ -233,13 +242,14 @@ await page.evaluate(url => fetch(url, { credentials: 'include' }), apiUrl);
 #### Correct
 
 ```ts
-const cookieHeader = buildCookieHeaderForUrl(cdpCookies, apiUrl);
-const response = await fetch(apiUrl, {
-  headers: {
-    Cookie: cookieHeader,
-    'New-API-User': String(userId),
-  },
+const requestSession = projectCdpCookiesIntoElectronSession(cdpCookies, apiUrl);
+const request = net.request({
+  method: 'GET',
+  url: apiUrl,
+  session: requestSession,
+  credentials: 'include',
 });
+request.setHeader('New-API-User', String(userId));
 ```
 
 ## Scenario: Managed Site CLI Config Is Account Scoped

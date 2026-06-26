@@ -1851,7 +1851,15 @@ export class UnifiedConfigManager {
     updates: Partial<
       Pick<
         AccountCredential,
-        'account_name' | 'status' | 'access_token' | 'user_id' | 'cli_config' | 'anyRouterConfig'
+        | 'account_name'
+        | 'username'
+        | 'status'
+        | 'access_token'
+        | 'user_id'
+        | 'auto_refresh'
+        | 'auto_refresh_interval'
+        | 'cli_config'
+        | 'anyRouterConfig'
       >
     >
   ): Promise<boolean> {

@@ -33,6 +33,7 @@ import type {
   SiteAccount,
   CachedDisplayData,
   RefreshAccountResult,
+  AccountBasicInfoRefreshResult,
   HealthCheckResult,
 } from './types/token';
 import type { CheckinStats } from '../shared/types/site';
@@ -853,6 +854,59 @@ export class TokenService {
     } catch (error: any) {
       Logger.error('❌ [TokenService] 数据刷新失败:', error.message);
 
+      return {
+        success: false,
+        healthStatus: {
+          status: 'error',
+          message: error.message,
+        },
+      };
+    }
+  }
+
+  /**
+   * 从浏览器登录态刷新账户基础信息
+   * 复用智能添加站点的等待登录与 token 创建流程，只返回可写回现有账户的基础字段。
+   */
+  async refreshAccountBasicInfo(
+    account: Pick<SiteAccount, 'site_url' | 'user_id' | 'access_token'> & { site_type?: SiteType },
+    onStatus?: (status: string) => void
+  ): Promise<AccountBasicInfoRefreshResult> {
+    const siteType = account.site_type || this.resolveSiteTypeByUrl(account.site_url);
+    Logger.info('🔄 [TokenService] 从浏览器刷新账户基础信息...', {
+      siteUrl: account.site_url,
+      siteType,
+    });
+
+    try {
+      const siteAccount = await this.initializeSiteAccount(
+        account.site_url,
+        true,
+        600000,
+        onStatus,
+        { loginMode: true, siteType }
+      );
+      const tokenRefreshed = siteAccount.access_token !== account.access_token;
+
+      return {
+        success: true,
+        data: {
+          user_id: String(siteAccount.user_id),
+          username: siteAccount.username || undefined,
+          access_token: siteAccount.access_token,
+          site_url: siteAccount.site_url || siteAccount.url || account.site_url,
+          site_type: siteAccount.site_type || siteType,
+          tokenRefreshed,
+        },
+        healthStatus: {
+          status: 'healthy',
+          message: tokenRefreshed
+            ? '账户基础信息已刷新，access token 已重新创建'
+            : '账户基础信息已刷新',
+        },
+      };
+    } catch (error: any) {
+      Logger.error('❌ [TokenService] 刷新账户基础信息失败:', error.message);
       return {
         success: false,
         healthStatus: {

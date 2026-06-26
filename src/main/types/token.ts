@@ -22,6 +22,7 @@ export type {
   CachedDisplayData,
   ApiResponse,
   RefreshAccountResult,
+  AccountBasicInfoRefreshResult,
   HealthCheckResult,
   SiteDisplayInfo,
   SiteStats,

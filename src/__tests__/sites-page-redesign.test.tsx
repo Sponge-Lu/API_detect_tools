@@ -986,6 +986,18 @@ describe('sites page redesign', () => {
     expect(panelSource).not.toContain('User hash changed');
   });
 
+  it('managed side-panel account refresh uses browser basic-info refresh instead of site detection', () => {
+    const source = readFileSync(join(process.cwd(), 'src/renderer/pages/SitesPage.tsx'), 'utf8');
+    const handlerStart = source.indexOf('const handleRefreshPanelAccountInfo = useCallback');
+    const handlerEnd = source.indexOf('const handleDetectAllSites = useCallback', handlerStart);
+    const handlerSource = source.slice(handlerStart, handlerEnd);
+
+    expect(handlerSource).toContain(
+      'window.electronAPI.token?.refreshAccountBasicInfo?.(accountId)'
+    );
+    expect(handlerSource).not.toContain('detectSingle(');
+  });
+
   it('keeps row click from firing when nested row controls are used', () => {
     const onRowClick = vi.fn();
     const onOpenSite = vi.fn();

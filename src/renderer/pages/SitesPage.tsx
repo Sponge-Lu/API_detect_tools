@@ -770,9 +770,12 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
   );
 
   const handleRefreshPanelAccountInfo = useCallback(
-    async (site: SiteConfig, accountId: string) => {
+    async (_site: SiteConfig, accountId: string) => {
       try {
-        await detectSingle(site, true, undefined, accountId);
+        const result = await window.electronAPI.token?.refreshAccountBasicInfo?.(accountId);
+        if (!result?.success) {
+          throw new Error(result?.error || '重新获取站点账户信息失败');
+        }
 
         const refreshedConfig = await window.electronAPI.loadConfig();
         setConfig(refreshedConfig);
@@ -803,7 +806,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
         throw error;
       }
     },
-    [detectSingle, loadAllAccounts, setConfig]
+    [loadAllAccounts, setConfig]
   );
 
   const handleDetectAllSites = useCallback(async () => {

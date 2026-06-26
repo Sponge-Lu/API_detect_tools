@@ -203,6 +203,8 @@ export interface AccountCredential {
   auth_source: AccountAuthSource;
   status: AccountStatus;
   browser_profile_path?: string; // isolated profile 持久化路径
+  auto_refresh?: boolean;
+  auto_refresh_interval?: number;
   cached_data?: DetectionCacheData; // 账户级检测缓存
 
   // === 账户级配置 ===
@@ -696,6 +698,20 @@ export interface RefreshAccountResult {
   healthStatus: HealthCheckResult;
 }
 
+/** 账户基础信息刷新结果（浏览器登录态来源） */
+export interface AccountBasicInfoRefreshResult {
+  success: boolean;
+  data?: {
+    user_id: string;
+    username?: string;
+    access_token: string;
+    site_url: string;
+    site_type: SiteType;
+    tokenRefreshed: boolean;
+  };
+  healthStatus: HealthCheckResult;
+}
+
 /** 健康检查结果 */
 export interface HealthCheckResult {
   status: SiteHealthStatus;
@@ -829,9 +845,7 @@ export function detectConfigVersion(config: any): ConfigVersion {
     (s: any) => s.access_token || s.user_id || s.api_key
   );
   const hasAccountCliConfig = config.accounts?.some((a: any) => a.cli_config);
-  const hasAccountAutoRefresh = config.accounts?.some(
-    (a: any) => a.auto_refresh !== undefined
-  );
+  const hasAccountAutoRefresh = config.accounts?.some((a: any) => a.auto_refresh !== undefined);
 
   if (hasLegacySiteToken || hasAccountCliConfig || hasAccountAutoRefresh) {
     return '3.0.5-or-earlier';

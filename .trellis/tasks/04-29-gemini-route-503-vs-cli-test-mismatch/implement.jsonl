@@ -1,5 +1,0 @@
-{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
-{"file": ".trellis/spec/backend/index.md", "reason": "Backend development guide"}
-{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend development guide"}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Shared route and CLI contracts change across main and renderer"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Bug spans CLI test path and route proxy path"}

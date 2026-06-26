@@ -1553,6 +1553,40 @@ describe('route workbench redesign', () => {
     await findPriorityDetailPane();
   });
 
+  it('refreshes stale seeded display items without resetting user priority disables on startup', async () => {
+    const staleRegistry = createModelRegistryConfig();
+    mockConfig = {
+      ...createRoutingConfig(),
+      modelRegistry: {
+        ...staleRegistry,
+        displayItems: [
+          {
+            ...staleRegistry.displayItems[0]!,
+            originalModelOrder: [],
+            priorityConfig: {
+              sitePriorities: {
+                'site-1': 5,
+                'site-2': 9,
+              },
+              apiKeyPriorities: {},
+              disabledSiteIds: ['site-2'],
+              disabledApiKeyPriorityKeys: [
+                buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'main-key-id'),
+              ],
+            },
+          },
+        ],
+      },
+    };
+
+    render(<ModelRedirectionTab />);
+
+    await waitFor(() => {
+      expect(mockRebuildModelRegistry).toHaveBeenCalledWith(true);
+    });
+    expect(mockRebuildModelRegistry).not.toHaveBeenCalledWith(true, { resetDefaults: true });
+  });
+
   it('supports searching and multi-selecting original models when creating a redirect', async () => {
     render(<ModelRedirectionTab />);
 
@@ -1796,13 +1830,11 @@ describe('route workbench redesign', () => {
       expect(within(detailPane).getByText('直连')).toBeInTheDocument();
       expect(within(detailPane).getByTitle('DuckCoding')).toBeInTheDocument();
       expect(within(detailPane).queryByText('自定义 CLI / DuckCoding')).not.toBeInTheDocument();
-      expect(within(detailPane).queryByText(/自定义 CLI \/ custom-cli \/ 倍率/u)).not.toBeInTheDocument();
       expect(
-        within(detailPane).getByText('DuckCoding Key（×0.001）')
-      ).toBeInTheDocument();
-      expect(
-        within(detailPane).getByText('duckcoding（↑$2 ↓$4 / 测试通过）')
-      ).toBeInTheDocument();
+        within(detailPane).queryByText(/自定义 CLI \/ custom-cli \/ 倍率/u)
+      ).not.toBeInTheDocument();
+      expect(within(detailPane).getByText('DuckCoding Key（×0.001）')).toBeInTheDocument();
+      expect(within(detailPane).getByText('duckcoding（↑$2 ↓$4 / 测试通过）')).toBeInTheDocument();
     });
   });
 
