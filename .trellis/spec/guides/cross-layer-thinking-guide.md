@@ -319,6 +319,9 @@ Examples:
   function call, or tool output
 - the upstream reports `input_tokens/output_tokens/total_tokens = 0`, and analytics displays a
   successful request with all token fields at `0`, while the CLI conversation ended abruptly
+- a non-streaming route receives `HTTP 200` with explicit total/input/output/cache usage all equal to
+  `0`, so the first candidate is logged as success and sibling `resolvedModel` candidates under the
+  same API key are never tried
 
 **Good**: Separate transport success from model semantic success.
 
@@ -326,11 +329,17 @@ Checklist:
 - classify HTTP status and content type only as transport eligibility
 - for streaming model routes, validate the protocol terminal event and completed response content
   before recording route-path success
+- for non-streaming model routes, validate semantic success before writing downstream; explicit
+  all-zero total/input/output/cache usage is a failure diagnostic, not a successful generation
 - treat missing usage as unknown, not `0`; do not fabricate final billing data
 - treat all-zero usage plus no output content as an empty/malformed generation diagnostic
+- preserve concrete route-path identity through fallback; one failed `resolvedModel` must not
+  short-circuit other original/upstream models covered by the same site/account/API key
 - when downstream bytes have already been written, append a protocol-shaped error and mark the path
   failed instead of silently ending the stream
 - add regression tests that include `HTTP 200 + terminal marker + no output + zero usage`
+- add regression tests that include non-streaming `HTTP 200 + explicit all-zero usage` both with and
+  without a fallback candidate
 
 ---
 
@@ -358,7 +367,9 @@ After implementation:
 - [ ] Confirmed configuration ownership migrations update save handlers, loaders, projections,
       scheduled jobs, route resolvers, and tests together
 - [ ] Confirmed route/proxy success is not inferred from HTTP status alone; streaming responses have
-      protocol terminal and output-content validation before route-path success is recorded
+      protocol terminal/output-content validation, non-streaming explicit all-zero usage is treated
+      as semantic failure, and same-key sibling `resolvedModel` candidates remain eligible for
+      fallback
 
 ---
 
