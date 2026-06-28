@@ -351,22 +351,25 @@ Examples:
   request routed to ElySiver
 - the reset-priority-hit action deletes one concrete `routePathStates` entry, while another
   resolved-model variant or a renderer-local first-hit log immediately restores the old highlight
-- affinity matching is keyed only by `siteId/accountId/apiKeyId` or upstream `resolvedModel`, so a
-  site/API-key path leaks across model cards
+- affinity matching or reset is keyed by only one `routeRuleId`, `siteId/accountId/apiKeyId`, or
+  upstream `resolvedModel`, so a site/API-key path leaks across model cards or survives under a
+  sibling route rule
 
 **Good**: Treat the selected canonical/display item as user intent, and treat affinity as a
 short-lived runtime optimization inside that intent.
 
 Checklist:
-- define the route-intent tuple before applying runtime state: `routeRuleId`, selected
-  `canonicalModel`, `targetProtocol`, and the display item's selected `sourceKeys`
+- define the route-intent tuple before applying runtime state: selected CLI type,
+  `canonicalModel`, `targetProtocol`, and the display item's selected `sourceKeys`; concrete
+  `routeRuleId` values are path identity, not the boundary for this class of fix
 - apply successful-path affinity only after normal priority sorting and attempt-plan bounding
-- when a user resets a priority hit, clear every concrete resolved-model state for that visible
-  channel and write a short suppression marker so in-flight successes cannot restore it immediately
+- when a user resets a priority hit, clear every concrete route-rule/resolved-model state for that
+  visible channel and write a short channel-level suppression marker so in-flight successes cannot
+  restore it immediately
 - recompute UI hit highlights from the currently selected display item; do not reuse stale
   first-hit logs from another selected model card
-- add tests where two model cards share the same site/API key but only one has a recent successful
-  path
+- add tests where two model cards or two matching route rules share the same site/API key but only
+  one has a recent successful path
 
 ---
 
