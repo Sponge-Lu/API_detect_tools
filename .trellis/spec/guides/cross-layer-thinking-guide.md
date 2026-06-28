@@ -341,6 +341,33 @@ Checklist:
 - add regression tests that include non-streaming `HTTP 200 + explicit all-zero usage` both with and
   without a fallback candidate
 
+### Mistake 14: Letting Runtime Affinity Override Routing Intent
+
+**Bad**: Reusing a cached "successful path" or UI first-hit highlight as if it were the user's
+current routing intent.
+
+Examples:
+- Claude Code is switched to `GLM5.2`, but a recent successful hit for another model keeps the next
+  request routed to ElySiver
+- the reset-priority-hit action deletes one concrete `routePathStates` entry, while another
+  resolved-model variant or a renderer-local first-hit log immediately restores the old highlight
+- affinity matching is keyed only by `siteId/accountId/apiKeyId` or upstream `resolvedModel`, so a
+  site/API-key path leaks across model cards
+
+**Good**: Treat the selected canonical/display item as user intent, and treat affinity as a
+short-lived runtime optimization inside that intent.
+
+Checklist:
+- define the route-intent tuple before applying runtime state: `routeRuleId`, selected
+  `canonicalModel`, `targetProtocol`, and the display item's selected `sourceKeys`
+- apply successful-path affinity only after normal priority sorting and attempt-plan bounding
+- when a user resets a priority hit, clear every concrete resolved-model state for that visible
+  channel and write a short suppression marker so in-flight successes cannot restore it immediately
+- recompute UI hit highlights from the currently selected display item; do not reuse stale
+  first-hit logs from another selected model card
+- add tests where two model cards share the same site/API key but only one has a recent successful
+  path
+
 ---
 
 ## Checklist for Cross-Layer Features
@@ -370,6 +397,8 @@ After implementation:
       protocol terminal/output-content validation, non-streaming explicit all-zero usage is treated
       as semantic failure, and same-key sibling `resolvedModel` candidates remain eligible for
       fallback
+- [ ] Confirmed runtime affinity, route-path state, and UI first-hit highlights are scoped by the
+      selected route-intent tuple and cannot override the user's current model/card selection
 
 ---
 

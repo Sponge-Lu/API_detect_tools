@@ -363,6 +363,7 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 - Canonical-model channel resolution must treat `displayItem.priorityConfig.apiKeyPriorities` as the source of API key ordering semantics. If a current API key under a site has no explicit saved priority yet, assign it a synthetic priority after the highest explicit API key priority already saved for that site, preserving current discovery order only among those missing-priority additions.
 - Canonical-model channel resolution must skip any site listed in `displayItem.priorityConfig.disabledSiteIds` and any API key listed in `displayItem.priorityConfig.disabledApiKeyPriorityKeys`. Disabled site/API-key ids are route-intent exclusions, not low-priority candidates.
 - When `routing.modelRegistry` contains any routing data (`sources`, `entries`, or `displayItems`), `resolveChannels(rule, canonicalModel)` must not fall back to generic site/account/API-key channels if `canonicalModel` has no registry entry. Unknown requested models such as a Gemini CLI default path model must produce no candidates instead of being forwarded through an unrelated site.
+- Selected CLI model routing must keep `routeRuleId`, `canonicalModel`, `targetProtocol`, and the display item's `sourceKeys` as the route-intent boundary. Route-path state, in-memory first-hit logs, successful-path affinity, and reset matching must not promote or preserve a site/API-key path from another canonical/display item merely because it shares the same site, account, API key, upstream model name, or recent success timestamp. For example, selecting Claude Code `GLM5.2` must not keep routing to a previously successful ElySiver path after the user changes priority or resets the priority hit unless that path belongs to the current `GLM5.2` route intent and is not reset-suppressed.
 - `RouteModelDisplayItem.runtimeConfig` owns per-redirection runtime behavior. Missing fields normalize to `maxAttemptsPerRoutePath = 1`, `successRateWindowMinutes = 5`, `disableDurationMinutes = 30`, and `minSuccessRate = 0.8`.
 - `handleRequest()` must resolve `RouteRuntimeConfig` from the matched canonical model's display item and pass `runtimeConfig.maxAttemptsPerRoutePath` into `buildChannelAttemptPlan(sortChannelsByScore(channels), ...)`.
 - Successful route path affinity is derived from existing `routing.routePathStates`, not a separate preferred-path pointer. A candidate is eligible only when its concrete route path state has `lastOutcome === 'success'`, `lastSuccessAt` is within `ROUTE_SUCCESSFUL_PATH_AFFINITY_MS`, `disabledUntil` is not active, and neither the concrete state nor the same channel's `resolvedModel: undefined` suppression state has `affinitySuppressedUntil` in the future.
@@ -567,6 +568,12 @@ Deleting a seeded display item is a stable user intent, not a transient display 
   After a successful reset, the renderer must also
   remove any matching same-session first-attempt route log by the same channel identity so a stale
   in-memory log cannot re-highlight the cleared path after `routePathStates` refreshes.
+- Priority-hit detection and reset controls are scoped to the currently selected display item. When
+  the user changes the selected Claude Code/Codex/Gemini model, changes original-model selection, or
+  reorders site priority, the renderer must recompute the current hit from the latest selected
+  `canonicalName` plus its `sourceKeys`; it must not reuse a first-hit log or persisted
+  `routePathStates` entry from a previously selected model card. A reset that returns a positive
+  cleared count is incomplete if a stale cross-card local hit can still re-highlight the old channel.
 
 ### 4. Validation & Error Matrix
 
@@ -583,6 +590,8 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 | Path disabled during current request | first planned attempt fails, `recordRoutePathOutcome()` sets `disabledUntil`, and remaining planned attempts target only disabled route paths | Do not make another upstream request; respond `400` with a non-retryable CLI-native `all_route_paths_disabled` error shape |
 | User resets current rule paths | renderer calls `resetRoutePathStates({ canonicalModel })` from a redirection card | Matching `routePathStates` are deleted, `stats` are preserved, redirection config is refreshed |
 | User resets current priority hit after changing site priority | renderer calls `resetRoutePathStates()` from the detail action bar with channel identity and no `resolvedModel` | Every resolved-model state for that site/account/API-key channel is cleared and suppressed; sibling API keys remain; the next request starts from normal site priority order |
+| User selects Claude Code `GLM5.2` after another model recently hit ElySiver | route resolver builds candidates for the selected display item, then affinity inspects persisted state | Only route-path states matching the current `routeRuleId`, `canonicalModel`, `targetProtocol`, and display-item source boundary can affect attempt order; unrelated previous hits are ignored |
+| User resets a priority hit while a stale first-hit log exists for another selected model | renderer recomputes current hit after reset | The stale cross-card log is not used to re-highlight or restore the old channel; the next request follows the current model's priority order |
 | App restarts after a successful route hit | `route:get-config` returns a recent successful `routePathStates` entry but in-memory request logs are empty | Redirection priority table still highlights the matching API-key row as `当前优先命中` and the reset action uses the persisted path identity |
 | User resets persisted priority hit while a matching first-hit log remains in memory | reset deletes the `routePathStates` entry but the renderer still has a same-session first-hit log for the same channel | Renderer removes the matching log by channel identity and the `当前优先命中` badge disappears |
 | Route log row has a matched display item and explicit site priority | logs page render | Compact priority cell derives the current display rank from the latest `priorityConfig.sitePriorities[siteId]`, even when the matched `RouteRule.priority` differs |
@@ -632,6 +641,9 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 - Good: if `site-1` already saved API key priorities `key-b => 9`, then newly discovered `key-a` and `key-c` under the same site must be appended as synthetic priorities `10` and `11` in their current source order.
 - Good: a redirect card with `maxAttemptsPerRoutePath = 2` may try `site0/A` twice before moving to `site0/B`, but the same card with the default value tries each path once.
 - Good: if `site2/keyC` was the most recent successful enabled path in the last 30 minutes, the next matching request starts with `site2/keyC`, then continues with candidates after its original position before wrapping to earlier priority candidates.
+- Good: when Claude Code is switched to `GLM5.2`, a recent successful hit for another selected model
+  on ElySiver is ignored unless it shares the same `routeRuleId`, selected `canonicalModel`,
+  `targetProtocol`, and source-key boundary.
 - Good: an upstream `503` with body
   `{"error":"quota_exceeded","message":"upstream quota exhausted"}` renders `HTTP 503` in the status
   badge and renders that upstream body in the failure-detail pill.
@@ -684,6 +696,9 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 - Bad: deleting only the successful `routePathStates` entry without a suppression marker, because an
   in-flight CLI stream can record success for the same path again and immediately restore the old
   priority hit before the user's next request.
+- Bad: keying successful-path affinity or local priority-hit highlights only by
+  `siteId/accountId/apiKeyId` or `resolvedModel`, because a stale hit from another selected model can
+  keep routing Claude Code `GLM5.2` to ElySiver even after the user resets the current priority hit.
 - Bad: showing `RouteRule.priority` in the route log priority cell, because the visible log cell is
   the matched site's priority-table order, not the route-rule matching order.
 - Bad: rendering raw persisted `priorityConfig.sitePriorities[siteId]` in route logs, because legacy
@@ -717,6 +732,9 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 - `src/__tests__/route-proxy-service.test.ts`: assert one attempt per route path while preserving distinct API keys and sites.
 - `src/__tests__/route-proxy-service.test.ts`: assert recent successful path affinity promotes the most recently successful eligible path and preserves circular fallback order.
 - `src/__tests__/route-proxy-service.test.ts`: assert stale, failed, and disabled route path states are ignored for successful path affinity.
+- `src/__tests__/route-proxy-service.test.ts`: assert successful path affinity ignores route-path
+  states from another selected canonical/display item even when the site/account/API key or
+  `resolvedModel` matches the current candidate.
 - `src/__tests__/route-proxy-service.test.ts`: assert affinity is applied after `maxAttemptsPerRoutePath` bounding and does not add duplicate attempts.
 - `src/__tests__/route-proxy-service.test.ts`: assert `handleRequest()` uses the affinity-reordered plan while still falling back to later and then earlier candidates in the same request.
 - `src/__tests__/route-proxy-service.test.ts`: assert a failure that disables the current route path prevents remaining pre-planned attempts for that disabled path from making another upstream request.
@@ -747,6 +765,9 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 - `src/__tests__/route-workbench-redesign.test.tsx`: assert resetting a persisted priority-hit path
   also clears a matching same-channel renderer-local first-hit log, even when its resolved model
   differs from the persisted path state, so the badge disappears after success.
+- `src/__tests__/route-workbench-redesign.test.tsx`: assert switching the selected display item
+  recomputes priority-hit state from that card only, so a stale first-hit log from another model does
+  not keep the old channel highlighted or make reset appear ineffective.
 - `src/__tests__/anyrouter-rewriter.test.ts`: assert AnyRouter Claude Code request rewrites to `/v1/messages?beta=true` with Anthropic beta headers, Codex native Responses requests keep `/v1/responses` without hash injection, and Gemini native requests remain transparent.
 - `src/__tests__/route-proxy-service.test.ts`: assert explicit non-native target protocols invoke
   protocol adaptation and still preserve CLI-native downstream response handling.
