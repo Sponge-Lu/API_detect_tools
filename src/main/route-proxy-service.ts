@@ -93,6 +93,7 @@ const ALL_ROUTE_PATHS_DISABLED_STATUS_CODE = 400;
 const ALL_ROUTE_PATHS_DISABLED_MESSAGE =
   'all_route_paths_disabled: All route paths for this rule are temporarily disabled. Restore route paths in the route rule UI or wait for the suspension to expire.';
 const EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE = 'empty_response_zero_usage';
+const ZERO_USAGE_UPSTREAM_RETRY_ATTEMPTS = 1;
 const PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_ERROR_CODE = 'probe_lock_upstream_attempt_exhausted';
 const PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_STATUS_CODE = 400;
 const ANYROUTER_REQUEST_TIMEOUT_MS = 120 * 1000;
@@ -2640,26 +2641,48 @@ export async function handleRequest(
         probeLockIsFinalAttempt = attempt.isFinalAttempt;
       }
 
-      const result = await forwardToUpstream(
-        req,
-        creds.baseUrl,
-        creds.apiKey,
-        finalBody,
-        cliType,
-        upstreamTimeouts.timeoutMs,
-        activeChannel.resolvedModel,
-        {
-          upstreamProxyUrl: routing.server.upstreamProxyUrl,
-          additionalHeaders,
-          methodOverride,
-          requestUrlOverride,
-          upstreamCliType,
-          streamResponse: res,
-          streamResponseBody,
-          streamIdleTimeoutMs: upstreamTimeouts.streamIdleTimeoutMs,
-        }
-      );
-      const outcome = classifyRouteStatusCode(result.statusCode);
+      const forwardActiveChannel = () =>
+        forwardToUpstream(
+          req,
+          creds.baseUrl,
+          creds.apiKey,
+          finalBody,
+          cliType,
+          upstreamTimeouts.timeoutMs,
+          activeChannel.resolvedModel,
+          {
+            upstreamProxyUrl: routing.server.upstreamProxyUrl,
+            additionalHeaders,
+            methodOverride,
+            requestUrlOverride,
+            upstreamCliType,
+            streamResponse: res,
+            streamResponseBody,
+            streamIdleTimeoutMs: upstreamTimeouts.streamIdleTimeoutMs,
+          }
+        );
+
+      let result = await forwardActiveChannel();
+      let outcome = classifyRouteStatusCode(result.statusCode);
+      for (
+        let zeroUsageRetry = 0;
+        zeroUsageRetry < ZERO_USAGE_UPSTREAM_RETRY_ATTEMPTS &&
+        outcome === 'success' &&
+        !result.streamed &&
+        isAllZeroRouteUsage(result.usage);
+        zeroUsageRetry += 1
+      ) {
+        log.warn('Upstream channel returned HTTP 200 with all-zero usage; retrying same channel', {
+          retryAttempt: zeroUsageRetry + 1,
+          maxRetries: ZERO_USAGE_UPSTREAM_RETRY_ATTEMPTS,
+          siteId: activeChannel.siteId,
+          accountId: activeChannel.accountId,
+          apiKeyId: activeChannel.apiKeyId,
+          resolvedModel: activeChannel.resolvedModel,
+        });
+        result = await forwardActiveChannel();
+        outcome = classifyRouteStatusCode(result.statusCode);
+      }
       const upstreamFailureBodySnippet =
         outcome === 'failure' ? summarizeUpstreamFailureBodyForLog(result.body) : '';
 

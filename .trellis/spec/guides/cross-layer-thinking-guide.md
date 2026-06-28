@@ -331,6 +331,8 @@ Checklist:
   before recording route-path success
 - for non-streaming model routes, validate semantic success before writing downstream; explicit
   all-zero total/input/output/cache usage is a failure diagnostic, not a successful generation
+- before marking a route path failed for a transient-looking semantic anomaly, check whether the
+  contract calls for a bounded same-channel retry; record only the final retry outcome
 - treat missing usage as unknown, not `0`; do not fabricate final billing data
 - treat all-zero usage plus no output content as an empty/malformed generation diagnostic
 - preserve concrete route-path identity through fallback; one failed `resolvedModel` must not
