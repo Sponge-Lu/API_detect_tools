@@ -92,6 +92,7 @@ const ALL_ROUTE_PATHS_DISABLED_ERROR_CODE = 'all_route_paths_disabled';
 const ALL_ROUTE_PATHS_DISABLED_STATUS_CODE = 400;
 const ALL_ROUTE_PATHS_DISABLED_MESSAGE =
   'all_route_paths_disabled: All route paths for this rule are temporarily disabled. Restore route paths in the route rule UI or wait for the suspension to expire.';
+const EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE = 'empty_response_zero_usage';
 const PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_ERROR_CODE = 'probe_lock_upstream_attempt_exhausted';
 const PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_STATUS_CODE = 400;
 const ANYROUTER_REQUEST_TIMEOUT_MS = 120 * 1000;
@@ -1571,6 +1572,21 @@ function hasRouteUsageValues(usage: RouteUsageStats | undefined): usage is Route
   );
 }
 
+function isAllZeroRouteUsage(usage: RouteUsageStats | undefined): usage is RouteUsageStats {
+  if (!hasRouteUsageValues(usage)) {
+    return false;
+  }
+
+  return [
+    usage.promptTokens,
+    usage.completionTokens,
+    usage.totalTokens,
+    usage.cacheCreationTokens,
+    usage.cacheReadTokens,
+    usage.cachedTokens,
+  ].every(value => value === undefined || value === 0);
+}
+
 function mergeRouteUsage(
   current: RouteUsageStats | undefined,
   next: RouteUsageStats | undefined
@@ -2679,6 +2695,91 @@ export async function handleRequest(
         });
         writeAnthropicCountTokensEstimate(res, estimateClaudeCountTokens(bodyBuffer));
         return;
+      }
+
+      if (outcome === 'success' && !result.streamed && isAllZeroRouteUsage(result.usage)) {
+        const terminalError = buildRouteProxyErrorText(
+          EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE,
+          'upstream returned HTTP 200 with all-zero usage'
+        );
+
+        if (probeLock) {
+          settleRouteProbeLockUpstreamAttempt(token);
+          recordProbeLockFirstUpstreamResult({
+            routeApiKey: token,
+            cliType,
+            lock: probeLock,
+            statusCode: result.statusCode,
+            success: false,
+            body: result.body,
+            error: terminalError,
+          });
+          const terminalFailure = {
+            routeApiKey: token,
+            cliType,
+            statusCode: 502,
+            terminalError,
+            lock: probeLock,
+          };
+          notifyProbeLockTerminalFailure(terminalFailure);
+          writeProbeLockTerminalFailureResponse(res, terminalFailure);
+          return;
+        }
+
+        if (!bypassRoutePathState) {
+          recordOutcome(activeChannel, 'failure', {
+            statusCode: result.statusCode,
+            latencyMs: result.latencyMs,
+          });
+          await recordRoutePathOutcome(
+            activeChannel,
+            'failure',
+            {
+              statusCode: result.statusCode,
+              latencyMs: result.latencyMs,
+              error: EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE,
+            },
+            routeRuntimeConfig
+          );
+          recordRouteRequest({
+            requestId,
+            attempt,
+            routeRuleId: activeRouteRuleId,
+            cliType,
+            targetProtocol: activeChannel.targetProtocol,
+            targetEndpoint: activeChannel.targetEndpoint,
+            requestedModel: rawModel,
+            canonicalModel,
+            siteId: activeChannel.siteId,
+            accountId: activeChannel.accountId,
+            apiKeyId: activeChannel.apiKeyId,
+            resolvedModel: activeChannel.resolvedModel,
+            outcome: 'failure',
+            statusCode: result.statusCode,
+            latencyMs: result.latencyMs,
+            firstByteLatencyMs: result.firstByteLatencyMs,
+            promptTokens: result.usage.promptTokens,
+            completionTokens: result.usage.completionTokens,
+            totalTokens: result.usage.totalTokens,
+            cacheCreationTokens: result.usage.cacheCreationTokens,
+            cacheReadTokens: result.usage.cacheReadTokens,
+            cachedTokens: result.usage.cachedTokens,
+            error: EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE,
+          });
+        }
+        log.warn('Upstream channel returned HTTP 200 with all-zero usage; trying next channel', {
+          siteId: activeChannel.siteId,
+          accountId: activeChannel.accountId,
+          apiKeyId: activeChannel.apiKeyId,
+          resolvedModel: activeChannel.resolvedModel,
+        });
+
+        if (!bypassRoutePathState && areAllRoutePathsDisabled(sortedChannels)) {
+          writeAllRoutePathsDisabledResponse(res, cliType);
+          return;
+        }
+
+        continue;
       }
 
       if (!bypassRoutePathState) {

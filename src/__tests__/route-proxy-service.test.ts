@@ -1695,6 +1695,290 @@ describe('route-proxy-service successful path affinity', () => {
     );
   });
 
+  it('skips a non-streaming HTTP 200 channel with all-zero usage and tries the next route candidate', async () => {
+    vi.clearAllMocks();
+
+    const now = Date.now();
+    const rule = {
+      id: 'rule-codex-zero-usage',
+      cliType: 'codex' as const,
+      pattern: 'gpt-4.1-mini',
+      patternType: 'exact' as const,
+    };
+    const zeroUsageChannel = {
+      routeRuleId: rule.id,
+      siteId: 'site-a',
+      accountId: 'account-a',
+      apiKeyId: 'key-a',
+      cliType: 'codex' as const,
+      targetProtocol: 'native' as const,
+      canonicalModel: 'gpt-4.1-mini',
+      resolvedModel: 'zero-model',
+    };
+    const fallbackChannel = {
+      ...zeroUsageChannel,
+      resolvedModel: 'good-model',
+    };
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+      },
+      rules: [rule],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: null,
+        geminiCli: null,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'gpt-4.1-mini': {
+            canonicalName: 'gpt-4.1-mini',
+            aliases: ['gpt-4.1-mini'],
+            sources: [],
+            vendor: 'gpt' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+      routePathStates: {},
+    };
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn((siteId: string) => ({ id: siteId, name: siteId })),
+      getAccountById: vi.fn((accountId: string) => ({ id: accountId, account_name: accountId })),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(extractModelFromBody).mockReturnValue('gpt-4.1-mini');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue([zeroUsageChannel, fallbackChannel]);
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://upstream.example.com',
+      apiKey: 'sk-upstream',
+    });
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockImplementation(async (channel, outcome) => ({
+      ...channel,
+      windowStartedAt: now,
+      windowRequestCount: 1,
+      windowSuccessCount: outcome === 'success' ? 1 : 0,
+      successRate: outcome === 'success' ? 1 : 0,
+      lastOutcome: outcome,
+      updatedAt: now,
+    }));
+    vi.mocked(httpRawRequest)
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from(
+          JSON.stringify({
+            id: 'resp_zero',
+            output: [{ content: [{ type: 'output_text', text: 'bad' }] }],
+            usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+          })
+        ),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from(
+          JSON.stringify({
+            id: 'resp_good',
+            output: [{ content: [{ type: 'output_text', text: 'ok' }] }],
+            usage: { input_tokens: 5, output_tokens: 2, total_tokens: 7 },
+          })
+        ),
+      });
+
+    const request = createJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+      },
+      { model: 'gpt-4.1-mini', input: 'hi' }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(httpRawRequest).toHaveBeenCalledTimes(2);
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toMatchObject({ id: 'resp_good' });
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ resolvedModel: 'zero-model' }),
+      'failure',
+      expect.objectContaining({
+        statusCode: 200,
+        error: 'empty_response_zero_usage',
+      }),
+      expect.any(Object)
+    );
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resolvedModel: 'zero-model',
+        outcome: 'failure',
+        statusCode: 200,
+        totalTokens: 0,
+        error: 'empty_response_zero_usage',
+      })
+    );
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ resolvedModel: 'good-model' }),
+      'success',
+      expect.objectContaining({ statusCode: 200 }),
+      expect.any(Object)
+    );
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resolvedModel: 'good-model',
+        outcome: 'success',
+        statusCode: 200,
+        totalTokens: 7,
+      })
+    );
+  });
+
+  it('does not return a non-streaming HTTP 200 all-zero usage body when no fallback remains', async () => {
+    vi.clearAllMocks();
+
+    const now = Date.now();
+    const rule = {
+      id: 'rule-codex-zero-usage-terminal',
+      cliType: 'codex' as const,
+      pattern: 'gpt-4.1-mini',
+      patternType: 'exact' as const,
+    };
+    const zeroUsageChannel = {
+      routeRuleId: rule.id,
+      siteId: 'site-a',
+      accountId: 'account-a',
+      apiKeyId: 'key-a',
+      cliType: 'codex' as const,
+      targetProtocol: 'native' as const,
+      canonicalModel: 'gpt-4.1-mini',
+      resolvedModel: 'zero-model',
+    };
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+      },
+      rules: [rule],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: null,
+        geminiCli: null,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'gpt-4.1-mini': {
+            canonicalName: 'gpt-4.1-mini',
+            aliases: ['gpt-4.1-mini'],
+            sources: [],
+            vendor: 'gpt' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+      routePathStates: {},
+    };
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn((siteId: string) => ({ id: siteId, name: siteId })),
+      getAccountById: vi.fn((accountId: string) => ({ id: accountId, account_name: accountId })),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(extractModelFromBody).mockReturnValue('gpt-4.1-mini');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue([zeroUsageChannel]);
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://upstream.example.com',
+      apiKey: 'sk-upstream',
+    });
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockImplementation(async (channel, outcome) => ({
+      ...channel,
+      windowStartedAt: now,
+      windowRequestCount: 1,
+      windowSuccessCount: outcome === 'success' ? 1 : 0,
+      successRate: outcome === 'success' ? 1 : 0,
+      lastOutcome: outcome,
+      updatedAt: now,
+    }));
+    vi.mocked(httpRawRequest).mockResolvedValueOnce({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(
+        JSON.stringify({
+          id: 'resp_zero',
+          output: [{ content: [{ type: 'output_text', text: 'bad' }] }],
+          usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+        })
+      ),
+    });
+
+    const request = createJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+      },
+      { model: 'gpt-4.1-mini', input: 'hi' }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(httpRawRequest).toHaveBeenCalledTimes(1);
+    expect(response.statusCode).toBe(502);
+    expect(JSON.parse(response.body)).toEqual({
+      error: 'all_channels_failed',
+      message: 'All upstream channels failed',
+    });
+    expect(response.body).not.toContain('resp_zero');
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ resolvedModel: 'zero-model' }),
+      'failure',
+      expect.objectContaining({
+        statusCode: 200,
+        error: 'empty_response_zero_usage',
+      }),
+      expect.any(Object)
+    );
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resolvedModel: 'zero-model',
+        outcome: 'failure',
+        statusCode: 200,
+        totalTokens: 0,
+        error: 'empty_response_zero_usage',
+      })
+    );
+  });
+
   it('does not promote a recent first-hit path after its api key is disabled', async () => {
     vi.clearAllMocks();
 
