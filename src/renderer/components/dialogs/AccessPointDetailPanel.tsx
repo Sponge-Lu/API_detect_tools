@@ -3,7 +3,7 @@
  * 输入: AccessPoint (托管站点 | 直连配置), 账户数据, API Keys, 模型, CLI 配置
  * 输出: 三 tab 侧滑面板 UI（合并站点信息 / 模型 & 资源 / CLI 配置 & 测试）
  * 定位: 展示层 - 接入管理页行详情面板
- * 说明: 面板固定 720px，Tab 内容区独立滚动；托管/直连 Tab1 使用单一信息面承载身份与凭证。
+ * 说明: 面板固定 720px，Tab 内容区独立滚动；托管/直连 Tab1 使用单一信息面承载名称、身份与凭证。
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -11,7 +11,7 @@
  * - PROJECT_INDEX.md
  */
 
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   Info,
   Box,
@@ -114,7 +114,10 @@ export interface AccessPointDetailPanelProps {
   onSaveSiteMeta?: (
     siteId: string,
     updates: Partial<
-      Pick<SiteConfig, 'url' | 'site_type' | 'group' | 'extra_links' | 'force_enable_checkin'>
+      Pick<
+        SiteConfig,
+        'name' | 'url' | 'site_type' | 'group' | 'extra_links' | 'force_enable_checkin'
+      >
     >
   ) => void | Promise<void>;
   onSaveAccount?: (
@@ -228,6 +231,7 @@ function InlineSwitch({
 }
 
 interface ManagedSiteDraft {
+  name: string;
   url: string;
   site_type: SiteType;
   group: string;
@@ -240,6 +244,7 @@ function buildManagedSiteDraft(
   defaultGroupId: string
 ): ManagedSiteDraft {
   return {
+    name: site?.name ?? '',
     url: site?.url ?? '',
     site_type: site?.site_type || DEFAULT_SITE_TYPE,
     group: site?.group || defaultGroupId,
@@ -382,6 +387,15 @@ export function AccessPointDetailPanel({
     if (!data || data.type !== 'managed') return null;
     return data.account;
   }, [data]);
+  const selectedItemKey = useMemo(() => {
+    if (!data) return null;
+    if (data.type === 'custom-cli') {
+      return `custom-cli:${data.config.id}`;
+    }
+    return `managed:${data.site.id}:${data.account?.id ?? 'site'}`;
+  }, [data]);
+  const previousOpenRef = useRef(false);
+  const previousSelectedItemKeyRef = useRef<string | null>(null);
   const shouldShowAnyRouterConfig =
     data?.type === 'managed' &&
     currentAccount !== null &&
@@ -408,7 +422,8 @@ export function AccessPointDetailPanel({
 
   const isManagedSiteMetaDirty =
     data?.type === 'managed' &&
-    (managedSiteDraft.url !== savedManagedSiteDraft.url ||
+    ((managedSiteDraft.name.trim() || data.site.name) !== savedManagedSiteDraft.name ||
+      managedSiteDraft.url !== savedManagedSiteDraft.url ||
       managedSiteDraft.site_type !== savedManagedSiteDraft.site_type ||
       managedSiteDraft.group !== savedManagedSiteDraft.group ||
       managedSiteDraft.extra_links !== savedManagedSiteDraft.extra_links ||
@@ -437,17 +452,26 @@ export function AccessPointDetailPanel({
     return [TAB_META.info, TAB_META.resources, TAB_META.cli];
   }, []);
 
-  // 打开面板时始终重置为 Tab1
+  // 打开面板或切换接入点时重置为 Tab1；同一接入点保存刷新时保留当前 Tab。
   useEffect(() => {
-    if (open) {
+    const openedNow = open && !previousOpenRef.current;
+    const selectedItemChanged = open && selectedItemKey !== previousSelectedItemKeyRef.current;
+
+    if (openedNow || selectedItemChanged) {
       setActiveTab('info');
+    }
+
+    if (open) {
       setManagedSiteDraft(
         buildManagedSiteDraft(data?.type === 'managed' ? data.site : null, defaultGroupId)
       );
       setManagedAccountDraft(buildManagedAccountDraft(currentAccount));
       setShowAccessToken(false);
     }
-  }, [currentAccount, data, defaultGroupId, open]);
+
+    previousOpenRef.current = open;
+    previousSelectedItemKeyRef.current = selectedItemKey;
+  }, [currentAccount, data, defaultGroupId, open, selectedItemKey]);
 
   const updateManagedSiteDraft = useCallback(
     <K extends keyof ManagedSiteDraft>(key: K, value: ManagedSiteDraft[K]) => {
@@ -481,6 +505,7 @@ export function AccessPointDetailPanel({
       : null;
     const normalizedSiteDraft: ManagedSiteDraft = {
       ...managedSiteDraft,
+      name: managedSiteDraft.name.trim() || data.site.name,
       url: managedSiteDraft.url.trim(),
       extra_links: managedSiteDraft.extra_links.trim(),
     };
@@ -489,6 +514,7 @@ export function AccessPointDetailPanel({
     try {
       if (isManagedSiteMetaDirty && data.site.id && onSaveSiteMeta) {
         await onSaveSiteMeta(data.site.id, {
+          name: normalizedSiteDraft.name,
           url: normalizedSiteDraft.url,
           site_type: normalizedSiteDraft.site_type,
           group: normalizedSiteDraft.group,
@@ -675,6 +701,19 @@ export function AccessPointDetailPanel({
                     <div className="mt-4 grid grid-cols-1 gap-4 border-t border-[var(--line-soft)] pt-4 md:grid-cols-2">
                       <div>
                         <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">
+                          站点名称
+                        </label>
+                        <input
+                          type="text"
+                          aria-label="站点名称"
+                          value={managedSiteDraft.name}
+                          onChange={event => updateManagedSiteDraft('name', event.target.value)}
+                          placeholder="站点名称"
+                          className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">
                           站点 URL
                         </label>
                         <div className="flex min-w-0 items-center gap-2 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2">
@@ -742,7 +781,7 @@ export function AccessPointDetailPanel({
                           />
                         </div>
                       </div>
-                      <div className="md:col-span-2">
+                      <div>
                         <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">
                           Access Token
                         </label>

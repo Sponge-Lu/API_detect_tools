@@ -772,7 +772,8 @@ export class UnifiedConfigManager {
         return siteCopy;
       }),
       accounts: config.accounts.map(account => {
-        const accountCopy: AccountCredential = { ...account };
+        const accountCopy = { ...account } as AccountCredential & { status?: unknown };
+        delete accountCopy.status;
         delete accountCopy.cached_data;
         return accountCopy;
       }),
@@ -847,6 +848,11 @@ export class UnifiedConfigManager {
     if (!Array.isArray(config.accounts)) {
       config.accounts = [];
     }
+    config.accounts = config.accounts.map(account => {
+      const normalized = { ...account } as AccountCredential & { status?: unknown };
+      delete normalized.status;
+      return normalized;
+    });
 
     // 确保有分组
     if (!Array.isArray(config.siteGroups) || config.siteGroups.length === 0) {
@@ -946,7 +952,6 @@ export class UnifiedConfigManager {
         user_id: userId,
         access_token: accessToken,
         auth_source: 'manual',
-        status: 'active',
         cached_data: site.cached_data ? { ...site.cached_data } : undefined,
         cli_config: site.cli_config ? { ...site.cli_config } : undefined,
         created_at: now,
@@ -1523,7 +1528,6 @@ export class UnifiedConfigManager {
           user_id: site.user_id,
           access_token: site.access_token,
           auth_source: 'manual',
-          status: 'active',
           cached_data: site.cached_data ? { ...site.cached_data } : undefined,
           cli_config: site.cli_config ? { ...site.cli_config } : undefined,
           created_at: Date.now(),
@@ -1584,7 +1588,6 @@ export class UnifiedConfigManager {
             api_key: site.api_key, // 同时迁移 api_key
             cli_config: site.cli_config, // 迁移 CLI 配置到账户
             auth_source: 'manual',
-            status: 'active',
             created_at: Date.now(),
             updated_at: Date.now(),
           };
@@ -1784,38 +1787,39 @@ export class UnifiedConfigManager {
 
     const now = Date.now();
     const site = this.config!.sites.find(s => s.id === account.site_id);
+    const accountInput = { ...account } as typeof account & { status?: unknown };
+    delete accountInput.status;
 
     // 站点有 legacy 凭证但无账户记录 → 先补建默认账户，防止原凭证被覆盖丢失
     if (site) {
-      const existingAccounts = this.config!.accounts.filter(a => a.site_id === account.site_id);
+      const existingAccounts = this.config!.accounts.filter(a => a.site_id === accountInput.site_id);
       if (existingAccounts.length === 0 && (site.access_token || site.user_id)) {
         const defaultAccount: AccountCredential = {
           id: generateAccountId(),
-          site_id: account.site_id,
+          site_id: accountInput.site_id,
           account_name: '默认账户',
           user_id: site.user_id || '',
           access_token: site.access_token || '',
           auth_source: 'manual',
-          status: site.access_token ? 'active' : 'expired',
           cached_data: site.cached_data ? { ...site.cached_data } : undefined,
           created_at: now,
           updated_at: now,
         };
         this.config!.accounts.push(defaultAccount);
         Logger.info(
-          `🔄 [UnifiedConfigManager] 自动补建默认账户: ${defaultAccount.id} (site=${account.site_id})`
+          `🔄 [UnifiedConfigManager] 自动补建默认账户: ${defaultAccount.id} (site=${accountInput.site_id})`
         );
       }
     }
 
     // 同一站点 + 同一用户只保留一个账户记录，避免重复账户导致自动刷新/Profile 绑定混乱。
     const duplicateIndex = this.config!.accounts.findIndex(
-      existing => existing.site_id === account.site_id && existing.user_id === account.user_id
+      existing => existing.site_id === accountInput.site_id && existing.user_id === accountInput.user_id
     );
     if (duplicateIndex >= 0) {
       const mergedAccount: AccountCredential = {
         ...this.config!.accounts[duplicateIndex],
-        ...account,
+        ...accountInput,
         id: this.config!.accounts[duplicateIndex].id,
         created_at: this.config!.accounts[duplicateIndex].created_at,
         updated_at: now,
@@ -1824,14 +1828,14 @@ export class UnifiedConfigManager {
       await this.saveConfig();
       this.notifySiteConfigChanged();
       Logger.info(
-        `🔁 [UnifiedConfigManager] 复用已有账户记录: ${mergedAccount.id} (site=${account.site_id}, user=${account.user_id})`
+        `🔁 [UnifiedConfigManager] 复用已有账户记录: ${mergedAccount.id} (site=${accountInput.site_id}, user=${accountInput.user_id})`
       );
       return mergedAccount;
     }
 
     const newAccount: AccountCredential = {
-      ...account,
-      id: account.id || generateAccountId(),
+      ...accountInput,
+      id: accountInput.id || generateAccountId(),
       created_at: now,
       updated_at: now,
     };
@@ -1853,7 +1857,6 @@ export class UnifiedConfigManager {
         AccountCredential,
         | 'account_name'
         | 'username'
-        | 'status'
         | 'access_token'
         | 'user_id'
         | 'auto_refresh'
@@ -1867,10 +1870,12 @@ export class UnifiedConfigManager {
 
     const index = this.config.accounts.findIndex(a => a.id === accountId);
     if (index === -1) return false;
+    const normalizedUpdates = { ...updates } as typeof updates & { status?: unknown };
+    delete normalizedUpdates.status;
 
     this.config.accounts[index] = {
       ...this.config.accounts[index],
-      ...updates,
+      ...normalizedUpdates,
       updated_at: Date.now(),
     };
 

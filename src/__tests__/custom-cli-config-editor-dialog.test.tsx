@@ -75,9 +75,9 @@ describe('DirectCliConfigEditorContent', () => {
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
   const getElectronAPI = () => window.electronAPI as unknown as MockElectronApi;
 
-  const renderDialog = async () => {
+  const renderDialog = async (config: CustomCliConfig = createConfig()) => {
     await act(async () => {
-      render(<DirectCliConfigEditorContent config={createConfig()} />);
+      render(<DirectCliConfigEditorContent config={config} />);
     });
 
     return screen.findByText('直连配置编辑');
@@ -169,6 +169,48 @@ describe('DirectCliConfigEditorContent', () => {
     expect(screen.getByRole('button', { name: 'Gemini CLI 主模型' })).toBeInTheDocument();
   }, 15_000);
 
+  it('filters available models from the model search input', async () => {
+    await renderDialog();
+
+    const modelSearchInput = screen.getByRole('searchbox', { name: '搜索可用模型' });
+    expect(modelSearchInput).toHaveAttribute('placeholder', '搜索模型');
+    expect(screen.getByTitle('claude-3.7')).toBeInTheDocument();
+
+    const modelGrid = screen.getByTitle('claude-3.7').closest('.grid');
+    expect(modelGrid).toHaveClass('max-h-[270px]');
+
+    await act(async () => {
+      fireEvent.change(modelSearchInput, { target: { value: '4.1-mini' } });
+    });
+
+    expect(screen.getByTitle('gpt-4.1-mini')).toBeInTheDocument();
+    expect(screen.queryByTitle('claude-3.7')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('gemini-2.5')).not.toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.change(modelSearchInput, { target: { value: 'missing-model' } });
+    });
+
+    expect(screen.getByText('没有匹配的模型')).toBeInTheDocument();
+    expect(screen.queryByTitle('gpt-4.1-mini')).not.toBeInTheDocument();
+  });
+
+  it('keeps manually added models out of the available model list', async () => {
+    const config = {
+      ...createConfig(),
+      manualModels: ['manual-only-model'],
+    };
+
+    useCustomCliConfigStore.setState({
+      configs: [config],
+    });
+
+    await renderDialog(config);
+
+    expect(screen.queryByTitle('manual-only-model')).not.toBeInTheDocument();
+    expect(screen.getByText('manual-only-model')).toBeInTheDocument();
+  });
+
   it('runs tests only for the clicked cli column', async () => {
     const testWithWrapper = vi.fn().mockResolvedValue({
       success: true,
@@ -214,6 +256,52 @@ describe('DirectCliConfigEditorContent', () => {
       'cfg-1',
       expect.objectContaining({
         groupMultiplier: 2.5,
+      })
+    );
+  });
+
+  it('persists config name edits from the identity form', async () => {
+    await renderDialog();
+
+    await act(async () => {
+      fireEvent.change(screen.getByDisplayValue('测试配置'), {
+        target: { value: '测试配置重命名' },
+      });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+    });
+
+    const updateConfig = useCustomCliConfigStore.getState().updateConfig as ReturnType<
+      typeof vi.fn
+    >;
+    expect(updateConfig).toHaveBeenLastCalledWith(
+      'cfg-1',
+      expect.objectContaining({
+        name: '测试配置重命名',
+      })
+    );
+  });
+
+  it('keeps the current config name when the identity name edit is blank', async () => {
+    await renderDialog();
+
+    await act(async () => {
+      fireEvent.change(screen.getByDisplayValue('测试配置'), {
+        target: { value: '   ' },
+      });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+    });
+
+    const updateConfig = useCustomCliConfigStore.getState().updateConfig as ReturnType<
+      typeof vi.fn
+    >;
+    expect(updateConfig).toHaveBeenLastCalledWith(
+      'cfg-1',
+      expect.objectContaining({
+        name: '测试配置',
       })
     );
   });

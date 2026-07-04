@@ -70,12 +70,12 @@
 | `src/renderer/components/Sidebar/VerticalSidebar.tsx` | 左侧导航组件，负责展示一级页面与 `数据总览` 子页入口 |
 | `src/renderer/components/CliConfigStatus/*` | CLI 配置状态组件，展示 Claude Code / Codex / Gemini CLI 配置来源，并将匹配本地路由代理端口的 Base URL 显示为“本地路由”；本地路由、站点管理和自定义 CLI 均显示当前使用模型小字 |
 | `src/renderer/pages/DataOverviewPage.tsx` | 数据总览首页，按 `overviewSubtab` 渲染 `SiteOverviewView` 或 `RouteOverviewView`：站点视图展示资源 / 签到 / 历史快照；路由视图三行布局（KPI / 运行趋势 + 模型热力 / 通道散点 + 模型→通道 Sankey），通过路由内容区实际尺寸选择紧凑/常规布局，并用 scope (全部 / 站点 / 自定义 CLI) 控制路由视图范围；运行趋势在 `24h` / `7d` 视窗内补齐完整小时/日期 X 轴，前置空桶只显示标签不绘制柱/线；用 treemap 的 selectedModel 控制散点高亮；Sankey 独立展示不参与模型联动。KPI 第四张为首字响应 P95 + 会话时间 P99 合并卡。 |
-| `src/renderer/pages/SitesPage.tsx` | 站点管理主页面，统一承载托管站点与直连配置接入管理；列表按站点/账户行展示余额、今日消费、模型数量与 48h History，点击行打开接入点侧滑面板；页头集中提供探测设置、立即探测、操作记录、一键刷新、一键签到、添加接入点与恢复站点入口，其中探测设置/立即探测接入 `routing.cliProbe`；侧滑面板支持编辑站点 URL，并通过浏览器基础信息刷新重新获取当前账户 user_id/username/access_token；直连配置复用自定义 CLI 编辑器，取消未保存新建会清理临时配置 |
+| `src/renderer/pages/SitesPage.tsx` | 站点管理主页面，统一承载托管站点与直连配置接入管理；列表按站点/账户行展示余额、今日消费、模型数量与 48h History，点击行打开接入点侧滑面板；页头集中提供探测设置、立即探测、操作记录、一键刷新、一键签到、添加接入点与恢复站点入口，其中探测设置/立即探测接入 `routing.cliProbe`；侧滑面板支持编辑站点名称和 URL，并通过浏览器基础信息刷新重新获取当前账户 user_id/username/access_token；直连配置复用自定义 CLI 编辑器，支持保存后继续编辑配置名称，取消未保存新建会清理临时配置 |
 | `src/renderer/pages/CreditPage.tsx` | LDC 积分页面，展示 Linux Do Credit 账户信息、收支统计与充值入口 |
 | `src/renderer/pages/RoutePage.tsx` | 路由配置/操作页，组合代理服务与模型重定向，并引导用户跳转到数据总览查看统计 |
 | `src/renderer/pages/LogsPage.tsx` | 路由日志主页面，通过逐条 push 追加；使用无卡片横向滚动单行表格展示 CLI 图标、原始模型、路由目标、Token（总/输入/输出/缓存写/缓存读）、参考金额、用时/首字、纯数字状态码与时间，失败信息在第二行展示；直连配置路由目标带 `直连配置 /` 前缀 |
 | `src/renderer/components/HistoryCell.tsx` / `src/renderer/components/Route/Usability/HistoryBucketBars.tsx` / `src/renderer/components/SiteListHeader/SiteListHeader.tsx` | 站点管理 History 列 UI：表头用旧版 CLI SVG 图标提供 Claude Code / Codex / Gemini CLI 选择和综合/探测/路由模式切换；行内只渲染半高 24 个 2h 时间桶成功率条形图，数据来自 `route:getHistoryBuckets` IPC |
-| `src/renderer/components/dialogs/AddAccessPointDialog.tsx` / `AccessPointDetailPanel.tsx` / `OperationRecordDialog.tsx` / `CliProbeSettingsDialog.tsx` | 统一添加接入点弹窗、接入点详情侧滑面板、操作记录弹窗与站点 CLI 探测设置弹窗；侧滑面板固定 720px，Tab 内容区独立滚动；托管站点 Tab1 将账户、站点 URL、站点属性、加油站链接、签到启用、访问凭证、AnyRouter、其他账户与重新获取账户信息入口合并到单一信息面，Tab2 复用 `SiteCardDetails` 展示资源，Tab3 内嵌 `ManagedCliConfigEditorContent`；直连配置 Tab1/Tab2/Tab3 内嵌 `DirectCliConfigEditorContent`；操作记录弹窗显示当前会话内 `kind: action` 的非路由请求操作记录；探测设置弹窗编辑 `routing.cliProbe.config`（不含探测模型数量，模型由各接入点 CLI 测试模型决定） |
+| `src/renderer/components/dialogs/AddAccessPointDialog.tsx` / `AccessPointDetailPanel.tsx` / `OperationRecordDialog.tsx` / `CliProbeSettingsDialog.tsx` | 统一添加接入点弹窗、接入点详情侧滑面板、操作记录弹窗与站点 CLI 探测设置弹窗；侧滑面板固定 720px，Tab 内容区独立滚动；托管站点 Tab1 将站点名称、账户、站点 URL、站点属性、加油站链接、签到启用、访问凭证、AnyRouter、其他账户与重新获取账户信息入口合并到单一信息面，Tab2 复用 `SiteCardDetails` 展示资源，Tab3 内嵌 `ManagedCliConfigEditorContent`；直连配置 Tab1/Tab2/Tab3 内嵌 `DirectCliConfigEditorContent` 并保留配置名称维护入口；操作记录弹窗显示当前会话内 `kind: action` 的非路由请求操作记录；探测设置弹窗编辑 `routing.cliProbe.config`（不含探测模型数量，模型由各接入点 CLI 测试模型决定） |
 | `src/renderer/components/Route/*` | 路由页内部区块（模型重定向、服务器/统计面板，以及站点管理 History 条形图复用组件） |
 | `src/renderer/services/cli-compat-projection.ts` | 将 `routing.cliProbe.latest` 投影为站点页/账户卡片兼容性结果与 CLI 配置弹窗 per-model 测试 slot，并处理来源标记、站点级回退和最新时间戳合并 |
 | `src/renderer/services/sessionEventLog.ts` | 将关键操作写入当前会话事件历史，供站点页操作记录弹窗展示 |
@@ -153,7 +153,7 @@
 ### Route 工作台
 
 1. 渲染进程通过 `route:*` IPC 拉取 `server / rules / modelRegistry / cliProbe / analytics`。
-2. 主进程中的 `route-proxy-service`、`route-cli-probe-service`、`route-analytics-service`、`route-history-service` 等模块负责运行时行为和统计；本地路由上游转发使用 Electron net raw 客户端，必要时读取 `routing.server.upstreamProxyUrl` 走上游代理；流式请求在上游返回成功 `text/event-stream` 且响应适配器透明时会边收边转发，失败响应仍缓冲以保留 fallback；模型注册表会同时聚合站点/账户模型与自定义 CLI 配置模型，并用自定义 CLI 已拉取模型列表隔离旧 Base URL/API Key 残留模型，`manualModels` 作为用户手动输入模型例外继续参与路由来源同步。自定义 CLI 配置保存后会强制同步持久化 registry，避免重启后路由模型选择继续读取旧来源；站点管理会把自定义 CLI 配置投影为虚拟站点/账户/API Key，直连配置行与普通站点行共享 CLI 探测、路由统计和 History 展示。
+2. 主进程中的 `route-proxy-service`、`route-cli-probe-service`、`route-analytics-service`、`route-history-service` 等模块负责运行时行为和统计；本地路由上游转发使用 Electron net raw 客户端，必要时读取 `routing.server.upstreamProxyUrl` 走上游代理，客户端取消会中止当前上游请求且不继续 fallback；流式请求在上游返回成功 `text/event-stream` 且响应适配器透明时会边收边转发，失败响应仍缓冲以保留 fallback；模型注册表会同时聚合站点/账户模型与自定义 CLI 配置模型，并用自定义 CLI 已拉取模型列表隔离旧 Base URL/API Key 残留模型，`manualModels` 作为用户手动输入模型例外继续参与路由来源同步。自定义 CLI 配置保存后会强制同步持久化 registry，避免重启后路由模型选择继续读取旧来源；站点管理会把自定义 CLI 配置投影为虚拟站点/账户/API Key，直连配置行与普通站点行共享 CLI 探测、路由统计和 History 展示。
 3. 配置与统计通过 `UnifiedConfigManager` 写回 `config.routing`。
 
 ### 数据总览

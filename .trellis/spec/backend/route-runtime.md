@@ -313,6 +313,13 @@ Stage 3: Build Entries
       (final canonicalName → sources mapping for route resolution)
 ```
 
+Managed site account participation is not gated by an account-level status field. Legacy
+`accounts[].status` values such as `active`, `expired`, or `revoked` may still exist in old config
+files, but route model registry rebuild, route channel resolution, route log fetches, and route CLI
+probe expansion must ignore them. Usability is derived from the account record, account-owned cache,
+model/group match, and shared API-key availability (`isApiKeyActive()`), not from an
+`AccountStatus` concept.
+
 **Rebuild Modes**:
 - `reseed`: Re-generate seeded items from `detectedEntries`, preserve manual items, used by `rebuildModelRegistry()`
 - `preserve`: Keep all existing displayItems **and create new seeded items for newly detected canonicalNames**, used by `syncModelRegistrySources()`
@@ -326,6 +333,8 @@ Stage 3: Build Entries
 
 Failing to create new seeded items in preserve mode causes "sync sources" to miss newly added models — the sources are scanned into sourcePool but never referenced by any displayItem, so `buildEntriesFromDisplayItems()` produces entries without the new sources.
 
+Custom CLI source discovery treats both persisted `models` (fetched from `/v1/models`) and `manualModels` (user-entered fallback models) as first-class `sourcePool` inputs. These source records must be created independent of `cliSettings.<cli>.enabled`; CLI settings may still contribute configured/tested model references, but those references are filtered by the fetched-plus-manual allowlist so stale selected/tested models are not resurrected.
+
 Deleting a seeded display item is a stable user intent, not a transient display cleanup. `deleteModelDisplayItem()` must persist `action: 'exclude'` overrides for the deleted seeded item's source keys before it calls `syncModelRegistrySources(true)`; otherwise preserve mode will immediately recreate the same seeded card from the still-detected source.
 
 #### Route Runtime Contracts
@@ -333,7 +342,10 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 - `normalizeRoutingConfig()` must always backfill `routing.routePathStates = {}` for old config files.
 - `normalizeRoutingConfig()` must always backfill `routing.server.upstreamProxyUrl = ''` for old config files and trim non-empty persisted values.
 - `buildRoutePathStateKey()` must include `routeRuleId`, `siteId`, `accountId`, `apiKeyId`, normalized `targetProtocol`, `canonicalModel`, and `resolvedModel`; target protocol plus canonical and resolved model fields use `encodeURIComponent`.
+- `buildChannelAttemptPlan()` must key attempts by the full route path, including normalized `targetProtocol`, `canonicalModel`, and `resolvedModel`. Candidates for the same site/account/API key/model but different target protocols are different route paths and must not dedupe or suppress each other.
+- Custom CLI sources explicitly selected by the current `RouteModelDisplayItem` are part of the route intent. Legacy `RouteRule.allowedSiteIds`, `allowedAccountIds`, and `allowedApiKeyGroups` scope managed-site/account/API-key sources only; they must not filter out selected custom CLI sources before forwarding.
 - Local route forwarding must use `httpRawRequest(..., { preferElectronNet: true, proxyUrl: routing.server.upstreamProxyUrl })` instead of Node `http.request` / `https.request`, so packaged route traffic uses Chromium/Electron's network stack and preserves raw response bodies for transparent forwarding.
+- Local route forwarding must pass a per-request cancellation signal into `httpRawRequest()` / `httpRawStreamRequest()`. If the downstream CLI client cancels or disconnects, the proxy aborts the active upstream request, ignores any late upstream result, does not try another route path for that client request, and does not record route-path failure or provider-failure analytics for the cancellation.
 - `electronFetchRaw()` must treat `timeout` as a connection/idle timeout, not a total response-duration timeout. Re-arm the timer when the response starts and after every `data` chunk so long-running SSE CLI responses are not aborted while the upstream is actively streaming.
 - Local route streaming requests must keep the initial upstream wait bounded by the configured/site-specific request timeout. After the first SSE data chunk is received, active streams use an idle timeout of at least 10 minutes so healthy long-running streams are not aborted between chunks.
 - AnyRouter site-name detection must normalize spaces, repeated spaces, hyphens, and underscores so both `Any Router` and `AnyRouter` activate the same AnyRouter request rewrite path. Do not match names with extra prefix/suffix text.
@@ -343,8 +355,8 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 - Claude Code and Codex transparent SSE streams must not silently end on upstream EOF unless a protocol terminal marker has been observed (`message_stop` for Anthropic/Claude Code, `response.completed` or `[DONE]` for OpenAI Responses/Codex). If the upstream connection ends after downstream bytes were written but before the terminal marker, append a protocol-shaped SSE error event, record `incomplete_streaming_response:missing_terminal_event`, and then close the downstream response.
 - Transparent SSE terminal-marker scanning may retain only a bounded text window for memory safety, but each incoming chunk must be checked together with the previously retained window before the combined text is trimmed. A large upstream chunk with `message_stop`, `response.completed`, or `[DONE]` near the beginning must not be misclassified as `incomplete_streaming_response:missing_terminal_event` merely because the marker falls outside the retained tail after trimming.
 - Claude Code transparent SSE streams must validate completed Anthropic message structure before accepting a terminal `message_stop` as success. A completed Claude Code stream with OpenAI-style events, leaked DSML/tool-call markup in text deltas, malformed tool input JSON, unclosed content blocks, `tool_use` stop reasons without real `tool_use` blocks, or no visible text/tool_use content (for example thinking-only output) must append a protocol-shaped SSE error when bytes were already written, record `malformed_streaming_response:<reason>`, and close without forwarding the terminal `message_stop`.
-- Codex/OpenAI Responses transparent SSE streams must validate completed response content before accepting `response.completed` or `[DONE]` as success. A completed stream with no assistant text (`response.output_text.delta`, `response.output_text.done`, `output_text`, or text content) and no function/tool output (`function_call`, `function_call_output`, or function-call arguments) must append a protocol-shaped SSE error, record `malformed_streaming_response:empty_response` or `malformed_streaming_response:empty_response_zero_usage`, and close without treating the path as successful. HTTP `200` plus a terminal marker is only a transport-level success; it is not enough to prove the model produced a consumable answer.
-- Route token accounting must not fabricate final usage. If a successful-looking response lacks usage, keep usage undefined. If a completed OpenAI Responses stream reports all observed token fields as `0` and contains no output content, treat those zero tokens as a malformed-empty-response diagnostic rather than a billable/successful generation.
+- Codex/OpenAI Responses transparent SSE streams must validate completed response content before accepting `response.completed` or `[DONE]` as success. A completed stream with no assistant text (`response.output_text.delta`, `response.output_text.done`, `output_text`, or text content) and no function/tool output (`function_call`, `function_call_output`, or function-call arguments) must append a protocol-shaped SSE error, record `malformed_streaming_response:empty_response`, and close without treating the path as successful. If terminal `response.completed` usage explicitly reports all observed token fields as `0`, the stream must record `malformed_streaming_response:empty_response_zero_usage` even when earlier chunks contained assistant text or function/tool output. HTTP `200` plus a terminal marker is only a transport-level success; it is not enough to prove the model produced a consumable answer.
+- Route token accounting must not fabricate final usage. If a successful-looking response lacks usage, keep usage undefined. If a completed OpenAI Responses stream reports all observed terminal token fields as `0`, treat those zero tokens as a malformed response diagnostic rather than a billable/successful generation, regardless of whether output content appeared earlier in the stream.
 - `httpRawStreamRequest()` and `electronFetchRawStream()` must invoke chunk callbacks as bytes arrive while still retaining the complete response `body` and `firstByteLatencyMs` for analytics, usage extraction, and failure logs.
 - If the upstream streaming candidate is not a success SSE response, no downstream bytes may be written. The proxy must keep buffering the full response so existing failure classification, path suspension, response adaptation, and fallback attempts continue to work.
 - Once downstream streaming bytes have been written, the current request cannot fall back to another channel. Any later upstream or write error must end the downstream response if it is not already ended.
@@ -374,6 +386,7 @@ Deleting a seeded display item is a stable user intent, not a transient display 
   unless that path belongs to the current `GLM5.2` route intent and is not reset-suppressed.
 - `RouteModelDisplayItem.runtimeConfig` owns per-redirection runtime behavior. Missing fields normalize to `maxAttemptsPerRoutePath = 1`, `successRateWindowMinutes = 5`, `disableDurationMinutes = 30`, and `minSuccessRate = 0.8`.
 - `handleRequest()` must resolve `RouteRuntimeConfig` from the matched canonical model's display item and pass `runtimeConfig.maxAttemptsPerRoutePath` into `buildChannelAttemptPlan(sortChannelsByScore(channels), ...)`.
+- `handleRequest()` must resolve each candidate's concrete `targetProtocol` and `targetEndpoint` before normal priority sorting, `buildChannelAttemptPlan()`, disabled-path filtering, and successful path affinity. `buildRoutePathStateKey()`, `isRoutePathDisabled()`, and `applySuccessfulRoutePathAffinity()` all depend on normalized `targetProtocol`; using unresolved candidates can miss the current priority hit, ignore disabled paths, or start fallback from the wrong priority position.
 - Successful route path affinity is derived from existing `routing.routePathStates`, not a separate preferred-path pointer. A candidate is eligible only when its concrete route path state has `lastOutcome === 'success'`, `lastSuccessAt` is within `ROUTE_SUCCESSFUL_PATH_AFFINITY_MS`, `disabledUntil` is not active, and neither the concrete state nor the same channel's `resolvedModel: undefined` suppression state has `affinitySuppressedUntil` in the future.
 - Priority-hit reset from the redirection UI is channel-scoped across all route rules for the
   selected route intent: it sends `canonicalModel + siteId + accountId + apiKeyId + targetProtocol`
@@ -608,6 +621,7 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 | Gemini helper request receives `502 no_matching_rule` | proxy returns retriable 5xx before a route path exists | Expect Gemini CLI to retry and potentially flood route logs; this is a proxy classification/routing contract failure, not proof that the user selected `gemini-2.5-flash-lite` |
 | All paths disabled | every planned route path has active `disabledUntil > now` | Respond `400` with a non-retryable CLI-native `all_route_paths_disabled` error shape |
 | Path disabled during current request | first planned attempt fails, `recordRoutePathOutcome()` sets `disabledUntil`, and remaining planned attempts target only disabled route paths | Do not make another upstream request; respond `400` with a non-retryable CLI-native `all_route_paths_disabled` error shape |
+| Candidate target protocol resolves after channel discovery | `resolveChannels()` returns candidates without concrete `targetProtocol`, but `resolveChannelTarget()` maps them to `openai-responses` before planning | Build route-path keys from the resolved protocol, so disabled-path checks and successful affinity match persisted `routePathStates` and attempt order starts from the current priority hit |
 | User resets current rule paths | renderer calls `resetRoutePathStates({ canonicalModel })` from a redirection card | Matching `routePathStates` are deleted, `stats` are preserved, redirection config is refreshed |
 | User resets current priority hit after changing site priority | renderer calls `resetRoutePathStates()` from the detail action bar with channel identity and no `routeRuleId` / `resolvedModel` | Every route-rule/resolved-model state for that site/account/API-key channel is cleared and suppressed; sibling API keys remain; the next request starts from normal site priority order |
 | User selects Claude Code `GLM5.2` after another model recently hit ElySiver | route resolver builds candidates for the selected display item, then affinity inspects persisted state | Only route-path states matching the current CLI/model/display source boundary can affect attempt order; unrelated previous hits are ignored even if they belong to another route rule |
@@ -622,10 +636,13 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 | Upstream failure log has only duplicate code text | renderer legacy log defense | Keep the status badge, but do not render another failure-detail pill containing the same code |
 | Upstream TLS fails in Node but succeeds in CLI/Electron | route proxy forwarding | Forward with Electron net raw client before classifying the route attempt, preserving status/body/headers |
 | Long upstream SSE stays active past `requestTimeoutMs` | upstream emits data chunks before each timeout interval | Keep the Electron raw request alive until `end`; do not abort only because total elapsed time exceeded `requestTimeoutMs` |
+| Downstream CLI client cancels a buffered request | `httpRawRequest()` is pending and the local client socket/response closes before upstream completes | Abort the active upstream request via the per-request signal, ignore any late upstream result, do not record route-path failure or provider-failure analytics, and do not try fallback candidates |
+| Downstream CLI client cancels a transparent SSE request | `httpRawStreamRequest()` is active and downstream close fires while chunks are streaming | Abort the active upstream stream and exit the local request; do not append protocol errors, classify upstream failure, or try another channel for that client request |
 | Transparent streaming request receives successful SSE | original request is streaming, adapters are transparent, upstream status is `2xx/3xx`, `content-type` includes `text/event-stream`, and the first body bytes validate as SSE | Defer downstream headers until the first accepted SSE chunk, strip hop-by-hop/`content-encoding`/`content-length`/`transfer-encoding` headers, forward buffered and subsequent chunks, retain the complete body for analytics, then end the downstream response |
 | Streaming request receives malformed 2xx body | upstream status is classified as `success`, but the response is not SSE or begins with HTML/JSON/non-SSE content | Do not write downstream bytes; record `invalid_streaming_response`, mark the route path failed, and try the next enabled channel when available |
 | Transparent stream ends without terminal marker | downstream bytes were already written, but no `message_stop`, `response.completed`, or `[DONE]` was observed before upstream EOF | Append SSE `event: error`, record `incomplete_streaming_response:missing_terminal_event`, mark the path failed, and close the downstream response instead of silently ending |
 | Codex stream completes with no output and zero usage | upstream returns `200 text/event-stream` with `response.completed` / `[DONE]`, but no output text/function/tool content and all observed usage token fields are `0` | Append SSE `event: error`, record `malformed_streaming_response:empty_response_zero_usage`, mark the path failed, and do not count it as a successful generated response |
+| Codex stream emits output but terminal usage is all zero | upstream sends text/function/tool output chunks, then `response.completed` reports every observed terminal usage token field as `0` | Append SSE `event: error`, record `malformed_streaming_response:empty_response_zero_usage`, mark the path failed, and do not record success for that path |
 | Streaming request receives failed SSE | upstream status is not classified as `success` | Do not write downstream bytes; buffer the body, record failure, suspend/update the path, and try the next enabled channel when available |
 | Streaming request requires response adaptation | AnyRouter or protocol response adapter is not `transparent` | Do not stream passthrough; buffer the full body and run the normal response adaptation path before writing downstream |
 | Upstream proxy configured | `routing.server.upstreamProxyUrl = 'http://127.0.0.1:7890'` | Only upstream forwarding uses that proxy; local CLI clients still connect directly to the route proxy |
@@ -662,6 +679,9 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 - Good: if `site-1` already saved API key priorities `key-b => 9`, then newly discovered `key-a` and `key-c` under the same site must be appended as synthetic priorities `10` and `11` in their current source order.
 - Good: a redirect card with `maxAttemptsPerRoutePath = 2` may try `site0/A` twice before moving to `site0/B`, but the same card with the default value tries each path once.
 - Good: if `site2/keyC` was the most recent successful enabled path in the last 30 minutes, the next matching request starts with `site2/keyC`, then continues with candidates after its original position before wrapping to earlier priority candidates.
+- Good: if route candidates are discovered without `targetProtocol` but resolve to `openai-responses`
+  before forwarding, a persisted successful `openai-responses` state for `site2/keyC` still makes
+  the next request start from `site2/keyC` instead of falling back to raw priority order.
 - Good: when Claude Code is switched to `GLM5.2`, a recent successful hit for another selected model
   on ElySiver is ignored unless it shares the same selected CLI/model/display source boundary;
   priority-hit reset for `GLM5.2` clears matching ElySiver states across every route rule.
@@ -686,8 +706,14 @@ Deleting a seeded display item is a stable user intent, not a transient display 
   upstream while still returning native Responses API shape to Codex.
 - Good: a native CLI SSE route that receives one chunk every 30 seconds may run longer than the configured 60-second request timeout without being aborted by `electronFetchRaw()`.
 - Good: a native transparent Codex SSE route writes `text/event-stream` headers and forwards each `data:` chunk before the upstream stream ends.
+- Good: a user cancels a Codex local route request while the first upstream channel is pending; the
+  proxy aborts that upstream request, does not try the second configured channel, and writes no
+  route-path failure sample.
 - Good: a Codex/OpenAI Responses stream with `response.output_text.delta` followed by `response.completed` is accepted even when the terminal marker appears near the beginning of a large chunk.
 - Good: a Codex/OpenAI Responses stream that ends with `response.completed` but contains no output and reports `input_tokens/output_tokens/total_tokens = 0` is surfaced to the client as a protocol-shaped error and records the route path as failed.
+- Good: a Codex/OpenAI Responses stream that emits `response.output_text.delta` and then reports
+  terminal `input_tokens/output_tokens/total_tokens = 0` is still surfaced as
+  `malformed_streaming_response:empty_response_zero_usage` and never records route success.
 - Good: a non-streaming Codex/OpenAI Responses `HTTP 200` body with explicit `input_tokens/output_tokens/total_tokens/cache_* = 0` is retried once against the same active channel; if the retry returns normal usage, the path is recorded as success and no fallback candidate is touched.
 - Good: a non-streaming Codex/OpenAI Responses `HTTP 200` body that still reports explicit all-zero usage after the same-channel retry is recorded as `empty_response_zero_usage`; if the same API key also covers another `resolvedModel`, the proxy tries that sibling model before replying to the CLI.
 - Good: when the last enabled non-streaming candidate still returns explicit all-zero usage with `HTTP 200` after retry, the proxy returns aggregate failure instead of a misleading successful empty body.
@@ -709,6 +735,12 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 - Base: a CLI exits without any observed probe-lock request; the wrapper reports the local-proxy
   connectivity diagnostic because no request subscriber fired.
 - Bad: the same site/account/key/model path appears multiple times because several sources produce it; the attempt planner must keep only one attempt for that path in the current request.
+- Bad: building the route-path attempt key before resolving `targetProtocol`, because a persisted
+  `openai-responses` current hit will not match an unresolved/native candidate and the proxy can
+  start from the wrong priority position.
+- Bad: deduplicating candidates without `targetProtocol`, because `native`, `openai-responses`, and
+  `openai-chat-completions` paths can have different health, affinity, and disable state even when
+  they share the same site/account/API key/model.
 - Bad: applying successful path affinity before `buildChannelAttemptPlan()` can resurrect duplicate attempts and make `maxAttemptsPerRoutePath = 1` ineffective.
 - Bad: a disabled path remains visible as a warning in the UI but must not be forwarded to until `disabledUntil` expires.
 - Bad: deriving `当前优先命中` only from in-memory route request logs, because those logs disappear on
@@ -742,8 +774,13 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 - Bad: implementing `electronFetchRaw()` with one fixed `setTimeout()` from request start, which can abort a healthy long-running SSE stream and make CLI conversations end without an upstream error body.
 - Bad: using the buffered `httpRawRequest()` path for successful SSE responses, which makes the CLI receive nothing until upstream `end` and can look like a stalled or abruptly ended conversation.
 - Bad: writing a failed upstream SSE chunk to the downstream response before classifying status, because fallback becomes impossible after bytes are sent.
+- Bad: treating downstream cancellation as `upstream_failed`, because it pollutes route health and
+  can spend additional quota by falling back to another channel after the user has already cancelled.
 - Bad: recording the first non-streaming `HTTP 200` plus explicit all-zero generation usage as a route-path failure immediately, because a transient semantic anomaly can poison affinity/health and skip a channel that succeeds on retry.
 - Bad: treating repeated non-streaming `HTTP 200` plus explicit all-zero generation usage as success, because the route can repeat the same empty path forever and never reaches sibling original-model candidates under the same API key.
+- Bad: treating a Codex SSE stream as success only because it emitted output text before terminal
+  all-zero usage, because the route can keep reusing a semantically broken path and never reaches
+  the next priority candidate.
 - Bad: rebuilding an AnyRouter Claude Code request from only `model/messages/system/metadata`, because this drops Claude Code tool definitions and can make the CLI session end even though the upstream returned a successful SSE response.
 - Bad: letting a probe-lock wrapper test retry the same selected model through upstream multiple
   times after the first deterministic failure, which wastes quota and hides the original failure
@@ -760,8 +797,19 @@ Deleting a seeded display item is a stable user intent, not a transient display 
   states from another selected canonical/display item even when the route rule, site/account/API key,
   or `resolvedModel` matches the current candidate.
 - `src/__tests__/route-proxy-service.test.ts`: assert affinity is applied after `maxAttemptsPerRoutePath` bounding and does not add duplicate attempts.
+- `src/__tests__/route-proxy-service.test.ts`: assert candidates whose `targetProtocol` is resolved
+  after channel discovery still match persisted `routePathStates`, so successful affinity starts
+  from the current priority hit using the resolved protocol key.
+- `src/__tests__/route-proxy-service.test.ts`: assert a selected custom CLI route channel is
+  forwarded to the custom CLI direct base URL and not accidentally treated as a managed-site scoped
+  channel.
 - `src/__tests__/route-proxy-service.test.ts`: assert `handleRequest()` uses the affinity-reordered plan while still falling back to later and then earlier candidates in the same request.
 - `src/__tests__/route-proxy-service.test.ts`: assert a failure that disables the current route path prevents remaining pre-planned attempts for that disabled path from making another upstream request.
+- `src/__tests__/route-proxy-service.test.ts`: assert downstream client cancellation aborts the
+  active upstream request, does not try fallback channels, and does not record route-path failure or
+  provider-failure analytics.
+- `src/__tests__/http-client.test.ts`: assert raw buffered and streaming requests pass
+  `AbortSignal` through to the Electron net helpers.
 - `src/__tests__/route-proxy-service.test.ts`: assert OpenAI-compatible paths are preserved and Gemini native paths replace the model segment and query API key before upstream forwarding.
 - `src/__tests__/route-proxy-service.test.ts`: assert an unmatched Gemini CLI internal
   utility/fallback raw model returns non-retryable `400 gemini_cli_internal_utility_blocked` by
@@ -808,6 +856,9 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 - `src/__tests__/route-proxy-service.test.ts`: assert a transparent Claude/Codex stream that reaches upstream EOF without a terminal SSE marker appends an SSE error and records `incomplete_streaming_response:missing_terminal_event`.
 - `src/__tests__/route-proxy-service.test.ts`: assert a transparent Codex/OpenAI Responses SSE stream with `response.completed` near the beginning of a chunk larger than the retained terminal-scan window is accepted as complete and does not append an incomplete-stream error.
 - `src/__tests__/route-proxy-service.test.ts`: assert a transparent Codex/OpenAI Responses SSE stream with `response.completed`, no output content, and all observed usage token fields equal to `0` appends an SSE error and records `malformed_streaming_response:empty_response_zero_usage`.
+- `src/__tests__/route-proxy-service.test.ts`: assert a transparent Codex/OpenAI Responses SSE
+  stream with output content plus terminal all-zero usage records
+  `malformed_streaming_response:empty_response_zero_usage` and does not record route success.
 - `src/__tests__/route-proxy-service.test.ts`: assert failed SSE upstream responses are buffered without downstream writes and fallback attempts can still stream successful chunks.
 - `src/__tests__/route-proxy-service.test.ts`: assert a non-streaming `HTTP 200` response with explicit all-zero total/input/output/cache usage retries the same active channel first, then records `empty_response_zero_usage` as a route-path failure and falls back to another `resolvedModel` under the same API key only if the retry also returns all-zero usage.
 - `src/__tests__/route-proxy-service.test.ts`: assert a first all-zero-usage `HTTP 200` followed by a successful same-channel retry records success for that route path and does not call fallback candidates.

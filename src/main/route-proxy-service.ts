@@ -49,7 +49,10 @@ import {
   ROUTE_SUCCESSFUL_PATH_AFFINITY_MS,
 } from '../shared/types/route-proxy';
 import { isAnyRouterSite } from '../shared/types/site';
-import { isCliTargetProtocolNativeEquivalent } from '../shared/types/cli-config';
+import {
+  isCliTargetProtocolNativeEquivalent,
+  normalizeCliTargetProtocol,
+} from '../shared/types/cli-config';
 import {
   rewriteForAnyRouter,
   transformAnyRouterResponse,
@@ -106,6 +109,25 @@ const LOCAL_COUNT_TOKENS_MESSAGE_OVERHEAD = 4;
 const LOCAL_COUNT_TOKENS_CONSERVATIVE_MULTIPLIER = 1.15;
 const INITIAL_STREAM_VALIDATION_MAX_BYTES = 4096;
 const STREAM_TERMINAL_SCAN_MAX_CHARS = 8192;
+const ROUTE_CLIENT_CANCELLED_ERROR_CODE = 'route_client_cancelled';
+
+class RouteClientCancelledError extends Error {
+  constructor(message = 'Route client cancelled request') {
+    super(message);
+    this.name = 'RouteClientCancelledError';
+  }
+}
+
+function isRouteClientCancelledError(error: unknown): boolean {
+  return (
+    error instanceof RouteClientCancelledError ||
+    (error instanceof Error && error.name === 'RouteClientCancelledError')
+  );
+}
+
+function createRouteClientCancelledError(): RouteClientCancelledError {
+  return new RouteClientCancelledError(ROUTE_CLIENT_CANCELLED_ERROR_CODE);
+}
 
 function nextRequestId(cliType: RouteCliType): string {
   requestSequence += 1;
@@ -174,6 +196,19 @@ function filterChannelsByPriorityConfig(
 ): ResolvedChannel[] {
   return channels.filter(
     channel => !isChannelDisabledByPriorityConfig(channel, routing.modelRegistry, canonicalModel)
+  );
+}
+
+async function resolveChannelTargets(channels: ResolvedChannel[]): Promise<ResolvedChannel[]> {
+  return Promise.all(
+    channels.map(async channel => {
+      const resolvedTarget = await resolveChannelTarget(channel);
+      return {
+        ...channel,
+        targetProtocol: resolvedTarget.targetProtocol,
+        targetEndpoint: resolvedTarget.targetEndpoint,
+      };
+    })
   );
 }
 
@@ -254,6 +289,7 @@ export function buildChannelAttemptPlan<
     siteId?: string;
     accountId?: string;
     apiKeyId?: string;
+    targetProtocol?: RoutePathState['targetProtocol'];
     resolvedModel?: string;
     canonicalModel?: string;
   },
@@ -267,6 +303,7 @@ export function buildChannelAttemptPlan<
       channel.siteId || '__site__',
       channel.accountId || '__account__',
       channel.apiKeyId || '__api_key__',
+      normalizeCliTargetProtocol(channel.targetProtocol),
       channel.canonicalModel?.trim() || '__empty_canonical_model__',
       channel.resolvedModel?.trim() || '__empty_resolved_model__',
     ].join('|');
@@ -338,9 +375,44 @@ export function applySuccessfulRoutePathAffinity<T extends RoutePathAffinityCand
 function readBody(req: http.IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on('data', chunk => chunks.push(chunk));
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', reject);
+    let settled = false;
+
+    const cleanup = () => {
+      req.off('data', onData);
+      req.off('end', onEnd);
+      req.off('aborted', onAborted);
+      req.off('close', onClose);
+      req.off('error', onError);
+    };
+    const resolveOnce = (body: Buffer) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(body);
+    };
+    const rejectOnce = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const onData = (chunk: Buffer | string) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    };
+    const onEnd = () => resolveOnce(Buffer.concat(chunks));
+    const onAborted = () => rejectOnce(createRouteClientCancelledError());
+    const onClose = () => {
+      if (!req.complete) {
+        rejectOnce(createRouteClientCancelledError());
+      }
+    };
+    const onError = (error: Error) => rejectOnce(error);
+
+    req.on('data', onData);
+    req.on('end', onEnd);
+    req.on('aborted', onAborted);
+    req.on('close', onClose);
+    req.on('error', onError);
   });
 }
 
@@ -751,10 +823,16 @@ function validateCompletedOpenAiResponsesStream(body: Buffer): CompletedStreamVa
     );
   }
 
-  if (textLength === 0 && outputItems === 0) {
-    const reason = explicitZeroUsage ? 'empty_response_zero_usage' : 'empty_response';
+  if (explicitZeroUsage) {
     return buildCompletedStreamFailure(
-      reason,
+      'empty_response_zero_usage',
+      'upstream ended Codex stream with all-zero usage'
+    );
+  }
+
+  if (textLength === 0 && outputItems === 0) {
+    return buildCompletedStreamFailure(
+      'empty_response',
       'upstream ended Codex stream without assistant text, function_call, or tool output content'
     );
   }
@@ -1809,6 +1887,7 @@ interface ForwardToUpstreamOptions {
   methodOverride?: string;
   requestUrlOverride?: string;
   upstreamCliType?: RouteCliType;
+  signal?: AbortSignal;
   streamResponse?: http.ServerResponse;
   streamResponseBody?: boolean;
   streamIdleTimeoutMs?: number;
@@ -1862,6 +1941,7 @@ async function forwardToUpstream(
     timeout: timeoutMs,
     proxyUrl: options.upstreamProxyUrl,
     preferElectronNet: true,
+    signal: options.signal,
   };
 
   let streamed = false;
@@ -2105,6 +2185,36 @@ export async function handleRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse
 ): Promise<void> {
+  const routeAbortController = new AbortController();
+  let requestBodyRead = false;
+  let routeHandlingDone = false;
+  let cleanupRouteCancellationListeners = () => {};
+  const finishRouteHandling = () => {
+    routeHandlingDone = true;
+    cleanupRouteCancellationListeners();
+  };
+  const cancelRouteRequest = () => {
+    if (routeHandlingDone || !requestBodyRead || routeAbortController.signal.aborted) {
+      return;
+    }
+    routeAbortController.abort(createRouteClientCancelledError());
+  };
+  const handleResponseClose = () => {
+    if (res.writableEnded) {
+      finishRouteHandling();
+      return;
+    }
+    cancelRouteRequest();
+  };
+  cleanupRouteCancellationListeners = () => {
+    res.off('close', handleResponseClose);
+    res.off('finish', finishRouteHandling);
+    req.off('aborted', cancelRouteRequest);
+  };
+  res.once('close', handleResponseClose);
+  res.once('finish', finishRouteHandling);
+  req.on('aborted', cancelRouteRequest);
+
   const routing = unifiedConfigManager.getRoutingConfig();
 
   // 识别 CLI 类型
@@ -2191,7 +2301,17 @@ export async function handleRequest(
   const requestId = nextRequestId(cliType);
 
   // 读取请求体
-  const bodyBuffer = await readBody(req);
+  let bodyBuffer: Buffer;
+  try {
+    bodyBuffer = await readBody(req);
+    requestBodyRead = true;
+  } catch (err: unknown) {
+    if (isRouteClientCancelledError(err)) {
+      finishRouteHandling();
+      return;
+    }
+    throw err;
+  }
   let bodyJson: unknown = null;
   try {
     bodyJson = JSON.parse(bodyBuffer.toString('utf-8'));
@@ -2234,7 +2354,7 @@ export async function handleRequest(
   if (probeLock) {
     canonicalModel = probeLock.canonicalModel;
     routeRuntimeConfig = resolveRouteRuntimeConfig(routing, canonicalModel);
-    sortedChannels = [
+    sortedChannels = await resolveChannelTargets([
       {
         routeRuleId: '__probe_lock__',
         siteId: probeLock.siteId,
@@ -2245,7 +2365,7 @@ export async function handleRequest(
         resolvedModel: probeLock.rawModel,
         targetProtocol: probeLock.targetProtocol,
       },
-    ];
+    ]);
   } else {
     // 规则匹配只看 canonical model；若当前请求尚未建立 canonical，则退化为 raw。
     // canonicalModel 已优先采用应用内 CLI 选择模型，因此本地路由不再依赖外部 CLI 配置模型。
@@ -2349,9 +2469,10 @@ export async function handleRequest(
     }
     routeRuntimeConfig = resolveRouteRuntimeConfig(routing, canonicalModel);
     const enabledChannels = filterChannelsByPriorityConfig(channels, routing, canonicalModel);
+    const resolvedChannels = await resolveChannelTargets(enabledChannels);
     sortedChannels = applySuccessfulRoutePathAffinity(
       buildChannelAttemptPlan(
-        sortChannelsByScore(enabledChannels),
+        sortChannelsByScore(resolvedChannels),
         routeRuntimeConfig.maxAttemptsPerRoutePath
       ).filter(channel => !isRoutePathDisabled(channel)) as ResolvedChannel[],
       routing.routePathStates
@@ -2388,11 +2509,8 @@ export async function handleRequest(
     }
 
     attempt += 1;
-    const resolvedTarget = await resolveChannelTarget(ch);
     const activeChannel: ResolvedChannel = {
       ...ch,
-      targetProtocol: resolvedTarget.targetProtocol,
-      targetEndpoint: resolvedTarget.targetEndpoint,
     };
     const site = unifiedConfigManager.getSiteById(activeChannel.siteId);
     const account = unifiedConfigManager.getAccountById(activeChannel.accountId);
@@ -2656,6 +2774,7 @@ export async function handleRequest(
             methodOverride,
             requestUrlOverride,
             upstreamCliType,
+            signal: routeAbortController.signal,
             streamResponse: res,
             streamResponseBody,
             streamIdleTimeoutMs: upstreamTimeouts.streamIdleTimeoutMs,
@@ -2663,6 +2782,10 @@ export async function handleRequest(
         );
 
       let result = await forwardActiveChannel();
+      if (routeAbortController.signal.aborted) {
+        finishRouteHandling();
+        return;
+      }
       let outcome = classifyRouteStatusCode(result.statusCode);
       for (
         let zeroUsageRetry = 0;
@@ -2681,6 +2804,10 @@ export async function handleRequest(
           resolvedModel: activeChannel.resolvedModel,
         });
         result = await forwardActiveChannel();
+        if (routeAbortController.signal.aborted) {
+          finishRouteHandling();
+          return;
+        }
         outcome = classifyRouteStatusCode(result.statusCode);
       }
       const upstreamFailureBodySnippet =
@@ -3042,6 +3169,10 @@ export async function handleRequest(
       res.end(transformed.body);
       return;
     } catch (err: unknown) {
+      if (isRouteClientCancelledError(err) || routeAbortController.signal.aborted) {
+        finishRouteHandling();
+        return;
+      }
       const errorMessage = err instanceof Error ? err.message : 'unknown_error';
       if (probeLock) {
         // 网络异常无 statusCode，按瞬时错误处理：未达上限则不 settle/不通知，
@@ -3149,6 +3280,7 @@ export async function handleRequest(
       );
     }
   }
+  finishRouteHandling();
 }
 
 export async function startProxyServer(): Promise<void> {

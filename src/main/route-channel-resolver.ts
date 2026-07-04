@@ -107,6 +107,11 @@ function sourceSupportsCliType(source: RouteModelSourceRef, cliType: RouteCliTyp
   return !source.availableCliTypes?.length || source.availableCliTypes.includes(cliType);
 }
 
+function sourceUsesRouteRuleScope(source: RouteModelSourceRef): boolean {
+  // Custom CLI channels are selected through the display item; legacy rule scopes name managed sites.
+  return source.sourceType !== 'customCli';
+}
+
 function normalizeOriginalModelOrder(
   originalModelOrder: string[] | undefined,
   sourceKeys: string[],
@@ -330,11 +335,7 @@ function buildCanonicalModelChannels(
   const activeSiteById = new Map(
     unifiedConfig.sites.filter(site => site.enabled).map(site => [site.id, site] as const)
   );
-  const activeAccountById = new Map(
-    unifiedConfig.accounts
-      .filter(account => account.status === 'active')
-      .map(account => [account.id, account] as const)
-  );
+  const accountById = new Map(unifiedConfig.accounts.map(account => [account.id, account] as const));
 
   const combinedOriginalModelOrder: string[] = [];
   const siteOrderById = new Map<string, number>();
@@ -418,7 +419,7 @@ function buildCanonicalModelChannels(
       const isCustomCliSource = source.sourceType === 'customCli';
       if (!isCustomCliSource) {
         const site = activeSiteById.get(source.siteId);
-        const account = activeAccountById.get(source.accountId);
+        const account = accountById.get(source.accountId);
         if (!site || !account) {
           continue;
         }
@@ -426,16 +427,25 @@ function buildCanonicalModelChannels(
 
       const siteId = source.siteId;
       const accountId = source.accountId;
+      const applyRouteRuleScope = sourceUsesRouteRuleScope(source);
 
       if (disabledSiteIds.has(siteId)) {
         continue;
       }
 
-      if (rule.allowedSiteIds?.length && !rule.allowedSiteIds.includes(siteId)) {
+      if (
+        applyRouteRuleScope &&
+        rule.allowedSiteIds?.length &&
+        !rule.allowedSiteIds.includes(siteId)
+      ) {
         continue;
       }
 
-      if (rule.allowedAccountIds?.length && !rule.allowedAccountIds.includes(accountId)) {
+      if (
+        applyRouteRuleScope &&
+        rule.allowedAccountIds?.length &&
+        !rule.allowedAccountIds.includes(accountId)
+      ) {
         continue;
       }
 
@@ -452,7 +462,11 @@ function buildCanonicalModelChannels(
           return false;
         }
 
-        if (rule.allowedApiKeyGroups?.length && !rule.allowedApiKeyGroups.includes(apiKey.group)) {
+        if (
+          applyRouteRuleScope &&
+          rule.allowedApiKeyGroups?.length &&
+          !rule.allowedApiKeyGroups.includes(apiKey.group)
+        ) {
           return false;
         }
 
@@ -533,7 +547,7 @@ function buildCanonicalModelChannels(
       ? undefined
       : resolveStoredTargetProtocol(
           activeSiteById.get(group.siteId),
-          activeAccountById.get(group.accountId),
+          accountById.get(group.accountId),
           rule.cliType
         );
 
@@ -581,9 +595,7 @@ function buildGenericChannels(
       continue;
     }
 
-    const siteAccounts = unifiedConfig.accounts.filter(
-      account => account.site_id === site.id && account.status === 'active'
-    );
+    const siteAccounts = unifiedConfig.accounts.filter(account => account.site_id === site.id);
 
     for (const account of siteAccounts) {
       if (rule.allowedAccountIds?.length && !rule.allowedAccountIds.includes(account.id)) {

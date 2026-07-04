@@ -41,7 +41,7 @@
 | **SiteGroupTabs/** | 站点分组标签 | SiteGroupTabs, GroupTab |
 | **SiteListHeader/** | 站点列表头部 | SiteListHeader, SearchBar, FilterBar；History 表头内嵌旧 CLI 图标选择器和模式切换 |
 | **Route/** | Route 页面组件 | ModelRedirectionTab, ProxyStatsTab, HistoryBucketBars |
-| **dialogs/** | 对话框组件 | 各类对话框；接入点弹窗/侧滑面板承载站点管理合并后的低频操作和详情，托管/直连 CLI 编辑内容以内嵌组件形式运行并从 `routing.cliProbe.latest` 回显最新测试模型结果；操作记录弹窗展示当前会话关键操作；站点页 CLI 探测设置弹窗编辑 `routing.cliProbe.config`（不含探测模型数量，模型由各接入点 CLI 测试模型决定） |
+| **dialogs/** | 对话框组件 | 各类对话框；接入点弹窗/侧滑面板承载站点管理合并后的低频操作和详情，包括保存后维护站点名称与直连配置名称；托管/直连 CLI 编辑内容以内嵌组件形式运行并从 `routing.cliProbe.latest` 回显最新测试模型结果；操作记录弹窗展示当前会话关键操作；站点页 CLI 探测设置弹窗编辑 `routing.cliProbe.config`（不含探测模型数量，模型由各接入点 CLI 测试模型决定） |
 | **Skeleton/** | 骨架屏 | SkeletonLoader, SkeletonCard |
 | **Toast/** | 消息提示 | Toast, ToastContainer |
 | **CliCompatibilityIcons/** | CLI 兼容性图标 | CliIcon, CliIconGroup；按测试时间选择 canonical 投影与本地持久化结果中的较新状态 |

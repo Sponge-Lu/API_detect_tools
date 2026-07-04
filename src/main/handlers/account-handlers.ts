@@ -37,7 +37,6 @@ export function registerAccountHandlers(): void {
       accountId: string,
       updates: {
         account_name?: string;
-        status?: string;
         access_token?: string;
         user_id?: string;
         auto_refresh?: boolean;
@@ -95,8 +94,6 @@ export function registerAccountHandlers(): void {
           access_token: data.access_token,
 
           auth_source: data.auth_source as any,
-
-          status: 'active',
 
           browser_profile_path: data.browser_profile_path,
 

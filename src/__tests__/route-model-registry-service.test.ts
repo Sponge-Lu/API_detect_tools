@@ -269,6 +269,70 @@ describe('route model registry service', () => {
     );
   });
 
+  it('uses account-backed sources when a legacy account status is expired', async () => {
+    const registry = createRegistryConfig();
+
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
+      sites: [
+        {
+          id: 'site-1',
+          name: 'Legacy Site',
+          enabled: true,
+          group: 'default',
+          cached_data: {
+            models: ['glm-5.2'],
+          },
+        },
+      ],
+      accounts: [
+        {
+          id: 'acc-legacy',
+          site_id: 'site-1',
+          account_name: 'Primary',
+          status: 'expired',
+          cached_data: {
+            models: ['glm-5.2'],
+            user_groups: {
+              default: {
+                desc: 'Default',
+                ratio: 1,
+              },
+            },
+            api_keys: [
+              {
+                id: 'key-1',
+                name: 'default-key',
+                group: 'default',
+              },
+            ],
+          },
+        },
+      ],
+    });
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      modelRegistry: registry,
+    });
+
+    const result = await rebuildModelRegistry(true);
+
+    expect(result.sources).toEqual([
+      expect.objectContaining({
+        sourceType: 'account',
+        siteId: 'site-1',
+        accountId: 'acc-legacy',
+        originalModel: 'glm-5.2',
+        availableApiKeys: [
+          expect.objectContaining({
+            apiKeyId: 'key-1',
+            accountId: 'acc-legacy',
+            group: 'default',
+          }),
+        ],
+      }),
+    ]);
+    expect(result.sources.some(source => source.sourceType === 'site')).toBe(false);
+  });
+
   it('treats sub2api string active key states as route-eligible while syncing sources', async () => {
     const registry = createRegistryConfig();
 
@@ -1177,7 +1241,7 @@ describe('route model registry service', () => {
           accountName: '自定义 CLI',
           sourceType: 'customCli',
           originalModel: 'duckcoding',
-          availableCliTypes: ['codex', 'geminiCli'],
+          availableCliTypes: ['claudeCode', 'codex', 'geminiCli'],
           apiKeyGroups: [CUSTOM_CLI_ROUTE_GROUP],
           availableUserGroups: [CUSTOM_CLI_ROUTE_GROUP],
           availableApiKeys: [
@@ -1193,7 +1257,7 @@ describe('route model registry service', () => {
         expect.objectContaining({
           sourceKey: `${siteId}:${accountId}:gpt-5.4-duck`,
           originalModel: 'gpt-5.4-duck',
-          availableCliTypes: ['codex', 'geminiCli'],
+          availableCliTypes: ['claudeCode', 'codex', 'geminiCli'],
         }),
       ])
     );
@@ -1259,7 +1323,7 @@ describe('route model registry service', () => {
         expect.objectContaining({
           sourceKey: `${siteId}:${accountId}:manual-duck`,
           originalModel: 'manual-duck',
-          availableCliTypes: ['codex'],
+          availableCliTypes: ['claudeCode', 'codex', 'geminiCli'],
         }),
       ])
     );
@@ -1267,6 +1331,81 @@ describe('route model registry service', () => {
     expect(result.sources.map(source => source.originalModel)).not.toContain('stale-extra');
     expect(result.sources.map(source => source.originalModel)).not.toContain('stale-tested');
     expect(result.sources.map(source => source.originalModel)).not.toContain('stale-gemini');
+  });
+
+  it('syncs manual custom CLI model sources even when all CLI settings are disabled', async () => {
+    const registry = createRegistryConfig();
+    const customConfig = createCustomCliConfig({
+      models: [],
+      manualModels: ['manual-disabled-duck'],
+      lastModelFetch: 100,
+      cliSettings: {
+        claudeCode: {
+          enabled: false,
+          model: null,
+          testModels: [],
+          testState: null,
+        },
+        codex: {
+          enabled: false,
+          model: 'manual-disabled-duck',
+          testModels: ['stale-disabled'],
+          testState: {
+            status: true,
+            testedAt: 2,
+            slots: [{ model: 'stale-tested', success: true, timestamp: 2 }, null, null],
+          },
+        },
+        geminiCli: {
+          enabled: false,
+          model: null,
+          testModels: [],
+          testState: null,
+        },
+      },
+    });
+    const siteId = buildCustomCliRouteSiteId(customConfig.id);
+    const accountId = buildCustomCliRouteAccountId(customConfig.id);
+
+    customCliStorageMock.mockResolvedValue({
+      configs: [customConfig],
+      activeConfigId: customConfig.id,
+    });
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
+      sites: [],
+      accounts: [],
+    });
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      modelRegistry: registry,
+    });
+
+    const result = await syncModelRegistrySources(true);
+
+    expect(result.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceKey: `${siteId}:${accountId}:manual-disabled-duck`,
+          originalModel: 'manual-disabled-duck',
+          sourceType: 'customCli',
+          availableCliTypes: ['claudeCode', 'codex', 'geminiCli'],
+        }),
+      ])
+    );
+    expect(result.entries['manual-disabled-duck']).toEqual(
+      expect.objectContaining({
+        aliases: ['manual-disabled-duck'],
+      })
+    );
+    expect(result.displayItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          canonicalName: 'manual-disabled-duck',
+          sourceKeys: [`${siteId}:${accountId}:manual-disabled-duck`],
+        }),
+      ])
+    );
+    expect(result.sources.map(source => source.originalModel)).not.toContain('stale-disabled');
+    expect(result.sources.map(source => source.originalModel)).not.toContain('stale-tested');
   });
 
   it('falls back to configured custom CLI models before a model list has been fetched', async () => {
@@ -1456,6 +1595,75 @@ describe('route model registry service', () => {
       baseUrl: customConfig.baseUrl,
       apiKey: customConfig.apiKey,
     });
+  });
+
+  it('keeps selected custom CLI sources routable when a matched rule still has managed-site scope', async () => {
+    const customConfig = createCustomCliConfig();
+    const siteId = buildCustomCliRouteSiteId(customConfig.id);
+    const accountId = buildCustomCliRouteAccountId(customConfig.id);
+    const apiKeyId = buildCustomCliRouteApiKeyId(customConfig.id);
+    const sourceKey = `${siteId}:${accountId}:duckcoding`;
+    const registry = createRegistryConfig();
+    registry.displayItems = [
+      {
+        id: 'manual:duckcoding',
+        vendor: 'unknown',
+        canonicalName: 'duckcoding-route',
+        sourceKeys: [sourceKey],
+        originalModelOrder: ['duckcoding'],
+        priorityConfig: {
+          sitePriorities: {
+            [siteId]: 0,
+          },
+          apiKeyPriorities: {
+            [buildRouteApiKeyPriorityKey(siteId, accountId, apiKeyId)]: 0,
+          },
+        },
+        mode: 'manual',
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    ];
+
+    customCliStorageMock.mockResolvedValue({
+      configs: [customConfig],
+      activeConfigId: customConfig.id,
+    });
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
+      sites: [],
+      accounts: [],
+    });
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      modelRegistry: registry,
+    });
+
+    const synced = await syncModelRegistrySources(true);
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      cliProbe: { latest: {} },
+      modelRegistry: synced,
+    });
+
+    const channels = resolveChannels(
+      createRouteRule({
+        id: 'rule-managed-scope',
+        name: 'Codex Managed Scope',
+        cliType: 'codex',
+        allowedSiteIds: ['site-managed'],
+        allowedAccountIds: ['account-managed'],
+        allowedApiKeyGroups: ['team-a'],
+      }),
+      'duckcoding-route'
+    );
+
+    expect(channels).toEqual([
+      expect.objectContaining({
+        siteId,
+        accountId,
+        apiKeyId,
+        canonicalModel: 'duckcoding-route',
+        resolvedModel: 'duckcoding',
+      }),
+    ]);
   });
 
   it('preserves customCli configured targetProtocol through resolveChannelTarget', async () => {
@@ -1665,6 +1873,89 @@ describe('route model registry service', () => {
         cliType: 'geminiCli',
         canonicalModel: 'gemini-2.5-flash-lite',
         resolvedModel: 'gemini-2.5-flash-lite',
+      }),
+    ]);
+  });
+
+  it('resolves canonical channels for accounts with a legacy expired status', () => {
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
+      sites: [{ id: 'site-1', name: 'Legacy Site', enabled: true, url: 'https://site-1.example.com' }],
+      accounts: [
+        {
+          id: 'acc-legacy',
+          site_id: 'site-1',
+          account_name: 'Primary',
+          status: 'expired',
+        },
+      ],
+    });
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
+      cliProbe: { latest: {} },
+      modelRegistry: {
+        version: 1,
+        sources: [
+          {
+            sourceKey: 'site-1:acc-legacy:raw-current',
+            siteId: 'site-1',
+            siteName: 'Legacy Site',
+            accountId: 'acc-legacy',
+            accountName: 'Primary',
+            sourceType: 'account',
+            originalModel: 'raw-current',
+            vendor: 'claude',
+            availableUserGroups: ['default'],
+            availableApiKeys: [
+              {
+                apiKeyId: 'key-1',
+                apiKeyName: 'default-key',
+                accountId: 'acc-legacy',
+                accountName: 'Primary',
+                group: 'default',
+              },
+            ],
+            firstSeenAt: 1,
+            lastSeenAt: 1,
+          },
+        ],
+        entries: {
+          'claude-route': {
+            canonicalName: 'claude-route',
+            vendor: 'claude',
+            aliases: ['raw-current'],
+            sources: [],
+            hasOverride: true,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [
+          {
+            id: 'manual:claude-route',
+            vendor: 'claude',
+            canonicalName: 'claude-route',
+            sourceKeys: ['site-1:acc-legacy:raw-current'],
+            originalModelOrder: ['raw-current'],
+            priorityConfig: {
+              sitePriorities: {},
+              apiKeyPriorities: {},
+            },
+            mode: 'manual',
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+        vendorPriorities: {},
+      },
+    });
+
+    expect(resolveChannels(createRouteRule(), 'claude-route')).toEqual([
+      expect.objectContaining({
+        siteId: 'site-1',
+        accountId: 'acc-legacy',
+        apiKeyId: 'key-1',
+        canonicalModel: 'claude-route',
+        resolvedModel: 'raw-current',
       }),
     ]);
   });

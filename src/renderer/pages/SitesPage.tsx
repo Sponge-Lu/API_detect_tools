@@ -741,7 +741,10 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     async (
       siteId: string,
       updates: Partial<
-        Pick<SiteConfig, 'url' | 'site_type' | 'group' | 'extra_links' | 'force_enable_checkin'>
+        Pick<
+          SiteConfig,
+          'name' | 'url' | 'site_type' | 'group' | 'extra_links' | 'force_enable_checkin'
+        >
       >
     ) => {
       if (!config) return;

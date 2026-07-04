@@ -222,3 +222,21 @@ Legacy note:
 
 - `src/renderer/hooks/useSiteGroups.ts` still contains direct `alert(...)` calls for a couple of
   validation branches. Treat that as existing debt, not as the preferred component pattern.
+
+### Pattern: Persistent Names In Active Access Point Editors
+
+**Problem**: A configuration display name can be editable during creation or in a secondary editor,
+but absent from the active post-save surface where users actually maintain the item later.
+
+**Solution**: Every active editor for a persisted access point must expose and persist the owner
+display name together with the rest of that surface's identity fields. For site access points this
+means `SiteConfig.name`; for direct CLI access points this means `CustomCliConfig.name`.
+
+Checklist:
+
+- Prove the mounted route/page and panel first, then update that active surface rather than a
+  similar legacy editor.
+- Include the name in the local draft, dirty check, save payload, parent callback type, and selected
+  item refresh path.
+- Do not let empty or whitespace-only input overwrite the current persisted name.
+- Add regression tests at the active panel boundary for both normal rename and blank-name fallback.

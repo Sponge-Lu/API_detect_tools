@@ -10,7 +10,13 @@ import type { TokenService } from '../token-service';
 import { isMaskedApiKeyValue, mergeApiKeysPreservingRawValue } from '../token-service';
 import type { ChromeManager } from '../chrome-manager';
 import { unifiedConfigManager } from '../unified-config-manager';
-import type { AccountAuthSource } from '../../shared/types/site';
+import { browserProfileManager } from '../browser-profile-manager';
+import type { AccountAuthSource, AccountCredential } from '../../shared/types/site';
+
+type BrowserProfileLaunchOptions = {
+  userDataDir?: string;
+  profileDirectory?: string;
+};
 
 // 发送站点初始化状态到渲染进程
 function sendSiteInitStatus(mainWindow: BrowserWindow | null, status: string) {
@@ -125,6 +131,65 @@ export function registerTokenHandlers(
     return slotIndex >= 0 ? slotIndex : 0;
   };
 
+  const resolveAccountProfileLaunchOptions = async (
+    account: Pick<
+      AccountCredential,
+      'id' | 'site_id' | 'account_name' | 'auth_source' | 'browser_profile_path'
+    >
+  ): Promise<
+    | {
+        success: true;
+        options: BrowserProfileLaunchOptions;
+      }
+    | {
+        success: false;
+        error: string;
+      }
+  > => {
+    if (account.auth_source === 'isolated_profile') {
+      const profileOptions = account.browser_profile_path
+        ? { success: true, options: { userDataDir: account.browser_profile_path } }
+        : await browserProfileManager.getIsolatedProfileLaunchOptions(account.site_id, account.id);
+
+      if (!profileOptions.success || !profileOptions.options?.userDataDir) {
+        return {
+          success: false,
+          error: profileOptions.error || '未找到隔离浏览器 Profile',
+        };
+      }
+
+      return {
+        success: true,
+        options: {
+          userDataDir: profileOptions.options.userDataDir,
+        },
+      };
+    }
+
+    if (account.auth_source === 'main_profile') {
+      const mainProfilePath = await browserProfileManager.detectMainChromeProfile();
+      if (!mainProfilePath) {
+        return {
+          success: false,
+          error: '未检测到主浏览器 Profile',
+        };
+      }
+
+      return {
+        success: true,
+        options: {
+          userDataDir: mainProfilePath,
+          profileDirectory: 'Default',
+        },
+      };
+    }
+
+    return {
+      success: false,
+      error: '手动账户没有可复用的浏览器 Profile，请重新添加账户或改用浏览器 Profile 账户后再刷新',
+    };
+  };
+
   // 初始化站点账号
   ipcMain.handle('token:initialize-site', async (_, baseUrl: string) => {
     try {
@@ -178,6 +243,18 @@ export function registerTokenHandlers(
         return { success: false, error: `Site not found: ${account.site_id}` };
       }
 
+      const profileTarget = await resolveAccountProfileLaunchOptions(account);
+      if (!profileTarget.success) {
+        return {
+          success: false,
+          error: profileTarget.error,
+          healthStatus: {
+            status: 'error',
+            message: profileTarget.error,
+          },
+        };
+      }
+
       const mainWindow = getMainWindow();
       const result = await tokenService.refreshAccountBasicInfo(
         {
@@ -186,7 +263,10 @@ export function registerTokenHandlers(
           user_id: Number(account.user_id || 0),
           access_token: account.access_token,
         },
-        (status: string) => sendSiteInitStatus(mainWindow, status)
+        (status: string) => sendSiteInitStatus(mainWindow, status),
+        {
+          profileOptions: profileTarget.options,
+        }
       );
 
       if (!result.success || !result.data) {
@@ -201,7 +281,6 @@ export function registerTokenHandlers(
         user_id: result.data.user_id,
         username: result.data.username,
         access_token: result.data.access_token,
-        status: 'active',
       });
 
       return { success: true, data: result.data, healthStatus: result.healthStatus };
@@ -482,7 +561,6 @@ export function registerTokenHandlers(
           username: siteAccount.username || undefined,
           access_token: siteAccount.access_token,
           auth_source: params.authSource,
-          status: 'active',
           browser_profile_path: params.profilePath,
           metadata: {
             supports_checkin: (siteAccount as any).supportsCheckIn,

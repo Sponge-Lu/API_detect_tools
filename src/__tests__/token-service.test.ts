@@ -169,7 +169,16 @@ async function loadApiServiceModule(options?: {
   };
 }
 
-async function loadTokenHandlersModule() {
+async function loadTokenHandlersModule(options?: {
+  account?: Record<string, any>;
+  site?: Record<string, any>;
+  isolatedProfileResult?: {
+    success: boolean;
+    options?: { userDataDir: string };
+    error?: string;
+  };
+  mainProfilePath?: string | null;
+}) {
   vi.resetModules();
 
   const registeredHandlers = new Map<string, (...args: any[]) => any>();
@@ -178,6 +187,15 @@ async function loadTokenHandlersModule() {
   });
   const updateAccountCachedData = vi.fn(async () => true);
   const updateSite = vi.fn(async () => true);
+  const updateAccount = vi.fn(async () => true);
+  const detectMainChromeProfile = vi.fn(async () => options?.mainProfilePath ?? 'C:/profiles/main');
+  const getIsolatedProfileLaunchOptions = vi.fn(
+    async () =>
+      options?.isolatedProfileResult ?? {
+        success: true,
+        options: { userDataDir: 'C:/profiles/acct-1' },
+      }
+  );
 
   vi.doMock('electron', () => ({
     ipcMain: {
@@ -201,12 +219,17 @@ async function loadTokenHandlersModule() {
         id: 'site-1',
         url: 'https://demo.example.com',
         site_type: 'newapi',
+        ...(options?.site || {}),
       })),
       getAccountById: vi.fn((accountId: string) =>
         accountId === 'acct-1'
           ? {
               id: 'acct-1',
               site_id: 'site-1',
+              user_id: '1',
+              access_token: 'access-token',
+              auth_source: 'isolated_profile',
+              ...(options?.account || {}),
             }
           : undefined
       ),
@@ -228,6 +251,14 @@ async function loadTokenHandlersModule() {
       })),
       updateAccountCachedData,
       updateSite,
+      updateAccount,
+    },
+  }));
+
+  vi.doMock('../main/browser-profile-manager', () => ({
+    browserProfileManager: {
+      detectMainChromeProfile,
+      getIsolatedProfileLaunchOptions,
     },
   }));
 
@@ -236,6 +267,9 @@ async function loadTokenHandlersModule() {
     registeredHandlers,
     updateAccountCachedData,
     updateSite,
+    updateAccount,
+    detectMainChromeProfile,
+    getIsolatedProfileLaunchOptions,
   };
 }
 
@@ -372,6 +406,7 @@ describe('initializeSiteAccount site_type 驱动', () => {
     });
 
     const chromeManager = {
+      launchForLogin: vi.fn(async () => ({ success: true, message: 'ok' })),
       getLocalStorageData: vi.fn(async () => ({
         userId: 7,
         username: 'demo',
@@ -409,6 +444,7 @@ describe('initializeSiteAccount site_type 驱动', () => {
     const onStatus = vi.fn();
 
     const chromeManager = {
+      launchForLogin: vi.fn(async () => ({ success: true, message: 'ok' })),
       getLocalStorageData: vi.fn(async () => ({
         userId: 7,
         username: 'demo',
@@ -419,9 +455,11 @@ describe('initializeSiteAccount site_type 驱动', () => {
         canCheckIn: true,
       })),
       createAccessTokenForLogin: vi.fn(async () => 'fresh-browser-token'),
+      cleanupLoginBrowser: vi.fn(),
     };
 
     const service = new TokenService(chromeManager as any);
+    const profileOptions = { userDataDir: 'C:/profiles/acct-1' };
     const result = await service.refreshAccountBasicInfo(
       {
         site_url: 'https://demo.example.com',
@@ -429,7 +467,8 @@ describe('initializeSiteAccount site_type 驱动', () => {
         user_id: 7,
         access_token: 'old-token',
       },
-      onStatus
+      onStatus,
+      { profileOptions }
     );
 
     expect(result.success).toBe(true);
@@ -439,6 +478,11 @@ describe('initializeSiteAccount site_type 驱动', () => {
       access_token: 'fresh-browser-token',
       tokenRefreshed: true,
     });
+    expect(chromeManager.launchForLogin).toHaveBeenCalledWith(
+      'https://demo.example.com',
+      profileOptions,
+      { preserveSession: true }
+    );
     expect(chromeManager.getLocalStorageData).toHaveBeenCalledWith(
       'https://demo.example.com',
       true,
@@ -450,6 +494,43 @@ describe('initializeSiteAccount site_type 驱动', () => {
       'https://demo.example.com',
       7
     );
+    expect(chromeManager.cleanupLoginBrowser).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshAccountBasicInfo 启动账户 Profile 失败时不读取浏览器登录态', async () => {
+    const { TokenService } = await loadTokenServiceModule(null, {
+      siteType: 'newapi',
+    });
+
+    const chromeManager = {
+      launchForLogin: vi.fn(async () => ({ success: false, message: 'Profile 被占用' })),
+      getLocalStorageData: vi.fn(),
+      createAccessTokenForLogin: vi.fn(),
+      cleanupLoginBrowser: vi.fn(),
+    };
+
+    const service = new TokenService(chromeManager as any);
+    const result = await service.refreshAccountBasicInfo(
+      {
+        site_url: 'https://demo.example.com',
+        site_type: 'newapi',
+        user_id: 7,
+        access_token: 'old-token',
+      },
+      undefined,
+      { profileOptions: { userDataDir: 'C:/profiles/acct-1' } }
+    );
+
+    expect(result).toEqual({
+      success: false,
+      healthStatus: {
+        status: 'error',
+        message: 'Profile 被占用',
+      },
+    });
+    expect(chromeManager.getLocalStorageData).not.toHaveBeenCalled();
+    expect(chromeManager.createAccessTokenForLogin).not.toHaveBeenCalled();
+    expect(chromeManager.cleanupLoginBrowser).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -2503,5 +2584,97 @@ describe('token-handlers API key 持久化', () => {
     });
 
     expect(next.api_keys?.[0]?.key).toBe('sk-new-raw-12345678');
+  });
+});
+
+describe('token-handlers 账户基础信息刷新', () => {
+  it('refresh-account-basic-info 应按 isolated_profile 账户 Profile 刷新并写回基础字段', async () => {
+    const {
+      registerTokenHandlers,
+      registeredHandlers,
+      updateAccount,
+      getIsolatedProfileLaunchOptions,
+    } = await loadTokenHandlersModule({
+      account: {
+        user_id: '7',
+        access_token: 'old-token',
+        auth_source: 'isolated_profile',
+        browser_profile_path: 'C:/profiles/acct-1',
+      },
+    });
+
+    const tokenService = {
+      refreshAccountBasicInfo: vi.fn(async () => ({
+        success: true,
+        data: {
+          user_id: '7',
+          username: 'demo',
+          access_token: 'fresh-browser-token',
+          site_url: 'https://demo.example.com',
+          site_type: 'newapi',
+          tokenRefreshed: true,
+        },
+        healthStatus: {
+          status: 'healthy',
+          message: '账户基础信息已刷新',
+        },
+      })),
+    };
+
+    registerTokenHandlers(tokenService as any, {} as any, () => null);
+
+    const handler = registeredHandlers.get('token:refresh-account-basic-info');
+    expect(handler).toBeTypeOf('function');
+
+    const result = await handler?.({}, 'acct-1');
+
+    expect(result?.success).toBe(true);
+    expect(tokenService.refreshAccountBasicInfo).toHaveBeenCalledWith(
+      {
+        site_url: 'https://demo.example.com',
+        site_type: 'newapi',
+        user_id: 7,
+        access_token: 'old-token',
+      },
+      expect.any(Function),
+      {
+        profileOptions: {
+          userDataDir: 'C:/profiles/acct-1',
+        },
+      }
+    );
+    expect(getIsolatedProfileLaunchOptions).not.toHaveBeenCalled();
+    expect(updateAccount).toHaveBeenCalledWith('acct-1', {
+      user_id: '7',
+      username: 'demo',
+      access_token: 'fresh-browser-token',
+      status: 'active',
+    });
+  });
+
+  it('refresh-account-basic-info 对 manual 账户返回明确错误且不写回', async () => {
+    const { registerTokenHandlers, registeredHandlers, updateAccount } =
+      await loadTokenHandlersModule({
+        account: {
+          auth_source: 'manual',
+          account_name: '手动账户',
+        },
+      });
+
+    const tokenService = {
+      refreshAccountBasicInfo: vi.fn(),
+    };
+
+    registerTokenHandlers(tokenService as any, {} as any, () => null);
+
+    const handler = registeredHandlers.get('token:refresh-account-basic-info');
+    expect(handler).toBeTypeOf('function');
+
+    const result = await handler?.({}, 'acct-1');
+
+    expect(result?.success).toBe(false);
+    expect(result?.error).toContain('手动账户没有可复用的浏览器 Profile');
+    expect(tokenService.refreshAccountBasicInfo).not.toHaveBeenCalled();
+    expect(updateAccount).not.toHaveBeenCalled();
   });
 });

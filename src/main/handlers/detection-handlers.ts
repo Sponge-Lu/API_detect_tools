@@ -165,7 +165,6 @@ export function registerDetectionHandlers(
 
             await unifiedConfigManager.updateAccount(account.id, {
               access_token: refreshedToken,
-              status: 'active',
             });
 
             resolvedSite = {
@@ -552,7 +551,6 @@ export function registerDetectionHandlers(
 
             await unifiedConfigManager.updateAccount(account.id, {
               access_token: refreshedToken,
-              status: 'active',
             });
 
             siteResults.push({ siteId: site.id, accountId: account.id, success: true });

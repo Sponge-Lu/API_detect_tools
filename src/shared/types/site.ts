@@ -175,9 +175,6 @@ export const DEFAULT_CLI_CONFIG_DATA: CliConfigData = {
 /** 账户认证来源 */
 export type AccountAuthSource = 'main_profile' | 'isolated_profile' | 'manual';
 
-/** 账户状态 */
-export type AccountStatus = 'active' | 'expired' | 'revoked';
-
 /**
  * AnyRouter 专用配置
  */
@@ -201,7 +198,6 @@ export interface AccountCredential {
   api_key?: string; // v3.0.6: 从 Site.api_key 迁移过来
 
   auth_source: AccountAuthSource;
-  status: AccountStatus;
   browser_profile_path?: string; // isolated profile 持久化路径
   auto_refresh?: boolean;
   auto_refresh_interval?: number;

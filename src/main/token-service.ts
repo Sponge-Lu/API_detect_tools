@@ -63,9 +63,18 @@ type TokenRequestContext = {
   siteType?: SiteType;
 };
 
+type BrowserProfileLaunchOptions = {
+  userDataDir?: string;
+  profileDirectory?: string;
+};
+
 type InitializeSiteAccountOptions = {
   loginMode?: boolean;
   siteType?: SiteType;
+};
+
+type RefreshAccountBasicInfoOptions = {
+  profileOptions?: BrowserProfileLaunchOptions;
 };
 
 function normalizeApiKeyValue(value: unknown): string | null {
@@ -870,7 +879,8 @@ export class TokenService {
    */
   async refreshAccountBasicInfo(
     account: Pick<SiteAccount, 'site_url' | 'user_id' | 'access_token'> & { site_type?: SiteType },
-    onStatus?: (status: string) => void
+    onStatus?: (status: string) => void,
+    options?: RefreshAccountBasicInfoOptions
   ): Promise<AccountBasicInfoRefreshResult> {
     const siteType = account.site_type || this.resolveSiteTypeByUrl(account.site_url);
     Logger.info('🔄 [TokenService] 从浏览器刷新账户基础信息...', {
@@ -879,6 +889,24 @@ export class TokenService {
     });
 
     try {
+      if (options?.profileOptions) {
+        onStatus?.('正在启动账户浏览器 Profile...');
+        const launchResult = await this.chromeManager.launchForLogin(
+          account.site_url,
+          options.profileOptions,
+          { preserveSession: true }
+        );
+        if (!launchResult.success) {
+          return {
+            success: false,
+            healthStatus: {
+              status: 'error',
+              message: launchResult.message || '无法访问浏览器',
+            },
+          };
+        }
+      }
+
       const siteAccount = await this.initializeSiteAccount(
         account.site_url,
         true,
@@ -914,6 +942,10 @@ export class TokenService {
           message: error.message,
         },
       };
+    } finally {
+      if (options?.profileOptions) {
+        this.chromeManager.cleanupLoginBrowser();
+      }
     }
   }
 

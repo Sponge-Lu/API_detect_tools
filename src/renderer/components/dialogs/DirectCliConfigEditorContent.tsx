@@ -3,7 +3,7 @@
  * @description 直连配置 CLI 编辑器内容组件（无 OverlayDrawer 外壳）
  *
  * 输入: DirectCliConfigEditorContentProps (配置对象、保存/取消回调)
- * 输出: React 内容组件 (身份信息、模型拉取、按 CLI 聚合的配置/测试/预览/应用)
+ * 输出: React 内容组件 (配置名称、身份信息、模型拉取、按 CLI 聚合的配置/测试/预览/应用)
  * 定位: 展示层 - 嵌入接入点详情面板，维护直连配置且不创建嵌套抽屉
  */
 
@@ -160,7 +160,9 @@ function getModelInputOptions(config: CustomCliConfig): string[] {
   return Array.from(new Set([...(config.models ?? []), ...(config.manualModels ?? [])]));
 }
 
-function normalizeModelPricingState(pricingData: ModelPricingData | undefined): Record<string, ModelPriceInfo> {
+function normalizeModelPricingState(
+  pricingData: ModelPricingData | undefined
+): Record<string, ModelPriceInfo> {
   return { ...(pricingData?.data ?? {}) };
 }
 
@@ -266,11 +268,17 @@ function DirectModelPriceEditor({
       <div className="flex min-w-0 items-center justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate font-mono text-xs font-medium text-[var(--text-primary)]" title={model}>
+            <span
+              className="truncate font-mono text-xs font-medium text-[var(--text-primary)]"
+              title={model}
+            >
               {model}
             </span>
             {quotaInfo ? (
-              <span className={`inline-flex items-center rounded border px-0.5 py-0 leading-none ${quotaInfo.color}`} title={quotaInfo.text}>
+              <span
+                className={`inline-flex items-center rounded border px-0.5 py-0 leading-none ${quotaInfo.color}`}
+                title={quotaInfo.text}
+              >
                 {quotaInfo.icon}
               </span>
             ) : null}
@@ -686,6 +694,7 @@ export function DirectCliConfigEditorContent({
   const [notes, setNotes] = useState(config.notes || '');
   const [manualModels, setManualModels] = useState<string[]>(config.manualModels || []);
   const [manualModelInput, setManualModelInput] = useState('');
+  const [modelSearchText, setModelSearchText] = useState('');
   const [modelPricing, setModelPricing] = useState<Record<string, ModelPriceInfo>>(() =>
     normalizeModelPricingState(config.modelPricing)
   );
@@ -721,6 +730,20 @@ export function DirectCliConfigEditorContent({
       }),
     [config, currentConfig, manualModels, models]
   );
+  const fetchedModelOptions = useMemo(
+    () => Array.from(new Set(models.map(model => model.trim()).filter(Boolean))),
+    [models]
+  );
+  const normalizedModelSearchText = modelSearchText.trim().toLowerCase();
+  const filteredFetchedModelOptions = useMemo(() => {
+    if (!normalizedModelSearchText) {
+      return fetchedModelOptions;
+    }
+
+    return fetchedModelOptions.filter(model =>
+      model.toLowerCase().includes(normalizedModelSearchText)
+    );
+  }, [fetchedModelOptions, normalizedModelSearchText]);
 
   // 重置状态
   useEffect(() => {
@@ -731,6 +754,7 @@ export function DirectCliConfigEditorContent({
     setNotes(config.notes || '');
     setManualModels(config.manualModels || []);
     setManualModelInput('');
+    setModelSearchText('');
     setModelPricing(normalizeModelPricingState(config.modelPricing));
     setCliSettings(normalizeCliSettings(config.cliSettings));
     setSelectedCli('claudeCode');
@@ -1068,7 +1092,6 @@ export function DirectCliConfigEditorContent({
     });
   };
 
-
   const handleUpdateModelPrice = (model: string, price: ModelPriceInfo) => {
     setModelPricing(prev => ({
       ...prev,
@@ -1135,7 +1158,7 @@ export function DirectCliConfigEditorContent({
     }
 
     updateConfig(config.id, {
-      name,
+      name: name.trim() || config.name,
       baseUrl,
       apiKey,
       groupMultiplier: parseGroupMultiplierInput(groupMultiplierInput),
@@ -1305,8 +1328,16 @@ export function DirectCliConfigEditorContent({
                 </span>
               </label>
               <div className="flex items-center gap-2">
-                <div className="flex-1 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-secondary)]">
-                  {models.length > 0 ? `已拉取 ${models.length} 个模型` : '尚未拉取模型'}
+                <div className="relative min-w-0 flex-1">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-tertiary)]" />
+                  <input
+                    type="search"
+                    aria-label="搜索可用模型"
+                    value={modelSearchText}
+                    onChange={e => setModelSearchText(e.target.value)}
+                    placeholder="搜索模型"
+                    className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 pl-9 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                  />
                 </div>
                 <AppButton
                   variant="secondary"
@@ -1322,17 +1353,23 @@ export function DirectCliConfigEditorContent({
                   拉取
                 </AppButton>
               </div>
-              {modelOptions.length > 0 ? (
-                <div className="mt-3 grid max-h-[360px] grid-cols-1 gap-2 overflow-y-auto lg:grid-cols-2">
-                  {modelOptions.map(model => (
-                    <DirectModelPriceEditor
-                      key={model}
-                      model={model}
-                      pricing={modelPricing[model]}
-                      onChange={handleUpdateModelPrice}
-                      onRemove={handleRemoveModelPrice}
-                    />
-                  ))}
+              {fetchedModelOptions.length > 0 ? (
+                <div className="mt-3 grid max-h-[270px] grid-cols-1 gap-2 overflow-y-auto lg:grid-cols-2">
+                  {filteredFetchedModelOptions.length > 0 ? (
+                    filteredFetchedModelOptions.map(model => (
+                      <DirectModelPriceEditor
+                        key={model}
+                        model={model}
+                        pricing={modelPricing[model]}
+                        onChange={handleUpdateModelPrice}
+                        onRemove={handleRemoveModelPrice}
+                      />
+                    ))
+                  ) : (
+                    <div className="rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-secondary)] lg:col-span-2">
+                      没有匹配的模型
+                    </div>
+                  )}
                 </div>
               ) : null}
             </div>

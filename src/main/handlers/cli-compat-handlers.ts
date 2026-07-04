@@ -136,9 +136,7 @@ function pickPreferredRouteAccount(
     return null;
   }
 
-  return (
-    siteAccounts.find(account => account.status === 'active' || !account.status) || siteAccounts[0]
-  );
+  return siteAccounts.find(account => account.account_name === '默认账户') || siteAccounts[0];
 }
 
 function collectMatchingSiteRouteTargets(

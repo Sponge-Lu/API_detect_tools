@@ -20,6 +20,7 @@ interface FetchOptions {
   body?: string | Buffer;
   timeout?: number;
   proxyUrl?: string;
+  signal?: AbortSignal;
 }
 
 interface FetchResponse<T = any> {
@@ -339,7 +340,7 @@ export async function electronFetchRaw(
   url: string,
   options: FetchOptions = {}
 ): Promise<RawFetchResponse> {
-  const { method = 'GET', headers = {}, body, timeout = 30000, proxyUrl } = options;
+  const { method = 'GET', headers = {}, body, timeout = 30000, proxyUrl, signal } = options;
   const proxySession = await resolveProxySession(proxyUrl);
 
   return new Promise((resolve, reject) => {
@@ -357,10 +358,15 @@ export async function electronFetchRaw(
       }
     };
 
+    const cleanupAbortListener = () => {
+      signal?.removeEventListener('abort', abortRequest);
+    };
+
     const rejectOnce = (error: Error) => {
       if (settled) return;
       settled = true;
       clearRequestTimeout();
+      cleanupAbortListener();
       reject(error);
     };
 
@@ -368,8 +374,20 @@ export async function electronFetchRaw(
       if (settled) return;
       settled = true;
       clearRequestTimeout();
+      cleanupAbortListener();
       resolve(response);
     };
+
+    const buildAbortError = () =>
+      signal?.reason instanceof Error
+        ? signal.reason
+        : new Error(signal?.reason ? String(signal.reason) : 'Request aborted');
+
+    function abortRequest() {
+      if (settled) return;
+      request.abort();
+      rejectOnce(buildAbortError());
+    }
 
     const armIdleTimeout = () => {
       if (timeout <= 0 || settled) return;
@@ -380,6 +398,12 @@ export async function electronFetchRaw(
       }, timeout);
     };
 
+    if (signal?.aborted) {
+      abortRequest();
+      return;
+    }
+
+    signal?.addEventListener('abort', abortRequest, { once: true });
     armIdleTimeout();
 
     request.on('response', response => {
@@ -437,6 +461,7 @@ export async function electronFetchRawStream(
     timeout = 30000,
     streamIdleTimeout,
     proxyUrl,
+    signal,
     onResponse,
     onData,
   } = options;
@@ -457,10 +482,15 @@ export async function electronFetchRawStream(
       }
     };
 
+    const cleanupAbortListener = () => {
+      signal?.removeEventListener('abort', abortRequest);
+    };
+
     const rejectOnce = (error: Error) => {
       if (settled) return;
       settled = true;
       clearRequestTimeout();
+      cleanupAbortListener();
       reject(error);
     };
 
@@ -468,8 +498,20 @@ export async function electronFetchRawStream(
       if (settled) return;
       settled = true;
       clearRequestTimeout();
+      cleanupAbortListener();
       resolve(response);
     };
+
+    const buildAbortError = () =>
+      signal?.reason instanceof Error
+        ? signal.reason
+        : new Error(signal?.reason ? String(signal.reason) : 'Request aborted');
+
+    function abortRequest() {
+      if (settled) return;
+      request.abort();
+      rejectOnce(buildAbortError());
+    }
 
     const armIdleTimeout = (timeoutMs: number) => {
       if (timeoutMs <= 0 || settled) return;
@@ -480,6 +522,12 @@ export async function electronFetchRawStream(
       }, timeoutMs);
     };
 
+    if (signal?.aborted) {
+      abortRequest();
+      return;
+    }
+
+    signal?.addEventListener('abort', abortRequest, { once: true });
     armIdleTimeout(timeout);
 
     request.on('response', response => {

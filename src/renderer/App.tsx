@@ -310,7 +310,6 @@ declare global {
           accountId: string,
           updates: {
             account_name?: string;
-            status?: string;
             access_token?: string;
             user_id?: string;
             auto_refresh?: boolean;

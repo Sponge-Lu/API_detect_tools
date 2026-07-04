@@ -373,6 +373,29 @@ Checklist:
 - add tests where two model cards or two matching route rules share the same site/API key but only
   one has a recent successful path
 
+### Mistake 15: Treating Creation-Time Names As Sufficient Maintenance UI
+
+**Bad**: Letting a display name be editable while adding a site or direct configuration, but omitting
+that same persisted field from the active detail panel used after save.
+
+Examples:
+- smart/manual site add captures `SiteConfig.name`, but the access-point side panel only edits URL,
+  type, group, and account fields
+- direct CLI creation captures `CustomCliConfig.name`, but the post-save identity section only saves
+  credentials or model settings
+- a blank rename writes an empty string, causing list rows and drawer titles to fall back to generic
+  labels
+
+**Good**: Treat display name as part of the identity save contract for every active maintenance
+entrypoint.
+
+Checklist:
+- identify the persisted owner field first (`SiteConfig.name`, `CustomCliConfig.name`, etc.)
+- add the field to the mounted editor's draft state, dirty check, save payload, and parent refresh
+  path
+- trim user input and preserve the current name when the edit is empty or whitespace-only
+- assert the active workflow, not only the standalone create/edit dialog
+
 ---
 
 ## Checklist for Cross-Layer Features
@@ -404,6 +427,8 @@ After implementation:
       fallback
 - [ ] Confirmed runtime affinity, route-path state, and UI first-hit highlights are scoped by the
       selected route-intent tuple and cannot override the user's current model/card selection
+- [ ] Confirmed persisted display-name fields remain editable from the active post-save maintenance
+      surface and blank edits cannot erase the current name
 
 ---
 

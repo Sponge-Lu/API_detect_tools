@@ -193,11 +193,6 @@ async function resolveProbeApiKeyForExecution(
     : null;
 }
 
-function isProbeAccountActive(account: AccountCredential): boolean {
-  // Older configs may not have persisted status yet; treat them as active for backward compatibility.
-  return !account.status || account.status === 'active';
-}
-
 function isCliProbeExcludedSite(site: UnifiedSite): boolean {
   return site.group === BUILTIN_GROUP_IDS.UNAVAILABLE;
 }
@@ -209,20 +204,18 @@ function listProbeAccountsForSite(params: { siteId: string; explicitAccountId?: 
   const site = getProbeSite(params.siteId);
   if (!site) return null;
 
-  const activeAccounts = unifiedConfigManager
-    .getAccountsBySiteId(site.id)
-    .filter(account => isProbeAccountActive(account));
+  const accounts = unifiedConfigManager.getAccountsBySiteId(site.id);
 
   if (!params.explicitAccountId) {
     return {
       site,
-      accounts: activeAccounts,
+      accounts,
     };
   }
 
   return {
     site,
-    accounts: activeAccounts.filter(account => account.id === params.explicitAccountId),
+    accounts: accounts.filter(account => account.id === params.explicitAccountId),
   };
 }
 

@@ -387,9 +387,7 @@ export function registerRouteHandlers() {
         const site = config.sites.find(s => s.id === params.siteId);
         if (!site) return err('Site not found');
 
-        const siteAccounts = config.accounts.filter(
-          a => a.site_id === site.id && (!a.status || a.status === 'active')
-        );
+        const siteAccounts = config.accounts.filter(a => a.site_id === site.id);
         const account =
           siteAccounts.find(a => a.account_name === '默认账户') || siteAccounts[0] || null;
         const authToken = account?.access_token || site.access_token;

@@ -120,7 +120,6 @@ function repairLegacyAccounts(config) {
       user_id: userId,
       access_token: accessToken,
       auth_source: 'manual',
-      status: 'active',
       cached_data: site.cached_data ? { ...site.cached_data } : undefined,
       cli_config: site.cli_config ? { ...site.cli_config } : undefined,
       created_at: now,

@@ -216,6 +216,7 @@ const customCliConfig: CustomCliConfig = {
 
 describe('sites page redesign', () => {
   beforeEach(() => {
+    localStorage.removeItem('panel-active-tab');
     useConfigStore.setState({
       config: null,
       loading: false,
@@ -716,6 +717,73 @@ describe('sites page redesign', () => {
     expect(screen.queryByText('三 CLI 配置编辑区与测试结果（实现期细化）')).not.toBeInTheDocument();
   });
 
+  it('keeps the direct config side panel on tab2 after saving the same config', async () => {
+    const initialConfig: CustomCliConfig = {
+      ...customCliConfig,
+      updatedAt: new Date('2026-06-17T00:00:00Z').getTime(),
+    };
+    const refreshedConfig: CustomCliConfig = {
+      ...initialConfig,
+      updatedAt: new Date('2026-06-18T00:00:00Z').getTime(),
+      notes: 'saved',
+    };
+    const updateConfig = vi.fn((id: string, updates: Partial<CustomCliConfig>) => {
+      useCustomCliConfigStore.setState(state => ({
+        configs: state.configs.map(config =>
+          config.id === id ? { ...config, ...updates, updatedAt: refreshedConfig.updatedAt } : config
+        ),
+      }));
+    });
+    const saveConfigs = vi.fn().mockResolvedValue(undefined);
+    const onConfigChanged = vi.fn();
+
+    useCustomCliConfigStore.setState({
+      configs: [initialConfig],
+      activeConfigId: null,
+      loading: false,
+      saving: false,
+      fetchingModels: {},
+      updateConfig,
+      saveConfigs,
+      fetchModels: vi.fn().mockResolvedValue(initialConfig.models),
+    });
+
+    const { rerender } = render(
+      <AccessPointDetailPanel
+        open={true}
+        onClose={vi.fn()}
+        data={{ type: 'custom-cli', config: initialConfig }}
+        onConfigChanged={onConfigChanged}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '模型 & 资源' }));
+    expect(screen.getByText('直连模型管理')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+    });
+
+    await waitFor(() => expect(saveConfigs).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(onConfigChanged).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      useCustomCliConfigStore.setState({ configs: [refreshedConfig] });
+      rerender(
+        <AccessPointDetailPanel
+          open={true}
+          onClose={vi.fn()}
+          data={{ type: 'custom-cli', config: refreshedConfig }}
+          onConfigChanged={onConfigChanged}
+        />
+      );
+    });
+
+    expect(screen.getByText('直连模型管理')).toBeInTheDocument();
+    expect(screen.getByText('手动模型')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('例如: 我的 API')).not.toBeInTheDocument();
+  });
+
   it('merges managed side-panel tab1 into one editable information surface', async () => {
     const onSaveAccount = vi.fn().mockResolvedValue(undefined);
     const onRefreshAccountInfo = vi.fn().mockResolvedValue(undefined);
@@ -764,9 +832,10 @@ describe('sites page redesign', () => {
     expect(screen.getByRole('button', { name: '添加账户' })).toBeInTheDocument();
     expect(screen.getByDisplayValue('Primary Account')).toBeInTheDocument();
     expect(screen.getByDisplayValue('user-1')).toBeInTheDocument();
-    expect(
-      screen.getByDisplayValue('sk-managed-access-token').closest('div.md\\:col-span-2')
-    ).toBeInTheDocument();
+    const userIdField = screen.getByText('User ID').parentElement;
+    const accessTokenField = screen.getByText('Access Token').parentElement;
+    expect(accessTokenField).toBe(userIdField?.nextElementSibling);
+    expect(accessTokenField).not.toHaveClass('md:col-span-2');
     expect(screen.getByDisplayValue('https://fuel.example.com')).toBeInTheDocument();
     expect(screen.getByRole('switch', { name: '启用签到功能' })).toHaveAttribute(
       'aria-checked',
@@ -841,11 +910,13 @@ describe('sites page redesign', () => {
 
     const siteTypeSelect = screen.getByRole('combobox', { name: '站点类型' });
     const groupSelect = screen.getByRole('combobox', { name: '分组' });
+    const siteNameInput = screen.getByRole('textbox', { name: '站点名称' });
     const siteUrlInput = screen.getByRole('textbox', { name: '站点 URL' });
     const extraLinksInput = screen.getByRole('textbox', { name: '加油站链接' });
     const checkinSwitch = screen.getByRole('switch', { name: '启用签到功能' });
     expect(siteTypeSelect).toHaveValue('newapi');
     expect(groupSelect).toHaveValue('default');
+    expect(siteNameInput).toHaveValue('Claude Hub');
     expect(siteUrlInput).toHaveValue('https://example.com');
     expect(extraLinksInput).toHaveValue('https://fuel.example.com');
     expect(checkinSwitch).toHaveAttribute('aria-checked', 'true');
@@ -854,6 +925,7 @@ describe('sites page redesign', () => {
 
     fireEvent.change(siteTypeSelect, { target: { value: 'sub2api' } });
     fireEvent.change(groupSelect, { target: { value: 'priority' } });
+    fireEvent.change(siteNameInput, { target: { value: 'Claude Hub Edited' } });
     fireEvent.change(siteUrlInput, { target: { value: 'https://edited.example.com' } });
     fireEvent.change(extraLinksInput, { target: { value: 'https://fuel-edited.example.com' } });
     fireEvent.click(checkinSwitch);
@@ -863,6 +935,7 @@ describe('sites page redesign', () => {
     expect(onSaveSiteMeta).toHaveBeenCalledWith(
       'site-1',
       expect.objectContaining({
+        name: 'Claude Hub Edited',
         url: 'https://edited.example.com',
         site_type: 'sub2api',
         group: 'priority',
@@ -872,7 +945,48 @@ describe('sites page redesign', () => {
     );
   });
 
-  it('exposes the embedded managed CLI editor from the side panel', () => {
+  it('keeps the current managed site name when tab1 name edit is blank', async () => {
+    const onSaveSiteMeta = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <AccessPointDetailPanel
+        open={true}
+        onClose={vi.fn()}
+        data={{
+          type: 'managed',
+          site: baseSite,
+          account: {
+            id: 'account-1',
+            account_name: 'Primary Account',
+            user_id: 'user-1',
+            access_token: 'sk-managed-access-token',
+            status: 'active',
+            auth_source: 'manual',
+          },
+        }}
+        onSaveSiteMeta={onSaveSiteMeta}
+      />
+    );
+
+    fireEvent.change(screen.getByRole('textbox', { name: '站点名称' }), {
+      target: { value: '   ' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: '站点 URL' }), {
+      target: { value: 'https://edited.example.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存更改' }));
+
+    await waitFor(() => expect(onSaveSiteMeta).toHaveBeenCalledTimes(1));
+    expect(onSaveSiteMeta).toHaveBeenCalledWith(
+      'site-1',
+      expect.objectContaining({
+        name: 'Claude Hub',
+        url: 'https://edited.example.com',
+      })
+    );
+  });
+
+  it('exposes the embedded managed CLI editor from the side panel', async () => {
     const onSaveCliConfig = vi.fn();
     const managedFailureMessage = 'managed upstream timeout detail';
     const baseCliConfig = buildSiteCardProps().cliConfig;
@@ -938,9 +1052,79 @@ describe('sites page redesign', () => {
     fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
     expect(screen.queryByRole('button', { name: '测试已选模型' })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+    });
 
     expect(onSaveCliConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the managed side panel on the cli tab after saving the same account config', async () => {
+    const onSaveCliConfig = vi.fn();
+    const initialData = {
+      type: 'managed' as const,
+      site: baseSite,
+      account: {
+        id: 'account-1',
+        account_name: 'Primary Account',
+        user_id: 'user-1',
+        status: 'active',
+        auth_source: 'manual',
+      },
+    };
+    const refreshedData = {
+      type: 'managed' as const,
+      site: { ...baseSite },
+      account: {
+        ...initialData.account,
+      },
+    };
+    const initialCliConfig = buildSiteCardProps().cliConfig;
+    const refreshedCliConfig = {
+      ...initialCliConfig,
+      claudeCode: {
+        ...initialCliConfig.claudeCode,
+        enabled: true,
+      },
+    };
+
+    const { rerender } = render(
+      <AccessPointDetailPanel
+        open={true}
+        onClose={vi.fn()}
+        data={initialData}
+        cliConfig={initialCliConfig}
+        apiKeys={[{ id: 1, name: 'Primary Key', key: 'sk-primary' }]}
+        siteResult={{ status: '成功', models: ['claude-3-5-sonnet'] } as any}
+        onSaveCliConfig={onSaveCliConfig}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'CLI 配置 & 测试' }));
+    expect(screen.getByText('CLI 配置（2/3）')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+    });
+
+    expect(onSaveCliConfig).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      rerender(
+        <AccessPointDetailPanel
+          open={true}
+          onClose={vi.fn()}
+          data={refreshedData}
+          cliConfig={refreshedCliConfig}
+          apiKeys={[{ id: 1, name: 'Primary Key', key: 'sk-primary' }]}
+          siteResult={{ status: '成功', models: ['claude-3-5-sonnet'] } as any}
+          onSaveCliConfig={onSaveCliConfig}
+        />
+      );
+    });
+
+    expect(screen.getByText('CLI 配置（2/3）')).toBeInTheDocument();
+    expect(screen.queryByText('站点与账户')).not.toBeInTheDocument();
   });
 
   it('shows AnyRouter user hash controls even before an account has saved config', () => {

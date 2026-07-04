@@ -37,6 +37,7 @@ interface RawRequestConfig extends Omit<AxiosRequestConfig, 'data' | 'headers' |
   body?: Buffer | string;
   proxyUrl?: string;
   preferElectronNet?: boolean;
+  signal?: AbortSignal;
 }
 
 interface RawStreamRequestConfig extends RawRequestConfig {
@@ -267,6 +268,7 @@ export async function httpRawRequest(
     timeout = 30000,
     proxyUrl,
     preferElectronNet,
+    signal,
     ...axiosConfig
   } = config;
   const compactedHeaders = compactHeaders(headers);
@@ -279,6 +281,7 @@ export async function httpRawRequest(
       body,
       timeout,
       proxyUrl,
+      ...(signal ? { signal } : {}),
     });
     return toRawHttpResponse(res);
   }
@@ -290,6 +293,7 @@ export async function httpRawRequest(
     data: body,
     headers: compactedHeaders,
     timeout,
+    signal,
     proxy: buildAxiosProxyConfig(proxyUrl),
     responseType: 'arraybuffer',
     transformResponse: data => data,
@@ -412,6 +416,7 @@ export async function httpRawStreamRequest(
     streamIdleTimeout,
     proxyUrl,
     preferElectronNet,
+    signal,
     onResponse,
     onChunk,
     ...axiosConfig
@@ -429,6 +434,7 @@ export async function httpRawStreamRequest(
       proxyUrl,
       onResponse,
       onData: onChunk,
+      ...(signal ? { signal } : {}),
     });
     return toRawHttpResponse(res);
   }
@@ -440,6 +446,7 @@ export async function httpRawStreamRequest(
     data: body,
     headers: compactedHeaders,
     timeout,
+    signal,
     proxy: buildAxiosProxyConfig(proxyUrl),
     responseType: 'stream',
     validateStatus: () => true,

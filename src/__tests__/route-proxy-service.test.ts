@@ -1,3 +1,4 @@
+import { EventEmitter } from 'events';
 import { Readable } from 'stream';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -80,7 +81,11 @@ import {
   findMatchingRule,
   sortRules,
 } from '../main/route-rule-engine';
-import { resolveChannels, resolveChannelCredentials } from '../main/route-channel-resolver';
+import {
+  resolveChannels,
+  resolveChannelCredentials,
+  resolveChannelTarget,
+} from '../main/route-channel-resolver';
 import {
   buildProbeLockRouteApiKey,
   clearRouteProbeLockTerminalFailure,
@@ -124,19 +129,54 @@ function createJsonRequest(
   return request as unknown as Parameters<typeof handleRequest>[0];
 }
 
+function createControllableJsonRequest(
+  url: string,
+  headers: Record<string, string>,
+  body: unknown
+): Parameters<typeof handleRequest>[0] & EventEmitter {
+  const request = new Readable({
+    read() {
+      this.push(Buffer.from(JSON.stringify(body)));
+      this.push(null);
+    },
+  }) as Readable &
+    EventEmitter & {
+      complete: boolean;
+      headers: Record<string, string>;
+      method: string;
+      url: string;
+      socket: { remoteAddress: string };
+    };
+
+  request.complete = true;
+  request.headers = headers;
+  request.method = 'POST';
+  request.url = url;
+  request.socket = { remoteAddress: '::1' };
+
+  return request as unknown as Parameters<typeof handleRequest>[0] & EventEmitter;
+}
+
 function createMockResponse(): Parameters<typeof handleRequest>[1] & {
   body: string;
   end: ReturnType<typeof vi.fn>;
+  emit: EventEmitter['emit'];
   headers: Record<string, unknown>;
+  off: EventEmitter['off'];
+  once: EventEmitter['once'];
   statusCode: number;
   write: ReturnType<typeof vi.fn>;
   writeHead: ReturnType<typeof vi.fn>;
 } {
+  const events = new EventEmitter();
   const response = {
     body: '',
     destroyed: false,
+    emit: events.emit.bind(events),
     headers: {} as Record<string, unknown>,
     headersSent: false,
+    off: events.off.bind(events),
+    once: events.once.bind(events),
     statusCode: 0,
     writableEnded: false,
     writeHead: vi.fn((statusCode: number, headers?: Record<string, unknown>) => {
@@ -158,16 +198,18 @@ function createMockResponse(): Parameters<typeof handleRequest>[1] & {
       }
       response.headersSent = true;
       response.writableEnded = true;
+      events.emit('finish');
       return response;
     }),
-    off: vi.fn(),
-    once: vi.fn(),
   };
 
   return response as unknown as Parameters<typeof handleRequest>[1] & {
     body: string;
     end: ReturnType<typeof vi.fn>;
+    emit: EventEmitter['emit'];
     headers: Record<string, unknown>;
+    off: EventEmitter['off'];
+    once: EventEmitter['once'];
     statusCode: number;
     write: ReturnType<typeof vi.fn>;
     writeHead: ReturnType<typeof vi.fn>;
@@ -1199,6 +1241,301 @@ describe('route-proxy-service Claude count_tokens fallback', () => {
   });
 });
 
+describe('route-proxy-service client cancellation', () => {
+  const rule = {
+    id: 'rule-codex-cancel',
+    cliType: 'codex' as const,
+    pattern: 'gpt-4.1-mini',
+    patternType: 'exact' as const,
+  };
+  const firstChannel = {
+    routeRuleId: rule.id,
+    siteId: 'site-a',
+    accountId: 'account-a',
+    apiKeyId: 'key-a',
+    cliType: 'codex' as const,
+    targetProtocol: 'native' as const,
+    canonicalModel: 'gpt-4.1-mini',
+    resolvedModel: 'gpt-4.1-mini',
+  };
+  const secondChannel = {
+    ...firstChannel,
+    siteId: 'site-b',
+    accountId: 'account-b',
+    apiKeyId: 'key-b',
+  };
+  const routing = {
+    server: {
+      unifiedApiKey: 'sk-route',
+      requestTimeoutMs: 1000,
+      upstreamProxyUrl: '',
+    },
+    rules: [rule],
+    cliModelSelections: {
+      claudeCode: null,
+      codex: null,
+      geminiCli: null,
+    },
+    modelRegistry: {
+      version: 1,
+      sources: [],
+      entries: {
+        'gpt-4.1-mini': {
+          canonicalName: 'gpt-4.1-mini',
+          aliases: ['gpt-4.1-mini'],
+          sources: [],
+          vendor: 'gpt' as const,
+          hasOverride: false,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      },
+      overrides: [],
+      displayItems: [],
+      vendorPriorities: {},
+    },
+    routePathStates: {},
+  };
+
+  function setupCodexCancellationRoute() {
+    vi.clearAllMocks();
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn((siteId: string) => ({ id: siteId, name: siteId })),
+      getAccountById: vi.fn((accountId: string) => ({ id: accountId, account_name: accountId })),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(extractModelFromBody).mockReturnValue('gpt-4.1-mini');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue([firstChannel, secondChannel]);
+    vi.mocked(resolveChannelCredentials).mockImplementation(
+      async (_siteId, _accountId, apiKeyId) => ({
+        baseUrl: `https://${apiKeyId}.example.com`,
+        apiKey: `sk-${apiKeyId}`,
+      })
+    );
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+  }
+
+  it('aborts the active upstream request and does not try fallback channels after client close', async () => {
+    setupCodexCancellationRoute();
+
+    let upstreamSignal: AbortSignal | undefined;
+    vi.mocked(httpRawRequest).mockImplementation(
+      async (_url, config = {}) =>
+        await new Promise((resolve, reject) => {
+          upstreamSignal = config.signal;
+          upstreamSignal?.addEventListener(
+            'abort',
+            () => reject(upstreamSignal?.reason ?? new Error('aborted')),
+            { once: true }
+          );
+          setTimeout(() => {
+            resolve({
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+              body: Buffer.from('{"ok":true}'),
+            });
+          }, 1000);
+        })
+    );
+
+    const request = createControllableJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+      },
+      { model: 'gpt-4.1-mini', input: 'hi' }
+    );
+    const response = createMockResponse();
+
+    const pending = handleRequest(request, response);
+    await vi.waitFor(() => expect(httpRawRequest).toHaveBeenCalledTimes(1));
+
+    response.emit('close');
+    await pending;
+
+    expect(upstreamSignal?.aborted).toBe(true);
+    expect(httpRawRequest).toHaveBeenCalledTimes(1);
+    expect(resolveChannelCredentials).toHaveBeenCalledTimes(1);
+    expect(recordRoutePathOutcome).not.toHaveBeenCalled();
+    expect(recordRouteRequest).not.toHaveBeenCalled();
+    expect(response.end).not.toHaveBeenCalled();
+  });
+
+  it('ignores an upstream result that resolves after client cancellation', async () => {
+    setupCodexCancellationRoute();
+
+    let resolveUpstream: (value: Awaited<ReturnType<typeof httpRawRequest>>) => void = () => {};
+    vi.mocked(httpRawRequest).mockImplementation(
+      async () =>
+        await new Promise(resolve => {
+          resolveUpstream = resolve;
+        })
+    );
+
+    const request = createControllableJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+      },
+      { model: 'gpt-4.1-mini', input: 'hi' }
+    );
+    const response = createMockResponse();
+
+    const pending = handleRequest(request, response);
+    await vi.waitFor(() => expect(httpRawRequest).toHaveBeenCalledTimes(1));
+
+    response.emit('close');
+    resolveUpstream({
+      status: 503,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{"error":"late failure"}'),
+    });
+    await pending;
+
+    expect(httpRawRequest).toHaveBeenCalledTimes(1);
+    expect(recordRoutePathOutcome).not.toHaveBeenCalled();
+    expect(recordRouteRequest).not.toHaveBeenCalled();
+    expect(response.end).not.toHaveBeenCalled();
+  });
+});
+
+describe('route-proxy-service custom CLI forwarding', () => {
+  it('forwards a selected custom CLI channel to its direct base URL', async () => {
+    vi.clearAllMocks();
+
+    const rule = {
+      id: 'rule-custom-cli',
+      cliType: 'codex' as const,
+      pattern: 'duckcoding-route',
+      patternType: 'exact' as const,
+      allowedSiteIds: ['site-managed'],
+      allowedAccountIds: ['account-managed'],
+      allowedApiKeyGroups: ['team-a'],
+    };
+    const customChannel = {
+      routeRuleId: rule.id,
+      siteId: 'custom-cli-site-duckcoding',
+      accountId: 'custom-cli-account-duckcoding',
+      apiKeyId: 'custom-cli-key-duckcoding',
+      cliType: 'codex' as const,
+      targetProtocol: 'native' as const,
+      targetEndpoint: '/v1/responses',
+      canonicalModel: 'duckcoding-route',
+      resolvedModel: 'duckcoding',
+      sitePriority: 0,
+      apiKeyPriority: 0,
+    };
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+      },
+      rules: [rule],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: null,
+        geminiCli: null,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'duckcoding-route': {
+            canonicalName: 'duckcoding-route',
+            aliases: ['duckcoding'],
+            sources: [],
+            vendor: 'unknown' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+      routePathStates: {},
+    };
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn(() => null),
+      getAccountById: vi.fn(() => null),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(extractModelFromBody).mockReturnValue('duckcoding-route');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue([customChannel]);
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://duck.example.com',
+      apiKey: 'sk-duck',
+    });
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockImplementation(async (channel, outcome) => ({
+      ...channel,
+      windowStartedAt: 1,
+      windowRequestCount: 1,
+      windowSuccessCount: outcome === 'success' ? 1 : 0,
+      successRate: outcome === 'success' ? 1 : 0,
+      lastOutcome: outcome,
+      updatedAt: 1,
+    }));
+    vi.mocked(httpRawRequest).mockResolvedValueOnce({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{"output_text":"ok","usage":{"input_tokens":1,"output_tokens":1}}'),
+    });
+
+    const request = createJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+      },
+      { model: 'duckcoding-route', input: 'hi' }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(resolveChannelCredentials).toHaveBeenCalledWith(
+      'custom-cli-site-duckcoding',
+      'custom-cli-account-duckcoding',
+      'custom-cli-key-duckcoding'
+    );
+    expect(httpRawRequest).toHaveBeenCalledWith(
+      'https://duck.example.com/v1/responses',
+      expect.objectContaining({
+        preferElectronNet: true,
+        body: expect.any(Buffer),
+      })
+    );
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('"output_text":"ok"');
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({
+        siteId: 'custom-cli-site-duckcoding',
+        accountId: 'custom-cli-account-duckcoding',
+        apiKeyId: 'custom-cli-key-duckcoding',
+        canonicalModel: 'duckcoding-route',
+        resolvedModel: 'duckcoding',
+      }),
+      'success',
+      expect.objectContaining({ statusCode: 200 }),
+      expect.any(Object)
+    );
+  });
+});
+
 describe('route-proxy-service CLI model fallback', () => {
   it('routes Gemini path-only default model requests through the selected CLI model rule', async () => {
     vi.clearAllMocks();
@@ -1689,6 +2026,146 @@ describe('route-proxy-service successful path affinity', () => {
     );
     expect(recordRoutePathOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ apiKeyId: 'key-a' }),
+      'success',
+      expect.objectContaining({ statusCode: 200 }),
+      expect.any(Object)
+    );
+  });
+
+  it('matches successful affinity after targetProtocol is resolved for route candidates', async () => {
+    vi.clearAllMocks();
+
+    const now = Date.now();
+    const rule = {
+      id: 'rule-codex-affinity-late-target',
+      cliType: 'codex' as const,
+      pattern: 'gpt-4.1-mini',
+      patternType: 'exact' as const,
+    };
+    const channelA = {
+      routeRuleId: rule.id,
+      siteId: 'site-a',
+      accountId: 'account-a',
+      apiKeyId: 'key-a',
+      cliType: 'codex' as const,
+      canonicalModel: 'gpt-4.1-mini',
+      resolvedModel: 'gpt-4.1-mini',
+    };
+    const channelB = {
+      ...channelA,
+      siteId: 'site-b',
+      accountId: 'account-b',
+      apiKeyId: 'key-b',
+    };
+    const preferredPath = {
+      ...channelB,
+      targetProtocol: 'openai-responses' as const,
+      targetEndpoint: '/v1/responses',
+    };
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+      },
+      rules: [rule],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: null,
+        geminiCli: null,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'gpt-4.1-mini': {
+            canonicalName: 'gpt-4.1-mini',
+            aliases: ['gpt-4.1-mini'],
+            sources: [],
+            vendor: 'openai' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+      routePathStates: {
+        [buildRoutePathStateKey(preferredPath)]: {
+          ...preferredPath,
+          windowStartedAt: now,
+          windowRequestCount: 1,
+          windowSuccessCount: 1,
+          successRate: 1,
+          lastOutcome: 'success' as const,
+          lastSuccessAt: now - 10_000,
+          updatedAt: now - 10_000,
+        },
+      },
+    };
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn((siteId: string) => ({ id: siteId, name: siteId })),
+      getAccountById: vi.fn((accountId: string) => ({ id: accountId, account_name: accountId })),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(extractModelFromBody).mockReturnValue('gpt-4.1-mini');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue([channelA, channelB]);
+    vi.mocked(resolveChannelTarget)
+      .mockImplementationOnce(async () => ({
+        targetProtocol: 'openai-responses',
+        targetEndpoint: '/v1/responses',
+      }))
+      .mockImplementationOnce(async () => ({
+        targetProtocol: 'openai-responses',
+        targetEndpoint: '/v1/responses',
+      }));
+    vi.mocked(resolveChannelCredentials).mockImplementation(
+      async (_siteId, _accountId, apiKeyId) => ({
+        baseUrl: `https://${apiKeyId}.example.com`,
+        apiKey: `sk-${apiKeyId}`,
+      })
+    );
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockImplementation(async (channel, outcome) => ({
+      ...channel,
+      windowStartedAt: now,
+      windowRequestCount: 1,
+      windowSuccessCount: outcome === 'success' ? 1 : 0,
+      successRate: outcome === 'success' ? 1 : 0,
+      lastOutcome: outcome,
+      updatedAt: now,
+    }));
+    vi.mocked(httpRawRequest).mockResolvedValueOnce({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{"ok":true}'),
+    });
+
+    const request = createJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+      },
+      { model: 'gpt-4.1-mini', input: 'hi' }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(vi.mocked(resolveChannelCredentials).mock.calls.map(call => call[2])).toEqual(['key-b']);
+    expect(vi.mocked(httpRawRequest).mock.calls.map(call => call[0])).toEqual([
+      'https://key-b.example.com/v1/responses',
+    ]);
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: 'key-b', targetProtocol: 'openai-responses' }),
       'success',
       expect.objectContaining({ statusCode: 200 }),
       expect.any(Object)
@@ -4339,9 +4816,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain('response.completed');
     expect(response.body).toContain('event: error');
-    expect(response.body).toContain(
-      'without assistant text, function_call, or tool output content'
-    );
+    expect(response.body).toContain('all-zero usage');
     expect(recordRoutePathOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ apiKeyId: 'key-openai' }),
       'failure',
@@ -4356,6 +4831,133 @@ describe('route-proxy-service SSE streaming passthrough', () => {
         outcome: 'failure',
         error: 'malformed_streaming_response:empty_response_zero_usage',
       })
+    );
+  });
+
+  it('marks a completed Codex SSE stream with output but all-zero usage as malformed', async () => {
+    vi.clearAllMocks();
+
+    const rule = {
+      id: 'rule-codex-output-zero-usage',
+      cliType: 'codex' as const,
+      pattern: 'gpt-4.1-mini',
+      patternType: 'exact' as const,
+    };
+    const channel = {
+      routeRuleId: rule.id,
+      siteId: 'site-openai',
+      accountId: 'account-openai',
+      apiKeyId: 'key-openai',
+      cliType: 'codex' as const,
+      canonicalModel: 'gpt-4.1-mini',
+      resolvedModel: 'gpt-4.1-mini',
+    };
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+      },
+      rules: [rule],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: null,
+        geminiCli: null,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'gpt-4.1-mini': {
+            canonicalName: 'gpt-4.1-mini',
+            aliases: ['gpt-4.1-mini'],
+            sources: [],
+            vendor: 'openai' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+    };
+    const textChunk = Buffer.from(
+      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"hello"}\n\n'
+    );
+    const completedChunk = Buffer.from(
+      'event: response.completed\ndata: {"type":"response.completed","response":{"output_text":"hello","usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}\n\n'
+    );
+    const fullBody = Buffer.concat([textChunk, completedChunk]);
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn(() => ({ id: 'site-openai', name: 'OpenAI-compatible' })),
+      getAccountById: vi.fn(() => ({ id: 'account-openai', account_name: 'default' })),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(extractModelFromBody).mockReturnValue('gpt-4.1-mini');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue([channel]);
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://upstream.example.com',
+      apiKey: 'sk-upstream',
+    });
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockResolvedValue({
+      ...channel,
+      windowStartedAt: 1,
+      windowRequestCount: 1,
+      windowSuccessCount: 0,
+      successRate: 0,
+      updatedAt: 1,
+    });
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
+      const headers = { 'content-type': 'text/event-stream' };
+      const accepted = config.onResponse?.({ status: 200, statusText: 'OK', headers });
+      expect(accepted).toBe(true);
+      await config.onChunk?.(textChunk);
+      await config.onChunk?.(completedChunk);
+      return {
+        status: 200,
+        headers,
+        body: fullBody,
+        firstByteLatencyMs: 4,
+      };
+    });
+
+    const request = createJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+      },
+      { model: 'gpt-4.1-mini', stream: true, input: 'hi' }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('hello');
+    expect(response.body).toContain('event: error');
+    expect(response.body).toContain('all-zero usage');
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: 'key-openai' }),
+      'failure',
+      expect.objectContaining({
+        error: 'malformed_streaming_response:empty_response_zero_usage',
+      }),
+      expect.any(Object)
+    );
+    expect(recordRoutePathOutcome).not.toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: 'key-openai' }),
+      'success',
+      expect.anything(),
+      expect.anything()
     );
   });
 

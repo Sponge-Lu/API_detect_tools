@@ -77,6 +77,26 @@ describe('httpRawRequest', () => {
       firstByteLatencyMs: 12,
     });
   });
+
+  it('passes abort signals to Electron net raw forwarding', async () => {
+    const signal = new AbortController().signal;
+
+    await httpRawRequest('https://anyrouter.top/v1/responses', {
+      method: 'POST',
+      body: Buffer.from('{"input":"ping"}'),
+      preferElectronNet: true,
+      signal,
+    });
+
+    expect(mocks.electronFetchRaw).toHaveBeenCalledWith('https://anyrouter.top/v1/responses', {
+      method: 'POST',
+      headers: {},
+      body: Buffer.from('{"input":"ping"}'),
+      timeout: 30000,
+      proxyUrl: undefined,
+      signal,
+    });
+  });
 });
 
 describe('httpRawStreamRequest', () => {
@@ -121,5 +141,33 @@ describe('httpRawStreamRequest', () => {
       body: Buffer.from('data: ok\n\n'),
       firstByteLatencyMs: 8,
     });
+  });
+
+  it('passes abort signals to Electron net raw streaming', async () => {
+    const signal = new AbortController().signal;
+    const onChunk = vi.fn();
+
+    await httpRawStreamRequest('https://anyrouter.top/v1/responses', {
+      method: 'POST',
+      body: Buffer.from('{"stream":true}'),
+      preferElectronNet: true,
+      signal,
+      onChunk,
+    });
+
+    expect(mocks.electronFetchRawStream).toHaveBeenCalledWith(
+      'https://anyrouter.top/v1/responses',
+      {
+        method: 'POST',
+        headers: {},
+        body: Buffer.from('{"stream":true}'),
+        timeout: 30000,
+        streamIdleTimeout: undefined,
+        proxyUrl: undefined,
+        onResponse: undefined,
+        onData: onChunk,
+        signal,
+      }
+    );
   });
 });

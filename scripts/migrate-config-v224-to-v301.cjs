@@ -631,7 +631,6 @@ function normalizeAccount(account, now) {
   return {
     ...account,
     id: account.id || generateAccountId(),
-    status: account.status || 'active',
     auth_source: account.auth_source || 'manual',
     created_at: account.created_at || now,
     updated_at: account.updated_at || now,
@@ -794,7 +793,6 @@ async function migrateConfigShape(config, existingRuntimeCache, existingRouteSta
       user_id: site.user_id,
       access_token: legacyAccessToken,
       auth_source: 'manual',
-      status: 'active',
       cached_data: site.cached_data ? { ...site.cached_data } : undefined,
       cli_config: normalizeCliConfig(site.cli_config),
       created_at: now,

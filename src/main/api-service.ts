@@ -1447,14 +1447,6 @@ export class ApiService {
         accountId: account?.id,
       });
 
-      // 401 认证失败时，标记实际检测账户为 expired
-      if (error && (error.includes('登录已过期') || error.includes('401'))) {
-        const targetAccountId = account?.id;
-        if (targetAccountId) {
-          await unifiedConfigManager.updateAccount(targetAccountId, { status: 'expired' });
-          Logger.warn(`⚠️ [ApiService] 检测账户已标记为 expired: ${targetAccountId}`);
-        }
-      }
     } catch (e: any) {
       Logger.error('❌ [ApiService] 保存最近检测状态失败:', e.message);
     }

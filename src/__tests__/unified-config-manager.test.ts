@@ -256,7 +256,6 @@ describe('UnifiedConfigManager', () => {
       user_id: 'legacy-user',
       access_token: 'legacy-token',
       auth_source: 'manual',
-      status: 'active',
     });
     expect(loadedConfig.accounts[0].cached_data).toMatchObject({
       balance: 12.34,

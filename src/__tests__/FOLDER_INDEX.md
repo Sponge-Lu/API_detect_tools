@@ -43,13 +43,13 @@
 | **migrate-config-v224-to-v301-script.test.ts** | 配置迁移脚本测试 | v2.1.24 config 拆分为 clean config、runtime-cache 与 route state，重复运行保留已有 state |
 | **route-cli-probe-service.test.ts** | CLI 探测多账户回归测试 | 同站点全部活跃账户覆盖、账户级 CLI 配置优先/禁用/旧站点 fallback、自定义 CLI 配置行/探测任务、活跃 API Key 选择、probe-lock `probeRunId` 与自定义上游信息传递、错误码透传、旧配置兼容 |
 | **route-model-registry-service.test.ts** | 路由模型注册表服务测试 | display item、厂商优先级、canonical 映射与自定义 CLI 来源，覆盖 `manualModels` 手动模型同步 |
-| **route-proxy-service.test.ts** | 路由代理调度回归测试 | canonical-only 规则命中前提下的 per-rawModel 尝试计划、probe-lock loopback 限制/终止失败/单模型上游尝试预算、首次上游结果缓存且不被 budget 覆盖、瞬时上游错误透传原始响应且记录非终结结果(含非原生 targetProtocol 不被转换劫持)、Gemini 内部辅助模型阻断、上游 URL 构造、Gemini path/key 重写、AnyRouter beta path、流式请求首包超时与首个 SSE chunk 后 10 分钟活跃流空闲超时下限、provider usage/cache token 解析 |
+| **route-proxy-service.test.ts** | 路由代理调度回归测试 | canonical-only 规则命中前提下的 per-rawModel 尝试计划、选中 custom CLI 通道转发到直连 baseUrl、客户端取消中止当前上游且不 fallback/不记录失败、probe-lock loopback 限制/终止失败/单模型上游尝试预算、首次上游结果缓存且不被 budget 覆盖、瞬时上游错误透传原始响应且记录非终结结果(含非原生 targetProtocol 不被转换劫持)、Gemini 内部辅助模型阻断、上游 URL 构造、Gemini path/key 重写、AnyRouter beta path、流式请求首包超时与首个 SSE chunk 后 10 分钟活跃流空闲超时下限、provider usage/cache token 解析 |
 | **route-probe-lock.test.ts** | probe-lock 首个上游结果记录回归测试 | terminal-wins / transient-overwritable 记录语义、瞬时结果可被后续成功/终结失败覆盖、终结结果 first-wins、waiter 仅在终结结果 resolve |
 | **cli-protocol-adapter.test.ts** | CLI 协议适配器请求/响应转换测试 | Claude/Codex/Gemini 三类源 CLI 与 Anthropic Messages / OpenAI Chat Completions / OpenAI Responses 三类目标协议之间的 text/tool_use/tool_result/function_call 双向转换，流式 SSE 与非流式 JSON 矩阵，empty_conversation / unsupported_content 显式抛 `CliProtocolAdapterError` |
 | **anyrouter-timeout.test.ts** | AnyRouter 站点识别测试 | `Any Router` / `AnyRouter` / 分隔符变体归一化命中，带额外前后缀的站点名不误判 |
 | **anyrouter-rewriter.test.ts** | AnyRouter 协议处理测试 | Claude Code 指纹改写、Codex 原生 Responses 补齐 metadata.user_id、Gemini 原生透传 |
 | **electron-fetch.test.ts** | Electron 网络工具测试 | 上游代理 URL 归一化、受限请求头过滤、raw/streaming 响应空闲超时与首包/活跃流分段超时 |
-| **http-client.test.ts** | HTTP 客户端测试 | raw 上游转发走 Electron net 并传递上游代理、流式回调和活跃流空闲超时配置 |
+| **http-client.test.ts** | HTTP 客户端测试 | raw 上游转发走 Electron net 并传递上游代理、取消信号、流式回调和活跃流空闲超时配置 |
 | **route-rule-engine.test.ts** | 路由规则引擎回归测试 | canonical-only 模型匹配与规则优先级排序 |
 | **cli-compat-projection.test.ts** | CLI 兼容性投影测试 | `routing.cliProbe.latest` 到站点/账户卡片结果的映射，以及 latest probe 回灌到 CLI 配置弹窗测试模型 slot 的时间戳合并 |
 | **cli-compat-handlers.test.ts** | CLI 兼容性 IPC 回归测试 | 托管站点 CLI 配置保存写入账户级 `cli_config`，避免回写站点级 legacy 字段 |
@@ -61,7 +61,7 @@
 | **cli-wrapper-compat-service.test.ts** | 真实 CLI wrapper 兼容性测试 | CliWrapperCompatService 的临时目录、隔离配置、stdin prompt 注入、结果解析、probe-lock 终止失败提前中止、首个上游成功/延迟失败覆盖后续 probe-lock budget noise、Claude JSON 错误摘要、未观察到本地路由请求时的诊断提示、Codex 上游错误摘要与临时目录清理重试 |
 | **cli-config-generator.property.test.ts** | CLI 配置生成测试 | CLI 配置生成（含端点选择逻辑） |
 | **cli-config-status.test.tsx** | CLI 配置状态组件回归测试 | 本地路由代理 Base URL 在紧凑状态中显示为“本地路由”，并覆盖本地路由、站点与自定义 CLI 的当前模型小字 |
-| **custom-cli-config-editor-dialog.test.tsx** | 直连 CLI 编辑内容回归测试 | DirectCliConfigEditorContent 的身份保存、预览/应用按钮、按 CLI 聚合测试流程、上游协议选择与手动模型写入 `manualModels` |
+| **custom-cli-config-editor-dialog.test.tsx** | 直连 CLI 编辑内容回归测试 | DirectCliConfigEditorContent 的配置名称/身份保存、空白名称保护、预览/应用按钮、按 CLI 聚合测试流程、上游协议选择与手动模型写入 `manualModels` |
 | **custom-cli-config-store.test.ts** | 自定义 CLI 配置 Store 回归测试 | 拉取模型后清理旧 Base URL/API Key 遗留的 CLI 使用模型、测试模型与测试结果，并保留 `manualModels` 手动模型 |
 | **custom-cli-config-handlers.test.ts** | 自定义 CLI 配置 IPC 回归测试 | 保存自定义 CLI 配置后同步路由模型 registry，并在同步失败时暴露错误 |
 | **app-data-events.test.ts** | 主进程数据变更广播回归测试 | 跳过已销毁窗口/webContents、吞掉 Electron disposed-frame 竞态错误并保留非预期 send 失败日志 |
@@ -75,7 +75,7 @@
 | **data-overview-page.test.tsx** | 数据总览页回归测试 | 首页总览 KPI、站点榜单、规则解释、异常请求、快照趋势，以及路由趋势 `24h` / `7d` 部分数据窗口下的完整 X 轴与前置空桶绘制规则 |
 | **route-analytics-service.test.ts** | 路由分析服务回归测试 | 请求日志 token/cache token 字段、站点/账户/API Key 对象级 token 聚合 |
 | **route-workbench-redesign.test.tsx** | Route 页面重设计测试 | route 页回退为配置页，并引导到数据总览查看统计，覆盖重定向卡片路径恢复动作与自定义 CLI 覆盖模型测试结果显示 |
-| **sites-page-redesign.test.tsx** | 站点页重设计测试 | 合并后的站点管理页多列列头、内联排序、高频动作、行内旧菜单移除、接入点详情组件复用、History 列、直连配置展示、操作记录弹窗与行内控件冒泡隔离回归 |
+| **sites-page-redesign.test.tsx** | 站点页重设计测试 | 合并后的站点管理页多列列头、内联排序、高频动作、行内旧菜单移除、接入点详情组件复用、站点名称编辑、History 列、直连配置展示、操作记录弹窗与行内控件冒泡隔离回归 |
 | **logs-page.test.tsx** | 日志页回归测试 | 路由日志主页面、逐条 push 追加、CLI 筛选/清空、无卡片表头单行布局、CLI 图标、纯数字状态码、站点路径截断、失败第二行、token/cache token/按次参考金额与直连配置显示 |
 | **toast-store.test.ts** | Toast Store 回归测试 | 可见队列上限、事件历史记录与清理 |
 | **close-behavior-manager.property.test.ts** | 窗口关闭行为测试 | CloseBehaviorManager 设置持久化、对话框显示条件与设置面板偏好映射 |

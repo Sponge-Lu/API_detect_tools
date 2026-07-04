@@ -284,9 +284,6 @@ function collectCustomCliModelCandidates(
   config: CustomCliConfig
 ): Array<{ model: string; cliTypes: RouteCliType[] }> {
   const modelsByName = new Map<string, Set<RouteCliType>>();
-  const enabledCliTypes = ROUTE_CLI_TYPES.filter(
-    cliType => config.cliSettings?.[cliType]?.enabled !== false
-  );
   const fetchedModelSet = new Set(
     (config.models || []).map(model => model.trim()).filter(model => model.length > 0)
   );
@@ -299,7 +296,11 @@ function collectCustomCliModelCandidates(
     : undefined;
 
   for (const model of fetchedModelSet) {
-    addCustomCliModelCandidate(modelsByName, model, enabledCliTypes);
+    addCustomCliModelCandidate(modelsByName, model, ROUTE_CLI_TYPES);
+  }
+
+  for (const model of manualModelSet) {
+    addCustomCliModelCandidate(modelsByName, model, ROUTE_CLI_TYPES);
   }
 
   for (const cliType of ROUTE_CLI_TYPES) {
@@ -573,7 +574,7 @@ async function rebuildModelRegistryInternal(
       continue;
     }
 
-    const siteAccounts = accounts.filter(a => a.site_id === site.id && a.status === 'active');
+    const siteAccounts = accounts.filter(a => a.site_id === site.id);
     for (const account of siteAccounts) {
       const models = account.cached_data?.models || [];
       const userGroupKeys = Object.keys(account.cached_data?.user_groups || {});
