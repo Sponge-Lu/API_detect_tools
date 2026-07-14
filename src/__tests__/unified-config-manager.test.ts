@@ -13,6 +13,7 @@ import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  DEFAULT_ROUTING_CONFIG,
   buildBucketKey,
   buildProbeKey,
   buildRoutePathStateKey,
@@ -53,6 +54,110 @@ const createSampleConfig = () => ({
   },
   last_updated: 1,
 });
+
+const createLegacyRouteExampleConfig = (withManualSameName = false) => {
+  const config = createSampleConfig() as any;
+  const canonicalName = 'claude-opus-4-6';
+  const sourceKey = 'site-1:acct-default:claude-opus-4.6-20260201';
+  const seededItem = {
+    id: 'seeded:claude-opus-4-6',
+    vendor: 'claude',
+    canonicalName,
+    sourceKeys: [sourceKey],
+    originalModelOrder: ['claude-opus-4.6-20260201'],
+    priorityConfig: { sitePriorities: {}, apiKeyPriorities: {} },
+    mode: 'seeded',
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const manualSameNameItem = {
+    ...seededItem,
+    id: 'manual:claude-opus-4-6',
+    mode: 'manual',
+    createdAt: 2,
+    updatedAt: 2,
+  };
+
+  config.version = '3.0.6';
+  config.routing = {
+    ...structuredClone(DEFAULT_ROUTING_CONFIG),
+    rules: [
+      {
+        id: 'auto-cli-model-claudeCode-claude-opus-4-6',
+        name: 'Claude Code / claude-opus-4-6',
+        enabled: true,
+        priority: 0,
+        cliType: 'claudeCode',
+        patternType: 'exact',
+        pattern: canonicalName,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      ...(withManualSameName
+        ? [
+            {
+              id: 'manual-opus-rule',
+              name: 'Manual Opus Rule',
+              enabled: true,
+              priority: 10,
+              cliType: 'claudeCode',
+              patternType: 'exact',
+              pattern: canonicalName,
+              createdAt: 2,
+              updatedAt: 2,
+            },
+          ]
+        : []),
+    ],
+    cliModelSelections: {
+      ...DEFAULT_ROUTING_CONFIG.cliModelSelections,
+      claudeCode: canonicalName,
+    },
+    modelRegistry: {
+      ...structuredClone(DEFAULT_ROUTING_CONFIG.modelRegistry),
+      entries: {
+        [canonicalName]: {
+          canonicalName,
+          vendor: 'claude',
+          aliases: ['claude-opus-4.6-20260201'],
+          sources: [],
+          hasOverride: true,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      },
+      overrides: withManualSameName
+        ? [
+            {
+              id: 'manual-opus-override',
+              sourceKey,
+              canonicalName,
+              action: 'rename',
+              createdAt: 1,
+              updatedAt: 1,
+            },
+          ]
+        : [],
+      displayItems: [
+        seededItem,
+        ...(withManualSameName ? [manualSameNameItem] : []),
+        {
+          id: 'manual:gpt-5.4',
+          vendor: 'gpt',
+          canonicalName: 'gpt-5.4',
+          sourceKeys: ['site-1:acct-default:gpt-5.4-latest'],
+          originalModelOrder: ['gpt-5.4-latest'],
+          priorityConfig: { sitePriorities: {}, apiKeyPriorities: {} },
+          mode: 'manual',
+          createdAt: 3,
+          updatedAt: 3,
+        },
+      ],
+    },
+  };
+
+  return config;
+};
 
 describe('UnifiedConfigManager', () => {
   let userDataDir: string;
@@ -721,6 +826,95 @@ describe('UnifiedConfigManager', () => {
     expect(routing.routePathStates[buildRoutePathStateKey(otherApiKeyPathState)]).toBeDefined();
   });
 
+  it('resets and suppresses a priority-hit route channel across route rules', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as any);
+    await manager.loadConfig();
+
+    const firstRulePathState = {
+      routeRuleId: 'rule-1',
+      siteId: 'site-1',
+      accountId: 'account-1',
+      apiKeyId: 'key-1',
+      cliType: 'codex' as const,
+      targetProtocol: 'native' as const,
+      canonicalModel: 'gpt-5',
+      resolvedModel: 'gpt-5-mini',
+      windowStartedAt: 100,
+      windowRequestCount: 1,
+      windowSuccessCount: 1,
+      successRate: 1,
+      lastOutcome: 'success' as const,
+      lastSuccessAt: 100,
+      updatedAt: 100,
+    };
+    const secondRulePathState = {
+      ...firstRulePathState,
+      routeRuleId: 'rule-2',
+      resolvedModel: 'gpt-5-codex',
+      lastSuccessAt: 200,
+      updatedAt: 200,
+    };
+    const otherApiKeyPathState = {
+      ...firstRulePathState,
+      routeRuleId: 'rule-2',
+      apiKeyId: 'key-2',
+    };
+
+    await manager.upsertRoutePathState(firstRulePathState);
+    await manager.upsertRoutePathState(secondRulePathState);
+    await manager.upsertRoutePathState(otherApiKeyPathState);
+
+    const cleared = await manager.resetRoutePathStates({
+      canonicalModel: 'gpt-5',
+      siteId: 'site-1',
+      accountId: 'account-1',
+      apiKeyId: 'key-1',
+      targetProtocol: 'native',
+    });
+    const routing = manager.getRoutingConfig();
+    const firstSuppressedState =
+      routing.routePathStates[buildRoutePathStateKey(firstRulePathState)];
+    const secondSuppressedState =
+      routing.routePathStates[buildRoutePathStateKey(secondRulePathState)];
+    const channelSuppressedState =
+      routing.routePathStates[
+        buildRoutePathStateKey({
+          siteId: 'site-1',
+          accountId: 'account-1',
+          apiKeyId: 'key-1',
+          targetProtocol: 'native',
+          canonicalModel: 'gpt-5',
+        })
+      ];
+
+    expect(cleared).toBe(2);
+    expect(firstSuppressedState).toMatchObject({
+      routeRuleId: 'rule-1',
+      apiKeyId: 'key-1',
+      affinitySuppressedAt: expect.any(Number),
+      affinitySuppressedUntil: expect.any(Number),
+    });
+    expect(secondSuppressedState).toMatchObject({
+      routeRuleId: 'rule-2',
+      apiKeyId: 'key-1',
+      affinitySuppressedAt: expect.any(Number),
+      affinitySuppressedUntil: expect.any(Number),
+    });
+    expect(channelSuppressedState).toMatchObject({
+      routeRuleId: undefined,
+      apiKeyId: 'key-1',
+      canonicalModel: 'gpt-5',
+      targetProtocol: 'native',
+      affinitySuppressedAt: expect.any(Number),
+      affinitySuppressedUntil: expect.any(Number),
+    });
+    expect(channelSuppressedState.resolvedModel).toBeUndefined();
+    expect(firstSuppressedState.lastOutcome).toBeUndefined();
+    expect(secondSuppressedState.lastOutcome).toBeUndefined();
+    expect(routing.routePathStates[buildRoutePathStateKey(otherApiKeyPathState)]).toBeDefined();
+  });
+
   it('creates channel-wide priority-hit reset suppression without an existing path state', async () => {
     const manager = await loadManager();
     await manager.saveConfig(createSampleConfig() as any);
@@ -1177,7 +1371,6 @@ describe('UnifiedConfigManager', () => {
       cliModelSelections: {
         claudeCode: 'claude-sonnet-4.6-20260201',
         codex: 'o3-latest',
-        geminiCli: null,
       },
       stats: {},
       health: {},
@@ -1241,7 +1434,7 @@ describe('UnifiedConfigManager', () => {
     expect(manager.getRoutingConfig().cliModelSelections).toEqual({
       claudeCode: 'claude-sonnet-4-6',
       codex: 'o3',
-      geminiCli: null,
+      openCode: null,
     });
   });
 
@@ -1439,114 +1632,49 @@ describe('UnifiedConfigManager', () => {
     ).rejects.toThrow('Model display item already exists for claude-opus-4-6');
   });
 
-  it('drops legacy seeded display items that are not the default example during load', async () => {
+  it('removes the legacy route example, generated rule, and stale selection during load', async () => {
     const configPath = path.join(userDataDir, 'config.json');
-    const rawConfig = createSampleConfig();
-    rawConfig.version = '3.1';
-    rawConfig.routing = {
-      server: {
-        enabled: false,
-        host: '127.0.0.1',
-        port: 3210,
-        unifiedApiKey: 'sk-route-test',
-        requestTimeoutMs: 60000,
-        retryCount: 1,
-        healthCheckIntervalMinutes: 60,
-      },
-      rules: [],
-      cliModelSelections: {
-        claudeCode: null,
-        codex: null,
-        geminiCli: null,
-      },
-      stats: {},
-      health: {},
-      modelRegistry: {
-        version: 1,
-        sources: [],
-        overrides: [],
-        entries: {},
-        displayItems: [
-          {
-            id: 'seeded:claude-opus-4-6',
-            vendor: 'claude',
-            canonicalName: 'claude-opus-4-6',
-            sourceKeys: ['site-1:acct-default:claude-opus-4.6-20260201'],
-            originalModelOrder: ['claude-opus-4.6-20260201'],
-            priorityConfig: {
-              sitePriorities: {},
-              apiKeyPriorities: {},
-            },
-            mode: 'seeded',
-            createdAt: 1,
-            updatedAt: 1,
-          },
-          {
-            id: 'seeded:gpt-5',
-            vendor: 'gpt',
-            canonicalName: 'gpt-5',
-            sourceKeys: ['site-1:acct-default:gpt-5-latest'],
-            originalModelOrder: ['gpt-5-latest'],
-            priorityConfig: {
-              sitePriorities: {},
-              apiKeyPriorities: {},
-            },
-            mode: 'seeded',
-            createdAt: 2,
-            updatedAt: 2,
-          },
-          {
-            id: 'manual:gpt-5.4',
-            vendor: 'gpt',
-            canonicalName: 'gpt-5.4',
-            sourceKeys: ['site-1:acct-default:gpt-5.4-latest'],
-            originalModelOrder: ['gpt-5.4-latest'],
-            priorityConfig: {
-              sitePriorities: {},
-              apiKeyPriorities: {},
-            },
-            mode: 'manual',
-            createdAt: 3,
-            updatedAt: 3,
-          },
-        ],
-        vendorPriorities: {},
-      },
-      cliProbe: {
-        config: {
-          enabled: false,
-          intervalMinutes: 240,
-          modelsPerCli: 1,
-          requestTimeoutMs: 30000,
-          maxConcurrency: 3,
-          retentionDays: 3,
-          runOnStartup: false,
-        },
-        latest: {},
-        history: {},
-      },
-      analytics: {
-        config: {
-          enabled: true,
-          retentionDays: 3,
-          bucketSizeMinutes: 60,
-          recordTokenUsage: true,
-          recordStatusCode: true,
-          recordLatencyHistogram: true,
-          latencyHistogramBuckets: [1000, 3000],
-          firstByteHistogramBuckets: [200, 500],
-        },
-        buckets: {},
-      },
-    } as any;
+    const rawConfig = createLegacyRouteExampleConfig();
     await fs.writeFile(configPath, JSON.stringify(rawConfig, null, 2), 'utf-8');
 
     const manager = await loadManager();
     await manager.loadConfig();
 
-    expect(
-      manager.getRoutingConfig().modelRegistry.displayItems.map(item => item.canonicalName)
-    ).toEqual(['claude-opus-4-6', 'gpt-5.4']);
+    const routing = manager.getRoutingConfig();
+    expect(routing.modelRegistry.displayItems.map(item => item.canonicalName)).toEqual(['gpt-5.4']);
+    expect(routing.rules).toEqual([]);
+    expect(routing.cliModelSelections.claudeCode).toBeNull();
+
+    const persisted = JSON.parse(await fs.readFile(configPath, 'utf-8'));
+    expect(persisted.routing.modelRegistry.displayItems).toHaveLength(1);
+    expect(persisted.routing.rules).toEqual([]);
+    expect(persisted.routing.cliModelSelections.claudeCode).toBeNull();
+  });
+
+  it('preserves same-name manual redirects and user-authored rules while cleaning the example', async () => {
+    const configPath = path.join(userDataDir, 'config.json');
+    await fs.writeFile(
+      configPath,
+      JSON.stringify(createLegacyRouteExampleConfig(true), null, 2),
+      'utf-8'
+    );
+
+    const manager = await loadManager();
+    await manager.loadConfig();
+
+    const routing = manager.getRoutingConfig();
+    expect(routing.modelRegistry.displayItems).toEqual([
+      expect.objectContaining({
+        id: 'manual:claude-opus-4-6',
+        canonicalName: 'claude-opus-4-6',
+        mode: 'manual',
+      }),
+      expect.objectContaining({ id: 'manual:gpt-5.4' }),
+    ]);
+    expect(routing.rules).toEqual([
+      expect.objectContaining({ id: 'manual-opus-rule', pattern: 'claude-opus-4-6' }),
+    ]);
+    expect(routing.cliModelSelections.claudeCode).toBe('claude-opus-4-6');
   });
 
   it('migrates legacy cli_compatibility into cliProbe.latest without fabricating history', async () => {
@@ -1566,8 +1694,6 @@ describe('UnifiedConfigManager', () => {
           cli_compatibility: {
             codex: true,
             codexDetail: { responses: true },
-            geminiCli: false,
-            geminiDetail: { native: false, proxy: false },
             testedAt: 1234567890,
           },
         },
@@ -1582,15 +1708,10 @@ describe('UnifiedConfigManager', () => {
 
     const routing = manager.getRoutingConfig();
     const codexKey = buildProbeKey('site-1', 'acct-default', 'codex', '__legacy__compat__');
-    const geminiKey = buildProbeKey('site-1', 'acct-default', 'geminiCli', '__legacy__compat__');
 
     expect(routing.cliProbe.latest[codexKey]).toBeDefined();
     expect(routing.cliProbe.latest[codexKey].lastSample.source).toBe('legacyCache');
     expect(routing.cliProbe.latest[codexKey].lastSample.codexDetail).toEqual({ responses: true });
-    expect(routing.cliProbe.latest[geminiKey].lastSample.geminiDetail).toEqual({
-      native: false,
-      proxy: false,
-    });
     expect(routing.cliProbe.history).toEqual({});
 
     const persisted = JSON.parse(await fs.readFile(configPath, 'utf-8'));

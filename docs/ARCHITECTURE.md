@@ -160,13 +160,13 @@ interface UnifiedConfig {
 | `ChromeManager` | 多槽位检测浏览器池、独立登录浏览器、页面复用与清理 |
 | `UnifiedConfigManager` | 配置加载、迁移、原子写入、备份恢复、路由配置持久化 |
 | `CliCompatService` | 协议级 CLI 兼容性探测，请求格式与真实 CLI 对齐，用于底层能力判断与属性测试 |
-| `CliWrapperCompatService` | 拉起真实 Claude Code / Codex / Gemini CLI wrapper，在隔离临时目录中执行当前 UI 的 CLI 可用性测试，并监听本地路由 probe-lock 终止错误以提前结束失败测试 |
+| `CliWrapperCompatService` | 拉起真实 Claude Code / Codex wrapper，在隔离临时目录中执行当前 UI 的 CLI 可用性测试，并监听本地路由 probe-lock 终止错误以提前结束失败测试 |
 | `CreditService` | Linux Do Credit 数据读取与充值跳转 |
 | `UpdateService` | 版本检查、应用内下载、安装 |
 
 ### CLI 兼容性执行路径
 
-当前前端入口统一走 `cli-compat:test-with-wrapper` IPC，由 `CliWrapperCompatService` 在临时 `HOME` / `CODEX_HOME` / Gemini `HOME/.gemini` 中生成最小配置并执行真实 CLI。测试结束后删除临时目录，不修改用户真实 CLI 配置目录，因此常规测试流程不需要备份或恢复本机 CLI 配置。
+当前前端入口统一走 `cli-compat:test-with-wrapper` IPC，由 `CliWrapperCompatService` 在临时 `HOME` / `CODEX_HOME` 中生成最小配置并执行真实 CLI。测试结束后删除临时目录，不修改用户真实 CLI 配置目录，因此常规测试流程不需要备份或恢复本机 CLI 配置。
 
 站点手动测试与 route 自动探测都会通过本地路由代理的 probe-lock API Key 进行精确定向。probe-lock payload 绑定 `siteId / accountId / apiKeyId / cliType / probeRunId / canonicalModel / rawModel / targetProtocol`，只允许 loopback 客户端使用，且不会转发给上游。
 
@@ -248,7 +248,7 @@ Route 功能统一挂在 `route:*`：
 
 - **Claude Code**：支持配置生成与应用。
 - **Codex**：仅使用 Responses API，`wire_api = "responses"`。
-- **Gemini CLI**：保留 Native/Proxy 兼容数据结构；路由测试链路会阻断已知内部辅助模型请求，避免 helper/default 模型绕过用户选择。
+- Google/Gemini GenerateContent 仅作为路由/provider 协议处理能力保留，不作为可配置 CLI 集成展示。
 - 手动 CLI 测试与 route/site detection 探测结果以 `routing.cliProbe.latest/history` 为共享最新结果源；站点卡片、统一 CLI 配置抽屉和 CLI 可用性矩阵都从该源投影。
 
 ---

@@ -13,6 +13,7 @@
 
 import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
+import { BUILTIN_CLI_TYPES } from '../shared/types/cli-config';
 
 // ============= 纯函数实现（从 cli-compat-service.ts 复制，避免 Electron 依赖） =============
 
@@ -92,7 +93,7 @@ function selectLowestModel(models: string[], prefix: string): string | null {
 /**
  * 使用正则表达式匹配模型类型
  */
-function findModelByType(models: string[], type: 'claude' | 'gpt' | 'gemini'): string | null {
+function findModelByType(models: string[], type: 'claude' | 'gpt'): string | null {
   if (!models || models.length === 0) {
     return null;
   }
@@ -100,7 +101,6 @@ function findModelByType(models: string[], type: 'claude' | 'gpt' | 'gemini'): s
   const patterns: Record<string, RegExp[]> = {
     claude: [/^claude[-_]?/i, /^anthropic[-_]?/i, /^claude\d/i],
     gpt: [/^gpt[-_]?/i, /^openai[-_]?/i, /^chatgpt[-_]?/i, /^o[134][-_]?/i, /^gpt\d/i],
-    gemini: [/^gemini[-_]?/i, /^google[-_]?/i, /^gemini\d/i],
   };
 
   const regexList = patterns[type];
@@ -238,44 +238,6 @@ function buildCodexResponsesRequest(baseUrl: string, apiKey: string, model: stri
   };
 }
 
-/**
- * 构建 Gemini CLI 测试请求
- */
-function buildGeminiCliRequest(baseUrl: string, apiKey: string, model: string): RequestFormat {
-  const url = `${baseUrl.replace(/\/$/, '')}/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
-
-  return {
-    url,
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': 'GeminiCLI/0.1.0 google-api-nodejs-client/9.15.1',
-      'x-goog-api-client': 'gl-node/22.0.0',
-    },
-    body: {
-      contents: [{ role: 'user', parts: [{ text: '1+1=?' }] }],
-      tools: [
-        {
-          functionDeclarations: [
-            {
-              name: 'test_tool',
-              description: 'A test tool',
-              parameters: {
-                type: 'object',
-                properties: { test: { type: 'string' } },
-                required: [],
-              },
-            },
-          ],
-        },
-      ],
-      generationConfig: {
-        maxOutputTokens: 1,
-      },
-    },
-  };
-}
-
 // ============= Arbitraries =============
 
 /**
@@ -302,8 +264,7 @@ const modelListArb = fc.array(
   fc.oneof(
     modelNameArb('claude-'),
     modelNameArb('gpt-'),
-    modelNameArb('gemini-'),
-    fc.constantFrom('llama-3', 'mistral-7b', 'qwen-72b', 'claude3', 'gpt4o', 'gemini1.5')
+    fc.constantFrom('llama-3', 'mistral-7b', 'qwen-72b', 'claude3', 'gpt4o')
   ),
   { minLength: 0, maxLength: 20 }
 );
@@ -330,7 +291,7 @@ describe('CLI Compatibility Service Property Tests', () => {
   describe('Property 1: Model Selection Correctness', () => {
     it('should return null for empty model list', () => {
       fc.assert(
-        fc.property(fc.constantFrom('claude-', 'gpt-', 'gemini-'), prefix => {
+        fc.property(fc.constantFrom('claude-', 'gpt-'), prefix => {
           const result = selectLowestModel([], prefix);
           expect(result).toBeNull();
         }),
@@ -405,19 +366,17 @@ describe('CLI Compatibility Service Property Tests', () => {
    */
   describe('Property 1b: Flexible Model Matching', () => {
     it('should match models without hyphen (e.g., claude3, gpt4o)', () => {
-      const modelsWithoutHyphen = ['claude3', 'gpt4o', 'gemini1.5'];
+      const modelsWithoutHyphen = ['claude3', 'gpt4o'];
 
       expect(findModelByType(modelsWithoutHyphen, 'claude')).toBe('claude3');
       expect(findModelByType(modelsWithoutHyphen, 'gpt')).toBe('gpt4o');
-      expect(findModelByType(modelsWithoutHyphen, 'gemini')).toBe('gemini1.5');
     });
 
     it('should match models with hyphen (e.g., claude-3, gpt-4)', () => {
-      const modelsWithHyphen = ['claude-3', 'gpt-4', 'gemini-1.5'];
+      const modelsWithHyphen = ['claude-3', 'gpt-4'];
 
       expect(findModelByType(modelsWithHyphen, 'claude')).toBe('claude-3');
       expect(findModelByType(modelsWithHyphen, 'gpt')).toBe('gpt-4');
-      expect(findModelByType(modelsWithHyphen, 'gemini')).toBe('gemini-1.5');
     });
 
     it('should match o-series models as GPT', () => {
@@ -429,7 +388,6 @@ describe('CLI Compatibility Service Property Tests', () => {
     it('should return null for empty model list', () => {
       expect(findModelByType([], 'claude')).toBeNull();
       expect(findModelByType([], 'gpt')).toBeNull();
-      expect(findModelByType([], 'gemini')).toBeNull();
     });
 
     it('should return null when no models match', () => {
@@ -437,7 +395,6 @@ describe('CLI Compatibility Service Property Tests', () => {
 
       expect(findModelByType(unrelatedModels, 'claude')).toBeNull();
       expect(findModelByType(unrelatedModels, 'gpt')).toBeNull();
-      expect(findModelByType(unrelatedModels, 'gemini')).toBeNull();
     });
   });
 
@@ -632,89 +589,10 @@ describe('CLI Compatibility Service Property Tests', () => {
   });
 
   /**
-   * **Property 5: Gemini CLI Request Format**
-   * **Validates: Requirements 4.3**
-   *
-   * *For any* Gemini CLI test request, the request SHALL:
-   * - Target endpoint /v1beta/models/{model}:streamGenerateContent
-   * - Include functionDeclarations array format
-   * - Use generationConfig.maxOutputTokens for token limit
-   * - Include User-Agent and x-goog-api-client headers
-   */
-  describe('Property 5: Gemini CLI Request Format', () => {
-    it('should target /v1beta/models/{model}:streamGenerateContent endpoint', () => {
-      fc.assert(
-        fc.property(urlArb, apiKeyArb, modelNameArb('gemini-'), (baseUrl, apiKey, model) => {
-          const request = buildGeminiCliRequest(baseUrl, apiKey, model);
-          expect(request.url).toContain('/v1beta/models/');
-          expect(request.url).toContain(':streamGenerateContent');
-          expect(request.url).toContain('alt=sse');
-          expect(request.url).toContain(model);
-        }),
-        { numRuns: 100 }
-      );
-    });
-
-    it('should include API key in URL query parameter', () => {
-      fc.assert(
-        fc.property(urlArb, apiKeyArb, modelNameArb('gemini-'), (baseUrl, apiKey, model) => {
-          const request = buildGeminiCliRequest(baseUrl, apiKey, model);
-          expect(request.url).toContain(`key=${apiKey}`);
-        }),
-        { numRuns: 100 }
-      );
-    });
-
-    it('should include User-Agent and x-goog-api-client headers', () => {
-      fc.assert(
-        fc.property(urlArb, apiKeyArb, modelNameArb('gemini-'), (baseUrl, apiKey, model) => {
-          const request = buildGeminiCliRequest(baseUrl, apiKey, model);
-          expect(request.headers['User-Agent']).toContain('GeminiCLI');
-          expect(request.headers['x-goog-api-client']).toBeDefined();
-        }),
-        { numRuns: 100 }
-      );
-    });
-
-    it('should include functionDeclarations format', () => {
-      fc.assert(
-        fc.property(urlArb, apiKeyArb, modelNameArb('gemini-'), (baseUrl, apiKey, model) => {
-          const request = buildGeminiCliRequest(baseUrl, apiKey, model);
-          const body = request.body as any;
-
-          expect(body.tools).toBeDefined();
-          expect(Array.isArray(body.tools)).toBe(true);
-          expect(body.tools.length).toBeGreaterThan(0);
-
-          // Check functionDeclarations format
-          const tool = body.tools[0];
-          expect(tool.functionDeclarations).toBeDefined();
-          expect(Array.isArray(tool.functionDeclarations)).toBe(true);
-        }),
-        { numRuns: 100 }
-      );
-    });
-
-    it('should use generationConfig.maxOutputTokens', () => {
-      fc.assert(
-        fc.property(urlArb, apiKeyArb, modelNameArb('gemini-'), (baseUrl, apiKey, model) => {
-          const request = buildGeminiCliRequest(baseUrl, apiKey, model);
-          const body = request.body as any;
-
-          expect(body.generationConfig).toBeDefined();
-          expect(body.generationConfig.maxOutputTokens).toBe(1);
-        }),
-        { numRuns: 100 }
-      );
-    });
-  });
-
-  /**
    * **Property 6: Minimal Token Consumption**
    * **Validates: Requirements 5.1, 5.2**
    *
-   * *For any* test request (regardless of CLI type), the request SHALL
-   * set max_tokens/maxOutputTokens to 1 and use minimal message content.
+   * *For any* supported test request, the request SHALL use minimal message content.
    */
   describe('Property 6: Minimal Token Consumption', () => {
     it('should set max_tokens to 1 for Claude Code requests', () => {
@@ -739,31 +617,17 @@ describe('CLI Compatibility Service Property Tests', () => {
       );
     });
 
-    it('should set maxOutputTokens to 1 for Gemini CLI requests', () => {
-      fc.assert(
-        fc.property(urlArb, apiKeyArb, modelNameArb('gemini-'), (baseUrl, apiKey, model) => {
-          const request = buildGeminiCliRequest(baseUrl, apiKey, model);
-          const body = request.body as any;
-          expect(body.generationConfig.maxOutputTokens).toBe(1);
-        }),
-        { numRuns: 100 }
-      );
-    });
-
-    it('should use minimal message content for all request types', () => {
+    it('should use minimal message content for all supported request types', () => {
       fc.assert(
         fc.property(urlArb, apiKeyArb, modelNameArb('claude-'), (baseUrl, apiKey, model) => {
           const claudeRequest = buildClaudeCodeRequest(baseUrl, apiKey, model);
           const codexRequest = buildCodexResponsesRequest(baseUrl, apiKey, model);
-          const geminiRequest = buildGeminiCliRequest(baseUrl, apiKey, model);
 
           const claudeBody = claudeRequest.body as any;
           const codexBody = codexRequest.body as any;
-          const geminiBody = geminiRequest.body as any;
 
           expect(claudeBody.messages[0].content.length).toBeLessThanOrEqual(10);
           expect(codexBody.input.length).toBeLessThanOrEqual(10);
-          expect(geminiBody.contents[0].parts[0].text.length).toBeLessThanOrEqual(10);
         }),
         { numRuns: 100 }
       );
@@ -936,7 +800,7 @@ describe('Property 8: Icon Style Correctness', () => {
     interface CliCompatibilityResult {
       claudeCode: boolean | null;
       codex: boolean | null;
-      geminiCli: boolean | null;
+      openCode: boolean | null;
       testedAt: number | null;
       error?: string;
     }
@@ -944,16 +808,14 @@ describe('Property 8: Icon Style Correctness', () => {
     const cliCompatibilityResultArb: fc.Arbitrary<CliCompatibilityResult> = fc.record({
       claudeCode: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
       codex: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
-      geminiCli: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
+      openCode: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
       testedAt: fc.oneof(fc.integer({ min: 0, max: Date.now() + 1000000 }), fc.constant(null)),
       error: fc.option(fc.string({ minLength: 0, maxLength: 200 }), { nil: undefined }),
     });
 
     fc.assert(
       fc.property(cliCompatibilityResultArb, result => {
-        const cliTypes = ['claudeCode', 'codex', 'geminiCli'] as const;
-
-        for (const cliType of cliTypes) {
+        for (const cliType of BUILTIN_CLI_TYPES) {
           const status = result[cliType];
           const styleClass = getIconStyleClass(status);
 
@@ -984,7 +846,7 @@ describe('Property 8: Persistence Round Trip', () => {
   interface CliCompatibilityResult {
     claudeCode: boolean | null;
     codex: boolean | null;
-    geminiCli: boolean | null;
+    openCode: boolean | null;
     testedAt: number | null;
     error?: string;
   }
@@ -995,7 +857,7 @@ describe('Property 8: Persistence Round Trip', () => {
   const cliCompatibilityResultArb: fc.Arbitrary<CliCompatibilityResult> = fc.record({
     claudeCode: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
     codex: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
-    geminiCli: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
+    openCode: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
     testedAt: fc.oneof(fc.integer({ min: 0, max: Date.now() + 1000000 }), fc.constant(null)),
     error: fc.option(fc.string({ minLength: 0, maxLength: 200 }), { nil: undefined }),
   });
@@ -1019,7 +881,7 @@ describe('Property 8: Persistence Round Trip', () => {
     return (
       a.claudeCode === b.claudeCode &&
       a.codex === b.codex &&
-      a.geminiCli === b.geminiCli &&
+      a.openCode === b.openCode &&
       a.testedAt === b.testedAt &&
       a.error === b.error
     );
@@ -1044,9 +906,9 @@ describe('Property 8: Persistence Round Trip', () => {
         const deserialized = deserializeResult(serialized);
 
         // Verify each field type is preserved
-        expect(typeof deserialized.claudeCode).toBe(typeof original.claudeCode);
-        expect(typeof deserialized.codex).toBe(typeof original.codex);
-        expect(typeof deserialized.geminiCli).toBe(typeof original.geminiCli);
+        for (const cliType of BUILTIN_CLI_TYPES) {
+          expect(typeof deserialized[cliType]).toBe(typeof original[cliType]);
+        }
       }),
       { numRuns: 100 }
     );
@@ -1099,176 +961,6 @@ describe('Property 8: Persistence Round Trip', () => {
         // Check all values are equivalent
         for (const key of Object.keys(original)) {
           expect(areResultsEqual(original[key], deserialized[key])).toBe(true);
-        }
-      }),
-      { numRuns: 100 }
-    );
-  });
-});
-
-/**
- * **Property 9: Gemini CLI 双端点测试完整性**
- * **Validates: Requirements 1.1, 1.2**
- *
- * *For any* Gemini CLI compatibility test invocation, the system SHALL test both
- * native and proxy endpoints and return a result containing `geminiDetail` with
- * both `native` and `proxy` boolean values.
- */
-describe('Property 9: Gemini CLI Dual Endpoint Test Completeness', () => {
-  /** Gemini CLI 详细测试结果 */
-  interface GeminiTestDetail {
-    native: boolean | null;
-    proxy: boolean | null;
-  }
-
-  /**
-   * Arbitrary for generating GeminiTestDetail
-   */
-  const geminiTestDetailArb: fc.Arbitrary<GeminiTestDetail> = fc.record({
-    native: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
-    proxy: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
-  });
-
-  /**
-   * Simulates the testGeminiWithDetail logic
-   * Returns { supported: boolean, detail: GeminiTestDetail }
-   */
-  function simulateTestGeminiWithDetail(
-    nativeResult: boolean,
-    proxyResult: boolean
-  ): { supported: boolean; detail: GeminiTestDetail } {
-    return {
-      supported: proxyResult || nativeResult, // 任一通过即支持
-      detail: {
-        native: nativeResult,
-        proxy: proxyResult,
-      },
-    };
-  }
-
-  it('should return geminiDetail with both native and proxy fields', () => {
-    fc.assert(
-      fc.property(fc.boolean(), fc.boolean(), (nativeResult, proxyResult) => {
-        const result = simulateTestGeminiWithDetail(nativeResult, proxyResult);
-
-        // Verify geminiDetail exists and has both fields
-        expect(result.detail).toBeDefined();
-        expect('native' in result.detail).toBe(true);
-        expect('proxy' in result.detail).toBe(true);
-      }),
-      { numRuns: 100 }
-    );
-  });
-
-  it('should set supported=true when proxy is true (regardless of native)', () => {
-    fc.assert(
-      fc.property(fc.boolean(), nativeResult => {
-        const result = simulateTestGeminiWithDetail(nativeResult, true);
-        expect(result.supported).toBe(true);
-      }),
-      { numRuns: 100 }
-    );
-  });
-
-  it('should set supported=true when native is true (regardless of proxy)', () => {
-    fc.assert(
-      fc.property(fc.boolean(), proxyResult => {
-        const result = simulateTestGeminiWithDetail(true, proxyResult);
-        expect(result.supported).toBe(true);
-      }),
-      { numRuns: 100 }
-    );
-  });
-
-  it('should set supported=false only when both native and proxy are false', () => {
-    const result = simulateTestGeminiWithDetail(false, false);
-    expect(result.supported).toBe(false);
-    expect(result.detail.native).toBe(false);
-    expect(result.detail.proxy).toBe(false);
-  });
-
-  it('should correctly reflect individual endpoint results in detail', () => {
-    fc.assert(
-      fc.property(fc.boolean(), fc.boolean(), (nativeResult, proxyResult) => {
-        const result = simulateTestGeminiWithDetail(nativeResult, proxyResult);
-
-        // Detail should exactly match input results
-        expect(result.detail.native).toBe(nativeResult);
-        expect(result.detail.proxy).toBe(proxyResult);
-      }),
-      { numRuns: 100 }
-    );
-  });
-
-  it('should preserve geminiDetail through serialization round trip', () => {
-    fc.assert(
-      fc.property(geminiTestDetailArb, original => {
-        const serialized = JSON.stringify(original);
-        const deserialized = JSON.parse(serialized) as GeminiTestDetail;
-
-        expect(deserialized.native).toBe(original.native);
-        expect(deserialized.proxy).toBe(original.proxy);
-      }),
-      { numRuns: 100 }
-    );
-  });
-
-  it('should handle all combinations of native/proxy results correctly', () => {
-    // Test all 4 combinations explicitly
-    const combinations: [boolean, boolean][] = [
-      [false, false],
-      [false, true],
-      [true, false],
-      [true, true],
-    ];
-
-    for (const [native, proxy] of combinations) {
-      const result = simulateTestGeminiWithDetail(native, proxy);
-
-      // Verify supported logic: either one being true means supported
-      expect(result.supported).toBe(native || proxy);
-
-      // Verify detail reflects actual results
-      expect(result.detail.native).toBe(native);
-      expect(result.detail.proxy).toBe(proxy);
-    }
-  });
-
-  /**
-   * Test that CliCompatibilityResult with geminiDetail preserves correctly
-   */
-  it('should preserve geminiDetail in CliCompatibilityResult round trip', () => {
-    interface CliCompatibilityResultWithGeminiDetail {
-      claudeCode: boolean | null;
-      codex: boolean | null;
-      geminiCli: boolean | null;
-      geminiDetail?: GeminiTestDetail;
-      testedAt: number | null;
-      error?: string;
-    }
-
-    const cliCompatibilityResultWithGeminiDetailArb: fc.Arbitrary<CliCompatibilityResultWithGeminiDetail> =
-      fc.record({
-        claudeCode: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
-        codex: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
-        geminiCli: fc.oneof(fc.constant(true), fc.constant(false), fc.constant(null)),
-        geminiDetail: fc.option(geminiTestDetailArb, { nil: undefined }),
-        testedAt: fc.oneof(fc.integer({ min: 0, max: Date.now() + 1000000 }), fc.constant(null)),
-        error: fc.option(fc.string({ minLength: 0, maxLength: 200 }), { nil: undefined }),
-      });
-
-    fc.assert(
-      fc.property(cliCompatibilityResultWithGeminiDetailArb, original => {
-        const serialized = JSON.stringify(original);
-        const deserialized = JSON.parse(serialized) as CliCompatibilityResultWithGeminiDetail;
-
-        // Verify geminiDetail is preserved
-        if (original.geminiDetail === undefined) {
-          expect(deserialized.geminiDetail).toBeUndefined();
-        } else {
-          expect(deserialized.geminiDetail).toBeDefined();
-          expect(deserialized.geminiDetail!.native).toBe(original.geminiDetail.native);
-          expect(deserialized.geminiDetail!.proxy).toBe(original.geminiDetail.proxy);
         }
       }),
       { numRuns: 100 }

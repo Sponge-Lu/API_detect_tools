@@ -3,7 +3,7 @@
  * 平铺展示重定向卡片，并在详情弹窗内维护当前卡片的站点 / API key 优先级
  */
 
-import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useId, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Check,
@@ -34,7 +34,6 @@ import {
   buildRouteOverrideDisplayItemId,
   buildRouteApiKeyPriorityKey,
   DEFAULT_ROUTE_RUNTIME_CONFIG,
-  DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME,
   inferRouteModelVendor,
   normalizeRouteRuntimeConfig,
   ROUTE_SUCCESSFUL_PATH_AFFINITY_MS,
@@ -66,9 +65,10 @@ import type {
   UnifiedConfig,
   UserGroupInfo,
 } from '../../../../shared/types/site';
+import { BUILTIN_CLI_TYPES } from '../../../../shared/types/cli-config';
 import { parseCustomCliRouteConfigId } from '../../../../shared/utils/customCliRouteId';
 
-const ROUTE_CLI_TYPES = ['claudeCode', 'codex', 'geminiCli'] as const;
+const ROUTE_CLI_TYPES = BUILTIN_CLI_TYPES;
 
 interface RedirectCandidateGroup {
   originalModel: string;
@@ -737,7 +737,6 @@ function getPriorityHitRoutePathFromLog(
 }
 
 function getPriorityHitRoutePathResetParams(hitPath: PriorityHitRoutePath | null): {
-  routeRuleId?: string;
   canonicalModel: string;
   siteId: string;
   accountId: string;
@@ -750,7 +749,6 @@ function getPriorityHitRoutePathResetParams(hitPath: PriorityHitRoutePath | null
 
   // Reset the route channel, not just one upstream model variant under the same channel.
   return {
-    routeRuleId: hitPath.routeRuleId,
     canonicalModel: hitPath.canonicalModel,
     siteId: hitPath.siteId,
     accountId: hitPath.accountId,
@@ -1249,32 +1247,6 @@ function buildRedirectCandidateGroups(sources: RouteModelSourceRef[]): RedirectC
     .sort((left, right) => left.originalModel.localeCompare(right.originalModel));
 }
 
-function buildFallbackDisplayItems(registry: RouteModelRegistryConfig): RouteModelDisplayItem[] {
-  const exampleEntry = registry.entries[DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME];
-  if (!exampleEntry || registry.lastAggregatedAt) {
-    return [];
-  }
-
-  return [
-    {
-      id: `fallback:${exampleEntry.canonicalName}`,
-      vendor: exampleEntry.vendor,
-      canonicalName: exampleEntry.canonicalName,
-      sourceKeys: exampleEntry.sources.map(source => source.sourceKey),
-      originalModelOrder: Array.from(
-        new Set(exampleEntry.sources.map(source => source.originalModel))
-      ),
-      priorityConfig: {
-        sitePriorities: {},
-        apiKeyPriorities: {},
-      },
-      mode: 'seeded',
-      createdAt: exampleEntry.createdAt,
-      updatedAt: exampleEntry.updatedAt,
-    },
-  ];
-}
-
 function buildOverrideDisplayItems(
   registry: RouteModelRegistryConfig,
   sourceByKey: Map<string, RouteModelSourceRef>,
@@ -1369,13 +1341,7 @@ export function buildDisplayItemViews(
     overrideSourceKeysByCanonicalName.set(canonicalName, sourceKeys);
   }
 
-  const visibleDisplayItems = registry.displayItems.filter(
-    item =>
-      item.mode === 'manual' ||
-      item.canonicalName === DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME
-  );
-  const baseDisplayItems =
-    visibleDisplayItems.length > 0 ? visibleDisplayItems : buildFallbackDisplayItems(registry);
+  const baseDisplayItems = registry.displayItems.filter(item => item.mode === 'manual');
   const displayItems = [
     ...baseDisplayItems,
     ...buildOverrideDisplayItems(
@@ -1464,27 +1430,6 @@ export function shouldRefreshRegistrySourceDetails(registry?: RouteModelRegistry
     }
 
     return source.availableUserGroups === undefined || source.availableApiKeys === undefined;
-  });
-}
-
-export function shouldRefreshRegistryDisplayItems(registry?: RouteModelRegistryConfig): boolean {
-  if (!registry) {
-    return false;
-  }
-
-  if (getRegistrySourcePool(registry).length === 0) {
-    return false;
-  }
-
-  return registry.displayItems.some(item => {
-    if ((item.originalModelOrder?.length ?? 0) === 0) {
-      return true;
-    }
-
-    return (
-      item.mode === 'seeded' &&
-      item.canonicalName !== DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME
-    );
   });
 }
 
@@ -1818,7 +1763,6 @@ export function ModelRedirectionTab({
   const {
     config,
     refreshRuntimeState,
-    rebuildModelRegistry,
     syncModelRegistrySources,
     upsertMappingOverride,
     upsertDisplayItem,
@@ -1829,7 +1773,6 @@ export function ModelRedirectionTab({
     useShallow(store => ({
       config: store.config,
       refreshRuntimeState: store.refreshRuntimeState,
-      rebuildModelRegistry: store.rebuildModelRegistry,
       syncModelRegistrySources: store.syncModelRegistrySources,
       upsertMappingOverride: store.upsertMappingOverride,
       upsertDisplayItem: store.upsertDisplayItem,
@@ -1839,7 +1782,6 @@ export function ModelRedirectionTab({
     }))
   );
   const [syncingSources, setSyncingSources] = useState(false);
-  const [resettingDefaults, setResettingDefaults] = useState(false);
   const [resettingPathCanonicalName, setResettingPathCanonicalName] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [selectedDisplayItemId, setSelectedDisplayItemId] = useState<string | null>(null);
@@ -1873,7 +1815,6 @@ export function ModelRedirectionTab({
   const [firstHitPathLogsByCanonicalName, setFirstHitPathLogsByCanonicalName] = useState<
     Record<string, RouteRequestLogItem>
   >({});
-  const refreshingDisplayItemsRef = useRef(false);
   const redirectNameInputId = useId();
   const searchInputId = useId();
 
@@ -1897,14 +1838,6 @@ export function ModelRedirectionTab({
   const shouldAutoRefreshSourceDetails = useMemo(
     () => shouldRefreshRegistrySourceDetails(registry),
     [registry]
-  );
-  const shouldAutoRefreshDisplayItems = useMemo(
-    () => shouldRefreshRegistryDisplayItems(registry),
-    [registry]
-  );
-  const shouldBootstrapRegistry = useMemo(
-    () => displayItems.length === 0 && !registry?.lastAggregatedAt,
-    [displayItems.length, registry?.lastAggregatedAt]
   );
   const overrideBySource = useMemo(
     () =>
@@ -2240,7 +2173,7 @@ export function ModelRedirectionTab({
   const openEditEditor = useCallback(
     (displayItem: RouteModelDisplayItem, entry: RouteModelRegistryEntry | null) => {
       if (!entry) {
-        toast.error('当前重定向项缺少可编辑的来源，请先同步来源或重置默认重定向');
+        toast.error('当前重定向项缺少可编辑的来源，请先同步来源或重新创建重定向');
         return;
       }
 
@@ -2283,43 +2216,6 @@ export function ModelRedirectionTab({
       setSyncingSources(false);
     }
   }, [refreshOpenSourceDetails, syncModelRegistrySources]);
-
-  const handleResetDefaults = useCallback(async () => {
-    setResettingDefaults(true);
-    try {
-      const rebuiltRegistry = await rebuildModelRegistry(true, { resetDefaults: true });
-      if (!rebuiltRegistry) {
-        throw new Error('无法重置默认重定向');
-      }
-      toast.success('默认模型重定向已重置，Claude Code 路由规则已修复');
-    } catch (error: unknown) {
-      toast.error(`重置失败: ${getErrorMessage(error)}`);
-    } finally {
-      setResettingDefaults(false);
-    }
-  }, [rebuildModelRegistry]);
-
-  const handleRefreshDisplayItems = useCallback(async () => {
-    if (refreshingDisplayItemsRef.current) {
-      return;
-    }
-
-    refreshingDisplayItemsRef.current = true;
-    setResettingDefaults(true);
-    try {
-      const rebuiltRegistry = await rebuildModelRegistry(true);
-      if (!rebuiltRegistry) {
-        throw new Error('无法刷新默认重定向');
-      }
-      refreshOpenSourceDetails(rebuiltRegistry);
-      toast.success('默认模型重定向已刷新，现有优先级设置已保留');
-    } catch (error: unknown) {
-      toast.error(`刷新失败: ${getErrorMessage(error)}`);
-    } finally {
-      refreshingDisplayItemsRef.current = false;
-      setResettingDefaults(false);
-    }
-  }, [rebuildModelRegistry, refreshOpenSourceDetails]);
 
   const handleResetRoutePaths = useCallback(
     async (item: RouteModelDisplayItem, displayName: string) => {
@@ -2482,28 +2378,10 @@ export function ModelRedirectionTab({
       return;
     }
 
-    if (shouldBootstrapRegistry) {
-      void handleResetDefaults();
-      return;
-    }
-
-    if (shouldAutoRefreshDisplayItems) {
-      void handleRefreshDisplayItems();
-      return;
-    }
-
     if (shouldAutoRefreshSourceDetails) {
       void handleSyncSources();
     }
-  }, [
-    config,
-    handleRefreshDisplayItems,
-    handleResetDefaults,
-    handleSyncSources,
-    shouldBootstrapRegistry,
-    shouldAutoRefreshDisplayItems,
-    shouldAutoRefreshSourceDetails,
-  ]);
+  }, [config, handleSyncSources, shouldAutoRefreshSourceDetails]);
 
   const toggleOriginalModel = useCallback((originalModel: string) => {
     setDraft(current => {
@@ -2820,6 +2698,17 @@ export function ModelRedirectionTab({
 
     const normalizedDraft = buildSequentialPriorityDraft(sortedDetailSiteGroups, priorityDraft);
     const priorityConfig = serializePriorityConfig(normalizedDraft);
+    const priorityHitPath =
+      getPriorityHitRoutePathFromState({
+        states: config?.routePathStates,
+        item: sourceDetailState.item,
+        now: Date.now(),
+      }) ??
+      getPriorityHitRoutePathFromLog(
+        sourceDetailState.item,
+        firstHitPathLogsByCanonicalName[sourceDetailState.item.canonicalName]
+      );
+    const priorityHitResetParams = getPriorityHitRoutePathResetParams(priorityHitPath);
 
     setSaving(true);
     try {
@@ -2832,13 +2721,39 @@ export function ModelRedirectionTab({
         throw new Error('无法保存重定向优先级');
       }
 
+      if (priorityHitResetParams) {
+        const cleared = await resetPathStates(priorityHitResetParams);
+        if (cleared === null) {
+          throw new Error('无法重置旧优先命中路径');
+        }
+        setFirstHitPathLogsByCanonicalName(current => {
+          const currentLog = current[sourceDetailState.item.canonicalName];
+          const currentHitPath = getPriorityHitRoutePathFromLog(sourceDetailState.item, currentLog);
+          if (!isSamePriorityHitRouteChannel(currentHitPath, priorityHitPath)) {
+            return current;
+          }
+
+          const next = { ...current };
+          delete next[sourceDetailState.item.canonicalName];
+          return next;
+        });
+      }
+
       toast.success('重定向优先级已更新');
     } catch (error: unknown) {
       toast.error(`保存失败: ${getErrorMessage(error)}`);
     } finally {
       setSaving(false);
     }
-  }, [priorityDraft, sortedDetailSiteGroups, sourceDetailState, upsertDisplayItem]);
+  }, [
+    config?.routePathStates,
+    firstHitPathLogsByCanonicalName,
+    priorityDraft,
+    resetPathStates,
+    sortedDetailSiteGroups,
+    sourceDetailState,
+    upsertDisplayItem,
+  ]);
 
   const handleSaveRouteRules = useCallback(async () => {
     if (!routeRuleState) {
@@ -3038,7 +2953,7 @@ export function ModelRedirectionTab({
                   size="sm"
                   className="!h-7 !min-h-7 !px-2"
                   onClick={handleSyncSources}
-                  disabled={syncingSources || resettingDefaults}
+                  disabled={syncingSources}
                 >
                   {syncingSources ? '同步中' : '同步来源'}
                 </AppButton>
@@ -3048,7 +2963,7 @@ export function ModelRedirectionTab({
                   variant="secondary"
                   className="!h-7 !min-h-7 !px-2"
                   onClick={openCreateEditor}
-                  disabled={resettingDefaults || syncingSources || saving}
+                  disabled={syncingSources || saving}
                 >
                   新增重定向
                 </AppButton>
@@ -3080,11 +2995,6 @@ export function ModelRedirectionTab({
                         <code className="min-w-0 truncate font-mono text-[13px] font-semibold text-[var(--text-primary)]">
                           {displayItem.displayName}
                         </code>
-                        {displayItem.item.mode === 'seeded' ? (
-                          <span className="shrink-0 rounded-full bg-[var(--surface-2)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)]">
-                            示例
-                          </span>
-                        ) : null}
                       </div>
                     </button>
                   );

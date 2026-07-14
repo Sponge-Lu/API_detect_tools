@@ -166,7 +166,7 @@ function normalizeCliConfig(config) {
     ...config,
     claudeCode: normalizeCliConfigItem(config.claudeCode),
     codex: normalizeCliConfigItem(config.codex),
-    geminiCli: normalizeCliConfigItem(config.geminiCli),
+    openCode: normalizeCliConfigItem(config.openCode),
   };
 }
 
@@ -849,11 +849,8 @@ async function migrateConfigShape(config, existingRuntimeCache, existingRouteSta
     ...config,
     version: CONFIG_VERSION,
     sites: sites.map(site => {
-      const { cached_data: _cachedData, ...persistableSite } = site;
-      return {
-        ...persistableSite,
-        cli_config: normalizeCliConfig(persistableSite.cli_config),
-      };
+      const { cached_data: _cachedData, cli_config: _cliConfig, ...persistableSite } = site;
+      return persistableSite;
     }),
     accounts: accounts.map(account => {
       const { cached_data: _cachedData, ...persistableAccount } = account;

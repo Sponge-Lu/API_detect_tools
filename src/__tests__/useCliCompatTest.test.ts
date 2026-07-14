@@ -1,7 +1,7 @@
 /**
  * 输入: 站点页 CLI 配置、Electron IPC mock、Zustand 检测状态
  * 输出: 站点页 CLI 兼容性测试回归结果
- * 定位: 测试层 - 验证 useCliCompatTest 的站点 URL 优先级、手动测试结果同步与 Gemini 错误提示
+ * 定位: 测试层 - 验证 useCliCompatTest 的站点 URL 优先级和手动测试结果同步
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -65,34 +65,17 @@ interface TestElectronApi {
   };
 }
 
-function buildCliConfig(
-  cliType: 'codex' | 'geminiCli',
-  editedFiles: Array<{ path: string; content: string }>
-): CliConfig {
+function buildCliConfig(editedFiles: Array<{ path: string; content: string }>): CliConfig {
   return {
     claudeCode: null,
-    codex:
-      cliType === 'codex'
-        ? {
-            apiKeyId: 1,
-            model: 'gpt-5.2-xhigh',
-            testModels: ['gpt-5.2-codex-low'],
-            enabled: true,
-            editedFiles,
-            applyMode: 'merge',
-          }
-        : null,
-    geminiCli:
-      cliType === 'geminiCli'
-        ? {
-            apiKeyId: 1,
-            model: 'gemini-3-pro-preview',
-            testModels: ['gemini-3-flash-preview'],
-            enabled: true,
-            editedFiles,
-            applyMode: 'merge',
-          }
-        : null,
+    codex: {
+      apiKeyId: 1,
+      model: 'gpt-5.2-xhigh',
+      testModels: ['gpt-5.2-codex-low'],
+      enabled: true,
+      editedFiles,
+      applyMode: 'merge',
+    },
   };
 }
 
@@ -136,7 +119,6 @@ describe('useCliCompatTest', () => {
         data: {
           claudeCode: null,
           codex: true,
-          geminiCli: true,
         },
         samples: [],
       }),
@@ -147,7 +129,7 @@ describe('useCliCompatTest', () => {
   it.each([
     [
       'codex',
-      buildCliConfig('codex', [
+      buildCliConfig([
         {
           path: '~/.codex/config.toml',
           content: 'base_url = "https://duckcoding.com/v1"\nwire_api = "responses"',
@@ -158,20 +140,6 @@ describe('useCliCompatTest', () => {
         },
       ]),
       'gpt-5.2-codex-low',
-    ],
-    [
-      'geminiCli',
-      buildCliConfig('geminiCli', [
-        {
-          path: '~/.gemini/.env',
-          content: [
-            'GEMINI_API_KEY=sk-stale-from-preview',
-            'GEMINI_MODEL=gemini-3-pro-preview',
-            'GOOGLE_GEMINI_BASE_URL=https://duckcoding.com',
-          ].join('\n'),
-        },
-      ]),
-      'gemini-3-flash-preview',
     ],
   ] as const)(
     'uses the current site URL for %s tests when the site selected an API key',
@@ -218,14 +186,10 @@ describe('useCliCompatTest', () => {
   it('syncs persisted manual probe results back into the site card and route usability cache', async () => {
     useDetectionStore.getState().setCliConfig(
       STORE_KEY,
-      buildCliConfig('geminiCli', [
+      buildCliConfig([
         {
-          path: '~/.gemini/.env',
-          content: [
-            'GEMINI_API_KEY=sk-stale-from-preview',
-            'GEMINI_MODEL=gemini-3-pro-preview',
-            'GOOGLE_GEMINI_BASE_URL=https://duckcoding.com',
-          ].join('\n'),
+          path: '~/.codex/config.toml',
+          content: 'base_url = "https://duckcoding.com/v1"\nwire_api = "responses"',
         },
       ])
     );
@@ -242,36 +206,28 @@ describe('useCliCompatTest', () => {
     const testWindow = window as typeof window & TestElectronApi;
     const electronAPI = testWindow.electronAPI!;
     const siteScopedAccountId = buildSiteScopedProbeAccountId(SITE_ID);
-    const probeKey = buildProbeKey(
-      SITE_ID,
-      siteScopedAccountId,
-      'geminiCli',
-      'gemini-3-flash-preview'
-    );
+    const probeKey = buildProbeKey(SITE_ID, siteScopedAccountId, 'codex', 'gpt-5.2-codex-low');
 
     electronAPI.cliCompat = {
       testWithWrapper: vi.fn().mockResolvedValue({
         success: true,
         data: {
           claudeCode: null,
-          codex: null,
-          geminiCli: false,
-          geminiDetail: {
-            native: false,
-            proxy: false,
+          codex: false,
+          codexDetail: {
+            responses: false,
           },
-          geminiError: '错误码 401',
+          codexError: '错误码 401',
         },
         samples: [
           {
-            cliType: 'geminiCli',
-            model: 'gemini-3-flash-preview',
+            cliType: 'codex',
+            model: 'gpt-5.2-codex-low',
             success: false,
             testedAt: 1776800000000,
             error: '错误码 401',
-            geminiDetail: {
-              native: false,
-              proxy: false,
+            codexDetail: {
+              responses: false,
             },
           },
         ],
@@ -288,24 +244,23 @@ describe('useCliCompatTest', () => {
               probeKey,
               siteId: SITE_ID,
               accountId: siteScopedAccountId,
-              cliType: 'geminiCli',
-              canonicalModel: 'gemini-3-flash-preview',
-              rawModel: 'gemini-3-flash-preview',
+              cliType: 'codex',
+              canonicalModel: 'gpt-5.2-codex-low',
+              rawModel: 'gpt-5.2-codex-low',
               healthy: false,
               lastSample: {
                 sampleId: 'sample-1',
                 probeKey,
                 siteId: SITE_ID,
                 accountId: siteScopedAccountId,
-                cliType: 'geminiCli',
-                canonicalModel: 'gemini-3-flash-preview',
-                rawModel: 'gemini-3-flash-preview',
+                cliType: 'codex',
+                canonicalModel: 'gpt-5.2-codex-low',
+                rawModel: 'gpt-5.2-codex-low',
                 success: false,
                 source: 'siteManual',
                 error: '错误码 401',
-                geminiDetail: {
-                  native: false,
-                  proxy: false,
+                codexDetail: {
+                  responses: false,
                 },
                 testedAt: 1776800000000,
               },
@@ -326,11 +281,11 @@ describe('useCliCompatTest', () => {
     expect(fetchConfigMock).toHaveBeenCalled();
     expect(fetchCliProbeDataMock).toHaveBeenCalledWith('7d', true);
     expect(useDetectionStore.getState().cliCompatibility[STORE_KEY]).toMatchObject({
-      geminiCli: false,
-      geminiError: '错误码 401',
+      codex: false,
+      codexError: '错误码 401',
       testedAt: 1776800000000,
       sourceLabel: '来自站点管理测试',
     });
-    expect(toastErrorMock).toHaveBeenCalledWith('Gemini CLI 失败原因: 错误码 401', 8000);
+    expect(toastErrorMock).toHaveBeenCalledWith('Codex: 不兼容 [responses: ✗]', 6000);
   });
 });

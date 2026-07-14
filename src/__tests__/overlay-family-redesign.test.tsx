@@ -30,15 +30,6 @@ const editedCliConfig: CliConfig = {
     editedFiles: null,
     applyMode: 'merge',
   },
-  geminiCli: {
-    apiKeyId: null,
-    model: null,
-    testModel: null,
-    testModels: [],
-    enabled: true,
-    editedFiles: null,
-    applyMode: 'merge',
-  },
 };
 
 const editedCustomCliConfig: CustomCliConfig = {
@@ -61,12 +52,6 @@ const editedCustomCliConfig: CustomCliConfig = {
       ],
     },
     codex: {
-      enabled: true,
-      model: null,
-      testModels: [],
-      editedFiles: null,
-    },
-    geminiCli: {
       enabled: true,
       model: null,
       testModels: [],
@@ -210,6 +195,7 @@ describe('overlay family redesign', () => {
       />
     );
 
+    fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
     fireEvent.click(screen.getByTitle('重置为默认配置'));
 
     await waitFor(() =>

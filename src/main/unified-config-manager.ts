@@ -76,6 +76,8 @@ import type {
   RouteAnalyticsBucket,
 } from '../shared/types/route-proxy';
 import {
+  BUILTIN_CLI_LABELS,
+  BUILTIN_CLI_TYPES,
   CLI_TARGET_PROTOCOLS,
   getCliTargetEndpoint,
   normalizeCliTargetProtocol,
@@ -86,13 +88,13 @@ import {
   DEFAULT_CLI_PROBE_CONFIG,
   DEFAULT_ANALYTICS_CONFIG,
   DEFAULT_MODEL_REGISTRY_CONFIG,
-  DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME,
   buildRouteEndpointCapabilityKey,
   buildStatsKey,
   buildRoutePathStateKey,
   buildProbeKey,
   buildBucketKey,
   buildSiteScopedProbeAccountId,
+  normalizeOpenCodeRouteProtocol,
   normalizeRouteCliSelection,
   normalizeRouteRuntimeConfig,
 } from '../shared/types/route-proxy';
@@ -111,12 +113,22 @@ const DEFAULT_SETTINGS: Settings = {
 const DEFAULT_GROUP: SiteGroup = { id: 'default', name: '默认分组' };
 const UNAVAILABLE_GROUP: SiteGroup = { id: 'unavailable', name: '不可用' };
 const AUTO_CLI_MODEL_ROUTE_RULE_PRIORITY = 0;
-const ROUTE_CLI_LABELS: Record<RouteCliType, string> = {
-  claudeCode: 'Claude Code',
-  codex: 'Codex',
-  geminiCli: 'Gemini CLI',
-};
-const ROUTE_CLI_TYPES: RouteCliType[] = ['claudeCode', 'codex', 'geminiCli'];
+const LEGACY_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME = 'claude-opus-4-6';
+const LEGACY_ROUTE_REDIRECTION_EXAMPLE_AUTO_RULE_ID = 'auto-cli-model-claudeCode-claude-opus-4-6';
+const ROUTE_CLI_LABELS: Record<RouteCliType, string> = BUILTIN_CLI_LABELS;
+const ROUTE_CLI_TYPES: RouteCliType[] = [...BUILTIN_CLI_TYPES];
+
+function normalizeRouteCliSelections(
+  selections: Partial<Record<RouteCliType, string | null>> | null | undefined,
+  entries: RouteModelRegistryConfig['entries']
+): Record<RouteCliType, string | null> {
+  return Object.fromEntries(
+    ROUTE_CLI_TYPES.map(cliType => [
+      cliType,
+      normalizeRouteCliSelection(selections?.[cliType], entries),
+    ])
+  ) as Record<RouteCliType, string | null>;
+}
 
 type ReadConfigResult = {
   config: UnifiedConfig;
@@ -323,10 +335,7 @@ function normalizeRouteModelDisplayItems(items: RouteModelDisplayItem[]): RouteM
     if (!normalizedItem.canonicalName || normalizedItem.sourceKeys.length === 0) {
       continue;
     }
-    if (
-      normalizedItem.mode === 'seeded' &&
-      normalizedItem.canonicalName !== DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME
-    ) {
+    if (normalizedItem.mode !== 'manual') {
       continue;
     }
 
@@ -501,6 +510,9 @@ export class UnifiedConfigManager {
     const runtimeCache = this.createRuntimeCacheSnapshot(
       runtimeCacheManager.exportCacheSync() || (await runtimeCacheManager.loadCache())
     );
+    if (this.cleanupLegacyRouteRedirectionExample(config)) {
+      needsSave = true;
+    }
     config = this.normalizeConfig(config);
     const routeStateSnapshot = await routeStateManager.loadSnapshot();
     const hasRouteRuntimePayload = this.hasPersistedRouteRuntimePayload(config);
@@ -1063,7 +1075,8 @@ export class UnifiedConfigManager {
     if (!r.routeEndpointCapabilities) r.routeEndpointCapabilities = {};
     if (!r.health) r.health = {};
     if (!r.cliModelSelections)
-      r.cliModelSelections = { claudeCode: null, codex: null, geminiCli: null };
+      r.cliModelSelections = { ...DEFAULT_ROUTING_CONFIG.cliModelSelections };
+    r.openCodeRouteProtocol = normalizeOpenCodeRouteProtocol(r.openCodeRouteProtocol);
     if (!r.modelRegistry) {
       r.modelRegistry = { ...DEFAULT_MODEL_REGISTRY_CONFIG };
     } else {
@@ -1113,9 +1126,6 @@ export class UnifiedConfigManager {
       s.upstreamProxyUrl = '';
     } else {
       s.upstreamProxyUrl = String(s.upstreamProxyUrl).trim();
-    }
-    if (s.blockGeminiCliInternalUtilityRequests === undefined) {
-      s.blockGeminiCliInternalUtilityRequests = true;
     }
     if (s.enabled === undefined) s.enabled = false;
 
@@ -1266,17 +1276,70 @@ export class UnifiedConfigManager {
       })
     );
 
-    r.cliModelSelections = {
-      claudeCode: normalizeRouteCliSelection(
-        r.cliModelSelections.claudeCode,
-        r.modelRegistry.entries
-      ),
-      codex: normalizeRouteCliSelection(r.cliModelSelections.codex, r.modelRegistry.entries),
-      geminiCli: normalizeRouteCliSelection(
-        r.cliModelSelections.geminiCli,
-        r.modelRegistry.entries
-      ),
-    };
+    r.cliModelSelections = normalizeRouteCliSelections(
+      r.cliModelSelections,
+      r.modelRegistry.entries
+    );
+  }
+
+  private cleanupLegacyRouteRedirectionExample(config: UnifiedConfig): boolean {
+    const routing = config.routing;
+    if (!routing) {
+      return false;
+    }
+
+    let changed = false;
+    const registry = routing.modelRegistry;
+    const displayItems = Array.isArray(registry?.displayItems) ? registry.displayItems : [];
+    const hasManualSameNameDisplayItem = displayItems.some(
+      item =>
+        item?.mode === 'manual' &&
+        item.canonicalName?.trim() === LEGACY_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME
+    );
+
+    if (registry && displayItems.length > 0) {
+      const manualDisplayItems = displayItems.filter(item => item?.mode !== 'seeded');
+      if (manualDisplayItems.length !== displayItems.length) {
+        registry.displayItems = manualDisplayItems;
+        changed = true;
+      }
+    }
+
+    const rules = Array.isArray(routing.rules) ? routing.rules : [];
+    const manualMatchingRuleExists = rules.some(
+      rule =>
+        rule.id !== LEGACY_ROUTE_REDIRECTION_EXAMPLE_AUTO_RULE_ID &&
+        routeRuleMatchesCliModel(
+          rule,
+          'claudeCode',
+          LEGACY_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME
+        )
+    );
+
+    if (rules.length > 0) {
+      const userRules = rules.filter(
+        rule => rule.id !== LEGACY_ROUTE_REDIRECTION_EXAMPLE_AUTO_RULE_ID
+      );
+      if (userRules.length !== rules.length) {
+        routing.rules = userRules;
+        changed = true;
+      }
+    }
+
+    if (
+      routing.cliModelSelections?.claudeCode?.trim() ===
+        LEGACY_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME &&
+      !hasManualSameNameDisplayItem &&
+      !manualMatchingRuleExists
+    ) {
+      routing.cliModelSelections = {
+        ...routing.cliModelSelections,
+        claudeCode: null,
+      };
+      changed = true;
+    }
+
+    return changed;
   }
 
   private migrateLegacyCliCompatibilityToRouteCliProbe(config: UnifiedConfig): boolean {
@@ -1285,7 +1348,7 @@ export class UnifiedConfigManager {
     const latest = config.routing!.cliProbe.latest;
     let changed = false;
     const legacyModel = '__legacy__compat__';
-    const cliTypes: RouteCliType[] = ['claudeCode', 'codex', 'geminiCli'];
+    const cliTypes: RouteCliType[] = ROUTE_CLI_TYPES;
 
     const getExistingLatestAt = (siteId: string, accountId: string, cliType: RouteCliType) =>
       Object.values(latest)
@@ -1304,9 +1367,9 @@ export class UnifiedConfigManager {
       (typeof compat.testedAt === 'number' ||
         typeof compat.claudeCode === 'boolean' ||
         typeof compat.codex === 'boolean' ||
-        typeof compat.geminiCli === 'boolean' ||
+        typeof compat.openCode === 'boolean' ||
         compat.codexDetail ||
-        compat.geminiDetail ||
+        compat.openCodeDetail ||
         typeof compat.error === 'string');
 
     const upsertLegacyLatest = (
@@ -1329,7 +1392,7 @@ export class UnifiedConfigManager {
         const hasStatus = typeof rawStatus === 'boolean';
         const hasDetail =
           (cliType === 'codex' && compat.codexDetail) ||
-          (cliType === 'geminiCli' && compat.geminiDetail);
+          (cliType === 'openCode' && compat.openCodeDetail);
         if (!hasStatus && !hasDetail && !compat.error) {
           continue;
         }
@@ -1359,8 +1422,8 @@ export class UnifiedConfigManager {
             success: rawStatus === true,
             source,
             error: typeof compat.error === 'string' ? compat.error : undefined,
-            codexDetail: compat.codexDetail,
-            geminiDetail: compat.geminiDetail,
+            codexDetail: cliType === 'codex' ? compat.codexDetail : undefined,
+            openCodeDetail: cliType === 'openCode' ? compat.openCodeDetail : undefined,
             testedAt,
           },
           lastSuccessAt: rawStatus === true ? testedAt : undefined,
@@ -1586,7 +1649,8 @@ export class UnifiedConfigManager {
             user_id: site.user_id || 'unknown',
             access_token: site.access_token || '',
             api_key: site.api_key, // 同时迁移 api_key
-            cli_config: site.cli_config, // 迁移 CLI 配置到账户
+            cli_config: site.cli_config ? { ...site.cli_config } : undefined, // 迁移 CLI 配置到账户
+            cached_data: site.cached_data ? { ...site.cached_data } : undefined,
             auth_source: 'manual',
             created_at: Date.now(),
             updated_at: Date.now(),
@@ -1596,9 +1660,10 @@ export class UnifiedConfigManager {
         }
       }
 
+      const firstAccount = accounts.find(a => a.site_id === site.id);
+
       // 1.2 如果站点有 api_key 但已有账户，迁移到第一个账户
       if (site.api_key && !site.access_token) {
-        const firstAccount = accounts.find(a => a.site_id === site.id);
         if (firstAccount && !firstAccount.api_key) {
           firstAccount.api_key = site.api_key;
           migratedApiKeys++;
@@ -1607,11 +1672,18 @@ export class UnifiedConfigManager {
 
       // 1.3 如果站点有 cli_config 但已有账户，迁移到第一个账户
       if (site.cli_config && !site.access_token) {
-        const firstAccount = accounts.find(a => a.site_id === site.id);
         if (firstAccount && !firstAccount.cli_config) {
-          firstAccount.cli_config = site.cli_config;
+          firstAccount.cli_config = { ...site.cli_config };
           migratedSiteCliConfig++;
         }
+      }
+
+      // 1.4 如果站点有运行时缓存但账户已存在，先迁移到账户再从配置中剥离
+      if (site.cached_data && firstAccount) {
+        firstAccount.cached_data = this.mergeDefinedCache(
+          firstAccount.cached_data,
+          site.cached_data
+        );
       }
 
       // 1.4 删除站点级 legacy 字段
@@ -1629,6 +1701,13 @@ export class UnifiedConfigManager {
         delete (account as any).auto_refresh_interval;
         removedAccountAutoRefresh++;
       }
+    }
+
+    const hydratedSiteTypes = await this.hydrateMissingSiteTypes(config as UnifiedConfig);
+    if (hydratedSiteTypes > 0) {
+      Logger.info(
+        `🧭 [UnifiedConfigManager] v3.0.x → 当前版本迁移阶段补全 site_type ${hydratedSiteTypes} 个`
+      );
     }
 
     config.version = CONFIG_VERSION;
@@ -1792,7 +1871,9 @@ export class UnifiedConfigManager {
 
     // 站点有 legacy 凭证但无账户记录 → 先补建默认账户，防止原凭证被覆盖丢失
     if (site) {
-      const existingAccounts = this.config!.accounts.filter(a => a.site_id === accountInput.site_id);
+      const existingAccounts = this.config!.accounts.filter(
+        a => a.site_id === accountInput.site_id
+      );
       if (existingAccounts.length === 0 && (site.access_token || site.user_id)) {
         const defaultAccount: AccountCredential = {
           id: generateAccountId(),
@@ -1814,7 +1895,8 @@ export class UnifiedConfigManager {
 
     // 同一站点 + 同一用户只保留一个账户记录，避免重复账户导致自动刷新/Profile 绑定混乱。
     const duplicateIndex = this.config!.accounts.findIndex(
-      existing => existing.site_id === accountInput.site_id && existing.user_id === accountInput.user_id
+      existing =>
+        existing.site_id === accountInput.site_id && existing.user_id === accountInput.user_id
     );
     if (duplicateIndex >= 0) {
       const mergedAccount: AccountCredential = {
@@ -2237,9 +2319,7 @@ export class UnifiedConfigManager {
       : undefined;
     const routePathStates = this.config.routing!.routePathStates;
     let cleared = 0;
-    const suppressAffinity = Boolean(
-      routeRuleId && canonicalModel && siteId && accountId && apiKeyId && targetProtocol
-    );
+    const suppressAffinity = Boolean(canonicalModel && siteId && accountId && apiKeyId);
     const suppressedStates: RoutePathState[] = [];
 
     if (
@@ -2305,7 +2385,7 @@ export class UnifiedConfigManager {
     if (suppressAffinity && (suppressedStates.length === 0 || !resolvedModel)) {
       const now = Date.now();
       suppressedStates.push({
-        routeRuleId: routeRuleId!,
+        routeRuleId,
         siteId: siteId!,
         accountId: accountId!,
         apiKeyId: apiKeyId!,
@@ -2426,20 +2506,10 @@ export class UnifiedConfigManager {
       ...this.config.routing!.cliModelSelections,
       ...selections,
     };
-    this.config.routing!.cliModelSelections = {
-      claudeCode: normalizeRouteCliSelection(
-        mergedSelections.claudeCode,
-        this.config.routing!.modelRegistry.entries
-      ),
-      codex: normalizeRouteCliSelection(
-        mergedSelections.codex,
-        this.config.routing!.modelRegistry.entries
-      ),
-      geminiCli: normalizeRouteCliSelection(
-        mergedSelections.geminiCli,
-        this.config.routing!.modelRegistry.entries
-      ),
-    };
+    this.config.routing!.cliModelSelections = normalizeRouteCliSelections(
+      mergedSelections,
+      this.config.routing!.modelRegistry.entries
+    );
     for (const [cliType, canonicalModel] of Object.entries(
       this.config.routing!.cliModelSelections
     ) as [RouteCliType, string | null][]) {
@@ -2449,26 +2519,26 @@ export class UnifiedConfigManager {
     return this.config.routing!.cliModelSelections;
   }
 
+  async updateOpenCodeRouteProtocol(
+    protocol: unknown
+  ): Promise<RoutingConfig['openCodeRouteProtocol']> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    this.config.routing!.openCodeRouteProtocol = normalizeOpenCodeRouteProtocol(protocol);
+    await this.saveConfig();
+    return this.config.routing!.openCodeRouteProtocol;
+  }
+
   // ============= 模型注册表 =============
 
   async updateRouteModelRegistry(registry: RouteModelRegistryConfig): Promise<void> {
     if (!this.config) throw new Error('Config not loaded');
     this.normalizeRoutingConfig(this.config);
     this.config.routing!.modelRegistry = registry;
-    this.config.routing!.cliModelSelections = {
-      claudeCode: normalizeRouteCliSelection(
-        this.config.routing!.cliModelSelections.claudeCode,
-        registry.entries
-      ),
-      codex: normalizeRouteCliSelection(
-        this.config.routing!.cliModelSelections.codex,
-        registry.entries
-      ),
-      geminiCli: normalizeRouteCliSelection(
-        this.config.routing!.cliModelSelections.geminiCli,
-        registry.entries
-      ),
-    };
+    this.config.routing!.cliModelSelections = normalizeRouteCliSelections(
+      this.config.routing!.cliModelSelections,
+      registry.entries
+    );
     await this.saveConfig();
   }
 

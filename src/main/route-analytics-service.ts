@@ -177,13 +177,14 @@ function buildRouteObjectStatsGroupKey(item: {
   return [item.siteName, item.accountName, item.apiKeyName].join('\u0000');
 }
 
-
 function resolveDirectModelPriceInfo(params: {
   siteId?: string;
   resolvedModel?: string;
   canonicalModel?: string | null;
   requestedModel?: string | null;
-}): { priceInfo: import('../shared/types/site').ModelPriceInfo; groupMultiplier: number } | undefined {
+}):
+  | { priceInfo: import('../shared/types/site').ModelPriceInfo; groupMultiplier: number }
+  | undefined {
   if (!params.siteId) {
     return undefined;
   }
@@ -193,7 +194,9 @@ function resolveDirectModelPriceInfo(params: {
     return undefined;
   }
 
-  const directConfig = loadCustomCliConfigStorageSync().configs.find(config => config.id === configId);
+  const directConfig = loadCustomCliConfigStorageSync().configs.find(
+    config => config.id === configId
+  );
   const pricingData = directConfig?.modelPricing?.data;
   if (!pricingData) {
     return undefined;

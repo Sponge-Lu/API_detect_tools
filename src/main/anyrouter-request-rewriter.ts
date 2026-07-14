@@ -9,7 +9,6 @@
  * 2. Claude Code: 保留原始请求字段和工具语义，生成 metadata.user_id，缺省补齐
  *    system/thinking/output_config，并添加 1m context beta 支持
  * 3. Codex: 保持 Responses API 原生协议透传，并过滤 AnyRouter 不支持的工具类型
- * 4. Gemini CLI: 保持 Gemini Native 原生协议透传
  *
  * 参考: D:\2_Github_Repository\any转cherry\anyrouter_proxy.py
  */
@@ -125,8 +124,7 @@ export interface AnyRouterRewriteResult {
 
 export type AnyRouterResponseAdapter =
   | { type: 'transparent' }
-  | { type: 'codexResponses'; model: string; stream: boolean }
-  | { type: 'geminiGenerateContent'; model: string; stream: boolean };
+  | { type: 'codexResponses'; model: string; stream: boolean };
 
 export interface AnyRouterResponseTransformResult {
   body: Buffer;
@@ -199,10 +197,6 @@ function buildClaudeAnyRouterBody(cleaned: JsonRecord, userHash: string | undefi
 function getDefaultUpstreamPath(cliType: RouteCliType): string {
   if (cliType === 'codex') {
     return '/v1/responses';
-  }
-
-  if (cliType === 'geminiCli') {
-    return '/v1beta/';
   }
 
   return '/v1/messages';
@@ -341,7 +335,7 @@ export function rewriteForAnyRouter(
 
   // 清理 [undefined]
   const cleaned = normalizeObject(stripUndefined(body));
-  if (cliType !== 'geminiCli' && !cleaned.model && upstreamModel) {
+  if (!cleaned.model && upstreamModel) {
     cleaned.model = upstreamModel;
   }
 
@@ -356,20 +350,6 @@ export function rewriteForAnyRouter(
 
     return buildTransparentRewriteResult(
       Buffer.from(JSON.stringify(codexBody), 'utf-8'),
-      requestUrl,
-      cliType
-    );
-  }
-
-  if (cliType === 'geminiCli') {
-    log.debug('[AnyRouter] Gemini native request forwarded:', {
-      cliType,
-      requestUrl,
-      hasUserHash: isValidUserHash(userHash),
-    });
-
-    return buildTransparentRewriteResult(
-      Buffer.from(JSON.stringify(cleaned), 'utf-8'),
       requestUrl,
       cliType
     );
@@ -645,59 +625,6 @@ function buildCodexSseBody(
   return Buffer.from(chunks.join(''), 'utf-8');
 }
 
-function buildGeminiUsage(usage: UsageShape): JsonRecord | undefined {
-  if (
-    usage.inputTokens === undefined &&
-    usage.outputTokens === undefined &&
-    usage.totalTokens === undefined
-  ) {
-    return undefined;
-  }
-
-  return {
-    ...(usage.inputTokens !== undefined ? { promptTokenCount: usage.inputTokens } : {}),
-    ...(usage.outputTokens !== undefined ? { candidatesTokenCount: usage.outputTokens } : {}),
-    ...(usage.totalTokens !== undefined
-      ? { totalTokenCount: usage.totalTokens }
-      : usage.inputTokens !== undefined && usage.outputTokens !== undefined
-        ? { totalTokenCount: usage.inputTokens + usage.outputTokens }
-        : {}),
-  };
-}
-
-function buildGeminiJson(text: string, usage: UsageShape): JsonRecord {
-  const usageMetadata = buildGeminiUsage(usage);
-  return {
-    candidates: [
-      {
-        content: {
-          parts: [{ text }],
-          role: 'model',
-        },
-        finishReason: 'STOP',
-        index: 0,
-      },
-    ],
-    ...(usageMetadata ? { usageMetadata } : {}),
-  };
-}
-
-function buildGeminiSseBody(text: string, deltas: string[], usage: UsageShape): Buffer {
-  const actualDeltas = deltas.length > 0 ? deltas : text ? [text] : [];
-  const chunks = actualDeltas.map(delta =>
-    sseEvent(null, {
-      candidates: [
-        {
-          content: { parts: [{ text: delta }], role: 'model' },
-          index: 0,
-        },
-      ],
-    })
-  );
-  chunks.push(sseEvent(null, buildGeminiJson('', usage)));
-  return Buffer.from(chunks.join(''), 'utf-8');
-}
-
 export function transformAnyRouterResponse(params: {
   body: Buffer;
   headers: Record<string, string | string[] | undefined>;
@@ -735,16 +662,5 @@ export function transformAnyRouterResponse(params: {
     );
   }
 
-  const body = params.adapter.stream
-    ? buildGeminiSseBody(anthropicPayload.text, anthropicPayload.deltas, anthropicPayload.usage)
-    : Buffer.from(
-        JSON.stringify(buildGeminiJson(anthropicPayload.text, anthropicPayload.usage)),
-        'utf-8'
-      );
-
-  return replaceResponseBody(
-    params.headers,
-    body,
-    params.adapter.stream ? 'text/event-stream; charset=utf-8' : 'application/json'
-  );
+  return { body: params.body, headers: params.headers };
 }

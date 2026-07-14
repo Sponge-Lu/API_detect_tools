@@ -13,17 +13,17 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import * as fc from 'fast-check';
-import type { CliConfig } from '../shared/types/cli-config';
-import { DEFAULT_CLI_CONFIG } from '../shared/types/cli-config';
+import type { BuiltinCliType, CliConfig } from '../shared/types/cli-config';
+import { BUILTIN_CLI_TYPES, DEFAULT_CLI_CONFIG } from '../shared/types/cli-config';
 import { filterValidCliConfigs } from '../renderer/components/dialogs/ApplyConfigPopover';
 import { isCliEnabled } from '../renderer/components/CliCompatibilityIcons';
 import { resolveClaudeCodeDisplayModel } from '../renderer/services/cli-config-generator';
 
 // ============= Types =============
 
-type CliType = 'claudeCode' | 'codex' | 'geminiCli';
+type CliType = BuiltinCliType;
 
-const CLI_TYPES: CliType[] = ['claudeCode', 'codex', 'geminiCli'];
+const CLI_TYPES: CliType[] = [...BUILTIN_CLI_TYPES];
 
 // ============= Arbitraries =============
 
@@ -47,13 +47,7 @@ const apiKeyIdArb = fc.option(fc.integer({ min: 1, max: 10000 }), { nil: null })
  */
 const modelArb = fc.option(
   fc.oneof(
-    fc.constantFrom(
-      'claude-3-opus-20240229',
-      'claude-3-sonnet-20240229',
-      'gpt-4',
-      'gpt-4-turbo',
-      'gemini-pro'
-    ),
+    fc.constantFrom('claude-3-opus-20240229', 'claude-3-sonnet-20240229', 'gpt-4', 'gpt-4-turbo'),
     fc.string({ minLength: 5, maxLength: 30 }).filter(s => /^[a-zA-Z0-9-]+$/.test(s))
   ),
   { nil: null }
@@ -74,7 +68,7 @@ const cliConfigItemArb = fc.record({
 const cliConfigArb: fc.Arbitrary<CliConfig> = fc.record({
   claudeCode: cliConfigItemArb,
   codex: cliConfigItemArb,
-  geminiCli: cliConfigItemArb,
+  openCode: cliConfigItemArb,
 });
 
 // ============= Helper Functions =============
@@ -101,23 +95,16 @@ function buildCliConfig(
   enabledState: Record<CliType, boolean>,
   cliConfigs: Record<CliType, { apiKeyId: number | null; model: string | null }>
 ): CliConfig {
-  return {
-    claudeCode: {
-      apiKeyId: cliConfigs.claudeCode.apiKeyId,
-      model: cliConfigs.claudeCode.model,
-      enabled: enabledState.claudeCode,
-    },
-    codex: {
-      apiKeyId: cliConfigs.codex.apiKeyId,
-      model: cliConfigs.codex.model,
-      enabled: enabledState.codex,
-    },
-    geminiCli: {
-      apiKeyId: cliConfigs.geminiCli.apiKeyId,
-      model: cliConfigs.geminiCli.model,
-      enabled: enabledState.geminiCli,
-    },
-  };
+  return Object.fromEntries(
+    CLI_TYPES.map(cliType => [
+      cliType,
+      {
+        apiKeyId: cliConfigs[cliType].apiKeyId,
+        model: cliConfigs[cliType].model,
+        enabled: enabledState[cliType],
+      },
+    ])
+  ) as CliConfig;
 }
 
 /**
@@ -146,7 +133,7 @@ describe('Property 1: CLI enabled toggle updates state correctly', () => {
         fc.record({
           claudeCode: enabledStateArb,
           codex: enabledStateArb,
-          geminiCli: enabledStateArb,
+          openCode: enabledStateArb,
         }),
         (cliType, initialState) => {
           const newState = toggleEnabledState(initialState, cliType);
@@ -173,7 +160,7 @@ describe('Property 1: CLI enabled toggle updates state correctly', () => {
         fc.record({
           claudeCode: enabledStateArb,
           codex: enabledStateArb,
-          geminiCli: enabledStateArb,
+          openCode: enabledStateArb,
         }),
         (cliType, initialState) => {
           const afterFirstToggle = toggleEnabledState(initialState, cliType);
@@ -188,10 +175,10 @@ describe('Property 1: CLI enabled toggle updates state correctly', () => {
   });
 
   it('should preserve default enabled states when no config provided', () => {
-    // Verify default states match expected values - all CLIs default to enabled
-    expect(DEFAULT_CLI_CONFIG.claudeCode.enabled).toBe(true);
-    expect(DEFAULT_CLI_CONFIG.codex.enabled).toBe(true);
-    expect(DEFAULT_CLI_CONFIG.geminiCli.enabled).toBe(true);
+    // Verify default states match expected values - all supported CLIs default to enabled
+    for (const cliType of CLI_TYPES) {
+      expect(DEFAULT_CLI_CONFIG[cliType].enabled).toBe(true);
+    }
   });
 });
 
@@ -214,10 +201,10 @@ describe('Property 2: CLI icon visibility follows enabled state', () => {
             enabled: cliType === 'claudeCode' ? enabled : true,
           },
           codex: { apiKeyId: 1, model: 'test', enabled: cliType === 'codex' ? enabled : true },
-          geminiCli: {
+          openCode: {
             apiKeyId: 1,
             model: 'test',
-            enabled: cliType === 'geminiCli' ? enabled : false,
+            enabled: cliType === 'openCode' ? enabled : true,
           },
         };
 
@@ -246,8 +233,8 @@ describe('Property 2: CLI icon visibility follows enabled state', () => {
           claudeCode:
             cliType === 'claudeCode' ? undefined : { apiKeyId: 1, model: 'test', enabled: true },
           codex: cliType === 'codex' ? undefined : { apiKeyId: 1, model: 'test', enabled: true },
-          geminiCli:
-            cliType === 'geminiCli' ? undefined : { apiKeyId: 1, model: 'test', enabled: false },
+          openCode:
+            cliType === 'openCode' ? undefined : { apiKeyId: 1, model: 'test', enabled: true },
         } as CliConfig;
 
         const isEnabled = isCliEnabled(config, cliType);
@@ -264,7 +251,7 @@ describe('Property 2: CLI icon visibility follows enabled state', () => {
         const config: CliConfig = {
           claudeCode: { apiKeyId: 1, model: 'test' } as any,
           codex: { apiKeyId: 1, model: 'test' } as any,
-          geminiCli: { apiKeyId: 1, model: 'test' } as any,
+          openCode: { apiKeyId: 1, model: 'test' } as any,
         };
 
         const isEnabled = isCliEnabled(config, cliType);
@@ -309,12 +296,12 @@ describe('Property 5: Save persists all configuration fields', () => {
         fc.record({
           claudeCode: enabledStateArb,
           codex: enabledStateArb,
-          geminiCli: enabledStateArb,
+          openCode: enabledStateArb,
         }),
         fc.record({
           claudeCode: fc.record({ apiKeyId: apiKeyIdArb, model: modelArb }),
           codex: fc.record({ apiKeyId: apiKeyIdArb, model: modelArb }),
-          geminiCli: fc.record({ apiKeyId: apiKeyIdArb, model: modelArb }),
+          openCode: fc.record({ apiKeyId: apiKeyIdArb, model: modelArb }),
         }),
         (enabledState, cliConfigs) => {
           const savedConfig = buildCliConfig(enabledState, cliConfigs);
@@ -339,14 +326,14 @@ describe('Property 5: Save persists all configuration fields', () => {
         fc.record({
           claudeCode: enabledStateArb,
           codex: enabledStateArb,
-          geminiCli: enabledStateArb,
+          openCode: enabledStateArb,
         }),
         enabledState => {
           // Create config with all null apiKeyId and model
           const cliConfigs = {
             claudeCode: { apiKeyId: null, model: null },
             codex: { apiKeyId: null, model: null },
-            geminiCli: { apiKeyId: null, model: null },
+            openCode: { apiKeyId: null, model: null },
           };
 
           const savedConfig = buildCliConfig(enabledState, cliConfigs);
@@ -407,8 +394,7 @@ describe('Property 6: Apply popover shows only valid configurations', () => {
         }
 
         // Verify excluded CLIs are missing at least one field
-        const supportedTypes: ('claudeCode' | 'codex')[] = ['claudeCode', 'codex'];
-        const excludedCliTypes = supportedTypes.filter(cliType => !validCliTypes.includes(cliType));
+        const excludedCliTypes = CLI_TYPES.filter(cliType => !validCliTypes.includes(cliType));
         for (const cliType of excludedCliTypes) {
           const item = config[cliType];
           const hasApiKeyId = item && item.apiKeyId !== null;
@@ -425,7 +411,7 @@ describe('Property 6: Apply popover shows only valid configurations', () => {
     const emptyConfig: CliConfig = {
       claudeCode: { apiKeyId: null, model: null, enabled: true },
       codex: { apiKeyId: null, model: null, enabled: true },
-      geminiCli: { apiKeyId: null, model: null, enabled: false },
+      openCode: { apiKeyId: null, model: null, enabled: true },
     };
 
     const validCliTypes = filterValidCliConfigs(emptyConfig);
@@ -447,7 +433,7 @@ describe('Property 6: Apply popover shows only valid configurations', () => {
           const config: CliConfig = {
             claudeCode: { apiKeyId, model, enabled: false }, // disabled but valid
             codex: { apiKeyId: null, model: null, enabled: true },
-            geminiCli: { apiKeyId: null, model: null, enabled: false },
+            openCode: { apiKeyId: null, model: null, enabled: true },
           };
 
           // filterValidCliConfigs should return claudeCode regardless of enabled state
@@ -459,26 +445,23 @@ describe('Property 6: Apply popover shows only valid configurations', () => {
     );
   });
 
-  it('should return all supported CLI types (claudeCode, codex, geminiCli)', () => {
+  it('should return all supported CLI types', () => {
     fc.assert(
       fc.property(
         fc.integer({ min: 1, max: 10000 }),
         fc.string({ minLength: 5, maxLength: 20 }).filter(s => /^[a-zA-Z0-9-]+$/.test(s)),
         (apiKeyId, model) => {
-          // Config with all CLIs having valid config
+          // Config with all supported CLIs having valid config
           const config: CliConfig = {
             claudeCode: { apiKeyId, model, enabled: true },
             codex: { apiKeyId, model, enabled: true },
-            geminiCli: { apiKeyId, model, enabled: true },
+            openCode: { apiKeyId, model, enabled: true },
           };
 
           const validCliTypes = filterValidCliConfigs(config);
 
-          // Should include all three supported types
-          expect(validCliTypes).toContain('claudeCode');
-          expect(validCliTypes).toContain('codex');
-          expect(validCliTypes).toContain('geminiCli');
-          expect(validCliTypes).toHaveLength(3);
+          expect(validCliTypes).toEqual(expect.arrayContaining(CLI_TYPES));
+          expect(validCliTypes).toHaveLength(CLI_TYPES.length);
         }
       ),
       { numRuns: 100 }

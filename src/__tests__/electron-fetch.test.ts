@@ -138,25 +138,21 @@ describe('electronFetchRaw request headers', () => {
     expect(mocks.setHeader).not.toHaveBeenCalledWith('transfer-encoding', 'chunked');
   });
 
-  it('skips Chromium-managed browser headers commonly sent by Gemini CLI clients', async () => {
-    await electronFetchRaw(
-      'https://generativelanguage.googleapis.com/v1beta/models/raw:streamGenerateContent',
-      {
-        method: 'POST',
-        headers: {
-          'accept-encoding': 'gzip, deflate, br',
-          cookie: 'session=local-client-cookie',
-          origin: 'http://127.0.0.1:48123',
-          'proxy-authorization': 'Basic local-proxy-auth',
-          referer: 'http://127.0.0.1:48123/',
-          'sec-fetch-mode': 'cors',
-          'user-agent': 'GeminiCLI/0.1.0 google-api-nodejs-client/9.15.1',
-          'x-goog-api-client': 'gl-node/22.0.0',
-          'x-goog-api-key': 'sk-upstream',
-        },
-        body: Buffer.from('{"contents":[]}'),
-      }
-    );
+  it('skips Chromium-managed browser headers before forwarding API client headers', async () => {
+    await electronFetchRaw('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        'accept-encoding': 'gzip, deflate, br',
+        authorization: 'Bearer sk-upstream',
+        cookie: 'session=local-client-cookie',
+        origin: 'http://127.0.0.1:48123',
+        'proxy-authorization': 'Basic local-proxy-auth',
+        referer: 'http://127.0.0.1:48123/',
+        'sec-fetch-mode': 'cors',
+        'user-agent': 'LocalClient/1.0',
+      },
+      body: Buffer.from('{"input":[]}'),
+    });
 
     expect(mocks.setHeader).not.toHaveBeenCalledWith('accept-encoding', 'gzip, deflate, br');
     expect(mocks.setHeader).not.toHaveBeenCalledWith('cookie', 'session=local-client-cookie');
@@ -167,12 +163,8 @@ describe('electronFetchRaw request headers', () => {
     );
     expect(mocks.setHeader).not.toHaveBeenCalledWith('referer', 'http://127.0.0.1:48123/');
     expect(mocks.setHeader).not.toHaveBeenCalledWith('sec-fetch-mode', 'cors');
-    expect(mocks.setHeader).toHaveBeenCalledWith(
-      'user-agent',
-      'GeminiCLI/0.1.0 google-api-nodejs-client/9.15.1'
-    );
-    expect(mocks.setHeader).toHaveBeenCalledWith('x-goog-api-client', 'gl-node/22.0.0');
-    expect(mocks.setHeader).toHaveBeenCalledWith('x-goog-api-key', 'sk-upstream');
+    expect(mocks.setHeader).toHaveBeenCalledWith('authorization', 'Bearer sk-upstream');
+    expect(mocks.setHeader).toHaveBeenCalledWith('user-agent', 'LocalClient/1.0');
   });
 
   it('uses idle timeout semantics for active raw streaming responses', async () => {

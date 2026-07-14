@@ -269,9 +269,9 @@ describe('DataOverviewPage', () => {
           bucketKey: '5',
           bucketStart: now - 45 * 60 * 1000,
           bucketSize: 'hour',
-          cliType: 'geminiCli',
+          cliType: 'codex',
           routeRuleId: 'rule-4',
-          canonicalModel: 'gemini-2.5-pro',
+          canonicalModel: 'gpt-4.1-mini',
           siteId: 'site-2',
           accountId: 'acct-2',
           apiKeyId: 'key-gamma',
@@ -359,8 +359,8 @@ describe('DataOverviewPage', () => {
               siteId: 'site-2',
               accountId: 'account-2',
               apiKeyId: 'key-beta',
-              cliType: 'geminiCli',
-              canonicalModel: 'gemini-2.5-pro',
+              cliType: 'codex',
+              canonicalModel: 'gpt-4.1-mini',
               windowStartedAt: now - 60_000,
               windowRequestCount: 6,
               windowSuccessCount: 6,
@@ -552,7 +552,9 @@ describe('DataOverviewPage', () => {
     expect(screen.getByRole('region', { name: '每日签到概览' })).toHaveClass('h-[260px]');
     expect(screen.getByLabelText('运行趋势图')).toHaveClass('h-[260px]');
     expect(document.querySelector('[data-route-heatmap-card="true"]')).toHaveClass('h-[260px]');
-    expect(document.querySelector('[data-route-third-row-card="scatter"]')).toHaveClass('h-[260px]');
+    expect(document.querySelector('[data-route-third-row-card="scatter"]')).toHaveClass(
+      'h-[260px]'
+    );
     expect(document.querySelector('[data-route-content-scroll="true"]')).toHaveClass('pb-3');
     expect(document.querySelector('[data-trend-chart-frame="true"]')).toHaveClass('-mx-2', 'px-5');
 
@@ -785,7 +787,9 @@ describe('DataOverviewPage', () => {
 
     fireEvent.click(screen.getByText('模型热力分布'));
     expect(modelButton).toHaveAttribute('aria-pressed', 'false');
-    expect(document.querySelector('svg[aria-label="模型→通道 Sankey 流图 SVG"]')).not.toBeInTheDocument();
+    expect(
+      document.querySelector('svg[aria-label="模型→通道 Sankey 流图 SVG"]')
+    ).not.toBeInTheDocument();
   });
 
   it('reloads route overview data automatically after route overview change events', async () => {

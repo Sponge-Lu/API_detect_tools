@@ -17,9 +17,9 @@ import {
   createDefaultDetectionResult,
 } from '../shared/types/config-detection';
 import {
-  getEffectiveGeminiConfig,
   getEffectiveClaudeCodeConfig,
   getEffectiveCodexConfig,
+  getEffectiveOpenCodeConfig,
 } from './utils/config-parsers';
 import { determineSourceType } from './utils/site-matcher';
 
@@ -60,7 +60,7 @@ const DEFAULT_CACHE_CONFIG: CacheConfig = {
 /**
  * CLI 配置检测服务
  *
- * 负责检测 Claude Code、Codex、Gemini CLI 三个 CLI 工具当前正在使用的配置来源
+ * 负责检测 Claude Code、Codex、OpenCode CLI 工具当前正在使用的配置来源
  */
 export class ConfigDetectionService {
   private cache: Map<CliType, CacheEntry> = new Map();
@@ -76,16 +76,16 @@ export class ConfigDetectionService {
    * @returns 所有 CLI 的检测结果
    */
   async detectAll(sites: SiteInfo[]): Promise<AllCliDetectionResult> {
-    const [claudeCode, codex, geminiCli] = await Promise.all([
+    const [claudeCode, codex, openCode] = await Promise.all([
       this.detectClaudeCode(sites),
       this.detectCodex(sites),
-      this.detectGeminiCli(sites),
+      this.detectOpenCode(sites),
     ]);
 
     return {
       claudeCode,
       codex,
-      geminiCli,
+      openCode,
     };
   }
 
@@ -206,35 +206,24 @@ export class ConfigDetectionService {
   }
 
   /**
-   * 检测 Gemini CLI 配置
+   * 检测 OpenCode 配置
    *
-   * 使用 getEffectiveGeminiConfig() 获取真正生效的配置，
-   * 正确处理认证类型优先级：
-   * 1. google-login/vertex-ai → subscription
-   * 2. gemini-api-key → 检测 base_url
-   *
-   * @param sites 站点列表
-   * @returns 检测结果
-   *
-   * Requirements: 1.1, 1.2, 1.3, 1.4, 1.5
+   * 使用官方 OpenCode config/auth 路径获取真正生效的配置。
    */
-  async detectGeminiCli(sites: SiteInfo[]): Promise<CliDetectionResult> {
-    // 检查缓存
-    const cached = this.getFromCache('geminiCli');
+  async detectOpenCode(sites: SiteInfo[]): Promise<CliDetectionResult> {
+    const cached = this.getFromCache('openCode');
     if (cached) {
       return cached;
     }
 
     try {
-      // 使用新的有效配置获取函数
-      const { baseUrl, hasApiKey, authType, isSubscription } = getEffectiveGeminiConfig();
+      const { baseUrl, hasApiKey, authType } = getEffectiveOpenCodeConfig();
 
       const { sourceType, siteName, siteId } = determineSourceType({
         baseUrl,
         hasApiKey,
         authType,
-        isSubscription,
-        cliType: 'geminiCli',
+        cliType: 'openCode',
         sites,
       });
 
@@ -248,12 +237,11 @@ export class ConfigDetectionService {
         detectedAt: Date.now(),
       };
 
-      // 存入缓存
-      this.setCache('geminiCli', result);
+      this.setCache('openCode', result);
 
       return result;
     } catch (error) {
-      log.error('Failed to detect Gemini CLI config', error);
+      log.error('Failed to detect OpenCode config', error);
       const result: CliDetectionResult = {
         ...createDefaultDetectionResult(),
         error: error instanceof Error ? error.message : 'Unknown error',

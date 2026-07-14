@@ -752,7 +752,7 @@
     "SidebarModulesAdmin": "{\"chat\":{\"enabled\":false,\"playground\":false,\"chat\":false},\"console\":{\"enabled\":true,\"detail\":true,\"token\":true,\"log\":true,\"midjourney\":false,\"task\":false},\"personal\":{\"enabled\":true,\"topup\":true,\"personal\":true},\"admin\":{\"enabled\":true,\"channel\":true,\"models\":false,\"redemption\":true,\"user\":true,\"setting\":true}}",
     "announcements": [
       {
-        "content": "GeminiCli逆向渠道上线",
+        "content": "GoogleGenerateContent逆向渠道上线",
         "extra": "模型可用度",
         "id": 4,
         "publishDate": "2025-11-30T04:06:13.023Z",
@@ -7105,8 +7105,8 @@ error code: 521
       "desc": "GLM 4.6",
       "ratio": 0.1
     },
-    "Gemini CLI": {
-      "desc": "Gemini CLI 专用",
+    "Google GenerateContent": {
+      "desc": "Google GenerateContent 专用",
       "ratio": 0.5
     },
     "Grok": {
@@ -8598,7 +8598,7 @@ error code: 521
         "type": "error"
       },
       {
-        "content": "上线droid-cc（0.3，支持cc和1m上下文，通过/model sonnet[1m]切换）和droid-gemini（0.5，支持gemini cli、roo code、kilo等，支持gemini3和2.5 pro）分组渠道，欢迎测试体验。有问题请随时反馈。",
+        "content": "上线droid-cc（0.3，支持cc和1m上下文，通过/model sonnet[1m]切换）和droid-gemini（0.5，支持google generatecontent、roo code、kilo等，支持gemini3和2.5 pro）分组渠道，欢迎测试体验。有问题请随时反馈。",
         "extra": "",
         "id": 11,
         "publishDate": "2025-12-05T03:41:16.642Z",
@@ -9016,7 +9016,7 @@ error code: 521
       "ratio": 1
     },
     "gemini": {
-      "desc": "注意无法使用Gemini CLI",
+      "desc": "注意无法使用Google GenerateContent",
       "ratio": 0.7
     },
     "nano-banana-2": {
@@ -14080,7 +14080,7 @@ error code: 521
       "owner_by": "",
       "completion_ratio": 6,
       "enable_groups": [
-        "vertex-ai",
+        "google-vertex",
         "ai-studio",
         "default"
       ],
@@ -14147,9 +14147,9 @@ error code: 521
       "enable_groups": [
         "ai-studio",
         "default",
-        "gemini-cli逆向",
-        "gemini-cli逆向散户",
-        "vertex-ai"
+        "google-generatecontent逆向",
+        "google-generatecontent逆向散户",
+        "google-vertex"
       ],
       "supported_endpoint_types": [
         "gemini",
@@ -14421,12 +14421,12 @@ error code: 521
       "desc": "默认分组",
       "ratio": 2
     },
-    "gemini-cli逆向": {
-      "desc": "gemini-cli逆向分组",
+    "google-generatecontent逆向": {
+      "desc": "google-generatecontent逆向分组",
       "ratio": 1
     },
-    "gemini-cli逆向散户": {
-      "desc": "gemini-cli逆向散户分组",
+    "google-generatecontent逆向散户": {
+      "desc": "google-generatecontent逆向散户分组",
       "ratio": 1
     },
     "gpt-4": {
@@ -14441,8 +14441,8 @@ error code: 521
       "desc": "nano banana绘图",
       "ratio": 1
     },
-    "vertex-ai": {
-      "desc": "vertex-ai分组",
+    "google-vertex": {
+      "desc": "google-vertex分组",
       "ratio": 2
     },
     "vip": {
@@ -14639,7 +14639,7 @@ error code: 521
     "SidebarModulesAdmin": "{\"chat\":{\"enabled\":true,\"playground\":true,\"chat\":true},\"console\":{\"enabled\":true,\"detail\":true,\"token\":true,\"log\":true,\"midjourney\":false,\"task\":true},\"personal\":{\"enabled\":true,\"topup\":true,\"personal\":true},\"admin\":{\"enabled\":true,\"channel\":true,\"models\":true,\"redemption\":true,\"user\":true,\"setting\":true}}",
     "announcements": [
       {
-        "content": "2025-12-15\n\nGemini CLI专用分组 倍率灵活调整：\n\ndefault用户分组 Gemini CLI专用分组模型 由1.3恢复至1.5，北京时间2025-12-15 12:00生效\n\nTier1用户分组 Gemini CLI专用分组模型 由1.3恢复至1.4，北京时间2025-12-15 12:00生效\n\nTier2、Tier3、Business用户分组不变，详情可查看：https://doc.duckcoding.com",
+        "content": "2025-12-15\n\nGoogle GenerateContent专用分组 倍率灵活调整：\n\ndefault用户分组 Google GenerateContent专用分组模型 由1.3恢复至1.5，北京时间2025-12-15 12:00生效\n\nTier1用户分组 Google GenerateContent专用分组模型 由1.3恢复至1.4，北京时间2025-12-15 12:00生效\n\nTier2、Tier3、Business用户分组不变，详情可查看：https://doc.duckcoding.com",
         "extra": "",
         "id": 411,
         "publishDate": "2025-12-15T03:31:57.334Z",
@@ -14674,7 +14674,7 @@ error code: 521
         "type": "ongoing"
       },
       {
-        "content": "2025-12-09\n\nGemini CLI专用分组 倍率灵活调整：\n\ndefault用户分组 Gemini CLI专用分组模型 由1.5下降至1.3，北京时间2025-12-09 21:30生效\n\nTier1用户分组 Gemini CLI专用分组模型 由1.4下降至1.3，北京时间2025-12-09 21:30生效\n\nTier2、Tier3、Business用户分组不变，详情可查看：https://doc.duckcoding.com",
+        "content": "2025-12-09\n\nGoogle GenerateContent专用分组 倍率灵活调整：\n\ndefault用户分组 Google GenerateContent专用分组模型 由1.5下降至1.3，北京时间2025-12-09 21:30生效\n\nTier1用户分组 Google GenerateContent专用分组模型 由1.4下降至1.3，北京时间2025-12-09 21:30生效\n\nTier2、Tier3、Business用户分组不变，详情可查看：https://doc.duckcoding.com",
         "extra": "",
         "id": 406,
         "publishDate": "2025-12-09T13:28:12.428Z",
@@ -14718,8 +14718,8 @@ error code: 521
     "Claude Code专用-特价2api",
     "CodeX专用",
     "CodeX专用（Droid）",
-    "Gemini CLI专用",
-    "Gemini CLI专用-Antigravity",
+    "Google GenerateContent专用",
+    "Google GenerateContent专用-Antigravity",
     "default"
   ],
   "data": [
@@ -14734,8 +14734,8 @@ error code: 521
       "completion_ratio": 4,
       "enable_groups": [
         "default",
-        "Gemini CLI专用",
-        "Gemini CLI专用-Antigravity"
+        "Google GenerateContent专用",
+        "Google GenerateContent专用-Antigravity"
       ],
       "supported_endpoint_types": [
         "gemini",
@@ -14769,8 +14769,8 @@ error code: 521
       "completion_ratio": 6,
       "enable_groups": [
         "default",
-        "Gemini CLI专用",
-        "Gemini CLI专用-Antigravity"
+        "Google GenerateContent专用",
+        "Google GenerateContent专用-Antigravity"
       ],
       "supported_endpoint_types": [
         "gemini",
@@ -15079,11 +15079,11 @@ error code: 521
       "desc": "自建Team订阅号池，满血，无场景限制，适配Droid CLI",
       "ratio": 0.8
     },
-    "Gemini CLI专用": {
-      "desc": "自建号池，满血，只可用于Gemini CLI",
+    "Google GenerateContent专用": {
+      "desc": "自建号池，满血，只可用于Google GenerateContent",
       "ratio": 1.5
     },
-    "Gemini CLI专用-Antigravity": {
+    "Google GenerateContent专用-Antigravity": {
       "desc": "逆向Antigravity，满血，无场景限制",
       "ratio": 0.8
     },

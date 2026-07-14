@@ -9,11 +9,13 @@
  * - PROJECT_INDEX.md
  */
 
+import type { BuiltinCliType } from './cli-config';
+
 /**
  * CLI 配置来源类型
  * - managed: 使用应用管理的站点
  * - official: 使用官方 API
- * - subscription: 使用订阅账号（如 Google 登录）
+ * - subscription: 使用订阅账号
  * - other: 使用其他中转站
  * - unknown: 未配置或无法确定
  */
@@ -21,20 +23,11 @@ export type ConfigSourceType = 'managed' | 'official' | 'subscription' | 'other'
 
 /**
  * 认证类型
- * - google-login: Gemini CLI Google 登录
- * - vertex-ai: Gemini CLI Vertex AI
- * - gemini-api-key: Gemini CLI API Key
  * - chatgpt-oauth: Codex ChatGPT OAuth
  * - api-key: 通用 API Key 认证
  * - unknown: 未知
  */
-export type AuthType =
-  | 'google-login'
-  | 'vertex-ai'
-  | 'gemini-api-key'
-  | 'chatgpt-oauth'
-  | 'api-key'
-  | 'unknown';
+export type AuthType = 'chatgpt-oauth' | 'api-key' | 'unknown';
 
 /**
  * 单个 CLI 的检测结果
@@ -64,7 +57,7 @@ export interface CliDetectionResult {
 export interface AllCliDetectionResult {
   claudeCode: CliDetectionResult;
   codex: CliDetectionResult;
-  geminiCli: CliDetectionResult;
+  openCode: CliDetectionResult;
 }
 
 /**
@@ -79,7 +72,7 @@ export interface SiteInfo {
 /**
  * CLI 类型
  */
-export type CliType = 'claudeCode' | 'codex' | 'geminiCli';
+export type CliType = BuiltinCliType;
 
 /**
  * 官方 API URL 配置
@@ -87,7 +80,12 @@ export type CliType = 'claudeCode' | 'codex' | 'geminiCli';
 export const OFFICIAL_API_URLS: Record<CliType, string[]> = {
   claudeCode: ['https://api.anthropic.com', 'api.anthropic.com'],
   codex: ['https://api.openai.com', 'api.openai.com'],
-  geminiCli: ['https://generativelanguage.googleapis.com', 'generativelanguage.googleapis.com'],
+  openCode: [
+    'https://api.anthropic.com',
+    'api.anthropic.com',
+    'https://api.openai.com',
+    'api.openai.com',
+  ],
 };
 
 /**
@@ -101,9 +99,9 @@ export const CLI_CONFIG_PATHS = {
     config: '.codex/config.toml',
     auth: '.codex/auth.json',
   },
-  geminiCli: {
-    settings: '.gemini/settings.json',
-    env: '.gemini/.env',
+  openCode: {
+    config: '.config/opencode/opencode.json',
+    auth: '.local/share/opencode/auth.json',
   },
 } as const;
 
@@ -125,6 +123,6 @@ export function createDefaultAllDetectionResult(): AllCliDetectionResult {
   return {
     claudeCode: createDefaultDetectionResult(),
     codex: createDefaultDetectionResult(),
-    geminiCli: createDefaultDetectionResult(),
+    openCode: createDefaultDetectionResult(),
   };
 }

@@ -32,8 +32,10 @@ import type { AccountCredential, ApiKeyInfo, UnifiedSite } from '../../shared/ty
 
 const log = Logger.scope('CliCompatHandlers');
 
+type SupportedCliType = 'claudeCode' | 'codex' | 'openCode';
+
 interface CliTestConfig {
-  cliType: 'claudeCode' | 'codex' | 'geminiCli';
+  cliType: SupportedCliType;
   apiKey: string;
   model: string;
   baseUrl?: string; // 可选的 baseUrl，如果提供则使用此 URL 而非 siteUrl
@@ -47,11 +49,11 @@ interface TestWithConfigParams {
 
 type CliCompatExecutor = Pick<
   typeof cliWrapperCompatService,
-  'testClaudeCodeWithDetail' | 'testCodexWithDetail' | 'testGeminiWithDetail'
+  'testClaudeCodeWithDetail' | 'testCodexWithDetail' | 'testOpenCodeWithDetail'
 >;
 
 interface CliCompatibilityTestSample {
-  cliType: 'claudeCode' | 'codex' | 'geminiCli';
+  cliType: SupportedCliType;
   model: string;
   success: boolean;
   testedAt: number;
@@ -61,7 +63,7 @@ interface CliCompatibilityTestSample {
   error?: string;
   claudeDetail?: CliCompatibilityResult['claudeDetail'];
   codexDetail?: CliCompatibilityResult['codexDetail'];
-  geminiDetail?: CliCompatibilityResult['geminiDetail'];
+  openCodeDetail?: CliCompatibilityResult['openCodeDetail'];
 }
 
 interface ResolvedCliTestRouteTarget {
@@ -255,7 +257,7 @@ async function resolveCliTestRouteTarget(
 
 /** 配置文件写入参数 */
 interface WriteCliConfigParams {
-  cliType: 'claudeCode' | 'codex' | 'geminiCli';
+  cliType: SupportedCliType;
   files: Array<{
     path: string;
     content: string;
@@ -701,9 +703,9 @@ async function runCliCompatibilityTests(
     codex: null,
     codexDetail: undefined,
     codexError: undefined,
-    geminiCli: null,
-    geminiDetail: undefined,
-    geminiError: undefined,
+    openCode: null,
+    openCodeDetail: undefined,
+    openCodeError: undefined,
   };
   const samples: CliCompatibilityTestSample[] = [];
   const latestFailureSummaryByCli: Partial<
@@ -785,29 +787,30 @@ async function runCliCompatibilityTests(
             codexDetail: codexResult.detail,
           };
         }
-        case 'geminiCli': {
-          const geminiResult = await executor.testGeminiWithDetail(
+        case 'openCode': {
+          const openCodeResult = await executor.testOpenCodeWithDetail(
             testUrl,
             routeApiKey,
-            config.model
+            config.model,
+            routeTarget.targetProtocol
           );
-          if (geminiResult.supported) {
+          if (openCodeResult.supported) {
             log.info(`CLI test ${config.cliType} (${config.model}, ${testUrl}): passed`);
           } else {
             log.warn(
-              `CLI test ${config.cliType} (${config.model}, ${testUrl}): failed${geminiResult.message ? ` - ${geminiResult.message}` : ''}`
+              `CLI test ${config.cliType} (${config.model}, ${testUrl}): failed${openCodeResult.message ? ` - ${openCodeResult.message}` : ''}`
             );
           }
           return {
             cliType: config.cliType,
             model: config.model,
-            success: geminiResult.supported ?? false,
+            success: openCodeResult.supported ?? false,
             testedAt,
             targetProtocol: routeTarget.targetProtocol,
             targetEndpoint: routeTarget.targetEndpoint,
-            error: geminiResult.message,
-            statusCode: extractStatusCodeFromMessage(geminiResult.message),
-            geminiDetail: geminiResult.detail,
+            error: openCodeResult.message,
+            statusCode: extractStatusCodeFromMessage(openCodeResult.message),
+            openCodeDetail: openCodeResult.detail,
           };
         }
       }
@@ -852,7 +855,7 @@ async function runCliCompatibilityTests(
       error: testResult.error,
       claudeDetail: testResult.claudeDetail,
       codexDetail: testResult.codexDetail,
-      geminiDetail: testResult.geminiDetail,
+      openCodeDetail: testResult.openCodeDetail,
     });
     if (!testResult.success) {
       latestFailureSummaryByCli[testResult.cliType] = summarizeCliFailure(
@@ -874,10 +877,10 @@ async function runCliCompatibilityTests(
           results.codexDetail = testResult.codexDetail;
         }
         break;
-      case 'geminiCli':
-        results.geminiCli = results.geminiCli === true ? true : testResult.success;
-        if (testResult.geminiDetail && (testResult.success || !results.geminiDetail)) {
-          results.geminiDetail = testResult.geminiDetail;
+      case 'openCode':
+        results.openCode = results.openCode === true ? true : testResult.success;
+        if (testResult.openCodeDetail && (testResult.success || !results.openCodeDetail)) {
+          results.openCodeDetail = testResult.openCodeDetail;
         }
         break;
     }
@@ -886,8 +889,8 @@ async function runCliCompatibilityTests(
   results.claudeError =
     results.claudeCode === false ? latestFailureSummaryByCli.claudeCode : undefined;
   results.codexError = results.codex === false ? latestFailureSummaryByCli.codex : undefined;
-  results.geminiError =
-    results.geminiCli === false ? latestFailureSummaryByCli.geminiCli : undefined;
+  results.openCodeError =
+    results.openCode === false ? latestFailureSummaryByCli.openCode : undefined;
 
   return { summary: results, samples };
 }
@@ -969,7 +972,7 @@ export function registerCliCompatHandlers() {
             error: sample.error,
             claudeDetail: sample.claudeDetail,
             codexDetail: sample.codexDetail,
-            geminiDetail: sample.geminiDetail,
+            openCodeDetail: sample.openCodeDetail,
             testedAt:
               typeof sample.testedAt === 'number'
                 ? sample.testedAt

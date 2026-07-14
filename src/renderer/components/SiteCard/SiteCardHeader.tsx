@@ -22,13 +22,6 @@ function formatNumber(num: number): string {
   return num.toString();
 }
 
-function formatLdcDisplay(siteResult: SiteCardHeaderProps['siteResult']): string {
-  if (!siteResult?.ldcPaymentSupported || !siteResult.ldcExchangeRate) {
-    return '--';
-  }
-  return siteResult.ldcExchangeRate;
-}
-
 function formatBalanceDisplay(balance: number): string {
   if (balance === -1) {
     return '∞';
@@ -53,7 +46,7 @@ export function SiteCardHeader({
   onOpenSite,
 }: SiteCardHeaderProps) {
   const isCustomCli = accessPointType === 'custom-cli';
-  const ldcDisplay = isCustomCli ? '--' : formatLdcDisplay(siteResult);
+  const ldcDisplay = '--';
 
   return (
     <div

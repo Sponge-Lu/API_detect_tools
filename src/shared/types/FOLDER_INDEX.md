@@ -1,26 +1,18 @@
 # 📁 src/shared/types/ - 共享类型定义
-
 ## 架构说明
-
 **职责**: 定义主进程和渲染进程共享的 TypeScript 类型
-
 **特点**:
 - 纯类型定义，无实现代码
 - 被 `main/` 和 `renderer/` 同时使用
 - 确保类型一致性
 - 支持编译时类型检查
-
 **依赖关系**:
 - 被 `main/` 和 `renderer/` 导入
 - 不依赖其他模块
 - 可独立维护
-
 ---
-
 ## 📂 文件清单
-
 ### 核心类型文件
-
 | 文件 | 职责 | 关键类型 |
 |------|------|--------|
 | **site.ts** | 站点、检测缓存、API Key 活跃状态归一化、AnyRouter 站点名归一化识别与运行期快照类型 | Site, UnifiedSite, CheckinStats, CliCompatibilityData, SiteDailySnapshot, RuntimeCacheFile, ApiKeyAvailability |
@@ -29,15 +21,10 @@
 | **custom-cli-config.ts** | 自定义 CLI 配置类型 | CustomCliConfig, CustomCliSettings, CustomCliTestState, manualModels |
 | **config-detection.ts** | CLI 配置检测类型 | ConfigSourceType, CliDetectionResult, AllCliDetectionResult 等 |
 | **credit.ts** | Linux Do Credit 积分类型 | CreditInfo, CreditConfig, CreditState, CreditResponse 等 |
-
 ---
-
 ## 📝 类型详解
-
 ### site.ts - 站点相关类型
-
 **职责**: 定义站点、分组、状态等相关类型
-
 **关键类型**:
 ```typescript
 // 站点信息
@@ -144,13 +131,11 @@ interface LdcPaymentInfo {
   ldcExchangeRate?: string;
 }
 ```
-
 **当前约束**:
 - `has_checkin` 表示站点或账户是否具备签到能力，`can_check_in` 表示当前运行态是否还能执行签到
 - `getApiKeyAvailability()` / `isApiKeyActive()` 是 API Key 可用性判断的共享入口；调用方不要只用 `status === 1` 判断，因为不同站点可能返回 `status_str`、`state` 或 `enabled`
-- `CliCompatibilityData` 为 Claude / Codex / Gemini 分别保留 detail 和 error 摘要，供站点卡片和日志页展示
+- `CliCompatibilityData` 为 Claude Code / Codex 保留 detail 和 error 摘要，供站点卡片和日志页展示
 - `SiteDailySnapshot` 用于 `数据总览` 页的站点日级历史趋势，存入 `RuntimeCacheFile.site_daily_snapshots_by_site_id`
-
 **使用示例**:
 ```typescript
 // 创建站点
@@ -185,11 +170,8 @@ const status: SiteStatus = {
   lastChecked: Date.now()
 };
 ```
-
 ### route-proxy.ts - 路由工作台类型
-
 **职责**: 定义路由代理、模型注册表、CLI 探测和统计分析相关共享契约
-
 **关键类型**:
 ```typescript
 interface RouteProxyServerConfig {
@@ -217,7 +199,7 @@ interface RouteCliProbeSample {
   statusCode?: number;
   claudeDetail?: ClaudeTestDetail;
   codexDetail?: CodexTestDetail;
-  geminiDetail?: GeminiTestDetail;
+
 }
 
 interface RouteAnalyticsObjectStatsItem {
@@ -234,21 +216,17 @@ interface RouteAnalyticsObjectStatsItem {
   cachedTokens?: number;
 }
 ```
-
 **关键辅助函数**:
 - `buildProbeKey()` / `buildSiteScopedProbeAccountId()` - 构造 CLI 探测索引键
 - `buildBucketKey()` - 构造包含 CLI / 模型 / 站点 / 账户 / API Key 的分析桶索引键
 - `normalizeRouteCliSelection()` - 将 CLI 默认模型统一归一到 canonical 名称
 - `compareRouteModelRegistryEntries()` - 按厂商优先模式、层级词和版本号排序模型
-
 ### cli-config.ts - CLI 配置类型
-
 **职责**: 定义 CLI 工具配置相关类型
-
 **关键类型**:
 ```typescript
 // CLI 工具类型
-type CliTool = 'claude-code' | 'codex' | 'gemini-cli' | 'chat';
+type CliTool = 'claude-code' | 'codex' | 'chat';
 
 // CLI 配置
 interface CliConfig {
@@ -286,7 +264,6 @@ interface CliConfigGenerateResult {
   content: string;
 }
 ```
-
 **使用示例**:
 ```typescript
 // CLI 配置
@@ -315,11 +292,8 @@ const result: CliCompatibilityResult = {
   timestamp: Date.now()
 };
 ```
-
 ### credit.ts - Linux Do Credit 积分类型
-
 **职责**: 定义 Linux Do Credit 积分检测功能相关类型
-
 **关键类型**:
 ```typescript
 // 积分信息（完整版）
@@ -466,7 +440,6 @@ interface RechargeResponse {
   error?: string;
 }
 ```
-
 **使用示例**:
 ```typescript
 // 积分信息
@@ -526,9 +499,7 @@ const response: CreditResponse<CreditInfo> = {
   data: creditInfo
 };
 ```
-
 ---
-
 ## 🔄 类型关系图
 
 ```
@@ -667,46 +638,32 @@ TransactionList (交易记录列表)
 ├── orders: TransactionOrder[]
 └── lastUpdated: number
 ```
-
 ---
-
 ## 🎯 设计原则
-
 ### 1. 类型安全
-
 - 完整的类型定义
 - 避免使用 `any`
 - 编译时类型检查
-
 ### 2. 可扩展性
-
 - 使用 `metadata` 字段存储扩展数据
 - 支持向后兼容
 - 易于添加新字段
-
 ### 3. 一致性
-
 - 主进程和渲染进程使用相同的类型
 - 确保数据一致性
 - 减少 Bug
-
 ### 4. 文档化
-
 - 为每个类型添加注释
 - 说明字段的含义
 - 提供使用示例
-
 ---
-
 ## 🧪 类型检查
-
 ### 编译时检查
 
 ```bash
 npm run build:main    # 编译主进程，检查类型
 npm run build:renderer # 编译渲染进程，检查类型
 ```
-
 ### 类型验证
 
 ```typescript
@@ -722,18 +679,14 @@ const site: Site = {
 // TypeScript 会检查类型
 // 如果字段类型不匹配，会报错
 ```
-
 ---
-
 ## 📈 扩展指南
-
 ### 添加新类型
 
 1. 在 `types/` 中创建新文件
 2. 定义 TypeScript 接口
 3. 添加注释说明
 4. 导出到 `index.ts`
-
 ### 模板
 
 ```typescript
@@ -752,14 +705,10 @@ export interface NewType {
   field3: Record<string, any>;
 }
 ```
-
 ---
-
 ## 🔄 自指
 
 当此文件夹中的文件变化时，更新本索引、src/shared/FOLDER_INDEX.md 和 PROJECT_INDEX.md
-
 ---
-
 **版本**: 3.0.3
 **更新日期**: 2026-05-25

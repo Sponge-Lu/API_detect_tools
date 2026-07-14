@@ -29,6 +29,7 @@ import {
   CUSTOM_CLI_GROUP_MULTIPLIER_MIN,
   createEmptyCustomCliTestState,
   normalizeCustomCliGroupMultiplier,
+  normalizeCustomCliSettings,
   normalizeCustomCliTestState,
   type CustomCliConfig,
   type CustomCliSettings,
@@ -36,15 +37,18 @@ import {
 } from '../../../shared/types/custom-cli-config';
 import type { ModelPriceInfo, ModelPricingData } from '../../../shared/types/site';
 import {
+  BUILTIN_CLI_LABELS,
+  BUILTIN_CLI_TYPES,
   CLI_TARGET_PROTOCOLS,
   getCliTargetEndpoint,
   normalizeCliTargetProtocol,
+  type BuiltinCliType,
   type CliTargetProtocol,
 } from '../../../shared/types/cli-config';
 import {
   generateClaudeCodeConfig,
   generateCodexConfig,
-  generateGeminiCliConfig,
+  generateOpenCodeConfig,
   type GeneratedConfig,
 } from '../../services/cli-config-generator';
 import { PanelSection } from './PanelSection';
@@ -53,7 +57,7 @@ import { formatModelPrice, resolveModelPricing } from '../../utils/modelPricing'
 // 导入 CLI 图标
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../assets/cli-icons/codex.svg';
-import GeminiIcon from '../../assets/cli-icons/gemini.svg';
+import OpenCodeIcon from '../../assets/cli-icons/opencode.svg';
 
 export interface DirectCliConfigEditorContentProps {
   config: CustomCliConfig;
@@ -73,7 +77,8 @@ export interface DirectCliConfigEditorContentProps {
   }) => Promise<boolean>;
 }
 
-type CliType = 'claudeCode' | 'codex' | 'geminiCli';
+type CliType = BuiltinCliType;
+const CLI_TYPE_KEYS: CliType[] = [...BUILTIN_CLI_TYPES];
 
 function getCliFailureMessage(
   cliType: CliType,
@@ -82,7 +87,7 @@ function getCliFailureMessage(
     data?: {
       claudeError?: string;
       codexError?: string;
-      geminiError?: string;
+      openCodeError?: string;
     };
   }
 ): string | undefined {
@@ -92,7 +97,10 @@ function getCliFailureMessage(
   if (cliType === 'codex') {
     return response.data?.codexError ?? response.error;
   }
-  return response.data?.geminiError ?? response.error;
+  if (cliType === 'openCode') {
+    return response.data?.openCodeError ?? response.error;
+  }
+  return response.error;
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -112,9 +120,9 @@ interface CliTypeConfig {
 }
 
 const CLI_TYPES: CliTypeConfig[] = [
-  { key: 'claudeCode', name: 'Claude Code', icon: ClaudeCodeIcon },
-  { key: 'codex', name: 'Codex', icon: CodexIcon },
-  { key: 'geminiCli', name: 'Gemini CLI', icon: GeminiIcon },
+  { key: 'claudeCode', name: BUILTIN_CLI_LABELS.claudeCode, icon: ClaudeCodeIcon },
+  { key: 'codex', name: BUILTIN_CLI_LABELS.codex, icon: CodexIcon },
+  { key: 'openCode', name: BUILTIN_CLI_LABELS.openCode, icon: OpenCodeIcon },
 ];
 
 const CLI_TARGET_PROTOCOL_LABELS: Record<CliTargetProtocol, string> = {
@@ -396,18 +404,21 @@ function DirectModelPriceEditor({
   );
 }
 
-const normalizeCliSetting = (setting: CustomCliSettings): CustomCliSettings => ({
-  ...setting,
-  testModels: setting.testModels ?? [],
-  testState: normalizeCustomCliTestState(setting.testState),
-});
+const normalizeCliSetting = (setting?: CustomCliSettings | null): CustomCliSettings => {
+  const normalized = normalizeCustomCliSettings(setting);
+  return {
+    ...normalized,
+    testModels: normalized.testModels ?? [],
+    testState: normalizeCustomCliTestState(normalized.testState),
+  };
+};
 
 const normalizeCliSettings = (
-  settings: CustomCliConfig['cliSettings']
+  settings: Partial<CustomCliConfig['cliSettings']>
 ): CustomCliConfig['cliSettings'] => ({
   claudeCode: normalizeCliSetting(settings.claudeCode),
   codex: normalizeCliSetting(settings.codex),
-  geminiCli: normalizeCliSetting(settings.geminiCli),
+  openCode: normalizeCliSetting(settings.openCode),
 });
 
 function buildPerCliEditedFromSettings(
@@ -416,10 +427,10 @@ function buildPerCliEditedFromSettings(
   const initEdited: Record<CliType, GeneratedConfig | null> = {
     claudeCode: null,
     codex: null,
-    geminiCli: null,
+    openCode: null,
   };
 
-  for (const key of ['claudeCode', 'codex', 'geminiCli'] as CliType[]) {
+  for (const key of CLI_TYPE_KEYS) {
     const saved = cliSettings[key]?.editedFiles;
     if (saved && saved.length > 0) {
       initEdited[key] = { files: saved.map(f => ({ ...f, language: 'json' as const })) };
@@ -688,6 +699,7 @@ export function DirectCliConfigEditorContent({
   const [name, setName] = useState(config.name);
   const [baseUrl, setBaseUrl] = useState(config.baseUrl);
   const [apiKey, setApiKey] = useState(config.apiKey);
+  const [gasStationUrl, setGasStationUrl] = useState(config.gasStationUrl || '');
   const [groupMultiplierInput, setGroupMultiplierInput] = useState(() =>
     buildGroupMultiplierInputValue(config.groupMultiplier)
   );
@@ -712,7 +724,7 @@ export function DirectCliConfigEditorContent({
   const [perCliEdited, setPerCliEdited] = useState<Record<CliType, GeneratedConfig | null>>({
     claudeCode: null,
     codex: null,
-    geminiCli: null,
+    openCode: null,
   });
   const [testingCli, setTestingCli] = useState<CliType | null>(null);
   const [applyingCli, setApplyingCli] = useState<CliType | null>(null);
@@ -750,6 +762,7 @@ export function DirectCliConfigEditorContent({
     setName(config.name);
     setBaseUrl(config.baseUrl);
     setApiKey(config.apiKey);
+    setGasStationUrl(config.gasStationUrl || '');
     setGroupMultiplierInput(buildGroupMultiplierInputValue(config.groupMultiplier));
     setNotes(config.notes || '');
     setManualModels(config.manualModels || []);
@@ -783,8 +796,11 @@ export function DirectCliConfigEditorContent({
         return generateClaudeCodeConfig(params);
       } else if (cliType === 'codex') {
         return generateCodexConfig(params);
-      } else if (cliType === 'geminiCli') {
-        return generateGeminiCliConfig(params);
+      } else if (cliType === 'openCode') {
+        return generateOpenCodeConfig({
+          ...params,
+          targetProtocol: normalizeCliTargetProtocol(cliSettings.openCode.targetProtocol),
+        });
       }
       return null;
     },
@@ -876,7 +892,7 @@ export function DirectCliConfigEditorContent({
     let testedAt: number | null = null;
     let claudeDetail: CustomCliTestState['claudeDetail'];
     let codexDetail: CustomCliTestState['codexDetail'];
-    let geminiDetail: CustomCliTestState['geminiDetail'];
+    let openCodeDetail: CustomCliTestState['openCodeDetail'];
     try {
       for (const [index, model] of cliTestTargets.entries()) {
         try {
@@ -903,7 +919,7 @@ export function DirectCliConfigEditorContent({
           if (!success) allSuccess = false;
           if (response.data?.claudeDetail) claudeDetail = response.data.claudeDetail;
           if (response.data?.codexDetail) codexDetail = response.data.codexDetail;
-          if (response.data?.geminiDetail) geminiDetail = response.data.geminiDetail;
+          if (response.data?.openCodeDetail) openCodeDetail = response.data.openCodeDetail;
         } catch (error) {
           testedAt = Date.now();
           slots[index] = {
@@ -921,7 +937,7 @@ export function DirectCliConfigEditorContent({
         testedAt,
         claudeDetail,
         codexDetail,
-        geminiDetail,
+        openCodeDetail,
         slots,
       };
       const nextCliSettings = {
@@ -1079,7 +1095,7 @@ export function DirectCliConfigEditorContent({
     setManualModels(prev => prev.filter(currentModel => currentModel !== model));
     setCliSettings(prev => {
       const next = { ...prev };
-      for (const key of ['claudeCode', 'codex', 'geminiCli'] as CliType[]) {
+      for (const key of CLI_TYPE_KEYS) {
         const current = next[key];
         next[key] = {
           ...current,
@@ -1148,7 +1164,7 @@ export function DirectCliConfigEditorContent({
 
     // 构建带 editedFiles 的 cliSettings
     const finalCliSettings = { ...cliSettings };
-    for (const key of ['claudeCode', 'codex', 'geminiCli'] as CliType[]) {
+    for (const key of CLI_TYPE_KEYS) {
       const edited = finalPerCliEdited[key];
       finalCliSettings[key] = {
         ...finalCliSettings[key],
@@ -1161,6 +1177,7 @@ export function DirectCliConfigEditorContent({
       name: name.trim() || config.name,
       baseUrl,
       apiKey,
+      gasStationUrl: gasStationUrl.trim() || undefined,
       groupMultiplier: parseGroupMultiplierInput(groupMultiplierInput),
       notes,
       manualModels,
@@ -1287,6 +1304,19 @@ export function DirectCliConfigEditorContent({
                   value={groupMultiplierInput}
                   onChange={e => setGroupMultiplierInput(e.target.value)}
                   placeholder="1"
+                  className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
+                  加油站链接
+                </label>
+                <input
+                  aria-label="加油站链接"
+                  type="url"
+                  value={gasStationUrl}
+                  onChange={e => setGasStationUrl(e.target.value)}
+                  placeholder="https://example.com/topup"
                   className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
                 />
               </div>

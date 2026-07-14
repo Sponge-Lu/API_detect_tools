@@ -16,6 +16,7 @@ import { app, BrowserWindow } from 'electron';
 // 允许使用更多的加密套件和 TLS 版本
 app.commandLine.appendSwitch('ignore-certificate-errors', 'false');
 app.commandLine.appendSwitch('disable-http2'); // 某些服务器 HTTP/2 实现有问题
+import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import * as os from 'os';

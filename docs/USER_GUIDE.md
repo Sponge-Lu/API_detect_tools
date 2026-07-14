@@ -81,15 +81,13 @@
 
 - Claude Code
 - Codex
-- Gemini CLI
 
 当前行为说明：
 
 - 站点页、统一 CLI 配置抽屉、自定义 CLI 配置编辑器和路由探测统一通过真实 CLI wrapper 执行测试
-- 测试会使用临时目录隔离 `HOME` / `CODEX_HOME` / Gemini 的 `HOME/.gemini`，正常情况下不会改写本机真实 CLI 配置
+- 测试会使用临时目录隔离 `HOME` / `CODEX_HOME`，正常情况下不会改写本机真实 CLI 配置
 - 手动 CLI 测试与路由自动探测结果会同步写入 `routing.cliProbe`，站点卡片、CLI 配置抽屉和 CLI 可用性矩阵都会读取最新结果
 - **Codex**：只测试并生成 Responses API 配置，不再使用 Chat Completions 模式
-- **Gemini CLI**：会阻断已知内部辅助模型请求，避免未选中的 helper/default 模型被静默路由并产生额外费用
 
 你可以完成以下操作：
 

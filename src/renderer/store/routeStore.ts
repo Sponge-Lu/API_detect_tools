@@ -82,10 +82,7 @@ interface RouteState {
 
   // Actions - 模型注册表
   fetchModelRegistry: () => Promise<RouteModelRegistryConfig | null>;
-  rebuildModelRegistry: (
-    force?: boolean,
-    options?: { resetDefaults?: boolean }
-  ) => Promise<RouteModelRegistryConfig | null>;
+  rebuildModelRegistry: (force?: boolean) => Promise<RouteModelRegistryConfig | null>;
   syncModelRegistrySources: (force?: boolean) => Promise<RouteModelRegistryConfig | null>;
   upsertMappingOverride: (
     override: RouteModelMappingOverride
@@ -100,6 +97,7 @@ interface RouteState {
   saveCliModelSelections: (
     selections: Partial<Record<RouteCliType, string | null>>
   ) => Promise<void>;
+  saveOpenCodeRouteProtocol: (protocol: RoutingConfig['openCodeRouteProtocol']) => Promise<void>;
 
   // Actions - CLI 探测
   saveCliProbeConfig: (updates: Partial<RouteCliProbeConfig>) => Promise<void>;
@@ -298,11 +296,8 @@ export const useRouteStore = create<RouteState>((set, get) => ({
     return null;
   },
 
-  rebuildModelRegistry: async (force, options) => {
-    const res = await window.electronAPI.route?.rebuildModelRegistry({
-      force,
-      resetDefaults: options?.resetDefaults,
-    });
+  rebuildModelRegistry: async force => {
+    const res = await window.electronAPI.route?.rebuildModelRegistry({ force });
     if (res?.success && res.data) {
       const needsFullConfig = !get().config;
       set(state => ({
@@ -311,23 +306,10 @@ export const useRouteStore = create<RouteState>((set, get) => ({
       if (needsFullConfig) {
         await get().fetchConfig();
       }
-      if (options?.resetDefaults) {
-        await get().fetchConfig();
-      }
-      sessionEventLog.success(
-        'route',
-        options?.resetDefaults
-          ? '已重置默认模型重定向'
-          : force
-            ? '已强制重建模型重定向目录'
-            : '已重建模型重定向目录'
-      );
+      sessionEventLog.success('route', force ? '已强制重建模型重定向目录' : '已重建模型重定向目录');
       return res.data;
     }
-    sessionEventLog.error(
-      'route',
-      options?.resetDefaults ? '默认模型重定向重置失败' : '模型重定向目录重建失败'
-    );
+    sessionEventLog.error('route', '模型重定向目录重建失败');
     return null;
   },
 
@@ -410,6 +392,12 @@ export const useRouteStore = create<RouteState>((set, get) => ({
     await window.electronAPI.route?.saveCliModelSelections(selections);
     await get().fetchConfig();
     sessionEventLog.success('route', 'CLI 默认模型已更新');
+  },
+
+  saveOpenCodeRouteProtocol: async protocol => {
+    await window.electronAPI.route?.saveOpenCodeRouteProtocol(protocol);
+    await get().fetchConfig();
+    sessionEventLog.success('route', 'OpenCode 路由端点已更新');
   },
 
   // CLI 探测

@@ -1,7 +1,7 @@
 /**
  * 输入: 路由代理收到的源 CLI 请求体 + 目标协议元数据
  * 输出: 改写后的上游请求体 + 响应回写适配器，支持 text/tool_use/tool_result 三类内容的双向转换
- * 定位: 服务层 - 在 Claude Code / Codex / Gemini CLI 原生协议与 Anthropic Messages / OpenAI Chat Completions / OpenAI Responses 上游协议之间桥接
+ * 定位: 服务层 - 在 Claude Code / Codex 原生协议与 Anthropic Messages / OpenAI Chat Completions / OpenAI Responses 上游协议之间桥接
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - src/main/FOLDER_INDEX.md
@@ -76,6 +76,7 @@ export type CliProtocolResponseAdapter =
   | {
       type: 'source';
       sourceCliType: RouteCliType;
+      sourceProtocol?: Exclude<CliTargetProtocol, 'native'>;
       targetProtocol: Exclude<CliTargetProtocol, 'native'>;
       model: string;
       stream: boolean;
@@ -86,14 +87,7 @@ export interface CliProtocolRewriteResult {
   headers: Record<string, string>;
   upstreamMethod: 'POST';
   upstreamPath: string;
-  /**
-   * 上游传输形态指示符（鉴权头 + 是否走 Gemini 路径改写）。
-   * - 'claudeCode' → 上游用 `x-api-key`，路径透传
-   * - 'codex'      → 上游用 `Authorization: Bearer`，路径透传
-   * - 'geminiCli'  → 上游用 `x-goog-api-key`/`?key=`，路径需 `buildGeminiUpstreamPath` 改写
-   * 当前 adapter 永远不会输出 geminiCli（目标协议都基于 Anthropic / OpenAI 系），
-   * 因此 openai-chat-completions/openai-responses 复用 codex 的 Bearer 鉴权位。
-   */
+  /** 上游传输形态指示符；Claude 使用 `x-api-key`，OpenAI 系使用 Bearer。 */
   upstreamCliType: RouteCliType;
   responseAdapter: CliProtocolResponseAdapter;
 }
@@ -323,28 +317,6 @@ function mapCodexTool(tool: unknown): NormalizedTool | null {
     description: normalizeText(record.description) || undefined,
     parameters: normalizeObject(record.parameters),
   };
-}
-
-function mapGeminiTools(tools: unknown): NormalizedTool[] | undefined {
-  if (!Array.isArray(tools)) return undefined;
-  const result: NormalizedTool[] = [];
-  for (const tool of tools) {
-    const record = normalizeObject(tool);
-    const declarations = Array.isArray(record.functionDeclarations)
-      ? record.functionDeclarations
-      : [];
-    for (const declaration of declarations) {
-      const item = normalizeObject(declaration);
-      const name = normalizeText(item.name);
-      if (!name) continue;
-      result.push({
-        name,
-        description: normalizeText(item.description) || undefined,
-        parameters: normalizeObject(item.parameters),
-      });
-    }
-  }
-  return result.length > 0 ? result : undefined;
 }
 
 /* ============================== Source Request Parsers ============================== */
@@ -580,98 +552,81 @@ function parseCodexRequest(
   };
 }
 
-function parseGeminiParts(
-  parts: unknown,
-  role: NormalizedRole,
-  sourceCliType: RouteCliType,
-  targetProtocol: Exclude<CliTargetProtocol, 'native'>
-): NormalizedPart[] {
-  if (!Array.isArray(parts)) return [];
-  const result: NormalizedPart[] = [];
-  for (const raw of parts) {
-    const record = normalizeObject(raw);
-    if (record.functionCall !== undefined) {
-      const call = normalizeObject(record.functionCall);
-      const name = normalizeText(call.name);
-      if (!name) continue;
-      const id = normalizeText(call.id) || genToolCallId();
-      result.push({
-        kind: 'tool_call',
-        toolCall: { id, name, argumentsJson: stringifyArguments(call.args) },
-      });
-      continue;
-    }
-    if (record.functionResponse !== undefined) {
-      const resp = normalizeObject(record.functionResponse);
-      const name = normalizeText(resp.name);
-      const toolCallId = normalizeText(resp.id) || name || '';
-      const content =
-        typeof resp.response === 'string' ? resp.response : stringifyArguments(resp.response);
-      result.push({
-        kind: 'tool_result',
-        toolResult: { toolCallId, content },
-      });
-      continue;
-    }
-    if (record.text !== undefined) {
-      const text = normalizeText(record.text);
-      if (text) result.push({ kind: 'text', text });
-      continue;
-    }
-    if (record.inlineData !== undefined || record.fileData !== undefined) {
-      throwUnsupported('unsupported_content:gemini_media', sourceCliType, targetProtocol);
-    }
-    // unknown part type: ignore quietly to mirror Claude/Codex unknown-part tolerance
-  }
-  if (role === 'user') {
-    // tool_call from user is illegal; demote to noop
-    return result.filter(part => part.kind !== 'tool_call');
-  }
-  if (role === 'assistant') {
-    return result.filter(part => part.kind !== 'tool_result');
-  }
-  return result;
+function parseOpenAiChatContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return normalizeText(content);
+  return content
+    .map(part => {
+      const record = normalizeObject(part);
+      const kind = normalizeText(record.type);
+      if (kind === 'text' || kind === 'input_text' || kind === '') {
+        return normalizeText(record.text);
+      }
+      return '';
+    })
+    .filter(Boolean)
+    .join('\n');
 }
 
-function parseGeminiRequest(
+function parseOpenAiChatRequest(
   cleaned: JsonRecord,
-  upstreamModel: string | undefined,
-  requestUrl: string | undefined,
-  sourceCliType: RouteCliType,
-  targetProtocol: Exclude<CliTargetProtocol, 'native'>
+  upstreamModel: string | undefined
 ): NormalizedRequest {
   const messages: NormalizedMessage[] = [];
-  const systemInstruction = normalizeObject(cleaned.systemInstruction);
-  const systemText = (
-    Array.isArray(systemInstruction.parts)
-      ? systemInstruction.parts
-          .map(part => normalizeText(normalizeObject(part).text))
-          .filter(Boolean)
-          .join('\n')
-      : normalizeText(cleaned.systemInstruction)
-  ).trim();
-  if (systemText) {
-    messages.push({ role: 'system', parts: [{ kind: 'text', text: systemText }] });
+
+  for (const raw of Array.isArray(cleaned.messages) ? cleaned.messages : []) {
+    const record = normalizeObject(raw);
+    const roleRaw = normalizeText(record.role);
+    const role: NormalizedRole =
+      roleRaw === 'assistant' ? 'assistant' : roleRaw === 'system' ? 'system' : 'user';
+    const parts: NormalizedPart[] = [];
+    const text = parseOpenAiChatContent(record.content);
+    if (text) {
+      parts.push({ kind: 'text', text });
+    }
+
+    if (Array.isArray(record.tool_calls) && role === 'assistant') {
+      for (const rawToolCall of record.tool_calls) {
+        const toolCall = normalizeObject(rawToolCall);
+        const fn = normalizeObject(toolCall.function);
+        const name = normalizeText(fn.name);
+        if (!name) continue;
+        parts.push({
+          kind: 'tool_call',
+          toolCall: {
+            id: normalizeText(toolCall.id) || genToolCallId(),
+            name,
+            argumentsJson: stringifyArguments(fn.arguments ?? {}),
+          },
+        });
+      }
+    }
+
+    if (roleRaw === 'tool') {
+      parts.push({
+        kind: 'tool_result',
+        toolResult: {
+          toolCallId: normalizeText(record.tool_call_id),
+          content: text,
+        },
+      });
+    }
+
+    if (parts.length > 0) {
+      messages.push({ role: roleRaw === 'tool' ? 'user' : role, parts });
+    }
   }
 
-  for (const content of Array.isArray(cleaned.contents) ? cleaned.contents : []) {
-    const record = normalizeObject(content);
-    const role: NormalizedRole = record.role === 'model' ? 'assistant' : 'user';
-    const parts = parseGeminiParts(record.parts, role, sourceCliType, targetProtocol);
-    if (parts.length === 0) continue;
-    messages.push({ role, parts });
-  }
-
-  const generationConfig = normalizeObject(cleaned.generationConfig);
   return {
     model: upstreamModel || normalizeText(cleaned.model),
-    stream: Boolean(requestUrl?.includes(':streamGenerateContent') || cleaned.stream === true),
+    stream: cleaned.stream === true,
     messages,
-    tools: mapGeminiTools(cleaned.tools),
-    maxOutputTokens: toFiniteNumber(generationConfig.maxOutputTokens),
-    temperature: toFiniteNumber(generationConfig.temperature),
-    topP: toFiniteNumber(generationConfig.topP),
-    stop: generationConfig.stopSequences,
+    tools: mapTools(cleaned.tools, mapCodexTool),
+    maxOutputTokens:
+      toFiniteNumber(cleaned.max_completion_tokens) ?? toFiniteNumber(cleaned.max_tokens),
+    temperature: toFiniteNumber(cleaned.temperature),
+    topP: toFiniteNumber(cleaned.top_p),
+    stop: cleaned.stop,
   };
 }
 
@@ -680,15 +635,27 @@ function normalizeSourceRequest(
   sourceCliType: RouteCliType,
   targetProtocol: Exclude<CliTargetProtocol, 'native'>,
   requestUrl: string | undefined,
-  upstreamModel: string | undefined
+  upstreamModel: string | undefined,
+  sourceProtocol?: Exclude<CliTargetProtocol, 'native'>
 ): NormalizedRequest | null {
   const cleaned = parseJsonBody(bodyBuffer);
   if (!cleaned) return null;
   if (sourceCliType === 'claudeCode') {
     return parseClaudeRequest(cleaned, upstreamModel, sourceCliType, targetProtocol);
   }
-  if (sourceCliType === 'geminiCli') {
-    return parseGeminiRequest(cleaned, upstreamModel, requestUrl, sourceCliType, targetProtocol);
+  if (sourceCliType === 'openCode') {
+    if (sourceProtocol === 'anthropic-messages') {
+      return parseClaudeRequest(cleaned, upstreamModel, sourceCliType, targetProtocol);
+    }
+    if (sourceProtocol === 'openai-chat-completions') {
+      return parseOpenAiChatRequest(cleaned, upstreamModel);
+    }
+    if (sourceProtocol === 'openai-responses') {
+      return parseCodexRequest(cleaned, upstreamModel, sourceCliType, targetProtocol);
+    }
+    if (Array.isArray(cleaned.messages)) {
+      return parseOpenAiChatRequest(cleaned, upstreamModel);
+    }
   }
   return parseCodexRequest(cleaned, upstreamModel, sourceCliType, targetProtocol);
 }
@@ -897,14 +864,16 @@ export function adaptRequestToTargetProtocol(
   sourceCliType: RouteCliType,
   targetProtocol: Exclude<CliTargetProtocol, 'native'>,
   requestUrl?: string,
-  upstreamModel?: string
+  upstreamModel?: string,
+  sourceProtocol?: Exclude<CliTargetProtocol, 'native'>
 ): CliProtocolRewriteResult {
   const normalized = normalizeSourceRequest(
     bodyBuffer,
     sourceCliType,
     targetProtocol,
     requestUrl,
-    upstreamModel
+    upstreamModel,
+    sourceProtocol
   );
   if (!normalized) {
     throw new CliProtocolAdapterError({
@@ -951,6 +920,7 @@ export function adaptRequestToTargetProtocol(
     responseAdapter: {
       type: 'source',
       sourceCliType,
+      sourceProtocol,
       targetProtocol,
       model: normalized.model,
       stream: normalized.stream,
@@ -1562,110 +1532,103 @@ function buildCodexSse(model: string, response: NormalizedResponse): Buffer {
   return Buffer.from(chunks.join(''), 'utf-8');
 }
 
-function buildGeminiUsageMetadata(usage: UsageShape): JsonRecord | undefined {
-  if (
-    usage.inputTokens === undefined &&
-    usage.outputTokens === undefined &&
-    usage.totalTokens === undefined
-  ) {
-    return undefined;
-  }
+function buildOpenAiChatUsage(usage: UsageShape): JsonRecord {
+  const promptTokens = usage.inputTokens ?? 0;
+  const completionTokens = usage.outputTokens ?? 0;
   return {
-    ...(usage.inputTokens !== undefined ? { promptTokenCount: usage.inputTokens } : {}),
-    ...(usage.outputTokens !== undefined ? { candidatesTokenCount: usage.outputTokens } : {}),
-    ...(usage.totalTokens !== undefined
-      ? { totalTokenCount: usage.totalTokens }
-      : usage.inputTokens !== undefined && usage.outputTokens !== undefined
-        ? { totalTokenCount: usage.inputTokens + usage.outputTokens }
-        : {}),
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: usage.totalTokens ?? promptTokens + completionTokens,
   };
 }
 
-function buildGeminiCandidateParts(response: NormalizedResponse): JsonRecord[] {
-  const parts: JsonRecord[] = [];
-  if (response.text) {
-    parts.push({ text: response.text });
-  }
-  for (const call of response.toolCalls) {
-    parts.push({
-      functionCall: {
-        name: call.name,
-        args: parseArgumentsObject(call.argumentsJson),
-      },
-    });
-  }
-  return parts;
+function mapChatFinishReason(reason?: NormalizedFinishReason): string {
+  if (reason === 'tool_calls') return 'tool_calls';
+  if (reason === 'length') return 'length';
+  return 'stop';
 }
 
-function buildGeminiJson(response: NormalizedResponse): JsonRecord {
-  const usageMetadata = buildGeminiUsageMetadata(response.usage);
-  const finishReason =
-    response.finishReason === 'tool_calls'
-      ? 'STOP'
-      : response.finishReason === 'length'
-        ? 'MAX_TOKENS'
-        : 'STOP';
+function buildOpenAiChatMessage(response: NormalizedResponse): JsonRecord {
+  const message: JsonRecord = {
+    role: 'assistant',
+    content: response.text || null,
+  };
+
+  if (response.toolCalls.length > 0) {
+    message.tool_calls = response.toolCalls.map(call => ({
+      id: call.id,
+      type: 'function',
+      function: {
+        name: call.name,
+        arguments: call.argumentsJson || '{}',
+      },
+    }));
+  }
+
+  return message;
+}
+
+function buildOpenAiChatResponseObject(model: string, response: NormalizedResponse): JsonRecord {
   return {
-    candidates: [
+    id: genMessageId('chatcmpl'),
+    object: 'chat.completion',
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [
       {
-        content: {
-          parts: buildGeminiCandidateParts(response),
-          role: 'model',
-        },
-        finishReason,
         index: 0,
+        message: buildOpenAiChatMessage(response),
+        finish_reason: mapChatFinishReason(response.finishReason),
       },
     ],
-    ...(usageMetadata ? { usageMetadata } : {}),
+    usage: buildOpenAiChatUsage(response.usage),
   };
 }
 
-function buildGeminiSse(response: NormalizedResponse): Buffer {
-  const chunks: string[] = [];
+function buildOpenAiChatSse(model: string, response: NormalizedResponse): Buffer {
+  const id = genMessageId('chatcmpl');
+  const created = Math.floor(Date.now() / 1000);
+  const chunks: string[] = [
+    `data: ${JSON.stringify({
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model,
+      choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
+    })}\n\n`,
+  ];
+
   const deltas =
     response.textDeltas.length > 0 ? response.textDeltas : response.text ? [response.text] : [];
   for (const delta of deltas) {
     chunks.push(
-      sseEvent(null, {
-        candidates: [{ content: { parts: [{ text: delta }], role: 'model' }, index: 0 }],
-      })
+      `data: ${JSON.stringify({
+        id,
+        object: 'chat.completion.chunk',
+        created,
+        model,
+        choices: [{ index: 0, delta: { content: delta }, finish_reason: null }],
+      })}\n\n`
     );
   }
-  for (const call of response.toolCalls) {
-    chunks.push(
-      sseEvent(null, {
-        candidates: [
-          {
-            content: {
-              parts: [
-                {
-                  functionCall: {
-                    name: call.name,
-                    args: parseArgumentsObject(call.argumentsJson),
-                  },
-                },
-              ],
-              role: 'model',
-            },
-            index: 0,
-          },
-        ],
-      })
-    );
-  }
-  const usageMetadata = buildGeminiUsageMetadata(response.usage);
+
   chunks.push(
-    sseEvent(null, {
-      candidates: [
+    `data: ${JSON.stringify({
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model,
+      choices: [
         {
-          content: { parts: [], role: 'model' },
-          finishReason: response.finishReason === 'length' ? 'MAX_TOKENS' : 'STOP',
           index: 0,
+          delta: {},
+          finish_reason: mapChatFinishReason(response.finishReason),
         },
       ],
-      ...(usageMetadata ? { usageMetadata } : {}),
-    })
+    })}\n\n`,
+    'data: [DONE]\n\n'
   );
+
   return Buffer.from(chunks.join(''), 'utf-8');
 }
 
@@ -1717,12 +1680,45 @@ export function transformTargetProtocolResponse(params: {
     );
   }
 
-  const body = params.adapter.stream
-    ? buildGeminiSse(normalized)
-    : Buffer.from(JSON.stringify(buildGeminiJson(normalized)), 'utf-8');
-  return replaceResponseBody(
-    params.headers,
-    body,
-    params.adapter.stream ? 'text/event-stream; charset=utf-8' : 'application/json'
-  );
+  if (params.adapter.sourceCliType === 'openCode') {
+    const openCodeResponseProtocol = params.adapter.sourceProtocol ?? params.adapter.targetProtocol;
+    if (openCodeResponseProtocol === 'anthropic-messages') {
+      const body = params.adapter.stream
+        ? buildClaudeSse(params.adapter.model, normalized)
+        : buildClaudeJson(params.adapter.model, normalized);
+      return replaceResponseBody(
+        params.headers,
+        body,
+        params.adapter.stream ? 'text/event-stream; charset=utf-8' : 'application/json'
+      );
+    }
+
+    if (openCodeResponseProtocol === 'openai-responses') {
+      const body = params.adapter.stream
+        ? buildCodexSse(params.adapter.model, normalized)
+        : Buffer.from(
+            JSON.stringify(buildCodexResponseObject(params.adapter.model, normalized)),
+            'utf-8'
+          );
+      return replaceResponseBody(
+        params.headers,
+        body,
+        params.adapter.stream ? 'text/event-stream; charset=utf-8' : 'application/json'
+      );
+    }
+
+    const body = params.adapter.stream
+      ? buildOpenAiChatSse(params.adapter.model, normalized)
+      : Buffer.from(
+          JSON.stringify(buildOpenAiChatResponseObject(params.adapter.model, normalized)),
+          'utf-8'
+        );
+    return replaceResponseBody(
+      params.headers,
+      body,
+      params.adapter.stream ? 'text/event-stream; charset=utf-8' : 'application/json'
+    );
+  }
+
+  return { body: params.body, headers: params.headers };
 }

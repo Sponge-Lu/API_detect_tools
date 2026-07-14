@@ -191,14 +191,13 @@ Checklist:
 intended to route.
 
 Examples:
-- Gemini CLI sends `/v1beta/models/gemini-2.5-flash-lite:generateContent` for an internal
-  helper/default request while the app-selected Gemini CLI model is `gemini-3.1-pro-preview`
-- Gemini CLI 0.41.2 maps internal utility configs such as `classifier`, `prompt-completion`,
-  `fast-ack-helper`, `edit-corrector`, `summarizer-default`, `summarizer-shell`, and
-  `chat-compression-2.5-flash-lite` to `gemini-2.5-flash-lite`, so repeated wire requests for that
-  model can be CLI utility traffic rather than user chat traffic
+- A client sends a provider-native path for a helper/default model while the app-selected route
+  intent points at a different canonical model.
+- A client maps internal utility configs such as classifiers, summarizers, prompt completion helpers,
+  or chat compression to a low-cost fallback model; repeated wire requests for that fallback can be
+  utility traffic rather than user chat traffic.
 - the proxy matches only the extracted path model, finds no rule, returns `no_matching_rule`, and
-  the CLI retries indefinitely
+  the client retries indefinitely
 
 **Good**: Separate "transport model observed on the wire" from "routing intent selected in app
 state", then define the fallback order explicitly.
@@ -207,14 +206,13 @@ Checklist:
 - preserve the transport model as diagnostic data such as `requestedModel`
 - inspect the request role/body and CLI model config source before concluding that the user selected
   the observed transport model
-- resolve canonical routing intent from registry aliases first; before falling back to explicit CLI
-  selection, apply billing guards for known CLI internal utility/fallback models such as Gemini
-  `gemini-2.5-flash-lite`
+- resolve canonical routing intent from registry aliases first; if no explicit selected-model rule
+  matches, do not forward through unrelated generic site/account channels
 - keep unknown-model safety: do not fall back to generic site/account channels when registry data
   exists and no selected CLI model rule matches
 - avoid returning retryable 5xx for expected non-routable helper/default models when the intended
-  outcome is terminal; Gemini CLI retries 5xx utility failures, so terminal billing guards must use
-  non-retryable 4xx responses and must not forward upstream
+  outcome is terminal; terminal billing guards should use non-retryable responses and must not
+  forward upstream
 - add integration tests that drive the real request shape through rule matching, channel resolution,
   and upstream path rewriting
 
@@ -368,6 +366,9 @@ Checklist:
 - when a user resets a priority hit, clear every concrete route-rule/resolved-model state for that
   visible channel and write a short channel-level suppression marker so in-flight successes cannot
   restore it immediately
+- if the reset intentionally spans route rules, the channel-level suppression marker must be keyed
+  without `routeRuleId`; affinity lookup must check that any-rule marker as well as the concrete
+  route path and same-rule channel marker
 - recompute UI hit highlights from the currently selected display item; do not reuse stale
   first-hit logs from another selected model card
 - add tests where two model cards or two matching route rules share the same site/API key but only
@@ -396,7 +397,64 @@ Checklist:
 - trim user input and preserve the current name when the edit is empty or whitespace-only
 - assert the active workflow, not only the standalone create/edit dialog
 
+### Mistake 16: Refreshing Runtime Data Without Updating Persisted Capability Config
+
+**Bad**: Treating a refresh result as display-only cache when it also discovers durable site
+capabilities.
+
+Examples:
+- site refresh reads `/api/status.check_in_enabled`, returns `has_checkin`, and updates account
+  `cached_data`, but leaves `sites[].has_checkin` unchanged
+- smart add persists `force_enable_checkin` from browser-discovered support, while later refreshes
+  do not repair the same field after the upstream site toggles check-in support
+- a card reloads from config after refresh and reverts the check-in toggle because the persistent
+  site record still contains the old capability value
+
+**Good**: Split runtime state from durable capability state, then update both owners in the same
+successful refresh.
+
+Checklist:
+- classify each refresh field as runtime cache, durable site capability, account credential, or
+  user override before writing the save path
+- when a successful refresh discovers a durable capability such as `has_checkin`, write the
+  canonical `sites[]` owner as well as any account/site runtime cache
+- preserve explicit user overrides separately; for check-in, `force_enable_checkin` may enable
+  probing but must not hide the last upstream `has_checkin` capability result
+- emit the same config-change notification path used by ordinary site edits so mounted cards reload
+  from the repaired persisted owner
+- add a regression where the upstream capability toggles after the site was created, then assert the
+  persisted site config changes after refresh
+
 ---
+
+### Mistake 17: Treating Multi-Site Route Failures As Local Request-Format Bugs
+
+**Bad**: Seeing Claude Code / Codex fail across many sites through the local route proxy and
+immediately rewriting request bodies, headers, or protocol adapters.
+
+Examples:
+- `Upstream channel returned failure response` with `No available channel`, balance, TPM/QPM, or 503
+  bodies is treated as "our route format is wrong"
+- `invalid_request_error` rate-limit text is treated as schema rejection because the error type name
+  contains `invalid_request`
+- `malformed_streaming_response:empty_response` is treated as a local SSE rewrite bug even though
+  `stage: 'upstream'` and the upstream already closed a success-ish empty stream
+- a single real schema reject such as `Unknown parameter: 'input[N].namespace'` is generalized into a
+  full Claude/Codex rewrite overhaul
+
+**Good**: Split failures by owner before changing code.
+
+Checklist:
+- Class A (upstream): non-2xx/3xx bodySnippet about capacity, rate limit, quota, maintenance, panic,
+  entitlement, or empty generation; `net::ERR_*` / timeout while contacting the site
+- Class B (local format/adapt): `stage: 'request-adapt' | 'response-adapt'`, explicit protocol-adapter
+  failure logs, missing AnyRouter `userHash`, or 400/422 naming concrete request fields that this app
+  emitted
+- always expand CLI-facing `all_channels_failed` into the preceding per-channel causes
+- for Codex, distinguish Responses **input item** fields (`input[i].namespace`) from AnyRouter
+  **tools allowlist** entries named `namespace`; they are different contracts
+- prefer route-path disable / priority / quota operations for Class A; only open rewriter/adapter work
+  for Class B with a captured field path and endpoint
 
 ## Checklist for Cross-Layer Features
 
@@ -429,6 +487,10 @@ After implementation:
       selected route-intent tuple and cannot override the user's current model/card selection
 - [ ] Confirmed persisted display-name fields remain editable from the active post-save maintenance
       surface and blank edits cannot erase the current name
+- [ ] Confirmed successful refreshes write durable capability fields back to their persisted config
+      owner, not only to runtime cache
+- [ ] Confirmed multi-site local-route failures were classified as upstream vs local format/adapt
+      before changing rewriters or protocol adapters
 
 ---
 

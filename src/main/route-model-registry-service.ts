@@ -5,9 +5,9 @@
  * 定位: 服务层 - 扫描所有站点模型 → 厂商分类 → 映射表管理
  */
 
+import { createHash } from 'crypto';
 import Logger from './utils/logger';
 import { unifiedConfigManager } from './unified-config-manager';
-import { createHash } from 'crypto';
 import {
   buildCustomCliRouteAccountId,
   buildCustomCliRouteApiKeyId,
@@ -26,17 +26,17 @@ import type {
   RouteCliType,
 } from '../shared/types/route-proxy';
 import {
-  DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME,
+  buildRouteOverrideDisplayItemId,
   inferRouteModelVendor,
   parseRouteOverrideDisplayItemId,
 } from '../shared/types/route-proxy';
 import { BUILTIN_GROUP_IDS, isApiKeyActive } from '../shared/types/site';
 import type { AccountCredential, ApiKeyInfo, ModelPricingData } from '../shared/types/site';
 import type { CustomCliConfig } from '../shared/types/custom-cli-config';
+import { BUILTIN_CLI_TYPES } from '../shared/types/cli-config';
 
 const log = Logger.scope('RouteModelRegistry');
-const ROUTE_CLI_TYPES: RouteCliType[] = ['claudeCode', 'codex', 'geminiCli'];
-type RegistryDisplayMode = 'reseed' | 'preserve' | 'resetDefaults';
+const ROUTE_CLI_TYPES: RouteCliType[] = [...BUILTIN_CLI_TYPES];
 
 function normalizeModelToken(model: string): string {
   return model.trim();
@@ -364,70 +364,16 @@ function upsertRegistryEntry(
   entry.updatedAt = Math.max(entry.updatedAt, updatedAt);
 }
 
-function buildSeededDisplayItems(
-  entries: Record<string, RouteModelRegistryEntry>,
-  manualDisplayItems: RouteModelDisplayItem[],
-  previousSeededDisplayItems: RouteModelDisplayItem[],
-  now: number
-): RouteModelDisplayItem[] {
-  const manualCanonicalNames = new Set(manualDisplayItems.map(item => item.canonicalName));
-  const seededEntry = entries[DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME];
-
-  if (!seededEntry || manualCanonicalNames.has(seededEntry.canonicalName)) {
-    return [];
-  }
-
-  const seededSources = seededEntry.sources.slice();
-  const previousSeededItem = previousSeededDisplayItems.find(
-    item => item.canonicalName === seededEntry.canonicalName
-  );
-
-  return [
-    {
-      id: `seeded:${seededEntry.canonicalName}`,
-      vendor: seededEntry.vendor,
-      canonicalName: seededEntry.canonicalName,
-      sourceKeys: seededSources.map(source => source.sourceKey),
-      originalModelOrder: Array.from(new Set(seededSources.map(source => source.originalModel))),
-      priorityConfig: {
-        sitePriorities: previousSeededItem?.priorityConfig?.sitePriorities ?? {},
-        apiKeyPriorities: previousSeededItem?.priorityConfig?.apiKeyPriorities ?? {},
-        ...(previousSeededItem?.priorityConfig?.disabledSiteIds?.length
-          ? { disabledSiteIds: previousSeededItem.priorityConfig.disabledSiteIds }
-          : {}),
-        ...(previousSeededItem?.priorityConfig?.disabledApiKeyPriorityKeys?.length
-          ? {
-              disabledApiKeyPriorityKeys:
-                previousSeededItem.priorityConfig.disabledApiKeyPriorityKeys,
-            }
-          : {}),
-      },
-      runtimeConfig: previousSeededItem?.runtimeConfig,
-      mode: 'seeded' as const,
-      createdAt: previousSeededItem?.createdAt ?? now,
-      updatedAt: now,
-    },
-  ];
-}
-
 function buildDisplayItems(
-  detectedEntries: Record<string, RouteModelRegistryEntry>,
   sourcePool: RouteModelSourceRef[],
   previousDisplayItems: RouteModelDisplayItem[] | undefined,
-  now: number,
-  mode: RegistryDisplayMode = 'reseed'
+  overrides: RouteModelMappingOverride[]
 ): RouteModelDisplayItem[] {
   const validSourceKeys = new Set(sourcePool.map(source => source.sourceKey));
   const sourceByKey = new Map(sourcePool.map(source => [source.sourceKey, source]));
-  const previousItems =
-    mode === 'resetDefaults'
-      ? (previousDisplayItems ?? []).filter(
-          item => item.canonicalName !== DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME
-        )
-      : (previousDisplayItems ?? []);
-  const previousSeededDisplayItems = previousItems.filter(item => item.mode === 'seeded');
 
-  const persistedDisplayItems = previousItems
+  const manualItems = (previousDisplayItems ?? [])
+    .filter(item => item.mode === 'manual')
     .map<RouteModelDisplayItem | null>(item => {
       const sourceKeys = Array.from(
         new Set(
@@ -453,45 +399,87 @@ function buildDisplayItems(
     })
     .filter((item): item is RouteModelDisplayItem => item !== null);
 
-  if (mode === 'preserve') {
-    const persistedCanonicalNames = new Set(persistedDisplayItems.map(item => item.canonicalName));
-    const newSeededItems: RouteModelDisplayItem[] = [];
+  const itemByCanonicalName = new Map(manualItems.map(item => [item.canonicalName, item]));
+  const overrideGroups = new Map<
+    string,
+    {
+      sources: RouteModelSourceRef[];
+      createdAt: number;
+      updatedAt: number;
+    }
+  >();
 
-    for (const [canonicalName, entry] of Object.entries(detectedEntries)) {
-      if (persistedCanonicalNames.has(canonicalName)) {
-        continue;
-      }
-
-      const sources = entry.sources.slice();
-      newSeededItems.push({
-        id: `seeded:${canonicalName}`,
-        vendor: entry.vendor,
-        canonicalName,
-        sourceKeys: sources.map(source => source.sourceKey),
-        originalModelOrder: Array.from(new Set(sources.map(source => source.originalModel))),
-        priorityConfig: {
-          sitePriorities: {},
-          apiKeyPriorities: {},
-        },
-        mode: 'seeded' as const,
-        createdAt: now,
-        updatedAt: now,
-      });
+  for (const override of overrides) {
+    if (override.action === 'exclude') {
+      continue;
     }
 
-    return [...persistedDisplayItems, ...newSeededItems];
+    const canonicalName = override.canonicalName.trim();
+    if (!canonicalName) {
+      continue;
+    }
+
+    const source = sourceByKey.get(override.sourceKey);
+    if (!source) {
+      continue;
+    }
+
+    const group = overrideGroups.get(canonicalName) ?? {
+      sources: [],
+      createdAt: override.createdAt,
+      updatedAt: override.updatedAt,
+    };
+    if (!group.sources.some(item => item.sourceKey === source.sourceKey)) {
+      group.sources.push(source);
+    }
+    group.createdAt = Math.min(group.createdAt, override.createdAt);
+    group.updatedAt = Math.max(group.updatedAt, override.updatedAt);
+    overrideGroups.set(canonicalName, group);
   }
 
-  const manualDisplayItems = persistedDisplayItems.filter(item => item.mode === 'manual');
-  return [
-    ...buildSeededDisplayItems(
-      detectedEntries,
-      manualDisplayItems,
-      previousSeededDisplayItems,
-      now
-    ),
-    ...manualDisplayItems,
-  ];
+  const overrideItems: RouteModelDisplayItem[] = [];
+
+  for (const [canonicalName, group] of overrideGroups.entries()) {
+    const manualItem = itemByCanonicalName.get(canonicalName);
+    if (manualItem) {
+      const sourceKeys = Array.from(
+        new Set([...manualItem.sourceKeys, ...group.sources.map(source => source.sourceKey)])
+      );
+      manualItem.sourceKeys = sortSourceKeysByOriginalModelOrder(
+        sourceKeys,
+        manualItem.originalModelOrder,
+        sourceByKey
+      );
+      manualItem.originalModelOrder = normalizeDisplayItemOriginalModelOrder(
+        manualItem.originalModelOrder,
+        manualItem.sourceKeys,
+        sourceByKey
+      );
+      continue;
+    }
+
+    const sourceKeys = group.sources.map(source => source.sourceKey);
+    overrideItems.push({
+      id: buildRouteOverrideDisplayItemId(canonicalName),
+      vendor: group.sources[0]?.vendor ?? inferVendorFromModel(canonicalName),
+      canonicalName,
+      sourceKeys: sortSourceKeysByOriginalModelOrder(sourceKeys, undefined, sourceByKey),
+      originalModelOrder: normalizeDisplayItemOriginalModelOrder(
+        undefined,
+        sourceKeys,
+        sourceByKey
+      ),
+      priorityConfig: {
+        sitePriorities: {},
+        apiKeyPriorities: {},
+      },
+      mode: 'manual',
+      createdAt: group.createdAt,
+      updatedAt: group.updatedAt,
+    });
+  }
+
+  return [...manualItems, ...overrideItems];
 }
 
 function buildEntriesFromDisplayItems(
@@ -531,10 +519,7 @@ function buildEntriesFromDisplayItems(
   return entries;
 }
 
-async function rebuildModelRegistryInternal(
-  force?: boolean,
-  displayMode: RegistryDisplayMode = 'reseed'
-): Promise<RouteModelRegistryConfig> {
+async function rebuildModelRegistryInternal(force?: boolean): Promise<RouteModelRegistryConfig> {
   const config = unifiedConfigManager.exportConfigSync();
   if (!config) throw new Error('Config not loaded');
 
@@ -552,12 +537,7 @@ async function rebuildModelRegistryInternal(
   const now = Date.now();
   const detectedEntries: Record<string, RouteModelRegistryEntry> = {};
   const sourcePool: RouteModelSourceRef[] = [];
-  const overrides =
-    displayMode === 'resetDefaults'
-      ? existing.overrides.filter(
-          override => override.canonicalName !== DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME
-        )
-      : existing.overrides;
+  const overrides = existing.overrides;
 
   const overrideBySource = new Map<string, RouteModelMappingOverride>();
   for (const o of overrides) {
@@ -660,13 +640,7 @@ async function rebuildModelRegistryInternal(
     }
   }
 
-  const displayItems = buildDisplayItems(
-    detectedEntries,
-    sourcePool,
-    existing.displayItems,
-    now,
-    displayMode
-  );
+  const displayItems = buildDisplayItems(sourcePool, existing.displayItems, overrides);
 
   const registry: RouteModelRegistryConfig = {
     version: 1,
@@ -746,45 +720,15 @@ function buildSourceKey(
   return `${siteId}:${accountId || 'site'}:${normalizeModelToken(originalModel)}`;
 }
 
-function buildDeletedSeededSourceExcludeOverride(
-  displayItem: RouteModelDisplayItem,
-  sourceKey: string,
-  now: number
-): RouteModelMappingOverride {
-  const hash = createHash('sha1')
-    .update(`${displayItem.id}:${displayItem.canonicalName}:${sourceKey}`)
-    .digest('hex')
-    .slice(0, 12);
-
-  return {
-    id: `exclude-deleted-seeded:${hash}`,
-    sourceKey,
-    canonicalName: displayItem.canonicalName,
-    action: 'exclude',
-    note: `Deleted seeded redirect model ${displayItem.canonicalName}`,
-    createdAt: now,
-    updatedAt: now,
-  };
-}
-
 /**
  * 扫描所有站点/账户 cached_data.models 重建 registry
  */
 export async function rebuildModelRegistry(force?: boolean): Promise<RouteModelRegistryConfig> {
-  return rebuildModelRegistryInternal(force, 'reseed');
-}
-
-export async function resetModelRegistryDefaults(): Promise<RouteModelRegistryConfig> {
-  const registry = await rebuildModelRegistryInternal(true, 'resetDefaults');
-  await unifiedConfigManager.ensureRouteRuleForCliModelSelection(
-    'claudeCode',
-    DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME
-  );
-  return registry;
+  return rebuildModelRegistryInternal(force);
 }
 
 export async function syncModelRegistrySources(force?: boolean): Promise<RouteModelRegistryConfig> {
-  return rebuildModelRegistryInternal(force, 'preserve');
+  return rebuildModelRegistryInternal(force);
 }
 
 function processModelSource(
@@ -998,15 +942,6 @@ export async function deleteModelDisplayItem(
   const deleted = await unifiedConfigManager.deleteRouteModelDisplayItem(displayItemId);
   if (!deleted) {
     return null;
-  }
-
-  if (displayItem.mode === 'seeded') {
-    const now = Date.now();
-    for (const sourceKey of sourceKeys) {
-      await unifiedConfigManager.upsertRouteModelMappingOverride(
-        buildDeletedSeededSourceExcludeOverride(displayItem, sourceKey, now)
-      );
-    }
   }
 
   return syncModelRegistrySources(true);

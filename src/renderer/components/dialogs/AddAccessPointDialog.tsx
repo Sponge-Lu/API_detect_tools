@@ -100,7 +100,7 @@ export function AddAccessPointDialog({
 
             <div className="pt-2 border-t border-[var(--line-soft)]">
               <p className="text-xs text-[var(--text-tertiary)]">
-                适用于 Claude Code、Codex、Gemini CLI 等工具的直连 API 配置
+                适用于 Claude Code、Codex 等工具的直连 API 配置
               </p>
             </div>
           </AppCard>

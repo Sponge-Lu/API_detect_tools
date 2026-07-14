@@ -16,7 +16,7 @@ import type { CliCompatibilityData } from '../../../shared/types/site';
 import {
   generateClaudeCodeConfig,
   generateCodexConfig,
-  generateGeminiCliConfig,
+  generateOpenCodeConfig,
 } from '../../services/cli-config-generator';
 import { toast } from '../../store/toastStore';
 import { useDetectionStore } from '../../store/detectionStore';
@@ -25,7 +25,7 @@ import { useConfigStore } from '../../store/configStore';
 // 导入 CLI 图标
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../assets/cli-icons/codex.svg';
-import GeminiIcon from '../../assets/cli-icons/gemini.svg';
+import OpenCodeIcon from '../../assets/cli-icons/opencode.svg';
 
 export interface ApplyConfigPopoverProps {
   isOpen: boolean;
@@ -38,7 +38,7 @@ export interface ApplyConfigPopoverProps {
   onClose: () => void;
 }
 
-type SupportedCliType = 'claudeCode' | 'codex' | 'geminiCli';
+type SupportedCliType = 'claudeCode' | 'codex' | 'openCode';
 
 interface CliOption {
   key: SupportedCliType;
@@ -49,7 +49,7 @@ interface CliOption {
 const CLI_OPTIONS: CliOption[] = [
   { key: 'claudeCode', name: 'Claude Code', icon: ClaudeCodeIcon },
   { key: 'codex', name: 'Codex', icon: CodexIcon },
-  { key: 'geminiCli', name: 'Gemini CLI', icon: GeminiIcon },
+  { key: 'openCode', name: 'OpenCode', icon: OpenCodeIcon },
 ];
 
 /** 获取 API Key 的实际 key 值 */
@@ -68,7 +68,7 @@ function getApiKeyId(apiKey: ApiKeyInfo): number {
  */
 export function filterValidCliConfigs(
   cliConfig: CliConfig | null,
-  supportedTypes: SupportedCliType[] = ['claudeCode', 'codex', 'geminiCli']
+  supportedTypes: SupportedCliType[] = ['claudeCode', 'codex', 'openCode']
 ): SupportedCliType[] {
   if (!cliConfig) return [];
 
@@ -185,18 +185,18 @@ export function ApplyConfigPopover({
           model: config.model,
         };
 
-        let generatedConfig;
-        if (cliType === 'claudeCode') {
-          generatedConfig = generateClaudeCodeConfig(params);
-        } else if (cliType === 'codex') {
-          // 传递 codexDetail 用于生成测试结果注释
-          generatedConfig = generateCodexConfig({
-            ...params,
-            codexDetail: cliCompatibility?.codexDetail,
-          });
-        } else {
-          generatedConfig = generateGeminiCliConfig(params);
-        }
+        const generatedConfig =
+          cliType === 'claudeCode'
+            ? generateClaudeCodeConfig(params)
+            : cliType === 'codex'
+              ? generateCodexConfig({
+                  ...params,
+                  codexDetail: cliCompatibility?.codexDetail,
+                })
+              : generateOpenCodeConfig({
+                  ...params,
+                  targetProtocol: config.targetProtocol,
+                });
         filesToWrite = generatedConfig.files.map(f => ({
           path: f.path,
           content: f.content,

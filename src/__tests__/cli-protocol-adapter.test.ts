@@ -1,7 +1,7 @@
 /**
  * 输入: 模拟的 CLI 请求/响应 buffer
  * 输出: CLI 协议适配器请求/响应转换的回归测试
- * 定位: 测试层 - 验证 Claude/Codex/Gemini 三类源 CLI 与 Anthropic/OpenAI Chat/OpenAI Responses 三类目标协议之间的双向适配
+ * 定位: 测试层 - 验证 Claude/Codex 源 CLI 与 Anthropic/OpenAI Chat/OpenAI Responses 目标协议之间的双向适配
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - src/__tests__/FOLDER_INDEX.md
@@ -67,31 +67,6 @@ describe('cli-protocol-adapter request adapt', () => {
     expect(body.messages[1]).toEqual({ role: 'user', content: 'hello' });
   });
 
-  it('adapts Gemini CLI streaming request into Anthropic messages body', () => {
-    const result = adaptRequestToTargetProtocol(
-      toBuffer({
-        contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
-        systemInstruction: { parts: [{ text: 'be polite' }] },
-      }),
-      'geminiCli',
-      'anthropic-messages',
-      '/v1beta/models/gemini-3.1-pro:streamGenerateContent',
-      'claude-opus-4-6'
-    );
-    expect(result.upstreamPath).toBe('/v1/messages');
-    expect(result.responseAdapter.type).toBe('source');
-    const body = JSON.parse(result.body.toString('utf-8'));
-    expect(body.model).toBe('claude-opus-4-6');
-    expect(body.system).toBe('be polite');
-    expect(body.messages[0]).toEqual({
-      role: 'user',
-      content: [{ type: 'text', text: 'hi' }],
-    });
-    if (result.responseAdapter.type === 'source') {
-      expect(result.responseAdapter.stream).toBe(true);
-    }
-  });
-
   it('adapts Codex request into OpenAI Chat Completions body', () => {
     const result = adaptRequestToTargetProtocol(
       toBuffer({
@@ -129,18 +104,18 @@ describe('cli-protocol-adapter request adapt', () => {
     try {
       adaptRequestToTargetProtocol(
         Buffer.from('bad', 'utf-8'),
-        'geminiCli',
-        'anthropic-messages',
-        '/v1beta/models/x:streamGenerateContent',
-        'upstream'
+        'codex',
+        'openai-chat-completions',
+        '/v1/responses',
+        'gpt-4.1-mini'
       );
       throw new Error('expected throw');
     } catch (err) {
       expect(err).toBeInstanceOf(CliProtocolAdapterError);
       const adapterErr = err as CliProtocolAdapterError;
       expect(adapterErr.stage).toBe('request-adapt');
-      expect(adapterErr.sourceCliType).toBe('geminiCli');
-      expect(adapterErr.targetProtocol).toBe('anthropic-messages');
+      expect(adapterErr.sourceCliType).toBe('codex');
+      expect(adapterErr.targetProtocol).toBe('openai-chat-completions');
       expect(adapterErr.reason).toBe('invalid_source_body');
     }
   });
@@ -327,45 +302,6 @@ describe('cli-protocol-adapter request tool/function conversion', () => {
     });
   });
 
-  it('converts Gemini functionCall/functionResponse into OpenAI Chat tool_calls', () => {
-    const result = adaptRequestToTargetProtocol(
-      toBuffer({
-        contents: [
-          { role: 'user', parts: [{ text: 'q' }] },
-          {
-            role: 'model',
-            parts: [{ functionCall: { name: 'lookup', args: { q: 'x' } } }],
-          },
-          {
-            role: 'user',
-            parts: [{ functionResponse: { name: 'lookup', response: { ok: true } } }],
-          },
-        ],
-        tools: [
-          {
-            functionDeclarations: [
-              { name: 'lookup', description: 'find', parameters: { type: 'object' } },
-            ],
-          },
-        ],
-      }),
-      'geminiCli',
-      'openai-chat-completions',
-      '/v1beta/models/gemini-3.1-pro:streamGenerateContent',
-      'gpt-4.1-mini'
-    );
-    const body = JSON.parse(result.body.toString('utf-8'));
-    const assistant = body.messages.find((m: { role: string }) => m.role === 'assistant');
-    expect(assistant.tool_calls).toHaveLength(1);
-    expect(assistant.tool_calls[0].function).toEqual({
-      name: 'lookup',
-      arguments: '{"q":"x"}',
-    });
-    const toolMsg = body.messages.find((m: { role: string }) => m.role === 'tool');
-    expect(toolMsg.content).toBe('{"ok":true}');
-    expect(body.tools[0].function.name).toBe('lookup');
-  });
-
   it('throws unsupported_content for Claude image part', () => {
     try {
       adaptRequestToTargetProtocol(
@@ -390,25 +326,6 @@ describe('cli-protocol-adapter request tool/function conversion', () => {
       expect(err).toBeInstanceOf(CliProtocolAdapterError);
       expect((err as CliProtocolAdapterError).reason).toContain('unsupported_content');
     }
-  });
-
-  it('throws unsupported_content for Gemini inlineData part', () => {
-    expect(() =>
-      adaptRequestToTargetProtocol(
-        toBuffer({
-          contents: [
-            {
-              role: 'user',
-              parts: [{ inlineData: { mimeType: 'image/png', data: 'aaa' } }],
-            },
-          ],
-        }),
-        'geminiCli',
-        'anthropic-messages',
-        '/v1beta/models/x:streamGenerateContent',
-        'claude-opus-4-6'
-      )
-    ).toThrow(/unsupported_content/);
   });
 });
 
@@ -501,32 +418,6 @@ describe('cli-protocol-adapter response tool/function conversion', () => {
     expect(fc.name).toBe('lookup');
     expect(fc.arguments).toBe('{"q":"a"}');
     expect(fc.call_id).toBe('call_x');
-  });
-
-  it('converts Anthropic tool_use SSE into Gemini functionCall stream', () => {
-    const sse =
-      'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":4}}}\n\n' +
-      'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"lookup"}}\n\n' +
-      'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"q\\":\\"x\\"}"}}\n\n' +
-      'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n' +
-      'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":6}}\n\n' +
-      'event: message_stop\ndata: {"type":"message_stop"}\n\n';
-    const out = transformTargetProtocolResponse({
-      body: Buffer.from(sse, 'utf-8'),
-      headers: { 'content-type': 'text/event-stream' },
-      statusCode: 200,
-      adapter: {
-        type: 'source',
-        sourceCliType: 'geminiCli',
-        targetProtocol: 'anthropic-messages',
-        model: 'gemini-3.1-pro',
-        stream: true,
-      },
-    });
-    const text = out.body.toString('utf-8');
-    expect(text).toContain('"functionCall"');
-    expect(text).toContain('"name":"lookup"');
-    expect(text).toContain('"args":{"q":"x"}');
   });
 
   it('converts OpenAI Responses function_call into Claude tool_use non-streaming JSON', () => {
@@ -695,29 +586,5 @@ describe('cli-protocol-adapter response transform', () => {
     expect(parsed.usage.input_tokens).toBe(5);
     expect(parsed.usage.output_tokens).toBe(7);
     expect(parsed.usage.total_tokens).toBe(12);
-  });
-
-  it('converts OpenAI Responses JSON into Gemini JSON for Gemini source', () => {
-    const upstream = {
-      output_text: 'gem reply',
-      usage: { input_tokens: 4, output_tokens: 6, total_tokens: 10 },
-    };
-    const out = transformTargetProtocolResponse({
-      body: toBuffer(upstream),
-      headers: { 'content-type': 'application/json' },
-      statusCode: 200,
-      adapter: {
-        type: 'source',
-        sourceCliType: 'geminiCli',
-        targetProtocol: 'openai-responses',
-        model: 'gemini-3.1-pro',
-        stream: false,
-      },
-    });
-    const parsed = JSON.parse(out.body.toString('utf-8'));
-    expect(parsed.candidates[0].content.parts[0].text).toBe('gem reply');
-    expect(parsed.usageMetadata.promptTokenCount).toBe(4);
-    expect(parsed.usageMetadata.candidatesTokenCount).toBe(6);
-    expect(parsed.usageMetadata.totalTokenCount).toBe(10);
   });
 });

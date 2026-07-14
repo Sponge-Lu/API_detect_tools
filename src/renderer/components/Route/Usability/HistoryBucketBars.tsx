@@ -17,6 +17,7 @@ import type {
   RouteCliType,
   RouteHistoryBucketsQuery,
 } from '../../../../shared/types/route-proxy';
+import { BUILTIN_CLI_LABELS } from '../../../../shared/types/cli-config';
 import { useUIStore } from '../../../store/uiStore';
 
 export type HistoryMode = 'combined' | 'probe' | 'route';
@@ -223,9 +224,7 @@ export const HistoryBucketBars = memo(function HistoryBucketBars({
     return buckets.map(bucket => {
       const lines: string[] = [];
       lines.push(formatBucketTime(bucket.bucketStart, bucket.bucketEnd));
-      lines.push(
-        `CLI: ${cliType === 'claudeCode' ? 'Claude Code' : cliType === 'codex' ? 'Codex' : 'Gemini CLI'}`
-      );
+      lines.push(`CLI: ${BUILTIN_CLI_LABELS[cliType]}`);
 
       const rate = bucket.successRate !== null ? Math.round(bucket.successRate * 100) : null;
       if (mode === 'combined') {

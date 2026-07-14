@@ -7,6 +7,7 @@ import type {
   RouteCliType,
 } from '../../shared/types/route-proxy';
 import {
+  BUILTIN_CLI_TYPES,
   CLI_TEST_MODEL_SLOT_COUNT,
   normalizeCliTargetProtocol,
   normalizeCliTestModels,
@@ -14,7 +15,7 @@ import {
 } from '../../shared/types/cli-config';
 import { buildSiteScopedProbeAccountId } from '../../shared/types/route-proxy';
 
-const CLI_TYPES: RouteCliType[] = ['claudeCode', 'codex', 'geminiCli'];
+const CLI_TYPES: RouteCliType[] = [...BUILTIN_CLI_TYPES];
 const makeStoreKey = (siteName: string, accountId?: string) =>
   accountId ? `${siteName}::${accountId}` : siteName;
 
@@ -29,7 +30,7 @@ function normalizeProbeFailureText(error?: string): string | undefined {
   }
 
   return normalized.replace(
-    /^(?:Claude Code|Codex|Gemini CLI)\s+(?:执行失败|输出异常|启动失败):\s*/i,
+    /^(?:Claude Code|Codex|OpenCode)\s+(?:执行失败|输出异常|启动失败):\s*/i,
     ''
   );
 }
@@ -87,8 +88,8 @@ function summarizeProbeLatest(
     claudeDetail: undefined,
     codex: null,
     codexDetail: undefined,
-    geminiCli: null,
-    geminiDetail: undefined,
+    openCode: null,
+    openCodeDetail: undefined,
     testedAt: sorted[0]?.lastSample.testedAt ?? null,
     sourceLabel,
   };
@@ -111,10 +112,10 @@ function summarizeProbeLatest(
       summary.codex = success;
       summary.codexDetail = detailEntry.lastSample.codexDetail;
       summary.codexError = success ? undefined : summarizeProbeFailure(detailEntry);
-    } else {
-      summary.geminiCli = success;
-      summary.geminiDetail = detailEntry.lastSample.geminiDetail;
-      summary.geminiError = success ? undefined : summarizeProbeFailure(detailEntry);
+    } else if (cliType === 'openCode') {
+      summary.openCode = success;
+      summary.openCodeDetail = detailEntry.lastSample.openCodeDetail;
+      summary.openCodeError = success ? undefined : summarizeProbeFailure(detailEntry);
     }
   }
 
@@ -223,7 +224,9 @@ export function projectCliCompatibilityMap(
     return {};
   }
 
-  const latestEntries = Object.values(routing.cliProbe.latest);
+  const latestEntries = Object.values(routing.cliProbe.latest).filter(entry =>
+    CLI_TYPES.includes(entry.cliType)
+  );
   const accountsBySiteId = new Map<string, typeof accounts>();
   for (const account of accounts) {
     const list = accountsBySiteId.get(account.site_id) || [];
@@ -334,7 +337,7 @@ export function projectCliModelTestResultsFromLatest(params: {
   const baseResults = {
     claudeCode: normalizeCliTestResults(params.cliConfig?.claudeCode, slotCount),
     codex: normalizeCliTestResults(params.cliConfig?.codex, slotCount),
-    geminiCli: normalizeCliTestResults(params.cliConfig?.geminiCli, slotCount),
+    openCode: normalizeCliTestResults(params.cliConfig?.openCode, slotCount),
   };
 
   if (!params.latest || !params.siteId) {
@@ -343,13 +346,16 @@ export function projectCliModelTestResultsFromLatest(params: {
 
   const ownerAccountId = params.accountId || buildSiteScopedProbeAccountId(params.siteId);
   const entries = Object.values(params.latest).filter(
-    entry => entry.siteId === params.siteId && entry.accountId === ownerAccountId
+    entry =>
+      CLI_TYPES.includes(entry.cliType) &&
+      entry.siteId === params.siteId &&
+      entry.accountId === ownerAccountId
   );
 
   const projected: Record<RouteCliType, Array<CliModelTestResult | null>> = {
     claudeCode: [...emptySlots],
     codex: [...emptySlots],
-    geminiCli: [...emptySlots],
+    openCode: [...emptySlots],
   };
 
   for (const cliType of CLI_TYPES) {

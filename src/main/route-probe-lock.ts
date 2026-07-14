@@ -378,7 +378,7 @@ export function parseProbeLockRouteApiKey(
     const rawModel = typeof record.rawModel === 'string' ? record.rawModel.trim() : '';
 
     if (
-      (cliType !== 'claudeCode' && cliType !== 'codex' && cliType !== 'geminiCli') ||
+      (cliType !== 'claudeCode' && cliType !== 'codex' && cliType !== 'openCode') ||
       !siteId ||
       !accountId ||
       !apiKeyId ||

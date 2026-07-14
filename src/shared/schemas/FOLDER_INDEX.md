@@ -1,34 +1,23 @@
 # 📁 src/shared/schemas/ - Zod 数据验证规则
-
 ## 架构说明
-
 **职责**: 使用 Zod 定义数据验证规则
-
 **特点**:
 - 运行时数据验证
 - 生成 TypeScript 类型
 - 被 `main/` 和 `renderer/` 使用
 - 确保数据一致性和安全性
-
 **依赖关系**:
 - 依赖 Zod 库
 - 依赖 `types/` 中的类型定义
 - 被 `main/` 和 `renderer/` 使用
-
 ---
-
 ## 📂 文件清单
-
 ### 核心 Schema 文件
-
 | 文件 | 职责 | 关键 Schema |
 |------|------|-----------|
 | **index.ts** | Schema 导出入口 | 所有 Schema 的统一导出 |
-
 ---
-
 ## ✅ Schema 详解
-
 ### 站点相关 Schema
 
 ```typescript
@@ -80,7 +69,6 @@ export const DetectionResultSchema = z.object({
   timestamp: z.number()
 });
 ```
-
 ### CLI 相关 Schema
 
 ```typescript
@@ -88,7 +76,7 @@ export const DetectionResultSchema = z.object({
 export const CliToolSchema = z.enum([
   'claude-code',
   'codex',
-  'gemini-cli',
+
   'chat'
 ]);
 
@@ -120,7 +108,6 @@ export const CliCompatibilityResultSchema = z.object({
   timestamp: z.number()
 });
 ```
-
 ### 应用配置 Schema
 
 ```typescript
@@ -163,11 +150,8 @@ export const AppConfigSchema = z.object({
   })
 });
 ```
-
 ---
-
 ## 🔄 使用示例
-
 ### 在主进程中使用
 
 ```typescript
@@ -194,7 +178,6 @@ async function checkBalance(site: any) {
   return validResult;
 }
 ```
-
 ### 在渲染进程中使用
 
 ```typescript
@@ -221,7 +204,6 @@ function useSiteGroups() {
   return { groups, handleAddGroup };
 }
 ```
-
 ### 错误处理
 
 ```typescript
@@ -235,11 +217,8 @@ try {
   }
 }
 ```
-
 ---
-
 ## 🎯 最佳实践
-
 ### 1. 验证输入
 
 ```typescript
@@ -253,7 +232,6 @@ const handleSaveConfig = async (config: any) => {
   }
 };
 ```
-
 ### 2. 验证 API 响应
 
 ```typescript
@@ -261,7 +239,6 @@ const handleSaveConfig = async (config: any) => {
 const result = await apiRequest();
 const validResult = DetectionResultSchema.parse(result);
 ```
-
 ### 3. 类型推导
 
 ```typescript
@@ -271,7 +248,6 @@ type SiteGroup = z.infer<typeof SiteGroupSchema>;
 
 // 现在 Site 和 SiteGroup 类型与 Schema 保持同步
 ```
-
 ### 4. 自定义验证
 
 ```typescript
@@ -286,11 +262,8 @@ export const SiteSchema = z.object({
   { message: 'apiKey 或 token 至少需要一个' }
 );
 ```
-
 ---
-
 ## 🧪 Schema 测试
-
 ### 测试示例
 
 ```typescript
@@ -333,18 +306,14 @@ describe('Schemas', () => {
   });
 });
 ```
-
 ---
-
 ## 📈 扩展指南
-
 ### 添加新 Schema
 
 1. 在 `schemas/index.ts` 中添加新 Schema
 2. 定义验证规则
 3. 添加注释说明
 4. 编写单元测试
-
 ### 模板
 
 ```typescript
@@ -363,14 +332,10 @@ export const NewSchema = z.object({
 // 从 Schema 推导类型
 export type NewType = z.infer<typeof NewSchema>;
 ```
-
 ---
-
 ## 🔄 自指
 
 当此文件夹中的文件变化时，更新本索引、src/shared/FOLDER_INDEX.md 和 PROJECT_INDEX.md
-
 ---
-
 **版本**: 2.1.8  
 **更新日期**: 2025-12-24

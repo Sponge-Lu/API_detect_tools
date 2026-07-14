@@ -2,13 +2,14 @@ import { useCallback, useRef } from 'react';
 import { ArrowDown, ArrowUp } from 'lucide-react';
 import { COLUMN_MAX_WIDTH, COLUMN_MIN_WIDTH } from '../../../shared/constants';
 import type { SiteType } from '../../../shared/types/site';
+import { BUILTIN_CLI_LABELS } from '../../../shared/types/cli-config';
 import type { RouteCliType } from '../../../shared/types/route-proxy';
 import { useUIStore } from '../../store/uiStore';
 import type { HistoryMode } from '../Route/Usability/HistoryBucketBars';
 import type { SortField, SortOrder } from '../../store/uiStore';
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../assets/cli-icons/codex.svg';
-import GeminiIcon from '../../assets/cli-icons/gemini.svg';
+import OpenCodeIcon from '../../assets/cli-icons/opencode.svg';
 
 interface SiteListColumn {
   label: string;
@@ -71,27 +72,27 @@ interface CliTypeButton {
 const CLI_TYPES: CliTypeButton[] = [
   {
     type: 'claudeCode',
-    label: 'Claude Code',
-    title: 'Claude Code',
-    aria: '选择 Claude Code',
+    label: BUILTIN_CLI_LABELS.claudeCode,
+    title: BUILTIN_CLI_LABELS.claudeCode,
+    aria: `选择 ${BUILTIN_CLI_LABELS.claudeCode}`,
     icon: ClaudeCodeIcon,
     iconClassName: 'h-[18px] w-[18px]',
   },
   {
     type: 'codex',
-    label: 'Codex',
-    title: 'Codex',
-    aria: '选择 Codex',
+    label: BUILTIN_CLI_LABELS.codex,
+    title: BUILTIN_CLI_LABELS.codex,
+    aria: `选择 ${BUILTIN_CLI_LABELS.codex}`,
     icon: CodexIcon,
     iconClassName: 'h-5 w-5',
   },
   {
-    type: 'geminiCli',
-    label: 'Gemini CLI',
-    title: 'Gemini CLI',
-    aria: '选择 Gemini CLI',
-    icon: GeminiIcon,
-    iconClassName: 'h-5 w-5',
+    type: 'openCode',
+    label: BUILTIN_CLI_LABELS.openCode,
+    title: BUILTIN_CLI_LABELS.openCode,
+    aria: `选择 ${BUILTIN_CLI_LABELS.openCode}`,
+    icon: OpenCodeIcon,
+    iconClassName: 'h-5 w-4',
   },
 ];
 

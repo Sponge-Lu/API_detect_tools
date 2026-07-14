@@ -52,7 +52,6 @@ function buildSiteCardProps(overrides: Record<string, unknown> = {}) {
     cliCompatibility: {
       claudeCode: null,
       codex: null,
-      geminiCli: null,
       testedAt: Date.now(),
     },
     cliConfig: {
@@ -73,16 +72,6 @@ function buildSiteCardProps(overrides: Record<string, unknown> = {}) {
         testModels: [],
         testResults: [],
         enabled: true,
-        editedFiles: null,
-        applyMode: 'merge',
-      },
-      geminiCli: {
-        apiKeyId: null,
-        model: null,
-        testModel: null,
-        testModels: [],
-        testResults: [],
-        enabled: false,
         editedFiles: null,
         applyMode: 'merge',
       },
@@ -201,12 +190,6 @@ const customCliConfig: CustomCliConfig = {
       enabled: false,
       model: null,
       testModels: [],
-      testState: null,
-    },
-    geminiCli: {
-      enabled: true,
-      model: 'direct-model',
-      testModels: ['direct-model'],
       testState: null,
     },
   },
@@ -683,7 +666,11 @@ describe('sites page redesign', () => {
     expect(screen.getByText('手动模型')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'CLI 配置 & 测试' }));
-    expect(screen.getByText('CLI 配置（2/3）')).toBeInTheDocument();
+    expect(
+      screen.getByText((_, element) =>
+        /^CLI 配置（\s*\d+\s*\/\s*3\s*）$/.test(element?.textContent ?? '')
+      )
+    ).toBeInTheDocument();
     expect(screen.queryByText('直连 CLI 配置')).not.toBeInTheDocument();
     expect(screen.queryByText('配置预览与编辑')).not.toBeInTheDocument();
     expect(screen.getByText('配置文件预览')).toBeInTheDocument();
@@ -714,7 +701,9 @@ describe('sites page redesign', () => {
     fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
     expect(screen.getByText('配置文件预览')).toBeInTheDocument();
 
-    expect(screen.queryByText('三 CLI 配置编辑区与测试结果（实现期细化）')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('旧版 CLI 配置编辑区与测试结果（实现期细化）')
+    ).not.toBeInTheDocument();
   });
 
   it('keeps the direct config side panel on tab2 after saving the same config', async () => {
@@ -730,7 +719,9 @@ describe('sites page redesign', () => {
     const updateConfig = vi.fn((id: string, updates: Partial<CustomCliConfig>) => {
       useCustomCliConfigStore.setState(state => ({
         configs: state.configs.map(config =>
-          config.id === id ? { ...config, ...updates, updatedAt: refreshedConfig.updatedAt } : config
+          config.id === id
+            ? { ...config, ...updates, updatedAt: refreshedConfig.updatedAt }
+            : config
         ),
       }));
     });
@@ -1101,7 +1092,11 @@ describe('sites page redesign', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'CLI 配置 & 测试' }));
-    expect(screen.getByText('CLI 配置（2/3）')).toBeInTheDocument();
+    expect(
+      screen.getByText((_, element) =>
+        /^CLI 配置（\s*\d+\s*\/\s*3\s*）$/.test(element?.textContent ?? '')
+      )
+    ).toBeInTheDocument();
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
@@ -1123,7 +1118,11 @@ describe('sites page redesign', () => {
       );
     });
 
-    expect(screen.getByText('CLI 配置（2/3）')).toBeInTheDocument();
+    expect(
+      screen.getByText((_, element) =>
+        /^CLI 配置（\s*\d+\s*\/\s*3\s*）$/.test(element?.textContent ?? '')
+      )
+    ).toBeInTheDocument();
     expect(screen.queryByText('站点与账户')).not.toBeInTheDocument();
   });
 
@@ -1341,7 +1340,6 @@ describe('sites page redesign', () => {
     expect(screen.getByRole('button', { name: '选择 Codex' })).toBeInTheDocument();
     expect(screen.getByAltText('Claude Code')).toBeInTheDocument();
     expect(screen.getByAltText('Codex')).toBeInTheDocument();
-    expect(screen.getByAltText('Gemini CLI')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '综合模式' })).toBeInTheDocument();
     expect(screen.queryByText('操作')).not.toBeInTheDocument();
     // 已移除的列
@@ -1416,7 +1414,6 @@ describe('sites page redesign', () => {
         cliCompatibility={{
           claudeCode: true,
           codex: null,
-          geminiCli: false,
           testedAt: Date.now(),
         }}
         cliConfig={null}
@@ -1456,7 +1453,6 @@ describe('sites page redesign', () => {
         cliCompatibility={{
           claudeCode: true,
           codex: null,
-          geminiCli: false,
           testedAt: Date.now(),
         }}
         cliConfig={null}
@@ -1493,7 +1489,6 @@ describe('sites page redesign', () => {
         cliCompatibility={{
           claudeCode: true,
           codex: null,
-          geminiCli: false,
           testedAt: Date.now(),
         }}
         cliConfig={null}
@@ -1545,7 +1540,6 @@ describe('sites page redesign', () => {
         cliCompatibility={{
           claudeCode: true,
           codex: null,
-          geminiCli: false,
           testedAt: Date.now(),
         }}
         cliConfig={null}
@@ -1579,7 +1573,6 @@ describe('sites page redesign', () => {
         cliCompatibility={{
           claudeCode: true,
           codex: null,
-          geminiCli: false,
           testedAt: Date.now(),
         }}
         cliConfig={null}
@@ -1623,7 +1616,7 @@ describe('sites page redesign', () => {
         checkingIn={null}
         dragOverIndex={null}
         refreshMessage={null}
-        cliCompatibility={{ claudeCode: true, codex: null, geminiCli: null, testedAt: Date.now() }}
+        cliCompatibility={{ claudeCode: true, codex: null, testedAt: Date.now() }}
         cliConfig={null}
         isCliTesting={false}
         onDetect={vi.fn()}
@@ -1792,7 +1785,6 @@ describe('sites page redesign', () => {
         cliCompatibility={{
           claudeCode: true,
           codex: null,
-          geminiCli: false,
           testedAt: Date.now(),
         }}
         cliConfig={{
@@ -1808,15 +1800,6 @@ describe('sites page redesign', () => {
           codex: {
             apiKeyId: 2,
             model: 'gpt-4.1',
-            testModel: null,
-            testModels: [],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-          geminiCli: {
-            apiKeyId: null,
-            model: null,
             testModel: null,
             testModels: [],
             enabled: true,
@@ -1841,7 +1824,6 @@ describe('sites page redesign', () => {
     // CLI 图标已移到 History 列，不再单独占据一列
     expect(screen.queryByAltText('Claude Code')).not.toBeInTheDocument();
     expect(screen.queryByAltText('Codex')).not.toBeInTheDocument();
-    expect(screen.queryByAltText('Gemini CLI')).not.toBeInTheDocument();
     // CLI配置和CLI应用按钮已移到侧滑面板中
     expect(screen.queryByRole('button', { name: 'CLI配置' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'CLI应用' })).not.toBeInTheDocument();
@@ -1865,7 +1847,6 @@ describe('sites page redesign', () => {
             cliCompatibility: {
               claudeCode: true,
               codex: null,
-              geminiCli: null,
               testedAt: Date.now(),
             },
           })}
@@ -1882,6 +1863,29 @@ describe('sites page redesign', () => {
     expect(screen.queryByText('CLI 工作台')).not.toBeInTheDocument();
   });
 
+  it('shows gas station and model refresh actions for direct configs', () => {
+    const onDetect = vi.fn();
+    const onOpenExtraLink = vi.fn();
+
+    render(
+      <SiteCard
+        {...buildSiteCardProps({
+          accessPointType: 'custom-cli',
+          accountName: '直连配置',
+          onDetect,
+          onOpenExtraLink,
+        })}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '打开加油站: https://fuel.example.com' }));
+    fireEvent.click(screen.getByRole('button', { name: '刷新模型' }));
+
+    expect(onOpenExtraLink).toHaveBeenCalledWith('https://fuel.example.com');
+    expect(onDetect).toHaveBeenCalledWith(baseSite);
+    expect(screen.queryByRole('button', { name: /点击签到/ })).not.toBeInTheDocument();
+  });
+
   it('renders the CLI compatibility surface through visible icons and config/apply entry buttons', () => {
     const onConfig = vi.fn();
     const onApply = vi.fn();
@@ -1891,7 +1895,6 @@ describe('sites page redesign', () => {
         compatibility={{
           claudeCode: true,
           codex: false,
-          geminiCli: null,
           testedAt: Date.now(),
         }}
         cliConfig={{
@@ -1913,15 +1916,6 @@ describe('sites page redesign', () => {
             editedFiles: null,
             applyMode: 'merge',
           },
-          geminiCli: {
-            apiKeyId: 3,
-            model: 'gemini-2.5-pro',
-            testModel: null,
-            testModels: [],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
         }}
         configTrigger="text"
         configButtonLabel="CLI配置"
@@ -1932,7 +1926,6 @@ describe('sites page redesign', () => {
 
     expect(screen.getByAltText('Claude Code')).toBeInTheDocument();
     expect(screen.getByAltText('Codex')).toBeInTheDocument();
-    expect(screen.getByAltText('Gemini CLI')).toBeInTheDocument();
 
     expect(screen.getByRole('button', { name: 'CLI配置' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'CLI应用' })).toBeInTheDocument();
@@ -1952,7 +1945,6 @@ describe('sites page redesign', () => {
         compatibility={{
           claudeCode: null,
           codex: null,
-          geminiCli: null,
           testedAt: null,
         }}
         cliConfig={{
@@ -1983,15 +1975,6 @@ describe('sites page redesign', () => {
             editedFiles: null,
             applyMode: 'merge',
           },
-          geminiCli: {
-            apiKeyId: 3,
-            model: 'gemini-2.5-pro',
-            testModel: null,
-            testModels: [],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
         }}
         configTrigger="text"
         configButtonLabel="CLI配置"
@@ -2010,7 +1993,6 @@ describe('sites page redesign', () => {
         compatibility={{
           claudeCode: null,
           codex: false,
-          geminiCli: null,
           testedAt: 200,
           codexError: '错误码 503',
           sourceLabel: '来自站点检测',
@@ -2043,15 +2025,6 @@ describe('sites page redesign', () => {
             editedFiles: null,
             applyMode: 'merge',
           },
-          geminiCli: {
-            apiKeyId: 3,
-            model: 'gemini-2.5-pro',
-            testModel: null,
-            testModels: [],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
         }}
         configTrigger="text"
         configButtonLabel="CLI配置"
@@ -2074,7 +2047,6 @@ describe('sites page redesign', () => {
           cliCompatibility: {
             claudeCode: true,
             codex: null,
-            geminiCli: null,
             testedAt: Date.now(),
           },
         })}

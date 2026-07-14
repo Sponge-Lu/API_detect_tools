@@ -46,11 +46,7 @@ import type { CustomCliConfig } from '../../../shared/types/custom-cli-config';
 import type { DetectionResult } from '../../App';
 import type { CliConfig } from '../../../shared/types/cli-config';
 import type { CliCompatibilityResult } from '../../store/detectionStore';
-import type {
-  CodexTestDetail,
-  GeminiTestDetail,
-  ModelPricingData,
-} from '../../../shared/types/site';
+import type { CodexTestDetail, ModelPricingData } from '../../../shared/types/site';
 
 // 账号信息接口（从 SitesPage 提取）
 export interface AccountInfo {
@@ -93,7 +89,6 @@ export interface AccessPointDetailPanelProps {
   // 托管 CLI 兼容性结果（驱动编辑器显示）
   cliCompatibility?: CliCompatibilityResult | null;
   cliCodexDetail?: CodexTestDetail | null;
-  cliGeminiDetail?: GeminiTestDetail | null;
   // 全局确认弹窗回调（供内嵌编辑器使用，替代嵌套 ConfirmDialog/AppModal）
   showDialog?: (options: {
     type?: 'confirm' | 'warning';
@@ -317,7 +312,6 @@ export function AccessPointDetailPanel({
   isCliTesting = false,
   cliCompatibility,
   cliCodexDetail,
-  cliGeminiDetail,
   showDialog,
   onAddAccount,
   onDeleteAccount,
@@ -1082,7 +1076,6 @@ export function AccessPointDetailPanel({
                 siteModelPricing={modelPricing}
                 currentConfig={cliConfig ?? null}
                 codexDetail={cliCodexDetail}
-                geminiDetail={cliGeminiDetail}
                 compatibility={cliCompatibility ?? null}
                 showDialog={showDialog}
                 onPersistConfig={onPersistCliConfig}

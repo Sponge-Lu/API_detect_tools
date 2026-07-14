@@ -19,11 +19,8 @@ import {
   ClaudeCodeConfig,
   CodexConfig,
   CodexAuthConfig,
-  GeminiCliConfig,
-  GeminiEnvConfig,
   extractClaudeCodeInfo,
   extractCodexInfo,
-  extractGeminiCliInfo,
 } from '../main/utils/config-parsers';
 
 // ============= Arbitraries =============
@@ -48,16 +45,9 @@ const apiKeyArb = fc
  * Generate a valid model name
  */
 const modelNameArb = fc.oneof(
-  fc.constantFrom(
-    'claude-3-opus-20240229',
-    'claude-3-sonnet-20240229',
-    'gpt-4',
-    'gpt-4-turbo',
-    'gemini-pro',
-    'gemini-1.5-pro'
-  ),
+  fc.constantFrom('claude-3-opus-20240229', 'claude-3-sonnet-20240229', 'gpt-4', 'gpt-4-turbo'),
   fc
-    .tuple(fc.constantFrom('claude-', 'gpt-', 'gemini-'), fc.integer({ min: 1, max: 5 }))
+    .tuple(fc.constantFrom('claude-', 'gpt-'), fc.integer({ min: 1, max: 5 }))
     .map(([prefix, version]) => `${prefix}${version}`)
 );
 
@@ -113,44 +103,14 @@ const codexAuthConfigArb: fc.Arbitrary<CodexAuthConfig> = fc.record({
   OPENAI_API_KEY: fc.option(apiKeyArb, { nil: undefined }),
 });
 
-// ============= Gemini CLI Config Arbitraries =============
-
-/**
- * Generate a valid Gemini CLI config
- */
-const geminiCliConfigArb: fc.Arbitrary<GeminiCliConfig> = fc.record({
-  security: fc.option(
-    fc.record({
-      auth: fc.option(
-        fc.record({
-          selectedType: fc.option(fc.constantFrom('gemini-api-key', 'google-login', 'vertex-ai'), {
-            nil: undefined,
-          }),
-        }),
-        { nil: undefined }
-      ),
-    }),
-    { nil: undefined }
-  ),
-});
-
-/**
- * Generate a valid Gemini ENV config
- */
-const geminiEnvConfigArb: fc.Arbitrary<GeminiEnvConfig> = fc.record({
-  GEMINI_API_KEY: fc.option(apiKeyArb, { nil: undefined }),
-  GEMINI_MODEL: fc.option(modelNameArb, { nil: undefined }),
-  GOOGLE_GEMINI_BASE_URL: fc.option(urlArb, { nil: undefined }),
-});
-
 // ============= Property Tests =============
 
 /**
  * **Property 1: Config Parsing Correctness**
  * **Validates: Requirements 1.3, 1.4, 2.3, 2.4, 3.3, 3.4**
  *
- * *For any* valid CLI configuration file (Claude Code settings.json, Codex config.toml/auth.json,
- * Gemini CLI settings.json/.env), parsing the file and extracting the URL and API key fields
+ * *For any* valid CLI configuration file (Claude Code settings.json, Codex config.toml/auth.json),
+ * parsing the file and extracting the URL and API key fields
  * SHALL produce values that exactly match the original input values.
  */
 describe('Property 1: Config Parsing Correctness', () => {
@@ -320,38 +280,6 @@ describe('Property 1: Config Parsing Correctness', () => {
       const result = extractCodexInfo(null, null);
       expect(result.hasApiKey).toBe(false);
       expect(result.baseUrl).toBeUndefined();
-    });
-  });
-
-  describe('Gemini CLI Config Extraction', () => {
-    it('should correctly extract URL, API key, and subscription status from Gemini CLI config', () => {
-      fc.assert(
-        fc.property(geminiCliConfigArb, geminiEnvConfigArb, (config, envConfig) => {
-          const result = extractGeminiCliInfo(config, envConfig);
-
-          // Verify URL extraction
-          if (envConfig.GOOGLE_GEMINI_BASE_URL) {
-            expect(result.baseUrl).toBe(envConfig.GOOGLE_GEMINI_BASE_URL);
-          } else {
-            expect(result.baseUrl).toBeUndefined();
-          }
-
-          // Verify API key detection
-          expect(result.hasApiKey).toBe(!!envConfig.GEMINI_API_KEY);
-
-          // Verify subscription detection
-          const isSubscription = config.security?.auth?.selectedType === 'google-login';
-          expect(result.isSubscription).toBe(isSubscription);
-        }),
-        { numRuns: 100 }
-      );
-    });
-
-    it('should return correct defaults when configs are null', () => {
-      const result = extractGeminiCliInfo(null, null);
-      expect(result.hasApiKey).toBe(false);
-      expect(result.baseUrl).toBeUndefined();
-      expect(result.isSubscription).toBe(false);
     });
   });
 });
@@ -608,7 +536,7 @@ const siteListArb = fc.array(siteInfoArb, { minLength: 0, maxLength: 10 });
 /**
  * Generate a CLI type
  */
-const cliTypeArb: fc.Arbitrary<CliType> = fc.constantFrom('claudeCode', 'codex', 'geminiCli');
+const cliTypeArb: fc.Arbitrary<CliType> = fc.constantFrom('claudeCode', 'codex');
 
 // ============= Property 3: Site Matching Correctness =============
 
@@ -932,161 +860,6 @@ describe('Property 3: Site Matching Correctness', () => {
   });
 });
 
-// ============= Property 4: Subscription Detection =============
-
-/**
- * **Property 4: Subscription Detection**
- * **Validates: Requirements 3.5**
- *
- * *For any* Gemini CLI configuration where `settings.json` contains
- * `security.auth.selectedType` equal to "google-login", the detection result
- * SHALL have sourceType "subscription".
- */
-describe('Property 4: Subscription Detection', () => {
-  describe('Gemini CLI Subscription Detection', () => {
-    it('should return isSubscription=true when selectedType is google-login', () => {
-      fc.assert(
-        fc.property(
-          fc.option(urlArb, { nil: undefined }),
-          fc.option(apiKeyArb, { nil: undefined }),
-          (baseUrl, apiKey) => {
-            // Create a config with google-login auth type
-            const config: GeminiCliConfig = {
-              security: {
-                auth: {
-                  selectedType: 'google-login',
-                },
-              },
-            };
-
-            const envConfig: GeminiEnvConfig = {
-              GOOGLE_GEMINI_BASE_URL: baseUrl,
-              GEMINI_API_KEY: apiKey,
-            };
-
-            const result = extractGeminiCliInfo(config, envConfig);
-            expect(result.isSubscription).toBe(true);
-          }
-        ),
-        { numRuns: 100 }
-      );
-    });
-
-    it('should return isSubscription=false when selectedType is not google-login', () => {
-      fc.assert(
-        fc.property(
-          fc.constantFrom('gemini-api-key', 'vertex-ai', undefined),
-          fc.option(urlArb, { nil: undefined }),
-          fc.option(apiKeyArb, { nil: undefined }),
-          (selectedType, baseUrl, apiKey) => {
-            const config: GeminiCliConfig = {
-              security: {
-                auth: {
-                  selectedType,
-                },
-              },
-            };
-
-            const envConfig: GeminiEnvConfig = {
-              GOOGLE_GEMINI_BASE_URL: baseUrl,
-              GEMINI_API_KEY: apiKey,
-            };
-
-            const result = extractGeminiCliInfo(config, envConfig);
-            expect(result.isSubscription).toBe(false);
-          }
-        ),
-        { numRuns: 100 }
-      );
-    });
-
-    it('should return isSubscription=false when security.auth is missing', () => {
-      fc.assert(
-        fc.property(
-          fc.option(urlArb, { nil: undefined }),
-          fc.option(apiKeyArb, { nil: undefined }),
-          (baseUrl, apiKey) => {
-            // Config without security.auth
-            const config: GeminiCliConfig = {};
-
-            const envConfig: GeminiEnvConfig = {
-              GOOGLE_GEMINI_BASE_URL: baseUrl,
-              GEMINI_API_KEY: apiKey,
-            };
-
-            const result = extractGeminiCliInfo(config, envConfig);
-            expect(result.isSubscription).toBe(false);
-          }
-        ),
-        { numRuns: 50 }
-      );
-    });
-
-    it('should return sourceType=subscription when isSubscription is true regardless of other config', () => {
-      fc.assert(
-        fc.property(
-          fc.option(urlArb, { nil: undefined }),
-          fc.boolean(),
-          siteListArb,
-          (baseUrl, hasApiKey, sites) => {
-            const result = determineSourceType({
-              baseUrl,
-              hasApiKey,
-              isSubscription: true,
-              cliType: 'geminiCli',
-              sites,
-            });
-
-            // Subscription should always take priority
-            expect(result.sourceType).toBe('subscription');
-          }
-        ),
-        { numRuns: 100 }
-      );
-    });
-
-    it('subscription detection should work with any combination of URL and API key', () => {
-      fc.assert(
-        fc.property(
-          fc.record({
-            hasUrl: fc.boolean(),
-            hasApiKey: fc.boolean(),
-          }),
-          siteListArb,
-          ({ hasUrl, hasApiKey }, sites) => {
-            const config: GeminiCliConfig = {
-              security: {
-                auth: {
-                  selectedType: 'google-login',
-                },
-              },
-            };
-
-            const envConfig: GeminiEnvConfig = {
-              GOOGLE_GEMINI_BASE_URL: hasUrl ? 'https://example.com/api' : undefined,
-              GEMINI_API_KEY: hasApiKey ? 'sk-test-key-12345' : undefined,
-            };
-
-            const extracted = extractGeminiCliInfo(config, envConfig);
-            expect(extracted.isSubscription).toBe(true);
-
-            const result = determineSourceType({
-              baseUrl: extracted.baseUrl,
-              hasApiKey: extracted.hasApiKey,
-              isSubscription: extracted.isSubscription,
-              cliType: 'geminiCli',
-              sites,
-            });
-
-            expect(result.sourceType).toBe('subscription');
-          }
-        ),
-        { numRuns: 100 }
-      );
-    });
-  });
-});
-
 // ============= Property 5: Caching Behavior =============
 
 import { ConfigDetectionService } from '../main/config-detection-service';
@@ -1113,10 +886,8 @@ describe('Property 5: Caching Behavior', () => {
           let firstResult: CliDetectionResult;
           if (cliType === 'claudeCode') {
             firstResult = await service.detectClaudeCode(sites);
-          } else if (cliType === 'codex') {
-            firstResult = await service.detectCodex(sites);
           } else {
-            firstResult = await service.detectGeminiCli(sites);
+            firstResult = await service.detectCodex(sites);
           }
 
           // After first call - should have cache
@@ -1126,10 +897,8 @@ describe('Property 5: Caching Behavior', () => {
           let secondResult: CliDetectionResult;
           if (cliType === 'claudeCode') {
             secondResult = await service.detectClaudeCode(sites);
-          } else if (cliType === 'codex') {
-            secondResult = await service.detectCodex(sites);
           } else {
-            secondResult = await service.detectGeminiCli(sites);
+            secondResult = await service.detectCodex(sites);
           }
 
           // Results should be identical (same object from cache)
@@ -1148,10 +917,8 @@ describe('Property 5: Caching Behavior', () => {
           // Perform detection
           if (cliType === 'claudeCode') {
             await service.detectClaudeCode(sites);
-          } else if (cliType === 'codex') {
-            await service.detectCodex(sites);
           } else {
-            await service.detectGeminiCli(sites);
+            await service.detectCodex(sites);
           }
 
           // Should have cache
@@ -1172,13 +939,12 @@ describe('Property 5: Caching Behavior', () => {
         fc.asyncProperty(siteListArb, async sites => {
           const service = new ConfigDetectionService({ ttl: 60000 });
 
-          // Detect all CLIs
+          // Detect all supported CLIs
           await service.detectAll(sites);
 
-          // All should have cache
+          // All supported CLIs should have cache
           expect(service.hasCacheFor('claudeCode')).toBe(true);
           expect(service.hasCacheFor('codex')).toBe(true);
-          expect(service.hasCacheFor('geminiCli')).toBe(true);
 
           // Clear only claudeCode cache
           service.clearCacheFor('claudeCode');
@@ -1186,7 +952,6 @@ describe('Property 5: Caching Behavior', () => {
           // Only claudeCode should not have cache
           expect(service.hasCacheFor('claudeCode')).toBe(false);
           expect(service.hasCacheFor('codex')).toBe(true);
-          expect(service.hasCacheFor('geminiCli')).toBe(true);
         }),
         { numRuns: 20 }
       );
@@ -1222,10 +987,9 @@ describe('Property 5: Caching Behavior', () => {
           // First detectAll
           const firstResult = await service.detectAll(sites);
 
-          // All should have cache
+          // All supported CLIs should have cache
           expect(service.hasCacheFor('claudeCode')).toBe(true);
           expect(service.hasCacheFor('codex')).toBe(true);
-          expect(service.hasCacheFor('geminiCli')).toBe(true);
 
           // Second detectAll should return cached results
           const secondResult = await service.detectAll(sites);
@@ -1233,7 +997,6 @@ describe('Property 5: Caching Behavior', () => {
           // Results should be identical
           expect(secondResult.claudeCode.detectedAt).toBe(firstResult.claudeCode.detectedAt);
           expect(secondResult.codex.detectedAt).toBe(firstResult.codex.detectedAt);
-          expect(secondResult.geminiCli.detectedAt).toBe(firstResult.geminiCli.detectedAt);
         }),
         { numRuns: 20 }
       );

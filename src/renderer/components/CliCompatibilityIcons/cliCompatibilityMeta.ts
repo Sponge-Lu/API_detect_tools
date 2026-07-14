@@ -2,7 +2,7 @@ import type {
   CliCompatibilityResult,
   ClaudeTestDetail,
   CodexTestDetail,
-  GeminiTestDetail,
+  OpenCodeTestDetail,
 } from '../../store/detectionStore';
 
 export interface CliCompatibilityMetaInput {
@@ -13,7 +13,7 @@ export interface CliCompatibilityMetaInput {
   testedAt?: number | null;
   claudeDetail?: ClaudeTestDetail;
   codexDetail?: CodexTestDetail;
-  geminiDetail?: GeminiTestDetail;
+  openCodeDetail?: OpenCodeTestDetail;
   sourceLabel?: string;
   error?: string;
 }
@@ -64,24 +64,18 @@ export function getCodexDetailText(compatibility: CliCompatibilityResult | undef
   return ` [responses: ${responsesStatus}${replyText ? `, 回答: ${replyText}` : ''}]`;
 }
 
-export function getGeminiDetailText(compatibility: CliCompatibilityResult | undefined): string {
-  const detail = compatibility?.geminiDetail;
+export function getOpenCodeDetailText(compatibility: CliCompatibilityResult | undefined): string {
+  const detail = compatibility?.openCodeDetail;
   if (!detail) return '';
 
-  const nativeStatus = detail.native === true ? '✓' : detail.native === false ? '✗' : '?';
-  const proxyStatus = detail.proxy === true ? '✓' : detail.proxy === false ? '✗' : '?';
-
-  let hint = '';
-  if (detail.native === true) {
-    hint = ' (原生格式可用)';
-  } else if (detail.native === false && detail.proxy === true) {
-    hint = ' (仅兼容格式可用，CLI可能不工作)';
-  } else if (detail.native === false && detail.proxy === false) {
-    hint = ' (均不可用)';
-  }
-
+  const modeLabels: Record<OpenCodeTestDetail['mode'], string> = {
+    native: 'native',
+    'anthropic-messages': 'messages',
+    'openai-chat-completions': 'chat',
+    'openai-responses': 'responses',
+  };
   const replyText = formatReplyText(detail.replyText);
-  return ` [native: ${nativeStatus}, proxy: ${proxyStatus}${replyText ? `, 回答: ${replyText}` : ''}]${hint}`;
+  return ` [${modeLabels[detail.mode]}${replyText ? `, 回答: ${replyText}` : ''}]`;
 }
 
 export function formatCliCompatibilityTestedAt(timestamp: number | null | undefined): string {
@@ -110,10 +104,10 @@ export function buildCliCompatibilityTooltip(input: CliCompatibilityMetaInput): 
   const codexDetailText = input.codexDetail
     ? getCodexDetailText({ codexDetail: input.codexDetail } as CliCompatibilityResult)
     : '';
-  const geminiDetailText = input.geminiDetail
-    ? getGeminiDetailText({ geminiDetail: input.geminiDetail } as CliCompatibilityResult)
+  const openCodeDetailText = input.openCodeDetail
+    ? getOpenCodeDetailText({ openCodeDetail: input.openCodeDetail } as CliCompatibilityResult)
     : '';
   const sourceText = input.sourceLabel ? ` [${input.sourceLabel}]` : '';
   const errorText = input.error?.trim() ? `\n错误: ${input.error.trim()}` : '';
-  return `${input.name}: ${statusText}${claudeDetailText}${codexDetailText}${geminiDetailText}${testedAtText}${sourceText}${errorText}`;
+  return `${input.name}: ${statusText}${claudeDetailText}${codexDetailText}${openCodeDetailText}${testedAtText}${sourceText}${errorText}`;
 }

@@ -16,7 +16,6 @@ const { unifiedConfigManagerMock, loggerScopeMock, customCliStorageMock } = vi.h
     exportConfigSync: vi.fn(),
     getRoutingConfig: vi.fn(),
     updateRouteModelRegistry: vi.fn(),
-    ensureRouteRuleForCliModelSelection: vi.fn(),
     upsertRouteModelMappingOverride: vi.fn(),
     deleteRouteModelDisplayItem: vi.fn(),
     deleteRouteModelMappingOverride: vi.fn(),
@@ -60,7 +59,6 @@ vi.mock('../main/utils/logger', () => ({
 import {
   deleteModelDisplayItem,
   rebuildModelRegistry,
-  resetModelRegistryDefaults,
   resolveCanonicalName,
   syncModelRegistrySources,
 } from '../main/route-model-registry-service';
@@ -125,12 +123,6 @@ function createCustomCliConfig(overrides: Partial<CustomCliConfig> = {}): Custom
         testModels: [],
         testState: null,
       },
-      geminiCli: {
-        enabled: false,
-        model: null,
-        testModels: [],
-        testState: null,
-      },
     },
     createdAt: 1,
     updatedAt: 1,
@@ -176,9 +168,6 @@ describe('route model registry service', () => {
     unifiedConfigManagerMock.exportConfigSync.mockReset();
     unifiedConfigManagerMock.getRoutingConfig.mockReset();
     unifiedConfigManagerMock.updateRouteModelRegistry.mockReset().mockResolvedValue(undefined);
-    unifiedConfigManagerMock.ensureRouteRuleForCliModelSelection
-      .mockReset()
-      .mockResolvedValue(undefined);
     unifiedConfigManagerMock.upsertRouteModelMappingOverride.mockReset();
     unifiedConfigManagerMock.deleteRouteModelDisplayItem.mockReset();
     unifiedConfigManagerMock.deleteRouteModelMappingOverride.mockReset();
@@ -505,7 +494,7 @@ describe('route model registry service', () => {
     ).toBe('gpt-4.1');
   });
 
-  it('seeds only the single default example display item during rebuild', async () => {
+  it('does not create display items from detected models during rebuild', async () => {
     const registry = createRegistryConfig();
 
     unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
@@ -544,27 +533,18 @@ describe('route model registry service', () => {
       'gpt-4.1-20260101',
     ]);
     expect(result.entries['gpt-4.1']).toBeUndefined();
-    expect(result.displayItems).toEqual([
-      expect.objectContaining({
-        canonicalName: 'claude-opus-4-6',
-        mode: 'seeded',
-        sourceKeys: ['site-1:acc-1:claude-opus-4.6-20260201'],
-        priorityConfig: {
-          sitePriorities: {},
-          apiKeyPriorities: {},
-        },
-      }),
-    ]);
+    expect(result.displayItems).toEqual([]);
+    expect(result.entries).toEqual({});
   });
 
-  it('preserves seeded default disabled priority config during ordinary rebuild', async () => {
+  it('preserves manual display item priority config during ordinary rebuild', async () => {
     const opusModel = 'claude-opus-4.6-20260201';
     const opusSourceKey = `site-1:acc-1:${opusModel}`;
     const disabledApiKeyPriorityKey = buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'key-a');
     const registry = createRegistryConfig();
     registry.displayItems = [
       {
-        id: 'seeded:claude-opus-4-6',
+        id: 'manual:claude-opus-4-6',
         vendor: 'claude',
         canonicalName: 'claude-opus-4-6',
         sourceKeys: [opusSourceKey],
@@ -586,7 +566,7 @@ describe('route model registry service', () => {
           disableDurationMinutes: 45,
           minSuccessRate: 0.75,
         },
-        mode: 'seeded',
+        mode: 'manual',
         createdAt: 123,
         updatedAt: 456,
       },
@@ -627,9 +607,9 @@ describe('route model registry service', () => {
 
     expect(result.displayItems).toEqual([
       expect.objectContaining({
-        id: 'seeded:claude-opus-4-6',
+        id: 'manual:claude-opus-4-6',
         canonicalName: 'claude-opus-4-6',
-        mode: 'seeded',
+        mode: 'manual',
         sourceKeys: [opusSourceKey],
         originalModelOrder: [opusModel],
         priorityConfig: {
@@ -666,36 +646,16 @@ describe('route model registry service', () => {
     );
   });
 
-  it('resets the default opus display item without preserving old overrides targeting it', async () => {
-    const opusModel = 'claude-opus-4.6-20260201';
+  it('rebuilds explicit override-backed redirects as manual display items', async () => {
     const sonnetModel = 'claude-sonnet-4.6-20260201';
-    const opusSourceKey = `site-1:acc-1:${opusModel}`;
     const sonnetSourceKey = `site-1:acc-1:${sonnetModel}`;
     const registry = createRegistryConfig([
       createSourceOverride({
-        id: 'old-default-override',
+        id: 'claude-team-route-override',
         sourceKey: sonnetSourceKey,
-        canonicalName: 'claude-opus-4-6',
+        canonicalName: 'claude-team-route',
       }),
     ]);
-    registry.displayItems = [
-      {
-        id: 'seeded:claude-opus-4-6',
-        vendor: 'claude',
-        canonicalName: 'claude-opus-4-6',
-        sourceKeys: [sonnetSourceKey, opusSourceKey],
-        originalModelOrder: [sonnetModel, opusModel],
-        priorityConfig: {
-          sitePriorities: {
-            'site-old': 0,
-          },
-          apiKeyPriorities: {},
-        },
-        mode: 'seeded',
-        createdAt: 1,
-        updatedAt: 2,
-      },
-    ];
 
     unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
       sites: [{ id: 'site-1', name: 'Site 1', cached_data: undefined }],
@@ -706,7 +666,7 @@ describe('route model registry service', () => {
           account_name: 'Primary',
           status: 'active',
           cached_data: {
-            models: [opusModel, sonnetModel],
+            models: [sonnetModel],
             api_keys: [],
             user_groups: {},
           },
@@ -717,51 +677,50 @@ describe('route model registry service', () => {
       modelRegistry: registry,
     });
 
-    const result = await resetModelRegistryDefaults();
+    const result = await rebuildModelRegistry(true);
 
-    expect(result.overrides).toEqual([]);
+    expect(result.overrides).toEqual(registry.overrides);
     expect(result.displayItems).toEqual([
       expect.objectContaining({
-        id: 'seeded:claude-opus-4-6',
-        canonicalName: 'claude-opus-4-6',
-        mode: 'seeded',
-        sourceKeys: [opusSourceKey],
-        originalModelOrder: [opusModel],
+        id: buildRouteOverrideDisplayItemId('claude-team-route'),
+        canonicalName: 'claude-team-route',
+        mode: 'manual',
+        sourceKeys: [sonnetSourceKey],
+        originalModelOrder: [sonnetModel],
         priorityConfig: {
           sitePriorities: {},
           apiKeyPriorities: {},
         },
       }),
     ]);
-    expect(result.entries['claude-opus-4-6']?.aliases).toEqual([opusModel]);
-    expect(result.entries['claude-sonnet-4-6']).toBeUndefined();
+    expect(result.entries['claude-team-route']?.aliases).toEqual([sonnetModel]);
     expect(unifiedConfigManagerMock.updateRouteModelRegistry).toHaveBeenCalledWith(
       expect.objectContaining({
-        overrides: [],
+        overrides: registry.overrides,
         displayItems: [
           expect.objectContaining({
-            canonicalName: 'claude-opus-4-6',
-            sourceKeys: [opusSourceKey],
+            canonicalName: 'claude-team-route',
+            sourceKeys: [sonnetSourceKey],
           }),
         ],
       })
     );
-    expect(unifiedConfigManagerMock.ensureRouteRuleForCliModelSelection).toHaveBeenCalledWith(
-      'claudeCode',
-      'claude-opus-4-6'
-    );
   });
 
-  it('syncs sources without overwriting persisted display items while seeding newly detected models', async () => {
+  it('syncs sources without creating redirects for newly detected models', async () => {
     const registry = createRegistryConfig();
     registry.displayItems = [
       {
-        id: 'seeded:gpt:0',
+        id: 'manual:gpt-5-4',
         vendor: 'gpt',
         canonicalName: 'gpt-5-4',
         sourceKeys: ['site-1:acc-1:gpt-5.4-20260101'],
         originalModelOrder: ['gpt-5.4-20260101'],
-        mode: 'seeded',
+        priorityConfig: {
+          sitePriorities: { 'site-1': 3 },
+          apiKeyPriorities: {},
+        },
+        mode: 'manual',
         createdAt: 1,
         updatedAt: 2,
       },
@@ -793,26 +752,21 @@ describe('route model registry service', () => {
       'gpt-5.4-20260101',
       'gpt-5-20260101',
     ]);
-    expect(result.displayItems).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: 'seeded:gpt:0',
-          canonicalName: 'gpt-5-4',
-          sourceKeys: ['site-1:acc-1:gpt-5.4-20260101'],
-          originalModelOrder: ['gpt-5.4-20260101'],
-          mode: 'seeded',
-        }),
-        expect.objectContaining({
-          id: 'seeded:gpt-5',
-          canonicalName: 'gpt-5',
-          sourceKeys: ['site-1:acc-1:gpt-5-20260101'],
-          originalModelOrder: ['gpt-5-20260101'],
-          mode: 'seeded',
-        }),
-      ])
-    );
+    expect(result.displayItems).toEqual([
+      expect.objectContaining({
+        id: 'manual:gpt-5-4',
+        canonicalName: 'gpt-5-4',
+        sourceKeys: ['site-1:acc-1:gpt-5.4-20260101'],
+        originalModelOrder: ['gpt-5.4-20260101'],
+        priorityConfig: {
+          sitePriorities: { 'site-1': 3 },
+          apiKeyPriorities: {},
+        },
+        mode: 'manual',
+      }),
+    ]);
     expect(result.entries['gpt-5-4']).toBeDefined();
-    expect(result.entries['gpt-5']).toBeDefined();
+    expect(result.entries['gpt-5']).toBeUndefined();
   });
 
   it('deletes override-backed display items that have no persisted display item', async () => {
@@ -968,76 +922,6 @@ describe('route model registry service', () => {
     ]);
   });
 
-  it('persists excludes when deleting a seeded display item so sync does not recreate it', async () => {
-    const canonicalName = 'claude-opus-4-6';
-    const originalModel = 'claude-opus-4.6-20260201';
-    const sourceKey = `site-1:acc-1:${originalModel}`;
-    const registry = createRegistryConfig();
-    registry.displayItems = [
-      {
-        id: 'seeded:claude-opus-4-6',
-        vendor: 'claude',
-        canonicalName,
-        sourceKeys: [sourceKey],
-        originalModelOrder: [originalModel],
-        priorityConfig: {
-          sitePriorities: {},
-          apiKeyPriorities: {},
-        },
-        mode: 'seeded',
-        createdAt: 10,
-        updatedAt: 20,
-      },
-    ];
-
-    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
-      sites: [{ id: 'site-1', name: 'Site 1', cached_data: undefined }],
-      accounts: [
-        {
-          id: 'acc-1',
-          site_id: 'site-1',
-          account_name: 'Primary',
-          status: 'active',
-          cached_data: {
-            models: [originalModel],
-            api_keys: [],
-            user_groups: {},
-          },
-        },
-      ],
-    });
-    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
-      modelRegistry: registry,
-    });
-    unifiedConfigManagerMock.deleteRouteModelDisplayItem.mockImplementation(async id => {
-      registry.displayItems = registry.displayItems.filter(item => item.id !== id);
-      return true;
-    });
-    unifiedConfigManagerMock.upsertRouteModelMappingOverride.mockImplementation(async override => {
-      registry.overrides = [
-        ...registry.overrides.filter(item => item.sourceKey !== override.sourceKey),
-        override,
-      ];
-      return override;
-    });
-
-    const result = await deleteModelDisplayItem('seeded:claude-opus-4-6');
-
-    expect(unifiedConfigManagerMock.deleteRouteModelDisplayItem).toHaveBeenCalledWith(
-      'seeded:claude-opus-4-6'
-    );
-    expect(unifiedConfigManagerMock.upsertRouteModelMappingOverride).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sourceKey,
-        canonicalName,
-        action: 'exclude',
-      })
-    );
-    expect(result).not.toBeNull();
-    expect(result?.displayItems.some(item => item.id === 'seeded:claude-opus-4-6')).toBe(false);
-    expect(result?.entries[canonicalName]).toBeUndefined();
-  });
-
   it('treats models with empty enable_groups as unavailable for routing groups', async () => {
     const registry = createRegistryConfig();
 
@@ -1089,19 +973,8 @@ describe('route model registry service', () => {
         apiKeyGroups: [],
       }),
     ]);
-    expect(result.entries['claude-opus-4-6']).toEqual(
-      expect.objectContaining({
-        canonicalName: 'claude-opus-4-6',
-        sources: [
-          expect.objectContaining({
-            originalModel: 'claude-opus-4.6-20260201',
-            availableUserGroups: [],
-            availableApiKeys: [],
-            apiKeyGroups: [],
-          }),
-        ],
-      })
-    );
+    expect(result.entries).toEqual({});
+    expect(result.displayItems).toEqual([]);
     unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
       modelRegistry: result,
       cliProbe: { latest: {} },
@@ -1205,12 +1078,6 @@ describe('route model registry service', () => {
             slots: [{ model: 'codex-tested', success: true, timestamp: 2 }, null, null],
           },
         },
-        geminiCli: {
-          enabled: true,
-          model: 'gemini-duck',
-          testModels: [],
-          testState: null,
-        },
       },
     });
     const siteId = buildCustomCliRouteSiteId(customConfig.id);
@@ -1241,7 +1108,7 @@ describe('route model registry service', () => {
           accountName: '自定义 CLI',
           sourceType: 'customCli',
           originalModel: 'duckcoding',
-          availableCliTypes: ['claudeCode', 'codex', 'geminiCli'],
+          availableCliTypes: ['claudeCode', 'codex', 'openCode'],
           apiKeyGroups: [CUSTOM_CLI_ROUTE_GROUP],
           availableUserGroups: [CUSTOM_CLI_ROUTE_GROUP],
           availableApiKeys: [
@@ -1257,13 +1124,12 @@ describe('route model registry service', () => {
         expect.objectContaining({
           sourceKey: `${siteId}:${accountId}:gpt-5.4-duck`,
           originalModel: 'gpt-5.4-duck',
-          availableCliTypes: ['claudeCode', 'codex', 'geminiCli'],
+          availableCliTypes: ['claudeCode', 'codex', 'openCode'],
         }),
       ])
     );
     expect(result.sources.map(source => source.originalModel)).not.toContain('codex-extra');
     expect(result.sources.map(source => source.originalModel)).not.toContain('codex-tested');
-    expect(result.sources.map(source => source.originalModel)).not.toContain('gemini-duck');
   });
 
   it('keeps manual custom CLI model sources outside the fetched model list', async () => {
@@ -1293,12 +1159,6 @@ describe('route model registry service', () => {
             ],
           },
         },
-        geminiCli: {
-          enabled: true,
-          model: 'stale-gemini',
-          testModels: [],
-          testState: null,
-        },
       },
     });
     const siteId = buildCustomCliRouteSiteId(customConfig.id);
@@ -1323,7 +1183,7 @@ describe('route model registry service', () => {
         expect.objectContaining({
           sourceKey: `${siteId}:${accountId}:manual-duck`,
           originalModel: 'manual-duck',
-          availableCliTypes: ['claudeCode', 'codex', 'geminiCli'],
+          availableCliTypes: ['claudeCode', 'codex', 'openCode'],
         }),
       ])
     );
@@ -1356,12 +1216,6 @@ describe('route model registry service', () => {
             slots: [{ model: 'stale-tested', success: true, timestamp: 2 }, null, null],
           },
         },
-        geminiCli: {
-          enabled: false,
-          model: null,
-          testModels: [],
-          testState: null,
-        },
       },
     });
     const siteId = buildCustomCliRouteSiteId(customConfig.id);
@@ -1387,23 +1241,12 @@ describe('route model registry service', () => {
           sourceKey: `${siteId}:${accountId}:manual-disabled-duck`,
           originalModel: 'manual-disabled-duck',
           sourceType: 'customCli',
-          availableCliTypes: ['claudeCode', 'codex', 'geminiCli'],
+          availableCliTypes: ['claudeCode', 'codex', 'openCode'],
         }),
       ])
     );
-    expect(result.entries['manual-disabled-duck']).toEqual(
-      expect.objectContaining({
-        aliases: ['manual-disabled-duck'],
-      })
-    );
-    expect(result.displayItems).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          canonicalName: 'manual-disabled-duck',
-          sourceKeys: [`${siteId}:${accountId}:manual-disabled-duck`],
-        }),
-      ])
-    );
+    expect(result.entries).toEqual({});
+    expect(result.displayItems).toEqual([]);
     expect(result.sources.map(source => source.originalModel)).not.toContain('stale-disabled');
     expect(result.sources.map(source => source.originalModel)).not.toContain('stale-tested');
   });
@@ -1429,12 +1272,6 @@ describe('route model registry service', () => {
             slots: [{ model: 'codex-tested', success: true, timestamp: 2 }, null, null],
           },
         },
-        geminiCli: {
-          enabled: true,
-          model: 'gemini-duck',
-          testModels: [],
-          testState: null,
-        },
       },
     });
 
@@ -1456,7 +1293,6 @@ describe('route model registry service', () => {
       'codex-extra',
       'codex-tested',
       'duckcoding',
-      'gemini-duck',
     ]);
   });
 
@@ -1481,12 +1317,6 @@ describe('route model registry service', () => {
             testedAt: 2,
             slots: [{ model: 'stale-tested', success: true, timestamp: 2 }, null, null],
           },
-        },
-        geminiCli: {
-          enabled: true,
-          model: 'stale-gemini',
-          testModels: [],
-          testState: null,
         },
       },
     });
@@ -1570,15 +1400,6 @@ describe('route model registry service', () => {
       }),
       'duckcoding-route'
     );
-    const geminiChannels = resolveChannels(
-      createRouteRule({
-        id: 'rule-2',
-        name: 'Gemini',
-        cliType: 'geminiCli',
-      }),
-      'duckcoding-route'
-    );
-
     expect(codexChannels).toEqual([
       expect.objectContaining({
         siteId,
@@ -1590,7 +1411,6 @@ describe('route model registry service', () => {
         apiKeyPriority: 1,
       }),
     ]);
-    expect(geminiChannels).toEqual([]);
     await expect(resolveChannelCredentials(siteId, accountId, apiKeyId)).resolves.toEqual({
       baseUrl: customConfig.baseUrl,
       apiKey: customConfig.apiKey,
@@ -1681,12 +1501,6 @@ describe('route model registry service', () => {
           testModels: [],
           testState: null,
           targetProtocol: 'openai-chat-completions',
-        },
-        geminiCli: {
-          enabled: false,
-          model: null,
-          testModels: [],
-          testState: null,
         },
       },
     });
@@ -1814,12 +1628,12 @@ describe('route model registry service', () => {
 
     const channels = resolveChannels(
       createRouteRule({
-        id: 'rule-gemini',
-        name: 'Gemini wildcard',
-        cliType: 'geminiCli',
+        id: 'rule-codex',
+        name: 'Codex wildcard',
+        cliType: 'codex',
         pattern: '*',
       }),
-      'gemini-2.5-flash-lite'
+      'unknown-model'
     );
 
     expect(channels).toEqual([]);
@@ -1858,10 +1672,10 @@ describe('route model registry service', () => {
       createRouteRule({
         id: 'rule-legacy',
         name: 'Legacy wildcard',
-        cliType: 'geminiCli',
+        cliType: 'codex',
         pattern: '*',
       }),
-      'gemini-2.5-flash-lite'
+      'gpt-legacy'
     );
 
     expect(channels).toEqual([
@@ -1870,16 +1684,18 @@ describe('route model registry service', () => {
         siteId: 'site-1',
         accountId: 'acc-1',
         apiKeyId: 'key-a',
-        cliType: 'geminiCli',
-        canonicalModel: 'gemini-2.5-flash-lite',
-        resolvedModel: 'gemini-2.5-flash-lite',
+        cliType: 'codex',
+        canonicalModel: 'gpt-legacy',
+        resolvedModel: 'gpt-legacy',
       }),
     ]);
   });
 
   it('resolves canonical channels for accounts with a legacy expired status', () => {
     unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
-      sites: [{ id: 'site-1', name: 'Legacy Site', enabled: true, url: 'https://site-1.example.com' }],
+      sites: [
+        { id: 'site-1', name: 'Legacy Site', enabled: true, url: 'https://site-1.example.com' },
+      ],
       accounts: [
         {
           id: 'acc-legacy',
@@ -3018,7 +2834,7 @@ describe('route model registry service', () => {
         overrides: [],
         displayItems: [
           {
-            id: 'seeded:claude:0',
+            id: 'manual:claude-route',
             vendor: 'claude',
             canonicalName: 'claude-route',
             sourceKeys: ['site-1:acc-1:raw-a', 'site-1:acc-1:raw-b', 'site-2:acc-2:raw-a'],
@@ -3034,7 +2850,7 @@ describe('route model registry service', () => {
                 'site-2:acc-2:key-c': 3,
               },
             },
-            mode: 'seeded',
+            mode: 'manual',
             createdAt: 1,
             updatedAt: 1,
           },

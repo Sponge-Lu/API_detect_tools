@@ -16,7 +16,12 @@ import {
   type CliModelTestResult,
   type CliTargetProtocol,
 } from './cli-config';
-import type { ClaudeTestDetail, CodexTestDetail, GeminiTestDetail, ModelPricingData } from './site';
+import type {
+  ClaudeTestDetail,
+  CodexTestDetail,
+  ModelPricingData,
+  OpenCodeTestDetail,
+} from './site';
 
 export const CUSTOM_CLI_GROUP_MULTIPLIER_DEFAULT = 1;
 export const CUSTOM_CLI_GROUP_MULTIPLIER_MIN = 0.001;
@@ -33,7 +38,7 @@ export interface CustomCliTestState {
   testedAt: number | null;
   claudeDetail?: ClaudeTestDetail;
   codexDetail?: CodexTestDetail;
-  geminiDetail?: GeminiTestDetail;
+  openCodeDetail?: OpenCodeTestDetail;
   slots: Array<CliModelTestResult | null>;
 }
 
@@ -43,7 +48,7 @@ export function createEmptyCustomCliTestState(): CustomCliTestState {
     testedAt: null,
     claudeDetail: undefined,
     codexDetail: undefined,
-    geminiDetail: undefined,
+    openCodeDetail: undefined,
     slots: Array.from({ length: CLI_TEST_MODEL_SLOT_COUNT }, () => null),
   };
 }
@@ -61,7 +66,7 @@ export function normalizeCustomCliTestState(state?: CustomCliTestState | null): 
     testedAt: typeof state?.testedAt === 'number' ? state.testedAt : derivedTestedAt,
     claudeDetail: state?.claudeDetail,
     codexDetail: state?.codexDetail,
-    geminiDetail: state?.geminiDetail,
+    openCodeDetail: state?.openCodeDetail,
     slots,
   };
 }
@@ -90,6 +95,8 @@ export interface CustomCliConfig {
   baseUrl: string;
   /** API Key */
   apiKey: string;
+  /** 加油站链接 */
+  gasStationUrl?: string;
   /** 直连配置分组倍率，用于估算实际费用 */
   groupMultiplier?: number;
   /** 拉取到的可用模型列表 */
@@ -106,7 +113,7 @@ export interface CustomCliConfig {
   cliSettings: {
     claudeCode: CustomCliSettings;
     codex: CustomCliSettings;
-    geminiCli: CustomCliSettings;
+    openCode: CustomCliSettings;
   };
   /** 创建时间 */
   createdAt: number;
@@ -149,7 +156,7 @@ export function createDefaultCustomCliConfig(partial?: Partial<CustomCliConfig>)
     cliSettings: {
       claudeCode: normalizeCustomCliSettings(),
       codex: normalizeCustomCliSettings(),
-      geminiCli: normalizeCustomCliSettings(),
+      openCode: normalizeCustomCliSettings(),
     },
     createdAt: now,
     updatedAt: now,

@@ -373,8 +373,9 @@ const activeKeys = apiKeys.filter(apiKey => {
 - The redirection editor must save the `RouteModelDisplayItem` before per-source overrides. The
   display item is the routing/display unit, and saving it first prevents a long multi-source save
   from leaving the UI stuck on an old single-model card if per-source override writes are interrupted.
-- Seeded defaults are intentionally reduced to one real example:
-  - `DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME = 'claude-opus-4-6'`
+- An empty redirect workspace is the canonical initial state. Renderer projection includes persisted
+  manual cards and explicit override-backed compatibility cards only; registry entries alone must
+  not synthesize a fallback card.
 - Channel ranking must read `displayItem.priorityConfig`, not `vendorPriorities`.
 - CLI probe compatibility filtering is model-scoped. A failed probe may exclude a channel only when
   the probe `canonicalModel` or `rawModel` matches the requested canonical model or the source
@@ -393,21 +394,20 @@ const activeKeys = apiKeys.filter(apiKey => {
   the folded site section and must be listed in `disabledSiteIds`. Numeric `sitePriorities` and
   `apiKeyPriorities` are priority memory and must keep disabled site/API-key entries so re-enabling
   restores their previous order. Empty disabled lists must not be persisted.
-- Resetting defaults is not the same as rebuilding the model registry. The renderer must call
-  `routeStore.rebuildModelRegistry(true, { resetDefaults: true })`, the IPC handler must route that
-  to `resetModelRegistryDefaults()`, and the service must drop existing display items and overrides
-  whose `canonicalName` is `claude-opus-4-6` before reseeding the current default example.
+- `routeStore.rebuildModelRegistry(force?)` and the `route:rebuild-model-registry` IPC payload
+  expose only the `force` flag. Opening the redirection UI must not call rebuild when
+  `displayItems` is empty, and explicit source sync must not create redirect cards from detected
+  models.
 - A CLI default model selection is only runnable when an enabled `RouteRule` can match
   `cliType + canonicalModel`. Saving CLI model selections must ensure this rule exists after
   canonicalization.
-- `resetModelRegistryDefaults()` must also ensure a Claude Code exact rule for
-  `claude-opus-4-6`, because resetting the default display item is the user-facing repair path for
-  stale default redirection state.
 - Automatic CLI/model rules are a fallback, not an override. If any enabled manual rule already
   matches the same `cliType + canonicalModel` by exact, wildcard, regex, or `*`, do not create a
   duplicate. If no match exists, create/update a stable exact rule with priority `0`.
-- After a reset-default operation changes both `modelRegistry` and `rules`, the renderer store must
-  refresh the full route config, not only replace `config.modelRegistry`.
+- Load-time legacy cleanup removes all `mode: 'seeded'` cards and only the deterministic rule id
+  `auto-cli-model-claudeCode-claude-opus-4-6`. It clears the matching Claude Code selection only
+  when no same-name manual card and no enabled user-authored matching rule remain; same-name manual
+  cards, rules, and their overrides must survive.
 - Active `routePathStates` belong to the concrete route path surface in the redirection detail
   pane. The renderer must show `disabledUntil` labels inside the matching API-key row's covered
   original-model details, while site names, API key names, and original-model chips remain identity
@@ -420,7 +420,7 @@ const activeKeys = apiKeys.filter(apiKey => {
 | Empty `canonicalName` | `upsertRouteModelDisplayItem` | throw `Model display item requires canonicalName` |
 | Empty `sourceKeys` | `upsertRouteModelDisplayItem` | throw `Model display item requires sourceKeys` |
 | Same `canonicalName`, different `id` | `upsertRouteModelDisplayItem` | reject duplicate card |
-| `displayItems` empty before first aggregation | renderer fallback | show only `claude-opus-4-6` example when entry exists |
+| `displayItems` empty before first aggregation | renderer projection | show `暂无模型重定向`; do not derive a card from entries or invoke rebuild |
 | Selected model has groups but no API keys | details modal | show reminder text, no priority input |
 | Selected model has only a site-level source for one site | details modal | show a re-add/refresh warning naming that site; do not create priority controls |
 | User disables an API key | details modal -> persistence | move it to the folded section, save it in `disabledApiKeyPriorityKeys`, and keep its numeric priority for later restore |
@@ -430,10 +430,10 @@ const activeKeys = apiKeys.filter(apiKey => {
 | Override-backed card has partial stale entry or display-item sources | renderer projection | show every grouped override source plus any entry/display-item sources; do not collapse selected original models to the stale projection |
 | Failed CLI probe for unrelated model | channel resolver | ignore it for the current model, preserve priority-0 channel |
 | Active route path suspension | renderer detail pane | show `暂停至 HH:mm` after the matching covered original model inside the API-key row, not beside site/API key names and not in original-model chips |
-| User clicks reset default redirection | renderer -> IPC -> service | remove stale `claude-opus-4-6` display item/overrides, then seed the current default source |
+| User clicks explicit source sync | renderer -> IPC -> service | refresh candidate source metadata without creating a redirect card |
 | CLI default selection has no matching rule | `updateRouteCliModelSelections` | create an enabled exact fallback rule for the normalized canonical model |
 | Manual rule already matches the selected model | `updateRouteCliModelSelections` | preserve the manual rule and do not create an automatic duplicate |
-| Reset default redirection repairs default opus | `resetModelRegistryDefaults` | reseed `claude-opus-4-6` and ensure the Claude Code exact fallback rule exists |
+| Legacy seeded example is loaded | config normalization | remove seeded cards and the deterministic auto rule; preserve same-name manual intent |
 
 ### 5. Good / Base / Bad Cases
 
@@ -449,8 +449,8 @@ const activeKeys = apiKeys.filter(apiKey => {
     labels inside the matching API-key row's original-model details, and reminder text for
     `team-alpha（claude-sonnet-4.6-20260201）未创建可用 API key`.
 - Base:
-  - Only the seeded `claude-opus-4-6` example exists; other models remain available in the create
-    dialog candidate list.
+  - No redirect cards exist; detected models remain available in the create dialog candidate list
+    until the user creates a redirect explicitly.
 - Bad:
   - Reintroducing vendor sections in the UI.
   - Ranking channels from `registry.vendorPriorities[vendor]`.
@@ -476,16 +476,19 @@ const activeKeys = apiKeys.filter(apiKey => {
     numeric priority memory so re-enabling restores the previous order.
 - Registry / runtime:
   - `src/__tests__/route-model-registry-service.test.ts`
-  - Assert single seeded example and display-item-scoped channel ordering.
+  - Assert source scans do not create display items or entries, explicit overrides reconstruct
+    manual compatibility items, and channel ordering stays display-item scoped.
   - Assert unrelated failed CLI probes do not hide a priority-0 channel.
-  - Assert `resetModelRegistryDefaults()` removes stale `claude-opus-4-6` overrides before reseeding.
 - Persistence:
   - `src/__tests__/unified-config-manager.test.ts`
   - Assert `priorityConfig` persistence and duplicate `canonicalName` rejection.
   - Assert saving a CLI model selection creates an automatic exact rule only when no enabled manual
     rule already matches.
+  - Assert legacy cleanup removes seeded cards, the deterministic example rule, and stale selection
+    while preserving same-name manual cards, user-authored rules, and their overrides.
 - Renderer:
-  - Assert the reset-default button calls `rebuildModelRegistry(true, { resetDefaults: true })`.
+  - Assert an empty registry renders the empty state without a bootstrap rebuild and the toolbar has
+    no reset-default action.
 
 ### 7. Wrong vs Correct
 
@@ -498,7 +501,7 @@ const activeKeys = apiKeys.filter(apiKey => {
   `displayItem.sourceKeys` alone and ignore grouped overrides, because stale projections can hide
   selected original models and custom CLI sources.
 - Treat the latest failed CLI probe for a site/account/CLI as a global failure across all models.
-- Implement the reset-default button as a normal rebuild that preserves stale default-card overrides.
+- Derive a redirect card from a registry entry or automatically rebuild an empty registry on mount.
 - Assume `cliModelSelections.claudeCode = 'claude-opus-4-6'` is enough for proxy routing without a
   matching `RouteRule`.
 
@@ -508,8 +511,8 @@ const activeKeys = apiKeys.filter(apiKey => {
 - Persist ranking on `displayItem.priorityConfig`.
 - Resolve channels against the single effective card for that `canonicalName`.
 - Match CLI probe health by `canonicalModel`/`rawModel` before excluding a channel.
-- Use an explicit `{ resetDefaults: true }` path that removes stale `claude-opus-4-6` state and
-  reseeds the current default example.
+- Keep an empty registry empty, rebuild only manual/override-backed cards, and clean legacy generated
+  data by `mode: 'seeded'` plus the deterministic auto-rule id rather than by canonical name alone.
 - Treat CLI model selection and route-rule matching as one write contract: selection persistence
   must leave the proxy with at least one enabled rule that can match the canonical model.
 

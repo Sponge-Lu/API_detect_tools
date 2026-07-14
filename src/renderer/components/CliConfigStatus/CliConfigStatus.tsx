@@ -1,7 +1,7 @@
 /**
  * 输入: CliDetectionResult (检测结果), CliType (CLI 类型)
  * 输出: CLI 配置状态组件，显示各 CLI 工具当前使用的配置来源、认证类型和模型名称
- * 定位: UI 组件层 - 显示 Claude Code、Codex、Gemini CLI 的配置来源状态
+ * 定位: UI 组件层 - 显示 Claude Code、Codex 的配置来源状态
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -16,6 +16,7 @@ import type {
   ConfigSourceType,
 } from '../../../shared/types/config-detection';
 import type { RouteProxyServerConfig } from '../../../shared/types/route-proxy';
+import { BUILTIN_CLI_LABELS } from '../../../shared/types/cli-config';
 import { useCustomCliConfigStore } from '../../store/customCliConfigStore';
 import { useDetectionStore, type CliConfig } from '../../store/detectionStore';
 import { useRouteStore } from '../../store/routeStore';
@@ -23,7 +24,7 @@ import { useRouteStore } from '../../store/routeStore';
 // 导入 CLI 图标
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../assets/cli-icons/codex.svg';
-import GeminiIcon from '../../assets/cli-icons/gemini.svg';
+import OpenCodeIcon from '../../assets/cli-icons/opencode.svg';
 
 export interface CliConfigStatusProps {
   /** CLI 类型 */
@@ -45,21 +46,21 @@ interface CliTypeConfig {
 const CLI_TYPE_CONFIGS: Record<CliType, CliTypeConfig> = {
   claudeCode: {
     key: 'claudeCode',
-    name: 'Claude Code',
+    name: BUILTIN_CLI_LABELS.claudeCode,
     icon: ClaudeCodeIcon,
     sizeClass: 'w-[18px] h-[18px]',
   },
   codex: {
     key: 'codex',
-    name: 'Codex',
+    name: BUILTIN_CLI_LABELS.codex,
     icon: CodexIcon,
     sizeClass: 'w-5 h-5',
   },
-  geminiCli: {
-    key: 'geminiCli',
-    name: 'Gemini CLI',
-    icon: GeminiIcon,
-    sizeClass: 'w-5 h-5',
+  openCode: {
+    key: 'openCode',
+    name: BUILTIN_CLI_LABELS.openCode,
+    icon: OpenCodeIcon,
+    sizeClass: 'w-4 h-5',
   },
 };
 
@@ -229,21 +230,6 @@ interface AuthTypeDisplay {
 }
 
 const AUTH_TYPE_DISPLAYS: Record<AuthType, AuthTypeDisplay> = {
-  'google-login': {
-    label: 'Google 登录',
-    shortLabel: 'Google',
-    icon: '🔐',
-  },
-  'vertex-ai': {
-    label: 'Vertex AI',
-    shortLabel: 'Vertex',
-    icon: '☁️',
-  },
-  'gemini-api-key': {
-    label: 'Gemini API Key',
-    shortLabel: 'API Key',
-    icon: '🔑',
-  },
   'chatgpt-oauth': {
     label: 'ChatGPT OAuth',
     shortLabel: 'OAuth',

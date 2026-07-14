@@ -47,7 +47,7 @@ const createConfig = (): CustomCliConfig => ({
   baseUrl: 'https://api.example.com',
   apiKey: 'test-key',
   groupMultiplier: 1,
-  models: ['claude-3.7', 'gpt-4.1', 'gpt-4.1-mini', 'gemini-2.5'],
+  models: ['claude-3.7', 'gpt-4.1', 'gpt-4.1-mini'],
   notes: '',
   cliSettings: {
     claudeCode: {
@@ -59,11 +59,6 @@ const createConfig = (): CustomCliConfig => ({
       enabled: true,
       model: 'gpt-4.1',
       testModels: ['gpt-4.1'],
-    },
-    geminiCli: {
-      enabled: true,
-      model: 'gemini-2.5',
-      testModels: ['gemini-2.5'],
     },
   },
   createdAt: 1,
@@ -117,7 +112,6 @@ describe('DirectCliConfigEditorContent', () => {
           data: {
             claudeCode: true,
             codex: true,
-            geminiCli: true,
           },
         }),
         writeConfig: vi.fn().mockResolvedValue({
@@ -161,12 +155,9 @@ describe('DirectCliConfigEditorContent', () => {
     expect(screen.queryByText('测试模型（最多 3 个）')).not.toBeInTheDocument();
     expect(screen.getByText('Claude Code')).toBeInTheDocument();
     expect(screen.getByText('Codex')).toBeInTheDocument();
-    expect(screen.getByText('Gemini CLI')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Claude Code 主模型' })).toBeInTheDocument();
     await openCliSection('Codex');
     expect(screen.getByRole('button', { name: 'Codex 主模型' })).toBeInTheDocument();
-    await openCliSection('Gemini CLI');
-    expect(screen.getByRole('button', { name: 'Gemini CLI 主模型' })).toBeInTheDocument();
   }, 15_000);
 
   it('filters available models from the model search input', async () => {
@@ -185,7 +176,6 @@ describe('DirectCliConfigEditorContent', () => {
 
     expect(screen.getByTitle('gpt-4.1-mini')).toBeInTheDocument();
     expect(screen.queryByTitle('claude-3.7')).not.toBeInTheDocument();
-    expect(screen.queryByTitle('gemini-2.5')).not.toBeInTheDocument();
 
     await act(async () => {
       fireEvent.change(modelSearchInput, { target: { value: 'missing-model' } });
@@ -193,6 +183,22 @@ describe('DirectCliConfigEditorContent', () => {
 
     expect(screen.getByText('没有匹配的模型')).toBeInTheDocument();
     expect(screen.queryByTitle('gpt-4.1-mini')).not.toBeInTheDocument();
+  });
+
+  it('saves the gas station URL with direct config identity fields', async () => {
+    await renderDialog();
+
+    fireEvent.change(screen.getByRole('textbox', { name: '加油站链接' }), {
+      target: { value: 'https://fuel.example.com/topup' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+
+    await waitFor(() => {
+      expect(useCustomCliConfigStore.getState().updateConfig).toHaveBeenCalledWith(
+        'cfg-1',
+        expect.objectContaining({ gasStationUrl: 'https://fuel.example.com/topup' })
+      );
+    });
   });
 
   it('keeps manually added models out of the available model list', async () => {
@@ -434,12 +440,6 @@ describe('DirectCliConfigEditorContent', () => {
                 testModels: [],
                 testState: null,
               },
-              geminiCli: {
-                ...currentConfig.cliSettings.geminiCli,
-                model: null,
-                testModels: [],
-                testState: null,
-              },
             },
           },
         ],
@@ -472,10 +472,6 @@ describe('DirectCliConfigEditorContent', () => {
       expect.objectContaining({
         cliSettings: expect.objectContaining({
           codex: expect.objectContaining({
-            model: null,
-            testModels: [],
-          }),
-          geminiCli: expect.objectContaining({
             model: null,
             testModels: [],
           }),

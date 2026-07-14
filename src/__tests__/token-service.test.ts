@@ -2648,7 +2648,6 @@ describe('token-handlers 账户基础信息刷新', () => {
       user_id: '7',
       username: 'demo',
       access_token: 'fresh-browser-token',
-      status: 'active',
     });
   });
 

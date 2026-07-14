@@ -23,7 +23,6 @@ import type { CliConfig, ApiKeyInfo, CliModelTestResult } from '../../../shared/
 import type {
   ClaudeTestDetail,
   CodexTestDetail,
-  GeminiTestDetail,
   ModelPricingData,
   UnifiedConfig,
 } from '../../../shared/types/site';
@@ -41,10 +40,10 @@ import {
 import {
   generateClaudeCodeConfig,
   generateCodexConfig,
-  generateGeminiCliConfig,
+  generateOpenCodeConfig,
   generateClaudeCodeTemplate,
   generateCodexTemplate,
-  generateGeminiCliTemplate,
+  generateOpenCodeTemplate,
   type GeneratedConfig,
   type ConfigFile,
 } from '../../services/cli-config-generator';
@@ -63,9 +62,9 @@ import {
 
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../assets/cli-icons/codex.svg';
-import GeminiIcon from '../../assets/cli-icons/gemini.svg';
+import OpenCodeIcon from '../../assets/cli-icons/opencode.svg';
 
-export type CliType = 'claudeCode' | 'codex' | 'geminiCli';
+export type CliType = 'claudeCode' | 'codex' | 'openCode';
 
 interface ConfirmOptions {
   type?: 'confirm' | 'warning';
@@ -86,7 +85,6 @@ export interface ManagedCliConfigEditorContentProps {
   siteModelPricing?: ModelPricingData | null;
   currentConfig: CliConfig | null;
   codexDetail?: CodexTestDetail | null;
-  geminiDetail?: GeminiTestDetail | null;
   compatibility?: CliCompatibilityResult | null;
   /** 全局确认对话框回调（替代 ConfirmDialog/AppModal） */
   showDialog?: (options: ConfirmOptions) => Promise<boolean>;
@@ -145,7 +143,7 @@ function getCliFailureMessage(
     data?: {
       claudeError?: string;
       codexError?: string;
-      geminiError?: string;
+      openCodeError?: string;
     };
   }
 ): string | undefined {
@@ -155,7 +153,10 @@ function getCliFailureMessage(
   if (cliType === 'codex') {
     return response.data?.codexError ?? response.error;
   }
-  return response.data?.geminiError ?? response.error;
+  if (cliType === 'openCode') {
+    return response.data?.openCodeError ?? response.error;
+  }
+  return response.error;
 }
 
 interface CliCompatTestResponse {
@@ -164,13 +165,13 @@ interface CliCompatTestResponse {
   data?: {
     claudeCode?: boolean | null;
     codex?: boolean | null;
-    geminiCli?: boolean | null;
+    openCode?: boolean | null;
     claudeDetail?: ClaudeTestDetail;
     codexDetail?: CodexTestDetail;
-    geminiDetail?: GeminiTestDetail;
+    openCodeDetail?: CliCompatibilityResult['openCodeDetail'];
     claudeError?: string;
     codexError?: string;
-    geminiError?: string;
+    openCodeError?: string;
   };
   samples?: PersistedCliCompatibilityTestSample[];
 }
@@ -183,7 +184,7 @@ function buildPersistedCompatibilityResult(params: {
   failureMessage?: string;
   latestClaudeDetail: ClaudeTestDetail | null;
   latestCodexDetail: CodexTestDetail | null;
-  latestGeminiDetail: GeminiTestDetail | null;
+  latestOpenCodeDetail: CliCompatibilityResult['openCodeDetail'] | null;
 }): CliCompatibilityResult {
   const {
     selectedCli,
@@ -193,7 +194,7 @@ function buildPersistedCompatibilityResult(params: {
     failureMessage,
     latestClaudeDetail,
     latestCodexDetail,
-    latestGeminiDetail,
+    latestOpenCodeDetail,
   } = params;
 
   const result: CliCompatibilityResult = {
@@ -203,9 +204,9 @@ function buildPersistedCompatibilityResult(params: {
     codex: compatibility?.codex ?? null,
     codexDetail: compatibility?.codexDetail,
     codexError: compatibility?.codexError,
-    geminiCli: compatibility?.geminiCli ?? null,
-    geminiDetail: compatibility?.geminiDetail,
-    geminiError: compatibility?.geminiError,
+    openCode: compatibility?.openCode ?? null,
+    openCodeDetail: compatibility?.openCodeDetail,
+    openCodeError: compatibility?.openCodeError,
     testedAt: testedAt ?? compatibility?.testedAt ?? Date.now(),
     sourceLabel: compatibility?.sourceLabel,
   };
@@ -218,10 +219,10 @@ function buildPersistedCompatibilityResult(params: {
     result.codex = supported;
     result.codexDetail = latestCodexDetail ?? result.codexDetail;
     result.codexError = supported ? undefined : failureMessage;
-  } else {
-    result.geminiCli = supported;
-    result.geminiDetail = latestGeminiDetail ?? result.geminiDetail;
-    result.geminiError = supported ? undefined : failureMessage;
+  } else if (selectedCli === 'openCode') {
+    result.openCode = supported;
+    result.openCodeDetail = latestOpenCodeDetail ?? result.openCodeDetail;
+    result.openCodeError = supported ? undefined : failureMessage;
   }
 
   return result;
@@ -242,12 +243,7 @@ const CLI_TYPES: CliTypeConfig[] = [
     supported: true,
   },
   { key: 'codex', name: 'Codex', icon: CodexIcon, supported: true },
-  {
-    key: 'geminiCli',
-    name: 'Gemini CLI',
-    icon: GeminiIcon,
-    supported: true,
-  },
+  { key: 'openCode', name: 'OpenCode', icon: OpenCodeIcon, supported: true },
 ];
 
 const CLI_TARGET_PROTOCOL_LABELS: Record<CliTargetProtocol, string> = {
@@ -400,20 +396,6 @@ function extractPreviewBaseUrl(
     return match?.[1]?.replace(/\/v1\/?$/, '') ?? null;
   }
 
-  if (cliType === 'geminiCli') {
-    const envFile = config.files.find(file => file.path.includes('.env'));
-    if (!envFile) {
-      return null;
-    }
-
-    const baseUrlLine = envFile.content
-      .split('\n')
-      .map(line => line.trim())
-      .find(line => line.startsWith('GOOGLE_GEMINI_BASE_URL='));
-
-    return baseUrlLine?.substring('GOOGLE_GEMINI_BASE_URL='.length) ?? null;
-  }
-
   return null;
 }
 
@@ -421,7 +403,7 @@ interface CliModelTestState {
   slots: Array<CliModelTestResult | null>;
   testedAt: number | null;
   codexDetail: CodexTestDetail | null;
-  geminiDetail: GeminiTestDetail | null;
+  openCodeDetail: CliCompatibilityResult['openCodeDetail'] | null;
 }
 
 function createEmptyCliModelTestState(): Record<CliType, CliModelTestState> {
@@ -431,19 +413,19 @@ function createEmptyCliModelTestState(): Record<CliType, CliModelTestState> {
       slots: [...emptySlots],
       testedAt: null,
       codexDetail: null,
-      geminiDetail: null,
+      openCodeDetail: null,
     },
     codex: {
       slots: [...emptySlots],
       testedAt: null,
       codexDetail: null,
-      geminiDetail: null,
+      openCodeDetail: null,
     },
-    geminiCli: {
+    openCode: {
       slots: [...emptySlots],
       testedAt: null,
       codexDetail: null,
-      geminiDetail: null,
+      openCodeDetail: null,
     },
   };
 }
@@ -457,7 +439,7 @@ function createCliModelTestStateFromConfig(
     slots,
     testedAt: testedRows.length > 0 ? Math.max(...testedRows.map(row => row.timestamp)) : null,
     codexDetail: null,
-    geminiDetail: null,
+    openCodeDetail: null,
   };
 }
 
@@ -739,7 +721,6 @@ export function ManagedCliConfigEditorContent({
   siteModelPricing,
   currentConfig,
   codexDetail,
-  geminiDetail,
   compatibility,
   showDialog,
   onPersistConfig,
@@ -751,7 +732,7 @@ export function ManagedCliConfigEditorContent({
   const [enabledState, setEnabledState] = useState<Record<CliType, boolean>>({
     claudeCode: true,
     codex: true,
-    geminiCli: true,
+    openCode: true,
   });
   const [listAllModels, setListAllModels] = useState(false);
 
@@ -784,7 +765,7 @@ export function ManagedCliConfigEditorContent({
       testModels: toTestModelSlots(null),
       editedFiles: null,
     },
-    geminiCli: {
+    openCode: {
       apiKeyId: null,
       model: null,
       targetProtocol: undefined,
@@ -862,7 +843,7 @@ export function ManagedCliConfigEditorContent({
       setEnabledState({
         claudeCode: currentConfig.claudeCode?.enabled ?? DEFAULT_CLI_CONFIG.claudeCode.enabled,
         codex: currentConfig.codex?.enabled ?? DEFAULT_CLI_CONFIG.codex.enabled,
-        geminiCli: currentConfig.geminiCli?.enabled ?? DEFAULT_CLI_CONFIG.geminiCli.enabled,
+        openCode: currentConfig.openCode?.enabled ?? DEFAULT_CLI_CONFIG.openCode.enabled,
       });
       setCliConfigs({
         claudeCode: {
@@ -895,18 +876,18 @@ export function ManagedCliConfigEditorContent({
               }
             : null,
         },
-        geminiCli: {
-          apiKeyId: currentConfig.geminiCli?.apiKeyId ?? null,
-          model: currentConfig.geminiCli?.model ?? null,
+        openCode: {
+          apiKeyId: currentConfig.openCode?.apiKeyId ?? null,
+          model: currentConfig.openCode?.model ?? null,
           targetProtocol: normalizeOptionalCliTargetProtocol(
-            currentConfig.geminiCli?.targetProtocol
+            currentConfig.openCode?.targetProtocol
           ),
-          testModels: toTestModelSlots(currentConfig.geminiCli),
-          editedFiles: currentConfig.geminiCli?.editedFiles
+          testModels: toTestModelSlots(currentConfig.openCode),
+          editedFiles: currentConfig.openCode?.editedFiles
             ? {
-                files: currentConfig.geminiCli.editedFiles.map(f => ({
+                files: currentConfig.openCode.editedFiles.map(f => ({
                   ...f,
-                  language: f.path.endsWith('.env') ? ('toml' as const) : ('json' as const),
+                  language: 'json' as const,
                 })),
               }
             : null,
@@ -915,13 +896,13 @@ export function ManagedCliConfigEditorContent({
       setCliModelTests({
         claudeCode: createCliModelTestStateFromConfig(currentConfig.claudeCode),
         codex: createCliModelTestStateFromConfig(currentConfig.codex),
-        geminiCli: createCliModelTestStateFromConfig(currentConfig.geminiCli),
+        openCode: createCliModelTestStateFromConfig(currentConfig.openCode),
       });
     } else if (shouldInitialize) {
       setEnabledState({
         claudeCode: DEFAULT_CLI_CONFIG.claudeCode.enabled,
         codex: DEFAULT_CLI_CONFIG.codex.enabled,
-        geminiCli: DEFAULT_CLI_CONFIG.geminiCli.enabled,
+        openCode: DEFAULT_CLI_CONFIG.openCode.enabled,
       });
       setCliConfigs({
         claudeCode: {
@@ -938,7 +919,7 @@ export function ManagedCliConfigEditorContent({
           testModels: toTestModelSlots(null),
           editedFiles: null,
         },
-        geminiCli: {
+        openCode: {
           apiKeyId: null,
           model: null,
           targetProtocol: undefined,
@@ -975,7 +956,7 @@ export function ManagedCliConfigEditorContent({
           prev.claudeCode
         ),
         codex: buildProjectionCliConfig('codex', currentConfig, cliConfigs, prev.codex),
-        geminiCli: buildProjectionCliConfig('geminiCli', currentConfig, cliConfigs, prev.geminiCli),
+        openCode: buildProjectionCliConfig('openCode', currentConfig, cliConfigs, prev.openCode),
       };
       const projectedResults = projectCliModelTestResultsFromLatest({
         latest: projectedCliProbeLatest,
@@ -998,17 +979,17 @@ export function ManagedCliConfigEditorContent({
           slots: projectedResults.codex,
           testedAt: getLatestCliModelTestedAt(prev.codex.testedAt, projectedResults.codex),
         },
-        geminiCli: {
-          ...prev.geminiCli,
-          slots: projectedResults.geminiCli,
-          testedAt: getLatestCliModelTestedAt(prev.geminiCli.testedAt, projectedResults.geminiCli),
+        openCode: {
+          ...prev.openCode,
+          slots: projectedResults.openCode,
+          testedAt: getLatestCliModelTestedAt(prev.openCode.testedAt, projectedResults.openCode),
         },
       };
 
       const unchanged =
         areCliModelTestSlotsEqual(prev.claudeCode.slots, next.claudeCode.slots) &&
         areCliModelTestSlotsEqual(prev.codex.slots, next.codex.slots) &&
-        areCliModelTestSlotsEqual(prev.geminiCli.slots, next.geminiCli.slots);
+        areCliModelTestSlotsEqual(prev.openCode.slots, next.openCode.slots);
 
       return unchanged ? prev : next;
     });
@@ -1019,7 +1000,7 @@ export function ManagedCliConfigEditorContent({
     if (
       selectedCli &&
       editedConfig &&
-      (selectedCli === 'claudeCode' || selectedCli === 'codex' || selectedCli === 'geminiCli')
+      (selectedCli === 'claudeCode' || selectedCli === 'codex' || selectedCli === 'openCode')
     ) {
       setCliConfigs(prev => ({
         ...prev,
@@ -1098,7 +1079,6 @@ export function ManagedCliConfigEditorContent({
   }, [availableModels, cliConfigs, listAllModels, selectedCli]);
 
   const effectiveCodexDetail = cliModelTests.codex.codexDetail ?? codexDetail ?? undefined;
-  const effectiveGeminiDetail = cliModelTests.geminiCli.geminiDetail ?? geminiDetail ?? undefined;
 
   const generateConfigForCli = useCallback(
     (cliType: CliType): GeneratedConfig | null => {
@@ -1120,12 +1100,15 @@ export function ManagedCliConfigEditorContent({
         return generateClaudeCodeConfig(params);
       } else if (cliType === 'codex') {
         return generateCodexConfig({ ...params, codexDetail: effectiveCodexDetail });
-      } else if (cliType === 'geminiCli') {
-        return generateGeminiCliConfig({ ...params, geminiDetail: effectiveGeminiDetail });
+      } else if (cliType === 'openCode') {
+        return generateOpenCodeConfig({
+          ...params,
+          targetProtocol: config.targetProtocol,
+        });
       }
       return null;
     },
-    [apiKeys, cliConfigs, effectiveCodexDetail, effectiveGeminiDetail, siteName, siteUrl]
+    [apiKeys, cliConfigs, effectiveCodexDetail, siteName, siteUrl]
   );
 
   const realtimeConfig = useMemo(() => {
@@ -1137,8 +1120,8 @@ export function ManagedCliConfigEditorContent({
       return generateClaudeCodeTemplate();
     } else if (selectedCli === 'codex') {
       return generateCodexTemplate();
-    } else if (selectedCli === 'geminiCli') {
-      return generateGeminiCliTemplate();
+    } else if (selectedCli === 'openCode') {
+      return generateOpenCodeTemplate();
     }
     return null;
   }, [selectedCli]);
@@ -1297,7 +1280,7 @@ export function ManagedCliConfigEditorContent({
   const buildConfigPayload = (
     testStates: Record<CliType, CliModelTestState> = cliModelTests
   ): CliConfig => {
-    const getEditedFiles = (cliType: 'claudeCode' | 'codex' | 'geminiCli') => {
+    const getEditedFiles = (cliType: CliType) => {
       if (selectedCli === cliType && editedConfig) {
         return editedConfig.files.map(f => ({ path: f.path, content: f.content }));
       }
@@ -1337,18 +1320,18 @@ export function ManagedCliConfigEditorContent({
         editedFiles: getEditedFiles('codex'),
         applyMode: currentConfig?.codex?.applyMode ?? 'merge',
       },
-      geminiCli: {
-        apiKeyId: cliConfigs.geminiCli.apiKeyId,
-        model: cliConfigs.geminiCli.model,
-        targetProtocol: cliConfigs.geminiCli.targetProtocol
-          ? normalizeCliTargetProtocol(cliConfigs.geminiCli.targetProtocol)
+      openCode: {
+        apiKeyId: cliConfigs.openCode.apiKeyId,
+        model: cliConfigs.openCode.model,
+        targetProtocol: cliConfigs.openCode.targetProtocol
+          ? normalizeCliTargetProtocol(cliConfigs.openCode.targetProtocol)
           : undefined,
-        testModel: sanitizeCliTestModels(cliConfigs.geminiCli.testModels)[0] ?? null,
-        testModels: sanitizeCliTestModels(cliConfigs.geminiCli.testModels),
-        testResults: sanitizeCliTestResults(testStates.geminiCli.slots),
-        enabled: enabledState.geminiCli,
-        editedFiles: getEditedFiles('geminiCli'),
-        applyMode: currentConfig?.geminiCli?.applyMode ?? 'merge',
+        testModel: sanitizeCliTestModels(cliConfigs.openCode.testModels)[0] ?? null,
+        testModels: sanitizeCliTestModels(cliConfigs.openCode.testModels),
+        testResults: sanitizeCliTestResults(testStates.openCode.slots),
+        enabled: enabledState.openCode,
+        editedFiles: getEditedFiles('openCode'),
+        applyMode: currentConfig?.openCode?.applyMode ?? 'merge',
       },
     };
   };
@@ -1392,8 +1375,8 @@ export function ManagedCliConfigEditorContent({
     let selectedCliSupported = false;
     let latestFailureMessage: string | undefined;
     let latestCodexDetail: CodexTestDetail | null = null;
-    let latestGeminiDetail: GeminiTestDetail | null = null;
     let latestClaudeDetail: ClaudeTestDetail | null = null;
+    let latestOpenCodeDetail: CliCompatibilityResult['openCodeDetail'] | null = null;
     const persistedSamples: PersistedCliCompatibilityTestSample[] = [];
     let nextCliTestState = resetCliTestState;
 
@@ -1419,7 +1402,7 @@ export function ManagedCliConfigEditorContent({
         selectedCliSupported = selectedCliSupported || success;
         if (response.data?.claudeDetail) latestClaudeDetail = response.data.claudeDetail;
         if (response.data?.codexDetail) latestCodexDetail = response.data.codexDetail;
-        if (response.data?.geminiDetail) latestGeminiDetail = response.data.geminiDetail;
+        if (response.data?.openCodeDetail) latestOpenCodeDetail = response.data.openCodeDetail;
         if (Array.isArray(response.samples) && response.samples.length > 0) {
           persistedSamples.push(...response.samples);
         }
@@ -1452,7 +1435,7 @@ export function ManagedCliConfigEditorContent({
         ...nextCliTestState,
         testedAt: latestTestedAt,
         codexDetail: latestCodexDetail,
-        geminiDetail: latestGeminiDetail,
+        openCodeDetail: latestOpenCodeDetail,
         slots: nextCliTestState.slots.map((slot, slotIndex) =>
           slotIndex === targetSlotIndex ? rowResult : slot
         ),
@@ -1490,7 +1473,7 @@ export function ManagedCliConfigEditorContent({
           failureMessage: latestFailureMessage,
           latestClaudeDetail,
           latestCodexDetail,
-          latestGeminiDetail,
+          latestOpenCodeDetail,
         }),
         {
           accountId,
@@ -1568,7 +1551,7 @@ export function ManagedCliConfigEditorContent({
     if (
       selectedCli &&
       editedConfig &&
-      (selectedCli === 'claudeCode' || selectedCli === 'codex' || selectedCli === 'geminiCli')
+      (selectedCli === 'claudeCode' || selectedCli === 'codex' || selectedCli === 'openCode')
     ) {
       setCliConfigs(prev => ({
         ...prev,
@@ -1821,7 +1804,7 @@ export function ManagedCliConfigEditorContent({
                   </div>
 
                   {/* 配置预览 */}
-                  {(cli.key === 'claudeCode' || cli.key === 'codex' || cli.key === 'geminiCli') && (
+                  {(cli.key === 'claudeCode' || cli.key === 'codex' || cli.key === 'openCode') && (
                     <div className="space-y-3 border-t border-[var(--line-soft)] pt-3">
                       <div className="flex items-center justify-between gap-2">
                         <div className="text-xs font-medium text-[var(--text-secondary)]">

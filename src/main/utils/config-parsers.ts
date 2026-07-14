@@ -13,7 +13,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { parseTomlFile } from './toml-parser';
-import { parseEnvFile } from './env-parser';
 import { CLI_CONFIG_PATHS } from '../../shared/types/config-detection';
 
 // 简单的日志函数，避免在测试环境中依赖 electron
@@ -72,23 +71,27 @@ export interface CodexAuthConfig {
   };
 }
 
-// ============= Gemini CLI 配置类型 =============
+// ============= OpenCode 配置类型 =============
 
-/** Gemini CLI settings.json 配置结构 */
-export interface GeminiCliConfig {
-  security?: {
-    auth?: {
-      selectedType?: string; // 'gemini-api-key' | 'google-login' | 'vertex-ai'
-    };
+export interface OpenCodeProviderConfig {
+  npm?: string;
+  name?: string;
+  options?: {
+    baseURL?: string;
+    baseUrl?: string;
+    base_url?: string;
+    apiKey?: string;
+    [key: string]: unknown;
   };
+  models?: Record<string, unknown>;
 }
 
-/** Gemini CLI .env 环境变量 */
-export interface GeminiEnvConfig {
-  GEMINI_API_KEY?: string;
-  GEMINI_MODEL?: string;
-  GOOGLE_GEMINI_BASE_URL?: string;
+export interface OpenCodeConfig {
+  model?: string;
+  provider?: Record<string, OpenCodeProviderConfig>;
 }
+
+export type OpenCodeAuthConfig = Record<string, { type?: string; key?: string } | undefined>;
 
 // ============= 解析函数 =============
 
@@ -115,6 +118,70 @@ function parseJsonFile<T>(filePath: string): T | null {
     return JSON.parse(content) as T;
   } catch (error) {
     log.error(`Failed to parse JSON file: ${filePath}`, error);
+    return null;
+  }
+}
+
+function stripJsonComments(content: string): string {
+  let result = '';
+  let inString = false;
+  let quote = '';
+  let escaped = false;
+
+  for (let i = 0; i < content.length; i++) {
+    const current = content[i];
+    const next = content[i + 1];
+
+    if (inString) {
+      result += current;
+      if (escaped) {
+        escaped = false;
+      } else if (current === '\\') {
+        escaped = true;
+      } else if (current === quote) {
+        inString = false;
+        quote = '';
+      }
+      continue;
+    }
+
+    if (current === '"' || current === "'") {
+      inString = true;
+      quote = current;
+      result += current;
+      continue;
+    }
+
+    if (current === '/' && next === '/') {
+      while (i < content.length && content[i] !== '\n') i++;
+      result += '\n';
+      continue;
+    }
+
+    if (current === '/' && next === '*') {
+      i += 2;
+      while (i < content.length && !(content[i] === '*' && content[i + 1] === '/')) i++;
+      i++;
+      continue;
+    }
+
+    result += current;
+  }
+
+  return result.replace(/,\s*([}\]])/g, '$1');
+}
+
+function parseJsoncFile<T>(filePath: string): T | null {
+  try {
+    if (!fs.existsSync(filePath)) {
+      log.debug(`JSONC file not found: ${filePath}`);
+      return null;
+    }
+
+    const content = fs.readFileSync(filePath, 'utf-8');
+    return JSON.parse(stripJsonComments(content)) as T;
+  } catch (error) {
+    log.error(`Failed to parse JSONC file: ${filePath}`, error);
     return null;
   }
 }
@@ -146,22 +213,14 @@ export function parseCodexAuthConfig(): CodexAuthConfig | null {
   return parseJsonFile<CodexAuthConfig>(configPath);
 }
 
-/**
- * 解析 Gemini CLI 配置 (settings.json)
- * @returns 解析后的配置对象，如果文件不存在或解析失败则返回 null
- */
-export function parseGeminiCliConfig(): GeminiCliConfig | null {
-  const configPath = getConfigPath(CLI_CONFIG_PATHS.geminiCli.settings);
-  return parseJsonFile<GeminiCliConfig>(configPath);
+export function parseOpenCodeConfig(): OpenCodeConfig | null {
+  const configPath = getConfigPath(CLI_CONFIG_PATHS.openCode.config);
+  return parseJsoncFile<OpenCodeConfig>(configPath);
 }
 
-/**
- * 解析 Gemini CLI 环境变量 (.env)
- * @returns 解析后的配置对象，如果文件不存在或解析失败则返回 null
- */
-export function parseGeminiEnvConfig(): GeminiEnvConfig | null {
-  const configPath = getConfigPath(CLI_CONFIG_PATHS.geminiCli.env);
-  return parseEnvFile<GeminiEnvConfig>(configPath);
+export function parseOpenCodeAuthConfig(): OpenCodeAuthConfig | null {
+  const configPath = getConfigPath(CLI_CONFIG_PATHS.openCode.auth);
+  return parseJsonFile<OpenCodeAuthConfig>(configPath);
 }
 
 // ============= 官方 API Key 检测函数 =============
@@ -233,23 +292,82 @@ export function extractCodexInfo(
   return { baseUrl, hasApiKey };
 }
 
+function getOpenCodeModelProviderId(config: OpenCodeConfig | null): string | undefined {
+  const model = typeof config?.model === 'string' ? config.model.trim() : '';
+  if (!model.includes('/')) {
+    return undefined;
+  }
+  return model.split('/')[0] || undefined;
+}
+
+function getOpenCodeProvider(config: OpenCodeConfig | null): {
+  providerId?: string;
+  provider?: OpenCodeProviderConfig;
+} {
+  const providers = config?.provider;
+  if (!providers || typeof providers !== 'object') {
+    return {};
+  }
+
+  const modelProviderId = getOpenCodeModelProviderId(config);
+  if (modelProviderId && providers[modelProviderId]) {
+    return { providerId: modelProviderId, provider: providers[modelProviderId] };
+  }
+
+  for (const [providerId, provider] of Object.entries(providers)) {
+    const baseUrl =
+      provider?.options?.baseURL || provider?.options?.baseUrl || provider?.options?.base_url;
+    if (baseUrl || provider?.options?.apiKey) {
+      return { providerId, provider };
+    }
+  }
+
+  const [providerId, provider] = Object.entries(providers)[0] || [];
+  return { providerId, provider };
+}
+
+function resolveOpenCodeApiKeyValue(
+  value: unknown,
+  processEnv: Record<string, string | undefined> = process.env
+): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  const envMatch = trimmed.match(/^\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/);
+  if (envMatch) {
+    return processEnv[envMatch[1]];
+  }
+
+  return trimmed || undefined;
+}
+
 /**
- * 从 Gemini CLI 配置中提取 URL、API Key 和认证类型
- * @deprecated 使用 getEffectiveGeminiConfig() 代替，它会正确处理配置优先级
+ * 从 OpenCode 配置中提取 URL 和 API Key
  */
-export function extractGeminiCliInfo(
-  config: GeminiCliConfig | null,
-  envConfig: GeminiEnvConfig | null
+export function extractOpenCodeInfo(
+  config: OpenCodeConfig | null,
+  authConfig: OpenCodeAuthConfig | null,
+  processEnv?: Record<string, string | undefined>
 ): {
   baseUrl?: string;
   hasApiKey: boolean;
-  isSubscription: boolean;
+  providerId?: string;
 } {
-  const baseUrl = envConfig?.GOOGLE_GEMINI_BASE_URL;
-  const hasApiKey = !!envConfig?.GEMINI_API_KEY;
-  const isSubscription = config?.security?.auth?.selectedType === 'google-login';
+  const { providerId, provider } = getOpenCodeProvider(config);
+  const options = provider?.options;
+  const baseUrl = options?.baseURL || options?.baseUrl || options?.base_url;
+  const configApiKey = resolveOpenCodeApiKeyValue(options?.apiKey, processEnv);
+  const authApiKey =
+    (providerId ? authConfig?.[providerId]?.key : undefined) ||
+    Object.values(authConfig || {}).find(entry => typeof entry?.key === 'string')?.key;
 
-  return { baseUrl, hasApiKey, isSubscription };
+  return {
+    baseUrl,
+    hasApiKey: Boolean(configApiKey || authApiKey),
+    providerId,
+  };
 }
 
 // ============= 有效配置获取函数 =============
@@ -325,37 +443,6 @@ export function getEffectiveClaudeCodeConfig(
   };
 }
 
-/** Gemini CLI 有效配置结果 */
-export interface EffectiveGeminiConfig {
-  /** 检测到的 base URL */
-  baseUrl?: string;
-  /** 是否配置了 API Key */
-  hasApiKey: boolean;
-  /** 认证类型 */
-  authType: AuthType;
-  /** 是否为订阅账号（Google 登录或 Vertex AI） */
-  isSubscription: boolean;
-}
-
-/**
- * 获取 Gemini CLI 真正生效的配置
- *
- * 优先级规则:
- * 1. settings.json 中的 security.auth.selectedType
- *    - google-login → subscription
- *    - vertex-ai → subscription
- *    - gemini-api-key → 继续检测 base_url
- * 2. 环境变量 GOOGLE_GEMINI_BASE_URL / GEMINI_API_KEY
- * 3. .env 文件 GOOGLE_GEMINI_BASE_URL / GEMINI_API_KEY
- * 4. 默认官方 API (无 base_url 时)
- *
- * @param config 可选的 settings.json 配置（用于测试注入）
- * @param envConfig 可选的 .env 配置（用于测试注入）
- * @param processEnv 可选的环境变量（用于测试注入）
- * @returns 有效配置结果
- *
- * Requirements: 1.1, 1.2, 1.3, 1.4, 1.5
- */
 // ============= Codex 有效配置获取函数 =============
 
 /** Codex 有效配置结果 */
@@ -370,6 +457,17 @@ export interface EffectiveCodexConfig {
   hasChatGptOAuth: boolean;
   /** 是否为官方 OpenAI API Key (以 sk- 开头) */
   isOfficialApiKey?: boolean;
+}
+
+export interface EffectiveOpenCodeConfig {
+  /** 检测到的 base URL */
+  baseUrl?: string;
+  /** 是否配置了 API Key */
+  hasApiKey: boolean;
+  /** 认证类型 */
+  authType: AuthType;
+  /** OpenCode provider id */
+  providerId?: string;
 }
 
 /**
@@ -505,59 +603,23 @@ export function getEffectiveCodexConfig(
   };
 }
 
-// ============= Gemini CLI 有效配置获取函数 =============
-
-export function getEffectiveGeminiConfig(
-  config?: GeminiCliConfig | null,
-  envConfig?: GeminiEnvConfig | null,
+export function getEffectiveOpenCodeConfig(
+  config?: OpenCodeConfig | null,
+  authConfig?: OpenCodeAuthConfig | null,
   processEnv?: Record<string, string | undefined>
-): EffectiveGeminiConfig {
-  // 使用注入的配置或读取实际配置
-  const settingsConfig = config !== undefined ? config : parseGeminiCliConfig();
-  const dotEnvConfig = envConfig !== undefined ? envConfig : parseGeminiEnvConfig();
-  const env = processEnv !== undefined ? processEnv : process.env;
-
-  // 1. 首先检查 settings.json 中的认证类型
-  const selectedType = settingsConfig?.security?.auth?.selectedType;
-
-  // 2. 如果是 google-login 或 vertex-ai，直接返回订阅类型
-  // Requirements 1.1, 1.2: 订阅认证优先，忽略 base_url 配置
-  if (selectedType === 'google-login') {
-    return {
-      hasApiKey: false,
-      authType: 'google-login',
-      isSubscription: true,
-    };
-  }
-
-  if (selectedType === 'vertex-ai') {
-    return {
-      hasApiKey: false,
-      authType: 'vertex-ai',
-      isSubscription: true,
-    };
-  }
-
-  // 3. 检查环境变量（优先于 .env 文件）
-  // Requirements 1.3, 1.5: 环境变量优先级高于配置文件
-  const envApiKey = env.GEMINI_API_KEY || env.GOOGLE_API_KEY;
-  const envBaseUrl = env.GOOGLE_GEMINI_BASE_URL;
-
-  // 4. 合并配置（环境变量优先）
-  const baseUrl = envBaseUrl || dotEnvConfig?.GOOGLE_GEMINI_BASE_URL;
-  const hasApiKey = !!(envApiKey || dotEnvConfig?.GEMINI_API_KEY);
-
-  // 5. 确定认证类型
-  // Requirements 1.4: 无 base_url 但有 API Key 时，使用官方 API
-  let authType: AuthType = 'unknown';
-  if (hasApiKey) {
-    authType = 'gemini-api-key';
-  }
+): EffectiveOpenCodeConfig {
+  const openCodeConfig = config !== undefined ? config : parseOpenCodeConfig();
+  const jsonAuthConfig = authConfig !== undefined ? authConfig : parseOpenCodeAuthConfig();
+  const { baseUrl, hasApiKey, providerId } = extractOpenCodeInfo(
+    openCodeConfig,
+    jsonAuthConfig,
+    processEnv
+  );
 
   return {
     baseUrl,
     hasApiKey,
-    authType,
-    isSubscription: false,
+    authType: hasApiKey ? 'api-key' : 'unknown',
+    providerId,
   };
 }

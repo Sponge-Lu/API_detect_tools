@@ -127,6 +127,7 @@ function buildCustomCliVirtualSite(config: CustomCliConfig, defaultGroupId: stri
     name: getCustomCliDisplayName(config),
     url: config.baseUrl || '',
     api_key: config.apiKey || '',
+    extra_links: config.gasStationUrl,
     enabled: true,
     group: defaultGroupId,
   };
@@ -193,6 +194,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     useDetectionStore();
   const {
     configs: customCliConfigs,
+    fetchingModels,
     loadConfigs: loadCustomCliConfigs,
     addConfig: addCustomCliConfig,
     deleteConfig: deleteCustomCliConfig,
@@ -475,42 +477,48 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
   };
 
   // 弹窗辅助函数
-  const showDialog = (options: Partial<DialogState> & { message: string }): Promise<boolean> => {
-    return new Promise(resolve => {
+  const showDialog = useCallback(
+    (options: Partial<DialogState> & { message: string }): Promise<boolean> => {
+      return new Promise(resolve => {
+        setDialogState({
+          isOpen: true,
+          type: options.type || 'confirm',
+          title: options.title,
+          message: options.message,
+          confirmText: options.confirmText,
+          cancelText: options.cancelText,
+          onConfirm: () => {
+            setDialogState(initialDialogState);
+            resolve(true);
+          },
+          onCancel: () => {
+            setDialogState(initialDialogState);
+            resolve(false);
+          },
+        });
+      });
+    },
+    [setDialogState]
+  );
+
+  const showAlert = useCallback(
+    (
+      message: string,
+      type: 'success' | 'error' | 'alert' | 'warning' = 'alert',
+      title?: string,
+      content?: React.ReactNode
+    ) => {
       setDialogState({
         isOpen: true,
-        type: options.type || 'confirm',
-        title: options.title,
-        message: options.message,
-        confirmText: options.confirmText,
-        cancelText: options.cancelText,
-        onConfirm: () => {
-          setDialogState(initialDialogState);
-          resolve(true);
-        },
-        onCancel: () => {
-          setDialogState(initialDialogState);
-          resolve(false);
-        },
+        type,
+        title,
+        message,
+        content,
+        onConfirm: () => setDialogState(initialDialogState),
       });
-    });
-  };
-
-  const showAlert = (
-    message: string,
-    type: 'success' | 'error' | 'alert' | 'warning' = 'alert',
-    title?: string,
-    content?: React.ReactNode
-  ) => {
-    setDialogState({
-      isOpen: true,
-      type,
-      title,
-      message,
-      content,
-      onConfirm: () => setDialogState(initialDialogState),
-    });
-  };
+    },
+    [setDialogState]
+  );
 
   // 站点拖拽 hook
   const {
@@ -525,16 +533,27 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     handleDropOnGroup,
   } = useSiteDrag({ config, saveConfig });
 
-  // 站点检测 hook
-  const { detectingSites, results, setResults, detectSingle, detectAllSites } = useSiteDetection({
-    onAuthError: sites => {
+  const handleSiteDetectionAuthError = useCallback(
+    (sites: Array<{ name: string; url: string; error: string; accountId?: string }>) => {
       for (const site of sites) {
         addAuthErrorSite(site);
       }
       setShowAuthErrorDialog(true);
     },
-    showDialog,
-  });
+    [addAuthErrorSite, setShowAuthErrorDialog]
+  );
+
+  const siteDetectionOptions = useMemo(
+    () => ({
+      onAuthError: handleSiteDetectionAuthError,
+      showDialog,
+    }),
+    [handleSiteDetectionAuthError, showDialog]
+  );
+
+  // 站点检测 hook
+  const { detectingSites, results, setResults, detectSingle, detectAllSites } =
+    useSiteDetection(siteDetectionOptions);
 
   // CLI 兼容性测试 hook
   const {
@@ -545,7 +564,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
   } = useCliCompatTest();
 
   // 规范化站点分组配置
-  const siteGroups: SiteGroup[] = (() => {
+  const siteGroups: SiteGroup[] = useMemo(() => {
     if (
       !config?.siteGroups ||
       !Array.isArray(config.siteGroups) ||
@@ -554,7 +573,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
       return [{ id: 'default', name: '默认分组' }];
     }
     return config.siteGroups;
-  })();
+  }, [config?.siteGroups]);
   const defaultGroupId: string = siteGroups.find(g => g.id === 'default')?.id || siteGroups[0].id;
   const effectiveActiveSiteGroupFilter = activeSiteGroupFilter ?? defaultGroupId;
 
@@ -855,6 +874,8 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     showAlert,
     setCheckingIn,
   });
+  const handleCheckInAllRef = useRef(handleCheckInAll);
+  handleCheckInAllRef.current = handleCheckInAll;
 
   // 令牌管理 hook
   const {
@@ -1178,7 +1199,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
   );
 
   // 打开备份列表
-  const handleOpenBackupDialog = async () => {
+  const handleOpenBackupDialog = useCallback(async () => {
     setLoadingBackups(true);
     setShowBackupDialog(true);
     try {
@@ -1190,7 +1211,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     } finally {
       setLoadingBackups(false);
     }
-  };
+  }, []);
 
   const refreshAllDirectConfigModels = useCallback(async () => {
     const currentConfigs = useCustomCliConfigStore.getState().configs;
@@ -1213,8 +1234,12 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     return { success, failed };
   }, []);
 
+  const handleRefreshDirectConfig = useCallback(async (configId: string) => {
+    await useCustomCliConfigStore.getState().fetchModels(configId);
+  }, []);
+
   // 一键刷新继承旧批量检测结果回写，再补充直连配置模型刷新
-  const handleRefreshAll = async () => {
+  const handleRefreshAll = useCallback(async () => {
     if (!config) return;
     setIsRefreshing(true);
     try {
@@ -1245,13 +1270,21 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     } finally {
       setIsRefreshing(false);
     }
-  };
+  }, [
+    accountsBySite,
+    config,
+    detectAllSites,
+    loadAllAccounts,
+    loadCustomCliConfigs,
+    refreshAllDirectConfigModels,
+    setConfig,
+  ]);
 
   // 一键签到继承 useCheckIn 的批量过滤、结果回写和失败手动签到入口
-  const handleCheckInAllSites = async () => {
+  const handleCheckInAllSites = useCallback(async () => {
     setIsCheckingInAll(true);
     try {
-      await handleCheckInAll();
+      await handleCheckInAllRef.current();
       const cfg = await window.electronAPI.loadConfig();
       setConfig(cfg);
       await loadAllAccounts(cfg?.sites);
@@ -1261,7 +1294,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     } finally {
       setIsCheckingInAll(false);
     }
-  };
+  }, [loadAllAccounts, setConfig]);
 
   // 处理行点击事件 - 打开侧滑面板
   const handleRowClick = useCallback((cardItem: FlattenedCardItem) => {
@@ -1762,7 +1795,9 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                               : modelPricing[ck] || modelPricing[site.name]
                           }
                           isDetecting={
-                            cardItem.type === 'custom-cli' ? false : detectingSites.has(ck)
+                            cardItem.type === 'custom-cli'
+                              ? Boolean(fetchingModels[cardItem.config.id])
+                              : detectingSites.has(ck)
                           }
                           checkingIn={checkingIn}
                           dragOverIndex={dragOverIndex}
@@ -1776,7 +1811,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                           }
                           onDetect={(s, accountId) =>
                             cardItem.type === 'custom-cli'
-                              ? undefined
+                              ? void handleRefreshDirectConfig(cardItem.config.id)
                               : detectSingle(s, true, undefined, accountId || account?.id)
                           }
                           onCheckIn={(s, aid) => {
@@ -2149,12 +2184,6 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
             selectedItem.type === 'managed' && selectedItem.account
               ? getCompatibility(makeCardKey(selectedItem.site.name, selectedItem.account.id))
                   ?.codexDetail
-              : null
-          }
-          cliGeminiDetail={
-            selectedItem.type === 'managed' && selectedItem.account
-              ? getCompatibility(makeCardKey(selectedItem.site.name, selectedItem.account.id))
-                  ?.geminiDetail
               : null
           }
           showDialog={showDialog}

@@ -8,7 +8,7 @@ export interface RouteRuleLookupContext {
 const CLI_LABELS: Record<RouteCliType, string> = {
   claudeCode: 'Claude Code',
   codex: 'Codex',
-  geminiCli: 'Gemini CLI',
+  openCode: 'OpenCode',
 };
 
 const PATTERN_TYPE_LABELS: Record<RoutePatternType, string> = {

@@ -23,7 +23,11 @@ import {
 } from '../store/detectionStore';
 import { toast } from '../store/toastStore';
 import { sessionEventLog } from '../services/sessionEventLog';
-import { normalizeCliTestModels } from '../../shared/types/cli-config';
+import {
+  normalizeCliTargetProtocol,
+  normalizeCliTestModels,
+  type CliTargetProtocol,
+} from '../../shared/types/cli-config';
 import { persistCliCompatibilityResult } from '../services/cli-compat-sync';
 
 /** Hook 返回类型 */
@@ -117,10 +121,91 @@ function parseCodexConfig(
   return { apiKey, baseUrl };
 }
 
+function stripJsonCommentsAndTrailingCommas(content: string): string {
+  let output = '';
+  let inString = false;
+  let quote = '';
+  let escaped = false;
+
+  for (let index = 0; index < content.length; index += 1) {
+    const char = content[index];
+    const next = content[index + 1];
+
+    if (inString) {
+      output += char;
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === quote) {
+        inString = false;
+        quote = '';
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      inString = true;
+      quote = char;
+      output += char;
+      continue;
+    }
+
+    if (char === '/' && next === '/') {
+      while (index < content.length && content[index] !== '\n') {
+        index += 1;
+      }
+      output += '\n';
+      continue;
+    }
+
+    if (char === '/' && next === '*') {
+      index += 2;
+      while (index < content.length && !(content[index] === '*' && content[index + 1] === '/')) {
+        index += 1;
+      }
+      index += 1;
+      continue;
+    }
+
+    output += char;
+  }
+
+  return output.replace(/,\s*([}\]])/g, '$1');
+}
+
+function parseJsonLikeObject(content: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(content);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    try {
+      const parsed = JSON.parse(stripJsonCommentsAndTrailingCommas(content));
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function trimBaseUrlVersionSuffix(baseUrl: string | null): string | null {
+  return baseUrl?.replace(/\/v1\/?$/, '').replace(/\/+$/, '') || null;
+}
+
 /**
- * 从 Gemini CLI 配置文件中解析 API Key 和 Base URL
+ * 从 OpenCode 官方 opencode.json/auth.json 中解析 API Key 和 Base URL
  */
-function parseGeminiCliConfig(
+function parseOpenCodeConfig(
   editedFiles: Array<{ path: string; content: string }> | null | undefined
 ): {
   apiKey: string | null;
@@ -130,25 +215,36 @@ function parseGeminiCliConfig(
     return { apiKey: null, baseUrl: null };
   }
 
-  // 查找 .env 文件
-  const envFile = editedFiles.find(f => f.path.includes('.env'));
-  if (!envFile) {
-    return { apiKey: null, baseUrl: null };
-  }
-
-  let apiKey: string | null = null;
-  let baseUrl: string | null = null;
-
-  // 解析 .env 文件
-  const lines = envFile.content.split('\n');
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith('GEMINI_API_KEY=')) {
-      apiKey = trimmed.substring('GEMINI_API_KEY='.length);
-    } else if (trimmed.startsWith('GOOGLE_GEMINI_BASE_URL=')) {
-      baseUrl = trimmed.substring('GOOGLE_GEMINI_BASE_URL='.length);
-    }
-  }
+  const configFile = editedFiles.find(f => f.path.includes('opencode.json'));
+  const authFile = editedFiles.find(
+    f => f.path.includes('auth.json') && f.path.toLowerCase().includes('opencode')
+  );
+  const config = configFile ? parseJsonLikeObject(configFile.content) : null;
+  const auth = authFile ? parseJsonLikeObject(authFile.content) : null;
+  const model = typeof config?.model === 'string' ? config.model : '';
+  const provider = asRecord(config?.provider);
+  const providerId =
+    model.includes('/') && model.split('/')[0]
+      ? model.split('/')[0]
+      : Object.keys(provider || {})[0] || null;
+  const providerConfig = providerId ? asRecord(provider?.[providerId]) : null;
+  const providerOptions = asRecord(providerConfig?.options);
+  const authProvider = providerId ? asRecord(auth?.[providerId]) : null;
+  const fallbackAuthProvider = Object.values(auth || {})
+    .map(asRecord)
+    .find(item => item?.type === 'api' && typeof item.key === 'string');
+  const baseUrl =
+    typeof providerOptions?.baseURL === 'string'
+      ? trimBaseUrlVersionSuffix(providerOptions.baseURL)
+      : null;
+  const apiKey =
+    typeof authProvider?.key === 'string'
+      ? authProvider.key
+      : typeof fallbackAuthProvider?.key === 'string'
+        ? fallbackAuthProvider.key
+        : typeof providerOptions?.apiKey === 'string'
+          ? providerOptions.apiKey
+          : null;
 
   return { apiKey, baseUrl };
 }
@@ -327,10 +423,10 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
       // 检查是否有任何配置且启用
       const cc = cliConfig.claudeCode;
       const cx = cliConfig.codex;
-      const gc = cliConfig.geminiCli;
+      const oc = cliConfig.openCode;
       const ccTestModels = normalizeCliTestModels(cc);
       const cxTestModels = normalizeCliTestModels(cx);
-      const gcTestModels = normalizeCliTestModels(gc);
+      const ocTestModels = normalizeCliTestModels(oc);
 
       // 标记为测试中
       addCliTestingSite(storeKey);
@@ -339,10 +435,11 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
         // 构建测试配置
         const mismatchWarnings = new Set<string>();
         const testConfigs: Array<{
-          cliType: 'claudeCode' | 'codex' | 'geminiCli';
+          cliType: 'claudeCode' | 'codex' | 'openCode';
           apiKey: string;
           model: string;
           baseUrl?: string;
+          targetProtocol?: CliTargetProtocol;
         }> = [];
 
         // Claude Code - 从配置文件中读取 API Key 和 Base URL
@@ -441,32 +538,33 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
           }
         }
 
-        // Gemini CLI - 从配置文件中读取 API Key 和 Base URL
-        if (gc?.enabled && gcTestModels.length > 0) {
+        // OpenCode - 从官方 opencode.json/auth.json 中读取 API Key 和 Base URL
+        if (oc?.enabled && ocTestModels.length > 0) {
           const credential = resolveCliCredentials(
-            gc.editedFiles,
-            parseGeminiCliConfig,
-            gc.apiKeyId,
+            oc.editedFiles,
+            parseOpenCodeConfig,
+            oc.apiKeyId,
             availableApiKeys,
             siteUrl
           );
           let apiKey = credential.apiKey;
           let baseUrl = credential.baseUrl;
+          const targetProtocol = normalizeCliTargetProtocol(oc.targetProtocol);
 
-          if (gc.apiKeyId != null) {
+          if (oc.apiKeyId != null) {
             maybeWarnPreviewBaseUrlMismatch(
-              'Gemini CLI',
+              'OpenCode',
               credential.baseUrl,
               normalizedSiteUrl,
               mismatchWarnings
             );
             const resolved = await window.electronAPI.token?.resolveApiKeyValue?.(
               siteUrl,
-              gc.apiKeyId,
+              oc.apiKeyId,
               accountId
             );
             if (!resolved || resolved.success !== true || !resolved.data) {
-              toast.warning('Gemini CLI 所选 API Key 无法解析明文，请先刷新站点或重新选择');
+              toast.warning('OpenCode 所选 API Key 无法解析明文，请先刷新站点或重新选择');
               apiKey = null;
             } else {
               apiKey = resolved.data;
@@ -475,14 +573,15 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
           }
 
           if (!apiKey || !baseUrl) {
-            toast.warning('Gemini CLI 配置不完整，请先选择 API Key 和测试模型');
+            toast.warning('OpenCode 配置不完整，请先选择 API Key 和测试模型');
           } else {
-            gcTestModels.forEach(model => {
+            ocTestModels.forEach(model => {
               testConfigs.push({
-                cliType: 'geminiCli',
+                cliType: 'openCode',
                 apiKey,
                 model,
                 baseUrl,
+                targetProtocol,
               });
             });
           }
@@ -511,9 +610,9 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
           codex: response.data.codex ?? null,
           codexDetail: response.data.codexDetail, // 保存 Codex 详细测试结果
           codexError: response.data.codexError,
-          geminiCli: response.data.geminiCli ?? null,
-          geminiDetail: response.data.geminiDetail, // 保存 Gemini CLI 详细测试结果
-          geminiError: response.data.geminiError,
+          openCode: response.data.openCode ?? null,
+          openCodeDetail: response.data.openCodeDetail,
+          openCodeError: response.data.openCodeError,
           testedAt: Date.now(),
         };
 
@@ -579,35 +678,13 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
           }
         }
 
-        // 如果测试了 Gemini CLI，显示详细测试结果提示
-        if (response.data.geminiDetail && gc?.enabled) {
-          const { native, proxy } = response.data.geminiDetail;
-          const nativeStatus = native === true ? '✓' : native === false ? '✗' : '?';
-          const proxyStatus = proxy === true ? '✓' : proxy === false ? '✗' : '?';
-
-          // 使用较长的显示时间（6秒），让用户有足够时间阅读
-          if (native === true) {
-            toast.success(
-              `Gemini CLI: 兼容 [native: ${nativeStatus}, proxy: ${proxyStatus}]`,
-              6000
-            );
-          } else if (native === false && proxy === true) {
-            toast.warning(
-              `Gemini CLI: 部分兼容 [native: ${nativeStatus}, proxy: ${proxyStatus}]`,
-              6000
-            );
-          } else if (native === false && proxy === false) {
-            toast.error(
-              `Gemini CLI: 不兼容 [native: ${nativeStatus}, proxy: ${proxyStatus}]`,
-              6000
-            );
-          } else {
-            toast.info(`Gemini CLI: [native: ${nativeStatus}, proxy: ${proxyStatus}]`, 6000);
+        if (oc?.enabled && response.data.openCode !== undefined) {
+          if (response.data.openCode === true) {
+            const mode = response.data.openCodeDetail?.mode ?? 'openai-chat-completions';
+            toast.success(`OpenCode: 兼容 [${mode}]`, 6000);
+          } else if (response.data.openCode === false) {
+            toast.error('OpenCode: 不兼容', 6000);
           }
-        }
-
-        if (response.data.geminiCli === false && response.data.geminiError) {
-          toast.error(`Gemini CLI 失败原因: ${response.data.geminiError}`, 8000);
         }
       } catch (error: any) {
         toast.error(`${siteLabel} CLI 兼容性测试失败: ${error.message}`);
@@ -621,9 +698,9 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
           codex: null,
           codexDetail: undefined,
           codexError: undefined,
-          geminiCli: null,
-          geminiDetail: undefined,
-          geminiError: undefined,
+          openCode: null,
+          openCodeDetail: undefined,
+          openCodeError: undefined,
           testedAt: Date.now(),
           error: error.message,
         });

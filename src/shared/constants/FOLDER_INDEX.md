@@ -104,7 +104,6 @@ export const UPDATE_CONFIG = {
 export const CLI_TOOLS = [
   'claude-code',
   'codex',
-  'gemini-cli',
   'chat'
 ] as const;
 
@@ -119,11 +118,6 @@ export const CLI_TOOL_CONFIG = {
     name: 'OpenAI Codex',
     description: 'OpenAI Codex',
     defaultModel: 'code-davinci-002'
-  },
-  'gemini-cli': {
-    name: 'Google Gemini CLI',
-    description: 'Google Gemini CLI',
-    defaultModel: 'gemini-pro'
   },
   'chat': {
     name: 'Chat',

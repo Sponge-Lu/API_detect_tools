@@ -75,10 +75,9 @@ export interface CodexTestDetail {
   replyText?: string; // CLI 返回的答案摘要
 }
 
-/** Gemini CLI 详细测试结果 */
-export interface GeminiTestDetail {
-  native: boolean | null; // Google 原生格式测试结果
-  proxy: boolean | null; // OpenAI 兼容格式测试结果
+/** OpenCode 详细测试结果 */
+export interface OpenCodeTestDetail {
+  mode: CliTargetProtocol;
   replyText?: string; // CLI 返回的答案摘要
 }
 
@@ -90,9 +89,9 @@ export interface CliCompatibilityData {
   codex: boolean | null;
   codexDetail?: CodexTestDetail; // Codex 详细测试结果（responses）
   codexError?: string; // Codex 失败摘要（错误码优先）
-  geminiCli: boolean | null;
-  geminiDetail?: GeminiTestDetail; // Gemini CLI 详细测试结果（native/proxy）
-  geminiError?: string; // Gemini CLI 失败摘要（错误码优先）
+  openCode: boolean | null;
+  openCodeDetail?: OpenCodeTestDetail; // OpenCode 详细测试结果（官方 provider/endpoint 模式）
+  openCodeError?: string; // OpenCode 失败摘要（错误码优先）
   testedAt: number | null;
   error?: string;
 }
@@ -160,14 +159,14 @@ export interface CliConfigItem {
 export interface CliConfigData {
   claudeCode: CliConfigItem;
   codex: CliConfigItem;
-  geminiCli: CliConfigItem;
+  openCode: CliConfigItem;
 }
 
 /** 默认 CLI 配置 - 所有 CLI 默认启用 */
 export const DEFAULT_CLI_CONFIG_DATA: CliConfigData = {
   claudeCode: { apiKeyId: null, model: null, enabled: true },
   codex: { apiKeyId: null, model: null, enabled: true },
-  geminiCli: { apiKeyId: null, model: null, enabled: true },
+  openCode: { apiKeyId: null, model: null, enabled: true },
 };
 
 // ============= 多账户类型 =============

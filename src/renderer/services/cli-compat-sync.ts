@@ -12,7 +12,7 @@
 import type {
   ClaudeTestDetail,
   CodexTestDetail,
-  GeminiTestDetail,
+  OpenCodeTestDetail,
   UnifiedConfig,
 } from '../../shared/types/site';
 import type { CliCompatibilityResult } from '../store/detectionStore';
@@ -21,7 +21,7 @@ import { useRouteStore } from '../store/routeStore';
 import { syncProjectedCliCompatibility } from './cli-compat-projection';
 
 export interface PersistedCliCompatibilityTestSample {
-  cliType: 'claudeCode' | 'codex' | 'geminiCli';
+  cliType: 'claudeCode' | 'codex' | 'openCode';
   model: string;
   success: boolean;
   testedAt?: number;
@@ -31,7 +31,7 @@ export interface PersistedCliCompatibilityTestSample {
   error?: string;
   claudeDetail?: ClaudeTestDetail;
   codexDetail?: CodexTestDetail;
-  geminiDetail?: GeminiTestDetail;
+  openCodeDetail?: OpenCodeTestDetail;
 }
 
 interface PersistCliCompatibilityResponse {

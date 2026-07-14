@@ -420,47 +420,6 @@ describe('AnyRouter Request Rewriter', () => {
       expect(rewritten.tool_choice).toEqual({ type: 'function', name: 'get_weather' });
     });
 
-    it('应该保持 Gemini Native 原生协议透传', () => {
-      const originalBody = Buffer.from(
-        JSON.stringify({
-          systemInstruction: { parts: [{ text: 'Be concise.' }] },
-          contents: [
-            { role: 'user', parts: [{ text: 'hello' }] },
-            { role: 'model', parts: [{ text: 'hi' }] },
-          ],
-          someField: '[undefined]',
-        })
-      );
-
-      const result = rewriteForAnyRouter(
-        originalBody,
-        validHash,
-        {},
-        'geminiCli',
-        '/v1beta/models/gemini-route:streamGenerateContent?alt=sse',
-        'claude-opus-4-6'
-      );
-      const rewritten = JSON.parse(result.body.toString('utf-8'));
-
-      expect(result.upstreamPath).toBe('/v1beta/models/gemini-route:streamGenerateContent?alt=sse');
-      expect(result.upstreamCliType).toBe('geminiCli');
-      expect(result.responseAdapter).toEqual({ type: 'transparent' });
-      expect(result.headers).toEqual({});
-      expect(result.urlSuffix).toBe('');
-      expect(rewritten.model).toBeUndefined();
-      expect(rewritten.systemInstruction.parts[0].text).toBe('Be concise.');
-      expect(rewritten.contents).toEqual([
-        { role: 'user', parts: [{ text: 'hello' }] },
-        { role: 'model', parts: [{ text: 'hi' }] },
-      ]);
-      expect(rewritten.someField).toBeUndefined();
-      expect(rewritten.metadata).toBeUndefined();
-      expect(rewritten.messages).toBeUndefined();
-      expect(rewritten.system).toBeUndefined();
-      expect(rewritten.thinking).toBeUndefined();
-      expect(rewritten.output_config).toBeUndefined();
-    });
-
     it('Codex 缺少有效 hash 时应原生透传且不伪造 metadata.user_id', () => {
       const originalBody = Buffer.from(
         JSON.stringify({
@@ -534,56 +493,6 @@ describe('AnyRouter Request Rewriter', () => {
       expect(converted).toContain('"delta":"2"');
       expect(converted).toContain('event: response.completed');
       expect(converted).toContain('data: [DONE]');
-      expect(result.headers['content-type']).toBe('text/event-stream; charset=utf-8');
-    });
-
-    it('应该把 Anthropic JSON 响应转换为 Gemini GenerateContent JSON', () => {
-      const upstreamBody = Buffer.from(
-        JSON.stringify({
-          content: [{ type: 'text', text: '2' }],
-          usage: { input_tokens: 5, output_tokens: 1 },
-        })
-      );
-
-      const result = transformAnyRouterResponse({
-        body: upstreamBody,
-        headers: { 'content-type': 'application/json' },
-        statusCode: 200,
-        adapter: { type: 'geminiGenerateContent', model: 'gemini-route', stream: false },
-      });
-      const converted = JSON.parse(result.body.toString('utf-8'));
-
-      expect(converted.candidates[0].content.parts[0].text).toBe('2');
-      expect(converted.candidates[0].finishReason).toBe('STOP');
-      expect(converted.usageMetadata).toEqual({
-        promptTokenCount: 5,
-        candidatesTokenCount: 1,
-        totalTokenCount: 6,
-      });
-    });
-
-    it('应该把 Anthropic SSE 响应转换为 Gemini SSE', () => {
-      const upstreamBody = Buffer.from(
-        [
-          'event: content_block_delta',
-          'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"2"}}',
-          '',
-          'event: message_delta',
-          'data: {"type":"message_delta","usage":{"input_tokens":5,"output_tokens":1}}',
-          '',
-        ].join('\n')
-      );
-
-      const result = transformAnyRouterResponse({
-        body: upstreamBody,
-        headers: { 'content-type': 'text/event-stream' },
-        statusCode: 200,
-        adapter: { type: 'geminiGenerateContent', model: 'gemini-route', stream: true },
-      });
-      const converted = result.body.toString('utf-8');
-
-      expect(converted).toContain('"text":"2"');
-      expect(converted).toContain('"finishReason":"STOP"');
       expect(result.headers['content-type']).toBe('text/event-stream; charset=utf-8');
     });
   });

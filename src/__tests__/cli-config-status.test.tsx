@@ -56,7 +56,7 @@ function buildResult(
     sourceType: 'other',
     baseUrl,
     hasApiKey: true,
-    authType: 'gemini-api-key',
+    authType: 'api-key',
     detectedAt: Date.now(),
     ...overrides,
   };
@@ -71,7 +71,6 @@ function buildCustomConfig(
   const defaultCliSettings: CustomCliConfig['cliSettings'] = {
     claudeCode: { enabled: true, model: null, testModels: [], testState: null },
     codex: { enabled: true, model: null, testModels: [], testState: null },
-    geminiCli: { enabled: true, model: null, testModels: [], testState: null },
   };
 
   return {
@@ -109,24 +108,24 @@ describe('CliConfigStatus', () => {
 
     render(
       <CliConfigStatus
-        cliType="geminiCli"
-        result={buildResult('http://127.0.0.1:3210/v1beta')}
+        cliType="codex"
+        result={buildResult('http://127.0.0.1:3210/v1/responses')}
         compact
       />
     );
 
     expect(screen.getByText('本地路由')).toBeInTheDocument();
-    expect(screen.getByTitle(/Gemini CLI: 本地路由/)).toBeInTheDocument();
+    expect(screen.getByTitle(/Codex: 本地路由/)).toBeInTheDocument();
     expect(screen.queryByText(/127\.0\.0\.1/)).not.toBeInTheDocument();
   });
 
   it('does not render auth type icons in compact mode', () => {
     render(
       <CliConfigStatus
-        cliType="geminiCli"
-        result={buildResult('https://relay.example.com/v1beta', {
+        cliType="codex"
+        result={buildResult('https://relay.example.com/v1/responses', {
           sourceType: 'other',
-          authType: 'gemini-api-key',
+          authType: 'api-key',
         })}
         compact
       />
@@ -134,7 +133,7 @@ describe('CliConfigStatus', () => {
 
     expect(screen.getByText('其他')).toBeInTheDocument();
     expect(screen.queryByText('🔑')).not.toBeInTheDocument();
-    expect(screen.getByTitle(/认证: Gemini API Key/)).toBeInTheDocument();
+    expect(screen.getByTitle(/认证: API Key/)).toBeInTheDocument();
   });
 
   it('matches localhost to the configured route proxy port', () => {
@@ -176,15 +175,15 @@ describe('CliConfigStatus', () => {
     useDetectionStore.setState({
       cliConfigs: {
         'Managed Site': {
-          geminiCli: { apiKeyId: 1, model: 'gemini-2.5-pro' },
+          codex: { apiKeyId: 1, model: 'gpt-4.1' },
         },
       },
     });
 
     render(
       <CliConfigStatus
-        cliType="geminiCli"
-        result={buildResult('https://managed.example.com/v1beta', {
+        cliType="codex"
+        result={buildResult('https://managed.example.com/v1/responses', {
           sourceType: 'managed',
           siteName: 'Managed Site',
           siteId: 'site-1',
@@ -194,8 +193,8 @@ describe('CliConfigStatus', () => {
     );
 
     expect(screen.getByText('Managed Site')).toBeInTheDocument();
-    expect(screen.getByText('gemini-2.5-pro')).toBeInTheDocument();
-    expect(screen.getByTitle(/模型: gemini-2\.5-pro/)).toBeInTheDocument();
+    expect(screen.getByText('gpt-4.1')).toBeInTheDocument();
+    expect(screen.getByTitle(/模型: gpt-4\.1/)).toBeInTheDocument();
   });
 
   it('uses the unique account-scoped managed CLI model when site-level config is absent', () => {
@@ -248,14 +247,14 @@ describe('CliConfigStatus', () => {
     expect(screen.getByTitle(/模型: gpt-5\.4/)).toBeInTheDocument();
   });
 
-  it('matches custom Gemini CLI configs with v1beta request paths', () => {
+  it('matches custom Codex configs with responses request paths', () => {
     useCustomCliConfigStore.setState({
       configs: [
         buildCustomConfig({
           cliSettings: {
-            geminiCli: {
+            codex: {
               enabled: true,
-              model: 'gemini-2.5-flash',
+              model: 'gpt-4.1-mini',
               testModels: [],
               testState: null,
             },
@@ -266,15 +265,15 @@ describe('CliConfigStatus', () => {
 
     render(
       <CliConfigStatus
-        cliType="geminiCli"
-        result={buildResult('https://custom.example.com/v1beta/models/gemini-2.5-flash')}
+        cliType="codex"
+        result={buildResult('https://custom.example.com/v1/responses')}
         compact
       />
     );
 
     expect(screen.getByText('Custom One')).toBeInTheDocument();
-    expect(screen.getByText('gemini-2.5-flash')).toBeInTheDocument();
-    expect(screen.getByTitle(/模型: gemini-2\.5-flash/)).toBeInTheDocument();
+    expect(screen.getByText('gpt-4.1-mini')).toBeInTheDocument();
+    expect(screen.getByTitle(/模型: gpt-4\.1-mini/)).toBeInTheDocument();
   });
 
   it('keeps non-route local URLs as other relay stations', () => {
@@ -282,8 +281,8 @@ describe('CliConfigStatus', () => {
 
     render(
       <CliConfigStatus
-        cliType="geminiCli"
-        result={buildResult('http://127.0.0.1:9999/v1beta')}
+        cliType="codex"
+        result={buildResult('http://127.0.0.1:9999/v1/responses')}
         compact
       />
     );

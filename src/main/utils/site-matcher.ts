@@ -153,7 +153,7 @@ export function determineSourceType(options: {
     options;
 
   // 1. 优先检查认证类型（订阅账号）
-  if (isSubscription || authType === 'google-login' || authType === 'vertex-ai') {
+  if (isSubscription) {
     return { sourceType: 'subscription' };
   }
 

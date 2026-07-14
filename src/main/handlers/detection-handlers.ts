@@ -344,8 +344,6 @@ export function registerDetectionHandlers(
           return await configDetectionService.detectClaudeCode(sites);
         case 'codex':
           return await configDetectionService.detectCodex(sites);
-        case 'geminiCli':
-          return await configDetectionService.detectGeminiCli(sites);
         default:
           throw new Error(`Unknown CLI type: ${cliType}`);
       }
@@ -375,12 +373,6 @@ export function registerDetectionHandlers(
           detectedAt: Date.now(),
         },
         codex: {
-          sourceType: 'unknown',
-          hasApiKey: false,
-          error: error?.message || 'Unknown error',
-          detectedAt: Date.now(),
-        },
-        geminiCli: {
           sourceType: 'unknown',
           hasApiKey: false,
           error: error?.message || 'Unknown error',
@@ -589,7 +581,12 @@ export function registerDetectionHandlers(
       Logger.info('[IPC] 批量签到所有托管站点账号');
       const config = await unifiedConfigManager.exportConfig();
       const checkinSites = config.sites.filter(site => site.has_checkin);
-      const results: Array<{ siteId: string; accountId: string; success: boolean; error?: string }> = [];
+      const results: Array<{
+        siteId: string;
+        accountId: string;
+        success: boolean;
+        error?: string;
+      }> = [];
 
       for (const site of checkinSites) {
         const accounts = config.accounts.filter(acc => acc.site_id === site.id);
@@ -627,7 +624,9 @@ export function registerDetectionHandlers(
                 success: false,
                 error: checkinResult.message || '签到失败',
               });
-              Logger.warn(`⚠️ 签到失败: ${site.name} / ${account.account_name} - ${checkinResult.message}`);
+              Logger.warn(
+                `⚠️ 签到失败: ${site.name} / ${account.account_name} - ${checkinResult.message}`
+              );
             }
           } catch (error: any) {
             results.push({

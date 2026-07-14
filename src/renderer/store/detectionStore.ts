@@ -1,5 +1,5 @@
 /**
- * 输入: DetectionResult (检测结果), CliCompatibilityResult (CLI 兼容性结果), CodexTestDetail, GeminiTestDetail, AllCliDetectionResult (CLI 配置检测结果)
+ * 输入: DetectionResult (检测结果), CliCompatibilityResult (CLI 兼容性结果), CodexTestDetail, AllCliDetectionResult (CLI 配置检测结果)
  * 输出: DetectionState (检测状态), 检测结果操作方法, useDetectionStore hook
  * 定位: 状态管理层 - 管理站点检测结果、CLI 兼容性数据和 CLI 配置检测结果
  *
@@ -19,6 +19,7 @@
 import { create } from 'zustand';
 import type { DetectionResult } from '../App';
 import type { AllCliDetectionResult, SiteInfo } from '../../shared/types/config-detection';
+import type { CliTargetProtocol } from '../../shared/types/cli-config';
 
 /** Claude Code 详细测试结果 */
 export interface ClaudeTestDetail {
@@ -31,10 +32,9 @@ export interface CodexTestDetail {
   replyText?: string; // CLI 返回的答案摘要
 }
 
-/** Gemini CLI 详细测试结果 */
-export interface GeminiTestDetail {
-  native: boolean | null; // Google 原生格式测试结果
-  proxy: boolean | null; // OpenAI 兼容格式测试结果
+/** OpenCode 详细测试结果 */
+export interface OpenCodeTestDetail {
+  mode: CliTargetProtocol; // OpenCode 官方 provider/endpoint 模式（旧缓存可能为 native）
   replyText?: string; // CLI 返回的答案摘要
 }
 
@@ -46,9 +46,9 @@ export interface CliCompatibilityResult {
   codex: boolean | null;
   codexDetail?: CodexTestDetail; // Codex 详细测试结果（responses）
   codexError?: string; // Codex 失败摘要（错误码优先）
-  geminiCli: boolean | null;
-  geminiDetail?: GeminiTestDetail; // Gemini CLI 详细测试结果（native/proxy）
-  geminiError?: string; // Gemini CLI 失败摘要（错误码优先）
+  openCode: boolean | null;
+  openCodeDetail?: OpenCodeTestDetail; // OpenCode 详细测试结果（官方 provider/endpoint 模式）
+  openCodeError?: string; // OpenCode 失败摘要（错误码优先）
   testedAt: number | null; // Unix timestamp
   error?: string; // 测试错误信息（可选）
   sourceLabel?: string; // 展示层来源标签（如“来自 CLI 可用性 · 默认账户”）
@@ -76,6 +76,7 @@ export interface CliConfigItem {
   testModels?: string[] | null; // 测试使用模型（最多 3 个）
   testResults?: Array<CliModelTestResult | null> | null; // 测试结果（按槽位持久化）
   enabled?: boolean; // 是否启用（控制图标显示和测试），可选以兼容旧数据
+  targetProtocol?: CliTargetProtocol; // 目标协议/官方 provider 模式
   editedFiles?: EditedConfigFile[] | null; // 用户编辑后的配置文件内容
   applyMode?: 'merge' | 'overwrite'; // 应用配置模式：合并或覆盖，默认合并
 }
@@ -84,7 +85,7 @@ export interface CliConfigItem {
 export interface CliConfig {
   claudeCode?: CliConfigItem | null;
   codex?: CliConfigItem | null;
-  geminiCli?: CliConfigItem | null;
+  openCode?: CliConfigItem | null;
 }
 
 interface DetectionState {

@@ -52,7 +52,7 @@ src/
 │   ├── token-service.ts   # Token 获取/刷新/签到
 │   ├── api-service.ts     # HTTP 请求、余额检测、LDC 支付探测
 │   ├── cli-compat-service.ts  # CLI 协议级兼容性流式探测 (请求格式与真实 CLI 对齐)
-│   ├── cli-wrapper-compat-service.ts  # 真实 CLI wrapper 测试 (隔离临时 HOME/CODEX_HOME/GEMINI_CLI_HOME)
+│   ├── cli-wrapper-compat-service.ts  # 真实 CLI wrapper 测试 (隔离临时 HOME + env 注入 OPENCODE_CONFIG_CONTENT/OPENCODE_AUTH_CONTENT)
 │   ├── credit-service.ts  # Linux Do Credit 积分/充值
 │   ├── update-service.ts  # 应用内更新检测/下载/安装
 │   ├── unified-config-manager.ts  # 配置持久化与迁移

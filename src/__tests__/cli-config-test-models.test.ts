@@ -20,15 +20,15 @@ describe('CLI test model helpers', () => {
     expect(
       normalizeCliTestModels({
         testModel: 'legacy-model',
-        testModels: [' claude-3.7 ', '', 'gpt-4.1', 'gemini-2.5'],
+        testModels: [' claude-3.7 ', '', 'gpt-4.1', 'o3'],
       })
-    ).toEqual(['claude-3.7', 'gpt-4.1', 'gemini-2.5']);
+    ).toEqual(['claude-3.7', 'gpt-4.1', 'o3']);
   });
 
   it('sanitizes editor slots by removing blanks and limiting to slot count', () => {
     expect(
-      sanitizeCliTestModels(['claude-3.7', '', 'gpt-4.1', undefined, 'gemini-2.5', 'extra-model'])
-    ).toEqual(['claude-3.7', 'gpt-4.1', 'gemini-2.5']);
+      sanitizeCliTestModels(['claude-3.7', '', 'gpt-4.1', undefined, 'o3', 'extra-model'])
+    ).toEqual(['claude-3.7', 'gpt-4.1', 'o3']);
   });
 
   it('never returns more than the configured slot count', () => {
@@ -42,7 +42,6 @@ describe('CLI test model helpers', () => {
   it('initializes default CLI configs with empty persisted test result slots', () => {
     expect(DEFAULT_CLI_CONFIG.claudeCode.testResults).toEqual([]);
     expect(DEFAULT_CLI_CONFIG.codex.testResults).toEqual([]);
-    expect(DEFAULT_CLI_CONFIG.geminiCli.testResults).toEqual([]);
   });
 
   it('migrates deprecated Codex collab flags to multi_agent', () => {

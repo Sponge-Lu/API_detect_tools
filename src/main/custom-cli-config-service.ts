@@ -25,6 +25,7 @@ import {
   parseCustomCliRouteConfigId,
 } from '../shared/utils/customCliRouteId';
 import { encryptCustomCliConfigs, decryptCustomCliConfigs } from './config-field-crypto';
+import { BUILTIN_CLI_TYPES } from '../shared/types/cli-config';
 
 export interface CustomCliConfigStorage {
   configs: CustomCliConfig[];
@@ -55,8 +56,7 @@ export function getCustomCliConfigFilePath(): string {
  */
 function normalizeCustomCliConfigTestModels(configs: CustomCliConfig[]): void {
   for (const config of configs) {
-    const cliTypes = ['claudeCode', 'codex', 'geminiCli'] as const;
-    for (const cliType of cliTypes) {
+    for (const cliType of BUILTIN_CLI_TYPES) {
       const cliSettings = config.cliSettings?.[cliType];
       if (!cliSettings || !Array.isArray(cliSettings.testModels)) {
         continue;

@@ -21,6 +21,7 @@ import { DialogState, DialogType, initialDialogState } from '../components/Confi
 import { COLUMN_WIDTHS_VERSION, DEFAULT_COLUMN_WIDTHS } from '../../shared/constants';
 import type { HistoryMode } from '../components/Route/Usability/HistoryBucketBars';
 import type { RouteCliType } from '../../shared/types/route-proxy';
+import { BUILTIN_CLI_TYPES } from '../../shared/types/cli-config';
 
 import type { ReleaseInfo } from '../hooks/useUpdate';
 
@@ -562,19 +563,31 @@ export const useUIStore = create<UIState>()(
           : (persisted.columnWidths as number[]);
 
         // 一次性迁移：从旧 localStorage 顶层 key 取出 HistoryCell 的选择
-        const VALID_CLI_TYPES: RouteCliType[] = ['claudeCode', 'codex', 'geminiCli'];
+        const VALID_CLI_TYPES: RouteCliType[] = [...BUILTIN_CLI_TYPES];
         const VALID_MODES: HistoryMode[] = ['combined', 'probe', 'route'];
+        const isValidRouteCliType = (value: string | null | undefined): value is RouteCliType =>
+          Boolean(value) && VALID_CLI_TYPES.includes(value as RouteCliType);
         const legacyCli =
           typeof localStorage !== 'undefined'
-            ? (localStorage.getItem('historyCell:selectedCli') as RouteCliType | null)
+            ? localStorage.getItem('historyCell:selectedCli')
             : null;
         const legacyMode =
           typeof localStorage !== 'undefined'
             ? (localStorage.getItem('historyCell:selectedMode') as HistoryMode | null)
             : null;
-        if (legacyCli && VALID_CLI_TYPES.includes(legacyCli)) {
+        if (legacyCli === 'geminiCli') {
+          persisted.historyCliType = 'openCode';
+        } else if (isValidRouteCliType(legacyCli)) {
           persisted.historyCliType = legacyCli;
         }
+
+        const persistedCliType = persisted.historyCliType as string | undefined;
+        if (persistedCliType === 'geminiCli') {
+          persisted.historyCliType = 'openCode';
+        } else if (persistedCliType && !isValidRouteCliType(persistedCliType)) {
+          persisted.historyCliType = currentState.historyCliType;
+        }
+
         if (legacyMode && VALID_MODES.includes(legacyMode)) {
           persisted.historyMode = legacyMode;
         }

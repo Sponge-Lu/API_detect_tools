@@ -178,7 +178,7 @@ npm run test:coverage
 当前 Route / CLI 相关测试重点覆盖：
 
 - 真实 CLI wrapper 临时目录隔离、stdin prompt 注入、终止错误摘要和 probe-lock 提前中止
-- route proxy 的 probe-lock loopback 限制、单模型上游尝试预算、Gemini 内部辅助模型阻断和上游失败透传
+- route proxy 的 probe-lock loopback 限制、单模型上游尝试预算、上游失败透传和 provider/native 协议处理
 - CLI 探测对活跃 API Key 的选择、`probeRunId` 批次持久化和 `routing.cliProbe.latest/history` 投影
 - 数据总览路由趋势图在 `24h` / `7d` 部分数据窗口下仍补齐完整 X 轴，并且前置空桶不绘制请求柱或趋势线
 - 日志页的会话事件筛选、路由日志逐条 push 追加、紧凑请求尝试列表、Token/cache token 与参考金额展示

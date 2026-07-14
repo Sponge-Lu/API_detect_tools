@@ -1,6 +1,6 @@
 /**
  * 输入: HttpClient (HTTP 请求), Logger (日志记录)
- * 输出: CliCompatibilityResult, CodexTestDetail, GeminiTestDetail, CliCompatService, 请求构建函数
+ * 输出: CliCompatibilityResult, CodexTestDetail, CliCompatService, 请求构建函数
  * 定位: 服务层 - CLI 工具兼容性测试服务，使用与真实 CLI 一致的流式请求格式（User-Agent/stream/beta headers）
  *
  * 🔄 自引用: 当此文件变更时，更新:
@@ -11,11 +11,12 @@
 
 /**
  * CLI 兼容性测试服务
- * 用于检测站点是否支持 Claude Code、Codex、Gemini CLI 等 CLI 工具
+ * 用于检测站点是否支持 Claude Code、Codex 等 CLI 工具
  */
 
 import { httpPostStream } from './utils/http-client';
 import { Logger } from './utils/logger';
+import type { CliTargetProtocol } from '../shared/types/cli-config';
 
 const log = Logger.scope('CliCompatService');
 
@@ -25,7 +26,7 @@ const log = Logger.scope('CliCompatService');
 export enum CliType {
   CLAUDE_CODE = 'claudeCode',
   CODEX = 'codex',
-  GEMINI_CLI = 'geminiCli',
+  OPEN_CODE = 'openCode',
 }
 
 /** Claude Code 详细测试结果 */
@@ -39,10 +40,9 @@ export interface CodexTestDetail {
   replyText?: string; // CLI 返回的答案摘要
 }
 
-/** Gemini CLI 详细测试结果 */
-export interface GeminiTestDetail {
-  native: boolean | null; // Google 原生格式测试结果
-  proxy: boolean | null; // OpenAI 兼容格式测试结果
+/** OpenCode 详细测试结果 */
+export interface OpenCodeTestDetail {
+  mode: CliTargetProtocol;
   replyText?: string; // CLI 返回的答案摘要
 }
 
@@ -54,9 +54,9 @@ export interface CliCompatibilityResult {
   codex: boolean | null;
   codexDetail?: CodexTestDetail; // Codex 详细测试结果（responses）
   codexError?: string; // Codex 失败摘要（错误码优先）
-  geminiCli: boolean | null;
-  geminiDetail?: GeminiTestDetail; // Gemini CLI 详细测试结果（native/proxy）
-  geminiError?: string; // Gemini CLI 失败摘要（错误码优先）
+  openCode: boolean | null;
+  openCodeDetail?: OpenCodeTestDetail; // OpenCode 详细测试结果
+  openCodeError?: string; // OpenCode 失败摘要（错误码优先）
   testedAt: number | null; // Unix timestamp
   error?: string; // 测试错误信息（可选）
 }
@@ -81,7 +81,7 @@ export interface RequestFormat {
 /**
  * 从模型列表中选择版本号最低的模型
  * @param models 模型列表
- * @param prefix 模型前缀 (如 'claude-', 'gpt-', 'gemini-')
+ * @param prefix 模型前缀 (如 'claude-', 'gpt-')
  * @returns 最低版本的模型名称，如果没有匹配则返回 null
  */
 export function selectLowestModel(models: string[], prefix: string): string | null {
@@ -112,13 +112,10 @@ export function selectLowestModel(models: string[], prefix: string): string | nu
  * 使用正则表达式匹配模型类型
  * 支持更灵活的模型名称格式
  * @param models 模型列表
- * @param type 模型类型 ('claude' | 'gpt' | 'gemini')
+ * @param type 模型类型 ('claude' | 'gpt')
  * @returns 匹配的模型名称，如果没有匹配则返回 null
  */
-export function findModelByType(
-  models: string[],
-  type: 'claude' | 'gpt' | 'gemini'
-): string | null {
+export function findModelByType(models: string[], type: 'claude' | 'gpt'): string | null {
   if (!models || models.length === 0) {
     return null;
   }
@@ -127,7 +124,6 @@ export function findModelByType(
   const patterns: Record<string, RegExp[]> = {
     claude: [/^claude[-_]?/i, /^anthropic[-_]?/i, /^claude\d/i],
     gpt: [/^gpt[-_]?/i, /^openai[-_]?/i, /^chatgpt[-_]?/i, /^o[134][-_]?/i, /^gpt\d/i],
-    gemini: [/^gemini[-_]?/i, /^google[-_]?/i, /^gemini\d/i],
   };
 
   const regexList = patterns[type];
@@ -383,55 +379,10 @@ export function buildCodexResponsesRequest(
 }
 
 /**
- * 构建 Gemini CLI 测试请求
- * 使用 /v1beta/models/{model}:streamGenerateContent?alt=sse 端点（与真实 Gemini CLI 一致）
+ * 构建 OpenCode OpenAI-compatible Chat Completions 测试请求
+ * 使用 /v1/chat/completions 端点，Bearer 认证，与 OpenCode 官方 openai-compatible provider 对齐
  */
-export function buildGeminiCliRequest(
-  baseUrl: string,
-  apiKey: string,
-  model: string
-): RequestFormat {
-  const url = `${baseUrl.replace(/\/$/, '')}/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
-
-  return {
-    url,
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': 'GeminiCLI/0.1.0 google-api-nodejs-client/9.15.1',
-      'x-goog-api-client': 'gl-node/22.0.0',
-    },
-    body: {
-      contents: [{ role: 'user', parts: [{ text: '1+1=?' }] }],
-      tools: [
-        {
-          functionDeclarations: [
-            {
-              name: 'test_tool',
-              description: 'A test tool',
-              parameters: {
-                type: 'object',
-                properties: {
-                  test: { type: 'string' },
-                },
-                required: [],
-              },
-            },
-          ],
-        },
-      ],
-      generationConfig: {
-        maxOutputTokens: 1,
-      },
-    },
-  };
-}
-
-/**
- * 构建 Gemini CLI 测试请求（OpenAI 兼容格式，用于中转站）
- * 使用 /v1/chat/completions 端点，与真实 Gemini CLI proxy 模式一致
- */
-export function buildGeminiCliProxyRequest(
+export function buildOpenCodeChatCompletionsRequest(
   baseUrl: string,
   apiKey: string,
   model: string
@@ -444,13 +395,12 @@ export function buildGeminiCliProxyRequest(
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
-      'User-Agent': 'GeminiCLI/0.1.0 google-api-nodejs-client/9.15.1',
+      'User-Agent': 'opencode',
     },
     body: {
       model,
-      max_tokens: 1,
-      stream: true,
       messages: [{ role: 'user', content: '1+1=?' }],
+      stream: true,
     },
   };
 }
@@ -546,67 +496,38 @@ export class CliCompatService {
   }
 
   /**
-   * 测试 Gemini CLI 兼容性（Google 原生格式）
+   * 测试 OpenCode 兼容性（默认 OpenAI-compatible Chat Completions）
    */
-  async testGeminiNative(url: string, apiKey: string, model: string): Promise<boolean> {
-    try {
-      return await this.runStreamTest(
-        'Gemini CLI (Native)',
-        buildGeminiCliRequest(url, apiKey, model)
-      );
-    } catch (error: any) {
-      log.warn(`Gemini CLI (Native) test failed: ${error.message}`);
-      return false;
-    }
-  }
-
-  /**
-   * 测试 Gemini CLI 兼容性（OpenAI 兼容格式，用于中转站）
-   */
-  async testGeminiProxy(url: string, apiKey: string, model: string): Promise<boolean> {
-    try {
-      return await this.runStreamTest(
-        'Gemini CLI (Proxy)',
-        buildGeminiCliProxyRequest(url, apiKey, model)
-      );
-    } catch (error: any) {
-      log.warn(`Gemini CLI (Proxy) test failed: ${error.message}`);
-      return false;
-    }
-  }
-
-  /**
-   * 测试 Gemini CLI 兼容性（同时测试 Native 和 Proxy 端点）
-   * 注意：Gemini CLI 实际只使用 Native 格式，Proxy 测试仅供参考
-   * @returns 包含详细测试结果的对象
-   */
-  async testGeminiWithDetail(
+  async testOpenCodeWithDetail(
     url: string,
     apiKey: string,
-    model: string
-  ): Promise<{ supported: boolean; detail: GeminiTestDetail }> {
-    // 并发测试两种端点
-    const [proxyResult, nativeResult] = await Promise.all([
-      this.testGeminiProxy(url, apiKey, model),
-      this.testGeminiNative(url, apiKey, model),
-    ]);
+    model: string,
+    mode: CliTargetProtocol = 'openai-chat-completions'
+  ): Promise<{ supported: boolean; detail: OpenCodeTestDetail }> {
+    const request =
+      mode === 'anthropic-messages'
+        ? buildClaudeCodeRequest(url, apiKey, model)
+        : mode === 'openai-responses'
+          ? buildCodexResponsesRequest(url, apiKey, model)
+          : buildOpenCodeChatCompletionsRequest(url, apiKey, model);
+    const label =
+      mode === 'anthropic-messages'
+        ? 'OpenCode (Anthropic Messages)'
+        : mode === 'openai-responses'
+          ? 'OpenCode (Responses)'
+          : 'OpenCode (Chat Completions)';
 
-    return {
-      // Gemini CLI 只使用 native 格式，所以支持状态只基于 native 测试结果
-      supported: nativeResult === true,
-      detail: {
-        native: nativeResult,
-        proxy: proxyResult,
-      },
-    };
+    try {
+      const supported = await this.runStreamTest(label, request);
+      return { supported, detail: { mode } };
+    } catch (error: any) {
+      log.warn(`${label} test failed: ${error.message}`);
+      return { supported: false, detail: { mode } };
+    }
   }
 
-  /**
-   * 测试 Gemini CLI 兼容性
-   * 同时测试 Native 和 Proxy 端点，任一通过即支持
-   */
-  async testGeminiCli(url: string, apiKey: string, model: string): Promise<boolean> {
-    const result = await this.testGeminiWithDetail(url, apiKey, model);
+  async testOpenCode(url: string, apiKey: string, model: string): Promise<boolean> {
+    const result = await this.testOpenCodeWithDetail(url, apiKey, model);
     return result.supported;
   }
 
@@ -622,7 +543,6 @@ export class CliCompatService {
     // 先尝试使用正则匹配，如果失败再使用前缀匹配
     let claudeModel = findModelByType(models, 'claude');
     let gptModel = findModelByType(models, 'gpt');
-    let geminiModel = findModelByType(models, 'gemini');
 
     // 如果正则匹配失败，回退到前缀匹配
     if (!claudeModel) {
@@ -631,29 +551,29 @@ export class CliCompatService {
     if (!gptModel) {
       gptModel = selectLowestModel(models, 'gpt-');
     }
-    if (!geminiModel) {
-      geminiModel = selectLowestModel(models, 'gemini-');
-    }
 
-    log.info(`Selected models - Claude: ${claudeModel}, GPT: ${gptModel}, Gemini: ${geminiModel}`);
+    log.info(`Selected models - Claude: ${claudeModel}, GPT: ${gptModel}`);
 
     // 并发执行所有测试
-    const [claudeCodeResult, codexResultWithDetail, geminiResultWithDetail] = await Promise.all([
+    const [claudeCodeResult, codexResultWithDetail, openCodeResultWithDetail] = await Promise.all([
       claudeModel ? this.testClaudeCode(siteUrl, apiKey, claudeModel) : Promise.resolve(null),
       gptModel
         ? this.testCodexWithDetail(siteUrl, apiKey, gptModel)
         : Promise.resolve({ supported: null, detail: { responses: null } }),
-      geminiModel
-        ? this.testGeminiWithDetail(siteUrl, apiKey, geminiModel)
-        : Promise.resolve({ supported: null, detail: { native: null, proxy: null } }),
+      gptModel
+        ? this.testOpenCodeWithDetail(siteUrl, apiKey, gptModel)
+        : Promise.resolve({
+            supported: null,
+            detail: { mode: 'openai-chat-completions' as const },
+          }),
     ]);
 
     const result: CliCompatibilityResult = {
       claudeCode: claudeCodeResult,
       codex: codexResultWithDetail.supported,
       codexDetail: codexResultWithDetail.detail,
-      geminiCli: geminiResultWithDetail.supported,
-      geminiDetail: geminiResultWithDetail.detail,
+      openCode: openCodeResultWithDetail.supported,
+      openCodeDetail: openCodeResultWithDetail.detail,
       testedAt: Date.now(),
     };
 

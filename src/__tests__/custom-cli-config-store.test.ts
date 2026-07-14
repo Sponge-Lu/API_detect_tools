@@ -39,13 +39,6 @@ function createConfig(): CustomCliConfig {
           slots: [{ model: 'stale-model', success: false, timestamp: 30 }, null, null],
         },
       },
-      geminiCli: {
-        enabled: true,
-        model: null,
-        testModels: [],
-        editedFiles: null,
-        testState: null,
-      },
     },
     createdAt: 1,
     updatedAt: 1,
@@ -208,7 +201,6 @@ describe('custom cli config store', () => {
       slots: [{ model: 'manual-model', success: true, timestamp: 50 }, null, null],
     });
   });
-
 
   it('normalizes invalid group multipliers when updating configs', () => {
     useCustomCliConfigStore.getState().updateConfig('cfg-1', { groupMultiplier: 0 });

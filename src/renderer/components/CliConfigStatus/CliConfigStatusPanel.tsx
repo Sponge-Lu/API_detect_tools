@@ -17,6 +17,7 @@ import { EditCliConfigDialog } from '../dialogs/EditCliConfigDialog';
 import { useConfigDetection } from '../../hooks/useConfigDetection';
 import { useCustomCliConfigStore } from '../../store/customCliConfigStore';
 import type { AuthType, CliType, CliDetectionResult } from '../../../shared/types/config-detection';
+import { BUILTIN_CLI_LABELS, BUILTIN_CLI_TYPES } from '../../../shared/types/cli-config';
 
 export interface CliConfigStatusPanelProps {
   /** 布局模式 */
@@ -36,20 +37,13 @@ export interface CliConfigStatusPanelProps {
 }
 
 /** CLI 类型列表 */
-const CLI_TYPES: CliType[] = ['claudeCode', 'codex', 'geminiCli'];
+const CLI_TYPES: CliType[] = [...BUILTIN_CLI_TYPES];
 
 /** CLI 名称映射 */
-const CLI_NAMES: Record<CliType, string> = {
-  claudeCode: 'Claude Code',
-  codex: 'Codex',
-  geminiCli: 'Gemini CLI',
-};
+const CLI_NAMES: Record<CliType, string> = BUILTIN_CLI_LABELS;
 
 /** 认证类型显示配置 */
 const AUTH_TYPE_LABELS: Record<AuthType, string> = {
-  'google-login': 'Google 登录',
-  'vertex-ai': 'Vertex AI',
-  'gemini-api-key': 'Gemini API Key',
   'chatgpt-oauth': 'ChatGPT OAuth',
   'api-key': 'API Key',
   unknown: '未知',
@@ -159,7 +153,7 @@ export function CliConfigStatusPanel({
             <Loader2 className="h-4 w-4 animate-spin text-[var(--text-secondary)]" />
             <span className="text-xs text-[var(--text-secondary)]">检测中...</span>
           </div>
-          <div className="grid grid-cols-3 gap-1.5">{actionButtons}</div>
+          <div className="grid grid-cols-2 gap-1.5">{actionButtons}</div>
         </div>
       );
     }
@@ -186,7 +180,7 @@ export function CliConfigStatusPanel({
               </div>
             ))}
           </div>
-          <div className="grid grid-cols-3 gap-1.5">{actionButtons}</div>
+          <div className="grid grid-cols-2 gap-1.5">{actionButtons}</div>
         </div>
       );
     }
@@ -216,7 +210,7 @@ export function CliConfigStatusPanel({
             </div>
           ))}
         </div>
-        <div className="grid grid-cols-3 gap-1.5">{actionButtons}</div>
+        <div className="grid grid-cols-2 gap-1.5">{actionButtons}</div>
 
         {showReset && (
           <ResetCliConfigDialog

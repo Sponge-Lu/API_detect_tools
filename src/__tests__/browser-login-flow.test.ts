@@ -682,7 +682,6 @@ describe('browser login flow', () => {
       configDetectionService: {
         detectClaudeCode: vi.fn(),
         detectCodex: vi.fn(),
-        detectGeminiCli: vi.fn(),
         detectAll: vi.fn(),
       },
     }));
@@ -1156,7 +1155,6 @@ describe('browser login flow', () => {
       configDetectionService: {
         detectClaudeCode: vi.fn(),
         detectCodex: vi.fn(),
-        detectGeminiCli: vi.fn(),
         detectAll: vi.fn(),
       },
     }));
@@ -1216,7 +1214,6 @@ describe('browser login flow', () => {
     );
     expect(updateAccount).toHaveBeenCalledWith('acct-1', {
       access_token: 'new-token',
-      status: 'active',
     });
     expect(apiService.detectSite.mock.calls[1][0]).toMatchObject({
       url: 'https://ai.huan666.de/',
@@ -1268,7 +1265,6 @@ describe('browser login flow', () => {
       configDetectionService: {
         detectClaudeCode: vi.fn(),
         detectCodex: vi.fn(),
-        detectGeminiCli: vi.fn(),
         detectAll: vi.fn(),
       },
     }));
@@ -1323,7 +1319,6 @@ describe('browser login flow', () => {
     expect(tokenService.recreateAccessTokenFromBrowser).not.toHaveBeenCalled();
     expect(updateAccount).toHaveBeenCalledWith('acct-sub2', {
       access_token: 'fresh-sub2-jwt',
-      status: 'active',
     });
     expect(apiService.detectSite.mock.calls[1][0]).toMatchObject({
       url: 'https://sub2.example.com/',
@@ -1373,7 +1368,6 @@ describe('browser login flow', () => {
       configDetectionService: {
         detectClaudeCode: vi.fn(),
         detectCodex: vi.fn(),
-        detectGeminiCli: vi.fn(),
         detectAll: vi.fn(),
       },
     }));
@@ -1461,7 +1455,6 @@ describe('browser login flow', () => {
       configDetectionService: {
         detectClaudeCode: vi.fn(),
         detectCodex: vi.fn(),
-        detectGeminiCli: vi.fn(),
         detectAll: vi.fn(),
       },
     }));

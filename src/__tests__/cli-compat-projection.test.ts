@@ -171,8 +171,8 @@ describe('cli compatibility projection', () => {
   });
 
   it('uses the newest sample for each CLI instead of optimistic multi-model aggregation', () => {
-    const successProbeKey = buildProbeKey('site-1', 'acct-a', 'geminiCli', 'gemini-2.5-pro');
-    const failureProbeKey = buildProbeKey('site-1', 'acct-a', 'geminiCli', 'gemini-2.5-flash');
+    const successProbeKey = buildProbeKey('site-1', 'acct-a', 'codex', 'gpt-4.1');
+    const failureProbeKey = buildProbeKey('site-1', 'acct-a', 'codex', 'gpt-4.1-mini');
 
     const projection = projectCliCompatibilityMap({
       sites: [
@@ -189,21 +189,21 @@ describe('cli compatibility projection', () => {
               probeKey: successProbeKey,
               siteId: 'site-1',
               accountId: 'acct-a',
-              cliType: 'geminiCli',
-              canonicalModel: 'gemini-2.5-pro',
-              rawModel: 'gemini-2.5-pro',
+              cliType: 'codex',
+              canonicalModel: 'gpt-4.1',
+              rawModel: 'gpt-4.1',
               healthy: true,
               lastSample: {
                 sampleId: 'sample-success',
                 probeKey: successProbeKey,
                 siteId: 'site-1',
                 accountId: 'acct-a',
-                cliType: 'geminiCli',
-                canonicalModel: 'gemini-2.5-pro',
-                rawModel: 'gemini-2.5-pro',
+                cliType: 'codex',
+                canonicalModel: 'gpt-4.1',
+                rawModel: 'gpt-4.1',
                 success: true,
                 source: 'routeProbe',
-                geminiDetail: { native: true, proxy: false },
+                codexDetail: { responses: true },
                 testedAt: 100,
               },
             },
@@ -211,21 +211,21 @@ describe('cli compatibility projection', () => {
               probeKey: failureProbeKey,
               siteId: 'site-1',
               accountId: 'acct-a',
-              cliType: 'geminiCli',
-              canonicalModel: 'gemini-2.5-flash',
-              rawModel: 'gemini-2.5-flash',
+              cliType: 'codex',
+              canonicalModel: 'gpt-4.1-mini',
+              rawModel: 'gpt-4.1-mini',
               healthy: false,
               lastSample: {
                 sampleId: 'sample-failure',
                 probeKey: failureProbeKey,
                 siteId: 'site-1',
                 accountId: 'acct-a',
-                cliType: 'geminiCli',
-                canonicalModel: 'gemini-2.5-flash',
-                rawModel: 'gemini-2.5-flash',
+                cliType: 'codex',
+                canonicalModel: 'gpt-4.1-mini',
+                rawModel: 'gpt-4.1-mini',
                 success: false,
                 source: 'routeProbe',
-                geminiDetail: { native: false, proxy: false },
+                codexDetail: { responses: false },
                 testedAt: 200,
               },
             },
@@ -235,8 +235,8 @@ describe('cli compatibility projection', () => {
     } as any);
 
     expect(projection['Demo Site::acct-a']).toMatchObject({
-      geminiCli: false,
-      geminiDetail: { native: false, proxy: false },
+      codex: false,
+      codexDetail: { responses: false },
       sourceLabel: '来自站点检测 · 默认账户',
       testedAt: 200,
     });

@@ -5,17 +5,18 @@
  * 定位: 类型定义层 - 本地 HTTP 代理 + 模型注册表 + CLI 探测 + 统计分析
  */
 
-import type { ClaudeTestDetail, CodexTestDetail, GeminiTestDetail } from './site';
+import type { ClaudeTestDetail, CodexTestDetail, OpenCodeTestDetail } from './site';
 import {
   DEFAULT_CLI_TARGET_PROTOCOL,
   normalizeCliTargetProtocol,
+  type BuiltinCliType,
   type CliTargetProtocol,
 } from './cli-config';
 
 // ============= 基础枚举 =============
 
 /** CLI 类型 */
-export type RouteCliType = 'claudeCode' | 'codex' | 'geminiCli';
+export type RouteCliType = BuiltinCliType;
 
 /** CLI 探测来源 */
 export type RouteCliProbeSource = 'routeProbe' | 'siteManual' | 'legacyCache';
@@ -49,7 +50,6 @@ export interface RouteProxyServerConfig {
   port: number;
   unifiedApiKey: string;
   upstreamProxyUrl?: string;
-  blockGeminiCliInternalUtilityRequests: boolean;
   requestTimeoutMs: number;
   retryCount: number;
   healthCheckIntervalMinutes: number;
@@ -103,7 +103,8 @@ export interface RouteChannelStats extends RouteChannelKey {
 }
 
 /** 单条路由路径的短窗口运行态（用于临时禁用不可用路径） */
-export interface RoutePathState extends RouteChannelKey {
+export interface RoutePathState extends Omit<RouteChannelKey, 'routeRuleId'> {
+  routeRuleId?: string;
   cliType?: RouteCliType;
   targetProtocol?: CliTargetProtocol;
   canonicalModel?: string;
@@ -340,7 +341,7 @@ export interface RouteCliProbeSample {
   error?: string;
   claudeDetail?: ClaudeTestDetail;
   codexDetail?: CodexTestDetail;
-  geminiDetail?: GeminiTestDetail;
+  openCodeDetail?: OpenCodeTestDetail;
   testedAt: number;
 }
 
@@ -374,7 +375,7 @@ export interface RouteCliProbeModelView {
   source?: RouteCliProbeSource;
   claudeDetail?: ClaudeTestDetail;
   codexDetail?: CodexTestDetail;
-  geminiDetail?: GeminiTestDetail;
+  openCodeDetail?: OpenCodeTestDetail;
   history: RouteCliProbeSample[];
 }
 
@@ -533,7 +534,6 @@ export interface RouteAnalyticsSummary {
   estimatedCostUsd?: number;
 }
 
-
 export interface RouteAnalyticsDistribution {
   buckets: RouteAnalyticsBucket[];
   statusCodeHistogram: Record<string, number>;
@@ -583,6 +583,7 @@ export interface RoutingConfig {
   server: RouteProxyServerConfig;
   rules: RouteRule[];
   cliModelSelections: Record<RouteCliType, string | null>;
+  openCodeRouteProtocol: Exclude<CliTargetProtocol, 'native'>;
   stats: Record<string, RouteChannelStats>;
   routePathStates: Record<string, RoutePathState>;
   routeEndpointCapabilities?: Record<string, RouteEndpointCapabilityState>;
@@ -607,7 +608,6 @@ export const DEFAULT_ROUTE_PROXY_SERVER_CONFIG: RouteProxyServerConfig = {
   port: 3210,
   unifiedApiKey: '',
   upstreamProxyUrl: '',
-  blockGeminiCliInternalUtilityRequests: true,
   requestTimeoutMs: 60000,
   retryCount: 1,
   healthCheckIntervalMinutes: 60,
@@ -635,6 +635,8 @@ export const DEFAULT_ANALYTICS_CONFIG: RouteAnalyticsConfig = {
 };
 
 export const ROUTE_SUCCESSFUL_PATH_AFFINITY_MS = 30 * 60 * 1000;
+export const DEFAULT_OPEN_CODE_ROUTE_PROTOCOL: Exclude<CliTargetProtocol, 'native'> =
+  'openai-chat-completions';
 
 export const DEFAULT_MODEL_REGISTRY_CONFIG: RouteModelRegistryConfig = {
   version: 1,
@@ -648,7 +650,8 @@ export const DEFAULT_MODEL_REGISTRY_CONFIG: RouteModelRegistryConfig = {
 export const DEFAULT_ROUTING_CONFIG: RoutingConfig = {
   server: DEFAULT_ROUTE_PROXY_SERVER_CONFIG,
   rules: [],
-  cliModelSelections: { claudeCode: null, codex: null, geminiCli: null },
+  cliModelSelections: { claudeCode: null, codex: null, openCode: null },
+  openCodeRouteProtocol: DEFAULT_OPEN_CODE_ROUTE_PROTOCOL,
   stats: {},
   routePathStates: {},
   routeEndpointCapabilities: {},
@@ -665,7 +668,12 @@ export const DEFAULT_ROUTING_CONFIG: RoutingConfig = {
   },
 };
 
-export const DEFAULT_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME = 'claude-opus-4-6';
+export function normalizeOpenCodeRouteProtocol(
+  value: unknown
+): Exclude<CliTargetProtocol, 'native'> {
+  const normalized = normalizeCliTargetProtocol(value);
+  return normalized === 'native' ? DEFAULT_OPEN_CODE_ROUTE_PROTOCOL : normalized;
+}
 
 // ============= 工具函数 =============
 
@@ -677,7 +685,8 @@ export function buildStatsKey(key: RouteChannelKey): string {
 }
 
 export function buildRoutePathStateKey(
-  key: RouteChannelKey & {
+  key: Omit<RouteChannelKey, 'routeRuleId'> & {
+    routeRuleId?: string;
     canonicalModel?: string;
     resolvedModel?: string;
     targetProtocol?: CliTargetProtocol;
@@ -743,7 +752,7 @@ export function buildBucketKey(
 export const CLI_TYPE_PATH_MAP: Record<RouteCliType, string[]> = {
   claudeCode: ['/v1/messages'],
   codex: ['/v1/responses'],
-  geminiCli: ['/v1beta/'],
+  openCode: ['/v1/messages', '/v1/chat/completions', '/v1/responses'],
 };
 
 /** 厂商匹配规则：prefixes 匹配前缀（优先），keywords 匹配名称中任意位置（兜底） */

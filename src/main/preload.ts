@@ -253,7 +253,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     testWithWrapper: (params: {
       siteUrl: string;
       configs: Array<{
-        cliType: 'claudeCode' | 'codex' | 'geminiCli';
+        cliType: 'claudeCode' | 'codex' | 'openCode';
         apiKey: string;
         model: string;
         baseUrl?: string;
@@ -272,7 +272,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('cli-compat:save-config', siteUrl, config, accountId),
     // 写入 CLI 配置文件到文件系统
     writeConfig: (params: {
-      cliType: 'claudeCode' | 'codex' | 'geminiCli';
+      cliType: 'claudeCode' | 'codex' | 'openCode';
       files: Array<{
         path: string;
         content: string;
@@ -285,20 +285,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   configDetection: {
     // 检测单个 CLI 配置
     detectCliConfig: (
-      cliType: 'claudeCode' | 'codex' | 'geminiCli',
+      cliType: 'claudeCode' | 'codex' | 'openCode',
       sites: Array<{ id: string; name: string; url: string }>
     ) => ipcRenderer.invoke('detection:detect-cli-config', cliType, sites),
     // 检测所有 CLI 配置
     detectAllCliConfig: (sites: Array<{ id: string; name: string; url: string }>) =>
       ipcRenderer.invoke('detection:detect-all-cli-config', sites),
     // 清除 CLI 配置检测缓存
-    clearCache: (cliType?: 'claudeCode' | 'codex' | 'geminiCli') =>
+    clearCache: (cliType?: 'claudeCode' | 'codex' | 'openCode') =>
       ipcRenderer.invoke('detection:clear-cli-config-cache', cliType),
     // 重置 CLI 配置：删除本地配置文件
-    resetCliConfig: (cliType: 'claudeCode' | 'codex' | 'geminiCli') =>
+    resetCliConfig: (cliType: 'claudeCode' | 'codex' | 'openCode') =>
       ipcRenderer.invoke('detection:reset-cli-config', cliType),
     // 读取 CLI 配置文件内容
-    readCliConfigFiles: (cliType: 'claudeCode' | 'codex' | 'geminiCli') =>
+    readCliConfigFiles: (cliType: 'claudeCode' | 'codex' | 'openCode') =>
       ipcRenderer.invoke('detection:read-cli-config-files', cliType),
     // 保存单个 CLI 配置文件
     saveCliConfigFile: (absolutePath: string, content: string) =>
@@ -446,7 +446,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     stopServer: () => ipcRenderer.invoke('route:stop-server'),
     regenerateApiKey: () => ipcRenderer.invoke('route:regenerate-api-key'),
     getModelRegistry: () => ipcRenderer.invoke('route:get-model-registry'),
-    rebuildModelRegistry: (params?: { force?: boolean; resetDefaults?: boolean }) =>
+    rebuildModelRegistry: (params?: { force?: boolean }) =>
       ipcRenderer.invoke('route:rebuild-model-registry', params),
     syncModelRegistrySources: (params?: { force?: boolean }) =>
       ipcRenderer.invoke('route:sync-model-registry-sources', params),
@@ -460,6 +460,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('route:delete-model-mapping-override', { overrideId }),
     saveCliModelSelections: (selections: any) =>
       ipcRenderer.invoke('route:save-cli-model-selections', { selections }),
+    saveOpenCodeRouteProtocol: (protocol: unknown) =>
+      ipcRenderer.invoke('route:save-open-code-route-protocol', { protocol }),
     saveCliProbeConfig: (updates: any) =>
       ipcRenderer.invoke('route:save-cli-probe-config', updates),
     runCliProbeNow: (params?: any) => ipcRenderer.invoke('route:run-cli-probe-now', params),
@@ -488,7 +490,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       bucketSize: '2h';
       siteId?: string;
       accountId?: string;
-      cliType: 'claudeCode' | 'codex' | 'geminiCli';
+      cliType: 'claudeCode' | 'codex' | 'openCode';
       mode: 'combined' | 'probe-only' | 'route-only';
     }) => ipcRenderer.invoke('route:getHistoryBuckets', query),
   },

@@ -194,7 +194,7 @@ declare global {
         testWithWrapper: (params: {
           siteUrl: string;
           configs: Array<{
-            cliType: 'claudeCode' | 'codex' | 'geminiCli';
+            cliType: 'claudeCode' | 'codex' | 'openCode';
             apiKey: string;
             model: string;
             baseUrl?: string;
@@ -204,14 +204,13 @@ declare global {
           success: boolean;
           data?: CliCompatibilityData;
           samples?: Array<{
-            cliType: 'claudeCode' | 'codex' | 'geminiCli';
+            cliType: 'claudeCode' | 'codex' | 'openCode';
             model: string;
             success: boolean;
             testedAt: number;
             error?: string;
             claudeDetail?: CliCompatibilityData['claudeDetail'];
             codexDetail?: CliCompatibilityData['codexDetail'];
-            geminiDetail?: CliCompatibilityData['geminiDetail'];
           }>;
           error?: string;
         }>;
@@ -227,7 +226,7 @@ declare global {
           accountId?: string
         ) => Promise<{ success: boolean; error?: string }>;
         writeConfig: (params: {
-          cliType: 'claudeCode' | 'codex' | 'geminiCli';
+          cliType: 'claudeCode' | 'codex' | 'openCode';
           files: Array<{
             path: string;
             content: string;
@@ -237,19 +236,19 @@ declare global {
       };
       configDetection: {
         detectCliConfig: (
-          cliType: 'claudeCode' | 'codex' | 'geminiCli',
+          cliType: 'claudeCode' | 'codex' | 'openCode',
           sites: Array<{ id: string; name: string; url: string }>
         ) => Promise<any>;
         detectAllCliConfig: (
           sites: Array<{ id: string; name: string; url: string }>
         ) => Promise<import('../shared/types/config-detection').AllCliDetectionResult>;
-        clearCache: (cliType?: 'claudeCode' | 'codex' | 'geminiCli') => Promise<void>;
-        resetCliConfig: (cliType: 'claudeCode' | 'codex' | 'geminiCli') => Promise<{
+        clearCache: (cliType?: 'claudeCode' | 'codex' | 'openCode') => Promise<void>;
+        resetCliConfig: (cliType: 'claudeCode' | 'codex' | 'openCode') => Promise<{
           success: boolean;
           deletedPaths: string[];
           error?: string;
         }>;
-        readCliConfigFiles: (cliType: 'claudeCode' | 'codex' | 'geminiCli') => Promise<{
+        readCliConfigFiles: (cliType: 'claudeCode' | 'codex' | 'openCode') => Promise<{
           success: boolean;
           files: Array<{
             key: string;
@@ -397,7 +396,6 @@ declare global {
         getModelRegistry: () => Promise<{ success: boolean; data?: any; error?: string }>;
         rebuildModelRegistry: (params?: {
           force?: boolean;
-          resetDefaults?: boolean;
         }) => Promise<{ success: boolean; data?: any; error?: string }>;
         syncModelRegistrySources: (params?: {
           force?: boolean;
@@ -415,6 +413,9 @@ declare global {
           overrideId: string
         ) => Promise<{ success: boolean; data?: any; error?: string }>;
         saveCliModelSelections: (selections: any) => Promise<{ success: boolean; error?: string }>;
+        saveOpenCodeRouteProtocol: (
+          protocol: unknown
+        ) => Promise<{ success: boolean; data?: any; error?: string }>;
         saveCliProbeConfig: (updates: any) => Promise<{ success: boolean; error?: string }>;
         runCliProbeNow: (params?: any) => Promise<{ success: boolean; data?: any; error?: string }>;
         getCliProbeLatest: (

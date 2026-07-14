@@ -85,8 +85,6 @@ interface CliCompatibilityData {
   claudeError?: string;
   codex: boolean | null;
   codexDetail?: { responses: boolean | null; replyText?: string };
-  geminiCli: boolean | null;
-  geminiDetail?: { native: boolean | null; proxy: boolean | null; replyText?: string };
 }
 
 type ApiKeyAvailability = 'active' | 'inactive' | 'unknown';
@@ -125,7 +123,7 @@ interface RouteModelRegistryConfig {
 **关键类型**:
 ```typescript
 interface CliConfig {
-  tool: 'claude-code' | 'codex' | 'gemini-cli';
+  tool: 'claude-code' | 'codex';
   enabled: boolean;
   model?: string;
   // ... 其他字段
@@ -136,13 +134,8 @@ interface CliCompatibility {
   supported: boolean;
   claudeDetail?: { replyText?: string };
   codexDetail?: { responses: boolean | null };
-  geminiDetail?: { native: boolean | null; proxy: boolean | null };
 }
 
-interface GeminiTestDetail {
-  native: boolean | null;  // Google 原生格式测试结果
-  proxy: boolean | null;   // OpenAI 兼容格式测试结果
-}
 ```
 
 ---
@@ -164,7 +157,7 @@ const SiteSchema = z.object({
 });
 
 const CliConfigSchema = z.object({
-  tool: z.enum(['claude-code', 'codex', 'gemini-cli', 'chat']),
+  tool: z.enum(['claude-code', 'codex', 'chat']),
   enabled: z.boolean(),
   // ...
 });
@@ -210,7 +203,6 @@ export const CONCURRENCY = {
 export const CLI_TOOLS = [
   'claude-code',
   'codex',
-  'gemini-cli',
   'chat',
 ];
 ```

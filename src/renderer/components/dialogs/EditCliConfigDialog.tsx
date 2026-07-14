@@ -8,11 +8,12 @@ import { useState, useEffect, useCallback } from 'react';
 import { FileEdit, Loader2, Save } from 'lucide-react';
 import { AppModal } from '../AppModal/AppModal';
 import type { CliType } from '../../../shared/types/config-detection';
+import { BUILTIN_CLI_LABELS } from '../../../shared/types/cli-config';
 import { toast } from '../../store/toastStore';
 
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../assets/cli-icons/codex.svg';
-import GeminiIcon from '../../assets/cli-icons/gemini.svg';
+import OpenCodeIcon from '../../assets/cli-icons/opencode.svg';
 
 interface EditCliConfigDialogProps {
   open: boolean;
@@ -35,9 +36,9 @@ interface CliTab {
 }
 
 const CLI_TABS: CliTab[] = [
-  { key: 'claudeCode', name: 'Claude Code', icon: ClaudeCodeIcon },
-  { key: 'codex', name: 'Codex', icon: CodexIcon },
-  { key: 'geminiCli', name: 'Gemini CLI', icon: GeminiIcon },
+  { key: 'claudeCode', name: BUILTIN_CLI_LABELS.claudeCode, icon: ClaudeCodeIcon },
+  { key: 'codex', name: BUILTIN_CLI_LABELS.codex, icon: CodexIcon },
+  { key: 'openCode', name: BUILTIN_CLI_LABELS.openCode, icon: OpenCodeIcon },
 ];
 
 export function EditCliConfigDialog({ open, onClose, onSaveComplete }: EditCliConfigDialogProps) {

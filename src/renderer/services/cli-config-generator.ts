@@ -1,6 +1,6 @@
 /**
- * 输入: ConfigParams (站点 URL、API Key、模型), CodexTestDetail (Codex 测试结果), GeminiTestDetail (Gemini 测试结果)
- * 输出: GeneratedConfig (CLI 配置文件内容), ConfigParams, CodexConfigParams, GeminiConfigParams
+ * 输入: ConfigParams (站点 URL、API Key、模型), CodexTestDetail (Codex 测试结果)
+ * 输出: GeneratedConfig (CLI 配置文件内容), ConfigParams, CodexConfigParams
  * 定位: 服务层 - CLI 配置生成器，根据站点信息和测试结果生成配置文件
  *
  * 🔄 自引用: 当此文件变更时，更新:
@@ -10,16 +10,19 @@
  */
 
 import { pinyin } from 'pinyin-pro';
-import { normalizeCodexFeatureFlagsToml } from '../../shared/types/cli-config';
+import {
+  normalizeCliTargetProtocol,
+  normalizeCodexFeatureFlagsToml,
+  type CliTargetProtocol,
+} from '../../shared/types/cli-config';
 
 /**
  * CLI 配置生成器服务
  *
  * 根据站点信息和用户选择的 API Key、模型生成 CLI 配置文件内容
- * 支持 Claude Code、Codex、Gemini CLI 配置生成
+ * 支持 Claude Code、Codex 配置生成
  * Codex 配置固定使用 wire_api = "responses"（chat 模式已废弃）
  * Codex 配置支持中文站点名称自动转换为拼音（ASCII 兼容格式）
- * Gemini CLI 配置支持根据测试结果生成端点注释 (native/proxy)
  * 配置模板参考 docs/cli_config_template/
  */
 
@@ -39,13 +42,8 @@ export interface CodexConfigParams extends ConfigParams {
   };
 }
 
-/** Gemini CLI 配置生成参数（扩展） */
-export interface GeminiConfigParams extends ConfigParams {
-  /** Gemini CLI 详细测试结果，用于生成端点注释 */
-  geminiDetail?: {
-    native: boolean | null;
-    proxy: boolean | null;
-  };
+export interface OpenCodeConfigParams extends ConfigParams {
+  targetProtocol?: CliTargetProtocol;
 }
 
 /** 单个配置文件 */
@@ -61,6 +59,8 @@ export interface GeneratedConfig {
 }
 
 export const CODEX_PROVIDER_NAME = 'AnyAPI';
+export const OPENCODE_PROVIDER_ID = 'anyapi';
+export const OPENCODE_PROVIDER_NAME = 'AnyAPI';
 
 /**
  * 规范化 URL，移除尾部斜杠
@@ -245,72 +245,6 @@ function generateWireApiComment(codexDetail?: { responses: boolean | null }): st
 }
 
 /**
- * 根据测试结果选择最佳端点格式
- * 优先级：proxy > native（proxy 兼容性更好，中转站常用）
- * @param geminiDetail - Gemini CLI 详细测试结果
- * @returns 推荐的端点格式
- */
-export function selectEndpointFormat(geminiDetail?: {
-  native: boolean | null;
-  proxy: boolean | null;
-}): 'proxy' | 'native' {
-  if (!geminiDetail) {
-    return 'proxy'; // 默认使用 proxy
-  }
-
-  const { native, proxy } = geminiDetail;
-
-  // 优先使用 proxy（中转站兼容性更好）
-  if (proxy === true) {
-    return 'proxy';
-  }
-
-  // 如果 proxy 不支持但 native 支持，使用 native
-  if (native === true) {
-    return 'native';
-  }
-
-  // 都不支持或未测试，默认使用 proxy
-  return 'proxy';
-}
-
-/**
- * 生成端点测试结果注释
- * native: Google 原生格式 (/v1beta/models/{model}:generateContent) - Gemini CLI 实际使用此格式
- * proxy: OpenAI 兼容格式 (/v1/chat/completions) - 仅供参考，Gemini CLI 不使用此格式
- * @param geminiDetail - Gemini CLI 详细测试结果
- * @returns 注释文本
- */
-export function generateEndpointComment(geminiDetail?: {
-  native: boolean | null;
-  proxy: boolean | null;
-}): string {
-  if (!geminiDetail) {
-    return `# 端点格式说明:
-# - native: Google 原生格式 (/v1beta/models/{model}:generateContent) - Gemini CLI 使用此格式
-# - proxy: OpenAI 兼容格式 (/v1/chat/completions) - 仅供参考`;
-  }
-
-  const nativeStatus =
-    geminiDetail.native === true ? '✓' : geminiDetail.native === false ? '✗' : '?';
-  const proxyStatus = geminiDetail.proxy === true ? '✓' : geminiDetail.proxy === false ? '✗' : '?';
-
-  // 添加使用建议
-  let advice = '';
-  if (geminiDetail.native === true) {
-    advice = '\n# ✓ 原生格式可用，Gemini CLI 应该可以正常工作';
-  } else if (geminiDetail.native === false && geminiDetail.proxy === true) {
-    advice = '\n# ⚠️ 仅兼容格式可用，Gemini CLI 可能无法正常工作（CLI 使用原生格式）';
-  } else if (geminiDetail.native === false && geminiDetail.proxy === false) {
-    advice = '\n# ✗ 两种格式均不可用，Gemini CLI 无法使用此站点';
-  }
-
-  return `# 端点测试结果: native=${nativeStatus}, proxy=${proxyStatus}
-# - native: Google 原生格式 - Gemini CLI 实际使用此格式
-# - proxy: OpenAI 兼容格式 - 仅供参考${advice}`;
-}
-
-/**
  * 生成 Codex 配置
  * 完全按照 docs/cli_config_template/codex_config_template.md 模板生成
  * @param params - 配置参数（支持 codexDetail 用于自动选择 wire_api）
@@ -439,96 +373,110 @@ web_search = "cached"`);
   };
 }
 
-/**
- * 生成 Gemini CLI 配置
- * 完全按照 docs/cli_config_template/gemini_cli_config_template.md 模板生成
- * @param params - 配置参数（支持 geminiDetail 用于生成端点注释）
- * @returns 生成的配置文件内容
- */
-export function generateGeminiCliConfig(params: GeminiConfigParams): GeneratedConfig {
-  const normalizedUrl = normalizeUrl(params.siteUrl);
-  const normalizedApiKey = normalizeApiKey(params.apiKey);
+function resolveOpenCodeMode(
+  targetProtocol?: CliTargetProtocol
+): Exclude<CliTargetProtocol, 'native'> {
+  const normalized = normalizeCliTargetProtocol(targetProtocol);
+  return normalized === 'native' ? 'openai-chat-completions' : normalized;
+}
 
-  // 生成端点测试结果注释
-  const endpointComment = generateEndpointComment(params.geminiDetail);
+function buildOpenCodeProviderConfig(params: OpenCodeConfigParams): {
+  providerId: string;
+  modelId: string;
+  config: Record<string, unknown>;
+} {
+  const mode = resolveOpenCodeMode(params.targetProtocol);
+  const baseURL = `${normalizeUrl(params.siteUrl)}/v1`;
 
-  // 按照模板生成 settings.json
-  const settingsJson = {
-    general: {
-      previewFeatures: true,
-    },
-    ide: {
-      hasSeenNudge: true,
-    },
-    maxRetries: 3,
-    security: {
-      auth: {
-        selectedType: 'gemini-api-key',
+  if (mode === 'anthropic-messages') {
+    return {
+      providerId: 'anthropic',
+      modelId: `anthropic/${params.model}`,
+      config: {
+        provider: {
+          anthropic: {
+            options: { baseURL },
+            models: {
+              [params.model]: { name: params.model },
+            },
+          },
+        },
+      },
+    };
+  }
+
+  if (mode === 'openai-responses') {
+    return {
+      providerId: 'openai',
+      modelId: `openai/${params.model}`,
+      config: {
+        provider: {
+          openai: {
+            options: { baseURL },
+            models: {
+              [params.model]: { name: params.model },
+            },
+          },
+        },
+      },
+    };
+  }
+
+  return {
+    providerId: OPENCODE_PROVIDER_ID,
+    modelId: `${OPENCODE_PROVIDER_ID}/${params.model}`,
+    config: {
+      provider: {
+        [OPENCODE_PROVIDER_ID]: {
+          npm: '@ai-sdk/openai-compatible',
+          name: OPENCODE_PROVIDER_NAME,
+          options: { baseURL },
+          models: {
+            [params.model]: { name: params.model },
+          },
+        },
       },
     },
-    timeout: 30000,
   };
+}
 
-  // 按照模板生成 .env，添加测试结果注释
-  const envContent = `${endpointComment}
-GEMINI_API_KEY=${normalizedApiKey}
-GEMINI_MODEL=${params.model}
-GOOGLE_GEMINI_BASE_URL=${normalizedUrl}`;
+export function generateOpenCodeConfig(params: OpenCodeConfigParams): GeneratedConfig {
+  const normalizedApiKey = normalizeApiKey(params.apiKey);
+  const { providerId, modelId, config } = buildOpenCodeProviderConfig(params);
+  const opencodeJson = {
+    $schema: 'https://opencode.ai/config.json',
+    model: modelId,
+    ...config,
+  };
+  const authJson = {
+    [providerId]: {
+      type: 'api',
+      key: normalizedApiKey,
+    },
+  };
 
   return {
     files: [
       {
-        path: '~/.gemini/settings.json',
-        content: JSON.stringify(settingsJson, null, 2),
+        path: '~/.config/opencode/opencode.json',
+        content: JSON.stringify(opencodeJson, null, 2),
         language: 'json',
       },
       {
-        path: '~/.gemini/.env',
-        content: envContent,
-        language: 'toml', // 使用 toml 高亮 dotenv 文件
+        path: '~/.local/share/opencode/auth.json',
+        content: JSON.stringify(authJson, null, 2),
+        language: 'json',
       },
     ],
   };
 }
 
-/**
- * 生成 Gemini CLI 配置模板（用于预览）
- * 完全照搬 docs/cli_config_template/gemini_cli_config_template.md 内容
- * @returns 配置模板内容
- */
-export function generateGeminiCliTemplate(): GeneratedConfig {
-  const settingsContent = `{
-  "general": {
-    "previewFeatures": true
-  },
-  "ide": {
-    "hasSeenNudge": true
-  },
-  "maxRetries": 3,
-  "security": {
-    "auth": {
-      "selectedType": "gemini-api-key"
-    }
-  },
-  "timeout": 30000
-}`;
-
-  const envContent = `GEMINI_API_KEY=sk-xxxxxxxxxxxxxxxxx
-GEMINI_MODEL=gemini-3-pro-high
-GOOGLE_GEMINI_BASE_URL=https://x666.me`;
-
-  return {
-    files: [
-      {
-        path: '~/.gemini/settings.json',
-        content: settingsContent,
-        language: 'json',
-      },
-      {
-        path: '~/.gemini/.env',
-        content: envContent,
-        language: 'toml',
-      },
-    ],
-  };
+export function generateOpenCodeTemplate(): GeneratedConfig {
+  return generateOpenCodeConfig({
+    siteUrl: 'https://api.example.com',
+    siteName: 'AnyAPI',
+    apiKey: 'sk-xxxxxxxxxxxxxxx',
+    model: 'gpt-5.1',
+    targetProtocol: 'openai-chat-completions',
+  });
 }

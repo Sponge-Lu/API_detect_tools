@@ -40,6 +40,7 @@ export function registerRouteHandlers() {
         server: routing.server,
         rules: routing.rules,
         cliModelSelections: routing.cliModelSelections,
+        openCodeRouteProtocol: routing.openCodeRouteProtocol,
         stats: routing.stats,
         routePathStates: routing.routePathStates,
         health: routing.health,
@@ -185,6 +186,15 @@ export function registerRouteHandlers() {
     }
   });
 
+  ipcMain.handle('route:save-open-code-route-protocol', async (_, params) => {
+    try {
+      const result = await unifiedConfigManager.updateOpenCodeRouteProtocol(params?.protocol);
+      return ok(result);
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
   // ============= 模型注册表 =============
 
   ipcMain.handle('route:get-model-registry', async () => {
@@ -195,19 +205,14 @@ export function registerRouteHandlers() {
     }
   });
 
-  ipcMain.handle(
-    'route:rebuild-model-registry',
-    async (_, params?: { force?: boolean; resetDefaults?: boolean }) => {
-      try {
-        const result = params?.resetDefaults
-          ? await modelRegistry.resetModelRegistryDefaults()
-          : await modelRegistry.rebuildModelRegistry(params?.force);
-        return ok(result);
-      } catch (e: any) {
-        return err(e.message);
-      }
+  ipcMain.handle('route:rebuild-model-registry', async (_, params?: { force?: boolean }) => {
+    try {
+      const result = await modelRegistry.rebuildModelRegistry(params?.force);
+      return ok(result);
+    } catch (e: any) {
+      return err(e.message);
     }
-  );
+  });
 
   ipcMain.handle('route:sync-model-registry-sources', async (_, params?: { force?: boolean }) => {
     try {

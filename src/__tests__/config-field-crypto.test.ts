@@ -145,7 +145,6 @@ describe('ConfigFieldCrypto', () => {
           cliSettings: {
             claudeCode: { enabled: true, model: null },
             codex: { enabled: true, model: null },
-            geminiCli: { enabled: true, model: null },
           },
           createdAt: Date.now(),
           updatedAt: Date.now(),
@@ -173,7 +172,6 @@ describe('ConfigFieldCrypto', () => {
           cliSettings: {
             claudeCode: { enabled: true, model: null },
             codex: { enabled: true, model: null },
-            geminiCli: { enabled: true, model: null },
           },
           createdAt: Date.now(),
           updatedAt: Date.now(),

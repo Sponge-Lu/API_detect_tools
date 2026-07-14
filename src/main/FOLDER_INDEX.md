@@ -35,23 +35,23 @@
 | **site-type-detector.ts** | 智能添加初始化前的站点类型自动识别 | `detectSiteType()` |
 | **token-service.ts** | Token 认证服务，初始化阶段按 site_type 选择端点与 access token 策略，Sub2API 可从浏览器登录态重读并校验 JWT，显式 `site_type` 可覆盖 URL 反查；支持按账户浏览器槽位刷新 user_id/username/access_token 并在 token 无效时重建；按 site_type 驱动签到/浏览器回退端点，统一识别 Unauthorized/invalid access token 失败 envelope，并在 NewAPI 脱敏 API Key 列表中优先使用 `/api/token/batch/keys` 批量补全明文 key | `TokenService` 类 |
 | **cli-compat-service.ts** | 协议级 CLI 兼容性测试，请求格式与真实 CLI 对齐 | `CliCompatService` 类 |
-| **cli-wrapper-compat-service.ts** | 基于真实 CLI wrapper 的兼容性测试；当前 UI 测试主路径，使用临时 HOME/CODEX_HOME 隔离环境，监听 route probe-lock 请求/终止失败以提前停止确定性失败测试，并在 CLI 二次请求先触发 probe-lock 限制时等待/回看首次真实上游结果避免误判，Claude JSON 错误会摘要化，清理临时目录时会重试并避免 Windows 文件锁覆盖真实测试结果，Gemini 仅写隔离 `HOME/.gemini` 并禁用自身 sandbox relaunch | `CliWrapperCompatService` 类 |
+| **cli-wrapper-compat-service.ts** | 基于真实 CLI wrapper 的兼容性测试；当前 UI 测试主路径，使用临时 HOME/CODEX_HOME 隔离环境，监听 route probe-lock 请求/终止失败以提前停止确定性失败测试，并在 CLI 二次请求先触发 probe-lock 限制时等待/回看首次真实上游结果避免误判，Claude JSON 错误会摘要化，清理临时目录时会重试并避免 Windows 文件锁覆盖真实测试结果 | `CliWrapperCompatService` 类 |
 | **custom-cli-config-service.ts** | 自定义 CLI 配置持久化服务，并为路由生成自定义 CLI 虚拟站点/账户/API Key 标识 | `loadCustomCliConfigStorage()`, `buildCustomCliRouteSiteId()` |
 | **custom-cli-model-service.ts** | 直连配置模型获取服务，通过 `baseUrl + /v1/models` 获取模型列表并写回配置 | `fetchModels()`, `fetchAllModels()` |
 | **backup-manager.ts** | 本地备份管理，自动备份保持 config-only 节流去重，手动备份生成加密 `.ahubpkg` manifest 配置包 | `backupManager` 实例 |
 | **webdav-manager.ts** | WebDAV 云端加密 `.ahubpkg` 配置包上传、列表、删除与恢复，兼容旧 config-only `.json` 备份 | `WebDAVManager` 类 |
-| **unified-config-manager.ts** | 统一配置管理、损坏恢复、读取失败短重试、原子写入、legacy 默认账户自愈修复、缺失 `site_type` 旧站点保持未决、账户级 `cli_config` 更新、路由路径暂停状态恢复、兼容保存时清理已删站点的孤儿账户、删除最后一个账户时自动移除站点配置，并提供 CLI probe samples/latest 一次性 sidecar 写入 | `unifiedConfigManager` 实例 |
+| **unified-config-manager.ts** | 统一配置管理、损坏恢复、读取失败短重试、原子写入、legacy 默认账户与 seeded 路由示例清理、缺失 `site_type` 旧站点保持未决、账户级 `cli_config` 更新、路由路径暂停状态恢复、兼容保存时清理已删站点的孤儿账户、删除最后一个账户时自动移除站点配置，并提供 CLI probe samples/latest 一次性 sidecar 写入 | `unifiedConfigManager` 实例 |
 | **browser-profile-manager.ts** | 主/隔离浏览器 Profile 管理，多账户共享槽位 | `BrowserProfileManager` 类 |
 | **update-service.ts** | 应用更新服务 | `UpdateService` 类 |
 | **config-detection-service.ts** | CLI 配置检测服务 | `ConfigDetectionService` 类 |
 | **close-behavior-manager.ts** | 窗口关闭行为管理 | `CloseBehaviorManager` 类 |
 | **credit-service.ts** | Linux Do Credit 积分检测、LDC 充值 | `CreditService` 类 |
 | **route-channel-resolver.ts** | 路由通道解析，结合站点/账户/API Key/自定义 CLI 配置与厂商优先级选择实际通道；CLI targetProtocol 按账户级配置优先、站点级旧配置 fallback | `resolveChannels()`, `resolveChannelCredentials()` |
-| **route-proxy-service.ts** | 本地路由代理服务器，按规则选择上游通道，使用 Electron net raw 客户端转发，客户端取消时中止当前上游且不继续 fallback；成功透明 SSE 边收边转发；流式请求首包等待仍受站点/配置超时约束，首个 SSE chunk 后使用 10 分钟活跃流空闲超时下限，同时在 AnyRouter / 通用 CLI 协议适配通道上接入请求/响应转换并从 JSON/SSE 响应解析 provider usage/cache token；probe-lock 请求只允许 loopback，缓存终止失败、记录并通知首次真实上游结果并限制单模型测试只发起一次真实上游尝试 | `startRouteProxyServer()`, `stopRouteProxyServer()`, `extractUsageFromBody()` |
+| **route-proxy-service.ts** | 本地路由代理服务器，按规则选择上游通道，使用 Electron net raw 客户端转发，客户端取消时中止当前上游且不继续 fallback；成功透明 SSE 边收边转发；流式请求首包等待仍受站点/配置超时约束，首个 SSE chunk 后使用 10 分钟活跃流空闲超时下限，同时在 AnyRouter / 通用 CLI 协议适配通道上接入请求/响应转换并从 JSON/SSE 响应解析 provider usage/cache token；OpenCode 入站请求按路由页选择先规范到 `/v1/messages`、`/v1/chat/completions` 或 `/v1/responses`，再转换到上游协议并反向转换响应；probe-lock 请求只允许 loopback，缓存终止失败、记录并通知首次真实上游结果并限制单模型测试只发起一次真实上游尝试 | `startRouteProxyServer()`, `stopRouteProxyServer()`, `extractUsageFromBody()` |
 | **route-probe-lock.ts** | CLI 探测/手动测试专用的 loopback probe-lock 编解码、本地路由基址构造、请求观察、终止失败通知/缓存、首次真实上游结果缓存/通知/等待与单模型上游尝试预算 | `buildProbeLockRouteApiKey()`, `parseProbeLockRouteApiKey()`, `buildRouteProxyBaseUrl()`, `subscribeRouteProbeLockTerminalFailure()` |
-| **anyrouter-request-rewriter.ts** | AnyRouter 请求/响应适配器：Claude Code 保留原始工具语义并注入 Anthropic 指纹，Codex 原生 Responses 透传，Gemini 原生透传 | `rewriteForAnyRouter()`, `transformAnyRouterResponse()` |
-| **cli-protocol-adapter.ts** | 通用 CLI 协议适配器：在 Claude/Codex/Gemini 原生协议与 Anthropic / OpenAI 上游协议之间双向转换请求与响应（含 text/tool_use/tool_result/function_call/function_call_output 工具语义、流式 SSE 与非流式 JSON、usage/finish_reason 映射），失败时抛 `CliProtocolAdapterError` 携带 stage 上下文 | `adaptRequestToTargetProtocol()`, `transformTargetProtocolResponse()`, `CliProtocolAdapterError` |
-| **route-model-registry-service.ts** | 模型注册表聚合、展示项维护与厂商优先级配置，聚合站点/账户模型和自定义 CLI 配置模型；自定义 CLI 已拉取模型列表会作为候选边界过滤旧测试/选择残留，`manualModels` 作为用户手动输入模型例外保留，配置保存后通过 handler 强制刷新持久化 registry | `rebuildModelRegistry()`, `resetModelRegistryDefaults()`, `syncModelRegistrySources()` |
+| **anyrouter-request-rewriter.ts** | AnyRouter 请求/响应适配器：Claude Code 保留原始工具语义并注入 Anthropic 指纹，Codex 原生 Responses 透传，Google/Gemini GenerateContent 原生透传 | `rewriteForAnyRouter()`, `transformAnyRouterResponse()` |
+| **cli-protocol-adapter.ts** | 通用 CLI 协议适配器：在 Claude/Codex 原生协议与 Anthropic / OpenAI 上游协议之间双向转换请求与响应，并覆盖 Google/Gemini GenerateContent 响应映射（含 text/tool_use/tool_result/function_call/function_call_output 工具语义、流式 SSE 与非流式 JSON、usage/finish_reason 映射），失败时抛 `CliProtocolAdapterError` 携带 stage 上下文 | `adaptRequestToTargetProtocol()`, `transformTargetProtocolResponse()`, `CliProtocolAdapterError` |
+| **route-model-registry-service.ts** | 模型注册表来源聚合、手工/显式 override 展示项维护与厂商优先级配置；扫描站点、账户和自定义 CLI 模型只刷新候选来源，不自动创建重定向，`manualModels` 作为用户手动输入模型例外保留 | `rebuildModelRegistry()`, `syncModelRegistrySources()` |
 | **route-cli-probe-service.ts** | CLI 定时探测、latest/history 维护与视图聚合；探测覆盖站点账户与自定义 CLI 虚拟配置，托管站点按账户级 CLI 配置优先选择开关/模型/协议并保留站点级旧配置 fallback，站点探测只选择活跃 API Key，并通过 probe-lock 携带 `probeRunId` 精确钉到当前站点/账户/API Key/模型/自定义上游 | `runCliProbeNow()`, `getCliProbeView()` |
 | **route-analytics-service.ts** | 路由请求分析、token/缓存 token/延迟/状态码统计与对象级排行 | `recordRouteRequest()`, `getRouteObjectStats()` |
 | **route-history-service.ts** | History 时间桶聚合服务，将 CLI 探测样本和路由统计按 48h / 2h 桶合并为成功率数据 | `getHistoryBuckets()` |
@@ -210,16 +210,12 @@ main.ts: app.whenReady()
 - `testClaudeCode(url, apiKey, model)` - 测试 Claude Code
 - `testCodex(url, apiKey, model)` - 测试 Codex (Responses API)
 - `testCodexWithDetail(url, apiKey, model)` - 测试 Codex 并返回详细结果
-- `testGeminiCli(url, apiKey, model)` - 测试 Gemini CLI
-- `testGeminiWithDetail(url, apiKey, model)` - 测试 Gemini CLI 双端点并返回详细结果
 
-**支持工具**: Claude Code, Codex (Responses API), Gemini CLI (Native/Proxy)
+**支持工具**: Claude Code, Codex (Responses API)
 
 **请求格式对齐**: 所有测试请求与真实 CLI 工具完全一致
 - Claude Code: stream + User-Agent + anthropic-beta + x-api-key
 - Codex: stream + User-Agent + Bearer + /v1/responses
-- Gemini CLI Native: streamGenerateContent + User-Agent + x-goog-api-client
-- Gemini CLI Proxy: stream + User-Agent + /v1/chat/completions
 
 **流式首包探测**: 发送 stream 请求后只读取首个 SSE chunk 即 abort，最小化 token 消耗
 
@@ -236,21 +232,19 @@ main.ts: app.whenReady()
 
 ### CliWrapperCompatService
 
-**职责**: 通过真实 CLI wrapper 拉起 Claude Code / Codex / Gemini CLI，在隔离的临时目录中验证站点可用性
+**职责**: 通过真实 CLI wrapper 拉起 Claude Code / Codex，在隔离的临时目录中验证站点可用性
 
 **关键方法**:
 - `testClaudeCode(url, apiKey, model)` - 真实执行 Claude Code
 - `testCodexWithDetail(url, apiKey, model)` - 真实执行 Codex 并返回 `responses` 结果
-- `testGeminiWithDetail(url, apiKey, model)` - 真实执行 Gemini CLI 并返回 `native/proxy` 结果
 - `testSite(params)` - 顺序执行多项 wrapper 测试
 
 **隔离策略**:
 - Claude Code: 临时 `HOME` + `~/.claude/settings.json`
 - Codex: 临时 `CODEX_HOME/config.toml` + 自定义 provider + `supports_websockets = false`
-- Gemini CLI: 临时 `HOME/.gemini/settings.json` + 空工作目录 + 环境变量注入（不再额外设置 `GEMINI_CLI_HOME`，避免路径被拼成 `.gemini/.gemini`）；同时设置 `GEMINI_SANDBOX=false`、`GEMINI_CLI_TRUST_WORKSPACE=true`，并追加 `--skip-trust`
 
 **命令执行细节**:
-- Codex / Gemini CLI: 测试 prompt 通过 `stdin` 注入，避免 Windows shell 包装下的位置参数拆词
+- Codex: 测试 prompt 通过 `stdin` 注入，避免 Windows shell 包装下的位置参数拆词
 - Codex stderr 会优先提取 `ERROR:` 行和 JSON `error.message`，把上游 `429/403/503` 或协议不支持原因放到失败摘要开头，避免被 CLI banner/warning 淹没
 
 **恢复策略**:
@@ -270,11 +264,10 @@ main.ts: app.whenReady()
 - `detectAll(sites)` - 检测所有 CLI 配置
 - `detectClaudeCode(sites)` - 检测 Claude Code 配置
 - `detectCodex(sites)` - 检测 Codex 配置
-- `detectGeminiCli(sites)` - 检测 Gemini CLI 配置
 - `clearCache()` - 清除缓存
 - `clearCacheFor(cliType)` - 清除指定 CLI 缓存
 
-**支持工具**: Claude Code, Codex, Gemini CLI
+**支持工具**: Claude Code, Codex
 
 **缓存机制**: 检测结果缓存 5 分钟，避免重复读取文件
 
@@ -298,7 +291,7 @@ main.ts: app.whenReady()
 **职责**: 为 Route 工作台提供模型来源聚合、厂商优先级排序、CLI wrapper 探测和统计评分能力
 
 **关键模块**:
-- `route-model-registry-service.ts` - 聚合站点/账户和自定义 CLI 配置模型来源，维护 `entries / displayItems / vendorPriorities`，并保留 `manualModels` 手动输入模型
+- `route-model-registry-service.ts` - 聚合站点/账户和自定义 CLI 配置模型来源，来源扫描不自动创建重定向，仅从手工展示项和显式 override 构建 `entries`
 - `route-cli-probe-service.ts` - 按站点下全部活跃账户和自定义 CLI 虚拟配置执行 CLI wrapper 探测，并维护 `history/latest`
 - `route-channel-resolver.ts` - 解析可用通道、补全真实 API Key 或自定义 CLI 凭证、结合厂商优先级选择实际出口
 - `route-stats-service.ts` - 记录运行结果并计算评分，供通道排序和统计视图复用

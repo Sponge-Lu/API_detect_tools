@@ -39,6 +39,7 @@ import {
   isAnyRouterSite,
 } from '../shared/types/site';
 import {
+  BUILTIN_CLI_TYPES,
   DEFAULT_CLI_CONFIG,
   CLI_TEST_MODEL_SLOT_COUNT,
   getCliTargetEndpoint,
@@ -53,7 +54,7 @@ import {
 } from '../shared/types/custom-cli-config';
 
 const log = Logger.scope('RouteCliProbe');
-const CLI_PROBE_TYPES: RouteCliType[] = ['claudeCode', 'codex', 'geminiCli'];
+const CLI_PROBE_TYPES: RouteCliType[] = [...BUILTIN_CLI_TYPES];
 const CUSTOM_CLI_PROBE_SITE_NAME = '自定义 CLI';
 
 let probeTimer: NodeJS.Timeout | null = null;
@@ -426,7 +427,7 @@ function buildProbeModelView(params: {
     source: latest?.lastSample.source,
     claudeDetail: latest?.lastSample.claudeDetail,
     codexDetail: latest?.lastSample.codexDetail,
-    geminiDetail: latest?.lastSample.geminiDetail,
+    openCodeDetail: latest?.lastSample.openCodeDetail,
     history,
   };
 }
@@ -529,7 +530,7 @@ async function runSingleProbe(
     let error: string | undefined;
     let claudeDetail: RouteCliProbeSample['claudeDetail'];
     let codexDetail: RouteCliProbeSample['codexDetail'];
-    let geminiDetail: RouteCliProbeSample['geminiDetail'];
+    let openCodeDetail: RouteCliProbeSample['openCodeDetail'];
 
     switch (cliType) {
       case 'claudeCode': {
@@ -558,17 +559,18 @@ async function runSingleProbe(
         codexDetail = result.detail;
         break;
       }
-      case 'geminiCli': {
-        const result = await cliWrapperCompatService.testGeminiWithDetail(
+      case 'openCode': {
+        const result = await cliWrapperCompatService.testOpenCodeWithDetail(
           routeRuntime.baseUrl,
           routeApiKey,
           rawModel,
+          targetProtocol,
           timeoutMs
         );
         success = result.supported;
         error = result.message;
         statusCode = extractStatusCodeFromError(result.message);
-        geminiDetail = result.detail;
+        openCodeDetail = result.detail;
         break;
       }
     }
@@ -594,7 +596,7 @@ async function runSingleProbe(
       error,
       claudeDetail,
       codexDetail,
-      geminiDetail,
+      openCodeDetail,
       testedAt: Date.now(),
     };
   } catch (err: unknown) {

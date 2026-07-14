@@ -60,7 +60,7 @@
 - **v3 配置模型**：统一配置升级为 `sites + accounts + routing` 单一数据源；旧版配置会在加载时自动迁移到 v3 结构
 - **主界面重构**：应用布局调整为 `侧边栏 + 全局命令栏 + 工作台页面`，并引入 `AppButton / AppInput / AppModal / DataTable / AppCard / AppIcon` 中性原语，替代旧 iOS 命名原语
 - **主题系统收敛**：当前仅保留 `Light` 与 `Dark` 两套主题预设
-- **Codex 配置策略调整**：Codex 兼容性测试与配置生成固定使用 Responses API；Gemini CLI 保留 Native/Proxy 双端点探测
+- **Codex 配置策略调整**：Codex 兼容性测试与配置生成固定使用 Responses API；旧 Google CLI 集成保留 Native/Proxy 双端点探测
 - **开发脚本整理**：新增 `dev-cleanup.cjs`、`dev-main.cjs`、`dev.cjs` 与 `run-node-module.cjs`，统一开发与构建入口
 
 ### 修复
@@ -127,7 +127,7 @@
 ## [v2.1.20]
 
 ### 新增
-- **CLI 配置重置功能**：支持一键删除指定 CLI（Claude Code / Codex / Gemini CLI）的本地配置文件，并自动清除检测缓存
+- **CLI 配置重置功能**：支持一键删除指定 CLI（Claude Code / Codex / 旧 Google CLI 集成）的本地配置文件，并自动清除检测缓存
 - **CLI 配置文件内联编辑**：自定义 CLI 配置编辑器支持预览/编辑模式切换，可直接修改配置文件内容
 - **CLI 独立模型选择**：自定义 CLI 配置编辑器中每个 CLI 可独立选择模型，替代原有的全局统一选择
 - **CLI 兼容性测试凭据回退**：测试时若配置文件为空，自动从 apiKeyId + siteUrl 回退生成凭据，无需先生成配置文件
@@ -174,7 +174,7 @@
 
 ### 优化
 - **Credit 面板稳定性**：`gamification_score` 与差值不再作为刷新依赖，积分刷新链路更稳定
-- **自定义 CLI 模型选择体验**：改为全局模型搜索下拉，一次选择可同步到 Claude Code / Codex / Gemini CLI
+- **自定义 CLI 模型选择体验**：改为全局模型搜索下拉，一次选择可同步到 Claude Code / Codex / 旧 Google CLI 集成
 
 ---
 
@@ -184,14 +184,14 @@
 - **自定义 CLI 配置系统**：支持新增/编辑/删除独立配置，可为非兼容公益站或仅有 Base URL + Key 的站点生成 CLI 配置
   - 新增独立 IPC 持久化（`custom-cli-configs.json`）与 Zustand 状态管理
   - 支持从 OpenAI 兼容 `/v1/models` 端点拉取模型列表
-  - 支持一键应用到 Claude Code / Codex / Gemini CLI
+  - 支持一键应用到 Claude Code / Codex / 旧 Google CLI 集成
 - **CLI 状态面板入口**：新增“自定义CLI配置”入口，支持直接管理并应用配置
 
 ### 优化
 - **更新下载链接选择**：根据当前系统自动匹配对应安装包（Windows/macOS/Linux）
 - **Credit 面板信息聚焦**：移除“今日积分变化”展示，紧凑视图改为突出可用积分
 - **模型操作体验**：站点二级卡片模型选择区新增“取消”按钮，便于快速清空选择
-- **CLI 文档整合**：将多份调研文档合并为 `docs/ClaudeCode_Codex_Gemini_CLI.md`
+- **CLI 文档整合**：整理旧 CLI 调研文档，当前支持范围收敛为 Claude Code / Codex
 
 ### 修复
 - **模型选择即时性**：修复站点二级卡片模型选择状态不能立即刷新的问题
@@ -407,7 +407,7 @@
   - 系统托盘图标支持（点击恢复窗口、右键菜单）
   - 设置面板中可随时更改偏好（每次询问/直接退出/最小化到托盘）
 - **CLI 配置检测功能**：自动检测本地 CLI 工具的配置状态
-  - 支持检测 Claude Code、Codex、Gemini CLI 三种 CLI 工具
+  - 支持检测 Claude Code、Codex、旧 Google CLI 集成 三种 CLI 工具
   - 显示配置来源类型：managed（本应用管理）、other（其他来源）、unconfigured（未配置）
   - Header 区域显示 CLI 配置状态面板，支持展开查看详情
   - 支持手动刷新检测结果
@@ -417,14 +417,14 @@
   - 测试完成后自动更新配置文件中的 `wire_api` 值
   - 根据测试结果自动选择最佳 API（优先 responses，其次 chat）
   - 配置文件包含测试结果注释
-- **Gemini CLI 双端点测试**：同时测试 Native 和 Proxy 端点
-  - Native: Google 原生格式 (`/v1beta/models/{model}:generateContent`) - Gemini CLI 实际使用此格式
+- **旧 Google CLI 集成双端点测试**：同时测试 Native 和 Proxy 端点
+  - Native: Google 原生格式 (`/v1beta/models/{model}:generateContent`) - 旧 Google CLI 集成曾使用此格式
   - Proxy: OpenAI 兼容格式 (`/v1/chat/completions`) - 仅供参考
   - 测试结果显示详细信息：`native: ✓/✗, proxy: ✓/✗`
   - 鼠标悬停显示详细状态和使用建议
   - 测试完成后弹窗提示测试结果和使用建议
   - 配置文件包含端点测试结果注释和说明
-  - Gemini CLI 支持状态仅基于 Native 测试结果（因为 CLI 只使用原生格式）
+  - 旧 Google CLI 集成支持状态仅基于 Native 测试结果（因为 CLI 只使用原生格式）
 - **分形多级索引系统**：https://github.com/Claudate/project-multilevel-index
 
 ### 改进
@@ -432,7 +432,7 @@
 - **CLI 配置优先级检测**：正确检测各 CLI 工具的有效配置
   - Codex：OAuth 登录优先于自定义 provider 配置（除非设置 `forced_login_method = 'api'`）
   - Codex：修复 OAuth 凭证检测，从 `auth.json` 的 `tokens` 字段检测登录状态
-  - Gemini CLI：Google 登录/Vertex AI 优先于 base_url 配置
+  - 旧 Google CLI 集成：Google 登录/Vertex AI 优先于 base_url 配置
   - Claude Code：环境变量优先于 settings.json 配置
 - **CLI 状态显示优化**：增加不同 CLI 之间的分隔线，显示更清晰
 
@@ -445,7 +445,7 @@
   - 支持更灵活的模型名称匹配（如 `claude3`、`gpt4o`、`o1-preview` 等）
   - 改进响应验证：401/403/429 状态码表示 API 存在，400 + 特定错误类型也表示支持
   - 500 + 内容验证错误（如 `EMPTY_RESPONSE`）也表示 API 格式正确
-  - Gemini CLI 测试支持 OpenAI 兼容格式（中转站常用）
+  - 旧 Google CLI 集成测试支持 OpenAI 兼容格式（中转站常用）
 - **CLI 测试结果持久化**：修复热重载和重启应用后 CLI 测试结果丢失的问题
   - 修复 `api-service.ts` 保存检测结果时覆盖 `cli_compatibility` 的问题
   - 修复 `configStore.ts` 更新站点时丢失 `cached_data` 的问题
@@ -468,10 +468,10 @@
 ## [v2.1.7]
 
 ### 新增
-- **Gemini CLI 配置支持**：完整支持 Gemini CLI 配置生成和应用
-  - Gemini CLI 默认启用
+- **旧 Google CLI 集成配置支持**：曾完整支持旧 Google CLI 配置生成和应用
+  - 旧 Google CLI 集成默认启用
   - 支持生成 settings.json 和 .env 配置文件
-  - 配置模板参考 `docs/cli_config_template/gemini_cli_config_template.md`
+  - 对应旧配置模板已从当前文档集中移除
 - **配置合并模式**：应用配置时支持合并和覆盖两种模式
   - 合并模式（默认）：保留现有配置，只更新相关项
   - 覆盖模式：完全替换现有配置文件
@@ -489,13 +489,13 @@
   - 配置模板：未选择配置时显示完整模板内容供参考
   - 代理设置：Claude Code 配置自动包含 HTTPS_PROXY 和 HTTP_PROXY
 - **应用配置功能**：一键将配置写入本地文件
-  - 应用弹出菜单：显示已配置的 CLI 列表（包括 Gemini CLI）
+  - 应用弹出菜单：显示已配置的 CLI 列表（包括旧 Google CLI 集成）
   - 配置文件写入：自动创建目录并写入配置文件
   - Claude Code 重启提醒：应用配置后提示用户重启 IDE
 
 ### 变更
 - 移除 Chat 基础测试功能及相关代码
-- Gemini CLI 从默认禁用改为默认启用
+- 旧 Google CLI 集成从默认禁用改为默认启用
 
 ### 优化
 - 移除独立的配置生成对话框，功能整合到统一配置对话框
@@ -506,19 +506,19 @@
 ## [v2.1.6]
 
 ### 新增
-- **CLI 兼容性测试**：检测站点是否支持 Claude Code、Codex、Gemini CLI 等工具
+- **CLI 兼容性测试**：检测站点是否支持 Claude Code、Codex、旧 Google CLI 集成 等工具
   - 支持单站点测试（需先配置 CLI 设置）
   - 站点卡片显示 CLI 兼容性图标（彩色=支持，深灰=不支持，浅灰=已配置待测试，非常淡=未配置）
   - 鼠标悬停显示详细状态和上次测试时间
   - 测试结果持久化保存，重启应用后自动恢复
 - **CLI 配置对话框**：为每个站点配置 CLI 测试参数
   - 选择用于测试的 API Key
-  - 选择用于测试的模型（Claude Code 只显示 claude* 模型，Codex 只显示 gpt* 模型，Gemini CLI 只显示 gemini* 模型）
-  - 支持 Claude Code、Codex、Gemini CLI 三种类型
+  - 选择用于测试的模型（Claude Code 只显示 claude* 模型，Codex 只显示 gpt* 模型，旧 Google CLI 集成只显示 gemini* 模型）
+  - 支持 Claude Code、Codex、旧 Google CLI 集成 三种类型
 - **CLI 官方图标**：使用 lobehub.com/icons 官方 SVG 图标
   - Claude Code（Anthropic 官方 logo）
   - Codex（OpenAI 官方 logo，绿色）
-  - Gemini CLI（Google Gemini 官方 logo）
+  - 旧 Google CLI 集成（Google 图标）
 
 ### 修复
 - **CLI 配置加载**：修复应用重启后 CLI 配置和测试结果不显示的问题

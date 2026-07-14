@@ -27,7 +27,7 @@ import { AppButton } from '../../AppButton/AppButton';
 import { buildRecommendedCliModelOptions } from '../Redirection/ModelRedirectionTab';
 import ClaudeCodeIcon from '../../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../../assets/cli-icons/codex.svg';
-import GeminiIcon from '../../../assets/cli-icons/gemini.svg';
+import OpenCodeIcon from '../../../assets/cli-icons/opencode.svg';
 import {
   normalizeRouteCliSelection,
   type RouteCliType,
@@ -36,19 +36,30 @@ import {
 import {
   generateClaudeCodeConfig,
   generateCodexConfig,
-  generateGeminiCliConfig,
+  generateOpenCodeConfig,
   type GeneratedConfig,
 } from '../../../services/cli-config-generator';
+import {
+  BUILTIN_CLI_LABELS,
+  BUILTIN_CLI_TYPES,
+  CLI_TARGET_PROTOCOLS,
+  type CliTargetProtocol,
+} from '../../../../shared/types/cli-config';
 
-const CLI_LABELS: Record<RouteCliType, string> = {
-  claudeCode: 'Claude Code',
-  codex: 'Codex',
-  geminiCli: 'Gemini CLI',
-};
+const ROUTE_CLI_TYPES: RouteCliType[] = [...BUILTIN_CLI_TYPES];
+const CLI_LABELS: Record<RouteCliType, string> = BUILTIN_CLI_LABELS;
 const CLI_ICON_CONFIGS: Record<RouteCliType, { src: string; className: string }> = {
   claudeCode: { src: ClaudeCodeIcon, className: 'h-[14px] w-[14px]' },
   codex: { src: CodexIcon, className: 'h-4 w-4' },
-  geminiCli: { src: GeminiIcon, className: 'h-4 w-4' },
+  openCode: { src: OpenCodeIcon, className: 'h-4 w-[13px]' },
+};
+const OPEN_CODE_ROUTE_PROTOCOL_OPTIONS = CLI_TARGET_PROTOCOLS.filter(
+  (protocol): protocol is Exclude<CliTargetProtocol, 'native'> => protocol !== 'native'
+);
+const OPEN_CODE_ROUTE_PROTOCOL_LABELS: Record<Exclude<CliTargetProtocol, 'native'>, string> = {
+  'anthropic-messages': '/v1/messages',
+  'openai-chat-completions': '/v1/chat/completions',
+  'openai-responses': '/v1/responses',
 };
 const ROUTE_PROXY_DISPLAY_NAME = '本地路由代理';
 const SERVER_FIELD_LABEL_CLASS_NAME = 'mb-0.5 block text-xs leading-4 text-[var(--text-secondary)]';
@@ -124,7 +135,11 @@ function buildRouteCliGeneratedConfig(params: {
     return generateCodexConfig(sharedParams);
   }
 
-  return generateGeminiCliConfig(sharedParams);
+  if (cliType === 'openCode') {
+    return generateOpenCodeConfig(sharedParams);
+  }
+
+  return null;
 }
 
 function cloneGeneratedConfig(config: GeneratedConfig): GeneratedConfig {
@@ -435,19 +450,6 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
             </span>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <label className="flex max-w-full items-center gap-2 text-xs leading-5 text-[var(--text-secondary)]">
-              <input
-                type="checkbox"
-                checked={server.blockGeminiCliInternalUtilityRequests !== false}
-                onChange={e =>
-                  saveServerConfig({
-                    blockGeminiCliInternalUtilityRequests: e.target.checked,
-                  })
-                }
-                className="h-3.5 w-3.5 shrink-0 rounded border-[var(--line-soft)] bg-[var(--surface-2)]"
-              />
-              <span className="min-w-0">阻断 Gemini CLI 内部工具/回退模型请求</span>
-            </label>
             <AppButton
               variant={serverRunning ? 'secondary' : 'primary'}
               size="sm"
@@ -557,10 +559,11 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
 
 /** CLI 路由模型选择区 */
 export function CliModelSection({ className = '', variant = 'card' }: RoutePanelProps) {
-  const { config, saveCliModelSelections } = useRouteStore(
+  const { config, saveCliModelSelections, saveOpenCodeRouteProtocol } = useRouteStore(
     useShallow(s => ({
       config: s.config,
       saveCliModelSelections: s.saveCliModelSelections,
+      saveOpenCodeRouteProtocol: s.saveOpenCodeRouteProtocol,
     }))
   );
   const [previewState, setPreviewState] = useState<RoutePreviewState | null>(null);
@@ -579,13 +582,13 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
 
   const { cliModelSelections, server } = config;
   const normalizedCliSelections = Object.fromEntries(
-    (['claudeCode', 'codex', 'geminiCli'] as RouteCliType[]).map(cli => [
+    ROUTE_CLI_TYPES.map(cli => [
       cli,
       resolveCliSelectionDisplayValue(cliModelSelections?.[cli], modelOptions),
     ])
   ) as Record<RouteCliType, string>;
   const generatedConfigs = Object.fromEntries(
-    (['claudeCode', 'codex', 'geminiCli'] as RouteCliType[]).map(cli => [
+    ROUTE_CLI_TYPES.map(cli => [
       cli,
       buildRouteCliGeneratedConfig({
         cliType: cli,
@@ -610,6 +613,12 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
     }));
     setApplyMenuCli(null);
     saveCliModelSelections({ [cli]: value || null });
+  };
+
+  const handleOpenCodeRouteProtocolChange = (
+    protocol: Exclude<CliTargetProtocol, 'native'>
+  ): void => {
+    saveOpenCodeRouteProtocol(protocol);
   };
 
   const handleApplyRouteConfig = async (cli: RouteCliType, applyMode: 'merge' | 'overwrite') => {
@@ -741,7 +750,7 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
       </div>
 
       <div className="grid gap-3">
-        {(['claudeCode', 'codex', 'geminiCli'] as RouteCliType[]).map(cli => {
+        {ROUTE_CLI_TYPES.map(cli => {
           const iconConfig = CLI_ICON_CONFIGS[cli];
 
           return (
@@ -767,6 +776,26 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
                   </option>
                 ))}
               </select>
+              {cli === 'openCode' && (
+                <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2">
+                  <span className="text-[11px] text-[var(--text-secondary)]">入口端点</span>
+                  <select
+                    value={config.openCodeRouteProtocol}
+                    onChange={event =>
+                      handleOpenCodeRouteProtocolChange(
+                        event.target.value as Exclude<CliTargetProtocol, 'native'>
+                      )
+                    }
+                    className="h-7 w-full rounded-md border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 text-xs text-[var(--text-primary)]"
+                  >
+                    {OPEN_CODE_ROUTE_PROTOCOL_OPTIONS.map(protocol => (
+                      <option key={protocol} value={protocol}>
+                        {OPEN_CODE_ROUTE_PROTOCOL_LABELS[protocol]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div
                 data-testid={`route-cli-actions-${cli}`}
                 className="grid grid-cols-2 items-center gap-2"
@@ -945,7 +974,10 @@ export function StatsDashboard({ className = '' }: RoutePanelProps) {
             </div>
             <div className="grid grid-cols-2 gap-2">
               <StatRow label="估算成本" value={formatCurrency(summary.estimatedCostUsd)} />
-              <StatRow label="Total Tokens" value={formatNumber(summary.promptTokens + summary.completionTokens)} />
+              <StatRow
+                label="Total Tokens"
+                value={formatNumber(summary.promptTokens + summary.completionTokens)}
+              />
             </div>
           </div>
         ) : (
@@ -989,8 +1021,8 @@ function formatNumber(n: number): string {
 }
 
 function formatCurrency(value: number | null | undefined): string {
-  if (value === null || value === undefined) return "—";
-  if (value === 0) return "$0";
+  if (value === null || value === undefined) return '—';
+  if (value === 0) return '$0';
   if (value >= 1) return `$${value.toFixed(2)}`;
   if (value >= 0.01) return `$${value.toFixed(4)}`;
   return `$${value.toFixed(6)}`;

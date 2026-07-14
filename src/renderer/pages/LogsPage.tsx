@@ -9,11 +9,12 @@ import {
 import type { ModelPriceInfo, ModelPricingData, UserGroupInfo } from '../../shared/types/site';
 import ClaudeCodeIcon from '../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../assets/cli-icons/codex.svg';
-import GeminiIcon from '../assets/cli-icons/gemini.svg';
+import OpenCodeIcon from '../assets/cli-icons/opencode.svg';
 import { AppButton } from '../components/AppButton/AppButton';
 import { useConfigStore } from '../store/configStore';
 import { useRouteStore } from '../store/routeStore';
 import { resolveModelPricing } from '../utils/modelPricing';
+import { BUILTIN_CLI_LABELS, BUILTIN_CLI_TYPES } from '../../shared/types/cli-config';
 
 type RouteCliFilter = 'all' | RouteCliType;
 
@@ -42,28 +43,23 @@ const ROUTE_OUTCOME_STYLES: Record<
   },
 };
 
-const CLI_LABELS: Record<RouteRequestLogItem['cliType'], string> = {
-  claudeCode: 'Claude Code',
-  codex: 'Codex',
-  geminiCli: 'Gemini CLI',
-};
+const CLI_LABELS: Record<RouteRequestLogItem['cliType'], string> = BUILTIN_CLI_LABELS;
 const ROUTE_CLI_ICON_CONFIGS: Record<
   RouteRequestLogItem['cliType'],
   { icon: string; sizeClass: string }
 > = {
   claudeCode: { icon: ClaudeCodeIcon, sizeClass: 'h-[18px] w-[18px]' },
   codex: { icon: CodexIcon, sizeClass: 'h-5 w-5' },
-  geminiCli: { icon: GeminiIcon, sizeClass: 'h-5 w-5' },
+  openCode: { icon: OpenCodeIcon, sizeClass: 'h-5 w-4' },
 };
 const ROUTE_CLI_FILTER_OPTIONS: Array<{
   id: RouteCliFilter;
   label: string;
 }> = [
   { id: 'all', label: '全部' },
-  { id: 'claudeCode', label: CLI_LABELS.claudeCode },
-  { id: 'codex', label: CLI_LABELS.codex },
-  { id: 'geminiCli', label: CLI_LABELS.geminiCli },
+  ...BUILTIN_CLI_TYPES.map(cliType => ({ id: cliType, label: CLI_LABELS[cliType] })),
 ];
+const SUPPORTED_ROUTE_CLI_TYPES = new Set<RouteCliType>(BUILTIN_CLI_TYPES);
 const UNKNOWN_TEXT = '未知';
 const EMPTY_VALUE_TEXT = '0';
 const DEFAULT_API_KEY_NAME = '默认';
@@ -129,6 +125,10 @@ function formatTimestamp(value: number): string {
     month: '2-digit',
     day: '2-digit',
   }).format(value);
+}
+
+function isSupportedRouteCliType(value: unknown): value is RouteCliType {
+  return typeof value === 'string' && SUPPORTED_ROUTE_CLI_TYPES.has(value as RouteCliType);
 }
 
 function formatDisplayName(name?: string): string {
@@ -689,6 +689,10 @@ export function LogsPage() {
     let failureCount = 0;
 
     for (const item of routeLogs) {
+      if (!isSupportedRouteCliType(item.cliType)) {
+        continue;
+      }
+
       if (routeCliFilter !== 'all' && item.cliType !== routeCliFilter) {
         continue;
       }

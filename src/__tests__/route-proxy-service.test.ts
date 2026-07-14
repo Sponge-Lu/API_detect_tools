@@ -62,7 +62,6 @@ vi.mock('../main/utils/http-client', () => ({
 import {
   applySuccessfulRoutePathAffinity,
   buildChannelAttemptPlan,
-  buildGeminiUpstreamPath,
   buildUpstreamRequestUrl,
   buildUpstreamHeaders,
   classifyRouteStatusCode,
@@ -608,6 +607,60 @@ describe('route-proxy-service attempt planning', () => {
     ]);
   });
 
+  it('ignores successful route path affinity when the route channel was reset across route rules', () => {
+    const now = 1_700_000_000_000;
+    const firstPath = {
+      routeRuleId: 'rule-1',
+      siteId: 'site-1',
+      accountId: 'acc-1',
+      apiKeyId: 'key-a',
+      targetProtocol: 'native' as const,
+      canonicalModel: 'claude-route',
+      resolvedModel: 'raw-a',
+    };
+    const resetPath = {
+      ...firstPath,
+      routeRuleId: 'rule-2',
+      siteId: 'site-2',
+      accountId: 'acc-2',
+      apiKeyId: 'key-b',
+      resolvedModel: 'raw-b',
+    };
+    const routePathStates: Record<string, RoutePathState> = {
+      [buildRoutePathStateKey(resetPath)]: {
+        ...resetPath,
+        windowStartedAt: now,
+        windowRequestCount: 2,
+        windowSuccessCount: 2,
+        successRate: 1,
+        lastOutcome: 'success',
+        lastSuccessAt: now - 10_000,
+        updatedAt: now - 1_000,
+      },
+      [buildRoutePathStateKey({
+        ...resetPath,
+        routeRuleId: undefined,
+        resolvedModel: undefined,
+      })]: {
+        ...resetPath,
+        routeRuleId: undefined,
+        resolvedModel: undefined,
+        windowStartedAt: now,
+        windowRequestCount: 0,
+        windowSuccessCount: 0,
+        successRate: 1,
+        affinitySuppressedAt: now - 1_000,
+        affinitySuppressedUntil: now + 60_000,
+        updatedAt: now - 1_000,
+      },
+    };
+
+    expect(applySuccessfulRoutePathAffinity([firstPath, resetPath], routePathStates, now)).toEqual([
+      firstPath,
+      resetPath,
+    ]);
+  });
+
   it('applies successful route path affinity after max attempts per route path bounding', () => {
     const now = 1_700_000_000_000;
     const firstPath = {
@@ -929,7 +982,6 @@ describe('route-proxy-service Claude count_tokens fallback', () => {
     cliModelSelections: {
       claudeCode: null,
       codex: null,
-      geminiCli: null,
     },
     modelRegistry: {
       version: 1,
@@ -1274,7 +1326,6 @@ describe('route-proxy-service client cancellation', () => {
     cliModelSelections: {
       claudeCode: null,
       codex: null,
-      geminiCli: null,
     },
     modelRegistry: {
       version: 1,
@@ -1441,7 +1492,6 @@ describe('route-proxy-service custom CLI forwarding', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -1491,7 +1541,12 @@ describe('route-proxy-service custom CLI forwarding', () => {
     }));
     vi.mocked(httpRawRequest).mockResolvedValueOnce({
       status: 200,
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'content-encoding': 'br',
+        'content-length': '999',
+        'transfer-encoding': 'chunked',
+      },
       body: Buffer.from('{"output_text":"ok","usage":{"input_tokens":1,"output_tokens":1}}'),
     });
 
@@ -1521,6 +1576,12 @@ describe('route-proxy-service custom CLI forwarding', () => {
     );
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain('"output_text":"ok"');
+    expect(response.headers).toMatchObject({
+      'content-type': 'application/json',
+      'content-length': String(Buffer.byteLength(response.body)),
+    });
+    expect(response.headers).not.toHaveProperty('content-encoding');
+    expect(response.headers).not.toHaveProperty('transfer-encoding');
     expect(recordRoutePathOutcome).toHaveBeenCalledWith(
       expect.objectContaining({
         siteId: 'custom-cli-site-duckcoding',
@@ -1534,49 +1595,47 @@ describe('route-proxy-service custom CLI forwarding', () => {
       expect.any(Object)
     );
   });
-});
 
-describe('route-proxy-service CLI model fallback', () => {
-  it('routes Gemini path-only default model requests through the selected CLI model rule', async () => {
+  it('forwards SenseNova Claude-compatible upstream auth as bearer token', async () => {
     vi.clearAllMocks();
 
-    const selectedRule = {
-      id: 'rule-gemini-selected',
-      cliType: 'geminiCli' as const,
-      pattern: 'gemini-3.1-pro-preview',
+    const rule = {
+      id: 'rule-sensenova-claude',
+      cliType: 'claudeCode' as const,
+      pattern: 'sensenova-6.7-flash-lite',
       patternType: 'exact' as const,
     };
     const channel = {
-      routeRuleId: selectedRule.id,
-      siteId: 'site-nhh',
-      accountId: 'account-default',
-      apiKeyId: 'key-default',
-      cliType: 'geminiCli' as const,
-      canonicalModel: 'gemini-3.1-pro-preview',
-      resolvedModel: 'gemini-3.1-pro-preview',
+      routeRuleId: rule.id,
+      siteId: 'site-sensenova',
+      accountId: 'account-sensenova',
+      apiKeyId: 'key-sensenova',
+      cliType: 'claudeCode' as const,
+      targetProtocol: 'native' as const,
+      targetEndpoint: '/v1/messages',
+      canonicalModel: 'sensenova-6.7-flash-lite',
+      resolvedModel: 'sensenova-6.7-flash-lite',
     };
     const routing = {
       server: {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
         upstreamProxyUrl: '',
-        blockGeminiCliInternalUtilityRequests: false,
       },
-      rules: [selectedRule],
+      rules: [rule],
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: 'gemini-3.1-pro-preview',
       },
       modelRegistry: {
         version: 1,
         sources: [],
         entries: {
-          'gemini-3.1-pro-preview': {
-            canonicalName: 'gemini-3.1-pro-preview',
-            aliases: ['gemini-3.1-pro-preview'],
+          'sensenova-6.7-flash-lite': {
+            canonicalName: 'sensenova-6.7-flash-lite',
+            aliases: ['sensenova-6.7-flash-lite'],
             sources: [],
-            vendor: 'gemini' as const,
+            vendor: 'unknown' as const,
             hasOverride: false,
             createdAt: 1,
             updatedAt: 1,
@@ -1586,24 +1645,23 @@ describe('route-proxy-service CLI model fallback', () => {
         displayItems: [],
         vendorPriorities: {},
       },
+      routePathStates: {},
     };
 
     Object.assign(unifiedConfigManager, {
       getRoutingConfig: vi.fn(() => routing),
-      getSiteById: vi.fn(() => ({ id: 'site-nhh', name: 'nhh' })),
-      getAccountById: vi.fn(() => ({ id: 'account-default', account_name: '默认账户' })),
+      getSiteById: vi.fn(() => ({ id: 'site-sensenova', name: 'SenseNova' })),
+      getAccountById: vi.fn(() => ({ id: 'account-sensenova', account_name: 'SenseNova' })),
     });
-    vi.mocked(detectCliTypeFromPath).mockReturnValue('geminiCli');
-    vi.mocked(extractModelFromBody).mockReturnValue(null);
-    vi.mocked(extractModelFromPath).mockReturnValue('gemini-2.5-flash-lite');
-    vi.mocked(sortRules).mockReturnValue([selectedRule as never]);
-    vi.mocked(findMatchingRule).mockImplementation((_rules, _cliType, model) =>
-      model === 'gemini-3.1-pro-preview' ? (selectedRule as never) : null
-    );
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('claudeCode');
+    vi.mocked(extractModelFromBody).mockReturnValue('sensenova-6.7-flash-lite');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
     vi.mocked(resolveChannels).mockReturnValue([channel]);
     vi.mocked(resolveChannelCredentials).mockResolvedValue({
-      baseUrl: 'https://nhh.example.com',
-      apiKey: 'sk-upstream',
+      baseUrl: 'https://token.sensenova.cn',
+      apiKey: 'sk-sensenova-upstream',
     });
     vi.mocked(isRoutePathDisabled).mockReturnValue(false);
     vi.mocked(recordRoutePathOutcome).mockResolvedValue({
@@ -1614,38 +1672,53 @@ describe('route-proxy-service CLI model fallback', () => {
       successRate: 1,
       updatedAt: 1,
     });
-    vi.mocked(httpRawRequest).mockResolvedValue({
+    vi.mocked(httpRawRequest).mockResolvedValueOnce({
       status: 200,
       headers: { 'content-type': 'application/json' },
-      body: Buffer.from('{"candidates":[]}'),
+      body: Buffer.from(
+        JSON.stringify({
+          id: 'msg_1',
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'ok' }],
+          model: 'sensenova-6.7-flash-lite',
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 1, output_tokens: 1 },
+        })
+      ),
     });
 
     const request = createJsonRequest(
-      '/v1beta/models/gemini-2.5-flash-lite:generateContent?key=sk-route',
+      '/v1/messages',
       {
-        'x-goog-api-key': 'sk-route',
+        'x-api-key': 'sk-route',
         'content-type': 'application/json',
       },
-      { contents: [] }
+      {
+        model: 'sensenova-6.7-flash-lite',
+        max_tokens: 1024,
+        messages: [{ role: 'user', content: 'Hello!' }],
+      }
     );
     const response = createMockResponse();
 
     await handleRequest(request, response);
 
-    expect(vi.mocked(findMatchingRule).mock.calls.map(call => call[2])).toEqual([
-      'gemini-3.1-pro-preview',
-    ]);
-    expect(resolveChannels).toHaveBeenCalledWith(selectedRule, 'gemini-3.1-pro-preview');
     expect(httpRawRequest).toHaveBeenCalledWith(
-      'https://nhh.example.com/v1beta/models/gemini-3.1-pro-preview:generateContent?key=sk-upstream',
+      'https://token.sensenova.cn/v1/messages',
       expect.objectContaining({
         method: 'POST',
         preferElectronNet: true,
       })
     );
+    const headers = vi.mocked(httpRawRequest).mock.calls[0]?.[1]?.headers;
+    expect(headers?.authorization).toBe('Bearer sk-sensenova-upstream');
+    expect(headers?.['x-api-key']).toBeUndefined();
     expect(response.statusCode).toBe(200);
   });
+});
 
+describe('route-proxy-service CLI model fallback', () => {
   it('routes normal Codex requests through the app-selected CLI model instead of the external request model', async () => {
     vi.clearAllMocks();
 
@@ -1669,13 +1742,11 @@ describe('route-proxy-service CLI model fallback', () => {
         unifiedApiKey: 'sk-route',
         requestTimeoutMs: 1000,
         upstreamProxyUrl: '',
-        blockGeminiCliInternalUtilityRequests: true,
       },
       rules: [selectedRule],
       cliModelSelections: {
         claudeCode: null,
         codex: 'gpt-5-selected',
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -1765,89 +1836,261 @@ describe('route-proxy-service CLI model fallback', () => {
     );
     expect(response.statusCode).toBe(200);
   });
+});
 
-  it('blocks unmatched Gemini internal utility model requests with non-retryable 400 by default', async () => {
-    vi.clearAllMocks();
-
-    const selectedRule = {
-      id: 'rule-gemini-selected',
-      cliType: 'geminiCli' as const,
-      pattern: 'gemini-3.1-pro-preview',
+describe('route-proxy-service OpenCode endpoint normalization', () => {
+  function buildOpenCodeRouting(
+    openCodeRouteProtocol: 'anthropic-messages' | 'openai-chat-completions' | 'openai-responses'
+  ) {
+    const rule = {
+      id: 'rule-opencode',
+      cliType: 'openCode' as const,
+      pattern: 'opencode-selected',
       patternType: 'exact' as const,
     };
-    const routing = {
-      server: {
-        unifiedApiKey: 'sk-route',
-        requestTimeoutMs: 1000,
-        upstreamProxyUrl: '',
-      },
-      rules: [selectedRule],
-      cliModelSelections: {
-        claudeCode: null,
-        codex: null,
-        geminiCli: 'gemini-3.1-pro-preview',
-      },
-      modelRegistry: {
-        version: 1,
-        sources: [],
-        entries: {
-          'gemini-3.1-pro-preview': {
-            canonicalName: 'gemini-3.1-pro-preview',
-            aliases: ['gemini-3.1-pro-preview'],
-            sources: [],
-            vendor: 'gemini' as const,
-            hasOverride: false,
-            createdAt: 1,
-            updatedAt: 1,
-          },
+    return {
+      rule,
+      routing: {
+        server: {
+          unifiedApiKey: 'sk-route',
+          requestTimeoutMs: 1000,
+          upstreamProxyUrl: '',
         },
-        overrides: [],
-        displayItems: [],
-        vendorPriorities: {},
+        rules: [rule],
+        cliModelSelections: {
+          claudeCode: null,
+          codex: null,
+          openCode: 'opencode-selected',
+        },
+        openCodeRouteProtocol,
+        modelRegistry: {
+          version: 1,
+          sources: [],
+          entries: {
+            'opencode-selected': {
+              canonicalName: 'opencode-selected',
+              aliases: ['opencode-selected'],
+              sources: [],
+              vendor: 'gpt' as const,
+              hasOverride: false,
+              createdAt: 1,
+              updatedAt: 1,
+            },
+          },
+          overrides: [],
+          displayItems: [],
+          vendorPriorities: {},
+        },
+        routePathStates: {},
+        routeEndpointCapabilities: {},
       },
+    };
+  }
+
+  function setupOpenCodeRoute(params: {
+    openCodeRouteProtocol: 'anthropic-messages' | 'openai-chat-completions' | 'openai-responses';
+    detectedCliType: 'claudeCode' | 'codex' | 'openCode';
+    channelTargetProtocol?:
+      | 'native'
+      | 'anthropic-messages'
+      | 'openai-chat-completions'
+      | 'openai-responses';
+  }) {
+    const { rule, routing } = buildOpenCodeRouting(params.openCodeRouteProtocol);
+    const channel = {
+      routeRuleId: rule.id,
+      siteId: 'site-opencode',
+      accountId: 'account-opencode',
+      apiKeyId: 'key-opencode',
+      cliType: 'openCode' as const,
+      targetProtocol: params.channelTargetProtocol ?? 'native',
+      canonicalModel: 'opencode-selected',
+      resolvedModel: 'opencode-upstream',
     };
 
     Object.assign(unifiedConfigManager, {
       getRoutingConfig: vi.fn(() => routing),
-      getSiteById: vi.fn(),
-      getAccountById: vi.fn(),
+      getSiteById: vi.fn(() => ({ id: 'site-opencode', name: 'OpenCode Site' })),
+      getAccountById: vi.fn(() => ({
+        id: 'account-opencode',
+        account_name: 'OpenCode Account',
+      })),
     });
-    vi.mocked(detectCliTypeFromPath).mockReturnValue('geminiCli');
-    vi.mocked(extractModelFromBody).mockReturnValue(null);
-    vi.mocked(extractModelFromPath).mockReturnValue('gemini-2.5-flash-lite');
-    vi.mocked(sortRules).mockReturnValue([selectedRule as never]);
-    vi.mocked(findMatchingRule).mockReturnValue(null);
+    vi.mocked(detectCliTypeFromPath).mockReturnValue(params.detectedCliType);
+    vi.mocked(extractModelFromBody).mockReturnValue('wire-opencode');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue([channel]);
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://opencode-upstream.example.com',
+      apiKey: 'sk-upstream',
+    });
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockResolvedValue({
+      ...channel,
+      targetProtocol:
+        params.channelTargetProtocol === 'native'
+          ? params.openCodeRouteProtocol
+          : params.channelTargetProtocol,
+      windowStartedAt: 1,
+      windowRequestCount: 1,
+      windowSuccessCount: 1,
+      successRate: 1,
+      updatedAt: 1,
+    });
+
+    return { rule, channel };
+  }
+
+  it('normalizes OpenCode Anthropic Messages requests to the selected Chat Completions endpoint', async () => {
+    vi.clearAllMocks();
+    setupOpenCodeRoute({
+      openCodeRouteProtocol: 'openai-chat-completions',
+      detectedCliType: 'claudeCode',
+      channelTargetProtocol: 'native',
+    });
+    vi.mocked(httpRawRequest).mockResolvedValue({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(
+        JSON.stringify({
+          id: 'chatcmpl-upstream',
+          object: 'chat.completion',
+          model: 'opencode-upstream',
+          choices: [
+            {
+              index: 0,
+              message: { role: 'assistant', content: 'normalized hello' },
+              finish_reason: 'stop',
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+        }),
+        'utf-8'
+      ),
+    });
 
     const request = createJsonRequest(
-      '/v1beta/models/gemini-2.5-flash-lite:generateContent?key=sk-route',
+      '/v1/messages',
       {
-        'x-goog-api-key': 'sk-route',
+        'x-api-key': 'sk-route',
         'content-type': 'application/json',
+        'user-agent': 'opencode',
       },
-      { contents: [] }
+      {
+        model: 'wire-opencode',
+        stream: false,
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+        max_tokens: 128,
+      }
     );
     const response = createMockResponse();
 
     await handleRequest(request, response);
 
-    expect(response.statusCode).toBe(400);
-    expect(JSON.parse(response.body)).toEqual({
-      error: expect.objectContaining({
-        code: 400,
-        status: 'FAILED_PRECONDITION',
-        message: expect.stringContaining('gemini_cli_internal_utility_blocked'),
-      }),
-    });
-    expect(resolveChannels).not.toHaveBeenCalled();
-    expect(httpRawRequest).not.toHaveBeenCalled();
-    expect(recordRouteRequest).toHaveBeenCalledWith(
+    expect(httpRawRequest).toHaveBeenCalledWith(
+      'https://opencode-upstream.example.com/v1/chat/completions',
       expect.objectContaining({
-        cliType: 'geminiCli',
-        requestedModel: 'gemini-2.5-flash-lite',
-        statusCode: 400,
-        error: 'gemini_cli_internal_utility_blocked',
+        method: 'POST',
+        preferElectronNet: true,
+        headers: expect.objectContaining({
+          authorization: 'Bearer sk-upstream',
+        }),
       })
     );
+    const forwardedBody = JSON.parse(
+      Buffer.from(vi.mocked(httpRawRequest).mock.calls[0]?.[1]?.body as Buffer).toString('utf-8')
+    );
+    expect(forwardedBody).toMatchObject({
+      model: 'opencode-upstream',
+      messages: [{ role: 'user', content: 'hello' }],
+      max_tokens: 128,
+    });
+    const downstreamBody = JSON.parse(response.body);
+    expect(downstreamBody).toMatchObject({
+      type: 'message',
+      role: 'assistant',
+      model: 'opencode-upstream',
+      content: [{ type: 'text', text: 'normalized hello' }],
+      usage: { input_tokens: 1, output_tokens: 2 },
+    });
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cliType: 'openCode',
+        targetProtocol: 'openai-chat-completions',
+        targetEndpoint: '/v1/chat/completions',
+        outcome: 'success',
+      })
+    );
+  });
+
+  it('does not bypass the selected OpenCode intermediate when source and upstream are both Chat Completions', async () => {
+    vi.clearAllMocks();
+    setupOpenCodeRoute({
+      openCodeRouteProtocol: 'anthropic-messages',
+      detectedCliType: 'openCode',
+      channelTargetProtocol: 'openai-chat-completions',
+    });
+    vi.mocked(httpRawRequest).mockResolvedValue({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(
+        JSON.stringify({
+          id: 'chatcmpl-upstream-transparent-would-leak',
+          object: 'chat.completion',
+          model: 'opencode-upstream',
+          choices: [
+            {
+              index: 0,
+              message: { role: 'assistant', content: 'round trip hello' },
+              finish_reason: 'stop',
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+        }),
+        'utf-8'
+      ),
+    });
+
+    const request = createJsonRequest(
+      '/v1/chat/completions',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+        'user-agent': 'opencode',
+      },
+      {
+        model: 'wire-opencode',
+        stream: false,
+        messages: [{ role: 'user', content: 'hello' }],
+        max_tokens: 64,
+      }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(httpRawRequest).toHaveBeenCalledWith(
+      'https://opencode-upstream.example.com/v1/chat/completions',
+      expect.objectContaining({
+        method: 'POST',
+        preferElectronNet: true,
+      })
+    );
+    const downstreamBody = JSON.parse(response.body);
+    expect(downstreamBody).toMatchObject({
+      object: 'chat.completion',
+      model: 'opencode-upstream',
+      choices: [
+        {
+          index: 0,
+          message: { role: 'assistant', content: 'round trip hello' },
+          finish_reason: 'stop',
+        },
+      ],
+    });
+    expect(downstreamBody.id).not.toBe('chatcmpl-upstream-transparent-would-leak');
   });
 });
 
@@ -1900,7 +2143,6 @@ describe('route-proxy-service successful path affinity', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -2072,7 +2314,6 @@ describe('route-proxy-service successful path affinity', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -2206,7 +2447,6 @@ describe('route-proxy-service successful path affinity', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -2394,7 +2634,6 @@ describe('route-proxy-service successful path affinity', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -2551,7 +2790,6 @@ describe('route-proxy-service successful path affinity', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -2717,7 +2955,6 @@ describe('route-proxy-service successful path affinity', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -2830,135 +3067,8 @@ describe('route-proxy-service successful path affinity', () => {
 });
 
 describe('route-proxy-service disabled path short-circuit', () => {
-  it('stops forwarding when a failed attempt disables the remaining planned route paths', async () => {
-    vi.clearAllMocks();
-
-    const rule = {
-      id: 'rule-gemini',
-      cliType: 'geminiCli' as const,
-    };
-    const channel = {
-      routeRuleId: 'rule-gemini',
-      siteId: 'site-duck',
-      accountId: 'account-duck',
-      apiKeyId: 'key-duck',
-      cliType: 'geminiCli' as const,
-      canonicalModel: 'duckcoding',
-      resolvedModel: 'duckcoding',
-    };
-    const routing = {
-      server: {
-        unifiedApiKey: 'sk-route',
-        requestTimeoutMs: 1000,
-        upstreamProxyUrl: '',
-      },
-      rules: [rule],
-      cliModelSelections: {
-        claudeCode: null,
-        codex: null,
-        geminiCli: null,
-      },
-      modelRegistry: {
-        version: 1,
-        sources: [],
-        entries: {
-          duckcoding: {
-            canonicalName: 'duckcoding',
-            aliases: ['duckcoding'],
-            sources: [],
-            vendor: 'gemini' as const,
-            hasOverride: false,
-            createdAt: 1,
-            updatedAt: 1,
-          },
-        },
-        overrides: [],
-        displayItems: [
-          {
-            id: 'manual:duckcoding',
-            vendor: 'gemini' as const,
-            canonicalName: 'duckcoding',
-            sourceKeys: [],
-            originalModelOrder: ['duckcoding'],
-            priorityConfig: { sitePriorities: {}, apiKeyPriorities: {} },
-            runtimeConfig: {
-              maxAttemptsPerRoutePath: 2,
-              successRateWindowMinutes: 5,
-              disableDurationMinutes: 30,
-              minSuccessRate: 0.8,
-            },
-            mode: 'manual' as const,
-            createdAt: 1,
-            updatedAt: 1,
-          },
-        ],
-        vendorPriorities: {},
-      },
-    };
-    let disabled = false;
-
-    Object.assign(unifiedConfigManager, {
-      getRoutingConfig: vi.fn(() => routing),
-      getSiteById: vi.fn(() => undefined),
-      getAccountById: vi.fn(() => undefined),
-    });
-    vi.mocked(detectCliTypeFromPath).mockReturnValue('geminiCli');
-    vi.mocked(extractModelFromBody).mockReturnValue('duckcoding');
-    vi.mocked(extractModelFromPath).mockReturnValue(null);
-    vi.mocked(sortRules).mockReturnValue([rule as never]);
-    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
-    vi.mocked(resolveChannels).mockReturnValue([channel, channel]);
-    vi.mocked(resolveChannelCredentials).mockResolvedValue({
-      baseUrl: 'https://duckcoding.ai',
-      apiKey: 'sk-upstream',
-    });
-    vi.mocked(isRoutePathDisabled).mockImplementation(() => disabled);
-    vi.mocked(recordRoutePathOutcome).mockImplementation(async () => {
-      disabled = true;
-      return {
-        ...channel,
-        windowStartedAt: 1,
-        windowRequestCount: 1,
-        windowSuccessCount: 0,
-        successRate: 0,
-        disabledUntil: Date.now() + 30 * 60 * 1000,
-        disabledReason: 'success_rate_below_threshold',
-        lastOutcome: 'failure',
-        lastStatusCode: 503,
-        updatedAt: 1,
-      };
-    });
-    vi.mocked(httpRawRequest).mockResolvedValue({
-      status: 503,
-      headers: { 'content-type': 'application/json' },
-      body: Buffer.from('{"error":"upstream_503"}'),
-    });
-
-    const request = createJsonRequest(
-      '/v1beta/models/duckcoding:generateContent?key=sk-route',
-      {
-        'x-goog-api-key': 'sk-route',
-        'content-type': 'application/json',
-      },
-      { contents: [] }
-    );
-    const response = createMockResponse();
-
-    await handleRequest(request, response);
-
-    expect(httpRawRequest).toHaveBeenCalledTimes(1);
-    expect(response.statusCode).toBe(400);
-    expect(JSON.parse(response.body)).toMatchObject({
-      error: {
-        code: 400,
-        status: 'FAILED_PRECONDITION',
-        message: expect.stringContaining('temporarily disabled'),
-      },
-    });
-  });
-
   const disabledResponseCases: Array<{
-    cliType: 'claudeCode' | 'codex' | 'geminiCli';
+    cliType: 'claudeCode' | 'codex';
     url: string;
     headers: Record<string, string>;
     body: unknown;
@@ -2986,19 +3096,6 @@ describe('route-proxy-service disabled path short-circuit', () => {
         error: {
           code: 'all_route_paths_disabled',
           type: 'invalid_request_error',
-          message: expect.stringContaining('temporarily disabled'),
-        },
-      },
-    },
-    {
-      cliType: 'geminiCli' as const,
-      url: '/v1beta/models/disabled-route:generateContent?key=sk-route',
-      headers: { 'x-goog-api-key': 'sk-route', 'content-type': 'application/json' },
-      body: { contents: [] },
-      expectedBody: {
-        error: {
-          code: 400,
-          status: 'FAILED_PRECONDITION',
           message: expect.stringContaining('temporarily disabled'),
         },
       },
@@ -3032,7 +3129,6 @@ describe('route-proxy-service disabled path short-circuit', () => {
         cliModelSelections: {
           claudeCode: null,
           codex: null,
-          geminiCli: null,
         },
         modelRegistry: {
           version: 1,
@@ -3109,33 +3205,7 @@ describe('route-proxy-service auth extraction', () => {
     expect(token).toBe('sk-route-claude-bearer');
   });
 
-  it('reads Gemini route auth from x-goog-api-key header', () => {
-    const token = extractRouteApiKey(
-      {
-        headers: {
-          'x-goog-api-key': 'sk-route-123',
-        },
-        url: '/v1beta/models/gemini-3-1-pro:generateContent',
-      },
-      'geminiCli'
-    );
-
-    expect(token).toBe('sk-route-123');
-  });
-
-  it('falls back to Gemini route auth from query key when header is absent', () => {
-    const token = extractRouteApiKey(
-      {
-        headers: {},
-        url: '/v1beta/models/gemini-3-1-pro:streamGenerateContent?alt=sse&key=sk-route-456',
-      },
-      'geminiCli'
-    );
-
-    expect(token).toBe('sk-route-456');
-  });
-
-  it('keeps bearer-token auth for non-Gemini CLIs', () => {
+  it('keeps bearer-token auth for supported CLIs', () => {
     const token = extractRouteApiKey(
       {
         headers: {
@@ -3164,7 +3234,6 @@ describe('route-proxy-service probe lock', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -3253,7 +3322,6 @@ describe('route-proxy-service probe lock', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -3378,7 +3446,6 @@ describe('route-proxy-service probe lock', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -3475,7 +3542,6 @@ describe('route-proxy-service probe lock', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -3592,7 +3658,6 @@ describe('route-proxy-service probe lock', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -3694,7 +3759,6 @@ describe('route-proxy-service probe lock', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -3803,7 +3867,6 @@ describe('route-proxy-service probe lock', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -3916,7 +3979,6 @@ describe('route-proxy-service probe lock', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -4020,7 +4082,6 @@ describe('route-proxy-service probe lock', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -4116,7 +4177,6 @@ describe('route-proxy-service probe lock', () => {
         cliModelSelections: {
           claudeCode: null,
           codex: null,
-          geminiCli: null,
         },
         modelRegistry: {
           version: 1,
@@ -4189,7 +4249,6 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -4349,7 +4408,6 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -4484,7 +4542,6 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -4616,7 +4673,6 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -4739,7 +4795,6 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -4862,7 +4917,6 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -4990,7 +5044,6 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -5129,6 +5182,154 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     expect(response.body).toBe(successChunk.toString('utf-8'));
   });
 
+  it('normalizes Claude Code transparent SSE tool_use streams with end_turn stop_reason', async () => {
+    vi.clearAllMocks();
+
+    const rule = {
+      id: 'rule-claude-tool-stop',
+      cliType: 'claudeCode' as const,
+      pattern: 'claude-opus-4-6',
+      patternType: 'exact' as const,
+    };
+    const channel = {
+      routeRuleId: rule.id,
+      siteId: 'site-claude',
+      accountId: 'account-claude',
+      apiKeyId: 'key-claude',
+      cliType: 'claudeCode' as const,
+      canonicalModel: 'claude-opus-4-6',
+      resolvedModel: 'claude-opus-4-6',
+    };
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+      },
+      rules: [rule],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: null,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'claude-opus-4-6': {
+            canonicalName: 'claude-opus-4-6',
+            aliases: ['claude-opus-4-6'],
+            sources: [],
+            vendor: 'claude' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+    };
+    const toolUseChunk = Buffer.from(
+      [
+        'event: message_start',
+        'data: {"type":"message_start","message":{"id":"msg_tool","type":"message","role":"assistant","model":"claude-opus-4-6","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}',
+        '',
+        'event: content_block_start',
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"Read","input":{}}}',
+        '',
+        'event: content_block_delta',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"file_path\\":\\"README.md\\"}"}}',
+        '',
+        'event: content_block_stop',
+        'data: {"type":"content_block_stop","index":0}',
+        '',
+        '',
+      ].join('\n'),
+      'utf-8'
+    );
+    const terminalChunk = Buffer.from(
+      [
+        'event: message_delta',
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}',
+        '',
+        'event: message_stop',
+        'data: {"type":"message_stop"}',
+        '',
+        '',
+      ].join('\n'),
+      'utf-8'
+    );
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn(() => ({ id: 'site-claude', name: 'Claude-compatible' })),
+      getAccountById: vi.fn(() => ({ id: 'account-claude', account_name: 'default' })),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('claudeCode');
+    vi.mocked(extractModelFromBody).mockReturnValue('claude-opus-4-6');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue([channel]);
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://upstream.example.com',
+      apiKey: 'sk-upstream',
+    });
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockResolvedValue({
+      ...channel,
+      windowStartedAt: 1,
+      windowRequestCount: 1,
+      windowSuccessCount: 1,
+      successRate: 1,
+      updatedAt: 1,
+    });
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
+      const headers = { 'content-type': 'text/event-stream' };
+      const accepted = config.onResponse?.({ status: 200, statusText: 'OK', headers });
+      expect(accepted).toBe(true);
+      await config.onChunk?.(toolUseChunk);
+      await config.onChunk?.(terminalChunk);
+      return {
+        status: 200,
+        headers,
+        body: Buffer.concat([toolUseChunk, terminalChunk]),
+        firstByteLatencyMs: 4,
+      };
+    });
+
+    const request = createJsonRequest(
+      '/v1/messages?beta=true',
+      {
+        'x-api-key': 'sk-route',
+        'content-type': 'application/json',
+      },
+      { model: 'claude-opus-4-6', stream: true, messages: [{ role: 'user', content: 'read' }] }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('"type":"tool_use"');
+    expect(response.body).toContain('"stop_reason":"tool_use"');
+    expect(response.body).not.toContain('"stop_reason":"end_turn"');
+    expect(response.body).not.toContain('event: error');
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: 'key-claude' }),
+      'success',
+      expect.objectContaining({ statusCode: 200 }),
+      expect.any(Object)
+    );
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKeyId: 'key-claude',
+        outcome: 'success',
+      })
+    );
+  });
+
   it('surfaces an error when Claude Code transparent SSE leaks DSML tool markup', async () => {
     vi.clearAllMocks();
 
@@ -5157,7 +5358,6 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -5309,7 +5509,6 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -5463,7 +5662,6 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
-        geminiCli: null,
       },
       modelRegistry: {
         version: 1,
@@ -5611,48 +5809,22 @@ describe('route-proxy-service upstream auth headers', () => {
     expect(headers['x-api-key']).toBeUndefined();
   });
 
-  it('forwards Gemini upstream auth as x-goog-api-key without leaking route query/header auth', () => {
+  it('uses bearer auth override without forwarding x-api-key', () => {
     const headers = buildUpstreamHeaders(
       {
-        'x-goog-api-key': 'sk-route-key',
+        'x-api-key': 'sk-route-key',
         authorization: 'Bearer sk-route-key',
         'content-type': 'application/json',
       },
-      'duckcoding.ai',
+      'token.sensenova.cn',
       42,
       'sk-upstream-key',
-      'geminiCli'
+      'claudeCode',
+      'bearer'
     );
 
-    expect(headers['x-goog-api-key']).toBe('sk-upstream-key');
-    expect(headers.authorization).toBeUndefined();
+    expect(headers.authorization).toBe('Bearer sk-upstream-key');
     expect(headers['x-api-key']).toBeUndefined();
-  });
-});
-
-describe('route-proxy-service Gemini upstream path rewriting', () => {
-  it('rewrites the native Gemini path model and replaces the query api key', () => {
-    const targetPath = buildGeminiUpstreamPath(
-      '/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse&key=sk-route-key',
-      'duckcoding',
-      'sk-upstream-key'
-    );
-
-    expect(targetPath).toBe(
-      '/v1beta/models/duckcoding:streamGenerateContent?alt=sse&key=sk-upstream-key'
-    );
-  });
-
-  it('preserves the Gemini action suffix when rewriting generateContent paths', () => {
-    const targetPath = buildGeminiUpstreamPath(
-      '/v1beta/models/gemini-2.5-flash:generateContent',
-      'duckcoding-preview',
-      'sk-upstream-key'
-    );
-
-    expect(targetPath).toBe(
-      '/v1beta/models/duckcoding-preview:generateContent?key=sk-upstream-key'
-    );
   });
 });
 
@@ -5683,21 +5855,6 @@ describe('route-proxy-service upstream request target', () => {
 
     expect(target).toEqual({
       url: 'https://anyrouter.top/v1/messages?beta=true',
-      host: 'anyrouter.top',
-    });
-  });
-
-  it('applies Gemini native path and query key rewriting before forwarding', () => {
-    const target = buildUpstreamRequestUrl(
-      'https://anyrouter.top/',
-      '/v1beta/models/gemini-3.1-pro:generateContent?key=sk-route-key',
-      'geminiCli',
-      'gemini-3.1-pro-upstream',
-      'sk-upstream-key'
-    );
-
-    expect(target).toEqual({
-      url: 'https://anyrouter.top/v1beta/models/gemini-3.1-pro-upstream:generateContent?key=sk-upstream-key',
       host: 'anyrouter.top',
     });
   });

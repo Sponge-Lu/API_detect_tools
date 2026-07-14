@@ -1,7 +1,7 @@
 /**
  * 输入: CliCompatibilityResult (兼容性结果), CliConfig (CLI 配置)
  * 输出: CLI 兼容性图标组件，显示各工具支持状态和详细测试结果
- * 定位: UI 组件层 - 显示 Claude Code、Codex、Gemini CLI 的兼容性状态图标
+ * 定位: UI 组件层 - 显示 Claude Code、Codex 的兼容性状态图标
  *
  * @version 2.1.12
  * @updated 2026-04-02 - 对齐当前中性操作按钮组说明
@@ -13,8 +13,10 @@
  */
 
 import type { CliCompatibilityResult } from '../../store/detectionStore';
-import type { CliConfig } from '../../../shared/types/cli-config';
+import type { BuiltinCliType, CliConfig } from '../../../shared/types/cli-config';
 import {
+  BUILTIN_CLI_TYPES,
+  BUILTIN_CLI_LABELS,
   DEFAULT_CLI_CONFIG,
   getCliTestResultStatus,
   getCliTestResultTestedAt,
@@ -24,7 +26,7 @@ import { buildCliCompatibilityTooltip, getCliCompatibilityIconClass } from './cl
 // 导入 CLI 图标
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../assets/cli-icons/codex.svg';
-import GeminiIcon from '../../assets/cli-icons/gemini.svg';
+import OpenCodeIcon from '../../assets/cli-icons/opencode.svg';
 
 export interface CliCompatibilityIconsProps {
   /** CLI 兼容性结果 */
@@ -49,8 +51,8 @@ export interface CliCompatibilityIconsProps {
 
 /** CLI 类型配置 */
 interface CliTypeConfig {
-  key: keyof Pick<CliCompatibilityResult, 'claudeCode' | 'codex' | 'geminiCli'>;
-  configKey: keyof CliConfig;
+  key: BuiltinCliType;
+  configKey: BuiltinCliType;
   name: string;
   icon: string;
   sizeClass: string; // 图标尺寸类名
@@ -66,13 +68,15 @@ const CLI_TYPES: CliTypeConfig[] = [
   },
   { key: 'codex', configKey: 'codex', name: 'Codex', icon: CodexIcon, sizeClass: 'w-5 h-5' },
   {
-    key: 'geminiCli',
-    configKey: 'geminiCli',
-    name: 'Gemini CLI',
-    icon: GeminiIcon,
-    sizeClass: 'w-5 h-5',
+    key: 'openCode',
+    configKey: 'openCode',
+    name: BUILTIN_CLI_LABELS.openCode,
+    icon: OpenCodeIcon,
+    sizeClass: 'w-4 h-5',
   },
 ];
+
+const cliCompatibilityKeys = new Set<BuiltinCliType>(BUILTIN_CLI_TYPES);
 
 function chooseLatestCliStatus(params: {
   persistedStatus: boolean | null;
@@ -138,7 +142,7 @@ function LoadingSpinner() {
 /**
  * 检查 CLI 是否已配置（有 API Key 和 Model）
  */
-function isCliConfigured(cliConfig: CliConfig | null, key: keyof CliConfig): boolean {
+function isCliConfigured(cliConfig: CliConfig | null, key: BuiltinCliType): boolean {
   if (!cliConfig) return false;
   const config = cliConfig[key];
   if (!config) return false;
@@ -148,7 +152,7 @@ function isCliConfigured(cliConfig: CliConfig | null, key: keyof CliConfig): boo
 /**
  * 检查 CLI 是否启用（仅通过 enabled 字段判断）
  */
-export function isCliEnabled(cliConfig: CliConfig | null, key: keyof CliConfig): boolean {
+export function isCliEnabled(cliConfig: CliConfig | null, key: BuiltinCliType): boolean {
   if (!cliConfig) {
     // 没有配置时使用默认配置
     return DEFAULT_CLI_CONFIG[key].enabled;
@@ -217,21 +221,31 @@ export function CliCompatibilityIcons({
                 ? compatibility?.claudeError
                 : key === 'codex'
                   ? compatibility?.codexError
-                  : compatibility?.geminiError;
+                  : compatibility?.openCodeError;
             const styleClass = getCliCompatibilityIconClass({
               enabled,
               configured,
               status,
             });
+            const canReadCompatibility = cliCompatibilityKeys.has(key);
             const tooltipText = buildCliCompatibilityTooltip({
               name,
               enabled,
               configured,
               status,
               testedAt: latestStatus.testedAt,
-              claudeDetail: latestStatus.useCompatibility ? compatibility?.claudeDetail : undefined,
-              codexDetail: latestStatus.useCompatibility ? compatibility?.codexDetail : undefined,
-              geminiDetail: latestStatus.useCompatibility ? compatibility?.geminiDetail : undefined,
+              claudeDetail:
+                latestStatus.useCompatibility && canReadCompatibility
+                  ? compatibility?.claudeDetail
+                  : undefined,
+              codexDetail:
+                latestStatus.useCompatibility && canReadCompatibility
+                  ? compatibility?.codexDetail
+                  : undefined,
+              openCodeDetail:
+                latestStatus.useCompatibility && canReadCompatibility
+                  ? compatibility?.openCodeDetail
+                  : undefined,
               sourceLabel: latestStatus.useCompatibility ? compatibility?.sourceLabel : undefined,
               error: latestStatus.useCompatibility ? (cliError ?? compatibility?.error) : undefined,
             });

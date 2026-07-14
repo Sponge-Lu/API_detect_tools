@@ -45,13 +45,16 @@ import type {
 import {
   buildRouteApiKeyPriorityKey,
   buildRoutePathStateKey,
+  normalizeOpenCodeRouteProtocol,
   normalizeRouteRuntimeConfig,
   ROUTE_SUCCESSFUL_PATH_AFFINITY_MS,
 } from '../shared/types/route-proxy';
 import { isAnyRouterSite } from '../shared/types/site';
 import {
+  getCliTargetEndpoint,
   isCliTargetProtocolNativeEquivalent,
   normalizeCliTargetProtocol,
+  type CliTargetProtocol,
 } from '../shared/types/cli-config';
 import {
   rewriteForAnyRouter,
@@ -84,13 +87,6 @@ const log = Logger.scope('RouteProxyService');
 let proxyServer: http.Server | null = null;
 let isRunning = false;
 let requestSequence = 0;
-const GEMINI_CLI_INTERNAL_UTILITY_MODELS = new Set([
-  'gemini-2.5-flash-lite',
-  'gemini-2.5-flash',
-  'gemini-2.5-pro',
-]);
-const GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_ERROR_CODE = 'gemini_cli_internal_utility_blocked';
-const GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_STATUS_CODE = 400;
 const ALL_ROUTE_PATHS_DISABLED_ERROR_CODE = 'all_route_paths_disabled';
 const ALL_ROUTE_PATHS_DISABLED_STATUS_CODE = 400;
 const ALL_ROUTE_PATHS_DISABLED_MESSAGE =
@@ -110,6 +106,8 @@ const LOCAL_COUNT_TOKENS_CONSERVATIVE_MULTIPLIER = 1.15;
 const INITIAL_STREAM_VALIDATION_MAX_BYTES = 4096;
 const STREAM_TERMINAL_SCAN_MAX_CHARS = 8192;
 const ROUTE_CLIENT_CANCELLED_ERROR_CODE = 'route_client_cancelled';
+
+type ConcreteCliTargetProtocol = Exclude<CliTargetProtocol, 'native'>;
 
 class RouteClientCancelledError extends Error {
   constructor(message = 'Route client cancelled request') {
@@ -225,23 +223,6 @@ function extractBearerToken(req: http.IncomingMessage): string {
   return authHeader.replace(/^Bearer\s+/i, '').trim();
 }
 
-function extractGeminiRouteToken(req: http.IncomingMessage): string {
-  const apiKeyHeader = normalizeHeaderValue(req.headers['x-goog-api-key']);
-  if (apiKeyHeader.trim()) {
-    return apiKeyHeader.trim();
-  }
-
-  const url = req.url || '/';
-  const query = url.includes('?') ? url.slice(url.indexOf('?') + 1) : '';
-  const params = new URLSearchParams(query);
-  const queryKey = params.get('key')?.trim();
-  if (queryKey) {
-    return queryKey;
-  }
-
-  return extractBearerToken(req);
-}
-
 function extractClaudeRouteToken(req: http.IncomingMessage): string {
   const apiKeyHeader = normalizeHeaderValue(req.headers['x-api-key']);
   if (apiKeyHeader.trim()) {
@@ -272,15 +253,67 @@ export function extractRouteApiKey(
   req: Pick<http.IncomingMessage, 'headers' | 'url'>,
   cliType: RouteCliType
 ): string {
-  if (cliType === 'geminiCli') {
-    return extractGeminiRouteToken(req as http.IncomingMessage);
-  }
-
   if (cliType === 'claudeCode') {
+    return extractClaudeRouteToken(req as http.IncomingMessage);
+  }
+  if (cliType === 'openCode' && inferOpenCodeSourceProtocol(req.url) === 'anthropic-messages') {
     return extractClaudeRouteToken(req as http.IncomingMessage);
   }
 
   return extractBearerToken(req as http.IncomingMessage);
+}
+
+function isLikelyOpenCodeRequest(req: Pick<http.IncomingMessage, 'headers'>): boolean {
+  const userAgent = normalizeHeaderValue(req.headers['user-agent']).toLowerCase();
+  const originator = normalizeHeaderValue(req.headers['originator']).toLowerCase();
+  return userAgent.includes('opencode') || originator.includes('opencode');
+}
+
+function getRequestPathname(requestUrl: string | undefined): string {
+  return (requestUrl || '/').split('?')[0] || '/';
+}
+
+function inferOpenCodeSourceProtocol(requestUrl: string | undefined): ConcreteCliTargetProtocol {
+  const pathname = getRequestPathname(requestUrl);
+  if (pathname === '/v1/messages' || pathname.startsWith('/v1/messages/')) {
+    return 'anthropic-messages';
+  }
+  if (pathname === '/v1/responses' || pathname.startsWith('/v1/responses/')) {
+    return 'openai-responses';
+  }
+  return 'openai-chat-completions';
+}
+
+function getUpstreamCliTypeForProtocol(protocol: ConcreteCliTargetProtocol): RouteCliType {
+  return protocol === 'anthropic-messages' ? 'claudeCode' : 'codex';
+}
+
+function resolveOpenCodeUpstreamProtocol(
+  channelProtocol: CliTargetProtocol | undefined,
+  selectedProtocol: ConcreteCliTargetProtocol
+): ConcreteCliTargetProtocol {
+  const normalized = normalizeCliTargetProtocol(channelProtocol);
+  return normalized === 'native' ? selectedProtocol : normalized;
+}
+
+function resolveEffectiveRouteChannel(
+  channel: ResolvedChannel,
+  cliType: RouteCliType,
+  openCodeRouteProtocol: ConcreteCliTargetProtocol | undefined
+): ResolvedChannel {
+  if (cliType !== 'openCode' || !openCodeRouteProtocol) {
+    return channel;
+  }
+
+  const upstreamProtocol = resolveOpenCodeUpstreamProtocol(
+    channel.targetProtocol,
+    openCodeRouteProtocol
+  );
+  return {
+    ...channel,
+    targetProtocol: upstreamProtocol,
+    targetEndpoint: getCliTargetEndpoint('openCode', upstreamProtocol, channel.resolvedModel),
+  };
 }
 
 export function buildChannelAttemptPlan<
@@ -323,6 +356,27 @@ type RoutePathAffinityCandidate = RouteChannelKey & {
   targetProtocol?: RoutePathState['targetProtocol'];
 };
 
+function getRoutePathAffinitySuppressionUntil(
+  channel: RoutePathAffinityCandidate,
+  routePathStates: Record<string, RoutePathState>
+): number {
+  const sameRuleChannelState =
+    routePathStates[buildRoutePathStateKey({ ...channel, resolvedModel: undefined })];
+  const anyRuleChannelState =
+    routePathStates[
+      buildRoutePathStateKey({
+        ...channel,
+        routeRuleId: undefined,
+        resolvedModel: undefined,
+      })
+    ];
+
+  return Math.max(
+    sameRuleChannelState?.affinitySuppressedUntil ?? 0,
+    anyRuleChannelState?.affinitySuppressedUntil ?? 0
+  );
+}
+
 export function applySuccessfulRoutePathAffinity<T extends RoutePathAffinityCandidate>(
   channels: T[],
   routePathStates: Record<string, RoutePathState> | null | undefined,
@@ -338,12 +392,9 @@ export function applySuccessfulRoutePathAffinity<T extends RoutePathAffinityCand
 
   channels.forEach((channel, index) => {
     const state = routePathStates[buildRoutePathStateKey(channel)];
-    const channelSuppressionState = channel.resolvedModel
-      ? routePathStates[buildRoutePathStateKey({ ...channel, resolvedModel: undefined })]
-      : undefined;
     const affinitySuppressedUntil = Math.max(
       state?.affinitySuppressedUntil ?? 0,
-      channelSuppressionState?.affinitySuppressedUntil ?? 0
+      getRoutePathAffinitySuppressionUntil(channel, routePathStates)
     );
     const lastSuccessAt = state?.lastSuccessAt ?? 0;
     if (
@@ -431,33 +482,10 @@ function rewriteRequestModel(bodyBuffer: Buffer, upstreamModel: string): Buffer 
   return bodyBuffer;
 }
 
-export function buildGeminiUpstreamPath(
-  requestUrl: string,
-  upstreamModel: string | undefined,
-  apiKey: string
-): string {
-  const parsed = new URL(requestUrl || '/', 'http://route-proxy.local');
-  parsed.searchParams.set('key', apiKey);
-
-  if (upstreamModel) {
-    parsed.pathname = parsed.pathname.replace(
-      /^\/v1beta\/models\/([^/:?]+)(:[^/?]+)?$/,
-      (_match, _currentModel, action = '') =>
-        `/v1beta/models/${encodeURIComponent(upstreamModel)}${action}`
-    );
-  }
-
-  return `${parsed.pathname}${parsed.search}`;
-}
-
 function deleteAuthHeaders(headers: Record<string, string | string[] | undefined>): void {
   for (const key of Object.keys(headers)) {
     const normalizedKey = key.toLowerCase();
-    if (
-      normalizedKey === 'authorization' ||
-      normalizedKey === 'x-api-key' ||
-      normalizedKey === 'x-goog-api-key'
-    ) {
+    if (normalizedKey === 'authorization' || normalizedKey === 'x-api-key') {
       delete headers[key];
     }
   }
@@ -479,11 +507,11 @@ function isEventStreamResponse(headers: http.IncomingHttpHeaders): boolean {
 }
 
 function isStreamingRequest(bodyJson: unknown, requestUrl: string | undefined): boolean {
+  void requestUrl;
   const record = asRecord(bodyJson);
   if (record?.stream === true) return true;
 
-  const pathname = (requestUrl || '/').split('?')[0];
-  return pathname.includes(':streamGenerateContent');
+  return false;
 }
 
 function isClaudeCountTokensRequest(pathname: string, cliType: RouteCliType): boolean {
@@ -512,34 +540,56 @@ function resolveUpstreamTimeouts(params: {
 
 function canStreamResponseAdapters(
   anyRouterAdapter: AnyRouterResponseAdapter,
-  protocolAdapter: CliProtocolResponseAdapter
+  protocolAdapters: CliProtocolResponseAdapter[]
 ): boolean {
-  return anyRouterAdapter.type === 'transparent' && protocolAdapter.type === 'transparent';
+  return (
+    anyRouterAdapter.type === 'transparent' &&
+    protocolAdapters.every(adapter => adapter.type === 'transparent')
+  );
+}
+
+const ROUTE_PROXY_BLOCKED_RESPONSE_HEADERS = new Set([
+  'connection',
+  'content-encoding',
+  'content-length',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+]);
+
+function buildRouteProxyResponseHeaders(
+  headers: http.IncomingHttpHeaders
+): http.OutgoingHttpHeaders {
+  const outgoing: http.OutgoingHttpHeaders = {};
+
+  for (const [key, value] of Object.entries(headers)) {
+    if (value === undefined || ROUTE_PROXY_BLOCKED_RESPONSE_HEADERS.has(key.toLowerCase())) {
+      continue;
+    }
+    outgoing[key] = value;
+  }
+
+  return outgoing;
 }
 
 function buildStreamingResponseHeaders(
   headers: http.IncomingHttpHeaders
 ): http.OutgoingHttpHeaders {
-  const outgoing: http.OutgoingHttpHeaders = {};
-  const blocked = new Set([
-    'connection',
-    'content-encoding',
-    'content-length',
-    'keep-alive',
-    'proxy-authenticate',
-    'proxy-authorization',
-    'te',
-    'trailer',
-    'transfer-encoding',
-    'upgrade',
-  ]);
+  return buildRouteProxyResponseHeaders(headers);
+}
 
-  for (const [key, value] of Object.entries(headers)) {
-    if (value === undefined || blocked.has(key.toLowerCase())) continue;
-    outgoing[key] = value;
-  }
-
-  return outgoing;
+function buildBufferedResponseHeaders(
+  headers: http.IncomingHttpHeaders,
+  body: Buffer
+): http.OutgoingHttpHeaders {
+  return {
+    ...buildRouteProxyResponseHeaders(headers),
+    'content-length': String(body.length),
+  };
 }
 
 type InitialEventStreamValidation =
@@ -547,12 +597,18 @@ type InitialEventStreamValidation =
   | { status: 'pending' }
   | { status: 'rejected'; reason: string };
 
-type StreamingTerminalProtocol = 'anthropic' | 'openaiResponses' | 'none';
+type StreamingTerminalProtocol = 'anthropic' | 'openaiChat' | 'openaiResponses' | 'none';
 type CompletedStreamValidation = { ok: true } | { ok: false; reason: string; message: string };
 
 interface ParsedSseBlock {
   event?: string;
   data: string;
+}
+
+interface AnthropicSseCompatibilityNormalizerState {
+  buffer: string;
+  openBlocks: Map<number, { type: string }>;
+  completedToolBlocks: number;
 }
 
 function validateInitialEventStreamChunk(buffer: Buffer): InitialEventStreamValidation {
@@ -591,9 +647,18 @@ function validateInitialEventStreamChunk(buffer: Buffer): InitialEventStreamVali
     : { status: 'pending' };
 }
 
-function getStreamingTerminalProtocol(cliType: RouteCliType): StreamingTerminalProtocol {
+function getStreamingTerminalProtocol(
+  cliType: RouteCliType,
+  requestUrl?: string
+): StreamingTerminalProtocol {
   if (cliType === 'claudeCode') return 'anthropic';
   if (cliType === 'codex') return 'openaiResponses';
+  if (cliType === 'openCode') {
+    const sourceProtocol = inferOpenCodeSourceProtocol(requestUrl);
+    if (sourceProtocol === 'anthropic-messages') return 'anthropic';
+    if (sourceProtocol === 'openai-responses') return 'openaiResponses';
+    return 'openaiChat';
+  }
   return 'none';
 }
 
@@ -617,6 +682,10 @@ function hasStreamingTerminalMarker(protocol: StreamingTerminalProtocol, text: s
 
   if (protocol === 'anthropic') {
     return /event:\s*message_stop/.test(text) || /"type"\s*:\s*"message_stop"/.test(text);
+  }
+
+  if (protocol === 'openaiChat') {
+    return /data:\s*\[DONE\]/.test(text);
   }
 
   return (
@@ -677,6 +746,120 @@ function parseSseBlocks(text: string): ParsedSseBlock[] {
   }
 
   return blocks;
+}
+
+function createAnthropicSseCompatibilityNormalizer(): AnthropicSseCompatibilityNormalizerState {
+  return {
+    buffer: '',
+    openBlocks: new Map(),
+    completedToolBlocks: 0,
+  };
+}
+
+function splitCompleteSseBlocks(text: string): { blocks: string[]; rest: string } {
+  const blocks: string[] = [];
+  let cursor = 0;
+  const separatorPattern = /\n\n+/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = separatorPattern.exec(text))) {
+    const end = match.index + match[0].length;
+    blocks.push(text.slice(cursor, end));
+    cursor = end;
+  }
+
+  return { blocks, rest: text.slice(cursor) };
+}
+
+function serializeSseBlock(event: string | undefined, data: string): string {
+  return `${event ? `event: ${event}\n` : ''}data: ${data}\n\n`;
+}
+
+function normalizeAnthropicSseCompatibilityBlock(
+  state: AnthropicSseCompatibilityNormalizerState,
+  rawBlock: string
+): string {
+  const blocks = parseSseBlocks(rawBlock);
+  if (blocks.length !== 1 || !blocks[0].data || blocks[0].data === '[DONE]') {
+    return rawBlock;
+  }
+
+  const block = blocks[0];
+  const payload = parseSseJsonRecord(block.data);
+  if (!payload) {
+    return rawBlock;
+  }
+
+  const payloadType = readString(payload.type);
+  const eventType = payloadType || block.event || '';
+
+  if (eventType === 'content_block_start') {
+    const index = readNumericIndex(payload.index);
+    const contentBlock = asRecord(payload.content_block);
+    const blockType = readString(contentBlock?.type);
+    if (index !== undefined && blockType && !state.openBlocks.has(index)) {
+      state.openBlocks.set(index, { type: blockType });
+    }
+    return rawBlock;
+  }
+
+  if (eventType === 'content_block_stop') {
+    const index = readNumericIndex(payload.index);
+    const blockState = index === undefined ? undefined : state.openBlocks.get(index);
+    if (blockState?.type === 'tool_use') {
+      state.completedToolBlocks += 1;
+    }
+    if (index !== undefined) {
+      state.openBlocks.delete(index);
+    }
+    return rawBlock;
+  }
+
+  if (eventType !== 'message_delta' || state.completedToolBlocks === 0) {
+    return rawBlock;
+  }
+
+  const delta = asRecord(payload.delta);
+  if (readString(delta?.stop_reason) !== 'end_turn') {
+    return rawBlock;
+  }
+
+  return serializeSseBlock(
+    block.event,
+    JSON.stringify({
+      ...payload,
+      delta: {
+        ...delta,
+        stop_reason: 'tool_use',
+      },
+    })
+  );
+}
+
+function normalizeAnthropicSseCompatibilityChunk(
+  state: AnthropicSseCompatibilityNormalizerState,
+  chunk: Buffer
+): Buffer {
+  const normalized = `${state.buffer}${chunk.toString('utf-8')}`.replace(/\r\n/g, '\n');
+  const { blocks, rest } = splitCompleteSseBlocks(normalized);
+  state.buffer = rest;
+  return Buffer.from(
+    blocks.map(block => normalizeAnthropicSseCompatibilityBlock(state, block)).join(''),
+    'utf-8'
+  );
+}
+
+function flushAnthropicSseCompatibilityNormalizer(
+  state: AnthropicSseCompatibilityNormalizerState
+): Buffer {
+  if (!state.buffer.trim()) {
+    state.buffer = '';
+    return Buffer.alloc(0);
+  }
+
+  const tail = state.buffer.endsWith('\n\n') ? state.buffer : `${state.buffer}\n\n`;
+  state.buffer = '';
+  return Buffer.from(normalizeAnthropicSseCompatibilityBlock(state, tail), 'utf-8');
 }
 
 function parseSseJsonRecord(data: string): Record<string, unknown> | undefined {
@@ -834,6 +1017,70 @@ function validateCompletedOpenAiResponsesStream(body: Buffer): CompletedStreamVa
     return buildCompletedStreamFailure(
       'empty_response',
       'upstream ended Codex stream without assistant text, function_call, or tool output content'
+    );
+  }
+
+  return { ok: true };
+}
+
+function validateCompletedOpenAiChatStream(body: Buffer): CompletedStreamValidation {
+  let sawDone = false;
+  let textLength = 0;
+  let toolItems = 0;
+  let explicitZeroUsage = false;
+
+  for (const block of parseSseBlocks(body.toString('utf-8'))) {
+    if (!block.data) {
+      continue;
+    }
+
+    if (block.data === '[DONE]') {
+      sawDone = true;
+      continue;
+    }
+
+    const payload = parseSseJsonRecord(block.data);
+    if (!payload) {
+      return buildCompletedStreamFailure(
+        'malformed_sse_json',
+        'upstream emitted malformed OpenAI Chat Completions SSE JSON'
+      );
+    }
+
+    const choices = Array.isArray(payload.choices) ? payload.choices : [];
+    for (const rawChoice of choices) {
+      const choice = asRecord(rawChoice);
+      const delta = asRecord(choice?.delta);
+      const message = asRecord(choice?.message);
+      textLength += readString(delta?.content).length + readString(message?.content).length;
+      const deltaToolCalls = Array.isArray(delta?.tool_calls) ? delta.tool_calls : [];
+      const messageToolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+      toolItems += deltaToolCalls.length + messageToolCalls.length;
+    }
+
+    if (hasOnlyZeroUsageTokens(asRecord(payload.usage))) {
+      explicitZeroUsage = true;
+    }
+  }
+
+  if (!sawDone) {
+    return buildCompletedStreamFailure(
+      'missing_chat_done',
+      'upstream ended OpenAI Chat Completions stream without [DONE]'
+    );
+  }
+
+  if (explicitZeroUsage) {
+    return buildCompletedStreamFailure(
+      'empty_response_zero_usage',
+      'upstream ended OpenAI Chat Completions stream with all-zero usage'
+    );
+  }
+
+  if (textLength === 0 && toolItems === 0) {
+    return buildCompletedStreamFailure(
+      'empty_response',
+      'upstream ended OpenAI Chat Completions stream without assistant text or tool call content'
     );
   }
 
@@ -1061,6 +1308,10 @@ function validateCompletedStreamingBody(
 ): CompletedStreamValidation {
   if (protocol === 'anthropic') {
     return validateCompletedAnthropicStream(body);
+  }
+
+  if (protocol === 'openaiChat') {
+    return validateCompletedOpenAiChatStream(body);
   }
 
   if (protocol === 'openaiResponses') {
@@ -1328,6 +1579,15 @@ const TRANSIENT_UPSTREAM_STATUS_CODES = new Set([
   408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527, 529, 530,
 ]);
 
+type UpstreamAuthScheme = 'native' | 'bearer';
+const SENSENOVA_UPSTREAM_HOST = 'token.sensenova.cn';
+
+function resolveUpstreamAuthScheme(targetBaseUrl: string): UpstreamAuthScheme {
+  return new URL(targetBaseUrl).hostname.toLowerCase() === SENSENOVA_UPSTREAM_HOST
+    ? 'bearer'
+    : 'native';
+}
+
 export function isTransientUpstreamStatus(statusCode?: number): boolean {
   return typeof statusCode === 'number' && TRANSIENT_UPSTREAM_STATUS_CODES.has(statusCode);
 }
@@ -1337,7 +1597,8 @@ export function buildUpstreamHeaders(
   targetHost: string,
   bodyLength: number,
   apiKey: string,
-  cliType: RouteCliType
+  cliType: RouteCliType,
+  authScheme: UpstreamAuthScheme = 'native'
 ): Record<string, string | string[] | undefined> {
   const forwardHeaders: Record<string, string | string[] | undefined> = {
     ...incomingHeaders,
@@ -1347,12 +1608,12 @@ export function buildUpstreamHeaders(
 
   deleteAuthHeaders(forwardHeaders);
 
-  if (cliType === 'claudeCode') {
-    forwardHeaders['x-api-key'] = apiKey;
-  } else if (cliType === 'codex') {
+  if (authScheme === 'bearer') {
     forwardHeaders.authorization = `Bearer ${apiKey}`;
-  } else if (cliType === 'geminiCli') {
-    forwardHeaders['x-goog-api-key'] = apiKey;
+  } else if (cliType === 'claudeCode') {
+    forwardHeaders['x-api-key'] = apiKey;
+  } else if (cliType === 'codex' || cliType === 'openCode') {
+    forwardHeaders.authorization = `Bearer ${apiKey}`;
   }
 
   return forwardHeaders;
@@ -1366,10 +1627,10 @@ export function buildUpstreamRequestUrl(
   apiKey: string
 ): { url: string; host: string } {
   const target = new URL(targetBaseUrl);
-  const targetPath =
-    cliType === 'geminiCli'
-      ? buildGeminiUpstreamPath(requestUrl || '/', upstreamModel, apiKey)
-      : requestUrl || '/';
+  void cliType;
+  void upstreamModel;
+  void apiKey;
+  const targetPath = requestUrl || '/';
   const upstreamUrl = new URL(targetPath, `${target.protocol}//${target.host}`);
 
   return {
@@ -1914,9 +2175,10 @@ async function forwardToUpstream(
 }> {
   const startTime = Date.now();
   const upstreamCliType = options.upstreamCliType ?? cliType;
+  const requestUrl = options.requestUrlOverride ?? req.url;
   const target = buildUpstreamRequestUrl(
     targetBaseUrl,
-    options.requestUrlOverride ?? req.url,
+    requestUrl,
     upstreamCliType,
     upstreamModel,
     apiKey
@@ -1926,7 +2188,8 @@ async function forwardToUpstream(
     target.host,
     bodyBuffer.length,
     apiKey,
-    upstreamCliType
+    upstreamCliType,
+    resolveUpstreamAuthScheme(targetBaseUrl)
   );
 
   // 合并额外的请求头（如 AnyRouter 改写添加的 anthropic-beta）
@@ -1951,9 +2214,82 @@ async function forwardToUpstream(
   let initialStreamingBuffer = Buffer.alloc(0);
   let pendingStreamingChunks: Buffer[] = [];
   const receivedStreamingChunks: Buffer[] = [];
-  const streamingTerminalProtocol = getStreamingTerminalProtocol(cliType);
+  const streamingTerminalProtocol = getStreamingTerminalProtocol(cliType, requestUrl);
+  const anthropicStreamNormalizer =
+    streamingTerminalProtocol === 'anthropic' ? createAnthropicSseCompatibilityNormalizer() : null;
   let streamingTerminalScanText = '';
   let streamingTerminalSeen = streamingTerminalProtocol === 'none';
+
+  const processStreamingOutgoingChunk = async (outgoingChunk: Buffer): Promise<void> => {
+    if (!streamingStatusCode || !streamingHeaders || !outgoingChunk.length) return;
+    receivedStreamingChunks.push(outgoingChunk);
+
+    if (streamingTerminalProtocol === 'anthropic' && !streamingTerminalSeen) {
+      const terminalScan = appendStreamingTerminalScanText(
+        streamingTerminalProtocol,
+        streamingTerminalScanText,
+        outgoingChunk
+      );
+      streamingTerminalScanText = terminalScan.text;
+      if (terminalScan.terminalSeen) {
+        const receivedBody = Buffer.concat(receivedStreamingChunks);
+        if (hasAnthropicMessageStop(receivedBody)) {
+          streamingTerminalSeen = true;
+          const completedValidation = validateCompletedStreamingBody(
+            streamingTerminalProtocol,
+            receivedBody
+          );
+          if (!completedValidation.ok) {
+            if (streamed) {
+              await writeResponseChunk(
+                options.streamResponse!,
+                buildMalformedStreamingErrorChunk(cliType, completedValidation.message)
+              );
+            }
+            throw new Error(`malformed_streaming_response:${completedValidation.reason}`);
+          }
+        }
+      }
+    } else if (!streamingTerminalSeen) {
+      const terminalScan = appendStreamingTerminalScanText(
+        streamingTerminalProtocol,
+        streamingTerminalScanText,
+        outgoingChunk
+      );
+      streamingTerminalScanText = terminalScan.text;
+      streamingTerminalSeen = terminalScan.terminalSeen;
+    }
+
+    if (!streamed) {
+      pendingStreamingChunks.push(outgoingChunk);
+      initialStreamingBuffer = Buffer.concat([
+        initialStreamingBuffer,
+        outgoingChunk.subarray(
+          0,
+          Math.max(0, INITIAL_STREAM_VALIDATION_MAX_BYTES + 1 - initialStreamingBuffer.length)
+        ),
+      ]);
+      const validation = validateInitialEventStreamChunk(initialStreamingBuffer);
+      if (validation.status === 'rejected') {
+        throw new Error(`invalid_streaming_response:${validation.reason}`);
+      }
+      if (validation.status === 'pending') {
+        return;
+      }
+
+      streamed = true;
+      options.streamResponse!.writeHead(streamingStatusCode, streamingHeaders);
+      const chunksToWrite = pendingStreamingChunks;
+      pendingStreamingChunks = [];
+      for (const pendingChunk of chunksToWrite) {
+        await writeResponseChunk(options.streamResponse!, pendingChunk);
+      }
+      return;
+    }
+
+    await writeResponseChunk(options.streamResponse!, outgoingChunk);
+  };
+
   const response =
     options.streamResponse && options.streamResponseBody
       ? await httpRawStreamRequest(target.url, {
@@ -1972,78 +2308,20 @@ async function forwardToUpstream(
           },
           onChunk: async chunk => {
             if (!streamingStatusCode || !streamingHeaders) return;
-            receivedStreamingChunks.push(chunk);
-
-            if (streamingTerminalProtocol === 'anthropic' && !streamingTerminalSeen) {
-              const terminalScan = appendStreamingTerminalScanText(
-                streamingTerminalProtocol,
-                streamingTerminalScanText,
-                chunk
-              );
-              streamingTerminalScanText = terminalScan.text;
-              if (terminalScan.terminalSeen) {
-                const receivedBody = Buffer.concat(receivedStreamingChunks);
-                if (hasAnthropicMessageStop(receivedBody)) {
-                  streamingTerminalSeen = true;
-                  const completedValidation = validateCompletedStreamingBody(
-                    streamingTerminalProtocol,
-                    receivedBody
-                  );
-                  if (!completedValidation.ok) {
-                    if (streamed) {
-                      await writeResponseChunk(
-                        options.streamResponse!,
-                        buildMalformedStreamingErrorChunk(cliType, completedValidation.message)
-                      );
-                    }
-                    throw new Error(`malformed_streaming_response:${completedValidation.reason}`);
-                  }
-                }
-              }
-            } else if (!streamingTerminalSeen) {
-              const terminalScan = appendStreamingTerminalScanText(
-                streamingTerminalProtocol,
-                streamingTerminalScanText,
-                chunk
-              );
-              streamingTerminalScanText = terminalScan.text;
-              streamingTerminalSeen = terminalScan.terminalSeen;
-            }
-
-            if (!streamed) {
-              pendingStreamingChunks.push(chunk);
-              initialStreamingBuffer = Buffer.concat([
-                initialStreamingBuffer,
-                chunk.subarray(
-                  0,
-                  Math.max(
-                    0,
-                    INITIAL_STREAM_VALIDATION_MAX_BYTES + 1 - initialStreamingBuffer.length
-                  )
-                ),
-              ]);
-              const validation = validateInitialEventStreamChunk(initialStreamingBuffer);
-              if (validation.status === 'rejected') {
-                throw new Error(`invalid_streaming_response:${validation.reason}`);
-              }
-              if (validation.status === 'pending') {
-                return;
-              }
-
-              streamed = true;
-              options.streamResponse!.writeHead(streamingStatusCode, streamingHeaders);
-              const chunksToWrite = pendingStreamingChunks;
-              pendingStreamingChunks = [];
-              for (const pendingChunk of chunksToWrite) {
-                await writeResponseChunk(options.streamResponse!, pendingChunk);
-              }
-              return;
-            }
-            return writeResponseChunk(options.streamResponse!, chunk);
+            const outgoingChunk = anthropicStreamNormalizer
+              ? normalizeAnthropicSseCompatibilityChunk(anthropicStreamNormalizer, chunk)
+              : chunk;
+            return processStreamingOutgoingChunk(outgoingChunk);
           },
           streamIdleTimeout: options.streamIdleTimeoutMs,
         })
       : await httpRawRequest(target.url, requestConfig);
+
+  if (options.streamResponse && options.streamResponseBody && anthropicStreamNormalizer) {
+    await processStreamingOutgoingChunk(
+      flushAnthropicSseCompatibilityNormalizer(anthropicStreamNormalizer)
+    );
+  }
 
   if (
     options.streamResponse &&
@@ -2075,7 +2353,7 @@ async function forwardToUpstream(
   if (options.streamResponse && options.streamResponseBody && streamed) {
     const completedValidation = validateCompletedStreamingBody(
       streamingTerminalProtocol,
-      response.body
+      Buffer.concat(receivedStreamingChunks)
     );
     if (!completedValidation.ok) {
       await writeResponseChunk(
@@ -2116,16 +2394,6 @@ function buildAllRoutePathsDisabledErrorBody(cliType: RouteCliType): unknown {
     };
   }
 
-  if (cliType === 'geminiCli') {
-    return {
-      error: {
-        code: ALL_ROUTE_PATHS_DISABLED_STATUS_CODE,
-        message: ALL_ROUTE_PATHS_DISABLED_MESSAGE,
-        status: 'FAILED_PRECONDITION',
-      },
-    };
-  }
-
   return {
     error: {
       message: ALL_ROUTE_PATHS_DISABLED_MESSAGE,
@@ -2142,43 +2410,6 @@ function writeAllRoutePathsDisabledResponse(res: http.ServerResponse, cliType: R
     'X-Route-Proxy-Error': ALL_ROUTE_PATHS_DISABLED_ERROR_CODE,
   });
   res.end(JSON.stringify(buildAllRoutePathsDisabledErrorBody(cliType)));
-}
-
-function shouldBlockGeminiCliInternalUtilityRequest(params: {
-  routing: RoutingConfig;
-  cliType: RouteCliType;
-  rawModel: string | null;
-  cliSelectedModel: string | null;
-}): boolean {
-  if (params.routing.server.blockGeminiCliInternalUtilityRequests === false) return false;
-  if (params.cliType !== 'geminiCli') return false;
-  if (!params.rawModel || !params.cliSelectedModel) return false;
-  if (params.rawModel === params.cliSelectedModel) return false;
-
-  return GEMINI_CLI_INTERNAL_UTILITY_MODELS.has(params.rawModel);
-}
-
-function buildGeminiCliInternalUtilityBlockedBody(rawModel: string | null): unknown {
-  return {
-    error: {
-      code: GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_STATUS_CODE,
-      status: 'FAILED_PRECONDITION',
-      message: `${GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_ERROR_CODE}: blocked Gemini CLI internal utility model request${
-        rawModel ? ` for ${rawModel}` : ''
-      }. Add an explicit routing rule for this model or disable the route proxy guard to allow it.`,
-    },
-  };
-}
-
-function writeGeminiCliInternalUtilityBlockedResponse(
-  res: http.ServerResponse,
-  rawModel: string | null
-): void {
-  res.writeHead(GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_STATUS_CODE, {
-    'Content-Type': 'application/json',
-    'X-Route-Proxy-Error': GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_ERROR_CODE,
-  });
-  res.end(JSON.stringify(buildGeminiCliInternalUtilityBlockedBody(rawModel)));
 }
 
 export async function handleRequest(
@@ -2219,7 +2450,10 @@ export async function handleRequest(
 
   // 识别 CLI 类型
   const pathname = (req.url || '/').split('?')[0];
-  const cliType = detectCliTypeFromPath(pathname);
+  let cliType = detectCliTypeFromPath(pathname);
+  if (cliType !== 'openCode' && cliType && isLikelyOpenCodeRequest(req)) {
+    cliType = 'openCode';
+  }
   if (!cliType) {
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(
@@ -2233,6 +2467,9 @@ export async function handleRequest(
   const probeLock = parseProbeLockRouteApiKey(token, routing.server.unifiedApiKey);
   if (probeLock) {
     notifyRouteProbeLockRequest(token);
+    if (probeLock.cliType === 'openCode') {
+      cliType = 'openCode';
+    }
   }
   if (token !== routing.server.unifiedApiKey && !probeLock) {
     notifyProbeLockTerminalFailure({
@@ -2285,6 +2522,12 @@ export async function handleRequest(
     );
     return;
   }
+  const openCodeSourceProtocol =
+    cliType === 'openCode' ? inferOpenCodeSourceProtocol(req.url) : undefined;
+  const openCodeRouteProtocol =
+    cliType === 'openCode'
+      ? normalizeOpenCodeRouteProtocol(routing.openCodeRouteProtocol)
+      : undefined;
   const previousTerminalFailure = probeLock ? getRouteProbeLockTerminalFailure(token) : undefined;
   if (previousTerminalFailure) {
     log.warn('Probe-lock request blocked after terminal upstream failure', {
@@ -2319,26 +2562,6 @@ export async function handleRequest(
     /* ignore */
   }
   const rawModel = extractModelFromBody(bodyJson) || extractModelFromPath(pathname, cliType);
-  if (
-    probeLock &&
-    shouldBlockGeminiCliInternalUtilityRequest({
-      routing,
-      cliType,
-      rawModel,
-      cliSelectedModel: probeLock.rawModel,
-    })
-  ) {
-    log.warn('Probe-lock Gemini internal utility request blocked before upstream forwarding', {
-      cliType,
-      siteId: probeLock.siteId,
-      accountId: probeLock.accountId,
-      apiKeyId: probeLock.apiKeyId,
-      rawModel,
-      lockedModel: probeLock.rawModel,
-    });
-    writeGeminiCliInternalUtilityBlockedResponse(res, rawModel);
-    return;
-  }
 
   // 解析 canonical model（代理层无 site 上下文，使用全局 alias 索引）。
   // 普通本地路由请求以应用中对应 CLI 选择的模型作为路由意图；外部 CLI 配置/请求模型仅保留为诊断 requestedModel。
@@ -2354,75 +2577,26 @@ export async function handleRequest(
   if (probeLock) {
     canonicalModel = probeLock.canonicalModel;
     routeRuntimeConfig = resolveRouteRuntimeConfig(routing, canonicalModel);
-    sortedChannels = await resolveChannelTargets([
-      {
-        routeRuleId: '__probe_lock__',
-        siteId: probeLock.siteId,
-        accountId: probeLock.accountId,
-        apiKeyId: probeLock.apiKeyId,
-        cliType,
-        canonicalModel: probeLock.canonicalModel,
-        resolvedModel: probeLock.rawModel,
-        targetProtocol: probeLock.targetProtocol,
-      },
-    ]);
+    sortedChannels = (
+      await resolveChannelTargets([
+        {
+          routeRuleId: '__probe_lock__',
+          siteId: probeLock.siteId,
+          accountId: probeLock.accountId,
+          apiKeyId: probeLock.apiKeyId,
+          cliType,
+          canonicalModel: probeLock.canonicalModel,
+          resolvedModel: probeLock.rawModel,
+          targetProtocol: probeLock.targetProtocol,
+        },
+      ])
+    ).map(channel => resolveEffectiveRouteChannel(channel, cliType, openCodeRouteProtocol));
   } else {
     // 规则匹配只看 canonical model；若当前请求尚未建立 canonical，则退化为 raw。
     // canonicalModel 已优先采用应用内 CLI 选择模型，因此本地路由不再依赖外部 CLI 配置模型。
     const sortedRules = sortRules(routing.rules);
-    const shouldBlockGeminiUtility = shouldBlockGeminiCliInternalUtilityRequest({
-      routing,
-      cliType,
-      rawModel,
-      cliSelectedModel,
-    });
-    let explicitGeminiUtilityRule = null as ReturnType<typeof findMatchingRule>;
-    if (shouldBlockGeminiUtility) {
-      // Preserve the existing billing guard: app-selected model fallback/override must not turn
-      // known Gemini CLI internal utility/fallback models into billable upstream chat requests.
-      // An explicit rule for the observed raw utility model still opts into forwarding it.
-      explicitGeminiUtilityRule = findMatchingRule(
-        sortedRules,
-        cliType,
-        rawCanonicalModel || rawModel
-      );
-      if (!explicitGeminiUtilityRule) {
-        recordRouteRequest({
-          requestId,
-          attempt: 0,
-          cliType,
-          requestedModel: rawModel,
-          canonicalModel,
-          outcome: 'failure',
-          statusCode: GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_STATUS_CODE,
-          error: GEMINI_CLI_INTERNAL_UTILITY_BLOCKED_ERROR_CODE,
-        });
-        writeGeminiCliInternalUtilityBlockedResponse(res, rawModel);
-        return;
-      }
-    }
-    let matchModel = canonicalModel || rawModel;
-    let rule = explicitGeminiUtilityRule || findMatchingRule(sortedRules, cliType, matchModel);
-    if (explicitGeminiUtilityRule) {
-      canonicalModel = rawCanonicalModel;
-      matchModel = rawCanonicalModel || rawModel;
-    }
-
-    // Gemini CLI can emit helper/default path models that differ from the app-selected model.
-    if (
-      !rule &&
-      cliType === 'geminiCli' &&
-      rawModel &&
-      cliSelectedModel &&
-      cliSelectedModel !== matchModel
-    ) {
-      const selectedModelRule = findMatchingRule(sortedRules, cliType, cliSelectedModel);
-      if (selectedModelRule) {
-        canonicalModel = cliSelectedModel;
-        matchModel = cliSelectedModel;
-        rule = selectedModelRule;
-      }
-    }
+    const matchModel = canonicalModel || rawModel;
+    const rule = findMatchingRule(sortedRules, cliType, matchModel);
 
     if (!rule) {
       recordRouteRequest({
@@ -2470,11 +2644,12 @@ export async function handleRequest(
     routeRuntimeConfig = resolveRouteRuntimeConfig(routing, canonicalModel);
     const enabledChannels = filterChannelsByPriorityConfig(channels, routing, canonicalModel);
     const resolvedChannels = await resolveChannelTargets(enabledChannels);
+    const attemptPlan = buildChannelAttemptPlan(
+      sortChannelsByScore(resolvedChannels),
+      routeRuntimeConfig.maxAttemptsPerRoutePath
+    ).map(channel => resolveEffectiveRouteChannel(channel, cliType, openCodeRouteProtocol));
     sortedChannels = applySuccessfulRoutePathAffinity(
-      buildChannelAttemptPlan(
-        sortChannelsByScore(resolvedChannels),
-        routeRuntimeConfig.maxAttemptsPerRoutePath
-      ).filter(channel => !isRoutePathDisabled(channel)) as ResolvedChannel[],
+      attemptPlan.filter(channel => !isRoutePathDisabled(channel)) as ResolvedChannel[],
       routing.routePathStates
     );
     if (sortedChannels.length === 0) {
@@ -2623,8 +2798,30 @@ export async function handleRequest(
     let requestUrlOverride: string | undefined;
     let upstreamCliType: RouteCliType = cliType;
     let responseAdapter: AnyRouterResponseAdapter = { type: 'transparent' };
-    let protocolResponseAdapter: CliProtocolResponseAdapter = { type: 'transparent' };
+    const protocolResponseAdapters: CliProtocolResponseAdapter[] = [];
+    const applyProtocolRewrite = (
+      targetProtocol: ConcreteCliTargetProtocol,
+      sourceProtocol?: ConcreteCliTargetProtocol
+    ) => {
+      const rewritten = adaptRequestToTargetProtocol(
+        finalBody,
+        cliType,
+        targetProtocol,
+        requestUrlOverride ?? req.url,
+        activeChannel.resolvedModel,
+        sourceProtocol
+      );
+
+      finalBody = rewritten.body;
+      additionalHeaders = { ...additionalHeaders, ...rewritten.headers };
+      methodOverride = rewritten.upstreamMethod;
+      requestUrlOverride = rewritten.upstreamPath;
+      upstreamCliType = rewritten.upstreamCliType;
+      protocolResponseAdapters.push(rewritten.responseAdapter);
+    };
+
     if (
+      cliType !== 'openCode' &&
       !requestIsClaudeCountTokens &&
       site &&
       account &&
@@ -2651,27 +2848,35 @@ export async function handleRequest(
       requestUrlOverride = rewritten.upstreamPath;
       upstreamCliType = rewritten.upstreamCliType;
       responseAdapter = rewritten.responseAdapter;
-    } else if (
-      !isCliTargetProtocolNativeEquivalent(cliType, activeChannel.targetProtocol ?? 'native')
-    ) {
+    } else {
       try {
-        const rewritten = adaptRequestToTargetProtocol(
-          finalBody,
-          cliType,
-          activeChannel.targetProtocol as Exclude<
-            typeof activeChannel.targetProtocol,
-            'native' | undefined
-          >,
-          req.url,
-          activeChannel.resolvedModel
-        );
+        if (cliType === 'openCode' && openCodeSourceProtocol && openCodeRouteProtocol) {
+          const openCodeUpstreamProtocol = resolveOpenCodeUpstreamProtocol(
+            activeChannel.targetProtocol,
+            openCodeRouteProtocol
+          );
 
-        finalBody = rewritten.body;
-        additionalHeaders = rewritten.headers;
-        methodOverride = rewritten.upstreamMethod;
-        requestUrlOverride = rewritten.upstreamPath;
-        upstreamCliType = rewritten.upstreamCliType;
-        protocolResponseAdapter = rewritten.responseAdapter;
+          if (openCodeSourceProtocol !== openCodeRouteProtocol) {
+            applyProtocolRewrite(openCodeRouteProtocol, openCodeSourceProtocol);
+          }
+
+          if (openCodeRouteProtocol !== openCodeUpstreamProtocol) {
+            applyProtocolRewrite(openCodeUpstreamProtocol, openCodeRouteProtocol);
+          }
+
+          if (protocolResponseAdapters.length === 0) {
+            upstreamCliType = getUpstreamCliTypeForProtocol(openCodeUpstreamProtocol);
+          }
+        } else if (
+          !isCliTargetProtocolNativeEquivalent(cliType, activeChannel.targetProtocol ?? 'native')
+        ) {
+          applyProtocolRewrite(
+            activeChannel.targetProtocol as Exclude<
+              typeof activeChannel.targetProtocol,
+              'native' | undefined
+            >
+          );
+        }
       } catch (err: unknown) {
         const isAdapterError = err instanceof CliProtocolAdapterError;
         const stage = isAdapterError ? err.stage : 'request-adapt';
@@ -2726,13 +2931,22 @@ export async function handleRequest(
             routeRuntimeConfig
           );
         }
+        if (!bypassRoutePathState && areAllRoutePathsDisabled(sortedChannels)) {
+          writeAllRoutePathsDisabledResponse(res, cliType);
+          return;
+        }
+
         continue;
+        if (!bypassRoutePathState && areAllRoutePathsDisabled(sortedChannels)) {
+          writeAllRoutePathsDisabledResponse(res, cliType);
+          return;
+        }
       }
     }
 
     const attemptStartedAt = Date.now();
     const streamResponseBody =
-      requestWantsStreaming && canStreamResponseAdapters(responseAdapter, protocolResponseAdapter);
+      requestWantsStreaming && canStreamResponseAdapters(responseAdapter, protocolResponseAdapters);
 
     // probe-lock 上游预算：按"终结结果"计，瞬时错误在上限内不消耗预算。
     let probeLockIsFinalAttempt = false;
@@ -2924,11 +3138,6 @@ export async function handleRequest(
           resolvedModel: activeChannel.resolvedModel,
         });
 
-        if (!bypassRoutePathState && areAllRoutePathsDisabled(sortedChannels)) {
-          writeAllRoutePathsDisabledResponse(res, cliType);
-          return;
-        }
-
         continue;
       }
 
@@ -3024,7 +3233,10 @@ export async function handleRequest(
               terminal: false,
             });
             if (!res.headersSent) {
-              res.writeHead(result.statusCode, buildStreamingResponseHeaders(result.headers));
+              res.writeHead(
+                result.statusCode,
+                buildBufferedResponseHeaders(result.headers, result.body)
+              );
             }
             if (!res.writableEnded) {
               res.end(result.body);
@@ -3062,11 +3274,6 @@ export async function handleRequest(
           log.warn(`Channel failed (${result.statusCode}), trying next channel`);
           continue;
         }
-
-        if (!bypassRoutePathState && areAllRoutePathsDisabled(sortedChannels)) {
-          writeAllRoutePathsDisabledResponse(res, cliType);
-          return;
-        }
       }
 
       if (result.streamed) {
@@ -3094,14 +3301,19 @@ export async function handleRequest(
         statusCode: result.statusCode,
         adapter: responseAdapter,
       });
-      let transformed: { body: Buffer; headers: http.IncomingHttpHeaders };
+      let transformed: { body: Buffer; headers: http.IncomingHttpHeaders } = {
+        body: anyRouterTransformed.body,
+        headers: anyRouterTransformed.headers,
+      };
       try {
-        transformed = transformTargetProtocolResponse({
-          body: anyRouterTransformed.body,
-          headers: anyRouterTransformed.headers,
-          statusCode: result.statusCode,
-          adapter: protocolResponseAdapter,
-        });
+        for (const adapter of [...protocolResponseAdapters].reverse()) {
+          transformed = transformTargetProtocolResponse({
+            body: transformed.body,
+            headers: transformed.headers,
+            statusCode: result.statusCode,
+            adapter,
+          });
+        }
       } catch (err: unknown) {
         const isAdapterError = err instanceof CliProtocolAdapterError;
         const reason = isAdapterError
@@ -3165,7 +3377,10 @@ export async function handleRequest(
           body: transformed.body,
         });
       }
-      res.writeHead(result.statusCode, transformed.headers);
+      res.writeHead(
+        result.statusCode,
+        buildBufferedResponseHeaders(transformed.headers, transformed.body)
+      );
       res.end(transformed.body);
       return;
     } catch (err: unknown) {

@@ -79,10 +79,6 @@ export function SiteCardActions({
   onCheckIn,
   onOpenExtraLink,
 }: SiteCardActionsProps) {
-  if (accessPointType === 'custom-cli') {
-    return <div className="ml-1 w-[48px] shrink-0" aria-hidden="true" />;
-  }
-
   return (
     <div className="ml-1 flex shrink-0 items-center gap-0.5">
       {site.extra_links && (
@@ -99,7 +95,7 @@ export function SiteCardActions({
         </button>
       )}
 
-      {(site.force_enable_checkin || siteResult?.has_checkin) && (
+      {accessPointType === 'managed' && (site.force_enable_checkin || siteResult?.has_checkin) && (
         <>
           {(() => {
             const isToday = siteResult?.lastRefresh
@@ -156,8 +152,8 @@ export function SiteCardActions({
         }}
         disabled={isDetecting}
         className="rounded-[var(--radius-sm)] p-[3px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--accent-soft)] hover:text-[var(--accent)] disabled:opacity-50"
-        title="刷新检测"
-        aria-label="刷新检测"
+        title={accessPointType === 'custom-cli' ? '刷新模型' : '刷新检测'}
+        aria-label={accessPointType === 'custom-cli' ? '刷新模型' : '刷新检测'}
       >
         <RefreshCw className={`w-3.5 h-3.5 ${isDetecting ? 'animate-spin' : ''}`} strokeWidth={2} />
       </button>

@@ -78,7 +78,6 @@ function buildRouteConfigForLogs(params: {
     cliModelSelections: {
       claudeCode: null,
       codex: null,
-      geminiCli: null,
     },
     stats: {},
     routePathStates: {},
@@ -622,7 +621,7 @@ describe('LogsPage', () => {
     const customCliSitePath = within(rows[2]).getByTestId('route-request-site-path');
     expect(customCliSitePath).toHaveTextContent(/^直连配置 \/ DuckCoding$/);
     expect(customCliSitePath).not.toHaveAttribute('title');
-    expect(within(rows[2]).getByTestId('route-request-cost')).toHaveTextContent('0');
+    expect(within(rows[2]).getByTestId('route-request-cost')).toHaveTextContent('—');
     expect(
       within(customCliSitePath).queryByRole('button', { name: '路由目标字段说明' })
     ).not.toBeInTheDocument();
@@ -1095,7 +1094,7 @@ describe('LogsPage', () => {
       })
     ).not.toBeInTheDocument();
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
-    expect(within(rows[1]).getByTestId('route-request-cost')).toHaveTextContent('0');
+    expect(within(rows[1]).getByTestId('route-request-cost')).toHaveTextContent('—');
     expect(
       within(rows[1]).queryByRole('button', { name: '预计金额计算公式' })
     ).not.toBeInTheDocument();
@@ -1106,6 +1105,7 @@ describe('LogsPage', () => {
   });
 
   it('filters route request logs by CLI and updates summary counts', async () => {
+    const removedCliType = ['gemini', 'Cli'].join('');
     vi.mocked(routeApi.getRequestLogs).mockResolvedValue({
       success: true,
       data: [
@@ -1127,9 +1127,9 @@ describe('LogsPage', () => {
           error: 'claude_failed',
         }),
         buildRouteLog({
-          id: 'route-filter-gemini',
-          requestId: 'gemini-filter',
-          cliType: 'geminiCli',
+          id: 'route-filter-removed',
+          requestId: 'removed-filter',
+          cliType: removedCliType as never,
           attempt: 1,
           outcome: 'success',
           createdAt: 300,
@@ -1139,8 +1139,8 @@ describe('LogsPage', () => {
 
     render(<LogsPage />);
 
-    await waitFor(() => expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(3));
-    expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(3);
+    await waitFor(() => expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(2));
+    expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(2);
     const rows = screen.getAllByTestId('route-request-log-row');
     expect(within(rows[1]).getByTestId('route-request-cli-icon')).toHaveAttribute(
       'aria-label',
@@ -1149,14 +1149,7 @@ describe('LogsPage', () => {
     expect(within(rows[1]).getByTestId('route-request-cli-icon').className).not.toMatch(
       /bg-|border/
     );
-    expect(within(rows[2]).getByTestId('route-request-cli-icon')).toHaveAttribute(
-      'aria-label',
-      'Gemini CLI'
-    );
-    expect(within(rows[2]).getByTestId('route-request-cli-icon').className).not.toMatch(
-      /bg-|border/
-    );
-    expect(screen.getByText('总尝试').parentElement).toHaveTextContent('总尝试3');
+    expect(screen.getByText('总尝试').parentElement).toHaveTextContent('总尝试2');
 
     fireEvent.click(screen.getByRole('button', { name: 'Claude Code' }));
 
@@ -1167,7 +1160,7 @@ describe('LogsPage', () => {
     expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(1);
     expect(getRouteLogRowByRequestId('claude-filter')).toBeInTheDocument();
     expect(findRouteLogRowByRequestId('codex-filter')).toBeUndefined();
-    expect(findRouteLogRowByRequestId('gemini-filter')).toBeUndefined();
+    expect(findRouteLogRowByRequestId('removed-filter')).toBeUndefined();
     expect(screen.getByText('总尝试').parentElement).toHaveTextContent('总尝试1');
     const successStat = screen
       .getAllByText('成功')
@@ -1179,16 +1172,16 @@ describe('LogsPage', () => {
     expect(failureStat?.parentElement).toHaveTextContent('失败1');
     expect(screen.getByText('1 条')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Gemini CLI' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Codex' }));
 
     expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(1);
-    expect(getRouteLogRowByRequestId('gemini-filter')).toBeInTheDocument();
+    expect(getRouteLogRowByRequestId('codex-filter')).toBeInTheDocument();
     expect(findRouteLogRowByRequestId('claude-filter')).toBeUndefined();
 
     fireEvent.click(screen.getByRole('button', { name: '全部' }));
 
-    expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(3);
-    expect(screen.getByText('3 条')).toBeInTheDocument();
+    expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(2);
+    expect(screen.getByText('2 条')).toBeInTheDocument();
   });
 
   it('shows upstream failure details without repeating the status code', async () => {

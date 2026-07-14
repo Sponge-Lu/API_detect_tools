@@ -314,3 +314,77 @@ const item = site.cli_config?.[cliType];
 await unifiedConfigManager.updateAccount(account.id, { cli_config });
 const item = account.cli_config?.[cliType] ?? site.cli_config?.[cliType];
 ```
+
+## Scenario: Site Refresh Persists Check-In Capability Back To Site Config
+
+### 1. Scope / Trigger
+
+- Trigger: a successful site refresh re-reads upstream check-in capability, for example
+  `/api/status.check_in_enabled`, after the site was already created.
+- Files: `src/main/api-service.ts`, `src/main/unified-config-manager.ts`,
+  `src/shared/types/site.ts`, `src/renderer/hooks/useSiteDetection.ts`,
+  `src/renderer/components/SiteCard/*`.
+
+### 2. Contracts
+
+- `DetectionCacheData.has_checkin` and `DetectionCacheData.can_check_in` are runtime display cache.
+  They are not the durable site capability owner.
+- `sites[].has_checkin` is the durable upstream capability owner for whether the site supports the
+  check-in feature.
+- `sites[].force_enable_checkin` is a user override. It may force probing/check-in UI availability,
+  but it must remain distinct from the last upstream capability result.
+- After a successful refresh computes `result.has_checkin`, the refresh path must update the
+  matching site config owner when the persisted `sites[].has_checkin` value differs.
+- The config write must use the normal `UnifiedConfigManager` save/notification path so renderer
+  cards, side panels, and any store projections reload from the repaired persisted config.
+- Account-scoped refreshes still update the site-level capability owner. The account cache owns
+  balance, API keys, `can_check_in`, stats, and last refresh time; it does not own whether the site
+  globally supports check-in.
+- If the refresh fails, preserve the existing persisted site capability. A failed detection must not
+  clear `sites[].has_checkin`.
+
+### 3. Validation & Error Matrix
+
+| Case | Boundary | Expected behavior |
+|------|----------|-------------------|
+| Upstream status changes from disabled to enabled | refresh -> config save | `sites[].has_checkin` becomes `true`, cache gets `has_checkin: true`, UI reloads the enabled check-in affordance |
+| Upstream status changes from enabled to disabled | refresh -> config save | `sites[].has_checkin` becomes `false`, cache gets `has_checkin: false`, stale check-in stats are cleared |
+| `force_enable_checkin: true` and upstream disabled | refresh -> config save | keep `force_enable_checkin: true`; persist upstream `has_checkin` independently instead of conflating it with the override |
+| Account-scoped refresh with valid account credentials | account cache -> site config | update that account cache and the shared site capability owner |
+| Refresh fails before capability detection completes | error path | keep previous `sites[].has_checkin`; only save failure status/error where appropriate |
+
+### 4. Tests Required
+
+- `src/__tests__/token-service.test.ts` or the nearest ApiService detection test:
+  - Assert a successful refresh writes changed `has_checkin` back to the persisted site config.
+  - Assert account-scoped refresh updates account cache and the shared site `has_checkin` owner.
+  - Assert failed refresh does not overwrite the persisted site capability.
+  - Assert `force_enable_checkin` remains independent from upstream `has_checkin`.
+- Renderer workflow test:
+  - Assert a site/card reload after refresh reads the updated config field, not only the transient
+    detection result.
+
+### 5. Wrong vs Correct
+
+#### Wrong
+
+```ts
+await updateAccountCachedData(accountId, cache => ({
+  ...cache,
+  has_checkin: result.has_checkin,
+  can_check_in: result.can_check_in,
+}));
+return result;
+```
+
+#### Correct
+
+```ts
+await updateAccountCachedData(accountId, cache => ({
+  ...cache,
+  has_checkin: result.has_checkin,
+  can_check_in: result.can_check_in,
+}));
+await updateSite(site.id, { has_checkin: result.has_checkin });
+return result;
+```

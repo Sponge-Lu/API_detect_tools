@@ -32,6 +32,7 @@ lpt2
 .agent/
 .claude/
 .windsurf/
+.opencode/
 
 # 本地配置（含敏感信息，不提交）
 .claude/settings.local.json

@@ -104,3 +104,34 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: Remove Gemini CLI support
+
+**Date**: 2026-07-08
+**Task**: Remove Gemini CLI support
+**Branch**: `main`
+
+### Summary
+
+Removed Gemini CLI integration from the supported app surface, updated docs/specs/indexes, preserved generic Google/Gemini GenerateContent protocol support, and archived the Trellis task without committing code.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

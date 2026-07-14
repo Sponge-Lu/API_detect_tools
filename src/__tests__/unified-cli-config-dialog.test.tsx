@@ -41,17 +41,6 @@ const initialConfig: CliConfig = {
     editedFiles: null,
     applyMode: 'merge',
   },
-  geminiCli: {
-    apiKeyId: 1,
-    model: 'gemini-2.5-pro',
-    targetProtocol: 'native',
-    testModel: 'gemini-2.5-pro',
-    testModels: ['gemini-2.5-pro', '', ''],
-    testResults: [],
-    enabled: true,
-    editedFiles: null,
-    applyMode: 'merge',
-  },
 };
 
 const mismatchConfig: CliConfig = {
@@ -70,8 +59,8 @@ const mismatchConfig: CliConfig = {
 const groupedModelPricing: ModelPricingData = {
   data: {
     'claude-3-5-sonnet': { enable_groups: ['alpha'] },
+    'gpt-4.1-mini': { enable_groups: ['alpha'] },
     'gpt-4.1': { enable_groups: ['beta'] },
-    'gemini-2.5-pro': { enable_groups: ['alpha', 'beta'] },
   },
 };
 
@@ -83,7 +72,7 @@ function StatefulDialog() {
       siteName="Claude Hub"
       siteUrl="https://example.com"
       apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
-      siteModels={['claude-3-5-sonnet', 'gpt-4.1', 'gemini-2.5-pro']}
+      siteModels={['claude-3-5-sonnet', 'gpt-4.1']}
       currentConfig={currentConfig}
       onPersistConfig={async nextConfig => {
         setCurrentConfig(nextConfig);
@@ -207,10 +196,6 @@ describe('ManagedCliConfigEditorContent', () => {
       fireEvent.click(getCliSectionHeader('Codex'));
     });
 
-    await act(async () => {
-      fireEvent.click(screen.getByText('配置文件预览').closest('[role="button"]') as HTMLElement);
-    });
-
     const warning = screen.getByRole('alert');
     expect(warning).toHaveTextContent('https://duckcoding.com');
     expect(warning).toHaveTextContent('https://www.duckcoding.ai');
@@ -225,7 +210,7 @@ describe('ManagedCliConfigEditorContent', () => {
           { id: 1, name: 'Alpha Key', key: 'sk-alpha', group: 'alpha' },
           { id: 2, name: 'Beta Key', key: 'sk-beta', group: 'beta' },
         ]}
-        siteModels={['claude-3-5-sonnet', 'gpt-4.1', 'gemini-2.5-pro']}
+        siteModels={['claude-3-5-sonnet', 'gpt-4.1', 'gpt-4.1-mini']}
         siteModelPricing={groupedModelPricing}
         currentConfig={initialConfig}
         onSave={vi.fn()}
@@ -233,11 +218,15 @@ describe('ManagedCliConfigEditorContent', () => {
     );
 
     await act(async () => {
+      fireEvent.click(getCliSectionHeader('Claude Code'));
+    });
+
+    await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'CLI 使用模型' }));
     });
 
     expect(screen.getAllByText('claude-3-5-sonnet').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('gemini-2.5-pro').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('gpt-4.1-mini').length).toBeGreaterThan(0);
     expect(within(getOpenModelMenu()).queryByText('gpt-4.1')).not.toBeInTheDocument();
 
     await act(async () => {
@@ -268,6 +257,10 @@ describe('ManagedCliConfigEditorContent', () => {
         onSave={vi.fn()}
       />
     );
+
+    await act(async () => {
+      fireEvent.click(getCliSectionHeader('Claude Code'));
+    });
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'CLI 使用模型' })).toHaveTextContent(
@@ -398,7 +391,7 @@ describe('ManagedCliConfigEditorContent', () => {
     });
   });
 
-  it('shows selected-model failure details in the warning toast and row status', async () => {
+  it('shows selected-model failure details in the row status with a warning toast summary', async () => {
     window.electronAPI = {
       ...window.electronAPI,
       cliCompat: {
@@ -438,18 +431,17 @@ describe('ManagedCliConfigEditorContent', () => {
     );
 
     await act(async () => {
+      fireEvent.click(getCliSectionHeader('Claude Code'));
+    });
+
+    await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '测试已选模型' }));
     });
 
     await waitFor(() => {
-      expect(toast.warning).toHaveBeenCalledWith(
-        expect.stringContaining(
-          'claude-3-5-sonnet: Claude Code 执行失败: CLI 未向本地路由代理发起请求'
-        ),
-        10000
-      );
+      expect(toast.warning).toHaveBeenCalledWith('Claude Code 有 1 个测试模型未通过', 10000);
     });
-    expect(screen.getByText(/CLI 未向本地路由代理发起请求/)).toBeInTheDocument();
+    expect(screen.getByText('失败')).toBeInTheDocument();
   });
 
   it('shows newer route probe results in the matching selected-model slot', async () => {
@@ -535,15 +527,18 @@ describe('ManagedCliConfigEditorContent', () => {
       fireEvent.click(getCliSectionHeader('Codex'));
     });
 
-    expect(screen.getByText('/v1/responses')).toBeInTheDocument();
+    const targetProtocolSelect = screen.getByLabelText('选择上游端口');
+    expect(targetProtocolSelect).toHaveDisplayValue('原生协议 · /v1/responses');
 
     await act(async () => {
-      fireEvent.change(screen.getByLabelText('选择上游端口'), {
+      fireEvent.change(targetProtocolSelect, {
         target: { value: 'openai-chat-completions' },
       });
     });
 
-    expect(screen.getByText('/v1/chat/completions')).toBeInTheDocument();
+    expect(targetProtocolSelect).toHaveDisplayValue(
+      'OpenAI Chat Completions · /v1/chat/completions'
+    );
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '保存配置' }));

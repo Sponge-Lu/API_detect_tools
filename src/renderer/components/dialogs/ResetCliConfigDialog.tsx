@@ -10,12 +10,13 @@ import { AppButton } from '../AppButton/AppButton';
 import { AppModal } from '../AppModal/AppModal';
 import { CLI_CONFIG_PATHS } from '../../../shared/types/config-detection';
 import type { CliType } from '../../../shared/types/config-detection';
+import { BUILTIN_CLI_LABELS } from '../../../shared/types/cli-config';
 import { toast } from '../../store/toastStore';
 
 // 导入 CLI 图标
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../assets/cli-icons/codex.svg';
-import GeminiIcon from '../../assets/cli-icons/gemini.svg';
+import OpenCodeIcon from '../../assets/cli-icons/opencode.svg';
 
 interface ResetCliConfigDialogProps {
   open: boolean;
@@ -34,21 +35,21 @@ interface CliOption {
 const CLI_OPTIONS: CliOption[] = [
   {
     key: 'claudeCode',
-    name: 'Claude Code',
+    name: BUILTIN_CLI_LABELS.claudeCode,
     icon: ClaudeCodeIcon,
     files: Object.values(CLI_CONFIG_PATHS.claudeCode).map(p => `~/${p}`),
   },
   {
     key: 'codex',
-    name: 'Codex',
+    name: BUILTIN_CLI_LABELS.codex,
     icon: CodexIcon,
     files: Object.values(CLI_CONFIG_PATHS.codex).map(p => `~/${p}`),
   },
   {
-    key: 'geminiCli',
-    name: 'Gemini CLI',
-    icon: GeminiIcon,
-    files: Object.values(CLI_CONFIG_PATHS.geminiCli).map(p => `~/${p}`),
+    key: 'openCode',
+    name: BUILTIN_CLI_LABELS.openCode,
+    icon: OpenCodeIcon,
+    files: Object.values(CLI_CONFIG_PATHS.openCode).map(p => `~/${p}`),
   },
 ];
 

@@ -30,7 +30,6 @@ async function loadCliCompatHandlersModule() {
     cliWrapperCompatService: {
       testClaudeCodeWithDetail: vi.fn(),
       testCodexWithDetail: vi.fn(),
-      testGeminiWithDetail: vi.fn(),
     },
   }));
   vi.doMock('../main/route-cli-probe-service', () => ({

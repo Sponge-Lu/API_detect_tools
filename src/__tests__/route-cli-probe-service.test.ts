@@ -122,10 +122,6 @@ async function loadProbeService(config: {
     cliWrapperCompatService: {
       testClaudeCodeWithDetail: vi.fn(async () => ({ supported: true, detail: {} })),
       testCodexWithDetail: vi.fn(async () => ({ supported: true, detail: { responses: true } })),
-      testGeminiWithDetail: vi.fn(async () => ({
-        supported: true,
-        detail: { native: true, proxy: null },
-      })),
     },
   }));
 
@@ -205,7 +201,6 @@ function createCustomCliConfig(overrides: Record<string, unknown> = {}): Record<
         testModels: ['duckcoding'],
         targetProtocol: 'openai-responses',
       },
-      geminiCli: { enabled: false, model: null, testModels: [] },
     },
     createdAt: 1,
     updatedAt: 1,
@@ -577,7 +572,7 @@ describe('route-cli-probe-service', () => {
           cli_config: {
             claudeCode: { enabled: false },
             codex: { enabled: false },
-            geminiCli: { enabled: false },
+            openCode: { enabled: false },
           },
         }),
       ],

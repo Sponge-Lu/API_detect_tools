@@ -124,7 +124,8 @@ function normalizeModelPriceInfo(value: unknown): ModelPriceInfo | null {
   if (modelRatio !== undefined) normalized.model_ratio = modelRatio;
   if (completionRatio !== undefined) normalized.completion_ratio = completionRatio;
   if (typeof raw.type === 'string') normalized.type = raw.type;
-  if (typeof raw.model_description === 'string') normalized.model_description = raw.model_description;
+  if (typeof raw.model_description === 'string')
+    normalized.model_description = raw.model_description;
   if (Array.isArray(raw.enable_groups)) {
     normalized.enable_groups = raw.enable_groups.filter(
       (group): group is string => typeof group === 'string' && group.trim().length > 0
@@ -133,7 +134,11 @@ function normalizeModelPriceInfo(value: unknown): ModelPriceInfo | null {
 
   if (typeof raw.model_price === 'number' && Number.isFinite(raw.model_price)) {
     normalized.model_price = raw.model_price;
-  } else if (raw.model_price && typeof raw.model_price === 'object' && !Array.isArray(raw.model_price)) {
+  } else if (
+    raw.model_price &&
+    typeof raw.model_price === 'object' &&
+    !Array.isArray(raw.model_price)
+  ) {
     const modelPriceInput = toFinitePricingNumber(raw.model_price.input);
     const modelPriceOutput = toFinitePricingNumber(raw.model_price.output);
     if (modelPriceInput !== undefined || modelPriceOutput !== undefined) {
@@ -197,7 +202,7 @@ function filterCustomCliTestState(
     testedAt: Math.max(...validSlots.map(slot => slot.timestamp)),
     claudeDetail: removedAnySlot ? undefined : normalized.claudeDetail,
     codexDetail: removedAnySlot ? undefined : normalized.codexDetail,
-    geminiDetail: removedAnySlot ? undefined : normalized.geminiDetail,
+    openCodeDetail: removedAnySlot ? undefined : normalized.openCodeDetail,
     slots,
   };
 }
@@ -229,7 +234,10 @@ function filterCustomCliConfigModels(
   config: CustomCliConfig,
   models: string[],
   fetchedAt: number
-): Pick<CustomCliConfig, 'models' | 'manualModels' | 'groupMultiplier' | 'modelPricing' | 'lastModelFetch' | 'cliSettings'> {
+): Pick<
+  CustomCliConfig,
+  'models' | 'manualModels' | 'groupMultiplier' | 'modelPricing' | 'lastModelFetch' | 'cliSettings'
+> {
   const normalizedModels = normalizeModelNames(models);
   const manualModels = normalizeManualModels(config.manualModels, normalizedModels);
   const availableModels = new Set([...normalizedModels, ...manualModels]);
@@ -241,9 +249,18 @@ function filterCustomCliConfigModels(
     modelPricing: normalizeModelPricingData(config.modelPricing),
     lastModelFetch: fetchedAt,
     cliSettings: {
-      claudeCode: filterCustomCliSettingModels(config.cliSettings.claudeCode, availableModels),
-      codex: filterCustomCliSettingModels(config.cliSettings.codex, availableModels),
-      geminiCli: filterCustomCliSettingModels(config.cliSettings.geminiCli, availableModels),
+      claudeCode: filterCustomCliSettingModels(
+        normalizeCustomCliSettings(config.cliSettings?.claudeCode),
+        availableModels
+      ),
+      codex: filterCustomCliSettingModels(
+        normalizeCustomCliSettings(config.cliSettings?.codex),
+        availableModels
+      ),
+      openCode: filterCustomCliSettingModels(
+        normalizeCustomCliSettings(config.cliSettings?.openCode),
+        availableModels
+      ),
     },
   };
 }
@@ -258,7 +275,7 @@ function normalizeCustomCliConfigModelBoundary(config: CustomCliConfig): CustomC
   const cliSettings = {
     claudeCode: normalizeCustomCliSettings(config.cliSettings?.claudeCode),
     codex: normalizeCustomCliSettings(config.cliSettings?.codex),
-    geminiCli: normalizeCustomCliSettings(config.cliSettings?.geminiCli),
+    openCode: normalizeCustomCliSettings(config.cliSettings?.openCode),
   };
 
   if (!hasModelBoundary) {
@@ -282,7 +299,7 @@ function normalizeCustomCliConfigModelBoundary(config: CustomCliConfig): CustomC
     cliSettings: {
       claudeCode: filterCustomCliSettingModels(cliSettings.claudeCode, availableModels),
       codex: filterCustomCliSettingModels(cliSettings.codex, availableModels),
-      geminiCli: filterCustomCliSettingModels(cliSettings.geminiCli, availableModels),
+      openCode: filterCustomCliSettingModels(cliSettings.openCode, availableModels),
     },
   };
 }

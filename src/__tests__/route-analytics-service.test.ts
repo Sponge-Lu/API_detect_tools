@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
     rules: [
       {
         id: 'rule-1',
-        name: 'Gemini 规则',
+        name: 'Codex 规则',
       },
     ],
     analytics: {
@@ -52,7 +52,10 @@ const mocks = vi.hoisted(() => ({
   },
   notifyAppDataChanged: vi.fn(),
   broadcastRendererEvent: vi.fn(),
-  customCliStorage: { configs: [], activeConfigId: null } as { configs: any[]; activeConfigId: string | null },
+  customCliStorage: { configs: [], activeConfigId: null } as {
+    configs: any[];
+    activeConfigId: string | null;
+  },
 }));
 
 vi.mock('../main/utils/logger', () => ({
@@ -122,9 +125,9 @@ describe('route-analytics-service token statistics', () => {
     recordRouteRequest({
       requestId: 'req-1',
       attempt: 1,
-      cliType: 'geminiCli',
-      requestedModel: 'gemini-3.1-pro',
-      canonicalModel: 'gemini-3.1-pro',
+      cliType: 'codex',
+      requestedModel: 'gpt-4.1',
+      canonicalModel: 'gpt-4.1',
       routeRuleId: 'rule-1',
       siteId: 'site-1',
       accountId: 'account-1',
@@ -221,8 +224,9 @@ describe('route-analytics-service token statistics', () => {
     const bucketStart = Date.now() - 60_000;
     const firstKey = buildBucketKey(
       bucketStart,
-      'geminiCli',
-      'gemini-3.1-pro',
+      'codex',
+      undefined,
+      'gpt-4.1',
       'site-1',
       'account-1',
       'key-1'
@@ -230,6 +234,7 @@ describe('route-analytics-service token statistics', () => {
     const secondKey = buildBucketKey(
       bucketStart,
       'codex',
+      undefined,
       'gpt-5.5',
       'site-1',
       'account-1',
@@ -241,9 +246,9 @@ describe('route-analytics-service token statistics', () => {
         bucketKey: firstKey,
         bucketStart,
         bucketSize: 'hour',
-        cliType: 'geminiCli',
+        cliType: 'codex',
         routeRuleId: 'rule-1',
-        canonicalModel: 'gemini-3.1-pro',
+        canonicalModel: 'gpt-4.1',
         siteId: 'site-1',
         accountId: 'account-1',
         apiKeyId: 'key-1',
@@ -299,8 +304,9 @@ describe('route-analytics-service token statistics', () => {
     const bucketStart = Date.now() - 60_000;
     const firstKey = buildBucketKey(
       bucketStart,
-      'geminiCli',
-      'gemini-3.1-pro',
+      'codex',
+      undefined,
+      'gpt-4.1',
       'site-1',
       'account-1',
       'key-1'
@@ -308,6 +314,7 @@ describe('route-analytics-service token statistics', () => {
     const secondKey = buildBucketKey(
       bucketStart,
       'codex',
+      undefined,
       'gpt-5.5',
       'site-1',
       'account-1',
@@ -319,9 +326,9 @@ describe('route-analytics-service token statistics', () => {
         bucketKey: firstKey,
         bucketStart,
         bucketSize: 'hour',
-        cliType: 'geminiCli',
+        cliType: 'codex',
         routeRuleId: 'rule-1',
-        canonicalModel: 'gemini-3.1-pro',
+        canonicalModel: 'gpt-4.1',
         siteId: 'site-1',
         accountId: 'account-1',
         apiKeyId: 'key-1',
@@ -396,8 +403,9 @@ describe('route-analytics-service token statistics', () => {
     const bucketStart = Date.now() - 60_000;
     const lowerRateKey = buildBucketKey(
       bucketStart,
-      'geminiCli',
-      'gemini-3.1-pro',
+      'codex',
+      undefined,
+      'gpt-4.1',
       'site-1',
       'account-1',
       'key-1'
@@ -405,6 +413,7 @@ describe('route-analytics-service token statistics', () => {
     const higherRateKey = buildBucketKey(
       bucketStart,
       'codex',
+      undefined,
       'gpt-5.5',
       'site-1',
       'account-1',
@@ -416,9 +425,9 @@ describe('route-analytics-service token statistics', () => {
         bucketKey: lowerRateKey,
         bucketStart,
         bucketSize: 'hour',
-        cliType: 'geminiCli',
+        cliType: 'codex',
         routeRuleId: 'rule-1',
-        canonicalModel: 'gemini-3.1-pro',
+        canonicalModel: 'gpt-4.1',
         siteId: 'site-1',
         accountId: 'account-1',
         apiKeyId: 'key-1',
@@ -522,7 +531,15 @@ describe('route-analytics-service token statistics', () => {
     const siteId = 'custom-cli-site-workbench';
     const accountId = 'custom-cli-account-workbench';
     const apiKeyId = 'custom-cli-key-workbench';
-    const bucketKey = buildBucketKey(bucketStart, 'codex', 'gpt-5.5', siteId, accountId, apiKeyId);
+    const bucketKey = buildBucketKey(
+      bucketStart,
+      'codex',
+      undefined,
+      'gpt-5.5',
+      siteId,
+      accountId,
+      apiKeyId
+    );
 
     resetRoutingBuckets({
       [bucketKey]: {
@@ -589,6 +606,7 @@ describe('route-analytics-service token statistics', () => {
     const firstBucketKey = buildBucketKey(
       bucketStart,
       'codex',
+      undefined,
       'gpt-5.5',
       firstSiteId,
       firstAccountId,
@@ -596,8 +614,9 @@ describe('route-analytics-service token statistics', () => {
     );
     const secondBucketKey = buildBucketKey(
       bucketStart,
-      'geminiCli',
-      'gemini-3.1-pro',
+      'codex',
+      undefined,
+      'gpt-4.1',
       secondSiteId,
       secondAccountId,
       secondApiKeyId
@@ -629,8 +648,8 @@ describe('route-analytics-service token statistics', () => {
         bucketKey: secondBucketKey,
         bucketStart,
         bucketSize: 'hour',
-        cliType: 'geminiCli',
-        canonicalModel: 'gemini-3.1-pro',
+        cliType: 'codex',
+        canonicalModel: 'gpt-4.1',
         siteId: secondSiteId,
         accountId: secondAccountId,
         apiKeyId: secondApiKeyId,
@@ -676,7 +695,7 @@ describe('route-analytics-service token statistics', () => {
         accountId: secondAccountId,
         accountName: '自定义 CLI',
         sourceType: 'customCli',
-        originalModel: 'gemini-3.1-pro',
+        originalModel: 'gpt-4.1',
         vendor: 'google',
         availableApiKeys: [
           {

@@ -42,6 +42,7 @@ const mockFetchCliProbeData = vi.fn();
 const mockRunProbeNow = vi.fn();
 const mockSaveCliProbeConfig = vi.fn();
 const mockSaveCliModelSelections = vi.fn();
+const mockSaveOpenCodeRouteProtocol = vi.fn();
 const mockSaveServerConfig = vi.fn();
 const mockRegenerateApiKey = vi.fn();
 const mockStartServer = vi.fn();
@@ -82,6 +83,7 @@ type MockRouteStoreShape = {
   runProbeNow: typeof mockRunProbeNow;
   saveCliProbeConfig: typeof mockSaveCliProbeConfig;
   saveCliModelSelections: typeof mockSaveCliModelSelections;
+  saveOpenCodeRouteProtocol: typeof mockSaveOpenCodeRouteProtocol;
   saveServerConfig: typeof mockSaveServerConfig;
   regenerateApiKey: typeof mockRegenerateApiKey;
   startServer: typeof mockStartServer;
@@ -122,6 +124,7 @@ vi.mock('../renderer/store/routeStore', () => ({
       runProbeNow: mockRunProbeNow,
       saveCliProbeConfig: mockSaveCliProbeConfig,
       saveCliModelSelections: mockSaveCliModelSelections,
+      saveOpenCodeRouteProtocol: mockSaveOpenCodeRouteProtocol,
       saveServerConfig: mockSaveServerConfig,
       regenerateApiKey: mockRegenerateApiKey,
       startServer: mockStartServer,
@@ -236,12 +239,6 @@ function createCustomCliStoreConfig(overrides: Partial<CustomCliConfig> = {}): C
           testedAt,
           slots: [{ model: 'duckcoding', success: true, timestamp: testedAt }, null, null],
         },
-      },
-      geminiCli: {
-        enabled: false,
-        model: null,
-        testModels: [],
-        testState: null,
       },
     },
     createdAt: 1,
@@ -494,7 +491,7 @@ function createModelRegistryConfig(): RouteModelRegistryConfig {
 
   const displayItems: RouteModelDisplayItem[] = [
     {
-      id: 'seeded:claude-opus-4-6',
+      id: 'manual:claude-opus-4-6',
       vendor: 'claude',
       canonicalName: 'claude-opus-4-6',
       sourceKeys: [
@@ -522,7 +519,7 @@ function createModelRegistryConfig(): RouteModelRegistryConfig {
           [buildRouteApiKeyPriorityKey('site-2', 'acc-2', 'shared-key-id')]: 3,
         },
       },
-      mode: 'seeded',
+      mode: 'manual',
       createdAt: 10,
       updatedAt: 10,
     },
@@ -713,8 +710,9 @@ function createRoutingConfig(
     cliModelSelections: {
       claudeCode: 'claude-opus-4-6',
       codex: 'gpt-5.4',
-      geminiCli: null,
+      openCode: 'gpt-5.4',
     },
+    openCodeRouteProtocol: 'openai-chat-completions',
     routePathStates,
     server: { host: '127.0.0.1', port: 3000, unifiedApiKey: 'route-key' },
   } as RoutingConfig;
@@ -911,6 +909,7 @@ beforeEach(() => {
   mockRunProbeNow.mockReset().mockResolvedValue(null);
   mockSaveCliProbeConfig.mockReset().mockResolvedValue(undefined);
   mockSaveCliModelSelections.mockReset().mockResolvedValue(undefined);
+  mockSaveOpenCodeRouteProtocol.mockReset().mockResolvedValue(undefined);
   mockSaveServerConfig.mockReset().mockResolvedValue(undefined);
   mockRegenerateApiKey.mockReset().mockResolvedValue('sk-route-new');
   mockStartServer.mockReset().mockResolvedValue(true);
@@ -966,7 +965,6 @@ describe('route workbench redesign', () => {
     expect(screen.getByLabelText('上游代理')).toBeInTheDocument();
     expect(screen.getByText('Claude Code')).toBeInTheDocument();
     expect(screen.getByText('Codex')).toBeInTheDocument();
-    expect(screen.getByText('Gemini CLI')).toBeInTheDocument();
     expect(screen.getByTestId('route-page-server-row')).toBeInTheDocument();
     const primaryRow = screen.getByTestId('route-page-primary-row');
     expect(primaryRow).toHaveClass('min-w-0');
@@ -979,11 +977,7 @@ describe('route workbench redesign', () => {
     expect(screen.getByTestId('route-cli-model-section-card')).toHaveClass('h-full');
     expect(serverSectionCard).not.toHaveClass('h-fit', 'self-start');
     expect(screen.getByTestId('route-cli-model-section-card')).not.toHaveClass('h-fit');
-    const guardToggle = within(serverSectionCard).getByRole('checkbox', {
-      name: '阻断 Gemini CLI 内部工具/回退模型请求',
-    });
     const stopButton = within(serverSectionCard).getByRole('button', { name: '停止' });
-    expect(guardToggle.compareDocumentPosition(stopButton)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     const serverPrimaryRow = screen.getByTestId('route-server-primary-config-row');
     const serverCredentialRow = screen.getByTestId('route-server-credential-row');
     expect(serverSectionCard.firstElementChild).toHaveClass('p-3');
@@ -1070,7 +1064,7 @@ describe('route workbench redesign', () => {
     expect(previewClaudeRouteButton).toHaveClass('h-7', 'w-full', 'min-w-0', 'whitespace-nowrap');
     expect(applyClaudeRouteButton).toHaveClass('h-7', 'w-full', 'min-w-0', 'whitespace-nowrap');
     expect(screen.getByDisplayValue('claude-opus-4-6')).toHaveClass('h-7', 'py-1', 'rounded-md');
-    expect(screen.getByDisplayValue('gpt-5.4')).toBeInTheDocument();
+    expect(screen.getAllByDisplayValue('gpt-5.4').length).toBeGreaterThan(0);
     expect(screen.queryByRole('option', { name: 'gpt-4.1' })).not.toBeInTheDocument();
     expect(screen.getAllByRole('option', { name: 'claude-opus-4-6' }).length).toBeGreaterThan(0);
     expect(screen.getByText('CLI 路由模型选择')).toBeInTheDocument();
@@ -1080,6 +1074,14 @@ describe('route workbench redesign', () => {
     );
     const claudeRouteLabel = screen.getByText('Claude Code').closest('label');
     expect(claudeRouteLabel?.querySelector('img[aria-hidden="true"]')).not.toBeNull();
+    const openCodeRouteLabel = screen.getByText('OpenCode').closest('label');
+    expect(openCodeRouteLabel?.querySelector('img[aria-hidden="true"]')).not.toBeNull();
+    expect(screen.getByText('入口端点')).toBeInTheDocument();
+    const openCodeEndpointSelect = screen.getByDisplayValue('/v1/chat/completions');
+    fireEvent.change(openCodeEndpointSelect, { target: { value: 'anthropic-messages' } });
+    await waitFor(() => {
+      expect(mockSaveOpenCodeRouteProtocol).toHaveBeenCalledWith('anthropic-messages');
+    });
     expect(
       screen.queryByText(/写入 CLI 本地配置时仅生成连接到本地代理的配置/)
     ).not.toBeInTheDocument();
@@ -1145,15 +1147,7 @@ describe('route workbench redesign', () => {
     expect(mockClearCache).toHaveBeenCalledWith('claudeCode');
   }, 15_000);
 
-  it('generates Codex and Gemini route configs that target the local route proxy', async () => {
-    mockConfig = {
-      ...mockConfig,
-      cliModelSelections: {
-        ...mockConfig.cliModelSelections,
-        geminiCli: 'gpt-5.4',
-      },
-    };
-
+  it('generates Codex route configs that target the local route proxy', async () => {
     render(<RoutePage />);
 
     fireEvent.click(screen.getByRole('button', { name: '预览 Codex 路由配置' }));
@@ -1168,17 +1162,6 @@ describe('route workbench redesign', () => {
     expect(within(codexPreview).getByText(/sk-route-key/)).toBeInTheDocument();
 
     fireEvent.click(within(codexPreview).getByRole('button', { name: '关闭预览' }));
-
-    fireEvent.click(screen.getByRole('button', { name: '预览 Gemini CLI 路由配置' }));
-
-    const geminiPreview = await screen.findByRole('dialog', { name: 'Gemini CLI 路由配置预览' });
-    expect(within(geminiPreview).getByText('~/.gemini/settings.json')).toBeInTheDocument();
-    expect(within(geminiPreview).getByText('~/.gemini/.env')).toBeInTheDocument();
-    expect(
-      within(geminiPreview).getByText(/GOOGLE_GEMINI_BASE_URL=http:\/\/127\.0\.0\.1:3000/)
-    ).toBeInTheDocument();
-    expect(within(geminiPreview).getByText(/GEMINI_API_KEY=sk-route-key/)).toBeInTheDocument();
-    expect(within(geminiPreview).getByText(/GEMINI_MODEL=gpt-5\.4/)).toBeInTheDocument();
   });
 
   it('resets saved route preview edits back to the generated config', async () => {
@@ -1279,16 +1262,7 @@ describe('route workbench redesign', () => {
     expect(originalModelFrame).toHaveClass('border', 'bg-[var(--surface-2)]', 'px-2', 'py-0');
     expect(screen.getByText('claude-opus-4.6-20260201')).toHaveClass('leading-4');
     expect(screen.queryByText('手工新增')).not.toBeInTheDocument();
-    expect(screen.queryByText('默认示例')).not.toBeInTheDocument();
-    const exampleBadge = screen.getAllByText('示例')[0];
-    expect(exampleBadge).toHaveClass(
-      'rounded-full',
-      'bg-[var(--surface-2)]',
-      'px-1.5',
-      'py-0.5',
-      'text-[11px]',
-      'text-[var(--text-secondary)]'
-    );
+    expect(screen.queryByText('示例')).not.toBeInTheDocument();
     expect(
       within(priorityPane).queryByText('站点与 API Key 按当前顺序尝试。')
     ).not.toBeInTheDocument();
@@ -1405,7 +1379,6 @@ describe('route workbench redesign', () => {
 
     await waitFor(() => {
       expect(mockResetPathStates).toHaveBeenCalledWith({
-        routeRuleId: 'rule-claude',
         canonicalModel: 'claude-opus-4-6',
         siteId: 'site-1',
         accountId: 'acc-1',
@@ -1442,7 +1415,7 @@ describe('route workbench redesign', () => {
     expect(mockRebuildModelRegistry).not.toHaveBeenCalled();
   });
 
-  it('filters out legacy seeded display items that are not the default example', () => {
+  it('filters out all legacy seeded display items', () => {
     const views = buildDisplayItemViews({
       ...createModelRegistryConfig(),
       displayItems: [
@@ -1465,6 +1438,26 @@ describe('route workbench redesign', () => {
     });
 
     expect(views.map(view => view.displayName)).toEqual(['claude-opus-4-6', 'gpt-5.4']);
+  });
+
+  it('does not synthesize or bootstrap a redirect from legacy registry entries', async () => {
+    const registry = createModelRegistryConfig();
+    mockConfig = {
+      ...mockConfig,
+      modelRegistry: {
+        ...registry,
+        overrides: [],
+        displayItems: [],
+        lastAggregatedAt: undefined,
+      },
+    };
+
+    render(<ModelRedirectionTab />);
+
+    expect(await screen.findByText('暂无模型重定向')).toBeInTheDocument();
+    expect(screen.queryByTestId('redirect-list-row')).not.toBeInTheDocument();
+    expect(screen.queryByText('示例')).not.toBeInTheDocument();
+    expect(mockRebuildModelRegistry).not.toHaveBeenCalled();
   });
 
   it('lists manual redirects in local route model options even before their entry is rebuilt', () => {
@@ -1551,40 +1544,6 @@ describe('route workbench redesign', () => {
 
     expect(await screen.findByText('deepseek-v4-pro')).toBeInTheDocument();
     await findPriorityDetailPane();
-  });
-
-  it('refreshes stale seeded display items without resetting user priority disables on startup', async () => {
-    const staleRegistry = createModelRegistryConfig();
-    mockConfig = {
-      ...createRoutingConfig(),
-      modelRegistry: {
-        ...staleRegistry,
-        displayItems: [
-          {
-            ...staleRegistry.displayItems[0]!,
-            originalModelOrder: [],
-            priorityConfig: {
-              sitePriorities: {
-                'site-1': 5,
-                'site-2': 9,
-              },
-              apiKeyPriorities: {},
-              disabledSiteIds: ['site-2'],
-              disabledApiKeyPriorityKeys: [
-                buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'main-key-id'),
-              ],
-            },
-          },
-        ],
-      },
-    };
-
-    render(<ModelRedirectionTab />);
-
-    await waitFor(() => {
-      expect(mockRebuildModelRegistry).toHaveBeenCalledWith(true);
-    });
-    expect(mockRebuildModelRegistry).not.toHaveBeenCalledWith(true, { resetDefaults: true });
   });
 
   it('supports searching and multi-selecting original models when creating a redirect', async () => {
@@ -2243,7 +2202,6 @@ describe('route workbench redesign', () => {
 
     await waitFor(() => {
       expect(mockResetPathStates).toHaveBeenCalledWith({
-        routeRuleId: 'rule-claude',
         canonicalModel: 'claude-opus-4-6',
         siteId: 'site-1',
         accountId: 'acc-1',
@@ -2532,6 +2490,14 @@ describe('route workbench redesign', () => {
   });
 
   it('saves detail priorities back into the current display item', async () => {
+    mockGetRequestLogs.mockResolvedValueOnce({
+      success: true,
+      data: [
+        createFirstHitRouteLog({
+          targetProtocol: 'native',
+        }),
+      ],
+    });
     render(<ModelRedirectionTab />);
 
     const detailPane = await findPriorityDetailPane();
@@ -2550,7 +2516,7 @@ describe('route workbench redesign', () => {
     await waitFor(() => {
       expect(mockUpsertDisplayItem).toHaveBeenCalledWith(
         expect.objectContaining({
-          id: 'seeded:claude-opus-4-6',
+          id: 'manual:claude-opus-4-6',
           canonicalName: 'claude-opus-4-6',
           priorityConfig: {
             sitePriorities: {
@@ -2566,6 +2532,15 @@ describe('route workbench redesign', () => {
           },
         })
       );
+    });
+    await waitFor(() => {
+      expect(mockResetPathStates).toHaveBeenCalledWith({
+        canonicalModel: 'claude-opus-4-6',
+        siteId: 'site-1',
+        accountId: 'acc-1',
+        apiKeyId: 'backup-key-id',
+        targetProtocol: 'native',
+      });
     });
   });
 
@@ -2881,7 +2856,7 @@ describe('route workbench redesign', () => {
     fireEvent.click(screen.getByRole('button', { name: '删除 claude-opus-4-6' }));
 
     await waitFor(() => {
-      expect(mockDeleteDisplayItem).toHaveBeenCalledWith('seeded:claude-opus-4-6');
+      expect(mockDeleteDisplayItem).toHaveBeenCalledWith('manual:claude-opus-4-6');
     });
   });
 
@@ -2972,7 +2947,7 @@ describe('route workbench redesign', () => {
     ).toBe(false);
   });
 
-  it('prefers persisted display items over fallback example derivation', () => {
+  it('prefers persisted display items without deriving fallback examples', () => {
     const views = buildDisplayItemViews({
       version: 1,
       sources: [
@@ -3017,7 +2992,7 @@ describe('route workbench redesign', () => {
     expect(views.map(view => view.displayName)).toEqual(['claude-team-opus']);
   });
 
-  it('falls back to the single example redirect before the first aggregation', () => {
+  it('does not derive a redirect from registry entries before the first aggregation', () => {
     const views = buildDisplayItemViews({
       version: 1,
       sources: [],
@@ -3047,12 +3022,7 @@ describe('route workbench redesign', () => {
       displayItems: [],
     });
 
-    expect(views.map(view => view.displayName)).toEqual(['claude-opus-4-6']);
-    expect(views[0]?.selectedOriginalModels).toEqual(['claude-opus-4.6-20260201']);
-    expect(views[0]?.item.priorityConfig).toEqual({
-      sitePriorities: {},
-      apiKeyPriorities: {},
-    });
+    expect(views).toEqual([]);
   });
 
   it('saves display-order priorities when the detail draft is unchanged', async () => {
@@ -3105,7 +3075,7 @@ describe('route workbench redesign', () => {
     await waitFor(() => {
       expect(mockUpsertDisplayItem).toHaveBeenCalledWith(
         expect.objectContaining({
-          id: 'seeded:claude-opus-4-6',
+          id: 'manual:claude-opus-4-6',
           runtimeConfig: {
             maxAttemptsPerRoutePath: 2,
             successRateWindowMinutes: 12,

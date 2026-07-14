@@ -1,7 +1,7 @@
 /**
  * 输入: CLI 测试配置、child_process、临时文件系统
  * 输出: 基于真实 CLI wrapper 的兼容性测试结果
- * 定位: 服务层 - 通过隔离环境拉起真实 Claude Code / Codex / Gemini CLI，验证站点可用性
+ * 定位: 服务层 - 通过隔离环境拉起真实 Claude Code / Codex，验证站点可用性
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -18,8 +18,9 @@ import type {
   ClaudeTestDetail,
   CliCompatibilityResult,
   CodexTestDetail,
-  GeminiTestDetail,
+  OpenCodeTestDetail,
 } from './cli-compat-service';
+import { normalizeCliTargetProtocol, type CliTargetProtocol } from '../shared/types/cli-config';
 import {
   clearRouteProbeLockTerminalFailure,
   getRouteProbeLockFirstUpstreamResult,
@@ -47,10 +48,11 @@ const PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_SUMMARY =
   'HTTP 400（应用侧 probe-lock 限制）：CLI 在一次模型测试中发起了多次上游请求，应用只允许一次真实上游请求。';
 
 export interface CliWrapperTestConfig {
-  cliType: 'claudeCode' | 'codex' | 'geminiCli';
+  cliType: 'claudeCode' | 'codex' | 'openCode';
   apiKey: string;
   model: string;
   baseUrl?: string;
+  targetProtocol?: CliTargetProtocol;
 }
 
 export interface TestWithWrapperParams {
@@ -95,6 +97,64 @@ function normalizeBaseUrl(baseUrl: string): string {
 function ensureOpenAiBaseUrl(baseUrl: string): string {
   const normalized = normalizeBaseUrl(baseUrl);
   return normalized.endsWith('/v1') ? normalized : `${normalized}/v1`;
+}
+
+function buildOpenCodeProviderConfig(
+  url: string,
+  model: string,
+  mode: CliTargetProtocol
+): { providerId: string; modelId: string; config: Record<string, unknown> } {
+  const baseURL = ensureOpenAiBaseUrl(url);
+  if (mode === 'anthropic-messages') {
+    return {
+      providerId: 'anthropic',
+      modelId: `anthropic/${model}`,
+      config: {
+        provider: {
+          anthropic: {
+            options: { baseURL },
+            models: {
+              [model]: { name: model },
+            },
+          },
+        },
+      },
+    };
+  }
+
+  if (mode === 'openai-responses') {
+    return {
+      providerId: 'openai',
+      modelId: `openai/${model}`,
+      config: {
+        provider: {
+          openai: {
+            options: { baseURL },
+            models: {
+              [model]: { name: model },
+            },
+          },
+        },
+      },
+    };
+  }
+
+  return {
+    providerId: 'api-detect',
+    modelId: `api-detect/${model}`,
+    config: {
+      provider: {
+        'api-detect': {
+          npm: '@ai-sdk/openai-compatible',
+          name: 'API Detect',
+          options: { baseURL },
+          models: {
+            [model]: { name: model },
+          },
+        },
+      },
+    },
+  };
 }
 
 function escapeTomlString(value: string): string {
@@ -270,15 +330,6 @@ function extractClaudeResult(stdout: string): string | null {
   }
 
   return extractJsonStringField(stdout, ['result', 'response', 'content', 'text']);
-}
-
-function extractGeminiResponse(stdout: string): string | null {
-  const directText = normalizeReplyText(stdout);
-  if (directText && !stdout.includes('{')) {
-    return directText;
-  }
-
-  return extractJsonStringField(stdout, ['response', 'result', 'content', 'text']);
 }
 
 function extractJsonErrorSummary(raw: string): string | null {
@@ -954,81 +1005,64 @@ export class CliWrapperCompatService {
     });
   }
 
-  async testGeminiWithDetail(
+  async testOpenCodeWithDetail(
     url: string,
     apiKey: string,
     model: string,
+    targetProtocol?: CliTargetProtocol,
     timeoutMs?: number
-  ): Promise<{ supported: boolean; detail: GeminiTestDetail; message?: string }> {
-    return this.testGeminiWithMessage(url, apiKey, model, timeoutMs);
-  }
+  ): Promise<{ supported: boolean; detail: OpenCodeTestDetail; message?: string }> {
+    const mode =
+      normalizeCliTargetProtocol(targetProtocol) === 'native'
+        ? 'openai-chat-completions'
+        : normalizeCliTargetProtocol(targetProtocol);
 
-  async testGeminiCli(url: string, apiKey: string, model: string): Promise<boolean> {
-    const result = await this.testGeminiWithMessage(url, apiKey, model);
-    return result.supported;
-  }
-
-  async testGeminiWithMessage(
-    url: string,
-    apiKey: string,
-    model: string,
-    timeoutMs?: number
-  ): Promise<{ supported: boolean; detail: GeminiTestDetail; message?: string }> {
-    return this.withIsolatedWorkspace('api-detect-gemini-wrapper', async workspace => {
-      const geminiHome = path.join(workspace.homeDir, '.gemini');
-      await fs.mkdir(geminiHome, { recursive: true });
-      await fs.writeFile(
-        path.join(geminiHome, 'settings.json'),
-        JSON.stringify(
-          {
-            security: {
-              auth: {
-                selectedType: 'gemini-api-key',
-              },
-            },
-          },
-          null,
-          2
-        ),
-        'utf-8'
+    return this.withIsolatedWorkspace('api-detect-opencode-wrapper', async workspace => {
+      const { providerId, modelId, config } = buildOpenCodeProviderConfig(url, model, mode);
+      const configContent = JSON.stringify(
+        {
+          $schema: 'https://opencode.ai/config.json',
+          model: modelId,
+          ...config,
+        },
+        null,
+        2
       );
-
+      const authContent = JSON.stringify({
+        [providerId]: {
+          type: 'api',
+          key: apiKey,
+        },
+      });
       const env = this.buildIsolatedEnv(workspace.homeDir, {
-        GEMINI_API_KEY: apiKey,
-        GOOGLE_GEMINI_BASE_URL: normalizeBaseUrl(url),
-        GEMINI_SANDBOX: 'false',
-        GEMINI_CLI_TRUST_WORKSPACE: 'true',
+        OPENCODE_CONFIG_CONTENT: configContent,
+        OPENCODE_AUTH_CONTENT: authContent,
       });
 
       const commandResult = await this.runCommandWatchingProbeLockFailure(apiKey, {
-        command: 'gemini',
-        args: ['--skip-trust', '-m', model, '--output-format', 'json', '--approval-mode', 'plan'],
+        command: 'opencode',
+        args: ['run', '--model', modelId, '--agent', 'plan', '--format', 'text', TEST_PROMPT],
         cwd: workspace.workDir,
         env,
         timeoutMs: timeoutMs ?? this.timeoutMs,
-        stdin: `${TEST_PROMPT}\n`,
       });
 
-      const content = extractGeminiResponse(commandResult.stdout);
       const probeLockReplyText = getProbeLockExpectedReplyText(
         commandResult.probeLockFirstUpstreamResult
       );
-      const replyText = summarizeReplyText(content) ?? summarizeReplyText(probeLockReplyText);
+      const replyText =
+        summarizeReplyText(commandResult.stdout) ?? summarizeReplyText(probeLockReplyText);
       const supported =
-        (commandResult.exitCode === 0 && isExpectedAnswer(content)) || Boolean(probeLockReplyText);
+        (commandResult.exitCode === 0 && isExpectedAnswer(commandResult.stdout)) ||
+        Boolean(probeLockReplyText);
       const message = supported
         ? undefined
-        : buildFailureMessage(
-            'Gemini CLI',
-            commandResult,
-            `reply=${replyText ?? (normalizeReplyText(content) || 'null')}`
-          );
+        : buildFailureMessage('OpenCode', commandResult, `reply=${replyText ?? 'missing output'}`);
 
       return {
         supported,
         detail: {
-          native: supported,
-          proxy: null,
+          mode,
           replyText,
         },
         ...(message ? { message } : {}),
@@ -1042,8 +1076,8 @@ export class CliWrapperCompatService {
       claudeDetail: undefined,
       codex: null,
       codexDetail: undefined,
-      geminiCli: null,
-      geminiDetail: undefined,
+      openCode: null,
+      openCodeDetail: undefined,
       testedAt: Date.now(),
     };
 
@@ -1058,10 +1092,15 @@ export class CliWrapperCompatService {
         const codex = await this.testCodexWithDetail(testUrl, config.apiKey, config.model);
         result.codex = codex.supported;
         result.codexDetail = codex.detail;
-      } else if (config.cliType === 'geminiCli') {
-        const gemini = await this.testGeminiWithDetail(testUrl, config.apiKey, config.model);
-        result.geminiCli = gemini.supported;
-        result.geminiDetail = gemini.detail;
+      } else if (config.cliType === 'openCode') {
+        const openCode = await this.testOpenCodeWithDetail(
+          testUrl,
+          config.apiKey,
+          config.model,
+          config.targetProtocol
+        );
+        result.openCode = openCode.supported;
+        result.openCodeDetail = openCode.detail;
       }
     }
 

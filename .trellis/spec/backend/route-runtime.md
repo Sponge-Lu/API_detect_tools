@@ -4,7 +4,7 @@
 
 ### 1. Scope / Trigger
 
-- Trigger: route proxy requests for Claude Code, Codex, and Gemini CLI must try high-priority sites first, avoid repeated attempts against a known-bad path, and expose path suspension state in the redirection UI.
+- Trigger: route proxy requests for supported CLI clients (Claude Code and Codex) must try high-priority sites first, avoid repeated attempts against a known-bad path, and expose path suspension state in the redirection UI.
 - A route path is identified by rule, site, account, API key, canonical model, and resolved upstream model. It is more specific than the legacy channel stats key.
 - This contract spans `src/shared/types/route-proxy.ts`, `src/main/route-channel-resolver.ts`, `src/main/route-stats-service.ts`, `src/main/route-proxy-service.ts`, `src/main/route-probe-lock.ts`, `src/main/anyrouter-request-rewriter.ts`, `src/main/cli-protocol-adapter.ts`, `src/main/unified-config-manager.ts`, and `src/renderer/components/Route/Redirection/ModelRedirectionTab.tsx`.
 
@@ -320,22 +320,36 @@ probe expansion must ignore them. Usability is derived from the account record, 
 model/group match, and shared API-key availability (`isApiKeyActive()`), not from an
 `AccountStatus` concept.
 
-**Rebuild Modes**:
-- `reseed`: Re-generate seeded items from `detectedEntries`, preserve manual items, used by `rebuildModelRegistry()`
-- `preserve`: Keep all existing displayItems **and create new seeded items for newly detected canonicalNames**, used by `syncModelRegistrySources()`
-- `resetDefaults`: Remove default example item then reseed, used by `resetModelRegistryDefaults()`
+**Registry Rebuild Contract**:
+- `rebuildModelRegistry()` and `syncModelRegistrySources()` both rescan source metadata, but bare
+  detected sources populate `modelRegistry.sources` only. They must not create redirect cards or
+  runnable `entries` until the user creates a redirect.
+- `buildDisplayItems()` retains only persisted `mode: 'manual'` items whose selected sources still
+  exist, while preserving their `priorityConfig` and `runtimeConfig`.
+- A non-`exclude` mapping override is explicit user intent. Its live source is merged into an
+  existing same-name manual item or represented by a compatibility manual item with id
+  `override:<canonicalName>`.
+- `buildEntriesFromDisplayItems()` derives runtime entries only from the resulting manual and
+  override-backed display items. Source discovery alone cannot make a model routable.
+- Legacy `mode: 'seeded'` display items are read-compatible but are discarded during config
+  normalization and rebuild; new code must never persist one.
 
-**Critical Invariant**: In `preserve` mode, `buildDisplayItems()` must:
-1. Update existing displayItems' sourceKeys to match current sourcePool
-2. Create new seeded displayItems for canonicalNames present in detectedEntries but absent from existing displayItems
-3. Preserve user-configured priorityConfig/runtimeConfig for all retained items
-4. Respect `exclude` overrides as user deletion intent before creating any replacement seeded item
-
-Failing to create new seeded items in preserve mode causes "sync sources" to miss newly added models — the sources are scanned into sourcePool but never referenced by any displayItem, so `buildEntriesFromDisplayItems()` produces entries without the new sources.
+**Critical Invariant**: An empty redirect workspace stays empty across page mount, source sync, and
+registry rebuild. Explicit source synchronization refreshes candidate metadata without changing user
+routing intent.
 
 Custom CLI source discovery treats both persisted `models` (fetched from `/v1/models`) and `manualModels` (user-entered fallback models) as first-class `sourcePool` inputs. These source records must be created independent of `cliSettings.<cli>.enabled`; CLI settings may still contribute configured/tested model references, but those references are filtered by the fetched-plus-manual allowlist so stale selected/tested models are not resurrected.
 
-Deleting a seeded display item is a stable user intent, not a transient display cleanup. `deleteModelDisplayItem()` must persist `action: 'exclude'` overrides for the deleted seeded item's source keys before it calls `syncModelRegistrySources(true)`; otherwise preserve mode will immediately recreate the same seeded card from the still-detected source.
+Deleting a persisted manual display item removes its associated non-`exclude` overrides before
+resyncing. Deleting an override-only compatibility card removes the grouped overrides identified by
+its `override:<canonicalName>` id. No exclusion tombstone is needed because source scanning cannot
+recreate a redirect card.
+
+On config load, legacy example cleanup must remove every `mode: 'seeded'` display item and only the
+deterministic rule id `auto-cli-model-claudeCode-claude-opus-4-6`. Clear the Claude Code
+`claude-opus-4-6` selection only when no same-name manual display item and no enabled user-authored
+matching rule remain. Never delete overrides by canonical name during this cleanup because a
+same-name manual redirect may depend on them.
 
 #### Route Runtime Contracts
 
@@ -345,16 +359,19 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 - `buildChannelAttemptPlan()` must key attempts by the full route path, including normalized `targetProtocol`, `canonicalModel`, and `resolvedModel`. Candidates for the same site/account/API key/model but different target protocols are different route paths and must not dedupe or suppress each other.
 - Custom CLI sources explicitly selected by the current `RouteModelDisplayItem` are part of the route intent. Legacy `RouteRule.allowedSiteIds`, `allowedAccountIds`, and `allowedApiKeyGroups` scope managed-site/account/API-key sources only; they must not filter out selected custom CLI sources before forwarding.
 - Local route forwarding must use `httpRawRequest(..., { preferElectronNet: true, proxyUrl: routing.server.upstreamProxyUrl })` instead of Node `http.request` / `https.request`, so packaged route traffic uses Chromium/Electron's network stack and preserves raw response bodies for transparent forwarding.
+- Local route forwarding must send upstream credentials to `token.sensenova.cn` as `Authorization: Bearer <apiKey>` for both OpenAI-compatible and Anthropic-compatible paths. Do not add Claude-style `x-api-key` for SenseNova; keep non-SenseNova Claude upstreams on `x-api-key`.
 - Local route forwarding must pass a per-request cancellation signal into `httpRawRequest()` / `httpRawStreamRequest()`. If the downstream CLI client cancels or disconnects, the proxy aborts the active upstream request, ignores any late upstream result, does not try another route path for that client request, and does not record route-path failure or provider-failure analytics for the cancellation.
 - `electronFetchRaw()` must treat `timeout` as a connection/idle timeout, not a total response-duration timeout. Re-arm the timer when the response starts and after every `data` chunk so long-running SSE CLI responses are not aborted while the upstream is actively streaming.
 - Local route streaming requests must keep the initial upstream wait bounded by the configured/site-specific request timeout. After the first SSE data chunk is received, active streams use an idle timeout of at least 10 minutes so healthy long-running streams are not aborted between chunks.
 - AnyRouter site-name detection must normalize spaces, repeated spaces, hyphens, and underscores so both `Any Router` and `AnyRouter` activate the same AnyRouter request rewrite path. Do not match names with extra prefix/suffix text.
 - Local route SSE passthrough must use `httpRawStreamRequest()` / `electronFetchRawStream()` only when the original request is streaming (`body.stream === true` or a Gemini `:streamGenerateContent` path), the upstream response status is classified as `success`, the upstream `content-type` contains `text/event-stream`, and both the AnyRouter and target-protocol response adapters are `transparent`.
 - For streaming passthrough, `handleRequest()` must validate the upstream `onResponse` callback but defer downstream response headers until the first accepted SSE chunk is about to be forwarded. Hop-by-hop headers plus `content-encoding`, `content-length`, and `transfer-encoding` must be stripped so the downstream response can remain streaming/chunked, and a first-chunk timeout can fail/fallback before any downstream bytes are written.
+- For buffered local route responses, including non-streaming transparent responses, transformed responses, and probe-lock transient failure passthroughs, `handleRequest()` must treat the outgoing body as a newly emitted representation. Strip hop-by-hop headers plus upstream `content-encoding`, `content-length`, and `transfer-encoding`, then set `content-length` to the final buffered body byte length before writing the downstream response.
 - A successful transparent streaming candidate must have an initial body chunk that looks like SSE (`event:`, `data:`, `id:`, `retry:`, or an SSE comment). Obvious HTML, JSON, empty, or non-SSE 2xx responses must be treated as `invalid_streaming_response` before any downstream bytes are written, allowing fallback to another route path.
 - Claude Code and Codex transparent SSE streams must not silently end on upstream EOF unless a protocol terminal marker has been observed (`message_stop` for Anthropic/Claude Code, `response.completed` or `[DONE]` for OpenAI Responses/Codex). If the upstream connection ends after downstream bytes were written but before the terminal marker, append a protocol-shaped SSE error event, record `incomplete_streaming_response:missing_terminal_event`, and then close the downstream response.
 - Transparent SSE terminal-marker scanning may retain only a bounded text window for memory safety, but each incoming chunk must be checked together with the previously retained window before the combined text is trimmed. A large upstream chunk with `message_stop`, `response.completed`, or `[DONE]` near the beginning must not be misclassified as `incomplete_streaming_response:missing_terminal_event` merely because the marker falls outside the retained tail after trimming.
 - Claude Code transparent SSE streams must validate completed Anthropic message structure before accepting a terminal `message_stop` as success. A completed Claude Code stream with OpenAI-style events, leaked DSML/tool-call markup in text deltas, malformed tool input JSON, unclosed content blocks, `tool_use` stop reasons without real `tool_use` blocks, or no visible text/tool_use content (for example thinking-only output) must append a protocol-shaped SSE error when bytes were already written, record `malformed_streaming_response:<reason>`, and close without forwarding the terminal `message_stop`.
+- Claude Code transparent SSE compatibility may normalize only one upstream quirk before downstream delivery: if the stream has completed at least one valid-looking Anthropic `tool_use` content block and the terminal `message_delta.delta.stop_reason` is exactly `end_turn`, rewrite that stop reason to `tool_use` in the outgoing SSE and validate the normalized body. Do not normalize `max_tokens`, malformed tool input JSON, OpenAI-style events, DSML markup, missing `message_stop`, or unclosed content blocks.
 - Codex/OpenAI Responses transparent SSE streams must validate completed response content before accepting `response.completed` or `[DONE]` as success. A completed stream with no assistant text (`response.output_text.delta`, `response.output_text.done`, `output_text`, or text content) and no function/tool output (`function_call`, `function_call_output`, or function-call arguments) must append a protocol-shaped SSE error, record `malformed_streaming_response:empty_response`, and close without treating the path as successful. If terminal `response.completed` usage explicitly reports all observed token fields as `0`, the stream must record `malformed_streaming_response:empty_response_zero_usage` even when earlier chunks contained assistant text or function/tool output. HTTP `200` plus a terminal marker is only a transport-level success; it is not enough to prove the model produced a consumable answer.
 - Route token accounting must not fabricate final usage. If a successful-looking response lacks usage, keep usage undefined. If a completed OpenAI Responses stream reports all observed terminal token fields as `0`, treat those zero tokens as a malformed response diagnostic rather than a billable/successful generation, regardless of whether output content appeared earlier in the stream.
 - `httpRawStreamRequest()` and `electronFetchRawStream()` must invoke chunk callbacks as bytes arrive while still retaining the complete response `body` and `firstByteLatencyMs` for analytics, usage extraction, and failure logs.
@@ -374,7 +391,7 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 - Canonical-model channel resolution must treat `displayItem.priorityConfig.sitePriorities` as the sole source of site ordering semantics. If a current source has no explicit saved site priority yet, assign it a synthetic priority after the highest explicit site priority for that display item, preserving current source discovery order only for those missing-priority additions.
 - Canonical-model channel resolution must treat `displayItem.priorityConfig.apiKeyPriorities` as the source of API key ordering semantics. If a current API key under a site has no explicit saved priority yet, assign it a synthetic priority after the highest explicit API key priority already saved for that site, preserving current discovery order only among those missing-priority additions.
 - Canonical-model channel resolution must skip any site listed in `displayItem.priorityConfig.disabledSiteIds` and any API key listed in `displayItem.priorityConfig.disabledApiKeyPriorityKeys`. Disabled site/API-key ids are route-intent exclusions, not low-priority candidates.
-- When `routing.modelRegistry` contains any routing data (`sources`, `entries`, or `displayItems`), `resolveChannels(rule, canonicalModel)` must not fall back to generic site/account/API-key channels if `canonicalModel` has no registry entry. Unknown requested models such as a Gemini CLI default path model must produce no candidates instead of being forwarded through an unrelated site.
+- When `routing.modelRegistry` contains any routing data (`sources`, `entries`, or `displayItems`), `resolveChannels(rule, canonicalModel)` must not fall back to generic site/account/API-key channels if `canonicalModel` has no registry entry. Unknown requested transport models must produce no candidates instead of being forwarded through an unrelated site.
 - Selected CLI model routing must keep the selected CLI type, `canonicalModel`, `targetProtocol`,
   and the display item's `sourceKeys` as the route-intent boundary across all matching route rules.
   `routeRuleId` remains part of concrete route-path identity, but it is not allowed to shrink this
@@ -387,7 +404,7 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 - `RouteModelDisplayItem.runtimeConfig` owns per-redirection runtime behavior. Missing fields normalize to `maxAttemptsPerRoutePath = 1`, `successRateWindowMinutes = 5`, `disableDurationMinutes = 30`, and `minSuccessRate = 0.8`.
 - `handleRequest()` must resolve `RouteRuntimeConfig` from the matched canonical model's display item and pass `runtimeConfig.maxAttemptsPerRoutePath` into `buildChannelAttemptPlan(sortChannelsByScore(channels), ...)`.
 - `handleRequest()` must resolve each candidate's concrete `targetProtocol` and `targetEndpoint` before normal priority sorting, `buildChannelAttemptPlan()`, disabled-path filtering, and successful path affinity. `buildRoutePathStateKey()`, `isRoutePathDisabled()`, and `applySuccessfulRoutePathAffinity()` all depend on normalized `targetProtocol`; using unresolved candidates can miss the current priority hit, ignore disabled paths, or start fallback from the wrong priority position.
-- Successful route path affinity is derived from existing `routing.routePathStates`, not a separate preferred-path pointer. A candidate is eligible only when its concrete route path state has `lastOutcome === 'success'`, `lastSuccessAt` is within `ROUTE_SUCCESSFUL_PATH_AFFINITY_MS`, `disabledUntil` is not active, and neither the concrete state nor the same channel's `resolvedModel: undefined` suppression state has `affinitySuppressedUntil` in the future.
+- Successful route path affinity is derived from existing `routing.routePathStates`, not a separate preferred-path pointer. A candidate is eligible only when its concrete route path state has `lastOutcome === 'success'`, `lastSuccessAt` is within `ROUTE_SUCCESSFUL_PATH_AFFINITY_MS`, `disabledUntil` is not active, and neither the concrete state, the same-rule channel state (`resolvedModel: undefined`), nor the any-rule channel state (`routeRuleId: undefined` and `resolvedModel: undefined`) has `affinitySuppressedUntil` in the future.
 - Priority-hit reset from the redirection UI is channel-scoped across all route rules for the
   selected route intent: it sends `canonicalModel + siteId + accountId + apiKeyId + targetProtocol`
   and intentionally omits both `routeRuleId` and `resolvedModel`. This clears every concrete
@@ -395,29 +412,15 @@ Deleting a seeded display item is a stable user intent, not a transient display 
   and pressing reset once cannot leave another same-channel route rule or upstream-model variant
   preserving the old preferred site.
 - When `resetRoutePathStates()` matches multiple concrete route path states while affinity suppression is enabled, it must write one suppressed state for each cleared concrete key. Keeping only the last suppressed state can make other resolved-model variants immediately eligible for successful-path affinity again.
-- Channel-scoped priority-hit reset must also write a channel-level suppression state with no `resolvedModel`, even when concrete states were cleared. This makes a reset effective when no current concrete state matched and blocks newly observed same-channel resolved-model variants during the suppression window.
+- Channel-scoped priority-hit reset must also write a channel-level suppression state with no `routeRuleId` and no `resolvedModel`, even when concrete states were cleared. This makes a reset effective when no current concrete state matched, blocks newly observed same-channel resolved-model variants during the suppression window, and keeps later matching route rules from restoring the previous visible site/API-key hit.
+- Saving a redirection priority table after reordering, enabling, or disabling sites/API keys must also suppress the current visible priority hit for that display item when one exists. Persisting the new `priorityConfig` alone is not enough, because successful-path affinity is runtime state and can otherwise reorder the next request back to the old successful channel.
 - `handleRequest()` must apply successful path affinity after normal priority sorting, after `buildChannelAttemptPlan(..., maxAttemptsPerRoutePath)`, and after disabled-path filtering. Affinity may reorder the bounded candidate plan but must not add attempts or bypass `maxAttemptsPerRoutePath`.
 - `applySuccessfulRoutePathAffinity()` must promote the most recently successful eligible path to the front, then preserve circular fallback order from that path's original position: promoted path, later candidates, then earlier candidates. If no eligible successful state exists or the eligible path is already first, keep the input order unchanged.
-- Gemini CLI may send path-only requests for its own helper/default model even when the user has
-  selected another model in the app. Gemini CLI 0.41.2 binds multiple internal utility model configs
-  (`classifier`, `prompt-completion`, `fast-ack-helper`, `edit-corrector`, `summarizer-default`,
-  `summarizer-shell`, and `chat-compression-2.5-flash-lite`) to `gemini-2.5-flash-lite`; this is
-  distinct from the user-selected chat model such as `gemini-3.1-pro-preview`.
-- If the extracted Gemini path model is a known Gemini CLI internal utility/fallback model
-  (`gemini-2.5-flash-lite`, `gemini-2.5-flash`, or `gemini-2.5-pro`), has no matching rule, differs
-  from `routing.cliModelSelections.geminiCli`, and
-  `routing.server.blockGeminiCliInternalUtilityRequests !== false`, `handleRequest()` must return
-  HTTP `400` with `gemini_cli_internal_utility_blocked` before selected-model fallback. This prevents
-  CLI idle/helper traffic from being silently billed through the app-selected model.
-- If the extracted Gemini path model has no matching rule, is not blocked by the internal utility
-  guard, and `routing.cliModelSelections.geminiCli` has a configured model whose rule matches,
-  `handleRequest()` may route the request using that selected canonical model while preserving the
-  extracted path model as `requestedModel` in logs. This prevents retry loops where Gemini repeatedly
-  calls a non-terminal default path and the proxy returns `no_matching_rule`.
-- `no_matching_rule` uses HTTP `502`, and Gemini CLI treats 5xx responses as retryable for utility
-  calls. Do not rely on `502` to stop internal helper retries; route through the selected CLI model
-  rule when safe, or return an explicitly non-retryable CLI-native error only for intentional
-  terminal states.
+- Transport model names observed on the wire are diagnostic evidence, not sufficient user intent.
+  When registry data exists and the extracted model has no matching rule or registry entry, the
+  proxy must not fall back to unrelated generic site/account/API-key channels. A provider-native
+  path model may be kept as `requestedModel` for diagnostics, but route intent must come from the
+  selected CLI type, canonical model, target protocol, and display item source keys.
 - `handleRequest()` must filter candidates with `isRoutePathDisabled()` before upstream forwarding.
 - `handleRequest()` must re-check `isRoutePathDisabled()` inside the attempt loop before every upstream forwarding attempt. If an earlier attempt in the same request records a failure and suspends that route path, any remaining pre-planned attempts for the same path must be skipped. If no planned route path remains enabled, respond `400` with a CLI-native `all_route_paths_disabled` error shape instead of forwarding again, falling through to `all_channels_failed`, or returning a retriable `503`.
 - `handleRequest()` must treat any upstream non-2xx/3xx status as a route path `failure`; otherwise a `400`/`422` from one key can short-circuit fallback and prevent later API keys from being tried.
@@ -432,7 +435,7 @@ Deleting a seeded display item is a stable user intent, not a transient display 
     shapes such as name-only legacy tools, `mcp`, `code_interpreter`, `computer_use_preview`,
     `local_shell`, and unstable `shell`; if filtering removes the selected forced tool, it must also
     remove the now-invalid `tool_choice`.
-  - Gemini CLI keeps the native Gemini path/auth/response shape; route path rewriting still owns model and query-key replacement.
+  - Google/Gemini GenerateContent routes keep the native path/auth/response shape; route path rewriting still owns model and query-key replacement.
   Non-AnyRouter sites keep their native CLI protocol and path behavior.
 - When a channel's configured `targetProtocol` is not native-equivalent for the current CLI,
   `handleRequest()` must route the request through `cli-protocol-adapter.ts` before upstream
@@ -525,9 +528,6 @@ Deleting a seeded display item is a stable user intent, not a transient display 
   prior transient one. A CLI retry that finally succeeds therefore replaces the earlier transient
   reason (wrapper `supported = true`), while a CLI that never retries keeps the transient reason as
   the surfaced failure detail.
-- Gemini CLI internal utility/default requests that carry a probe-lock token must be blocked before
-  upstream forwarding just like ordinary route traffic. The block is terminal for the wrapper run
-  and must not consume the upstream-attempt budget for the selected model request.
 - `recordRoutePathOutcome()` must use `runtimeConfig.successRateWindowMinutes`, `runtimeConfig.disableDurationMinutes`, and `runtimeConfig.minSuccessRate` when resetting the health window and deciding whether to suspend a route path.
 - `routing.cliProbe.latest` is a display and diagnostics cache only. Route candidate resolution must not use failed CLI probe samples from `routeProbe`, `siteManual`, or `legacyCache` to suppress sites, accounts, API keys, or original models. Runtime suppression is owned by `routePathStates`.
 - The redirection priority table must display model test status in the covered-model label. For
@@ -602,7 +602,7 @@ Deleting a seeded display item is a stable user intent, not a transient display 
   remove any matching same-session first-attempt route log by the same channel identity so a stale
   in-memory log cannot re-highlight the cleared path after `routePathStates` refreshes.
 - Priority-hit detection and reset controls are scoped to the currently selected display item. When
-  the user changes the selected Claude Code/Codex/Gemini model, changes original-model selection, or
+  the user changes the selected CLI model, changes original-model selection, or
   reorders site priority, the renderer must recompute the current hit from the latest selected
   `canonicalName` plus its `sourceKeys`; it must not reuse a first-hit log or persisted
   `routePathStates` entry from a previously selected model card. A reset that returns a positive
@@ -615,10 +615,6 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 | No matching rule | `matchRule()` returns null | Respond `502` with `error: 'no_matching_rule'`; do not record route path state because no path exists |
 | No channels | resolved rule has no candidate channel | Respond `503` with `error: 'no_channels'` |
 | Unknown canonical with active registry | `resolveChannels(rule, 'gemini-2.5-flash-lite')` and registry already has sources/display items but no `gemini-2.5-flash-lite` entry | Return no channels; do not use generic channels from unrelated sites such as `nhh` |
-| Gemini internal utility guard enabled | request path extracts `gemini-2.5-flash-lite`, `cliModelSelections.geminiCli = 'gemini-3.1-pro-preview'`, no explicit `gemini-2.5-flash-lite` rule matches, and `blockGeminiCliInternalUtilityRequests !== false` | Respond `400` with `gemini_cli_internal_utility_blocked`; do not resolve channels or forward upstream |
-| Gemini helper/default path model has no rule and guard is disabled | request path extracts a helper/default model, `cliModelSelections.geminiCli = 'gemini-3.1-pro-preview'`, the selected model has a matching rule, and `blockGeminiCliInternalUtilityRequests === false` | Match and route through `gemini-3.1-pro-preview`; keep `requestedModel` as the extracted path model for diagnostics |
-| Gemini internal utility request fails before fallback | Gemini CLI 0.41.2 utility request for `classifier`, `prompt-completion`, `fast-ack-helper`, `edit-corrector`, `summarizer-*`, or chat compression reaches the proxy as `gemini-2.5-flash-lite` | Treat the path model as transport evidence, not user intent; prefer non-retryable blocking when billing avoidance is enabled, otherwise use selected-model fallback if available and never send it through unrelated generic channels |
-| Gemini helper request receives `502 no_matching_rule` | proxy returns retriable 5xx before a route path exists | Expect Gemini CLI to retry and potentially flood route logs; this is a proxy classification/routing contract failure, not proof that the user selected `gemini-2.5-flash-lite` |
 | All paths disabled | every planned route path has active `disabledUntil > now` | Respond `400` with a non-retryable CLI-native `all_route_paths_disabled` error shape |
 | Path disabled during current request | first planned attempt fails, `recordRoutePathOutcome()` sets `disabledUntil`, and remaining planned attempts target only disabled route paths | Do not make another upstream request; respond `400` with a non-retryable CLI-native `all_route_paths_disabled` error shape |
 | Candidate target protocol resolves after channel discovery | `resolveChannels()` returns candidates without concrete `targetProtocol`, but `resolveChannelTarget()` maps them to `openai-responses` before planning | Build route-path keys from the resolved protocol, so disabled-path checks and successful affinity match persisted `routePathStates` and attempt order starts from the current priority hit |
@@ -641,6 +637,8 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 | Transparent streaming request receives successful SSE | original request is streaming, adapters are transparent, upstream status is `2xx/3xx`, `content-type` includes `text/event-stream`, and the first body bytes validate as SSE | Defer downstream headers until the first accepted SSE chunk, strip hop-by-hop/`content-encoding`/`content-length`/`transfer-encoding` headers, forward buffered and subsequent chunks, retain the complete body for analytics, then end the downstream response |
 | Streaming request receives malformed 2xx body | upstream status is classified as `success`, but the response is not SSE or begins with HTML/JSON/non-SSE content | Do not write downstream bytes; record `invalid_streaming_response`, mark the route path failed, and try the next enabled channel when available |
 | Transparent stream ends without terminal marker | downstream bytes were already written, but no `message_stop`, `response.completed`, or `[DONE]` was observed before upstream EOF | Append SSE `event: error`, record `incomplete_streaming_response:missing_terminal_event`, mark the path failed, and close the downstream response instead of silently ending |
+| Claude stream emits `tool_use` but stops with `end_turn` | upstream produced a completed Anthropic `tool_use` content block but terminal `message_delta.delta.stop_reason` is `end_turn` | Rewrite the outgoing terminal stop reason to `tool_use`, validate the normalized Anthropic stream, and record the route as success only if the rest of the protocol checks pass |
+| Claude stream emits `tool_use` but stops with `max_tokens` or malformed tool input | upstream tool call may be truncated or invalid | Do not normalize; append a protocol-shaped SSE error, record `malformed_streaming_response:<reason>`, and mark the path failed |
 | Codex stream completes with no output and zero usage | upstream returns `200 text/event-stream` with `response.completed` / `[DONE]`, but no output text/function/tool content and all observed usage token fields are `0` | Append SSE `event: error`, record `malformed_streaming_response:empty_response_zero_usage`, mark the path failed, and do not count it as a successful generated response |
 | Codex stream emits output but terminal usage is all zero | upstream sends text/function/tool output chunks, then `response.completed` reports every observed terminal usage token field as `0` | Append SSE `event: error`, record `malformed_streaming_response:empty_response_zero_usage`, mark the path failed, and do not record success for that path |
 | Streaming request receives failed SSE | upstream status is not classified as `success` | Do not write downstream bytes; buffer the body, record failure, suspend/update the path, and try the next enabled channel when available |
@@ -665,12 +663,11 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 | Probe-lock reaches proxy | parsed probe-lock token and loopback client | Notify request subscribers before upstream forwarding so wrapper diagnostics know the CLI connected to the local proxy |
 | Probe-lock from non-loopback client | parsed probe-lock token and remote address is not loopback | Return `403 probe_lock_forbidden`, notify terminal failure, and do not forward upstream |
 | Probe-lock terminal failure already cached | same full probe-lock route API key within 5 minutes | Replay cached status/error without resolving another upstream route |
-| Probe-lock HTTP transient upstream failure, not final attempt | a probe-lock upstream attempt returns `503`/`429` and `attemptNumber < MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS` | Record a non-terminal (`terminal: false`) first upstream result, write the raw upstream response back to the CLI (hop-by-hop/content-length/transfer-encoding stripped) and return without protocol transforms; do NOT settle the budget or notify terminal failure, so the CLI's retry/concurrent request can still reach upstream |
+| Probe-lock HTTP transient upstream failure, not final attempt | a probe-lock upstream attempt returns `503`/`429` and `attemptNumber < MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS` | Record a non-terminal (`terminal: false`) first upstream result, write the buffered upstream response back to the CLI with hop-by-hop/`content-encoding`/`transfer-encoding` stripped and `content-length` recalculated, then return without protocol transforms; do NOT settle the budget or notify terminal failure, so the CLI's retry/concurrent request can still reach upstream |
 | Probe-lock transient network exception, not final attempt | `forwardToUpstream()` throws (no status) and `attemptNumber < MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS` | Record a non-terminal (`terminal: false`, `statusCode 502`, `error = exception message`) result without settling or notifying terminal failure; let the loop fall through so the CLI's retry/concurrent request can still reach upstream and a later terminal result can overwrite it |
 | Probe-lock success within cap | a probe-lock upstream attempt returns `2xx/3xx` | `settleRouteProbeLockUpstreamAttempt()`, record the success first upstream result; later probe-lock requests for the token return `400 probe_lock_upstream_attempt_exhausted` |
 | Probe-lock terminal failure status | a probe-lock upstream attempt returns terminal `401/403/404` | Settle, record, and notify terminal failure immediately; no retry |
 | Probe-lock transient failures reach the cap | transient status on the `MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS`-th attempt | Escalate to terminal `upstream_temporarily_unavailable` ("retried N times") and notify terminal failure |
-| Probe-lock Gemini internal utility request | helper/default raw model differs from the locked selected raw model | Return non-retryable internal utility block before upstream forwarding and notify terminal failure |
 
 ### 5. Good/Base/Bad Cases
 
@@ -719,6 +716,7 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 - Good: when the last enabled non-streaming candidate still returns explicit all-zero usage with `HTTP 200` after retry, the proxy returns aggregate failure instead of a misleading successful empty body.
 - Good: the first streaming upstream returns `503 text/event-stream`; the proxy buffers that failed body, writes nothing to the client, marks the path failed, and streams chunks from the second successful channel.
 - Good: an AnyRouter Claude Code route preserves the source `tools` array while adding `metadata.user_id`; the model can still emit tool_use events and the CLI does not terminate as a plain chat response.
+- Good: a Claude-compatible upstream emits a complete `tool_use` block but reports terminal `stop_reason: "end_turn"`; the proxy rewrites the outgoing terminal event to `stop_reason: "tool_use"` before Claude Code consumes it, then records success after normalized validation passes.
 - Good: a real CLI wrapper sends a probe-lock token, the route proxy observes the request, the first
   selected-model upstream attempt returns `401`, and the wrapper terminates early from the
   terminal-failure notification instead of waiting for process timeout.
@@ -742,6 +740,7 @@ Deleting a seeded display item is a stable user intent, not a transient display 
   `openai-chat-completions` paths can have different health, affinity, and disable state even when
   they share the same site/account/API key/model.
 - Bad: applying successful path affinity before `buildChannelAttemptPlan()` can resurrect duplicate attempts and make `maxAttemptsPerRoutePath = 1` ineffective.
+- Bad: disabling Anthropic completed-stream validation to tolerate one broken provider. That would let truncated tool calls, foreign event formats, or thinking-only messages reach Claude Code as successful streams.
 - Bad: a disabled path remains visible as a warning in the UI but must not be forwarded to until `disabledUntil` expires.
 - Bad: deriving `当前优先命中` only from in-memory route request logs, because those logs disappear on
   restart while the actual successful-path affinity survives in `state/route-runtime.json`.
@@ -765,12 +764,8 @@ Deleting a seeded display item is a stable user intent, not a transient display 
   expected to follow the latest redirection priority table after the user reorders sites.
 - Bad: a stale display item has `sourceKeys` for only `site-1/acc-1/raw-a` while `site-1/acc-2/raw-a` now exists. The route resolver must include both accounts because the selected unit is `raw-a`.
 - Bad: a legacy override-backed card has overrides for `gpt-5-latest` and custom CLI `duckcoding`, while `registry.entries['mixed-route'].sources` or the persisted display item still contains only `gpt-5-latest`. The UI must show both original models and both source groups by unioning entry, display-item, and override sources, not by trusting the stale projection alone.
-- Bad: a Gemini CLI request for `gemini-2.5-flash-lite` has no model redirection entry, but a wildcard Gemini route causes `buildGenericChannels()` to forward it through the first active site.
-- Bad: a Gemini CLI helper/default path model has no matching rule, while the app-selected Gemini
-  CLI model does have a rule, and the proxy still returns `502 no_matching_rule`; Gemini CLI can
-  retry this forever and flood route logs.
-- Bad: interpreting repeated `gemini-2.5-flash-lite` requests from Gemini CLI as a changed user
-  model selection without checking whether the request is an internal utility call.
+- Bad: an unknown provider-native transport model has no model redirection entry, but a wildcard route causes `buildGenericChannels()` to forward it through the first active site.
+- Bad: interpreting repeated helper/default transport model requests as a changed user model selection without checking the selected route intent.
 - Bad: implementing `electronFetchRaw()` with one fixed `setTimeout()` from request start, which can abort a healthy long-running SSE stream and make CLI conversations end without an upstream error body.
 - Bad: using the buffered `httpRawRequest()` path for successful SSE responses, which makes the CLI receive nothing until upstream `end` and can look like a stalled or abruptly ended conversation.
 - Bad: writing a failed upstream SSE chunk to the downstream response before classifying status, because fallback becomes impossible after bytes are sent.
@@ -810,13 +805,7 @@ Deleting a seeded display item is a stable user intent, not a transient display 
   provider-failure analytics.
 - `src/__tests__/http-client.test.ts`: assert raw buffered and streaming requests pass
   `AbortSignal` through to the Electron net helpers.
-- `src/__tests__/route-proxy-service.test.ts`: assert OpenAI-compatible paths are preserved and Gemini native paths replace the model segment and query API key before upstream forwarding.
-- `src/__tests__/route-proxy-service.test.ts`: assert an unmatched Gemini CLI internal
-  utility/fallback raw model returns non-retryable `400 gemini_cli_internal_utility_blocked` by
-  default, without resolving channels or forwarding upstream.
-- `src/__tests__/route-proxy-service.test.ts`: assert disabling the Gemini internal utility guard
-  allows a Gemini path-only raw model with no matching rule to fall back to the configured Gemini CLI
-  model rule and rewrite the upstream Gemini path to the selected model.
+- `src/__tests__/route-proxy-service.test.ts`: assert OpenAI-compatible paths are preserved and Google/Gemini GenerateContent native paths replace the model segment and query API key before upstream forwarding.
 - `src/__tests__/unified-config-manager.test.ts`: assert `resetRoutePathStates({ canonicalModel })` deletes only matching path states and preserves `stats`.
 - `src/__tests__/unified-config-manager.test.ts`: assert concrete path reset filters delete only the matching `routeRuleId / siteId / accountId / apiKeyId / canonicalModel / resolvedModel / targetProtocol` state.
 - `src/__tests__/unified-config-manager.test.ts`: assert priority-hit reset without `routeRuleId`
@@ -845,7 +834,7 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 - `src/__tests__/route-proxy-service.test.ts`: assert explicit non-native target protocols invoke
   protocol adaptation and still preserve CLI-native downstream response handling.
 - `src/__tests__/electron-fetch.test.ts`: assert upstream proxy URL normalization for bare `host:port`, supported proxy schemes, and unsupported schemes.
-- `src/__tests__/electron-fetch.test.ts`: assert raw Electron forwarding skips Chromium-managed Gemini CLI browser headers while preserving upstream auth and API client headers.
+- `src/__tests__/electron-fetch.test.ts`: assert raw Electron forwarding skips Chromium-managed restricted headers while preserving upstream auth and API client headers.
 - `src/__tests__/electron-fetch.test.ts`: assert active raw streaming responses re-arm the timeout after each data chunk and are not aborted only because total elapsed time exceeds the timeout.
 - `src/__tests__/electron-fetch.test.ts`: assert `electronFetchRawStream()` calls `onResponse`/`onData` in streaming order while retaining the complete response body.
 - `src/__tests__/http-client.test.ts`: assert raw forwarding uses Electron net when requested and passes `proxyUrl` through to `electronFetchRaw()`.
@@ -867,7 +856,10 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 - `src/__tests__/anyrouter-rewriter.test.ts`: assert Claude Code AnyRouter rewrite preserves native tool/request fields and only injects/overrides the required AnyRouter fields.
 - `src/__tests__/route-stats-service.test.ts`: assert 5-minute success-rate tracking and 30-minute disable state.
 - `src/__tests__/route-stats-service.test.ts`: assert custom `successRateWindowMinutes`, `disableDurationMinutes`, and `minSuccessRate` change suspension behavior.
-- `src/__tests__/route-workbench-redesign.test.tsx`: assert redirection cards show path suspension, priority dialog shows balance/ratio/probe status, route-rule dialog saves `runtimeConfig`, and reset defaults calls rebuild with `{ resetDefaults: true }`.
+- `src/__tests__/route-workbench-redesign.test.tsx`: assert redirection cards show path suspension,
+  priority dialog shows balance/ratio/probe status, route-rule dialog saves `runtimeConfig`, an
+  empty registry stays empty without mount-time rebuild, and the toolbar exposes only explicit
+  source sync plus manual creation.
 - `src/__tests__/route-workbench-redesign.test.tsx`: assert custom CLI local slot test results
   appear after covered models in the redirection priority detail table when no newer
   `routing.cliProbe.latest` entry exists.
@@ -884,11 +876,19 @@ Deleting a seeded display item is a stable user intent, not a transient display 
 - `src/__tests__/logs-page.test.tsx`: assert route failure details show upstream body text and do
   not repeat `HTTP xxx` code-only strings that are already visible in the status badge.
 - `src/__tests__/route-workbench-redesign.test.tsx`: assert override-backed display reconstruction preserves every grouped override source even when `registry.entries[canonicalName].sources` or the persisted display item is stale or partial, and assert editor save persists the display item before per-source overrides.
-- `src/__tests__/route-model-registry-service.test.ts`: assert the seeded `claude-opus-4-6` display item maps to the current raw opus source after default reset.
+- `src/__tests__/route-model-registry-service.test.ts`: assert detected sources do not create
+  display items or entries, while explicit non-`exclude` overrides rebuild as manual compatibility
+  items with runtime entries.
 - `src/__tests__/route-model-registry-service.test.ts`: assert an unknown requested model does not resolve to generic channels when model registry routing data exists, while an empty legacy registry can still use generic routing.
 - `src/__tests__/route-model-registry-service.test.ts`: assert missing site priorities append after the highest explicit site priority and missing API key priorities append after the highest explicit site-level API key priority.
-- `src/__tests__/route-model-registry-service.test.ts`: assert `syncModelRegistrySources()` (preserve mode) creates new seeded displayItems for newly detected canonicalNames while preserving existing items' priorityConfig, and assert new sources appear in the final registry.entries.
-- `src/__tests__/route-model-registry-service.test.ts`: assert deleting a seeded display item writes source-level `exclude` overrides and a forced source sync does not recreate that seeded item or its canonical entry.
+- `src/__tests__/route-model-registry-service.test.ts`: assert
+  `syncModelRegistrySources()` preserves manual items and their priority config without creating
+  redirects for newly detected models.
+- `src/__tests__/route-model-registry-service.test.ts`: assert deleting an override-only
+  compatibility card removes its grouped overrides.
+- `src/__tests__/unified-config-manager.test.ts`: assert load-time cleanup removes seeded items,
+  the deterministic legacy auto rule, and a stale selection while preserving same-name manual items,
+  user-authored rules, and their overrides.
 - `src/__tests__/unified-config-manager.test.ts`: assert route selections normalize aliases and route rules are ensured for selected CLI models.
 - `src/__tests__/route-proxy-service.test.ts`: assert non-loopback probe-lock requests notify a
   terminal failure and return `403 probe_lock_forbidden` without upstream I/O.
@@ -912,8 +912,6 @@ Deleting a seeded display item is a stable user intent, not a transient display 
   later attempts return `probe_lock_upstream_attempt_exhausted`; assert repeated transient failures
   escalate to terminal `upstream_temporarily_unavailable` at `MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS`, while
   a terminal `401/403/404` settles immediately and replays from the cached terminal failure.
-- `src/__tests__/route-proxy-service.test.ts`: assert probe-lock Gemini internal utility requests
-  are blocked before upstream forwarding and do not consume the selected-model attempt budget.
 - `src/__tests__/cli-wrapper-compat-service.test.ts`: assert the wrapper aborts/returns promptly
   when `subscribeRouteProbeLockTerminalFailure()` receives a deterministic proxy failure.
 - `src/__tests__/cli-wrapper-compat-service.test.ts`: assert an observed probe-lock request prevents
@@ -1228,7 +1226,6 @@ export interface RouteCliProbeSample {
   error?: string;
   claudeDetail?: ClaudeTestDetail;
   codexDetail?: CodexTestDetail;
-  geminiDetail?: GeminiTestDetail;
   testedAt: number;
 }
 
@@ -1290,7 +1287,7 @@ fetchCliProbeData(timeRange: '24h' | '7d', force?: boolean): Promise<void>;
   `site/account/CLI/model` tested through native and adapted protocols must not overwrite each
   other's latest result.
 - Route probe and manual site-management samples must preserve `targetProtocol`, `targetEndpoint`,
-  protocol-specific detail (`claudeDetail`, `codexDetail`, `geminiDetail`), latency fields, status
+  protocol-specific detail (`claudeDetail`, `codexDetail`), latency fields, status
   code, and error text in `RouteCliProbeSample.lastSample` so site management and route usability
   render the same diagnostics.
 - Route probe execution must choose account API keys through shared `isApiKeyActive()` semantics and
@@ -1471,4 +1468,250 @@ const sample: RouteCliProbeSample = {
   source: 'routeProbe',
   testedAt: Date.now(),
 };
+```
+
+## Scenario: OpenCode Endpoint Normalization Selector
+
+### 1. Scope / Trigger
+
+- Trigger: OpenCode can send official Anthropic Messages, OpenAI-compatible Chat Completions, or
+  OpenAI Responses traffic. Route runtime must not treat OpenCode `native` as one fixed endpoint.
+- Files: `src/shared/types/route-proxy.ts`, `src/main/route-proxy-service.ts`,
+  `src/main/cli-protocol-adapter.ts`, `src/main/unified-config-manager.ts`,
+  `src/main/handlers/route-handlers.ts`, `src/main/preload.ts`,
+  `src/renderer/store/routeStore.ts`, and
+  `src/renderer/components/Route/ProxyStats/ProxyStatsTab.tsx`.
+
+### 2. Signatures
+
+```ts
+// src/shared/types/route-proxy.ts
+export interface RoutingConfig {
+  openCodeRouteProtocol: Exclude<CliTargetProtocol, 'native'>;
+}
+
+export const DEFAULT_OPEN_CODE_ROUTE_PROTOCOL = 'openai-chat-completions';
+
+export function normalizeOpenCodeRouteProtocol(
+  value: unknown
+): Exclude<CliTargetProtocol, 'native'>;
+
+// src/main/unified-config-manager.ts
+export function updateOpenCodeRouteProtocol(
+  protocol: unknown
+): Promise<RoutingConfig['openCodeRouteProtocol']>;
+
+// src/main/cli-protocol-adapter.ts
+export function adaptRequestToTargetProtocol(
+  bodyBuffer: Buffer,
+  sourceCliType: RouteCliType,
+  targetProtocol: Exclude<CliTargetProtocol, 'native'>,
+  requestUrl?: string,
+  upstreamModel?: string,
+  sourceProtocol?: Exclude<CliTargetProtocol, 'native'>
+): CliProtocolRewriteResult;
+```
+
+### 3. Contracts
+
+- `routing.openCodeRouteProtocol` is the user-selected OpenCode normalization endpoint shown on the
+  Route page under OpenCode CLI.
+- Persisted missing, invalid, or `native` values normalize to `openai-chat-completions`.
+- OpenCode source protocol is inferred from the incoming request path:
+  `/v1/messages` -> `anthropic-messages`, `/v1/responses` -> `openai-responses`, and
+  `/v1/chat/completions` or unknown OpenCode paths -> `openai-chat-completions`.
+- Every OpenCode request follows this logical chain:
+  `actual source protocol -> routing.openCodeRouteProtocol -> channel target protocol`.
+- When the selected channel target protocol is `native`, the final upstream protocol is
+  `routing.openCodeRouteProtocol`, not `getCliTargetEndpoint('openCode', 'native')`.
+- Response adaptation runs in reverse order so the downstream OpenCode client receives the same
+  protocol shape it originally sent.
+- Route logs, analytics, and route-path health for an OpenCode native channel must use the effective
+  upstream protocol selected by `openCodeRouteProtocol`; failures for `/v1/messages` must not poison
+  `/v1/chat/completions` health after the selector changes.
+- OpenCode `/v1/messages` route authentication accepts the Anthropic-style `x-api-key` header as
+  well as Bearer, because the local route proxy is validating the unified route key before upstream
+  adaptation.
+
+### 4. Validation & Error Matrix
+
+| Case | Boundary | Expected behavior |
+|------|----------|-------------------|
+| Missing persisted `openCodeRouteProtocol` | config normalization | Store `openai-chat-completions` |
+| User selects `/v1/messages`; client sends `/v1/chat/completions`; upstream target is native | proxy request chain | Convert chat -> messages and forward `/v1/messages` |
+| User selects `/v1/messages`; client and explicit upstream target are both chat | proxy request chain | Still run chat -> messages -> chat instead of transparent passthrough |
+| Client sends `/v1/messages` with `x-api-key` | route auth | Validate the route API key from `x-api-key` |
+| Upstream response is transformed | response boundary | Apply upstream -> selected -> original-source response adapters |
+| Adapter cannot parse source body | proxy fallback | Record `adapter_request-adapt:<reason>` and try the next route path before writing response bytes |
+
+### 5. Good/Base/Bad Cases
+
+- Good: OpenCode sends Anthropic Messages, the Route page selector is
+  `/v1/chat/completions`, and a native upstream channel receives a Chat Completions request while
+  OpenCode receives an Anthropic Messages response.
+- Good: OpenCode sends Chat Completions, the selector is `/v1/messages`, and an explicit Chat
+  Completions upstream still goes through a two-step conversion so selector semantics are not
+  bypassed.
+- Base: Source, selected, and upstream protocols are all Chat Completions; transparent streaming is
+  allowed and uses Chat Completions terminal validation.
+- Bad: Treating OpenCode `native` as permanently equal to `/v1/chat/completions` inside
+  `route-proxy-service.ts`.
+- Bad: Deciding whether to adapt by comparing only source protocol and final upstream protocol,
+  because that skips the selected intermediate endpoint.
+
+### 6. Tests Required
+
+- `src/__tests__/route-proxy-service.test.ts`
+  - Assert OpenCode `/v1/messages` normalizes to the selected Chat Completions endpoint for a native
+    channel and adapts the response back to Anthropic shape.
+  - Assert source chat + selected messages + explicit upstream chat does not transparently return
+    the upstream Chat Completions body.
+  - Assert route analytics records the effective target protocol and endpoint.
+- `src/__tests__/route-workbench-redesign.test.tsx`
+  - Assert the Route page renders OpenCode "入口端点" selector and calls
+    `saveOpenCodeRouteProtocol()` on change.
+- `src/__tests__/unified-config-manager.test.ts`
+  - Assert invalid persisted values backfill to `DEFAULT_OPEN_CODE_ROUTE_PROTOCOL`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+// Skips the Route page selector whenever source and final upstream are both chat.
+if (sourceProtocol === upstreamProtocol) {
+  forwardTransparent();
+}
+```
+
+#### Correct
+
+```ts
+const selectedProtocol = normalizeOpenCodeRouteProtocol(routing.openCodeRouteProtocol);
+if (sourceProtocol !== selectedProtocol) {
+  adapt(sourceProtocol, selectedProtocol);
+}
+if (selectedProtocol !== upstreamProtocol) {
+  adapt(selectedProtocol, upstreamProtocol);
+}
+```
+
+---
+
+## Scenario: Upstream Failure Taxonomy Vs Local Route Format Failures
+
+### 1. Scope / Trigger
+
+- Trigger: Claude Code / Codex / OpenCode traffic through the local route proxy produces many site
+  failures; operators must distinguish **upstream provider/site failures** from **local request-format
+  / protocol-adapt failures** before changing rewrite or adapter code.
+- Evidence source of truth: `userData/logs/main.log` and `main.old.log` lines from
+  `[RouteProxyService]`.
+- This is a diagnosis contract, not a new runtime feature. Do not treat every CLI-visible error as a
+  local format bug.
+
+### 2. Log Markers
+
+| Marker | Owner | Meaning |
+|--------|-------|---------|
+| `Upstream channel returned failure response { statusCode, siteId, resolvedModel, bodySnippet }` | Upstream HTTP non-success | Provider/site returned a failure body; local proxy already forwarded native request (after optional AnyRouter/protocol rewrite) |
+| `Channel failed (N), trying next channel` | Local fallback policy | Expected multi-channel retry; not itself a format bug |
+| `Upstream channel forwarding failed { stage, cliType, sourceEndpoint, targetProtocol, error }` | Local transport / stream validation / adapter | Look at `stage` and `error` carefully |
+| `stage: 'upstream'` + `error: 'malformed_streaming_response:*'` | Local stream validator on upstream body | Upstream returned success-ish stream that failed protocol content checks |
+| `stage: 'upstream'` + `error: 'net::ERR_*'` / timeout / empty response | Local transport to upstream | Network path failure before a usable body |
+| `stage: 'request-adapt'` / `stage: 'response-adapt'` / `adapter_request-adapt:*` | Local protocol adapter | Real local format conversion failure |
+| `Protocol adapter request-adapt failed` | Local protocol adapter | Confirmed local rewrite/adapt bug or unsupported conversion |
+| `Invalid or missing userHash` | Local AnyRouter rewrite precondition | Local account config missing required AnyRouter fingerprint |
+| `Dropped Codex tools unsupported by AnyRouter` | Local AnyRouter tool filter | Local compatibility strip; may change tool surface but is intentional |
+| `empty_response_zero_usage` | Local semantic classifier | Upstream HTTP 200 with all-zero usage treated as path failure |
+| `all_route_paths_disabled` / `all_channels_failed` | Local aggregate result | All planned paths failed or were suspended; inspect prior per-channel causes |
+| `probe_lock_upstream_attempt_exhausted` | Probe-lock only | Wrapper test budget, not normal interactive routing |
+
+### 3. Failure Classes
+
+#### Class A — Upstream site / provider failures (default prior)
+
+These dominate real interactive Claude Code / Codex route logs. Root cause is outside local rewrite
+logic; fix by changing channel priority, disabling bad paths, topping up quota, or waiting for the
+provider.
+
+| Subclass | Typical status | bodySnippet / error patterns |
+|----------|----------------|------------------------------|
+| Capacity / no channel | 404 / 503 | `model_not_found`, `No available channel for model ... under group ...`, `无可用账号` |
+| Rate / concurrency | 429 / 500-wrapped | `rate limit`, TPM/RPM/QPM, Chinese concurrency-limit text, `负载已饱和` |
+| Quota / billing | 402 / 403 / 429 | `insufficient`, `INSUFFICIENT_BALANCE`, `额度不足`, `user quota is not enough`, pre-deduct failures |
+| Transient outage | 500 / 502 / 503 / 520-529 | `Service temporarily unavailable`, `Service Unavailable`, `Bad Gateway`, Cloudflare 5xx |
+| Provider bug | 500 | `new_api_panic`, `implement me`, empty HTML/diagnostic pages |
+| Auth / entitlement | 401 / 403 | `permission_error`, missing Codex subscription, invalid key on **that site** |
+| Pricing / config gap | 503 | `Codex model price is temporarily unavailable` |
+| Upstream empty generation | often 200 stream then local fail | `malformed_streaming_response:empty_response` / `empty_message` / `missing_message_start` / `No choices in OpenAI response` |
+
+Observed mass pattern (2026-07 logs): interactive Codex failures clustered on `gpt-5.x` /
+`gpt-5.x-sol` with 503 no-channel, 403/402 balance, and empty Responses streams. Historical mixed
+Claude/Codex traffic was dominated by 500/503/429 plus group-channel unavailability, not adapter
+errors.
+
+#### Class B — Local route request-format / protocol failures (rare; require rewrite/adapter work)
+
+Only treat as Class B when evidence shows the **request shape produced by this app** is rejected, or
+local adaptation itself throws.
+
+| Subclass | Typical status / stage | Discriminators |
+|----------|------------------------|----------------|
+| Protocol adapter failure | `stage: 'request-adapt' \| 'response-adapt'` | Log explicitly says adapter failed; no upstream bodySnippet yet |
+| Schema rejected by upstream after local passthrough/rewrite | 400 / 422 | `invalid_request_error` / `Unknown parameter` / `extra inputs` that name fields present in the **outgoing** body |
+| AnyRouter precondition | warn + likely upstream reject | missing/invalid `userHash` for Claude Code AnyRouter |
+| Intentional tool strip side-effect | local warn | `Dropped Codex tools unsupported by AnyRouter` followed by tool-related upstream reject |
+
+Confirmed Class B sample from logs: `Unknown parameter: 'input[N].namespace'` on Codex
+`/v1/responses` against some sites. This is a **Codex native input item field** that those upstreams
+do not accept. It is **not** the AnyRouter tools allowlist entry named `namespace`, and it is **not**
+a Claude `/v1/messages` rewrite bug. Discriminator: status 400 + parameter path under `input[...]`
++ `cliType: 'codex'` + native/openai-responses path.
+
+Non-Class-B traps:
+- `invalid_request_error` with TPM/rate-limit text is Class A rate limiting, not schema failure.
+- `malformed_streaming_response:*` with `stage: 'upstream'` means upstream content failed local
+  protocol validation; do not rewrite request format first.
+- `Channel failed, trying next channel` is policy, not root cause.
+
+### 4. Diagnosis Procedure
+
+1. Open `main.log` and filter `[RouteProxyService]`.
+2. For each user-visible CLI error, collect the last per-channel markers for that request window:
+   failure response, forwarding failed, adapter failed.
+3. Classify with the table above. Default prior: Class A unless Class B discriminators are present.
+4. If Class A: inspect `resolvedModel`, site/group, quota, and path suspension; adjust routing intent
+   or site health, do not change protocol adapters.
+5. If Class B: capture `cliType`, `sourceEndpoint`, `targetProtocol`, `targetEndpoint`,
+   `resolvedModel`, and the rejected field path; only then consider rewriter/adapter changes.
+6. If only aggregate `all_channels_failed` is visible in the CLI, always expand to the preceding
+   per-channel Class A/B causes before changing code.
+
+### 5. Contracts
+
+- Local route must keep logging `bodySnippet` for upstream HTTP failures and `stage` + `error` for
+  forwarding/adapter failures so this taxonomy remains operable.
+- Do not collapse Class A and Class B into a single UI reason such as "站点不兼容" without the
+  subclass.
+- A high multi-site failure rate under load is expected when many candidates share the same scarce
+  upstream model/group; that is Class A capacity correlation, not proof of a local format regression.
+- Streaming validators (`malformed_streaming_response`, `incomplete_streaming_response`,
+  `invalid_streaming_response`, zero-usage) are local detectors of upstream semantic failure; they are
+  not request-format bugs unless paired with request-adapt errors.
+
+### 6. Wrong vs Correct
+
+#### Wrong
+
+```text
+Many sites failed while using local route → rewrite Claude/Codex request format first.
+```
+
+#### Correct
+
+```text
+Count Upstream channel returned failure response subclasses first.
+If bodySnippet is no-channel / rate-limit / balance / 5xx → Class A.
+Only if stage is request-adapt or bodySnippet names unknown request fields → Class B.
 ```

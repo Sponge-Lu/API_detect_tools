@@ -26,12 +26,22 @@ export type CliTargetProtocol = (typeof CLI_TARGET_PROTOCOLS)[number];
 
 export const DEFAULT_CLI_TARGET_PROTOCOL: CliTargetProtocol = 'native';
 
-export type CliTargetProtocolCliType = 'claudeCode' | 'codex' | 'geminiCli';
+export const BUILTIN_CLI_TYPES = ['claudeCode', 'codex', 'openCode'] as const;
+
+export type BuiltinCliType = (typeof BUILTIN_CLI_TYPES)[number];
+
+export const BUILTIN_CLI_LABELS: Record<BuiltinCliType, string> = {
+  claudeCode: 'Claude Code',
+  codex: 'Codex',
+  openCode: 'OpenCode',
+};
+
+export type CliTargetProtocolCliType = BuiltinCliType;
 
 export function getCliTargetEndpoint(
   cliType: CliTargetProtocolCliType,
   targetProtocol: CliTargetProtocol,
-  model?: string | null
+  _model?: string | null
 ): string {
   const normalized = normalizeCliTargetProtocol(targetProtocol);
   if (normalized === 'native') {
@@ -41,8 +51,9 @@ export function getCliTargetEndpoint(
     if (cliType === 'codex') {
       return '/v1/responses';
     }
-    const modelSegment = (model || '{model}').trim() || '{model}';
-    return `/v1beta/models/${modelSegment}:streamGenerateContent`;
+    if (cliType === 'openCode') {
+      return '/v1/chat/completions';
+    }
   }
   if (normalized === 'anthropic-messages') {
     return '/v1/messages';
@@ -66,6 +77,9 @@ export function isCliTargetProtocolNativeEquivalent(
   }
   if (cliType === 'codex') {
     return normalized === 'openai-responses';
+  }
+  if (cliType === 'openCode') {
+    return normalized === 'openai-chat-completions';
   }
   return false;
 }
@@ -98,7 +112,7 @@ export interface CliConfigItem {
 export interface CliConfig {
   claudeCode?: CliConfigItem | null;
   codex?: CliConfigItem | null;
-  geminiCli?: CliConfigItem | null;
+  openCode?: CliConfigItem | null;
 }
 
 /** 默认 CLI 配置 - 所有 CLI 默认启用 */
@@ -127,7 +141,7 @@ export const DEFAULT_CLI_CONFIG: Required<{
     applyMode: 'merge',
     targetProtocol: DEFAULT_CLI_TARGET_PROTOCOL,
   },
-  geminiCli: {
+  openCode: {
     apiKeyId: null,
     model: null,
     testModel: null,

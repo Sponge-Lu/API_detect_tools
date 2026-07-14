@@ -10,7 +10,6 @@ import { CLI_TYPE_PATH_MAP } from '../shared/types/route-proxy';
  * 从请求路径识别 CLI 类型
  * /v1/messages  -> claudeCode
  * /v1/responses -> codex
- * /v1beta/...   -> geminiCli
  */
 export function detectCliTypeFromPath(pathname: string): RouteCliType | null {
   for (const [cliType, paths] of Object.entries(CLI_TYPE_PATH_MAP) as [RouteCliType, string[]][]) {
@@ -33,27 +32,8 @@ export function extractModelFromBody(body: unknown): string | null {
   return null;
 }
 
-/**
- * 从请求路径提取模型名称
- * 目前主要用于 Gemini 原生格式：
- * /v1beta/models/{model}:generateContent
- * /v1beta/models/{model}:streamGenerateContent
- */
-export function extractModelFromPath(pathname: string, cliType: RouteCliType): string | null {
-  if (cliType !== 'geminiCli') {
-    return null;
-  }
-
-  const match = pathname.match(/^\/v1beta\/models\/([^/:?]+)(?::[A-Za-z]+)?/);
-  if (!match?.[1]) {
-    return null;
-  }
-
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return match[1];
-  }
+export function extractModelFromPath(_pathname: string, _cliType: RouteCliType): string | null {
+  return null;
 }
 
 /** pattern specificity 数值（越高越具体） */
