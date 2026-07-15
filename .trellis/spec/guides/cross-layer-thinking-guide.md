@@ -313,8 +313,9 @@ Checklist:
 Examples:
 - a local route receives `HTTP 200` and `text/event-stream`, so it writes success stats before
   validating the protocol-specific final event
-- a Codex/OpenAI Responses stream contains `response.completed` / `[DONE]`, but no output text,
-  function call, or tool output
+- a Codex/OpenAI Responses stream contains `response.completed` / `[DONE]`, but no output text or
+  typed `ResponseOutputItem`; reasoning and built-in/custom tool items are valid output and must not
+  be rejected by a text/function-only allowlist
 - the upstream reports `input_tokens/output_tokens/total_tokens = 0`, and analytics displays a
   successful request with all token fields at `0`, while the CLI conversation ended abruptly
 - a non-streaming route receives `HTTP 200` with explicit total/input/output/cache usage all equal to
@@ -327,6 +328,9 @@ Checklist:
 - classify HTTP status and content type only as transport eligibility
 - for streaming model routes, validate the protocol terminal event and completed response content
   before recording route-path success
+- treat protocol failure terminals separately from missing terminals: preserve Anthropic
+  `event: error` and OpenAI `response.failed`, and accept `response.incomplete` as a terminal event
+  when it carries consumable output
 - for non-streaming model routes, validate semantic success before writing downstream; explicit
   all-zero total/input/output/cache usage is a failure diagnostic, not a successful generation
 - before marking a route path failed for a transient-looking semantic anomaly, check whether the
@@ -437,8 +441,9 @@ Examples:
   bodies is treated as "our route format is wrong"
 - `invalid_request_error` rate-limit text is treated as schema rejection because the error type name
   contains `invalid_request`
-- `malformed_streaming_response:empty_response` is treated as a local SSE rewrite bug even though
-  `stage: 'upstream'` and the upstream already closed a success-ish empty stream
+- `malformed_streaming_response:empty_response` is assigned to the upstream without checking whether
+  the local validator ignored an official Responses output item such as `custom_tool_call`,
+  `local_shell_call`, reasoning, or MCP output
 - a single real schema reject such as `Unknown parameter: 'input[N].namespace'` is generalized into a
   full Claude/Codex rewrite overhaul
 

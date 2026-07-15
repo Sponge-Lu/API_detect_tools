@@ -4221,6 +4221,81 @@ describe('route-proxy-service probe lock', () => {
 });
 
 describe('route-proxy-service SSE streaming passthrough', () => {
+  function setupStreamingRoute(cliType: 'claudeCode' | 'codex', model: string) {
+    const rule = {
+      id: `rule-${cliType}-stream`,
+      cliType,
+      pattern: model,
+      patternType: 'exact' as const,
+    };
+    const channel = {
+      routeRuleId: rule.id,
+      siteId: 'site-upstream',
+      accountId: 'account-upstream',
+      apiKeyId: 'key-upstream',
+      cliType,
+      canonicalModel: model,
+      resolvedModel: model,
+    };
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+      },
+      rules: [rule],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: null,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          [model]: {
+            canonicalName: model,
+            aliases: [model],
+            sources: [],
+            vendor: cliType === 'claudeCode' ? ('anthropic' as const) : ('openai' as const),
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+    };
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn(() => ({ id: 'site-upstream', name: 'Upstream' })),
+      getAccountById: vi.fn(() => ({ id: 'account-upstream', account_name: 'default' })),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue(cliType);
+    vi.mocked(extractModelFromBody).mockReturnValue(model);
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue([channel]);
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://upstream.example.com',
+      apiKey: 'sk-upstream',
+    });
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockResolvedValue({
+      ...channel,
+      windowStartedAt: 1,
+      windowRequestCount: 1,
+      windowSuccessCount: 1,
+      successRate: 1,
+      updatedAt: 1,
+    });
+
+    return channel;
+  }
+
   it('forwards successful transparent SSE responses chunk-by-chunk', async () => {
     vi.clearAllMocks();
 
@@ -4269,13 +4344,30 @@ describe('route-proxy-service SSE streaming passthrough', () => {
         vendorPriorities: {},
       },
     };
+    const customToolCall = {
+      id: 'ctc_1',
+      type: 'custom_tool_call',
+      call_id: 'call_1',
+      name: 'shell',
+      input: '{}',
+    };
     const chunks = [
       Buffer.from('data: {"usage":{"prompt_tokens":5}}\n\n'),
       Buffer.from(
-        'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"ok"}\n\n'
+        `event: response.output_item.added\ndata: ${JSON.stringify({
+          type: 'response.output_item.added',
+          output_index: 0,
+          item: customToolCall,
+        })}\n\n`
       ),
       Buffer.from(
-        'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"completion_tokens":7,"total_tokens":12}}}\n\n'
+        `event: response.completed\ndata: ${JSON.stringify({
+          type: 'response.completed',
+          response: {
+            output: [customToolCall],
+            usage: { completion_tokens: 7, total_tokens: 12 },
+          },
+        })}\n\n`
       ),
     ];
     const upstreamHeaders = {
@@ -4377,6 +4469,168 @@ describe('route-proxy-service SSE streaming passthrough', () => {
         completionTokens: 7,
         totalTokens: 12,
       })
+    );
+  });
+
+  it('retries an empty SSE response once on the same channel before recording failure', async () => {
+    vi.clearAllMocks();
+    const model = 'grok-4.5';
+    const channel = setupStreamingRoute('claudeCode', model);
+    const completedStream = buildClaudeTextSse();
+    const upstreamHeaders = { 'content-type': 'text/event-stream' };
+
+    vi.mocked(httpRawStreamRequest)
+      .mockImplementationOnce(async (_url, config = {}) => {
+        expect(
+          config.onResponse?.({ status: 200, statusText: 'OK', headers: upstreamHeaders })
+        ).toBe(true);
+        return { status: 200, headers: upstreamHeaders, body: Buffer.alloc(0) };
+      })
+      .mockImplementationOnce(async (_url, config = {}) => {
+        expect(
+          config.onResponse?.({ status: 200, statusText: 'OK', headers: upstreamHeaders })
+        ).toBe(true);
+        await config.onChunk?.(completedStream);
+        return { status: 200, headers: upstreamHeaders, body: completedStream };
+      });
+
+    const request = createJsonRequest(
+      '/v1/messages',
+      { 'x-api-key': 'sk-route', 'content-type': 'application/json' },
+      { model, stream: true, messages: [{ role: 'user', content: 'hi' }] }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(httpRawStreamRequest).toHaveBeenCalledTimes(2);
+    expect(response.body).toBe(completedStream.toString('utf-8'));
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: channel.apiKeyId }),
+      'success',
+      expect.objectContaining({ statusCode: 200 }),
+      expect.any(Object)
+    );
+    expect(recordRoutePathOutcome).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'failure',
+      expect.anything(),
+      expect.anything()
+    );
+  });
+
+  it('preserves upstream SSE error events instead of replacing them with missing-terminal errors', async () => {
+    vi.clearAllMocks();
+    const model = 'grok-4.5';
+    const channel = setupStreamingRoute('claudeCode', model);
+    const errorChunk = Buffer.from(
+      'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}\n\n'
+    );
+    const upstreamHeaders = { 'content-type': 'text/event-stream' };
+
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
+      expect(config.onResponse?.({ status: 200, statusText: 'OK', headers: upstreamHeaders })).toBe(
+        true
+      );
+      await config.onChunk?.(errorChunk);
+      return { status: 200, headers: upstreamHeaders, body: errorChunk };
+    });
+
+    const request = createJsonRequest(
+      '/v1/messages',
+      { 'x-api-key': 'sk-route', 'content-type': 'application/json' },
+      { model, stream: true, messages: [{ role: 'user', content: 'hi' }] }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.body).toBe(errorChunk.toString('utf-8'));
+    expect(response.body).not.toContain('upstream stream ended before terminal SSE event');
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: channel.apiKeyId }),
+      'failure',
+      expect.objectContaining({ error: 'upstream_streaming_error:overloaded_error' }),
+      expect.any(Object)
+    );
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKeyId: channel.apiKeyId,
+        outcome: 'failure',
+        error: 'upstream_streaming_error:overloaded_error',
+      })
+    );
+  });
+
+  it('preserves response.failed terminal events and records the upstream error code', async () => {
+    vi.clearAllMocks();
+    const model = 'gpt-5.6-sol';
+    const channel = setupStreamingRoute('codex', model);
+    const failedChunk = Buffer.from(
+      'event: response.failed\ndata: {"type":"response.failed","response":{"error":{"type":"server_error","code":"upstream_failed","message":"Failed"}}}\n\n'
+    );
+    const upstreamHeaders = { 'content-type': 'text/event-stream' };
+
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
+      expect(config.onResponse?.({ status: 200, statusText: 'OK', headers: upstreamHeaders })).toBe(
+        true
+      );
+      await config.onChunk?.(failedChunk);
+      return { status: 200, headers: upstreamHeaders, body: failedChunk };
+    });
+
+    const request = createJsonRequest(
+      '/v1/responses',
+      { authorization: 'Bearer sk-route', 'content-type': 'application/json' },
+      { model, stream: true, input: 'hi' }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.body).toBe(failedChunk.toString('utf-8'));
+    expect(response.body).not.toContain('upstream stream ended before terminal SSE event');
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: channel.apiKeyId }),
+      'failure',
+      expect.objectContaining({ error: 'upstream_streaming_error:server_error' }),
+      expect.any(Object)
+    );
+  });
+
+  it('accepts response.incomplete as a terminal Responses event when output is present', async () => {
+    vi.clearAllMocks();
+    const model = 'gpt-5.6-sol';
+    const channel = setupStreamingRoute('codex', model);
+    const incompleteChunk = Buffer.from(
+      'event: response.incomplete\ndata: {"type":"response.incomplete","response":{"output":[{"type":"local_shell_call","id":"lsc_1","call_id":"call_1","action":{"type":"exec","command":["pwd"]},"status":"completed"}],"usage":{"input_tokens":10,"output_tokens":4,"total_tokens":14}}}\n\n'
+    );
+    const upstreamHeaders = { 'content-type': 'text/event-stream' };
+
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
+      expect(config.onResponse?.({ status: 200, statusText: 'OK', headers: upstreamHeaders })).toBe(
+        true
+      );
+      await config.onChunk?.(incompleteChunk);
+      return { status: 200, headers: upstreamHeaders, body: incompleteChunk };
+    });
+
+    const request = createJsonRequest(
+      '/v1/responses',
+      { authorization: 'Bearer sk-route', 'content-type': 'application/json' },
+      { model, stream: true, input: 'hi' }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.body).toBe(incompleteChunk.toString('utf-8'));
+    expect(response.body).not.toContain('event: error');
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: channel.apiKeyId }),
+      'success',
+      expect.objectContaining({ statusCode: 200 }),
+      expect.any(Object)
     );
   });
 

@@ -534,6 +534,7 @@ export async function electronFetchRawStream(
       armIdleTimeout(timeout);
       const chunks: Buffer[] = [];
       let firstByteLatencyMs: number | undefined;
+      let pendingChunkHandler = Promise.resolve();
       const responseHeaders = collectElectronResponseHeaders(response);
       let shouldStreamChunks = false;
       const readableResponse = response as typeof response & {
@@ -555,6 +556,27 @@ export async function electronFetchRawStream(
         return;
       }
 
+      const finishResponse = () => {
+        pendingChunkHandler.then(
+          () => {
+            resolveOnce({
+              status: response.statusCode,
+              statusText: response.statusMessage || '',
+              body: Buffer.concat(chunks),
+              headers: responseHeaders,
+              firstByteLatencyMs,
+            });
+          },
+          (error: unknown) => {
+            rejectOnce(error instanceof Error ? error : new Error(String(error)));
+          }
+        );
+      };
+
+      response.on('end', finishResponse);
+      response.on('aborted', () => rejectOnce(new Error('Upstream response aborted')));
+      response.on('error', (error: Error) => rejectOnce(error));
+
       response.on('data', chunk => {
         if (firstByteLatencyMs === undefined) {
           firstByteLatencyMs = Date.now() - startedAt;
@@ -567,7 +589,8 @@ export async function electronFetchRawStream(
         if (!shouldStreamChunks || !onData) return;
 
         readableResponse.pause?.();
-        Promise.resolve(onData(buffer)).then(
+        pendingChunkHandler = pendingChunkHandler.then(() => onData(buffer));
+        pendingChunkHandler.then(
           () => {
             if (!settled) {
               readableResponse.resume?.();
@@ -578,20 +601,6 @@ export async function electronFetchRawStream(
             rejectOnce(error instanceof Error ? error : new Error(String(error)));
           }
         );
-      });
-
-      response.on('end', () => {
-        resolveOnce({
-          status: response.statusCode,
-          statusText: response.statusMessage || '',
-          body: Buffer.concat(chunks),
-          headers: responseHeaders,
-          firstByteLatencyMs,
-        });
-      });
-
-      response.on('error', (error: Error) => {
-        rejectOnce(error);
       });
     });
 

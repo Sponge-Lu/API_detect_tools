@@ -93,6 +93,8 @@ const ALL_ROUTE_PATHS_DISABLED_MESSAGE =
   'all_route_paths_disabled: All route paths for this rule are temporarily disabled. Restore route paths in the route rule UI or wait for the suspension to expire.';
 const EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE = 'empty_response_zero_usage';
 const ZERO_USAGE_UPSTREAM_RETRY_ATTEMPTS = 1;
+const EMPTY_STREAM_UPSTREAM_RETRY_ATTEMPTS = 1;
+const EMPTY_STREAMING_RESPONSE_ERROR = 'invalid_streaming_response:empty_streaming_response';
 const PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_ERROR_CODE = 'probe_lock_upstream_attempt_exhausted';
 const PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_STATUS_CODE = 400;
 const ANYROUTER_REQUEST_TIMEOUT_MS = 120 * 1000;
@@ -691,7 +693,8 @@ function hasStreamingTerminalMarker(protocol: StreamingTerminalProtocol, text: s
   return (
     /data:\s*\[DONE\]/.test(text) ||
     /event:\s*response\.completed/.test(text) ||
-    /"type"\s*:\s*"response\.completed"/.test(text)
+    /event:\s*response\.(?:failed|incomplete)/.test(text) ||
+    /"type"\s*:\s*"response\.(?:completed|failed|incomplete)"/.test(text)
   );
 }
 
@@ -879,6 +882,28 @@ function readNumericIndex(value: unknown): number | undefined {
   return Number.isInteger(index) && index >= 0 ? index : undefined;
 }
 
+function findUpstreamStreamingFailureCode(body: Buffer): string | undefined {
+  for (const block of parseSseBlocks(body.toString('utf-8'))) {
+    const payload = parseSseJsonRecord(block.data);
+    if (!payload) continue;
+
+    const payloadType = readString(payload.type) || block.event || '';
+    const response = asRecord(payload.response);
+    const error = asRecord(payload.error) || asRecord(response?.error);
+    const isFailureEvent =
+      block.event === 'error' || payloadType === 'error' || payloadType === 'response.failed';
+    if (!isFailureEvent && !error) continue;
+
+    return readString(error?.type) || readString(error?.code) || payloadType || 'unknown_error';
+  }
+
+  return undefined;
+}
+
+function isRetryableEmptyStreamingResponse(error: unknown): boolean {
+  return error instanceof Error && error.message === EMPTY_STREAMING_RESPONSE_ERROR;
+}
+
 function buildCompletedStreamFailure(reason: string, message: string): CompletedStreamValidation {
   return { ok: false, reason, message };
 }
@@ -890,7 +915,7 @@ function hasOpenAiResponsesOutputItem(item: unknown): boolean {
   }
 
   const itemType = readString(record.type);
-  if (itemType === 'function_call' || itemType === 'function_call_output') {
+  if (itemType && itemType !== 'message') {
     return true;
   }
 
@@ -932,7 +957,7 @@ function hasOnlyZeroUsageTokens(usage: Record<string, unknown> | undefined): boo
 }
 
 function validateCompletedOpenAiResponsesStream(body: Buffer): CompletedStreamValidation {
-  let sawCompleted = false;
+  let sawFinished = false;
   let sawDone = false;
   let textLength = 0;
   let outputItems = 0;
@@ -985,8 +1010,8 @@ function validateCompletedOpenAiResponsesStream(body: Buffer): CompletedStreamVa
       continue;
     }
 
-    if (payloadType === 'response.completed') {
-      sawCompleted = true;
+    if (payloadType === 'response.completed' || payloadType === 'response.incomplete') {
+      sawFinished = true;
       const response = asRecord(payload.response);
       textLength += readString(response?.output_text).length;
       const output = Array.isArray(response?.output) ? response.output : [];
@@ -999,10 +1024,10 @@ function validateCompletedOpenAiResponsesStream(body: Buffer): CompletedStreamVa
     }
   }
 
-  if (!sawCompleted && !sawDone) {
+  if (!sawFinished && !sawDone) {
     return buildCompletedStreamFailure(
-      'missing_response_completed',
-      'upstream ended Codex stream without response.completed or [DONE]'
+      'missing_response_terminal',
+      'upstream ended Codex stream without response.completed, response.incomplete, or [DONE]'
     );
   }
 
@@ -2345,6 +2370,18 @@ async function forwardToUpstream(
     }
   }
 
+  const completedStreamingBody = Buffer.concat(receivedStreamingChunks);
+  const upstreamStreamingFailureCode = findUpstreamStreamingFailureCode(completedStreamingBody);
+
+  if (
+    options.streamResponse &&
+    options.streamResponseBody &&
+    streamed &&
+    upstreamStreamingFailureCode
+  ) {
+    throw new Error(`upstream_streaming_error:${upstreamStreamingFailureCode}`);
+  }
+
   if (options.streamResponse && options.streamResponseBody && streamed && !streamingTerminalSeen) {
     await writeResponseChunk(options.streamResponse, buildIncompleteStreamingErrorChunk(cliType));
     throw new Error('incomplete_streaming_response:missing_terminal_event');
@@ -2353,7 +2390,7 @@ async function forwardToUpstream(
   if (options.streamResponse && options.streamResponseBody && streamed) {
     const completedValidation = validateCompletedStreamingBody(
       streamingTerminalProtocol,
-      Buffer.concat(receivedStreamingChunks)
+      completedStreamingBody
     );
     if (!completedValidation.ok) {
       await writeResponseChunk(
@@ -2937,10 +2974,6 @@ export async function handleRequest(
         }
 
         continue;
-        if (!bypassRoutePathState && areAllRoutePathsDisabled(sortedChannels)) {
-          writeAllRoutePathsDisabledResponse(res, cliType);
-          return;
-        }
       }
     }
 
@@ -2995,7 +3028,34 @@ export async function handleRequest(
           }
         );
 
-      let result = await forwardActiveChannel();
+      const forwardActiveChannelWithEmptyStreamRetry = async () => {
+        for (let retry = 0; ; retry += 1) {
+          try {
+            return await forwardActiveChannel();
+          } catch (error: unknown) {
+            if (
+              probeLock ||
+              retry >= EMPTY_STREAM_UPSTREAM_RETRY_ATTEMPTS ||
+              res.headersSent ||
+              routeAbortController.signal.aborted ||
+              !isRetryableEmptyStreamingResponse(error)
+            ) {
+              throw error;
+            }
+
+            log.warn('Upstream channel returned an empty SSE body; retrying same channel', {
+              retryAttempt: retry + 1,
+              maxRetries: EMPTY_STREAM_UPSTREAM_RETRY_ATTEMPTS,
+              siteId: activeChannel.siteId,
+              accountId: activeChannel.accountId,
+              apiKeyId: activeChannel.apiKeyId,
+              resolvedModel: activeChannel.resolvedModel,
+            });
+          }
+        }
+      };
+
+      let result = await forwardActiveChannelWithEmptyStreamRetry();
       if (routeAbortController.signal.aborted) {
         finishRouteHandling();
         return;

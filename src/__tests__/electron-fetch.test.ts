@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => {
     autoRespond: true,
     requestHandlers: {} as Record<string, (value: unknown) => void>,
     responseHandlers: {} as Record<string, (value?: unknown) => void>,
+    responseEventOrder: [] as string[],
     lastRequest: null as { abort: ReturnType<typeof vi.fn> } | null,
     lastResponse: null as {
       pause: ReturnType<typeof vi.fn>;
@@ -20,6 +21,7 @@ const mocks = vi.hoisted(() => {
       statusMessage: 'OK',
       headers: { 'content-type': 'text/plain' },
       on: vi.fn((event: string, handler: (value?: unknown) => void) => {
+        state.responseEventOrder.push(event);
         responseHandlers[event] = handler;
       }),
       pause: vi.fn(),
@@ -99,6 +101,7 @@ beforeEach(() => {
   mocks.state.autoRespond = true;
   mocks.state.requestHandlers = {};
   mocks.state.responseHandlers = {};
+  mocks.state.responseEventOrder = [];
   mocks.state.lastRequest = null;
   mocks.state.lastResponse = null;
 });
@@ -243,6 +246,30 @@ describe('electronFetchRaw request headers', () => {
     ]);
     expect(mocks.state.lastResponse?.pause).toHaveBeenCalledTimes(2);
     expect(mocks.state.lastResponse?.resume).toHaveBeenCalledTimes(2);
+    expect(mocks.state.responseEventOrder.indexOf('end')).toBeLessThan(
+      mocks.state.responseEventOrder.indexOf('data')
+    );
+    expect(mocks.state.responseEventOrder.indexOf('error')).toBeLessThan(
+      mocks.state.responseEventOrder.indexOf('data')
+    );
+  });
+
+  it('rejects an aborted raw stream without waiting for the request timeout', async () => {
+    mocks.state.autoRespond = false;
+
+    const responsePromise = electronFetchRawStream('https://anyrouter.top/v1/messages', {
+      method: 'POST',
+      timeout: 30000,
+      body: Buffer.from('{"stream":true}'),
+      onResponse: () => true,
+      onData: vi.fn(),
+    });
+
+    await Promise.resolve();
+    const responseHandlers = mocks.startResponse();
+    responseHandlers.aborted?.();
+
+    await expect(responsePromise).rejects.toThrow('Upstream response aborted');
   });
 
   it('uses the initial timeout before the first raw stream chunk', async () => {
