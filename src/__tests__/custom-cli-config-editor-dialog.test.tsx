@@ -201,6 +201,33 @@ describe('DirectCliConfigEditorContent', () => {
     });
   });
 
+  it('toggles and copies the API Key from the identity form', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+
+    await renderDialog();
+
+    const apiKeyInput = screen.getByLabelText('API Key');
+    expect(apiKeyInput).toHaveAttribute('type', 'password');
+
+    fireEvent.click(screen.getByRole('button', { name: '显示 API Key' }));
+    expect(apiKeyInput).toHaveAttribute('type', 'text');
+
+    fireEvent.click(screen.getByRole('button', { name: '隐藏 API Key' }));
+    expect(apiKeyInput).toHaveAttribute('type', 'password');
+
+    fireEvent.click(screen.getByRole('button', { name: '复制 API Key' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('test-key'));
+    const copiedButton = screen.getByRole('button', { name: 'API Key 已复制' });
+    expect(copiedButton).toBeInTheDocument();
+
+    fireEvent.change(apiKeyInput, { target: { value: '' } });
+    expect(copiedButton).toBeDisabled();
+  });
+
   it('keeps manually added models out of the available model list', async () => {
     const config = {
       ...createConfig(),

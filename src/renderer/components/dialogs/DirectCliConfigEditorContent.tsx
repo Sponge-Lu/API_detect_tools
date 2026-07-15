@@ -11,6 +11,8 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   Copy,
   Check,
+  Eye,
+  EyeOff,
   RefreshCw,
   Loader2,
   Key,
@@ -699,6 +701,7 @@ export function DirectCliConfigEditorContent({
   const [name, setName] = useState(config.name);
   const [baseUrl, setBaseUrl] = useState(config.baseUrl);
   const [apiKey, setApiKey] = useState(config.apiKey);
+  const [showApiKey, setShowApiKey] = useState(false);
   const [gasStationUrl, setGasStationUrl] = useState(config.gasStationUrl || '');
   const [groupMultiplierInput, setGroupMultiplierInput] = useState(() =>
     buildGroupMultiplierInputValue(config.groupMultiplier)
@@ -762,6 +765,7 @@ export function DirectCliConfigEditorContent({
     setName(config.name);
     setBaseUrl(config.baseUrl);
     setApiKey(config.apiKey);
+    setShowApiKey(false);
     setGasStationUrl(config.gasStationUrl || '');
     setGroupMultiplierInput(buildGroupMultiplierInputValue(config.groupMultiplier));
     setNotes(config.notes || '');
@@ -1284,13 +1288,45 @@ export function DirectCliConfigEditorContent({
                   <Key className="mr-1 inline h-4 w-4" />
                   API Key
                 </label>
-                <input
-                  type="password"
-                  value={apiKey}
-                  onChange={e => setApiKey(e.target.value)}
-                  placeholder="sk-..."
-                  className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
-                />
+                <div className="relative">
+                  <input
+                    aria-label="API Key"
+                    type={showApiKey ? 'text' : 'password'}
+                    value={apiKey}
+                    onChange={e => setApiKey(e.target.value)}
+                    placeholder="sk-..."
+                    className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] py-2 pl-3 pr-20 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                  />
+                  <div className="absolute inset-y-0 right-1 flex items-center gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setShowApiKey(visible => !visible)}
+                      aria-label={showApiKey ? '隐藏 API Key' : '显示 API Key'}
+                      title={showApiKey ? '隐藏 API Key' : '显示 API Key'}
+                      className="rounded-[var(--radius-sm)] p-1.5 text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
+                    >
+                      {showApiKey ? (
+                        <EyeOff className="h-4 w-4" aria-hidden="true" />
+                      ) : (
+                        <Eye className="h-4 w-4" aria-hidden="true" />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleCopy('api-key', apiKey)}
+                      disabled={!apiKey}
+                      aria-label={copiedPath === 'api-key' ? 'API Key 已复制' : '复制 API Key'}
+                      title={copiedPath === 'api-key' ? '已复制' : '复制 API Key'}
+                      className="rounded-[var(--radius-sm)] p-1.5 text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {copiedPath === 'api-key' ? (
+                        <Check className="h-4 w-4 text-[var(--success)]" aria-hidden="true" />
+                      ) : (
+                        <Copy className="h-4 w-4" aria-hidden="true" />
+                      )}
+                    </button>
+                  </div>
+                </div>
               </div>
               <div>
                 <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
