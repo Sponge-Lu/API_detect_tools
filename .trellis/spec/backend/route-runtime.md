@@ -340,6 +340,16 @@ routing intent.
 
 Custom CLI source discovery treats both persisted `models` (fetched from `/v1/models`) and `manualModels` (user-entered fallback models) as first-class `sourcePool` inputs. These source records must be created independent of `cliSettings.<cli>.enabled`; CLI settings may still contribute configured/tested model references, but those references are filtered by the fetched-plus-manual allowlist so stale selected/tested models are not resurrected.
 
+**Known gap (2026-07-15 debug)**: `cli_config.<cli>.enabled` (managed sites) and
+`cliSettings.<cli>.enabled` (custom CLI) are binding for route CLI **probe** expansion, but are
+**not** currently read by `resolveChannels()` / `buildCanonicalModelChannels()`. As a result,
+disabling a CLI in the CLI config UI does not remove that site/custom-CLI from local route
+forwarding. Permanent route-intent exclusion today is only
+`displayItem.priorityConfig.disabledSiteIds` / `disabledApiKeyPriorityKeys` (plus whole-site
+`sites[].enabled === false` and temporary `routePathStates.disabledUntil`). Fix direction: enforce
+CLI-enabled at channel resolution and/or restrict custom-CLI `availableCliTypes` to enabled CLIs
+during registry rebuild.
+
 Deleting a persisted manual display item removes its associated non-`exclude` overrides before
 resyncing. Deleting an override-only compatibility card removes the grouped overrides identified by
 its `override:<canonicalName>` id. No exclusion tombstone is needed because source scanning cannot
@@ -1728,4 +1738,92 @@ Many sites failed while using local route → rewrite Claude/Codex request forma
 Count Upstream channel returned failure response subclasses first.
 If bodySnippet is no-channel / rate-limit / balance / 5xx → Class A.
 Only if stage is request-adapt or bodySnippet names unknown request fields → Class B.
+```
+
+---
+
+## Scenario: Route Request Logs Preserve Reasoning Effort
+
+### 1. Scope / Trigger
+
+- Trigger: the route log UI displays the reasoning effort carried by each local CLI request.
+- Flow: client request body → `route-proxy-service` extraction → `recordRouteRequest` → in-memory
+  `RouteRequestLogItem` → preload IPC → `LogsPage`.
+
+### 2. Signatures
+
+```ts
+// src/shared/types/route-proxy.ts
+export interface RouteRequestLogItem {
+  reasoningEffort?: string;
+}
+
+// src/main/route-proxy-service.ts
+export function extractRouteReasoningEffort(bodyJson: unknown): string | undefined;
+
+// src/main/route-analytics-service.ts
+export function recordRouteRequest(params: {
+  reasoningEffort?: string;
+  // existing route request fields
+}): void;
+```
+
+### 3. Contracts
+
+- Extract once from the original local CLI request body before rule matching or protocol adaptation.
+- Explicit effort precedence is `output_config.effort`, `reasoning.effort`,
+  `reasoning_effort`, then `reasoningEffort`.
+- Preserve every non-empty explicit string verbatim; do not validate against a closed vendor enum.
+- When `thinking.type` is `enabled` or `adaptive`, use a positive finite
+  `budget_tokens` / `budgetTokens` as `<value> tokens`; otherwise record `开启`.
+- Missing, disabled, malformed, empty, zero, or negative thinking controls produce no field; the
+  renderer displays `—`.
+- Every `recordRouteRequest` branch for the same request must receive the extracted value, including
+  no-rule, no-channel, disabled-path, credential, neutral, upstream failure, success, and exception
+  outcomes.
+- Display the actual wire value only. Do not infer Claude `ultracode`, an OpenCode variant name, or a
+  model default that was absent from the request.
+- IPC transports `RouteRequestLogItem` unchanged; no duplicate renderer-side parsing is allowed.
+
+### 4. Validation & Error Matrix
+
+| Input | Logged value |
+|------|--------------|
+| `{ reasoning: { effort: 'xhigh' } }` | `xhigh` |
+| `{ output_config: { effort: 'future' } }` | `future` |
+| `{ thinking: { type: 'enabled', budget_tokens: 2048 } }` | `2048 tokens` |
+| `{ thinking: { type: 'adaptive' } }` | `开启` |
+| `{ thinking: { type: 'disabled' } }` or no control | omitted; UI shows `—` |
+| explicit effort plus thinking budget | explicit effort wins |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a Codex request with `reasoning.effort = 'xhigh'` keeps `xhigh` across a failed first channel
+  and a successful fallback channel.
+- Base: an ordinary request without a reasoning control shows `—`.
+- Bad: mapping unknown effort strings to `—`, or displaying `ultracode` because the model/CLI config
+  suggests it while the wire request contains only `xhigh`.
+
+### 6. Tests Required
+
+- `src/__tests__/route-proxy-service.test.ts`: cover all supported request shapes, precedence,
+  future strings, budgets, enabled-only, disabled, and one `handleRequest` integration assertion.
+- `src/__tests__/route-analytics-service.test.ts`: assert storage and broadcast preserve the field.
+- `src/__tests__/logs-page.test.tsx`: assert the ninth column, displayed value, `—` fallback, fixed
+  grid width, failure-row span, and 1400px default window contract.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const known = ['low', 'medium', 'high', 'xhigh'];
+reasoningEffort = known.includes(value) ? value : undefined;
+```
+
+#### Correct
+
+```ts
+const effort = typeof value === 'string' ? value.trim() : '';
+reasoningEffort = effort || undefined;
 ```

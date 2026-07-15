@@ -247,6 +247,7 @@ function appendRouteRequestLog(params: {
   targetProtocol?: RouteRequestLogItem['targetProtocol'];
   targetEndpoint?: RouteRequestLogItem['targetEndpoint'];
   requestedModel?: string | null;
+  reasoningEffort?: string;
   canonicalModel?: string | null;
   routeRuleId?: string;
   siteId?: string;
@@ -285,6 +286,7 @@ function appendRouteRequestLog(params: {
     targetProtocol: params.targetProtocol,
     targetEndpoint: params.targetEndpoint,
     requestedModel: params.requestedModel,
+    reasoningEffort: params.reasoningEffort,
     canonicalModel: params.canonicalModel,
     routeRuleId: params.routeRuleId,
     routeRuleName: routeRule?.name?.trim() || undefined,
@@ -378,6 +380,7 @@ export function recordRouteRequest(params: {
   targetProtocol?: RouteRequestLogItem['targetProtocol'];
   targetEndpoint?: RouteRequestLogItem['targetEndpoint'];
   requestedModel?: string | null;
+  reasoningEffort?: string;
   canonicalModel: string | null;
   routeRuleId?: string;
   siteId?: string;
@@ -413,6 +416,7 @@ export function recordRouteRequest(params: {
     targetProtocol: params.targetProtocol,
     targetEndpoint: params.targetEndpoint,
     requestedModel: params.requestedModel,
+    reasoningEffort: params.reasoningEffort,
     canonicalModel: params.canonicalModel,
     routeRuleId: params.routeRuleId,
     siteId: params.siteId,

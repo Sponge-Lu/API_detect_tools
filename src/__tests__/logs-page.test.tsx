@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -16,7 +18,7 @@ import { useConfigStore } from '../renderer/store/configStore';
 import { useRouteStore } from '../renderer/store/routeStore';
 
 const ROUTE_LOG_RESPONSIVE_GRID_TEMPLATE =
-  'minmax(2rem,2fr) minmax(7rem,7fr) minmax(calc(14rem + 2ch),16fr) minmax(20rem,20fr) minmax(4.5rem,4.5fr) minmax(6rem,6fr) minmax(3rem,3fr) minmax(6rem,6fr)';
+  'minmax(2rem,2fr) minmax(7rem,7fr) minmax(5.5rem,5.5fr) minmax(calc(14rem + 2ch),16fr) minmax(20rem,20fr) minmax(4.5rem,4.5fr) minmax(6rem,6fr) minmax(3rem,3fr) minmax(6rem,6fr)';
 const ROUTE_LOG_TOKEN_GRID_TEMPLATE =
   'minmax(0,calc(20% - 1ch)) minmax(0,20%) minmax(0,calc(20% - 2ch)) minmax(0,calc(20% + 1ch)) minmax(0,20%)';
 
@@ -32,6 +34,7 @@ function buildRouteLog(
     outcome: partial.outcome,
     createdAt: partial.createdAt,
     requestedModel: partial.requestedModel ?? 'gpt-5.4',
+    reasoningEffort: partial.reasoningEffort,
     canonicalModel: partial.canonicalModel ?? 'gpt-5.4',
     routeRuleId: partial.routeRuleId ?? 'rule-codex',
     routeRuleName: partial.routeRuleName ?? 'Codex 主路由',
@@ -171,6 +174,13 @@ function buildPriorityRegistry(sitePriorities: Record<string, number>): RouteMod
 }
 
 describe('LogsPage', () => {
+  it('keeps the default Electron window wide enough for the nine-column route log', () => {
+    const mainSource = readFileSync(join(process.cwd(), 'src/main/main.ts'), 'utf8');
+
+    expect(mainSource).toMatch(/width:\s*1400/u);
+    expect(mainSource).toMatch(/minWidth:\s*1200/u);
+  });
+
   const routeApi = window.electronAPI.route!;
   let routeRequestLogListener: ((item: RouteRequestLogItem) => void) | null = null;
 
@@ -419,6 +429,7 @@ describe('LogsPage', () => {
           attempt: 1,
           outcome: 'failure',
           createdAt: 100,
+          reasoningEffort: 'xhigh',
           statusCode: 502,
           latencyMs: 1234,
           firstByteLatencyMs: 456,
@@ -514,10 +525,10 @@ describe('LogsPage', () => {
     );
     const header = screen.getByTestId('route-request-log-header');
     expect(header).toHaveTextContent(
-      'CLI原始模型路由目标Token（总/输入/输出/缓存写/缓存读）预计金额用时/首字状态时间'
+      'CLI原始模型思考强度路由目标Token（总/输入/输出/缓存写/缓存读）预计金额用时/首字状态时间'
     );
     expect(header.parentElement).toHaveClass('w-full');
-    expect(header.parentElement).toHaveStyle({ minWidth: 'calc(62.5rem + 2ch)' });
+    expect(header.parentElement).toHaveStyle({ minWidth: 'calc(68.5rem + 2ch)' });
     expect(header.style.gridTemplateColumns).toBe(ROUTE_LOG_RESPONSIVE_GRID_TEMPLATE);
     expect(screen.queryByRole('button', { name: '刷新' })).not.toBeInTheDocument();
     expect(screen.getByText('总尝试').parentElement).toHaveTextContent('总尝试4');
@@ -552,6 +563,9 @@ describe('LogsPage', () => {
     expect(modelPath).toHaveTextContent('gpt-5.4');
     expect(modelPath).toHaveAttribute('title', 'gpt-5.4-2025-02-15 → gpt-5.4');
     expect(modelPath).toHaveClass('truncate', 'min-w-0');
+    expect(within(rows[0]).getByTestId('route-request-reasoning-effort')).toHaveTextContent(
+      'xhigh'
+    );
     const sitePath = within(rows[0]).getByTestId('route-request-site-path');
     expect(sitePath).toHaveTextContent('站点 A / 主账户 / vip / Key Alpha');
     const sitePathText = within(sitePath).getByText('站点 A / 主账户 / vip / Key Alpha');
@@ -562,6 +576,7 @@ describe('LogsPage', () => {
     expect(failureInfo).toHaveTextContent('no_matching_rule');
     expect(failureInfo.style.gridTemplateColumns).toBe(ROUTE_LOG_RESPONSIVE_GRID_TEMPLATE);
     expect(failureInfo).toHaveClass('gap-x-2');
+    expect(failureInfo.firstElementChild).toHaveClass('col-start-2', 'col-span-8');
     expect(within(rows[1]).queryByTestId('route-request-failure-info')).not.toBeInTheDocument();
     const tokenSummary = within(rows[0]).getByTestId('route-request-token-summary');
     expect(tokenSummary).toHaveTextContent('T 150IN 100OUT 50C.R 40C.W 20');

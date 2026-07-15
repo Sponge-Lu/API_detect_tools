@@ -87,8 +87,8 @@ async function createWindow() {
   const backgroundColor = getWindowBackgroundColor(savedTheme);
 
   mainWindow = new BrowserWindow({
-    // 默认窗口尺寸调整为 1400x900，解决水平滚动条问题
-    width: 1300,
+    // 默认窗口尺寸为 1400x800，确保展开侧栏时路由日志九列无需水平滚动
+    width: 1400,
     height: 800,
     // 设置最小窗口尺寸，确保内容不会被过度压缩
     minWidth: 1200,

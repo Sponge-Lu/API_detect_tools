@@ -69,10 +69,10 @@ const CACHE_CREATION_INPUT_PRICE_RATIO = 1.25;
 const CACHE_READ_INPUT_PRICE_RATIO = 0.1;
 const ROUTE_LOG_VIEW_LIMIT = 200;
 const ROUTE_LOG_SITE_NAME_MAX_CJK_LENGTH = 5;
-const ROUTE_LOG_TABLE_STYLE = { minWidth: 'calc(62.5rem + 2ch)' };
+const ROUTE_LOG_TABLE_STYLE = { minWidth: 'calc(68.5rem + 2ch)' };
 const ROUTE_LOG_GRID_STYLE = {
   gridTemplateColumns:
-    'minmax(2rem, 2fr) minmax(7rem, 7fr) minmax(calc(14rem + 2ch), 16fr) minmax(20rem, 20fr) minmax(4.5rem, 4.5fr) minmax(6rem, 6fr) minmax(3rem, 3fr) minmax(6rem, 6fr)',
+    'minmax(2rem, 2fr) minmax(7rem, 7fr) minmax(5.5rem, 5.5fr) minmax(calc(14rem + 2ch), 16fr) minmax(20rem, 20fr) minmax(4.5rem, 4.5fr) minmax(6rem, 6fr) minmax(3rem, 3fr) minmax(6rem, 6fr)',
 };
 const ROUTE_LOG_GRID_GAP = 'gap-x-2';
 const ROUTE_LOG_TOKEN_GRID_STYLE = {
@@ -82,6 +82,7 @@ const ROUTE_LOG_TOKEN_GRID_STYLE = {
 const ROUTE_LOG_HEADER_LABELS = [
   'CLI',
   '原始模型',
+  '思考强度',
   '路由目标',
   'Token（总/输入/输出/缓存写/缓存读）',
   '预计金额',
@@ -109,6 +110,7 @@ interface RouteLogRowViewModel {
   outcomeStyle: (typeof ROUTE_OUTCOME_STYLES)[RouteRequestLogItem['outcome']];
   failureInfo: string | null;
   requestedModelName: string;
+  reasoningEffort: string;
   sitePathDisplay: string;
   compactTokenParts: Array<{ label: string; value: string }>;
   compactLatencyText: string;
@@ -531,6 +533,7 @@ function buildRouteLogRowViewModel(params: {
     outcomeStyle: ROUTE_OUTCOME_STYLES[item.outcome],
     failureInfo: resolveRouteFailureInfo(item),
     requestedModelName,
+    reasoningEffort: item.reasoningEffort?.trim() || '—',
     sitePathDisplay,
     compactTokenParts: formatRouteLogCompactTokenParts(costInfo),
     compactLatencyText: formatCompactLatency(item.latencyMs, item.firstByteLatencyMs),
@@ -821,6 +824,13 @@ export function LogsPage() {
                       {row.requestedModelName}
                     </span>
                     <span
+                      data-testid="route-request-reasoning-effort"
+                      className="min-w-0 truncate text-[var(--text-primary)]"
+                      title={row.reasoningEffort}
+                    >
+                      {row.reasoningEffort}
+                    </span>
+                    <span
                       data-testid="route-request-site-path"
                       className="min-w-0 truncate text-[var(--text-primary)]"
                     >
@@ -873,7 +883,7 @@ export function LogsPage() {
                       className={`mt-1 grid ${ROUTE_LOG_GRID_GAP} text-[11px]`}
                       style={ROUTE_LOG_GRID_STYLE}
                     >
-                      <span className="col-start-2 col-span-7 min-w-0 truncate rounded border border-[var(--danger)]/20 bg-[var(--danger-soft)] px-2 py-1 text-[var(--danger)]">
+                      <span className="col-start-2 col-span-8 min-w-0 truncate rounded border border-[var(--danger)]/20 bg-[var(--danger-soft)] px-2 py-1 text-[var(--danger)]">
                         {row.failureInfo}
                       </span>
                     </div>

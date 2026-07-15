@@ -127,6 +127,7 @@ describe('route-analytics-service token statistics', () => {
       attempt: 1,
       cliType: 'codex',
       requestedModel: 'gpt-4.1',
+      reasoningEffort: 'xhigh',
       canonicalModel: 'gpt-4.1',
       routeRuleId: 'rule-1',
       siteId: 'site-1',
@@ -147,6 +148,7 @@ describe('route-analytics-service token statistics', () => {
     expect(getRouteRequestLogs()).toMatchObject([
       {
         requestId: 'req-1',
+        reasoningEffort: 'xhigh',
         promptTokens: 120,
         completionTokens: 30,
         totalTokens: 150,
@@ -160,6 +162,7 @@ describe('route-analytics-service token statistics', () => {
       'route:request-log-appended',
       expect.objectContaining({
         requestId: 'req-1',
+        reasoningEffort: 'xhigh',
         apiKeyName: '主 Key',
       })
     );

@@ -472,6 +472,7 @@ export interface RouteRequestLogItem {
   targetProtocol?: CliTargetProtocol;
   targetEndpoint?: string;
   requestedModel?: string | null;
+  reasoningEffort?: string;
   canonicalModel?: string | null;
   routeRuleId?: string;
   routeRuleName?: string;

@@ -1710,6 +1710,33 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return undefined;
 }
 
+export function extractRouteReasoningEffort(bodyJson: unknown): string | undefined {
+  const body = asRecord(bodyJson);
+  if (!body) return undefined;
+
+  const outputConfig = asRecord(body.output_config);
+  const reasoning = asRecord(body.reasoning);
+  const explicitEffortCandidates = [
+    outputConfig?.effort,
+    reasoning?.effort,
+    body.reasoning_effort,
+    body.reasoningEffort,
+  ];
+
+  for (const candidate of explicitEffortCandidates) {
+    const effort = readString(candidate).trim();
+    if (effort) return effort;
+  }
+
+  const thinking = asRecord(body.thinking);
+  const thinkingType = readString(thinking?.type).trim().toLowerCase();
+  const thinkingEnabled = thinkingType === 'enabled' || thinkingType === 'adaptive';
+  if (!thinkingEnabled) return undefined;
+
+  const budgetTokens = toFiniteTokenNumber(thinking?.budget_tokens ?? thinking?.budgetTokens);
+  return budgetTokens !== undefined && budgetTokens > 0 ? `${budgetTokens} tokens` : '开启';
+}
+
 export interface ClaudeCountTokensEstimate {
   input_tokens: number;
   estimated: true;
@@ -2599,6 +2626,7 @@ export async function handleRequest(
     /* ignore */
   }
   const rawModel = extractModelFromBody(bodyJson) || extractModelFromPath(pathname, cliType);
+  const reasoningEffort = extractRouteReasoningEffort(bodyJson);
 
   // 解析 canonical model（代理层无 site 上下文，使用全局 alias 索引）。
   // 普通本地路由请求以应用中对应 CLI 选择的模型作为路由意图；外部 CLI 配置/请求模型仅保留为诊断 requestedModel。
@@ -2641,6 +2669,7 @@ export async function handleRequest(
         attempt: 0,
         cliType,
         requestedModel: rawModel,
+        reasoningEffort,
         canonicalModel,
         outcome: 'failure',
         statusCode: 502,
@@ -2666,6 +2695,7 @@ export async function handleRequest(
         attempt: 0,
         cliType,
         requestedModel: rawModel,
+        reasoningEffort,
         canonicalModel,
         routeRuleId: rule.id,
         outcome: 'failure',
@@ -2695,6 +2725,7 @@ export async function handleRequest(
         attempt: 0,
         cliType,
         requestedModel: rawModel,
+        reasoningEffort,
         canonicalModel,
         routeRuleId: rule.id,
         outcome: 'failure',
@@ -2754,6 +2785,7 @@ export async function handleRequest(
           targetProtocol: activeChannel.targetProtocol,
           targetEndpoint: activeChannel.targetEndpoint,
           requestedModel: rawModel,
+          reasoningEffort,
           canonicalModel,
           siteId: activeChannel.siteId,
           accountId: activeChannel.accountId,
@@ -2797,6 +2829,7 @@ export async function handleRequest(
         targetProtocol: activeChannel.targetProtocol,
         targetEndpoint: activeChannel.targetEndpoint,
         requestedModel: rawModel,
+        reasoningEffort,
         canonicalModel,
         routeRuleId: activeRouteRuleId,
         siteId: activeChannel.siteId,
@@ -2951,6 +2984,7 @@ export async function handleRequest(
           targetProtocol: activeChannel.targetProtocol,
           targetEndpoint: activeChannel.targetEndpoint,
           requestedModel: rawModel,
+          reasoningEffort,
           canonicalModel,
           siteId: activeChannel.siteId,
           accountId: activeChannel.accountId,
@@ -3106,6 +3140,7 @@ export async function handleRequest(
           targetProtocol: activeChannel.targetProtocol,
           targetEndpoint: activeChannel.targetEndpoint,
           requestedModel: rawModel,
+          reasoningEffort,
           canonicalModel,
           siteId: activeChannel.siteId,
           accountId: activeChannel.accountId,
@@ -3173,6 +3208,7 @@ export async function handleRequest(
             targetProtocol: activeChannel.targetProtocol,
             targetEndpoint: activeChannel.targetEndpoint,
             requestedModel: rawModel,
+            reasoningEffort,
             canonicalModel,
             siteId: activeChannel.siteId,
             accountId: activeChannel.accountId,
@@ -3227,6 +3263,7 @@ export async function handleRequest(
           targetProtocol: activeChannel.targetProtocol,
           targetEndpoint: activeChannel.targetEndpoint,
           requestedModel: rawModel,
+          reasoningEffort,
           canonicalModel,
           siteId: activeChannel.siteId,
           accountId: activeChannel.accountId,
@@ -3514,6 +3551,7 @@ export async function handleRequest(
           targetProtocol: activeChannel.targetProtocol,
           targetEndpoint: activeChannel.targetEndpoint,
           requestedModel: rawModel,
+          reasoningEffort,
           canonicalModel,
           siteId: activeChannel.siteId,
           accountId: activeChannel.accountId,

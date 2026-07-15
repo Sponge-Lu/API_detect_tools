@@ -67,6 +67,7 @@ import {
   classifyRouteStatusCode,
   estimateClaudeCountTokens,
   extractRouteApiKey,
+  extractRouteReasoningEffort,
   extractUsageFromBody,
   handleRequest,
   resolveRouteRuntimeConfig,
@@ -761,6 +762,31 @@ describe('route-proxy-service attempt planning', () => {
       disableDurationMinutes: 60,
       minSuccessRate: 0.3,
     });
+  });
+});
+
+describe('route-proxy-service reasoning effort extraction', () => {
+  it.each([
+    [{ output_config: { effort: 'max' } }, 'max'],
+    [{ reasoning: { effort: 'xhigh' } }, 'xhigh'],
+    [{ reasoning_effort: 'medium' }, 'medium'],
+    [{ reasoningEffort: 'future-effort' }, 'future-effort'],
+    [{ thinking: { type: 'enabled', budget_tokens: 2048 } }, '2048 tokens'],
+    [{ thinking: { type: 'enabled', budgetTokens: '4096' } }, '4096 tokens'],
+    [{ thinking: { type: 'adaptive' } }, '开启'],
+    [{ thinking: { type: 'disabled' } }, undefined],
+    [{}, undefined],
+  ])('extracts the actual request reasoning value from %j', (body, expected) => {
+    expect(extractRouteReasoningEffort(body)).toBe(expected);
+  });
+
+  it('prefers an explicit effort over a manual thinking budget', () => {
+    expect(
+      extractRouteReasoningEffort({
+        output_config: { effort: 'low' },
+        thinking: { type: 'enabled', budget_tokens: 8192 },
+      })
+    ).toBe('low');
   });
 });
 
@@ -1807,7 +1833,11 @@ describe('route-proxy-service CLI model fallback', () => {
         authorization: 'Bearer sk-route',
         'content-type': 'application/json',
       },
-      { model: 'gpt-4o-from-external-config', input: 'hello' }
+      {
+        model: 'gpt-4o-from-external-config',
+        input: 'hello',
+        reasoning: { effort: 'xhigh' },
+      }
     );
     const response = createMockResponse();
 
@@ -1830,6 +1860,7 @@ describe('route-proxy-service CLI model fallback', () => {
     expect(recordRouteRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         requestedModel: 'gpt-4o-from-external-config',
+        reasoningEffort: 'xhigh',
         canonicalModel: 'gpt-5-selected',
         resolvedModel: 'gpt-5-selected-upstream',
       })
