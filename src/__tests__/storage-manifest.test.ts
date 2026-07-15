@@ -44,17 +44,39 @@ describe('app storage manifest', () => {
     }
   });
 
-  it('requires explicit backup inclusion for deferred sensitive files', () => {
-    const sensitiveIds = ['custom-cli-configs', 'credit-settings'];
+  it('includes field-encrypted custom-cli-configs in full-manifest and portable backups', () => {
+    const entry = findAppStorageEntry('custom-cli-configs');
 
-    for (const id of sensitiveIds) {
-      const entry = findAppStorageEntry(id);
+    expect(entry?.containsSecrets).toBe(true);
+    expect(entry?.backup.defaultIncluded).toBe(true);
+    expect(entry?.backup.requiresExplicitInclude).toBeFalsy();
+    expect(entry?.backup.modes).toEqual(['full-manifest', 'portable-config']);
+  });
 
-      expect(entry?.containsSecrets).toBe(true);
-      expect(entry?.backup.defaultIncluded).toBe(false);
-      expect(entry?.backup.requiresExplicitInclude).toBe(true);
-      expect(entry?.backup.modes).toEqual(['explicit-sensitive']);
-    }
+  it('marks stable-config as portable and lightweight', () => {
+    const entry = findAppStorageEntry('stable-config');
+
+    expect(entry?.backup.defaultIncluded).toBe(true);
+    expect(entry?.backup.modes).toEqual(
+      expect.arrayContaining(['lightweight-config', 'full-manifest', 'portable-config'])
+    );
+  });
+
+  it('keeps runtime/settings out of portable-config mode', () => {
+    const portableIds = APP_STORAGE_ENTRIES.filter(entry =>
+      entry.backup.modes.includes('portable-config')
+    ).map(entry => entry.id);
+
+    expect(portableIds).toEqual(['stable-config', 'custom-cli-configs']);
+  });
+
+  it('requires explicit backup inclusion for credit cookies', () => {
+    const entry = findAppStorageEntry('credit-settings');
+
+    expect(entry?.containsSecrets).toBe(true);
+    expect(entry?.backup.defaultIncluded).toBe(false);
+    expect(entry?.backup.requiresExplicitInclude).toBe(true);
+    expect(entry?.backup.modes).toEqual(['explicit-sensitive']);
   });
 
   it('bounds every app-managed runtime, cache, statistics, log, and update file', () => {

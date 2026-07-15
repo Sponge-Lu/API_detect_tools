@@ -6,10 +6,11 @@
 
 - Trigger: `config.json` must stay small and stable while runtime detection cache, route runtime
   state, route diagnostics, and analytics are written to bounded sidecar files.
-- Trigger: local/WebDAV backups must restore the same storage structure without mutating protected
-  browser profile state.
+- Trigger: portable local/WebDAV/export backups must carry only migratable config and direct CLI
+  configs, then rebind isolated browser slots after restore without migrating login sessions.
 - Files: `src/main/app-storage-manifest.ts`, `src/main/app-storage-bundle.ts`,
   `src/main/backup-manager.ts`, `src/main/webdav-manager.ts`,
+  `src/main/browser-profile-manager.ts`, `src/main/handlers/backup-handlers.ts`,
   `src/main/runtime-cache-manager.ts`, `src/main/route-state-manager.ts`,
   `src/main/unified-config-manager.ts`, `src/main/utils/atomic-json.ts`, and
   `scripts/migrate-config-v224-to-v301.cjs`.
@@ -34,7 +35,7 @@ export interface AppStorageEntry {
   mutationPolicy: 'app-managed' | 'external-tool-owned' | 'protected-do-not-mutate';
   backup: {
     defaultIncluded: boolean;
-    modes: Array<'lightweight-config' | 'full-manifest' | 'explicit-sensitive'>;
+    modes: Array<'lightweight-config' | 'full-manifest' | 'portable-config' | 'explicit-sensitive'>;
     requiresExplicitInclude?: boolean;
   };
   retention: { mode: string; ttlDays?: number; maxItems?: number; maxBytes?: number };
@@ -46,34 +47,30 @@ export interface AppStorageBundle {
   format: 'api-hub-storage-bundle';
   version: 1;
   manifestVersion: 1;
-  mode: 'full-manifest';
+  mode: 'full-manifest' | 'portable-config';
   createdAt: number;
   files: AppStorageBundleFile[];
 }
 
-export interface CreateAppStorageBundleContentOptions {
-  includeExplicitSensitive?: boolean;
-  explicitSensitiveEntryIds?: string[];
-  encrypt?: boolean;
-}
-
-export function getUserConfigPackageBundleOptions(): CreateAppStorageBundleContentOptions;
 export function createAppStorageBundleContent(
-  roots?: AppStorageRoots,
-  options?: CreateAppStorageBundleContentOptions
+  rootsOrOptions?: AppStorageRoots | { mode?: AppStorageBundleMode; roots?: AppStorageRoots }
 ): Promise<string>;
-export function decryptBackupContentIfNeeded(content: string): Promise<string>;
+export function createPortableAppStorageBundleContent(
+  roots?: AppStorageRoots
+): Promise<string>;
 export function extractStableConfigFromBackupContent(content: string): unknown;
 export function restoreAppStorageBackupContent(
   content: string,
   targetConfigPath: string
-): Promise<{ kind: 'storage-bundle' | 'legacy-config'; restoredFiles: string[] }>;
+): Promise<{ kind: 'storage-bundle' | 'legacy-config'; mode?: AppStorageBundleMode; restoredFiles: string[] }>;
 
-// src/main/app-storage-backup-crypto.ts
-export const ENCRYPTED_APP_STORAGE_BACKUP_FORMAT = 'api-hub-encrypted-storage-backup';
-export const ENCRYPTED_APP_STORAGE_BACKUP_EXTENSION = '.ahubpkg';
-export function encryptAppStorageBackupContent(plaintext: string): Promise<string>;
-export function decryptAppStorageBackupContent(content: string): Promise<string>;
+// src/main/browser-profile-manager.ts
+export function extractSharedProfileSlot(profilePath?: string): number | null;
+export function ensureIsolatedProfileSlot(slotIndex: number, accountId?: string): Promise<string>;
+export function reconcileIsolatedProfilesAfterRestore(): Promise<{
+  reboundAccounts: number;
+  createdSlots: number;
+}>;
 
 // scripts/migrate-config-v224-to-v301.cjs
 node scripts/migrate-config-v224-to-v301.cjs [--path <config.json>] [--dry-run]
@@ -110,23 +107,35 @@ export function writeJsonFileAtomically<T>(targetPath: string, value: T): Promis
   failure. They must not fall back to non-atomic overwrite/copy of the target file, because readers
   can observe a partially replaced file on Windows.
 - Automatic config backup remains lightweight and config-only, with throttle + content dedupe.
-  Manual local backup, WebDAV upload, and settings-page export use an encrypted `.ahubpkg` user
-  config package: AES-256-GCM envelope + gzip-compressed manifest plaintext.
-- `getUserConfigPackageBundleOptions()` is the only standard explicit-sensitive package preset. It
-  may include `custom-cli-configs.json`, but must not include `credit-settings.json` or browser
-  operational state.
-- Bundle restore may write only manifest entries where `backup.defaultIncluded === true` and
-  `backup.modes` contains `full-manifest`, plus explicitly allowed sensitive entries from the
-  user config package preset.
+- Manual local backup, WebDAV upload, and Settings export/import use plaintext portable storage
+  bundles (`api-hub-storage-bundle` with `mode: 'portable-config'`) without an outer encrypted
+  envelope (no `.ahubpkg`). Field-level encryption of tokens/API keys remains on disk.
+- Portable-config bundles include only entries where `backup.defaultIncluded === true` and
+  `backup.modes` contains `portable-config`. That set is exactly:
+  - `stable-config` (`config.json`)
+  - `custom-cli-configs` (`custom-cli-configs.json`, field-encrypted `apiKey`)
+- Full-manifest mode remains available for restore compatibility with older backups that also
+  carried runtime/settings sidecars. New portable paths must not create full-manifest packages.
+- Bundle restore may write only allowed manifest entries. For full-manifest restore, runtime/cache
+  /statistics files that are absent from the bundle are wiped so stale local runtime does not
+  survive. For portable-config restore, only portable entries are written and local runtime/settings
+  /credit/browser state are preserved. `custom-cli-configs.json` is an exception for older bundles
+  that omit it: existing local direct CLI configs are preserved.
 - Legacy config-only restore must preserve existing managed runtime/cache/state files. A config-only
   backup has no authority over sidecar state, so preserving sidecars prevents automatic recovery from
   deleting runtime continuity after a transient config read failure.
+- After any restore path (local restore, WebDAV restore, import package), call
+  `browserProfileManager.reconcileIsolatedProfilesAfterRestore()`:
+  - for each account with `auth_source === 'isolated_profile'`, prefer the old `slot-N` number,
+    ensure `{userData}/browser-profiles/slot-N` exists as an empty isolated profile (extensions may
+    copy, auth state cleared), allocate the next free slot when the old path is invalid/collides,
+    and rewrite `browser_profile_path` to the new absolute path;
+  - `main_profile` / `manual` do not create isolated dirs; clear invalid main absolute paths;
+  - save config after rebinds through normal save so field encryption still applies.
 - Browser operational state entries are protected: do not migrate, compact, delete, back up by
-  default, or restore them from bundles.
-- `custom-cli-configs.json` and `credit-settings.json` are explicitly sensitive and excluded from
-  default plaintext bundles. The encrypted user config package explicitly includes
-  `custom-cli-configs.json` so direct CLI credentials migrate with user config; `credit-settings.json`
-  remains excluded because credit cookies are not part of the portable config package contract.
+  default, or restore them from bundles. Portable restore rebuilds empty isolated dirs only.
+- `credit-settings.json` remains excluded from portable and full-manifest backups because credit
+  cookies are install-local and are not part of the portable config package contract.
 - Logs are excluded from default backups and this storage split does not add log redaction.
 
 ### 4. Validation & Error Matrix
@@ -135,14 +144,18 @@ export function writeJsonFileAtomically<T>(targetPath: string, value: T): Promis
 | --- | --- | --- |
 | Missing `config.json` during bundle upload | bundle creation -> upload | Reject because no `stable-config` can be extracted |
 | Bundle has unknown or protected entry id | restore | Reject before mutating any file |
-| Encrypted package key id does not match this install | decrypt -> restore | Reject before mutating any file with `备份加密密钥不匹配，无法解密该配置包` |
-| User config package contains `custom-cli-configs` | restore | Restore it only from the encrypted explicit-sensitive package flow |
-| User config package omits `credit-settings` | restore | Preserve any existing local `credit-settings.json` because package restore has no authority over credit cookies |
+| Portable bundle contains only config + custom-cli | create/export | Include only those two entry ids |
+| Portable/full-manifest bundle contains `custom-cli-configs` | restore | Restore field-encrypted `custom-cli-configs.json` as-is |
+| Bundle omits `custom-cli-configs` | restore | Preserve any existing local `custom-cli-configs.json` |
+| Bundle omits `credit-settings` | restore | Preserve any existing local `credit-settings.json` |
+| Portable restore with local runtime sidecars | restore | Preserve local runtime/settings; do not wipe them |
 | Bundle file hash mismatch | restore | Reject before mutating any file |
 | `config.json` contains transient invalid JSON during a write | load -> recovery | Retry before attempting backup restore |
 | Legacy config-only restore with stale `runtime-cache.json` | restore -> load | Preserve managed runtime/cache/state sidecars, then write config |
-| Full bundle lacks an optional state file | restore | Remove the previous file so stale local runtime does not survive |
-| Browser profile directory exists | backup/restore | Leave untouched; it is not in bundle scope |
+| Full-manifest lacks an optional runtime/state file | restore | Remove the previous file so stale local runtime does not survive |
+| Browser profile directory exists | backup/restore | Leave existing browser sessions untouched; only empty slots may be created on reconcile |
+| Isolated account old path `.../slot-3` | restore reconcile | Create local `browser-profiles/slot-3` and rewrite path |
+| Isolated account old path invalid | restore reconcile | Allocate next free slot per site and rewrite path |
 | Windows temporarily locks `state/route-probes.json` during final rename | atomic write | Retry the rename, keep the temp file only while retrying, then commit or clean it up on failure |
 | Runtime route stats update | route service -> config manager | Persist sidecar state only; no config write and no config backup |
 | v2.1.24 config contains cached data and route runtime | migration script | Write clean config plus `runtime-cache.json` and `state/route-*.json` |
@@ -152,26 +165,31 @@ export function writeJsonFileAtomically<T>(targetPath: string, value: T): Promis
 
 - Good: saving a site with fresh detection cache hydrates the renderer compatibility view, but the
   persisted `config.json` has no `cached_data`.
-- Good: restoring a WebDAV/user-export `.ahubpkg` restores config, runtime cache, route state,
-  default settings, and `custom-cli-configs.json` while leaving browser profiles and
-  `credit-settings.json` intact.
+- Good: exporting/importing a portable package restores sites/accounts/rules/custom CLI configs and
+  rebinds isolated slots, while leaving browser cookies, credit cookies, and local runtime intact.
+- Good: restoring an older full-manifest WebDAV/local backup still works and wipes missing managed
+  runtime files, then reconciles isolated slots.
 - Base: restoring an old `config_*.json` backup restores only stable config and preserves existing
-  runtime sidecars; full-manifest restore is required to replace sidecar state.
+  runtime sidecars; portable restore is the supported migratable package.
 - Bad: adding a new runtime file without an `AppStorageEntry`; backup/restore and migration will
   drift.
 - Bad: using recursive directory copy for `userData`; this can include protected browser profiles,
   logs, and backup directories.
 - Bad: pruning or deleting `browser-profiles`, `api-detector-chrome*`, or isolated profile paths as
   part of storage cleanup.
+- Bad: wrapping portable packages in outer `.ahubpkg` encryption; field-level encryption is enough.
 
 ### 6. Tests Required
 
-- `src/__tests__/storage-manifest.test.ts`: manifest ids, protected browser entries, sensitive
-  explicit backup policy, and retention/cap declarations.
-- `src/__tests__/app-storage-bundle.test.ts`: bundle inclusion/exclusion, encrypted user config
-  package hides plaintext secrets, includes `custom-cli-configs`, excludes/preserves
-  `credit-settings`, bundle restore clearing stale managed files, and legacy config-only restore
-  preserving runtime sidecars.
+- `src/__tests__/storage-manifest.test.ts`: manifest ids, protected browser entries, custom-cli
+  full-manifest + portable inclusion, credit explicit-sensitive policy, portable entry set, and
+  retention/cap declarations.
+- `src/__tests__/app-storage-bundle.test.ts`: portable-only inclusion, full-manifest inclusion of
+  `custom-cli-configs`, exclusion of `credit-settings`/browser state, portable restore preserving
+  runtime/credit, wipe behavior for stale managed runtime files on full-manifest restore, and
+  legacy config-only restore preserving runtime sidecars.
+- `src/__tests__/browser-profile-reconcile.test.ts`: restore rewrites isolated paths, preserves
+  slot numbers, allocates free slots on collision/invalid paths.
 - `src/__tests__/backup-manager.test.ts`: automatic backup throttle/dedupe and forced retention.
 - `src/__tests__/atomic-json.test.ts`: parent directory creation, transient final-rename retry,
   no non-atomic overwrite fallback, same-target write serialization, missing-file defaults, and
@@ -211,11 +229,24 @@ await copyDirectory(app.getPath('userData'), backupDir);
 #### Correct
 
 ```ts
-// Uses the package preset: encrypted envelope + only approved explicit-sensitive entries.
-const content = await createAppStorageBundleContent(
-  undefined,
-  getUserConfigPackageBundleOptions()
-);
+// Uses portable 2-file bundle: config + field-encrypted custom-cli-configs.
+const content = await createPortableAppStorageBundleContent();
+```
+
+#### Wrong
+
+```ts
+// Restore leaves old absolute isolated paths that do not exist on the new machine.
+await restoreAppStorageBackupContent(content, configPath);
+await unifiedConfigManager.loadConfig();
+```
+
+#### Correct
+
+```ts
+await restoreAppStorageBackupContent(content, configPath);
+await unifiedConfigManager.loadConfig();
+await browserProfileManager.reconcileIsolatedProfilesAfterRestore();
 ```
 
 ## Scenario: Managed Site Account-Scoped Persistence

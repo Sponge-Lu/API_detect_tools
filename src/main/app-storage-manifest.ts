@@ -19,7 +19,11 @@ export type AppStorageMutationPolicy =
   | 'external-tool-owned'
   | 'protected-do-not-mutate';
 
-export type AppStorageBackupMode = 'lightweight-config' | 'full-manifest' | 'explicit-sensitive';
+export type AppStorageBackupMode =
+  | 'lightweight-config'
+  | 'full-manifest'
+  | 'portable-config'
+  | 'explicit-sensitive';
 
 export type RetentionMode =
   | 'none'
@@ -92,7 +96,7 @@ export const APP_STORAGE_ENTRIES: readonly AppStorageEntry[] = [
     },
     backup: {
       defaultIncluded: true,
-      modes: ['lightweight-config', 'full-manifest'],
+      modes: ['lightweight-config', 'full-manifest', 'portable-config'],
       reason: 'Primary user intent and compatibility config.',
     },
     containsSecrets: true,
@@ -290,7 +294,7 @@ export const APP_STORAGE_ENTRIES: readonly AppStorageEntry[] = [
     basePath: 'userData',
     pathSegments: ['custom-cli-configs.json'],
     description:
-      'Sensitive custom CLI settings. Encryption/migration is out of scope for this task.',
+      'Direct CLI configs. Disk writes encrypt apiKey field-level; backups include the encrypted file as-is.',
     mutationPolicy: 'app-managed',
     retention: {
       mode: 'replace-by-key',
@@ -299,10 +303,10 @@ export const APP_STORAGE_ENTRIES: readonly AppStorageEntry[] = [
       pruneTrigger: 'on-write',
     },
     backup: {
-      defaultIncluded: false,
-      modes: ['explicit-sensitive'],
-      requiresExplicitInclude: true,
-      reason: 'Contains API keys; sensitive backup behavior is deferred.',
+      defaultIncluded: true,
+      modes: ['full-manifest', 'portable-config'],
+      reason:
+        'User direct CLI endpoints/keys travel with portable/full-manifest backups; apiKey stays field-encrypted on disk.',
     },
     containsSecrets: true,
   },

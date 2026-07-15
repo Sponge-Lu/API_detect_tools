@@ -37,8 +37,9 @@
 | **webdav-config.test.ts** | WebDAV 配置测试 | WebDAV 配置 |
 | **unified-config-manager.test.ts** | 配置恢复与持久化回归测试 | UnifiedConfigManager 损坏恢复、备份回滚、原子保存、legacy 默认账户/seeded 路由示例清理、旧站点缺失 `site_type` 不默认补值、保存配置不丢站点每日快照、路由路径暂停状态恢复 |
 | **atomic-json.test.ts** | 原子 JSON 工具测试 | 原子写入、缺失文件默认值、normalize 读取、失败临时文件清理、同目标串行写入和 Windows final rename 临时错误重试 |
-| **storage-manifest.test.ts** | 应用存储清单测试 | 本地存储 owner/path/retention/cap/备份边界、受保护浏览器状态不变更约束 |
-| **app-storage-bundle.test.ts** | 应用存储配置包测试 | manifest 配置包纳入/排除边界、bundle 恢复、legacy config-only 恢复保留运行态 sidecar |
+| **storage-manifest.test.ts** | 应用存储清单测试 | 本地存储 owner/path/retention/cap/备份边界、portable 仅含 config+custom-cli、credit 显式敏感、受保护浏览器状态不变更约束 |
+| **app-storage-bundle.test.ts** | 应用存储配置包测试 | portable 2 文件纳入、full-manifest 含 custom-cli、排除 credit/browser、portable 恢复保留 runtime/credit、full-manifest 清理缺失 runtime、legacy config-only 保留 sidecar |
+| **browser-profile-reconcile.test.ts** | 隔离 Profile 恢复重绑测试 | 恢复后按旧 slot-N 重建目录并重写路径、同站冲突时分配空闲 slot、main/manual 不创建隔离目录 |
 | **backup-manager.test.ts** | 本地备份管理测试 | 自动备份节流、内容去重、强制备份与保留数量 |
 | **migrate-config-v224-to-v301-script.test.ts** | 配置迁移脚本测试 | v2.1.24 config 拆分为 clean config、runtime-cache 与 route state，重复运行保留已有 state |
 | **route-cli-probe-service.test.ts** | CLI 探测多账户回归测试 | 同站点全部活跃账户覆盖、账户级 CLI 配置优先/禁用/旧站点 fallback、自定义 CLI 配置行/探测任务、活跃 API Key 选择、probe-lock `probeRunId` 与自定义上游信息传递、错误码透传、旧配置兼容 |

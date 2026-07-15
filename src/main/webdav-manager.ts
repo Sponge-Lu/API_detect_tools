@@ -1,7 +1,7 @@
 /**
  * 输入: WebDAV client (WebDAV 通信), BackupManager (本地备份), UnifiedConfigManager (配置管理)
  * 输出: WebDAVResult (操作结果), WebDAVBackupInfo (备份信息)
- * 定位: 基础设施层 - 通过 WebDAV 协议管理云端备份和同步
+ * 定位: 基础设施层 - 通过 WebDAV 协议管理云端备份和同步（portable 2 文件包）
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -21,10 +21,11 @@ import Logger from './utils/logger';
 import { backupManager } from './backup-manager';
 import { unifiedConfigManager } from './unified-config-manager';
 import {
-  createAppStorageBundleContent,
+  createPortableAppStorageBundleContent,
   extractStableConfigFromBackupContent,
   restoreAppStorageBackupContent,
 } from './app-storage-bundle';
+import { browserProfileManager } from './browser-profile-manager';
 import type { WebDAVConfig, WebDAVBackupInfo, WebDAVResult } from '../shared/types/site';
 import { DEFAULT_WEBDAV_CONFIG } from '../shared/types/site';
 
@@ -178,7 +179,7 @@ export class WebDAVManager {
     }
 
     try {
-      const content = await createAppStorageBundleContent();
+      const content = await createPortableAppStorageBundleContent();
 
       // 验证 JSON 格式和 stable config 内容
       try {
@@ -198,7 +199,7 @@ export class WebDAVManager {
 
       // 上传文件
       await client.putFileContents(remotePath, content, { overwrite: true });
-      Logger.info(`✅ [WebDAVManager] 配置包上传成功: ${filename}`);
+      Logger.info(`✅ [WebDAVManager] 可迁移配置包上传成功: ${filename}`);
 
       // 清理旧备份
       await this.cleanupOldBackups(config);
@@ -400,14 +401,15 @@ export class WebDAVManager {
         return { success: false, error: '备份文件格式无效' };
       }
 
-      // 4. 恢复 manifest 配置包或 legacy config-only 备份
+      // 4. 恢复 portable/full-manifest 配置包或 legacy config-only 备份
       await restoreAppStorageBackupContent(content, configPath);
 
       // 5. 清理临时文件
       await fs.unlink(tempPath).catch(() => {});
 
-      // 6. 重新加载配置
+      // 6. 重新加载配置并为隔离账户重建本机 slot
       await unifiedConfigManager.loadConfig();
+      await browserProfileManager.reconcileIsolatedProfilesAfterRestore();
 
       Logger.info(`✅ [WebDAVManager] 配置恢复成功: ${filename}`);
       return { success: true };

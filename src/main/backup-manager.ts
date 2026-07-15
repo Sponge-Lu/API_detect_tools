@@ -1,7 +1,7 @@
 ﻿/**
  * 输入: UnifiedConfigManager (配置管理), FileSystem (文件系统), Electron app (应用路径)
  * 输出: BackupInfo (备份信息), 备份文件
- * 定位: 基础设施层 - 管理本地备份和恢复操作
+ * 定位: 基础设施层 - 管理本地备份和恢复操作（自动 config-only / 手动 portable 包）
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -22,7 +22,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { createHash } from 'crypto';
 import {
-  createAppStorageBundleContent,
+  createPortableAppStorageBundleContent,
   extractStableConfigFromBackupContent,
   restoreAppStorageBackupContent,
 } from './app-storage-bundle';
@@ -200,12 +200,11 @@ export class BackupManager {
   }
 
   /**
-   * 创建 manifest 全量备份包。
-   * 备份包只包含 app-storage-manifest 中默认纳入 full-manifest 的文件。
+   * 创建可迁移配置包（portable-config：config.json + custom-cli-configs.json）。
    */
   async backupManifestBundle(options: BackupFileOptions = {}): Promise<boolean> {
     try {
-      const content = await createAppStorageBundleContent();
+      const content = await createPortableAppStorageBundleContent();
       extractStableConfigFromBackupContent(content);
       const sourceBuffer = Buffer.from(content, 'utf-8');
       const latestBackup = this.findLatestBackup('config.json');
@@ -217,7 +216,7 @@ export class BackupManager {
       const backupPath = path.join(this.backupDir, backupFileName);
       fs.writeFileSync(backupPath, sourceBuffer);
       Logger.info(
-        `💾 [BackupManager] 已创建配置包备份: ${backupFileName}${
+        `💾 [BackupManager] 已创建可迁移配置包备份: ${backupFileName}${
           options.reason ? ` (${options.reason})` : ''
         }`
       );
@@ -231,14 +230,14 @@ export class BackupManager {
   }
 
   /**
-   * 备份所有默认纳入的 manifest 文件。
+   * 手动可迁移备份（portable 2 文件包）。
    */
   async backupAll(): Promise<void> {
-    Logger.info('🔄 [BackupManager] 开始手动备份...');
+    Logger.info('🔄 [BackupManager] 开始手动可迁移备份...');
 
     await this.backupManifestBundle({ force: true, reason: 'manual' });
 
-    Logger.info('✅ [BackupManager] 手动备份完成');
+    Logger.info('✅ [BackupManager] 手动可迁移备份完成');
   }
 
   /**
@@ -314,8 +313,13 @@ export class BackupManager {
 
       const content = fs.readFileSync(backupPath, 'utf-8');
       const restored = await restoreAppStorageBackupContent(content, targetPath);
+      // 动态导入避免与 unified-config-manager 形成循环依赖
+      const { browserProfileManager } = await import('./browser-profile-manager');
+      await browserProfileManager.reconcileIsolatedProfilesAfterRestore();
       Logger.info(
-        `✅ [BackupManager] 已从备份恢复: ${backupFileName} (${restored.kind}, ${restored.restoredFiles.length} 个文件)`
+        `✅ [BackupManager] 已从备份恢复: ${backupFileName} (${restored.kind}${
+          restored.mode ? `/${restored.mode}` : ''
+        }, ${restored.restoredFiles.length} 个文件)`
       );
 
       return true;

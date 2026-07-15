@@ -133,12 +133,17 @@ declare global {
         list: () => Promise<any[]>;
         exportPackage?: () => Promise<{
           success: boolean;
-          data?: { filename: string; content: string; kind: string };
+          data?: { filename: string; content: string; kind: string; mode?: string };
           error?: string;
         }>;
         importPackage?: (content: string) => Promise<{
           success: boolean;
-          data?: { kind: 'storage-bundle' | 'legacy-config'; restoredFiles: string[] };
+          data?: {
+            kind: 'storage-bundle' | 'legacy-config';
+            mode?: string;
+            restoredFiles: string[];
+            reconcile?: { reboundAccounts: number; createdSlots: number };
+          };
           error?: string;
         }>;
       };

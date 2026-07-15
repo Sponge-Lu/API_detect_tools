@@ -42,8 +42,8 @@
 |------|------|
 | `src/main/main.ts` | Electron 生命周期、窗口创建、预加载绑定 |
 | `src/main/app-data-events.ts` | 主进程到渲染进程的数据变更通知桥，按域广播站点配置、站点快照和路由总览更新；广播会跳过已销毁窗口/webContents 并吞掉 Electron disposed-frame 竞态错误 |
-| `src/main/app-storage-manifest.ts` | 本地存储清单，声明稳定配置、运行态缓存/统计、日志、备份、敏感设置和受保护浏览器状态的路径、owner、retention/cap 与备份边界 |
-| `src/main/app-storage-bundle.ts` | 基于本地存储清单创建/恢复 manifest 配置包；用户导出/手动/WebDAV 备份（含 custom CLI 配置），并兼容旧版 config-only 备份 |
+| `src/main/app-storage-manifest.ts` | 本地存储清单，声明稳定配置、运行态缓存/统计、日志、备份、敏感设置和受保护浏览器状态的路径、owner、retention/cap 与备份边界；支持 lightweight/full-manifest/portable-config 模式 |
+| `src/main/app-storage-bundle.ts` | 基于本地存储清单创建/恢复配置包；可迁移 portable 包仅含 config.json + custom-cli-configs.json，兼容旧 full-manifest 与 config-only 备份 |
 | `src/main/unified-config-manager.ts` | v3 配置加载、迁移、legacy 默认账户与 seeded 路由示例清理、缺失 `site_type` 旧站点保持未决、读取失败短重试、原子写入、备份恢复、账户级 `cli_config` 更新、路由配置持久化与路径暂停状态恢复，以及兼容保存时清理已删站点的孤儿账户；删除最后一个账户时自动移除站点配置；CLI probe latest/history 可一次性写入 sidecar |
 | `src/main/runtime-cache-manager.ts` | 运行期缓存持久化，维护站点共享缓存、账户运行态缓存与 90 天/120 条上限的站点每日快照 |
 | `src/main/chrome-manager.ts` | 多槽位检测浏览器池、独立登录浏览器、按 site_type 解析 localStorage / 初始化用户信息，提供页面级登录态重读入口，收紧 localStorage 站点类型线索，并支持复用账户 Profile 打开签到页 |
@@ -59,7 +59,7 @@
 | `src/main/route-*.ts` / `src/main/anyrouter-request-rewriter.ts` / `src/main/cli-protocol-adapter.ts` | 路由代理服务器、规则解析、模型注册表、自定义 CLI 路由来源、CLI 探测（含自定义 CLI 虚拟配置）、probe-lock 定向测试、健康检查、统计分析；模型来源扫描只刷新候选来源，仅手工展示项和显式 override 构建可路由 entry；托管站点 CLI 探测和 targetProtocol 解析以账户级 `cli_config` 优先、站点级旧配置仅作 fallback；自定义 CLI 已拉取模型列表会过滤旧测试/选择残留，`manualModels` 明确保留用户手动输入模型并同步为路由来源；本地路由上游转发使用 Electron net raw 客户端并支持可选上游代理，透明成功 SSE 响应可边收边转发，流式首包等待仍受站点/配置超时约束，首个 SSE chunk 后活跃流空闲超时下限为 10 分钟，AnyRouter 通道对 Claude Code 保留原始工具语义并注入 Anthropic 指纹，对 Codex 保持原生协议，其余显式协议适配统一走通用 CLI 协议转换器；probe-lock 请求只允许 loopback、携带 probeRunId、记录并通知首次真实上游结果、缓存终止失败并限制单模型测试只发起一次真实上游尝试 |
 | `src/main/route-history-service.ts` | 站点管理 History 列时间桶聚合服务，将 CLI 探测样本与路由请求统计按 48h / 2h 桶合并为成功率数据 |
 | `src/main/route-state-manager.ts` | 路由运行态文件管理，将 stats/path state/health、CLI probe、analytics bucket 和模型来源快照拆到有 TTL/max-items 的 `state/*.json`，避免高频状态写入 `config.json` |
-| `src/main/backup-manager.ts` / `webdav-manager.ts` | 本地备份与 WebDAV 云端配置包；自动备份 config-only 节流去重，手动/WebDAV 备份使用加密 `.ahubpkg` manifest 包 |
+| `src/main/backup-manager.ts` / `webdav-manager.ts` | 本地备份与 WebDAV 云端配置包；自动备份 config-only 节流去重，手动/WebDAV/导出使用 plaintext portable 2 文件包；恢复后 reconcile 隔离 Profile slot |
 
 ### 渲染进程
 

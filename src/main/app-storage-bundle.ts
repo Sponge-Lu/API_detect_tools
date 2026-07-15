@@ -6,6 +6,7 @@ import { app } from 'electron';
 import {
   APP_STORAGE_MANIFEST_VERSION,
   APP_STORAGE_ENTRIES,
+  type AppStorageBackupMode,
   type AppStorageEntry,
   type AppStorageRoots,
   resolveAppStorageEntryPath,
@@ -15,7 +16,7 @@ import { writeTextFileAtomically } from './utils/atomic-json';
 export const APP_STORAGE_BUNDLE_FORMAT = 'api-hub-storage-bundle';
 export const APP_STORAGE_BUNDLE_VERSION = 1;
 
-export type AppStorageBundleMode = 'full-manifest';
+export type AppStorageBundleMode = 'full-manifest' | 'portable-config';
 export type AppStorageBundleFileEncoding = 'utf8' | 'base64';
 
 export interface AppStorageBundleFile {
@@ -39,7 +40,13 @@ export interface AppStorageBundle {
 
 export interface RestoreStorageBackupResult {
   kind: 'storage-bundle' | 'legacy-config';
+  mode?: AppStorageBundleMode;
   restoredFiles: string[];
+}
+
+export interface CreateAppStorageBundleOptions {
+  mode?: AppStorageBundleMode;
+  roots?: AppStorageRoots;
 }
 
 function getLocalAppDataPath(): string | undefined {
@@ -59,10 +66,38 @@ export function getCurrentAppStorageRoots(): AppStorageRoots {
   };
 }
 
-function getFullManifestEntries(): AppStorageEntry[] {
+function getEntriesForBackupMode(mode: AppStorageBackupMode): AppStorageEntry[] {
   return APP_STORAGE_ENTRIES.filter(
-    entry => entry.backup.defaultIncluded && entry.backup.modes.includes('full-manifest')
+    entry => entry.backup.defaultIncluded && entry.backup.modes.includes(mode)
   );
+}
+
+function getFullManifestEntries(): AppStorageEntry[] {
+  return getEntriesForBackupMode('full-manifest');
+}
+
+function getPortableConfigEntries(): AppStorageEntry[] {
+  return getEntriesForBackupMode('portable-config');
+}
+
+function getEntriesForBundleMode(mode: AppStorageBundleMode): AppStorageEntry[] {
+  return mode === 'portable-config' ? getPortableConfigEntries() : getFullManifestEntries();
+}
+
+/**
+ * 恢复前允许清理的 managed 文件。
+ * - full-manifest：清理默认 full-manifest 文件 + runtime sidecars（custom-cli 缺失时保留本机文件）
+ * - portable-config：只恢复 config + custom-cli，不得 wipe 本机 runtime/settings
+ */
+function getRestoreWipeEntries(mode: AppStorageBundleMode): AppStorageEntry[] {
+  if (mode === 'portable-config') {
+    return getPortableConfigEntries().filter(entry => entry.id !== 'custom-cli-configs');
+  }
+
+  return uniqueEntries([
+    ...getFullManifestEntries().filter(entry => entry.id !== 'custom-cli-configs'),
+    ...getRuntimeRestoreEntries(),
+  ]);
 }
 
 function getRuntimeRestoreEntries(): AppStorageEntry[] {
@@ -130,17 +165,18 @@ export function isAppStorageBundle(value: unknown): value is AppStorageBundle {
     value.format === APP_STORAGE_BUNDLE_FORMAT &&
     value.version === APP_STORAGE_BUNDLE_VERSION &&
     value.manifestVersion === APP_STORAGE_MANIFEST_VERSION &&
-    value.mode === 'full-manifest' &&
+    (value.mode === 'full-manifest' || value.mode === 'portable-config') &&
     Array.isArray(value.files)
   );
 }
 
-export async function createAppStorageBundle(
-  roots: AppStorageRoots = getCurrentAppStorageRoots()
-): Promise<AppStorageBundle> {
+async function collectBundleFiles(
+  mode: AppStorageBundleMode,
+  roots: AppStorageRoots
+): Promise<AppStorageBundleFile[]> {
   const files: AppStorageBundleFile[] = [];
 
-  for (const entry of getFullManifestEntries()) {
+  for (const entry of getEntriesForBundleMode(mode)) {
     const absolutePath = resolveAppStorageEntryPath(entry, roots);
     if (!absolutePath) {
       continue;
@@ -168,11 +204,25 @@ export async function createAppStorageBundle(
     });
   }
 
+  return files;
+}
+
+export async function createAppStorageBundle(
+  rootsOrOptions: AppStorageRoots | CreateAppStorageBundleOptions = {}
+): Promise<AppStorageBundle> {
+  const options: CreateAppStorageBundleOptions =
+    'userData' in rootsOrOptions
+      ? { roots: rootsOrOptions, mode: 'full-manifest' }
+      : rootsOrOptions;
+  const mode = options.mode ?? 'full-manifest';
+  const roots = options.roots ?? getCurrentAppStorageRoots();
+  const files = await collectBundleFiles(mode, roots);
+
   return {
     format: APP_STORAGE_BUNDLE_FORMAT,
     version: APP_STORAGE_BUNDLE_VERSION,
     manifestVersion: APP_STORAGE_MANIFEST_VERSION,
-    mode: 'full-manifest',
+    mode,
     createdAt: Date.now(),
     files,
   };
@@ -183,9 +233,16 @@ export function serializeAppStorageBundle(bundle: AppStorageBundle): string {
 }
 
 export async function createAppStorageBundleContent(
+  rootsOrOptions: AppStorageRoots | CreateAppStorageBundleOptions = {}
+): Promise<string> {
+  return serializeAppStorageBundle(await createAppStorageBundle(rootsOrOptions));
+}
+
+/** 创建可迁移 2 文件包：config.json + custom-cli-configs.json */
+export async function createPortableAppStorageBundleContent(
   roots: AppStorageRoots = getCurrentAppStorageRoots()
 ): Promise<string> {
-  return serializeAppStorageBundle(await createAppStorageBundle(roots));
+  return createAppStorageBundleContent({ mode: 'portable-config', roots });
 }
 
 export function extractStableConfigFromBackupContent(content: string): unknown {
@@ -228,7 +285,15 @@ async function restoreBundle(
   bundle: AppStorageBundle,
   roots: AppStorageRoots
 ): Promise<RestoreStorageBackupResult> {
-  const allowedEntries = new Map(getFullManifestEntries().map(entry => [entry.id, entry]));
+  // 允许恢复的文件集合：
+  // - full-manifest：full-manifest 默认条目
+  // - portable-config：portable 2 文件 + 兼容旧 full-manifest 中可能出现的条目（但 wipe 策略按 mode）
+  const allowedEntries = new Map(
+    uniqueEntries([...getFullManifestEntries(), ...getPortableConfigEntries()]).map(entry => [
+      entry.id,
+      entry,
+    ])
+  );
   const restoredFiles: string[] = [];
   const seenEntryIds = new Set<string>();
   const decodedFiles: Array<{
@@ -259,10 +324,7 @@ async function restoreBundle(
     decodedFiles.push({ entry, file, buffer });
   }
 
-  await removeEntries(
-    uniqueEntries([...getFullManifestEntries(), ...getRuntimeRestoreEntries()]),
-    roots
-  );
+  await removeEntries(getRestoreWipeEntries(bundle.mode), roots);
 
   for (const { entry, buffer } of decodedFiles) {
     const absolutePath = resolveAppStorageEntryPath(entry, roots);
@@ -274,7 +336,7 @@ async function restoreBundle(
     restoredFiles.push(absolutePath);
   }
 
-  return { kind: 'storage-bundle', restoredFiles };
+  return { kind: 'storage-bundle', mode: bundle.mode, restoredFiles };
 }
 
 async function restoreLegacyConfig(

@@ -1,10 +1,11 @@
 /**
  * 输入: FileSystem, ChromeManager, UnifiedConfigManager
- * 输出: 浏览器 Profile 管理（主 Profile 检测、隔离 Profile 创建、Extensions 复制）
+ * 输出: 浏览器 Profile 管理（主 Profile 检测、隔离 Profile 创建、Extensions 复制、恢复后 slot 重绑）
  * 定位: 基础设施层 - 管理多账户登录所需的浏览器 Profile
  *
  * 主浏览器: 使用用户真实 Chrome User Data 目录（保留插件）
  * 隔离浏览器: 第 2/3/... 账号按槽位共享 Profile，首次创建时仅复制 Extensions 并清理登录态
+ * 跨机恢复: 可迁移备份不含 profile 本体；恢复后按旧 slot-N 重建空目录并重写 browser_profile_path
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -169,20 +170,167 @@ export class BrowserProfileManager {
     await unifiedConfigManager.loadConfig();
 
     const slotIndex = this.getNextSharedProfileSlot(siteId);
+    return this.ensureIsolatedProfileSlot(slotIndex, accountId);
+  }
+
+  /**
+   * 确保指定 slot 目录存在；不存在时初始化空隔离 Profile（复制插件、清理登录态）。
+   */
+  async ensureIsolatedProfileSlot(slotIndex: number, accountId?: string): Promise<string> {
+    if (!Number.isInteger(slotIndex) || slotIndex < 2) {
+      throw new Error(`无效的隔离 Profile 槽位: ${slotIndex}`);
+    }
+
     const profileDir = path.join(this.getIsolatedRootDir(), `${SHARED_PROFILE_PREFIX}${slotIndex}`);
     const alreadyExists = fs.existsSync(profileDir);
 
     if (!alreadyExists) {
       await this.initializeSharedProfile(profileDir);
       Logger.info(
-        `[BrowserProfile] 已初始化共享隔离 Profile(slot=${slotIndex}, account=${accountId})`
+        `[BrowserProfile] 已初始化共享隔离 Profile(slot=${slotIndex}${
+          accountId ? `, account=${accountId}` : ''
+        })`
       );
     } else {
       await fsp.mkdir(path.join(profileDir, 'Default'), { recursive: true });
-      Logger.info(`[BrowserProfile] 复用共享隔离 Profile(slot=${slotIndex}, account=${accountId})`);
+      Logger.info(
+        `[BrowserProfile] 复用共享隔离 Profile(slot=${slotIndex}${
+          accountId ? `, account=${accountId}` : ''
+        })`
+      );
     }
 
     return profileDir;
+  }
+
+  /**
+   * 从已保存的 Profile 路径中提取共享槽位编号（公开给恢复逻辑复用）。
+   */
+  extractSharedProfileSlot(profilePath?: string): number | null {
+    if (!profilePath) {
+      return null;
+    }
+
+    const normalizedPath = profilePath.replace(/\\/g, '/');
+    const match = normalizedPath.match(/(?:^|\/)slot-(\d+)$/);
+    if (!match) {
+      return null;
+    }
+
+    const slot = Number.parseInt(match[1], 10);
+    return Number.isInteger(slot) && slot >= 2 ? slot : null;
+  }
+
+  /**
+   * 备份恢复后重绑隔离账户的 browser_profile_path 到本机 slot 目录。
+   * - isolated_profile: 尽量保留旧 slot-N；冲突/无效时按站点分配下一空闲 slot
+   * - main_profile / manual: 不创建隔离目录；main 上无效的 browser_profile_path 清空
+   * 返回被重写的账户数量。
+   */
+  async reconcileIsolatedProfilesAfterRestore(): Promise<{
+    reboundAccounts: number;
+    createdSlots: number;
+  }> {
+    await unifiedConfigManager.loadConfig();
+    const config = (unifiedConfigManager as any).config as {
+      accounts?: Array<{
+        id: string;
+        site_id: string;
+        auth_source?: string;
+        browser_profile_path?: string;
+        created_at?: number;
+      }>;
+    } | null;
+
+    if (!config?.accounts?.length) {
+      return { reboundAccounts: 0, createdSlots: 0 };
+    }
+
+    const rootDir = this.getIsolatedRootDir();
+    await fsp.mkdir(rootDir, { recursive: true });
+
+    let reboundAccounts = 0;
+    let createdSlots = 0;
+    let dirty = false;
+
+    const accountsBySite = new Map<string, typeof config.accounts>();
+    for (const account of config.accounts) {
+      const list = accountsBySite.get(account.site_id) || [];
+      list.push(account);
+      accountsBySite.set(account.site_id, list);
+    }
+
+    for (const [, siteAccounts] of accountsBySite) {
+      siteAccounts.sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+
+      const claimedSlots = new Set<number>();
+      const plannedSlots = new Map<string, number>();
+
+      // 优先按旧路径 slot-N 认领（同站多账户保持原映射）
+      for (const account of siteAccounts) {
+        if (account.auth_source !== 'isolated_profile') {
+          continue;
+        }
+        const preferred = this.extractSharedProfileSlot(account.browser_profile_path);
+        if (preferred !== null && !claimedSlots.has(preferred)) {
+          claimedSlots.add(preferred);
+          plannedSlots.set(account.id, preferred);
+        }
+      }
+
+      // 无有效旧 slot 或冲突的账户分配下一空闲 slot
+      for (const account of siteAccounts) {
+        if (account.auth_source === 'main_profile') {
+          if (account.browser_profile_path) {
+            const stillValid =
+              fs.existsSync(account.browser_profile_path) &&
+              this.extractSharedProfileSlot(account.browser_profile_path) === null;
+            if (!stillValid) {
+              account.browser_profile_path = undefined;
+              dirty = true;
+              reboundAccounts++;
+            }
+          }
+          continue;
+        }
+
+        if (account.auth_source !== 'isolated_profile') {
+          continue;
+        }
+
+        let slot = plannedSlots.get(account.id);
+        if (slot === undefined) {
+          slot = 2;
+          while (claimedSlots.has(slot)) {
+            slot++;
+          }
+          claimedSlots.add(slot);
+          plannedSlots.set(account.id, slot);
+        }
+
+        const profileDirBefore = path.join(rootDir, `${SHARED_PROFILE_PREFIX}${slot}`);
+        const existed = fs.existsSync(profileDirBefore);
+        const profileDir = await this.ensureIsolatedProfileSlot(slot, account.id);
+        if (!existed) {
+          createdSlots++;
+        }
+
+        if (account.browser_profile_path !== profileDir) {
+          account.browser_profile_path = profileDir;
+          dirty = true;
+          reboundAccounts++;
+        }
+      }
+    }
+
+    if (dirty) {
+      await unifiedConfigManager.saveConfig();
+      Logger.info(
+        `[BrowserProfile] 恢复后已重绑隔离 Profile: rebound=${reboundAccounts}, createdSlots=${createdSlots}`
+      );
+    }
+
+    return { reboundAccounts, createdSlots };
   }
 
   /**
@@ -268,24 +416,6 @@ export class BrowserProfileManager {
       nextSlot++;
     }
     return nextSlot;
-  }
-
-  /**
-   * 从已保存的 Profile 路径中提取共享槽位编号
-   */
-  private extractSharedProfileSlot(profilePath?: string): number | null {
-    if (!profilePath) {
-      return null;
-    }
-
-    const normalizedPath = profilePath.replace(/\\/g, '/');
-    const match = normalizedPath.match(/(?:^|\/)slot-(\d+)$/);
-    if (!match) {
-      return null;
-    }
-
-    const slot = Number.parseInt(match[1], 10);
-    return Number.isInteger(slot) && slot >= 2 ? slot : null;
   }
 
   /**

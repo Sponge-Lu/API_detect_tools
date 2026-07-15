@@ -185,16 +185,14 @@ export function SettingsPanel({
         return;
       }
 
-      const blob = new Blob([result.data.content], { type: 'application/octet-stream' });
+      const blob = new Blob([result.data.content], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download =
-        result.data.filename ||
-        `api-hub-config-package-${new Date().toISOString().slice(0, 10)}.ahubpkg`;
+      a.download = result.data.filename || `config_${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
-      toast.success('加密配置包已导出（包含完整认证信息与默认运行态）');
+      toast.success('可迁移配置包已导出（config.json + 直连配置；隔离浏览器登录态需在新机重建）');
     } catch (error: any) {
       toast.error(error?.message || '导出配置包失败');
     }
@@ -222,7 +220,12 @@ export function SettingsPanel({
         const importedConfig = await window.electronAPI.loadConfig();
         onImport?.(importedConfig);
         const restoredCount = result.data?.restoredFiles.length ?? 0;
-        toast.success(`配置包已导入（恢复 ${restoredCount} 个文件）`);
+        const rebound = result.data?.reconcile?.reboundAccounts ?? 0;
+        toast.success(
+          rebound > 0
+            ? `配置包已导入（恢复 ${restoredCount} 个文件，已为 ${rebound} 个隔离账户重建浏览器目录）`
+            : `配置包已导入（恢复 ${restoredCount} 个文件）`
+        );
       } catch (error: any) {
         toast.error(error?.message || '配置包解析失败');
       }
@@ -780,14 +783,14 @@ export function SettingsPanel({
             <input
               ref={fileInputRef}
               type="file"
-              accept=".ahubpkg,.json"
+              accept=".json,.ahubpkg"
               onChange={handleImport}
               className="hidden"
             />
           </div>
           <p className="text-xs text-[var(--text-secondary)] mt-2">
-            导出为主进程生成的加密 manifest
-            配置包（含认证信息与默认运行态），请妥善保管导出文件与本机备份密钥
+            导出为可迁移配置包（config.json + custom-cli-configs.json，敏感字段保持字段级加密）。
+            导入后会自动为隔离账户重建本机浏览器目录，但不会迁移登录会话。
           </p>
         </>
       ) : (
