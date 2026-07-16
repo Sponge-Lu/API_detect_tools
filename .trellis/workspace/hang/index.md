@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 6
+- **Total Sessions**: 7
 - **Last Active**: 2026-07-16
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~228 | Active |
+| `journal-1.md` | ~281 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 7 | 2026-07-16 | OpenCode 默认 Responses 与思考参数配置 | `afa5dd9` | `main` |
 | 6 | 2026-07-16 | 完成直连密钥操作与路由日志思考强度展示 | `2a7875c`, `d93d9f7` | `main` |
 | 5 | 2026-07-15 | 可迁移两文件备份与隔离浏览器恢复 | `7ccf3f7` | `main` |
 | 4 | 2026-07-08 | Remove Gemini CLI support | - | `main` |

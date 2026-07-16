@@ -246,3 +246,36 @@ Debug complete; no code change per user request.
 
 - cross-layer Mistake 13
 - route-runtime priority disable scope + stale overwrite note
+
+
+## Session 7: OpenCode 默认 Responses 与思考参数配置
+
+**Date**: 2026-07-16
+**Task**: OpenCode 默认 Responses 与思考参数配置
+**Branch**: `main`
+
+### Summary
+
+OpenCode 第三方供应商配置默认使用 Responses；OpenAI 模型写入 high 思考强度，Anthropic 模型写入 16000 token 思考预算，并统一配置预览、兼容性测试与路由默认协议。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `afa5dd9` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
