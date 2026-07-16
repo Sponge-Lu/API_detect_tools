@@ -113,3 +113,85 @@ Before finishing frontend work:
 7. For data-dense scrollable pages, explicitly inspect whether large blurred containers,
    row-by-row heavy recomputation, or missing containment could cause jank before considering the
    task done.
+
+---
+
+## Scenario: OpenCode Third-Party Reasoning Defaults
+
+### 1. Scope / Trigger
+
+- Trigger: changing `generateOpenCodeConfig()` for a third-party endpoint.
+- Managed-site and direct CLI entrypoints share this generator and must not duplicate protocol
+  mapping in their components.
+
+### 2. Signatures
+
+```ts
+interface OpenCodeConfigParams extends ConfigParams {
+  targetProtocol?: CliTargetProtocol;
+}
+
+function generateOpenCodeConfig(params: OpenCodeConfigParams): GeneratedConfig;
+```
+
+### 3. Contracts
+
+- `anthropic-messages` writes model option
+  `thinking: { type: 'enabled', budgetTokens: 16000 }`.
+- `openai-responses` writes model option `reasoningEffort: 'high'` under provider `openai`.
+- `openai-chat-completions` writes model option `reasoningEffort: 'high'` under the
+  OpenAI-compatible provider.
+- Missing or legacy `native` target protocol resolves to `openai-responses`; endpoint labels,
+  compatibility tests, generated config, and route defaults must preserve this same meaning.
+- Reasoning options belong under `provider.<id>.models.<model>.options`; provider-level `options`
+  retain `baseURL` and other connection settings.
+- Saved manual `editedFiles` remain authoritative and are never rewritten by the generator.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+| --- | --- |
+| Missing or `native` target protocol | Generate OpenAI Responses config |
+| Anthropic target | Enable thinking with a 16000-token budget |
+| OpenAI Responses target | Generate model-level `reasoningEffort: 'high'` |
+| OpenAI-compatible target | Generate model-level `reasoningEffort: 'high'` |
+| User saves manual JSON | Preserve it; OpenCode/provider validates custom values |
+
+### 5. Good / Base / Bad Cases
+
+- Good: both entrypoints preview identical protocol-specific defaults from the shared generator.
+- Base: the user edits generated JSON to use another supported effort or token budget.
+- Bad: placing `reasoningEffort` beside provider `baseURL` instead of under the model.
+- Bad: implementing the same mapping separately in both editor components.
+
+### 6. Tests Required
+
+- Parse generated `opencode.json` and assert model-level options for all concrete target protocols
+  in `src/__tests__/cli-config-generator.property.test.ts`.
+- Keep route parsing coverage for `reasoning_effort`, `reasoning.effort`,
+  `output_config.effort`, and Anthropic thinking budgets.
+- Run the full renderer build after changing the generated config shape.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+openai: {
+  options: { baseURL, reasoningEffort: 'high' },
+}
+```
+
+#### Correct
+
+```ts
+openai: {
+  options: { baseURL },
+  models: {
+    [model]: {
+      name: model,
+      options: { reasoningEffort: 'high' },
+    },
+  },
+}
+```

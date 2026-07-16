@@ -377,7 +377,7 @@ function resolveOpenCodeMode(
   targetProtocol?: CliTargetProtocol
 ): Exclude<CliTargetProtocol, 'native'> {
   const normalized = normalizeCliTargetProtocol(targetProtocol);
-  return normalized === 'native' ? 'openai-chat-completions' : normalized;
+  return normalized === 'native' ? 'openai-responses' : normalized;
 }
 
 function buildOpenCodeProviderConfig(params: OpenCodeConfigParams): {
@@ -397,7 +397,15 @@ function buildOpenCodeProviderConfig(params: OpenCodeConfigParams): {
           anthropic: {
             options: { baseURL },
             models: {
-              [params.model]: { name: params.model },
+              [params.model]: {
+                name: params.model,
+                options: {
+                  thinking: {
+                    type: 'enabled',
+                    budgetTokens: 16000,
+                  },
+                },
+              },
             },
           },
         },
@@ -414,7 +422,10 @@ function buildOpenCodeProviderConfig(params: OpenCodeConfigParams): {
           openai: {
             options: { baseURL },
             models: {
-              [params.model]: { name: params.model },
+              [params.model]: {
+                name: params.model,
+                options: { reasoningEffort: 'high' },
+              },
             },
           },
         },
@@ -432,7 +443,10 @@ function buildOpenCodeProviderConfig(params: OpenCodeConfigParams): {
           name: OPENCODE_PROVIDER_NAME,
           options: { baseURL },
           models: {
-            [params.model]: { name: params.model },
+            [params.model]: {
+              name: params.model,
+              options: { reasoningEffort: 'high' },
+            },
           },
         },
       },
@@ -477,6 +491,6 @@ export function generateOpenCodeTemplate(): GeneratedConfig {
     siteName: 'AnyAPI',
     apiKey: 'sk-xxxxxxxxxxxxxxx',
     model: 'gpt-5.1',
-    targetProtocol: 'openai-chat-completions',
+    targetProtocol: 'openai-responses',
   });
 }

@@ -637,7 +637,7 @@ export const DEFAULT_ANALYTICS_CONFIG: RouteAnalyticsConfig = {
 
 export const ROUTE_SUCCESSFUL_PATH_AFFINITY_MS = 30 * 60 * 1000;
 export const DEFAULT_OPEN_CODE_ROUTE_PROTOCOL: Exclude<CliTargetProtocol, 'native'> =
-  'openai-chat-completions';
+  'openai-responses';
 
 export const DEFAULT_MODEL_REGISTRY_CONFIG: RouteModelRegistryConfig = {
   version: 1,

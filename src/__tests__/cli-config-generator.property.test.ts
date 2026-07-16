@@ -19,9 +19,15 @@ import {
   normalizeApiKey,
   generateClaudeCodeConfig,
   generateCodexConfig,
+  generateOpenCodeConfig,
   resolveClaudeCodeDisplayModel,
   ConfigParams,
 } from '../renderer/services/cli-config-generator';
+import {
+  getCliTargetEndpoint,
+  isCliTargetProtocolNativeEquivalent,
+} from '../shared/types/cli-config';
+import { normalizeOpenCodeRouteProtocol } from '../shared/types/route-proxy';
 
 // ============= Arbitraries =============
 
@@ -415,4 +421,84 @@ describe('Property 2: Codex config generation produces valid output', () => {
       { numRuns: 100 }
     );
   });
+});
+
+describe('OpenCode config generation', () => {
+  const params = {
+    siteUrl: 'https://api.example.com',
+    siteName: 'AnyAPI',
+    apiKey: 'sk-test-key',
+    model: 'test-model',
+  };
+
+  it('should enable a 16000-token thinking budget for Anthropic Messages', () => {
+    const config = generateOpenCodeConfig({ ...params, targetProtocol: 'anthropic-messages' });
+    const configFile = config.files.find(file => file.path.endsWith('/opencode.json'));
+    const content = JSON.parse(configFile!.content);
+
+    expect(content).toMatchObject({
+      model: 'anthropic/test-model',
+      provider: {
+        anthropic: {
+          models: {
+            'test-model': {
+              options: {
+                thinking: {
+                  type: 'enabled',
+                  budgetTokens: 16000,
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it.each([undefined, 'native'] as const)(
+    'should default %s target protocol to OpenAI Responses',
+    targetProtocol => {
+      const config = generateOpenCodeConfig({ ...params, targetProtocol });
+      const configFile = config.files.find(file => file.path.endsWith('/opencode.json'));
+      const content = JSON.parse(configFile!.content);
+
+      expect(content).toMatchObject({
+        model: 'openai/test-model',
+        provider: {
+          openai: {
+            models: {
+              'test-model': {
+                options: { reasoningEffort: 'high' },
+              },
+            },
+          },
+        },
+      });
+    }
+  );
+
+  it('should treat OpenAI Responses as the OpenCode native protocol', () => {
+    expect(getCliTargetEndpoint('openCode', 'native')).toBe('/v1/responses');
+    expect(isCliTargetProtocolNativeEquivalent('openCode', 'openai-responses')).toBe(true);
+    expect(isCliTargetProtocolNativeEquivalent('openCode', 'openai-chat-completions')).toBe(false);
+    expect(normalizeOpenCodeRouteProtocol(undefined)).toBe('openai-responses');
+    expect(normalizeOpenCodeRouteProtocol('native')).toBe('openai-responses');
+    expect(normalizeOpenCodeRouteProtocol('openai-chat-completions')).toBe(
+      'openai-chat-completions'
+    );
+  });
+
+  it.each(['openai-responses', 'openai-chat-completions'] as const)(
+    'should default reasoning effort to high for %s',
+    targetProtocol => {
+      const config = generateOpenCodeConfig({ ...params, targetProtocol });
+      const configFile = config.files.find(file => file.path.endsWith('/opencode.json'));
+      const content = JSON.parse(configFile!.content);
+      const providerId = targetProtocol === 'openai-responses' ? 'openai' : 'anyapi';
+
+      expect(content.provider[providerId].models['test-model'].options).toEqual({
+        reasoningEffort: 'high',
+      });
+    }
+  );
 });

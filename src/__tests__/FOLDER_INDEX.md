@@ -60,7 +60,7 @@
 | **cli-compat-persistence.property.test.ts** | CLI 兼容性持久化测试 | CLI 兼容性数据 |
 | **cli-compat-service.property.test.ts** | CLI 兼容性服务测试 | CliCompatService（含双端点测试） |
 | **cli-wrapper-compat-service.test.ts** | 真实 CLI wrapper 兼容性测试 | CliWrapperCompatService 的临时目录、隔离配置、stdin prompt 注入、结果解析、probe-lock 终止失败提前中止、首个上游成功/延迟失败覆盖后续 probe-lock budget noise、Claude JSON 错误摘要、未观察到本地路由请求时的诊断提示、Codex 上游错误摘要与临时目录清理重试 |
-| **cli-config-generator.property.test.ts** | CLI 配置生成测试 | CLI 配置生成（含端点选择逻辑） |
+| **cli-config-generator.property.test.ts** | CLI 配置生成测试 | CLI 配置生成、端点选择及 OpenCode 多协议思考参数 |
 | **cli-config-status.test.tsx** | CLI 配置状态组件回归测试 | 本地路由代理 Base URL 在紧凑状态中显示为“本地路由”，并覆盖本地路由、站点与自定义 CLI 的当前模型小字 |
 | **custom-cli-config-editor-dialog.test.tsx** | 直连 CLI 编辑内容回归测试 | DirectCliConfigEditorContent 的配置名称/身份保存、空白名称保护、预览/应用按钮、按 CLI 聚合测试流程、上游协议选择与手动模型写入 `manualModels` |
 | **custom-cli-config-store.test.ts** | 自定义 CLI 配置 Store 回归测试 | 拉取模型后清理旧 Base URL/API Key 遗留的 CLI 使用模型、测试模型与测试结果，并保留 `manualModels` 手动模型 |

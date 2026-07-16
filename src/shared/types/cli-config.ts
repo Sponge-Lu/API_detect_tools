@@ -52,7 +52,7 @@ export function getCliTargetEndpoint(
       return '/v1/responses';
     }
     if (cliType === 'openCode') {
-      return '/v1/chat/completions';
+      return '/v1/responses';
     }
   }
   if (normalized === 'anthropic-messages') {
@@ -79,7 +79,7 @@ export function isCliTargetProtocolNativeEquivalent(
     return normalized === 'openai-responses';
   }
   if (cliType === 'openCode') {
-    return normalized === 'openai-chat-completions';
+    return normalized === 'openai-responses';
   }
   return false;
 }

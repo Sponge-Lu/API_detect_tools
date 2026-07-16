@@ -1014,7 +1014,7 @@ export class CliWrapperCompatService {
   ): Promise<{ supported: boolean; detail: OpenCodeTestDetail; message?: string }> {
     const mode =
       normalizeCliTargetProtocol(targetProtocol) === 'native'
-        ? 'openai-chat-completions'
+        ? 'openai-responses'
         : normalizeCliTargetProtocol(targetProtocol);
 
     return this.withIsolatedWorkspace('api-detect-opencode-wrapper', async workspace => {

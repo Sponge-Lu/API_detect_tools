@@ -502,7 +502,7 @@ export class CliCompatService {
     url: string,
     apiKey: string,
     model: string,
-    mode: CliTargetProtocol = 'openai-chat-completions'
+    mode: CliTargetProtocol = 'openai-responses'
   ): Promise<{ supported: boolean; detail: OpenCodeTestDetail }> {
     const request =
       mode === 'anthropic-messages'
@@ -564,7 +564,7 @@ export class CliCompatService {
         ? this.testOpenCodeWithDetail(siteUrl, apiKey, gptModel)
         : Promise.resolve({
             supported: null,
-            detail: { mode: 'openai-chat-completions' as const },
+            detail: { mode: 'openai-responses' as const },
           }),
     ]);
 
