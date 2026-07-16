@@ -135,3 +135,114 @@ Removed Gemini CLI integration from the supported app surface, updated docs/spec
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: 可迁移两文件备份与隔离浏览器恢复
+
+**Date**: 2026-07-15
+**Task**: 可迁移两文件备份与隔离浏览器恢复
+**Branch**: `main`
+
+### Summary
+
+实现 portable-config 仅打包 config.json + custom-cli-configs.json；手动/WebDAV/导出统一该策略；恢复后为 isolated_profile 账户重绑本机 slot 目录；补齐导出导入 IPC；测试通过并完成本地 commit 与任务归档。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7ccf3f7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+---
+
+## 2026-07-15 — 禁用通道仍被路由请求 debug（不改代码）
+
+### Task
+
+`07-15-07-15-disabled-channel-still-routed`
+
+### Findings
+
+- 「禁用」有 5 种语义；只有 priority 禁用 / site.enabled / path.disabledUntil 会挡路由
+- CLI `enabled=false`（托管站 cli_config + 自定义 CLI cliSettings）只影响 probe，不影响 `resolveChannels`
+- custom CLI 的 fetched/manual models 会以全部 CLI types 进入 registry
+- expandDisplayItemSourceKeys 会按同名 originalModel 跨源回扩
+
+### Spec updates
+
+- `.trellis/spec/guides/cross-layer-thinking-guide.md` Mistake 12
+- `.trellis/spec/backend/route-runtime.md` known gap note
+
+### Status
+
+Debug complete; no code change per user request.
+
+
+## Session 6: 完成直连密钥操作与路由日志思考强度展示
+
+**Date**: 2026-07-16
+**Task**: 完成直连密钥操作与路由日志思考强度展示
+**Branch**: `main`
+
+### Summary
+
+为直连配置的 API Key 增加显示与复制按钮；路由日志新增本地 CLI 思考强度列并扩大默认窗口宽度，完成验证与任务归档。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2a7875c` | (see git log) |
+| `d93d9f7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+---
+
+## 2026-07-16 — 纠正：优先级表禁用仍被路由
+
+### Clarification
+
+用户明确是重定向模型规则优先级排序表禁用，不是 CLI enabled。
+
+### Corrected causes (priority table only)
+
+1. 禁用 toggle 只改 draft，必须「保存优先级」
+2. disabled 绑定单个 displayItem/canonicalModel，不是全局
+3. 「路由规则」对话框用旧 item 快照回写可冲掉 disabled（真实代码 bug）
+4. 只禁了 Key 时同站其它 Key 仍会请求
+
+### Spec
+
+- cross-layer Mistake 13
+- route-runtime priority disable scope + stale overwrite note

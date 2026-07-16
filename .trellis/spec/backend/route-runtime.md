@@ -401,6 +401,19 @@ same-name manual redirect may depend on them.
 - Canonical-model channel resolution must treat `displayItem.priorityConfig.sitePriorities` as the sole source of site ordering semantics. If a current source has no explicit saved site priority yet, assign it a synthetic priority after the highest explicit site priority for that display item, preserving current source discovery order only for those missing-priority additions.
 - Canonical-model channel resolution must treat `displayItem.priorityConfig.apiKeyPriorities` as the source of API key ordering semantics. If a current API key under a site has no explicit saved priority yet, assign it a synthetic priority after the highest explicit API key priority already saved for that site, preserving current discovery order only among those missing-priority additions.
 - Canonical-model channel resolution must skip any site listed in `displayItem.priorityConfig.disabledSiteIds` and any API key listed in `displayItem.priorityConfig.disabledApiKeyPriorityKeys`. Disabled site/API-key ids are route-intent exclusions, not low-priority candidates.
+- Priority-table disable is **persisted route intent on one `RouteModelDisplayItem`**, not a global
+  site kill-switch. `handleRequest()` resolves `canonicalModel` from
+  `cliModelSelections[cliType] || rawCanonicalModel`, then loads that model's display item
+  `priorityConfig`. Disabling a site/API key on model card A does not exclude it from model card B.
+- The priority-table disable/enable toggle auto-persists via `upsertModelDisplayItem` with
+  `serializePriorityConfig(priorityDraft)` and must leave the 「保存优先级」 button clean
+  (`data-priority-dirty=false`, non-danger variant) after a successful auto-save. Reorder-only
+  edits remain draft-local until the user clicks 「保存优先级」; while dirty, that button uses the
+  design-system `danger` variant.
+- Partial display-item editors (for example the per-model runtime-rule dialog) must not rewrite
+  `priorityConfig` from a stale in-memory snapshot. Saving `runtimeConfig` must read the latest
+  display item (open detail state / current registry) and preserve the latest
+  `disabledSiteIds` / `disabledApiKeyPriorityKeys` / site-API-key order.
 - When `routing.modelRegistry` contains any routing data (`sources`, `entries`, or `displayItems`), `resolveChannels(rule, canonicalModel)` must not fall back to generic site/account/API-key channels if `canonicalModel` has no registry entry. Unknown requested transport models must produce no candidates instead of being forwarded through an unrelated site.
 - Selected CLI model routing must keep the selected CLI type, `canonicalModel`, `targetProtocol`,
   and the display item's `sourceKeys` as the route-intent boundary across all matching route rules.

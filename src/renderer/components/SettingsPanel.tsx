@@ -4,7 +4,7 @@
  * 定位: 展示层 - 应用设置面板，左侧分类导航 + 右侧内容区
  */
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
   X,
@@ -31,6 +31,36 @@ import { WebDAVConfig, DEFAULT_WEBDAV_CONFIG } from '../../shared/types/site';
 import { WebDAVBackupDialog } from './dialogs';
 import { AppInput } from './AppInput';
 import { THEME_PRESETS, type ThemeMode } from '../../shared/theme/themePresets';
+
+function isSameDetectionSettings(left: Settings, right: Settings): boolean {
+  return (
+    left.timeout === right.timeout &&
+    left.concurrent === right.concurrent &&
+    (left.max_concurrent ?? 1) === (right.max_concurrent ?? 1) &&
+    left.show_disabled === right.show_disabled &&
+    (left.browser_path || '') === (right.browser_path || '')
+  );
+}
+
+function isSameWebdavConfig(left: WebDAVConfig, right: WebDAVConfig): boolean {
+  return (
+    left.enabled === right.enabled &&
+    left.serverUrl === right.serverUrl &&
+    left.username === right.username &&
+    left.password === right.password &&
+    left.remotePath === right.remotePath &&
+    left.maxBackups === right.maxBackups
+  );
+}
+
+const DETECTION_SAVE_DIRTY_CLASS =
+  'bg-[var(--danger)] hover:opacity-90 text-white rounded-lg transition-all font-semibold text-sm shadow-sm';
+const DETECTION_SAVE_CLEAN_CLASS =
+  'bg-[var(--accent)] hover:opacity-90 text-white rounded-lg transition-all font-semibold text-sm shadow-sm';
+const WEBDAV_SAVE_DIRTY_CLASS =
+  'px-3 py-1.5 bg-[var(--danger)] hover:opacity-90 disabled:opacity-50 text-white rounded-lg transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed';
+const WEBDAV_SAVE_CLEAN_CLASS =
+  'px-3 py-1.5 bg-[var(--accent)] hover:opacity-90 disabled:opacity-50 text-white rounded-lg transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed';
 
 // 设置分类定义
 const sections: { id: SettingsSection; label: string; icon: LucideIcon }[] = [
@@ -85,6 +115,7 @@ export function SettingsPanel({
   const { openDownloadPanel } = useUIStore();
 
   const [webdavConfig, setWebdavConfig] = useState<WebDAVConfig>(DEFAULT_WEBDAV_CONFIG);
+  const [savedWebdavConfig, setSavedWebdavConfig] = useState<WebDAVConfig>(DEFAULT_WEBDAV_CONFIG);
   const [testingConnection, setTestingConnection] = useState(false);
   const [savingWebdav, setSavingWebdav] = useState(false);
   const [connectionTestResult, setConnectionTestResult] = useState<{
@@ -97,12 +128,26 @@ export function SettingsPanel({
   const [loadingCloseBehavior, setLoadingCloseBehavior] = useState(true);
   const [savingCloseBehavior, setSavingCloseBehavior] = useState(false);
 
+  const isDetectionDirty = useMemo(
+    () => !isSameDetectionSettings(formData, settings),
+    [formData, settings]
+  );
+  const isWebdavDirty = useMemo(
+    () => !isSameWebdavConfig(webdavConfig, savedWebdavConfig),
+    [savedWebdavConfig, webdavConfig]
+  );
+
+  useEffect(() => {
+    setFormData(settings);
+  }, [settings]);
+
   useEffect(() => {
     const loadWebdavConfig = async () => {
       try {
         const result = await window.electronAPI.webdav?.getConfig();
         if (result?.success && result.data) {
           setWebdavConfig(result.data);
+          setSavedWebdavConfig(result.data);
         }
       } catch (error) {
         console.error('加载 WebDAV 配置失败:', error);
@@ -153,6 +198,7 @@ export function SettingsPanel({
     try {
       const result = await window.electronAPI.webdav?.saveConfig(webdavConfig);
       if (result?.success) {
+        setSavedWebdavConfig(webdavConfig);
         toast.success('WebDAV 配置已保存');
       } else {
         toast.error(result?.error || '保存失败');
@@ -603,7 +649,9 @@ export function SettingsPanel({
               type="button"
               onClick={handleSaveWebdavConfig}
               disabled={savingWebdav}
-              className="px-3 py-1.5 bg-[var(--accent)] hover:opacity-90 disabled:opacity-50 text-white rounded-lg transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed"
+              data-testid="webdav-save-button"
+              data-dirty={isWebdavDirty ? 'true' : 'false'}
+              className={isWebdavDirty ? WEBDAV_SAVE_DIRTY_CLASS : WEBDAV_SAVE_CLEAN_CLASS}
             >
               {savingWebdav ? (
                 <>
@@ -873,7 +921,9 @@ export function SettingsPanel({
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 bg-[var(--accent)] hover:opacity-90 text-white rounded-lg transition-all font-semibold text-sm shadow-sm"
+                data-testid="detection-settings-save-button"
+                data-dirty={isDetectionDirty ? 'true' : 'false'}
+                className={`px-4 py-2 ${isDetectionDirty ? DETECTION_SAVE_DIRTY_CLASS : DETECTION_SAVE_CLEAN_CLASS}`}
               >
                 保存检测设置
               </button>
@@ -940,7 +990,9 @@ export function SettingsPanel({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-[var(--accent)] hover:opacity-90 text-white rounded-lg transition-all font-semibold text-sm"
+                  data-testid="detection-settings-save-button"
+                  data-dirty={isDetectionDirty ? 'true' : 'false'}
+                  className={`px-4 py-2 ${isDetectionDirty ? DETECTION_SAVE_DIRTY_CLASS : DETECTION_SAVE_CLEAN_CLASS}`}
                 >
                   保存
                 </button>

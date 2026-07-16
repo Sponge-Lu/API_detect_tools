@@ -70,6 +70,7 @@ export interface DirectCliConfigEditorContentProps {
   identityFormId?: string;
   onSaved?: () => void | Promise<void>;
   onCancel?: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
   showDialog?: (options: {
     type?: 'confirm' | 'warning';
     title?: string;
@@ -442,6 +443,99 @@ function buildPerCliEditedFromSettings(
   return initEdited;
 }
 
+function serializeEditedFiles(
+  files: Array<{ path: string; content: string }> | null | undefined
+): string {
+  if (!files || files.length === 0) {
+    return '';
+  }
+
+  return JSON.stringify(
+    files
+      .map(file => ({ path: file.path, content: file.content }))
+      .sort((left, right) => left.path.localeCompare(right.path))
+  );
+}
+
+function isDirectCliConfigDirty(params: {
+  config: CustomCliConfig;
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  gasStationUrl: string;
+  groupMultiplierInput: string;
+  notes: string;
+  manualModels: string[];
+  modelPricing: Record<string, ModelPriceInfo>;
+  cliSettings: CustomCliConfig['cliSettings'];
+  perCliEdited: Record<CliType, GeneratedConfig | null>;
+  selectedCli: CliType | null;
+  editedConfig: GeneratedConfig | null;
+}): boolean {
+  const {
+    config,
+    name,
+    baseUrl,
+    apiKey,
+    gasStationUrl,
+    groupMultiplierInput,
+    notes,
+    manualModels,
+    modelPricing,
+    cliSettings,
+    perCliEdited,
+    selectedCli,
+    editedConfig,
+  } = params;
+
+  if ((name.trim() || config.name) !== config.name) return true;
+  if (baseUrl !== config.baseUrl) return true;
+  if (apiKey !== config.apiKey) return true;
+  if ((gasStationUrl.trim() || '') !== (config.gasStationUrl || '')) return true;
+  if (
+    parseGroupMultiplierInput(groupMultiplierInput) !==
+    normalizeCustomCliGroupMultiplier(config.groupMultiplier)
+  ) {
+    return true;
+  }
+  if ((notes || '') !== (config.notes || '')) return true;
+  if (JSON.stringify(manualModels) !== JSON.stringify(config.manualModels || [])) return true;
+  if (
+    JSON.stringify(modelPricing) !== JSON.stringify(normalizeModelPricingState(config.modelPricing))
+  ) {
+    return true;
+  }
+
+  const baselineSettings = normalizeCliSettings(config.cliSettings);
+  const finalPerCliEdited = { ...perCliEdited };
+  if (selectedCli && editedConfig) {
+    finalPerCliEdited[selectedCli] = editedConfig;
+  }
+
+  for (const key of CLI_TYPE_KEYS) {
+    const current = normalizeCliSetting(cliSettings[key]);
+    const baseline = baselineSettings[key];
+    if (current.enabled !== baseline.enabled) return true;
+    if ((current.model || null) !== (baseline.model || null)) return true;
+    if ((current.targetProtocol || undefined) !== (baseline.targetProtocol || undefined)) {
+      return true;
+    }
+    if (JSON.stringify(current.testModels || []) !== JSON.stringify(baseline.testModels || [])) {
+      return true;
+    }
+
+    const edited = finalPerCliEdited[key];
+    const currentEdited = edited
+      ? edited.files.map(file => ({ path: file.path, content: file.content }))
+      : (current.editedFiles ?? null);
+    if (serializeEditedFiles(currentEdited) !== serializeEditedFiles(baseline.editedFiles)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 /** 中性风格 Toggle Switch 组件 */
 function FormSwitch({
   checked,
@@ -693,6 +787,7 @@ export function DirectCliConfigEditorContent({
   identityFormId,
   onSaved,
   onCancel,
+  onDirtyChange,
   showDialog,
 }: DirectCliConfigEditorContentProps) {
   const { updateConfig, saveConfigs, fetchModels, fetchingModels } = useCustomCliConfigStore();
@@ -1209,6 +1304,26 @@ export function DirectCliConfigEditorContent({
   const shouldShowHeader = showHeader && section !== 'cli';
   const shouldShowStandaloneSaveAction =
     !shouldShowHeader && showSaveAction && section !== 'cli' && section !== 'identity';
+  const isDirty = isDirectCliConfigDirty({
+    config,
+    name,
+    baseUrl,
+    apiKey,
+    gasStationUrl,
+    groupMultiplierInput,
+    notes,
+    manualModels,
+    modelPricing,
+    cliSettings,
+    perCliEdited,
+    selectedCli,
+    editedConfig,
+  });
+  const saveButtonVariant = isDirty ? 'danger' : 'primary';
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
 
   return (
     <div className="space-y-4">
@@ -1230,7 +1345,13 @@ export function DirectCliConfigEditorContent({
               </AppButton>
             ) : null}
             {showSaveAction ? (
-              <AppButton variant="primary" size="sm" onClick={handleSave}>
+              <AppButton
+                variant={saveButtonVariant}
+                size="sm"
+                onClick={handleSave}
+                data-testid="direct-cli-save-button"
+                data-dirty={isDirty ? 'true' : 'false'}
+              >
                 保存配置
               </AppButton>
             ) : null}
@@ -1240,7 +1361,13 @@ export function DirectCliConfigEditorContent({
 
       {shouldShowStandaloneSaveAction ? (
         <div className="flex justify-end">
-          <AppButton variant="primary" size="sm" onClick={handleSave}>
+          <AppButton
+            variant={saveButtonVariant}
+            size="sm"
+            onClick={handleSave}
+            data-testid="direct-cli-save-button"
+            data-dirty={isDirty ? 'true' : 'false'}
+          >
             保存配置
           </AppButton>
         </div>
@@ -1497,7 +1624,13 @@ export function DirectCliConfigEditorContent({
                 {CLI_TYPES.length}）
               </div>
               {showSaveAction && section === 'cli' ? (
-                <AppButton variant="primary" size="sm" onClick={handleSave}>
+                <AppButton
+                  variant={saveButtonVariant}
+                  size="sm"
+                  onClick={handleSave}
+                  data-testid="direct-cli-save-button"
+                  data-dirty={isDirty ? 'true' : 'false'}
+                >
                   保存配置
                 </AppButton>
               ) : null}

@@ -353,6 +353,7 @@ export function AccessPointDetailPanel({
   );
   const [savingManagedAccount, setSavingManagedAccount] = useState(false);
   const [refreshingAccountInfo, setRefreshingAccountInfo] = useState(false);
+  const [directIdentityDirty, setDirectIdentityDirty] = useState(false);
 
   // 持久化 activeTab
   useEffect(() => {
@@ -461,6 +462,7 @@ export function AccessPointDetailPanel({
       );
       setManagedAccountDraft(buildManagedAccountDraft(currentAccount));
       setShowAccessToken(false);
+      setDirectIdentityDirty(false);
     }
 
     previousOpenRef.current = open;
@@ -946,8 +948,14 @@ export function AccessPointDetailPanel({
                         </AppButton>
                       </div>
                       <AppButton
-                        variant="primary"
+                        variant={
+                          isManagedAccountDirty || isManagedSiteMetaDirty ? 'danger' : 'primary'
+                        }
                         size="sm"
+                        data-testid="access-point-save-button"
+                        data-dirty={
+                          isManagedAccountDirty || isManagedSiteMetaDirty ? 'true' : 'false'
+                        }
                         onClick={() => {
                           void handleSaveManagedInfo();
                         }}
@@ -986,6 +994,7 @@ export function AccessPointDetailPanel({
                     identityFormId={directIdentityFormId}
                     config={data.config}
                     onSaved={onConfigChanged}
+                    onDirtyChange={setDirectIdentityDirty}
                     showDialog={showDialog}
                   />
                 </div>
@@ -998,7 +1007,14 @@ export function AccessPointDetailPanel({
                     <Trash2 className="h-4 w-4" />
                     删除配置
                   </AppButton>
-                  <AppButton variant="primary" size="sm" type="submit" form={directIdentityFormId}>
+                  <AppButton
+                    variant={directIdentityDirty ? 'danger' : 'primary'}
+                    size="sm"
+                    type="submit"
+                    form={directIdentityFormId}
+                    data-testid="access-point-direct-save-button"
+                    data-dirty={directIdentityDirty ? 'true' : 'false'}
+                  >
                     <Save className="h-4 w-4" />
                     保存配置
                   </AppButton>

@@ -46,6 +46,17 @@ const parseBoundedInteger = (
   return Math.min(Math.max(parsed, options.min), options.max);
 };
 
+function isSameCliProbeConfig(left: RouteCliProbeConfig, right: RouteCliProbeConfig): boolean {
+  return (
+    left.enabled === right.enabled &&
+    left.runOnStartup === right.runOnStartup &&
+    left.intervalMinutes === right.intervalMinutes &&
+    left.requestTimeoutMs === right.requestTimeoutMs &&
+    left.maxConcurrency === right.maxConcurrency &&
+    left.retentionDays === right.retentionDays
+  );
+}
+
 function SettingsSwitch({
   checked,
   disabled,
@@ -112,11 +123,10 @@ export function CliProbeSettingsDialog({
     () => ({
       enabled: draft.enabled,
       runOnStartup: draft.runOnStartup,
-      intervalMinutes: parseBoundedInteger(
-        draft.intervalMinutes,
-        effectiveConfig.intervalMinutes,
-        { min: 1, max: 1440 }
-      ),
+      intervalMinutes: parseBoundedInteger(draft.intervalMinutes, effectiveConfig.intervalMinutes, {
+        min: 1,
+        max: 1440,
+      }),
       // Kept for persisted config shape compatibility. The actual probe model is now
       // determined by each site/direct config's single selected CLI test model.
       modelsPerCli: 1,
@@ -146,6 +156,8 @@ export function CliProbeSettingsDialog({
     await onSave(normalizedConfig);
   };
 
+  const isDirty = !isSameCliProbeConfig(normalizedConfig, effectiveConfig);
+
   return (
     <AppModal
       isOpen={isOpen}
@@ -160,7 +172,14 @@ export function CliProbeSettingsDialog({
           <AppButton type="button" variant="secondary" onClick={onClose} disabled={saving}>
             取消
           </AppButton>
-          <AppButton type="submit" form="site-cli-probe-settings-form" loading={saving}>
+          <AppButton
+            type="submit"
+            form="site-cli-probe-settings-form"
+            loading={saving}
+            variant={isDirty ? 'danger' : 'primary'}
+            data-testid="cli-probe-settings-save-button"
+            data-dirty={isDirty ? 'true' : 'false'}
+          >
             保存设置
           </AppButton>
         </>

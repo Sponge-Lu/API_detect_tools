@@ -128,6 +128,19 @@ export function SiteEditor({
   const [userHash, setUserHash] = useState<string>(editingAccount?.anyRouterConfig?.userHash || '');
   const isAnyRouter = site ? isAnyRouterSite(site.name) : false;
 
+  const isEditDirty =
+    isEditing &&
+    ((autoInfo.name || '') !== (site?.name || '') ||
+      (url || '') !== (site?.url || '') ||
+      selectedSiteType !== (site?.site_type || DEFAULT_SITE_TYPE) ||
+      selectedGroupId !== (site?.group || defaultGroupId) ||
+      (autoInfo.extraLinks || '') !== (site?.extra_links || '') ||
+      Boolean(autoInfo.enableCheckin) !== Boolean(site?.force_enable_checkin) ||
+      (autoInfo.accountName || '') !== (editingAccount?.account_name || '') ||
+      (autoInfo.systemToken || '') !== (editingAccount?.access_token || site?.system_token || '') ||
+      (autoInfo.userId || '') !== (editingAccount?.user_id || site?.user_id || '') ||
+      (userHash || '') !== (editingAccount?.anyRouterConfig?.userHash || ''));
+
   // 监听后端发送的状态更新事件
   useEffect(() => {
     const cleanup = (window.electronAPI as any).onSiteInitStatus?.((status: string) => {
@@ -832,7 +845,13 @@ export function SiteEditor({
                 <button
                   onClick={handleSave}
                   disabled={!autoInfo.name || !url || !autoInfo.systemToken || !autoInfo.userId}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-[var(--radius-lg)] bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
+                  data-testid="site-editor-save-button"
+                  data-dirty={isEditDirty ? 'true' : 'false'}
+                  className={`flex flex-1 items-center justify-center gap-2 rounded-[var(--radius-lg)] px-4 py-2.5 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                    isEditDirty
+                      ? 'bg-[var(--danger)] hover:opacity-92'
+                      : 'bg-[var(--accent)] hover:bg-[var(--accent-strong)]'
+                  }`}
                 >
                   <CheckCircle className="w-4 h-4" />
                   {site ? '保存修改' : '保存站点'}

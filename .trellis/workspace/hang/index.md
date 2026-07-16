@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 4
-- **Last Active**: 2026-07-08
+- **Total Sessions**: 6
+- **Last Active**: 2026-07-16
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~137 | Active |
+| `journal-1.md` | ~228 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 6 | 2026-07-16 | 完成直连密钥操作与路由日志思考强度展示 | `2a7875c`, `d93d9f7` | `main` |
+| 5 | 2026-07-15 | 可迁移两文件备份与隔离浏览器恢复 | `7ccf3f7` | `main` |
 | 4 | 2026-07-08 | Remove Gemini CLI support | - | `main` |
 | 3 | 2026-06-24 | 修复散点矩阵残留已删除通道数据 | `2dfac9c` | `main` |
 | 2 | 2026-06-24 | 修正 CLI 配置归属 + 规范化测试模型 | `e40a08b`, `905c584` | `main` |

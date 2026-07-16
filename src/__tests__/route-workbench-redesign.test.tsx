@@ -898,7 +898,24 @@ beforeEach(() => {
     createdAt: 50,
     updatedAt: 50,
   });
-  mockUpsertDisplayItem.mockReset().mockResolvedValue(createModelRegistryConfig());
+  mockUpsertDisplayItem.mockReset().mockImplementation(async displayItem => {
+    const nextRegistry = {
+      ...createModelRegistryConfig(),
+      displayItems: createModelRegistryConfig().displayItems.map(item =>
+        item.id === displayItem.id || item.canonicalName === displayItem.canonicalName
+          ? {
+              ...item,
+              ...displayItem,
+            }
+          : item
+      ),
+    };
+    mockConfig = {
+      ...mockConfig,
+      modelRegistry: nextRegistry,
+    };
+    return nextRegistry;
+  });
   mockDeleteDisplayItem.mockReset().mockResolvedValue(createModelRegistryConfig());
   mockDeleteMappingOverride.mockReset().mockResolvedValue(true);
   mockRebuildModelRegistry.mockReset().mockResolvedValue(createModelRegistryConfig());
@@ -2544,7 +2561,7 @@ describe('route workbench redesign', () => {
     });
   });
 
-  it('folds a disabled api key and preserves it in saved priority memory', async () => {
+  it('auto-saves when an api key is disabled or re-enabled without dirtying the save button', async () => {
     render(<ModelRedirectionTab />);
 
     const detailPane = await findPriorityDetailPane();
@@ -2573,8 +2590,6 @@ describe('route workbench redesign', () => {
       'text-[10px]'
     );
 
-    fireEvent.click(within(detailPane).getByRole('button', { name: '保存优先级' }));
-
     await waitFor(() => {
       expect(mockUpsertDisplayItem).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2596,6 +2611,12 @@ describe('route workbench redesign', () => {
         })
       );
     });
+    await waitFor(() => {
+      expect(within(detailPane).getByTestId('priority-save-button')).toHaveAttribute(
+        'data-priority-dirty',
+        'false'
+      );
+    });
 
     fireEvent.click(within(disabledMainKeyRow).getByRole('button', { name: 'main-key 启用' }));
 
@@ -2605,9 +2626,24 @@ describe('route workbench redesign', () => {
       expect(apiKeyRows[1]).toHaveTextContent('main-key（Main / team-beta / ×1.50）');
       expect(apiKeyRows[2]).toHaveTextContent('backup-site-key（Backup / team-delta / ×2）');
     });
+    await waitFor(() => {
+      expect(mockUpsertDisplayItem).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          priorityConfig: expect.not.objectContaining({
+            disabledApiKeyPriorityKeys: expect.anything(),
+          }),
+        })
+      );
+    });
+    await waitFor(() => {
+      expect(within(detailPane).getByTestId('priority-save-button')).toHaveAttribute(
+        'data-priority-dirty',
+        'false'
+      );
+    });
   });
 
-  it('folds a disabled site and preserves its saved priority memory', async () => {
+  it('auto-saves when a site is disabled or re-enabled without dirtying the save button', async () => {
     render(<ModelRedirectionTab />);
 
     const detailPane = await findPriorityDetailPane();
@@ -2643,8 +2679,6 @@ describe('route workbench redesign', () => {
       within(disabledSharedKeyRow).getByRole('button', { name: 'shared-key 启用' })
     ).toBeDisabled();
 
-    fireEvent.click(within(detailPane).getByRole('button', { name: '保存优先级' }));
-
     await waitFor(() => {
       expect(mockUpsertDisplayItem).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2664,6 +2698,12 @@ describe('route workbench redesign', () => {
         })
       );
     });
+    await waitFor(() => {
+      expect(within(detailPane).getByTestId('priority-save-button')).toHaveAttribute(
+        'data-priority-dirty',
+        'false'
+      );
+    });
 
     fireEvent.click(within(detailPane).getByRole('button', { name: 'Claude Site 2 启用' }));
 
@@ -2678,6 +2718,12 @@ describe('route workbench redesign', () => {
         within(detailPane).getByText('shared-key（Secondary / team-gamma / ×1）')
       ).toBeInTheDocument();
       expect(within(detailPane).queryByText('随站点禁用')).not.toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(within(detailPane).getByTestId('priority-save-button')).toHaveAttribute(
+        'data-priority-dirty',
+        'false'
+      );
     });
   });
 
@@ -2766,7 +2812,7 @@ describe('route workbench redesign', () => {
     expect(within(detailPane).getByText('main-key（Main / team-beta / ×1.50）'));
   });
 
-  it('folds a site and preserves its priority when all of its api keys are disabled', async () => {
+  it('auto-saves when all api keys of a site are disabled and keeps the site folded', async () => {
     render(<ModelRedirectionTab />);
 
     const detailPane = await findPriorityDetailPane();
@@ -2796,8 +2842,6 @@ describe('route workbench redesign', () => {
       ).not.toBeInTheDocument();
     });
 
-    fireEvent.click(within(detailPane).getByRole('button', { name: '保存优先级' }));
-
     await waitFor(() => {
       expect(mockUpsertDisplayItem).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2821,6 +2865,12 @@ describe('route workbench redesign', () => {
         })
       );
     });
+    await waitFor(() => {
+      expect(within(detailPane).getByTestId('priority-save-button')).toHaveAttribute(
+        'data-priority-dirty',
+        'false'
+      );
+    });
 
     fireEvent.click(within(detailPane).getByRole('button', { name: '展开折叠站点' }));
     fireEvent.click(within(detailPane).getByRole('button', { name: 'Claude Site 展开折叠项' }));
@@ -2837,6 +2887,25 @@ describe('route workbench redesign', () => {
         within(detailPane).getByText('backup-key（Main / team-beta / ×1.50）')
       ).toBeInTheDocument();
     });
+  });
+
+  it('marks the priority save button dirty/red after reordering without saving', async () => {
+    render(<ModelRedirectionTab />);
+
+    const detailPane = await findPriorityDetailPane();
+    const saveButton = within(detailPane).getByTestId('priority-save-button');
+    expect(saveButton).toHaveAttribute('data-priority-dirty', 'false');
+    expect(saveButton.className).not.toContain('bg-[var(--danger-soft)]');
+
+    const siteSections = getPrioritySiteSections(detailPane);
+    fireEvent.click(within(siteSections[1]!).getByRole('radio', { name: '选择 Claude Site 2' }));
+    fireEvent.click(within(detailPane).getByRole('button', { name: '上移' }));
+
+    await waitFor(() => {
+      expect(saveButton).toHaveAttribute('data-priority-dirty', 'true');
+    });
+    expect(saveButton.className).toContain('bg-[var(--danger-soft)]');
+    expect(mockUpsertDisplayItem).not.toHaveBeenCalled();
   });
 
   it('syncs model sources from the list toolbar without rebuilding defaults', async () => {
@@ -3057,6 +3126,9 @@ describe('route workbench redesign', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: '路由规则' })[0]!);
     const dialog = await screen.findByRole('dialog', { name: 'claude-opus-4-6 路由规则' });
+    const saveButton = within(dialog).getByTestId('route-rule-save-button');
+    expect(saveButton).toHaveAttribute('data-dirty', 'false');
+    expect(saveButton.className).not.toContain('bg-[var(--danger-soft)]');
 
     fireEvent.change(within(dialog).getByLabelText('每条路由路径尝试次数'), {
       target: { value: '2' },
@@ -3070,7 +3142,13 @@ describe('route workbench redesign', () => {
     fireEvent.change(within(dialog).getByLabelText('最低成功率（%）'), {
       target: { value: '75' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: '保存路由规则' }));
+
+    await waitFor(() => {
+      expect(saveButton).toHaveAttribute('data-dirty', 'true');
+    });
+    expect(saveButton.className).toContain('bg-[var(--danger-soft)]');
+
+    fireEvent.click(saveButton);
 
     await waitFor(() => {
       expect(mockUpsertDisplayItem).toHaveBeenCalledWith(
@@ -3082,6 +3160,49 @@ describe('route workbench redesign', () => {
             disableDurationMinutes: 45,
             minSuccessRate: 0.75,
           },
+        })
+      );
+    });
+  });
+
+  it('preserves a newer auto-saved priority disable when saving route runtime rules from an older dialog snapshot', async () => {
+    render(<ModelRedirectionTab />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: '路由规则' })[0]!);
+    const dialog = await screen.findByRole('dialog', { name: 'claude-opus-4-6 路由规则' });
+
+    const detailPane = await findPriorityDetailPane();
+    fireEvent.click(within(detailPane).getByRole('button', { name: 'main-key 禁用' }));
+
+    await waitFor(() => {
+      expect(mockUpsertDisplayItem).toHaveBeenCalledWith(
+        expect.objectContaining({
+          priorityConfig: expect.objectContaining({
+            disabledApiKeyPriorityKeys: [
+              buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'main-key-id'),
+            ],
+          }),
+        })
+      );
+    });
+
+    fireEvent.change(within(dialog).getByLabelText('每条路由路径尝试次数'), {
+      target: { value: '2' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存路由规则' }));
+
+    await waitFor(() => {
+      expect(mockUpsertDisplayItem).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          id: 'manual:claude-opus-4-6',
+          runtimeConfig: expect.objectContaining({
+            maxAttemptsPerRoutePath: 2,
+          }),
+          priorityConfig: expect.objectContaining({
+            disabledApiKeyPriorityKeys: [
+              buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'main-key-id'),
+            ],
+          }),
         })
       );
     });

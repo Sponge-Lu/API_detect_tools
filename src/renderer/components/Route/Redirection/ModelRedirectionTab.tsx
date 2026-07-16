@@ -3,7 +3,7 @@
  * 平铺展示重定向卡片，并在详情弹窗内维护当前卡片的站点 / API key 优先级
  */
 
-import { type ReactNode, useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Check,
@@ -1738,6 +1738,19 @@ function createRouteRuntimeRuleDraft(
   };
 }
 
+function isRouteRuntimeRuleDraftDirty(
+  draft: RouteRuntimeRuleDraft,
+  runtimeConfig?: Partial<RouteRuntimeConfig> | null
+): boolean {
+  const baseline = createRouteRuntimeRuleDraft(runtimeConfig);
+  return (
+    draft.maxAttemptsPerRoutePath !== baseline.maxAttemptsPerRoutePath ||
+    draft.successRateWindowMinutes !== baseline.successRateWindowMinutes ||
+    draft.disableDurationMinutes !== baseline.disableDurationMinutes ||
+    draft.minSuccessRatePercent !== baseline.minSuccessRatePercent
+  );
+}
+
 function createDefaultNewApiKeyForm(group = 'default'): NewApiTokenForm {
   return {
     name: '',
@@ -1815,8 +1828,20 @@ export function ModelRedirectionTab({
   const [firstHitPathLogsByCanonicalName, setFirstHitPathLogsByCanonicalName] = useState<
     Record<string, RouteRequestLogItem>
   >({});
+  const sourceDetailStateRef = useRef(sourceDetailState);
+  const firstHitPathLogsRef = useRef(firstHitPathLogsByCanonicalName);
+  const routePathStatesRef = useRef(config?.routePathStates);
+  const savingPriorityRef = useRef(false);
+  const pendingPrioritySaveRef = useRef<{
+    draft: PriorityDraft;
+    groups: DetailSiteGroup[];
+  } | null>(null);
   const redirectNameInputId = useId();
   const searchInputId = useId();
+
+  sourceDetailStateRef.current = sourceDetailState;
+  firstHitPathLogsRef.current = firstHitPathLogsByCanonicalName;
+  routePathStatesRef.current = config?.routePathStates;
 
   const registry = config?.modelRegistry;
   const displayItems = useMemo(() => buildDisplayItemViews(registry), [registry]);
@@ -2625,6 +2650,124 @@ export function ModelRedirectionTab({
     [priorityDraft, sortedDetailSiteGroups]
   );
 
+  const savePriorityDraft = useCallback(
+    async (draftToSave: PriorityDraft, groupsForSave: DetailSiteGroup[]) => {
+      pendingPrioritySaveRef.current = {
+        draft: draftToSave,
+        groups: groupsForSave,
+      };
+      if (savingPriorityRef.current) {
+        return;
+      }
+
+      savingPriorityRef.current = true;
+      setSaving(true);
+      try {
+        while (pendingPrioritySaveRef.current) {
+          const pendingSave = pendingPrioritySaveRef.current;
+          pendingPrioritySaveRef.current = null;
+
+          const currentDetailState = sourceDetailStateRef.current;
+          if (!currentDetailState) {
+            continue;
+          }
+
+          const normalizedDraft = buildSequentialPriorityDraft(
+            pendingSave.groups,
+            pendingSave.draft
+          );
+          const priorityConfig = serializePriorityConfig(normalizedDraft);
+          const priorityHitPath =
+            getPriorityHitRoutePathFromState({
+              states: routePathStatesRef.current,
+              item: currentDetailState.item,
+              now: Date.now(),
+            }) ??
+            getPriorityHitRoutePathFromLog(
+              currentDetailState.item,
+              firstHitPathLogsRef.current[currentDetailState.item.canonicalName]
+            );
+          const priorityHitResetParams = getPriorityHitRoutePathResetParams(priorityHitPath);
+          const updatedAt = Date.now();
+
+          const savedRegistry = await upsertDisplayItem({
+            ...currentDetailState.item,
+            priorityConfig,
+            updatedAt,
+          });
+          if (!savedRegistry) {
+            throw new Error('无法保存重定向优先级');
+          }
+
+          if (priorityHitResetParams) {
+            const cleared = await resetPathStates(priorityHitResetParams);
+            if (cleared === null) {
+              throw new Error('无法重置旧优先命中路径');
+            }
+            setFirstHitPathLogsByCanonicalName(current => {
+              const currentLog = current[currentDetailState.item.canonicalName];
+              const currentHitPath = getPriorityHitRoutePathFromLog(
+                currentDetailState.item,
+                currentLog
+              );
+              if (!isSamePriorityHitRouteChannel(currentHitPath, priorityHitPath)) {
+                return current;
+              }
+
+              const next = { ...current };
+              delete next[currentDetailState.item.canonicalName];
+              return next;
+            });
+          }
+
+          // A newer draft may have been queued while this save was in flight.
+          if (pendingPrioritySaveRef.current) {
+            continue;
+          }
+
+          setSourceDetailState(current =>
+            current && current.item.id === currentDetailState.item.id
+              ? {
+                  ...current,
+                  item: {
+                    ...current.item,
+                    priorityConfig,
+                    updatedAt,
+                  },
+                }
+              : current
+          );
+          setRouteRuleState(current =>
+            current &&
+            (current.item.id === currentDetailState.item.id ||
+              current.item.canonicalName === currentDetailState.item.canonicalName)
+              ? {
+                  ...current,
+                  item: {
+                    ...current.item,
+                    priorityConfig,
+                    updatedAt,
+                  },
+                }
+              : current
+          );
+          setPriorityDraft(normalizedDraft);
+          toast.success('重定向优先级已更新');
+        }
+      } catch (error: unknown) {
+        toast.error(`保存失败: ${getErrorMessage(error)}`);
+      } finally {
+        savingPriorityRef.current = false;
+        setSaving(false);
+      }
+    },
+    [resetPathStates, upsertDisplayItem]
+  );
+
+  const handleSaveDetails = useCallback(() => {
+    void savePriorityDraft(priorityDraft, sortedDetailSiteGroups);
+  }, [priorityDraft, savePriorityDraft, sortedDetailSiteGroups]);
+
   const togglePrioritySiteDisabled = useCallback(
     (siteId: string) => {
       const currentGroup = sortedDetailSiteGroups.find(group => group.siteId === siteId);
@@ -2637,10 +2780,8 @@ export function ModelRedirectionTab({
           ...current,
           disabledSiteIds: nextDisabledSiteIds,
         };
-        const nextDraft = buildSequentialPriorityDraft(
-          sortDetailGroupsByPriority(detailSiteGroups, nextInput),
-          nextInput
-        );
+        const groupsForSave = sortDetailGroupsByPriority(detailSiteGroups, nextInput);
+        const nextDraft = buildSequentialPriorityDraft(groupsForSave, nextInput);
 
         if (currentGroup && !canSortPrioritySite(currentGroup, nextDraft)) {
           setSelectedPrioritySiteId(
@@ -2651,10 +2792,11 @@ export function ModelRedirectionTab({
           setSelectedPrioritySiteId(siteId);
         }
 
+        void savePriorityDraft(nextDraft, groupsForSave);
         return nextDraft;
       });
     },
-    [detailSiteGroups, sortedDetailSiteGroups]
+    [detailSiteGroups, savePriorityDraft, sortedDetailSiteGroups]
   );
 
   const togglePriorityApiKeyDisabled = useCallback(
@@ -2670,10 +2812,8 @@ export function ModelRedirectionTab({
           ...current,
           disabledApiKeyPriorityKeys: nextDisabledApiKeyPriorityKeys,
         };
-        const nextDraft = buildSequentialPriorityDraft(
-          sortDetailGroupsByPriority(detailSiteGroups, nextInput),
-          nextInput
-        );
+        const groupsForSave = sortDetailGroupsByPriority(detailSiteGroups, nextInput);
+        const nextDraft = buildSequentialPriorityDraft(groupsForSave, nextInput);
         const siteGroup = sortedDetailSiteGroups.find(group => group.siteId === siteId);
 
         if (siteGroup && canSortPrioritySite(siteGroup, nextDraft)) {
@@ -2685,75 +2825,12 @@ export function ModelRedirectionTab({
           );
         }
 
+        void savePriorityDraft(nextDraft, groupsForSave);
         return nextDraft;
       });
     },
-    [detailSiteGroups, sortedDetailSiteGroups]
+    [detailSiteGroups, savePriorityDraft, sortedDetailSiteGroups]
   );
-
-  const handleSaveDetails = useCallback(async () => {
-    if (!sourceDetailState) {
-      return;
-    }
-
-    const normalizedDraft = buildSequentialPriorityDraft(sortedDetailSiteGroups, priorityDraft);
-    const priorityConfig = serializePriorityConfig(normalizedDraft);
-    const priorityHitPath =
-      getPriorityHitRoutePathFromState({
-        states: config?.routePathStates,
-        item: sourceDetailState.item,
-        now: Date.now(),
-      }) ??
-      getPriorityHitRoutePathFromLog(
-        sourceDetailState.item,
-        firstHitPathLogsByCanonicalName[sourceDetailState.item.canonicalName]
-      );
-    const priorityHitResetParams = getPriorityHitRoutePathResetParams(priorityHitPath);
-
-    setSaving(true);
-    try {
-      const savedRegistry = await upsertDisplayItem({
-        ...sourceDetailState.item,
-        priorityConfig,
-        updatedAt: Date.now(),
-      });
-      if (!savedRegistry) {
-        throw new Error('无法保存重定向优先级');
-      }
-
-      if (priorityHitResetParams) {
-        const cleared = await resetPathStates(priorityHitResetParams);
-        if (cleared === null) {
-          throw new Error('无法重置旧优先命中路径');
-        }
-        setFirstHitPathLogsByCanonicalName(current => {
-          const currentLog = current[sourceDetailState.item.canonicalName];
-          const currentHitPath = getPriorityHitRoutePathFromLog(sourceDetailState.item, currentLog);
-          if (!isSamePriorityHitRouteChannel(currentHitPath, priorityHitPath)) {
-            return current;
-          }
-
-          const next = { ...current };
-          delete next[sourceDetailState.item.canonicalName];
-          return next;
-        });
-      }
-
-      toast.success('重定向优先级已更新');
-    } catch (error: unknown) {
-      toast.error(`保存失败: ${getErrorMessage(error)}`);
-    } finally {
-      setSaving(false);
-    }
-  }, [
-    config?.routePathStates,
-    firstHitPathLogsByCanonicalName,
-    priorityDraft,
-    resetPathStates,
-    sortedDetailSiteGroups,
-    sourceDetailState,
-    upsertDisplayItem,
-  ]);
 
   const handleSaveRouteRules = useCallback(async () => {
     if (!routeRuleState) {
@@ -2810,16 +2887,47 @@ export function ModelRedirectionTab({
       minSuccessRate: minSuccessRatePercent / 100,
     });
 
+    // Prefer the freshest display item so a stale dialog snapshot cannot clobber
+    // a newer priority disable/reorder that auto-saved while this dialog stayed open.
+    const latestItem =
+      (sourceDetailStateRef.current &&
+      (sourceDetailStateRef.current.item.id === routeRuleState.item.id ||
+        sourceDetailStateRef.current.item.canonicalName === routeRuleState.item.canonicalName)
+        ? sourceDetailStateRef.current.item
+        : null) ||
+      config?.modelRegistry?.displayItems.find(
+        item =>
+          item.id === routeRuleState.item.id ||
+          item.canonicalName === routeRuleState.item.canonicalName
+      ) ||
+      routeRuleState.item;
+    const updatedAt = Date.now();
+
     setSaving(true);
     try {
       const savedRegistry = await upsertDisplayItem({
-        ...routeRuleState.item,
+        ...latestItem,
         runtimeConfig,
-        updatedAt: Date.now(),
+        updatedAt,
       });
       if (!savedRegistry) {
         throw new Error('无法保存路由规则');
       }
+
+      setSourceDetailState(current =>
+        current &&
+        (current.item.id === latestItem.id ||
+          current.item.canonicalName === latestItem.canonicalName)
+          ? {
+              ...current,
+              item: {
+                ...current.item,
+                runtimeConfig,
+                updatedAt,
+              },
+            }
+          : current
+      );
 
       toast.success('路由规则已更新');
       closeRouteRules();
@@ -2828,7 +2936,13 @@ export function ModelRedirectionTab({
     } finally {
       setSaving(false);
     }
-  }, [closeRouteRules, routeRuleDraft, routeRuleState, upsertDisplayItem]);
+  }, [
+    closeRouteRules,
+    config?.modelRegistry?.displayItems,
+    routeRuleDraft,
+    routeRuleState,
+    upsertDisplayItem,
+  ]);
 
   const sortableDetailSiteGroups = sortedDetailSiteGroups.filter(group =>
     canSortPrioritySite(group, priorityDraft)
@@ -2901,6 +3015,15 @@ export function ModelRedirectionTab({
     : 0;
   const isResettingSelectedRoutePaths = selectedDisplayItem
     ? resettingPathCanonicalName === selectedDisplayItem.item.canonicalName
+    : false;
+  const isPriorityDirty = sourceDetailState
+    ? !priorityDraftMatches(
+        buildSequentialPriorityDraft(sortedDetailSiteGroups, priorityDraft),
+        createDisplayOrderPriorityDraft(
+          detailSiteGroups,
+          sourceDetailState.item.priorityConfig ?? createEmptyPriorityDraft()
+        )
+      )
     : false;
 
   if (!config) {
@@ -3211,6 +3334,9 @@ export function ModelRedirectionTab({
                       <AppButton
                         type="button"
                         size="sm"
+                        variant={isPriorityDirty ? 'danger' : 'primary'}
+                        data-testid="priority-save-button"
+                        data-priority-dirty={isPriorityDirty ? 'true' : 'false'}
                         onClick={handleSaveDetails}
                         loading={saving}
                       >
@@ -3911,7 +4037,24 @@ export function ModelRedirectionTab({
             <AppButton type="button" variant="secondary" onClick={closeRouteRules}>
               取消
             </AppButton>
-            <AppButton type="button" onClick={handleSaveRouteRules} loading={saving}>
+            <AppButton
+              type="button"
+              onClick={handleSaveRouteRules}
+              loading={saving}
+              variant={
+                routeRuleState &&
+                isRouteRuntimeRuleDraftDirty(routeRuleDraft, routeRuleState.item.runtimeConfig)
+                  ? 'danger'
+                  : 'primary'
+              }
+              data-testid="route-rule-save-button"
+              data-dirty={
+                routeRuleState &&
+                isRouteRuntimeRuleDraftDirty(routeRuleDraft, routeRuleState.item.runtimeConfig)
+                  ? 'true'
+                  : 'false'
+              }
+            >
               保存路由规则
             </AppButton>
           </div>

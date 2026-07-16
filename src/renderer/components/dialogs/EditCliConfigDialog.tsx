@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { FileEdit, Loader2, Save } from 'lucide-react';
+import { AppButton } from '../AppButton/AppButton';
 import { AppModal } from '../AppModal/AppModal';
 import type { CliType } from '../../../shared/types/config-detection';
 import { BUILTIN_CLI_LABELS } from '../../../shared/types/cli-config';
@@ -208,30 +209,21 @@ export function EditCliConfigDialog({ open, onClose, onSaveComplete }: EditCliCo
 
         {/* 操作按钮 */}
         <div className="flex justify-end gap-3 pt-1">
-          <button
-            onClick={handleClose}
-            disabled={isSaving}
-            className="rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] px-4 py-2 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] disabled:opacity-50"
-          >
+          <AppButton type="button" variant="secondary" onClick={handleClose} disabled={isSaving}>
             取消
-          </button>
-          <button
-            onClick={handleSave}
+          </AppButton>
+          <AppButton
+            type="button"
+            onClick={() => void handleSave()}
             disabled={!hasChanges || isSaving}
-            className="flex items-center gap-2 rounded-[var(--radius-md)] border border-transparent bg-[var(--accent-soft)] px-4 py-2 text-sm font-medium text-[var(--accent-strong)] transition-colors hover:bg-[var(--accent-soft-strong)] disabled:cursor-not-allowed disabled:opacity-50"
+            loading={isSaving}
+            variant={hasChanges ? 'danger' : 'primary'}
+            data-testid="edit-cli-config-save-button"
+            data-dirty={hasChanges ? 'true' : 'false'}
           >
-            {isSaving ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                保存中...
-              </>
-            ) : (
-              <>
-                <Save className="w-4 h-4" />
-                保存
-              </>
-            )}
-          </button>
+            <Save className="w-4 h-4" />
+            {isSaving ? '保存中...' : '保存'}
+          </AppButton>
         </div>
       </div>
     </AppModal>

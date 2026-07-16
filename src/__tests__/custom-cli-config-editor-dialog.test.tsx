@@ -201,6 +201,23 @@ describe('DirectCliConfigEditorContent', () => {
     });
   });
 
+  it('marks the save button dirty/red after editing identity fields', async () => {
+    await renderDialog();
+
+    const saveButton = screen.getByTestId('direct-cli-save-button');
+    expect(saveButton).toHaveAttribute('data-dirty', 'false');
+    expect(saveButton.className).not.toContain('bg-[var(--danger-soft)]');
+
+    fireEvent.change(screen.getByRole('textbox', { name: '加油站链接' }), {
+      target: { value: 'https://fuel.example.com/topup' },
+    });
+
+    await waitFor(() => {
+      expect(saveButton).toHaveAttribute('data-dirty', 'true');
+    });
+    expect(saveButton.className).toContain('bg-[var(--danger-soft)]');
+  });
+
   it('toggles and copies the API Key from the identity form', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', {

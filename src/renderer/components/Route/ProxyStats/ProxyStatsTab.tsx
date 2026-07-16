@@ -151,6 +151,7 @@ function cloneGeneratedConfig(config: GeneratedConfig): GeneratedConfig {
 function RouteConfigPreviewModal({
   previewState,
   displayConfig,
+  baselineConfig,
   onClose,
   onEdit,
   onChangeFile,
@@ -160,6 +161,7 @@ function RouteConfigPreviewModal({
 }: {
   previewState: RoutePreviewState | null;
   displayConfig: GeneratedConfig | null;
+  baselineConfig: GeneratedConfig | null;
   onClose: () => void;
   onEdit: () => void;
   onChangeFile: (path: string, content: string) => void;
@@ -172,6 +174,11 @@ function RouteConfigPreviewModal({
   }
 
   const title = `${CLI_LABELS[previewState.cliType]} 路由配置预览`;
+  const isPreviewDirty =
+    previewState.isEditing &&
+    Boolean(previewState.draft) &&
+    JSON.stringify(previewState.draft?.files ?? null) !==
+      JSON.stringify(baselineConfig?.files ?? null);
 
   return (
     <div className="fixed inset-0 z-[240] flex items-center justify-center bg-black/45 p-6">
@@ -191,7 +198,13 @@ function RouteConfigPreviewModal({
                 <AppButton variant="tertiary" size="sm" onClick={onCancelEdit}>
                   取消
                 </AppButton>
-                <AppButton variant="primary" size="sm" onClick={onSaveEdit}>
+                <AppButton
+                  variant={isPreviewDirty ? 'danger' : 'primary'}
+                  size="sm"
+                  onClick={onSaveEdit}
+                  data-testid="route-preview-save-button"
+                  data-dirty={isPreviewDirty ? 'true' : 'false'}
+                >
                   保存
                 </AppButton>
               </>
@@ -604,6 +617,9 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
       editedPreviews[previewState.cliType] ??
       generatedConfigs[previewState.cliType])
     : null;
+  const previewBaselineConfig = previewState
+    ? (editedPreviews[previewState.cliType] ?? generatedConfigs[previewState.cliType])
+    : null;
 
   const handleChange = (cli: RouteCliType, value: string) => {
     setPreviewState(current => (current?.cliType === cli ? null : current));
@@ -860,6 +876,7 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
       <RouteConfigPreviewModal
         previewState={previewState}
         displayConfig={previewConfig}
+        baselineConfig={previewBaselineConfig}
         onClose={() => setPreviewState(null)}
         onEdit={handlePreviewEdit}
         onChangeFile={handlePreviewChange}

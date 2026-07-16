@@ -443,6 +443,77 @@ function createCliModelTestStateFromConfig(
   };
 }
 
+function serializeManagedEditedFiles(
+  files: Array<{ path: string; content: string }> | null | undefined
+): string {
+  if (!files || files.length === 0) {
+    return '';
+  }
+
+  return JSON.stringify(
+    files
+      .map(file => ({ path: file.path, content: file.content }))
+      .sort((left, right) => left.path.localeCompare(right.path))
+  );
+}
+
+function isManagedCliConfigDirty(params: {
+  currentConfig: CliConfig | null;
+  enabledState: Record<CliType, boolean>;
+  cliConfigs: Record<
+    CliType,
+    {
+      apiKeyId: number | null;
+      model: string | null;
+      targetProtocol?: CliTargetProtocol;
+      testModels: string[];
+      editedFiles: GeneratedConfig | null;
+    }
+  >;
+  selectedCli: CliType | null;
+  editedConfig: GeneratedConfig | null;
+}): boolean {
+  const { currentConfig, enabledState, cliConfigs, selectedCli, editedConfig } = params;
+
+  for (const cliType of ['claudeCode', 'codex', 'openCode'] as CliType[]) {
+    const baseline = currentConfig?.[cliType];
+    const baselineEnabled = baseline?.enabled ?? DEFAULT_CLI_CONFIG[cliType].enabled;
+    if (enabledState[cliType] !== baselineEnabled) {
+      return true;
+    }
+
+    const current = cliConfigs[cliType];
+    if ((current.apiKeyId ?? null) !== (baseline?.apiKeyId ?? null)) return true;
+    if ((current.model ?? null) !== (baseline?.model ?? null)) return true;
+    if (
+      (current.targetProtocol ?? undefined) !==
+      normalizeOptionalCliTargetProtocol(baseline?.targetProtocol)
+    ) {
+      return true;
+    }
+
+    const baselineTestModels = toTestModelSlots(baseline);
+    if (JSON.stringify(current.testModels) !== JSON.stringify(baselineTestModels)) {
+      return true;
+    }
+
+    const currentEdited =
+      selectedCli === cliType && editedConfig
+        ? editedConfig.files.map(file => ({ path: file.path, content: file.content }))
+        : current.editedFiles
+          ? current.editedFiles.files.map(file => ({ path: file.path, content: file.content }))
+          : null;
+    if (
+      serializeManagedEditedFiles(currentEdited) !==
+      serializeManagedEditedFiles(baseline?.editedFiles)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function areCliModelTestResultsEqual(
   left: CliModelTestResult | null,
   right: CliModelTestResult | null
@@ -1563,6 +1634,13 @@ export function ManagedCliConfigEditorContent({
   };
 
   const selectedCliTestState = selectedCli ? cliModelTests[selectedCli] : null;
+  const isDirty = isManagedCliConfigDirty({
+    currentConfig,
+    enabledState,
+    cliConfigs,
+    selectedCli,
+    editedConfig,
+  });
 
   return (
     <div className="space-y-3">
@@ -1572,7 +1650,13 @@ export function ManagedCliConfigEditorContent({
           CLI 配置（{CLI_TYPES.filter(cli => enabledState[cli.key]).length}/{CLI_TYPES.length}）
         </div>
         <div className="flex items-center gap-2">
-          <AppButton variant="primary" size="sm" onClick={handleSave}>
+          <AppButton
+            variant={isDirty ? 'danger' : 'primary'}
+            size="sm"
+            onClick={handleSave}
+            data-testid="managed-cli-save-button"
+            data-dirty={isDirty ? 'true' : 'false'}
+          >
             保存配置
           </AppButton>
         </div>

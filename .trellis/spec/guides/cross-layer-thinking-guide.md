@@ -260,7 +260,69 @@ Checklist:
 - when a child owner explicitly disables a feature, do not fall back to a parent legacy enable
 - add tests for write path, load projection key, scheduler/runtime selection, and legacy fallback
 
-### Mistake 12: UI Field Data Source Determines "Refresh" Button Behavior
+### Mistake 12: Disable Semantics Differ Across Probe / Registry / Route Layers
+
+**Bad**: One UI "disable" control (or multiple disable controls that look similar) is enforced in
+only one consumer layer.
+
+Examples:
+- route CLI probe skips `cli_config.<cli>.enabled === false`, but `resolveChannels()` still builds
+  candidates from the model registry
+- custom CLI probe skips `cliSettings.<cli>.enabled === false`, but registry source discovery still
+  tags fetched/manual models with every CLI type, so the local route proxy keeps forwarding
+- redirection priority table writes `disabledSiteIds` / `disabledApiKeyPriorityKeys`, and the
+  resolver filters them, while a nearby CLI-config "enabled" toggle does nothing to routing
+- temporary runtime path suspension (`routePathStates.disabledUntil`) is confused with permanent
+  route-intent disable in the priority table
+
+**Good**: Enumerate every disable surface and pin the exact filter site for each consumer.
+
+Checklist:
+- list disable sources: site `enabled`, CLI `enabled`, priority `disabledSiteIds` /
+  `disabledApiKeyPriorityKeys`, runtime `disabledUntil`, rule `enabled`
+- for each consumer (probe, health, resolveChannels, proxy attempt loop, analytics UI), state
+  whether that disable is binding
+- if the user-facing wording is "不要再请求这个通道", the route candidate builder must enforce it,
+  not only the probe scheduler
+- keep permanent route-intent disable (`priorityConfig`) separate from temporary runtime disable
+  (`routePathStates`)
+- when rebuilding registry sources for custom CLI, do not invent CLI availability that the user
+  already turned off in `cliSettings`
+- add a regression where probe reports disabled while route still selects the same channel, and
+  assert `resolveChannels()` returns empty for that channel
+
+### Mistake 13: Priority-Table Disable Is Draft-Local, Model-Scoped, And Overwritable
+
+**Bad**: Treating the redirection priority table's disable toggle as a global, immediately
+persisted route exclusion.
+
+Examples:
+- UI folds a site/API key after toggle, so the user believes routing already excludes it, but the
+  toggle only mutates a local `priorityDraft` until 「保存优先级」 writes
+  `displayItem.priorityConfig.disabledSiteIds` / `disabledApiKeyPriorityKeys`
+- user disables site X on redirect card A, while `cliModelSelections[cli]` still points at card B;
+  route proxy loads B's `priorityConfig`, so A's disable never applies
+- 「路由规则」dialog opens with a frozen `routeRuleState.item` snapshot; later
+  `upsertDisplayItem({ ...routeRuleState.item, runtimeConfig })` rewrites the whole display item
+  and clobbers a newer `priorityConfig` that already contains disabled lists
+- user disables one API key under a site and still sees the same site name in route logs because
+  another key on that site remains enabled
+
+**Good**: Make disable write intent, model scope, and partial-update contracts explicit.
+
+Checklist:
+- distinguish draft UI state from persisted route intent; if the control is not auto-saved, the
+  save affordance must be impossible to miss
+- route exclusion is keyed by the request's resolved `canonicalModel` display item, not by the
+  card the user last clicked
+- dialogs that edit one field of a display item must patch only that field (`runtimeConfig`,
+  notes, etc.); never re-send a stale full item snapshot that can overwrite sibling fields
+- when a later save reloads an item for partial update, re-read the latest persisted item first
+- add regressions: disable + save → no route channel; disable without save → still routes; disable
+  on model A while CLI selects model B → B still may use the site; save runtime rules after
+  priority disable → disabled lists remain
+
+### Mistake 14: UI Field Data Source Determines "Refresh" Button Behavior
 
 **Bad**: UI displays fields from one data source (browser localStorage), but "refresh" button calls a
 method that fetches from a completely different source (API with existing token).
