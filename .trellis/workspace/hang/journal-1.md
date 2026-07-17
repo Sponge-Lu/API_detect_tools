@@ -279,3 +279,36 @@ OpenCode 第三方供应商配置默认使用 Responses；OpenAI 模型写入 hi
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: 完成 CLI 路由思考强度选择器
+
+**Date**: 2026-07-17
+**Task**: 完成 CLI 路由思考强度选择器
+**Branch**: `main`
+
+### Summary
+
+新增按 CLI 配置的思考强度覆盖、自定义下拉选项与行内删除操作，并完成请求改写、日志取值和回归测试。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `58d3387` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
