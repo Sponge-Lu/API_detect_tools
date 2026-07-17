@@ -421,6 +421,9 @@ declare global {
         saveOpenCodeRouteProtocol: (
           protocol: unknown
         ) => Promise<{ success: boolean; data?: any; error?: string }>;
+        saveCliThinkingEffortSelections: (
+          selections: any
+        ) => Promise<{ success: boolean; error?: string }>;
         saveCliProbeConfig: (updates: any) => Promise<{ success: boolean; error?: string }>;
         runCliProbeNow: (params?: any) => Promise<{ success: boolean; data?: any; error?: string }>;
         getCliProbeLatest: (

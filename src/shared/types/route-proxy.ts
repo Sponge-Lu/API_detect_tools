@@ -18,6 +18,11 @@ import {
 /** CLI 类型 */
 export type RouteCliType = BuiltinCliType;
 
+/** 路由思考强度预设 */
+export const ROUTE_THINKING_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+/** 路由思考强度：预设值或用户自定义字符串 */
+export type RouteThinkingEffort = string;
+
 /** CLI 探测来源 */
 export type RouteCliProbeSource = 'routeProbe' | 'siteManual' | 'legacyCache';
 
@@ -584,6 +589,7 @@ export interface RoutingConfig {
   server: RouteProxyServerConfig;
   rules: RouteRule[];
   cliModelSelections: Record<RouteCliType, string | null>;
+  cliThinkingEffortSelections: Record<RouteCliType, RouteThinkingEffort | null>;
   openCodeRouteProtocol: Exclude<CliTargetProtocol, 'native'>;
   stats: Record<string, RouteChannelStats>;
   routePathStates: Record<string, RoutePathState>;
@@ -652,6 +658,7 @@ export const DEFAULT_ROUTING_CONFIG: RoutingConfig = {
   server: DEFAULT_ROUTE_PROXY_SERVER_CONFIG,
   rules: [],
   cliModelSelections: { claudeCode: null, codex: null, openCode: null },
+  cliThinkingEffortSelections: { claudeCode: null, codex: null, openCode: null },
   openCodeRouteProtocol: DEFAULT_OPEN_CODE_ROUTE_PROTOCOL,
   stats: {},
   routePathStates: {},
@@ -674,6 +681,41 @@ export function normalizeOpenCodeRouteProtocol(
 ): Exclude<CliTargetProtocol, 'native'> {
   const normalized = normalizeCliTargetProtocol(value);
   return normalized === 'native' ? DEFAULT_OPEN_CODE_ROUTE_PROTOCOL : normalized;
+}
+
+export function isRouteThinkingEffortPreset(
+  value: string
+): value is (typeof ROUTE_THINKING_EFFORT_LEVELS)[number] {
+  return (ROUTE_THINKING_EFFORT_LEVELS as readonly string[]).includes(value);
+}
+
+export function normalizeRouteThinkingEffort(value: unknown): RouteThinkingEffort | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const lower = trimmed.toLowerCase();
+  if (isRouteThinkingEffortPreset(lower)) {
+    return lower;
+  }
+
+  // Keep custom freeform values as-is (trimmed).
+  return trimmed;
+}
+
+export function normalizeRouteThinkingEffortSelections(
+  selections: Partial<Record<RouteCliType, unknown>> | null | undefined
+): Record<RouteCliType, RouteThinkingEffort | null> {
+  return {
+    claudeCode: normalizeRouteThinkingEffort(selections?.claudeCode),
+    codex: normalizeRouteThinkingEffort(selections?.codex),
+    openCode: normalizeRouteThinkingEffort(selections?.openCode),
+  };
 }
 
 // ============= 工具函数 =============

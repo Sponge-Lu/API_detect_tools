@@ -40,12 +40,14 @@ import type {
   RouteOutcome,
   RoutePathState,
   RouteRuntimeConfig,
+  RouteThinkingEffort,
   RoutingConfig,
 } from '../shared/types/route-proxy';
 import {
   buildRouteApiKeyPriorityKey,
   buildRoutePathStateKey,
   normalizeOpenCodeRouteProtocol,
+  normalizeRouteThinkingEffort,
   normalizeRouteRuntimeConfig,
   ROUTE_SUCCESSFUL_PATH_AFFINITY_MS,
 } from '../shared/types/route-proxy';
@@ -467,6 +469,77 @@ function readBody(req: http.IncomingMessage): Promise<Buffer> {
     req.on('close', onClose);
     req.on('error', onError);
   });
+}
+
+function resolveThinkingEffortProtocol(
+  cliType: RouteCliType,
+  upstreamCliType: RouteCliType,
+  openCodeSourceProtocol?: ConcreteCliTargetProtocol,
+  openCodeRouteProtocol?: ConcreteCliTargetProtocol
+): 'anthropic' | 'openai' {
+  if (upstreamCliType === 'claudeCode' || cliType === 'claudeCode') {
+    return 'anthropic';
+  }
+
+  if (cliType === 'openCode') {
+    const protocol = openCodeRouteProtocol ?? openCodeSourceProtocol;
+    if (protocol === 'anthropic-messages') {
+      return 'anthropic';
+    }
+  }
+
+  return 'openai';
+}
+
+export function applyRouteThinkingEffortOverride(
+  bodyBuffer: Buffer,
+  effort: RouteThinkingEffort | null | undefined,
+  protocol: 'anthropic' | 'openai'
+): Buffer {
+  if (!effort) {
+    return bodyBuffer;
+  }
+
+  try {
+    const body = JSON.parse(bodyBuffer.toString('utf-8'));
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return bodyBuffer;
+    }
+
+    const record = body as Record<string, unknown>;
+
+    if (protocol === 'anthropic') {
+      const existingOutputConfig =
+        record.output_config &&
+        typeof record.output_config === 'object' &&
+        !Array.isArray(record.output_config)
+          ? { ...(record.output_config as Record<string, unknown>) }
+          : {};
+      existingOutputConfig.effort = effort;
+      record.output_config = existingOutputConfig;
+
+      const existingThinking =
+        record.thinking && typeof record.thinking === 'object' && !Array.isArray(record.thinking)
+          ? { ...(record.thinking as Record<string, unknown>) }
+          : null;
+      if (!existingThinking || Object.keys(existingThinking).length === 0) {
+        record.thinking = { type: 'adaptive' };
+      } else {
+        record.thinking = existingThinking;
+      }
+    } else {
+      const existingReasoning =
+        record.reasoning && typeof record.reasoning === 'object' && !Array.isArray(record.reasoning)
+          ? { ...(record.reasoning as Record<string, unknown>) }
+          : {};
+      existingReasoning.effort = effort;
+      record.reasoning = existingReasoning;
+    }
+
+    return Buffer.from(JSON.stringify(record), 'utf-8');
+  } catch {
+    return bodyBuffer;
+  }
 }
 
 /** 重写请求体中的 model 字段 */
@@ -2626,7 +2699,10 @@ export async function handleRequest(
     /* ignore */
   }
   const rawModel = extractModelFromBody(bodyJson) || extractModelFromPath(pathname, cliType);
-  const reasoningEffort = extractRouteReasoningEffort(bodyJson);
+  const selectedThinkingEffort = normalizeRouteThinkingEffort(
+    routing.cliThinkingEffortSelections?.[cliType]
+  );
+  let reasoningEffort = extractRouteReasoningEffort(bodyJson);
 
   // 解析 canonical model（代理层无 site 上下文，使用全局 alias 索引）。
   // 普通本地路由请求以应用中对应 CLI 选择的模型作为路由意图；外部 CLI 配置/请求模型仅保留为诊断 requestedModel。
@@ -3009,6 +3085,23 @@ export async function handleRequest(
 
         continue;
       }
+    }
+
+    finalBody = applyRouteThinkingEffortOverride(
+      finalBody,
+      selectedThinkingEffort,
+      resolveThinkingEffortProtocol(
+        cliType,
+        upstreamCliType,
+        openCodeSourceProtocol,
+        openCodeRouteProtocol
+      )
+    );
+    try {
+      reasoningEffort =
+        extractRouteReasoningEffort(JSON.parse(finalBody.toString('utf-8'))) ?? reasoningEffort;
+    } catch {
+      /* keep previous reasoningEffort */
     }
 
     const attemptStartedAt = Date.now();

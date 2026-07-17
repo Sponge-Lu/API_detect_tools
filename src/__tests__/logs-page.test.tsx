@@ -82,6 +82,12 @@ function buildRouteConfigForLogs(params: {
       claudeCode: null,
       codex: null,
     },
+    cliThinkingEffortSelections: {
+      claudeCode: null,
+      codex: null,
+      openCode: null,
+    },
+    openCodeRouteProtocol: 'openai-responses',
     stats: {},
     routePathStates: {},
     routeEndpointCapabilities: {},

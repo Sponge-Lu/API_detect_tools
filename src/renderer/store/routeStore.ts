@@ -98,6 +98,9 @@ interface RouteState {
     selections: Partial<Record<RouteCliType, string | null>>
   ) => Promise<void>;
   saveOpenCodeRouteProtocol: (protocol: RoutingConfig['openCodeRouteProtocol']) => Promise<void>;
+  saveCliThinkingEffortSelections: (
+    selections: Partial<RoutingConfig['cliThinkingEffortSelections']>
+  ) => Promise<void>;
 
   // Actions - CLI 探测
   saveCliProbeConfig: (updates: Partial<RouteCliProbeConfig>) => Promise<void>;
@@ -398,6 +401,12 @@ export const useRouteStore = create<RouteState>((set, get) => ({
     await window.electronAPI.route?.saveOpenCodeRouteProtocol(protocol);
     await get().fetchConfig();
     sessionEventLog.success('route', 'OpenCode 路由端点已更新');
+  },
+
+  saveCliThinkingEffortSelections: async selections => {
+    await window.electronAPI.route?.saveCliThinkingEffortSelections(selections);
+    await get().fetchConfig();
+    sessionEventLog.success('route', 'CLI 思考强度已更新');
   },
 
   // CLI 探测

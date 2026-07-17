@@ -1760,8 +1760,9 @@ Only if stage is request-adapt or bodySnippet names unknown request fields → C
 ### 1. Scope / Trigger
 
 - Trigger: the route log UI displays the reasoning effort carried by each local CLI request.
-- Flow: client request body → `route-proxy-service` extraction → `recordRouteRequest` → in-memory
-  `RouteRequestLogItem` → preload IPC → `LogsPage`.
+- Flow: client request body → protocol/AnyRouter rewrite → per-CLI effort override →
+  `route-proxy-service` extraction → `recordRouteRequest` → in-memory `RouteRequestLogItem` →
+  preload IPC → `LogsPage`.
 
 ### 2. Signatures
 
@@ -1783,7 +1784,8 @@ export function recordRouteRequest(params: {
 
 ### 3. Contracts
 
-- Extract once from the original local CLI request body before rule matching or protocol adaptation.
+- Extract from the final upstream request body after protocol adaptation and any user-selected
+  effort override, so logs describe the actual wire request.
 - Explicit effort precedence is `output_config.effort`, `reasoning.effort`,
   `reasoning_effort`, then `reasoningEffort`.
 - Preserve every non-empty explicit string verbatim; do not validate against a closed vendor enum.
@@ -1794,8 +1796,8 @@ export function recordRouteRequest(params: {
 - Every `recordRouteRequest` branch for the same request must receive the extracted value, including
   no-rule, no-channel, disabled-path, credential, neutral, upstream failure, success, and exception
   outcomes.
-- Display the actual wire value only. Do not infer Claude `ultracode`, an OpenCode variant name, or a
-  model default that was absent from the request.
+- Display the actual final wire value only. Do not infer Claude `ultracode`, an OpenCode variant
+  name, or a model default that was absent from the final request.
 - IPC transports `RouteRequestLogItem` unchanged; no duplicate renderer-side parsing is allowed.
 
 ### 4. Validation & Error Matrix
@@ -1840,3 +1842,212 @@ reasoningEffort = known.includes(value) ? value : undefined;
 const effort = typeof value === 'string' ? value.trim() : '';
 reasoningEffort = effort || undefined;
 ```
+
+---
+
+## Scenario: Per-CLI Route Thinking Effort Override
+
+### 1. Scope / Trigger
+
+- Trigger: users choose a Claude Code, Codex, or OpenCode reasoning effort in the route proxy panel.
+- The setting changes only forwarded route requests. It must not alter generated local CLI config
+  previews or files written by the route panel.
+
+### 2. Signatures
+
+```ts
+// src/shared/types/route-proxy.ts
+export type RouteThinkingEffort = string;
+export interface RoutingConfig {
+  cliThinkingEffortSelections: Record<RouteCliType, RouteThinkingEffort | null>;
+}
+export function normalizeRouteThinkingEffort(value: unknown): RouteThinkingEffort | null;
+
+// src/main/route-proxy-service.ts
+export function applyRouteThinkingEffortOverride(
+  bodyBuffer: Buffer,
+  effort: RouteThinkingEffort | null | undefined,
+  protocol: 'anthropic' | 'openai'
+): Buffer;
+
+// preload/store bridge
+saveCliThinkingEffortSelections(
+  selections: Partial<Record<RouteCliType, RouteThinkingEffort | null>>
+): Promise<void>;
+```
+
+### 3. Contracts
+
+- Persist one selection per built-in CLI. `null` means pass through the client request unchanged.
+- Normalize preset values `low`, `medium`, `high`, `xhigh`, and `max` to lowercase. Trim and retain
+  any other non-empty string as a custom value.
+- Apply the user selection after model, target-protocol, and AnyRouter rewrites so explicit user
+  intent wins over provider defaults such as AnyRouter `max`.
+- Anthropic-shaped requests write `output_config.effort`. Preserve an existing non-empty
+  `thinking` object; otherwise add `{ type: 'adaptive' }`.
+- OpenAI-shaped requests write `reasoning.effort`, preserving sibling reasoning fields.
+- Non-JSON or non-object request bodies are returned unchanged.
+- The selector has no visible `思考强度` prefix. Choosing `自定义` opens the shared application
+  modal for one-time input; no persistent inline input and no raw browser prompt are allowed.
+- A saved custom string is shown on the closed trigger and appears inside the expanded menu
+  immediately above the `自定义` action.
+- The custom-value menu row contains its delete icon immediately after the string. Do not render
+  the delete button beside the closed selector frame. Deletion persists `null` and returns the
+  selector to `未设置`.
+- Route request logs extract effort from the final rewritten body.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+|---|---|
+| Selection is `null` or empty | Preserve the original request effort fields |
+| Preset is uppercase or padded | Normalize to the lowercase preset |
+| Custom string is padded | Trim and persist the remaining string verbatim |
+| Anthropic body lacks `thinking` | Add adaptive thinking and write `output_config.effort` |
+| Anthropic body has `thinking.type` | Preserve it and only write effort |
+| OpenAI body has other `reasoning` fields | Preserve siblings and replace only `reasoning.effort` |
+| Custom row delete button is clicked | Persist `null`; remove the custom row from the menu |
+| Body is invalid JSON | Forward the original bytes unchanged |
+
+### 5. Good / Base / Bad Cases
+
+- Good: Claude Code selects custom `ultra`; the selector displays `ultra`, the upstream body uses
+  `output_config.effort = 'ultra'`, and the log displays `ultra`.
+- Base: Codex remains `未设置`; its original `reasoning.effort` passes through.
+- Bad: keeping an extra text input below every selector, placing the delete button outside the
+  closed selector frame, using `window.prompt`, or allowing an AnyRouter default to overwrite the
+  user's explicit selection.
+
+### 6. Tests Required
+
+- `src/__tests__/route-workbench-redesign.test.tsx`: assert no visible prefix or persistent custom
+  input, modal entry, the custom row immediately above `自定义`, the delete button inside that row,
+  and delete-to-null behavior.
+- `src/__tests__/route-proxy-service.test.ts`: assert Anthropic/OpenAI rewrites, preservation,
+  pass-through, custom strings, invalid JSON, OpenCode protocol mapping, and AnyRouter precedence.
+- `src/__tests__/logs-page.test.tsx`: assert the logged value reflects the final overridden body.
+- Type-check and production build must cover the shared config, preload, store, and renderer bridge.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const customValue = window.prompt('输入自定义思考强度');
+body.output_config.effort = anyRouterDefault;
+```
+
+#### Correct
+
+```ts
+const normalized = normalizeRouteThinkingEffort(customValue);
+const rewritten = applyProtocolAndProviderRewrites(body);
+const finalBody = applyRouteThinkingEffortOverride(rewritten, normalized, protocol);
+```
+
+---
+
+## Scenario: Interactive CLI Works But Route Request Logs Appear Empty
+
+### 1. Scope / Trigger
+
+- Trigger: Codex / Claude Code / OpenCode can chat successfully through the local route proxy
+  (`127.0.0.1:<port>`), but the renderer **路由日志** page shows no matching request rows (or
+  appears empty after the user reopens the app / window).
+- Diagnosis only first: do **not** treat this as "Codex bypasses the proxy" or "Codex is not logged"
+  without checking `main.log` and the in-memory request-log contract.
+- Evidence sources:
+  - `userData/logs/main.log` (`[RouteProxyService]`, `[AnyRouterRewriter]`, `[HttpClient]`)
+  - `src/main/route-proxy-service.ts` `handleRequest()`
+  - `src/main/route-analytics-service.ts` `routeRequestLogs` / `recordRouteRequest()`
+  - `src/renderer/pages/LogsPage.tsx`
+
+### 2. Priors (Bayesian)
+
+| Hypothesis | Prior | Why |
+|------------|------:|-----|
+| H1: Session-only in-memory logs cleared by app restart | 45% | `routeRequestLogs` is process memory; UI copy already says logs are session-scoped; `routePathStates` affinity still makes later CLI turns work after restart |
+| H2: Client cancel / disconnect races out of `recordRouteRequest` | 30% | After upstream returns, `handleRequest()` early-returns on `routeAbortController.signal.aborted` with **no** request-log write; intentional for cancel, but races with successful SSE end |
+| H3: Codex-specific path never hits proxy / never records | 10% | Path map and tests both treat `/v1/responses` as codex; main.log commonly shows codex AnyRouter rewrite + upstream stream |
+| H4: UI preload / filter / live subscription issue | 10% | Old preload lacks `getRequestLogs` / `onRequestLogAppended`; CLI filter can hide rows; still secondary once main process has logs |
+| H5: Other | 5% | Catch-all |
+
+### 3. Discriminating Evidence Checklist
+
+1. **Did the request hit the local proxy at all?**
+   - Look for `AnyRouter] Codex native request forwarded` / Claude rewrite / `HttpClient ... raw stream
+     POST: https://.../v1/responses|/v1/messages` near the CLI turn time.
+   - Presence => local proxy handled it. Absence => CLI base_url is not the local route (config
+     mismatch), not a request-log bug.
+2. **Did main process classify and forward?**
+   - Failures: `Upstream channel returned failure response` / `Channel failed` / `Upstream channel
+     forwarding failed` with `cliType: 'codex'|'claudeCode'|'openCode'`.
+   - These failure branches call `recordRouteRequest()` when not probe-lock and not client-cancel.
+3. **Is the app process the same one that served the CLI turn?**
+   - `Route proxy server started on 127.0.0.1:<port>` marks a new process session.
+   - After that line, previous in-memory request logs are gone even if CLI still works via persisted
+     `routePathStates` affinity.
+4. **Is the missing row a successful SSE that may have cancelled?**
+   - Code order in `handleRequest()` after `forwardToUpstream()`:
+     1. if `routeAbortController.signal.aborted` → `return` (**no** `recordRouteRequest`)
+     2. else `recordRouteRequest(...)` (success/failure)
+     3. then `if (result.streamed) res.end(); return`
+   - Spec already says client cancel must not record path-failure analytics. That same early return
+     also skips the route-request log row, so a CLI turn that "felt successful" can leave no UI log
+     when the client closes just as the stream ends.
+5. **Is this Codex-only?**
+   - No. `recordRouteRequest()` is shared. `CLI_TYPE_PATH_MAP` only differs by path:
+     - Claude Code → `/v1/messages`
+     - Codex → `/v1/responses`
+     - OpenCode → those paths plus `/v1/chat/completions`, reclassified by OpenCode UA/originator
+   - OpenCode on `/v1/responses` can be labeled `openCode` instead of `codex` when UA matches; filter
+     the log page by the actual `cliType`, not by assumed CLI.
+
+### 4. Contracts
+
+- Route request logs are **session-scoped process memory** (`routeRequestLogs` in
+  `route-analytics-service.ts`), capped at `MAX_ROUTE_REQUEST_LOGS` (1000) and UI view limit 200.
+  They are **not** written to `config.json` and do not survive app restart. Persisted route runtime
+  state (`routePathStates`, analytics buckets) can still show that routing "worked".
+- Interactive (non-probe-lock) success/failure attempts that finish without client cancel must call
+  `recordRouteRequest()` before ending a streamed response. Probe-lock traffic intentionally bypasses
+  path-state and normal interactive logging side effects where `bypassRoutePathState` is true.
+- Client cancel / disconnect remains "no path failure / no provider-failure analytics". That does
+  **not** mean operators should diagnose empty logs as "proxy never saw the request"; check main.log
+  first.
+- Live UI updates use `route:request-log-appended` / `window.electronAPI.route.onRequestLogAppended`.
+  `route-overview` debounce is for dashboards, not the log page primary feed.
+- When debugging "CLI works, logs empty", prefer this order:
+  1. `main.log` markers for the CLI turn
+  2. same-process session vs restart
+  3. cancel race vs recorded failure rows
+  4. renderer preload / CLI filter
+
+### 5. Validation Matrix
+
+| Case | Evidence | Expected operator conclusion |
+|------|----------|------------------------------|
+| Codex works after full app restart; log page empty | `Route proxy server started` after the successful turns; `routePathStates` still has recent success | H1: logs wiped with process; routing still healthy |
+| Codex works; main.log shows continuous `Codex native request forwarded` + stream POST, no failure | Same process since proxy start | Expect request-log rows; if UI empty, check H2 cancel race / H4 preload-filter |
+| Codex works; main.log shows `Channel failed` then later success stream | Same process | Failure attempts must have request-log rows even if user only notices the final success |
+| Claude Code / OpenCode same empty-log complaint | Same markers with their cliType/path | Same contracts; not Codex-only |
+| CLI works but main.log has no local rewrite / no upstream from RouteProxy | No proxy markers | CLI not pointed at local route (wrong base_url / different port / provider manager) |
+| Probe-lock CLI detection works; interactive logs empty | probe-lock key / `__probe_lock__` path | Probe-lock is a different budget path; do not equate detection traffic with interactive request logs |
+
+### 6. Good / Bad Diagnosis
+
+- Good: open `main.log`, grep `cliType: 'codex'` / `Codex native request forwarded` / `Route proxy server started`, then decide H1 vs H2 vs config mismatch.
+- Good: compare "CLI works" with persisted `routePathStates` affinity — working after restart is expected even when request logs are empty.
+- Bad: concluding "Codex does not go through local route" only because the log page is empty.
+- Bad: adding Codex-only logging branches without checking the shared `recordRouteRequest` path.
+- Bad: treating client-cancel silent exit as proof the proxy never received the request.
+
+### 7. Fix Direction (do not implement in pure diagnosis)
+
+1. Keep session-scoped memory unless product explicitly wants durable request logs.
+2. If product wants "every finished interactive attempt visible", reconsider logging on client-cancel
+   after a successful upstream terminal marker (or log a `neutral`/`cancelled` outcome) without
+   counting it as path failure.
+3. Optionally surface session-scope more strongly in the log page empty state ("当前会话暂无；重启后会清空").
+4. Add an integration assertion: streamed success that completes with terminal marker always calls
+   `recordRouteRequest` once; aborted-before-record remains explicit.

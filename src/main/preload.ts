@@ -462,6 +462,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('route:save-cli-model-selections', { selections }),
     saveOpenCodeRouteProtocol: (protocol: unknown) =>
       ipcRenderer.invoke('route:save-open-code-route-protocol', { protocol }),
+    saveCliThinkingEffortSelections: (selections: any) =>
+      ipcRenderer.invoke('route:save-cli-thinking-effort-selections', { selections }),
     saveCliProbeConfig: (updates: any) =>
       ipcRenderer.invoke('route:save-cli-probe-config', updates),
     runCliProbeNow: (params?: any) => ipcRenderer.invoke('route:run-cli-probe-now', params),

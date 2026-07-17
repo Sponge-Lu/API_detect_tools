@@ -96,7 +96,9 @@ import {
   buildSiteScopedProbeAccountId,
   normalizeOpenCodeRouteProtocol,
   normalizeRouteCliSelection,
+  normalizeRouteThinkingEffortSelections,
   normalizeRouteRuntimeConfig,
+  type RouteThinkingEffort,
 } from '../shared/types/route-proxy';
 
 const CONFIG_VERSION = '3.0.6';
@@ -1076,6 +1078,9 @@ export class UnifiedConfigManager {
     if (!r.health) r.health = {};
     if (!r.cliModelSelections)
       r.cliModelSelections = { ...DEFAULT_ROUTING_CONFIG.cliModelSelections };
+    r.cliThinkingEffortSelections = normalizeRouteThinkingEffortSelections(
+      r.cliThinkingEffortSelections
+    );
     r.openCodeRouteProtocol = normalizeOpenCodeRouteProtocol(r.openCodeRouteProtocol);
     if (!r.modelRegistry) {
       r.modelRegistry = { ...DEFAULT_MODEL_REGISTRY_CONFIG };
@@ -2527,6 +2532,19 @@ export class UnifiedConfigManager {
     this.config.routing!.openCodeRouteProtocol = normalizeOpenCodeRouteProtocol(protocol);
     await this.saveConfig();
     return this.config.routing!.openCodeRouteProtocol;
+  }
+
+  async updateRouteCliThinkingEffortSelections(
+    selections: Partial<Record<RouteCliType, RouteThinkingEffort | null>>
+  ): Promise<Record<RouteCliType, RouteThinkingEffort | null>> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    this.config.routing!.cliThinkingEffortSelections = normalizeRouteThinkingEffortSelections({
+      ...this.config.routing!.cliThinkingEffortSelections,
+      ...selections,
+    });
+    await this.saveConfig();
+    return this.config.routing!.cliThinkingEffortSelections;
   }
 
   // ============= 模型注册表 =============

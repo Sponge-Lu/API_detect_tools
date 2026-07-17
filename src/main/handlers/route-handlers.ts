@@ -40,6 +40,7 @@ export function registerRouteHandlers() {
         server: routing.server,
         rules: routing.rules,
         cliModelSelections: routing.cliModelSelections,
+        cliThinkingEffortSelections: routing.cliThinkingEffortSelections,
         openCodeRouteProtocol: routing.openCodeRouteProtocol,
         stats: routing.stats,
         routePathStates: routing.routePathStates,
@@ -189,6 +190,17 @@ export function registerRouteHandlers() {
   ipcMain.handle('route:save-open-code-route-protocol', async (_, params) => {
     try {
       const result = await unifiedConfigManager.updateOpenCodeRouteProtocol(params?.protocol);
+      return ok(result);
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
+  ipcMain.handle('route:save-cli-thinking-effort-selections', async (_, params) => {
+    try {
+      const result = await unifiedConfigManager.updateRouteCliThinkingEffortSelections(
+        params.selections
+      );
       return ok(result);
     } catch (e: any) {
       return err(e.message);

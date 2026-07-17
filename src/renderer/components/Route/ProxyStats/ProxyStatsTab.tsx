@@ -5,7 +5,7 @@
  * 定位: 路由页代理统计子面板
  */
 
-import { useCallback, useEffect, useState, useRef, useMemo } from 'react';
+import { useCallback, useEffect, useState, useRef, useMemo, useId } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Play,
@@ -18,19 +18,27 @@ import {
   Edit2,
   RotateCcw,
   X,
+  Check,
+  ChevronDown,
 } from 'lucide-react';
 import { useShallow } from 'zustand/shallow';
 import { useRouteStore } from '../../../store/routeStore';
 import { toast } from '../../../store/toastStore';
 import { AppCard, AppCardContent } from '../../AppCard';
 import { AppButton } from '../../AppButton/AppButton';
+import { AppInput } from '../../AppInput/AppInput';
+import { AppModal } from '../../AppModal/AppModal';
 import { buildRecommendedCliModelOptions } from '../Redirection/ModelRedirectionTab';
 import ClaudeCodeIcon from '../../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../../assets/cli-icons/codex.svg';
 import OpenCodeIcon from '../../../assets/cli-icons/opencode.svg';
 import {
+  normalizeRouteThinkingEffort,
+  isRouteThinkingEffortPreset,
+  ROUTE_THINKING_EFFORT_LEVELS,
   normalizeRouteCliSelection,
   type RouteCliType,
+  type RouteThinkingEffort,
   type RouteModelRegistryEntry,
 } from '../../../../shared/types/route-proxy';
 import {
@@ -75,6 +83,191 @@ type RoutePreviewState = {
   isEditing: boolean;
   draft: GeneratedConfig | null;
 };
+type CustomThinkingEffortDialogState = {
+  cliType: RouteCliType;
+  value: string;
+};
+
+interface ThinkingEffortSelectProps {
+  cliType: RouteCliType;
+  value: RouteThinkingEffort | null | undefined;
+  onSelect: (value: RouteThinkingEffort | null) => void;
+  onCustom: () => void;
+  onDeleteCustom: () => void;
+}
+
+function ThinkingEffortSelect({
+  cliType,
+  value,
+  onSelect,
+  onCustom,
+  onDeleteCustom,
+}: ThinkingEffortSelectProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuId = useId();
+  const customValue = value && !isRouteThinkingEffortPreset(value) ? value : null;
+  const displayValue = value || '未设置';
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen]);
+
+  const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') {
+      return;
+    }
+
+    event.preventDefault();
+    const items = Array.from(
+      event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')
+    );
+    const currentIndex = items.findIndex(item => item === document.activeElement);
+    const nextIndex =
+      event.key === 'ArrowDown'
+        ? (currentIndex + 1) % items.length
+        : (currentIndex - 1 + items.length) % items.length;
+    items[nextIndex]?.focus();
+  };
+
+  const selectValue = (nextValue: RouteThinkingEffort | null) => {
+    onSelect(nextValue);
+    setIsOpen(false);
+    triggerRef.current?.focus();
+  };
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        ref={triggerRef}
+        data-testid={`route-cli-thinking-effort-${cliType}`}
+        type="button"
+        aria-label={`${CLI_LABELS[cliType]} 思考强度，当前 ${displayValue}`}
+        aria-expanded={isOpen}
+        aria-haspopup="menu"
+        aria-controls={isOpen ? menuId : undefined}
+        onClick={() => setIsOpen(current => !current)}
+        className="flex h-7 w-full items-center justify-between gap-2 rounded-md border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 text-left text-xs text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-1"
+      >
+        <span className="min-w-0 flex-1 truncate">{displayValue}</span>
+        <ChevronDown
+          className={`h-3.5 w-3.5 shrink-0 text-[var(--text-secondary)] transition-transform ${isOpen ? 'rotate-180' : ''}`}
+          aria-hidden="true"
+        />
+      </button>
+
+      {isOpen && (
+        <div
+          ref={menuRef}
+          id={menuId}
+          data-testid={`route-cli-thinking-effort-menu-${cliType}`}
+          role="menu"
+          aria-label={`${CLI_LABELS[cliType]} 思考强度选项`}
+          onKeyDown={handleMenuKeyDown}
+          className="absolute inset-x-0 top-full z-40 mt-1 overflow-hidden rounded-md border border-[var(--line-soft)] bg-[var(--surface-1)] py-1 shadow-[var(--shadow-lg)]"
+        >
+          <button
+            type="button"
+            role="menuitemradio"
+            aria-checked={!value}
+            onClick={() => selectValue(null)}
+            className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs text-[var(--text-primary)] hover:bg-[var(--surface-2)] focus:bg-[var(--surface-2)] focus:outline-none"
+          >
+            <Check className={`h-3.5 w-3.5 ${!value ? 'opacity-100' : 'opacity-0'}`} />
+            <span>未设置</span>
+          </button>
+          {ROUTE_THINKING_EFFORT_LEVELS.map(option => (
+            <button
+              key={option}
+              type="button"
+              role="menuitemradio"
+              aria-checked={value === option}
+              onClick={() => selectValue(option)}
+              className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs text-[var(--text-primary)] hover:bg-[var(--surface-2)] focus:bg-[var(--surface-2)] focus:outline-none"
+            >
+              <Check className={`h-3.5 w-3.5 ${value === option ? 'opacity-100' : 'opacity-0'}`} />
+              <span>{option}</span>
+            </button>
+          ))}
+          {customValue && (
+            <div
+              data-testid={`route-cli-thinking-effort-custom-option-${cliType}`}
+              role="none"
+              className="flex items-center hover:bg-[var(--surface-2)] focus-within:bg-[var(--surface-2)]"
+            >
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={true}
+                onClick={() => {
+                  setIsOpen(false);
+                  triggerRef.current?.focus();
+                }}
+                className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-xs text-[var(--text-primary)] focus:outline-none"
+              >
+                <Check className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{customValue}</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                title="删除自定义思考强度"
+                aria-label={`删除 ${CLI_LABELS[cliType]} 自定义思考强度`}
+                onClick={event => {
+                  event.stopPropagation();
+                  onDeleteCustom();
+                  setIsOpen(false);
+                  triggerRef.current?.focus();
+                }}
+                className="mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--text-secondary)] hover:bg-[var(--danger-soft)] hover:text-[var(--danger)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-1"
+              >
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            </div>
+          )}
+          <button
+            data-testid={`route-cli-thinking-effort-custom-action-${cliType}`}
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setIsOpen(false);
+              onCustom();
+            }}
+            className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs text-[var(--text-primary)] hover:bg-[var(--surface-2)] focus:bg-[var(--surface-2)] focus:outline-none"
+          >
+            <span className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>自定义</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** 代理服务器状态区 */
 interface RoutePanelProps {
@@ -572,11 +765,17 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
 
 /** CLI 路由模型选择区 */
 export function CliModelSection({ className = '', variant = 'card' }: RoutePanelProps) {
-  const { config, saveCliModelSelections, saveOpenCodeRouteProtocol } = useRouteStore(
+  const {
+    config,
+    saveCliModelSelections,
+    saveOpenCodeRouteProtocol,
+    saveCliThinkingEffortSelections,
+  } = useRouteStore(
     useShallow(s => ({
       config: s.config,
       saveCliModelSelections: s.saveCliModelSelections,
       saveOpenCodeRouteProtocol: s.saveOpenCodeRouteProtocol,
+      saveCliThinkingEffortSelections: s.saveCliThinkingEffortSelections,
     }))
   );
   const [previewState, setPreviewState] = useState<RoutePreviewState | null>(null);
@@ -585,6 +784,8 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
   >({});
   const [applyMenuCli, setApplyMenuCli] = useState<RouteCliType | null>(null);
   const [applyingCli, setApplyingCli] = useState<RouteCliType | null>(null);
+  const [customThinkingEffortDialog, setCustomThinkingEffortDialog] =
+    useState<CustomThinkingEffortDialogState | null>(null);
   const applyButtonRefs = useRef<Partial<Record<RouteCliType, HTMLButtonElement | null>>>({});
   const modelOptions = useMemo(
     () => buildRecommendedCliModelOptions(config?.modelRegistry),
@@ -593,7 +794,7 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
 
   if (!config || !config.server) return null;
 
-  const { cliModelSelections, server } = config;
+  const { cliModelSelections, cliThinkingEffortSelections, server } = config;
   const normalizedCliSelections = Object.fromEntries(
     ROUTE_CLI_TYPES.map(cli => [
       cli,
@@ -629,6 +830,34 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
     }));
     setApplyMenuCli(null);
     saveCliModelSelections({ [cli]: value || null });
+  };
+
+  const handleThinkingEffortSelect = (cli: RouteCliType, value: RouteThinkingEffort | null) => {
+    saveCliThinkingEffortSelections({ [cli]: value });
+  };
+
+  const handleOpenCustomThinkingEffort = (cli: RouteCliType) => {
+    const existing = cliThinkingEffortSelections?.[cli];
+    const initialValue = existing && !isRouteThinkingEffortPreset(existing) ? existing : '';
+    setCustomThinkingEffortDialog({ cliType: cli, value: initialValue });
+  };
+
+  const handleSaveCustomThinkingEffort = () => {
+    if (!customThinkingEffortDialog) {
+      return;
+    }
+
+    const value = normalizeRouteThinkingEffort(customThinkingEffortDialog.value);
+    if (!value) {
+      return;
+    }
+
+    saveCliThinkingEffortSelections({ [customThinkingEffortDialog.cliType]: value });
+    setCustomThinkingEffortDialog(null);
+  };
+
+  const handleDeleteCustomThinkingEffort = (cli: RouteCliType) => {
+    saveCliThinkingEffortSelections({ [cli]: null });
   };
 
   const handleOpenCodeRouteProtocolChange = (
@@ -792,6 +1021,13 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
                   </option>
                 ))}
               </select>
+              <ThinkingEffortSelect
+                cliType={cli}
+                value={cliThinkingEffortSelections[cli]}
+                onSelect={value => handleThinkingEffortSelect(cli, value)}
+                onCustom={() => handleOpenCustomThinkingEffort(cli)}
+                onDeleteCustom={() => handleDeleteCustomThinkingEffort(cli)}
+              />
               {cli === 'openCode' && (
                 <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2">
                   <span className="text-[11px] text-[var(--text-secondary)]">入口端点</span>
@@ -904,6 +1140,44 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
         }}
         onClose={() => setApplyMenuCli(null)}
       />
+      <AppModal
+        isOpen={customThinkingEffortDialog !== null}
+        onClose={() => setCustomThinkingEffortDialog(null)}
+        title="自定义思考强度"
+        size="sm"
+        footer={
+          <>
+            <AppButton variant="tertiary" onClick={() => setCustomThinkingEffortDialog(null)}>
+              取消
+            </AppButton>
+            <AppButton
+              variant="primary"
+              onClick={handleSaveCustomThinkingEffort}
+              disabled={!customThinkingEffortDialog?.value.trim()}
+            >
+              保存
+            </AppButton>
+          </>
+        }
+      >
+        <AppInput
+          data-testid="route-cli-thinking-effort-custom-input"
+          label="自定义值"
+          value={customThinkingEffortDialog?.value ?? ''}
+          onChange={event =>
+            setCustomThinkingEffortDialog(current =>
+              current ? { ...current, value: event.target.value } : current
+            )
+          }
+          onKeyDown={event => {
+            if (event.key === 'Enter' && customThinkingEffortDialog?.value.trim()) {
+              handleSaveCustomThinkingEffort();
+            }
+          }}
+          placeholder="输入自定义字符串"
+          aria-label="自定义思考强度"
+        />
+      </AppModal>
     </>
   );
 }

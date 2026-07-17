@@ -68,6 +68,7 @@ import {
   estimateClaudeCountTokens,
   extractRouteApiKey,
   extractRouteReasoningEffort,
+  applyRouteThinkingEffortOverride,
   extractUsageFromBody,
   handleRequest,
   resolveRouteRuntimeConfig,
@@ -787,6 +788,68 @@ describe('route-proxy-service reasoning effort extraction', () => {
         thinking: { type: 'enabled', budget_tokens: 8192 },
       })
     ).toBe('low');
+  });
+});
+
+describe('route-proxy-service thinking effort override', () => {
+  it('overrides Claude output_config.effort and fills adaptive thinking when missing', () => {
+    const next = applyRouteThinkingEffortOverride(
+      Buffer.from(JSON.stringify({ model: 'claude-opus-4-6', stream: true })),
+      'high',
+      'anthropic'
+    );
+    expect(JSON.parse(next.toString('utf-8'))).toEqual({
+      model: 'claude-opus-4-6',
+      stream: true,
+      output_config: { effort: 'high' },
+      thinking: { type: 'adaptive' },
+    });
+  });
+
+  it('preserves existing Claude thinking type while replacing effort', () => {
+    const next = applyRouteThinkingEffortOverride(
+      Buffer.from(
+        JSON.stringify({
+          thinking: { type: 'enabled', budget_tokens: 2048 },
+          output_config: { effort: 'max', format: 'text' },
+        })
+      ),
+      'low',
+      'anthropic'
+    );
+    expect(JSON.parse(next.toString('utf-8'))).toEqual({
+      thinking: { type: 'enabled', budget_tokens: 2048 },
+      output_config: { effort: 'low', format: 'text' },
+    });
+  });
+
+  it('overrides Codex reasoning.effort', () => {
+    const next = applyRouteThinkingEffortOverride(
+      Buffer.from(JSON.stringify({ model: 'gpt-5.1-codex-max', reasoning: { summary: 'auto' } })),
+      'xhigh',
+      'openai'
+    );
+    expect(JSON.parse(next.toString('utf-8'))).toEqual({
+      model: 'gpt-5.1-codex-max',
+      reasoning: { summary: 'auto', effort: 'xhigh' },
+    });
+  });
+
+  it('returns original body when effort is unset', () => {
+    const original = Buffer.from(JSON.stringify({ reasoning: { effort: 'medium' } }));
+    const next = applyRouteThinkingEffortOverride(original, null, 'openai');
+    expect(next).toBe(original);
+  });
+
+  it('accepts custom freeform effort tokens', () => {
+    const next = applyRouteThinkingEffortOverride(
+      Buffer.from(JSON.stringify({ reasoning: { effort: 'medium' } })),
+      'ultra',
+      'openai'
+    );
+    expect(JSON.parse(next.toString('utf-8'))).toEqual({
+      reasoning: { effort: 'ultra' },
+    });
   });
 });
 

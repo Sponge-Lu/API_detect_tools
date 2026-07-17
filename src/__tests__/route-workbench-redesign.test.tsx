@@ -42,6 +42,7 @@ const mockFetchCliProbeData = vi.fn();
 const mockRunProbeNow = vi.fn();
 const mockSaveCliProbeConfig = vi.fn();
 const mockSaveCliModelSelections = vi.fn();
+const mockSaveCliThinkingEffortSelections = vi.fn();
 const mockSaveOpenCodeRouteProtocol = vi.fn();
 const mockSaveServerConfig = vi.fn();
 const mockRegenerateApiKey = vi.fn();
@@ -83,6 +84,7 @@ type MockRouteStoreShape = {
   runProbeNow: typeof mockRunProbeNow;
   saveCliProbeConfig: typeof mockSaveCliProbeConfig;
   saveCliModelSelections: typeof mockSaveCliModelSelections;
+  saveCliThinkingEffortSelections: typeof mockSaveCliThinkingEffortSelections;
   saveOpenCodeRouteProtocol: typeof mockSaveOpenCodeRouteProtocol;
   saveServerConfig: typeof mockSaveServerConfig;
   regenerateApiKey: typeof mockRegenerateApiKey;
@@ -124,6 +126,7 @@ vi.mock('../renderer/store/routeStore', () => ({
       runProbeNow: mockRunProbeNow,
       saveCliProbeConfig: mockSaveCliProbeConfig,
       saveCliModelSelections: mockSaveCliModelSelections,
+      saveCliThinkingEffortSelections: mockSaveCliThinkingEffortSelections,
       saveOpenCodeRouteProtocol: mockSaveOpenCodeRouteProtocol,
       saveServerConfig: mockSaveServerConfig,
       regenerateApiKey: mockRegenerateApiKey,
@@ -712,6 +715,11 @@ function createRoutingConfig(
       codex: 'gpt-5.4',
       openCode: 'gpt-5.4',
     },
+    cliThinkingEffortSelections: {
+      claudeCode: null,
+      codex: null,
+      openCode: null,
+    },
     openCodeRouteProtocol: 'openai-chat-completions',
     routePathStates,
     server: { host: '127.0.0.1', port: 3000, unifiedApiKey: 'route-key' },
@@ -926,6 +934,7 @@ beforeEach(() => {
   mockRunProbeNow.mockReset().mockResolvedValue(null);
   mockSaveCliProbeConfig.mockReset().mockResolvedValue(undefined);
   mockSaveCliModelSelections.mockReset().mockResolvedValue(undefined);
+  mockSaveCliThinkingEffortSelections.mockReset().mockResolvedValue(undefined);
   mockSaveOpenCodeRouteProtocol.mockReset().mockResolvedValue(undefined);
   mockSaveServerConfig.mockReset().mockResolvedValue(undefined);
   mockRegenerateApiKey.mockReset().mockResolvedValue('sk-route-new');
@@ -1179,6 +1188,53 @@ describe('route workbench redesign', () => {
     expect(within(codexPreview).getByText(/sk-route-key/)).toBeInTheDocument();
 
     fireEvent.click(within(codexPreview).getByRole('button', { name: '关闭预览' }));
+  });
+
+  it('shows a saved custom thinking effort in the selector and lets the user delete it', async () => {
+    const { rerender } = render(<RoutePage />);
+    const selector = screen.getByTestId('route-cli-thinking-effort-claudeCode');
+
+    expect(screen.queryByText('思考强度')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('route-cli-thinking-effort-custom-input')).not.toBeInTheDocument();
+    fireEvent.click(selector);
+    fireEvent.click(screen.getByTestId('route-cli-thinking-effort-custom-action-claudeCode'));
+    const customInput = await screen.findByTestId('route-cli-thinking-effort-custom-input');
+    fireEvent.change(customInput, { target: { value: 'ultra' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    expect(mockSaveCliThinkingEffortSelections).toHaveBeenCalledWith({ claudeCode: 'ultra' });
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId('route-cli-thinking-effort-custom-input')
+      ).not.toBeInTheDocument();
+    });
+
+    mockConfig = {
+      ...mockConfig,
+      cliThinkingEffortSelections: {
+        ...mockConfig.cliThinkingEffortSelections,
+        claudeCode: 'ultra',
+      },
+    };
+    rerender(<RoutePage />);
+
+    const customSelector = screen.getByTestId('route-cli-thinking-effort-claudeCode');
+    expect(customSelector).toHaveTextContent('ultra');
+    expect(
+      screen.queryByRole('menuitem', { name: '删除 Claude Code 自定义思考强度' })
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(customSelector);
+    const customOption = screen.getByTestId('route-cli-thinking-effort-custom-option-claudeCode');
+    const customAction = screen.getByTestId('route-cli-thinking-effort-custom-action-claudeCode');
+    expect(customOption).toHaveTextContent('ultra');
+    expect(customOption.nextElementSibling).toBe(customAction);
+    fireEvent.click(
+      within(customOption).getByRole('menuitem', {
+        name: '删除 Claude Code 自定义思考强度',
+      })
+    );
+    expect(mockSaveCliThinkingEffortSelections).toHaveBeenLastCalledWith({ claudeCode: null });
   });
 
   it('resets saved route preview edits back to the generated config', async () => {
