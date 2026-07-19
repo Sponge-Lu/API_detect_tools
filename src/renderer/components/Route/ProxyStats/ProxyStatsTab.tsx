@@ -32,6 +32,7 @@ import { buildRecommendedCliModelOptions } from '../Redirection/ModelRedirection
 import ClaudeCodeIcon from '../../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../../assets/cli-icons/codex.svg';
 import OpenCodeIcon from '../../../assets/cli-icons/opencode.svg';
+import GrokBuildIcon from '../../../assets/cli-icons/grok.svg';
 import {
   normalizeRouteThinkingEffort,
   isRouteThinkingEffortPreset,
@@ -42,17 +43,13 @@ import {
   type RouteModelRegistryEntry,
 } from '../../../../shared/types/route-proxy';
 import {
-  generateClaudeCodeConfig,
-  generateCodexConfig,
-  generateOpenCodeConfig,
+  generateClaudeCodeRouteConfig,
+  generateCodexRouteConfig,
+  generateGrokBuildRouteConfig,
+  generateOpenCodeRouteConfig,
   type GeneratedConfig,
 } from '../../../services/cli-config-generator';
-import {
-  BUILTIN_CLI_LABELS,
-  BUILTIN_CLI_TYPES,
-  CLI_TARGET_PROTOCOLS,
-  type CliTargetProtocol,
-} from '../../../../shared/types/cli-config';
+import { BUILTIN_CLI_LABELS, BUILTIN_CLI_TYPES } from '../../../../shared/types/cli-config';
 
 const ROUTE_CLI_TYPES: RouteCliType[] = [...BUILTIN_CLI_TYPES];
 const CLI_LABELS: Record<RouteCliType, string> = BUILTIN_CLI_LABELS;
@@ -60,14 +57,7 @@ const CLI_ICON_CONFIGS: Record<RouteCliType, { src: string; className: string }>
   claudeCode: { src: ClaudeCodeIcon, className: 'h-[14px] w-[14px]' },
   codex: { src: CodexIcon, className: 'h-4 w-4' },
   openCode: { src: OpenCodeIcon, className: 'h-4 w-[13px]' },
-};
-const OPEN_CODE_ROUTE_PROTOCOL_OPTIONS = CLI_TARGET_PROTOCOLS.filter(
-  (protocol): protocol is Exclude<CliTargetProtocol, 'native'> => protocol !== 'native'
-);
-const OPEN_CODE_ROUTE_PROTOCOL_LABELS: Record<Exclude<CliTargetProtocol, 'native'>, string> = {
-  'anthropic-messages': '/v1/messages',
-  'openai-chat-completions': '/v1/chat/completions',
-  'openai-responses': '/v1/responses',
+  grokBuild: { src: GrokBuildIcon, className: 'h-4 w-4' },
 };
 const ROUTE_PROXY_DISPLAY_NAME = '本地路由代理';
 const SERVER_FIELD_LABEL_CLASS_NAME = 'mb-0.5 block text-xs leading-4 text-[var(--text-secondary)]';
@@ -321,15 +311,19 @@ function buildRouteCliGeneratedConfig(params: {
   };
 
   if (cliType === 'claudeCode') {
-    return generateClaudeCodeConfig(sharedParams);
+    return generateClaudeCodeRouteConfig(sharedParams);
   }
 
   if (cliType === 'codex') {
-    return generateCodexConfig(sharedParams);
+    return generateCodexRouteConfig(sharedParams);
   }
 
   if (cliType === 'openCode') {
-    return generateOpenCodeConfig(sharedParams);
+    return generateOpenCodeRouteConfig(sharedParams);
+  }
+
+  if (cliType === 'grokBuild') {
+    return generateGrokBuildRouteConfig(sharedParams);
   }
 
   return null;
@@ -586,14 +580,16 @@ function RouteApplyPopover({
       >
         合并
       </button>
-      <button
-        type="button"
-        onClick={() => onApply(cliType, 'overwrite')}
-        disabled={applyingCli !== null}
-        className="block w-full border-t border-[var(--line-soft)] px-3 py-2 text-left text-xs text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-2)] disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        覆盖
-      </button>
+      {cliType !== 'openCode' && cliType !== 'grokBuild' && (
+        <button
+          type="button"
+          onClick={() => onApply(cliType, 'overwrite')}
+          disabled={applyingCli !== null}
+          className="block w-full border-t border-[var(--line-soft)] px-3 py-2 text-left text-xs text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-2)] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          覆盖
+        </button>
+      )}
     </div>,
     document.body
   );
@@ -765,16 +761,10 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
 
 /** CLI 路由模型选择区 */
 export function CliModelSection({ className = '', variant = 'card' }: RoutePanelProps) {
-  const {
-    config,
-    saveCliModelSelections,
-    saveOpenCodeRouteProtocol,
-    saveCliThinkingEffortSelections,
-  } = useRouteStore(
+  const { config, saveCliModelSelections, saveCliThinkingEffortSelections } = useRouteStore(
     useShallow(s => ({
       config: s.config,
       saveCliModelSelections: s.saveCliModelSelections,
-      saveOpenCodeRouteProtocol: s.saveOpenCodeRouteProtocol,
       saveCliThinkingEffortSelections: s.saveCliThinkingEffortSelections,
     }))
   );
@@ -860,12 +850,6 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
     saveCliThinkingEffortSelections({ [cli]: null });
   };
 
-  const handleOpenCodeRouteProtocolChange = (
-    protocol: Exclude<CliTargetProtocol, 'native'>
-  ): void => {
-    saveOpenCodeRouteProtocol(protocol);
-  };
-
   const handleApplyRouteConfig = async (cli: RouteCliType, applyMode: 'merge' | 'overwrite') => {
     const generatedConfig = editedPreviews[cli] ?? generatedConfigs[cli];
     if (!generatedConfig || applyingCli) {
@@ -874,13 +858,14 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
 
     setApplyingCli(cli);
     try {
+      const effectiveApplyMode = cli === 'openCode' || cli === 'grokBuild' ? 'merge' : applyMode;
       const result = await window.electronAPI.cliCompat.writeConfig({
         cliType: cli,
         files: generatedConfig.files.map(file => ({
           path: file.path,
           content: file.content,
         })),
-        applyMode,
+        applyMode: effectiveApplyMode,
       });
 
       if (!result.success) {
@@ -1028,26 +1013,6 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
                 onCustom={() => handleOpenCustomThinkingEffort(cli)}
                 onDeleteCustom={() => handleDeleteCustomThinkingEffort(cli)}
               />
-              {cli === 'openCode' && (
-                <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2">
-                  <span className="text-[11px] text-[var(--text-secondary)]">入口端点</span>
-                  <select
-                    value={config.openCodeRouteProtocol}
-                    onChange={event =>
-                      handleOpenCodeRouteProtocolChange(
-                        event.target.value as Exclude<CliTargetProtocol, 'native'>
-                      )
-                    }
-                    className="h-7 w-full rounded-md border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 text-xs text-[var(--text-primary)]"
-                  >
-                    {OPEN_CODE_ROUTE_PROTOCOL_OPTIONS.map(protocol => (
-                      <option key={protocol} value={protocol}>
-                        {OPEN_CODE_ROUTE_PROTOCOL_LABELS[protocol]}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
               <div
                 data-testid={`route-cli-actions-${cli}`}
                 className="grid grid-cols-2 items-center gap-2"

@@ -4,7 +4,7 @@
 
 ### 1. Scope / Trigger
 
-- Trigger: route proxy requests for supported CLI clients (Claude Code and Codex) must try high-priority sites first, avoid repeated attempts against a known-bad path, and expose path suspension state in the redirection UI.
+- Trigger: route proxy requests for supported CLI clients (Claude Code, Codex, OpenCode, and Grok Build) must try high-priority sites first, avoid repeated attempts against a known-bad path, and expose path suspension state in the redirection UI.
 - A route path is identified by rule, site, account, API key, canonical model, and resolved upstream model. It is more specific than the legacy channel stats key.
 - This contract spans `src/shared/types/route-proxy.ts`, `src/main/route-channel-resolver.ts`, `src/main/route-stats-service.ts`, `src/main/route-proxy-service.ts`, `src/main/route-probe-lock.ts`, `src/main/anyrouter-request-rewriter.ts`, `src/main/cli-protocol-adapter.ts`, `src/main/unified-config-manager.ts`, and `src/renderer/components/Route/Redirection/ModelRedirectionTab.tsx`.
 
@@ -259,6 +259,7 @@ export function httpRawStreamRequest(
       headers: Record<string, string | string[]>;
     }) => boolean | void;
     onChunk?: (chunk: Buffer) => void | Promise<void>;
+    shouldResolveOnAbort?: () => boolean;
   }
 ): Promise<{
   status: number;
@@ -283,6 +284,7 @@ export function electronFetchRawStream(
       headers: Record<string, string | string[]>;
     }) => boolean | void;
     onData?: (chunk: Buffer) => void | Promise<void>;
+    shouldResolveOnAbort?: () => boolean;
   }
 ): Promise<{
   status: number;
@@ -370,7 +372,7 @@ same-name manual redirect may depend on them.
 - Custom CLI sources explicitly selected by the current `RouteModelDisplayItem` are part of the route intent. Legacy `RouteRule.allowedSiteIds`, `allowedAccountIds`, and `allowedApiKeyGroups` scope managed-site/account/API-key sources only; they must not filter out selected custom CLI sources before forwarding.
 - Local route forwarding must use `httpRawRequest(..., { preferElectronNet: true, proxyUrl: routing.server.upstreamProxyUrl })` instead of Node `http.request` / `https.request`, so packaged route traffic uses Chromium/Electron's network stack and preserves raw response bodies for transparent forwarding.
 - Local route forwarding must send upstream credentials to `token.sensenova.cn` as `Authorization: Bearer <apiKey>` for both OpenAI-compatible and Anthropic-compatible paths. Do not add Claude-style `x-api-key` for SenseNova; keep non-SenseNova Claude upstreams on `x-api-key`.
-- Local route forwarding must pass a per-request cancellation signal into `httpRawRequest()` / `httpRawStreamRequest()`. If the downstream CLI client cancels or disconnects, the proxy aborts the active upstream request, ignores any late upstream result, does not try another route path for that client request, and does not record route-path failure or provider-failure analytics for the cancellation.
+- Local route forwarding must pass a per-request cancellation signal into `httpRawRequest()` / `httpRawStreamRequest()`. If the downstream CLI client cancels or disconnects, the proxy aborts the active upstream request, ignores any late incomplete/failed upstream result, does not try another route path for that client request, and does not record route-path failure analytics for the cancellation. For transparent SSE, `shouldResolveOnAbort` may return true only after the complete protocol terminal event and consumable output have passed validation; Electron then resolves the retained response body instead of discarding it through cancellation rejection, so the session request log and success path-state are recorded exactly once. Cancellation before validated completion must still reject and remain silent.
 - `electronFetchRaw()` must treat `timeout` as a connection/idle timeout, not a total response-duration timeout. Re-arm the timer when the response starts and after every `data` chunk so long-running SSE CLI responses are not aborted while the upstream is actively streaming.
 - Local route streaming requests must keep the initial upstream wait bounded by the configured/site-specific request timeout. After the first SSE data chunk is received, active streams use an idle timeout of at least 10 minutes so healthy long-running streams are not aborted between chunks.
 - AnyRouter site-name detection must normalize spaces, repeated spaces, hyphens, and underscores so both `Any Router` and `AnyRouter` activate the same AnyRouter request rewrite path. Do not match names with extra prefix/suffix text.
@@ -384,7 +386,7 @@ same-name manual redirect may depend on them.
 - Claude Code transparent SSE compatibility may normalize only one upstream quirk before downstream delivery: if the stream has completed at least one valid-looking Anthropic `tool_use` content block and the terminal `message_delta.delta.stop_reason` is exactly `end_turn`, rewrite that stop reason to `tool_use` in the outgoing SSE and validate the normalized body. Do not normalize `max_tokens`, malformed tool input JSON, OpenAI-style events, DSML markup, missing `message_stop`, or unclosed content blocks.
 - Codex/OpenAI Responses transparent SSE streams must validate finished response content before accepting `response.completed`, `response.incomplete`, or `[DONE]` as success. Any typed non-`message` `ResponseOutputItem` is consumable output, including reasoning, custom/local-shell/computer/MCP and built-in tool-call items; a `message` item still requires non-empty text content. A finished stream with neither assistant text nor a typed output item must append a protocol-shaped SSE error, record `malformed_streaming_response:empty_response`, and close without treating the path as successful. If terminal usage explicitly reports all observed token fields as `0`, the stream must record `malformed_streaming_response:empty_response_zero_usage` even when output appeared earlier. HTTP `200` plus a terminal marker is only a transport-level success; it is not enough to prove the model produced a consumable answer.
 - Route token accounting must not fabricate final usage. If a successful-looking response lacks usage, keep usage undefined. If a completed OpenAI Responses stream reports all observed terminal token fields as `0`, treat those zero tokens as a malformed response diagnostic rather than a billable/successful generation, regardless of whether output content appeared earlier in the stream.
-- `httpRawStreamRequest()` and `electronFetchRawStream()` must invoke chunk callbacks as bytes arrive while still retaining the complete response `body` and `firstByteLatencyMs` for analytics, usage extraction, and failure logs. Electron response `end` / `aborted` / `error` listeners must be registered before the `data` listener, and `end` must wait for pending asynchronous chunk handling before resolving the retained body.
+- `httpRawStreamRequest()` and `electronFetchRawStream()` must invoke chunk callbacks as bytes arrive while still retaining the complete response `body` and `firstByteLatencyMs` for analytics, usage extraction, and failure logs. Electron response `end` / `aborted` / `error` listeners must be registered before the `data` listener, and `end` must wait for pending asynchronous chunk handling before resolving the retained body. Signal cancellation normally rejects; when `shouldResolveOnAbort()` confirms a protocol-validated completed stream, abort the transport but resolve the retained response after pending chunk handling instead. Transport errors emitted by that intentional abort must not race the retained-body resolution.
 - If the upstream streaming candidate is not a success SSE response, no downstream bytes may be written. The proxy must keep buffering the full response so existing failure classification, path suspension, response adaptation, and fallback attempts continue to work.
 - Once downstream streaming bytes have been written, the current request cannot fall back to another channel. Any later upstream or write error must end the downstream response if it is not already ended.
 - Electron net request headers must drop Chromium-restricted, browser-managed, and hop-by-hop request headers before `ClientRequest.setHeader()`, including `Host`, `Content-Length`, `Connection`, `Transfer-Encoding`, `Upgrade`, `Trailer`, `TE`, `Keep-Alive`, `Proxy-Connection`, `Cookie`, `Cookie2`, `Accept-Encoding`, `Origin`, `Referer`, `Expect`, `Date`, `DNT`, `Via`, `Permissions-Policy`, and `Sec-*` / `Proxy-*` headers; passing them through can fail before upstream I/O with `net::ERR_INVALID_ARGUMENT`.
@@ -655,8 +657,9 @@ same-name manual redirect may depend on them.
 | Upstream failure log has only duplicate code text | renderer legacy log defense | Keep the status badge, but do not render another failure-detail pill containing the same code |
 | Upstream TLS fails in Node but succeeds in CLI/Electron | route proxy forwarding | Forward with Electron net raw client before classifying the route attempt, preserving status/body/headers |
 | Long upstream SSE stays active past `requestTimeoutMs` | upstream emits data chunks before each timeout interval | Keep the Electron raw request alive until `end`; do not abort only because total elapsed time exceeded `requestTimeoutMs` |
-| Downstream CLI client cancels a buffered request | `httpRawRequest()` is pending and the local client socket/response closes before upstream completes | Abort the active upstream request via the per-request signal, ignore any late upstream result, do not record route-path failure or provider-failure analytics, and do not try fallback candidates |
-| Downstream CLI client cancels a transparent SSE request | `httpRawStreamRequest()` is active and downstream close fires while chunks are streaming | Abort the active upstream stream and exit the local request; do not append protocol errors, classify upstream failure, or try another channel for that client request |
+| Downstream CLI client cancels a buffered request | `httpRawRequest()` is pending and the local client socket/response closes before upstream completes | Abort the active upstream request via the per-request signal, ignore any late incomplete/failed upstream result, do not record route-path failure analytics, and do not try fallback candidates |
+| Downstream CLI client cancels after a finished successful attempt | upstream already resolved success (streamed or non-stream with non-zero usage) while the local client closed | Record one session request-log success and success path-state/affinity update; still do not record path failure or try fallback candidates |
+| Downstream CLI client cancels a transparent SSE request mid-stream | `httpRawStreamRequest()` is active and downstream close fires before a finished successful result is available | Abort the active upstream stream and exit the local request; do not append protocol errors, classify upstream failure, or try another channel for that client request |
 | Transparent streaming request receives successful SSE | original request is streaming, adapters are transparent, upstream status is `2xx/3xx`, `content-type` includes `text/event-stream`, and the first body bytes validate as SSE | Defer downstream headers until the first accepted SSE chunk, strip hop-by-hop/`content-encoding`/`content-length`/`transfer-encoding` headers, forward buffered and subsequent chunks, retain the complete body for analytics, then end the downstream response |
 | Streaming request receives malformed 2xx body | upstream status is classified as `success`, but the response is not SSE or begins with HTML/JSON/non-SSE content | Do not write downstream bytes; record `invalid_streaming_response`, mark the route path failed, and try the next enabled channel when available |
 | Streaming request receives an empty 2xx SSE body | upstream status is classified as `success`, content type is SSE, but EOF arrives before any body bytes | Retry the same route path once before recording `invalid_streaming_response:empty_streaming_response`; keep downstream unwritten so fallback remains possible |
@@ -1144,7 +1147,9 @@ export function recordRouteEndpointUnsupported(
 - The real `/v1/messages` response `usage` is the authoritative route token accounting source. `extractUsageFromBody()` must continue to parse JSON and SSE usage fields, including Anthropic `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, OpenAI-style `prompt_tokens` / `completion_tokens`, and Gemini `usageMetadata`.
 - `count_tokens` unsupported responses are endpoint-capability failures, not model or route-path failures. They must not lower the health score for normal `/v1/messages` generation on the same site/account/API key.
 - Once a site/account/API-key/custom-CLI target is known not to support `claude_messages_count_tokens`, later Claude Code `/v1/messages/count_tokens` requests for the same `siteId + accountId + apiKeyId + cliType + targetProtocol + endpoint` must return the local estimate directly without calling upstream or trying later route candidates.
-- Non-Anthropic target protocols such as OpenAI Responses or chat completions cannot answer Anthropic `count_tokens`; mark that target as `target_protocol_unsupported` and use the local estimate.
+- Non-Anthropic target protocols such as OpenAI Responses or chat completions cannot answer
+  Anthropic `count_tokens`; filter them before endpoint-capability lookup and use the local
+  estimate. A protocol mismatch must never be persisted as an unsupported native endpoint.
 - AnyRouter selected-channel rewriting must not turn `/v1/messages/count_tokens` into a real `/v1/messages` generation request. AnyRouter count-token requests must pass through to `/v1/messages/count_tokens` unless that exact upstream response proves the endpoint is unsupported.
 - AnyRouter special rewriting remains selected-channel behavior only. Do not introduce an implicit AnyRouter fallback for `count_tokens`; if the selected route path is not usable for count preflight, use the local estimator.
 
@@ -1156,7 +1161,7 @@ export function recordRouteEndpointUnsupported(
 | Upstream returns count-token `404` unsupported endpoint | proxy endpoint handling | return local estimated `{ input_tokens }`; do not mark `/v1/messages` path unhealthy |
 | Upstream returns count-token `403 count_tokens is not enabled` | proxy endpoint handling | return local estimated `{ input_tokens }`; do not try unrelated generation fallbacks |
 | Later request hits cached unsupported count-token capability | endpoint capability cache | return local estimated `{ input_tokens }` without resolving credentials or calling upstream |
-| Custom CLI target protocol is OpenAI-compatible | endpoint capability cache | mark `target_protocol_unsupported`; return local estimated `{ input_tokens }` |
+| Custom CLI target protocol is OpenAI-compatible | protocol filter | skip without writing endpoint capability; return local estimated `{ input_tokens }` |
 | AnyRouter supports `/v1/messages/count_tokens` | selected-channel passthrough | forward the original count-token endpoint; do not force local estimation |
 | Real `/v1/messages` response contains `usage` | response analytics | record real usage values; prefer them over any earlier estimate |
 | Real `/v1/messages` response lacks `usage` | response analytics | keep usage undefined rather than fabricating final billing data |
@@ -1503,129 +1508,219 @@ const sample: RouteCliProbeSample = {
 };
 ```
 
-## Scenario: OpenCode Endpoint Normalization Selector
+## Scenario: Native Endpoint Routing And Bounded Protocol Conversion
 
 ### 1. Scope / Trigger
 
-- Trigger: OpenCode can send official Anthropic Messages, OpenAI-compatible Chat Completions, or
-  OpenAI Responses traffic. Route runtime must not treat OpenCode `native` as one fixed endpoint.
+- Trigger: OpenCode and Grok Build can switch among three local route entries while running, and
+  every routed CLI request must preserve its actual endpoint semantics without a global
+  intermediate protocol.
+- The conversion surface is limited to the three generation creation endpoints. Token counting is
+  native-only; provider-owned resource operations are unsupported because the route has no resource
+  ID ownership map.
 - Files: `src/shared/types/route-proxy.ts`, `src/main/route-proxy-service.ts`,
-  `src/main/cli-protocol-adapter.ts`, `src/main/unified-config-manager.ts`,
-  `src/main/handlers/route-handlers.ts`, `src/main/preload.ts`,
-  `src/renderer/store/routeStore.ts`, and
+  `src/main/cli-protocol-adapter.ts`, `src/main/config-detection-service.ts`,
+  `src/main/route-cli-probe-service.ts`, `src/renderer/services/cli-config-generator.ts`, and
   `src/renderer/components/Route/ProxyStats/ProxyStatsTab.tsx`.
 
 ### 2. Signatures
 
 ```ts
 // src/shared/types/route-proxy.ts
-export interface RoutingConfig {
-  openCodeRouteProtocol: Exclude<CliTargetProtocol, 'native'>;
+export const ROUTE_CLI_MARKER_HEADER = 'x-api-detect-cli';
+export const ROUTE_CLI_MARKER_VALUES: Record<RouteCliType, string>;
+
+// src/shared/types/cli-config.ts
+export const BUILTIN_CLI_TYPES = ['claudeCode', 'codex', 'openCode', 'grokBuild'] as const;
+export const PROBE_CLI_TYPES = ['claudeCode', 'codex', 'openCode'] as const;
+export type BuiltinCliType = (typeof BUILTIN_CLI_TYPES)[number];
+export type ProbeCliType = (typeof PROBE_CLI_TYPES)[number];
+
+// src/main/route-proxy-service.ts
+export interface RouteEndpointOperation {
+  protocol: Exclude<CliTargetProtocol, 'native'>;
+  operation: string;
+  capability:
+    | 'generation-convertible'
+    | 'stateless-native-only'
+    | 'stateful-unsupported'
+    | 'unsupported';
 }
 
-export const DEFAULT_OPEN_CODE_ROUTE_PROTOCOL = 'openai-chat-completions';
+export function classifyRouteEndpointOperation(
+  method: string | undefined,
+  requestUrl: string | undefined
+): RouteEndpointOperation | null;
 
-export function normalizeOpenCodeRouteProtocol(
-  value: unknown
-): Exclude<CliTargetProtocol, 'native'>;
+export function detectMarkedRouteCliType(
+  headers: Pick<http.IncomingHttpHeaders, string>
+): RouteCliType | null;
 
-// src/main/unified-config-manager.ts
-export function updateOpenCodeRouteProtocol(
-  protocol: unknown
-): Promise<RoutingConfig['openCodeRouteProtocol']>;
-
-// src/main/cli-protocol-adapter.ts
-export function adaptRequestToTargetProtocol(
-  bodyBuffer: Buffer,
-  sourceCliType: RouteCliType,
-  targetProtocol: Exclude<CliTargetProtocol, 'native'>,
-  requestUrl?: string,
-  upstreamModel?: string,
-  sourceProtocol?: Exclude<CliTargetProtocol, 'native'>
-): CliProtocolRewriteResult;
+// src/renderer/services/cli-config-generator.ts
+export function generateClaudeCodeRouteConfig(params: ConfigParams): GeneratedConfig;
+export function generateCodexRouteConfig(params: CodexConfigParams): GeneratedConfig;
+export function generateOpenCodeRouteConfig(params: ConfigParams): GeneratedConfig;
+export function generateGrokBuildRouteConfig(params: ConfigParams): GeneratedConfig;
 ```
 
 ### 3. Contracts
 
-- `routing.openCodeRouteProtocol` is the user-selected OpenCode normalization endpoint shown on the
-  Route page under OpenCode CLI.
-- Persisted missing, invalid, or `native` values normalize to `openai-chat-completions`.
-- OpenCode source protocol is inferred from the incoming request path:
-  `/v1/messages` -> `anthropic-messages`, `/v1/responses` -> `openai-responses`, and
-  `/v1/chat/completions` or unknown OpenCode paths -> `openai-chat-completions`.
-- Every OpenCode request follows this logical chain:
-  `actual source protocol -> routing.openCodeRouteProtocol -> channel target protocol`.
-- When the selected channel target protocol is `native`, the final upstream protocol is
-  `routing.openCodeRouteProtocol`, not `getCliTargetEndpoint('openCode', 'native')`.
-- Response adaptation runs in reverse order so the downstream OpenCode client receives the same
-  protocol shape it originally sent.
-- Route logs, analytics, and route-path health for an OpenCode native channel must use the effective
-  upstream protocol selected by `openCodeRouteProtocol`; failures for `/v1/messages` must not poison
-  `/v1/chat/completions` health after the selector changes.
-- OpenCode `/v1/messages` route authentication accepts the Anthropic-style `x-api-key` header as
-  well as Bearer, because the local route proxy is validating the unified route key before upstream
-  adaptation.
+- `RoutingConfig` has no OpenCode global entry-protocol field. The Route page has no "入口端点"
+  selector or matching IPC/store action.
+- Explicitly applying the OpenCode route config always uses merge mode and deep-merges three
+  application-owned Providers:
+  `api-detect-anthropic`, `api-detect-responses`, and `api-detect-chat`. The top-level model becomes
+  `api-detect-responses/<model>`. Managed route models omit hard-coded thinking/reasoning defaults;
+  the final route runtime selection is the only explicit override. Existing user Providers remain
+  untouched; app startup never writes this migration.
+- Explicitly applying Grok Build config always uses TOML merge mode and owns only
+  `model.api-detect-grok-responses`, `model.api-detect-grok-chat`, and
+  `model.api-detect-grok-messages`. User models, MCP sections, and other settings survive. Each
+  managed model targets local `/v1`, declares its matching `api_backend`, and disables
+  `supports_backend_search` plus `stream_tool_calls`. Responses and Chat models use `api_key`; the
+  Messages model uses only `extra_headers["x-api-key"]` so a generic Bearer header is not emitted
+  to an Anthropic-compatible upstream. Grok API keys are written verbatim; do not add an `sk-`
+  prefix.
+- Route-generated Claude Code, Codex, OpenCode, and Grok Build configs add `x-api-detect-cli` with their
+  canonical CLI value. Direct/managed-site configs do not. The marker is classification only,
+  cannot bypass the unified route key, and is deleted before upstream forwarding. Existing
+  `User-Agent`/`originator` OpenCode detection remains a compatibility fallback. Grok Build also
+  falls back to `x-grok-client-identifier: grok-shell` and `User-Agent: grok-shell/...`.
+- Marker/path compatibility is exact: Claude Code accepts Anthropic Messages, Codex accepts OpenAI
+  Responses, and OpenCode plus Grok Build accept all three generation protocol families. Chat
+  Completions must never be classified as Codex merely because it is OpenAI-shaped.
+- HTTP method plus exact path determines `operation` and `sourceProtocol`. Prefix matching may
+  identify a route family, but unknown child paths never fall back to generation.
+- For each candidate:
+
+  ```text
+  upstreamProtocol = targetProtocol == native ? sourceProtocol : targetProtocol
+  ```
+
+  Equal protocols are transparent. Different protocols invoke one request adapter and one reverse
+  response adapter; no intermediate protocol is allowed.
+- Cross-protocol requests pass strict field/content/tool validation before upstream traffic. A
+  lossy candidate is recorded as neutral and skipped. Reasoning effort and the shared function-tool
+  choice subset (`auto`, required/any, named function, and parallel-call control) are mapped.
+  Provider-specific reasoning budgets, signed thinking blocks, summaries, media, native tools,
+  metadata, and unknown fields are not silently removed.
+- `POST /v1/messages/count_tokens` and `POST /v1/responses/input_tokens` try only same-protocol
+  channels. If none supports the endpoint, return `{ input_tokens }` with
+  `x-api-detect-token-estimate: local-approximate`. Unsupported upstream attempts retain their real
+  status code; the final local estimate has one separate HTTP 200 diagnostic log.
+- Batch, stored Chat Completion, stored/background Responses, Files references,
+  `previous_response_id`, conversation/container state, and resource lifecycle paths are rejected
+  before channel selection. Top-level OpenAI resource families such as `/v1/batches`, `/v1/files`,
+  `/v1/uploads`, `/v1/vector_stores`, `/v1/conversations`, and `/v1/containers` are explicitly
+  stateful-unsupported rather than unknown 404 routes. No resource map or conversation-level
+  affinity exists. The existing global 30-minute successful-path affinity and one current-hit UI
+  remain unchanged.
+- Config load removes the obsolete `routing.openCodeRouteProtocol` property and persists the clean
+  stable config; the field no longer participates in any runtime decision.
+- Grok Build static detection reads `~/.grok/config.toml` or `GROK_HOME/config.toml`, resolves
+  `[models].default` into `[model.<id>]`, and accepts a model `api_key`, one or more `env_key`
+  names, model/global `extra_headers["x-api-key"]` or `extra_headers["authorization"]`,
+  `XAI_API_KEY`, or `GROK_CODE_XAI_API_KEY`. A signed-in session token is outside the static TOML
+  contract and must not be guessed. Static detection must not execute `grok` or send an inference
+  request.
+- After route authentication and any protocol conversion, remove the private marker and every
+  `x-grok-*` conversation/identity header before forwarding to an upstream relay. Standard protocol
+  headers and request body fields carry the routable model/request semantics.
+- Configuration support and model-probe support are separate contracts. Every persisted/UI map uses
+  `BuiltinCliType`; wrapper, manual-test, and scheduled-probe payloads use `ProbeCliType`. Grok Build
+  controls render normally but the test action is disabled with `暂不支持探测`.
 
 ### 4. Validation & Error Matrix
 
-| Case | Boundary | Expected behavior |
-|------|----------|-------------------|
-| Missing persisted `openCodeRouteProtocol` | config normalization | Store `openai-chat-completions` |
-| User selects `/v1/messages`; client sends `/v1/chat/completions`; upstream target is native | proxy request chain | Convert chat -> messages and forward `/v1/messages` |
-| User selects `/v1/messages`; client and explicit upstream target are both chat | proxy request chain | Still run chat -> messages -> chat instead of transparent passthrough |
-| Client sends `/v1/messages` with `x-api-key` | route auth | Validate the route API key from `x-api-key` |
-| Upstream response is transformed | response boundary | Apply upstream -> selected -> original-source response adapters |
-| Adapter cannot parse source body | proxy fallback | Record `adapter_request-adapt:<reason>` and try the next route path before writing response bytes |
+| Case | Expected behavior |
+|------|-------------------|
+| Unknown route family | `404 unsupported_route` |
+| Known family with unknown method/full path | `501 unsupported_route_operation`; no channel attempt |
+| Batch/stored/resource lifecycle path | `501 stateful_route_operation_unsupported`; no channel attempt |
+| Generation/count request contains provider-owned state | `501 stateful_request_unsupported`; no channel attempt |
+| Valid CLI marker with invalid route key | `401 invalid_api_key` |
+| Marker CLI conflicts with source protocol | `400 cli_marker_path_mismatch` |
+| Grok Build marker/native header/UA on any generation family | Classify as `grokBuild`; normal route-key validation still applies |
+| Grok Build static config missing/invalid | Return unconfigured/invalid detection state; do not run the CLI |
+| Grok Build sent to a model-probe IPC/service | Reject or skip before wrapper execution; no model request |
+| Cross-protocol candidate contains an unsupported field | Skip candidate without route-path failure |
+| Every candidate would be lossy | `400 no_compatible_route_channel`; no upstream traffic |
+| Token-count endpoint unsupported upstream | Same-protocol attempts continue, then local approximate response |
+| Same source/upstream protocol | Preserve request/response shape and streaming behavior |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: OpenCode sends Anthropic Messages, the Route page selector is
-  `/v1/chat/completions`, and a native upstream channel receives a Chat Completions request while
-  OpenCode receives an Anthropic Messages response.
-- Good: OpenCode sends Chat Completions, the selector is `/v1/messages`, and an explicit Chat
-  Completions upstream still goes through a two-step conversion so selector semantics are not
-  bypassed.
-- Base: Source, selected, and upstream protocols are all Chat Completions; transparent streaming is
-  allowed and uses Chat Completions terminal validation.
-- Bad: Treating OpenCode `native` as permanently equal to `/v1/chat/completions` inside
-  `route-proxy-service.ts`.
-- Bad: Deciding whether to adapt by comparing only source protocol and final upstream protocol,
-  because that skips the selected intermediate endpoint.
+- Good: OpenCode selects `api-detect-anthropic/model` through `/models`; a native channel receives
+  `/v1/messages`, and the private marker is removed upstream.
+- Good: Grok Build selects `api-detect-grok-chat` through `/model`; a native channel receives
+  `/v1/chat/completions`, while the same configured CLI can later send `/v1/messages` without any
+  global entry-protocol change.
+- Good: A Responses request first encounters an explicit Chat candidate that cannot preserve
+  `metadata`; that candidate is skipped and a later native Responses candidate succeeds unchanged.
+- Base: An Anthropic request targets Chat with only text, function tools, a shared tool-choice
+  control, sampling fields, and reasoning effort; one adapter runs in each direction.
+- Bad: Treating every `/v1/responses/*` path as `POST /v1/responses` generation.
+- Bad: Rebuilding a request while silently dropping unknown fields or running
+  `source -> intermediate -> upstream`.
+- Bad: Adding `grokBuild` to `BuiltinCliType` and then reusing that type for wrapper/probe payloads,
+  which would expose a test action without a real executor.
 
 ### 6. Tests Required
 
 - `src/__tests__/route-proxy-service.test.ts`
-  - Assert OpenCode `/v1/messages` normalizes to the selected Chat Completions endpoint for a native
-    channel and adapts the response back to Anthropic shape.
-  - Assert source chat + selected messages + explicit upstream chat does not transparently return
-    the upstream Chat Completions body.
-  - Assert route analytics records the effective target protocol and endpoint.
+  - Assert the three source protocols by real method/path and managed OpenCode/Grok Build markers.
+  - Assert the complete three-by-three source/upstream matrix, endpoint, auth shape, model/thinking
+    override, private-header removal, and downstream source shape.
+  - Assert every known special operation classification and rejection before channel selection.
+  - Assert both token-count endpoints use same-protocol forwarding and approximate fallback headers.
+  - Assert marker/path compatibility, top-level OpenAI resource families, tool-schema token
+    estimation, real unsupported statuses, and a separate final local-estimate log.
+  - Assert lossy-candidate fallback and the all-incompatible diagnostic response.
+- `src/__tests__/cli-protocol-adapter.test.ts`
+  - Assert unsupported media/unknown fields fail instead of disappearing.
+  - Assert reasoning effort maps between Anthropic and OpenAI shapes.
+  - Assert the shared tool-choice and parallel-call subset maps in both directions while unsupported
+    choices remain fail-closed.
+- `src/__tests__/cli-config-generator.property.test.ts`
+  - Assert only route-generated configs contain CLI markers.
+  - Assert all three OpenCode Providers, auth entries, packages, default model, and local base URL.
+  - Assert all three Grok Build managed models, backends, marker, local base URL, and disabled hosted
+    search/stream-tool extensions.
+- `src/__tests__/cli-compat-handlers.test.ts`
+  - Apply the managed OpenCode config twice in merge mode and assert user Providers survive.
+  - Apply Grok Build TOML twice and assert user model/MCP sections survive without Codex feature flags.
 - `src/__tests__/route-workbench-redesign.test.tsx`
-  - Assert the Route page renders OpenCode "入口端点" selector and calls
-    `saveOpenCodeRouteProtocol()` on change.
-- `src/__tests__/unified-config-manager.test.ts`
-  - Assert invalid persisted values backfill to `DEFAULT_OPEN_CODE_ROUTE_PROTOCOL`.
+  - Assert no OpenCode/Grok Build entry selector remains, Grok preview contains three models, and
+    apply exposes merge only.
+- `src/__tests__/config-detection.property.test.ts`
+  - Assert Grok Build TOML resolution and that `detectAll()` includes the static result.
+- `src/__tests__/route-cli-probe-service.test.ts`
+  - Assert Grok Build is a built-in CLI but is absent from `PROBE_CLI_TYPES` and scheduled tasks.
+- `src/__tests__/unified-cli-config-dialog.test.tsx` and
+  `src/__tests__/custom-cli-config-editor-dialog.test.tsx`
+  - Assert native endpoint text follows the current Grok model entry, apply is merge-only, and the
+    disabled probe action never calls the wrapper bridge.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
 ```ts
-// Skips the Route page selector whenever source and final upstream are both chat.
-if (sourceProtocol === upstreamProtocol) {
-  forwardTransparent();
+if (pathname.startsWith('/v1/responses')) {
+  adaptRequestToTargetProtocol(body, selectedIntermediateProtocol);
+  adaptRequestToTargetProtocol(body, channelProtocol);
 }
 ```
 
 #### Correct
 
 ```ts
-const selectedProtocol = normalizeOpenCodeRouteProtocol(routing.openCodeRouteProtocol);
-if (sourceProtocol !== selectedProtocol) {
-  adapt(sourceProtocol, selectedProtocol);
-}
-if (selectedProtocol !== upstreamProtocol) {
-  adapt(selectedProtocol, upstreamProtocol);
+const operation = classifyRouteEndpointOperation(req.method, req.url);
+const upstreamProtocol =
+  channel.targetProtocol === 'native' ? operation.protocol : channel.targetProtocol;
+
+if (operation.capability === 'generation-convertible' && operation.protocol !== upstreamProtocol) {
+  adaptRequestToTargetProtocol(body, cliType, upstreamProtocol, req.url, model, operation.protocol);
 }
 ```
 
@@ -1849,7 +1944,7 @@ reasoningEffort = effort || undefined;
 
 ### 1. Scope / Trigger
 
-- Trigger: users choose a Claude Code, Codex, or OpenCode reasoning effort in the route proxy panel.
+- Trigger: users choose a Claude Code, Codex, OpenCode, or Grok Build reasoning effort in the route proxy panel.
 - The setting changes only forwarded route requests. It must not alter generated local CLI config
   previews or files written by the route panel.
 
@@ -1867,7 +1962,7 @@ export function normalizeRouteThinkingEffort(value: unknown): RouteThinkingEffor
 export function applyRouteThinkingEffortOverride(
   bodyBuffer: Buffer,
   effort: RouteThinkingEffort | null | undefined,
-  protocol: 'anthropic' | 'openai'
+  protocol: 'anthropic-messages' | 'openai-chat-completions' | 'openai-responses'
 ): Buffer;
 
 // preload/store bridge
@@ -1883,9 +1978,12 @@ saveCliThinkingEffortSelections(
   any other non-empty string as a custom value.
 - Apply the user selection after model, target-protocol, and AnyRouter rewrites so explicit user
   intent wins over provider defaults such as AnyRouter `max`.
-- Anthropic-shaped requests write `output_config.effort`. Preserve an existing non-empty
+- Anthropic Messages requests write `output_config.effort`. Preserve an existing non-empty
   `thinking` object; otherwise add `{ type: 'adaptive' }`.
-- OpenAI-shaped requests write `reasoning.effort`, preserving sibling reasoning fields.
+- OpenAI Responses requests write `reasoning.effort`, preserving sibling reasoning fields and
+  removing top-level Chat aliases.
+- OpenAI Chat Completions requests write top-level `reasoning_effort` and remove the
+  Responses-only `reasoning` object plus camel-case aliases.
 - Non-JSON or non-object request bodies are returned unchanged.
 - The selector has no visible `思考强度` prefix. Choosing `自定义` opens the shared application
   modal for one-time input; no persistent inline input and no raw browser prompt are allowed.
@@ -1905,7 +2003,8 @@ saveCliThinkingEffortSelections(
 | Custom string is padded | Trim and persist the remaining string verbatim |
 | Anthropic body lacks `thinking` | Add adaptive thinking and write `output_config.effort` |
 | Anthropic body has `thinking.type` | Preserve it and only write effort |
-| OpenAI body has other `reasoning` fields | Preserve siblings and replace only `reasoning.effort` |
+| Responses body has other `reasoning` fields | Preserve siblings and replace only `reasoning.effort` |
+| Chat body has `reasoning` or camel-case aliases | Remove those fields and write top-level `reasoning_effort` |
 | Custom row delete button is clicked | Persist `null`; remove the custom row from the menu |
 | Body is invalid JSON | Forward the original bytes unchanged |
 
@@ -1914,6 +2013,8 @@ saveCliThinkingEffortSelections(
 - Good: Claude Code selects custom `ultra`; the selector displays `ultra`, the upstream body uses
   `output_config.effort = 'ultra'`, and the log displays `ultra`.
 - Base: Codex remains `未设置`; its original `reasoning.effort` passes through.
+- Good: Grok Build targets Chat Completions; the final body contains only top-level
+  `reasoning_effort`, and a Messages model sends its key through `extra_headers["x-api-key"]`.
 - Bad: keeping an extra text input below every selector, placing the delete button outside the
   closed selector frame, using `window.prompt`, or allowing an AnyRouter default to overwrite the
   user's explicit selection.
@@ -1923,8 +2024,13 @@ saveCliThinkingEffortSelections(
 - `src/__tests__/route-workbench-redesign.test.tsx`: assert no visible prefix or persistent custom
   input, modal entry, the custom row immediately above `自定义`, the delete button inside that row,
   and delete-to-null behavior.
-- `src/__tests__/route-proxy-service.test.ts`: assert Anthropic/OpenAI rewrites, preservation,
-  pass-through, custom strings, invalid JSON, OpenCode protocol mapping, and AnyRouter precedence.
+- `src/__tests__/route-proxy-service.test.ts`: assert Anthropic, Chat, and Responses rewrites,
+  preservation, pass-through, custom strings, invalid JSON, OpenCode protocol mapping, private
+  `x-grok-*` header removal, and AnyRouter precedence.
+- `src/__tests__/cli-config-generator.property.test.ts`: assert Messages `x-api-key` only,
+  route-marker/header merging, and verbatim non-`sk-` Grok keys.
+- `src/__tests__/config-detection.property.test.ts`: assert `env_key` arrays, model/global auth
+  headers, and both supported global Grok API-key environment names.
 - `src/__tests__/logs-page.test.tsx`: assert the logged value reflects the final overridden body.
 - Type-check and production build must cover the shared config, preload, store, and renderer bridge.
 
@@ -1951,7 +2057,7 @@ const finalBody = applyRouteThinkingEffortOverride(rewritten, normalized, protoc
 
 ### 1. Scope / Trigger
 
-- Trigger: Codex / Claude Code / OpenCode can chat successfully through the local route proxy
+- Trigger: Codex / Claude Code / OpenCode / Grok Build can chat successfully through the local route proxy
   (`127.0.0.1:<port>`), but the renderer **路由日志** page shows no matching request rows (or
   appears empty after the user reopens the app / window).
 - Diagnosis only first: do **not** treat this as "Codex bypasses the proxy" or "Codex is not logged"
@@ -1988,13 +2094,20 @@ const finalBody = applyRouteThinkingEffortOverride(rewritten, normalized, protoc
    - After that line, previous in-memory request logs are gone even if CLI still works via persisted
      `routePathStates` affinity.
 4. **Is the missing row a successful SSE that may have cancelled?**
-   - Code order in `handleRequest()` after `forwardToUpstream()`:
-     1. if `routeAbortController.signal.aborted` → `return` (**no** `recordRouteRequest`)
-     2. else `recordRouteRequest(...)` (success/failure)
-     3. then `if (result.streamed) res.end(); return`
-   - Spec already says client cancel must not record path-failure analytics. That same early return
-     also skips the route-request log row, so a CLI turn that "felt successful" can leave no UI log
-     when the client closes just as the stream ends.
+   - Electron cancellation normally rejects `electronFetchRawStream()` before
+     `forwardToUpstream()` can return. A test double that resolves after abort does not reproduce the
+     production transport contract.
+   - Once a complete protocol terminal event has passed content validation,
+     `shouldResolveOnAbort()` lets Electron resolve the retained stream body despite the intentional
+     transport abort. Code order in `handleRequest()` after `forwardToUpstream()` is then:
+     1. if `routeAbortController.signal.aborted` and the finished result is a non-zero-usage success
+        (including successful transparent SSE with `streamed: true`) → record success path outcome +
+        `recordRouteRequest({ outcome: 'success' })`, then return
+     2. if `routeAbortController.signal.aborted` and the finished result is failure / incomplete /
+        all-zero non-stream usage → return **without** request-log or path-failure writes
+     3. else `recordRouteRequest(...)` for normal success/failure, then end streamed responses
+   - Client cancel still must not record path-failure analytics. After the H2 fix, a finished
+     successful upstream attempt remains visible in session request logs and can seed path affinity.
 5. **Is this Codex-only?**
    - No. `recordRouteRequest()` is shared. `CLI_TYPE_PATH_MAP` only differs by path:
      - Claude Code → `/v1/messages`
@@ -2012,9 +2125,11 @@ const finalBody = applyRouteThinkingEffortOverride(rewritten, normalized, protoc
 - Interactive (non-probe-lock) success/failure attempts that finish without client cancel must call
   `recordRouteRequest()` before ending a streamed response. Probe-lock traffic intentionally bypasses
   path-state and normal interactive logging side effects where `bypassRoutePathState` is true.
-- Client cancel / disconnect remains "no path failure / no provider-failure analytics". That does
-  **not** mean operators should diagnose empty logs as "proxy never saw the request"; check main.log
-  first.
+- Client cancel / disconnect remains "no path failure / no provider-failure analytics" for incomplete
+  or failed late results. When the upstream attempt has already finished as a successful non-zero
+  result (including successful transparent SSE), `handleRequest()` must still call
+  `recordRouteRequest({ outcome: 'success' })` and success path-state updates even if the local client
+  closed first. That preserves session observability without treating cancel as a path failure.
 - Live UI updates use `route:request-log-appended` / `window.electronAPI.route.onRequestLogAppended`.
   `route-overview` debounce is for dashboards, not the log page primary feed.
 - When debugging "CLI works, logs empty", prefer this order:
@@ -2028,7 +2143,10 @@ const finalBody = applyRouteThinkingEffortOverride(rewritten, normalized, protoc
 | Case | Evidence | Expected operator conclusion |
 |------|----------|------------------------------|
 | Codex works after full app restart; log page empty | `Route proxy server started` after the successful turns; `routePathStates` still has recent success | H1: logs wiped with process; routing still healthy |
-| Codex works; main.log shows continuous `Codex native request forwarded` + stream POST, no failure | Same process since proxy start | Expect request-log rows; if UI empty, check H2 cancel race / H4 preload-filter |
+| Codex works; main.log shows continuous `Codex native request forwarded` + stream POST, no failure | Same process since proxy start | Expect request-log rows; if UI empty after the H2 fix, check H1 restart / H4 preload-filter |
+| Finished streamed success then client close | protocol terminal event validated; Electron signal abort resolves the retained stream body; `forwardToUpstream` returns `streamed: true` while `signal.aborted` | Session request log records `success`; path affinity may update; no failure analytics |
+| Client closes before a validated terminal event | Electron signal abort rejects the stream request | No success/failure request-log row, no fallback, and no path-failure write |
+| Late failed upstream after client close | aborted, finished result is `5xx` / incomplete | No request-log row and no path-failure write |
 | Codex works; main.log shows `Channel failed` then later success stream | Same process | Failure attempts must have request-log rows even if user only notices the final success |
 | Claude Code / OpenCode same empty-log complaint | Same markers with their cliType/path | Same contracts; not Codex-only |
 | CLI works but main.log has no local rewrite / no upstream from RouteProxy | No proxy markers | CLI not pointed at local route (wrong base_url / different port / provider manager) |
@@ -2036,18 +2154,22 @@ const finalBody = applyRouteThinkingEffortOverride(rewritten, normalized, protoc
 
 ### 6. Good / Bad Diagnosis
 
-- Good: open `main.log`, grep `cliType: 'codex'` / `Codex native request forwarded` / `Route proxy server started`, then decide H1 vs H2 vs config mismatch.
+- Good: open `main.log`, grep `cliType: 'codex'` / `Codex native request forwarded` / `Route proxy server started`, then decide H1 vs config mismatch.
 - Good: compare "CLI works" with persisted `routePathStates` affinity — working after restart is expected even when request logs are empty.
 - Bad: concluding "Codex does not go through local route" only because the log page is empty.
 - Bad: adding Codex-only logging branches without checking the shared `recordRouteRequest` path.
 - Bad: treating client-cancel silent exit as proof the proxy never received the request.
+- Bad: recording path-failure analytics for cancelled incomplete streams.
 
-### 7. Fix Direction (do not implement in pure diagnosis)
+### 7. Fix Status / Remaining Direction
 
-1. Keep session-scoped memory unless product explicitly wants durable request logs.
-2. If product wants "every finished interactive attempt visible", reconsider logging on client-cancel
-   after a successful upstream terminal marker (or log a `neutral`/`cancelled` outcome) without
-   counting it as path failure.
+1. H2 cancel race for finished successful upstream attempts is fixed across both layers:
+   - `electronFetchRawStream()` resolves its retained response on signal abort only when
+     `shouldResolveOnAbort()` confirms protocol-validated completion
+   - `handleRequest()` then uses `shouldRecordCancelledUpstreamSuccess()` +
+     `recordCancelledUpstreamSuccess()` to record the successful attempt once
+2. Keep session-scoped memory unless product explicitly wants durable request logs (H1 remains).
 3. Optionally surface session-scope more strongly in the log page empty state ("当前会话暂无；重启后会清空").
-4. Add an integration assertion: streamed success that completes with terminal marker always calls
-   `recordRouteRequest` once; aborted-before-record remains explicit.
+4. Tests must model the real transport contract: Electron signal abort rejects incomplete streams
+   but resolves retained validated-complete streams; the route test must not use an unrealistic mock
+   that resolves an arbitrary result after cancellation.

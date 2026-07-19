@@ -26,14 +26,24 @@ export type CliTargetProtocol = (typeof CLI_TARGET_PROTOCOLS)[number];
 
 export const DEFAULT_CLI_TARGET_PROTOCOL: CliTargetProtocol = 'native';
 
-export const BUILTIN_CLI_TYPES = ['claudeCode', 'codex', 'openCode'] as const;
+export const BUILTIN_CLI_TYPES = ['claudeCode', 'codex', 'openCode', 'grokBuild'] as const;
 
 export type BuiltinCliType = (typeof BUILTIN_CLI_TYPES)[number];
+
+/** 当前具备真实模型探测执行器的 CLI；Grok Build 暂不参与探测。 */
+export const PROBE_CLI_TYPES = [
+  'claudeCode',
+  'codex',
+  'openCode',
+] as const satisfies readonly BuiltinCliType[];
+
+export type ProbeCliType = (typeof PROBE_CLI_TYPES)[number];
 
 export const BUILTIN_CLI_LABELS: Record<BuiltinCliType, string> = {
   claudeCode: 'Claude Code',
   codex: 'Codex',
   openCode: 'OpenCode',
+  grokBuild: 'Grok Build',
 };
 
 export type CliTargetProtocolCliType = BuiltinCliType;
@@ -52,6 +62,9 @@ export function getCliTargetEndpoint(
       return '/v1/responses';
     }
     if (cliType === 'openCode') {
+      return '/v1/responses';
+    }
+    if (cliType === 'grokBuild') {
       return '/v1/responses';
     }
   }
@@ -113,6 +126,7 @@ export interface CliConfig {
   claudeCode?: CliConfigItem | null;
   codex?: CliConfigItem | null;
   openCode?: CliConfigItem | null;
+  grokBuild?: CliConfigItem | null;
 }
 
 /** 默认 CLI 配置 - 所有 CLI 默认启用 */
@@ -142,6 +156,17 @@ export const DEFAULT_CLI_CONFIG: Required<{
     targetProtocol: DEFAULT_CLI_TARGET_PROTOCOL,
   },
   openCode: {
+    apiKeyId: null,
+    model: null,
+    testModel: null,
+    testModels: [],
+    testResults: [],
+    enabled: true,
+    editedFiles: null,
+    applyMode: 'merge',
+    targetProtocol: DEFAULT_CLI_TARGET_PROTOCOL,
+  },
+  grokBuild: {
     apiKeyId: null,
     model: null,
     testModel: null,

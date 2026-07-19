@@ -26,6 +26,11 @@ interface NormalizedTool {
   parameters?: JsonRecord;
 }
 
+type NormalizedToolChoice =
+  | { type: 'auto' }
+  | { type: 'required' }
+  | { type: 'tool'; name: string };
+
 interface NormalizedToolCall {
   id: string;
   name: string;
@@ -59,6 +64,9 @@ interface NormalizedRequest {
   temperature?: number;
   topP?: number;
   stop?: unknown;
+  reasoningEffort?: string;
+  toolChoice?: NormalizedToolChoice;
+  parallelToolCalls?: boolean;
 }
 
 type NormalizedFinishReason = 'stop' | 'tool_calls' | 'length' | 'error';
@@ -319,6 +327,47 @@ function mapCodexTool(tool: unknown): NormalizedTool | null {
   };
 }
 
+function readToolChoice(
+  body: JsonRecord,
+  sourceProtocol: Exclude<CliTargetProtocol, 'native'>
+): NormalizedToolChoice | undefined {
+  const rawChoice = body.tool_choice;
+  if (rawChoice === undefined) return undefined;
+
+  if (sourceProtocol === 'anthropic-messages') {
+    const choice = normalizeObject(rawChoice);
+    const type = normalizeText(choice.type);
+    if (type === 'auto') return { type: 'auto' };
+    if (type === 'any') return { type: 'required' };
+    if (type === 'tool') return { type: 'tool', name: normalizeText(choice.name) };
+    return undefined;
+  }
+
+  if (typeof rawChoice === 'string') {
+    if (rawChoice === 'auto' || rawChoice === 'required') {
+      return { type: rawChoice };
+    }
+    return undefined;
+  }
+
+  const choice = normalizeObject(rawChoice);
+  if (sourceProtocol === 'openai-chat-completions') {
+    return { type: 'tool', name: normalizeText(normalizeObject(choice.function).name) };
+  }
+  return { type: 'tool', name: normalizeText(choice.name) };
+}
+
+function readParallelToolCalls(
+  body: JsonRecord,
+  sourceProtocol: Exclude<CliTargetProtocol, 'native'>
+): boolean | undefined {
+  if (sourceProtocol === 'anthropic-messages') {
+    const disabled = normalizeObject(body.tool_choice).disable_parallel_tool_use;
+    return typeof disabled === 'boolean' ? !disabled : undefined;
+  }
+  return typeof body.parallel_tool_calls === 'boolean' ? body.parallel_tool_calls : undefined;
+}
+
 /* ============================== Source Request Parsers ============================== */
 
 function parseClaudeTextOrError(
@@ -435,12 +484,23 @@ function parseClaudeRequest(
     temperature: toFiniteNumber(cleaned.temperature),
     topP: toFiniteNumber(cleaned.top_p),
     stop: cleaned.stop_sequences ?? cleaned.stop,
+    reasoningEffort: readReasoningEffort(cleaned),
+    toolChoice: readToolChoice(cleaned, 'anthropic-messages'),
+    parallelToolCalls: readParallelToolCalls(cleaned, 'anthropic-messages'),
   };
 }
 
 function toFiniteNumber(value: unknown): number | undefined {
   const num = Number(value);
   return Number.isFinite(num) ? num : undefined;
+}
+
+function readReasoningEffort(body: JsonRecord): string | undefined {
+  const reasoning = normalizeObject(body.reasoning);
+  const outputConfig = normalizeObject(body.output_config);
+  const value =
+    reasoning.effort ?? outputConfig.effort ?? body.reasoning_effort ?? body.reasoningEffort;
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 function parseCodexInstructions(value: unknown): string {
@@ -549,6 +609,9 @@ function parseCodexRequest(
     temperature: toFiniteNumber(cleaned.temperature),
     topP: toFiniteNumber(cleaned.top_p),
     stop: cleaned.stop,
+    reasoningEffort: readReasoningEffort(cleaned),
+    toolChoice: readToolChoice(cleaned, 'openai-responses'),
+    parallelToolCalls: readParallelToolCalls(cleaned, 'openai-responses'),
   };
 }
 
@@ -627,7 +690,561 @@ function parseOpenAiChatRequest(
     temperature: toFiniteNumber(cleaned.temperature),
     topP: toFiniteNumber(cleaned.top_p),
     stop: cleaned.stop,
+    reasoningEffort: readReasoningEffort(cleaned),
+    toolChoice: readToolChoice(cleaned, 'openai-chat-completions'),
+    parallelToolCalls: readParallelToolCalls(cleaned, 'openai-chat-completions'),
   };
+}
+
+function assertAllowedKeys(
+  record: JsonRecord,
+  allowed: ReadonlySet<string>,
+  path: string,
+  sourceCliType: RouteCliType,
+  targetProtocol: Exclude<CliTargetProtocol, 'native'>
+): void {
+  const unsupported = Object.keys(record).find(key => !allowed.has(key));
+  if (unsupported) {
+    throwUnsupported(`unsupported_field:${path}.${unsupported}`, sourceCliType, targetProtocol);
+  }
+}
+
+function validateReasoningObject(
+  value: unknown,
+  path: string,
+  sourceCliType: RouteCliType,
+  targetProtocol: Exclude<CliTargetProtocol, 'native'>
+): void {
+  if (value === undefined) return;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throwUnsupported(`unsupported_field:${path}`, sourceCliType, targetProtocol);
+  }
+  const record = value as JsonRecord;
+  assertAllowedKeys(record, new Set(['effort']), path, sourceCliType, targetProtocol);
+  if (record.effort !== undefined && typeof record.effort !== 'string') {
+    throwUnsupported(`unsupported_field:${path}.effort`, sourceCliType, targetProtocol);
+  }
+}
+
+function validateReasoningScalars(
+  body: JsonRecord,
+  sourceCliType: RouteCliType,
+  targetProtocol: Exclude<CliTargetProtocol, 'native'>
+): void {
+  for (const field of ['reasoning_effort', 'reasoningEffort'] as const) {
+    if (body[field] !== undefined && typeof body[field] !== 'string') {
+      throwUnsupported(`unsupported_field:${field}`, sourceCliType, targetProtocol);
+    }
+  }
+}
+
+function validateTextContent(
+  content: unknown,
+  path: string,
+  sourceCliType: RouteCliType,
+  targetProtocol: Exclude<CliTargetProtocol, 'native'>
+): void {
+  if (typeof content === 'string' || content === null || content === undefined) {
+    return;
+  }
+  if (!Array.isArray(content)) {
+    throwUnsupported(`unsupported_content:${path}`, sourceCliType, targetProtocol);
+  }
+
+  content.forEach((part, index) => {
+    if (typeof part === 'string') return;
+    const record = normalizeObject(part);
+    const type = normalizeText(record.type);
+    if (!['', 'text', 'input_text', 'output_text'].includes(type)) {
+      throwUnsupported(
+        `unsupported_content:${path}[${index}].${type || 'unknown'}`,
+        sourceCliType,
+        targetProtocol
+      );
+    }
+    assertAllowedKeys(
+      record,
+      new Set(['type', 'text']),
+      `${path}[${index}]`,
+      sourceCliType,
+      targetProtocol
+    );
+  });
+}
+
+function validateInstructions(
+  value: unknown,
+  path: string,
+  sourceCliType: RouteCliType,
+  targetProtocol: Exclude<CliTargetProtocol, 'native'>
+): void {
+  if (value === undefined || value === null || typeof value === 'string') {
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) =>
+      validateInstructions(item, `${path}[${index}]`, sourceCliType, targetProtocol)
+    );
+    return;
+  }
+  if (typeof value !== 'object') {
+    throwUnsupported(`unsupported_field:${path}`, sourceCliType, targetProtocol);
+  }
+
+  const record = value as JsonRecord;
+  assertAllowedKeys(
+    record,
+    new Set(['type', 'text', 'input_text', 'output_text', 'content', 'parts']),
+    path,
+    sourceCliType,
+    targetProtocol
+  );
+  if (record.content !== undefined) {
+    validateInstructions(record.content, `${path}.content`, sourceCliType, targetProtocol);
+  }
+  if (record.parts !== undefined) {
+    validateInstructions(record.parts, `${path}.parts`, sourceCliType, targetProtocol);
+  }
+}
+
+function validateFunctionTools(
+  tools: unknown,
+  sourceProtocol: Exclude<CliTargetProtocol, 'native'>,
+  sourceCliType: RouteCliType,
+  targetProtocol: Exclude<CliTargetProtocol, 'native'>
+): void {
+  if (tools === undefined) return;
+  if (!Array.isArray(tools)) {
+    throwUnsupported('unsupported_field:tools', sourceCliType, targetProtocol);
+  }
+
+  tools.forEach((tool, index) => {
+    const record = normalizeObject(tool);
+    if (sourceProtocol === 'anthropic-messages') {
+      assertAllowedKeys(
+        record,
+        new Set(['name', 'description', 'input_schema']),
+        `tools[${index}]`,
+        sourceCliType,
+        targetProtocol
+      );
+      if (typeof record.name !== 'string' || !record.name.trim()) {
+        throwUnsupported(`unsupported_tool:tools[${index}].name`, sourceCliType, targetProtocol);
+      }
+      return;
+    }
+
+    if (record.type !== undefined && record.type !== 'function') {
+      throwUnsupported(
+        `unsupported_tool:${normalizeText(record.type) || 'unknown'}`,
+        sourceCliType,
+        targetProtocol
+      );
+    }
+    const fn = normalizeObject(record.function);
+    if (Object.keys(fn).length > 0) {
+      assertAllowedKeys(
+        record,
+        new Set(['type', 'function']),
+        `tools[${index}]`,
+        sourceCliType,
+        targetProtocol
+      );
+      assertAllowedKeys(
+        fn,
+        new Set(['name', 'description', 'parameters']),
+        `tools[${index}].function`,
+        sourceCliType,
+        targetProtocol
+      );
+      if (typeof fn.name !== 'string' || !fn.name.trim()) {
+        throwUnsupported(`unsupported_tool:tools[${index}].name`, sourceCliType, targetProtocol);
+      }
+      return;
+    }
+    assertAllowedKeys(
+      record,
+      new Set(['type', 'name', 'description', 'parameters']),
+      `tools[${index}]`,
+      sourceCliType,
+      targetProtocol
+    );
+    if (typeof record.name !== 'string' || !record.name.trim()) {
+      throwUnsupported(`unsupported_tool:tools[${index}].name`, sourceCliType, targetProtocol);
+    }
+  });
+}
+
+function validateToolChoice(
+  value: unknown,
+  sourceProtocol: Exclude<CliTargetProtocol, 'native'>,
+  sourceCliType: RouteCliType,
+  targetProtocol: Exclude<CliTargetProtocol, 'native'>
+): void {
+  if (value === undefined) return;
+
+  if (sourceProtocol === 'anthropic-messages') {
+    const choice = normalizeObject(value);
+    assertAllowedKeys(
+      choice,
+      new Set(['type', 'name', 'disable_parallel_tool_use']),
+      'tool_choice',
+      sourceCliType,
+      targetProtocol
+    );
+    const type = normalizeText(choice.type);
+    if (!['auto', 'any', 'tool'].includes(type)) {
+      throwUnsupported('unsupported_field:tool_choice.type', sourceCliType, targetProtocol);
+    }
+    if (type === 'tool') {
+      if (!normalizeText(choice.name).trim()) {
+        throwUnsupported('unsupported_field:tool_choice.name', sourceCliType, targetProtocol);
+      }
+    } else if (choice.name !== undefined) {
+      throwUnsupported('unsupported_field:tool_choice.name', sourceCliType, targetProtocol);
+    }
+    if (
+      choice.disable_parallel_tool_use !== undefined &&
+      typeof choice.disable_parallel_tool_use !== 'boolean'
+    ) {
+      throwUnsupported(
+        'unsupported_field:tool_choice.disable_parallel_tool_use',
+        sourceCliType,
+        targetProtocol
+      );
+    }
+    return;
+  }
+
+  if (typeof value === 'string') {
+    if (value === 'auto' || value === 'required') return;
+    throwUnsupported('unsupported_field:tool_choice', sourceCliType, targetProtocol);
+  }
+
+  const choice = normalizeObject(value);
+  if (sourceProtocol === 'openai-chat-completions') {
+    assertAllowedKeys(
+      choice,
+      new Set(['type', 'function']),
+      'tool_choice',
+      sourceCliType,
+      targetProtocol
+    );
+    const fn = normalizeObject(choice.function);
+    assertAllowedKeys(fn, new Set(['name']), 'tool_choice.function', sourceCliType, targetProtocol);
+    if (choice.type !== 'function' || !normalizeText(fn.name).trim()) {
+      throwUnsupported('unsupported_field:tool_choice.function', sourceCliType, targetProtocol);
+    }
+    return;
+  }
+
+  assertAllowedKeys(
+    choice,
+    new Set(['type', 'name']),
+    'tool_choice',
+    sourceCliType,
+    targetProtocol
+  );
+  if (choice.type !== 'function' || !normalizeText(choice.name).trim()) {
+    throwUnsupported('unsupported_field:tool_choice', sourceCliType, targetProtocol);
+  }
+}
+
+function validateParallelToolCalls(
+  value: unknown,
+  sourceCliType: RouteCliType,
+  targetProtocol: Exclude<CliTargetProtocol, 'native'>
+): void {
+  if (value !== undefined && typeof value !== 'boolean') {
+    throwUnsupported('unsupported_field:parallel_tool_calls', sourceCliType, targetProtocol);
+  }
+}
+
+function validateAnthropicRequest(
+  body: JsonRecord,
+  sourceCliType: RouteCliType,
+  targetProtocol: Exclude<CliTargetProtocol, 'native'>
+): void {
+  assertAllowedKeys(
+    body,
+    new Set([
+      'model',
+      'messages',
+      'system',
+      'max_tokens',
+      'stream',
+      'temperature',
+      'top_p',
+      'stop_sequences',
+      'stop',
+      'tools',
+      'tool_choice',
+      'output_config',
+    ]),
+    'request',
+    sourceCliType,
+    targetProtocol
+  );
+  validateReasoningObject(body.output_config, 'output_config', sourceCliType, targetProtocol);
+  validateToolChoice(body.tool_choice, 'anthropic-messages', sourceCliType, targetProtocol);
+  validateTextContent(body.system, 'system', sourceCliType, targetProtocol);
+  for (const [messageIndex, message] of (Array.isArray(body.messages)
+    ? body.messages
+    : []
+  ).entries()) {
+    const record = normalizeObject(message);
+    assertAllowedKeys(
+      record,
+      new Set(['role', 'content']),
+      `messages[${messageIndex}]`,
+      sourceCliType,
+      targetProtocol
+    );
+    const role = normalizeText(record.role);
+    if (role !== 'user' && role !== 'assistant') {
+      throwUnsupported(
+        `unsupported_field:messages[${messageIndex}].role`,
+        sourceCliType,
+        targetProtocol
+      );
+    }
+    if (typeof record.content === 'string') continue;
+    if (!Array.isArray(record.content)) {
+      throwUnsupported(
+        `unsupported_content:messages[${messageIndex}]`,
+        sourceCliType,
+        targetProtocol
+      );
+    }
+    record.content.forEach((part, partIndex) => {
+      if (typeof part === 'string') return;
+      const content = normalizeObject(part);
+      const path = `messages[${messageIndex}].content[${partIndex}]`;
+      const type = normalizeText(content.type);
+      const allowedByType: Record<string, ReadonlySet<string>> = {
+        text: new Set(['type', 'text']),
+        tool_use: new Set(['type', 'id', 'name', 'input']),
+        tool_result: new Set(['type', 'tool_use_id', 'id', 'content', 'is_error']),
+      };
+      const allowed = allowedByType[type];
+      if (!allowed) {
+        throwUnsupported(
+          `unsupported_content:${path}.${type || 'unknown'}`,
+          sourceCliType,
+          targetProtocol
+        );
+      }
+      if (type === 'tool_use' && role !== 'assistant') {
+        throwUnsupported(
+          `unsupported_content:${path}.tool_use_role`,
+          sourceCliType,
+          targetProtocol
+        );
+      }
+      assertAllowedKeys(content, allowed, path, sourceCliType, targetProtocol);
+      if (type === 'tool_result') {
+        validateTextContent(content.content, `${path}.content`, sourceCliType, targetProtocol);
+      }
+    });
+  }
+  validateFunctionTools(body.tools, 'anthropic-messages', sourceCliType, targetProtocol);
+}
+
+function validateResponsesRequest(
+  body: JsonRecord,
+  sourceCliType: RouteCliType,
+  targetProtocol: Exclude<CliTargetProtocol, 'native'>
+): void {
+  assertAllowedKeys(
+    body,
+    new Set([
+      'model',
+      'input',
+      'instructions',
+      'stream',
+      'tools',
+      'max_output_tokens',
+      'max_tokens',
+      'temperature',
+      'top_p',
+      'stop',
+      'reasoning',
+      'reasoning_effort',
+      'reasoningEffort',
+      'tool_choice',
+      'parallel_tool_calls',
+    ]),
+    'request',
+    sourceCliType,
+    targetProtocol
+  );
+  validateReasoningObject(body.reasoning, 'reasoning', sourceCliType, targetProtocol);
+  validateReasoningScalars(body, sourceCliType, targetProtocol);
+  validateToolChoice(body.tool_choice, 'openai-responses', sourceCliType, targetProtocol);
+  validateParallelToolCalls(body.parallel_tool_calls, sourceCliType, targetProtocol);
+  validateInstructions(body.instructions, 'instructions', sourceCliType, targetProtocol);
+  const inputs = Array.isArray(body.input) ? body.input : [];
+  inputs.forEach((input, index) => {
+    const record = normalizeObject(input);
+    const type = normalizeText(record.type);
+    if (type === 'function_call') {
+      assertAllowedKeys(
+        record,
+        new Set(['type', 'call_id', 'id', 'name', 'arguments']),
+        `input[${index}]`,
+        sourceCliType,
+        targetProtocol
+      );
+      return;
+    }
+    if (type === 'function_call_output') {
+      assertAllowedKeys(
+        record,
+        new Set(['type', 'call_id', 'id', 'output']),
+        `input[${index}]`,
+        sourceCliType,
+        targetProtocol
+      );
+      return;
+    }
+    assertAllowedKeys(
+      record,
+      new Set(['type', 'role', 'content']),
+      `input[${index}]`,
+      sourceCliType,
+      targetProtocol
+    );
+    const role = normalizeText(record.role);
+    if (role !== 'user' && role !== 'assistant') {
+      throwUnsupported(`unsupported_field:input[${index}].role`, sourceCliType, targetProtocol);
+    }
+    validateTextContent(record.content, `input[${index}].content`, sourceCliType, targetProtocol);
+  });
+  validateFunctionTools(body.tools, 'openai-responses', sourceCliType, targetProtocol);
+}
+
+function validateChatRequest(
+  body: JsonRecord,
+  sourceCliType: RouteCliType,
+  targetProtocol: Exclude<CliTargetProtocol, 'native'>
+): void {
+  assertAllowedKeys(
+    body,
+    new Set([
+      'model',
+      'messages',
+      'stream',
+      'tools',
+      'max_completion_tokens',
+      'max_tokens',
+      'temperature',
+      'top_p',
+      'stop',
+      'reasoning',
+      'reasoning_effort',
+      'reasoningEffort',
+      'tool_choice',
+      'parallel_tool_calls',
+    ]),
+    'request',
+    sourceCliType,
+    targetProtocol
+  );
+  validateReasoningObject(body.reasoning, 'reasoning', sourceCliType, targetProtocol);
+  validateReasoningScalars(body, sourceCliType, targetProtocol);
+  validateToolChoice(body.tool_choice, 'openai-chat-completions', sourceCliType, targetProtocol);
+  validateParallelToolCalls(body.parallel_tool_calls, sourceCliType, targetProtocol);
+  for (const [messageIndex, message] of (Array.isArray(body.messages)
+    ? body.messages
+    : []
+  ).entries()) {
+    const record = normalizeObject(message);
+    assertAllowedKeys(
+      record,
+      new Set(['role', 'content', 'tool_calls', 'tool_call_id']),
+      `messages[${messageIndex}]`,
+      sourceCliType,
+      targetProtocol
+    );
+    const role = normalizeText(record.role);
+    if (!['system', 'user', 'assistant', 'tool'].includes(role)) {
+      throwUnsupported(
+        `unsupported_field:messages[${messageIndex}].role`,
+        sourceCliType,
+        targetProtocol
+      );
+    }
+    if (record.tool_calls !== undefined && role !== 'assistant') {
+      throwUnsupported(
+        `unsupported_field:messages[${messageIndex}].tool_calls`,
+        sourceCliType,
+        targetProtocol
+      );
+    }
+    if (record.tool_call_id !== undefined && role !== 'tool') {
+      throwUnsupported(
+        `unsupported_field:messages[${messageIndex}].tool_call_id`,
+        sourceCliType,
+        targetProtocol
+      );
+    }
+    validateTextContent(
+      record.content,
+      `messages[${messageIndex}].content`,
+      sourceCliType,
+      targetProtocol
+    );
+    for (const [toolIndex, toolCall] of (Array.isArray(record.tool_calls)
+      ? record.tool_calls
+      : []
+    ).entries()) {
+      const tool = normalizeObject(toolCall);
+      assertAllowedKeys(
+        tool,
+        new Set(['id', 'type', 'function']),
+        `messages[${messageIndex}].tool_calls[${toolIndex}]`,
+        sourceCliType,
+        targetProtocol
+      );
+      assertAllowedKeys(
+        normalizeObject(tool.function),
+        new Set(['name', 'arguments']),
+        `messages[${messageIndex}].tool_calls[${toolIndex}].function`,
+        sourceCliType,
+        targetProtocol
+      );
+    }
+  }
+  validateFunctionTools(body.tools, 'openai-chat-completions', sourceCliType, targetProtocol);
+}
+
+function resolveSourceProtocol(
+  sourceCliType: RouteCliType,
+  requestUrl: string | undefined,
+  sourceProtocol: Exclude<CliTargetProtocol, 'native'> | undefined
+): Exclude<CliTargetProtocol, 'native'> {
+  if (sourceProtocol) return sourceProtocol;
+  if (sourceCliType === 'claudeCode') return 'anthropic-messages';
+  if (sourceCliType === 'codex') return 'openai-responses';
+  if (requestUrl?.split('?')[0] === '/v1/messages') return 'anthropic-messages';
+  if (requestUrl?.split('?')[0] === '/v1/responses') return 'openai-responses';
+  return 'openai-chat-completions';
+}
+
+function assertCrossProtocolRequestCompatible(
+  body: JsonRecord,
+  sourceCliType: RouteCliType,
+  sourceProtocol: Exclude<CliTargetProtocol, 'native'>,
+  targetProtocol: Exclude<CliTargetProtocol, 'native'>
+): void {
+  if (sourceProtocol === targetProtocol) return;
+  if (sourceProtocol === 'anthropic-messages') {
+    validateAnthropicRequest(body, sourceCliType, targetProtocol);
+  } else if (sourceProtocol === 'openai-responses') {
+    validateResponsesRequest(body, sourceCliType, targetProtocol);
+  } else {
+    validateChatRequest(body, sourceCliType, targetProtocol);
+  }
 }
 
 function normalizeSourceRequest(
@@ -643,7 +1260,7 @@ function normalizeSourceRequest(
   if (sourceCliType === 'claudeCode') {
     return parseClaudeRequest(cleaned, upstreamModel, sourceCliType, targetProtocol);
   }
-  if (sourceCliType === 'openCode') {
+  if (sourceCliType === 'openCode' || sourceCliType === 'grokBuild') {
     if (sourceProtocol === 'anthropic-messages') {
       return parseClaudeRequest(cleaned, upstreamModel, sourceCliType, targetProtocol);
     }
@@ -669,6 +1286,36 @@ function collectSystemText(request: NormalizedRequest): string {
     .filter((part): part is { kind: 'text'; text: string } => part.kind === 'text')
     .map(part => part.text)
     .join('\n\n');
+}
+
+function buildAnthropicToolChoice(request: NormalizedRequest): JsonRecord | undefined {
+  if (!request.toolChoice && request.parallelToolCalls === undefined) {
+    return undefined;
+  }
+
+  const choice: JsonRecord =
+    request.toolChoice?.type === 'required'
+      ? { type: 'any' }
+      : request.toolChoice?.type === 'tool'
+        ? { type: 'tool', name: request.toolChoice.name }
+        : { type: 'auto' };
+  if (request.parallelToolCalls !== undefined) {
+    choice.disable_parallel_tool_use = !request.parallelToolCalls;
+  }
+  return choice;
+}
+
+function buildOpenAiToolChoice(
+  request: NormalizedRequest,
+  protocol: 'openai-chat-completions' | 'openai-responses'
+): unknown {
+  if (!request.toolChoice) return undefined;
+  if (request.toolChoice.type === 'auto' || request.toolChoice.type === 'required') {
+    return request.toolChoice.type;
+  }
+  return protocol === 'openai-chat-completions'
+    ? { type: 'function', function: { name: request.toolChoice.name } }
+    : { type: 'function', name: request.toolChoice.name };
 }
 
 function buildAnthropicBody(request: NormalizedRequest): JsonRecord {
@@ -722,6 +1369,12 @@ function buildAnthropicBody(request: NormalizedRequest): JsonRecord {
       description: tool.description,
       input_schema: tool.parameters ?? {},
     }));
+  }
+  const toolChoice = buildAnthropicToolChoice(request);
+  if (toolChoice) body.tool_choice = toolChoice;
+  if (request.reasoningEffort) {
+    body.output_config = { effort: request.reasoningEffort };
+    body.thinking = { type: 'adaptive' };
   }
   return body;
 }
@@ -794,6 +1447,14 @@ function buildOpenAiChatBody(request: NormalizedRequest): JsonRecord {
       },
     }));
   }
+  const toolChoice = buildOpenAiToolChoice(request, 'openai-chat-completions');
+  if (toolChoice !== undefined) body.tool_choice = toolChoice;
+  if (request.parallelToolCalls !== undefined) {
+    body.parallel_tool_calls = request.parallelToolCalls;
+  }
+  if (request.reasoningEffort) {
+    body.reasoning_effort = request.reasoningEffort;
+  }
   return body;
 }
 
@@ -854,6 +1515,14 @@ function buildOpenAiResponsesBody(request: NormalizedRequest): JsonRecord {
       parameters: tool.parameters ?? {},
     }));
   }
+  const toolChoice = buildOpenAiToolChoice(request, 'openai-responses');
+  if (toolChoice !== undefined) body.tool_choice = toolChoice;
+  if (request.parallelToolCalls !== undefined) {
+    body.parallel_tool_calls = request.parallelToolCalls;
+  }
+  if (request.reasoningEffort) {
+    body.reasoning = { effort: request.reasoningEffort };
+  }
   return body;
 }
 
@@ -867,13 +1536,29 @@ export function adaptRequestToTargetProtocol(
   upstreamModel?: string,
   sourceProtocol?: Exclude<CliTargetProtocol, 'native'>
 ): CliProtocolRewriteResult {
+  const parsedBody = parseJsonBody(bodyBuffer);
+  if (!parsedBody) {
+    throw new CliProtocolAdapterError({
+      stage: 'request-adapt',
+      sourceCliType,
+      targetProtocol,
+      reason: 'invalid_source_body',
+    });
+  }
+  const resolvedSourceProtocol = resolveSourceProtocol(sourceCliType, requestUrl, sourceProtocol);
+  assertCrossProtocolRequestCompatible(
+    parsedBody,
+    sourceCliType,
+    resolvedSourceProtocol,
+    targetProtocol
+  );
   const normalized = normalizeSourceRequest(
     bodyBuffer,
     sourceCliType,
     targetProtocol,
     requestUrl,
     upstreamModel,
-    sourceProtocol
+    resolvedSourceProtocol
   );
   if (!normalized) {
     throw new CliProtocolAdapterError({
@@ -920,7 +1605,7 @@ export function adaptRequestToTargetProtocol(
     responseAdapter: {
       type: 'source',
       sourceCliType,
-      sourceProtocol,
+      sourceProtocol: resolvedSourceProtocol,
       targetProtocol,
       model: normalized.model,
       stream: normalized.stream,
@@ -1680,9 +2365,9 @@ export function transformTargetProtocolResponse(params: {
     );
   }
 
-  if (params.adapter.sourceCliType === 'openCode') {
-    const openCodeResponseProtocol = params.adapter.sourceProtocol ?? params.adapter.targetProtocol;
-    if (openCodeResponseProtocol === 'anthropic-messages') {
+  if (params.adapter.sourceCliType === 'openCode' || params.adapter.sourceCliType === 'grokBuild') {
+    const sourceResponseProtocol = params.adapter.sourceProtocol ?? params.adapter.targetProtocol;
+    if (sourceResponseProtocol === 'anthropic-messages') {
       const body = params.adapter.stream
         ? buildClaudeSse(params.adapter.model, normalized)
         : buildClaudeJson(params.adapter.model, normalized);
@@ -1693,7 +2378,7 @@ export function transformTargetProtocolResponse(params: {
       );
     }
 
-    if (openCodeResponseProtocol === 'openai-responses') {
+    if (sourceResponseProtocol === 'openai-responses') {
       const body = params.adapter.stream
         ? buildCodexSse(params.adapter.model, normalized)
         : Buffer.from(

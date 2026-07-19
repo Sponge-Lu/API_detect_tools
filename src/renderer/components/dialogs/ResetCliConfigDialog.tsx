@@ -17,6 +17,7 @@ import { toast } from '../../store/toastStore';
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../assets/cli-icons/codex.svg';
 import OpenCodeIcon from '../../assets/cli-icons/opencode.svg';
+import GrokBuildIcon from '../../assets/cli-icons/grok.svg';
 
 interface ResetCliConfigDialogProps {
   open: boolean;
@@ -50,6 +51,12 @@ const CLI_OPTIONS: CliOption[] = [
     name: BUILTIN_CLI_LABELS.openCode,
     icon: OpenCodeIcon,
     files: Object.values(CLI_CONFIG_PATHS.openCode).map(p => `~/${p}`),
+  },
+  {
+    key: 'grokBuild',
+    name: BUILTIN_CLI_LABELS.grokBuild,
+    icon: GrokBuildIcon,
+    files: Object.values(CLI_CONFIG_PATHS.grokBuild).map(p => `~/${p}`),
   },
 ];
 
@@ -176,7 +183,7 @@ export function ResetCliConfigDialog({
                 >
                   {isSelected && (
                     <svg
-                      className="w-3 h-3 text-white"
+                      className="w-3 h-3 text-[var(--text-on-danger)]"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"

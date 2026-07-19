@@ -167,6 +167,7 @@ function normalizeCliConfig(config) {
     claudeCode: normalizeCliConfigItem(config.claudeCode),
     codex: normalizeCliConfigItem(config.codex),
     openCode: normalizeCliConfigItem(config.openCode),
+    grokBuild: normalizeCliConfigItem(config.grokBuild),
   };
 }
 

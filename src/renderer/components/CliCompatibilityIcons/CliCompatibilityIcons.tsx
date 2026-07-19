@@ -27,6 +27,7 @@ import { buildCliCompatibilityTooltip, getCliCompatibilityIconClass } from './cl
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../assets/cli-icons/codex.svg';
 import OpenCodeIcon from '../../assets/cli-icons/opencode.svg';
+import GrokBuildIcon from '../../assets/cli-icons/grok.svg';
 
 export interface CliCompatibilityIconsProps {
   /** CLI 兼容性结果 */
@@ -73,6 +74,13 @@ const CLI_TYPES: CliTypeConfig[] = [
     name: BUILTIN_CLI_LABELS.openCode,
     icon: OpenCodeIcon,
     sizeClass: 'w-4 h-5',
+  },
+  {
+    key: 'grokBuild',
+    configKey: 'grokBuild',
+    name: BUILTIN_CLI_LABELS.grokBuild,
+    icon: GrokBuildIcon,
+    sizeClass: 'w-[18px] h-[18px]',
   },
 ];
 
@@ -221,7 +229,9 @@ export function CliCompatibilityIcons({
                 ? compatibility?.claudeError
                 : key === 'codex'
                   ? compatibility?.codexError
-                  : compatibility?.openCodeError;
+                  : key === 'openCode'
+                    ? compatibility?.openCodeError
+                    : compatibility?.grokBuildError;
             const styleClass = getCliCompatibilityIconClass({
               enabled,
               configured,
@@ -233,6 +243,7 @@ export function CliCompatibilityIcons({
               enabled,
               configured,
               status,
+              probeSupported: key !== 'grokBuild',
               testedAt: latestStatus.testedAt,
               claudeDetail:
                 latestStatus.useCompatibility && canReadCompatibility

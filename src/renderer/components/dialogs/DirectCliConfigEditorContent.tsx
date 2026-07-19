@@ -50,6 +50,7 @@ import {
 import {
   generateClaudeCodeConfig,
   generateCodexConfig,
+  generateGrokBuildConfig,
   generateOpenCodeConfig,
   type GeneratedConfig,
 } from '../../services/cli-config-generator';
@@ -60,6 +61,7 @@ import { formatModelPrice, resolveModelPricing } from '../../utils/modelPricing'
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../assets/cli-icons/codex.svg';
 import OpenCodeIcon from '../../assets/cli-icons/opencode.svg';
+import GrokBuildIcon from '../../assets/cli-icons/grok.svg';
 
 export interface DirectCliConfigEditorContentProps {
   config: CustomCliConfig;
@@ -126,6 +128,7 @@ const CLI_TYPES: CliTypeConfig[] = [
   { key: 'claudeCode', name: BUILTIN_CLI_LABELS.claudeCode, icon: ClaudeCodeIcon },
   { key: 'codex', name: BUILTIN_CLI_LABELS.codex, icon: CodexIcon },
   { key: 'openCode', name: BUILTIN_CLI_LABELS.openCode, icon: OpenCodeIcon },
+  { key: 'grokBuild', name: BUILTIN_CLI_LABELS.grokBuild, icon: GrokBuildIcon },
 ];
 
 const CLI_TARGET_PROTOCOL_LABELS: Record<CliTargetProtocol, string> = {
@@ -142,6 +145,9 @@ function buildCliTargetProtocolOptionLabel(
   targetProtocol: CliTargetProtocol,
   model?: string | null
 ): string {
+  if (cliType === 'grokBuild' && targetProtocol === 'native') {
+    return '原生协议 · 跟随 Grok Build 当前模型入口';
+  }
   return `${CLI_TARGET_PROTOCOL_LABELS[targetProtocol]} · ${getCliTargetEndpoint(
     cliType,
     targetProtocol,
@@ -418,11 +424,10 @@ const normalizeCliSetting = (setting?: CustomCliSettings | null): CustomCliSetti
 
 const normalizeCliSettings = (
   settings: Partial<CustomCliConfig['cliSettings']>
-): CustomCliConfig['cliSettings'] => ({
-  claudeCode: normalizeCliSetting(settings.claudeCode),
-  codex: normalizeCliSetting(settings.codex),
-  openCode: normalizeCliSetting(settings.openCode),
-});
+): CustomCliConfig['cliSettings'] =>
+  Object.fromEntries(
+    CLI_TYPE_KEYS.map(cliType => [cliType, normalizeCliSetting(settings[cliType])])
+  ) as CustomCliConfig['cliSettings'];
 
 function buildPerCliEditedFromSettings(
   cliSettings: CustomCliConfig['cliSettings']
@@ -431,12 +436,18 @@ function buildPerCliEditedFromSettings(
     claudeCode: null,
     codex: null,
     openCode: null,
+    grokBuild: null,
   };
 
   for (const key of CLI_TYPE_KEYS) {
     const saved = cliSettings[key]?.editedFiles;
     if (saved && saved.length > 0) {
-      initEdited[key] = { files: saved.map(f => ({ ...f, language: 'json' as const })) };
+      initEdited[key] = {
+        files: saved.map(file => ({
+          ...file,
+          language: file.path.toLowerCase().endsWith('.toml') ? 'toml' : 'json',
+        })),
+      };
     }
   }
 
@@ -823,6 +834,7 @@ export function DirectCliConfigEditorContent({
     claudeCode: null,
     codex: null,
     openCode: null,
+    grokBuild: null,
   });
   const [testingCli, setTestingCli] = useState<CliType | null>(null);
   const [applyingCli, setApplyingCli] = useState<CliType | null>(null);
@@ -900,6 +912,11 @@ export function DirectCliConfigEditorContent({
           ...params,
           targetProtocol: normalizeCliTargetProtocol(cliSettings.openCode.targetProtocol),
         });
+      } else if (cliType === 'grokBuild') {
+        return generateGrokBuildConfig({
+          ...params,
+          targetProtocol: normalizeCliTargetProtocol(cliSettings.grokBuild.targetProtocol),
+        });
       }
       return null;
     },
@@ -968,6 +985,10 @@ export function DirectCliConfigEditorContent({
   };
 
   const handleRunCliTests = async (cliType: CliType) => {
+    if (cliType === 'grokBuild') {
+      toast.info('Grok Build 模型探测暂未启用');
+      return;
+    }
     if (!baseUrl || !apiKey) {
       toast.error('请先填写 Base URL 和 API Key');
       return;
@@ -1649,7 +1670,10 @@ export function DirectCliConfigEditorContent({
                   ? summaries.find(summary => summary?.model === selectedTestModel)
                   : undefined;
                 const canRunCliTests =
-                  Boolean(baseUrl && apiKey) && setting.enabled && selectedTestModels.length > 0;
+                  cli.key !== 'grokBuild' &&
+                  Boolean(baseUrl && apiKey) &&
+                  setting.enabled &&
+                  selectedTestModels.length > 0;
                 const isOpen = selectedCli === cli.key;
 
                 return (
@@ -1778,7 +1802,7 @@ export function DirectCliConfigEditorContent({
                               {testingCli === cli.key ? (
                                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                               ) : null}
-                              测试已选模型
+                              {cli.key === 'grokBuild' ? '暂不支持探测' : '测试已选模型'}
                             </AppButton>
                           </div>
                           {modelOptions.length > 0 ? (

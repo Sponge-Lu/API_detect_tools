@@ -19,8 +19,10 @@ import {
   ClaudeCodeConfig,
   CodexConfig,
   CodexAuthConfig,
+  GrokBuildConfig,
   extractClaudeCodeInfo,
   extractCodexInfo,
+  getEffectiveGrokBuildConfig,
 } from '../main/utils/config-parsers';
 
 // ============= Arbitraries =============
@@ -114,6 +116,91 @@ const codexAuthConfigArb: fc.Arbitrary<CodexAuthConfig> = fc.record({
  * SHALL produce values that exactly match the original input values.
  */
 describe('Property 1: Config Parsing Correctness', () => {
+  it('resolves the active Grok Build model from static TOML config without probing', () => {
+    const config: GrokBuildConfig = {
+      models: { default: 'api-detect-grok-messages' },
+      model: {
+        'api-detect-grok-responses': {
+          base_url: 'http://127.0.0.1:3210/v1',
+          api_key: 'sk-responses',
+        },
+        'api-detect-grok-messages': {
+          base_url: 'https://messages.example.com/v1',
+          env_key: 'GROK_ROUTE_KEY',
+        },
+      },
+    };
+
+    expect(getEffectiveGrokBuildConfig(config, { GROK_ROUTE_KEY: 'sk-messages' })).toEqual({
+      baseUrl: 'https://messages.example.com/v1',
+      hasApiKey: true,
+      authType: 'api-key',
+      modelId: 'api-detect-grok-messages',
+    });
+  });
+
+  it('resolves Grok Build env_key arrays using the first populated environment variable', () => {
+    const config: GrokBuildConfig = {
+      models: { default: 'custom-messages' },
+      model: {
+        'custom-messages': {
+          base_url: 'https://messages.example.com/v1',
+          env_key: ['MISSING_GROK_KEY', 'GROK_ROUTE_KEY'],
+        },
+      },
+    };
+
+    expect(getEffectiveGrokBuildConfig(config, { GROK_ROUTE_KEY: 'route-key' })).toMatchObject({
+      hasApiKey: true,
+      authType: 'api-key',
+      modelId: 'custom-messages',
+    });
+  });
+
+  it.each([
+    {
+      name: 'model x-api-key header',
+      config: {
+        models: { default: 'custom-messages' },
+        model: {
+          'custom-messages': {
+            base_url: 'https://messages.example.com/v1',
+            extra_headers: { 'x-api-key': 'header-key' },
+          },
+        },
+      } satisfies GrokBuildConfig,
+      env: {},
+    },
+    {
+      name: 'global authorization header',
+      config: {
+        models: {
+          default: 'custom-responses',
+          extra_headers: { Authorization: 'Bearer header-key' },
+        },
+        model: {
+          'custom-responses': { base_url: 'https://responses.example.com/v1' },
+        },
+      } satisfies GrokBuildConfig,
+      env: {},
+    },
+    {
+      name: 'legacy Grok environment key',
+      config: {
+        models: { default: 'custom-responses' },
+        model: {
+          'custom-responses': { base_url: 'https://responses.example.com/v1' },
+        },
+      } satisfies GrokBuildConfig,
+      env: { GROK_CODE_XAI_API_KEY: 'legacy-key' },
+    },
+  ])('recognizes Grok Build credentials from $name', ({ config, env }) => {
+    expect(getEffectiveGrokBuildConfig(config, env)).toMatchObject({
+      hasApiKey: true,
+      authType: 'api-key',
+    });
+  });
+
   describe('ENV Parser Round Trip', () => {
     it('should correctly parse ENV format strings', () => {
       fc.assert(
@@ -945,6 +1032,7 @@ describe('Property 5: Caching Behavior', () => {
           // All supported CLIs should have cache
           expect(service.hasCacheFor('claudeCode')).toBe(true);
           expect(service.hasCacheFor('codex')).toBe(true);
+          expect(service.hasCacheFor('grokBuild')).toBe(true);
 
           // Clear only claudeCode cache
           service.clearCacheFor('claudeCode');
@@ -952,6 +1040,7 @@ describe('Property 5: Caching Behavior', () => {
           // Only claudeCode should not have cache
           expect(service.hasCacheFor('claudeCode')).toBe(false);
           expect(service.hasCacheFor('codex')).toBe(true);
+          expect(service.hasCacheFor('grokBuild')).toBe(true);
         }),
         { numRuns: 20 }
       );
@@ -990,6 +1079,7 @@ describe('Property 5: Caching Behavior', () => {
           // All supported CLIs should have cache
           expect(service.hasCacheFor('claudeCode')).toBe(true);
           expect(service.hasCacheFor('codex')).toBe(true);
+          expect(service.hasCacheFor('grokBuild')).toBe(true);
 
           // Second detectAll should return cached results
           const secondResult = await service.detectAll(sites);
@@ -997,6 +1087,7 @@ describe('Property 5: Caching Behavior', () => {
           // Results should be identical
           expect(secondResult.claudeCode.detectedAt).toBe(firstResult.claudeCode.detectedAt);
           expect(secondResult.codex.detectedAt).toBe(firstResult.codex.detectedAt);
+          expect(secondResult.grokBuild.detectedAt).toBe(firstResult.grokBuild.detectedAt);
         }),
         { numRuns: 20 }
       );

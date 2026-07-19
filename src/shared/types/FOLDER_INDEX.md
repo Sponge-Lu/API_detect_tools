@@ -15,11 +15,11 @@
 ### 核心类型文件
 | 文件 | 职责 | 关键类型 |
 |------|------|--------|
-| **site.ts** | 站点、检测缓存、API Key 活跃状态归一化、AnyRouter 站点名归一化识别与运行期快照类型 | Site, UnifiedSite, CheckinStats, CliCompatibilityData, SiteDailySnapshot, RuntimeCacheFile, ApiKeyAvailability |
-| **route-proxy.ts** | 路由工作台类型 | RoutingConfig, RouteProxyServerConfig, RouteModelRegistryConfig, RouteCliProbeSample, RouteCliProbeLatest, RouteAnalyticsObjectStatsItem |
-| **cli-config.ts** | CLI 配置类型 | CliConfig, CliCompatibility 等 |
-| **custom-cli-config.ts** | 自定义 CLI 配置类型 | CustomCliConfig, CustomCliSettings, CustomCliTestState, manualModels |
-| **config-detection.ts** | CLI 配置检测类型 | ConfigSourceType, CliDetectionResult, AllCliDetectionResult 等 |
+| **site.ts** | 站点、检测缓存、四种内置 CLI 配置/兼容性状态与运行期快照类型 | Site, UnifiedSite, CheckinStats, CliCompatibilityData, SiteDailySnapshot, RuntimeCacheFile, ApiKeyAvailability |
+| **route-proxy.ts** | 路由工作台类型，含 Grok Build marker、模型/思考强度和三协议路径映射 | RoutingConfig, RouteProxyServerConfig, RouteModelRegistryConfig, RouteCliProbeSample, RouteCliProbeLatest, RouteAnalyticsObjectStatsItem |
+| **cli-config.ts** | 内置 CLI 配置类型；区分四种配置 CLI 与三种可执行探测 CLI | BuiltinCliType, ProbeCliType, CliConfig, CLI_TARGET_PROTOCOLS |
+| **custom-cli-config.ts** | 自定义 CLI 配置类型，`cliSettings` 覆盖四种内置 CLI | CustomCliConfig, CustomCliSettings, CustomCliTestState, manualModels |
+| **config-detection.ts** | 四种 CLI 本地配置静态检测类型与官方端点/路径 | ConfigSourceType, CliDetectionResult, AllCliDetectionResult 等 |
 | **credit.ts** | Linux Do Credit 积分类型 | CreditInfo, CreditConfig, CreditState, CreditResponse 等 |
 ---
 ## 📝 类型详解

@@ -16,6 +16,7 @@ import type { CliCompatibilityData } from '../../../shared/types/site';
 import {
   generateClaudeCodeConfig,
   generateCodexConfig,
+  generateGrokBuildConfig,
   generateOpenCodeConfig,
 } from '../../services/cli-config-generator';
 import { toast } from '../../store/toastStore';
@@ -26,6 +27,7 @@ import { useConfigStore } from '../../store/configStore';
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../assets/cli-icons/codex.svg';
 import OpenCodeIcon from '../../assets/cli-icons/opencode.svg';
+import GrokBuildIcon from '../../assets/cli-icons/grok.svg';
 
 export interface ApplyConfigPopoverProps {
   isOpen: boolean;
@@ -38,7 +40,7 @@ export interface ApplyConfigPopoverProps {
   onClose: () => void;
 }
 
-type SupportedCliType = 'claudeCode' | 'codex' | 'openCode';
+type SupportedCliType = 'claudeCode' | 'codex' | 'openCode' | 'grokBuild';
 
 interface CliOption {
   key: SupportedCliType;
@@ -50,6 +52,7 @@ const CLI_OPTIONS: CliOption[] = [
   { key: 'claudeCode', name: 'Claude Code', icon: ClaudeCodeIcon },
   { key: 'codex', name: 'Codex', icon: CodexIcon },
   { key: 'openCode', name: 'OpenCode', icon: OpenCodeIcon },
+  { key: 'grokBuild', name: 'Grok Build', icon: GrokBuildIcon },
 ];
 
 /** 获取 API Key 的实际 key 值 */
@@ -68,7 +71,7 @@ function getApiKeyId(apiKey: ApiKeyInfo): number {
  */
 export function filterValidCliConfigs(
   cliConfig: CliConfig | null,
-  supportedTypes: SupportedCliType[] = ['claudeCode', 'codex', 'openCode']
+  supportedTypes: SupportedCliType[] = ['claudeCode', 'codex', 'openCode', 'grokBuild']
 ): SupportedCliType[] {
   if (!cliConfig) return [];
 
@@ -193,10 +196,15 @@ export function ApplyConfigPopover({
                   ...params,
                   codexDetail: cliCompatibility?.codexDetail,
                 })
-              : generateOpenCodeConfig({
-                  ...params,
-                  targetProtocol: config.targetProtocol,
-                });
+              : cliType === 'openCode'
+                ? generateOpenCodeConfig({
+                    ...params,
+                    targetProtocol: config.targetProtocol,
+                  })
+                : generateGrokBuildConfig({
+                    ...params,
+                    targetProtocol: config.targetProtocol,
+                  });
         filesToWrite = generatedConfig.files.map(f => ({
           path: f.path,
           content: f.content,
@@ -207,7 +215,7 @@ export function ApplyConfigPopover({
       const result = await (window.electronAPI as any).cliCompat.writeConfig({
         cliType,
         files: filesToWrite,
-        applyMode,
+        applyMode: cliType === 'openCode' || cliType === 'grokBuild' ? 'merge' : applyMode,
       });
 
       if (result.success) {
@@ -297,14 +305,16 @@ export function ApplyConfigPopover({
                     >
                       合并
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => handleApply(option.key, 'overwrite')}
-                      disabled={applyingCli !== null}
-                      className="border-l border-[var(--line-soft)] px-3 py-1 text-xs text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      覆盖
-                    </button>
+                    {option.key !== 'openCode' && option.key !== 'grokBuild' ? (
+                      <button
+                        type="button"
+                        onClick={() => handleApply(option.key, 'overwrite')}
+                        disabled={applyingCli !== null}
+                        className="border-l border-[var(--line-soft)] px-3 py-1 text-xs text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        覆盖
+                      </button>
+                    ) : null}
                   </div>
                 )}
               </div>

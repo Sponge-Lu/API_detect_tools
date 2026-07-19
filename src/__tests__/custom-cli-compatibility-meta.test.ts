@@ -42,4 +42,16 @@ describe('custom cli compatibility metadata helpers', () => {
     expect(tooltip).toContain('分钟前测试');
     expect(tooltip).toContain('错误: 期望包含 2');
   });
+
+  it('describes configured Grok Build as not supporting probes yet', () => {
+    expect(
+      buildCliCompatibilityTooltip({
+        name: 'Grok Build',
+        enabled: true,
+        configured: true,
+        probeSupported: false,
+        status: null,
+      })
+    ).toBe('Grok Build: 已配置，暂不支持探测');
+  });
 });

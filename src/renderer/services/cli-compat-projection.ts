@@ -334,11 +334,12 @@ export function projectCliModelTestResultsFromLatest(params: {
     { length: slotCount },
     () => null
   );
-  const baseResults = {
-    claudeCode: normalizeCliTestResults(params.cliConfig?.claudeCode, slotCount),
-    codex: normalizeCliTestResults(params.cliConfig?.codex, slotCount),
-    openCode: normalizeCliTestResults(params.cliConfig?.openCode, slotCount),
-  };
+  const baseResults = Object.fromEntries(
+    CLI_TYPES.map(cliType => [
+      cliType,
+      normalizeCliTestResults(params.cliConfig?.[cliType], slotCount),
+    ])
+  ) as Record<RouteCliType, Array<CliModelTestResult | null>>;
 
   if (!params.latest || !params.siteId) {
     return baseResults;
@@ -356,6 +357,7 @@ export function projectCliModelTestResultsFromLatest(params: {
     claudeCode: [...emptySlots],
     codex: [...emptySlots],
     openCode: [...emptySlots],
+    grokBuild: [...emptySlots],
   };
 
   for (const cliType of CLI_TYPES) {

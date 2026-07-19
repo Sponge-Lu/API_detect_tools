@@ -15,6 +15,7 @@ import { toast } from '../../store/toastStore';
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../assets/cli-icons/codex.svg';
 import OpenCodeIcon from '../../assets/cli-icons/opencode.svg';
+import GrokBuildIcon from '../../assets/cli-icons/grok.svg';
 
 interface EditCliConfigDialogProps {
   open: boolean;
@@ -40,6 +41,7 @@ const CLI_TABS: CliTab[] = [
   { key: 'claudeCode', name: BUILTIN_CLI_LABELS.claudeCode, icon: ClaudeCodeIcon },
   { key: 'codex', name: BUILTIN_CLI_LABELS.codex, icon: CodexIcon },
   { key: 'openCode', name: BUILTIN_CLI_LABELS.openCode, icon: OpenCodeIcon },
+  { key: 'grokBuild', name: BUILTIN_CLI_LABELS.grokBuild, icon: GrokBuildIcon },
 ];
 
 export function EditCliConfigDialog({ open, onClose, onSaveComplete }: EditCliConfigDialogProps) {

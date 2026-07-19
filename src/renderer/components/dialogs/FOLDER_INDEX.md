@@ -26,9 +26,9 @@
 |------|------|--------|
 | **AuthErrorDialog.tsx** | 认证错误对话框 | `AuthErrorDialog` 组件，分析并展示 Session/Token 过期等问题 |
 | **SiteGroupDialog.tsx** | 站点分组对话框 | `SiteGroupDialog` 组件，支持创建和编辑分组 |
-| **ApplyConfigPopover.tsx** | 应用配置弹出菜单 | `ApplyConfigPopover` 组件，支持选择 CLI 并写入配置 |
-| **ManagedCliConfigEditorContent.tsx** | 托管站点 CLI 配置编辑内容 | `ManagedCliConfigEditorContent` 组件，无外层抽屉；嵌入接入点详情 Tab3，支持 CLI 启用/禁用、按 API Key 分组或整站范围切换模型列表、配置预览编辑和保存，并在预览配置域名与当前站点不一致时显示 warning；“测试已选模型”会同步写入 `routing.cliProbe` 并刷新检测页缓存，打开或 route store 更新时会把 `routing.cliProbe.latest` 中更新的同模型结果回显到对应测试模型 slot |
-| **DirectCliConfigEditorContent.tsx** | 直连配置编辑内容 | `DirectCliConfigEditorContent` 组件，无外层抽屉；按 `section` 嵌入直连配置 Tab1/Tab2/Tab3，支持配置名称/身份信息保存、模型拉取、手动模型、上游协议选择，并在 Tab3 按 CLI 聚合模型选择、测试、结果、预览与应用；保存后通知 SitesPage 刷新直连行 |
+| **ApplyConfigPopover.tsx** | 应用配置弹出菜单 | 支持四种内置 CLI；OpenCode 与 Grok Build 仅允许合并写入 |
+| **ManagedCliConfigEditorContent.tsx** | 托管站点 CLI 配置编辑内容 | 覆盖四种内置 CLI 的启用、模型、上游协议、预览、保存与应用；Grok Build 的 native 跟随当前模型入口且暂不提供模型探测 |
+| **DirectCliConfigEditorContent.tsx** | 直连配置编辑内容 | 覆盖四种内置 CLI 的模型、上游协议、预览与应用；Grok Build 生成三后端 TOML、仅合并写入且暂不提供模型探测 |
 | **PanelSection.tsx** | 面板通用折叠分区原语 | `PanelSection` 组件，为窄面板内的托管/直连 CLI 编辑器提供统一 section chrome |
 | **CloseBehaviorDialog.tsx** | 窗口关闭行为对话框 | `CloseBehaviorDialog` 组件，用户选择退出或最小化到托盘 |
 | **BackupSelectDialog.tsx** | 备份选择对话框 | `BackupSelectDialog` 组件，从备份目录选择配置包或旧版配置文件进行恢复 |

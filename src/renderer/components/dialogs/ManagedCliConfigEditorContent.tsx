@@ -35,14 +35,17 @@ import {
   normalizeCliTargetProtocol,
   sanitizeCliTestResults,
   sanitizeCliTestModels,
+  type BuiltinCliType,
   type CliTargetProtocol,
 } from '../../../shared/types/cli-config';
 import {
   generateClaudeCodeConfig,
   generateCodexConfig,
+  generateGrokBuildConfig,
   generateOpenCodeConfig,
   generateClaudeCodeTemplate,
   generateCodexTemplate,
+  generateGrokBuildTemplate,
   generateOpenCodeTemplate,
   type GeneratedConfig,
   type ConfigFile,
@@ -63,8 +66,9 @@ import {
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../assets/cli-icons/codex.svg';
 import OpenCodeIcon from '../../assets/cli-icons/opencode.svg';
+import GrokBuildIcon from '../../assets/cli-icons/grok.svg';
 
-export type CliType = 'claudeCode' | 'codex' | 'openCode';
+export type CliType = BuiltinCliType;
 
 interface ConfirmOptions {
   type?: 'confirm' | 'warning';
@@ -244,6 +248,7 @@ const CLI_TYPES: CliTypeConfig[] = [
   },
   { key: 'codex', name: 'Codex', icon: CodexIcon, supported: true },
   { key: 'openCode', name: 'OpenCode', icon: OpenCodeIcon, supported: true },
+  { key: 'grokBuild', name: 'Grok Build', icon: GrokBuildIcon, supported: true },
 ];
 
 const CLI_TARGET_PROTOCOL_LABELS: Record<CliTargetProtocol, string> = {
@@ -260,6 +265,9 @@ function buildCliTargetProtocolOptionLabel(
   targetProtocol: CliTargetProtocol,
   model?: string | null
 ): string {
+  if (cliType === 'grokBuild' && targetProtocol === 'native') {
+    return '原生协议 · 跟随 Grok Build 当前模型入口';
+  }
   return `${CLI_TARGET_PROTOCOL_LABELS[targetProtocol]} · ${getCliTargetEndpoint(
     cliType,
     targetProtocol,
@@ -386,7 +394,7 @@ function extractPreviewBaseUrl(
     }
   }
 
-  if (cliType === 'codex') {
+  if (cliType === 'codex' || cliType === 'grokBuild') {
     const configFile = config.files.find(file => file.path.includes('config.toml'));
     if (!configFile) {
       return null;
@@ -422,6 +430,12 @@ function createEmptyCliModelTestState(): Record<CliType, CliModelTestState> {
       openCodeDetail: null,
     },
     openCode: {
+      slots: [...emptySlots],
+      testedAt: null,
+      codexDetail: null,
+      openCodeDetail: null,
+    },
+    grokBuild: {
       slots: [...emptySlots],
       testedAt: null,
       codexDetail: null,
@@ -475,7 +489,7 @@ function isManagedCliConfigDirty(params: {
 }): boolean {
   const { currentConfig, enabledState, cliConfigs, selectedCli, editedConfig } = params;
 
-  for (const cliType of ['claudeCode', 'codex', 'openCode'] as CliType[]) {
+  for (const { key: cliType } of CLI_TYPES) {
     const baseline = currentConfig?.[cliType];
     const baselineEnabled = baseline?.enabled ?? DEFAULT_CLI_CONFIG[cliType].enabled;
     if (enabledState[cliType] !== baselineEnabled) {
@@ -804,6 +818,7 @@ export function ManagedCliConfigEditorContent({
     claudeCode: true,
     codex: true,
     openCode: true,
+    grokBuild: true,
   });
   const [listAllModels, setListAllModels] = useState(false);
 
@@ -837,6 +852,13 @@ export function ManagedCliConfigEditorContent({
       editedFiles: null,
     },
     openCode: {
+      apiKeyId: null,
+      model: null,
+      targetProtocol: undefined,
+      testModels: toTestModelSlots(null),
+      editedFiles: null,
+    },
+    grokBuild: {
       apiKeyId: null,
       model: null,
       targetProtocol: undefined,
@@ -915,6 +937,7 @@ export function ManagedCliConfigEditorContent({
         claudeCode: currentConfig.claudeCode?.enabled ?? DEFAULT_CLI_CONFIG.claudeCode.enabled,
         codex: currentConfig.codex?.enabled ?? DEFAULT_CLI_CONFIG.codex.enabled,
         openCode: currentConfig.openCode?.enabled ?? DEFAULT_CLI_CONFIG.openCode.enabled,
+        grokBuild: currentConfig.grokBuild?.enabled ?? DEFAULT_CLI_CONFIG.grokBuild.enabled,
       });
       setCliConfigs({
         claudeCode: {
@@ -963,17 +986,35 @@ export function ManagedCliConfigEditorContent({
               }
             : null,
         },
+        grokBuild: {
+          apiKeyId: currentConfig.grokBuild?.apiKeyId ?? null,
+          model: currentConfig.grokBuild?.model ?? null,
+          targetProtocol: normalizeOptionalCliTargetProtocol(
+            currentConfig.grokBuild?.targetProtocol
+          ),
+          testModels: toTestModelSlots(currentConfig.grokBuild),
+          editedFiles: currentConfig.grokBuild?.editedFiles
+            ? {
+                files: currentConfig.grokBuild.editedFiles.map(file => ({
+                  ...file,
+                  language: file.path.endsWith('.toml') ? ('toml' as const) : ('json' as const),
+                })),
+              }
+            : null,
+        },
       });
       setCliModelTests({
         claudeCode: createCliModelTestStateFromConfig(currentConfig.claudeCode),
         codex: createCliModelTestStateFromConfig(currentConfig.codex),
         openCode: createCliModelTestStateFromConfig(currentConfig.openCode),
+        grokBuild: createCliModelTestStateFromConfig(currentConfig.grokBuild),
       });
     } else if (shouldInitialize) {
       setEnabledState({
         claudeCode: DEFAULT_CLI_CONFIG.claudeCode.enabled,
         codex: DEFAULT_CLI_CONFIG.codex.enabled,
         openCode: DEFAULT_CLI_CONFIG.openCode.enabled,
+        grokBuild: DEFAULT_CLI_CONFIG.grokBuild.enabled,
       });
       setCliConfigs({
         claudeCode: {
@@ -991,6 +1032,13 @@ export function ManagedCliConfigEditorContent({
           editedFiles: null,
         },
         openCode: {
+          apiKeyId: null,
+          model: null,
+          targetProtocol: undefined,
+          testModels: toTestModelSlots(null),
+          editedFiles: null,
+        },
+        grokBuild: {
           apiKeyId: null,
           model: null,
           targetProtocol: undefined,
@@ -1028,6 +1076,7 @@ export function ManagedCliConfigEditorContent({
         ),
         codex: buildProjectionCliConfig('codex', currentConfig, cliConfigs, prev.codex),
         openCode: buildProjectionCliConfig('openCode', currentConfig, cliConfigs, prev.openCode),
+        grokBuild: buildProjectionCliConfig('grokBuild', currentConfig, cliConfigs, prev.grokBuild),
       };
       const projectedResults = projectCliModelTestResultsFromLatest({
         latest: projectedCliProbeLatest,
@@ -1055,12 +1104,18 @@ export function ManagedCliConfigEditorContent({
           slots: projectedResults.openCode,
           testedAt: getLatestCliModelTestedAt(prev.openCode.testedAt, projectedResults.openCode),
         },
+        grokBuild: {
+          ...prev.grokBuild,
+          slots: projectedResults.grokBuild,
+          testedAt: getLatestCliModelTestedAt(prev.grokBuild.testedAt, projectedResults.grokBuild),
+        },
       };
 
       const unchanged =
         areCliModelTestSlotsEqual(prev.claudeCode.slots, next.claudeCode.slots) &&
         areCliModelTestSlotsEqual(prev.codex.slots, next.codex.slots) &&
-        areCliModelTestSlotsEqual(prev.openCode.slots, next.openCode.slots);
+        areCliModelTestSlotsEqual(prev.openCode.slots, next.openCode.slots) &&
+        areCliModelTestSlotsEqual(prev.grokBuild.slots, next.grokBuild.slots);
 
       return unchanged ? prev : next;
     });
@@ -1068,11 +1123,7 @@ export function ManagedCliConfigEditorContent({
 
   // 切换或折叠 CLI 面板前保存当前编辑的配置
   const handleCliTypeChange = (newCliType: CliType | null) => {
-    if (
-      selectedCli &&
-      editedConfig &&
-      (selectedCli === 'claudeCode' || selectedCli === 'codex' || selectedCli === 'openCode')
-    ) {
+    if (selectedCli && editedConfig && CLI_TYPES.some(cli => cli.key === selectedCli)) {
       setCliConfigs(prev => ({
         ...prev,
         [selectedCli]: { ...prev[selectedCli], editedFiles: editedConfig },
@@ -1176,6 +1227,11 @@ export function ManagedCliConfigEditorContent({
           ...params,
           targetProtocol: config.targetProtocol,
         });
+      } else if (cliType === 'grokBuild') {
+        return generateGrokBuildConfig({
+          ...params,
+          targetProtocol: config.targetProtocol,
+        });
       }
       return null;
     },
@@ -1193,6 +1249,8 @@ export function ManagedCliConfigEditorContent({
       return generateCodexTemplate();
     } else if (selectedCli === 'openCode') {
       return generateOpenCodeTemplate();
+    } else if (selectedCli === 'grokBuild') {
+      return generateGrokBuildTemplate();
     }
     return null;
   }, [selectedCli]);
@@ -1404,11 +1462,28 @@ export function ManagedCliConfigEditorContent({
         editedFiles: getEditedFiles('openCode'),
         applyMode: currentConfig?.openCode?.applyMode ?? 'merge',
       },
+      grokBuild: {
+        apiKeyId: cliConfigs.grokBuild.apiKeyId,
+        model: cliConfigs.grokBuild.model,
+        targetProtocol: cliConfigs.grokBuild.targetProtocol
+          ? normalizeCliTargetProtocol(cliConfigs.grokBuild.targetProtocol)
+          : undefined,
+        testModel: null,
+        testModels: [],
+        testResults: [],
+        enabled: enabledState.grokBuild,
+        editedFiles: getEditedFiles('grokBuild'),
+        applyMode: 'merge',
+      },
     };
   };
 
   const handleTestSelectedModels = async () => {
     if (!selectedCli || isTestingSelectedModels) return;
+    if (selectedCli === 'grokBuild') {
+      toast.info('Grok Build 模型探测暂未启用');
+      return;
+    }
 
     const config = cliConfigs[selectedCli];
     if (!config.apiKeyId) {
@@ -1602,7 +1677,8 @@ export function ManagedCliConfigEditorContent({
           path: file.path,
           content: file.content,
         })),
-        applyMode: currentConfig?.[cliType]?.applyMode ?? 'merge',
+        applyMode:
+          cliType === 'grokBuild' ? 'merge' : (currentConfig?.[cliType]?.applyMode ?? 'merge'),
       });
 
       if (result.success) {
@@ -1619,11 +1695,7 @@ export function ManagedCliConfigEditorContent({
   };
 
   const handleSave = () => {
-    if (
-      selectedCli &&
-      editedConfig &&
-      (selectedCli === 'claudeCode' || selectedCli === 'codex' || selectedCli === 'openCode')
-    ) {
+    if (selectedCli && editedConfig && CLI_TYPES.some(cli => cli.key === selectedCli)) {
       setCliConfigs(prev => ({
         ...prev,
         [selectedCli]: { ...prev[selectedCli], editedFiles: editedConfig },
@@ -1844,12 +1916,12 @@ export function ManagedCliConfigEditorContent({
                           onClick={() => {
                             void handleTestSelectedModels();
                           }}
-                          disabled={isTestingSelectedModels}
+                          disabled={isTestingSelectedModels || cli.key === 'grokBuild'}
                         >
                           {isTestingSelectedModels ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
                           ) : null}
-                          测试已选模型
+                          {cli.key === 'grokBuild' ? '暂不支持探测' : '测试已选模型'}
                         </AppButton>
                       </div>
                       {!cliConfigs[cli.key]?.apiKeyId ? (
@@ -1888,7 +1960,7 @@ export function ManagedCliConfigEditorContent({
                   </div>
 
                   {/* 配置预览 */}
-                  {(cli.key === 'claudeCode' || cli.key === 'codex' || cli.key === 'openCode') && (
+                  {CLI_TYPES.some(item => item.key === cli.key) && (
                     <div className="space-y-3 border-t border-[var(--line-soft)] pt-3">
                       <div className="flex items-center justify-between gap-2">
                         <div className="text-xs font-medium text-[var(--text-secondary)]">

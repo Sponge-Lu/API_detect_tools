@@ -54,6 +54,7 @@ interface RawFetchStreamOptions extends FetchOptions {
   streamIdleTimeout?: number;
   onResponse?: (response: RawFetchStreamStart) => boolean | void;
   onData?: (chunk: Buffer) => void | Promise<void>;
+  shouldResolveOnAbort?: () => boolean;
 }
 
 const proxySessionCache = new Map<string, Promise<Session>>();
@@ -464,6 +465,7 @@ export async function electronFetchRawStream(
     signal,
     onResponse,
     onData,
+    shouldResolveOnAbort,
   } = options;
   const proxySession = await resolveProxySession(proxyUrl);
 
@@ -471,6 +473,8 @@ export async function electronFetchRawStream(
     const startedAt = Date.now();
     const request = net.request(createElectronRequestOptions(method, url, proxySession));
     let settled = false;
+    let resolvingCompletedAbort = false;
+    let resolveActiveResponse: (() => void) | undefined;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
     setElectronRequestHeaders(request, headers);
@@ -507,9 +511,28 @@ export async function electronFetchRawStream(
         ? signal.reason
         : new Error(signal?.reason ? String(signal.reason) : 'Request aborted');
 
+    const canResolveCompletedAbort = () => {
+      if (!resolveActiveResponse || !shouldResolveOnAbort) {
+        return false;
+      }
+      try {
+        return shouldResolveOnAbort();
+      } catch {
+        return false;
+      }
+    };
+
     function abortRequest() {
       if (settled) return;
+      const canResolveCompletedResponse = canResolveCompletedAbort();
+      if (canResolveCompletedResponse) {
+        resolvingCompletedAbort = true;
+      }
       request.abort();
+      if (canResolveCompletedResponse) {
+        resolveActiveResponse!();
+        return;
+      }
       rejectOnce(buildAbortError());
     }
 
@@ -568,14 +591,33 @@ export async function electronFetchRawStream(
             });
           },
           (error: unknown) => {
+            if (resolvingCompletedAbort && canResolveCompletedAbort()) {
+              resolveOnce({
+                status: response.statusCode,
+                statusText: response.statusMessage || '',
+                body: Buffer.concat(chunks),
+                headers: responseHeaders,
+                firstByteLatencyMs,
+              });
+              return;
+            }
             rejectOnce(error instanceof Error ? error : new Error(String(error)));
           }
         );
       };
+      resolveActiveResponse = finishResponse;
 
       response.on('end', finishResponse);
-      response.on('aborted', () => rejectOnce(new Error('Upstream response aborted')));
-      response.on('error', (error: Error) => rejectOnce(error));
+      response.on('aborted', () => {
+        if (!resolvingCompletedAbort) {
+          rejectOnce(new Error('Upstream response aborted'));
+        }
+      });
+      response.on('error', (error: Error) => {
+        if (!resolvingCompletedAbort) {
+          rejectOnce(error);
+        }
+      });
 
       response.on('data', chunk => {
         if (firstByteLatencyMs === undefined) {
@@ -597,6 +639,9 @@ export async function electronFetchRawStream(
             }
           },
           (error: unknown) => {
+            if (resolvingCompletedAbort && canResolveCompletedAbort()) {
+              return;
+            }
             request.abort();
             rejectOnce(error instanceof Error ? error : new Error(String(error)));
           }
@@ -605,6 +650,9 @@ export async function electronFetchRawStream(
     });
 
     request.on('error', (error: Error) => {
+      if (resolvingCompletedAbort) {
+        return;
+      }
       if (!settled) {
         log.error('Raw stream request error:', error);
       }

@@ -87,7 +87,6 @@ function buildRouteConfigForLogs(params: {
       codex: null,
       openCode: null,
     },
-    openCodeRouteProtocol: 'openai-responses',
     stats: {},
     routePathStates: {},
     routeEndpointCapabilities: {},
@@ -1148,6 +1147,14 @@ describe('LogsPage', () => {
           error: 'claude_failed',
         }),
         buildRouteLog({
+          id: 'route-filter-grok',
+          requestId: 'grok-filter',
+          cliType: 'grokBuild',
+          attempt: 1,
+          outcome: 'success',
+          createdAt: 250,
+        }),
+        buildRouteLog({
           id: 'route-filter-removed',
           requestId: 'removed-filter',
           cliType: removedCliType as never,
@@ -1160,8 +1167,8 @@ describe('LogsPage', () => {
 
     render(<LogsPage />);
 
-    await waitFor(() => expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(2));
-    expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(2);
+    await waitFor(() => expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(3));
+    expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(3);
     const rows = screen.getAllByTestId('route-request-log-row');
     expect(within(rows[1]).getByTestId('route-request-cli-icon')).toHaveAttribute(
       'aria-label',
@@ -1170,7 +1177,7 @@ describe('LogsPage', () => {
     expect(within(rows[1]).getByTestId('route-request-cli-icon').className).not.toMatch(
       /bg-|border/
     );
-    expect(screen.getByText('总尝试').parentElement).toHaveTextContent('总尝试2');
+    expect(screen.getByText('总尝试').parentElement).toHaveTextContent('总尝试3');
 
     fireEvent.click(screen.getByRole('button', { name: 'Claude Code' }));
 
@@ -1181,6 +1188,7 @@ describe('LogsPage', () => {
     expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(1);
     expect(getRouteLogRowByRequestId('claude-filter')).toBeInTheDocument();
     expect(findRouteLogRowByRequestId('codex-filter')).toBeUndefined();
+    expect(findRouteLogRowByRequestId('grok-filter')).toBeUndefined();
     expect(findRouteLogRowByRequestId('removed-filter')).toBeUndefined();
     expect(screen.getByText('总尝试').parentElement).toHaveTextContent('总尝试1');
     const successStat = screen
@@ -1199,10 +1207,18 @@ describe('LogsPage', () => {
     expect(getRouteLogRowByRequestId('codex-filter')).toBeInTheDocument();
     expect(findRouteLogRowByRequestId('claude-filter')).toBeUndefined();
 
+    fireEvent.click(screen.getByRole('button', { name: 'Grok Build' }));
+
+    expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(1);
+    expect(getRouteLogRowByRequestId('grok-filter')).toBeInTheDocument();
+    expect(
+      within(getRouteLogRowByRequestId('grok-filter')).getByTestId('route-request-cli-icon')
+    ).toHaveAttribute('aria-label', 'Grok Build');
+
     fireEvent.click(screen.getByRole('button', { name: '全部' }));
 
-    expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(2);
-    expect(screen.getByText('2 条')).toBeInTheDocument();
+    expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(3);
+    expect(screen.getByText('3 条')).toBeInTheDocument();
   });
 
   it('shows upstream failure details without repeating the status code', async () => {

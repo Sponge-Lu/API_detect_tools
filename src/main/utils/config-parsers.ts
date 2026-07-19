@@ -93,6 +93,24 @@ export interface OpenCodeConfig {
 
 export type OpenCodeAuthConfig = Record<string, { type?: string; key?: string } | undefined>;
 
+// ============= Grok Build 配置类型 =============
+
+export interface GrokBuildModelConfig {
+  model?: string;
+  base_url?: string;
+  api_key?: string;
+  env_key?: string | string[];
+  extra_headers?: Record<string, unknown>;
+}
+
+export interface GrokBuildConfig {
+  models?: {
+    default?: string;
+    extra_headers?: Record<string, unknown>;
+  };
+  model?: Record<string, GrokBuildModelConfig>;
+}
+
 // ============= 解析函数 =============
 
 /**
@@ -221,6 +239,16 @@ export function parseOpenCodeConfig(): OpenCodeConfig | null {
 export function parseOpenCodeAuthConfig(): OpenCodeAuthConfig | null {
   const configPath = getConfigPath(CLI_CONFIG_PATHS.openCode.auth);
   return parseJsonFile<OpenCodeAuthConfig>(configPath);
+}
+
+export function parseGrokBuildConfig(
+  processEnv: Record<string, string | undefined> = process.env
+): GrokBuildConfig | null {
+  const grokHome = processEnv.GROK_HOME?.trim();
+  const configPath = grokHome
+    ? path.join(grokHome, 'config.toml')
+    : getConfigPath(CLI_CONFIG_PATHS.grokBuild.config);
+  return parseTomlFile<GrokBuildConfig>(configPath);
 }
 
 // ============= 官方 API Key 检测函数 =============
@@ -470,6 +498,13 @@ export interface EffectiveOpenCodeConfig {
   providerId?: string;
 }
 
+export interface EffectiveGrokBuildConfig {
+  baseUrl?: string;
+  hasApiKey: boolean;
+  authType: AuthType;
+  modelId?: string;
+}
+
 /**
  * 检查 Codex OAuth 状态
  *
@@ -621,5 +656,53 @@ export function getEffectiveOpenCodeConfig(
     hasApiKey,
     authType: hasApiKey ? 'api-key' : 'unknown',
     providerId,
+  };
+}
+
+export function getEffectiveGrokBuildConfig(
+  config?: GrokBuildConfig | null,
+  processEnv?: Record<string, string | undefined>
+): EffectiveGrokBuildConfig {
+  const env = processEnv !== undefined ? processEnv : process.env;
+  const grokConfig = config !== undefined ? config : parseGrokBuildConfig(env);
+  const models = grokConfig?.model;
+  const defaultModelId = grokConfig?.models?.default?.trim();
+  const selectedEntry =
+    (defaultModelId && models?.[defaultModelId]) ||
+    Object.values(models || {}).find(
+      entry => entry?.base_url || entry?.api_key || entry?.env_key || entry?.extra_headers
+    );
+  const modelId =
+    defaultModelId ||
+    Object.entries(models || {}).find(([, entry]) => entry === selectedEntry)?.[0];
+  const envKeys = (
+    Array.isArray(selectedEntry?.env_key) ? selectedEntry.env_key : [selectedEntry?.env_key]
+  ).flatMap(value => (typeof value === 'string' && value.trim() ? [value.trim()] : []));
+  const hasCredentialHeader = [
+    selectedEntry?.extra_headers,
+    grokConfig?.models?.extra_headers,
+  ].some(headers =>
+    Object.entries(headers || {}).some(([name, value]) => {
+      const normalizedName = name.trim().toLowerCase();
+      return (
+        (normalizedName === 'x-api-key' || normalizedName === 'authorization') &&
+        typeof value === 'string' &&
+        Boolean(value.trim())
+      );
+    })
+  );
+  const hasApiKey = Boolean(
+    selectedEntry?.api_key?.trim() ||
+      envKeys.some(envKey => Boolean(env[envKey]?.trim())) ||
+      hasCredentialHeader ||
+      env.XAI_API_KEY?.trim() ||
+      env.GROK_CODE_XAI_API_KEY?.trim()
+  );
+
+  return {
+    baseUrl: selectedEntry?.base_url?.trim() || undefined,
+    hasApiKey,
+    authType: hasApiKey ? 'api-key' : 'unknown',
+    modelId,
   };
 }

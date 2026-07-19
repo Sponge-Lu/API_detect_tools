@@ -10,6 +10,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildProbeKey } from '../shared/types/route-proxy';
+import { BUILTIN_CLI_TYPES, PROBE_CLI_TYPES } from '../shared/types/cli-config';
 import {
   buildCustomCliRouteAccountId,
   buildCustomCliRouteApiKeyId,
@@ -36,6 +37,14 @@ function createSite(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+describe('route CLI probe type boundary', () => {
+  it('keeps Grok Build out of model probe execution', () => {
+    expect(BUILTIN_CLI_TYPES).toContain('grokBuild');
+    expect(PROBE_CLI_TYPES).toEqual(['claudeCode', 'codex', 'openCode']);
+    expect(PROBE_CLI_TYPES).not.toContain('grokBuild');
+  });
+});
 
 function createAccount(id: string, overrides: Record<string, unknown> = {}) {
   return {

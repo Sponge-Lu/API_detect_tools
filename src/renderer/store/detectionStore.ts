@@ -49,6 +49,8 @@ export interface CliCompatibilityResult {
   openCode: boolean | null;
   openCodeDetail?: OpenCodeTestDetail; // OpenCode 详细测试结果（官方 provider/endpoint 模式）
   openCodeError?: string; // OpenCode 失败摘要（错误码优先）
+  grokBuild?: boolean | null;
+  grokBuildError?: string;
   testedAt: number | null; // Unix timestamp
   error?: string; // 测试错误信息（可选）
   sourceLabel?: string; // 展示层来源标签（如“来自 CLI 可用性 · 默认账户”）
@@ -86,6 +88,7 @@ export interface CliConfig {
   claudeCode?: CliConfigItem | null;
   codex?: CliConfigItem | null;
   openCode?: CliConfigItem | null;
+  grokBuild?: CliConfigItem | null;
 }
 
 interface DetectionState {

@@ -79,6 +79,7 @@ import {
   BUILTIN_CLI_LABELS,
   BUILTIN_CLI_TYPES,
   CLI_TARGET_PROTOCOLS,
+  DEFAULT_CLI_CONFIG,
   getCliTargetEndpoint,
   normalizeCliTargetProtocol,
   type CliTargetProtocol,
@@ -94,7 +95,6 @@ import {
   buildProbeKey,
   buildBucketKey,
   buildSiteScopedProbeAccountId,
-  normalizeOpenCodeRouteProtocol,
   normalizeRouteCliSelection,
   normalizeRouteThinkingEffortSelections,
   normalizeRouteRuntimeConfig,
@@ -512,6 +512,9 @@ export class UnifiedConfigManager {
     const runtimeCache = this.createRuntimeCacheSnapshot(
       runtimeCacheManager.exportCacheSync() || (await runtimeCacheManager.loadCache())
     );
+    if (this.cleanupLegacyOpenCodeRouteProtocol(config)) {
+      needsSave = true;
+    }
     if (this.cleanupLegacyRouteRedirectionExample(config)) {
       needsSave = true;
     }
@@ -1081,7 +1084,6 @@ export class UnifiedConfigManager {
     r.cliThinkingEffortSelections = normalizeRouteThinkingEffortSelections(
       r.cliThinkingEffortSelections
     );
-    r.openCodeRouteProtocol = normalizeOpenCodeRouteProtocol(r.openCodeRouteProtocol);
     if (!r.modelRegistry) {
       r.modelRegistry = { ...DEFAULT_MODEL_REGISTRY_CONFIG };
     } else {
@@ -1136,6 +1138,9 @@ export class UnifiedConfigManager {
 
     // v3.0.6: 账户级 cli_config 规范化
     for (const account of config.accounts || []) {
+      if (account.cli_config && !account.cli_config.grokBuild) {
+        account.cli_config.grokBuild = { ...DEFAULT_CLI_CONFIG.grokBuild };
+      }
       normalizeCliConfigTargetProtocols(
         account.cli_config as Partial<
           Record<RouteCliType, { targetProtocol?: CliTargetProtocol | null } | null>
@@ -1285,6 +1290,17 @@ export class UnifiedConfigManager {
       r.cliModelSelections,
       r.modelRegistry.entries
     );
+  }
+
+  private cleanupLegacyOpenCodeRouteProtocol(config: UnifiedConfig): boolean {
+    const routing = config.routing as
+      | (RoutingConfig & { openCodeRouteProtocol?: unknown })
+      | undefined;
+    if (!routing || !Object.prototype.hasOwnProperty.call(routing, 'openCodeRouteProtocol')) {
+      return false;
+    }
+    delete routing.openCodeRouteProtocol;
+    return true;
   }
 
   private cleanupLegacyRouteRedirectionExample(config: UnifiedConfig): boolean {
@@ -2522,16 +2538,6 @@ export class UnifiedConfigManager {
     }
     await this.saveConfig();
     return this.config.routing!.cliModelSelections;
-  }
-
-  async updateOpenCodeRouteProtocol(
-    protocol: unknown
-  ): Promise<RoutingConfig['openCodeRouteProtocol']> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
-    this.config.routing!.openCodeRouteProtocol = normalizeOpenCodeRouteProtocol(protocol);
-    await this.saveConfig();
-    return this.config.routing!.openCodeRouteProtocol;
   }
 
   async updateRouteCliThinkingEffortSelections(

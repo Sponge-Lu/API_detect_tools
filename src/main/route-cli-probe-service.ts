@@ -39,9 +39,8 @@ import {
   isAnyRouterSite,
 } from '../shared/types/site';
 import {
-  BUILTIN_CLI_TYPES,
+  PROBE_CLI_TYPES,
   DEFAULT_CLI_CONFIG,
-  CLI_TEST_MODEL_SLOT_COUNT,
   getCliTargetEndpoint,
   normalizeCliTargetProtocol,
   normalizeCliTestModels,
@@ -54,7 +53,7 @@ import {
 } from '../shared/types/custom-cli-config';
 
 const log = Logger.scope('RouteCliProbe');
-const CLI_PROBE_TYPES: RouteCliType[] = [...BUILTIN_CLI_TYPES];
+const CLI_PROBE_TYPES: RouteCliType[] = [...PROBE_CLI_TYPES];
 const CUSTOM_CLI_PROBE_SITE_NAME = '自定义 CLI';
 
 let probeTimer: NodeJS.Timeout | null = null;

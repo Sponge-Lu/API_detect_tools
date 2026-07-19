@@ -18,8 +18,15 @@ import {
   normalizeUrl,
   normalizeApiKey,
   generateClaudeCodeConfig,
+  generateClaudeCodeRouteConfig,
   generateCodexConfig,
+  generateCodexRouteConfig,
+  generateGrokBuildConfig,
+  generateGrokBuildRouteConfig,
   generateOpenCodeConfig,
+  generateOpenCodeRouteConfig,
+  GROK_BUILD_MANAGED_MODEL_IDS,
+  OPENCODE_ROUTE_PROVIDER_IDS,
   resolveClaudeCodeDisplayModel,
   ConfigParams,
 } from '../renderer/services/cli-config-generator';
@@ -27,7 +34,7 @@ import {
   getCliTargetEndpoint,
   isCliTargetProtocolNativeEquivalent,
 } from '../shared/types/cli-config';
-import { normalizeOpenCodeRouteProtocol } from '../shared/types/route-proxy';
+import { ROUTE_CLI_MARKER_HEADER, ROUTE_CLI_MARKER_VALUES } from '../shared/types/route-proxy';
 
 // ============= Arbitraries =============
 
@@ -481,11 +488,6 @@ describe('OpenCode config generation', () => {
     expect(getCliTargetEndpoint('openCode', 'native')).toBe('/v1/responses');
     expect(isCliTargetProtocolNativeEquivalent('openCode', 'openai-responses')).toBe(true);
     expect(isCliTargetProtocolNativeEquivalent('openCode', 'openai-chat-completions')).toBe(false);
-    expect(normalizeOpenCodeRouteProtocol(undefined)).toBe('openai-responses');
-    expect(normalizeOpenCodeRouteProtocol('native')).toBe('openai-responses');
-    expect(normalizeOpenCodeRouteProtocol('openai-chat-completions')).toBe(
-      'openai-chat-completions'
-    );
   });
 
   it.each(['openai-responses', 'openai-chat-completions'] as const)(
@@ -501,4 +503,93 @@ describe('OpenCode config generation', () => {
       });
     }
   );
+
+  it('should generate three isolated providers for the managed OpenCode route', () => {
+    const config = generateOpenCodeRouteConfig(params);
+    const configFile = config.files.find(file => file.path.endsWith('/opencode.json'));
+    const authFile = config.files.find(file => file.path.endsWith('/auth.json'));
+    const content = JSON.parse(configFile!.content);
+    const auth = JSON.parse(authFile!.content);
+
+    expect(content.model).toBe(`${OPENCODE_ROUTE_PROVIDER_IDS.responses}/test-model`);
+    expect(Object.keys(content.provider)).toEqual(
+      expect.arrayContaining(Object.values(OPENCODE_ROUTE_PROVIDER_IDS))
+    );
+    expect(content.provider[OPENCODE_ROUTE_PROVIDER_IDS.anthropic].npm).toBe('@ai-sdk/anthropic');
+    expect(content.provider[OPENCODE_ROUTE_PROVIDER_IDS.responses].npm).toBe('@ai-sdk/openai');
+    expect(content.provider[OPENCODE_ROUTE_PROVIDER_IDS.chat].npm).toBe(
+      '@ai-sdk/openai-compatible'
+    );
+
+    for (const providerId of Object.values(OPENCODE_ROUTE_PROVIDER_IDS)) {
+      expect(content.provider[providerId].options).toMatchObject({
+        baseURL: 'https://api.example.com/v1',
+        headers: { [ROUTE_CLI_MARKER_HEADER]: ROUTE_CLI_MARKER_VALUES.openCode },
+      });
+      expect(content.provider[providerId].models['test-model']).toEqual({ name: 'test-model' });
+      expect(auth[providerId]).toEqual({ type: 'api', key: 'sk-test-key' });
+    }
+  });
+
+  it('should generate three managed Grok Build models and mark only route configs', () => {
+    const direct = generateGrokBuildConfig({ ...params, targetProtocol: 'native' });
+    const route = generateGrokBuildRouteConfig(params);
+    const directToml = direct.files[0].content;
+    const routeToml = route.files[0].content;
+
+    expect(direct.files[0].path).toBe('~/.grok/config.toml');
+    expect(routeToml).toContain(`default = "${GROK_BUILD_MANAGED_MODEL_IDS.responses}"`);
+    expect(routeToml).toContain(`[model.${GROK_BUILD_MANAGED_MODEL_IDS.responses}]`);
+    expect(routeToml).toContain('api_backend = "responses"');
+    expect(routeToml).toContain(`[model.${GROK_BUILD_MANAGED_MODEL_IDS.chat}]`);
+    expect(routeToml).toContain('api_backend = "chat_completions"');
+    expect(routeToml).toContain(`[model.${GROK_BUILD_MANAGED_MODEL_IDS.messages}]`);
+    expect(routeToml).toContain('api_backend = "messages"');
+    expect(routeToml.match(/supports_backend_search = false/g)).toHaveLength(3);
+    expect(routeToml.match(/stream_tool_calls = false/g)).toHaveLength(3);
+    expect(directToml).not.toContain(ROUTE_CLI_MARKER_HEADER);
+    expect(routeToml.match(new RegExp(ROUTE_CLI_MARKER_HEADER, 'g'))).toHaveLength(3);
+    expect(routeToml).toContain(
+      `"${ROUTE_CLI_MARKER_HEADER}" = "${ROUTE_CLI_MARKER_VALUES.grokBuild}"`
+    );
+    expect(directToml).toContain('extra_headers = { "x-api-key" = "sk-test-key" }');
+    expect(routeToml).toContain(
+      `extra_headers = { "x-api-key" = "sk-test-key", "${ROUTE_CLI_MARKER_HEADER}" = "${ROUTE_CLI_MARKER_VALUES.grokBuild}" }`
+    );
+  });
+
+  it('should preserve Grok Build API keys with non-OpenAI prefixes', () => {
+    const config = generateGrokBuildConfig({
+      ...params,
+      apiKey: 'xai-test-key',
+      targetProtocol: 'native',
+    });
+
+    expect(config.files[0].content).toContain('api_key = "xai-test-key"');
+    expect(config.files[0].content).toContain('extra_headers = { "x-api-key" = "xai-test-key" }');
+    expect(config.files[0].content).not.toContain('sk-xai-test-key');
+    const messagesBlock = config.files[0].content.split(
+      `[model.${GROK_BUILD_MANAGED_MODEL_IDS.messages}]`
+    )[1];
+    expect(messagesBlock).not.toContain('\napi_key =');
+  });
+
+  it('should add CLI markers only to route-managed Claude and Codex configs', () => {
+    const directClaude = generateClaudeCodeConfig(params);
+    const routeClaude = generateClaudeCodeRouteConfig(params);
+    const directClaudeSettings = JSON.parse(directClaude.files[0].content);
+    const routeClaudeSettings = JSON.parse(routeClaude.files[0].content);
+
+    expect(directClaudeSettings.env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+    expect(routeClaudeSettings.env.ANTHROPIC_CUSTOM_HEADERS).toBe(
+      `${ROUTE_CLI_MARKER_HEADER}: ${ROUTE_CLI_MARKER_VALUES.claudeCode}`
+    );
+
+    const directCodex = generateCodexConfig(params).files[0].content;
+    const routeCodex = generateCodexRouteConfig(params).files[0].content;
+    expect(directCodex).not.toContain(ROUTE_CLI_MARKER_HEADER);
+    expect(routeCodex).toContain(
+      `http_headers = { "${ROUTE_CLI_MARKER_HEADER}" = "${ROUTE_CLI_MARKER_VALUES.codex}" }`
+    );
+  });
 });

@@ -272,6 +272,66 @@ describe('electronFetchRaw request headers', () => {
     await expect(responsePromise).rejects.toThrow('Upstream response aborted');
   });
 
+  it('resolves the retained response when a completed stream is cancelled before upstream EOF', async () => {
+    mocks.state.autoRespond = false;
+    const controller = new AbortController();
+    const completedChunk = Buffer.from(
+      'event: response.completed\ndata: {"type":"response.completed"}\n\n'
+    );
+    let completed = false;
+
+    const responsePromise = electronFetchRawStream('https://anyrouter.top/v1/responses', {
+      method: 'POST',
+      body: Buffer.from('{"stream":true}'),
+      signal: controller.signal,
+      onResponse: () => true,
+      onData: async chunk => {
+        completed = chunk.includes(Buffer.from('response.completed'));
+      },
+      shouldResolveOnAbort: () => completed,
+    });
+
+    await Promise.resolve();
+    const responseHandlers = mocks.startResponse();
+    responseHandlers.data?.(completedChunk);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    controller.abort(new Error('route_client_cancelled'));
+    responseHandlers.aborted?.();
+    mocks.state.requestHandlers.error?.(new Error('net::ERR_ABORTED'));
+
+    await expect(responsePromise).resolves.toMatchObject({
+      status: 200,
+      body: completedChunk,
+    });
+    expect(mocks.state.lastRequest?.abort).toHaveBeenCalledTimes(1);
+  });
+
+  it('still rejects client cancellation before stream completion', async () => {
+    mocks.state.autoRespond = false;
+    const controller = new AbortController();
+
+    const responsePromise = electronFetchRawStream('https://anyrouter.top/v1/responses', {
+      method: 'POST',
+      body: Buffer.from('{"stream":true}'),
+      signal: controller.signal,
+      onResponse: () => true,
+      onData: vi.fn(),
+      shouldResolveOnAbort: () => false,
+    });
+
+    await Promise.resolve();
+    const responseHandlers = mocks.startResponse();
+    responseHandlers.data?.(Buffer.from('event: response.output_text.delta\ndata: {}\n\n'));
+    await Promise.resolve();
+
+    controller.abort(new Error('route_client_cancelled'));
+
+    await expect(responsePromise).rejects.toThrow('route_client_cancelled');
+    expect(mocks.state.lastRequest?.abort).toHaveBeenCalledTimes(1);
+  });
+
   it('uses the initial timeout before the first raw stream chunk', async () => {
     vi.useFakeTimers();
     mocks.state.autoRespond = false;

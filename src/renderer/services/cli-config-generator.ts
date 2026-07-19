@@ -15,6 +15,7 @@ import {
   normalizeCodexFeatureFlagsToml,
   type CliTargetProtocol,
 } from '../../shared/types/cli-config';
+import { ROUTE_CLI_MARKER_HEADER, ROUTE_CLI_MARKER_VALUES } from '../../shared/types/route-proxy';
 
 /**
  * CLI 配置生成器服务
@@ -46,6 +47,10 @@ export interface OpenCodeConfigParams extends ConfigParams {
   targetProtocol?: CliTargetProtocol;
 }
 
+export interface GrokBuildConfigParams extends ConfigParams {
+  targetProtocol?: CliTargetProtocol;
+}
+
 /** 单个配置文件 */
 export interface ConfigFile {
   path: string;
@@ -61,6 +66,16 @@ export interface GeneratedConfig {
 export const CODEX_PROVIDER_NAME = 'AnyAPI';
 export const OPENCODE_PROVIDER_ID = 'anyapi';
 export const OPENCODE_PROVIDER_NAME = 'AnyAPI';
+export const OPENCODE_ROUTE_PROVIDER_IDS = {
+  anthropic: 'api-detect-anthropic',
+  responses: 'api-detect-responses',
+  chat: 'api-detect-chat',
+} as const;
+export const GROK_BUILD_MANAGED_MODEL_IDS = {
+  responses: 'api-detect-grok-responses',
+  chat: 'api-detect-grok-chat',
+  messages: 'api-detect-grok-messages',
+} as const;
 
 /**
  * 规范化 URL，移除尾部斜杠
@@ -129,7 +144,10 @@ export function resolveClaudeCodeDisplayModel(model: string): string {
  * @param params - 配置参数
  * @returns 生成的配置文件内容
  */
-export function generateClaudeCodeConfig(params: ConfigParams): GeneratedConfig {
+function generateClaudeCodeConfigInternal(
+  params: ConfigParams,
+  routeMarker?: string
+): GeneratedConfig {
   const normalizedUrl = normalizeUrl(params.siteUrl);
   const normalizedApiKey = normalizeApiKey(params.apiKey);
   const displayModel = resolveClaudeCodeDisplayModel(params.model);
@@ -149,6 +167,9 @@ export function generateClaudeCodeConfig(params: ConfigParams): GeneratedConfig 
       CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
       HTTPS_PROXY: 'http://127.0.0.1:7890',
       HTTP_PROXY: 'http://127.0.0.1:7890',
+      ...(routeMarker
+        ? { ANTHROPIC_CUSTOM_HEADERS: `${ROUTE_CLI_MARKER_HEADER}: ${routeMarker}` }
+        : {}),
     },
   };
 
@@ -171,6 +192,14 @@ export function generateClaudeCodeConfig(params: ConfigParams): GeneratedConfig 
       },
     ],
   };
+}
+
+export function generateClaudeCodeConfig(params: ConfigParams): GeneratedConfig {
+  return generateClaudeCodeConfigInternal(params);
+}
+
+export function generateClaudeCodeRouteConfig(params: ConfigParams): GeneratedConfig {
+  return generateClaudeCodeConfigInternal(params, ROUTE_CLI_MARKER_VALUES.claudeCode);
 }
 
 /**
@@ -282,7 +311,10 @@ export function sanitizeProviderName(siteName: string): string {
   return name || 'Provider';
 }
 
-export function generateCodexConfig(params: CodexConfigParams): GeneratedConfig {
+function generateCodexConfigInternal(
+  params: CodexConfigParams,
+  routeMarker?: string
+): GeneratedConfig {
   const normalizedUrl = normalizeUrl(params.siteUrl);
   const normalizedApiKey = normalizeApiKey(params.apiKey);
   const providerName = CODEX_PROVIDER_NAME;
@@ -304,7 +336,9 @@ network_access = "enabled"
 name = "${providerName}"
 base_url = "${normalizedUrl}/v1"
 ${wireApiComment}
-wire_api = "${wireApi}"
+wire_api = "${wireApi}"${
+    routeMarker ? `\nhttp_headers = { "${ROUTE_CLI_MARKER_HEADER}" = "${routeMarker}" }` : ''
+  }
 
 web_search = "cached"`);
 
@@ -327,6 +361,14 @@ web_search = "cached"`);
       },
     ],
   };
+}
+
+export function generateCodexConfig(params: CodexConfigParams): GeneratedConfig {
+  return generateCodexConfigInternal(params);
+}
+
+export function generateCodexRouteConfig(params: CodexConfigParams): GeneratedConfig {
+  return generateCodexConfigInternal(params, ROUTE_CLI_MARKER_VALUES.codex);
 }
 
 /**
@@ -485,6 +527,61 @@ export function generateOpenCodeConfig(params: OpenCodeConfigParams): GeneratedC
   };
 }
 
+export function generateOpenCodeRouteConfig(params: ConfigParams): GeneratedConfig {
+  const normalizedApiKey = normalizeApiKey(params.apiKey);
+  const baseURL = `${normalizeUrl(params.siteUrl)}/v1`;
+  const headers = {
+    [ROUTE_CLI_MARKER_HEADER]: ROUTE_CLI_MARKER_VALUES.openCode,
+  };
+  const { anthropic, responses, chat } = OPENCODE_ROUTE_PROVIDER_IDS;
+  const routeModel = { name: params.model };
+  const opencodeJson = {
+    $schema: 'https://opencode.ai/config.json',
+    model: `${responses}/${params.model}`,
+    provider: {
+      [anthropic]: {
+        npm: '@ai-sdk/anthropic',
+        name: `${OPENCODE_PROVIDER_NAME} Anthropic`,
+        options: { baseURL, headers },
+        models: { [params.model]: routeModel },
+      },
+      [responses]: {
+        npm: '@ai-sdk/openai',
+        name: `${OPENCODE_PROVIDER_NAME} Responses`,
+        options: { baseURL, headers },
+        models: { [params.model]: routeModel },
+      },
+      [chat]: {
+        npm: '@ai-sdk/openai-compatible',
+        name: `${OPENCODE_PROVIDER_NAME} Chat Completions`,
+        options: { baseURL, headers },
+        models: { [params.model]: routeModel },
+      },
+    },
+  };
+  const authJson = Object.fromEntries(
+    Object.values(OPENCODE_ROUTE_PROVIDER_IDS).map(providerId => [
+      providerId,
+      { type: 'api', key: normalizedApiKey },
+    ])
+  );
+
+  return {
+    files: [
+      {
+        path: '~/.config/opencode/opencode.json',
+        content: JSON.stringify(opencodeJson, null, 2),
+        language: 'json',
+      },
+      {
+        path: '~/.local/share/opencode/auth.json',
+        content: JSON.stringify(authJson, null, 2),
+        language: 'json',
+      },
+    ],
+  };
+}
+
 export function generateOpenCodeTemplate(): GeneratedConfig {
   return generateOpenCodeConfig({
     siteUrl: 'https://api.example.com',
@@ -492,5 +589,99 @@ export function generateOpenCodeTemplate(): GeneratedConfig {
     apiKey: 'sk-xxxxxxxxxxxxxxx',
     model: 'gpt-5.1',
     targetProtocol: 'openai-responses',
+  });
+}
+
+function escapeTomlString(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, '\\n');
+}
+
+function getGrokBuildDefaultModelId(targetProtocol?: CliTargetProtocol): string {
+  const normalized = normalizeCliTargetProtocol(targetProtocol);
+  if (normalized === 'anthropic-messages') {
+    return GROK_BUILD_MANAGED_MODEL_IDS.messages;
+  }
+  if (normalized === 'openai-chat-completions') {
+    return GROK_BUILD_MANAGED_MODEL_IDS.chat;
+  }
+  return GROK_BUILD_MANAGED_MODEL_IDS.responses;
+}
+
+function generateGrokBuildConfigInternal(
+  params: GrokBuildConfigParams,
+  routeMarker?: string
+): GeneratedConfig {
+  const baseUrl = `${normalizeUrl(params.siteUrl)}/v1`;
+  const apiKey = params.apiKey;
+  const model = escapeTomlString(params.model);
+  const escapedBaseUrl = escapeTomlString(baseUrl);
+  const escapedApiKey = escapeTomlString(apiKey);
+  const escapedSiteName = escapeTomlString(params.siteName || 'API Detect');
+  const escapedRouteMarker = routeMarker ? escapeTomlString(routeMarker) : null;
+  const marker = escapedRouteMarker
+    ? `\nextra_headers = { "${ROUTE_CLI_MARKER_HEADER}" = "${escapedRouteMarker}" }`
+    : '';
+  const messagesHeaders = `\nextra_headers = { "x-api-key" = "${escapedApiKey}"${
+    escapedRouteMarker ? `, "${ROUTE_CLI_MARKER_HEADER}" = "${escapedRouteMarker}"` : ''
+  } }`;
+  const { responses, chat, messages } = GROK_BUILD_MANAGED_MODEL_IDS;
+  const content = `[models]
+default = "${getGrokBuildDefaultModelId(params.targetProtocol)}"
+
+[model.${responses}]
+model = "${model}"
+base_url = "${escapedBaseUrl}"
+name = "${escapedSiteName} · Responses"
+api_key = "${escapedApiKey}"
+api_backend = "responses"
+supports_backend_search = false
+stream_tool_calls = false${marker}
+
+[model.${chat}]
+model = "${model}"
+base_url = "${escapedBaseUrl}"
+name = "${escapedSiteName} · Chat Completions"
+api_key = "${escapedApiKey}"
+api_backend = "chat_completions"
+supports_backend_search = false
+stream_tool_calls = false${marker}
+
+[model.${messages}]
+model = "${model}"
+base_url = "${escapedBaseUrl}"
+name = "${escapedSiteName} · Anthropic Messages"
+api_backend = "messages"
+supports_backend_search = false
+stream_tool_calls = false${messagesHeaders}`;
+
+  return {
+    files: [
+      {
+        path: '~/.grok/config.toml',
+        content,
+        language: 'toml',
+      },
+    ],
+  };
+}
+
+export function generateGrokBuildConfig(params: GrokBuildConfigParams): GeneratedConfig {
+  return generateGrokBuildConfigInternal(params);
+}
+
+export function generateGrokBuildRouteConfig(params: ConfigParams): GeneratedConfig {
+  return generateGrokBuildConfigInternal(
+    { ...params, targetProtocol: 'native' },
+    ROUTE_CLI_MARKER_VALUES.grokBuild
+  );
+}
+
+export function generateGrokBuildTemplate(): GeneratedConfig {
+  return generateGrokBuildConfig({
+    siteUrl: 'https://api.example.com',
+    siteName: 'AnyAPI',
+    apiKey: 'sk-xxxxxxxxxxxxxxx',
+    model: 'grok-code-fast-1',
+    targetProtocol: 'native',
   });
 }

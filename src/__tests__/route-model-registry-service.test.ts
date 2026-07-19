@@ -1108,7 +1108,7 @@ describe('route model registry service', () => {
           accountName: '自定义 CLI',
           sourceType: 'customCli',
           originalModel: 'duckcoding',
-          availableCliTypes: ['claudeCode', 'codex', 'openCode'],
+          availableCliTypes: ['claudeCode', 'codex', 'openCode', 'grokBuild'],
           apiKeyGroups: [CUSTOM_CLI_ROUTE_GROUP],
           availableUserGroups: [CUSTOM_CLI_ROUTE_GROUP],
           availableApiKeys: [
@@ -1124,7 +1124,7 @@ describe('route model registry service', () => {
         expect.objectContaining({
           sourceKey: `${siteId}:${accountId}:gpt-5.4-duck`,
           originalModel: 'gpt-5.4-duck',
-          availableCliTypes: ['claudeCode', 'codex', 'openCode'],
+          availableCliTypes: ['claudeCode', 'codex', 'openCode', 'grokBuild'],
         }),
       ])
     );
@@ -1183,7 +1183,7 @@ describe('route model registry service', () => {
         expect.objectContaining({
           sourceKey: `${siteId}:${accountId}:manual-duck`,
           originalModel: 'manual-duck',
-          availableCliTypes: ['claudeCode', 'codex', 'openCode'],
+          availableCliTypes: ['claudeCode', 'codex', 'openCode', 'grokBuild'],
         }),
       ])
     );
@@ -1241,7 +1241,7 @@ describe('route model registry service', () => {
           sourceKey: `${siteId}:${accountId}:manual-disabled-duck`,
           originalModel: 'manual-disabled-duck',
           sourceType: 'customCli',
-          availableCliTypes: ['claudeCode', 'codex', 'openCode'],
+          availableCliTypes: ['claudeCode', 'codex', 'openCode', 'grokBuild'],
         }),
       ])
     );

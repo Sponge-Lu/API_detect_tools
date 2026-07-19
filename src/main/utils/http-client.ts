@@ -44,6 +44,7 @@ interface RawStreamRequestConfig extends RawRequestConfig {
   streamIdleTimeout?: number;
   onResponse?: (response: RawFetchStreamStart) => boolean | void;
   onChunk?: (chunk: Buffer) => void | Promise<void>;
+  shouldResolveOnAbort?: () => boolean;
 }
 
 export interface RawHttpResponse {
@@ -419,6 +420,7 @@ export async function httpRawStreamRequest(
     signal,
     onResponse,
     onChunk,
+    shouldResolveOnAbort,
     ...axiosConfig
   } = config;
   const compactedHeaders = compactHeaders(headers);
@@ -434,6 +436,7 @@ export async function httpRawStreamRequest(
       proxyUrl,
       onResponse,
       onData: onChunk,
+      shouldResolveOnAbort,
       ...(signal ? { signal } : {}),
     });
     return toRawHttpResponse(res);

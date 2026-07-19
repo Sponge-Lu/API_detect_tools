@@ -43,7 +43,6 @@ const mockRunProbeNow = vi.fn();
 const mockSaveCliProbeConfig = vi.fn();
 const mockSaveCliModelSelections = vi.fn();
 const mockSaveCliThinkingEffortSelections = vi.fn();
-const mockSaveOpenCodeRouteProtocol = vi.fn();
 const mockSaveServerConfig = vi.fn();
 const mockRegenerateApiKey = vi.fn();
 const mockStartServer = vi.fn();
@@ -85,7 +84,6 @@ type MockRouteStoreShape = {
   saveCliProbeConfig: typeof mockSaveCliProbeConfig;
   saveCliModelSelections: typeof mockSaveCliModelSelections;
   saveCliThinkingEffortSelections: typeof mockSaveCliThinkingEffortSelections;
-  saveOpenCodeRouteProtocol: typeof mockSaveOpenCodeRouteProtocol;
   saveServerConfig: typeof mockSaveServerConfig;
   regenerateApiKey: typeof mockRegenerateApiKey;
   startServer: typeof mockStartServer;
@@ -127,7 +125,6 @@ vi.mock('../renderer/store/routeStore', () => ({
       saveCliProbeConfig: mockSaveCliProbeConfig,
       saveCliModelSelections: mockSaveCliModelSelections,
       saveCliThinkingEffortSelections: mockSaveCliThinkingEffortSelections,
-      saveOpenCodeRouteProtocol: mockSaveOpenCodeRouteProtocol,
       saveServerConfig: mockSaveServerConfig,
       regenerateApiKey: mockRegenerateApiKey,
       startServer: mockStartServer,
@@ -714,13 +711,14 @@ function createRoutingConfig(
       claudeCode: 'claude-opus-4-6',
       codex: 'gpt-5.4',
       openCode: 'gpt-5.4',
+      grokBuild: 'gpt-5.4',
     },
     cliThinkingEffortSelections: {
       claudeCode: null,
       codex: null,
       openCode: null,
+      grokBuild: null,
     },
-    openCodeRouteProtocol: 'openai-chat-completions',
     routePathStates,
     server: { host: '127.0.0.1', port: 3000, unifiedApiKey: 'route-key' },
   } as RoutingConfig;
@@ -935,7 +933,6 @@ beforeEach(() => {
   mockSaveCliProbeConfig.mockReset().mockResolvedValue(undefined);
   mockSaveCliModelSelections.mockReset().mockResolvedValue(undefined);
   mockSaveCliThinkingEffortSelections.mockReset().mockResolvedValue(undefined);
-  mockSaveOpenCodeRouteProtocol.mockReset().mockResolvedValue(undefined);
   mockSaveServerConfig.mockReset().mockResolvedValue(undefined);
   mockRegenerateApiKey.mockReset().mockResolvedValue('sk-route-new');
   mockStartServer.mockReset().mockResolvedValue(true);
@@ -1102,12 +1099,9 @@ describe('route workbench redesign', () => {
     expect(claudeRouteLabel?.querySelector('img[aria-hidden="true"]')).not.toBeNull();
     const openCodeRouteLabel = screen.getByText('OpenCode').closest('label');
     expect(openCodeRouteLabel?.querySelector('img[aria-hidden="true"]')).not.toBeNull();
-    expect(screen.getByText('入口端点')).toBeInTheDocument();
-    const openCodeEndpointSelect = screen.getByDisplayValue('/v1/chat/completions');
-    fireEvent.change(openCodeEndpointSelect, { target: { value: 'anthropic-messages' } });
-    await waitFor(() => {
-      expect(mockSaveOpenCodeRouteProtocol).toHaveBeenCalledWith('anthropic-messages');
-    });
+    const grokBuildRouteLabel = screen.getByText('Grok Build').closest('label');
+    expect(grokBuildRouteLabel?.querySelector('img[aria-hidden="true"]')).not.toBeNull();
+    expect(screen.queryByText('入口端点')).not.toBeInTheDocument();
     expect(
       screen.queryByText(/写入 CLI 本地配置时仅生成连接到本地代理的配置/)
     ).not.toBeInTheDocument();
@@ -1188,6 +1182,69 @@ describe('route workbench redesign', () => {
     expect(within(codexPreview).getByText(/sk-route-key/)).toBeInTheDocument();
 
     fireEvent.click(within(codexPreview).getByRole('button', { name: '关闭预览' }));
+  });
+
+  it('applies the managed OpenCode providers only in merge mode', async () => {
+    render(<RoutePage />);
+
+    fireEvent.click(screen.getByRole('button', { name: '应用 OpenCode 路由配置' }));
+    expect(screen.getByRole('button', { name: '合并' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '覆盖' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '合并' }));
+
+    await waitFor(() => {
+      expect(mockWriteConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ cliType: 'openCode', applyMode: 'merge' })
+      );
+    });
+    const payload = mockWriteConfig.mock.calls.find(call => call[0].cliType === 'openCode')?.[0];
+    const configFile = payload?.files.find(
+      (file: { path: string }) => file.path === '~/.config/opencode/opencode.json'
+    );
+    const authFile = payload?.files.find(
+      (file: { path: string }) => file.path === '~/.local/share/opencode/auth.json'
+    );
+    const config = JSON.parse(configFile?.content ?? '{}');
+    const auth = JSON.parse(authFile?.content ?? '{}');
+
+    expect(config.model).toBe('api-detect-responses/gpt-5.4');
+    expect(Object.keys(config.provider)).toEqual(
+      expect.arrayContaining(['api-detect-anthropic', 'api-detect-responses', 'api-detect-chat'])
+    );
+    expect(Object.keys(auth)).toEqual(expect.arrayContaining(Object.keys(config.provider)));
+  });
+
+  it('previews and applies the managed Grok Build models only in merge mode', async () => {
+    render(<RoutePage />);
+
+    fireEvent.click(screen.getByRole('button', { name: '预览 Grok Build 路由配置' }));
+    const preview = await screen.findByRole('dialog', { name: 'Grok Build 路由配置预览' });
+    expect(within(preview).getByText('~/.grok/config.toml')).toBeInTheDocument();
+    expect(within(preview).getByText(/\[model\.api-detect-grok-responses\]/)).toBeInTheDocument();
+    expect(within(preview).getByText(/\[model\.api-detect-grok-chat\]/)).toBeInTheDocument();
+    expect(within(preview).getByText(/\[model\.api-detect-grok-messages\]/)).toBeInTheDocument();
+    expect(within(preview).getByText(/x-api-detect-cli/)).toBeInTheDocument();
+    expect(within(preview).getByText(/grokBuild/)).toBeInTheDocument();
+    fireEvent.click(within(preview).getByRole('button', { name: '关闭预览' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '应用 Grok Build 路由配置' }));
+    expect(screen.getByRole('button', { name: '合并' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '覆盖' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '合并' }));
+
+    await waitFor(() => {
+      expect(mockWriteConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ cliType: 'grokBuild', applyMode: 'merge' })
+      );
+    });
+    const payload = mockWriteConfig.mock.calls.find(call => call[0].cliType === 'grokBuild')?.[0];
+    const configFile = payload?.files.find(
+      (file: { path: string }) => file.path === '~/.grok/config.toml'
+    );
+    expect(configFile?.content).toContain('default = "api-detect-grok-responses"');
+    expect(configFile?.content).toContain('api_backend = "responses"');
+    expect(configFile?.content).toContain('api_backend = "chat_completions"');
+    expect(configFile?.content).toContain('api_backend = "messages"');
   });
 
   it('shows a saved custom thinking effort in the selector and lets the user delete it', async () => {

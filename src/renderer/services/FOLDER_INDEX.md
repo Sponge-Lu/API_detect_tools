@@ -15,7 +15,7 @@
 ### 核心服务文件
 | 文件 | 职责 | 关键方法 |
 |------|------|--------|
-| **cli-config-generator.ts** | CLI 配置生成 | Claude Code、Codex、OpenCode 多协议配置与默认思考参数 |
+| **cli-config-generator.ts** | CLI 配置生成 | Claude Code、Codex、OpenCode 与 Grok Build；Grok Build 生成三种 `api_backend` 受管模型并通过 `/model` 切换，路由配置写入 marker |
 | **cli-compat-projection.ts** | 将 `routing.cliProbe.latest` 投影为站点页 CLI 兼容性结果与 CLI 配置弹窗测试模型 slot | `projectCliCompatibilityMap()`, `projectCliModelTestResultsFromLatest()`, `mergeCliProbeLatestRecords()`, `syncProjectedCliCompatibility()` |
 | **cli-compat-sync.ts** | 手动 CLI 测试结果落盘后的跨视图回灌 | `persistCliCompatibilityResult()`, `refreshPersistedCliProbeState()` |
 | **sessionEventLog.ts** | 将关键操作写入当前会话操作记录 | `success()`, `info()`, `warning()`, `error()` |

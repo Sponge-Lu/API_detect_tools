@@ -10,6 +10,7 @@ import type { ModelPriceInfo, ModelPricingData, UserGroupInfo } from '../../shar
 import ClaudeCodeIcon from '../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../assets/cli-icons/codex.svg';
 import OpenCodeIcon from '../assets/cli-icons/opencode.svg';
+import GrokBuildIcon from '../assets/cli-icons/grok.svg';
 import { AppButton } from '../components/AppButton/AppButton';
 import { useConfigStore } from '../store/configStore';
 import { useRouteStore } from '../store/routeStore';
@@ -51,6 +52,7 @@ const ROUTE_CLI_ICON_CONFIGS: Record<
   claudeCode: { icon: ClaudeCodeIcon, sizeClass: 'h-[18px] w-[18px]' },
   codex: { icon: CodexIcon, sizeClass: 'h-5 w-5' },
   openCode: { icon: OpenCodeIcon, sizeClass: 'h-5 w-4' },
+  grokBuild: { icon: GrokBuildIcon, sizeClass: 'h-[18px] w-[18px]' },
 };
 const ROUTE_CLI_FILTER_OPTIONS: Array<{
   id: RouteCliFilter;

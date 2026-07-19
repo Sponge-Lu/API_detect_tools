@@ -69,6 +69,7 @@ const cliConfigArb: fc.Arbitrary<CliConfig> = fc.record({
   claudeCode: cliConfigItemArb,
   codex: cliConfigItemArb,
   openCode: cliConfigItemArb,
+  grokBuild: cliConfigItemArb,
 });
 
 // ============= Helper Functions =============
@@ -134,6 +135,7 @@ describe('Property 1: CLI enabled toggle updates state correctly', () => {
           claudeCode: enabledStateArb,
           codex: enabledStateArb,
           openCode: enabledStateArb,
+          grokBuild: enabledStateArb,
         }),
         (cliType, initialState) => {
           const newState = toggleEnabledState(initialState, cliType);
@@ -161,6 +163,7 @@ describe('Property 1: CLI enabled toggle updates state correctly', () => {
           claudeCode: enabledStateArb,
           codex: enabledStateArb,
           openCode: enabledStateArb,
+          grokBuild: enabledStateArb,
         }),
         (cliType, initialState) => {
           const afterFirstToggle = toggleEnabledState(initialState, cliType);
@@ -206,6 +209,11 @@ describe('Property 2: CLI icon visibility follows enabled state', () => {
             model: 'test',
             enabled: cliType === 'openCode' ? enabled : true,
           },
+          grokBuild: {
+            apiKeyId: 1,
+            model: 'test',
+            enabled: cliType === 'grokBuild' ? enabled : true,
+          },
         };
 
         const isEnabled = isCliEnabled(config, cliType);
@@ -235,6 +243,8 @@ describe('Property 2: CLI icon visibility follows enabled state', () => {
           codex: cliType === 'codex' ? undefined : { apiKeyId: 1, model: 'test', enabled: true },
           openCode:
             cliType === 'openCode' ? undefined : { apiKeyId: 1, model: 'test', enabled: true },
+          grokBuild:
+            cliType === 'grokBuild' ? undefined : { apiKeyId: 1, model: 'test', enabled: true },
         } as CliConfig;
 
         const isEnabled = isCliEnabled(config, cliType);
@@ -252,6 +262,7 @@ describe('Property 2: CLI icon visibility follows enabled state', () => {
           claudeCode: { apiKeyId: 1, model: 'test' } as any,
           codex: { apiKeyId: 1, model: 'test' } as any,
           openCode: { apiKeyId: 1, model: 'test' } as any,
+          grokBuild: { apiKeyId: 1, model: 'test' } as any,
         };
 
         const isEnabled = isCliEnabled(config, cliType);
@@ -297,11 +308,13 @@ describe('Property 5: Save persists all configuration fields', () => {
           claudeCode: enabledStateArb,
           codex: enabledStateArb,
           openCode: enabledStateArb,
+          grokBuild: enabledStateArb,
         }),
         fc.record({
           claudeCode: fc.record({ apiKeyId: apiKeyIdArb, model: modelArb }),
           codex: fc.record({ apiKeyId: apiKeyIdArb, model: modelArb }),
           openCode: fc.record({ apiKeyId: apiKeyIdArb, model: modelArb }),
+          grokBuild: fc.record({ apiKeyId: apiKeyIdArb, model: modelArb }),
         }),
         (enabledState, cliConfigs) => {
           const savedConfig = buildCliConfig(enabledState, cliConfigs);
@@ -327,6 +340,7 @@ describe('Property 5: Save persists all configuration fields', () => {
           claudeCode: enabledStateArb,
           codex: enabledStateArb,
           openCode: enabledStateArb,
+          grokBuild: enabledStateArb,
         }),
         enabledState => {
           // Create config with all null apiKeyId and model
@@ -334,6 +348,7 @@ describe('Property 5: Save persists all configuration fields', () => {
             claudeCode: { apiKeyId: null, model: null },
             codex: { apiKeyId: null, model: null },
             openCode: { apiKeyId: null, model: null },
+            grokBuild: { apiKeyId: null, model: null },
           };
 
           const savedConfig = buildCliConfig(enabledState, cliConfigs);
@@ -412,6 +427,7 @@ describe('Property 6: Apply popover shows only valid configurations', () => {
       claudeCode: { apiKeyId: null, model: null, enabled: true },
       codex: { apiKeyId: null, model: null, enabled: true },
       openCode: { apiKeyId: null, model: null, enabled: true },
+      grokBuild: { apiKeyId: null, model: null, enabled: true },
     };
 
     const validCliTypes = filterValidCliConfigs(emptyConfig);
@@ -434,6 +450,7 @@ describe('Property 6: Apply popover shows only valid configurations', () => {
             claudeCode: { apiKeyId, model, enabled: false }, // disabled but valid
             codex: { apiKeyId: null, model: null, enabled: true },
             openCode: { apiKeyId: null, model: null, enabled: true },
+            grokBuild: { apiKeyId: null, model: null, enabled: true },
           };
 
           // filterValidCliConfigs should return claudeCode regardless of enabled state
@@ -456,6 +473,7 @@ describe('Property 6: Apply popover shows only valid configurations', () => {
             claudeCode: { apiKeyId, model, enabled: true },
             codex: { apiKeyId, model, enabled: true },
             openCode: { apiKeyId, model, enabled: true },
+            grokBuild: { apiKeyId, model, enabled: true },
           };
 
           const validCliTypes = filterValidCliConfigs(config);

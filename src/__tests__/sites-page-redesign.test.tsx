@@ -668,7 +668,7 @@ describe('sites page redesign', () => {
     fireEvent.click(screen.getByRole('button', { name: 'CLI 配置 & 测试' }));
     expect(
       screen.getByText((_, element) =>
-        /^CLI 配置（\s*\d+\s*\/\s*3\s*）$/.test(element?.textContent ?? '')
+        /^CLI 配置（\s*\d+\s*\/\s*4\s*）$/.test(element?.textContent ?? '')
       )
     ).toBeInTheDocument();
     expect(screen.queryByText('直连 CLI 配置')).not.toBeInTheDocument();
@@ -1094,7 +1094,7 @@ describe('sites page redesign', () => {
     fireEvent.click(screen.getByRole('button', { name: 'CLI 配置 & 测试' }));
     expect(
       screen.getByText((_, element) =>
-        /^CLI 配置（\s*\d+\s*\/\s*3\s*）$/.test(element?.textContent ?? '')
+        /^CLI 配置（\s*\d+\s*\/\s*4\s*）$/.test(element?.textContent ?? '')
       )
     ).toBeInTheDocument();
 
@@ -1120,7 +1120,7 @@ describe('sites page redesign', () => {
 
     expect(
       screen.getByText((_, element) =>
-        /^CLI 配置（\s*\d+\s*\/\s*3\s*）$/.test(element?.textContent ?? '')
+        /^CLI 配置（\s*\d+\s*\/\s*4\s*）$/.test(element?.textContent ?? '')
       )
     ).toBeInTheDocument();
     expect(screen.queryByText('站点与账户')).not.toBeInTheDocument();
@@ -1340,6 +1340,8 @@ describe('sites page redesign', () => {
     expect(screen.getByRole('button', { name: '选择 Codex' })).toBeInTheDocument();
     expect(screen.getByAltText('Claude Code')).toBeInTheDocument();
     expect(screen.getByAltText('Codex')).toBeInTheDocument();
+    expect(screen.getByAltText('OpenCode')).toBeInTheDocument();
+    expect(screen.getByAltText('Grok Build')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '综合模式' })).toBeInTheDocument();
     expect(screen.queryByText('操作')).not.toBeInTheDocument();
     // 已移除的列

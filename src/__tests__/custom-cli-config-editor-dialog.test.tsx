@@ -47,7 +47,7 @@ const createConfig = (): CustomCliConfig => ({
   baseUrl: 'https://api.example.com',
   apiKey: 'test-key',
   groupMultiplier: 1,
-  models: ['claude-3.7', 'gpt-4.1', 'gpt-4.1-mini'],
+  models: ['claude-3.7', 'gpt-4.1', 'gpt-4.1-mini', 'grok-4.1'],
   notes: '',
   cliSettings: {
     claudeCode: {
@@ -59,6 +59,17 @@ const createConfig = (): CustomCliConfig => ({
       enabled: true,
       model: 'gpt-4.1',
       testModels: ['gpt-4.1'],
+    },
+    openCode: {
+      enabled: true,
+      model: 'gpt-4.1',
+      testModels: ['gpt-4.1'],
+    },
+    grokBuild: {
+      enabled: true,
+      model: 'grok-4.1',
+      testModels: ['grok-4.1'],
+      targetProtocol: 'native',
     },
   },
   createdAt: 1,
@@ -155,6 +166,8 @@ describe('DirectCliConfigEditorContent', () => {
     expect(screen.queryByText('测试模型（最多 3 个）')).not.toBeInTheDocument();
     expect(screen.getByText('Claude Code')).toBeInTheDocument();
     expect(screen.getByText('Codex')).toBeInTheDocument();
+    expect(screen.getByText('OpenCode')).toBeInTheDocument();
+    expect(screen.getByText('Grok Build')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Claude Code 主模型' })).toBeInTheDocument();
     await openCliSection('Codex');
     expect(screen.getByRole('button', { name: 'Codex 主模型' })).toBeInTheDocument();
@@ -546,6 +559,41 @@ describe('DirectCliConfigEditorContent', () => {
             expect.objectContaining({ path: '~/.codex/config.toml' }),
             expect.objectContaining({ path: '~/.codex/auth.json' }),
           ]),
+        })
+      )
+    );
+  });
+
+  it('shows Grok Build native endpoint behavior without enabling model probes', async () => {
+    const writeConfig = vi.fn().mockResolvedValue({
+      success: true,
+      writtenPaths: ['~/.grok/config.toml'],
+    });
+    const testWithWrapper = getElectronAPI().cliCompat.testWithWrapper;
+    getElectronAPI().cliCompat.writeConfig = writeConfig;
+
+    await renderDialog();
+    await openCliSection('Grok Build');
+
+    expect(screen.getByRole('button', { name: 'Grok Build 主模型' })).toHaveTextContent('grok-4.1');
+    expect(screen.getByLabelText('Grok Build 选择上游端口')).toHaveDisplayValue(
+      '原生协议 · 跟随 Grok Build 当前模型入口'
+    );
+    const testButton = screen.getByRole('button', { name: '测试 Grok Build' });
+    expect(testButton).toBeDisabled();
+    expect(testButton).toHaveTextContent('暂不支持探测');
+    expect(testWithWrapper).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '应用 Grok Build' }));
+    });
+
+    await waitFor(() =>
+      expect(writeConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cliType: 'grokBuild',
+          applyMode: 'merge',
+          files: [expect.objectContaining({ path: '~/.grok/config.toml' })],
         })
       )
     );

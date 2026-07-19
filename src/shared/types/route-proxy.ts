@@ -18,6 +18,14 @@ import {
 /** CLI 类型 */
 export type RouteCliType = BuiltinCliType;
 
+export const ROUTE_CLI_MARKER_HEADER = 'x-api-detect-cli';
+export const ROUTE_CLI_MARKER_VALUES: Record<RouteCliType, string> = {
+  claudeCode: 'claudeCode',
+  codex: 'codex',
+  openCode: 'openCode',
+  grokBuild: 'grokBuild',
+};
+
 /** 路由思考强度预设 */
 export const ROUTE_THINKING_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 /** 路由思考强度：预设值或用户自定义字符串 */
@@ -132,7 +140,9 @@ export interface RoutePathState extends Omit<RouteChannelKey, 'routeRuleId'> {
   updatedAt: number;
 }
 
-export type RouteEndpointCapabilityName = 'claude_messages_count_tokens';
+export type RouteEndpointCapabilityName =
+  | 'claude_messages_count_tokens'
+  | 'openai_responses_input_tokens';
 export type RouteEndpointCapabilityStatus = 'unsupported';
 
 export interface RouteEndpointCapabilityState {
@@ -590,7 +600,6 @@ export interface RoutingConfig {
   rules: RouteRule[];
   cliModelSelections: Record<RouteCliType, string | null>;
   cliThinkingEffortSelections: Record<RouteCliType, RouteThinkingEffort | null>;
-  openCodeRouteProtocol: Exclude<CliTargetProtocol, 'native'>;
   stats: Record<string, RouteChannelStats>;
   routePathStates: Record<string, RoutePathState>;
   routeEndpointCapabilities?: Record<string, RouteEndpointCapabilityState>;
@@ -642,8 +651,6 @@ export const DEFAULT_ANALYTICS_CONFIG: RouteAnalyticsConfig = {
 };
 
 export const ROUTE_SUCCESSFUL_PATH_AFFINITY_MS = 30 * 60 * 1000;
-export const DEFAULT_OPEN_CODE_ROUTE_PROTOCOL: Exclude<CliTargetProtocol, 'native'> =
-  'openai-responses';
 
 export const DEFAULT_MODEL_REGISTRY_CONFIG: RouteModelRegistryConfig = {
   version: 1,
@@ -657,9 +664,13 @@ export const DEFAULT_MODEL_REGISTRY_CONFIG: RouteModelRegistryConfig = {
 export const DEFAULT_ROUTING_CONFIG: RoutingConfig = {
   server: DEFAULT_ROUTE_PROXY_SERVER_CONFIG,
   rules: [],
-  cliModelSelections: { claudeCode: null, codex: null, openCode: null },
-  cliThinkingEffortSelections: { claudeCode: null, codex: null, openCode: null },
-  openCodeRouteProtocol: DEFAULT_OPEN_CODE_ROUTE_PROTOCOL,
+  cliModelSelections: { claudeCode: null, codex: null, openCode: null, grokBuild: null },
+  cliThinkingEffortSelections: {
+    claudeCode: null,
+    codex: null,
+    openCode: null,
+    grokBuild: null,
+  },
   stats: {},
   routePathStates: {},
   routeEndpointCapabilities: {},
@@ -675,13 +686,6 @@ export const DEFAULT_ROUTING_CONFIG: RoutingConfig = {
     buckets: {},
   },
 };
-
-export function normalizeOpenCodeRouteProtocol(
-  value: unknown
-): Exclude<CliTargetProtocol, 'native'> {
-  const normalized = normalizeCliTargetProtocol(value);
-  return normalized === 'native' ? DEFAULT_OPEN_CODE_ROUTE_PROTOCOL : normalized;
-}
 
 export function isRouteThinkingEffortPreset(
   value: string
@@ -715,6 +719,7 @@ export function normalizeRouteThinkingEffortSelections(
     claudeCode: normalizeRouteThinkingEffort(selections?.claudeCode),
     codex: normalizeRouteThinkingEffort(selections?.codex),
     openCode: normalizeRouteThinkingEffort(selections?.openCode),
+    grokBuild: normalizeRouteThinkingEffort(selections?.grokBuild),
   };
 }
 
@@ -796,6 +801,7 @@ export const CLI_TYPE_PATH_MAP: Record<RouteCliType, string[]> = {
   claudeCode: ['/v1/messages'],
   codex: ['/v1/responses'],
   openCode: ['/v1/messages', '/v1/chat/completions', '/v1/responses'],
+  grokBuild: ['/v1/messages', '/v1/chat/completions', '/v1/responses'],
 };
 
 /** 厂商匹配规则：prefixes 匹配前缀（优先），keywords 匹配名称中任意位置（兜底） */

@@ -41,6 +41,28 @@ const initialConfig: CliConfig = {
     editedFiles: null,
     applyMode: 'merge',
   },
+  openCode: {
+    apiKeyId: 1,
+    model: 'gpt-4.1',
+    targetProtocol: 'native',
+    testModel: 'gpt-4.1',
+    testModels: ['gpt-4.1', '', ''],
+    testResults: [],
+    enabled: true,
+    editedFiles: null,
+    applyMode: 'merge',
+  },
+  grokBuild: {
+    apiKeyId: 1,
+    model: 'gpt-4.1',
+    targetProtocol: 'native',
+    testModel: null,
+    testModels: [],
+    testResults: [],
+    enabled: true,
+    editedFiles: null,
+    applyMode: 'merge',
+  },
 };
 
 const mismatchConfig: CliConfig = {
@@ -150,6 +172,10 @@ describe('ManagedCliConfigEditorContent', () => {
           data: {
             codex: true,
           },
+        }),
+        writeConfig: vi.fn().mockResolvedValue({
+          success: true,
+          writtenPaths: ['~/.grok/config.toml'],
         }),
         saveResult: vi.fn().mockResolvedValue({ success: true }),
       },
@@ -550,6 +576,43 @@ describe('ManagedCliConfigEditorContent', () => {
           targetProtocol: 'openai-chat-completions',
         }),
       })
+    );
+  });
+
+  it('supports managed Grok Build configuration without exposing model probes', async () => {
+    render(
+      <ManagedCliConfigEditorContent
+        siteName="Claude Hub"
+        siteUrl="https://example.com"
+        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
+        siteModels={['gpt-4.1']}
+        currentConfig={initialConfig}
+        onSave={vi.fn()}
+      />
+    );
+
+    await act(async () => {
+      fireEvent.click(getCliSectionHeader('Grok Build'));
+    });
+
+    expect(screen.getByLabelText('选择上游端口')).toHaveDisplayValue(
+      '原生协议 · 跟随 Grok Build 当前模型入口'
+    );
+    expect(screen.getByRole('button', { name: '暂不支持探测' })).toBeDisabled();
+    expect(window.electronAPI.cliCompat.testWithWrapper).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '应用 Grok Build' }));
+    });
+
+    await waitFor(() =>
+      expect(window.electronAPI.cliCompat.writeConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cliType: 'grokBuild',
+          applyMode: 'merge',
+          files: [expect.objectContaining({ path: '~/.grok/config.toml' })],
+        })
+      )
     );
   });
 });

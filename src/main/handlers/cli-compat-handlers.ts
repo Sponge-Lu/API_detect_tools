@@ -25,14 +25,16 @@ import {
   getCliTargetEndpoint,
   normalizeCodexFeatureFlagsToml,
   normalizeCliTargetProtocol,
+  type BuiltinCliType,
   type CliConfig,
+  type ProbeCliType,
 } from '../../shared/types/cli-config';
 import { buildProbeKey, buildSiteScopedProbeAccountId } from '../../shared/types/route-proxy';
 import type { AccountCredential, ApiKeyInfo, UnifiedSite } from '../../shared/types/site';
 
 const log = Logger.scope('CliCompatHandlers');
 
-type SupportedCliType = 'claudeCode' | 'codex' | 'openCode';
+type SupportedCliType = ProbeCliType;
 
 interface CliTestConfig {
   cliType: SupportedCliType;
@@ -257,7 +259,7 @@ async function resolveCliTestRouteTarget(
 
 /** 配置文件写入参数 */
 interface WriteCliConfigParams {
-  cliType: SupportedCliType;
+  cliType: BuiltinCliType;
   files: Array<{
     path: string;
     content: string;
@@ -569,7 +571,11 @@ function mergeTomlConfig(existingContent: string, newContent: string): string {
 
       // 检查是否是嵌套 section，且新配置有同一父级的 section
       const parent = getSectionParentPrefix(existingCurrentSection);
-      if (parent && newSectionParents.has(parent) && !newSections.has(existingCurrentSection)) {
+      if (
+        parent === 'model_providers' &&
+        newSectionParents.has(parent) &&
+        !newSections.has(existingCurrentSection)
+      ) {
         // 新配置有同一父级的子 section，但不包含这个具体的子 section
         // 跳过这个旧的子 section（不保留）
         skippedSections.add(existingCurrentSection);
@@ -674,14 +680,20 @@ function mergeTomlConfig(existingContent: string, newContent: string): string {
  * @param newContent - 新内容
  * @returns 合并后的内容
  */
-function mergeConfigByType(filePath: string, existingContent: string, newContent: string): string {
+function mergeConfigByType(
+  cliType: BuiltinCliType,
+  filePath: string,
+  existingContent: string,
+  newContent: string
+): string {
   const ext = path.extname(filePath).toLowerCase();
   const basename = path.basename(filePath).toLowerCase();
 
   if (ext === '.json') {
     return mergeJsonConfig(existingContent, newContent);
   } else if (ext === '.toml') {
-    return normalizeCodexFeatureFlagsToml(mergeTomlConfig(existingContent, newContent));
+    const merged = mergeTomlConfig(existingContent, newContent);
+    return cliType === 'codex' ? normalizeCodexFeatureFlagsToml(merged) : merged;
   } else if (ext === '.env' || basename === '.env') {
     return mergeEnvConfig(existingContent, newContent);
   }
@@ -1061,7 +1073,10 @@ export function registerCliCompatHandlers() {
           ensureDirectoryExists(dirPath);
 
           let finalContent = file.content;
-          if (path.basename(file.path).toLowerCase() === 'config.toml') {
+          if (
+            params.cliType === 'codex' &&
+            path.basename(file.path).toLowerCase() === 'config.toml'
+          ) {
             finalContent = normalizeCodexFeatureFlagsToml(finalContent);
           }
 
@@ -1069,7 +1084,12 @@ export function registerCliCompatHandlers() {
           if (applyMode === 'merge' && fs.existsSync(resolvedPath)) {
             try {
               const existingContent = fs.readFileSync(resolvedPath, 'utf-8');
-              finalContent = mergeConfigByType(file.path, existingContent, file.content);
+              finalContent = mergeConfigByType(
+                params.cliType,
+                file.path,
+                existingContent,
+                file.content
+              );
               log.info(`Merged config file: ${resolvedPath}`);
             } catch (readError: any) {
               log.warn(`Failed to read existing config, will overwrite: ${readError.message}`);

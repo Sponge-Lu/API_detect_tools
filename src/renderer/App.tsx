@@ -231,7 +231,7 @@ declare global {
           accountId?: string
         ) => Promise<{ success: boolean; error?: string }>;
         writeConfig: (params: {
-          cliType: 'claudeCode' | 'codex' | 'openCode';
+          cliType: 'claudeCode' | 'codex' | 'openCode' | 'grokBuild';
           files: Array<{
             path: string;
             content: string;
@@ -241,19 +241,21 @@ declare global {
       };
       configDetection: {
         detectCliConfig: (
-          cliType: 'claudeCode' | 'codex' | 'openCode',
+          cliType: 'claudeCode' | 'codex' | 'openCode' | 'grokBuild',
           sites: Array<{ id: string; name: string; url: string }>
         ) => Promise<any>;
         detectAllCliConfig: (
           sites: Array<{ id: string; name: string; url: string }>
         ) => Promise<import('../shared/types/config-detection').AllCliDetectionResult>;
-        clearCache: (cliType?: 'claudeCode' | 'codex' | 'openCode') => Promise<void>;
-        resetCliConfig: (cliType: 'claudeCode' | 'codex' | 'openCode') => Promise<{
+        clearCache: (cliType?: 'claudeCode' | 'codex' | 'openCode' | 'grokBuild') => Promise<void>;
+        resetCliConfig: (cliType: 'claudeCode' | 'codex' | 'openCode' | 'grokBuild') => Promise<{
           success: boolean;
           deletedPaths: string[];
           error?: string;
         }>;
-        readCliConfigFiles: (cliType: 'claudeCode' | 'codex' | 'openCode') => Promise<{
+        readCliConfigFiles: (
+          cliType: 'claudeCode' | 'codex' | 'openCode' | 'grokBuild'
+        ) => Promise<{
           success: boolean;
           files: Array<{
             key: string;
@@ -418,9 +420,6 @@ declare global {
           overrideId: string
         ) => Promise<{ success: boolean; data?: any; error?: string }>;
         saveCliModelSelections: (selections: any) => Promise<{ success: boolean; error?: string }>;
-        saveOpenCodeRouteProtocol: (
-          protocol: unknown
-        ) => Promise<{ success: boolean; data?: any; error?: string }>;
         saveCliThinkingEffortSelections: (
           selections: any
         ) => Promise<{ success: boolean; error?: string }>;

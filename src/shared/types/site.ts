@@ -92,6 +92,8 @@ export interface CliCompatibilityData {
   openCode: boolean | null;
   openCodeDetail?: OpenCodeTestDetail; // OpenCode 详细测试结果（官方 provider/endpoint 模式）
   openCodeError?: string; // OpenCode 失败摘要（错误码优先）
+  grokBuild?: boolean | null;
+  grokBuildError?: string;
   testedAt: number | null;
   error?: string;
 }
@@ -160,6 +162,7 @@ export interface CliConfigData {
   claudeCode: CliConfigItem;
   codex: CliConfigItem;
   openCode: CliConfigItem;
+  grokBuild: CliConfigItem;
 }
 
 /** 默认 CLI 配置 - 所有 CLI 默认启用 */
@@ -167,6 +170,7 @@ export const DEFAULT_CLI_CONFIG_DATA: CliConfigData = {
   claudeCode: { apiKeyId: null, model: null, enabled: true },
   codex: { apiKeyId: null, model: null, enabled: true },
   openCode: { apiKeyId: null, model: null, enabled: true },
+  grokBuild: { apiKeyId: null, model: null, enabled: true },
 };
 
 // ============= 多账户类型 =============

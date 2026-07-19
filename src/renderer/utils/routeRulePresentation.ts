@@ -9,6 +9,7 @@ const CLI_LABELS: Record<RouteCliType, string> = {
   claudeCode: 'Claude Code',
   codex: 'Codex',
   openCode: 'OpenCode',
+  grokBuild: 'Grok Build',
 };
 
 const PATTERN_TYPE_LABELS: Record<RoutePatternType, string> = {

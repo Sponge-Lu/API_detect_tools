@@ -25,6 +25,7 @@ import { useRouteStore } from '../../store/routeStore';
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../assets/cli-icons/codex.svg';
 import OpenCodeIcon from '../../assets/cli-icons/opencode.svg';
+import GrokBuildIcon from '../../assets/cli-icons/grok.svg';
 
 export interface CliConfigStatusProps {
   /** CLI 类型 */
@@ -61,6 +62,12 @@ const CLI_TYPE_CONFIGS: Record<CliType, CliTypeConfig> = {
     name: BUILTIN_CLI_LABELS.openCode,
     icon: OpenCodeIcon,
     sizeClass: 'w-4 h-5',
+  },
+  grokBuild: {
+    key: 'grokBuild',
+    name: BUILTIN_CLI_LABELS.grokBuild,
+    icon: GrokBuildIcon,
+    sizeClass: 'w-[18px] h-[18px]',
   },
 };
 

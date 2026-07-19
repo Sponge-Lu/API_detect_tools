@@ -46,15 +46,15 @@ import type {
 import {
   buildRouteApiKeyPriorityKey,
   buildRoutePathStateKey,
-  normalizeOpenCodeRouteProtocol,
   normalizeRouteThinkingEffort,
   normalizeRouteRuntimeConfig,
+  ROUTE_CLI_MARKER_HEADER,
+  ROUTE_CLI_MARKER_VALUES,
   ROUTE_SUCCESSFUL_PATH_AFFINITY_MS,
 } from '../shared/types/route-proxy';
 import { isAnyRouterSite } from '../shared/types/site';
 import {
   getCliTargetEndpoint,
-  isCliTargetProtocolNativeEquivalent,
   normalizeCliTargetProtocol,
   type CliTargetProtocol,
 } from '../shared/types/cli-config';
@@ -102,7 +102,18 @@ const PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_STATUS_CODE = 400;
 const ANYROUTER_REQUEST_TIMEOUT_MS = 120 * 1000;
 const ACTIVE_STREAM_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 const CLAUDE_COUNT_TOKENS_PATH = '/v1/messages/count_tokens';
+const RESPONSES_INPUT_TOKENS_PATH = '/v1/responses/input_tokens';
 const CLAUDE_MESSAGES_COUNT_TOKENS_ENDPOINT = 'claude_messages_count_tokens';
+const RESPONSES_INPUT_TOKENS_ENDPOINT = 'openai_responses_input_tokens';
+const LOCAL_TOKEN_ESTIMATE_HEADER = 'x-api-detect-token-estimate';
+const OPENAI_STATEFUL_ROUTE_PREFIXES = [
+  '/v1/batches',
+  '/v1/files',
+  '/v1/uploads',
+  '/v1/vector_stores',
+  '/v1/conversations',
+  '/v1/containers',
+] as const;
 const LOCAL_COUNT_TOKENS_IMAGE_ESTIMATE = 2000;
 const LOCAL_COUNT_TOKENS_DOCUMENT_ESTIMATE = 2000;
 const LOCAL_COUNT_TOKENS_MESSAGE_OVERHEAD = 4;
@@ -112,6 +123,17 @@ const STREAM_TERMINAL_SCAN_MAX_CHARS = 8192;
 const ROUTE_CLIENT_CANCELLED_ERROR_CODE = 'route_client_cancelled';
 
 type ConcreteCliTargetProtocol = Exclude<CliTargetProtocol, 'native'>;
+type RouteOperationCapability =
+  | 'generation-convertible'
+  | 'stateless-native-only'
+  | 'stateful-unsupported'
+  | 'unsupported';
+
+export interface RouteEndpointOperation {
+  protocol: ConcreteCliTargetProtocol;
+  operation: string;
+  capability: RouteOperationCapability;
+}
 
 class RouteClientCancelledError extends Error {
   constructor(message = 'Route client cancelled request') {
@@ -129,6 +151,83 @@ function isRouteClientCancelledError(error: unknown): boolean {
 
 function createRouteClientCancelledError(): RouteClientCancelledError {
   return new RouteClientCancelledError(ROUTE_CLIENT_CANCELLED_ERROR_CODE);
+}
+
+/**
+ * Client disconnect after a finished successful upstream attempt should still
+ * appear in session request logs / path affinity. Incomplete or failed late
+ * results stay silent so cancellation does not poison path health.
+ */
+function shouldRecordCancelledUpstreamSuccess(result: {
+  statusCode: number;
+  streamed?: boolean;
+  usage?: RouteUsageStats;
+}): boolean {
+  if (classifyRouteStatusCode(result.statusCode) !== 'success') {
+    return false;
+  }
+  if (!result.streamed && isAllZeroRouteUsage(result.usage)) {
+    return false;
+  }
+  return true;
+}
+
+async function recordCancelledUpstreamSuccess(params: {
+  requestId: string;
+  attempt: number;
+  activeChannel: ResolvedChannel;
+  activeRouteRuleId?: string;
+  cliType: RouteCliType;
+  rawModel: string | null;
+  reasoningEffort?: string;
+  canonicalModel: string | null;
+  result: {
+    statusCode: number;
+    latencyMs: number;
+    firstByteLatencyMs?: number;
+    usage?: RouteUsageStats;
+  };
+  routeRuntimeConfig: RouteRuntimeConfig;
+}): Promise<void> {
+  const { activeChannel, result } = params;
+  recordOutcome(activeChannel, 'success', {
+    statusCode: result.statusCode,
+    latencyMs: result.latencyMs,
+  });
+  await recordRoutePathOutcome(
+    activeChannel,
+    'success',
+    {
+      statusCode: result.statusCode,
+      latencyMs: result.latencyMs,
+    },
+    params.routeRuntimeConfig
+  );
+  recordRouteRequest({
+    requestId: params.requestId,
+    attempt: params.attempt,
+    routeRuleId: params.activeRouteRuleId,
+    cliType: params.cliType,
+    targetProtocol: activeChannel.targetProtocol,
+    targetEndpoint: activeChannel.targetEndpoint,
+    requestedModel: params.rawModel,
+    reasoningEffort: params.reasoningEffort,
+    canonicalModel: params.canonicalModel,
+    siteId: activeChannel.siteId,
+    accountId: activeChannel.accountId,
+    apiKeyId: activeChannel.apiKeyId,
+    resolvedModel: activeChannel.resolvedModel,
+    outcome: 'success',
+    statusCode: result.statusCode,
+    latencyMs: result.latencyMs,
+    firstByteLatencyMs: result.firstByteLatencyMs,
+    promptTokens: result.usage?.promptTokens,
+    completionTokens: result.usage?.completionTokens,
+    totalTokens: result.usage?.totalTokens,
+    cacheCreationTokens: result.usage?.cacheCreationTokens,
+    cacheReadTokens: result.usage?.cacheReadTokens,
+    cachedTokens: result.usage?.cachedTokens,
+  });
 }
 
 function nextRequestId(cliType: RouteCliType): string {
@@ -257,10 +356,7 @@ export function extractRouteApiKey(
   req: Pick<http.IncomingMessage, 'headers' | 'url'>,
   cliType: RouteCliType
 ): string {
-  if (cliType === 'claudeCode') {
-    return extractClaudeRouteToken(req as http.IncomingMessage);
-  }
-  if (cliType === 'openCode' && inferOpenCodeSourceProtocol(req.url) === 'anthropic-messages') {
+  if (cliType === 'grokBuild' || inferSourceProtocol(req.url) === 'anthropic-messages') {
     return extractClaudeRouteToken(req as http.IncomingMessage);
   }
 
@@ -273,11 +369,39 @@ function isLikelyOpenCodeRequest(req: Pick<http.IncomingMessage, 'headers'>): bo
   return userAgent.includes('opencode') || originator.includes('opencode');
 }
 
+function isLikelyGrokBuildRequest(req: Pick<http.IncomingMessage, 'headers'>): boolean {
+  const clientIdentifier = normalizeHeaderValue(
+    req.headers['x-grok-client-identifier']
+  ).toLowerCase();
+  const userAgent = normalizeHeaderValue(req.headers['user-agent']).toLowerCase();
+  return clientIdentifier === 'grok-shell' || userAgent.includes('grok-shell/');
+}
+
+export function detectMarkedRouteCliType(
+  headers: Pick<http.IncomingHttpHeaders, string>
+): RouteCliType | null {
+  const marker = normalizeHeaderValue(headers[ROUTE_CLI_MARKER_HEADER]).trim().toLowerCase();
+  if (!marker) {
+    return null;
+  }
+
+  for (const [cliType, value] of Object.entries(ROUTE_CLI_MARKER_VALUES) as [
+    RouteCliType,
+    string,
+  ][]) {
+    if (value.toLowerCase() === marker) {
+      return cliType;
+    }
+  }
+
+  return null;
+}
+
 function getRequestPathname(requestUrl: string | undefined): string {
   return (requestUrl || '/').split('?')[0] || '/';
 }
 
-function inferOpenCodeSourceProtocol(requestUrl: string | undefined): ConcreteCliTargetProtocol {
+function inferSourceProtocol(requestUrl: string | undefined): ConcreteCliTargetProtocol | null {
   const pathname = getRequestPathname(requestUrl);
   if (pathname === '/v1/messages' || pathname.startsWith('/v1/messages/')) {
     return 'anthropic-messages';
@@ -285,38 +409,179 @@ function inferOpenCodeSourceProtocol(requestUrl: string | undefined): ConcreteCl
   if (pathname === '/v1/responses' || pathname.startsWith('/v1/responses/')) {
     return 'openai-responses';
   }
-  return 'openai-chat-completions';
+  if (pathname === '/v1/chat/completions' || pathname.startsWith('/v1/chat/completions/')) {
+    return 'openai-chat-completions';
+  }
+  return null;
+}
+
+export function classifyRouteEndpointOperation(
+  method: string | undefined,
+  requestUrl: string | undefined
+): RouteEndpointOperation | null {
+  const pathname = getRequestPathname(requestUrl);
+  if (
+    OPENAI_STATEFUL_ROUTE_PREFIXES.some(
+      prefix => pathname === prefix || pathname.startsWith(`${prefix}/`)
+    )
+  ) {
+    return {
+      protocol: 'openai-responses',
+      operation: 'resource.lifecycle',
+      capability: 'stateful-unsupported',
+    };
+  }
+
+  const protocol = inferSourceProtocol(pathname);
+  if (!protocol) {
+    return null;
+  }
+
+  const normalizedMethod = (method || 'GET').toUpperCase();
+  const matches = (expectedMethod: string, expectedPath: string | RegExp): boolean =>
+    normalizedMethod === expectedMethod &&
+    (typeof expectedPath === 'string' ? pathname === expectedPath : expectedPath.test(pathname));
+
+  if (
+    matches('POST', '/v1/messages') ||
+    matches('POST', '/v1/responses') ||
+    matches('POST', '/v1/chat/completions')
+  ) {
+    return { protocol, operation: 'generation.create', capability: 'generation-convertible' };
+  }
+
+  if (matches('POST', CLAUDE_COUNT_TOKENS_PATH) || matches('POST', RESPONSES_INPUT_TOKENS_PATH)) {
+    return { protocol, operation: 'input_tokens.count', capability: 'stateless-native-only' };
+  }
+
+  const statefulOperation =
+    matches('POST', '/v1/messages/batches') ||
+    matches('GET', '/v1/messages/batches') ||
+    matches('GET', /^\/v1\/messages\/batches\/[^/]+$/) ||
+    matches('DELETE', /^\/v1\/messages\/batches\/[^/]+$/) ||
+    matches('POST', /^\/v1\/messages\/batches\/[^/]+\/cancel$/) ||
+    matches('GET', /^\/v1\/messages\/batches\/[^/]+\/results$/) ||
+    matches('GET', /^\/v1\/responses\/[^/]+$/) ||
+    matches('DELETE', /^\/v1\/responses\/[^/]+$/) ||
+    matches('POST', /^\/v1\/responses\/[^/]+\/cancel$/) ||
+    matches('GET', /^\/v1\/responses\/[^/]+\/input_items$/) ||
+    matches('GET', '/v1/chat/completions') ||
+    matches('GET', /^\/v1\/chat\/completions\/[^/]+$/) ||
+    matches('POST', /^\/v1\/chat\/completions\/[^/]+$/) ||
+    matches('DELETE', /^\/v1\/chat\/completions\/[^/]+$/) ||
+    matches('GET', /^\/v1\/chat\/completions\/[^/]+\/messages$/);
+  if (statefulOperation) {
+    return { protocol, operation: 'resource.lifecycle', capability: 'stateful-unsupported' };
+  }
+
+  if (matches('POST', '/v1/responses/compact')) {
+    return { protocol, operation: 'responses.compact', capability: 'unsupported' };
+  }
+
+  return { protocol, operation: 'unknown', capability: 'unsupported' };
+}
+
+function findProviderOwnedStateReference(body: unknown): string | null {
+  const record = asRecord(body);
+  if (!record) {
+    return null;
+  }
+
+  for (const field of ['previous_response_id', 'conversation', 'container'] as const) {
+    if (record[field] !== undefined && record[field] !== null && record[field] !== '') {
+      return field;
+    }
+  }
+  if (record.store === true) {
+    return 'store';
+  }
+  if (record.background === true) {
+    return 'background';
+  }
+  if (asRecord(record.prompt)?.id) {
+    return 'prompt.id';
+  }
+
+  const visit = (value: unknown, path: string): string | null => {
+    if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index += 1) {
+        const found = visit(value[index], `${path}[${index}]`);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    const item = asRecord(value);
+    if (!item) {
+      return null;
+    }
+
+    const type = typeof item.type === 'string' ? item.type.toLowerCase() : '';
+    if (['input_file', 'file', 'file_search'].includes(type)) {
+      return `${path}.type`;
+    }
+    const isTopLevelTool = /^tools\[\d+\]$/.test(path);
+    for (const field of ['file_id', 'file_ids', 'vector_store_ids', 'container_id'] as const) {
+      if (item[field] !== undefined && (type || isTopLevelTool)) {
+        return `${path}.${field}`;
+      }
+    }
+    for (const [key, nested] of Object.entries(item)) {
+      if (key === 'parameters' || key === 'input_schema') {
+        continue;
+      }
+      const found = visit(nested, `${path}.${key}`);
+      if (found) return found;
+    }
+    return null;
+  };
+
+  for (const field of ['input', 'messages', 'system', 'tools'] as const) {
+    const found = visit(record[field], field);
+    if (found) return found;
+  }
+  return null;
 }
 
 function getUpstreamCliTypeForProtocol(protocol: ConcreteCliTargetProtocol): RouteCliType {
   return protocol === 'anthropic-messages' ? 'claudeCode' : 'codex';
 }
 
-function resolveOpenCodeUpstreamProtocol(
+function isRouteCliCompatibleWithProtocol(
+  cliType: RouteCliType,
+  protocol: ConcreteCliTargetProtocol
+): boolean {
+  if (cliType === 'openCode' || cliType === 'grokBuild') {
+    return true;
+  }
+  if (cliType === 'claudeCode') {
+    return protocol === 'anthropic-messages';
+  }
+  return protocol === 'openai-responses';
+}
+
+function resolveChannelUpstreamProtocol(
   channelProtocol: CliTargetProtocol | undefined,
-  selectedProtocol: ConcreteCliTargetProtocol
+  sourceProtocol: ConcreteCliTargetProtocol
 ): ConcreteCliTargetProtocol {
   const normalized = normalizeCliTargetProtocol(channelProtocol);
-  return normalized === 'native' ? selectedProtocol : normalized;
+  return normalized === 'native' ? sourceProtocol : normalized;
 }
 
 function resolveEffectiveRouteChannel(
   channel: ResolvedChannel,
   cliType: RouteCliType,
-  openCodeRouteProtocol: ConcreteCliTargetProtocol | undefined
+  sourceProtocol: ConcreteCliTargetProtocol
 ): ResolvedChannel {
-  if (cliType !== 'openCode' || !openCodeRouteProtocol) {
+  if (cliType !== 'openCode' && cliType !== 'grokBuild') {
     return channel;
   }
 
-  const upstreamProtocol = resolveOpenCodeUpstreamProtocol(
-    channel.targetProtocol,
-    openCodeRouteProtocol
-  );
+  const upstreamProtocol = resolveChannelUpstreamProtocol(channel.targetProtocol, sourceProtocol);
   return {
     ...channel,
     targetProtocol: upstreamProtocol,
-    targetEndpoint: getCliTargetEndpoint('openCode', upstreamProtocol, channel.resolvedModel),
+    targetEndpoint: getCliTargetEndpoint(cliType, upstreamProtocol, channel.resolvedModel),
   };
 }
 
@@ -471,30 +736,10 @@ function readBody(req: http.IncomingMessage): Promise<Buffer> {
   });
 }
 
-function resolveThinkingEffortProtocol(
-  cliType: RouteCliType,
-  upstreamCliType: RouteCliType,
-  openCodeSourceProtocol?: ConcreteCliTargetProtocol,
-  openCodeRouteProtocol?: ConcreteCliTargetProtocol
-): 'anthropic' | 'openai' {
-  if (upstreamCliType === 'claudeCode' || cliType === 'claudeCode') {
-    return 'anthropic';
-  }
-
-  if (cliType === 'openCode') {
-    const protocol = openCodeRouteProtocol ?? openCodeSourceProtocol;
-    if (protocol === 'anthropic-messages') {
-      return 'anthropic';
-    }
-  }
-
-  return 'openai';
-}
-
 export function applyRouteThinkingEffortOverride(
   bodyBuffer: Buffer,
   effort: RouteThinkingEffort | null | undefined,
-  protocol: 'anthropic' | 'openai'
+  protocol: ConcreteCliTargetProtocol
 ): Buffer {
   if (!effort) {
     return bodyBuffer;
@@ -508,7 +753,7 @@ export function applyRouteThinkingEffortOverride(
 
     const record = body as Record<string, unknown>;
 
-    if (protocol === 'anthropic') {
+    if (protocol === 'anthropic-messages') {
       const existingOutputConfig =
         record.output_config &&
         typeof record.output_config === 'object' &&
@@ -527,13 +772,19 @@ export function applyRouteThinkingEffortOverride(
       } else {
         record.thinking = existingThinking;
       }
-    } else {
+    } else if (protocol === 'openai-responses') {
       const existingReasoning =
         record.reasoning && typeof record.reasoning === 'object' && !Array.isArray(record.reasoning)
           ? { ...(record.reasoning as Record<string, unknown>) }
           : {};
       existingReasoning.effort = effort;
       record.reasoning = existingReasoning;
+      delete record.reasoning_effort;
+      delete record.reasoningEffort;
+    } else {
+      record.reasoning_effort = effort;
+      delete record.reasoningEffort;
+      delete record.reasoning;
     }
 
     return Buffer.from(JSON.stringify(record), 'utf-8');
@@ -587,10 +838,6 @@ function isStreamingRequest(bodyJson: unknown, requestUrl: string | undefined): 
   if (record?.stream === true) return true;
 
   return false;
-}
-
-function isClaudeCountTokensRequest(pathname: string, cliType: RouteCliType): boolean {
-  return cliType === 'claudeCode' && pathname === CLAUDE_COUNT_TOKENS_PATH;
 }
 
 function resolveUpstreamTimeouts(params: {
@@ -728,8 +975,8 @@ function getStreamingTerminalProtocol(
 ): StreamingTerminalProtocol {
   if (cliType === 'claudeCode') return 'anthropic';
   if (cliType === 'codex') return 'openaiResponses';
-  if (cliType === 'openCode') {
-    const sourceProtocol = inferOpenCodeSourceProtocol(requestUrl);
+  if (cliType === 'openCode' || cliType === 'grokBuild') {
+    const sourceProtocol = inferSourceProtocol(requestUrl);
     if (sourceProtocol === 'anthropic-messages') return 'anthropic';
     if (sourceProtocol === 'openai-responses') return 'openaiResponses';
     return 'openaiChat';
@@ -1705,6 +1952,15 @@ export function buildUpstreamHeaders(
   };
 
   deleteAuthHeaders(forwardHeaders);
+  for (const headerName of Object.keys(forwardHeaders)) {
+    const normalizedHeaderName = headerName.toLowerCase();
+    if (
+      normalizedHeaderName === ROUTE_CLI_MARKER_HEADER ||
+      normalizedHeaderName.startsWith('x-grok-')
+    ) {
+      delete forwardHeaders[headerName];
+    }
+  }
 
   if (authScheme === 'bearer') {
     forwardHeaders.authorization = `Bearer ${apiKey}`;
@@ -1926,7 +2182,11 @@ export function estimateClaudeCountTokens(body: Buffer): ClaudeCountTokensEstima
 
   let total = 0;
   total += estimateClaudeContentTokens(request.system);
+  total += estimateClaudeContentTokens(request.input);
+  total += estimateClaudeContentTokens(request.instructions);
   total += estimateJsonTokens(request.thinking);
+  total += estimateJsonTokens(request.reasoning);
+  total += estimateJsonTokens(request.text);
   total += estimateJsonTokens(request.tool_choice);
   total += estimateJsonTokens(request.output_config);
 
@@ -1945,9 +2205,16 @@ export function estimateClaudeCountTokens(body: Buffer): ClaudeCountTokensEstima
       total += estimateJsonTokens(tool);
       continue;
     }
-    total += estimateJsonTokens(record.name);
-    total += estimateJsonTokens(record.description);
-    total += estimateJsonTokens(record.input_schema);
+    total += estimateJsonTokens(record.type);
+    const fn = asRecord(record.function);
+    if (fn) {
+      total += estimateJsonTokens(fn);
+    } else {
+      total += estimateJsonTokens(record.name);
+      total += estimateJsonTokens(record.description);
+      total += estimateJsonTokens(record.input_schema);
+      total += estimateJsonTokens(record.parameters);
+    }
   }
 
   return {
@@ -2235,10 +2502,7 @@ export function extractUsageFromBody(body: Buffer): RouteUsageStats | undefined 
   }
 }
 
-function isUnsupportedClaudeCountTokensResponse(result: {
-  statusCode: number;
-  body: Buffer;
-}): boolean {
+function isUnsupportedTokenCountResponse(result: { statusCode: number; body: Buffer }): boolean {
   if ([404, 405, 501].includes(result.statusCode)) {
     return true;
   }
@@ -2259,11 +2523,14 @@ function isUnsupportedClaudeCountTokensResponse(result: {
   );
 }
 
-function writeAnthropicCountTokensEstimate(
+function writeInputTokensEstimate(
   res: http.ServerResponse,
   estimate: ClaudeCountTokensEstimate
 ): void {
-  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.writeHead(200, {
+    'Content-Type': 'application/json',
+    [LOCAL_TOKEN_ESTIMATE_HEADER]: 'local-approximate',
+  });
   res.end(JSON.stringify({ input_tokens: estimate.input_tokens }));
 }
 
@@ -2344,6 +2611,7 @@ async function forwardToUpstream(
     streamingTerminalProtocol === 'anthropic' ? createAnthropicSseCompatibilityNormalizer() : null;
   let streamingTerminalScanText = '';
   let streamingTerminalSeen = streamingTerminalProtocol === 'none';
+  let streamingCompletionValidated = false;
 
   const processStreamingOutgoingChunk = async (outgoingChunk: Buffer): Promise<void> => {
     if (!streamingStatusCode || !streamingHeaders || !outgoingChunk.length) return;
@@ -2373,16 +2641,27 @@ async function forwardToUpstream(
             }
             throw new Error(`malformed_streaming_response:${completedValidation.reason}`);
           }
+          streamingCompletionValidated = true;
         }
       }
-    } else if (!streamingTerminalSeen) {
+    } else if (streamingTerminalProtocol !== 'none' && !streamingCompletionValidated) {
       const terminalScan = appendStreamingTerminalScanText(
         streamingTerminalProtocol,
         streamingTerminalScanText,
         outgoingChunk
       );
       streamingTerminalScanText = terminalScan.text;
-      streamingTerminalSeen = terminalScan.terminalSeen;
+      streamingTerminalSeen = streamingTerminalSeen || terminalScan.terminalSeen;
+      if (streamingTerminalSeen) {
+        const completedValidation = validateCompletedStreamingBody(
+          streamingTerminalProtocol,
+          Buffer.concat(receivedStreamingChunks)
+        );
+        if (completedValidation.ok) {
+          streamingTerminalSeen = true;
+          streamingCompletionValidated = true;
+        }
+      }
     }
 
     if (!streamed) {
@@ -2439,6 +2718,7 @@ async function forwardToUpstream(
             return processStreamingOutgoingChunk(outgoingChunk);
           },
           streamIdleTimeout: options.streamIdleTimeoutMs,
+          shouldResolveOnAbort: () => streamed && streamingCompletionValidated,
         })
       : await httpRawRequest(target.url, requestConfig);
 
@@ -2585,16 +2865,43 @@ export async function handleRequest(
 
   const routing = unifiedConfigManager.getRoutingConfig();
 
-  // 识别 CLI 类型
-  const pathname = (req.url || '/').split('?')[0];
-  let cliType = detectCliTypeFromPath(pathname);
-  if (cliType !== 'openCode' && cliType && isLikelyOpenCodeRequest(req)) {
+  const pathname = getRequestPathname(req.url);
+  const endpointOperation = classifyRouteEndpointOperation(req.method, req.url);
+  if (!endpointOperation) {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({ error: 'unsupported_route', message: `No route handler for ${pathname}` })
+    );
+    return;
+  }
+
+  const markedCliType = detectMarkedRouteCliType(req.headers);
+  let cliType =
+    markedCliType ??
+    detectCliTypeFromPath(pathname) ??
+    getUpstreamCliTypeForProtocol(endpointOperation.protocol);
+  if (!markedCliType && isLikelyGrokBuildRequest(req)) {
+    cliType = 'grokBuild';
+  } else if (!markedCliType && cliType !== 'openCode' && cliType && isLikelyOpenCodeRequest(req)) {
     cliType = 'openCode';
   }
   if (!cliType) {
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({ error: 'unsupported_route', message: `No route handler for ${pathname}` })
+    );
+    return;
+  }
+  if (
+    markedCliType &&
+    !isRouteCliCompatibleWithProtocol(markedCliType, endpointOperation.protocol)
+  ) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        error: 'cli_marker_path_mismatch',
+        message: `${markedCliType} does not support ${pathname}`,
+      })
     );
     return;
   }
@@ -2659,12 +2966,27 @@ export async function handleRequest(
     );
     return;
   }
-  const openCodeSourceProtocol =
-    cliType === 'openCode' ? inferOpenCodeSourceProtocol(req.url) : undefined;
-  const openCodeRouteProtocol =
-    cliType === 'openCode'
-      ? normalizeOpenCodeRouteProtocol(routing.openCodeRouteProtocol)
-      : undefined;
+  if (
+    endpointOperation.capability === 'stateful-unsupported' ||
+    endpointOperation.capability === 'unsupported'
+  ) {
+    const error =
+      endpointOperation.capability === 'stateful-unsupported'
+        ? 'stateful_route_operation_unsupported'
+        : 'unsupported_route_operation';
+    res.writeHead(501, {
+      'Content-Type': 'application/json',
+      'X-Route-Proxy-Error': error,
+    });
+    res.end(
+      JSON.stringify({
+        error,
+        message: `${req.method || 'GET'} ${pathname} is not supported by the local route`,
+      })
+    );
+    return;
+  }
+  const sourceProtocol = endpointOperation.protocol;
   const previousTerminalFailure = probeLock ? getRouteProbeLockTerminalFailure(token) : undefined;
   if (previousTerminalFailure) {
     log.warn('Probe-lock request blocked after terminal upstream failure', {
@@ -2697,6 +3019,30 @@ export async function handleRequest(
     bodyJson = JSON.parse(bodyBuffer.toString('utf-8'));
   } catch {
     /* ignore */
+  }
+  const stateReference = findProviderOwnedStateReference(bodyJson);
+  if (stateReference) {
+    recordRouteRequest({
+      requestId,
+      attempt: 0,
+      cliType,
+      requestedModel: extractModelFromBody(bodyJson),
+      canonicalModel: null,
+      outcome: 'failure',
+      statusCode: 501,
+      error: `stateful_request_unsupported:${stateReference}`,
+    });
+    res.writeHead(501, {
+      'Content-Type': 'application/json',
+      'X-Route-Proxy-Error': 'stateful_request_unsupported',
+    });
+    res.end(
+      JSON.stringify({
+        error: 'stateful_request_unsupported',
+        message: `Provider-owned state reference is not supported: ${stateReference}`,
+      })
+    );
+    return;
   }
   const rawModel = extractModelFromBody(bodyJson) || extractModelFromPath(pathname, cliType);
   const selectedThinkingEffort = normalizeRouteThinkingEffort(
@@ -2731,7 +3077,7 @@ export async function handleRequest(
           targetProtocol: probeLock.targetProtocol,
         },
       ])
-    ).map(channel => resolveEffectiveRouteChannel(channel, cliType, openCodeRouteProtocol));
+    ).map(channel => resolveEffectiveRouteChannel(channel, cliType, sourceProtocol));
   } else {
     // 规则匹配只看 canonical model；若当前请求尚未建立 canonical，则退化为 raw。
     // canonicalModel 已优先采用应用内 CLI 选择模型，因此本地路由不再依赖外部 CLI 配置模型。
@@ -2790,7 +3136,7 @@ export async function handleRequest(
     const attemptPlan = buildChannelAttemptPlan(
       sortChannelsByScore(resolvedChannels),
       routeRuntimeConfig.maxAttemptsPerRoutePath
-    ).map(channel => resolveEffectiveRouteChannel(channel, cliType, openCodeRouteProtocol));
+    ).map(channel => resolveEffectiveRouteChannel(channel, cliType, sourceProtocol));
     sortedChannels = applySuccessfulRoutePathAffinity(
       attemptPlan.filter(channel => !isRoutePathDisabled(channel)) as ResolvedChannel[],
       routing.routePathStates
@@ -2814,13 +3160,42 @@ export async function handleRequest(
   }
   const timeoutMs = routing.server.requestTimeoutMs;
   const requestWantsStreaming = isStreamingRequest(bodyJson, req.url);
-  const requestIsClaudeCountTokens = isClaudeCountTokensRequest(pathname, cliType);
-  if (probeLock && requestIsClaudeCountTokens) {
-    writeAnthropicCountTokensEstimate(res, estimateClaudeCountTokens(bodyBuffer));
+  const requestIsTokenCount = endpointOperation.capability === 'stateless-native-only';
+  const tokenCountEndpoint =
+    sourceProtocol === 'anthropic-messages'
+      ? CLAUDE_MESSAGES_COUNT_TOKENS_ENDPOINT
+      : RESPONSES_INPUT_TOKENS_ENDPOINT;
+  if (probeLock && requestIsTokenCount) {
+    writeInputTokensEstimate(res, estimateClaudeCountTokens(bodyBuffer));
     return;
+  }
+  if (requestIsTokenCount) {
+    sortedChannels = sortedChannels.filter(
+      channel =>
+        resolveChannelUpstreamProtocol(channel.targetProtocol, sourceProtocol) === sourceProtocol
+    );
+    if (sortedChannels.length === 0) {
+      recordRouteRequest({
+        requestId,
+        attempt: 0,
+        routeRuleId: activeRouteRuleId,
+        cliType,
+        requestedModel: rawModel,
+        reasoningEffort,
+        canonicalModel,
+        outcome: 'neutral',
+        statusCode: 200,
+        error: 'count_tokens_local_estimate:no_native_protocol_channel',
+      });
+      writeInputTokensEstimate(res, estimateClaudeCountTokens(bodyBuffer));
+      return;
+    }
   }
 
   let attempt = 0;
+  let attemptedUpstream = false;
+  let tokenCountFallbackReason: string | undefined;
+  const adapterIncompatibilityReasons: string[] = [];
   for (let i = 0; i < sortedChannels.length; i++) {
     const ch = sortedChannels[i] as ResolvedChannel;
     if (!bypassRoutePathState && isRoutePathDisabled(ch)) {
@@ -2831,48 +3206,18 @@ export async function handleRequest(
     const activeChannel: ResolvedChannel = {
       ...ch,
     };
+    const upstreamProtocol = resolveChannelUpstreamProtocol(
+      activeChannel.targetProtocol,
+      sourceProtocol
+    );
     const site = unifiedConfigManager.getSiteById(activeChannel.siteId);
     const account = unifiedConfigManager.getAccountById(activeChannel.accountId);
 
-    if (requestIsClaudeCountTokens && !bypassRoutePathState) {
-      const endpointUnsupported = isRouteEndpointUnsupported(
-        activeChannel,
-        CLAUDE_MESSAGES_COUNT_TOKENS_ENDPOINT
-      );
-      const targetProtocolUnsupported = !isCliTargetProtocolNativeEquivalent(
-        cliType,
-        activeChannel.targetProtocol ?? 'native'
-      );
-
-      if (endpointUnsupported || targetProtocolUnsupported) {
-        const reason = endpointUnsupported ? 'cached_unsupported' : 'target_protocol_unsupported';
-        if (!endpointUnsupported) {
-          await recordRouteEndpointUnsupported(
-            activeChannel,
-            CLAUDE_MESSAGES_COUNT_TOKENS_ENDPOINT,
-            { reason }
-          );
-        }
-        recordRouteRequest({
-          requestId,
-          attempt,
-          routeRuleId: activeRouteRuleId,
-          cliType,
-          targetProtocol: activeChannel.targetProtocol,
-          targetEndpoint: activeChannel.targetEndpoint,
-          requestedModel: rawModel,
-          reasoningEffort,
-          canonicalModel,
-          siteId: activeChannel.siteId,
-          accountId: activeChannel.accountId,
-          apiKeyId: activeChannel.apiKeyId,
-          resolvedModel: activeChannel.resolvedModel,
-          outcome: 'neutral',
-          statusCode: 200,
-          error: `count_tokens_local_estimate:${reason}`,
-        });
-        writeAnthropicCountTokensEstimate(res, estimateClaudeCountTokens(bodyBuffer));
-        return;
+    if (requestIsTokenCount && !bypassRoutePathState) {
+      const endpointUnsupported = isRouteEndpointUnsupported(activeChannel, tokenCountEndpoint);
+      if (endpointUnsupported) {
+        tokenCountFallbackReason ??= 'cached_unsupported';
+        continue;
       }
     }
 
@@ -2938,11 +3283,11 @@ export async function handleRequest(
       ? rewriteRequestModel(bodyBuffer, activeChannel.resolvedModel)
       : bodyBuffer;
 
-    // 站点级特殊处理：AnyRouter 仅在原生协议透传时保留，其余显式 targetProtocol 走通用适配
+    // 站点级特殊处理：AnyRouter 仅在同协议透传时保留，其余显式 targetProtocol 走通用适配
     let additionalHeaders: Record<string, string> = {};
     let methodOverride: string | undefined;
     let requestUrlOverride: string | undefined;
-    let upstreamCliType: RouteCliType = cliType;
+    let upstreamCliType: RouteCliType = getUpstreamCliTypeForProtocol(upstreamProtocol);
     let responseAdapter: AnyRouterResponseAdapter = { type: 'transparent' };
     const protocolResponseAdapters: CliProtocolResponseAdapter[] = [];
     const applyProtocolRewrite = (
@@ -2968,11 +3313,12 @@ export async function handleRequest(
 
     if (
       cliType !== 'openCode' &&
-      !requestIsClaudeCountTokens &&
+      cliType !== 'grokBuild' &&
+      !requestIsTokenCount &&
       site &&
       account &&
       isAnyRouterSite(site.name) &&
-      isCliTargetProtocolNativeEquivalent(cliType, activeChannel.targetProtocol ?? 'native')
+      sourceProtocol === upstreamProtocol
     ) {
       const userHash = account.anyRouterConfig?.userHash;
 
@@ -2996,32 +3342,8 @@ export async function handleRequest(
       responseAdapter = rewritten.responseAdapter;
     } else {
       try {
-        if (cliType === 'openCode' && openCodeSourceProtocol && openCodeRouteProtocol) {
-          const openCodeUpstreamProtocol = resolveOpenCodeUpstreamProtocol(
-            activeChannel.targetProtocol,
-            openCodeRouteProtocol
-          );
-
-          if (openCodeSourceProtocol !== openCodeRouteProtocol) {
-            applyProtocolRewrite(openCodeRouteProtocol, openCodeSourceProtocol);
-          }
-
-          if (openCodeRouteProtocol !== openCodeUpstreamProtocol) {
-            applyProtocolRewrite(openCodeUpstreamProtocol, openCodeRouteProtocol);
-          }
-
-          if (protocolResponseAdapters.length === 0) {
-            upstreamCliType = getUpstreamCliTypeForProtocol(openCodeUpstreamProtocol);
-          }
-        } else if (
-          !isCliTargetProtocolNativeEquivalent(cliType, activeChannel.targetProtocol ?? 'native')
-        ) {
-          applyProtocolRewrite(
-            activeChannel.targetProtocol as Exclude<
-              typeof activeChannel.targetProtocol,
-              'native' | undefined
-            >
-          );
+        if (!requestIsTokenCount && sourceProtocol !== upstreamProtocol) {
+          applyProtocolRewrite(upstreamProtocol, sourceProtocol);
         }
       } catch (err: unknown) {
         const isAdapterError = err instanceof CliProtocolAdapterError;
@@ -3066,22 +3388,10 @@ export async function handleRequest(
           accountId: activeChannel.accountId,
           apiKeyId: activeChannel.apiKeyId,
           resolvedModel: activeChannel.resolvedModel,
-          outcome: 'failure',
+          outcome: 'neutral',
           error: `adapter_${stage}:${reason}`,
         });
-        if (!bypassRoutePathState) {
-          recordOutcome(activeChannel, 'failure', {});
-          await recordRoutePathOutcome(
-            activeChannel,
-            'failure',
-            { error: `adapter_${stage}:${reason}` },
-            routeRuntimeConfig
-          );
-        }
-        if (!bypassRoutePathState && areAllRoutePathsDisabled(sortedChannels)) {
-          writeAllRoutePathsDisabledResponse(res, cliType);
-          return;
-        }
+        adapterIncompatibilityReasons.push(reason);
 
         continue;
       }
@@ -3090,12 +3400,7 @@ export async function handleRequest(
     finalBody = applyRouteThinkingEffortOverride(
       finalBody,
       selectedThinkingEffort,
-      resolveThinkingEffortProtocol(
-        cliType,
-        upstreamCliType,
-        openCodeSourceProtocol,
-        openCodeRouteProtocol
-      )
+      upstreamProtocol
     );
     try {
       reasoningEffort =
@@ -3107,6 +3412,7 @@ export async function handleRequest(
     const attemptStartedAt = Date.now();
     const streamResponseBody =
       requestWantsStreaming && canStreamResponseAdapters(responseAdapter, protocolResponseAdapters);
+    attemptedUpstream = true;
 
     // probe-lock 上游预算：按"终结结果"计，瞬时错误在上限内不消耗预算。
     let probeLockIsFinalAttempt = false;
@@ -3184,6 +3490,20 @@ export async function handleRequest(
 
       let result = await forwardActiveChannelWithEmptyStreamRetry();
       if (routeAbortController.signal.aborted) {
+        if (!bypassRoutePathState && shouldRecordCancelledUpstreamSuccess(result)) {
+          await recordCancelledUpstreamSuccess({
+            requestId,
+            attempt,
+            activeChannel,
+            activeRouteRuleId,
+            cliType,
+            rawModel,
+            reasoningEffort,
+            canonicalModel,
+            result,
+            routeRuntimeConfig,
+          });
+        }
         finishRouteHandling();
         return;
       }
@@ -3206,6 +3526,20 @@ export async function handleRequest(
         });
         result = await forwardActiveChannel();
         if (routeAbortController.signal.aborted) {
+          if (!bypassRoutePathState && shouldRecordCancelledUpstreamSuccess(result)) {
+            await recordCancelledUpstreamSuccess({
+              requestId,
+              attempt,
+              activeChannel,
+              activeRouteRuleId,
+              cliType,
+              rawModel,
+              reasoningEffort,
+              canonicalModel,
+              result,
+              routeRuntimeConfig,
+            });
+          }
           finishRouteHandling();
           return;
         }
@@ -3214,13 +3548,9 @@ export async function handleRequest(
       const upstreamFailureBodySnippet =
         outcome === 'failure' ? summarizeUpstreamFailureBodyForLog(result.body) : '';
 
-      if (
-        requestIsClaudeCountTokens &&
-        !bypassRoutePathState &&
-        isUnsupportedClaudeCountTokensResponse(result)
-      ) {
+      if (requestIsTokenCount && !bypassRoutePathState && isUnsupportedTokenCountResponse(result)) {
         const bodySnippet = summarizeUpstreamFailureBodyForLog(result.body) || '<empty>';
-        await recordRouteEndpointUnsupported(activeChannel, CLAUDE_MESSAGES_COUNT_TOKENS_ENDPOINT, {
+        await recordRouteEndpointUnsupported(activeChannel, tokenCountEndpoint, {
           statusCode: result.statusCode,
           error: bodySnippet,
           reason: 'upstream_unsupported',
@@ -3240,13 +3570,13 @@ export async function handleRequest(
           apiKeyId: activeChannel.apiKeyId,
           resolvedModel: activeChannel.resolvedModel,
           outcome: 'neutral',
-          statusCode: 200,
+          statusCode: result.statusCode,
           latencyMs: result.latencyMs,
           firstByteLatencyMs: result.firstByteLatencyMs,
-          error: `count_tokens_local_estimate:upstream_${result.statusCode}`,
+          error: `count_tokens_upstream_unsupported:${result.statusCode}`,
         });
-        writeAnthropicCountTokensEstimate(res, estimateClaudeCountTokens(bodyBuffer));
-        return;
+        tokenCountFallbackReason = `upstream_${result.statusCode}`;
+        continue;
       }
 
       if (outcome === 'success' && !result.streamed && isAllZeroRouteUsage(result.usage)) {
@@ -3677,7 +4007,33 @@ export async function handleRequest(
   }
 
   if (!res.headersSent) {
-    if (!bypassRoutePathState && areAllRoutePathsDisabled(sortedChannels)) {
+    if (requestIsTokenCount) {
+      recordRouteRequest({
+        requestId,
+        attempt: attempt + 1,
+        routeRuleId: activeRouteRuleId,
+        cliType,
+        requestedModel: rawModel,
+        reasoningEffort,
+        canonicalModel,
+        outcome: 'neutral',
+        statusCode: 200,
+        error: `count_tokens_local_estimate:${tokenCountFallbackReason || 'native_channels_unavailable'}`,
+      });
+      writeInputTokensEstimate(res, estimateClaudeCountTokens(bodyBuffer));
+    } else if (!attemptedUpstream && adapterIncompatibilityReasons.length > 0) {
+      res.writeHead(400, {
+        'Content-Type': 'application/json',
+        'X-Route-Proxy-Error': 'no_compatible_route_channel',
+      });
+      res.end(
+        JSON.stringify({
+          error: 'no_compatible_route_channel',
+          message: 'No route channel can preserve the request across protocols',
+          reasons: Array.from(new Set(adapterIncompatibilityReasons)),
+        })
+      );
+    } else if (!bypassRoutePathState && areAllRoutePathsDisabled(sortedChannels)) {
       writeAllRoutePathsDisabledResponse(res, cliType);
     } else {
       res.writeHead(502, { 'Content-Type': 'application/json' });

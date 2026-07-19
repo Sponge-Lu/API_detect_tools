@@ -58,6 +58,7 @@ export interface AllCliDetectionResult {
   claudeCode: CliDetectionResult;
   codex: CliDetectionResult;
   openCode: CliDetectionResult;
+  grokBuild: CliDetectionResult;
 }
 
 /**
@@ -86,6 +87,7 @@ export const OFFICIAL_API_URLS: Record<CliType, string[]> = {
     'https://api.openai.com',
     'api.openai.com',
   ],
+  grokBuild: ['https://api.x.ai', 'api.x.ai'],
 };
 
 /**
@@ -102,6 +104,9 @@ export const CLI_CONFIG_PATHS = {
   openCode: {
     config: '.config/opencode/opencode.json',
     auth: '.local/share/opencode/auth.json',
+  },
+  grokBuild: {
+    config: '.grok/config.toml',
   },
 } as const;
 
@@ -124,5 +129,6 @@ export function createDefaultAllDetectionResult(): AllCliDetectionResult {
     claudeCode: createDefaultDetectionResult(),
     codex: createDefaultDetectionResult(),
     openCode: createDefaultDetectionResult(),
+    grokBuild: createDefaultDetectionResult(),
   };
 }

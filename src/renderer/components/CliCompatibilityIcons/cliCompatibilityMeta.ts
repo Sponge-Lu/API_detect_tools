@@ -9,6 +9,7 @@ export interface CliCompatibilityMetaInput {
   name: string;
   enabled: boolean;
   configured: boolean;
+  probeSupported?: boolean;
   status: boolean | null | undefined;
   testedAt?: number | null;
   claudeDetail?: ClaudeTestDetail;
@@ -33,10 +34,12 @@ export function getCliCompatibilityIconClass(input: {
 export function getCliCompatibilityStatusText(input: {
   enabled: boolean;
   configured: boolean;
+  probeSupported?: boolean;
   status: boolean | null | undefined;
 }): string {
   if (!input.enabled) return '未启用';
   if (!input.configured) return '未配置';
+  if (input.probeSupported === false) return '已配置，暂不支持探测';
   if (input.status === true) return '支持';
   if (input.status === false) return '不支持';
   return '已配置，待测试';

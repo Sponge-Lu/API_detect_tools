@@ -33,7 +33,7 @@
 | **validation-utils.ts** | 数据验证 | `validateUrl()`, `validateEmail()` 等 |
 | **toml-parser.ts** | TOML 解析 | `parseTomlFile()`, `parseTomlString()` |
 | **env-parser.ts** | ENV 解析 | `parseEnvFile()`, `parseEnvString()` |
-| **config-parsers.ts** | CLI 配置解析 | `parseClaudeCodeConfig()`, `parseCodexConfig()`, `isOfficialOpenAIApiKey()` 等 |
+| **config-parsers.ts** | CLI 配置解析 | `parseClaudeCodeConfig()`, `parseCodexConfig()`, `parseGrokBuildConfig()`, `getEffectiveGrokBuildConfig()` 等 |
 | **site-matcher.ts** | 站点匹配 | `normalizeUrl()`, `matchSite()`, `isOfficialUrl()`, `determineSourceType()` |
 | **page-exec-queue.ts** | 页面执行队列 | `runOnPageQueue()` - 串行化同一 Page 的 evaluate 调用 |
 | **request-manager.ts** | 请求管理 | `RequestManager` - 请求去重和缓存 |

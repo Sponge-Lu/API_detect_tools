@@ -10,9 +10,11 @@
  */
 
 import {
+  BUILTIN_CLI_TYPES,
   CLI_TEST_MODEL_SLOT_COUNT,
   normalizeCliTargetProtocol,
   sanitizeCliTestResults,
+  type BuiltinCliType,
   type CliModelTestResult,
   type CliTargetProtocol,
 } from './cli-config';
@@ -110,11 +112,7 @@ export interface CustomCliConfig {
   /** 用户备注 */
   notes?: string;
   /** 各 CLI 工具的配置 */
-  cliSettings: {
-    claudeCode: CustomCliSettings;
-    codex: CustomCliSettings;
-    openCode: CustomCliSettings;
-  };
+  cliSettings: Record<BuiltinCliType, CustomCliSettings>;
   /** 创建时间 */
   createdAt: number;
   /** 更新时间 */
@@ -143,6 +141,12 @@ export function normalizeCustomCliSettings(setting?: CustomCliSettings | null): 
 /** 创建新自定义配置的默认值 */
 export function createDefaultCustomCliConfig(partial?: Partial<CustomCliConfig>): CustomCliConfig {
   const now = Date.now();
+  const cliSettings = Object.fromEntries(
+    BUILTIN_CLI_TYPES.map(cliType => [
+      cliType,
+      normalizeCustomCliSettings(partial?.cliSettings?.[cliType]),
+    ])
+  ) as Record<BuiltinCliType, CustomCliSettings>;
   return {
     id: crypto.randomUUID(),
     name: '',
@@ -153,14 +157,10 @@ export function createDefaultCustomCliConfig(partial?: Partial<CustomCliConfig>)
     modelPricing: { data: {} },
     lastModelFetch: undefined,
     notes: '',
-    cliSettings: {
-      claudeCode: normalizeCustomCliSettings(),
-      codex: normalizeCustomCliSettings(),
-      openCode: normalizeCustomCliSettings(),
-    },
     createdAt: now,
     updatedAt: now,
     ...partial,
+    cliSettings,
     groupMultiplier: normalizeCustomCliGroupMultiplier(partial?.groupMultiplier),
   };
 }

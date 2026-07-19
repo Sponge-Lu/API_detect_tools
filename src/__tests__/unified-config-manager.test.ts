@@ -1435,6 +1435,7 @@ describe('UnifiedConfigManager', () => {
       claudeCode: 'claude-sonnet-4-6',
       codex: 'o3',
       openCode: null,
+      grokBuild: null,
     });
   });
 
@@ -1649,6 +1650,26 @@ describe('UnifiedConfigManager', () => {
     expect(persisted.routing.modelRegistry.displayItems).toHaveLength(1);
     expect(persisted.routing.rules).toEqual([]);
     expect(persisted.routing.cliModelSelections.claudeCode).toBeNull();
+  });
+
+  it('removes the obsolete OpenCode route protocol field during load', async () => {
+    const configPath = path.join(userDataDir, 'config.json');
+    const rawConfig = {
+      ...createSampleConfig(),
+      version: '3.0.6',
+      routing: {
+        ...structuredClone(DEFAULT_ROUTING_CONFIG),
+        openCodeRouteProtocol: 'anthropic-messages',
+      },
+    };
+    await fs.writeFile(configPath, JSON.stringify(rawConfig, null, 2), 'utf-8');
+
+    const manager = await loadManager();
+    await manager.loadConfig();
+
+    expect(manager.getRoutingConfig()).not.toHaveProperty('openCodeRouteProtocol');
+    const persisted = JSON.parse(await fs.readFile(configPath, 'utf-8'));
+    expect(persisted.routing).not.toHaveProperty('openCodeRouteProtocol');
   });
 
   it('preserves same-name manual redirects and user-authored rules while cleaning the example', async () => {

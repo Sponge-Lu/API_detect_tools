@@ -261,6 +261,10 @@ function filterCustomCliConfigModels(
         normalizeCustomCliSettings(config.cliSettings?.openCode),
         availableModels
       ),
+      grokBuild: filterCustomCliSettingModels(
+        normalizeCustomCliSettings(config.cliSettings?.grokBuild),
+        availableModels
+      ),
     },
   };
 }
@@ -276,6 +280,7 @@ function normalizeCustomCliConfigModelBoundary(config: CustomCliConfig): CustomC
     claudeCode: normalizeCustomCliSettings(config.cliSettings?.claudeCode),
     codex: normalizeCustomCliSettings(config.cliSettings?.codex),
     openCode: normalizeCustomCliSettings(config.cliSettings?.openCode),
+    grokBuild: normalizeCustomCliSettings(config.cliSettings?.grokBuild),
   };
 
   if (!hasModelBoundary) {
@@ -300,6 +305,7 @@ function normalizeCustomCliConfigModelBoundary(config: CustomCliConfig): CustomC
       claudeCode: filterCustomCliSettingModels(cliSettings.claudeCode, availableModels),
       codex: filterCustomCliSettingModels(cliSettings.codex, availableModels),
       openCode: filterCustomCliSettingModels(cliSettings.openCode, availableModels),
+      grokBuild: filterCustomCliSettingModels(cliSettings.grokBuild, availableModels),
     },
   };
 }

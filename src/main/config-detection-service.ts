@@ -19,6 +19,7 @@ import {
 import {
   getEffectiveClaudeCodeConfig,
   getEffectiveCodexConfig,
+  getEffectiveGrokBuildConfig,
   getEffectiveOpenCodeConfig,
 } from './utils/config-parsers';
 import { determineSourceType } from './utils/site-matcher';
@@ -76,16 +77,18 @@ export class ConfigDetectionService {
    * @returns 所有 CLI 的检测结果
    */
   async detectAll(sites: SiteInfo[]): Promise<AllCliDetectionResult> {
-    const [claudeCode, codex, openCode] = await Promise.all([
+    const [claudeCode, codex, openCode, grokBuild] = await Promise.all([
       this.detectClaudeCode(sites),
       this.detectCodex(sites),
       this.detectOpenCode(sites),
+      this.detectGrokBuild(sites),
     ]);
 
     return {
       claudeCode,
       codex,
       openCode,
+      grokBuild,
     };
   }
 
@@ -247,6 +250,42 @@ export class ConfigDetectionService {
         error: error instanceof Error ? error.message : 'Unknown error',
       };
       return result;
+    }
+  }
+
+  /** 检测 Grok Build 静态配置；不会发起模型或兼容性探测。 */
+  async detectGrokBuild(sites: SiteInfo[]): Promise<CliDetectionResult> {
+    const cached = this.getFromCache('grokBuild');
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      const { baseUrl, hasApiKey, authType } = getEffectiveGrokBuildConfig();
+      const { sourceType, siteName, siteId } = determineSourceType({
+        baseUrl,
+        hasApiKey,
+        authType,
+        cliType: 'grokBuild',
+        sites,
+      });
+      const result: CliDetectionResult = {
+        sourceType,
+        siteName,
+        siteId,
+        baseUrl,
+        hasApiKey,
+        authType,
+        detectedAt: Date.now(),
+      };
+      this.setCache('grokBuild', result);
+      return result;
+    } catch (error) {
+      log.error('Failed to detect Grok Build config', error);
+      return {
+        ...createDefaultDetectionResult(),
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
     }
   }
 

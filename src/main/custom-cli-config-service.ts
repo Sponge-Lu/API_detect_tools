@@ -15,7 +15,8 @@ import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
 import * as path from 'path';
 import Logger from './utils/logger';
-import type { CustomCliConfig } from '../shared/types/custom-cli-config';
+import type { CustomCliConfig, CustomCliSettings } from '../shared/types/custom-cli-config';
+import { normalizeCustomCliSettings } from '../shared/types/custom-cli-config';
 import {
   CUSTOM_CLI_ROUTE_GROUP,
   buildCustomCliRouteAccountId,
@@ -56,6 +57,12 @@ export function getCustomCliConfigFilePath(): string {
  */
 function normalizeCustomCliConfigTestModels(configs: CustomCliConfig[]): void {
   for (const config of configs) {
+    config.cliSettings = Object.fromEntries(
+      BUILTIN_CLI_TYPES.map(cliType => [
+        cliType,
+        normalizeCustomCliSettings(config.cliSettings?.[cliType]),
+      ])
+    ) as Record<(typeof BUILTIN_CLI_TYPES)[number], CustomCliSettings>;
     for (const cliType of BUILTIN_CLI_TYPES) {
       const cliSettings = config.cliSettings?.[cliType];
       if (!cliSettings || !Array.isArray(cliSettings.testModels)) {

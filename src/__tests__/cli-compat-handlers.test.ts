@@ -1,3 +1,6 @@
+import * as fs from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 async function loadCliCompatHandlersModule() {
@@ -99,5 +102,130 @@ describe('cli compat handlers', () => {
 
     expect(updateAccount).toHaveBeenCalledWith('acct-1', { cli_config: cliConfig });
     expect(updateSite).not.toHaveBeenCalled();
+  });
+
+  it('deep-merges managed OpenCode providers without replacing user providers', async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'api-detect-opencode-'));
+    const configPath = path.join(tempDir, 'opencode.json');
+    const existingConfig = {
+      $schema: 'https://opencode.ai/config.json',
+      model: 'user-provider/user-model',
+      provider: {
+        'user-provider': {
+          npm: '@ai-sdk/openai-compatible',
+          options: { baseURL: 'https://user.example.com/v1' },
+          models: { 'user-model': { name: 'User model' } },
+        },
+      },
+    };
+    const managedConfig = {
+      $schema: 'https://opencode.ai/config.json',
+      model: 'api-detect-responses/route-model',
+      provider: Object.fromEntries(
+        ['api-detect-anthropic', 'api-detect-responses', 'api-detect-chat'].map(providerId => [
+          providerId,
+          {
+            options: {
+              baseURL: 'http://127.0.0.1:3210/v1',
+              headers: { 'x-api-detect-cli': 'openCode' },
+            },
+            models: { 'route-model': { name: 'route-model' } },
+          },
+        ])
+      ),
+    };
+
+    try {
+      await fs.writeFile(configPath, JSON.stringify(existingConfig), 'utf-8');
+      const { registerCliCompatHandlers, registeredHandlers } = await loadCliCompatHandlersModule();
+      registerCliCompatHandlers();
+      const writeHandler = registeredHandlers.get('cli-compat:write-config');
+      expect(writeHandler).toBeDefined();
+
+      const payload = {
+        cliType: 'openCode',
+        files: [{ path: configPath, content: JSON.stringify(managedConfig) }],
+        applyMode: 'merge',
+      };
+      await expect(writeHandler?.({}, payload)).resolves.toMatchObject({ success: true });
+      await expect(writeHandler?.({}, payload)).resolves.toMatchObject({ success: true });
+
+      const merged = JSON.parse(await fs.readFile(configPath, 'utf-8'));
+      expect(merged.model).toBe('api-detect-responses/route-model');
+      expect(merged.provider['user-provider']).toEqual(existingConfig.provider['user-provider']);
+      expect(Object.keys(merged.provider)).toEqual(
+        expect.arrayContaining([
+          'user-provider',
+          'api-detect-anthropic',
+          'api-detect-responses',
+          'api-detect-chat',
+        ])
+      );
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('merges Grok Build managed models without deleting user model sections', async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'api-detect-grok-build-'));
+    const configPath = path.join(tempDir, 'config.toml');
+    const existingConfig = `[models]
+default = "user-model"
+
+[model.user-model]
+model = "grok-code-fast-1"
+base_url = "https://user.example.com/v1"
+api_backend = "responses"
+
+[mcp.user-tool]
+command = "user-tool"`;
+    const managedConfig = `[models]
+default = "api-detect-grok-responses"
+
+[model.api-detect-grok-responses]
+model = "route-model"
+base_url = "http://127.0.0.1:3210/v1"
+api_key = "sk-route"
+api_backend = "responses"
+extra_headers = { "x-api-detect-cli" = "grokBuild" }
+
+[model.api-detect-grok-chat]
+model = "route-model"
+base_url = "http://127.0.0.1:3210/v1"
+api_key = "sk-route"
+api_backend = "chat_completions"
+
+[model.api-detect-grok-messages]
+model = "route-model"
+base_url = "http://127.0.0.1:3210/v1"
+api_key = "sk-route"
+api_backend = "messages"`;
+
+    try {
+      await fs.writeFile(configPath, existingConfig, 'utf-8');
+      const { registerCliCompatHandlers, registeredHandlers } = await loadCliCompatHandlersModule();
+      registerCliCompatHandlers();
+      const writeHandler = registeredHandlers.get('cli-compat:write-config');
+      const payload = {
+        cliType: 'grokBuild',
+        files: [{ path: configPath, content: managedConfig }],
+        applyMode: 'merge',
+      };
+
+      await expect(writeHandler?.({}, payload)).resolves.toMatchObject({ success: true });
+      await expect(writeHandler?.({}, payload)).resolves.toMatchObject({ success: true });
+
+      const merged = await fs.readFile(configPath, 'utf-8');
+      expect(merged).toContain('default = "api-detect-grok-responses"');
+      expect(merged).toContain('[model.user-model]');
+      expect(merged).toContain('base_url = "https://user.example.com/v1"');
+      expect(merged).toContain('[mcp.user-tool]');
+      expect(merged).toContain('[model.api-detect-grok-responses]');
+      expect(merged).toContain('[model.api-detect-grok-chat]');
+      expect(merged).toContain('[model.api-detect-grok-messages]');
+      expect(merged).not.toContain('disable_response_storage');
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
   });
 });

@@ -67,6 +67,33 @@ describe('cli-protocol-adapter request adapt', () => {
     expect(body.messages[1]).toEqual({ role: 'user', content: 'hello' });
   });
 
+  it('adapts Grok Build according to its actual Messages source endpoint', () => {
+    const result = adaptRequestToTargetProtocol(
+      toBuffer({
+        model: 'wire-grok',
+        messages: [{ role: 'user', content: 'hello' }],
+        max_tokens: 64,
+      }),
+      'grokBuild',
+      'openai-chat-completions',
+      '/v1/messages',
+      'grok-upstream',
+      'anthropic-messages'
+    );
+
+    expect(result.upstreamPath).toBe('/v1/chat/completions');
+    expect(JSON.parse(result.body.toString('utf-8'))).toMatchObject({
+      model: 'grok-upstream',
+      messages: [{ role: 'user', content: 'hello' }],
+      max_tokens: 64,
+    });
+    expect(result.responseAdapter).toMatchObject({
+      type: 'source',
+      sourceCliType: 'grokBuild',
+      sourceProtocol: 'anthropic-messages',
+    });
+  });
+
   it('adapts Codex request into OpenAI Chat Completions body', () => {
     const result = adaptRequestToTargetProtocol(
       toBuffer({
@@ -152,25 +179,157 @@ describe('cli-protocol-adapter request adapt', () => {
     expect(body.messages[0]).toEqual({ role: 'system', content: 'be precise' });
   });
 
-  it('tolerates Codex instructions unknown structured object without throwing', () => {
+  it('rejects Codex instructions fields that cannot be preserved', () => {
+    expect(() =>
+      adaptRequestToTargetProtocol(
+        toBuffer({
+          model: 'gpt-5',
+          instructions: { meta: { tag: 'system' }, foo: 1 },
+          input: [{ role: 'user', content: [{ type: 'input_text', text: 'q' }] }],
+        }),
+        'codex',
+        'openai-chat-completions',
+        '/v1/responses',
+        'gpt-4.1-mini'
+      )
+    ).toThrow(/unsupported_field:instructions\.meta/);
+  });
+
+  it('maps Responses reasoning effort to Anthropic output config', () => {
     const result = adaptRequestToTargetProtocol(
       toBuffer({
         model: 'gpt-5',
-        instructions: { meta: { tag: 'system' }, foo: 1 },
-        input: [{ role: 'user', content: [{ type: 'input_text', text: 'q' }] }],
+        input: 'hello',
+        reasoning: { effort: 'high' },
       }),
       'codex',
-      'openai-chat-completions',
+      'anthropic-messages',
       '/v1/responses',
-      'gpt-4.1-mini'
+      'claude-opus-4-6'
     );
-    const body = JSON.parse(result.body.toString('utf-8'));
-    // 未知 instructions 结构被丢弃，user 消息仍正常传递
-    expect(body.messages[0]).toEqual({ role: 'user', content: 'q' });
+
+    expect(JSON.parse(result.body.toString('utf-8'))).toMatchObject({
+      output_config: { effort: 'high' },
+      thinking: { type: 'adaptive' },
+    });
+  });
+
+  it('maps Anthropic output effort to OpenAI Responses reasoning', () => {
+    const result = adaptRequestToTargetProtocol(
+      toBuffer({
+        model: 'claude-opus-4-6',
+        messages: [{ role: 'user', content: 'hello' }],
+        output_config: { effort: 'max' },
+      }),
+      'claudeCode',
+      'openai-responses',
+      '/v1/messages',
+      'gpt-5'
+    );
+
+    expect(JSON.parse(result.body.toString('utf-8')).reasoning).toEqual({ effort: 'max' });
+  });
+
+  it('maps Anthropic output effort to Chat Completions reasoning_effort', () => {
+    const result = adaptRequestToTargetProtocol(
+      toBuffer({
+        model: 'claude-opus-4-6',
+        messages: [{ role: 'user', content: 'hello' }],
+        output_config: { effort: 'max' },
+      }),
+      'grokBuild',
+      'openai-chat-completions',
+      '/v1/messages',
+      'grok-4'
+    );
+
+    expect(JSON.parse(result.body.toString('utf-8'))).toMatchObject({
+      reasoning_effort: 'max',
+    });
+    expect(JSON.parse(result.body.toString('utf-8')).reasoning).toBeUndefined();
   });
 });
 
 describe('cli-protocol-adapter request tool/function conversion', () => {
+  it('maps Anthropic required single-tool selection to OpenAI Chat controls', () => {
+    const result = adaptRequestToTargetProtocol(
+      toBuffer({
+        model: 'claude-opus-4-6',
+        messages: [{ role: 'user', content: 'fetch weather' }],
+        tools: [{ name: 'weather', input_schema: { type: 'object' } }],
+        tool_choice: { type: 'any', disable_parallel_tool_use: true },
+      }),
+      'claudeCode',
+      'openai-chat-completions',
+      '/v1/messages',
+      'gpt-4.1-mini'
+    );
+
+    expect(JSON.parse(result.body.toString('utf-8'))).toMatchObject({
+      tool_choice: 'required',
+      parallel_tool_calls: false,
+    });
+  });
+
+  it('maps Anthropic named tool selection to OpenAI Responses controls', () => {
+    const result = adaptRequestToTargetProtocol(
+      toBuffer({
+        model: 'claude-opus-4-6',
+        messages: [{ role: 'user', content: 'fetch weather' }],
+        tools: [{ name: 'weather', input_schema: { type: 'object' } }],
+        tool_choice: { type: 'tool', name: 'weather' },
+      }),
+      'claudeCode',
+      'openai-responses',
+      '/v1/messages',
+      'gpt-5'
+    );
+
+    expect(JSON.parse(result.body.toString('utf-8')).tool_choice).toEqual({
+      type: 'function',
+      name: 'weather',
+    });
+  });
+
+  it('maps OpenAI Responses named tool and parallel controls to Anthropic', () => {
+    const result = adaptRequestToTargetProtocol(
+      toBuffer({
+        model: 'gpt-5',
+        input: 'fetch weather',
+        tools: [{ type: 'function', name: 'weather', parameters: { type: 'object' } }],
+        tool_choice: { type: 'function', name: 'weather' },
+        parallel_tool_calls: false,
+      }),
+      'codex',
+      'anthropic-messages',
+      '/v1/responses',
+      'claude-opus-4-6'
+    );
+
+    expect(JSON.parse(result.body.toString('utf-8')).tool_choice).toEqual({
+      type: 'tool',
+      name: 'weather',
+      disable_parallel_tool_use: true,
+    });
+  });
+
+  it('rejects tool choices without a lossless cross-protocol equivalent', () => {
+    expect(() =>
+      adaptRequestToTargetProtocol(
+        toBuffer({
+          model: 'gpt-5',
+          input: 'answer directly',
+          tools: [{ type: 'function', name: 'weather', parameters: { type: 'object' } }],
+          tool_choice: 'none',
+        }),
+        'codex',
+        'anthropic-messages',
+        '/v1/responses',
+        'claude-opus-4-6'
+      )
+    ).toThrow(/unsupported_field:tool_choice/);
+  });
+
   it('converts Claude tool_use + tool_result through OpenAI Chat target', () => {
     const result = adaptRequestToTargetProtocol(
       toBuffer({
@@ -586,5 +745,28 @@ describe('cli-protocol-adapter response transform', () => {
     expect(parsed.usage.input_tokens).toBe(5);
     expect(parsed.usage.output_tokens).toBe(7);
     expect(parsed.usage.total_tokens).toBe(12);
+  });
+
+  it('converts a Chat response back to the Grok Build source protocol', () => {
+    const out = transformTargetProtocolResponse({
+      body: toBuffer({
+        choices: [{ message: { content: 'grok reply' } }],
+        usage: { prompt_tokens: 2, completion_tokens: 3 },
+      }),
+      headers: { 'content-type': 'application/json' },
+      statusCode: 200,
+      adapter: {
+        type: 'source',
+        sourceCliType: 'grokBuild',
+        sourceProtocol: 'anthropic-messages',
+        targetProtocol: 'openai-chat-completions',
+        model: 'wire-grok',
+        stream: false,
+      },
+    });
+
+    const parsed = JSON.parse(out.body.toString('utf-8'));
+    expect(parsed.type).toBe('message');
+    expect(parsed.content[0]).toEqual({ type: 'text', text: 'grok reply' });
   });
 });
