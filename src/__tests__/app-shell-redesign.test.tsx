@@ -1228,7 +1228,7 @@ describe('app shell redesign', () => {
     expect(screen.getByText(APP_PAGE_META.route.description)).toBeInTheDocument();
   });
 
-  it('renders SettingsPanel detection and sync inputs through the neutral AppInput primitives', async () => {
+  it('removes detection settings from SettingsPanel and keeps sync inputs on AppInput', async () => {
     vi.resetModules();
 
     vi.doMock('../renderer/hooks/useTheme', () => ({
@@ -1317,15 +1317,6 @@ describe('app shell redesign', () => {
 
     render(
       <SettingsPanel
-        settings={
-          {
-            timeout: 30,
-            concurrent: false,
-            show_disabled: true,
-            browser_path: '',
-          } as any
-        }
-        onSave={vi.fn()}
         onCancel={vi.fn()}
         config={
           {
@@ -1343,14 +1334,8 @@ describe('app shell redesign', () => {
       />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '检测设置' }));
-
-    const timeoutInput = screen.getByLabelText('请求超时时间 (秒)');
-    expect(timeoutInput).toHaveClass(
-      'bg-[var(--surface-2)]',
-      'border-[var(--line-soft)]',
-      'text-[var(--text-primary)]'
-    );
+    expect(screen.queryByRole('button', { name: '检测设置' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('请求超时时间 (秒)')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '云端备份' }));
 

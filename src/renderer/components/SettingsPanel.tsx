@@ -1,5 +1,5 @@
 /**
- * 输入: SettingsPanelProps (设置数据、配置、回调函数)
+ * 输入: SettingsPanelProps (应用配置、导入与关闭回调)
  * 输出: React 组件 (设置面板 UI - 左右分栏布局)
  * 定位: 展示层 - 应用设置面板，左侧分类导航 + 右侧内容区
  */
@@ -10,7 +10,6 @@ import {
   X,
   Sun,
   Moon,
-  Monitor,
   Download,
   Upload,
   Cloud,
@@ -22,7 +21,7 @@ import {
   Info,
   Database,
 } from 'lucide-react';
-import { Settings, Config } from '../App';
+import type { Config } from '../App';
 import { useTheme } from '../hooks/useTheme';
 import { useUpdate, UpdateCheckResult } from '../hooks/useUpdate';
 import { toast } from '../store/toastStore';
@@ -31,16 +30,6 @@ import { WebDAVConfig, DEFAULT_WEBDAV_CONFIG } from '../../shared/types/site';
 import { WebDAVBackupDialog } from './dialogs';
 import { AppInput } from './AppInput';
 import { THEME_PRESETS, type ThemeMode } from '../../shared/theme/themePresets';
-
-function isSameDetectionSettings(left: Settings, right: Settings): boolean {
-  return (
-    left.timeout === right.timeout &&
-    left.concurrent === right.concurrent &&
-    (left.max_concurrent ?? 1) === (right.max_concurrent ?? 1) &&
-    left.show_disabled === right.show_disabled &&
-    (left.browser_path || '') === (right.browser_path || '')
-  );
-}
 
 function isSameWebdavConfig(left: WebDAVConfig, right: WebDAVConfig): boolean {
   return (
@@ -53,10 +42,6 @@ function isSameWebdavConfig(left: WebDAVConfig, right: WebDAVConfig): boolean {
   );
 }
 
-const DETECTION_SAVE_DIRTY_CLASS =
-  'bg-[var(--danger)] hover:opacity-90 text-white rounded-lg transition-all font-semibold text-sm shadow-sm';
-const DETECTION_SAVE_CLEAN_CLASS =
-  'bg-[var(--accent)] hover:opacity-90 text-white rounded-lg transition-all font-semibold text-sm shadow-sm';
 const WEBDAV_SAVE_DIRTY_CLASS =
   'px-3 py-1.5 bg-[var(--danger)] hover:opacity-90 disabled:opacity-50 text-white rounded-lg transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed';
 const WEBDAV_SAVE_CLEAN_CLASS =
@@ -65,7 +50,6 @@ const WEBDAV_SAVE_CLEAN_CLASS =
 // 设置分类定义
 const sections: { id: SettingsSection; label: string; icon: LucideIcon }[] = [
   { id: 'general', label: '外观与行为', icon: Sun },
-  { id: 'detection', label: '检测设置', icon: Monitor },
   { id: 'sync', label: '云端备份', icon: Cloud },
   { id: 'update', label: '软件更新', icon: Info },
   { id: 'data', label: '数据管理', icon: Database },
@@ -77,8 +61,6 @@ const themeIcons: Record<ThemeMode, LucideIcon> = {
 };
 
 interface SettingsPanelProps {
-  settings: Settings;
-  onSave: (settings: Settings) => void;
   onCancel: () => void;
   config?: Config;
   onImport?: (config: Config) => void;
@@ -87,17 +69,17 @@ interface SettingsPanelProps {
 }
 
 export function SettingsPanel({
-  settings,
-  onSave,
   onCancel,
   config,
   onImport,
   initialUpdateInfo,
   asPage = false,
 }: SettingsPanelProps) {
-  const [formData, setFormData] = useState<Settings>(settings);
-  const activeSection = useUIStore(state => state.activeSettingsSection);
+  const requestedActiveSection = useUIStore(state => state.activeSettingsSection);
   const setActiveSection = useUIStore(state => state.setActiveSettingsSection);
+  const activeSection = sections.some(section => section.id === requestedActiveSection)
+    ? requestedActiveSection
+    : 'general';
   const { themeMode, changeThemeMode } = useTheme();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -128,18 +110,16 @@ export function SettingsPanel({
   const [loadingCloseBehavior, setLoadingCloseBehavior] = useState(true);
   const [savingCloseBehavior, setSavingCloseBehavior] = useState(false);
 
-  const isDetectionDirty = useMemo(
-    () => !isSameDetectionSettings(formData, settings),
-    [formData, settings]
-  );
   const isWebdavDirty = useMemo(
     () => !isSameWebdavConfig(webdavConfig, savedWebdavConfig),
     [savedWebdavConfig, webdavConfig]
   );
 
   useEffect(() => {
-    setFormData(settings);
-  }, [settings]);
+    if (activeSection !== requestedActiveSection) {
+      setActiveSection(activeSection);
+    }
+  }, [activeSection, requestedActiveSection, setActiveSection]);
 
   useEffect(() => {
     const loadWebdavConfig = async () => {
@@ -280,11 +260,6 @@ export function SettingsPanel({
     e.target.value = '';
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    onSave(formData);
-  };
-
   // ===== Section 内容渲染 =====
 
   const renderGeneralSection = () => (
@@ -423,105 +398,6 @@ export function SettingsPanel({
             <span className="text-sm">保存中...</span>
           </div>
         )}
-      </div>
-    </div>
-  );
-
-  const renderDetectionSection = () => (
-    <div className="bg-[var(--surface-1)] rounded-xl p-5 space-y-4 border border-[var(--line-soft)] shadow-sm">
-      <div>
-        <AppInput
-          type="number"
-          label="请求超时时间 (秒)"
-          size="md"
-          value={formData.timeout}
-          onChange={e => setFormData({ ...formData, timeout: Number(e.target.value) })}
-          min={1}
-          max={60}
-        />
-        <p className="text-xs text-[var(--text-secondary)] mt-1">每个站点的最大等待时间</p>
-      </div>
-
-      <div className="flex items-start gap-3">
-        <input
-          type="checkbox"
-          id="concurrent"
-          checked={formData.concurrent}
-          onChange={e => setFormData({ ...formData, concurrent: e.target.checked })}
-          className="mt-1 h-4 w-4 rounded border-[var(--line-soft)] text-[var(--accent)] focus:ring-[var(--accent)]"
-        />
-        <div className="flex-1">
-          <label
-            htmlFor="concurrent"
-            className="text-sm font-medium block text-[var(--text-primary)] cursor-pointer"
-          >
-            并发检测
-          </label>
-          <p className="text-xs text-[var(--text-secondary)] mt-1">
-            同时检测所有站点，速度更快但占用资源更多
-          </p>
-        </div>
-      </div>
-
-      {formData.concurrent && (
-        <div className="flex items-start gap-3 pl-7">
-          <label
-            htmlFor="max_concurrent"
-            className="text-sm font-medium text-[var(--text-primary)] w-32 pt-1"
-          >
-            最大并发数
-          </label>
-          <div className="flex-1">
-            <input
-              id="max_concurrent"
-              type="number"
-              min={1}
-              max={5}
-              value={formData.max_concurrent ?? 1}
-              onChange={e =>
-                setFormData({
-                  ...formData,
-                  max_concurrent: Math.min(5, Math.max(1, Number(e.target.value) || 1)),
-                })
-              }
-              className="w-24 rounded-md border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-1.5 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
-            />
-            <p className="text-xs text-[var(--text-secondary)] mt-1">
-              默认 1（串行），可按机器/网络情况调到 2–5。
-            </p>
-          </div>
-        </div>
-      )}
-
-      <div className="flex items-start gap-3">
-        <input
-          type="checkbox"
-          id="show_disabled"
-          checked={formData.show_disabled}
-          onChange={e => setFormData({ ...formData, show_disabled: e.target.checked })}
-          className="mt-1 h-4 w-4 rounded border-[var(--line-soft)] text-[var(--accent)] focus:ring-[var(--accent)]"
-        />
-        <div className="flex-1">
-          <label
-            htmlFor="show_disabled"
-            className="text-sm font-medium block text-[var(--text-primary)] cursor-pointer"
-          >
-            显示禁用的站点
-          </label>
-          <p className="text-xs text-[var(--text-secondary)] mt-1">在检测时也包含已禁用的站点</p>
-        </div>
-      </div>
-
-      <div>
-        <AppInput
-          type="text"
-          label="浏览器路径（可选）"
-          size="md"
-          value={formData.browser_path || ''}
-          onChange={e => setFormData({ ...formData, browser_path: e.target.value })}
-          placeholder="例如：C:\PortableApps\Chrome\chrome.exe"
-        />
-        <p className="text-xs text-[var(--text-secondary)] mt-1">留空则自动检测 Chrome / Edge</p>
       </div>
     </div>
   );
@@ -851,14 +727,14 @@ export function SettingsPanel({
     switch (activeSection) {
       case 'general':
         return renderGeneralSection();
-      case 'detection':
-        return renderDetectionSection();
       case 'sync':
         return renderSyncSection();
       case 'update':
         return renderUpdateSection();
       case 'data':
         return renderDataSection();
+      default:
+        return renderGeneralSection();
     }
   };
 
@@ -873,7 +749,7 @@ export function SettingsPanel({
   // ===== 页面模式：左右分栏 =====
   if (asPage) {
     return (
-      <form onSubmit={handleSubmit} className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden">
         {/* 左侧导航 */}
         <aside className="w-56 shrink-0 border-r border-[var(--line-soft)] bg-[var(--surface-2)]/72 p-3 space-y-1 overflow-y-auto">
           {sections.map(({ id, label, icon: Icon }) => (
@@ -908,31 +784,10 @@ export function SettingsPanel({
               {renderSectionContent()}
             </div>
           </div>
-
-          {/* 粘性底部操作栏 - 仅在检测设置分类时显示保存/取消 */}
-          {activeSection === 'detection' && (
-            <div className="shrink-0 border-t border-[var(--line-soft)] bg-[var(--surface-1)]/92 backdrop-blur px-6 py-3 flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={onCancel}
-                className="px-4 py-2 bg-[var(--surface-1)] hover:bg-[var(--surface-3)] rounded-lg transition-all border border-[var(--line-soft)] text-[var(--text-primary)] font-medium text-sm"
-              >
-                取消
-              </button>
-              <button
-                type="submit"
-                data-testid="detection-settings-save-button"
-                data-dirty={isDetectionDirty ? 'true' : 'false'}
-                className={`px-4 py-2 ${isDetectionDirty ? DETECTION_SAVE_DIRTY_CLASS : DETECTION_SAVE_CLEAN_CLASS}`}
-              >
-                保存检测设置
-              </button>
-            </div>
-          )}
         </div>
 
         {dialogs}
-      </form>
+      </div>
     );
   }
 
@@ -949,7 +804,7 @@ export function SettingsPanel({
             <X className="w-5 h-5" />
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex overflow-hidden">
           <aside className="w-48 shrink-0 border-r border-[var(--line-soft)] bg-[var(--surface-2)]/72 p-2 space-y-1 overflow-y-auto">
             {sections.map(({ id, label, icon: Icon }) => (
               <button
@@ -979,27 +834,8 @@ export function SettingsPanel({
                 {renderSectionContent()}
               </div>
             </div>
-            {activeSection === 'detection' && (
-              <div className="shrink-0 border-t border-[var(--line-soft)] px-6 py-3 flex justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={onCancel}
-                  className="px-4 py-2 bg-[var(--surface-1)] hover:bg-[var(--surface-2)] rounded-lg transition-all border border-[var(--line-soft)] text-[var(--text-primary)] font-medium text-sm"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  data-testid="detection-settings-save-button"
-                  data-dirty={isDetectionDirty ? 'true' : 'false'}
-                  className={`px-4 py-2 ${isDetectionDirty ? DETECTION_SAVE_DIRTY_CLASS : DETECTION_SAVE_CLEAN_CLASS}`}
-                >
-                  保存
-                </button>
-              </div>
-            )}
           </div>
-        </form>
+        </div>
       </div>
       {dialogs}
     </div>

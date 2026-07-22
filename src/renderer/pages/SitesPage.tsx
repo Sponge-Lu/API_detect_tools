@@ -19,8 +19,9 @@ import {
   AddAccessPointDialog,
   AccessPointDetailPanel,
   OperationRecordDialog,
-  CliProbeSettingsDialog,
+  SiteSettingsDialog,
 } from '../components/dialogs';
+import type { SiteSettingsChanges } from '../components/dialogs';
 import type { CliConfig } from '../../shared/types/cli-config';
 import { useRouteStore } from '../store/routeStore';
 import { CreateApiKeyDialog } from '../components/CreateApiKeyDialog';
@@ -46,7 +47,7 @@ import {
   type DetectionResult,
   type AnyRouterAccountConfig,
 } from '../../shared/types/site';
-import { DEFAULT_CLI_PROBE_CONFIG, type RouteCliProbeConfig } from '../../shared/types/route-proxy';
+import { DEFAULT_CLI_PROBE_CONFIG } from '../../shared/types/route-proxy';
 import type { Config, SiteGroup } from '../App';
 import {
   UNKNOWN_SITE_TYPE_FILTER,
@@ -279,8 +280,8 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     null
   );
   const [showOperationRecords, setShowOperationRecords] = useState(false);
-  const [showCliProbeSettings, setShowCliProbeSettings] = useState(false);
-  const [savingCliProbeSettings, setSavingCliProbeSettings] = useState(false);
+  const [showSiteSettings, setShowSiteSettings] = useState(false);
+  const [savingSiteSettings, setSavingSiteSettings] = useState(false);
   const [runningCliProbe, setRunningCliProbe] = useState(false);
 
   // 多账户: 按站点 ID 预加载的账户列表
@@ -849,23 +850,39 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     } catch (error) {
       Logger.warn('加载 CLI 探测设置失败，将使用默认设置:', error);
     }
-    setShowCliProbeSettings(true);
+    setShowSiteSettings(true);
   }, [fetchRouteConfig]);
 
-  const handleSaveCliProbeSettings = useCallback(
-    async (nextConfig: RouteCliProbeConfig) => {
-      setSavingCliProbeSettings(true);
+  const handleSaveSiteSettings = useCallback(
+    async ({ cliProbeConfig, siteRefreshSettings }: SiteSettingsChanges) => {
+      setSavingSiteSettings(true);
       try {
-        await saveRouteCliProbeConfig(nextConfig);
-        setShowCliProbeSettings(false);
-      } catch (error: any) {
-        Logger.error('保存 CLI 可用性检测设置失败:', error);
-        toast.error('保存 CLI 可用性检测设置失败: ' + (error?.message || error));
+        if (cliProbeConfig) {
+          await saveRouteCliProbeConfig(cliProbeConfig);
+        }
+        if (siteRefreshSettings) {
+          const currentConfig = useConfigStore.getState().config;
+          if (!currentConfig) {
+            throw new Error('站点配置尚未加载');
+          }
+          const nextConfig = {
+            ...currentConfig,
+            settings: { ...currentConfig.settings, ...siteRefreshSettings },
+          };
+          await window.electronAPI.saveConfig(nextConfig);
+          setConfig(nextConfig);
+        }
+        setShowSiteSettings(false);
+        toast.success('站点设置已保存');
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        Logger.error('保存站点设置失败:', error);
+        toast.error('保存站点设置失败: ' + message);
       } finally {
-        setSavingCliProbeSettings(false);
+        setSavingSiteSettings(false);
       }
     },
-    [saveRouteCliProbeConfig]
+    [saveRouteCliProbeConfig, setConfig]
   );
 
   // 签到逻辑 hook
@@ -1485,10 +1502,10 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
           variant="secondary"
           size="sm"
           onClick={handleOpenDetectionSettings}
-          title="打开检测设置"
-          aria-label="探测设置"
+          title="打开站点设置"
+          aria-label="设置"
         >
-          探测设置
+          设置
         </AppButton>
         <AppButton
           variant="secondary"
@@ -2096,16 +2113,17 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
         />
       )}
 
-      <CliProbeSettingsDialog
-        isOpen={showCliProbeSettings}
-        config={routeCliProbeConfig ?? DEFAULT_CLI_PROBE_CONFIG}
-        saving={savingCliProbeSettings}
+      <SiteSettingsDialog
+        isOpen={showSiteSettings}
+        cliProbeConfig={routeCliProbeConfig ?? DEFAULT_CLI_PROBE_CONFIG}
+        siteRefreshSettings={config.settings}
+        saving={savingSiteSettings}
         onClose={() => {
-          if (!savingCliProbeSettings) {
-            setShowCliProbeSettings(false);
+          if (!savingSiteSettings) {
+            setShowSiteSettings(false);
           }
         }}
-        onSave={handleSaveCliProbeSettings}
+        onSave={handleSaveSiteSettings}
       />
 
       {/* 添加接入点弹窗 */}

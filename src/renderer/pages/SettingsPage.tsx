@@ -43,12 +43,7 @@ export function SettingsPage() {
   return (
     <SettingsPanel
       asPage
-      settings={config.settings}
       config={config}
-      onSave={async settings => {
-        await saveConfig({ ...config, settings });
-        toast.success('设置已保存');
-      }}
       onCancel={() => setActiveTab('sites')}
       onImport={async newConfig => {
         await saveConfig(newConfig);

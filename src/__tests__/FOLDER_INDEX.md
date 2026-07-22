@@ -24,6 +24,7 @@
 | 文件 | 职责 | 测试对象 |
 |------|------|--------|
 | **setup.ts** | 测试环境配置 | Vitest 配置 |
+| **site-settings-dialog.test.tsx** | 站点设置弹窗回归测试 | CLI 探测/站点刷新分类、按脏状态提交与取消不保存 |
 | **example.test.ts** | 示例测试 | 测试模板 |
 | **schemas.test.ts** | Schema 验证测试 | Zod Schema |
 | **token-service.test.ts** | TokenService / ApiService 的 site_type 驱动回归测试 | API Key 原始值保留、NewAPI 批量明文 key 兼容、显式 `site_type` 覆盖 URL 反查、Unauthorized envelope 登录过期识别、账户基础信息刷新在浏览器 token 无效时重建 access_token、签到端点按 `site_type` 选择、模型响应非对象/直接数组容错、NewAPI 空模型端点恢复、同日手动签到完成状态刷新保留、sub2api 端点适配、旧站点 `site_type` 首检写回 |
@@ -76,7 +77,7 @@
 | **data-overview-page.test.tsx** | 数据总览页回归测试 | 首页总览 KPI、站点榜单、规则解释、异常请求、快照趋势，以及路由趋势 `24h` / `7d` 部分数据窗口下的完整 X 轴与前置空桶绘制规则 |
 | **route-analytics-service.test.ts** | 路由分析服务回归测试 | 请求日志 token/cache token 字段、站点/账户/API Key 对象级 token 聚合 |
 | **route-workbench-redesign.test.tsx** | Route 页面重设计测试 | route 页配置与重定向；覆盖 OpenCode/Grok Build 无入口端点选择器、Grok Build 三受管模型预览及仅合并应用 |
-| **sites-page-redesign.test.tsx** | 站点页重设计测试 | 合并后的站点管理页多列列头、内联排序、高频动作、行内旧菜单移除、接入点详情组件复用、站点名称编辑、History 列、直连配置展示、操作记录弹窗与行内控件冒泡隔离回归 |
+| **sites-page-redesign.test.tsx** | 站点页重设计测试 | 合并后的站点管理页多列列头、内联排序、高频动作、行内旧菜单移除、接入点详情组件复用、站点设置双保存链路、站点名称编辑、History 列、直连配置展示、操作记录弹窗与行内控件冒泡隔离回归 |
 | **logs-page.test.tsx** | 日志页回归测试 | 路由日志主页面、四种 CLI 筛选与图标、逐条 push、状态码、失败详情、token/cache token/按次参考金额与直连配置显示 |
 | **toast-store.test.ts** | Toast Store 回归测试 | 可见队列上限、事件历史记录与清理 |
 | **close-behavior-manager.property.test.ts** | 窗口关闭行为测试 | CloseBehaviorManager 设置持久化、对话框显示条件与设置面板偏好映射 |

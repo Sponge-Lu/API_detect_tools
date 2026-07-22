@@ -267,15 +267,15 @@ describe('sites page redesign', () => {
 
     expect(source).not.toContain('<div className="w-[48px]" aria-hidden="true" />');
     expect(source).toContain('handleOpenDetectionSettings');
-    expect(source).toContain('CliProbeSettingsDialog');
+    expect(source).toContain('SiteSettingsDialog');
     expect(source).toContain('fetchRouteConfig');
-    expect(source).toContain('setShowCliProbeSettings(true)');
+    expect(source).toContain('setShowSiteSettings(true)');
     expect(source).toContain('runRouteProbeNow');
     expect(source).not.toContain("setActiveSettingsSection('detection')");
     expect(source).toContain('handleDetectAllSites');
-    expect(source).toContain('aria-label="探测设置"');
+    expect(source).toContain('aria-label="设置"');
     expect(source).toContain('aria-label="立即探测"');
-    expect(source).toContain('探测设置');
+    expect(source).toContain('siteRefreshSettings={config.settings}');
     expect(source).toContain('立即探测');
     expect(source).not.toContain('<SlidersHorizontal className="w-4 h-4"');
     expect(source).not.toContain('<Play className="w-4 h-4"');
@@ -313,7 +313,7 @@ describe('sites page redesign', () => {
     expect((window.electronAPI as any).detectAllSites).not.toHaveBeenCalled();
   });
 
-  it('opens and saves route CLI probe settings from the Sites page header', async () => {
+  it('opens and saves CLI probe and site refresh settings from the Sites page header', async () => {
     const routeConfig = {
       cliProbe: {
         config: {
@@ -329,6 +329,8 @@ describe('sites page redesign', () => {
       success: true,
       data: routeConfig,
     });
+    const saveConfig = vi.fn().mockResolvedValue(undefined);
+    window.electronAPI.saveConfig = saveConfig;
 
     useConfigStore.setState({
       config: {
@@ -350,16 +352,26 @@ describe('sites page redesign', () => {
     render(<SitesPage setPageHeaderActions={setPageHeaderActions} />);
     await waitFor(() => expect(setPageHeaderActions).toHaveBeenCalled());
 
-    const settingsAction = findClickableAction(headerActions, '探测设置');
+    const settingsAction = findClickableAction(headerActions, '设置');
     expect(settingsAction).not.toBeNull();
 
     await act(async () => {
       await settingsAction?.props.onClick();
     });
 
-    expect(await screen.findByRole('dialog', { name: '站点 CLI 探测设置' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: '站点设置' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'CLI 探测' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByLabelText('探测间隔（分钟）')).toHaveValue(120);
     expect(screen.queryByLabelText('每个 CLI 探测模型数')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('探测间隔（分钟）'), {
+      target: { value: '180' },
+    });
+
+    fireEvent.click(screen.getByRole('tab', { name: '站点刷新' }));
+    expect(screen.getByLabelText('请求超时时间 (秒)')).toHaveValue(30);
+    fireEvent.change(screen.getByLabelText('请求超时时间 (秒)'), {
+      target: { value: '45' },
+    });
 
     await act(async () => {
       fireEvent.click(screen.getByText('保存设置'));
@@ -367,9 +379,52 @@ describe('sites page redesign', () => {
 
     await waitFor(() =>
       expect((window.electronAPI as any).route.saveCliProbeConfig).toHaveBeenCalledWith(
-        expect.objectContaining({ enabled: true, intervalMinutes: 120 })
+        expect.objectContaining({ enabled: true, intervalMinutes: 180 })
       )
     );
+    expect(saveConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        settings: expect.objectContaining({ timeout: 45, show_disabled: true }),
+      })
+    );
+  });
+
+  it('keeps the site settings dialog open when saving site refresh settings fails', async () => {
+    const saveConfig = vi.fn().mockRejectedValue(new Error('disk unavailable'));
+    window.electronAPI.saveConfig = saveConfig;
+    useConfigStore.setState({
+      config: {
+        sites: [],
+        settings: {
+          timeout: 30,
+          concurrent: false,
+          show_disabled: true,
+        },
+        siteGroups: [{ id: 'default', name: '默认分组' }],
+      },
+    });
+
+    let headerActions: ReactNode | null = null;
+    const setPageHeaderActions = vi.fn((actions: ReactNode | null) => {
+      headerActions = actions;
+    });
+
+    render(<SitesPage setPageHeaderActions={setPageHeaderActions} />);
+    await waitFor(() => expect(setPageHeaderActions).toHaveBeenCalled());
+
+    const settingsAction = findClickableAction(headerActions, '设置');
+    await act(async () => {
+      await settingsAction?.props.onClick();
+    });
+
+    fireEvent.click(screen.getByRole('tab', { name: '站点刷新' }));
+    fireEvent.change(screen.getByLabelText('请求超时时间 (秒)'), {
+      target: { value: '45' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }));
+
+    await waitFor(() => expect(saveConfig).toHaveBeenCalledOnce());
+    expect(screen.getByRole('dialog', { name: '站点设置' })).toBeInTheDocument();
   });
 
   it('defaults the group filter to 默认分组 and does not render an 全部 tab', () => {
