@@ -18,7 +18,7 @@
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
 | **App.tsx** | 应用根组件、页面壳层 | `App` 组件；根据 `activeTab + overviewSubtab` 派生数据总览 Header |
-| **main.tsx** | 前端入口 | React 应用挂载 |
+| **main.tsx** | 前端入口 | 在根错误边界内挂载 React 应用 |
 | **index.html** | HTML 模板 | 应用入口 HTML |
 | **index.css** | 全局样式 | Tailwind CSS 导入、Light/Dark token、响应式布局系统 |
 | **svg.d.ts** | SVG 类型定义 | SVG 导入类型 |
@@ -49,6 +49,7 @@
 | **Skeleton** | 骨架屏 | 加载占位符 |
 | **CliCompatibilityIcons** | CLI 兼容性图标 | 工具支持情况 |
 | **CreateApiKeyDialog** | API Key 创建对话框 | 创建 API Key |
+| **AppErrorBoundary** | 根渲染异常兜底 | 可见错误状态、重新加载 |
 ### 对话框组件 (dialogs/)
 - 各类对话框的独立组件
 - 支持表单验证、错误处理

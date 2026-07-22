@@ -36,6 +36,7 @@ import {
   normalizeThemeMode,
   type ThemeMode,
 } from '../shared/theme/themePresets';
+import { createRendererHealthMonitor } from './window-health-manager';
 
 // 设置Windows控制台编码为UTF-8，解决中文乱码问题
 if (os.platform() === 'win32') {
@@ -86,7 +87,7 @@ async function createWindow() {
   const savedTheme = await getSavedTheme();
   const backgroundColor = getWindowBackgroundColor(savedTheme);
 
-  mainWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     // 默认窗口尺寸为 1400x800，确保展开侧栏时路由日志九列无需水平滚动
     width: 1400,
     height: 800,
@@ -105,28 +106,31 @@ async function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
     },
   });
+  mainWindow = window;
 
   // 窗口准备好后再显示，避免白屏闪烁
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.show();
+  window.once('ready-to-show', () => {
+    window.show();
   });
 
   // 完全移除菜单栏
-  mainWindow.setMenu(null);
+  window.setMenu(null);
 
-  // 根据环境加载不同的URL
-  if (app.isPackaged) {
-    // 生产环境：加载打包后的HTML文件
-    // __dirname 在打包后是 dist/main/，需要向上两级到根目录
-    await mainWindow.loadFile(path.join(__dirname, '../../dist-renderer/index.html'));
-  } else {
+  const loadRenderer = async () => {
+    if (app.isPackaged) {
+      // 生产环境：加载打包后的HTML文件
+      // __dirname 在打包后是 dist/main/，需要向上两级到根目录
+      await window.loadFile(path.join(__dirname, '../../dist-renderer/index.html'));
+      return;
+    }
+
     // 开发环境：尝试多个常用端口，避免5173被占用时出现空白
     const ports = [5173, 5174, 5175];
     let loaded = false;
     for (const p of ports) {
       const url = `http://localhost:${p}`;
       try {
-        await mainWindow.loadURL(url);
+        await window.loadURL(url);
         loaded = true;
         break;
       } catch {
@@ -135,11 +139,18 @@ async function createWindow() {
     }
     if (!loaded) {
       // 如果都失败，仍尝试默认端口，便于调试
-      await mainWindow.loadURL('http://localhost:5173');
+      await window.loadURL('http://localhost:5173');
     }
     // 开发环境可按需打开开发者工具
-    // mainWindow.webContents.openDevTools();
-  }
+    // window.webContents.openDevTools();
+  };
+
+  const rendererHealth = createRendererHealthMonitor(window.webContents, {
+    loadRenderer,
+    logger: Logger,
+  });
+  window.on('closed', () => rendererHealth.dispose());
+  await rendererHealth.load();
 }
 
 app.whenReady().then(async () => {

@@ -25,6 +25,7 @@
 
 | 文件 | 职责 | Props |
 |------|------|-------|
+| **AppErrorBoundary.tsx** | React 根渲染异常兜底与手动恢复入口 | `children`, `onReload` |
 | **ConfirmDialog.tsx** | 确认对话框 | `open`, `title`, `message`, `onConfirm`, `onCancel` |
 | **DetectionResults.tsx** | 检测结果显示 | `results`, `loading`, `onRetry` |
 | **SettingsPanel.tsx** | 应用设置面板 | 外观与行为、云端备份、软件更新和数据管理；站点刷新参数由 SitesPage 的站点设置弹窗维护 |

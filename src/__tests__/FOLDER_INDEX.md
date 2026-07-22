@@ -24,6 +24,8 @@
 | 文件 | 职责 | 测试对象 |
 |------|------|--------|
 | **setup.ts** | 测试环境配置 | Vitest 配置 |
+| **window-health-manager.test.ts** | 主窗口渲染健康回归测试 | 崩溃/无响应有界恢复、稳定期预算重置、错误页手动重试与诊断转义 |
+| **app-error-boundary.test.tsx** | React 根错误边界回归测试 | 未捕获渲染异常显示可恢复状态并触发重载操作 |
 | **site-settings-dialog.test.tsx** | 站点设置弹窗回归测试 | CLI 探测/站点刷新分类、按脏状态提交与取消不保存 |
 | **example.test.ts** | 示例测试 | 测试模板 |
 | **schemas.test.ts** | Schema 验证测试 | Zod Schema |

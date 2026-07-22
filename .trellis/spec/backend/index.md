@@ -8,6 +8,7 @@
 
 | Guide | Description | Status |
 |-------|-------------|--------|
+| [Window Runtime](./window-runtime.md) | Electron renderer lifecycle diagnostics, bounded recovery, and root error containment | Documented |
 | [Storage Runtime](./storage-runtime.md) | Stable config, runtime sidecars, manifest backup/restore, and migration contracts | Documented |
 | [Route Runtime](./route-runtime.md) | Route proxy ordering, per-path health state, and cross-layer display contract | Documented |
 | [Site Detection Runtime](./site-detection.md) | Site refresh response parsing and account-level check-in credential contract | Documented |
