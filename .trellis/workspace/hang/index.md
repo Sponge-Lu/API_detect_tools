@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
+- **Total Sessions**: 10
 - **Last Active**: 2026-07-22
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~347 | Active |
+| `journal-1.md` | ~378 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-07-22 | 修复应用频繁白屏 | - | `main` |
 | 9 | 2026-07-22 | 合并站点管理检测设置 | `ff49756` | `main` |
 | 8 | 2026-07-17 | 完成 CLI 路由思考强度选择器 | `58d3387` | `main` |
 | 7 | 2026-07-16 | OpenCode 默认 Responses 与思考参数配置 | `afa5dd9` | `main` |
