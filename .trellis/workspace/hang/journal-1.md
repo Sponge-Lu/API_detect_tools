@@ -312,3 +312,36 @@ OpenCode 第三方供应商配置默认使用 Responses；OpenAI 模型写入 hi
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: 合并站点管理检测设置
+
+**Date**: 2026-07-22
+**Task**: 合并站点管理检测设置
+**Branch**: `main`
+
+### Summary
+
+将检测设置迁移到站点管理页，合并 CLI 探测与站点刷新设置弹窗，统一单列布局并补充回归测试。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ff49756` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
