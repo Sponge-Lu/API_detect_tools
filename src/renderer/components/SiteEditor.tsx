@@ -23,6 +23,7 @@ import {
   SITE_TYPES,
   type SiteType,
   type AnyRouterAccountConfig,
+  type AccountAuthSource,
   isAnyRouterSite,
 } from '../../shared/types/site';
 import { AnyRouterConfigSection } from './AnyRouterConfigSection';
@@ -36,14 +37,22 @@ interface EditingAccountInfo {
   anyRouterConfig?: AnyRouterAccountConfig;
 }
 
+interface ExistingSiteAccountContext {
+  site: SiteConfig;
+  username?: string;
+  profilePath?: string;
+}
+
 interface Props {
   site?: SiteConfig;
   editingAccount?: EditingAccountInfo | null;
+  initialMode?: 'auto' | 'manual';
   onSave: (
     site: SiteConfig,
     auth: {
       systemToken: string;
       userId: string;
+      authSource: AccountAuthSource;
       accountName?: string;
       anyRouterConfig?: AnyRouterAccountConfig;
     }
@@ -99,6 +108,7 @@ function extractDetectedApiKey(payload: any): string {
 export function SiteEditor({
   site,
   editingAccount,
+  initialMode = 'auto',
   onSave,
   onCancel,
   groups,
@@ -106,8 +116,12 @@ export function SiteEditor({
   onConfigChanged,
 }: Props) {
   // 编辑模式下直接跳到确认步骤，新增模式从输入URL开始
-  const [step, setStep] = useState<Step>(site ? 'confirm' : 'input-url');
-  const [mode, setMode] = useState<Mode>('auto'); // 当前添加模式
+  const [step, setStep] = useState<Step>(
+    site || initialMode === 'manual' ? 'confirm' : 'input-url'
+  );
+  const [mode, setMode] = useState<Mode>(initialMode); // 当前添加模式
+  const [existingSiteAccountContext, setExistingSiteAccountContext] =
+    useState<ExistingSiteAccountContext | null>(null);
   const [url, setUrl] = useState(site?.url || '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -185,6 +199,7 @@ export function SiteEditor({
       return;
     }
     setUrl(finalUrl);
+    setExistingSiteAccountContext(null);
 
     // 检测站点是否已存在（仅在新增模式下检测）
     if (!site) {
@@ -203,63 +218,51 @@ export function SiteEditor({
         });
 
         if (confirmed) {
-          // 用户确认添加新账号，继续登录流程获取新账号凭证
-          // 流程会在 handleSave 中检测并自动添加账号
+          if (!existingSite.id) {
+            setError('现有站点缺少 ID，无法添加账户');
+            return;
+          }
+
           setLoading(true);
           setError('');
-          setStatusMessage('正在启动浏览器...');
+          setStatusMessage('正在启动隔离浏览器...');
           setStep('fetching');
 
           try {
-            const result = await window.electronAPI.launchChromeForLogin(finalUrl);
-            if (!result.success) {
-              setError(result.message);
-              setStatusMessage('');
-              setStep('input-url');
-              setLoading(false);
-              return;
-            }
-
-            setStatusMessage('浏览器已启动，正在检测登录状态...');
-
-            const siteAccountResult = (await (window.electronAPI as any).token.initializeSite(
-              finalUrl
-            )) as any;
-
-            if (!siteAccountResult.success) {
-              throw new Error(siteAccountResult.error || '初始化站点失败');
+            const loginResult = await window.electronAPI.browserProfile?.loginIsolated(
+              existingSite.id,
+              finalUrl,
+              crypto.randomUUID()
+            );
+            if (!loginResult?.success || !loginResult.data) {
+              throw new Error(loginResult?.error || '隔离浏览器登录失败');
             }
 
             setStatusMessage('✅ 信息获取成功！');
 
-            const { user_id, site_name, access_token, supportsCheckIn, site_type, site_url, url } =
-              siteAccountResult.data;
-            const detectedApiKey = extractDetectedApiKey(siteAccountResult.data);
-            if (!user_id) {
-              throw new Error('初始化站点返回的数据中缺少用户ID');
+            const { userId, username, accessToken, profilePath } = loginResult.data;
+            if (!userId) {
+              throw new Error('隔离浏览器登录结果中缺少用户ID');
             }
-            const resolvedUrl = site_url || url || finalUrl;
 
             setAutoInfo(prev => ({
-              name: site_name || extractDomainName(finalUrl),
+              name: existingSite.name,
               accountName: prev.accountName || '新账号',
-              apiKey: detectedApiKey || prev.apiKey,
-              systemToken: access_token || '',
-              userId: String(user_id),
+              apiKey: existingSite.api_key || prev.apiKey,
+              systemToken: accessToken || '',
+              userId: String(userId),
               balance: null,
-              extraLinks: prev.extraLinks,
-              enableCheckin: supportsCheckIn === true,
+              extraLinks: existingSite.extra_links || prev.extraLinks,
+              enableCheckin: existingSite.force_enable_checkin === true,
             }));
 
-            if (site_type) {
-              setSelectedSiteType(site_type);
+            if (existingSite.site_type) {
+              setSelectedSiteType(existingSite.site_type);
               setHasDetectedSiteType(true);
               setIsSiteTypeEditing(false);
             }
-            setUrl(resolvedUrl);
-
-            // 标记为添加账号模式
-            (window as any).__addAccountToExistingSite = existingSite;
+            setUrl(existingSite.url);
+            setExistingSiteAccountContext({ site: existingSite, username, profilePath });
 
             setTimeout(() => {
               setStep('confirm');
@@ -344,6 +347,7 @@ export function SiteEditor({
       // 失败时允许用户继续在确认页手动填写
       setError('获取站点信息失败: ' + err.message);
       setStatusMessage('');
+      setMode('manual');
       setStep('confirm');
     } finally {
       setLoading(false);
@@ -363,12 +367,10 @@ export function SiteEditor({
   };
 
   const handleSave = async () => {
-    // 检查是否为添加账号模式（通过全局标记判断）
-    const existingSite = (window as any).__addAccountToExistingSite;
-
-    if (existingSite) {
+    if (existingSiteAccountContext) {
       // 添加账号模式：直接调用添加账号接口
       try {
+        const { site: existingSite, username, profilePath } = existingSiteAccountContext;
         if (!existingSite.id) {
           throw new Error('站点 ID 缺失');
         }
@@ -377,10 +379,12 @@ export function SiteEditor({
           site_id: existingSite.id,
           account_name: autoInfo.accountName?.trim() || '新账号',
           user_id: autoInfo.userId,
+          username,
           access_token: autoInfo.systemToken,
-          auth_source: 'browser',
+          auth_source: 'isolated_profile',
+          browser_profile_path: profilePath,
           ...(isAnyRouter && userHash ? { anyRouterConfig: { userHash } } : {}),
-        } as any);
+        });
 
         if (!result?.success) {
           throw new Error(result?.error || '添加账号失败');
@@ -388,8 +392,7 @@ export function SiteEditor({
 
         toast.success(`添加账号成功：${autoInfo.accountName || '新账号'}@${existingSite.name}`);
 
-        // 清除全局标记
-        delete (window as any).__addAccountToExistingSite;
+        setExistingSiteAccountContext(null);
 
         // 关闭浏览器
         try {
@@ -428,6 +431,7 @@ export function SiteEditor({
     await onSave(newSite, {
       systemToken: autoInfo.systemToken,
       userId: autoInfo.userId,
+      authSource: mode === 'auto' ? 'main_profile' : 'manual',
       ...(editingAccount
         ? {
             accountName: autoInfo.accountName.trim() || editingAccount.account_name || '',
@@ -463,6 +467,7 @@ export function SiteEditor({
                   onClick={() => {
                     // 切换回智能添加：回到浏览器引导流程
                     setMode('auto');
+                    setExistingSiteAccountContext(null);
                     setStep('input-url');
                     setError('');
                     setIsSiteTypeEditing(false);
@@ -479,6 +484,7 @@ export function SiteEditor({
                   onClick={() => {
                     // 切换为手动添加：直接进入确认/手动填写步骤
                     setMode('manual');
+                    setExistingSiteAccountContext(null);
                     setStep('confirm');
                     setError('');
                     setIsSiteTypeEditing(true);

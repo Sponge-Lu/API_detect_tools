@@ -12,8 +12,11 @@ import type { BrowserWindow } from 'electron';
 import Logger from '../utils/logger';
 import { detectSiteType } from '../site-type-detector';
 import { getSiteTypeProfile } from '../site-type-registry';
-import type { AccountCredential } from '../../shared/types/site';
-import type { DetectionCacheData } from '../../shared/types/site';
+import type {
+  AccountCredential,
+  BrowserProfileOptionId,
+  DetectionCacheData,
+} from '../../shared/types/site';
 
 export function registerBrowserProfileHandlers(
   chromeManager: ChromeManager,
@@ -138,6 +141,30 @@ export function registerBrowserProfileHandlers(
       return { success: false, error: error.message };
     }
   });
+
+  ipcMain.handle(
+    'browser-profile:list-account-options',
+    async (_, siteId: string, accountId: string) => {
+      try {
+        const data = await browserProfileManager.listAccountProfileOptions(siteId, accountId);
+        return { success: true, data };
+      } catch (error: any) {
+        return { success: false, error: error.message };
+      }
+    }
+  );
+
+  ipcMain.handle(
+    'browser-profile:bind-account',
+    async (_, siteId: string, accountId: string, optionId: BrowserProfileOptionId) => {
+      try {
+        const data = await browserProfileManager.bindAccountProfile(siteId, accountId, optionId);
+        return { success: true, data };
+      } catch (error: any) {
+        return { success: false, error: error.message };
+      }
+    }
+  );
 
   // 使用主浏览器 Profile 登录（第一个账号）
   ipcMain.handle('browser-profile:login-main', async (_, siteUrl: string) => {

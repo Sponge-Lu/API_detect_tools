@@ -178,6 +178,29 @@ export const DEFAULT_CLI_CONFIG_DATA: CliConfigData = {
 /** 账户认证来源 */
 export type AccountAuthSource = 'main_profile' | 'isolated_profile' | 'manual';
 
+/** 浏览器 Profile 选择器中的稳定选项 ID */
+export type BrowserProfileOptionId =
+  | 'manual'
+  | 'main_profile'
+  | `isolated_profile:${number}`
+  | 'current_isolated_profile';
+
+/** 可绑定到站点账户的浏览器 Profile */
+export interface BrowserProfileOption {
+  id: BrowserProfileOptionId;
+  label: string;
+  authSource: AccountAuthSource;
+  browserProfilePath?: string;
+  disabled?: boolean;
+  disabledReason?: string;
+}
+
+/** 当前账户的浏览器 Profile 选择状态 */
+export interface AccountBrowserProfileOptions {
+  selectedId: BrowserProfileOptionId;
+  options: BrowserProfileOption[];
+}
+
 /**
  * AnyRouter 专用配置
  */

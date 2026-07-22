@@ -61,6 +61,7 @@ describe('SiteEditor', () => {
       {
         systemToken: 'token-123',
         userId: '42',
+        authSource: 'main_profile',
       }
     );
   });
@@ -68,7 +69,7 @@ describe('SiteEditor', () => {
   it('智能添加成功后应自动回填识别出的站点类型', async () => {
     vi.useFakeTimers();
     const onSave = vi.fn().mockResolvedValue(undefined);
-    const electronAPI = window.electronAPI as any;
+    const electronAPI = window.electronAPI;
     electronAPI.launchChromeForLogin.mockResolvedValue({ success: true });
     electronAPI.token.initializeSite.mockResolvedValue({
       success: true,
@@ -132,6 +133,7 @@ describe('SiteEditor', () => {
       {
         systemToken: 'jwt-token',
         userId: '9',
+        authSource: 'main_profile',
       }
     );
   });
@@ -180,9 +182,127 @@ describe('SiteEditor', () => {
       {
         systemToken: 'token-123',
         userId: '42',
+        authSource: 'main_profile',
         accountName: '备用账户',
       }
     );
+  });
+
+  it('手动添加应将认证来源保存为 manual', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <SiteEditor
+        initialMode="manual"
+        onSave={onSave}
+        onCancel={vi.fn()}
+        groups={[{ id: 'default', name: '默认分组' }]}
+        defaultGroupId="default"
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('输入站点名称'), {
+      target: { value: 'Manual Hub' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('https://api.example.com'), {
+      target: { value: 'https://manual.example.com' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('输入用户ID'), {
+      target: { value: 'manual-user' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('请手动填入 Access Token'), {
+      target: { value: 'manual-token' },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '保存站点' }));
+    });
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Manual Hub',
+        url: 'https://manual.example.com',
+      }),
+      expect.objectContaining({
+        systemToken: 'manual-token',
+        userId: 'manual-user',
+        authSource: 'manual',
+      })
+    );
+  });
+
+  it('智能添加已有站点时应使用隔离 Profile 保存账户', async () => {
+    vi.useFakeTimers();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const onCancel = vi.fn();
+    const electronAPI = window.electronAPI;
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValueOnce(true);
+    const existingSite: SiteConfig = {
+      id: 'site-existing',
+      name: 'Existing Hub',
+      url: 'https://existing.example.com',
+      site_type: 'newapi',
+      api_key: 'sk-existing',
+      enabled: true,
+      group: 'default',
+    };
+
+    electronAPI.loadConfig.mockResolvedValueOnce({ sites: [existingSite], accounts: [] });
+    electronAPI.browserProfile.loginIsolated = vi.fn().mockResolvedValueOnce({
+      success: true,
+      data: {
+        userId: 8,
+        username: 'isolated-user',
+        accessToken: 'isolated-token',
+        authSource: 'isolated_profile',
+        profilePath: 'C:/profiles/slot-2',
+      },
+    });
+    electronAPI.accounts.add = vi.fn().mockResolvedValueOnce({
+      success: true,
+      data: { id: 'account-2' },
+    });
+
+    render(
+      <SiteEditor
+        onSave={onSave}
+        onCancel={onCancel}
+        groups={[{ id: 'default', name: '默认分组' }]}
+        defaultGroupId="default"
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('https://api.example.com'), {
+      target: { value: existingSite.url },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '获取信息' }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+      vi.advanceTimersByTime(1000);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '保存站点' }));
+    });
+
+    expect(electronAPI.browserProfile.loginIsolated).toHaveBeenCalledWith(
+      existingSite.id,
+      existingSite.url,
+      expect.any(String)
+    );
+    expect(electronAPI.accounts.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        site_id: existingSite.id,
+        user_id: '8',
+        access_token: 'isolated-token',
+        auth_source: 'isolated_profile',
+        browser_profile_path: 'C:/profiles/slot-2',
+      })
+    );
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    confirmSpy.mockRestore();
   });
 
   it('编辑 AnyRouter 账户时默认部分明文显示 User Hash，并允许显隐切换', () => {

@@ -28,11 +28,11 @@
 | **example.test.ts** | 示例测试 | 测试模板 |
 | **schemas.test.ts** | Schema 验证测试 | Zod Schema |
 | **token-service.test.ts** | TokenService / ApiService 的 site_type 驱动回归测试 | API Key 原始值保留、NewAPI 批量明文 key 兼容、显式 `site_type` 覆盖 URL 反查、Unauthorized envelope 登录过期识别、账户基础信息刷新在浏览器 token 无效时重建 access_token、签到端点按 `site_type` 选择、模型响应非对象/直接数组容错、NewAPI 空模型端点恢复、同日手动签到完成状态刷新保留、sub2api 端点适配、旧站点 `site_type` 首检写回 |
-| **browser-login-flow.test.ts** | 浏览器登录流回归测试 | 登录浏览器模式、账户级 token 重试、Sub2API 浏览器 JWT 续期、localStorage 站点类型线索收紧 |
+| **browser-login-flow.test.ts** | 浏览器登录流回归测试 | 登录浏览器模式、账户级 token 重试、Profile 列表/绑定 IPC、Sub2API 浏览器 JWT 续期、localStorage 站点类型线索收紧 |
 | **useCheckIn.test.ts** | useCheckIn Hook 回归测试 | 一键签到跳过 `unavailable` 分组站点，账户级签到透传 `accountId`，AnyRouter 命名变体走账户浏览器签到，手动签到完成状态写入缓存 |
 | **useCliCompatTest.test.ts** | 站点页 CLI 测试回归测试 | `useCliCompatTest` 在已选 API Key 时优先测试当前站点 URL、保存后立即同步 `routing.cliProbe` 投影，并展示真实 wrapper 失败摘要 |
 | **site-type-detector.test.ts** | 站点类型自动识别测试 | title 命中与 `/api/status` 识别 |
-| **site-editor.test.tsx** | SiteEditor 回归测试 | 手动保存站点类型、智能添加回填识别类型 |
+| **site-editor.test.tsx** | SiteEditor 回归测试 | 手动保存站点类型、智能添加回填识别类型、智能/手动认证来源和已有站点隔离账户保存 |
 | **groupStyle.test.tsx** | 分组样式测试 | groupStyle 工具 |
 | **useSiteGroups.test.ts** | Hook 测试 | useSiteGroups Hook |
 | **webdav-config.test.ts** | WebDAV 配置测试 | WebDAV 配置 |
@@ -40,7 +40,7 @@
 | **atomic-json.test.ts** | 原子 JSON 工具测试 | 原子写入、缺失文件默认值、normalize 读取、失败临时文件清理、同目标串行写入和 Windows final rename 临时错误重试 |
 | **storage-manifest.test.ts** | 应用存储清单测试 | 本地存储 owner/path/retention/cap/备份边界、portable 仅含 config+custom-cli、credit 显式敏感、受保护浏览器状态不变更约束 |
 | **app-storage-bundle.test.ts** | 应用存储配置包测试 | portable 2 文件纳入、full-manifest 含 custom-cli、排除 credit/browser、portable 恢复保留 runtime/credit、full-manifest 清理缺失 runtime、legacy config-only 保留 sidecar |
-| **browser-profile-reconcile.test.ts** | 隔离 Profile 恢复重绑测试 | 恢复后按旧 slot-N 重建目录并重写路径、同站冲突时分配空闲 slot、main/manual 不创建隔离目录 |
+| **browser-profile-reconcile.test.ts** | 浏览器 Profile 管理测试 | 历史 manual 账户原地绑定主 Profile、同站 Profile 重复占用拦截，以及恢复后按旧 slot-N 重建目录并重写路径 |
 | **backup-manager.test.ts** | 本地备份管理测试 | 自动备份节流、内容去重、强制备份与保留数量 |
 | **migrate-config-v224-to-v301-script.test.ts** | 配置迁移脚本测试 | v2.1.24 config 拆分为 clean config、runtime-cache 与 route state，重复运行保留已有 state |
 | **route-cli-probe-service.test.ts** | CLI 探测多账户回归测试 | 同站点全部活跃账户覆盖、账户级 CLI 配置优先/禁用/旧站点 fallback、自定义 CLI 配置行/探测任务、活跃 API Key 选择、probe-lock `probeRunId` 与自定义上游信息传递、错误码透传、旧配置兼容 |
@@ -77,7 +77,7 @@
 | **data-overview-page.test.tsx** | 数据总览页回归测试 | 首页总览 KPI、站点榜单、规则解释、异常请求、快照趋势，以及路由趋势 `24h` / `7d` 部分数据窗口下的完整 X 轴与前置空桶绘制规则 |
 | **route-analytics-service.test.ts** | 路由分析服务回归测试 | 请求日志 token/cache token 字段、站点/账户/API Key 对象级 token 聚合 |
 | **route-workbench-redesign.test.tsx** | Route 页面重设计测试 | route 页配置与重定向；覆盖 OpenCode/Grok Build 无入口端点选择器、Grok Build 三受管模型预览及仅合并应用 |
-| **sites-page-redesign.test.tsx** | 站点页重设计测试 | 合并后的站点管理页多列列头、内联排序、高频动作、行内旧菜单移除、接入点详情组件复用、站点设置双保存链路、站点名称编辑、History 列、直连配置展示、操作记录弹窗与行内控件冒泡隔离回归 |
+| **sites-page-redesign.test.tsx** | 站点页重设计测试 | 合并后的站点管理页多列列头、内联排序、高频动作、接入点详情浏览器 Profile 原地重绑、站点设置双保存链路、站点名称编辑、History 列、直连配置展示、操作记录弹窗与行内控件冒泡隔离回归 |
 | **logs-page.test.tsx** | 日志页回归测试 | 路由日志主页面、四种 CLI 筛选与图标、逐条 push、状态码、失败详情、token/cache token/按次参考金额与直连配置显示 |
 | **toast-store.test.ts** | Toast Store 回归测试 | 可见队列上限、事件历史记录与清理 |
 | **close-behavior-manager.property.test.ts** | 窗口关闭行为测试 | CloseBehaviorManager 设置持久化、对话框显示条件与设置面板偏好映射 |

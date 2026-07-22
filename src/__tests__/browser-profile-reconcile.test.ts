@@ -4,34 +4,50 @@ import * as fsp from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 
-const { mockLoadConfig, mockSaveConfig, mockGetSites, mockGetAccountsBySiteId, state } = vi.hoisted(
-  () => {
-    const state = {
-      config: {
-        settings: {},
-        accounts: [] as Array<{
-          id: string;
-          site_id: string;
-          auth_source: string;
-          browser_profile_path?: string;
-          created_at: number;
-        }>,
-      },
-    };
+const {
+  mockLoadConfig,
+  mockSaveConfig,
+  mockGetSites,
+  mockGetAccountsBySiteId,
+  mockGetAccountById,
+  mockUpdateAccount,
+  state,
+} = vi.hoisted(() => {
+  const state = {
+    config: {
+      settings: {} as { browser_profile?: { main_profile_path?: string } },
+      accounts: [] as Array<{
+        id: string;
+        site_id: string;
+        account_name?: string;
+        auth_source: string;
+        browser_profile_path?: string;
+        created_at: number;
+      }>,
+    },
+  };
 
-    return {
-      state,
-      mockLoadConfig: vi.fn(async () => state.config),
-      mockSaveConfig: vi.fn(async () => {
-        // no-op; tests inspect state.config
-      }),
-      mockGetSites: vi.fn(() => []),
-      mockGetAccountsBySiteId: vi.fn((siteId: string) =>
-        state.config.accounts.filter(account => account.site_id === siteId)
-      ),
-    };
-  }
-);
+  return {
+    state,
+    mockLoadConfig: vi.fn(async () => state.config),
+    mockSaveConfig: vi.fn(async () => {
+      // no-op; tests inspect state.config
+    }),
+    mockGetSites: vi.fn(() => []),
+    mockGetAccountsBySiteId: vi.fn((siteId: string) =>
+      state.config.accounts.filter(account => account.site_id === siteId)
+    ),
+    mockGetAccountById: vi.fn((accountId: string) =>
+      state.config.accounts.find(account => account.id === accountId)
+    ),
+    mockUpdateAccount: vi.fn(async (accountId: string, updates: Record<string, unknown>) => {
+      const account = state.config.accounts.find(candidate => candidate.id === accountId);
+      if (!account) return false;
+      Object.assign(account, updates);
+      return true;
+    }),
+  };
+});
 
 vi.mock('electron', () => ({
   app: {
@@ -50,6 +66,8 @@ vi.mock('../main/unified-config-manager', () => ({
     saveConfig: mockSaveConfig,
     getSites: mockGetSites,
     getAccountsBySiteId: mockGetAccountsBySiteId,
+    getAccountById: mockGetAccountById,
+    updateAccount: mockUpdateAccount,
     get config() {
       return state.config;
     },
@@ -64,7 +82,7 @@ vi.mock('../main/utils/logger', () => ({
   },
 }));
 
-describe('BrowserProfileManager.reconcileIsolatedProfilesAfterRestore', () => {
+describe('BrowserProfileManager', () => {
   let tempDir: string;
   let userDataDir: string;
 
@@ -80,6 +98,8 @@ describe('BrowserProfileManager.reconcileIsolatedProfilesAfterRestore', () => {
     };
     mockLoadConfig.mockClear();
     mockSaveConfig.mockClear();
+    mockGetAccountById.mockClear();
+    mockUpdateAccount.mockClear();
     vi.resetModules();
   });
 
@@ -190,5 +210,114 @@ describe('BrowserProfileManager.reconcileIsolatedProfilesAfterRestore', () => {
     expect(p1).not.toBe(p2);
     expect(fs.existsSync(p1!)).toBe(true);
     expect(fs.existsSync(p2!)).toBe(true);
+  });
+
+  it('binds a historical manual account to the main Profile without recreating it', async () => {
+    const mainProfilePath = path.join(tempDir, 'Chrome', 'User Data');
+    await fsp.mkdir(mainProfilePath, { recursive: true });
+    state.config.settings.browser_profile = { main_profile_path: mainProfilePath };
+    state.config.accounts = [
+      {
+        id: 'manual-account',
+        site_id: 'site-a',
+        account_name: '默认账户',
+        auth_source: 'manual',
+        browser_profile_path: 'C:/stale/slot-2',
+        created_at: 1,
+      },
+      {
+        id: 'other-site-main',
+        site_id: 'site-b',
+        account_name: '其他站点账户',
+        auth_source: 'main_profile',
+        created_at: 2,
+      },
+    ];
+
+    const { browserProfileManager } = await import('../main/browser-profile-manager');
+    const selection = await browserProfileManager.listAccountProfileOptions(
+      'site-a',
+      'manual-account'
+    );
+
+    expect(selection.selectedId).toBe('manual');
+    expect(selection.options).toContainEqual({
+      id: 'manual',
+      label: '手动添加账户无绑定浏览器',
+      authSource: 'manual',
+    });
+    expect(selection.options).toContainEqual(
+      expect.objectContaining({
+        id: 'main_profile',
+        disabled: false,
+      })
+    );
+
+    await browserProfileManager.bindAccountProfile('site-a', 'manual-account', 'main_profile');
+
+    expect(mockUpdateAccount).toHaveBeenCalledWith('manual-account', {
+      auth_source: 'main_profile',
+      browser_profile_path: undefined,
+    });
+    expect(state.config.accounts[0].auth_source).toBe('main_profile');
+    expect(state.config.accounts[0].browser_profile_path).toBeUndefined();
+  });
+
+  it('prevents two accounts on the same site from binding the same Profile', async () => {
+    const mainProfilePath = path.join(tempDir, 'Chrome', 'User Data');
+    const isolatedProfilePath = path.join(userDataDir, 'browser-profiles', 'slot-2');
+    await fsp.mkdir(mainProfilePath, { recursive: true });
+    await fsp.mkdir(isolatedProfilePath, { recursive: true });
+    state.config.settings.browser_profile = { main_profile_path: mainProfilePath };
+    state.config.accounts = [
+      {
+        id: 'manual-account',
+        site_id: 'site-a',
+        account_name: '待修复账户',
+        auth_source: 'manual',
+        created_at: 1,
+      },
+      {
+        id: 'main-account',
+        site_id: 'site-a',
+        account_name: '主账户',
+        auth_source: 'main_profile',
+        created_at: 2,
+      },
+      {
+        id: 'isolated-account',
+        site_id: 'site-a',
+        account_name: '隔离账户',
+        auth_source: 'isolated_profile',
+        browser_profile_path: isolatedProfilePath,
+        created_at: 3,
+      },
+    ];
+
+    const { browserProfileManager } = await import('../main/browser-profile-manager');
+    const selection = await browserProfileManager.listAccountProfileOptions(
+      'site-a',
+      'manual-account'
+    );
+
+    expect(selection.options).toContainEqual(
+      expect.objectContaining({
+        id: 'main_profile',
+        disabled: true,
+        disabledReason: '已被账户「主账户」使用',
+      })
+    );
+    expect(selection.options).toContainEqual(
+      expect.objectContaining({
+        id: 'isolated_profile:2',
+        disabled: true,
+        disabledReason: '已被账户「隔离账户」使用',
+      })
+    );
+
+    await expect(
+      browserProfileManager.bindAccountProfile('site-a', 'manual-account', 'main_profile')
+    ).rejects.toThrow('已被账户「主账户」使用');
+    expect(mockUpdateAccount).not.toHaveBeenCalled();
   });
 });

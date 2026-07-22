@@ -16,6 +16,7 @@ import type {
   RoutePathStateResetParams,
   RouteRequestLogItem,
 } from '../shared/types/route-proxy';
+import type { BrowserProfileOptionId } from '../shared/types/site';
 
 const APP_DATA_CHANGED_EVENT = 'app-data:changed';
 const ROUTE_REQUEST_LOG_APPENDED_EVENT = 'route:request-log-appended';
@@ -396,6 +397,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   browserProfile: {
     detect: () => ipcRenderer.invoke('browser-profile:detect'),
     isChromeRunning: () => ipcRenderer.invoke('browser-profile:is-chrome-running'),
+    listAccountOptions: (siteId: string, accountId: string) =>
+      ipcRenderer.invoke('browser-profile:list-account-options', siteId, accountId),
+    bindAccount: (siteId: string, accountId: string, optionId: BrowserProfileOptionId) =>
+      ipcRenderer.invoke('browser-profile:bind-account', siteId, accountId, optionId),
     loginMain: (siteUrl: string) => ipcRenderer.invoke('browser-profile:login-main', siteUrl),
     loginIsolated: (siteId: string, siteUrl: string, accountId: string) =>
       ipcRenderer.invoke('browser-profile:login-isolated', siteId, siteUrl, accountId),

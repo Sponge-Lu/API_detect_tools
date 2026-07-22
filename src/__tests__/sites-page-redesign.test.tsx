@@ -470,7 +470,12 @@ describe('sites page redesign', () => {
     expect(source).toContain('const createSiteWithDefaultAccount = useCallback(');
     expect(source).toContain('window.electronAPI.sites?.add(buildSitePayloadForCreate(site))');
     expect(source).toContain('window.electronAPI.accounts?.add({');
-    expect(source).toContain("auth_source: 'manual'");
+    expect(source).toContain('auth_source: auth.authSource');
+    expect(source).toContain("setSiteEditorInitialMode('auto')");
+    expect(source).toContain("setSiteEditorInitialMode('manual')");
+    expect(source).toContain('initialMode={siteEditorInitialMode}');
+    expect(source).toContain('browserProfile?.listAccountOptions(siteId, accountId)');
+    expect(source).toContain('browserProfile?.bindAccount(');
     expect(source).toContain(
       'await detectSingle(refreshedSite, false, undefined, accountResult.data.id)'
     );
@@ -849,7 +854,7 @@ describe('sites page redesign', () => {
             user_id: 'user-1',
             access_token: 'sk-managed-access-token',
             status: 'active',
-            auth_source: 'manual',
+            auth_source: 'main_profile',
             browser_profile_path: 'profiles/chrome-primary',
             auto_refresh: true,
             auto_refresh_interval: 30,
@@ -861,7 +866,8 @@ describe('sites page redesign', () => {
             account_name: 'Backup Account',
             user_id: 'user-2',
             status: 'active',
-            auth_source: 'browser',
+            auth_source: 'isolated_profile',
+            browser_profile_path: 'profiles/slot-2',
           },
         ]}
         onSaveAccount={onSaveAccount}
@@ -889,7 +895,8 @@ describe('sites page redesign', () => {
     );
     expect(screen.getByDisplayValue('30')).toBeInTheDocument();
     expect(screen.getByText('浏览器 Profile')).toBeInTheDocument();
-    expect(screen.getByText('默认 Profile')).toBeInTheDocument();
+    expect(screen.getByText('主浏览器 Profile')).toBeInTheDocument();
+    expect(screen.getByText('隔离浏览器 1')).toBeInTheDocument();
     expect(screen.queryByText('profiles/chrome-primary')).not.toBeInTheDocument();
     expect(screen.getByText('其他账户 (1)')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '保存更改' })).toBeDisabled();
@@ -925,6 +932,84 @@ describe('sites page redesign', () => {
     expect(screen.queryByText('立即探测全部 CLI')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '编辑账户' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '自动刷新' })).not.toBeInTheDocument();
+  });
+
+  it('shows manual accounts as unbound even when legacy data contains a profile path', () => {
+    render(
+      <AccessPointDetailPanel
+        open={true}
+        onClose={vi.fn()}
+        data={{
+          type: 'managed',
+          site: baseSite,
+          account: {
+            id: 'manual-account',
+            account_name: 'Manual Account',
+            user_id: 'manual-user',
+            status: 'active',
+            auth_source: 'manual',
+            browser_profile_path: 'profiles/slot-2',
+          },
+        }}
+      />
+    );
+
+    expect(screen.getByText('手动添加账户无绑定浏览器')).toBeInTheDocument();
+    expect(screen.queryByText('隔离浏览器 1')).not.toBeInTheDocument();
+  });
+
+  it('allows a historical manual account to select the main browser Profile in place', async () => {
+    const onLoadBrowserProfileOptions = vi.fn().mockResolvedValue({
+      selectedId: 'manual',
+      options: [
+        {
+          id: 'manual',
+          label: '手动添加账户无绑定浏览器',
+          authSource: 'manual',
+        },
+        {
+          id: 'main_profile',
+          label: '主浏览器 Profile',
+          authSource: 'main_profile',
+        },
+      ],
+    });
+    const onBindBrowserProfile = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <AccessPointDetailPanel
+        open={true}
+        onClose={vi.fn()}
+        data={{
+          type: 'managed',
+          site: baseSite,
+          account: {
+            id: 'manual-account',
+            account_name: 'Manual Account',
+            user_id: 'manual-user',
+            status: 'active',
+            auth_source: 'manual',
+            browser_profile_path: 'profiles/slot-2',
+          },
+        }}
+        onLoadBrowserProfileOptions={onLoadBrowserProfileOptions}
+        onBindBrowserProfile={onBindBrowserProfile}
+      />
+    );
+
+    const selector = await screen.findByRole('combobox', { name: '浏览器 Profile' });
+    expect(selector).toHaveValue('manual');
+    expect(
+      screen.getByRole('option', { name: '手动添加账户无绑定浏览器' })
+    ).toBeEnabled();
+    expect(screen.getByRole('option', { name: '主浏览器 Profile' })).toBeEnabled();
+
+    fireEvent.change(selector, { target: { value: 'main_profile' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存更改' }));
+
+    await waitFor(() =>
+      expect(onBindBrowserProfile).toHaveBeenCalledWith('site-1', 'manual-account', 'main_profile')
+    );
   });
 
   it('allows managed side-panel tab1 to edit site metadata fields', async () => {

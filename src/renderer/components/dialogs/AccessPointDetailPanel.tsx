@@ -41,6 +41,9 @@ import {
   type SiteConfig,
   type SiteGroup,
   type SiteType,
+  type AccountBrowserProfileOptions,
+  type AccountAuthSource,
+  type BrowserProfileOptionId,
 } from '../../../shared/types/site';
 import type { CustomCliConfig } from '../../../shared/types/custom-cli-config';
 import type { DetectionResult } from '../../App';
@@ -56,7 +59,7 @@ export interface AccountInfo {
   username?: string;
   access_token?: string;
   status: string;
-  auth_source: string;
+  auth_source: AccountAuthSource | 'browser' | 'custom-cli';
   browser_profile_path?: string;
   auto_refresh?: boolean;
   auto_refresh_interval?: number;
@@ -123,6 +126,15 @@ export interface AccessPointDetailPanelProps {
         'account_name' | 'user_id' | 'access_token' | 'auto_refresh' | 'auto_refresh_interval'
       >
     >
+  ) => void | Promise<void>;
+  onLoadBrowserProfileOptions?: (
+    siteId: string,
+    accountId: string
+  ) => Promise<AccountBrowserProfileOptions>;
+  onBindBrowserProfile?: (
+    siteId: string,
+    accountId: string,
+    optionId: BrowserProfileOptionId
   ) => void | Promise<void>;
   onRefreshAccountInfo?: (site: SiteConfig, accountId: string) => void | Promise<void>;
   onSaveCliConfig?: (config: CliConfig) => void;
@@ -275,13 +287,23 @@ function formatBrowserProfileLabel(account: AccountInfo | null): string {
     return '主浏览器 Profile';
   }
 
+  if (account.auth_source === 'manual') {
+    return '手动添加账户无绑定浏览器';
+  }
+
   const normalizedPath = account.browser_profile_path?.replace(/\\/g, '/');
   const profileLeaf = normalizedPath?.split('/').filter(Boolean).pop() ?? '';
-  const slotMatch =
-    profileLeaf.match(/(?:^|-)slot-(\d+)$/i) ??
-    profileLeaf.match(/(?:^|[-_])profile[-_]?(\d+)$/i) ??
-    profileLeaf.match(/(\d+)$/);
-  const isolatedProfileLabel = slotMatch?.[1] ? `隔离 Profile ${slotMatch[1]}` : '隔离 Profile';
+  const sharedSlotMatch = profileLeaf.match(/(?:^|-)slot-(\d+)$/i);
+  const legacySlotMatch =
+    profileLeaf.match(/(?:^|[-_])profile[-_]?(\d+)$/i) ?? profileLeaf.match(/(\d+)$/);
+  const physicalSlot = sharedSlotMatch?.[1] ? Number.parseInt(sharedSlotMatch[1], 10) : null;
+  const browserNumber =
+    physicalSlot !== null && physicalSlot >= 2
+      ? physicalSlot - 1
+      : legacySlotMatch?.[1]
+        ? Number.parseInt(legacySlotMatch[1], 10)
+        : null;
+  const isolatedProfileLabel = browserNumber ? `隔离浏览器 ${browserNumber}` : '隔离浏览器';
 
   if (account.auth_source === 'isolated_profile') {
     return isolatedProfileLabel;
@@ -291,11 +313,7 @@ function formatBrowserProfileLabel(account: AccountInfo | null): string {
     return account.browser_profile_path ? isolatedProfileLabel : '浏览器登录';
   }
 
-  if (account.browser_profile_path) {
-    return '默认 Profile';
-  }
-
-  return account.auth_source === 'manual' ? '未绑定浏览器' : '默认 Profile';
+  return account.browser_profile_path ? isolatedProfileLabel : '未绑定浏览器';
 }
 
 export function AccessPointDetailPanel({
@@ -323,6 +341,8 @@ export function AccessPointDetailPanel({
   onDeleteToken,
   onSaveSiteMeta,
   onSaveAccount,
+  onLoadBrowserProfileOptions,
+  onBindBrowserProfile,
   onRefreshAccountInfo,
   onSaveCliConfig,
   onPersistCliConfig,
@@ -353,6 +373,12 @@ export function AccessPointDetailPanel({
   );
   const [savingManagedAccount, setSavingManagedAccount] = useState(false);
   const [refreshingAccountInfo, setRefreshingAccountInfo] = useState(false);
+  const [browserProfileSelection, setBrowserProfileSelection] =
+    useState<AccountBrowserProfileOptions | null>(null);
+  const [selectedBrowserProfileId, setSelectedBrowserProfileId] =
+    useState<BrowserProfileOptionId>('manual');
+  const [loadingBrowserProfiles, setLoadingBrowserProfiles] = useState(false);
+  const [browserProfileError, setBrowserProfileError] = useState('');
   const [directIdentityDirty, setDirectIdentityDirty] = useState(false);
 
   // 持久化 activeTab
@@ -424,13 +450,17 @@ export function AccessPointDetailPanel({
       managedSiteDraft.extra_links !== savedManagedSiteDraft.extra_links ||
       managedSiteDraft.force_enable_checkin !== savedManagedSiteDraft.force_enable_checkin);
 
-  const isManagedAccountDirty =
+  const isManagedAccountFieldsDirty =
     currentAccount !== null &&
     (managedAccountDraft.account_name !== savedManagedAccountDraft.account_name ||
       managedAccountDraft.user_id !== savedManagedAccountDraft.user_id ||
       managedAccountDraft.access_token !== savedManagedAccountDraft.access_token ||
       managedAccountDraft.auto_refresh !== savedManagedAccountDraft.auto_refresh ||
       managedAccountDraft.auto_refresh_interval !== savedManagedAccountDraft.auto_refresh_interval);
+  const isBrowserProfileDirty =
+    browserProfileSelection !== null &&
+    selectedBrowserProfileId !== browserProfileSelection.selectedId;
+  const isManagedAccountDirty = isManagedAccountFieldsDirty || isBrowserProfileDirty;
 
   const otherAccounts = useMemo(() => {
     if (!data || data.type !== 'managed') return [];
@@ -468,6 +498,40 @@ export function AccessPointDetailPanel({
     previousOpenRef.current = open;
     previousSelectedItemKeyRef.current = selectedItemKey;
   }, [currentAccount, data, defaultGroupId, open, selectedItemKey]);
+
+  useEffect(() => {
+    const siteId = data?.type === 'managed' ? data.site.id : undefined;
+    const accountId = currentAccount?.id;
+    if (!open || !siteId || !accountId || !onLoadBrowserProfileOptions) {
+      setBrowserProfileSelection(null);
+      setBrowserProfileError('');
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingBrowserProfiles(true);
+    setBrowserProfileError('');
+    void onLoadBrowserProfileOptions(siteId, accountId)
+      .then(selection => {
+        if (cancelled) return;
+        setBrowserProfileSelection(selection);
+        setSelectedBrowserProfileId(selection.selectedId);
+      })
+      .catch(error => {
+        if (cancelled) return;
+        setBrowserProfileSelection(null);
+        setBrowserProfileError(error instanceof Error ? error.message : '加载浏览器 Profile 失败');
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingBrowserProfiles(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentAccount?.id, data, onLoadBrowserProfileOptions, open]);
 
   const updateManagedSiteDraft = useCallback(
     <K extends keyof ManagedSiteDraft>(key: K, value: ManagedSiteDraft[K]) => {
@@ -519,7 +583,13 @@ export function AccessPointDetailPanel({
         });
         setManagedSiteDraft(normalizedSiteDraft);
       }
-      if (currentAccount && accountUpdates && isManagedAccountDirty && onSaveAccount) {
+      if (currentAccount && data.site.id && isBrowserProfileDirty && onBindBrowserProfile) {
+        await onBindBrowserProfile(data.site.id, currentAccount.id, selectedBrowserProfileId);
+        setBrowserProfileSelection(prev =>
+          prev ? { ...prev, selectedId: selectedBrowserProfileId } : prev
+        );
+      }
+      if (currentAccount && accountUpdates && isManagedAccountFieldsDirty && onSaveAccount) {
         await onSaveAccount(currentAccount.id, accountUpdates);
         setManagedAccountDraft({ ...accountUpdates });
       }
@@ -529,12 +599,15 @@ export function AccessPointDetailPanel({
   }, [
     currentAccount,
     data,
-    isManagedAccountDirty,
+    isBrowserProfileDirty,
+    isManagedAccountFieldsDirty,
     isManagedSiteMetaDirty,
     managedAccountDraft,
     managedSiteDraft,
+    onBindBrowserProfile,
     onSaveAccount,
     onSaveSiteMeta,
+    selectedBrowserProfileId,
   ]);
 
   const handleRefreshAccountInfo = useCallback(async () => {
@@ -691,7 +764,45 @@ export function AccessPointDetailPanel({
                           ))}
                         </select>
                       </div>
-                      <InfoField label="浏览器 Profile" value={currentAccountProfileLabel} />
+                      {onLoadBrowserProfileOptions ? (
+                        <div>
+                          <label className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">
+                            浏览器 Profile
+                          </label>
+                          <select
+                            aria-label="浏览器 Profile"
+                            value={browserProfileSelection ? selectedBrowserProfileId : ''}
+                            onChange={event =>
+                              setSelectedBrowserProfileId(
+                                event.target.value as BrowserProfileOptionId
+                              )
+                            }
+                            disabled={loadingBrowserProfiles || !browserProfileSelection}
+                            className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {!browserProfileSelection && (
+                              <option value="">
+                                {loadingBrowserProfiles
+                                  ? '正在加载...'
+                                  : currentAccountProfileLabel}
+                              </option>
+                            )}
+                            {browserProfileSelection?.options.map(option => (
+                              <option key={option.id} value={option.id} disabled={option.disabled}>
+                                {option.label}
+                                {option.disabledReason ? `（${option.disabledReason}）` : ''}
+                              </option>
+                            ))}
+                          </select>
+                          {browserProfileError && (
+                            <p className="mt-1 text-xs text-[var(--danger)]">
+                              {browserProfileError}
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <InfoField label="浏览器 Profile" value={currentAccountProfileLabel} />
+                      )}
                     </div>
 
                     <div className="mt-4 grid grid-cols-1 gap-4 border-t border-[var(--line-soft)] pt-4 md:grid-cols-2">

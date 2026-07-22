@@ -30,6 +30,9 @@ import type {
   SiteConfig,
   DetectionResult,
   AccountCredential,
+  AccountBrowserProfileOptions,
+  BrowserProfileOption,
+  BrowserProfileOptionId,
   CliCompatibilityData,
   SiteDailySnapshot,
 } from '../shared/types/site';
@@ -328,6 +331,19 @@ declare global {
       browserProfile?: {
         detect: () => Promise<{ success: boolean; data?: string | null; error?: string }>;
         isChromeRunning: () => Promise<{ success: boolean; data?: boolean; error?: string }>;
+        listAccountOptions: (
+          siteId: string,
+          accountId: string
+        ) => Promise<{
+          success: boolean;
+          data?: AccountBrowserProfileOptions;
+          error?: string;
+        }>;
+        bindAccount: (
+          siteId: string,
+          accountId: string,
+          optionId: BrowserProfileOptionId
+        ) => Promise<{ success: boolean; data?: BrowserProfileOption; error?: string }>;
         loginMain: (siteUrl: string) => Promise<{
           success: boolean;
           data?: {

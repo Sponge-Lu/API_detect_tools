@@ -46,6 +46,9 @@ import {
   type SiteConfig,
   type DetectionResult,
   type AnyRouterAccountConfig,
+  type AccountBrowserProfileOptions,
+  type AccountAuthSource,
+  type BrowserProfileOptionId,
 } from '../../shared/types/site';
 import { DEFAULT_CLI_PROBE_CONFIG } from '../../shared/types/route-proxy';
 import type { Config, SiteGroup } from '../App';
@@ -84,7 +87,7 @@ interface AccountInfo {
   username?: string;
   access_token?: string;
   status: string;
-  auth_source: string;
+  auth_source: AccountAuthSource | 'browser' | 'custom-cli';
   browser_profile_path?: string;
   auto_refresh?: boolean;
   auto_refresh_interval?: number;
@@ -254,6 +257,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
 
   // 添加接入点弹窗状态
   const [showAddAccessPointDialog, setShowAddAccessPointDialog] = useState(false);
+  const [siteEditorInitialMode, setSiteEditorInitialMode] = useState<'auto' | 'manual'>('auto');
   const [pendingNewCustomCliConfigId, setPendingNewCustomCliConfigId] = useState<string | null>(
     null
   );
@@ -635,6 +639,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
       auth: {
         systemToken: string;
         userId: string;
+        authSource: AccountAuthSource;
         accountName?: string;
         anyRouterConfig?: AnyRouterAccountConfig;
       }
@@ -652,7 +657,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
         account_name: auth.accountName?.trim() || '默认账户',
         user_id: auth.userId,
         access_token: auth.systemToken,
-        auth_source: 'manual',
+        auth_source: auth.authSource,
         ...(auth.anyRouterConfig ? { anyRouterConfig: auth.anyRouterConfig } : {}),
       });
 
@@ -751,6 +756,52 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
       } catch (err: any) {
         Logger.error('保存账户配置失败:', err);
         toast.error('保存账户配置失败: ' + (err?.message || err));
+        throw err;
+      }
+    },
+    [loadAllAccounts, setConfig]
+  );
+
+  const handleLoadPanelBrowserProfiles = useCallback(
+    async (siteId: string, accountId: string): Promise<AccountBrowserProfileOptions> => {
+      const result = await window.electronAPI.browserProfile?.listAccountOptions(siteId, accountId);
+      if (!result?.success || !result.data) {
+        throw new Error(result?.error || '加载浏览器 Profile 失败');
+      }
+      return result.data;
+    },
+    []
+  );
+
+  const handleBindPanelBrowserProfile = useCallback(
+    async (siteId: string, accountId: string, optionId: BrowserProfileOptionId) => {
+      try {
+        const result = await window.electronAPI.browserProfile?.bindAccount(
+          siteId,
+          accountId,
+          optionId
+        );
+        if (!result?.success) {
+          throw new Error(result?.error || '保存浏览器 Profile 失败');
+        }
+
+        const refreshedConfig = await window.electronAPI.loadConfig();
+        setConfig(refreshedConfig);
+        const refreshedAccountsBySite = await loadAllAccounts(refreshedConfig?.sites);
+        setSelectedItem(prev => {
+          if (prev?.type !== 'managed' || prev.account?.id !== accountId) {
+            return prev;
+          }
+          const latestAccount = refreshedAccountsBySite[siteId]?.find(
+            account => account.id === accountId
+          );
+          return latestAccount ? { ...prev, account: latestAccount } : prev;
+        });
+
+        toast.success('浏览器 Profile 已更新');
+      } catch (err: any) {
+        Logger.error('保存浏览器 Profile 失败:', err);
+        toast.error('保存浏览器 Profile 失败: ' + (err?.message || err));
         throw err;
       }
     },
@@ -1872,9 +1923,10 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
 
       {showSiteEditor && (
         <SiteEditor
-          key={`${siteBeingEdited?.id || 'new-site'}:${resolvedEditingAccount?.id || 'site'}`}
+          key={`${siteBeingEdited?.id || 'new-site'}:${resolvedEditingAccount?.id || 'site'}:${siteEditorInitialMode}`}
           site={siteBeingEdited}
           editingAccount={resolvedEditingAccount}
+          initialMode={siteEditorInitialMode}
           onSave={async (site, auth) => {
             const isEditing = editingSite !== null;
             try {
@@ -2133,11 +2185,13 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
         onSmartAdd={() => {
           setEditingSite(null);
           setEditingAccount(null);
+          setSiteEditorInitialMode('auto');
           setShowSiteEditor(true);
         }}
         onManualAdd={() => {
           setEditingSite(null);
           setEditingAccount(null);
+          setSiteEditorInitialMode('manual');
           setShowSiteEditor(true);
         }}
         onAddDirectConfig={handleAddDirectConfig}
@@ -2212,6 +2266,8 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
           }}
           onSaveSiteMeta={handleSavePanelSiteMeta}
           onSaveAccount={handleSavePanelAccount}
+          onLoadBrowserProfileOptions={handleLoadPanelBrowserProfiles}
+          onBindBrowserProfile={handleBindPanelBrowserProfile}
           onRefreshAccountInfo={handleRefreshPanelAccountInfo}
           onDeleteAccount={async (accountId: string) => {
             if (selectedItem.type !== 'managed') return;

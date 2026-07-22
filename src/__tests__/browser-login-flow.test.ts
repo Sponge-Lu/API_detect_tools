@@ -857,6 +857,76 @@ describe('browser login flow', () => {
     expect(result).toEqual({ success: true });
   });
 
+  it('browser-profile Profile 选择 IPC 应透传列表与绑定请求', async () => {
+    const handlers = new Map<string, (...args: any[]) => any>();
+    const selection = {
+      selectedId: 'manual',
+      options: [
+        { id: 'manual', label: '手动添加账户无绑定浏览器', authSource: 'manual' },
+        { id: 'main_profile', label: '主浏览器 Profile', authSource: 'main_profile' },
+      ],
+    };
+    const listAccountProfileOptions = vi.fn(async () => selection);
+    const bindAccountProfile = vi.fn(async () => selection.options[1]);
+
+    vi.doMock('electron', () => ({
+      ipcMain: {
+        handle: vi.fn((channel: string, handler: (...args: any[]) => any) => {
+          handlers.set(channel, handler);
+        }),
+      },
+      shell: { openExternal: vi.fn() },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+    vi.doMock('../main/unified-config-manager', () => ({
+      unifiedConfigManager: {
+        loadConfig: vi.fn(),
+        getAccountById: vi.fn(),
+      },
+    }));
+    vi.doMock('../main/browser-profile-manager', () => ({
+      browserProfileManager: {
+        listAccountProfileOptions,
+        bindAccountProfile,
+        detectMainChromeProfile: vi.fn(),
+        getIsolatedProfileLaunchOptions: vi.fn(),
+        deleteIsolatedProfile: vi.fn(),
+        getMainProfileLaunchOptions: vi.fn(),
+        isChromeRunning: vi.fn(),
+      },
+    }));
+    vi.doMock('../main/site-type-detector', () => ({
+      detectSiteType: vi.fn(),
+    }));
+    vi.doMock('../main/site-type-registry', () => ({
+      getSiteTypeProfile: vi.fn(() => ({ accessTokenMode: 'create-if-missing' })),
+    }));
+
+    const { registerBrowserProfileHandlers } = await import(
+      '../main/handlers/browser-profile-handlers'
+    );
+    registerBrowserProfileHandlers({} as any, () => null);
+
+    const listResult = await handlers.get('browser-profile:list-account-options')?.(
+      {},
+      'site-1',
+      'manual-account'
+    );
+    const bindResult = await handlers.get('browser-profile:bind-account')?.(
+      {},
+      'site-1',
+      'manual-account',
+      'main_profile'
+    );
+
+    expect(listAccountProfileOptions).toHaveBeenCalledWith('site-1', 'manual-account');
+    expect(bindAccountProfile).toHaveBeenCalledWith('site-1', 'manual-account', 'main_profile');
+    expect(listResult).toEqual({ success: true, data: selection });
+    expect(bindResult).toEqual({ success: true, data: selection.options[1] });
+  });
+
   it('browser-profile:open-site-for-checkin 应让 manual 默认账户复用默认浏览器链路', async () => {
     const handlers = new Map<string, (...args: any[]) => any>();
     const loadConfig = vi.fn(async () => undefined);

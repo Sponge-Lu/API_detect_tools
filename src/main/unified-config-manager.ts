@@ -1966,6 +1966,8 @@ export class UnifiedConfigManager {
         | 'auto_refresh_interval'
         | 'cli_config'
         | 'anyRouterConfig'
+        | 'auth_source'
+        | 'browser_profile_path'
       >
     >
   ): Promise<boolean> {

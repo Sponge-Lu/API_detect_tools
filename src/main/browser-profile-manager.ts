@@ -1,6 +1,6 @@
 /**
  * 输入: FileSystem, ChromeManager, UnifiedConfigManager
- * 输出: 浏览器 Profile 管理（主 Profile 检测、隔离 Profile 创建、Extensions 复制、恢复后 slot 重绑）
+ * 输出: 浏览器 Profile 管理（主 Profile 检测、隔离 Profile 创建、账户显式绑定、恢复后 slot 重绑）
  * 定位: 基础设施层 - 管理多账户登录所需的浏览器 Profile
  *
  * 主浏览器: 使用用户真实 Chrome User Data 目录（保留插件）
@@ -19,6 +19,12 @@ import * as path from 'path';
 import { app } from 'electron';
 import Logger from './utils/logger';
 import { unifiedConfigManager } from './unified-config-manager';
+import type {
+  AccountBrowserProfileOptions,
+  AccountCredential,
+  BrowserProfileOption,
+  BrowserProfileOptionId,
+} from '../shared/types/site';
 
 const ISOLATED_PROFILES_DIR = 'browser-profiles';
 const SHARED_PROFILE_PREFIX = 'slot-';
@@ -219,6 +225,152 @@ export class BrowserProfileManager {
 
     const slot = Number.parseInt(match[1], 10);
     return Number.isInteger(slot) && slot >= 2 ? slot : null;
+  }
+
+  private getAccountProfileOptionId(
+    account: Pick<AccountCredential, 'auth_source' | 'browser_profile_path'>
+  ): BrowserProfileOptionId {
+    if (account.auth_source === 'main_profile') {
+      return 'main_profile';
+    }
+
+    if (account.auth_source === 'isolated_profile') {
+      const slot = this.extractSharedProfileSlot(account.browser_profile_path);
+      return slot === null ? 'current_isolated_profile' : `isolated_profile:${slot}`;
+    }
+
+    return 'manual';
+  }
+
+  private async listExistingIsolatedProfileSlots(): Promise<
+    Array<{ slot: number; profilePath: string }>
+  > {
+    const rootDir = this.getIsolatedRootDir();
+
+    try {
+      const entries = await fsp.readdir(rootDir, { withFileTypes: true });
+      return entries
+        .filter(entry => entry.isDirectory())
+        .map(entry => {
+          const match = entry.name.match(/^slot-(\d+)$/i);
+          const slot = match ? Number.parseInt(match[1], 10) : Number.NaN;
+          return {
+            slot,
+            profilePath: path.join(rootDir, entry.name),
+          };
+        })
+        .filter(item => Number.isInteger(item.slot) && item.slot >= 2)
+        .sort((a, b) => a.slot - b.slot);
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  async listAccountProfileOptions(
+    siteId: string,
+    accountId: string
+  ): Promise<AccountBrowserProfileOptions> {
+    await unifiedConfigManager.loadConfig();
+    const account = unifiedConfigManager.getAccountById(accountId);
+    if (!account || account.site_id !== siteId) {
+      throw new Error('未找到对应的站点账户');
+    }
+
+    const selectedId = this.getAccountProfileOptionId(account);
+    const siteAccounts = unifiedConfigManager.getAccountsBySiteId(siteId);
+    const claimedByOther = new Map<BrowserProfileOptionId, string>();
+    for (const candidate of siteAccounts) {
+      if (candidate.id === accountId) {
+        continue;
+      }
+      const optionId = this.getAccountProfileOptionId(candidate);
+      if (optionId !== 'manual' && optionId !== 'current_isolated_profile') {
+        claimedByOther.set(optionId, candidate.account_name || candidate.id);
+      }
+    }
+
+    const options: BrowserProfileOption[] = [
+      {
+        id: 'manual',
+        label: '手动添加账户无绑定浏览器',
+        authSource: 'manual',
+      },
+    ];
+
+    const mainProfilePath = await this.detectMainChromeProfile();
+    const mainClaimedBy = claimedByOther.get('main_profile');
+    options.push({
+      id: 'main_profile',
+      label: '主浏览器 Profile',
+      authSource: 'main_profile',
+      disabled: !mainProfilePath || Boolean(mainClaimedBy),
+      disabledReason: !mainProfilePath
+        ? '未检测到主浏览器 Profile'
+        : mainClaimedBy
+          ? `已被账户「${mainClaimedBy}」使用`
+          : undefined,
+    });
+
+    for (const item of await this.listExistingIsolatedProfileSlots()) {
+      const id = `isolated_profile:${item.slot}` as BrowserProfileOptionId;
+      const claimedBy = claimedByOther.get(id);
+      options.push({
+        id,
+        label: `隔离浏览器 ${item.slot - 1}`,
+        authSource: 'isolated_profile',
+        browserProfilePath: item.profilePath,
+        disabled: Boolean(claimedBy),
+        disabledReason: claimedBy ? `已被账户「${claimedBy}」使用` : undefined,
+      });
+    }
+
+    if (!options.some(option => option.id === selectedId)) {
+      const profilePath = account.browser_profile_path;
+      const slot = this.extractSharedProfileSlot(profilePath);
+      options.push({
+        id: selectedId,
+        label: slot === null ? '当前隔离浏览器' : `隔离浏览器 ${slot - 1}`,
+        authSource: 'isolated_profile',
+        browserProfilePath: profilePath,
+        disabled: !profilePath || !fs.existsSync(profilePath),
+        disabledReason:
+          !profilePath || !fs.existsSync(profilePath) ? '当前 Profile 路径不可用' : undefined,
+      });
+    }
+
+    return { selectedId, options };
+  }
+
+  async bindAccountProfile(
+    siteId: string,
+    accountId: string,
+    optionId: BrowserProfileOptionId
+  ): Promise<BrowserProfileOption> {
+    const selection = await this.listAccountProfileOptions(siteId, accountId);
+    const option = selection.options.find(candidate => candidate.id === optionId);
+    if (!option) {
+      throw new Error('所选浏览器 Profile 不存在');
+    }
+    if (option.disabled) {
+      throw new Error(option.disabledReason || '所选浏览器 Profile 当前不可用');
+    }
+    if (option.authSource === 'isolated_profile' && !option.browserProfilePath) {
+      throw new Error('所选隔离浏览器缺少 Profile 路径');
+    }
+
+    const updated = await unifiedConfigManager.updateAccount(accountId, {
+      auth_source: option.authSource,
+      browser_profile_path:
+        option.authSource === 'isolated_profile' ? option.browserProfilePath : undefined,
+    });
+    if (!updated) {
+      throw new Error('浏览器 Profile 绑定保存失败');
+    }
+
+    return option;
   }
 
   /**

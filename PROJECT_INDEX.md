@@ -70,7 +70,7 @@
 | `src/renderer/components/Sidebar/VerticalSidebar.tsx` | 左侧导航组件，负责展示一级页面与 `数据总览` 子页入口 |
 | `src/renderer/components/CliConfigStatus/*` | CLI 配置状态组件，展示 Claude Code / Codex / OpenCode / Grok Build 配置来源，并将匹配本地路由代理端口的 Base URL 显示为“本地路由”；本地路由、站点管理和自定义 CLI 均显示当前使用模型小字 |
 | `src/renderer/pages/DataOverviewPage.tsx` | 数据总览首页，按 `overviewSubtab` 渲染 `SiteOverviewView` 或 `RouteOverviewView`：站点视图展示资源 / 签到 / 历史快照；路由视图三行布局（KPI / 运行趋势 + 模型热力 / 通道散点 + 模型→通道 Sankey），通过路由内容区实际尺寸选择紧凑/常规布局，并用 scope (全部 / 站点 / 自定义 CLI) 控制路由视图范围；运行趋势在 `24h` / `7d` 视窗内补齐完整小时/日期 X 轴，前置空桶只显示标签不绘制柱/线；用 treemap 的 selectedModel 控制散点高亮；Sankey 独立展示不参与模型联动。KPI 第四张为首字响应 P95 + 会话时间 P99 合并卡。 |
-| `src/renderer/pages/SitesPage.tsx` | 站点管理主页面，统一承载托管站点与直连配置接入管理；列表按站点/账户行展示余额、今日消费、模型数量与 48h History，点击行打开接入点侧滑面板；页头“设置”弹窗集中维护 CLI 探测与站点刷新参数，并提供立即探测、操作记录、一键刷新、一键签到、添加接入点与恢复站点入口；侧滑面板支持编辑站点名称和 URL，并通过浏览器基础信息刷新重新获取当前账户 user_id/username/access_token；直连配置复用自定义 CLI 编辑器，支持保存后继续编辑配置名称，取消未保存新建会清理临时配置 |
+| `src/renderer/pages/SitesPage.tsx` | 站点管理主页面，统一承载托管站点与直连配置接入管理；智能添加首账户保存为 `main_profile`，手动凭证账户保存为 `manual`，后续浏览器账户使用隔离 Profile；列表按站点/账户行展示余额、今日消费、模型数量与 48h History，点击行打开接入点侧滑面板；页头“设置”弹窗集中维护 CLI 探测与站点刷新参数，并提供立即探测、操作记录、一键刷新、一键签到、添加接入点与恢复站点入口；侧滑面板支持编辑站点名称和 URL、原地选择并重绑账户浏览器 Profile，以及通过浏览器基础信息刷新重新获取当前账户 user_id/username/access_token；直连配置复用自定义 CLI 编辑器，支持保存后继续编辑配置名称，取消未保存新建会清理临时配置 |
 | `src/renderer/pages/CreditPage.tsx` | LDC 积分页面，展示 Linux Do Credit 账户信息、收支统计与充值入口 |
 | `src/renderer/pages/RoutePage.tsx` | 路由配置/操作页，组合代理服务与模型重定向，并引导用户跳转到数据总览查看统计 |
 | `src/renderer/pages/LogsPage.tsx` | 路由日志主页面，通过逐条 push 追加；使用无卡片横向滚动单行表格展示 CLI 图标、原始模型、路由目标、Token（总/输入/输出/缓存写/缓存读）、参考金额、用时/首字、纯数字状态码与时间，失败信息在第二行展示；直连配置路由目标带 `直连配置 /` 前缀 |
@@ -98,7 +98,7 @@
 
 | 模块 | 作用 |
 |------|------|
-| `src/shared/types/site.ts` | 站点、账户、账户级 CLI 配置、检测缓存（含 `has_checkin` / `can_check_in` 拆分）、API Key 活跃状态归一化、AnyRouter 站点名归一化识别、站点每日快照、运行期缓存等核心类型 |
+| `src/shared/types/site.ts` | 站点、账户、浏览器 Profile 选择与绑定、账户级 CLI 配置、检测缓存（含 `has_checkin` / `can_check_in` 拆分）、API Key 活跃状态归一化、AnyRouter 站点名归一化识别、站点每日快照、运行期缓存等核心类型 |
 | `src/shared/types/route-proxy.ts` | 路由规则、服务器配置（含上游代理）、模型来源、路径暂停状态、CLI 探测、分析统计类型 |
 | `src/shared/theme/themePresets.ts` | `Light` / `Dark` 主题预设与旧值归一化 |
 | `src/shared/constants/index.ts` | 列宽、默认值等共享常量 |

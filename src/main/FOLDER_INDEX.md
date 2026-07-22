@@ -41,7 +41,7 @@
 | **backup-manager.ts** | 本地备份管理；自动备份保持 config-only 节流去重，手动备份生成 portable 2 文件包，恢复后重绑隔离 Profile | `backupManager` 实例 |
 | **webdav-manager.ts** | WebDAV 云端 portable 配置包上传、列表、删除与恢复，兼容旧 full-manifest / config-only `.json` 备份 | `WebDAVManager` 类 |
 | **unified-config-manager.ts** | 统一配置管理、损坏恢复、读取失败短重试、原子写入、legacy 默认账户、seeded 路由示例与旧 OpenCode 路由协议字段清理、缺失 `site_type` 旧站点保持未决、账户级 `cli_config` 更新、路由路径暂停状态恢复、兼容保存时清理已删站点的孤儿账户、删除最后一个账户时自动移除站点配置，并提供 CLI probe samples/latest 一次性 sidecar 写入 | `unifiedConfigManager` 实例 |
-| **browser-profile-manager.ts** | 主/隔离浏览器 Profile 管理，多账户共享槽位；备份恢复后按旧 slot-N 重建空目录并重写 browser_profile_path | `BrowserProfileManager`, `reconcileIsolatedProfilesAfterRestore()` |
+| **browser-profile-manager.ts** | 主/隔离浏览器 Profile 管理，多账户共享槽位；列出并校验账户可绑定 Profile，支持显式重绑；备份恢复后按旧 slot-N 重建空目录并重写 browser_profile_path | `BrowserProfileManager`, `listAccountProfileOptions()`, `bindAccountProfile()`, `reconcileIsolatedProfilesAfterRestore()` |
 | **update-service.ts** | 应用更新服务 | `UpdateService` 类 |
 | **config-detection-service.ts** | Claude Code、Codex、OpenCode、Grok Build 本地配置静态检测；Grok Build 仅读取 `~/.grok/config.toml`，不执行模型探测 | `ConfigDetectionService` 类 |
 | **close-behavior-manager.ts** | 窗口关闭行为管理 | `CloseBehaviorManager` 类 |
@@ -58,7 +58,7 @@
 | **route-stats-service.ts** | 路由调用统计与通道评分排序 | `recordOutcome()`, `sortChannelsByScore()` |
 | **route-state-manager.ts** | 路由运行态文件管理，维护并裁剪 `state/route-runtime.json`、`route-probes.json`、`route-analytics.json` 与模型来源快照，避免高频路由状态写入 `config.json` | `routeStateManager` |
 | **power-manager.ts** | 电源管理，阻止系统休眠 | `powerManager` 实例 |
-| **preload.ts** | Preload 脚本 | IPC 上下文隔离，暴露统一站点 CRUD / 账户 / 检测 / token 基础信息刷新 / 路由路径恢复 / overview 接口，并提供总览数据变更与路由日志逐条追加订阅 |
+| **preload.ts** | Preload 脚本 | IPC 上下文隔离，暴露统一站点 CRUD / 账户 / 浏览器 Profile 列表与绑定 / 检测 / token 基础信息刷新 / 路由路径恢复 / overview 接口，并提供总览数据变更与路由日志逐条追加订阅 |
 | **api-request-helper.ts** | API 请求辅助函数 | 通用请求逻辑 |
 
 ### 子文件夹
