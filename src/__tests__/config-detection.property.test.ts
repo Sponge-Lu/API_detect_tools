@@ -13,8 +13,11 @@
 
 import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { parseEnvString } from '../main/utils/env-parser';
-import { parseTomlString } from '../main/utils/toml-parser';
+import { parseTomlFile, parseTomlString } from '../main/utils/toml-parser';
 import {
   ClaudeCodeConfig,
   CodexConfig,
@@ -314,6 +317,21 @@ describe('Property 1: Config Parsing Correctness', () => {
         ),
         { numRuns: 100 }
       );
+    });
+
+    it('should parse UTF-8 BOM-prefixed TOML files', () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'api-detect-toml-'));
+      const configPath = path.join(tempDir, 'config.toml');
+
+      try {
+        fs.writeFileSync(configPath, '\uFEFF[models]\ndefault = "grok-code-fast-1"', 'utf-8');
+
+        expect(parseTomlFile<{ models: { default: string } }>(configPath)).toEqual({
+          models: { default: 'grok-code-fast-1' },
+        });
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
     });
   });
 

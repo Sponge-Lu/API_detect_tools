@@ -2066,8 +2066,10 @@ describe('sites page redesign', () => {
       />
     );
 
-    expect(screen.getByAltText('Claude Code')).toBeInTheDocument();
-    expect(screen.getByAltText('Codex')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /^Claude Code:/ })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /^Codex:/ })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /^OpenCode:/ })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /^Grok Build:/ })).toBeInTheDocument();
 
     expect(screen.getByRole('button', { name: 'CLI配置' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'CLI应用' })).toBeInTheDocument();
@@ -2125,8 +2127,9 @@ describe('sites page redesign', () => {
       />
     );
 
-    expect(screen.getByAltText('Codex').parentElement?.className).toContain('opacity-100');
-    expect(screen.getByAltText('Codex').parentElement?.title).toContain('支持');
+    const codexIcon = screen.getByRole('img', { name: /^Codex:/ });
+    expect(codexIcon.className).toContain('opacity-100');
+    expect(codexIcon.title).toContain('支持');
   });
 
   it('uses newer projected compatibility over stale persisted CLI test results', () => {
@@ -2175,11 +2178,11 @@ describe('sites page redesign', () => {
       />
     );
 
-    const codexIcon = screen.getByAltText('Codex').parentElement;
-    expect(codexIcon?.className).toContain('opacity-70');
-    expect(codexIcon?.title).toContain('不支持');
-    expect(codexIcon?.title).toContain('来自站点检测');
-    expect(codexIcon?.title).toContain('错误码 503');
+    const codexIcon = screen.getByRole('img', { name: /^Codex:/ });
+    expect(codexIcon.className).toContain('opacity-70');
+    expect(codexIcon.title).toContain('不支持');
+    expect(codexIcon.title).toContain('来自站点检测');
+    expect(codexIcon.title).toContain('错误码 503');
   });
 
   it('keeps CLI icons inline in the header instead of a dedicated workbench slot', () => {

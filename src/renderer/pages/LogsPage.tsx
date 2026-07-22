@@ -9,8 +9,8 @@ import {
 import type { ModelPriceInfo, ModelPricingData, UserGroupInfo } from '../../shared/types/site';
 import ClaudeCodeIcon from '../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../assets/cli-icons/codex.svg';
-import OpenCodeIcon from '../assets/cli-icons/opencode.svg';
 import GrokBuildIcon from '../assets/cli-icons/grok.svg';
+import OpenCodeIcon from '../assets/cli-icons/opencode.svg';
 import { AppButton } from '../components/AppButton/AppButton';
 import { useConfigStore } from '../store/configStore';
 import { useRouteStore } from '../store/routeStore';
@@ -52,7 +52,7 @@ const ROUTE_CLI_ICON_CONFIGS: Record<
   claudeCode: { icon: ClaudeCodeIcon, sizeClass: 'h-[18px] w-[18px]' },
   codex: { icon: CodexIcon, sizeClass: 'h-5 w-5' },
   openCode: { icon: OpenCodeIcon, sizeClass: 'h-5 w-4' },
-  grokBuild: { icon: GrokBuildIcon, sizeClass: 'h-[18px] w-[18px]' },
+  grokBuild: { icon: GrokBuildIcon, sizeClass: 'h-5 w-5' },
 };
 const ROUTE_CLI_FILTER_OPTIONS: Array<{
   id: RouteCliFilter;
@@ -71,10 +71,10 @@ const CACHE_CREATION_INPUT_PRICE_RATIO = 1.25;
 const CACHE_READ_INPUT_PRICE_RATIO = 0.1;
 const ROUTE_LOG_VIEW_LIMIT = 200;
 const ROUTE_LOG_SITE_NAME_MAX_CJK_LENGTH = 5;
-const ROUTE_LOG_TABLE_STYLE = { minWidth: 'calc(68.5rem + 2ch)' };
+const ROUTE_LOG_TABLE_STYLE = { minWidth: 'calc(67.5rem + 2ch)' };
 const ROUTE_LOG_GRID_STYLE = {
   gridTemplateColumns:
-    'minmax(2rem, 2fr) minmax(7rem, 7fr) minmax(5.5rem, 5.5fr) minmax(calc(14rem + 2ch), 16fr) minmax(20rem, 20fr) minmax(4.5rem, 4.5fr) minmax(6rem, 6fr) minmax(3rem, 3fr) minmax(6rem, 6fr)',
+    'minmax(2rem, 2fr) minmax(7rem, 7fr) minmax(4.5rem, 4.5fr) minmax(calc(14rem + 2ch), 16fr) minmax(20rem, 20fr) minmax(4.5rem, 4.5fr) minmax(6rem, 6fr) minmax(3rem, 3fr) minmax(6rem, 6fr)',
 };
 const ROUTE_LOG_GRID_GAP = 'gap-x-2';
 const ROUTE_LOG_TOKEN_GRID_STYLE = {

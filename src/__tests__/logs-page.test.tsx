@@ -18,7 +18,7 @@ import { useConfigStore } from '../renderer/store/configStore';
 import { useRouteStore } from '../renderer/store/routeStore';
 
 const ROUTE_LOG_RESPONSIVE_GRID_TEMPLATE =
-  'minmax(2rem,2fr) minmax(7rem,7fr) minmax(5.5rem,5.5fr) minmax(calc(14rem + 2ch),16fr) minmax(20rem,20fr) minmax(4.5rem,4.5fr) minmax(6rem,6fr) minmax(3rem,3fr) minmax(6rem,6fr)';
+  'minmax(2rem,2fr) minmax(7rem,7fr) minmax(4.5rem,4.5fr) minmax(calc(14rem + 2ch),16fr) minmax(20rem,20fr) minmax(4.5rem,4.5fr) minmax(6rem,6fr) minmax(3rem,3fr) minmax(6rem,6fr)';
 const ROUTE_LOG_TOKEN_GRID_TEMPLATE =
   'minmax(0,calc(20% - 1ch)) minmax(0,20%) minmax(0,calc(20% - 2ch)) minmax(0,calc(20% + 1ch)) minmax(0,20%)';
 
@@ -533,7 +533,7 @@ describe('LogsPage', () => {
       'CLI原始模型思考强度路由目标Token（总/输入/输出/缓存写/缓存读）预计金额用时/首字状态时间'
     );
     expect(header.parentElement).toHaveClass('w-full');
-    expect(header.parentElement).toHaveStyle({ minWidth: 'calc(68.5rem + 2ch)' });
+    expect(header.parentElement).toHaveStyle({ minWidth: 'calc(67.5rem + 2ch)' });
     expect(header.style.gridTemplateColumns).toBe(ROUTE_LOG_RESPONSIVE_GRID_TEMPLATE);
     expect(screen.queryByRole('button', { name: '刷新' })).not.toBeInTheDocument();
     expect(screen.getByText('总尝试').parentElement).toHaveTextContent('总尝试4');

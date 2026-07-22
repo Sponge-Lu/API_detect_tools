@@ -10,7 +10,6 @@ import type { SortField, SortOrder } from '../../store/uiStore';
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../assets/cli-icons/codex.svg';
 import OpenCodeIcon from '../../assets/cli-icons/opencode.svg';
-import GrokBuildIcon from '../../assets/cli-icons/grok.svg';
 
 interface SiteListColumn {
   label: string;
@@ -94,14 +93,6 @@ const CLI_TYPES: CliTypeButton[] = [
     aria: `选择 ${BUILTIN_CLI_LABELS.openCode}`,
     icon: OpenCodeIcon,
     iconClassName: 'h-5 w-4',
-  },
-  {
-    type: 'grokBuild',
-    label: BUILTIN_CLI_LABELS.grokBuild,
-    title: BUILTIN_CLI_LABELS.grokBuild,
-    aria: `选择 ${BUILTIN_CLI_LABELS.grokBuild}`,
-    icon: GrokBuildIcon,
-    iconClassName: 'h-[18px] w-[18px]',
   },
 ];
 

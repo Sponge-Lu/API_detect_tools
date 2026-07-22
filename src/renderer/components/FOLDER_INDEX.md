@@ -29,7 +29,7 @@
 | **ConfirmDialog.tsx** | 确认对话框 | `open`, `title`, `message`, `onConfirm`, `onCancel` |
 | **DetectionResults.tsx** | 检测结果显示 | `results`, `loading`, `onRetry` |
 | **SettingsPanel.tsx** | 应用设置面板 | 外观与行为、云端备份、软件更新和数据管理；站点刷新参数由 SitesPage 的站点设置弹窗维护 |
-| **SiteEditor.tsx** | 站点编辑对话框 | `open`, `site`, `onSave`, `onCancel` |
+| **SiteEditor.tsx** | 站点编辑对话框 | `site`, `editingAccount`, `initialMode`, `onSave`, `onCancel`；智能首账户回传 `main_profile`，手动凭证回传 `manual`，已有站点浏览器添加使用 `isolated_profile` |
 | **HistoryCell.tsx** | 站点管理 History 列单元格 | `siteId`, `accountId`；按表头共享的 CLI 类型/模式显示时间桶条形图 |
 
 ### 子文件夹
@@ -152,14 +152,14 @@ interface SiteListHeaderProps {
 
 ### SiteEditor 组件
 
-**职责**: 编辑站点信息的对话框
+**职责**: 编辑站点信息，并区分智能添加、手动添加和已有站点隔离账户添加
 
 **Props**:
 ```typescript
 interface SiteEditorProps {
-  open: boolean;
   site?: Site;
-  onSave: (site: Site) => void;
+  initialMode?: 'auto' | 'manual';
+  onSave: (site: Site, auth: { authSource: AccountAuthSource }) => void;
   onCancel: () => void;
 }
 ```
@@ -168,6 +168,8 @@ interface SiteEditorProps {
 - 表单验证
 - 错误提示
 - 加载状态
+- 智能首账户保存为 `main_profile`，手动凭证保存为 `manual`
+- 已有站点的浏览器添加流程使用隔离 Profile 并保存 `isolated_profile`
 - 保存/取消按钮
 
 ### SettingsPanel 组件

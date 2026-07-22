@@ -3042,7 +3042,7 @@ export function ModelRedirectionTab({
           data-testid="redirect-two-pane-layout"
           className={
             hasLeadingPane
-              ? 'grid min-h-[520px] xl:grid-cols-[minmax(168px,0.176fr)_minmax(192px,0.448fr)_minmax(0,1.676fr)]'
+              ? 'grid min-h-[520px] xl:grid-cols-[minmax(202px,0.2112fr)_minmax(192px,0.448fr)_minmax(0,1.6408fr)]'
               : 'grid min-h-[520px] xl:grid-cols-[minmax(192px,0.448fr)_minmax(0,1.632fr)]'
           }
         >

@@ -1879,7 +1879,7 @@ describe('route-proxy-service client cancellation', () => {
     expect(response.end).not.toHaveBeenCalled();
   });
 
-  it('records success when a finished streamed upstream completes after client cancel', async () => {
+  it('aborts a committed native stream without recording or retrying after client cancel', async () => {
     setupCodexCancellationRoute();
     vi.mocked(recordRoutePathOutcome).mockResolvedValue({
       ...firstChannel,
@@ -1904,7 +1904,7 @@ describe('route-proxy-service client cancellation', () => {
 
     vi.mocked(httpRawStreamRequest).mockImplementation(
       (_url, config = {}) =>
-        new Promise((resolve, reject) => {
+        new Promise((_resolve, reject) => {
           const accepted = config.onResponse?.({
             status: 200,
             statusText: 'OK',
@@ -1914,13 +1914,8 @@ describe('route-proxy-service client cancellation', () => {
           config.signal?.addEventListener(
             'abort',
             () => {
-              expect(config.shouldResolveOnAbort?.()).toBe(true);
-              resolve({
-                status: 200,
-                headers: upstreamHeaders,
-                body: completedStream,
-                firstByteLatencyMs: 4,
-              });
+              expect(config.shouldResolveOnAbort?.()).toBe(false);
+              reject(config.signal?.reason ?? new Error('Request aborted'));
             },
             { once: true }
           );
@@ -1947,29 +1942,8 @@ describe('route-proxy-service client cancellation', () => {
 
     expect(httpRawStreamRequest).toHaveBeenCalledTimes(1);
     expect(resolveChannelCredentials).toHaveBeenCalledTimes(1);
-    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
-      expect.objectContaining({
-        siteId: 'site-a',
-        apiKeyId: 'key-a',
-        resolvedModel: 'gpt-4.1-mini',
-      }),
-      'success',
-      expect.objectContaining({ statusCode: 200 }),
-      expect.anything()
-    );
-    expect(recordRouteRequest).toHaveBeenCalledWith(
-      expect.objectContaining({
-        cliType: 'codex',
-        outcome: 'success',
-        statusCode: 200,
-        siteId: 'site-a',
-        apiKeyId: 'key-a',
-        firstByteLatencyMs: 4,
-        promptTokens: 5,
-        completionTokens: 2,
-        totalTokens: 7,
-      })
-    );
+    expect(recordRoutePathOutcome).not.toHaveBeenCalled();
+    expect(recordRouteRequest).not.toHaveBeenCalled();
   });
 
   it('still ignores late non-success upstream results after client cancel', async () => {
@@ -2864,6 +2838,51 @@ describe('route-proxy-service OpenCode native endpoint routing', () => {
     expect(JSON.parse(response.body).id).toBe('resp_native');
     expect(recordRouteRequest).toHaveBeenCalledWith(
       expect.objectContaining({ cliType: 'openCode', targetProtocol: 'openai-responses' })
+    );
+  });
+
+  it('preserves OpenCode native stream passthrough after resolving its concrete endpoint', async () => {
+    vi.clearAllMocks();
+    setupOpenCodeRoute({
+      detectedCliType: 'codex',
+      channelTargetProtocol: 'native',
+    });
+    const partialChunk = Buffer.from(
+      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"partial"}\n\n'
+    );
+    const upstreamHeaders = { 'content-type': 'text/event-stream' };
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
+      expect(config.onResponse?.({ status: 200, statusText: 'OK', headers: upstreamHeaders })).toBe(
+        true
+      );
+      await config.onChunk?.(partialChunk);
+      return { status: 200, headers: upstreamHeaders, body: partialChunk };
+    });
+
+    const request = createJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+        'x-api-detect-cli': 'openCode',
+      },
+      { model: 'wire-opencode', stream: true, input: 'hello' }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(httpRawStreamRequest).toHaveBeenCalledWith(
+      'https://opencode-upstream.example.com/v1/responses',
+      expect.objectContaining({ method: 'POST', preferElectronNet: true })
+    );
+    expect(response.body).toBe(partialChunk.toString('utf-8'));
+    expect(response.body).not.toContain('event: error');
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ targetProtocol: 'openai-responses' }),
+      'success',
+      expect.objectContaining({ statusCode: 200 }),
+      expect.any(Object)
     );
   });
 
@@ -5541,7 +5560,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     );
   });
 
-  it('preserves upstream SSE error events instead of replacing them with missing-terminal errors', async () => {
+  it('forwards native upstream SSE error events and records the explicit failure', async () => {
     vi.clearAllMocks();
     const model = 'grok-4.5';
     const channel = setupStreamingRoute('claudeCode', model);
@@ -5584,7 +5603,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     );
   });
 
-  it('preserves response.failed terminal events and records the upstream error code', async () => {
+  it('forwards native response.failed events and records the explicit failure', async () => {
     vi.clearAllMocks();
     const model = 'gpt-5.6-sol';
     const channel = setupStreamingRoute('codex', model);
@@ -5921,7 +5940,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     );
   });
 
-  it('surfaces an error when a transparent stream ends before a terminal SSE event', async () => {
+  it('forwards native streams that end without a terminal event unchanged', async () => {
     vi.clearAllMocks();
 
     const rule = {
@@ -6024,26 +6043,23 @@ describe('route-proxy-service SSE streaming passthrough', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain('response.output_text.delta');
-    expect(response.body).toContain('event: error');
-    expect(response.body).toContain('upstream stream ended before terminal SSE event');
+    expect(response.body).toBe(incompleteChunk.toString('utf-8'));
+    expect(response.body).not.toContain('event: error');
     expect(recordRoutePathOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ apiKeyId: 'key-openai' }),
-      'failure',
-      expect.objectContaining({
-        error: 'incomplete_streaming_response:missing_terminal_event',
-      }),
+      'success',
+      expect.objectContaining({ statusCode: 200 }),
       expect.any(Object)
     );
     expect(recordRouteRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         apiKeyId: 'key-openai',
-        outcome: 'failure',
-        error: 'incomplete_streaming_response:missing_terminal_event',
+        outcome: 'success',
       })
     );
   });
 
-  it('marks a completed Codex SSE stream with zero usage and no output as malformed', async () => {
+  it('forwards native completed streams with zero usage and no output unchanged', async () => {
     vi.clearAllMocks();
 
     const rule = {
@@ -6146,26 +6162,23 @@ describe('route-proxy-service SSE streaming passthrough', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain('response.completed');
-    expect(response.body).toContain('event: error');
-    expect(response.body).toContain('all-zero usage');
+    expect(response.body).toBe(emptyCompletedChunk.toString('utf-8'));
+    expect(response.body).not.toContain('event: error');
     expect(recordRoutePathOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ apiKeyId: 'key-openai' }),
-      'failure',
-      expect.objectContaining({
-        error: 'malformed_streaming_response:empty_response_zero_usage',
-      }),
+      'success',
+      expect.objectContaining({ statusCode: 200 }),
       expect.any(Object)
     );
     expect(recordRouteRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         apiKeyId: 'key-openai',
-        outcome: 'failure',
-        error: 'malformed_streaming_response:empty_response_zero_usage',
+        outcome: 'success',
       })
     );
   });
 
-  it('marks a completed Codex SSE stream with output but all-zero usage as malformed', async () => {
+  it('forwards native completed streams with output but zero usage unchanged', async () => {
     vi.clearAllMocks();
 
     const rule = {
@@ -6273,21 +6286,13 @@ describe('route-proxy-service SSE streaming passthrough', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain('hello');
-    expect(response.body).toContain('event: error');
-    expect(response.body).toContain('all-zero usage');
+    expect(response.body).toBe(fullBody.toString('utf-8'));
+    expect(response.body).not.toContain('event: error');
     expect(recordRoutePathOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ apiKeyId: 'key-openai' }),
-      'failure',
-      expect.objectContaining({
-        error: 'malformed_streaming_response:empty_response_zero_usage',
-      }),
-      expect.any(Object)
-    );
-    expect(recordRoutePathOutcome).not.toHaveBeenCalledWith(
-      expect.objectContaining({ apiKeyId: 'key-openai' }),
       'success',
-      expect.anything(),
-      expect.anything()
+      expect.objectContaining({ statusCode: 200 }),
+      expect.any(Object)
     );
   });
 
@@ -6458,7 +6463,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     expect(response.body).toBe(successChunk.toString('utf-8'));
   });
 
-  it('normalizes Claude Code transparent SSE tool_use streams with end_turn stop_reason', async () => {
+  it('forwards standard native Claude SSE bytes without normalizing stop reasons', async () => {
     vi.clearAllMocks();
 
     const rule = {
@@ -6485,6 +6490,10 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       rules: [rule],
       cliModelSelections: {
         claudeCode: null,
+        codex: null,
+      },
+      cliThinkingEffortSelections: {
+        claudeCode: 'high',
         codex: null,
       },
       modelRegistry: {
@@ -6537,13 +6546,14 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       'utf-8'
     );
 
+    let upstreamBody: Record<string, unknown> | undefined;
     Object.assign(unifiedConfigManager, {
       getRoutingConfig: vi.fn(() => routing),
       getSiteById: vi.fn(() => ({ id: 'site-claude', name: 'Claude-compatible' })),
       getAccountById: vi.fn(() => ({ id: 'account-claude', account_name: 'default' })),
     });
     vi.mocked(detectCliTypeFromPath).mockReturnValue('claudeCode');
-    vi.mocked(extractModelFromBody).mockReturnValue('claude-opus-4-6');
+    vi.mocked(extractModelFromBody).mockReturnValue('claude-client-model');
     vi.mocked(extractModelFromPath).mockReturnValue(null);
     vi.mocked(sortRules).mockReturnValue([rule as never]);
     vi.mocked(findMatchingRule).mockReturnValue(rule as never);
@@ -6562,6 +6572,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       updatedAt: 1,
     });
     vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
+      upstreamBody = JSON.parse(Buffer.from(config.body as Buffer).toString('utf-8'));
       const headers = { 'content-type': 'text/event-stream' };
       const accepted = config.onResponse?.({ status: 200, statusText: 'OK', headers });
       expect(accepted).toBe(true);
@@ -6581,16 +6592,46 @@ describe('route-proxy-service SSE streaming passthrough', () => {
         'x-api-key': 'sk-route',
         'content-type': 'application/json',
       },
-      { model: 'claude-opus-4-6', stream: true, messages: [{ role: 'user', content: 'read' }] }
+      {
+        model: 'claude-client-model',
+        stream: true,
+        messages: [{ role: 'user', content: 'read' }],
+        system: [{ type: 'text', text: 'Keep this system prompt' }],
+        tools: [
+          {
+            name: 'Read',
+            description: 'Read a file',
+            input_schema: { type: 'object', properties: { file_path: { type: 'string' } } },
+          },
+        ],
+        metadata: { source: 'claude-code', trace_id: 'trace-1' },
+        thinking: { type: 'enabled', budget_tokens: 2048 },
+        output_config: { effort: 'low', format: 'text' },
+      }
     );
     const response = createMockResponse();
 
     await handleRequest(request, response);
 
+    expect(upstreamBody).toEqual({
+      model: 'claude-opus-4-6',
+      stream: true,
+      messages: [{ role: 'user', content: 'read' }],
+      system: [{ type: 'text', text: 'Keep this system prompt' }],
+      tools: [
+        {
+          name: 'Read',
+          description: 'Read a file',
+          input_schema: { type: 'object', properties: { file_path: { type: 'string' } } },
+        },
+      ],
+      metadata: { source: 'claude-code', trace_id: 'trace-1' },
+      thinking: { type: 'enabled', budget_tokens: 2048 },
+      output_config: { effort: 'high', format: 'text' },
+    });
     expect(response.statusCode).toBe(200);
-    expect(response.body).toContain('"type":"tool_use"');
-    expect(response.body).toContain('"stop_reason":"tool_use"');
-    expect(response.body).not.toContain('"stop_reason":"end_turn"');
+    expect(response.body).toBe(Buffer.concat([toolUseChunk, terminalChunk]).toString('utf-8'));
+    expect(response.body).toContain('"stop_reason":"end_turn"');
     expect(response.body).not.toContain('event: error');
     expect(recordRoutePathOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ apiKeyId: 'key-claude' }),
@@ -6606,7 +6647,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     );
   });
 
-  it('surfaces an error when Claude Code transparent SSE leaks DSML tool markup', async () => {
+  it('forwards standard native Claude SSE with invalid block starts without injecting errors', async () => {
     vi.clearAllMocks();
 
     const rule = {
@@ -6654,7 +6695,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
         vendorPriorities: {},
       },
     };
-    const leakedMarkupChunk = Buffer.from(
+    const malformedChunk = Buffer.from(
       [
         'event: message_start',
         'data: {"type":"message_start","message":{"id":"msg_bad","type":"message","role":"assistant","model":"claude-opus-4-6","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}',
@@ -6662,8 +6703,11 @@ describe('route-proxy-service SSE streaming passthrough', () => {
         'event: content_block_start',
         'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
         '',
+        'event: content_block_start',
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+        '',
         'event: content_block_delta',
-        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"</ | DSML | parameter>\\n</ | DSML | invoke>\\n</ | DSML | tool_calls>"}}',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}',
         '',
         'event: content_block_stop',
         'data: {"type":"content_block_stop","index":0}',
@@ -6713,12 +6757,12 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       const headers = { 'content-type': 'text/event-stream' };
       const accepted = config.onResponse?.({ status: 200, statusText: 'OK', headers });
       expect(accepted).toBe(true);
-      await config.onChunk?.(leakedMarkupChunk);
+      await config.onChunk?.(malformedChunk);
       await config.onChunk?.(terminalChunk);
       return {
         status: 200,
         headers,
-        body: Buffer.concat([leakedMarkupChunk, terminalChunk]),
+        body: Buffer.concat([malformedChunk, terminalChunk]),
         firstByteLatencyMs: 4,
       };
     });
@@ -6736,28 +6780,24 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     await handleRequest(request, response);
 
     expect(response.statusCode).toBe(200);
-    expect(response.body).toContain('</ | DSML | tool_calls>');
-    expect(response.body).toContain('event: error');
-    expect(response.body).toContain('non-Anthropic tool markup');
-    expect(response.body).not.toContain('event: message_stop');
+    expect(response.body).toBe(Buffer.concat([malformedChunk, terminalChunk]).toString('utf-8'));
+    expect(response.body).not.toContain('event: error');
+    expect(response.body).toContain('event: message_stop');
     expect(recordRoutePathOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ apiKeyId: 'key-claude' }),
-      'failure',
-      expect.objectContaining({
-        error: 'malformed_streaming_response:foreign_dsml_tool_markup',
-      }),
+      'success',
+      expect.objectContaining({ statusCode: 200 }),
       expect.any(Object)
     );
     expect(recordRouteRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         apiKeyId: 'key-claude',
-        outcome: 'failure',
-        error: 'malformed_streaming_response:foreign_dsml_tool_markup',
+        outcome: 'success',
       })
     );
   });
 
-  it('surfaces an error when Claude Code transparent SSE ends after thinking only', async () => {
+  it('forwards standard native Claude thinking-only SSE without local validation errors', async () => {
     vi.clearAllMocks();
 
     const rule = {
@@ -6887,16 +6927,13 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     await handleRequest(request, response);
 
     expect(response.statusCode).toBe(200);
-    expect(response.body).toContain('checking the task');
-    expect(response.body).toContain('event: error');
-    expect(response.body).toContain('without assistant text or tool_use content');
-    expect(response.body).not.toContain('event: message_stop');
+    expect(response.body).toBe(Buffer.concat([thinkingChunk, terminalChunk]).toString('utf-8'));
+    expect(response.body).not.toContain('event: error');
+    expect(response.body).toContain('event: message_stop');
     expect(recordRoutePathOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ apiKeyId: 'key-claude' }),
-      'failure',
-      expect.objectContaining({
-        error: 'malformed_streaming_response:thinking_only_message',
-      }),
+      'success',
+      expect.objectContaining({ statusCode: 200 }),
       expect.any(Object)
     );
   });

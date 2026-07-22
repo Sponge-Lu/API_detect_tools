@@ -1,12 +1,23 @@
 import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CliConfigStatus } from '../renderer/components/CliConfigStatus/CliConfigStatus';
+import { CliConfigStatusPanel } from '../renderer/components/CliConfigStatus/CliConfigStatusPanel';
 import { useCustomCliConfigStore } from '../renderer/store/customCliConfigStore';
 import { useDetectionStore } from '../renderer/store/detectionStore';
 import { useRouteStore } from '../renderer/store/routeStore';
 import type { CliDetectionResult } from '../shared/types/config-detection';
 import type { CustomCliConfig } from '../shared/types/custom-cli-config';
 import { DEFAULT_ROUTING_CONFIG, type RoutingConfig } from '../shared/types/route-proxy';
+
+vi.mock('../renderer/hooks/useConfigDetection', () => ({
+  useConfigDetection: () => ({
+    detection: null,
+    isLoading: false,
+    refresh: async () => undefined,
+  }),
+}));
+
+const originalLoadCustomCliConfigs = useCustomCliConfigStore.getState().loadConfigs;
 
 function buildRouteConfig(
   port = 3210,
@@ -100,6 +111,7 @@ describe('CliConfigStatus', () => {
       loading: false,
       saving: false,
       fetchingModels: {},
+      loadConfigs: originalLoadCustomCliConfigs,
     });
   });
 
@@ -289,5 +301,22 @@ describe('CliConfigStatus', () => {
 
     expect(screen.getByText('其他')).toBeInTheDocument();
     expect(screen.queryByText('本地路由')).not.toBeInTheDocument();
+  });
+
+  it('keeps stacked refresh, edit, and reset actions on one row', () => {
+    useCustomCliConfigStore.setState({ loadConfigs: vi.fn().mockResolvedValue(undefined) });
+    render(<CliConfigStatusPanel layout="stacked" showRefresh showEdit showReset />);
+
+    const refreshButton = screen.getByTitle('刷新 CLI 配置检测');
+    const editButton = screen.getByTitle('编辑 CLI 配置文件');
+    const resetButton = screen.getByTitle('重置 CLI 配置');
+    const actions = refreshButton.parentElement;
+
+    expect(actions).toHaveClass('flex', 'flex-nowrap', '[&>button]:flex-1');
+    expect(actions?.children).toHaveLength(3);
+    [refreshButton, editButton, resetButton].forEach(button => {
+      expect(button).toHaveClass('min-w-0', 'whitespace-nowrap');
+      expect(button).not.toHaveClass('flex-1');
+    });
   });
 });

@@ -202,7 +202,7 @@ api_key = "sk-route"
 api_backend = "messages"`;
 
     try {
-      await fs.writeFile(configPath, existingConfig, 'utf-8');
+      await fs.writeFile(configPath, `\uFEFF${existingConfig}`, 'utf-8');
       const { registerCliCompatHandlers, registeredHandlers } = await loadCliCompatHandlersModule();
       registerCliCompatHandlers();
       const writeHandler = registeredHandlers.get('cli-compat:write-config');
@@ -216,6 +216,7 @@ api_backend = "messages"`;
       await expect(writeHandler?.({}, payload)).resolves.toMatchObject({ success: true });
 
       const merged = await fs.readFile(configPath, 'utf-8');
+      expect(merged.charCodeAt(0)).not.toBe(0xfeff);
       expect(merged).toContain('default = "api-detect-grok-responses"');
       expect(merged).toContain('[model.user-model]');
       expect(merged).toContain('base_url = "https://user.example.com/v1"');

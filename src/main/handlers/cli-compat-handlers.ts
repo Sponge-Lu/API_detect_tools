@@ -18,6 +18,7 @@ import { ensureRouteProxyReady } from '../route-proxy-service';
 import { buildProbeLockRouteApiKey } from '../route-probe-lock';
 import { unifiedConfigManager } from '../unified-config-manager';
 import Logger from '../utils/logger';
+import { normalizeTomlContent } from '../utils/toml-parser';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -1096,6 +1097,10 @@ export function registerCliCompatHandlers() {
             }
           } else if (applyMode === 'overwrite') {
             log.info(`Overwriting config file: ${resolvedPath}`);
+          }
+
+          if (path.extname(file.path).toLowerCase() === '.toml') {
+            finalContent = normalizeTomlContent(finalContent);
           }
 
           // 写入文件

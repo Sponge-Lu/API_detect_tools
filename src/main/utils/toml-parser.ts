@@ -1,5 +1,5 @@
 /**
- * 输入: TOML 文件路径
+ * 输入: TOML 文件路径或字符串（支持 UTF-8 BOM）
  * 输出: 解析后的 JavaScript 对象或 null
  * 定位: 工具层 - TOML 文件解析器
  *
@@ -11,6 +11,10 @@
 
 import * as fs from 'fs';
 import * as TOML from '@iarna/toml';
+
+export function normalizeTomlContent(content: string): string {
+  return content.charCodeAt(0) === 0xfeff ? content.slice(1) : content;
+}
 
 // 简单的日志函数，避免在测试环境中依赖 electron
 const log = {
@@ -39,7 +43,7 @@ export function parseTomlFile<T = Record<string, unknown>>(filePath: string): T 
     }
 
     const content = fs.readFileSync(filePath, 'utf-8');
-    const parsed = TOML.parse(content) as T;
+    const parsed = TOML.parse(normalizeTomlContent(content)) as T;
     return parsed;
   } catch (error) {
     log.error(`Failed to parse TOML file: ${filePath}`, error);
@@ -54,7 +58,7 @@ export function parseTomlFile<T = Record<string, unknown>>(filePath: string): T 
  */
 export function parseTomlString<T = Record<string, unknown>>(content: string): T | null {
   try {
-    const parsed = TOML.parse(content) as T;
+    const parsed = TOML.parse(normalizeTomlContent(content)) as T;
     return parsed;
   } catch (error) {
     log.error('Failed to parse TOML string', error);

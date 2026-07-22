@@ -117,7 +117,7 @@ export function CliConfigStatusPanel({
         <button
           onClick={handleRefresh}
           disabled={isLoading}
-          className="rounded-[var(--radius-sm)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--accent)] disabled:opacity-50"
+          className="min-w-0 whitespace-nowrap rounded-[var(--radius-sm)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--accent)] disabled:opacity-50"
           title="刷新 CLI 配置检测"
         >
           {isLoading ? <Loader2 className="w-3 h-3 animate-spin inline" /> : '刷新'}
@@ -126,7 +126,7 @@ export function CliConfigStatusPanel({
       {showEdit && (
         <button
           onClick={() => setShowEditDialog(true)}
-          className="rounded-[var(--radius-sm)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--accent)]"
+          className="min-w-0 whitespace-nowrap rounded-[var(--radius-sm)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--accent)]"
           title="编辑 CLI 配置文件"
         >
           编辑
@@ -135,7 +135,7 @@ export function CliConfigStatusPanel({
       {showReset && (
         <button
           onClick={() => setShowResetDialog(true)}
-          className="rounded-[var(--radius-sm)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--danger)]"
+          className="min-w-0 whitespace-nowrap rounded-[var(--radius-sm)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--danger)]"
           title="重置 CLI 配置"
         >
           重置
@@ -153,7 +153,9 @@ export function CliConfigStatusPanel({
             <Loader2 className="h-4 w-4 animate-spin text-[var(--text-secondary)]" />
             <span className="text-xs text-[var(--text-secondary)]">检测中...</span>
           </div>
-          <div className="grid grid-cols-2 gap-1.5">{actionButtons}</div>
+          <div className="flex flex-nowrap items-center gap-1.5 [&>button]:min-w-0 [&>button]:flex-1">
+            {actionButtons}
+          </div>
         </div>
       );
     }
@@ -180,7 +182,9 @@ export function CliConfigStatusPanel({
               </div>
             ))}
           </div>
-          <div className="grid grid-cols-2 gap-1.5">{actionButtons}</div>
+          <div className="flex flex-nowrap items-center gap-1.5 [&>button]:min-w-0 [&>button]:flex-1">
+            {actionButtons}
+          </div>
         </div>
       );
     }
@@ -210,7 +214,9 @@ export function CliConfigStatusPanel({
             </div>
           ))}
         </div>
-        <div className="grid grid-cols-2 gap-1.5">{actionButtons}</div>
+        <div className="flex flex-nowrap items-center gap-1.5 [&>button]:min-w-0 [&>button]:flex-1">
+          {actionButtons}
+        </div>
 
         {showReset && (
           <ResetCliConfigDialog

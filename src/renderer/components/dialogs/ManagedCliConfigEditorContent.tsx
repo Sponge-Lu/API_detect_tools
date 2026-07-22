@@ -50,7 +50,8 @@ import {
   type GeneratedConfig,
   type ConfigFile,
 } from '../../services/cli-config-generator';
-import type { CliCompatibilityResult } from '../../store/detectionStore';
+import { useDetectionStore, type CliCompatibilityResult } from '../../store/detectionStore';
+import { useConfigStore } from '../../store/configStore';
 import { useRouteStore } from '../../store/routeStore';
 import { toast } from '../../store/toastStore';
 import {
@@ -812,6 +813,9 @@ export function ManagedCliConfigEditorContent({
   onSave,
 }: ManagedCliConfigEditorContentProps) {
   const routeCliProbeLatest = useRouteStore(state => state.config?.cliProbe?.latest ?? null);
+  const clearCliConfigDetection = useDetectionStore(state => state.clearCliConfigDetection);
+  const detectCliConfig = useDetectionStore(state => state.detectCliConfig);
+  const appSites = useConfigStore(state => state.config?.sites);
 
   // CLI 启用状态
   const [enabledState, setEnabledState] = useState<Record<CliType, boolean>>({
@@ -1684,6 +1688,22 @@ export function ManagedCliConfigEditorContent({
       if (result.success) {
         const cliName = CLI_TYPES.find(cli => cli.key === cliType)?.name ?? cliType;
         toast.success(`${cliName} 配置已写入本地`);
+
+        try {
+          await window.electronAPI.configDetection.clearCache();
+        } catch (error) {
+          console.error('清除 CLI 配置缓存失败:', error);
+        }
+        clearCliConfigDetection();
+
+        const siteInfos = (appSites || [])
+          .filter(site => site.url)
+          .map(site => ({
+            id: site.name,
+            name: site.name,
+            url: site.url,
+          }));
+        void detectCliConfig(siteInfos);
       } else {
         toast.error(result.error ?? '写入配置失败');
       }

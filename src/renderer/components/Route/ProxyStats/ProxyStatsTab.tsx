@@ -994,25 +994,30 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
                 />
                 <span>{CLI_LABELS[cli]}</span>
               </label>
-              <select
-                value={normalizedCliSelections[cli]}
-                onChange={e => handleChange(cli, e.target.value)}
-                className="h-7 w-full rounded-md border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 text-xs text-[var(--text-primary)]"
+              <div
+                data-testid={`route-cli-selection-row-${cli}`}
+                className="grid grid-cols-[minmax(0,1fr)_minmax(70px,0.384fr)] gap-1.5"
               >
-                <option value="">未选择</option>
-                {modelOptions.map(entry => (
-                  <option key={entry.canonicalName} value={entry.canonicalName}>
-                    {entry.canonicalName}
-                  </option>
-                ))}
-              </select>
-              <ThinkingEffortSelect
-                cliType={cli}
-                value={cliThinkingEffortSelections[cli]}
-                onSelect={value => handleThinkingEffortSelect(cli, value)}
-                onCustom={() => handleOpenCustomThinkingEffort(cli)}
-                onDeleteCustom={() => handleDeleteCustomThinkingEffort(cli)}
-              />
+                <select
+                  value={normalizedCliSelections[cli]}
+                  onChange={e => handleChange(cli, e.target.value)}
+                  className="h-7 w-full min-w-0 rounded-md border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 text-xs text-[var(--text-primary)]"
+                >
+                  <option value="">未选择</option>
+                  {modelOptions.map(entry => (
+                    <option key={entry.canonicalName} value={entry.canonicalName}>
+                      {entry.canonicalName}
+                    </option>
+                  ))}
+                </select>
+                <ThinkingEffortSelect
+                  cliType={cli}
+                  value={cliThinkingEffortSelections[cli]}
+                  onSelect={value => handleThinkingEffortSelect(cli, value)}
+                  onCustom={() => handleOpenCustomThinkingEffort(cli)}
+                  onDeleteCustom={() => handleDeleteCustomThinkingEffort(cli)}
+                />
+              </div>
               <div
                 data-testid={`route-cli-actions-${cli}`}
                 className="grid grid-cols-2 items-center gap-2"

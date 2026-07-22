@@ -993,7 +993,7 @@ describe('route workbench redesign', () => {
     expect(primaryRow).toHaveClass('min-w-0');
     expect(screen.getByTestId('redirect-leading-pane')).toBeInTheDocument();
     expect(screen.getByTestId('redirect-two-pane-layout')).toHaveClass(
-      'xl:grid-cols-[minmax(168px,0.176fr)_minmax(192px,0.448fr)_minmax(0,1.676fr)]'
+      'xl:grid-cols-[minmax(202px,0.2112fr)_minmax(192px,0.448fr)_minmax(0,1.6408fr)]'
     );
     const serverSectionCard = screen.getByTestId('route-server-section-card');
     expect(serverSectionCard).toHaveClass('w-full');
@@ -1087,6 +1087,14 @@ describe('route workbench redesign', () => {
     expect(previewClaudeRouteButton).toHaveClass('h-7', 'w-full', 'min-w-0', 'whitespace-nowrap');
     expect(applyClaudeRouteButton).toHaveClass('h-7', 'w-full', 'min-w-0', 'whitespace-nowrap');
     expect(screen.getByDisplayValue('claude-opus-4-6')).toHaveClass('h-7', 'py-1', 'rounded-md');
+    const claudeSelectionRow = screen.getByTestId('route-cli-selection-row-claudeCode');
+    const claudeThinkingEffort = screen.getByTestId('route-cli-thinking-effort-claudeCode');
+    expect(claudeSelectionRow).toHaveClass(
+      'grid',
+      'grid-cols-[minmax(0,1fr)_minmax(70px,0.384fr)]'
+    );
+    expect(claudeSelectionRow.children[0]).toBe(screen.getByDisplayValue('claude-opus-4-6'));
+    expect(claudeSelectionRow.children[1]).toContainElement(claudeThinkingEffort);
     expect(screen.getAllByDisplayValue('gpt-5.4').length).toBeGreaterThan(0);
     expect(screen.queryByRole('option', { name: 'gpt-4.1' })).not.toBeInTheDocument();
     expect(screen.getAllByRole('option', { name: 'claude-opus-4-6' }).length).toBeGreaterThan(0);
@@ -1106,7 +1114,9 @@ describe('route workbench redesign', () => {
       screen.queryByText(/写入 CLI 本地配置时仅生成连接到本地代理的配置/)
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/当 CLI 使用本地应用路由 URL 时/)).not.toBeInTheDocument();
-    expect(screen.getByTestId('redirect-two-pane-layout')).toBeInTheDocument();
+    expect(screen.getByTestId('redirect-two-pane-layout')).toHaveClass(
+      'xl:grid-cols-[minmax(202px,0.2112fr)_minmax(192px,0.448fr)_minmax(0,1.6408fr)]'
+    );
     expect(screen.getAllByText('claude-opus-4-6').length).toBeGreaterThan(0);
     expect(screen.queryByText('统计已迁移到数据总览')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '打开数据总览' })).not.toBeInTheDocument();

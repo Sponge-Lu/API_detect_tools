@@ -4,10 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ManagedCliConfigEditorContent } from '../renderer/components/dialogs/ManagedCliConfigEditorContent';
 import type { CliConfig } from '../shared/types/cli-config';
 import { useDetectionStore } from '../renderer/store/detectionStore';
+import { useConfigStore } from '../renderer/store/configStore';
 import { useRouteStore } from '../renderer/store/routeStore';
 import { toast } from '../renderer/store/toastStore';
 import { DEFAULT_ROUTING_CONFIG, buildProbeKey } from '../shared/types/route-proxy';
 import type { ModelPricingData, UnifiedConfig } from '../shared/types/site';
+import { createDefaultAllDetectionResult } from '../shared/types/config-detection';
 
 vi.mock('../renderer/store/toastStore', () => ({
   toast: {
@@ -142,10 +144,31 @@ function getOpenModelMenu(): HTMLElement {
 
 describe('ManagedCliConfigEditorContent', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     useDetectionStore.setState({
       cliCompatibility: {},
       cliConfigs: {},
       cliTestingSites: new Set<string>(),
+    });
+    useConfigStore.setState({
+      config: {
+        sites: [
+          {
+            id: 'site-1',
+            name: 'Claude Hub',
+            url: 'https://example.com',
+            api_key: '',
+            enabled: true,
+          },
+        ],
+        settings: {
+          timeout: 30,
+          concurrent: false,
+          show_disabled: false,
+        },
+      },
+      loading: false,
+      saving: false,
     });
     useRouteStore.setState({
       cliProbeLoaded: false,
@@ -178,6 +201,11 @@ describe('ManagedCliConfigEditorContent', () => {
           writtenPaths: ['~/.grok/config.toml'],
         }),
         saveResult: vi.fn().mockResolvedValue({ success: true }),
+      },
+      configDetection: {
+        ...window.electronAPI?.configDetection,
+        clearCache: vi.fn().mockResolvedValue(undefined),
+        detectAllCliConfig: vi.fn().mockResolvedValue(createDefaultAllDetectionResult()),
       },
     };
   });
@@ -614,5 +642,50 @@ describe('ManagedCliConfigEditorContent', () => {
         })
       )
     );
+
+    const clearCache = vi.mocked(window.electronAPI.configDetection.clearCache);
+    const detectAllCliConfig = vi.mocked(window.electronAPI.configDetection.detectAllCliConfig);
+    await waitFor(() =>
+      expect(detectAllCliConfig).toHaveBeenCalledWith([
+        {
+          id: 'Claude Hub',
+          name: 'Claude Hub',
+          url: 'https://example.com',
+        },
+      ])
+    );
+    expect(clearCache).toHaveBeenCalledOnce();
+    expect(clearCache.mock.invocationCallOrder[0]).toBeLessThan(
+      detectAllCliConfig.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('refreshes Grok detection even when clearing the backend cache fails', async () => {
+    const clearCache = vi.mocked(window.electronAPI.configDetection.clearCache);
+    const detectAllCliConfig = vi.mocked(window.electronAPI.configDetection.detectAllCliConfig);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    clearCache.mockRejectedValueOnce(new Error('cache unavailable'));
+
+    render(
+      <ManagedCliConfigEditorContent
+        siteName="Claude Hub"
+        siteUrl="https://example.com"
+        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
+        siteModels={['gpt-4.1']}
+        currentConfig={initialConfig}
+        onSave={vi.fn()}
+      />
+    );
+
+    await act(async () => {
+      fireEvent.click(getCliSectionHeader('Grok Build'));
+      fireEvent.click(screen.getByRole('button', { name: '应用 Grok Build' }));
+    });
+
+    await waitFor(() => expect(detectAllCliConfig).toHaveBeenCalledOnce());
+    expect(toast.success).toHaveBeenCalledWith('Grok Build 配置已写入本地');
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledWith('清除 CLI 配置缓存失败:', expect.any(Error));
+    consoleError.mockRestore();
   });
 });

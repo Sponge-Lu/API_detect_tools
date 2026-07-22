@@ -32,6 +32,8 @@
 | **backup.handler.ts** | 备份管理处理 | `backup:create`, `backup:restore`, `backup:upload` 等 |
 | **cli.handler.ts** | CLI 兼容性处理 | `cli:test`, `cli:generateConfig` 等 |
 | **browser.handler.ts** | 浏览器管理处理 | `browser:launch`, `browser:login` 等 |
+| **account-handlers.ts** | 多账户查询、创建、更新与删除 | `accounts:list`, `accounts:add`, `accounts:update`, `accounts:delete` |
+| **browser-profile-handlers.ts** | 账户浏览器 Profile 登录、列举、显式绑定、打开站点与签到 | `browser-profile:list-account-options`, `browser-profile:bind-account`, `browser-profile:login-main`, `browser-profile:login-isolated` |
 | **detection-handlers.ts** | 站点检测、签到与刷新处理，多账户刷新按 `site_type` 选择 token 续期路径，签到按 `accountId` 解析账户凭证 | `detect-site`, `checkin-and-refresh` |
 | **overview-handlers.ts** | 数据总览处理 | `overview:get-site-daily-snapshots` |
 | **route-handlers.ts** | 路由代理与统计处理 | `route:get-analytics-summary`, `route:get-analytics-distribution`, `route:get-object-stats`, `route:get-request-logs` |

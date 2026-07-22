@@ -571,18 +571,26 @@ function resolveChannelUpstreamProtocol(
 function resolveEffectiveRouteChannel(
   channel: ResolvedChannel,
   cliType: RouteCliType,
-  sourceProtocol: ConcreteCliTargetProtocol
+  sourceProtocol: ConcreteCliTargetProtocol,
+  nativePassthroughChannels: WeakSet<ResolvedChannel>
 ): ResolvedChannel {
+  const nativePassthrough = normalizeCliTargetProtocol(channel.targetProtocol) === 'native';
+  let resolvedChannel: ResolvedChannel;
   if (cliType !== 'openCode' && cliType !== 'grokBuild') {
-    return channel;
+    resolvedChannel = channel;
+  } else {
+    const upstreamProtocol = resolveChannelUpstreamProtocol(channel.targetProtocol, sourceProtocol);
+    resolvedChannel = {
+      ...channel,
+      targetProtocol: upstreamProtocol,
+      targetEndpoint: getCliTargetEndpoint(cliType, upstreamProtocol, channel.resolvedModel),
+    };
   }
 
-  const upstreamProtocol = resolveChannelUpstreamProtocol(channel.targetProtocol, sourceProtocol);
-  return {
-    ...channel,
-    targetProtocol: upstreamProtocol,
-    targetEndpoint: getCliTargetEndpoint(cliType, upstreamProtocol, channel.resolvedModel),
-  };
+  if (nativePassthrough) {
+    nativePassthroughChannels.add(resolvedChannel);
+  }
+  return resolvedChannel;
 }
 
 export function buildChannelAttemptPlan<
@@ -2543,6 +2551,7 @@ interface ForwardToUpstreamOptions {
   signal?: AbortSignal;
   streamResponse?: http.ServerResponse;
   streamResponseBody?: boolean;
+  nativeResponsePassthrough?: boolean;
   streamIdleTimeoutMs?: number;
 }
 
@@ -2608,16 +2617,24 @@ async function forwardToUpstream(
   const receivedStreamingChunks: Buffer[] = [];
   const streamingTerminalProtocol = getStreamingTerminalProtocol(cliType, requestUrl);
   const anthropicStreamNormalizer =
-    streamingTerminalProtocol === 'anthropic' ? createAnthropicSseCompatibilityNormalizer() : null;
+    !options.nativeResponsePassthrough && streamingTerminalProtocol === 'anthropic'
+      ? createAnthropicSseCompatibilityNormalizer()
+      : null;
   let streamingTerminalScanText = '';
   let streamingTerminalSeen = streamingTerminalProtocol === 'none';
   let streamingCompletionValidated = false;
 
   const processStreamingOutgoingChunk = async (outgoingChunk: Buffer): Promise<void> => {
     if (!streamingStatusCode || !streamingHeaders || !outgoingChunk.length) return;
-    receivedStreamingChunks.push(outgoingChunk);
+    if (!options.nativeResponsePassthrough) {
+      receivedStreamingChunks.push(outgoingChunk);
+    }
 
-    if (streamingTerminalProtocol === 'anthropic' && !streamingTerminalSeen) {
+    if (
+      !options.nativeResponsePassthrough &&
+      streamingTerminalProtocol === 'anthropic' &&
+      !streamingTerminalSeen
+    ) {
       const terminalScan = appendStreamingTerminalScanText(
         streamingTerminalProtocol,
         streamingTerminalScanText,
@@ -2644,7 +2661,11 @@ async function forwardToUpstream(
           streamingCompletionValidated = true;
         }
       }
-    } else if (streamingTerminalProtocol !== 'none' && !streamingCompletionValidated) {
+    } else if (
+      !options.nativeResponsePassthrough &&
+      streamingTerminalProtocol !== 'none' &&
+      !streamingCompletionValidated
+    ) {
       const terminalScan = appendStreamingTerminalScanText(
         streamingTerminalProtocol,
         streamingTerminalScanText,
@@ -2718,7 +2739,8 @@ async function forwardToUpstream(
             return processStreamingOutgoingChunk(outgoingChunk);
           },
           streamIdleTimeout: options.streamIdleTimeoutMs,
-          shouldResolveOnAbort: () => streamed && streamingCompletionValidated,
+          shouldResolveOnAbort: () =>
+            !options.nativeResponsePassthrough && streamed && streamingCompletionValidated,
         })
       : await httpRawRequest(target.url, requestConfig);
 
@@ -2750,7 +2772,9 @@ async function forwardToUpstream(
     }
   }
 
-  const completedStreamingBody = Buffer.concat(receivedStreamingChunks);
+  const completedStreamingBody = options.nativeResponsePassthrough
+    ? response.body
+    : Buffer.concat(receivedStreamingChunks);
   const upstreamStreamingFailureCode = findUpstreamStreamingFailureCode(completedStreamingBody);
 
   if (
@@ -2762,12 +2786,23 @@ async function forwardToUpstream(
     throw new Error(`upstream_streaming_error:${upstreamStreamingFailureCode}`);
   }
 
-  if (options.streamResponse && options.streamResponseBody && streamed && !streamingTerminalSeen) {
+  if (
+    options.streamResponse &&
+    options.streamResponseBody &&
+    !options.nativeResponsePassthrough &&
+    streamed &&
+    !streamingTerminalSeen
+  ) {
     await writeResponseChunk(options.streamResponse, buildIncompleteStreamingErrorChunk(cliType));
     throw new Error('incomplete_streaming_response:missing_terminal_event');
   }
 
-  if (options.streamResponse && options.streamResponseBody && streamed) {
+  if (
+    options.streamResponse &&
+    options.streamResponseBody &&
+    !options.nativeResponsePassthrough &&
+    streamed
+  ) {
     const completedValidation = validateCompletedStreamingBody(
       streamingTerminalProtocol,
       completedStreamingBody
@@ -2987,6 +3022,7 @@ export async function handleRequest(
     return;
   }
   const sourceProtocol = endpointOperation.protocol;
+  const nativePassthroughChannels = new WeakSet<ResolvedChannel>();
   const previousTerminalFailure = probeLock ? getRouteProbeLockTerminalFailure(token) : undefined;
   if (previousTerminalFailure) {
     log.warn('Probe-lock request blocked after terminal upstream failure', {
@@ -3077,7 +3113,9 @@ export async function handleRequest(
           targetProtocol: probeLock.targetProtocol,
         },
       ])
-    ).map(channel => resolveEffectiveRouteChannel(channel, cliType, sourceProtocol));
+    ).map(channel =>
+      resolveEffectiveRouteChannel(channel, cliType, sourceProtocol, nativePassthroughChannels)
+    );
   } else {
     // 规则匹配只看 canonical model；若当前请求尚未建立 canonical，则退化为 raw。
     // canonicalModel 已优先采用应用内 CLI 选择模型，因此本地路由不再依赖外部 CLI 配置模型。
@@ -3136,7 +3174,9 @@ export async function handleRequest(
     const attemptPlan = buildChannelAttemptPlan(
       sortChannelsByScore(resolvedChannels),
       routeRuntimeConfig.maxAttemptsPerRoutePath
-    ).map(channel => resolveEffectiveRouteChannel(channel, cliType, sourceProtocol));
+    ).map(channel =>
+      resolveEffectiveRouteChannel(channel, cliType, sourceProtocol, nativePassthroughChannels)
+    );
     sortedChannels = applySuccessfulRoutePathAffinity(
       attemptPlan.filter(channel => !isRoutePathDisabled(channel)) as ResolvedChannel[],
       routing.routePathStates
@@ -3197,7 +3237,7 @@ export async function handleRequest(
   let tokenCountFallbackReason: string | undefined;
   const adapterIncompatibilityReasons: string[] = [];
   for (let i = 0; i < sortedChannels.length; i++) {
-    const ch = sortedChannels[i] as ResolvedChannel;
+    const ch = sortedChannels[i];
     if (!bypassRoutePathState && isRoutePathDisabled(ch)) {
       continue;
     }
@@ -3412,6 +3452,8 @@ export async function handleRequest(
     const attemptStartedAt = Date.now();
     const streamResponseBody =
       requestWantsStreaming && canStreamResponseAdapters(responseAdapter, protocolResponseAdapters);
+    const nativeResponsePassthrough =
+      nativePassthroughChannels.has(ch) && !(site && isAnyRouterSite(site.name));
     attemptedUpstream = true;
 
     // probe-lock 上游预算：按"终结结果"计，瞬时错误在上限内不消耗预算。
@@ -3457,6 +3499,7 @@ export async function handleRequest(
             signal: routeAbortController.signal,
             streamResponse: res,
             streamResponseBody,
+            nativeResponsePassthrough,
             streamIdleTimeoutMs: upstreamTimeouts.streamIdleTimeoutMs,
           }
         );
