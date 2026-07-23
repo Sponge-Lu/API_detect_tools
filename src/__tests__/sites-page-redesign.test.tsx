@@ -16,7 +16,7 @@ import { useCustomCliConfigStore } from '../renderer/store/customCliConfigStore'
 import { useUIStore } from '../renderer/store/uiStore';
 import { useToastStore } from '../renderer/store/toastStore';
 import { useRouteStore } from '../renderer/store/routeStore';
-import type { SiteConfig } from '../renderer/App';
+import type { DetectionResult, SiteConfig } from '../renderer/App';
 import type { CustomCliConfig } from '../shared/types/custom-cli-config';
 import { DEFAULT_CLI_PROBE_CONFIG } from '../shared/types/route-proxy';
 
@@ -1658,6 +1658,59 @@ describe('sites page redesign', () => {
     expect(screen.queryByText('RPM 0.00 / TPM 0')).not.toBeInTheDocument();
     // CLI配置按钮已移到侧滑面板中，不再在卡片头部显示
     expect(screen.queryByRole('button', { name: 'CLI配置' })).not.toBeInTheDocument();
+  });
+
+  it('renders LDC exchange rates for managed sites only', () => {
+    const supportedResult: DetectionResult = {
+      name: baseSite.name,
+      url: baseSite.url,
+      status: '成功',
+      models: [],
+      has_checkin: false,
+      ldcPaymentSupported: true,
+      ldcExchangeRate: '10.00',
+    };
+    const buildHeader = (
+      siteResult: DetectionResult | undefined,
+      accessPointType: 'managed' | 'custom-cli' = 'managed'
+    ) => (
+      <SiteCardHeader
+        site={baseSite}
+        siteResult={siteResult}
+        lastSyncDisplay="12:34"
+        errorCode={null}
+        timeoutSeconds={null}
+        columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
+        todayTotalTokens={0}
+        todayPromptTokens={0}
+        todayCompletionTokens={0}
+        todayRequests={0}
+        rpm={0}
+        tpm={0}
+        modelCount={0}
+        accessPointType={accessPointType}
+        accountId="account-1"
+        accountName="Primary Account"
+        onOpenSite={vi.fn()}
+      />
+    );
+
+    const { rerender } = render(buildHeader(supportedResult));
+
+    expect(screen.getByTitle('LDC 兑换比例: 10.00')).toHaveTextContent('10.00');
+
+    rerender(
+      buildHeader({
+        ...supportedResult,
+        ldcPaymentSupported: false,
+        ldcExchangeRate: undefined,
+      })
+    );
+    expect(screen.getByTitle('不支持 LDC')).toHaveTextContent('--');
+
+    rerender(buildHeader(supportedResult, 'custom-cli'));
+    expect(screen.getByTitle('不支持 LDC')).toHaveTextContent('--');
+    expect(screen.queryByTitle('LDC 兑换比例: 10.00')).not.toBeInTheDocument();
   });
 
   it('formats balances below and above the 100000 threshold differently', () => {

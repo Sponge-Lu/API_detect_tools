@@ -46,7 +46,10 @@ export function SiteCardHeader({
   onOpenSite,
 }: SiteCardHeaderProps) {
   const isCustomCli = accessPointType === 'custom-cli';
-  const ldcDisplay = '--';
+  const ldcDisplay =
+    !isCustomCli && siteResult?.ldcPaymentSupported && siteResult.ldcExchangeRate
+      ? siteResult.ldcExchangeRate
+      : '--';
 
   return (
     <div
