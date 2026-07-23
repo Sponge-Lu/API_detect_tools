@@ -18,6 +18,7 @@ import {
   getTransactionStatusText,
   getTransactionStatusColor,
 } from '../../../shared/types/credit';
+import { formatLastUpdated } from './formatLastUpdated';
 
 export interface TransactionListCardProps {
   /** 交易记录列表 */
@@ -28,20 +29,6 @@ export interface TransactionListCardProps {
   onRefresh: () => void;
   /** 自定义类名 */
   className?: string;
-}
-
-/**
- * 格式化时间戳为可读字符串
- */
-function formatLastUpdated(timestamp: number): string {
-  if (!timestamp) return '从未更新';
-  const date = new Date(timestamp);
-  return date.toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
 }
 
 /**
@@ -68,7 +55,7 @@ function getStatusBadgeClass(status: TransactionStatus): string {
 async function openCreditSite() {
   try {
     await window.electronAPI.openUrl('https://credit.linux.do');
-  } catch (error) {
+  } catch {
     // 降级到 window.open
     window.open('https://credit.linux.do', '_blank');
   }

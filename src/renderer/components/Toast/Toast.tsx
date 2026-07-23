@@ -55,7 +55,7 @@ export function Toast({ toast, onClose }: ToastProps) {
   return (
     <div
       role={toast.type === 'error' ? 'alert' : 'status'}
-      className={`pointer-events-auto animate-in slide-in-from-top-full flex items-start gap-3 rounded-[var(--radius-lg)] border px-4 py-3 shadow-[var(--shadow-lg)] duration-300 ${bgColors[toast.type]}`}
+      className={`pointer-events-auto app-toast-in flex items-start gap-3 rounded-[var(--radius-lg)] border px-4 py-3 shadow-[var(--shadow-lg)] ${bgColors[toast.type]}`}
     >
       {icons[toast.type]}
       <span
@@ -86,7 +86,7 @@ export function ToastContainer({ toasts, onClose }: ToastContainerProps) {
 
   return (
     <div
-      className="pointer-events-none fixed left-1/2 top-4 z-[200] flex -translate-x-1/2 flex-col gap-2"
+      className="pointer-events-none fixed left-1/2 top-4 z-[var(--z-toast)] flex -translate-x-1/2 flex-col gap-2"
       style={{ width: 'min(28rem, calc(100vw - 2rem))' }}
     >
       {toasts.slice(-3).map(toast => (

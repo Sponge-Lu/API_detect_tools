@@ -10,7 +10,9 @@ import type {
 } from '../../shared/types/route-proxy';
 import type { SiteDailySnapshot } from '../../shared/types/site';
 import { AppButton } from '../components/AppButton/AppButton';
+import { AppSelect } from '../components/AppSelect';
 import { AppCard, AppCardContent } from '../components/AppCard';
+import { ErrorState } from '../components/ErrorState';
 import { useConfigStore } from '../store/configStore';
 import { useCustomCliConfigStore } from '../store/customCliConfigStore';
 import { useUIStore } from '../store/uiStore';
@@ -1012,19 +1014,21 @@ function RouteTrendChart({
           title="运行趋势"
           actions={
             <div className="flex flex-wrap items-center gap-2">
-              <select
+              <AppSelect
                 aria-label="选择运行趋势范围"
                 data-trend-scope-select="true"
+                size="sm"
+                containerClassName="-mt-1.5 w-auto"
+                className="h-6 py-0.5 text-[11px]"
                 value={scopeValue}
                 onChange={event => onScopeChange(event.target.value)}
-                className="-mt-1.5 h-6 rounded-md border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 text-[11px] text-[var(--text-primary)]"
               >
                 {scopeOptions.map(option => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
                 ))}
-              </select>
+              </AppSelect>
             </div>
           }
         />
@@ -2014,7 +2018,7 @@ function SiteTrendCard({
   return (
     <div
       aria-label={`${label} 趋势卡片`}
-      className="relative flex min-h-[208px] flex-col overflow-hidden rounded-[18px] border border-[var(--line-muted)] bg-[var(--surface-3)] px-4 pb-3 pt-4 shadow-[var(--shadow-sm)]"
+      className="relative flex min-h-[208px] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--line-muted)] bg-[var(--surface-3)] px-4 pb-3 pt-4 shadow-[var(--shadow-sm)]"
     >
       <div className="relative z-10 flex flex-col">
         <div className="flex items-start justify-between gap-3">
@@ -2491,7 +2495,9 @@ function SiteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }:
       <div className="space-y-4">
         {error ? (
           <AppCard blur={false} hoverable={false}>
-            <AppCardContent className="p-4 text-sm text-[var(--danger)]">{error}</AppCardContent>
+            <AppCardContent className="p-2">
+              <ErrorState className="py-4" title="数据加载失败" description={error} />
+            </AppCardContent>
           </AppCard>
         ) : null}
 
@@ -2585,13 +2591,15 @@ function SiteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }:
               icon={Activity}
               title="站点历史趋势"
               actions={
-                <select
+                <AppSelect
                   aria-label="选择站点历史"
+                  size="sm"
+                  containerClassName="w-auto"
+                  className="h-7 py-1 text-xs"
                   value={selectedSiteId}
                   onChange={event =>
                     setSelectedSiteId(event.target.value || AGGREGATED_SITE_OPTION_ID)
                   }
-                  className="h-7 rounded-lg border border-[var(--line-soft)] bg-[var(--surface-2)] px-2.5 text-xs text-[var(--text-primary)]"
                 >
                   <option value={AGGREGATED_SITE_OPTION_ID}>{AGGREGATED_SITE_OPTION_LABEL}</option>
                   {rankedSiteMetrics.map(metric => (
@@ -2599,7 +2607,7 @@ function SiteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }:
                       {metric.siteName}
                     </option>
                   ))}
-                </select>
+                </AppSelect>
               }
             />
 
@@ -2911,7 +2919,11 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
           }}
           disabled={loading}
         >
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          {loading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <RefreshCw className="h-4 w-4" />
+          )}
           刷新
         </AppButton>
       </div>

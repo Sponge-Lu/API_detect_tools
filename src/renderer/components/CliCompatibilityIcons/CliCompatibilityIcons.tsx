@@ -192,15 +192,20 @@ export function CliCompatibilityIcons({
           {CLI_TYPES.map(({ key, configKey, name, icon, sizeClass }) => {
             const enabled = isCliEnabled(cliConfig, configKey);
 
-            // 未启用：最淡样式
+            // 未启用：最淡样式 + 斜杠形状（非仅靠颜色/灰度）
             if (!enabled) {
               return (
                 <div
                   key={key}
-                  className={`${sizeClass} flex-shrink-0 transition-opacity duration-200 opacity-15 grayscale`}
+                  className={`${sizeClass} relative flex-shrink-0 transition-opacity duration-200 opacity-15 grayscale`}
                   title={`${name}: 未启用`}
+                  aria-label={`${name}: 未启用`}
                 >
-                  <img src={icon} alt={name} className="w-full h-full" />
+                  <img src={icon} alt="" aria-hidden="true" className="w-full h-full" />
+                  <span
+                    aria-hidden="true"
+                    className="absolute inset-0 m-auto h-px w-full rotate-45 bg-[var(--text-tertiary)]"
+                  />
                 </div>
               );
             }
@@ -253,10 +258,12 @@ export function CliCompatibilityIcons({
             return (
               <div
                 key={key}
+                role="img"
+                aria-label={tooltipText}
                 className={`${sizeClass} flex-shrink-0 transition-opacity duration-200 ${styleClass}`}
                 title={tooltipText}
               >
-                <img src={icon} alt={name} className="w-full h-full" />
+                <img src={icon} alt="" aria-hidden="true" className="w-full h-full" />
               </div>
             );
           })}
@@ -302,12 +309,14 @@ export function CliCompatibilityIcons({
                   }}
                   className="p-0.5 rounded-[var(--radius-sm)] hover:bg-[var(--surface-1)] active:scale-95 transition-all duration-200"
                   title="配置 CLI"
+                  aria-label="配置 CLI"
                 >
                   <svg
                     className="w-[18px] h-[18px] text-[var(--icon-muted)] hover:text-[var(--accent)]"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
+                    aria-hidden="true"
                   >
                     <path
                       strokeLinecap="round"
@@ -334,12 +343,14 @@ export function CliCompatibilityIcons({
                   }}
                   className="p-0.5 rounded-[var(--radius-sm)] hover:bg-[var(--surface-1)] active:scale-95 transition-all duration-200"
                   title="应用 CLI 配置到本地文件"
+                  aria-label="应用 CLI 配置到本地文件"
                 >
                   <svg
                     className="w-[18px] h-[18px] text-[var(--icon-muted)] hover:text-[var(--accent)]"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
+                    aria-hidden="true"
                   >
                     <path
                       strokeLinecap="round"

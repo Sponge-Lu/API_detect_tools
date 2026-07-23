@@ -15,7 +15,7 @@
  * - PROJECT_INDEX.md
  */
 
-import { Key } from 'lucide-react';
+import { Key, Clock, ShieldX, AlertTriangle, type LucideIcon } from 'lucide-react';
 import type { SiteConfig } from '../../App';
 import { AppModal } from '../AppModal/AppModal';
 import { AppButton } from '../AppButton/AppButton';
@@ -35,12 +35,12 @@ interface AuthErrorSite {
  * 2. Access Token 失效：API 返回 401，说明 token 本身已过期或被撤销
  * 3. 权限不足：API 返回 403，说明账号状态异常
  */
-function analyzeErrorType(error: string): { type: string; icon: string; description: string } {
+function analyzeErrorType(error: string): { type: string; icon: LucideIcon; description: string } {
   // Session 过期（API 返回成功但无数据）
   if (error.includes('返回成功但无数据') || error.includes('登录可能已过期')) {
     return {
       type: '会话过期',
-      icon: '⏰',
+      icon: Clock,
       description: 'Token 有效但服务端会话(Session)已过期，重新登录即可恢复',
     };
   }
@@ -53,7 +53,7 @@ function analyzeErrorType(error: string): { type: string; icon: string; descript
   ) {
     return {
       type: 'Token 失效',
-      icon: '🔑',
+      icon: Key,
       description: 'Access Token 已过期或被撤销，需要重新登录获取新 Token',
     };
   }
@@ -62,7 +62,7 @@ function analyzeErrorType(error: string): { type: string; icon: string; descript
   if (error.includes('status code 403') || error.includes('权限不足')) {
     return {
       type: '权限不足',
-      icon: '🚫',
+      icon: ShieldX,
       description: '账号权限受限或状态异常，请在浏览器中检查站点账号情况',
     };
   }
@@ -70,7 +70,7 @@ function analyzeErrorType(error: string): { type: string; icon: string; descript
   // 默认情况
   return {
     type: '认证异常',
-    icon: '⚠️',
+    icon: AlertTriangle,
     description: '认证信息可能已失效，请重新登录站点',
   };
 }
@@ -139,7 +139,9 @@ export function AuthErrorDialog({
               >
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <span className="text-lg">{errorAnalysis.icon}</span>
+                    <span className="inline-flex text-[var(--text-secondary)]" aria-hidden="true">
+                      <errorAnalysis.icon className="h-4 w-4" strokeWidth={2} />
+                    </span>
                     <p className="text-sm font-medium text-[var(--text-primary)]">{site.name}</p>
                     <span className="rounded-[var(--radius-sm)] bg-[var(--warning-soft)] px-2 py-0.5 text-xs font-medium text-[var(--warning)]">
                       {errorAnalysis.type}

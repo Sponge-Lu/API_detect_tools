@@ -4,6 +4,7 @@
  */
 
 import { SettingsPanel } from '../components/SettingsPanel';
+import { LoadingState } from '../components/LoadingState';
 import { useConfigStore } from '../store/configStore';
 import { useUIStore } from '../store/uiStore';
 import { useUpdate } from '../hooks/useUpdate';
@@ -18,11 +19,7 @@ export function SettingsPage() {
   const { updateInfo } = useUpdate();
 
   if (!config) {
-    return (
-      <div className="flex flex-1 items-center justify-center text-[var(--text-secondary)]">
-        配置加载中...
-      </div>
-    );
+    return <LoadingState message="配置加载中..." />;
   }
 
   const saveConfig = async (newConfig: Config) => {

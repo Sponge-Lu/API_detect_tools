@@ -117,6 +117,7 @@ export function VerticalSidebar({
               <button
                 type="button"
                 aria-label={item.navLabel}
+                aria-current={isActive ? 'page' : undefined}
                 title={itemTitle}
                 onClick={() => onTabChange(item.id)}
                 className={`flex w-full items-center rounded-lg py-2 text-[13px] font-medium transition-colors ${
@@ -163,7 +164,6 @@ export function VerticalSidebar({
                   {item.navLabel}
                 </span>
               </button>
-
             </div>
           );
         })}

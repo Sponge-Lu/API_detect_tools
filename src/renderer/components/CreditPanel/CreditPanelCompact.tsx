@@ -21,28 +21,18 @@ import {
   ChevronUp,
 } from 'lucide-react';
 import { useCredit } from '../../hooks/useCredit';
+import { AppSwitch } from '../AppSwitch';
 import { toast } from '../../store/toastStore';
 import { MIN_REFRESH_INTERVAL } from '../../../shared/types/credit';
-import { IncomeStatsCard } from './IncomeStatsCard';
-import { ExpenseStatsCard } from './ExpenseStatsCard';
+import { DailyStatsCard } from './DailyStatsCard';
 import { TransactionListCard } from './TransactionListCard';
 import { RechargeSection, type LdcSiteInfo } from './RechargeSection';
+import { formatLastUpdated } from './formatLastUpdated';
 
 export interface CreditPanelCompactProps {
   className?: string;
   /** 支持 LDC 支付的站点列表 (从外部传入) */
   ldcSites?: LdcSiteInfo[];
-}
-
-function formatLastUpdated(timestamp: number): string {
-  if (!timestamp) return '从未更新';
-  const date = new Date(timestamp);
-  return date.toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
 }
 
 function getTrustLevelText(level: number): string {
@@ -139,8 +129,8 @@ export function CreditPanelCompact({ className = '', ldcSites = [] }: CreditPane
     }
   };
 
-  const handleAutoRefreshToggle = async () => {
-    await updateConfig({ autoRefresh: !config.autoRefresh });
+  const handleAutoRefreshToggle = async (next: boolean) => {
+    await updateConfig({ autoRefresh: next });
   };
 
   const handleIntervalChange = (value: string) => {
@@ -182,7 +172,7 @@ export function CreditPanelCompact({ className = '', ldcSites = [] }: CreditPane
         <button
           onClick={handleLogin}
           disabled={isLoading}
-          className="flex items-center gap-1 rounded-[var(--radius-sm)] bg-[var(--accent)] px-2 py-1 text-xs text-white transition-colors hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex items-center gap-1 rounded-[var(--radius-sm)] bg-[var(--accent)] px-2 py-1 text-xs text-[var(--text-on-accent)] transition-colors hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <LogIn className="w-3 h-3" />}
           登录
@@ -234,7 +224,7 @@ export function CreditPanelCompact({ className = '', ldcSites = [] }: CreditPane
       </div>
 
       {isExpanded && (
-        <div className="fixed top-16 right-4 z-[9999] w-[800px] max-w-[calc(100vw-2rem)] rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-1)] p-4 shadow-[var(--shadow-xl)]">
+        <div className="fixed top-16 right-4 z-[var(--z-drawer)] w-[800px] max-w-[calc(100vw-2rem)] rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-1)] p-4 shadow-[var(--shadow-xl)]">
           <div className="mb-3 flex items-center justify-between border-b border-[var(--line-soft)] pb-2">
             <div className="flex items-center gap-2">
               <Coins className="w-5 h-5 text-[var(--accent)]" />
@@ -324,12 +314,14 @@ export function CreditPanelCompact({ className = '', ldcSites = [] }: CreditPane
                   isLoading={isLoadingTransactions}
                   onRefresh={handleRefreshTransactions}
                 />
-                <IncomeStatsCard
+                <DailyStatsCard
+                  variant="income"
                   dailyStats={dailyStats}
                   isLoading={isLoadingStats}
                   onRefresh={handleRefreshDailyStats}
                 />
-                <ExpenseStatsCard
+                <DailyStatsCard
+                  variant="expense"
                   dailyStats={dailyStats}
                   isLoading={isLoadingStats}
                   onRefresh={handleRefreshDailyStats}
@@ -383,23 +375,17 @@ export function CreditPanelCompact({ className = '', ldcSites = [] }: CreditPane
                 </div>
                 {/* 自动刷新设置 */}
                 <div className="flex items-center gap-2">
-                  <span className="text-[var(--text-secondary)]">自动刷新</span>
-                  <button
-                    onClick={handleAutoRefreshToggle}
-                    className={`relative w-8 h-4 rounded-full transition-colors ${
-                      config.autoRefresh ? 'bg-[var(--accent)]' : 'bg-[var(--line-strong)]'
-                    }`}
-                  >
-                    <span
-                      className={`absolute top-0.5 left-0.5 h-3 w-3 rounded-full bg-[var(--surface-3)] transition-transform ${
-                        config.autoRefresh ? 'translate-x-4' : ''
-                      }`}
-                    />
-                  </button>
+                  <AppSwitch
+                    size="sm"
+                    checked={config.autoRefresh}
+                    onCheckedChange={handleAutoRefreshToggle}
+                    label="自动刷新"
+                  />
                   {config.autoRefresh && (
                     <div className="flex items-center gap-1">
                       <input
                         type="number"
+                        aria-label="自动刷新间隔（分钟）"
                         min={MIN_REFRESH_INTERVAL}
                         value={intervalInput}
                         onChange={e => handleIntervalChange(e.target.value)}

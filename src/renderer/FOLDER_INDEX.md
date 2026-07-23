@@ -39,7 +39,6 @@
 |------|------|-------|
 | **Header** | 顶部导航栏 | 主题切换、菜单 |
 | **SiteCard** | 站点卡片 | 站点信息、操作按钮 |
-| **SiteGroupTabs** | 站点分组标签 | 分组切换、新增 |
 | **SiteListHeader** | 站点列表头部 | 搜索、筛选、排序 |
 | **SiteEditor** | 站点编辑对话框 | 编辑站点信息 |
 | **SettingsPanel** | 设置面板 | 应用设置 |
@@ -190,7 +189,7 @@ useAutoRefresh Hook 启动定时器
 ```
 App.tsx (根组件)
     ↓
-Header, SiteGroupTabs, SiteListHeader
+Header, SiteListHeader
     ↓
 SiteCard (站点卡片)
     ↓

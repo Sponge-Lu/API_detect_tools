@@ -29,10 +29,6 @@ const detectionResultsSource = readFileSync(
   resolve(process.cwd(), 'src/renderer/components/DetectionResults.tsx'),
   'utf8'
 );
-const siteGroupTabsSource = readFileSync(
-  resolve(process.cwd(), 'src/renderer/components/SiteGroupTabs/SiteGroupTabs.tsx'),
-  'utf8'
-);
 const toastSource = readFileSync(
   resolve(process.cwd(), 'src/renderer/components/Toast/Toast.tsx'),
   'utf8'
@@ -216,11 +212,6 @@ describe('theme visual consistency', () => {
     expect(detectionResultsSource).not.toContain('text-gray-400');
     expect(detectionResultsSource).not.toContain('border-green-500');
     expect(detectionResultsSource).not.toContain('border-red-500');
-    expect(siteGroupTabsSource).not.toContain('bg-slate-200');
-    expect(siteGroupTabsSource).not.toContain('text-slate-600');
-    expect(siteGroupTabsSource).not.toContain('hover:bg-red-500/20');
-    expect(siteGroupTabsSource).not.toContain('text-red-500');
-    expect(siteGroupTabsSource).not.toContain('text-green-500');
   });
 
   it('keeps toast and daily stats cards on product tokens instead of legacy light/dark palettes', () => {

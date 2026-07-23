@@ -50,6 +50,7 @@ export function TabBar({ activeTab, onTabChange }: TabBarProps) {
     >
       {/* Sliding bottom bar */}
       <div
+        aria-hidden="true"
         className="absolute bottom-0 h-[3px] rounded-full bg-[var(--accent)] transition-all duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)]"
         style={{
           left: indicator.left,
@@ -63,6 +64,7 @@ export function TabBar({ activeTab, onTabChange }: TabBarProps) {
             key={id}
             ref={setTabRef(id)}
             onClick={() => onTabChange(id)}
+            aria-current={isActive ? 'page' : undefined}
             className={`
               relative flex items-center justify-center gap-1.5
               px-5 text-[13px] font-medium

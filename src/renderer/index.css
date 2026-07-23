@@ -68,6 +68,18 @@
   --icon-muted: rgba(101, 113, 124, 0.72);
   --code-bg: #1e2328;
   --code-text: #d8dde2;
+  --text-on-accent: #ffffff;
+
+  /* z-index 阶梯（toast > modal > drawer > dropdown > sticky） */
+  --z-dropdown: 50;
+  --z-command-bar: 100;
+  --z-sticky: 20;
+  --z-drawer: 190;
+  --z-modal: 200;
+  --z-modal-stacked: 220;
+  --z-overlay-top: 240;
+  --z-popover-top: 260;
+  --z-toast: 300;
 
   /* 间距系统 (8px 网格) - 所有值为 4px 的倍数 */
   --spacing-0: 0px;
@@ -165,6 +177,7 @@ html[data-theme='light-b'] {
   --icon-muted: rgba(101, 113, 124, 0.72);
   --code-bg: #1e2328;
   --code-text: #d8dde2;
+  --text-on-accent: #ffffff;
 
   --shadow-sm: 0 1px 2px rgba(31, 36, 41, 0.04);
   --shadow-md: 0 2px 8px rgba(31, 36, 41, 0.06), 0 1px 2px rgba(31, 36, 41, 0.04);
@@ -205,6 +218,7 @@ html[data-theme='dark'] {
   --icon-muted: rgba(170, 180, 188, 0.72);
   --code-bg: #101317;
   --code-text: #dde4ea;
+  --text-on-accent: #1f2429;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
   --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.18);
@@ -315,6 +329,22 @@ body {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* Toast 顶部进入动画 - 仅使用 transform 和 opacity */
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.app-toast-in {
+  animation: toastIn var(--duration-normal) var(--ease-standard) forwards;
 }
 
 /* 按钮按下动画 */

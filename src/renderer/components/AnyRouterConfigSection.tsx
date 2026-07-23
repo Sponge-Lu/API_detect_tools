@@ -236,7 +236,10 @@ claude`}
 
       {/* 错误提示 */}
       {extractError && (
-        <div className="rounded-[var(--radius-md)] border border-[var(--warning)]/30 bg-[var(--warning-soft)] px-3 py-2 text-xs font-medium text-[var(--warning)]">
+        <div
+          role="alert"
+          className="rounded-[var(--radius-md)] border border-[var(--danger)]/30 bg-[var(--danger-soft)] px-3 py-2 text-xs font-medium text-[var(--danger)]"
+        >
           {extractError}
         </div>
       )}

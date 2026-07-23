@@ -26,6 +26,7 @@ import {
   RefreshCw,
   ChevronDown,
   ChevronUp,
+  XCircle,
 } from 'lucide-react';
 import { isApiKeyActive, type SiteConfig } from '../../../shared/types/site';
 import type { DetectionResult } from '../../App';
@@ -326,15 +327,22 @@ export function SiteCardDetails({
                       <button
                         onClick={() => onToggleTokenVisibility(tokenKey)}
                         className={tokenActionButtonClass}
+                        aria-label={isVisible ? '隐藏 API Key' : '显示 API Key'}
+                        title={isVisible ? '隐藏 API Key' : '显示 API Key'}
                       >
-                        {isVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                        {isVisible ? (
+                          <EyeOff className="h-3 w-3" aria-hidden="true" />
+                        ) : (
+                          <Eye className="h-3 w-3" aria-hidden="true" />
+                        )}
                       </button>
                       <button
                         onClick={() => onCopyToClipboard(fullKey, `API Key: ${token.name}`)}
                         className={tokenActionButtonClass}
+                        aria-label={`复制 API Key: ${token.name}`}
                         title="复制 API Key"
                       >
-                        <Copy className="h-3 w-3" />
+                        <Copy className="h-3 w-3" aria-hidden="true" />
                       </button>
                       <button
                         onClick={() => onRefreshToken(site, token, idx)}
@@ -514,7 +522,7 @@ export function SiteCardDetails({
                                   className="font-semibold text-[var(--success)]"
                                   title="输入价格(/1M tokens)"
                                 >
-                                  ↑${formatPrice(inputPrice)}
+                                  <span aria-hidden="true">↑</span>${formatPrice(inputPrice)}
                                 </span>
                               )}
                               {outputPrice !== undefined && (
@@ -522,7 +530,7 @@ export function SiteCardDetails({
                                   className="font-semibold text-[var(--accent)]"
                                   title={`输出价格(/1M tokens) ×${completionRatio}`}
                                 >
-                                  ↓${formatPrice(outputPrice)}
+                                  <span aria-hidden="true">↓</span>${formatPrice(outputPrice)}
                                 </span>
                               )}
                             </>
@@ -562,7 +570,10 @@ export function SiteCardDetails({
       {/* 错误信息 */}
       {siteResult?.error && (
         <div className="rounded-[var(--radius-sm)] border border-[color-mix(in_srgb,var(--danger)_30%,transparent)] bg-[var(--danger-soft)] px-3 py-2">
-          <p className="text-xs text-[var(--danger)]">❌ {siteResult.error}</p>
+          <p className="flex items-center gap-1.5 text-xs text-[var(--danger)]">
+            <XCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <span>{siteResult.error}</span>
+          </p>
         </div>
       )}
     </div>

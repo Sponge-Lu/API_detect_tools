@@ -140,6 +140,25 @@ export function EditCliConfigDialog({ open, onClose, onSaveComplete }: EditCliCo
       titleIcon={<FileEdit className="w-5 h-5" />}
       size="lg"
       showCloseButton={!isSaving}
+      footer={
+        <>
+          <AppButton type="button" variant="secondary" onClick={handleClose} disabled={isSaving}>
+            取消
+          </AppButton>
+          <AppButton
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={!hasChanges || isSaving}
+            loading={isSaving}
+            variant={hasChanges ? 'danger' : 'primary'}
+            data-testid="edit-cli-config-save-button"
+            data-dirty={hasChanges ? 'true' : 'false'}
+          >
+            <Save className="w-4 h-4" />
+            {isSaving ? '保存中...' : '保存'}
+          </AppButton>
+        </>
+      }
     >
       <div className="space-y-3">
         {/* CLI 选择标签 */}
@@ -208,25 +227,6 @@ export function EditCliConfigDialog({ open, onClose, onSaveComplete }: EditCliCo
             />
           </>
         )}
-
-        {/* 操作按钮 */}
-        <div className="flex justify-end gap-3 pt-1">
-          <AppButton type="button" variant="secondary" onClick={handleClose} disabled={isSaving}>
-            取消
-          </AppButton>
-          <AppButton
-            type="button"
-            onClick={() => void handleSave()}
-            disabled={!hasChanges || isSaving}
-            loading={isSaving}
-            variant={hasChanges ? 'danger' : 'primary'}
-            data-testid="edit-cli-config-save-button"
-            data-dirty={hasChanges ? 'true' : 'false'}
-          >
-            <Save className="w-4 h-4" />
-            {isSaving ? '保存中...' : '保存'}
-          </AppButton>
-        </div>
       </div>
     </AppModal>
   );

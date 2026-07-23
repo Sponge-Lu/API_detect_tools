@@ -133,8 +133,24 @@ export function AddAccountDialog({
       onClose={isProcessing ? () => {} : onClose}
       title={`添加账户 - ${siteName}`}
       titleIcon={<UserPlus className="w-5 h-5" />}
+      footer={
+        <>
+          <AppButton type="button" variant="secondary" onClick={onClose} disabled={isProcessing}>
+            取消
+          </AppButton>
+          <AppButton
+            type="button"
+            variant="primary"
+            onClick={handleStart}
+            disabled={isProcessing || !accountName.trim()}
+            loading={isProcessing}
+          >
+            {isProcessing ? '处理中...' : '启动浏览器登录'}
+          </AppButton>
+        </>
+      }
     >
-      <div className="p-5 space-y-4">
+      <div className="space-y-4">
         <AppInput
           label="账户名称"
           value={accountName}
@@ -148,7 +164,7 @@ export function AddAccountDialog({
         {/* 状态提示 */}
         {isProcessing && (
           <div className="flex items-center gap-2 text-sm text-[var(--accent)]">
-            <Loader2 className="w-4 h-4 animate-spin" />
+            <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
             <span>{statusMessage}</span>
           </div>
         )}
@@ -160,21 +176,6 @@ export function AddAccountDialog({
         <p className="text-xs text-[var(--text-secondary)]">
           将启动独立浏览器窗口（含主浏览器插件），请用新账号登录站点。
         </p>
-
-        <div className="flex justify-end gap-3 pt-2">
-          <AppButton type="button" variant="secondary" onClick={onClose} disabled={isProcessing}>
-            取消
-          </AppButton>
-          <AppButton
-            type="button"
-            variant="primary"
-            onClick={handleStart}
-            disabled={isProcessing || !accountName.trim()}
-            loading={isProcessing}
-          >
-            {isProcessing ? '处理中...' : '启动浏览器登录'}
-          </AppButton>
-        </div>
       </div>
     </AppModal>
   );

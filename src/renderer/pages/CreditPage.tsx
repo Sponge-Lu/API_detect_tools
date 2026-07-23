@@ -22,21 +22,14 @@ import { useLdcSites } from '../hooks/useLdcSites';
 import { toast } from '../store/toastStore';
 import { MIN_REFRESH_INTERVAL } from '../../shared/types/credit';
 import { AppButton } from '../components/AppButton/AppButton';
-import { IncomeStatsCard } from '../components/CreditPanel/IncomeStatsCard';
-import { ExpenseStatsCard } from '../components/CreditPanel/ExpenseStatsCard';
+import { AppSwitch } from '../components/AppSwitch';
+import { DataTableEmpty } from '../components/DataTable/primitives';
+import { LoadingState } from '../components/LoadingState';
+import { ErrorState } from '../components/ErrorState';
+import { DailyStatsCard } from '../components/CreditPanel/DailyStatsCard';
 import { TransactionListCard } from '../components/CreditPanel/TransactionListCard';
 import { RechargeSection } from '../components/CreditPanel/RechargeSection';
-
-function formatLastUpdated(timestamp: number): string {
-  if (!timestamp) return '从未更新';
-  const date = new Date(timestamp);
-  return date.toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
+import { formatLastUpdated } from '../components/CreditPanel/formatLastUpdated';
 
 function getTrustLevelText(level: number): string {
   const levels: Record<number, string> = {
@@ -115,8 +108,8 @@ export function CreditPage() {
     }
   };
 
-  const handleAutoRefreshToggle = async () => {
-    await updateConfig({ autoRefresh: !config.autoRefresh });
+  const handleAutoRefreshToggle = async (next: boolean) => {
+    await updateConfig({ autoRefresh: next });
   };
 
   const handleIntervalChange = (value: string) => {
@@ -135,14 +128,7 @@ export function CreditPage() {
 
   // 加载中状态
   if (isLoading) {
-    return (
-      <div className="flex flex-1 items-center justify-center">
-        <div className="flex items-center gap-3 text-[var(--text-secondary)]">
-          <Loader2 className="w-6 h-6 animate-spin" />
-          <span>加载中...</span>
-        </div>
-      </div>
-    );
+    return <LoadingState />;
   }
 
   // 未登录状态
@@ -169,7 +155,7 @@ export function CreditPage() {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto px-6 py-3">
+    <div className="flex-1 overflow-y-auto px-6 py-4">
       <div className="mx-auto max-w-6xl space-y-4">
         {/* 用户信息头部 */}
         <div className="flex items-center justify-between">
@@ -201,19 +187,22 @@ export function CreditPage() {
             <button
               onClick={handleRefresh}
               disabled={isRefreshing}
+              aria-label="刷新积分"
               className="rounded-[var(--radius-md)] p-2 transition-colors hover:bg-[var(--surface-2)] disabled:cursor-not-allowed"
               title="刷新"
             >
               <RefreshCw
+                aria-hidden="true"
                 className={`w-4 h-4 text-[var(--text-secondary)] ${isRefreshing ? 'animate-spin' : ''}`}
               />
             </button>
             <button
               onClick={handleLogout}
+              aria-label="登出"
               className="rounded-[var(--radius-md)] p-2 transition-colors hover:bg-[var(--surface-2)]"
               title="登出"
             >
-              <LogOut className="w-4 h-4 text-[var(--text-secondary)]" />
+              <LogOut aria-hidden="true" className="w-4 h-4 text-[var(--text-secondary)]" />
             </button>
           </div>
         </div>
@@ -272,12 +261,14 @@ export function CreditPage() {
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
               <div className="space-y-4 lg:col-span-2">
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <IncomeStatsCard
+                  <DailyStatsCard
+                    variant="income"
                     dailyStats={dailyStats}
                     isLoading={isLoadingStats}
                     onRefresh={() => fetchDailyStats()}
                   />
-                  <ExpenseStatsCard
+                  <DailyStatsCard
+                    variant="expense"
                     dailyStats={dailyStats}
                     isLoading={isLoadingStats}
                     onRefresh={() => fetchDailyStats()}
@@ -313,30 +304,22 @@ export function CreditPage() {
                   </span>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="text-[var(--text-secondary)]">自动刷新</span>
-                  <button
-                    onClick={handleAutoRefreshToggle}
-                    className={`relative h-5 w-9 rounded-full border transition-colors ${
-                      config.autoRefresh
-                        ? 'border-transparent bg-[var(--accent)]'
-                        : 'border-[var(--line-soft)] bg-[var(--surface-2)]'
-                    }`}
-                  >
-                    <span
-                      className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)] transition-transform ${
-                        config.autoRefresh ? 'translate-x-4' : ''
-                      }`}
-                    />
-                  </button>
+                  <AppSwitch
+                    size="sm"
+                    checked={config.autoRefresh}
+                    onCheckedChange={handleAutoRefreshToggle}
+                    label="自动刷新"
+                  />
                   {config.autoRefresh && (
                     <div className="flex items-center gap-1.5">
                       <input
                         type="number"
+                        aria-label="自动刷新间隔（分钟）"
                         min={MIN_REFRESH_INTERVAL}
                         value={intervalInput}
                         onChange={e => handleIntervalChange(e.target.value)}
                         onBlur={handleIntervalBlur}
-                        className="w-14 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 text-right text-xs text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--focus-ring)]"
+                        className="w-14 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 text-right text-xs text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)] focus:shadow-[0_0_0_4px_var(--focus-ring)]"
                       />
                       <span className="text-[var(--text-secondary)]">分钟</span>
                     </div>
@@ -346,12 +329,10 @@ export function CreditPage() {
             </div>
           </>
         ) : (
-          <div className="py-8 text-center text-sm text-[var(--text-secondary)]">
-            暂无数据，点击刷新获取
-          </div>
+          <DataTableEmpty description="暂无数据，点击刷新获取" title="暂无积分数据" />
         )}
 
-        {error && <p className="mt-2 text-sm text-[var(--danger)]">{error}</p>}
+        {error && <ErrorState className="py-4" title="操作失败" description={error} />}
       </div>
     </div>
   );

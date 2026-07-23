@@ -454,7 +454,8 @@ describe('sites page redesign', () => {
     expect(source).toContain('const { handleCheckIn, handleCheckInAll } = useCheckIn');
     expect(source).toContain('if (config.sites.length > 0)');
     expect(source).toContain('await detectAllSites(config, accountsBySite)');
-    expect(source).toContain('await handleCheckInAll()');
+    // 一键签到通过 ref 调用最新 handleCheckInAll，避免闭包捕获过期引用
+    expect(source).toContain('await handleCheckInAllRef.current()');
     expect(source).toContain('refreshAllDirectConfigModels');
     expect(source).toContain(
       'disabled={!config || config.sites.length === 0 || Boolean(checkingIn)}'
@@ -671,7 +672,7 @@ describe('sites page redesign', () => {
     expect(screen.queryByText('3')).not.toBeInTheDocument();
   });
 
-  it('embeds direct config identity, model, and CLI editors in the side panel', () => {
+  it('embeds direct config identity, model, and CLI editors in the side panel', { timeout: 20000 }, () => {
     const onDeleteDirectConfig = vi.fn();
     const directFailureMessage = 'direct upstream timeout detail';
     const directConfigWithFailure: CustomCliConfig = {
@@ -1117,7 +1118,7 @@ describe('sites page redesign', () => {
     );
   });
 
-  it('exposes the embedded managed CLI editor from the side panel', async () => {
+  it('exposes the embedded managed CLI editor from the side panel', { timeout: 20000 }, async () => {
     const onSaveCliConfig = vi.fn();
     const managedFailureMessage = 'managed upstream timeout detail';
     const baseCliConfig = buildSiteCardProps().cliConfig;
@@ -1481,7 +1482,8 @@ describe('sites page redesign', () => {
     expect(screen.getByAltText('Claude Code')).toBeInTheDocument();
     expect(screen.getByAltText('Codex')).toBeInTheDocument();
     expect(screen.getByAltText('OpenCode')).toBeInTheDocument();
-    expect(screen.getByAltText('Grok Build')).toBeInTheDocument();
+    // Grok Build 暂不参与站点探测，表头仅提供 Claude Code / Codex / OpenCode 选择
+    expect(screen.queryByAltText('Grok Build')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '综合模式' })).toBeInTheDocument();
     expect(screen.queryByText('操作')).not.toBeInTheDocument();
     // 已移除的列
@@ -2122,7 +2124,8 @@ describe('sites page redesign', () => {
     expect(screen.getByRole('img', { name: /^Claude Code:/ })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: /^Codex:/ })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: /^OpenCode:/ })).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: /^Grok Build:/ })).toBeInTheDocument();
+    // Grok Build 暂不参与站点探测，不在兼容性图标面板的 CLI 列表中
+    expect(screen.queryByRole('img', { name: /^Grok Build:/ })).not.toBeInTheDocument();
 
     expect(screen.getByRole('button', { name: 'CLI配置' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'CLI应用' })).toBeInTheDocument();

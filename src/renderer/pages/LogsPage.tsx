@@ -12,6 +12,9 @@ import CodexIcon from '../assets/cli-icons/codex.svg';
 import GrokBuildIcon from '../assets/cli-icons/grok.svg';
 import OpenCodeIcon from '../assets/cli-icons/opencode.svg';
 import { AppButton } from '../components/AppButton/AppButton';
+import { DataTableEmpty } from '../components/DataTable/primitives';
+import { LoadingState } from '../components/LoadingState';
+import { ErrorState } from '../components/ErrorState';
 import { useConfigStore } from '../store/configStore';
 import { useRouteStore } from '../store/routeStore';
 import { resolveModelPricing } from '../utils/modelPricing';
@@ -772,9 +775,7 @@ export function LogsPage() {
       </header>
 
       {routeLogsLoading ? (
-        <div className="flex flex-1 items-center justify-center px-5 py-10 text-sm text-[var(--text-secondary)]">
-          正在加载路由日志...
-        </div>
+        <LoadingState message="正在加载路由日志..." />
       ) : filteredRouteLogs.length > 0 ? (
         <div className="min-h-0 flex-1 overflow-auto">
           <div className="w-full" style={ROUTE_LOG_TABLE_STYLE}>
@@ -896,15 +897,14 @@ export function LogsPage() {
           </div>
         </div>
       ) : (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 px-5 py-10 text-center">
-          <div className="text-sm font-medium text-[var(--text-primary)]">
-            {routeLogs.length > 0 ? '当前 CLI 没有路由日志' : '暂无路由日志'}
-          </div>
+        <div className="flex flex-1 flex-col items-center justify-center px-5 py-10">
           {routeLogsError ? (
-            <div className="mt-2 rounded-[var(--radius-md)] border border-[var(--danger)]/20 bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)]">
-              {routeLogsError}
-            </div>
-          ) : null}
+            <ErrorState title="路由日志加载失败" description={routeLogsError} />
+          ) : (
+            <DataTableEmpty
+              title={routeLogs.length > 0 ? '当前 CLI 没有路由日志' : '暂无路由日志'}
+            />
+          )}
         </div>
       )}
     </>

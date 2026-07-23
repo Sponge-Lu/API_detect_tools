@@ -13,6 +13,9 @@ export type { IncomeStatsCardProps } from './IncomeStatsCard';
 export { ExpenseStatsCard } from './ExpenseStatsCard';
 export type { ExpenseStatsCardProps } from './ExpenseStatsCard';
 
+export { DailyStatsCard } from './DailyStatsCard';
+export type { DailyStatsCardProps } from './DailyStatsCard';
+
 export { TransactionListCard } from './TransactionListCard';
 export type { TransactionListCardProps } from './TransactionListCard';
 

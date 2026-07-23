@@ -15,6 +15,7 @@ import type {
   CliType,
   ConfigSourceType,
 } from '../../../shared/types/config-detection';
+import { KeyRound, Lock, HelpCircle, type LucideIcon } from 'lucide-react';
 import type { RouteProxyServerConfig } from '../../../shared/types/route-proxy';
 import { BUILTIN_CLI_LABELS } from '../../../shared/types/cli-config';
 import { useCustomCliConfigStore } from '../../store/customCliConfigStore';
@@ -233,24 +234,24 @@ function normalizeCustomConfigBaseUrl(url: string): string {
 interface AuthTypeDisplay {
   label: string;
   shortLabel: string;
-  icon: string;
+  icon: LucideIcon;
 }
 
 const AUTH_TYPE_DISPLAYS: Record<AuthType, AuthTypeDisplay> = {
   'chatgpt-oauth': {
     label: 'ChatGPT OAuth',
     shortLabel: 'OAuth',
-    icon: '🔐',
+    icon: Lock,
   },
   'api-key': {
     label: 'API Key',
     shortLabel: 'API Key',
-    icon: '🔑',
+    icon: KeyRound,
   },
   unknown: {
     label: '未知',
     shortLabel: '未知',
-    icon: '❓',
+    icon: HelpCircle,
   },
 };
 
@@ -462,8 +463,8 @@ export function CliConfigStatus({ cliType, result, compact = false }: CliConfigS
           </span>
           {/* 显示认证类型图标 */}
           {authDisplay && (
-            <span className="text-xs" title={authDisplay.label}>
-              {authDisplay.icon}
+            <span className="inline-flex text-xs" title={authDisplay.label} aria-hidden="true">
+              <authDisplay.icon className="h-3.5 w-3.5" strokeWidth={2} />
             </span>
           )}
         </div>

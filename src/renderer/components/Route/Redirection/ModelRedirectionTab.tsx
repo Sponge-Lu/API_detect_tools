@@ -3986,7 +3986,7 @@ export function ModelRedirectionTab({
                             <span
                               className={`mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
                                 checked
-                                  ? 'border-[var(--accent)] bg-[var(--accent)] text-white'
+                                  ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--text-on-accent)]'
                                   : 'border-[var(--line-soft)] bg-[var(--surface-1)] text-transparent'
                               }`}
                             >

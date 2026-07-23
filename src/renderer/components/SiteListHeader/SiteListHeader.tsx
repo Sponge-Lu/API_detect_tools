@@ -118,40 +118,47 @@ function HistoryHeaderControls() {
       onClick={event => event.stopPropagation()}
       onPointerDown={event => event.stopPropagation()}
     >
-      <div className="flex items-center gap-1">
-        {CLI_TYPES.map(({ type, label, title, aria, icon, iconClassName }) => (
-          <button
-            key={type}
-            type="button"
-            title={title}
-            aria-label={aria}
-            onClick={event => {
-              event.stopPropagation();
-              setCliType(type);
-            }}
-            className={`flex h-6 w-6 items-center justify-center transition-opacity ${
-              cliType === type ? 'opacity-100' : 'opacity-45 grayscale hover:opacity-80'
-            }`}
-          >
-            <img src={icon} alt={label} className={`${iconClassName} shrink-0`} />
-          </button>
-        ))}
+      <div className="flex items-center gap-1" role="group" aria-label="CLI 类型选择">
+        {CLI_TYPES.map(({ type, label, title, aria, icon, iconClassName }) => {
+          const isSelected = cliType === type;
+          return (
+            <button
+              key={type}
+              type="button"
+              title={title}
+              aria-label={aria}
+              aria-pressed={isSelected}
+              onClick={event => {
+                event.stopPropagation();
+                setCliType(type);
+              }}
+              className={`flex h-6 w-6 items-center justify-center rounded-[var(--radius-sm)] transition-all ${
+                isSelected
+                  ? 'ring-1 ring-inset ring-[var(--accent)] bg-[var(--accent-soft)] opacity-100'
+                  : 'opacity-45 grayscale hover:opacity-80'
+              }`}
+            >
+              <img src={icon} alt={label} className={`${iconClassName} shrink-0`} />
+            </button>
+          );
+        })}
       </div>
 
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1" role="group" aria-label="历史模式选择">
         {MODES.map(({ mode: value, label, title, aria }) => (
           <button
             key={value}
             type="button"
             title={title}
             aria-label={aria}
+            aria-pressed={mode === value}
             onClick={event => {
               event.stopPropagation();
               setMode(value);
             }}
             className={`h-6 rounded-[var(--radius-md)] border px-2 text-[11px] font-medium transition-colors ${
               mode === value
-                ? 'border-[var(--accent)] bg-[var(--accent)] text-white'
+                ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--text-on-accent)]'
                 : 'border-[var(--line-soft)] bg-[var(--surface-1)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent)]'
             }`}
           >
@@ -232,7 +239,7 @@ export function SiteListHeader({
     <div
       className={`sticky top-0 z-20 grid items-center gap-x-1 border-b border-[var(--line-soft)] bg-[var(--surface-1)]/95 px-3 py-2 text-xs font-medium uppercase tracking-wide text-[var(--text-secondary)] backdrop-blur ${className}`.trim()}
       style={{
-        gridTemplateColumns: `${columnWidths.map(width => `${width}px`).join(' ')} 1fr`,
+        gridTemplateColumns: `${columnWidths.map(width => `${width}px`).join(' ')}${actions ? ' 1fr' : ''}`,
       }}
     >
       {columns.map((column, index) => {

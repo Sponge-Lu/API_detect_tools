@@ -45,7 +45,7 @@ function isSameWebdavConfig(left: WebDAVConfig, right: WebDAVConfig): boolean {
 const WEBDAV_SAVE_DIRTY_CLASS =
   'px-3 py-1.5 bg-[var(--danger)] hover:opacity-90 disabled:opacity-50 text-white rounded-lg transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed';
 const WEBDAV_SAVE_CLEAN_CLASS =
-  'px-3 py-1.5 bg-[var(--accent)] hover:opacity-90 disabled:opacity-50 text-white rounded-lg transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed';
+  'px-3 py-1.5 bg-[var(--accent)] hover:opacity-90 disabled:opacity-50 text-[var(--text-on-accent)] rounded-lg transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed';
 
 // 设置分类定义
 const sections: { id: SettingsSection; label: string; icon: LucideIcon }[] = [
@@ -566,7 +566,7 @@ export function SettingsPanel({
           type="button"
           onClick={checkForUpdates}
           disabled={isChecking}
-          className="px-3 py-1.5 bg-[var(--accent)] hover:opacity-90 disabled:opacity-50 text-white rounded-lg transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed"
+          className="px-3 py-1.5 bg-[var(--accent)] hover:opacity-90 disabled:opacity-50 text-[var(--text-on-accent)] rounded-lg transition-all flex items-center gap-2 text-sm font-medium disabled:cursor-not-allowed"
         >
           {isChecking ? (
             <>
@@ -691,7 +691,7 @@ export function SettingsPanel({
             <button
               type="button"
               onClick={handleExport}
-              className="flex-1 px-4 py-2.5 bg-[var(--accent)] hover:opacity-90 text-white rounded-lg transition-all flex items-center justify-center gap-2 font-medium text-sm shadow-sm"
+              className="flex-1 px-4 py-2.5 bg-[var(--accent)] hover:opacity-90 text-[var(--text-on-accent)] rounded-lg transition-all flex items-center justify-center gap-2 font-medium text-sm shadow-sm"
             >
               <Download className="w-4 h-4" />
               导出配置
@@ -757,11 +757,12 @@ export function SettingsPanel({
               key={id}
               type="button"
               onClick={() => setActiveSection(id)}
+              aria-current={activeSection === id ? 'page' : undefined}
               className={`
                 w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all text-left
                 ${
                   activeSection === id
-                    ? 'bg-[var(--accent-soft)] text-[var(--accent)] shadow-sm border border-[var(--accent)]/25'
+                    ? 'bg-[var(--accent-soft)] font-semibold text-[var(--accent)]'
                     : 'text-[var(--text-secondary)] hover:bg-[var(--surface-3)] hover:text-[var(--text-primary)]'
                 }
               `}

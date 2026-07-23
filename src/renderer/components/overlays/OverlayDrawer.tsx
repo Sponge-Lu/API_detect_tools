@@ -153,7 +153,7 @@ export function OverlayDrawer({
   return createPortal(
     <div
       className={joinClasses(
-        'fixed inset-0 z-[190] flex p-4 overflow-hidden',
+        'fixed inset-0 z-[var(--z-drawer)] flex p-4 overflow-hidden',
         isCentered ? 'items-center justify-center' : 'justify-end',
         'transition-opacity duration-[var(--duration-normal)] [transition-timing-function:var(--ease-standard)] [will-change:opacity]',
         isAnimating ? 'opacity-100' : 'opacity-0'

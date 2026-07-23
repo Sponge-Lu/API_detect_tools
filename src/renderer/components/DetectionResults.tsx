@@ -9,8 +9,10 @@
  * - PROJECT_INDEX.md
  */
 
-import { CheckCircle, XCircle, Loader2, Server, DollarSign, Box } from 'lucide-react';
+import { CheckCircle, XCircle, Server, DollarSign, Box } from 'lucide-react';
 import { DetectionResult } from '../App';
+import { DataTableEmpty } from './DataTable/primitives';
+import { LoadingState } from './LoadingState';
 
 interface DetectionResultsProps {
   results: DetectionResult[];
@@ -19,25 +21,16 @@ interface DetectionResultsProps {
 
 export function DetectionResults({ results, detecting }: DetectionResultsProps) {
   if (detecting) {
-    return (
-      <div className="flex flex-1 items-center justify-center">
-        <div className="text-center">
-          <Loader2 className="mx-auto mb-4 h-12 w-12 animate-spin text-[var(--accent)]" />
-          <p className="text-[var(--text-secondary)]">正在检测站点...</p>
-        </div>
-      </div>
-    );
+    return <LoadingState size="lg" message="正在检测站点..." />;
   }
 
   if (results.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center">
-        <div className="text-center text-[var(--text-secondary)]">
-          <Server className="mx-auto mb-4 h-12 w-12 opacity-50" />
-          <p>暂无检测结果</p>
-          <p className="text-sm mt-2">点击左上角"检测所有站点"开始</p>
-        </div>
-      </div>
+      <DataTableEmpty
+        icon={<Server className="h-12 w-12 opacity-50" />}
+        title="暂无检测结果"
+        description='点击左上角"检测所有站点"开始'
+      />
     );
   }
 

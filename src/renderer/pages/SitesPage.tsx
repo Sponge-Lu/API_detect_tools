@@ -7,7 +7,7 @@
 
 import Logger from '../utils/logger';
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { Server, Plus, Trash2, Pencil, Search, X } from 'lucide-react';
+import { Server, Plus, Trash2, Pencil } from 'lucide-react';
 import { SiteEditor } from '../components/SiteEditor';
 import { AddAccountDialog } from '../components/AddAccountDialog';
 import { SiteCard } from '../components/SiteCard';
@@ -26,7 +26,8 @@ import type { CliConfig } from '../../shared/types/cli-config';
 import { useRouteStore } from '../store/routeStore';
 import { CreateApiKeyDialog } from '../components/CreateApiKeyDialog';
 import { AppButton } from '../components/AppButton/AppButton';
-import { DataTableBody } from '../components/DataTable/DataTable';
+import { AppSearchInput } from '../components/AppInput';
+import { DataTableBody, DataTableEmpty } from '../components/DataTable/DataTable';
 import {
   useSiteGroups,
   useCheckIn,
@@ -1670,7 +1671,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                       onDragEnd={handleGroupDragEnd}
                       className={`group/tag inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[13px] transition-all cursor-grab active:cursor-grabbing ${
                         isActive
-                          ? 'border-[var(--accent)] bg-[var(--accent)] text-white'
+                          ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--text-on-accent)]'
                           : isDragOverForSort
                             ? 'scale-105 border-[var(--accent)] bg-[var(--accent-soft)]'
                             : dragOverGroupId === groupId
@@ -1709,13 +1710,25 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                           : `点击只显示「${group.name}」分组的站点\n拖动站点卡片到此可移动分组\n拖动分组标签可调整顺序`
                       }
                     >
-                      <span
-                        className={`flex items-center gap-1 ${isActive ? 'text-white' : colorClass}`}
+                      <button
+                        type="button"
+                        onClick={e => {
+                          e.stopPropagation();
+                          toggleSiteGroupFilter(groupId);
+                        }}
+                        aria-pressed={isActive}
+                        aria-label={`${isActive ? '当前筛选：' : '筛选分组：'}${group.name}，${groupSitesCount} 个站点`}
+                        title={
+                          isActive
+                            ? `当前显示「${group.name}」分组的站点`
+                            : `点击只显示「${group.name}」分组的站点`
+                        }
+                        className={`flex items-center gap-1 rounded-full focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-1 ${isActive ? 'text-[var(--text-on-accent)]' : colorClass}`}
                       >
                         <span className="font-semibold">{group.name}</span>
-                      </span>
+                      </button>
                       <span
-                        className={`text-xs ${isActive ? 'text-white/80' : 'text-[var(--text-tertiary)]'}`}
+                        className={`text-xs ${isActive ? 'text-[var(--text-on-accent)] opacity-80' : 'text-[var(--text-tertiary)]'}`}
                       >
                         {groupSitesCount} 个
                       </span>
@@ -1724,10 +1737,11 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                           e.stopPropagation();
                           openEditGroupDialog(group);
                         }}
-                        className={`hidden rounded p-0.5 transition-colors group-hover/tag:block ${isActive ? 'text-white/80 hover:bg-white/20 hover:text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent)]'}`}
+                        aria-label={`编辑分组 ${group.name}`}
+                        className={`hidden rounded p-0.5 transition-colors group-hover/tag:block group-focus-within/tag:block focus-visible:outline-2 focus-visible:outline-[var(--accent)] ${isActive ? 'text-[var(--text-on-accent)] opacity-80 hover:bg-white/20 hover:opacity-100' : 'text-[var(--text-secondary)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent)]'}`}
                         title="编辑分组名称"
                       >
-                        <Pencil className="w-3 h-3" />
+                        <Pencil className="w-3 h-3" aria-hidden="true" />
                       </button>
                       {!isDefaultGroup && (
                         <button
@@ -1735,10 +1749,11 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                             e.stopPropagation();
                             deleteSiteGroup(groupId);
                           }}
-                          className={`hidden rounded p-0.5 transition-colors group-hover/tag:block ${isActive ? 'text-white/80 hover:bg-white/20 hover:text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--accent-soft)] hover:text-[var(--danger)]'}`}
+                          aria-label={`删除分组 ${group.name}`}
+                          className={`hidden rounded p-0.5 transition-colors group-hover/tag:block group-focus-within/tag:block focus-visible:outline-2 focus-visible:outline-[var(--accent)] ${isActive ? 'text-[var(--text-on-accent)] opacity-80 hover:bg-white/20 hover:opacity-100' : 'text-[var(--text-secondary)] hover:bg-[var(--accent-soft)] hover:text-[var(--danger)]'}`}
                           title="删除分组"
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <Trash2 className="w-3 h-3" aria-hidden="true" />
                         </button>
                       )}
                     </div>
@@ -1755,24 +1770,15 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                 </AppButton>
               </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
-                <div className="relative">
-                  <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-tertiary)]" />
-                  <input
-                    value={globalModelSearch}
-                    onChange={e => handleGlobalModelSearchChange(e.target.value)}
-                    placeholder="搜索可用模型（全局）"
-                    className="rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-1)]/88 py-2 pl-8 pr-7 text-sm text-[var(--text-primary)] placeholder-[var(--text-tertiary)] focus:border-[var(--accent)] focus:outline-none"
-                  />
-                  {globalModelSearch && (
-                    <button
-                      onClick={() => handleGlobalModelSearchChange('')}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
-                      title="清空全局搜索"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
+                <AppSearchInput
+                  size="sm"
+                  containerClassName="w-64"
+                  value={globalModelSearch}
+                  onChange={e => handleGlobalModelSearchChange(e.target.value)}
+                  onClear={() => handleGlobalModelSearchChange('')}
+                  placeholder="搜索可用模型（全局）"
+                  aria-label="搜索可用模型（全局）"
+                />
               </div>
             </div>
           )}
@@ -1780,23 +1786,30 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
           {/* 站点列表区域 */}
           <div className="relative z-0 flex-1 overflow-x-visible overflow-y-auto px-4 pb-4">
             {!hasAccessPoints ? (
-              <div className="py-16 text-center text-[var(--text-secondary)]">
-                <Server className="w-16 h-16 mx-auto mb-4 opacity-30" strokeWidth={1.5} />
-                <p className="text-lg font-medium mb-2">还没有添加任何接入点</p>
-                <p className="text-sm mb-4">点击"添加站点"按钮开始添加托管站点或直连配置</p>
-                <div className="flex items-center justify-center gap-2">
-                  <AppButton variant="primary" onClick={() => setShowAddAccessPointDialog(true)}>
-                    <Plus className="w-4 h-4" strokeWidth={2.5} />
-                    添加站点
-                  </AppButton>
-                  <AppButton variant="secondary" onClick={handleOpenBackupDialog}>
-                    从备份恢复站点
-                  </AppButton>
-                </div>
-                <p className="mt-2 text-xs text-[var(--text-tertiary)]">
-                  从备份目录选择配置文件进行恢复
-                </p>
-              </div>
+              <DataTableEmpty
+                icon={<Server className="w-16 h-16 opacity-30" strokeWidth={1.5} />}
+                title="还没有添加任何接入点"
+                description='点击"添加站点"按钮开始添加托管站点或直连配置'
+                action={
+                  <>
+                    <div className="flex items-center justify-center gap-2">
+                      <AppButton
+                        variant="primary"
+                        onClick={() => setShowAddAccessPointDialog(true)}
+                      >
+                        <Plus className="w-4 h-4" strokeWidth={2.5} />
+                        添加站点
+                      </AppButton>
+                      <AppButton variant="secondary" onClick={handleOpenBackupDialog}>
+                        从备份恢复站点
+                      </AppButton>
+                    </div>
+                    <p className="mt-2 text-xs text-[var(--text-tertiary)]">
+                      从备份目录选择配置文件进行恢复
+                    </p>
+                  </>
+                }
+              />
             ) : (
               <>
                 <SiteListHeader

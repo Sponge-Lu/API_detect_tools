@@ -157,10 +157,12 @@ const normalizeSnapshotIds = (node: Element | null) => {
     const overlayClass = clone.getAttribute('class') ?? '';
     clone.setAttribute(
       'class',
-      overlayClass.replace(
-        'fixed inset-0 overflow-y-auto',
-        'fixed inset-0 flex items-center justify-center overflow-y-auto'
-      )
+      overlayClass
+        .replace(
+          'fixed inset-0 overflow-y-auto',
+          'fixed inset-0 flex items-center justify-center overflow-y-auto'
+        )
+        .replace('z-[var(--z-modal)]', 'z-[200]')
     );
 
     const overlayChildren = Array.from(clone.children);

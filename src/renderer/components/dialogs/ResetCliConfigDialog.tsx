@@ -135,6 +135,29 @@ export function ResetCliConfigDialog({
       titleIcon={<RotateCcw className="w-5 h-5" />}
       size="md"
       showCloseButton={!isResetting}
+      footer={
+        <>
+          <AppButton type="button" variant="secondary" onClick={handleClose} disabled={isResetting}>
+            取消
+          </AppButton>
+          <AppButton
+            type="button"
+            variant="danger"
+            onClick={handleReset}
+            disabled={selectedClis.size === 0 || isResetting}
+            loading={isResetting}
+          >
+            {isResetting ? (
+              '重置中...'
+            ) : (
+              <>
+                <RotateCcw className="w-4 h-4" />
+                确认重置
+              </>
+            )}
+          </AppButton>
+        </>
+      }
     >
       <div className="space-y-4">
         {/* 说明 */}
@@ -207,29 +230,6 @@ export function ResetCliConfigDialog({
             </ul>
           </div>
         )}
-
-        {/* 操作按钮 */}
-        <div className="flex justify-end gap-3 pt-2">
-          <AppButton type="button" variant="secondary" onClick={handleClose} disabled={isResetting}>
-            取消
-          </AppButton>
-          <AppButton
-            type="button"
-            variant="danger"
-            onClick={handleReset}
-            disabled={selectedClis.size === 0 || isResetting}
-            loading={isResetting}
-          >
-            {isResetting ? (
-              '重置中...'
-            ) : (
-              <>
-                <RotateCcw className="w-4 h-4" />
-                确认重置
-              </>
-            )}
-          </AppButton>
-        </div>
       </div>
     </AppModal>
   );

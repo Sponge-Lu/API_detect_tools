@@ -12,6 +12,7 @@
 
 import { useState, useMemo } from 'react';
 import { Wallet, AlertTriangle, Loader2, ExternalLink } from 'lucide-react';
+import { AppSelect } from '../AppSelect';
 import { toast } from '../../store/toastStore';
 import type { RechargeResponse } from '../../../shared/types/credit';
 
@@ -160,10 +161,13 @@ export function RechargeSection({
         </div>
 
         {/* 站点选择 */}
-        <select
+        <AppSelect
+          aria-label="选择充值站点"
+          size="sm"
+          containerClassName="min-w-0 flex-1"
+          className="py-1.5"
           value={selectedSiteUrl}
           onChange={e => setSelectedSiteUrl(e.target.value)}
-          className="min-w-0 flex-1 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2.5 py-1.5 text-sm text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--focus-ring)]"
         >
           <option value="">选择站点</option>
           {ldcSites.map(site => (
@@ -171,17 +175,18 @@ export function RechargeSection({
               {site.name} ({site.exchangeRate}:1)
             </option>
           ))}
-        </select>
+        </AppSelect>
 
         {/* 金额输入 */}
         <input
           type="number"
+          aria-label="充值金额"
           min="1"
           step="1"
           value={amount}
           onChange={e => setAmount(e.target.value)}
           placeholder="金额"
-          className="w-20 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2.5 py-1.5 text-sm text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--focus-ring)]"
+          className="w-20 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2.5 py-1.5 text-sm text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--accent)] focus:shadow-[0_0_0_4px_var(--focus-ring)]"
         />
 
         {/* 所需积分显示 */}
@@ -197,7 +202,7 @@ export function RechargeSection({
         <button
           onClick={handleRecharge}
           disabled={isRechargeDisabled}
-          className="flex flex-shrink-0 items-center gap-1.5 rounded-[var(--radius-lg)] bg-[var(--accent)] px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex flex-shrink-0 items-center gap-1.5 rounded-[var(--radius-lg)] bg-[var(--accent)] px-3 py-1.5 text-sm font-medium text-[var(--text-on-accent)] transition-colors hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isRecharging ? (
             <Loader2 className="w-3 h-3 animate-spin" />

@@ -5,10 +5,10 @@
  * 定位: 展示层 - Route 工作台入口
  */
 
-import { Loader2 } from 'lucide-react';
 import { useShallow } from 'zustand/shallow';
 import { ModelRedirectionTab } from '../components/Route/Redirection/ModelRedirectionTab';
 import { CliModelSection, ServerSection } from '../components/Route/ProxyStats/ProxyStatsTab';
+import { LoadingState } from '../components/LoadingState';
 import { useRouteStore } from '../store/routeStore';
 import { useUIStore } from '../store/uiStore';
 
@@ -24,7 +24,7 @@ export function RoutePage() {
   if (loading && !config) {
     return (
       <div className="flex h-full items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-[var(--accent)]" />
+        <LoadingState size="lg" message="" />
       </div>
     );
   }

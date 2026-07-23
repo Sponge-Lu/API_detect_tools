@@ -238,7 +238,7 @@ describe('LDC UI visibility', () => {
     expect(mockSetActiveTab).toHaveBeenCalledWith('sites');
   });
 
-  it('does not render the hidden LDC ratio value in the site header row', () => {
+  it('renders the LDC ratio value in the site header row when the site supports LDC payment', () => {
     const site = {
       id: 'site-1',
       name: 'Example Site',
@@ -282,7 +282,7 @@ describe('LDC UI visibility', () => {
       />
     );
 
-    expect(screen.queryByText('9.9')).not.toBeInTheDocument();
+    expect(screen.getByText('9.9')).toBeInTheDocument();
   });
 
   it('keeps the LDC and CLI column widths when widths are already filtered', () => {

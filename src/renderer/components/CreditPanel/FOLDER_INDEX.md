@@ -9,10 +9,12 @@
 | 文件 | 说明 |
 |------|------|
 | `CreditPanelCompact.tsx` | 积分面板组件，显示在表头区域，支持展开详情弹出面板 |
-| `IncomeStatsCard.tsx` | 收入统计卡片组件，显示每日收入条形图 |
-| `ExpenseStatsCard.tsx` | 支出统计卡片组件，显示每日支出条形图 |
+| `DailyStatsCard.tsx` | 统一每日收支统计卡片（`variant: income/expense`），显示每日收/支条形图 |
+| `IncomeStatsCard.tsx` | 收入统计卡片，`DailyStatsCard(variant=income)` 的薄封装（向后兼容导出） |
+| `ExpenseStatsCard.tsx` | 支出统计卡片，`DailyStatsCard(variant=expense)` 的薄封装（向后兼容导出） |
 | `TransactionListCard.tsx` | 交易记录卡片组件，显示交易列表 |
 | `RechargeSection.tsx` | LDC 充值区域组件，提供充值金额输入、站点选择、所需积分计算 |
+| `formatLastUpdated.ts` | 共享"更新于"时间格式化工具 |
 | `index.ts` | 组件导出文件 |
 | `FOLDER_INDEX.md` | 本索引文件 |
 
@@ -30,25 +32,12 @@
 - 刷新按钮会同时刷新积分、每日统计、交易记录
 - LDC 充值功能（展开详情时显示）
 
-### IncomeStatsCard (收入统计卡片)
-- 紧凑布局，高度自适应内容
-- 标题栏显示"收入统计"和总收入金额（LDC 格式）
-- 显示每日收入水平条形图（绿色）
-- 条形图布局：日期和数值在条形上方（日期靠左，数值靠右）
-- 只显示最近5天数据
-- 日期从新到旧排序（最新在上）
-- 零值显示为灰色细线指示器
-- 显示刷新按钮和更新时间
-
-### ExpenseStatsCard (支出统计卡片)
-- 紧凑布局，高度自适应内容
-- 标题栏显示"支出统计"和总支出金额（LDC 格式，红色）
-- 显示每日支出水平条形图（红色）
-- 条形图布局：日期和数值在条形上方（日期靠左，数值靠右）
-- 只显示最近5天数据
-- 日期从新到旧排序（最新在上）
-- 零值显示为灰色细线指示器
-- 显示刷新按钮和更新时间
+### DailyStatsCard (每日收支统计卡片)
+- 单一组件通过 `variant: 'income' | 'expense'` 渲染收入(accent)或支出(danger)统计
+- 标题栏显示统计标题和对应总额（LDC 格式）
+- 显示每日收/支水平条形图，零值显示为灰色细线指示器
+- 只显示最近5天数据，日期从新到旧排序
+- `IncomeStatsCard`/`ExpenseStatsCard` 为其 variant 薄封装，保持既有导入路径可用
 
 ### TransactionListCard (交易记录卡片)
 - 紧凑布局，高度自适应内容

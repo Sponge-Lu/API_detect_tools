@@ -47,7 +47,7 @@ describe('AppModal primitive contract', () => {
           expect(overlayClassList).toContain('inset-0');
           expect(overlayClassList).toContain('transition-opacity');
           expect(overlayClassList).toContain('duration-200');
-          expect(overlayClassList).toContain('z-[200]');
+          expect(overlayClassList).toContain('z-[var(--z-modal)]');
 
           expect(dialogClassList).toContain('transition-[transform,opacity]');
           expect(dialogClassList).toContain('duration-200');

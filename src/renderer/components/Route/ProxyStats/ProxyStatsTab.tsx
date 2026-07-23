@@ -368,7 +368,7 @@ function RouteConfigPreviewModal({
       JSON.stringify(baselineConfig?.files ?? null);
 
   return (
-    <div className="fixed inset-0 z-[240] flex items-center justify-center bg-black/45 p-6">
+    <div className="fixed inset-0 z-[var(--z-overlay-top)] flex items-center justify-center bg-black/45 p-6">
       <div
         role="dialog"
         aria-label={title}
@@ -567,7 +567,7 @@ function RouteApplyPopover({
   return createPortal(
     <div
       ref={popoverRef}
-      className={`fixed z-[260] min-w-[128px] overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-opacity duration-100 ${
+      className={`fixed z-[var(--z-popover-top)] min-w-[128px] overflow-hidden rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-xl)] transition-opacity duration-100 ${
         isPositioned ? 'opacity-100' : 'opacity-0'
       }`}
       style={{ top: position.top, left: position.left }}

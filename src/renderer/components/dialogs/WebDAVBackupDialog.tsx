@@ -232,7 +232,7 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
             type="button"
             onClick={handleUpload}
             disabled={uploading || loading}
-            className="inline-flex items-center gap-2 rounded-[var(--radius-md)] bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-[var(--radius-md)] bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--text-on-accent)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {uploading ? (
               <>
@@ -376,7 +376,7 @@ export function WebDAVBackupDialog({ isOpen, onClose }: WebDAVBackupDialogProps)
           }
           confirmText={confirm.type === 'restore' ? '确认恢复' : '确认删除'}
           cancelText="取消"
-          overlayZIndexClassName="z-[220]"
+          overlayZIndexClassName="z-[var(--z-modal-stacked)]"
           onConfirm={handleConfirm}
           onCancel={closeConfirm}
         />

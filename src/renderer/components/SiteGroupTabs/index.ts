@@ -1,1 +1,0 @@
-export { SiteGroupTabs } from './SiteGroupTabs';

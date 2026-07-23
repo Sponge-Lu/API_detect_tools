@@ -60,7 +60,7 @@ export function AppModal({
   closeOnOverlayClick = true,
   closeOnEsc = true,
   className = '',
-  overlayZIndexClassName = 'z-[200]',
+  overlayZIndexClassName = 'z-[var(--z-modal)]',
   contentClassName = '',
   'aria-describedby': ariaDescribedBy,
 }: AppModalProps) {

@@ -18,6 +18,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Copy, Check, Edit2, Eye, Loader2, RotateCcw, Search, X, ChevronDown } from 'lucide-react';
 import { AppButton } from '../AppButton/AppButton';
+import { AppSwitch } from '../AppSwitch';
 import { PanelSection } from './PanelSection';
 import type { CliConfig, ApiKeyInfo, CliModelTestResult } from '../../../shared/types/cli-config';
 import type {
@@ -109,35 +110,12 @@ function FormSwitch({
   ariaLabel?: string;
 }) {
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={ariaLabel}
+    <AppSwitch
+      checked={checked}
+      onCheckedChange={onChange}
       disabled={disabled}
-      onClick={() => !disabled && onChange(!checked)}
-      className={`
-        relative inline-flex h-[24px] w-[44px] shrink-0 cursor-pointer rounded-full
-        border-2 transition-colors duration-200 ease-in-out
-        focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]
-        ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
-        ${
-          checked
-            ? 'bg-[var(--accent)] border-[var(--accent)]'
-            : 'bg-[var(--surface-2)] border-[var(--line-soft)]'
-        }
-      `}
-    >
-      <span
-        className={`
-          pointer-events-none inline-block h-[18px] w-[18px] rounded-full
-          border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)] ring-0
-          transition-transform duration-200 ease-in-out
-          ${checked ? 'translate-x-[21px]' : 'translate-x-[1px]'}
-          mt-[1px]
-        `}
-      />
-    </button>
+      ariaLabel={ariaLabel}
+    />
   );
 }
 

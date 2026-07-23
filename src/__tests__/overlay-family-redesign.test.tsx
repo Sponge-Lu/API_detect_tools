@@ -135,8 +135,8 @@ describe('overlay family redesign', () => {
     const drawerDialog = screen.getByRole('dialog', { name: '站点详情' });
     const modalDialog = screen.getByRole('dialog', { name: '确认操作' });
 
-    expect(drawerDialog.closest('[role="presentation"]')).toHaveClass('z-[190]');
-    expect(modalDialog.closest('[role="presentation"]')).toHaveClass('z-[200]');
+    expect(drawerDialog.closest('[role="presentation"]')).toHaveClass('z-[var(--z-drawer)]');
+    expect(modalDialog.closest('[role="presentation"]')).toHaveClass('z-[var(--z-modal)]');
   });
 
   it('closes only for real overlay clicks, not for drag-release gestures that start inside the drawer', () => {

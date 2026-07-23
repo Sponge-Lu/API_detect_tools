@@ -31,6 +31,11 @@
 | **SettingsPanel.tsx** | 应用设置面板 | 外观与行为、云端备份、软件更新和数据管理；站点刷新参数由 SitesPage 的站点设置弹窗维护 |
 | **SiteEditor.tsx** | 站点编辑对话框 | `site`, `editingAccount`, `initialMode`, `onSave`, `onCancel`；智能首账户回传 `main_profile`，手动凭证回传 `manual`，已有站点浏览器添加使用 `isolated_profile` |
 | **HistoryCell.tsx** | 站点管理 History 列单元格 | `siteId`, `accountId`；按表头共享的 CLI 类型/模式显示时间桶条形图 |
+| **LoadingState.tsx** | 统一加载态原语 | `message`, `size`, `className` |
+| **ErrorState.tsx** | 统一错误态原语 | `title`, `description`, `action`, `className` |
+| **AppSwitch.tsx** | 统一布尔开关原语 | `checked`, `onCheckedChange`, `label`, `ariaLabel`, `size` |
+| **AppSelect.tsx** | token 化原生下拉原语 | 原生 select 属性 + `label`, `errorMessage`, `helpText`, `size` |
+| **PageContainer.tsx** | 统一页面容器 | `children`, `className` |
 
 ### 子文件夹
 
@@ -39,7 +44,6 @@
 | **Header/** | 顶部导航栏 | Header, Menu, ThemeToggle |
 | **AppShell/** | 页面壳层组件 | GlobalCommandBar, PageHeader |
 | **SiteCard/** | 站点列表行 | SiteCard, SiteCardHeader, SiteCardActions |
-| **SiteGroupTabs/** | 站点分组标签 | SiteGroupTabs, GroupTab |
 | **SiteListHeader/** | 站点列表头部 | SiteListHeader, SearchBar, FilterBar；History 表头内嵌旧 CLI 图标选择器和模式切换 |
 | **Route/** | Route 页面组件 | ModelRedirectionTab, ProxyStatsTab, HistoryBucketBars |
 | **dialogs/** | 对话框组件 | 各类对话框；接入点弹窗/侧滑面板承载站点管理合并后的低频操作和详情，包括保存后维护站点名称与直连配置名称；托管/直连 CLI 编辑内容以内嵌组件形式运行并从 `routing.cliProbe.latest` 回显最新测试模型结果；操作记录弹窗展示当前会话关键操作；站点设置弹窗集中维护 CLI 探测与站点刷新参数 |
@@ -104,28 +108,6 @@ interface SiteCardProps {
 - 操作按钮仅保留主行高频动作（打开加油站、签到、刷新检测），低频编辑/删除/添加账户/自动刷新迁移到接入点详情侧滑面板
 - 加载状态显示
 - 错误状态显示
-
-### SiteGroupTabs 组件
-
-**职责**: 站点分组标签切换
-
-**Props**:
-```typescript
-interface SiteGroupTabsProps {
-  groups: SiteGroup[];
-  activeGroupId?: string;
-  onGroupChange?: (groupId: string) => void;
-  onAddGroup?: () => void;
-  onEditGroup?: (groupId: string) => void;
-  onDeleteGroup?: (groupId: string) => void;
-}
-```
-
-**特点**:
-- 分组标签切换
-- 新增分组按钮
-- 编辑分组菜单
-- 删除分组确认
 
 ### SiteListHeader 组件
 
@@ -414,8 +396,6 @@ interface CliCompatibilityIconsProps {
 App.tsx
   ↓
 Header (接收 onMenuClick, onSettingsClick)
-  ↓
-SiteGroupTabs (接收 groups, onGroupChange)
   ↓
 SiteListHeader (接收 searchText, onSearchChange)
   ↓

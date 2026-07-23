@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { OverlayDrawer } from '../overlays/OverlayDrawer';
 import { AppButton } from '../AppButton/AppButton';
+import { AppSwitch } from '../AppSwitch';
 import { SiteCardDetails } from '../SiteCard/SiteCardDetails';
 import { AnyRouterConfigSection } from '../AnyRouterConfigSection';
 import { ManagedCliConfigEditorContent } from './ManagedCliConfigEditorContent';
@@ -202,37 +203,6 @@ function CopyInlineButton({
       aria-label={title}
     >
       {children ?? <Copy className="h-3.5 w-3.5" />}
-    </button>
-  );
-}
-
-function InlineSwitch({
-  checked,
-  onChange,
-  ariaLabel,
-}: {
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-  ariaLabel: string;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={ariaLabel}
-      onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-[24px] w-[44px] shrink-0 rounded-full border-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] ${
-        checked
-          ? 'border-[var(--accent)] bg-[var(--accent)]'
-          : 'border-[var(--line-soft)] bg-[var(--surface-2)]'
-      }`}
-    >
-      <span
-        className={`mt-[1px] inline-block h-[18px] w-[18px] rounded-full border border-[var(--line-soft)] bg-[var(--surface-1)] shadow-[var(--shadow-sm)] transition-transform ${
-          checked ? 'translate-x-[21px]' : 'translate-x-[1px]'
-        }`}
-      />
     </button>
   );
 }
@@ -935,9 +905,9 @@ export function AccessPointDetailPanel({
                             保存后按站点生效
                           </div>
                         </div>
-                        <InlineSwitch
+                        <AppSwitch
                           checked={managedSiteDraft.force_enable_checkin}
-                          onChange={checked =>
+                          onCheckedChange={checked =>
                             updateManagedSiteDraft('force_enable_checkin', checked)
                           }
                           ariaLabel="启用签到功能"
@@ -952,9 +922,11 @@ export function AccessPointDetailPanel({
                             保存后按账户生效
                           </div>
                         </div>
-                        <InlineSwitch
+                        <AppSwitch
                           checked={managedAccountDraft.auto_refresh}
-                          onChange={checked => updateManagedAccountDraft('auto_refresh', checked)}
+                          onCheckedChange={checked =>
+                            updateManagedAccountDraft('auto_refresh', checked)
+                          }
                           ariaLabel="启用账户自动刷新"
                         />
                       </div>

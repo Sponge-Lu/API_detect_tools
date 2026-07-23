@@ -26,11 +26,14 @@ describe('app shell redesign', () => {
     useRouteStore.setState({ serverRunning: false });
   });
 
-  it('does not render the global command bar when there is no active top-level status', () => {
-    const { container } = render(<GlobalCommandBar saving={false} />);
+  it('keeps the global command bar mounted but hides the saving badge when there is no active top-level status', () => {
+    render(<GlobalCommandBar saving={false} />);
 
     expect(screen.queryByTestId('cli-status-inline')).not.toBeInTheDocument();
-    expect(container.firstElementChild).toBeNull();
+    // R1.5：栏体恒渲染消除布局跳动，仅"保存中"徽标不可见
+    const badge = screen.queryByText('保存中...');
+    expect(badge).toBeInTheDocument();
+    expect(badge?.parentElement).toHaveClass('opacity-0');
   });
 
   it('renders the global command bar as compact neutral chrome while saving', () => {
@@ -1223,7 +1226,9 @@ describe('app shell redesign', () => {
     render(<App />);
 
     expect(await screen.findByText('Mock Route Page')).toBeInTheDocument();
-    expect(screen.queryByText('保存中...')).not.toBeInTheDocument();
+    // R1.5：保存徽标恒渲染但隐藏
+    const savingBadge = screen.queryByText('保存中...');
+    expect(savingBadge?.parentElement).toHaveClass('opacity-0');
     expect(screen.getByRole('heading', { name: APP_PAGE_META.route.title })).toBeInTheDocument();
     expect(screen.getByText(APP_PAGE_META.route.description)).toBeInTheDocument();
   });

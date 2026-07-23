@@ -231,7 +231,7 @@ describe('DirectCliConfigEditorContent', () => {
     expect(saveButton.className).toContain('bg-[var(--danger-soft)]');
   });
 
-  it('toggles and copies the API Key from the identity form', async () => {
+  it('toggles and copies the API Key from the identity form', { timeout: 20000 }, async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,

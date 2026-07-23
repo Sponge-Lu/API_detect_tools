@@ -461,7 +461,7 @@ export function SiteEditor({
                 <button
                   className={`px-2 py-0.5 rounded-full border text-[11px] transition-colors ${
                     mode === 'auto'
-                      ? 'border-[var(--accent)] bg-[var(--accent)] text-white'
+                      ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--text-on-accent)]'
                       : 'border-[var(--line-soft)] bg-transparent text-[var(--text-secondary)]'
                   }`}
                   onClick={() => {
@@ -478,7 +478,7 @@ export function SiteEditor({
                 <button
                   className={`px-2 py-0.5 rounded-full border text-[11px] transition-colors ${
                     mode === 'manual'
-                      ? 'border-[var(--accent)] bg-[var(--accent)] text-white'
+                      ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--text-on-accent)]'
                       : 'border-[var(--line-soft)] bg-transparent text-[var(--text-secondary)]'
                   }`}
                   onClick={() => {
@@ -521,16 +521,16 @@ export function SiteEditor({
               <button
                 onClick={handleUrlSubmit}
                 disabled={loading || !url.trim()}
-                className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-lg)] bg-[var(--accent)] px-6 py-3 font-semibold text-white transition-colors hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex w-full items-center justify-center gap-2 rounded-[var(--radius-lg)] bg-[var(--accent)] px-6 py-3 font-semibold text-[var(--text-on-accent)] transition-colors hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {loading ? (
                   <>
-                    <Loader2 className="w-5 h-5 animate-spin text-white" />
+                    <Loader2 className="w-5 h-5 animate-spin" aria-hidden="true" />
                     获取中...
                   </>
                 ) : (
                   <>
-                    <Globe className="w-5 h-5 text-white" />
+                    <Globe className="w-5 h-5" aria-hidden="true" />
                     获取信息
                   </>
                 )}
@@ -842,7 +842,7 @@ export function SiteEditor({
                       setStep('input-url');
                       setError('');
                     }}
-                    className="flex flex-1 items-center justify-center gap-2 rounded-[var(--radius-lg)] bg-[var(--warning)] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:opacity-92"
+                    className="flex flex-1 items-center justify-center gap-2 rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-4 py-2.5 text-sm font-semibold text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-primary)]"
                   >
                     <Globe className="w-4 h-4" />
                     重新获取信息
@@ -853,10 +853,10 @@ export function SiteEditor({
                   disabled={!autoInfo.name || !url || !autoInfo.systemToken || !autoInfo.userId}
                   data-testid="site-editor-save-button"
                   data-dirty={isEditDirty ? 'true' : 'false'}
-                  className={`flex flex-1 items-center justify-center gap-2 rounded-[var(--radius-lg)] px-4 py-2.5 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                  className={`flex flex-1 items-center justify-center gap-2 rounded-[var(--radius-lg)] px-4 py-2.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                     isEditDirty
-                      ? 'bg-[var(--danger)] hover:opacity-92'
-                      : 'bg-[var(--accent)] hover:bg-[var(--accent-strong)]'
+                      ? 'bg-[var(--danger)] text-[var(--text-on-accent)] hover:opacity-92'
+                      : 'bg-[var(--accent)] text-[var(--text-on-accent)] hover:bg-[var(--accent-strong)]'
                   }`}
                 >
                   <CheckCircle className="w-4 h-4" />

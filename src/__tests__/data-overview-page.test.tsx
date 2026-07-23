@@ -610,7 +610,10 @@ describe('DataOverviewPage', () => {
     expect(screen.getByText(/输入 3\.6K\s*\/\s*输出 1\.4K/)).toBeInTheDocument();
     const trendScopeSelect = screen.getByLabelText('选择运行趋势范围');
     expect(trendScopeSelect).toHaveDisplayValue('全部聚合');
-    expect(trendScopeSelect).toHaveClass('-mt-1.5', 'h-6', 'text-[11px]');
+    // R3.1：趋势范围下拉收敛进 AppSelect 原语，保留紧凑尺寸与负边距对齐
+    expect(trendScopeSelect).toHaveClass('h-6', 'text-[11px]', 'bg-[var(--surface-2)]');
+    const scopeSelectWrapper = trendScopeSelect.closest('div.relative')?.parentElement;
+    expect(scopeSelectWrapper).toHaveClass('-mt-1.5');
   });
 
   it('provides merged header actions', async () => {
