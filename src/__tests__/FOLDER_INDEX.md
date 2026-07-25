@@ -32,7 +32,7 @@
 | **token-service.test.ts** | TokenService / ApiService 的 site_type 驱动回归测试 | API Key 原始值保留、NewAPI 批量明文 key 兼容、显式 `site_type` 覆盖 URL 反查、Unauthorized envelope 登录过期识别、账户基础信息刷新在浏览器 token 无效时重建 access_token、签到端点按 `site_type` 选择、模型响应非对象/直接数组容错、NewAPI 空模型端点恢复、同日手动签到完成状态刷新保留、sub2api 端点适配、旧站点 `site_type` 首检写回 |
 | **browser-login-flow.test.ts** | 浏览器登录流回归测试 | 登录浏览器模式、账户级 token 重试、Profile 列表/绑定 IPC、Sub2API 浏览器 JWT 续期、localStorage 站点类型线索收紧 |
 | **useCheckIn.test.ts** | useCheckIn Hook 回归测试 | 一键签到跳过 `unavailable` 分组站点，账户级签到透传 `accountId`，AnyRouter 命名变体走账户浏览器签到，手动签到完成状态写入缓存 |
-| **useCliCompatTest.test.ts** | 站点页 CLI 测试回归测试 | `useCliCompatTest` 在已选 API Key 时优先测试当前站点 URL、保存后立即同步 `routing.cliProbe` 投影，并展示真实 wrapper 失败摘要 |
+| **useCliCompatTest.test.ts** | 站点页 CLI 测试回归测试 | `useCliCompatTest` 仅为 Claude Code / Codex 构造探测请求，在已选 API Key 时优先测试当前站点 URL，保存后同步 `routing.cliProbe` 投影 |
 | **site-type-detector.test.ts** | 站点类型自动识别测试 | title 命中与 `/api/status` 识别 |
 | **site-editor.test.tsx** | SiteEditor 回归测试 | 手动保存站点类型、智能添加回填识别类型、智能/手动认证来源和已有站点隔离账户保存 |
 | **groupStyle.test.tsx** | 分组样式测试 | groupStyle 工具 |
@@ -45,10 +45,10 @@
 | **browser-profile-reconcile.test.ts** | 浏览器 Profile 管理测试 | 历史 manual 账户原地绑定主 Profile、同站 Profile 重复占用拦截，以及恢复后按旧 slot-N 重建目录并重写路径 |
 | **backup-manager.test.ts** | 本地备份管理测试 | 自动备份节流、内容去重、强制备份与保留数量 |
 | **migrate-config-v224-to-v301-script.test.ts** | 配置迁移脚本测试 | v2.1.24 config 拆分为 clean config、runtime-cache 与 route state，重复运行保留已有 state |
-| **route-cli-probe-service.test.ts** | CLI 探测多账户回归测试 | 同站点全部活跃账户覆盖、账户级 CLI 配置优先/禁用/旧站点 fallback、自定义 CLI 配置行/探测任务、活跃 API Key 选择、probe-lock `probeRunId` 与自定义上游信息传递、错误码透传、旧配置兼容 |
+| **route-cli-probe-service.test.ts** | CLI 探测多账户回归测试 | Claude Code / Codex 探测边界、OpenCode 即时探测拒绝、账户级配置与自定义 CLI 任务、活跃 API Key、probe-lock 和旧配置兼容 |
 | **route-model-registry-service.test.ts** | 路由模型注册表服务测试 | 手工/显式 override display item、来源扫描不自动生成重定向、厂商优先级、canonical 映射与四种 CLI 可用的自定义 CLI 来源 |
 | **route-proxy-service.test.ts** | 路由代理调度回归测试 | canonical-only 规则命中前提下的 per-rawModel 尝试计划、选中 custom CLI 通道转发到直连 baseUrl、OpenCode 实际入站协议到通道协议的单次转换、CLI marker/path 精确矩阵、特殊端点前置拒绝、Token 计数同协议转发与本地估算、客户端取消中止当前上游且不 fallback/不记录失败、probe-lock loopback 限制/终止失败/单模型上游尝试预算、上游 URL 构造、流式校验及 provider usage/cache token 解析 |
-| **route-probe-lock.test.ts** | probe-lock 首个上游结果记录回归测试 | terminal-wins / transient-overwritable 记录语义、瞬时结果可被后续成功/终结失败覆盖、终结结果 first-wins、waiter 仅在终结结果 resolve |
+| **route-probe-lock.test.ts** | probe-lock 能力边界与首个上游结果回归测试 | 拒绝旧 OpenCode 锁；terminal-wins / transient-overwritable、终结结果 first-wins、waiter 仅在终结结果 resolve |
 | **cli-protocol-adapter.test.ts** | CLI 协议适配器请求/响应转换测试 | Claude/Codex 源 CLI 与 Anthropic Messages / OpenAI Chat Completions / OpenAI Responses 目标协议之间的 text/tool_use/tool_result/function_call/tool_choice 双向转换，覆盖流式 SSE 与非流式 JSON 矩阵及无损能力拒绝 |
 | **anyrouter-timeout.test.ts** | AnyRouter 站点识别测试 | `Any Router` / `AnyRouter` / 分隔符变体归一化命中，带额外前后缀的站点名不误判 |
 | **anyrouter-rewriter.test.ts** | AnyRouter 协议处理测试 | Claude Code 指纹改写、Codex 原生 Responses 补齐 metadata.user_id、Google/Gemini GenerateContent 原生透传 |
@@ -56,7 +56,7 @@
 | **http-client.test.ts** | HTTP 客户端测试 | raw 上游转发走 Electron net 并传递上游代理、取消信号、流式回调和活跃流空闲超时配置 |
 | **route-rule-engine.test.ts** | 路由规则引擎回归测试 | canonical-only 模型匹配与规则优先级排序 |
 | **cli-compat-projection.test.ts** | CLI 兼容性投影测试 | `routing.cliProbe.latest` 到站点/账户卡片结果的映射，以及 latest probe 回灌到 CLI 配置弹窗测试模型 slot 的时间戳合并 |
-| **cli-compat-handlers.test.ts** | CLI 兼容性 IPC 回归测试 | 托管站点 CLI 配置保存写入账户级 `cli_config`，避免回写站点级 legacy 字段 |
+| **cli-compat-handlers.test.ts** | CLI 兼容性 IPC 回归测试 | 拒绝 OpenCode 手动探测 payload；托管站点 CLI 配置保存写入账户级 `cli_config` |
 | **webdav-manager.test.ts** | WebDAV 管理器测试 | WebDAVManager 类 |
 | **update-service.test.ts** | 更新服务测试 | UpdateService 类 |
 | **auto-refresh.property.test.ts** | 自动刷新属性测试 | 自动刷新逻辑 |
@@ -65,11 +65,11 @@
 | **cli-wrapper-compat-service.test.ts** | 真实 CLI wrapper 兼容性测试 | CliWrapperCompatService 的临时目录、隔离配置、stdin prompt 注入、结果解析、probe-lock 终止失败提前中止、首个上游成功/延迟失败覆盖后续 probe-lock budget noise、Claude JSON 错误摘要、未观察到本地路由请求时的诊断提示、Codex 上游错误摘要与临时目录清理重试 |
 | **cli-config-generator.property.test.ts** | CLI 配置生成测试 | CLI 配置生成、端点选择、OpenCode 直连多协议思考参数及无硬编码思考默认的三路受管 Provider |
 | **cli-config-status.test.tsx** | CLI 配置状态组件回归测试 | 本地路由代理 Base URL 在紧凑状态中显示为“本地路由”，并覆盖本地路由、站点与自定义 CLI 的当前模型小字 |
-| **custom-cli-config-editor-dialog.test.tsx** | 直连 CLI 编辑内容回归测试 | 四种 CLI 分区、配置保存、预览/应用、上游协议与手动模型；Grok Build native 跟随入口、仅合并应用且不调用模型探测 |
+| **custom-cli-config-editor-dialog.test.tsx** | 直连 CLI 编辑内容回归测试 | 四种 CLI 分区、配置保存、预览/应用、上游协议与手动模型；OpenCode / Grok Build 保留配置但不调用模型探测 |
 | **custom-cli-config-store.test.ts** | 自定义 CLI 配置 Store 回归测试 | 拉取模型后清理旧 Base URL/API Key 遗留的 CLI 使用模型、测试模型与测试结果，并保留 `manualModels` 手动模型 |
 | **custom-cli-config-handlers.test.ts** | 自定义 CLI 配置 IPC 回归测试 | 保存自定义 CLI 配置后同步路由模型 registry，并在同步失败时暴露错误 |
 | **app-data-events.test.ts** | 主进程数据变更广播回归测试 | 跳过已销毁窗口/webContents、吞掉 Electron disposed-frame 竞态错误并保留非预期 send 失败日志 |
-| **unified-cli-config-dialog.test.tsx** | 托管 CLI 编辑内容回归测试 | ManagedCliConfigEditorContent 四种 CLI 配置、协议与应用；Grok Build native 跟随入口并明确禁用模型探测 |
+| **unified-cli-config-dialog.test.tsx** | 托管 CLI 编辑内容回归测试 | ManagedCliConfigEditorContent 四种 CLI 配置、协议与应用；OpenCode / Grok Build 明确禁用模型探测 |
 | **filter-model-logs.property.test.ts** | 日志过滤属性测试 | 日志过滤逻辑 |
 | **unified-cli-config.property.test.ts** | 统一 CLI 配置测试 | 四种内置 CLI 的启用、持久化、图标状态和可应用配置过滤 |
 | **useAutoRefresh.property.test.ts** | 自动刷新 Hook 测试 | useAutoRefresh Hook |
@@ -79,7 +79,7 @@
 | **data-overview-page.test.tsx** | 数据总览页回归测试 | 首页总览 KPI、站点榜单、规则解释、异常请求、快照趋势，以及路由趋势 `24h` / `7d` 部分数据窗口下的完整 X 轴与前置空桶绘制规则 |
 | **route-analytics-service.test.ts** | 路由分析服务回归测试 | 请求日志 token/cache token 字段、站点/账户/API Key 对象级 token 聚合 |
 | **route-workbench-redesign.test.tsx** | Route 页面重设计测试 | route 页配置与重定向；覆盖 OpenCode/Grok Build 无入口端点选择器、Grok Build 三受管模型预览及仅合并应用 |
-| **sites-page-redesign.test.tsx** | 站点页重设计测试 | 合并后的站点管理页多列列头、内联排序、高频动作、接入点详情浏览器 Profile 原地重绑、站点设置双保存链路、站点名称编辑、History 列、直连配置展示、操作记录弹窗与行内控件冒泡隔离回归 |
+| **sites-page-redesign.test.tsx** | 站点页重设计测试 | 多列列头、内联排序、高频动作、接入点详情、History 四 CLI 选择与 Grok Build 路由请求条形图、直连配置及行内控件回归 |
 | **logs-page.test.tsx** | 日志页回归测试 | 路由日志主页面、四种 CLI 筛选与图标、逐条 push、状态码、失败详情、token/cache token/按次参考金额与直连配置显示 |
 | **toast-store.test.ts** | Toast Store 回归测试 | 可见队列上限、事件历史记录与清理 |
 | **close-behavior-manager.property.test.ts** | 窗口关闭行为测试 | CloseBehaviorManager 设置持久化、对话框显示条件与设置面板偏好映射 |

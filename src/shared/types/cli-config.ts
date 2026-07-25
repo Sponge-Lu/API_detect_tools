@@ -1,7 +1,7 @@
 /**
  * 输入: 无
- * 输出: CLI 配置相关类型定义 (CliConfig, CliConfigItem, ApiKeyInfo 等)
- * 定位: 类型层 - CLI 配置相关类型定义，供多个组件共享使用
+ * 输出: CLI 配置与能力相关类型定义 (CliConfig, CliConfigItem, BuiltinCliType, ProbeCliType 等)
+ * 定位: 类型层 - CLI 配置与内建/可执行探测能力边界，供多个组件共享使用
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -30,14 +30,14 @@ export const BUILTIN_CLI_TYPES = ['claudeCode', 'codex', 'openCode', 'grokBuild'
 
 export type BuiltinCliType = (typeof BUILTIN_CLI_TYPES)[number];
 
-/** 当前具备真实模型探测执行器的 CLI；Grok Build 暂不参与探测。 */
-export const PROBE_CLI_TYPES = [
-  'claudeCode',
-  'codex',
-  'openCode',
-] as const satisfies readonly BuiltinCliType[];
+/** 当前具备真实模型探测执行器的 CLI。 */
+export const PROBE_CLI_TYPES = ['claudeCode', 'codex'] as const satisfies readonly BuiltinCliType[];
 
 export type ProbeCliType = (typeof PROBE_CLI_TYPES)[number];
+
+export function isProbeCliType(value: unknown): value is ProbeCliType {
+  return typeof value === 'string' && PROBE_CLI_TYPES.includes(value as ProbeCliType);
+}
 
 export const BUILTIN_CLI_LABELS: Record<BuiltinCliType, string> = {
   claudeCode: 'Claude Code',

@@ -599,6 +599,21 @@ describe('DirectCliConfigEditorContent', () => {
     );
   });
 
+  it('keeps OpenCode direct configuration without enabling model probes', async () => {
+    const testWithWrapper = getElectronAPI().cliCompat.testWithWrapper;
+
+    await renderDialog();
+    await openCliSection('OpenCode');
+
+    expect(screen.getByRole('button', { name: 'OpenCode 主模型' })).toHaveTextContent('gpt-4.1');
+    expect(screen.getByLabelText('OpenCode 选择上游端口')).toBeEnabled();
+    const testButton = screen.getByRole('button', { name: '测试 OpenCode' });
+    expect(testButton).toBeDisabled();
+    expect(testButton).toHaveTextContent('暂不支持探测');
+    expect(testWithWrapper).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: '应用 OpenCode' })).toBeEnabled();
+  });
+
   it('persists manually typed models for direct custom cli configs', async () => {
     await renderDialog();
     await openCliSection('Codex');

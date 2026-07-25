@@ -27,8 +27,8 @@
 | **AuthErrorDialog.tsx** | 认证错误对话框 | `AuthErrorDialog` 组件，分析并展示 Session/Token 过期等问题 |
 | **SiteGroupDialog.tsx** | 站点分组对话框 | `SiteGroupDialog` 组件，支持创建和编辑分组 |
 | **ApplyConfigPopover.tsx** | 应用配置弹出菜单 | 支持四种内置 CLI；OpenCode 与 Grok Build 仅允许合并写入 |
-| **ManagedCliConfigEditorContent.tsx** | 托管站点 CLI 配置编辑内容 | 覆盖四种内置 CLI 的启用、模型、上游协议、预览、保存与应用；Grok Build 的 native 跟随当前模型入口且暂不提供模型探测 |
-| **DirectCliConfigEditorContent.tsx** | 直连配置编辑内容 | 覆盖四种内置 CLI 的模型、上游协议、预览与应用；Grok Build 生成三后端 TOML、仅合并写入且暂不提供模型探测 |
+| **ManagedCliConfigEditorContent.tsx** | 托管站点 CLI 配置编辑内容 | 覆盖四种内置 CLI 的启用、模型、上游协议、预览、保存与应用；仅 Claude Code / Codex 提供模型探测，OpenCode / Grok Build 明确禁用测试 |
+| **DirectCliConfigEditorContent.tsx** | 直连配置编辑内容 | 覆盖四种内置 CLI 的模型、上游协议、预览与应用；仅 Claude Code / Codex 提供模型探测，OpenCode / Grok Build 明确禁用测试 |
 | **PanelSection.tsx** | 面板通用折叠分区原语 | `PanelSection` 组件，为窄面板内的托管/直连 CLI 编辑器提供统一 section chrome |
 | **CloseBehaviorDialog.tsx** | 窗口关闭行为对话框 | `CloseBehaviorDialog` 组件，用户选择退出或最小化到托盘 |
 | **BackupSelectDialog.tsx** | 备份选择对话框 | `BackupSelectDialog` 组件，从备份目录选择配置包或旧版配置文件进行恢复 |

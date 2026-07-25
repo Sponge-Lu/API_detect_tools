@@ -2,7 +2,7 @@
  * CLI 定时探测服务
  * 输入: ModelRegistry (选样本), cliWrapperCompatService (执行探测), 配置
  * 输出: 探测历史 (RouteCliProbeSample[]), 最新快照 (RouteCliProbeLatest)
- * 定位: 服务层 - 独立于代理服务器生命周期的定时 CLI 健康探测
+ * 定位: 服务层 - 独立于代理服务器生命周期的 Claude Code / Codex 定时健康探测；旧 OpenCode 样本仅用于兼容读取
  */
 
 import Logger from './utils/logger';
@@ -42,10 +42,12 @@ import {
   PROBE_CLI_TYPES,
   DEFAULT_CLI_CONFIG,
   getCliTargetEndpoint,
+  isProbeCliType,
   normalizeCliTargetProtocol,
   normalizeCliTestModels,
   type CliTargetProtocol,
   type CliConfigItem,
+  type ProbeCliType,
 } from '../shared/types/cli-config';
 import {
   normalizeCustomCliSettings,
@@ -53,7 +55,7 @@ import {
 } from '../shared/types/custom-cli-config';
 
 const log = Logger.scope('RouteCliProbe');
-const CLI_PROBE_TYPES: RouteCliType[] = [...PROBE_CLI_TYPES];
+const CLI_PROBE_TYPES: ProbeCliType[] = [...PROBE_CLI_TYPES];
 const CUSTOM_CLI_PROBE_SITE_NAME = '自定义 CLI';
 
 let probeTimer: NodeJS.Timeout | null = null;
@@ -108,7 +110,7 @@ function getProbeAccount(siteId: string, accountId: string): AccountCredential |
 function resolveProbeCliItem(
   siteId: string,
   accountId: string,
-  cliType: RouteCliType
+  cliType: ProbeCliType
 ): CliConfigItem | null {
   const site = getProbeSite(siteId);
   const account = getProbeAccount(siteId, accountId);
@@ -134,14 +136,14 @@ function resolveProbeCliItem(
 function resolveProbeTargetProtocol(
   siteId: string,
   accountId: string,
-  cliType: RouteCliType
+  cliType: ProbeCliType
 ): ReturnType<typeof normalizeCliTargetProtocol> {
   return normalizeCliTargetProtocol(
     resolveProbeCliItem(siteId, accountId, cliType)?.targetProtocol
   );
 }
 
-function isProbeCliEnabled(siteId: string, accountId: string, cliType: RouteCliType): boolean {
+function isProbeCliEnabled(siteId: string, accountId: string, cliType: ProbeCliType): boolean {
   return resolveProbeCliItem(siteId, accountId, cliType)?.enabled !== false;
 }
 
@@ -156,7 +158,7 @@ function matchesConfiguredApiKey(apiKey: ApiKeyInfo, apiKeyId: number | null | u
 async function resolveProbeApiKeyForExecution(
   site: UnifiedSite,
   account: AccountCredential,
-  cliType: RouteCliType
+  cliType: ProbeCliType
 ): Promise<{ apiKeyId: string } | null> {
   const preferredApiKeyId = resolveProbeCliItem(site.id, account.id, cliType)?.apiKeyId;
   const apiKeys = (account.cached_data?.api_keys || []).filter(apiKey => {
@@ -245,7 +247,7 @@ function extractStatusCodeFromError(message?: string): number | undefined {
 function buildConfiguredProbeModels(
   siteId: string,
   accountId: string,
-  cliType: RouteCliType,
+  cliType: ProbeCliType,
   limit: number
 ): Array<{ canonicalModel: string; rawModel: string }> {
   const cliConfigItem = resolveProbeCliItem(siteId, accountId, cliType);
@@ -319,6 +321,11 @@ export async function persistCliProbeSamples(samples: RouteCliProbeSample[]): Pr
     return;
   }
 
+  const unsupportedSample = samples.find(sample => !isProbeCliType(sample?.cliType));
+  if (unsupportedSample) {
+    throw new Error(`CLI probe is not supported for: ${String(unsupportedSample.cliType)}`);
+  }
+
   await unifiedConfigManager.persistRouteCliProbeSamples(
     samples,
     buildLatestListFromSamples(samples)
@@ -331,10 +338,13 @@ export async function persistCliProbeSamples(samples: RouteCliProbeSample[]): Pr
 export function selectProbeModelsForCli(params: {
   siteId: string;
   accountId: string;
-  cliType: RouteCliType;
+  cliType: ProbeCliType;
   limit: number;
 }): Array<{ canonicalModel: string; rawModel: string }> {
   const { siteId, accountId, cliType, limit } = params;
+  if (!isProbeCliType(cliType)) {
+    return [];
+  }
   if (!isProbeCliEnabled(siteId, accountId, cliType)) {
     return [];
   }
@@ -360,7 +370,7 @@ function resolveCustomCliProbeIds(configId: string): {
 
 function selectCustomCliProbeModelsForCli(params: {
   config: CustomCliConfig;
-  cliType: RouteCliType;
+  cliType: ProbeCliType;
   limit: number;
 }): Array<{ canonicalModel: string; rawModel: string }> {
   const setting = normalizeCustomCliSettings(params.config.cliSettings?.[params.cliType]);
@@ -389,7 +399,7 @@ function buildProbeModelView(params: {
   cutoff: number;
   siteId: string;
   accountId: string;
-  cliType: RouteCliType;
+  cliType: ProbeCliType;
   canonicalModel: string;
   rawModel: string;
   targetProtocol: CliTargetProtocol;
@@ -437,7 +447,7 @@ function buildProbeModelView(params: {
 async function runSingleProbe(
   siteId: string,
   accountId: string,
-  cliType: RouteCliType,
+  cliType: ProbeCliType,
   canonicalModel: string,
   rawModel: string,
   _timeoutMs: number,
@@ -529,7 +539,6 @@ async function runSingleProbe(
     let error: string | undefined;
     let claudeDetail: RouteCliProbeSample['claudeDetail'];
     let codexDetail: RouteCliProbeSample['codexDetail'];
-    let openCodeDetail: RouteCliProbeSample['openCodeDetail'];
 
     switch (cliType) {
       case 'claudeCode': {
@@ -558,20 +567,6 @@ async function runSingleProbe(
         codexDetail = result.detail;
         break;
       }
-      case 'openCode': {
-        const result = await cliWrapperCompatService.testOpenCodeWithDetail(
-          routeRuntime.baseUrl,
-          routeApiKey,
-          rawModel,
-          targetProtocol,
-          timeoutMs
-        );
-        success = result.supported;
-        error = result.message;
-        statusCode = extractStatusCodeFromError(result.message);
-        openCodeDetail = result.detail;
-        break;
-      }
     }
 
     const totalLatencyMs = Date.now() - startTime;
@@ -595,7 +590,6 @@ async function runSingleProbe(
       error,
       claudeDetail,
       codexDetail,
-      openCodeDetail,
       testedAt: Date.now(),
     };
   } catch (err: unknown) {
@@ -627,7 +621,7 @@ async function runSingleProbe(
 export async function runCliProbeNow(params?: {
   siteId?: string;
   accountId?: string;
-  cliType?: RouteCliType;
+  cliType?: ProbeCliType;
 }): Promise<{
   startedAt: number;
   finishedAt: number;
@@ -637,6 +631,9 @@ export async function runCliProbeNow(params?: {
 }> {
   const startedAt = Date.now();
   const probeRunId = generateProbeRunId('route');
+  if (params?.cliType !== undefined && !isProbeCliType(params.cliType)) {
+    throw new Error(`CLI probe is not supported for: ${String(params.cliType)}`);
+  }
   const probeConfig = getCliProbeConfig();
   const config = unifiedConfigManager.exportConfigSync();
   if (!config) {
@@ -649,13 +646,13 @@ export async function runCliProbeNow(params?: {
     };
   }
 
-  const cliTypes: RouteCliType[] = params?.cliType ? [params.cliType] : CLI_PROBE_TYPES;
+  const cliTypes: ProbeCliType[] = params?.cliType ? [params.cliType] : CLI_PROBE_TYPES;
 
   const tasks: Array<{
     siteId: string;
     accountId: string;
     apiKeyId?: string;
-    cliType: RouteCliType;
+    cliType: ProbeCliType;
     canonicalModel: string;
     rawModel: string;
     targetProtocol?: CliTargetProtocol;

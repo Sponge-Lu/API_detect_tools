@@ -1,5 +1,10 @@
+import {
+  isProbeCliType,
+  normalizeCliTargetProtocol,
+  type CliTargetProtocol,
+  type ProbeCliType,
+} from '../shared/types/cli-config';
 import type { RouteCliType } from '../shared/types/route-proxy';
-import { normalizeCliTargetProtocol, type CliTargetProtocol } from '../shared/types/cli-config';
 
 const ROUTE_PROBE_LOCK_SEPARATOR = '.probe.';
 const TERMINAL_FAILURE_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -14,7 +19,7 @@ export interface RouteProbeLock {
   siteId: string;
   accountId: string;
   apiKeyId: string;
-  cliType: RouteCliType;
+  cliType: ProbeCliType;
   probeRunId?: string;
   canonicalModel: string;
   rawModel: string;
@@ -378,7 +383,7 @@ export function parseProbeLockRouteApiKey(
     const rawModel = typeof record.rawModel === 'string' ? record.rawModel.trim() : '';
 
     if (
-      (cliType !== 'claudeCode' && cliType !== 'codex' && cliType !== 'openCode') ||
+      !isProbeCliType(cliType) ||
       !siteId ||
       !accountId ||
       !apiKeyId ||

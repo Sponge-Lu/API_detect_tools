@@ -53,11 +53,11 @@
 | `src/main/token-service.ts` | 登录初始化、按 site_type 选择端点与访问令牌策略，Sub2API 可从浏览器登录态重读并校验 JWT，显式 `site_type` 可覆盖 URL 反查；支持按账户浏览器槽位重新读取基础账号信息并在 access token 无效时重建；按站点类型驱动签到/浏览器回退、账号数据刷新；统一识别 Unauthorized/invalid access token 失败 envelope；NewAPI 脱敏 API Key 优先通过 `/api/token/batch/keys` 批量补全明文 key |
 | `src/main/api-service.ts` | 站点检测、HTTP 请求、模型接口响应格式容错、NewAPI/Sub2API 认证失败 envelope 识别、同日手动签到完成状态保留、旧站点首次检测时自动识别并写回 `site_type`、LDC 支付信息探测，并在检测缓存落盘后触发站点每日快照采集 |
 | `src/main/overview-service.ts` | 数据总览聚合服务，负责站点每日快照采集、查询与按日期汇总 |
-| `src/main/cli-wrapper-compat-service.ts` | 通过真实 Claude Code / Codex / OpenCode wrapper 做兼容性验证；Grok Build 暂不进入模型探测。当前 UI 使用临时目录隔离本机配置，监听 probe-lock 终止失败并在 CLI 二次请求先触发 budget 限制时等待/回看首次真实上游结果，避免后续额外请求的噪声覆盖真实检测结果 |
+| `src/main/cli-wrapper-compat-service.ts` | 通过真实 Claude Code / Codex wrapper 做兼容性验证；OpenCode 与 Grok Build 保留配置和路由能力，但不进入模型探测。当前 UI 使用临时目录隔离本机配置，监听 probe-lock 终止失败并在 CLI 二次请求先触发 budget 限制时等待/回看首次真实上游结果，避免后续额外请求的噪声覆盖真实检测结果 |
 | `src/main/custom-cli-config-service.ts` | 自定义 CLI 配置持久化服务，并为路由模型注册表生成自定义 CLI 虚拟通道标识 |
 | `src/main/custom-cli-model-service.ts` | 直连配置模型获取服务，通过配置 `baseUrl + /v1/models` 拉取模型列表并写回 `CustomCliConfig.models` |
 | `src/main/handlers/*.ts` | `config:*`、`token:*`、`accounts:*`、`route:*`、`overview:*`、`cli-compat:*` 等 IPC 通道；托管站点 CLI 配置保存到账户级 `cli_config`，自定义 CLI 配置保存后会同步路由模型 registry |
-| `src/main/route-*.ts` / `src/main/anyrouter-request-rewriter.ts` / `src/main/cli-protocol-adapter.ts` | 路由代理服务器、规则解析、模型注册表、自定义 CLI 路由来源、CLI 探测、probe-lock 定向测试、健康检查与统计分析；Claude Code、Codex、OpenCode、Grok Build 均可作为路由 CLI，Grok Build 的 `native` 跟随实际入站端点并支持 marker/原生头/UA 识别，但暂不进入模型探测执行器；生成协议仅在无损子集内执行单次转换，Token 计数与状态资源按操作能力处理；模型来源扫描只刷新候选来源，probe-lock 只允许 loopback 并限制单模型测试的真实上游尝试预算 |
+| `src/main/route-*.ts` / `src/main/anyrouter-request-rewriter.ts` / `src/main/cli-protocol-adapter.ts` | 路由代理服务器、规则解析、模型注册表、自定义 CLI 路由来源、CLI 探测、probe-lock 定向测试、健康检查与统计分析；Claude Code、Codex、OpenCode、Grok Build 均可作为路由 CLI，只有 Claude Code 与 Codex 进入模型探测执行器和 probe-lock；Grok Build 的 `native` 跟随实际入站端点并支持 marker/原生头/UA 识别；生成协议仅在无损子集内执行单次转换，Token 计数与状态资源按操作能力处理；模型来源扫描只刷新候选来源，probe-lock 只允许 loopback 并限制单模型测试的真实上游尝试预算 |
 | `src/main/route-history-service.ts` | 站点管理 History 列时间桶聚合服务，将 CLI 探测样本与路由请求统计按 48h / 2h 桶合并为成功率数据 |
 | `src/main/route-state-manager.ts` | 路由运行态文件管理，将 stats/path state/health、CLI probe、analytics bucket 和模型来源快照拆到有 TTL/max-items 的 `state/*.json`，避免高频状态写入 `config.json` |
 | `src/main/backup-manager.ts` / `webdav-manager.ts` | 本地备份与 WebDAV 云端配置包；自动备份 config-only 节流去重，手动/WebDAV/导出使用 plaintext portable 2 文件包；恢复后 reconcile 隔离 Profile slot |
@@ -157,7 +157,7 @@
 ### Route 工作台
 
 1. 渲染进程通过 `route:*` IPC 拉取 `server / rules / modelRegistry / cliProbe / analytics`。
-2. 主进程中的 `route-proxy-service`、`route-cli-probe-service`、`route-analytics-service`、`route-history-service` 等模块负责运行时行为和统计；本地路由上游转发使用 Electron net raw 客户端，必要时读取 `routing.server.upstreamProxyUrl` 走上游代理，客户端取消会中止当前上游请求且不继续 fallback；流式请求在上游返回成功 `text/event-stream` 且响应适配器透明时会边收边转发，失败响应仍缓冲以保留 fallback；模型注册表会同时聚合站点/账户模型与自定义 CLI 配置模型，并用自定义 CLI 已拉取模型列表隔离旧 Base URL/API Key 残留模型，`manualModels` 作为用户手动输入模型例外继续参与路由来源同步。自定义 CLI 配置保存后会强制同步持久化 registry，避免重启后路由模型选择继续读取旧来源；站点管理会把自定义 CLI 配置投影为虚拟站点/账户/API Key，直连配置行与普通站点行共享 CLI 探测、路由统计和 History 展示。
+2. 主进程中的 `route-proxy-service`、`route-cli-probe-service`、`route-analytics-service`、`route-history-service` 等模块负责运行时行为和统计；本地路由上游转发使用 Electron net raw 客户端，必要时读取 `routing.server.upstreamProxyUrl` 走上游代理，客户端取消会中止当前上游请求且不继续 fallback；流式请求在上游返回成功 `text/event-stream` 且响应适配器透明时会边收边转发，失败响应仍缓冲以保留 fallback；模型注册表会同时聚合站点/账户模型与自定义 CLI 配置模型，并用自定义 CLI 已拉取模型列表隔离旧 Base URL/API Key 残留模型，`manualModels` 作为用户手动输入模型例外继续参与路由来源同步。自定义 CLI 配置保存后会强制同步持久化 registry，避免重启后路由模型选择继续读取旧来源；站点管理会把自定义 CLI 配置投影为虚拟站点/账户/API Key，直连配置行与普通站点行共享路由统计和 History 展示，仅 Claude Code / Codex 参与 CLI 探测。
 3. 配置与统计通过 `UnifiedConfigManager` 写回 `config.routing`。
 
 ### 数据总览
@@ -170,8 +170,8 @@
 ### CLI 兼容性测试
 
 1. 渲染进程中的 `useCliCompatTest`、站点页与 CLI 配置对话框统一调用 `cli-compat:test-with-wrapper`。
-2. 主进程由 `cli-wrapper-compat-service.ts` 在隔离的临时 `HOME` / `CODEX_HOME` 中拉起真实 CLI；Codex 测试 prompt 走 `stdin`，Codex 会优先从 stderr 的 `ERROR:` / JSON error 中提取上游原因，Claude JSON `is_error` 输出会摘要化；probe-lock 检测以首个真实上游生成结果为主事实源，首个上游生成成功或失败都优先于 CLI 后续辅助/重试请求触发的 budget noise；临时目录清理遇到 Windows 文件锁时会重试并只记录 warning。
-3. 站点管理兼容性测试与 CLI 探测统一落到 `config.routing.cliProbe`：主进程保存 `history/latest`，并按站点下全部活跃账户和自定义 CLI 虚拟配置分别探测；站点页手动测试以及统一 CLI 配置抽屉里的“测试已选模型”在保存成功后，渲染进程都会通过 `cli-compat-sync.ts` 重新加载配置、重投影对应账户卡片，并强制刷新一次 route CLI history 视图缓存；自定义 CLI 编辑器保留上游协议选择和手动模型输入，测试 payload 写入 `targetProtocol`，手动模型写入 `manualModels` 并继续参与路由来源同步；自定义 CLI 本地测试结果作为重定向优先级详情的 fallback，按时间戳与 `routing.cliProbe.latest` 合并；站点管理 History 列固定展示 48 小时窗口、2 小时粒度的 24 个时间桶，CLI 类型与综合/CLI 探测/路由请求模式由 History 表头统一控制；CLI 探测模型固定使用各站点/直连配置中选择的单个 CLI 测试模型，不再由全局 modelsPerCli 控制。
+2. 主进程由 `cli-wrapper-compat-service.ts` 在隔离的临时 `HOME` / `CODEX_HOME` 中拉起真实 Claude Code / Codex；Codex 测试 prompt 走 `stdin`，Codex 会优先从 stderr 的 `ERROR:` / JSON error 中提取上游原因，Claude JSON `is_error` 输出会摘要化；probe-lock 检测以首个真实上游生成结果为主事实源，首个上游生成成功或失败都优先于 CLI 后续辅助/重试请求触发的 budget noise；临时目录清理遇到 Windows 文件锁时会重试并只记录 warning。
+3. 站点管理兼容性测试与 CLI 探测统一落到 `config.routing.cliProbe`：只有 Claude Code / Codex 会由主进程按站点下全部活跃账户和自定义 CLI 虚拟配置执行探测并保存 `history/latest`；OpenCode 与 Grok Build 继续保留配置、路由、日志、统计和 History，但测试操作不可用。站点页手动测试以及统一 CLI 配置抽屉里的“测试已选模型”在保存成功后，渲染进程都会通过 `cli-compat-sync.ts` 重新加载配置、重投影对应账户卡片，并强制刷新一次 route CLI history 视图缓存；自定义 CLI 编辑器保留上游协议选择和手动模型输入，测试 payload 写入 `targetProtocol`，手动模型写入 `manualModels` 并继续参与路由来源同步；自定义 CLI 本地测试结果作为重定向优先级详情的 fallback，按时间戳与 `routing.cliProbe.latest` 合并；站点管理 History 列固定展示 48 小时窗口、2 小时粒度的 24 个时间桶，四种内建 CLI 与综合/CLI 探测/路由请求模式由 History 表头统一控制；CLI 探测模型固定使用各站点/直连配置中选择的单个 CLI 测试模型，不再由全局 modelsPerCli 控制。
 4. 由于真实测试不写入用户 CLI 配置目录，因此正常情况下无需备份或恢复测试前的本机 CLI 配置。
 
 ---

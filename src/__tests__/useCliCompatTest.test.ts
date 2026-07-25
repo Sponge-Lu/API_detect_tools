@@ -1,7 +1,7 @@
 /**
  * 输入: 站点页 CLI 配置、Electron IPC mock、Zustand 检测状态
  * 输出: 站点页 CLI 兼容性测试回归结果
- * 定位: 测试层 - 验证 useCliCompatTest 的站点 URL 优先级和手动测试结果同步
+ * 定位: 测试层 - 验证 useCliCompatTest 的 Claude Code / Codex 探测边界、站点 URL 优先级和手动测试结果同步
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -182,6 +182,60 @@ describe('useCliCompatTest', () => {
       );
     }
   );
+
+  it('excludes OpenCode from site-level batch probes while retaining its configuration', async () => {
+    const cliConfig: CliConfig = {
+      ...buildCliConfig([
+        {
+          path: '~/.codex/config.toml',
+          content: 'base_url = "https://www.duckcoding.ai/v1"\nwire_api = "responses"',
+        },
+      ]),
+      openCode: {
+        apiKeyId: 2,
+        model: 'gpt-4.1',
+        testModels: ['gpt-4.1'],
+        enabled: true,
+        editedFiles: null,
+        applyMode: 'merge',
+      },
+    };
+    useDetectionStore.getState().setCliConfig(STORE_KEY, cliConfig);
+
+    const { result } = renderHook(() => useCliCompatTest());
+
+    await act(async () => {
+      await result.current.testSite(
+        STORE_KEY,
+        'DuckCoding',
+        SITE_URL,
+        [
+          { id: 1, key: 'sk-codex' },
+          { id: 2, key: 'sk-opencode' },
+        ],
+        'acct-default'
+      );
+    });
+
+    const testWindow = window as typeof window & TestElectronApi;
+    expect(testWindow.electronAPI?.token?.resolveApiKeyValue).toHaveBeenCalledTimes(1);
+    expect(testWindow.electronAPI?.token?.resolveApiKeyValue).toHaveBeenCalledWith(
+      SITE_URL,
+      1,
+      'acct-default'
+    );
+    expect(testWindow.electronAPI?.cliCompat?.testWithWrapper).toHaveBeenCalledWith({
+      siteUrl: SITE_URL,
+      configs: [
+        {
+          cliType: 'codex',
+          apiKey: 'sk-live-selected',
+          model: 'gpt-5.2-codex-low',
+          baseUrl: 'https://www.duckcoding.ai',
+        },
+      ],
+    });
+  });
 
   it('syncs persisted manual probe results back into the site card and route usability cache', async () => {
     useDetectionStore.getState().setCliConfig(

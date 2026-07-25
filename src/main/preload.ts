@@ -17,6 +17,7 @@ import type {
   RouteRequestLogItem,
 } from '../shared/types/route-proxy';
 import type { BrowserProfileOptionId } from '../shared/types/site';
+import type { ProbeCliType } from '../shared/types/cli-config';
 
 const APP_DATA_CHANGED_EVENT = 'app-data:changed';
 const ROUTE_REQUEST_LOG_APPENDED_EVENT = 'route:request-log-appended';
@@ -254,7 +255,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     testWithWrapper: (params: {
       siteUrl: string;
       configs: Array<{
-        cliType: 'claudeCode' | 'codex' | 'openCode';
+        cliType: ProbeCliType;
         apiKey: string;
         model: string;
         baseUrl?: string;
@@ -469,7 +470,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('route:save-cli-thinking-effort-selections', { selections }),
     saveCliProbeConfig: (updates: any) =>
       ipcRenderer.invoke('route:save-cli-probe-config', updates),
-    runCliProbeNow: (params?: any) => ipcRenderer.invoke('route:run-cli-probe-now', params),
+    runCliProbeNow: (params?: { siteId?: string; accountId?: string; cliType?: ProbeCliType }) =>
+      ipcRenderer.invoke('route:run-cli-probe-now', params),
     getCliProbeLatest: (params?: any) => ipcRenderer.invoke('route:get-cli-probe-latest', params),
     getCliProbeHistory: (params: any) => ipcRenderer.invoke('route:get-cli-probe-history', params),
     getCliProbeView: (params: any) => ipcRenderer.invoke('route:get-cli-probe-view', params),

@@ -223,6 +223,8 @@ describe('sites page redesign', () => {
       draggedIndex: null,
       dragOverIndex: null,
       dragOverGroupId: null,
+      historyCliType: 'claudeCode',
+      historyMode: 'combined',
     });
     useToastStore.setState({
       toasts: [],
@@ -672,100 +674,104 @@ describe('sites page redesign', () => {
     expect(screen.queryByText('3')).not.toBeInTheDocument();
   });
 
-  it('embeds direct config identity, model, and CLI editors in the side panel', { timeout: 20000 }, () => {
-    const onDeleteDirectConfig = vi.fn();
-    const directFailureMessage = 'direct upstream timeout detail';
-    const directConfigWithFailure: CustomCliConfig = {
-      ...customCliConfig,
-      cliSettings: {
-        ...customCliConfig.cliSettings,
-        claudeCode: {
-          ...customCliConfig.cliSettings.claudeCode,
-          testState: {
-            status: false,
-            testedAt: 123,
-            slots: [
-              {
-                model: 'direct-model',
-                success: false,
-                timestamp: 123,
-                message: directFailureMessage,
-              },
-              null,
-              null,
-            ],
+  it(
+    'embeds direct config identity, model, and CLI editors in the side panel',
+    { timeout: 20000 },
+    () => {
+      const onDeleteDirectConfig = vi.fn();
+      const directFailureMessage = 'direct upstream timeout detail';
+      const directConfigWithFailure: CustomCliConfig = {
+        ...customCliConfig,
+        cliSettings: {
+          ...customCliConfig.cliSettings,
+          claudeCode: {
+            ...customCliConfig.cliSettings.claudeCode,
+            testState: {
+              status: false,
+              testedAt: 123,
+              slots: [
+                {
+                  model: 'direct-model',
+                  success: false,
+                  timestamp: 123,
+                  message: directFailureMessage,
+                },
+                null,
+                null,
+              ],
+            },
           },
         },
-      },
-    };
+      };
 
-    render(
-      <AccessPointDetailPanel
-        open={true}
-        onClose={vi.fn()}
-        data={{ type: 'custom-cli', config: directConfigWithFailure }}
-        onDeleteDirectConfig={onDeleteDirectConfig}
-      />
-    );
+      render(
+        <AccessPointDetailPanel
+          open={true}
+          onClose={vi.fn()}
+          data={{ type: 'custom-cli', config: directConfigWithFailure }}
+          onDeleteDirectConfig={onDeleteDirectConfig}
+        />
+      );
 
-    expect(screen.getByText('直连配置')).toBeInTheDocument();
-    expect(screen.queryByText('身份、凭证和备注在此统一编辑')).not.toBeInTheDocument();
-    expect(screen.queryByText('直连配置身份')).not.toBeInTheDocument();
-    expect(screen.queryByText('配置 ID')).not.toBeInTheDocument();
-    expect(screen.queryByText('创建时间')).not.toBeInTheDocument();
-    expect(screen.queryByText('更新时间')).not.toBeInTheDocument();
-    expect(screen.getByPlaceholderText('例如: 我的 API')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('https://api.example.com')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('sk-...')).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: '保存配置' })).toHaveLength(1);
+      expect(screen.getByText('直连配置')).toBeInTheDocument();
+      expect(screen.queryByText('身份、凭证和备注在此统一编辑')).not.toBeInTheDocument();
+      expect(screen.queryByText('直连配置身份')).not.toBeInTheDocument();
+      expect(screen.queryByText('配置 ID')).not.toBeInTheDocument();
+      expect(screen.queryByText('创建时间')).not.toBeInTheDocument();
+      expect(screen.queryByText('更新时间')).not.toBeInTheDocument();
+      expect(screen.getByPlaceholderText('例如: 我的 API')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('https://api.example.com')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('sk-...')).toBeInTheDocument();
+      expect(screen.getAllByRole('button', { name: '保存配置' })).toHaveLength(1);
 
-    fireEvent.click(screen.getByRole('button', { name: '删除配置' }));
-    expect(onDeleteDirectConfig).toHaveBeenCalledWith(directConfigWithFailure);
+      fireEvent.click(screen.getByRole('button', { name: '删除配置' }));
+      expect(onDeleteDirectConfig).toHaveBeenCalledWith(directConfigWithFailure);
 
-    fireEvent.click(screen.getByRole('button', { name: '模型 & 资源' }));
-    expect(screen.getByText('直连模型管理')).toBeInTheDocument();
-    expect(screen.getByText('手动模型')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: '模型 & 资源' }));
+      expect(screen.getByText('直连模型管理')).toBeInTheDocument();
+      expect(screen.getByText('手动模型')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'CLI 配置 & 测试' }));
-    expect(
-      screen.getByText((_, element) =>
-        /^CLI 配置（\s*\d+\s*\/\s*4\s*）$/.test(element?.textContent ?? '')
-      )
-    ).toBeInTheDocument();
-    expect(screen.queryByText('直连 CLI 配置')).not.toBeInTheDocument();
-    expect(screen.queryByText('配置预览与编辑')).not.toBeInTheDocument();
-    expect(screen.getByText('配置文件预览')).toBeInTheDocument();
-    expect(screen.getAllByText('应用到本机').length).toBeGreaterThan(0);
-    expect(screen.getByRole('button', { name: 'Claude Code 主模型' })).toHaveClass(
-      'px-3',
-      'py-2',
-      'text-sm'
-    );
-    expect(screen.getByRole('button', { name: 'Claude Code 测试模型' })).toHaveClass(
-      'px-3',
-      'py-2',
-      'text-sm'
-    );
-    expect(screen.getByText('失败')).toBeInTheDocument();
-    expect(screen.queryByText(directFailureMessage)).not.toBeInTheDocument();
-    expect(screen.queryByTitle(directFailureMessage)).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'CLI 配置 & 测试' }));
+      expect(
+        screen.getByText((_, element) =>
+          /^CLI 配置（\s*\d+\s*\/\s*4\s*）$/.test(element?.textContent ?? '')
+        )
+      ).toBeInTheDocument();
+      expect(screen.queryByText('直连 CLI 配置')).not.toBeInTheDocument();
+      expect(screen.queryByText('配置预览与编辑')).not.toBeInTheDocument();
+      expect(screen.getByText('配置文件预览')).toBeInTheDocument();
+      expect(screen.getAllByText('应用到本机').length).toBeGreaterThan(0);
+      expect(screen.getByRole('button', { name: 'Claude Code 主模型' })).toHaveClass(
+        'px-3',
+        'py-2',
+        'text-sm'
+      );
+      expect(screen.getByRole('button', { name: 'Claude Code 测试模型' })).toHaveClass(
+        'px-3',
+        'py-2',
+        'text-sm'
+      );
+      expect(screen.getByText('失败')).toBeInTheDocument();
+      expect(screen.queryByText(directFailureMessage)).not.toBeInTheDocument();
+      expect(screen.queryByTitle(directFailureMessage)).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
+      fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
 
-    expect(screen.queryByText('配置文件预览')).not.toBeInTheDocument();
-    expect(screen.queryByText('CLI 测试')).not.toBeInTheDocument();
-    expect(screen.queryAllByText('测试模型')).toHaveLength(0);
-    expect(screen.queryByText('测试模型（最多 3 个）')).not.toBeInTheDocument();
-    expect(screen.queryByText('请确认配置信息是否正确')).not.toBeInTheDocument();
-    expect(screen.queryAllByRole('button', { name: /^预览 / })).toHaveLength(0);
+      expect(screen.queryByText('配置文件预览')).not.toBeInTheDocument();
+      expect(screen.queryByText('CLI 测试')).not.toBeInTheDocument();
+      expect(screen.queryAllByText('测试模型')).toHaveLength(0);
+      expect(screen.queryByText('测试模型（最多 3 个）')).not.toBeInTheDocument();
+      expect(screen.queryByText('请确认配置信息是否正确')).not.toBeInTheDocument();
+      expect(screen.queryAllByRole('button', { name: /^预览 / })).toHaveLength(0);
 
-    fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
-    expect(screen.getByText('配置文件预览')).toBeInTheDocument();
+      fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
+      expect(screen.getByText('配置文件预览')).toBeInTheDocument();
 
-    expect(
-      screen.queryByText('旧版 CLI 配置编辑区与测试结果（实现期细化）')
-    ).not.toBeInTheDocument();
-  });
+      expect(
+        screen.queryByText('旧版 CLI 配置编辑区与测试结果（实现期细化）')
+      ).not.toBeInTheDocument();
+    }
+  );
 
   it('keeps the direct config side panel on tab2 after saving the same config', async () => {
     const initialConfig: CustomCliConfig = {
@@ -1000,9 +1006,7 @@ describe('sites page redesign', () => {
 
     const selector = await screen.findByRole('combobox', { name: '浏览器 Profile' });
     expect(selector).toHaveValue('manual');
-    expect(
-      screen.getByRole('option', { name: '手动添加账户无绑定浏览器' })
-    ).toBeEnabled();
+    expect(screen.getByRole('option', { name: '手动添加账户无绑定浏览器' })).toBeEnabled();
     expect(screen.getByRole('option', { name: '主浏览器 Profile' })).toBeEnabled();
 
     fireEvent.change(selector, { target: { value: 'main_profile' } });
@@ -1118,78 +1122,82 @@ describe('sites page redesign', () => {
     );
   });
 
-  it('exposes the embedded managed CLI editor from the side panel', { timeout: 20000 }, async () => {
-    const onSaveCliConfig = vi.fn();
-    const managedFailureMessage = 'managed upstream timeout detail';
-    const baseCliConfig = buildSiteCardProps().cliConfig;
-    const managedCliConfigWithFailure = {
-      ...baseCliConfig,
-      claudeCode: {
-        ...baseCliConfig.claudeCode,
-        testResults: [
-          {
-            model: 'claude-3-5-sonnet',
-            success: false,
-            timestamp: 123,
-            message: managedFailureMessage,
-          },
-          null,
-          null,
-        ],
-      },
-    };
+  it(
+    'exposes the embedded managed CLI editor from the side panel',
+    { timeout: 20000 },
+    async () => {
+      const onSaveCliConfig = vi.fn();
+      const managedFailureMessage = 'managed upstream timeout detail';
+      const baseCliConfig = buildSiteCardProps().cliConfig;
+      const managedCliConfigWithFailure = {
+        ...baseCliConfig,
+        claudeCode: {
+          ...baseCliConfig.claudeCode,
+          testResults: [
+            {
+              model: 'claude-3-5-sonnet',
+              success: false,
+              timestamp: 123,
+              message: managedFailureMessage,
+            },
+            null,
+            null,
+          ],
+        },
+      };
 
-    render(
-      <AccessPointDetailPanel
-        open={true}
-        onClose={vi.fn()}
-        data={{
-          type: 'managed',
-          site: baseSite,
-          account: {
-            id: 'account-1',
-            account_name: 'Primary Account',
-            user_id: 'user-1',
-            status: 'active',
-            auth_source: 'manual',
-          },
-        }}
-        cliConfig={managedCliConfigWithFailure}
-        apiKeys={[{ id: 1, name: 'Primary Key', key: 'sk-primary' }]}
-        siteResult={{ status: '成功', models: ['claude-3-5-sonnet'] } as any}
-        onSaveCliConfig={onSaveCliConfig}
-      />
-    );
+      render(
+        <AccessPointDetailPanel
+          open={true}
+          onClose={vi.fn()}
+          data={{
+            type: 'managed',
+            site: baseSite,
+            account: {
+              id: 'account-1',
+              account_name: 'Primary Account',
+              user_id: 'user-1',
+              status: 'active',
+              auth_source: 'manual',
+            },
+          }}
+          cliConfig={managedCliConfigWithFailure}
+          apiKeys={[{ id: 1, name: 'Primary Key', key: 'sk-primary' }]}
+          siteResult={{ status: '成功', models: ['claude-3-5-sonnet'] } as any}
+          onSaveCliConfig={onSaveCliConfig}
+        />
+      );
 
-    fireEvent.click(screen.getByRole('button', { name: 'CLI 配置 & 测试' }));
+      fireEvent.click(screen.getByRole('button', { name: 'CLI 配置 & 测试' }));
 
-    expect(screen.getByRole('button', { name: '保存配置' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '测试已选模型' })).not.toBeInTheDocument();
-    expect(screen.getAllByText('应用到本机').length).toBeGreaterThan(0);
+      expect(screen.getByRole('button', { name: '保存配置' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: '测试已选模型' })).not.toBeInTheDocument();
+      expect(screen.getAllByText('应用到本机').length).toBeGreaterThan(0);
 
-    fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
+      fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
 
-    expect(screen.getByRole('button', { name: '测试已选模型' })).toBeInTheDocument();
-    expect(screen.getByLabelText('选择 API Key')).toBeInTheDocument();
-    expect(screen.getByLabelText('选择上游端口')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'CLI 使用模型' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '测试模型' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '测试模型 2' })).not.toBeInTheDocument();
-    expect(screen.getByText('失败')).toBeInTheDocument();
-    expect(screen.queryByText(managedFailureMessage)).not.toBeInTheDocument();
-    expect(screen.queryByTitle(managedFailureMessage)).not.toBeInTheDocument();
-    expect(screen.getByText('配置文件预览')).toBeInTheDocument();
-    expect(screen.queryByText('请去站点确认配置信息是否正确')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '测试已选模型' })).toBeInTheDocument();
+      expect(screen.getByLabelText('选择 API Key')).toBeInTheDocument();
+      expect(screen.getByLabelText('选择上游端口')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'CLI 使用模型' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '测试模型' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: '测试模型 2' })).not.toBeInTheDocument();
+      expect(screen.getByText('失败')).toBeInTheDocument();
+      expect(screen.queryByText(managedFailureMessage)).not.toBeInTheDocument();
+      expect(screen.queryByTitle(managedFailureMessage)).not.toBeInTheDocument();
+      expect(screen.getByText('配置文件预览')).toBeInTheDocument();
+      expect(screen.queryByText('请去站点确认配置信息是否正确')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
-    expect(screen.queryByRole('button', { name: '测试已选模型' })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
+      expect(screen.queryByRole('button', { name: '测试已选模型' })).not.toBeInTheDocument();
 
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
-    });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+      });
 
-    expect(onSaveCliConfig).toHaveBeenCalledTimes(1);
-  });
+      expect(onSaveCliConfig).toHaveBeenCalledTimes(1);
+    }
+  );
 
   it('keeps the managed side panel on the cli tab after saving the same account config', async () => {
     const onSaveCliConfig = vi.fn();
@@ -1395,6 +1403,38 @@ describe('sites page redesign', () => {
     expect(screen.getByTestId('history-bucket-bars-track')).toHaveStyle({ height: '13px' });
   });
 
+  it('loads Grok Build route requests into the History bars without CLI probing', async () => {
+    const getHistoryBuckets = vi.fn().mockResolvedValue({
+      success: true,
+      data: Array.from({ length: 24 }, (_, index) => ({
+        bucketStart: index * 2 * 60 * 60 * 1000,
+        bucketEnd: (index + 1) * 2 * 60 * 60 * 1000,
+        successRate: index === 23 ? 1 : null,
+        probeCount: 0,
+        routeCount: index === 23 ? 1 : 0,
+      })),
+    });
+    window.electronAPI.route.getHistoryBuckets = getHistoryBuckets;
+
+    await act(async () => {
+      render(
+        <HistoryBucketBars siteId="site-1" accountId="account-1" cliType="grokBuild" mode="route" />
+      );
+    });
+
+    await vi.waitFor(() => expect(getHistoryBuckets).toHaveBeenCalled());
+    expect(getHistoryBuckets).toHaveBeenCalledWith({
+      window: '48h',
+      bucketSize: '2h',
+      siteId: 'site-1',
+      accountId: 'account-1',
+      cliType: 'grokBuild',
+      mode: 'route-only',
+    });
+    expect(await screen.findAllByLabelText(/CLI: Grok Build/)).toHaveLength(24);
+    expect(screen.getByLabelText(/路由请求 1 次 100%/)).toBeInTheDocument();
+  });
+
   it('shows the check-in spinner only for the targeted account card key', () => {
     render(
       <>
@@ -1482,9 +1522,11 @@ describe('sites page redesign', () => {
     expect(screen.getByAltText('Claude Code')).toBeInTheDocument();
     expect(screen.getByAltText('Codex')).toBeInTheDocument();
     expect(screen.getByAltText('OpenCode')).toBeInTheDocument();
-    // Grok Build 暂不参与站点探测，表头仅提供 Claude Code / Codex / OpenCode 选择
-    expect(screen.queryByAltText('Grok Build')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '选择 Grok Build' })).toBeInTheDocument();
+    expect(screen.getByAltText('Grok Build')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '综合模式' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '选择 Grok Build' }));
+    expect(useUIStore.getState().historyCliType).toBe('grokBuild');
     expect(screen.queryByText('操作')).not.toBeInTheDocument();
     // 已移除的列
     expect(screen.queryByText('站点类型')).not.toBeInTheDocument();

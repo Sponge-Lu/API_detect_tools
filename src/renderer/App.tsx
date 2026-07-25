@@ -36,7 +36,7 @@ import type {
   CliCompatibilityData,
   SiteDailySnapshot,
 } from '../shared/types/site';
-import type { CliTargetProtocol } from '../shared/types/cli-config';
+import type { CliTargetProtocol, ProbeCliType } from '../shared/types/cli-config';
 import type {
   RouteAnalyticsOverview,
   RouteAnalyticsObjectStatsItem,
@@ -202,7 +202,7 @@ declare global {
         testWithWrapper: (params: {
           siteUrl: string;
           configs: Array<{
-            cliType: 'claudeCode' | 'codex' | 'openCode';
+            cliType: ProbeCliType;
             apiKey: string;
             model: string;
             baseUrl?: string;
@@ -212,7 +212,7 @@ declare global {
           success: boolean;
           data?: CliCompatibilityData;
           samples?: Array<{
-            cliType: 'claudeCode' | 'codex' | 'openCode';
+            cliType: ProbeCliType;
             model: string;
             success: boolean;
             testedAt: number;
@@ -440,7 +440,11 @@ declare global {
           selections: any
         ) => Promise<{ success: boolean; error?: string }>;
         saveCliProbeConfig: (updates: any) => Promise<{ success: boolean; error?: string }>;
-        runCliProbeNow: (params?: any) => Promise<{ success: boolean; data?: any; error?: string }>;
+        runCliProbeNow: (params?: {
+          siteId?: string;
+          accountId?: string;
+          cliType?: ProbeCliType;
+        }) => Promise<{ success: boolean; data?: any; error?: string }>;
         getCliProbeLatest: (
           params?: any
         ) => Promise<{ success: boolean; data?: any; error?: string }>;

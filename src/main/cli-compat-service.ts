@@ -1,7 +1,7 @@
 /**
  * 输入: HttpClient (HTTP 请求), Logger (日志记录)
  * 输出: CliCompatibilityResult, CodexTestDetail, CliCompatService, 请求构建函数
- * 定位: 服务层 - CLI 工具兼容性测试服务，使用与真实 CLI 一致的流式请求格式（User-Agent/stream/beta headers）
+ * 定位: 服务层 - Claude Code / Codex 兼容性测试服务，使用与真实 CLI 一致的流式请求格式；旧 OpenCode 结果字段仅作兼容
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -26,7 +26,6 @@ const log = Logger.scope('CliCompatService');
 export enum CliType {
   CLAUDE_CODE = 'claudeCode',
   CODEX = 'codex',
-  OPEN_CODE = 'openCode',
 }
 
 /** Claude Code 详细测试结果 */
@@ -378,33 +377,6 @@ export function buildCodexResponsesRequest(
   };
 }
 
-/**
- * 构建 OpenCode OpenAI-compatible Chat Completions 测试请求
- * 使用 /v1/chat/completions 端点，Bearer 认证，与 OpenCode 官方 openai-compatible provider 对齐
- */
-export function buildOpenCodeChatCompletionsRequest(
-  baseUrl: string,
-  apiKey: string,
-  model: string
-): RequestFormat {
-  const url = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
-
-  return {
-    url,
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-      'User-Agent': 'opencode',
-    },
-    body: {
-      model,
-      messages: [{ role: 'user', content: '1+1=?' }],
-      stream: true,
-    },
-  };
-}
-
 // ============= CLI 兼容性服务类 =============
 
 /**
@@ -496,43 +468,7 @@ export class CliCompatService {
   }
 
   /**
-   * 测试 OpenCode 兼容性（默认 OpenAI-compatible Chat Completions）
-   */
-  async testOpenCodeWithDetail(
-    url: string,
-    apiKey: string,
-    model: string,
-    mode: CliTargetProtocol = 'openai-responses'
-  ): Promise<{ supported: boolean; detail: OpenCodeTestDetail }> {
-    const request =
-      mode === 'anthropic-messages'
-        ? buildClaudeCodeRequest(url, apiKey, model)
-        : mode === 'openai-responses'
-          ? buildCodexResponsesRequest(url, apiKey, model)
-          : buildOpenCodeChatCompletionsRequest(url, apiKey, model);
-    const label =
-      mode === 'anthropic-messages'
-        ? 'OpenCode (Anthropic Messages)'
-        : mode === 'openai-responses'
-          ? 'OpenCode (Responses)'
-          : 'OpenCode (Chat Completions)';
-
-    try {
-      const supported = await this.runStreamTest(label, request);
-      return { supported, detail: { mode } };
-    } catch (error: any) {
-      log.warn(`${label} test failed: ${error.message}`);
-      return { supported: false, detail: { mode } };
-    }
-  }
-
-  async testOpenCode(url: string, apiKey: string, model: string): Promise<boolean> {
-    const result = await this.testOpenCodeWithDetail(url, apiKey, model);
-    return result.supported;
-  }
-
-  /**
-   * 测试单个站点的所有 CLI 兼容性
+   * 测试单个站点当前具备探测执行器的 CLI 兼容性
    */
   async testSite(config: TestConfig): Promise<CliCompatibilityResult> {
     const { siteUrl, apiKey, models } = config;
@@ -555,25 +491,19 @@ export class CliCompatService {
     log.info(`Selected models - Claude: ${claudeModel}, GPT: ${gptModel}`);
 
     // 并发执行所有测试
-    const [claudeCodeResult, codexResultWithDetail, openCodeResultWithDetail] = await Promise.all([
+    const [claudeCodeResult, codexResultWithDetail] = await Promise.all([
       claudeModel ? this.testClaudeCode(siteUrl, apiKey, claudeModel) : Promise.resolve(null),
       gptModel
         ? this.testCodexWithDetail(siteUrl, apiKey, gptModel)
         : Promise.resolve({ supported: null, detail: { responses: null } }),
-      gptModel
-        ? this.testOpenCodeWithDetail(siteUrl, apiKey, gptModel)
-        : Promise.resolve({
-            supported: null,
-            detail: { mode: 'openai-responses' as const },
-          }),
     ]);
 
     const result: CliCompatibilityResult = {
       claudeCode: claudeCodeResult,
       codex: codexResultWithDetail.supported,
       codexDetail: codexResultWithDetail.detail,
-      openCode: openCodeResultWithDetail.supported,
-      openCodeDetail: openCodeResultWithDetail.detail,
+      openCode: null,
+      openCodeDetail: undefined,
       testedAt: Date.now(),
     };
 

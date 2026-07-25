@@ -3,7 +3,7 @@
  * @description 托管站点 CLI 配置编辑器内容组件（无 OverlayDrawer 外壳）
  *
  * 输入: 站点 / 账户 / API Keys / 当前 CliConfig / 测试兼容性结果 / 持久化回调 / 确认回调
- * 输出: React 内容组件 (CLI 启用 / 模型选择 / 测试 / 配置预览编辑 / 保存)
+ * 输出: React 内容组件 (CLI 启用 / 模型选择 / Claude Code/Codex 测试 / 配置预览编辑 / 保存)
  * 定位: 展示层 - 嵌入 AccessPointDetailPanel 托管 Tab3，无嵌套抽屉/弹窗
  *
  * 由旧托管 CLI 抽屉实现抽取为面板内嵌内容。
@@ -31,6 +31,7 @@ import {
   CLI_TARGET_PROTOCOLS,
   DEFAULT_CLI_CONFIG,
   getCliTargetEndpoint,
+  isProbeCliType,
   normalizeCliTestModels,
   normalizeCliTestResults,
   normalizeCliTargetProtocol,
@@ -1462,8 +1463,9 @@ export function ManagedCliConfigEditorContent({
 
   const handleTestSelectedModels = async () => {
     if (!selectedCli || isTestingSelectedModels) return;
-    if (selectedCli === 'grokBuild') {
-      toast.info('Grok Build 模型探测暂未启用');
+    if (!isProbeCliType(selectedCli)) {
+      const cliName = CLI_TYPES.find(cli => cli.key === selectedCli)?.name ?? selectedCli;
+      toast.info(`${cliName} 模型探测暂未启用`);
       return;
     }
 
@@ -1914,12 +1916,12 @@ export function ManagedCliConfigEditorContent({
                           onClick={() => {
                             void handleTestSelectedModels();
                           }}
-                          disabled={isTestingSelectedModels || cli.key === 'grokBuild'}
+                          disabled={isTestingSelectedModels || !isProbeCliType(cli.key)}
                         >
                           {isTestingSelectedModels ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
                           ) : null}
-                          {cli.key === 'grokBuild' ? '暂不支持探测' : '测试已选模型'}
+                          {isProbeCliType(cli.key) ? '测试已选模型' : '暂不支持探测'}
                         </AppButton>
                       </div>
                       {!cliConfigs[cli.key]?.apiKeyId ? (

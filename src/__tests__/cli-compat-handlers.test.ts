@@ -14,6 +14,9 @@ async function loadCliCompatHandlersModule() {
   const account = { id: 'acct-1', site_id: 'site-1', status: 'active' };
   const updateAccount = vi.fn(async () => true);
   const updateSite = vi.fn(async () => true);
+  const testClaudeCodeWithDetail = vi.fn();
+  const testCodexWithDetail = vi.fn();
+  const persistCliProbeSamples = vi.fn(async () => undefined);
 
   vi.doMock('electron', () => ({
     ipcMain: {
@@ -31,13 +34,13 @@ async function loadCliCompatHandlersModule() {
   }));
   vi.doMock('../main/cli-wrapper-compat-service', () => ({
     cliWrapperCompatService: {
-      testClaudeCodeWithDetail: vi.fn(),
-      testCodexWithDetail: vi.fn(),
+      testClaudeCodeWithDetail,
+      testCodexWithDetail,
     },
   }));
   vi.doMock('../main/route-cli-probe-service', () => ({
     generateProbeRunId: vi.fn(() => 'manual_1'),
-    persistCliProbeSamples: vi.fn(async () => undefined),
+    persistCliProbeSamples,
   }));
   vi.doMock('../main/custom-cli-config-service', () => ({
     buildCustomCliRouteAccountId: vi.fn((id: string) => `custom-account:${id}`),
@@ -71,6 +74,9 @@ async function loadCliCompatHandlersModule() {
     registeredHandlers,
     updateAccount,
     updateSite,
+    testClaudeCodeWithDetail,
+    testCodexWithDetail,
+    persistCliProbeSamples,
   };
 }
 
@@ -80,6 +86,73 @@ afterEach(() => {
 });
 
 describe('cli compat handlers', () => {
+  it('rejects OpenCode manual probe payloads before invoking an executor', async () => {
+    const {
+      registerCliCompatHandlers,
+      registeredHandlers,
+      testClaudeCodeWithDetail,
+      testCodexWithDetail,
+    } = await loadCliCompatHandlersModule();
+
+    registerCliCompatHandlers();
+    const testHandler = registeredHandlers.get('cli-compat:test-with-wrapper');
+
+    await expect(
+      testHandler?.(
+        {},
+        {
+          siteUrl: 'https://demo.example.com',
+          configs: [
+            {
+              cliType: 'openCode',
+              apiKey: 'sk-test',
+              model: 'gpt-4.1',
+            },
+          ],
+        }
+      )
+    ).resolves.toEqual({
+      success: false,
+      error: 'CLI probe is not supported for: openCode',
+    });
+    expect(testClaudeCodeWithDetail).not.toHaveBeenCalled();
+    expect(testCodexWithDetail).not.toHaveBeenCalled();
+  });
+
+  it('rejects forged OpenCode samples before persisting manual probe history', async () => {
+    const { registerCliCompatHandlers, registeredHandlers, persistCliProbeSamples } =
+      await loadCliCompatHandlersModule();
+
+    registerCliCompatHandlers();
+    const saveHandler = registeredHandlers.get('cli-compat:save-result');
+
+    await expect(
+      saveHandler?.(
+        {},
+        'https://demo.example.com',
+        {
+          claudeCode: null,
+          codex: null,
+          openCode: true,
+          testedAt: Date.now(),
+        },
+        'acct-1',
+        [
+          {
+            cliType: 'openCode',
+            model: 'gpt-4.1',
+            success: true,
+            testedAt: Date.now(),
+          },
+        ]
+      )
+    ).resolves.toEqual({
+      success: false,
+      error: 'CLI probe is not supported for: openCode',
+    });
+    expect(persistCliProbeSamples).not.toHaveBeenCalled();
+  });
+
   it('saves managed CLI config to the selected account instead of the site', async () => {
     const { registerCliCompatHandlers, registeredHandlers, updateAccount, updateSite } =
       await loadCliCompatHandlersModule();

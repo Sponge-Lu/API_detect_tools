@@ -44,6 +44,7 @@ import {
   BUILTIN_CLI_TYPES,
   CLI_TARGET_PROTOCOLS,
   getCliTargetEndpoint,
+  isProbeCliType,
   normalizeCliTargetProtocol,
   type BuiltinCliType,
   type CliTargetProtocol,
@@ -964,8 +965,8 @@ export function DirectCliConfigEditorContent({
   };
 
   const handleRunCliTests = async (cliType: CliType) => {
-    if (cliType === 'grokBuild') {
-      toast.info('Grok Build 模型探测暂未启用');
+    if (!isProbeCliType(cliType)) {
+      toast.info(`${BUILTIN_CLI_LABELS[cliType]} 模型探测暂未启用`);
       return;
     }
     if (!baseUrl || !apiKey) {
@@ -1649,7 +1650,7 @@ export function DirectCliConfigEditorContent({
                   ? summaries.find(summary => summary?.model === selectedTestModel)
                   : undefined;
                 const canRunCliTests =
-                  cli.key !== 'grokBuild' &&
+                  isProbeCliType(cli.key) &&
                   Boolean(baseUrl && apiKey) &&
                   setting.enabled &&
                   selectedTestModels.length > 0;
@@ -1781,7 +1782,7 @@ export function DirectCliConfigEditorContent({
                               {testingCli === cli.key ? (
                                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                               ) : null}
-                              {cli.key === 'grokBuild' ? '暂不支持探测' : '测试已选模型'}
+                              {isProbeCliType(cli.key) ? '测试已选模型' : '暂不支持探测'}
                             </AppButton>
                           </div>
                           {modelOptions.length > 0 ? (

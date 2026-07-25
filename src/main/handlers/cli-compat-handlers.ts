@@ -24,6 +24,7 @@ import * as path from 'path';
 import * as os from 'os';
 import {
   getCliTargetEndpoint,
+  isProbeCliType,
   normalizeCodexFeatureFlagsToml,
   normalizeCliTargetProtocol,
   type BuiltinCliType,
@@ -52,7 +53,7 @@ interface TestWithConfigParams {
 
 type CliCompatExecutor = Pick<
   typeof cliWrapperCompatService,
-  'testClaudeCodeWithDetail' | 'testCodexWithDetail' | 'testOpenCodeWithDetail'
+  'testClaudeCodeWithDetail' | 'testCodexWithDetail'
 >;
 
 interface CliCompatibilityTestSample {
@@ -708,6 +709,11 @@ async function runCliCompatibilityTests(
   executor: CliCompatExecutor,
   options?: { parallel?: boolean }
 ): Promise<{ summary: Partial<CliCompatibilityResult>; samples: CliCompatibilityTestSample[] }> {
+  const unsupportedConfig = params.configs.find(config => !isProbeCliType(config?.cliType));
+  if (unsupportedConfig) {
+    throw new Error(`CLI probe is not supported for: ${String(unsupportedConfig.cliType)}`);
+  }
+
   const routeRuntime = await ensureRouteProxyReady({ autoEnable: true });
   const results: Partial<CliCompatibilityResult> = {
     claudeCode: null,
@@ -800,32 +806,6 @@ async function runCliCompatibilityTests(
             codexDetail: codexResult.detail,
           };
         }
-        case 'openCode': {
-          const openCodeResult = await executor.testOpenCodeWithDetail(
-            testUrl,
-            routeApiKey,
-            config.model,
-            routeTarget.targetProtocol
-          );
-          if (openCodeResult.supported) {
-            log.info(`CLI test ${config.cliType} (${config.model}, ${testUrl}): passed`);
-          } else {
-            log.warn(
-              `CLI test ${config.cliType} (${config.model}, ${testUrl}): failed${openCodeResult.message ? ` - ${openCodeResult.message}` : ''}`
-            );
-          }
-          return {
-            cliType: config.cliType,
-            model: config.model,
-            success: openCodeResult.supported ?? false,
-            testedAt,
-            targetProtocol: routeTarget.targetProtocol,
-            targetEndpoint: routeTarget.targetEndpoint,
-            error: openCodeResult.message,
-            statusCode: extractStatusCodeFromMessage(openCodeResult.message),
-            openCodeDetail: openCodeResult.detail,
-          };
-        }
       }
     } catch (error: any) {
       const message = error.message;
@@ -868,7 +848,6 @@ async function runCliCompatibilityTests(
       error: testResult.error,
       claudeDetail: testResult.claudeDetail,
       codexDetail: testResult.codexDetail,
-      openCodeDetail: testResult.openCodeDetail,
     });
     if (!testResult.success) {
       latestFailureSummaryByCli[testResult.cliType] = summarizeCliFailure(
@@ -890,21 +869,12 @@ async function runCliCompatibilityTests(
           results.codexDetail = testResult.codexDetail;
         }
         break;
-      case 'openCode':
-        results.openCode = results.openCode === true ? true : testResult.success;
-        if (testResult.openCodeDetail && (testResult.success || !results.openCodeDetail)) {
-          results.openCodeDetail = testResult.openCodeDetail;
-        }
-        break;
     }
   }
 
   results.claudeError =
     results.claudeCode === false ? latestFailureSummaryByCli.claudeCode : undefined;
   results.codexError = results.codex === false ? latestFailureSummaryByCli.codex : undefined;
-  results.openCodeError =
-    results.openCode === false ? latestFailureSummaryByCli.openCode : undefined;
-
   return { summary: results, samples };
 }
 
@@ -949,6 +919,11 @@ export function registerCliCompatHandlers() {
         if (accountId && !unifiedConfigManager.getAccountById(accountId)) {
           log.warn(`Account not found for id: ${accountId}`);
           return { success: false, error: 'Account not found' };
+        }
+
+        const unsupportedSample = (samples || []).find(sample => !isProbeCliType(sample?.cliType));
+        if (unsupportedSample) {
+          throw new Error(`CLI probe is not supported for: ${String(unsupportedSample.cliType)}`);
         }
 
         const ownerAccountId = accountId || buildSiteScopedProbeAccountId(site.id);

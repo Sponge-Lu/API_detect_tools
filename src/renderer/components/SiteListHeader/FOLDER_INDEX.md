@@ -23,7 +23,7 @@
 
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
-| **SiteListHeader.tsx** | 站点列头主组件，显示站点/账户/刷新时间等多列标题、列宽调节、内联排序提示，并在 History 表头提供旧 CLI 图标选择器与模式切换 | `SiteListHeader` 组件 |
+| **SiteListHeader.tsx** | 站点列头主组件，显示站点/账户/刷新时间等多列标题、列宽调节、内联排序提示，并在 History 表头提供四种内建 CLI 图标选择器与模式切换 | `SiteListHeader` 组件 |
 | **SearchBar.tsx** | 搜索框 | `SearchBar` 组件 |
 | **FilterBar.tsx** | 筛选栏 | `FilterBar` 组件 |
 | **SortMenu.tsx** | 排序菜单 | `SortMenu` 组件 |

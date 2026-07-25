@@ -16,12 +16,13 @@ import type {
   UnifiedConfig,
 } from '../../shared/types/site';
 import type { CliCompatibilityResult } from '../store/detectionStore';
+import type { ProbeCliType } from '../../shared/types/cli-config';
 import { useDetectionStore } from '../store/detectionStore';
 import { useRouteStore } from '../store/routeStore';
 import { syncProjectedCliCompatibility } from './cli-compat-projection';
 
 export interface PersistedCliCompatibilityTestSample {
-  cliType: 'claudeCode' | 'codex' | 'openCode';
+  cliType: ProbeCliType;
   model: string;
   success: boolean;
   testedAt?: number;

@@ -35,8 +35,8 @@
 | **site-type-registry.ts** | 站点类型到初始化/端点/行为的注册表 | `getSiteTypeProfile()`, `resolveSiteType()` |
 | **site-type-detector.ts** | 智能添加初始化前的站点类型自动识别 | `detectSiteType()` |
 | **token-service.ts** | Token 认证服务，初始化阶段按 site_type 选择端点与 access token 策略，Sub2API 可从浏览器登录态重读并校验 JWT，显式 `site_type` 可覆盖 URL 反查；支持按账户浏览器槽位刷新 user_id/username/access_token 并在 token 无效时重建；按 site_type 驱动签到/浏览器回退端点，统一识别 Unauthorized/invalid access token 失败 envelope，并在 NewAPI 脱敏 API Key 列表中优先使用 `/api/token/batch/keys` 批量补全明文 key | `TokenService` 类 |
-| **cli-compat-service.ts** | 协议级 CLI 兼容性测试，请求格式与真实 CLI 对齐 | `CliCompatService` 类 |
-| **cli-wrapper-compat-service.ts** | 基于真实 CLI wrapper 的兼容性测试；当前 UI 测试主路径，使用临时 HOME/CODEX_HOME 隔离环境，监听 route probe-lock 请求/终止失败以提前停止确定性失败测试，并在 CLI 二次请求先触发 probe-lock 限制时等待/回看首次真实上游结果避免误判，Claude JSON 错误会摘要化，清理临时目录时会重试并避免 Windows 文件锁覆盖真实测试结果 | `CliWrapperCompatService` 类 |
+| **cli-compat-service.ts** | Claude Code / Codex 协议级兼容性测试；保留旧 OpenCode 结果字段用于历史数据兼容 | `CliCompatService` 类 |
+| **cli-wrapper-compat-service.ts** | 基于真实 Claude Code / Codex wrapper 的兼容性测试；当前 UI 测试主路径，使用临时 HOME/CODEX_HOME 隔离环境，监听 route probe-lock 请求/终止失败以提前停止确定性失败测试，并在 CLI 二次请求先触发 probe-lock 限制时等待/回看首次真实上游结果避免误判，Claude JSON 错误会摘要化，清理临时目录时会重试并避免 Windows 文件锁覆盖真实测试结果 | `CliWrapperCompatService` 类 |
 | **custom-cli-config-service.ts** | 自定义 CLI 配置持久化服务，并为路由生成自定义 CLI 虚拟站点/账户/API Key 标识 | `loadCustomCliConfigStorage()`, `buildCustomCliRouteSiteId()` |
 | **custom-cli-model-service.ts** | 直连配置模型获取服务，通过 `baseUrl + /v1/models` 获取模型列表并写回配置 | `fetchModels()`, `fetchAllModels()` |
 | **backup-manager.ts** | 本地备份管理；自动备份保持 config-only 节流去重，手动备份生成 portable 2 文件包，恢复后重绑隔离 Profile | `backupManager` 实例 |
@@ -49,11 +49,11 @@
 | **credit-service.ts** | Linux Do Credit 积分检测、LDC 充值 | `CreditService` 类 |
 | **route-channel-resolver.ts** | 路由通道解析，结合站点/账户/API Key/自定义 CLI 配置与厂商优先级选择实际通道；CLI targetProtocol 按账户级配置优先、站点级旧配置 fallback | `resolveChannels()`, `resolveChannelCredentials()` |
 | **route-proxy-service.ts** | 本地路由代理服务器，按规则选择上游通道，使用 Electron net raw 客户端转发，客户端取消时中止当前上游且不继续 fallback；成功透明 SSE 边收边转发；按 HTTP 方法与完整路径分类生成、Token 计数和状态资源操作，OpenCode 依据实际入站协议直接转换到通道协议；Token 计数仅尝试同协议端点并以单独日志标记本地估算；probe-lock 请求只允许 loopback，缓存终止失败、记录并通知首次真实上游结果并限制单模型测试只发起一次真实上游尝试 | `startRouteProxyServer()`, `stopRouteProxyServer()`, `extractUsageFromBody()` |
-| **route-probe-lock.ts** | CLI 探测/手动测试专用的 loopback probe-lock 编解码、本地路由基址构造、请求观察、终止失败通知/缓存、首次真实上游结果缓存/通知/等待与单模型上游尝试预算 | `buildProbeLockRouteApiKey()`, `parseProbeLockRouteApiKey()`, `buildRouteProxyBaseUrl()`, `subscribeRouteProbeLockTerminalFailure()` |
+| **route-probe-lock.ts** | Claude Code / Codex 探测与手动测试专用的 loopback probe-lock 编解码、本地路由基址构造、请求观察、终止失败通知/缓存、首次真实上游结果缓存/通知/等待与单模型上游尝试预算 | `buildProbeLockRouteApiKey()`, `parseProbeLockRouteApiKey()`, `buildRouteProxyBaseUrl()`, `subscribeRouteProbeLockTerminalFailure()` |
 | **anyrouter-request-rewriter.ts** | AnyRouter 请求/响应适配器：Claude Code 保留原始工具语义并注入 Anthropic 指纹，Codex 原生 Responses 透传，Google/Gemini GenerateContent 原生透传 | `rewriteForAnyRouter()`, `transformAnyRouterResponse()` |
 | **cli-protocol-adapter.ts** | 通用 CLI 协议适配器：在 Anthropic Messages、OpenAI Chat Completions 与 OpenAI Responses 之间执行单次无损子集转换，覆盖文本、函数工具、共享 `tool_choice`/并行调用控制、思考强度、流式 SSE 与非流式 JSON；不可等价字段以 `CliProtocolAdapterError` 中立跳过候选 | `adaptRequestToTargetProtocol()`, `transformTargetProtocolResponse()`, `CliProtocolAdapterError` |
 | **route-model-registry-service.ts** | 模型注册表来源聚合、手工/显式 override 展示项维护与厂商优先级配置；所有模型来源均标记四种内置路由 CLI 可用，扫描只刷新候选来源，不自动创建重定向 | `rebuildModelRegistry()`, `syncModelRegistrySources()` |
-| **route-cli-probe-service.ts** | CLI 定时探测、latest/history 维护与视图聚合；探测执行器仅覆盖 Claude Code、Codex、OpenCode，明确排除暂未支持真实探测的 Grok Build | `runCliProbeNow()`, `getCliProbeView()` |
+| **route-cli-probe-service.ts** | CLI 定时探测、latest/history 维护与视图聚合；探测执行器仅覆盖 Claude Code、Codex，旧 OpenCode 样本仍可读取 | `runCliProbeNow()`, `getCliProbeView()` |
 | **route-analytics-service.ts** | 路由请求分析、token/缓存 token/延迟/状态码统计与对象级排行 | `recordRouteRequest()`, `getRouteObjectStats()` |
 | **route-history-service.ts** | History 时间桶聚合服务，将 CLI 探测样本和路由统计按 48h / 2h 桶合并为成功率数据 | `getHistoryBuckets()` |
 | **route-stats-service.ts** | 路由调用统计与通道评分排序 | `recordOutcome()`, `sortChannelsByScore()` |
@@ -293,7 +293,7 @@ main.ts: app.whenReady()
 
 **关键模块**:
 - `route-model-registry-service.ts` - 聚合站点/账户和自定义 CLI 配置模型来源，来源扫描不自动创建重定向，仅从手工展示项和显式 override 构建 `entries`
-- `route-cli-probe-service.ts` - 按站点下全部活跃账户和自定义 CLI 虚拟配置执行 CLI wrapper 探测，并维护 `history/latest`
+- `route-cli-probe-service.ts` - 按站点下全部活跃账户和自定义 CLI 虚拟配置执行 Claude Code / Codex wrapper 探测，并维护 `history/latest`
 - `route-channel-resolver.ts` - 解析可用通道、补全真实 API Key 或自定义 CLI 凭证、结合厂商优先级选择实际出口
 - `route-stats-service.ts` - 记录运行结果并计算评分，供通道排序和统计视图复用
 

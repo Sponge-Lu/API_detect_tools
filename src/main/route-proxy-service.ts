@@ -2946,9 +2946,6 @@ export async function handleRequest(
   const probeLock = parseProbeLockRouteApiKey(token, routing.server.unifiedApiKey);
   if (probeLock) {
     notifyRouteProbeLockRequest(token);
-    if (probeLock.cliType === 'openCode') {
-      cliType = 'openCode';
-    }
   }
   if (token !== routing.server.unifiedApiKey && !probeLock) {
     notifyProbeLockTerminalFailure({

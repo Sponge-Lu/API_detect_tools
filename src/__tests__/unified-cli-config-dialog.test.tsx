@@ -660,6 +660,28 @@ describe('ManagedCliConfigEditorContent', () => {
     );
   });
 
+  it('keeps managed OpenCode configuration without exposing model probes', async () => {
+    render(
+      <ManagedCliConfigEditorContent
+        siteName="Claude Hub"
+        siteUrl="https://example.com"
+        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
+        siteModels={['gpt-4.1']}
+        currentConfig={initialConfig}
+        onSave={vi.fn()}
+      />
+    );
+
+    await act(async () => {
+      fireEvent.click(getCliSectionHeader('OpenCode'));
+    });
+
+    expect(screen.getByLabelText('选择上游端口')).toHaveDisplayValue('原生协议 · /v1/responses');
+    expect(screen.getByRole('button', { name: '暂不支持探测' })).toBeDisabled();
+    expect(window.electronAPI.cliCompat.testWithWrapper).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: '应用 OpenCode' })).toBeEnabled();
+  });
+
   it('refreshes Grok detection even when clearing the backend cache fails', async () => {
     const clearCache = vi.mocked(window.electronAPI.configDetection.clearCache);
     const detectAllCliConfig = vi.mocked(window.electronAPI.configDetection.detectAllCliConfig);

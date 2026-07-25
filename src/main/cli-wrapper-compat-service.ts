@@ -18,9 +18,8 @@ import type {
   ClaudeTestDetail,
   CliCompatibilityResult,
   CodexTestDetail,
-  OpenCodeTestDetail,
 } from './cli-compat-service';
-import { normalizeCliTargetProtocol, type CliTargetProtocol } from '../shared/types/cli-config';
+import type { CliTargetProtocol, ProbeCliType } from '../shared/types/cli-config';
 import {
   clearRouteProbeLockTerminalFailure,
   getRouteProbeLockFirstUpstreamResult,
@@ -48,7 +47,7 @@ const PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_SUMMARY =
   'HTTP 400（应用侧 probe-lock 限制）：CLI 在一次模型测试中发起了多次上游请求，应用只允许一次真实上游请求。';
 
 export interface CliWrapperTestConfig {
-  cliType: 'claudeCode' | 'codex' | 'openCode';
+  cliType: ProbeCliType;
   apiKey: string;
   model: string;
   baseUrl?: string;
@@ -97,64 +96,6 @@ function normalizeBaseUrl(baseUrl: string): string {
 function ensureOpenAiBaseUrl(baseUrl: string): string {
   const normalized = normalizeBaseUrl(baseUrl);
   return normalized.endsWith('/v1') ? normalized : `${normalized}/v1`;
-}
-
-function buildOpenCodeProviderConfig(
-  url: string,
-  model: string,
-  mode: CliTargetProtocol
-): { providerId: string; modelId: string; config: Record<string, unknown> } {
-  const baseURL = ensureOpenAiBaseUrl(url);
-  if (mode === 'anthropic-messages') {
-    return {
-      providerId: 'anthropic',
-      modelId: `anthropic/${model}`,
-      config: {
-        provider: {
-          anthropic: {
-            options: { baseURL },
-            models: {
-              [model]: { name: model },
-            },
-          },
-        },
-      },
-    };
-  }
-
-  if (mode === 'openai-responses') {
-    return {
-      providerId: 'openai',
-      modelId: `openai/${model}`,
-      config: {
-        provider: {
-          openai: {
-            options: { baseURL },
-            models: {
-              [model]: { name: model },
-            },
-          },
-        },
-      },
-    };
-  }
-
-  return {
-    providerId: 'api-detect',
-    modelId: `api-detect/${model}`,
-    config: {
-      provider: {
-        'api-detect': {
-          npm: '@ai-sdk/openai-compatible',
-          name: 'API Detect',
-          options: { baseURL },
-          models: {
-            [model]: { name: model },
-          },
-        },
-      },
-    },
-  };
 }
 
 function escapeTomlString(value: string): string {
@@ -1005,71 +946,6 @@ export class CliWrapperCompatService {
     });
   }
 
-  async testOpenCodeWithDetail(
-    url: string,
-    apiKey: string,
-    model: string,
-    targetProtocol?: CliTargetProtocol,
-    timeoutMs?: number
-  ): Promise<{ supported: boolean; detail: OpenCodeTestDetail; message?: string }> {
-    const mode =
-      normalizeCliTargetProtocol(targetProtocol) === 'native'
-        ? 'openai-responses'
-        : normalizeCliTargetProtocol(targetProtocol);
-
-    return this.withIsolatedWorkspace('api-detect-opencode-wrapper', async workspace => {
-      const { providerId, modelId, config } = buildOpenCodeProviderConfig(url, model, mode);
-      const configContent = JSON.stringify(
-        {
-          $schema: 'https://opencode.ai/config.json',
-          model: modelId,
-          ...config,
-        },
-        null,
-        2
-      );
-      const authContent = JSON.stringify({
-        [providerId]: {
-          type: 'api',
-          key: apiKey,
-        },
-      });
-      const env = this.buildIsolatedEnv(workspace.homeDir, {
-        OPENCODE_CONFIG_CONTENT: configContent,
-        OPENCODE_AUTH_CONTENT: authContent,
-      });
-
-      const commandResult = await this.runCommandWatchingProbeLockFailure(apiKey, {
-        command: 'opencode',
-        args: ['run', '--model', modelId, '--agent', 'plan', '--format', 'text', TEST_PROMPT],
-        cwd: workspace.workDir,
-        env,
-        timeoutMs: timeoutMs ?? this.timeoutMs,
-      });
-
-      const probeLockReplyText = getProbeLockExpectedReplyText(
-        commandResult.probeLockFirstUpstreamResult
-      );
-      const replyText =
-        summarizeReplyText(commandResult.stdout) ?? summarizeReplyText(probeLockReplyText);
-      const supported =
-        (commandResult.exitCode === 0 && isExpectedAnswer(commandResult.stdout)) ||
-        Boolean(probeLockReplyText);
-      const message = supported
-        ? undefined
-        : buildFailureMessage('OpenCode', commandResult, `reply=${replyText ?? 'missing output'}`);
-
-      return {
-        supported,
-        detail: {
-          mode,
-          replyText,
-        },
-        ...(message ? { message } : {}),
-      };
-    });
-  }
-
   async testSite(params: TestWithWrapperParams): Promise<CliCompatibilityResult> {
     const result: CliCompatibilityResult = {
       claudeCode: null,
@@ -1092,15 +968,6 @@ export class CliWrapperCompatService {
         const codex = await this.testCodexWithDetail(testUrl, config.apiKey, config.model);
         result.codex = codex.supported;
         result.codexDetail = codex.detail;
-      } else if (config.cliType === 'openCode') {
-        const openCode = await this.testOpenCodeWithDetail(
-          testUrl,
-          config.apiKey,
-          config.model,
-          config.targetProtocol
-        );
-        result.openCode = openCode.supported;
-        result.openCodeDetail = openCode.detail;
       }
     }
 

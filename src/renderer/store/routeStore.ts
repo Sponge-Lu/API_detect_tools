@@ -19,6 +19,7 @@ import type {
   RoutePathStateResetParams,
 } from '../../shared/types/route-proxy';
 import type { UnifiedConfig } from '../../shared/types/site';
+import type { ProbeCliType } from '../../shared/types/cli-config';
 import { useDetectionStore } from './detectionStore';
 import { syncProjectedCliCompatibility } from '../services/cli-compat-projection';
 import { sessionEventLog } from '../services/sessionEventLog';
@@ -31,7 +32,7 @@ type CliProbeTimeRange = '24h' | '7d';
 interface CliProbeRunParams {
   siteId?: string;
   accountId?: string;
-  cliType?: RouteCliType;
+  cliType?: ProbeCliType;
 }
 
 interface CliProbeRunResult {

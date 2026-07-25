@@ -1,7 +1,7 @@
 /**
  * 输入: DetectionStore (检测状态), IPC 调用, Toast 通知
  * 输出: 测试方法 (testSite), 兼容性结果, 自动更新配置和 Toast 提示
- * 定位: 业务逻辑层 - CLI 兼容性测试 Hook，封装测试逻辑、持久化回写与探测视图同步
+ * 定位: 业务逻辑层 - Claude Code / Codex 兼容性测试 Hook，封装测试逻辑、持久化回写与探测视图同步
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -23,11 +23,7 @@ import {
 } from '../store/detectionStore';
 import { toast } from '../store/toastStore';
 import { sessionEventLog } from '../services/sessionEventLog';
-import {
-  normalizeCliTargetProtocol,
-  normalizeCliTestModels,
-  type CliTargetProtocol,
-} from '../../shared/types/cli-config';
+import { normalizeCliTestModels, type ProbeCliType } from '../../shared/types/cli-config';
 import { persistCliCompatibilityResult } from '../services/cli-compat-sync';
 
 /** Hook 返回类型 */
@@ -117,134 +113,6 @@ function parseCodexConfig(
       baseUrl = match[1].replace(/\/v1$/, ''); // 移除 /v1 后缀
     }
   }
-
-  return { apiKey, baseUrl };
-}
-
-function stripJsonCommentsAndTrailingCommas(content: string): string {
-  let output = '';
-  let inString = false;
-  let quote = '';
-  let escaped = false;
-
-  for (let index = 0; index < content.length; index += 1) {
-    const char = content[index];
-    const next = content[index + 1];
-
-    if (inString) {
-      output += char;
-      if (escaped) {
-        escaped = false;
-      } else if (char === '\\') {
-        escaped = true;
-      } else if (char === quote) {
-        inString = false;
-        quote = '';
-      }
-      continue;
-    }
-
-    if (char === '"' || char === "'") {
-      inString = true;
-      quote = char;
-      output += char;
-      continue;
-    }
-
-    if (char === '/' && next === '/') {
-      while (index < content.length && content[index] !== '\n') {
-        index += 1;
-      }
-      output += '\n';
-      continue;
-    }
-
-    if (char === '/' && next === '*') {
-      index += 2;
-      while (index < content.length && !(content[index] === '*' && content[index + 1] === '/')) {
-        index += 1;
-      }
-      index += 1;
-      continue;
-    }
-
-    output += char;
-  }
-
-  return output.replace(/,\s*([}\]])/g, '$1');
-}
-
-function parseJsonLikeObject(content: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(content);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch {
-    try {
-      const parsed = JSON.parse(stripJsonCommentsAndTrailingCommas(content));
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-        ? (parsed as Record<string, unknown>)
-        : null;
-    } catch {
-      return null;
-    }
-  }
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function trimBaseUrlVersionSuffix(baseUrl: string | null): string | null {
-  return baseUrl?.replace(/\/v1\/?$/, '').replace(/\/+$/, '') || null;
-}
-
-/**
- * 从 OpenCode 官方 opencode.json/auth.json 中解析 API Key 和 Base URL
- */
-function parseOpenCodeConfig(
-  editedFiles: Array<{ path: string; content: string }> | null | undefined
-): {
-  apiKey: string | null;
-  baseUrl: string | null;
-} {
-  if (!editedFiles || editedFiles.length === 0) {
-    return { apiKey: null, baseUrl: null };
-  }
-
-  const configFile = editedFiles.find(f => f.path.includes('opencode.json'));
-  const authFile = editedFiles.find(
-    f => f.path.includes('auth.json') && f.path.toLowerCase().includes('opencode')
-  );
-  const config = configFile ? parseJsonLikeObject(configFile.content) : null;
-  const auth = authFile ? parseJsonLikeObject(authFile.content) : null;
-  const model = typeof config?.model === 'string' ? config.model : '';
-  const provider = asRecord(config?.provider);
-  const providerId =
-    model.includes('/') && model.split('/')[0]
-      ? model.split('/')[0]
-      : Object.keys(provider || {})[0] || null;
-  const providerConfig = providerId ? asRecord(provider?.[providerId]) : null;
-  const providerOptions = asRecord(providerConfig?.options);
-  const authProvider = providerId ? asRecord(auth?.[providerId]) : null;
-  const fallbackAuthProvider = Object.values(auth || {})
-    .map(asRecord)
-    .find(item => item?.type === 'api' && typeof item.key === 'string');
-  const baseUrl =
-    typeof providerOptions?.baseURL === 'string'
-      ? trimBaseUrlVersionSuffix(providerOptions.baseURL)
-      : null;
-  const apiKey =
-    typeof authProvider?.key === 'string'
-      ? authProvider.key
-      : typeof fallbackAuthProvider?.key === 'string'
-        ? fallbackAuthProvider.key
-        : typeof providerOptions?.apiKey === 'string'
-          ? providerOptions.apiKey
-          : null;
 
   return { apiKey, baseUrl };
 }
@@ -423,10 +291,8 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
       // 检查是否有任何配置且启用
       const cc = cliConfig.claudeCode;
       const cx = cliConfig.codex;
-      const oc = cliConfig.openCode;
       const ccTestModels = normalizeCliTestModels(cc);
       const cxTestModels = normalizeCliTestModels(cx);
-      const ocTestModels = normalizeCliTestModels(oc);
 
       // 标记为测试中
       addCliTestingSite(storeKey);
@@ -435,11 +301,10 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
         // 构建测试配置
         const mismatchWarnings = new Set<string>();
         const testConfigs: Array<{
-          cliType: 'claudeCode' | 'codex' | 'openCode';
+          cliType: ProbeCliType;
           apiKey: string;
           model: string;
           baseUrl?: string;
-          targetProtocol?: CliTargetProtocol;
         }> = [];
 
         // Claude Code - 从配置文件中读取 API Key 和 Base URL
@@ -538,55 +403,6 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
           }
         }
 
-        // OpenCode - 从官方 opencode.json/auth.json 中读取 API Key 和 Base URL
-        if (oc?.enabled && ocTestModels.length > 0) {
-          const credential = resolveCliCredentials(
-            oc.editedFiles,
-            parseOpenCodeConfig,
-            oc.apiKeyId,
-            availableApiKeys,
-            siteUrl
-          );
-          let apiKey = credential.apiKey;
-          let baseUrl = credential.baseUrl;
-          const targetProtocol = normalizeCliTargetProtocol(oc.targetProtocol);
-
-          if (oc.apiKeyId != null) {
-            maybeWarnPreviewBaseUrlMismatch(
-              'OpenCode',
-              credential.baseUrl,
-              normalizedSiteUrl,
-              mismatchWarnings
-            );
-            const resolved = await window.electronAPI.token?.resolveApiKeyValue?.(
-              siteUrl,
-              oc.apiKeyId,
-              accountId
-            );
-            if (!resolved || resolved.success !== true || !resolved.data) {
-              toast.warning('OpenCode 所选 API Key 无法解析明文，请先刷新站点或重新选择');
-              apiKey = null;
-            } else {
-              apiKey = resolved.data;
-              baseUrl = normalizedSiteUrl;
-            }
-          }
-
-          if (!apiKey || !baseUrl) {
-            toast.warning('OpenCode 配置不完整，请先选择 API Key 和测试模型');
-          } else {
-            ocTestModels.forEach(model => {
-              testConfigs.push({
-                cliType: 'openCode',
-                apiKey,
-                model,
-                baseUrl,
-                targetProtocol,
-              });
-            });
-          }
-        }
-
         if (testConfigs.length === 0) {
           toast.error('没有有效的 CLI 配置，请确保已生成配置文件并选择测试模型');
           return;
@@ -675,15 +491,6 @@ export function useCliCompatTest(): UseCliCompatTestReturn {
           } else if (response.data.codex === false) {
             // Responses API 不支持，显示错误
             toast.error(`Codex: 不兼容 [responses: ${responsesStatus}]`, 6000);
-          }
-        }
-
-        if (oc?.enabled && response.data.openCode !== undefined) {
-          if (response.data.openCode === true) {
-            const mode = response.data.openCodeDetail?.mode ?? 'openai-chat-completions';
-            toast.success(`OpenCode: 兼容 [${mode}]`, 6000);
-          } else if (response.data.openCode === false) {
-            toast.error('OpenCode: 不兼容', 6000);
           }
         }
       } catch (error: any) {

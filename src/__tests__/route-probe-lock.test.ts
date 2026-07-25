@@ -1,7 +1,7 @@
 /**
  * 输入: probe-lock 首个上游结果的记录/读取/等待调用序列
- * 输出: terminal-wins / transient-overwritable 记录语义与 waiter 仅终结结果 resolve 的回归结果
- * 定位: 测试层 - 验证瞬时结果可被后续成功/终结失败覆盖、终结结果 first-wins 且锁定等待者
+ * 输出: probe-lock CLI 能力边界与 terminal-wins / transient-overwritable 记录回归结果
+ * 定位: 测试层 - 验证旧 OpenCode 锁被拒绝、瞬时结果可被后续成功/终结失败覆盖、终结结果 first-wins 且锁定等待者
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - src/__tests__/FOLDER_INDEX.md
@@ -11,8 +11,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildProbeLockRouteApiKey,
   clearRouteProbeLockTerminalFailure,
   getRouteProbeLockFirstUpstreamResult,
+  parseProbeLockRouteApiKey,
   recordRouteProbeLockFirstUpstreamResult,
   waitForRouteProbeLockFirstUpstreamResult,
   type RouteProbeLockUpstreamResult,
@@ -32,6 +34,19 @@ function makeResult(
 }
 
 describe('route-probe-lock first upstream result recording', () => {
+  it('rejects legacy OpenCode probe-lock payloads', () => {
+    const token = buildProbeLockRouteApiKey('sk-route', {
+      siteId: 'site-1',
+      accountId: 'account-1',
+      apiKeyId: 'key-1',
+      cliType: 'openCode' as never,
+      canonicalModel: 'gpt-4.1',
+      rawModel: 'gpt-4.1',
+    });
+
+    expect(parseProbeLockRouteApiKey(token, 'sk-route')).toBeNull();
+  });
+
   it('records a transient result as non-terminal and lets a later success overwrite it', () => {
     const key = 'unit-transient-overwrite';
     clearRouteProbeLockTerminalFailure(key);

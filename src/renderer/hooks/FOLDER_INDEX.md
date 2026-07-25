@@ -23,7 +23,7 @@
 | **useSiteDetection.ts** | 站点检测 | `{ results, isDetecting, detect, ... }` |
 | **useTokenManagement.ts** | Token 管理，支持站点 API Key 列表刷新、单个 API Key 状态刷新、创建与删除 | `{ refreshSiteApiKeys, handleRefreshToken, handleCreateTokenSubmit, handleDeleteToken }` |
 | **useCheckIn.ts** | 签到逻辑，批量签到时跳过 `unavailable` 分组，账户级签到透传 `accountId`，按站点类型打开手动签到页，并持久化同日手动签到完成状态 | `{ canSignIn, isSigningIn, signIn, ... }` |
-| **useCliCompatTest.ts** | CLI 兼容性测试 | `{ results, isTesting, test, ... }` |
+| **useCliCompatTest.ts** | 站点级 CLI 兼容性测试，仅为 Claude Code / Codex 构造探测请求 | `{ results, isTesting, test, ... }` |
 | **useDataLoader.ts** | 数据加载，支持站点状态持久化、签到能力缓存回填与账户级 CLI 配置按 card key 回填 | `{ data, isLoading, error, reload, ... }` |
 | **useSiteDrag.ts** | 站点拖拽排序 | `{ draggedSite, onDragStart, onDrop, ... }` |
 | **useTheme.ts** | 主题管理 | `{ theme, setTheme, isDark, ... }` |

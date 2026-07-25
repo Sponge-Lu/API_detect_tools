@@ -1,7 +1,7 @@
 /**
  * 输入: 模拟的多账户站点配置、CLI 探测路由状态
  * 输出: CLI 探测账户覆盖与视图回归测试结果
- * 定位: 测试层 - 验证 CLI 可用性视图按账户展开、探测任务覆盖全部账户
+ * 定位: 测试层 - 验证 Claude Code / Codex 探测边界、CLI 可用性视图按账户展开、探测任务覆盖全部账户
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - src/__tests__/FOLDER_INDEX.md
@@ -10,7 +10,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildProbeKey } from '../shared/types/route-proxy';
-import { BUILTIN_CLI_TYPES, PROBE_CLI_TYPES } from '../shared/types/cli-config';
+import { BUILTIN_CLI_TYPES, isProbeCliType, PROBE_CLI_TYPES } from '../shared/types/cli-config';
 import {
   buildCustomCliRouteAccountId,
   buildCustomCliRouteApiKeyId,
@@ -39,10 +39,15 @@ function createSite(overrides: Record<string, unknown> = {}) {
 }
 
 describe('route CLI probe type boundary', () => {
-  it('keeps Grok Build out of model probe execution', () => {
+  it('keeps OpenCode and Grok Build out of model probe execution', () => {
+    expect(BUILTIN_CLI_TYPES).toContain('openCode');
     expect(BUILTIN_CLI_TYPES).toContain('grokBuild');
-    expect(PROBE_CLI_TYPES).toEqual(['claudeCode', 'codex', 'openCode']);
+    expect(PROBE_CLI_TYPES).toEqual(['claudeCode', 'codex']);
+    expect(PROBE_CLI_TYPES).not.toContain('openCode');
     expect(PROBE_CLI_TYPES).not.toContain('grokBuild');
+    expect(isProbeCliType('codex')).toBe(true);
+    expect(isProbeCliType('openCode')).toBe(false);
+    expect(isProbeCliType('grokBuild')).toBe(false);
   });
 });
 
@@ -325,6 +330,34 @@ describe('route-cli-probe-service', () => {
       canonicalModel: 'gpt-4.1-mini',
       rawModel: 'gpt-4.1-mini',
     });
+  });
+
+  it('即时探测拒绝执行 OpenCode', async () => {
+    const config = {
+      sites: [createSite()],
+      accounts: [createAccount('acct-default')],
+    };
+
+    const { runCliProbeNow, unifiedConfigManager } = await loadProbeService(config);
+
+    await expect(runCliProbeNow({ cliType: 'openCode' } as never)).rejects.toThrow(
+      'CLI probe is not supported for: openCode'
+    );
+    expect(unifiedConfigManager.persistRouteCliProbeSamples).not.toHaveBeenCalled();
+  });
+
+  it('持久化边界拒绝伪造的 OpenCode 探测样本', async () => {
+    const config = {
+      sites: [createSite()],
+      accounts: [createAccount('acct-default')],
+    };
+
+    const { persistCliProbeSamples, unifiedConfigManager } = await loadProbeService(config);
+
+    await expect(
+      persistCliProbeSamples([createProbeSample({ cliType: 'openCode' })] as never)
+    ).rejects.toThrow('CLI probe is not supported for: openCode');
+    expect(unifiedConfigManager.persistRouteCliProbeSamples).not.toHaveBeenCalled();
   });
 
   it('即时探测优先使用账户级 CLI 配置选择模型', async () => {
