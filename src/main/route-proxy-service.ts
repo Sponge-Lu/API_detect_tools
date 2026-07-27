@@ -94,6 +94,19 @@ const ALL_ROUTE_PATHS_DISABLED_STATUS_CODE = 400;
 const ALL_ROUTE_PATHS_DISABLED_MESSAGE =
   'all_route_paths_disabled: All route paths for this rule are temporarily disabled. Restore route paths in the route rule UI or wait for the suspension to expire.';
 const EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE = 'empty_response_zero_usage';
+const UPSTREAM_TEMPORARILY_UNAVAILABLE_ERROR_CODE = 'upstream_temporarily_unavailable';
+const UPSTREAM_TEMPORARILY_UNAVAILABLE_STATUS_CODE = 503;
+const UPSTREAM_TEMPORARILY_UNAVAILABLE_MESSAGE =
+  'No upstream route is currently available. Please retry.';
+const UPSTREAM_QUOTA_EXHAUSTION_PATTERNS = [
+  /\binsufficient(?:[_\s-]+account)?[_\s-]+balance\b/i,
+  /\binsufficient[_\s-]+quota\b/i,
+  /\bbilling[_\s-]+error\b/i,
+  /\bupstream[_\s-]+quota[_\s-]+exhausted\b/i,
+  /\buser[_\s-]+quota[_\s-]+is[_\s-]+not[_\s-]+enough\b/i,
+  /(?:用户)?(?:余额|额度)不足/u,
+  /预扣费(?:额度)?失败/u,
+];
 const ZERO_USAGE_UPSTREAM_RETRY_ATTEMPTS = 1;
 const EMPTY_STREAM_UPSTREAM_RETRY_ATTEMPTS = 1;
 const EMPTY_STREAMING_RESPONSE_ERROR = 'invalid_streaming_response:empty_streaming_response';
@@ -120,6 +133,8 @@ const LOCAL_COUNT_TOKENS_MESSAGE_OVERHEAD = 4;
 const LOCAL_COUNT_TOKENS_CONSERVATIVE_MULTIPLIER = 1.15;
 const INITIAL_STREAM_VALIDATION_MAX_BYTES = 4096;
 const STREAM_TERMINAL_SCAN_MAX_CHARS = 8192;
+const NATIVE_ANTHROPIC_SSE_MAX_FRAME_BYTES = 1024 * 1024;
+const NATIVE_ANTHROPIC_SSE_MAX_PRECOMMIT_BYTES = 1024 * 1024;
 const ROUTE_CLIENT_CANCELLED_ERROR_CODE = 'route_client_cancelled';
 
 type ConcreteCliTargetProtocol = Exclude<CliTargetProtocol, 'native'>;
@@ -608,15 +623,7 @@ export function buildChannelAttemptPlan<
   const attemptsByRoutePath = new Map<string, number>();
 
   return channels.filter(channel => {
-    const pathKey = [
-      channel.routeRuleId || '__rule__',
-      channel.siteId || '__site__',
-      channel.accountId || '__account__',
-      channel.apiKeyId || '__api_key__',
-      normalizeCliTargetProtocol(channel.targetProtocol),
-      channel.canonicalModel?.trim() || '__empty_canonical_model__',
-      channel.resolvedModel?.trim() || '__empty_resolved_model__',
-    ].join('|');
+    const pathKey = buildChannelAttemptPathKey(channel);
     const attempts = attemptsByRoutePath.get(pathKey) ?? 0;
     if (attempts >= normalizedMaxAttempts) {
       return false;
@@ -625,6 +632,26 @@ export function buildChannelAttemptPlan<
     attemptsByRoutePath.set(pathKey, attempts + 1);
     return true;
   });
+}
+
+function buildChannelAttemptPathKey(channel: {
+  routeRuleId?: string;
+  siteId?: string;
+  accountId?: string;
+  apiKeyId?: string;
+  targetProtocol?: RoutePathState['targetProtocol'];
+  resolvedModel?: string;
+  canonicalModel?: string;
+}): string {
+  return [
+    channel.routeRuleId || '__rule__',
+    channel.siteId || '__site__',
+    channel.accountId || '__account__',
+    channel.apiKeyId || '__api_key__',
+    normalizeCliTargetProtocol(channel.targetProtocol),
+    channel.canonicalModel?.trim() || '__empty_canonical_model__',
+    channel.resolvedModel?.trim() || '__empty_resolved_model__',
+  ].join('|');
 }
 
 type RoutePathAffinityCandidate = RouteChannelKey & {
@@ -941,6 +968,25 @@ interface AnthropicSseCompatibilityNormalizerState {
   completedToolBlocks: number;
 }
 
+class NativeAnthropicSseGuardError extends Error {
+  constructor(
+    readonly reason: string,
+    readonly protocolMessage: string
+  ) {
+    super(`malformed_streaming_response:${reason}`);
+    this.name = 'NativeAnthropicSseGuardError';
+  }
+}
+
+interface NativeAnthropicSseGuardState {
+  buffer: Buffer;
+  openBlocks: Set<number>;
+  pendingFrames: Buffer[];
+  pendingBytes: number;
+  released: boolean;
+  sawMessageStart: boolean;
+}
+
 function validateInitialEventStreamChunk(buffer: Buffer): InitialEventStreamValidation {
   if (!buffer.length) {
     return { status: 'pending' };
@@ -1055,7 +1101,7 @@ function buildMalformedStreamingErrorChunk(cliType: RouteCliType, message: strin
 }
 
 function parseSseBlocks(text: string): ParsedSseBlock[] {
-  const normalized = text.replace(/\r\n/g, '\n');
+  const normalized = text.replace(/\r\n?/g, '\n');
   const blocks: ParsedSseBlock[] = [];
 
   for (const block of normalized.split(/\n\n+/)) {
@@ -1199,6 +1245,228 @@ function parseSseJsonRecord(data: string): Record<string, unknown> | undefined {
   } catch {
     return undefined;
   }
+}
+
+function createNativeAnthropicSseGuard(): NativeAnthropicSseGuardState {
+  return {
+    buffer: Buffer.alloc(0),
+    openBlocks: new Set(),
+    pendingFrames: [],
+    pendingBytes: 0,
+    released: false,
+    sawMessageStart: false,
+  };
+}
+
+function findSseFrameEnd(buffer: Buffer): number {
+  let previousWasLineEnding = false;
+
+  for (let index = 0; index < buffer.length; index += 1) {
+    const byte = buffer[index];
+    if (byte !== 0x0a && byte !== 0x0d) {
+      previousWasLineEnding = false;
+      continue;
+    }
+
+    const lineEndingLength = byte === 0x0d && buffer[index + 1] === 0x0a ? 2 : 1;
+    if (previousWasLineEnding) {
+      return index + lineEndingLength;
+    }
+
+    previousWasLineEnding = true;
+    index += lineEndingLength - 1;
+  }
+
+  return -1;
+}
+
+function buildNativeAnthropicSseGuardFailure(
+  reason: string,
+  message: string
+): CompletedStreamValidation {
+  return buildCompletedStreamFailure(reason, message);
+}
+
+function validateNativeAnthropicSseFrame(
+  state: NativeAnthropicSseGuardState,
+  frame: Buffer
+): CompletedStreamValidation & { releasesPending?: boolean } {
+  const blocks = parseSseBlocks(frame.toString('utf-8'));
+  if (blocks.length === 0 || !blocks[0].data || blocks[0].data === '[DONE]') {
+    return { ok: true };
+  }
+
+  const block = blocks[0];
+  const payload = parseSseJsonRecord(block.data);
+  const eventType = readString(payload?.type) || block.event || '';
+  if (!payload) {
+    if (
+      block.event &&
+      !block.event.startsWith('content_block_') &&
+      !block.event.startsWith('message_') &&
+      block.event !== 'error'
+    ) {
+      return { ok: true };
+    }
+    return buildNativeAnthropicSseGuardFailure(
+      'malformed_sse_json',
+      'upstream emitted malformed Anthropic SSE JSON'
+    );
+  }
+
+  if (eventType === 'message_start') {
+    state.sawMessageStart = true;
+    return { ok: true };
+  }
+
+  if (eventType === 'content_block_start') {
+    const index = readNumericIndex(payload.index);
+    const contentBlock = asRecord(payload.content_block);
+    if (
+      !state.sawMessageStart ||
+      index === undefined ||
+      !readString(contentBlock?.type) ||
+      state.openBlocks.has(index)
+    ) {
+      return buildNativeAnthropicSseGuardFailure(
+        'invalid_content_block_start',
+        'upstream emitted invalid Anthropic content block start'
+      );
+    }
+
+    state.openBlocks.add(index);
+    return { ok: true, releasesPending: true };
+  }
+
+  if (eventType === 'content_block_delta') {
+    const index = readNumericIndex(payload.index);
+    if (index === undefined || !state.openBlocks.has(index) || !asRecord(payload.delta)) {
+      return buildNativeAnthropicSseGuardFailure(
+        'unexpected_content_block_delta',
+        'upstream emitted Anthropic content delta without an open block'
+      );
+    }
+    return { ok: true };
+  }
+
+  if (eventType === 'content_block_stop') {
+    const index = readNumericIndex(payload.index);
+    if (index === undefined || !state.openBlocks.delete(index)) {
+      return buildNativeAnthropicSseGuardFailure(
+        'unexpected_content_block_stop',
+        'upstream emitted Anthropic content block stop without an open block'
+      );
+    }
+    return { ok: true };
+  }
+
+  if (eventType === 'message_stop') {
+    if (state.openBlocks.size > 0) {
+      return buildNativeAnthropicSseGuardFailure(
+        'unclosed_content_block',
+        'upstream ended Claude Code stream with an unclosed content block'
+      );
+    }
+    return { ok: true, releasesPending: true };
+  }
+
+  if (eventType === 'error') {
+    return { ok: true, releasesPending: true };
+  }
+
+  return { ok: true };
+}
+
+function* processNativeAnthropicSseFrames(
+  state: NativeAnthropicSseGuardState,
+  frames: Buffer[]
+): Generator<Buffer> {
+  for (const frame of frames) {
+    if (frame.length > NATIVE_ANTHROPIC_SSE_MAX_FRAME_BYTES) {
+      throw new NativeAnthropicSseGuardError(
+        'sse_frame_too_large',
+        'upstream emitted an Anthropic SSE frame above the safety limit'
+      );
+    }
+
+    const validation = validateNativeAnthropicSseFrame(state, frame);
+    if (!validation.ok) {
+      throw new NativeAnthropicSseGuardError(validation.reason, validation.message);
+    }
+
+    if (state.released) {
+      yield frame;
+      continue;
+    }
+
+    state.pendingFrames.push(frame);
+    state.pendingBytes += frame.length;
+    if (state.pendingBytes > NATIVE_ANTHROPIC_SSE_MAX_PRECOMMIT_BYTES) {
+      throw new NativeAnthropicSseGuardError(
+        'precommit_buffer_too_large',
+        'upstream did not emit a valid Anthropic content block before the safety limit'
+      );
+    }
+
+    if (validation.releasesPending) {
+      state.released = true;
+      const pendingFrames = state.pendingFrames;
+      state.pendingFrames = [];
+      state.pendingBytes = 0;
+      yield* pendingFrames;
+    }
+  }
+}
+
+function* processNativeAnthropicSseGuardChunk(
+  state: NativeAnthropicSseGuardState,
+  chunk: Buffer
+): Generator<Buffer> {
+  state.buffer = state.buffer.length ? Buffer.concat([state.buffer, chunk]) : chunk;
+  const frames: Buffer[] = [];
+
+  for (;;) {
+    const frameEnd = findSseFrameEnd(state.buffer);
+    if (frameEnd < 0) break;
+    frames.push(state.buffer.subarray(0, frameEnd));
+    state.buffer = state.buffer.subarray(frameEnd);
+  }
+
+  if (state.buffer.length > NATIVE_ANTHROPIC_SSE_MAX_FRAME_BYTES) {
+    throw new NativeAnthropicSseGuardError(
+      'sse_frame_too_large',
+      'upstream emitted an Anthropic SSE frame above the safety limit'
+    );
+  }
+
+  yield* processNativeAnthropicSseFrames(state, frames);
+}
+
+function* flushNativeAnthropicSseGuard(state: NativeAnthropicSseGuardState): Generator<Buffer> {
+  const frames = state.buffer.length ? [state.buffer] : [];
+  state.buffer = Buffer.alloc(0);
+  yield* processNativeAnthropicSseFrames(state, frames);
+
+  if (state.openBlocks.size > 0) {
+    throw new NativeAnthropicSseGuardError(
+      'unclosed_content_block',
+      'upstream ended Claude Code stream with an unclosed content block'
+    );
+  }
+
+  if (!state.released) {
+    state.released = true;
+    const pendingFrames = state.pendingFrames;
+    state.pendingFrames = [];
+    state.pendingBytes = 0;
+    yield* pendingFrames;
+  }
+}
+
+function readStreamingValidationMessage(error: unknown): string {
+  return error instanceof NativeAnthropicSseGuardError
+    ? error.protocolMessage
+    : 'upstream emitted an invalid streaming response';
 }
 
 function readString(value: unknown): string {
@@ -1719,6 +1987,15 @@ export function summarizeUpstreamFailureBodyForLog(body: Buffer, maxChars: numbe
     summarizeJsonFailureText(text) || summarizeHtmlFailureText(text) || normalizeLogLine(text);
 
   return truncateUpstreamFailureSummary(summary, maxChars);
+}
+
+export function isUpstreamQuotaExhaustionResponse(statusCode: number, body: Buffer): boolean {
+  if (classifyRouteStatusCode(statusCode) !== 'failure') {
+    return false;
+  }
+
+  const summary = summarizeUpstreamFailureBodyForLog(body, 4000);
+  return UPSTREAM_QUOTA_EXHAUSTION_PATTERNS.some(pattern => pattern.test(summary));
 }
 
 function summarizeUpstreamFailureBodyRaw(body: Buffer, maxChars: number = 1200): string {
@@ -2620,6 +2897,10 @@ async function forwardToUpstream(
     !options.nativeResponsePassthrough && streamingTerminalProtocol === 'anthropic'
       ? createAnthropicSseCompatibilityNormalizer()
       : null;
+  const nativeAnthropicStreamGuard =
+    options.nativeResponsePassthrough && streamingTerminalProtocol === 'anthropic'
+      ? createNativeAnthropicSseGuard()
+      : null;
   let streamingTerminalScanText = '';
   let streamingTerminalSeen = streamingTerminalProtocol === 'none';
   let streamingCompletionValidated = false;
@@ -2733,10 +3014,26 @@ async function forwardToUpstream(
           },
           onChunk: async chunk => {
             if (!streamingStatusCode || !streamingHeaders) return;
-            const outgoingChunk = anthropicStreamNormalizer
-              ? normalizeAnthropicSseCompatibilityChunk(anthropicStreamNormalizer, chunk)
-              : chunk;
-            return processStreamingOutgoingChunk(outgoingChunk);
+            try {
+              const outgoingChunks = nativeAnthropicStreamGuard
+                ? processNativeAnthropicSseGuardChunk(nativeAnthropicStreamGuard, chunk)
+                : [
+                    anthropicStreamNormalizer
+                      ? normalizeAnthropicSseCompatibilityChunk(anthropicStreamNormalizer, chunk)
+                      : chunk,
+                  ];
+              for (const outgoingChunk of outgoingChunks) {
+                await processStreamingOutgoingChunk(outgoingChunk);
+              }
+            } catch (error: unknown) {
+              if (streamed && error instanceof NativeAnthropicSseGuardError) {
+                await writeResponseChunk(
+                  options.streamResponse!,
+                  buildMalformedStreamingErrorChunk(cliType, readStreamingValidationMessage(error))
+                );
+              }
+              throw error;
+            }
           },
           streamIdleTimeout: options.streamIdleTimeoutMs,
           shouldResolveOnAbort: () =>
@@ -2748,6 +3045,22 @@ async function forwardToUpstream(
     await processStreamingOutgoingChunk(
       flushAnthropicSseCompatibilityNormalizer(anthropicStreamNormalizer)
     );
+  }
+
+  if (options.streamResponse && options.streamResponseBody && nativeAnthropicStreamGuard) {
+    try {
+      for (const outgoingChunk of flushNativeAnthropicSseGuard(nativeAnthropicStreamGuard)) {
+        await processStreamingOutgoingChunk(outgoingChunk);
+      }
+    } catch (error: unknown) {
+      if (streamed && error instanceof NativeAnthropicSseGuardError) {
+        await writeResponseChunk(
+          options.streamResponse,
+          buildMalformedStreamingErrorChunk(cliType, readStreamingValidationMessage(error))
+        );
+      }
+      throw error;
+    }
   }
 
   if (
@@ -2862,6 +3175,38 @@ function writeAllRoutePathsDisabledResponse(res: http.ServerResponse, cliType: R
     'X-Route-Proxy-Error': ALL_ROUTE_PATHS_DISABLED_ERROR_CODE,
   });
   res.end(JSON.stringify(buildAllRoutePathsDisabledErrorBody(cliType)));
+}
+
+function buildUpstreamTemporarilyUnavailableErrorBody(cliType: RouteCliType): unknown {
+  if (cliType === 'claudeCode') {
+    return {
+      type: 'error',
+      error: {
+        type: 'overloaded_error',
+        message: UPSTREAM_TEMPORARILY_UNAVAILABLE_MESSAGE,
+      },
+    };
+  }
+
+  return {
+    error: {
+      message: UPSTREAM_TEMPORARILY_UNAVAILABLE_MESSAGE,
+      type: 'server_error',
+      param: null,
+      code: UPSTREAM_TEMPORARILY_UNAVAILABLE_ERROR_CODE,
+    },
+  };
+}
+
+function writeUpstreamTemporarilyUnavailableResponse(
+  res: http.ServerResponse,
+  cliType: RouteCliType
+): void {
+  res.writeHead(UPSTREAM_TEMPORARILY_UNAVAILABLE_STATUS_CODE, {
+    'Content-Type': 'application/json',
+    'X-Route-Proxy-Error': UPSTREAM_TEMPORARILY_UNAVAILABLE_ERROR_CODE,
+  });
+  res.end(JSON.stringify(buildUpstreamTemporarilyUnavailableErrorBody(cliType)));
 }
 
 export async function handleRequest(
@@ -3233,11 +3578,24 @@ export async function handleRequest(
   let attemptedUpstream = false;
   let tokenCountFallbackReason: string | undefined;
   const adapterIncompatibilityReasons: string[] = [];
+  const attemptsByRoutePath = new Map<string, number>();
+  const quotaExhaustedRoutePaths = new Set<string>();
+  let quotaExhaustionEncountered = false;
   for (let i = 0; i < sortedChannels.length; i++) {
     const ch = sortedChannels[i];
     if (!bypassRoutePathState && isRoutePathDisabled(ch)) {
       continue;
     }
+
+    const routePathKey = buildChannelAttemptPathKey(ch);
+    if (quotaExhaustedRoutePaths.has(routePathKey)) {
+      continue;
+    }
+    const routePathAttempts = attemptsByRoutePath.get(routePathKey) ?? 0;
+    if (routePathAttempts >= routeRuntimeConfig.maxAttemptsPerRoutePath) {
+      continue;
+    }
+    attemptsByRoutePath.set(routePathKey, routePathAttempts + 1);
 
     attempt += 1;
     const activeChannel: ResolvedChannel = {
@@ -3750,6 +4108,9 @@ export async function handleRequest(
       if (outcome === 'failure') {
         const bodySnippet = upstreamFailureBodySnippet || '<empty>';
         const rawBodySnippet = summarizeUpstreamFailureBodyRaw(result.body) || '<empty>';
+        const quotaExhausted =
+          !bypassRoutePathState &&
+          isUpstreamQuotaExhaustionResponse(result.statusCode, result.body);
         const terminalError =
           rawBodySnippet === '<empty>'
             ? buildRouteProxyErrorText(
@@ -3828,6 +4189,22 @@ export async function handleRequest(
             terminalError: finalError,
             lock: probeLock,
           });
+        }
+
+        if (quotaExhausted) {
+          quotaExhaustionEncountered = true;
+          quotaExhaustedRoutePaths.add(routePathKey);
+          log.warn(
+            'Upstream route quota is exhausted; skipping remaining attempts for route path',
+            {
+              statusCode: result.statusCode,
+              siteId: activeChannel.siteId,
+              accountId: activeChannel.accountId,
+              apiKeyId: activeChannel.apiKeyId,
+              resolvedModel: activeChannel.resolvedModel,
+            }
+          );
+          continue;
         }
 
         if (hasEnabledRoutePath(sortedChannels.slice(i + 1)) && !bypassRoutePathState) {
@@ -4043,6 +4420,25 @@ export async function handleRequest(
         }
         return;
       }
+      if (
+        err instanceof NativeAnthropicSseGuardError &&
+        nativeResponsePassthrough &&
+        !probeLock &&
+        !routeAbortController.signal.aborted &&
+        !isRoutePathDisabled(activeChannel) &&
+        (attemptsByRoutePath.get(routePathKey) ?? 0) < routeRuntimeConfig.maxAttemptsPerRoutePath
+      ) {
+        log.warn('Native Anthropic stream failed before commit; retrying same route path', {
+          retryAttempt: (attemptsByRoutePath.get(routePathKey) ?? 0) + 1,
+          maxAttempts: routeRuntimeConfig.maxAttemptsPerRoutePath,
+          siteId: activeChannel.siteId,
+          accountId: activeChannel.accountId,
+          apiKeyId: activeChannel.apiKeyId,
+          resolvedModel: activeChannel.resolvedModel,
+          error: errorMessage,
+        });
+        i -= 1;
+      }
     }
   }
 
@@ -4073,6 +4469,8 @@ export async function handleRequest(
           reasons: Array.from(new Set(adapterIncompatibilityReasons)),
         })
       );
+    } else if (quotaExhaustionEncountered) {
+      writeUpstreamTemporarilyUnavailableResponse(res, cliType);
     } else if (!bypassRoutePathState && areAllRoutePathsDisabled(sortedChannels)) {
       writeAllRoutePathsDisabledResponse(res, cliType);
     } else {

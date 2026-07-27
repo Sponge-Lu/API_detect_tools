@@ -73,6 +73,7 @@ import {
   applyRouteThinkingEffortOverride,
   extractUsageFromBody,
   handleRequest,
+  isUpstreamQuotaExhaustionResponse,
   resolveRouteRuntimeConfig,
   summarizeUpstreamFailureBodyForLog,
 } from '../main/route-proxy-service';
@@ -404,6 +405,38 @@ describe('route-proxy-service attempt planning', () => {
     expect(classifyRouteStatusCode(422)).toBe('failure');
     expect(classifyRouteStatusCode(502)).toBe('failure');
   });
+
+  it.each([
+    [403, 'INSUFFICIENT_BALANCE: Insufficient account balance'],
+    [403, 'billing_error: request rejected'],
+    [403, 'new_api_error: 用户额度不足, 剩余额度: 0'],
+    [403, 'new_api_error: 预扣费额度失败'],
+    [500, 'upstream_quota_exhausted: no credits remain'],
+  ])('recognizes explicit upstream quota exhaustion (%s)', (statusCode, message) => {
+    expect(
+      isUpstreamQuotaExhaustionResponse(
+        statusCode,
+        Buffer.from(JSON.stringify({ error: { message } }))
+      )
+    ).toBe(true);
+  });
+
+  it.each([
+    [403, 'permission_error: API key is forbidden'],
+    [403, 'rate_limit_error: Codex rolling spend limit exceeded'],
+    [429, 'rate_limit_error: too many requests'],
+    [200, 'INSUFFICIENT_BALANCE: Insufficient account balance'],
+  ])(
+    'does not classify unrelated upstream responses as quota exhaustion (%s)',
+    (statusCode, message) => {
+      expect(
+        isUpstreamQuotaExhaustionResponse(
+          statusCode,
+          Buffer.from(JSON.stringify({ error: { message } }))
+        )
+      ).toBe(false);
+    }
+  );
 
   it('keeps one attempt per route path while preserving distinct api keys and sites', () => {
     const plan = buildChannelAttemptPlan(
@@ -3101,6 +3134,203 @@ describe('route-proxy-service OpenCode native endpoint routing', () => {
     expect(JSON.parse(response.body)).toMatchObject({
       error: 'no_compatible_route_channel',
       reasons: ['unsupported_field:request.metadata'],
+    });
+  });
+});
+
+describe('route-proxy-service quota exhaustion failover', () => {
+  const rule = {
+    id: 'rule-codex-quota-failover',
+    cliType: 'codex' as const,
+    pattern: 'gpt-4.1-mini',
+    patternType: 'exact' as const,
+  };
+  const quotaChannel = {
+    routeRuleId: rule.id,
+    siteId: 'site-quota',
+    accountId: 'account-quota',
+    apiKeyId: 'key-quota',
+    cliType: 'codex' as const,
+    targetProtocol: 'native' as const,
+    canonicalModel: 'gpt-4.1-mini',
+    resolvedModel: 'quota-model',
+  };
+  const fallbackChannel = {
+    ...quotaChannel,
+    siteId: 'site-good',
+    accountId: 'account-good',
+    apiKeyId: 'key-good',
+    resolvedModel: 'good-model',
+  };
+
+  function setupQuotaFailoverRoute(channels: Array<typeof quotaChannel>): void {
+    const now = Date.now();
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+      },
+      rules: [rule],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: null,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'gpt-4.1-mini': {
+            canonicalName: 'gpt-4.1-mini',
+            aliases: ['gpt-4.1-mini'],
+            sources: [],
+            vendor: 'gpt' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+      routePathStates: {},
+    };
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn((siteId: string) => ({ id: siteId, name: siteId })),
+      getAccountById: vi.fn((accountId: string) => ({ id: accountId, account_name: accountId })),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(extractModelFromBody).mockReturnValue('gpt-4.1-mini');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue(channels);
+    vi.mocked(resolveChannelCredentials).mockImplementation(
+      async (_siteId, _accountId, apiKeyId) => ({
+        baseUrl: `https://${apiKeyId}.example.com`,
+        apiKey: `sk-${apiKeyId}`,
+      })
+    );
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockImplementation(async (channel, outcome) => ({
+      ...channel,
+      windowStartedAt: now,
+      windowRequestCount: 1,
+      windowSuccessCount: outcome === 'success' ? 1 : 0,
+      successRate: outcome === 'success' ? 1 : 0,
+      lastOutcome: outcome,
+      updatedAt: now,
+    }));
+  }
+
+  function createQuotaTestRequest() {
+    return createJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+      },
+      { model: 'gpt-4.1-mini', input: 'hi' }
+    );
+  }
+
+  it('skips remaining attempts for an exhausted route path and continues to the next path', async () => {
+    vi.clearAllMocks();
+    setupQuotaFailoverRoute([quotaChannel, { ...quotaChannel }, fallbackChannel]);
+    vi.mocked(httpRawRequest)
+      .mockResolvedValueOnce({
+        status: 403,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from(
+          JSON.stringify({
+            error: {
+              type: 'billing_error',
+              message: 'INSUFFICIENT_BALANCE: Insufficient account balance',
+            },
+          })
+        ),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from(JSON.stringify({ ok: true })),
+      });
+    const response = createMockResponse();
+
+    await handleRequest(createQuotaTestRequest(), response);
+
+    expect(vi.mocked(resolveChannelCredentials).mock.calls.map(call => call[2])).toEqual([
+      'key-quota',
+      'key-good',
+    ]);
+    expect(httpRawRequest).toHaveBeenCalledTimes(2);
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({ ok: true });
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: 'key-quota' }),
+      'failure',
+      expect.objectContaining({
+        statusCode: 403,
+        error: expect.stringContaining('INSUFFICIENT_BALANCE'),
+      }),
+      expect.any(Object)
+    );
+  });
+
+  it('returns only a generic retryable error when quota-exhausted paths are exhausted', async () => {
+    vi.clearAllMocks();
+    setupQuotaFailoverRoute([quotaChannel]);
+    vi.mocked(httpRawRequest).mockResolvedValueOnce({
+      status: 403,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(
+        JSON.stringify({
+          error: {
+            type: 'new_api_error',
+            message: '用户额度不足, 剩余额度: 0; 预扣费额度失败',
+          },
+        })
+      ),
+    });
+    const response = createMockResponse();
+
+    await handleRequest(createQuotaTestRequest(), response);
+
+    expect(response.statusCode).toBe(503);
+    expect(response.headers['X-Route-Proxy-Error']).toBe('upstream_temporarily_unavailable');
+    expect(JSON.parse(response.body)).toEqual({
+      error: {
+        message: 'No upstream route is currently available. Please retry.',
+        type: 'server_error',
+        param: null,
+        code: 'upstream_temporarily_unavailable',
+      },
+    });
+    expect(response.body).not.toMatch(/403|billing|quota|余额|额度|预扣费/i);
+  });
+
+  it('keeps unrelated 403 responses on the existing terminal path', async () => {
+    vi.clearAllMocks();
+    setupQuotaFailoverRoute([quotaChannel]);
+    vi.mocked(httpRawRequest).mockResolvedValueOnce({
+      status: 403,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(
+        JSON.stringify({
+          error: { type: 'permission_error', message: 'API key is forbidden' },
+        })
+      ),
+    });
+    const response = createMockResponse();
+
+    await handleRequest(createQuotaTestRequest(), response);
+
+    expect(response.statusCode).toBe(403);
+    expect(JSON.parse(response.body)).toEqual({
+      error: { type: 'permission_error', message: 'API key is forbidden' },
     });
   });
 });
@@ -6647,7 +6877,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     );
   });
 
-  it('forwards standard native Claude SSE with invalid block starts without injecting errors', async () => {
+  it('blocks a malformed native Claude frame after commit and records the attempt as failed', async () => {
     vi.clearAllMocks();
 
     const rule = {
@@ -6780,24 +7010,193 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     await handleRequest(request, response);
 
     expect(response.statusCode).toBe(200);
-    expect(response.body).toBe(Buffer.concat([malformedChunk, terminalChunk]).toString('utf-8'));
+    expect(response.body).toContain('event: message_start');
+    expect(response.body).toContain('event: content_block_start');
+    expect(response.body.match(/event: content_block_start/g)).toHaveLength(1);
+    expect(response.body).not.toContain('event: content_block_delta');
+    expect(response.body).not.toContain('event: message_stop');
+    expect(response.body).toContain('event: error');
+    expect(response.body).toContain('invalid Anthropic content block start');
+    expect(httpRawStreamRequest).toHaveBeenCalledTimes(1);
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: 'key-claude' }),
+      'failure',
+      expect.objectContaining({ error: expect.stringContaining('invalid_content_block_start') }),
+      expect.any(Object)
+    );
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKeyId: 'key-claude',
+        outcome: 'failure',
+        error: expect.stringContaining('invalid_content_block_start'),
+      })
+    );
+  });
+
+  it('retries native Claude pre-commit guard failures within the configured path limit', async () => {
+    vi.clearAllMocks();
+
+    const rule = {
+      id: 'rule-claude-precommit-fallback',
+      cliType: 'claudeCode' as const,
+      pattern: 'claude-opus-4-6',
+      patternType: 'exact' as const,
+    };
+    const channel = {
+      routeRuleId: rule.id,
+      siteId: 'site-claude',
+      accountId: 'account-claude',
+      apiKeyId: 'key-claude',
+      cliType: 'claudeCode' as const,
+      canonicalModel: 'claude-opus-4-6',
+      resolvedModel: 'claude-opus-4-6',
+    };
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+      },
+      rules: [rule],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: null,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'claude-opus-4-6': {
+            canonicalName: 'claude-opus-4-6',
+            aliases: ['claude-opus-4-6'],
+            sources: [],
+            vendor: 'claude' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [
+          {
+            id: 'manual:claude-opus-4-6',
+            vendor: 'claude' as const,
+            canonicalName: 'claude-opus-4-6',
+            sourceKeys: ['site-claude:account-claude:claude-opus-4-6'],
+            originalModelOrder: ['claude-opus-4-6'],
+            priorityConfig: { sitePriorities: {}, apiKeyPriorities: {} },
+            runtimeConfig: {
+              maxAttemptsPerRoutePath: 3,
+              successRateWindowMinutes: 60,
+              disableDurationMinutes: 60,
+              minSuccessRate: 0.3,
+            },
+            mode: 'manual' as const,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+        vendorPriorities: {},
+      },
+    };
+    const malformedChunk = Buffer.from(
+      [
+        'event: message_start',
+        'data: {"type":"message_start","message":{"id":"msg_bad","type":"message","role":"assistant","model":"claude-opus-4-6","content":[]}}',
+        '',
+        'event: content_block_delta',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"must-not-leak"}}',
+        '',
+        '',
+      ].join('\n'),
+      'utf-8'
+    );
+    const oversizedFrame = Buffer.from(
+      `event: vendor_notice\ndata: ${'x'.repeat(1024 * 1024)}\n\n`,
+      'utf-8'
+    );
+    const successChunk = buildClaudeTextSse('fallback-ok');
+    let upstreamAttempt = 0;
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn((siteId: string) => ({ id: siteId, name: 'Claude-compatible' })),
+      getAccountById: vi.fn((accountId: string) => ({ id: accountId, account_name: 'default' })),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('claudeCode');
+    vi.mocked(extractModelFromBody).mockReturnValue('claude-opus-4-6');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue([channel]);
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://upstream.example.com',
+      apiKey: 'sk-upstream',
+    });
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockResolvedValue({
+      ...channel,
+      windowStartedAt: 1,
+      windowRequestCount: 1,
+      windowSuccessCount: 0,
+      successRate: 0,
+      updatedAt: 1,
+    });
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
+      upstreamAttempt += 1;
+      const headers = { 'content-type': 'text/event-stream' };
+      expect(config.onResponse?.({ status: 200, statusText: 'OK', headers })).toBe(true);
+      const chunk =
+        upstreamAttempt === 1
+          ? malformedChunk
+          : upstreamAttempt === 2
+            ? oversizedFrame
+            : successChunk;
+      await config.onChunk?.(chunk);
+      return { status: 200, headers, body: chunk, firstByteLatencyMs: 3 };
+    });
+
+    const request = createJsonRequest(
+      '/v1/messages?beta=true',
+      {
+        'x-api-key': 'sk-route',
+        'content-type': 'application/json',
+      },
+      { model: 'claude-opus-4-6', stream: true, messages: [{ role: 'user', content: 'edit' }] }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(upstreamAttempt).toBe(3);
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe(successChunk.toString('utf-8'));
+    expect(response.body).not.toContain('must-not-leak');
+    expect(response.body).not.toContain('vendor_notice');
     expect(response.body).not.toContain('event: error');
-    expect(response.body).toContain('event: message_stop');
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: 'key-claude' }),
+      'failure',
+      expect.objectContaining({
+        error: 'malformed_streaming_response:unexpected_content_block_delta',
+      }),
+      expect.any(Object)
+    );
     expect(recordRoutePathOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ apiKeyId: 'key-claude' }),
       'success',
       expect.objectContaining({ statusCode: 200 }),
       expect.any(Object)
     );
-    expect(recordRouteRequest).toHaveBeenCalledWith(
-      expect.objectContaining({
-        apiKeyId: 'key-claude',
-        outcome: 'success',
-      })
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: 'key-claude' }),
+      'failure',
+      expect.objectContaining({ error: 'malformed_streaming_response:sse_frame_too_large' }),
+      expect.any(Object)
     );
   });
 
-  it('forwards standard native Claude thinking-only SSE without local validation errors', async () => {
+  it('preserves native Claude CRLF frames across split UTF-8 chunks and unknown events', async () => {
     vi.clearAllMocks();
 
     const rule = {
@@ -6847,6 +7246,14 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     };
     const thinkingChunk = Buffer.from(
       [
+        ': keepalive',
+        '',
+        'event: ping',
+        'data: {"type":"ping"}',
+        '',
+        'event: vendor_notice',
+        'data: opaque-vendor-payload',
+        '',
         'event: message_start',
         'data: {"type":"message_start","message":{"id":"msg_think","type":"message","role":"assistant","model":"claude-opus-4-6","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}',
         '',
@@ -6854,13 +7261,13 @@ describe('route-proxy-service SSE streaming passthrough', () => {
         'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}',
         '',
         'event: content_block_delta',
-        'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"checking the task"}}',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"检查任务"}}',
         '',
         'event: content_block_stop',
         'data: {"type":"content_block_stop","index":0}',
         '',
         '',
-      ].join('\n'),
+      ].join('\r\n'),
       'utf-8'
     );
     const terminalChunk = Buffer.from(
@@ -6872,7 +7279,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
         'data: {"type":"message_stop"}',
         '',
         '',
-      ].join('\n'),
+      ].join('\r\n'),
       'utf-8'
     );
 
@@ -6904,7 +7311,9 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       const headers = { 'content-type': 'text/event-stream' };
       const accepted = config.onResponse?.({ status: 200, statusText: 'OK', headers });
       expect(accepted).toBe(true);
-      await config.onChunk?.(thinkingChunk);
+      const utf8Split = thinkingChunk.indexOf(Buffer.from('检查', 'utf-8')) + 1;
+      await config.onChunk?.(thinkingChunk.subarray(0, utf8Split));
+      await config.onChunk?.(thinkingChunk.subarray(utf8Split));
       await config.onChunk?.(terminalChunk);
       return {
         status: 200,
