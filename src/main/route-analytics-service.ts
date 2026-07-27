@@ -77,6 +77,10 @@ function resolveRouteRegistryIdentity(params: {
   apiKeyName?: string;
   sourceType?: RouteModelSourceRef['sourceType'];
 } | null {
+  if (!params.siteId && !params.accountId && !params.apiKeyId) {
+    return null;
+  }
+
   const routingConfig = unifiedConfigManager.getRoutingConfig();
   const sources = routingConfig?.modelRegistry?.sources || [];
 

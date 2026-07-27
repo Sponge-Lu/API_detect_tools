@@ -214,6 +214,10 @@ function findRouteLogSource(
   item: RouteRequestLogItem,
   context: RouteLogRegistryContext
 ): RouteModelSourceRef | undefined {
+  if (!item.siteId) {
+    return undefined;
+  }
+
   const sources = context.registry?.sources || [];
   const candidateModels = new Set(
     [item.resolvedModel, item.requestedModel, item.canonicalModel]
@@ -222,7 +226,7 @@ function findRouteLogSource(
   );
 
   return sources.find(source => {
-    if (item.siteId && source.siteId !== item.siteId) {
+    if (source.siteId !== item.siteId) {
       return false;
     }
     if (item.accountId && source.accountId && source.accountId !== item.accountId) {
@@ -511,14 +515,14 @@ function buildRouteLogRowViewModel(params: {
   const routeSource = findRouteLogSource(item, context);
   const customCli = isCustomCliLog(item, routeSource);
   const siteOrConfigName = customCli
-    ? normalizeCustomCliConfigName(routeSource?.siteName || item.siteName)
-    : formatDisplayName(routeSource?.siteName || item.siteName);
+    ? normalizeCustomCliConfigName(item.siteName || routeSource?.siteName)
+    : formatDisplayName(item.siteName || routeSource?.siteName);
   const costInfo = resolveRouteLogCostInfo(item, config, customCli);
   const requestedModelName = formatOptionalDisplayName(item.resolvedModel || item.canonicalModel);
   const canonicalModelName = formatOptionalDisplayName(item.canonicalModel);
   const accountDisplayName = customCli
     ? EMPTY_VALUE_TEXT
-    : formatOptionalDisplayName(routeSource?.accountName || item.accountName);
+    : formatOptionalDisplayName(item.accountName || routeSource?.accountName);
   const userGroupDisplayName = customCli
     ? EMPTY_VALUE_TEXT
     : formatOptionalDisplayName(item.userGroupKey);

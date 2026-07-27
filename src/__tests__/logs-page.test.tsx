@@ -669,6 +669,74 @@ describe('LogsPage', () => {
     expect(screen.queryByText(/当前运行会话中还没有路由请求/)).not.toBeInTheDocument();
   });
 
+  it('uses explicit log identity without guessing a site from the model', async () => {
+    vi.mocked(routeApi.getRequestLogs).mockResolvedValue({
+      success: true,
+      data: [
+        {
+          ...buildRouteLog({
+            id: 'route-log-no-site',
+            requestId: 'no-site',
+            cliType: 'claudeCode',
+            attempt: 1,
+            outcome: 'neutral',
+            createdAt: 100,
+            requestedModel: 'duckcoding',
+            canonicalModel: 'duckcoding',
+            resolvedModel: 'duckcoding',
+          }),
+          siteId: undefined,
+          siteName: undefined,
+          accountId: undefined,
+          accountName: undefined,
+          userGroupKey: undefined,
+          apiKeyId: undefined,
+          apiKeyName: undefined,
+        },
+        {
+          ...buildRouteLog({
+            id: 'route-log-snapshot-name',
+            requestId: 'snapshot-name',
+            cliType: 'codex',
+            attempt: 1,
+            outcome: 'success',
+            createdAt: 200,
+          }),
+          siteName: '旧站点',
+          accountName: '旧账户',
+        },
+        {
+          ...buildRouteLog({
+            id: 'route-log-registry-name',
+            requestId: 'registry-name',
+            cliType: 'codex',
+            attempt: 1,
+            outcome: 'success',
+            createdAt: 300,
+          }),
+          siteName: undefined,
+          accountName: undefined,
+        },
+      ],
+    });
+
+    render(<LogsPage />);
+
+    await waitFor(() => expect(getRouteLogRowByRequestId('no-site')).toBeInTheDocument());
+
+    const noSitePath = within(getRouteLogRowByRequestId('no-site')).getByTestId(
+      'route-request-site-path'
+    );
+    expect(noSitePath).toHaveTextContent('未知 / 0 / 0 / 0');
+    expect(noSitePath).not.toHaveTextContent('DuckCoding');
+    expect(
+      within(getRouteLogRowByRequestId('snapshot-name')).getByTestId('route-request-site-path')
+    ).toHaveTextContent('旧站点 / 旧账户 / vip / Key Alpha');
+    expect(
+      within(getRouteLogRowByRequestId('registry-name')).getByTestId('route-request-site-path')
+    ).toHaveTextContent('站点 A / 主账户 / vip / Key Alpha');
+  });
+
   it('uses the matched display item site priority even when the priority is zero', async () => {
     vi.mocked(routeApi.getRequestLogs).mockResolvedValue({
       success: true,

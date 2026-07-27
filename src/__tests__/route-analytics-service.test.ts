@@ -168,6 +168,44 @@ describe('route-analytics-service token statistics', () => {
     );
   });
 
+  it('does not infer route identity from the registry when every channel id is missing', () => {
+    mocks.routingConfig.analytics.config.enabled = false;
+    mocks.routingConfig.modelRegistry.sources = [
+      {
+        sourceKey: 'source-custom-duck',
+        siteId: 'custom-cli-site-duckcoding',
+        siteName: '自定义 CLI / DuckCoding',
+        accountId: 'custom-cli-account-duckcoding',
+        accountName: '自定义 CLI',
+        sourceType: 'customCli',
+        originalModel: 'duckcoding',
+        vendor: 'unknown',
+        firstSeenAt: 1,
+        lastSeenAt: 1,
+      },
+    ];
+
+    recordRouteRequest({
+      requestId: 'req-local-token-estimate',
+      attempt: 1,
+      cliType: 'claudeCode',
+      requestedModel: 'duckcoding',
+      canonicalModel: 'duckcoding',
+      resolvedModel: 'duckcoding',
+      outcome: 'neutral',
+      statusCode: 200,
+      error: 'count_tokens_local_estimate:upstream_404',
+      at: 1_776_000_000_001,
+    });
+
+    expect(getRouteRequestLogs()[0]).toMatchObject({
+      requestId: 'req-local-token-estimate',
+      siteName: undefined,
+      accountName: undefined,
+      apiKeyName: undefined,
+    });
+  });
+
   it('records estimated cost snapshots for direct custom cli route requests', () => {
     const now = Date.now();
     mocks.customCliStorage = {
