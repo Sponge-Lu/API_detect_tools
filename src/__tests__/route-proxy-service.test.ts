@@ -3366,6 +3366,17 @@ describe('route-proxy-service quota exhaustion failover', () => {
       }),
       expect.any(Object)
     );
+    const quotaFailureLog = vi
+      .mocked(recordRouteRequest)
+      .mock.calls.find(([params]) => params.apiKeyId === 'key-quota')?.[0];
+    expect(quotaFailureLog).toEqual(
+      expect.objectContaining({
+        outcome: 'failure',
+        statusCode: 403,
+        error: expect.stringContaining('余额不足，已跳过当前通道'),
+      })
+    );
+    expect(quotaFailureLog?.error).toContain('INSUFFICIENT_BALANCE');
   });
 
   it('returns only a generic retryable error when quota-exhausted paths are exhausted', async () => {
@@ -3420,6 +3431,13 @@ describe('route-proxy-service quota exhaustion failover', () => {
     expect(JSON.parse(response.body)).toEqual({
       error: { type: 'permission_error', message: 'API key is forbidden' },
     });
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKeyId: 'key-quota',
+        outcome: 'failure',
+        error: 'permission_error: API key is forbidden',
+      })
+    );
   });
 });
 

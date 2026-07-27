@@ -98,6 +98,7 @@ const UPSTREAM_TEMPORARILY_UNAVAILABLE_ERROR_CODE = 'upstream_temporarily_unavai
 const UPSTREAM_TEMPORARILY_UNAVAILABLE_STATUS_CODE = 503;
 const UPSTREAM_TEMPORARILY_UNAVAILABLE_MESSAGE =
   'No upstream route is currently available. Please retry.';
+const QUOTA_EXHAUSTED_ROUTE_LOG_MESSAGE = '余额不足，已跳过当前通道';
 const UPSTREAM_QUOTA_EXHAUSTION_PATTERNS = [
   /\binsufficient(?:[_\s-]+account)?[_\s-]+balance\b/i,
   /\binsufficient[_\s-]+quota\b/i,
@@ -2004,6 +2005,12 @@ export function isUpstreamQuotaExhaustionResponse(statusCode: number, body: Buff
 
   const summary = summarizeUpstreamFailureBodyForLog(body, 4000);
   return UPSTREAM_QUOTA_EXHAUSTION_PATTERNS.some(pattern => pattern.test(summary));
+}
+
+function buildQuotaExhaustedRouteLogError(upstreamFailureSummary: string): string {
+  return upstreamFailureSummary
+    ? `${QUOTA_EXHAUSTED_ROUTE_LOG_MESSAGE}；上游错误：${upstreamFailureSummary}`
+    : QUOTA_EXHAUSTED_ROUTE_LOG_MESSAGE;
 }
 
 function summarizeUpstreamFailureBodyRaw(body: Buffer, maxChars: number = 1200): string {
@@ -3977,6 +3984,13 @@ export async function handleRequest(
       }
       const upstreamFailureBodySnippet =
         outcome === 'failure' ? summarizeUpstreamFailureBodyForLog(result.body) : '';
+      const quotaExhausted =
+        outcome === 'failure' &&
+        !bypassRoutePathState &&
+        isUpstreamQuotaExhaustionResponse(result.statusCode, result.body);
+      const routeRequestLogError = quotaExhausted
+        ? buildQuotaExhaustedRouteLogError(upstreamFailureBodySnippet)
+        : upstreamFailureBodySnippet;
 
       if (requestIsTokenCount && !bypassRoutePathState && isUnsupportedTokenCountResponse(result)) {
         const bodySnippet = summarizeUpstreamFailureBodyForLog(result.body) || '<empty>';
@@ -4132,7 +4146,7 @@ export async function handleRequest(
           cacheCreationTokens: result.usage?.cacheCreationTokens,
           cacheReadTokens: result.usage?.cacheReadTokens,
           cachedTokens: result.usage?.cachedTokens,
-          ...(upstreamFailureBodySnippet ? { error: upstreamFailureBodySnippet } : {}),
+          ...(routeRequestLogError ? { error: routeRequestLogError } : {}),
         });
       }
 
@@ -4140,9 +4154,6 @@ export async function handleRequest(
       if (outcome === 'failure') {
         const bodySnippet = upstreamFailureBodySnippet || '<empty>';
         const rawBodySnippet = summarizeUpstreamFailureBodyRaw(result.body) || '<empty>';
-        const quotaExhausted =
-          !bypassRoutePathState &&
-          isUpstreamQuotaExhaustionResponse(result.statusCode, result.body);
         const terminalError =
           rawBodySnippet === '<empty>'
             ? buildRouteProxyErrorText(
