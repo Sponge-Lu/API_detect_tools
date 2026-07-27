@@ -1485,11 +1485,7 @@ describe('route workbench redesign', () => {
   it('resets the current priority hit route channel without narrowing to one resolved model', async () => {
     mockGetRequestLogs.mockResolvedValueOnce({
       success: true,
-      data: [
-        createFirstHitRouteLog({
-          targetProtocol: 'native',
-        }),
-      ],
+      data: [createFirstHitRouteLog()],
     });
 
     render(<ModelRedirectionTab />);
@@ -1679,11 +1675,38 @@ describe('route workbench redesign', () => {
         displayItems: registry.displayItems,
       },
     };
+    mockGetRequestLogs.mockResolvedValueOnce({
+      success: true,
+      data: [
+        createFirstHitRouteLog({
+          id: 'route-log-override-backed-card',
+          canonicalModel: 'deepseek-v4-pro',
+          requestedModel: 'deepseek-v4',
+          siteId: 'site-9',
+          siteName: 'DeepSeek Site',
+          accountId: 'acc-9',
+          accountName: 'DeepSeek Main',
+          apiKeyId: 'deepseek-key-id',
+          apiKeyName: 'deepseek-key',
+          resolvedModel: 'deepseek-v4',
+        }),
+      ],
+    });
 
     render(<ModelRedirectionTab />);
 
-    expect(await screen.findByText('deepseek-v4-pro')).toBeInTheDocument();
-    await findPriorityDetailPane();
+    const deepseekRedirect = await screen.findByText('deepseek-v4-pro');
+    fireEvent.click(deepseekRedirect.closest('[data-testid="redirect-list-row"]')!);
+
+    const detailPane = await findPriorityDetailPane();
+    const deepseekKeyRow = await waitFor(() => {
+      const row = within(detailPane)
+        .getByText(/deepseek-key/)
+        .closest('[data-testid="priority-detail-api-key-row"]') as HTMLElement | null;
+      expect(row).not.toBeNull();
+      return row!;
+    });
+    expect(deepseekKeyRow).toHaveAttribute('data-priority-hit', 'true');
   });
 
   it('supports searching and multi-selecting original models when creating a redirect', async () => {
@@ -2305,6 +2328,60 @@ describe('route workbench redesign', () => {
     expect(mainKeyRow).not.toHaveAttribute('data-priority-hit', 'true');
   });
 
+  it('ignores logs before the persisted priority boundary and accepts later selections', async () => {
+    const affinityInvalidatedAt = Date.now() - 1_000;
+    const registry = createModelRegistryConfig();
+    registry.displayItems = registry.displayItems.map(item =>
+      item.canonicalName === 'claude-opus-4-6'
+        ? {
+            ...item,
+            priorityConfig: {
+              ...item.priorityConfig!,
+              affinityInvalidatedAt,
+            },
+          }
+        : item
+    );
+    mockConfig = {
+      ...createRoutingConfig(),
+      modelRegistry: registry,
+    };
+    mockGetRequestLogs.mockResolvedValueOnce({
+      success: true,
+      data: [
+        createFirstHitRouteLog({
+          requestSelectionStartedAt: affinityInvalidatedAt - 1,
+        }),
+      ],
+    });
+    let routeLogCallback: ((item: RouteRequestLogItem) => void) | null = null;
+    mockOnRequestLogAppended.mockImplementation(callback => {
+      routeLogCallback = callback;
+      return vi.fn();
+    });
+
+    render(<ModelRedirectionTab />);
+
+    const detailPane = await findPriorityDetailPane();
+    const backupKeyRow = within(detailPane)
+      .getByText('backup-key（Main / team-beta / ×1.50）')
+      .closest('[data-testid="priority-detail-api-key-row"]') as HTMLElement;
+    await waitFor(() => expect(mockGetRequestLogs).toHaveBeenCalled());
+    expect(backupKeyRow).not.toHaveAttribute('data-priority-hit', 'true');
+
+    act(() => {
+      routeLogCallback?.(
+        createFirstHitRouteLog({
+          id: 'route-log-after-priority-boundary',
+          requestSelectionStartedAt: affinityInvalidatedAt + 1,
+          createdAt: Date.now(),
+        })
+      );
+    });
+
+    await waitFor(() => expect(backupKeyRow).toHaveAttribute('data-priority-hit', 'true'));
+  });
+
   it('skips first-hit route log loading and subscription while inactive', async () => {
     render(<ModelRedirectionTab isActive={false} />);
 
@@ -2357,6 +2434,7 @@ describe('route workbench redesign', () => {
       success: true,
       data: [
         createFirstHitRouteLog({
+          routeRuleId: 'rule-other',
           targetProtocol: 'native',
           resolvedModel: 'claude-opus-4.6-alt-20260201',
           createdAt: Date.now(),
@@ -2399,6 +2477,158 @@ describe('route workbench redesign', () => {
     });
   });
 
+  it('does not restore a priority hit from request logs loaded before reset', async () => {
+    mockConfig = createRoutingConfig({ includeSuccessfulPathState: true });
+    let resolveRequestLogs!: (value: { success: boolean; data: RouteRequestLogItem[] }) => void;
+    mockGetRequestLogs.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          resolveRequestLogs = resolve;
+        })
+    );
+    mockResetPathStates.mockImplementationOnce(async () => {
+      mockConfig = {
+        ...mockConfig,
+        routePathStates: Object.fromEntries(
+          Object.entries(mockConfig.routePathStates).filter(
+            ([, state]) => state.lastOutcome !== 'success'
+          )
+        ),
+      };
+      return 1;
+    });
+
+    render(<ModelRedirectionTab />);
+
+    const detailPane = await findPriorityDetailPane();
+    const backupKeyRow = await waitFor(() => {
+      const row = within(detailPane)
+        .getByText('backup-key（Main / team-beta / ×1.50）')
+        .closest('[data-testid="priority-detail-api-key-row"]') as HTMLElement | null;
+      expect(row).toHaveAttribute('data-priority-hit', 'true');
+      return row!;
+    });
+
+    fireEvent.click(
+      within(screen.getByTestId('redirect-detail-actions')).getByRole('button', {
+        name: '重置 claude-opus-4-6 当前优先命中路径',
+      })
+    );
+    await waitFor(() => expect(backupKeyRow).not.toHaveAttribute('data-priority-hit', 'true'));
+
+    await act(async () => {
+      resolveRequestLogs({ success: true, data: [createFirstHitRouteLog()] });
+      await Promise.resolve();
+    });
+
+    expect(backupKeyRow).not.toHaveAttribute('data-priority-hit', 'true');
+  });
+
+  it('does not restore a priority hit from a request selected before reset', async () => {
+    mockConfig = createRoutingConfig({ includeSuccessfulPathState: true });
+    let routeLogCallback: ((item: RouteRequestLogItem) => void) | null = null;
+    mockOnRequestLogAppended.mockImplementation(callback => {
+      routeLogCallback = callback;
+      return vi.fn();
+    });
+    mockResetPathStates.mockImplementationOnce(async () => {
+      mockConfig = {
+        ...mockConfig,
+        routePathStates: Object.fromEntries(
+          Object.entries(mockConfig.routePathStates).filter(
+            ([, state]) => state.lastOutcome !== 'success'
+          )
+        ),
+      };
+      return 1;
+    });
+
+    render(<ModelRedirectionTab />);
+
+    const detailPane = await findPriorityDetailPane();
+    const backupKeyRow = await waitFor(() => {
+      const row = within(detailPane)
+        .getByText('backup-key（Main / team-beta / ×1.50）')
+        .closest('[data-testid="priority-detail-api-key-row"]') as HTMLElement | null;
+      expect(row).toHaveAttribute('data-priority-hit', 'true');
+      return row!;
+    });
+    const requestSelectionStartedAt = Date.now() - 10_000;
+
+    fireEvent.click(
+      within(screen.getByTestId('redirect-detail-actions')).getByRole('button', {
+        name: '重置 claude-opus-4-6 当前优先命中路径',
+      })
+    );
+    await waitFor(() => expect(backupKeyRow).not.toHaveAttribute('data-priority-hit', 'true'));
+
+    act(() => {
+      routeLogCallback?.(
+        createFirstHitRouteLog({
+          id: 'route-log-completed-after-reset',
+          requestSelectionStartedAt,
+          createdAt: Date.now() + 1,
+        })
+      );
+    });
+
+    expect(backupKeyRow).not.toHaveAttribute('data-priority-hit', 'true');
+  });
+
+  it('does not restore a hit from a request selected while reset is still pending', async () => {
+    mockConfig = createRoutingConfig({ includeSuccessfulPathState: true });
+    let routeLogCallback: ((item: RouteRequestLogItem) => void) | null = null;
+    let resolveReset!: (value: number) => void;
+    mockOnRequestLogAppended.mockImplementation(callback => {
+      routeLogCallback = callback;
+      return vi.fn();
+    });
+    mockResetPathStates.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          resolveReset = resolve;
+        })
+    );
+
+    render(<ModelRedirectionTab />);
+
+    const detailPane = await findPriorityDetailPane();
+    const backupKeyRow = await waitFor(() => {
+      const row = within(detailPane)
+        .getByText('backup-key（Main / team-beta / ×1.50）')
+        .closest('[data-testid="priority-detail-api-key-row"]') as HTMLElement | null;
+      expect(row).toHaveAttribute('data-priority-hit', 'true');
+      return row!;
+    });
+
+    fireEvent.click(
+      within(screen.getByTestId('redirect-detail-actions')).getByRole('button', {
+        name: '重置 claude-opus-4-6 当前优先命中路径',
+      })
+    );
+    await waitFor(() => expect(mockResetPathStates).toHaveBeenCalled());
+    await new Promise(resolve => window.setTimeout(resolve, 5));
+    const requestSelectionStartedAt = Date.now();
+
+    await act(async () => {
+      resolveReset(1);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(backupKeyRow).not.toHaveAttribute('data-priority-hit', 'true'));
+
+    act(() => {
+      routeLogCallback?.(
+        createFirstHitRouteLog({
+          id: 'route-log-selected-during-reset',
+          requestSelectionStartedAt,
+          createdAt: Date.now() + 1,
+        })
+      );
+    });
+
+    expect(backupKeyRow).not.toHaveAttribute('data-priority-hit', 'true');
+  });
+
   it('updates the highlighted api key from appended first-hit route logs in real time', async () => {
     let routeLogCallback: ((item: RouteRequestLogItem) => void) | null = null;
     mockOnRequestLogAppended.mockImplementation(callback => {
@@ -2421,6 +2651,18 @@ describe('route workbench redesign', () => {
           apiKeyId: 'main-key-id',
           apiKeyName: 'main-key',
           createdAt: 1_800_000_000_600,
+        })
+      );
+    });
+    expect(apiKeyRows.every(row => row.getAttribute('data-priority-hit') !== 'true')).toBe(true);
+
+    act(() => {
+      routeLogCallback?.(
+        createFirstHitRouteLog({
+          id: 'route-log-outside-source-set',
+          apiKeyId: 'unknown-key-id',
+          apiKeyName: 'unknown-key',
+          createdAt: 1_800_000_000_700,
         })
       );
     });
@@ -2673,15 +2915,7 @@ describe('route workbench redesign', () => {
         })
       );
     });
-    await waitFor(() => {
-      expect(mockResetPathStates).toHaveBeenCalledWith({
-        canonicalModel: 'claude-opus-4-6',
-        siteId: 'site-1',
-        accountId: 'acc-1',
-        apiKeyId: 'backup-key-id',
-        targetProtocol: 'native',
-      });
-    });
+    expect(mockResetPathStates).not.toHaveBeenCalled();
   });
 
   it('auto-saves when an api key is disabled or re-enabled without dirtying the save button', async () => {

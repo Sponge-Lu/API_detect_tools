@@ -189,6 +189,7 @@ function shouldRecordCancelledUpstreamSuccess(result: {
 
 async function recordCancelledUpstreamSuccess(params: {
   requestId: string;
+  requestSelectionStartedAt: number;
   attempt: number;
   activeChannel: ResolvedChannel;
   activeRouteRuleId?: string;
@@ -215,11 +216,13 @@ async function recordCancelledUpstreamSuccess(params: {
     {
       statusCode: result.statusCode,
       latencyMs: result.latencyMs,
+      requestSelectionStartedAt: params.requestSelectionStartedAt,
     },
     params.routeRuntimeConfig
   );
   recordRouteRequest({
     requestId: params.requestId,
+    requestSelectionStartedAt: params.requestSelectionStartedAt,
     attempt: params.attempt,
     routeRuleId: params.activeRouteRuleId,
     cliType: params.cliType,
@@ -684,7 +687,8 @@ function getRoutePathAffinitySuppressionUntil(
 export function applySuccessfulRoutePathAffinity<T extends RoutePathAffinityCandidate>(
   channels: T[],
   routePathStates: Record<string, RoutePathState> | null | undefined,
-  now: number = Date.now()
+  now: number = Date.now(),
+  affinityInvalidatedAt?: number
 ): T[] {
   if (channels.length <= 1 || !routePathStates) {
     return channels;
@@ -701,9 +705,13 @@ export function applySuccessfulRoutePathAffinity<T extends RoutePathAffinityCand
       getRoutePathAffinitySuppressionUntil(channel, routePathStates)
     );
     const lastSuccessAt = state?.lastSuccessAt ?? 0;
+    const lastSuccessRequestStartedAt = state?.lastSuccessRequestStartedAt;
     if (
       state?.lastOutcome !== 'success' ||
       lastSuccessAt <= affinityCutoff ||
+      (affinityInvalidatedAt !== undefined &&
+        (lastSuccessRequestStartedAt === undefined ||
+          lastSuccessRequestStartedAt <= affinityInvalidatedAt)) ||
       affinitySuppressedUntil > now ||
       (state.disabledUntil ?? 0) > now
     ) {
@@ -3213,6 +3221,25 @@ export async function handleRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse
 ): Promise<void> {
+  const requestSelectionStartedAt = Date.now();
+  const recordRequestForSelection = (params: Parameters<typeof recordRouteRequest>[0]): void => {
+    recordRouteRequest({ ...params, requestSelectionStartedAt });
+  };
+  const recordPathOutcomeForSelection = (
+    key: Parameters<typeof recordRoutePathOutcome>[0],
+    outcome: Parameters<typeof recordRoutePathOutcome>[1],
+    meta: Parameters<typeof recordRoutePathOutcome>[2],
+    nowOrRuntimeConfig?: Parameters<typeof recordRoutePathOutcome>[3],
+    runtimeConfig?: Parameters<typeof recordRoutePathOutcome>[4]
+  ): ReturnType<typeof recordRoutePathOutcome> => {
+    const nextMeta = { ...(meta ?? {}), requestSelectionStartedAt };
+    if (nowOrRuntimeConfig === undefined) {
+      return recordRoutePathOutcome(key, outcome, nextMeta);
+    }
+    return runtimeConfig === undefined
+      ? recordRoutePathOutcome(key, outcome, nextMeta, nowOrRuntimeConfig)
+      : recordRoutePathOutcome(key, outcome, nextMeta, nowOrRuntimeConfig, runtimeConfig);
+  };
   const routeAbortController = new AbortController();
   let requestBodyRead = false;
   let routeHandlingDone = false;
@@ -3400,7 +3427,7 @@ export async function handleRequest(
   }
   const stateReference = findProviderOwnedStateReference(bodyJson);
   if (stateReference) {
-    recordRouteRequest({
+    recordRequestForSelection({
       requestId,
       attempt: 0,
       cliType,
@@ -3466,7 +3493,7 @@ export async function handleRequest(
     const rule = findMatchingRule(sortedRules, cliType, matchModel);
 
     if (!rule) {
-      recordRouteRequest({
+      recordRequestForSelection({
         requestId,
         attempt: 0,
         cliType,
@@ -3492,7 +3519,7 @@ export async function handleRequest(
     // 解析候选通道（带 canonical model 过滤）
     const channels = resolveChannels(rule, canonicalModel);
     if (channels.length === 0) {
-      recordRouteRequest({
+      recordRequestForSelection({
         requestId,
         attempt: 0,
         cliType,
@@ -3521,10 +3548,13 @@ export async function handleRequest(
     );
     sortedChannels = applySuccessfulRoutePathAffinity(
       attemptPlan.filter(channel => !isRoutePathDisabled(channel)) as ResolvedChannel[],
-      routing.routePathStates
+      routing.routePathStates,
+      Date.now(),
+      getEffectiveRouteDisplayItem(routing.modelRegistry, canonicalModel)?.priorityConfig
+        ?.affinityInvalidatedAt
     );
     if (sortedChannels.length === 0) {
-      recordRouteRequest({
+      recordRequestForSelection({
         requestId,
         attempt: 0,
         cliType,
@@ -3557,7 +3587,7 @@ export async function handleRequest(
         resolveChannelUpstreamProtocol(channel.targetProtocol, sourceProtocol) === sourceProtocol
     );
     if (sortedChannels.length === 0) {
-      recordRouteRequest({
+      recordRequestForSelection({
         requestId,
         attempt: 0,
         routeRuleId: activeRouteRuleId,
@@ -3638,7 +3668,7 @@ export async function handleRequest(
           lock: probeLock,
         });
       }
-      recordRouteRequest({
+      recordRequestForSelection({
         requestId,
         attempt,
         cliType,
@@ -3656,7 +3686,7 @@ export async function handleRequest(
         error: 'credentials_unavailable',
       });
       if (!bypassRoutePathState) {
-        await recordRoutePathOutcome(
+        await recordPathOutcomeForSelection(
           activeChannel,
           'failure',
           { error: 'credentials_unavailable' },
@@ -3769,7 +3799,7 @@ export async function handleRequest(
           resolvedModel: activeChannel.resolvedModel,
           reason,
         });
-        recordRouteRequest({
+        recordRequestForSelection({
           requestId,
           attempt,
           routeRuleId: activeRouteRuleId,
@@ -3891,6 +3921,7 @@ export async function handleRequest(
         if (!bypassRoutePathState && shouldRecordCancelledUpstreamSuccess(result)) {
           await recordCancelledUpstreamSuccess({
             requestId,
+            requestSelectionStartedAt,
             attempt,
             activeChannel,
             activeRouteRuleId,
@@ -3927,6 +3958,7 @@ export async function handleRequest(
           if (!bypassRoutePathState && shouldRecordCancelledUpstreamSuccess(result)) {
             await recordCancelledUpstreamSuccess({
               requestId,
+              requestSelectionStartedAt,
               attempt,
               activeChannel,
               activeRouteRuleId,
@@ -3953,7 +3985,7 @@ export async function handleRequest(
           error: bodySnippet,
           reason: 'upstream_unsupported',
         });
-        recordRouteRequest({
+        recordRequestForSelection({
           requestId,
           attempt,
           routeRuleId: activeRouteRuleId,
@@ -4011,7 +4043,7 @@ export async function handleRequest(
             statusCode: result.statusCode,
             latencyMs: result.latencyMs,
           });
-          await recordRoutePathOutcome(
+          await recordPathOutcomeForSelection(
             activeChannel,
             'failure',
             {
@@ -4021,7 +4053,7 @@ export async function handleRequest(
             },
             routeRuntimeConfig
           );
-          recordRouteRequest({
+          recordRequestForSelection({
             requestId,
             attempt,
             routeRuleId: activeRouteRuleId,
@@ -4064,7 +4096,7 @@ export async function handleRequest(
           statusCode: result.statusCode,
           latencyMs: result.latencyMs,
         });
-        await recordRoutePathOutcome(
+        await recordPathOutcomeForSelection(
           activeChannel,
           outcome,
           {
@@ -4076,7 +4108,7 @@ export async function handleRequest(
         );
 
         // 记录分析统计
-        recordRouteRequest({
+        recordRequestForSelection({
           requestId,
           attempt,
           routeRuleId: activeRouteRuleId,
@@ -4291,7 +4323,7 @@ export async function handleRequest(
           reason,
         });
         if (!bypassRoutePathState) {
-          await recordRoutePathOutcome(
+          await recordPathOutcomeForSelection(
             activeChannel,
             'failure',
             { error: `adapter_response-adapt:${reason}` },
@@ -4374,7 +4406,7 @@ export async function handleRequest(
       }
       if (!bypassRoutePathState) {
         recordOutcome(activeChannel, 'failure', {});
-        await recordRoutePathOutcome(
+        await recordPathOutcomeForSelection(
           activeChannel,
           'failure',
           {
@@ -4383,7 +4415,7 @@ export async function handleRequest(
           },
           routeRuntimeConfig
         );
-        recordRouteRequest({
+        recordRequestForSelection({
           requestId,
           attempt,
           routeRuleId: activeRouteRuleId,
@@ -4444,7 +4476,7 @@ export async function handleRequest(
 
   if (!res.headersSent) {
     if (requestIsTokenCount) {
-      recordRouteRequest({
+      recordRequestForSelection({
         requestId,
         attempt: attempt + 1,
         routeRuleId: activeRouteRuleId,

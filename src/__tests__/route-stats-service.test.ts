@@ -9,7 +9,15 @@ const mocks = vi.hoisted(() => {
   const routing = {
     routePathStates: {},
     routeEndpointCapabilities: {},
-  } as Pick<RoutingConfig, 'routeEndpointCapabilities' | 'routePathStates'>;
+    modelRegistry: {
+      version: 1,
+      sources: [],
+      entries: {},
+      overrides: [],
+      displayItems: [],
+      vendorPriorities: {},
+    },
+  } as Pick<RoutingConfig, 'modelRegistry' | 'routeEndpointCapabilities' | 'routePathStates'>;
 
   return {
     routing,
@@ -81,6 +89,7 @@ describe('route-stats-service route path state', () => {
   beforeEach(() => {
     mocks.routing.routePathStates = {};
     mocks.routing.routeEndpointCapabilities = {};
+    mocks.routing.modelRegistry.displayItems = [];
     mocks.upsertRoutePathState.mockClear();
     mocks.upsertRouteEndpointCapabilityState.mockClear();
   });
@@ -186,6 +195,80 @@ describe('route-stats-service route path state', () => {
     expect(state.lastSuccessAt).toBe(now);
     expect(state.affinitySuppressedAt).toBe(now - 500);
     expect(state.affinitySuppressedUntil).toBe(now + 60_000);
+  });
+
+  it('tracks the request selection time for the latest successful outcome', async () => {
+    const now = 4_600_000;
+    const requestSelectionStartedAt = now - 500;
+
+    const state = await recordRoutePathOutcome(
+      routePath,
+      'success',
+      { statusCode: 200, requestSelectionStartedAt },
+      now
+    );
+
+    expect(state.lastSuccessRequestStartedAt).toBe(requestSelectionStartedAt);
+  });
+
+  it('preserves the successful request selection time after a later failure', async () => {
+    const now = 4_700_000;
+    const requestSelectionStartedAt = now - 500;
+
+    await recordRoutePathOutcome(
+      routePath,
+      'success',
+      { statusCode: 200, requestSelectionStartedAt },
+      now
+    );
+    const state = await recordRoutePathOutcome(
+      routePath,
+      'failure',
+      { statusCode: 502, requestSelectionStartedAt: now + 500 },
+      now + 1_000
+    );
+
+    expect(state.lastSuccessRequestStartedAt).toBe(requestSelectionStartedAt);
+  });
+
+  it('does not let a pre-invalidation completion overwrite a later valid success', async () => {
+    const affinityInvalidatedAt = 4_800_000;
+    const validRequestStartedAt = affinityInvalidatedAt + 100;
+    mocks.routing.modelRegistry.displayItems = [
+      {
+        id: 'manual-claude-opus',
+        vendor: 'claude',
+        canonicalName: routePath.canonicalModel,
+        sourceKeys: ['site-1:acc-1:claude-opus-4.6-20260201'],
+        priorityConfig: {
+          sitePriorities: {},
+          apiKeyPriorities: {},
+          affinityInvalidatedAt,
+        },
+        mode: 'manual',
+        createdAt: 1,
+        updatedAt: affinityInvalidatedAt,
+      },
+    ];
+
+    await recordRoutePathOutcome(
+      routePath,
+      'success',
+      { statusCode: 200, requestSelectionStartedAt: validRequestStartedAt },
+      affinityInvalidatedAt + 1_000
+    );
+    const state = await recordRoutePathOutcome(
+      routePath,
+      'success',
+      { statusCode: 200, requestSelectionStartedAt: affinityInvalidatedAt - 100 },
+      affinityInvalidatedAt + 2_000
+    );
+
+    expect(state.lastOutcome).toBe('success');
+    expect(state.lastSuccessAt).toBe(affinityInvalidatedAt + 1_000);
+    expect(state.lastSuccessRequestStartedAt).toBe(validRequestStartedAt);
+    expect(state.windowRequestCount).toBe(2);
+    expect(state.windowSuccessCount).toBe(2);
   });
 });
 

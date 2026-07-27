@@ -242,6 +242,7 @@ function resolveRouteEstimatedCostUsd(params: {
 
 function appendRouteRequestLog(params: {
   requestId: string;
+  requestSelectionStartedAt?: number;
   attempt: number;
   cliType: RouteCliType;
   targetProtocol?: RouteRequestLogItem['targetProtocol'];
@@ -281,6 +282,7 @@ function appendRouteRequestLog(params: {
   const item: RouteRequestLogItem = {
     id: buildRouteRequestLogId(params.at),
     requestId: params.requestId,
+    requestSelectionStartedAt: params.requestSelectionStartedAt,
     attempt: params.attempt,
     cliType: params.cliType,
     targetProtocol: params.targetProtocol,
@@ -375,6 +377,7 @@ export async function saveAnalyticsConfig(
 /** 记录一次代理请求 */
 export function recordRouteRequest(params: {
   requestId: string;
+  requestSelectionStartedAt?: number;
   attempt: number;
   cliType: RouteCliType;
   targetProtocol?: RouteRequestLogItem['targetProtocol'];
@@ -411,6 +414,7 @@ export function recordRouteRequest(params: {
   });
   const logItem = appendRouteRequestLog({
     requestId: params.requestId,
+    requestSelectionStartedAt: params.requestSelectionStartedAt,
     attempt: params.attempt,
     cliType: params.cliType,
     targetProtocol: params.targetProtocol,

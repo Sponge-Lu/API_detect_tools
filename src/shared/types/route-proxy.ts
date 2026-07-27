@@ -134,6 +134,7 @@ export interface RoutePathState extends Omit<RouteChannelKey, 'routeRuleId'> {
   lastError?: string;
   lastUsedAt?: number;
   lastSuccessAt?: number;
+  lastSuccessRequestStartedAt?: number;
   lastFailureAt?: number;
   affinitySuppressedUntil?: number;
   affinitySuppressedAt?: number;
@@ -205,6 +206,7 @@ export interface RouteDisplayItemPriorityConfig {
   apiKeyPriorities: Record<string, number>;
   disabledSiteIds?: string[];
   disabledApiKeyPriorityKeys?: string[];
+  affinityInvalidatedAt?: number;
 }
 
 export interface RouteRuntimeConfig {
@@ -482,6 +484,7 @@ export interface RouteAnalyticsBucket {
 export interface RouteRequestLogItem {
   id: string;
   requestId: string;
+  requestSelectionStartedAt?: number;
   attempt: number;
   cliType: RouteCliType;
   targetProtocol?: CliTargetProtocol;

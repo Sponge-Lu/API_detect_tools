@@ -13,6 +13,7 @@ import type {
   RouteOutcome,
   RoutePathState,
   RouteRuntimeConfig,
+  RoutingConfig,
 } from '../shared/types/route-proxy';
 import {
   DEFAULT_ROUTE_RUNTIME_CONFIG,
@@ -48,6 +49,20 @@ type RoutePathRuntimeKey = RouteChannelRuntimeKey & {
 type RouteEndpointCapabilityRuntimeKey = RouteChannelRuntimeKey & {
   cliType: RouteEndpointCapabilityState['cliType'];
 };
+
+function getAffinityInvalidationBoundary(
+  routing: Pick<RoutingConfig, 'modelRegistry'>,
+  canonicalModel: string | undefined
+): number | undefined {
+  if (!canonicalModel) {
+    return undefined;
+  }
+
+  const boundary = routing.modelRegistry?.displayItems.find(
+    item => item.canonicalName === canonicalModel
+  )?.priorityConfig?.affinityInvalidatedAt;
+  return typeof boundary === 'number' && Number.isFinite(boundary) ? boundary : undefined;
+}
 
 /** 触发延迟 flush（3秒后写磁盘） */
 function scheduleFlush() {
@@ -175,7 +190,12 @@ export async function recordRouteEndpointUnsupported(
 export async function recordRoutePathOutcome(
   key: RoutePathRuntimeKey,
   outcome: RouteOutcome,
-  meta?: { statusCode?: number; latencyMs?: number; error?: string },
+  meta?: {
+    statusCode?: number;
+    latencyMs?: number;
+    error?: string;
+    requestSelectionStartedAt?: number;
+  },
   nowOrRuntimeConfig: number | Partial<RouteRuntimeConfig> = Date.now(),
   runtimeConfig?: Partial<RouteRuntimeConfig>
 ): Promise<RoutePathState> {
@@ -210,6 +230,15 @@ export async function recordRoutePathOutcome(
       ? existing.affinitySuppressedUntil
       : undefined;
   const affinitySuppressedAt = affinitySuppressedUntil ? existing?.affinitySuppressedAt : undefined;
+  const affinityInvalidatedAt = getAffinityInvalidationBoundary(routing, key.canonicalModel);
+  const requestSelectionStartedAt = meta?.requestSelectionStartedAt;
+  const preservePostInvalidationSuccess =
+    outcome === 'success' &&
+    affinityInvalidatedAt !== undefined &&
+    (requestSelectionStartedAt === undefined ||
+      requestSelectionStartedAt <= affinityInvalidatedAt) &&
+    existing?.lastSuccessRequestStartedAt !== undefined &&
+    existing.lastSuccessRequestStartedAt > affinityInvalidatedAt;
   const shouldDisable =
     outcome === 'failure' &&
     windowRequestCount >= ROUTE_PATH_MIN_DISABLE_SAMPLES &&
@@ -237,12 +266,17 @@ export async function recordRoutePathOutcome(
       : stillDisabledUntil
         ? existing?.disabledReason
         : undefined,
-    lastOutcome: outcome,
+    lastOutcome: preservePostInvalidationSuccess ? existing?.lastOutcome : outcome,
     lastStatusCode: meta?.statusCode,
     lastLatencyMs: meta?.latencyMs,
     lastError: meta?.error,
     lastUsedAt: now,
-    lastSuccessAt: outcome === 'success' ? now : existing?.lastSuccessAt,
+    lastSuccessAt:
+      outcome === 'success' && !preservePostInvalidationSuccess ? now : existing?.lastSuccessAt,
+    lastSuccessRequestStartedAt:
+      outcome === 'success' && !preservePostInvalidationSuccess
+        ? requestSelectionStartedAt
+        : existing?.lastSuccessRequestStartedAt,
     lastFailureAt: outcome === 'failure' ? now : existing?.lastFailureAt,
     affinitySuppressedUntil,
     affinitySuppressedAt,

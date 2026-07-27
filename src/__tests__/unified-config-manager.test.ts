@@ -1566,6 +1566,7 @@ describe('UnifiedConfigManager', () => {
       apiKeyPriorities: {
         'site-1:acct-default:key-1': 1,
       },
+      affinityInvalidatedAt: expect.any(Number),
     });
     expect(displayItem.runtimeConfig).toEqual({
       maxAttemptsPerRoutePath: 2,
@@ -1586,6 +1587,7 @@ describe('UnifiedConfigManager', () => {
       apiKeyPriorities: {
         'site-1:acct-default:key-1': 1,
       },
+      affinityInvalidatedAt: displayItem.priorityConfig!.affinityInvalidatedAt,
     });
     expect(persistedDisplayItem.runtimeConfig).toEqual({
       maxAttemptsPerRoutePath: 2,
@@ -1593,6 +1595,93 @@ describe('UnifiedConfigManager', () => {
       disableDurationMinutes: 45,
       minSuccessRate: 0.75,
     });
+  });
+
+  it('advances affinity invalidation only when routing priorities change', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as any);
+    await manager.loadConfig();
+
+    const baseItem = {
+      id: 'manual-claude-opus',
+      vendor: 'claude' as any,
+      canonicalName: 'claude-opus-4-6',
+      sourceKeys: ['site-1:acct-default:claude-opus-4.6-20260201'],
+      originalModelOrder: ['claude-opus-4.6-20260201'],
+      priorityConfig: {
+        sitePriorities: { 'site-1': 0 },
+        apiKeyPriorities: { 'site-1:acct-default:key-1': 0 },
+        disabledSiteIds: ['site-3', 'site-2'],
+      },
+      mode: 'manual' as const,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const created = await manager.upsertRouteModelDisplayItem(baseItem);
+    const initialBoundary = created.priorityConfig!.affinityInvalidatedAt!;
+
+    const runtimeOnly = await manager.upsertRouteModelDisplayItem({
+      ...created,
+      priorityConfig: {
+        ...created.priorityConfig!,
+        disabledSiteIds: ['site-2', 'site-3'],
+      },
+      runtimeConfig: {
+        maxAttemptsPerRoutePath: 2,
+        successRateWindowMinutes: 10,
+        disableDurationMinutes: 30,
+        minSuccessRate: 0.8,
+      },
+    });
+    expect(runtimeOnly.priorityConfig!.affinityInvalidatedAt).toBe(initialBoundary);
+
+    const reprioritized = await manager.upsertRouteModelDisplayItem({
+      ...runtimeOnly,
+      priorityConfig: {
+        ...runtimeOnly.priorityConfig!,
+        sitePriorities: { 'site-1': 1 },
+      },
+    });
+    expect(reprioritized.priorityConfig!.affinityInvalidatedAt).toBeGreaterThan(initialBoundary);
+  });
+
+  it('advances the persisted affinity invalidation boundary for a concrete reset', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as any);
+    await manager.loadConfig();
+
+    const displayItem = await manager.upsertRouteModelDisplayItem({
+      id: 'manual-gpt-5',
+      vendor: 'gpt' as any,
+      canonicalName: 'gpt-5',
+      sourceKeys: ['site-1:acct-default:gpt-5'],
+      priorityConfig: { sitePriorities: {}, apiKeyPriorities: {} },
+      mode: 'manual',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    const initialBoundary = displayItem.priorityConfig!.affinityInvalidatedAt!;
+
+    await manager.resetRoutePathStates({
+      canonicalModel: 'gpt-5',
+      siteId: 'site-1',
+      accountId: 'acct-default',
+      apiKeyId: 'key-1',
+      targetProtocol: 'native',
+    });
+
+    const resetItem = manager
+      .getRoutingConfig()
+      .modelRegistry.displayItems.find(item => item.id === displayItem.id)!;
+    expect(resetItem.priorityConfig!.affinityInvalidatedAt).toBeGreaterThan(initialBoundary);
+
+    const persisted = JSON.parse(await fs.readFile(path.join(userDataDir, 'config.json'), 'utf-8'));
+    const persistedItem = persisted.routing.modelRegistry.displayItems.find(
+      (item: { id: string }) => item.id === displayItem.id
+    );
+    expect(persistedItem.priorityConfig.affinityInvalidatedAt).toBe(
+      resetItem.priorityConfig!.affinityInvalidatedAt
+    );
   });
 
   it('rejects duplicate canonical names across different display items', async () => {

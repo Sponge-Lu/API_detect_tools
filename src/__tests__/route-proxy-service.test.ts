@@ -638,6 +638,88 @@ describe('route-proxy-service attempt planning', () => {
     expect(plan.map(channel => channel.siteId)).toEqual(['site-3', 'site-4', 'site-1', 'site-2']);
   });
 
+  it('does not promote a success from a request selected before priority invalidation', () => {
+    const now = 1_700_000_000_000;
+    const firstPath = {
+      routeRuleId: 'rule-1',
+      siteId: 'site-1',
+      accountId: 'acc-1',
+      apiKeyId: 'key-a',
+      targetProtocol: 'native' as const,
+      canonicalModel: 'claude-route',
+      resolvedModel: 'raw-a',
+    };
+    const oldSuccessfulPath = {
+      ...firstPath,
+      siteId: 'site-2',
+      accountId: 'acc-2',
+      apiKeyId: 'key-b',
+    };
+    const routePathStates: Record<string, RoutePathState> = {
+      [buildRoutePathStateKey(oldSuccessfulPath)]: {
+        ...oldSuccessfulPath,
+        windowStartedAt: now,
+        windowRequestCount: 1,
+        windowSuccessCount: 1,
+        successRate: 1,
+        lastOutcome: 'success',
+        lastSuccessAt: now - 1_000,
+        lastSuccessRequestStartedAt: now - 10_000,
+        updatedAt: now - 1_000,
+      },
+    };
+
+    expect(
+      applySuccessfulRoutePathAffinity(
+        [firstPath, oldSuccessfulPath],
+        routePathStates,
+        now,
+        now - 5_000
+      )
+    ).toEqual([firstPath, oldSuccessfulPath]);
+  });
+
+  it('promotes a success from a request selected after priority invalidation', () => {
+    const now = 1_700_000_000_000;
+    const firstPath = {
+      routeRuleId: 'rule-1',
+      siteId: 'site-1',
+      accountId: 'acc-1',
+      apiKeyId: 'key-a',
+      targetProtocol: 'native' as const,
+      canonicalModel: 'claude-route',
+      resolvedModel: 'raw-a',
+    };
+    const newSuccessfulPath = {
+      ...firstPath,
+      siteId: 'site-2',
+      accountId: 'acc-2',
+      apiKeyId: 'key-b',
+    };
+    const routePathStates: Record<string, RoutePathState> = {
+      [buildRoutePathStateKey(newSuccessfulPath)]: {
+        ...newSuccessfulPath,
+        windowStartedAt: now,
+        windowRequestCount: 1,
+        windowSuccessCount: 1,
+        successRate: 1,
+        lastOutcome: 'success',
+        lastSuccessAt: now - 1_000,
+        lastSuccessRequestStartedAt: now - 2_000,
+        updatedAt: now - 1_000,
+      },
+    };
+
+    expect(
+      applySuccessfulRoutePathAffinity(
+        [firstPath, newSuccessfulPath],
+        routePathStates,
+        now,
+        now - 5_000
+      )
+    ).toEqual([newSuccessfulPath, firstPath]);
+  });
+
   it('ignores stale, failed, and disabled route path affinity states', () => {
     const now = 1_700_000_000_000;
     const firstPath = {
@@ -1434,11 +1516,17 @@ describe('route-proxy-service Claude count_tokens fallback', () => {
     expect(recordRoutePathOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ siteId: 'site-b' }),
       'success',
-      expect.anything(),
+      expect.objectContaining({ requestSelectionStartedAt: expect.any(Number) }),
       expect.anything()
     );
+    const successfulPathCall = vi
+      .mocked(recordRoutePathOutcome)
+      .mock.calls.find(([, outcome]) => outcome === 'success');
+    const requestSelectionStartedAt = successfulPathCall?.[2]?.requestSelectionStartedAt;
+    expect(requestSelectionStartedAt).toEqual(expect.any(Number));
     expect(recordRouteRequest).toHaveBeenCalledWith(
       expect.objectContaining({
+        requestSelectionStartedAt,
         outcome: 'neutral',
         statusCode: 404,
         error: 'count_tokens_upstream_unsupported:404',

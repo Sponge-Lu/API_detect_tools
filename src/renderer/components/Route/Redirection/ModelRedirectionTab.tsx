@@ -65,7 +65,7 @@ import type {
   UnifiedConfig,
   UserGroupInfo,
 } from '../../../../shared/types/site';
-import { BUILTIN_CLI_TYPES } from '../../../../shared/types/cli-config';
+import { BUILTIN_CLI_TYPES, normalizeCliTargetProtocol } from '../../../../shared/types/cli-config';
 import { parseCustomCliRouteConfigId } from '../../../../shared/utils/customCliRouteId';
 
 const ROUTE_CLI_TYPES = BUILTIN_CLI_TYPES;
@@ -613,10 +613,29 @@ function isNewerRouteRequestLog(
 
 function upsertFirstHitPathLog(
   current: Record<string, RouteRequestLogItem>,
-  item: RouteRequestLogItem
+  item: RouteRequestLogItem,
+  displayItemViews?: RedirectDisplayItemView[],
+  localInvalidationCutoffs?: Record<string, number>
 ): Record<string, RouteRequestLogItem> {
   if (!isRouteFirstHitPathLog(item)) {
     return current;
+  }
+
+  if (displayItemViews) {
+    const displayItemView = displayItemViews.find(
+      currentView => currentView.item.canonicalName === item.canonicalModel
+    );
+    if (
+      !displayItemView?.entry ||
+      !getPriorityHitRoutePathFromLog(
+        displayItemView.item,
+        displayItemView.entry,
+        item,
+        localInvalidationCutoffs?.[item.canonicalModel]
+      )
+    ) {
+      return current;
+    }
   }
 
   const existing = current[item.canonicalModel];
@@ -631,25 +650,69 @@ function upsertFirstHitPathLog(
 }
 
 function buildFirstHitPathLogsByCanonicalName(
-  logs: RouteRequestLogItem[]
+  logs: RouteRequestLogItem[],
+  registry?: RouteModelRegistryConfig,
+  localInvalidationCutoffs?: Record<string, number>
 ): Record<string, RouteRequestLogItem> {
+  const displayItemViews = registry ? buildDisplayItemViews(registry) : undefined;
   return logs.reduce<Record<string, RouteRequestLogItem>>(
-    (acc, item) => upsertFirstHitPathLog(acc, item),
+    (acc, item) => upsertFirstHitPathLog(acc, item, displayItemViews, localInvalidationCutoffs),
     {}
+  );
+}
+
+function isPriorityHitPathInEntry(
+  entry: RouteModelRegistryEntry,
+  path: Pick<PriorityHitRoutePath, 'siteId' | 'accountId' | 'apiKeyId'>
+): boolean {
+  return entry.sources.some(
+    source =>
+      source.siteId === path.siteId &&
+      source.accountId === path.accountId &&
+      source.availableApiKeys?.some(
+        apiKey => apiKey.accountId === path.accountId && apiKey.apiKeyId === path.apiKeyId
+      )
+  );
+}
+
+function getPriorityHitInvalidationBoundary(
+  item: RouteModelDisplayItem,
+  localInvalidationCutoff?: number
+): number | undefined {
+  const persistedBoundary = item.priorityConfig?.affinityInvalidatedAt;
+  if (persistedBoundary === undefined) {
+    return localInvalidationCutoff;
+  }
+  if (localInvalidationCutoff === undefined) {
+    return persistedBoundary;
+  }
+  return Math.max(persistedBoundary, localInvalidationCutoff);
+}
+
+function isPriorityHitAfterInvalidationBoundary(
+  requestSelectionStartedAt: number | undefined,
+  boundary: number | undefined
+): boolean {
+  return (
+    boundary === undefined ||
+    (requestSelectionStartedAt !== undefined && requestSelectionStartedAt > boundary)
   );
 }
 
 function getPriorityHitRoutePathFromState(params: {
   states: Record<string, RoutePathState> | undefined;
   item: RouteModelDisplayItem;
+  entry: RouteModelRegistryEntry;
   now: number;
+  localInvalidationCutoff?: number;
 }): PriorityHitRoutePath | null {
-  const { states, item, now } = params;
+  const { states, item, entry, now, localInvalidationCutoff } = params;
   if (!states) {
     return null;
   }
 
   const affinityCutoff = now - ROUTE_SUCCESSFUL_PATH_AFFINITY_MS;
+  const invalidationBoundary = getPriorityHitInvalidationBoundary(item, localInvalidationCutoff);
   let selected: PriorityHitRoutePath | null = null;
 
   for (const state of Object.values(states)) {
@@ -666,6 +729,11 @@ function getPriorityHitRoutePathFromState(params: {
       !apiKeyId ||
       state.lastOutcome !== 'success' ||
       lastSuccessAt <= affinityCutoff ||
+      !isPriorityHitAfterInvalidationBoundary(
+        state.lastSuccessRequestStartedAt,
+        invalidationBoundary
+      ) ||
+      !isPriorityHitPathInEntry(entry, { siteId, accountId, apiKeyId }) ||
       (state.affinitySuppressedUntil ?? 0) > now ||
       (state.disabledUntil ?? 0) > now
     ) {
@@ -691,17 +759,13 @@ function getPriorityHitRoutePathFromState(params: {
 
 function getPriorityHitApiKeyKeyFromRouteLog(
   item: RouteModelDisplayItem,
+  entry: RouteModelRegistryEntry,
+  localInvalidationCutoff: number | undefined,
   logItem: RouteRequestLogItem | undefined
 ): string | null {
-  if (!logItem || !isRouteFirstHitPathLog(logItem)) {
-    return null;
-  }
-
-  if (logItem.canonicalModel !== item.canonicalName) {
-    return null;
-  }
-
-  return buildRouteApiKeyPriorityKey(logItem.siteId, logItem.accountId, logItem.apiKeyId);
+  return getPriorityHitApiKeyKey(
+    getPriorityHitRoutePathFromLog(item, entry, logItem, localInvalidationCutoff)
+  );
 }
 
 function getPriorityHitApiKeyKey(hitPath: PriorityHitRoutePath | null): string | null {
@@ -714,13 +778,23 @@ function getPriorityHitApiKeyKey(hitPath: PriorityHitRoutePath | null): string |
 
 function getPriorityHitRoutePathFromLog(
   item: RouteModelDisplayItem,
-  logItem: RouteRequestLogItem | undefined
+  entry: RouteModelRegistryEntry,
+  logItem: RouteRequestLogItem | undefined,
+  localInvalidationCutoff?: number
 ): PriorityHitRoutePath | null {
   if (!logItem || !isRouteFirstHitPathLog(logItem)) {
     return null;
   }
 
-  if (logItem.canonicalModel !== item.canonicalName) {
+  const invalidationBoundary = getPriorityHitInvalidationBoundary(item, localInvalidationCutoff);
+  if (
+    logItem.canonicalModel !== item.canonicalName ||
+    !isPriorityHitAfterInvalidationBoundary(
+      logItem.requestSelectionStartedAt,
+      invalidationBoundary
+    ) ||
+    !isPriorityHitPathInEntry(entry, logItem)
+  ) {
     return null;
   }
 
@@ -753,26 +827,8 @@ function getPriorityHitRoutePathResetParams(hitPath: PriorityHitRoutePath | null
     siteId: hitPath.siteId,
     accountId: hitPath.accountId,
     apiKeyId: hitPath.apiKeyId,
-    targetProtocol: hitPath.targetProtocol,
+    targetProtocol: normalizeCliTargetProtocol(hitPath.targetProtocol),
   };
-}
-
-function isSamePriorityHitRouteChannel(
-  left: PriorityHitRoutePath | null,
-  right: PriorityHitRoutePath | null
-): boolean {
-  if (!left || !right) {
-    return false;
-  }
-
-  return (
-    left.routeRuleId === right.routeRuleId &&
-    left.canonicalModel === right.canonicalModel &&
-    left.siteId === right.siteId &&
-    left.accountId === right.accountId &&
-    left.apiKeyId === right.apiKeyId &&
-    left.targetProtocol === right.targetProtocol
-  );
 }
 
 function getPriorityValue(value: string | number | undefined): number | null {
@@ -1829,8 +1885,9 @@ export function ModelRedirectionTab({
     Record<string, RouteRequestLogItem>
   >({});
   const sourceDetailStateRef = useRef(sourceDetailState);
-  const firstHitPathLogsRef = useRef(firstHitPathLogsByCanonicalName);
-  const routePathStatesRef = useRef(config?.routePathStates);
+  const registryRef = useRef(config?.modelRegistry);
+  const requestLogsGenerationRef = useRef(0);
+  const localPriorityInvalidationCutoffsRef = useRef<Record<string, number>>({});
   const savingPriorityRef = useRef(false);
   const pendingPrioritySaveRef = useRef<{
     draft: PriorityDraft;
@@ -1840,8 +1897,7 @@ export function ModelRedirectionTab({
   const searchInputId = useId();
 
   sourceDetailStateRef.current = sourceDetailState;
-  firstHitPathLogsRef.current = firstHitPathLogsByCanonicalName;
-  routePathStatesRef.current = config?.routePathStates;
+  registryRef.current = config?.modelRegistry;
 
   const registry = config?.modelRegistry;
   const displayItems = useMemo(() => buildDisplayItemViews(registry), [registry]);
@@ -2070,6 +2126,17 @@ export function ModelRedirectionTab({
         sourceDetailState.item.canonicalName === selectedDisplayItem.item.canonicalName);
 
     if (isSameDetailItem) {
+      const currentBoundary = sourceDetailState.item.priorityConfig?.affinityInvalidatedAt ?? 0;
+      const selectedBoundary = selectedDisplayItem.item.priorityConfig?.affinityInvalidatedAt ?? 0;
+      if (
+        selectedDisplayItem.item.updatedAt > sourceDetailState.item.updatedAt ||
+        selectedBoundary > currentBoundary
+      ) {
+        setSourceDetailState({
+          item: selectedDisplayItem.item,
+          entry: selectedDisplayItem.entry,
+        });
+      }
       return;
     }
 
@@ -2097,15 +2164,24 @@ export function ModelRedirectionTab({
     }
 
     let isMounted = true;
+    const requestLogsGeneration = ++requestLogsGenerationRef.current;
 
     void window.electronAPI.route
       ?.getRequestLogs?.({ limit: PRIORITY_ROUTE_LOG_LIMIT })
       .then(result => {
-        if (!isMounted || !result?.success) {
+        if (
+          !isMounted ||
+          requestLogsGeneration !== requestLogsGenerationRef.current ||
+          !result?.success
+        ) {
           return;
         }
 
-        const loadedLogsByCanonicalName = buildFirstHitPathLogsByCanonicalName(result.data ?? []);
+        const loadedLogsByCanonicalName = buildFirstHitPathLogsByCanonicalName(
+          result.data ?? [],
+          registryRef.current,
+          localPriorityInvalidationCutoffsRef.current
+        );
         setFirstHitPathLogsByCanonicalName(current =>
           Object.values(loadedLogsByCanonicalName).reduce<Record<string, RouteRequestLogItem>>(
             (acc, item) => upsertFirstHitPathLog(acc, item),
@@ -2116,11 +2192,20 @@ export function ModelRedirectionTab({
       .catch(() => undefined);
 
     const unsubscribe = window.electronAPI.route?.onRequestLogAppended?.(item => {
-      setFirstHitPathLogsByCanonicalName(current => upsertFirstHitPathLog(current, item));
+      const currentRegistry = registryRef.current;
+      setFirstHitPathLogsByCanonicalName(current =>
+        upsertFirstHitPathLog(
+          current,
+          item,
+          currentRegistry ? buildDisplayItemViews(currentRegistry) : undefined,
+          localPriorityInvalidationCutoffsRef.current
+        )
+      );
     });
 
     return () => {
       isMounted = false;
+      requestLogsGenerationRef.current += 1;
       unsubscribe?.();
     };
   }, [isActive]);
@@ -2280,10 +2365,14 @@ export function ModelRedirectionTab({
           throw new Error('无法重置当前优先命中路径');
         }
 
+        const resetCompletedAt = Date.now();
+        requestLogsGenerationRef.current += 1;
+        localPriorityInvalidationCutoffsRef.current[item.canonicalName] = Math.max(
+          localPriorityInvalidationCutoffsRef.current[item.canonicalName] ?? 0,
+          resetCompletedAt
+        );
         setFirstHitPathLogsByCanonicalName(current => {
-          const currentLog = current[item.canonicalName];
-          const currentHitPath = getPriorityHitRoutePathFromLog(item, currentLog);
-          if (!isSamePriorityHitRouteChannel(currentHitPath, hitPath)) {
+          if (!current[item.canonicalName]) {
             return current;
           }
 
@@ -2677,17 +2766,6 @@ export function ModelRedirectionTab({
             pendingSave.draft
           );
           const priorityConfig = serializePriorityConfig(normalizedDraft);
-          const priorityHitPath =
-            getPriorityHitRoutePathFromState({
-              states: routePathStatesRef.current,
-              item: currentDetailState.item,
-              now: Date.now(),
-            }) ??
-            getPriorityHitRoutePathFromLog(
-              currentDetailState.item,
-              firstHitPathLogsRef.current[currentDetailState.item.canonicalName]
-            );
-          const priorityHitResetParams = getPriorityHitRoutePathResetParams(priorityHitPath);
           const updatedAt = Date.now();
 
           const savedRegistry = await upsertDisplayItem({
@@ -2699,26 +2777,36 @@ export function ModelRedirectionTab({
             throw new Error('无法保存重定向优先级');
           }
 
-          if (priorityHitResetParams) {
-            const cleared = await resetPathStates(priorityHitResetParams);
-            if (cleared === null) {
-              throw new Error('无法重置旧优先命中路径');
-            }
-            setFirstHitPathLogsByCanonicalName(current => {
-              const currentLog = current[currentDetailState.item.canonicalName];
-              const currentHitPath = getPriorityHitRoutePathFromLog(
-                currentDetailState.item,
-                currentLog
-              );
-              if (!isSamePriorityHitRouteChannel(currentHitPath, priorityHitPath)) {
-                return current;
-              }
-
-              const next = { ...current };
-              delete next[currentDetailState.item.canonicalName];
-              return next;
-            });
+          const savedView = buildDisplayItemViews(savedRegistry).find(
+            view =>
+              view.item.id === currentDetailState.item.id ||
+              view.item.canonicalName === currentDetailState.item.canonicalName
+          );
+          if (!savedView?.entry) {
+            throw new Error('保存后的重定向配置不可用');
           }
+
+          registryRef.current = savedRegistry;
+          requestLogsGenerationRef.current += 1;
+          const savedBoundary = savedView.item.priorityConfig?.affinityInvalidatedAt;
+          if (savedBoundary !== undefined) {
+            localPriorityInvalidationCutoffsRef.current[savedView.item.canonicalName] = Math.max(
+              localPriorityInvalidationCutoffsRef.current[savedView.item.canonicalName] ?? 0,
+              savedBoundary
+            );
+          }
+          setFirstHitPathLogsByCanonicalName(current => {
+            if (!current[savedView.item.canonicalName]) {
+              return current;
+            }
+
+            const next = { ...current };
+            delete next[savedView.item.canonicalName];
+            return next;
+          });
+
+          const nextDetailState = { item: savedView.item, entry: savedView.entry };
+          sourceDetailStateRef.current = nextDetailState;
 
           // A newer draft may have been queued while this save was in flight.
           if (pendingPrioritySaveRef.current) {
@@ -2726,15 +2814,10 @@ export function ModelRedirectionTab({
           }
 
           setSourceDetailState(current =>
-            current && current.item.id === currentDetailState.item.id
-              ? {
-                  ...current,
-                  item: {
-                    ...current.item,
-                    priorityConfig,
-                    updatedAt,
-                  },
-                }
+            current &&
+            (current.item.id === currentDetailState.item.id ||
+              current.item.canonicalName === currentDetailState.item.canonicalName)
+              ? nextDetailState
               : current
           );
           setRouteRuleState(current =>
@@ -2743,11 +2826,7 @@ export function ModelRedirectionTab({
               current.item.canonicalName === currentDetailState.item.canonicalName)
               ? {
                   ...current,
-                  item: {
-                    ...current.item,
-                    priorityConfig,
-                    updatedAt,
-                  },
+                  item: savedView.item,
                 }
               : current
           );
@@ -2761,7 +2840,7 @@ export function ModelRedirectionTab({
         setSaving(false);
       }
     },
-    [resetPathStates, upsertDisplayItem]
+    [upsertDisplayItem]
   );
 
   const handleSaveDetails = useCallback(() => {
@@ -2978,11 +3057,16 @@ export function ModelRedirectionTab({
     ? (getPriorityHitRoutePathFromState({
         states: config?.routePathStates,
         item: sourceDetailState.item,
+        entry: sourceDetailState.entry,
         now,
+        localInvalidationCutoff:
+          localPriorityInvalidationCutoffsRef.current[sourceDetailState.item.canonicalName],
       }) ??
       getPriorityHitRoutePathFromLog(
         sourceDetailState.item,
-        firstHitPathLogsByCanonicalName[sourceDetailState.item.canonicalName]
+        sourceDetailState.entry,
+        firstHitPathLogsByCanonicalName[sourceDetailState.item.canonicalName],
+        localPriorityInvalidationCutoffsRef.current[sourceDetailState.item.canonicalName]
       ))
     : null;
   const priorityHitApiKeyKey =
@@ -2990,18 +3074,25 @@ export function ModelRedirectionTab({
     (sourceDetailState
       ? getPriorityHitApiKeyKeyFromRouteLog(
           sourceDetailState.item,
+          sourceDetailState.entry,
+          localPriorityInvalidationCutoffsRef.current[sourceDetailState.item.canonicalName],
           firstHitPathLogsByCanonicalName[sourceDetailState.item.canonicalName]
         )
       : null);
-  const selectedPriorityHitPath = selectedDisplayItem
+  const selectedPriorityHitPath = selectedDisplayItem?.entry
     ? (getPriorityHitRoutePathFromState({
         states: config?.routePathStates,
         item: selectedDisplayItem.item,
+        entry: selectedDisplayItem.entry,
         now,
+        localInvalidationCutoff:
+          localPriorityInvalidationCutoffsRef.current[selectedDisplayItem.item.canonicalName],
       }) ??
       getPriorityHitRoutePathFromLog(
         selectedDisplayItem.item,
-        firstHitPathLogsByCanonicalName[selectedDisplayItem.item.canonicalName]
+        selectedDisplayItem.entry,
+        firstHitPathLogsByCanonicalName[selectedDisplayItem.item.canonicalName],
+        localPriorityInvalidationCutoffsRef.current[selectedDisplayItem.item.canonicalName]
       ))
     : null;
   const selectedPriorityHitResetParams =

@@ -229,6 +229,41 @@ function normalizeStringList(value: string[] | null | undefined): string[] {
   );
 }
 
+function normalizeTimestamp(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : undefined;
+}
+
+function arePriorityRecordsEqual(
+  left: Record<string, number>,
+  right: Record<string, number>
+): boolean {
+  const leftEntries = Object.entries(left).sort(([leftKey], [rightKey]) =>
+    leftKey.localeCompare(rightKey)
+  );
+  const rightEntries = Object.entries(right).sort(([leftKey], [rightKey]) =>
+    leftKey.localeCompare(rightKey)
+  );
+
+  return (
+    leftEntries.length === rightEntries.length &&
+    leftEntries.every(
+      ([key, value], index) =>
+        rightEntries[index]?.[0] === key && rightEntries[index]?.[1] === value
+    )
+  );
+}
+
+function areStringSetsEqual(left: string[] | undefined, right: string[] | undefined): boolean {
+  const leftValues = normalizeStringList(left).sort();
+  const rightValues = normalizeStringList(right).sort();
+  return (
+    leftValues.length === rightValues.length &&
+    leftValues.every((value, index) => rightValues[index] === value)
+  );
+}
+
 function buildAutoCliModelRouteRuleId(cliType: RouteCliType, canonicalModel: string): string {
   const modelSlug =
     canonicalModel
@@ -280,7 +315,26 @@ function normalizeDisplayItemPriorityConfig(
     apiKeyPriorities: normalizePriorityRecord(value?.apiKeyPriorities),
     ...(disabledSiteIds.length > 0 ? { disabledSiteIds } : {}),
     ...(disabledApiKeyPriorityKeys.length > 0 ? { disabledApiKeyPriorityKeys } : {}),
+    ...(normalizeTimestamp(value?.affinityInvalidatedAt)
+      ? { affinityInvalidatedAt: normalizeTimestamp(value?.affinityInvalidatedAt) }
+      : {}),
   };
+}
+
+function hasSameRoutingPriorityConfig(
+  left: RouteDisplayItemPriorityConfig,
+  right: RouteDisplayItemPriorityConfig
+): boolean {
+  return (
+    arePriorityRecordsEqual(left.sitePriorities, right.sitePriorities) &&
+    arePriorityRecordsEqual(left.apiKeyPriorities, right.apiKeyPriorities) &&
+    areStringSetsEqual(left.disabledSiteIds, right.disabledSiteIds) &&
+    areStringSetsEqual(left.disabledApiKeyPriorityKeys, right.disabledApiKeyPriorityKeys)
+  );
+}
+
+function nextAffinityInvalidationBoundary(current: number | undefined, now: number): number {
+  return Math.max(now, (current ?? 0) + 1);
 }
 
 function normalizeRouteModelDisplayItem(displayItem: RouteModelDisplayItem): RouteModelDisplayItem {
@@ -2344,6 +2398,25 @@ export class UnifiedConfigManager {
     let cleared = 0;
     const suppressAffinity = Boolean(canonicalModel && siteId && accountId && apiKeyId);
     const suppressedStates: RoutePathState[] = [];
+    const now = Date.now();
+
+    if (suppressAffinity) {
+      const displayItem = this.config.routing!.modelRegistry.displayItems.find(
+        item => item.canonicalName === canonicalModel
+      );
+      if (displayItem) {
+        const priorityConfig = normalizeDisplayItemPriorityConfig(displayItem.priorityConfig);
+        displayItem.priorityConfig = {
+          ...priorityConfig,
+          affinityInvalidatedAt: nextAffinityInvalidationBoundary(
+            priorityConfig.affinityInvalidatedAt,
+            now
+          ),
+        };
+        displayItem.updatedAt = now;
+        await this.saveConfig();
+      }
+    }
 
     if (
       !routeRuleId &&
@@ -2390,11 +2463,11 @@ export class UnifiedConfigManager {
       }
 
       if (suppressAffinity) {
-        const now = Date.now();
         suppressedStates.push({
           ...state,
           lastOutcome: undefined,
           lastSuccessAt: undefined,
+          lastSuccessRequestStartedAt: undefined,
           affinitySuppressedAt: now,
           affinitySuppressedUntil: now + ROUTE_PRIORITY_HIT_RESET_SUPPRESSION_MS,
           updatedAt: now,
@@ -2406,7 +2479,6 @@ export class UnifiedConfigManager {
     }
 
     if (suppressAffinity && (suppressedStates.length === 0 || !resolvedModel)) {
-      const now = Date.now();
       suppressedStates.push({
         routeRuleId,
         siteId: siteId!,
@@ -2642,16 +2714,32 @@ export class UnifiedConfigManager {
     }
 
     const idx = items.findIndex(existing => existing.id === normalizedDisplayItem.id);
+    const existingItem = idx >= 0 ? items[idx] : undefined;
+    const existingPriorityConfig = normalizeDisplayItemPriorityConfig(existingItem?.priorityConfig);
+    const priorityChanged =
+      !existingItem ||
+      !hasSameRoutingPriorityConfig(existingPriorityConfig, normalizedDisplayItem.priorityConfig!);
+    const affinityInvalidatedAt = priorityChanged
+      ? nextAffinityInvalidationBoundary(existingPriorityConfig.affinityInvalidatedAt, Date.now())
+      : existingPriorityConfig.affinityInvalidatedAt;
+    const nextDisplayItem: RouteModelDisplayItem = {
+      ...normalizedDisplayItem,
+      priorityConfig: {
+        ...normalizedDisplayItem.priorityConfig!,
+        ...(affinityInvalidatedAt ? { affinityInvalidatedAt } : {}),
+      },
+    };
+
     if (idx >= 0) {
       items[idx] = {
         ...items[idx],
-        ...normalizedDisplayItem,
+        ...nextDisplayItem,
         createdAt: items[idx].createdAt,
         updatedAt: Date.now(),
       };
     } else {
       items.push({
-        ...normalizedDisplayItem,
+        ...nextDisplayItem,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       });
