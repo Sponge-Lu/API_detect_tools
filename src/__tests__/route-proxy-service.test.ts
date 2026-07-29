@@ -1527,9 +1527,19 @@ describe('route-proxy-service Claude count_tokens fallback', () => {
     expect(recordRouteRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         requestSelectionStartedAt,
+        requestKind: 'token-count',
         outcome: 'neutral',
         statusCode: 404,
         error: 'count_tokens_upstream_unsupported:404',
+      })
+    );
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestKind: 'token-count',
+        tokenUsageSource: 'upstream',
+        promptTokens: 37,
+        totalTokens: 37,
+        outcome: 'success',
       })
     );
   });
@@ -1579,6 +1589,7 @@ describe('route-proxy-service Claude count_tokens fallback', () => {
     expect(recordRoutePathOutcome).not.toHaveBeenCalled();
     expect(recordRouteRequest).toHaveBeenCalledWith(
       expect.objectContaining({
+        requestKind: 'token-count',
         outcome: 'neutral',
         statusCode: 403,
         error: 'count_tokens_upstream_unsupported:403',
@@ -1586,6 +1597,9 @@ describe('route-proxy-service Claude count_tokens fallback', () => {
     );
     expect(recordRouteRequest).toHaveBeenCalledWith(
       expect.objectContaining({
+        requestKind: 'token-count',
+        tokenUsageSource: 'local-estimate',
+        estimatedInputTokens: expect.any(Number),
         outcome: 'neutral',
         statusCode: 200,
         error: 'count_tokens_local_estimate:upstream_403',
@@ -1692,6 +1706,9 @@ describe('route-proxy-service Claude count_tokens fallback', () => {
     expect(recordRouteRequest).toHaveBeenCalledTimes(1);
     expect(recordRouteRequest).toHaveBeenCalledWith(
       expect.objectContaining({
+        requestKind: 'token-count',
+        tokenUsageSource: 'local-estimate',
+        estimatedInputTokens: expect.any(Number),
         outcome: 'neutral',
         statusCode: 200,
         error: 'count_tokens_local_estimate:cached_unsupported',
@@ -6395,7 +6412,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     );
   });
 
-  it('forwards native completed streams with zero usage and no output unchanged', async () => {
+  it('falls back before commit when a native completed stream has zero usage and no output', async () => {
     vi.clearAllMocks();
 
     const rule = {
@@ -6404,14 +6421,20 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       pattern: 'gpt-4.1-mini',
       patternType: 'exact' as const,
     };
-    const channel = {
+    const emptyChannel = {
       routeRuleId: rule.id,
       siteId: 'site-openai',
       accountId: 'account-openai',
-      apiKeyId: 'key-openai',
+      apiKeyId: 'key-openai-empty',
       cliType: 'codex' as const,
       canonicalModel: 'gpt-4.1-mini',
       resolvedModel: 'gpt-4.1-mini',
+    };
+    const fallbackChannel = {
+      ...emptyChannel,
+      siteId: 'site-openai-fallback',
+      accountId: 'account-openai-fallback',
+      apiKeyId: 'key-openai-fallback',
     };
     const routing = {
       server: {
@@ -6446,6 +6469,13 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     const emptyCompletedChunk = Buffer.from(
       'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}\n\n'
     );
+    const fallbackTextChunk = Buffer.from(
+      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"fallback"}\n\n'
+    );
+    const fallbackCompletedChunk = Buffer.from(
+      'event: response.completed\ndata: {"type":"response.completed","response":{"output_text":"fallback"}}\n\n'
+    );
+    const fallbackBody = Buffer.concat([fallbackTextChunk, fallbackCompletedChunk]);
 
     Object.assign(unifiedConfigManager, {
       getRoutingConfig: vi.fn(() => routing),
@@ -6457,29 +6487,42 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     vi.mocked(extractModelFromPath).mockReturnValue(null);
     vi.mocked(sortRules).mockReturnValue([rule as never]);
     vi.mocked(findMatchingRule).mockReturnValue(rule as never);
-    vi.mocked(resolveChannels).mockReturnValue([channel]);
+    vi.mocked(resolveChannels).mockReturnValue([emptyChannel, fallbackChannel]);
     vi.mocked(resolveChannelCredentials).mockResolvedValue({
       baseUrl: 'https://upstream.example.com',
       apiKey: 'sk-upstream',
     });
     vi.mocked(isRoutePathDisabled).mockReturnValue(false);
     vi.mocked(recordRoutePathOutcome).mockResolvedValue({
-      ...channel,
+      ...emptyChannel,
       windowStartedAt: 1,
       windowRequestCount: 1,
       windowSuccessCount: 0,
       successRate: 0,
       updatedAt: 1,
     });
+    let upstreamCall = 0;
     vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
+      upstreamCall += 1;
       const headers = { 'content-type': 'text/event-stream' };
       const accepted = config.onResponse?.({ status: 200, statusText: 'OK', headers });
       expect(accepted).toBe(true);
-      await config.onChunk?.(emptyCompletedChunk);
+      if (upstreamCall === 1) {
+        await config.onChunk?.(emptyCompletedChunk);
+        return {
+          status: 200,
+          headers,
+          body: emptyCompletedChunk,
+          firstByteLatencyMs: 4,
+        };
+      }
+
+      await config.onChunk?.(fallbackTextChunk);
+      await config.onChunk?.(fallbackCompletedChunk);
       return {
         status: 200,
         headers,
-        body: emptyCompletedChunk,
+        body: fallbackBody,
         firstByteLatencyMs: 4,
       };
     });
@@ -6497,18 +6540,38 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     await handleRequest(request, response);
 
     expect(response.statusCode).toBe(200);
-    expect(response.body).toContain('response.completed');
-    expect(response.body).toBe(emptyCompletedChunk.toString('utf-8'));
+    expect(response.body).toContain('fallback');
+    expect(response.body).toBe(fallbackBody.toString('utf-8'));
     expect(response.body).not.toContain('event: error');
+    expect(httpRawStreamRequest).toHaveBeenCalledTimes(2);
     expect(recordRoutePathOutcome).toHaveBeenCalledWith(
-      expect.objectContaining({ apiKeyId: 'key-openai' }),
+      expect.objectContaining({ apiKeyId: 'key-openai-empty' }),
+      'failure',
+      expect.objectContaining({ statusCode: 200, error: 'empty_response_zero_usage' }),
+      expect.any(Object)
+    );
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: 'key-openai-fallback' }),
       'success',
       expect.objectContaining({ statusCode: 200 }),
       expect.any(Object)
     );
     expect(recordRouteRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        apiKeyId: 'key-openai',
+        apiKeyId: 'key-openai-empty',
+        outcome: 'failure',
+        error: 'empty_response_zero_usage',
+      })
+    );
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKeyId: 'key-openai-fallback',
+        outcome: 'success',
+      })
+    );
+    expect(recordRouteRequest).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKeyId: 'key-openai-empty',
         outcome: 'success',
       })
     );

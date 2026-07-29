@@ -49,6 +49,9 @@ function buildRouteLog(
     statusCode: partial.statusCode,
     latencyMs: partial.latencyMs,
     firstByteLatencyMs: partial.firstByteLatencyMs,
+    requestKind: partial.requestKind,
+    tokenUsageSource: partial.tokenUsageSource,
+    estimatedInputTokens: partial.estimatedInputTokens,
     promptTokens: partial.promptTokens,
     completionTokens: partial.completionTokens,
     totalTokens: partial.totalTokens,
@@ -636,7 +639,7 @@ describe('LogsPage', () => {
     expect(rows[1]).toHaveAttribute('data-route-request-id', 'codex-2');
     expect(within(rows[1]).getByTestId('route-request-cost')).toHaveTextContent('2.7e-9');
     expect(within(rows[1]).getByTestId('route-request-token-summary')).toHaveTextContent(
-      'T 15IN 12OUT 3C.R 0C.W 0'
+      'T 15IN 12OUT 3C.R —C.W —'
     );
     const customCliSitePath = within(rows[2]).getByTestId('route-request-site-path');
     expect(customCliSitePath).toHaveTextContent(/^直连配置 \/ DuckCoding$/);
@@ -647,7 +650,7 @@ describe('LogsPage', () => {
     ).not.toBeInTheDocument();
     expect(rows[3]).toHaveAttribute('data-route-request-id', 'codex-cache');
     expect(within(rows[3]).getByTestId('route-request-token-summary')).toHaveTextContent(
-      'T 100IN 100OUT 0C.R 40C.W 0'
+      'T 100IN 100OUT 0C.R 40C.W —'
     );
     expect(within(rows[3]).getByTestId('route-request-cost')).toHaveTextContent('1.28e-7');
     expect(screen.queryByText(/^规则说明：/)).not.toBeInTheDocument();
@@ -667,6 +670,91 @@ describe('LogsPage', () => {
     });
     expect(screen.getByText('暂无路由日志')).toBeInTheDocument();
     expect(screen.queryByText(/当前运行会话中还没有路由请求/)).not.toBeInTheDocument();
+  });
+
+  it('distinguishes unavailable usage, explicit zero, and token-count estimates', async () => {
+    vi.mocked(routeApi.getRequestLogs).mockResolvedValue({
+      success: true,
+      data: [
+        buildRouteLog({
+          id: 'route-log-missing-usage',
+          requestId: 'missing-usage',
+          cliType: 'codex',
+          attempt: 1,
+          outcome: 'success',
+          createdAt: 100,
+          statusCode: 200,
+        }),
+        buildRouteLog({
+          id: 'route-log-explicit-zero',
+          requestId: 'explicit-zero',
+          cliType: 'codex',
+          attempt: 1,
+          outcome: 'success',
+          createdAt: 200,
+          statusCode: 200,
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 0,
+        }),
+        buildRouteLog({
+          id: 'route-log-local-estimate',
+          requestId: 'local-estimate',
+          cliType: 'claudeCode',
+          attempt: 1,
+          outcome: 'neutral',
+          createdAt: 300,
+          statusCode: 200,
+          requestKind: 'token-count',
+          tokenUsageSource: 'local-estimate',
+          estimatedInputTokens: 1234,
+        }),
+        buildRouteLog({
+          id: 'route-log-upstream-count',
+          requestId: 'upstream-count',
+          cliType: 'claudeCode',
+          attempt: 1,
+          outcome: 'success',
+          createdAt: 400,
+          statusCode: 200,
+          requestKind: 'token-count',
+          tokenUsageSource: 'upstream',
+          promptTokens: 55,
+          totalTokens: 55,
+        }),
+      ],
+    });
+
+    render(<LogsPage />);
+
+    await waitFor(() => expect(getRouteLogRowByRequestId('missing-usage')).toBeInTheDocument());
+
+    const missingRow = getRouteLogRowByRequestId('missing-usage');
+    expect(within(missingRow).getByTestId('route-request-token-summary')).toHaveTextContent(
+      'T —IN —OUT —C.R —C.W —'
+    );
+
+    const zeroRow = getRouteLogRowByRequestId('explicit-zero');
+    expect(within(zeroRow).getByTestId('route-request-token-summary')).toHaveTextContent(
+      'T 0IN 0OUT 0C.R 0C.W 0'
+    );
+
+    const estimateRow = getRouteLogRowByRequestId('local-estimate');
+    expect(within(estimateRow).getByTestId('route-request-token-summary')).toHaveTextContent(
+      'T —IN ≈1,234OUT —C.R —C.W —'
+    );
+    expect(within(estimateRow).getByTestId('route-request-token-usage-label')).toHaveTextContent(
+      '本地估算 · 不计入推理用量'
+    );
+    expect(within(estimateRow).getByTestId('route-request-cost')).toHaveTextContent('—');
+
+    const upstreamCountRow = getRouteLogRowByRequestId('upstream-count');
+    expect(
+      within(upstreamCountRow).getByTestId('route-request-token-usage-label')
+    ).toHaveTextContent('Token 计数 · 不计入推理用量');
+    expect(within(upstreamCountRow).getByTestId('route-request-cost')).toHaveTextContent('—');
   });
 
   it('uses explicit log identity without guessing a site from the model', async () => {
@@ -1173,7 +1261,7 @@ describe('LogsPage', () => {
     await waitFor(() => expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(3));
     const rows = screen.getAllByTestId('route-request-log-row');
     expect(within(rows[0]).getByTestId('route-request-token-summary')).toHaveTextContent(
-      'T 0IN 0OUT 0C.R 0C.W 0'
+      'T —IN —OUT —C.R —C.W —'
     );
     expect(within(rows[0]).getByTestId('route-request-cost')).toHaveTextContent('0.5');
     expect(

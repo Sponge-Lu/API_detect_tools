@@ -481,6 +481,9 @@ export interface RouteAnalyticsBucket {
 }
 
 /** 单条路由请求日志（当前运行会话内存态） */
+export type RouteRequestKind = 'inference' | 'token-count';
+export type RouteTokenUsageSource = 'upstream' | 'local-estimate';
+
 export interface RouteRequestLogItem {
   id: string;
   requestId: string;
@@ -506,6 +509,9 @@ export interface RouteRequestLogItem {
   statusCode?: number;
   latencyMs?: number;
   firstByteLatencyMs?: number;
+  requestKind?: RouteRequestKind;
+  tokenUsageSource?: RouteTokenUsageSource;
+  estimatedInputTokens?: number;
   promptTokens?: number;
   completionTokens?: number;
   totalTokens?: number;

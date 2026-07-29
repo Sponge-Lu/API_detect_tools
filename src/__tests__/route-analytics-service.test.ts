@@ -168,6 +168,62 @@ describe('route-analytics-service token statistics', () => {
     );
   });
 
+  it('keeps token-count estimates out of inference token and cost analytics', () => {
+    const at = Date.now();
+
+    recordRouteRequest({
+      requestId: 'req-inference',
+      attempt: 1,
+      cliType: 'codex',
+      canonicalModel: 'gpt-4.1',
+      routeRuleId: 'rule-1',
+      siteId: 'site-1',
+      accountId: 'account-1',
+      apiKeyId: 'key-1',
+      resolvedModel: 'gpt-4.1',
+      outcome: 'success',
+      statusCode: 200,
+      requestKind: 'inference',
+      tokenUsageSource: 'upstream',
+      promptTokens: 10,
+      completionTokens: 5,
+      totalTokens: 15,
+      at,
+    });
+    recordRouteRequest({
+      requestId: 'req-local-estimate',
+      attempt: 1,
+      cliType: 'claudeCode',
+      canonicalModel: 'gpt-4.1',
+      routeRuleId: 'rule-1',
+      siteId: 'site-1',
+      accountId: 'account-1',
+      apiKeyId: 'key-1',
+      resolvedModel: 'gpt-4.1',
+      outcome: 'neutral',
+      statusCode: 200,
+      requestKind: 'token-count',
+      tokenUsageSource: 'local-estimate',
+      estimatedInputTokens: 999,
+      promptTokens: 999,
+      totalTokens: 999,
+      at,
+    });
+
+    expect(getRouteRequestLogs()[0]).toMatchObject({
+      requestId: 'req-local-estimate',
+      requestKind: 'token-count',
+      tokenUsageSource: 'local-estimate',
+      estimatedInputTokens: 999,
+      estimatedCostUsd: undefined,
+    });
+    expect(getAnalyticsSummary({ window: '24h' })).toMatchObject({
+      promptTokens: 10,
+      completionTokens: 5,
+      totalTokens: 15,
+    });
+  });
+
   it('does not infer route identity from the registry when every channel id is missing', () => {
     mocks.routingConfig.analytics.config.enabled = false;
     mocks.routingConfig.modelRegistry.sources = [

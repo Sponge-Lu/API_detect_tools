@@ -134,6 +134,7 @@ const LOCAL_COUNT_TOKENS_MESSAGE_OVERHEAD = 4;
 const LOCAL_COUNT_TOKENS_CONSERVATIVE_MULTIPLIER = 1.15;
 const INITIAL_STREAM_VALIDATION_MAX_BYTES = 4096;
 const STREAM_TERMINAL_SCAN_MAX_CHARS = 8192;
+const NATIVE_OPENAI_RESPONSES_SSE_MAX_PRECOMMIT_BYTES = 1024 * 1024;
 const NATIVE_ANTHROPIC_SSE_MAX_FRAME_BYTES = 1024 * 1024;
 const NATIVE_ANTHROPIC_SSE_MAX_PRECOMMIT_BYTES = 1024 * 1024;
 const ROUTE_CLIENT_CANCELLED_ERROR_CODE = 'route_client_cancelled';
@@ -1561,12 +1562,24 @@ function hasOnlyZeroUsageTokens(usage: Record<string, unknown> | undefined): boo
   return tokenValues.length > 0 && tokenValues.every(value => value === 0);
 }
 
-function validateCompletedOpenAiResponsesStream(body: Buffer): CompletedStreamValidation {
+interface OpenAiResponsesStreamInspection {
+  sawFinished: boolean;
+  sawDone: boolean;
+  sawFailure: boolean;
+  textLength: number;
+  outputItems: number;
+  explicitZeroUsage: boolean;
+  malformedJson: boolean;
+}
+
+function inspectOpenAiResponsesStream(body: Buffer): OpenAiResponsesStreamInspection {
   let sawFinished = false;
   let sawDone = false;
+  let sawFailure = false;
   let textLength = 0;
   let outputItems = 0;
   let explicitZeroUsage = false;
+  let malformedJson = false;
 
   for (const block of parseSseBlocks(body.toString('utf-8'))) {
     if (!block.data) {
@@ -1580,18 +1593,21 @@ function validateCompletedOpenAiResponsesStream(body: Buffer): CompletedStreamVa
 
     const payload = parseSseJsonRecord(block.data);
     if (!payload) {
-      return buildCompletedStreamFailure(
-        'malformed_sse_json',
-        'upstream emitted malformed OpenAI Responses SSE JSON'
-      );
+      malformedJson = true;
+      continue;
     }
 
     const payloadType = readString(payload.type) || block.event || '';
+    if (payloadType === 'response.failed') {
+      sawFailure = true;
+      continue;
+    }
     if (
       payloadType === 'response.output_text.delta' ||
       payloadType === 'response.output_text.done'
     ) {
-      textLength += readString(payload.delta).length + readString(payload.text).length;
+      textLength +=
+        readString(payload.delta).trim().length + readString(payload.text).trim().length;
       continue;
     }
 
@@ -1618,7 +1634,7 @@ function validateCompletedOpenAiResponsesStream(body: Buffer): CompletedStreamVa
     if (payloadType === 'response.completed' || payloadType === 'response.incomplete') {
       sawFinished = true;
       const response = asRecord(payload.response);
-      textLength += readString(response?.output_text).length;
+      textLength += readString(response?.output_text).trim().length;
       const output = Array.isArray(response?.output) ? response.output : [];
       outputItems += output.filter(hasOpenAiResponsesOutputItem).length;
 
@@ -1629,21 +1645,46 @@ function validateCompletedOpenAiResponsesStream(body: Buffer): CompletedStreamVa
     }
   }
 
-  if (!sawFinished && !sawDone) {
+  return {
+    sawFinished,
+    sawDone,
+    sawFailure,
+    textLength,
+    outputItems,
+    explicitZeroUsage,
+    malformedJson,
+  };
+}
+
+function hasOpenAiResponsesStreamOutput(inspection: OpenAiResponsesStreamInspection): boolean {
+  return inspection.textLength > 0 || inspection.outputItems > 0;
+}
+
+function validateCompletedOpenAiResponsesStream(body: Buffer): CompletedStreamValidation {
+  const inspection = inspectOpenAiResponsesStream(body);
+
+  if (inspection.malformedJson) {
+    return buildCompletedStreamFailure(
+      'malformed_sse_json',
+      'upstream emitted malformed OpenAI Responses SSE JSON'
+    );
+  }
+
+  if (!inspection.sawFinished && !inspection.sawDone) {
     return buildCompletedStreamFailure(
       'missing_response_terminal',
       'upstream ended Codex stream without response.completed, response.incomplete, or [DONE]'
     );
   }
 
-  if (explicitZeroUsage) {
-    return buildCompletedStreamFailure(
-      'empty_response_zero_usage',
-      'upstream ended Codex stream with all-zero usage'
-    );
-  }
+  if (!hasOpenAiResponsesStreamOutput(inspection)) {
+    if (inspection.explicitZeroUsage) {
+      return buildCompletedStreamFailure(
+        'empty_response_zero_usage',
+        'upstream ended Codex stream without output and with all-zero usage'
+      );
+    }
 
-  if (textLength === 0 && outputItems === 0) {
     return buildCompletedStreamFailure(
       'empty_response',
       'upstream ended Codex stream without assistant text, function_call, or tool output content'
@@ -1700,14 +1741,14 @@ function validateCompletedOpenAiChatStream(body: Buffer): CompletedStreamValidat
     );
   }
 
-  if (explicitZeroUsage) {
-    return buildCompletedStreamFailure(
-      'empty_response_zero_usage',
-      'upstream ended OpenAI Chat Completions stream with all-zero usage'
-    );
-  }
-
   if (textLength === 0 && toolItems === 0) {
+    if (explicitZeroUsage) {
+      return buildCompletedStreamFailure(
+        'empty_response_zero_usage',
+        'upstream ended OpenAI Chat Completions stream without output and with all-zero usage'
+      );
+    }
+
     return buildCompletedStreamFailure(
       'empty_response',
       'upstream ended OpenAI Chat Completions stream without assistant text or tool call content'
@@ -2865,6 +2906,7 @@ async function forwardToUpstream(
   firstByteLatencyMs?: number;
   usage?: RouteUsageStats;
   streamed?: boolean;
+  semanticError?: typeof EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE;
 }> {
   const startTime = Date.now();
   const upstreamCliType = options.upstreamCliType ?? cliType;
@@ -2919,11 +2961,45 @@ async function forwardToUpstream(
   let streamingTerminalScanText = '';
   let streamingTerminalSeen = streamingTerminalProtocol === 'none';
   let streamingCompletionValidated = false;
+  let streamingSemanticError: typeof EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE | undefined;
+  const inspectNativeOpenAiResponsesBeforeCommit =
+    options.nativeResponsePassthrough && streamingTerminalProtocol === 'openaiResponses';
 
   const processStreamingOutgoingChunk = async (outgoingChunk: Buffer): Promise<void> => {
     if (!streamingStatusCode || !streamingHeaders || !outgoingChunk.length) return;
-    if (!options.nativeResponsePassthrough) {
+    if (
+      !options.nativeResponsePassthrough ||
+      (inspectNativeOpenAiResponsesBeforeCommit && !streamed)
+    ) {
       receivedStreamingChunks.push(outgoingChunk);
+    }
+
+    let nativeOpenAiInspection: OpenAiResponsesStreamInspection | undefined;
+    let nativeOpenAiTerminalParsed = false;
+    let nativeOpenAiPrecommitBytes = 0;
+    if (inspectNativeOpenAiResponsesBeforeCommit && !streamed) {
+      const terminalScan = appendStreamingTerminalScanText(
+        streamingTerminalProtocol,
+        streamingTerminalScanText,
+        outgoingChunk
+      );
+      streamingTerminalScanText = terminalScan.text;
+      streamingTerminalSeen = streamingTerminalSeen || terminalScan.terminalSeen;
+      const receivedStreamingBody = Buffer.concat(receivedStreamingChunks);
+      nativeOpenAiPrecommitBytes = receivedStreamingBody.length;
+      nativeOpenAiInspection = inspectOpenAiResponsesStream(receivedStreamingBody);
+      nativeOpenAiTerminalParsed =
+        nativeOpenAiInspection.sawFinished ||
+        nativeOpenAiInspection.sawDone ||
+        nativeOpenAiInspection.sawFailure;
+      if (
+        nativeOpenAiTerminalParsed &&
+        !nativeOpenAiInspection.sawFailure &&
+        nativeOpenAiInspection.explicitZeroUsage &&
+        !hasOpenAiResponsesStreamOutput(nativeOpenAiInspection)
+      ) {
+        streamingSemanticError = EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE;
+      }
     }
 
     if (
@@ -2996,6 +3072,22 @@ async function forwardToUpstream(
       }
       if (validation.status === 'pending') {
         return;
+      }
+
+      if (inspectNativeOpenAiResponsesBeforeCommit) {
+        if (streamingSemanticError) {
+          return;
+        }
+        const hasOutput = nativeOpenAiInspection
+          ? hasOpenAiResponsesStreamOutput(nativeOpenAiInspection)
+          : false;
+        if (
+          !hasOutput &&
+          !nativeOpenAiTerminalParsed &&
+          nativeOpenAiPrecommitBytes <= NATIVE_OPENAI_RESPONSES_SSE_MAX_PRECOMMIT_BYTES
+        ) {
+          return;
+        }
       }
 
       streamed = true;
@@ -3152,6 +3244,7 @@ async function forwardToUpstream(
     firstByteLatencyMs: response.firstByteLatencyMs,
     usage: extractUsageFromBody(response.body),
     streamed,
+    semanticError: streamingSemanticError,
   };
 }
 
@@ -3594,6 +3687,7 @@ export async function handleRequest(
         resolveChannelUpstreamProtocol(channel.targetProtocol, sourceProtocol) === sourceProtocol
     );
     if (sortedChannels.length === 0) {
+      const estimate = estimateClaudeCountTokens(bodyBuffer);
       recordRequestForSelection({
         requestId,
         attempt: 0,
@@ -3602,11 +3696,14 @@ export async function handleRequest(
         requestedModel: rawModel,
         reasoningEffort,
         canonicalModel,
+        requestKind: 'token-count',
+        tokenUsageSource: 'local-estimate',
+        estimatedInputTokens: estimate.input_tokens,
         outcome: 'neutral',
         statusCode: 200,
         error: 'count_tokens_local_estimate:no_native_protocol_channel',
       });
-      writeInputTokensEstimate(res, estimateClaudeCountTokens(bodyBuffer));
+      writeInputTokensEstimate(res, estimate);
       return;
     }
   }
@@ -3816,6 +3913,7 @@ export async function handleRequest(
           requestedModel: rawModel,
           reasoningEffort,
           canonicalModel,
+          requestKind: 'inference',
           siteId: activeChannel.siteId,
           accountId: activeChannel.accountId,
           apiKeyId: activeChannel.apiKeyId,
@@ -3948,6 +4046,8 @@ export async function handleRequest(
         let zeroUsageRetry = 0;
         zeroUsageRetry < ZERO_USAGE_UPSTREAM_RETRY_ATTEMPTS &&
         outcome === 'success' &&
+        !requestIsTokenCount &&
+        !result.semanticError &&
         !result.streamed &&
         isAllZeroRouteUsage(result.usage);
         zeroUsageRetry += 1
@@ -4009,6 +4109,7 @@ export async function handleRequest(
           requestedModel: rawModel,
           reasoningEffort,
           canonicalModel,
+          requestKind: 'token-count',
           siteId: activeChannel.siteId,
           accountId: activeChannel.accountId,
           apiKeyId: activeChannel.apiKeyId,
@@ -4023,7 +4124,10 @@ export async function handleRequest(
         continue;
       }
 
-      if (outcome === 'success' && !result.streamed && isAllZeroRouteUsage(result.usage)) {
+      const emptyResponseZeroUsage =
+        result.semanticError === EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE ||
+        (!requestIsTokenCount && !result.streamed && isAllZeroRouteUsage(result.usage));
+      if (outcome === 'success' && emptyResponseZeroUsage) {
         const terminalError = buildRouteProxyErrorText(
           EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE,
           'upstream returned HTTP 200 with all-zero usage'
@@ -4077,6 +4181,8 @@ export async function handleRequest(
             requestedModel: rawModel,
             reasoningEffort,
             canonicalModel,
+            requestKind: 'inference',
+            tokenUsageSource: 'upstream',
             siteId: activeChannel.siteId,
             accountId: activeChannel.accountId,
             apiKeyId: activeChannel.apiKeyId,
@@ -4085,12 +4191,12 @@ export async function handleRequest(
             statusCode: result.statusCode,
             latencyMs: result.latencyMs,
             firstByteLatencyMs: result.firstByteLatencyMs,
-            promptTokens: result.usage.promptTokens,
-            completionTokens: result.usage.completionTokens,
-            totalTokens: result.usage.totalTokens,
-            cacheCreationTokens: result.usage.cacheCreationTokens,
-            cacheReadTokens: result.usage.cacheReadTokens,
-            cachedTokens: result.usage.cachedTokens,
+            promptTokens: result.usage?.promptTokens,
+            completionTokens: result.usage?.completionTokens,
+            totalTokens: result.usage?.totalTokens,
+            cacheCreationTokens: result.usage?.cacheCreationTokens,
+            cacheReadTokens: result.usage?.cacheReadTokens,
+            cachedTokens: result.usage?.cachedTokens,
             error: EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE,
           });
         }
@@ -4132,6 +4238,8 @@ export async function handleRequest(
           requestedModel: rawModel,
           reasoningEffort,
           canonicalModel,
+          requestKind: requestIsTokenCount ? 'token-count' : 'inference',
+          tokenUsageSource: hasRouteUsageValues(result.usage) ? 'upstream' : undefined,
           siteId: activeChannel.siteId,
           accountId: activeChannel.accountId,
           apiKeyId: activeChannel.apiKeyId,
@@ -4436,6 +4544,7 @@ export async function handleRequest(
           requestedModel: rawModel,
           reasoningEffort,
           canonicalModel,
+          requestKind: requestIsTokenCount ? 'token-count' : 'inference',
           siteId: activeChannel.siteId,
           accountId: activeChannel.accountId,
           apiKeyId: activeChannel.apiKeyId,
@@ -4487,6 +4596,7 @@ export async function handleRequest(
 
   if (!res.headersSent) {
     if (requestIsTokenCount) {
+      const estimate = estimateClaudeCountTokens(bodyBuffer);
       recordRequestForSelection({
         requestId,
         attempt: attempt + 1,
@@ -4495,11 +4605,14 @@ export async function handleRequest(
         requestedModel: rawModel,
         reasoningEffort,
         canonicalModel,
+        requestKind: 'token-count',
+        tokenUsageSource: 'local-estimate',
+        estimatedInputTokens: estimate.input_tokens,
         outcome: 'neutral',
         statusCode: 200,
         error: `count_tokens_local_estimate:${tokenCountFallbackReason || 'native_channels_unavailable'}`,
       });
-      writeInputTokensEstimate(res, estimateClaudeCountTokens(bodyBuffer));
+      writeInputTokensEstimate(res, estimate);
     } else if (!attemptedUpstream && adapterIncompatibilityReasons.length > 0) {
       res.writeHead(400, {
         'Content-Type': 'application/json',

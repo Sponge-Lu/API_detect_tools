@@ -118,6 +118,7 @@ interface RouteLogRowViewModel {
   reasoningEffort: string;
   sitePathDisplay: string;
   compactTokenParts: Array<{ label: string; value: string }>;
+  tokenUsageLabel: string | null;
   compactLatencyText: string;
   statusText: string;
   modelPathTitle: string;
@@ -148,7 +149,7 @@ function formatOptionalDisplayName(name?: string | null): string {
 
 function formatTokenCount(value?: number | null): string {
   if (value === undefined || value === null || !Number.isFinite(value)) {
-    return '0';
+    return '—';
   }
 
   return new Intl.NumberFormat('zh-CN').format(value);
@@ -374,11 +375,7 @@ function resolveRouteLogCostInfo(
   const cacheCreationTokens = toFiniteNumber(item.cacheCreationTokens);
   const cachedTokens = toFiniteNumber(item.cachedTokens);
   const cacheReadTokens = toFiniteNumber(item.cacheReadTokens) ?? cachedTokens;
-  const totalTokens =
-    toFiniteNumber(item.totalTokens) ??
-    (promptTokens !== null || completionTokens !== null
-      ? (promptTokens ?? 0) + (completionTokens ?? 0)
-      : null);
+  const totalTokens = toFiniteNumber(item.totalTokens);
   const baseCostInfo = createBaseRouteLogCostInfo({
     totalTokens,
     promptTokens,
@@ -386,6 +383,19 @@ function resolveRouteLogCostInfo(
     cacheCreationTokens,
     cacheReadTokens,
   });
+
+  if (item.tokenUsageSource === 'local-estimate') {
+    const estimatedInputTokens = toFiniteNumber(item.estimatedInputTokens);
+    return {
+      ...baseCostInfo,
+      promptTokens:
+        estimatedInputTokens === null ? '—' : `≈${formatTokenCount(estimatedInputTokens)}`,
+    };
+  }
+
+  if (item.requestKind === 'token-count') {
+    return baseCostInfo;
+  }
 
   if (customCli) {
     return {
@@ -440,6 +450,18 @@ function resolveRouteLogCostInfo(
     ...baseCostInfo,
     estimatedCost: formatEstimatedCost(estimatedCost),
   };
+}
+
+function resolveTokenUsageLabel(item: RouteRequestLogItem): string | null {
+  if (item.tokenUsageSource === 'local-estimate') {
+    return '本地估算 · 不计入推理用量';
+  }
+
+  if (item.requestKind === 'token-count') {
+    return 'Token 计数 · 不计入推理用量';
+  }
+
+  return null;
 }
 
 function formatDuration(value: number): string {
@@ -545,6 +567,7 @@ function buildRouteLogRowViewModel(params: {
     reasoningEffort: item.reasoningEffort?.trim() || '—',
     sitePathDisplay,
     compactTokenParts: formatRouteLogCompactTokenParts(costInfo),
+    tokenUsageLabel: resolveTokenUsageLabel(item),
     compactLatencyText: formatCompactLatency(item.latencyMs, item.firstByteLatencyMs),
     statusText: formatRouteLogStatusCode(item.statusCode),
     modelPathTitle: `${requestedModelName} → ${canonicalModelName}`,
@@ -859,6 +882,14 @@ export function LogsPage() {
                           <span className="min-w-0 truncate">{part.value}</span>
                         </span>
                       ))}
+                      {row.tokenUsageLabel ? (
+                        <span
+                          data-testid="route-request-token-usage-label"
+                          className="col-span-5 min-w-0 truncate text-[9px] text-[var(--text-tertiary)]"
+                        >
+                          {row.tokenUsageLabel}
+                        </span>
+                      ) : null}
                     </span>
                     <span
                       data-testid="route-request-cost"

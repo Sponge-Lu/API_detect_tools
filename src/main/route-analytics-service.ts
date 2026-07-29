@@ -263,6 +263,9 @@ function appendRouteRequestLog(params: {
   statusCode?: number;
   latencyMs?: number;
   firstByteLatencyMs?: number;
+  requestKind?: RouteRequestLogItem['requestKind'];
+  tokenUsageSource?: RouteRequestLogItem['tokenUsageSource'];
+  estimatedInputTokens?: number;
   promptTokens?: number;
   completionTokens?: number;
   totalTokens?: number;
@@ -308,6 +311,9 @@ function appendRouteRequestLog(params: {
     statusCode: params.statusCode,
     latencyMs: params.latencyMs,
     firstByteLatencyMs: params.firstByteLatencyMs,
+    requestKind: params.requestKind,
+    tokenUsageSource: params.tokenUsageSource,
+    estimatedInputTokens: params.estimatedInputTokens,
     promptTokens: params.promptTokens,
     completionTokens: params.completionTokens,
     totalTokens: params.totalTokens,
@@ -398,6 +404,9 @@ export function recordRouteRequest(params: {
   statusCode?: number;
   latencyMs?: number;
   firstByteLatencyMs?: number;
+  requestKind?: RouteRequestLogItem['requestKind'];
+  tokenUsageSource?: RouteRequestLogItem['tokenUsageSource'];
+  estimatedInputTokens?: number;
   promptTokens?: number;
   completionTokens?: number;
   totalTokens?: number;
@@ -408,14 +417,18 @@ export function recordRouteRequest(params: {
   at?: number;
 }): void {
   const at = params.at ?? Date.now();
-  const estimatedCostUsd = resolveRouteEstimatedCostUsd({
-    siteId: params.siteId,
-    resolvedModel: params.resolvedModel,
-    canonicalModel: params.canonicalModel,
-    requestedModel: params.requestedModel,
-    promptTokens: params.promptTokens,
-    completionTokens: params.completionTokens,
-  });
+  const recordsInferenceUsage =
+    params.requestKind !== 'token-count' && params.tokenUsageSource !== 'local-estimate';
+  const estimatedCostUsd = recordsInferenceUsage
+    ? resolveRouteEstimatedCostUsd({
+        siteId: params.siteId,
+        resolvedModel: params.resolvedModel,
+        canonicalModel: params.canonicalModel,
+        requestedModel: params.requestedModel,
+        promptTokens: params.promptTokens,
+        completionTokens: params.completionTokens,
+      })
+    : undefined;
   const logItem = appendRouteRequestLog({
     requestId: params.requestId,
     requestSelectionStartedAt: params.requestSelectionStartedAt,
@@ -435,6 +448,9 @@ export function recordRouteRequest(params: {
     statusCode: params.statusCode,
     latencyMs: params.latencyMs,
     firstByteLatencyMs: params.firstByteLatencyMs,
+    requestKind: params.requestKind,
+    tokenUsageSource: params.tokenUsageSource,
+    estimatedInputTokens: params.estimatedInputTokens,
     promptTokens: params.promptTokens,
     completionTokens: params.completionTokens,
     totalTokens: params.totalTokens,
@@ -503,7 +519,7 @@ export function recordRouteRequest(params: {
   else if (params.outcome === 'failure') bucket.failureCount++;
   else bucket.neutralCount++;
 
-  if (config.recordTokenUsage) {
+  if (config.recordTokenUsage && recordsInferenceUsage) {
     bucket.promptTokens += params.promptTokens || 0;
     bucket.completionTokens += params.completionTokens || 0;
     bucket.totalTokens += params.totalTokens || 0;
