@@ -37,6 +37,17 @@ function sumMetric(snapshots: SiteDailySnapshot[], key: SiteSnapshotNumericKey):
   return snapshots.reduce((sum, snapshot) => sum + snapshot[key], 0);
 }
 
+function toNonNegativeBalance(balance: number | undefined): number {
+  return typeof balance === 'number' && Number.isFinite(balance) && balance > 0 ? balance : 0;
+}
+
+function normalizeSiteDailySnapshot(snapshot: SiteDailySnapshot): SiteDailySnapshot {
+  return {
+    ...snapshot,
+    balance: toNonNegativeBalance(snapshot.balance),
+  };
+}
+
 function extractTodayMetrics(cache: DetectionCacheData | undefined, dateKey: string) {
   const isFreshToday = isSameLocalDay(cache?.last_refresh, dateKey);
   const todayPromptTokens = isFreshToday ? (cache?.today_prompt_tokens ?? 0) : 0;
@@ -44,8 +55,7 @@ function extractTodayMetrics(cache: DetectionCacheData | undefined, dateKey: str
   const totalTokens = todayPromptTokens + todayCompletionTokens;
 
   return {
-    balance:
-      typeof cache?.balance === 'number' && Number.isFinite(cache.balance) ? cache.balance : 0,
+    balance: toNonNegativeBalance(cache?.balance),
     todayUsage: isFreshToday ? (cache?.today_usage ?? 0) : 0,
     todayRequests: isFreshToday ? (cache?.today_requests ?? 0) : 0,
     todayPromptTokens,
@@ -146,7 +156,8 @@ export function getSiteDailySnapshots(params?: { siteId?: string; days?: number 
     siteIds.map(siteId => {
       const snapshots = runtimeCacheManager
         .getSiteDailySnapshots(siteId)
-        .filter(snapshot => (cutoff === null ? true : snapshot.capturedAt >= cutoff));
+        .filter(snapshot => (cutoff === null ? true : snapshot.capturedAt >= cutoff))
+        .map(normalizeSiteDailySnapshot);
 
       return [siteId, snapshots];
     })

@@ -78,6 +78,8 @@ describe('neutral theme token contract', () => {
   beforeEach(() => {
     const lightB = getThemePreset('light-b');
     const dark = getThemePreset('dark');
+    const modern = getThemePreset('modern');
+    const modernDark = getThemePreset('modern-dark');
 
     styleElement = document.createElement('style');
     styleElement.textContent = `
@@ -124,6 +126,22 @@ describe('neutral theme token contract', () => {
         --surface-3: ${dark.panelRaised};
         --accent: ${dark.accentColor};
         --accent-soft: ${dark.softAccent};
+      }
+
+      html[data-theme='modern'] {
+        --app-bg: ${modern.appBackground};
+        --surface-1: ${modern.panelBackground};
+        --surface-3: ${modern.panelRaised};
+        --accent: ${modern.accentColor};
+        --accent-soft: ${modern.softAccent};
+      }
+
+      html[data-theme='modern-dark'] {
+        --app-bg: ${modernDark.appBackground};
+        --surface-1: ${modernDark.panelBackground};
+        --surface-3: ${modernDark.panelRaised};
+        --accent: ${modernDark.accentColor};
+        --accent-soft: ${modernDark.softAccent};
       }
     `;
 

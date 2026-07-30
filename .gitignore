@@ -74,8 +74,12 @@ LINUX DO Credit.user.js
 .cursor/
 .roo/
 
-# 文档
-docs/
+# 文档（README 导航中的文档保持跟踪）
+docs/*
+!docs/API_REFERENCE.md
+!docs/ARCHITECTURE.md
+!docs/DEVELOPMENT.md
+!docs/USER_GUIDE.md
 .ace-tool/
 .worktrees/
 outputs/

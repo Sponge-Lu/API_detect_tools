@@ -1553,6 +1553,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
         <AppButton
           variant="secondary"
           size="sm"
+          className="!h-7 !min-h-7"
           onClick={handleOpenDetectionSettings}
           title="打开站点设置"
           aria-label="设置"
@@ -1562,6 +1563,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
         <AppButton
           variant="secondary"
           size="sm"
+          className="!h-7 !min-h-7"
           onClick={handleDetectAllSites}
           loading={runningCliProbe}
           disabled={activeSitesCount === 0}
@@ -1573,6 +1575,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
         <AppButton
           variant="secondary"
           size="sm"
+          className="!h-7 !min-h-7"
           onClick={() => setShowOperationRecords(true)}
           title="查看应用操作记录"
           aria-label="操作记录"
@@ -1582,6 +1585,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
         <AppButton
           variant="secondary"
           size="sm"
+          className="!h-7 !min-h-7"
           onClick={handleRefreshAll}
           loading={isRefreshing}
           disabled={activeSitesCount === 0}
@@ -1593,6 +1597,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
         <AppButton
           variant="secondary"
           size="sm"
+          className="!h-7 !min-h-7"
           onClick={handleCheckInAllSites}
           loading={isCheckingInAll}
           disabled={!config || config.sites.length === 0 || Boolean(checkingIn)}
@@ -1604,6 +1609,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
         <AppButton
           variant="primary"
           size="sm"
+          className="!h-7 !min-h-7"
           onClick={() => setShowAddAccessPointDialog(true)}
           title="添加站点"
           aria-label="添加站点"
@@ -1613,6 +1619,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
         <AppButton
           variant="secondary"
           size="sm"
+          className="!h-7 !min-h-7"
           onClick={handleOpenBackupDialog}
           title="从备份文件恢复站点配置"
           aria-label="恢复站点"

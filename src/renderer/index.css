@@ -226,6 +226,93 @@ html[data-theme='dark'] {
   --shadow-xl: 0 16px 32px rgba(0, 0, 0, 0.42), 0 4px 12px rgba(0, 0, 0, 0.24);
 }
 
+html[data-theme='modern'] {
+  color-scheme: light;
+  --app-bg: #fafafa;
+  --app-bg-muted: #f4f4f5;
+  --surface-1: #ffffff;
+  --surface-2: #f4f4f5;
+  --surface-3: #f9fafb;
+  --line-muted: rgba(24, 24, 27, 0.06);
+  --line-soft: rgba(24, 24, 27, 0.1);
+  --line-strong: rgba(24, 24, 27, 0.16);
+  --text-primary: #18181b;
+  --text-secondary: #6b7280;
+  --text-tertiary: #a1a1aa;
+  --accent: #6b7280;
+  --accent-soft: rgba(107, 114, 128, 0.12);
+  --accent-soft-strong: rgba(107, 114, 128, 0.18);
+  --accent-strong: #4b5563;
+  --success: #3f7a5f;
+  --success-soft: rgba(63, 122, 95, 0.14);
+  --warning: #a67c3a;
+  --warning-soft: rgba(166, 124, 58, 0.16);
+  --danger: #b45454;
+  --danger-soft: rgba(180, 84, 84, 0.14);
+  --cli-history-success: #5f9a78;
+  --cli-history-danger: #c07070;
+  --cli-history-empty: rgba(24, 24, 27, 0.1);
+  --overlay-mask: rgba(24, 24, 27, 0.24);
+  --hover-overlay: rgba(24, 24, 27, 0.05);
+  --focus-ring: rgba(107, 114, 128, 0.18);
+  --selection-soft: rgba(107, 114, 128, 0.12);
+  --icon-muted: rgba(107, 114, 128, 0.7);
+  --code-bg: #18181b;
+  --code-text: #e4e4e7;
+  --text-on-accent: #ffffff;
+
+  --shadow-sm: 0 1px 2px rgba(24, 24, 27, 0.04);
+  --shadow-md: 0 2px 8px rgba(24, 24, 27, 0.06), 0 1px 2px rgba(24, 24, 27, 0.04);
+  --shadow-lg: 0 8px 24px rgba(24, 24, 27, 0.08), 0 2px 8px rgba(24, 24, 27, 0.04);
+  --shadow-xl: 0 16px 32px rgba(24, 24, 27, 0.1), 0 4px 12px rgba(24, 24, 27, 0.06);
+}
+
+html[data-theme='modern-dark'] {
+  color-scheme: dark;
+  --app-bg: #0a0a0a;
+  --app-bg-muted: #111111;
+  --surface-1: #141414;
+  --surface-2: #1c1c1c;
+  --surface-3: #262626;
+  --line-muted: rgba(229, 231, 235, 0.07);
+  --line-soft: rgba(229, 231, 235, 0.12);
+  --line-strong: rgba(229, 231, 235, 0.2);
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-tertiary: #71717a;
+  --accent: #e5e7eb;
+  --accent-soft: rgba(229, 231, 235, 0.14);
+  --accent-soft-strong: rgba(229, 231, 235, 0.22);
+  --accent-strong: #f9fafb;
+  --success: #6fbf8f;
+  --success-soft: rgba(111, 191, 143, 0.18);
+  --warning: #d4a84b;
+  --warning-soft: rgba(212, 168, 75, 0.2);
+  --danger: #e07a7a;
+  --danger-soft: rgba(224, 122, 122, 0.18);
+  --cli-history-success: #5a9e74;
+  --cli-history-danger: #c96b6b;
+  --cli-history-empty: rgba(229, 231, 235, 0.1);
+  --overlay-mask: rgba(0, 0, 0, 0.52);
+  --hover-overlay: rgba(255, 255, 255, 0.06);
+  --focus-ring: rgba(229, 231, 235, 0.28);
+  --selection-soft: rgba(229, 231, 235, 0.16);
+  --icon-muted: rgba(161, 161, 170, 0.7);
+  --code-bg: #09090b;
+  --code-text: #e4e4e7;
+  --text-on-accent: #0a0a0a;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.32);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.48), 0 2px 8px rgba(0, 0, 0, 0.28);
+  --shadow-xl: 0 16px 32px rgba(0, 0, 0, 0.56), 0 4px 12px rgba(0, 0, 0, 0.32);
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
 body {
   margin: 0;
   display: flex;
@@ -280,17 +367,22 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.1);
+  background: var(--hover-overlay);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.3);
+  background: color-mix(in srgb, var(--text-tertiary) 55%, transparent);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.5);
+  background: color-mix(in srgb, var(--text-secondary) 70%, transparent);
+}
+
+::selection {
+  background: var(--selection-soft);
+  color: var(--text-primary);
 }
 
 /* ========== 应用动画系统 ========== */
@@ -570,6 +662,17 @@ body,
 /* 双向滚动容器 */
 .app-scroll-both {
   overflow: auto;
+}
+
+/* 隐藏滚动条但保留滚动能力（窗口高度不足时上下滚动且不显示滚动条） */
+.app-scrollbar-none {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/旧 Edge */
+}
+.app-scrollbar-none::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none; /* Chrome/Safari/Electron */
 }
 
 /* 防止内容被压缩 - 保持最小宽度 */

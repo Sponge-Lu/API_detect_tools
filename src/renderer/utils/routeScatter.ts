@@ -114,7 +114,7 @@ export function buildRouteScatterPoints(
   return Array.from(grouped.entries())
     .map(([key, entry]) => {
       const denominator = entry.successCount + entry.failureCount;
-      const successRate = denominator > 0 ? entry.successCount / denominator : 1;
+      const successRate = denominator > 0 ? entry.successCount / denominator : 0;
       const tier = classifyTier(successRate, entry.failureCount > 0);
       return {
         key,
@@ -133,7 +133,7 @@ export function buildRouteScatterPoints(
         tier,
       } satisfies ScatterPoint;
     })
-    .filter(point => point.requests > 0 && point.ttfbMs !== null);
+    .filter(point => point.requests > 0);
 }
 
 export interface LabelCandidate {

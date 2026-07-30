@@ -88,12 +88,11 @@ async function createWindow() {
   const backgroundColor = getWindowBackgroundColor(savedTheme);
 
   const window = new BrowserWindow({
-    // 默认窗口尺寸为 1400x800，确保展开侧栏时路由日志九列无需水平滚动
-    width: 1400,
+    // 默认窗口尺寸：日志九列 + 侧栏 + 总览/路由固定布局
+    width: 1320,
     height: 800,
-    // 设置最小窗口尺寸，确保内容不会被过度压缩
     minWidth: 1200,
-    minHeight: 700,
+    minHeight: 720,
     title: 'API Hub Management Tools',
     // 无论开发还是生产都显式指定窗口图标，防止 EXE 默认图标被沿用
     icon: iconPath,

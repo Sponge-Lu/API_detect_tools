@@ -11,7 +11,7 @@
 
 /**
  * 主题管理 Hook
- * 支持：1 套浅色主题 + 1 套统一暗色主题
+ * 支持：经典 light-b/dark + modern/modern-dark
  * 主题设置会同步保存到主进程存储，确保下次启动时窗口背景色正确
  */
 
@@ -22,10 +22,12 @@ import {
   type ThemeMode,
 } from '../../shared/theme/themePresets';
 
+const DARK_THEMES = new Set<ThemeMode>(['dark', 'modern-dark']);
+
 function applyTheme(theme: ThemeMode) {
   const root = document.documentElement;
   root.dataset.theme = theme;
-  root.classList.toggle('dark', theme === 'dark');
+  root.classList.toggle('dark', DARK_THEMES.has(theme));
 }
 
 function persistThemeMode(mode: ThemeMode) {

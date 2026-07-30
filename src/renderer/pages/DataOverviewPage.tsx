@@ -27,7 +27,7 @@ import {
 } from '../utils/siteOverview';
 import { computeLatencyPercentiles, formatLatency } from '../utils/routeLatency';
 import { computeFirstBytePercentiles, formatTtfb } from '../utils/routeTtfb';
-import { ROUTE_SCOPE_ALL, filterBucketsByScope, type RouteScope } from '../utils/routeScopeFilter';
+import { ROUTE_SCOPE_ALL, filterBucketsByScope } from '../utils/routeScopeFilter';
 import { buildCustomCliRouteSiteId } from '../../shared/utils/customCliRouteId';
 import {
   buildRouteScatterPoints,
@@ -50,7 +50,6 @@ import {
 } from '../utils/routeModelDistribution';
 
 type RouteWindow = RouteAnalyticsWindow;
-const ROUTE_WINDOW_OPTIONS: RouteWindow[] = ['24h', '7d'];
 const ROUTE_WINDOW_POINT_COUNTS: Record<RouteWindow, number> = {
   '24h': 24,
   '7d': 7,
@@ -71,7 +70,7 @@ interface TrendPoint {
   successCount: number;
   failureCount: number;
   totalTokens: number;
-  slowRequestCount: number;
+  latencyHistogram: Record<string, number>;
   firstByteHistogram: Record<string, number>;
 }
 
@@ -176,7 +175,7 @@ function createEmptyTrendPoint(timestamp: number, window: RouteWindow): TrendPoi
     successCount: 0,
     failureCount: 0,
     totalTokens: 0,
-    slowRequestCount: 0,
+    latencyHistogram: {},
     firstByteHistogram: {},
   };
 }
@@ -209,18 +208,9 @@ function buildRouteTrendPoints(buckets: RouteAnalyticsBucket[], window: RouteWin
     current.successCount += bucket.successCount;
     current.failureCount += bucket.failureCount;
     current.totalTokens += bucket.totalTokens;
-    current.slowRequestCount += Object.entries(bucket.latencyHistogram).reduce(
-      (sum, [label, count]) => {
-        const isSlowBucket =
-          label.startsWith('>') ||
-          (() => {
-            const match = label.match(/-(\d+)ms$/);
-            return match ? Number(match[1]) >= 5000 : false;
-          })();
-        return sum + (isSlowBucket ? count : 0);
-      },
-      0
-    );
+    for (const [label, count] of Object.entries(bucket.latencyHistogram || {})) {
+      current.latencyHistogram[label] = (current.latencyHistogram[label] || 0) + count;
+    }
     for (const [label, count] of Object.entries(bucket.firstByteHistogram || {})) {
       current.firstByteHistogram[label] = (current.firstByteHistogram[label] || 0) + count;
     }
@@ -828,15 +818,21 @@ function SectionTitle({
   actions?: ReactNode;
 }) {
   return (
-    <div className="mb-3 flex items-start justify-between gap-3">
+    <div
+      className={`mb-1.5 flex justify-between gap-2 ${subtitle ? 'items-start' : 'items-center'}`}
+    >
       <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <Icon className="h-4 w-4 shrink-0 text-[var(--accent)]" />
-          <h2 className="truncate text-sm font-semibold text-[var(--text-primary)]">{title}</h2>
+        <div className="flex h-5 items-center gap-1.5">
+          <Icon className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" />
+          <h2 className="truncate text-[13px] font-semibold leading-5 text-[var(--text-primary)]">
+            {title}
+          </h2>
         </div>
-        {subtitle ? <p className="mt-1 text-xs text-[var(--text-secondary)]">{subtitle}</p> : null}
+        {subtitle ? (
+          <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">{subtitle}</p>
+        ) : null}
       </div>
-      {actions ? <div className="shrink-0">{actions}</div> : null}
+      {actions ? <div className="flex h-5 shrink-0 items-center">{actions}</div> : null}
     </div>
   );
 }
@@ -847,37 +843,67 @@ function MetricCard({
   hint,
   toneClass = 'text-[var(--text-primary)]',
   compact = false,
+  sparklineValues,
+  sparklineClass = 'text-[var(--accent)]',
+  chip,
+  chipToneClass = 'bg-[var(--surface-2)] text-[var(--text-secondary)]',
 }: {
   label: string;
   value: string;
   hint?: string;
   toneClass?: string;
   compact?: boolean;
+  sparklineValues?: Array<number | null>;
+  sparklineClass?: string;
+  chip?: string;
+  chipToneClass?: string;
 }) {
   return (
     <AppCard blur={false} hoverable={false} className="h-full">
-      <AppCardContent className={compact ? 'flex h-full flex-col p-3' : 'p-4'}>
-        <div
-          className={
-            compact
-              ? 'truncate text-[11px] font-semibold tracking-[0.04em] text-[var(--text-secondary)]'
-              : 'text-xs text-[var(--text-secondary)]'
-          }
-          title={label}
-        >
-          {label}
+      <AppCardContent className={compact ? 'flex h-full flex-col p-2' : 'p-4'}>
+        <div className="flex items-start justify-between gap-1.5">
+          <div
+            className={
+              compact
+                ? 'truncate text-[10px] font-semibold tracking-[0.04em] text-[var(--text-secondary)]'
+                : 'text-xs text-[var(--text-secondary)]'
+            }
+            title={label}
+          >
+            {label}
+          </div>
+          {chip ? (
+            <span
+              className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${chipToneClass}`}
+            >
+              {chip}
+            </span>
+          ) : null}
         </div>
         <div
-          className={`${compact ? 'mt-1.5 truncate text-[21px] leading-none tracking-[-0.03em]' : 'mt-2 text-2xl'} font-semibold ${toneClass}`}
+          className={`tnum ${compact ? 'mt-0.5 truncate text-[18px] leading-none tracking-[-0.03em]' : 'mt-2 text-2xl'} font-semibold tabular-nums ${toneClass}`}
           title={value}
         >
           {value}
         </div>
+        {sparklineValues && sparklineValues.length > 0 ? (
+          <div className={compact ? 'mt-1 h-6' : 'mt-1.5 h-8'}>
+            <Sparkline
+              values={sparklineValues}
+              strokeClass={sparklineClass}
+              showAreaFill
+              areaClass="text-[var(--accent-soft)]"
+              heightClass={compact ? 'h-6' : 'h-8'}
+              chartHeight={compact ? 24 : 32}
+              strokeWidth={1.6}
+            />
+          </div>
+        ) : null}
         {hint ? (
           <div
             className={
               compact
-                ? 'mt-auto truncate whitespace-nowrap pt-2 text-[11px] leading-4 text-[var(--text-tertiary)]'
+                ? 'mt-auto truncate whitespace-nowrap pt-1 text-[10px] leading-3 text-[var(--text-tertiary)]'
                 : 'mt-2 text-xs text-[var(--text-tertiary)]'
             }
             title={hint}
@@ -898,6 +924,8 @@ function RouteMetricCard({
   toneClass = 'text-[var(--text-primary)]',
   chipToneClass = 'bg-[var(--surface-1)] text-[var(--text-secondary)]',
   compact = false,
+  sparklineValues,
+  sparklineClass = 'text-[var(--accent)]',
 }: {
   label: string;
   value: ReactNode;
@@ -906,35 +934,58 @@ function RouteMetricCard({
   toneClass?: string;
   chipToneClass?: string;
   compact?: boolean;
+  sparklineValues?: Array<number | null>;
+  sparklineClass?: string;
 }) {
   return (
-    <AppCard aria-label={`${label} KPI`} blur={false} hoverable={false} className="h-full">
-      <AppCardContent className={`flex h-full flex-col ${compact ? 'p-3' : 'p-3.5'}`}>
-        <div className="flex items-start justify-between gap-2">
+    <AppCard
+      aria-label={`${label} KPI`}
+      data-sparkline-values={sparklineValues
+        ?.map(value => (value === null ? 'null' : String(value)))
+        .join(',')}
+      blur={false}
+      hoverable={false}
+      className="h-full"
+    >
+      <AppCardContent className={`flex h-full flex-col ${compact ? 'p-2' : 'p-3.5'}`}>
+        <div className="flex items-start justify-between gap-1.5">
           <div
             className={`truncate font-semibold text-[var(--text-secondary)] ${
-              compact ? 'text-[11px] tracking-[0.04em]' : 'text-[11px] tracking-[0.06em]'
+              compact ? 'text-[10px] tracking-[0.04em]' : 'text-[11px] tracking-[0.06em]'
             }`}
             title={label}
           >
             {label}
           </div>
-          {chip && !compact ? (
+          {chip ? (
             <span
-              className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${chipToneClass}`}
+              className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${chipToneClass}`}
             >
               {chip}
             </span>
           ) : null}
         </div>
         <div
-          className={`${compact ? 'mt-1.5 text-[21px]' : 'mt-2.5 text-[26px]'} font-semibold leading-none tracking-[-0.03em] ${toneClass}`}
+          className={`tnum ${compact ? 'mt-0.5 text-[18px]' : 'mt-2.5 text-[26px]'} font-semibold leading-none tracking-[-0.03em] tabular-nums ${toneClass}`}
         >
           {value}
         </div>
+        {sparklineValues && sparklineValues.length > 0 ? (
+          <div className={compact ? 'mt-1 h-6' : 'mt-1.5 h-8'}>
+            <Sparkline
+              values={sparklineValues}
+              strokeClass={sparklineClass}
+              showAreaFill
+              areaClass="text-[var(--accent-soft)]"
+              heightClass={compact ? 'h-6' : 'h-8'}
+              chartHeight={compact ? 24 : 32}
+              strokeWidth={1.6}
+            />
+          </div>
+        ) : null}
         {hint ? (
           <div
-            className={`${compact ? 'pt-2 text-[11px] leading-4' : 'pt-3 text-xs leading-5'} mt-auto truncate whitespace-nowrap text-[var(--text-tertiary)]`}
+            className={`${compact ? 'pt-1 text-[10px] leading-3' : 'pt-3 text-xs leading-5'} mt-auto truncate whitespace-nowrap text-[var(--text-tertiary)]`}
             title={typeof hint === 'string' ? hint : undefined}
           >
             {hint}
@@ -942,6 +993,105 @@ function RouteMetricCard({
         ) : null}
       </AppCardContent>
     </AppCard>
+  );
+}
+
+const DONUT_PALETTE = [
+  'var(--accent)',
+  'var(--success)',
+  'var(--warning)',
+  'var(--danger)',
+  'var(--accent-strong)',
+  'var(--text-secondary)',
+  'var(--cli-history-success)',
+  'var(--text-tertiary)',
+];
+
+function ModelDonutChart({
+  items,
+}: {
+  items: Array<{ id: string; label: string; value: number }>;
+}) {
+  if (items.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center text-xs text-[var(--text-secondary)]">
+        暂无模型分布
+      </div>
+    );
+  }
+
+  const total = Math.max(
+    items.reduce((sum, item) => sum + item.value, 0),
+    1
+  );
+  const size = 120;
+  const radius = 44;
+  const stroke = 16;
+  const circumference = 2 * Math.PI * radius;
+  let offset = 0;
+
+  return (
+    <div className="flex h-full min-h-0 items-center gap-3">
+      <svg viewBox={`0 0 ${size} ${size}`} className="h-[108px] w-[108px] shrink-0">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="var(--surface-2)"
+          strokeWidth={stroke}
+        />
+        {items.map((item, index) => {
+          const ratio = item.value / total;
+          const dash = ratio * circumference;
+          const segment = (
+            <circle
+              key={item.id}
+              cx={size / 2}
+              cy={size / 2}
+              r={radius}
+              fill="none"
+              stroke={DONUT_PALETTE[index % DONUT_PALETTE.length]}
+              strokeWidth={stroke}
+              strokeDasharray={`${dash} ${circumference - dash}`}
+              strokeDashoffset={-offset}
+              strokeLinecap="butt"
+              transform={`rotate(-90 ${size / 2} ${size / 2})`}
+            />
+          );
+          offset += dash;
+          return segment;
+        })}
+        <text
+          x="50%"
+          y="50%"
+          textAnchor="middle"
+          dominantBaseline="central"
+          className="tnum fill-[var(--text-primary)] text-[13px] font-semibold"
+        >
+          {formatCompactNumber(total)}
+        </text>
+      </svg>
+      <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
+        {items.map((item, index) => (
+          <div key={item.id} className="flex items-center gap-1.5 text-[11px]">
+            <span
+              className="h-2 w-2 shrink-0 rounded-full"
+              style={{ background: DONUT_PALETTE[index % DONUT_PALETTE.length] }}
+            />
+            <span
+              className="min-w-0 flex-1 truncate text-[var(--text-secondary)]"
+              title={item.label}
+            >
+              {item.label}
+            </span>
+            <span className="tnum shrink-0 tabular-nums text-[var(--text-primary)]">
+              {formatCompactNumber(item.value)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -955,9 +1105,6 @@ function RouteTrendChart({
   ttfbP95,
   ttfbP99,
   failureCountTotal,
-  scopeOptions,
-  scopeValue,
-  onScopeChange,
   compact = false,
   className,
 }: {
@@ -970,14 +1117,11 @@ function RouteTrendChart({
   ttfbP95: number | null;
   ttfbP99: number | null;
   failureCountTotal: number;
-  scopeOptions: Array<{ value: string; label: string }>;
-  scopeValue: string;
-  onScopeChange: (value: string) => void;
   compact?: boolean;
   className?: string;
 }) {
-  const trendChartHeight = compact ? 124 : 132;
-  const trendChartMinHeightClass = compact ? 'min-h-[124px]' : 'min-h-[132px]';
+  const trendChartHeight = compact ? 92 : 132;
+  const trendChartMinHeightClass = compact ? 'min-h-[92px]' : 'min-h-[132px]';
   const trendPointLeftPercents = useMemo(
     () => trendPoints.map((_, index) => resolveTrendPointLeftPercent(index, trendPoints.length)),
     [trendPoints]
@@ -1006,33 +1150,11 @@ function RouteTrendChart({
       data-trend-point-count={trendPoints.length}
       blur={false}
       hoverable={false}
-      className={className ?? (compact ? 'min-h-[224px]' : 'min-h-[244px]')}
+      className={className ?? (compact ? 'min-h-[176px]' : 'min-h-[244px]')}
     >
-      <AppCardContent className="flex h-full min-h-0 flex-col p-4">
-        <SectionTitle
-          icon={Activity}
-          title="运行趋势"
-          actions={
-            <div className="flex flex-wrap items-center gap-2">
-              <AppSelect
-                aria-label="选择运行趋势范围"
-                data-trend-scope-select="true"
-                size="sm"
-                containerClassName="-mt-1.5 w-auto"
-                className="h-6 py-0.5 text-[11px]"
-                value={scopeValue}
-                onChange={event => onScopeChange(event.target.value)}
-              >
-                {scopeOptions.map(option => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </AppSelect>
-            </div>
-          }
-        />
-        <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-[var(--text-secondary)]">
+      <AppCardContent className="flex h-full min-h-0 flex-col p-3">
+        <SectionTitle icon={Activity} title="运行趋势" />
+        <div className="mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-[var(--text-secondary)]">
           <span className="inline-flex items-center gap-1.5">
             <span
               data-trend-legend="success-rate"
@@ -1073,7 +1195,7 @@ function RouteTrendChart({
         </div>
         <div
           data-trend-chart-frame="true"
-          className="-mx-2 flex min-h-0 flex-1 flex-col rounded-[var(--radius-lg)] bg-[var(--surface-2)] px-5 py-3"
+          className="-mx-2 flex min-h-0 flex-1 flex-col rounded-[var(--radius-lg)] bg-[var(--surface-2)] px-5 py-2"
         >
           <div className={`relative ${trendChartMinHeightClass} flex-1`}>
             <div className="absolute inset-0">
@@ -1964,6 +2086,124 @@ function DotMatrixChart({
   );
 }
 
+/** 小时级热力格子（半天分列，右对齐当前半天） */
+interface HeatCell {
+  hourStart: number;
+  requestCount: number;
+  /** 落在 7d 窗口内且未到未来：渲染上色 / 中性灰 */
+  visible: boolean;
+  hasData: boolean;
+}
+
+const HEAT_HALF_HOURS = 12;
+const HEAT_WINDOW_HOURS = 7 * 24; // 168
+
+/**
+ * 输入: 路由分析小时桶 + 当前时间
+ * 输出: 列固定 12 行的完整网格（列数 14 或 15），列单位=半天，右对齐当前所处半天。
+ * 当前小时恰为半天末小时（11/23）→ 14 列；否则 15 列（7d 起点那半天整列都在窗口内）。
+ * 每列 row 0..11 = 该半天 0..11 小时（上午列 hour 0-11，下午列 hour 12-23），row↔hour 固定。
+ * visible = hourStart 落在 (now-7d, nowHour]：显示格恒 168；越界 / 未来为透明占位（visible=false）。
+ */
+function buildHourlyHeatCells(buckets: RouteAnalyticsBucket[], now: number): HeatCell[] {
+  const nowHour = new Date(now);
+  nowHour.setMinutes(0, 0, 0);
+  const nowHourTs = nowHour.getTime();
+  const hourMs = 60 * 60 * 1000;
+  const cutoff = nowHourTs - HEAT_WINDOW_HOURS * hourMs;
+
+  const byHour = new Map<number, number>();
+  for (const bucket of buckets) {
+    const bucketHour = new Date(bucket.bucketStart);
+    bucketHour.setMinutes(0, 0, 0);
+    const ts = bucketHour.getTime();
+    if (ts <= cutoff || ts > nowHourTs) continue;
+    byHour.set(ts, (byHour.get(ts) || 0) + bucket.requestCount);
+  }
+
+  const elapsedInHalf = nowHour.getHours() % HEAT_HALF_HOURS;
+  const columnCount = elapsedInHalf === HEAT_HALF_HOURS - 1 ? 14 : 15;
+  const currentHalfStart = nowHourTs - elapsedInHalf * hourMs;
+
+  const cells: HeatCell[] = [];
+  for (let column = 0; column < columnCount; column += 1) {
+    const columnStart = currentHalfStart - (columnCount - 1 - column) * HEAT_HALF_HOURS * hourMs;
+    for (let row = 0; row < HEAT_HALF_HOURS; row += 1) {
+      const hourStart = columnStart + row * hourMs;
+      const inWindow = hourStart > cutoff && hourStart <= nowHourTs;
+      const requestCount = inWindow ? byHour.get(hourStart) || 0 : 0;
+      cells.push({
+        hourStart,
+        requestCount,
+        visible: inWindow,
+        hasData: requestCount > 0,
+      });
+    }
+  }
+  return cells;
+}
+
+function formatHeatCellTitle(cell: HeatCell): string {
+  const date = new Date(cell.hourStart);
+  const dateLabel = new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+  const hourLabel = String(date.getHours()).padStart(2, '0');
+  return `${dateLabel} ${hourLabel}时 · ${formatCompactNumber(cell.requestCount)} 次`;
+}
+
+function RequestHeatGrid({ cells }: { cells: HeatCell[] }) {
+  const visibleCells = cells.filter(cell => cell.visible);
+  const hasAnyData = visibleCells.some(cell => cell.hasData);
+
+  if (!hasAnyData) {
+    return (
+      <div className="flex h-full items-center justify-center text-xs text-[var(--text-secondary)]">
+        暂无请求量
+      </div>
+    );
+  }
+
+  const maxValue = Math.max(...visibleCells.map(cell => cell.requestCount), 1);
+
+  const resolveCellStyle = (cell: HeatCell): React.CSSProperties => {
+    if (!cell.visible) return { background: 'transparent' };
+    if (!cell.hasData) return { background: 'var(--surface-2)' };
+    const ratio = Math.min(cell.requestCount / maxValue, 1);
+    if (ratio >= 0.8) return { background: 'var(--success)' };
+    if (ratio >= 0.4) return { background: 'color-mix(in srgb, var(--success) 60%, transparent)' };
+    return {
+      background: 'color-mix(in srgb, var(--success) 60%, transparent)',
+      opacity: 0.4 + ratio * 0.6,
+    };
+  };
+
+  return (
+    <div
+      className="grid h-full w-full gap-[3px]"
+      style={{
+        gridTemplateRows: `repeat(${HEAT_HALF_HOURS}, minmax(0, 1fr))`,
+        gridAutoFlow: 'column',
+        gridAutoColumns: 'minmax(0, 1fr)',
+      }}
+      data-testid="overview-heat-grid"
+      role="img"
+      aria-label="7 天请求热力图"
+    >
+      {cells.map((cell, index) => (
+        <span
+          key={`heat-cell-${index}`}
+          className="rounded-[3px] transition-opacity"
+          style={resolveCellStyle(cell)}
+          title={cell.visible && cell.hasData ? formatHeatCellTitle(cell) : undefined}
+          aria-hidden={!cell.visible || undefined}
+        />
+      ))}
+    </div>
+  );
+}
+
 function compactTrendSeries(values: Array<number | null>): Array<number | null> {
   const definedValues = values.filter((value): value is number => value !== null);
   if (definedValues.length >= 2 && definedValues.length < values.length) {
@@ -2176,7 +2416,7 @@ function CheckinStatusList({
     <div className="flex h-full min-h-0 flex-col">
       <div
         aria-label="每日签到概览滚动区域"
-        className="min-h-0 flex-1 overflow-y-auto pr-4 [scrollbar-gutter:stable]"
+        className="app-scrollbar-none min-h-0 flex-1 overflow-y-auto pr-1"
       >
         <div className="space-y-0.5">
           {items.map(item => {
@@ -2196,34 +2436,36 @@ function CheckinStatusList({
                 : item.completedCheckins > 0
                   ? 'bg-[var(--success-soft)] text-[var(--success)]'
                   : 'bg-[var(--surface-1)] text-[var(--text-secondary)]';
+            const monthTotalTitle = `本月 ${formatCompactNumber(item.monthCheckinCount)} / 累计 ${formatCompactNumber(item.totalCheckins)}`;
+            const amountText =
+              item.todayCheckinQuota > 0 ? `+${formatCheckinQuota(item.todayCheckinQuota)}` : '—';
 
             return (
               <div
                 key={item.id}
-                className="grid grid-cols-[minmax(0,1.4fr)_108px_44px_58px] items-center gap-2 py-1 [contain-intrinsic-size:40px] [content-visibility:auto]"
+                className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-1.5 py-1 [contain-intrinsic-size:36px] [content-visibility:auto]"
+                title={monthTotalTitle}
               >
-                <div className="min-w-0 truncate whitespace-nowrap text-[12px] font-medium text-[var(--text-primary)]">
-                  <span title={item.siteName}>{truncatedSiteName}</span>
-                  <span className="ml-1 text-[10px] font-normal text-[var(--text-secondary)]">
-                    / {item.accountName}
-                  </span>
+                <div className="min-w-0">
+                  <div className="truncate whitespace-nowrap text-[12px] font-medium text-[var(--text-primary)]">
+                    <span title={item.siteName}>{truncatedSiteName}</span>
+                    <span className="ml-1 text-[10px] font-normal text-[var(--text-secondary)]">
+                      / {item.accountName}
+                    </span>
+                  </div>
+                  <div className="truncate text-[10px] text-[var(--text-tertiary)]">
+                    本月 {formatCompactNumber(item.monthCheckinCount)}
+                    <span className="mx-1">/</span>
+                    累计 {formatCompactNumber(item.totalCheckins)}
+                  </div>
                 </div>
-                <div className="truncate whitespace-nowrap text-left text-[10px] text-[var(--text-secondary)]">
-                  <span>本月 {formatCompactNumber(item.monthCheckinCount)}</span>
-                  <span className="mx-1">/</span>
-                  <span>累计 {formatCompactNumber(item.totalCheckins)}</span>
-                </div>
-                <div className="flex justify-start">
-                  <span
-                    className={`rounded-full px-1.5 py-0.5 text-[9px] font-medium ${statusClass}`}
-                  >
-                    {statusLabel}
-                  </span>
-                </div>
-                <div className="text-right text-[11px] font-medium text-[var(--text-primary)]">
-                  {item.todayCheckinQuota > 0
-                    ? `+${formatCheckinQuota(item.todayCheckinQuota)}`
-                    : '—'}
+                <span
+                  className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium ${statusClass}`}
+                >
+                  {statusLabel}
+                </span>
+                <div className="tnum shrink-0 whitespace-nowrap text-right text-[11px] font-medium tabular-nums text-[var(--text-primary)]">
+                  {amountText}
                 </div>
               </div>
             );
@@ -2249,7 +2491,10 @@ export function DataOverviewPage({
   const isOverviewActive = activeTab === 'overview';
 
   return (
-    <div className="relative min-h-0 flex-1" data-overview-active-view="merged">
+    <div
+      className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
+      data-overview-active-view="merged"
+    >
       <RouteOverviewView
         setPageHeaderActions={setPageHeaderActions}
         isOverviewActive={isOverviewActive}
@@ -2670,40 +2915,18 @@ function SiteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }:
   );
 }
 
-const ROUTE_SCOPE_AGGREGATED_OPTION = '__aggregated__';
-const ROUTE_SCOPE_SITE_PREFIX = 'site:';
-const ROUTE_SCOPE_CUSTOM_PREFIX = 'customCli:';
-
-function serializeRouteScope(scope: RouteScope): string {
-  if (scope.kind === 'site') return `${ROUTE_SCOPE_SITE_PREFIX}${scope.siteId}`;
-  if (scope.kind === 'customCli') return `${ROUTE_SCOPE_CUSTOM_PREFIX}${scope.customCliId}`;
-  return ROUTE_SCOPE_AGGREGATED_OPTION;
-}
-
-function parseRouteScopeOption(value: string): RouteScope {
-  if (value.startsWith(ROUTE_SCOPE_SITE_PREFIX)) {
-    return { kind: 'site', siteId: value.slice(ROUTE_SCOPE_SITE_PREFIX.length) };
-  }
-  if (value.startsWith(ROUTE_SCOPE_CUSTOM_PREFIX)) {
-    return { kind: 'customCli', customCliId: value.slice(ROUTE_SCOPE_CUSTOM_PREFIX.length) };
-  }
-  return ROUTE_SCOPE_ALL;
-}
-
-interface RouteScopeOption {
-  value: string;
-  label: string;
-}
-
 void SiteOverviewView;
 void RouteSankeyChart;
+void RouteScatterChart;
+void ModelHeatmapList;
 
 function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }: SubViewProps) {
   const config = useConfigStore(state => state.config);
+  const setConfig = useConfigStore(state => state.setConfig);
   const customCliConfigs = useCustomCliConfigStore(state => state.configs);
-  const [routeWindow, setRouteWindow] = useState<RouteWindow>('7d');
-  const [scope, setScope] = useState<RouteScope>(ROUTE_SCOPE_ALL);
-  const [selectedModel, setSelectedModel] = useState<string | null>(null);
+  const routeWindow: RouteWindow = '7d';
+  const scope = ROUTE_SCOPE_ALL;
+  const selectedModel = null;
   const [routeSummary, setRouteSummary] = useState<RouteSummary | null>(null);
   const [routeDistribution, setRouteDistribution] = useState<RouteDistribution | null>(null);
   const [routePathStates, setRoutePathStates] = useState<Record<string, RoutePathState>>({});
@@ -2711,6 +2934,7 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
   const [loading, setLoading] = useState(false);
   const [siteError, setSiteError] = useState<string | null>(null);
   const [routeError, setRouteError] = useState<string | null>(null);
+  const [channelRankBy, setChannelRankBy] = useState<'requests' | 'successRate'>('requests');
 
   const siteMetrics = useMemo(() => (config ? buildSiteOverviewMetrics(config) : []), [config]);
   const enabledSiteMetrics = useMemo(
@@ -2759,48 +2983,17 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
   ).length;
 
   const loadSiteOverview = useCallback(async () => {
-    if (!window.electronAPI.overview?.getSiteDailySnapshots) {
-      return;
-    }
     setSiteError(null);
     try {
-      await window.electronAPI.overview.getSiteDailySnapshots({ days: 1 });
+      const [latestConfig] = await Promise.all([
+        window.electronAPI.loadConfig(),
+        window.electronAPI.overview?.getSiteDailySnapshots?.({ days: 1 }),
+      ]);
+      setConfig(latestConfig);
     } catch (nextError: unknown) {
       setSiteError(nextError instanceof Error ? nextError.message : '加载站点数据失败');
     }
-  }, []);
-
-  const scopeOptions = useMemo<RouteScopeOption[]>(() => {
-    const siteOptions: RouteScopeOption[] = (config?.sites || [])
-      .filter(site => Boolean(site?.id) && site.enabled !== false)
-      .map(site => ({
-        value: serializeRouteScope({ kind: 'site', siteId: site.id! }),
-        label: site.name?.trim() || site.id!,
-      }));
-    const customOptions: RouteScopeOption[] = (customCliConfigs || [])
-      .filter(item => Boolean(item?.id))
-      .map(item => ({
-        value: serializeRouteScope({ kind: 'customCli', customCliId: item.id }),
-        label: `${item.name?.trim() || '自定义 CLI'}（自定义 CLI）`,
-      }));
-    return [
-      { value: ROUTE_SCOPE_AGGREGATED_OPTION, label: '全部聚合' },
-      ...siteOptions,
-      ...customOptions,
-    ];
-  }, [config, customCliConfigs]);
-
-  useEffect(() => {
-    if (scope.kind === 'all') return;
-    const exists = scopeOptions.some(option => option.value === serializeRouteScope(scope));
-    if (!exists) {
-      setScope(ROUTE_SCOPE_ALL);
-    }
-  }, [scope, scopeOptions]);
-
-  useEffect(() => {
-    setSelectedModel(null);
-  }, [scope]);
+  }, [setConfig]);
 
   const loadRouteData = useCallback(async () => {
     const routeApi = window.electronAPI.route;
@@ -2863,7 +3056,7 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
     } finally {
       setLoading(false);
     }
-  }, [routeWindow]);
+  }, []);
 
   useEffect(() => {
     if (!isOverviewActive) return;
@@ -2900,19 +3093,10 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
   const headerActions = useMemo(
     () => (
       <div className="flex flex-wrap items-center justify-end gap-2">
-        {ROUTE_WINDOW_OPTIONS.map(windowOption => (
-          <AppButton
-            key={windowOption}
-            variant={routeWindow === windowOption ? 'primary' : 'secondary'}
-            size="sm"
-            onClick={() => setRouteWindow(windowOption)}
-          >
-            {windowOption}
-          </AppButton>
-        ))}
         <AppButton
           variant="tertiary"
           size="sm"
+          className="!h-7 !min-h-7"
           onClick={() => {
             void loadSiteOverview();
             void loadRouteData();
@@ -2928,7 +3112,7 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
         </AppButton>
       </div>
     ),
-    [loadRouteData, loadSiteOverview, loading, routeWindow]
+    [loadRouteData, loadSiteOverview, loading]
   );
 
   useEffect(() => {
@@ -2960,7 +3144,7 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
   const successRateTrend = trendPoints.map((point, index) => {
     if (isLeadingEmptyTrendPoint(index, point)) return null;
     const denominator = point.successCount + point.failureCount;
-    return denominator > 0 ? Number(((point.successCount / denominator) * 100).toFixed(1)) : null;
+    return denominator > 0 ? Number(((point.successCount / denominator) * 100).toFixed(1)) : 0;
   });
   const tokenTrend = trendPoints.map(point => point.totalTokens);
   const failureCounts = trendPoints.map(point => point.failureCount);
@@ -3005,9 +3189,13 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
     [isLeadingEmptyTrendPoint, trendPoints]
   );
 
-  const modelDistribution = useMemo(
-    () => buildModelDistribution(filteredBuckets).slice(0, 8),
+  const fullModelDistribution = useMemo(
+    () => buildModelDistribution(filteredBuckets),
     [filteredBuckets]
+  );
+  const modelDistribution = useMemo(
+    () => fullModelDistribution.slice(0, 8),
+    [fullModelDistribution]
   );
 
   const scopedRouteSummary = useMemo(() => {
@@ -3048,14 +3236,6 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
   const tokenTrendSummary = useMemo(() => buildTrendDeltaSummary(tokenTrend), [tokenTrend]);
 
   const ttfbHasSamples = ttfbPercentiles.sampleCount > 0 && ttfbPercentiles.p95 !== null;
-  const latencyHasSamples = latencyPercentiles.sampleCount > 0 && latencyPercentiles.p99 !== null;
-  const firstByteSessionValue = (
-    <span className="inline-flex flex-wrap items-baseline gap-x-2 gap-y-1">
-      <span>{ttfbHasSamples ? formatTtfb(ttfbPercentiles.p95) : '样本不足'}</span>
-      <span className="text-[var(--text-tertiary)]">/</span>
-      <span>{latencyHasSamples ? formatLatency(latencyPercentiles.p99) : '样本不足'}</span>
-    </span>
-  );
   const ttfbHint = (() => {
     if (!ttfbHasSamples) {
       return `当前样本 ${ttfbPercentiles.sampleCount} < 20`;
@@ -3126,18 +3306,6 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
     [filteredBuckets, channelNameLookup, knownSiteIds]
   );
 
-  const disabledChannelKeys = useMemo(() => {
-    const now = Date.now();
-    const result = new Set<string>();
-    for (const state of Object.values(routePathStates)) {
-      if (state.disabledUntil && state.disabledUntil > now) {
-        result.add(`${state.siteId}::${state.accountId}::${state.apiKeyId || ''}`);
-      }
-    }
-    return result;
-  }, [routePathStates]);
-
-  const scopeSelectValue = serializeRouteScope(scope);
   const { ref: routeContentRef, size: routeContentSize } = useContainerSize<HTMLDivElement>();
   const routeOverviewState = useMemo(
     () =>
@@ -3151,53 +3319,73 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
     [routePathStates, routeRulesById, scatterPoints.length, scope, selectedModel]
   );
 
+  const channelBarItems = useMemo(
+    () =>
+      scatterPoints
+        .slice()
+        .sort((a, b) =>
+          channelRankBy === 'successRate'
+            ? b.successRate - a.successRate || b.requests - a.requests
+            : b.requests - a.requests
+        )
+        .slice(0, 8)
+        .map(point => ({
+          id: point.key,
+          label: `${point.siteName} / ${point.accountName}`,
+          value: point.requests,
+          successRate: point.successRate,
+        })),
+    [scatterPoints, channelRankBy]
+  );
+  const donutItems = useMemo(
+    () =>
+      modelDistribution.map(item => ({
+        id: item.canonicalModel,
+        label: item.canonicalModel,
+        value: item.requests,
+      })),
+    [modelDistribution]
+  );
+  const heatValues = useMemo(
+    () => buildHourlyHeatCells(filteredBuckets, Date.now()),
+    [filteredBuckets]
+  );
+  const latencyTrend = useMemo(
+    () =>
+      trendPoints.map((point, index) =>
+        isLeadingEmptyTrendPoint(index, point)
+          ? null
+          : (computeLatencyPercentiles(point.latencyHistogram).p90 ?? null)
+      ),
+    [isLeadingEmptyTrendPoint, trendPoints]
+  );
+  const p90LatencyValue =
+    latencyPercentiles.sampleCount > 0 && latencyPercentiles.p90 !== null
+      ? formatLatency(latencyPercentiles.p90)
+      : '—';
+
   return (
     <div
       ref={routeContentRef}
       data-route-content-scroll="true"
-      className="flex-1 overflow-y-auto px-6 pb-3 pt-4"
+      className="app-scrollbar-none flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-2.5 pt-2.5"
     >
       <div
         aria-label="数据总览驾驶舱"
         data-route-content-size={`${routeContentSize.width}x${routeContentSize.height}`}
-        data-route-layout="merged-compact"
-        className="flex min-h-full flex-col gap-3"
+        data-route-layout="classic-dashboard"
+        className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-hidden"
       >
         {siteError || routeError ? (
           <AppCard blur={false} hoverable={false}>
-            <AppCardContent className="space-y-1 p-4 text-sm text-[var(--danger)]">
+            <AppCardContent className="space-y-1 p-3 text-sm text-[var(--danger)]">
               {siteError ? <div>{siteError}</div> : null}
               {routeError ? <div>{routeError}</div> : null}
             </AppCardContent>
           </AppCard>
         ) : null}
 
-        <div className="grid gap-2 xl:grid-cols-8 xl:flex-none" data-overview-metric-grid="merged">
-          <MetricCard
-            compact
-            label="可用站点数"
-            value={formatCompactNumber(activeSiteCount)}
-            hint={`展示 ${visibleSiteCount} / 模型 ${formatCompactNumber(activeModelCount)}`}
-          />
-          <MetricCard
-            compact
-            label="站点总余额"
-            value={formatCurrency(totalBalance)}
-            hint="按站点聚合"
-          />
-          <MetricCard
-            compact
-            label="今日消费"
-            value={formatCurrency(totalUsage)}
-            hint={`请求 ${formatCompactNumber(totalTodayRequestCount)} · Tokens ${formatCompactNumber(totalTodayTokenCount)}`}
-            toneClass="text-[var(--warning)]"
-          />
-          <MetricCard
-            compact
-            label="今日签到收益"
-            value={formatCheckinQuota(totalCheckinQuota)}
-            hint={`已签 ${completedCheckinSiteCount} / 待签 ${pendingCheckinSiteCount}`}
-          />
+        <div className="grid shrink-0 grid-cols-6 gap-1.5" data-overview-metric-grid="classic">
           <RouteMetricCard
             compact
             label="路由请求量"
@@ -3213,25 +3401,55 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
                 ? 'bg-[var(--success-soft)] text-[var(--success)]'
                 : requestTrendSummary.direction === 'down'
                   ? 'bg-[var(--danger-soft)] text-[var(--danger)]'
-                  : 'bg-[var(--surface-1)] text-[var(--text-secondary)]'
+                  : 'bg-[var(--surface-2)] text-[var(--text-secondary)]'
             }
+            sparklineValues={requestTrend}
+            sparklineClass="text-[var(--accent)]"
           />
           <RouteMetricCard
             compact
             label="路由成功率"
             value={scopedRouteSummary ? formatPercent(scopedRouteSummary.successRate) : '—'}
             hint={`失败 ${formatCompactNumber(scopedRouteSummary?.failureCount || 0)} 次`}
-            chip="健康度"
             toneClass={
               scopedRouteSummary && scopedRouteSummary.successRate < 80
                 ? 'text-[var(--danger)]'
                 : 'text-[var(--success)]'
             }
+            chip={formatTrendDeltaBadge(
+              buildTrendDeltaSummary(successRateTrend).direction,
+              buildTrendDeltaSummary(successRateTrend).deltaPercent,
+              buildTrendDeltaSummary(successRateTrend).previousValue
+            )}
             chipToneClass={
               scopedRouteSummary && scopedRouteSummary.successRate < 80
                 ? 'bg-[var(--danger-soft)] text-[var(--danger)]'
                 : 'bg-[var(--success-soft)] text-[var(--success)]'
             }
+            sparklineValues={successRateTrend}
+            sparklineClass="text-[var(--success)]"
+          />
+          <RouteMetricCard
+            compact
+            label="P90 延迟"
+            value={p90LatencyValue}
+            hint={
+              latencyPercentiles.sampleCount > 0
+                ? `P99 ${formatLatency(latencyPercentiles.p99)} · 样本 ${latencyPercentiles.sampleCount}`
+                : '样本不足'
+            }
+            toneClass="text-[var(--accent)]"
+            sparklineValues={latencyTrend}
+            sparklineClass="text-[var(--accent)]"
+          />
+          <RouteMetricCard
+            compact
+            label="首字 P95"
+            value={ttfbHasSamples ? formatTtfb(ttfbPercentiles.p95) : '—'}
+            hint={ttfbHint}
+            toneClass={ttfbToneClass}
+            sparklineValues={ttfbTrend}
+            sparklineClass="text-[var(--success)]"
           />
           <RouteMetricCard
             compact
@@ -3253,90 +3471,209 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
             )}
             toneClass="text-[var(--warning)]"
             chipToneClass="bg-[var(--warning-soft)] text-[var(--warning)]"
+            sparklineValues={tokenTrend}
+            sparklineClass="text-[var(--warning)]"
           />
-          <RouteMetricCard
+          <MetricCard
             compact
-            label="首字响应 / 会话时间"
-            value={firstByteSessionValue}
-            hint={ttfbHint}
-            chip="响应体验"
-            toneClass={ttfbToneClass}
-            chipToneClass="bg-[var(--accent-soft)] text-[var(--accent)]"
+            label="活跃模型数"
+            value={formatCompactNumber(fullModelDistribution.length)}
+            hint={`站点 ${activeSiteCount} · 展示 ${visibleSiteCount}`}
+            sparklineValues={tokenTrend}
+            sparklineClass="text-[var(--accent)]"
           />
         </div>
 
-        <div className="grid gap-3 xl:grid-cols-[minmax(0,0.38fr)_minmax(0,0.62fr)] xl:items-stretch">
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(200px,0.26fr)] gap-1.5 overflow-hidden">
+          <div className="grid min-h-0 grid-rows-[minmax(0,1.0625fr)_minmax(0,0.9375fr)] gap-1.5 overflow-hidden">
+            <RouteTrendChart
+              trendPoints={trendPoints}
+              successRateTrend={successRateTrend}
+              ttfbTrend={ttfbTrend}
+              requestTrend={requestTrend}
+              failureCounts={failureCounts}
+              ttfbP50={ttfbPercentiles.p50}
+              ttfbP95={ttfbPercentiles.p95}
+              ttfbP99={ttfbPercentiles.p99}
+              failureCountTotal={failureCountTotal}
+              compact
+              className="min-h-0"
+            />
+
+            <div className="grid min-h-0 grid-cols-3 gap-1.5 overflow-hidden">
+              <AppCard blur={false} hoverable={false} data-testid="overview-model-donut">
+                <AppCardContent className="flex h-full min-h-0 flex-col p-2.5">
+                  <SectionTitle icon={Layers} title="模型分布" />
+                  <div className="min-h-0 flex-1">
+                    <ModelDonutChart items={donutItems} />
+                  </div>
+                </AppCardContent>
+              </AppCard>
+
+              <AppCard blur={false} hoverable={false} data-testid="overview-channel-bars">
+                <AppCardContent className="flex h-full min-h-0 flex-col p-2.5">
+                  <SectionTitle
+                    icon={Gauge}
+                    title="通道分布"
+                    actions={
+                      <div
+                        role="group"
+                        aria-label="通道分布排行方式"
+                        className="inline-flex h-5 overflow-hidden rounded-[var(--radius-sm)] border border-[var(--line-muted)] bg-[var(--surface-2)]"
+                      >
+                        <button
+                          type="button"
+                          aria-pressed={channelRankBy === 'requests'}
+                          className={`h-full px-1.5 text-[10px] font-medium leading-none transition-colors ${
+                            channelRankBy === 'requests'
+                              ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                              : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                          }`}
+                          onClick={() => setChannelRankBy('requests')}
+                        >
+                          请求次数
+                        </button>
+                        <button
+                          type="button"
+                          aria-pressed={channelRankBy === 'successRate'}
+                          className={`h-full border-l border-[var(--line-muted)] px-1.5 text-[10px] font-medium leading-none transition-colors ${
+                            channelRankBy === 'successRate'
+                              ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                              : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                          }`}
+                          onClick={() => setChannelRankBy('successRate')}
+                        >
+                          成功率
+                        </button>
+                      </div>
+                    }
+                  />
+                  <div className="app-scrollbar-none min-h-0 flex-1 overflow-y-auto">
+                    {channelBarItems.length > 0 ? (
+                      <div className="space-y-1.5">
+                        {channelBarItems.map(item => {
+                          const maxValue = Math.max(
+                            ...channelBarItems.map(entry => entry.value),
+                            1
+                          );
+                          const tone =
+                            item.successRate >= 0.9
+                              ? 'bg-[var(--success)]'
+                              : item.successRate >= 0.7
+                                ? 'bg-[var(--warning)]'
+                                : 'bg-[var(--danger)]';
+                          return (
+                            <div key={item.id} className="space-y-0.5">
+                              <div className="flex items-center justify-between gap-2 text-[11px]">
+                                <span
+                                  className="min-w-0 truncate text-[var(--text-secondary)]"
+                                  title={item.label}
+                                >
+                                  {item.label}
+                                </span>
+                                <span className="tnum shrink-0 tabular-nums text-[var(--text-primary)]">
+                                  {formatCompactNumber(item.value)} ·{' '}
+                                  {(item.successRate * 100).toFixed(0)}%
+                                </span>
+                              </div>
+                              <div className="h-1.5 rounded-full bg-[var(--surface-2)]">
+                                <div
+                                  className={`h-1.5 rounded-full ${tone}`}
+                                  style={{
+                                    width: `${
+                                      channelRankBy === 'successRate'
+                                        ? Math.max(item.successRate * 100, 4)
+                                        : Math.max((item.value / maxValue) * 100, 4)
+                                    }%`,
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-xs text-[var(--text-secondary)]">
+                        暂无通道流量
+                      </div>
+                    )}
+                  </div>
+                </AppCardContent>
+              </AppCard>
+
+              <AppCard blur={false} hoverable={false} data-testid="overview-history-heat">
+                <AppCardContent className="flex h-full min-h-0 flex-col p-2.5">
+                  <SectionTitle icon={Activity} title="7d 请求热力" />
+                  <div className="min-h-0 flex-1">
+                    <RequestHeatGrid cells={heatValues} />
+                  </div>
+                </AppCardContent>
+              </AppCard>
+            </div>
+          </div>
+
           <AppCard
             blur={false}
             hoverable={false}
             role="region"
-            aria-label="每日签到概览"
-            className="h-[260px]"
+            aria-label="站点汇总速览"
+            className="min-h-0"
+            data-testid="overview-site-summary"
           >
-            <AppCardContent className="flex h-full flex-col p-3.5">
-              <SectionTitle icon={Activity} title="每日签到概览" />
-              <div className="mt-0.5 min-h-0 flex-1">
-                <CheckinStatusList
-                  items={orderedCheckinRows}
-                  emptyText="当前没有可展示的签到站点"
-                />
+            <AppCardContent className="flex h-full min-h-0 flex-col gap-1.5 p-2.5">
+              <SectionTitle icon={Wallet} title="站点汇总" />
+              <div className="grid gap-1 rounded-md border border-[var(--line-muted)] bg-[var(--surface-2)]/40 px-2 py-1.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="shrink-0 text-[11px] text-[var(--text-secondary)]">站点数</span>
+                  <span
+                    className="tnum min-w-0 truncate text-right text-[12px] font-semibold tabular-nums text-[var(--text-primary)]"
+                    title={`站点 / 直连配置 ${activeSiteCount} / ${visibleSiteCount} · 模型 ${formatCompactNumber(activeModelCount)}`}
+                  >
+                    {activeSiteCount}
+                    <span className="mx-1 font-normal text-[var(--text-tertiary)]">·</span>
+                    直连 {visibleSiteCount}
+                  </span>
+                </div>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="shrink-0 text-[11px] text-[var(--text-secondary)]">总余额</span>
+                  <span className="tnum text-right text-[12px] font-semibold tabular-nums text-[var(--success)]">
+                    {formatCurrency(totalBalance)}
+                  </span>
+                </div>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="shrink-0 text-[11px] text-[var(--text-secondary)]">
+                    今日消费
+                  </span>
+                  <span
+                    className="tnum min-w-0 truncate text-right text-[12px] font-semibold tabular-nums text-[var(--warning)]"
+                    title={`请求 ${formatCompactNumber(totalTodayRequestCount)} · Tokens ${formatCompactNumber(totalTodayTokenCount)}`}
+                  >
+                    {formatCurrency(totalUsage)}
+                  </span>
+                </div>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="shrink-0 text-[11px] text-[var(--text-secondary)]">签到</span>
+                  <span
+                    className="tnum min-w-0 truncate text-right text-[12px] font-semibold tabular-nums text-[var(--text-primary)]"
+                    title={`签到情况 ${formatCheckinQuota(totalCheckinQuota)}`}
+                  >
+                    已签 {completedCheckinSiteCount} / 待签 {pendingCheckinSiteCount}
+                  </span>
+                </div>
               </div>
-            </AppCardContent>
-          </AppCard>
-
-          <RouteTrendChart
-            trendPoints={trendPoints}
-            successRateTrend={successRateTrend}
-            ttfbTrend={ttfbTrend}
-            requestTrend={requestTrend}
-            failureCounts={failureCounts}
-            ttfbP50={ttfbPercentiles.p50}
-            ttfbP95={ttfbPercentiles.p95}
-            ttfbP99={ttfbPercentiles.p99}
-            failureCountTotal={failureCountTotal}
-            scopeOptions={scopeOptions}
-            scopeValue={scopeSelectValue}
-            onScopeChange={value => setScope(parseRouteScopeOption(value))}
-            compact
-            className="h-[260px]"
-          />
-        </div>
-
-        <div className="grid gap-3 xl:grid-cols-[minmax(0,0.48fr)_minmax(0,0.52fr)]">
-          <AppCard
-            blur={false}
-            hoverable={false}
-            data-route-heatmap-card="true"
-            className="h-[260px]"
-          >
-            <AppCardContent className="flex h-full min-h-0 flex-col p-4">
-              <div className="flex h-full min-h-0 flex-col" onClick={() => setSelectedModel(null)}>
-                <SectionTitle icon={Layers} title="模型热力分布" />
-                <ModelHeatmapList
-                  items={modelDistribution}
-                  selectedModel={selectedModel}
-                  onSelectModel={setSelectedModel}
-                />
-              </div>
-            </AppCardContent>
-          </AppCard>
-
-          <AppCard
-            blur={false}
-            hoverable={false}
-            data-route-third-row-card="scatter"
-            className="h-[260px]"
-          >
-            <AppCardContent className="flex h-full min-h-0 flex-col p-3.5">
-              <SectionTitle icon={Gauge} title="通道健康散点矩阵" />
-              <div className="min-h-0 flex-1">
-                <RouteScatterChart
-                  points={scatterPoints}
-                  scopeIsSpecific={scope.kind !== 'all'}
-                  selectedModel={selectedModel}
-                  disabledKeys={disabledChannelKeys}
-                />
-              </div>
+              {orderedCheckinRows.length > 0 ? (
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden pt-0.5">
+                  <div className="mb-1 text-[11px] font-medium text-[var(--text-secondary)]">
+                    签到明细
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-hidden">
+                    <CheckinStatusList
+                      items={orderedCheckinRows}
+                      emptyText="当前没有可展示的签到站点"
+                    />
+                  </div>
+                </div>
+              ) : null}
             </AppCardContent>
           </AppCard>
         </div>

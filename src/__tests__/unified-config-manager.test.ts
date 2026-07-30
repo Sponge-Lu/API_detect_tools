@@ -19,6 +19,7 @@ import {
   buildRoutePathStateKey,
   buildStatsKey,
 } from '../shared/types/route-proxy';
+import type { UnifiedConfig } from '../shared/types/site';
 
 interface BackupEntry {
   filename: string;
@@ -1070,7 +1071,7 @@ describe('UnifiedConfigManager', () => {
           version: '1',
           buckets: {
             [analyticsBucketKey]: {
-              bucketKey: analyticsBucketKey,
+              bucketKey: 'legacy-bucket-key',
               bucketStart: 1,
               bucketSize: 'hour',
               cliType: 'codex',
@@ -1130,6 +1131,7 @@ describe('UnifiedConfigManager', () => {
     });
     expect(routing.cliProbe.latest[probeKey].healthy).toBe(true);
     expect(routing.analytics.buckets[analyticsBucketKey]).toMatchObject({
+      bucketKey: analyticsBucketKey,
       totalTokens: 30,
     });
     expect(routing.modelRegistry.sources).toEqual([
@@ -1143,13 +1145,14 @@ describe('UnifiedConfigManager', () => {
   it('preserves persisted site daily snapshots when saveConfig rewrites runtime cache', async () => {
     const manager = await loadManager();
     await manager.saveConfig(createSampleConfig() as any);
+    const capturedAt = Date.now();
 
     const { runtimeCacheManager } = await import('../main/runtime-cache-manager');
     await runtimeCacheManager.updateSiteDailySnapshots('site-1', () => [
       {
         siteId: 'site-1',
         snapshotDate: '2026-04-25',
-        capturedAt: Date.UTC(2026, 3, 25),
+        capturedAt,
         balance: 88.8,
         todayUsage: 6.4,
         todayRequests: 42,
@@ -1171,7 +1174,7 @@ describe('UnifiedConfigManager', () => {
       {
         siteId: 'site-1',
         snapshotDate: '2026-04-25',
-        capturedAt: Date.UTC(2026, 3, 25),
+        capturedAt,
         balance: 88.8,
         todayUsage: 6.4,
         todayRequests: 42,
@@ -1180,6 +1183,47 @@ describe('UnifiedConfigManager', () => {
         totalTokens: 4600,
       },
     ]);
+  });
+
+  it('normalizes negative site balances when snapshots are captured and read', async () => {
+    const manager = await loadManager();
+    const config = createSampleConfig() as UnifiedConfig;
+    config.sites[0].cached_data = {
+      balance: -12.5,
+      today_usage: 1,
+      last_refresh: Date.now(),
+    };
+    await manager.saveConfig(config);
+
+    vi.doMock('../main/unified-config-manager', () => ({ unifiedConfigManager: manager }));
+    const { captureSiteDailySnapshot, getSiteDailySnapshots } = await import(
+      '../main/overview-service'
+    );
+    vi.doUnmock('../main/unified-config-manager');
+    const captured = await captureSiteDailySnapshot('site-1');
+    expect(captured?.balance).toBe(0);
+
+    const { runtimeCacheManager } = await import('../main/runtime-cache-manager');
+    await runtimeCacheManager.updateSiteDailySnapshots('site-1', current => [
+      ...(current || []),
+      {
+        siteId: 'site-1',
+        snapshotDate: 'legacy-negative',
+        capturedAt: Date.now(),
+        balance: -99,
+        todayUsage: 0,
+        todayRequests: 0,
+        todayPromptTokens: 0,
+        todayCompletionTokens: 0,
+        totalTokens: 0,
+      },
+    ]);
+
+    expect(getSiteDailySnapshots({ siteId: 'site-1' })['site-1']).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ snapshotDate: 'legacy-negative', balance: 0 }),
+      ])
+    );
   });
 
   it('hydrates missing legacy site_type during v2 -> v3 migration when detection succeeds', async () => {

@@ -466,7 +466,6 @@ export function recordRouteRequest(params: {
 
   const config = getAnalyticsConfig();
   if (!config.enabled) return;
-  if (!params.routeRuleId || !params.siteId || !params.accountId) return;
 
   const bucketStart = getBucketStart(at, config.bucketSizeMinutes);
   const bucketKey = buildBucketKey(
@@ -476,7 +475,8 @@ export function recordRouteRequest(params: {
     params.canonicalModel || undefined,
     params.siteId,
     params.accountId,
-    params.apiKeyId
+    params.apiKeyId,
+    params.routeRuleId
   );
 
   let bucket = pendingBuckets.get(bucketKey);

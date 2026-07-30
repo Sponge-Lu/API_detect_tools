@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { render } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { GlobalCommandBar } from '../renderer/components/AppShell/GlobalCommandBar';
+import { PageHeader } from '../renderer/components/AppShell/PageHeader';
 
 vi.mock('../renderer/components/CliConfigStatus', () => ({
   CliConfigStatusPanel: () => <div>Mock CLI Status</div>,
@@ -113,6 +113,9 @@ describe('theme visual consistency', () => {
     expect(globalCss).toContain('--ease-exit:');
     expect(globalCss).toContain("html[data-theme='light-b']");
     expect(globalCss).toContain("html[data-theme='dark']");
+    expect(globalCss).toContain("html[data-theme='modern']");
+    expect(globalCss).toContain("html[data-theme='modern-dark']");
+    expect(globalCss).toContain('.tnum');
     expect(globalCss).not.toContain("html[data-theme='light-c']");
     expect(globalCss).toContain('.app-icon');
     expect(topLevelRootBlock).not.toContain('--ios-');
@@ -152,23 +155,8 @@ describe('theme visual consistency', () => {
     expect(useSiteDragSource).not.toContain('.ios-scroll-y');
   });
 
-  it('keeps the global command bar on theme tokens instead of hardcoded gray and blue utilities', () => {
-    const { container } = render(
-      <GlobalCommandBar
-        saving
-        updateInfo={{
-          hasUpdate: true,
-          latestVersion: '3.1.0',
-          releaseInfo: {
-            version: '3.1.0',
-            releaseDate: '2026-04-01',
-            releaseNotes: 'notes',
-            mandatory: false,
-            downloadUrl: 'https://example.com/download',
-          },
-        }}
-      />
-    );
+  it('keeps the merged page header on theme tokens instead of hardcoded gray and blue utilities', () => {
+    const { container } = render(<PageHeader title="站点管理" saving />);
 
     const root = container.firstElementChild as HTMLElement;
 
@@ -303,5 +291,35 @@ describe('theme visual consistency', () => {
     );
     expect(themePresetsSource).not.toContain("label: 'Light B'");
     expect(themePresetsSource).toContain("label: 'Light'");
+  });
+
+  it('keeps modern themes as independent platinum white presets', () => {
+    expect(themePresetsSource).toContain("id: 'modern'");
+    expect(themePresetsSource).toContain("id: 'modern-dark'");
+    expect(themePresetsSource).toContain("description: '铂金白 · 简洁浅色'");
+    expect(themePresetsSource).toContain("description: '铂金白 · 简洁深色'");
+    expect(themePresetsSource).toContain("accentColor: '#6B7280'");
+    expect(themePresetsSource).toContain("accentColor: '#E5E7EB'");
+    expect(themePresetsSource).not.toContain('#5E6AD2');
+    expect(themePresetsSource).not.toContain('#7C85E0');
+    expect(themePresetsSource).not.toContain('#3D8B7A');
+    expect(themePresetsSource).not.toContain('#5BB8A5');
+    expect(themePresetsSource).not.toContain('靛蓝');
+    expect(globalCss).toContain('--accent: #6b7280');
+    expect(globalCss).toContain('--accent: #e5e7eb');
+    expect(globalCss).not.toContain('--accent: #5e6ad2');
+    expect(globalCss).not.toContain('--accent: #7c85e0');
+    expect(globalCss).not.toContain('--accent: #3d8b7a');
+    expect(globalCss).not.toContain('--accent: #5bb8a5');
+
+    const modernBlock = globalCss.match(/html\[data-theme='modern'\]\s*\{[\s\S]*?\n\}/)?.[0] ?? '';
+    const modernDarkBlock =
+      globalCss.match(/html\[data-theme='modern-dark'\]\s*\{[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(modernBlock).toContain('--app-bg: #fafafa');
+    expect(modernBlock).toContain('--accent: #6b7280');
+    expect(modernBlock).not.toContain('--accent: #5c6b78');
+    expect(modernDarkBlock).toContain('--app-bg: #0a0a0a');
+    expect(modernDarkBlock).toContain('--accent: #e5e7eb');
+    expect(modernDarkBlock).not.toContain('--accent: #8ea1ad');
   });
 });

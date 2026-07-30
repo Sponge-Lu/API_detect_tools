@@ -17,7 +17,6 @@ import {
 } from 'react';
 import { XCircle, Loader2 } from 'lucide-react';
 import { ConfirmDialog, initialDialogState } from './components/ConfirmDialog';
-import { GlobalCommandBar } from './components/AppShell/GlobalCommandBar';
 import { PageHeader } from './components/AppShell/PageHeader';
 import { APP_PAGE_META } from './components/AppShell/pageMeta';
 import { VerticalSidebar } from './components/Sidebar';
@@ -902,15 +901,11 @@ function App() {
 
         {/* 页面内容区域 - CSS 显隐保活 */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          <GlobalCommandBar
-            saving={saving}
-            updateInfo={updateInfo}
-            onDownloadUpdate={handleDownloadUpdate}
-          />
           <PageHeader
             title={pageMeta.title}
             description={pageMeta.description}
             actions={pageHeaderActions}
+            saving={saving}
           />
 
           <Suspense

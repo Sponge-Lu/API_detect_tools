@@ -1321,22 +1321,22 @@ export class UnifiedConfigManager {
     r.analytics.buckets = Object.fromEntries(
       Object.values(r.analytics.buckets || {}).map(bucket => {
         const targetProtocol = normalizeCliTargetProtocol(bucket?.targetProtocol);
+        const normalizedBucketKey = buildBucketKey(
+          bucket.bucketStart,
+          bucket.cliType,
+          targetProtocol,
+          bucket.canonicalModel,
+          bucket.siteId,
+          bucket.accountId,
+          bucket.apiKeyId,
+          bucket.routeRuleId
+        );
         const normalizedBucket: RouteAnalyticsBucket = {
           ...bucket,
           targetProtocol,
+          bucketKey: normalizedBucketKey,
         };
-        return [
-          buildBucketKey(
-            normalizedBucket.bucketStart,
-            normalizedBucket.cliType,
-            targetProtocol,
-            normalizedBucket.canonicalModel,
-            normalizedBucket.siteId,
-            normalizedBucket.accountId,
-            normalizedBucket.apiKeyId
-          ),
-          normalizedBucket,
-        ];
+        return [normalizedBucketKey, normalizedBucket];
       })
     );
 

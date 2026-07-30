@@ -10,6 +10,7 @@ import {
   estimateLabelWidth,
   selectScatterLabels,
 } from '../renderer/utils/routeScatter';
+import { buildModelDistribution } from '../renderer/utils/routeModelDistribution';
 
 function buildBucket(overrides: Partial<RouteAnalyticsBucket>): RouteAnalyticsBucket {
   return {
@@ -118,6 +119,32 @@ describe('buildRouteScatterPoints', () => {
     expect(byId.get('s-good')?.tier).toBe('good');
     expect(byId.get('s-warn')?.tier).toBe('warn');
     expect(byId.get('s-bad')?.tier).toBe('bad');
+  });
+
+  it('保留无首字样本的通道，并将纯中性请求成功率记为 0', () => {
+    const points = buildRouteScatterPoints([
+      buildBucket({
+        siteId: 's-neutral',
+        accountId: 'a-neutral',
+        requestCount: 3,
+        neutralCount: 3,
+      }),
+    ]);
+
+    expect(points).toHaveLength(1);
+    expect(points[0]).toMatchObject({ requests: 3, successRate: 0, ttfbMs: null, tier: 'bad' });
+  });
+});
+
+describe('buildModelDistribution', () => {
+  it('将纯中性请求模型的成功率记为 0', () => {
+    const distribution = buildModelDistribution([
+      buildBucket({ canonicalModel: 'neutral-model', requestCount: 2, neutralCount: 2 }),
+    ]);
+
+    expect(distribution).toMatchObject([
+      { canonicalModel: 'neutral-model', requests: 2, successRate: 0 },
+    ]);
   });
 });
 

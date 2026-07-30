@@ -262,6 +262,77 @@ describe('route-analytics-service token statistics', () => {
     });
   });
 
+  it('keeps requests with missing route dimensions in analytics totals', () => {
+    const at = Date.now();
+
+    recordRouteRequest({
+      requestId: 'req-unknown-route-dimensions',
+      attempt: 1,
+      cliType: 'codex',
+      canonicalModel: null,
+      outcome: 'neutral',
+      at,
+    });
+
+    expect(getAnalyticsSummary({ window: '24h' })).toMatchObject({
+      totalRequests: 1,
+      successCount: 0,
+      failureCount: 0,
+      neutralCount: 1,
+      successRate: 0,
+    });
+    expect(getAnalyticsDistribution({ window: '24h' }).buckets).toMatchObject([
+      {
+        routeRuleId: undefined,
+        siteId: undefined,
+        accountId: undefined,
+        requestCount: 1,
+        neutralCount: 1,
+      },
+    ]);
+    expect(mocks.notifyAppDataChanged).toHaveBeenCalledWith('route-overview', 1200);
+  });
+
+  it('keeps otherwise identical requests from different route rules in separate buckets', () => {
+    const at = Date.now();
+    const common = {
+      attempt: 1,
+      cliType: 'codex' as const,
+      canonicalModel: 'gpt-4.1',
+      siteId: 'site-1',
+      accountId: 'account-1',
+      apiKeyId: 'key-1',
+      at,
+    };
+
+    recordRouteRequest({
+      ...common,
+      requestId: 'req-rule-1',
+      routeRuleId: 'rule-1',
+      outcome: 'success',
+    });
+    recordRouteRequest({
+      ...common,
+      requestId: 'req-rule-2',
+      routeRuleId: 'rule-2',
+      outcome: 'failure',
+    });
+
+    const allBuckets = getAnalyticsDistribution({ window: '24h' }).buckets;
+    expect(allBuckets).toHaveLength(2);
+    expect(new Set(allBuckets.map(bucket => bucket.bucketKey)).size).toBe(2);
+    expect(getAnalyticsSummary({ window: '24h', routeRuleId: 'rule-1' })).toMatchObject({
+      totalRequests: 1,
+      successCount: 1,
+      failureCount: 0,
+    });
+    expect(getAnalyticsSummary({ window: '24h', routeRuleId: 'rule-2' })).toMatchObject({
+      totalRequests: 1,
+      successCount: 0,
+      failureCount: 1,
+    });
+  });
+
   it('records estimated cost snapshots for direct custom cli route requests', () => {
     const now = Date.now();
     mocks.customCliStorage = {

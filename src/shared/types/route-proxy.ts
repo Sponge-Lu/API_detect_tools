@@ -650,7 +650,7 @@ export const DEFAULT_CLI_PROBE_CONFIG: RouteCliProbeConfig = {
 
 export const DEFAULT_ANALYTICS_CONFIG: RouteAnalyticsConfig = {
   enabled: true,
-  retentionDays: 3,
+  retentionDays: 7,
   bucketSizeMinutes: 60,
   recordTokenUsage: true,
   recordStatusCode: true,
@@ -800,9 +800,10 @@ export function buildBucketKey(
   canonicalModel?: string,
   siteId?: string,
   accountId?: string,
-  apiKeyId?: string
+  apiKeyId?: string,
+  routeRuleId?: string
 ): string {
-  return `${bucketStart}:${cliType}:${normalizeCliTargetProtocol(targetProtocol)}:${canonicalModel || '*'}:${siteId || '*'}:${accountId || '*'}:${apiKeyId || '*'}`;
+  return `${bucketStart}:${cliType}:${normalizeCliTargetProtocol(targetProtocol)}:${canonicalModel || '*'}:${siteId || '*'}:${accountId || '*'}:${apiKeyId || '*'}:${routeRuleId || '*'}`;
 }
 
 /** CLI 类型对应的请求路径前缀 */

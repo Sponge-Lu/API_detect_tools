@@ -50,7 +50,7 @@ type AccountConfigWithCache = NonNullable<Config['accounts']>[number] & {
 type CacheLike = DetectionCacheData;
 
 export function toNonNegativeBalance(balance: number): number {
-  return balance >= 0 ? balance : 0;
+  return Number.isFinite(balance) && balance >= 0 ? balance : 0;
 }
 
 export function sumNonNegativeBalances<T extends { balance: number }>(items: readonly T[]): number {

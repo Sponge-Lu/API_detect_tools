@@ -1,4 +1,4 @@
-export type ThemeMode = 'light-b' | 'dark';
+export type ThemeMode = 'light-b' | 'dark' | 'modern' | 'modern-dark';
 export type LegacyThemeMode = 'light' | 'dark' | 'system';
 export type AnyThemeMode = ThemeMode | LegacyThemeMode | string | null | undefined;
 
@@ -37,9 +37,29 @@ export const THEME_PRESETS: ThemePresetDefinition[] = [
     accentColor: '#8ea1ad',
     softAccent: 'rgba(142, 161, 173, 0.18)',
   },
+  {
+    id: 'modern',
+    label: 'Modern',
+    description: '铂金白 · 简洁浅色',
+    appBackground: '#FAFAFA',
+    panelBackground: '#FFFFFF',
+    panelRaised: '#F9FAFB',
+    accentColor: '#6B7280',
+    softAccent: 'rgba(107, 114, 128, 0.12)',
+  },
+  {
+    id: 'modern-dark',
+    label: 'Modern Dark',
+    description: '铂金白 · 简洁深色',
+    appBackground: '#0A0A0A',
+    panelBackground: '#141414',
+    panelRaised: '#262626',
+    accentColor: '#E5E7EB',
+    softAccent: 'rgba(229, 231, 235, 0.14)',
+  },
 ];
 
-const VALID_THEME_MODES = new Set<ThemeMode>(['light-b', 'dark']);
+const VALID_THEME_MODES = new Set<ThemeMode>(['light-b', 'dark', 'modern', 'modern-dark']);
 
 export function normalizeThemeMode(value: AnyThemeMode): ThemeMode {
   if (typeof value !== 'string') {

@@ -10,6 +10,8 @@ import {
   X,
   Sun,
   Moon,
+  Sparkles,
+  Zap,
   Download,
   Upload,
   Cloud,
@@ -58,6 +60,8 @@ const sections: { id: SettingsSection; label: string; icon: LucideIcon }[] = [
 const themeIcons: Record<ThemeMode, LucideIcon> = {
   'light-b': Sun,
   dark: Moon,
+  modern: Sparkles,
+  'modern-dark': Zap,
 };
 
 interface SettingsPanelProps {

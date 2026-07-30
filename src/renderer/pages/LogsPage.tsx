@@ -74,12 +74,12 @@ const CACHE_CREATION_INPUT_PRICE_RATIO = 1.25;
 const CACHE_READ_INPUT_PRICE_RATIO = 0.1;
 const ROUTE_LOG_VIEW_LIMIT = 200;
 const ROUTE_LOG_SITE_NAME_MAX_CJK_LENGTH = 5;
-const ROUTE_LOG_TABLE_STYLE = { minWidth: 'calc(67.5rem + 2ch)' };
+const ROUTE_LOG_TABLE_STYLE = { minWidth: 'calc(62rem + 2ch)' };
 const ROUTE_LOG_GRID_STYLE = {
   gridTemplateColumns:
-    'minmax(2rem, 2fr) minmax(7rem, 7fr) minmax(4.5rem, 4.5fr) minmax(calc(14rem + 2ch), 16fr) minmax(20rem, 20fr) minmax(4.5rem, 4.5fr) minmax(6rem, 6fr) minmax(3rem, 3fr) minmax(6rem, 6fr)',
+    'minmax(1.75rem, 1.75fr) minmax(6.5rem, 6.5fr) minmax(4rem, 4fr) minmax(calc(12.5rem + 2ch), 14.5fr) minmax(18rem, 18fr) minmax(4rem, 4fr) minmax(5.25rem, 5.25fr) minmax(2.75rem, 2.75fr) minmax(5.25rem, 5.25fr)',
 };
-const ROUTE_LOG_GRID_GAP = 'gap-x-2';
+const ROUTE_LOG_GRID_GAP = 'gap-x-1';
 const ROUTE_LOG_TOKEN_GRID_STYLE = {
   gridTemplateColumns:
     'minmax(0, calc(20% - 1ch)) minmax(0, 20%) minmax(0, calc(20% - 2ch)) minmax(0, calc(20% + 1ch)) minmax(0, 20%)',

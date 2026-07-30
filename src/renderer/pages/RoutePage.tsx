@@ -30,18 +30,20 @@ export function RoutePage() {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto px-6 py-4">
-      <div className="space-y-4">
-        <div data-testid="route-page-server-row">
-          <ServerSection className="w-full" />
-        </div>
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden px-6 py-3 gap-2.5">
+      <div data-testid="route-page-server-row" className="shrink-0">
+        <ServerSection className="w-full" />
+      </div>
 
-        <div data-testid="route-page-primary-row" className="min-w-0">
-          <ModelRedirectionTab
-            isActive={isRoutePageActive}
-            className="min-w-0"
-            leadingPane={<CliModelSection variant="pane" className="h-full" />}
-          />
+      <div
+        data-testid="route-page-primary-row"
+        className="flex min-h-0 min-w-0 flex-1 flex-col gap-2.5"
+      >
+        <div data-testid="route-page-cli-row" className="min-w-0 shrink-0">
+          <CliModelSection variant="card" className="w-full" />
+        </div>
+        <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+          <ModelRedirectionTab isActive={isRoutePageActive} className="h-full min-h-0 min-w-0" />
         </div>
       </div>
     </div>

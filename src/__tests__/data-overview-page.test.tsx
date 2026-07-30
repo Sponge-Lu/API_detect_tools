@@ -5,11 +5,9 @@ import { DataOverviewPage } from '../renderer/pages/DataOverviewPage';
 import type { Config } from '../renderer/App';
 import type { RouteAnalyticsBucket } from '../shared/types/route-proxy';
 import { buildSiteOverviewMetrics } from '../renderer/utils/siteOverview';
+import { computeLatencyPercentiles } from '../renderer/utils/routeLatency';
 
 const now = Date.now();
-const todayLabel = new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(
-  new Date(now)
-);
 
 const mockConfig = {
   sites: [
@@ -131,9 +129,12 @@ const mockUIState: {
   setOverviewSubtab: vi.fn(),
 };
 
+const mockSetConfig = vi.fn();
+
 vi.mock('../renderer/store/configStore', () => ({
-  useConfigStore: (selector: (state: { config: typeof mockConfig }) => unknown) =>
-    selector({ config: mockConfig }),
+  useConfigStore: (
+    selector: (state: { config: typeof mockConfig; setConfig: typeof mockSetConfig }) => unknown
+  ) => selector({ config: mockConfig, setConfig: mockSetConfig }),
 }));
 
 vi.mock('../renderer/store/customCliConfigStore', () => ({
@@ -152,15 +153,15 @@ vi.mock('../renderer/store/uiStore', () => ({
 }));
 
 describe('DataOverviewPage', () => {
-  let appDataChangedListener:
-    | ((payload: {
-        domains: Array<'site-config' | 'site-overview' | 'route-overview'>;
-        emittedAt: number;
-      }) => void)
-    | null = null;
+  type AppDataChangedListener = (payload: {
+    domains: Array<'site-config' | 'site-overview' | 'route-overview'>;
+    emittedAt: number;
+  }) => void;
+  let appDataChangedListeners: AppDataChangedListener[] = [];
 
   beforeEach(() => {
-    appDataChangedListener = null;
+    appDataChangedListeners = [];
+    mockSetConfig.mockReset();
     mockUIState.activeTab = 'overview';
     mockUIState.overviewSubtab = 'site';
     mockUIState.setOverviewSubtab.mockReset();
@@ -418,11 +419,16 @@ describe('DataOverviewPage', () => {
       }),
     } as NonNullable<typeof window.electronAPI.overview>;
 
+    window.electronAPI.loadConfig = vi.fn().mockResolvedValue(mockConfig as Config);
+    window.electronAPI.detectSite = vi.fn();
+
     window.electronAPI.appData = {
       onChanged: vi.fn(callback => {
-        appDataChangedListener = callback;
+        appDataChangedListeners.push(callback);
         return () => {
-          appDataChangedListener = null;
+          appDataChangedListeners = appDataChangedListeners.filter(
+            listener => listener !== callback
+          );
         };
       }),
     };
@@ -476,7 +482,7 @@ describe('DataOverviewPage', () => {
     expect(metrics[0]?.balance).toBe(12);
   });
 
-  it('renders the merged site and route overview dashboard', async () => {
+  it('renders the classic dashboard overview layout', async () => {
     render(<DataOverviewPage />);
 
     expect(screen.queryByRole('button', { name: '站点数据' })).not.toBeInTheDocument();
@@ -484,12 +490,20 @@ describe('DataOverviewPage', () => {
     expect(screen.queryByRole('button', { name: '刷新' })).not.toBeInTheDocument();
 
     const dashboard = screen.getByLabelText('数据总览驾驶舱');
-    expect(dashboard).toHaveAttribute('data-route-layout', 'merged-compact');
-    expect(screen.getByText('每日签到概览')).toBeInTheDocument();
+    expect(dashboard).toHaveAttribute('data-route-layout', 'classic-dashboard');
+    expect(document.querySelector('[data-overview-active-view="merged"]')).toHaveClass(
+      'flex',
+      'min-h-0',
+      'flex-col',
+      'overflow-hidden'
+    );
     expect(screen.getByText('运行趋势')).toBeInTheDocument();
-    expect(screen.getByText('模型热力分布')).toBeInTheDocument();
-    expect(screen.getByText('通道健康散点矩阵')).toBeInTheDocument();
-    expect(screen.queryByText('站点资源概览')).not.toBeInTheDocument();
+    expect(screen.getByText('模型分布')).toBeInTheDocument();
+    expect(screen.getByText('通道分布')).toBeInTheDocument();
+    expect(screen.getByText('7d 请求热力')).toBeInTheDocument();
+    expect(screen.getByText('站点汇总')).toBeInTheDocument();
+    expect(screen.queryByText('模型热力分布')).not.toBeInTheDocument();
+    expect(screen.queryByText('通道健康散点矩阵')).not.toBeInTheDocument();
     expect(screen.queryByText('站点历史趋势')).not.toBeInTheDocument();
     expect(screen.queryByText('模型 → 通道流向')).not.toBeInTheDocument();
 
@@ -500,62 +514,67 @@ describe('DataOverviewPage', () => {
     expect(window.electronAPI.route?.getAnalyticsSummary).not.toHaveBeenCalled();
     expect(window.electronAPI.route?.getAnalyticsDistribution).not.toHaveBeenCalled();
 
-    expect(screen.getByText('可用站点数')).toBeInTheDocument();
-    expect(screen.getByText('展示 3 / 模型 2')).toBeInTheDocument();
-    const totalBalanceMetric = screen.getByText('站点总余额').parentElement;
-    if (!totalBalanceMetric) {
-      throw new Error('Missing site total balance metric');
-    }
-    expect(totalBalanceMetric).toHaveTextContent('$23.70');
-    expect(totalBalanceMetric).not.toHaveTextContent('$18.70');
-    expect(screen.getByText('今日签到收益')).toBeInTheDocument();
-    expect(screen.getByText('请求 44 · Tokens 5.0K')).toBeInTheDocument();
+    expect(screen.getByText('路由请求量')).toBeInTheDocument();
+    expect(screen.getByText('路由成功率')).toBeInTheDocument();
+    expect(screen.getByText('P90 延迟')).toBeInTheDocument();
+    expect(screen.getByText('首字 P95')).toBeInTheDocument();
+    expect(screen.getByText('Token 消耗')).toBeInTheDocument();
+    expect(screen.getByText('活跃模型数')).toBeInTheDocument();
+    expect(screen.getByText('站点数')).toBeInTheDocument();
+    expect(screen.getByText('总余额')).toBeInTheDocument();
+    expect(screen.getByText('今日消费')).toBeInTheDocument();
+    expect(screen.getByText('签到')).toBeInTheDocument();
+    expect(screen.getByText('$23.70')).toBeInTheDocument();
     expect(screen.getByText('已签 1 / 待签 1')).toBeInTheDocument();
-    expect(screen.getAllByText(/已签到/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText('待签 1/1').length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/\$1\.00/).length).toBeGreaterThan(0);
-    expect(screen.queryByText('可签到站点')).not.toBeInTheDocument();
+    expect(screen.getByText(/输入 3\.6K\s*\/\s*输出 1\.4K/)).toBeInTheDocument();
+
     const checkinScrollRegion = screen.getByLabelText('每日签到概览滚动区域');
     expect(checkinScrollRegion).toBeInTheDocument();
     expect(checkinScrollRegion).toHaveTextContent('Claude Site');
     expect(checkinScrollRegion).toHaveTextContent('Codex Site');
-    expect(checkinScrollRegion).toHaveTextContent('站点级');
-    expect(checkinScrollRegion).toHaveTextContent(/本月 12\s*\/\s*累计 40/);
+    expect(checkinScrollRegion).toHaveClass(
+      'app-scrollbar-none',
+      'min-h-0',
+      'flex-1',
+      'overflow-y-auto'
+    );
+    expect(checkinScrollRegion.parentElement?.parentElement).toHaveClass('overflow-hidden');
+    expect(checkinScrollRegion.parentElement?.parentElement).not.toHaveClass('overflow-y-auto');
+    expect(checkinScrollRegion.className).not.toContain('pr-4');
+    expect(checkinScrollRegion.className).not.toContain('[scrollbar-gutter:stable]');
 
-    expect(screen.getByText('首字响应 / 会话时间')).toBeInTheDocument();
-    const responseKpi = screen.getByLabelText('首字响应 / 会话时间 KPI');
-    expect(within(responseKpi).queryByText(/P95|P99/)).not.toBeInTheDocument();
-    expect(screen.queryByText('延迟分位数')).not.toBeInTheDocument();
-    expect(screen.queryByText('活跃对象')).not.toBeInTheDocument();
+    expect(document.querySelector('[data-overview-metric-grid="classic"]')).toHaveClass(
+      'grid-cols-6'
+    );
+    expect(document.querySelector('[data-testid="overview-model-donut"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-testid="overview-channel-bars"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-testid="overview-history-heat"]')).toBeInTheDocument();
+    const heatGrid = document.querySelector('[data-testid="overview-heat-grid"]');
+    expect(heatGrid).toBeInTheDocument();
+    // 完整网格为 列数×12（14 列=168 / 15 列=180）；其中显示格 (visible) 恒为 168
+    const heatChildren = Array.from(heatGrid?.children ?? []);
+    const visibleHeatCells = heatChildren.filter(
+      node => (node as HTMLElement).style.background !== 'transparent'
+    );
+    expect(visibleHeatCells).toHaveLength(168);
+    expect(document.querySelector('[data-testid="overview-site-summary"]')).toBeInTheDocument();
     expect(screen.queryByText('通道健康矩阵')).not.toBeInTheDocument();
-    expect(screen.getAllByText('Codex Site / acct-2 / Key-Beta').length).toBeGreaterThan(0);
-    expect(document.querySelectorAll('[data-scatter-success-label="true"]')).toHaveLength(5);
-    expect(document.querySelectorAll('[data-scatter-inline-label="true"]')).toHaveLength(0);
+    expect(document.querySelectorAll('[data-scatter-success-label="true"]')).toHaveLength(0);
 
-    const scatterGridLines = Array.from(
-      document.querySelectorAll('[data-scatter-grid-line="true"]')
+    const trendCard = screen.getByLabelText('运行趋势图');
+    expect(trendCard).toHaveClass('min-h-0');
+    expect(trendCard).not.toHaveClass('flex-1');
+    expect(trendCard.parentElement).toHaveClass(
+      'grid',
+      'grid-rows-[minmax(0,1.0625fr)_minmax(0,0.9375fr)]',
+      'overflow-hidden'
     );
-    expect(scatterGridLines.length).toBeGreaterThan(0);
-    expect(scatterGridLines.some(line => line.getAttribute('x1') === line.getAttribute('x2'))).toBe(
-      true
+    expect(screen.getByTestId('overview-model-donut').parentElement).toHaveClass(
+      'grid-cols-3',
+      'overflow-hidden'
     );
-    expect(scatterGridLines.some(line => line.getAttribute('y1') === line.getAttribute('y2'))).toBe(
-      true
-    );
-    expect(scatterGridLines.every(line => line.getAttribute('opacity') === '0.85')).toBe(true);
-    expect(screen.getByText('60s+')).toBeInTheDocument();
-    expect(screen.queryByText('120s+')).not.toBeInTheDocument();
 
-    expect(document.querySelector('[data-overview-metric-grid="merged"]')).toHaveClass(
-      'xl:grid-cols-8'
-    );
-    expect(screen.getByRole('region', { name: '每日签到概览' })).toHaveClass('h-[260px]');
-    expect(screen.getByLabelText('运行趋势图')).toHaveClass('h-[260px]');
-    expect(document.querySelector('[data-route-heatmap-card="true"]')).toHaveClass('h-[260px]');
-    expect(document.querySelector('[data-route-third-row-card="scatter"]')).toHaveClass(
-      'h-[260px]'
-    );
-    expect(document.querySelector('[data-route-content-scroll="true"]')).toHaveClass('pb-3');
+    expect(document.querySelector('[data-route-content-scroll="true"]')).toHaveClass('pb-2.5');
     expect(document.querySelector('[data-trend-chart-frame="true"]')).toHaveClass('-mx-2', 'px-5');
 
     const trendPointCount = Number(
@@ -564,56 +583,11 @@ describe('DataOverviewPage', () => {
     expect(document.querySelectorAll('[data-trend-axis-label="true"]')).toHaveLength(
       trendPointCount
     );
-    const failureMarkers = Array.from(
-      document.querySelectorAll('[data-trend-failure-marker="true"]')
-    ) as HTMLElement[];
-    expect(failureMarkers.length).toBeGreaterThan(0);
-    const trendAxisLabels = Array.from(
-      document.querySelectorAll('[data-trend-axis-label="true"]')
-    ) as HTMLElement[];
-    const trendAxisLefts = trendAxisLabels.map(label => Number.parseFloat(label.style.left));
     for (const seriesName of ['requests', 'success-rate', 'ttfb-p95']) {
-      const series = document.querySelector(`[data-trend-series="${seriesName}"]`);
-      expect(series).toBeInTheDocument();
-      const seriesLefts = (series?.getAttribute('data-trend-point-lefts') || '')
-        .split(',')
-        .filter(Boolean)
-        .map(value => Number.parseFloat(value));
-      expect(seriesLefts).toEqual(trendAxisLefts.map(value => Number(value.toFixed(2))));
+      expect(document.querySelector(`[data-trend-series="${seriesName}"]`)).toBeInTheDocument();
     }
-    const successRateSeries = document.querySelector('[data-trend-series="success-rate"]');
-    expect(successRateSeries?.querySelector('path[fill="currentColor"]')).not.toBeInTheDocument();
-    expect(
-      successRateSeries
-        ?.querySelector('path[stroke="currentColor"]')
-        ?.getAttribute('stroke-dasharray')
-    ).toBeNull();
-    expect(
-      document
-        .querySelector('[data-trend-legend="success-rate"] [data-trend-legend-line]')
-        ?.getAttribute('data-trend-legend-line')
-    ).toBe('solid');
-    expect(
-      document
-        .querySelector('[data-trend-legend="ttfb-p95"] [data-trend-legend-line]')
-        ?.getAttribute('data-trend-legend-line')
-    ).toBe('dashed');
-    const requestSeries = document.querySelector('[data-trend-series="requests"]');
-    const requestBars = Array.from(
-      requestSeries?.querySelectorAll('[data-trend-bar-center-left]') || []
-    );
-    const requestBarIndexes = requestBars.map(bar =>
-      Number(bar.getAttribute('data-trend-bar-point-index'))
-    );
-    expect(requestBarIndexes.length).toBeGreaterThan(0);
-    expect(screen.queryByText('快又稳')).not.toBeInTheDocument();
-    expect(screen.getByText(/输入 3\.6K\s*\/\s*输出 1\.4K/)).toBeInTheDocument();
-    const trendScopeSelect = screen.getByLabelText('选择运行趋势范围');
-    expect(trendScopeSelect).toHaveDisplayValue('全部聚合');
-    // R3.1：趋势范围下拉收敛进 AppSelect 原语，保留紧凑尺寸与负边距对齐
-    expect(trendScopeSelect).toHaveClass('h-6', 'text-[11px]', 'bg-[var(--surface-2)]');
-    const scopeSelectWrapper = trendScopeSelect.closest('div.relative')?.parentElement;
-    expect(scopeSelectWrapper).toHaveClass('-mt-1.5');
+    expect(screen.queryByLabelText('选择运行趋势范围')).not.toBeInTheDocument();
+    expect(document.querySelector('[data-trend-scope-select="true"]')).not.toBeInTheDocument();
   });
 
   it('provides merged header actions', async () => {
@@ -636,18 +610,15 @@ describe('DataOverviewPage', () => {
     });
 
     const headerActions = screen.getByTestId('header-actions');
-    expect(within(headerActions).getByRole('button', { name: '24h' })).toBeInTheDocument();
-    expect(within(headerActions).getByRole('button', { name: '7d' })).toBeInTheDocument();
     expect(within(headerActions).getByRole('button', { name: '刷新' })).toBeInTheDocument();
+    expect(within(headerActions).queryByRole('button', { name: '24h' })).not.toBeInTheDocument();
+    expect(within(headerActions).queryByRole('button', { name: '7d' })).not.toBeInTheDocument();
     expect(within(headerActions).queryByRole('button', { name: '30d' })).not.toBeInTheDocument();
   });
 
-  it('fills route trend x-axis labels for partial 24h and 7d windows', async () => {
-    mockUIState.overviewSubtab = 'route';
-
+  it('reloads persisted site config on mount, site changes, and manual refresh without detection', async () => {
     function HeaderActionHost() {
       const [actions, setActions] = useState<ReactNode | null>(null);
-
       return (
         <>
           <DataOverviewPage setPageHeaderActions={setActions} />
@@ -658,52 +629,30 @@ describe('DataOverviewPage', () => {
 
     render(<HeaderActionHost />);
 
-    const trendCard = await screen.findByLabelText('运行趋势图');
     await waitFor(() => {
-      expect(window.electronAPI.route?.getAnalyticsOverview).toHaveBeenCalled();
+      expect(window.electronAPI.loadConfig).toHaveBeenCalledTimes(1);
+      expect(mockSetConfig).toHaveBeenCalledWith(mockConfig);
     });
 
-    expect(trendCard).toHaveAttribute('data-trend-point-count', '7');
-    expect(document.querySelectorAll('[data-trend-axis-label="true"]')).toHaveLength(7);
-    const sevenDayRequestBars = Array.from(
-      document.querySelectorAll('[data-trend-series="requests"] [data-trend-bar-point-index]')
-    );
-    expect(
-      sevenDayRequestBars.map(bar => Number(bar.getAttribute('data-trend-bar-point-index')))
-    ).toEqual([6]);
+    await act(async () => {
+      for (const listener of appDataChangedListeners) {
+        listener({ domains: ['site-overview'], emittedAt: Date.now() });
+      }
+    });
+
+    await waitFor(() => {
+      expect(window.electronAPI.loadConfig).toHaveBeenCalledTimes(2);
+    });
 
     fireEvent.click(
-      within(screen.getByTestId('header-actions')).getByRole('button', { name: '24h' })
+      within(screen.getByTestId('header-actions')).getByRole('button', { name: '刷新' })
     );
 
     await waitFor(() => {
-      expect(trendCard).toHaveAttribute('data-trend-point-count', '24');
+      expect(window.electronAPI.loadConfig).toHaveBeenCalledTimes(3);
+      expect(window.electronAPI.overview?.getSiteDailySnapshots).toHaveBeenCalledTimes(3);
     });
-    expect(document.querySelectorAll('[data-trend-axis-label="true"]')).toHaveLength(24);
-    const twentyFourHourRequestBars = Array.from(
-      document.querySelectorAll('[data-trend-series="requests"] [data-trend-bar-point-index]')
-    );
-    const twentyFourHourRequestBarIndexes = twentyFourHourRequestBars.map(bar =>
-      Number(bar.getAttribute('data-trend-bar-point-index'))
-    );
-    expect(twentyFourHourRequestBarIndexes.length).toBeGreaterThan(0);
-    const firstTwentyFourHourBarIndex = Math.min(...twentyFourHourRequestBarIndexes);
-    expect(firstTwentyFourHourBarIndex).toBeGreaterThan(0);
-    const axisLefts = Array.from(document.querySelectorAll('[data-trend-axis-label="true"]')).map(
-      label => Number.parseFloat((label as HTMLElement).style.left)
-    );
-    const expectedLineStartX = Number(
-      ((axisLefts[firstTwentyFourHourBarIndex] / 100) * 160).toFixed(2)
-    );
-    const successPath = document.querySelector(
-      '[data-trend-series="success-rate"] path[stroke="currentColor"]'
-    );
-    expect(successPath?.getAttribute('d')?.startsWith(`M ${expectedLineStartX.toFixed(2)} `)).toBe(
-      true
-    );
-    expect(window.electronAPI.route?.getAnalyticsOverview).toHaveBeenLastCalledWith({
-      window: '24h',
-    });
+    expect(window.electronAPI.detectSite).not.toHaveBeenCalled();
   });
 
   it('keeps route trend x-axis labels in chronological order across month boundaries', async () => {
@@ -780,19 +729,195 @@ describe('DataOverviewPage', () => {
     expect(trendCard).toHaveAttribute('data-trend-point-count', '8');
   });
 
-  it('selects and clears heatmap model filters within the merged dashboard', async () => {
+  it('renders model donut and channel bars instead of heatmap filters', async () => {
     render(<DataOverviewPage />);
 
-    const modelButton = await screen.findByRole('button', { name: '模型：claude-opus-4-6' });
-    expect(modelButton).toHaveAttribute('aria-pressed', 'false');
-    fireEvent.click(modelButton);
-    expect(modelButton).toHaveAttribute('aria-pressed', 'true');
-
-    fireEvent.click(screen.getByText('模型热力分布'));
-    expect(modelButton).toHaveAttribute('aria-pressed', 'false');
+    await waitFor(() => {
+      expect(window.electronAPI.route?.getAnalyticsOverview).toHaveBeenCalled();
+    });
+    expect(document.querySelector('[data-testid="overview-model-donut"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-testid="overview-channel-bars"]')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '模型：claude-opus-4-6' })).not.toBeInTheDocument();
     expect(
       document.querySelector('svg[aria-label="模型→通道 Sankey 流图 SVG"]')
     ).not.toBeInTheDocument();
+  });
+
+  it('counts every active route model while limiting the donut to eight items', async () => {
+    const buckets = Array.from(
+      { length: 10 },
+      (_, index): RouteAnalyticsBucket => ({
+        bucketKey: `model-${index}`,
+        bucketStart: now,
+        bucketSize: 'hour',
+        cliType: 'codex',
+        canonicalModel: `model-${index}`,
+        siteId: 'site-1',
+        accountId: 'acct-1',
+        requestCount: 10 - index,
+        successCount: 10 - index,
+        failureCount: 0,
+        neutralCount: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        statusCodeHistogram: {},
+        latencyHistogram: {},
+        firstByteHistogram: { '0-200ms': 10 - index },
+        updatedAt: now,
+      })
+    );
+    window.electronAPI.route = {
+      ...window.electronAPI.route,
+      getAnalyticsOverview: vi.fn().mockResolvedValue({
+        success: true,
+        data: {
+          summary: {
+            totalRequests: 55,
+            successCount: 55,
+            failureCount: 0,
+            neutralCount: 0,
+            successRate: 100,
+            promptTokens: 0,
+            completionTokens: 0,
+            totalTokens: 0,
+            cacheCreationTokens: 0,
+            cacheReadTokens: 0,
+            cachedTokens: 0,
+          },
+          distribution: {
+            buckets,
+            statusCodeHistogram: {},
+            latencyHistogram: {},
+            firstByteHistogram: { '0-200ms': 55 },
+          },
+        },
+      }),
+    } as NonNullable<typeof window.electronAPI.route>;
+
+    render(<DataOverviewPage />);
+
+    const activeModelLabel = await screen.findByText('活跃模型数');
+    expect(activeModelLabel.parentElement?.parentElement).toHaveTextContent('10');
+    expect(screen.getByTestId('overview-model-donut').querySelectorAll('svg circle')).toHaveLength(
+      9
+    );
+  });
+
+  it('keeps channels without first-byte samples in channel distribution', async () => {
+    const bucket: RouteAnalyticsBucket = {
+      bucketKey: 'no-ttfb',
+      bucketStart: now,
+      bucketSize: 'hour',
+      cliType: 'codex',
+      canonicalModel: 'gpt-no-ttfb',
+      siteId: 'site-1',
+      accountId: 'acct-no-ttfb',
+      requestCount: 3,
+      successCount: 0,
+      failureCount: 0,
+      neutralCount: 3,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      statusCodeHistogram: {},
+      latencyHistogram: {},
+      firstByteHistogram: {},
+      updatedAt: now,
+    };
+    window.electronAPI.route = {
+      ...window.electronAPI.route,
+      getAnalyticsOverview: vi.fn().mockResolvedValue({
+        success: true,
+        data: {
+          summary: {
+            totalRequests: 3,
+            successCount: 0,
+            failureCount: 0,
+            neutralCount: 3,
+            successRate: 0,
+            promptTokens: 0,
+            completionTokens: 0,
+            totalTokens: 0,
+            cacheCreationTokens: 0,
+            cacheReadTokens: 0,
+            cachedTokens: 0,
+          },
+          distribution: {
+            buckets: [bucket],
+            statusCodeHistogram: {},
+            latencyHistogram: {},
+            firstByteHistogram: {},
+          },
+        },
+      }),
+    } as NonNullable<typeof window.electronAPI.route>;
+
+    render(<DataOverviewPage />);
+
+    const channelCard = await screen.findByTestId('overview-channel-bars');
+    expect(within(channelCard).getByTitle('Claude Site / acct-no-ttfb')).toBeInTheDocument();
+    expect(within(channelCard).getByText('3 · 0%')).toBeInTheDocument();
+  });
+
+  it('uses per-period P90 latency values for the P90 sparkline', async () => {
+    const histograms = [{ '0-1000ms': 20 }, { '0-1000ms': 2, '1000-3000ms': 18 }];
+    const buckets = histograms.map(
+      (latencyHistogram, index): RouteAnalyticsBucket => ({
+        bucketKey: `latency-${index}`,
+        bucketStart: now - (1 - index) * 24 * 60 * 60 * 1000,
+        bucketSize: 'hour',
+        cliType: 'codex',
+        canonicalModel: 'latency-model',
+        siteId: 'site-1',
+        accountId: 'acct-1',
+        requestCount: 20,
+        successCount: 20,
+        failureCount: 0,
+        neutralCount: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        statusCodeHistogram: {},
+        latencyHistogram,
+        firstByteHistogram: {},
+        updatedAt: now,
+      })
+    );
+    window.electronAPI.route = {
+      ...window.electronAPI.route,
+      getAnalyticsOverview: vi.fn().mockResolvedValue({
+        success: true,
+        data: {
+          summary: {
+            totalRequests: 40,
+            successCount: 40,
+            failureCount: 0,
+            neutralCount: 0,
+            successRate: 100,
+            promptTokens: 0,
+            completionTokens: 0,
+            totalTokens: 0,
+            cacheCreationTokens: 0,
+            cacheReadTokens: 0,
+            cachedTokens: 0,
+          },
+          distribution: {
+            buckets,
+            statusCodeHistogram: {},
+            latencyHistogram: { '0-1000ms': 22, '1000-3000ms': 18 },
+            firstByteHistogram: {},
+          },
+        },
+      }),
+    } as NonNullable<typeof window.electronAPI.route>;
+
+    render(<DataOverviewPage />);
+
+    const p90Card = await screen.findByLabelText('P90 延迟 KPI');
+    const values = p90Card.getAttribute('data-sparkline-values')?.split(',') || [];
+    const expected = histograms.map(histogram => String(computeLatencyPercentiles(histogram).p90));
+    expect(values.slice(-2)).toEqual(expected);
   });
 
   it('reloads route overview data automatically after route overview change events', async () => {
@@ -804,10 +929,9 @@ describe('DataOverviewPage', () => {
     });
 
     await act(async () => {
-      appDataChangedListener?.({
-        domains: ['route-overview'],
-        emittedAt: Date.now(),
-      });
+      for (const listener of appDataChangedListeners) {
+        listener({ domains: ['route-overview'], emittedAt: Date.now() });
+      }
     });
 
     await waitFor(() => {
@@ -862,7 +986,9 @@ describe('DataOverviewPage', () => {
     await waitFor(() => {
       expect(window.electronAPI.overview?.getSiteDailySnapshots).toHaveBeenCalled();
     });
-    expect(screen.getByText('请求 44 · Tokens 5.0K')).toBeInTheDocument();
+    const todayUsageValue = screen.getByTitle('请求 44 · Tokens 5.0K');
+    expect(todayUsageValue).toHaveTextContent('$8.20');
+    expect(screen.getByText('今日消费')).toBeInTheDocument();
   });
 
   it('renders route trend markers as fixed-size circles', async () => {

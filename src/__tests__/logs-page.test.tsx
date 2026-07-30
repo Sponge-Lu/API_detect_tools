@@ -18,7 +18,7 @@ import { useConfigStore } from '../renderer/store/configStore';
 import { useRouteStore } from '../renderer/store/routeStore';
 
 const ROUTE_LOG_RESPONSIVE_GRID_TEMPLATE =
-  'minmax(2rem,2fr) minmax(7rem,7fr) minmax(4.5rem,4.5fr) minmax(calc(14rem + 2ch),16fr) minmax(20rem,20fr) minmax(4.5rem,4.5fr) minmax(6rem,6fr) minmax(3rem,3fr) minmax(6rem,6fr)';
+  'minmax(1.75rem,1.75fr) minmax(6.5rem,6.5fr) minmax(4rem,4fr) minmax(calc(12.5rem + 2ch),14.5fr) minmax(18rem,18fr) minmax(4rem,4fr) minmax(5.25rem,5.25fr) minmax(2.75rem,2.75fr) minmax(5.25rem,5.25fr)';
 const ROUTE_LOG_TOKEN_GRID_TEMPLATE =
   'minmax(0,calc(20% - 1ch)) minmax(0,20%) minmax(0,calc(20% - 2ch)) minmax(0,calc(20% + 1ch)) minmax(0,20%)';
 
@@ -185,7 +185,7 @@ describe('LogsPage', () => {
   it('keeps the default Electron window wide enough for the nine-column route log', () => {
     const mainSource = readFileSync(join(process.cwd(), 'src/main/main.ts'), 'utf8');
 
-    expect(mainSource).toMatch(/width:\s*1400/u);
+    expect(mainSource).toMatch(/width:\s*1320/u);
     expect(mainSource).toMatch(/minWidth:\s*1200/u);
   });
 
@@ -536,7 +536,7 @@ describe('LogsPage', () => {
       'CLI原始模型思考强度路由目标Token（总/输入/输出/缓存写/缓存读）预计金额用时/首字状态时间'
     );
     expect(header.parentElement).toHaveClass('w-full');
-    expect(header.parentElement).toHaveStyle({ minWidth: 'calc(67.5rem + 2ch)' });
+    expect(header.parentElement).toHaveStyle({ minWidth: 'calc(62rem + 2ch)' });
     expect(header.style.gridTemplateColumns).toBe(ROUTE_LOG_RESPONSIVE_GRID_TEMPLATE);
     expect(screen.queryByRole('button', { name: '刷新' })).not.toBeInTheDocument();
     expect(screen.getByText('总尝试').parentElement).toHaveTextContent('总尝试4');
@@ -556,7 +556,7 @@ describe('LogsPage', () => {
     expect(screen.queryByText('HTTP 502')).not.toBeInTheDocument();
     const tableLine = within(rows[0]).getByTestId('route-request-table-line');
     expect(tableLine.style.gridTemplateColumns).toBe(ROUTE_LOG_RESPONSIVE_GRID_TEMPLATE);
-    expect(tableLine).toHaveClass('gap-x-2');
+    expect(tableLine).toHaveClass('gap-x-1');
     expect(within(rows[0]).getByTestId('route-request-cli-icon')).toHaveAttribute(
       'aria-label',
       'Codex'
@@ -583,7 +583,7 @@ describe('LogsPage', () => {
     const failureInfo = within(rows[0]).getByTestId('route-request-failure-info');
     expect(failureInfo).toHaveTextContent('no_matching_rule');
     expect(failureInfo.style.gridTemplateColumns).toBe(ROUTE_LOG_RESPONSIVE_GRID_TEMPLATE);
-    expect(failureInfo).toHaveClass('gap-x-2');
+    expect(failureInfo).toHaveClass('gap-x-1');
     expect(failureInfo.firstElementChild).toHaveClass('col-start-2', 'col-span-8');
     expect(within(rows[1]).queryByTestId('route-request-failure-info')).not.toBeInTheDocument();
     const tokenSummary = within(rows[0]).getByTestId('route-request-token-summary');
@@ -1429,7 +1429,7 @@ describe('LogsPage', () => {
     expect(within(upstreamRow).queryByText('HTTP 503')).not.toBeInTheDocument();
     expect(failureInfo).toHaveTextContent('quota_exceeded: upstream quota exhausted');
     expect(failureInfo.style.gridTemplateColumns).toBe(ROUTE_LOG_RESPONSIVE_GRID_TEMPLATE);
-    expect(failureInfo).toHaveClass('gap-x-2');
+    expect(failureInfo).toHaveClass('gap-x-1');
     expect(failureInfo).not.toHaveAttribute('title');
     expect(failureInfo).not.toHaveTextContent('503');
   });

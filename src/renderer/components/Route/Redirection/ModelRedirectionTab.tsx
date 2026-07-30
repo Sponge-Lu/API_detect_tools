@@ -11,12 +11,10 @@ import {
   ChevronUp,
   ChevronsDown,
   ChevronsUp,
-  Edit3,
   Loader2,
   RotateCcw,
   Search,
   SlidersHorizontal,
-  Trash2,
   X,
 } from 'lucide-react';
 import { useShallow } from 'zustand/shallow';
@@ -1855,6 +1853,10 @@ export function ModelRedirectionTab({
   const [saving, setSaving] = useState(false);
   const [selectedDisplayItemId, setSelectedDisplayItemId] = useState<string | null>(null);
   const [editorContext, setEditorContext] = useState<RedirectEditorContext | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    displayItemId: string;
+    displayName: string;
+  } | null>(null);
   const [sourceDetailState, setSourceDetailState] = useState<DisplayItemDetailState | null>(null);
   const [priorityDraft, setPriorityDraft] = useState<PriorityDraft>({
     sitePriorities: {},
@@ -2657,6 +2659,7 @@ export function ModelRedirectionTab({
         }
 
         toast.success('重定向模型已删除');
+        setDeleteConfirm(current => (current?.displayItemId === displayItemId ? null : current));
       } catch (error: unknown) {
         toast.error(`删除失败: ${getErrorMessage(error)}`);
       } finally {
@@ -2665,6 +2668,13 @@ export function ModelRedirectionTab({
     },
     [closeEditor, deleteDisplayItem, editorContext?.displayItemId]
   );
+
+  const confirmDelete = useCallback(() => {
+    if (!deleteConfirm) {
+      return;
+    }
+    void handleDelete(deleteConfirm.displayItemId);
+  }, [deleteConfirm, handleDelete]);
 
   const movePrioritySite = useCallback(
     (siteId: string, target: 'up' | 'down' | 'first' | 'last') => {
@@ -3127,20 +3137,20 @@ export function ModelRedirectionTab({
     <>
       <div
         data-testid="redirect-workspace"
-        className={`overflow-hidden border border-[var(--line-muted)] bg-[var(--surface-1)] ${className}`.trim()}
+        className={`flex h-full min-h-0 flex-col overflow-hidden border border-[var(--line-muted)] bg-[var(--surface-1)] ${className}`.trim()}
       >
         <div
           data-testid="redirect-two-pane-layout"
           className={
             hasLeadingPane
-              ? 'grid min-h-[520px] xl:grid-cols-[minmax(202px,0.2112fr)_minmax(192px,0.448fr)_minmax(0,1.6408fr)]'
-              : 'grid min-h-[520px] xl:grid-cols-[minmax(192px,0.448fr)_minmax(0,1.632fr)]'
+              ? 'grid h-full min-h-0 grid-cols-[minmax(202px,0.2112fr)_minmax(198px,0.3825fr)_minmax(189px,0.3825fr)_minmax(0,1.335fr)]'
+              : 'grid h-full min-h-0 grid-cols-[minmax(198px,0.3825fr)_minmax(189px,0.3825fr)_minmax(0,1.335fr)]'
           }
         >
           {hasLeadingPane ? (
             <div
               data-testid="redirect-leading-pane"
-              className="flex min-h-0 flex-col border-b border-[var(--line-muted)] xl:border-b-0 xl:border-r"
+              className="flex min-h-0 flex-col border-r border-[var(--line-muted)]"
             >
               {leadingPane}
             </div>
@@ -3148,11 +3158,11 @@ export function ModelRedirectionTab({
 
           <div
             data-testid="redirect-list-pane"
-            className="flex min-h-0 flex-col border-b border-[var(--line-muted)] xl:border-b-0 xl:border-r"
+            className="flex min-h-0 flex-col border-r border-[var(--line-muted)]"
           >
             <div
               data-testid="redirect-list-toolbar"
-              className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line-muted)] px-3 py-2"
+              className="flex flex-wrap items-center justify-between gap-1.5 border-b border-[var(--line-muted)] px-2.5 py-1.5"
             >
               <div className="flex min-w-0 items-baseline gap-1.5">
                 <div className="text-xs font-semibold text-[var(--text-primary)]">重定向模型</div>
@@ -3205,10 +3215,37 @@ export function ModelRedirectionTab({
                           : 'border-l-transparent hover:bg-[var(--surface-2)]'
                       }`}
                     >
-                      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                      <div className="flex min-w-0 flex-nowrap items-center gap-1.5">
                         <code className="min-w-0 truncate font-mono text-[13px] font-semibold text-[var(--text-primary)]">
                           {displayItem.displayName}
                         </code>
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`删除 ${displayItem.displayName}`}
+                          title="删除重定向模型"
+                          data-testid="redirect-delete-icon"
+                          className="ml-auto shrink-0 rounded p-0.5 text-[var(--text-tertiary)] transition-colors hover:text-[var(--danger)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+                          onClick={event => {
+                            event.stopPropagation();
+                            setDeleteConfirm({
+                              displayItemId: displayItem.item.id,
+                              displayName: displayItem.displayName,
+                            });
+                          }}
+                          onKeyDown={event => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setDeleteConfirm({
+                                displayItemId: displayItem.item.id,
+                                displayName: displayItem.displayName,
+                              });
+                            }
+                          }}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </span>
                       </div>
                     </button>
                   );
@@ -3225,27 +3262,79 @@ export function ModelRedirectionTab({
           </div>
 
           <div
+            data-testid="redirect-original-pane"
+            className="flex min-h-0 flex-col border-r border-[var(--line-muted)] bg-[var(--surface-1)]"
+          >
+            <div className="flex h-9 shrink-0 items-center justify-between gap-1.5 border-b border-[var(--line-muted)] px-2.5">
+              <div className="text-xs font-semibold text-[var(--text-primary)]">原始模型</div>
+              {selectedDisplayItem ? (
+                <AppButton
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  className="!h-6 !min-h-6 !px-1.5 text-[11px]"
+                  onClick={() =>
+                    openEditEditor(selectedDisplayItem.item, selectedDisplayItem.entry)
+                  }
+                  aria-label={`编辑 ${selectedDisplayItem.displayName}`}
+                  title="编辑模型重定向"
+                  disabled={saving || isResettingSelectedRoutePaths}
+                >
+                  <span>编辑</span>
+                </AppButton>
+              ) : null}
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden px-2.5 py-2">
+              {selectedDisplayItem ? (
+                <div
+                  data-testid="redirect-detail-original-models"
+                  className="flex flex-col gap-1.5"
+                >
+                  {selectedDisplayItem.selectedOriginalModels.length > 0 ? (
+                    selectedDisplayItem.selectedOriginalModels.map(originalModel => (
+                      <div
+                        key={`${selectedDisplayItem.item.id}:${originalModel}`}
+                        className="max-w-full border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1"
+                      >
+                        <code className="break-all font-mono text-[11px] leading-4 text-[var(--text-secondary)]">
+                          {originalModel}
+                        </code>
+                      </div>
+                    ))
+                  ) : (
+                    <span className="border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 font-mono text-[11px] text-[var(--text-secondary)]">
+                      {selectedDisplayItem.item.canonicalName}
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <div className="py-6 text-center text-xs text-[var(--text-secondary)]">
+                  选择重定向模型
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div
             data-testid="redirect-detail-pane"
-            className="min-h-0 overflow-y-auto bg-[var(--surface-1)]"
+            className="flex min-h-0 flex-col overflow-hidden bg-[var(--surface-1)]"
           >
             {selectedDisplayItem ? (
-              <div className="min-h-full">
+              <div className="flex h-full min-h-0 flex-col">
                 <div
                   data-testid="redirect-detail-actions"
-                  className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line-muted)] px-3 py-2"
+                  className="flex h-9 shrink-0 flex-wrap items-center gap-1.5 border-b border-[var(--line-muted)] px-2.5"
                 >
-                  <div className="min-w-0">
-                    <code className="block truncate font-mono text-sm font-semibold text-[var(--text-primary)]">
-                      {selectedDisplayItem.displayName}
-                    </code>
+                  <div className="mr-1 shrink-0 text-xs font-semibold text-[var(--text-primary)]">
+                    优先级排序
                   </div>
-                  <div className="flex flex-wrap items-center justify-end gap-1.5">
+                  <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1">
                     {selectedPriorityHitResetParams ? (
                       <AppButton
                         type="button"
                         size="sm"
                         variant="secondary"
-                        className="!h-7 !min-h-7 !px-2"
+                        className="!h-6 !min-h-6 !px-1.5 text-[11px]"
                         onClick={() => {
                           if (!selectedPriorityHitPath) {
                             return;
@@ -3262,18 +3351,18 @@ export function ModelRedirectionTab({
                         title="重置当前优先命中路径"
                       >
                         {isResettingSelectedRoutePaths ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          <Loader2 className="h-3 w-3 animate-spin" />
                         ) : (
-                          <RotateCcw className="h-3.5 w-3.5" />
+                          <RotateCcw className="h-3 w-3" />
                         )}
-                        <span>重置优先命中</span>
+                        <span>重置命中</span>
                       </AppButton>
                     ) : null}
                     <AppButton
                       type="button"
                       size="sm"
                       variant="secondary"
-                      className="!h-7 !min-h-7 !px-2"
+                      className="!h-6 !min-h-6 !px-1.5 text-[11px]"
                       onClick={() =>
                         void handleResetRoutePaths(
                           selectedDisplayItem.item,
@@ -3293,149 +3382,95 @@ export function ModelRedirectionTab({
                       }
                     >
                       {isResettingSelectedRoutePaths ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <Loader2 className="h-3 w-3 animate-spin" />
                       ) : (
-                        <RotateCcw className="h-3.5 w-3.5" />
+                        <RotateCcw className="h-3 w-3" />
                       )}
-                      <span>恢复路径</span>
+                      <span>恢复</span>
                     </AppButton>
                     <AppButton
                       type="button"
                       size="sm"
                       variant="secondary"
-                      className="!h-7 !min-h-7 !px-2"
+                      className="!h-6 !min-h-6 !px-1.5 text-[11px]"
                       onClick={() =>
                         openRouteRules(selectedDisplayItem.item, selectedDisplayItem.displayName)
                       }
                       disabled={saving || isResettingSelectedRoutePaths}
                     >
-                      <SlidersHorizontal className="h-3.5 w-3.5" />
-                      <span>路由规则</span>
+                      <SlidersHorizontal className="h-3 w-3" />
+                      <span>规则</span>
                     </AppButton>
-                    <button
+                    <span className="mx-0.5 h-4 w-px bg-[var(--line-soft)]" />
+                    <AppButton
                       type="button"
-                      onClick={() =>
-                        openEditEditor(selectedDisplayItem.item, selectedDisplayItem.entry)
+                      size="sm"
+                      variant="secondary"
+                      className="!h-6 !min-h-6 !px-1.5 text-[11px]"
+                      onClick={() => moveSelectedPrioritySite('first')}
+                      disabled={selectedPrioritySiteIndex <= 0}
+                    >
+                      <ChevronsUp className="h-3 w-3" />
+                      <span>置顶</span>
+                    </AppButton>
+                    <AppButton
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      className="!h-6 !min-h-6 !px-1.5 text-[11px]"
+                      onClick={() => moveSelectedPrioritySite('up')}
+                      disabled={selectedPrioritySiteIndex <= 0}
+                    >
+                      <ChevronUp className="h-3 w-3" />
+                      <span>上移</span>
+                    </AppButton>
+                    <AppButton
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      className="!h-6 !min-h-6 !px-1.5 text-[11px]"
+                      onClick={() => moveSelectedPrioritySite('down')}
+                      disabled={
+                        selectedPrioritySiteIndex < 0 ||
+                        selectedPrioritySiteIndex >= sortableDetailSiteGroups.length - 1
                       }
-                      className="inline-flex h-7 w-7 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
-                      aria-label={`编辑 ${selectedDisplayItem.displayName}`}
-                      title="编辑模型重定向"
-                      disabled={saving || isResettingSelectedRoutePaths}
                     >
-                      <Edit3 className="h-3.5 w-3.5" />
-                    </button>
-                    <button
+                      <ChevronDown className="h-3 w-3" />
+                      <span>下移</span>
+                    </AppButton>
+                    <AppButton
                       type="button"
-                      onClick={() => void handleDelete(selectedDisplayItem.item.id)}
-                      className="inline-flex h-7 w-7 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:border-[var(--danger)] hover:text-[var(--danger)] disabled:cursor-not-allowed disabled:opacity-50"
-                      aria-label={`删除 ${selectedDisplayItem.displayName}`}
-                      title="删除重定向模型"
-                      disabled={saving || isResettingSelectedRoutePaths}
+                      size="sm"
+                      variant="secondary"
+                      className="!h-6 !min-h-6 !px-1.5 text-[11px]"
+                      onClick={() => moveSelectedPrioritySite('last')}
+                      disabled={
+                        selectedPrioritySiteIndex < 0 ||
+                        selectedPrioritySiteIndex >= sortableDetailSiteGroups.length - 1
+                      }
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                      <ChevronsDown className="h-3 w-3" />
+                      <span>置底</span>
+                    </AppButton>
+                    <AppButton
+                      type="button"
+                      size="sm"
+                      variant={isPriorityDirty ? 'danger' : 'primary'}
+                      className="!h-6 !min-h-6 !px-1.5 text-[11px]"
+                      data-testid="priority-save-button"
+                      data-priority-dirty={isPriorityDirty ? 'true' : 'false'}
+                      onClick={handleSaveDetails}
+                      loading={saving}
+                    >
+                      保存
+                    </AppButton>
                   </div>
                 </div>
 
-                <div className="border-b border-[var(--line-muted)] px-3 py-2">
-                  <div className="mb-1.5 text-xs font-semibold text-[var(--text-primary)]">
-                    原始模型
-                  </div>
-                  <div
-                    data-testid="redirect-detail-original-models"
-                    className="flex flex-wrap gap-x-1.5 gap-y-1"
-                  >
-                    {selectedDisplayItem.selectedOriginalModels.length > 0 ? (
-                      selectedDisplayItem.selectedOriginalModels.map(originalModel => (
-                        <div
-                          key={`${selectedDisplayItem.item.id}:${originalModel}`}
-                          className="max-w-full border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-0"
-                        >
-                          <code className="font-mono text-[11px] leading-4 text-[var(--text-secondary)]">
-                            {originalModel}
-                          </code>
-                        </div>
-                      ))
-                    ) : (
-                      <span className="border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-0.5 font-mono text-[11px] text-[var(--text-secondary)]">
-                        {selectedDisplayItem.item.canonicalName}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                <div data-testid="redirect-detail-priority" className="px-3 py-2">
-                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-xs font-semibold text-[var(--text-primary)]">
-                        优先级排序
-                      </div>
-                    </div>
-                    <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
-                      <AppButton
-                        type="button"
-                        size="sm"
-                        variant="secondary"
-                        className="h-7 px-2"
-                        onClick={() => moveSelectedPrioritySite('first')}
-                        disabled={selectedPrioritySiteIndex <= 0}
-                      >
-                        <ChevronsUp className="h-3.5 w-3.5" />
-                        <span>移到第一个</span>
-                      </AppButton>
-                      <AppButton
-                        type="button"
-                        size="sm"
-                        variant="secondary"
-                        className="h-7 px-2"
-                        onClick={() => moveSelectedPrioritySite('up')}
-                        disabled={selectedPrioritySiteIndex <= 0}
-                      >
-                        <ChevronUp className="h-3.5 w-3.5" />
-                        <span>上移</span>
-                      </AppButton>
-                      <AppButton
-                        type="button"
-                        size="sm"
-                        variant="secondary"
-                        className="h-7 px-2"
-                        onClick={() => moveSelectedPrioritySite('down')}
-                        disabled={
-                          selectedPrioritySiteIndex < 0 ||
-                          selectedPrioritySiteIndex >= sortableDetailSiteGroups.length - 1
-                        }
-                      >
-                        <ChevronDown className="h-3.5 w-3.5" />
-                        <span>下移</span>
-                      </AppButton>
-                      <AppButton
-                        type="button"
-                        size="sm"
-                        variant="secondary"
-                        className="h-7 px-2"
-                        onClick={() => moveSelectedPrioritySite('last')}
-                        disabled={
-                          selectedPrioritySiteIndex < 0 ||
-                          selectedPrioritySiteIndex >= sortableDetailSiteGroups.length - 1
-                        }
-                      >
-                        <ChevronsDown className="h-3.5 w-3.5" />
-                        <span>移到末尾</span>
-                      </AppButton>
-                      <AppButton
-                        type="button"
-                        size="sm"
-                        variant={isPriorityDirty ? 'danger' : 'primary'}
-                        data-testid="priority-save-button"
-                        data-priority-dirty={isPriorityDirty ? 'true' : 'false'}
-                        onClick={handleSaveDetails}
-                        loading={saving}
-                      >
-                        保存优先级
-                      </AppButton>
-                    </div>
-                  </div>
-
+                <div
+                  data-testid="redirect-detail-priority"
+                  className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden px-2.5 py-2"
+                >
                   {siteOnlySourceNotices.length > 0 ? (
                     <div
                       data-testid="priority-detail-site-only-warning"
@@ -4294,6 +4329,41 @@ export function ModelRedirectionTab({
           onClose={closeCreateApiKeyDialog}
         />
       ) : null}
+
+      <AppModal
+        isOpen={deleteConfirm !== null}
+        onClose={() => setDeleteConfirm(null)}
+        title="删除重定向模型"
+        titleIcon={<AlertTriangle className="h-5 w-5" />}
+        size="sm"
+        footer={
+          <div className="flex justify-end gap-2">
+            <AppButton
+              type="button"
+              variant="secondary"
+              onClick={() => setDeleteConfirm(null)}
+              disabled={saving}
+            >
+              取消
+            </AppButton>
+            <AppButton
+              type="button"
+              variant="danger"
+              onClick={confirmDelete}
+              loading={saving}
+              data-testid="confirm-delete-redirect"
+            >
+              删除
+            </AppButton>
+          </div>
+        }
+      >
+        <p className="text-sm text-[var(--text-primary)]">
+          确定要删除重定向模型
+          <code className="mx-1 font-mono font-semibold">{deleteConfirm?.displayName}</code>
+          吗？删除后其优先级与规则配置将一并移除，此操作无法撤销。
+        </p>
+      </AppModal>
     </>
   );
 }

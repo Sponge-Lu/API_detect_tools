@@ -20,6 +20,8 @@ import {
   X,
   Check,
   ChevronDown,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { useShallow } from 'zustand/shallow';
 import { useRouteStore } from '../../../store/routeStore';
@@ -60,11 +62,12 @@ const CLI_ICON_CONFIGS: Record<RouteCliType, { src: string; className: string }>
   grokBuild: { src: GrokBuildIcon, className: 'h-4 w-4' },
 };
 const ROUTE_PROXY_DISPLAY_NAME = '本地路由代理';
-const SERVER_FIELD_LABEL_CLASS_NAME = 'mb-0.5 block text-xs leading-4 text-[var(--text-secondary)]';
+const SERVER_FIELD_LABEL_CLASS_NAME =
+  'mb-0 shrink-0 text-xs leading-4 text-[var(--text-secondary)]';
 const SERVER_FIELD_BASE_CONTROL_CLASS_NAME =
   'h-6 rounded bg-[var(--surface-2)] px-2 py-1 font-mono text-xs leading-4 text-[var(--text-secondary)]';
-const SERVER_FIELD_INPUT_CLASS_NAME = `${SERVER_FIELD_BASE_CONTROL_CLASS_NAME} w-full border-0 outline-none transition-colors placeholder-[var(--text-tertiary)] focus:text-[var(--text-primary)] focus:ring-2 focus:ring-[var(--focus-ring)]`;
-const SERVER_FIELD_VALUE_CLASS_NAME = `${SERVER_FIELD_BASE_CONTROL_CLASS_NAME} w-full truncate`;
+const SERVER_FIELD_INPUT_CLASS_NAME = `${SERVER_FIELD_BASE_CONTROL_CLASS_NAME} min-w-0 flex-1 border-0 outline-none transition-colors placeholder-[var(--text-tertiary)] focus:text-[var(--text-primary)] focus:ring-2 focus:ring-[var(--focus-ring)]`;
+const SERVER_FIELD_VALUE_CLASS_NAME = `${SERVER_FIELD_BASE_CONTROL_CLASS_NAME} min-w-0 flex-1 truncate`;
 
 type TimeRange = '24h' | '7d';
 const STATS_TIME_RANGES: TimeRange[] = ['24h', '7d'];
@@ -94,6 +97,7 @@ function ThinkingEffortSelect({
   onDeleteCustom,
 }: ThinkingEffortSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({});
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -106,12 +110,33 @@ function ThinkingEffortSelect({
       return;
     }
 
+    const updatePosition = () => {
+      const trigger = triggerRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const width = Math.max(rect.width, 128);
+      const left = Math.min(Math.max(8, rect.left), window.innerWidth - width - 8);
+      const spaceBelow = window.innerHeight - rect.bottom - 8;
+      const openUpward = spaceBelow < 180 && rect.top > spaceBelow;
+      setMenuStyle({
+        position: 'fixed',
+        left,
+        width,
+        top: openUpward ? undefined : rect.bottom + 4,
+        bottom: openUpward ? window.innerHeight - rect.top + 4 : undefined,
+        zIndex: 260,
+      });
+    };
+
+    updatePosition();
     menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        setIsOpen(false);
+      const target = event.target as Node;
+      if (rootRef.current?.contains(target) || menuRef.current?.contains(target)) {
+        return;
       }
+      setIsOpen(false);
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -119,12 +144,17 @@ function ThinkingEffortSelect({
         triggerRef.current?.focus();
       }
     };
+    const handleReposition = () => updatePosition();
 
     document.addEventListener('pointerdown', handlePointerDown);
     document.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('resize', handleReposition);
+    window.addEventListener('scroll', handleReposition, true);
     return () => {
       document.removeEventListener('pointerdown', handlePointerDown);
       document.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('resize', handleReposition);
+      window.removeEventListener('scroll', handleReposition, true);
     };
   }, [isOpen]);
 
@@ -171,90 +201,96 @@ function ThinkingEffortSelect({
         />
       </button>
 
-      {isOpen && (
-        <div
-          ref={menuRef}
-          id={menuId}
-          data-testid={`route-cli-thinking-effort-menu-${cliType}`}
-          role="menu"
-          aria-label={`${CLI_LABELS[cliType]} 思考强度选项`}
-          onKeyDown={handleMenuKeyDown}
-          className="absolute inset-x-0 top-full z-40 mt-1 overflow-hidden rounded-md border border-[var(--line-soft)] bg-[var(--surface-1)] py-1 shadow-[var(--shadow-lg)]"
-        >
-          <button
-            type="button"
-            role="menuitemradio"
-            aria-checked={!value}
-            onClick={() => selectValue(null)}
-            className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs text-[var(--text-primary)] hover:bg-[var(--surface-2)] focus:bg-[var(--surface-2)] focus:outline-none"
-          >
-            <Check className={`h-3.5 w-3.5 ${!value ? 'opacity-100' : 'opacity-0'}`} />
-            <span>未设置</span>
-          </button>
-          {ROUTE_THINKING_EFFORT_LEVELS.map(option => (
-            <button
-              key={option}
-              type="button"
-              role="menuitemradio"
-              aria-checked={value === option}
-              onClick={() => selectValue(option)}
-              className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs text-[var(--text-primary)] hover:bg-[var(--surface-2)] focus:bg-[var(--surface-2)] focus:outline-none"
-            >
-              <Check className={`h-3.5 w-3.5 ${value === option ? 'opacity-100' : 'opacity-0'}`} />
-              <span>{option}</span>
-            </button>
-          ))}
-          {customValue && (
+      {isOpen
+        ? createPortal(
             <div
-              data-testid={`route-cli-thinking-effort-custom-option-${cliType}`}
-              role="none"
-              className="flex items-center hover:bg-[var(--surface-2)] focus-within:bg-[var(--surface-2)]"
+              ref={menuRef}
+              id={menuId}
+              data-testid={`route-cli-thinking-effort-menu-${cliType}`}
+              role="menu"
+              aria-label={`${CLI_LABELS[cliType]} 思考强度选项`}
+              onKeyDown={handleMenuKeyDown}
+              style={menuStyle}
+              className="overflow-hidden rounded-md border border-[var(--line-soft)] bg-[var(--surface-1)] py-1 shadow-[var(--shadow-lg)]"
             >
               <button
                 type="button"
                 role="menuitemradio"
-                aria-checked={true}
-                onClick={() => {
-                  setIsOpen(false);
-                  triggerRef.current?.focus();
-                }}
-                className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-xs text-[var(--text-primary)] focus:outline-none"
+                aria-checked={!value}
+                onClick={() => selectValue(null)}
+                className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs text-[var(--text-primary)] hover:bg-[var(--surface-2)] focus:bg-[var(--surface-2)] focus:outline-none"
               >
-                <Check className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">{customValue}</span>
+                <Check className={`h-3.5 w-3.5 ${!value ? 'opacity-100' : 'opacity-0'}`} />
+                <span>未设置</span>
               </button>
+              {ROUTE_THINKING_EFFORT_LEVELS.map(option => (
+                <button
+                  key={option}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={value === option}
+                  onClick={() => selectValue(option)}
+                  className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs text-[var(--text-primary)] hover:bg-[var(--surface-2)] focus:bg-[var(--surface-2)] focus:outline-none"
+                >
+                  <Check
+                    className={`h-3.5 w-3.5 ${value === option ? 'opacity-100' : 'opacity-0'}`}
+                  />
+                  <span>{option}</span>
+                </button>
+              ))}
+              {customValue && (
+                <div
+                  data-testid={`route-cli-thinking-effort-custom-option-${cliType}`}
+                  role="none"
+                  className="flex items-center hover:bg-[var(--surface-2)] focus-within:bg-[var(--surface-2)]"
+                >
+                  <button
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={true}
+                    onClick={() => {
+                      setIsOpen(false);
+                      triggerRef.current?.focus();
+                    }}
+                    className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-xs text-[var(--text-primary)] focus:outline-none"
+                  >
+                    <Check className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">{customValue}</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    title="删除自定义思考强度"
+                    aria-label={`删除 ${CLI_LABELS[cliType]} 自定义思考强度`}
+                    onClick={event => {
+                      event.stopPropagation();
+                      onDeleteCustom();
+                      setIsOpen(false);
+                      triggerRef.current?.focus();
+                    }}
+                    className="mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--text-secondary)] hover:bg-[var(--danger-soft)] hover:text-[var(--danger)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-1"
+                  >
+                    <X className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                </div>
+              )}
               <button
+                data-testid={`route-cli-thinking-effort-custom-action-${cliType}`}
                 type="button"
                 role="menuitem"
-                title="删除自定义思考强度"
-                aria-label={`删除 ${CLI_LABELS[cliType]} 自定义思考强度`}
-                onClick={event => {
-                  event.stopPropagation();
-                  onDeleteCustom();
+                onClick={() => {
                   setIsOpen(false);
-                  triggerRef.current?.focus();
+                  onCustom();
                 }}
-                className="mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--text-secondary)] hover:bg-[var(--danger-soft)] hover:text-[var(--danger)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-1"
+                className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs text-[var(--text-primary)] hover:bg-[var(--surface-2)] focus:bg-[var(--surface-2)] focus:outline-none"
               >
-                <X className="h-3.5 w-3.5" aria-hidden="true" />
+                <span className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>自定义</span>
               </button>
-            </div>
-          )}
-          <button
-            data-testid={`route-cli-thinking-effort-custom-action-${cliType}`}
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setIsOpen(false);
-              onCustom();
-            }}
-            className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs text-[var(--text-primary)] hover:bg-[var(--surface-2)] focus:bg-[var(--surface-2)] focus:outline-none"
-          >
-            <span className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>自定义</span>
-          </button>
-        </div>
-      )}
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }
@@ -632,50 +668,54 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
   };
 
   return (
-    <AppCard data-testid="route-server-section-card" className={className}>
-      <AppCardContent className="p-3">
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-2">
-            <Activity className="w-4 h-4 text-[var(--accent)]" />
-            <span className="font-medium text-sm">代理服务器</span>
+    <AppCard
+      data-testid="route-server-section-card"
+      className={className}
+      hoverable={false}
+      blur={false}
+    >
+      <AppCardContent className="p-2.5">
+        <div className="mb-2 flex min-w-0 items-center gap-2">
+          <Activity className="h-4 w-4 shrink-0 text-[var(--accent)]" />
+          <span className="truncate text-sm font-medium">代理服务器</span>
+          <span
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
+              serverRunning
+                ? 'bg-[var(--success-soft)] text-[var(--success)]'
+                : 'bg-[var(--surface-2)] text-[var(--text-secondary)]'
+            }`}
+          >
             <span
-              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
-                serverRunning
-                  ? 'bg-[var(--success-soft)] text-[var(--success)]'
-                  : 'bg-[var(--surface-2)] text-[var(--text-secondary)]'
-              }`}
-            >
-              <span
-                className={`h-1.5 w-1.5 rounded-full ${serverRunning ? 'bg-[var(--success)]' : 'bg-[var(--icon-muted)]'}`}
-              />
-              {serverRunning ? '运行中' : '已停止'}
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <AppButton
-              variant={serverRunning ? 'secondary' : 'primary'}
-              size="sm"
-              className="h-7 !min-h-7 shrink-0 px-2"
-              onClick={handleToggle}
-              disabled={toggling}
-            >
-              {toggling ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : serverRunning ? (
-                <Square className="w-3.5 h-3.5" />
-              ) : (
-                <Play className="w-3.5 h-3.5" />
-              )}
-              <span className="ml-1">{serverRunning ? '停止' : '启动'}</span>
-            </AppButton>
-          </div>
+              className={`h-1.5 w-1.5 rounded-full ${serverRunning ? 'bg-[var(--success)]' : 'bg-[var(--icon-muted)]'}`}
+            />
+            {serverRunning ? '运行中' : '已停止'}
+          </span>
+          <AppButton
+            variant={serverRunning ? 'danger' : 'primary'}
+            size="sm"
+            className={
+              serverRunning
+                ? 'ml-auto h-7 !min-h-7 w-fit shrink-0 px-2 !bg-[var(--danger)] !text-[var(--text-on-accent)] hover:!opacity-90'
+                : 'ml-auto h-7 !min-h-7 w-fit shrink-0 px-2 !bg-[var(--success)] !text-[var(--text-on-accent)] hover:!opacity-90'
+            }
+            onClick={handleToggle}
+            disabled={toggling}
+          >
+            {toggling ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : serverRunning ? (
+              <Square className="h-3.5 w-3.5" />
+            ) : (
+              <Play className="h-3.5 w-3.5" />
+            )}
+            <span className="ml-1">{serverRunning ? '停止' : '启动'}</span>
+          </AppButton>
         </div>
-
         <div
           data-testid="route-server-primary-config-row"
-          className="grid gap-2 text-sm md:grid-cols-4 xl:grid-cols-[7rem_minmax(10rem,1fr)_minmax(13rem,1.15fr)_minmax(17rem,1.45fr)]"
+          className="grid grid-cols-[minmax(5.5rem,0.7fr)_minmax(8rem,1fr)_minmax(10rem,1.1fr)_minmax(12rem,1.35fr)] items-center gap-x-2 gap-y-1.5 text-sm"
         >
-          <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-1.5">
             <label htmlFor="route-server-port" className={SERVER_FIELD_LABEL_CLASS_NAME}>
               端口
             </label>
@@ -692,9 +732,9 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
               className={SERVER_FIELD_INPUT_CLASS_NAME}
             />
           </div>
-          <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-1.5">
             <label htmlFor="route-server-upstream-proxy" className={SERVER_FIELD_LABEL_CLASS_NAME}>
-              上游代理
+              代理
             </label>
             <input
               id="route-server-upstream-proxy"
@@ -706,7 +746,7 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
             />
           </div>
           <div data-testid="route-server-credential-row" className="contents">
-            <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-1.5">
               <label className={SERVER_FIELD_LABEL_CLASS_NAME}>Base URL</label>
               <div
                 data-testid="route-server-base-url-value"
@@ -715,42 +755,43 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
                 http://{server.host}:{server.port}
               </div>
             </div>
-            <div className="min-w-0">
-              <label className={SERVER_FIELD_LABEL_CLASS_NAME}>路由 API Key</label>
-              <div className="flex min-w-0 items-center gap-2">
-                <div
-                  data-testid="route-server-api-key-value"
-                  className={`${SERVER_FIELD_VALUE_CLASS_NAME} min-w-0 flex-1`}
-                >
-                  {showKey ? server.unifiedApiKey : '••••••••••••••••'}
-                </div>
-                <button
-                  onClick={() => setShowKey(!showKey)}
-                  className="text-xs text-[var(--accent)] hover:underline"
-                >
-                  {showKey ? '隐藏' : '显示'}
-                </button>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(server.unifiedApiKey);
-                    toast.success('已复制');
-                  }}
-                  title="复制"
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  onClick={async () => {
-                    const k = await regenerateApiKey();
-                    if (k) toast.success('已重新生成');
-                  }}
-                  title="重新生成"
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
-                >
-                  <KeyRound className="h-3.5 w-3.5" />
-                </button>
+            <div className="flex min-w-0 items-center gap-1.5">
+              <label className={SERVER_FIELD_LABEL_CLASS_NAME}>API Key</label>
+              <div
+                data-testid="route-server-api-key-value"
+                className={SERVER_FIELD_VALUE_CLASS_NAME}
+              >
+                {showKey ? server.unifiedApiKey : '••••••••••••••••'}
               </div>
+              <button
+                type="button"
+                onClick={() => setShowKey(!showKey)}
+                aria-label={showKey ? '隐藏 API Key' : '显示 API Key'}
+                title={showKey ? '隐藏' : '显示'}
+                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
+              >
+                {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </button>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(server.unifiedApiKey);
+                  toast.success('已复制');
+                }}
+                title="复制"
+                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
+              >
+                <Copy className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={async () => {
+                  const k = await regenerateApiKey();
+                  if (k) toast.success('已重新生成');
+                }}
+                title="重新生成"
+                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
+              >
+                <KeyRound className="h-3.5 w-3.5" />
+              </button>
             </div>
           </div>
         </div>
@@ -972,31 +1013,78 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
 
   const content = (
     <div className="px-3 py-2">
-      <div className="mb-2">
-        <div className="text-xs font-semibold text-[var(--text-primary)]">CLI 路由模型选择</div>
-        <p className="text-[11px] text-[var(--text-secondary)]">
+      <div className="mb-2 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <div className="shrink-0 text-xs font-semibold text-[var(--text-primary)]">
+          CLI 路由模型选择
+        </div>
+        <p className="min-w-0 text-[11px] text-[var(--text-secondary)]">
           应用本地路由后，只需修改此处重定向模型即可，无需修改本地配置中的模型
         </p>
       </div>
 
-      <div className="grid gap-3">
+      <div className="grid grid-cols-4 gap-2">
         {ROUTE_CLI_TYPES.map(cli => {
           const iconConfig = CLI_ICON_CONFIGS[cli];
 
           return (
-            <div key={cli} className="space-y-1.5">
-              <label className="mb-0.5 flex items-center gap-1.5 text-xs leading-4 text-[var(--text-secondary)]">
-                <img
-                  src={iconConfig.src}
-                  alt=""
-                  aria-hidden="true"
-                  className={`${iconConfig.className} shrink-0`}
-                />
-                <span>{CLI_LABELS[cli]}</span>
-              </label>
+            <div
+              key={cli}
+              className="min-w-0 space-y-1.5 rounded-md border border-[var(--line-muted)] bg-[var(--surface-2)]/40 p-2"
+            >
+              <div className="flex min-w-0 items-center gap-1.5">
+                <label className="flex min-w-0 flex-1 items-center gap-1.5 text-xs leading-4 text-[var(--text-secondary)]">
+                  <img
+                    src={iconConfig.src}
+                    alt=""
+                    aria-hidden="true"
+                    className={`${iconConfig.className} shrink-0`}
+                  />
+                  <span className="truncate">{CLI_LABELS[cli]}</span>
+                </label>
+                <div
+                  data-testid={`route-cli-actions-${cli}`}
+                  className="flex shrink-0 items-center gap-1"
+                >
+                  <AppButton
+                    variant="secondary"
+                    size="sm"
+                    className="h-6 !min-h-6 whitespace-nowrap px-1.5 text-[11px]"
+                    onClick={() => handleOpenPreview(cli)}
+                    disabled={!generatedConfigs[cli]}
+                    aria-label={`预览 ${CLI_LABELS[cli]} 路由配置`}
+                  >
+                    预览
+                  </AppButton>
+                  <AppButton
+                    ref={element => {
+                      applyButtonRefs.current[cli] = element;
+                    }}
+                    variant="secondary"
+                    size="sm"
+                    className="h-6 !min-h-6 whitespace-nowrap px-1.5 text-[11px]"
+                    onClick={() => {
+                      setPreviewState(null);
+                      setApplyMenuCli(current => (current === cli ? null : cli));
+                    }}
+                    disabled={
+                      !(editedPreviews[cli] ?? generatedConfigs[cli]) || applyingCli !== null
+                    }
+                    aria-label={`应用 ${CLI_LABELS[cli]} 路由配置`}
+                  >
+                    {applyingCli === cli ? (
+                      <>
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        应用中
+                      </>
+                    ) : (
+                      '应用'
+                    )}
+                  </AppButton>
+                </div>
+              </div>
               <div
                 data-testid={`route-cli-selection-row-${cli}`}
-                className="grid grid-cols-[minmax(0,1fr)_minmax(70px,0.384fr)] gap-1.5"
+                className="grid grid-cols-[minmax(0,1fr)_minmax(105px,0.576fr)] gap-1.5"
               >
                 <select
                   value={normalizedCliSelections[cli]}
@@ -1018,48 +1106,6 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
                   onDeleteCustom={() => handleDeleteCustomThinkingEffort(cli)}
                 />
               </div>
-              <div
-                data-testid={`route-cli-actions-${cli}`}
-                className="grid grid-cols-2 items-center gap-2"
-              >
-                <AppButton
-                  variant="secondary"
-                  size="sm"
-                  className="h-7 !min-h-7 w-full min-w-0 whitespace-nowrap px-2"
-                  onClick={() => handleOpenPreview(cli)}
-                  disabled={!generatedConfigs[cli]}
-                  aria-label={`预览 ${CLI_LABELS[cli]} 路由配置`}
-                >
-                  预览
-                </AppButton>
-                <div className="min-w-0">
-                  <AppButton
-                    ref={element => {
-                      applyButtonRefs.current[cli] = element;
-                    }}
-                    variant="secondary"
-                    size="sm"
-                    className="h-7 !min-h-7 w-full min-w-0 whitespace-nowrap px-2"
-                    onClick={() => {
-                      setPreviewState(null);
-                      setApplyMenuCli(current => (current === cli ? null : cli));
-                    }}
-                    disabled={
-                      !(editedPreviews[cli] ?? generatedConfigs[cli]) || applyingCli !== null
-                    }
-                    aria-label={`应用 ${CLI_LABELS[cli]} 路由配置`}
-                  >
-                    {applyingCli === cli ? (
-                      <>
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        应用中
-                      </>
-                    ) : (
-                      '应用'
-                    )}
-                  </AppButton>
-                </div>
-              </div>
             </div>
           );
         })}
@@ -1074,7 +1120,12 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
           {content}
         </div>
       ) : (
-        <AppCard data-testid="route-cli-model-section-card" className={className}>
+        <AppCard
+          data-testid="route-cli-model-section-card"
+          className={className}
+          hoverable={false}
+          blur={false}
+        >
           {content}
         </AppCard>
       )}

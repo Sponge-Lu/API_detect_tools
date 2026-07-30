@@ -46,8 +46,8 @@ const ALL_COLUMNS: SiteListColumn[] = [
   { label: '站点', field: 'name' },
   { label: '账户' },
   { label: '刷新时间' },
-  { label: '余额', field: 'balance' },
-  { label: '今日消费', field: 'todayUsage' },
+  { label: '余额', field: 'balance', centered: true },
+  { label: '今日消费', field: 'todayUsage', centered: true },
   { label: '模型数', field: 'modelCount', centered: true },
   { label: 'LDC', field: 'ldcRatio', centered: true },
   { label: 'History', centered: true },
@@ -143,7 +143,7 @@ function HistoryHeaderControls() {
               }}
               className={`flex h-6 w-6 items-center justify-center rounded-[var(--radius-sm)] transition-all ${
                 isSelected
-                  ? 'ring-1 ring-inset ring-[var(--accent)] bg-[var(--accent-soft)] opacity-100'
+                  ? 'bg-[var(--accent-soft)] opacity-100'
                   : 'opacity-45 grayscale hover:opacity-80'
               }`}
             >

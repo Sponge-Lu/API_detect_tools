@@ -1,7 +1,6 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { GlobalCommandBar } from '../renderer/components/AppShell/GlobalCommandBar';
 import { PageHeader } from '../renderer/components/AppShell/PageHeader';
 import { APP_PAGE_META } from '../renderer/components/AppShell/pageMeta';
 import { VerticalSidebar } from '../renderer/components/Sidebar/VerticalSidebar';
@@ -26,28 +25,26 @@ describe('app shell redesign', () => {
     useRouteStore.setState({ serverRunning: false });
   });
 
-  it('keeps the global command bar mounted but hides the saving badge when there is no active top-level status', () => {
-    render(<GlobalCommandBar saving={false} />);
+  it('keeps the merged page header mounted but hides the saving badge when idle', () => {
+    render(<PageHeader title="站点管理" saving={false} />);
 
-    expect(screen.queryByTestId('cli-status-inline')).not.toBeInTheDocument();
-    // R1.5：栏体恒渲染消除布局跳动，仅"保存中"徽标不可见
     const badge = screen.queryByText('保存中...');
     expect(badge).toBeInTheDocument();
     expect(badge?.parentElement).toHaveClass('opacity-0');
   });
 
-  it('renders the global command bar as compact neutral chrome while saving', () => {
-    const { container } = render(<GlobalCommandBar saving={true} />);
+  it('renders the merged page header as a compact single bar while saving', () => {
+    const { container } = render(<PageHeader title="站点管理" saving={true} />);
 
     expect(container.firstElementChild).toHaveClass(
-      'h-[42px]',
+      'h-10',
       'border-[var(--line-soft)]',
-      'bg-[var(--surface-1)]/90',
-      'backdrop-blur-sm'
+      'bg-[var(--surface-1)]/90'
     );
+    expect(screen.getByText('保存中...').parentElement).toHaveClass('opacity-100');
   });
 
-  it('renders the site page header as a compact row with shared theme typography tokens', () => {
+  it('renders the site page header as a compact row with title tooltip from description', () => {
     const { container, queryByText } = render(
       <PageHeader title="站点管理" description="集中维护站点配置、账号、检测结果与日常操作。" />
     );
@@ -59,10 +56,12 @@ describe('app shell redesign', () => {
     expect(screen.getByRole('heading', { name: '站点管理' })).toHaveClass(
       'text-[var(--text-primary)]'
     );
-    expect(screen.getByText('集中维护站点配置、账号、检测结果与日常操作。')).toHaveClass(
-      'text-[var(--text-secondary)]'
+    expect(screen.getByRole('heading', { name: '站点管理' })).toHaveAttribute(
+      'title',
+      '集中维护站点配置、账号、检测结果与日常操作。'
     );
-    expect(container.querySelector('[data-testid="page-header-row"]')).toHaveClass('min-h-[40px]');
+    expect(queryByText('集中维护站点配置、账号、检测结果与日常操作。')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-testid="page-header-row"]')).toHaveClass('h-10');
     expect(queryByText('Workspace')).not.toBeInTheDocument();
   });
 
@@ -504,7 +503,11 @@ describe('app shell redesign', () => {
     expect(screen.getByTestId('cli-status-stacked')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '更新 v3.0.2' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: APP_PAGE_META.sites.title })).toBeInTheDocument();
-    expect(screen.getByText(APP_PAGE_META.sites.description)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: APP_PAGE_META.sites.title })).toHaveAttribute(
+      'title',
+      APP_PAGE_META.sites.description
+    );
+    expect(screen.queryByText(APP_PAGE_META.sites.description)).not.toBeInTheDocument();
     expect(await screen.findByText('Mock Sites Page')).toBeInTheDocument();
     expect(container.querySelector('.app-responsive-container')).not.toBeNull();
     expect(container.querySelector('.ios-responsive-container')).toBeNull();
@@ -1000,7 +1003,11 @@ describe('app shell redesign', () => {
 
     expect(await screen.findByText('Mock Overview Page')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: APP_PAGE_META.overview.title })).toBeInTheDocument();
-    expect(screen.getByText(APP_PAGE_META.overview.description)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: APP_PAGE_META.overview.title })).toHaveAttribute(
+      'title',
+      APP_PAGE_META.overview.description
+    );
+    expect(screen.queryByText(APP_PAGE_META.overview.description)).not.toBeInTheDocument();
     expect(await screen.findByRole('button', { name: '24h' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '7d' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '30d' })).not.toBeInTheDocument();
@@ -1230,7 +1237,11 @@ describe('app shell redesign', () => {
     const savingBadge = screen.queryByText('保存中...');
     expect(savingBadge?.parentElement).toHaveClass('opacity-0');
     expect(screen.getByRole('heading', { name: APP_PAGE_META.route.title })).toBeInTheDocument();
-    expect(screen.getByText(APP_PAGE_META.route.description)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: APP_PAGE_META.route.title })).toHaveAttribute(
+      'title',
+      APP_PAGE_META.route.description
+    );
+    expect(screen.queryByText(APP_PAGE_META.route.description)).not.toBeInTheDocument();
   });
 
   it('removes detection settings from SettingsPanel and keeps sync inputs on AppInput', async () => {

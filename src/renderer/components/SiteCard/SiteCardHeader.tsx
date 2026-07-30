@@ -116,13 +116,13 @@ export function SiteCardHeader({
       </div>
 
       {/* 列 4: 余额 */}
-      <div className="flex flex-col items-end text-right">
+      <div className="flex flex-col items-center justify-center text-center">
         {!isCustomCli &&
         siteResult &&
         siteResult.balance !== undefined &&
         siteResult.balance !== null ? (
           <span
-            className={`truncate font-mono font-semibold tabular-nums ${
+            className={`tnum truncate font-mono font-semibold tabular-nums ${
               siteResult.balance === -1 ? 'text-[var(--warning)]' : 'text-[var(--success)]'
             }`}
           >
@@ -134,10 +134,10 @@ export function SiteCardHeader({
       </div>
 
       {/* 列 5: 今日消费 */}
-      <div className="flex flex-col items-end text-right">
+      <div className="flex flex-col items-center justify-center text-center">
         {!isCustomCli && siteResult && siteResult.todayUsage !== undefined ? (
           <span
-            className={`truncate font-mono font-semibold tabular-nums ${
+            className={`tnum truncate font-mono font-semibold tabular-nums ${
               siteResult.todayUsage === 0 ? 'text-[var(--text-tertiary)]' : 'text-[var(--warning)]'
             }`}
           >
