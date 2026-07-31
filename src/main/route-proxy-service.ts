@@ -972,6 +972,13 @@ interface ParsedSseBlock {
   data: string;
 }
 
+interface StreamingSseObservationState {
+  buffer: Buffer;
+  errorSeen: boolean;
+  nextSequenceNumber: number;
+  terminalSeen: boolean;
+}
+
 interface AnthropicSseCompatibilityNormalizerState {
   buffer: string;
   openBlocks: Map<number, { type: string }>;
@@ -1093,21 +1100,45 @@ function hasAnthropicMessageStop(body: Buffer): boolean {
   return false;
 }
 
-function buildStreamingErrorChunk(cliType: RouteCliType, message: string): Buffer {
-  const payload =
-    cliType === 'claudeCode'
-      ? { type: 'error', error: { type: 'api_error', message } }
-      : { type: 'error', error: { type: 'server_error', message } };
+function buildStreamingErrorChunk(
+  protocol: StreamingTerminalProtocol,
+  message: string,
+  sequenceNumber = 0
+): Buffer {
+  if (protocol === 'anthropic') {
+    return Buffer.from(
+      `event: error\ndata: ${JSON.stringify({
+        type: 'error',
+        error: { type: 'api_error', message },
+      })}\n\n`,
+      'utf-8'
+    );
+  }
 
-  return Buffer.from(`event: error\ndata: ${JSON.stringify(payload)}\n\n`, 'utf-8');
-}
+  if (protocol === 'openaiResponses') {
+    return Buffer.from(
+      `event: error\ndata: ${JSON.stringify({
+        type: 'error',
+        code: 'upstream_stream_error',
+        message,
+        param: null,
+        sequence_number: sequenceNumber,
+      })}\n\n`,
+      'utf-8'
+    );
+  }
 
-function buildIncompleteStreamingErrorChunk(cliType: RouteCliType): Buffer {
-  return buildStreamingErrorChunk(cliType, 'upstream stream ended before terminal SSE event');
-}
-
-function buildMalformedStreamingErrorChunk(cliType: RouteCliType, message: string): Buffer {
-  return buildStreamingErrorChunk(cliType, message);
+  return Buffer.from(
+    `data: ${JSON.stringify({
+      error: {
+        message,
+        type: 'server_error',
+        code: 'upstream_stream_error',
+        param: null,
+      },
+    })}\n\n`,
+    'utf-8'
+  );
 }
 
 function parseSseBlocks(text: string): ParsedSseBlock[] {
@@ -1133,6 +1164,86 @@ function parseSseBlocks(text: string): ParsedSseBlock[] {
   }
 
   return blocks;
+}
+
+function createStreamingSseObservationState(
+  protocol: StreamingTerminalProtocol
+): StreamingSseObservationState {
+  return {
+    buffer: Buffer.alloc(0),
+    errorSeen: false,
+    nextSequenceNumber: 0,
+    terminalSeen: protocol === 'none',
+  };
+}
+
+function observeStreamingSseBlock(
+  state: StreamingSseObservationState,
+  protocol: StreamingTerminalProtocol,
+  block: ParsedSseBlock
+): void {
+  if (block.data === '[DONE]') {
+    state.terminalSeen = true;
+    return;
+  }
+
+  const payload = parseSseJsonRecord(block.data);
+  const eventType = readString(payload?.type) || block.event || '';
+  const sequenceNumber = payload?.sequence_number;
+  if (
+    typeof sequenceNumber === 'number' &&
+    Number.isSafeInteger(sequenceNumber) &&
+    sequenceNumber >= state.nextSequenceNumber
+  ) {
+    state.nextSequenceNumber = sequenceNumber + 1;
+  }
+
+  if (eventType === 'error' || asRecord(payload?.error)) {
+    state.errorSeen = true;
+    state.terminalSeen = true;
+    return;
+  }
+
+  if (protocol === 'anthropic') {
+    state.terminalSeen = state.terminalSeen || eventType === 'message_stop';
+    return;
+  }
+
+  if (protocol === 'openaiResponses') {
+    state.terminalSeen =
+      state.terminalSeen ||
+      eventType === 'response.completed' ||
+      eventType === 'response.failed' ||
+      eventType === 'response.incomplete';
+  }
+}
+
+function observeStreamingSseChunk(
+  state: StreamingSseObservationState,
+  protocol: StreamingTerminalProtocol,
+  chunk: Buffer,
+  flush = false
+): void {
+  if (chunk.length) {
+    state.buffer = state.buffer.length ? Buffer.concat([state.buffer, chunk]) : chunk;
+  }
+
+  for (;;) {
+    const frameEnd = findSseFrameEnd(state.buffer);
+    if (frameEnd < 0) break;
+    const frame = state.buffer.subarray(0, frameEnd);
+    state.buffer = state.buffer.subarray(frameEnd);
+    for (const block of parseSseBlocks(frame.toString('utf-8'))) {
+      observeStreamingSseBlock(state, protocol, block);
+    }
+  }
+
+  if (flush && state.buffer.length) {
+    for (const block of parseSseBlocks(state.buffer.toString('utf-8'))) {
+      observeStreamingSseBlock(state, protocol, block);
+    }
+    state.buffer = Buffer.alloc(0);
+  }
 }
 
 function createAnthropicSseCompatibilityNormalizer(): AnthropicSseCompatibilityNormalizerState {
@@ -2958,6 +3069,7 @@ async function forwardToUpstream(
     options.nativeResponsePassthrough && streamingTerminalProtocol === 'anthropic'
       ? createNativeAnthropicSseGuard()
       : null;
+  const streamingObservation = createStreamingSseObservationState(streamingTerminalProtocol);
   let streamingTerminalScanText = '';
   let streamingTerminalSeen = streamingTerminalProtocol === 'none';
   let streamingCompletionValidated = false;
@@ -2965,8 +3077,33 @@ async function forwardToUpstream(
   const inspectNativeOpenAiResponsesBeforeCommit =
     options.nativeResponsePassthrough && streamingTerminalProtocol === 'openaiResponses';
 
+  const writeStreamingError = async (message: string): Promise<void> => {
+    if (
+      !streamed ||
+      streamingObservation.errorSeen ||
+      options.streamResponse?.writableEnded ||
+      options.streamResponse?.destroyed
+    ) {
+      return;
+    }
+
+    streamingObservation.errorSeen = true;
+    streamingObservation.terminalSeen = true;
+    streamingTerminalSeen = true;
+    await writeResponseChunk(
+      options.streamResponse!,
+      buildStreamingErrorChunk(
+        streamingTerminalProtocol,
+        message,
+        streamingObservation.nextSequenceNumber
+      )
+    );
+  };
+
   const processStreamingOutgoingChunk = async (outgoingChunk: Buffer): Promise<void> => {
     if (!streamingStatusCode || !streamingHeaders || !outgoingChunk.length) return;
+    observeStreamingSseChunk(streamingObservation, streamingTerminalProtocol, outgoingChunk);
+    streamingTerminalSeen = streamingTerminalSeen || streamingObservation.terminalSeen;
     if (
       !options.nativeResponsePassthrough ||
       (inspectNativeOpenAiResponsesBeforeCommit && !streamed)
@@ -3023,10 +3160,7 @@ async function forwardToUpstream(
           );
           if (!completedValidation.ok) {
             if (streamed) {
-              await writeResponseChunk(
-                options.streamResponse!,
-                buildMalformedStreamingErrorChunk(cliType, completedValidation.message)
-              );
+              await writeStreamingError(completedValidation.message);
             }
             throw new Error(`malformed_streaming_response:${completedValidation.reason}`);
           }
@@ -3103,50 +3237,67 @@ async function forwardToUpstream(
     await writeResponseChunk(options.streamResponse!, outgoingChunk);
   };
 
-  const response =
-    options.streamResponse && options.streamResponseBody
-      ? await httpRawStreamRequest(target.url, {
-          ...requestConfig,
-          onResponse: upstreamResponse => {
-            const statusCode = upstreamResponse.status || 500;
-            if (classifyRouteStatusCode(statusCode) !== 'success') return false;
-            if (!isEventStreamResponse(upstreamResponse.headers)) {
-              streamingRejectedBeforeBody = 'unexpected_content_type';
-              return false;
-            }
+  let response: Awaited<ReturnType<typeof httpRawRequest>>;
+  try {
+    response =
+      options.streamResponse && options.streamResponseBody
+        ? await httpRawStreamRequest(target.url, {
+            ...requestConfig,
+            onResponse: upstreamResponse => {
+              const statusCode = upstreamResponse.status || 500;
+              if (classifyRouteStatusCode(statusCode) !== 'success') return false;
+              if (!isEventStreamResponse(upstreamResponse.headers)) {
+                streamingRejectedBeforeBody = 'unexpected_content_type';
+                return false;
+              }
 
-            streamingStatusCode = statusCode;
-            streamingHeaders = buildStreamingResponseHeaders(upstreamResponse.headers);
-            return true;
-          },
-          onChunk: async chunk => {
-            if (!streamingStatusCode || !streamingHeaders) return;
-            try {
-              const outgoingChunks = nativeAnthropicStreamGuard
-                ? processNativeAnthropicSseGuardChunk(nativeAnthropicStreamGuard, chunk)
-                : [
-                    anthropicStreamNormalizer
-                      ? normalizeAnthropicSseCompatibilityChunk(anthropicStreamNormalizer, chunk)
-                      : chunk,
-                  ];
-              for (const outgoingChunk of outgoingChunks) {
-                await processStreamingOutgoingChunk(outgoingChunk);
+              streamingStatusCode = statusCode;
+              streamingHeaders = buildStreamingResponseHeaders(upstreamResponse.headers);
+              return true;
+            },
+            onChunk: async chunk => {
+              if (!streamingStatusCode || !streamingHeaders) return;
+              try {
+                const outgoingChunks = nativeAnthropicStreamGuard
+                  ? processNativeAnthropicSseGuardChunk(nativeAnthropicStreamGuard, chunk)
+                  : [
+                      anthropicStreamNormalizer
+                        ? normalizeAnthropicSseCompatibilityChunk(anthropicStreamNormalizer, chunk)
+                        : chunk,
+                    ];
+                for (const outgoingChunk of outgoingChunks) {
+                  await processStreamingOutgoingChunk(outgoingChunk);
+                }
+              } catch (error: unknown) {
+                if (streamed && error instanceof NativeAnthropicSseGuardError) {
+                  await writeStreamingError(readStreamingValidationMessage(error));
+                }
+                throw error;
               }
-            } catch (error: unknown) {
-              if (streamed && error instanceof NativeAnthropicSseGuardError) {
-                await writeResponseChunk(
-                  options.streamResponse!,
-                  buildMalformedStreamingErrorChunk(cliType, readStreamingValidationMessage(error))
-                );
-              }
-              throw error;
-            }
-          },
-          streamIdleTimeout: options.streamIdleTimeoutMs,
-          shouldResolveOnAbort: () =>
-            !options.nativeResponsePassthrough && streamed && streamingCompletionValidated,
-        })
-      : await httpRawRequest(target.url, requestConfig);
+            },
+            streamIdleTimeout: options.streamIdleTimeoutMs,
+            shouldResolveOnAbort: () =>
+              !options.nativeResponsePassthrough && streamed && streamingCompletionValidated,
+          })
+        : await httpRawRequest(target.url, requestConfig);
+  } catch (error: unknown) {
+    observeStreamingSseChunk(
+      streamingObservation,
+      streamingTerminalProtocol,
+      Buffer.alloc(0),
+      true
+    );
+    streamingTerminalSeen = streamingTerminalSeen || streamingObservation.terminalSeen;
+    if (
+      streamed &&
+      !options.signal?.aborted &&
+      !streamingObservation.errorSeen &&
+      !streamingObservation.terminalSeen
+    ) {
+      await writeStreamingError('upstream stream terminated unexpectedly');
+    }
+    throw error;
+  }
 
   if (options.streamResponse && options.streamResponseBody && anthropicStreamNormalizer) {
     await processStreamingOutgoingChunk(
@@ -3161,10 +3312,7 @@ async function forwardToUpstream(
       }
     } catch (error: unknown) {
       if (streamed && error instanceof NativeAnthropicSseGuardError) {
-        await writeResponseChunk(
-          options.streamResponse,
-          buildMalformedStreamingErrorChunk(cliType, readStreamingValidationMessage(error))
-        );
+        await writeStreamingError(readStreamingValidationMessage(error));
       }
       throw error;
     }
@@ -3195,6 +3343,8 @@ async function forwardToUpstream(
   const completedStreamingBody = options.nativeResponsePassthrough
     ? response.body
     : Buffer.concat(receivedStreamingChunks);
+  observeStreamingSseChunk(streamingObservation, streamingTerminalProtocol, Buffer.alloc(0), true);
+  streamingTerminalSeen = streamingTerminalSeen || streamingObservation.terminalSeen;
   const upstreamStreamingFailureCode = findUpstreamStreamingFailureCode(completedStreamingBody);
 
   if (
@@ -3209,11 +3359,12 @@ async function forwardToUpstream(
   if (
     options.streamResponse &&
     options.streamResponseBody &&
-    !options.nativeResponsePassthrough &&
     streamed &&
-    !streamingTerminalSeen
+    streamingTerminalProtocol !== 'none' &&
+    !streamingTerminalSeen &&
+    !streamingObservation.errorSeen
   ) {
-    await writeResponseChunk(options.streamResponse, buildIncompleteStreamingErrorChunk(cliType));
+    await writeStreamingError('upstream stream ended before terminal SSE event');
     throw new Error('incomplete_streaming_response:missing_terminal_event');
   }
 
@@ -3228,10 +3379,7 @@ async function forwardToUpstream(
       completedStreamingBody
     );
     if (!completedValidation.ok) {
-      await writeResponseChunk(
-        options.streamResponse,
-        buildMalformedStreamingErrorChunk(cliType, completedValidation.message)
-      );
+      await writeStreamingError(completedValidation.message);
       throw new Error(`malformed_streaming_response:${completedValidation.reason}`);
     }
   }

@@ -2979,14 +2979,14 @@ describe('route-proxy-service OpenCode native endpoint routing', () => {
     );
   });
 
-  it('preserves OpenCode native stream passthrough after resolving its concrete endpoint', async () => {
+  it('marks an incomplete OpenCode native stream as failed after resolving its endpoint', async () => {
     vi.clearAllMocks();
     setupOpenCodeRoute({
       detectedCliType: 'codex',
       channelTargetProtocol: 'native',
     });
     const partialChunk = Buffer.from(
-      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"partial"}\n\n'
+      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"partial","sequence_number":2}\n\n'
     );
     const upstreamHeaders = { 'content-type': 'text/event-stream' };
     vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
@@ -3014,12 +3014,13 @@ describe('route-proxy-service OpenCode native endpoint routing', () => {
       'https://opencode-upstream.example.com/v1/responses',
       expect.objectContaining({ method: 'POST', preferElectronNet: true })
     );
-    expect(response.body).toBe(partialChunk.toString('utf-8'));
-    expect(response.body).not.toContain('event: error');
+    expect(response.body).toContain(partialChunk.toString('utf-8'));
+    expect(response.body).toContain('event: error');
+    expect(response.body).toContain('"sequence_number":3');
     expect(recordRoutePathOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ targetProtocol: 'openai-responses' }),
-      'success',
-      expect.objectContaining({ statusCode: 200 }),
+      'failure',
+      expect.objectContaining({ error: 'incomplete_streaming_response:missing_terminal_event' }),
       expect.any(Object)
     );
   });
@@ -5615,7 +5616,10 @@ describe('route-proxy-service probe lock', () => {
 });
 
 describe('route-proxy-service SSE streaming passthrough', () => {
-  function setupStreamingRoute(cliType: 'claudeCode' | 'codex', model: string) {
+  function setupStreamingRoute(
+    cliType: 'claudeCode' | 'codex' | 'openCode' | 'grokBuild',
+    model: string
+  ) {
     const rule = {
       id: `rule-${cliType}-stream`,
       cliType,
@@ -5630,6 +5634,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       cliType,
       canonicalModel: model,
       resolvedModel: model,
+      targetProtocol: 'native' as const,
     };
     const routing = {
       server: {
@@ -5641,6 +5646,8 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       cliModelSelections: {
         claudeCode: null,
         codex: null,
+        openCode: null,
+        grokBuild: null,
       },
       modelRegistry: {
         version: 1,
@@ -5992,6 +5999,126 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     );
   });
 
+  it.each([
+    { cliType: 'claudeCode', path: '/v1/messages', protocol: 'anthropic' },
+    { cliType: 'codex', path: '/v1/responses', protocol: 'openaiResponses' },
+    { cliType: 'openCode', path: '/v1/messages', protocol: 'anthropic' },
+    { cliType: 'openCode', path: '/v1/responses', protocol: 'openaiResponses' },
+    { cliType: 'openCode', path: '/v1/chat/completions', protocol: 'openaiChat' },
+    { cliType: 'grokBuild', path: '/v1/messages', protocol: 'anthropic' },
+    { cliType: 'grokBuild', path: '/v1/responses', protocol: 'openaiResponses' },
+    { cliType: 'grokBuild', path: '/v1/chat/completions', protocol: 'openaiChat' },
+  ] as const)(
+    'emits a $protocol error when $cliType transport fails after stream commit',
+    async ({ cliType, path, protocol }) => {
+      vi.clearAllMocks();
+      const model = protocol === 'anthropic' ? 'claude-opus-4-6' : 'gpt-5.6-sol';
+      const channel = setupStreamingRoute(cliType, model);
+      const partialChunk =
+        protocol === 'anthropic'
+          ? Buffer.from(
+              [
+                'event: message_start',
+                'data: {"type":"message_start","message":{"id":"msg_partial","type":"message","role":"assistant","model":"claude-opus-4-6","content":[],"stop_reason":null,"usage":{"input_tokens":1,"output_tokens":0}}}',
+                '',
+                'event: content_block_start',
+                'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+                '',
+                'event: content_block_delta',
+                'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}',
+                '',
+                '',
+              ].join('\n'),
+              'utf-8'
+            )
+          : protocol === 'openaiResponses'
+            ? Buffer.from(
+                'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"partial","sequence_number":7}\n\n'
+              )
+            : Buffer.from(
+                'data: {"id":"chatcmpl_partial","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"partial"}}]}\n\n'
+              );
+      const upstreamHeaders = { 'content-type': 'text/event-stream' };
+
+      vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
+        expect(
+          config.onResponse?.({ status: 200, statusText: 'OK', headers: upstreamHeaders })
+        ).toBe(true);
+        await config.onChunk?.(partialChunk);
+        throw new Error('net::ERR_INCOMPLETE_CHUNKED_ENCODING');
+      });
+
+      const request = createJsonRequest(
+        path,
+        {
+          authorization: 'Bearer sk-route',
+          'x-api-key': 'sk-route',
+          'content-type': 'application/json',
+        },
+        {
+          model,
+          stream: true,
+          input: 'hi',
+          messages: [{ role: 'user', content: 'hi' }],
+        }
+      );
+      const response = createMockResponse();
+
+      await handleRequest(request, response);
+
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain('partial');
+      expect(response.body).not.toContain('[DONE]');
+      const errorDataLine = response.body
+        .split(/\r?\n/)
+        .find(line => line.startsWith('data: ') && line.includes('upstream_stream_error'));
+
+      if (protocol === 'anthropic') {
+        expect(response.body.match(/event: error/g)).toHaveLength(1);
+        const anthropicErrorLine = response.body
+          .split(/\r?\n/)
+          .find(line => line.startsWith('data: ') && line.includes('"type":"api_error"'));
+        expect(JSON.parse(anthropicErrorLine!.slice('data: '.length))).toMatchObject({
+          type: 'error',
+          error: { type: 'api_error' },
+        });
+      } else if (protocol === 'openaiResponses') {
+        expect(response.body.match(/event: error/g)).toHaveLength(1);
+        expect(JSON.parse(errorDataLine!.slice('data: '.length))).toMatchObject({
+          type: 'error',
+          code: 'upstream_stream_error',
+          param: null,
+          sequence_number: 8,
+        });
+      } else {
+        expect(response.body).not.toContain('event: error');
+        expect(response.body.match(/"code":"upstream_stream_error"/g)).toHaveLength(1);
+        expect(JSON.parse(errorDataLine!.slice('data: '.length))).toMatchObject({
+          error: {
+            type: 'server_error',
+            code: 'upstream_stream_error',
+            param: null,
+          },
+        });
+      }
+
+      expect(httpRawStreamRequest).toHaveBeenCalledTimes(1);
+      expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+        expect.objectContaining({ apiKeyId: channel.apiKeyId }),
+        'failure',
+        expect.objectContaining({ error: 'net::ERR_INCOMPLETE_CHUNKED_ENCODING' }),
+        expect.any(Object)
+      );
+      expect(recordRouteRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cliType,
+          apiKeyId: channel.apiKeyId,
+          outcome: 'failure',
+        })
+      );
+    }
+  );
+
   it('accepts response.incomplete as a terminal Responses event when output is present', async () => {
     vi.clearAllMocks();
     const model = 'gpt-5.6-sol';
@@ -6293,7 +6420,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     );
   });
 
-  it('forwards native streams that end without a terminal event unchanged', async () => {
+  it('emits a Responses error when a native stream ends without a terminal event', async () => {
     vi.clearAllMocks();
 
     const rule = {
@@ -6342,7 +6469,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       },
     };
     const incompleteChunk = Buffer.from(
-      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"partial"}\n\n'
+      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"partial","sequence_number":4}\n\n'
     );
 
     Object.assign(unifiedConfigManager, {
@@ -6396,18 +6523,20 @@ describe('route-proxy-service SSE streaming passthrough', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain('response.output_text.delta');
-    expect(response.body).toBe(incompleteChunk.toString('utf-8'));
-    expect(response.body).not.toContain('event: error');
+    expect(response.body).toContain('event: error');
+    expect(response.body).toContain('"code":"upstream_stream_error"');
+    expect(response.body).toContain('"sequence_number":5');
     expect(recordRoutePathOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ apiKeyId: 'key-openai' }),
-      'success',
-      expect.objectContaining({ statusCode: 200 }),
+      'failure',
+      expect.objectContaining({ error: 'incomplete_streaming_response:missing_terminal_event' }),
       expect.any(Object)
     );
     expect(recordRouteRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         apiKeyId: 'key-openai',
-        outcome: 'success',
+        outcome: 'failure',
+        error: 'incomplete_streaming_response:missing_terminal_event',
       })
     );
   });
@@ -7185,6 +7314,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     expect(response.body).not.toContain('event: content_block_delta');
     expect(response.body).not.toContain('event: message_stop');
     expect(response.body).toContain('event: error');
+    expect(response.body.match(/event: error/g)).toHaveLength(1);
     expect(response.body).toContain('invalid Anthropic content block start');
     expect(httpRawStreamRequest).toHaveBeenCalledTimes(1);
     expect(recordRoutePathOutcome).toHaveBeenCalledWith(
