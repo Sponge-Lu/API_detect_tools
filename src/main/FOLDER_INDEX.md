@@ -31,10 +31,10 @@
 | **config-field-crypto.ts** | 配置字段 AES-256-GCM 加密/解密，应用固定密钥版本化，在磁盘 I/O 边界透明加解密敏感字段（api_key, access_token, apiKey） | `encryptField()`, `decryptField()`, `encryptConfigFields()`, `decryptConfigFields()`, `encryptCustomCliConfigs()`, `decryptCustomCliConfigs()` |
 | **api-service.ts** | API 请求服务、模型接口响应格式容错、NewAPI/Sub2API 认证失败 envelope 识别、检测状态持久化、同日手动签到完成状态保留、旧站点首次检测时自动写回 `site_type`，并在缓存更新后触发站点每日快照采集 | `ApiService` 类 |
 | **overview-service.ts** | 数据总览聚合服务，维护站点每日快照的采集、查询和按日期汇总 | `captureSiteDailySnapshot()`, `getSiteDailySnapshots()`, `getSiteSnapshotTotals()` |
-| **chrome-manager.ts** | Chrome 浏览器管理、多槽位架构、独立登录浏览器（loginBrowserState）、按 site_type 解析登录态，提供页面级登录态重读入口，并支持复用账户 Profile 打开签到页 | `ChromeManager` 类 |
+| **chrome-manager.ts** | Chrome 浏览器管理、多槽位架构、独立登录浏览器（loginBrowserState）、按目标域动态选择登录页面；兼容 legacy localStorage/Cookie 与 New API refresh AuthBundle，并仅用短期 Bearer 初始化长期 PAT；提供页面级登录态重读入口和账户 Profile 签到页复用 | `ChromeManager` 类 |
 | **site-type-registry.ts** | 站点类型到初始化/端点/行为的注册表 | `getSiteTypeProfile()`, `resolveSiteType()` |
 | **site-type-detector.ts** | 智能添加初始化前的站点类型自动识别 | `detectSiteType()` |
-| **token-service.ts** | Token 认证服务，初始化阶段按 site_type 选择端点与 access token 策略，Sub2API 可从浏览器登录态重读并校验 JWT，显式 `site_type` 可覆盖 URL 反查；支持按账户浏览器槽位刷新 user_id/username/access_token 并在 token 无效时重建；按 site_type 驱动签到/浏览器回退端点，统一识别 Unauthorized/invalid access token 失败 envelope，并在 NewAPI 脱敏 API Key 列表中优先使用 `/api/token/batch/keys` 批量补全明文 key | `TokenService` 类 |
+| **token-service.ts** | Token 认证服务，初始化阶段按 site_type 选择端点与 access token 策略，新版 New API 短期 session Bearer 仅用于创建长期 PAT；Sub2API 可从浏览器登录态重读并校验 JWT，显式 `site_type` 可覆盖 URL 反查；支持按账户浏览器槽位刷新 user_id/username/access_token 并在 token 无效时重建；统一识别认证失败 envelope，并在 NewAPI 脱敏 API Key 列表中优先使用 `/api/token/batch/keys` 批量补全明文 key | `TokenService` 类 |
 | **cli-compat-service.ts** | Claude Code / Codex 协议级兼容性测试；保留旧 OpenCode 结果字段用于历史数据兼容 | `CliCompatService` 类 |
 | **cli-wrapper-compat-service.ts** | 基于真实 Claude Code / Codex wrapper 的兼容性测试；当前 UI 测试主路径，使用临时 HOME/CODEX_HOME 隔离环境，监听 route probe-lock 请求/终止失败以提前停止确定性失败测试，并在 CLI 二次请求先触发 probe-lock 限制时等待/回看首次真实上游结果避免误判，Claude JSON 错误会摘要化，清理临时目录时会重试并避免 Windows 文件锁覆盖真实测试结果 | `CliWrapperCompatService` 类 |
 | **custom-cli-config-service.ts** | 自定义 CLI 配置持久化服务，并为路由生成自定义 CLI 虚拟站点/账户/API Key 标识 | `loadCustomCliConfigStorage()`, `buildCustomCliRouteSiteId()` |

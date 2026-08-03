@@ -426,7 +426,16 @@ export class TokenService {
 
         try {
           accessToken = loginMode
-            ? await this.chromeManager.createAccessTokenForLogin(resolvedBaseUrl, localData.userId)
+            ? localData.sessionAccessToken
+              ? await this.chromeManager.createAccessTokenForLogin(
+                  resolvedBaseUrl,
+                  localData.userId,
+                  localData.sessionAccessToken
+                )
+              : await this.chromeManager.createAccessTokenForLogin(
+                  resolvedBaseUrl,
+                  localData.userId
+                )
             : await this.createAccessToken(resolvedBaseUrl, localData.userId);
           if (!accessToken) {
             throw new Error('浏览器未返回有效访问令牌');

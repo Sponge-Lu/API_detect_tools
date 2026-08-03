@@ -14,6 +14,8 @@
  * - auth_user / auth_token 可作为登录凭据读取，但不能单独推断为 Sub2API
  * - 登录验证的 protected API 请求必须由主进程携带浏览器 Cookie 发起，避免 CSP/CORS
  *   阻断页面内 fetch 后让智能添加卡在“等待登录中”
+ * - 新版 New API 通过 refresh Cookie 换取短期 Bearer，短期 Bearer 仅用于初始化长期 PAT
+ * - 登录轮询每轮重新按目标域名选择页面，避免 OAuth 弹窗或新标签页导致读取错误页面
  *
  * LocalStorageData 签到字段支持两种站点类型:
  * - Veloera: check_in_enabled, can_check_in
@@ -53,6 +55,7 @@ interface LocalStorageData {
   username: string | null;
   systemName: string | null;
   accessToken: string | null;
+  sessionAccessToken?: string | null;
   siteTypeHint?: SiteType | null;
   resolvedBaseUrl?: string | null;
   dataSource?: 'localStorage' | 'api' | 'mixed';
@@ -973,7 +976,11 @@ export class ChromeManager {
    * 在登录浏览器中创建 access token（通过浏览器上下文调用 /api/user/token）
    * 与 TokenService.createAccessToken 逻辑一致，但使用 loginBrowserState
    */
-  async createAccessTokenForLogin(baseUrl: string, userId: number): Promise<string | null> {
+  async createAccessTokenForLogin(
+    baseUrl: string,
+    userId: number,
+    sessionAccessToken?: string
+  ): Promise<string | null> {
     if (!this.loginBrowserState?.browser) return null;
 
     const page = await this.resolveBestPageForUrl(this.loginBrowserState.browser, baseUrl);
@@ -989,19 +996,25 @@ export class ChromeManager {
       const apiUrl = `${effectiveBaseUrl}/api/user/token`;
 
       const token = await page.evaluate(
-        async (url: string, uid: number) => {
+        async (url: string, uid: number, bearerToken?: string) => {
+          const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store',
+            Pragma: 'no-cache',
+          };
+          if (bearerToken) {
+            headers.Authorization = `Bearer ${bearerToken}`;
+          } else {
+            headers['New-API-User'] = uid.toString();
+            headers['Veloera-User'] = uid.toString();
+            headers['voapi-user'] = uid.toString();
+            headers['User-id'] = uid.toString();
+          }
+
           const response = await fetch(url, {
             method: 'GET',
             credentials: 'include',
-            headers: {
-              'Content-Type': 'application/json',
-              'New-API-User': uid.toString(),
-              'Veloera-User': uid.toString(),
-              'voapi-user': uid.toString(),
-              'User-id': uid.toString(),
-              'Cache-Control': 'no-store',
-              Pragma: 'no-cache',
-            },
+            headers,
           });
 
           if (!response.ok) {
@@ -1016,7 +1029,8 @@ export class ChromeManager {
           return data.data as string;
         },
         apiUrl,
-        userId
+        userId,
+        sessionAccessToken
       );
 
       Logger.info('✅ [ChromeManager] access token 创建成功');
@@ -1128,6 +1142,11 @@ export class ChromeManager {
     );
   }
 
+  private isTerminalModernAuthError(error: unknown): boolean {
+    const message = String((error as { message?: string } | null | undefined)?.message || '');
+    return /^新版登录会话刷新失败 \(HTTP (401|403|409)\)/.test(message);
+  }
+
   private async resolveEffectiveBaseUrl(
     page: Page,
     baseUrl: string,
@@ -1236,12 +1255,10 @@ export class ChromeManager {
       throw new Error(loginMode ? '登录浏览器未启动' : '浏览器未启动');
     }
 
-    const pages = await activeBrowser.pages();
-    if (pages.length === 0) {
+    let page = await this.resolveBestPageForUrl(activeBrowser, url);
+    if (!page) {
       throw new Error('没有打开的页面');
     }
-
-    const page = pages[0];
 
     // 等待页面稳定并读取 localStorage（处理重定向、Cloudflare 验证等）
     onStatus?.('等待页面加载...');
@@ -1272,7 +1289,7 @@ export class ChromeManager {
           // API也没有数据，进入等待循环
           onStatus?.('未检测到登录，请在浏览器中登录账号...');
           localData = await this.waitForUserLogin(
-            page,
+            activeBrowser,
             url,
             maxWaitTime,
             onStatus,
@@ -1288,11 +1305,15 @@ export class ChromeManager {
         ) {
           throw apiError;
         }
+        if (this.isTerminalModernAuthError(apiError)) {
+          onStatus?.('新版登录会话无效，请重新登录后重试');
+          throw apiError;
+        }
         Logger.info(`ℹ️ [ChromeManager] API验证失败: ${apiError.message}，进入等待循环...`);
         // API失败（可能401/403），进入等待循环
         onStatus?.('登录状态无效，请在浏览器中登录账号...');
         localData = await this.waitForUserLogin(
-          page,
+          activeBrowser,
           url,
           maxWaitTime,
           onStatus,
@@ -1306,7 +1327,13 @@ export class ChromeManager {
       Logger.info('   - userId:', localData.userId);
       Logger.info('   - username:', localData.username || '未获取');
       Logger.info('   - accessToken:', localData.accessToken ? '已获取' : '未获取');
+      Logger.info(
+        '   - sessionAccessToken:',
+        localData.sessionAccessToken ? '已获取（仅当前初始化使用）' : '未获取'
+      );
     }
+
+    page = (await this.resolveBestPageForUrl(activeBrowser, url)) || page;
 
     const hasFreshApiData = localData.dataSource === 'api' || localData.dataSource === 'mixed';
 
@@ -1334,6 +1361,9 @@ export class ChromeManager {
         ) {
           throw apiError;
         }
+        if (this.isTerminalModernAuthError(apiError)) {
+          throw apiError;
+        }
         Logger.error('❌ [ChromeManager] API补全失败:', apiError.message);
 
         // 如果 API 返回 401 或其他认证错误，说明 session 过期，需要重新登录
@@ -1346,7 +1376,7 @@ export class ChromeManager {
           Logger.info('🔄 [ChromeManager] 检测到登录状态无效，等待用户重新登录...');
           onStatus?.('登录状态已过期，请在浏览器中重新登录...');
           localData = await this.waitForUserLogin(
-            page,
+            activeBrowser,
             url,
             maxWaitTime,
             onStatus,
@@ -1362,6 +1392,7 @@ export class ChromeManager {
       }
     }
 
+    page = (await this.resolveBestPageForUrl(activeBrowser, url)) || page;
     const resolvedBaseUrl = await this.resolveEffectiveBaseUrl(page, url, loginMode);
     localData = { ...localData, resolvedBaseUrl };
 
@@ -1681,7 +1712,7 @@ export class ChromeManager {
    * @returns 登录后的localStorage数据
    */
   private async waitForUserLogin(
-    page: Page,
+    browser: Browser,
     baseUrl: string,
     maxWaitTime: number,
     onStatus?: (status: string) => void,
@@ -1710,6 +1741,11 @@ export class ChromeManager {
       );
       onStatus?.(`等待登录中... (${elapsedTime}s)`);
 
+      const page = await this.resolveBestPageForUrl(browser, baseUrl);
+      if (!page) {
+        throw new Error('没有打开的页面');
+      }
+
       // 检查localStorage
       try {
         const localData = await this.tryGetFromLocalStorage(page);
@@ -1736,6 +1772,9 @@ export class ChromeManager {
               apiError.message.includes('浏览器已关闭') ||
               apiError.message.includes('操作已被取消')
             ) {
+              throw apiError;
+            }
+            if (this.isTerminalModernAuthError(apiError)) {
               throw apiError;
             }
             if (this.isLikelyAuthError(apiError)) {
@@ -1768,6 +1807,9 @@ export class ChromeManager {
             ) {
               throw apiError;
             }
+            if (this.isTerminalModernAuthError(apiError)) {
+              throw apiError;
+            }
             // API失败不影响继续等待
             Logger.info(`ℹ️ [ChromeManager] API检查失败: ${apiError.message}，继续等待...`);
           }
@@ -1775,6 +1817,9 @@ export class ChromeManager {
       } catch (error: any) {
         // 如果是浏览器关闭错误，直接抛出
         if (error.message.includes('浏览器已关闭') || error.message.includes('操作已被取消')) {
+          throw error;
+        }
+        if (this.isTerminalModernAuthError(error)) {
           throw error;
         }
         Logger.warn('⚠️ [ChromeManager] 检查登录状态时出错:', error.message);
@@ -1787,6 +1832,10 @@ export class ChromeManager {
 
     Logger.info('⏰ [ChromeManager] 等待超时，最后尝试API回退...');
     try {
+      const page = await this.resolveBestPageForUrl(browser, baseUrl);
+      if (!page) {
+        throw new Error('没有打开的页面');
+      }
       const apiData = await this.getUserDataFromApi(page, baseUrl, siteType, loginMode);
       if (apiData.userId) {
         Logger.info(`✅ [ChromeManager] 通过API检测到用户登录！用户ID: ${apiData.userId}`);
@@ -1796,6 +1845,9 @@ export class ChromeManager {
     } catch (apiError: any) {
       // 如果是浏览器关闭错误，直接抛出
       if (apiError.message.includes('浏览器已关闭') || apiError.message.includes('操作已被取消')) {
+        throw apiError;
+      }
+      if (this.isTerminalModernAuthError(apiError)) {
         throw apiError;
       }
       Logger.info(`ℹ️ [ChromeManager] 最后API检查也失败: ${apiError.message}`);
@@ -2288,9 +2340,42 @@ export class ChromeManager {
 
     const cleanBaseUrl = await this.resolveEffectiveBaseUrl(page, baseUrl, loginMode);
 
-    const endpoints = getSiteTypeProfile(siteType).initializationUserEndpoints;
-
     let lastError: any = null;
+
+    if (loginMode && (siteType === undefined || siteType === 'newapi')) {
+      try {
+        const modernAuthData = await this.getModernAuthDataFromRefresh(
+          page,
+          cleanBaseUrl,
+          loginMode
+        );
+        if (modernAuthData?.userId) {
+          try {
+            const systemName = await this.getSystemNameFromApi(page, cleanBaseUrl, loginMode);
+            if (systemName) {
+              modernAuthData.systemName = systemName;
+            }
+          } catch (error: any) {
+            if (this.isBrowserClosureError(error)) {
+              throw error;
+            }
+            Logger.warn('⚠️ [ChromeManager] 新版认证成功后获取system_name失败，继续');
+          }
+          return modernAuthData;
+        }
+      } catch (error: any) {
+        if (this.isBrowserClosureError(error)) {
+          throw error;
+        }
+        if (this.isTerminalModernAuthError(error)) {
+          throw error;
+        }
+        Logger.info(`ℹ️ [ChromeManager] 新版认证 refresh 未就绪: ${error.message}`);
+        lastError = error;
+      }
+    }
+
+    const endpoints = getSiteTypeProfile(siteType).initializationUserEndpoints;
 
     for (const endpoint of endpoints) {
       // 在每次循环前检查浏览器状态
@@ -2357,6 +2442,91 @@ export class ChromeManager {
     }
 
     throw new Error('无法从任何API端点获取用户数据');
+  }
+
+  private async getModernAuthDataFromRefresh(
+    page: Page,
+    baseUrl: string,
+    loginMode?: boolean
+  ): Promise<LocalStorageData | null> {
+    this.checkBrowserClosed(loginMode);
+    if (page.isClosed()) {
+      throw new Error('浏览器已关闭，操作已取消');
+    }
+
+    const currentPageUrl = await this.resolveCurrentPageUrl(page, loginMode);
+    if (!currentPageUrl) {
+      return null;
+    }
+
+    const pageOrigin = new URL(currentPageUrl).origin;
+    const targetOrigin = new URL(baseUrl).origin;
+    if (pageOrigin !== targetOrigin) {
+      return null;
+    }
+
+    const refreshUrl = `${baseUrl}/api/user/auth/refresh`;
+    const refreshCookies = await this.getCookiesForUrl(page, refreshUrl, loginMode);
+    const hasModernRefreshCookie = refreshCookies.some(
+      cookie => cookie.httpOnly && (cookie.path || '/').startsWith('/api/user/auth')
+    );
+    if (!hasModernRefreshCookie) {
+      return null;
+    }
+
+    const response = await page.evaluate(async (url: string) => {
+      try {
+        const result = await fetch(url, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            Accept: 'application/json, text/plain, */*',
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store',
+            Pragma: 'no-cache',
+          },
+        });
+        return {
+          status: result.status,
+          statusText: result.statusText,
+          text: await result.text(),
+        };
+      } catch (error: any) {
+        throw new Error(error?.message || 'refresh request failed');
+      }
+    }, refreshUrl);
+
+    if (response.status === 404 || response.status === 405) {
+      return null;
+    }
+
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(
+        `新版登录会话刷新失败 (HTTP ${response.status}): ${response.text.substring(0, 200)}`
+      );
+    }
+
+    let payload: any;
+    try {
+      payload = response.text ? JSON.parse(response.text) : null;
+    } catch {
+      throw new Error('新版登录会话刷新响应不是有效 JSON');
+    }
+
+    const bundle = payload?.data;
+    const sessionAccessToken = bundle?.access_token;
+    if (payload?.success !== true || typeof sessionAccessToken !== 'string' || !bundle?.user) {
+      throw new Error(payload?.message || '新版登录会话刷新响应缺少 AuthBundle');
+    }
+
+    const userData = this.parseUserDataResponse({ data: bundle.user });
+    Logger.info('✅ [ChromeManager] 已通过新版 refresh 协议确认登录状态');
+    return {
+      ...userData,
+      accessToken: null,
+      sessionAccessToken,
+      dataSource: 'api',
+    };
   }
 
   private parseUserDataResponse(data: any): LocalStorageData {

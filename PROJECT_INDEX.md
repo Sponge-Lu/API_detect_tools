@@ -47,10 +47,10 @@
 | `src/main/app-storage-bundle.ts` | 基于本地存储清单创建/恢复配置包；可迁移 portable 包仅含 config.json + custom-cli-configs.json，兼容旧 full-manifest 与 config-only 备份 |
 | `src/main/unified-config-manager.ts` | v3 配置加载、迁移、legacy 默认账户、seeded 路由示例与旧 OpenCode 路由协议字段清理、缺失 `site_type` 旧站点保持未决、读取失败短重试、原子写入、备份恢复、账户级 `cli_config` 更新、路由配置持久化与路径暂停状态恢复，以及兼容保存时清理已删站点的孤儿账户；删除最后一个账户时自动移除站点配置；CLI probe latest/history 可一次性写入 sidecar |
 | `src/main/runtime-cache-manager.ts` | 运行期缓存持久化，维护站点共享缓存、账户运行态缓存与 90 天/120 条上限的站点每日快照 |
-| `src/main/chrome-manager.ts` | 多槽位检测浏览器池、独立登录浏览器、按 site_type 解析 localStorage / 初始化用户信息，提供页面级登录态重读入口，收紧 localStorage 站点类型线索，并支持复用账户 Profile 打开签到页 |
+| `src/main/chrome-manager.ts` | 多槽位检测浏览器池、独立登录浏览器、按目标域动态选择登录页面；兼容 legacy localStorage/Cookie 与 New API refresh AuthBundle，并仅用短期 Bearer 初始化长期 PAT；提供页面级登录态重读入口和账户 Profile 签到页复用 |
 | `src/main/site-type-registry.ts` | 站点类型注册表，统一维护各类型的初始化/模型/余额/API Key/分组/定价端点策略 |
 | `src/main/site-type-detector.ts` | 智能添加与多账户初始化前的站点类型自动识别 |
-| `src/main/token-service.ts` | 登录初始化、按 site_type 选择端点与访问令牌策略，Sub2API 可从浏览器登录态重读并校验 JWT，显式 `site_type` 可覆盖 URL 反查；支持按账户浏览器槽位重新读取基础账号信息并在 access token 无效时重建；按站点类型驱动签到/浏览器回退、账号数据刷新；统一识别 Unauthorized/invalid access token 失败 envelope；NewAPI 脱敏 API Key 优先通过 `/api/token/batch/keys` 批量补全明文 key |
+| `src/main/token-service.ts` | 登录初始化、按 site_type 选择端点与访问令牌策略，新版 New API 短期 session Bearer 仅用于创建长期 PAT；Sub2API 可从浏览器登录态重读并校验 JWT，显式 `site_type` 可覆盖 URL 反查；支持按账户浏览器槽位重新读取基础账号信息并在 access token 无效时重建；统一识别认证失败 envelope；NewAPI 脱敏 API Key 优先通过 `/api/token/batch/keys` 批量补全明文 key |
 | `src/main/api-service.ts` | 站点检测、HTTP 请求、模型接口响应格式容错、NewAPI/Sub2API 认证失败 envelope 识别、同日手动签到完成状态保留、旧站点首次检测时自动识别并写回 `site_type`、LDC 支付信息探测，并在检测缓存落盘后触发站点每日快照采集 |
 | `src/main/overview-service.ts` | 数据总览聚合服务，负责站点每日快照采集、查询与按日期汇总 |
 | `src/main/cli-wrapper-compat-service.ts` | 通过真实 Claude Code / Codex wrapper 做兼容性验证；OpenCode 与 Grok Build 保留配置和路由能力，但不进入模型探测。当前 UI 使用临时目录隔离本机配置，监听 probe-lock 终止失败并在 CLI 二次请求先触发 budget 限制时等待/回看首次真实上游结果，避免后续额外请求的噪声覆盖真实检测结果 |

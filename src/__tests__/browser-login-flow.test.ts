@@ -67,6 +67,67 @@ describe('browser login flow', () => {
     expect(result.access_token).toBe('login-browser-token');
   });
 
+  it('initializeSiteAccount uses modern session bearer only to create the persistent token', async () => {
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+    vi.doMock('../main/utils/http-client', () => ({
+      httpGet: vi.fn(),
+      httpPost: vi.fn(),
+      httpRequest: vi.fn(),
+    }));
+    vi.doMock('../main/utils/page-exec-queue', () => ({
+      runOnPageQueue: vi.fn(),
+    }));
+    vi.doMock('../main/site-type-detector', () => ({
+      detectSiteType: vi.fn(async () => ({
+        siteType: 'newapi',
+        detectionMethod: 'fallback',
+      })),
+    }));
+    vi.doMock('../main/unified-config-manager', () => ({
+      unifiedConfigManager: {
+        getSiteByUrl: vi.fn(() => ({
+          id: 'site-1',
+          url: 'https://demo.example.com',
+          site_type: 'newapi',
+        })),
+      },
+    }));
+
+    const { TokenService } = await import('../main/token-service');
+
+    const chromeManager = {
+      getLocalStorageData: vi.fn(async () => ({
+        userId: 7,
+        username: 'demo',
+        systemName: 'Demo Site',
+        accessToken: null,
+        sessionAccessToken: 'short-lived-session-bearer',
+        dataSource: 'api',
+      })),
+      createAccessTokenForLogin: vi.fn(async () => 'persistent-panel-token'),
+    };
+
+    const service = new TokenService(chromeManager as any);
+    const result = await service.initializeSiteAccount(
+      'https://demo.example.com',
+      true,
+      600000,
+      undefined,
+      { loginMode: true }
+    );
+
+    expect(chromeManager.createAccessTokenForLogin).toHaveBeenCalledWith(
+      'https://demo.example.com',
+      7,
+      'short-lived-session-bearer'
+    );
+    expect(result.access_token).toBe('persistent-panel-token');
+    expect(result.account_info.access_token).toBe('persistent-panel-token');
+    expect(result).not.toHaveProperty('sessionAccessToken');
+  });
+
   it('recreateSub2ApiAccessTokenFromBrowser reads and validates browser JWT', async () => {
     const runOnPageQueue = vi.fn(async (_page: any, task: () => Promise<any>) => task());
     vi.doMock('../main/utils/logger', () => ({
@@ -290,6 +351,261 @@ describe('browser login flow', () => {
     expect(token).toBe('login-browser-token');
     expect(page.goto).not.toHaveBeenCalled();
     expect(page.evaluate).toHaveBeenCalledTimes(1);
+  });
+
+  it('createAccessTokenForLogin 应使用短期 Bearer 调用长期令牌接口', async () => {
+    vi.doMock('puppeteer-core', () => ({
+      default: {},
+    }));
+    vi.doMock('electron', () => ({
+      app: {
+        getPath: vi.fn(() => 'C:/tmp'),
+      },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const { ChromeManager } = await import('../main/chrome-manager');
+    const manager = new ChromeManager();
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ success: true, data: 'persistent-panel-token' }),
+    }));
+
+    const page = {
+      url: vi.fn(() => 'https://demo.example.com/dashboard'),
+      goto: vi.fn(async () => undefined),
+      evaluate: vi.fn(async (fn: (...args: any[]) => Promise<any>, ...args: any[]) => {
+        vi.stubGlobal('fetch', fetchMock);
+        try {
+          return await fn(...args);
+        } finally {
+          vi.unstubAllGlobals();
+        }
+      }),
+      isClosed: vi.fn(() => false),
+    };
+
+    (manager as any).loginBrowserState = {
+      browser: {
+        pages: vi.fn(async () => [page]),
+      },
+      chromeProcess: null,
+      debugPort: 0,
+      isClosed: false,
+      abortController: new AbortController(),
+    };
+
+    const token = await manager.createAccessTokenForLogin(
+      'https://demo.example.com',
+      7,
+      'short-lived-session-bearer'
+    );
+
+    expect(token).toBe('persistent-panel-token');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://demo.example.com/api/user/token',
+      expect.objectContaining({
+        method: 'GET',
+        credentials: 'include',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer short-lived-session-bearer',
+        }),
+      })
+    );
+  });
+
+  it('getUserDataFromApi 应通过 modern refresh AuthBundle 识别登录状态', async () => {
+    vi.doMock('puppeteer-core', () => ({
+      default: {},
+    }));
+    vi.doMock('electron', () => ({
+      app: {
+        getPath: vi.fn(() => 'C:/tmp'),
+      },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const { ChromeManager } = await import('../main/chrome-manager');
+    const manager = new ChromeManager();
+    const page = {
+      url: vi.fn(() => 'https://demo.example.com/dashboard/overview'),
+      createCDPSession: vi.fn(async () => ({
+        send: vi.fn(async () => ({
+          cookies: [
+            {
+              name: 'new_api_refresh',
+              value: 'refresh-cookie',
+              domain: '.demo.example.com',
+              path: '/api/user/auth',
+              secure: true,
+              httpOnly: true,
+            },
+          ],
+        })),
+        detach: vi.fn(async () => undefined),
+      })),
+      evaluate: vi.fn(async (_fn: any, url: string) => {
+        expect(url).toBe('https://demo.example.com/api/user/auth/refresh');
+        return {
+          status: 200,
+          statusText: 'OK',
+          text: JSON.stringify({
+            success: true,
+            data: {
+              access_token: 'short-lived-session-bearer',
+              token_type: 'Bearer',
+              user: {
+                id: 7,
+                username: 'demo',
+              },
+              session: {
+                sid: 'session-1',
+                current: true,
+              },
+            },
+          }),
+        };
+      }),
+      isClosed: vi.fn(() => false),
+    };
+
+    (manager as any).loginBrowserState = {
+      browser: null,
+      chromeProcess: null,
+      debugPort: 0,
+      isClosed: false,
+      abortController: new AbortController(),
+    };
+    vi.spyOn(manager as any, 'getSystemNameFromApi').mockResolvedValue('Demo Site');
+
+    const result = await (manager as any).getUserDataFromApi(
+      page,
+      'https://demo.example.com',
+      'newapi',
+      true
+    );
+
+    expect(result).toMatchObject({
+      userId: 7,
+      username: 'demo',
+      systemName: 'Demo Site',
+      accessToken: null,
+      sessionAccessToken: 'short-lived-session-bearer',
+      dataSource: 'api',
+    });
+    expect(page.evaluate).toHaveBeenCalledTimes(1);
+  });
+
+  it('getUserDataFromApi 应立即返回 modern refresh 会话冲突', async () => {
+    vi.doMock('puppeteer-core', () => ({
+      default: {},
+    }));
+    vi.doMock('electron', () => ({
+      app: {
+        getPath: vi.fn(() => 'C:/tmp'),
+      },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const { ChromeManager } = await import('../main/chrome-manager');
+    const manager = new ChromeManager();
+    const page = {
+      url: vi.fn(() => 'https://demo.example.com/dashboard/overview'),
+      createCDPSession: vi.fn(async () => ({
+        send: vi.fn(async () => ({
+          cookies: [
+            {
+              name: 'new_api_refresh',
+              value: 'refresh-cookie',
+              domain: '.demo.example.com',
+              path: '/api/user/auth',
+              secure: true,
+              httpOnly: true,
+            },
+          ],
+        })),
+        detach: vi.fn(async () => undefined),
+      })),
+      evaluate: vi.fn(async () => ({
+        status: 409,
+        statusText: 'Conflict',
+        text: JSON.stringify({
+          success: false,
+          code: 'AUTH_SESSION_MISMATCH',
+          message: 'session mismatch',
+        }),
+      })),
+      isClosed: vi.fn(() => false),
+    };
+
+    (manager as any).loginBrowserState = {
+      browser: null,
+      chromeProcess: null,
+      debugPort: 0,
+      isClosed: false,
+      abortController: new AbortController(),
+    };
+
+    await expect(
+      (manager as any).getUserDataFromApi(page, 'https://demo.example.com', 'newapi', true)
+    ).rejects.toThrow('新版登录会话刷新失败 (HTTP 409)');
+  });
+
+  it('getLocalStorageData 遇到 modern 终止认证错误时不应进入长轮询', async () => {
+    vi.doMock('puppeteer-core', () => ({
+      default: {},
+    }));
+    vi.doMock('electron', () => ({
+      app: {
+        getPath: vi.fn(() => 'C:/tmp'),
+      },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const { ChromeManager } = await import('../main/chrome-manager');
+    const manager = new ChromeManager();
+    const page = {
+      url: vi.fn(() => 'https://demo.example.com/dashboard/overview'),
+      isClosed: vi.fn(() => false),
+    };
+
+    (manager as any).loginBrowserState = {
+      browser: {
+        pages: vi.fn(async () => [page]),
+      },
+      chromeProcess: null,
+      debugPort: 0,
+      isClosed: false,
+      abortController: new AbortController(),
+    };
+    vi.spyOn(manager as any, 'waitAndReadLocalStorage').mockResolvedValue({
+      userId: null,
+      username: null,
+      systemName: null,
+      accessToken: null,
+      dataSource: 'localStorage',
+    });
+    vi.spyOn(manager as any, 'getUserDataFromApi').mockRejectedValue(
+      new Error('新版登录会话刷新失败 (HTTP 401): invalid access token')
+    );
+    const waitForUserLoginSpy = vi.spyOn(manager as any, 'waitForUserLogin');
+
+    await expect(
+      manager.getLocalStorageData('https://demo.example.com', true, 600000, undefined, {
+        loginMode: true,
+        siteType: 'newapi',
+      })
+    ).rejects.toThrow('新版登录会话刷新失败 (HTTP 401)');
+    expect(waitForUserLoginSpy).not.toHaveBeenCalled();
   });
 
   it('getUserDataFromApi 应在 API 验证阶段使用页面实际的 https origin', async () => {
@@ -579,7 +895,7 @@ describe('browser login flow', () => {
     expect(headerWrites[0]).not.toHaveProperty('Referer');
     expect(netRequest).toHaveBeenCalledTimes(2);
     expect(page.evaluate).toHaveBeenCalledTimes(1);
-    expect(detach).toHaveBeenCalledTimes(2);
+    expect(detach).toHaveBeenCalledTimes(3);
   });
 
   it('getLocalStorageData 在首次 API 验证成功后不应重复请求 API 补全', async () => {
@@ -655,6 +971,149 @@ describe('browser login flow', () => {
       dataSource: 'mixed',
       resolvedBaseUrl: 'https://demo.example.com',
     });
+  });
+
+  it('getLocalStorageData 应选择目标域页面而不是固定 pages[0]', async () => {
+    vi.doMock('puppeteer-core', () => ({
+      default: {},
+    }));
+    vi.doMock('electron', () => ({
+      app: {
+        getPath: vi.fn(() => 'C:/tmp'),
+      },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const { ChromeManager } = await import('../main/chrome-manager');
+    const manager = new ChromeManager();
+    const firstPage = {
+      url: vi.fn(() => 'edge://newtab/'),
+      isClosed: vi.fn(() => false),
+    };
+    const targetPage = {
+      url: vi.fn(() => 'https://demo.example.com/dashboard'),
+      isClosed: vi.fn(() => false),
+    };
+
+    (manager as any).loginBrowserState = {
+      browser: {
+        pages: vi.fn(async () => [firstPage, targetPage]),
+      },
+      chromeProcess: null,
+      debugPort: 0,
+      isClosed: false,
+      abortController: new AbortController(),
+    };
+
+    const waitAndReadLocalStorageSpy = vi
+      .spyOn(manager as any, 'waitAndReadLocalStorage')
+      .mockResolvedValue({
+        userId: 7,
+        username: 'demo',
+        systemName: 'Demo Site',
+        accessToken: 'persistent-panel-token',
+        dataSource: 'localStorage',
+      });
+    vi.spyOn(manager as any, 'resolveEffectiveBaseUrl').mockResolvedValue(
+      'https://demo.example.com'
+    );
+
+    const result = await manager.getLocalStorageData(
+      'https://demo.example.com',
+      false,
+      60000,
+      undefined,
+      { loginMode: true, siteType: 'newapi' }
+    );
+
+    expect(waitAndReadLocalStorageSpy).toHaveBeenCalledWith(
+      targetPage,
+      'https://demo.example.com',
+      undefined,
+      true
+    );
+    expect(result.userId).toBe(7);
+  });
+
+  it('waitForUserLogin 应在每轮轮询重新选择目标页面', async () => {
+    vi.doMock('puppeteer-core', () => ({
+      default: {},
+    }));
+    vi.doMock('electron', () => ({
+      app: {
+        getPath: vi.fn(() => 'C:/tmp'),
+      },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const { ChromeManager } = await import('../main/chrome-manager');
+    const manager = new ChromeManager();
+    const closedPage = {
+      url: vi.fn(() => 'https://demo.example.com/login'),
+      isClosed: vi.fn(() => true),
+    };
+    const oauthPage = {
+      url: vi.fn(() => 'https://accounts.example.com/oauth'),
+      isClosed: vi.fn(() => false),
+    };
+    const targetPage = {
+      url: vi.fn(() => 'https://demo.example.com/dashboard'),
+      isClosed: vi.fn(() => false),
+    };
+    const browser = {
+      pages: vi
+        .fn()
+        .mockResolvedValueOnce([closedPage, oauthPage])
+        .mockResolvedValueOnce([closedPage, targetPage]),
+    };
+
+    (manager as any).loginBrowserState = {
+      browser,
+      chromeProcess: null,
+      debugPort: 0,
+      isClosed: false,
+      abortController: new AbortController(),
+    };
+    vi.spyOn(manager as any, 'sleepWithAbort').mockResolvedValue(undefined);
+    const tryGetFromLocalStorageSpy = vi
+      .spyOn(manager as any, 'tryGetFromLocalStorage')
+      .mockImplementation(async (page: any) =>
+        page === targetPage
+          ? {
+              userId: 7,
+              username: 'demo',
+              systemName: 'Demo Site',
+              accessToken: 'persistent-panel-token',
+              dataSource: 'localStorage',
+            }
+          : {
+              userId: null,
+              username: null,
+              systemName: null,
+              accessToken: null,
+              dataSource: 'localStorage',
+            }
+      );
+
+    const result = await (manager as any).waitForUserLogin(
+      browser,
+      'https://demo.example.com',
+      60000,
+      undefined,
+      true,
+      'newapi'
+    );
+
+    expect(result.userId).toBe(7);
+    expect(browser.pages).toHaveBeenCalledTimes(2);
+    expect(tryGetFromLocalStorageSpy.mock.calls.map(call => call[0])).toEqual([
+      oauthPage,
+      targetPage,
+    ]);
   });
 
   it('close-login-browser only cleans the login browser state', async () => {
