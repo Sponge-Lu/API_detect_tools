@@ -9,6 +9,7 @@
  *
  * 并发安全: fetchWithBrowserFallback 在 sharedPage 被并发任务关闭时
  * 自动检测 Target closed 等异常并重试创建新页面
+ * Bot/Cloudflare 回退复用浏览器 Cookie/UA，但 API 请求始终由 Electron 主进程网络栈发起
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -1446,14 +1447,13 @@ export class ApiService {
         status,
         accountId: account?.id,
       });
-
     } catch (e: any) {
       Logger.error('❌ [ApiService] 保存最近检测状态失败:', e.message);
     }
   }
 
   /**
-   * 通用的带Cloudflare回退的HTTP GET请求
+   * 通用的带 Cloudflare 回退的 HTTP 请求
    * @param url 请求URL
    * @param headers 请求头
    * @param site 站点配置
@@ -1487,7 +1487,6 @@ export class ApiService {
       // 如果有共享页面，优先复用；否则创建新页面
       let page = sharedPage;
       let pageRelease: (() => void) | null = null;
-      let shouldClosePage = false;
 
       const isClosed =
         page && typeof page.isClosed === 'function' ? Boolean(page.isClosed()) : false;
@@ -1509,7 +1508,6 @@ export class ApiService {
         });
         page = pageResult.page;
         pageRelease = pageResult.release;
-        shouldClosePage = false; // 不在这里关闭，由调用者决定
 
         await this.waitForCloudflareChallenge(page, 600000); // 10分钟
       } else {
@@ -1517,62 +1515,63 @@ export class ApiService {
       }
 
       try {
-        Logger.info('📡 [ApiService] 在浏览器中调用API...');
+        Logger.info('📡 [ApiService] 使用浏览器会话调用 API...');
+        const chromeManager = (this.tokenService as any).chromeManager;
         const userIdHeaders =
           site.user_id && this.getSiteTypeProfile(site).includeUserIdHeaders
             ? getAllUserIdHeaders(site.user_id)
             : {};
 
-        const result = await runOnPageQueue(page, () =>
-          page.evaluate(
-            async (
-              apiUrl: string,
-              requestHeaders: Record<string, string>,
-              additionalHeaders: Record<string, string>,
-              httpMethod: 'GET' | 'POST',
-              body: any
-            ) => {
-              // 构建完整的请求头（包含 User-ID 头和 Authorization）
-              const fullHeaders: Record<string, string> = {
-                ...requestHeaders,
-                ...additionalHeaders,
-              };
-
-              const init: RequestInit = {
-                method: httpMethod,
-                credentials: 'include',
-                headers: fullHeaders,
-              };
-
-              if (httpMethod === 'POST') {
-                init.body = JSON.stringify(body ?? {});
-              }
-
-              const response = await fetch(apiUrl, init);
-
-              if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-              }
-
-              return await response.json();
-            },
-            url,
-            headers,
-            userIdHeaders,
+        const requestBody =
+          method === 'POST' ? JSON.stringify(requestOptions?.data ?? {}) : undefined;
+        const requestOnce = () =>
+          chromeManager.requestWithBrowserSession(page, url, {
             method,
-            requestOptions?.data ?? null
-          )
-        );
+            headers: { ...headers, ...userIdHeaders },
+            body: requestBody,
+            timeoutMs: timeout * 1000,
+            allowNodeFallback: false,
+          });
+
+        let response = await requestOnce();
+        if (this.isBotDetectionPage(response.text)) {
+          Logger.warn('⚠️ [ApiService] 浏览器会话仍收到挑战页，等待验证后重试一次');
+          await this.waitForCloudflareChallenge(page, 60000);
+          response = await requestOnce();
+        }
+
+        let responseData: any = response.text;
+        try {
+          responseData = response.text ? JSON.parse(response.text) : null;
+        } catch {
+          // 非 JSON 响应由下面的 HTTP/Bot 分支保留原始内容用于诊断。
+        }
+
+        if (response.status < 200 || response.status >= 300) {
+          throw {
+            message: `HTTP ${response.status}: ${response.statusText}`,
+            response: { status: response.status, data: responseData },
+          };
+        }
+        if (this.isBotDetectionPage(responseData)) {
+          throw {
+            isBotDetection: true,
+            message: '浏览器会话通过验证后仍收到 Bot Detection 页面',
+            response: { status: response.status, data: responseData },
+          };
+        }
+        if (typeof responseData === 'string') {
+          throw new Error('浏览器会话响应不是有效 JSON');
+        }
 
         Logger.info('✅ [ApiService] 浏览器模式请求成功');
         return {
-          result: parseResponse(result),
-          page: shouldClosePage ? undefined : page,
+          result: parseResponse(responseData),
+          page,
           pageRelease: pageRelease || undefined,
         };
       } catch (evalError) {
         pageRelease?.();
-        if (shouldClosePage && page) await page.close();
         throw evalError;
       }
     };
@@ -1611,12 +1610,14 @@ export class ApiService {
           : // POST 一般不做缓存与去重，避免副作用；若遇到站点风控/需要 Cookie，再走浏览器回退
             await httpPost(url, requestOptions?.data ?? {}, { timeout: timeout * 1000, headers });
 
-      // httpPost 在打包环境会返回状态码而不是抛异常；这里将常见鉴权/风控错误统一转成异常，
-      // 以便触发浏览器回退（携带 Cookie / 站点会话）。
+      // httpPost 在打包环境会返回状态码而不是抛异常；这里统一恢复 HTTP 错误语义。
       if (method === 'POST' && (response.status === 401 || response.status === 403)) {
+        const responseHeaders = (
+          response as unknown as { headers?: Record<string, string | string[]> }
+        ).headers;
         throw {
           message: `HTTP ${response.status}`,
-          response: { status: response.status, data: response.data },
+          response: { status: response.status, data: response.data, headers: responseHeaders },
         };
       }
 
@@ -1649,11 +1650,8 @@ export class ApiService {
       if (error.isIpBlocked) throw error;
 
       // 第二步：检测是否为Cloudflare保护或Bot Detection
-      const status = error.response?.status;
       const needBrowserFallback =
-        this.isCloudflareProtection(error) ||
-        error.isBotDetection === true ||
-        (method === 'POST' && (status === 401 || status === 403));
+        this.isCloudflareProtection(error) || error.isBotDetection === true;
       if (needBrowserFallback) {
         Logger.info('🛡️ [ApiService] 检测到Bot/Cloudflare保护，切换到浏览器模式...');
 
@@ -1661,94 +1659,6 @@ export class ApiService {
         // 注：后续旧的 fallback 分支保留作为兜底，但正常情况下不会执行到。
         try {
           return await fetchInBrowser();
-        } catch (browserError: any) {
-          Logger.error('❌ [ApiService] 浏览器模式也失败:', browserError.message);
-          throw browserError;
-        }
-
-        // 确保有必要的认证信息
-        if (!this.tokenService || !site.system_token || !site.user_id) {
-          Logger.error('❌ [ApiService] 缺少必要的认证信息，无法使用浏览器模式');
-          throw error;
-        }
-
-        const chromeManager = (this.tokenService as any).chromeManager;
-        if (!chromeManager) {
-          Logger.error('❌ [ApiService] ChromeManager不可用');
-          throw error;
-        }
-
-        try {
-          // 如果有共享页面，直接使用；否则创建新页面
-          let page = sharedPage;
-          let pageRelease: (() => void) | null = null;
-          let shouldClosePage = false;
-
-          if (!page) {
-            Logger.info('🌐 [ApiService] 创建新浏览器页面...');
-            const pageResult = await chromeManager.createPage(site.url);
-            page = pageResult.page;
-            pageRelease = pageResult.release;
-            shouldClosePage = false; // 不在这里关闭，由调用者决定
-
-            // 调用智能Cloudflare验证等待
-            await this.waitForCloudflareChallenge(page, 600000); // 10分钟 = 600秒
-          } else {
-            Logger.info('♻️ [ApiService] 复用共享浏览器页面');
-          }
-
-          try {
-            Logger.info('📡 [ApiService] 在浏览器中调用API...');
-            // 在浏览器环境中调用API
-            const userIdHeaders = this.getSiteTypeProfile(site).includeUserIdHeaders
-              ? getAllUserIdHeaders(site.user_id!)
-              : {};
-            const result = await runOnPageQueue(page, () =>
-              page.evaluate(
-                async (
-                  apiUrl: string,
-                  requestHeaders: Record<string, string>,
-                  additionalHeaders: Record<string, string>
-                ) => {
-                  // 构建完整的请求头（包含所有User-ID头和Authorization）
-                  const fullHeaders: Record<string, string> = {
-                    ...requestHeaders,
-                    ...additionalHeaders,
-                  };
-
-                  const response = await fetch(apiUrl, {
-                    method: 'GET',
-                    credentials: 'include',
-                    headers: fullHeaders,
-                  });
-
-                  if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                  }
-
-                  return await response.json();
-                },
-                url,
-                headers,
-                userIdHeaders
-              )
-            );
-
-            Logger.info('✅ [ApiService] 浏览器模式请求成功');
-            // 返回页面和释放函数（如果创建了新页面）
-            return {
-              result: parseResponse(result),
-              page: shouldClosePage ? undefined : page,
-              pageRelease: pageRelease || undefined,
-            };
-          } catch (evalError) {
-            // 如果是我们创建的页面且执行失败，释放引用并关闭页面
-            pageRelease?.();
-            if (shouldClosePage && page) {
-              await page.close();
-            }
-            throw evalError;
-          }
         } catch (browserError: any) {
           Logger.error('❌ [ApiService] 浏览器模式也失败:', browserError.message);
           throw browserError;

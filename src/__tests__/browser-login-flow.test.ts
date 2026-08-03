@@ -821,6 +821,9 @@ describe('browser login flow', () => {
         if (typeof fn === 'function' && fn.toString().includes('fetch(')) {
           throw new Error('page-context fetch should not be used');
         }
+        if (typeof fn === 'function' && fn.toString().includes('userAgent')) {
+          return 'Demo Browser/123';
+        }
         return 7;
       }),
       createCDPSession: vi.fn(async () => ({
@@ -888,14 +891,225 @@ describe('browser login flow', () => {
         'Veloera-User': '7',
         'voapi-user': '7',
         'User-id': '7',
+        'User-Agent': 'Demo Browser/123',
       })
     );
     expect(headerWrites[0]).not.toHaveProperty('Cookie');
     expect(headerWrites[0]).not.toHaveProperty('Origin');
     expect(headerWrites[0]).not.toHaveProperty('Referer');
     expect(netRequest).toHaveBeenCalledTimes(2);
-    expect(page.evaluate).toHaveBeenCalledTimes(1);
+    expect(page.evaluate).toHaveBeenCalledTimes(3);
     expect(detach).toHaveBeenCalledTimes(3);
+  });
+
+  it('requestWithBrowserSession 应同步页面 UA 和任意名称 Cookie，并支持 POST body', async () => {
+    const cookieSet = vi.fn(async () => undefined);
+    const clearStorageData = vi.fn(async () => undefined);
+    const fromPartition = vi.fn(() => ({
+      clearStorageData,
+      cookies: { set: cookieSet },
+    }));
+    const writtenHeaders: Record<string, string> = {};
+    const write = vi.fn();
+    const netRequest = vi.fn((_options: any) => {
+      const handlers = new Map<string, (...args: any[]) => void>();
+      const request = {
+        setHeader: vi.fn((key: string, value: string) => {
+          writtenHeaders[key] = value;
+        }),
+        write,
+        on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+          handlers.set(event, handler);
+          return request;
+        }),
+        end: vi.fn(() => {
+          handlers.get('response')?.({
+            statusCode: 200,
+            statusMessage: 'OK',
+            on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+              if (event === 'data') handler(Buffer.from('{"success":true}'));
+              if (event === 'end') handler();
+            }),
+          });
+        }),
+        abort: vi.fn(),
+      };
+      return request;
+    });
+    vi.doMock('puppeteer-core', () => ({ default: {} }));
+    vi.doMock('electron', () => ({
+      app: { getPath: vi.fn(() => 'C:/tmp') },
+      net: { request: netRequest },
+      session: {
+        fromPartition,
+      },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const { ChromeManager } = await import('../main/chrome-manager');
+    const manager = new ChromeManager();
+    const page = {
+      isClosed: vi.fn(() => false),
+      evaluate: vi.fn(async () => 'Chrome/123 CHY-UA'),
+      createCDPSession: vi.fn(async () => ({
+        send: vi.fn(async () => ({
+          cookies: [
+            {
+              name: 'opaque_clearance_name',
+              value: 'clearance-value',
+              domain: '.example.com',
+              path: '/',
+              secure: true,
+              httpOnly: true,
+            },
+            {
+              name: 'other_path_cookie',
+              value: 'excluded',
+              domain: '.example.com',
+              path: '/admin',
+              secure: true,
+            },
+          ],
+        })),
+        detach: vi.fn(async () => undefined),
+      })),
+    };
+
+    const body = JSON.stringify({ page: 1 });
+    const response = await manager.requestWithBrowserSession(
+      page as any,
+      'https://api.example.com/api/user/models',
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer durable-token', 'New-API-User': '7' },
+        body,
+        allowNodeFallback: false,
+      }
+    );
+
+    expect(response).toEqual({ status: 200, statusText: 'OK', text: '{"success":true}' });
+    expect(netRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'POST',
+        url: 'https://api.example.com/api/user/models',
+        credentials: 'include',
+      })
+    );
+    expect(cookieSet).toHaveBeenCalledTimes(1);
+    expect(cookieSet).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'opaque_clearance_name', value: 'clearance-value' })
+    );
+    expect(writtenHeaders).toMatchObject({
+      Authorization: 'Bearer durable-token',
+      'New-API-User': '7',
+      'User-Agent': 'Chrome/123 CHY-UA',
+    });
+    expect(writtenHeaders).not.toHaveProperty('Cookie');
+    expect(write).toHaveBeenCalledWith(body);
+    expect(clearStorageData).toHaveBeenCalledWith({
+      origin: 'https://api.example.com',
+      storages: ['cookies'],
+    });
+    expect(clearStorageData).toHaveBeenCalledTimes(2);
+    expect(fromPartition).toHaveBeenCalledWith(expect.stringMatching(/^browser-api-/));
+  });
+
+  it('浏览器会话请求应按 origin 串行执行', async () => {
+    vi.doMock('puppeteer-core', () => ({ default: {} }));
+    vi.doMock('electron', () => ({ app: { getPath: vi.fn(() => 'C:/tmp') } }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const { ChromeManager } = await import('../main/chrome-manager');
+    const manager = new ChromeManager();
+    const events: string[] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>(resolve => {
+      releaseFirst = resolve;
+    });
+
+    const first = (manager as any).withBrowserSessionRequestLock(
+      'https://api.example.com',
+      async () => {
+        events.push('first:start');
+        await firstGate;
+        events.push('first:end');
+      }
+    );
+    const second = (manager as any).withBrowserSessionRequestLock(
+      'https://api.example.com',
+      async () => {
+        events.push('second:start');
+        events.push('second:end');
+      }
+    );
+
+    await vi.waitFor(() => expect(events).toEqual(['first:start']));
+    releaseFirst();
+    await Promise.all([first, second]);
+
+    expect(events).toEqual(['first:start', 'first:end', 'second:start', 'second:end']);
+  });
+
+  it('禁止 Node 回退时应明确暴露 Electron net 错误', async () => {
+    const clearStorageData = vi.fn(async () => undefined);
+    const netRequest = vi.fn(() => {
+      const handlers = new Map<string, (...args: any[]) => void>();
+      const request = {
+        setHeader: vi.fn(),
+        write: vi.fn(),
+        on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+          handlers.set(event, handler);
+          return request;
+        }),
+        end: vi.fn(() => handlers.get('error')?.(new Error('net::ERR_FAILED'))),
+        abort: vi.fn(),
+      };
+      return request;
+    });
+    vi.doMock('puppeteer-core', () => ({ default: {} }));
+    vi.doMock('electron', () => ({
+      app: { getPath: vi.fn(() => 'C:/tmp') },
+      net: { request: netRequest },
+      session: {
+        fromPartition: vi.fn(() => ({
+          clearStorageData,
+          cookies: { set: vi.fn(async () => undefined) },
+        })),
+      },
+    }));
+    vi.doMock('../main/utils/logger', () => ({
+      default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    }));
+
+    const originalFetch = globalThis.fetch;
+    const nodeFetch = vi.fn();
+    globalThis.fetch = nodeFetch as typeof fetch;
+    try {
+      const { ChromeManager } = await import('../main/chrome-manager');
+      const manager = new ChromeManager();
+      const page = {
+        isClosed: vi.fn(() => false),
+        evaluate: vi.fn(async () => 'Chrome/123'),
+        createCDPSession: vi.fn(async () => ({
+          send: vi.fn(async () => ({ cookies: [] })),
+          detach: vi.fn(async () => undefined),
+        })),
+      };
+
+      await expect(
+        manager.requestWithBrowserSession(page as any, 'https://api.example.com/api/user/models', {
+          allowNodeFallback: false,
+        })
+      ).rejects.toThrow('Electron net 浏览器会话请求失败: net::ERR_FAILED');
+      expect(nodeFetch).not.toHaveBeenCalled();
+      expect(clearStorageData).toHaveBeenCalledTimes(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('getLocalStorageData 在首次 API 验证成功后不应重复请求 API 补全', async () => {

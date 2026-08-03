@@ -16,6 +16,7 @@
  *   阻断页面内 fetch 后让智能添加卡在“等待登录中”
  * - 新版 New API 通过 refresh Cookie 换取短期 Bearer，短期 Bearer 仅用于初始化长期 PAT
  * - 登录轮询每轮重新按目标域名选择页面，避免 OAuth 弹窗或新标签页导致读取错误页面
+ * - 受 Bot/Cloudflare 保护的 API 通过 Cookie/UA 投影后的 Electron Session 请求，支持 GET/POST
  *
  * LocalStorageData 签到字段支持两种站点类型:
  * - Veloera: check_in_enabled, can_check_in
@@ -74,10 +75,18 @@ interface BrowserCookie {
   sameSite?: string;
 }
 
-interface BrowserSessionTextResponse {
+export interface BrowserSessionTextResponse {
   status: number;
   statusText: string;
   text: string;
+}
+
+export interface BrowserSessionRequestOptions {
+  method?: 'GET' | 'POST';
+  headers?: Record<string, string>;
+  body?: string;
+  timeoutMs?: number;
+  allowNodeFallback?: boolean;
 }
 
 const LOGIN_API_REQUEST_TIMEOUT_MS = 10000;
@@ -126,7 +135,7 @@ export class ChromeManager {
   } | null = null;
 
   /** 按 origin 串行化登录验证请求，避免同一请求会话的 Cookie 同步互相覆盖 */
-  private loginApiSessionLocks = new Map<string, Promise<void>>();
+  private browserSessionRequestLocks = new Map<string, Promise<void>>();
 
   /** 获取或创建指定槽位 */
   private getSlot(index: number): BrowserSlot {
@@ -1503,7 +1512,10 @@ export class ChromeManager {
     }
 
     const cookiePath = cookie.path || '/';
-    return target.pathname.startsWith(cookiePath) || cookiePath === '/';
+    if (cookiePath === '/' || target.pathname === cookiePath) {
+      return true;
+    }
+    return target.pathname.startsWith(cookiePath.endsWith('/') ? cookiePath : `${cookiePath}/`);
   }
 
   private async getCookiesForUrl(
@@ -1512,7 +1524,9 @@ export class ChromeManager {
     loginMode?: boolean
   ): Promise<BrowserCookie[]> {
     try {
-      this.checkBrowserClosed(loginMode);
+      if (loginMode) {
+        this.checkBrowserClosed(true);
+      }
       const target = new URL(requestUrl);
       const client = await page.createCDPSession();
       try {
@@ -1536,14 +1550,17 @@ export class ChromeManager {
     return cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
   }
 
-  private async withLoginApiSessionLock<T>(origin: string, task: () => Promise<T>): Promise<T> {
-    const previousLock = this.loginApiSessionLocks.get(origin) || Promise.resolve();
+  private async withBrowserSessionRequestLock<T>(
+    origin: string,
+    task: () => Promise<T>
+  ): Promise<T> {
+    const previousLock = this.browserSessionRequestLocks.get(origin) || Promise.resolve();
     let releaseCurrentLock!: () => void;
     const currentLock = new Promise<void>(resolve => {
       releaseCurrentLock = resolve;
     });
     const storedLock = previousLock.catch(() => undefined).then(() => currentLock);
-    this.loginApiSessionLocks.set(origin, storedLock);
+    this.browserSessionRequestLocks.set(origin, storedLock);
 
     await previousLock.catch(() => undefined);
 
@@ -1551,8 +1568,8 @@ export class ChromeManager {
       return await task();
     } finally {
       releaseCurrentLock();
-      if (this.loginApiSessionLocks.get(origin) === storedLock) {
-        this.loginApiSessionLocks.delete(origin);
+      if (this.browserSessionRequestLocks.get(origin) === storedLock) {
+        this.browserSessionRequestLocks.delete(origin);
       }
     }
   }
@@ -1566,7 +1583,7 @@ export class ChromeManager {
     }
 
     const target = new URL(url);
-    const partition = `login-api-${Buffer.from(target.origin).toString('base64url').slice(0, 120)}`;
+    const partition = `browser-api-${Buffer.from(target.origin).toString('base64url').slice(0, 120)}`;
     const requestSession = electronSession.fromPartition(partition);
     await requestSession.clearStorageData({
       origin: target.origin,
@@ -1616,30 +1633,80 @@ export class ChromeManager {
     return undefined;
   }
 
+  async requestWithBrowserSession(
+    page: Page,
+    url: string,
+    options: BrowserSessionRequestOptions = {},
+    loginMode?: boolean
+  ): Promise<BrowserSessionTextResponse> {
+    if (loginMode) {
+      this.checkBrowserClosed(true);
+    }
+    if (page.isClosed()) {
+      throw new Error('浏览器已关闭，操作已取消');
+    }
+
+    const cookies = await this.getCookiesForUrl(page, url, loginMode);
+    const userAgent = await page.evaluate(
+      () => (globalThis as unknown as { navigator: { userAgent: string } }).navigator.userAgent
+    );
+    const headers: Record<string, string> = {
+      ...options.headers,
+      'User-Agent': userAgent,
+    };
+    const cookieHeader = this.buildCookieHeader(cookies);
+    if (cookieHeader) {
+      headers.Cookie = cookieHeader;
+    }
+
+    return this.fetchTextWithBrowserSession(url, headers, cookies, options);
+  }
+
   private async fetchTextWithBrowserSession(
     url: string,
     headers: Record<string, string>,
-    cookies: BrowserCookie[]
+    cookies: BrowserCookie[],
+    options: BrowserSessionRequestOptions = {}
   ): Promise<BrowserSessionTextResponse> {
     if (typeof net?.request === 'function') {
       try {
         const origin = new URL(url).origin;
-        return await this.withLoginApiSessionLock(origin, async () => {
+        return await this.withBrowserSessionRequestLock(origin, async () => {
           const requestSession = await this.prepareBrowserSessionForRequest(url, cookies);
           if (!requestSession) {
             throw new Error('Electron session is unavailable for browser-session request');
           }
-          return await this.fetchTextWithElectronNet(url, headers, requestSession);
+          try {
+            return await this.fetchTextWithElectronNet(url, headers, requestSession, options);
+          } finally {
+            await requestSession
+              .clearStorageData({ origin, storages: ['cookies'] })
+              .catch((error: any) => {
+                Logger.warn('⚠️ [ChromeManager] 清理主进程请求会话 Cookie 失败:', {
+                  origin,
+                  error: error?.message || error,
+                });
+              });
+          }
         });
       } catch (error: any) {
-        Logger.warn('⚠️ [ChromeManager] Electron net 登录验证请求失败，回退到 Node fetch:', {
+        if (options.allowNodeFallback === false) {
+          throw new Error(`Electron net 浏览器会话请求失败: ${error?.message || error}`);
+        }
+        Logger.warn('⚠️ [ChromeManager] Electron net 浏览器会话请求失败，回退到 Node fetch:', {
           url,
           error: error?.message || error,
         });
       }
+    } else if (options.allowNodeFallback === false) {
+      throw new Error('Electron net 浏览器会话请求不可用');
     }
 
-    const response = await fetch(url, { method: 'GET', headers });
+    const response = await fetch(url, {
+      method: options.method ?? 'GET',
+      headers,
+      body: options.body,
+    });
     return {
       status: response.status,
       statusText: response.statusText,
@@ -1650,22 +1717,24 @@ export class ChromeManager {
   private fetchTextWithElectronNet(
     url: string,
     headers: Record<string, string>,
-    requestSession: Session
+    requestSession: Session,
+    options: BrowserSessionRequestOptions
   ): Promise<BrowserSessionTextResponse> {
     return new Promise((resolve, reject) => {
       const request = net.request({
-        method: 'GET',
+        method: options.method ?? 'GET',
         url,
         session: requestSession,
         credentials: 'include',
       });
       let settled = false;
+      const timeoutMs = options.timeoutMs ?? LOGIN_API_REQUEST_TIMEOUT_MS;
       const timeoutId = setTimeout(() => {
         if (settled) return;
         settled = true;
         request.abort();
-        reject(new Error(`Request timeout after ${LOGIN_API_REQUEST_TIMEOUT_MS}ms`));
-      }, LOGIN_API_REQUEST_TIMEOUT_MS);
+        reject(new Error(`Request timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
 
       const rejectOnce = (error: Error) => {
         if (settled) return;
@@ -1698,6 +1767,9 @@ export class ChromeManager {
       });
 
       request.on('error', rejectOnce);
+      if (options.body !== undefined) {
+        request.write(options.body);
+      }
       request.end();
     });
   }
@@ -2630,8 +2702,6 @@ export class ChromeManager {
       throw new Error('浏览器已关闭，操作已取消');
     }
 
-    const requestCookies = await this.getCookiesForUrl(page, url, loginMode);
-    const cookieHeader = this.buildCookieHeader(requestCookies);
     const requestOrigin = new URL(url).origin;
     const headers: Record<string, string> = {
       Accept: 'application/json, text/plain, */*',
@@ -2642,10 +2712,6 @@ export class ChromeManager {
       Referer: `${requestOrigin}/`,
     };
 
-    if (cookieHeader) {
-      headers.Cookie = cookieHeader;
-    }
-
     if (userId) {
       const normalizedUserId = String(userId);
       headers['New-API-User'] = normalizedUserId;
@@ -2654,7 +2720,7 @@ export class ChromeManager {
       headers['User-id'] = normalizedUserId;
     }
 
-    const response = await this.fetchTextWithBrowserSession(url, headers, requestCookies);
+    const response = await this.requestWithBrowserSession(page, url, { headers }, loginMode);
     const text = response.text;
 
     if (response.status < 200 || response.status >= 300) {

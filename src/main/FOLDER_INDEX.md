@@ -29,9 +29,9 @@
 | **app-storage-manifest.ts** | 应用本地存储清单，声明 stable config、runtime/cache/statistics、备份、日志、敏感设置与受保护浏览器状态的 owner、路径、retention/cap 和备份边界；支持 lightweight/full-manifest/portable-config 模式 | `APP_STORAGE_ENTRIES`, `resolveAppStorageManifest()` |
 | **app-storage-bundle.ts** | 配置包创建/恢复；portable-config 仅含 config.json + custom-cli-configs；full-manifest 另含 runtime/settings；兼容 legacy config-only 恢复 | `createAppStorageBundleContent()`, `createPortableAppStorageBundleContent()`, `restoreAppStorageBackupContent()` |
 | **config-field-crypto.ts** | 配置字段 AES-256-GCM 加密/解密，应用固定密钥版本化，在磁盘 I/O 边界透明加解密敏感字段（api_key, access_token, apiKey） | `encryptField()`, `decryptField()`, `encryptConfigFields()`, `decryptConfigFields()`, `encryptCustomCliConfigs()`, `decryptCustomCliConfigs()` |
-| **api-service.ts** | API 请求服务、模型接口响应格式容错、NewAPI/Sub2API 认证失败 envelope 识别、检测状态持久化、同日手动签到完成状态保留、旧站点首次检测时自动写回 `site_type`，并在缓存更新后触发站点每日快照采集 | `ApiService` 类 |
+| **api-service.ts** | API 请求服务、Bot/Cloudflare 挑战后的主进程浏览器会话回退、模型接口响应格式容错、NewAPI/Sub2API 认证失败 envelope 识别、检测状态持久化、同日手动签到完成状态保留、旧站点首次检测时自动写回 `site_type`，并在缓存更新后触发站点每日快照采集 | `ApiService` 类 |
 | **overview-service.ts** | 数据总览聚合服务，维护站点每日快照的采集、查询和按日期汇总 | `captureSiteDailySnapshot()`, `getSiteDailySnapshots()`, `getSiteSnapshotTotals()` |
-| **chrome-manager.ts** | Chrome 浏览器管理、多槽位架构、独立登录浏览器（loginBrowserState）、按目标域动态选择登录页面；兼容 legacy localStorage/Cookie 与 New API refresh AuthBundle，并仅用短期 Bearer 初始化长期 PAT；提供页面级登录态重读入口和账户 Profile 签到页复用 | `ChromeManager` 类 |
+| **chrome-manager.ts** | Chrome 浏览器管理、多槽位架构、独立登录浏览器（loginBrowserState）、按目标域动态选择登录页面；兼容 legacy localStorage/Cookie 与 New API refresh AuthBundle，并仅用短期 Bearer 初始化长期 PAT；提供 Cookie/UA 投影后的 Electron Session 通用 GET/POST 请求、页面级登录态重读和账户 Profile 签到页复用 | `ChromeManager` 类 |
 | **site-type-registry.ts** | 站点类型到初始化/端点/行为的注册表 | `getSiteTypeProfile()`, `resolveSiteType()` |
 | **site-type-detector.ts** | 智能添加初始化前的站点类型自动识别 | `detectSiteType()` |
 | **token-service.ts** | Token 认证服务，初始化阶段按 site_type 选择端点与 access token 策略，新版 New API 短期 session Bearer 仅用于创建长期 PAT；Sub2API 可从浏览器登录态重读并校验 JWT，显式 `site_type` 可覆盖 URL 反查；支持按账户浏览器槽位刷新 user_id/username/access_token 并在 token 无效时重建；统一识别认证失败 envelope，并在 NewAPI 脱敏 API Key 列表中优先使用 `/api/token/batch/keys` 批量补全明文 key | `TokenService` 类 |
