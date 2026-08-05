@@ -97,25 +97,11 @@ export function isCliTargetProtocolNativeEquivalent(
   return false;
 }
 
-/** 每个 CLI 保存的测试模型槽位数 */
-export const CLI_TEST_MODEL_SLOT_COUNT = 3;
-
-/** 单个测试模型的持久化结果 */
-export interface CliModelTestResult {
-  model: string;
-  success: boolean;
-  message?: string;
-  timestamp: number;
-}
-
 /** 单个 CLI 配置项 */
 export interface CliConfigItem {
   apiKeyId: number | null;
   model: string | null; // CLI 使用模型
-  testModel?: string | null; // 测试使用模型
-  testModels?: string[] | null; // 测试使用模型（最多 3 个，兼容旧数据）
-  testResults?: Array<CliModelTestResult | null> | null; // 测试结果（按槽位持久化）
-  enabled?: boolean; // 是否启用（控制图标显示和测试），可选以兼容旧数据
+  enabled?: boolean; // 是否启用，可选以兼容旧数据
   editedFiles?: EditedConfigFile[] | null; // 用户编辑后的配置文件内容
   applyMode?: 'merge' | 'overwrite'; // 应用配置模式：合并或覆盖，默认合并
   targetProtocol?: CliTargetProtocol; // 上游目标协议
@@ -136,9 +122,6 @@ export const DEFAULT_CLI_CONFIG: Required<{
   claudeCode: {
     apiKeyId: null,
     model: null,
-    testModel: null,
-    testModels: [],
-    testResults: [],
     enabled: true,
     editedFiles: null,
     applyMode: 'merge',
@@ -147,9 +130,6 @@ export const DEFAULT_CLI_CONFIG: Required<{
   codex: {
     apiKeyId: null,
     model: null,
-    testModel: null,
-    testModels: [],
-    testResults: [],
     enabled: true,
     editedFiles: null,
     applyMode: 'merge',
@@ -158,9 +138,6 @@ export const DEFAULT_CLI_CONFIG: Required<{
   openCode: {
     apiKeyId: null,
     model: null,
-    testModel: null,
-    testModels: [],
-    testResults: [],
     enabled: true,
     editedFiles: null,
     applyMode: 'merge',
@@ -169,9 +146,6 @@ export const DEFAULT_CLI_CONFIG: Required<{
   grokBuild: {
     apiKeyId: null,
     model: null,
-    testModel: null,
-    testModels: [],
-    testResults: [],
     enabled: true,
     editedFiles: null,
     applyMode: 'merge',
@@ -183,131 +157,6 @@ export function normalizeCliTargetProtocol(value: unknown): CliTargetProtocol {
   return typeof value === 'string' && CLI_TARGET_PROTOCOLS.includes(value as CliTargetProtocol)
     ? (value as CliTargetProtocol)
     : DEFAULT_CLI_TARGET_PROTOCOL;
-}
-
-/**
- * 规范化测试模型列表，兼容 legacy `testModel`
- */
-export function normalizeCliTestModels(
-  item?: Pick<CliConfigItem, 'testModel' | 'testModels'> | null,
-  slotCount: number = CLI_TEST_MODEL_SLOT_COUNT
-): string[] {
-  const fromArray = Array.isArray(item?.testModels)
-    ? item!.testModels.map(model => (typeof model === 'string' ? model.trim() : '')).filter(Boolean)
-    : [];
-  const normalized = fromArray.length > 0 ? fromArray : item?.testModel ? [item.testModel] : [];
-  return normalized.slice(0, slotCount);
-}
-
-/**
- * 将编辑态的测试模型槽位压缩为持久化数组
- */
-export function sanitizeCliTestModels(
-  testModels: Array<string | null | undefined>,
-  slotCount: number = CLI_TEST_MODEL_SLOT_COUNT
-): string[] {
-  return testModels
-    .map(model => (typeof model === 'string' ? model.trim() : ''))
-    .filter(Boolean)
-    .slice(0, slotCount);
-}
-
-/**
- * 规范化测试结果槽位，只保留与当前测试模型槽位匹配的结果
- */
-export function normalizeCliTestResults(
-  item?: Pick<CliConfigItem, 'testModel' | 'testModels' | 'testResults'> | null,
-  slotCount: number = CLI_TEST_MODEL_SLOT_COUNT
-): Array<CliModelTestResult | null> {
-  const selectedModels = Array.from({ length: slotCount }, (_, index) => {
-    return normalizeCliTestModels(item, slotCount)[index] || '';
-  });
-  const rawResults = Array.isArray(item?.testResults) ? item!.testResults : [];
-
-  return Array.from({ length: slotCount }, (_, index) => {
-    const selectedModel = selectedModels[index];
-    const rawResult = rawResults[index];
-    if (!selectedModel || !rawResult || typeof rawResult !== 'object') return null;
-
-    const model = typeof rawResult.model === 'string' ? rawResult.model.trim() : '';
-    if (!model || model !== selectedModel) return null;
-
-    const success = typeof rawResult.success === 'boolean' ? rawResult.success : null;
-    const timestamp =
-      typeof rawResult.timestamp === 'number' && Number.isFinite(rawResult.timestamp)
-        ? rawResult.timestamp
-        : null;
-    if (success === null || timestamp === null) return null;
-
-    const message =
-      typeof rawResult.message === 'string' && rawResult.message.trim()
-        ? rawResult.message.trim()
-        : undefined;
-
-    return {
-      model,
-      success,
-      timestamp,
-      ...(message ? { message } : {}),
-    };
-  });
-}
-
-/**
- * 将编辑态的测试结果槽位转为持久化数组
- */
-export function sanitizeCliTestResults(
-  testResults: Array<CliModelTestResult | null | undefined>,
-  slotCount: number = CLI_TEST_MODEL_SLOT_COUNT
-): Array<CliModelTestResult | null> {
-  return Array.from({ length: slotCount }, (_, index) => {
-    const rawResult = testResults[index];
-    if (!rawResult) return null;
-
-    const model = typeof rawResult.model === 'string' ? rawResult.model.trim() : '';
-    const success = typeof rawResult.success === 'boolean' ? rawResult.success : null;
-    const timestamp =
-      typeof rawResult.timestamp === 'number' && Number.isFinite(rawResult.timestamp)
-        ? rawResult.timestamp
-        : null;
-    if (!model || success === null || timestamp === null) return null;
-
-    const message =
-      typeof rawResult.message === 'string' && rawResult.message.trim()
-        ? rawResult.message.trim()
-        : undefined;
-
-    return {
-      model,
-      success,
-      timestamp,
-      ...(message ? { message } : {}),
-    };
-  });
-}
-
-/**
- * 从持久化测试结果推导 CLI 状态
- */
-export function getCliTestResultStatus(
-  item?: Pick<CliConfigItem, 'testModel' | 'testModels' | 'testResults'> | null,
-  slotCount: number = CLI_TEST_MODEL_SLOT_COUNT
-): boolean | null {
-  const results = normalizeCliTestResults(item, slotCount).filter(Boolean) as CliModelTestResult[];
-  if (results.length === 0) return null;
-  return results.some(result => result.success);
-}
-
-/**
- * 获取持久化测试结果中的最新测试时间
- */
-export function getCliTestResultTestedAt(
-  item?: Pick<CliConfigItem, 'testModel' | 'testModels' | 'testResults'> | null,
-  slotCount: number = CLI_TEST_MODEL_SLOT_COUNT
-): number | null {
-  const results = normalizeCliTestResults(item, slotCount).filter(Boolean) as CliModelTestResult[];
-  if (results.length === 0) return null;
-  return Math.max(...results.map(result => result.timestamp));
 }
 
 /**

@@ -27,16 +27,17 @@
 | **AuthErrorDialog.tsx** | 认证错误对话框 | `AuthErrorDialog` 组件，分析并展示 Session/Token 过期等问题 |
 | **SiteGroupDialog.tsx** | 站点分组对话框 | `SiteGroupDialog` 组件，支持创建和编辑分组 |
 | **ApplyConfigPopover.tsx** | 应用配置弹出菜单 | 支持四种内置 CLI；OpenCode 与 Grok Build 仅允许合并写入 |
-| **ManagedCliConfigEditorContent.tsx** | 托管站点 CLI 配置编辑内容 | 覆盖四种内置 CLI 的启用、模型、上游协议、预览、保存与应用；仅 Claude Code / Codex 提供模型探测，OpenCode / Grok Build 明确禁用测试 |
-| **DirectCliConfigEditorContent.tsx** | 直连配置编辑内容 | 覆盖四种内置 CLI 的模型、上游协议、预览与应用；仅 Claude Code / Codex 提供模型探测，OpenCode / Grok Build 明确禁用测试 |
+| **ManagedCliConfigEditorContent.tsx** | 托管站点 CLI 配置编辑内容 | 四种内置 CLI 卡片常驻展开，紧凑配置 API Key、使用模型与上游协议，配置预览按需折叠 |
+| **DirectCliConfigEditorContent.tsx** | 直连配置编辑内容 | 四种内置 CLI 卡片常驻展开，紧凑展示 API Key、使用模型与上游协议，配置预览按需折叠 |
 | **PanelSection.tsx** | 面板通用折叠分区原语 | `PanelSection` 组件，为窄面板内的托管/直连 CLI 编辑器提供统一 section chrome |
 | **CloseBehaviorDialog.tsx** | 窗口关闭行为对话框 | `CloseBehaviorDialog` 组件，用户选择退出或最小化到托盘 |
 | **BackupSelectDialog.tsx** | 备份选择对话框 | `BackupSelectDialog` 组件，从备份目录选择配置包或旧版配置文件进行恢复 |
 | **AutoRefreshDialog.tsx** | 自动刷新配置对话框 | `AutoRefreshDialog` 组件，由 SitesPage 调用，是自动刷新的唯一配置入口（默认30分钟） |
 | **AddAccessPointDialog.tsx** | 添加接入点对话框 | `AddAccessPointDialog` 组件，统一提供托管站点智能/手动添加与直连配置新建入口 |
-| **AccessPointDetailPanel.tsx** | 接入点详情侧滑面板 | `AccessPointDetailPanel` 组件，承载站点信息、模型 & 资源、CLI 配置 & 测试三 tab；Tab 内容区独立滚动；托管站点 Tab1 提供浏览器 Profile 选择器，可在未绑定、主浏览器和现有隔离浏览器间显式重绑，其中 `manual` 即使残留旧路径也保持未绑定；Tab2 复用 `SiteCardDetails`，Tab3 内嵌托管 CLI 配置/测试；直连配置 Tab1 用同一信息面承载配置名称、元信息与身份表单，Tab2/Tab3 分别内嵌模型和按 CLI 聚合的编辑内容 |
+| **AccessPointDetailPanel.tsx** | 接入点详情侧滑面板 | `AccessPointDetailPanel` 组件，承载信息、模型 & 资源、CLI 配置与独立测试四页 |
+| **EndpointTestPanel.tsx** | 端点测试面板 | 三卡常驻展开；托管模型按 Key 分组过滤并可列出全部，直连列出全部模型，显示简短结果和最近测试时间 |
 | **OperationRecordDialog.tsx** | 操作记录弹窗 | `OperationRecordDialog` 组件，读取当前会话 `toastStore.eventHistory` 中 `kind: 'action'` 的关键操作记录，排除普通 toast 通知与路由请求日志 |
-| **CliProbeSettingsDialog.tsx** | 站点设置弹窗 | `SiteSettingsDialog` 组件（保留 `CliProbeSettingsDialog` 兼容导出），由 SitesPage 页头“设置”调用；分为“CLI 探测”和“站点刷新”两个页签，分别保存 `routing.cliProbe.config` 与站点刷新参数 |
+| **SiteSettingsDialog.tsx** | 站点设置弹窗 | 只维护站点刷新参数，不包含定时测试 |
 | **DownloadUpdatePanel.tsx** | 下载更新面板 | `DownloadUpdatePanel` 组件，显示 changelog、下载进度和安装按钮 |
 | **WebDAVBackupDialog.tsx** | WebDAV 配置包对话框 | `WebDAVBackupDialog` 组件，上传/恢复/删除云端 manifest 配置包 |
 | **index.ts** | 导出文件 | 导出所有对话框组件 |

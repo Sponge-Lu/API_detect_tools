@@ -2,7 +2,7 @@
  * 路由代理 IPC handlers
  * 输入: IPC 调用 (route:* 命名空间)
  * 输出: IPC 响应 { success, data?, error? }
- * 定位: 通信层 - 路由规则/模型注册表/CLI 探测/统计分析/服务器控制
+ * 定位: 通信层 - 路由规则/模型注册表/端点测试/统计分析/服务器控制
  */
 
 import { ipcMain } from 'electron';
@@ -11,8 +11,12 @@ import Logger from '../utils/logger';
 import { unifiedConfigManager } from '../unified-config-manager';
 import { startProxyServer, stopProxyServer, getProxyStatus } from '../route-proxy-service';
 import * as modelRegistry from '../route-model-registry-service';
-import * as cliProbe from '../route-cli-probe-service';
 import * as analytics from '../route-analytics-service';
+import {
+  getEndpointTestState,
+  runEndpointTest,
+  saveEndpointTestSelection,
+} from '../endpoint-test-service';
 import { runHealthCheck } from '../route-health-service';
 import { getHistoryBuckets } from '../route-history-service';
 import type {
@@ -22,6 +26,8 @@ import type {
   RouteRule,
   RouteRequestLogQuery,
   RouteHistoryBucketsQuery,
+  EndpointTestSelectionInput,
+  EndpointTestTarget,
 } from '../../shared/types/route-proxy';
 
 const log = Logger.scope('RouteHandlers');
@@ -45,10 +51,6 @@ export function registerRouteHandlers() {
         routePathStates: routing.routePathStates,
         health: routing.health,
         modelRegistry: routing.modelRegistry,
-        cliProbe: {
-          config: routing.cliProbe.config,
-          latest: routing.cliProbe.latest,
-        },
         analytics: {
           config: routing.analytics.config,
         },
@@ -264,45 +266,27 @@ export function registerRouteHandlers() {
     }
   });
 
-  // ============= CLI 探测 =============
+  // ============= 端点测试 =============
 
-  ipcMain.handle('route:save-cli-probe-config', async (_, updates) => {
+  ipcMain.handle('endpoint-test:get-state', async (_, target: EndpointTestTarget) => {
     try {
-      const result = await cliProbe.saveCliProbeConfig(updates);
-      return ok(result);
+      return ok(await getEndpointTestState(target));
     } catch (e: any) {
       return err(e.message);
     }
   });
 
-  ipcMain.handle('route:run-cli-probe-now', async (_, params?) => {
+  ipcMain.handle('endpoint-test:save-selection', async (_, input: EndpointTestSelectionInput) => {
     try {
-      const result = await cliProbe.runCliProbeNow(params);
-      return ok(result);
+      return ok(await saveEndpointTestSelection(input));
     } catch (e: any) {
       return err(e.message);
     }
   });
 
-  ipcMain.handle('route:get-cli-probe-latest', async (_, params?) => {
+  ipcMain.handle('endpoint-test:run', async (_, input: EndpointTestSelectionInput) => {
     try {
-      return ok(cliProbe.getCliProbeLatest(params));
-    } catch (e: any) {
-      return err(e.message);
-    }
-  });
-
-  ipcMain.handle('route:get-cli-probe-history', async (_, params) => {
-    try {
-      return ok(cliProbe.getCliProbeHistory(params));
-    } catch (e: any) {
-      return err(e.message);
-    }
-  });
-
-  ipcMain.handle('route:get-cli-probe-view', async (_, params) => {
-    try {
-      return ok(await cliProbe.getCliProbeView(params));
+      return ok(await runEndpointTest(input));
     } catch (e: any) {
       return err(e.message);
     }

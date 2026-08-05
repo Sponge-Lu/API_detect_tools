@@ -14,7 +14,6 @@
 
 import type { SiteConfig } from '../../../main/types/token';
 import type { DetectionResult } from '../../App';
-import type { CliCompatibilityResult } from '../../store/detectionStore';
 import type { CliConfig } from '../../../shared/types/cli-config';
 
 export interface SiteCardProps {
@@ -41,10 +40,7 @@ export interface SiteCardProps {
   dragOverIndex: number | null;
   refreshMessage: { site: string; message: string; type: 'success' | 'info' } | null;
 
-  // CLI 兼容性状态
-  cliCompatibility?: CliCompatibilityResult;
   cliConfig?: CliConfig | null;
-  isCliTesting?: boolean;
 
   // 回调函数
   onDetect: (site: SiteConfig, accountId?: string) => void;
@@ -52,7 +48,6 @@ export interface SiteCardProps {
   onOpenSite: (site: SiteConfig, accountId?: string) => void;
   onOpenExtraLink: (link: string) => void;
   onOpenCliConfig?: () => void;
-  onTestCliCompat?: () => void;
   onApply?: (e?: React.MouseEvent<HTMLButtonElement>) => void;
 
   // 拖拽回调
@@ -82,12 +77,8 @@ export interface SiteCardHeaderProps {
   /** 账户名（多账户时显示在站点名下方） */
   accountName?: string;
   onOpenSite: (site: SiteConfig, accountId?: string) => void;
-  // CLI 兼容性相关
-  cliCompatibility?: CliCompatibilityResult;
   cliConfig?: CliConfig | null;
-  isCliTesting?: boolean;
   onOpenCliConfig?: () => void;
-  onTestCliCompat?: () => void;
   onApply?: (e?: React.MouseEvent<HTMLButtonElement>) => void;
 }
 

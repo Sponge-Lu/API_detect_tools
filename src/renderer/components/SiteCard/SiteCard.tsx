@@ -49,15 +49,12 @@ export const SiteCard = React.memo(
     checkingIn,
     dragOverIndex,
     refreshMessage,
-    cliCompatibility,
     cliConfig,
-    isCliTesting,
     onDetect,
     onCheckIn,
     onOpenSite,
     onOpenExtraLink,
     onOpenCliConfig,
-    onTestCliCompat,
     onApply,
     onDragStart,
     onDragEnd,
@@ -202,11 +199,8 @@ export const SiteCard = React.memo(
               accountId={accountId}
               accountName={accountName}
               onOpenSite={onOpenSite}
-              cliCompatibility={cliCompatibility}
               cliConfig={cliConfig}
-              isCliTesting={isCliTesting}
               onOpenCliConfig={onOpenCliConfig}
-              onTestCliCompat={onTestCliCompat}
               onApply={onApply}
             />
 
@@ -244,8 +238,6 @@ export const SiteCard = React.memo(
         prevProps.columnWidths === nextProps.columnWidths &&
         prevProps.isDetecting === nextProps.isDetecting &&
         prevProps.checkingIn === nextProps.checkingIn &&
-        prevProps.isCliTesting === nextProps.isCliTesting &&
-        prevProps.cliCompatibility === nextProps.cliCompatibility &&
         prevProps.cliConfig === nextProps.cliConfig &&
         prevProps.refreshMessage === nextProps.refreshMessage &&
         prevProps.accessPointType === nextProps.accessPointType &&

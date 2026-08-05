@@ -91,22 +91,6 @@ export const CliConfigSchema = z.object({
   metadata: z.record(z.any()).optional()
 });
 
-// CLI 兼容性 Schema
-export const CliCompatibilitySchema = z.object({
-  tool: CliToolSchema,
-  supported: z.boolean(),
-  version: z.string().optional(),
-  features: z.array(z.string()).optional(),
-  error: z.string().optional()
-});
-
-// CLI 兼容性结果 Schema
-export const CliCompatibilityResultSchema = z.object({
-  siteId: z.string(),
-  siteName: z.string(),
-  compatibility: z.array(CliCompatibilitySchema),
-  timestamp: z.number()
-});
 ```
 ### 应用配置 Schema
 

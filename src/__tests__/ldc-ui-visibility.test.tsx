@@ -21,7 +21,6 @@ const detectionState = {
   setApiKeys: vi.fn(),
   setUserGroups: vi.fn(),
   setModelPricing: vi.fn(),
-  setCliCompatibility: vi.fn(),
   detectCliConfig: vi.fn(),
   cliConfigDetection: null,
   setCliConfig: vi.fn(),
@@ -201,10 +200,6 @@ vi.mock('../renderer/store/toastStore', () => ({
     success: vi.fn(),
     error: vi.fn(),
   },
-}));
-
-vi.mock('../renderer/components/CliCompatibilityIcons', () => ({
-  CliCompatibilityIcons: () => <div>Mock CLI Compatibility</div>,
 }));
 
 import App from '../renderer/App';

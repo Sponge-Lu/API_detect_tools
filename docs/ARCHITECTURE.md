@@ -12,8 +12,8 @@
 
 - 配置模型升级为 v3：`sites + accounts + routing`
 - 新增 `数据总览`、`本地路由` 与 `日志` 工作区，并接入对应主进程路由服务
-- CLI 兼容性 UI 测试链路统一切换到真实 wrapper 执行，并通过临时目录隔离本机 CLI 配置
-- 路由运行态、CLI 探测、分析桶和模型来源快照拆分到 bounded sidecar 文件，稳定配置不再承载高频状态
+- 接入点侧滑面板提供协议中立的三端点 HTTP 生成测试，CLI 配置与测试选择完全解耦
+- 路由运行态、端点测试最新结果、分析桶和模型来源快照拆分到 bounded sidecar 文件
 - UI 原语迁移到 `App*` 中性命名体系
 - 主题系统收敛为 `Light` / `Dark`
 
@@ -87,8 +87,8 @@ interface UnifiedConfig {
 
 - `sites`：站点元信息、站点级设置、兼容层字段。
 - `accounts`：站点账号、账号级自动刷新和 CLI 配置。
-- `routing`：Route 工作台对应的稳定服务配置、规则、模型展示项、优先级、CLI 选择和探测配置。
-- 运行态检测缓存、路由路径状态、CLI 探测 latest/history、路由分析桶和模型来源快照存入 `runtime-cache.json` 与 `state/route-*.json` sidecar 文件，不写回稳定 `config.json`。
+- `routing`：Route 工作台对应的稳定服务配置、规则、模型展示项、优先级与 CLI 选择。
+- 运行态检测缓存、路由路径状态、端点测试 latest、路由分析桶和模型来源快照存入 `runtime-cache.json` 与 `state/route-*.json` sidecar 文件。
 
 ### 加载与恢复策略
 
@@ -159,18 +159,13 @@ interface UnifiedConfig {
 | `TokenService` | 登录初始化、token 校验、签到、access token 自动补建 |
 | `ChromeManager` | 多槽位检测浏览器池、独立登录浏览器、页面复用与清理 |
 | `UnifiedConfigManager` | 配置加载、迁移、原子写入、备份恢复、路由配置持久化 |
-| `CliCompatService` | 协议级 CLI 兼容性探测，请求格式与真实 CLI 对齐，用于底层能力判断与属性测试 |
-| `CliWrapperCompatService` | 拉起真实 Claude Code / Codex wrapper，在隔离临时目录中执行当前 UI 的 CLI 可用性测试，并监听本地路由 probe-lock 终止错误以提前结束失败测试 |
+| `EndpointTestService` | 解析托管/直连目标，通过本地路由 target lock 执行三协议 HTTP 生成测试并保存最新时间 |
 | `CreditService` | Linux Do Credit 数据读取与充值跳转 |
 | `UpdateService` | 版本检查、应用内下载、安装 |
 
-### CLI 兼容性执行路径
+### 端点测试执行路径
 
-当前前端入口统一走 `cli-compat:test-with-wrapper` IPC，由 `CliWrapperCompatService` 在临时 `HOME` / `CODEX_HOME` 中生成最小配置并执行真实 CLI。测试结束后删除临时目录，不修改用户真实 CLI 配置目录，因此常规测试流程不需要备份或恢复本机 CLI 配置。
-
-站点手动测试与 route 自动探测都会通过本地路由代理的 probe-lock API Key 进行精确定向。probe-lock payload 绑定 `siteId / accountId / apiKeyId / cliType / probeRunId / canonicalModel / rawModel / targetProtocol`，只允许 loopback 客户端使用，且不会转发给上游。
-
-当路由代理观察到 probe-lock 的确定性终止错误（例如无效 API Key、CLI 类型不匹配、非 loopback 请求、凭据不可用、上游 4xx/5xx、所有通道失败或 probe-lock 单模型上游尝试耗尽）时，会通知 wrapper 测试进程提前终止。wrapper 也会记录 CLI 是否真正向本地代理发起过请求，用于区分“上游失败”和“CLI 未连接到代理”。
+`endpoint-test:*` IPC 接收接入目标、协议、API Key 与模型。`EndpointTestService` 复用路由目标解析的 AnyRouter、代理、直连和托管 Key 处理，再通过只允许 loopback 的 target lock 发起非流式 HTTP 请求。托管目标同时返回站点全量模型与各 API Key 用户分组可用模型，直连目标返回已获取和手工模型并集。三个协议统一发送“1.2和1.19哪个更大？”，测试头只包含协议必需字段，不携带 CLI marker、User-Agent、originator 或 Grok 特征；上游失败只持久化经过提取和限长的简短原因。
 
 ### 浏览器管理模型
 
@@ -205,18 +200,18 @@ Route 相关能力是 v3 主线相比 v2.1.24 最重要的新增模块之一。
 - `route-channel-resolver.ts`：通道路由决策
 - `route-rule-engine.ts`：规则匹配
 - `route-model-registry-service.ts`：模型注册表与覆盖项
-- `route-cli-probe-service.ts`：CLI 探测配置、历史与最新结果
+- `endpoint-test-service.ts`：三协议手动测试与最新结果持久化
 - `route-analytics-service.ts`：聚合分析统计
 - `route-health-service.ts`：健康检查
 - `route-stats-service.ts`：统计写入
-- `route-probe-lock.ts`：CLI 手动测试 / 自动探测的本地定向锁、请求观察、终止错误缓存与单模型上游尝试预算
+- `route-target-lock.ts`：手动端点测试的 loopback 目标锁定编解码与请求尝试预算
 
 ### 渲染层页面
 
 - `RoutePage`：本地路由配置/操作页，承载代理服务、CLI 默认模型与模型重定向配置
 - `DataOverviewPage`：数据总览页；路由数据子页展示 KPI、趋势、模型热力、通道散点与 Sankey；趋势图在 `24h` / `7d` 视窗内补齐完整小时/日期 X 轴
 - `LogsPage`：日志页；路由日志子页以无卡片、带表头的横向滚动单行表格展示逐条请求尝试、路由目标、Token（总/输入/输出/缓存写/缓存读）、参考金额、用时/首字、纯数字状态码与失败第二行
-- `CliUsabilityTab`：CLI 探测状态、7 天历史批次条、自动探测设置与诊断信息，当前作为站点检测相关工作区使用
+- `EndpointTestPanel`：接入点侧滑面板的独立测试页，每端点单独选择 Key/模型并显示最近测试时间
 
 ### IPC 命名空间
 
@@ -227,29 +222,30 @@ Route 功能统一挂在 `route:*`：
 - `route:start-server` / `route:stop-server`
 - `route:list-rules` / `route:upsert-rule` / `route:delete-rule`
 - `route:get-model-registry` / `route:rebuild-model-registry`
-- `route:save-cli-probe-config` / `route:run-cli-probe-now`
+- `endpoint-test:get-state` / `endpoint-test:save-selection` / `endpoint-test:run`
 - `route:get-analytics-summary` / `route:get-analytics-distribution`
 - `route:get-request-logs`
 - `route:get-object-stats`
 
 ---
 
-## CLI 配置与兼容性
+## CLI 配置与端点测试
 
 ### 存储位置
 
 | 数据 | 位置 |
 |------|------|
 | 站点 CLI 配置 | `account.cli_config` 或兼容层 `site.cli_config` |
-| CLI 兼容性缓存 | `account.cached_data.cli_compatibility` 或兼容字段 |
 | 自定义 CLI 配置 | `${userData}/custom-cli-configs.json` |
+| 端点测试最新状态 | `${userData}/state/route-endpoint-tests.json` |
 
 ### 当前策略
 
 - **Claude Code**：支持配置生成与应用。
-- **Codex**：仅使用 Responses API，`wire_api = "responses"`。
+- **Codex**：配置使用 Responses API，`wire_api = "responses"`。
 - Google/Gemini GenerateContent 仅作为路由/provider 协议处理能力保留，不作为可配置 CLI 集成展示。
-- 手动 CLI 测试与 route/site detection 探测结果以 `routing.cliProbe.latest/history` 为共享最新结果源；站点卡片、统一 CLI 配置抽屉和 CLI 可用性矩阵都从该源投影。
+- CLI 使用模型只影响配置生成/应用；端点测试选择完全独立。
+- 四个内置 CLI 配置卡片常驻展开，连接字段采用紧凑三列布局；每个配置文件预览按需展开。
 
 ---
 
@@ -280,8 +276,8 @@ Route 功能统一挂在 `route:*`：
 
 1. Route 请求经过规则解析与通道选择。
 2. 普通代理请求按规则、模型注册表、站点优先级、API Key 优先级和运行时路径健康状态选择上游。
-3. CLI probe-lock 请求跳过普通 fallback 语义，精确钉到当前站点 / 账户 / API Key / 模型；单模型测试只允许一次真实上游尝试。
-4. 运行结果写入 sidecar 中的 route runtime、probe 和 analytics 状态。
+3. 手动端点测试使用 target lock 精确选择站点 / 账户 / API Key / 模型，不进入普通路由统计。
+4. 运行结果写入 route runtime、endpoint tests 和 analytics 各自的 sidecar。
 5. 渲染层通过 `routeStore`、数据总览页和日志页拉取摘要、分布、逐条请求尝试与最新状态。
 6. 路由数据趋势图由前端按当前 scope 过滤后的桶级数据聚合；`24h` 固定生成 24 个小时点，`7d` 固定生成 7 个日期点，缺失桶保持零值，首个真实桶之前的空点只保留 X 轴标签。
 
@@ -313,6 +309,6 @@ Route 功能统一挂在 `route:*`：
 
 - **数据模型更清晰**：站点、账号、稳定路由配置与高频运行态 sidecar 分层明确。
 - **工作台能力更完整**：站点管理之外，新增路由代理运维面。
-- **CLI 测试链路更确定**：真实 wrapper 测试、probe-lock 定向和 route latest 投影形成统一诊断链路。
+- **端点测试更明确**：协议中立、目标锁定、最新结果与时间持久化形成统一诊断链路。
 - **UI 与主题体系收敛**：从旧命名和多套实验主题回到统一原语与双主题。
 - **恢复能力更强**：配置迁移、坏文件保护和备份恢复成为内建能力。

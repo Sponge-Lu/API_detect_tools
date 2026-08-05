@@ -1,26 +1,17 @@
-import {
-  isProbeCliType,
-  normalizeCliTargetProtocol,
-  type CliTargetProtocol,
-  type ProbeCliType,
-} from '../shared/types/cli-config';
+import { normalizeCliTargetProtocol, type CliTargetProtocol } from '../shared/types/cli-config';
 import type { RouteCliType } from '../shared/types/route-proxy';
 
-const ROUTE_PROBE_LOCK_SEPARATOR = '.probe.';
+const ROUTE_TARGET_LOCK_SEPARATOR = '.target.';
 const TERMINAL_FAILURE_CACHE_TTL_MS = 5 * 60 * 1000;
 const UPSTREAM_ATTEMPT_CACHE_TTL_MS = 5 * 60 * 1000;
 const UPSTREAM_RESULT_CACHE_TTL_MS = 5 * 60 * 1000;
 
-// Claude Code 一次探测会并发/退避重发多个上游请求；上限取 4 留出重试余量。
-// 权衡：瞬时错误在上限内不消耗预算，故并发的 CLI 请求单次模型测试最多可计费 MAX 次真实上游调用。
-export const MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS = 4;
+export const MAX_TARGET_LOCK_UPSTREAM_ATTEMPTS = 4;
 
-export interface RouteProbeLock {
+export interface RouteTargetLock {
   siteId: string;
   accountId: string;
   apiKeyId: string;
-  cliType: ProbeCliType;
-  probeRunId?: string;
   canonicalModel: string;
   rawModel: string;
   targetProtocol?: CliTargetProtocol;
@@ -28,15 +19,15 @@ export interface RouteProbeLock {
   upstreamApiKey?: string;
 }
 
-export interface RouteProbeLockTerminalFailure {
+export interface RouteTargetLockTerminalFailure {
   routeApiKey: string;
   cliType: RouteCliType;
   statusCode?: number;
   terminalError: string;
-  lock?: RouteProbeLock;
+  lock?: RouteTargetLock;
 }
 
-export interface RouteProbeLockUpstreamResult {
+export interface RouteTargetLockUpstreamResult {
   routeApiKey: string;
   cliType: RouteCliType;
   statusCode?: number;
@@ -44,24 +35,24 @@ export interface RouteProbeLockUpstreamResult {
   responseSummary?: string;
   error?: string;
   finishedAt: number;
-  lock?: RouteProbeLock;
+  lock?: RouteTargetLock;
 }
 
-type RouteProbeLockTerminalFailureListener = (failure: RouteProbeLockTerminalFailure) => void;
-type RouteProbeLockRequestListener = () => void;
-type RouteProbeLockUpstreamResultListener = (result: RouteProbeLockUpstreamResult) => void;
+type RouteTargetLockTerminalFailureListener = (failure: RouteTargetLockTerminalFailure) => void;
+type RouteTargetLockRequestListener = () => void;
+type RouteTargetLockUpstreamResultListener = (result: RouteTargetLockUpstreamResult) => void;
 
-const terminalFailureListeners = new Map<string, Set<RouteProbeLockTerminalFailureListener>>();
-const requestListeners = new Map<string, Set<RouteProbeLockRequestListener>>();
-const upstreamResultListeners = new Map<string, Set<RouteProbeLockUpstreamResultListener>>();
+const terminalFailureListeners = new Map<string, Set<RouteTargetLockTerminalFailureListener>>();
+const requestListeners = new Map<string, Set<RouteTargetLockRequestListener>>();
+const upstreamResultListeners = new Map<string, Set<RouteTargetLockUpstreamResultListener>>();
 const terminalFailures = new Map<
   string,
-  { failure: RouteProbeLockTerminalFailure; expiresAt: number }
+  { failure: RouteTargetLockTerminalFailure; expiresAt: number }
 >();
 const upstreamAttempts = new Map<string, { count: number; settled: boolean; expiresAt: number }>();
 const upstreamResults = new Map<
   string,
-  { result: RouteProbeLockUpstreamResult; terminal: boolean; expiresAt: number }
+  { result: RouteTargetLockUpstreamResult; terminal: boolean; expiresAt: number }
 >();
 
 function encodeBase64Url(value: string): string {
@@ -78,8 +69,8 @@ function decodeBase64Url(value: string): string {
   return Buffer.from(padded, 'base64').toString('utf-8');
 }
 
-export function buildProbeLockRouteApiKey(unifiedApiKey: string, lock: RouteProbeLock): string {
-  return `${unifiedApiKey}${ROUTE_PROBE_LOCK_SEPARATOR}${encodeBase64Url(
+export function buildTargetLockRouteApiKey(unifiedApiKey: string, lock: RouteTargetLock): string {
+  return `${unifiedApiKey}${ROUTE_TARGET_LOCK_SEPARATOR}${encodeBase64Url(
     JSON.stringify({
       ...lock,
       targetProtocol: normalizeCliTargetProtocol(lock.targetProtocol),
@@ -87,9 +78,9 @@ export function buildProbeLockRouteApiKey(unifiedApiKey: string, lock: RouteProb
   )}`;
 }
 
-export function subscribeRouteProbeLockTerminalFailure(
+export function subscribeRouteTargetLockTerminalFailure(
   routeApiKey: string,
-  listener: RouteProbeLockTerminalFailureListener
+  listener: RouteTargetLockTerminalFailureListener
 ): () => void {
   const listeners = terminalFailureListeners.get(routeApiKey) ?? new Set();
   listeners.add(listener);
@@ -103,15 +94,15 @@ export function subscribeRouteProbeLockTerminalFailure(
   };
 }
 
-export function clearRouteProbeLockTerminalFailure(routeApiKey: string): void {
+export function clearRouteTargetLockState(routeApiKey: string): void {
   terminalFailures.delete(routeApiKey);
   upstreamAttempts.delete(routeApiKey);
   upstreamResults.delete(routeApiKey);
 }
 
-export function subscribeRouteProbeLockRequest(
+export function subscribeRouteTargetLockRequest(
   routeApiKey: string,
-  listener: RouteProbeLockRequestListener
+  listener: RouteTargetLockRequestListener
 ): () => void {
   const listeners = requestListeners.get(routeApiKey) ?? new Set();
   listeners.add(listener);
@@ -125,7 +116,7 @@ export function subscribeRouteProbeLockRequest(
   };
 }
 
-export function notifyRouteProbeLockRequest(routeApiKey: string): void {
+export function notifyRouteTargetLockRequest(routeApiKey: string): void {
   const listeners = requestListeners.get(routeApiKey);
   if (!listeners?.size) {
     return;
@@ -136,9 +127,9 @@ export function notifyRouteProbeLockRequest(routeApiKey: string): void {
   }
 }
 
-export function getRouteProbeLockTerminalFailure(
+export function getRouteTargetLockTerminalFailure(
   routeApiKey: string
-): RouteProbeLockTerminalFailure | undefined {
+): RouteTargetLockTerminalFailure | undefined {
   const cached = terminalFailures.get(routeApiKey);
   if (!cached) {
     return undefined;
@@ -152,7 +143,9 @@ export function getRouteProbeLockTerminalFailure(
   return cached.failure;
 }
 
-export function notifyRouteProbeLockTerminalFailure(failure: RouteProbeLockTerminalFailure): void {
+export function notifyRouteTargetLockTerminalFailure(
+  failure: RouteTargetLockTerminalFailure
+): void {
   terminalFailures.set(failure.routeApiKey, {
     failure,
     expiresAt: Date.now() + TERMINAL_FAILURE_CACHE_TTL_MS,
@@ -168,9 +161,9 @@ export function notifyRouteProbeLockTerminalFailure(failure: RouteProbeLockTermi
   }
 }
 
-export function getRouteProbeLockFirstUpstreamResult(
+export function getRouteTargetLockFirstUpstreamResult(
   routeApiKey: string
-): RouteProbeLockUpstreamResult | undefined {
+): RouteTargetLockUpstreamResult | undefined {
   const cached = upstreamResults.get(routeApiKey);
   if (!cached) {
     return undefined;
@@ -185,9 +178,9 @@ export function getRouteProbeLockFirstUpstreamResult(
 }
 
 // 仅返回已终结(成功/终结失败)的结果；可被覆盖的瞬时结果不视为终值。
-function getTerminalRouteProbeLockUpstreamResult(
+function getTerminalRouteTargetLockUpstreamResult(
   routeApiKey: string
-): RouteProbeLockUpstreamResult | undefined {
+): RouteTargetLockUpstreamResult | undefined {
   const cached = upstreamResults.get(routeApiKey);
   if (!cached) {
     return undefined;
@@ -204,10 +197,10 @@ function getTerminalRouteProbeLockUpstreamResult(
 // 语义：终值优先(terminal-wins)、瞬时可覆盖(transient-overwritable)。
 // - 已缓存终值：直接返回，不覆盖、不通知。
 // - 否则写入新结果；仅终值 resolve 等待者，瞬时结果只更新缓存供同步读取，可被后续结果覆盖。
-export function recordRouteProbeLockFirstUpstreamResult(
-  result: RouteProbeLockUpstreamResult,
+export function recordRouteTargetLockFirstUpstreamResult(
+  result: RouteTargetLockUpstreamResult,
   opts?: { terminal?: boolean }
-): RouteProbeLockUpstreamResult {
+): RouteTargetLockUpstreamResult {
   const terminal = opts?.terminal ?? true;
   const cached = upstreamResults.get(result.routeApiKey);
   const existing = cached && cached.expiresAt > Date.now() ? cached : undefined;
@@ -233,11 +226,11 @@ export function recordRouteProbeLockFirstUpstreamResult(
   return result;
 }
 
-export function waitForRouteProbeLockFirstUpstreamResult(
+export function waitForRouteTargetLockFirstUpstreamResult(
   routeApiKey: string,
   timeoutMs: number
-): Promise<RouteProbeLockUpstreamResult | undefined> {
-  const existing = getTerminalRouteProbeLockUpstreamResult(routeApiKey);
+): Promise<RouteTargetLockUpstreamResult | undefined> {
+  const existing = getTerminalRouteTargetLockUpstreamResult(routeApiKey);
   if (existing || timeoutMs <= 0) {
     return Promise.resolve(existing);
   }
@@ -245,7 +238,7 @@ export function waitForRouteProbeLockFirstUpstreamResult(
   return new Promise(resolve => {
     let settled = false;
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-    let listener: RouteProbeLockUpstreamResultListener = () => undefined;
+    let listener: RouteTargetLockUpstreamResultListener = () => undefined;
     const listeners = upstreamResultListeners.get(routeApiKey) ?? new Set();
 
     const cleanup = () => {
@@ -279,14 +272,14 @@ export function waitForRouteProbeLockFirstUpstreamResult(
       resolve(undefined);
     }, timeoutMs);
 
-    const current = getTerminalRouteProbeLockUpstreamResult(routeApiKey);
+    const current = getTerminalRouteTargetLockUpstreamResult(routeApiKey);
     if (current) {
       listener(current);
     }
   });
 }
 
-export function beginRouteProbeLockUpstreamAttempt(routeApiKey: string): {
+export function beginRouteTargetLockUpstreamAttempt(routeApiKey: string): {
   allowed: boolean;
   attemptNumber: number;
   isFinalAttempt: boolean;
@@ -300,7 +293,7 @@ export function beginRouteProbeLockUpstreamAttempt(routeApiKey: string): {
 
   const current = upstreamAttempts.get(routeApiKey);
   if (current) {
-    if (current.settled || current.count >= MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS) {
+    if (current.settled || current.count >= MAX_TARGET_LOCK_UPSTREAM_ATTEMPTS) {
       return { allowed: false, attemptNumber: current.count, isFinalAttempt: true };
     }
     current.count += 1;
@@ -308,7 +301,7 @@ export function beginRouteProbeLockUpstreamAttempt(routeApiKey: string): {
     return {
       allowed: true,
       attemptNumber: current.count,
-      isFinalAttempt: current.count >= MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS,
+      isFinalAttempt: current.count >= MAX_TARGET_LOCK_UPSTREAM_ATTEMPTS,
     };
   }
 
@@ -320,11 +313,11 @@ export function beginRouteProbeLockUpstreamAttempt(routeApiKey: string): {
   return {
     allowed: true,
     attemptNumber: 1,
-    isFinalAttempt: MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS <= 1,
+    isFinalAttempt: MAX_TARGET_LOCK_UPSTREAM_ATTEMPTS <= 1,
   };
 }
 
-export function settleRouteProbeLockUpstreamAttempt(routeApiKey: string): void {
+export function settleRouteTargetLockUpstreamAttempt(routeApiKey: string): void {
   const existing = upstreamAttempts.get(routeApiKey);
   if (existing) {
     existing.settled = true;
@@ -339,7 +332,7 @@ export function settleRouteProbeLockUpstreamAttempt(routeApiKey: string): void {
   });
 }
 
-export function hasRouteProbeLockUpstreamAttempt(routeApiKey: string): boolean {
+export function hasRouteTargetLockUpstreamAttempt(routeApiKey: string): boolean {
   const existing = upstreamAttempts.get(routeApiKey);
   if (!existing) {
     return false;
@@ -353,15 +346,15 @@ export function hasRouteProbeLockUpstreamAttempt(routeApiKey: string): boolean {
   return existing.count > 0;
 }
 
-export function parseProbeLockRouteApiKey(
+export function parseTargetLockRouteApiKey(
   token: string,
   unifiedApiKey: string
-): RouteProbeLock | null {
+): RouteTargetLock | null {
   if (token === unifiedApiKey) {
     return null;
   }
 
-  const prefix = `${unifiedApiKey}${ROUTE_PROBE_LOCK_SEPARATOR}`;
+  const prefix = `${unifiedApiKey}${ROUTE_TARGET_LOCK_SEPARATOR}`;
   if (!token.startsWith(prefix)) {
     return null;
   }
@@ -373,23 +366,14 @@ export function parseProbeLockRouteApiKey(
     }
 
     const record = parsed as Record<string, unknown>;
-    const cliType = record.cliType;
     const siteId = typeof record.siteId === 'string' ? record.siteId.trim() : '';
     const accountId = typeof record.accountId === 'string' ? record.accountId.trim() : '';
     const apiKeyId = typeof record.apiKeyId === 'string' ? record.apiKeyId.trim() : '';
-    const probeRunId = typeof record.probeRunId === 'string' ? record.probeRunId.trim() : '';
     const canonicalModel =
       typeof record.canonicalModel === 'string' ? record.canonicalModel.trim() : '';
     const rawModel = typeof record.rawModel === 'string' ? record.rawModel.trim() : '';
 
-    if (
-      !isProbeCliType(cliType) ||
-      !siteId ||
-      !accountId ||
-      !apiKeyId ||
-      !canonicalModel ||
-      !rawModel
-    ) {
+    if (!siteId || !accountId || !apiKeyId || !canonicalModel || !rawModel) {
       return null;
     }
 
@@ -397,8 +381,6 @@ export function parseProbeLockRouteApiKey(
       siteId,
       accountId,
       apiKeyId,
-      cliType,
-      probeRunId: probeRunId || undefined,
       canonicalModel,
       rawModel,
       targetProtocol: normalizeCliTargetProtocol(record.targetProtocol),

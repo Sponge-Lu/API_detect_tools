@@ -19,7 +19,6 @@ import { persist } from 'zustand/middleware';
 import type { SiteConfig } from '../App';
 import { DialogState, DialogType, initialDialogState } from '../components/ConfirmDialog';
 import { COLUMN_WIDTHS_VERSION, DEFAULT_COLUMN_WIDTHS } from '../../shared/constants';
-import type { HistoryMode } from '../components/Route/Usability/HistoryBucketBars';
 import type { RouteCliType } from '../../shared/types/route-proxy';
 import { BUILTIN_CLI_TYPES } from '../../shared/types/cli-config';
 
@@ -136,9 +135,8 @@ interface UIState {
   /** 已应用列宽默认值的版本；小于 COLUMN_WIDTHS_VERSION 时会在加载时一次性重置 */
   columnWidthsVersion: number;
 
-  // History 列：CLI 类型与模式（共享于列表头与所有行）
+  // History 列：CLI 类型（共享于列表头与所有行）
   historyCliType: RouteCliType;
-  historyMode: HistoryMode;
 
   // 排序状态
   sortField: SortField | null;
@@ -226,7 +224,6 @@ interface UIState {
 
   // Actions - History 列选择器
   setHistoryCliType: (cliType: RouteCliType) => void;
-  setHistoryMode: (mode: HistoryMode) => void;
 
   // Actions - 排序
   setSortField: (field: SortField | null) => void;
@@ -293,7 +290,6 @@ export const useUIStore = create<UIState>()(
       columnWidths: [...DEFAULT_COLUMN_WIDTHS],
       columnWidthsVersion: COLUMN_WIDTHS_VERSION,
       historyCliType: 'claudeCode',
-      historyMode: 'combined',
       sortField: null,
       sortOrder: 'desc',
       showDownloadPanel: false,
@@ -498,7 +494,6 @@ export const useUIStore = create<UIState>()(
         }),
 
       setHistoryCliType: cliType => set({ historyCliType: cliType }),
-      setHistoryMode: historyMode => set({ historyMode }),
 
       // 排序 Actions
       setSortField: field => set({ sortField: field }),
@@ -548,7 +543,6 @@ export const useUIStore = create<UIState>()(
         columnWidths: state.columnWidths,
         columnWidthsVersion: state.columnWidthsVersion,
         historyCliType: state.historyCliType,
-        historyMode: state.historyMode,
       }),
       merge: (persistedState, currentState) => {
         const persisted = (persistedState ?? {}) as Partial<UIState>;
@@ -564,16 +558,11 @@ export const useUIStore = create<UIState>()(
 
         // 一次性迁移：从旧 localStorage 顶层 key 取出 HistoryCell 的选择
         const VALID_CLI_TYPES: RouteCliType[] = [...BUILTIN_CLI_TYPES];
-        const VALID_MODES: HistoryMode[] = ['combined', 'probe', 'route'];
         const isValidRouteCliType = (value: string | null | undefined): value is RouteCliType =>
           Boolean(value) && VALID_CLI_TYPES.includes(value as RouteCliType);
         const legacyCli =
           typeof localStorage !== 'undefined'
             ? localStorage.getItem('historyCell:selectedCli')
-            : null;
-        const legacyMode =
-          typeof localStorage !== 'undefined'
-            ? (localStorage.getItem('historyCell:selectedMode') as HistoryMode | null)
             : null;
         if (legacyCli === 'geminiCli') {
           persisted.historyCliType = 'openCode';
@@ -588,9 +577,6 @@ export const useUIStore = create<UIState>()(
           persisted.historyCliType = currentState.historyCliType;
         }
 
-        if (legacyMode && VALID_MODES.includes(legacyMode)) {
-          persisted.historyMode = legacyMode;
-        }
         try {
           if (typeof localStorage !== 'undefined') {
             localStorage.removeItem('historyCell:selectedCli');

@@ -1,14 +1,11 @@
-import { useState } from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ManagedCliConfigEditorContent } from '../renderer/components/dialogs/ManagedCliConfigEditorContent';
 import type { CliConfig } from '../shared/types/cli-config';
 import { useDetectionStore } from '../renderer/store/detectionStore';
 import { useConfigStore } from '../renderer/store/configStore';
-import { useRouteStore } from '../renderer/store/routeStore';
 import { toast } from '../renderer/store/toastStore';
-import { DEFAULT_ROUTING_CONFIG, buildProbeKey } from '../shared/types/route-proxy';
-import type { ModelPricingData, UnifiedConfig } from '../shared/types/site';
+import type { ModelPricingData } from '../shared/types/site';
 import { createDefaultAllDetectionResult } from '../shared/types/config-detection';
 
 vi.mock('../renderer/store/toastStore', () => ({
@@ -25,9 +22,6 @@ const initialConfig: CliConfig = {
     apiKeyId: 1,
     model: 'claude-3-5-sonnet',
     targetProtocol: 'native',
-    testModel: 'claude-3-5-sonnet',
-    testModels: ['claude-3-5-sonnet', '', ''],
-    testResults: [],
     enabled: true,
     editedFiles: null,
     applyMode: 'merge',
@@ -36,9 +30,6 @@ const initialConfig: CliConfig = {
     apiKeyId: 1,
     model: 'gpt-4.1',
     targetProtocol: 'native',
-    testModel: 'gpt-4.1',
-    testModels: ['gpt-4.1', '', ''],
-    testResults: [],
     enabled: true,
     editedFiles: null,
     applyMode: 'merge',
@@ -47,9 +38,6 @@ const initialConfig: CliConfig = {
     apiKeyId: 1,
     model: 'gpt-4.1',
     targetProtocol: 'native',
-    testModel: 'gpt-4.1',
-    testModels: ['gpt-4.1', '', ''],
-    testResults: [],
     enabled: true,
     editedFiles: null,
     applyMode: 'merge',
@@ -58,9 +46,6 @@ const initialConfig: CliConfig = {
     apiKeyId: 1,
     model: 'gpt-4.1',
     targetProtocol: 'native',
-    testModel: null,
-    testModels: [],
-    testResults: [],
     enabled: true,
     editedFiles: null,
     applyMode: 'merge',
@@ -88,24 +73,6 @@ const groupedModelPricing: ModelPricingData = {
   },
 };
 
-function StatefulDialog() {
-  const [currentConfig, setCurrentConfig] = useState<CliConfig>(initialConfig);
-
-  return (
-    <ManagedCliConfigEditorContent
-      siteName="Claude Hub"
-      siteUrl="https://example.com"
-      apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
-      siteModels={['claude-3-5-sonnet', 'gpt-4.1']}
-      currentConfig={currentConfig}
-      onPersistConfig={async nextConfig => {
-        setCurrentConfig(nextConfig);
-      }}
-      onSave={vi.fn()}
-    />
-  );
-}
-
 function MismatchDialog() {
   return (
     <ManagedCliConfigEditorContent
@@ -120,17 +87,7 @@ function MismatchDialog() {
 }
 
 function getCliSectionHeader(label: string): HTMLElement {
-  const header =
-    screen
-      .getAllByText(label)
-      .map(node => node.closest('[role="button"]'))
-      .find((node): node is HTMLElement => node instanceof HTMLElement) ?? null;
-
-  if (!header) {
-    throw new Error(`CLI section header not found: ${label}`);
-  }
-
-  return header;
+  return screen.getByRole('button', { name: `${label} 配置文件预览` });
 }
 
 function getOpenModelMenu(): HTMLElement {
@@ -146,9 +103,7 @@ describe('ManagedCliConfigEditorContent', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useDetectionStore.setState({
-      cliCompatibility: {},
       cliConfigs: {},
-      cliTestingSites: new Set<string>(),
     });
     useConfigStore.setState({
       config: {
@@ -170,37 +125,18 @@ describe('ManagedCliConfigEditorContent', () => {
       loading: false,
       saving: false,
     });
-    useRouteStore.setState({
-      cliProbeLoaded: false,
-      cliProbeTimeRange: '7d',
-      fetchCliProbeData: vi.fn().mockResolvedValue(undefined),
-      fetchConfig: vi.fn().mockResolvedValue(undefined),
-    });
-
     window.electronAPI = {
       ...window.electronAPI,
       loadConfig: vi.fn().mockResolvedValue({
         sites: [],
         accounts: [],
-        routing: {
-          cliProbe: {
-            latest: {},
-          },
-        },
       }),
       cliCompat: {
         ...window.electronAPI?.cliCompat,
-        testWithWrapper: vi.fn().mockResolvedValue({
-          success: true,
-          data: {
-            codex: true,
-          },
-        }),
         writeConfig: vi.fn().mockResolvedValue({
           success: true,
           writtenPaths: ['~/.grok/config.toml'],
         }),
-        saveResult: vi.fn().mockResolvedValue({ success: true }),
       },
       configDetection: {
         ...window.electronAPI?.configDetection,
@@ -208,39 +144,6 @@ describe('ManagedCliConfigEditorContent', () => {
         detectAllCliConfig: vi.fn().mockResolvedValue(createDefaultAllDetectionResult()),
       },
     };
-  });
-
-  it('keeps the selected codex tab after test-result persistence updates currentConfig', async () => {
-    render(<StatefulDialog />);
-
-    await act(async () => {
-      fireEvent.click(getCliSectionHeader('Codex'));
-    });
-
-    expect(getCliSectionHeader('Codex')).toHaveAttribute('aria-expanded', 'true');
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '测试已选模型' }));
-    });
-
-    await waitFor(() =>
-      expect(window.electronAPI.cliCompat.testWithWrapper).toHaveBeenCalledWith({
-        siteUrl: 'https://example.com',
-        configs: [
-          {
-            cliType: 'codex',
-            apiKey: 'sk-test',
-            model: 'gpt-4.1',
-            baseUrl: 'https://example.com',
-            targetProtocol: 'native',
-          },
-        ],
-      })
-    );
-    await waitFor(() =>
-      expect(getCliSectionHeader('Codex')).toHaveAttribute('aria-expanded', 'true')
-    );
-    expect(getCliSectionHeader('Claude Code')).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('shows a warning when edited codex config points to a different domain than the current site', async () => {
@@ -271,12 +174,27 @@ describe('ManagedCliConfigEditorContent', () => {
       />
     );
 
+    expect(screen.queryByText('连接配置')).not.toBeInTheDocument();
+    const cliTitle = screen.getByText('Claude Code').parentElement;
+    expect(cliTitle).toHaveClass('items-center');
+    expect(cliTitle).toHaveTextContent('Claude Codeclaude-3-5-sonnet');
+    expect(screen.getByRole('button', { name: '应用 Claude Code' })).toHaveClass(
+      '!min-h-7',
+      '!px-2.5'
+    );
+    expect(screen.getByRole('switch', { name: '启用 Claude Code' })).toHaveClass('h-4', 'w-8');
+    const targetProtocolSelect = screen.getByLabelText('Claude Code 选择上游端口');
+    expect(targetProtocolSelect).toHaveClass('h-8', 'py-0', 'text-xs');
+    expect(targetProtocolSelect.parentElement?.parentElement?.firstElementChild).toBe(
+      targetProtocolSelect.parentElement
+    );
+
     await act(async () => {
       fireEvent.click(getCliSectionHeader('Claude Code'));
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'CLI 使用模型' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Claude Code CLI 使用模型' }));
     });
 
     expect(screen.getAllByText('claude-3-5-sonnet').length).toBeGreaterThan(0);
@@ -304,8 +222,6 @@ describe('ManagedCliConfigEditorContent', () => {
             ...initialConfig.claudeCode!,
             apiKeyId: 1,
             model: 'gpt-4.1',
-            testModel: 'gpt-4.1',
-            testModels: ['gpt-4.1'],
           },
         }}
         onSave={vi.fn()}
@@ -317,250 +233,11 @@ describe('ManagedCliConfigEditorContent', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'CLI 使用模型' })).toHaveTextContent(
+      expect(screen.getByRole('button', { name: 'Claude Code CLI 使用模型' })).toHaveTextContent(
         '请选择 CLI 模型'
       );
     });
-    expect(screen.getByRole('button', { name: '测试模型' })).toHaveTextContent('请选择测试模型');
-    expect(screen.queryByRole('button', { name: '测试模型 2' })).not.toBeInTheDocument();
-  });
-
-  it('persists selected-model test samples into route CLI history and refreshes the cached view', async () => {
-    const fetchCliProbeDataMock = vi.fn().mockResolvedValue(undefined);
-    const fetchConfigMock = vi.fn().mockResolvedValue(undefined);
-    useRouteStore.setState({
-      cliProbeLoaded: true,
-      cliProbeTimeRange: '7d',
-      fetchCliProbeData: fetchCliProbeDataMock,
-      fetchConfig: fetchConfigMock,
-    });
-
-    const testedAt = 1777000000000;
-    const probeKey = buildProbeKey('site-1', 'acct-1', 'codex', 'gpt-4.1');
-    window.electronAPI = {
-      ...window.electronAPI,
-      loadConfig: vi.fn().mockResolvedValue({
-        sites: [{ id: 'site-1', name: 'Claude Hub' }],
-        accounts: [{ id: 'acct-1', site_id: 'site-1', account_name: 'Primary' }],
-        routing: {
-          cliProbe: {
-            latest: {
-              [probeKey]: {
-                probeKey,
-                siteId: 'site-1',
-                accountId: 'acct-1',
-                cliType: 'codex',
-                canonicalModel: 'gpt-4.1',
-                rawModel: 'gpt-4.1',
-                healthy: true,
-                lastSample: {
-                  sampleId: 'sample-1',
-                  probeKey,
-                  siteId: 'site-1',
-                  accountId: 'acct-1',
-                  cliType: 'codex',
-                  canonicalModel: 'gpt-4.1',
-                  rawModel: 'gpt-4.1',
-                  success: true,
-                  source: 'siteManual',
-                  codexDetail: { responses: true },
-                  testedAt,
-                },
-              },
-            },
-          },
-        },
-      } satisfies UnifiedConfig),
-      cliCompat: {
-        ...window.electronAPI?.cliCompat,
-        testWithWrapper: vi.fn().mockResolvedValue({
-          success: true,
-          data: {
-            codex: true,
-            codexDetail: { responses: true },
-          },
-          samples: [
-            {
-              cliType: 'codex',
-              model: 'gpt-4.1',
-              success: true,
-              testedAt,
-              codexDetail: { responses: true },
-            },
-          ],
-        }),
-        saveResult: vi.fn().mockResolvedValue({ success: true }),
-      },
-    };
-
-    render(
-      <ManagedCliConfigEditorContent
-        siteName="Claude Hub"
-        accountId="acct-1"
-        accountName="Primary"
-        siteUrl="https://example.com"
-        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
-        siteModels={['claude-3-5-sonnet', 'gpt-4.1']}
-        currentConfig={initialConfig}
-        onPersistConfig={vi.fn().mockResolvedValue(undefined)}
-        onSave={vi.fn()}
-      />
-    );
-
-    await act(async () => {
-      fireEvent.click(getCliSectionHeader('Codex'));
-    });
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '测试已选模型' }));
-    });
-
-    await waitFor(() =>
-      expect(window.electronAPI.cliCompat.saveResult).toHaveBeenCalledWith(
-        'https://example.com',
-        expect.objectContaining({
-          codex: true,
-          codexDetail: { responses: true },
-          testedAt: expect.any(Number),
-        }),
-        'acct-1',
-        [
-          expect.objectContaining({
-            cliType: 'codex',
-            model: 'gpt-4.1',
-            success: true,
-            testedAt,
-          }),
-        ]
-      )
-    );
-
-    await waitFor(() => expect(fetchConfigMock).toHaveBeenCalled());
-    expect(fetchCliProbeDataMock).toHaveBeenCalledWith('7d', true);
-    expect(useDetectionStore.getState().cliCompatibility['Claude Hub::acct-1']).toMatchObject({
-      codex: true,
-      codexDetail: { responses: true },
-      sourceLabel: '来自站点管理测试 · Primary',
-      testedAt,
-    });
-  });
-
-  it('shows selected-model failure details in the row status with a warning toast summary', async () => {
-    window.electronAPI = {
-      ...window.electronAPI,
-      cliCompat: {
-        ...window.electronAPI?.cliCompat,
-        testWithWrapper: vi.fn().mockResolvedValue({
-          success: true,
-          data: {
-            claudeCode: false,
-            claudeError:
-              'Claude Code 执行失败: CLI 未向本地路由代理发起请求，请检查 CLI 是否已登录、是否支持环境变量代理配置，以及本机是否能执行该 CLI。',
-          },
-          samples: [
-            {
-              cliType: 'claudeCode',
-              model: 'claude-3-5-sonnet',
-              success: false,
-              testedAt: 1777000000000,
-              error:
-                'Claude Code 执行失败: CLI 未向本地路由代理发起请求，请检查 CLI 是否已登录、是否支持环境变量代理配置，以及本机是否能执行该 CLI。',
-            },
-          ],
-        }),
-        saveResult: vi.fn().mockResolvedValue({ success: true }),
-      },
-    };
-
-    render(
-      <ManagedCliConfigEditorContent
-        siteName="HuanAPI"
-        siteUrl="https://example.com"
-        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
-        siteModels={['claude-3-5-sonnet']}
-        currentConfig={initialConfig}
-        onPersistConfig={vi.fn().mockResolvedValue(undefined)}
-        onSave={vi.fn()}
-      />
-    );
-
-    await act(async () => {
-      fireEvent.click(getCliSectionHeader('Claude Code'));
-    });
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '测试已选模型' }));
-    });
-
-    await waitFor(() => {
-      expect(toast.warning).toHaveBeenCalledWith('Claude Code 有 1 个测试模型未通过', 10000);
-    });
-    expect(screen.getByText('失败')).toBeInTheDocument();
-  });
-
-  it('shows newer route probe results in the matching selected-model slot', async () => {
-    const probeKey = buildProbeKey('site-1', 'acct-1', 'codex', 'gpt-4.1');
-    useRouteStore.setState({
-      config: {
-        ...DEFAULT_ROUTING_CONFIG,
-        cliProbe: {
-          ...DEFAULT_ROUTING_CONFIG.cliProbe,
-          latest: {
-            [probeKey]: {
-              probeKey,
-              siteId: 'site-1',
-              accountId: 'acct-1',
-              cliType: 'codex',
-              canonicalModel: 'gpt-4.1',
-              rawModel: 'gpt-4.1',
-              healthy: false,
-              lastSample: {
-                sampleId: 'route-sample-1',
-                probeKey,
-                siteId: 'site-1',
-                accountId: 'acct-1',
-                cliType: 'codex',
-                canonicalModel: 'gpt-4.1',
-                rawModel: 'gpt-4.1',
-                success: false,
-                source: 'routeProbe',
-                statusCode: 503,
-                testedAt: 1777000000000,
-              },
-              lastFailureAt: 1777000000000,
-            },
-          },
-        },
-      },
-    });
-
-    render(
-      <ManagedCliConfigEditorContent
-        siteId="site-1"
-        siteName="Claude Hub"
-        accountId="acct-1"
-        accountName="Primary"
-        siteUrl="https://example.com"
-        apiKeys={[{ id: 1, name: 'Default Key', key: 'sk-test' }]}
-        siteModels={['claude-3-5-sonnet', 'gpt-4.1']}
-        currentConfig={{
-          ...initialConfig,
-          codex: {
-            ...initialConfig.codex!,
-            testResults: [{ model: 'gpt-4.1', success: true, timestamp: 1776000000000 }],
-          },
-        }}
-        onSave={vi.fn()}
-      />
-    );
-
-    await act(async () => {
-      fireEvent.click(getCliSectionHeader('Codex'));
-    });
-
-    await waitFor(() => {
-      expect(screen.getByText('失败')).toBeInTheDocument();
-    });
+    expect(screen.queryByRole('button', { name: '测试模型' })).not.toBeInTheDocument();
   });
 
   it('persists the selected target protocol and updates the displayed endpoint', async () => {
@@ -581,7 +258,7 @@ describe('ManagedCliConfigEditorContent', () => {
       fireEvent.click(getCliSectionHeader('Codex'));
     });
 
-    const targetProtocolSelect = screen.getByLabelText('选择上游端口');
+    const targetProtocolSelect = screen.getByLabelText('Codex 选择上游端口');
     expect(targetProtocolSelect).toHaveDisplayValue('原生协议 · /v1/responses');
 
     await act(async () => {
@@ -607,7 +284,7 @@ describe('ManagedCliConfigEditorContent', () => {
     );
   });
 
-  it('supports managed Grok Build configuration without exposing model probes', async () => {
+  it('supports managed Grok Build configuration without test controls', async () => {
     render(
       <ManagedCliConfigEditorContent
         siteName="Claude Hub"
@@ -623,11 +300,10 @@ describe('ManagedCliConfigEditorContent', () => {
       fireEvent.click(getCliSectionHeader('Grok Build'));
     });
 
-    expect(screen.getByLabelText('选择上游端口')).toHaveDisplayValue(
+    expect(screen.getByLabelText('Grok Build 选择上游端口')).toHaveDisplayValue(
       '原生协议 · 跟随 Grok Build 当前模型入口'
     );
-    expect(screen.getByRole('button', { name: '暂不支持探测' })).toBeDisabled();
-    expect(window.electronAPI.cliCompat.testWithWrapper).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: '暂不支持探测' })).not.toBeInTheDocument();
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '应用 Grok Build' }));
@@ -660,7 +336,7 @@ describe('ManagedCliConfigEditorContent', () => {
     );
   });
 
-  it('keeps managed OpenCode configuration without exposing model probes', async () => {
+  it('keeps managed OpenCode configuration without test controls', async () => {
     render(
       <ManagedCliConfigEditorContent
         siteName="Claude Hub"
@@ -676,9 +352,10 @@ describe('ManagedCliConfigEditorContent', () => {
       fireEvent.click(getCliSectionHeader('OpenCode'));
     });
 
-    expect(screen.getByLabelText('选择上游端口')).toHaveDisplayValue('原生协议 · /v1/responses');
-    expect(screen.getByRole('button', { name: '暂不支持探测' })).toBeDisabled();
-    expect(window.electronAPI.cliCompat.testWithWrapper).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('OpenCode 选择上游端口')).toHaveDisplayValue(
+      '原生协议 · /v1/responses'
+    );
+    expect(screen.queryByRole('button', { name: '暂不支持探测' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '应用 OpenCode' })).toBeEnabled();
   });
 

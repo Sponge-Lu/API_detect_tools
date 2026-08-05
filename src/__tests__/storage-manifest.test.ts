@@ -18,7 +18,7 @@ describe('app storage manifest', () => {
         'stable-config',
         'runtime-detection-cache',
         'route-runtime-state',
-        'route-probe-state',
+        'route-endpoint-test-state',
         'route-analytics-state',
         'model-registry-source-state',
         'local-config-backups',

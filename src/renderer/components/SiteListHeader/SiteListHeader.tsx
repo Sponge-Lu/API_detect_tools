@@ -5,7 +5,6 @@ import type { SiteType } from '../../../shared/types/site';
 import { BUILTIN_CLI_LABELS } from '../../../shared/types/cli-config';
 import type { RouteCliType } from '../../../shared/types/route-proxy';
 import { useUIStore } from '../../store/uiStore';
-import type { HistoryMode } from '../Route/Usability/HistoryBucketBars';
 import type { SortField, SortOrder } from '../../store/uiStore';
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../assets/cli-icons/codex.svg';
@@ -105,21 +104,13 @@ const CLI_TYPES: CliTypeButton[] = [
   },
 ];
 
-const MODES: { mode: HistoryMode; label: string; title: string; aria: string }[] = [
-  { mode: 'combined', label: '综合', title: '综合模式（探测 + 路由）', aria: '综合模式' },
-  { mode: 'probe', label: '探测', title: '仅探测模式', aria: '仅探测' },
-  { mode: 'route', label: '路由', title: '仅路由模式', aria: '仅路由' },
-];
-
 function clampColumnWidth(width: number): number {
   return Math.max(COLUMN_MIN_WIDTH, Math.min(COLUMN_MAX_WIDTH, width));
 }
 
 function HistoryHeaderControls() {
   const cliType = useUIStore(state => state.historyCliType);
-  const mode = useUIStore(state => state.historyMode);
   const setCliType = useUIStore(state => state.setHistoryCliType);
-  const setMode = useUIStore(state => state.setHistoryMode);
 
   return (
     <div
@@ -151,29 +142,6 @@ function HistoryHeaderControls() {
             </button>
           );
         })}
-      </div>
-
-      <div className="flex items-center gap-1" role="group" aria-label="历史模式选择">
-        {MODES.map(({ mode: value, label, title, aria }) => (
-          <button
-            key={value}
-            type="button"
-            title={title}
-            aria-label={aria}
-            aria-pressed={mode === value}
-            onClick={event => {
-              event.stopPropagation();
-              setMode(value);
-            }}
-            className={`h-6 rounded-[var(--radius-md)] border px-2 text-[11px] font-medium transition-colors ${
-              mode === value
-                ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--text-on-accent)]'
-                : 'border-[var(--line-soft)] bg-[var(--surface-1)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent)]'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
       </div>
     </div>
   );

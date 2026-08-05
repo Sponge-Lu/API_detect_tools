@@ -310,12 +310,6 @@ function collectCustomCliModelCandidates(
     }
 
     addCustomCliModelCandidate(modelsByName, setting.model, [cliType], modelAllowlist);
-    for (const model of setting.testModels || []) {
-      addCustomCliModelCandidate(modelsByName, model, [cliType], modelAllowlist);
-    }
-    for (const slot of setting.testState?.slots || []) {
-      addCustomCliModelCandidate(modelsByName, slot?.model, [cliType], modelAllowlist);
-    }
   }
 
   return Array.from(modelsByName.entries())

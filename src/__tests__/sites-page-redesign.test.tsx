@@ -4,7 +4,6 @@ import { Children, isValidElement, type ReactElement, type ReactNode } from 'rea
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_COLUMN_WIDTHS } from '../shared/constants';
-import { CliCompatibilityIcons } from '../renderer/components/CliCompatibilityIcons/CliCompatibilityIcons';
 import { SiteListHeader } from '../renderer/components/SiteListHeader';
 import { SiteCard, SiteCardActions, SiteCardDetails } from '../renderer/components/SiteCard';
 import { SiteCardHeader } from '../renderer/components/SiteCard/SiteCardHeader';
@@ -18,7 +17,6 @@ import { useToastStore } from '../renderer/store/toastStore';
 import { useRouteStore } from '../renderer/store/routeStore';
 import type { DetectionResult, SiteConfig } from '../renderer/App';
 import type { CustomCliConfig } from '../shared/types/custom-cli-config';
-import { DEFAULT_CLI_PROBE_CONFIG } from '../shared/types/route-proxy';
 
 const baseSite: SiteConfig = {
   id: 'site-1',
@@ -49,18 +47,10 @@ function buildSiteCardProps(overrides: Record<string, unknown> = {}) {
     checkingIn: null,
     dragOverIndex: null,
     refreshMessage: null,
-    cliCompatibility: {
-      claudeCode: null,
-      codex: null,
-      testedAt: Date.now(),
-    },
     cliConfig: {
       claudeCode: {
         apiKeyId: 1,
         model: 'claude-3-5-sonnet',
-        testModel: 'claude-3-5-sonnet',
-        testModels: ['claude-3-5-sonnet'],
-        testResults: [],
         enabled: true,
         editedFiles: null,
         applyMode: 'merge',
@@ -68,21 +58,16 @@ function buildSiteCardProps(overrides: Record<string, unknown> = {}) {
       codex: {
         apiKeyId: null,
         model: null,
-        testModel: null,
-        testModels: [],
-        testResults: [],
         enabled: true,
         editedFiles: null,
         applyMode: 'merge',
       },
     },
-    isCliTesting: false,
     onDetect: vi.fn(),
     onCheckIn: vi.fn(),
     onOpenSite: vi.fn(),
     onOpenExtraLink: vi.fn(),
     onOpenCliConfig: vi.fn(),
-    onTestCliCompat: vi.fn(),
     onApply: vi.fn(),
     onDragStart: vi.fn(),
     onDragEnd: vi.fn(),
@@ -183,14 +168,10 @@ const customCliConfig: CustomCliConfig = {
     claudeCode: {
       enabled: true,
       model: 'direct-model',
-      testModels: ['direct-model'],
-      testState: null,
     },
     codex: {
       enabled: false,
       model: null,
-      testModels: [],
-      testState: null,
     },
   },
   createdAt: new Date('2026-06-17T00:00:00Z').getTime(),
@@ -224,7 +205,6 @@ describe('sites page redesign', () => {
       dragOverIndex: null,
       dragOverGroupId: null,
       historyCliType: 'claudeCode',
-      historyMode: 'combined',
     });
     useToastStore.setState({
       toasts: [],
@@ -241,26 +221,31 @@ describe('sites page redesign', () => {
     (window.electronAPI as any).route.getConfig = vi
       .fn()
       .mockResolvedValue({ success: true, data: null });
-    (window.electronAPI as any).route.saveCliProbeConfig = vi
-      .fn()
-      .mockResolvedValue({ success: true });
-    (window.electronAPI as any).route.runCliProbeNow = vi.fn().mockResolvedValue({
-      success: true,
-      data: { startedAt: 1, finishedAt: 2, totalSamples: 0, successSamples: 0, failureSamples: 0 },
-    });
     (window.electronAPI as any).loadConfig = vi.fn().mockResolvedValue({
       sites: [],
       accounts: [],
-      routing: { cliProbe: { latest: {} } },
     });
+    (window.electronAPI as any).endpointTest = {
+      getState: vi.fn().mockResolvedValue({
+        success: true,
+        data: {
+          target: { kind: 'direct', configId: 'cfg-1' },
+          targetKey: 'direct:cfg-1',
+          apiKeys: [],
+          models: [],
+          protocols: {
+            'anthropic-messages': { apiKeyId: null, model: null },
+            'openai-responses': { apiKeyId: null, model: null },
+            'openai-chat-completions': { apiKeyId: null, model: null },
+          },
+        },
+      }),
+      saveSelection: vi.fn().mockResolvedValue({ success: true }),
+      run: vi.fn().mockResolvedValue({ success: true }),
+    };
     useRouteStore.setState({
       config: null,
       loading: false,
-      cliProbeHistory: [],
-      cliProbeLatest: [],
-      cliProbeView: [],
-      cliProbeLoaded: false,
-      cliProbeError: null,
     });
   });
 
@@ -270,67 +255,20 @@ describe('sites page redesign', () => {
     expect(source).not.toContain('<div className="w-[48px]" aria-hidden="true" />');
     expect(source).toContain('handleOpenDetectionSettings');
     expect(source).toContain('SiteSettingsDialog');
-    expect(source).toContain('fetchRouteConfig');
+    expect(source).not.toContain('fetchRouteConfig');
     expect(source).toContain('setShowSiteSettings(true)');
-    expect(source).toContain('runRouteProbeNow');
+    expect(source).not.toContain('runRouteProbeNow');
     expect(source).not.toContain("setActiveSettingsSection('detection')");
-    expect(source).toContain('handleDetectAllSites');
+    expect(source).not.toContain('handleDetectAllSites');
     expect(source).toContain('aria-label="设置"');
-    expect(source).toContain('aria-label="立即探测"');
+    expect(source).not.toContain('aria-label="立即探测"');
     expect(source).toContain('siteRefreshSettings={config.settings}');
-    expect(source).toContain('立即探测');
+    expect(source).not.toContain('立即探测');
     expect(source).not.toContain('<SlidersHorizontal className="w-4 h-4"');
     expect(source).not.toContain('<Play className="w-4 h-4"');
   });
 
-  it('runs route CLI probe from the Sites page header immediate probe action', async () => {
-    useConfigStore.setState({
-      config: {
-        sites: [baseSite],
-        settings: {
-          timeout: 30,
-          concurrent: false,
-          show_disabled: true,
-        },
-        siteGroups: [{ id: 'default', name: '默认分组' }],
-      },
-    });
-
-    let headerActions: ReactNode | null = null;
-    const setPageHeaderActions = vi.fn((actions: ReactNode | null) => {
-      headerActions = actions;
-    });
-
-    render(<SitesPage setPageHeaderActions={setPageHeaderActions} />);
-    await waitFor(() => expect(setPageHeaderActions).toHaveBeenCalled());
-
-    const immediateProbeAction = findClickableAction(headerActions, '立即探测');
-    expect(immediateProbeAction).not.toBeNull();
-
-    await act(async () => {
-      await immediateProbeAction?.props.onClick();
-    });
-
-    expect((window.electronAPI as any).route.runCliProbeNow).toHaveBeenCalledWith(undefined);
-    expect((window.electronAPI as any).detectAllSites).not.toHaveBeenCalled();
-  });
-
-  it('opens and saves CLI probe and site refresh settings from the Sites page header', async () => {
-    const routeConfig = {
-      cliProbe: {
-        config: {
-          ...DEFAULT_CLI_PROBE_CONFIG,
-          enabled: true,
-          intervalMinutes: 120,
-        },
-        latest: {},
-        history: {},
-      },
-    };
-    (window.electronAPI as any).route.getConfig = vi.fn().mockResolvedValue({
-      success: true,
-      data: routeConfig,
-    });
+  it('opens and saves site refresh settings from the Sites page header', async () => {
     const saveConfig = vi.fn().mockResolvedValue(undefined);
     window.electronAPI.saveConfig = saveConfig;
 
@@ -361,17 +299,10 @@ describe('sites page redesign', () => {
       await settingsAction?.props.onClick();
     });
 
-    expect(await screen.findByRole('dialog', { name: '站点设置' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'CLI 探测' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByLabelText('探测间隔（分钟）')).toHaveValue(120);
-    expect(screen.queryByLabelText('每个 CLI 探测模型数')).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('探测间隔（分钟）'), {
-      target: { value: '180' },
-    });
-
-    fireEvent.click(screen.getByRole('tab', { name: '站点刷新' }));
-    expect(screen.getByLabelText('请求超时时间 (秒)')).toHaveValue(30);
-    fireEvent.change(screen.getByLabelText('请求超时时间 (秒)'), {
+    expect(await screen.findByRole('dialog', { name: '站点刷新设置' })).toBeInTheDocument();
+    expect(screen.queryByText('CLI 探测')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('请求超时（秒）')).toHaveValue(30);
+    fireEvent.change(screen.getByLabelText('请求超时（秒）'), {
       target: { value: '45' },
     });
 
@@ -379,11 +310,6 @@ describe('sites page redesign', () => {
       fireEvent.click(screen.getByText('保存设置'));
     });
 
-    await waitFor(() =>
-      expect((window.electronAPI as any).route.saveCliProbeConfig).toHaveBeenCalledWith(
-        expect.objectContaining({ enabled: true, intervalMinutes: 180 })
-      )
-    );
     expect(saveConfig).toHaveBeenCalledWith(
       expect.objectContaining({
         settings: expect.objectContaining({ timeout: 45, show_disabled: true }),
@@ -419,14 +345,13 @@ describe('sites page redesign', () => {
       await settingsAction?.props.onClick();
     });
 
-    fireEvent.click(screen.getByRole('tab', { name: '站点刷新' }));
-    fireEvent.change(screen.getByLabelText('请求超时时间 (秒)'), {
+    fireEvent.change(screen.getByLabelText('请求超时（秒）'), {
       target: { value: '45' },
     });
     fireEvent.click(screen.getByRole('button', { name: '保存设置' }));
 
     await waitFor(() => expect(saveConfig).toHaveBeenCalledOnce());
-    expect(screen.getByRole('dialog', { name: '站点设置' })).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: '站点刷新设置' })).toBeInTheDocument();
   });
 
   it('defaults the group filter to 默认分组 and does not render an 全部 tab', () => {
@@ -679,36 +604,12 @@ describe('sites page redesign', () => {
     { timeout: 20000 },
     () => {
       const onDeleteDirectConfig = vi.fn();
-      const directFailureMessage = 'direct upstream timeout detail';
-      const directConfigWithFailure: CustomCliConfig = {
-        ...customCliConfig,
-        cliSettings: {
-          ...customCliConfig.cliSettings,
-          claudeCode: {
-            ...customCliConfig.cliSettings.claudeCode,
-            testState: {
-              status: false,
-              testedAt: 123,
-              slots: [
-                {
-                  model: 'direct-model',
-                  success: false,
-                  timestamp: 123,
-                  message: directFailureMessage,
-                },
-                null,
-                null,
-              ],
-            },
-          },
-        },
-      };
 
       render(
         <AccessPointDetailPanel
           open={true}
           onClose={vi.fn()}
-          data={{ type: 'custom-cli', config: directConfigWithFailure }}
+          data={{ type: 'custom-cli', config: customCliConfig }}
           onDeleteDirectConfig={onDeleteDirectConfig}
         />
       );
@@ -725,13 +626,13 @@ describe('sites page redesign', () => {
       expect(screen.getAllByRole('button', { name: '保存配置' })).toHaveLength(1);
 
       fireEvent.click(screen.getByRole('button', { name: '删除配置' }));
-      expect(onDeleteDirectConfig).toHaveBeenCalledWith(directConfigWithFailure);
+      expect(onDeleteDirectConfig).toHaveBeenCalledWith(customCliConfig);
 
       fireEvent.click(screen.getByRole('button', { name: '模型 & 资源' }));
       expect(screen.getByText('直连模型管理')).toBeInTheDocument();
       expect(screen.getByText('手动模型')).toBeInTheDocument();
 
-      fireEvent.click(screen.getByRole('button', { name: 'CLI 配置 & 测试' }));
+      fireEvent.click(screen.getByRole('button', { name: 'CLI 配置' }));
       expect(
         screen.getByText((_, element) =>
           /^CLI 配置（\s*\d+\s*\/\s*4\s*）$/.test(element?.textContent ?? '')
@@ -739,33 +640,27 @@ describe('sites page redesign', () => {
       ).toBeInTheDocument();
       expect(screen.queryByText('直连 CLI 配置')).not.toBeInTheDocument();
       expect(screen.queryByText('配置预览与编辑')).not.toBeInTheDocument();
-      expect(screen.getByText('配置文件预览')).toBeInTheDocument();
+      expect(screen.getAllByText('配置文件预览')).toHaveLength(4);
       expect(screen.getAllByText('应用到本机').length).toBeGreaterThan(0);
       expect(screen.getByRole('button', { name: 'Claude Code 主模型' })).toHaveClass(
         'px-3',
         'py-2',
         'text-sm'
       );
-      expect(screen.getByRole('button', { name: 'Claude Code 测试模型' })).toHaveClass(
-        'px-3',
-        'py-2',
-        'text-sm'
+      expect(
+        screen.queryByRole('button', { name: 'Claude Code 测试模型' })
+      ).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Claude Code 配置文件预览' }));
+      expect(screen.getByRole('button', { name: 'Claude Code 配置文件预览' })).toHaveAttribute(
+        'aria-expanded',
+        'true'
       );
-      expect(screen.getByText('失败')).toBeInTheDocument();
-      expect(screen.queryByText(directFailureMessage)).not.toBeInTheDocument();
-      expect(screen.queryByTitle(directFailureMessage)).not.toBeInTheDocument();
-
-      fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
-
-      expect(screen.queryByText('配置文件预览')).not.toBeInTheDocument();
       expect(screen.queryByText('CLI 测试')).not.toBeInTheDocument();
       expect(screen.queryAllByText('测试模型')).toHaveLength(0);
       expect(screen.queryByText('测试模型（最多 3 个）')).not.toBeInTheDocument();
       expect(screen.queryByText('请确认配置信息是否正确')).not.toBeInTheDocument();
       expect(screen.queryAllByRole('button', { name: /^预览 / })).toHaveLength(0);
-
-      fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
-      expect(screen.getByText('配置文件预览')).toBeInTheDocument();
 
       expect(
         screen.queryByText('旧版 CLI 配置编辑区与测试结果（实现期细化）')
@@ -1127,24 +1022,7 @@ describe('sites page redesign', () => {
     { timeout: 20000 },
     async () => {
       const onSaveCliConfig = vi.fn();
-      const managedFailureMessage = 'managed upstream timeout detail';
       const baseCliConfig = buildSiteCardProps().cliConfig;
-      const managedCliConfigWithFailure = {
-        ...baseCliConfig,
-        claudeCode: {
-          ...baseCliConfig.claudeCode,
-          testResults: [
-            {
-              model: 'claude-3-5-sonnet',
-              success: false,
-              timestamp: 123,
-              message: managedFailureMessage,
-            },
-            null,
-            null,
-          ],
-        },
-      };
 
       render(
         <AccessPointDetailPanel
@@ -1161,34 +1039,27 @@ describe('sites page redesign', () => {
               auth_source: 'manual',
             },
           }}
-          cliConfig={managedCliConfigWithFailure}
+          cliConfig={baseCliConfig}
           apiKeys={[{ id: 1, name: 'Primary Key', key: 'sk-primary' }]}
           siteResult={{ status: '成功', models: ['claude-3-5-sonnet'] } as any}
           onSaveCliConfig={onSaveCliConfig}
         />
       );
 
-      fireEvent.click(screen.getByRole('button', { name: 'CLI 配置 & 测试' }));
+      fireEvent.click(screen.getByRole('button', { name: 'CLI 配置' }));
 
       expect(screen.getByRole('button', { name: '保存配置' })).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: '测试已选模型' })).not.toBeInTheDocument();
       expect(screen.getAllByText('应用到本机').length).toBeGreaterThan(0);
 
-      fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
-
-      expect(screen.getByRole('button', { name: '测试已选模型' })).toBeInTheDocument();
-      expect(screen.getByLabelText('选择 API Key')).toBeInTheDocument();
-      expect(screen.getByLabelText('选择上游端口')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'CLI 使用模型' })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: '测试模型' })).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: '测试模型 2' })).not.toBeInTheDocument();
-      expect(screen.getByText('失败')).toBeInTheDocument();
-      expect(screen.queryByText(managedFailureMessage)).not.toBeInTheDocument();
-      expect(screen.queryByTitle(managedFailureMessage)).not.toBeInTheDocument();
-      expect(screen.getByText('配置文件预览')).toBeInTheDocument();
+      expect(screen.getByLabelText('Claude Code 选择 API Key')).toBeInTheDocument();
+      expect(screen.getByLabelText('Claude Code 选择上游端口')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Claude Code CLI 使用模型' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: '测试模型' })).not.toBeInTheDocument();
+      expect(screen.getAllByText('配置文件预览')).toHaveLength(4);
       expect(screen.queryByText('请去站点确认配置信息是否正确')).not.toBeInTheDocument();
 
-      fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
+      fireEvent.click(screen.getByRole('button', { name: 'Claude Code 配置文件预览' }));
       expect(screen.queryByRole('button', { name: '测试已选模型' })).not.toBeInTheDocument();
 
       await act(async () => {
@@ -1240,7 +1111,7 @@ describe('sites page redesign', () => {
       />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'CLI 配置 & 测试' }));
+    fireEvent.click(screen.getByRole('button', { name: 'CLI 配置' }));
     expect(
       screen.getByText((_, element) =>
         /^CLI 配置（\s*\d+\s*\/\s*4\s*）$/.test(element?.textContent ?? '')
@@ -1321,7 +1192,10 @@ describe('sites page redesign', () => {
   it('managed side-panel account refresh uses browser basic-info refresh instead of site detection', () => {
     const source = readFileSync(join(process.cwd(), 'src/renderer/pages/SitesPage.tsx'), 'utf8');
     const handlerStart = source.indexOf('const handleRefreshPanelAccountInfo = useCallback');
-    const handlerEnd = source.indexOf('const handleDetectAllSites = useCallback', handlerStart);
+    const handlerEnd = source.indexOf(
+      'const handleOpenDetectionSettings = useCallback',
+      handlerStart
+    );
     const handlerSource = source.slice(handlerStart, handlerEnd);
 
     expect(handlerSource).toContain(
@@ -1366,7 +1240,8 @@ describe('sites page redesign', () => {
     expect(source).toContain('getHistoryBuckets');
     expect(source).toContain("window: '48h'");
     expect(source).toContain("bucketSize: '2h'");
-    expect(source).toContain('mapHistoryMode(mode)');
+    expect(source).not.toContain('mapHistoryMode');
+    expect(source).not.toContain('mode:');
     expect(source).not.toContain('config?.analytics?.buckets');
     expect(source).not.toContain('useRouteStore');
   });
@@ -1378,16 +1253,13 @@ describe('sites page redesign', () => {
         bucketStart: index * 2 * 60 * 60 * 1000,
         bucketEnd: (index + 1) * 2 * 60 * 60 * 1000,
         successRate: index === 23 ? 1 : null,
-        probeCount: index === 23 ? 1 : 0,
         routeCount: 0,
       })),
     });
     (window.electronAPI as any).route.getHistoryBuckets = getHistoryBuckets;
 
     await act(async () => {
-      render(
-        <HistoryBucketBars siteId="site-1" accountId="account-1" cliType="codex" mode="probe" />
-      );
+      render(<HistoryBucketBars siteId="site-1" accountId="account-1" cliType="codex" />);
     });
 
     await vi.waitFor(() => expect(getHistoryBuckets).toHaveBeenCalled());
@@ -1397,7 +1269,6 @@ describe('sites page redesign', () => {
       siteId: 'site-1',
       accountId: 'account-1',
       cliType: 'codex',
-      mode: 'probe-only',
     });
     expect(await screen.findAllByLabelText(/CLI: Codex/)).toHaveLength(24);
     expect(screen.getByTestId('history-bucket-bars-track')).toHaveStyle({ height: '13px' });
@@ -1410,16 +1281,13 @@ describe('sites page redesign', () => {
         bucketStart: index * 2 * 60 * 60 * 1000,
         bucketEnd: (index + 1) * 2 * 60 * 60 * 1000,
         successRate: index === 23 ? 1 : null,
-        probeCount: 0,
         routeCount: index === 23 ? 1 : 0,
       })),
     });
     window.electronAPI.route.getHistoryBuckets = getHistoryBuckets;
 
     await act(async () => {
-      render(
-        <HistoryBucketBars siteId="site-1" accountId="account-1" cliType="grokBuild" mode="route" />
-      );
+      render(<HistoryBucketBars siteId="site-1" accountId="account-1" cliType="grokBuild" />);
     });
 
     await vi.waitFor(() => expect(getHistoryBuckets).toHaveBeenCalled());
@@ -1429,7 +1297,6 @@ describe('sites page redesign', () => {
       siteId: 'site-1',
       accountId: 'account-1',
       cliType: 'grokBuild',
-      mode: 'route-only',
     });
     expect(await screen.findAllByLabelText(/CLI: Grok Build/)).toHaveLength(24);
     expect(screen.getByLabelText(/路由请求 1 次 100%/)).toBeInTheDocument();
@@ -1524,7 +1391,7 @@ describe('sites page redesign', () => {
     expect(screen.getByAltText('OpenCode')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '选择 Grok Build' })).toBeInTheDocument();
     expect(screen.getByAltText('Grok Build')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '综合模式' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '综合模式' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '选择 Grok Build' }));
     expect(useUIStore.getState().historyCliType).toBe('grokBuild');
     expect(screen.queryByText('操作')).not.toBeInTheDocument();
@@ -1597,15 +1464,8 @@ describe('sites page redesign', () => {
         accountId="account-1"
         accountName="Primary Account"
         onOpenSite={vi.fn()}
-        cliCompatibility={{
-          claudeCode: true,
-          codex: null,
-          testedAt: Date.now(),
-        }}
         cliConfig={null}
-        isCliTesting={false}
         onOpenCliConfig={vi.fn()}
-        onTestCliCompat={vi.fn()}
         onApply={vi.fn()}
       />
     );
@@ -1636,15 +1496,8 @@ describe('sites page redesign', () => {
         accountId="account-1"
         accountName="Primary Account"
         onOpenSite={vi.fn()}
-        cliCompatibility={{
-          claudeCode: true,
-          codex: null,
-          testedAt: Date.now(),
-        }}
         cliConfig={null}
-        isCliTesting={false}
         onOpenCliConfig={vi.fn()}
-        onTestCliCompat={vi.fn()}
         onApply={vi.fn()}
       />
     );
@@ -1672,15 +1525,8 @@ describe('sites page redesign', () => {
         accountId="account-1"
         accountName="Primary Account"
         onOpenSite={vi.fn()}
-        cliCompatibility={{
-          claudeCode: true,
-          codex: null,
-          testedAt: Date.now(),
-        }}
         cliConfig={null}
-        isCliTesting={false}
         onOpenCliConfig={vi.fn()}
-        onTestCliCompat={vi.fn()}
         onApply={vi.fn()}
       />
     );
@@ -1776,15 +1622,8 @@ describe('sites page redesign', () => {
         accountId="account-1"
         accountName="Primary Account"
         onOpenSite={vi.fn()}
-        cliCompatibility={{
-          claudeCode: true,
-          codex: null,
-          testedAt: Date.now(),
-        }}
         cliConfig={null}
-        isCliTesting={false}
         onOpenCliConfig={vi.fn()}
-        onTestCliCompat={vi.fn()}
         onApply={vi.fn()}
       />
     );
@@ -1809,15 +1648,8 @@ describe('sites page redesign', () => {
         accountId="account-1"
         accountName="Primary Account"
         onOpenSite={vi.fn()}
-        cliCompatibility={{
-          claudeCode: true,
-          codex: null,
-          testedAt: Date.now(),
-        }}
         cliConfig={null}
-        isCliTesting={false}
         onOpenCliConfig={vi.fn()}
-        onTestCliCompat={vi.fn()}
         onApply={vi.fn()}
       />
     );
@@ -1855,15 +1687,12 @@ describe('sites page redesign', () => {
         checkingIn={null}
         dragOverIndex={null}
         refreshMessage={null}
-        cliCompatibility={{ claudeCode: true, codex: null, testedAt: Date.now() }}
         cliConfig={null}
-        isCliTesting={false}
         onDetect={vi.fn()}
         onCheckIn={vi.fn()}
         onOpenSite={vi.fn()}
         onOpenExtraLink={vi.fn()}
         onOpenCliConfig={vi.fn()}
-        onTestCliCompat={vi.fn()}
         onApply={vi.fn()}
         onDragStart={vi.fn()}
         onDragEnd={vi.fn()}
@@ -2021,17 +1850,10 @@ describe('sites page redesign', () => {
         accountId="account-1"
         accountName="Primary Account"
         onOpenSite={vi.fn()}
-        cliCompatibility={{
-          claudeCode: true,
-          codex: null,
-          testedAt: Date.now(),
-        }}
         cliConfig={{
           claudeCode: {
             apiKeyId: 1,
             model: 'claude-3-5-sonnet',
-            testModel: null,
-            testModels: [],
             enabled: true,
             editedFiles: null,
             applyMode: 'merge',
@@ -2039,16 +1861,12 @@ describe('sites page redesign', () => {
           codex: {
             apiKeyId: 2,
             model: 'gpt-4.1',
-            testModel: null,
-            testModels: [],
             enabled: true,
             editedFiles: null,
             applyMode: 'merge',
           },
         }}
-        isCliTesting={false}
         onOpenCliConfig={vi.fn()}
-        onTestCliCompat={vi.fn()}
         onApply={vi.fn()}
       />
     );
@@ -2081,15 +1899,7 @@ describe('sites page redesign', () => {
           sortOrder="desc"
           onToggleSort={vi.fn()}
         />
-        <SiteCard
-          {...buildSiteCardProps({
-            cliCompatibility: {
-              claudeCode: true,
-              codex: null,
-              testedAt: Date.now(),
-            },
-          })}
-        />
+        <SiteCard {...buildSiteCardProps()} />
       </div>
     );
 
@@ -2125,176 +1935,8 @@ describe('sites page redesign', () => {
     expect(screen.queryByRole('button', { name: /点击签到/ })).not.toBeInTheDocument();
   });
 
-  it('renders the CLI compatibility surface through visible icons and config/apply entry buttons', () => {
-    const onConfig = vi.fn();
-    const onApply = vi.fn();
-
-    render(
-      <CliCompatibilityIcons
-        compatibility={{
-          claudeCode: true,
-          codex: false,
-          testedAt: Date.now(),
-        }}
-        cliConfig={{
-          claudeCode: {
-            apiKeyId: 1,
-            model: 'claude-3-5-sonnet',
-            testModel: null,
-            testModels: [],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-          codex: {
-            apiKeyId: 2,
-            model: 'gpt-4.1',
-            testModel: null,
-            testModels: [],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-        }}
-        configTrigger="text"
-        configButtonLabel="CLI配置"
-        onConfig={onConfig}
-        onApply={onApply}
-      />
-    );
-
-    expect(screen.getByRole('img', { name: /^Claude Code:/ })).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: /^Codex:/ })).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: /^OpenCode:/ })).toBeInTheDocument();
-    // Grok Build 暂不参与站点探测，不在兼容性图标面板的 CLI 列表中
-    expect(screen.queryByRole('img', { name: /^Grok Build:/ })).not.toBeInTheDocument();
-
-    expect(screen.getByRole('button', { name: 'CLI配置' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'CLI应用' })).toBeInTheDocument();
-    expect(screen.queryByTitle('测试 CLI 兼容性')).not.toBeInTheDocument();
-    expect(screen.queryByTitle('应用 CLI 配置到本地文件')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'CLI配置' }));
-    fireEvent.click(screen.getByRole('button', { name: 'CLI应用' }));
-
-    expect(onConfig).toHaveBeenCalledTimes(1);
-    expect(onApply).toHaveBeenCalledTimes(1);
-  });
-
-  it('lights up a CLI icon when persisted test results contain at least one successful model', () => {
-    render(
-      <CliCompatibilityIcons
-        compatibility={{
-          claudeCode: null,
-          codex: null,
-          testedAt: null,
-        }}
-        cliConfig={{
-          claudeCode: {
-            apiKeyId: 1,
-            model: 'claude-3-5-sonnet',
-            testModel: null,
-            testModels: [],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-          codex: {
-            apiKeyId: 2,
-            model: 'gpt-4.1',
-            testModel: 'gpt-4.1',
-            testModels: ['gpt-4.1'],
-            testResults: [
-              {
-                model: 'gpt-4.1',
-                success: true,
-                timestamp: Date.now(),
-              },
-              null,
-              null,
-            ],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-        }}
-        configTrigger="text"
-        configButtonLabel="CLI配置"
-        onConfig={vi.fn()}
-        onApply={vi.fn()}
-      />
-    );
-
-    const codexIcon = screen.getByRole('img', { name: /^Codex:/ });
-    expect(codexIcon.className).toContain('opacity-100');
-    expect(codexIcon.title).toContain('支持');
-  });
-
-  it('uses newer projected compatibility over stale persisted CLI test results', () => {
-    render(
-      <CliCompatibilityIcons
-        compatibility={{
-          claudeCode: null,
-          codex: false,
-          testedAt: 200,
-          codexError: '错误码 503',
-          sourceLabel: '来自站点检测',
-        }}
-        cliConfig={{
-          claudeCode: {
-            apiKeyId: 1,
-            model: 'claude-3-5-sonnet',
-            testModel: null,
-            testModels: [],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-          codex: {
-            apiKeyId: 2,
-            model: 'gpt-4.1',
-            testModel: 'gpt-4.1',
-            testModels: ['gpt-4.1'],
-            testResults: [
-              {
-                model: 'gpt-4.1',
-                success: true,
-                timestamp: 100,
-              },
-              null,
-              null,
-            ],
-            enabled: true,
-            editedFiles: null,
-            applyMode: 'merge',
-          },
-        }}
-        configTrigger="text"
-        configButtonLabel="CLI配置"
-        onConfig={vi.fn()}
-        onApply={vi.fn()}
-      />
-    );
-
-    const codexIcon = screen.getByRole('img', { name: /^Codex:/ });
-    expect(codexIcon.className).toContain('opacity-70');
-    expect(codexIcon.title).toContain('不支持');
-    expect(codexIcon.title).toContain('来自站点检测');
-    expect(codexIcon.title).toContain('错误码 503');
-  });
-
   it('keeps CLI icons inline in the header instead of a dedicated workbench slot', () => {
-    const { getByTestId } = render(
-      <SiteCard
-        {...buildSiteCardProps({
-          cliCompatibility: {
-            claudeCode: true,
-            codex: null,
-            testedAt: Date.now(),
-          },
-        })}
-      />
-    );
+    const { getByTestId } = render(<SiteCard {...buildSiteCardProps()} />);
 
     const mainRow = getByTestId('site-card-main-row');
     // CLI配置按钮已移到侧滑面板中
@@ -2391,36 +2033,5 @@ describe('sites page redesign', () => {
     expect(onRefreshToken.mock.calls[0]?.[0]).toEqual(baseSite);
     expect(onRefreshToken.mock.calls[0]?.[1]).toMatchObject({ id: 1, name: 'Alpha Key' });
     expect(onRefreshToken.mock.calls[0]?.[2]).toBe(0);
-  });
-
-  it('rerenders the site card when only cli test results change so the column icons update', () => {
-    const initialProps = buildSiteCardProps();
-    const { rerender } = render(<SiteCard {...initialProps} />);
-
-    // CLI 图标现在在 History 列，而不是独立的 CLI 可用性列
-    // 当前测试场景：没有配置时不显示图标
-    expect(screen.queryByAltText('Claude Code')).not.toBeInTheDocument();
-
-    const nextCliConfig = {
-      ...initialProps.cliConfig,
-      claudeCode: {
-        ...initialProps.cliConfig.claudeCode,
-        testResults: [
-          {
-            model: 'claude-3-5-sonnet',
-            success: true,
-            timestamp: Date.now(),
-          },
-          null,
-          null,
-        ],
-      },
-    };
-
-    rerender(<SiteCard {...buildSiteCardProps({ cliConfig: nextCliConfig })} />);
-
-    // 配置后应该显示在 History 列
-    // 注意：此测试可能需要根据 History 列的实际实现进一步调整
-    expect(screen.queryByAltText('Claude Code')).not.toBeInTheDocument();
   });
 });

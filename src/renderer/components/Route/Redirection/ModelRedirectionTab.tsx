@@ -38,7 +38,6 @@ import {
 } from '../../../../shared/types/route-proxy';
 import type {
   RouteDisplayItemPriorityConfig,
-  RouteCliProbeLatest,
   RouteModelDisplayItem,
   RouteModelMappingOverride,
   RouteModelRegistryConfig,
@@ -47,12 +46,9 @@ import type {
   RouteRequestLogItem,
   RoutePathState,
   RouteRuntimeConfig,
-  RoutingConfig,
 } from '../../../../shared/types/route-proxy';
 import {
   normalizeCustomCliGroupMultiplier,
-  normalizeCustomCliSettings,
-  normalizeCustomCliTestState,
   type CustomCliConfig,
 } from '../../../../shared/types/custom-cli-config';
 import type {
@@ -63,10 +59,8 @@ import type {
   UnifiedConfig,
   UserGroupInfo,
 } from '../../../../shared/types/site';
-import { BUILTIN_CLI_TYPES, normalizeCliTargetProtocol } from '../../../../shared/types/cli-config';
+import { normalizeCliTargetProtocol } from '../../../../shared/types/cli-config';
 import { parseCustomCliRouteConfigId } from '../../../../shared/utils/customCliRouteId';
-
-const ROUTE_CLI_TYPES = BUILTIN_CLI_TYPES;
 
 interface RedirectCandidateGroup {
   originalModel: string;
@@ -136,7 +130,6 @@ interface DetailApiKeyRow {
   sourceType?: RouteModelSourceRef['sourceType'];
   supportedOriginalModels: string[];
   modelPriceLabels: Record<string, string>;
-  modelTestResults: Record<string, string>;
 }
 
 interface DetailMissingApiKeyHint {
@@ -389,115 +382,8 @@ function formatShortTime(timestamp: number | undefined): string {
   });
 }
 
-function formatProbeStatus(entry: RouteCliProbeLatest | undefined): string {
-  if (!entry) {
-    return '未测试';
-  }
-
-  if (entry.lastSample.success) {
-    return '测试通过';
-  }
-
-  return '测试失败';
-}
-
-function formatCustomCliSlotProbeStatus(success: boolean): string {
-  return success ? '测试通过' : '测试失败';
-}
-
-function getCustomCliLocalProbeStatus(params: {
-  source: RouteModelSourceRef;
-  customCliConfigs?: CustomCliConfig[];
-  canonicalName: string;
-  originalModel: string;
-}): { label: string; testedAt: number } | null {
-  if (params.source.sourceType !== 'customCli') {
-    return null;
-  }
-
-  const config = getCustomCliConfigForSource(params.source, params.customCliConfigs);
-  if (!config) {
-    return null;
-  }
-
-  const cliTypes =
-    params.source.availableCliTypes && params.source.availableCliTypes.length > 0
-      ? params.source.availableCliTypes
-      : ROUTE_CLI_TYPES;
-  const candidateModels = new Set([params.originalModel, params.canonicalName]);
-  let latestSlot: { success: boolean; timestamp: number } | null = null;
-
-  for (const cliType of cliTypes) {
-    const setting = normalizeCustomCliSettings(config.cliSettings?.[cliType]);
-    const testState = normalizeCustomCliTestState(setting.testState);
-    for (const slot of testState.slots) {
-      if (!slot || !candidateModels.has(slot.model)) {
-        continue;
-      }
-
-      if (!latestSlot || slot.timestamp > latestSlot.timestamp) {
-        latestSlot = {
-          success: slot.success,
-          timestamp: slot.timestamp,
-        };
-      }
-    }
-  }
-
-  return latestSlot
-    ? {
-        label: formatCustomCliSlotProbeStatus(latestSlot.success),
-        testedAt: latestSlot.timestamp,
-      }
-    : null;
-}
-
-function getModelProbeStatus(params: {
-  routingConfig?: Pick<RoutingConfig, 'cliProbe'> | null;
-  source: RouteModelSourceRef;
-  accountId: string;
-  canonicalName: string;
-  originalModel: string;
-  customCliConfigs?: CustomCliConfig[];
-}): string {
-  const { routingConfig, source, accountId, canonicalName, originalModel } = params;
-  const latestEntries = Object.values(routingConfig?.cliProbe?.latest || {})
-    .filter(
-      entry =>
-        entry.siteId === source.siteId &&
-        entry.accountId === accountId &&
-        (entry.canonicalModel === canonicalName || entry.rawModel === originalModel)
-    )
-    .sort((left, right) => right.lastSample.testedAt - left.lastSample.testedAt);
-
-  const successfulEntry = latestEntries.find(entry => entry.lastSample.success);
-  const routeProbeEntry = successfulEntry || latestEntries[0];
-  const routeProbeStatus = routeProbeEntry
-    ? {
-        label: formatProbeStatus(routeProbeEntry),
-        testedAt: routeProbeEntry.lastSample.testedAt,
-      }
-    : null;
-  const customCliStatus = getCustomCliLocalProbeStatus({
-    source,
-    customCliConfigs: params.customCliConfigs,
-    canonicalName,
-    originalModel,
-  });
-
-  if (
-    customCliStatus &&
-    (!routeProbeStatus || customCliStatus.testedAt > routeProbeStatus.testedAt)
-  ) {
-    return customCliStatus.label;
-  }
-
-  return routeProbeStatus?.label || '未测试';
-}
-
-function formatModelListWithProbeStatus(
+function formatModelListDetails(
   models: string[],
-  modelTestResults?: Record<string, string>,
   modelPriceLabels?: Record<string, string>,
   modelRoutePathSuspensions?: Record<string, string[]>
 ): string {
@@ -505,7 +391,6 @@ function formatModelListWithProbeStatus(
     .map(model => {
       const details = [
         modelPriceLabels?.[model],
-        modelTestResults?.[model],
         ...(modelRoutePathSuspensions?.[model] || []),
       ].filter(Boolean);
       return details.length > 0 ? `${model}（${details.join(' / ')}）` : model;
@@ -1490,7 +1375,6 @@ export function shouldRefreshRegistrySourceDetails(registry?: RouteModelRegistry
 function buildDetailSiteAccountGroups(
   detailState: DisplayItemDetailState | null,
   fullConfig?: UnifiedConfig | null,
-  routingConfig?: Pick<RoutingConfig, 'cliProbe'> | null,
   customCliConfigs?: CustomCliConfig[]
 ): DetailSiteGroup[] {
   if (!detailState) {
@@ -1530,7 +1414,6 @@ function buildDetailSiteAccountGroups(
           sourceType?: RouteModelSourceRef['sourceType'];
           supportedOriginalModels: Set<string>;
           modelPriceLabels: Map<string, string>;
-          modelTestResults: Map<string, string>;
         }
       >;
       missingGroupHints: Map<string, DetailMissingApiKeyHint>;
@@ -1565,7 +1448,6 @@ function buildDetailSiteAccountGroups(
               sourceType?: RouteModelSourceRef['sourceType'];
               supportedOriginalModels: Set<string>;
               modelPriceLabels: Map<string, string>;
-              modelTestResults: Map<string, string>;
             }
           >(),
           missingGroupHints: new Map<string, DetailMissingApiKeyHint>(),
@@ -1618,7 +1500,6 @@ function buildDetailSiteAccountGroups(
             sourceType: source.sourceType,
             supportedOriginalModels: new Set<string>(),
             modelPriceLabels: new Map<string, string>(),
-            modelTestResults: new Map<string, string>(),
           };
           siteGroup.apiKeys.set(key, next);
           return next;
@@ -1626,17 +1507,6 @@ function buildDetailSiteAccountGroups(
 
       apiKeyRow.supportedOriginalModels.add(source.originalModel);
       addModelPriceLabel(apiKeyRow.modelPriceLabels, source.originalModel, modelPriceLabel);
-      apiKeyRow.modelTestResults.set(
-        source.originalModel,
-        getModelProbeStatus({
-          routingConfig,
-          source,
-          accountId: apiKey.accountId,
-          canonicalName: item.canonicalName,
-          originalModel: source.originalModel,
-          customCliConfigs,
-        })
-      );
     }
 
     for (const userGroup of availableGroups) {
@@ -1692,7 +1562,6 @@ function buildDetailSiteAccountGroups(
             sourceType: apiKey.sourceType,
             supportedOriginalModels: Array.from(apiKey.supportedOriginalModels),
             modelPriceLabels: Object.fromEntries(apiKey.modelPriceLabels),
-            modelTestResults: Object.fromEntries(apiKey.modelTestResults),
           }))
           .sort((left, right) => {
             if (left.apiKeyName !== right.apiKeyName) {
@@ -1929,20 +1798,9 @@ export function ModelRedirectionTab({
       ),
     [registry?.overrides]
   );
-  const routeCliProbe = config?.cliProbe ?? null;
-  const routeProbeContext = useMemo(
-    () => (routeCliProbe ? { cliProbe: routeCliProbe } : null),
-    [routeCliProbe]
-  );
   const detailSiteGroups = useMemo(
-    () =>
-      buildDetailSiteAccountGroups(
-        sourceDetailState,
-        priorityDetailConfig,
-        routeProbeContext,
-        customCliConfigs
-      ),
-    [customCliConfigs, priorityDetailConfig, routeProbeContext, sourceDetailState]
+    () => buildDetailSiteAccountGroups(sourceDetailState, priorityDetailConfig, customCliConfigs),
+    [customCliConfigs, priorityDetailConfig, sourceDetailState]
   );
   const sortedDetailSiteGroups = useMemo(() => {
     return sortDetailGroupsByPriority(detailSiteGroups, priorityDraft);
@@ -2082,7 +1940,6 @@ export function ModelRedirectionTab({
       const initialDetailGroups = buildDetailSiteAccountGroups(
         { item, entry },
         null,
-        routeProbeContext,
         customCliConfigs
       );
       const nextPriorityDraft = createDisplayOrderPriorityDraft(
@@ -2113,7 +1970,7 @@ export function ModelRedirectionTab({
           setPriorityDetailConfig(null);
         });
     },
-    [customCliConfigs, routeProbeContext]
+    [customCliConfigs]
   );
 
   useEffect(() => {
@@ -3688,9 +3545,8 @@ export function ModelRedirectionTab({
                                 });
                                 const apiKeySuspensionLabels =
                                   groupSuspensionLabelsByModel(apiKeySuspensions);
-                                const formattedModelList = formatModelListWithProbeStatus(
+                                const formattedModelList = formatModelListDetails(
                                   apiKey.supportedOriginalModels,
-                                  apiKey.modelTestResults,
                                   apiKey.modelPriceLabels,
                                   apiKeySuspensionLabels
                                 );
@@ -3826,9 +3682,8 @@ export function ModelRedirectionTab({
                                   {missingHintsExpanded ? (
                                     <div id={`priority-folded-hints-${siteGroup.siteId}`}>
                                       {disabledApiKeys.map(apiKey => {
-                                        const formattedModelList = formatModelListWithProbeStatus(
+                                        const formattedModelList = formatModelListDetails(
                                           apiKey.supportedOriginalModels,
-                                          apiKey.modelTestResults,
                                           apiKey.modelPriceLabels
                                         );
 

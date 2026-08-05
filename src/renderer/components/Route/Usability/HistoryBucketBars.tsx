@@ -12,15 +12,9 @@
 
 import { memo, useMemo, useRef, useState, useEffect } from 'react';
 import type { CSSProperties, Dispatch, SetStateAction } from 'react';
-import type {
-  HistoryBucket,
-  RouteCliType,
-  RouteHistoryBucketsQuery,
-} from '../../../../shared/types/route-proxy';
+import type { HistoryBucket, RouteCliType } from '../../../../shared/types/route-proxy';
 import { BUILTIN_CLI_LABELS } from '../../../../shared/types/cli-config';
 import { useUIStore } from '../../../store/uiStore';
-
-export type HistoryMode = 'combined' | 'probe' | 'route';
 
 const HISTORY_POLL_INTERVAL_MS = 60_000;
 
@@ -29,7 +23,6 @@ interface HistoryBucketBarsProps {
   accountId: string;
   /** 可选覆盖；默认从 uiStore 读取 */
   cliType?: RouteCliType;
-  mode?: HistoryMode;
   miniature?: boolean;
 }
 
@@ -58,16 +51,9 @@ function buildEmptyBuckets(now = Date.now()): HistoryBucket[] {
       bucketStart,
       bucketEnd: bucketStart + BUCKET_SIZE_MS,
       successRate: null,
-      probeCount: 0,
       routeCount: 0,
     };
   });
-}
-
-function mapHistoryMode(mode: HistoryMode): RouteHistoryBucketsQuery['mode'] {
-  if (mode === 'probe') return 'probe-only';
-  if (mode === 'route') return 'route-only';
-  return 'combined';
 }
 
 function areHistoryBucketsEqual(left: HistoryBucket[], right: HistoryBucket[]): boolean {
@@ -78,7 +64,6 @@ function areHistoryBucketsEqual(left: HistoryBucket[], right: HistoryBucket[]): 
       bucket.bucketStart === other.bucketStart &&
       bucket.bucketEnd === other.bucketEnd &&
       bucket.successRate === other.successRate &&
-      bucket.probeCount === other.probeCount &&
       bucket.routeCount === other.routeCount
     );
   });
@@ -164,13 +149,10 @@ export const HistoryBucketBars = memo(function HistoryBucketBars({
   siteId,
   accountId,
   cliType: cliTypeProp,
-  mode: modeProp,
   miniature = false,
 }: HistoryBucketBarsProps) {
   const storeCliType = useUIStore(state => state.historyCliType);
-  const storeMode = useUIStore(state => state.historyMode);
   const cliType = cliTypeProp ?? storeCliType;
-  const mode = modeProp ?? storeMode;
   const barHeight = miniature ? MINIATURE_HEIGHT : LARGE_HEIGHT;
   const [buckets, setBuckets] = useState<HistoryBucket[]>(() => buildEmptyBuckets());
 
@@ -193,7 +175,6 @@ export const HistoryBucketBars = memo(function HistoryBucketBars({
           siteId,
           accountId,
           cliType,
-          mode: mapHistoryMode(mode),
         });
 
         if (cancelled) return;
@@ -218,7 +199,7 @@ export const HistoryBucketBars = memo(function HistoryBucketBars({
       cancelled = true;
       if (pollTimer) clearInterval(pollTimer);
     };
-  }, [accountId, cliType, mode, siteId]);
+  }, [accountId, cliType, siteId]);
 
   const tooltips = useMemo(() => {
     return buckets.map(bucket => {
@@ -227,19 +208,11 @@ export const HistoryBucketBars = memo(function HistoryBucketBars({
       lines.push(`CLI: ${BUILTIN_CLI_LABELS[cliType]}`);
 
       const rate = bucket.successRate !== null ? Math.round(bucket.successRate * 100) : null;
-      if (mode === 'combined') {
-        lines.push(`CLI探测 ${bucket.probeCount} 次`);
-        lines.push(`路由请求 ${bucket.routeCount} 次`);
-        lines.push(`综合 ${rate !== null ? `${rate}%` : '--'}`);
-      } else if (mode === 'probe') {
-        lines.push(`CLI探测 ${bucket.probeCount} 次 ${rate !== null ? `${rate}%` : '--'}`);
-      } else {
-        lines.push(`路由请求 ${bucket.routeCount} 次 ${rate !== null ? `${rate}%` : '--'}`);
-      }
+      lines.push(`路由请求 ${bucket.routeCount} 次 ${rate !== null ? `${rate}%` : '--'}`);
 
       return lines.join('\n');
     });
-  }, [buckets, cliType, mode]);
+  }, [buckets, cliType]);
 
   const colors = useMemo(() => {
     return buckets.map(bucket => getBucketColor(bucket.successRate));

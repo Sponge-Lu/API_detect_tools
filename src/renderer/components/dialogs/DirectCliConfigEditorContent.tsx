@@ -30,13 +30,10 @@ import { useCustomCliConfigStore } from '../../store/customCliConfigStore';
 import { toast } from '../../store/toastStore';
 import {
   CUSTOM_CLI_GROUP_MULTIPLIER_MIN,
-  createEmptyCustomCliTestState,
   normalizeCustomCliGroupMultiplier,
   normalizeCustomCliSettings,
-  normalizeCustomCliTestState,
   type CustomCliConfig,
   type CustomCliSettings,
-  type CustomCliTestState,
 } from '../../../shared/types/custom-cli-config';
 import type { ModelPriceInfo, ModelPricingData } from '../../../shared/types/site';
 import {
@@ -44,7 +41,6 @@ import {
   BUILTIN_CLI_TYPES,
   CLI_TARGET_PROTOCOLS,
   getCliTargetEndpoint,
-  isProbeCliType,
   normalizeCliTargetProtocol,
   type BuiltinCliType,
   type CliTargetProtocol,
@@ -87,29 +83,6 @@ export interface DirectCliConfigEditorContentProps {
 type CliType = BuiltinCliType;
 const CLI_TYPE_KEYS: CliType[] = [...BUILTIN_CLI_TYPES];
 
-function getCliFailureMessage(
-  cliType: CliType,
-  response: {
-    error?: string;
-    data?: {
-      claudeError?: string;
-      codexError?: string;
-      openCodeError?: string;
-    };
-  }
-): string | undefined {
-  if (cliType === 'claudeCode') {
-    return response.data?.claudeError ?? response.error;
-  }
-  if (cliType === 'codex') {
-    return response.data?.codexError ?? response.error;
-  }
-  if (cliType === 'openCode') {
-    return response.data?.openCodeError ?? response.error;
-  }
-  return response.error;
-}
-
 function getErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error) {
     return error.message;
@@ -139,8 +112,6 @@ const CLI_TARGET_PROTOCOL_LABELS: Record<CliTargetProtocol, string> = {
   'openai-chat-completions': 'OpenAI Chat Completions',
   'openai-responses': 'OpenAI Responses',
 };
-
-const PANEL_TEST_MODEL_LIMIT = 1;
 
 function buildCliTargetProtocolOptionLabel(
   cliType: CliType,
@@ -416,12 +387,7 @@ function DirectModelPriceEditor({
 }
 
 const normalizeCliSetting = (setting?: CustomCliSettings | null): CustomCliSettings => {
-  const normalized = normalizeCustomCliSettings(setting);
-  return {
-    ...normalized,
-    testModels: normalized.testModels ?? [],
-    testState: normalizeCustomCliTestState(normalized.testState),
-  };
+  return normalizeCustomCliSettings(setting);
 };
 
 const normalizeCliSettings = (
@@ -533,10 +499,6 @@ function isDirectCliConfigDirty(params: {
     if ((current.targetProtocol || undefined) !== (baseline.targetProtocol || undefined)) {
       return true;
     }
-    if (JSON.stringify(current.testModels || []) !== JSON.stringify(baseline.testModels || [])) {
-      return true;
-    }
-
     const edited = finalPerCliEdited[key];
     const currentEdited = edited
       ? edited.files.map(file => ({ path: file.path, content: file.content }))
@@ -554,10 +516,12 @@ function FormSwitch({
   checked,
   onChange,
   disabled = false,
+  size = 'md',
 }: {
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
+  size?: 'sm' | 'md';
 }) {
   return (
     <AppSwitch
@@ -565,6 +529,7 @@ function FormSwitch({
       onCheckedChange={onChange}
       disabled={disabled}
       ariaLabel="启用该 CLI"
+      size={size}
     />
   );
 }
@@ -802,7 +767,7 @@ export function DirectCliConfigEditorContent({
   const [cliSettings, setCliSettings] = useState<CustomCliConfig['cliSettings']>(() =>
     normalizeCliSettings(config.cliSettings)
   );
-  const [selectedCli, setSelectedCli] = useState<CliType | null>('claudeCode');
+  const [selectedCli, setSelectedCli] = useState<CliType | null>(null);
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
 
   // 编辑模式状态
@@ -816,7 +781,6 @@ export function DirectCliConfigEditorContent({
     openCode: null,
     grokBuild: null,
   });
-  const [testingCli, setTestingCli] = useState<CliType | null>(null);
   const [applyingCli, setApplyingCli] = useState<CliType | null>(null);
 
   // 获取当前配置的模型列表 (从 store 中实时获取以反映拉取结果)
@@ -861,9 +825,8 @@ export function DirectCliConfigEditorContent({
     setModelSearchText('');
     setModelPricing(normalizeModelPricingState(config.modelPricing));
     setCliSettings(normalizeCliSettings(config.cliSettings));
-    setSelectedCli('claudeCode');
+    setSelectedCli(null);
     setCopiedPath(null);
-    setTestingCli(null);
     setApplyingCli(null);
     setEditedConfig(null);
     setIsEditing(false);
@@ -932,140 +895,6 @@ export function DirectCliConfigEditorContent({
         },
       };
     });
-  };
-
-  const getTestModelsForSetting = (setting: CustomCliSettings) => {
-    const candidates =
-      setting.testModels && setting.testModels.length > 0
-        ? setting.testModels
-        : setting.model
-          ? [setting.model]
-          : [];
-    return candidates
-      .map(m => m.trim())
-      .filter(Boolean)
-      .slice(0, PANEL_TEST_MODEL_LIMIT);
-  };
-
-  const handleAddTestModel = (cliType: CliType, model: string) => {
-    const nextModel = model.trim();
-    if (!nextModel) return;
-    setManualModels(prev => mergeManualModelName(prev, models, nextModel));
-
-    setCliSettings(prev => {
-      const current = prev[cliType];
-      return {
-        ...prev,
-        [cliType]: {
-          ...current,
-          testModels: [nextModel],
-        },
-      };
-    });
-  };
-
-  const handleRunCliTests = async (cliType: CliType) => {
-    if (!isProbeCliType(cliType)) {
-      toast.info(`${BUILTIN_CLI_LABELS[cliType]} 模型探测暂未启用`);
-      return;
-    }
-    if (!baseUrl || !apiKey) {
-      toast.error('请先填写 Base URL 和 API Key');
-      return;
-    }
-
-    const setting = cliSettings[cliType];
-    if (!setting.enabled) {
-      toast.error('请先启用该 CLI');
-      return;
-    }
-
-    const cliTestTargets = getTestModelsForSetting(setting);
-    if (cliTestTargets.length === 0) {
-      toast.error('请启用 CLI 并选择测试模型');
-      return;
-    }
-
-    setTestingCli(cliType);
-    const slots = createEmptyCustomCliTestState().slots;
-    let allSuccess = cliTestTargets.length > 0;
-    let testedAt: number | null = null;
-    let claudeDetail: CustomCliTestState['claudeDetail'];
-    let codexDetail: CustomCliTestState['codexDetail'];
-    let openCodeDetail: CustomCliTestState['openCodeDetail'];
-    try {
-      for (const [index, model] of cliTestTargets.entries()) {
-        try {
-          const response = await window.electronAPI.cliCompat.testWithWrapper({
-            siteUrl: baseUrl,
-            configs: [
-              {
-                cliType,
-                apiKey,
-                model,
-                baseUrl,
-                targetProtocol: normalizeCliTargetProtocol(setting.targetProtocol),
-              },
-            ],
-          });
-          const success = response.success && response.data?.[cliType] === true;
-          testedAt = Date.now();
-          slots[index] = {
-            model,
-            success,
-            message: success ? undefined : (getCliFailureMessage(cliType, response) ?? '未通过'),
-            timestamp: testedAt,
-          };
-          if (!success) allSuccess = false;
-          if (response.data?.claudeDetail) claudeDetail = response.data.claudeDetail;
-          if (response.data?.codexDetail) codexDetail = response.data.codexDetail;
-          if (response.data?.openCodeDetail) openCodeDetail = response.data.openCodeDetail;
-        } catch (error) {
-          testedAt = Date.now();
-          slots[index] = {
-            model,
-            success: false,
-            message: getErrorMessage(error, '测试失败'),
-            timestamp: testedAt,
-          };
-          allSuccess = false;
-        }
-      }
-
-      const nextTestState: CustomCliTestState = {
-        status: cliTestTargets.length > 0 ? allSuccess : null,
-        testedAt,
-        claudeDetail,
-        codexDetail,
-        openCodeDetail,
-        slots,
-      };
-      const nextCliSettings = {
-        ...(currentConfig?.cliSettings ?? config.cliSettings),
-        [cliType]: {
-          ...(currentConfig?.cliSettings?.[cliType] ?? config.cliSettings[cliType]),
-          ...cliSettings[cliType],
-          testState: nextTestState,
-        },
-      };
-      setCliSettings(prev => ({
-        ...prev,
-        [cliType]: {
-          ...prev[cliType],
-          testState: nextTestState,
-        },
-      }));
-      updateConfig(config.id, { cliSettings: nextCliSettings });
-      await saveConfigs();
-    } finally {
-      setTestingCli(null);
-    }
-
-    if (allSuccess) {
-      toast.success('CLI 测试已完成');
-    } else {
-      toast.error('部分测试未通过，请查看结果');
-    }
   };
 
   const handleApplyCliConfig = async (cliType: CliType) => {
@@ -1200,8 +1029,6 @@ export function DirectCliConfigEditorContent({
         next[key] = {
           ...current,
           model: current.model === model ? null : current.model,
-          testModels: (current.testModels ?? []).filter(testModel => testModel !== model),
-          testState: current.model === model ? null : current.testState,
         };
       }
       return next;
@@ -1268,7 +1095,6 @@ export function DirectCliConfigEditorContent({
       const edited = finalPerCliEdited[key];
       finalCliSettings[key] = {
         ...finalCliSettings[key],
-        testModels: finalCliSettings[key].testModels ?? [],
         editedFiles: edited ? edited.files.map(f => ({ path: f.path, content: f.content })) : null,
       };
     }
@@ -1616,7 +1442,7 @@ export function DirectCliConfigEditorContent({
           </div>
         ) : null}
 
-        {/* CLI 配置与测试：按 CLI 聚合配置、测试模型、结果和操作 */}
+        {/* CLI 配置：按 CLI 聚合模型、目标协议和应用操作 */}
         {showCliSection ? (
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-2">
@@ -1640,53 +1466,28 @@ export function DirectCliConfigEditorContent({
             <div className="space-y-2">
               {CLI_TYPES.map(cli => {
                 const setting = cliSettings[cli.key];
-                const explicitTestModels = setting.testModels ?? [];
-                const selectedTestModels = getTestModelsForSetting(setting);
-                const summaries = normalizeCustomCliTestState(setting.testState).slots.filter(
-                  Boolean
-                );
-                const selectedTestModel = explicitTestModels[0] ?? null;
-                const selectedTestOutcome = selectedTestModel
-                  ? summaries.find(summary => summary?.model === selectedTestModel)
-                  : undefined;
-                const canRunCliTests =
-                  isProbeCliType(cli.key) &&
-                  Boolean(baseUrl && apiKey) &&
-                  setting.enabled &&
-                  selectedTestModels.length > 0;
-                const isOpen = selectedCli === cli.key;
+                const isPreviewOpen = selectedCli === cli.key;
 
                 return (
                   <PanelSection
                     key={cli.key}
-                    collapsible
-                    expanded={isOpen}
-                    onExpandedChange={expanded => {
-                      handleCliTypeChange(expanded ? cli.key : null);
-                    }}
+                    collapsible={false}
                     title={
-                      <span className="flex items-center gap-2">
+                      <span className="flex min-w-0 items-center gap-2">
                         <img src={cli.icon} alt={cli.name} className="h-4 w-4" />
-                        <span>{cli.name}</span>
+                        <span className="shrink-0">{cli.name}</span>
+                        <span className="min-w-0 truncate text-xs font-normal text-[var(--text-secondary)]">
+                          {setting.enabled ? setting.model || '已启用 · 未选模型' : '已禁用'}
+                        </span>
                       </span>
-                    }
-                    subtitle={
-                      setting.enabled ? (
-                        setting.model ? (
-                          <span className="truncate">{setting.model}</span>
-                        ) : (
-                          '已启用 · 未选模型'
-                        )
-                      ) : (
-                        '已禁用'
-                      )
                     }
                     actions={
                       <>
                         <AppButton
                           variant="secondary"
                           size="sm"
-                          aria-label={isOpen ? `应用 ${cli.name}` : `应用到本机 ${cli.name}`}
+                          className="!min-h-7 !px-2.5"
+                          aria-label={`应用 ${cli.name}`}
                           onClick={() => handleApplyCliConfig(cli.key)}
                           disabled={
                             !setting.enabled ||
@@ -1706,176 +1507,141 @@ export function DirectCliConfigEditorContent({
                           onChange={checked =>
                             handleCliSettingChange(cli.key, { enabled: checked })
                           }
+                          size="sm"
                         />
                       </>
                     }
                   >
-                    {isOpen ? (
+                    <div className="space-y-3">
                       <div className="space-y-3">
-                        <div className="space-y-3">
-                          <div className="text-xs font-medium text-[var(--text-secondary)]">
-                            连接配置
-                          </div>
-
-                          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                            <div className="space-y-1.5">
-                              <label className="block text-xs font-medium text-[var(--text-secondary)]">
-                                CLI 使用模型
-                              </label>
-                              <CliModelSelector
-                                models={modelOptions}
-                                selectedModel={setting.model}
-                                onSelect={model => handleUpdateCliModel(cli.key, model)}
-                                disabled={!setting.enabled}
-                                ariaLabel={`${cli.name} 主模型`}
-                              />
-                            </div>
-
-                            <div className="space-y-1.5">
-                              <label className="block text-xs font-medium text-[var(--text-secondary)]">
-                                选择上游端口
-                              </label>
-                              <select
-                                aria-label={`${cli.name} 选择上游端口`}
-                                value={setting.targetProtocol ?? ''}
-                                onChange={event =>
-                                  handleCliSettingChange(cli.key, {
-                                    targetProtocol: event.target.value
-                                      ? (event.target.value as CliTargetProtocol)
-                                      : undefined,
-                                  })
-                                }
-                                disabled={!setting.enabled}
-                                className={`w-full min-w-0 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm transition-all disabled:opacity-50 focus:border-transparent focus:ring-2 focus:ring-[var(--accent)] ${
-                                  setting.targetProtocol
-                                    ? 'text-[var(--text-primary)]'
-                                    : 'text-[var(--text-tertiary)]'
-                                }`}
-                              >
-                                <option value="">选择上游端口</option>
-                                {CLI_TARGET_PROTOCOLS.map(protocol => (
-                                  <option key={protocol} value={protocol}>
-                                    {buildCliTargetProtocolOptionLabel(
-                                      cli.key,
-                                      protocol,
-                                      setting.model
-                                    )}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="space-y-2 border-t border-[var(--line-soft)] pt-3">
-                          <div className="flex items-center justify-between gap-2">
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                          <div className="space-y-1.5">
                             <label className="block text-xs font-medium text-[var(--text-secondary)]">
-                              测试模型
+                              选择上游端口
                             </label>
-                            <AppButton
-                              variant="tertiary"
-                              size="sm"
-                              aria-label={`测试 ${cli.name}`}
-                              onClick={() => handleRunCliTests(cli.key)}
-                              disabled={!canRunCliTests || testingCli !== null}
+                            <select
+                              aria-label={`${cli.name} 选择上游端口`}
+                              value={setting.targetProtocol ?? ''}
+                              onChange={event =>
+                                handleCliSettingChange(cli.key, {
+                                  targetProtocol: event.target.value
+                                    ? (event.target.value as CliTargetProtocol)
+                                    : undefined,
+                                })
+                              }
+                              disabled={!setting.enabled}
+                              className={`h-8 w-full min-w-0 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2.5 py-0 text-xs transition-all disabled:opacity-50 focus:border-transparent focus:ring-2 focus:ring-[var(--accent)] ${
+                                setting.targetProtocol
+                                  ? 'text-[var(--text-primary)]'
+                                  : 'text-[var(--text-tertiary)]'
+                              }`}
                             >
-                              {testingCli === cli.key ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : null}
-                              {isProbeCliType(cli.key) ? '测试已选模型' : '暂不支持探测'}
-                            </AppButton>
+                              <option value="">选择上游端口</option>
+                              {CLI_TARGET_PROTOCOLS.map(protocol => (
+                                <option key={protocol} value={protocol}>
+                                  {buildCliTargetProtocolOptionLabel(
+                                    cli.key,
+                                    protocol,
+                                    setting.model
+                                  )}
+                                </option>
+                              ))}
+                            </select>
                           </div>
-                          {modelOptions.length > 0 ? (
-                            <div className="flex items-start gap-2">
-                              <CliModelSelector
-                                models={modelOptions}
-                                selectedModel={selectedTestModel}
-                                onSelect={model => {
-                                  if (model) {
-                                    handleAddTestModel(cli.key, model);
-                                  }
-                                }}
-                                disabled={!setting.enabled}
-                                ariaLabel={`${cli.name} 测试模型`}
-                              />
-                              {selectedTestOutcome ? (
-                                <div className="min-w-[4rem] shrink-0 pt-2 text-right">
-                                  <span
-                                    className={`text-xs font-medium ${
-                                      selectedTestOutcome.success
-                                        ? 'text-[var(--success)]'
-                                        : 'text-[var(--danger)]'
-                                    }`}
-                                  >
-                                    {selectedTestOutcome.success ? '成功' : '失败'}
-                                  </span>
-                                </div>
-                              ) : null}
-                            </div>
-                          ) : (
-                            <div className="py-1 text-xs text-[var(--text-secondary)]">
-                              没有可用模型
-                            </div>
-                          )}
-                        </div>
 
-                        <div className="space-y-3 border-t border-[var(--line-soft)] pt-3">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="text-xs font-medium text-[var(--text-secondary)]">
-                              配置文件预览
+                          <div className="space-y-1.5">
+                            <label className="block text-xs font-medium text-[var(--text-secondary)]">
+                              API Key
+                            </label>
+                            <div className="flex min-h-9 items-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 text-sm text-[var(--text-secondary)]">
+                              {apiKey ? '默认 API Key · 已配置' : '默认 API Key · 未配置'}
                             </div>
-                            {displayConfig ? (
-                              <div className="flex items-center gap-1">
-                                {isEditing ? (
-                                  <>
-                                    <button
-                                      type="button"
-                                      onClick={handleCancelEdit}
-                                      className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--line-soft)] px-2 py-1 text-xs text-[var(--text-secondary)] transition-all hover:bg-[var(--surface-2)] active:scale-95"
-                                    >
-                                      <X className="h-3 w-3" />
-                                      <span>取消</span>
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={handleSaveEdit}
-                                      className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--accent)] bg-[var(--accent)]/10 px-2 py-1 text-xs text-[var(--accent)] transition-all hover:bg-[var(--accent)]/20 active:scale-95"
-                                    >
-                                      <Check className="h-3 w-3" />
-                                      <span>保存</span>
-                                    </button>
-                                  </>
-                                ) : (
-                                  <>
-                                    {savedEditedConfig ? (
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          void requestResetConfig();
-                                        }}
-                                        className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--warning)]/50 px-2 py-1 text-xs text-[var(--warning)] transition-all hover:bg-[var(--warning)]/10 active:scale-95"
-                                        title="重置为默认配置"
-                                      >
-                                        <RotateCcw className="h-3 w-3" />
-                                        <span>重置</span>
-                                      </button>
-                                    ) : null}
-                                    <button
-                                      type="button"
-                                      onClick={toggleEditMode}
-                                      className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--line-soft)] px-2 py-1 text-xs text-[var(--text-secondary)] transition-all hover:bg-[var(--surface-2)] active:scale-95"
-                                      title="切换到编辑模式"
-                                    >
-                                      <Edit2 className="h-3 w-3" />
-                                      <span>编辑</span>
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                            ) : null}
                           </div>
-                          {displayConfig ? (
-                            <div className="space-y-3">
+
+                          <div className="space-y-1.5">
+                            <label className="block text-xs font-medium text-[var(--text-secondary)]">
+                              CLI 使用模型
+                            </label>
+                            <CliModelSelector
+                              models={modelOptions}
+                              selectedModel={setting.model}
+                              onSelect={model => handleUpdateCliModel(cli.key, model)}
+                              disabled={!setting.enabled}
+                              ariaLabel={`${cli.name} 主模型`}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-[var(--line-soft)] pt-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleCliTypeChange(isPreviewOpen ? null : cli.key)}
+                            aria-expanded={isPreviewOpen}
+                            aria-label={`${cli.name} 配置文件预览`}
+                            className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-[var(--text-secondary)]"
+                          >
+                            <ChevronDown
+                              className={`h-3.5 w-3.5 transition-transform ${
+                                isPreviewOpen ? '' : '-rotate-90'
+                              }`}
+                            />
+                            <span>配置文件预览</span>
+                          </button>
+                          {isPreviewOpen && displayConfig ? (
+                            <div className="flex items-center gap-1">
+                              {isEditing ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={handleCancelEdit}
+                                    className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--line-soft)] px-2 py-1 text-xs text-[var(--text-secondary)] transition-all hover:bg-[var(--surface-2)] active:scale-95"
+                                  >
+                                    <X className="h-3 w-3" />
+                                    <span>取消</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={handleSaveEdit}
+                                    className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--accent)] bg-[var(--accent)]/10 px-2 py-1 text-xs text-[var(--accent)] transition-all hover:bg-[var(--accent)]/20 active:scale-95"
+                                  >
+                                    <Check className="h-3 w-3" />
+                                    <span>保存</span>
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  {savedEditedConfig ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        void requestResetConfig();
+                                      }}
+                                      className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--warning)]/50 px-2 py-1 text-xs text-[var(--warning)] transition-all hover:bg-[var(--warning)]/10 active:scale-95"
+                                      title="重置为默认配置"
+                                    >
+                                      <RotateCcw className="h-3 w-3" />
+                                      <span>重置</span>
+                                    </button>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    onClick={toggleEditMode}
+                                    className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--line-soft)] px-2 py-1 text-xs text-[var(--text-secondary)] transition-all hover:bg-[var(--surface-2)] active:scale-95"
+                                    title="切换到编辑模式"
+                                  >
+                                    <Edit2 className="h-3 w-3" />
+                                    <span>编辑</span>
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                        {isPreviewOpen ? (
+                          displayConfig ? (
+                            <div className="mt-3 space-y-3">
                               {isEditing ? (
                                 <div className="text-xs text-[var(--text-secondary)]">
                                   提示：您可以直接编辑配置内容，修改后会随配置一起保存
@@ -1895,15 +1661,15 @@ export function DirectCliConfigEditorContent({
                               </div>
                             </div>
                           ) : (
-                            <div className="px-3 py-4 text-center text-sm text-[var(--text-secondary)]">
+                            <div className="mt-3 px-3 py-4 text-center text-sm text-[var(--text-secondary)]">
                               {!setting.model
                                 ? '请为当前 CLI 选择模型以预览配置'
                                 : '请填写 Base URL 和 API Key'}
                             </div>
-                          )}
-                        </div>
+                          )
+                        ) : null}
                       </div>
-                    ) : null}
+                    </div>
                   </PanelSection>
                 );
               })}

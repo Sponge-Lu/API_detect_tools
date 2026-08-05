@@ -15,7 +15,6 @@ import * as path from 'path';
 import {
   DEFAULT_ROUTING_CONFIG,
   buildBucketKey,
-  buildProbeKey,
   buildRoutePathStateKey,
   buildStatsKey,
 } from '../shared/types/route-proxy';
@@ -495,19 +494,6 @@ describe('UnifiedConfigManager', () => {
       apiKeyId: 'key-1',
     };
     const now = Date.now();
-    const probeKey = buildProbeKey('site-1', 'account-1', 'codex', 'gpt-5');
-    const probeSample = {
-      sampleId: 'sample-1',
-      probeKey,
-      siteId: 'site-1',
-      accountId: 'account-1',
-      cliType: 'codex',
-      canonicalModel: 'gpt-5',
-      rawModel: 'gpt-5',
-      success: true,
-      source: 'routeProbe',
-      testedAt: now,
-    } as any;
     const analyticsBucket = {
       bucketKey: 'bucket-1',
       bucketStart: now,
@@ -554,20 +540,6 @@ describe('UnifiedConfigManager', () => {
       lastOutcome: 'success',
       updatedAt: now,
     } as any);
-    await manager.appendRouteCliProbeSamples([probeSample]);
-    await manager.upsertRouteCliProbeLatest([
-      {
-        probeKey,
-        siteId: 'site-1',
-        accountId: 'account-1',
-        cliType: 'codex',
-        canonicalModel: 'gpt-5',
-        rawModel: 'gpt-5',
-        healthy: true,
-        lastSample: probeSample,
-        lastSuccessAt: now,
-      } as any,
-    ]);
     await manager.upsertRouteAnalyticsBuckets([analyticsBucket]);
 
     expect(backupManagerMock.backupFile).not.toHaveBeenCalled();
@@ -578,8 +550,7 @@ describe('UnifiedConfigManager', () => {
     expect(persistedConfig.routing.stats).toEqual({});
     expect(persistedConfig.routing.routePathStates).toEqual({});
     expect(persistedConfig.routing.health).toEqual({});
-    expect(persistedConfig.routing.cliProbe.latest).toEqual({});
-    expect(persistedConfig.routing.cliProbe.history).toEqual({});
+    expect(persistedConfig.routing.endpointTests).toEqual({});
     expect(persistedConfig.routing.analytics.buckets).toEqual({});
 
     const runtimeState = JSON.parse(
@@ -593,12 +564,6 @@ describe('UnifiedConfigManager', () => {
       routeRuleId: 'rule-1',
       successRate: 1,
     });
-
-    const probesState = JSON.parse(
-      await fs.readFile(path.join(userDataDir, 'state', 'route-probes.json'), 'utf-8')
-    );
-    expect(probesState.latest[probeKey].healthy).toBe(true);
-    expect(probesState.history[probeKey]).toHaveLength(1);
 
     const analyticsState = JSON.parse(
       await fs.readFile(path.join(userDataDir, 'state', 'route-analytics.json'), 'utf-8')
@@ -999,7 +964,7 @@ describe('UnifiedConfigManager', () => {
       accountId: 'account-1',
       apiKeyId: 'key-1',
     };
-    const probeKey = buildProbeKey('site-1', 'account-1', 'codex', 'gpt-5');
+    const endpointTargetKey = 'managed:site-1:account-1';
     const analyticsBucketKey = buildBucketKey(1, 'codex', 'native');
     await fs.writeFile(
       path.join(stateDir, 'route-runtime.json'),
@@ -1029,34 +994,33 @@ describe('UnifiedConfigManager', () => {
       'utf-8'
     );
     await fs.writeFile(
-      path.join(stateDir, 'route-probes.json'),
+      path.join(stateDir, 'route-endpoint-tests.json'),
       JSON.stringify(
         {
           version: '1',
-          latest: {
-            [probeKey]: {
-              probeKey,
-              siteId: 'site-1',
-              accountId: 'account-1',
-              cliType: 'codex',
-              canonicalModel: 'gpt-5',
-              rawModel: 'gpt-5',
-              healthy: true,
-              lastSample: {
-                sampleId: 'sample-1',
-                probeKey,
-                siteId: 'site-1',
-                accountId: 'account-1',
-                cliType: 'codex',
-                canonicalModel: 'gpt-5',
-                rawModel: 'gpt-5',
-                success: true,
-                source: 'routeProbe',
-                testedAt: 1,
+          targets: {
+            [endpointTargetKey]: {
+              targetKey: endpointTargetKey,
+              protocols: {
+                'openai-responses': {
+                  apiKeyId: 'key-1',
+                  model: 'gpt-5',
+                  latest: {
+                    success: true,
+                    endpoint: '/v1/responses',
+                    apiKeyId: 'key-1',
+                    apiKeyLabel: 'Key 1',
+                    model: 'gpt-5',
+                    testedAt: 1,
+                    latencyMs: 12,
+                    statusCode: 200,
+                    summary: 'OK',
+                  },
+                },
               },
+              updatedAt: 1,
             },
           },
-          history: {},
           last_updated: 1,
         },
         null,
@@ -1129,7 +1093,11 @@ describe('UnifiedConfigManager', () => {
     expect(routing.stats[buildStatsKey(routeKey)]).toMatchObject({
       successCount: 1,
     });
-    expect(routing.cliProbe.latest[probeKey].healthy).toBe(true);
+    expect(routing.endpointTests[endpointTargetKey].protocols['openai-responses']).toMatchObject({
+      apiKeyId: 'key-1',
+      model: 'gpt-5',
+      latest: { testedAt: 1, success: true },
+    });
     expect(routing.analytics.buckets[analyticsBucketKey]).toMatchObject({
       bucketKey: analyticsBucketKey,
       totalTokens: 30,
@@ -1831,7 +1799,7 @@ describe('UnifiedConfigManager', () => {
     expect(routing.cliModelSelections.claudeCode).toBe('claude-opus-4-6');
   });
 
-  it('migrates legacy cli_compatibility into cliProbe.latest without fabricating history', async () => {
+  it('removes legacy cli_compatibility without creating endpoint test results', async () => {
     const configPath = path.join(userDataDir, 'config.json');
     const rawConfig = createSampleConfig();
     rawConfig.version = '3.1';
@@ -1860,13 +1828,7 @@ describe('UnifiedConfigManager', () => {
     const manager = await loadManager();
     await manager.loadConfig();
 
-    const routing = manager.getRoutingConfig();
-    const codexKey = buildProbeKey('site-1', 'acct-default', 'codex', '__legacy__compat__');
-
-    expect(routing.cliProbe.latest[codexKey]).toBeDefined();
-    expect(routing.cliProbe.latest[codexKey].lastSample.source).toBe('legacyCache');
-    expect(routing.cliProbe.latest[codexKey].lastSample.codexDetail).toEqual({ responses: true });
-    expect(routing.cliProbe.history).toEqual({});
+    expect(manager.getRoutingConfig().endpointTests).toEqual({});
 
     const persisted = JSON.parse(await fs.readFile(configPath, 'utf-8'));
     expect(persisted.accounts[0].cached_data?.cli_compatibility).toBeUndefined();

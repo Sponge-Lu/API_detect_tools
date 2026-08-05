@@ -44,12 +44,11 @@
 | **Header/** | 顶部导航栏 | Header, Menu, ThemeToggle |
 | **AppShell/** | 页面壳层组件 | GlobalCommandBar, PageHeader |
 | **SiteCard/** | 站点列表行 | SiteCard, SiteCardHeader, SiteCardActions |
-| **SiteListHeader/** | 站点列表头部 | SiteListHeader, SearchBar, FilterBar；History 表头内嵌旧 CLI 图标选择器和模式切换 |
+| **SiteListHeader/** | 站点列表头部 | SiteListHeader, SearchBar, FilterBar；History 固定展示路由请求时间桶 |
 | **Route/** | Route 页面组件 | ModelRedirectionTab, ProxyStatsTab, HistoryBucketBars |
-| **dialogs/** | 对话框组件 | 各类对话框；接入点弹窗/侧滑面板承载站点管理合并后的低频操作和详情，包括保存后维护站点名称与直连配置名称；托管/直连 CLI 编辑内容以内嵌组件形式运行并从 `routing.cliProbe.latest` 回显最新测试模型结果；操作记录弹窗展示当前会话关键操作；站点设置弹窗集中维护 CLI 探测与站点刷新参数 |
+| **dialogs/** | 对话框组件 | 各类对话框；接入点侧滑面板承载独立端点测试、CLI 配置及身份维护；操作记录弹窗展示当前会话关键操作；站点设置弹窗维护站点刷新参数 |
 | **Skeleton/** | 骨架屏 | SkeletonLoader, SkeletonCard |
 | **Toast/** | 消息提示 | Toast, ToastContainer |
-| **CliCompatibilityIcons/** | CLI 兼容性图标 | CliIcon, CliIconGroup；按测试时间选择 canonical 投影与本地持久化结果中的较新状态 |
 | **CliConfigStatus/** | CLI 配置状态显示，含本地路由代理识别和当前模型小字 | CliConfigStatus, CliConfigStatusPanel |
 | **CreateApiKeyDialog/** | API Key 创建对话框 | CreateApiKeyDialog |
 | **CreditPanel/** | Linux Do Credit 积分面板 | CreditPanelCompact |
@@ -343,26 +342,6 @@ interface CreditPanelCompactProps {
 - 展开面板包含完整积分信息和三栏布局（交易记录、收入统计、支出统计）
 - 点击外部自动关闭展开面板
 - 支持登录/登出、刷新、自动刷新配置
-
-### CliCompatibilityIcons 组件
-
-**职责**: 显示 CLI 工具兼容性图标
-
-**Props**:
-```typescript
-interface CliCompatibilityIconsProps {
-  compatibility: CliCompatibility[];
-  size?: 'small' | 'medium' | 'large';
-}
-```
-
-**特点**:
-- 工具图标显示
-- 支持状态指示
-- 版本信息提示
-- 响应式布局
-
----
 
 ## 🎨 样式系统
 

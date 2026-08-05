@@ -2,10 +2,9 @@
  * 路由代理模块类型定义
  * 输入: 无 (纯类型定义)
  * 输出: 路由代理相关 TypeScript 类型、接口、常量、工具函数
- * 定位: 类型定义层 - 本地 HTTP 代理 + 模型注册表 + CLI 探测 + 统计分析
+ * 定位: 类型定义层 - 本地 HTTP 代理 + 模型注册表 + 端点测试 + 统计分析
  */
 
-import type { ClaudeTestDetail, CodexTestDetail, OpenCodeTestDetail } from './site';
 import {
   DEFAULT_CLI_TARGET_PROTOCOL,
   normalizeCliTargetProtocol,
@@ -30,9 +29,6 @@ export const ROUTE_CLI_MARKER_VALUES: Record<RouteCliType, string> = {
 export const ROUTE_THINKING_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 /** 路由思考强度：预设值或用户自定义字符串 */
 export type RouteThinkingEffort = string;
-
-/** CLI 探测来源 */
-export type RouteCliProbeSource = 'routeProbe' | 'siteManual' | 'legacyCache';
 
 /** Pattern 匹配类型 */
 export type RoutePatternType = 'exact' | 'wildcard' | 'regex';
@@ -324,98 +320,65 @@ export interface RouteModelRegistryConfig {
   lastAggregatedAt?: number;
 }
 
-// ============= CLI 探测 =============
+// ============= 端点测试 =============
 
-/** CLI 定时探测配置 */
-export interface RouteCliProbeConfig {
-  enabled: boolean;
-  intervalMinutes: number;
-  modelsPerCli: number;
-  requestTimeoutMs: number;
-  maxConcurrency: number;
-  retentionDays: number;
-  runOnStartup: boolean;
+export const ENDPOINT_TEST_PROTOCOLS = [
+  'anthropic-messages',
+  'openai-responses',
+  'openai-chat-completions',
+] as const;
+
+export type EndpointTestProtocol = (typeof ENDPOINT_TEST_PROTOCOLS)[number];
+
+export type EndpointTestTarget =
+  | { kind: 'managed'; siteId: string; accountId: string }
+  | { kind: 'direct'; configId: string };
+
+export interface EndpointTestApiKeyOption {
+  id: string;
+  label: string;
+  group?: string;
+  models?: string[];
 }
 
-/** 单条 CLI 探测样本 */
-export interface RouteCliProbeSample {
-  sampleId: string;
-  probeRunId?: string;
-  probeKey: string;
-  siteId: string;
-  accountId: string;
-  cliType: RouteCliType;
-  targetProtocol?: CliTargetProtocol;
-  targetEndpoint?: string;
-  canonicalModel: string;
-  rawModel: string;
+export interface EndpointTestResult {
   success: boolean;
-  source: RouteCliProbeSource;
-  statusCode?: number;
-  endpointPingMs?: number;
-  firstByteLatencyMs?: number;
-  totalLatencyMs?: number;
-  error?: string;
-  claudeDetail?: ClaudeTestDetail;
-  codexDetail?: CodexTestDetail;
-  openCodeDetail?: OpenCodeTestDetail;
+  endpoint: string;
+  apiKeyId: string;
+  apiKeyLabel: string;
+  model: string;
   testedAt: number;
-}
-
-/** probe 维度最新快照 */
-export interface RouteCliProbeLatest {
-  probeKey: string;
-  siteId: string;
-  accountId: string;
-  cliType: RouteCliType;
-  targetProtocol?: CliTargetProtocol;
-  targetEndpoint?: string;
-  canonicalModel: string;
-  rawModel: string;
-  healthy: boolean;
-  lastSample: RouteCliProbeSample;
-  lastSuccessAt?: number;
-  lastFailureAt?: number;
-}
-
-/** CLI 可用性单模型展示视图 */
-export interface RouteCliProbeModelView {
-  canonicalModel: string;
-  rawModel?: string;
-  targetProtocol?: CliTargetProtocol;
-  targetEndpoint?: string;
-  success: boolean | null;
-  testedAt?: number;
+  latencyMs: number;
   statusCode?: number;
-  totalLatencyMs?: number;
+  summary?: string;
   error?: string;
-  source?: RouteCliProbeSource;
-  claudeDetail?: ClaudeTestDetail;
-  codexDetail?: CodexTestDetail;
-  openCodeDetail?: OpenCodeTestDetail;
-  history: RouteCliProbeSample[];
 }
 
-/** CLI 可用性单 CLI 展示视图 */
-export interface RouteCliProbeCliView {
-  cliType: RouteCliType;
-  enabled: boolean;
-  accountId?: string;
-  accountName?: string;
-  isFallbackAccount: boolean;
-  accountReason?: string;
-  models: RouteCliProbeModelView[];
+export interface EndpointTestSelectionState {
+  apiKeyId: string | null;
+  model: string | null;
+  latest?: EndpointTestResult;
 }
 
-/** CLI 可用性单站点展示视图 */
-export interface RouteCliProbeSiteView {
-  siteId: string;
-  siteName: string;
-  accountId?: string;
-  accountName?: string;
-  isFallbackAccount: boolean;
-  accountReason?: string;
-  clis: Record<RouteCliType, RouteCliProbeCliView>;
+export interface EndpointTestTargetState {
+  targetKey: string;
+  protocols: Partial<Record<EndpointTestProtocol, EndpointTestSelectionState>>;
+  updatedAt: number;
+}
+
+export interface EndpointTestStateView {
+  target: EndpointTestTarget;
+  targetKey: string;
+  apiKeys: EndpointTestApiKeyOption[];
+  models: string[];
+  protocols: Record<EndpointTestProtocol, EndpointTestSelectionState>;
+}
+
+export interface EndpointTestSelectionInput {
+  target: EndpointTestTarget;
+  protocol: EndpointTestProtocol;
+  apiKeyId: string;
+  model: string;
 }
 
 // ============= 分析统计 =============
@@ -437,7 +400,6 @@ export interface HistoryBucket {
   bucketStart: number;
   bucketEnd: number;
   successRate: number | null;
-  probeCount: number;
   routeCount: number;
 }
 
@@ -448,7 +410,6 @@ export interface RouteHistoryBucketsQuery {
   siteId?: string;
   accountId?: string;
   cliType: RouteCliType;
-  mode: 'combined' | 'probe-only' | 'route-only';
 }
 
 /** 小时级分析桶 */
@@ -614,11 +575,7 @@ export interface RoutingConfig {
   routeEndpointCapabilities?: Record<string, RouteEndpointCapabilityState>;
   health: Record<string, RouteChannelHealth>;
   modelRegistry: RouteModelRegistryConfig;
-  cliProbe: {
-    config: RouteCliProbeConfig;
-    latest: Record<string, RouteCliProbeLatest>;
-    history: Record<string, RouteCliProbeSample[]>;
-  };
+  endpointTests: Record<string, EndpointTestTargetState>;
   analytics: {
     config: RouteAnalyticsConfig;
     buckets: Record<string, RouteAnalyticsBucket>;
@@ -636,16 +593,6 @@ export const DEFAULT_ROUTE_PROXY_SERVER_CONFIG: RouteProxyServerConfig = {
   requestTimeoutMs: 60000,
   retryCount: 1,
   healthCheckIntervalMinutes: 60,
-};
-
-export const DEFAULT_CLI_PROBE_CONFIG: RouteCliProbeConfig = {
-  enabled: false,
-  intervalMinutes: 240,
-  modelsPerCli: 1,
-  requestTimeoutMs: 30000,
-  maxConcurrency: 3,
-  retentionDays: 3,
-  runOnStartup: false,
 };
 
 export const DEFAULT_ANALYTICS_CONFIG: RouteAnalyticsConfig = {
@@ -685,11 +632,7 @@ export const DEFAULT_ROUTING_CONFIG: RoutingConfig = {
   routeEndpointCapabilities: {},
   health: {},
   modelRegistry: DEFAULT_MODEL_REGISTRY_CONFIG,
-  cliProbe: {
-    config: DEFAULT_CLI_PROBE_CONFIG,
-    latest: {},
-    history: {},
-  },
+  endpointTests: {},
   analytics: {
     config: DEFAULT_ANALYTICS_CONFIG,
     buckets: {},

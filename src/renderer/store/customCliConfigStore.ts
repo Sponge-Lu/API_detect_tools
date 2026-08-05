@@ -10,17 +10,12 @@
  */
 
 import { create } from 'zustand';
-import type {
-  CustomCliConfig,
-  CustomCliSettings,
-  CustomCliTestState,
-} from '../../shared/types/custom-cli-config';
+import type { CustomCliConfig, CustomCliSettings } from '../../shared/types/custom-cli-config';
 import type { ModelPriceInfo, ModelPricingData } from '../../shared/types/site';
 import {
   createDefaultCustomCliConfig,
   normalizeCustomCliGroupMultiplier,
   normalizeCustomCliSettings,
-  normalizeCustomCliTestState,
 } from '../../shared/types/custom-cli-config';
 import { toast } from './toastStore';
 import { sessionEventLog } from '../services/sessionEventLog';
@@ -170,63 +165,17 @@ function normalizeModelPricingData(pricingData: ModelPricingData | undefined): M
   return { data };
 }
 
-function filterCustomCliTestState(
-  testState: CustomCliTestState | null | undefined,
-  availableModels: Set<string>
-): CustomCliTestState | null {
-  if (!testState) {
-    return null;
-  }
-
-  const normalized = normalizeCustomCliTestState(testState);
-  const slots = normalized.slots.map(slot => {
-    if (!slot) {
-      return null;
-    }
-
-    const model = slot.model.trim();
-    return availableModels.has(model) ? { ...slot, model } : null;
-  });
-  const validSlots = slots.filter((slot): slot is NonNullable<(typeof slots)[number]> =>
-    Boolean(slot)
-  );
-  const removedAnySlot = normalized.slots.some((slot, index) => Boolean(slot) && !slots[index]);
-
-  if (validSlots.length === 0) {
-    return null;
-  }
-
-  return {
-    ...normalized,
-    status: validSlots.every(slot => slot.success),
-    testedAt: Math.max(...validSlots.map(slot => slot.timestamp)),
-    claudeDetail: removedAnySlot ? undefined : normalized.claudeDetail,
-    codexDetail: removedAnySlot ? undefined : normalized.codexDetail,
-    openCodeDetail: removedAnySlot ? undefined : normalized.openCodeDetail,
-    slots,
-  };
-}
-
 function filterCustomCliSettingModels(
   setting: CustomCliSettings,
   availableModels: Set<string>
 ): CustomCliSettings {
   const selectedModel = setting.model?.trim() ?? '';
   const model = selectedModel && availableModels.has(selectedModel) ? selectedModel : null;
-  const testModels = Array.from(
-    new Set(
-      (setting.testModels ?? [])
-        .map(testModel => testModel.trim())
-        .filter(testModel => availableModels.has(testModel))
-    )
-  ).slice(0, 3);
 
   return {
     ...setting,
     model,
-    testModels,
     editedFiles: model ? setting.editedFiles : null,
-    testState: filterCustomCliTestState(setting.testState, availableModels),
   };
 }
 

@@ -1,7 +1,7 @@
 /**
- * 输入: DetectionResult (检测结果), CliCompatibilityResult (CLI 兼容性结果), CodexTestDetail, AllCliDetectionResult (CLI 配置检测结果)
+ * 输入: DetectionResult (检测结果), CliConfig, AllCliDetectionResult (CLI 配置检测结果)
  * 输出: DetectionState (检测状态), 检测结果操作方法, useDetectionStore hook
- * 定位: 状态管理层 - 管理站点检测结果、CLI 兼容性数据和 CLI 配置检测结果
+ * 定位: 状态管理层 - 管理站点检测结果、CLI 配置和本地 CLI 配置检测结果
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -19,77 +19,8 @@
 import { create } from 'zustand';
 import type { DetectionResult } from '../App';
 import type { AllCliDetectionResult, SiteInfo } from '../../shared/types/config-detection';
-import type { CliTargetProtocol } from '../../shared/types/cli-config';
-
-/** Claude Code 详细测试结果 */
-export interface ClaudeTestDetail {
-  replyText?: string; // CLI 返回的答案摘要
-}
-
-/** Codex 详细测试结果 */
-export interface CodexTestDetail {
-  responses: boolean | null; // Responses API 测试结果
-  replyText?: string; // CLI 返回的答案摘要
-}
-
-/** OpenCode 详细测试结果 */
-export interface OpenCodeTestDetail {
-  mode: CliTargetProtocol; // OpenCode 官方 provider/endpoint 模式（旧缓存可能为 native）
-  replyText?: string; // CLI 返回的答案摘要
-}
-
-/** CLI 兼容性测试结果 */
-export interface CliCompatibilityResult {
-  claudeCode: boolean | null; // true=支持, false=不支持, null=未测试
-  claudeDetail?: ClaudeTestDetail; // Claude Code 详细测试结果（回答摘要）
-  claudeError?: string; // Claude Code 失败摘要（错误码优先）
-  codex: boolean | null;
-  codexDetail?: CodexTestDetail; // Codex 详细测试结果（responses）
-  codexError?: string; // Codex 失败摘要（错误码优先）
-  openCode: boolean | null;
-  openCodeDetail?: OpenCodeTestDetail; // OpenCode 详细测试结果（官方 provider/endpoint 模式）
-  openCodeError?: string; // OpenCode 失败摘要（错误码优先）
-  grokBuild?: boolean | null;
-  grokBuildError?: string;
-  testedAt: number | null; // Unix timestamp
-  error?: string; // 测试错误信息（可选）
-  sourceLabel?: string; // 展示层来源标签（如“来自 CLI 可用性 · 默认账户”）
-}
-
-/** 编辑后的配置文件 */
-export interface EditedConfigFile {
-  path: string;
-  content: string;
-}
-
-/** 单个测试模型的持久化结果 */
-export interface CliModelTestResult {
-  model: string;
-  success: boolean;
-  message?: string;
-  timestamp: number;
-}
-
-/** 单个 CLI 配置项 */
-export interface CliConfigItem {
-  apiKeyId: number | null;
-  model: string | null; // CLI 使用模型
-  testModel?: string | null; // 测试使用模型
-  testModels?: string[] | null; // 测试使用模型（最多 3 个）
-  testResults?: Array<CliModelTestResult | null> | null; // 测试结果（按槽位持久化）
-  enabled?: boolean; // 是否启用（控制图标显示和测试），可选以兼容旧数据
-  targetProtocol?: CliTargetProtocol; // 目标协议/官方 provider 模式
-  editedFiles?: EditedConfigFile[] | null; // 用户编辑后的配置文件内容
-  applyMode?: 'merge' | 'overwrite'; // 应用配置模式：合并或覆盖，默认合并
-}
-
-/** CLI 配置（每个 CLI 类型的 API Key 和模型选择） */
-export interface CliConfig {
-  claudeCode?: CliConfigItem | null;
-  codex?: CliConfigItem | null;
-  openCode?: CliConfigItem | null;
-  grokBuild?: CliConfigItem | null;
-}
+import type { CliConfig } from '../../shared/types/cli-config';
+export type { CliConfig } from '../../shared/types/cli-config';
 
 interface DetectionState {
   // 检测结果
@@ -105,10 +36,7 @@ interface DetectionState {
   userGroups: Record<string, Record<string, { desc: string; ratio: number }>>;
   modelPricing: Record<string, any>;
 
-  // CLI 兼容性数据
-  cliCompatibility: Record<string, CliCompatibilityResult>;
   cliConfigs: Record<string, CliConfig>; // CLI 配置
-  cliTestingSites: Set<string>; // 正在测试 CLI 兼容性的站点
 
   // CLI 配置检测结果
   cliConfigDetection: AllCliDetectionResult | null;
@@ -132,13 +60,9 @@ interface DetectionState {
   ) => void;
   setModelPricing: (siteName: string, pricing: any) => void;
 
-  // CLI 兼容性 Actions
-  setCliCompatibility: (siteName: string, result: CliCompatibilityResult) => void;
+  // CLI 配置 Actions
   setCliConfig: (siteName: string, config: CliConfig) => void;
   getCliConfig: (siteName: string) => CliConfig | null;
-  addCliTestingSite: (siteName: string) => void;
-  removeCliTestingSite: (siteName: string) => void;
-  isCliTestingSite: (siteName: string) => boolean;
 
   // CLI 配置检测 Actions
   detectCliConfig: (sites: SiteInfo[]) => Promise<void>;
@@ -155,9 +79,7 @@ export const useDetectionStore = create<DetectionState>()((set, get) => ({
   apiKeys: {},
   userGroups: {},
   modelPricing: {},
-  cliCompatibility: {},
   cliConfigs: {},
-  cliTestingSites: new Set<string>(),
   cliConfigDetection: null,
   isDetectingCliConfig: false,
 
@@ -230,12 +152,6 @@ export const useDetectionStore = create<DetectionState>()((set, get) => ({
     set({ modelPricing: { ...modelPricing, [siteName]: pricing } });
   },
 
-  // CLI 兼容性 Actions
-  setCliCompatibility: (siteName, result) => {
-    const { cliCompatibility } = get();
-    set({ cliCompatibility: { ...cliCompatibility, [siteName]: result } });
-  },
-
   setCliConfig: (siteName, config) => {
     const { cliConfigs } = get();
     set({ cliConfigs: { ...cliConfigs, [siteName]: config } });
@@ -244,25 +160,6 @@ export const useDetectionStore = create<DetectionState>()((set, get) => ({
   getCliConfig: siteName => {
     const { cliConfigs } = get();
     return cliConfigs[siteName] ?? null;
-  },
-
-  addCliTestingSite: siteName => {
-    const { cliTestingSites } = get();
-    const newSet = new Set(cliTestingSites);
-    newSet.add(siteName);
-    set({ cliTestingSites: newSet });
-  },
-
-  removeCliTestingSite: siteName => {
-    const { cliTestingSites } = get();
-    const newSet = new Set(cliTestingSites);
-    newSet.delete(siteName);
-    set({ cliTestingSites: newSet });
-  },
-
-  isCliTestingSite: siteName => {
-    const { cliTestingSites } = get();
-    return cliTestingSites.has(siteName);
   },
 
   // CLI 配置检测 Actions

@@ -2,12 +2,12 @@
  * @file src/renderer/components/dialogs/ManagedCliConfigEditorContent.tsx
  * @description 托管站点 CLI 配置编辑器内容组件（无 OverlayDrawer 外壳）
  *
- * 输入: 站点 / 账户 / API Keys / 当前 CliConfig / 测试兼容性结果 / 持久化回调 / 确认回调
- * 输出: React 内容组件 (CLI 启用 / 模型选择 / Claude Code/Codex 测试 / 配置预览编辑 / 保存)
+ * 输入: 站点 / 账户 / API Keys / 当前 CliConfig / 确认回调
+ * 输出: React 内容组件 (CLI 启用 / 模型选择 / 配置预览编辑 / 保存)
  * 定位: 展示层 - 嵌入 AccessPointDetailPanel 托管 Tab3，无嵌套抽屉/弹窗
  *
  * 由旧托管 CLI 抽屉实现抽取为面板内嵌内容。
- * 720px 窄宽布局：CLI 折叠手风琴 + 模型/测试槽垂直堆叠 + 配置预览折叠。
+ * 720px 窄宽布局：CLI 折叠手风琴 + 模型选择 + 配置预览折叠。
  *
  * 🔄 自引用: 当此文件变更时，更新:
  * - 本文件头注释
@@ -20,23 +20,13 @@ import { Copy, Check, Edit2, Eye, Loader2, RotateCcw, Search, X, ChevronDown } f
 import { AppButton } from '../AppButton/AppButton';
 import { AppSwitch } from '../AppSwitch';
 import { PanelSection } from './PanelSection';
-import type { CliConfig, ApiKeyInfo, CliModelTestResult } from '../../../shared/types/cli-config';
-import type {
-  ClaudeTestDetail,
-  CodexTestDetail,
-  ModelPricingData,
-  UnifiedConfig,
-} from '../../../shared/types/site';
+import type { CliConfig, ApiKeyInfo } from '../../../shared/types/cli-config';
+import type { ModelPricingData } from '../../../shared/types/site';
 import {
   CLI_TARGET_PROTOCOLS,
   DEFAULT_CLI_CONFIG,
   getCliTargetEndpoint,
-  isProbeCliType,
-  normalizeCliTestModels,
-  normalizeCliTestResults,
   normalizeCliTargetProtocol,
-  sanitizeCliTestResults,
-  sanitizeCliTestModels,
   type BuiltinCliType,
   type CliTargetProtocol,
 } from '../../../shared/types/cli-config';
@@ -52,19 +42,9 @@ import {
   type GeneratedConfig,
   type ConfigFile,
 } from '../../services/cli-config-generator';
-import { useDetectionStore, type CliCompatibilityResult } from '../../store/detectionStore';
+import { useDetectionStore } from '../../store/detectionStore';
 import { useConfigStore } from '../../store/configStore';
-import { useRouteStore } from '../../store/routeStore';
 import { toast } from '../../store/toastStore';
-import {
-  persistCliCompatibilityResult,
-  type PersistedCliCompatibilityTestSample,
-} from '../../services/cli-compat-sync';
-import {
-  mergeCliProbeLatestRecords,
-  projectCliModelTestResultsFromLatest,
-  resolveCliProbeSiteId,
-} from '../../services/cli-compat-projection';
 
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../assets/cli-icons/codex.svg';
@@ -91,11 +71,8 @@ export interface ManagedCliConfigEditorContentProps {
   siteModels: string[];
   siteModelPricing?: ModelPricingData | null;
   currentConfig: CliConfig | null;
-  codexDetail?: CodexTestDetail | null;
-  compatibility?: CliCompatibilityResult | null;
   /** 全局确认对话框回调（替代 ConfirmDialog/AppModal） */
   showDialog?: (options: ConfirmOptions) => Promise<boolean>;
-  onPersistConfig?: (config: CliConfig) => void | Promise<void>;
   onSave: (config: CliConfig) => void;
 }
 
@@ -104,11 +81,13 @@ function FormSwitch({
   onChange,
   disabled = false,
   ariaLabel,
+  size = 'md',
 }: {
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
   ariaLabel?: string;
+  size?: 'sm' | 'md';
 }) {
   return (
     <AppSwitch
@@ -116,100 +95,9 @@ function FormSwitch({
       onCheckedChange={onChange}
       disabled={disabled}
       ariaLabel={ariaLabel}
+      size={size}
     />
   );
-}
-
-function getCliFailureMessage(
-  cliType: CliType,
-  response: {
-    error?: string;
-    data?: {
-      claudeError?: string;
-      codexError?: string;
-      openCodeError?: string;
-    };
-  }
-): string | undefined {
-  if (cliType === 'claudeCode') {
-    return response.data?.claudeError ?? response.error;
-  }
-  if (cliType === 'codex') {
-    return response.data?.codexError ?? response.error;
-  }
-  if (cliType === 'openCode') {
-    return response.data?.openCodeError ?? response.error;
-  }
-  return response.error;
-}
-
-interface CliCompatTestResponse {
-  success?: boolean;
-  error?: string;
-  data?: {
-    claudeCode?: boolean | null;
-    codex?: boolean | null;
-    openCode?: boolean | null;
-    claudeDetail?: ClaudeTestDetail;
-    codexDetail?: CodexTestDetail;
-    openCodeDetail?: CliCompatibilityResult['openCodeDetail'];
-    claudeError?: string;
-    codexError?: string;
-    openCodeError?: string;
-  };
-  samples?: PersistedCliCompatibilityTestSample[];
-}
-
-function buildPersistedCompatibilityResult(params: {
-  selectedCli: CliType;
-  compatibility?: CliCompatibilityResult | null;
-  supported: boolean;
-  testedAt: number | null;
-  failureMessage?: string;
-  latestClaudeDetail: ClaudeTestDetail | null;
-  latestCodexDetail: CodexTestDetail | null;
-  latestOpenCodeDetail: CliCompatibilityResult['openCodeDetail'] | null;
-}): CliCompatibilityResult {
-  const {
-    selectedCli,
-    compatibility,
-    supported,
-    testedAt,
-    failureMessage,
-    latestClaudeDetail,
-    latestCodexDetail,
-    latestOpenCodeDetail,
-  } = params;
-
-  const result: CliCompatibilityResult = {
-    claudeCode: compatibility?.claudeCode ?? null,
-    claudeDetail: compatibility?.claudeDetail,
-    claudeError: compatibility?.claudeError,
-    codex: compatibility?.codex ?? null,
-    codexDetail: compatibility?.codexDetail,
-    codexError: compatibility?.codexError,
-    openCode: compatibility?.openCode ?? null,
-    openCodeDetail: compatibility?.openCodeDetail,
-    openCodeError: compatibility?.openCodeError,
-    testedAt: testedAt ?? compatibility?.testedAt ?? Date.now(),
-    sourceLabel: compatibility?.sourceLabel,
-  };
-
-  if (selectedCli === 'claudeCode') {
-    result.claudeCode = supported;
-    result.claudeDetail = latestClaudeDetail ?? result.claudeDetail;
-    result.claudeError = supported ? undefined : failureMessage;
-  } else if (selectedCli === 'codex') {
-    result.codex = supported;
-    result.codexDetail = latestCodexDetail ?? result.codexDetail;
-    result.codexError = supported ? undefined : failureMessage;
-  } else if (selectedCli === 'openCode') {
-    result.openCode = supported;
-    result.openCodeDetail = latestOpenCodeDetail ?? result.openCodeDetail;
-    result.openCodeError = supported ? undefined : failureMessage;
-  }
-
-  return result;
 }
 
 interface CliTypeConfig {
@@ -238,8 +126,6 @@ const CLI_TARGET_PROTOCOL_LABELS: Record<CliTargetProtocol, string> = {
   'openai-responses': 'OpenAI Responses',
 };
 
-const PANEL_TEST_MODEL_SLOT_COUNT = 1;
-
 function buildCliTargetProtocolOptionLabel(
   cliType: CliType,
   targetProtocol: CliTargetProtocol,
@@ -259,13 +145,6 @@ function normalizeOptionalCliTargetProtocol(value: unknown): CliTargetProtocol |
   return typeof value === 'string' && CLI_TARGET_PROTOCOLS.includes(value as CliTargetProtocol)
     ? normalizeCliTargetProtocol(value)
     : undefined;
-}
-
-function toTestModelSlots(
-  configItem?: Pick<NonNullable<CliConfig[CliType]>, 'testModel' | 'testModels'> | null
-): string[] {
-  const normalized = normalizeCliTestModels(configItem, PANEL_TEST_MODEL_SLOT_COUNT);
-  return Array.from({ length: PANEL_TEST_MODEL_SLOT_COUNT }, (_, index) => normalized[index] || '');
 }
 
 function getApiKeyId(apiKey: ApiKeyInfo): number {
@@ -387,56 +266,6 @@ function extractPreviewBaseUrl(
   return null;
 }
 
-interface CliModelTestState {
-  slots: Array<CliModelTestResult | null>;
-  testedAt: number | null;
-  codexDetail: CodexTestDetail | null;
-  openCodeDetail: CliCompatibilityResult['openCodeDetail'] | null;
-}
-
-function createEmptyCliModelTestState(): Record<CliType, CliModelTestState> {
-  const emptySlots = Array.from({ length: PANEL_TEST_MODEL_SLOT_COUNT }, () => null);
-  return {
-    claudeCode: {
-      slots: [...emptySlots],
-      testedAt: null,
-      codexDetail: null,
-      openCodeDetail: null,
-    },
-    codex: {
-      slots: [...emptySlots],
-      testedAt: null,
-      codexDetail: null,
-      openCodeDetail: null,
-    },
-    openCode: {
-      slots: [...emptySlots],
-      testedAt: null,
-      codexDetail: null,
-      openCodeDetail: null,
-    },
-    grokBuild: {
-      slots: [...emptySlots],
-      testedAt: null,
-      codexDetail: null,
-      openCodeDetail: null,
-    },
-  };
-}
-
-function createCliModelTestStateFromConfig(
-  config?: Pick<NonNullable<CliConfig[CliType]>, 'testModel' | 'testModels' | 'testResults'> | null
-): CliModelTestState {
-  const slots = normalizeCliTestResults(config, PANEL_TEST_MODEL_SLOT_COUNT);
-  const testedRows = slots.filter(Boolean) as CliModelTestResult[];
-  return {
-    slots,
-    testedAt: testedRows.length > 0 ? Math.max(...testedRows.map(row => row.timestamp)) : null,
-    codexDetail: null,
-    openCodeDetail: null,
-  };
-}
-
 function serializeManagedEditedFiles(
   files: Array<{ path: string; content: string }> | null | undefined
 ): string {
@@ -460,7 +289,6 @@ function isManagedCliConfigDirty(params: {
       apiKeyId: number | null;
       model: string | null;
       targetProtocol?: CliTargetProtocol;
-      testModels: string[];
       editedFiles: GeneratedConfig | null;
     }
   >;
@@ -486,11 +314,6 @@ function isManagedCliConfigDirty(params: {
       return true;
     }
 
-    const baselineTestModels = toTestModelSlots(baseline);
-    if (JSON.stringify(current.testModels) !== JSON.stringify(baselineTestModels)) {
-      return true;
-    }
-
     const currentEdited =
       selectedCli === cliType && editedConfig
         ? editedConfig.files.map(file => ({ path: file.path, content: file.content }))
@@ -506,77 +329,6 @@ function isManagedCliConfigDirty(params: {
   }
 
   return false;
-}
-
-function areCliModelTestResultsEqual(
-  left: CliModelTestResult | null,
-  right: CliModelTestResult | null
-): boolean {
-  if (!left || !right) {
-    return left === right;
-  }
-
-  return (
-    left.model === right.model &&
-    left.success === right.success &&
-    left.timestamp === right.timestamp &&
-    left.message === right.message
-  );
-}
-
-function areCliModelTestSlotsEqual(
-  left: Array<CliModelTestResult | null>,
-  right: Array<CliModelTestResult | null>
-): boolean {
-  return (
-    left.length === right.length &&
-    left.every((leftSlot, index) => areCliModelTestResultsEqual(leftSlot, right[index] ?? null))
-  );
-}
-
-function getLatestCliModelTestedAt(
-  currentTestedAt: number | null,
-  slots: Array<CliModelTestResult | null>
-): number | null {
-  const timestamps = slots
-    .map(slot => slot?.timestamp)
-    .filter((timestamp): timestamp is number => typeof timestamp === 'number');
-  if (timestamps.length === 0) {
-    return currentTestedAt;
-  }
-
-  return Math.max(currentTestedAt ?? 0, ...timestamps);
-}
-
-function buildProjectionCliConfig(
-  cliType: CliType,
-  currentConfig: CliConfig | null,
-  cliConfigs: Record<
-    CliType,
-    {
-      apiKeyId: number | null;
-      model: string | null;
-      targetProtocol?: CliTargetProtocol;
-      testModels: string[];
-      editedFiles: GeneratedConfig | null;
-    }
-  >,
-  testState: CliModelTestState
-): NonNullable<CliConfig[CliType]> {
-  const persistedConfig = currentConfig?.[cliType] ?? null;
-  return {
-    apiKeyId: persistedConfig?.apiKeyId ?? cliConfigs[cliType].apiKeyId,
-    model: persistedConfig?.model ?? cliConfigs[cliType].model,
-    targetProtocol: normalizeCliTargetProtocol(
-      persistedConfig?.targetProtocol ?? cliConfigs[cliType].targetProtocol
-    ),
-    testModel: persistedConfig?.testModel ?? null,
-    testModels: cliConfigs[cliType].testModels,
-    testResults: testState.slots,
-    enabled: persistedConfig?.enabled ?? true,
-    editedFiles: persistedConfig?.editedFiles ?? null,
-    applyMode: persistedConfig?.applyMode ?? 'merge',
-  };
 }
 
 function SearchableModelSelector({
@@ -776,22 +528,16 @@ function ConfigFileDisplay({
  * 托管站点 CLI 配置编辑器内容组件（嵌入面板 Tab3）
  */
 export function ManagedCliConfigEditorContent({
-  siteId,
   siteName,
-  accountId,
   accountName,
   siteUrl,
   apiKeys,
   siteModels,
   siteModelPricing,
   currentConfig,
-  codexDetail,
-  compatibility,
   showDialog,
-  onPersistConfig,
   onSave,
 }: ManagedCliConfigEditorContentProps) {
-  const routeCliProbeLatest = useRouteStore(state => state.config?.cliProbe?.latest ?? null);
   const clearCliConfigDetection = useDetectionStore(state => state.clearCliConfigDetection);
   const detectCliConfig = useDetectionStore(state => state.detectCliConfig);
   const appSites = useConfigStore(state => state.config?.sites);
@@ -805,7 +551,7 @@ export function ManagedCliConfigEditorContent({
   });
   const [listAllModels, setListAllModels] = useState(false);
 
-  // 当前展开的 CLI 类型；允许全部折叠
+  // 当前展开配置预览的 CLI 类型
   const [selectedCli, setSelectedCli] = useState<CliType | null>(null);
 
   const [cliConfigs, setCliConfigs] = useState<
@@ -815,7 +561,6 @@ export function ManagedCliConfigEditorContent({
         apiKeyId: number | null;
         model: string | null;
         targetProtocol?: CliTargetProtocol;
-        testModels: string[];
         editedFiles: GeneratedConfig | null;
       }
     >
@@ -824,28 +569,24 @@ export function ManagedCliConfigEditorContent({
       apiKeyId: null,
       model: null,
       targetProtocol: undefined,
-      testModels: toTestModelSlots(null),
       editedFiles: null,
     },
     codex: {
       apiKeyId: null,
       model: null,
       targetProtocol: undefined,
-      testModels: toTestModelSlots(null),
       editedFiles: null,
     },
     openCode: {
       apiKeyId: null,
       model: null,
       targetProtocol: undefined,
-      testModels: toTestModelSlots(null),
       editedFiles: null,
     },
     grokBuild: {
       apiKeyId: null,
       model: null,
       targetProtocol: undefined,
-      testModels: toTestModelSlots(null),
       editedFiles: null,
     },
   });
@@ -853,62 +594,8 @@ export function ManagedCliConfigEditorContent({
   const [editedConfig, setEditedConfig] = useState<GeneratedConfig | null>(null);
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
-  const [isTestingSelectedModels, setIsTestingSelectedModels] = useState(false);
   const [applyingCli, setApplyingCli] = useState<CliType | null>(null);
-  const [cliModelTests, setCliModelTests] = useState<Record<CliType, CliModelTestState>>(
-    createEmptyCliModelTestState()
-  );
-  const [loadedCliProbeConfig, setLoadedCliProbeConfig] = useState<Pick<
-    UnifiedConfig,
-    'sites' | 'routing'
-  > | null>(null);
   const previousDialogKeyRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadConfig = window.electronAPI.loadConfig;
-    if (!loadConfig) {
-      setLoadedCliProbeConfig(null);
-      return;
-    }
-
-    void Promise.resolve()
-      .then(() => loadConfig())
-      .then(config => {
-        if (cancelled) {
-          return;
-        }
-
-        const loadedConfig = config as UnifiedConfig | null | undefined;
-        setLoadedCliProbeConfig({
-          sites: loadedConfig?.sites || [],
-          routing: loadedConfig?.routing,
-        });
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setLoadedCliProbeConfig(null);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [accountId, siteId, siteName, siteUrl]);
-
-  const projectedCliProbeLatest = useMemo(
-    () =>
-      mergeCliProbeLatestRecords(
-        loadedCliProbeConfig?.routing?.cliProbe?.latest,
-        routeCliProbeLatest
-      ),
-    [loadedCliProbeConfig?.routing?.cliProbe?.latest, routeCliProbeLatest]
-  );
-
-  const projectedCliProbeSiteId = useMemo(
-    () => resolveCliProbeSiteId(loadedCliProbeConfig, { siteId, siteName, siteUrl }),
-    [loadedCliProbeConfig, siteId, siteName, siteUrl]
-  );
 
   // 挂载 / 站点-账户变化时从持久化配置（重新）初始化
   useEffect(() => {
@@ -929,7 +616,6 @@ export function ManagedCliConfigEditorContent({
           targetProtocol: normalizeOptionalCliTargetProtocol(
             currentConfig.claudeCode?.targetProtocol
           ),
-          testModels: toTestModelSlots(currentConfig.claudeCode),
           editedFiles: currentConfig.claudeCode?.editedFiles
             ? {
                 files: currentConfig.claudeCode.editedFiles.map(f => ({
@@ -943,7 +629,6 @@ export function ManagedCliConfigEditorContent({
           apiKeyId: currentConfig.codex?.apiKeyId ?? null,
           model: currentConfig.codex?.model ?? null,
           targetProtocol: normalizeOptionalCliTargetProtocol(currentConfig.codex?.targetProtocol),
-          testModels: toTestModelSlots(currentConfig.codex),
           editedFiles: currentConfig.codex?.editedFiles
             ? {
                 files: currentConfig.codex.editedFiles.map(f => ({
@@ -959,7 +644,6 @@ export function ManagedCliConfigEditorContent({
           targetProtocol: normalizeOptionalCliTargetProtocol(
             currentConfig.openCode?.targetProtocol
           ),
-          testModels: toTestModelSlots(currentConfig.openCode),
           editedFiles: currentConfig.openCode?.editedFiles
             ? {
                 files: currentConfig.openCode.editedFiles.map(f => ({
@@ -975,7 +659,6 @@ export function ManagedCliConfigEditorContent({
           targetProtocol: normalizeOptionalCliTargetProtocol(
             currentConfig.grokBuild?.targetProtocol
           ),
-          testModels: toTestModelSlots(currentConfig.grokBuild),
           editedFiles: currentConfig.grokBuild?.editedFiles
             ? {
                 files: currentConfig.grokBuild.editedFiles.map(file => ({
@@ -985,12 +668,6 @@ export function ManagedCliConfigEditorContent({
               }
             : null,
         },
-      });
-      setCliModelTests({
-        claudeCode: createCliModelTestStateFromConfig(currentConfig.claudeCode),
-        codex: createCliModelTestStateFromConfig(currentConfig.codex),
-        openCode: createCliModelTestStateFromConfig(currentConfig.openCode),
-        grokBuild: createCliModelTestStateFromConfig(currentConfig.grokBuild),
       });
     } else if (shouldInitialize) {
       setEnabledState({
@@ -1004,32 +681,27 @@ export function ManagedCliConfigEditorContent({
           apiKeyId: null,
           model: null,
           targetProtocol: undefined,
-          testModels: toTestModelSlots(null),
           editedFiles: null,
         },
         codex: {
           apiKeyId: null,
           model: null,
           targetProtocol: undefined,
-          testModels: toTestModelSlots(null),
           editedFiles: null,
         },
         openCode: {
           apiKeyId: null,
           model: null,
           targetProtocol: undefined,
-          testModels: toTestModelSlots(null),
           editedFiles: null,
         },
         grokBuild: {
           apiKeyId: null,
           model: null,
           targetProtocol: undefined,
-          testModels: toTestModelSlots(null),
           editedFiles: null,
         },
       });
-      setCliModelTests(createEmptyCliModelTestState());
     }
 
     if (shouldInitialize) {
@@ -1044,66 +716,6 @@ export function ManagedCliConfigEditorContent({
     previousDialogKeyRef.current = dialogKey;
   }, [accountName, currentConfig, siteUrl]);
 
-  useEffect(() => {
-    if (!projectedCliProbeSiteId || Object.keys(projectedCliProbeLatest).length === 0) {
-      return;
-    }
-
-    setCliModelTests(prev => {
-      const projectionConfig: CliConfig = {
-        claudeCode: buildProjectionCliConfig(
-          'claudeCode',
-          currentConfig,
-          cliConfigs,
-          prev.claudeCode
-        ),
-        codex: buildProjectionCliConfig('codex', currentConfig, cliConfigs, prev.codex),
-        openCode: buildProjectionCliConfig('openCode', currentConfig, cliConfigs, prev.openCode),
-        grokBuild: buildProjectionCliConfig('grokBuild', currentConfig, cliConfigs, prev.grokBuild),
-      };
-      const projectedResults = projectCliModelTestResultsFromLatest({
-        latest: projectedCliProbeLatest,
-        siteId: projectedCliProbeSiteId,
-        accountId,
-        cliConfig: projectionConfig,
-      });
-
-      const next: Record<CliType, CliModelTestState> = {
-        claudeCode: {
-          ...prev.claudeCode,
-          slots: projectedResults.claudeCode,
-          testedAt: getLatestCliModelTestedAt(
-            prev.claudeCode.testedAt,
-            projectedResults.claudeCode
-          ),
-        },
-        codex: {
-          ...prev.codex,
-          slots: projectedResults.codex,
-          testedAt: getLatestCliModelTestedAt(prev.codex.testedAt, projectedResults.codex),
-        },
-        openCode: {
-          ...prev.openCode,
-          slots: projectedResults.openCode,
-          testedAt: getLatestCliModelTestedAt(prev.openCode.testedAt, projectedResults.openCode),
-        },
-        grokBuild: {
-          ...prev.grokBuild,
-          slots: projectedResults.grokBuild,
-          testedAt: getLatestCliModelTestedAt(prev.grokBuild.testedAt, projectedResults.grokBuild),
-        },
-      };
-
-      const unchanged =
-        areCliModelTestSlotsEqual(prev.claudeCode.slots, next.claudeCode.slots) &&
-        areCliModelTestSlotsEqual(prev.codex.slots, next.codex.slots) &&
-        areCliModelTestSlotsEqual(prev.openCode.slots, next.openCode.slots) &&
-        areCliModelTestSlotsEqual(prev.grokBuild.slots, next.grokBuild.slots);
-
-      return unchanged ? prev : next;
-    });
-  }, [accountId, cliConfigs, currentConfig, projectedCliProbeLatest, projectedCliProbeSiteId]);
-
   // 切换或折叠 CLI 面板前保存当前编辑的配置
   const handleCliTypeChange = (newCliType: CliType | null) => {
     if (selectedCli && editedConfig && CLI_TYPES.some(cli => cli.key === selectedCli)) {
@@ -1117,73 +729,34 @@ export function ManagedCliConfigEditorContent({
     setIsEditing(false);
   };
 
-  const selectedApiKey = useMemo(() => {
-    if (!selectedCli) return null;
-    const config = cliConfigs[selectedCli];
-    if (!config.apiKeyId) return null;
-    return apiKeys.find(k => getApiKeyId(k) === config.apiKeyId) || null;
-  }, [apiKeys, selectedCli, cliConfigs]);
-
-  const selectedTargetProtocolValue = selectedCli
-    ? (cliConfigs[selectedCli].targetProtocol ?? '')
-    : '';
-
-  const availableModels = useMemo(() => {
-    if (!selectedCli || !selectedApiKey) {
-      return [];
-    }
-    return getScopedSiteModels({
-      siteModels,
-      siteModelPricing,
-      apiKey: selectedApiKey,
-      listAllModels,
-    });
-  }, [selectedApiKey, selectedCli, siteModelPricing, siteModels, listAllModels]);
-
   useEffect(() => {
-    if (!selectedCli || listAllModels) {
+    if (listAllModels) {
       return;
     }
-
-    const currentConfigState = cliConfigs[selectedCli];
-    if (!currentConfigState.apiKeyId) {
-      return;
-    }
-
-    const availableModelSet = new Set(availableModels);
-    const nextModel =
-      currentConfigState.model && availableModelSet.has(currentConfigState.model)
-        ? currentConfigState.model
-        : null;
-    const nextTestModels = currentConfigState.testModels.map(model =>
-      model && availableModelSet.has(model) ? model : ''
-    );
-    const selectionChanged =
-      nextModel !== currentConfigState.model ||
-      nextTestModels.some((model, index) => model !== currentConfigState.testModels[index]);
-
-    if (!selectionChanged) {
-      return;
-    }
-
-    setCliConfigs(prev => ({
-      ...prev,
-      [selectedCli]: {
-        ...prev[selectedCli],
-        model: nextModel,
-        testModels: nextTestModels,
-        editedFiles: null,
-      },
-    }));
-    setEditedConfig(null);
-    setIsEditing(false);
-    setCliModelTests(prev => ({
-      ...prev,
-      [selectedCli]: createEmptyCliModelTestState()[selectedCli],
-    }));
-  }, [availableModels, cliConfigs, listAllModels, selectedCli]);
-
-  const effectiveCodexDetail = cliModelTests.codex.codexDetail ?? codexDetail ?? undefined;
+    setCliConfigs(prev => {
+      const next = { ...prev };
+      for (const cli of CLI_TYPES) {
+        const current = prev[cli.key];
+        const apiKey = current.apiKeyId
+          ? apiKeys.find(item => getApiKeyId(item) === current.apiKeyId)
+          : null;
+        const availableModelSet = new Set(
+          apiKey
+            ? getScopedSiteModels({
+                siteModels,
+                siteModelPricing,
+                apiKey,
+                listAllModels: false,
+              })
+            : []
+        );
+        const model = current.model && availableModelSet.has(current.model) ? current.model : null;
+        next[cli.key] =
+          model === current.model ? current : { ...current, model, editedFiles: null };
+      }
+      return next;
+    });
+  }, [apiKeys, listAllModels, siteModelPricing, siteModels]);
 
   const generateConfigForCli = useCallback(
     (cliType: CliType): GeneratedConfig | null => {
@@ -1204,7 +777,7 @@ export function ManagedCliConfigEditorContent({
       if (cliType === 'claudeCode') {
         return generateClaudeCodeConfig(params);
       } else if (cliType === 'codex') {
-        return generateCodexConfig({ ...params, codexDetail: effectiveCodexDetail });
+        return generateCodexConfig(params);
       } else if (cliType === 'openCode') {
         return generateOpenCodeConfig({
           ...params,
@@ -1218,7 +791,7 @@ export function ManagedCliConfigEditorContent({
       }
       return null;
     },
-    [apiKeys, cliConfigs, effectiveCodexDetail, siteName, siteUrl]
+    [apiKeys, cliConfigs, siteName, siteUrl]
   );
 
   const realtimeConfig = useMemo(() => {
@@ -1273,65 +846,41 @@ export function ManagedCliConfigEditorContent({
     }));
   };
 
-  const handleApiKeyChange = (apiKeyId: number | null) => {
-    if (!selectedCli) return;
+  const handleApiKeyChange = (cliType: CliType, apiKeyId: number | null) => {
     setCliConfigs(prev => ({
       ...prev,
-      [selectedCli]: {
-        ...prev[selectedCli],
+      [cliType]: {
+        ...prev[cliType],
         apiKeyId,
         model: null,
-        testModels: toTestModelSlots(null),
         editedFiles: null,
       },
     }));
-    setEditedConfig(null);
-    setIsEditing(false);
-    setCliModelTests(prev => ({
-      ...prev,
-      [selectedCli]: createEmptyCliModelTestState()[selectedCli],
-    }));
+    if (selectedCli === cliType) {
+      setEditedConfig(null);
+      setIsEditing(false);
+    }
   };
 
-  const handleTargetProtocolChange = (value: string) => {
-    if (!selectedCli) return;
+  const handleTargetProtocolChange = (cliType: CliType, value: string) => {
     setCliConfigs(prev => ({
       ...prev,
-      [selectedCli]: {
-        ...prev[selectedCli],
+      [cliType]: {
+        ...prev[cliType],
         targetProtocol: value ? normalizeOptionalCliTargetProtocol(value) : undefined,
       },
     }));
   };
 
-  const handleModelChange = (model: string | null) => {
-    if (!selectedCli) return;
+  const handleModelChange = (cliType: CliType, model: string | null) => {
     setCliConfigs(prev => ({
       ...prev,
-      [selectedCli]: { ...prev[selectedCli], model, editedFiles: null },
+      [cliType]: { ...prev[cliType], model, editedFiles: null },
     }));
-    setEditedConfig(null);
-    setIsEditing(false);
-  };
-
-  const handleTestModelChange = (slotIndex: number, testModel: string | null) => {
-    if (!selectedCli) return;
-    setCliConfigs(prev => ({
-      ...prev,
-      [selectedCli]: {
-        ...prev[selectedCli],
-        testModels: prev[selectedCli].testModels.map((current, index) => {
-          return index === slotIndex ? testModel || '' : current;
-        }),
-      },
-    }));
-    setCliModelTests(prev => ({
-      ...prev,
-      [selectedCli]: {
-        ...prev[selectedCli],
-        slots: prev[selectedCli].slots.map((slot, index) => (index === slotIndex ? null : slot)),
-      },
-    }));
+    if (selectedCli === cliType) {
+      setEditedConfig(null);
+      setIsEditing(false);
+    }
   };
 
   const handleCopy = async (path: string, content: string) => {
@@ -1389,9 +938,7 @@ export function ManagedCliConfigEditorContent({
     await handleResetConfig();
   };
 
-  const buildConfigPayload = (
-    testStates: Record<CliType, CliModelTestState> = cliModelTests
-  ): CliConfig => {
+  const buildConfigPayload = (): CliConfig => {
     const getEditedFiles = (cliType: CliType) => {
       if (selectedCli === cliType && editedConfig) {
         return editedConfig.files.map(f => ({ path: f.path, content: f.content }));
@@ -1412,9 +959,6 @@ export function ManagedCliConfigEditorContent({
         targetProtocol: cliConfigs.claudeCode.targetProtocol
           ? normalizeCliTargetProtocol(cliConfigs.claudeCode.targetProtocol)
           : undefined,
-        testModel: sanitizeCliTestModels(cliConfigs.claudeCode.testModels)[0] ?? null,
-        testModels: sanitizeCliTestModels(cliConfigs.claudeCode.testModels),
-        testResults: sanitizeCliTestResults(testStates.claudeCode.slots),
         enabled: enabledState.claudeCode,
         editedFiles: getEditedFiles('claudeCode'),
         applyMode: currentConfig?.claudeCode?.applyMode ?? 'merge',
@@ -1425,9 +969,6 @@ export function ManagedCliConfigEditorContent({
         targetProtocol: cliConfigs.codex.targetProtocol
           ? normalizeCliTargetProtocol(cliConfigs.codex.targetProtocol)
           : undefined,
-        testModel: sanitizeCliTestModels(cliConfigs.codex.testModels)[0] ?? null,
-        testModels: sanitizeCliTestModels(cliConfigs.codex.testModels),
-        testResults: sanitizeCliTestResults(testStates.codex.slots),
         enabled: enabledState.codex,
         editedFiles: getEditedFiles('codex'),
         applyMode: currentConfig?.codex?.applyMode ?? 'merge',
@@ -1438,9 +979,6 @@ export function ManagedCliConfigEditorContent({
         targetProtocol: cliConfigs.openCode.targetProtocol
           ? normalizeCliTargetProtocol(cliConfigs.openCode.targetProtocol)
           : undefined,
-        testModel: sanitizeCliTestModels(cliConfigs.openCode.testModels)[0] ?? null,
-        testModels: sanitizeCliTestModels(cliConfigs.openCode.testModels),
-        testResults: sanitizeCliTestResults(testStates.openCode.slots),
         enabled: enabledState.openCode,
         editedFiles: getEditedFiles('openCode'),
         applyMode: currentConfig?.openCode?.applyMode ?? 'merge',
@@ -1451,183 +989,11 @@ export function ManagedCliConfigEditorContent({
         targetProtocol: cliConfigs.grokBuild.targetProtocol
           ? normalizeCliTargetProtocol(cliConfigs.grokBuild.targetProtocol)
           : undefined,
-        testModel: null,
-        testModels: [],
-        testResults: [],
         enabled: enabledState.grokBuild,
         editedFiles: getEditedFiles('grokBuild'),
         applyMode: 'merge',
       },
     };
-  };
-
-  const handleTestSelectedModels = async () => {
-    if (!selectedCli || isTestingSelectedModels) return;
-    if (!isProbeCliType(selectedCli)) {
-      const cliName = CLI_TYPES.find(cli => cli.key === selectedCli)?.name ?? selectedCli;
-      toast.info(`${cliName} 模型探测暂未启用`);
-      return;
-    }
-
-    const config = cliConfigs[selectedCli];
-    if (!config.apiKeyId) {
-      toast.error('请先选择 API Key');
-      return;
-    }
-
-    const apiKey = apiKeys.find(item => getApiKeyId(item) === config.apiKeyId);
-    const resolvedApiKey = apiKey ? getApiKeyValue(apiKey) : '';
-    if (!resolvedApiKey) {
-      toast.error('未找到对应的 API Key');
-      return;
-    }
-
-    const modelEntries = config.testModels
-      .map((rawModel, slotIndex) => ({
-        slotIndex,
-        model: typeof rawModel === 'string' ? rawModel.trim() : '',
-      }))
-      .filter((entry): entry is { slotIndex: number; model: string } => Boolean(entry.model));
-    if (modelEntries.length === 0) {
-      toast.error('请先为当前 CLI 选择测试模型');
-      return;
-    }
-
-    setIsTestingSelectedModels(true);
-    const resetCliTestState = createEmptyCliModelTestState()[selectedCli];
-    setCliModelTests(prev => ({
-      ...prev,
-      [selectedCli]: resetCliTestState,
-    }));
-
-    let failedCount = 0;
-    let latestTestedAt: number | null = null;
-    let selectedCliSupported = false;
-    let latestFailureMessage: string | undefined;
-    let latestCodexDetail: CodexTestDetail | null = null;
-    let latestClaudeDetail: ClaudeTestDetail | null = null;
-    let latestOpenCodeDetail: CliCompatibilityResult['openCodeDetail'] | null = null;
-    const persistedSamples: PersistedCliCompatibilityTestSample[] = [];
-    let nextCliTestState = resetCliTestState;
-
-    for (const { slotIndex: targetSlotIndex, model } of modelEntries) {
-      let rowResult: CliModelTestResult;
-
-      try {
-        const response = (await (window.electronAPI as any).cliCompat.testWithWrapper({
-          siteUrl,
-          configs: [
-            {
-              cliType: selectedCli,
-              apiKey: resolvedApiKey,
-              model,
-              baseUrl: siteUrl,
-              targetProtocol: normalizeCliTargetProtocol(config.targetProtocol),
-            },
-          ],
-        })) as CliCompatTestResponse;
-
-        const success = response.success === true && response.data?.[selectedCli] === true;
-        latestTestedAt = Date.now();
-        selectedCliSupported = selectedCliSupported || success;
-        if (response.data?.claudeDetail) latestClaudeDetail = response.data.claudeDetail;
-        if (response.data?.codexDetail) latestCodexDetail = response.data.codexDetail;
-        if (response.data?.openCodeDetail) latestOpenCodeDetail = response.data.openCodeDetail;
-        if (Array.isArray(response.samples) && response.samples.length > 0) {
-          persistedSamples.push(...response.samples);
-        }
-        if (!success) failedCount += 1;
-        if (!success) {
-          latestFailureMessage =
-            getCliFailureMessage(selectedCli, response) ?? latestFailureMessage;
-        }
-
-        rowResult = {
-          model,
-          success,
-          message: success
-            ? undefined
-            : (getCliFailureMessage(selectedCli, response) ?? '测试失败'),
-          timestamp: latestTestedAt,
-        };
-      } catch (error) {
-        latestTestedAt = Date.now();
-        failedCount += 1;
-        rowResult = {
-          model,
-          success: false,
-          message: error instanceof Error ? error.message : '测试失败',
-          timestamp: latestTestedAt,
-        };
-      }
-
-      nextCliTestState = {
-        ...nextCliTestState,
-        testedAt: latestTestedAt,
-        codexDetail: latestCodexDetail,
-        openCodeDetail: latestOpenCodeDetail,
-        slots: nextCliTestState.slots.map((slot, slotIndex) =>
-          slotIndex === targetSlotIndex ? rowResult : slot
-        ),
-      };
-
-      const interimTestState = nextCliTestState;
-      setCliModelTests(prev => ({
-        ...prev,
-        [selectedCli]: interimTestState,
-      }));
-    }
-
-    setIsTestingSelectedModels(false);
-    const nextTestStates = {
-      ...cliModelTests,
-      [selectedCli]: nextCliTestState,
-    };
-
-    if (onPersistConfig) {
-      try {
-        await onPersistConfig(buildConfigPayload(nextTestStates));
-      } catch {
-        toast.error('测试结果持久化失败');
-      }
-    }
-
-    try {
-      const persistResult = await persistCliCompatibilityResult(
-        siteUrl,
-        buildPersistedCompatibilityResult({
-          selectedCli,
-          compatibility,
-          supported: selectedCliSupported,
-          testedAt: latestTestedAt,
-          failureMessage: latestFailureMessage,
-          latestClaudeDetail,
-          latestCodexDetail,
-          latestOpenCodeDetail,
-        }),
-        {
-          accountId,
-          samples: persistedSamples,
-        }
-      );
-
-      if (!persistResult.success) {
-        toast.error(`测试结果同步到站点检测失败: ${persistResult.error ?? '未知错误'}`);
-      }
-    } catch (error) {
-      toast.error(
-        `测试结果同步到站点检测失败: ${error instanceof Error ? error.message : '未知错误'}`
-      );
-    }
-
-    if (failedCount === 0) {
-      toast.success(`${CLI_TYPES.find(cli => cli.key === selectedCli)?.name ?? 'CLI'} 测试通过`);
-    } else {
-      toast.warning(
-        `${CLI_TYPES.find(cli => cli.key === selectedCli)?.name ?? 'CLI'} 有 ${failedCount} 个测试模型未通过`,
-        10000
-      );
-    }
   };
 
   const handleApplyCliConfig = async (cliType: CliType) => {
@@ -1705,7 +1071,6 @@ export function ManagedCliConfigEditorContent({
     onSave(buildConfigPayload());
   };
 
-  const selectedCliTestState = selectedCli ? cliModelTests[selectedCli] : null;
   const isDirty = isManagedCliConfigDirty({
     currentConfig,
     enabledState,
@@ -1722,6 +1087,14 @@ export function ManagedCliConfigEditorContent({
           CLI 配置（{CLI_TYPES.filter(cli => enabledState[cli.key]).length}/{CLI_TYPES.length}）
         </div>
         <div className="flex items-center gap-2">
+          <label className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+            <span>列出全部模型</span>
+            <FormSwitch
+              checked={listAllModels}
+              onChange={setListAllModels}
+              ariaLabel="列出全部模型"
+            />
+          </label>
           <AppButton
             variant={isDirty ? 'danger' : 'primary'}
             size="sm"
@@ -1734,40 +1107,44 @@ export function ManagedCliConfigEditorContent({
         </div>
       </div>
 
-      {/* 每个 CLI 一个折叠分区；允许全部折叠 */}
+      {/* CLI 卡片始终展开，配置文件预览单独折叠 */}
       <div className="space-y-2">
         {CLI_TYPES.map(cli => {
-          const isOpen = selectedCli === cli.key;
+          const isPreviewOpen = selectedCli === cli.key;
+          const cliConfig = cliConfigs[cli.key];
+          const selectedApiKey = cliConfig.apiKeyId
+            ? apiKeys.find(item => getApiKeyId(item) === cliConfig.apiKeyId)
+            : null;
+          const availableModels = selectedApiKey
+            ? getScopedSiteModels({
+                siteModels,
+                siteModelPricing,
+                apiKey: selectedApiKey,
+                listAllModels,
+              })
+            : [];
+          const selectedTargetProtocolValue = cliConfig.targetProtocol ?? '';
           return (
             <PanelSection
               key={cli.key}
-              collapsible
-              expanded={isOpen}
-              onExpandedChange={expanded => {
-                handleCliTypeChange(expanded ? cli.key : null);
-              }}
+              collapsible={false}
               title={
-                <span className="flex items-center gap-2">
+                <span className="flex min-w-0 items-center gap-2">
                   <img src={cli.icon} alt={cli.name} className="h-4 w-4" />
-                  <span>{cli.name}</span>
+                  <span className="shrink-0">{cli.name}</span>
+                  <span className="min-w-0 truncate text-xs font-normal text-[var(--text-secondary)]">
+                    {enabledState[cli.key]
+                      ? cliConfigs[cli.key]?.model || '已启用 · 未选模型'
+                      : '已禁用'}
+                  </span>
                 </span>
-              }
-              subtitle={
-                enabledState[cli.key] ? (
-                  cliConfigs[cli.key]?.model ? (
-                    <span className="truncate">{cliConfigs[cli.key]?.model}</span>
-                  ) : (
-                    '已启用 · 未选模型'
-                  )
-                ) : (
-                  '已禁用'
-                )
               }
               actions={
                 <>
                   <AppButton
                     variant="secondary"
                     size="sm"
+                    className="!min-h-7 !px-2.5"
                     aria-label={`应用 ${cli.name}`}
                     onClick={() => {
                       void handleApplyCliConfig(cli.key);
@@ -1788,115 +1165,97 @@ export function ManagedCliConfigEditorContent({
                     checked={enabledState[cli.key]}
                     onChange={() => handleToggleEnabled(cli.key)}
                     ariaLabel={`启用 ${cli.name}`}
+                    size="sm"
                   />
                 </>
               }
             >
-              {isOpen ? (
+              <div className="space-y-3">
                 <div className="space-y-3">
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-xs font-medium text-[var(--text-secondary)]">
-                        连接配置
-                      </div>
-                      <label className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
-                        <span>列出全部模型</span>
-                        <FormSwitch
-                          checked={listAllModels}
-                          onChange={setListAllModels}
-                          ariaLabel="列出全部模型"
-                        />
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-medium text-[var(--text-secondary)]">
+                        选择上游端口
                       </label>
+                      <select
+                        aria-label={`${cli.name} 选择上游端口`}
+                        value={selectedTargetProtocolValue}
+                        onChange={event => handleTargetProtocolChange(cli.key, event.target.value)}
+                        className={`h-8 w-full min-w-0 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2.5 py-0 text-xs transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)] ${
+                          selectedTargetProtocolValue
+                            ? 'text-[var(--text-primary)]'
+                            : 'text-[var(--text-tertiary)]'
+                        }`}
+                      >
+                        <option value="">选择上游端口</option>
+                        {CLI_TARGET_PROTOCOLS.map(protocol => (
+                          <option key={protocol} value={protocol}>
+                            {buildCliTargetProtocolOptionLabel(
+                              cli.key,
+                              protocol,
+                              cliConfigs[cli.key]?.model
+                            )}
+                          </option>
+                        ))}
+                      </select>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                      <div className="space-y-1.5">
-                        <label className="block text-xs font-medium text-[var(--text-secondary)]">
-                          选择 API Key
-                        </label>
-                        {apiKeys.length === 0 ? (
-                          <div className="py-2 text-xs text-[var(--text-secondary)]">
-                            该站点没有可用的 API Key
-                          </div>
-                        ) : (
-                          <select
-                            aria-label="选择 API Key"
-                            value={cliConfigs[cli.key]?.apiKeyId ?? ''}
-                            onChange={e =>
-                              handleApiKeyChange(
-                                e.target.value ? parseInt(e.target.value, 10) : null
-                              )
-                            }
-                            className="w-full min-w-0 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
-                          >
-                            <option value="">请选择 API Key</option>
-                            {apiKeys.map(apiKey => {
-                              const id = getApiKeyId(apiKey);
-                              const modelCount = getScopedSiteModels({
-                                siteModels,
-                                siteModelPricing,
-                                apiKey,
-                                listAllModels,
-                              }).length;
-                              return (
-                                <option key={id} value={id}>
-                                  {apiKey.name || `Key #${id}`}
-                                  {apiKey.group ? ` [${apiKey.group}]` : ''}
-                                  {` (${modelCount} 个模型)`}
-                                </option>
-                              );
-                            })}
-                          </select>
-                        )}
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <label className="block text-xs font-medium text-[var(--text-secondary)]">
-                          选择上游端口
-                        </label>
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-medium text-[var(--text-secondary)]">
+                        选择 API Key
+                      </label>
+                      {apiKeys.length === 0 ? (
+                        <div className="py-2 text-xs text-[var(--text-secondary)]">
+                          该站点没有可用的 API Key
+                        </div>
+                      ) : (
                         <select
-                          aria-label="选择上游端口"
-                          value={selectedTargetProtocolValue}
-                          onChange={event => handleTargetProtocolChange(event.target.value)}
-                          className={`w-full min-w-0 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)] ${
-                            selectedTargetProtocolValue
-                              ? 'text-[var(--text-primary)]'
-                              : 'text-[var(--text-tertiary)]'
-                          }`}
+                          aria-label={`${cli.name} 选择 API Key`}
+                          value={cliConfigs[cli.key]?.apiKeyId ?? ''}
+                          onChange={e =>
+                            handleApiKeyChange(
+                              cli.key,
+                              e.target.value ? parseInt(e.target.value, 10) : null
+                            )
+                          }
+                          className="w-full min-w-0 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
                         >
-                          <option value="">选择上游端口</option>
-                          {CLI_TARGET_PROTOCOLS.map(protocol => (
-                            <option key={protocol} value={protocol}>
-                              {buildCliTargetProtocolOptionLabel(
-                                cli.key,
-                                protocol,
-                                cliConfigs[cli.key]?.model
-                              )}
-                            </option>
-                          ))}
+                          <option value="">请选择 API Key</option>
+                          {apiKeys.map(apiKey => {
+                            const id = getApiKeyId(apiKey);
+                            const modelCount = getScopedSiteModels({
+                              siteModels,
+                              siteModelPricing,
+                              apiKey,
+                              listAllModels,
+                            }).length;
+                            return (
+                              <option key={id} value={id}>
+                                {apiKey.name || `Key #${id}`}
+                                {apiKey.group ? ` [${apiKey.group}]` : ''}
+                                {` (${modelCount} 个模型)`}
+                              </option>
+                            );
+                          })}
                         </select>
-                      </div>
+                      )}
                     </div>
-                  </div>
 
-                  <div className="grid grid-cols-1 gap-3 border-t border-[var(--line-soft)] pt-3 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <div className="flex min-h-8 items-center">
-                        <label className="block text-xs font-medium text-[var(--text-secondary)]">
-                          CLI 使用模型
-                        </label>
-                      </div>
-                      {!cliConfigs[cli.key]?.apiKeyId ? (
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-medium text-[var(--text-secondary)]">
+                        CLI 使用模型
+                      </label>
+                      {!cliConfig.apiKeyId ? (
                         <div className="py-1 text-xs text-[var(--text-secondary)]">
                           选择 API Key 后可选择模型
                         </div>
                       ) : availableModels.length > 0 ? (
                         <SearchableModelSelector
                           models={availableModels}
-                          selectedModel={cliConfigs[cli.key]?.model ?? null}
-                          onSelect={model => handleModelChange(model)}
+                          selectedModel={cliConfig.model ?? null}
+                          onSelect={model => handleModelChange(cli.key, model)}
                           placeholder="请选择 CLI 模型"
-                          ariaLabel="CLI 使用模型"
+                          ariaLabel={`${cli.name} CLI 使用模型`}
                         />
                       ) : (
                         <div className="py-1 text-xs text-[var(--text-secondary)]">
@@ -1904,140 +1263,102 @@ export function ManagedCliConfigEditorContent({
                         </div>
                       )}
                     </div>
-
-                    <div className="space-y-2">
-                      <div className="flex min-h-8 items-center justify-between gap-2">
-                        <label className="block text-xs font-medium text-[var(--text-secondary)]">
-                          测试模型
-                        </label>
-                        <AppButton
-                          variant="tertiary"
-                          size="sm"
-                          onClick={() => {
-                            void handleTestSelectedModels();
-                          }}
-                          disabled={isTestingSelectedModels || !isProbeCliType(cli.key)}
-                        >
-                          {isTestingSelectedModels ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : null}
-                          {isProbeCliType(cli.key) ? '测试已选模型' : '暂不支持探测'}
-                        </AppButton>
-                      </div>
-                      {!cliConfigs[cli.key]?.apiKeyId ? (
-                        <div className="py-1 text-xs text-[var(--text-secondary)]">
-                          选择 API Key 后可选择测试模型
-                        </div>
-                      ) : availableModels.length > 0 ? (
-                        <div className="flex items-start gap-2">
-                          <SearchableModelSelector
-                            models={availableModels}
-                            selectedModel={cliConfigs[cli.key]?.testModels[0] || null}
-                            onSelect={model => handleTestModelChange(0, model)}
-                            placeholder="请选择测试模型"
-                            ariaLabel="测试模型"
-                          />
-                          {selectedCliTestState?.slots[0] ? (
-                            <div className="min-w-[4rem] shrink-0 pt-2 text-right">
-                              <span
-                                className={`text-xs font-medium ${
-                                  selectedCliTestState.slots[0]?.success
-                                    ? 'text-[var(--success)]'
-                                    : 'text-[var(--danger)]'
-                                }`}
-                              >
-                                {selectedCliTestState.slots[0]?.success ? '成功' : '失败'}
-                              </span>
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : (
-                        <div className="py-1 text-xs text-[var(--text-secondary)]">
-                          没有可用模型
-                        </div>
-                      )}
-                    </div>
                   </div>
-
-                  {/* 配置预览 */}
-                  {CLI_TYPES.some(item => item.key === cli.key) && (
-                    <div className="space-y-3 border-t border-[var(--line-soft)] pt-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="text-xs font-medium text-[var(--text-secondary)]">
-                          配置文件预览
-                          {isShowingTemplate ? (
-                            <span className="ml-1 text-xs text-[var(--warning)]">(模板)</span>
-                          ) : null}
-                        </div>
-                        {displayConfig && !isShowingTemplate ? (
-                          <div className="flex items-center gap-1">
-                            {(editedConfig || savedEditedConfig) && (
-                              <button
-                                onClick={() => void onResetConfirmRequested()}
-                                className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--warning)]/50 px-2 py-1 text-xs text-[var(--warning)] transition-all hover:bg-[var(--warning)]/10 active:scale-95"
-                                title="重置为默认配置"
-                              >
-                                <RotateCcw className="h-3 w-3" />
-                                <span>重置</span>
-                              </button>
-                            )}
-                            <button
-                              onClick={toggleEditMode}
-                              className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--line-soft)] px-2 py-1 text-xs text-[var(--text-secondary)] transition-all hover:bg-[var(--surface-2)] active:scale-95"
-                              title={isEditing ? '切换到预览模式' : '切换到编辑模式'}
-                            >
-                              {isEditing ? (
-                                <>
-                                  <Eye className="h-3 w-3" />
-                                  <span>预览</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Edit2 className="h-3 w-3" />
-                                  <span>编辑</span>
-                                </>
-                              )}
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
-                      {previewBaseUrlMismatch && (
-                        <div
-                          role="alert"
-                          className="rounded-[var(--radius-sm)] border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-2 py-1.5 text-xs text-[var(--warning)]"
-                        >
-                          检测到当前预览配置中的域名（{previewBaseUrlMismatch.previewBaseUrl}
-                          ）与当前站点（
-                          {previewBaseUrlMismatch.siteUrl}）不一致。站点页测试将优先使用当前站点
-                          URL，建议重新生成并保存配置。
-                        </div>
-                      )}
-                      {isShowingTemplate && (
-                        <div className="rounded-[var(--radius-sm)] bg-[var(--warning)]/10 px-2 py-1.5 text-xs text-[var(--warning)]">
-                          请选择 API Key 和 CLI 使用模型以生成实际配置，以下为配置模板
-                        </div>
-                      )}
-                      {isEditing && (
-                        <div className="text-xs text-[var(--text-secondary)]">
-                          提示：您可以直接编辑配置内容，修改后点击复制按钮复制最终配置
-                        </div>
-                      )}
-                      <div className="space-y-2">
-                        {displayConfig?.files.map(file => (
-                          <ConfigFileDisplay
-                            key={file.path}
-                            file={file}
-                            onCopy={handleCopy}
-                            copiedPath={copiedPath}
-                            isEditing={isEditing && !isShowingTemplate}
-                            onContentChange={handleContentChange}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  )}
                 </div>
-              ) : null}
+
+                {/* 配置预览 */}
+                {CLI_TYPES.some(item => item.key === cli.key) && (
+                  <div className="border-t border-[var(--line-soft)] pt-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleCliTypeChange(isPreviewOpen ? null : cli.key)}
+                        aria-expanded={isPreviewOpen}
+                        aria-label={`${cli.name} 配置文件预览`}
+                        className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-[var(--text-secondary)]"
+                      >
+                        <ChevronDown
+                          className={`h-3.5 w-3.5 transition-transform ${
+                            isPreviewOpen ? '' : '-rotate-90'
+                          }`}
+                        />
+                        <span>配置文件预览</span>
+                        {isPreviewOpen && isShowingTemplate ? (
+                          <span className="text-xs text-[var(--warning)]">(模板)</span>
+                        ) : null}
+                      </button>
+                      {isPreviewOpen && displayConfig && !isShowingTemplate ? (
+                        <div className="flex items-center gap-1">
+                          {(editedConfig || savedEditedConfig) && (
+                            <button
+                              onClick={() => void onResetConfirmRequested()}
+                              className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--warning)]/50 px-2 py-1 text-xs text-[var(--warning)] transition-all hover:bg-[var(--warning)]/10 active:scale-95"
+                              title="重置为默认配置"
+                            >
+                              <RotateCcw className="h-3 w-3" />
+                              <span>重置</span>
+                            </button>
+                          )}
+                          <button
+                            onClick={toggleEditMode}
+                            className="flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--line-soft)] px-2 py-1 text-xs text-[var(--text-secondary)] transition-all hover:bg-[var(--surface-2)] active:scale-95"
+                            title={isEditing ? '切换到预览模式' : '切换到编辑模式'}
+                          >
+                            {isEditing ? (
+                              <>
+                                <Eye className="h-3 w-3" />
+                                <span>预览</span>
+                              </>
+                            ) : (
+                              <>
+                                <Edit2 className="h-3 w-3" />
+                                <span>编辑</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                    {isPreviewOpen ? (
+                      <div className="mt-3 space-y-3">
+                        {previewBaseUrlMismatch && (
+                          <div
+                            role="alert"
+                            className="rounded-[var(--radius-sm)] border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-2 py-1.5 text-xs text-[var(--warning)]"
+                          >
+                            检测到当前预览配置中的域名（{previewBaseUrlMismatch.previewBaseUrl}
+                            ）与当前站点（
+                            {previewBaseUrlMismatch.siteUrl}）不一致。站点页测试将优先使用当前站点
+                            URL，建议重新生成并保存配置。
+                          </div>
+                        )}
+                        {isShowingTemplate && (
+                          <div className="rounded-[var(--radius-sm)] bg-[var(--warning)]/10 px-2 py-1.5 text-xs text-[var(--warning)]">
+                            请选择 API Key 和 CLI 使用模型以生成实际配置，以下为配置模板
+                          </div>
+                        )}
+                        {isEditing && (
+                          <div className="text-xs text-[var(--text-secondary)]">
+                            提示：您可以直接编辑配置内容，修改后点击复制按钮复制最终配置
+                          </div>
+                        )}
+                        <div className="space-y-2">
+                          {displayConfig?.files.map(file => (
+                            <ConfigFileDisplay
+                              key={file.path}
+                              file={file}
+                              onCopy={handleCopy}
+                              copiedPath={copiedPath}
+                              isEditing={isEditing && !isShowingTemplate}
+                              onContentChange={handleContentChange}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+              </div>
             </PanelSection>
           );
         })}

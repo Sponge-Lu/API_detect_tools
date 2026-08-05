@@ -26,6 +26,7 @@ import {
   Plus,
   RefreshCw,
   Loader2,
+  FlaskConical,
 } from 'lucide-react';
 import { OverlayDrawer } from '../overlays/OverlayDrawer';
 import { AppButton } from '../AppButton/AppButton';
@@ -34,6 +35,7 @@ import { SiteCardDetails } from '../SiteCard/SiteCardDetails';
 import { AnyRouterConfigSection } from '../AnyRouterConfigSection';
 import { ManagedCliConfigEditorContent } from './ManagedCliConfigEditorContent';
 import { DirectCliConfigEditorContent } from './DirectCliConfigEditorContent';
+import { EndpointTestPanel } from './EndpointTestPanel';
 import {
   DEFAULT_SITE_TYPE,
   SITE_TYPE_LABELS,
@@ -49,8 +51,7 @@ import {
 import type { CustomCliConfig } from '../../../shared/types/custom-cli-config';
 import type { DetectionResult } from '../../App';
 import type { CliConfig } from '../../../shared/types/cli-config';
-import type { CliCompatibilityResult } from '../../store/detectionStore';
-import type { CodexTestDetail, ModelPricingData } from '../../../shared/types/site';
+import type { ModelPricingData } from '../../../shared/types/site';
 
 // 账号信息接口（从 SitesPage 提取）
 export interface AccountInfo {
@@ -87,12 +88,8 @@ export interface AccessPointDetailPanelProps {
   userGroups?: Record<string, { desc: string; ratio: number }>;
   modelPricing?: ModelPricingData | null;
   groups?: SiteGroup[];
-  // CLI 配置与测试
+  // CLI 配置
   cliConfig?: CliConfig | null;
-  isCliTesting?: boolean;
-  // 托管 CLI 兼容性结果（驱动编辑器显示）
-  cliCompatibility?: CliCompatibilityResult | null;
-  cliCodexDetail?: CodexTestDetail | null;
   // 全局确认弹窗回调（供内嵌编辑器使用，替代嵌套 ConfirmDialog/AppModal）
   showDialog?: (options: {
     type?: 'confirm' | 'warning';
@@ -139,18 +136,18 @@ export interface AccessPointDetailPanelProps {
   ) => void | Promise<void>;
   onRefreshAccountInfo?: (site: SiteConfig, accountId: string) => void | Promise<void>;
   onSaveCliConfig?: (config: CliConfig) => void;
-  onPersistCliConfig?: (config: CliConfig) => void | Promise<void>;
   onDeleteDirectConfig?: (config: CustomCliConfig) => void;
   onUpdateAnyRouterUserHash?: (accountId: string, userHash: string) => void | Promise<void>;
   onConfigChanged?: () => void | Promise<void>;
 }
 
-type TabId = 'info' | 'resources' | 'cli';
+type TabId = 'info' | 'resources' | 'cli' | 'test';
 
 const TAB_META: Record<TabId, { id: TabId; label: string; icon: React.ComponentType<any> }> = {
   info: { id: 'info', label: '站点信息', icon: Info },
   resources: { id: 'resources', label: '模型 & 资源', icon: Box },
-  cli: { id: 'cli', label: 'CLI 配置 & 测试', icon: SettingsIcon },
+  cli: { id: 'cli', label: 'CLI 配置', icon: SettingsIcon },
+  test: { id: 'test', label: '测试', icon: FlaskConical },
 };
 
 function InfoField({
@@ -297,9 +294,6 @@ export function AccessPointDetailPanel({
   modelPricing,
   groups = [],
   cliConfig,
-  isCliTesting = false,
-  cliCompatibility,
-  cliCodexDetail,
   showDialog,
   onAddAccount,
   onDeleteAccount,
@@ -315,7 +309,6 @@ export function AccessPointDetailPanel({
   onBindBrowserProfile,
   onRefreshAccountInfo,
   onSaveCliConfig,
-  onPersistCliConfig,
   onDeleteDirectConfig,
   onUpdateAnyRouterUserHash,
   onConfigChanged,
@@ -442,9 +435,9 @@ export function AccessPointDetailPanel({
     [currentAccount]
   );
 
-  // 标签过滤：托管站点和直连配置都显示全部三个 tab
+  // 托管站点和直连配置共享同一组详情页。
   const visibleTabs = useMemo(() => {
-    return [TAB_META.info, TAB_META.resources, TAB_META.cli];
+    return [TAB_META.info, TAB_META.resources, TAB_META.cli, TAB_META.test];
   }, []);
 
   // 打开面板或切换接入点时重置为 Tab1；同一接入点保存刷新时保留当前 Tab。
@@ -1054,7 +1047,7 @@ export function AccessPointDetailPanel({
                   </>
                 ) : (
                   <div className="mt-4 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-3 text-sm text-[var(--text-secondary)]">
-                    该站点还没有账户。添加账户后可管理 API Key、User Hash、自动刷新与 CLI 测试。
+                    该站点还没有账户。添加账户后可管理 API Key、User Hash、自动刷新与端点测试。
                   </div>
                 )}
               </div>
@@ -1153,16 +1146,9 @@ export function AccessPointDetailPanel({
           </div>
         )}
 
-        {/* Tab3: CLI 配置 & 测试 */}
+        {/* Tab3: CLI 配置 */}
         {activeTab === 'cli' && (
           <div className="space-y-4">
-            {/* 测试状态横幅 */}
-            {isCliTesting && (
-              <div className="rounded-[var(--radius-md)] border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-3 py-2 text-xs text-[var(--warning)]">
-                正在测试 CLI 兼容性...
-              </div>
-            )}
-
             {isManagedSite && data.type === 'managed' && currentAccount ? (
               <ManagedCliConfigEditorContent
                 siteId={data.site.id}
@@ -1174,10 +1160,7 @@ export function AccessPointDetailPanel({
                 siteModels={siteResult?.models || []}
                 siteModelPricing={modelPricing}
                 currentConfig={cliConfig ?? null}
-                codexDetail={cliCodexDetail}
-                compatibility={cliCompatibility ?? null}
                 showDialog={showDialog}
-                onPersistConfig={onPersistCliConfig}
                 onSave={config => {
                   onSaveCliConfig?.(config);
                 }}
@@ -1193,6 +1176,22 @@ export function AccessPointDetailPanel({
                 onSaved={onConfigChanged}
                 showDialog={showDialog}
               />
+            ) : null}
+          </div>
+        )}
+
+        {activeTab === 'test' && (
+          <div className="space-y-4">
+            {isManagedSite && data.type === 'managed' && data.site.id && currentAccount ? (
+              <EndpointTestPanel
+                target={{ kind: 'managed', siteId: data.site.id, accountId: currentAccount.id }}
+              />
+            ) : isManagedSite && data.type === 'managed' ? (
+              <div className="px-4 py-8 text-center text-sm text-[var(--text-secondary)]">
+                请选择账户后进行测试。
+              </div>
+            ) : isDirectConfig && data.type === 'custom-cli' ? (
+              <EndpointTestPanel target={{ kind: 'direct', configId: data.config.id }} />
             ) : null}
           </div>
         )}

@@ -35,29 +35,27 @@
 | **site-type-registry.ts** | 站点类型到初始化/端点/行为的注册表 | `getSiteTypeProfile()`, `resolveSiteType()` |
 | **site-type-detector.ts** | 智能添加初始化前的站点类型自动识别 | `detectSiteType()` |
 | **token-service.ts** | Token 认证服务，初始化阶段按 site_type 选择端点与 access token 策略，新版 New API 短期 session Bearer 仅用于创建长期 PAT；Sub2API 可从浏览器登录态重读并校验 JWT，显式 `site_type` 可覆盖 URL 反查；支持按账户浏览器槽位刷新 user_id/username/access_token 并在 token 无效时重建；统一识别认证失败 envelope，并在 NewAPI 脱敏 API Key 列表中优先使用 `/api/token/batch/keys` 批量补全明文 key | `TokenService` 类 |
-| **cli-compat-service.ts** | Claude Code / Codex 协议级兼容性测试；保留旧 OpenCode 结果字段用于历史数据兼容 | `CliCompatService` 类 |
-| **cli-wrapper-compat-service.ts** | 基于真实 Claude Code / Codex wrapper 的兼容性测试；当前 UI 测试主路径，使用临时 HOME/CODEX_HOME 隔离环境，监听 route probe-lock 请求/终止失败以提前停止确定性失败测试，并在 CLI 二次请求先触发 probe-lock 限制时等待/回看首次真实上游结果避免误判，Claude JSON 错误会摘要化，清理临时目录时会重试并避免 Windows 文件锁覆盖真实测试结果 | `CliWrapperCompatService` 类 |
+| **endpoint-test-service.ts** | 解析托管/直连目标，执行 Messages、Responses 与 Chat Completions 手动 HTTP 测试，持久化最新选择、结果与 `testedAt` | `getEndpointTestState()`, `runEndpointTest()` |
 | **custom-cli-config-service.ts** | 自定义 CLI 配置持久化服务，并为路由生成自定义 CLI 虚拟站点/账户/API Key 标识 | `loadCustomCliConfigStorage()`, `buildCustomCliRouteSiteId()` |
 | **custom-cli-model-service.ts** | 直连配置模型获取服务，通过 `baseUrl + /v1/models` 获取模型列表并写回配置 | `fetchModels()`, `fetchAllModels()` |
 | **backup-manager.ts** | 本地备份管理；自动备份保持 config-only 节流去重，手动备份生成 portable 2 文件包，恢复后重绑隔离 Profile | `backupManager` 实例 |
 | **webdav-manager.ts** | WebDAV 云端 portable 配置包上传、列表、删除与恢复，兼容旧 full-manifest / config-only `.json` 备份 | `WebDAVManager` 类 |
-| **unified-config-manager.ts** | 统一配置管理、损坏恢复、读取失败短重试、原子写入、legacy 默认账户、seeded 路由示例与旧 OpenCode 路由协议字段清理、缺失 `site_type` 旧站点保持未决、账户级 `cli_config` 更新、路由路径暂停状态恢复、兼容保存时清理已删站点的孤儿账户、删除最后一个账户时自动移除站点配置，并提供 CLI probe samples/latest 一次性 sidecar 写入 | `unifiedConfigManager` 实例 |
+| **unified-config-manager.ts** | 统一配置管理、损坏恢复、原子写入、legacy 字段清理、账户级 CLI 配置与路由运行态恢复 | `unifiedConfigManager` 实例 |
 | **browser-profile-manager.ts** | 主/隔离浏览器 Profile 管理，多账户共享槽位；列出并校验账户可绑定 Profile，支持显式重绑；备份恢复后按旧 slot-N 重建空目录并重写 browser_profile_path | `BrowserProfileManager`, `listAccountProfileOptions()`, `bindAccountProfile()`, `reconcileIsolatedProfilesAfterRestore()` |
 | **update-service.ts** | 应用更新服务 | `UpdateService` 类 |
 | **config-detection-service.ts** | Claude Code、Codex、OpenCode、Grok Build 本地配置静态检测；Grok Build 仅读取 `~/.grok/config.toml`，不执行模型探测 | `ConfigDetectionService` 类 |
 | **close-behavior-manager.ts** | 窗口关闭行为管理 | `CloseBehaviorManager` 类 |
 | **credit-service.ts** | Linux Do Credit 积分检测、LDC 充值 | `CreditService` 类 |
 | **route-channel-resolver.ts** | 路由通道解析，结合站点/账户/API Key/自定义 CLI 配置与厂商优先级选择实际通道；CLI targetProtocol 按账户级配置优先、站点级旧配置 fallback | `resolveChannels()`, `resolveChannelCredentials()` |
-| **route-proxy-service.ts** | 本地路由代理服务器，按规则选择上游通道，使用 Electron net raw 客户端转发，客户端取消时中止当前上游且不继续 fallback；成功透明 SSE 边收边转发；按 HTTP 方法与完整路径分类生成、Token 计数和状态资源操作，OpenCode 依据实际入站协议直接转换到通道协议；Token 计数仅尝试同协议端点并以单独日志标记本地估算；probe-lock 请求只允许 loopback，缓存终止失败、记录并通知首次真实上游结果并限制单模型测试只发起一次真实上游尝试 | `startRouteProxyServer()`, `stopRouteProxyServer()`, `extractUsageFromBody()` |
-| **route-probe-lock.ts** | Claude Code / Codex 探测与手动测试专用的 loopback probe-lock 编解码、本地路由基址构造、请求观察、终止失败通知/缓存、首次真实上游结果缓存/通知/等待与单模型上游尝试预算 | `buildProbeLockRouteApiKey()`, `parseProbeLockRouteApiKey()`, `buildRouteProxyBaseUrl()`, `subscribeRouteProbeLockTerminalFailure()` |
+| **route-proxy-service.ts** | 本地路由代理服务器，按规则选择上游通道，支持流式转发、协议适配、客户端取消与端点测试 target lock 隔离 | `startRouteProxyServer()`, `stopRouteProxyServer()`, `extractUsageFromBody()` |
+| **route-target-lock.ts** | 端点测试专用的 loopback 目标锁定编解码、终止错误状态与单测试上游尝试预算 | `buildTargetLockRouteApiKey()`, `parseTargetLockRouteApiKey()` |
 | **anyrouter-request-rewriter.ts** | AnyRouter 请求/响应适配器：Claude Code 保留原始工具语义并注入 Anthropic 指纹，Codex 原生 Responses 透传，Google/Gemini GenerateContent 原生透传 | `rewriteForAnyRouter()`, `transformAnyRouterResponse()` |
 | **cli-protocol-adapter.ts** | 通用 CLI 协议适配器：在 Anthropic Messages、OpenAI Chat Completions 与 OpenAI Responses 之间执行单次无损子集转换，覆盖文本、函数工具、共享 `tool_choice`/并行调用控制、思考强度、流式 SSE 与非流式 JSON；不可等价字段以 `CliProtocolAdapterError` 中立跳过候选 | `adaptRequestToTargetProtocol()`, `transformTargetProtocolResponse()`, `CliProtocolAdapterError` |
 | **route-model-registry-service.ts** | 模型注册表来源聚合、手工/显式 override 展示项维护与厂商优先级配置；所有模型来源均标记四种内置路由 CLI 可用，扫描只刷新候选来源，不自动创建重定向 | `rebuildModelRegistry()`, `syncModelRegistrySources()` |
-| **route-cli-probe-service.ts** | CLI 定时探测、latest/history 维护与视图聚合；探测执行器仅覆盖 Claude Code、Codex，旧 OpenCode 样本仍可读取 | `runCliProbeNow()`, `getCliProbeView()` |
 | **route-analytics-service.ts** | 路由请求分析、token/缓存 token/延迟/状态码统计与对象级排行 | `recordRouteRequest()`, `getRouteObjectStats()` |
-| **route-history-service.ts** | History 时间桶聚合服务，将 CLI 探测样本和路由统计按 48h / 2h 桶合并为成功率数据 | `getHistoryBuckets()` |
+| **route-history-service.ts** | History 时间桶聚合服务，只将真实路由请求按 48h / 2h 桶聚合为成功率数据 | `getHistoryBuckets()` |
 | **route-stats-service.ts** | 路由调用统计与通道评分排序 | `recordOutcome()`, `sortChannelsByScore()` |
-| **route-state-manager.ts** | 路由运行态文件管理，维护并裁剪 `state/route-runtime.json`、`route-probes.json`、`route-analytics.json` 与模型来源快照，避免高频路由状态写入 `config.json` | `routeStateManager` |
+| **route-state-manager.ts** | 路由运行态文件管理，维护 `route-runtime.json`、`route-endpoint-tests.json`、`route-analytics.json` 与模型来源快照 | `routeStateManager` |
 | **power-manager.ts** | 电源管理，阻止系统休眠 | `powerManager` 实例 |
 | **preload.ts** | Preload 脚本 | IPC 上下文隔离，暴露统一站点 CRUD / 账户 / 浏览器 Profile 列表与绑定 / 检测 / token 基础信息刷新 / 路由路径恢复 / overview 接口，并提供总览数据变更与路由日志逐条追加订阅 |
 | **api-request-helper.ts** | API 请求辅助函数 | 通用请求逻辑 |
@@ -201,61 +199,6 @@ main.ts: app.whenReady()
 - 自动捕获登录凭证
 - 支持两种站点类型的签到状态读取
 - **页面复用策略**: 同域名页面复用，保持 session 连续性（v2.1.11+）
-
-### CliCompatService
-
-**职责**: 以协议级方式测试站点对 CLI 工具的兼容性，使用与真实 CLI 一致的流式请求格式
-
-**关键方法**:
-- `testSite(config)` - 测试站点所有 CLI 兼容性
-- `testClaudeCode(url, apiKey, model)` - 测试 Claude Code
-- `testCodex(url, apiKey, model)` - 测试 Codex (Responses API)
-- `testCodexWithDetail(url, apiKey, model)` - 测试 Codex 并返回详细结果
-
-**支持工具**: Claude Code, Codex (Responses API)
-
-**请求格式对齐**: 所有测试请求与真实 CLI 工具完全一致
-- Claude Code: stream + User-Agent + anthropic-beta + x-api-key
-- Codex: stream + User-Agent + Bearer + /v1/responses
-
-**流式首包探测**: 发送 stream 请求后只读取首个 SSE chunk 即 abort，最小化 token 消耗
-
-**当前定位**:
-- 保留为底层协议探测与属性测试能力
-- 当前前端 CLI 可用性测试主路径不直接调用该服务，而是统一走 `CliWrapperCompatService`
-
-**API 支持判定 (`isApiSupported`)**:
-- 200 + SSE/`data: {` → 支持
-- 2xx/401/403/429 → 支持（端点存在）
-- 400 + 已知错误类型（invalid_request_error 等）→ 支持
-- 500 + `application/json` contentType → 支持（中转站上游失败，端点本身存在）
-- 其他 → 不支持
-
-### CliWrapperCompatService
-
-**职责**: 通过真实 CLI wrapper 拉起 Claude Code / Codex，在隔离的临时目录中验证站点可用性
-
-**关键方法**:
-- `testClaudeCode(url, apiKey, model)` - 真实执行 Claude Code
-- `testCodexWithDetail(url, apiKey, model)` - 真实执行 Codex 并返回 `responses` 结果
-- `testSite(params)` - 顺序执行多项 wrapper 测试
-
-**隔离策略**:
-- Claude Code: 临时 `HOME` + `~/.claude/settings.json`
-- Codex: 临时 `CODEX_HOME/config.toml` + 自定义 provider + `supports_websockets = false`
-
-**命令执行细节**:
-- Codex: 测试 prompt 通过 `stdin` 注入，避免 Windows shell 包装下的位置参数拆词
-- Codex stderr 会优先提取 `ERROR:` 行和 JSON `error.message`，把上游 `429/403/503` 或协议不支持原因放到失败摘要开头，避免被 CLI banner/warning 淹没
-
-**恢复策略**:
-- 不写入用户真实 CLI 配置目录；测试结束后删除临时目录
-- Windows 临时目录清理遇到 `EBUSY` / `EPERM` / `ENOTEMPTY` / `EACCES` 会短重试；清理最终失败只记录 warning，不覆盖 CLI 的真实测试结果
-- 因此正常情况下无需“恢复测试前站点配置”
-
-**当前入口**:
-- 主进程 IPC 仅保留 `cli-compat:test-with-wrapper`
-- 站点页、统一 CLI 配置对话框、自定义 CLI 配置编辑器均通过该入口执行真实 CLI 测试
 
 ### ConfigDetectionService
 

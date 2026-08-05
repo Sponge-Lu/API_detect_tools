@@ -91,13 +91,13 @@ import {
   resolveChannelTarget,
 } from '../main/route-channel-resolver';
 import {
-  buildProbeLockRouteApiKey,
-  clearRouteProbeLockTerminalFailure,
-  getRouteProbeLockFirstUpstreamResult,
-  subscribeRouteProbeLockTerminalFailure,
-  MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS,
-  type RouteProbeLockTerminalFailure,
-} from '../main/route-probe-lock';
+  buildTargetLockRouteApiKey as buildProbeLockRouteApiKey,
+  clearRouteTargetLockState as clearRouteProbeLockTerminalFailure,
+  getRouteTargetLockFirstUpstreamResult as getRouteProbeLockFirstUpstreamResult,
+  subscribeRouteTargetLockTerminalFailure as subscribeRouteProbeLockTerminalFailure,
+  MAX_TARGET_LOCK_UPSTREAM_ATTEMPTS as MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS,
+  type RouteTargetLockTerminalFailure as RouteProbeLockTerminalFailure,
+} from '../main/route-target-lock';
 import { httpRawRequest, httpRawStreamRequest } from '../main/utils/http-client';
 import {
   isRouteEndpointUnsupported,
@@ -4615,8 +4615,8 @@ describe('route-proxy-service auth extraction', () => {
   });
 });
 
-describe('route-proxy-service probe lock', () => {
-  it('allows loopback probe-lock requests to bypass disabled route paths and analytics side effects', async () => {
+describe('route-proxy-service target lock', () => {
+  it('allows loopback target-lock requests to bypass disabled route paths and analytics side effects', async () => {
     vi.clearAllMocks();
 
     const routing = {
@@ -4704,7 +4704,7 @@ describe('route-proxy-service probe lock', () => {
     expect(httpRawRequest).toHaveBeenCalledTimes(1);
   });
 
-  it('allows concurrent probe-lock upstream attempts up to the cap before any terminal result settles', async () => {
+  it('allows concurrent target-lock upstream attempts up to the cap before any terminal result settles', async () => {
     vi.clearAllMocks();
 
     const routing = {
@@ -4799,7 +4799,7 @@ describe('route-proxy-service probe lock', () => {
       await handleRequest(makeRequest(), cappedResponse);
       expect(httpRawRequest).toHaveBeenCalledTimes(MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS);
       expect(cappedResponse.statusCode).toBe(400);
-      expect(cappedResponse.body).toContain('probe_lock_upstream_attempt_exhausted');
+      expect(cappedResponse.body).toContain('target_lock_upstream_attempt_exhausted');
 
       for (const resolve of resolvers) {
         resolve({
@@ -4828,7 +4828,7 @@ describe('route-proxy-service probe lock', () => {
     }
   });
 
-  it('does not spend the probe-lock upstream attempt on Claude count_tokens requests', async () => {
+  it('does not spend the target-lock upstream attempt on Claude count_tokens requests', async () => {
     vi.clearAllMocks();
 
     const routing = {
@@ -4924,7 +4924,7 @@ describe('route-proxy-service probe lock', () => {
     expect(mainResponse.statusCode).toBe(200);
   });
 
-  it('passes a transient probe-lock upstream failure through to the CLI without settling or terminal-failure', async () => {
+  it('passes a transient target-lock upstream failure through without settling or terminal-failure', async () => {
     vi.clearAllMocks();
 
     const routing = {
@@ -5040,7 +5040,7 @@ describe('route-proxy-service probe lock', () => {
     expect(httpRawStreamRequest).toHaveBeenCalledTimes(2);
   });
 
-  it('passes a non-native targetProtocol transient probe-lock failure through raw without transform escalation', async () => {
+  it('passes a non-native targetProtocol transient target-lock failure through raw without transform escalation', async () => {
     vi.clearAllMocks();
 
     const routing = {
@@ -5249,7 +5249,7 @@ describe('route-proxy-service probe lock', () => {
     expect(httpRawRequest).toHaveBeenCalledTimes(2);
   });
 
-  it('treats a terminal probe-lock upstream failure (401) as an immediate terminal failure', async () => {
+  it('treats a terminal target-lock upstream failure (401) as an immediate terminal failure', async () => {
     vi.clearAllMocks();
 
     const routing = {
@@ -5355,13 +5355,13 @@ describe('route-proxy-service probe lock', () => {
       }),
     ]);
     expect(response.statusCode).toBe(401);
-    // 终结失败已缓存：后续 probe-lock 请求重放缓存的终结状态/响应体，不再访问上游。
+    // 终结失败已缓存：后续 target-lock 请求重放缓存的终结状态/响应体，不再访问上游。
     expect(retryResponse.statusCode).toBe(401);
     expect(retryResponse.body).toBe(terminalError);
     expect(httpRawStreamRequest).toHaveBeenCalledTimes(1);
   });
 
-  it('settles the probe-lock budget on the first success and blocks later upstream attempts', async () => {
+  it('settles the target-lock budget on the first success and blocks later upstream attempts', async () => {
     vi.clearAllMocks();
 
     const routing = {
@@ -5460,11 +5460,11 @@ describe('route-proxy-service probe lock', () => {
     }
 
     expect(secondResponse.statusCode).toBe(400);
-    expect(secondResponse.body).toContain('probe_lock_upstream_attempt_exhausted');
+    expect(secondResponse.body).toContain('target_lock_upstream_attempt_exhausted');
     expect(httpRawRequest).toHaveBeenCalledTimes(1);
   });
 
-  it('escalates repeated transient probe-lock failures to terminal at the attempt cap', async () => {
+  it('escalates repeated transient target-lock failures to terminal at the attempt cap', async () => {
     vi.clearAllMocks();
 
     const routing = {
@@ -5558,7 +5558,7 @@ describe('route-proxy-service probe lock', () => {
     );
   });
 
-  it('rejects non-loopback probe-lock requests', async () => {
+  it('rejects non-loopback target-lock requests', async () => {
     vi.clearAllMocks();
 
     Object.assign(unifiedConfigManager, {
@@ -5610,7 +5610,7 @@ describe('route-proxy-service probe lock', () => {
 
     expect(response.statusCode).toBe(403);
     expect(JSON.parse(response.body)).toMatchObject({
-      error: 'probe_lock_forbidden',
+      error: 'target_lock_forbidden',
     });
   });
 });

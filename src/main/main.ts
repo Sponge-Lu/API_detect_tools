@@ -29,7 +29,6 @@ import { createCloseBehaviorManager, CloseBehaviorManager } from './close-behavi
 import { createCreditService } from './credit-service';
 import { powerManager } from './power-manager';
 import { initializeRouteProxy } from './route-proxy-service';
-import { startCliProbeTimer } from './route-cli-probe-service';
 import { configureRouteApiKeyResolver } from './route-channel-resolver';
 import {
   getWindowBackgroundColor,
@@ -194,10 +193,6 @@ app.whenReady().then(async () => {
   // 初始化路由代理服务（如已启用则启动本地代理）
   await initializeRouteProxy();
   Logger.info('✅ [Main] 路由代理服务已初始化');
-
-  // 启动 CLI 探测定时器（独立于代理服务器）
-  startCliProbeTimer({ resumeFromLatest: true });
-  Logger.info('✅ [Main] CLI 探测定时器已初始化');
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

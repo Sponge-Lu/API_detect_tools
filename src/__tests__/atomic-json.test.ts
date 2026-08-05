@@ -50,8 +50,8 @@ describe('atomic-json utilities', () => {
   });
 
   it('retries transient rename failures and does not overwrite on persistent failures', async () => {
-    const retryTargetPath = path.join(tempDir, 'route-probes-retry.json');
-    const persistentTargetPath = path.join(tempDir, 'route-probes-persist.json');
+    const retryTargetPath = path.join(tempDir, 'route-endpoint-tests-retry.json');
+    const persistentTargetPath = path.join(tempDir, 'route-endpoint-tests-persist.json');
     const actualFs = await vi.importActual<typeof import('fs/promises')>('fs/promises');
     const renameError = Object.assign(new Error('target file is temporarily locked'), {
       code: 'EPERM',
@@ -90,14 +90,17 @@ describe('atomic-json utilities', () => {
 
     await expect(fs.readFile(persistentTargetPath, 'utf-8')).resolves.toBe('old-state');
     const siblingFiles = await fs.readdir(path.dirname(persistentTargetPath));
-    expect(siblingFiles.sort()).toEqual(['route-probes-persist.json', 'route-probes-retry.json']);
+    expect(siblingFiles.sort()).toEqual([
+      'route-endpoint-tests-persist.json',
+      'route-endpoint-tests-retry.json',
+    ]);
     expect(rename).toHaveBeenCalledTimes(8);
     vi.doUnmock('fs/promises');
   });
 
   it('serializes concurrent writes to the same target path', async () => {
     const { writeJsonFileAtomically } = await import('../main/utils/atomic-json');
-    const targetPath = path.join(tempDir, 'state', 'route-probes.json');
+    const targetPath = path.join(tempDir, 'state', 'route-endpoint-tests.json');
 
     await Promise.all(
       Array.from({ length: 20 }, (_, index) =>
@@ -110,7 +113,7 @@ describe('atomic-json utilities', () => {
 
     expect(parsed).toMatchObject({ version: 1 });
     expect(typeof parsed.index).toBe('number');
-    expect(siblingFiles).toEqual(['route-probes.json']);
+    expect(siblingFiles).toEqual(['route-endpoint-tests.json']);
   });
 
   it('removes temporary files when the final replace fails', async () => {

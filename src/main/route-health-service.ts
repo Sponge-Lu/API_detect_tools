@@ -1,16 +1,14 @@
 /**
  * 路由健康投影服务
- * 输入: cliProbe.latest (最新探测快照)
+ * 输入: routing.stats (真实路由请求统计)
  * 输出: RouteChannelHealth 投影缓存
- * 定位: 服务层 - 从 probe latest 投影轻量健康态，供选路评分读取
+ * 定位: 服务层 - 从真实路由结果投影轻量健康态，供选路评分读取
  */
 
 import Logger from './utils/logger';
 import { unifiedConfigManager } from './unified-config-manager';
-import { resolveChannels } from './route-channel-resolver';
-import { getCliProbeLatest } from './route-cli-probe-service';
 import type { RouteChannelHealth } from '../shared/types/route-proxy';
-import { buildStatsKey, buildProbeKey } from '../shared/types/route-proxy';
+import { buildStatsKey } from '../shared/types/route-proxy';
 
 const log = Logger.scope('RouteHealthService');
 
@@ -33,46 +31,43 @@ export function getChannelHealth(params: {
 }
 
 /**
- * 基于 cliProbe.latest 重建健康态投影
+ * 基于真实路由请求统计重建健康态投影。
  */
 export async function refreshRouteHealthProjection(): Promise<Record<string, RouteChannelHealth>> {
   const routing = unifiedConfigManager.getRoutingConfig();
-  const latestList = getCliProbeLatest();
-  const healthResults: RouteChannelHealth[] = [];
+  const healthResults = Object.values(routing.stats)
+    .filter(stats => Boolean(stats.cliType && stats.lastUsedAt))
+    .map<RouteChannelHealth>(stats => ({
+      routeRuleId: stats.routeRuleId,
+      siteId: stats.siteId,
+      accountId: stats.accountId,
+      apiKeyId: stats.apiKeyId,
+      cliType: stats.cliType!,
+      targetProtocol: stats.targetProtocol,
+      healthy:
+        Boolean(stats.lastSuccessAt) &&
+        (!stats.lastFailureAt || stats.lastSuccessAt! >= stats.lastFailureAt),
+      canonicalModel: stats.lastCanonicalModel,
+      rawModel: stats.lastResolvedModel,
+      firstByteLatencyMs: stats.lastFirstByteLatencyMs,
+      totalLatencyMs: stats.lastLatencyMs,
+      testedAt: stats.lastUsedAt,
+      error:
+        stats.lastFailureAt && (!stats.lastSuccessAt || stats.lastFailureAt > stats.lastSuccessAt)
+          ? stats.lastStatusCode
+            ? `HTTP ${stats.lastStatusCode}`
+            : '最近一次路由请求失败'
+          : undefined,
+    }));
 
-  // 直接从 probe latest 投影，无需遍历规则（probe latest 已覆盖所有探测维度）
-  for (const probe of latestList) {
-    // 为每条匹配此 cliType 的启用规则生成通道级投影
-    for (const rule of routing.rules) {
-      if (!rule.enabled || rule.cliType !== probe.cliType) continue;
-      const channels = resolveChannels(rule, probe.canonicalModel);
-      for (const ch of channels) {
-        if (ch.siteId !== probe.siteId || ch.accountId !== probe.accountId) continue;
-        healthResults.push({
-          ...ch,
-          cliType: probe.cliType,
-          healthy: probe.healthy,
-          canonicalModel: probe.canonicalModel,
-          rawModel: probe.rawModel,
-          endpointPingMs: probe.lastSample.endpointPingMs,
-          firstByteLatencyMs: probe.lastSample.firstByteLatencyMs,
-          totalLatencyMs: probe.lastSample.totalLatencyMs,
-          testedAt: probe.lastSample.testedAt,
-          error: probe.lastSample.error,
-        });
-      }
-    }
-  }
-
-  if (healthResults.length > 0) {
-    await unifiedConfigManager.updateRouteHealth(healthResults);
-  }
+  routing.health = {};
+  await unifiedConfigManager.updateRouteHealth(healthResults);
 
   log.info(`Health projection refreshed: ${healthResults.length} channels`);
   return unifiedConfigManager.getRoutingConfig().health;
 }
 
-/** 执行健康检测（兼容旧接口，实际委托 refreshProjection） */
+/** 重新计算健康投影，不发送测试请求。 */
 export async function runHealthCheck(): Promise<void> {
   await refreshRouteHealthProjection();
 }

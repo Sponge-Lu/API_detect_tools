@@ -20,10 +20,9 @@
 import { useCallback } from 'react';
 import Logger from '../utils/logger';
 import type { Config } from '../App';
-import type { DetectionResult, DetectionCacheData, UnifiedConfig } from '../../shared/types/site';
-import type { CliCompatibilityResult, CliConfig } from '../store/detectionStore';
+import type { DetectionResult, DetectionCacheData } from '../../shared/types/site';
+import type { CliConfig } from '../store/detectionStore';
 import type { SiteInfo } from '../../shared/types/config-detection';
-import { syncProjectedCliCompatibility } from '../services/cli-compat-projection';
 
 /** 生成 per-account 复合 key */
 const makeStoreKey = (siteName: string, accountId?: string) =>
@@ -80,7 +79,6 @@ interface UseDataLoaderOptions {
     groups: Record<string, { desc: string; ratio: number }>
   ) => void;
   setModelPricing: (siteName: string, pricing: any) => void;
-  setCliCompatibility?: (siteName: string, result: CliCompatibilityResult) => void;
   setCliConfig?: (siteName: string, config: CliConfig) => void;
   /** CLI 配置检测函数 (Requirements 6.1) */
   detectCliConfig?: (sites: SiteInfo[]) => Promise<void>;
@@ -91,7 +89,6 @@ export function useDataLoader({
   setApiKeys,
   setUserGroups,
   setModelPricing,
-  setCliCompatibility,
   setCliConfig,
   detectCliConfig,
 }: UseDataLoaderOptions) {
@@ -152,11 +149,7 @@ export function useDataLoader({
           if (result.userGroups) setUserGroups(key, result.userGroups);
         }
 
-        // 加载基于统一 cliProbe 的 CLI 兼容性投影
         let cliConfigCount = 0;
-        if (setCliCompatibility) {
-          await syncProjectedCliCompatibility(currentConfig as UnifiedConfig, setCliCompatibility);
-        }
         // v3.0.6: cli_config 在账户级，按账户 card key 加载；站点级仅作为 legacy fallback
         const allAccounts = (currentConfig as any).accounts || [];
         const accountSiteIds = new Set<string>();
@@ -200,15 +193,7 @@ export function useDataLoader({
         Logger.error('❌ [useDataLoader] 加载缓存数据失败:', error);
       }
     },
-    [
-      setResults,
-      setApiKeys,
-      setUserGroups,
-      setModelPricing,
-      setCliCompatibility,
-      setCliConfig,
-      detectCliConfig,
-    ]
+    [setResults, setApiKeys, setUserGroups, setModelPricing, setCliConfig, detectCliConfig]
   );
 
   return { loadCachedData };

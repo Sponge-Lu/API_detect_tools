@@ -12,12 +12,13 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ThemeMode } from '../shared/theme/themePresets';
 import type {
+  EndpointTestSelectionInput,
+  EndpointTestTarget,
   RouteAnalyticsWindowQuery,
   RoutePathStateResetParams,
   RouteRequestLogItem,
 } from '../shared/types/route-proxy';
 import type { BrowserProfileOptionId } from '../shared/types/site';
-import type { ProbeCliType } from '../shared/types/cli-config';
 
 const APP_DATA_CHANGED_EVENT = 'app-data:changed';
 const ROUTE_REQUEST_LOG_APPENDED_EVENT = 'route:request-log-appended';
@@ -249,26 +250,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
   },
 
-  // CLI 兼容性测试 API
+  // CLI 配置保存 API
   cliCompat: {
-    // 使用真实 CLI wrapper 测试 CLI 兼容性
-    testWithWrapper: (params: {
-      siteUrl: string;
-      configs: Array<{
-        cliType: ProbeCliType;
-        apiKey: string;
-        model: string;
-        baseUrl?: string;
-        targetProtocol?:
-          | 'native'
-          | 'anthropic-messages'
-          | 'openai-chat-completions'
-          | 'openai-responses';
-      }>;
-    }) => ipcRenderer.invoke('cli-compat:test-with-wrapper', params),
-    // 保存 CLI 兼容性结果到缓存
-    saveResult: (siteUrl: string, result: any, accountId?: string, samples?: any[]) =>
-      ipcRenderer.invoke('cli-compat:save-result', siteUrl, result, accountId, samples),
     // 保存 CLI 配置
     saveConfig: (siteUrl: string, config: any, accountId?: string) =>
       ipcRenderer.invoke('cli-compat:save-config', siteUrl, config, accountId),
@@ -434,6 +417,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('browser-profile:delete-profile', siteId, accountId),
   },
 
+  endpointTest: {
+    getState: (target: EndpointTestTarget) => ipcRenderer.invoke('endpoint-test:get-state', target),
+    saveSelection: (input: EndpointTestSelectionInput) =>
+      ipcRenderer.invoke('endpoint-test:save-selection', input),
+    run: (input: EndpointTestSelectionInput) => ipcRenderer.invoke('endpoint-test:run', input),
+  },
+
   // 路由代理 API
   route: {
     getConfig: () => ipcRenderer.invoke('route:get-config'),
@@ -468,13 +458,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('route:save-cli-model-selections', { selections }),
     saveCliThinkingEffortSelections: (selections: any) =>
       ipcRenderer.invoke('route:save-cli-thinking-effort-selections', { selections }),
-    saveCliProbeConfig: (updates: any) =>
-      ipcRenderer.invoke('route:save-cli-probe-config', updates),
-    runCliProbeNow: (params?: { siteId?: string; accountId?: string; cliType?: ProbeCliType }) =>
-      ipcRenderer.invoke('route:run-cli-probe-now', params),
-    getCliProbeLatest: (params?: any) => ipcRenderer.invoke('route:get-cli-probe-latest', params),
-    getCliProbeHistory: (params: any) => ipcRenderer.invoke('route:get-cli-probe-history', params),
-    getCliProbeView: (params: any) => ipcRenderer.invoke('route:get-cli-probe-view', params),
     getAnalyticsSummary: (params: RouteAnalyticsWindowQuery) =>
       ipcRenderer.invoke('route:get-analytics-summary', params),
     getAnalyticsDistribution: (params: RouteAnalyticsWindowQuery) =>

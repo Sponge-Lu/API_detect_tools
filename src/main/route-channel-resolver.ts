@@ -335,7 +335,9 @@ function buildCanonicalModelChannels(
   const activeSiteById = new Map(
     unifiedConfig.sites.filter(site => site.enabled).map(site => [site.id, site] as const)
   );
-  const accountById = new Map(unifiedConfig.accounts.map(account => [account.id, account] as const));
+  const accountById = new Map(
+    unifiedConfig.accounts.map(account => [account.id, account] as const)
+  );
 
   const combinedOriginalModelOrder: string[] = [];
   const siteOrderById = new Map<string, number>();

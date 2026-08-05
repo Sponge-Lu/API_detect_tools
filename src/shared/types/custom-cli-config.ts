@@ -11,19 +11,11 @@
 
 import {
   BUILTIN_CLI_TYPES,
-  CLI_TEST_MODEL_SLOT_COUNT,
   normalizeCliTargetProtocol,
-  sanitizeCliTestResults,
   type BuiltinCliType,
-  type CliModelTestResult,
   type CliTargetProtocol,
 } from './cli-config';
-import type {
-  ClaudeTestDetail,
-  CodexTestDetail,
-  ModelPricingData,
-  OpenCodeTestDetail,
-} from './site';
+import type { ModelPricingData } from './site';
 
 export const CUSTOM_CLI_GROUP_MULTIPLIER_DEFAULT = 1;
 export const CUSTOM_CLI_GROUP_MULTIPLIER_MIN = 0.001;
@@ -35,56 +27,14 @@ export function normalizeCustomCliGroupMultiplier(value: unknown): number {
   return Math.max(CUSTOM_CLI_GROUP_MULTIPLIER_MIN, value);
 }
 
-export interface CustomCliTestState {
-  status: boolean | null;
-  testedAt: number | null;
-  claudeDetail?: ClaudeTestDetail;
-  codexDetail?: CodexTestDetail;
-  openCodeDetail?: OpenCodeTestDetail;
-  slots: Array<CliModelTestResult | null>;
-}
-
-export function createEmptyCustomCliTestState(): CustomCliTestState {
-  return {
-    status: null,
-    testedAt: null,
-    claudeDetail: undefined,
-    codexDetail: undefined,
-    openCodeDetail: undefined,
-    slots: Array.from({ length: CLI_TEST_MODEL_SLOT_COUNT }, () => null),
-  };
-}
-
-export function normalizeCustomCliTestState(state?: CustomCliTestState | null): CustomCliTestState {
-  const slots = sanitizeCliTestResults(state?.slots ?? [], CLI_TEST_MODEL_SLOT_COUNT);
-  const validRows = slots.filter(Boolean) as CliModelTestResult[];
-  const derivedStatus =
-    validRows.length === 0 ? null : validRows.every(result => result.success === true);
-  const derivedTestedAt =
-    validRows.length > 0 ? Math.max(...validRows.map(result => result.timestamp)) : null;
-
-  return {
-    status: typeof state?.status === 'boolean' ? state.status : derivedStatus,
-    testedAt: typeof state?.testedAt === 'number' ? state.testedAt : derivedTestedAt,
-    claudeDetail: state?.claudeDetail,
-    codexDetail: state?.codexDetail,
-    openCodeDetail: state?.openCodeDetail,
-    slots,
-  };
-}
-
 /** 单个 CLI 的自定义配置 */
 export interface CustomCliSettings {
   enabled: boolean;
   model: string | null;
-  /** 用于测试的模型（优先级高于 model，但最多保留 3 个） */
-  testModels?: string[];
   /** 上游目标协议 */
   targetProtocol?: CliTargetProtocol;
   /** 用户编辑后的配置文件内容（null 表示未编辑，使用自动生成的配置） */
   editedFiles?: { path: string; content: string }[] | null;
-  /** 最近一次 CLI 测试结果 */
-  testState?: CustomCliTestState | null;
 }
 
 /** 自定义 CLI 配置 */
@@ -123,18 +73,20 @@ export interface CustomCliConfig {
 export const DEFAULT_CUSTOM_CLI_SETTINGS: CustomCliSettings = {
   enabled: true,
   model: null,
-  testModels: [],
-  testState: null,
 };
 
 export function normalizeCustomCliSettings(setting?: CustomCliSettings | null): CustomCliSettings {
+  const {
+    testModels: _legacyTestModels,
+    testState: _legacyTestState,
+    ...current
+  } = (setting || {}) as CustomCliSettings & { testModels?: unknown; testState?: unknown };
   return {
     ...DEFAULT_CUSTOM_CLI_SETTINGS,
-    ...(setting || {}),
+    ...current,
     targetProtocol: setting?.targetProtocol
       ? normalizeCliTargetProtocol(setting.targetProtocol)
       : undefined,
-    testState: setting?.testState ? normalizeCustomCliTestState(setting.testState) : null,
   };
 }
 

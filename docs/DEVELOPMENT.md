@@ -164,8 +164,8 @@ npm run test:coverage
 
 当前主线还包含针对 v3 工作台的回归测试，例如：
 
-- `cli-wrapper-compat-service.test.ts`
-- `route-cli-probe-service.test.ts`
+- `endpoint-test-service.test.ts`
+- `endpoint-test-panel.test.tsx`
 - `route-proxy-service.test.ts`
 - `route-model-registry-service.test.ts`
 - `data-overview-page.test.tsx`
@@ -177,9 +177,9 @@ npm run test:coverage
 
 当前 Route / CLI 相关测试重点覆盖：
 
-- 真实 CLI wrapper 临时目录隔离、stdin prompt 注入、终止错误摘要和 probe-lock 提前中止
-- route proxy 的 probe-lock loopback 限制、单模型上游尝试预算、上游失败透传和 provider/native 协议处理
-- CLI 探测对活跃 API Key 的选择、`probeRunId` 批次持久化和 `routing.cliProbe.latest/history` 投影
+- 三种端点的协议头/请求体、生成文本校验与无 CLI 特征请求
+- route proxy target lock 的 loopback 限制、单测试目标尝试预算和托管/直连特殊处理
+- 成功、HTTP 失败、解析失败和超时的 `testedAt` 持久化与 UI 展示
 - 数据总览路由趋势图在 `24h` / `7d` 部分数据窗口下仍补齐完整 X 轴，并且前置空桶不绘制请求柱或趋势线
 - 日志页的会话事件筛选、路由日志逐条 push 追加、紧凑请求尝试列表、Token/cache token 与参考金额展示
 

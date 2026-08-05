@@ -4,7 +4,6 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_ANALYTICS_CONFIG,
-  DEFAULT_CLI_PROBE_CONFIG,
   DEFAULT_ROUTE_PROXY_SERVER_CONFIG,
   type RouteDisplayItemPriorityConfig,
   type RouteModelRegistryConfig,
@@ -95,11 +94,7 @@ function buildRouteConfigForLogs(params: {
     routeEndpointCapabilities: {},
     health: {},
     modelRegistry: params.modelRegistry,
-    cliProbe: {
-      config: { ...DEFAULT_CLI_PROBE_CONFIG },
-      latest: {},
-      history: {},
-    },
+    endpointTests: {},
     analytics: {
       config: { ...DEFAULT_ANALYTICS_CONFIG },
       buckets: {},

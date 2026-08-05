@@ -15,8 +15,8 @@
 | 文件 | 职责 |
 |------|------|
 | `RouteSubTabs.tsx` | 遗留 route 子页切换条，供旧结构兼容使用 |
-| `Redirection/ModelRedirectionTab.tsx` | 路由页中的手工/显式 override 模型重定向卡片区与编辑模态框；空注册表不自动生成示例，优先级详情会在覆盖模型后显示 route/custom CLI 测试结果 |
-| `Usability/HistoryBucketBars.tsx` | 站点管理 History 列复用的 48 小时 / 2 小时时间桶成功率条形图，通过 `route:getHistoryBuckets` IPC 获取 24 个桶，支持综合、CLI 探测、路由请求三种模式 |
+| `Redirection/ModelRedirectionTab.tsx` | 路由页中的手工/显式 override 模型重定向卡片区与编辑模态框；空注册表不自动生成示例 |
+| `Usability/HistoryBucketBars.tsx` | 站点管理 History 列复用的 48 小时 / 2 小时时间桶成功率条形图，通过 `route:getHistoryBuckets` IPC 获取 24 个真实路由请求桶 |
 | `ProxyStats/ProxyStatsTab.tsx` | 路由页复用的代理服务器、上游代理、CLI 默认模型与思考强度、统计面板 |
 
 ## 更新日志

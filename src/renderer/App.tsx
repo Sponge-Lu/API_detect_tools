@@ -32,11 +32,14 @@ import type {
   AccountBrowserProfileOptions,
   BrowserProfileOption,
   BrowserProfileOptionId,
-  CliCompatibilityData,
   SiteDailySnapshot,
 } from '../shared/types/site';
-import type { CliTargetProtocol, ProbeCliType } from '../shared/types/cli-config';
 import type {
+  EndpointTestResult,
+  EndpointTestSelectionInput,
+  EndpointTestSelectionState,
+  EndpointTestStateView,
+  EndpointTestTarget,
   RouteAnalyticsOverview,
   RouteAnalyticsObjectStatsItem,
   RouteAnalyticsObjectStatsQuery,
@@ -198,35 +201,6 @@ declare global {
         ) => () => void;
       };
       cliCompat: {
-        testWithWrapper: (params: {
-          siteUrl: string;
-          configs: Array<{
-            cliType: ProbeCliType;
-            apiKey: string;
-            model: string;
-            baseUrl?: string;
-            targetProtocol?: CliTargetProtocol;
-          }>;
-        }) => Promise<{
-          success: boolean;
-          data?: CliCompatibilityData;
-          samples?: Array<{
-            cliType: ProbeCliType;
-            model: string;
-            success: boolean;
-            testedAt: number;
-            error?: string;
-            claudeDetail?: CliCompatibilityData['claudeDetail'];
-            codexDetail?: CliCompatibilityData['codexDetail'];
-          }>;
-          error?: string;
-        }>;
-        saveResult: (
-          siteUrl: string,
-          result: any,
-          accountId?: string,
-          samples?: any[]
-        ) => Promise<{ success: boolean; error?: string }>;
         saveConfig: (
           siteUrl: string,
           config: any,
@@ -398,6 +372,17 @@ declare global {
           accountId: string
         ) => Promise<{ success: boolean; error?: string }>;
       };
+      endpointTest?: {
+        getState: (
+          target: EndpointTestTarget
+        ) => Promise<{ success: boolean; data?: EndpointTestStateView; error?: string }>;
+        saveSelection: (
+          input: EndpointTestSelectionInput
+        ) => Promise<{ success: boolean; data?: EndpointTestSelectionState; error?: string }>;
+        run: (
+          input: EndpointTestSelectionInput
+        ) => Promise<{ success: boolean; data?: EndpointTestResult; error?: string }>;
+      };
       route?: {
         getConfig: () => Promise<{ success: boolean; data?: any; error?: string }>;
         saveServerConfig: (updates: any) => Promise<{ success: boolean; error?: string }>;
@@ -438,19 +423,6 @@ declare global {
         saveCliThinkingEffortSelections: (
           selections: any
         ) => Promise<{ success: boolean; error?: string }>;
-        saveCliProbeConfig: (updates: any) => Promise<{ success: boolean; error?: string }>;
-        runCliProbeNow: (params?: {
-          siteId?: string;
-          accountId?: string;
-          cliType?: ProbeCliType;
-        }) => Promise<{ success: boolean; data?: any; error?: string }>;
-        getCliProbeLatest: (
-          params?: any
-        ) => Promise<{ success: boolean; data?: any; error?: string }>;
-        getCliProbeHistory: (
-          params: any
-        ) => Promise<{ success: boolean; data?: any; error?: string }>;
-        getCliProbeView: (params: any) => Promise<{ success: boolean; data?: any; error?: string }>;
         getAnalyticsSummary: (
           params: RouteAnalyticsWindowQuery
         ) => Promise<{ success: boolean; data?: any; error?: string }>;
@@ -544,14 +516,8 @@ function App() {
   // ========== 从 Store 读取状态 ==========
   const { config, setConfig, saving, loading, setLoading } = useConfigStore();
 
-  const {
-    setApiKeys,
-    setUserGroups,
-    setModelPricing,
-    setCliCompatibility,
-    detectCliConfig,
-    cliConfigDetection,
-  } = useDetectionStore();
+  const { setApiKeys, setUserGroups, setModelPricing, detectCliConfig, cliConfigDetection } =
+    useDetectionStore();
 
   const {
     activeTab,
@@ -633,7 +599,6 @@ function App() {
     setApiKeys,
     setUserGroups,
     setModelPricing,
-    setCliCompatibility,
     setCliConfig,
     detectCliConfig,
   });

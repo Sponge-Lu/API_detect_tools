@@ -71,18 +71,18 @@ import {
 } from './cli-protocol-adapter';
 import {
   buildRouteProxyBaseUrl,
-  beginRouteProbeLockUpstreamAttempt,
-  settleRouteProbeLockUpstreamAttempt,
-  MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS,
-  getRouteProbeLockTerminalFailure,
+  beginRouteTargetLockUpstreamAttempt,
+  settleRouteTargetLockUpstreamAttempt,
+  MAX_TARGET_LOCK_UPSTREAM_ATTEMPTS,
+  getRouteTargetLockTerminalFailure,
   isLoopbackAddress,
-  notifyRouteProbeLockRequest,
-  notifyRouteProbeLockTerminalFailure,
-  parseProbeLockRouteApiKey,
-  recordRouteProbeLockFirstUpstreamResult,
-  type RouteProbeLockTerminalFailure,
-  type RouteProbeLock,
-} from './route-probe-lock';
+  notifyRouteTargetLockRequest,
+  notifyRouteTargetLockTerminalFailure,
+  parseTargetLockRouteApiKey,
+  recordRouteTargetLockFirstUpstreamResult,
+  type RouteTargetLockTerminalFailure,
+  type RouteTargetLock,
+} from './route-target-lock';
 
 const log = Logger.scope('RouteProxyService');
 
@@ -111,8 +111,8 @@ const UPSTREAM_QUOTA_EXHAUSTION_PATTERNS = [
 const ZERO_USAGE_UPSTREAM_RETRY_ATTEMPTS = 1;
 const EMPTY_STREAM_UPSTREAM_RETRY_ATTEMPTS = 1;
 const EMPTY_STREAMING_RESPONSE_ERROR = 'invalid_streaming_response:empty_streaming_response';
-const PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_ERROR_CODE = 'probe_lock_upstream_attempt_exhausted';
-const PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_STATUS_CODE = 400;
+const TARGET_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_ERROR_CODE = 'target_lock_upstream_attempt_exhausted';
+const TARGET_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_STATUS_CODE = 400;
 const ANYROUTER_REQUEST_TIMEOUT_MS = 120 * 1000;
 const ACTIVE_STREAM_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 const CLAUDE_COUNT_TOKENS_PATH = '/v1/messages/count_tokens';
@@ -2300,7 +2300,7 @@ function normalizeLogLine(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
-function summarizeProbeLockUpstreamBody(body: Buffer): string | undefined {
+function summarizeTargetLockUpstreamBody(body: Buffer): string | undefined {
   return summarizeUpstreamFailureBodyRaw(body, 2000) || undefined;
 }
 
@@ -2308,17 +2308,17 @@ function buildRouteProxyErrorText(error: string, message: string): string {
   return JSON.stringify({ error, message });
 }
 
-function recordProbeLockFirstUpstreamResult(params: {
+function recordTargetLockFirstUpstreamResult(params: {
   routeApiKey: string;
   cliType: RouteCliType;
-  lock: RouteProbeLock;
+  lock: RouteTargetLock;
   success: boolean;
   statusCode?: number;
   body?: Buffer;
   error?: string;
   terminal?: boolean;
 }): void {
-  recordRouteProbeLockFirstUpstreamResult(
+  recordRouteTargetLockFirstUpstreamResult(
     {
       routeApiKey: params.routeApiKey,
       cliType: params.cliType,
@@ -2326,21 +2326,21 @@ function recordProbeLockFirstUpstreamResult(params: {
       finishedAt: Date.now(),
       lock: params.lock,
       ...(params.statusCode !== undefined ? { statusCode: params.statusCode } : {}),
-      ...(params.body ? { responseSummary: summarizeProbeLockUpstreamBody(params.body) } : {}),
+      ...(params.body ? { responseSummary: summarizeTargetLockUpstreamBody(params.body) } : {}),
       ...(params.error ? { error: params.error } : {}),
     },
     { terminal: params.terminal ?? true }
   );
 }
 
-function notifyProbeLockTerminalFailure(params: {
+function notifyTargetLockTerminalFailure(params: {
   routeApiKey: string;
   cliType: RouteCliType;
   terminalError: string;
   statusCode?: number;
-  lock?: RouteProbeLock | null;
+  lock?: RouteTargetLock | null;
 }): void {
-  notifyRouteProbeLockTerminalFailure({
+  notifyRouteTargetLockTerminalFailure({
     routeApiKey: params.routeApiKey,
     cliType: params.cliType,
     terminalError: params.terminalError,
@@ -2349,13 +2349,13 @@ function notifyProbeLockTerminalFailure(params: {
   });
 }
 
-function writeProbeLockTerminalFailureResponse(
+function writeTargetLockTerminalFailureResponse(
   res: http.ServerResponse,
-  failure: RouteProbeLockTerminalFailure
+  failure: RouteTargetLockTerminalFailure
 ): void {
   const body =
     failure.terminalError.trim() ||
-    buildRouteProxyErrorText('all_channels_failed', 'CLI probe aborted');
+    buildRouteProxyErrorText('all_channels_failed', 'Target-locked request aborted');
   const contentType =
     body.startsWith('{') || body.startsWith('[')
       ? 'application/json; charset=utf-8'
@@ -2364,10 +2364,10 @@ function writeProbeLockTerminalFailureResponse(
   res.end(body);
 }
 
-function buildProbeLockUpstreamAttemptExhaustedErrorText(): string {
+function buildTargetLockUpstreamAttemptExhaustedErrorText(): string {
   return buildRouteProxyErrorText(
-    PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_ERROR_CODE,
-    'CLI probe-lock upstream attempt budget exhausted'
+    TARGET_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_ERROR_CODE,
+    'Endpoint-test target lock upstream attempt budget exhausted'
   );
 }
 
@@ -3563,12 +3563,12 @@ export async function handleRequest(
 
   // 鉴权
   const token = extractRouteApiKey(req, cliType);
-  const probeLock = parseProbeLockRouteApiKey(token, routing.server.unifiedApiKey);
-  if (probeLock) {
-    notifyRouteProbeLockRequest(token);
+  const targetLock = parseTargetLockRouteApiKey(token, routing.server.unifiedApiKey);
+  if (targetLock) {
+    notifyRouteTargetLockRequest(token);
   }
-  if (token !== routing.server.unifiedApiKey && !probeLock) {
-    notifyProbeLockTerminalFailure({
+  if (token !== routing.server.unifiedApiKey && !targetLock) {
+    notifyTargetLockTerminalFailure({
       routeApiKey: token,
       cliType,
       statusCode: 401,
@@ -3578,42 +3578,22 @@ export async function handleRequest(
     res.end(JSON.stringify({ error: 'invalid_api_key', message: 'Invalid route API key' }));
     return;
   }
-  if (probeLock && !isLoopbackAddress(req.socket.remoteAddress)) {
-    notifyProbeLockTerminalFailure({
+  if (targetLock && !isLoopbackAddress(req.socket.remoteAddress)) {
+    notifyTargetLockTerminalFailure({
       routeApiKey: token,
       cliType,
       statusCode: 403,
       terminalError: buildRouteProxyErrorText(
-        'probe_lock_forbidden',
-        'Probe-lock requests are only allowed from loopback clients'
+        'target_lock_forbidden',
+        'Target-lock requests are only allowed from loopback clients'
       ),
-      lock: probeLock,
+      lock: targetLock,
     });
     res.writeHead(403, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
-        error: 'probe_lock_forbidden',
-        message: 'Probe-lock requests are only allowed from loopback clients',
-      })
-    );
-    return;
-  }
-  if (probeLock && probeLock.cliType !== cliType) {
-    notifyProbeLockTerminalFailure({
-      routeApiKey: token,
-      cliType,
-      statusCode: 400,
-      terminalError: buildRouteProxyErrorText(
-        'probe_lock_cli_mismatch',
-        `Probe-lock CLI type ${probeLock.cliType} does not match route ${cliType}`
-      ),
-      lock: probeLock,
-    });
-    res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        error: 'probe_lock_cli_mismatch',
-        message: `Probe-lock CLI type ${probeLock.cliType} does not match route ${cliType}`,
+        error: 'target_lock_forbidden',
+        message: 'Target-lock requests are only allowed from loopback clients',
       })
     );
     return;
@@ -3640,17 +3620,17 @@ export async function handleRequest(
   }
   const sourceProtocol = endpointOperation.protocol;
   const nativePassthroughChannels = new WeakSet<ResolvedChannel>();
-  const previousTerminalFailure = probeLock ? getRouteProbeLockTerminalFailure(token) : undefined;
+  const previousTerminalFailure = targetLock ? getRouteTargetLockTerminalFailure(token) : undefined;
   if (previousTerminalFailure) {
-    log.warn('Probe-lock request blocked after terminal upstream failure', {
+    log.warn('Target-lock request blocked after terminal upstream failure', {
       cliType,
       statusCode: previousTerminalFailure.statusCode,
-      siteId: probeLock?.siteId,
-      accountId: probeLock?.accountId,
-      apiKeyId: probeLock?.apiKeyId,
-      rawModel: probeLock?.rawModel,
+      siteId: targetLock?.siteId,
+      accountId: targetLock?.accountId,
+      apiKeyId: targetLock?.apiKeyId,
+      rawModel: targetLock?.rawModel,
     });
-    writeProbeLockTerminalFailureResponse(res, previousTerminalFailure);
+    writeTargetLockTerminalFailureResponse(res, previousTerminalFailure);
     return;
   }
   const requestId = nextRequestId(cliType);
@@ -3712,22 +3692,22 @@ export async function handleRequest(
   let activeRouteRuleId: string | undefined;
   let sortedChannels: ResolvedChannel[] = [];
   let routeRuntimeConfig = resolveRouteRuntimeConfig(routing, canonicalModel);
-  const bypassRoutePathState = Boolean(probeLock);
+  const bypassRoutePathState = Boolean(targetLock);
 
-  if (probeLock) {
-    canonicalModel = probeLock.canonicalModel;
+  if (targetLock) {
+    canonicalModel = targetLock.canonicalModel;
     routeRuntimeConfig = resolveRouteRuntimeConfig(routing, canonicalModel);
     sortedChannels = (
       await resolveChannelTargets([
         {
-          routeRuleId: '__probe_lock__',
-          siteId: probeLock.siteId,
-          accountId: probeLock.accountId,
-          apiKeyId: probeLock.apiKeyId,
+          routeRuleId: '__target_lock__',
+          siteId: targetLock.siteId,
+          accountId: targetLock.accountId,
+          apiKeyId: targetLock.apiKeyId,
           cliType,
-          canonicalModel: probeLock.canonicalModel,
-          resolvedModel: probeLock.rawModel,
-          targetProtocol: probeLock.targetProtocol,
+          canonicalModel: targetLock.canonicalModel,
+          resolvedModel: targetLock.rawModel,
+          targetProtocol: targetLock.targetProtocol,
         },
       ])
     ).map(channel =>
@@ -3825,7 +3805,7 @@ export async function handleRequest(
     sourceProtocol === 'anthropic-messages'
       ? CLAUDE_MESSAGES_COUNT_TOKENS_ENDPOINT
       : RESPONSES_INPUT_TOKENS_ENDPOINT;
-  if (probeLock && requestIsTokenCount) {
+  if (targetLock && requestIsTokenCount) {
     writeInputTokensEstimate(res, estimateClaudeCountTokens(bodyBuffer));
     return;
   }
@@ -3898,26 +3878,26 @@ export async function handleRequest(
       }
     }
 
-    const probeLockCredentials =
-      probeLock?.upstreamBaseUrl && probeLock?.upstreamApiKey
+    const targetLockCredentials =
+      targetLock?.upstreamBaseUrl && targetLock?.upstreamApiKey
         ? {
-            baseUrl: probeLock.upstreamBaseUrl,
-            apiKey: probeLock.upstreamApiKey,
+            baseUrl: targetLock.upstreamBaseUrl,
+            apiKey: targetLock.upstreamApiKey,
           }
         : null;
     const creds =
-      probeLockCredentials ||
+      targetLockCredentials ||
       (await resolveChannelCredentials(ch.siteId, ch.accountId, ch.apiKeyId));
     if (!creds) {
-      if (probeLock) {
-        notifyProbeLockTerminalFailure({
+      if (targetLock) {
+        notifyTargetLockTerminalFailure({
           routeApiKey: token,
           cliType,
           terminalError: buildRouteProxyErrorText(
             'credentials_unavailable',
-            'Route credentials are unavailable for this probe-lock request'
+            'Route credentials are unavailable for this target-lock request'
           ),
-          lock: probeLock,
+          lock: targetLock,
         });
       }
       recordRequestForSelection({
@@ -4030,13 +4010,13 @@ export async function handleRequest(
           : err instanceof Error
             ? err.message
             : 'unknown_error';
-        if (probeLock) {
-          notifyProbeLockTerminalFailure({
+        if (targetLock) {
+          notifyTargetLockTerminalFailure({
             routeApiKey: token,
             cliType,
             statusCode: 502,
             terminalError: buildRouteProxyErrorText(`adapter_${stage}`, reason),
-            lock: probeLock,
+            lock: targetLock,
           });
         }
         log.warn('Protocol adapter request-adapt failed', {
@@ -4094,29 +4074,32 @@ export async function handleRequest(
       nativePassthroughChannels.has(ch) && !(site && isAnyRouterSite(site.name));
     attemptedUpstream = true;
 
-    // probe-lock 上游预算：按"终结结果"计，瞬时错误在上限内不消耗预算。
-    let probeLockIsFinalAttempt = false;
+    // target-lock 上游预算：按"终结结果"计，瞬时错误在上限内不消耗预算。
+    let targetLockIsFinalAttempt = false;
 
     try {
-      if (probeLock) {
-        const attempt = beginRouteProbeLockUpstreamAttempt(token);
+      if (targetLock) {
+        const attempt = beginRouteTargetLockUpstreamAttempt(token);
         if (!attempt.allowed) {
-          const terminalError = buildProbeLockUpstreamAttemptExhaustedErrorText();
-          log.warn('Probe-lock upstream request blocked after per-model attempt budget exhausted', {
-            cliType,
-            siteId: probeLock.siteId,
-            accountId: probeLock.accountId,
-            apiKeyId: probeLock.apiKeyId,
-            rawModel: probeLock.rawModel,
-          });
-          res.writeHead(PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_STATUS_CODE, {
+          const terminalError = buildTargetLockUpstreamAttemptExhaustedErrorText();
+          log.warn(
+            'Target-lock upstream request blocked after per-model attempt budget exhausted',
+            {
+              cliType,
+              siteId: targetLock.siteId,
+              accountId: targetLock.accountId,
+              apiKeyId: targetLock.apiKeyId,
+              rawModel: targetLock.rawModel,
+            }
+          );
+          res.writeHead(TARGET_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_STATUS_CODE, {
             'Content-Type': 'application/json',
-            'X-Route-Proxy-Error': PROBE_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_ERROR_CODE,
+            'X-Route-Proxy-Error': TARGET_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_ERROR_CODE,
           });
           res.end(terminalError);
           return;
         }
-        probeLockIsFinalAttempt = attempt.isFinalAttempt;
+        targetLockIsFinalAttempt = attempt.isFinalAttempt;
       }
 
       const forwardActiveChannel = () =>
@@ -4148,7 +4131,7 @@ export async function handleRequest(
             return await forwardActiveChannel();
           } catch (error: unknown) {
             if (
-              probeLock ||
+              targetLock ||
               retry >= EMPTY_STREAM_UPSTREAM_RETRY_ATTEMPTS ||
               res.headersSent ||
               routeAbortController.signal.aborted ||
@@ -4281,12 +4264,12 @@ export async function handleRequest(
           'upstream returned HTTP 200 with all-zero usage'
         );
 
-        if (probeLock) {
-          settleRouteProbeLockUpstreamAttempt(token);
-          recordProbeLockFirstUpstreamResult({
+        if (targetLock) {
+          settleRouteTargetLockUpstreamAttempt(token);
+          recordTargetLockFirstUpstreamResult({
             routeApiKey: token,
             cliType,
-            lock: probeLock,
+            lock: targetLock,
             statusCode: result.statusCode,
             success: false,
             body: result.body,
@@ -4297,10 +4280,10 @@ export async function handleRequest(
             cliType,
             statusCode: 502,
             terminalError,
-            lock: probeLock,
+            lock: targetLock,
           };
-          notifyProbeLockTerminalFailure(terminalFailure);
-          writeProbeLockTerminalFailureResponse(res, terminalFailure);
+          notifyTargetLockTerminalFailure(terminalFailure);
+          writeTargetLockTerminalFailureResponse(res, terminalFailure);
           return;
         }
 
@@ -4427,25 +4410,25 @@ export async function handleRequest(
           bodySnippet,
         });
 
-        if (probeLock) {
+        if (targetLock) {
           const transient = isTransientUpstreamStatus(result.statusCode);
-          if (transient && !probeLockIsFinalAttempt) {
+          if (transient && !targetLockIsFinalAttempt) {
             // 瞬时上游错误且未达尝试上限：不消耗预算、不通知终结失败。
             // 记录一个可被后续成功/终结失败覆盖的非终结结果（保留失败原因），
             // 并把原始上游响应直接透传回 CLI（剥离 hop-by-hop/content-length/transfer-encoding），
             // 不走 AnyRouter/协议转换，避免转换异常把瞬时错误劫持成终结失败。
-            log.debug('Probe-lock transient upstream failure passed through without settling', {
+            log.debug('Target-lock transient upstream failure passed through without settling', {
               statusCode: result.statusCode,
               cliType,
-              siteId: probeLock.siteId,
-              accountId: probeLock.accountId,
-              apiKeyId: probeLock.apiKeyId,
-              rawModel: probeLock.rawModel,
+              siteId: targetLock.siteId,
+              accountId: targetLock.accountId,
+              apiKeyId: targetLock.apiKeyId,
+              rawModel: targetLock.rawModel,
             });
-            recordProbeLockFirstUpstreamResult({
+            recordTargetLockFirstUpstreamResult({
               routeApiKey: token,
               cliType,
-              lock: probeLock,
+              lock: targetLock,
               statusCode: result.statusCode,
               success: false,
               body: result.body,
@@ -4465,28 +4448,28 @@ export async function handleRequest(
           }
 
           const finalError =
-            transient && probeLockIsFinalAttempt
+            transient && targetLockIsFinalAttempt
               ? buildRouteProxyErrorText(
                   'upstream_temporarily_unavailable',
-                  `upstream temporarily unavailable, retried ${MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS} times (last status ${result.statusCode})`
+                  `upstream temporarily unavailable, retried ${MAX_TARGET_LOCK_UPSTREAM_ATTEMPTS} times (last status ${result.statusCode})`
                 )
               : terminalError;
-          settleRouteProbeLockUpstreamAttempt(token);
-          recordProbeLockFirstUpstreamResult({
+          settleRouteTargetLockUpstreamAttempt(token);
+          recordTargetLockFirstUpstreamResult({
             routeApiKey: token,
             cliType,
-            lock: probeLock,
+            lock: targetLock,
             statusCode: result.statusCode,
             success: false,
             body: result.body,
             error: finalError,
           });
-          notifyProbeLockTerminalFailure({
+          notifyTargetLockTerminalFailure({
             routeApiKey: token,
             cliType,
             statusCode: result.statusCode,
             terminalError: finalError,
-            lock: probeLock,
+            lock: targetLock,
           });
         }
 
@@ -4513,12 +4496,12 @@ export async function handleRequest(
       }
 
       if (result.streamed) {
-        if (probeLock) {
-          settleRouteProbeLockUpstreamAttempt(token);
-          recordProbeLockFirstUpstreamResult({
+        if (targetLock) {
+          settleRouteTargetLockUpstreamAttempt(token);
+          recordTargetLockFirstUpstreamResult({
             routeApiKey: token,
             cliType,
-            lock: probeLock,
+            lock: targetLock,
             statusCode: result.statusCode,
             // forwardToUpstream 只在成功 SSE 时置 streamed，故此处恒为成功。
             success: true,
@@ -4557,24 +4540,24 @@ export async function handleRequest(
           : err instanceof Error
             ? err.message
             : 'unknown_error';
-        if (probeLock) {
+        if (targetLock) {
           const terminalError = buildRouteProxyErrorText('adapter_response-adapt', reason);
-          settleRouteProbeLockUpstreamAttempt(token);
-          recordProbeLockFirstUpstreamResult({
+          settleRouteTargetLockUpstreamAttempt(token);
+          recordTargetLockFirstUpstreamResult({
             routeApiKey: token,
             cliType,
-            lock: probeLock,
+            lock: targetLock,
             statusCode: 502,
             success: false,
             body: result.body,
             error: terminalError,
           });
-          notifyProbeLockTerminalFailure({
+          notifyTargetLockTerminalFailure({
             routeApiKey: token,
             cliType,
             statusCode: 502,
             terminalError,
-            lock: probeLock,
+            lock: targetLock,
           });
         }
         log.warn('Protocol adapter response-adapt failed', {
@@ -4602,12 +4585,12 @@ export async function handleRequest(
       }
 
       // 成功/neutral/最后一次失败：写 res
-      if (probeLock && outcome === 'success') {
-        settleRouteProbeLockUpstreamAttempt(token);
-        recordProbeLockFirstUpstreamResult({
+      if (targetLock && outcome === 'success') {
+        settleRouteTargetLockUpstreamAttempt(token);
+        recordTargetLockFirstUpstreamResult({
           routeApiKey: token,
           cliType,
-          lock: probeLock,
+          lock: targetLock,
           statusCode: result.statusCode,
           success: true,
           body: transformed.body,
@@ -4625,45 +4608,45 @@ export async function handleRequest(
         return;
       }
       const errorMessage = err instanceof Error ? err.message : 'unknown_error';
-      if (probeLock) {
+      if (targetLock) {
         // 网络异常无 statusCode，按瞬时错误处理：未达上限则不 settle/不通知，
         // 透传错误给 CLI,让后续请求继续尝试上游。
-        if (probeLockIsFinalAttempt) {
+        if (targetLockIsFinalAttempt) {
           const finalError = buildRouteProxyErrorText(
             'upstream_temporarily_unavailable',
-            `upstream temporarily unavailable, retried ${MAX_PROBE_LOCK_UPSTREAM_ATTEMPTS} times (${errorMessage})`
+            `upstream temporarily unavailable, retried ${MAX_TARGET_LOCK_UPSTREAM_ATTEMPTS} times (${errorMessage})`
           );
-          settleRouteProbeLockUpstreamAttempt(token);
-          recordProbeLockFirstUpstreamResult({
+          settleRouteTargetLockUpstreamAttempt(token);
+          recordTargetLockFirstUpstreamResult({
             routeApiKey: token,
             cliType,
-            lock: probeLock,
+            lock: targetLock,
             statusCode: 502,
             success: false,
             error: finalError,
           });
-          notifyProbeLockTerminalFailure({
+          notifyTargetLockTerminalFailure({
             routeApiKey: token,
             cliType,
             statusCode: 502,
             terminalError: finalError,
-            lock: probeLock,
+            lock: targetLock,
           });
         } else {
           // 瞬时网络异常且未达上限：不消耗预算、不通知终结失败，但记录一个可被
           // 后续成功/终结失败覆盖的非终结结果，避免单发不重试的 CLI 丢失失败原因。
-          log.debug('Probe-lock transient network failure passed through without settling', {
+          log.debug('Target-lock transient network failure passed through without settling', {
             cliType,
-            siteId: probeLock.siteId,
-            accountId: probeLock.accountId,
-            apiKeyId: probeLock.apiKeyId,
-            rawModel: probeLock.rawModel,
+            siteId: targetLock.siteId,
+            accountId: targetLock.accountId,
+            apiKeyId: targetLock.apiKeyId,
+            rawModel: targetLock.rawModel,
             error: errorMessage,
           });
-          recordProbeLockFirstUpstreamResult({
+          recordTargetLockFirstUpstreamResult({
             routeApiKey: token,
             cliType,
-            lock: probeLock,
+            lock: targetLock,
             statusCode: 502,
             success: false,
             error: errorMessage,
@@ -4723,7 +4706,7 @@ export async function handleRequest(
       if (
         err instanceof NativeAnthropicSseGuardError &&
         nativeResponsePassthrough &&
-        !probeLock &&
+        !targetLock &&
         !routeAbortController.signal.aborted &&
         !isRoutePathDisabled(activeChannel) &&
         (attemptsByRoutePath.get(routePathKey) ?? 0) < routeRuntimeConfig.maxAttemptsPerRoutePath

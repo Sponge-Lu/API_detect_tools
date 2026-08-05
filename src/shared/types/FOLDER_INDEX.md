@@ -15,10 +15,10 @@
 ### 核心类型文件
 | 文件 | 职责 | 关键类型 |
 |------|------|--------|
-| **site.ts** | 站点、检测缓存、四种内置 CLI 配置/兼容性状态与运行期快照类型 | Site, UnifiedSite, CheckinStats, CliCompatibilityData, SiteDailySnapshot, RuntimeCacheFile, ApiKeyAvailability |
-| **route-proxy.ts** | 路由工作台类型，含 Grok Build marker、模型/思考强度和三协议路径映射 | RoutingConfig, RouteProxyServerConfig, RouteModelRegistryConfig, RouteCliProbeSample, RouteCliProbeLatest, RouteAnalyticsObjectStatsItem |
-| **cli-config.ts** | 内置 CLI 配置类型；区分四种配置 CLI 与 Claude Code / Codex 两种可执行探测 CLI | BuiltinCliType, ProbeCliType, CliConfig, CLI_TARGET_PROTOCOLS |
-| **custom-cli-config.ts** | 自定义 CLI 配置类型，`cliSettings` 覆盖四种内置 CLI | CustomCliConfig, CustomCliSettings, CustomCliTestState, manualModels |
+| **site.ts** | 站点、检测缓存、四种内置 CLI 配置与运行期快照类型 | Site, UnifiedSite, CheckinStats, SiteDailySnapshot, RuntimeCacheFile, ApiKeyAvailability |
+| **route-proxy.ts** | 路由工作台与独立端点测试类型，含模型/思考强度和三协议路径映射 | RoutingConfig, RouteProxyServerConfig, RouteModelRegistryConfig, EndpointTestResult, EndpointTestTargetState, RouteAnalyticsObjectStatsItem |
+| **cli-config.ts** | 四种内置 CLI 的配置与目标协议类型 | BuiltinCliType, CliConfig, CLI_TARGET_PROTOCOLS |
+| **custom-cli-config.ts** | 自定义 CLI 配置类型，`cliSettings` 覆盖四种内置 CLI | CustomCliConfig, CustomCliSettings, manualModels |
 | **config-detection.ts** | 四种 CLI 本地配置静态检测类型与官方端点/路径 | ConfigSourceType, CliDetectionResult, AllCliDetectionResult 等 |
 | **credit.ts** | Linux Do Credit 积分类型 | CreditInfo, CreditConfig, CreditState, CreditResponse 等 |
 ---
@@ -134,7 +134,6 @@ interface LdcPaymentInfo {
 **当前约束**:
 - `has_checkin` 表示站点或账户是否具备签到能力，`can_check_in` 表示当前运行态是否还能执行签到
 - `getApiKeyAvailability()` / `isApiKeyActive()` 是 API Key 可用性判断的共享入口；调用方不要只用 `status === 1` 判断，因为不同站点可能返回 `status_str`、`state` 或 `enabled`
-- `CliCompatibilityData` 为 Claude Code / Codex 保留 detail 和 error 摘要，供站点卡片和日志页展示
 - `SiteDailySnapshot` 用于 `数据总览` 页的站点日级历史趋势，存入 `RuntimeCacheFile.site_daily_snapshots_by_site_id`
 **使用示例**:
 ```typescript
@@ -171,7 +170,7 @@ const status: SiteStatus = {
 };
 ```
 ### route-proxy.ts - 路由工作台类型
-**职责**: 定义路由代理、模型注册表、CLI 探测和统计分析相关共享契约
+**职责**: 定义路由代理、模型注册表、独立端点测试和统计分析相关共享契约
 **关键类型**:
 ```typescript
 interface RouteProxyServerConfig {
@@ -190,16 +189,11 @@ interface RouteModelSourceRef {
   availableCliTypes?: RouteCliType[];
 }
 
-interface RouteCliProbeSample {
-  probeKey: string;
-  siteId: string;
-  accountId: string;
-  cliType: RouteCliType;
-  source: 'routeProbe' | 'siteManual' | 'legacyCache';
-  statusCode?: number;
-  claudeDetail?: ClaudeTestDetail;
-  codexDetail?: CodexTestDetail;
-
+interface EndpointTestResult {
+  protocol: 'messages' | 'responses' | 'chatCompletions';
+  success: boolean;
+  model: string;
+  testedAt: number;
 }
 
 interface RouteAnalyticsObjectStatsItem {
@@ -217,7 +211,6 @@ interface RouteAnalyticsObjectStatsItem {
 }
 ```
 **关键辅助函数**:
-- `buildProbeKey()` / `buildSiteScopedProbeAccountId()` - 构造 CLI 探测索引键
 - `buildBucketKey()` - 构造包含 CLI / 模型 / 站点 / 账户 / API Key 的分析桶索引键
 - `normalizeRouteCliSelection()` - 将 CLI 默认模型统一归一到 canonical 名称
 - `compareRouteModelRegistryEntries()` - 按厂商优先模式、层级词和版本号排序模型
@@ -237,23 +230,6 @@ interface CliConfig {
   baseUrl?: string;
   timeout?: number;
   metadata?: Record<string, any>;
-}
-
-// CLI 兼容性信息
-interface CliCompatibility {
-  tool: CliTool;
-  supported: boolean;
-  version?: string;
-  features?: string[];
-  error?: string;
-}
-
-// CLI 兼容性测试结果
-interface CliCompatibilityResult {
-  siteId: string;
-  siteName: string;
-  compatibility: CliCompatibility[];
-  timestamp: number;
 }
 
 // CLI 配置生成结果
@@ -276,21 +252,6 @@ const cliConfig: CliConfig = {
   timeout: 30000
 };
 
-// 兼容性信息
-const compatibility: CliCompatibility = {
-  tool: 'claude-code',
-  supported: true,
-  version: '1.0.0',
-  features: ['streaming', 'function-calling']
-};
-
-// 兼容性测试结果
-const result: CliCompatibilityResult = {
-  siteId: 'site-1',
-  siteName: 'One API',
-  compatibility: [compatibility],
-  timestamp: Date.now()
-};
 ```
 ### credit.ts - Linux Do Credit 积分类型
 **职责**: 定义 Linux Do Credit 积分检测功能相关类型
@@ -569,12 +530,6 @@ CliConfig (CLI 配置)
 ├── model?: string
 ├── apiKey?: string
 └── baseUrl?: string
-
-CliCompatibility (CLI 兼容性)
-├── tool: CliTool
-├── supported: boolean
-├── version?: string
-└── features?: string[]
 
 CreditInfo (积分信息)
 ├── id: number

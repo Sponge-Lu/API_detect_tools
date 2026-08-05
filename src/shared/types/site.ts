@@ -64,40 +64,6 @@ export interface UserGroupInfo {
   ratio: number;
 }
 
-/** Claude Code 详细测试结果 */
-export interface ClaudeTestDetail {
-  replyText?: string; // CLI 返回的答案摘要
-}
-
-/** Codex 详细测试结果 */
-export interface CodexTestDetail {
-  responses: boolean | null; // Responses API 测试结果
-  replyText?: string; // CLI 返回的答案摘要
-}
-
-/** OpenCode 详细测试结果 */
-export interface OpenCodeTestDetail {
-  mode: CliTargetProtocol;
-  replyText?: string; // CLI 返回的答案摘要
-}
-
-/** CLI 兼容性数据 */
-export interface CliCompatibilityData {
-  claudeCode: boolean | null;
-  claudeDetail?: ClaudeTestDetail; // Claude Code 详细测试结果（回答摘要）
-  claudeError?: string; // Claude Code 失败摘要（错误码优先）
-  codex: boolean | null;
-  codexDetail?: CodexTestDetail; // Codex 详细测试结果（responses）
-  codexError?: string; // Codex 失败摘要（错误码优先）
-  openCode: boolean | null;
-  openCodeDetail?: OpenCodeTestDetail; // OpenCode 详细测试结果（官方 provider/endpoint 模式）
-  openCodeError?: string; // OpenCode 失败摘要（错误码优先）
-  grokBuild?: boolean | null;
-  grokBuildError?: string;
-  testedAt: number | null;
-  error?: string;
-}
-
 /** 签到统计数据 (New API 格式) */
 export interface CheckinStats {
   /** 今日签到获得金额 (内部单位，需要 /500000 转换为美元) */
@@ -272,7 +238,6 @@ export interface DetectionCacheData {
   last_refresh?: number;
   has_checkin?: boolean;
   can_check_in?: boolean;
-  cli_compatibility?: CliCompatibilityData;
   ldc_payment_supported?: boolean;
   ldc_exchange_rate?: string;
   ldc_payment_type?: string;
@@ -309,7 +274,6 @@ export interface AccountRuntimeDetectionData {
   last_refresh?: number;
   has_checkin?: boolean;
   can_check_in?: boolean;
-  cli_compatibility?: CliCompatibilityData;
   ldc_payment_supported?: boolean;
   ldc_exchange_rate?: string;
   ldc_payment_type?: string;
@@ -791,7 +755,6 @@ export function splitDetectionCacheData(cache?: DetectionCacheData): {
     last_refresh: cache.last_refresh,
     has_checkin: cache.has_checkin,
     can_check_in: cache.can_check_in,
-    cli_compatibility: cache.cli_compatibility,
     ldc_payment_supported: cache.ldc_payment_supported,
     ldc_exchange_rate: cache.ldc_exchange_rate,
     ldc_payment_type: cache.ldc_payment_type,
@@ -824,7 +787,6 @@ export function mergeDetectionCacheData(
     last_refresh: runtime?.last_refresh ?? shared?.last_refresh,
     has_checkin: runtime?.has_checkin,
     can_check_in: runtime?.can_check_in,
-    cli_compatibility: runtime?.cli_compatibility,
     ldc_payment_supported: runtime?.ldc_payment_supported,
     ldc_exchange_rate: runtime?.ldc_exchange_rate,
     ldc_payment_type: runtime?.ldc_payment_type,

@@ -8,11 +8,7 @@ import {
 } from '../renderer/components/Route/Redirection/ModelRedirectionTab';
 import { RoutePage } from '../renderer/pages/RoutePage';
 import { useCustomCliConfigStore } from '../renderer/store/customCliConfigStore';
-import {
-  buildProbeKey,
-  buildRouteApiKeyPriorityKey,
-  buildRoutePathStateKey,
-} from '../shared/types/route-proxy';
+import { buildRouteApiKeyPriorityKey, buildRoutePathStateKey } from '../shared/types/route-proxy';
 import type {
   RouteRequestLogItem,
   RouteModelDisplayItem,
@@ -38,9 +34,6 @@ const mockGetRequestLogs = vi.fn();
 const mockOnRequestLogAppended = vi.fn();
 const mockLoadConfig = vi.fn();
 const mockCreateApiToken = vi.fn();
-const mockFetchCliProbeData = vi.fn();
-const mockRunProbeNow = vi.fn();
-const mockSaveCliProbeConfig = vi.fn();
 const mockSaveCliModelSelections = vi.fn();
 const mockSaveCliThinkingEffortSelections = vi.fn();
 const mockSaveServerConfig = vi.fn();
@@ -71,17 +64,10 @@ type MockElectronApi = {
 type MockRouteStoreShape = {
   config: RoutingConfig;
   loading: boolean;
-  cliProbeView: [];
-  cliProbeTimeRange: '7d';
-  cliProbeLoaded: boolean;
-  cliProbeError: null;
   serverRunning: boolean;
   refreshRuntimeState: typeof mockRefreshRuntimeState;
   rebuildModelRegistry: typeof mockRebuildModelRegistry;
   syncModelRegistrySources: typeof mockSyncModelRegistrySources;
-  fetchCliProbeData: typeof mockFetchCliProbeData;
-  runProbeNow: typeof mockRunProbeNow;
-  saveCliProbeConfig: typeof mockSaveCliProbeConfig;
   saveCliModelSelections: typeof mockSaveCliModelSelections;
   saveCliThinkingEffortSelections: typeof mockSaveCliThinkingEffortSelections;
   saveServerConfig: typeof mockSaveServerConfig;
@@ -112,17 +98,10 @@ vi.mock('../renderer/store/routeStore', () => ({
     selector({
       config: mockConfig,
       loading: false,
-      cliProbeView: [],
-      cliProbeTimeRange: '7d',
-      cliProbeLoaded: true,
-      cliProbeError: null,
       serverRunning: true,
       refreshRuntimeState: mockRefreshRuntimeState,
       rebuildModelRegistry: mockRebuildModelRegistry,
       syncModelRegistrySources: mockSyncModelRegistrySources,
-      fetchCliProbeData: mockFetchCliProbeData,
-      runProbeNow: mockRunProbeNow,
-      saveCliProbeConfig: mockSaveCliProbeConfig,
       saveCliModelSelections: mockSaveCliModelSelections,
       saveCliThinkingEffortSelections: mockSaveCliThinkingEffortSelections,
       saveServerConfig: mockSaveServerConfig,
@@ -208,8 +187,6 @@ function createSource(overrides: Partial<RouteModelSourceRef>): RouteModelSource
 }
 
 function createCustomCliStoreConfig(overrides: Partial<CustomCliConfig> = {}): CustomCliConfig {
-  const testedAt = 1_800_000_001_000;
-
   return {
     id: 'duckcoding',
     name: 'DuckCoding',
@@ -228,18 +205,10 @@ function createCustomCliStoreConfig(overrides: Partial<CustomCliConfig> = {}): C
       claudeCode: {
         enabled: false,
         model: null,
-        testModels: [],
-        testState: null,
       },
       codex: {
         enabled: true,
         model: 'duckcoding',
-        testModels: ['duckcoding'],
-        testState: {
-          status: true,
-          testedAt,
-          slots: [{ model: 'duckcoding', success: true, timestamp: testedAt }, null, null],
-        },
       },
     },
     createdAt: 1,
@@ -629,7 +598,6 @@ function createModelRegistryConfig(): RouteModelRegistryConfig {
 function createRoutingConfig(
   options: { includeSuccessfulPathState?: boolean } = {}
 ): RoutingConfig {
-  const claudeProbeKey = buildProbeKey('site-1', 'acc-1', 'claudeCode', 'claude-opus-4-6');
   const disabledPathState = {
     routeRuleId: 'rule-claude',
     siteId: 'site-1',
@@ -680,34 +648,6 @@ function createRoutingConfig(
 
   return {
     modelRegistry: createModelRegistryConfig(),
-    cliProbe: {
-      config: { enabled: true, intervalMinutes: 240 },
-      latest: {
-        [claudeProbeKey]: {
-          probeKey: claudeProbeKey,
-          siteId: 'site-1',
-          accountId: 'acc-1',
-          cliType: 'claudeCode',
-          canonicalModel: 'claude-opus-4-6',
-          rawModel: 'claude-opus-4.6-20260201',
-          healthy: true,
-          lastSample: {
-            sampleId: 'sample-claude-opus',
-            probeKey: claudeProbeKey,
-            siteId: 'site-1',
-            accountId: 'acc-1',
-            cliType: 'claudeCode',
-            canonicalModel: 'claude-opus-4-6',
-            rawModel: 'claude-opus-4.6-20260201',
-            success: true,
-            source: 'routeProbe',
-            testedAt: 100,
-          },
-          lastSuccessAt: 100,
-        },
-      },
-      history: {},
-    },
     cliModelSelections: {
       claudeCode: 'claude-opus-4-6',
       codex: 'gpt-5.4',
@@ -929,9 +869,6 @@ beforeEach(() => {
   mockSyncModelRegistrySources.mockReset().mockResolvedValue(createModelRegistryConfig());
   mockRefreshRuntimeState.mockReset().mockResolvedValue(undefined);
   mockResetPathStates.mockReset().mockResolvedValue(1);
-  mockFetchCliProbeData.mockReset().mockResolvedValue(undefined);
-  mockRunProbeNow.mockReset().mockResolvedValue(null);
-  mockSaveCliProbeConfig.mockReset().mockResolvedValue(undefined);
   mockSaveCliModelSelections.mockReset().mockResolvedValue(undefined);
   mockSaveCliThinkingEffortSelections.mockReset().mockResolvedValue(undefined);
   mockSaveServerConfig.mockReset().mockResolvedValue(undefined);
@@ -1918,113 +1855,6 @@ describe('route workbench redesign', () => {
     expect(within(candidateList).getByText('1 站点 / 1 来源')).toBeInTheDocument();
   });
 
-  it('shows custom CLI local test results after covered models in priority details', async () => {
-    const registry = createModelRegistryConfig();
-    const customCliSource = registry.sources.find(source => source.originalModel === 'duckcoding')!;
-
-    mockConfig = {
-      ...mockConfig,
-      modelRegistry: {
-        ...registry,
-        entries: {
-          ...registry.entries,
-          'duckcoding-route': {
-            canonicalName: 'duckcoding-route',
-            vendor: 'unknown',
-            aliases: [customCliSource.originalModel],
-            sources: [customCliSource],
-            hasOverride: true,
-            createdAt: 90,
-            updatedAt: 90,
-          },
-        },
-        displayItems: [
-          ...registry.displayItems,
-          {
-            id: 'manual:duckcoding-route',
-            vendor: 'unknown',
-            canonicalName: 'duckcoding-route',
-            sourceKeys: [customCliSource.sourceKey],
-            originalModelOrder: [customCliSource.originalModel],
-            priorityConfig: {
-              sitePriorities: {},
-              apiKeyPriorities: {},
-            },
-            mode: 'manual',
-            createdAt: 90,
-            updatedAt: 90,
-          },
-        ],
-      },
-      cliProbe: {
-        ...mockConfig.cliProbe,
-        latest: {},
-        history: {},
-      },
-    };
-    useCustomCliConfigStore.setState({
-      configs: [createCustomCliStoreConfig()],
-    });
-
-    render(<ModelRedirectionTab />);
-    await screen.findByText('duckcoding-route');
-    selectRedirectRow('duckcoding-route');
-
-    const detailPane = await findPriorityDetailPane();
-
-    await waitFor(() => {
-      expect(within(detailPane).getByText('直连')).toBeInTheDocument();
-      expect(within(detailPane).getByTitle('DuckCoding')).toBeInTheDocument();
-      expect(within(detailPane).queryByText('自定义 CLI / DuckCoding')).not.toBeInTheDocument();
-      expect(
-        within(detailPane).queryByText(/自定义 CLI \/ custom-cli \/ 倍率/u)
-      ).not.toBeInTheDocument();
-      expect(within(detailPane).getByText('DuckCoding Key（×0.001）')).toBeInTheDocument();
-      expect(within(detailPane).getByText('duckcoding（↑$2 ↓$4 / 测试通过）')).toBeInTheDocument();
-    });
-  });
-
-  it('omits failure codes after original model test results in priority details', async () => {
-    const claudeProbeKey = buildProbeKey('site-1', 'acc-1', 'claudeCode', 'claude-opus-4-6');
-    const latestProbe = mockConfig.cliProbe.latest[claudeProbeKey]!;
-
-    mockConfig = {
-      ...mockConfig,
-      cliProbe: {
-        ...mockConfig.cliProbe,
-        latest: {
-          ...mockConfig.cliProbe.latest,
-          [claudeProbeKey]: {
-            ...latestProbe,
-            healthy: false,
-            lastSample: {
-              ...latestProbe.lastSample,
-              success: false,
-              statusCode: 503,
-              error: 'status code 503: upstream unavailable',
-              testedAt: 101,
-            },
-            lastSuccessAt: undefined,
-            lastFailureAt: 101,
-          },
-        },
-      },
-    };
-
-    render(<ModelRedirectionTab />);
-
-    const detailPane = await findPriorityDetailPane();
-
-    await waitFor(() => {
-      expect(
-        within(detailPane).getAllByText('claude-opus-4.6-20260201（↑$0.001 ↓$0.002 / 测试失败）')
-          .length
-      ).toBeGreaterThan(0);
-    });
-    expect(within(detailPane).queryByText(/HTTP503|错误码\s*503/)).not.toBeInTheDocument();
-    expect(within(detailPane).queryByTitle(/HTTP503|错误码\s*503/)).not.toBeInTheDocument();
-  });
-
   it('keeps all override-only original models when a stale entry has partial sources', () => {
     const registry = createModelRegistryConfig();
     const gptSource = registry.sources.find(source => source.originalModel === 'gpt-5-latest')!;
@@ -2230,11 +2060,10 @@ describe('route workbench redesign', () => {
         within(detailPane).getByText('backup-site-key（Backup / team-delta / ×2）')
       ).toBeInTheDocument();
       expect(
-        within(detailPane).getAllByText('claude-opus-4.6-20260201（↑$0.001 ↓$0.002 / 测试通过）')
-          .length
+        within(detailPane).getAllByText('claude-opus-4.6-20260201（↑$0.001 ↓$0.002）').length
       ).toBeGreaterThan(0);
       expect(
-        within(detailPane).getByText('claude-haiku-4.5-20251001（↑$1 ↓$3 / 未测试）')
+        within(detailPane).getByText('claude-haiku-4.5-20251001（↑$1 ↓$3）')
       ).toBeInTheDocument();
     });
     const apiKeyRows = within(detailPane).getAllByTestId('priority-detail-api-key-row');

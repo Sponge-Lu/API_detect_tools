@@ -1,11 +1,10 @@
 import * as path from 'path';
 import { app } from 'electron';
 import type {
+  EndpointTestTargetState,
   RouteAnalyticsBucket,
   RouteChannelHealth,
   RouteChannelStats,
-  RouteCliProbeLatest,
-  RouteCliProbeSample,
   RouteEndpointCapabilityState,
   RouteModelSourceRef,
   RoutePathState,
@@ -14,15 +13,13 @@ import type {
 import { readJsonFile, writeJsonFileAtomically } from './utils/atomic-json';
 
 const ROUTE_RUNTIME_STATE_VERSION = '1';
-const ROUTE_PROBES_STATE_VERSION = '1';
+const ROUTE_ENDPOINT_TESTS_STATE_VERSION = '1';
 const ROUTE_ANALYTICS_STATE_VERSION = '1';
 const ROUTE_MODEL_SOURCES_STATE_VERSION = '1';
 const MAX_ROUTE_RUNTIME_ITEMS = 5000;
-const MAX_ROUTE_PROBE_HISTORY_SAMPLES = 10000;
 const MAX_ROUTE_ANALYTICS_BUCKETS = 50000;
 const MAX_ROUTE_MODEL_SOURCES = 20000;
 const ROUTE_RUNTIME_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
-const ROUTE_PROBE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const ROUTE_ANALYTICS_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface RouteRuntimeStateFile {
@@ -34,10 +31,9 @@ export interface RouteRuntimeStateFile {
   last_updated: number;
 }
 
-export interface RouteProbesStateFile {
+export interface RouteEndpointTestsStateFile {
   version: string;
-  latest: Record<string, RouteCliProbeLatest>;
-  history: Record<string, RouteCliProbeSample[]>;
+  targets: Record<string, EndpointTestTargetState>;
   last_updated: number;
 }
 
@@ -55,9 +51,17 @@ export interface RouteModelSourcesStateFile {
 
 export interface RouteStateSnapshot {
   runtime: RouteRuntimeStateFile;
-  probes: RouteProbesStateFile;
+  endpointTests: RouteEndpointTestsStateFile;
   analytics: RouteAnalyticsStateFile;
   modelSources: RouteModelSourcesStateFile;
+}
+
+function emptyRouteEndpointTestsState(): RouteEndpointTestsStateFile {
+  return {
+    version: ROUTE_ENDPOINT_TESTS_STATE_VERSION,
+    targets: {},
+    last_updated: 0,
+  };
 }
 
 function emptyRouteRuntimeState(): RouteRuntimeStateFile {
@@ -67,15 +71,6 @@ function emptyRouteRuntimeState(): RouteRuntimeStateFile {
     routePathStates: {},
     routeEndpointCapabilities: {},
     health: {},
-    last_updated: 0,
-  };
-}
-
-function emptyRouteProbesState(): RouteProbesStateFile {
-  return {
-    version: ROUTE_PROBES_STATE_VERSION,
-    latest: {},
-    history: {},
     last_updated: 0,
   };
 }
@@ -108,12 +103,11 @@ function normalizeRouteRuntimeState(value: unknown): RouteRuntimeStateFile {
   };
 }
 
-function normalizeRouteProbesState(value: unknown): RouteProbesStateFile {
-  const partial = (value || {}) as Partial<RouteProbesStateFile>;
+function normalizeRouteEndpointTestsState(value: unknown): RouteEndpointTestsStateFile {
+  const partial = (value || {}) as Partial<RouteEndpointTestsStateFile>;
   return {
-    version: partial.version || ROUTE_PROBES_STATE_VERSION,
-    latest: partial.latest || {},
-    history: partial.history || {},
+    version: partial.version || ROUTE_ENDPOINT_TESTS_STATE_VERSION,
+    targets: partial.targets || {},
     last_updated: partial.last_updated || 0,
   };
 }
@@ -157,28 +151,6 @@ function keepNewestRecordEntries<T>(
   );
 }
 
-function compactProbeHistory(
-  history: Record<string, RouteCliProbeSample[]>,
-  now: number
-): Record<string, RouteCliProbeSample[]> {
-  const cutoff = now - ROUTE_PROBE_RETENTION_MS;
-  const allSamples = Object.values(history)
-    .flat()
-    .filter(sample => sample.testedAt >= cutoff)
-    .sort((left, right) => right.testedAt - left.testedAt)
-    .slice(0, MAX_ROUTE_PROBE_HISTORY_SAMPLES);
-  const compacted: Record<string, RouteCliProbeSample[]> = {};
-
-  for (const sample of allSamples.sort((left, right) => left.testedAt - right.testedAt)) {
-    if (!compacted[sample.probeKey]) {
-      compacted[sample.probeKey] = [];
-    }
-    compacted[sample.probeKey].push(sample);
-  }
-
-  return compacted;
-}
-
 export class RouteStateManager {
   private stateDir: string;
 
@@ -190,8 +162,8 @@ export class RouteStateManager {
     return path.join(this.stateDir, 'route-runtime.json');
   }
 
-  getRouteProbesPath(): string {
-    return path.join(this.stateDir, 'route-probes.json');
+  getRouteEndpointTestsPath(): string {
+    return path.join(this.stateDir, 'route-endpoint-tests.json');
   }
 
   getRouteAnalyticsPath(): string {
@@ -203,14 +175,14 @@ export class RouteStateManager {
   }
 
   async loadSnapshot(): Promise<RouteStateSnapshot> {
-    const [runtime, probes, analytics, modelSources] = await Promise.all([
+    const [runtime, endpointTests, analytics, modelSources] = await Promise.all([
       readJsonFile(this.getRouteRuntimePath(), {
         defaultValue: emptyRouteRuntimeState(),
         normalize: normalizeRouteRuntimeState,
       }),
-      readJsonFile(this.getRouteProbesPath(), {
-        defaultValue: emptyRouteProbesState(),
-        normalize: normalizeRouteProbesState,
+      readJsonFile(this.getRouteEndpointTestsPath(), {
+        defaultValue: emptyRouteEndpointTestsState(),
+        normalize: normalizeRouteEndpointTestsState,
       }),
       readJsonFile(this.getRouteAnalyticsPath(), {
         defaultValue: emptyRouteAnalyticsState(),
@@ -222,7 +194,7 @@ export class RouteStateManager {
       }),
     ]);
 
-    return { runtime, probes, analytics, modelSources };
+    return { runtime, endpointTests, analytics, modelSources };
   }
 
   applySnapshotToRouting(routing: RoutingConfig, snapshot: RouteStateSnapshot): void {
@@ -236,8 +208,7 @@ export class RouteStateManager {
       ...(routing.routeEndpointCapabilities || {}),
     };
     routing.health = { ...snapshot.runtime.health, ...routing.health };
-    routing.cliProbe.latest = { ...snapshot.probes.latest, ...routing.cliProbe.latest };
-    routing.cliProbe.history = { ...snapshot.probes.history, ...routing.cliProbe.history };
+    routing.endpointTests = { ...snapshot.endpointTests.targets, ...routing.endpointTests };
     routing.analytics.buckets = {
       ...snapshot.analytics.buckets,
       ...routing.analytics.buckets,
@@ -251,10 +222,23 @@ export class RouteStateManager {
   async saveSnapshotFromRouting(routing: RoutingConfig): Promise<void> {
     await Promise.all([
       this.saveRuntimeState(routing),
-      this.saveProbesState(routing),
+      this.saveEndpointTestsState(routing),
       this.saveAnalyticsState(routing),
       this.saveModelSourcesState(routing),
     ]);
+  }
+
+  async saveEndpointTestsState(routing: RoutingConfig): Promise<void> {
+    const now = Date.now();
+    await writeJsonFileAtomically(this.getRouteEndpointTestsPath(), {
+      version: ROUTE_ENDPOINT_TESTS_STATE_VERSION,
+      targets: keepNewestRecordEntries(
+        routing.endpointTests,
+        MAX_ROUTE_RUNTIME_ITEMS,
+        value => value.updatedAt || 0
+      ),
+      last_updated: now,
+    } satisfies RouteEndpointTestsStateFile);
   }
 
   async saveRuntimeState(routing: RoutingConfig): Promise<void> {
@@ -287,21 +271,6 @@ export class RouteStateManager {
       ),
       last_updated: now,
     } satisfies RouteRuntimeStateFile);
-  }
-
-  async saveProbesState(routing: RoutingConfig): Promise<void> {
-    const now = Date.now();
-    await writeJsonFileAtomically(this.getRouteProbesPath(), {
-      version: ROUTE_PROBES_STATE_VERSION,
-      latest: keepNewestRecordEntries(
-        routing.cliProbe.latest,
-        MAX_ROUTE_RUNTIME_ITEMS,
-        value => value.lastSample?.testedAt || value.lastSuccessAt || value.lastFailureAt || 0,
-        { now, maxAgeMs: ROUTE_PROBE_RETENTION_MS }
-      ),
-      history: compactProbeHistory(routing.cliProbe.history, now),
-      last_updated: now,
-    } satisfies RouteProbesStateFile);
   }
 
   async saveAnalyticsState(routing: RoutingConfig): Promise<void> {

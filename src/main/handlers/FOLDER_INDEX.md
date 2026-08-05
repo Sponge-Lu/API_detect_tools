@@ -37,7 +37,7 @@
 | **detection-handlers.ts** | 站点检测、签到与刷新处理，多账户刷新按 `site_type` 选择 token 续期路径，签到按 `accountId` 解析账户凭证 | `detect-site`, `checkin-and-refresh` |
 | **overview-handlers.ts** | 数据总览处理 | `overview:get-site-daily-snapshots` |
 | **route-handlers.ts** | 路由代理与统计处理 | `route:get-analytics-summary`, `route:get-analytics-distribution`, `route:get-object-stats`, `route:get-request-logs` |
-| **cli-compat-handlers.ts** | CLI 兼容性测试与配置处理；手动探测仅接受 Claude Code / Codex，托管站点 CLI 配置保存到账户级 `cli_config`，站点级 `cli_config` 仅作 legacy fallback | `cli-compat:test-with-wrapper`, `cli-compat:save-result`, `cli-compat:save-config` |
+| **cli-compat-handlers.ts** | 本地 CLI 配置读取、写入与托管站点 CLI 配置保存；站点级 `cli_config` 仅作 legacy fallback | `cli-compat:save-config`, `cli-compat:write-config` |
 | **custom-cli-config-handlers.ts** | 自定义 CLI 配置处理；保存后强制同步路由模型 registry，避免旧自定义 CLI 模型继续出现在路由模型选择中 | `custom-cli-config:load`, `custom-cli-config:save`, `custom-cli-config:fetch-models` |
 
 ---
@@ -143,8 +143,6 @@ try {
 
 | 事件 | 请求参数 | 响应数据 | 职责 |
 |------|---------|--------|------|
-| `cli-compat:test-with-wrapper` | `{ siteUrl, configs }` | `{ results: [...] }` | 使用真实 CLI wrapper 测试 CLI 兼容性 |
-| `cli-compat:save-result` | `{ siteUrl, result }` | `{ success }` | 保存测试结果，并写入 `routing.cliProbe.latest/history` 供站点页、配置抽屉和 CLI 可用性视图共用 |
 | `cli-compat:save-config` | `{ siteUrl, cliConfig }` | `{ success }` | 保存 CLI 配置 |
 | `cli-compat:write-config` | `{ cliType, files, applyMode }` | `{ success, writtenPaths }` | 写入配置文件 |
 

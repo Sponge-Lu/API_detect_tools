@@ -62,16 +62,12 @@ import type {
   RouteChannelHealth,
   RouteOutcome,
   RouteCliType,
-  RouteCliProbeSource,
   RouteModelRegistryConfig,
   RouteModelMappingOverride,
   RouteModelDisplayItem,
   RouteDisplayItemPriorityConfig,
   RouteModelVendor,
   RouteVendorPriorityConfig,
-  RouteCliProbeConfig,
-  RouteCliProbeSample,
-  RouteCliProbeLatest,
   RouteAnalyticsConfig,
   RouteAnalyticsBucket,
 } from '../shared/types/route-proxy';
@@ -80,21 +76,17 @@ import {
   BUILTIN_CLI_TYPES,
   CLI_TARGET_PROTOCOLS,
   DEFAULT_CLI_CONFIG,
-  getCliTargetEndpoint,
   normalizeCliTargetProtocol,
   type CliTargetProtocol,
 } from '../shared/types/cli-config';
 import {
   DEFAULT_ROUTING_CONFIG,
-  DEFAULT_CLI_PROBE_CONFIG,
   DEFAULT_ANALYTICS_CONFIG,
   DEFAULT_MODEL_REGISTRY_CONFIG,
   buildRouteEndpointCapabilityKey,
   buildStatsKey,
   buildRoutePathStateKey,
-  buildProbeKey,
   buildBucketKey,
-  buildSiteScopedProbeAccountId,
   normalizeRouteCliSelection,
   normalizeRouteThinkingEffortSelections,
   normalizeRouteRuntimeConfig,
@@ -171,34 +163,6 @@ function normalizeCliConfigTargetProtocols(
       item.targetProtocol = normalizeCliTargetProtocol(item.targetProtocol);
     } else {
       delete item.targetProtocol;
-    }
-  }
-}
-
-/**
- * 规范化 CLI 配置的测试模型列表（当前版本只支持 1 个测试模型）
- * 如果发现多个测试模型（旧版本遗留），自动截断为只保留第一个
- */
-function normalizeCliConfigTestModels(
-  cliConfig?: Partial<Record<RouteCliType, { testModels?: string[] | null } | null>> | null
-): void {
-  if (!cliConfig) {
-    return;
-  }
-
-  for (const cliType of ROUTE_CLI_TYPES) {
-    const item = cliConfig[cliType];
-    if (!item || !Array.isArray(item.testModels)) {
-      continue;
-    }
-
-    // 如果有多个测试模型，只保留第一个
-    if (item.testModels.length > 1) {
-      const originalCount = item.testModels.length;
-      item.testModels = [item.testModels[0]];
-      Logger.info(
-        `🔧 [UnifiedConfigManager] 规范化 CLI 配置: ${cliType} 测试模型从 ${originalCount} 个截断为 1 个`
-      );
     }
   }
 }
@@ -583,7 +547,7 @@ export class UnifiedConfigManager {
       needsSave = true;
     }
     const hydratedConfig = this.applyRuntimeCacheToConfig(config, runtimeCache);
-    if (this.migrateLegacyCliCompatibilityToRouteCliProbe(hydratedConfig)) {
+    if (this.cleanupLegacyCliCompatibility(hydratedConfig)) {
       needsSave = true;
     }
 
@@ -860,11 +824,7 @@ export class UnifiedConfigManager {
               sources: [],
               lastAggregatedAt: undefined,
             },
-            cliProbe: {
-              config: { ...config.routing.cliProbe.config },
-              latest: {},
-              history: {},
-            },
+            endpointTests: {},
             analytics: {
               config: { ...config.routing.analytics.config },
               buckets: {},
@@ -884,8 +844,7 @@ export class UnifiedConfigManager {
       Object.keys(routing.stats || {}).length > 0 ||
       Object.keys(routing.routePathStates || {}).length > 0 ||
       Object.keys(routing.health || {}).length > 0 ||
-      Object.keys(routing.cliProbe?.latest || {}).length > 0 ||
-      Object.keys(routing.cliProbe?.history || {}).length > 0 ||
+      Object.keys(routing.endpointTests || {}).length > 0 ||
       Object.keys(routing.analytics?.buckets || {}).length > 0 ||
       (routing.modelRegistry?.sources || []).length > 0 ||
       routing.modelRegistry?.lastAggregatedAt !== undefined
@@ -1133,6 +1092,7 @@ export class UnifiedConfigManager {
     if (!r.routePathStates) r.routePathStates = {};
     if (!r.routeEndpointCapabilities) r.routeEndpointCapabilities = {};
     if (!r.health) r.health = {};
+    if (!r.endpointTests) r.endpointTests = {};
     if (!r.cliModelSelections)
       r.cliModelSelections = { ...DEFAULT_ROUTING_CONFIG.cliModelSelections };
     r.cliThinkingEffortSelections = normalizeRouteThinkingEffortSelections(
@@ -1160,13 +1120,6 @@ export class UnifiedConfigManager {
         normalizeVendorPriorityConfig(priorityConfig),
       ])
     ) as Partial<Record<RouteModelVendor, RouteVendorPriorityConfig>>;
-    if (!r.cliProbe) {
-      r.cliProbe = { config: { ...DEFAULT_CLI_PROBE_CONFIG }, latest: {}, history: {} };
-    } else {
-      if (!r.cliProbe.config) r.cliProbe.config = { ...DEFAULT_CLI_PROBE_CONFIG };
-      if (!r.cliProbe.latest) r.cliProbe.latest = {};
-      if (!r.cliProbe.history) r.cliProbe.history = {};
-    }
     if (!r.analytics) {
       r.analytics = { config: { ...DEFAULT_ANALYTICS_CONFIG }, buckets: {} };
     } else {
@@ -1199,9 +1152,6 @@ export class UnifiedConfigManager {
         account.cli_config as Partial<
           Record<RouteCliType, { targetProtocol?: CliTargetProtocol | null } | null>
         >
-      );
-      normalizeCliConfigTestModels(
-        account.cli_config as Partial<Record<RouteCliType, { testModels?: string[] | null } | null>>
       );
     }
 
@@ -1245,78 +1195,6 @@ export class UnifiedConfigManager {
         return [buildStatsKey(normalizedHealth), normalizedHealth];
       })
     );
-
-    const normalizedProbeLatest: Record<string, RouteCliProbeLatest> = {};
-    for (const latest of Object.values(r.cliProbe.latest || {})) {
-      const targetProtocol = normalizeCliTargetProtocol(
-        latest?.targetProtocol ?? latest?.lastSample?.targetProtocol
-      );
-      const normalizedProbeKey = buildProbeKey(
-        latest.siteId,
-        latest.accountId,
-        latest.cliType,
-        latest.canonicalModel,
-        targetProtocol
-      );
-      const normalizedLastSample: RouteCliProbeSample = {
-        ...latest.lastSample,
-        targetProtocol,
-        targetEndpoint:
-          latest.lastSample?.targetEndpoint ||
-          getCliTargetEndpoint(
-            latest.cliType,
-            targetProtocol,
-            latest.lastSample?.rawModel || latest.lastSample?.canonicalModel
-          ),
-        probeKey: normalizedProbeKey,
-      };
-      normalizedProbeLatest[normalizedProbeKey] = {
-        ...latest,
-        targetProtocol,
-        targetEndpoint:
-          latest.targetEndpoint ||
-          normalizedLastSample.targetEndpoint ||
-          getCliTargetEndpoint(
-            latest.cliType,
-            targetProtocol,
-            latest.rawModel || latest.canonicalModel
-          ),
-        probeKey: normalizedProbeKey,
-        lastSample: normalizedLastSample,
-      };
-    }
-    r.cliProbe.latest = normalizedProbeLatest;
-
-    const normalizedProbeHistory: Record<string, RouteCliProbeSample[]> = {};
-    for (const samples of Object.values(r.cliProbe.history || {})) {
-      for (const sample of samples || []) {
-        const targetProtocol = normalizeCliTargetProtocol(sample?.targetProtocol);
-        const normalizedProbeKey = buildProbeKey(
-          sample.siteId,
-          sample.accountId,
-          sample.cliType,
-          sample.canonicalModel,
-          targetProtocol
-        );
-        const normalizedSample: RouteCliProbeSample = {
-          ...sample,
-          targetProtocol,
-          targetEndpoint:
-            sample.targetEndpoint ||
-            getCliTargetEndpoint(
-              sample.cliType,
-              targetProtocol,
-              sample.rawModel || sample.canonicalModel
-            ),
-          probeKey: normalizedProbeKey,
-        };
-        normalizedProbeHistory[normalizedProbeKey] = [
-          ...(normalizedProbeHistory[normalizedProbeKey] || []),
-          normalizedSample,
-        ];
-      }
-    }
-    r.cliProbe.history = normalizedProbeHistory;
 
     r.analytics.buckets = Object.fromEntries(
       Object.values(r.analytics.buckets || {}).map(bucket => {
@@ -1417,138 +1295,23 @@ export class UnifiedConfigManager {
     return changed;
   }
 
-  private migrateLegacyCliCompatibilityToRouteCliProbe(config: UnifiedConfig): boolean {
-    this.normalizeRoutingConfig(config);
-
-    const latest = config.routing!.cliProbe.latest;
+  private cleanupLegacyCliCompatibility(config: UnifiedConfig): boolean {
     let changed = false;
-    const legacyModel = '__legacy__compat__';
-    const cliTypes: RouteCliType[] = ROUTE_CLI_TYPES;
-
-    const getExistingLatestAt = (siteId: string, accountId: string, cliType: RouteCliType) =>
-      Object.values(latest)
-        .filter(
-          entry =>
-            entry.siteId === siteId && entry.accountId === accountId && entry.cliType === cliType
-        )
-        .reduce<number | null>(
-          (max, entry) =>
-            max === null || entry.lastSample.testedAt > max ? entry.lastSample.testedAt : max,
-          null
-        );
-
-    const shouldPersistCompat = (compat: any) =>
-      compat &&
-      (typeof compat.testedAt === 'number' ||
-        typeof compat.claudeCode === 'boolean' ||
-        typeof compat.codex === 'boolean' ||
-        typeof compat.openCode === 'boolean' ||
-        compat.codexDetail ||
-        compat.openCodeDetail ||
-        typeof compat.error === 'string');
-
-    const upsertLegacyLatest = (
-      siteId: string,
-      accountId: string,
-      compat: any,
-      source: RouteCliProbeSource
-    ) => {
-      if (!shouldPersistCompat(compat)) {
-        return;
-      }
-
-      const testedAt =
-        typeof compat.testedAt === 'number' && Number.isFinite(compat.testedAt)
-          ? compat.testedAt
-          : Date.now();
-
-      for (const cliType of cliTypes) {
-        const rawStatus = compat[cliType];
-        const hasStatus = typeof rawStatus === 'boolean';
-        const hasDetail =
-          (cliType === 'codex' && compat.codexDetail) ||
-          (cliType === 'openCode' && compat.openCodeDetail);
-        if (!hasStatus && !hasDetail && !compat.error) {
-          continue;
-        }
-
-        const existingLatestAt = getExistingLatestAt(siteId, accountId, cliType);
-        if (existingLatestAt !== null && existingLatestAt >= testedAt) {
-          continue;
-        }
-
-        const probeKey = buildProbeKey(siteId, accountId, cliType, legacyModel);
-        latest[probeKey] = {
-          probeKey,
-          siteId,
-          accountId,
-          cliType,
-          canonicalModel: legacyModel,
-          rawModel: legacyModel,
-          healthy: rawStatus === true,
-          lastSample: {
-            sampleId: `legacy_${siteId}_${accountId}_${cliType}`,
-            probeKey,
-            siteId,
-            accountId,
-            cliType,
-            canonicalModel: legacyModel,
-            rawModel: legacyModel,
-            success: rawStatus === true,
-            source,
-            error: typeof compat.error === 'string' ? compat.error : undefined,
-            codexDetail: cliType === 'codex' ? compat.codexDetail : undefined,
-            openCodeDetail: cliType === 'openCode' ? compat.openCodeDetail : undefined,
-            testedAt,
-          },
-          lastSuccessAt: rawStatus === true ? testedAt : undefined,
-          lastFailureAt: rawStatus === false ? testedAt : undefined,
-        };
-        changed = true;
-      }
+    const deleteLegacyField = (value: unknown): boolean => {
+      if (!value || typeof value !== 'object') return false;
+      const record = value as Record<string, unknown>;
+      if (record.cli_compatibility === undefined) return false;
+      delete record.cli_compatibility;
+      return true;
     };
 
     for (const account of config.accounts) {
-      upsertLegacyLatest(
-        account.site_id,
-        account.id,
-        account.cached_data?.cli_compatibility,
-        'legacyCache'
-      );
-      if (account.cached_data?.cli_compatibility !== undefined) {
-        delete account.cached_data.cli_compatibility;
-        changed = true;
-      }
+      changed = deleteLegacyField(account.cached_data) || changed;
     }
 
-    const siteIdsWithAccounts = new Set(config.accounts.map(account => account.site_id));
     for (const site of config.sites) {
-      if (siteIdsWithAccounts.has(site.id)) {
-        if (site.cached_data?.cli_compatibility !== undefined) {
-          delete site.cached_data.cli_compatibility;
-          changed = true;
-        }
-        if ((site as any).cli_compatibility !== undefined) {
-          delete (site as any).cli_compatibility;
-          changed = true;
-        }
-        continue;
-      }
-
-      upsertLegacyLatest(
-        site.id,
-        buildSiteScopedProbeAccountId(site.id),
-        site.cached_data?.cli_compatibility || (site as any).cli_compatibility,
-        'legacyCache'
-      );
-      if (site.cached_data?.cli_compatibility !== undefined) {
-        delete site.cached_data.cli_compatibility;
-        changed = true;
-      }
-      if ((site as any).cli_compatibility !== undefined) {
-        delete (site as any).cli_compatibility;
-        changed = true;
-      }
+      changed = deleteLegacyField(site.cached_data) || changed;
+      changed = deleteLegacyField(site) || changed;
     }
 
     return changed;
@@ -1614,13 +1377,6 @@ export class UnifiedConfigManager {
       return;
     }
     await routeStateManager.saveRuntimeState(this.config.routing);
-  }
-
-  private async saveRouteProbesState(): Promise<void> {
-    if (!this.config?.routing) {
-      return;
-    }
-    await routeStateManager.saveProbesState(this.config.routing);
   }
 
   private async saveRouteAnalyticsState(): Promise<void> {
@@ -2099,7 +1855,6 @@ export class UnifiedConfigManager {
     sites: (SiteConfig & {
       cached_data?: UnifiedSite['cached_data'];
       cli_config?: UnifiedSite['cli_config'];
-      cli_compatibility?: any;
     })[];
     accounts: AccountCredential[];
     settings: Settings;
@@ -2127,7 +1882,6 @@ export class UnifiedConfigManager {
       auto_refresh: site.auto_refresh, // 站点独立的自动刷新开关
       auto_refresh_interval: site.auto_refresh_interval, // 自动刷新间隔
       cached_data: undefined, // v3.0.6: 运行时缓存不再保存在配置中
-      cli_compatibility: (site as any).cli_compatibility, // 兼容旧版本数据结构（站点根级别）
     }));
 
     return {
@@ -2788,81 +2542,6 @@ export class UnifiedConfigManager {
       return true;
     }
     return false;
-  }
-
-  // ============= CLI 探测 =============
-
-  async updateRouteCliProbeConfig(
-    updates: Partial<RouteCliProbeConfig>
-  ): Promise<RouteCliProbeConfig> {
-    if (!this.config) throw new Error('Config not loaded');
-    this.normalizeRoutingConfig(this.config);
-    this.config.routing!.cliProbe.config = {
-      ...this.config.routing!.cliProbe.config,
-      ...updates,
-    };
-    await this.saveConfig();
-    return this.config.routing!.cliProbe.config;
-  }
-
-  async appendRouteCliProbeSamples(samples: RouteCliProbeSample[]): Promise<void> {
-    if (!this.config || samples.length === 0) return;
-    this.normalizeRoutingConfig(this.config);
-    const history = this.config.routing!.cliProbe.history;
-    for (const s of samples) {
-      if (!history[s.probeKey]) history[s.probeKey] = [];
-      history[s.probeKey].push(s);
-    }
-    await this.saveRouteProbesState();
-  }
-
-  async persistRouteCliProbeSamples(
-    samples: RouteCliProbeSample[],
-    latestList: RouteCliProbeLatest[]
-  ): Promise<void> {
-    if (!this.config || (samples.length === 0 && latestList.length === 0)) return;
-    this.normalizeRoutingConfig(this.config);
-    const cliProbe = this.config.routing!.cliProbe;
-    const history = cliProbe.history;
-    for (const s of samples) {
-      if (!history[s.probeKey]) history[s.probeKey] = [];
-      history[s.probeKey].push(s);
-    }
-    for (const l of latestList) {
-      cliProbe.latest[l.probeKey] = l;
-    }
-    const cutoff = Date.now() - cliProbe.config.retentionDays * 24 * 60 * 60 * 1000;
-    for (const key of Object.keys(history)) {
-      history[key] = history[key].filter(s => s.testedAt >= cutoff);
-      if (history[key].length === 0) delete history[key];
-    }
-    await this.saveRouteProbesState();
-  }
-
-  async upsertRouteCliProbeLatest(latestList: RouteCliProbeLatest[]): Promise<void> {
-    if (!this.config || latestList.length === 0) return;
-    this.normalizeRoutingConfig(this.config);
-    for (const l of latestList) {
-      this.config.routing!.cliProbe.latest[l.probeKey] = l;
-    }
-    await this.saveRouteProbesState();
-  }
-
-  async pruneRouteCliProbeHistory(retentionDays?: number, now?: number): Promise<number> {
-    if (!this.config) return 0;
-    this.normalizeRoutingConfig(this.config);
-    const days = retentionDays ?? this.config.routing!.cliProbe.config.retentionDays;
-    const cutoff = (now ?? Date.now()) - days * 24 * 60 * 60 * 1000;
-    const history = this.config.routing!.cliProbe.history;
-    let pruned = 0;
-    for (const key of Object.keys(history)) {
-      const before = history[key].length;
-      history[key] = history[key].filter(s => s.testedAt >= cutoff);
-      pruned += before - history[key].length;
-      if (history[key].length === 0) delete history[key];
-    }
-    if (pruned > 0) await this.saveRouteProbesState();
-    return pruned;
   }
 
   // ============= 分析统计 =============

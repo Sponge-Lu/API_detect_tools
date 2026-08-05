@@ -195,7 +195,7 @@ describe('overlay family redesign', () => {
       />
     );
 
-    fireEvent.click(screen.getByText('Claude Code').closest('[role="button"]') as HTMLElement);
+    fireEvent.click(screen.getByRole('button', { name: 'Claude Code 配置文件预览' }));
     fireEvent.click(screen.getByTitle('重置为默认配置'));
 
     await waitFor(() =>
@@ -221,6 +221,7 @@ describe('overlay family redesign', () => {
       />
     );
 
+    fireEvent.click(screen.getByRole('button', { name: 'Claude Code 配置文件预览' }));
     fireEvent.click(screen.getByTitle('重置为默认配置'));
 
     await waitFor(() =>

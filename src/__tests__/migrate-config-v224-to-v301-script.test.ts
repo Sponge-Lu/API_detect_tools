@@ -124,8 +124,8 @@ describe('migrate-config-v224-to-v301 script', () => {
     const routeRuntime = JSON.parse(
       await fs.readFile(path.join(tempDir, 'state', 'route-runtime.json'), 'utf-8')
     );
-    const routeProbes = JSON.parse(
-      await fs.readFile(path.join(tempDir, 'state', 'route-probes.json'), 'utf-8')
+    const routeEndpointTests = JSON.parse(
+      await fs.readFile(path.join(tempDir, 'state', 'route-endpoint-tests.json'), 'utf-8')
     );
     const routeAnalytics = JSON.parse(
       await fs.readFile(path.join(tempDir, 'state', 'route-analytics.json'), 'utf-8')
@@ -141,7 +141,8 @@ describe('migrate-config-v224-to-v301 script', () => {
     expect(config.accounts[0].cached_data).toBeUndefined();
     expect(config.accounts[0].cli_config.codex.targetProtocol).toBeUndefined();
     expect(config.routing.stats).toEqual({});
-    expect(config.routing.cliProbe.latest).toEqual({});
+    expect(config.routing.cliProbe).toBeUndefined();
+    expect(config.routing.endpointTests).toEqual({});
     expect(config.routing.analytics.buckets).toEqual({});
     expect(config.routing.modelRegistry.sources).toEqual([]);
     expect(config.routing.modelRegistry.lastAggregatedAt).toBeUndefined();
@@ -154,8 +155,7 @@ describe('migrate-config-v224-to-v301 script', () => {
       has_checkin: true,
     });
     expect(routeRuntime.stats['rule-1:site-1:acct-1:key-1'].successCount).toBe(1);
-    expect(routeProbes.latest.probe1.probeKey).toBe('probe1');
-    expect(routeProbes.history.probe1).toHaveLength(1);
+    expect(routeEndpointTests.targets).toEqual({});
     expect(routeAnalytics.buckets.bucket1.bucketKey).toBe('bucket1');
     expect(routeModelSources.sources).toEqual([expect.objectContaining({ sourceKey: 'source-1' })]);
   });
@@ -182,7 +182,7 @@ describe('migrate-config-v224-to-v301 script', () => {
               vendorPriorities: {},
               overrides: [],
             },
-            cliProbe: { config: {}, latest: {}, history: {} },
+            endpointTests: {},
             analytics: { config: {}, buckets: {} },
           },
           last_updated: 1,
@@ -203,13 +203,32 @@ describe('migrate-config-v224-to-v301 script', () => {
       }),
       'utf-8'
     );
+    await fs.writeFile(
+      path.join(tempDir, 'state', 'route-endpoint-tests.json'),
+      JSON.stringify({
+        version: '1',
+        targets: {
+          existing: {
+            targetKey: 'direct:existing',
+            protocols: {},
+            updatedAt: 2,
+          },
+        },
+        last_updated: 2,
+      }),
+      'utf-8'
+    );
 
     await runMigration(configPath);
 
     const routeRuntime = JSON.parse(
       await fs.readFile(path.join(tempDir, 'state', 'route-runtime.json'), 'utf-8')
     );
+    const routeEndpointTests = JSON.parse(
+      await fs.readFile(path.join(tempDir, 'state', 'route-endpoint-tests.json'), 'utf-8')
+    );
 
     expect(routeRuntime.stats.existing.successCount).toBe(2);
+    expect(routeEndpointTests.targets.existing.targetKey).toBe('direct:existing');
   });
 });

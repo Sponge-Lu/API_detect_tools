@@ -14,9 +14,6 @@ async function loadCliCompatHandlersModule() {
   const account = { id: 'acct-1', site_id: 'site-1', status: 'active' };
   const updateAccount = vi.fn(async () => true);
   const updateSite = vi.fn(async () => true);
-  const testClaudeCodeWithDetail = vi.fn();
-  const testCodexWithDetail = vi.fn();
-  const persistCliProbeSamples = vi.fn(async () => undefined);
 
   vi.doMock('electron', () => ({
     ipcMain: {
@@ -31,33 +28,6 @@ async function loadCliCompatHandlersModule() {
         error: vi.fn(),
       }),
     },
-  }));
-  vi.doMock('../main/cli-wrapper-compat-service', () => ({
-    cliWrapperCompatService: {
-      testClaudeCodeWithDetail,
-      testCodexWithDetail,
-    },
-  }));
-  vi.doMock('../main/route-cli-probe-service', () => ({
-    generateProbeRunId: vi.fn(() => 'manual_1'),
-    persistCliProbeSamples,
-  }));
-  vi.doMock('../main/custom-cli-config-service', () => ({
-    buildCustomCliRouteAccountId: vi.fn((id: string) => `custom-account:${id}`),
-    buildCustomCliRouteApiKeyId: vi.fn((id: string) => `custom-key:${id}`),
-    buildCustomCliRouteSiteId: vi.fn((id: string) => `custom-site:${id}`),
-    loadCustomCliConfigStorage: vi.fn(async () => ({ configs: [], activeConfigId: null })),
-  }));
-  vi.doMock('../main/route-model-registry-service', () => ({
-    resolveApiKeyId: vi.fn((apiKey: { id?: number | string; key?: string }) =>
-      String(apiKey.id ?? apiKey.key ?? 'unknown')
-    ),
-  }));
-  vi.doMock('../main/route-proxy-service', () => ({
-    ensureRouteProxyReady: vi.fn(async () => ({ baseUrl: 'http://127.0.0.1:3210' })),
-  }));
-  vi.doMock('../main/route-probe-lock', () => ({
-    buildProbeLockRouteApiKey: vi.fn(() => 'probe-lock:key'),
   }));
   vi.doMock('../main/unified-config-manager', () => ({
     unifiedConfigManager: {
@@ -74,9 +44,6 @@ async function loadCliCompatHandlersModule() {
     registeredHandlers,
     updateAccount,
     updateSite,
-    testClaudeCodeWithDetail,
-    testCodexWithDetail,
-    persistCliProbeSamples,
   };
 }
 
@@ -86,80 +53,14 @@ afterEach(() => {
 });
 
 describe('cli compat handlers', () => {
-  it('rejects OpenCode manual probe payloads before invoking an executor', async () => {
-    const {
-      registerCliCompatHandlers,
-      registeredHandlers,
-      testClaudeCodeWithDetail,
-      testCodexWithDetail,
-    } = await loadCliCompatHandlersModule();
-
-    registerCliCompatHandlers();
-    const testHandler = registeredHandlers.get('cli-compat:test-with-wrapper');
-
-    await expect(
-      testHandler?.(
-        {},
-        {
-          siteUrl: 'https://demo.example.com',
-          configs: [
-            {
-              cliType: 'openCode',
-              apiKey: 'sk-test',
-              model: 'gpt-4.1',
-            },
-          ],
-        }
-      )
-    ).resolves.toEqual({
-      success: false,
-      error: 'CLI probe is not supported for: openCode',
-    });
-    expect(testClaudeCodeWithDetail).not.toHaveBeenCalled();
-    expect(testCodexWithDetail).not.toHaveBeenCalled();
-  });
-
-  it('rejects forged OpenCode samples before persisting manual probe history', async () => {
-    const { registerCliCompatHandlers, registeredHandlers, persistCliProbeSamples } =
-      await loadCliCompatHandlersModule();
-
-    registerCliCompatHandlers();
-    const saveHandler = registeredHandlers.get('cli-compat:save-result');
-
-    await expect(
-      saveHandler?.(
-        {},
-        'https://demo.example.com',
-        {
-          claudeCode: null,
-          codex: null,
-          openCode: true,
-          testedAt: Date.now(),
-        },
-        'acct-1',
-        [
-          {
-            cliType: 'openCode',
-            model: 'gpt-4.1',
-            success: true,
-            testedAt: Date.now(),
-          },
-        ]
-      )
-    ).resolves.toEqual({
-      success: false,
-      error: 'CLI probe is not supported for: openCode',
-    });
-    expect(persistCliProbeSamples).not.toHaveBeenCalled();
-  });
-
   it('saves managed CLI config to the selected account instead of the site', async () => {
     const { registerCliCompatHandlers, registeredHandlers, updateAccount, updateSite } =
       await loadCliCompatHandlersModule();
     const cliConfig = {
       codex: {
         enabled: true,
-        testModels: ['account-model'],
+        model: 'account-model',
+        apiKeyId: 1,
       },
     };
 

@@ -79,14 +79,6 @@ interface RuntimeCacheFile {
   site_daily_snapshots_by_site_id: Record<string, SiteDailySnapshot[]>;
 }
 
-interface CliCompatibilityData {
-  claudeCode: boolean | null;
-  claudeDetail?: { replyText?: string };
-  claudeError?: string;
-  codex: boolean | null;
-  codexDetail?: { responses: boolean | null; replyText?: string };
-}
-
 type ApiKeyAvailability = 'active' | 'inactive' | 'unknown';
 function getApiKeyAvailability(apiKey): ApiKeyAvailability;
 function isApiKeyActive(apiKey): boolean;
@@ -94,14 +86,14 @@ function isApiKeyActive(apiKey): boolean;
 
 ### route-proxy.ts
 
-**职责**: 路由工作台共享契约，覆盖代理服务、模型注册表、CLI 探测和统计配置
+**职责**: 路由工作台共享契约，覆盖代理服务、模型注册表、独立端点测试和统计配置
 
 **关键类型**:
 ```typescript
 interface RoutingConfig {
   server: RouteProxyServerConfig;
   modelRegistry: RouteModelRegistryConfig;
-  cliProbe: RouteCliProbeConfig;
+  endpointTests: Record<string, EndpointTestTargetState>;
   analytics: RouteAnalyticsConfig;
 }
 
@@ -127,13 +119,6 @@ interface CliConfig {
   enabled: boolean;
   model?: string;
   // ... 其他字段
-}
-
-interface CliCompatibility {
-  tool: string;
-  supported: boolean;
-  claudeDetail?: { replyText?: string };
-  codexDetail?: { responses: boolean | null };
 }
 
 ```

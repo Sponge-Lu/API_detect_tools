@@ -7,12 +7,11 @@ const os = require('os');
 const CONFIG_VERSION = '3.1';
 const RUNTIME_CACHE_VERSION = '1';
 const ROUTE_RUNTIME_STATE_VERSION = '1';
-const ROUTE_PROBES_STATE_VERSION = '1';
+const ROUTE_ENDPOINT_TESTS_STATE_VERSION = '1';
 const ROUTE_ANALYTICS_STATE_VERSION = '1';
 const ROUTE_MODEL_SOURCES_STATE_VERSION = '1';
 const DEFAULT_SITE_TYPE = 'newapi';
 const MAX_ROUTE_RUNTIME_ITEMS = 5000;
-const MAX_ROUTE_PROBE_HISTORY_SAMPLES = 10000;
 const MAX_ROUTE_ANALYTICS_BUCKETS = 50000;
 const MAX_ROUTE_MODEL_SOURCES = 20000;
 
@@ -79,11 +78,10 @@ function createEmptyRouteRuntimeState() {
   };
 }
 
-function createEmptyRouteProbesState() {
+function createEmptyRouteEndpointTestsState() {
   return {
-    version: ROUTE_PROBES_STATE_VERSION,
-    latest: {},
-    history: {},
+    version: ROUTE_ENDPOINT_TESTS_STATE_VERSION,
+    targets: {},
     last_updated: 0,
   };
 }
@@ -107,7 +105,7 @@ function createEmptyRouteModelSourcesState() {
 function createEmptyRouteStateSnapshot() {
   return {
     runtime: createEmptyRouteRuntimeState(),
-    probes: createEmptyRouteProbesState(),
+    endpointTests: createEmptyRouteEndpointTestsState(),
     analytics: createEmptyRouteAnalyticsState(),
     modelSources: createEmptyRouteModelSourcesState(),
   };
@@ -182,29 +180,6 @@ function keepNewestRecordEntries(record, maxItems, getTimestamp) {
   );
 }
 
-function compactProbeHistory(history) {
-  const allSamples = Object.values(history || {})
-    .flat()
-    .filter(sample => sample && typeof sample === 'object')
-    .sort((left, right) => (right.testedAt || 0) - (left.testedAt || 0))
-    .slice(0, MAX_ROUTE_PROBE_HISTORY_SAMPLES);
-  const compacted = {};
-
-  for (const sample of allSamples.sort(
-    (left, right) => (left.testedAt || 0) - (right.testedAt || 0)
-  )) {
-    if (!sample.probeKey) {
-      continue;
-    }
-    if (!compacted[sample.probeKey]) {
-      compacted[sample.probeKey] = [];
-    }
-    compacted[sample.probeKey].push(sample);
-  }
-
-  return compacted;
-}
-
 function compactModelSources(sources) {
   const byKey = new Map();
   for (const source of sources || []) {
@@ -240,7 +215,6 @@ function splitDetectionCacheData(cache) {
     last_refresh: cache.last_refresh,
     has_checkin: cache.has_checkin,
     can_check_in: cache.can_check_in,
-    cli_compatibility: cache.cli_compatibility,
     ldc_payment_supported: cache.ldc_payment_supported,
     ldc_exchange_rate: cache.ldc_exchange_rate,
     ldc_payment_type: cache.ldc_payment_type,
@@ -344,12 +318,11 @@ function normalizeRouteRuntimeState(value) {
   };
 }
 
-function normalizeRouteProbesState(value) {
+function normalizeRouteEndpointTestsState(value) {
   const partial = value && typeof value === 'object' ? value : {};
   return {
-    version: partial.version || ROUTE_PROBES_STATE_VERSION,
-    latest: partial.latest || {},
-    history: partial.history || {},
+    version: partial.version || ROUTE_ENDPOINT_TESTS_STATE_VERSION,
+    targets: partial.targets || {},
     last_updated: partial.last_updated || 0,
   };
 }
@@ -641,7 +614,6 @@ function normalizeAccount(account, now) {
 function buildRouteStateSnapshotFromConfig(config, existingState, now) {
   const routing = config.routing || {};
   const modelRegistry = routing.modelRegistry || {};
-  const cliProbe = routing.cliProbe || {};
   const analytics = routing.analytics || {};
 
   return {
@@ -664,14 +636,13 @@ function buildRouteStateSnapshotFromConfig(config, existingState, now) {
       ),
       last_updated: now,
     },
-    probes: {
-      version: ROUTE_PROBES_STATE_VERSION,
-      latest: keepNewestRecordEntries(
-        mergeRecord(existingState.probes.latest, cliProbe.latest),
+    endpointTests: {
+      version: ROUTE_ENDPOINT_TESTS_STATE_VERSION,
+      targets: keepNewestRecordEntries(
+        mergeRecord(existingState.endpointTests.targets, routing.endpointTests),
         MAX_ROUTE_RUNTIME_ITEMS,
-        value => value.lastSample?.testedAt || value.lastSuccessAt || value.lastFailureAt || 0
+        value => value.updatedAt || 0
       ),
-      history: compactProbeHistory(mergeRecord(existingState.probes.history, cliProbe.history)),
       last_updated: now,
     },
     analytics: {
@@ -699,8 +670,9 @@ function createPersistableRouting(routing) {
     return undefined;
   }
 
+  const { cliProbe: _legacyCliProbe, ...currentRouting } = routing;
   return {
-    ...routing,
+    ...currentRouting,
     stats: {},
     routePathStates: {},
     health: {},
@@ -711,13 +683,7 @@ function createPersistableRouting(routing) {
           lastAggregatedAt: undefined,
         }
       : undefined,
-    cliProbe: routing.cliProbe
-      ? {
-          config: { ...(routing.cliProbe.config || {}) },
-          latest: {},
-          history: {},
-        }
-      : undefined,
+    endpointTests: {},
     analytics: routing.analytics
       ? {
           config: { ...(routing.analytics.config || {}) },
@@ -751,8 +717,7 @@ async function migrateConfigShape(config, existingRuntimeCache, existingRouteSta
     accountRuntimeCacheEntries: 0,
     routeStatsEntries: 0,
     routePathStateEntries: 0,
-    routeProbeLatestEntries: 0,
-    routeProbeHistorySamples: 0,
+    routeEndpointTestTargets: 0,
     routeAnalyticsBucketEntries: 0,
     routeModelSourceEntries: 0,
   };
@@ -878,11 +843,7 @@ async function migrateConfigShape(config, existingRuntimeCache, existingRouteSta
   ).length;
   summary.routeStatsEntries = Object.keys(routeState.runtime.stats).length;
   summary.routePathStateEntries = Object.keys(routeState.runtime.routePathStates).length;
-  summary.routeProbeLatestEntries = Object.keys(routeState.probes.latest).length;
-  summary.routeProbeHistorySamples = Object.values(routeState.probes.history).reduce(
-    (total, samples) => total + samples.length,
-    0
-  );
+  summary.routeEndpointTestTargets = Object.keys(routeState.endpointTests.targets).length;
   summary.routeAnalyticsBucketEntries = Object.keys(routeState.analytics.buckets).length;
   summary.routeModelSourceEntries = routeState.modelSources.sources.length;
 
@@ -911,7 +872,7 @@ async function main() {
   const runtimeCachePath = path.join(path.dirname(args.path), 'runtime-cache.json');
   const stateDir = path.join(configDir, 'state');
   const routeRuntimePath = path.join(stateDir, 'route-runtime.json');
-  const routeProbesPath = path.join(stateDir, 'route-probes.json');
+  const routeEndpointTestsPath = path.join(stateDir, 'route-endpoint-tests.json');
   const routeAnalyticsPath = path.join(stateDir, 'route-analytics.json');
   const routeModelSourcesPath = path.join(stateDir, 'route-model-sources.json');
   const existingRuntimeCache = readJsonIfExists(
@@ -925,10 +886,10 @@ async function main() {
       createEmptyRouteRuntimeState(),
       normalizeRouteRuntimeState
     ),
-    probes: readJsonIfExists(
-      routeProbesPath,
-      createEmptyRouteProbesState(),
-      normalizeRouteProbesState
+    endpointTests: readJsonIfExists(
+      routeEndpointTestsPath,
+      createEmptyRouteEndpointTestsState(),
+      normalizeRouteEndpointTestsState
     ),
     analytics: readJsonIfExists(
       routeAnalyticsPath,
@@ -948,7 +909,7 @@ async function main() {
   console.log(`Target config path: ${args.path}`);
   console.log(`Target runtime cache path: ${runtimeCachePath}`);
   console.log(`Target route runtime path: ${routeRuntimePath}`);
-  console.log(`Target route probes path: ${routeProbesPath}`);
+  console.log(`Target route endpoint tests path: ${routeEndpointTestsPath}`);
   console.log(`Target route analytics path: ${routeAnalyticsPath}`);
   console.log(`Target route model sources path: ${routeModelSourcesPath}`);
 
@@ -974,7 +935,7 @@ async function main() {
   for (const filePath of [
     runtimeCachePath,
     routeRuntimePath,
-    routeProbesPath,
+    routeEndpointTestsPath,
     routeAnalyticsPath,
     routeModelSourcesPath,
   ]) {
@@ -987,7 +948,7 @@ async function main() {
   writeJsonAtomically(args.path, migrated.config);
   writeJsonAtomically(runtimeCachePath, migrated.runtimeCache);
   writeJsonAtomically(routeRuntimePath, migrated.routeState.runtime);
-  writeJsonAtomically(routeProbesPath, migrated.routeState.probes);
+  writeJsonAtomically(routeEndpointTestsPath, migrated.routeState.endpointTests);
   writeJsonAtomically(routeAnalyticsPath, migrated.routeState.analytics);
   writeJsonAtomically(routeModelSourcesPath, migrated.routeState.modelSources);
 

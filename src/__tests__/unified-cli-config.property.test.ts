@@ -16,7 +16,6 @@ import * as fc from 'fast-check';
 import type { BuiltinCliType, CliConfig } from '../shared/types/cli-config';
 import { BUILTIN_CLI_TYPES, DEFAULT_CLI_CONFIG } from '../shared/types/cli-config';
 import { filterValidCliConfigs } from '../renderer/components/dialogs/ApplyConfigPopover';
-import { isCliEnabled } from '../renderer/components/CliCompatibilityIcons';
 import { resolveClaudeCodeDisplayModel } from '../renderer/services/cli-config-generator';
 
 // ============= Types =============
@@ -24,6 +23,10 @@ import { resolveClaudeCodeDisplayModel } from '../renderer/services/cli-config-g
 type CliType = BuiltinCliType;
 
 const CLI_TYPES: CliType[] = [...BUILTIN_CLI_TYPES];
+
+function isCliEnabled(config: CliConfig | null | undefined, cliType: CliType): boolean {
+  return config?.[cliType]?.enabled ?? DEFAULT_CLI_CONFIG[cliType].enabled;
+}
 
 // ============= Arbitraries =============
 

@@ -6,7 +6,6 @@ import type {
   RouteRule,
 } from '../shared/types/route-proxy';
 import {
-  buildProbeKey,
   buildRouteApiKeyPriorityKey,
   buildRouteOverrideDisplayItemId,
 } from '../shared/types/route-proxy';
@@ -977,7 +976,6 @@ describe('route model registry service', () => {
     expect(result.displayItems).toEqual([]);
     unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
       modelRegistry: result,
-      cliProbe: { latest: {} },
     });
     expect(resolveChannels(createRouteRule(), 'claude-opus-4-6')).toEqual([]);
   });
@@ -1065,18 +1063,10 @@ describe('route model registry service', () => {
         claudeCode: {
           enabled: false,
           model: null,
-          testModels: [],
-          testState: null,
         },
         codex: {
           enabled: true,
           model: 'duckcoding',
-          testModels: ['codex-extra'],
-          testState: {
-            status: true,
-            testedAt: 2,
-            slots: [{ model: 'codex-tested', success: true, timestamp: 2 }, null, null],
-          },
         },
       },
     });
@@ -1289,11 +1279,7 @@ describe('route model registry service', () => {
 
     const result = await rebuildModelRegistry(true);
 
-    expect(result.sources.map(source => source.originalModel).sort()).toEqual([
-      'codex-extra',
-      'codex-tested',
-      'duckcoding',
-    ]);
+    expect(result.sources.map(source => source.originalModel)).toEqual(['duckcoding']);
   });
 
   it('does not fall back to stale custom CLI models after an empty model list was fetched', async () => {
@@ -1388,7 +1374,6 @@ describe('route model registry service', () => {
     );
 
     unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
-      cliProbe: { latest: {} },
       modelRegistry: synced,
     });
 
@@ -1459,7 +1444,6 @@ describe('route model registry service', () => {
 
     const synced = await syncModelRegistrySources(true);
     unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
-      cliProbe: { latest: {} },
       modelRegistry: synced,
     });
 
@@ -1536,7 +1520,6 @@ describe('route model registry service', () => {
 
     const synced = await syncModelRegistrySources(true);
     unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
-      cliProbe: { latest: {} },
       modelRegistry: synced,
     });
 
@@ -1590,7 +1573,6 @@ describe('route model registry service', () => {
       ],
     });
     unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
-      cliProbe: { latest: {} },
       modelRegistry: {
         version: 1,
         sources: [source],
@@ -1657,7 +1639,6 @@ describe('route model registry service', () => {
       ],
     });
     unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
-      cliProbe: { latest: {} },
       modelRegistry: {
         version: 1,
         sources: [],
@@ -1706,7 +1687,6 @@ describe('route model registry service', () => {
       ],
     });
     unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
-      cliProbe: { latest: {} },
       modelRegistry: {
         version: 1,
         sources: [
@@ -1775,152 +1755,6 @@ describe('route model registry service', () => {
       }),
     ]);
   });
-
-  it('does not let an unrelated failed CLI probe hide the priority zero route channel', () => {
-    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
-      sites: [
-        { id: 'site-1', name: 'Priority 0', enabled: true, url: 'https://site-1.example.com' },
-        { id: 'site-2', name: 'Priority 1', enabled: true, url: 'https://site-2.example.com' },
-      ],
-      accounts: [
-        { id: 'acc-1', site_id: 'site-1', account_name: 'Primary', status: 'active' },
-        { id: 'acc-2', site_id: 'site-2', account_name: 'Backup', status: 'active' },
-      ],
-    });
-
-    const unrelatedProbeKey = buildProbeKey('site-1', 'acc-1', 'claudeCode', 'unrelated-model');
-    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
-      cliProbe: {
-        latest: {
-          [unrelatedProbeKey]: {
-            probeKey: unrelatedProbeKey,
-            siteId: 'site-1',
-            accountId: 'acc-1',
-            cliType: 'claudeCode',
-            canonicalModel: 'unrelated-model',
-            rawModel: 'unrelated-model',
-            healthy: false,
-            lastSample: {
-              sampleId: 'sample-1',
-              probeKey: unrelatedProbeKey,
-              siteId: 'site-1',
-              accountId: 'acc-1',
-              cliType: 'claudeCode',
-              canonicalModel: 'unrelated-model',
-              rawModel: 'unrelated-model',
-              success: false,
-              source: 'routeProbe',
-              testedAt: 10,
-            },
-          },
-        },
-      },
-      modelRegistry: {
-        version: 1,
-        sources: [
-          {
-            sourceKey: 'site-1:acc-1:raw-current',
-            siteId: 'site-1',
-            siteName: 'Priority 0',
-            accountId: 'acc-1',
-            accountName: 'Primary',
-            sourceType: 'account',
-            originalModel: 'raw-current',
-            vendor: 'claude',
-            availableUserGroups: ['team-a'],
-            availableApiKeys: [
-              {
-                apiKeyId: 'key-a',
-                apiKeyName: 'key-a',
-                accountId: 'acc-1',
-                accountName: 'Primary',
-                group: 'team-a',
-              },
-            ],
-            firstSeenAt: 1,
-            lastSeenAt: 1,
-          },
-          {
-            sourceKey: 'site-2:acc-2:raw-current',
-            siteId: 'site-2',
-            siteName: 'Priority 1',
-            accountId: 'acc-2',
-            accountName: 'Backup',
-            sourceType: 'account',
-            originalModel: 'raw-current',
-            vendor: 'claude',
-            availableUserGroups: ['team-a'],
-            availableApiKeys: [
-              {
-                apiKeyId: 'key-b',
-                apiKeyName: 'key-b',
-                accountId: 'acc-2',
-                accountName: 'Backup',
-                group: 'team-a',
-              },
-            ],
-            firstSeenAt: 1,
-            lastSeenAt: 1,
-          },
-        ],
-        entries: {
-          'claude-route': {
-            canonicalName: 'claude-route',
-            vendor: 'claude',
-            aliases: ['raw-current'],
-            sources: [],
-            hasOverride: true,
-            createdAt: 1,
-            updatedAt: 1,
-          },
-        },
-        overrides: [],
-        displayItems: [
-          {
-            id: 'manual:claude-route',
-            vendor: 'claude',
-            canonicalName: 'claude-route',
-            sourceKeys: ['site-1:acc-1:raw-current', 'site-2:acc-2:raw-current'],
-            originalModelOrder: ['raw-current'],
-            priorityConfig: {
-              sitePriorities: {
-                'site-1': 0,
-                'site-2': 1,
-              },
-              apiKeyPriorities: {},
-            },
-            mode: 'manual',
-            createdAt: 1,
-            updatedAt: 1,
-          },
-        ],
-        vendorPriorities: {},
-      },
-    });
-
-    const channels = sortChannelsByScore(
-      resolveChannels(
-        createRouteRule({
-          id: 'rule-1',
-          name: 'Claude',
-          cliType: 'claudeCode',
-        }),
-        'claude-route'
-      )
-    );
-
-    expect(
-      channels.map(channel => ({
-        siteId: channel.siteId,
-        apiKeyId: channel.apiKeyId,
-        sitePriority: channel.sitePriority,
-      }))
-    ).toEqual([
-      { siteId: 'site-1', apiKeyId: 'key-a', sitePriority: 0 },
-      { siteId: 'site-2', apiKeyId: 'key-b', sitePriority: 1 },
-    ]);
-  });
-
   it('excludes channels from sites disabled in display item priority config', () => {
     unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
       sites: [
@@ -1934,7 +1768,6 @@ describe('route model registry service', () => {
     });
 
     unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
-      cliProbe: { latest: {} },
       modelRegistry: {
         version: 1,
         sources: [
@@ -2045,7 +1878,6 @@ describe('route model registry service', () => {
 
     const disabledApiKeyPriorityKey = buildRouteApiKeyPriorityKey('site-1', 'acc-1', 'key-a');
     unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
-      cliProbe: { latest: {} },
       modelRegistry: {
         version: 1,
         sources: [
@@ -2182,307 +2014,6 @@ describe('route model registry service', () => {
     ]);
   });
 
-  it('does not use failed CLI probe samples as route candidate filters', () => {
-    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
-      sites: [
-        { id: 'site-1', name: 'Priority 0', enabled: true, url: 'https://site-1.example.com' },
-        { id: 'site-2', name: 'Priority 1', enabled: true, url: 'https://site-2.example.com' },
-      ],
-      accounts: [
-        { id: 'acc-1', site_id: 'site-1', account_name: 'Primary', status: 'active' },
-        { id: 'acc-2', site_id: 'site-1', account_name: 'Secondary', status: 'active' },
-        { id: 'acc-3', site_id: 'site-1', account_name: 'Tertiary', status: 'active' },
-        { id: 'acc-4', site_id: 'site-2', account_name: 'Backup', status: 'active' },
-      ],
-    });
-
-    const failedPrimaryProbeKey = buildProbeKey('site-1', 'acc-1', 'claudeCode', 'raw-current');
-    const successfulSecondaryProbeKey = buildProbeKey(
-      'site-1',
-      'acc-2',
-      'claudeCode',
-      'raw-current'
-    );
-    const failedTertiaryProbeKey = buildProbeKey('site-1', 'acc-3', 'claudeCode', 'raw-current');
-    const failedBackupProbeKey = buildProbeKey('site-2', 'acc-4', 'claudeCode', 'raw-current');
-
-    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
-      cliProbe: {
-        latest: {
-          [failedPrimaryProbeKey]: {
-            probeKey: failedPrimaryProbeKey,
-            siteId: 'site-1',
-            accountId: 'acc-1',
-            cliType: 'claudeCode',
-            canonicalModel: 'claude-route',
-            rawModel: 'raw-current',
-            healthy: false,
-            lastSample: {
-              sampleId: 'sample-primary',
-              probeKey: failedPrimaryProbeKey,
-              siteId: 'site-1',
-              accountId: 'acc-1',
-              cliType: 'claudeCode',
-              canonicalModel: 'claude-route',
-              rawModel: 'raw-current',
-              success: false,
-              source: 'routeProbe',
-              testedAt: 10,
-            },
-          },
-          [successfulSecondaryProbeKey]: {
-            probeKey: successfulSecondaryProbeKey,
-            siteId: 'site-1',
-            accountId: 'acc-2',
-            cliType: 'claudeCode',
-            canonicalModel: 'claude-route',
-            rawModel: 'raw-current',
-            healthy: true,
-            lastSample: {
-              sampleId: 'sample-secondary',
-              probeKey: successfulSecondaryProbeKey,
-              siteId: 'site-1',
-              accountId: 'acc-2',
-              cliType: 'claudeCode',
-              canonicalModel: 'claude-route',
-              rawModel: 'raw-current',
-              success: true,
-              source: 'routeProbe',
-              testedAt: 11,
-            },
-          },
-          [failedTertiaryProbeKey]: {
-            probeKey: failedTertiaryProbeKey,
-            siteId: 'site-1',
-            accountId: 'acc-3',
-            cliType: 'claudeCode',
-            canonicalModel: 'claude-route',
-            rawModel: 'raw-current',
-            healthy: false,
-            lastSample: {
-              sampleId: 'sample-tertiary',
-              probeKey: failedTertiaryProbeKey,
-              siteId: 'site-1',
-              accountId: 'acc-3',
-              cliType: 'claudeCode',
-              canonicalModel: 'claude-route',
-              rawModel: 'raw-current',
-              success: false,
-              source: 'siteManual',
-              testedAt: 12,
-            },
-          },
-          [failedBackupProbeKey]: {
-            probeKey: failedBackupProbeKey,
-            siteId: 'site-2',
-            accountId: 'acc-4',
-            cliType: 'claudeCode',
-            canonicalModel: 'claude-route',
-            rawModel: 'raw-current',
-            healthy: false,
-            lastSample: {
-              sampleId: 'sample-backup',
-              probeKey: failedBackupProbeKey,
-              siteId: 'site-2',
-              accountId: 'acc-4',
-              cliType: 'claudeCode',
-              canonicalModel: 'claude-route',
-              rawModel: 'raw-current',
-              success: false,
-              source: 'legacyCache',
-              testedAt: 13,
-            },
-          },
-        },
-      },
-      modelRegistry: {
-        version: 1,
-        sources: [
-          {
-            sourceKey: 'site-1:acc-1:raw-current',
-            siteId: 'site-1',
-            siteName: 'Priority 0',
-            accountId: 'acc-1',
-            accountName: 'Primary',
-            sourceType: 'account',
-            originalModel: 'raw-current',
-            vendor: 'claude',
-            availableUserGroups: ['team-a'],
-            availableApiKeys: [
-              {
-                apiKeyId: 'key-a',
-                apiKeyName: 'key-a',
-                accountId: 'acc-1',
-                accountName: 'Primary',
-                group: 'team-a',
-              },
-            ],
-            firstSeenAt: 1,
-            lastSeenAt: 1,
-          },
-          {
-            sourceKey: 'site-1:acc-2:raw-current',
-            siteId: 'site-1',
-            siteName: 'Priority 0',
-            accountId: 'acc-2',
-            accountName: 'Secondary',
-            sourceType: 'account',
-            originalModel: 'raw-current',
-            vendor: 'claude',
-            availableUserGroups: ['team-a'],
-            availableApiKeys: [
-              {
-                apiKeyId: 'key-b',
-                apiKeyName: 'key-b',
-                accountId: 'acc-2',
-                accountName: 'Secondary',
-                group: 'team-a',
-              },
-            ],
-            firstSeenAt: 1,
-            lastSeenAt: 1,
-          },
-          {
-            sourceKey: 'site-1:acc-3:raw-current',
-            siteId: 'site-1',
-            siteName: 'Priority 0',
-            accountId: 'acc-3',
-            accountName: 'Tertiary',
-            sourceType: 'account',
-            originalModel: 'raw-current',
-            vendor: 'claude',
-            availableUserGroups: ['team-a'],
-            availableApiKeys: [
-              {
-                apiKeyId: 'key-c',
-                apiKeyName: 'key-c',
-                accountId: 'acc-3',
-                accountName: 'Tertiary',
-                group: 'team-a',
-              },
-            ],
-            firstSeenAt: 1,
-            lastSeenAt: 1,
-          },
-          {
-            sourceKey: 'site-2:acc-4:raw-current',
-            siteId: 'site-2',
-            siteName: 'Priority 1',
-            accountId: 'acc-4',
-            accountName: 'Backup',
-            sourceType: 'account',
-            originalModel: 'raw-current',
-            vendor: 'claude',
-            availableUserGroups: ['team-a'],
-            availableApiKeys: [
-              {
-                apiKeyId: 'key-d',
-                apiKeyName: 'key-d',
-                accountId: 'acc-4',
-                accountName: 'Backup',
-                group: 'team-a',
-              },
-            ],
-            firstSeenAt: 1,
-            lastSeenAt: 1,
-          },
-        ],
-        entries: {
-          'claude-route': {
-            canonicalName: 'claude-route',
-            vendor: 'claude',
-            aliases: ['raw-current'],
-            sources: [],
-            hasOverride: true,
-            createdAt: 1,
-            updatedAt: 1,
-          },
-        },
-        overrides: [],
-        displayItems: [
-          {
-            id: 'manual:claude-route',
-            vendor: 'claude',
-            canonicalName: 'claude-route',
-            sourceKeys: [
-              'site-1:acc-1:raw-current',
-              'site-1:acc-2:raw-current',
-              'site-1:acc-3:raw-current',
-              'site-2:acc-4:raw-current',
-            ],
-            originalModelOrder: ['raw-current'],
-            priorityConfig: {
-              sitePriorities: {
-                'site-1': 0,
-                'site-2': 1,
-              },
-              apiKeyPriorities: {
-                'site-1:acc-1:key-a': 1,
-                'site-1:acc-2:key-b': 2,
-                'site-1:acc-3:key-c': 3,
-                'site-2:acc-4:key-d': 1,
-              },
-            },
-            mode: 'manual',
-            createdAt: 1,
-            updatedAt: 1,
-          },
-        ],
-        vendorPriorities: {},
-      },
-    });
-
-    const channels = sortChannelsByScore(
-      resolveChannels(
-        createRouteRule({
-          id: 'rule-1',
-          name: 'Claude',
-          cliType: 'claudeCode',
-        }),
-        'claude-route'
-      )
-    );
-
-    expect(
-      channels.map(channel => ({
-        siteId: channel.siteId,
-        accountId: channel.accountId,
-        apiKeyId: channel.apiKeyId,
-        sitePriority: channel.sitePriority,
-        apiKeyPriority: channel.apiKeyPriority,
-      }))
-    ).toEqual([
-      {
-        siteId: 'site-1',
-        accountId: 'acc-1',
-        apiKeyId: 'key-a',
-        sitePriority: 0,
-        apiKeyPriority: 1,
-      },
-      {
-        siteId: 'site-1',
-        accountId: 'acc-2',
-        apiKeyId: 'key-b',
-        sitePriority: 0,
-        apiKeyPriority: 2,
-      },
-      {
-        siteId: 'site-1',
-        accountId: 'acc-3',
-        apiKeyId: 'key-c',
-        sitePriority: 0,
-        apiKeyPriority: 3,
-      },
-      {
-        siteId: 'site-2',
-        accountId: 'acc-4',
-        apiKeyId: 'key-d',
-        sitePriority: 1,
-        apiKeyPriority: 1,
-      },
-    ]);
-  });
-
   it('appends sites without explicit priority after all configured site priorities', () => {
     unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
       sites: [
@@ -2503,7 +2034,6 @@ describe('route model registry service', () => {
     });
 
     unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
-      cliProbe: { latest: {} },
       modelRegistry: {
         version: 1,
         sources: [
@@ -2627,7 +2157,6 @@ describe('route model registry service', () => {
     });
 
     unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
-      cliProbe: { latest: {} },
       modelRegistry: {
         version: 1,
         sources: [
@@ -2735,7 +2264,6 @@ describe('route model registry service', () => {
     });
 
     unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
-      cliProbe: { latest: {} },
       modelRegistry: {
         version: 1,
         sources: [
@@ -2899,7 +2427,6 @@ describe('route model registry service', () => {
     });
 
     unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({
-      cliProbe: { latest: {} },
       modelRegistry: {
         version: 1,
         sources: [

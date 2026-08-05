@@ -4,17 +4,6 @@ import { DirectCliConfigEditorContent } from '../renderer/components/dialogs/Dir
 import { useCustomCliConfigStore } from '../renderer/store/customCliConfigStore';
 import type { CustomCliConfig } from '../shared/types/custom-cli-config';
 
-type TestWithWrapperPayload = {
-  siteUrl: string;
-  configs: Array<{
-    cliType: string;
-    apiKey: string;
-    model: string;
-    baseUrl: string;
-    targetProtocol?: string;
-  }>;
-};
-
 type WriteConfigPayload = {
   cliType: string;
   files: Array<{ path: string; content: string }>;
@@ -23,9 +12,6 @@ type WriteConfigPayload = {
 
 type MockElectronApi = {
   cliCompat: {
-    testWithWrapper: ReturnType<
-      typeof vi.fn<(payload: TestWithWrapperPayload) => Promise<unknown>>
-    >;
     writeConfig: ReturnType<typeof vi.fn<(payload: WriteConfigPayload) => Promise<unknown>>>;
   };
   configDetection: {
@@ -53,22 +39,18 @@ const createConfig = (): CustomCliConfig => ({
     claudeCode: {
       enabled: true,
       model: 'claude-3.7',
-      testModels: ['claude-3.7'],
     },
     codex: {
       enabled: true,
       model: 'gpt-4.1',
-      testModels: ['gpt-4.1'],
     },
     openCode: {
       enabled: true,
       model: 'gpt-4.1',
-      testModels: ['gpt-4.1'],
     },
     grokBuild: {
       enabled: true,
       model: 'grok-4.1',
-      testModels: ['grok-4.1'],
       targetProtocol: 'native',
     },
   },
@@ -91,7 +73,7 @@ describe('DirectCliConfigEditorContent', () => {
 
   const openCliSection = async (cliName: string) => {
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${cliName}`) }));
+      fireEvent.click(screen.getByRole('button', { name: `${cliName} 配置文件预览` }));
     });
   };
 
@@ -118,13 +100,6 @@ describe('DirectCliConfigEditorContent', () => {
     window.electronAPI = {
       ...window.electronAPI,
       cliCompat: {
-        testWithWrapper: vi.fn().mockResolvedValue({
-          success: true,
-          data: {
-            claudeCode: true,
-            codex: true,
-          },
-        }),
         writeConfig: vi.fn().mockResolvedValue({
           success: true,
           writtenPaths: ['~/.codex/config.toml', '~/.codex/auth.json'],
@@ -152,23 +127,40 @@ describe('DirectCliConfigEditorContent', () => {
     vi.clearAllMocks();
   });
 
-  it('renders per-cli operation blocks with apply, test controls, and one preview path', async () => {
+  it('renders per-cli operation blocks with apply controls and one preview path', async () => {
     await renderDialog();
 
     expect(screen.queryByRole('button', { name: '测试当前配置' })).not.toBeInTheDocument();
     expect(screen.queryAllByRole('button', { name: /^预览 / })).toHaveLength(0);
     expect(screen.queryByText('配置预览与编辑')).not.toBeInTheDocument();
-    expect(screen.getByText('配置文件预览')).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /^应用 / })).toHaveLength(1);
-    expect(screen.getAllByRole('button', { name: /^测试 / })).toHaveLength(1);
+    expect(screen.getAllByText('配置文件预览')).toHaveLength(4);
+    expect(screen.getAllByRole('button', { name: /^应用 / })).toHaveLength(4);
+    expect(screen.queryAllByRole('button', { name: /^测试 / })).toHaveLength(0);
     expect(screen.queryByTestId('cli-test-columns')).not.toBeInTheDocument();
-    expect(screen.getAllByText('测试模型')).toHaveLength(1);
+    expect(screen.queryAllByText('测试模型')).toHaveLength(0);
     expect(screen.queryByText('测试模型（最多 3 个）')).not.toBeInTheDocument();
+    expect(screen.queryByText('连接配置')).not.toBeInTheDocument();
     expect(screen.getByText('Claude Code')).toBeInTheDocument();
     expect(screen.getByText('Codex')).toBeInTheDocument();
     expect(screen.getByText('OpenCode')).toBeInTheDocument();
     expect(screen.getByText('Grok Build')).toBeInTheDocument();
+    const cliTitle = screen.getByText('Claude Code').parentElement;
+    expect(cliTitle).toHaveClass('items-center');
+    expect(cliTitle).toHaveTextContent('Claude Codeclaude-3.7');
+    expect(screen.getByRole('button', { name: '应用 Claude Code' })).toHaveClass(
+      '!min-h-7',
+      '!px-2.5'
+    );
+    expect(screen.getAllByRole('switch', { name: '启用该 CLI' })[0]).toHaveClass('h-4', 'w-8');
+    const targetProtocolSelect = screen.getByLabelText('Claude Code 选择上游端口');
+    expect(targetProtocolSelect).toHaveClass('h-8', 'py-0', 'text-xs');
+    expect(targetProtocolSelect.parentElement?.parentElement?.firstElementChild).toBe(
+      targetProtocolSelect.parentElement
+    );
     expect(screen.getByRole('button', { name: 'Claude Code 主模型' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Codex 主模型' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'OpenCode 主模型' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Grok Build 主模型' })).toBeInTheDocument();
     await openCliSection('Codex');
     expect(screen.getByRole('button', { name: 'Codex 主模型' })).toBeInTheDocument();
   }, 15_000);
@@ -274,34 +266,6 @@ describe('DirectCliConfigEditorContent', () => {
     expect(screen.getByText('manual-only-model')).toBeInTheDocument();
   });
 
-  it('runs tests only for the clicked cli column', async () => {
-    const testWithWrapper = vi.fn().mockResolvedValue({
-      success: true,
-      data: { codex: true },
-    });
-    getElectronAPI().cliCompat.testWithWrapper = testWithWrapper;
-
-    await renderDialog();
-    await openCliSection('Codex');
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '测试 Codex' }));
-    });
-
-    await waitFor(() => expect(testWithWrapper).toHaveBeenCalledTimes(1));
-    expect(testWithWrapper).toHaveBeenNthCalledWith(1, {
-      siteUrl: 'https://api.example.com',
-      configs: [
-        {
-          cliType: 'codex',
-          apiKey: 'test-key',
-          model: 'gpt-4.1',
-          baseUrl: 'https://api.example.com',
-          targetProtocol: 'native',
-        },
-      ],
-    });
-  });
-
   it('persists group multiplier from the identity form', async () => {
     await renderDialog();
 
@@ -390,13 +354,7 @@ describe('DirectCliConfigEditorContent', () => {
     );
   });
 
-  it('passes the selected target protocol into direct custom cli tests and persistence', async () => {
-    const testWithWrapper = vi.fn().mockResolvedValue({
-      success: true,
-      data: { codex: true },
-    });
-    getElectronAPI().cliCompat.testWithWrapper = testWithWrapper;
-
+  it('persists the selected target protocol for direct custom cli configuration', async () => {
     await renderDialog();
     await openCliSection('Codex');
     await act(async () => {
@@ -404,23 +362,6 @@ describe('DirectCliConfigEditorContent', () => {
         target: { value: 'openai-chat-completions' },
       });
     });
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '测试 Codex' }));
-    });
-
-    await waitFor(() => expect(testWithWrapper).toHaveBeenCalledTimes(1));
-    expect(testWithWrapper).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        configs: [
-          expect.objectContaining({
-            cliType: 'codex',
-            targetProtocol: 'openai-chat-completions',
-          }),
-        ],
-      })
-    );
-
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
     });
@@ -440,41 +381,6 @@ describe('DirectCliConfigEditorContent', () => {
     );
   });
 
-  it('persists cli test outcomes back into the custom config store after a column run', async () => {
-    const testWithWrapper = vi.fn().mockResolvedValue({
-      success: true,
-      data: { codex: true },
-    });
-    const updateConfig = useCustomCliConfigStore.getState().updateConfig as ReturnType<
-      typeof vi.fn
-    >;
-    const saveConfigs = useCustomCliConfigStore.getState().saveConfigs as ReturnType<typeof vi.fn>;
-    getElectronAPI().cliCompat.testWithWrapper = testWithWrapper;
-
-    await renderDialog();
-    await openCliSection('Codex');
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '测试 Codex' }));
-    });
-
-    await waitFor(() =>
-      expect(updateConfig).toHaveBeenCalledWith(
-        'cfg-1',
-        expect.objectContaining({
-          cliSettings: expect.objectContaining({
-            codex: expect.objectContaining({
-              testState: expect.objectContaining({
-                status: true,
-                slots: [expect.objectContaining({ model: 'gpt-4.1', success: true }), null, null],
-              }),
-            }),
-          }),
-        })
-      )
-    );
-    await waitFor(() => expect(saveConfigs).toHaveBeenCalledTimes(1));
-  });
-
   it('syncs local model selections after fetching a narrowed model list', async () => {
     const fetchModels = vi.fn(async (configId: string) => {
       const currentConfig = useCustomCliConfigStore
@@ -489,13 +395,10 @@ describe('DirectCliConfigEditorContent', () => {
               claudeCode: {
                 ...currentConfig.cliSettings.claudeCode,
                 model: 'claude-3.7',
-                testModels: ['claude-3.7'],
               },
               codex: {
                 ...currentConfig.cliSettings.codex,
                 model: null,
-                testModels: [],
-                testState: null,
               },
             },
           },
@@ -530,7 +433,6 @@ describe('DirectCliConfigEditorContent', () => {
         cliSettings: expect.objectContaining({
           codex: expect.objectContaining({
             model: null,
-            testModels: [],
           }),
         }),
       })
@@ -564,12 +466,11 @@ describe('DirectCliConfigEditorContent', () => {
     );
   });
 
-  it('shows Grok Build native endpoint behavior without enabling model probes', async () => {
+  it('shows Grok Build native endpoint behavior without test controls', async () => {
     const writeConfig = vi.fn().mockResolvedValue({
       success: true,
       writtenPaths: ['~/.grok/config.toml'],
     });
-    const testWithWrapper = getElectronAPI().cliCompat.testWithWrapper;
     getElectronAPI().cliCompat.writeConfig = writeConfig;
 
     await renderDialog();
@@ -579,10 +480,7 @@ describe('DirectCliConfigEditorContent', () => {
     expect(screen.getByLabelText('Grok Build 选择上游端口')).toHaveDisplayValue(
       '原生协议 · 跟随 Grok Build 当前模型入口'
     );
-    const testButton = screen.getByRole('button', { name: '测试 Grok Build' });
-    expect(testButton).toBeDisabled();
-    expect(testButton).toHaveTextContent('暂不支持探测');
-    expect(testWithWrapper).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: '测试 Grok Build' })).not.toBeInTheDocument();
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '应用 Grok Build' }));
@@ -599,18 +497,13 @@ describe('DirectCliConfigEditorContent', () => {
     );
   });
 
-  it('keeps OpenCode direct configuration without enabling model probes', async () => {
-    const testWithWrapper = getElectronAPI().cliCompat.testWithWrapper;
-
+  it('keeps OpenCode direct configuration without test controls', async () => {
     await renderDialog();
     await openCliSection('OpenCode');
 
     expect(screen.getByRole('button', { name: 'OpenCode 主模型' })).toHaveTextContent('gpt-4.1');
     expect(screen.getByLabelText('OpenCode 选择上游端口')).toBeEnabled();
-    const testButton = screen.getByRole('button', { name: '测试 OpenCode' });
-    expect(testButton).toBeDisabled();
-    expect(testButton).toHaveTextContent('暂不支持探测');
-    expect(testWithWrapper).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: '测试 OpenCode' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '应用 OpenCode' })).toBeEnabled();
   });
 

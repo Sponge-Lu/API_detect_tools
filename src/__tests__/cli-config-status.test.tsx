@@ -47,11 +47,6 @@ function buildRouteConfig(
       displayItems: [],
       vendorPriorities: {},
     },
-    cliProbe: {
-      config: { ...DEFAULT_ROUTING_CONFIG.cliProbe.config },
-      latest: {},
-      history: {},
-    },
     analytics: {
       config: { ...DEFAULT_ROUTING_CONFIG.analytics.config },
       buckets: {},
@@ -80,8 +75,8 @@ function buildCustomConfig(
 ): CustomCliConfig {
   const { cliSettings, ...configOverrides } = overrides;
   const defaultCliSettings: CustomCliConfig['cliSettings'] = {
-    claudeCode: { enabled: true, model: null, testModels: [], testState: null },
-    codex: { enabled: true, model: null, testModels: [], testState: null },
+    claudeCode: { enabled: true, model: null },
+    codex: { enabled: true, model: null },
   };
 
   return {
@@ -240,7 +235,7 @@ describe('CliConfigStatus', () => {
       configs: [
         buildCustomConfig({
           cliSettings: {
-            codex: { enabled: true, model: 'gpt-5.4', testModels: [], testState: null },
+            codex: { enabled: true, model: 'gpt-5.4' },
           },
         }),
       ],
@@ -267,8 +262,6 @@ describe('CliConfigStatus', () => {
             codex: {
               enabled: true,
               model: 'gpt-4.1-mini',
-              testModels: [],
-              testState: null,
             },
           },
         }),

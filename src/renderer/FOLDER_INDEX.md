@@ -46,7 +46,6 @@
 | **DetectionResults** | 检测结果显示 | 检测结果展示 |
 | **Toast** | 消息提示 | 成功、错误、警告 |
 | **Skeleton** | 骨架屏 | 加载占位符 |
-| **CliCompatibilityIcons** | CLI 兼容性图标 | 工具支持情况 |
 | **CreateApiKeyDialog** | API Key 创建对话框 | 创建 API Key |
 | **AppErrorBoundary** | 根渲染异常兜底 | 可见错误状态、重新加载 |
 ### 对话框组件 (dialogs/)
@@ -58,7 +57,7 @@
 | 页面 | 职责 | 关键内容 |
 |------|------|--------|
 | **DataOverviewPage** | 数据总览首页 | 左侧 `站点数据 / 路由数据` 子页对应内容、路由健康 KPI、站点余额/消费榜单、每日快照趋势、规则洞察、异常请求；路由运行趋势在 `24h` / `7d` 下补齐完整 X 轴 |
-| **SitesPage** | 站点管理主页面 | 统一展示托管站点账户行与直连配置接入点；页头“设置”弹窗集中维护 CLI 探测和站点刷新参数，并提供操作记录、添加接入点、批量检测/刷新/签到、History 时间桶列与接入点详情侧滑面板；详情面板支持保存后维护站点名称与直连配置名称 |
+| **SitesPage** | 站点管理主页面 | 统一展示托管站点账户行与直连配置接入点；页头“设置”弹窗维护站点刷新参数，并提供操作记录、添加接入点、批量检测/刷新/签到、路由请求 History 与接入点详情侧滑面板；详情面板支持独立端点测试及保存后维护站点名称与直连配置名称 |
 | **CreditPage** | Linux Do Credit 页面 | 积分余额、每日统计、交易记录、充值入口 |
 | **RoutePage** | 路由配置/操作页 | 代理服务、模型重定向，以及跳转到数据总览的统计入口 |
 | **LogsPage** | 日志页内容容器 | 直接展示路由日志；通过逐条 push 追加并使用无卡片、带表头的横向滚动单行表格，展示 CLI 图标、原始模型、实际请求思考强度、路由目标、Token（总/输入/输出/缓存写/缓存读）、参考金额、用时/首字、纯数字状态码与失败第二行 |
@@ -73,7 +72,6 @@
 | **useSiteDetection** | 站点检测 | 检测状态、结果 |
 | **useTokenManagement** | Token 管理 | Token 操作方法 |
 | **useCheckIn** | 签到逻辑 | 签到状态、方法 |
-| **useCliCompatTest** | CLI 兼容性测试 | 测试状态、结果、toast 提示 |
 | **useDataLoader** | 数据加载 | 加载状态、数据 |
 | **useSiteDrag** | 站点拖拽排序 | 拖拽状态、方法 |
 | **useTheme** | 主题管理 | 主题模式、切换方法 |
@@ -104,11 +102,6 @@
 **关键方法**:
 - `generateConfig(site)` - 生成配置
 - `generateCodexConfig(params)` - 生成 Codex 配置（含 wire_api 测试结果注释）
-### cli-compat-projection.ts
-**职责**: 把 `routing.cliProbe.latest` 投影为站点页兼容性图标使用的结果，并补充来源标签。
-**关键方法**:
-- `projectCliCompatibilityMap(config)` - 生成站点/账户维度的兼容性映射
-- `syncProjectedCliCompatibility(config, setCliCompatibility)` - 将投影结果同步到 `detectionStore`
 ### sessionEventLog.ts
 **职责**: 当前会话关键操作记录
 **关键方法**:

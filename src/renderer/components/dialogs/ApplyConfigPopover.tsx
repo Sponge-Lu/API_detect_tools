@@ -1,5 +1,5 @@
 /**
- * 输入: ApplyConfigPopoverProps (CLI 配置、API Keys、兼容性数据), configStore (应用配置), detectionStore (CLI 配置检测)
+ * 输入: ApplyConfigPopoverProps (CLI 配置、API Keys), configStore (应用配置), detectionStore (CLI 配置检测)
  * 输出: React 组件 (应用配置弹出菜单 UI)
  * 定位: 展示层 - 应用配置弹出菜单，允许用户选择目标 CLI 并写入配置，应用后自动刷新 CLI 配置检测状态
  *
@@ -12,7 +12,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import type { CliConfig, ApiKeyInfo } from '../../../shared/types/cli-config';
-import type { CliCompatibilityData } from '../../../shared/types/site';
 import {
   generateClaudeCodeConfig,
   generateCodexConfig,
@@ -33,7 +32,6 @@ export interface ApplyConfigPopoverProps {
   isOpen: boolean;
   anchorEl: HTMLElement | null;
   cliConfig: CliConfig | null;
-  cliCompatibility?: CliCompatibilityData | null; // CLI 兼容性测试结果
   siteUrl: string;
   siteName: string;
   apiKeys: ApiKeyInfo[];
@@ -88,7 +86,6 @@ export function ApplyConfigPopover({
   isOpen,
   anchorEl,
   cliConfig,
-  cliCompatibility,
   siteUrl,
   siteName,
   apiKeys,
@@ -192,10 +189,7 @@ export function ApplyConfigPopover({
           cliType === 'claudeCode'
             ? generateClaudeCodeConfig(params)
             : cliType === 'codex'
-              ? generateCodexConfig({
-                  ...params,
-                  codexDetail: cliCompatibility?.codexDetail,
-                })
+              ? generateCodexConfig(params)
               : cliType === 'openCode'
                 ? generateOpenCodeConfig({
                     ...params,

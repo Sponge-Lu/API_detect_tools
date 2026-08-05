@@ -23,7 +23,6 @@ import {
 } from '../components/dialogs';
 import type { SiteSettingsChanges } from '../components/dialogs';
 import type { CliConfig } from '../../shared/types/cli-config';
-import { useRouteStore } from '../store/routeStore';
 import { CreateApiKeyDialog } from '../components/CreateApiKeyDialog';
 import { AppButton } from '../components/AppButton/AppButton';
 import { AppSearchInput } from '../components/AppInput';
@@ -34,7 +33,6 @@ import {
   useTokenManagement,
   useSiteDrag,
   useSiteDetection,
-  useCliCompatTest,
   useDateString,
 } from '../hooks';
 import type { NewApiTokenForm } from '../hooks';
@@ -51,7 +49,6 @@ import {
   type AccountAuthSource,
   type BrowserProfileOptionId,
 } from '../../shared/types/site';
-import { DEFAULT_CLI_PROBE_CONFIG } from '../../shared/types/route-proxy';
 import type { Config, SiteGroup } from '../App';
 import {
   UNKNOWN_SITE_TYPE_FILTER,
@@ -195,8 +192,16 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
   // ========== 从 Store 读取状态 ==========
   const { config, setConfig, setSaving, updateSite: storeUpdateSite } = useConfigStore();
 
-  const { apiKeys, userGroups, modelPricing, setApiKeys, setUserGroups, setModelPricing } =
-    useDetectionStore();
+  const {
+    apiKeys,
+    userGroups,
+    modelPricing,
+    setApiKeys,
+    setUserGroups,
+    setModelPricing,
+    getCliConfig,
+    setCliConfig,
+  } = useDetectionStore();
   const {
     configs: customCliConfigs,
     fetchingModels,
@@ -287,17 +292,11 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
   const [showOperationRecords, setShowOperationRecords] = useState(false);
   const [showSiteSettings, setShowSiteSettings] = useState(false);
   const [savingSiteSettings, setSavingSiteSettings] = useState(false);
-  const [runningCliProbe, setRunningCliProbe] = useState(false);
 
   // 多账户: 按站点 ID 预加载的账户列表
   const [accountsBySite, setAccountsBySite] = useState<Record<string, AccountInfo[]>>({});
   const [, setRefreshingTokenKey] = useState<string | null>(null);
   const dateStr = useDateString();
-
-  const routeCliProbeConfig = useRouteStore(state => state.config?.cliProbe?.config ?? null);
-  const fetchRouteConfig = useRouteStore(state => state.fetchConfig);
-  const saveRouteCliProbeConfig = useRouteStore(state => state.saveCliProbeConfig);
-  const runRouteProbeNow = useRouteStore(state => state.runProbeNow);
 
   // 兼容层
   const setNewTokenForm = (form: NewApiTokenForm | ((p: NewApiTokenForm) => NewApiTokenForm)) => {
@@ -560,14 +559,6 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
   // 站点检测 hook
   const { detectingSites, results, setResults, detectSingle, detectAllSites } =
     useSiteDetection(siteDetectionOptions);
-
-  // CLI 兼容性测试 hook
-  const {
-    isTestingSite: isCliTestingSite,
-    getCompatibility,
-    getCliConfig,
-    setCliConfig,
-  } = useCliCompatTest();
 
   // 规范化站点分组配置
   const siteGroups: SiteGroup[] = useMemo(() => {
@@ -884,34 +875,14 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     [loadAllAccounts, setConfig]
   );
 
-  const handleDetectAllSites = useCallback(async () => {
-    setRunningCliProbe(true);
-    try {
-      await runRouteProbeNow();
-    } catch (error: any) {
-      Logger.error('CLI 可用性即时探测失败:', error);
-      toast.error('CLI 可用性即时探测失败: ' + (error?.message || error));
-    } finally {
-      setRunningCliProbe(false);
-    }
-  }, [runRouteProbeNow]);
-
-  const handleOpenDetectionSettings = useCallback(async () => {
-    try {
-      await fetchRouteConfig();
-    } catch (error) {
-      Logger.warn('加载 CLI 探测设置失败，将使用默认设置:', error);
-    }
+  const handleOpenDetectionSettings = useCallback(() => {
     setShowSiteSettings(true);
-  }, [fetchRouteConfig]);
+  }, []);
 
   const handleSaveSiteSettings = useCallback(
-    async ({ cliProbeConfig, siteRefreshSettings }: SiteSettingsChanges) => {
+    async ({ siteRefreshSettings }: SiteSettingsChanges) => {
       setSavingSiteSettings(true);
       try {
-        if (cliProbeConfig) {
-          await saveRouteCliProbeConfig(cliProbeConfig);
-        }
         if (siteRefreshSettings) {
           const currentConfig = useConfigStore.getState().config;
           if (!currentConfig) {
@@ -934,7 +905,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
         setSavingSiteSettings(false);
       }
     },
-    [saveRouteCliProbeConfig, setConfig]
+    [setConfig]
   );
 
   // 签到逻辑 hook
@@ -1564,18 +1535,6 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
           variant="secondary"
           size="sm"
           className="!h-7 !min-h-7"
-          onClick={handleDetectAllSites}
-          loading={runningCliProbe}
-          disabled={activeSitesCount === 0}
-          title="立即执行一次站点 CLI 可用性探测"
-          aria-label="立即探测"
-        >
-          立即探测
-        </AppButton>
-        <AppButton
-          variant="secondary"
-          size="sm"
-          className="!h-7 !min-h-7"
           onClick={() => setShowOperationRecords(true)}
           title="查看应用操作记录"
           aria-label="操作记录"
@@ -1630,11 +1589,9 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     ),
     [
       handleOpenDetectionSettings,
-      handleDetectAllSites,
       handleOpenBackupDialog,
       handleRefreshAll,
       handleCheckInAllSites,
-      runningCliProbe,
       isRefreshing,
       isCheckingInAll,
       activeSitesCount,
@@ -1890,13 +1847,7 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                           checkingIn={checkingIn}
                           dragOverIndex={dragOverIndex}
                           refreshMessage={refreshMessage}
-                          cliCompatibility={
-                            cardItem.type === 'custom-cli' ? undefined : getCompatibility(ck)
-                          }
                           cliConfig={cardItem.type === 'custom-cli' ? null : getCliConfig(ck)}
-                          isCliTesting={
-                            cardItem.type === 'custom-cli' ? false : isCliTestingSite(ck)
-                          }
                           onDetect={(s, accountId) =>
                             cardItem.type === 'custom-cli'
                               ? void handleRefreshDirectConfig(cardItem.config.id)
@@ -2098,9 +2049,6 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
         cliConfig={
           cliApplySite ? (getCliConfig(cliApplyCardKey ?? cliApplySite.name) ?? null) : null
         }
-        cliCompatibility={
-          cliApplySite ? (getCompatibility(cliApplyCardKey ?? cliApplySite.name) ?? null) : null
-        }
         siteUrl={cliApplySite?.url ?? ''}
         siteName={cliApplySite?.name ?? ''}
         apiKeys={
@@ -2187,7 +2135,6 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
 
       <SiteSettingsDialog
         isOpen={showSiteSettings}
-        cliProbeConfig={routeCliProbeConfig ?? DEFAULT_CLI_PROBE_CONFIG}
         siteRefreshSettings={config.settings}
         saving={savingSiteSettings}
         onClose={() => {
@@ -2259,23 +2206,6 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
           cliConfig={
             selectedItem.type === 'managed' && selectedItem.account
               ? getCliConfig(makeCardKey(selectedItem.site.name, selectedItem.account.id))
-              : null
-          }
-          isCliTesting={isCliTestingSite(
-            selectedItem.type === 'managed' && selectedItem.account
-              ? makeCardKey(selectedItem.site.name, selectedItem.account.id)
-              : ''
-          )}
-          cliCompatibility={
-            selectedItem.type === 'managed' && selectedItem.account
-              ? (getCompatibility(makeCardKey(selectedItem.site.name, selectedItem.account.id)) ??
-                null)
-              : null
-          }
-          cliCodexDetail={
-            selectedItem.type === 'managed' && selectedItem.account
-              ? getCompatibility(makeCardKey(selectedItem.site.name, selectedItem.account.id))
-                  ?.codexDetail
               : null
           }
           showDialog={showDialog}

@@ -122,27 +122,6 @@ interface UseCheckInReturn {
 - 签到失败时根据站点类型打开对应的手动签到页面（Veloera: /console, New API: /console/personal）
 - 手动签到完成后调用 `browserProfile.persistCheckinCompletion()` 写入站点/账户缓存
 - 签到成功后更新 lastRefresh 时间戳，确保图标状态正确显示并能跨刷新保持
-### useCliCompatTest
-**职责**: 测试 CLI 兼容性
-**返回值**:
-```typescript
-interface UseCliCompatTestReturn {
-  results: CliCompatibility[];
-  isTesting: boolean;
-  test: (siteId: string) => Promise<CliCompatibility[]>;
-  testAll: () => Promise<CliCompatibility[]>;
-  generateConfig: (siteId: string, tool: string) => Promise<string>;
-}
-```
-**特点**:
-- 单个站点测试
-- 批量测试
-- 配置生成
-- 结果缓存
-- 统一调用 `window.electronAPI.cliCompat.testWithWrapper()`
-- 测试结果持久化后统一走 `cli-compat-sync.ts`，立即重投影 `routing.cliProbe.latest`，并在路由可用性视图已打开时主动刷新缓存
-- 当 `editedFiles` 中的旧域名与当前站点不一致且使用的是已选 API Key 时，会明确告警并优先测试当前站点 URL
-- CLI 测试失败时会给出明确失败摘要 toast，并同步写入 canonical probe cache
 ### useDataLoader
 **职责**: 通用数据加载，支持站点检测状态持久化与签到能力状态回填
 **返回值**:

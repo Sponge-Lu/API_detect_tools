@@ -1,6 +1,6 @@
 /**
  * 路由代理 Zustand Store（扩展版）
- * 管理路由配置、模型注册表、CLI 探测、统计分析
+ * 管理路由配置、模型注册表和统计分析
  */
 
 import { create } from 'zustand';
@@ -11,56 +11,19 @@ import type {
   RouteModelRegistryConfig,
   RouteModelMappingOverride,
   RouteModelDisplayItem,
-  RouteCliProbeConfig,
-  RouteCliProbeLatest,
-  RouteCliProbeSample,
-  RouteCliProbeSiteView,
   RouteCliType,
   RoutePathStateResetParams,
 } from '../../shared/types/route-proxy';
-import type { UnifiedConfig } from '../../shared/types/site';
-import type { ProbeCliType } from '../../shared/types/cli-config';
-import { useDetectionStore } from './detectionStore';
-import { syncProjectedCliCompatibility } from '../services/cli-compat-projection';
 import { sessionEventLog } from '../services/sessionEventLog';
 
 /** 路由页 Sub-Tab */
 export type RouteSubTab = 'redirection' | 'usability' | 'proxystats';
-
-type CliProbeTimeRange = '24h' | '7d';
-
-interface CliProbeRunParams {
-  siteId?: string;
-  accountId?: string;
-  cliType?: ProbeCliType;
-}
-
-interface CliProbeRunResult {
-  startedAt: number;
-  finishedAt: number;
-  totalSamples: number;
-  successSamples: number;
-  failureSamples: number;
-}
-
-interface CliProbeLatestParams extends CliProbeRunParams {
-  canonicalModel?: string;
-}
 
 interface RouteState {
   config: RoutingConfig | null;
   loading: boolean;
   serverRunning: boolean;
   activeSubTab: RouteSubTab;
-
-  // CLI 探测数据缓存
-  cliProbeHistory: RouteCliProbeSample[];
-  cliProbeLatest: RouteCliProbeLatest[];
-  cliProbeView: RouteCliProbeSiteView[];
-  cliProbeTimeRange: CliProbeTimeRange;
-  cliProbeLoaded: boolean;
-  cliProbeRequestId: number;
-  cliProbeError: string | null;
 
   // Actions - 配置
   fetchConfig: () => Promise<void>;
@@ -101,12 +64,6 @@ interface RouteState {
   saveCliThinkingEffortSelections: (
     selections: Partial<RoutingConfig['cliThinkingEffortSelections']>
   ) => Promise<void>;
-
-  // Actions - CLI 探测
-  saveCliProbeConfig: (updates: Partial<RouteCliProbeConfig>) => Promise<void>;
-  runProbeNow: (params?: CliProbeRunParams) => Promise<CliProbeRunResult | null>;
-  fetchProbeLatest: (params?: CliProbeLatestParams) => Promise<RouteCliProbeLatest[]>;
-  fetchCliProbeData: (timeRange: CliProbeTimeRange, force?: boolean) => Promise<void>;
 }
 
 function mergeModelRegistryIntoRouteConfig(
@@ -121,14 +78,6 @@ export const useRouteStore = create<RouteState>((set, get) => ({
   loading: false,
   serverRunning: false,
   activeSubTab: (localStorage.getItem('route-sub-tab') as RouteSubTab) || 'redirection',
-  cliProbeHistory: [],
-  cliProbeLatest: [],
-  cliProbeView: [],
-  cliProbeTimeRange: '7d',
-  cliProbeLoaded: false,
-  cliProbeRequestId: 0,
-  cliProbeError: null,
-
   fetchConfig: async () => {
     set({ loading: true });
     try {
@@ -401,71 +350,5 @@ export const useRouteStore = create<RouteState>((set, get) => ({
     await window.electronAPI.route?.saveCliThinkingEffortSelections(selections);
     await get().fetchConfig();
     sessionEventLog.success('route', 'CLI 思考强度已更新');
-  },
-
-  // CLI 探测
-  saveCliProbeConfig: async updates => {
-    await window.electronAPI.route?.saveCliProbeConfig(updates);
-    await get().fetchConfig();
-    sessionEventLog.success('route', 'CLI 可用性检测设置已保存');
-  },
-
-  runProbeNow: async params => {
-    const res = await window.electronAPI.route?.runCliProbeNow(params);
-    if (res?.success) {
-      const fullConfig = (await window.electronAPI.loadConfig()) as UnifiedConfig;
-      await syncProjectedCliCompatibility(
-        fullConfig,
-        useDetectionStore.getState().setCliCompatibility
-      );
-      await get().fetchConfig();
-      sessionEventLog.info('route', '已执行一次 CLI 可用性即时探测');
-      return res.data;
-    }
-    sessionEventLog.error('route', 'CLI 可用性即时探测失败');
-    return null;
-  },
-
-  fetchProbeLatest: async params => {
-    const res = await window.electronAPI.route?.getCliProbeLatest(params);
-    return res?.success ? res.data : [];
-  },
-
-  fetchCliProbeData: async (timeRange, force) => {
-    const state = get();
-    if (!force && state.cliProbeLoaded && state.cliProbeTimeRange === timeRange) return;
-
-    const requestId = state.cliProbeRequestId + 1;
-    set({
-      loading: true,
-      cliProbeTimeRange: timeRange,
-      cliProbeRequestId: requestId,
-      cliProbeError: null,
-    });
-
-    try {
-      const viewRes = await window.electronAPI.route?.getCliProbeView({ window: timeRange });
-
-      // 竞态保护：只提交最新请求的结果
-      if (get().cliProbeRequestId !== requestId) return;
-
-      if (!viewRes?.success) {
-        set({
-          cliProbeError: '探测数据加载失败',
-          cliProbeLoaded: false,
-        });
-        return;
-      }
-
-      set({
-        cliProbeHistory: [],
-        cliProbeLatest: [],
-        cliProbeView: viewRes.data || [],
-        cliProbeLoaded: true,
-        cliProbeError: null,
-      });
-    } finally {
-      set({ loading: false });
-    }
   },
 }));

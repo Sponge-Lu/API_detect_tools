@@ -51,11 +51,7 @@ export function getCustomCliConfigFilePath(): string {
   return path.join(app.getPath('userData'), 'custom-cli-configs.json');
 }
 
-/**
- * 规范化直连配置的测试模型列表（当前版本只支持 1 个测试模型）
- * 如果发现多个测试模型（旧版本遗留），自动截断为只保留第一个
- */
-function normalizeCustomCliConfigTestModels(configs: CustomCliConfig[]): void {
+function normalizeCustomCliConfigs(configs: CustomCliConfig[]): void {
   for (const config of configs) {
     config.cliSettings = Object.fromEntries(
       BUILTIN_CLI_TYPES.map(cliType => [
@@ -63,21 +59,6 @@ function normalizeCustomCliConfigTestModels(configs: CustomCliConfig[]): void {
         normalizeCustomCliSettings(config.cliSettings?.[cliType]),
       ])
     ) as Record<(typeof BUILTIN_CLI_TYPES)[number], CustomCliSettings>;
-    for (const cliType of BUILTIN_CLI_TYPES) {
-      const cliSettings = config.cliSettings?.[cliType];
-      if (!cliSettings || !Array.isArray(cliSettings.testModels)) {
-        continue;
-      }
-
-      // 如果有多个测试模型，只保留第一个
-      if (cliSettings.testModels.length > 1) {
-        const originalCount = cliSettings.testModels.length;
-        cliSettings.testModels = [cliSettings.testModels[0]];
-        Logger.info(
-          `🔧 [CustomCliConfigService] 规范化直连配置 "${config.name}": ${cliType} 测试模型从 ${originalCount} 个截断为 1 个`
-        );
-      }
-    }
   }
 }
 
@@ -89,8 +70,7 @@ export async function loadCustomCliConfigStorage(): Promise<CustomCliConfigStora
     const configs = Array.isArray(data.configs) ? data.configs : [];
     const decryptedConfigs = decryptCustomCliConfigs(configs);
 
-    // 规范化测试模型（只保留第一个）
-    normalizeCustomCliConfigTestModels(decryptedConfigs);
+    normalizeCustomCliConfigs(decryptedConfigs);
 
     return {
       configs: decryptedConfigs,
@@ -119,8 +99,7 @@ export function loadCustomCliConfigStorageSync(): CustomCliConfigStorage {
     const configs = Array.isArray(data.configs) ? data.configs : [];
     const decryptedConfigs = decryptCustomCliConfigs(configs);
 
-    // 规范化测试模型（只保留第一个）
-    normalizeCustomCliConfigTestModels(decryptedConfigs);
+    normalizeCustomCliConfigs(decryptedConfigs);
 
     return {
       configs: decryptedConfigs,
