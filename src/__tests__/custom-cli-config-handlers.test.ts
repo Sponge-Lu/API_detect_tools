@@ -9,7 +9,6 @@ async function loadCustomCliConfigHandlersModule() {
   });
   const loadCustomCliConfigStorage = vi.fn();
   const saveCustomCliConfigStorage = vi.fn(async () => undefined);
-  const fetchCustomCliModelsFromEndpoint = vi.fn();
   const syncModelRegistrySources = vi.fn(async () => ({
     version: 1,
     sources: {},
@@ -34,7 +33,6 @@ async function loadCustomCliConfigHandlersModule() {
     },
   }));
   vi.doMock('../main/custom-cli-config-service', () => ({
-    fetchCustomCliModelsFromEndpoint,
     loadCustomCliConfigStorage,
     saveCustomCliConfigStorage,
   }));

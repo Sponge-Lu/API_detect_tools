@@ -73,7 +73,6 @@ if (typeof window !== 'undefined') {
       load: vi.fn(),
       save: vi.fn(),
       fetchModels: vi.fn(),
-      fetchModelsById: vi.fn(),
     },
     accounts: {
       list: vi.fn(),

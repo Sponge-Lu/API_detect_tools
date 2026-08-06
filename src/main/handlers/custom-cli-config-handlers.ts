@@ -13,7 +13,6 @@ import { ipcMain } from 'electron';
 import Logger from '../utils/logger';
 import { notifyAppDataChanged } from '../app-data-events';
 import {
-  fetchCustomCliModelsFromEndpoint,
   loadCustomCliConfigStorage,
   saveCustomCliConfigStorage,
   type CustomCliConfigStorage,
@@ -25,7 +24,6 @@ const CHANNELS = {
   LOAD: 'custom-cli-config:load',
   SAVE: 'custom-cli-config:save',
   FETCH_MODELS: 'custom-cli-config:fetch-models',
-  FETCH_MODELS_BY_ID: 'customCliConfig:fetchModels',
 } as const;
 
 /**
@@ -58,32 +56,19 @@ export function registerCustomCliConfigHandlers(): void {
     }
   });
 
-  // 拉取模型
-  ipcMain.handle(CHANNELS.FETCH_MODELS, async (_, baseUrl: string, apiKey: string) => {
-    try {
-      Logger.info('📡 [CustomCliConfigHandlers] 收到拉取模型请求');
-      const models = await fetchCustomCliModelsFromEndpoint(baseUrl, apiKey);
-      return models;
-    } catch (error: unknown) {
-      Logger.error('❌ [CustomCliConfigHandlers] 拉取模型失败:', error);
-      throw error;
-    }
-  });
-
-  // 通过配置 ID 拉取模型
-  ipcMain.handle(CHANNELS.FETCH_MODELS_BY_ID, async (_, configId: string) => {
+  // 拉取模型 (通过 configId,走 httpGet → Electron net/axios,接入系统代理)
+  ipcMain.handle(CHANNELS.FETCH_MODELS, async (_, configId: string) => {
     try {
       Logger.info(`📡 [CustomCliConfigHandlers] 收到拉取模型请求 (configId=${configId})`);
       const { fetchModels } = await import('../custom-cli-model-service');
       const result = await fetchModels(configId);
-      return result;
+      if (!result.success) {
+        throw new Error(result.error || '拉取模型失败');
+      }
+      return result.models;
     } catch (error: unknown) {
       Logger.error(`❌ [CustomCliConfigHandlers] 拉取模型失败 (configId=${configId}):`, error);
-      return {
-        success: false,
-        models: [],
-        error: error instanceof Error ? error.message : '未知错误',
-      };
+      throw error;
     }
   });
 

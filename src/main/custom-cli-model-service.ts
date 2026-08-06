@@ -11,7 +11,6 @@ import {
   loadCustomCliConfigStorage,
   saveCustomCliConfigStorage,
 } from './custom-cli-config-service';
-import type { CustomCliConfig } from '../shared/types/custom-cli-config';
 
 const log = Logger.scope('CustomCliModelService');
 
@@ -21,6 +20,37 @@ export interface FetchModelsResult {
   success: boolean;
   models: string[];
   error?: string;
+}
+
+/**
+ * 从 /v1/models 响应体提取模型 ID 列表。
+ * 兼容三种形态：{ data: [{id}, ...] }（OpenAI 标准）、[...]（纯数组）、
+ * 以及对象兜底（字段叫 id 或 name）。返回空数组表示无法解析。
+ */
+function extractModelIds(payload: unknown): string[] {
+  const candidates: unknown[] = Array.isArray(payload)
+    ? payload
+    : payload &&
+        typeof payload === 'object' &&
+        'data' in payload &&
+        Array.isArray((payload as { data: unknown }).data)
+      ? (payload as { data: unknown[] }).data
+      : [];
+
+  if (candidates.length === 0) {
+    return [];
+  }
+
+  return candidates
+    .map(item => {
+      if (typeof item === 'string') return item;
+      if (item && typeof item === 'object') {
+        const obj = item as { id?: unknown; name?: unknown };
+        return typeof obj.id === 'string' ? obj.id : typeof obj.name === 'string' ? obj.name : null;
+      }
+      return null;
+    })
+    .filter((id): id is string => !!id && id.length > 0);
 }
 
 /**
@@ -64,28 +94,26 @@ export async function fetchModels(configId: string): Promise<FetchModelsResult> 
       headers,
     });
 
-    // 解析响应
-    if (!response.data || typeof response.data !== 'object') {
+    // 上游返回非 JSON（如 HTML 错误页 / 401 文本 / anthropic 协议路径不提供该端点）
+    const data = response.data;
+    if (!data || typeof data !== 'object') {
+      const bodyPreview = typeof data === 'string' ? data.slice(0, 200) : String(data ?? '');
       return {
         success: false,
         models: [],
-        error: '响应格式错误：不是有效的 JSON 对象',
+        error: `响应非 JSON 对象 (HTTP ${response.status}): ${bodyPreview}`,
       };
     }
 
-    const data = response.data as { data?: Array<{ id?: string }> };
-    if (!Array.isArray(data.data)) {
+    // 三形态兼容解析（与历史通道等价）：{ data: [...] } / [...] / 文档兜底
+    const models = extractModelIds(data);
+    if (models.length === 0) {
       return {
         success: false,
         models: [],
-        error: '响应格式错误：缺少 data 数组',
+        error: `无法解析模型列表响应 (HTTP ${response.status}): ${JSON.stringify(data).slice(0, 200)}`,
       };
     }
-
-    // 提取模型 ID
-    const models = data.data
-      .map(item => item.id)
-      .filter((id): id is string => typeof id === 'string' && id.length > 0);
 
     log.info(`Fetched ${models.length} models for config ${configId}`);
 

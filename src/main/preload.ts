@@ -351,12 +351,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 保存配置
     save: (data: { configs: any[]; activeConfigId: string | null }) =>
       ipcRenderer.invoke('custom-cli-config:save', data),
-    // 拉取模型列表（通过 baseUrl + apiKey）
-    fetchModels: (baseUrl: string, apiKey: string) =>
-      ipcRenderer.invoke('custom-cli-config:fetch-models', baseUrl, apiKey),
-    // 拉取模型列表（通过 configId）
-    fetchModelsById: (configId: string) =>
-      ipcRenderer.invoke('customCliConfig:fetchModels', configId),
+    // 拉取模型列表（通过 configId，走 httpGet 接入系统代理）
+    fetchModels: (configId: string) =>
+      ipcRenderer.invoke('custom-cli-config:fetch-models', configId),
   },
 
   // 多账户管理 API

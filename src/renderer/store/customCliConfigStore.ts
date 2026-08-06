@@ -61,7 +61,7 @@ interface CustomCliConfigState {
 type CustomCliConfigBridge = {
   load?: () => Promise<{ configs?: CustomCliConfig[]; activeConfigId?: string | null } | null>;
   save?: (data: { configs: CustomCliConfig[]; activeConfigId: string | null }) => Promise<unknown>;
-  fetchModels?: (baseUrl: string, apiKey: string) => Promise<string[]>;
+  fetchModels?: (configId: string) => Promise<string[]>;
 };
 
 type ElectronApiWithCustomCliConfig = Window['electronAPI'] & {
@@ -405,7 +405,7 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
     try {
       const customCliConfig = getCustomCliConfigBridge();
       if (customCliConfig?.fetchModels) {
-        const models = await customCliConfig.fetchModels(config.baseUrl, config.apiKey);
+        const models = await customCliConfig.fetchModels(configId);
 
         // 更新配置中的模型列表，并清理旧 Base URL / API Key 遗留的模型选择。
         updateConfig(configId, filterCustomCliConfigModels(config, models, Date.now()));
