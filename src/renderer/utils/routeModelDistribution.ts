@@ -1,16 +1,15 @@
 /**
- * 路由模型分布聚合工具
+ * 路由模型/端点分布聚合工具
  * 输入: RouteAnalyticsBucket[]
- * 输出: ModelDistributionItem[] + squarified treemap 布局
- * 定位: 工具层 - 按 canonicalModel 聚合请求/token/失败
+ * 输出: ModelDistributionItem[] / EndpointDistributionItem[] + squarified treemap 布局
+ * 定位: 工具层 - 按 canonicalModel 或 targetEndpoint 聚合请求/token/失败
  */
 
-import type { RouteAnalyticsBucket, RouteCliType } from '../../shared/types/route-proxy';
+import type { RouteAnalyticsBucket } from '../../shared/types/route-proxy';
 
 export interface ModelDistributionItem {
   id: string;
   canonicalModel: string;
-  cliType: RouteCliType;
   requests: number;
   successCount: number;
   failureCount: number;
@@ -32,12 +31,11 @@ export function buildModelDistribution(buckets: RouteAnalyticsBucket[]): ModelDi
 
   for (const bucket of buckets) {
     const canonicalModel = bucket.canonicalModel || '未标记模型';
-    const id = `${bucket.cliType}:${canonicalModel}`;
+    const id = canonicalModel;
 
     const current = grouped.get(id) || {
       id,
       canonicalModel,
-      cliType: bucket.cliType,
       requests: 0,
       successCount: 0,
       failureCount: 0,
@@ -51,6 +49,50 @@ export function buildModelDistribution(buckets: RouteAnalyticsBucket[]): ModelDi
     current.totalTokens += bucket.totalTokens;
 
     grouped.set(id, current);
+  }
+
+  for (const item of grouped.values()) {
+    const denominator = item.successCount + item.failureCount;
+    item.successRate = denominator > 0 ? item.successCount / denominator : 0;
+  }
+
+  return Array.from(grouped.values()).sort((a, b) => b.requests - a.requests);
+}
+
+export interface EndpointDistributionItem {
+  id: string;
+  endpoint: string;
+  requests: number;
+  successCount: number;
+  failureCount: number;
+  totalTokens: number;
+  successRate: number;
+}
+
+export function buildEndpointDistribution(
+  buckets: RouteAnalyticsBucket[]
+): EndpointDistributionItem[] {
+  const grouped = new Map<string, EndpointDistributionItem>();
+
+  for (const bucket of buckets) {
+    const endpoint = bucket.targetEndpoint || '未标记端点';
+
+    const current = grouped.get(endpoint) || {
+      id: endpoint,
+      endpoint,
+      requests: 0,
+      successCount: 0,
+      failureCount: 0,
+      totalTokens: 0,
+      successRate: 0,
+    };
+
+    current.requests += bucket.requestCount;
+    current.successCount += bucket.successCount;
+    current.failureCount += bucket.failureCount;
+    current.totalTokens += bucket.totalTokens;
+
+    grouped.set(endpoint, current);
   }
 
   for (const item of grouped.values()) {

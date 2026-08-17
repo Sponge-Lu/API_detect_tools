@@ -1073,11 +1073,15 @@ function validateResponsesRequest(
       'reasoningEffort',
       'tool_choice',
       'parallel_tool_calls',
+      'store',
     ]),
     'request',
     sourceCliType,
     targetProtocol
   );
+  if (body.store !== undefined && body.store !== false) {
+    throwUnsupported('unsupported_field:store', sourceCliType, targetProtocol);
+  }
   validateReasoningObject(body.reasoning, 'reasoning', sourceCliType, targetProtocol);
   validateReasoningScalars(body, sourceCliType, targetProtocol);
   validateToolChoice(body.tool_choice, 'openai-responses', sourceCliType, targetProtocol);
@@ -1257,22 +1261,12 @@ function normalizeSourceRequest(
 ): NormalizedRequest | null {
   const cleaned = parseJsonBody(bodyBuffer);
   if (!cleaned) return null;
-  if (sourceCliType === 'claudeCode') {
+  const resolvedSourceProtocol = resolveSourceProtocol(sourceCliType, requestUrl, sourceProtocol);
+  if (resolvedSourceProtocol === 'anthropic-messages') {
     return parseClaudeRequest(cleaned, upstreamModel, sourceCliType, targetProtocol);
   }
-  if (sourceCliType === 'openCode' || sourceCliType === 'grokBuild') {
-    if (sourceProtocol === 'anthropic-messages') {
-      return parseClaudeRequest(cleaned, upstreamModel, sourceCliType, targetProtocol);
-    }
-    if (sourceProtocol === 'openai-chat-completions') {
-      return parseOpenAiChatRequest(cleaned, upstreamModel);
-    }
-    if (sourceProtocol === 'openai-responses') {
-      return parseCodexRequest(cleaned, upstreamModel, sourceCliType, targetProtocol);
-    }
-    if (Array.isArray(cleaned.messages)) {
-      return parseOpenAiChatRequest(cleaned, upstreamModel);
-    }
+  if (resolvedSourceProtocol === 'openai-chat-completions') {
+    return parseOpenAiChatRequest(cleaned, upstreamModel);
   }
   return parseCodexRequest(cleaned, upstreamModel, sourceCliType, targetProtocol);
 }
@@ -2340,7 +2334,12 @@ export function transformTargetProtocolResponse(params: {
         ? parseOpenAiResponsesResponse(params.body)
         : parseOpenAiChatResponse(params.body);
 
-  if (params.adapter.sourceCliType === 'claudeCode') {
+  const sourceResponseProtocol = resolveSourceProtocol(
+    params.adapter.sourceCliType,
+    undefined,
+    params.adapter.sourceProtocol
+  );
+  if (sourceResponseProtocol === 'anthropic-messages') {
     const body = params.adapter.stream
       ? buildClaudeSse(params.adapter.model, normalized)
       : buildClaudeJson(params.adapter.model, normalized);
@@ -2351,7 +2350,7 @@ export function transformTargetProtocolResponse(params: {
     );
   }
 
-  if (params.adapter.sourceCliType === 'codex') {
+  if (sourceResponseProtocol === 'openai-responses') {
     const body = params.adapter.stream
       ? buildCodexSse(params.adapter.model, normalized)
       : Buffer.from(
@@ -2365,45 +2364,15 @@ export function transformTargetProtocolResponse(params: {
     );
   }
 
-  if (params.adapter.sourceCliType === 'openCode' || params.adapter.sourceCliType === 'grokBuild') {
-    const sourceResponseProtocol = params.adapter.sourceProtocol ?? params.adapter.targetProtocol;
-    if (sourceResponseProtocol === 'anthropic-messages') {
-      const body = params.adapter.stream
-        ? buildClaudeSse(params.adapter.model, normalized)
-        : buildClaudeJson(params.adapter.model, normalized);
-      return replaceResponseBody(
-        params.headers,
-        body,
-        params.adapter.stream ? 'text/event-stream; charset=utf-8' : 'application/json'
+  const body = params.adapter.stream
+    ? buildOpenAiChatSse(params.adapter.model, normalized)
+    : Buffer.from(
+        JSON.stringify(buildOpenAiChatResponseObject(params.adapter.model, normalized)),
+        'utf-8'
       );
-    }
-
-    if (sourceResponseProtocol === 'openai-responses') {
-      const body = params.adapter.stream
-        ? buildCodexSse(params.adapter.model, normalized)
-        : Buffer.from(
-            JSON.stringify(buildCodexResponseObject(params.adapter.model, normalized)),
-            'utf-8'
-          );
-      return replaceResponseBody(
-        params.headers,
-        body,
-        params.adapter.stream ? 'text/event-stream; charset=utf-8' : 'application/json'
-      );
-    }
-
-    const body = params.adapter.stream
-      ? buildOpenAiChatSse(params.adapter.model, normalized)
-      : Buffer.from(
-          JSON.stringify(buildOpenAiChatResponseObject(params.adapter.model, normalized)),
-          'utf-8'
-        );
-    return replaceResponseBody(
-      params.headers,
-      body,
-      params.adapter.stream ? 'text/event-stream; charset=utf-8' : 'application/json'
-    );
-  }
-
-  return { body: params.body, headers: params.headers };
+  return replaceResponseBody(
+    params.headers,
+    body,
+    params.adapter.stream ? 'text/event-stream; charset=utf-8' : 'application/json'
+  );
 }

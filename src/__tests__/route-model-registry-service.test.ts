@@ -135,7 +135,7 @@ function createRouteRule(overrides: Partial<RouteRule> = {}): RouteRule {
     name: 'Route Rule',
     enabled: true,
     priority: 1,
-    cliType: 'claudeCode',
+    sourceProtocol: 'anthropic-messages',
     patternType: 'wildcard',
     pattern: '*',
     createdAt: 1,
@@ -1381,7 +1381,7 @@ describe('route model registry service', () => {
       createRouteRule({
         id: 'rule-1',
         name: 'Codex',
-        cliType: 'codex',
+        sourceProtocol: 'openai-responses',
       }),
       'duckcoding-route'
     );
@@ -1451,7 +1451,7 @@ describe('route model registry service', () => {
       createRouteRule({
         id: 'rule-managed-scope',
         name: 'Codex Managed Scope',
-        cliType: 'codex',
+        sourceProtocol: 'openai-responses',
         allowedSiteIds: ['site-managed'],
         allowedAccountIds: ['account-managed'],
         allowedApiKeyGroups: ['team-a'],
@@ -1470,8 +1470,9 @@ describe('route model registry service', () => {
     ]);
   });
 
-  it('preserves customCli configured targetProtocol through resolveChannelTarget', async () => {
+  it('prefers the direct access point protocol through resolveChannelTarget', async () => {
     const customConfig = createCustomCliConfig({
+      routeTargetProtocol: 'openai-responses',
       cliSettings: {
         claudeCode: {
           enabled: false,
@@ -1534,8 +1535,8 @@ describe('route model registry service', () => {
     expect(channels[0].targetProtocol).toBeUndefined();
 
     const resolved = await resolveChannelTarget(channels[0]);
-    expect(resolved.targetProtocol).toBe('openai-chat-completions');
-    expect(resolved.targetEndpoint).toBe('/v1/chat/completions');
+    expect(resolved.targetProtocol).toBe('openai-responses');
+    expect(resolved.targetEndpoint).toBe('/v1/responses');
   });
 
   it('does not route an unknown requested model through generic channels once registry data exists', () => {
@@ -1612,7 +1613,7 @@ describe('route model registry service', () => {
       createRouteRule({
         id: 'rule-codex',
         name: 'Codex wildcard',
-        cliType: 'codex',
+        sourceProtocol: 'openai-responses',
         pattern: '*',
       }),
       'unknown-model'
@@ -1653,7 +1654,8 @@ describe('route model registry service', () => {
       createRouteRule({
         id: 'rule-legacy',
         name: 'Legacy wildcard',
-        cliType: 'codex',
+        sourceProtocol: 'openai-responses',
+        targetProtocol: 'openai-responses',
         pattern: '*',
       }),
       'gpt-legacy'
@@ -1665,7 +1667,6 @@ describe('route model registry service', () => {
         siteId: 'site-1',
         accountId: 'acc-1',
         apiKeyId: 'key-a',
-        cliType: 'codex',
         canonicalModel: 'gpt-legacy',
         resolvedModel: 'gpt-legacy',
       }),

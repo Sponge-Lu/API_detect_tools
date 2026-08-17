@@ -1,20 +1,16 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { render } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { PageHeader } from '../renderer/components/AppShell/PageHeader';
-
-vi.mock('../renderer/components/CliConfigStatus', () => ({
-  CliConfigStatusPanel: () => <div>Mock CLI Status</div>,
-}));
 
 const globalCss = readFileSync(resolve(process.cwd(), 'src/renderer/index.css'), 'utf8');
 const useSiteDragSource = readFileSync(
   resolve(process.cwd(), 'src/renderer/hooks/useSiteDrag.ts'),
   'utf8'
 );
-const cliConfigStatusSource = readFileSync(
-  resolve(process.cwd(), 'src/renderer/components/CliConfigStatus/CliConfigStatus.tsx'),
+const configFilesPageSource = readFileSync(
+  resolve(process.cwd(), 'src/renderer/pages/ConfigFilesPage.tsx'),
   'utf8'
 );
 const creditPanelCompactSource = readFileSync(
@@ -166,17 +162,17 @@ describe('theme visual consistency', () => {
     expect(root.className).not.toContain('border-gray-200');
   });
 
-  it('keeps cli status chips and settings loading state on product theme tokens', () => {
-    expect(cliConfigStatusSource).not.toContain('text-green-600');
-    expect(cliConfigStatusSource).not.toContain('text-blue-600');
-    expect(cliConfigStatusSource).not.toContain('text-purple-600');
-    expect(cliConfigStatusSource).not.toContain('text-orange-600');
-    expect(cliConfigStatusSource).not.toContain('text-slate-500');
-    expect(cliConfigStatusSource).not.toContain('bg-green-50');
-    expect(cliConfigStatusSource).not.toContain('bg-blue-50');
-    expect(cliConfigStatusSource).not.toContain('bg-purple-50');
-    expect(cliConfigStatusSource).not.toContain('bg-orange-50');
-    expect(cliConfigStatusSource).not.toContain('bg-slate-100');
+  it('keeps config files page and settings loading state on product theme tokens', () => {
+    expect(configFilesPageSource).not.toContain('text-green-600');
+    expect(configFilesPageSource).not.toContain('text-blue-600');
+    expect(configFilesPageSource).not.toContain('text-purple-600');
+    expect(configFilesPageSource).not.toContain('text-orange-600');
+    expect(configFilesPageSource).not.toContain('text-slate-500');
+    expect(configFilesPageSource).not.toContain('bg-green-50');
+    expect(configFilesPageSource).not.toContain('bg-blue-50');
+    expect(configFilesPageSource).not.toContain('bg-purple-50');
+    expect(configFilesPageSource).not.toContain('bg-orange-50');
+    expect(configFilesPageSource).not.toContain('bg-slate-100');
     expect(settingsPageSource).not.toContain('text-slate-500');
   });
 

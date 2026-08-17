@@ -205,6 +205,7 @@ describe('sites page redesign', () => {
       dragOverIndex: null,
       dragOverGroupId: null,
       historyCliType: 'claudeCode',
+      historyTargetEndpoint: null,
     });
     useToastStore.setState({
       toasts: [],
@@ -600,9 +601,9 @@ describe('sites page redesign', () => {
   });
 
   it(
-    'embeds direct config identity, model, and CLI editors in the side panel',
+    'keeps direct config identity, models, and native endpoint tests in the side panel',
     { timeout: 20000 },
-    () => {
+    async () => {
       const onDeleteDirectConfig = vi.fn();
 
       render(
@@ -632,39 +633,9 @@ describe('sites page redesign', () => {
       expect(screen.getByText('直连模型管理')).toBeInTheDocument();
       expect(screen.getByText('手动模型')).toBeInTheDocument();
 
-      fireEvent.click(screen.getByRole('button', { name: 'CLI 配置' }));
-      expect(
-        screen.getByText((_, element) =>
-          /^CLI 配置（\s*\d+\s*\/\s*4\s*）$/.test(element?.textContent ?? '')
-        )
-      ).toBeInTheDocument();
-      expect(screen.queryByText('直连 CLI 配置')).not.toBeInTheDocument();
-      expect(screen.queryByText('配置预览与编辑')).not.toBeInTheDocument();
-      expect(screen.getAllByText('配置文件预览')).toHaveLength(4);
-      expect(screen.getAllByText('应用到本机').length).toBeGreaterThan(0);
-      expect(screen.getByRole('button', { name: 'Claude Code 主模型' })).toHaveClass(
-        'px-3',
-        'py-2',
-        'text-sm'
-      );
-      expect(
-        screen.queryByRole('button', { name: 'Claude Code 测试模型' })
-      ).not.toBeInTheDocument();
-
-      fireEvent.click(screen.getByRole('button', { name: 'Claude Code 配置文件预览' }));
-      expect(screen.getByRole('button', { name: 'Claude Code 配置文件预览' })).toHaveAttribute(
-        'aria-expanded',
-        'true'
-      );
-      expect(screen.queryByText('CLI 测试')).not.toBeInTheDocument();
-      expect(screen.queryAllByText('测试模型')).toHaveLength(0);
-      expect(screen.queryByText('测试模型（最多 3 个）')).not.toBeInTheDocument();
-      expect(screen.queryByText('请确认配置信息是否正确')).not.toBeInTheDocument();
-      expect(screen.queryAllByRole('button', { name: /^预览 / })).toHaveLength(0);
-
-      expect(
-        screen.queryByText('旧版 CLI 配置编辑区与测试结果（实现期细化）')
-      ).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'CLI 配置' })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: '测试' }));
+      expect(await screen.findByRole('combobox', { name: '路由上游协议' })).toBeInTheDocument();
     }
   );
 
@@ -1018,7 +989,7 @@ describe('sites page redesign', () => {
   });
 
   it(
-    'exposes the embedded managed CLI editor from the side panel',
+    'exposes managed native endpoint tests without an embedded CLI editor',
     { timeout: 20000 },
     async () => {
       const onSaveCliConfig = vi.fn();
@@ -1046,31 +1017,14 @@ describe('sites page redesign', () => {
         />
       );
 
-      fireEvent.click(screen.getByRole('button', { name: 'CLI 配置' }));
-
-      expect(screen.getByRole('button', { name: '保存配置' })).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: '测试已选模型' })).not.toBeInTheDocument();
-      expect(screen.getAllByText('应用到本机').length).toBeGreaterThan(0);
-
-      expect(screen.getByLabelText('Claude Code 选择 API Key')).toBeInTheDocument();
-      expect(screen.getByLabelText('Claude Code 选择上游端口')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Claude Code CLI 使用模型' })).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: '测试模型' })).not.toBeInTheDocument();
-      expect(screen.getAllByText('配置文件预览')).toHaveLength(4);
-      expect(screen.queryByText('请去站点确认配置信息是否正确')).not.toBeInTheDocument();
-
-      fireEvent.click(screen.getByRole('button', { name: 'Claude Code 配置文件预览' }));
-      expect(screen.queryByRole('button', { name: '测试已选模型' })).not.toBeInTheDocument();
-
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
-      });
-
-      expect(onSaveCliConfig).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('button', { name: 'CLI 配置' })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: '测试' }));
+      expect(await screen.findByRole('combobox', { name: '路由上游协议' })).toBeInTheDocument();
+      expect(onSaveCliConfig).not.toHaveBeenCalled();
     }
   );
 
-  it('keeps the managed side panel on the cli tab after saving the same account config', async () => {
+  it('keeps the managed side panel on the test tab after refreshing the same account', async () => {
     const onSaveCliConfig = vi.fn();
     const initialData = {
       type: 'managed' as const,
@@ -1111,18 +1065,8 @@ describe('sites page redesign', () => {
       />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'CLI 配置' }));
-    expect(
-      screen.getByText((_, element) =>
-        /^CLI 配置（\s*\d+\s*\/\s*4\s*）$/.test(element?.textContent ?? '')
-      )
-    ).toBeInTheDocument();
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
-    });
-
-    expect(onSaveCliConfig).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: '测试' }));
+    expect(await screen.findByRole('combobox', { name: '路由上游协议' })).toBeInTheDocument();
 
     await act(async () => {
       rerender(
@@ -1138,11 +1082,9 @@ describe('sites page redesign', () => {
       );
     });
 
-    expect(
-      screen.getByText((_, element) =>
-        /^CLI 配置（\s*\d+\s*\/\s*4\s*）$/.test(element?.textContent ?? '')
-      )
-    ).toBeInTheDocument();
+    expect(await screen.findByRole('combobox', { name: '路由上游协议' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'CLI 配置' })).not.toBeInTheDocument();
+    expect(onSaveCliConfig).not.toHaveBeenCalled();
     expect(screen.queryByText('站点与账户')).not.toBeInTheDocument();
   });
 
@@ -1235,8 +1177,7 @@ describe('sites page redesign', () => {
       'utf8'
     );
 
-    expect(source).toContain('const MINIATURE_HEIGHT = 8');
-    expect(source).toContain('const LARGE_HEIGHT = 13');
+    expect(source).toContain('miniature ? 8 : 13');
     expect(source).toContain('getHistoryBuckets');
     expect(source).toContain("window: '48h'");
     expect(source).toContain("bucketSize: '2h'");
@@ -1249,17 +1190,22 @@ describe('sites page redesign', () => {
   it('fetches 24 two-hour history buckets through the route IPC bridge', async () => {
     const getHistoryBuckets = vi.fn().mockResolvedValue({
       success: true,
-      data: Array.from({ length: 24 }, (_, index) => ({
-        bucketStart: index * 2 * 60 * 60 * 1000,
-        bucketEnd: (index + 1) * 2 * 60 * 60 * 1000,
-        successRate: index === 23 ? 1 : null,
-        routeCount: 0,
-      })),
+      data: [
+        {
+          targetEndpoint: '/v1/responses',
+          buckets: Array.from({ length: 24 }, (_, index) => ({
+            bucketStart: index * 2 * 60 * 60 * 1000,
+            bucketEnd: (index + 1) * 2 * 60 * 60 * 1000,
+            successRate: index === 23 ? 1 : null,
+            routeCount: 0,
+          })),
+        },
+      ],
     });
     (window.electronAPI as any).route.getHistoryBuckets = getHistoryBuckets;
 
     await act(async () => {
-      render(<HistoryBucketBars siteId="site-1" accountId="account-1" cliType="codex" />);
+      render(<HistoryBucketBars siteId="site-1" accountId="account-1" />);
     });
 
     await vi.waitFor(() => expect(getHistoryBuckets).toHaveBeenCalled());
@@ -1268,26 +1214,30 @@ describe('sites page redesign', () => {
       bucketSize: '2h',
       siteId: 'site-1',
       accountId: 'account-1',
-      cliType: 'codex',
     });
-    expect(await screen.findAllByLabelText(/CLI: Codex/)).toHaveLength(24);
+    expect(await screen.findAllByLabelText(/OpenAI · \/v1\/responses/)).toHaveLength(24);
     expect(screen.getByTestId('history-bucket-bars-track')).toHaveStyle({ height: '13px' });
   });
 
-  it('loads Grok Build route requests into the History bars without CLI probing', async () => {
+  it('renders separate target endpoint tracks without CLI probing', async () => {
     const getHistoryBuckets = vi.fn().mockResolvedValue({
       success: true,
-      data: Array.from({ length: 24 }, (_, index) => ({
-        bucketStart: index * 2 * 60 * 60 * 1000,
-        bucketEnd: (index + 1) * 2 * 60 * 60 * 1000,
-        successRate: index === 23 ? 1 : null,
-        routeCount: index === 23 ? 1 : 0,
-      })),
+      data: [
+        {
+          targetEndpoint: '/v1/messages',
+          buckets: Array.from({ length: 24 }, (_, index) => ({
+            bucketStart: index * 2 * 60 * 60 * 1000,
+            bucketEnd: (index + 1) * 2 * 60 * 60 * 1000,
+            successRate: index === 23 ? 1 : null,
+            routeCount: index === 23 ? 1 : 0,
+          })),
+        },
+      ],
     });
     window.electronAPI.route.getHistoryBuckets = getHistoryBuckets;
 
     await act(async () => {
-      render(<HistoryBucketBars siteId="site-1" accountId="account-1" cliType="grokBuild" />);
+      render(<HistoryBucketBars siteId="site-1" accountId="account-1" />);
     });
 
     await vi.waitFor(() => expect(getHistoryBuckets).toHaveBeenCalled());
@@ -1296,10 +1246,78 @@ describe('sites page redesign', () => {
       bucketSize: '2h',
       siteId: 'site-1',
       accountId: 'account-1',
-      cliType: 'grokBuild',
     });
-    expect(await screen.findAllByLabelText(/CLI: Grok Build/)).toHaveLength(24);
+    expect(await screen.findAllByLabelText(/Anthropic · \/v1\/messages/)).toHaveLength(24);
     expect(screen.getByLabelText(/路由请求 1 次 100%/)).toBeInTheDocument();
+  });
+
+  it('keeps all standard History endpoint switches visible without matching history data', async () => {
+    const getHistoryBuckets = vi.fn().mockResolvedValue({
+      success: true,
+      data: [{ targetEndpoint: '/v1/responses', buckets: [] }],
+    });
+    window.electronAPI.route.getHistoryBuckets = getHistoryBuckets;
+
+    render(
+      <SiteListHeader
+        columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
+        onColumnWidthChange={vi.fn()}
+      />
+    );
+
+    expect(await screen.findByRole('button', { name: '选择端点 Anthropic' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '选择端点 OpenAI' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '选择端点 OpenAI Chat' })).toBeInTheDocument();
+  });
+
+  it('switches the shared History track from endpoint buttons and uses a success-rate gradient', async () => {
+    const endpointA = '/v1/messages';
+    const endpointB = '/v1/responses';
+    const endpointC = '/v1/chat/completions';
+    const makeBuckets = (successRate: number) =>
+      Array.from({ length: 24 }, (_, index) => ({
+        bucketStart: index * 2 * 60 * 60 * 1000,
+        bucketEnd: (index + 1) * 2 * 60 * 60 * 1000,
+        successRate: index === 23 ? successRate : null,
+        routeCount: index === 23 ? 4 : 0,
+      }));
+    const getHistoryBuckets = vi.fn().mockResolvedValue({
+      success: true,
+      data: [
+        { targetEndpoint: endpointA, buckets: makeBuckets(0.25) },
+        { targetEndpoint: endpointB, buckets: makeBuckets(0.75) },
+        { targetEndpoint: endpointC, buckets: makeBuckets(1) },
+        { targetEndpoint: '未知端点', buckets: makeBuckets(0) },
+      ],
+    });
+    (window.electronAPI as any).route.getHistoryBuckets = getHistoryBuckets;
+
+    render(
+      <>
+        <SiteListHeader columnWidths={[...DEFAULT_COLUMN_WIDTHS]} onColumnWidthChange={vi.fn()} />
+        <HistoryBucketBars siteId="site-1" accountId="account-1" />
+      </>
+    );
+
+    const endpointButtonA = await screen.findByRole('button', { name: '选择端点 Anthropic' });
+    const endpointButtonB = await screen.findByRole('button', { name: '选择端点 OpenAI' });
+    expect(screen.getByRole('group', { name: '请求端点选择' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '选择端点 OpenAI Chat' })).toHaveTextContent(
+      'OpenAI Chat'
+    );
+    expect(screen.queryByText('History')).not.toBeInTheDocument();
+    expect(screen.queryByText('未知端点')).not.toBeInTheDocument();
+    await waitFor(() => expect(useUIStore.getState().historyTargetEndpoint).toBe(endpointA));
+    expect(endpointButtonA).toHaveAttribute('aria-pressed', 'true');
+
+    const track = screen.getByTestId('history-bucket-bars-track');
+    const firstColor = (track.children[23] as HTMLElement).style.backgroundColor;
+    expect(firstColor).toContain('color-mix');
+
+    fireEvent.click(endpointButtonB);
+    await waitFor(() => expect(useUIStore.getState().historyTargetEndpoint).toBe(endpointB));
+    expect(endpointButtonB).toHaveAttribute('aria-pressed', 'true');
+    expect((track.children[23] as HTMLElement).style.backgroundColor).not.toBe(firstColor);
   });
 
   it('shows the check-in spinner only for the targeted account card key', () => {
@@ -1362,7 +1380,7 @@ describe('sites page redesign', () => {
   });
 
   it('renders only the visible folded-row columns inside the sticky header', () => {
-    // 站点 / 账户 / 刷新时间 / 余额 / 今日消费 / 模型 / LDC / History
+    // 站点 / 账户 / 刷新时间 / 余额 / 今日消费 / 模型 / LDC / 请求端点
     expect(DEFAULT_COLUMN_WIDTHS).toEqual([180, 112, 84, 84, 70, 50, 64, 320]);
 
     const { container } = render(
@@ -1384,16 +1402,9 @@ describe('sites page redesign', () => {
     expect(screen.getByRole('button', { name: '今日消费' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '模型数' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'LDC' })).toBeInTheDocument();
-    // R10: History 列头改为内嵌 CLI/模式选择器（不再显示 "History" 文本）
-    expect(screen.getByRole('button', { name: '选择 Codex' })).toBeInTheDocument();
-    expect(screen.getByAltText('Claude Code')).toBeInTheDocument();
-    expect(screen.getByAltText('Codex')).toBeInTheDocument();
-    expect(screen.getByAltText('OpenCode')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '选择 Grok Build' })).toBeInTheDocument();
-    expect(screen.getByAltText('Grok Build')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '综合模式' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '选择 Grok Build' }));
-    expect(useUIStore.getState().historyCliType).toBe('grokBuild');
+    expect(screen.getByText('目标端点')).toBeInTheDocument();
+    expect(screen.queryByText('History')).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'CLI 类型选择' })).not.toBeInTheDocument();
     expect(screen.queryByText('操作')).not.toBeInTheDocument();
     // 已移除的列
     expect(screen.queryByText('站点类型')).not.toBeInTheDocument();
@@ -1403,7 +1414,7 @@ describe('sites page redesign', () => {
     expect(screen.queryByRole('button', { name: '更新时间' })).not.toBeInTheDocument();
   });
 
-  it('allows the History column to be widened from the header resize handle', () => {
+  it('allows the request endpoint column to be widened from the header resize handle', () => {
     const onColumnWidthChange = vi.fn();
 
     render(
@@ -1413,7 +1424,7 @@ describe('sites page redesign', () => {
       />
     );
 
-    fireEvent.mouseDown(screen.getByRole('separator', { name: '调整History列宽' }), {
+    fireEvent.mouseDown(screen.getByRole('separator', { name: '调整请求端点列宽' }), {
       clientX: 100,
     });
     fireEvent.mouseMove(document, { clientX: 180 });
@@ -1422,7 +1433,7 @@ describe('sites page redesign', () => {
     expect(onColumnWidthChange).toHaveBeenCalledWith(7, 400);
   });
 
-  it('supports keyboard resizing on the History column handle', () => {
+  it('supports keyboard resizing on the request endpoint column handle', () => {
     const onColumnWidthChange = vi.fn();
 
     render(
@@ -1432,12 +1443,12 @@ describe('sites page redesign', () => {
       />
     );
 
-    const historyHandle = screen.getByRole('separator', { name: '调整History列宽' });
-    expect(historyHandle).toHaveAttribute('aria-valuenow', '320');
-    expect(historyHandle).toHaveAttribute('aria-valuemax', '480');
+    const endpointHandle = screen.getByRole('separator', { name: '调整请求端点列宽' });
+    expect(endpointHandle).toHaveAttribute('aria-valuenow', '320');
+    expect(endpointHandle).toHaveAttribute('aria-valuemax', '480');
 
-    fireEvent.keyDown(historyHandle, { key: 'ArrowRight' });
-    fireEvent.keyDown(historyHandle, { key: 'End' });
+    fireEvent.keyDown(endpointHandle, { key: 'ArrowRight' });
+    fireEvent.keyDown(endpointHandle, { key: 'End' });
 
     expect(onColumnWidthChange).toHaveBeenCalledWith(7, 330);
     expect(onColumnWidthChange).toHaveBeenCalledWith(7, 480);
@@ -1740,9 +1751,8 @@ describe('sites page redesign', () => {
     expect(screen.getByRole('button', { name: '今日消费' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '模型数' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'LDC' })).toBeInTheDocument();
-    // R10: History 列头改为内嵌选择器
-    expect(screen.getByRole('button', { name: '选择 Claude Code' })).toBeInTheDocument();
-    expect(screen.getByAltText('Claude Code')).toBeInTheDocument();
+    expect(screen.getByText('目标端点')).toBeInTheDocument();
+    expect(screen.queryByText('History')).not.toBeInTheDocument();
     expect(screen.getByText('批量检测')).toBeInTheDocument();
     const header = container.firstElementChild as HTMLDivElement;
     expect(header.style.gridTemplateColumns).toBe(
@@ -1878,7 +1888,7 @@ describe('sites page redesign', () => {
     // Phase 5/6: 站点类型列已移除
     expect(screen.queryByText('New API')).not.toBeInTheDocument();
     expect(screen.queryByText('default')).not.toBeInTheDocument();
-    // CLI 图标已移到 History 列，不再单独占据一列
+    // History 端点选择器位于 History 列头，不再单独占据一列
     expect(screen.queryByAltText('Claude Code')).not.toBeInTheDocument();
     expect(screen.queryByAltText('Codex')).not.toBeInTheDocument();
     // CLI配置和CLI应用按钮已移到侧滑面板中

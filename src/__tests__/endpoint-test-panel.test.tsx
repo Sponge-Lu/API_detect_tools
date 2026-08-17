@@ -102,11 +102,12 @@ describe('EndpointTestPanel', () => {
   it('renders three endpoint tests and restores independent persisted selections', async () => {
     render(<EndpointTestPanel target={target} />);
 
-    const messagesTitle = (await screen.findByText('Anthropic Messages')).parentElement;
+    await screen.findByTitle('测试 /v1/messages');
+    const messagesTitle = screen.getByText('/v1/messages').parentElement;
     expect(messagesTitle).toHaveClass('items-center');
     expect(messagesTitle).toHaveTextContent('Anthropic Messages/v1/messages');
-    expect(screen.getByText('OpenAI Responses')).toBeInTheDocument();
-    expect(screen.getByText('OpenAI Chat Completions')).toBeInTheDocument();
+    expect(screen.getAllByText('OpenAI Responses')).toHaveLength(2);
+    expect(screen.getAllByText('OpenAI Chat Completions')).toHaveLength(2);
     expect(screen.getByText('/v1/messages')).toBeInTheDocument();
     expect(screen.getByText('/v1/responses')).toBeInTheDocument();
     expect(screen.getByText('/v1/chat/completions')).toBeInTheDocument();
@@ -114,8 +115,9 @@ describe('EndpointTestPanel', () => {
     expect(screen.getByTitle('测试 /v1/messages')).toHaveClass('!min-h-7', '!px-2.5');
 
     const selects = screen.getAllByRole('combobox') as HTMLSelectElement[];
-    expect(selects).toHaveLength(6);
+    expect(selects).toHaveLength(7);
     expect(selects.map(select => select.value)).toEqual([
+      'native',
       'key-a',
       'messages-model',
       'key-b',
@@ -149,10 +151,12 @@ describe('EndpointTestPanel', () => {
 
   it('saves endpoint selections independently', async () => {
     render(<EndpointTestPanel target={target} />);
-    await screen.findByText('Anthropic Messages');
+    await screen.findByTitle('测试 /v1/messages');
 
-    const selects = screen.getAllByRole('combobox') as HTMLSelectElement[];
-    fireEvent.change(selects[1], { target: { value: 'chat-model' } });
+    const messagesModel = screen.getByLabelText('模型', {
+      selector: '#endpoint-test-model-anthropic-messages',
+    });
+    fireEvent.change(messagesModel, { target: { value: 'chat-model' } });
 
     await waitFor(() => {
       expect(saveSelection).toHaveBeenCalledWith({
@@ -162,13 +166,17 @@ describe('EndpointTestPanel', () => {
         model: 'chat-model',
       });
     });
-    expect(selects[3]).toHaveValue('responses-model');
-    expect(selects[5]).toHaveValue('chat-model');
+    expect(
+      screen.getByLabelText('模型', { selector: '#endpoint-test-model-openai-responses' })
+    ).toHaveValue('responses-model');
+    expect(
+      screen.getByLabelText('模型', { selector: '#endpoint-test-model-openai-chat-completions' })
+    ).toHaveValue('chat-model');
   });
 
   it('updates the displayed latest test time from a completed run', async () => {
     render(<EndpointTestPanel target={target} />);
-    await screen.findByText('Anthropic Messages');
+    await screen.findByTitle('测试 /v1/messages');
 
     fireEvent.click(screen.getByTitle('测试 /v1/chat/completions'));
 
@@ -208,7 +216,7 @@ describe('EndpointTestPanel', () => {
     });
 
     render(<EndpointTestPanel target={managedTarget} />);
-    await screen.findByText('Anthropic Messages');
+    await screen.findByTitle('测试 /v1/messages');
 
     const modelSelect = screen.getByLabelText('模型', {
       selector: '#endpoint-test-model-anthropic-messages',
@@ -223,7 +231,7 @@ describe('EndpointTestPanel', () => {
     ).toBeInTheDocument();
 
     fireEvent.click(listAllSwitch);
-    const apiKeySelect = screen.getAllByRole('combobox')[0];
+    const apiKeySelect = screen.getAllByRole('combobox')[1];
     fireEvent.change(apiKeySelect, { target: { value: 'key-b' } });
     await waitFor(() => expect(modelSelect).toHaveValue('responses-model'));
   });

@@ -11,8 +11,9 @@
 当前版本为 **v3.0.4**。相较 `v2.1.24`，核心架构变化是：
 
 - 配置模型升级为 v3：`sites + accounts + routing`
-- 新增 `数据总览`、`本地路由` 与 `日志` 工作区，并接入对应主进程路由服务
-- 接入点侧滑面板提供协议中立的三端点 HTTP 生成测试，CLI 配置与测试选择完全解耦
+- 新增并行的 `本地路由`、`模型映射`、`配置文件` 工作区
+- 本地路由升级为按 pathname 分派的三协议通用网关，客户端身份不参与基础协议和通道选择
+- 接入点侧滑面板只提供三端点原生测试；顶部上游协议字段仅供真实路由使用
 - 路由运行态、端点测试最新结果、分析桶和模型来源快照拆分到 bounded sidecar 文件
 - UI 原语迁移到 `App*` 中性命名体系
 - 主题系统收敛为 `Light` / `Dark`
@@ -115,8 +116,9 @@ interface UnifiedConfig {
 - 页面工作台：
   - `DataOverviewPage`
   - `SitesPage`
-  - `CustomCliPage`
   - `RoutePage`
+  - `ModelMappingPage`
+  - `ConfigFilesPage`
   - `LogsPage`
   - `CreditPage`
   - `SettingsPage`
@@ -159,13 +161,15 @@ interface UnifiedConfig {
 | `TokenService` | 登录初始化、token 校验、签到、access token 自动补建 |
 | `ChromeManager` | 多槽位检测浏览器池、独立登录浏览器、页面复用与清理 |
 | `UnifiedConfigManager` | 配置加载、迁移、原子写入、备份恢复、路由配置持久化 |
-| `EndpointTestService` | 解析托管/直连目标，通过本地路由 target lock 执行三协议 HTTP 生成测试并保存最新时间 |
+| `EndpointTestService` | 解析托管/直连目标，绕过协议转换执行三协议原生测试并保存最新时间 |
+| `ConfigFileProfileService` | 配置卡片持久化、文件授权、预览事务、原子写入/回滚和会话记录扫描 |
+| `RouteSessionService` | 会话规则提取、候选发现、活动生命周期、连接器关联和覆盖查询 |
 | `CreditService` | Linux Do Credit 数据读取与充值跳转 |
 | `UpdateService` | 版本检查、应用内下载、安装 |
 
 ### 端点测试执行路径
 
-`endpoint-test:*` IPC 接收接入目标、协议、API Key 与模型。`EndpointTestService` 复用路由目标解析的 AnyRouter、代理、直连和托管 Key 处理，再通过只允许 loopback 的 target lock 发起非流式 HTTP 请求。托管目标同时返回站点全量模型与各 API Key 用户分组可用模型，直连目标返回已获取和手工模型并集。三个协议统一发送“1.2和1.19哪个更大？”，测试头只包含协议必需字段，不携带 CLI marker、User-Agent、originator 或 Grok 特征；上游失败只持久化经过提取和限长的简短原因。
+`endpoint-test:*` IPC 接收接入目标、协议、API Key 与模型。测试页保存接入点级上游协议，但 `EndpointTestService` 始终按被测协议构造原生请求，不调用协议转换层。托管目标同时返回站点全量模型与各 API Key 用户分组可用模型，直连目标返回已获取和手工模型并集。
 
 ### 浏览器管理模型
 
@@ -196,8 +200,9 @@ Route 相关能力是 v3 主线相比 v2.1.24 最重要的新增模块之一。
 
 ### 主进程模块
 
-- `route-proxy-service.ts`：代理服务器启停与运行状态
+- `route-proxy-service.ts`：三协议 pathname 分派、模型发现/根探测、代理启停、完整 Base URL 前缀拼接和请求执行
 - `route-channel-resolver.ts`：通道路由决策
+- `route-session-service.ts`：基于 `agentId + runtimeSlotId + sessionId` 的 RouteInstance 生命周期、ARMED 原子绑定、槽位切换和配置覆盖
 - `route-rule-engine.ts`：规则匹配
 - `route-model-registry-service.ts`：模型注册表与覆盖项
 - `endpoint-test-service.ts`：三协议手动测试与最新结果持久化
@@ -208,9 +213,11 @@ Route 相关能力是 v3 主线相比 v2.1.24 最重要的新增模块之一。
 
 ### 渲染层页面
 
-- `RoutePage`：本地路由配置/操作页，承载代理服务、CLI 默认模型与模型重定向配置
+- `RoutePage`：本地网关服务与会话级模型/思考强度覆盖
+- `ModelMappingPage`：模型重定向、原始来源和候选优先级
+- `ConfigFilesPage`：配置方案摘要卡片（整卡点击编辑）、规则详情、模板应用与本地文件保存（行级 diff 预览）和对话记录路径
 - `DataOverviewPage`：数据总览页；路由数据子页展示 KPI、趋势、模型热力、通道散点与 Sankey；趋势图在 `24h` / `7d` 视窗内补齐完整小时/日期 X 轴
-- `LogsPage`：日志页；路由日志子页以无卡片、带表头的横向滚动单行表格展示逐条请求尝试、路由目标、Token（总/输入/输出/缓存写/缓存读）、参考金额、用时/首字、纯数字状态码与失败第二行
+- `LogsPage`：日志页；路由日志按实际 Agent 动态筛选，首列纯文本展示 Agent，Token 固定两行展示输入/输出与缓存写/读
 - `EndpointTestPanel`：接入点侧滑面板的独立测试页，每端点单独选择 Key/模型并显示最近测试时间
 
 ### IPC 命名空间
@@ -226,26 +233,36 @@ Route 功能统一挂在 `route:*`：
 - `route:get-analytics-summary` / `route:get-analytics-distribution`
 - `route:get-request-logs`
 - `route:get-object-stats`
+- `route:list-sessions` / `route:upsert-session-override` / `route:upsert-session-rule`
+- `config-file-profile:load` / `config-file-profile:upsert` / `config-file-profile:delete`
+- `config-file-profile:target-catalog` / `config-file-profile:preview` / `config-file-profile:preview-direct-edit` / `config-file-profile:commit`
 
 ---
 
-## CLI 配置与端点测试
+## 配置文件与端点测试
 
 ### 存储位置
 
 | 数据 | 位置 |
 |------|------|
-| 站点 CLI 配置 | `account.cli_config` 或兼容层 `site.cli_config` |
-| 自定义 CLI 配置 | `${userData}/custom-cli-configs.json` |
+| 接入点上游协议 | `account.routeTargetProtocol` 或直连配置 `routeTargetProtocol` |
+| 自定义配置卡片 | `${userData}/config-file-profiles.json` |
+| 直连接入点 | `${userData}/custom-cli-configs.json` |
+| 会话规则与覆盖 | `config.json` 的 `routing.sessionRouting`（活动记录仅在内存） |
 | 端点测试最新状态 | `${userData}/state/route-endpoint-tests.json` |
 
 ### 当前策略
 
-- **Claude Code**：支持配置生成与应用。
-- **Codex**：配置使用 Responses API，`wire_api = "responses"`。
-- Google/Gemini GenerateContent 仅作为路由/provider 协议处理能力保留，不作为可配置 CLI 集成展示。
-- CLI 使用模型只影响配置生成/应用；端点测试选择完全独立。
-- 四个内置 CLI 配置卡片常驻展开，连接字段采用紧凑三列布局；每个配置文件预览按需展开。
+- 配置卡片不参与网关客户端识别；删除所有卡片后标准协议请求仍可路由。
+- 四个旧 CLI 的完整配置由 `shared/config/builtin-client-configs.ts` 统一构建；未修改的简化示例可升级，用户修改不会被覆盖。
+- 模板只保存目标引用和占位字符，真实 API Key 按需解析，不写入普通日志。
+- 主进程提供过滤不可用目标的非敏感目录，并分别提供本地重定向、Key 分组、账户原始与直连模型域。
+- 模板应用与真实文件编辑使用独立、绑定 revision/路径/hash/mtime/权限的事务；JSON/TOML/ENV 合并失败禁止降级覆盖。
+- 对话记录扫描按路径、mtime 和大小缓存，坏文件形成逐路径诊断，记录独有会话保持候选状态。
+- 会话窗口状态使用 `open/closed/unknown` 三态：记录级 `activePath` 可直接提供状态；JSON 顶层必须由 `windowOpenPath` 与 `currentSessionIdPath` 共同证明窗口打开且当前 ID 匹配。残留 ID、请求时间和文件 mtime 都不能产生 `open`。
+- 会话路由在代理读取 JSON 请求体后、选择路由前归一化完整稳定三元键 `agentId + runtimeSlotId + sessionId`。完整内部 `x-api-detect-*` 键优先；当前 Codex 也可由原生 `x-codex-window-id` 与 `client_metadata` 的 `session_id/window_id` 等确定性字段组成键。缺失、冲突或不合法时不创建实例也不消耗 ARMED。首个未知键绑定预创建配置或按请求配置自动创建，同槽位新 Session 关闭旧实例，静默时长不改变状态。
+- 静态 CLI 配置只负责生成并应用本地客户端文件，不承载动态会话身份。代理只剥离应用内部 `x-api-detect-*` 身份头，Codex 原生协议 Header 保持上送。
+- 扫描候选保存的覆盖带有 `probable` 关联等级，只有后续 HTTP 请求提供相同稳定 ID 时才应用；手工预配置的稳定 ID 持久化为 `exact`，清理活动记录不会删除覆盖。
 
 ---
 

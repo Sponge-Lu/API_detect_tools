@@ -562,20 +562,30 @@ describe('DataOverviewPage', () => {
     expect(document.querySelectorAll('[data-scatter-success-label="true"]')).toHaveLength(0);
 
     const trendCard = screen.getByLabelText('运行趋势图');
-    expect(trendCard).toHaveClass('min-h-0');
+    expect(trendCard).toHaveClass('min-h-0', 'col-span-2');
     expect(trendCard).not.toHaveClass('flex-1');
-    expect(trendCard.parentElement).toHaveClass(
+    // 趋势行与底行同为三等分网格：趋势占 2 列、通道分布占 1 列，保证通道分布与底行卡片等宽
+    expect(trendCard.parentElement).toHaveClass('grid', 'grid-cols-3', 'overflow-hidden');
+    expect(trendCard.parentElement?.parentElement).toHaveClass(
       'grid',
       'grid-rows-[minmax(0,1.0625fr)_minmax(0,0.9375fr)]',
       'overflow-hidden'
     );
+    expect(document.querySelector('[data-testid="overview-endpoint-donut"]')).toBeInTheDocument();
+    expect(screen.getByTestId('overview-channel-bars').parentElement).toBe(trendCard.parentElement);
     expect(screen.getByTestId('overview-model-donut').parentElement).toHaveClass(
       'grid-cols-3',
       'overflow-hidden'
     );
+    expect(screen.getByTestId('overview-endpoint-donut').parentElement).toBe(
+      screen.getByTestId('overview-model-donut').parentElement
+    );
 
     expect(document.querySelector('[data-route-content-scroll="true"]')).toHaveClass('pb-2.5');
-    expect(document.querySelector('[data-trend-chart-frame="true"]')).toHaveClass('-mx-2', 'px-5');
+    expect(document.querySelector('[data-trend-chart-frame="true"]')).toHaveClass(
+      '-mx-2',
+      'px-2.5'
+    );
 
     const trendPointCount = Number(
       screen.getByLabelText('运行趋势图').getAttribute('data-trend-point-count')
@@ -583,9 +593,11 @@ describe('DataOverviewPage', () => {
     expect(document.querySelectorAll('[data-trend-axis-label="true"]')).toHaveLength(
       trendPointCount
     );
-    for (const seriesName of ['requests', 'success-rate', 'ttfb-p95']) {
+    for (const seriesName of ['requests', 'success-rate']) {
       expect(document.querySelector(`[data-trend-series="${seriesName}"]`)).toBeInTheDocument();
     }
+    expect(document.querySelector('[data-trend-series="ttfb-p95"]')).not.toBeInTheDocument();
+    expect(document.querySelector('[data-trend-legend="ttfb-p95"]')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('选择运行趋势范围')).not.toBeInTheDocument();
     expect(document.querySelector('[data-trend-scope-select="true"]')).not.toBeInTheDocument();
   });
@@ -727,6 +739,58 @@ describe('DataOverviewPage', () => {
       expect(axisLabels).toEqual(expectedLabels);
     });
     expect(trendCard).toHaveAttribute('data-trend-point-count', '8');
+  });
+
+  it('renders success-rate and request-count y axes with aligned gridlines', async () => {
+    render(<DataOverviewPage />);
+
+    const trendCard = await screen.findByLabelText('运行趋势图');
+    await waitFor(() => {
+      expect(window.electronAPI.route?.getAnalyticsOverview).toHaveBeenCalled();
+    });
+
+    // 左侧为请求量轴、右侧为成功率轴
+    expect(
+      Array.from(trendCard.querySelectorAll('[data-trend-y-axis]')).map(axis =>
+        axis.getAttribute('data-trend-y-axis')
+      )
+    ).toEqual(['requests', 'success-rate']);
+
+    const successRateTicks = Array.from(
+      trendCard.querySelectorAll(
+        '[data-trend-y-axis="success-rate"] [data-trend-y-axis-tick="true"]'
+      )
+    ).map(tick => tick.textContent);
+    expect(successRateTicks).toEqual(['100%', '50%', '0%']);
+
+    // 默认 7d 窗口将 5 个测试桶合并到同一天：12+20+8+6+4=50 次请求
+    const requestTicks = Array.from(
+      trendCard.querySelectorAll('[data-trend-y-axis="requests"] [data-trend-y-axis-tick="true"]')
+    ).map(tick => tick.textContent);
+    expect(requestTicks).toEqual(['50', '25', '0']);
+
+    expect(trendCard.querySelectorAll('[data-trend-guide="true"]')).toHaveLength(3);
+
+    // 纵轴与绘图区保留间距，顶部参考线距卡片上边沿的留白与横轴标签距下边沿的留白对称
+    const plotRow = trendCard.querySelector('[data-trend-y-axis="requests"]')?.parentElement;
+    expect(plotRow).toHaveClass('gap-3', 'pt-1');
+
+    // 横纵轴刻度使用更醒目的字号与颜色
+    expect(trendCard.querySelector('[data-trend-y-axis="requests"]')).toHaveClass(
+      'text-[10px]',
+      'text-[var(--text-secondary)]'
+    );
+    expect(plotRow?.nextElementSibling).toHaveClass('text-[10px]', 'text-[var(--text-secondary)]');
+
+    // 柱体几何被钳制在绘图区 viewBox（宽 160）内，不向纵轴方向溢出
+    const barRects = Array.from(trendCard.querySelectorAll('rect[data-trend-bar-point-index]'));
+    expect(barRects.length).toBeGreaterThan(0);
+    for (const rect of barRects) {
+      const x = Number.parseFloat(rect.getAttribute('x') ?? '');
+      const width = Number.parseFloat(rect.getAttribute('width') ?? '');
+      expect(x).toBeGreaterThanOrEqual(-0.001);
+      expect(x + width).toBeLessThanOrEqual(160.001);
+    }
   });
 
   it('renders model donut and channel bars instead of heatmap filters', async () => {

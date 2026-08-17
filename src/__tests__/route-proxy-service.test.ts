@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import { Readable } from 'stream';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../main/utils/logger', () => ({
   default: {
@@ -17,12 +17,35 @@ vi.mock('../main/unified-config-manager', () => ({
   unifiedConfigManager: {},
 }));
 
+vi.mock('../main/config-file-profile-service', () => ({
+  findConfigFileProfileByRouteApiKey: vi.fn(async (apiKey: string) =>
+    apiKey === 'wrong-key' ? null : { id: 'profile-test', name: 'Test Client' }
+  ),
+}));
+
+vi.mock('../main/route-state-affinity-service', () => ({
+  routeStateAffinityService: {
+    get: vi.fn(async () => null),
+    bind: vi.fn(async () => undefined),
+    remove: vi.fn(async () => undefined),
+  },
+}));
+
+vi.mock('../main/route-session-activity-service', () => ({
+  routeSessionActivityService: {
+    touch: vi.fn(),
+    hydrate: vi.fn(async () => undefined),
+    flush: vi.fn(async () => undefined),
+    removeByProfile: vi.fn(async () => 0),
+  },
+}));
+
 vi.mock('../main/route-rule-engine', () => ({
   detectCliTypeFromPath: vi.fn(),
   extractModelFromBody: vi.fn(),
   extractModelFromPath: vi.fn(),
   sortRules: vi.fn(),
-  findMatchingRule: vi.fn(),
+  findMatchingProtocolRule: vi.fn(),
 }));
 
 vi.mock('../main/route-channel-resolver', () => ({
@@ -31,7 +54,15 @@ vi.mock('../main/route-channel-resolver', () => ({
   resolveChannelTarget: vi.fn(
     async (channel: { targetProtocol?: string; targetEndpoint?: string }) => ({
       targetProtocol: channel.targetProtocol ?? 'native',
-      targetEndpoint: channel.targetEndpoint ?? '/mock-endpoint',
+      targetEndpoint:
+        channel.targetEndpoint ??
+        (channel.targetProtocol === 'anthropic-messages'
+          ? '/v1/messages'
+          : channel.targetProtocol === 'openai-responses'
+            ? '/v1/responses'
+            : channel.targetProtocol === 'openai-chat-completions'
+              ? '/v1/chat/completions'
+              : '/mock-endpoint'),
     })
   ),
 }));
@@ -67,22 +98,26 @@ import {
   classifyRouteEndpointOperation,
   classifyRouteStatusCode,
   detectMarkedRouteCliType,
-  estimateClaudeCountTokens,
   extractRouteApiKey,
+  extractRouteCredentialCandidates,
   extractRouteReasoningEffort,
   applyRouteThinkingEffortOverride,
   extractUsageFromBody,
+  findProviderOwnedStateReference,
   handleRequest,
   isUpstreamQuotaExhaustionResponse,
   resolveRouteRuntimeConfig,
+  resolveRouteProfileCredential,
   summarizeUpstreamFailureBodyForLog,
 } from '../main/route-proxy-service';
 import { unifiedConfigManager } from '../main/unified-config-manager';
+import { findConfigFileProfileByRouteApiKey } from '../main/config-file-profile-service';
+import { routeStateAffinityService } from '../main/route-state-affinity-service';
 import {
   detectCliTypeFromPath,
   extractModelFromBody,
   extractModelFromPath,
-  findMatchingRule,
+  findMatchingProtocolRule as findMatchingRule,
   sortRules,
 } from '../main/route-rule-engine';
 import {
@@ -118,7 +153,17 @@ function createJsonRequest(
   headers: Record<string, string>,
   body: unknown
 ): Parameters<typeof handleRequest>[0] {
-  const request = Readable.from([Buffer.from(JSON.stringify(body))]) as Readable & {
+  const requestBody =
+    url.split('?')[0] === '/v1/responses' &&
+    body &&
+    typeof body === 'object' &&
+    !Array.isArray(body) &&
+    !('store' in body) &&
+    !('previous_response_id' in body) &&
+    !('conversation' in body)
+      ? { ...body, store: false }
+      : body;
+  const request = Readable.from([Buffer.from(JSON.stringify(requestBody))]) as Readable & {
     headers: Record<string, string>;
     method: string;
     url: string;
@@ -136,11 +181,25 @@ function createJsonRequest(
 function createControllableJsonRequest(
   url: string,
   headers: Record<string, string>,
-  body: unknown
+  body: unknown,
+  options: { deferBody?: boolean } = {}
 ): Parameters<typeof handleRequest>[0] & EventEmitter {
+  const requestBody =
+    url.split('?')[0] === '/v1/responses' &&
+    body &&
+    typeof body === 'object' &&
+    !Array.isArray(body) &&
+    !('store' in body) &&
+    !('previous_response_id' in body) &&
+    !('conversation' in body)
+      ? { ...body, store: false }
+      : body;
   const request = new Readable({
     read() {
-      this.push(Buffer.from(JSON.stringify(body)));
+      if (options.deferBody) {
+        return;
+      }
+      this.push(Buffer.from(JSON.stringify(requestBody)));
       this.push(null);
     },
   }) as Readable &
@@ -221,18 +280,79 @@ function createMockResponse(): Parameters<typeof handleRequest>[1] & {
 }
 
 describe('route-proxy-service endpoint classification', () => {
+  it('collects Bearer and x-api-key credentials without client or endpoint precedence', () => {
+    expect(
+      extractRouteCredentialCandidates({
+        headers: { authorization: 'Bearer profile-a', 'x-api-key': 'profile-b' },
+      })
+    ).toEqual([
+      { value: 'profile-a', sources: ['authorization'] },
+      { value: 'profile-b', sources: ['x-api-key'] },
+    ]);
+    expect(
+      extractRouteCredentialCandidates({
+        headers: { authorization: 'Bearer profile-a', 'x-api-key': 'profile-a' },
+      })
+    ).toEqual([{ value: 'profile-a', sources: ['authorization', 'x-api-key'] }]);
+  });
+
+  it('resolves one active Profile while tolerating an unknown companion credential', async () => {
+    const profile = { id: 'profile-a', name: 'Profile A' } as never;
+    const lookup = vi.fn(async (apiKey: string) => (apiKey === 'active-key' ? profile : null));
+
+    const resolution = await resolveRouteProfileCredential(
+      {
+        headers: { authorization: 'Bearer stale-key', 'x-api-key': 'active-key' },
+      },
+      lookup
+    );
+
+    expect(resolution).toMatchObject({
+      status: 'resolved',
+      profile,
+      unknownCandidates: [{ value: 'stale-key', sources: ['authorization'] }],
+    });
+  });
+
+  it('rejects credentials that resolve to different active Profiles', async () => {
+    const lookup = vi.fn(async (apiKey: string) =>
+      ({
+        'key-a': { id: 'profile-a', name: 'Profile A' },
+        'key-b': { id: 'profile-b', name: 'Profile B' },
+      })[apiKey] as never
+    );
+
+    const resolution = await resolveRouteProfileCredential(
+      { headers: { authorization: 'Bearer key-a', 'x-api-key': 'key-b' } },
+      lookup
+    );
+
+    expect(resolution).toMatchObject({
+      status: 'ambiguous_credentials',
+      profiles: [{ id: 'profile-a' }, { id: 'profile-b' }],
+    });
+  });
+
   it.each([
     ['POST', '/v1/messages', 'generation-convertible'],
     ['POST', '/v1/responses', 'generation-convertible'],
     ['POST', '/v1/chat/completions', 'generation-convertible'],
     ['POST', '/v1/messages/count_tokens', 'stateless-native-only'],
-    ['POST', '/v1/responses/input_tokens', 'stateless-native-only'],
     ['POST', '/v1/messages/batches', 'stateful-unsupported'],
     ['GET', '/v1/messages/batches/batch_1/results', 'stateful-unsupported'],
     ['DELETE', '/v1/messages/batches/batch_1', 'stateful-unsupported'],
-    ['GET', '/v1/responses/resp_1', 'stateful-unsupported'],
-    ['POST', '/v1/responses/resp_1/cancel', 'stateful-unsupported'],
-    ['GET', '/v1/responses/resp_1/input_items', 'stateful-unsupported'],
+    ['GET', '/v1/responses/resp_1', 'stateful-native'],
+    ['DELETE', '/v1/responses/resp_1', 'stateful-native'],
+    ['POST', '/v1/responses/resp_1/cancel', 'stateful-native'],
+    ['GET', '/v1/responses/resp_1/input_items', 'stateful-native'],
+    ['POST', '/v1/conversations', 'stateful-unsupported'],
+    ['GET', '/v1/conversations/conv_1', 'stateful-unsupported'],
+    ['POST', '/v1/conversations/conv_1', 'stateful-unsupported'],
+    ['DELETE', '/v1/conversations/conv_1', 'stateful-unsupported'],
+    ['POST', '/v1/conversations/conv_1/items', 'stateful-unsupported'],
+    ['GET', '/v1/conversations/conv_1/items', 'stateful-unsupported'],
+    ['GET', '/v1/conversations/conv_1/items/item_1', 'stateful-unsupported'],
+    ['DELETE', '/v1/conversations/conv_1/items/item_1', 'stateful-unsupported'],
     ['POST', '/v1/responses/compact', 'unsupported'],
     ['GET', '/v1/chat/completions', 'stateful-unsupported'],
     ['POST', '/v1/chat/completions/chat_1', 'stateful-unsupported'],
@@ -241,11 +361,32 @@ describe('route-proxy-service endpoint classification', () => {
     ['GET', '/v1/files/file_1', 'stateful-unsupported'],
     ['POST', '/v1/uploads/upload_1/complete', 'stateful-unsupported'],
     ['GET', '/v1/vector_stores/vs_1', 'stateful-unsupported'],
-    ['GET', '/v1/conversations/conv_1', 'stateful-unsupported'],
     ['DELETE', '/v1/containers/container_1', 'stateful-unsupported'],
     ['POST', '/v1/responses/unknown/subpath', 'unsupported'],
   ] as const)('classifies %s %s as %s', (method, path, capability) => {
     expect(classifyRouteEndpointOperation(method, path)?.capability).toBe(capability);
+  });
+
+  it('does not expose the deferred Responses input_tokens endpoint', () => {
+    expect(classifyRouteEndpointOperation('POST', '/v1/responses/input_tokens')?.capability).toBe(
+      'unsupported'
+    );
+  });
+
+  it('records unsupported endpoints before returning', async () => {
+    vi.clearAllMocks();
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => ({ server: { unifiedApiKey: 'sk-route' } })),
+    });
+    const request = createJsonRequest('/unsupported', {}, {});
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.statusCode).toBe(404);
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'failure', statusCode: 404, error: 'unsupported_route' })
+    );
   });
 
   it('uses only known managed CLI marker values', () => {
@@ -255,12 +396,13 @@ describe('route-proxy-service endpoint classification', () => {
     expect(detectMarkedRouteCliType({ 'x-api-detect-cli': 'unknown-client' })).toBeNull();
   });
 
-  it('rejects stateful endpoint operations before channel selection', async () => {
+  it('rejects the legacy global key before stateful endpoint channel selection', async () => {
     vi.clearAllMocks();
     Object.assign(unifiedConfigManager, {
       getRoutingConfig: vi.fn(() => ({ server: { unifiedApiKey: 'sk-route' } })),
     });
     vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(findConfigFileProfileByRouteApiKey).mockResolvedValueOnce(null);
     const request = createJsonRequest(
       '/v1/responses/resp_1',
       {
@@ -274,18 +416,22 @@ describe('route-proxy-service endpoint classification', () => {
 
     await handleRequest(request, response);
 
-    expect(response.statusCode).toBe(501);
-    expect(JSON.parse(response.body).error).toBe('stateful_route_operation_unsupported');
+    expect(response.statusCode).toBe(401);
+    expect(JSON.parse(response.body).error).toBe('invalid_api_key');
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'failure', statusCode: 401, error: 'invalid_api_key' })
+    );
     expect(resolveChannels).not.toHaveBeenCalled();
     expect(httpRawRequest).not.toHaveBeenCalled();
   });
 
-  it('rejects previous_response_id before channel selection', async () => {
+  it('rejects the legacy global key before previous_response_id channel selection', async () => {
     vi.clearAllMocks();
     Object.assign(unifiedConfigManager, {
       getRoutingConfig: vi.fn(() => ({ server: { unifiedApiKey: 'sk-route' } })),
     });
     vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(findConfigFileProfileByRouteApiKey).mockResolvedValueOnce(null);
     const request = createJsonRequest(
       '/v1/responses',
       {
@@ -298,8 +444,11 @@ describe('route-proxy-service endpoint classification', () => {
 
     await handleRequest(request, response);
 
-    expect(response.statusCode).toBe(501);
-    expect(JSON.parse(response.body).error).toBe('stateful_request_unsupported');
+    expect(response.statusCode).toBe(401);
+    expect(JSON.parse(response.body).error).toBe('invalid_api_key');
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'failure', statusCode: 401, error: 'invalid_api_key' })
+    );
     expect(resolveChannels).not.toHaveBeenCalled();
   });
 
@@ -325,10 +474,24 @@ describe('route-proxy-service endpoint classification', () => {
     expect(resolveChannels).not.toHaveBeenCalled();
   });
 
-  it('rejects a Codex marker on the Chat Completions path', async () => {
+  it('ignores a Codex marker on the Chat Completions path', async () => {
     vi.clearAllMocks();
+    vi.mocked(extractModelFromBody).mockReturnValue('gpt-5');
     Object.assign(unifiedConfigManager, {
-      getRoutingConfig: vi.fn(() => ({ server: { unifiedApiKey: 'sk-route' } })),
+      getRoutingConfig: vi.fn(() => ({
+        server: { unifiedApiKey: 'sk-route' },
+        cliModelSelections: { claudeCode: null, codex: null, openCode: null, grokBuild: null },
+        cliThinkingEffortSelections: {
+          claudeCode: null,
+          codex: null,
+          openCode: null,
+          grokBuild: null,
+        },
+        modelRegistry: { entries: {} },
+        rules: [],
+      })),
+      saveConfig: vi.fn(async () => undefined),
+      ensureRouteRuleForProtocolModelSelection: vi.fn(async () => null),
     });
     const request = createJsonRequest(
       '/v1/chat/completions',
@@ -342,8 +505,113 @@ describe('route-proxy-service endpoint classification', () => {
 
     await handleRequest(request, response);
 
-    expect(response.statusCode).toBe(400);
-    expect(JSON.parse(response.body).error).toBe('cli_marker_path_mismatch');
+    expect(response.statusCode).not.toBe(400);
+    expect(JSON.parse(response.body).error).not.toBe('cli_marker_path_mismatch');
+    expect(findMatchingRule.mock.calls[0]?.[1]).toBe('openai-chat-completions');
+  });
+
+  it('handles root HEAD probes without authentication', async () => {
+    vi.clearAllMocks();
+    const request = createJsonRequest('/', {}, null) as Parameters<typeof handleRequest>[0] & {
+      method: string;
+    };
+    request.method = 'HEAD';
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.statusCode).toBe(204);
+    expect(resolveChannels).not.toHaveBeenCalled();
+  });
+
+  it('serves the local model registry without an upstream request', async () => {
+    vi.clearAllMocks();
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => ({
+        server: { unifiedApiKey: 'sk-route' },
+        modelRegistry: {
+          entries: {
+            'gpt-5': { canonicalName: 'gpt-5', aliases: ['gpt-5-mini'] },
+          },
+        },
+      })),
+    });
+    const request = createJsonRequest(
+      '/v1/models?limit=1',
+      {
+        authorization: 'Bearer sk-route',
+      },
+      null
+    ) as Parameters<typeof handleRequest>[0] & { method: string };
+    request.method = 'GET';
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body).data).toHaveLength(1);
+    expect(resolveChannels).not.toHaveBeenCalled();
+  });
+
+  it('lists only canonical models in the discovery response', async () => {
+    vi.clearAllMocks();
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => ({
+        server: { unifiedApiKey: 'sk-route' },
+        modelRegistry: {
+          entries: {
+            'gpt-5': { canonicalName: 'gpt-5', aliases: ['gpt-5-mini'] },
+            'deepseek-chat': { canonicalName: 'deepseek-chat', aliases: ['deepseek-chat'] },
+          },
+        },
+      })),
+    });
+    const request = createJsonRequest(
+      '/v1/models',
+      {
+        authorization: 'Bearer sk-route',
+      },
+      null
+    ) as Parameters<typeof handleRequest>[0] & { method: string };
+    request.method = 'GET';
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.statusCode).toBe(200);
+    const ids = JSON.parse(response.body).data.map((item: { id: string }) => item.id);
+    expect(ids).toEqual(['gpt-5', 'deepseek-chat']);
+    expect(ids).not.toContain('gpt-5-mini');
+  });
+
+  it('still serves detail lookups by legacy alias names', async () => {
+    vi.clearAllMocks();
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => ({
+        server: { unifiedApiKey: 'sk-route' },
+        modelRegistry: {
+          entries: {
+            'gpt-5': { canonicalName: 'gpt-5', aliases: ['gpt-5-mini'] },
+          },
+        },
+      })),
+    });
+    const request = createJsonRequest(
+      '/v1/models/gpt-5-mini',
+      {
+        authorization: 'Bearer sk-route',
+      },
+      null
+    ) as Parameters<typeof handleRequest>[0] & { method: string };
+    request.method = 'GET';
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body).data).toEqual([
+      { id: 'gpt-5-mini', object: 'model', created: 0, owned_by: 'api-detect-tools' },
+    ]);
     expect(resolveChannels).not.toHaveBeenCalled();
   });
 
@@ -397,6 +665,407 @@ function buildClaudeTextSse(text = 'ok'): Buffer {
     'utf-8'
   );
 }
+
+function buildResponsesTextSse(text = 'ok'): Buffer {
+  return Buffer.from(
+    [
+      'event: response.output_text.delta',
+      `data: {"type":"response.output_text.delta","delta":${JSON.stringify(text)}}`,
+      '',
+      'event: response.completed',
+      `data: {"type":"response.completed","response":{"output_text":${JSON.stringify(text)},"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`,
+      '',
+      '',
+    ].join('\n'),
+    'utf-8'
+  );
+}
+
+function buildChatTextSse(text = 'ok'): Buffer {
+  return Buffer.from(
+    [
+      `data: {"id":"chatcmpl_test","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":${JSON.stringify(text)}},"finish_reason":null}]}`,
+      '',
+      'data: {"id":"chatcmpl_test","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+      '',
+      'data: [DONE]',
+      '',
+      '',
+    ].join('\n'),
+    'utf-8'
+  );
+}
+
+describe('route-proxy-service Responses state affinity', () => {
+  const profile = { id: 'profile-a', name: 'Codex A' };
+  const rule = {
+    id: 'rule-responses',
+    sourceProtocol: 'openai-responses' as const,
+    cliType: 'codex' as const,
+    pattern: 'gpt-5',
+    patternType: 'exact' as const,
+  };
+  const channel = {
+    routeRuleId: rule.id,
+    siteId: 'site-a',
+    accountId: 'account-a',
+    apiKeyId: 'key-a',
+    cliType: 'codex' as const,
+    targetProtocol: 'openai-responses' as const,
+    targetEndpoint: '/v1/responses',
+    canonicalModel: 'gpt-5',
+    resolvedModel: 'gpt-5-upstream',
+  };
+
+  afterAll(() => {
+    vi.mocked(findConfigFileProfileByRouteApiKey).mockImplementation(async apiKey =>
+      apiKey === 'wrong-key' ? null : ({ id: 'profile-test', name: 'Test Client' } as never)
+    );
+    vi.mocked(routeStateAffinityService.get).mockResolvedValue(null);
+    vi.mocked(routeStateAffinityService.bind).mockResolvedValue(undefined);
+    vi.mocked(routeStateAffinityService.remove).mockResolvedValue(undefined);
+    vi.mocked(resolveChannelTarget).mockImplementation(async currentChannel => ({
+      targetProtocol: currentChannel.targetProtocol ?? 'native',
+      targetEndpoint:
+        currentChannel.targetEndpoint ??
+        (currentChannel.targetProtocol === 'anthropic-messages'
+          ? '/v1/messages'
+          : currentChannel.targetProtocol === 'openai-responses'
+            ? '/v1/responses'
+            : currentChannel.targetProtocol === 'openai-chat-completions'
+              ? '/v1/chat/completions'
+              : '/mock-endpoint'),
+    }));
+  });
+
+  function setupStatefulRoute(): void {
+    vi.clearAllMocks();
+    const routing = {
+      server: { unifiedApiKey: 'sk-route', requestTimeoutMs: 1000, upstreamProxyUrl: '' },
+      rules: [rule],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: 'gpt-5',
+        openCode: null,
+        grokBuild: null,
+      },
+      cliThinkingEffortSelections: {
+        claudeCode: null,
+        codex: null,
+        openCode: null,
+        grokBuild: null,
+      },
+      modelRegistry: { version: 1, sources: [], entries: {}, overrides: [], displayItems: [] },
+      routePathStates: {},
+      routeEndpointCapabilities: {},
+    };
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      saveConfig: vi.fn(async () => undefined),
+      getSiteById: vi.fn(() => ({ id: channel.siteId, name: 'Site A' })),
+      getAccountById: vi.fn(() => ({ id: channel.accountId, account_name: 'Account A' })),
+    });
+    vi.mocked(findConfigFileProfileByRouteApiKey).mockResolvedValue(profile as never);
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(extractModelFromBody).mockReturnValue('gpt-5');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue([channel]);
+    vi.mocked(resolveChannelCredentials).mockResolvedValue({
+      baseUrl: 'https://stateful.example.com',
+      apiKey: 'sk-upstream',
+    });
+    vi.mocked(resolveChannelTarget).mockResolvedValue({
+      targetProtocol: 'openai-responses',
+      targetEndpoint: '/v1/responses',
+    });
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+  }
+
+  it('rejects Conversations API endpoints before route selection', async () => {
+    setupStatefulRoute();
+    const response = createMockResponse();
+
+    await handleRequest(
+      createJsonRequest(
+        '/v1/conversations',
+        { authorization: 'Bearer sk-profile', 'content-type': 'application/json' },
+        { metadata: { client: 'test' } }
+      ),
+      response
+    );
+
+    expect(response.statusCode).toBe(501);
+    expect(JSON.parse(response.body).error).toBe('stateful_route_operation_unsupported');
+    expect(resolveChannels).not.toHaveBeenCalled();
+    expect(httpRawRequest).not.toHaveBeenCalled();
+  });
+
+  it.each(['conv_existing', null, ''])(
+    'rejects a Responses conversation field before route selection (%#)',
+    async conversation => {
+      setupStatefulRoute();
+      const response = createMockResponse();
+
+      await handleRequest(
+        createJsonRequest(
+          '/v1/responses',
+          { authorization: 'Bearer sk-profile', 'content-type': 'application/json' },
+          { model: 'gpt-5', conversation, input: 'hello' }
+        ),
+        response
+      );
+
+      expect(response.statusCode).toBe(conversation ? 501 : 502);
+      expect(JSON.parse(response.body).error).toBe(
+        conversation ? 'stateful_request_unsupported' : 'all_channels_failed'
+      );
+      if (conversation) {
+        expect(resolveChannels).not.toHaveBeenCalled();
+        expect(httpRawRequest).not.toHaveBeenCalled();
+      } else {
+        expect(resolveChannels).toHaveBeenCalled();
+      }
+    }
+  );
+
+  it('auto-creates a protocol model rule for a profile-authenticated client without a session identity', async () => {
+    setupStatefulRoute();
+    vi.mocked(findConfigFileProfileByRouteApiKey).mockResolvedValue({
+      ...profile,
+      credentialOnly: true,
+    } as never);
+    const ensureRouteRuleForProtocolModelSelection = vi.fn(async () => rule);
+    Object.assign(unifiedConfigManager, { ensureRouteRuleForProtocolModelSelection });
+    vi.mocked(findMatchingRule).mockReturnValueOnce(null).mockReturnValueOnce(rule as never);
+    vi.mocked(httpRawRequest).mockResolvedValue({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(
+        JSON.stringify({
+          id: 'resp_profile_client',
+          object: 'response',
+          output: [],
+          usage: { input_tokens: 1, output_tokens: 1, total_tokens: 1 },
+        })
+      ),
+    });
+
+    const response = createMockResponse();
+    await handleRequest(
+      createJsonRequest(
+        '/v1/responses',
+        { authorization: 'Bearer sk-profile', 'content-type': 'application/json' },
+        { model: 'gpt-5', input: 'hello', store: true }
+      ),
+      response
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(ensureRouteRuleForProtocolModelSelection).toHaveBeenCalledWith(
+      'openai-responses',
+      'gpt-5'
+    );
+    expect(unifiedConfigManager.saveConfig).toHaveBeenCalled();
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ agentName: 'Codex A' })
+    );
+  });
+
+  it('treats null and empty conversation references as absent', () => {
+    expect(findProviderOwnedStateReference({ conversation: null })).toBeNull();
+    expect(findProviderOwnedStateReference({ conversation: '' })).toBeNull();
+    expect(findProviderOwnedStateReference({ conversation: '  ' })).toBeNull();
+    expect(findProviderOwnedStateReference({ conversation: 'conv_1' })).toBe('conversation');
+  });
+
+  it('binds a created response before exposing its id downstream', async () => {
+    setupStatefulRoute();
+    const responseBody = Buffer.from(
+      JSON.stringify({
+        id: 'resp_created',
+        object: 'response',
+        output: [{ type: 'message', content: [{ type: 'output_text', text: 'ok' }] }],
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      })
+    );
+    vi.mocked(httpRawRequest).mockResolvedValue({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: responseBody,
+    });
+    const response = createMockResponse();
+    vi.mocked(routeStateAffinityService.bind).mockImplementation(async () => {
+      expect(response.writeHead).not.toHaveBeenCalled();
+    });
+
+    await handleRequest(
+      createJsonRequest(
+        '/v1/responses',
+        { authorization: 'Bearer sk-profile', 'content-type': 'application/json' },
+        { model: 'gpt-5', input: 'hello', store: true }
+      ),
+      response
+    );
+
+    expect(routeStateAffinityService.bind).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resourceId: 'resp_created',
+        profileId: profile.id,
+        siteId: channel.siteId,
+        accountId: channel.accountId,
+        apiKeyId: channel.apiKeyId,
+        routeRuleId: rule.id,
+        targetProtocol: 'openai-responses',
+      })
+    );
+    expect(response.statusCode).toBe(200);
+  });
+
+  it('binds a streamed response before committing its first SSE bytes', async () => {
+    setupStatefulRoute();
+    const chunks = [
+      Buffer.from(
+        'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_streamed","status":"in_progress"}}\n\n'
+      ),
+      Buffer.from(
+        'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"ok"}\n\n'
+      ),
+      Buffer.from(
+        'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_streamed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n'
+      ),
+    ];
+    const streamBody = Buffer.concat(chunks);
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
+      expect(
+        config.onResponse?.({
+          status: 200,
+          statusText: 'OK',
+          headers: { 'content-type': 'text/event-stream' },
+        })
+      ).toBe(true);
+      for (const chunk of chunks) {
+        await config.onChunk?.(chunk);
+      }
+      return {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+        body: streamBody,
+      };
+    });
+    const response = createMockResponse();
+    vi.mocked(routeStateAffinityService.bind).mockImplementation(async () => {
+      expect(response.writeHead).not.toHaveBeenCalled();
+      expect(response.write).not.toHaveBeenCalled();
+    });
+
+    await handleRequest(
+      createJsonRequest(
+        '/v1/responses',
+        { authorization: 'Bearer sk-profile', 'content-type': 'application/json' },
+        { model: 'gpt-5', input: 'hello', stream: true, store: true }
+      ),
+      response
+    );
+
+    expect(routeStateAffinityService.bind).toHaveBeenCalledWith(
+      expect.objectContaining({ resourceId: 'resp_streamed', profileId: profile.id })
+    );
+    expect(response.body).toBe(streamBody.toString('utf-8'));
+  });
+
+  it('routes a previous_response_id only through its recorded channel', async () => {
+    setupStatefulRoute();
+    vi.mocked(routeStateAffinityService.get).mockResolvedValue({
+      resourceId: 'resp_existing',
+      resourceType: 'response',
+      profileId: profile.id,
+      siteId: channel.siteId,
+      accountId: channel.accountId,
+      apiKeyId: channel.apiKeyId,
+      routeRuleId: rule.id,
+      targetProtocol: 'openai-responses',
+      targetEndpoint: '/v1/responses',
+      createdAt: 1,
+    });
+    vi.mocked(httpRawRequest).mockResolvedValue({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(
+        '{"id":"resp_next","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}'
+      ),
+    });
+
+    const response = createMockResponse();
+    await handleRequest(
+      createJsonRequest(
+        '/v1/responses',
+        { authorization: 'Bearer sk-profile', 'content-type': 'application/json' },
+        { model: 'gpt-5', input: 'continue', previous_response_id: 'resp_existing' }
+      ),
+      response
+    );
+
+    expect(routeStateAffinityService.get).toHaveBeenCalledWith('resp_existing', profile.id);
+    expect(resolveChannels).not.toHaveBeenCalled();
+    expect(resolveChannelCredentials).toHaveBeenCalledTimes(1);
+    expect(resolveChannelCredentials).toHaveBeenCalledWith('site-a', 'account-a', 'key-a');
+    expect(routeStateAffinityService.bind).toHaveBeenCalledWith(
+      expect.objectContaining({ resourceId: 'resp_next', profileId: profile.id })
+    );
+  });
+
+  it('removes an affinity record only after a successful delete', async () => {
+    setupStatefulRoute();
+    vi.mocked(routeStateAffinityService.get).mockResolvedValue({
+      resourceId: 'resp_existing',
+      resourceType: 'response',
+      profileId: profile.id,
+      siteId: channel.siteId,
+      accountId: channel.accountId,
+      apiKeyId: channel.apiKeyId,
+      routeRuleId: rule.id,
+      targetProtocol: 'openai-responses',
+      targetEndpoint: '/v1/responses',
+      createdAt: 1,
+    });
+    vi.mocked(httpRawRequest).mockResolvedValue({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{"id":"resp_existing","deleted":true,"object":"response.deleted"}'),
+    });
+    const request = createJsonRequest(
+      '/v1/responses/resp_existing',
+      { authorization: 'Bearer sk-profile' },
+      null
+    ) as Parameters<typeof handleRequest>[0] & { method: string };
+    request.method = 'DELETE';
+
+    await handleRequest(request, createMockResponse());
+
+    expect(routeStateAffinityService.remove).toHaveBeenCalledWith('resp_existing');
+  });
+
+  it('does not reveal or route an affinity record unavailable to the profile', async () => {
+    setupStatefulRoute();
+    vi.mocked(routeStateAffinityService.get).mockResolvedValue(null);
+    const request = createJsonRequest(
+      '/v1/responses/resp_other',
+      { authorization: 'Bearer sk-profile' },
+      null
+    ) as Parameters<typeof handleRequest>[0] & { method: string };
+    request.method = 'GET';
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(response.body).error.code).toBe('state_affinity_not_found');
+    expect(resolveChannels).not.toHaveBeenCalled();
+    expect(httpRawRequest).not.toHaveBeenCalled();
+  });
+});
 
 describe('route-proxy-service attempt planning', () => {
   it('treats upstream client errors as route path failures so fallback keys can be tried', () => {
@@ -1340,38 +2009,6 @@ describe('route-proxy-service usage extraction', () => {
   });
 });
 
-describe('route-proxy-service local token estimation', () => {
-  it('includes OpenAI Responses function parameters', () => {
-    const baseRequest = {
-      model: 'gpt-5',
-      input: 'hello',
-      tools: [{ type: 'function', name: 'lookup', parameters: { type: 'object' } }],
-    };
-    const requestWithSchema = {
-      ...baseRequest,
-      tools: [
-        {
-          type: 'function',
-          name: 'lookup',
-          parameters: {
-            type: 'object',
-            properties: {
-              query: { type: 'string', description: 'x'.repeat(400) },
-            },
-          },
-        },
-      ],
-    };
-
-    const base = estimateClaudeCountTokens(Buffer.from(JSON.stringify(baseRequest))).input_tokens;
-    const withSchema = estimateClaudeCountTokens(
-      Buffer.from(JSON.stringify(requestWithSchema))
-    ).input_tokens;
-
-    expect(withSchema).toBeGreaterThan(base + 80);
-  });
-});
-
 describe('route-proxy-service Claude count_tokens fallback', () => {
   const rule = {
     id: 'rule-claude-count',
@@ -1576,7 +2213,7 @@ describe('route-proxy-service Claude count_tokens fallback', () => {
 
     await handleRequest(request, response);
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode).toBe(501);
     expect(recordRouteEndpointUnsupported).toHaveBeenCalledWith(
       expect.objectContaining({
         siteId: 'site-forbidden',
@@ -1598,11 +2235,9 @@ describe('route-proxy-service Claude count_tokens fallback', () => {
     expect(recordRouteRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         requestKind: 'token-count',
-        tokenUsageSource: 'local-estimate',
-        estimatedInputTokens: expect.any(Number),
         outcome: 'neutral',
-        statusCode: 200,
-        error: 'count_tokens_local_estimate:upstream_403',
+        statusCode: 501,
+        error: 'token_count_unsupported:upstream_403',
       })
     );
   });
@@ -1695,9 +2330,10 @@ describe('route-proxy-service Claude count_tokens fallback', () => {
 
     await handleRequest(request, response);
 
-    expect(response.statusCode).toBe(200);
-    expect(JSON.parse(response.body)).toEqual({
-      input_tokens: estimateClaudeCountTokens(Buffer.from(JSON.stringify(countBody))).input_tokens,
+    expect(response.statusCode).toBe(501);
+    expect(JSON.parse(response.body)).toMatchObject({
+      error: { type: 'not_supported_error' },
+      reason: 'cached_unsupported',
     });
     expect(resolveChannelCredentials).not.toHaveBeenCalled();
     expect(httpRawRequest).not.toHaveBeenCalled();
@@ -1707,11 +2343,9 @@ describe('route-proxy-service Claude count_tokens fallback', () => {
     expect(recordRouteRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         requestKind: 'token-count',
-        tokenUsageSource: 'local-estimate',
-        estimatedInputTokens: expect.any(Number),
         outcome: 'neutral',
-        statusCode: 200,
-        error: 'count_tokens_local_estimate:cached_unsupported',
+        statusCode: 501,
+        error: 'token_count_unsupported:cached_unsupported',
       })
     );
   });
@@ -1745,16 +2379,16 @@ describe('route-proxy-service Claude count_tokens fallback', () => {
 
     await handleRequest(request, response);
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode).toBe(501);
     expect(resolveChannelCredentials).not.toHaveBeenCalled();
     expect(httpRawRequest).not.toHaveBeenCalled();
     expect(recordRouteEndpointUnsupported).not.toHaveBeenCalled();
-    expect(response.headers['x-api-detect-token-estimate']).toBe('local-approximate');
+    expect(response.headers['X-Route-Proxy-Error']).toBe('token_count_unsupported');
   });
 });
 
-describe('route-proxy-service Responses input_tokens fallback', () => {
-  it('forwards only to a Responses channel and marks the local fallback as approximate', async () => {
+describe('route-proxy-service Responses input_tokens scope', () => {
+  it('does not expose the deferred Responses input_tokens endpoint', async () => {
     vi.clearAllMocks();
     const rule = {
       id: 'rule-opencode-input-tokens',
@@ -1839,18 +2473,10 @@ describe('route-proxy-service Responses input_tokens fallback', () => {
 
     await handleRequest(request, response);
 
-    expect(httpRawRequest).toHaveBeenCalledWith(
-      'https://responses.example.com/v1/responses/input_tokens',
-      expect.objectContaining({ method: 'POST' })
-    );
-    expect(recordRouteEndpointUnsupported).toHaveBeenCalledWith(
-      expect.objectContaining({ siteId: 'site-responses' }),
-      'openai_responses_input_tokens',
-      expect.objectContaining({ reason: 'upstream_unsupported' })
-    );
-    expect(response.statusCode).toBe(200);
-    expect(response.headers['x-api-detect-token-estimate']).toBe('local-approximate');
-    expect(JSON.parse(response.body).input_tokens).toBeGreaterThan(1);
+    expect(httpRawRequest).not.toHaveBeenCalled();
+    expect(recordRouteEndpointUnsupported).not.toHaveBeenCalled();
+    expect(response.statusCode).toBe(501);
+    expect(JSON.parse(response.body).error).toBe('unsupported_route_operation');
     expect(recordRoutePathOutcome).not.toHaveBeenCalled();
   });
 });
@@ -1868,7 +2494,7 @@ describe('route-proxy-service client cancellation', () => {
     accountId: 'account-a',
     apiKeyId: 'key-a',
     cliType: 'codex' as const,
-    targetProtocol: 'native' as const,
+    targetProtocol: 'openai-responses' as const,
     canonicalModel: 'gpt-4.1-mini',
     resolvedModel: 'gpt-4.1-mini',
   };
@@ -1932,6 +2558,23 @@ describe('route-proxy-service client cancellation', () => {
     vi.mocked(isRoutePathDisabled).mockReturnValue(false);
   }
 
+  function expectClientCancellationLog(): void {
+    expect(recordRouteRequest).toHaveBeenCalledTimes(1);
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attempt: 1,
+        cliType: 'codex',
+        routeRuleId: rule.id,
+        siteId: firstChannel.siteId,
+        accountId: firstChannel.accountId,
+        apiKeyId: firstChannel.apiKeyId,
+        outcome: 'neutral',
+        statusCode: 499,
+        error: 'route_client_cancelled',
+      })
+    );
+  }
+
   it('aborts the active upstream request and does not try fallback channels after client close', async () => {
     setupCodexCancellationRoute();
 
@@ -1975,7 +2618,7 @@ describe('route-proxy-service client cancellation', () => {
     expect(httpRawRequest).toHaveBeenCalledTimes(1);
     expect(resolveChannelCredentials).toHaveBeenCalledTimes(1);
     expect(recordRoutePathOutcome).not.toHaveBeenCalled();
-    expect(recordRouteRequest).not.toHaveBeenCalled();
+    expectClientCancellationLog();
     expect(response.end).not.toHaveBeenCalled();
   });
 
@@ -2013,8 +2656,50 @@ describe('route-proxy-service client cancellation', () => {
 
     expect(httpRawRequest).toHaveBeenCalledTimes(1);
     expect(recordRoutePathOutcome).not.toHaveBeenCalled();
-    expect(recordRouteRequest).not.toHaveBeenCalled();
+    expectClientCancellationLog();
     expect(response.end).not.toHaveBeenCalled();
+  });
+
+  it('keeps path success for a completed late upstream result without duplicating the log', async () => {
+    setupCodexCancellationRoute();
+
+    let resolveUpstream: (value: Awaited<ReturnType<typeof httpRawRequest>>) => void = () => {};
+    vi.mocked(httpRawRequest).mockImplementation(
+      async () =>
+        await new Promise(resolve => {
+          resolveUpstream = resolve;
+        })
+    );
+
+    const request = createControllableJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+      },
+      { model: 'gpt-4.1-mini', input: 'hi' }
+    );
+    const response = createMockResponse();
+    const pending = handleRequest(request, response);
+    await vi.waitFor(() => expect(httpRawRequest).toHaveBeenCalledTimes(1));
+
+    response.emit('close');
+    resolveUpstream({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(
+        '{"output": [{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}'
+      ),
+    });
+    await pending;
+
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining(firstChannel),
+      'success',
+      expect.objectContaining({ statusCode: 200 }),
+      expect.objectContaining({ maxAttemptsPerRoutePath: expect.any(Number) })
+    );
+    expectClientCancellationLog();
   });
 
   it('aborts a committed native stream without recording or retrying after client cancel', async () => {
@@ -2028,13 +2713,10 @@ describe('route-proxy-service client cancellation', () => {
       updatedAt: 1,
     });
 
-    const completedStream = Buffer.from(
+    const partialStream = Buffer.from(
       [
         'event: response.output_text.delta',
         'data: {"type":"response.output_text.delta","delta":"hi"}',
-        '',
-        'event: response.completed',
-        'data: {"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}}',
         '',
       ].join('\n')
     );
@@ -2057,7 +2739,7 @@ describe('route-proxy-service client cancellation', () => {
             },
             { once: true }
           );
-          void Promise.resolve(config.onChunk?.(completedStream)).catch(reject);
+          void Promise.resolve(config.onChunk?.(partialStream)).catch(reject);
         })
     );
 
@@ -2081,7 +2763,70 @@ describe('route-proxy-service client cancellation', () => {
     expect(httpRawStreamRequest).toHaveBeenCalledTimes(1);
     expect(resolveChannelCredentials).toHaveBeenCalledTimes(1);
     expect(recordRoutePathOutcome).not.toHaveBeenCalled();
-    expect(recordRouteRequest).not.toHaveBeenCalled();
+    expectClientCancellationLog();
+  });
+
+  it('records success when the client closes after receiving a successful stream terminal', async () => {
+    setupCodexCancellationRoute();
+    const completedStream = Buffer.from(
+      [
+        'event: response.output_text.delta',
+        'data: {"type":"response.output_text.delta","delta":"hi"}',
+        '',
+        'event: response.completed',
+        'data: {"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}}',
+        '',
+        '',
+      ].join('\n')
+    );
+    const upstreamHeaders = { 'content-type': 'text/event-stream' };
+    const request = createControllableJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+      },
+      { model: 'gpt-4.1-mini', stream: true, input: 'hi' }
+    );
+    const response = createMockResponse();
+
+    vi.mocked(httpRawStreamRequest).mockImplementation(
+      (_url, config = {}) =>
+        new Promise((resolve, reject) => {
+          expect(
+            config.onResponse?.({
+              status: 200,
+              statusText: 'OK',
+              headers: upstreamHeaders,
+            })
+          ).toBe(true);
+          void Promise.resolve(config.onChunk?.(completedStream))
+            .then(() => {
+              response.emit('close');
+              resolve({
+                status: 200,
+                headers: upstreamHeaders,
+                body: completedStream,
+                firstByteLatencyMs: 1,
+              });
+            })
+            .catch(reject);
+        })
+    );
+
+    await handleRequest(request, response);
+
+    expect(recordRouteRequest).toHaveBeenCalledTimes(1);
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attempt: 1,
+        outcome: 'success',
+        statusCode: 200,
+      })
+    );
+    expect(recordRouteRequest).not.toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'route_client_cancelled' })
+    );
   });
 
   it('still ignores late non-success upstream results after client cancel', async () => {
@@ -2123,7 +2868,42 @@ describe('route-proxy-service client cancellation', () => {
     await pending;
 
     expect(recordRoutePathOutcome).not.toHaveBeenCalled();
-    expect(recordRouteRequest).not.toHaveBeenCalled();
+    expectClientCancellationLog();
+  });
+
+  it('records cancellation when the downstream closes before the request body finishes', async () => {
+    setupCodexCancellationRoute();
+
+    const request = createControllableJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+      },
+      { model: 'gpt-4.1-mini', input: 'hi' },
+      { deferBody: true }
+    );
+    const response = createMockResponse();
+    const pending = handleRequest(request, response);
+
+    response.emit('close');
+    request.push(Buffer.from(JSON.stringify({ model: 'gpt-4.1-mini', input: 'hi' })));
+    request.push(null);
+    await pending;
+
+    expect(httpRawRequest).not.toHaveBeenCalled();
+    expect(recordRoutePathOutcome).not.toHaveBeenCalled();
+    expect(recordRouteRequest).toHaveBeenCalledTimes(1);
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attempt: 0,
+        cliType: 'codex',
+        outcome: 'neutral',
+        statusCode: 499,
+        error: 'route_client_cancelled',
+      })
+    );
+    expect(response.end).not.toHaveBeenCalled();
   });
 });
 
@@ -2146,7 +2926,7 @@ describe('route-proxy-service custom CLI forwarding', () => {
       accountId: 'custom-cli-account-duckcoding',
       apiKeyId: 'custom-cli-key-duckcoding',
       cliType: 'codex' as const,
-      targetProtocol: 'native' as const,
+      targetProtocol: 'openai-responses' as const,
       targetEndpoint: '/v1/responses',
       canonicalModel: 'duckcoding-route',
       resolvedModel: 'duckcoding',
@@ -2390,7 +3170,7 @@ describe('route-proxy-service custom CLI forwarding', () => {
 });
 
 describe('route-proxy-service CLI model fallback', () => {
-  it('routes normal Codex requests through the app-selected CLI model instead of the external request model', async () => {
+  it('routes normal Codex requests through the explicit request model instead of the legacy CLI selection', async () => {
     vi.clearAllMocks();
 
     const selectedRule = {
@@ -2423,6 +3203,15 @@ describe('route-proxy-service CLI model fallback', () => {
         version: 1,
         sources: [],
         entries: {
+          'gpt-4o-from-external-config': {
+            canonicalName: 'gpt-4o-from-external-config',
+            aliases: ['gpt-4o-from-external-config'],
+            sources: [],
+            vendor: 'gpt' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
           'gpt-5-selected': {
             canonicalName: 'gpt-5-selected',
             aliases: ['gpt-5-selected'],
@@ -2450,7 +3239,7 @@ describe('route-proxy-service CLI model fallback', () => {
     vi.mocked(extractModelFromPath).mockReturnValue(null);
     vi.mocked(sortRules).mockReturnValue([selectedRule as never]);
     vi.mocked(findMatchingRule).mockImplementation((_rules, _cliType, model) =>
-      model === 'gpt-5-selected' ? (selectedRule as never) : null
+      model === 'gpt-4o-from-external-config' ? (selectedRule as never) : null
     );
     vi.mocked(resolveChannels).mockReturnValue([channel]);
     vi.mocked(resolveChannelCredentials).mockResolvedValue({
@@ -2488,8 +3277,10 @@ describe('route-proxy-service CLI model fallback', () => {
 
     await handleRequest(request, response);
 
-    expect(vi.mocked(findMatchingRule).mock.calls.map(call => call[2])).toEqual(['gpt-5-selected']);
-    expect(resolveChannels).toHaveBeenCalledWith(selectedRule, 'gpt-5-selected');
+    expect(vi.mocked(findMatchingRule).mock.calls.map(call => call[2])).toEqual([
+      'gpt-4o-from-external-config',
+    ]);
+    expect(resolveChannels).toHaveBeenCalledWith(selectedRule, 'gpt-4o-from-external-config');
     expect(httpRawRequest).toHaveBeenCalledWith(
       'https://codex.example.com/v1/responses',
       expect.objectContaining({
@@ -2506,11 +3297,250 @@ describe('route-proxy-service CLI model fallback', () => {
       expect.objectContaining({
         requestedModel: 'gpt-4o-from-external-config',
         reasoningEffort: 'xhigh',
-        canonicalModel: 'gpt-5-selected',
+        canonicalModel: 'gpt-4o-from-external-config',
         resolvedModel: 'gpt-5-selected-upstream',
       })
     );
     expect(response.statusCode).toBe(200);
+  });
+
+  it('binds an ARMED RouteInstance from native Codex metadata before route selection', async () => {
+    vi.clearAllMocks();
+
+    const selectedRule = {
+      id: 'rule-session-model',
+      cliType: 'codex' as const,
+      pattern: 'session-model',
+      patternType: 'exact' as const,
+    };
+    const channels = ['primary', 'fallback'].map((name, index) => ({
+      routeRuleId: selectedRule.id,
+      siteId: `site-${name}`,
+      accountId: `account-${name}`,
+      apiKeyId: `key-${name}`,
+      cliType: 'codex' as const,
+      canonicalModel: 'session-model',
+      resolvedModel: `session-upstream-${index + 1}`,
+    }));
+    const routing = {
+      server: {
+        unifiedApiKey: 'sk-route',
+        requestTimeoutMs: 1000,
+        upstreamProxyUrl: '',
+      },
+      rules: [selectedRule],
+      cliModelSelections: {
+        claudeCode: null,
+        codex: null,
+        openCode: null,
+        grokBuild: null,
+      },
+      cliThinkingEffortSelections: {
+        claudeCode: null,
+        codex: null,
+        openCode: null,
+        grokBuild: null,
+      },
+      sessionRouting: {
+        instances: {
+          'route-window-1': {
+            id: 'route-window-1',
+            display: {},
+            modelId: 'session-model',
+            reasoningEffort: 'vendor-ultra-2',
+            routingState: 'armed' as const,
+            presenceState: 'unknown' as const,
+          },
+        },
+        currentRouteBySlot: {},
+        extractionRules: [],
+        overrides: {},
+        activeWindowMinutes: 30,
+        recentWindowHours: 24,
+        historyRetentionDays: 30,
+        overrideRetentionDays: 90,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'request-model': {
+            canonicalName: 'request-model',
+            aliases: ['request-model'],
+            sources: [],
+            vendor: 'gpt' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+          'session-model': {
+            canonicalName: 'session-model',
+            aliases: ['session-model'],
+            sources: [],
+            vendor: 'gpt' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+      routePathStates: {},
+    };
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      saveConfig: vi.fn(),
+      getSiteById: vi.fn((siteId: string) => ({ id: siteId, name: siteId })),
+      getAccountById: vi.fn((accountId: string) => ({ id: accountId, account_name: accountId })),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(extractModelFromBody).mockReturnValue('request-model');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([selectedRule as never]);
+    vi.mocked(findMatchingRule).mockImplementation((_rules, _cliType, model) =>
+      model === 'session-model' || model === 'request-model' ? (selectedRule as never) : null
+    );
+    vi.mocked(resolveChannels).mockReturnValue(channels);
+    vi.mocked(resolveChannelCredentials).mockImplementation(async channel => ({
+      baseUrl: `https://${channel.siteId}.example.com`,
+      apiKey: `sk-${channel.apiKeyId}`,
+    }));
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockImplementation(async channel => ({
+      ...channel,
+      windowStartedAt: 1,
+      windowRequestCount: 1,
+      windowSuccessCount: 1,
+      successRate: 1,
+      updatedAt: 1,
+    }));
+    vi.mocked(httpRawRequest)
+      .mockResolvedValueOnce({
+        status: 503,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from('{"error":{"message":"temporary failure"}}'),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from(
+          '{"id":"resp_1","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}'
+        ),
+      });
+
+    const request = createJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+        'x-codex-window-id': 'session-1:5',
+      },
+      {
+        model: 'request-model',
+        input: 'hello',
+        reasoning: { effort: 'low' },
+        client_metadata: { session_id: 'session-1' },
+      }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(findMatchingRule).toHaveBeenCalledWith(
+      expect.any(Array),
+      'openai-responses',
+      'session-model'
+    );
+    expect(resolveChannels).toHaveBeenCalledWith(selectedRule, 'session-model');
+    expect(httpRawRequest).toHaveBeenCalledTimes(2);
+    expect(routing.sessionRouting.instances['route-window-1']).toEqual(
+      expect.objectContaining({
+        routeKey: { agentId: 'codex', runtimeSlotId: 'session-1', sessionId: 'session-1' },
+        display: {
+          observedAgentName: 'Codex',
+          observedRuntimeSlotLabel: 'Codex 会话',
+        },
+        routingState: 'active',
+        createdAt: expect.any(Number),
+        lastRequestAt: expect.any(Number),
+      })
+    );
+    expect(routing.sessionRouting.currentRouteBySlot).toEqual({
+      '["profile-test","codex","session-1"]': 'route-window-1',
+    });
+    expect(vi.mocked(unifiedConfigManager.saveConfig)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(unifiedConfigManager.saveConfig).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(httpRawRequest).mock.invocationCallOrder[0]
+    );
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: 'codex',
+        agentName: 'Codex',
+        canonicalModel: 'session-model',
+        reasoningEffort: 'vendor-ultra-2',
+      })
+    );
+    expect(
+      vi
+        .mocked(httpRawRequest)
+        .mock.calls.every(call => call[1].headers?.['x-codex-window-id'] === 'session-1:5')
+    ).toBe(true);
+    expect(
+      vi
+        .mocked(httpRawRequest)
+        .mock.calls.map(call => JSON.parse(Buffer.from(call[1].body as Buffer).toString('utf-8')))
+    ).toEqual([
+      expect.objectContaining({
+        model: 'session-upstream-1',
+        reasoning: expect.objectContaining({ effort: 'vendor-ultra-2' }),
+      }),
+      expect.objectContaining({
+        model: 'session-upstream-2',
+        reasoning: expect.objectContaining({ effort: 'vendor-ultra-2' }),
+      }),
+    ]);
+    expect(response.statusCode).toBe(200);
+
+    vi.mocked(httpRawRequest)
+      .mockClear()
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from(
+          '{"id":"resp_2","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}'
+        ),
+      });
+    const requestIdOnly = createJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+        'x-request-id': 'window-1',
+      },
+      { model: 'request-model', input: 'hello', reasoning: { effort: 'low' } }
+    );
+    const requestIdOnlyResponse = createMockResponse();
+
+    await handleRequest(requestIdOnly, requestIdOnlyResponse);
+
+    expect(findMatchingRule).toHaveBeenLastCalledWith(
+      expect.any(Array),
+      'openai-responses',
+      'request-model'
+    );
+    expect(resolveChannels).toHaveBeenLastCalledWith(selectedRule, 'request-model');
+    expect(httpRawRequest).toHaveBeenCalledTimes(1);
+    expect(
+      JSON.parse(
+        Buffer.from(vi.mocked(httpRawRequest).mock.calls[0]?.[1].body as Buffer).toString('utf-8')
+      )
+    ).toMatchObject({
+      reasoning: { effort: 'low' },
+    });
+    expect(requestIdOnlyResponse.statusCode).toBe(200);
   });
 });
 
@@ -3055,6 +4085,7 @@ describe('route-proxy-service OpenCode native endpoint routing', () => {
       requestBody: {
         model: 'wire-opencode',
         stream: false,
+        store: false,
         input: 'hello',
         reasoning: { effort: 'high' },
       },
@@ -3083,7 +4114,7 @@ describe('route-proxy-service OpenCode native endpoint routing', () => {
         stream: false,
         messages: [{ role: 'user', content: 'hello' }],
         max_tokens: 64,
-        reasoning: { effort: 'high' },
+        reasoning_effort: 'high',
       },
       responseBody: {
         id: 'chatcmpl_target',
@@ -3160,6 +4191,197 @@ describe('route-proxy-service OpenCode native endpoint routing', () => {
     }
   );
 
+  it.each(Object.keys(protocolCases) as Array<keyof typeof protocolCases>)(
+    'routes an unregistered non-streaming client through %s by pathname',
+    async sourceProtocol => {
+      vi.clearAllMocks();
+      const source = protocolCases[sourceProtocol];
+      setupOpenCodeRoute({
+        detectedCliType: source.detectedCliType,
+        channelTargetProtocol: 'native',
+      });
+      vi.mocked(httpRawRequest).mockResolvedValue({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from(JSON.stringify(source.responseBody)),
+      });
+      const request = createJsonRequest(
+        source.path,
+        {
+          ...source.routeHeaders,
+          'content-type': 'application/json',
+          'user-agent': 'UnregisteredEditor/1.0',
+        },
+        source.requestBody
+      );
+      const response = createMockResponse();
+
+      await handleRequest(request, response);
+
+      expect(response.statusCode).toBe(200);
+      expect(httpRawRequest).toHaveBeenCalledWith(
+        `https://opencode-upstream.example.com${source.path}`,
+        expect.objectContaining({ method: 'POST', preferElectronNet: true })
+      );
+      expect(vi.mocked(httpRawRequest).mock.calls[0]?.[1]?.headers).not.toHaveProperty(
+        'x-api-detect-cli'
+      );
+    }
+  );
+
+  it.each([
+    ['anthropic-messages', buildClaudeTextSse('unregistered')],
+    ['openai-responses', buildResponsesTextSse('unregistered')],
+    ['openai-chat-completions', buildChatTextSse('unregistered')],
+  ] as const)(
+    'routes an unregistered streaming client through %s by pathname',
+    async (sourceProtocol, streamBody) => {
+      vi.clearAllMocks();
+      const source = protocolCases[sourceProtocol];
+      setupOpenCodeRoute({
+        detectedCliType: source.detectedCliType,
+        channelTargetProtocol: 'native',
+      });
+      const upstreamHeaders = { 'content-type': 'text/event-stream' };
+      vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, requestConfig = {}) => {
+        expect(
+          requestConfig.onResponse?.({ status: 200, statusText: 'OK', headers: upstreamHeaders })
+        ).toBe(true);
+        await requestConfig.onChunk?.(streamBody);
+        return { status: 200, headers: upstreamHeaders, body: streamBody };
+      });
+      const request = createJsonRequest(
+        source.path,
+        {
+          ...source.routeHeaders,
+          'content-type': 'application/json',
+          'user-agent': 'UnregisteredCli/1.0',
+        },
+        { ...source.requestBody, stream: true }
+      );
+      const response = createMockResponse();
+
+      await handleRequest(request, response);
+
+      expect(response.statusCode).toBe(200);
+      expect(httpRawStreamRequest).toHaveBeenCalledWith(
+        `https://opencode-upstream.example.com${source.path}`,
+        expect.objectContaining({ method: 'POST', preferElectronNet: true })
+      );
+      expect(response.body).toContain('unregistered');
+      expect(vi.mocked(httpRawStreamRequest).mock.calls[0]?.[1]?.headers).not.toHaveProperty(
+        'x-api-detect-cli'
+      );
+    }
+  );
+
+  it.each(protocolMatrix)(
+    'streams OpenCode $sourceProtocol <- $targetProtocol before upstream completion',
+    async ({ sourceProtocol, targetProtocol }) => {
+      vi.clearAllMocks();
+      const source = protocolCases[sourceProtocol];
+      const target = protocolCases[targetProtocol];
+      const targetStream =
+        targetProtocol === 'anthropic-messages'
+          ? buildClaudeTextSse('incremental-cross-protocol')
+          : targetProtocol === 'openai-responses'
+            ? buildResponsesTextSse('incremental-cross-protocol')
+            : buildChatTextSse('incremental-cross-protocol');
+      setupOpenCodeRoute({
+        detectedCliType: source.detectedCliType,
+        channelTargetProtocol: targetProtocol,
+      });
+      const upstreamHeaders = { 'content-type': 'text/event-stream' };
+      const response = createMockResponse();
+      vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, requestConfig = {}) => {
+        expect(
+          requestConfig.onResponse?.({ status: 200, statusText: 'OK', headers: upstreamHeaders })
+        ).toBe(true);
+        await requestConfig.onChunk?.(targetStream);
+        expect(response.body).toContain('incremental-cross-protocol');
+        return { status: 200, headers: upstreamHeaders, body: targetStream };
+      });
+      const request = createJsonRequest(
+        source.path,
+        {
+          ...source.routeHeaders,
+          'content-type': 'application/json',
+          'x-api-detect-cli': 'openCode',
+        },
+        { ...source.requestBody, stream: true }
+      );
+
+      await handleRequest(request, response);
+
+      expect(response.statusCode).toBe(200);
+      expect(httpRawStreamRequest).toHaveBeenCalledWith(
+        `https://opencode-upstream.example.com${target.path}`,
+        expect.objectContaining({ method: 'POST', preferElectronNet: true })
+      );
+      if (sourceProtocol === 'anthropic-messages') {
+        expect(response.body).toContain('event: message_stop');
+      } else if (sourceProtocol === 'openai-responses') {
+        expect(response.body).toContain('event: response.completed');
+      } else {
+        expect(response.body).toContain('data: [DONE]');
+      }
+    }
+  );
+
+  it.each([
+    {
+      sourceProtocol: 'anthropic-messages' as const,
+      authScheme: 'bearer' as const,
+      marker: 'grokBuild',
+      expectedHeader: 'authorization',
+      forbiddenHeader: 'x-api-key',
+      expectedValue: 'Bearer sk-upstream',
+    },
+    {
+      sourceProtocol: 'openai-responses' as const,
+      authScheme: 'x-api-key' as const,
+      marker: 'openCode',
+      expectedHeader: 'x-api-key',
+      forbiddenHeader: 'authorization',
+      expectedValue: 'sk-upstream',
+    },
+  ])(
+    'uses channel $authScheme auth for $sourceProtocol regardless of client marker',
+    async ({ sourceProtocol, authScheme, marker, expectedHeader, forbiddenHeader, expectedValue }) => {
+      vi.clearAllMocks();
+      const source = protocolCases[sourceProtocol];
+      setupOpenCodeRoute({
+        detectedCliType: source.detectedCliType,
+        channelTargetProtocol: 'native',
+      });
+      vi.mocked(resolveChannelCredentials).mockResolvedValue({
+        baseUrl: 'https://opencode-upstream.example.com',
+        apiKey: 'sk-upstream',
+        authScheme,
+      });
+      vi.mocked(httpRawRequest).mockResolvedValue({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from(JSON.stringify(source.responseBody)),
+      });
+      const request = createJsonRequest(
+        source.path,
+        {
+          ...source.routeHeaders,
+          'content-type': 'application/json',
+          'x-api-detect-cli': marker,
+        },
+        source.requestBody
+      );
+
+      await handleRequest(request, createMockResponse());
+
+      const headers = vi.mocked(httpRawRequest).mock.calls[0]?.[1]?.headers;
+      expect(headers).toMatchObject({ [expectedHeader]: expectedValue });
+      expect(headers).not.toHaveProperty(forbiddenHeader);
+    }
+  );
+
   it('skips a lossy cross-protocol candidate and continues with a compatible channel', async () => {
     vi.clearAllMocks();
     const { rule, channel } = setupOpenCodeRoute({
@@ -3197,7 +4419,7 @@ describe('route-proxy-service OpenCode native endpoint routing', () => {
 
     await handleRequest(request, response);
 
-    expect(resolveChannels).toHaveBeenCalledWith(rule, 'opencode-selected');
+    expect(resolveChannels).toHaveBeenCalledWith(rule, 'wire-opencode');
     expect(httpRawRequest).toHaveBeenCalledTimes(1);
     expect(httpRawRequest).toHaveBeenCalledWith(
       'https://opencode-upstream.example.com/v1/responses',
@@ -3476,7 +4698,7 @@ describe('route-proxy-service successful path affinity', () => {
       accountId: 'account-a',
       apiKeyId: 'key-a',
       cliType: 'codex' as const,
-      targetProtocol: 'native' as const,
+      targetProtocol: 'openai-responses' as const,
       canonicalModel: 'gpt-4.1-mini',
       resolvedModel: 'gpt-4.1-mini',
     };
@@ -4585,7 +5807,7 @@ describe('route-proxy-service auth extraction', () => {
   });
 
   it.each(['/v1/messages', '/v1/responses', '/v1/chat/completions'])(
-    'accepts Grok Build x-api-key auth on %s',
+    'does not give Grok Build a client-specific credential precedence on %s',
     url => {
       const token = extractRouteApiKey(
         {
@@ -4598,7 +5820,7 @@ describe('route-proxy-service auth extraction', () => {
         'grokBuild'
       );
 
-      expect(token).toBe('sk-route-grok');
+      expect(token).toBe('ignored-bearer');
     }
   );
 
@@ -4915,9 +6137,10 @@ describe('route-proxy-service target lock', () => {
       clearRouteProbeLockTerminalFailure(routeApiKey);
     }
 
-    expect(countTokensResponse.statusCode).toBe(200);
-    expect(JSON.parse(countTokensResponse.body)).toEqual({
-      input_tokens: expect.any(Number),
+    expect(countTokensResponse.statusCode).toBe(501);
+    expect(JSON.parse(countTokensResponse.body)).toMatchObject({
+      error: { type: 'not_supported_error' },
+      reason: 'target_lock_has_no_exact_tokenizer',
     });
     expect(httpRawRequest).not.toHaveBeenCalled();
     expect(httpRawStreamRequest).toHaveBeenCalledTimes(1);
@@ -7155,7 +8378,7 @@ describe('route-proxy-service SSE streaming passthrough', () => {
       ],
       metadata: { source: 'claude-code', trace_id: 'trace-1' },
       thinking: { type: 'enabled', budget_tokens: 2048 },
-      output_config: { effort: 'high', format: 'text' },
+      output_config: { effort: 'low', format: 'text' },
     });
     expect(response.statusCode).toBe(200);
     expect(response.body).toBe(Buffer.concat([toolUseChunk, terminalChunk]).toString('utf-8'));
@@ -7819,6 +9042,7 @@ describe('route-proxy-service upstream auth headers', () => {
       {
         authorization: 'Bearer sk-route-key',
         'content-type': 'application/json',
+        'x-codex-window-id': 'window-1',
       },
       'duckcoding.ai',
       42,
@@ -7828,6 +9052,7 @@ describe('route-proxy-service upstream auth headers', () => {
 
     expect(headers.authorization).toBe('Bearer sk-upstream-key');
     expect(headers['x-api-key']).toBeUndefined();
+    expect(headers['x-codex-window-id']).toBe('window-1');
   });
 
   it('uses bearer auth override without forwarding x-api-key', () => {
@@ -7867,6 +9092,28 @@ describe('route-proxy-service upstream auth headers', () => {
     expect(headers.authorization).toBe('Bearer sk-upstream-key');
     expect(Object.keys(headers).some(name => name.toLowerCase().startsWith('x-grok-'))).toBe(false);
   });
+
+  it('does not forward internal route identity and display headers upstream', () => {
+    const headers = buildUpstreamHeaders(
+      {
+        authorization: 'Bearer sk-route-key',
+        'x-api-detect-agent-id': 'codex-agent',
+        'x-api-detect-runtime-slot-id': 'terminal-1',
+        'x-api-detect-session-id': 'session-1',
+        'x-api-detect-agent-name': 'Codex',
+        'x-api-detect-runtime-slot-label': 'Terminal 1',
+      },
+      'relay.example.com',
+      42,
+      'sk-upstream-key',
+      'codex'
+    );
+
+    expect(headers.authorization).toBe('Bearer sk-upstream-key');
+    expect(Object.keys(headers).some(name => name.toLowerCase().startsWith('x-api-detect-'))).toBe(
+      false
+    );
+  });
 });
 
 describe('route-proxy-service upstream request target', () => {
@@ -7898,5 +9145,30 @@ describe('route-proxy-service upstream request target', () => {
       url: 'https://anyrouter.top/v1/messages?beta=true',
       host: 'anyrouter.top',
     });
+  });
+
+  it.each([
+    [
+      'ModelScope-style version prefix',
+      'https://api-inference.modelscope.cn/v1',
+      '/v1/chat/completions',
+      'https://api-inference.modelscope.cn/v1/chat/completions',
+    ],
+    [
+      'nested OpenAI compatibility prefix',
+      'https://provider.example.com/api/openai',
+      '/v1/responses',
+      'https://provider.example.com/api/openai/v1/responses',
+    ],
+    [
+      'DashScope-style compatibility prefix',
+      'https://dashscope.example.com/compatible-mode/v1',
+      '/v1/chat/completions?beta=true',
+      'https://dashscope.example.com/compatible-mode/v1/chat/completions?beta=true',
+    ],
+  ])('preserves %s in upstream Base URLs', (_name, baseUrl, requestUrl, expected) => {
+    expect(
+      buildUpstreamRequestUrl(baseUrl, requestUrl, 'openCode', undefined, 'sk-upstream-key').url
+    ).toBe(expected);
   });
 });

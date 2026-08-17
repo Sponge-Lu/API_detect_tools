@@ -1688,12 +1688,14 @@ interface ModelRedirectionTabProps {
   isActive?: boolean;
   leadingPane?: ReactNode;
   className?: string;
+  setPageHeaderActions?: (actions: ReactNode | null) => void;
 }
 
 export function ModelRedirectionTab({
   isActive = true,
   leadingPane,
   className = '',
+  setPageHeaderActions,
 }: ModelRedirectionTabProps = {}) {
   const customCliConfigs = useCustomCliConfigStore(state => state.configs);
   const {
@@ -2025,9 +2027,11 @@ export function ModelRedirectionTab({
     let isMounted = true;
     const requestLogsGeneration = ++requestLogsGenerationRef.current;
 
-    void window.electronAPI.route
-      ?.getRequestLogs?.({ limit: PRIORITY_ROUTE_LOG_LIMIT })
-      .then(result => {
+    const requestLogs = window.electronAPI.route?.getRequestLogs?.({
+      limit: PRIORITY_ROUTE_LOG_LIMIT,
+    });
+    void requestLogs
+      ?.then(result => {
         if (
           !isMounted ||
           requestLogsGeneration !== requestLogsGenerationRef.current ||
@@ -2984,6 +2988,40 @@ export function ModelRedirectionTab({
       )
     : false;
 
+  const pageHeaderActions = useMemo(
+    () =>
+      config ? (
+        <div className="flex items-center gap-2">
+          <AppButton
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="!h-7 !min-h-7"
+            onClick={handleSyncSources}
+            disabled={syncingSources}
+          >
+            {syncingSources ? '同步中' : '同步来源'}
+          </AppButton>
+          <AppButton
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="!h-7 !min-h-7"
+            onClick={openCreateEditor}
+            disabled={syncingSources || saving}
+          >
+            新增重定向
+          </AppButton>
+        </div>
+      ) : null,
+    [config, handleSyncSources, openCreateEditor, saving, syncingSources]
+  );
+
+  useEffect(() => {
+    setPageHeaderActions?.(pageHeaderActions);
+    return () => setPageHeaderActions?.(null);
+  }, [pageHeaderActions, setPageHeaderActions]);
+
   if (!config) {
     return null;
   }
@@ -3019,35 +3057,13 @@ export function ModelRedirectionTab({
           >
             <div
               data-testid="redirect-list-toolbar"
-              className="flex flex-wrap items-center justify-between gap-1.5 border-b border-[var(--line-muted)] px-2.5 py-1.5"
+              className="flex h-9 shrink-0 items-center gap-1.5 border-b border-[var(--line-muted)] px-2.5"
             >
               <div className="flex min-w-0 items-baseline gap-1.5">
                 <div className="text-xs font-semibold text-[var(--text-primary)]">重定向模型</div>
                 <div className="shrink-0 text-[11px] text-[var(--text-secondary)]">
                   {displayItems.length} 项
                 </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <AppButton
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  className="!h-7 !min-h-7 !px-2"
-                  onClick={handleSyncSources}
-                  disabled={syncingSources}
-                >
-                  {syncingSources ? '同步中' : '同步来源'}
-                </AppButton>
-                <AppButton
-                  type="button"
-                  size="sm"
-                  variant="secondary"
-                  className="!h-7 !min-h-7 !px-2"
-                  onClick={openCreateEditor}
-                  disabled={syncingSources || saving}
-                >
-                  新增重定向
-                </AppButton>
               </div>
             </div>
 

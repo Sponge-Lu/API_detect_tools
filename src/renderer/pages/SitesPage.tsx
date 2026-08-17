@@ -22,7 +22,7 @@ import {
   SiteSettingsDialog,
 } from '../components/dialogs';
 import type { SiteSettingsChanges } from '../components/dialogs';
-import type { CliConfig } from '../../shared/types/cli-config';
+import type { CliTargetProtocol } from '../../shared/types/cli-config';
 import { CreateApiKeyDialog } from '../components/CreateApiKeyDialog';
 import { AppButton } from '../components/AppButton/AppButton';
 import { AppSearchInput } from '../components/AppInput';
@@ -89,6 +89,8 @@ interface AccountInfo {
   browser_profile_path?: string;
   auto_refresh?: boolean;
   auto_refresh_interval?: number;
+  routeTargetProtocol?: CliTargetProtocol;
+  routeTargetProtocolNeedsConfirmation?: boolean;
   anyRouterConfig?: AnyRouterAccountConfig;
 }
 
@@ -200,7 +202,6 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     setUserGroups,
     setModelPricing,
     getCliConfig,
-    setCliConfig,
   } = useDetectionStore();
   const {
     configs: customCliConfigs,
@@ -714,7 +715,13 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
       updates: Partial<
         Pick<
           AccountInfo,
-          'account_name' | 'user_id' | 'access_token' | 'auto_refresh' | 'auto_refresh_interval'
+          | 'account_name'
+          | 'user_id'
+          | 'access_token'
+          | 'auto_refresh'
+          | 'auto_refresh_interval'
+          | 'routeTargetProtocol'
+          | 'routeTargetProtocolNeedsConfirmation'
         >
       >
     ) => {
@@ -2203,11 +2210,6 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
                 modelPricing[selectedItem.site.name]
               : null
           }
-          cliConfig={
-            selectedItem.type === 'managed' && selectedItem.account
-              ? getCliConfig(makeCardKey(selectedItem.site.name, selectedItem.account.id))
-              : null
-          }
           showDialog={showDialog}
           onAddAccount={() => {
             if (selectedItem.type === 'managed') {
@@ -2251,22 +2253,34 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
           }}
           onDeleteDirectConfig={handleDeleteDirectConfig}
           onUpdateAnyRouterUserHash={handleUpdateAnyRouterUserHash}
-          onSaveCliConfig={async (newConfig: CliConfig) => {
-            if (selectedItem.type !== 'managed') return;
-            try {
-              const cardKey = makeCardKey(selectedItem.site.name, selectedItem.account?.id);
-              const result = await (window.electronAPI as any).cliCompat.saveConfig(
-                selectedItem.site.url,
-                newConfig,
-                selectedItem.account?.id
+          onSaveRouteTargetProtocol={async (protocol: CliTargetProtocol) => {
+            if (selectedItem.type === 'managed' && selectedItem.account) {
+              await handleSavePanelAccount(selectedItem.account.id, {
+                routeTargetProtocol: protocol,
+                routeTargetProtocolNeedsConfirmation: false,
+              });
+              return;
+            }
+            if (selectedItem.type === 'custom-cli') {
+              const store = useCustomCliConfigStore.getState();
+              store.updateConfig(selectedItem.config.id, {
+                routeTargetProtocol: protocol,
+                routeTargetProtocolNeedsConfirmation: false,
+              });
+              await store.saveConfigs();
+              setSelectedItem(current =>
+                current?.type === 'custom-cli' && current.config.id === selectedItem.config.id
+                  ? {
+                      ...current,
+                      config: {
+                        ...current.config,
+                        routeTargetProtocol: protocol,
+                        routeTargetProtocolNeedsConfirmation: false,
+                      },
+                    }
+                  : current
               );
-              if (!result?.success) {
-                throw new Error(result?.error ?? '保存 CLI 配置失败');
-              }
-              setCliConfig(cardKey, newConfig);
-              toast.success('CLI 配置已保存');
-            } catch {
-              toast.error('保存 CLI 配置失败');
+              toast.success('路由上游协议已保存');
             }
           }}
           onConfigChanged={async () => {

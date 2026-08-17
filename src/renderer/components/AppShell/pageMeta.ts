@@ -1,6 +1,8 @@
 import {
   Coins,
   LayoutDashboard,
+  FileJson,
+  GitFork,
   Route as RouteIcon,
   ScrollText,
   Server,
@@ -29,6 +31,8 @@ export const APP_PAGE_ORDER: VisibleTabId[] = [
   'sites',
   'credit',
   'route',
+  'model-mapping',
+  'config-files',
   'logs',
   'settings',
 ];
@@ -59,8 +63,22 @@ export const APP_PAGE_META = {
     id: 'route',
     navLabel: '本地路由',
     title: '本地路由',
-    description: '统一管理代理服务、CLI 默认模型、统计分析与模型重定向。',
+    description: '统一管理本地网关、会话路由与运行状态。',
     icon: RouteIcon,
+  },
+  'model-mapping': {
+    id: 'model-mapping',
+    navLabel: '模型映射',
+    title: '模型映射',
+    description: '管理逻辑模型、原始模型、来源优先级与故障转移顺序。',
+    icon: GitFork,
+  },
+  'config-files': {
+    id: 'config-files',
+    navLabel: '配置文件',
+    title: '配置文件',
+    description: '管理客户端、CLI 与 SDK 的本地配置文件。',
+    icon: FileJson,
   },
   logs: {
     id: 'logs',

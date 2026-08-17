@@ -19,6 +19,21 @@ import {
 } from '../endpoint-test-service';
 import { runHealthCheck } from '../route-health-service';
 import { getHistoryBuckets } from '../route-history-service';
+import {
+  archiveRouteInstance,
+  cancelArmedRouteInstance,
+  clearRouteSessionActivities,
+  closeRouteInstance,
+  createArmedRouteInstance,
+  listRouteInstances,
+  listRouteSessionActivities,
+  listRouteSessionCandidates,
+  mergeRouteSessionRecords,
+  normalizeRouteInstanceCollections,
+  rollbackRouteSessionRule,
+  updateRouteInstance,
+  type RouteSessionListScope,
+} from '../route-session-service';
 import type {
   RouteAnalyticsObjectStatsQuery,
   RouteAnalyticsWindowQuery,
@@ -28,7 +43,12 @@ import type {
   RouteHistoryBucketsQuery,
   EndpointTestSelectionInput,
   EndpointTestTarget,
+  RouteSessionOverride,
+  RouteSessionExtractionRule,
+  RouteInstanceUpdate,
 } from '../../shared/types/route-proxy';
+import { scanSavedSessionRecordsWithDiagnostics } from '../config-file-profile-service';
+import { routeStateAffinityService } from '../route-state-affinity-service';
 
 const log = Logger.scope('RouteHandlers');
 
@@ -47,6 +67,7 @@ export function registerRouteHandlers() {
         rules: routing.rules,
         cliModelSelections: routing.cliModelSelections,
         cliThinkingEffortSelections: routing.cliThinkingEffortSelections,
+        sessionRouting: routing.sessionRouting,
         stats: routing.stats,
         routePathStates: routing.routePathStates,
         health: routing.health,
@@ -194,6 +215,206 @@ export function registerRouteHandlers() {
         params.selections
       );
       return ok(result);
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
+  ipcMain.handle('route:list-sessions', async (_, scope?: RouteSessionListScope) => {
+    try {
+      const validScopes: RouteSessionListScope[] = ['active', 'recent', 'history', 'all'];
+      const normalizedScope = validScopes.includes(scope as RouteSessionListScope)
+        ? (scope as RouteSessionListScope)
+        : 'active';
+      await unifiedConfigManager.pruneExpiredRouteSessionOverrides();
+      const sessionRouting = unifiedConfigManager.getRoutingConfig().sessionRouting;
+      if (sessionRouting) {
+        try {
+          const scan = await scanSavedSessionRecordsWithDiagnostics();
+          mergeRouteSessionRecords(
+            scan.records,
+            sessionRouting,
+            Date.now(),
+            new Set(
+              scan.diagnostics
+                .filter(diagnostic => diagnostic.status !== 'error')
+                .map(diagnostic => diagnostic.connectorId)
+            )
+          );
+        } catch {
+          log.warn('Session record connector scan failed');
+        }
+      }
+      return ok(
+        sessionRouting
+          ? listRouteSessionActivities(sessionRouting, Date.now(), normalizedScope)
+          : []
+      );
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
+  ipcMain.handle('route:list-route-instances', async () => {
+    try {
+      const config = unifiedConfigManager.getRoutingConfig().sessionRouting;
+      if (!config) return ok([]);
+      if (normalizeRouteInstanceCollections(config)) await unifiedConfigManager.saveConfig();
+      return ok(listRouteInstances(config));
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
+  ipcMain.handle(
+    'route:create-armed-route-instance',
+    async (_, input: { modelId: string; reasoningEffort: string }) => {
+      try {
+        const config = unifiedConfigManager.getRoutingConfig().sessionRouting;
+        if (!config) throw new Error('会话路由配置不可用');
+        const instance = createArmedRouteInstance(config, input.modelId, input.reasoningEffort);
+        await unifiedConfigManager.saveConfig();
+        return ok(instance);
+      } catch (e: any) {
+        return err(e.message);
+      }
+    }
+  );
+
+  ipcMain.handle(
+    'route:update-route-instance',
+    async (_, instanceId: string, updates: RouteInstanceUpdate) => {
+      try {
+        const config = unifiedConfigManager.getRoutingConfig().sessionRouting;
+        if (!config) throw new Error('会话路由配置不可用');
+        const instance = updateRouteInstance(config, instanceId, updates);
+        await unifiedConfigManager.saveConfig();
+        return ok(instance);
+      } catch (e: any) {
+        return err(e.message);
+      }
+    }
+  );
+
+  ipcMain.handle('route:close-route-instance', async (_, instanceId: string) => {
+    try {
+      const config = unifiedConfigManager.getRoutingConfig().sessionRouting;
+      if (!config) throw new Error('会话路由配置不可用');
+      const instance = closeRouteInstance(config, instanceId);
+      await unifiedConfigManager.saveConfig();
+      return ok(instance);
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
+  ipcMain.handle('route:cancel-armed-route-instance', async (_, instanceId: string) => {
+    try {
+      const config = unifiedConfigManager.getRoutingConfig().sessionRouting;
+      if (!config) throw new Error('会话路由配置不可用');
+      const instance = cancelArmedRouteInstance(config, instanceId);
+      await unifiedConfigManager.saveConfig();
+      return ok(instance);
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
+  ipcMain.handle('route:archive-route-instance', async (_, instanceId: string) => {
+    try {
+      const config = unifiedConfigManager.getRoutingConfig().sessionRouting;
+      if (!config) throw new Error('会话路由配置不可用');
+      const archived = archiveRouteInstance(config, instanceId);
+      if (archived) await unifiedConfigManager.saveConfig();
+      return ok({ archived });
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
+  ipcMain.handle('route:upsert-session-override', async (_, override: RouteSessionOverride) => {
+    try {
+      return ok(await unifiedConfigManager.upsertRouteSessionOverride(override));
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
+  ipcMain.handle('route:delete-session-override', async (_, key: string) => {
+    try {
+      return ok({ deleted: await unifiedConfigManager.deleteRouteSessionOverride(key) });
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
+  ipcMain.handle('route:preview-profile-state-clear', async (_, profileId: string) => {
+    try {
+      if (!profileId) throw new Error('配置卡片 ID 不能为空');
+      return ok(await routeStateAffinityService.summarizeProfile(profileId));
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
+  ipcMain.handle('route:clear-profile-state', async (_, profileId: string) => {
+    try {
+      if (!profileId) throw new Error('配置卡片 ID 不能为空');
+      return ok({ removed: await routeStateAffinityService.removeByProfile(profileId) });
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
+  ipcMain.handle('route:clear-session-activity', async (_, key?: string) => {
+    clearRouteSessionActivities(key);
+    return ok();
+  });
+
+  ipcMain.handle('route:list-session-rules', async () => {
+    try {
+      return ok(unifiedConfigManager.getRoutingConfig().sessionRouting?.extractionRules || []);
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
+  ipcMain.handle('route:upsert-session-rule', async (_, rule: RouteSessionExtractionRule) => {
+    try {
+      return ok(await unifiedConfigManager.upsertRouteSessionRule(rule));
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
+  ipcMain.handle('route:delete-session-rule', async (_, ruleId: string) => {
+    try {
+      return ok({ deleted: await unifiedConfigManager.deleteRouteSessionRule(ruleId) });
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
+  ipcMain.handle('route:rollback-session-rule', async (_, ruleId: string, version: number) => {
+    try {
+      const rule = unifiedConfigManager
+        .getRoutingConfig()
+        .sessionRouting?.extractionRules.find(item => item.id === ruleId);
+      if (!rule) throw new Error('会话规则不存在');
+      return ok(
+        await unifiedConfigManager.upsertRouteSessionRule(rollbackRouteSessionRule(rule, version))
+      );
+    } catch (e: any) {
+      return err(e.message);
+    }
+  });
+
+  ipcMain.handle('route:list-session-candidates', async () => ok(listRouteSessionCandidates()));
+
+  ipcMain.handle('route:update-session-settings', async (_, settings) => {
+    try {
+      await unifiedConfigManager.updateRouteSessionSettings(settings);
+      return ok();
     } catch (e: any) {
       return err(e.message);
     }

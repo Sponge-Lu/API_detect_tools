@@ -171,7 +171,7 @@ export function SiteCardHeader({
         </span>
       </div>
 
-      {/* 列 8: History（双控件 + 时间桶条形图）*/}
+      {/* 列 8: History（端点选择 + 时间桶条形图）*/}
       <div
         className="flex items-center px-2"
         onClick={event => event.stopPropagation()}

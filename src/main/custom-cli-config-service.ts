@@ -26,7 +26,13 @@ import {
   parseCustomCliRouteConfigId,
 } from '../shared/utils/customCliRouteId';
 import { encryptCustomCliConfigs, decryptCustomCliConfigs } from './config-field-crypto';
-import { BUILTIN_CLI_TYPES } from '../shared/types/cli-config';
+import { routeStateAffinityService } from './route-state-affinity-service';
+import {
+  BUILTIN_CLI_TYPES,
+  CLI_TARGET_PROTOCOLS,
+  normalizeCliTargetProtocol,
+  type CliTargetProtocol,
+} from '../shared/types/cli-config';
 
 export interface CustomCliConfigStorage {
   configs: CustomCliConfig[];
@@ -53,12 +59,40 @@ export function getCustomCliConfigFilePath(): string {
 
 function normalizeCustomCliConfigs(configs: CustomCliConfig[]): void {
   for (const config of configs) {
+    const legacyValues = new Set<CliTargetProtocol>();
+    if (
+      !(
+        typeof config.routeTargetProtocol === 'string' &&
+        CLI_TARGET_PROTOCOLS.includes(config.routeTargetProtocol)
+      )
+    ) {
+      for (const cliType of BUILTIN_CLI_TYPES) {
+        const value = config.cliSettings?.[cliType]?.targetProtocol;
+        if (typeof value === 'string' && CLI_TARGET_PROTOCOLS.includes(value)) {
+          legacyValues.add(normalizeCliTargetProtocol(value));
+        }
+      }
+    }
     config.cliSettings = Object.fromEntries(
       BUILTIN_CLI_TYPES.map(cliType => [
         cliType,
         normalizeCustomCliSettings(config.cliSettings?.[cliType]),
       ])
     ) as Record<(typeof BUILTIN_CLI_TYPES)[number], CustomCliSettings>;
+    if (
+      typeof config.routeTargetProtocol === 'string' &&
+      CLI_TARGET_PROTOCOLS.includes(config.routeTargetProtocol)
+    ) {
+      config.routeTargetProtocol = normalizeCliTargetProtocol(config.routeTargetProtocol);
+      continue;
+    }
+    if (legacyValues.size === 1) {
+      config.routeTargetProtocol = Array.from(legacyValues)[0];
+      config.routeTargetProtocolNeedsConfirmation = false;
+    } else if (legacyValues.size > 1) {
+      config.routeTargetProtocol = 'native';
+      config.routeTargetProtocolNeedsConfirmation = true;
+    }
   }
 }
 
@@ -121,14 +155,26 @@ export function loadCustomCliConfigStorageSync(): CustomCliConfigStorage {
 
 export async function saveCustomCliConfigStorage(data: CustomCliConfigStorage): Promise<void> {
   const filePath = getCustomCliConfigFilePath();
+  const previous = await loadCustomCliConfigStorage();
   try {
     const encryptedData = {
       configs: encryptCustomCliConfigs(data.configs),
       activeConfigId: data.activeConfigId,
     };
     await fs.writeFile(filePath, JSON.stringify(encryptedData, null, 2), 'utf-8');
+    const nextIds = new Set(data.configs.map(config => config.id));
+    await routeStateAffinityService.removeBySites(
+      previous.configs
+        .filter(config => !nextIds.has(config.id))
+        .map(config => buildCustomCliRouteSiteId(config.id))
+    );
     Logger.info('[CustomCliConfigService] 配置文件已保存');
   } catch (error: unknown) {
+    const rollbackData = {
+      configs: encryptCustomCliConfigs(previous.configs),
+      activeConfigId: previous.activeConfigId,
+    };
+    await fs.writeFile(filePath, JSON.stringify(rollbackData, null, 2), 'utf-8');
     Logger.error('[CustomCliConfigService] 保存配置文件失败:', error);
     throw error;
   }

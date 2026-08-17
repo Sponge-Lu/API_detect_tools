@@ -1,19 +1,17 @@
 /**
  * 路由页面
  * 输入: routeStore (配置/模型注册表)
- * 输出: 路由总览布局（代理服务器、CLI 路由模型选择、模型重定向）
+ * 输出: 本地路由布局（代理服务器、会话路由）
  * 定位: 展示层 - Route 工作台入口
  */
 
 import { useShallow } from 'zustand/shallow';
-import { ModelRedirectionTab } from '../components/Route/Redirection/ModelRedirectionTab';
-import { CliModelSection, ServerSection } from '../components/Route/ProxyStats/ProxyStatsTab';
+import { ServerSection } from '../components/Route/ProxyStats/ProxyStatsTab';
+import { RouteSessionSection } from '../components/Route/RouteSessionSection';
 import { LoadingState } from '../components/LoadingState';
 import { useRouteStore } from '../store/routeStore';
-import { useUIStore } from '../store/uiStore';
 
 export function RoutePage() {
-  const isRoutePageActive = useUIStore(state => state.activeTab === 'route');
   const { config, loading } = useRouteStore(
     useShallow(store => ({
       config: store.config,
@@ -30,20 +28,17 @@ export function RoutePage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden px-6 py-3 gap-2.5">
+    <div
+      data-testid="route-page-scroll-container"
+      className="flex h-full min-h-0 flex-1 flex-col gap-2.5 overflow-x-hidden overflow-y-auto px-6 py-3 [scrollbar-gutter:stable]"
+    >
       <div data-testid="route-page-server-row" className="shrink-0">
         <ServerSection className="w-full" />
       </div>
 
-      <div
-        data-testid="route-page-primary-row"
-        className="flex min-h-0 min-w-0 flex-1 flex-col gap-2.5"
-      >
+      <div data-testid="route-page-primary-row" className="flex min-w-0 shrink-0 flex-col gap-2.5">
         <div data-testid="route-page-cli-row" className="min-w-0 shrink-0">
-          <CliModelSection variant="card" className="w-full" />
-        </div>
-        <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
-          <ModelRedirectionTab isActive={isRoutePageActive} className="h-full min-h-0 min-w-0" />
+          <RouteSessionSection />
         </div>
       </div>
     </div>

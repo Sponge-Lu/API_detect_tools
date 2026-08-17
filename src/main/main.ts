@@ -36,6 +36,7 @@ import {
   type ThemeMode,
 } from '../shared/theme/themePresets';
 import { createRendererHealthMonitor } from './window-health-manager';
+import { routeSessionActivityService } from './route-session-activity-service';
 
 // 设置Windows控制台编码为UTF-8，解决中文乱码问题
 if (os.platform() === 'win32') {
@@ -208,4 +209,17 @@ app.on('window-all-closed', () => {
     closeBehaviorManager.destroyTray();
   }
   if (process.platform !== 'darwin') app.quit();
+});
+
+let routeActivityFlushedForQuit = false;
+let routeActivityFlushInProgress = false;
+app.on('before-quit', event => {
+  if (routeActivityFlushedForQuit || routeActivityFlushInProgress) return;
+  event.preventDefault();
+  routeActivityFlushInProgress = true;
+  void routeSessionActivityService.flush().finally(() => {
+    routeActivityFlushedForQuit = true;
+    routeActivityFlushInProgress = false;
+    app.quit();
+  });
 });

@@ -1,70 +1,51 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Eraser, Network } from 'lucide-react';
 import {
-  type RouteCliType,
   type RouteModelRegistryConfig,
   type RouteModelSourceRef,
   type RouteRequestLogItem,
 } from '../../shared/types/route-proxy';
 import type { ModelPriceInfo, ModelPricingData, UserGroupInfo } from '../../shared/types/site';
-import ClaudeCodeIcon from '../assets/cli-icons/claude-code.svg';
-import CodexIcon from '../assets/cli-icons/codex.svg';
-import GrokBuildIcon from '../assets/cli-icons/grok.svg';
-import OpenCodeIcon from '../assets/cli-icons/opencode.svg';
 import { AppButton } from '../components/AppButton/AppButton';
+import { AgentLogo } from '../components/AgentLogo';
 import { DataTableEmpty } from '../components/DataTable/primitives';
 import { LoadingState } from '../components/LoadingState';
 import { ErrorState } from '../components/ErrorState';
 import { useConfigStore } from '../store/configStore';
 import { useRouteStore } from '../store/routeStore';
 import { resolveModelPricing } from '../utils/modelPricing';
-import { BUILTIN_CLI_LABELS, BUILTIN_CLI_TYPES } from '../../shared/types/cli-config';
-
-type RouteCliFilter = 'all' | RouteCliType;
+type RouteAgentFilter = 'all' | string;
 
 const ROUTE_OUTCOME_STYLES: Record<
   RouteRequestLogItem['outcome'],
   {
     badge: string;
     dot: string;
+    diagnostic: string;
     label: string;
   }
 > = {
   success: {
     badge: 'border-[var(--success)]/20 bg-[var(--success-soft)] text-[var(--success)]',
     dot: 'bg-[var(--success)]',
+    diagnostic: 'text-[var(--success)]',
     label: '成功',
   },
   failure: {
     badge: 'border-[var(--danger)]/20 bg-[var(--danger-soft)] text-[var(--danger)]',
     dot: 'bg-[var(--danger)]',
+    diagnostic: 'text-[var(--danger)]',
     label: '失败',
   },
   neutral: {
     badge: 'border-[var(--warning)]/20 bg-[var(--warning-soft)] text-[var(--warning)]',
     dot: 'bg-[var(--warning)]',
+    diagnostic: 'text-[var(--warning)]',
     label: '中性',
   },
 };
 
-const CLI_LABELS: Record<RouteRequestLogItem['cliType'], string> = BUILTIN_CLI_LABELS;
-const ROUTE_CLI_ICON_CONFIGS: Record<
-  RouteRequestLogItem['cliType'],
-  { icon: string; sizeClass: string }
-> = {
-  claudeCode: { icon: ClaudeCodeIcon, sizeClass: 'h-[18px] w-[18px]' },
-  codex: { icon: CodexIcon, sizeClass: 'h-5 w-5' },
-  openCode: { icon: OpenCodeIcon, sizeClass: 'h-5 w-4' },
-  grokBuild: { icon: GrokBuildIcon, sizeClass: 'h-5 w-5' },
-};
-const ROUTE_CLI_FILTER_OPTIONS: Array<{
-  id: RouteCliFilter;
-  label: string;
-}> = [
-  { id: 'all', label: '全部' },
-  ...BUILTIN_CLI_TYPES.map(cliType => ({ id: cliType, label: CLI_LABELS[cliType] })),
-];
-const SUPPORTED_ROUTE_CLI_TYPES = new Set<RouteCliType>(BUILTIN_CLI_TYPES);
+const UNKNOWN_AGENT_ID = '__unknown_agent__';
 const UNKNOWN_TEXT = '未知';
 const EMPTY_VALUE_TEXT = '0';
 const DEFAULT_API_KEY_NAME = '默认';
@@ -74,22 +55,21 @@ const CACHE_CREATION_INPUT_PRICE_RATIO = 1.25;
 const CACHE_READ_INPUT_PRICE_RATIO = 0.1;
 const ROUTE_LOG_VIEW_LIMIT = 200;
 const ROUTE_LOG_SITE_NAME_MAX_CJK_LENGTH = 5;
-const ROUTE_LOG_TABLE_STYLE = { minWidth: 'calc(62rem + 2ch)' };
+const ROUTE_LOG_TABLE_STYLE = { minWidth: 'calc(59rem + 2ch)' };
 const ROUTE_LOG_GRID_STYLE = {
   gridTemplateColumns:
-    'minmax(1.75rem, 1.75fr) minmax(6.5rem, 6.5fr) minmax(4rem, 4fr) minmax(calc(12.5rem + 2ch), 14.5fr) minmax(18rem, 18fr) minmax(4rem, 4fr) minmax(5.25rem, 5.25fr) minmax(2.75rem, 2.75fr) minmax(5.25rem, 5.25fr)',
+    'minmax(6.5rem, 6.5fr) minmax(6.5rem, 6.5fr) minmax(4rem, 4fr) minmax(calc(12.5rem + 2ch), 14.5fr) minmax(10rem, 10fr) minmax(4rem, 4fr) minmax(5.25rem, 5.25fr) minmax(2.75rem, 2.75fr) minmax(5.25rem, 5.25fr)',
 };
 const ROUTE_LOG_GRID_GAP = 'gap-x-1';
 const ROUTE_LOG_TOKEN_GRID_STYLE = {
-  gridTemplateColumns:
-    'minmax(0, calc(20% - 1ch)) minmax(0, 20%) minmax(0, calc(20% - 2ch)) minmax(0, calc(20% + 1ch)) minmax(0, 20%)',
+  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
 };
 const ROUTE_LOG_HEADER_LABELS = [
-  'CLI',
+  'Agent',
   '原始模型',
   '思考强度',
   '路由目标',
-  'Token（总/输入/输出/缓存写/缓存读）',
+  'Token（输入/输出 · 写/缓存读）',
   '预计金额',
   '用时/首字',
   '状态',
@@ -133,10 +113,6 @@ function formatTimestamp(value: number): string {
     month: '2-digit',
     day: '2-digit',
   }).format(value);
-}
-
-function isSupportedRouteCliType(value: unknown): value is RouteCliType {
-  return typeof value === 'string' && SUPPORTED_ROUTE_CLI_TYPES.has(value as RouteCliType);
 }
 
 function formatDisplayName(name?: string): string {
@@ -292,11 +268,10 @@ function formatRouteLogCompactTokenParts(
   costInfo: RouteLogCostInfo
 ): Array<{ label: string; value: string }> {
   return [
-    { label: 'T', value: costInfo.totalTokens },
     { label: 'IN', value: costInfo.promptTokens },
     { label: 'OUT', value: costInfo.completionTokens },
-    { label: 'C.R', value: costInfo.cacheReadTokens },
     { label: 'C.W', value: costInfo.cacheCreationTokens },
+    { label: 'C.R', value: costInfo.cacheReadTokens },
   ];
 }
 
@@ -488,12 +463,16 @@ function formatRouteLogStatusCode(statusCode?: number): string {
 }
 
 function resolveRouteFailureInfo(item: RouteRequestLogItem): string | null {
-  if (item.outcome !== 'failure') {
+  if (item.outcome === 'success') {
     return null;
   }
 
   const error = item.error?.trim();
   if (error) {
+    if (item.outcome === 'neutral') {
+      return error;
+    }
+
     if (item.statusCode !== undefined && isDuplicateRouteFailureCode(error, item.statusCode)) {
       return null;
     }
@@ -611,7 +590,7 @@ function prependRouteLogItem(
 export function LogsPage() {
   const appConfig = useConfigStore(state => state.config);
   const liveRouteConfig = useRouteStore(state => state.config);
-  const [routeCliFilter, setRouteCliFilter] = useState<RouteCliFilter>('all');
+  const [routeAgentFilter, setRouteAgentFilter] = useState<RouteAgentFilter>('all');
   const [routeLogs, setRouteLogs] = useState<RouteRequestLogItem[]>([]);
   const [routeLogsLoading, setRouteLogsLoading] = useState(false);
   const [routeLogsError, setRouteLogsError] = useState<string | null>(null);
@@ -718,17 +697,23 @@ export function LogsPage() {
     () => buildRouteLogRegistryContext(routeModelRegistry),
     [routeModelRegistry]
   );
+  const routeAgentFilterOptions = useMemo(() => {
+    const agents = new Map<string, string>();
+    for (const item of routeLogs) {
+      const id = item.agentId?.trim() || UNKNOWN_AGENT_ID;
+      const name = item.agentName?.trim() || (id === UNKNOWN_AGENT_ID ? '未知 Agent' : id);
+      if (!agents.has(id)) agents.set(id, name);
+    }
+    return [{ id: 'all', label: '全部' }, ...Array.from(agents, ([id, label]) => ({ id, label }))];
+  }, [routeLogs]);
   const routeLogRows = useMemo(() => {
     const rows: RouteLogRowViewModel[] = [];
     let successCount = 0;
     let failureCount = 0;
 
     for (const item of routeLogs) {
-      if (!isSupportedRouteCliType(item.cliType)) {
-        continue;
-      }
-
-      if (routeCliFilter !== 'all' && item.cliType !== routeCliFilter) {
+      const agentId = item.agentId?.trim() || UNKNOWN_AGENT_ID;
+      if (routeAgentFilter !== 'all' && agentId !== routeAgentFilter) {
         continue;
       }
 
@@ -748,7 +733,7 @@ export function LogsPage() {
     }
 
     return { rows, successCount, failureCount };
-  }, [appConfig, routeCliFilter, routeLogContext, routeLogs]);
+  }, [appConfig, routeAgentFilter, routeLogContext, routeLogs]);
   const filteredRouteLogs = routeLogRows.rows;
   const routeSuccessCount = routeLogRows.successCount;
   const routeFailureCount = routeLogRows.failureCount;
@@ -774,8 +759,8 @@ export function LogsPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {ROUTE_CLI_FILTER_OPTIONS.map(option => {
-            const selected = routeCliFilter === option.id;
+          {routeAgentFilterOptions.map(option => {
+            const selected = routeAgentFilter === option.id;
 
             return (
               <AppButton
@@ -783,7 +768,7 @@ export function LogsPage() {
                 variant={selected ? 'primary' : 'secondary'}
                 size="sm"
                 aria-pressed={selected}
-                onClick={() => setRouteCliFilter(option.id)}
+                onClick={() => setRouteAgentFilter(option.id)}
               >
                 {option.label}
               </AppButton>
@@ -819,7 +804,6 @@ export function LogsPage() {
             </div>
             {filteredRouteLogs.map((row, index) => {
               const { item } = row;
-              const cliIcon = ROUTE_CLI_ICON_CONFIGS[item.cliType];
               return (
                 <article
                   key={item.id}
@@ -835,16 +819,14 @@ export function LogsPage() {
                     style={ROUTE_LOG_GRID_STYLE}
                   >
                     <span
-                      data-testid="route-request-cli-icon"
-                      className="inline-flex h-7 w-full items-center justify-start"
-                      aria-label={CLI_LABELS[item.cliType]}
+                      data-testid="route-request-agent"
+                      className="flex min-w-0 items-center gap-1.5 text-[var(--text-primary)]"
+                      title={item.agentName?.trim() || '未知 Agent'}
                     >
-                      <img
-                        src={cliIcon.icon}
-                        alt=""
-                        aria-hidden="true"
-                        className={`${cliIcon.sizeClass} object-contain`}
-                      />
+                      <AgentLogo agentId={item.agentId} agentName={item.agentName} />
+                      <span className="min-w-0 truncate">
+                        {item.agentName?.trim() || '未知 Agent'}
+                      </span>
                     </span>
                     <span
                       data-testid="route-request-model-path"
@@ -870,6 +852,7 @@ export function LogsPage() {
                       data-testid="route-request-token-summary"
                       className="grid min-w-0 items-center gap-x-1 overflow-hidden whitespace-nowrap tabular-nums text-[var(--text-primary)]"
                       style={ROUTE_LOG_TOKEN_GRID_STYLE}
+                      title={row.tokenUsageLabel || undefined}
                     >
                       {row.compactTokenParts.map(part => (
                         <span key={part.label} className="inline-flex min-w-0 items-baseline">
@@ -882,14 +865,6 @@ export function LogsPage() {
                           <span className="min-w-0 truncate">{part.value}</span>
                         </span>
                       ))}
-                      {row.tokenUsageLabel ? (
-                        <span
-                          data-testid="route-request-token-usage-label"
-                          className="col-span-5 min-w-0 truncate text-[9px] text-[var(--text-tertiary)]"
-                        >
-                          {row.tokenUsageLabel}
-                        </span>
-                      ) : null}
                     </span>
                     <span
                       data-testid="route-request-cost"
@@ -918,10 +893,12 @@ export function LogsPage() {
                   {row.failureInfo ? (
                     <div
                       data-testid="route-request-failure-info"
-                      className={`mt-1 grid ${ROUTE_LOG_GRID_GAP} text-[11px]`}
+                      className={`mt-1 grid ${ROUTE_LOG_GRID_GAP} text-[11px] ${row.outcomeStyle.diagnostic}`}
                       style={ROUTE_LOG_GRID_STYLE}
                     >
-                      <span className="col-start-2 col-span-8 min-w-0 truncate rounded border border-[var(--danger)]/20 bg-[var(--danger-soft)] px-2 py-1 text-[var(--danger)]">
+                      <span
+                        className={`col-start-2 col-span-8 min-w-0 truncate rounded border px-2 py-1 ${row.outcomeStyle.badge}`}
+                      >
                         {row.failureInfo}
                       </span>
                     </div>
@@ -937,7 +914,7 @@ export function LogsPage() {
             <ErrorState title="路由日志加载失败" description={routeLogsError} />
           ) : (
             <DataTableEmpty
-              title={routeLogs.length > 0 ? '当前 CLI 没有路由日志' : '暂无路由日志'}
+              title={routeLogs.length > 0 ? '当前 Agent 没有路由日志' : '暂无路由日志'}
             />
           )}
         </div>

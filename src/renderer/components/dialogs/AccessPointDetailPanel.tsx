@@ -15,7 +15,6 @@ import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   Info,
   Box,
-  Settings as SettingsIcon,
   Link,
   Key,
   Copy,
@@ -33,7 +32,6 @@ import { AppButton } from '../AppButton/AppButton';
 import { AppSwitch } from '../AppSwitch';
 import { SiteCardDetails } from '../SiteCard/SiteCardDetails';
 import { AnyRouterConfigSection } from '../AnyRouterConfigSection';
-import { ManagedCliConfigEditorContent } from './ManagedCliConfigEditorContent';
 import { DirectCliConfigEditorContent } from './DirectCliConfigEditorContent';
 import { EndpointTestPanel } from './EndpointTestPanel';
 import {
@@ -50,7 +48,7 @@ import {
 } from '../../../shared/types/site';
 import type { CustomCliConfig } from '../../../shared/types/custom-cli-config';
 import type { DetectionResult } from '../../App';
-import type { CliConfig } from '../../../shared/types/cli-config';
+import type { CliTargetProtocol } from '../../../shared/types/cli-config';
 import type { ModelPricingData } from '../../../shared/types/site';
 
 // 账号信息接口（从 SitesPage 提取）
@@ -65,6 +63,8 @@ export interface AccountInfo {
   browser_profile_path?: string;
   auto_refresh?: boolean;
   auto_refresh_interval?: number;
+  routeTargetProtocol?: CliTargetProtocol;
+  routeTargetProtocolNeedsConfirmation?: boolean;
   anyRouterConfig?: {
     userHash?: string;
   };
@@ -88,8 +88,6 @@ export interface AccessPointDetailPanelProps {
   userGroups?: Record<string, { desc: string; ratio: number }>;
   modelPricing?: ModelPricingData | null;
   groups?: SiteGroup[];
-  // CLI 配置
-  cliConfig?: CliConfig | null;
   // 全局确认弹窗回调（供内嵌编辑器使用，替代嵌套 ConfirmDialog/AppModal）
   showDialog?: (options: {
     type?: 'confirm' | 'warning';
@@ -121,7 +119,13 @@ export interface AccessPointDetailPanelProps {
     updates: Partial<
       Pick<
         AccountInfo,
-        'account_name' | 'user_id' | 'access_token' | 'auto_refresh' | 'auto_refresh_interval'
+        | 'account_name'
+        | 'user_id'
+        | 'access_token'
+        | 'auto_refresh'
+        | 'auto_refresh_interval'
+        | 'routeTargetProtocol'
+        | 'routeTargetProtocolNeedsConfirmation'
       >
     >
   ) => void | Promise<void>;
@@ -135,18 +139,17 @@ export interface AccessPointDetailPanelProps {
     optionId: BrowserProfileOptionId
   ) => void | Promise<void>;
   onRefreshAccountInfo?: (site: SiteConfig, accountId: string) => void | Promise<void>;
-  onSaveCliConfig?: (config: CliConfig) => void;
+  onSaveRouteTargetProtocol?: (protocol: CliTargetProtocol) => void | Promise<void>;
   onDeleteDirectConfig?: (config: CustomCliConfig) => void;
   onUpdateAnyRouterUserHash?: (accountId: string, userHash: string) => void | Promise<void>;
   onConfigChanged?: () => void | Promise<void>;
 }
 
-type TabId = 'info' | 'resources' | 'cli' | 'test';
+type TabId = 'info' | 'resources' | 'test';
 
 const TAB_META: Record<TabId, { id: TabId; label: string; icon: React.ComponentType<any> }> = {
   info: { id: 'info', label: '站点信息', icon: Info },
   resources: { id: 'resources', label: '模型 & 资源', icon: Box },
-  cli: { id: 'cli', label: 'CLI 配置', icon: SettingsIcon },
   test: { id: 'test', label: '测试', icon: FlaskConical },
 };
 
@@ -293,7 +296,6 @@ export function AccessPointDetailPanel({
   userGroups = {},
   modelPricing,
   groups = [],
-  cliConfig,
   showDialog,
   onAddAccount,
   onDeleteAccount,
@@ -308,7 +310,7 @@ export function AccessPointDetailPanel({
   onLoadBrowserProfileOptions,
   onBindBrowserProfile,
   onRefreshAccountInfo,
-  onSaveCliConfig,
+  onSaveRouteTargetProtocol,
   onDeleteDirectConfig,
   onUpdateAnyRouterUserHash,
   onConfigChanged,
@@ -437,7 +439,7 @@ export function AccessPointDetailPanel({
 
   // 托管站点和直连配置共享同一组详情页。
   const visibleTabs = useMemo(() => {
-    return [TAB_META.info, TAB_META.resources, TAB_META.cli, TAB_META.test];
+    return [TAB_META.info, TAB_META.resources, TAB_META.test];
   }, []);
 
   // 打开面板或切换接入点时重置为 Tab1；同一接入点保存刷新时保留当前 Tab。
@@ -1146,52 +1148,30 @@ export function AccessPointDetailPanel({
           </div>
         )}
 
-        {/* Tab3: CLI 配置 */}
-        {activeTab === 'cli' && (
-          <div className="space-y-4">
-            {isManagedSite && data.type === 'managed' && currentAccount ? (
-              <ManagedCliConfigEditorContent
-                siteId={data.site.id}
-                siteName={data.site.name}
-                accountId={currentAccount.id}
-                accountName={currentAccount.account_name}
-                siteUrl={data.site.url}
-                apiKeys={apiKeys as any}
-                siteModels={siteResult?.models || []}
-                siteModelPricing={modelPricing}
-                currentConfig={cliConfig ?? null}
-                showDialog={showDialog}
-                onSave={config => {
-                  onSaveCliConfig?.(config);
-                }}
-              />
-            ) : isManagedSite && data.type === 'managed' && !currentAccount ? (
-              <div className="rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] p-4 text-sm text-[var(--text-secondary)]">
-                该站点尚未选择账户，请先在「站点信息」中选择或添加账户后再配置 CLI。
-              </div>
-            ) : isDirectConfig && data.type === 'custom-cli' ? (
-              <DirectCliConfigEditorContent
-                section="cli"
-                config={data.config}
-                onSaved={onConfigChanged}
-                showDialog={showDialog}
-              />
-            ) : null}
-          </div>
-        )}
-
         {activeTab === 'test' && (
           <div className="space-y-4">
             {isManagedSite && data.type === 'managed' && data.site.id && currentAccount ? (
               <EndpointTestPanel
                 target={{ kind: 'managed', siteId: data.site.id, accountId: currentAccount.id }}
+                routeTargetProtocol={currentAccount.routeTargetProtocol}
+                routeTargetProtocolNeedsConfirmation={
+                  currentAccount.routeTargetProtocolNeedsConfirmation
+                }
+                onRouteTargetProtocolChange={onSaveRouteTargetProtocol}
               />
             ) : isManagedSite && data.type === 'managed' ? (
               <div className="px-4 py-8 text-center text-sm text-[var(--text-secondary)]">
                 请选择账户后进行测试。
               </div>
             ) : isDirectConfig && data.type === 'custom-cli' ? (
-              <EndpointTestPanel target={{ kind: 'direct', configId: data.config.id }} />
+              <EndpointTestPanel
+                target={{ kind: 'direct', configId: data.config.id }}
+                routeTargetProtocol={data.config.routeTargetProtocol}
+                routeTargetProtocolNeedsConfirmation={
+                  data.config.routeTargetProtocolNeedsConfirmation
+                }
+                onRouteTargetProtocolChange={onSaveRouteTargetProtocol}
+              />
             ) : null}
           </div>
         )}

@@ -30,7 +30,8 @@
 | **DetectionResults.tsx** | 检测结果显示 | `results`, `loading`, `onRetry` |
 | **SettingsPanel.tsx** | 应用设置面板 | 外观与行为、云端备份、软件更新和数据管理；站点刷新参数由 SitesPage 的站点设置弹窗维护 |
 | **SiteEditor.tsx** | 站点编辑对话框 | `site`, `editingAccount`, `initialMode`, `onSave`, `onCancel`；智能首账户回传 `main_profile`，手动凭证回传 `manual`，已有站点浏览器添加使用 `isolated_profile` |
-| **HistoryCell.tsx** | 站点管理 History 列单元格 | `siteId`, `accountId`；按表头共享的 CLI 类型/模式显示时间桶条形图 |
+| **HistoryCell.tsx** | 站点管理 History 列单元格 | `siteId`, `accountId`；按表头共享的实际请求端点显示时间桶条形图 |
+| **AgentLogo.tsx** | 主流 Agent/harness 产品 Logo 识别与未知占位图标 | `agentId`, `agentName`, `className` |
 | **LoadingState.tsx** | 统一加载态原语 | `message`, `size`, `className` |
 | **ErrorState.tsx** | 统一错误态原语 | `title`, `description`, `action`, `className` |
 | **AppSwitch.tsx** | 统一布尔开关原语 | `checked`, `onCheckedChange`, `label`, `ariaLabel`, `size` |
@@ -49,7 +50,6 @@
 | **dialogs/** | 对话框组件 | 各类对话框；接入点侧滑面板承载独立端点测试、CLI 配置及身份维护；操作记录弹窗展示当前会话关键操作；站点设置弹窗维护站点刷新参数 |
 | **Skeleton/** | 骨架屏 | SkeletonLoader, SkeletonCard |
 | **Toast/** | 消息提示 | Toast, ToastContainer |
-| **CliConfigStatus/** | CLI 配置状态显示，含本地路由代理识别和当前模型小字 | CliConfigStatus, CliConfigStatusPanel |
 | **CreateApiKeyDialog/** | API Key 创建对话框 | CreateApiKeyDialog |
 | **CreditPanel/** | Linux Do Credit 积分面板 | CreditPanelCompact |
 | **AppCard/** | 中性卡片原语入口 | AppCard, AppCardDivider, AppCardHeader, AppCardContent, AppCardFooter |
@@ -128,7 +128,7 @@ interface SiteListHeaderProps {
 - 保持多列标题和列宽调整
 - 通过点击列头直接切换排序
 - 支持右侧批量操作槽位
-- History 列头提供旧版 CLI 图标选择器和综合/探测/路由模式切换；未传入 actions 时不显示默认“操作”文案
+- History 列头按实际请求端点提供紧凑选择器；未传入 actions 时不显示默认“操作”文案
 - 保持站点列表的原有扫描节奏
 
 ### SiteEditor 组件

@@ -100,7 +100,7 @@ const createLegacyRouteExampleConfig = (withManualSameName = false) => {
               name: 'Manual Opus Rule',
               enabled: true,
               priority: 10,
-              cliType: 'claudeCode',
+              sourceProtocol: 'anthropic-messages',
               patternType: 'exact',
               pattern: canonicalName,
               createdAt: 2,
@@ -336,6 +336,80 @@ describe('UnifiedConfigManager', () => {
     await manager.saveConfig(loadedConfig as any);
     const persisted = JSON.parse(await fs.readFile(configPath, 'utf-8'));
     expect(persisted.sites[0].active_account_id).toBeUndefined();
+  });
+
+  it('drops the legacy Responses state default channel during normalize + save', async () => {
+    const configPath = path.join(userDataDir, 'config.json');
+    const rawConfig = createSampleConfig() as any;
+    rawConfig.routing = {
+      server: {
+        responsesStateDefaultChannel: {
+          targetType: 'direct',
+          directConfigId: 'direct-legacy',
+        },
+      },
+    };
+    await fs.writeFile(configPath, JSON.stringify(rawConfig, null, 2), 'utf-8');
+
+    const manager = await loadManager();
+    const loadedConfig = await manager.loadConfig();
+
+    expect(loadedConfig.routing?.server).not.toHaveProperty('responsesStateDefaultChannel');
+
+    await manager.saveConfig(loadedConfig as any);
+    const persisted = JSON.parse(await fs.readFile(configPath, 'utf-8'));
+    expect(persisted.routing.server).not.toHaveProperty('responsesStateDefaultChannel');
+  });
+
+  it('migrates one unique account CLI protocol before adding missing CLI defaults', async () => {
+    const configPath = path.join(userDataDir, 'config.json');
+    const rawConfig = createSampleConfig() as any;
+    rawConfig.accounts = [
+      {
+        id: 'account-1',
+        site_id: 'site-1',
+        account_name: 'Account',
+        cli_config: {
+          claudeCode: { targetProtocol: 'openai-chat-completions' },
+          codex: { targetProtocol: 'openai-chat-completions' },
+          openCode: { targetProtocol: 'openai-chat-completions' },
+        },
+      },
+    ];
+    await fs.writeFile(configPath, JSON.stringify(rawConfig), 'utf-8');
+
+    const manager = await loadManager();
+    const loadedConfig = await manager.loadConfig();
+
+    expect(loadedConfig.accounts[0]).toMatchObject({
+      routeTargetProtocol: 'openai-chat-completions',
+      routeTargetProtocolNeedsConfirmation: false,
+    });
+  });
+
+  it('marks conflicting account CLI protocols for confirmation', async () => {
+    const configPath = path.join(userDataDir, 'config.json');
+    const rawConfig = createSampleConfig() as any;
+    rawConfig.accounts = [
+      {
+        id: 'account-1',
+        site_id: 'site-1',
+        account_name: 'Account',
+        cli_config: {
+          claudeCode: { targetProtocol: 'anthropic-messages' },
+          codex: { targetProtocol: 'openai-responses' },
+        },
+      },
+    ];
+    await fs.writeFile(configPath, JSON.stringify(rawConfig), 'utf-8');
+
+    const manager = await loadManager();
+    const loadedConfig = await manager.loadConfig();
+
+    expect(loadedConfig.accounts[0]).toMatchObject({
+      routeTargetProtocol: 'native',
+      routeTargetProtocolNeedsConfirmation: true,
+    });
   });
 
   it('repairs v3 configs that still have legacy site-level auth without accounts', async () => {
@@ -1451,7 +1525,7 @@ describe('UnifiedConfigManager', () => {
     });
   });
 
-  it('creates an automatic exact route rule when saving a CLI model selection without a match', async () => {
+  it('does not create a route rule when saving a CLI presentation model selection', async () => {
     const manager = await loadManager();
     await manager.saveConfig(createSampleConfig() as any);
     await manager.loadConfig();
@@ -1480,17 +1554,7 @@ describe('UnifiedConfigManager', () => {
     });
 
     expect(selections.claudeCode).toBe('claude-opus-4-6');
-    expect(manager.getRoutingConfig().rules).toEqual([
-      expect.objectContaining({
-        id: 'auto-cli-model-claudeCode-claude-opus-4-6',
-        name: 'Claude Code / claude-opus-4-6',
-        enabled: true,
-        priority: 0,
-        cliType: 'claudeCode',
-        patternType: 'exact',
-        pattern: 'claude-opus-4-6',
-      }),
-    ]);
+    expect(manager.getRoutingConfig().rules).toEqual([]);
   });
 
   it('does not duplicate or overwrite an existing matching manual route rule', async () => {
@@ -1521,7 +1585,7 @@ describe('UnifiedConfigManager', () => {
       name: 'Manual Opus Rule',
       enabled: true,
       priority: 100,
-      cliType: 'claudeCode',
+      sourceProtocol: 'anthropic-messages',
       patternType: 'exact',
       pattern: 'claude-opus-4-6',
       createdAt: 1,

@@ -1,20 +1,12 @@
 /**
  * 垂直侧边栏导航
  * 输入: activeTab, onTabChange, saving, updateInfo
- * 输出: 左侧竖向 tab 导航（一级页面与子页导航）
+ * 输出: 左侧竖向 tab 导航(一级页面与子页导航)
  * 定位: 展示层 - 主导航组件
  */
 
 import type { CSSProperties } from 'react';
-import {
-  ChevronLeft,
-  Download,
-  Loader2,
-  PanelLeftClose,
-  PanelLeftOpen,
-  TerminalSquare,
-} from 'lucide-react';
-import { CliConfigStatusPanel } from '../CliConfigStatus';
+import { ChevronLeft, Download, Loader2, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import type { UpdateCheckResult } from '../../hooks/useUpdate';
 import { useRouteStore } from '../../store/routeStore';
 import { useUIStore } from '../../store/uiStore';
@@ -46,11 +38,9 @@ export function VerticalSidebar({
   const uiState = useUIStore() as {
     sidebarDisplayMode?: SidebarDisplayMode;
     toggleSidebarDisplayMode?: () => void;
-    setSidebarDisplayMode?: (mode: SidebarDisplayMode) => void;
   };
   const sidebarDisplayMode = uiState.sidebarDisplayMode ?? 'expanded';
   const toggleSidebarDisplayMode = uiState.toggleSidebarDisplayMode ?? (() => undefined);
-  const setSidebarDisplayMode = uiState.setSidebarDisplayMode ?? (() => undefined);
   const visibleSidebarItems = APP_PAGE_ORDER.filter(
     id => LDC_UI_VISIBILITY.showCreditTab || id !== 'credit'
   ).map(id => APP_PAGE_META[id]);
@@ -58,7 +48,6 @@ export function VerticalSidebar({
   const newVersion = updateInfo?.releaseInfo?.version || updateInfo?.latestVersion;
   const routeState = useRouteStore() as { serverRunning?: boolean };
   const serverRunning = routeState.serverRunning === true;
-  const routeServerStatusTitle = serverRunning ? '代理服务器运行中' : '代理服务器已停止';
   const isIconOnly = sidebarDisplayMode === 'icon-only';
   const sidebarWidthClass = isIconOnly ? 'w-[68px]' : 'w-[140px]';
   const versionLabel = currentVersion ? `版本 v${currentVersion}` : '版本信息';
@@ -106,11 +95,6 @@ export function VerticalSidebar({
       >
         {visibleSidebarItems.map(item => {
           const isActive = activeTab === item.id;
-          const isRouteItem = item.id === 'route';
-          const itemTitle =
-            isRouteItem && isIconOnly
-              ? `${item.navLabel}（${routeServerStatusTitle}）`
-              : item.navLabel;
 
           return (
             <div key={item.id} className="space-y-1">
@@ -118,7 +102,7 @@ export function VerticalSidebar({
                 type="button"
                 aria-label={item.navLabel}
                 aria-current={isActive ? 'page' : undefined}
-                title={itemTitle}
+                title={item.navLabel}
                 onClick={() => onTabChange(item.id)}
                 className={`flex w-full items-center rounded-lg py-2 text-[13px] font-medium transition-colors ${
                   isActive
@@ -126,35 +110,7 @@ export function VerticalSidebar({
                     : 'text-[var(--text-secondary)] hover:bg-[var(--surface-1)] hover:text-[var(--text-primary)]'
                 } ${isIconOnly ? 'justify-center px-2' : 'px-3'}`}
               >
-                {isRouteItem && isIconOnly ? (
-                  <span
-                    data-testid={
-                      serverRunning
-                        ? 'sidebar-route-icon-status-running'
-                        : 'sidebar-route-icon-status-stopped'
-                    }
-                    className={`relative flex h-7 w-7 items-center justify-center rounded-full border bg-[var(--surface-3)] shadow-sm ${
-                      serverRunning
-                        ? 'border-[var(--success)] text-[var(--success)]'
-                        : 'border-[var(--danger)] text-[var(--danger)]'
-                    }`}
-                  >
-                    <item.icon className="h-4 w-4 shrink-0" strokeWidth={isActive ? 2.2 : 1.9} />
-                    <span
-                      aria-hidden="true"
-                      data-testid={
-                        serverRunning
-                          ? 'sidebar-route-icon-badge-running'
-                          : 'sidebar-route-icon-badge-stopped'
-                      }
-                      className={`absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-[var(--surface-2)] ${
-                        serverRunning ? 'bg-[var(--success)]' : 'bg-[var(--danger)]'
-                      }`}
-                    />
-                  </span>
-                ) : (
-                  <item.icon className="w-4 h-4 shrink-0" strokeWidth={isActive ? 2 : 1.5} />
-                )}
+                <item.icon className="w-4 h-4 shrink-0" strokeWidth={isActive ? 2 : 1.5} />
                 <span
                   aria-hidden={isIconOnly}
                   className={`overflow-hidden whitespace-nowrap text-left transition-[max-width,opacity,margin] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] ${
@@ -177,7 +133,7 @@ export function VerticalSidebar({
       >
         {!isIconOnly ? (
           <div className="flex items-center gap-1 text-[11px]">
-            <span className="text-[var(--text-secondary)]">代理服务器：</span>
+            <span className="text-[var(--text-secondary)]">代理服务器:</span>
             <span
               data-testid={
                 serverRunning ? 'sidebar-route-server-running' : 'sidebar-route-server-stopped'
@@ -194,33 +150,8 @@ export function VerticalSidebar({
 
       <div data-testid="sidebar-footer" className="border-t border-[var(--line-soft)] px-2 py-2">
         <div
-          data-testid="sidebar-cli-block"
-          className={`overflow-hidden transition-[max-height,opacity,margin] duration-[var(--duration-fast)] [transition-timing-function:var(--ease-standard)] ${
-            isIconOnly ? 'mb-0 max-h-0 opacity-0' : 'mb-2 max-h-[220px] opacity-100 delay-75'
-          }`}
-        >
-          {!isIconOnly ? (
-            <div>
-              <CliConfigStatusPanel layout="stacked" compact showRefresh showEdit showReset />
-            </div>
-          ) : null}
-        </div>
-
-        {isIconOnly ? (
-          <button
-            type="button"
-            aria-label="打开本地 CLI 配置"
-            title="打开本地 CLI 配置"
-            onClick={() => setSidebarDisplayMode('expanded')}
-            className="mb-2 flex w-full items-center justify-center rounded-lg border border-[var(--line-soft)] bg-[var(--surface-1)]/86 px-2 py-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-1)] hover:text-[var(--text-primary)]"
-          >
-            <TerminalSquare className="h-4 w-4" />
-          </button>
-        ) : null}
-
-        <div
           data-testid="sidebar-footer-separator"
-          className={`-mx-2 border-t border-[var(--line-soft)] px-2 ${isIconOnly ? 'mb-2 pt-2' : 'mb-2 pt-2'}`}
+          className={`-mx-2 px-2 ${isIconOnly ? 'mb-2 pt-2' : 'mb-2 pt-2'}`}
         >
           {!isIconOnly ? (
             <div className="flex items-center gap-1 text-[11px] text-[var(--text-tertiary)]">

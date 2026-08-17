@@ -1,7 +1,11 @@
 import { BrowserWindow } from 'electron';
 import logger from './utils/logger';
 
-export type AppDataChangeDomain = 'site-config' | 'site-overview' | 'route-overview';
+export type AppDataChangeDomain =
+  | 'site-config'
+  | 'site-overview'
+  | 'route-overview'
+  | 'config-file-profiles';
 
 export interface AppDataChangePayload {
   domains: AppDataChangeDomain[];

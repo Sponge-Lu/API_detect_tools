@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from 'react';
-import { Activity, Gauge, Layers, Loader2, RefreshCw, Wallet, type LucideIcon } from 'lucide-react';
+import {
+  Activity,
+  Gauge,
+  Globe,
+  Layers,
+  Loader2,
+  RefreshCw,
+  Wallet,
+  type LucideIcon,
+} from 'lucide-react';
 import type {
   RouteAnalyticsBucket,
   RouteAnalyticsDistribution,
@@ -16,7 +25,6 @@ import { ErrorState } from '../components/ErrorState';
 import { useConfigStore } from '../store/configStore';
 import { useCustomCliConfigStore } from '../store/customCliConfigStore';
 import { useUIStore } from '../store/uiStore';
-import { getRouteCliLabel } from '../utils/routeRulePresentation';
 import {
   buildSiteCheckinOverviewRows,
   buildSiteOverviewMetrics,
@@ -44,6 +52,7 @@ import {
   DEFAULT_FIRST_BYTE_AXIS_TICKS,
 } from '../utils/routeLogAxis';
 import {
+  buildEndpointDistribution,
   buildModelDistribution,
   squarifiedTreemap,
   type ModelDistributionItem,
@@ -414,7 +423,23 @@ function resolveSparklineDisplayValues(values: Array<number | null>): number[] {
   return resolvedValues.map(value => value ?? 0);
 }
 
-function buildSparklineBarHeights(values: Array<number | null>, chartHeight: number): number[] {
+function resolveSparklineValueDomain(
+  values: Array<number | null>,
+  valueMin?: number,
+  valueMax?: number
+): { min: number; max: number; fixed: boolean } {
+  const fixed = typeof valueMin === 'number' && typeof valueMax === 'number' && valueMax > valueMin;
+  const displayValues = resolveSparklineDisplayValues(values);
+  if (fixed) return { min: valueMin, max: valueMax, fixed: true };
+  return { min: Math.min(...displayValues, 0), max: Math.max(...displayValues, 1), fixed: false };
+}
+
+function buildSparklineBarHeights(
+  values: Array<number | null>,
+  chartHeight: number,
+  valueMin?: number,
+  valueMax?: number
+): number[] {
   if (values.length === 0) return [];
 
   const displayValues = resolveSparklineDisplayValues(values);
@@ -423,16 +448,18 @@ function buildSparklineBarHeights(values: Array<number | null>, chartHeight: num
     return new Array(values.length).fill(Math.max(chartHeight * 0.12, 6));
   }
 
-  const max = Math.max(...displayValues, 1);
-  const min = Math.min(...displayValues, 0);
-  const hasVariance = max !== min;
+  const domain = resolveSparklineValueDomain(values, valueMin, valueMax);
+  const hasVariance = domain.fixed || domain.max !== domain.min;
 
   return displayValues.map(value => {
     if (!hasVariance) {
       return Math.max(chartHeight * 0.52, 12);
     }
 
-    const ratio = (value - min) / (max - min || 1);
+    const ratio = Math.min(1, Math.max(0, (value - domain.min) / (domain.max - domain.min || 1)));
+    if (domain.fixed) {
+      return ratio > 0 ? Math.max(ratio * chartHeight, 2) : 0;
+    }
     return Math.max(ratio * chartHeight, 8);
   });
 }
@@ -442,7 +469,9 @@ function buildSparklineCoordinates(
   width: number,
   height: number,
   padding = 0,
-  pointLeftPercents?: number[]
+  pointLeftPercents?: number[],
+  valueMin?: number,
+  valueMax?: number
 ) {
   if (values.length === 0) return [];
   const displayValues = resolveSparklineDisplayValues(values);
@@ -465,12 +494,13 @@ function buildSparklineCoordinates(
     }));
   }
 
+  const domain = resolveSparklineValueDomain(values, valueMin, valueMax);
   const rawMax = Math.max(...displayValues);
   const rawMin = Math.min(...displayValues);
-  const max = Math.max(rawMax, 1);
-  const min = Math.min(rawMin, 0);
+  const max = domain.fixed ? domain.max : Math.max(rawMax, 1);
+  const min = domain.fixed ? domain.min : Math.min(rawMin, 0);
   const range = max - min || 1;
-  const hasVariance = rawMax !== rawMin;
+  const hasVariance = domain.fixed || rawMax !== rawMin;
 
   return displayValues.map((displayValue, index) => {
     const x = resolveX(index);
@@ -487,9 +517,19 @@ function buildSparklinePath(
   height: number,
   padding = 0,
   pointLeftPercents?: number[],
-  startIndex = 0
+  startIndex = 0,
+  valueMin?: number,
+  valueMax?: number
 ): string {
-  const coordinates = buildSparklineCoordinates(values, width, height, padding, pointLeftPercents);
+  const coordinates = buildSparklineCoordinates(
+    values,
+    width,
+    height,
+    padding,
+    pointLeftPercents,
+    valueMin,
+    valueMax
+  );
   if (coordinates.length === 0) return '';
 
   const definedPointCount = values.filter(value => value !== null).length;
@@ -519,10 +559,29 @@ function buildSparklineAreaPath(
   width: number,
   height: number,
   padding = 0,
-  pointLeftPercents?: number[]
+  pointLeftPercents?: number[],
+  valueMin?: number,
+  valueMax?: number
 ): string {
-  const coordinates = buildSparklineCoordinates(values, width, height, padding, pointLeftPercents);
-  const linePath = buildSparklinePath(values, width, height, padding, pointLeftPercents);
+  const coordinates = buildSparklineCoordinates(
+    values,
+    width,
+    height,
+    padding,
+    pointLeftPercents,
+    valueMin,
+    valueMax
+  );
+  const linePath = buildSparklinePath(
+    values,
+    width,
+    height,
+    padding,
+    pointLeftPercents,
+    0,
+    valueMin,
+    valueMax
+  );
   if (coordinates.length === 0 || !linePath) return '';
 
   const first = coordinates[0];
@@ -601,6 +660,7 @@ function Sparkline({
   showBars = false,
   showAreaFill = false,
   showGuides = false,
+  guideRatios = [0.18, 0.52, 0.86],
   hideLine = false,
   barClass = 'text-[var(--accent-soft-strong)]',
   emptyBarClass = 'text-[var(--line-soft)]',
@@ -613,6 +673,8 @@ function Sparkline({
   pointLeftPercents,
   alignBarsToPoints = false,
   skipLeadingNullDraw = false,
+  valueMin,
+  valueMax,
   trendSeries,
 }: {
   values: Array<number | null>;
@@ -623,6 +685,7 @@ function Sparkline({
   showBars?: boolean;
   showAreaFill?: boolean;
   showGuides?: boolean;
+  guideRatios?: number[];
   hideLine?: boolean;
   barClass?: string;
   emptyBarClass?: string;
@@ -635,6 +698,8 @@ function Sparkline({
   pointLeftPercents?: number[];
   alignBarsToPoints?: boolean;
   skipLeadingNullDraw?: boolean;
+  valueMin?: number;
+  valueMax?: number;
   trendSeries?: string;
 }) {
   if (values.length === 0) {
@@ -651,9 +716,11 @@ function Sparkline({
     chartWidth,
     chartHeight,
     pointPadding,
-    pointLeftPercents
+    pointLeftPercents,
+    valueMin,
+    valueMax
   );
-  const barHeights = buildSparklineBarHeights(values, chartHeight);
+  const barHeights = buildSparklineBarHeights(values, chartHeight, valueMin, valueMax);
   const barWidth = chartWidth / Math.max(values.length, 1);
   const alignedBarWidth =
     coordinates.length > 1
@@ -689,11 +756,12 @@ function Sparkline({
         preserveAspectRatio="none"
       >
         {showGuides
-          ? [0.18, 0.52, 0.86].map(ratio => {
+          ? guideRatios.map(ratio => {
               const y = chartHeight * ratio;
               return (
                 <line
                   key={`guide-${ratio}`}
+                  data-trend-guide={trendSeries ? 'true' : undefined}
                   x1="0"
                   y1={y}
                   x2={chartWidth}
@@ -714,7 +782,9 @@ function Sparkline({
               chartWidth,
               chartHeight,
               pointPadding,
-              pointLeftPercents
+              pointLeftPercents,
+              valueMin,
+              valueMax
             )}
             fill="currentColor"
             className={areaClass}
@@ -729,10 +799,11 @@ function Sparkline({
 
               const coordinate = coordinates[index];
               const width = alignBarsToPoints ? alignedBarWidth : barWidth * 0.68;
-              const x =
-                alignBarsToPoints && coordinate
-                  ? coordinate.x - width / 2
-                  : index * barWidth + barWidth * 0.16;
+              const x = alignBarsToPoints
+                ? coordinate
+                  ? Math.min(Math.max(coordinate.x - width / 2, 0), Math.max(chartWidth - width, 0))
+                  : 0
+                : index * barWidth + barWidth * 0.16;
               const y = chartHeight - barHeight;
 
               return (
@@ -765,7 +836,9 @@ function Sparkline({
               chartHeight,
               pointPadding,
               pointLeftPercents,
-              lineStartIndex
+              lineStartIndex,
+              valueMin,
+              valueMax
             )}
             fill="none"
             stroke="currentColor"
@@ -1009,13 +1082,15 @@ const DONUT_PALETTE = [
 
 function ModelDonutChart({
   items,
+  emptyText = '暂无模型分布',
 }: {
   items: Array<{ id: string; label: string; value: number }>;
+  emptyText?: string;
 }) {
   if (items.length === 0) {
     return (
       <div className="flex h-full items-center justify-center text-xs text-[var(--text-secondary)]">
-        暂无模型分布
+        {emptyText}
       </div>
     );
   }
@@ -1098,24 +1173,16 @@ function ModelDonutChart({
 function RouteTrendChart({
   trendPoints,
   successRateTrend,
-  ttfbTrend,
   requestTrend,
   failureCounts,
-  ttfbP50,
-  ttfbP95,
-  ttfbP99,
   failureCountTotal,
   compact = false,
   className,
 }: {
   trendPoints: TrendPoint[];
   successRateTrend: Array<number | null>;
-  ttfbTrend: Array<number | null>;
   requestTrend: Array<number | null>;
   failureCounts: number[];
-  ttfbP50: number | null;
-  ttfbP95: number | null;
-  ttfbP99: number | null;
   failureCountTotal: number;
   compact?: boolean;
   className?: string;
@@ -1143,6 +1210,13 @@ function RouteTrendChart({
       })),
     [failureCounts, trendPointLeftPercents]
   );
+  const requestAxisMax = Math.max(
+    ...requestTrend.filter((value): value is number => value !== null),
+    1
+  );
+  const requestAxisTicks = [requestAxisMax, requestAxisMax / 2, 0];
+  const formatRequestAxisTick = (value: number) =>
+    value > 0 && value < 1 ? value.toFixed(1) : formatCompactNumber(value);
 
   return (
     <AppCard
@@ -1169,16 +1243,6 @@ function RouteTrendChart({
             成功率
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <span data-trend-legend="ttfb-p95" className="relative h-2 w-4 text-[var(--success)]">
-              <span
-                data-trend-legend-line="dashed"
-                className="absolute left-0 right-0 top-1/2 h-0 -translate-y-1/2 border-t border-dashed border-current"
-              />
-              <span className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-current" />
-            </span>
-            首字响应 P95
-          </span>
-          <span className="inline-flex items-center gap-1.5">
             <span className="h-2 w-3 rounded-sm bg-[var(--line-soft)]" />
             请求量
           </span>
@@ -1187,101 +1251,121 @@ function RouteTrendChart({
             失败次数
           </span>
           <span className="ml-auto inline-flex flex-wrap items-center gap-2 text-[var(--text-tertiary)]">
-            <span>P50 {formatTtfb(ttfbP50)}</span>
-            <span>P95 {formatTtfb(ttfbP95)}</span>
-            <span>P99 {formatTtfb(ttfbP99)}</span>
             <span>失败 {formatCompactNumber(failureCountTotal)} 次</span>
           </span>
         </div>
         <div
           data-trend-chart-frame="true"
-          className="-mx-2 flex min-h-0 flex-1 flex-col rounded-[var(--radius-lg)] bg-[var(--surface-2)] px-5 py-2"
+          className="-mx-2 flex min-h-0 flex-1 flex-col rounded-[var(--radius-lg)] bg-[var(--surface-2)] px-2.5 py-2"
         >
-          <div className={`relative ${trendChartMinHeightClass} flex-1`}>
-            <div className="absolute inset-0">
-              <Sparkline
-                values={requestTrend}
-                strokeClass="text-transparent"
-                showBars
-                hideLine
-                showGuides
-                barClass="text-[var(--line-soft)]"
-                emptyBarClass="text-[var(--line-soft)]"
-                chartHeight={trendChartHeight}
-                heightClass="h-full"
-                strokeWidth={0}
-                pointLeftPercents={trendPointLeftPercents}
-                alignBarsToPoints
-                skipLeadingNullDraw
-                trendSeries="requests"
-              />
-            </div>
-            <div className="absolute inset-0">
-              <Sparkline
-                values={successRateTrend}
-                strokeClass="text-[var(--success)]"
-                showPointMarkers={successRateTrend.length > 0}
-                chartHeight={trendChartHeight}
-                heightClass="h-full"
-                strokeWidth={2.2}
-                pointLeftPercents={trendPointLeftPercents}
-                skipLeadingNullDraw
-                trendSeries="success-rate"
-              />
-            </div>
-            <div className="absolute inset-0">
-              <Sparkline
-                values={ttfbTrend}
-                strokeClass="text-[var(--success)]"
-                strokeDasharray="4 3"
-                showPointMarkers={ttfbTrend.length > 0}
-                chartHeight={trendChartHeight}
-                heightClass="h-full"
-                strokeWidth={1.8}
-                pointLeftPercents={trendPointLeftPercents}
-                skipLeadingNullDraw
-                trendSeries="ttfb-p95"
-              />
-            </div>
-            {hasFailurePoints
-              ? failurePoints.map((point, index) => {
-                  if (point.count <= 0) return null;
-                  const markerSize = 8 + Math.min(8, (point.count / failureCountMax) * 8);
-                  const bottom = 8 + (point.count / failureCountMax) * 18;
-                  return (
-                    <span
-                      key={`fail-marker-${index}`}
-                      aria-hidden="true"
-                      data-trend-failure-marker="true"
-                      data-trend-point-index={index}
-                      className="absolute z-20 -translate-x-1/2"
-                      style={{ left: `${point.x}%`, bottom }}
-                      title={`该时段失败 ${point.count} 次`}
-                    >
-                      <span
-                        className="block rounded-full border-2 border-[var(--danger)] bg-[var(--surface-3)] shadow-[0_0_0_2px_var(--danger-soft)]"
-                        style={{ width: markerSize, height: markerSize }}
-                      />
-                    </span>
-                  );
-                })
-              : null}
-          </div>
-          <div className="relative mt-2 h-4 text-[9px] leading-3 text-[var(--text-tertiary)]">
-            {axisLabels.length > 0 ? (
-              axisLabels.map(item => (
-                <span
-                  key={item.key}
-                  data-trend-axis-label="true"
-                  className="absolute max-w-[64px] -translate-x-1/2 truncate text-center"
-                  style={{ left: `${item.x}%` }}
-                >
-                  {item.label}
+          <div className="flex min-h-0 flex-1 gap-3 pt-1">
+            <div
+              data-trend-y-axis="requests"
+              aria-hidden="true"
+              className="flex w-8 shrink-0 flex-col items-end justify-between text-[10px] leading-none text-[var(--text-secondary)]"
+            >
+              {requestAxisTicks.map(tick => (
+                <span key={tick} className="tnum" data-trend-y-axis-tick="true">
+                  {formatRequestAxisTick(tick)}
                 </span>
-              ))
-            ) : (
-              <span>等待更多趋势分桶</span>
-            )}
+              ))}
+            </div>
+            <div className={`relative ${trendChartMinHeightClass} min-h-0 flex-1`}>
+              <div className="absolute inset-0">
+                <Sparkline
+                  values={requestTrend}
+                  strokeClass="text-transparent"
+                  showBars
+                  hideLine
+                  showGuides
+                  guideRatios={[0, 0.5, 1]}
+                  barClass="text-[var(--line-soft)]"
+                  emptyBarClass="text-[var(--line-soft)]"
+                  chartHeight={trendChartHeight}
+                  heightClass="h-full"
+                  strokeWidth={0}
+                  pointLeftPercents={trendPointLeftPercents}
+                  alignBarsToPoints
+                  skipLeadingNullDraw
+                  valueMin={0}
+                  valueMax={requestAxisMax}
+                  trendSeries="requests"
+                />
+              </div>
+              <div className="absolute inset-0">
+                <Sparkline
+                  values={successRateTrend}
+                  strokeClass="text-[var(--success)]"
+                  showPointMarkers={successRateTrend.length > 0}
+                  chartHeight={trendChartHeight}
+                  heightClass="h-full"
+                  strokeWidth={2.2}
+                  pointLeftPercents={trendPointLeftPercents}
+                  skipLeadingNullDraw
+                  valueMin={0}
+                  valueMax={100}
+                  trendSeries="success-rate"
+                />
+              </div>
+              {hasFailurePoints
+                ? failurePoints.map((point, index) => {
+                    if (point.count <= 0) return null;
+                    const markerSize = 8 + Math.min(8, (point.count / failureCountMax) * 8);
+                    const bottom = 8 + (point.count / failureCountMax) * 18;
+                    return (
+                      <span
+                        key={`fail-marker-${index}`}
+                        aria-hidden="true"
+                        data-trend-failure-marker="true"
+                        data-trend-point-index={index}
+                        className="absolute z-20 -translate-x-1/2"
+                        style={{ left: `${point.x}%`, bottom }}
+                        title={`该时段失败 ${point.count} 次`}
+                      >
+                        <span
+                          className="block rounded-full border-2 border-[var(--danger)] bg-[var(--surface-3)] shadow-[0_0_0_2px_var(--danger-soft)]"
+                          style={{ width: markerSize, height: markerSize }}
+                        />
+                      </span>
+                    );
+                  })
+                : null}
+            </div>
+            <div
+              data-trend-y-axis="success-rate"
+              aria-hidden="true"
+              className="flex w-7 shrink-0 flex-col items-start justify-between text-[10px] leading-none text-[var(--text-secondary)]"
+            >
+              <span className="tnum" data-trend-y-axis-tick="true">
+                100%
+              </span>
+              <span className="tnum" data-trend-y-axis-tick="true">
+                50%
+              </span>
+              <span className="tnum" data-trend-y-axis-tick="true">
+                0%
+              </span>
+            </div>
+          </div>
+          <div className="mt-2 flex h-4 gap-3 text-[10px] leading-3 text-[var(--text-secondary)]">
+            <div className="w-8 shrink-0" />
+            <div className="relative min-w-0 flex-1">
+              {axisLabels.length > 0 ? (
+                axisLabels.map(item => (
+                  <span
+                    key={item.key}
+                    data-trend-axis-label="true"
+                    className="absolute max-w-[64px] -translate-x-1/2 truncate text-center"
+                    style={{ left: `${item.x}%` }}
+                  >
+                    {item.label}
+                  </span>
+                ))
+              ) : (
+                <span>等待更多趋势分桶</span>
+              )}
+            </div>
+            <div className="w-7 shrink-0" />
           </div>
         </div>
       </AppCardContent>
@@ -1979,7 +2063,7 @@ function ModelHeatmapList({
             tabIndex={onSelectModel ? 0 : undefined}
             aria-label={`模型：${item.canonicalModel}`}
             aria-pressed={onSelectModel ? isSelected : undefined}
-            title={`${item.canonicalModel} · ${getRouteCliLabel(item.cliType)} · 请求 ${item.requests} · 成功率 ${successPct}% · Tokens ${formatCompactNumber(item.totalTokens)}`}
+            title={`${item.canonicalModel} · 请求 ${item.requests} · 成功率 ${successPct}% · Tokens ${formatCompactNumber(item.totalTokens)}`}
             onClick={
               onSelectModel
                 ? event => {
@@ -3198,6 +3282,11 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
     [fullModelDistribution]
   );
 
+  const endpointDistribution = useMemo(
+    () => buildEndpointDistribution(filteredBuckets).slice(0, 8),
+    [filteredBuckets]
+  );
+
   const scopedRouteSummary = useMemo(() => {
     if (scope.kind === 'all') return routeSummary;
     const aggregate = filteredBuckets.reduce(
@@ -3346,6 +3435,15 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
       })),
     [modelDistribution]
   );
+  const endpointDonutItems = useMemo(
+    () =>
+      endpointDistribution.map(item => ({
+        id: item.endpoint,
+        label: item.endpoint,
+        value: item.requests,
+      })),
+    [endpointDistribution]
+  );
   const heatValues = useMemo(
     () => buildHourlyHeatCells(filteredBuckets, Date.now()),
     [filteredBuckets]
@@ -3486,29 +3584,16 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
 
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(200px,0.26fr)] gap-1.5 overflow-hidden">
           <div className="grid min-h-0 grid-rows-[minmax(0,1.0625fr)_minmax(0,0.9375fr)] gap-1.5 overflow-hidden">
-            <RouteTrendChart
-              trendPoints={trendPoints}
-              successRateTrend={successRateTrend}
-              ttfbTrend={ttfbTrend}
-              requestTrend={requestTrend}
-              failureCounts={failureCounts}
-              ttfbP50={ttfbPercentiles.p50}
-              ttfbP95={ttfbPercentiles.p95}
-              ttfbP99={ttfbPercentiles.p99}
-              failureCountTotal={failureCountTotal}
-              compact
-              className="min-h-0"
-            />
-
             <div className="grid min-h-0 grid-cols-3 gap-1.5 overflow-hidden">
-              <AppCard blur={false} hoverable={false} data-testid="overview-model-donut">
-                <AppCardContent className="flex h-full min-h-0 flex-col p-2.5">
-                  <SectionTitle icon={Layers} title="模型分布" />
-                  <div className="min-h-0 flex-1">
-                    <ModelDonutChart items={donutItems} />
-                  </div>
-                </AppCardContent>
-              </AppCard>
+              <RouteTrendChart
+                trendPoints={trendPoints}
+                successRateTrend={successRateTrend}
+                requestTrend={requestTrend}
+                failureCounts={failureCounts}
+                failureCountTotal={failureCountTotal}
+                compact
+                className="col-span-2 min-h-0"
+              />
 
               <AppCard blur={false} hoverable={false} data-testid="overview-channel-bars">
                 <AppCardContent className="flex h-full min-h-0 flex-col p-2.5">
@@ -3597,6 +3682,26 @@ function RouteOverviewView({ setPageHeaderActions, isOverviewActive, isVisible }
                         暂无通道流量
                       </div>
                     )}
+                  </div>
+                </AppCardContent>
+              </AppCard>
+            </div>
+
+            <div className="grid min-h-0 grid-cols-3 gap-1.5 overflow-hidden">
+              <AppCard blur={false} hoverable={false} data-testid="overview-model-donut">
+                <AppCardContent className="flex h-full min-h-0 flex-col p-2.5">
+                  <SectionTitle icon={Layers} title="模型分布" />
+                  <div className="min-h-0 flex-1">
+                    <ModelDonutChart items={donutItems} />
+                  </div>
+                </AppCardContent>
+              </AppCard>
+
+              <AppCard blur={false} hoverable={false} data-testid="overview-endpoint-donut">
+                <AppCardContent className="flex h-full min-h-0 flex-col p-2.5">
+                  <SectionTitle icon={Globe} title="端点分布" />
+                  <div className="min-h-0 flex-1">
+                    <ModelDonutChart items={endpointDonutItems} emptyText="暂无端点分布" />
                   </div>
                 </AppCardContent>
               </AppCard>

@@ -27,6 +27,8 @@ import { backupManager } from './backup-manager';
 import { notifyAppDataChanged } from './app-data-events';
 import { runtimeCacheManager } from './runtime-cache-manager';
 import { routeStateManager } from './route-state-manager';
+import { routeStateAffinityService } from './route-state-affinity-service';
+import { routeSessionActivityService } from './route-session-activity-service';
 import { detectSiteType } from './site-type-detector';
 import { matchPattern } from './route-rule-engine';
 import { encryptConfigFields, decryptConfigFields } from './config-field-crypto';
@@ -70,7 +72,11 @@ import type {
   RouteVendorPriorityConfig,
   RouteAnalyticsConfig,
   RouteAnalyticsBucket,
+  RouteSessionExtractionRule,
+  RouteSessionOverride,
+  RouteSourceProtocol,
 } from '../shared/types/route-proxy';
+import { normalizeRouteSessionOverride, normalizeRouteSessionRule } from './route-session-service';
 import {
   BUILTIN_CLI_LABELS,
   BUILTIN_CLI_TYPES,
@@ -83,6 +89,8 @@ import {
   DEFAULT_ROUTING_CONFIG,
   DEFAULT_ANALYTICS_CONFIG,
   DEFAULT_MODEL_REGISTRY_CONFIG,
+  DEFAULT_ROUTE_SESSION_ROUTING_CONFIG,
+  ROUTE_SOURCE_PROTOCOLS,
   buildRouteEndpointCapabilityKey,
   buildStatsKey,
   buildRoutePathStateKey,
@@ -167,6 +175,38 @@ function normalizeCliConfigTargetProtocols(
   }
 }
 
+function migrateLegacyRouteTargetProtocol(
+  owner: {
+    routeTargetProtocol?: CliTargetProtocol;
+    routeTargetProtocolNeedsConfirmation?: boolean;
+  },
+  cliConfig?: Partial<
+    Record<RouteCliType, { targetProtocol?: CliTargetProtocol | null } | null>
+  > | null
+): void {
+  if (
+    typeof owner.routeTargetProtocol === 'string' &&
+    CLI_TARGET_PROTOCOLS.includes(owner.routeTargetProtocol)
+  ) {
+    owner.routeTargetProtocol = normalizeCliTargetProtocol(owner.routeTargetProtocol);
+    return;
+  }
+  const legacyValues = new Set<CliTargetProtocol>();
+  for (const cliType of BUILTIN_CLI_TYPES) {
+    const value = cliConfig?.[cliType]?.targetProtocol;
+    if (typeof value === 'string' && CLI_TARGET_PROTOCOLS.includes(value)) {
+      legacyValues.add(normalizeCliTargetProtocol(value));
+    }
+  }
+  if (legacyValues.size === 1) {
+    owner.routeTargetProtocol = Array.from(legacyValues)[0];
+    owner.routeTargetProtocolNeedsConfirmation = false;
+  } else if (legacyValues.size > 1) {
+    owner.routeTargetProtocol = 'native';
+    owner.routeTargetProtocolNeedsConfirmation = true;
+  }
+}
+
 function normalizePriorityRecord(
   value: Record<string, number> | null | undefined
 ): Record<string, number> {
@@ -228,7 +268,10 @@ function areStringSetsEqual(left: string[] | undefined, right: string[] | undefi
   );
 }
 
-function buildAutoCliModelRouteRuleId(cliType: RouteCliType, canonicalModel: string): string {
+function buildAutoProtocolModelRouteRuleId(
+  sourceProtocol: RouteSourceProtocol,
+  canonicalModel: string
+): string {
   const modelSlug =
     canonicalModel
       .trim()
@@ -236,7 +279,7 @@ function buildAutoCliModelRouteRuleId(cliType: RouteCliType, canonicalModel: str
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '')
       .slice(0, 80) || 'model';
-  return `auto-cli-model-${cliType}-${modelSlug}`;
+  return `auto-protocol-model-${sourceProtocol}-${modelSlug}`;
 }
 
 function routePatternMatchesModel(rule: RouteRule, canonicalModel: string): boolean {
@@ -251,12 +294,15 @@ function routePatternMatchesModel(rule: RouteRule, canonicalModel: string): bool
   return matchPattern(canonicalModel, rule.pattern, rule.patternType);
 }
 
-function routeRuleMatchesCliModel(
+function routeRuleMatchesProtocolModel(
   rule: RouteRule,
-  cliType: RouteCliType,
+  sourceProtocol: RouteSourceProtocol,
   canonicalModel: string
 ): boolean {
-  return rule.enabled && rule.cliType === cliType && routePatternMatchesModel(rule, canonicalModel);
+  return (
+    rule.enabled && rule.sourceProtocol === sourceProtocol &&
+    routePatternMatchesModel(rule, canonicalModel)
+  );
 }
 
 function normalizeVendorPriorityConfig(
@@ -404,6 +450,7 @@ export class UnifiedConfigManager {
         );
         await this.saveConfig();
       }
+      await routeSessionActivityService.hydrate(this.config.routing?.sessionRouting);
       Logger.info(
         `✅ [UnifiedConfigManager] 加载配置成功，${this.config.sites.length} 个站点，${this.config.accounts.length} 个账户`
       );
@@ -424,6 +471,7 @@ export class UnifiedConfigManager {
       if (recoveredConfig.needsSave) {
         await this.saveConfig();
       }
+      await routeSessionActivityService.hydrate(this.config.routing?.sessionRouting);
       Logger.warn(
         `♻️ [UnifiedConfigManager] 已从备份恢复配置，${this.config.sites.length} 个站点，${this.config.accounts.length} 个账户`
       );
@@ -438,6 +486,7 @@ export class UnifiedConfigManager {
     this.config = this.createDefaultConfig();
     runtimeCacheManager.setCache(this.createEmptyRuntimeCache());
     await this.saveConfig();
+    await routeSessionActivityService.hydrate(this.config.routing?.sessionRouting);
     return this.config;
   }
 
@@ -524,6 +573,10 @@ export class UnifiedConfigManager {
 
     const migratedManagedSiteLegacyAuth = this.migrateManagedSiteLegacyAuthToAccounts(config);
     if (migratedManagedSiteLegacyAuth > 0) {
+      needsSave = true;
+    }
+
+    if (this.migrateCanonicalRouteRules(config) > 0) {
       needsSave = true;
     }
 
@@ -815,6 +868,20 @@ export class UnifiedConfigManager {
       routing: config.routing
         ? {
             ...config.routing,
+            sessionRouting: config.routing.sessionRouting
+              ? {
+                  ...config.routing.sessionRouting,
+                  instances: Object.fromEntries(
+                    Object.entries(config.routing.sessionRouting.instances || {}).map(
+                      ([instanceId, instance]) => {
+                        const persistableInstance = { ...instance };
+                        delete persistableInstance.lastRequestAt;
+                        return [instanceId, persistableInstance];
+                      }
+                    )
+                  ),
+                }
+              : undefined,
             stats: {},
             routePathStates: {},
             routeEndpointCapabilities: {},
@@ -1082,12 +1149,12 @@ export class UnifiedConfigManager {
    */
   private normalizeRoutingConfig(config: UnifiedConfig): void {
     if (!config.routing) {
-      config.routing = { ...DEFAULT_ROUTING_CONFIG };
-      return;
+      config.routing = structuredClone(DEFAULT_ROUTING_CONFIG);
     }
     const r = config.routing;
     if (!r.server) r.server = { ...DEFAULT_ROUTING_CONFIG.server };
     if (!r.rules) r.rules = [];
+    r.rules = r.rules.filter(rule => ROUTE_SOURCE_PROTOCOLS.includes(rule.sourceProtocol));
     if (!r.stats) r.stats = {};
     if (!r.routePathStates) r.routePathStates = {};
     if (!r.routeEndpointCapabilities) r.routeEndpointCapabilities = {};
@@ -1098,6 +1165,58 @@ export class UnifiedConfigManager {
     r.cliThinkingEffortSelections = normalizeRouteThinkingEffortSelections(
       r.cliThinkingEffortSelections
     );
+    const normalizedSessionOverrides = Object.values(r.sessionRouting?.overrides || {}).reduce<
+      Record<string, RouteSessionOverride>
+    >((result, override) => {
+      try {
+        const normalized = normalizeRouteSessionOverride(override);
+        result[normalized.key] = normalized;
+      } catch {
+        // Ignore malformed legacy entries while preserving valid overrides.
+      }
+      return result;
+    }, {});
+    let hasArmedRouteInstance = false;
+    const normalizedRouteInstances = Object.fromEntries(
+      Object.entries(r.sessionRouting?.instances || {}).flatMap(([id, instance]) => {
+        if (id !== instance.id || !instance.modelId?.trim() || !instance.reasoningEffort?.trim()) {
+          return [];
+        }
+        if (instance.routingState === 'armed') {
+          if (hasArmedRouteInstance) return [];
+          hasArmedRouteInstance = true;
+        }
+        return [[id, { ...instance, display: { ...(instance.display || {}) } }]];
+      })
+    );
+    r.sessionRouting = {
+      instances: normalizedRouteInstances,
+      currentRouteBySlot: { ...(r.sessionRouting?.currentRouteBySlot || {}) },
+      extractionRules: r.sessionRouting?.extractionRules?.length
+        ? r.sessionRouting.extractionRules
+        : DEFAULT_ROUTE_SESSION_ROUTING_CONFIG.extractionRules.map(rule => ({ ...rule })),
+      overrides: normalizedSessionOverrides,
+      activeWindowMinutes:
+        Number.isFinite(r.sessionRouting?.activeWindowMinutes) &&
+        (r.sessionRouting?.activeWindowMinutes || 0) > 0
+          ? Math.round(r.sessionRouting!.activeWindowMinutes)
+          : DEFAULT_ROUTE_SESSION_ROUTING_CONFIG.activeWindowMinutes,
+      recentWindowHours:
+        Number.isFinite(r.sessionRouting?.recentWindowHours) &&
+        (r.sessionRouting?.recentWindowHours || 0) > 0
+          ? Math.round(r.sessionRouting!.recentWindowHours!)
+          : DEFAULT_ROUTE_SESSION_ROUTING_CONFIG.recentWindowHours,
+      historyRetentionDays:
+        Number.isFinite(r.sessionRouting?.historyRetentionDays) &&
+        (r.sessionRouting?.historyRetentionDays || 0) > 0
+          ? Math.round(r.sessionRouting!.historyRetentionDays!)
+          : DEFAULT_ROUTE_SESSION_ROUTING_CONFIG.historyRetentionDays,
+      overrideRetentionDays:
+        Number.isFinite(r.sessionRouting?.overrideRetentionDays) &&
+        (r.sessionRouting?.overrideRetentionDays || 0) > 0
+          ? Math.round(r.sessionRouting!.overrideRetentionDays!)
+          : DEFAULT_ROUTE_SESSION_ROUTING_CONFIG.overrideRetentionDays,
+    };
     if (!r.modelRegistry) {
       r.modelRegistry = { ...DEFAULT_MODEL_REGISTRY_CONFIG };
     } else {
@@ -1141,10 +1260,19 @@ export class UnifiedConfigManager {
     } else {
       s.upstreamProxyUrl = String(s.upstreamProxyUrl).trim();
     }
+    delete (s as typeof s & { responsesStateDefaultChannel?: unknown })
+      .responsesStateDefaultChannel;
+    delete (s as typeof s & { corsAllowedOrigins?: unknown }).corsAllowedOrigins;
     if (s.enabled === undefined) s.enabled = false;
 
     // v3.0.6: 账户级 cli_config 规范化
     for (const account of config.accounts || []) {
+      migrateLegacyRouteTargetProtocol(
+        account,
+        account.cli_config as Partial<
+          Record<RouteCliType, { targetProtocol?: CliTargetProtocol | null } | null>
+        >
+      );
       if (account.cli_config && !account.cli_config.grokBuild) {
         account.cli_config.grokBuild = { ...DEFAULT_CLI_CONFIG.grokBuild };
       }
@@ -1262,9 +1390,9 @@ export class UnifiedConfigManager {
     const manualMatchingRuleExists = rules.some(
       rule =>
         rule.id !== LEGACY_ROUTE_REDIRECTION_EXAMPLE_AUTO_RULE_ID &&
-        routeRuleMatchesCliModel(
+        routeRuleMatchesProtocolModel(
           rule,
-          'claudeCode',
+          'anthropic-messages',
           LEGACY_ROUTE_REDIRECTION_EXAMPLE_CANONICAL_NAME
         )
     );
@@ -1293,6 +1421,47 @@ export class UnifiedConfigManager {
     }
 
     return changed;
+  }
+
+  private migrateCanonicalRouteRules(config: UnifiedConfig): number {
+    const routing = config.routing;
+    if (!routing || !Array.isArray(routing.rules)) {
+      return 0;
+    }
+
+    const validProtocols = new Set<string>(ROUTE_SOURCE_PROTOCOLS);
+    const dropped: Array<{ id: string; name: string }> = [];
+    const canonicalRules: RouteRule[] = [];
+
+    for (const value of routing.rules as unknown[]) {
+      if (!value || typeof value !== 'object') {
+        dropped.push({ id: '<invalid>', name: '<invalid>' });
+        continue;
+      }
+
+      const legacy = value as Record<string, unknown>;
+      if (!validProtocols.has(String(legacy.sourceProtocol || ''))) {
+        dropped.push({
+          id: typeof legacy.id === 'string' ? legacy.id : '<invalid>',
+          name: typeof legacy.name === 'string' ? legacy.name : '<unnamed>',
+        });
+        continue;
+      }
+
+      const { cliType: _cliType, legacyCliType: _legacyCliType, migrationState: _state, ...rule } =
+        legacy;
+      canonicalRules.push(rule as unknown as RouteRule);
+    }
+
+    routing.rules = canonicalRules;
+    if (dropped.length > 0) {
+      Logger.warn(
+        `⚠️ [UnifiedConfigManager] 已删除 ${dropped.length} 条缺少有效 sourceProtocol 的旧路由规则: ${dropped
+          .map(rule => `${rule.name} (${rule.id})`)
+          .join(', ')}`
+      );
+    }
+    return dropped.length;
   }
 
   private cleanupLegacyCliCompatibility(config: UnifiedConfig): boolean {
@@ -1640,13 +1809,23 @@ export class UnifiedConfigManager {
   async deleteSite(id: string): Promise<boolean> {
     if (!this.config) return false;
 
-    const initialLength = this.config.sites.length;
+    const previousSites = this.config.sites;
+    const previousAccounts = this.config.accounts;
+    const initialLength = previousSites.length;
     this.config.sites = this.config.sites.filter(s => s.id !== id);
 
     if (this.config.sites.length < initialLength) {
       // 删除关联的所有账户
       this.config.accounts = this.config.accounts.filter(a => a.site_id !== id);
       await this.saveConfig();
+      try {
+        await routeStateAffinityService.removeBySite(id);
+      } catch (error) {
+        this.config.sites = previousSites;
+        this.config.accounts = previousAccounts;
+        await this.saveConfig();
+        throw error;
+      }
       this.notifySiteConfigChanged();
       return true;
     }
@@ -1833,6 +2012,8 @@ export class UnifiedConfigManager {
     const account = this.config.accounts.find(a => a.id === accountId);
     if (!account) return false;
 
+    const previousSites = this.config.sites;
+    const previousAccounts = this.config.accounts;
     this.config.accounts = this.config.accounts.filter(a => a.id !== accountId);
 
     const remainingAccounts = this.config.accounts.filter(a => a.site_id === account.site_id);
@@ -1841,6 +2022,14 @@ export class UnifiedConfigManager {
     }
 
     await this.saveConfig();
+    try {
+      await routeStateAffinityService.removeByAccount(accountId);
+    } catch (error) {
+      this.config.sites = previousSites;
+      this.config.accounts = previousAccounts;
+      await this.saveConfig();
+      throw error;
+    }
     this.notifySiteConfigChanged();
     return true;
   }
@@ -2279,51 +2468,15 @@ export class UnifiedConfigManager {
     await this.saveRouteRuntimeState();
   }
 
-  private ensureCliModelRouteRuleInMemory(
-    cliType: RouteCliType,
-    canonicalModel: string | null | undefined
-  ): boolean {
-    const normalizedModel = canonicalModel?.trim();
-    if (!normalizedModel) {
-      return false;
-    }
-
-    const routing = this.config!.routing!;
-    if (routing.rules.some(rule => routeRuleMatchesCliModel(rule, cliType, normalizedModel))) {
-      return false;
-    }
-
-    const now = Date.now();
-    const ruleId = buildAutoCliModelRouteRuleId(cliType, normalizedModel);
-    const idx = routing.rules.findIndex(rule => rule.id === ruleId);
-    const rule: RouteRule = {
-      id: ruleId,
-      name: `${ROUTE_CLI_LABELS[cliType]} / ${normalizedModel}`,
-      enabled: true,
-      priority: AUTO_CLI_MODEL_ROUTE_RULE_PRIORITY,
-      cliType,
-      patternType: 'exact',
-      pattern: normalizedModel,
-      notes: '自动补全：CLI 默认模型需要可匹配路由规则，否则代理会返回 no_matching_rule。',
-      createdAt: idx >= 0 ? routing.rules[idx].createdAt : now,
-      updatedAt: now,
-    };
-
-    if (idx >= 0) {
-      routing.rules[idx] = {
-        ...routing.rules[idx],
-        ...rule,
-        createdAt: routing.rules[idx].createdAt,
-      };
-    } else {
-      routing.rules.push(rule);
-    }
-
-    return true;
+  async ensureRouteRuleForCliModelSelection(
+    _cliType: RouteCliType,
+    _canonicalModel: string | null | undefined
+  ): Promise<RouteRule | null> {
+    return null;
   }
 
-  async ensureRouteRuleForCliModelSelection(
-    cliType: RouteCliType,
+  async ensureRouteRuleForProtocolModelSelection(
+    sourceProtocol: RouteSourceProtocol,
     canonicalModel: string | null | undefined
   ): Promise<RouteRule | null> {
     if (!this.config) throw new Error('Config not loaded');
@@ -2334,14 +2487,32 @@ export class UnifiedConfigManager {
       return null;
     }
 
-    const changed = this.ensureCliModelRouteRuleInMemory(cliType, normalizedModel);
-    if (!changed) {
+    const routing = this.config.routing!;
+    if (
+      routing.rules.some(rule =>
+        routeRuleMatchesProtocolModel(rule, sourceProtocol, normalizedModel)
+      )
+    ) {
       return null;
     }
 
+    const now = Date.now();
+    const ruleId = buildAutoProtocolModelRouteRuleId(sourceProtocol, normalizedModel);
+    const rule: RouteRule = {
+      id: ruleId,
+      name: `${sourceProtocol} / ${normalizedModel}`,
+      enabled: true,
+      priority: AUTO_CLI_MODEL_ROUTE_RULE_PRIORITY,
+      sourceProtocol,
+      patternType: 'exact',
+      pattern: normalizedModel,
+      notes: 'Auto-generated so the selected protocol and model have a matching route rule.',
+      createdAt: now,
+      updatedAt: now,
+    };
+    routing.rules.push(rule);
     await this.saveConfig();
-    const ruleId = buildAutoCliModelRouteRuleId(cliType, normalizedModel);
-    return this.config.routing!.rules.find(rule => rule.id === ruleId) ?? null;
+    return rule;
   }
 
   // ============= CLI 模型选择 =============
@@ -2359,11 +2530,6 @@ export class UnifiedConfigManager {
       mergedSelections,
       this.config.routing!.modelRegistry.entries
     );
-    for (const [cliType, canonicalModel] of Object.entries(
-      this.config.routing!.cliModelSelections
-    ) as [RouteCliType, string | null][]) {
-      this.ensureCliModelRouteRuleInMemory(cliType, canonicalModel);
-    }
     await this.saveConfig();
     return this.config.routing!.cliModelSelections;
   }
@@ -2379,6 +2545,89 @@ export class UnifiedConfigManager {
     });
     await this.saveConfig();
     return this.config.routing!.cliThinkingEffortSelections;
+  }
+
+  async upsertRouteSessionOverride(override: RouteSessionOverride): Promise<RouteSessionOverride> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    const key = `${override.namespace.trim()}:${override.sessionId.trim()}`;
+    const existing = this.config.routing!.sessionRouting!.overrides[key];
+    const normalized = normalizeRouteSessionOverride(
+      { ...override, updatedAt: Date.now() },
+      existing?.associationLevel || 'exact'
+    );
+    this.config.routing!.sessionRouting!.overrides[normalized.key] = normalized;
+    await this.saveConfig();
+    return normalized;
+  }
+
+  async deleteRouteSessionOverride(key: string): Promise<boolean> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    const overrides = this.config.routing!.sessionRouting!.overrides;
+    if (!overrides[key]) return false;
+    delete overrides[key];
+    await this.saveConfig();
+    return true;
+  }
+
+  async pruneExpiredRouteSessionOverrides(now = Date.now()): Promise<number> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    const sessionRouting = this.config.routing!.sessionRouting!;
+    const retentionMs = Math.max(1, sessionRouting.overrideRetentionDays || 90) * 86_400_000;
+    let removed = 0;
+    for (const [key, override] of Object.entries(sessionRouting.overrides)) {
+      if (now - override.updatedAt <= retentionMs) continue;
+      delete sessionRouting.overrides[key];
+      removed += 1;
+    }
+    if (removed > 0) await this.saveConfig();
+    return removed;
+  }
+
+  async upsertRouteSessionRule(
+    rule: RouteSessionExtractionRule
+  ): Promise<RouteSessionExtractionRule> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    const rules = this.config.routing!.sessionRouting!.extractionRules;
+    const index = rules.findIndex(item => item.id === rule.id);
+    const normalized = normalizeRouteSessionRule(rule, index >= 0 ? rules[index] : undefined);
+    if (rules.some((item, itemIndex) => item.id === normalized.id && itemIndex !== index)) {
+      throw new Error('会话规则 ID 必须唯一');
+    }
+    if (index >= 0) rules[index] = normalized;
+    else rules.push(normalized);
+    await this.saveConfig();
+    return normalized;
+  }
+
+  async deleteRouteSessionRule(ruleId: string): Promise<boolean> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    const rules = this.config.routing!.sessionRouting!.extractionRules;
+    const next = rules.filter(rule => rule.id !== ruleId);
+    if (next.length === rules.length) return false;
+    this.config.routing!.sessionRouting!.extractionRules = next;
+    await this.saveConfig();
+    return true;
+  }
+
+  async updateRouteSessionSettings(settings: {
+    activeWindowMinutes?: number;
+    recentWindowHours?: number;
+    historyRetentionDays?: number;
+    overrideRetentionDays?: number;
+  }): Promise<void> {
+    if (!this.config) throw new Error('Config not loaded');
+    this.normalizeRoutingConfig(this.config);
+    const sessionRouting = this.config.routing!.sessionRouting!;
+    for (const [key, value] of Object.entries(settings)) {
+      if (!Number.isFinite(value) || Number(value) <= 0) throw new Error('会话保留时间必须大于 0');
+      Object.assign(sessionRouting, { [key]: Math.round(Number(value)) });
+    }
+    await this.saveConfig();
   }
 
   // ============= 模型注册表 =============

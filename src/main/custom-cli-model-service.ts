@@ -54,6 +54,29 @@ function extractModelIds(payload: unknown): string[] {
 }
 
 /**
+ * 上游返回 HTTP 错误时构造分类文案，避免误报为解析失败。
+ * 兼容 {error:{message}} / {message} / {detail} 错误体形态。
+ */
+function buildUpstreamErrorMessage(status: number, payload: unknown): string {
+  let detail = '无响应内容';
+  if (payload && typeof payload === 'object') {
+    const obj = payload as { error?: { message?: unknown }; message?: unknown; detail?: unknown };
+    const text = obj.error?.message ?? obj.message ?? obj.detail;
+    detail = typeof text === 'string' && text ? text : JSON.stringify(payload).slice(0, 200);
+  } else if (typeof payload === 'string' && payload) {
+    detail = payload.slice(0, 200);
+  }
+
+  const reason =
+    status === 401 || status === 403
+      ? 'API Key 无效或无权限'
+      : status >= 500
+        ? '上游服务器错误'
+        : '上游拒绝请求';
+  return `${reason} (HTTP ${status}): ${detail}`;
+}
+
+/**
  * 获取直连配置的模型列表
  * @param configId 直连配置 ID
  * @returns 模型列表及状态
@@ -94,7 +117,16 @@ export async function fetchModels(configId: string): Promise<FetchModelsResult> 
       headers,
     });
 
-    // 上游返回非 JSON（如 HTML 错误页 / 401 文本 / anthropic 协议路径不提供该端点）
+    // 上游返回 HTTP 错误时按状态码分类，不进入解析流程
+    if (response.status < 200 || response.status >= 300) {
+      return {
+        success: false,
+        models: [],
+        error: buildUpstreamErrorMessage(response.status, response.data),
+      };
+    }
+
+    // 2xx 但响应非 JSON 对象（如 HTML 错误页）
     const data = response.data;
     if (!data || typeof data !== 'object') {
       const bodyPreview = typeof data === 'string' ? data.slice(0, 200) : String(data ?? '');

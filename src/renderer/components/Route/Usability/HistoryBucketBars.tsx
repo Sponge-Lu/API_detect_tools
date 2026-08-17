@@ -1,28 +1,29 @@
 /**
  * History Bucket Bars 组件
- * 输入: siteId, accountId, 可选 cliType/mode (默认从 uiStore 读取)
- * 输出: 时间桶聚合成功率条形图（2h 桶，48 小时 = 24 桶），并按 60s 间隔轮询刷新
- * 定位: 展示层 - 接入管理页 History 列的数据可视化
- *
- * 🔄 自引用: 当此文件变更时，更新:
- * - 本文件头注释
- * - src/renderer/components/Route/Usability/FOLDER_INDEX.md
- * - PROJECT_INDEX.md
+ * 输入: siteId, accountId，以及列表头共享的实际请求端点选择
+ * 输出: 48 小时 / 2 小时时间桶成功率条形图
+ * 定位: 展示层 - 站点管理页 History 列的数据可视化
  */
 
-import { memo, useMemo, useRef, useState, useEffect } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, Dispatch, SetStateAction } from 'react';
-import type { HistoryBucket, RouteCliType } from '../../../../shared/types/route-proxy';
-import { BUILTIN_CLI_LABELS } from '../../../../shared/types/cli-config';
+import {
+  getRouteHistoryEndpointLabel,
+  normalizeRouteHistoryEndpoint,
+  type HistoryBucket,
+  type HistoryEndpointTrack,
+} from '../../../../shared/types/route-proxy';
 import { useUIStore } from '../../../store/uiStore';
 
-const HISTORY_POLL_INTERVAL_MS = 60_000;
+export const HISTORY_POLL_INTERVAL_MS = 60_000;
+const BUCKET_SIZE_MS = 2 * 60 * 60 * 1000;
+const TIME_WINDOW_MS = 2 * 24 * 60 * 60 * 1000;
+const BUCKET_COUNT = Math.floor(TIME_WINDOW_MS / BUCKET_SIZE_MS);
+const BAR_GAP_PX = 1;
 
 interface HistoryBucketBarsProps {
   siteId: string;
   accountId: string;
-  /** 可选覆盖；默认从 uiStore 读取 */
-  cliType?: RouteCliType;
   miniature?: boolean;
 }
 
@@ -31,13 +32,6 @@ interface TrackLayout {
   gapPx: number;
   style: CSSProperties;
 }
-
-const BUCKET_SIZE_MS = 2 * 60 * 60 * 1000; // 2 hours
-const TIME_WINDOW_MS = 2 * 24 * 60 * 60 * 1000; // 48 hours (2 days)
-const BUCKET_COUNT = Math.floor(TIME_WINDOW_MS / BUCKET_SIZE_MS); // 24 buckets
-const BAR_GAP_PX = 1;
-const MINIATURE_HEIGHT = 8;
-const LARGE_HEIGHT = 13;
 
 function getBucketStartTime(timestamp: number): number {
   return Math.floor(timestamp / BUCKET_SIZE_MS) * BUCKET_SIZE_MS;
@@ -53,6 +47,38 @@ function buildEmptyBuckets(now = Date.now()): HistoryBucket[] {
       successRate: null,
       routeCount: 0,
     };
+  });
+}
+
+function isHistoryBucket(value: unknown): value is HistoryBucket {
+  if (!value || typeof value !== 'object') return false;
+  const bucket = value as Partial<HistoryBucket>;
+  return (
+    typeof bucket.bucketStart === 'number' &&
+    typeof bucket.bucketEnd === 'number' &&
+    (bucket.successRate === null || typeof bucket.successRate === 'number') &&
+    typeof bucket.routeCount === 'number'
+  );
+}
+
+function normalizeBuckets(value: unknown): HistoryBucket[] {
+  if (!Array.isArray(value)) return buildEmptyBuckets();
+  const buckets = value.filter(isHistoryBucket);
+  return buckets.length > 0 ? buckets : buildEmptyBuckets();
+}
+
+function normalizeHistoryTracks(value: unknown): HistoryEndpointTrack[] {
+  if (!Array.isArray(value) || value.length === 0) return [];
+
+  if (isHistoryBucket(value[0])) return [];
+
+  return value.flatMap(item => {
+    if (!item || typeof item !== 'object') return [];
+    const track = item as Partial<HistoryEndpointTrack>;
+    const rawEndpoint = typeof track.targetEndpoint === 'string' ? track.targetEndpoint.trim() : '';
+    const targetEndpoint = normalizeRouteHistoryEndpoint(rawEndpoint);
+    if (!targetEndpoint) return [];
+    return [{ targetEndpoint, buckets: normalizeBuckets(track.buckets) }];
   });
 }
 
@@ -88,11 +114,13 @@ function formatBucketTime(startMs: number, endMs: number): string {
   return `${padTimePart(start.getMonth() + 1)}/${padTimePart(start.getDate())} ${padTimePart(start.getHours())}:${padTimePart(start.getMinutes())} - ${padTimePart(end.getHours())}:${padTimePart(end.getMinutes())}`;
 }
 
+/** Map 0..1 to the existing danger/success tokens without changing chart geometry. */
 function getBucketColor(successRate: number | null): string {
-  if (successRate === null) return 'var(--cli-history-empty)';
-  if (successRate >= 0.8) return 'var(--cli-history-success)';
-  if (successRate >= 0.5) return 'var(--warning)';
-  return 'var(--cli-history-danger)';
+  if (successRate === null || !Number.isFinite(successRate)) {
+    return 'var(--cli-history-empty)';
+  }
+  const rate = Math.max(0, Math.min(1, successRate));
+  return `color-mix(in srgb, var(--cli-history-success) ${Math.round(rate * 100)}%, var(--cli-history-danger))`;
 }
 
 function buildTrackLayout(
@@ -148,23 +176,20 @@ function buildTrackLayout(
 export const HistoryBucketBars = memo(function HistoryBucketBars({
   siteId,
   accountId,
-  cliType: cliTypeProp,
   miniature = false,
 }: HistoryBucketBarsProps) {
-  const storeCliType = useUIStore(state => state.historyCliType);
-  const cliType = cliTypeProp ?? storeCliType;
-  const barHeight = miniature ? MINIATURE_HEIGHT : LARGE_HEIGHT;
+  const selectedEndpoint = useUIStore(state => state.historyTargetEndpoint);
+  const [tracks, setTracks] = useState<HistoryEndpointTrack[]>([]);
   const [buckets, setBuckets] = useState<HistoryBucket[]>(() => buildEmptyBuckets());
 
   useEffect(() => {
     let cancelled = false;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
 
-    const loadBuckets = async () => {
-      const fallbackBuckets = buildEmptyBuckets();
+    const loadTracks = async () => {
       const routeApi = window.electronAPI?.route;
       if (!routeApi?.getHistoryBuckets) {
-        setBucketsIfChanged(setBuckets, fallbackBuckets);
+        if (!cancelled) setTracks([]);
         return;
       }
 
@@ -174,49 +199,69 @@ export const HistoryBucketBars = memo(function HistoryBucketBars({
           bucketSize: '2h',
           siteId,
           accountId,
-          cliType,
         });
-
-        if (cancelled) return;
-        if (response?.success && Array.isArray(response.data)) {
-          setBucketsIfChanged(setBuckets, response.data);
-        } else {
-          setBucketsIfChanged(setBuckets, fallbackBuckets);
+        if (!cancelled) {
+          setTracks(response?.success ? normalizeHistoryTracks(response.data) : []);
         }
       } catch {
-        if (!cancelled) {
-          setBucketsIfChanged(setBuckets, fallbackBuckets);
-        }
+        if (!cancelled) setTracks([]);
       }
     };
 
-    void loadBuckets();
+    void loadTracks();
     pollTimer = setInterval(() => {
-      if (!cancelled) void loadBuckets();
+      if (!cancelled) void loadTracks();
     }, HISTORY_POLL_INTERVAL_MS);
 
     return () => {
       cancelled = true;
       if (pollTimer) clearInterval(pollTimer);
     };
-  }, [accountId, cliType, siteId]);
+  }, [accountId, siteId]);
 
+  const visibleTrack = useMemo<HistoryEndpointTrack>(() => {
+    if (tracks.length === 0) {
+      return {
+        targetEndpoint: selectedEndpoint || '暂无端点数据',
+        buckets: buildEmptyBuckets(),
+      };
+    }
+
+    if (selectedEndpoint) {
+      const selectedTrack = tracks.find(track => track.targetEndpoint === selectedEndpoint);
+      if (selectedTrack) return selectedTrack;
+      return { targetEndpoint: selectedEndpoint, buckets: buildEmptyBuckets() };
+    }
+
+    return tracks[0];
+  }, [selectedEndpoint, tracks]);
+
+  useEffect(() => {
+    setBucketsIfChanged(setBuckets, normalizeBuckets(visibleTrack.buckets));
+  }, [visibleTrack]);
+
+  const barHeight = miniature ? 8 : 13;
+  const endpointDescription = useMemo(() => {
+    const label = getRouteHistoryEndpointLabel(visibleTrack.targetEndpoint);
+    return label === visibleTrack.targetEndpoint
+      ? label
+      : `${label} · ${visibleTrack.targetEndpoint}`;
+  }, [visibleTrack.targetEndpoint]);
   const tooltips = useMemo(() => {
     return buckets.map(bucket => {
-      const lines: string[] = [];
-      lines.push(formatBucketTime(bucket.bucketStart, bucket.bucketEnd));
-      lines.push(`CLI: ${BUILTIN_CLI_LABELS[cliType]}`);
-
       const rate = bucket.successRate !== null ? Math.round(bucket.successRate * 100) : null;
-      lines.push(`路由请求 ${bucket.routeCount} 次 ${rate !== null ? `${rate}%` : '--'}`);
-
-      return lines.join('\n');
+      return [
+        formatBucketTime(bucket.bucketStart, bucket.bucketEnd),
+        endpointDescription,
+        `路由请求 ${bucket.routeCount} 次 ${rate !== null ? `${rate}%` : '--'}`,
+      ].join('\n');
     });
-  }, [buckets, cliType]);
+  }, [buckets, endpointDescription]);
 
-  const colors = useMemo(() => {
-    return buckets.map(bucket => getBucketColor(bucket.successRate));
-  }, [buckets]);
+  const colors = useMemo(
+    () => buckets.map(bucket => getBucketColor(bucket.successRate)),
+    [buckets]
+  );
 
   const trackRef = useRef<HTMLDivElement>(null);
   const [trackWidth, setTrackWidth] = useState<number | null>(null);
@@ -227,36 +272,30 @@ export const HistoryBucketBars = memo(function HistoryBucketBars({
 
     const measure = () => {
       const nextTrackWidth = Math.max(0, Math.floor(node.getBoundingClientRect().width));
-      setTrackWidth(prevWidth => (prevWidth === nextTrackWidth ? prevWidth : nextTrackWidth));
+      setTrackWidth(previous => (previous === nextTrackWidth ? previous : nextTrackWidth));
     };
 
     measure();
 
     if (typeof ResizeObserver === 'function') {
-      const resizeObserver = new ResizeObserver(() => {
-        measure();
-      });
+      const resizeObserver = new ResizeObserver(measure);
       resizeObserver.observe(node);
-      return () => {
-        resizeObserver.disconnect();
-      };
+      return () => resizeObserver.disconnect();
     }
 
     window.addEventListener('resize', measure);
-    return () => {
-      window.removeEventListener('resize', measure);
-    };
+    return () => window.removeEventListener('resize', measure);
   }, []);
 
   const trackLayout = useMemo(
-    () => buildTrackLayout(trackWidth, BUCKET_COUNT, BAR_GAP_PX, barHeight),
-    [trackWidth, barHeight]
+    () => buildTrackLayout(trackWidth, buckets.length, BAR_GAP_PX, barHeight),
+    [barHeight, buckets.length, trackWidth]
   );
 
   return (
-    <div className="w-full">
+    <div className="w-full" data-testid="history-endpoint-track">
       <div
-        className="overflow-hidden rounded-[8px] border border-[var(--line-soft)] bg-[var(--surface-2)] p-[2px]"
+        className="w-full overflow-hidden"
         data-testid="history-bucket-bars-frame"
       >
         <div

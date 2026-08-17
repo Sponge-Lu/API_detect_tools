@@ -17,9 +17,8 @@ import { useConfigStore } from '../renderer/store/configStore';
 import { useRouteStore } from '../renderer/store/routeStore';
 
 const ROUTE_LOG_RESPONSIVE_GRID_TEMPLATE =
-  'minmax(1.75rem,1.75fr) minmax(6.5rem,6.5fr) minmax(4rem,4fr) minmax(calc(12.5rem + 2ch),14.5fr) minmax(18rem,18fr) minmax(4rem,4fr) minmax(5.25rem,5.25fr) minmax(2.75rem,2.75fr) minmax(5.25rem,5.25fr)';
-const ROUTE_LOG_TOKEN_GRID_TEMPLATE =
-  'minmax(0,calc(20% - 1ch)) minmax(0,20%) minmax(0,calc(20% - 2ch)) minmax(0,calc(20% + 1ch)) minmax(0,20%)';
+  'minmax(6.5rem,6.5fr) minmax(6.5rem,6.5fr) minmax(4rem,4fr) minmax(calc(12.5rem + 2ch),14.5fr) minmax(10rem,10fr) minmax(4rem,4fr) minmax(5.25rem,5.25fr) minmax(2.75rem,2.75fr) minmax(5.25rem,5.25fr)';
+const ROUTE_LOG_TOKEN_GRID_TEMPLATE = 'repeat(2, minmax(0, 1fr))';
 
 function buildRouteLog(
   partial: Partial<RouteRequestLogItem> &
@@ -30,6 +29,8 @@ function buildRouteLog(
     requestId: partial.requestId,
     attempt: partial.attempt,
     cliType: partial.cliType,
+    agentId: partial.agentId ?? 'codex',
+    agentName: partial.agentName ?? 'Codex',
     outcome: partial.outcome,
     createdAt: partial.createdAt,
     requestedModel: partial.requestedModel ?? 'gpt-5.4',
@@ -528,10 +529,10 @@ describe('LogsPage', () => {
     );
     const header = screen.getByTestId('route-request-log-header');
     expect(header).toHaveTextContent(
-      'CLI原始模型思考强度路由目标Token（总/输入/输出/缓存写/缓存读）预计金额用时/首字状态时间'
+      'Agent原始模型思考强度路由目标Token（输入/输出 · 写/缓存读）预计金额用时/首字状态时间'
     );
     expect(header.parentElement).toHaveClass('w-full');
-    expect(header.parentElement).toHaveStyle({ minWidth: 'calc(62rem + 2ch)' });
+    expect(header.parentElement).toHaveStyle({ minWidth: 'calc(59rem + 2ch)' });
     expect(header.style.gridTemplateColumns).toBe(ROUTE_LOG_RESPONSIVE_GRID_TEMPLATE);
     expect(screen.queryByRole('button', { name: '刷新' })).not.toBeInTheDocument();
     expect(screen.getByText('总尝试').parentElement).toHaveTextContent('总尝试4');
@@ -552,14 +553,7 @@ describe('LogsPage', () => {
     const tableLine = within(rows[0]).getByTestId('route-request-table-line');
     expect(tableLine.style.gridTemplateColumns).toBe(ROUTE_LOG_RESPONSIVE_GRID_TEMPLATE);
     expect(tableLine).toHaveClass('gap-x-1');
-    expect(within(rows[0]).getByTestId('route-request-cli-icon')).toHaveAttribute(
-      'aria-label',
-      'Codex'
-    );
-    expect(within(rows[0]).getByTestId('route-request-cli-icon').className).not.toMatch(
-      /bg-|border/
-    );
-    expect(within(rows[0]).getByTestId('route-request-cli-icon')).toHaveClass('justify-start');
+    expect(within(rows[0]).getByTestId('route-request-agent')).toHaveTextContent('Codex');
     expect(within(rows[0]).queryByTestId('route-request-id-attempt')).not.toBeInTheDocument();
     expect(rows[0]).toHaveAttribute('data-route-request-id', 'codex-1');
     const modelPath = within(rows[0]).getByTestId('route-request-model-path');
@@ -582,17 +576,11 @@ describe('LogsPage', () => {
     expect(failureInfo.firstElementChild).toHaveClass('col-start-2', 'col-span-8');
     expect(within(rows[1]).queryByTestId('route-request-failure-info')).not.toBeInTheDocument();
     const tokenSummary = within(rows[0]).getByTestId('route-request-token-summary');
-    expect(tokenSummary).toHaveTextContent('T 150IN 100OUT 50C.R 40C.W 20');
+    expect(tokenSummary).toHaveTextContent('IN 100OUT 50C.W 20C.R 40');
     expect(tokenSummary).toHaveClass('whitespace-nowrap', 'tabular-nums');
     expect(tokenSummary).not.toHaveAttribute('title');
     expect(tokenSummary).not.toHaveClass('grid-cols-5');
     expect(tokenSummary.style.gridTemplateColumns).toBe(ROUTE_LOG_TOKEN_GRID_TEMPLATE);
-    expect(within(tokenSummary).getByText('T')).toHaveClass(
-      'font-mono',
-      'text-[9.5px]',
-      'italic',
-      'text-[var(--text-tertiary)]'
-    );
     expect(within(tokenSummary).getByText('IN')).toHaveClass(
       'font-mono',
       'text-[9.5px]',
@@ -604,11 +592,11 @@ describe('LogsPage', () => {
       'text-[9.5px]',
       'italic'
     );
+    expect(within(tokenSummary).getAllByText(/^(IN|OUT|C\.R|C\.W)$/)[0].parentElement).toHaveClass(
+      'inline-flex'
+    );
     expect(
-      within(tokenSummary).getAllByText(/^(T|IN|OUT|C\.R|C\.W)$/)[0].parentElement
-    ).toHaveClass('inline-flex');
-    expect(
-      within(tokenSummary).getAllByText(/^(T|IN|OUT|C\.R|C\.W)$/)[0].parentElement
+      within(tokenSummary).getAllByText(/^(IN|OUT|C\.R|C\.W)$/)[0].parentElement
     ).not.toHaveClass('gap-px');
     const costCell = within(rows[0]).getByTestId('route-request-cost');
     expect(costCell).toHaveTextContent('4.58e-7');
@@ -634,7 +622,7 @@ describe('LogsPage', () => {
     expect(rows[1]).toHaveAttribute('data-route-request-id', 'codex-2');
     expect(within(rows[1]).getByTestId('route-request-cost')).toHaveTextContent('2.7e-9');
     expect(within(rows[1]).getByTestId('route-request-token-summary')).toHaveTextContent(
-      'T 15IN 12OUT 3C.R —C.W —'
+      'IN 12OUT 3C.W —C.R —'
     );
     const customCliSitePath = within(rows[2]).getByTestId('route-request-site-path');
     expect(customCliSitePath).toHaveTextContent(/^直连配置 \/ DuckCoding$/);
@@ -645,7 +633,7 @@ describe('LogsPage', () => {
     ).not.toBeInTheDocument();
     expect(rows[3]).toHaveAttribute('data-route-request-id', 'codex-cache');
     expect(within(rows[3]).getByTestId('route-request-token-summary')).toHaveTextContent(
-      'T 100IN 100OUT 0C.R 40C.W —'
+      'IN 100OUT 0C.W —C.R 40'
     );
     expect(within(rows[3]).getByTestId('route-request-cost')).toHaveTextContent('1.28e-7');
     expect(screen.queryByText(/^规则说明：/)).not.toBeInTheDocument();
@@ -728,27 +716,29 @@ describe('LogsPage', () => {
 
     const missingRow = getRouteLogRowByRequestId('missing-usage');
     expect(within(missingRow).getByTestId('route-request-token-summary')).toHaveTextContent(
-      'T —IN —OUT —C.R —C.W —'
+      'IN —OUT —C.W —C.R —'
     );
 
     const zeroRow = getRouteLogRowByRequestId('explicit-zero');
     expect(within(zeroRow).getByTestId('route-request-token-summary')).toHaveTextContent(
-      'T 0IN 0OUT 0C.R 0C.W 0'
+      'IN 0OUT 0C.W 0C.R 0'
     );
 
     const estimateRow = getRouteLogRowByRequestId('local-estimate');
     expect(within(estimateRow).getByTestId('route-request-token-summary')).toHaveTextContent(
-      'T —IN ≈1,234OUT —C.R —C.W —'
+      'IN ≈1,234OUT —C.W —C.R —'
     );
-    expect(within(estimateRow).getByTestId('route-request-token-usage-label')).toHaveTextContent(
+    expect(within(estimateRow).getByTestId('route-request-token-summary')).toHaveAttribute(
+      'title',
       '本地估算 · 不计入推理用量'
     );
     expect(within(estimateRow).getByTestId('route-request-cost')).toHaveTextContent('—');
 
     const upstreamCountRow = getRouteLogRowByRequestId('upstream-count');
-    expect(
-      within(upstreamCountRow).getByTestId('route-request-token-usage-label')
-    ).toHaveTextContent('Token 计数 · 不计入推理用量');
+    expect(within(upstreamCountRow).getByTestId('route-request-token-summary')).toHaveAttribute(
+      'title',
+      'Token 计数 · 不计入推理用量'
+    );
     expect(within(upstreamCountRow).getByTestId('route-request-cost')).toHaveTextContent('—');
   });
 
@@ -1256,7 +1246,7 @@ describe('LogsPage', () => {
     await waitFor(() => expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(3));
     const rows = screen.getAllByTestId('route-request-log-row');
     expect(within(rows[0]).getByTestId('route-request-token-summary')).toHaveTextContent(
-      'T —IN —OUT —C.R —C.W —'
+      'IN —OUT —C.W —C.R —'
     );
     expect(within(rows[0]).getByTestId('route-request-cost')).toHaveTextContent('0.5');
     expect(
@@ -1275,7 +1265,7 @@ describe('LogsPage', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('filters route request logs by CLI and updates summary counts', async () => {
+  it('filters route request logs by dynamic Agent identity and updates summary counts', async () => {
     const removedCliType = ['gemini', 'Cli'].join('');
     vi.mocked(routeApi.getRequestLogs).mockResolvedValue({
       success: true,
@@ -1284,6 +1274,8 @@ describe('LogsPage', () => {
           id: 'route-filter-codex',
           requestId: 'codex-filter',
           cliType: 'codex',
+          agentId: 'codex-agent',
+          agentName: 'Codex',
           attempt: 1,
           outcome: 'success',
           createdAt: 100,
@@ -1292,6 +1284,8 @@ describe('LogsPage', () => {
           id: 'route-filter-claude',
           requestId: 'claude-filter',
           cliType: 'claudeCode',
+          agentId: 'claude-agent',
+          agentName: 'Claude Code',
           attempt: 1,
           outcome: 'failure',
           createdAt: 200,
@@ -1301,6 +1295,8 @@ describe('LogsPage', () => {
           id: 'route-filter-grok',
           requestId: 'grok-filter',
           cliType: 'grokBuild',
+          agentId: 'grok-agent',
+          agentName: 'Grok Build',
           attempt: 1,
           outcome: 'success',
           createdAt: 250,
@@ -1309,6 +1305,8 @@ describe('LogsPage', () => {
           id: 'route-filter-removed',
           requestId: 'removed-filter',
           cliType: removedCliType as never,
+          agentId: 'zcode-agent',
+          agentName: 'Zcode',
           attempt: 1,
           outcome: 'success',
           createdAt: 300,
@@ -1318,17 +1316,14 @@ describe('LogsPage', () => {
 
     render(<LogsPage />);
 
-    await waitFor(() => expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(3));
-    expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(3);
+    await waitFor(() => expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(4));
+    expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(4);
     const rows = screen.getAllByTestId('route-request-log-row');
-    expect(within(rows[1]).getByTestId('route-request-cli-icon')).toHaveAttribute(
-      'aria-label',
-      'Claude Code'
-    );
-    expect(within(rows[1]).getByTestId('route-request-cli-icon').className).not.toMatch(
-      /bg-|border/
-    );
-    expect(screen.getByText('总尝试').parentElement).toHaveTextContent('总尝试3');
+    expect(within(rows[1]).getByTestId('route-request-agent')).toHaveTextContent('Claude Code');
+    expect(
+      within(rows[1]).getByTestId('route-request-agent').querySelector('[data-agent-logo]')
+    ).toHaveAttribute('data-agent-logo', 'claudeCode');
+    expect(screen.getByText('总尝试').parentElement).toHaveTextContent('总尝试4');
 
     fireEvent.click(screen.getByRole('button', { name: 'Claude Code' }));
 
@@ -1363,13 +1358,18 @@ describe('LogsPage', () => {
     expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(1);
     expect(getRouteLogRowByRequestId('grok-filter')).toBeInTheDocument();
     expect(
-      within(getRouteLogRowByRequestId('grok-filter')).getByTestId('route-request-cli-icon')
-    ).toHaveAttribute('aria-label', 'Grok Build');
+      within(getRouteLogRowByRequestId('grok-filter')).getByTestId('route-request-agent')
+    ).toHaveTextContent('Grok Build');
+    expect(
+      within(getRouteLogRowByRequestId('grok-filter'))
+        .getByTestId('route-request-agent')
+        .querySelector('[data-agent-logo]')
+    ).toHaveAttribute('data-agent-logo', 'grokBuild');
 
     fireEvent.click(screen.getByRole('button', { name: '全部' }));
 
-    expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(3);
-    expect(screen.getByText('3 条')).toBeInTheDocument();
+    expect(screen.getAllByTestId('route-request-log-row')).toHaveLength(4);
+    expect(screen.getByText('4 条')).toBeInTheDocument();
   });
 
   it('shows upstream failure details without repeating the status code', async () => {
@@ -1427,5 +1427,32 @@ describe('LogsPage', () => {
     expect(failureInfo).toHaveClass('gap-x-1');
     expect(failureInfo).not.toHaveAttribute('title');
     expect(failureInfo).not.toHaveTextContent('503');
+  });
+
+  it('shows diagnostics for neutral client-cancellation logs', async () => {
+    vi.mocked(routeApi.getRequestLogs).mockResolvedValue({
+      success: true,
+      data: [
+        buildRouteLog({
+          id: 'route-client-cancelled',
+          requestId: 'client-cancelled',
+          cliType: 'claudeCode',
+          attempt: 1,
+          outcome: 'neutral',
+          createdAt: 100,
+          statusCode: 499,
+          error: 'route_client_cancelled',
+        }),
+      ],
+    });
+
+    render(<LogsPage />);
+
+    await waitFor(() => expect(getRouteLogRowByRequestId('client-cancelled')).toBeInTheDocument());
+    const row = getRouteLogRowByRequestId('client-cancelled');
+    expect(within(row).getByTestId('route-request-status-code')).toHaveTextContent('499');
+    const diagnostic = within(row).getByTestId('route-request-failure-info');
+    expect(diagnostic).toHaveTextContent('route_client_cancelled');
+    expect(diagnostic).toHaveClass('text-[var(--warning)]');
   });
 });

@@ -7,19 +7,6 @@ import { VerticalSidebar } from '../renderer/components/Sidebar/VerticalSidebar'
 import { useRouteStore } from '../renderer/store/routeStore';
 import { useUIStore } from '../renderer/store/uiStore';
 
-vi.mock('../renderer/components/CliConfigStatus', () => ({
-  CliConfigStatusPanel: ({ layout, showRefresh, showEdit, showReset }: any) => (
-    <div data-testid={`cli-status-${layout ?? 'inline'}`}>
-      <div>Mock CLI Claude</div>
-      <div>Mock CLI Codex</div>
-      <div>Mock CLI Gemini</div>
-      {showRefresh ? <button type="button">刷新</button> : null}
-      {showEdit ? <button type="button">编辑</button> : null}
-      {showReset ? <button type="button">重置</button> : null}
-    </div>
-  ),
-}));
-
 describe('app shell redesign', () => {
   beforeEach(() => {
     useRouteStore.setState({ serverRunning: false });
@@ -95,13 +82,12 @@ describe('app shell redesign', () => {
     expect(screen.getByRole('button', { name: '设置' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '模型重定向' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '代理统计' })).not.toBeInTheDocument();
-    expect(screen.getByText('代理服务器：')).toBeInTheDocument();
     expect(screen.getByTestId('sidebar-route-server-running')).toHaveTextContent('运行中');
     expect(
       within(nav as HTMLElement)
         .getAllByRole('button')
         .map(button => button.getAttribute('aria-label'))
-    ).toEqual(['数据总览', '站点管理', '本地路由', '路由日志', '设置']);
+    ).toEqual(['数据总览', '站点管理', '本地路由', '模型映射', '配置文件', '路由日志', '设置']);
   });
 
   it('supports manual sidebar mode switching and keeps version/update info in the bottom section', () => {
@@ -140,11 +126,6 @@ describe('app shell redesign', () => {
     expect(screen.getByText('API Hub')).toBeInTheDocument();
     expect(routeServerStatus).toHaveClass('max-h-10', 'opacity-100');
     expect(routeServerStatus.nextElementSibling).toBe(footer);
-    expect(within(footer).getByTestId('sidebar-cli-block')).toHaveClass(
-      'max-h-[220px]',
-      'opacity-100'
-    );
-    expect(within(footer).getByTestId('cli-status-stacked')).toBeInTheDocument();
     expect(within(footer).getByText('版本 v3.0.1')).toBeInTheDocument();
     expect(within(footer).getByRole('button', { name: '更新 v3.0.2' })).toBeInTheDocument();
     expect(screen.getByTestId('sidebar-route-server-stopped')).toHaveTextContent('停止');
@@ -155,17 +136,8 @@ describe('app shell redesign', () => {
     expect(screen.queryByText('API Hub')).not.toBeInTheDocument();
     expect(routeServerStatus).toHaveClass('max-h-0', 'opacity-0');
     const routeButton = screen.getByRole('button', { name: '本地路由' });
-    expect(routeButton).toHaveAttribute('title', '本地路由（代理服务器已停止）');
-    expect(
-      within(routeButton).getByTestId('sidebar-route-icon-status-stopped')
-    ).toBeInTheDocument();
-    expect(within(routeButton).getByTestId('sidebar-route-icon-badge-stopped')).toBeInTheDocument();
-    expect(within(footer).getByTestId('sidebar-cli-block')).toHaveClass('max-h-0', 'opacity-0');
-    expect(within(footer).getByRole('button', { name: '打开本地 CLI 配置' })).toBeInTheDocument();
-    expect(within(footer).getByTestId('sidebar-footer-separator')).toHaveClass(
-      'border-t',
-      'border-[var(--line-soft)]'
-    );
+    expect(routeButton).toHaveAttribute('title', '本地路由');
+    expect(within(footer).getByTestId('sidebar-footer-separator')).toBeInTheDocument();
     expect(screen.queryByText('代理服务器：')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '站点数据' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '路由数据' })).not.toBeInTheDocument();
@@ -197,11 +169,7 @@ describe('app shell redesign', () => {
     const routeButton = screen.getByRole('button', { name: '本地路由' });
 
     expect(screen.getByTestId('sidebar-route-server-status')).toHaveClass('max-h-0', 'opacity-0');
-    expect(routeButton).toHaveAttribute('title', '本地路由（代理服务器运行中）');
-    expect(
-      within(routeButton).getByTestId('sidebar-route-icon-status-running')
-    ).toBeInTheDocument();
-    expect(within(routeButton).getByTestId('sidebar-route-icon-badge-running')).toBeInTheDocument();
+    expect(routeButton).toHaveAttribute('title', '本地路由');
     expect(screen.queryByText('代理服务器：')).not.toBeInTheDocument();
   });
 
@@ -398,18 +366,6 @@ describe('app shell redesign', () => {
       ),
     }));
 
-    vi.doMock('../renderer/components/CliConfigStatus', () => ({
-      CliConfigStatusPanel: ({ layout, showRefresh, showEdit, showReset }: any) => (
-        <div data-testid={`cli-status-${layout ?? 'inline'}`}>
-          <div>Mock CLI Claude</div>
-          <div>Mock CLI Codex</div>
-          <div>Mock CLI Gemini</div>
-          {showRefresh ? <button type="button">刷新</button> : null}
-          {showEdit ? <button type="button">编辑</button> : null}
-          {showReset ? <button type="button">重置</button> : null}
-        </div>
-      ),
-    }));
 
     vi.doMock('../renderer/pages/SitesPage', () => ({
       SitesPage: () => <div>Mock Sites Page</div>,
@@ -441,6 +397,14 @@ describe('app shell redesign', () => {
 
     vi.doMock('../renderer/pages/RoutePage', () => ({
       RoutePage: () => <div>Mock Route Page</div>,
+    }));
+
+    vi.doMock('../renderer/pages/ModelMappingPage', () => ({
+      ModelMappingPage: () => <div>Mock Model Mapping Page</div>,
+    }));
+
+    vi.doMock('../renderer/pages/ConfigFilesPage', () => ({
+      ConfigFilesPage: () => <div>Mock Config Files Page</div>,
     }));
 
     vi.doMock('../renderer/store/configStore', () => ({
@@ -499,7 +463,7 @@ describe('app shell redesign', () => {
     const { container } = render(<App />);
 
     expect(screen.queryByTestId('cli-status-inline')).not.toBeInTheDocument();
-    expect(screen.getByTestId('cli-status-stacked')).toBeInTheDocument();
+    expect(screen.queryByTestId('cli-status-stacked')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '更新 v3.0.2' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: APP_PAGE_META.sites.title })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: APP_PAGE_META.sites.title })).toHaveAttribute(
@@ -656,18 +620,6 @@ describe('app shell redesign', () => {
       ),
     }));
 
-    vi.doMock('../renderer/components/CliConfigStatus', () => ({
-      CliConfigStatusPanel: ({ layout, showRefresh, showEdit, showReset }: any) => (
-        <div data-testid={`cli-status-${layout ?? 'inline'}`}>
-          <div>Mock CLI Claude</div>
-          <div>Mock CLI Codex</div>
-          <div>Mock CLI Gemini</div>
-          {showRefresh ? <button type="button">刷新</button> : null}
-          {showEdit ? <button type="button">编辑</button> : null}
-          {showReset ? <button type="button">重置</button> : null}
-        </div>
-      ),
-    }));
 
     vi.doMock('../renderer/pages/SitesPage', () => {
       const React = require('react');
@@ -715,6 +667,14 @@ describe('app shell redesign', () => {
 
     vi.doMock('../renderer/pages/RoutePage', () => ({
       RoutePage: () => <div>Mock Route Page</div>,
+    }));
+
+    vi.doMock('../renderer/pages/ModelMappingPage', () => ({
+      ModelMappingPage: () => <div>Mock Model Mapping Page</div>,
+    }));
+
+    vi.doMock('../renderer/pages/ConfigFilesPage', () => ({
+      ConfigFilesPage: () => <div>Mock Config Files Page</div>,
     }));
 
     vi.doMock('../renderer/store/configStore', () => ({
@@ -895,15 +855,6 @@ describe('app shell redesign', () => {
       ),
     }));
 
-    vi.doMock('../renderer/components/CliConfigStatus', () => ({
-      CliConfigStatusPanel: ({ layout, showRefresh, showEdit, showReset }: any) => (
-        <div data-testid={`cli-status-${layout ?? 'inline'}`}>
-          {showRefresh ? <button type="button">刷新</button> : null}
-          {showEdit ? <button type="button">编辑</button> : null}
-          {showReset ? <button type="button">重置</button> : null}
-        </div>
-      ),
-    }));
 
     vi.doMock('../renderer/pages/SitesPage', () => ({
       SitesPage: () => <div>Mock Sites Page</div>,
@@ -944,6 +895,14 @@ describe('app shell redesign', () => {
 
     vi.doMock('../renderer/pages/RoutePage', () => ({
       RoutePage: () => <div>Mock Route Page</div>,
+    }));
+
+    vi.doMock('../renderer/pages/ModelMappingPage', () => ({
+      ModelMappingPage: () => <div>Mock Model Mapping Page</div>,
+    }));
+
+    vi.doMock('../renderer/pages/ConfigFilesPage', () => ({
+      ConfigFilesPage: () => <div>Mock Config Files Page</div>,
     }));
 
     vi.doMock('../renderer/store/configStore', () => ({
@@ -1105,18 +1064,6 @@ describe('app shell redesign', () => {
       ),
     }));
 
-    vi.doMock('../renderer/components/CliConfigStatus', () => ({
-      CliConfigStatusPanel: ({ layout, showRefresh, showEdit, showReset }: any) => (
-        <div data-testid={`cli-status-${layout ?? 'inline'}`}>
-          <div>Mock CLI Claude</div>
-          <div>Mock CLI Codex</div>
-          <div>Mock CLI Gemini</div>
-          {showRefresh ? <button type="button">刷新</button> : null}
-          {showEdit ? <button type="button">编辑</button> : null}
-          {showReset ? <button type="button">重置</button> : null}
-        </div>
-      ),
-    }));
 
     vi.doMock('../renderer/pages/SitesPage', () => ({
       SitesPage: () => <div>Mock Sites Page</div>,
@@ -1144,6 +1091,14 @@ describe('app shell redesign', () => {
 
     vi.doMock('../renderer/pages/RoutePage', () => ({
       RoutePage: () => <div>Mock Route Page</div>,
+    }));
+
+    vi.doMock('../renderer/pages/ModelMappingPage', () => ({
+      ModelMappingPage: () => <div>Mock Model Mapping Page</div>,
+    }));
+
+    vi.doMock('../renderer/pages/ConfigFilesPage', () => ({
+      ConfigFilesPage: () => <div>Mock Config Files Page</div>,
     }));
 
     vi.doMock('../renderer/store/configStore', () => ({

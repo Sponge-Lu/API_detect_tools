@@ -7,6 +7,11 @@ import {
   type EndpointTestStateView,
   type EndpointTestTarget,
 } from '../../../shared/types/route-proxy';
+import {
+  CLI_TARGET_PROTOCOLS,
+  normalizeCliTargetProtocol,
+  type CliTargetProtocol,
+} from '../../../shared/types/cli-config';
 import { toast } from '../../store/toastStore';
 import { AppButton } from '../AppButton/AppButton';
 import { AppSwitch } from '../AppSwitch';
@@ -23,6 +28,9 @@ const PROTOCOL_META: Record<EndpointTestProtocol, { title: string; endpoint: str
 
 interface EndpointTestPanelProps {
   target: EndpointTestTarget;
+  routeTargetProtocol?: CliTargetProtocol;
+  routeTargetProtocolNeedsConfirmation?: boolean;
+  onRouteTargetProtocolChange?: (protocol: CliTargetProtocol) => void | Promise<void>;
 }
 
 function formatTestedAt(value: number): string {
@@ -72,7 +80,12 @@ function getProtocolModels(
   );
 }
 
-export function EndpointTestPanel({ target }: EndpointTestPanelProps) {
+export function EndpointTestPanel({
+  target,
+  routeTargetProtocol,
+  routeTargetProtocolNeedsConfirmation,
+  onRouteTargetProtocolChange,
+}: EndpointTestPanelProps) {
   const targetRef = useRef(target);
   targetRef.current = target;
   const [view, setView] = useState<EndpointTestStateView | null>(null);
@@ -202,6 +215,33 @@ export function EndpointTestPanel({ target }: EndpointTestPanelProps) {
 
   return (
     <div className="space-y-3">
+      <PanelSection title="路由上游协议" collapsible={false}>
+        <select
+          aria-label="路由上游协议"
+          value={normalizeCliTargetProtocol(routeTargetProtocol)}
+          onChange={event =>
+            void onRouteTargetProtocolChange?.(normalizeCliTargetProtocol(event.target.value))
+          }
+          className="h-9 w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 text-sm text-[var(--text-primary)] outline-none focus:ring-2 focus:ring-[var(--focus-ring)]"
+        >
+          {CLI_TARGET_PROTOCOLS.map(protocol => (
+            <option key={protocol} value={protocol}>
+              {protocol === 'native'
+                ? '自动 / 原生'
+                : protocol === 'anthropic-messages'
+                  ? 'Anthropic Messages'
+                  : protocol === 'openai-chat-completions'
+                    ? 'OpenAI Chat Completions'
+                    : 'OpenAI Responses'}
+            </option>
+          ))}
+        </select>
+        {routeTargetProtocolNeedsConfirmation ? (
+          <div className="mt-2 text-xs text-[var(--warning)]">
+            旧 CLI 上游协议存在冲突，请确认当前选择。
+          </div>
+        ) : null}
+      </PanelSection>
       {ENDPOINT_TEST_PROTOCOLS.map(protocol => {
         const meta = PROTOCOL_META[protocol];
         const state = view.protocols[protocol];

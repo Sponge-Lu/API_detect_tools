@@ -43,6 +43,7 @@
     "@tanstack/react-virtual": "^3.13.12",
     "axios": "^1.6.0",
     "electron-log": "^5.4.3",
+    "jsonc-parser": "^3.3.1",
     "pinyin-pro": "^3.27.0",
     "puppeteer-core": "^21.0.0",
     "webdav": "^5.8.0",

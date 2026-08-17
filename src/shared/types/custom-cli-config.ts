@@ -47,6 +47,10 @@ export interface CustomCliConfig {
   baseUrl: string;
   /** API Key */
   apiKey: string;
+  /** 真实路由请求使用的上游协议；测试请求始终按被测端点原生发送 */
+  routeTargetProtocol?: CliTargetProtocol;
+  routeTargetProtocolNeedsConfirmation?: boolean;
+  routeAuthScheme?: 'bearer' | 'x-api-key';
   /** 加油站链接 */
   gasStationUrl?: string;
   /** 直连配置分组倍率，用于估算实际费用 */

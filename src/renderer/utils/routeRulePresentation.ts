@@ -1,15 +1,18 @@
-import type { RouteCliType, RoutePatternType, RouteRule } from '../../shared/types/route-proxy';
+import type {
+  RoutePatternType,
+  RouteRule,
+  RouteSourceProtocol,
+} from '../../shared/types/route-proxy';
 
 export interface RouteRuleLookupContext {
   siteNamesById?: Record<string, string>;
   accountNamesById?: Record<string, string>;
 }
 
-const CLI_LABELS: Record<RouteCliType, string> = {
-  claudeCode: 'Claude Code',
-  codex: 'Codex',
-  openCode: 'OpenCode',
-  grokBuild: 'Grok Build',
+const PROTOCOL_LABELS: Record<RouteSourceProtocol, string> = {
+  'anthropic-messages': 'Anthropic Messages',
+  'openai-responses': 'OpenAI Responses',
+  'openai-chat-completions': 'OpenAI Chat Completions',
 };
 
 const PATTERN_TYPE_LABELS: Record<RoutePatternType, string> = {
@@ -39,8 +42,8 @@ function formatNamedScope(
   return `${ids.length} 个${entityLabel}`;
 }
 
-export function getRouteCliLabel(cliType: RouteCliType): string {
-  return CLI_LABELS[cliType];
+export function getRouteProtocolLabel(sourceProtocol: RouteSourceProtocol): string {
+  return PROTOCOL_LABELS[sourceProtocol];
 }
 
 export function getRoutePatternTypeLabel(patternType: RoutePatternType): string {
@@ -68,13 +71,13 @@ export function buildRouteRuleSummary(
   rule: RouteRule,
   context: RouteRuleLookupContext = {}
 ): string {
-  const cliLabel = getRouteCliLabel(rule.cliType);
+  const protocolLabel = getRouteProtocolLabel(rule.sourceProtocol);
   const matchText =
     rule.pattern === '*'
       ? '匹配全部模型'
       : `${getRoutePatternTypeLabel(rule.patternType)} ${rule.pattern}`;
 
-  return `${cliLabel} 请求 ${matchText} 时生效；范围：${buildRouteRuleScopeSummary(rule, context)}`;
+  return `${protocolLabel} 请求 ${matchText} 时生效；范围：${buildRouteRuleScopeSummary(rule, context)}`;
 }
 
 export function buildRouteRuleSelectionReason(rule: RouteRule): string {
@@ -85,7 +88,7 @@ export function buildRouteRuleTags(
   rule: RouteRule,
   context: RouteRuleLookupContext = {}
 ): string[] {
-  const tags = [getRouteCliLabel(rule.cliType), getRoutePatternTypeLabel(rule.patternType)];
+  const tags = [getRouteProtocolLabel(rule.sourceProtocol), getRoutePatternTypeLabel(rule.patternType)];
   if (rule.pattern === '*') {
     tags.push('全部模型');
   } else {

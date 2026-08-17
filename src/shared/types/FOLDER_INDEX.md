@@ -15,10 +15,11 @@
 ### 核心类型文件
 | 文件 | 职责 | 关键类型 |
 |------|------|--------|
-| **site.ts** | 站点、检测缓存、四种内置 CLI 配置与运行期快照类型 | Site, UnifiedSite, CheckinStats, SiteDailySnapshot, RuntimeCacheFile, ApiKeyAvailability |
-| **route-proxy.ts** | 路由工作台与独立端点测试类型，含模型/思考强度和三协议路径映射 | RoutingConfig, RouteProxyServerConfig, RouteModelRegistryConfig, EndpointTestResult, EndpointTestTargetState, RouteAnalyticsObjectStatsItem |
+| **site.ts** | 站点、账户接入点级上游协议、检测缓存与运行期快照类型 | Site, UnifiedSite, AccountCredential, SiteDailySnapshot, RuntimeCacheFile |
+| **route-proxy.ts** | 通用网关、非敏感 Responses affinity 摘要、模型映射、会话路由实例与端点历史类型 | RoutingConfig, RouteStateAffinitySummary, RouteInstance, HistoryEndpointTrack |
+| **config-file-profile.ts** | 版本化配置方案、含协议元数据的目标目录、文件事务和对话记录扫描类型 | ConfigFileProfile, ConfigFileTargetCatalogEntry, ConfigFilePreviewTransaction, ConfigSessionRecordScanResult |
 | **cli-config.ts** | 四种内置 CLI 的配置与目标协议类型 | BuiltinCliType, CliConfig, CLI_TARGET_PROTOCOLS |
-| **custom-cli-config.ts** | 自定义 CLI 配置类型，`cliSettings` 覆盖四种内置 CLI | CustomCliConfig, CustomCliSettings, manualModels |
+| **custom-cli-config.ts** | 直连接入点配置及接入点级上游协议 | CustomCliConfig, routeTargetProtocol, manualModels |
 | **config-detection.ts** | 四种 CLI 本地配置静态检测类型与官方端点/路径 | ConfigSourceType, CliDetectionResult, AllCliDetectionResult 等 |
 | **credit.ts** | Linux Do Credit 积分类型 | CreditInfo, CreditConfig, CreditState, CreditResponse 等 |
 ---
@@ -170,7 +171,7 @@ const status: SiteStatus = {
 };
 ```
 ### route-proxy.ts - 路由工作台类型
-**职责**: 定义路由代理、模型注册表、独立端点测试和统计分析相关共享契约
+**职责**: 定义路由代理、模型注册表、独立端点测试、profile affinity 分类摘要、History 请求端点标签和统计分析相关共享契约
 **关键类型**:
 ```typescript
 interface RouteProxyServerConfig {
@@ -194,6 +195,22 @@ interface EndpointTestResult {
   success: boolean;
   model: string;
   testedAt: number;
+}
+
+interface RouteInstanceKey {
+  agentId: string;
+  runtimeSlotId: string;
+  sessionId: string;
+}
+
+interface RouteInstance {
+  id: string;
+  routeKey?: RouteInstanceKey;
+  routingState: 'armed' | 'active' | 'closed' | 'cancelled';
+  modelId: string;
+  reasoningEffort: string;
+  createdAt?: number;
+  lastRequestAt?: number;
 }
 
 interface RouteAnalyticsObjectStatsItem {

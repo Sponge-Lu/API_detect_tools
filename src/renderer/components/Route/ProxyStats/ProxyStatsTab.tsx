@@ -1,8 +1,8 @@
 /**
- * 代理服务&统计 Sub-Tab
- * 输入: routeStore (服务器配置/模型选择/统计)
- * 输出: 服务器状态 + CLI 路由模型选择 + 统计仪表盘
- * 定位: 路由页代理统计子面板
+ * 代理服务&CLI 路由模型选择
+ * 输入: routeStore (服务器配置/模型选择)
+ * 输出: 服务器状态 + CLI 路由模型选择
+ * 定位: 路由页代理服务器与 CLI 模型选择面板
  */
 
 import { useCallback, useEffect, useState, useRef, useMemo, useId } from 'react';
@@ -14,7 +14,6 @@ import {
   KeyRound,
   Loader2,
   Activity,
-  BarChart3,
   Edit2,
   RotateCcw,
   X,
@@ -22,6 +21,8 @@ import {
   ChevronDown,
   Eye,
   EyeOff,
+  Trash2,
+  Plus,
 } from 'lucide-react';
 import { useShallow } from 'zustand/shallow';
 import { useRouteStore } from '../../../store/routeStore';
@@ -30,6 +31,7 @@ import { AppCard, AppCardContent } from '../../AppCard';
 import { AppButton } from '../../AppButton/AppButton';
 import { AppInput } from '../../AppInput/AppInput';
 import { AppModal } from '../../AppModal/AppModal';
+import { AgentLogo, AgentLogoSelect } from '../../AgentLogo';
 import { buildRecommendedCliModelOptions } from '../Redirection/ModelRedirectionTab';
 import ClaudeCodeIcon from '../../../assets/cli-icons/claude-code.svg';
 import CodexIcon from '../../../assets/cli-icons/codex.svg';
@@ -43,7 +45,13 @@ import {
   type RouteCliType,
   type RouteThinkingEffort,
   type RouteModelRegistryEntry,
+  type RouteStateAffinitySummary,
 } from '../../../../shared/types/route-proxy';
+import type {
+  ConfigFilePreviewTransaction,
+  ConfigFileProfile,
+  AgentLogoId,
+} from '../../../../shared/types/config-file-profile';
 import {
   generateClaudeCodeRouteConfig,
   generateCodexRouteConfig,
@@ -62,15 +70,9 @@ const CLI_ICON_CONFIGS: Record<RouteCliType, { src: string; className: string }>
   grokBuild: { src: GrokBuildIcon, className: 'h-4 w-4' },
 };
 const ROUTE_PROXY_DISPLAY_NAME = '本地路由代理';
-const SERVER_FIELD_LABEL_CLASS_NAME =
-  'mb-0 shrink-0 text-xs leading-4 text-[var(--text-secondary)]';
-const SERVER_FIELD_BASE_CONTROL_CLASS_NAME =
-  'h-6 rounded bg-[var(--surface-2)] px-2 py-1 font-mono text-xs leading-4 text-[var(--text-secondary)]';
-const SERVER_FIELD_INPUT_CLASS_NAME = `${SERVER_FIELD_BASE_CONTROL_CLASS_NAME} min-w-0 flex-1 border-0 outline-none transition-colors placeholder-[var(--text-tertiary)] focus:text-[var(--text-primary)] focus:ring-2 focus:ring-[var(--focus-ring)]`;
-const SERVER_FIELD_VALUE_CLASS_NAME = `${SERVER_FIELD_BASE_CONTROL_CLASS_NAME} min-w-0 flex-1 truncate`;
+const PROFILE_CREDENTIAL_ICON_BUTTON_CLASS =
+  'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-1)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50';
 
-type TimeRange = '24h' | '7d';
-const STATS_TIME_RANGES: TimeRange[] = ['24h', '7d'];
 type RoutePreviewState = {
   cliType: RouteCliType;
   isEditing: boolean;
@@ -80,7 +82,6 @@ type CustomThinkingEffortDialogState = {
   cliType: RouteCliType;
   value: string;
 };
-
 interface ThinkingEffortSelectProps {
   cliType: RouteCliType;
   value: RouteThinkingEffort | null | undefined;
@@ -299,16 +300,6 @@ function ThinkingEffortSelect({
 interface RoutePanelProps {
   className?: string;
   variant?: 'card' | 'pane';
-}
-
-interface RouteAnalyticsSummary {
-  totalRequests: number;
-  successRate: number;
-  promptTokens: number;
-  completionTokens: number;
-  cacheCreationTokens?: number;
-  cacheReadTokens?: number;
-  estimatedCostUsd?: number;
 }
 
 function resolveCliSelectionDisplayValue(
@@ -632,20 +623,61 @@ function RouteApplyPopover({
 }
 
 export function ServerSection({ className = '' }: RoutePanelProps) {
-  const { config, serverRunning, saveServerConfig, regenerateApiKey, startServer, stopServer } =
-    useRouteStore(
-      useShallow(s => ({
-        config: s.config,
-        serverRunning: s.serverRunning,
-        saveServerConfig: s.saveServerConfig,
-        regenerateApiKey: s.regenerateApiKey,
-        startServer: s.startServer,
-        stopServer: s.stopServer,
-      }))
-    );
+  const { config, serverRunning, saveServerConfig, startServer, stopServer } = useRouteStore(
+    useShallow(s => ({
+      config: s.config,
+      serverRunning: s.serverRunning,
+      saveServerConfig: s.saveServerConfig,
+      startServer: s.startServer,
+      stopServer: s.stopServer,
+    }))
+  );
   const [toggling, setToggling] = useState(false);
-  const [showKey, setShowKey] = useState(false);
+  const [localRouteProfiles, setLocalRouteProfiles] = useState<ConfigFileProfile[]>([]);
+  const [visibleProfileKeys, setVisibleProfileKeys] = useState<Record<string, boolean>>({});
+  const [credentialActionProfileId, setCredentialActionProfileId] = useState<string | null>(null);
+  const [rotationPreview, setRotationPreview] = useState<ConfigFilePreviewTransaction | null>(null);
+  const [stateClearPreview, setStateClearPreview] = useState<RouteStateAffinitySummary | null>(
+    null
+  );
+  const [credentialEditorProfileId, setCredentialEditorProfileId] = useState<string | 'new' | null>(
+    null
+  );
+  const [credentialDraft, setCredentialDraft] = useState<{
+    name: string;
+    agentLogoId?: AgentLogoId;
+  }>({ name: '' });
+  const [savingCredential, setSavingCredential] = useState(false);
+  const [deleteCredentialProfile, setDeleteCredentialProfile] = useState<ConfigFileProfile | null>(
+    null
+  );
   const server = config?.server;
+
+  const reloadProfiles = useCallback(async () => {
+    const profiles = await window.electronAPI.configFileProfiles.load();
+    setLocalRouteProfiles(profiles.filter(profile => profile.target.kind === 'local-route'));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void reloadProfiles().catch(
+      error =>
+        !cancelled && toast.error(error instanceof Error ? error.message : '加载代理服务器配置失败')
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadProfiles]);
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.appData?.onChanged?.(({ domains }) => {
+      if (!domains.includes('config-file-profiles')) return;
+      void reloadProfiles().catch(error =>
+        toast.error(error instanceof Error ? error.message : '刷新客户端独立凭证失败')
+      );
+    });
+    return () => unsubscribe?.();
+  }, [reloadProfiles]);
 
   if (!config || !server) return null;
 
@@ -667,60 +699,228 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
     }
   };
 
+  const openCredentialEditor = (profile?: ConfigFileProfile) => {
+    setCredentialDraft({
+      name: profile?.name || '',
+      agentLogoId: profile?.agentLogoId,
+    });
+    setCredentialEditorProfileId(profile?.id || 'new');
+  };
+
+  const saveCredentialProfile = async () => {
+    const name = credentialDraft.name.trim();
+    if (!name || !credentialEditorProfileId) return;
+    setSavingCredential(true);
+    try {
+      if (credentialEditorProfileId === 'new') {
+        const now = Date.now();
+        const saved = await window.electronAPI.configFileProfiles.upsert({
+          profile: {
+            id: crypto.randomUUID(),
+            name,
+            agentLogoId: credentialDraft.agentLogoId,
+            credentialOnly: true,
+            files: [],
+            sessionRecordConnectors: [],
+            sessionRecordPaths: [],
+            target: { kind: 'local-route', model: null },
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        setLocalRouteProfiles(current => [...current, saved]);
+        setCredentialEditorProfileId(saved.id);
+        const generated = await window.electronAPI.configFileProfiles.generateRouteKey({
+          profileId: saved.id,
+          expectedRevision: saved.revision,
+        });
+        setLocalRouteProfiles(current =>
+          current.map(profile => (profile.id === generated.id ? generated : profile))
+        );
+        setVisibleProfileKeys(current => ({ ...current, [generated.id]: false }));
+        toast.success(`已添加 ${generated.name} 并生成独立 API Key`);
+      } else {
+        const current = localRouteProfiles.find(
+          profile => profile.id === credentialEditorProfileId
+        );
+        if (!current?.credentialOnly) throw new Error('仅凭证客户端不存在');
+        const updated = await window.electronAPI.configFileProfiles.upsert({
+          profile: {
+            ...current,
+            name,
+            agentLogoId: credentialDraft.agentLogoId,
+          },
+          expectedRevision: current.revision,
+        });
+        setLocalRouteProfiles(profiles =>
+          profiles.map(profile => (profile.id === updated.id ? updated : profile))
+        );
+        toast.success('客户端信息已更新');
+      }
+      setCredentialEditorProfileId(null);
+      setCredentialDraft({ name: '' });
+    } catch (error) {
+      await reloadProfiles().catch(() => undefined);
+      toast.error(error instanceof Error ? error.message : '保存客户端凭证失败');
+    } finally {
+      setSavingCredential(false);
+    }
+  };
+
+  const deleteStandaloneCredential = async () => {
+    if (!deleteCredentialProfile?.credentialOnly) return;
+    setSavingCredential(true);
+    try {
+      await window.electronAPI.configFileProfiles.delete({
+        profileId: deleteCredentialProfile.id,
+        expectedRevision: deleteCredentialProfile.revision,
+      });
+      setLocalRouteProfiles(current =>
+        current.filter(profile => profile.id !== deleteCredentialProfile.id)
+      );
+      setDeleteCredentialProfile(null);
+      toast.success('客户端独立凭证已删除');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '删除客户端凭证失败');
+    } finally {
+      setSavingCredential(false);
+    }
+  };
+
+  const generateProfileKey = async (profile: ConfigFileProfile) => {
+    setCredentialActionProfileId(profile.id);
+    try {
+      const updated = await window.electronAPI.configFileProfiles.generateRouteKey({
+        profileId: profile.id,
+        expectedRevision: profile.revision,
+      });
+      setLocalRouteProfiles(current =>
+        current.map(item => (item.id === updated.id ? updated : item))
+      );
+      setVisibleProfileKeys(current => ({ ...current, [updated.id]: false }));
+      toast.success(`已为 ${updated.name} 生成独立 API Key`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '生成独立 API Key 失败');
+    } finally {
+      setCredentialActionProfileId(null);
+    }
+  };
+
+  const previewProfileKeyRotation = async (profile: ConfigFileProfile) => {
+    setCredentialActionProfileId(profile.id);
+    try {
+      setRotationPreview(
+        await window.electronAPI.configFileProfiles.previewRouteKeyRotation({
+          profileId: profile.id,
+          expectedRevision: profile.revision,
+        })
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '生成 API Key 轮换预览失败');
+    } finally {
+      setCredentialActionProfileId(null);
+    }
+  };
+
+  const commitProfileKeyRotation = async () => {
+    if (!rotationPreview) return;
+    setCredentialActionProfileId(rotationPreview.profileId);
+    try {
+      await window.electronAPI.configFileProfiles.commit({
+        transactionId: rotationPreview.transactionId,
+      });
+      await reloadProfiles();
+      setVisibleProfileKeys(current => ({ ...current, [rotationPreview.profileId]: false }));
+      setRotationPreview(null);
+      toast.success('API Key 与客户端配置文件已同步轮换');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '轮换 API Key 失败');
+    } finally {
+      setCredentialActionProfileId(null);
+    }
+  };
+
+  const previewProfileStateClear = async (profile: ConfigFileProfile) => {
+    setCredentialActionProfileId(profile.id);
+    try {
+      const result = await window.electronAPI.route?.previewProfileStateClear?.(profile.id);
+      if (!result?.success || !result.data) {
+        throw new Error(result?.error || '无法读取状态资源影响范围');
+      }
+      setStateClearPreview(result.data);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '读取状态资源影响范围失败');
+    } finally {
+      setCredentialActionProfileId(null);
+    }
+  };
+
+  const commitProfileStateClear = async () => {
+    if (!stateClearPreview) return;
+    setCredentialActionProfileId(stateClearPreview.profileId);
+    try {
+      const result = await window.electronAPI.route?.clearProfileState?.(
+        stateClearPreview.profileId
+      );
+      if (!result?.success) throw new Error(result?.error || '清理状态资源失败');
+      setStateClearPreview(null);
+      toast.success(`已清理 ${result.data?.removed || 0} 条状态资源映射`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '清理状态资源失败');
+    } finally {
+      setCredentialActionProfileId(null);
+    }
+  };
+
   return (
-    <AppCard
-      data-testid="route-server-section-card"
-      className={className}
-      hoverable={false}
-      blur={false}
-    >
-      <AppCardContent className="p-2.5">
-        <div className="mb-2 flex min-w-0 items-center gap-2">
-          <Activity className="h-4 w-4 shrink-0 text-[var(--accent)]" />
-          <span className="truncate text-sm font-medium">代理服务器</span>
-          <span
-            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
-              serverRunning
-                ? 'bg-[var(--success-soft)] text-[var(--success)]'
-                : 'bg-[var(--surface-2)] text-[var(--text-secondary)]'
-            }`}
-          >
+    <>
+      <AppCard
+        data-testid="route-server-section-card"
+        className={className}
+        hoverable={false}
+        blur={false}
+      >
+        <AppCardContent className="p-4">
+          <div className="mb-3 flex min-w-0 items-center gap-2">
+            <Activity className="h-4 w-4 shrink-0 text-[var(--accent)]" />
+            <span className="truncate text-sm font-medium">代理服务器</span>
             <span
-              className={`h-1.5 w-1.5 rounded-full ${serverRunning ? 'bg-[var(--success)]' : 'bg-[var(--icon-muted)]'}`}
-            />
-            {serverRunning ? '运行中' : '已停止'}
-          </span>
-          <AppButton
-            variant={serverRunning ? 'danger' : 'primary'}
-            size="sm"
-            className={
-              serverRunning
-                ? 'ml-auto h-7 !min-h-7 w-fit shrink-0 px-2 !bg-[var(--danger)] !text-[var(--text-on-accent)] hover:!opacity-90'
-                : 'ml-auto h-7 !min-h-7 w-fit shrink-0 px-2 !bg-[var(--success)] !text-[var(--text-on-accent)] hover:!opacity-90'
-            }
-            onClick={handleToggle}
-            disabled={toggling}
+              className={`inline-flex items-center gap-1 rounded-[var(--radius-full)] px-2 py-0.5 text-xs font-medium ${
+                serverRunning
+                  ? 'bg-[var(--success-soft)] text-[var(--success)]'
+                  : 'bg-[var(--surface-2)] text-[var(--text-secondary)]'
+              }`}
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${serverRunning ? 'bg-[var(--success)]' : 'bg-[var(--icon-muted)]'}`}
+              />
+              {serverRunning ? '运行中' : '已停止'}
+            </span>
+            <AppButton
+              variant={serverRunning ? 'danger' : 'primary'}
+              size="sm"
+              className="ml-auto shrink-0"
+              onClick={handleToggle}
+              disabled={toggling}
+            >
+              {toggling ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : serverRunning ? (
+                <Square className="h-3.5 w-3.5" />
+              ) : (
+                <Play className="h-3.5 w-3.5" />
+              )}
+              <span className="ml-1">{serverRunning ? '停止' : '启动'}</span>
+            </AppButton>
+          </div>
+          <div
+            data-testid="route-server-primary-config-row"
+            className="grid grid-cols-1 gap-3 md:grid-cols-3"
           >
-            {toggling ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : serverRunning ? (
-              <Square className="h-3.5 w-3.5" />
-            ) : (
-              <Play className="h-3.5 w-3.5" />
-            )}
-            <span className="ml-1">{serverRunning ? '停止' : '启动'}</span>
-          </AppButton>
-        </div>
-        <div
-          data-testid="route-server-primary-config-row"
-          className="grid grid-cols-[minmax(5.5rem,0.7fr)_minmax(8rem,1fr)_minmax(10rem,1.1fr)_minmax(12rem,1.35fr)] items-center gap-x-2 gap-y-1.5 text-sm"
-        >
-          <div className="flex min-w-0 items-center gap-1.5">
-            <label htmlFor="route-server-port" className={SERVER_FIELD_LABEL_CLASS_NAME}>
-              端口
-            </label>
-            <input
+            <AppInput
               id="route-server-port"
+              label="端口"
+              size="sm"
               type="text"
               inputMode="numeric"
               pattern="[0-9]*"
@@ -729,86 +929,386 @@ export function ServerSection({ className = '' }: RoutePanelProps) {
                 const port = parseInt(e.target.value, 10);
                 if (!isNaN(port) && port > 0 && port < 65536) saveServerConfig({ port });
               }}
-              className={SERVER_FIELD_INPUT_CLASS_NAME}
             />
-          </div>
-          <div className="flex min-w-0 items-center gap-1.5">
-            <label htmlFor="route-server-upstream-proxy" className={SERVER_FIELD_LABEL_CLASS_NAME}>
-              代理
-            </label>
-            <input
+            <AppInput
               id="route-server-upstream-proxy"
+              label="代理"
+              size="sm"
               type="text"
               defaultValue={server.upstreamProxyUrl || ''}
               placeholder="http://127.0.0.1:7890"
               onBlur={e => saveServerConfig({ upstreamProxyUrl: e.target.value.trim() })}
-              className={SERVER_FIELD_INPUT_CLASS_NAME}
+            />
+            <AppInput
+              id="route-server-base-url"
+              label="Base URL"
+              size="sm"
+              type="text"
+              value={`http://${server.host}:${server.port}`}
+              readOnly
+              containerClassName="[&_input]:font-mono"
             />
           </div>
-          <div data-testid="route-server-credential-row" className="contents">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <label className={SERVER_FIELD_LABEL_CLASS_NAME}>Base URL</label>
-              <div
-                data-testid="route-server-base-url-value"
-                className={SERVER_FIELD_VALUE_CLASS_NAME}
-              >
-                http://{server.host}:{server.port}
+          <div className="mt-4 border-t border-[var(--line-muted)] pt-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">客户端独立凭证</p>
+                <p className="text-xs text-[var(--text-tertiary)]">
+                  配置文件客户端与手动添加的第三方供应商客户端共用独立认证。
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="text-xs text-[var(--text-tertiary)]">
+                  {localRouteProfiles.length} 个客户端
+                </span>
+                <AppButton size="sm" onClick={() => openCredentialEditor()}>
+                  <Plus className="h-3.5 w-3.5" />
+                  新增客户端
+                </AppButton>
               </div>
             </div>
-            <div className="flex min-w-0 items-center gap-1.5">
-              <label className={SERVER_FIELD_LABEL_CLASS_NAME}>API Key</label>
+            <div
+              className="grid grid-cols-3 gap-x-3 gap-y-1"
+              data-testid="route-profile-credentials"
+            >
+              {localRouteProfiles.length === 0 ? (
+                <p className="col-span-3 py-3 text-xs text-[var(--text-tertiary)]">
+                  暂无客户端独立凭证
+                </p>
+              ) : (
+                localRouteProfiles.map(profile => {
+                  const credential = profile.localRouteCredential;
+                  const visible = Boolean(visibleProfileKeys[profile.id]);
+                  const busy = credentialActionProfileId === profile.id;
+                  return (
+                    <div
+                      key={profile.id}
+                      data-testid={`route-profile-credential-${profile.id}`}
+                      className="min-w-0 space-y-1.5 border-t border-[var(--line-muted)] py-2.5"
+                    >
+                      <div className="flex min-w-0 items-center justify-between gap-2">
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <AgentLogo
+                            logoId={profile.agentLogoId}
+                            agentId={profile.builtin?.clientType}
+                            agentName={profile.name}
+                            className="h-5 w-5"
+                          />
+                          <p className="truncate text-xs font-medium" title={profile.name}>
+                            {profile.name}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-0.5">
+                          <p className="text-[10px] text-[var(--text-tertiary)]">
+                            {credential ? '已生成独立 Key' : '尚未生成 Key'}
+                          </p>
+                          {profile.credentialOnly ? (
+                            <>
+                              <button
+                                type="button"
+                                title="编辑客户端"
+                                aria-label={`编辑 ${profile.name}`}
+                                className="inline-flex h-6 w-6 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-tertiary)] hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
+                                onClick={() => openCredentialEditor(profile)}
+                              >
+                                <Edit2 className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                title="删除客户端"
+                                aria-label={`删除 ${profile.name}`}
+                                className="inline-flex h-6 w-6 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-tertiary)] hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]"
+                                onClick={() => setDeleteCredentialProfile(profile)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div
+                        data-testid={`route-profile-credential-controls-${profile.id}`}
+                        className="flex min-w-0 items-center gap-1"
+                      >
+                        <input
+                          aria-label={`${profile.name} API Key`}
+                          type={visible ? 'text' : 'password'}
+                          value={credential?.apiKey || ''}
+                          placeholder="尚未生成"
+                          readOnly
+                          className="h-8 min-w-0 flex-1 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 font-mono text-xs text-[var(--text-primary)]"
+                        />
+                        {credential ? (
+                          <div
+                            data-testid={`route-profile-credential-actions-${profile.id}`}
+                            className="flex shrink-0 items-center gap-0.5"
+                          >
+                            <button
+                              type="button"
+                              title={visible ? '隐藏' : '显示'}
+                              aria-label={`${visible ? '隐藏' : '显示'} ${profile.name} API Key`}
+                              className={PROFILE_CREDENTIAL_ICON_BUTTON_CLASS}
+                              onClick={() =>
+                                setVisibleProfileKeys(current => ({
+                                  ...current,
+                                  [profile.id]: !visible,
+                                }))
+                              }
+                            >
+                              {visible ? (
+                                <EyeOff className="h-3.5 w-3.5" />
+                              ) : (
+                                <Eye className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              title="复制"
+                              aria-label={`复制 ${profile.name} API Key`}
+                              className={PROFILE_CREDENTIAL_ICON_BUTTON_CLASS}
+                              onClick={() => {
+                                void navigator.clipboard.writeText(credential.apiKey);
+                                toast.success('已复制');
+                              }}
+                            >
+                              <Copy className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              title="轮换"
+                              aria-label={`轮换 ${profile.name} API Key`}
+                              className={PROFILE_CREDENTIAL_ICON_BUTTON_CLASS}
+                              onClick={() => void previewProfileKeyRotation(profile)}
+                            >
+                              {busy ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <RotateCcw className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              title="清理状态资源"
+                              aria-label={`清理 ${profile.name} 状态资源`}
+                              className={PROFILE_CREDENTIAL_ICON_BUTTON_CLASS}
+                              onClick={() => void previewProfileStateClear(profile)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            className="inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-[var(--radius-sm)] bg-[var(--accent)] px-2 text-xs font-medium text-white transition-colors hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+                            onClick={() => void generateProfileKey(profile)}
+                          >
+                            {busy ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <KeyRound className="h-3.5 w-3.5" />
+                            )}
+                            生成
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </AppCardContent>
+      </AppCard>
+      <AppModal
+        isOpen={credentialEditorProfileId !== null}
+        onClose={() => setCredentialEditorProfileId(null)}
+        title={credentialEditorProfileId === 'new' ? '新增客户端独立凭证' : '编辑客户端独立凭证'}
+        titleIcon={<KeyRound className="h-5 w-5" />}
+        size="sm"
+        footer={
+          <>
+            <AppButton
+              variant="tertiary"
+              disabled={savingCredential}
+              onClick={() => setCredentialEditorProfileId(null)}
+            >
+              取消
+            </AppButton>
+            <AppButton
+              disabled={savingCredential || !credentialDraft.name.trim()}
+              onClick={() => void saveCredentialProfile()}
+            >
+              {savingCredential ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Check className="h-4 w-4" />
+              )}
+              {credentialEditorProfileId === 'new' ? '保存并生成' : '保存'}
+            </AppButton>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <label className="block space-y-1 text-xs">
+            <span>客户端名称</span>
+            <input
+              autoFocus
+              aria-label="客户端名称"
+              value={credentialDraft.name}
+              onChange={event =>
+                setCredentialDraft(current => ({ ...current, name: event.target.value }))
+              }
+              className="h-9 w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 text-sm"
+            />
+          </label>
+          <label className="block space-y-1 text-xs">
+            <span>Logo</span>
+            <AgentLogoSelect
+              value={credentialDraft.agentLogoId}
+              agentName={credentialDraft.name}
+              onChange={agentLogoId => setCredentialDraft(current => ({ ...current, agentLogoId }))}
+            />
+          </label>
+        </div>
+      </AppModal>
+      <AppModal
+        isOpen={deleteCredentialProfile !== null}
+        onClose={() => setDeleteCredentialProfile(null)}
+        title="删除客户端独立凭证"
+        titleIcon={<Trash2 className="h-5 w-5" />}
+        size="sm"
+        footer={
+          <>
+            <AppButton
+              variant="tertiary"
+              disabled={savingCredential}
+              onClick={() => setDeleteCredentialProfile(null)}
+            >
+              取消
+            </AppButton>
+            <AppButton
+              variant="danger"
+              disabled={savingCredential}
+              onClick={() => void deleteStandaloneCredential()}
+            >
+              <Trash2 className="h-4 w-4" />
+              确认删除
+            </AppButton>
+          </>
+        }
+      >
+        <p className="text-sm text-[var(--text-secondary)]">
+          删除 {deleteCredentialProfile?.name || '此客户端'} 后，其 API Key
+          将立即失效，关联的本地状态映射也会清理。
+        </p>
+      </AppModal>
+      <AppModal
+        isOpen={rotationPreview !== null}
+        onClose={() => setRotationPreview(null)}
+        title="确认轮换客户端 API Key"
+        titleIcon={<KeyRound className="h-5 w-5" />}
+        size="lg"
+        footer={
+          <>
+            <AppButton variant="tertiary" onClick={() => setRotationPreview(null)}>
+              取消
+            </AppButton>
+            <AppButton
+              disabled={credentialActionProfileId !== null}
+              onClick={() => void commitProfileKeyRotation()}
+            >
+              <Check className="h-4 w-4" />
+              确认轮换
+            </AppButton>
+          </>
+        }
+      >
+        <div className="space-y-3 text-sm">
+          <p>
+            {rotationPreview?.files.length
+              ? '新 Key 将同步写入以下客户端配置文件；确认前旧 Key 仍保持有效。'
+              : '此客户端没有关联配置文件；确认后只更新客户端独立凭证。'}
+          </p>
+          <div className="divide-y divide-[var(--line-muted)] border-y border-[var(--line-muted)]">
+            {(rotationPreview?.files || []).map(file => (
               <div
-                data-testid="route-server-api-key-value"
-                className={SERVER_FIELD_VALUE_CLASS_NAME}
+                key={file.fileId}
+                className="flex min-w-0 items-center justify-between gap-3 py-2"
               >
-                {showKey ? server.unifiedApiKey : '••••••••••••••••'}
+                <span className="truncate font-mono text-xs" title={file.path}>
+                  {file.path}
+                </span>
+                <span
+                  className={file.changed ? 'text-[var(--warning)]' : 'text-[var(--text-tertiary)]'}
+                >
+                  {file.changed ? '将更新' : '无需修改'}
+                </span>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowKey(!showKey)}
-                aria-label={showKey ? '隐藏 API Key' : '显示 API Key'}
-                title={showKey ? '隐藏' : '显示'}
-                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
-              >
-                {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-              </button>
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(server.unifiedApiKey);
-                  toast.success('已复制');
-                }}
-                title="复制"
-                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
-              >
-                <Copy className="h-3.5 w-3.5" />
-              </button>
-              <button
-                onClick={async () => {
-                  const k = await regenerateApiKey();
-                  if (k) toast.success('已重新生成');
-                }}
-                title="重新生成"
-                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-3)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
-              >
-                <KeyRound className="h-3.5 w-3.5" />
-              </button>
+            ))}
+          </div>
+        </div>
+      </AppModal>
+      <AppModal
+        isOpen={stateClearPreview !== null}
+        onClose={() => setStateClearPreview(null)}
+        title="确认清理状态资源"
+        titleIcon={<Trash2 className="h-5 w-5" />}
+        size="md"
+        footer={
+          <>
+            <AppButton variant="tertiary" onClick={() => setStateClearPreview(null)}>
+              取消
+            </AppButton>
+            <AppButton
+              variant="danger"
+              disabled={credentialActionProfileId !== null || stateClearPreview?.total === 0}
+              onClick={() => void commitProfileStateClear()}
+            >
+              <Trash2 className="h-4 w-4" />
+              确认清理
+            </AppButton>
+          </>
+        }
+      >
+        <div className="space-y-3 text-sm">
+          <p>
+            将删除此客户端的 {stateClearPreview?.total || 0}{' '}
+            条本地亲和映射。上游资源不会被删除，后续状态请求也不会重新选路。
+          </p>
+          <div className="grid grid-cols-3 gap-2 text-center text-xs">
+            <div className="border-y border-[var(--line-muted)] py-2">
+              <strong className="block text-base">{stateClearPreview?.responses || 0}</strong>
+              Responses
+            </div>
+            <div className="border-y border-[var(--line-muted)] py-2">
+              <strong className="block text-base">{stateClearPreview?.conversations || 0}</strong>
+              Conversations
+            </div>
+            <div className="border-y border-[var(--line-muted)] py-2">
+              <strong className="block text-base">
+                {stateClearPreview?.conversationItems || 0}
+              </strong>
+              Items
             </div>
           </div>
         </div>
-      </AppCardContent>
-    </AppCard>
+      </AppModal>
+    </>
   );
 }
 
 /** CLI 路由模型选择区 */
 export function CliModelSection({ className = '', variant = 'card' }: RoutePanelProps) {
-  const { config, saveCliModelSelections, saveCliThinkingEffortSelections } = useRouteStore(
+  const { config } = useRouteStore(
     useShallow(s => ({
       config: s.config,
-      saveCliModelSelections: s.saveCliModelSelections,
-      saveCliThinkingEffortSelections: s.saveCliThinkingEffortSelections,
     }))
   );
+  const saveCliModelSelections = async (_selections: unknown) => undefined;
+  const saveCliThinkingEffortSelections = async (_selections: unknown) => undefined;
   const [previewState, setPreviewState] = useState<RoutePreviewState | null>(null);
   const [editedPreviews, setEditedPreviews] = useState<
     Partial<Record<RouteCliType, GeneratedConfig | null>>
@@ -1022,14 +1522,14 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
         </p>
       </div>
 
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-4 gap-3">
         {ROUTE_CLI_TYPES.map(cli => {
           const iconConfig = CLI_ICON_CONFIGS[cli];
 
           return (
             <div
               key={cli}
-              className="min-w-0 space-y-1.5 rounded-md border border-[var(--line-muted)] bg-[var(--surface-2)]/40 p-2"
+              className="min-w-0 space-y-2 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] p-3"
             >
               <div className="flex min-w-0 items-center gap-1.5">
                 <label className="flex min-w-0 flex-1 items-center gap-1.5 text-xs leading-4 text-[var(--text-secondary)]">
@@ -1048,7 +1548,6 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
                   <AppButton
                     variant="secondary"
                     size="sm"
-                    className="h-6 !min-h-6 whitespace-nowrap px-1.5 text-[11px]"
                     onClick={() => handleOpenPreview(cli)}
                     disabled={!generatedConfigs[cli]}
                     aria-label={`预览 ${CLI_LABELS[cli]} 路由配置`}
@@ -1061,7 +1560,6 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
                     }}
                     variant="secondary"
                     size="sm"
-                    className="h-6 !min-h-6 whitespace-nowrap px-1.5 text-[11px]"
                     onClick={() => {
                       setPreviewState(null);
                       setApplyMenuCli(current => (current === cli ? null : cli));
@@ -1089,7 +1587,7 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
                 <select
                   value={normalizedCliSelections[cli]}
                   onChange={e => handleChange(cli, e.target.value)}
-                  className="h-7 w-full min-w-0 rounded-md border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 text-xs text-[var(--text-primary)]"
+                  className="h-8 w-full min-w-0 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 text-xs text-[var(--text-primary)]"
                 >
                   <option value="">未选择</option>
                   {modelOptions.map(entry => (
@@ -1204,152 +1702,3 @@ export function CliModelSection({ className = '', variant = 'card' }: RoutePanel
 }
 
 /** 统计仪表盘（首次加载后缓存） */
-export function StatsDashboard({ className = '' }: RoutePanelProps) {
-  const [timeRange, setTimeRange] = useState<TimeRange>('24h');
-  const [summary, setSummary] = useState<RouteAnalyticsSummary | null>(null);
-  const [loading, setLoading] = useState(false);
-  const loadedRef = useRef<Partial<Record<TimeRange, RouteAnalyticsSummary>>>({});
-
-  const loadStats = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await window.electronAPI.route?.getAnalyticsSummary({ window: timeRange });
-      if (res?.success) {
-        const nextSummary = res.data as RouteAnalyticsSummary;
-        loadedRef.current[timeRange] = nextSummary;
-        setSummary(nextSummary);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [timeRange]);
-
-  useEffect(() => {
-    if (loadedRef.current[timeRange]) {
-      setSummary(loadedRef.current[timeRange]);
-      return;
-    }
-    loadStats();
-  }, [timeRange, loadStats]);
-
-  return (
-    <AppCard className={`h-fit self-start ${className}`}>
-      <AppCardContent className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <BarChart3 className="w-4 h-4 text-[var(--accent)]" />
-            <span className="font-medium text-sm">数据统计</span>
-          </div>
-          <div className="flex gap-1">
-            {STATS_TIME_RANGES.map(r => (
-              <AppButton
-                key={r}
-                variant={timeRange === r ? 'primary' : 'secondary'}
-                size="sm"
-                onClick={() => setTimeRange(r)}
-              >
-                {r}
-              </AppButton>
-            ))}
-          </div>
-        </div>
-
-        {loading ? (
-          <div className="flex justify-center py-6">
-            <Loader2 className="w-5 h-5 animate-spin text-[var(--accent)]" />
-          </div>
-        ) : summary ? (
-          <div className="space-y-2">
-            <div className="grid grid-cols-2 gap-2">
-              <StatRow label="总请求" value={summary.totalRequests} />
-              <StatRow
-                label="成功率"
-                value={`${summary.successRate}%`}
-                color={
-                  summary.successRate >= 80 ? 'green' : summary.successRate >= 50 ? 'yellow' : 'red'
-                }
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <StatRow label="Prompt Tokens" value={formatNumber(summary.promptTokens)} />
-              <StatRow label="Completion Tokens" value={formatNumber(summary.completionTokens)} />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <StatRow
-                label="Cache Write Tokens"
-                value={formatNumber(summary.cacheCreationTokens || 0)}
-              />
-              <StatRow
-                label="Cache Hit Tokens"
-                value={formatNumber(summary.cacheReadTokens || 0)}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <StatRow label="估算成本" value={formatCurrency(summary.estimatedCostUsd)} />
-              <StatRow
-                label="Total Tokens"
-                value={formatNumber(summary.promptTokens + summary.completionTokens)}
-              />
-            </div>
-          </div>
-        ) : (
-          <div className="py-6 text-center text-sm text-[var(--text-secondary)]">暂无统计数据</div>
-        )}
-      </AppCardContent>
-    </AppCard>
-  );
-}
-
-function StatRow({
-  label,
-  value,
-  color,
-}: {
-  label: string;
-  value: string | number;
-  color?: string;
-}) {
-  const colorClass =
-    color === 'green'
-      ? 'text-[var(--success)]'
-      : color === 'red'
-        ? 'text-[var(--danger)]'
-        : color === 'yellow'
-          ? 'text-[var(--warning)]'
-          : 'text-[var(--text-primary)]';
-
-  return (
-    <div className="flex items-center justify-between rounded-lg border border-[var(--line-soft)] bg-[var(--surface-2)] px-3 py-2">
-      <div className="text-xs text-[var(--text-secondary)]">{label}</div>
-      <div className={`text-sm font-semibold ${colorClass}`}>{value}</div>
-    </div>
-  );
-}
-
-function formatNumber(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
-
-function formatCurrency(value: number | null | undefined): string {
-  if (value === null || value === undefined) return '—';
-  if (value === 0) return '$0';
-  if (value >= 1) return `$${value.toFixed(2)}`;
-  if (value >= 0.01) return `$${value.toFixed(4)}`;
-  return `$${value.toFixed(6)}`;
-}
-
-export function ProxyStatsTab() {
-  return (
-    <div className="flex-1 overflow-y-auto px-6 py-2">
-      <div className="space-y-4">
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,0.92fr)_minmax(360px,1.08fr)] xl:items-stretch">
-          <ServerSection className="h-full self-stretch" />
-          <CliModelSection className="h-full self-stretch" />
-        </div>
-        <StatsDashboard />
-      </div>
-    </div>
-  );
-}

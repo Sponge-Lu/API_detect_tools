@@ -67,7 +67,7 @@ describe('app storage manifest', () => {
       entry.backup.modes.includes('portable-config')
     ).map(entry => entry.id);
 
-    expect(portableIds).toEqual(['stable-config', 'custom-cli-configs']);
+    expect(portableIds).toEqual(['stable-config', 'custom-cli-configs', 'config-file-profiles']);
   });
 
   it('requires explicit backup inclusion for credit cookies', () => {

@@ -91,3 +91,4 @@ openspec/
 .trellis/
 .tmp-vitest-credit/
 CLAUDE-FABLE-5.md
+.run-shots/

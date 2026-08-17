@@ -17,6 +17,13 @@ import {
 /** CLI 类型 */
 export type RouteCliType = BuiltinCliType;
 
+export const ROUTE_SOURCE_PROTOCOLS = [
+  'anthropic-messages',
+  'openai-responses',
+  'openai-chat-completions',
+] as const;
+export type RouteSourceProtocol = (typeof ROUTE_SOURCE_PROTOCOLS)[number];
+
 export const ROUTE_CLI_MARKER_HEADER = 'x-api-detect-cli';
 export const ROUTE_CLI_MARKER_VALUES: Record<RouteCliType, string> = {
   claudeCode: 'claudeCode',
@@ -29,6 +36,246 @@ export const ROUTE_CLI_MARKER_VALUES: Record<RouteCliType, string> = {
 export const ROUTE_THINKING_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 /** 路由思考强度：预设值或用户自定义字符串 */
 export type RouteThinkingEffort = string;
+
+export const ROUTE_AGENT_ID_HEADER = 'x-api-detect-agent-id';
+export const ROUTE_RUNTIME_SLOT_ID_HEADER = 'x-api-detect-runtime-slot-id';
+export const ROUTE_SESSION_ID_HEADER = 'x-api-detect-session-id';
+export const ROUTE_AGENT_NAME_HEADER = 'x-api-detect-agent-name';
+export const ROUTE_RUNTIME_SLOT_LABEL_HEADER = 'x-api-detect-runtime-slot-label';
+
+export interface RouteInstanceKey {
+  agentId: string;
+  runtimeSlotId: string;
+  sessionId: string;
+}
+
+export interface RouteInstanceDisplay {
+  observedAgentName?: string;
+  observedRuntimeSlotLabel?: string;
+  customAgentName?: string;
+  customRuntimeSlotLabel?: string;
+}
+
+export type RouteInstanceRoutingState = 'armed' | 'active' | 'closed' | 'cancelled';
+export type RouteInstancePresenceState = 'confirmed_open' | 'confirmed_closed' | 'unknown';
+export type RouteInstanceClosedReason = 'replaced' | 'explicit' | 'lifecycle';
+
+export interface RouteInstance {
+  id: string;
+  /** Profile namespace that owns this bound generation. ARMED and legacy records may be unscoped. */
+  profileId?: string;
+  routeKey?: RouteInstanceKey;
+  display: RouteInstanceDisplay;
+  modelId: string;
+  reasoningEffort: RouteThinkingEffort;
+  routingState: RouteInstanceRoutingState;
+  presenceState: RouteInstancePresenceState;
+  createdAt?: number;
+  lastRequestAt?: number;
+  closedAt?: number;
+  closedReason?: RouteInstanceClosedReason;
+}
+
+export interface RouteInstanceUpdate {
+  modelId?: string;
+  reasoningEffort?: RouteThinkingEffort;
+  customAgentName?: string | null;
+  customRuntimeSlotLabel?: string | null;
+}
+
+export type RouteSessionRuleSource = 'header' | 'query' | 'json';
+export type RouteSessionIdentityLevel = 'conversation' | 'window' | 'agent' | 'request';
+export type RouteSessionAssociationLevel = 'exact' | 'linked' | 'probable' | 'unidentified';
+export type RouteSessionActivityState = 'open' | 'closed' | 'unknown';
+
+export interface RouteSessionExtractionRuleRevision {
+  version: number;
+  name: string;
+  enabled: boolean;
+  namespace: string;
+  source: RouteSessionRuleSource;
+  path: string;
+  protocol?: CliTargetProtocol | 'any';
+  identityLevel?: RouteSessionIdentityLevel;
+  priority?: number;
+  minLength?: number;
+  maxLength?: number;
+  valuePattern?: string;
+  updatedAt: number;
+}
+
+export interface RouteSessionExtractionRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  namespace: string;
+  source: RouteSessionRuleSource;
+  path: string;
+  protocol?: CliTargetProtocol | 'any';
+  identityLevel?: RouteSessionIdentityLevel;
+  priority?: number;
+  minLength?: number;
+  maxLength?: number;
+  valuePattern?: string;
+  version?: number;
+  revisions?: RouteSessionExtractionRuleRevision[];
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+export interface RouteSessionOverride {
+  key: string;
+  namespace: string;
+  sessionId: string;
+  displayName?: string;
+  model: string | null;
+  thinkingEffort: RouteThinkingEffort | null;
+  associationLevel?: RouteSessionAssociationLevel;
+  updatedAt: number;
+}
+
+export interface RouteSessionActivity extends RouteSessionOverride {
+  clientLabel?: string;
+  workspace?: string;
+  protocol: CliTargetProtocol;
+  requestedModel?: string | null;
+  requestCount: number;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  active: boolean;
+  activityState?: RouteSessionActivityState;
+  associationLevel: RouteSessionAssociationLevel;
+  sourceRuleId?: string;
+  recordConnectorId?: string;
+}
+
+export interface RouteSessionCandidate {
+  key: string;
+  source: RouteSessionRuleSource;
+  path: string;
+  protocol: CliTargetProtocol;
+  valueShape: string;
+  observationCount: number;
+  distinctValueCount: number;
+  firstSeenAt: number;
+  lastSeenAt: number;
+}
+
+export interface RouteSessionRoutingConfig {
+  instances: Record<string, RouteInstance>;
+  currentRouteBySlot: Record<string, string>;
+  extractionRules: RouteSessionExtractionRule[];
+  overrides: Record<string, RouteSessionOverride>;
+  /** Legacy compatibility only; open-window state is never inferred from elapsed request time. */
+  activeWindowMinutes: number;
+  recentWindowHours?: number;
+  historyRetentionDays?: number;
+  overrideRetentionDays?: number;
+}
+
+export const DEFAULT_ROUTE_SESSION_EXTRACTION_RULES: RouteSessionExtractionRule[] = [
+  {
+    id: 'header-route-session-id',
+    name: 'Route Session ID Header',
+    enabled: true,
+    namespace: 'route',
+    source: 'header',
+    path: 'x-route-session-id',
+    identityLevel: 'conversation',
+    priority: 100,
+  },
+  {
+    id: 'header-claude-code-session-id',
+    name: 'Claude Code Session ID Header',
+    enabled: true,
+    namespace: 'claude-code',
+    source: 'header',
+    path: 'x-claude-code-session-id',
+    identityLevel: 'conversation',
+    priority: 90,
+  },
+  {
+    id: 'header-session-affinity',
+    name: 'Session Affinity Header',
+    enabled: true,
+    namespace: 'session-affinity',
+    source: 'header',
+    path: 'x-session-affinity',
+    identityLevel: 'conversation',
+    priority: 80,
+  },
+  {
+    id: 'header-session-id',
+    name: 'Session ID Header',
+    enabled: true,
+    namespace: 'http',
+    source: 'header',
+    path: 'x-session-id',
+    identityLevel: 'conversation',
+    priority: 70,
+  },
+  {
+    id: 'header-conversation-id',
+    name: 'Conversation ID Header',
+    enabled: true,
+    namespace: 'http',
+    source: 'header',
+    path: 'x-conversation-id',
+    identityLevel: 'conversation',
+    priority: 70,
+  },
+  {
+    id: 'header-thread-id',
+    name: 'Thread ID Header',
+    enabled: true,
+    namespace: 'thread',
+    source: 'header',
+    path: 'thread-id',
+    identityLevel: 'conversation',
+    priority: 70,
+  },
+  {
+    id: 'json-session-id',
+    name: 'Session ID Field',
+    enabled: true,
+    namespace: 'body',
+    source: 'json',
+    path: 'session_id',
+    identityLevel: 'conversation',
+    priority: 60,
+  },
+  {
+    id: 'json-conversation-id',
+    name: 'Conversation ID Field',
+    enabled: true,
+    namespace: 'body',
+    source: 'json',
+    path: 'conversation_id',
+    identityLevel: 'conversation',
+    priority: 60,
+  },
+  {
+    id: 'json-thread-id',
+    name: 'Thread ID Field',
+    enabled: true,
+    namespace: 'thread',
+    source: 'json',
+    path: 'thread_id',
+    identityLevel: 'conversation',
+    priority: 60,
+  },
+];
+
+export const DEFAULT_ROUTE_SESSION_ROUTING_CONFIG: RouteSessionRoutingConfig = {
+  instances: {},
+  currentRouteBySlot: {},
+  extractionRules: DEFAULT_ROUTE_SESSION_EXTRACTION_RULES,
+  overrides: {},
+  activeWindowMinutes: 30,
+  recentWindowHours: 24,
+  historyRetentionDays: 30,
+  overrideRetentionDays: 90,
+};
 
 /** Pattern 匹配类型 */
 export type RoutePatternType = 'exact' | 'wildcard' | 'regex';
@@ -52,6 +299,14 @@ export type RouteModelVendor =
 
 // ============= 代理服务器 =============
 
+export interface RouteStateAffinitySummary {
+  profileId: string;
+  total: number;
+  responses: number;
+  conversations: number;
+  conversationItems: number;
+}
+
 /** 代理服务器配置 */
 export interface RouteProxyServerConfig {
   enabled: boolean;
@@ -72,7 +327,7 @@ export interface RouteRule {
   name: string;
   enabled: boolean;
   priority: number;
-  cliType: RouteCliType;
+  sourceProtocol: RouteSourceProtocol;
   patternType: RoutePatternType;
   pattern: string;
   allowedSiteIds?: string[];
@@ -395,6 +650,60 @@ export interface RouteAnalyticsConfig {
   firstByteHistogramBuckets: number[];
 }
 
+export const ROUTE_HISTORY_ENDPOINTS = [
+  '/v1/messages',
+  '/v1/responses',
+  '/v1/chat/completions',
+] as const;
+
+export type RouteHistoryEndpoint = (typeof ROUTE_HISTORY_ENDPOINTS)[number];
+
+export const ROUTE_HISTORY_ENDPOINT_LABELS: Record<RouteHistoryEndpoint, string> = {
+  '/v1/messages': 'Anthropic',
+  '/v1/responses': 'OpenAI',
+  '/v1/chat/completions': 'OpenAI Chat',
+};
+
+export const UNKNOWN_ROUTE_HISTORY_ENDPOINT = '未知端点';
+
+export function normalizeRouteHistoryEndpoint(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const rawEndpoint = value.trim();
+  if (!rawEndpoint || rawEndpoint === UNKNOWN_ROUTE_HISTORY_ENDPOINT) return '';
+
+  const withoutOrigin = rawEndpoint.replace(/^[a-z][a-z\d+.-]*:\/\/[^/]+/i, '');
+  const pathOnly = withoutOrigin.split(/[?#]/, 1)[0]?.trim() || '';
+  if (!pathOnly) return '';
+
+  const normalized = `${pathOnly.startsWith('/') ? '' : '/'}${pathOnly}`
+    .replace(/\/{2,}/g, '/')
+    .replace(/\/+$/, '')
+    .toLowerCase();
+  return normalized === '/v1/chat/completion' ? '/v1/chat/completions' : normalized;
+}
+
+export function getRouteHistoryEndpointLabel(value: unknown): string {
+  const rawEndpoint = typeof value === 'string' ? value.trim() : '';
+  if (!rawEndpoint) return UNKNOWN_ROUTE_HISTORY_ENDPOINT;
+  const normalized = normalizeRouteHistoryEndpoint(rawEndpoint);
+  return ROUTE_HISTORY_ENDPOINT_LABELS[normalized as RouteHistoryEndpoint] || rawEndpoint;
+}
+
+export function compareRouteHistoryEndpoints(left: string, right: string): number {
+  const leftIndex = ROUTE_HISTORY_ENDPOINTS.indexOf(
+    normalizeRouteHistoryEndpoint(left) as RouteHistoryEndpoint
+  );
+  const rightIndex = ROUTE_HISTORY_ENDPOINTS.indexOf(
+    normalizeRouteHistoryEndpoint(right) as RouteHistoryEndpoint
+  );
+  if (leftIndex !== -1 || rightIndex !== -1) {
+    if (leftIndex === -1) return 1;
+    if (rightIndex === -1) return -1;
+    if (leftIndex !== rightIndex) return leftIndex - rightIndex;
+  }
+  return left.localeCompare(right);
+}
+
 /** History 时间桶数据结构 */
 export interface HistoryBucket {
   bucketStart: number;
@@ -403,13 +712,17 @@ export interface HistoryBucket {
   routeCount: number;
 }
 
+export interface HistoryEndpointTrack {
+  targetEndpoint: string;
+  buckets: HistoryBucket[];
+}
+
 /** History 时间桶查询参数 */
 export interface RouteHistoryBucketsQuery {
   window: '48h';
   bucketSize: '2h';
   siteId?: string;
   accountId?: string;
-  cliType: RouteCliType;
 }
 
 /** 小时级分析桶 */
@@ -419,6 +732,7 @@ export interface RouteAnalyticsBucket {
   bucketSize: 'hour';
   cliType: RouteCliType;
   targetProtocol?: CliTargetProtocol;
+  targetEndpoint?: string;
   routeRuleId?: string;
   canonicalModel?: string;
   siteId?: string;
@@ -451,6 +765,8 @@ export interface RouteRequestLogItem {
   requestSelectionStartedAt?: number;
   attempt: number;
   cliType: RouteCliType;
+  agentId?: string;
+  agentName?: string;
   targetProtocol?: CliTargetProtocol;
   targetEndpoint?: string;
   requestedModel?: string | null;
@@ -570,6 +886,7 @@ export interface RoutingConfig {
   rules: RouteRule[];
   cliModelSelections: Record<RouteCliType, string | null>;
   cliThinkingEffortSelections: Record<RouteCliType, RouteThinkingEffort | null>;
+  sessionRouting?: RouteSessionRoutingConfig;
   stats: Record<string, RouteChannelStats>;
   routePathStates: Record<string, RoutePathState>;
   routeEndpointCapabilities?: Record<string, RouteEndpointCapabilityState>;
@@ -627,6 +944,7 @@ export const DEFAULT_ROUTING_CONFIG: RoutingConfig = {
     openCode: null,
     grokBuild: null,
   },
+  sessionRouting: DEFAULT_ROUTE_SESSION_ROUTING_CONFIG,
   stats: {},
   routePathStates: {},
   routeEndpointCapabilities: {},
@@ -744,9 +1062,10 @@ export function buildBucketKey(
   siteId?: string,
   accountId?: string,
   apiKeyId?: string,
-  routeRuleId?: string
+  routeRuleId?: string,
+  targetEndpoint?: string
 ): string {
-  return `${bucketStart}:${cliType}:${normalizeCliTargetProtocol(targetProtocol)}:${canonicalModel || '*'}:${siteId || '*'}:${accountId || '*'}:${apiKeyId || '*'}:${routeRuleId || '*'}`;
+  return `${bucketStart}:${cliType}:${normalizeCliTargetProtocol(targetProtocol)}:${canonicalModel || '*'}:${siteId || '*'}:${accountId || '*'}:${apiKeyId || '*'}:${routeRuleId || '*'}:${targetEndpoint || '*'}`;
 }
 
 /** CLI 类型对应的请求路径前缀 */

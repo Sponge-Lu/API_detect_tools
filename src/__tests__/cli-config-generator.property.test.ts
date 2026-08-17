@@ -180,6 +180,8 @@ describe('Property 1: Claude Code config generation produces valid output', () =
         expect(settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe(params.model);
         expect(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe(params.model);
         expect(settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(params.model);
+        expect(settings.env.HTTPS_PROXY).toBeUndefined();
+        expect(settings.env.HTTP_PROXY).toBeUndefined();
       }),
       { numRuns: 100 }
     );
@@ -395,6 +397,7 @@ describe('Property 2: Codex config generation produces valid output', () => {
         expect(content).toContain(`model_provider = "${CODEX_PROVIDER_NAME}"`);
         expect(content).toContain(`[model_providers.${CODEX_PROVIDER_NAME}]`);
         expect(content).toContain(`name = "${CODEX_PROVIDER_NAME}"`);
+        expect(content).toContain('env_key = "OPENAI_API_KEY"');
       }),
       { numRuns: 100 }
     );
@@ -524,8 +527,8 @@ describe('OpenCode config generation', () => {
     for (const providerId of Object.values(OPENCODE_ROUTE_PROVIDER_IDS)) {
       expect(content.provider[providerId].options).toMatchObject({
         baseURL: 'https://api.example.com/v1',
-        headers: { [ROUTE_CLI_MARKER_HEADER]: ROUTE_CLI_MARKER_VALUES.openCode },
       });
+      expect(content.provider[providerId].options.headers).toBeUndefined();
       expect(content.provider[providerId].models['test-model']).toEqual({ name: 'test-model' });
       expect(auth[providerId]).toEqual({ type: 'api', key: 'sk-test-key' });
     }
@@ -548,14 +551,9 @@ describe('OpenCode config generation', () => {
     expect(routeToml.match(/supports_backend_search = false/g)).toHaveLength(3);
     expect(routeToml.match(/stream_tool_calls = false/g)).toHaveLength(3);
     expect(directToml).not.toContain(ROUTE_CLI_MARKER_HEADER);
-    expect(routeToml.match(new RegExp(ROUTE_CLI_MARKER_HEADER, 'g'))).toHaveLength(3);
-    expect(routeToml).toContain(
-      `"${ROUTE_CLI_MARKER_HEADER}" = "${ROUTE_CLI_MARKER_VALUES.grokBuild}"`
-    );
+    expect(routeToml).not.toContain(ROUTE_CLI_MARKER_HEADER);
     expect(directToml).toContain('extra_headers = { "x-api-key" = "sk-test-key" }');
-    expect(routeToml).toContain(
-      `extra_headers = { "x-api-key" = "sk-test-key", "${ROUTE_CLI_MARKER_HEADER}" = "${ROUTE_CLI_MARKER_VALUES.grokBuild}" }`
-    );
+    expect(routeToml).toContain('extra_headers = { "x-api-key" = "sk-test-key" }');
   });
 
   it('should preserve Grok Build API keys with non-OpenAI prefixes', () => {
@@ -574,22 +572,18 @@ describe('OpenCode config generation', () => {
     expect(messagesBlock).not.toContain('\napi_key =');
   });
 
-  it('should add CLI markers only to route-managed Claude and Codex configs', () => {
+  it('does not add legacy CLI markers to newly generated route configs', () => {
     const directClaude = generateClaudeCodeConfig(params);
     const routeClaude = generateClaudeCodeRouteConfig(params);
     const directClaudeSettings = JSON.parse(directClaude.files[0].content);
     const routeClaudeSettings = JSON.parse(routeClaude.files[0].content);
 
     expect(directClaudeSettings.env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
-    expect(routeClaudeSettings.env.ANTHROPIC_CUSTOM_HEADERS).toBe(
-      `${ROUTE_CLI_MARKER_HEADER}: ${ROUTE_CLI_MARKER_VALUES.claudeCode}`
-    );
+    expect(routeClaudeSettings.env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
 
     const directCodex = generateCodexConfig(params).files[0].content;
     const routeCodex = generateCodexRouteConfig(params).files[0].content;
     expect(directCodex).not.toContain(ROUTE_CLI_MARKER_HEADER);
-    expect(routeCodex).toContain(
-      `http_headers = { "${ROUTE_CLI_MARKER_HEADER}" = "${ROUTE_CLI_MARKER_VALUES.codex}" }`
-    );
+    expect(routeCodex).not.toContain(ROUTE_CLI_MARKER_HEADER);
   });
 });

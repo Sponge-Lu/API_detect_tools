@@ -1,20 +1,23 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp } from 'lucide-react';
 import { COLUMN_MAX_WIDTH, COLUMN_MIN_WIDTH } from '../../../shared/constants';
+import {
+  compareRouteHistoryEndpoints,
+  getRouteHistoryEndpointLabel,
+  normalizeRouteHistoryEndpoint,
+  ROUTE_HISTORY_ENDPOINTS,
+  type HistoryEndpointTrack,
+} from '../../../shared/types/route-proxy';
 import type { SiteType } from '../../../shared/types/site';
-import { BUILTIN_CLI_LABELS } from '../../../shared/types/cli-config';
-import type { RouteCliType } from '../../../shared/types/route-proxy';
+import { HISTORY_POLL_INTERVAL_MS } from '../Route/Usability/HistoryBucketBars';
 import { useUIStore } from '../../store/uiStore';
 import type { SortField, SortOrder } from '../../store/uiStore';
-import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
-import CodexIcon from '../../assets/cli-icons/codex.svg';
-import OpenCodeIcon from '../../assets/cli-icons/opencode.svg';
-import GrokBuildIcon from '../../assets/cli-icons/grok.svg';
 
 interface SiteListColumn {
   label: string;
   field?: SortField;
   centered?: boolean;
+  historySelector?: boolean;
 }
 
 // 保留这些导出以兼容 SitesPage（虽然列表中不再使用站点类型筛选）
@@ -49,7 +52,7 @@ const ALL_COLUMNS: SiteListColumn[] = [
   { label: '今日消费', field: 'todayUsage', centered: true },
   { label: '模型数', field: 'modelCount', centered: true },
   { label: 'LDC', field: 'ldcRatio', centered: true },
-  { label: 'History', centered: true },
+  { label: '请求端点', centered: true, historySelector: true },
 ];
 
 function SortIndicator({ order }: { order: SortOrder }) {
@@ -60,89 +63,117 @@ function SortIndicator({ order }: { order: SortOrder }) {
   );
 }
 
-interface CliTypeButton {
-  type: RouteCliType;
-  label: string;
-  title: string;
-  aria: string;
-  icon: string;
-  iconClassName: string;
-}
-
-const CLI_TYPES: CliTypeButton[] = [
-  {
-    type: 'claudeCode',
-    label: BUILTIN_CLI_LABELS.claudeCode,
-    title: BUILTIN_CLI_LABELS.claudeCode,
-    aria: `选择 ${BUILTIN_CLI_LABELS.claudeCode}`,
-    icon: ClaudeCodeIcon,
-    iconClassName: 'h-[18px] w-[18px]',
-  },
-  {
-    type: 'codex',
-    label: BUILTIN_CLI_LABELS.codex,
-    title: BUILTIN_CLI_LABELS.codex,
-    aria: `选择 ${BUILTIN_CLI_LABELS.codex}`,
-    icon: CodexIcon,
-    iconClassName: 'h-5 w-5',
-  },
-  {
-    type: 'openCode',
-    label: BUILTIN_CLI_LABELS.openCode,
-    title: BUILTIN_CLI_LABELS.openCode,
-    aria: `选择 ${BUILTIN_CLI_LABELS.openCode}`,
-    icon: OpenCodeIcon,
-    iconClassName: 'h-5 w-4',
-  },
-  {
-    type: 'grokBuild',
-    label: BUILTIN_CLI_LABELS.grokBuild,
-    title: BUILTIN_CLI_LABELS.grokBuild,
-    aria: `选择 ${BUILTIN_CLI_LABELS.grokBuild}`,
-    icon: GrokBuildIcon,
-    iconClassName: 'h-5 w-5',
-  },
-];
-
 function clampColumnWidth(width: number): number {
   return Math.max(COLUMN_MIN_WIDTH, Math.min(COLUMN_MAX_WIDTH, width));
 }
 
+function getEndpointOptions(data: unknown): string[] {
+  const discoveredEndpoints = Array.isArray(data)
+    ? data.flatMap(item => {
+        if (!item || typeof item !== 'object') return [];
+        const track = item as Partial<HistoryEndpointTrack>;
+        const rawEndpoint =
+          typeof track.targetEndpoint === 'string' ? track.targetEndpoint.trim() : '';
+        const endpoint = normalizeRouteHistoryEndpoint(rawEndpoint);
+        return endpoint ? [endpoint] : [];
+      })
+    : [];
+
+  return Array.from(
+    new Set<string>([...ROUTE_HISTORY_ENDPOINTS, ...discoveredEndpoints])
+  ).sort(compareRouteHistoryEndpoints);
+}
+
 function HistoryHeaderControls() {
-  const cliType = useUIStore(state => state.historyCliType);
-  const setCliType = useUIStore(state => state.setHistoryCliType);
+  const selectedEndpoint = useUIStore(state => state.historyTargetEndpoint);
+  const setSelectedEndpoint = useUIStore(state => state.setHistoryTargetEndpoint);
+  const [endpoints, setEndpoints] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+    const loadEndpoints = async () => {
+      const routeApi = window.electronAPI?.route;
+      if (!routeApi?.getHistoryBuckets) return;
+
+      try {
+        const response = await routeApi.getHistoryBuckets({
+          window: '48h',
+          bucketSize: '2h',
+        });
+        if (!cancelled && response?.success) {
+          setEndpoints(getEndpointOptions(response.data));
+        }
+      } catch {
+        // History is a best-effort visualization; keep the last endpoint list on a poll failure.
+      }
+    };
+
+    void loadEndpoints();
+    pollTimer = setInterval(() => {
+      if (!cancelled) void loadEndpoints();
+    }, HISTORY_POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      if (pollTimer) clearInterval(pollTimer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (endpoints.length === 0) {
+      if (selectedEndpoint !== null) setSelectedEndpoint(null);
+      return;
+    }
+    if (selectedEndpoint && endpoints.includes(selectedEndpoint)) return;
+    setSelectedEndpoint(endpoints[0]);
+  }, [endpoints, selectedEndpoint, setSelectedEndpoint]);
 
   return (
     <div
-      className="flex w-full items-center justify-between gap-2 normal-case tracking-normal"
+      className="flex min-w-0 w-full items-center normal-case tracking-normal"
       onClick={event => event.stopPropagation()}
       onPointerDown={event => event.stopPropagation()}
     >
-      <div className="flex items-center gap-1" role="group" aria-label="CLI 类型选择">
-        {CLI_TYPES.map(({ type, label, title, aria, icon, iconClassName }) => {
-          const isSelected = cliType === type;
-          return (
-            <button
-              key={type}
-              type="button"
-              title={title}
-              aria-label={aria}
-              aria-pressed={isSelected}
-              onClick={event => {
-                event.stopPropagation();
-                setCliType(type);
-              }}
-              className={`flex h-6 w-6 items-center justify-center rounded-[var(--radius-sm)] transition-all ${
-                isSelected
-                  ? 'bg-[var(--accent-soft)] opacity-100'
-                  : 'opacity-45 grayscale hover:opacity-80'
-              }`}
-            >
-              <img src={icon} alt={label} className={`${iconClassName} shrink-0`} />
-            </button>
-          );
-        })}
+      <div
+        className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
+        role="group"
+        aria-label="请求端点选择"
+      >
+        {endpoints.length > 0 ? (
+          endpoints.map(endpoint => {
+            const isSelected = selectedEndpoint === endpoint;
+            const endpointLabel = getRouteHistoryEndpointLabel(endpoint);
+            const endpointTitle =
+              endpointLabel === endpoint ? endpoint : `${endpointLabel} · ${endpoint}`;
+            return (
+              <button
+                key={endpoint}
+                type="button"
+                title={`切换请求端点: ${endpointTitle}`}
+                aria-label={`选择端点 ${endpointLabel}`}
+                aria-pressed={isSelected}
+                data-testid="history-endpoint-option"
+                onClick={event => {
+                  event.stopPropagation();
+                  setSelectedEndpoint(endpoint);
+                }}
+                className={`max-w-[10rem] shrink-0 truncate rounded-[var(--radius-sm)] border px-1.5 py-0.5 text-[10px] transition-colors ${
+                  isSelected
+                    ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--text-primary)]'
+                    : 'border-transparent text-[var(--text-tertiary)] hover:border-[var(--line-soft)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                {endpointLabel}
+              </button>
+            );
+          })
+        ) : (
+          <span className="truncate text-[10px] text-[var(--text-tertiary)]">目标端点</span>
+        )}
       </div>
+      <span className="sr-only">请求端点</span>
     </div>
   );
 }
@@ -222,7 +253,7 @@ export function SiteListHeader({
       {columns.map((column, index) => {
         const isActive = column.field !== undefined && sortField === column.field;
         const clickable = column.field !== undefined && onToggleSort !== undefined;
-        const isHistoryColumn = column.label === 'History';
+        const isHistoryColumn = column.historySelector === true;
 
         return (
           <div key={column.label} className="relative flex items-center">
@@ -239,9 +270,7 @@ export function SiteListHeader({
                 {isActive ? <SortIndicator order={sortOrder} /> : null}
               </button>
             ) : isHistoryColumn ? (
-              <div className="w-full">
-                <HistoryHeaderControls />
-              </div>
+              <HistoryHeaderControls />
             ) : (
               <span className={column.centered ? 'w-full text-center' : ''}>{column.label}</span>
             )}

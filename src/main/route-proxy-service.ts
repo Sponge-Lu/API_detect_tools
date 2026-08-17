@@ -6,6 +6,7 @@
  */
 
 import * as http from 'http';
+import { createHash } from 'crypto';
 import { URL } from 'url';
 import Logger from './utils/logger';
 import { httpRawRequest, httpRawStreamRequest } from './utils/http-client';
@@ -15,7 +16,7 @@ import {
   extractModelFromBody,
   extractModelFromPath,
   sortRules,
-  findMatchingRule,
+  findMatchingProtocolRule,
 } from './route-rule-engine';
 import {
   resolveChannels,
@@ -51,13 +52,10 @@ import {
   ROUTE_CLI_MARKER_HEADER,
   ROUTE_CLI_MARKER_VALUES,
   ROUTE_SUCCESSFUL_PATH_AFFINITY_MS,
+  DEFAULT_ROUTE_SESSION_ROUTING_CONFIG,
 } from '../shared/types/route-proxy';
 import { isAnyRouterSite } from '../shared/types/site';
-import {
-  getCliTargetEndpoint,
-  normalizeCliTargetProtocol,
-  type CliTargetProtocol,
-} from '../shared/types/cli-config';
+import { normalizeCliTargetProtocol, type CliTargetProtocol } from '../shared/types/cli-config';
 import {
   rewriteForAnyRouter,
   transformAnyRouterResponse,
@@ -69,6 +67,11 @@ import {
   CliProtocolAdapterError,
   type CliProtocolResponseAdapter,
 } from './cli-protocol-adapter';
+import {
+  IncrementalProtocolSseTransformer,
+  type StreamingProtocol,
+} from './protocol-sse-transformer';
+import { routeSessionActivityService } from './route-session-activity-service';
 import {
   buildRouteProxyBaseUrl,
   beginRouteTargetLockUpstreamAttempt,
@@ -83,6 +86,16 @@ import {
   type RouteTargetLockTerminalFailure,
   type RouteTargetLock,
 } from './route-target-lock';
+import {
+  extractObservedRouteInstanceKey,
+  resolveRouteInstanceForRequest,
+} from './route-session-service';
+import { findConfigFileProfileByRouteApiKey } from './config-file-profile-service';
+import type { ConfigFileProfile } from '../shared/types/config-file-profile';
+import {
+  routeStateAffinityService,
+  type RouteStateAffinityRecord,
+} from './route-state-affinity-service';
 
 const log = Logger.scope('RouteProxyService');
 
@@ -116,33 +129,28 @@ const TARGET_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_STATUS_CODE = 400;
 const ANYROUTER_REQUEST_TIMEOUT_MS = 120 * 1000;
 const ACTIVE_STREAM_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 const CLAUDE_COUNT_TOKENS_PATH = '/v1/messages/count_tokens';
-const RESPONSES_INPUT_TOKENS_PATH = '/v1/responses/input_tokens';
 const CLAUDE_MESSAGES_COUNT_TOKENS_ENDPOINT = 'claude_messages_count_tokens';
-const RESPONSES_INPUT_TOKENS_ENDPOINT = 'openai_responses_input_tokens';
-const LOCAL_TOKEN_ESTIMATE_HEADER = 'x-api-detect-token-estimate';
 const OPENAI_STATEFUL_ROUTE_PREFIXES = [
   '/v1/batches',
   '/v1/files',
   '/v1/uploads',
   '/v1/vector_stores',
-  '/v1/conversations',
   '/v1/containers',
 ] as const;
-const LOCAL_COUNT_TOKENS_IMAGE_ESTIMATE = 2000;
-const LOCAL_COUNT_TOKENS_DOCUMENT_ESTIMATE = 2000;
-const LOCAL_COUNT_TOKENS_MESSAGE_OVERHEAD = 4;
-const LOCAL_COUNT_TOKENS_CONSERVATIVE_MULTIPLIER = 1.15;
 const INITIAL_STREAM_VALIDATION_MAX_BYTES = 4096;
 const STREAM_TERMINAL_SCAN_MAX_CHARS = 8192;
 const NATIVE_OPENAI_RESPONSES_SSE_MAX_PRECOMMIT_BYTES = 1024 * 1024;
 const NATIVE_ANTHROPIC_SSE_MAX_FRAME_BYTES = 1024 * 1024;
 const NATIVE_ANTHROPIC_SSE_MAX_PRECOMMIT_BYTES = 1024 * 1024;
 const ROUTE_CLIENT_CANCELLED_ERROR_CODE = 'route_client_cancelled';
+const ROUTE_CLIENT_CANCELLED_STATUS_CODE = 499;
 
 type ConcreteCliTargetProtocol = Exclude<CliTargetProtocol, 'native'>;
 type RouteOperationCapability =
   | 'generation-convertible'
   | 'stateless-native-only'
+  | 'model-discovery'
+  | 'stateful-native'
   | 'stateful-unsupported'
   | 'unsupported';
 
@@ -150,6 +158,7 @@ export interface RouteEndpointOperation {
   protocol: ConcreteCliTargetProtocol;
   operation: string;
   capability: RouteOperationCapability;
+  resourceId?: string;
 }
 
 class RouteClientCancelledError extends Error {
@@ -170,12 +179,7 @@ function createRouteClientCancelledError(): RouteClientCancelledError {
   return new RouteClientCancelledError(ROUTE_CLIENT_CANCELLED_ERROR_CODE);
 }
 
-/**
- * Client disconnect after a finished successful upstream attempt should still
- * appear in session request logs / path affinity. Incomplete or failed late
- * results stay silent so cancellation does not poison path health.
- */
-function shouldRecordCancelledUpstreamSuccess(result: {
+function shouldRecordCancelledUpstreamPathSuccess(result: {
   statusCode: number;
   streamed?: boolean;
   usage?: RouteUsageStats;
@@ -189,21 +193,13 @@ function shouldRecordCancelledUpstreamSuccess(result: {
   return true;
 }
 
-async function recordCancelledUpstreamSuccess(params: {
-  requestId: string;
+/** Preserve a completed upstream success in path health without hiding the client cancellation. */
+async function recordCancelledUpstreamPathSuccess(params: {
   requestSelectionStartedAt: number;
-  attempt: number;
   activeChannel: ResolvedChannel;
-  activeRouteRuleId?: string;
-  cliType: RouteCliType;
-  rawModel: string | null;
-  reasoningEffort?: string;
-  canonicalModel: string | null;
   result: {
     statusCode: number;
     latencyMs: number;
-    firstByteLatencyMs?: number;
-    usage?: RouteUsageStats;
   };
   routeRuntimeConfig: RouteRuntimeConfig;
 }): Promise<void> {
@@ -222,32 +218,6 @@ async function recordCancelledUpstreamSuccess(params: {
     },
     params.routeRuntimeConfig
   );
-  recordRouteRequest({
-    requestId: params.requestId,
-    requestSelectionStartedAt: params.requestSelectionStartedAt,
-    attempt: params.attempt,
-    routeRuleId: params.activeRouteRuleId,
-    cliType: params.cliType,
-    targetProtocol: activeChannel.targetProtocol,
-    targetEndpoint: activeChannel.targetEndpoint,
-    requestedModel: params.rawModel,
-    reasoningEffort: params.reasoningEffort,
-    canonicalModel: params.canonicalModel,
-    siteId: activeChannel.siteId,
-    accountId: activeChannel.accountId,
-    apiKeyId: activeChannel.apiKeyId,
-    resolvedModel: activeChannel.resolvedModel,
-    outcome: 'success',
-    statusCode: result.statusCode,
-    latencyMs: result.latencyMs,
-    firstByteLatencyMs: result.firstByteLatencyMs,
-    promptTokens: result.usage?.promptTokens,
-    completionTokens: result.usage?.completionTokens,
-    totalTokens: result.usage?.totalTokens,
-    cacheCreationTokens: result.usage?.cacheCreationTokens,
-    cacheReadTokens: result.usage?.cacheReadTokens,
-    cachedTokens: result.usage?.cachedTokens,
-  });
 }
 
 function nextRequestId(cliType: RouteCliType): string {
@@ -341,18 +311,88 @@ function normalizeHeaderValue(value: string | string[] | undefined): string {
   return value || '';
 }
 
-function extractBearerToken(req: http.IncomingMessage): string {
+function extractBearerToken(req: Pick<http.IncomingMessage, 'headers'>): string {
   const authHeader = normalizeHeaderValue(req.headers['authorization']);
-  return authHeader.replace(/^Bearer\s+/i, '').trim();
+  const match = /^Bearer\s+(.+)$/i.exec(authHeader.trim());
+  return match?.[1]?.trim() || '';
 }
 
-function extractClaudeRouteToken(req: http.IncomingMessage): string {
-  const apiKeyHeader = normalizeHeaderValue(req.headers['x-api-key']);
-  if (apiKeyHeader.trim()) {
-    return apiKeyHeader.trim();
-  }
+export interface RouteCredentialCandidate {
+  value: string;
+  sources: ('authorization' | 'x-api-key')[];
+}
 
-  return extractBearerToken(req);
+export type RouteProfileCredentialResolution =
+  | {
+      status: 'resolved';
+      profile: ConfigFileProfile;
+      candidates: RouteCredentialCandidate[];
+      unknownCandidates: RouteCredentialCandidate[];
+    }
+  | {
+      status: 'invalid_api_key' | 'ambiguous_credentials';
+      candidates: RouteCredentialCandidate[];
+      profiles: ConfigFileProfile[];
+    };
+
+export function extractRouteCredentialCandidates(
+  req: Pick<http.IncomingMessage, 'headers'>
+): RouteCredentialCandidate[] {
+  const byValue = new Map<string, RouteCredentialCandidate>();
+  const append = (value: string, source: RouteCredentialCandidate['sources'][number]) => {
+    const normalized = value.trim();
+    if (!normalized) return;
+    const existing = byValue.get(normalized);
+    if (existing) {
+      if (!existing.sources.includes(source)) existing.sources.push(source);
+      return;
+    }
+    byValue.set(normalized, { value: normalized, sources: [source] });
+  };
+
+  append(extractBearerToken(req), 'authorization');
+  append(normalizeHeaderValue(req.headers['x-api-key']), 'x-api-key');
+  return [...byValue.values()];
+}
+
+export async function resolveRouteProfileCredential(
+  req: Pick<http.IncomingMessage, 'headers'>,
+  lookup: (apiKey: string) => Promise<ConfigFileProfile | null> =
+    findConfigFileProfileByRouteApiKey
+): Promise<RouteProfileCredentialResolution> {
+  return resolveRouteProfileCredentialCandidates(extractRouteCredentialCandidates(req), lookup);
+}
+
+async function resolveRouteProfileCredentialCandidates(
+  candidates: RouteCredentialCandidate[],
+  lookup: (apiKey: string) => Promise<ConfigFileProfile | null>
+): Promise<RouteProfileCredentialResolution> {
+  const matches = await Promise.all(
+    candidates.map(async candidate => ({ candidate, profile: await lookup(candidate.value) }))
+  );
+  const profiles = [
+    ...new Map(
+      matches
+        .filter(
+          (match): match is { candidate: RouteCredentialCandidate; profile: ConfigFileProfile } =>
+            Boolean(match.profile)
+        )
+        .map(match => [match.profile.id, match.profile])
+    ).values(),
+  ];
+
+  if (profiles.length === 0) return { status: 'invalid_api_key', candidates, profiles };
+  if (profiles.length > 1) return { status: 'ambiguous_credentials', candidates, profiles };
+  return {
+    status: 'resolved',
+    profile: profiles[0],
+    candidates,
+    unknownCandidates: matches.filter(match => !match.profile).map(match => match.candidate),
+  };
+}
+
+function fingerprintRouteCredential(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 12);
 }
 
 function resolveCanonicalModelFromRegistry(
@@ -374,27 +414,9 @@ function resolveCanonicalModelFromRegistry(
 
 export function extractRouteApiKey(
   req: Pick<http.IncomingMessage, 'headers' | 'url'>,
-  cliType: RouteCliType
+  _cliType: RouteCliType
 ): string {
-  if (cliType === 'grokBuild' || inferSourceProtocol(req.url) === 'anthropic-messages') {
-    return extractClaudeRouteToken(req as http.IncomingMessage);
-  }
-
-  return extractBearerToken(req as http.IncomingMessage);
-}
-
-function isLikelyOpenCodeRequest(req: Pick<http.IncomingMessage, 'headers'>): boolean {
-  const userAgent = normalizeHeaderValue(req.headers['user-agent']).toLowerCase();
-  const originator = normalizeHeaderValue(req.headers['originator']).toLowerCase();
-  return userAgent.includes('opencode') || originator.includes('opencode');
-}
-
-function isLikelyGrokBuildRequest(req: Pick<http.IncomingMessage, 'headers'>): boolean {
-  const clientIdentifier = normalizeHeaderValue(
-    req.headers['x-grok-client-identifier']
-  ).toLowerCase();
-  const userAgent = normalizeHeaderValue(req.headers['user-agent']).toLowerCase();
-  return clientIdentifier === 'grok-shell' || userAgent.includes('grok-shell/');
+  return extractRouteCredentialCandidates(req)[0]?.value || '';
 }
 
 export function detectMarkedRouteCliType(
@@ -421,12 +443,65 @@ function getRequestPathname(requestUrl: string | undefined): string {
   return (requestUrl || '/').split('?')[0] || '/';
 }
 
+function buildRouteModelDiscoveryResponse(
+  routing: Pick<RoutingConfig, 'modelRegistry'>,
+  req: Pick<http.IncomingMessage, 'headers' | 'url'>
+): { statusCode: number; body: unknown } {
+  const pathname = getRequestPathname(req.url);
+  const requestedId = pathname.startsWith('/v1/models/')
+    ? decodeURIComponent(pathname.slice('/v1/models/'.length))
+    : null;
+  // 发现列表只暴露重定向模型（entries 的 canonicalName，天然唯一且与模型映射页顺序一致）；
+  // 原始模型名（aliases）仅用于单模型查询的兼容校验，避免已缓存旧列表的客户端查询原始名时 404。
+  const ids = Object.keys(routing.modelRegistry.entries)
+    .map(value => value.trim())
+    .filter(Boolean);
+  const knownIds = new Set(
+    Object.values(routing.modelRegistry.entries)
+      .flatMap(entry => [entry.canonicalName, ...entry.aliases])
+      .map(value => value.trim())
+      .filter(Boolean)
+  );
+  if (requestedId && !knownIds.has(requestedId)) {
+    return { statusCode: 404, body: { error: { type: 'not_found', message: 'Model not found' } } };
+  }
+  const limitValue = new URL(req.url || '/', 'http://127.0.0.1').searchParams.get('limit');
+  const limit =
+    limitValue && /^\d+$/.test(limitValue) ? Math.max(0, Number(limitValue)) : ids.length;
+  const selectedIds = requestedId ? [requestedId] : ids.slice(0, limit);
+  const data = selectedIds.map(modelId => ({
+    id: modelId,
+    object: 'model',
+    created: 0,
+    owned_by: 'api-detect-tools',
+  }));
+  const anthropic = Boolean(req.headers['anthropic-version'] || req.headers['anthropic-beta']);
+  return {
+    statusCode: 200,
+    body: anthropic
+      ? {
+          data: data.map(item => ({
+            id: item.id,
+            type: 'model',
+            display_name: item.id,
+            created_at: new Date(0).toISOString(),
+          })),
+        }
+      : { object: 'list', data },
+  };
+}
+
 function inferSourceProtocol(requestUrl: string | undefined): ConcreteCliTargetProtocol | null {
   const pathname = getRequestPathname(requestUrl);
   if (pathname === '/v1/messages' || pathname.startsWith('/v1/messages/')) {
     return 'anthropic-messages';
   }
-  if (pathname === '/v1/responses' || pathname.startsWith('/v1/responses/')) {
+  if (
+    pathname === '/v1/responses' ||
+    pathname.startsWith('/v1/responses/') ||
+    pathname === '/v1/conversations' ||
+    pathname.startsWith('/v1/conversations/')
+  ) {
     return 'openai-responses';
   }
   if (pathname === '/v1/chat/completions' || pathname.startsWith('/v1/chat/completions/')) {
@@ -440,6 +515,17 @@ export function classifyRouteEndpointOperation(
   requestUrl: string | undefined
 ): RouteEndpointOperation | null {
   const pathname = getRequestPathname(requestUrl);
+  const normalizedMethod = (method || 'GET').toUpperCase();
+  if (
+    normalizedMethod === 'GET' &&
+    (pathname === '/v1/models' || /^\/v1\/models\/[^/]+$/.test(pathname))
+  ) {
+    return {
+      protocol: 'openai-chat-completions',
+      operation: 'models.list',
+      capability: 'model-discovery',
+    };
+  }
   if (
     OPENAI_STATEFUL_ROUTE_PREFIXES.some(
       prefix => pathname === prefix || pathname.startsWith(`${prefix}/`)
@@ -457,7 +543,6 @@ export function classifyRouteEndpointOperation(
     return null;
   }
 
-  const normalizedMethod = (method || 'GET').toUpperCase();
   const matches = (expectedMethod: string, expectedPath: string | RegExp): boolean =>
     normalizedMethod === expectedMethod &&
     (typeof expectedPath === 'string' ? pathname === expectedPath : expectedPath.test(pathname));
@@ -470,21 +555,43 @@ export function classifyRouteEndpointOperation(
     return { protocol, operation: 'generation.create', capability: 'generation-convertible' };
   }
 
-  if (matches('POST', CLAUDE_COUNT_TOKENS_PATH) || matches('POST', RESPONSES_INPUT_TOKENS_PATH)) {
+  if (matches('POST', CLAUDE_COUNT_TOKENS_PATH)) {
     return { protocol, operation: 'input_tokens.count', capability: 'stateless-native-only' };
   }
 
+  const responseResourceMatch = pathname.match(/^\/v1\/responses\/([^/]+)$/);
+  if (responseResourceMatch && ['GET', 'DELETE'].includes(normalizedMethod)) {
+    return {
+      protocol: 'openai-responses',
+      operation: normalizedMethod === 'DELETE' ? 'response.delete' : 'response.retrieve',
+      capability: 'stateful-native',
+      resourceId: decodeURIComponent(responseResourceMatch[1]),
+    };
+  }
+  const responseActionMatch = pathname.match(/^\/v1\/responses\/([^/]+)\/(cancel|input_items)$/);
+  if (
+    responseActionMatch &&
+    ((normalizedMethod === 'POST' && responseActionMatch[2] === 'cancel') ||
+      (normalizedMethod === 'GET' && responseActionMatch[2] === 'input_items'))
+  ) {
+    return {
+      protocol: 'openai-responses',
+      operation:
+        responseActionMatch[2] === 'cancel' ? 'response.cancel' : 'response.input_items.list',
+      capability: 'stateful-native',
+      resourceId: decodeURIComponent(responseActionMatch[1]),
+    };
+  }
+
   const statefulOperation =
+    pathname === '/v1/conversations' ||
+    pathname.startsWith('/v1/conversations/') ||
     matches('POST', '/v1/messages/batches') ||
     matches('GET', '/v1/messages/batches') ||
     matches('GET', /^\/v1\/messages\/batches\/[^/]+$/) ||
     matches('DELETE', /^\/v1\/messages\/batches\/[^/]+$/) ||
     matches('POST', /^\/v1\/messages\/batches\/[^/]+\/cancel$/) ||
     matches('GET', /^\/v1\/messages\/batches\/[^/]+\/results$/) ||
-    matches('GET', /^\/v1\/responses\/[^/]+$/) ||
-    matches('DELETE', /^\/v1\/responses\/[^/]+$/) ||
-    matches('POST', /^\/v1\/responses\/[^/]+\/cancel$/) ||
-    matches('GET', /^\/v1\/responses\/[^/]+\/input_items$/) ||
     matches('GET', '/v1/chat/completions') ||
     matches('GET', /^\/v1\/chat\/completions\/[^/]+$/) ||
     matches('POST', /^\/v1\/chat\/completions\/[^/]+$/) ||
@@ -501,22 +608,22 @@ export function classifyRouteEndpointOperation(
   return { protocol, operation: 'unknown', capability: 'unsupported' };
 }
 
-function findProviderOwnedStateReference(body: unknown): string | null {
+export function findProviderOwnedStateReference(body: unknown): string | null {
   const record = asRecord(body);
   if (!record) {
     return null;
   }
 
-  for (const field of ['previous_response_id', 'conversation', 'container'] as const) {
-    if (record[field] !== undefined && record[field] !== null && record[field] !== '') {
-      return field;
-    }
+  const conversation = record.conversation;
+  if (
+    conversation !== undefined &&
+    conversation !== null &&
+    (typeof conversation !== 'string' || conversation.trim().length > 0)
+  ) {
+    return 'conversation';
   }
-  if (record.store === true) {
-    return 'store';
-  }
-  if (record.background === true) {
-    return 'background';
+  if (record.container !== undefined && record.container !== null && record.container !== '') {
+    return 'container';
   }
   if (asRecord(record.prompt)?.id) {
     return 'prompt.id';
@@ -563,21 +670,103 @@ function findProviderOwnedStateReference(body: unknown): string | null {
   return null;
 }
 
-function getUpstreamCliTypeForProtocol(protocol: ConcreteCliTargetProtocol): RouteCliType {
-  return protocol === 'anthropic-messages' ? 'claudeCode' : 'codex';
+interface ResponsesStateRequest {
+  resourceId?: string;
+  createsResource: boolean;
+  resourceType: 'response';
+  removesResource?: boolean;
 }
 
-function isRouteCliCompatibleWithProtocol(
-  cliType: RouteCliType,
-  protocol: ConcreteCliTargetProtocol
-): boolean {
-  if (cliType === 'openCode' || cliType === 'grokBuild') {
-    return true;
+function classifyResponsesStateRequest(
+  endpointOperation: RouteEndpointOperation,
+  body: unknown
+): ResponsesStateRequest | null {
+  if (endpointOperation.protocol !== 'openai-responses') {
+    return null;
   }
-  if (cliType === 'claudeCode') {
-    return protocol === 'anthropic-messages';
+  if (endpointOperation.capability === 'stateful-native' && endpointOperation.resourceId) {
+    return {
+      resourceId: endpointOperation.resourceId,
+      createsResource: false,
+      resourceType: 'response',
+      removesResource: endpointOperation.operation === 'response.delete',
+    };
   }
-  return protocol === 'openai-responses';
+  if (endpointOperation.operation !== 'generation.create') {
+    return null;
+  }
+
+  const record = asRecord(body);
+  const previousResponseId =
+    typeof record?.previous_response_id === 'string' ? record.previous_response_id.trim() : '';
+  const resourceId = previousResponseId || undefined;
+  const createsResource = record?.store !== false;
+  return resourceId || createsResource
+    ? { resourceId, createsResource, resourceType: 'response' }
+    : null;
+}
+
+function writeStateAffinityError(
+  res: http.ServerResponse,
+  statusCode: number,
+  error: string,
+  message: string
+): void {
+  res.writeHead(statusCode, {
+    'Content-Type': 'application/json',
+    'X-Route-Proxy-Error': error,
+  });
+  res.end(
+    JSON.stringify({
+      error: {
+        message,
+        type: 'invalid_request_error',
+        param: null,
+        code: error,
+      },
+    })
+  );
+}
+
+function buildAffinityChannel(
+  record: RouteStateAffinityRecord,
+  sourceProtocol: ConcreteCliTargetProtocol,
+  canonicalModel: string | null,
+  resolvedModel: string | null
+): ResolvedChannel {
+  return {
+    routeRuleId: record.routeRuleId,
+    siteId: record.siteId,
+    accountId: record.accountId,
+    apiKeyId: record.apiKeyId,
+    sourceProtocol,
+    canonicalModel: canonicalModel || undefined,
+    resolvedModel: resolvedModel || undefined,
+    targetProtocol: record.targetProtocol,
+    targetEndpoint: record.targetEndpoint,
+  };
+}
+
+function extractResponseResourceId(body: Buffer): string | null {
+  try {
+    const id = asRecord(JSON.parse(body.toString('utf-8')))?.id;
+    return typeof id === 'string' && id.trim() ? id.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractResponseResourceIdFromSse(body: Buffer): string | null {
+  for (const block of parseSseBlocks(body.toString('utf-8'))) {
+    if (!block.data || block.data === '[DONE]') continue;
+    const event = parseSseJsonRecord(block.data);
+    const response = asRecord(event?.response);
+    const id = response?.id ?? event?.id;
+    if (typeof id === 'string' && id.trim()) {
+      return id.trim();
+    }
+  }
+  return null;
 }
 
 function resolveChannelUpstreamProtocol(
@@ -590,27 +779,22 @@ function resolveChannelUpstreamProtocol(
 
 function resolveEffectiveRouteChannel(
   channel: ResolvedChannel,
-  cliType: RouteCliType,
   sourceProtocol: ConcreteCliTargetProtocol,
   nativePassthroughChannels: WeakSet<ResolvedChannel>
 ): ResolvedChannel {
-  const nativePassthrough = normalizeCliTargetProtocol(channel.targetProtocol) === 'native';
-  let resolvedChannel: ResolvedChannel;
-  if (cliType !== 'openCode' && cliType !== 'grokBuild') {
-    resolvedChannel = channel;
-  } else {
-    const upstreamProtocol = resolveChannelUpstreamProtocol(channel.targetProtocol, sourceProtocol);
-    resolvedChannel = {
-      ...channel,
-      targetProtocol: upstreamProtocol,
-      targetEndpoint: getCliTargetEndpoint(cliType, upstreamProtocol, channel.resolvedModel),
-    };
-  }
-
-  if (nativePassthrough) {
+  const upstreamProtocol = resolveChannelUpstreamProtocol(channel.targetProtocol, sourceProtocol);
+  const resolvedChannel =
+    upstreamProtocol === channel.targetProtocol
+      ? channel
+      : { ...channel, targetProtocol: upstreamProtocol };
+  if (upstreamProtocol === sourceProtocol) {
     nativePassthroughChannels.add(resolvedChannel);
   }
   return resolvedChannel;
+}
+
+function getAdapterCliTypeForProtocol(protocol: ConcreteCliTargetProtocol): RouteCliType {
+  return protocol === 'anthropic-messages' ? 'claudeCode' : 'codex';
 }
 
 export function buildChannelAttemptPlan<
@@ -909,10 +1093,24 @@ function canStreamResponseAdapters(
   anyRouterAdapter: AnyRouterResponseAdapter,
   protocolAdapters: CliProtocolResponseAdapter[]
 ): boolean {
-  return (
-    anyRouterAdapter.type === 'transparent' &&
-    protocolAdapters.every(adapter => adapter.type === 'transparent')
-  );
+  if (anyRouterAdapter.type !== 'transparent') return false;
+  if (protocolAdapters.every(adapter => adapter.type === 'transparent')) return true;
+  return getIncrementalProtocolResponseAdapter(protocolAdapters) !== null;
+}
+
+type SourceProtocolResponseAdapter = Extract<CliProtocolResponseAdapter, { type: 'source' }>;
+
+function getIncrementalProtocolResponseAdapter(
+  protocolAdapters: CliProtocolResponseAdapter[]
+): SourceProtocolResponseAdapter | null {
+  if (protocolAdapters.length !== 1) return null;
+  const adapter = protocolAdapters[0];
+  return adapter.type === 'source' &&
+    adapter.stream &&
+    adapter.sourceProtocol !== undefined &&
+    adapter.sourceProtocol !== adapter.targetProtocol
+    ? adapter
+    : null;
 }
 
 const ROUTE_PROXY_BLOCKED_RESPONSE_HEADERS = new Set([
@@ -965,6 +1163,14 @@ type InitialEventStreamValidation =
   | { status: 'rejected'; reason: string };
 
 type StreamingTerminalProtocol = 'anthropic' | 'openaiChat' | 'openaiResponses' | 'none';
+
+function getStreamingTerminalProtocolForWireProtocol(
+  protocol: StreamingProtocol
+): StreamingTerminalProtocol {
+  if (protocol === 'anthropic-messages') return 'anthropic';
+  if (protocol === 'openai-responses') return 'openaiResponses';
+  return 'openaiChat';
+}
 type CompletedStreamValidation = { ok: true } | { ok: false; reason: string; message: string };
 
 interface ParsedSseBlock {
@@ -1040,18 +1246,11 @@ function validateInitialEventStreamChunk(buffer: Buffer): InitialEventStreamVali
     : { status: 'pending' };
 }
 
-function getStreamingTerminalProtocol(
-  cliType: RouteCliType,
-  requestUrl?: string
-): StreamingTerminalProtocol {
-  if (cliType === 'claudeCode') return 'anthropic';
-  if (cliType === 'codex') return 'openaiResponses';
-  if (cliType === 'openCode' || cliType === 'grokBuild') {
-    const sourceProtocol = inferSourceProtocol(requestUrl);
-    if (sourceProtocol === 'anthropic-messages') return 'anthropic';
-    if (sourceProtocol === 'openai-responses') return 'openaiResponses';
-    return 'openaiChat';
-  }
+function getStreamingTerminalProtocol(requestUrl?: string): StreamingTerminalProtocol {
+  const sourceProtocol = inferSourceProtocol(requestUrl);
+  if (sourceProtocol === 'anthropic-messages') return 'anthropic';
+  if (sourceProtocol === 'openai-responses') return 'openaiResponses';
+  if (sourceProtocol === 'openai-chat-completions') return 'openaiChat';
   return 'none';
 }
 
@@ -1210,6 +1409,9 @@ function observeStreamingSseBlock(
   }
 
   if (protocol === 'openaiResponses') {
+    if (eventType === 'response.failed') {
+      state.errorSeen = true;
+    }
     state.terminalSeen =
       state.terminalSeen ||
       eventType === 'response.completed' ||
@@ -2376,7 +2578,7 @@ const TRANSIENT_UPSTREAM_STATUS_CODES = new Set([
   408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527, 529, 530,
 ]);
 
-type UpstreamAuthScheme = 'native' | 'bearer';
+type UpstreamAuthScheme = 'native' | 'bearer' | 'x-api-key';
 const SENSENOVA_UPSTREAM_HOST = 'token.sensenova.cn';
 
 function resolveUpstreamAuthScheme(targetBaseUrl: string): UpstreamAuthScheme {
@@ -2397,6 +2599,7 @@ export function buildUpstreamHeaders(
   cliType: RouteCliType,
   authScheme: UpstreamAuthScheme = 'native'
 ): Record<string, string | string[] | undefined> {
+  void cliType;
   const forwardHeaders: Record<string, string | string[] | undefined> = {
     ...incomingHeaders,
     host: targetHost,
@@ -2408,6 +2611,7 @@ export function buildUpstreamHeaders(
     const normalizedHeaderName = headerName.toLowerCase();
     if (
       normalizedHeaderName === ROUTE_CLI_MARKER_HEADER ||
+      normalizedHeaderName.startsWith('x-api-detect-') ||
       normalizedHeaderName.startsWith('x-grok-')
     ) {
       delete forwardHeaders[headerName];
@@ -2416,9 +2620,9 @@ export function buildUpstreamHeaders(
 
   if (authScheme === 'bearer') {
     forwardHeaders.authorization = `Bearer ${apiKey}`;
-  } else if (cliType === 'claudeCode') {
+  } else if (authScheme === 'x-api-key' || (authScheme === 'native' && cliType === 'claudeCode')) {
     forwardHeaders['x-api-key'] = apiKey;
-  } else if (cliType === 'codex' || cliType === 'openCode') {
+  } else {
     forwardHeaders.authorization = `Bearer ${apiKey}`;
   }
 
@@ -2436,11 +2640,24 @@ export function buildUpstreamRequestUrl(
   void cliType;
   void upstreamModel;
   void apiKey;
-  const targetPath = requestUrl || '/';
-  const upstreamUrl = new URL(targetPath, `${target.protocol}//${target.host}`);
+  const requestTarget = new URL(requestUrl || '/', 'http://127.0.0.1');
+  const baseSegments = target.pathname.split('/').filter(Boolean);
+  const requestSegments = requestTarget.pathname.split('/').filter(Boolean);
+  let overlap = Math.min(baseSegments.length, requestSegments.length);
+  while (
+    overlap > 0 &&
+    !baseSegments
+      .slice(baseSegments.length - overlap)
+      .every((segment, index) => segment === requestSegments[index])
+  ) {
+    overlap -= 1;
+  }
+  target.pathname = `/${[...baseSegments, ...requestSegments.slice(overlap)].join('/')}`;
+  for (const [name, value] of requestTarget.searchParams) target.searchParams.set(name, value);
+  target.hash = '';
 
   return {
-    url: upstreamUrl.toString(),
+    url: target.toString(),
     host: target.host,
   };
 }
@@ -2516,164 +2733,6 @@ export function extractRouteReasoningEffort(bodyJson: unknown): string | undefin
 
   const budgetTokens = toFiniteTokenNumber(thinking?.budget_tokens ?? thinking?.budgetTokens);
   return budgetTokens !== undefined && budgetTokens > 0 ? `${budgetTokens} tokens` : '开启';
-}
-
-export interface ClaudeCountTokensEstimate {
-  input_tokens: number;
-  estimated: true;
-  method: 'local';
-}
-
-function estimateTextTokens(text: string): number {
-  let total = 0;
-  let asciiRunLength = 0;
-
-  const flushAsciiRun = () => {
-    if (asciiRunLength > 0) {
-      total += Math.ceil(asciiRunLength / 4);
-      asciiRunLength = 0;
-    }
-  };
-
-  for (const char of text) {
-    const code = char.codePointAt(0) ?? 0;
-    if (code <= 0x7f && /[A-Za-z0-9_]/.test(char)) {
-      asciiRunLength += 1;
-      continue;
-    }
-
-    flushAsciiRun();
-    if (/\s/.test(char)) {
-      total += 0.25;
-    } else if (code >= 0x2e80) {
-      total += 1;
-    } else {
-      total += 0.5;
-    }
-  }
-
-  flushAsciiRun();
-  return Math.ceil(total);
-}
-
-function estimateJsonTokens(value: unknown): number {
-  if (value === undefined || value === null) {
-    return 0;
-  }
-
-  if (typeof value === 'string') {
-    return estimateTextTokens(value);
-  }
-
-  try {
-    return estimateTextTokens(JSON.stringify(value));
-  } catch {
-    return estimateTextTokens(String(value));
-  }
-}
-
-function estimateClaudeContentTokens(content: unknown): number {
-  if (typeof content === 'string') {
-    return estimateTextTokens(content);
-  }
-
-  if (Array.isArray(content)) {
-    return content.reduce((total, block) => {
-      const record = asRecord(block);
-      if (!record) {
-        return total + estimateJsonTokens(block);
-      }
-
-      const type = typeof record.type === 'string' ? record.type : '';
-      if (type === 'text') {
-        return total + estimateJsonTokens(record.text);
-      }
-      if (type === 'image') {
-        return total + LOCAL_COUNT_TOKENS_IMAGE_ESTIMATE + estimateJsonTokens(record.source);
-      }
-      if (type === 'document') {
-        return total + LOCAL_COUNT_TOKENS_DOCUMENT_ESTIMATE + estimateJsonTokens(record.source);
-      }
-      if (type === 'tool_use') {
-        return total + estimateJsonTokens(record.name) + estimateJsonTokens(record.input);
-      }
-      if (type === 'tool_result') {
-        return total + estimateClaudeContentTokens(record.content);
-      }
-      if (type === 'thinking') {
-        return total + estimateJsonTokens(record.thinking);
-      }
-
-      return total + estimateJsonTokens(record);
-    }, 0);
-  }
-
-  return estimateJsonTokens(content);
-}
-
-export function estimateClaudeCountTokens(body: Buffer): ClaudeCountTokensEstimate {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body.toString('utf-8'));
-  } catch {
-    return {
-      input_tokens: Math.max(1, estimateTextTokens(body.toString('utf-8'))),
-      estimated: true,
-      method: 'local',
-    };
-  }
-
-  const request = asRecord(parsed);
-  if (!request) {
-    return {
-      input_tokens: Math.max(1, estimateJsonTokens(parsed)),
-      estimated: true,
-      method: 'local',
-    };
-  }
-
-  let total = 0;
-  total += estimateClaudeContentTokens(request.system);
-  total += estimateClaudeContentTokens(request.input);
-  total += estimateClaudeContentTokens(request.instructions);
-  total += estimateJsonTokens(request.thinking);
-  total += estimateJsonTokens(request.reasoning);
-  total += estimateJsonTokens(request.text);
-  total += estimateJsonTokens(request.tool_choice);
-  total += estimateJsonTokens(request.output_config);
-
-  const messages = Array.isArray(request.messages) ? request.messages : [];
-  for (const message of messages) {
-    const record = asRecord(message);
-    total += LOCAL_COUNT_TOKENS_MESSAGE_OVERHEAD;
-    total += estimateJsonTokens(record?.role);
-    total += estimateClaudeContentTokens(record?.content ?? message);
-  }
-
-  const tools = Array.isArray(request.tools) ? request.tools : [];
-  for (const tool of tools) {
-    const record = asRecord(tool);
-    if (!record) {
-      total += estimateJsonTokens(tool);
-      continue;
-    }
-    total += estimateJsonTokens(record.type);
-    const fn = asRecord(record.function);
-    if (fn) {
-      total += estimateJsonTokens(fn);
-    } else {
-      total += estimateJsonTokens(record.name);
-      total += estimateJsonTokens(record.description);
-      total += estimateJsonTokens(record.input_schema);
-      total += estimateJsonTokens(record.parameters);
-    }
-  }
-
-  return {
-    input_tokens: Math.max(1, Math.ceil(total * LOCAL_COUNT_TOKENS_CONSERVATIVE_MULTIPLIER)),
-    estimated: true,
-    method: 'local',
-  };
 }
 
 function toFiniteTokenNumber(value: unknown): number | undefined {
@@ -2975,15 +3034,21 @@ function isUnsupportedTokenCountResponse(result: { statusCode: number; body: Buf
   );
 }
 
-function writeInputTokensEstimate(
-  res: http.ServerResponse,
-  estimate: ClaudeCountTokensEstimate
-): void {
-  res.writeHead(200, {
+function writeTokenCountUnsupported(res: http.ServerResponse, reason: string): void {
+  res.writeHead(501, {
     'Content-Type': 'application/json',
-    [LOCAL_TOKEN_ESTIMATE_HEADER]: 'local-approximate',
+    'X-Route-Proxy-Error': 'token_count_unsupported',
   });
-  res.end(JSON.stringify({ input_tokens: estimate.input_tokens }));
+  res.end(
+    JSON.stringify({
+      type: 'error',
+      error: {
+        type: 'not_supported_error',
+        message: 'Exact token counting is unavailable for the selected route',
+      },
+      reason,
+    })
+  );
 }
 
 interface ForwardToUpstreamOptions {
@@ -2992,11 +3057,15 @@ interface ForwardToUpstreamOptions {
   methodOverride?: string;
   requestUrlOverride?: string;
   upstreamCliType?: RouteCliType;
+  upstreamAuthScheme?: 'bearer' | 'x-api-key';
   signal?: AbortSignal;
   streamResponse?: http.ServerResponse;
   streamResponseBody?: boolean;
+  streamResponseAdapter?: SourceProtocolResponseAdapter;
   nativeResponsePassthrough?: boolean;
   streamIdleTimeoutMs?: number;
+  beforeStreamCommit?: (bufferedBody: Buffer) => Promise<void>;
+  onStreamCompletionDelivered?: () => void;
 }
 
 /** 转发请求到上游（不直接写 res，返回结果由调用者决定是否透传） */
@@ -3035,7 +3104,15 @@ async function forwardToUpstream(
     bodyBuffer.length,
     apiKey,
     upstreamCliType,
-    resolveUpstreamAuthScheme(targetBaseUrl)
+    options.upstreamAuthScheme === 'x-api-key'
+      ? 'x-api-key'
+      : options.upstreamAuthScheme === 'bearer'
+        ? 'bearer'
+        : resolveUpstreamAuthScheme(targetBaseUrl) === 'bearer'
+          ? 'bearer'
+          : upstreamCliType === 'claudeCode'
+            ? 'x-api-key'
+            : 'bearer'
   );
 
   // 合并额外的请求头（如 AnyRouter 改写添加的 anthropic-beta）
@@ -3060,7 +3137,16 @@ async function forwardToUpstream(
   let initialStreamingBuffer = Buffer.alloc(0);
   let pendingStreamingChunks: Buffer[] = [];
   const receivedStreamingChunks: Buffer[] = [];
-  const streamingTerminalProtocol = getStreamingTerminalProtocol(cliType, requestUrl);
+  const incrementalProtocolTransformer = options.streamResponseAdapter?.sourceProtocol
+    ? new IncrementalProtocolSseTransformer({
+        sourceProtocol: options.streamResponseAdapter.sourceProtocol,
+        targetProtocol: options.streamResponseAdapter.targetProtocol,
+        model: options.streamResponseAdapter.model,
+      })
+    : null;
+  const streamingTerminalProtocol = incrementalProtocolTransformer
+    ? getStreamingTerminalProtocolForWireProtocol(options.streamResponseAdapter!.sourceProtocol!)
+    : getStreamingTerminalProtocol(requestUrl);
   const anthropicStreamNormalizer =
     !options.nativeResponsePassthrough && streamingTerminalProtocol === 'anthropic'
       ? createAnthropicSseCompatibilityNormalizer()
@@ -3073,6 +3159,7 @@ async function forwardToUpstream(
   let streamingTerminalScanText = '';
   let streamingTerminalSeen = streamingTerminalProtocol === 'none';
   let streamingCompletionValidated = false;
+  let streamingCompletionNotified = false;
   let streamingSemanticError: typeof EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE | undefined;
   const inspectNativeOpenAiResponsesBeforeCommit =
     options.nativeResponsePassthrough && streamingTerminalProtocol === 'openaiResponses';
@@ -3098,6 +3185,16 @@ async function forwardToUpstream(
         streamingObservation.nextSequenceNumber
       )
     );
+  };
+
+  const notifyStreamCompletionIfDelivered = (): void => {
+    if (streamingCompletionNotified || streamingSemanticError) return;
+    const completionDelivered = options.nativeResponsePassthrough
+      ? streamingObservation.terminalSeen && !streamingObservation.errorSeen
+      : streamingCompletionValidated;
+    if (!completionDelivered) return;
+    streamingCompletionNotified = true;
+    options.onStreamCompletionDelivered?.();
   };
 
   const processStreamingOutgoingChunk = async (outgoingChunk: Buffer): Promise<void> => {
@@ -3224,6 +3321,9 @@ async function forwardToUpstream(
         }
       }
 
+      if (options.beforeStreamCommit) {
+        await options.beforeStreamCommit(Buffer.concat(pendingStreamingChunks));
+      }
       streamed = true;
       options.streamResponse!.writeHead(streamingStatusCode, streamingHeaders);
       const chunksToWrite = pendingStreamingChunks;
@@ -3231,10 +3331,12 @@ async function forwardToUpstream(
       for (const pendingChunk of chunksToWrite) {
         await writeResponseChunk(options.streamResponse!, pendingChunk);
       }
+      notifyStreamCompletionIfDelivered();
       return;
     }
 
     await writeResponseChunk(options.streamResponse!, outgoingChunk);
+    notifyStreamCompletionIfDelivered();
   };
 
   let response: Awaited<ReturnType<typeof httpRawRequest>>;
@@ -3258,13 +3360,15 @@ async function forwardToUpstream(
             onChunk: async chunk => {
               if (!streamingStatusCode || !streamingHeaders) return;
               try {
-                const outgoingChunks = nativeAnthropicStreamGuard
-                  ? processNativeAnthropicSseGuardChunk(nativeAnthropicStreamGuard, chunk)
-                  : [
-                      anthropicStreamNormalizer
-                        ? normalizeAnthropicSseCompatibilityChunk(anthropicStreamNormalizer, chunk)
-                        : chunk,
-                    ];
+                const outgoingChunks = incrementalProtocolTransformer
+                  ? incrementalProtocolTransformer.transform(chunk)
+                  : nativeAnthropicStreamGuard
+                    ? processNativeAnthropicSseGuardChunk(nativeAnthropicStreamGuard, chunk)
+                    : [
+                        anthropicStreamNormalizer
+                          ? normalizeAnthropicSseCompatibilityChunk(anthropicStreamNormalizer, chunk)
+                          : chunk,
+                      ];
                 for (const outgoingChunk of outgoingChunks) {
                   await processStreamingOutgoingChunk(outgoingChunk);
                 }
@@ -3312,6 +3416,24 @@ async function forwardToUpstream(
       }
     } catch (error: unknown) {
       if (streamed && error instanceof NativeAnthropicSseGuardError) {
+        await writeStreamingError(readStreamingValidationMessage(error));
+      }
+      throw error;
+    }
+  }
+
+  if (options.streamResponse && options.streamResponseBody && incrementalProtocolTransformer) {
+    try {
+      for (const outgoingChunk of incrementalProtocolTransformer.finish()) {
+        await processStreamingOutgoingChunk(outgoingChunk);
+      }
+    } catch (error: unknown) {
+      if (
+        streamed &&
+        !options.signal?.aborted &&
+        !streamingObservation.errorSeen &&
+        !streamingObservation.terminalSeen
+      ) {
         await writeStreamingError(readStreamingValidationMessage(error));
       }
       throw error;
@@ -3470,8 +3592,53 @@ export async function handleRequest(
   res: http.ServerResponse
 ): Promise<void> {
   const requestSelectionStartedAt = Date.now();
+  let routeAgentId: string | undefined;
+  let routeAgentName: string | undefined;
+  type RouteCancellationLogContext = Omit<
+    Parameters<typeof recordRouteRequest>[0],
+    | 'requestSelectionStartedAt'
+    | 'agentId'
+    | 'agentName'
+    | 'outcome'
+    | 'statusCode'
+    | 'error'
+    | 'at'
+  >;
+  let routeCancellationLogContext: RouteCancellationLogContext | undefined;
+  let routeClientCancellationLogged = false;
+  const recordedRouteRequestAttempts = new Set<number>();
   const recordRequestForSelection = (params: Parameters<typeof recordRouteRequest>[0]): void => {
-    recordRouteRequest({ ...params, requestSelectionStartedAt });
+    if (routeClientCancellationLogged) {
+      return;
+    }
+    recordRouteRequest({
+      ...params,
+      requestSelectionStartedAt,
+      agentId: routeAgentId,
+      agentName: routeAgentName,
+    });
+    recordedRouteRequestAttempts.add(params.attempt);
+  };
+  const recordRouteClientCancellation = (): void => {
+    if (
+      routeClientCancellationLogged ||
+      !routeCancellationLogContext ||
+      recordedRouteRequestAttempts.has(routeCancellationLogContext.attempt)
+    ) {
+      return;
+    }
+
+    routeClientCancellationLogged = true;
+    recordedRouteRequestAttempts.add(routeCancellationLogContext.attempt);
+    recordRouteRequest({
+      ...routeCancellationLogContext,
+      requestSelectionStartedAt,
+      agentId: routeAgentId,
+      agentName: routeAgentName,
+      outcome: 'neutral',
+      statusCode: ROUTE_CLIENT_CANCELLED_STATUS_CODE,
+      error: ROUTE_CLIENT_CANCELLED_ERROR_CODE,
+    });
   };
   const recordPathOutcomeForSelection = (
     key: Parameters<typeof recordRoutePathOutcome>[0],
@@ -3491,19 +3658,37 @@ export async function handleRequest(
   const routeAbortController = new AbortController();
   let requestBodyRead = false;
   let routeHandlingDone = false;
+  let routeClientCancelled = false;
+  let routeStreamCompletionDelivered = false;
   let cleanupRouteCancellationListeners = () => {};
   const finishRouteHandling = () => {
     routeHandlingDone = true;
     cleanupRouteCancellationListeners();
   };
   const cancelRouteRequest = () => {
-    if (routeHandlingDone || !requestBodyRead || routeAbortController.signal.aborted) {
+    if (routeHandlingDone || routeClientCancelled) {
       return;
     }
-    routeAbortController.abort(createRouteClientCancelledError());
+    routeClientCancelled = true;
+    recordRouteClientCancellation();
+    if (requestBodyRead && !routeAbortController.signal.aborted) {
+      routeAbortController.abort(createRouteClientCancelledError());
+    }
+  };
+  const stopRouteHandlingIfClientCancelled = (): boolean => {
+    if (!routeClientCancelled && !routeAbortController.signal.aborted) {
+      return false;
+    }
+    routeClientCancelled = true;
+    recordRouteClientCancellation();
+    if (requestBodyRead && !routeAbortController.signal.aborted) {
+      routeAbortController.abort(createRouteClientCancelledError());
+    }
+    finishRouteHandling();
+    return true;
   };
   const handleResponseClose = () => {
-    if (res.writableEnded) {
+    if (res.writableEnded || routeStreamCompletionDelivered) {
       finishRouteHandling();
       return;
     }
@@ -3521,8 +3706,34 @@ export async function handleRequest(
   const routing = unifiedConfigManager.getRoutingConfig();
 
   const pathname = getRequestPathname(req.url);
+  const initialCliType =
+    detectMarkedRouteCliType(req.headers) ?? detectCliTypeFromPath(pathname) ?? 'codex';
+  const requestId = nextRequestId(initialCliType);
+  routeCancellationLogContext = {
+    requestId,
+    attempt: 0,
+    cliType: initialCliType,
+    canonicalModel: null,
+    requestKind: 'inference',
+  };
+  if ((req.method || 'GET').toUpperCase() === 'HEAD' && pathname === '/') {
+    recordRequestForSelection({
+      ...routeCancellationLogContext,
+      outcome: 'neutral',
+      statusCode: 204,
+    });
+    res.writeHead(204);
+    res.end();
+    return;
+  }
   const endpointOperation = classifyRouteEndpointOperation(req.method, req.url);
   if (!endpointOperation) {
+    recordRequestForSelection({
+      ...routeCancellationLogContext,
+      outcome: 'failure',
+      statusCode: 404,
+      error: 'unsupported_route',
+    });
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({ error: 'unsupported_route', message: `No route handler for ${pathname}` })
@@ -3534,45 +3745,95 @@ export async function handleRequest(
   let cliType =
     markedCliType ??
     detectCliTypeFromPath(pathname) ??
-    getUpstreamCliTypeForProtocol(endpointOperation.protocol);
+    getAdapterCliTypeForProtocol(endpointOperation.protocol);
   if (!markedCliType && isLikelyGrokBuildRequest(req)) {
     cliType = 'grokBuild';
   } else if (!markedCliType && cliType !== 'openCode' && cliType && isLikelyOpenCodeRequest(req)) {
     cliType = 'openCode';
   }
   if (!cliType) {
+    recordRequestForSelection({
+      ...routeCancellationLogContext,
+      outcome: 'failure',
+      statusCode: 404,
+      error: 'unsupported_route',
+    });
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({ error: 'unsupported_route', message: `No route handler for ${pathname}` })
     );
     return;
   }
-  if (
-    markedCliType &&
-    !isRouteCliCompatibleWithProtocol(markedCliType, endpointOperation.protocol)
-  ) {
-    res.writeHead(400, { 'Content-Type': 'application/json' });
+  // Client markers are compatibility metadata only; pathname still determines the inbound protocol.
+  const credentialCandidates = extractRouteCredentialCandidates(req);
+  const targetLockCandidates = credentialCandidates
+    .map(candidate => ({
+      candidate,
+      lock: parseTargetLockRouteApiKey(candidate.value, routing.server.unifiedApiKey),
+    }))
+    .filter(
+      (entry): entry is { candidate: RouteCredentialCandidate; lock: RouteTargetLock } =>
+        Boolean(entry.lock)
+    );
+  const targetLockValues = new Set(targetLockCandidates.map(entry => entry.candidate.value));
+  const credentialResolution = await resolveRouteProfileCredentialCandidates(
+    credentialCandidates.filter(candidate => !targetLockValues.has(candidate.value)),
+    findConfigFileProfileByRouteApiKey
+  );
+  const hasCredentialConflict =
+    credentialResolution.status === 'ambiguous_credentials' ||
+    targetLockCandidates.length > 1 ||
+    (credentialResolution.status === 'resolved' && targetLockCandidates.length > 0);
+  if (hasCredentialConflict) {
+    recordRequestForSelection({
+      ...routeCancellationLogContext,
+      outcome: 'failure',
+      statusCode: 401,
+      error: 'ambiguous_credentials',
+    });
+    res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
-        error: 'cli_marker_path_mismatch',
-        message: `${markedCliType} does not support ${pathname}`,
+        error: 'ambiguous_credentials',
+        message: 'Credentials resolve to multiple route identities',
       })
     );
     return;
   }
 
-  // 鉴权
-  const token = extractRouteApiKey(req, cliType);
-  const targetLock = parseTargetLockRouteApiKey(token, routing.server.unifiedApiKey);
+  Object.assign(routeCancellationLogContext, {
+    cliType,
+    requestKind:
+      endpointOperation.capability === 'stateless-native-only' ? 'token-count' : 'inference',
+  });
+  const targetLock = targetLockCandidates[0]?.lock || null;
+  const token = targetLockCandidates[0]?.candidate.value || credentialResolution.candidates[0]?.value || '';
+  const routeProfile = credentialResolution.status === 'resolved' ? credentialResolution.profile : null;
+  if (credentialResolution.status === 'resolved' && credentialResolution.unknownCandidates.length > 0) {
+    log.warn('Ignored unknown companion route credentials', {
+      profileId: credentialResolution.profile.id,
+      candidateCount: credentialResolution.candidates.length,
+      unknown: credentialResolution.unknownCandidates.map(candidate => ({
+        sources: candidate.sources,
+        fingerprint: fingerprintRouteCredential(candidate.value),
+      })),
+    });
+  }
   if (targetLock) {
     notifyRouteTargetLockRequest(token);
   }
-  if (token !== routing.server.unifiedApiKey && !targetLock) {
+  if (!targetLock && !routeProfile) {
     notifyTargetLockTerminalFailure({
       routeApiKey: token,
       cliType,
       statusCode: 401,
       terminalError: buildRouteProxyErrorText('invalid_api_key', 'Invalid route API key'),
+    });
+    recordRequestForSelection({
+      ...routeCancellationLogContext,
+      outcome: 'failure',
+      statusCode: 401,
+      error: 'invalid_api_key',
     });
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'invalid_api_key', message: 'Invalid route API key' }));
@@ -3606,6 +3867,12 @@ export async function handleRequest(
       endpointOperation.capability === 'stateful-unsupported'
         ? 'stateful_route_operation_unsupported'
         : 'unsupported_route_operation';
+    recordRequestForSelection({
+      ...routeCancellationLogContext,
+      outcome: 'failure',
+      statusCode: 501,
+      error,
+    });
     res.writeHead(501, {
       'Content-Type': 'application/json',
       'X-Route-Proxy-Error': error,
@@ -3618,7 +3885,23 @@ export async function handleRequest(
     );
     return;
   }
+  if (endpointOperation.capability === 'model-discovery') {
+    const discovery = buildRouteModelDiscoveryResponse(routing, req);
+    recordRequestForSelection({
+      ...routeCancellationLogContext,
+      outcome: discovery.statusCode >= 400 ? 'failure' : 'success',
+      statusCode: discovery.statusCode,
+      ...(discovery.statusCode >= 400 ? { error: 'model_discovery_failed' } : {}),
+    });
+    res.writeHead(discovery.statusCode, {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+    });
+    res.end(JSON.stringify(discovery.body));
+    return;
+  }
   const sourceProtocol = endpointOperation.protocol;
+  const sourceAdapterCliType = getAdapterCliTypeForProtocol(sourceProtocol);
   const nativePassthroughChannels = new WeakSet<ResolvedChannel>();
   const previousTerminalFailure = targetLock ? getRouteTargetLockTerminalFailure(token) : undefined;
   if (previousTerminalFailure) {
@@ -3633,7 +3916,9 @@ export async function handleRequest(
     writeTargetLockTerminalFailureResponse(res, previousTerminalFailure);
     return;
   }
-  const requestId = nextRequestId(cliType);
+  if (stopRouteHandlingIfClientCancelled()) {
+    return;
+  }
 
   // 读取请求体
   let bodyBuffer: Buffer;
@@ -3642,16 +3927,70 @@ export async function handleRequest(
     requestBodyRead = true;
   } catch (err: unknown) {
     if (isRouteClientCancelledError(err)) {
+      cancelRouteRequest();
       finishRouteHandling();
       return;
     }
     throw err;
+  }
+  if (stopRouteHandlingIfClientCancelled()) {
+    return;
   }
   let bodyJson: unknown = null;
   try {
     bodyJson = JSON.parse(bodyBuffer.toString('utf-8'));
   } catch {
     /* ignore */
+  }
+  const sessionRouting =
+    routing.sessionRouting ??
+    (routing.sessionRouting = structuredClone(DEFAULT_ROUTE_SESSION_ROUTING_CONFIG));
+  let observedRouteInstanceKey = extractObservedRouteInstanceKey(
+    req,
+    bodyJson,
+    sessionRouting.extractionRules,
+    sourceProtocol
+  );
+  if (!observedRouteInstanceKey && routeProfile) {
+    const profileSessionKey = `profile:${routeProfile.id}`;
+    observedRouteInstanceKey = {
+      agentId: profileSessionKey,
+      runtimeSlotId: profileSessionKey,
+      sessionId: profileSessionKey,
+      observedAgentName: routeProfile.name,
+      observedRuntimeSlotLabel: '客户端级路由',
+    };
+  }
+  routeAgentId = observedRouteInstanceKey?.agentId;
+  routeAgentName =
+    observedRouteInstanceKey?.observedAgentName ||
+    observedRouteInstanceKey?.agentId ||
+    routeProfile?.name;
+  const responsesStateRequest = classifyResponsesStateRequest(endpointOperation, bodyJson);
+  if (responsesStateRequest && !routeProfile) {
+    writeStateAffinityError(
+      res,
+      400,
+      'stateful_profile_key_required',
+      'Stateful Responses requests require a dedicated configuration profile API key'
+    );
+    return;
+  }
+  let stateAffinityRecord: RouteStateAffinityRecord | null = null;
+  if (responsesStateRequest?.resourceId && routeProfile) {
+    stateAffinityRecord = await routeStateAffinityService.get(
+      responsesStateRequest.resourceId,
+      routeProfile.id
+    );
+    if (!stateAffinityRecord) {
+      writeStateAffinityError(
+        res,
+        409,
+        'state_affinity_not_found',
+        'The referenced resource is not available for this configuration profile'
+      );
+      return;
+    }
   }
   const stateReference = findProviderOwnedStateReference(bodyJson);
   if (stateReference) {
@@ -3678,24 +4017,96 @@ export async function handleRequest(
     return;
   }
   const rawModel = extractModelFromBody(bodyJson) || extractModelFromPath(pathname, cliType);
-  const selectedThinkingEffort = normalizeRouteThinkingEffort(
-    routing.cliThinkingEffortSelections?.[cliType]
-  );
-  let reasoningEffort = extractRouteReasoningEffort(bodyJson);
+  if (
+    !observedRouteInstanceKey &&
+    Object.values(sessionRouting.instances || {}).some(
+      instance => instance.routingState === 'armed'
+    )
+  ) {
+    log.debug('Armed RouteInstance remains unbound because runtime identity is incomplete', {
+      cliType,
+    });
+  }
+  const requestedReasoningEffort = extractRouteReasoningEffort(bodyJson);
+  const requestedCanonicalModel = resolveCanonicalModelFromRegistry(routing, rawModel);
+  Object.assign(routeCancellationLogContext, {
+    requestedModel: rawModel,
+    reasoningEffort: requestedReasoningEffort,
+  });
+  const routeInstanceResolution = resolveRouteInstanceForRequest({
+    config: sessionRouting,
+    profileId:
+      routeProfile?.id ||
+      `__target_lock__:${targetLock?.siteId}:${targetLock?.accountId}:${targetLock?.apiKeyId}`,
+    observedKey: observedRouteInstanceKey,
+    requestedModel: requestedCanonicalModel,
+    requestedReasoningEffort: requestedReasoningEffort || null,
+    defaultModel: '',
+    defaultReasoningEffort: 'medium',
+    requestAt: requestSelectionStartedAt,
+  });
+  if (!routeInstanceResolution.instance && !rawModel && !stateAffinityRecord && !targetLock) {
+    recordRequestForSelection({
+      requestId,
+      attempt: 0,
+      cliType,
+      requestedModel: null,
+      reasoningEffort: requestedReasoningEffort,
+      canonicalModel: null,
+      outcome: 'failure',
+      statusCode: 400,
+      error: 'model_required',
+    });
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        error: 'model_required',
+        message: 'A model is required when no RouteInstance is bound',
+      })
+    );
+    return;
+  }
+  if (routeInstanceResolution.changed) {
+    await unifiedConfigManager.saveConfig();
+    if (stopRouteHandlingIfClientCancelled()) {
+      return;
+    }
+  }
+  if (routeInstanceResolution.instance) {
+    routeSessionActivityService.touch(routeInstanceResolution.instance);
+    routeAgentId = routeInstanceResolution.instance.routeKey?.agentId;
+    routeAgentName =
+      routeInstanceResolution.instance.display.customAgentName ||
+      routeInstanceResolution.instance.display.observedAgentName ||
+      routeAgentId ||
+      routeProfile?.name;
+  }
+  const selectedThinkingEffort =
+    normalizeRouteThinkingEffort(routeInstanceResolution.instance?.reasoningEffort) ??
+    requestedReasoningEffort ??
+    'medium';
+  let reasoningEffort = selectedThinkingEffort;
 
   // 解析 canonical model（代理层无 site 上下文，使用全局 alias 索引）。
-  // 普通本地路由请求以应用中对应 CLI 选择的模型作为路由意图；外部 CLI 配置/请求模型仅保留为诊断 requestedModel。
-  const rawCanonicalModel = resolveCanonicalModelFromRegistry(routing, rawModel);
-  const cliSelectedModel = routing.cliModelSelections[cliType]?.trim() || null;
-  let canonicalModel: string | null = cliSelectedModel || rawCanonicalModel;
+  let canonicalModel: string | null =
+    routeInstanceResolution.instance?.modelId.trim() || requestedCanonicalModel;
+  Object.assign(routeCancellationLogContext, {
+    requestedModel: rawModel,
+    reasoningEffort,
+    canonicalModel,
+  });
 
   let activeRouteRuleId: string | undefined;
   let sortedChannels: ResolvedChannel[] = [];
   let routeRuntimeConfig = resolveRouteRuntimeConfig(routing, canonicalModel);
-  const bypassRoutePathState = Boolean(targetLock);
+  const bypassRoutePathState = Boolean(targetLock || stateAffinityRecord);
 
   if (targetLock) {
     canonicalModel = targetLock.canonicalModel;
+    Object.assign(routeCancellationLogContext, {
+      routeRuleId: '__target_lock__',
+      canonicalModel,
+    });
     routeRuntimeConfig = resolveRouteRuntimeConfig(routing, canonicalModel);
     sortedChannels = (
       await resolveChannelTargets([
@@ -3704,21 +4115,42 @@ export async function handleRequest(
           siteId: targetLock.siteId,
           accountId: targetLock.accountId,
           apiKeyId: targetLock.apiKeyId,
-          cliType,
+          sourceProtocol,
           canonicalModel: targetLock.canonicalModel,
           resolvedModel: targetLock.rawModel,
           targetProtocol: targetLock.targetProtocol,
         },
       ])
     ).map(channel =>
-      resolveEffectiveRouteChannel(channel, cliType, sourceProtocol, nativePassthroughChannels)
+      resolveEffectiveRouteChannel(channel, sourceProtocol, nativePassthroughChannels)
     );
+    if (stopRouteHandlingIfClientCancelled()) {
+      return;
+    }
+  } else if (stateAffinityRecord) {
+    activeRouteRuleId = stateAffinityRecord.routeRuleId;
+    Object.assign(routeCancellationLogContext, { routeRuleId: activeRouteRuleId });
+    sortedChannels = [
+      buildAffinityChannel(stateAffinityRecord, sourceProtocol, canonicalModel, rawModel),
+    ];
   } else {
     // 规则匹配只看 canonical model；若当前请求尚未建立 canonical，则退化为 raw。
-    // canonicalModel 已优先采用应用内 CLI 选择模型，因此本地路由不再依赖外部 CLI 配置模型。
-    const sortedRules = sortRules(routing.rules);
+    // RouteInstance model is authoritative; otherwise the wire model seeds the route.
+    let sortedRules = sortRules(routing.rules);
     const matchModel = canonicalModel || rawModel;
-    const rule = findMatchingRule(sortedRules, cliType, matchModel);
+    let rule = findMatchingProtocolRule(sortedRules, sourceProtocol, matchModel);
+
+    if (!rule && (routeInstanceResolution.instance || routeProfile) && matchModel) {
+      await unifiedConfigManager.ensureRouteRuleForProtocolModelSelection(
+        sourceProtocol,
+        matchModel
+      );
+      if (stopRouteHandlingIfClientCancelled()) {
+        return;
+      }
+      sortedRules = sortRules(routing.rules);
+      rule = findMatchingProtocolRule(sortedRules, sourceProtocol, matchModel);
+    }
 
     if (!rule) {
       recordRequestForSelection({
@@ -3736,13 +4168,14 @@ export async function handleRequest(
       res.end(
         JSON.stringify({
           error: 'no_matching_rule',
-          message: `No routing rule matched for ${cliType} / ${matchModel || '(empty model)'}`,
+          message: `No routing rule matched for ${sourceProtocol} / ${matchModel || '(empty model)'}`,
         })
       );
       return;
     }
 
     activeRouteRuleId = rule.id;
+    Object.assign(routeCancellationLogContext, { routeRuleId: rule.id });
 
     // 解析候选通道（带 canonical model 过滤）
     const channels = resolveChannels(rule, canonicalModel);
@@ -3768,11 +4201,14 @@ export async function handleRequest(
     routeRuntimeConfig = resolveRouteRuntimeConfig(routing, canonicalModel);
     const enabledChannels = filterChannelsByPriorityConfig(channels, routing, canonicalModel);
     const resolvedChannels = await resolveChannelTargets(enabledChannels);
+    if (stopRouteHandlingIfClientCancelled()) {
+      return;
+    }
     const attemptPlan = buildChannelAttemptPlan(
       sortChannelsByScore(resolvedChannels),
       routeRuntimeConfig.maxAttemptsPerRoutePath
     ).map(channel =>
-      resolveEffectiveRouteChannel(channel, cliType, sourceProtocol, nativePassthroughChannels)
+      resolveEffectiveRouteChannel(channel, sourceProtocol, nativePassthroughChannels)
     );
     sortedChannels = applySuccessfulRoutePathAffinity(
       attemptPlan.filter(channel => !isRoutePathDisabled(channel)) as ResolvedChannel[],
@@ -3798,15 +4234,29 @@ export async function handleRequest(
       return;
     }
   }
+  if (responsesStateRequest?.createsResource) {
+    sortedChannels = sortedChannels.filter(
+      channel =>
+        resolveChannelUpstreamProtocol(channel.targetProtocol, sourceProtocol) ===
+        'openai-responses'
+    );
+    if (sortedChannels.length === 0) {
+      writeStateAffinityError(
+        res,
+        501,
+        'stateful_cross_protocol_unsupported',
+        'Stateful Responses requests require a native OpenAI Responses channel'
+      );
+      return;
+    }
+    sortedChannels = sortedChannels.slice(0, 1);
+  }
   const timeoutMs = routing.server.requestTimeoutMs;
   const requestWantsStreaming = isStreamingRequest(bodyJson, req.url);
   const requestIsTokenCount = endpointOperation.capability === 'stateless-native-only';
-  const tokenCountEndpoint =
-    sourceProtocol === 'anthropic-messages'
-      ? CLAUDE_MESSAGES_COUNT_TOKENS_ENDPOINT
-      : RESPONSES_INPUT_TOKENS_ENDPOINT;
+  const tokenCountEndpoint = CLAUDE_MESSAGES_COUNT_TOKENS_ENDPOINT;
   if (targetLock && requestIsTokenCount) {
-    writeInputTokensEstimate(res, estimateClaudeCountTokens(bodyBuffer));
+    writeTokenCountUnsupported(res, 'target_lock_has_no_exact_tokenizer');
     return;
   }
   if (requestIsTokenCount) {
@@ -3815,7 +4265,6 @@ export async function handleRequest(
         resolveChannelUpstreamProtocol(channel.targetProtocol, sourceProtocol) === sourceProtocol
     );
     if (sortedChannels.length === 0) {
-      const estimate = estimateClaudeCountTokens(bodyBuffer);
       recordRequestForSelection({
         requestId,
         attempt: 0,
@@ -3825,13 +4274,11 @@ export async function handleRequest(
         reasoningEffort,
         canonicalModel,
         requestKind: 'token-count',
-        tokenUsageSource: 'local-estimate',
-        estimatedInputTokens: estimate.input_tokens,
         outcome: 'neutral',
-        statusCode: 200,
-        error: 'count_tokens_local_estimate:no_native_protocol_channel',
+        statusCode: 501,
+        error: 'token_count_unsupported:no_native_protocol_channel',
       });
-      writeInputTokensEstimate(res, estimate);
+      writeTokenCountUnsupported(res, 'no_native_protocol_channel');
       return;
     }
   }
@@ -3844,6 +4291,9 @@ export async function handleRequest(
   const quotaExhaustedRoutePaths = new Set<string>();
   let quotaExhaustionEncountered = false;
   for (let i = 0; i < sortedChannels.length; i++) {
+    if (stopRouteHandlingIfClientCancelled()) {
+      return;
+    }
     const ch = sortedChannels[i];
     if (!bypassRoutePathState && isRoutePathDisabled(ch)) {
       continue;
@@ -3863,6 +4313,22 @@ export async function handleRequest(
     const activeChannel: ResolvedChannel = {
       ...ch,
     };
+    Object.assign(routeCancellationLogContext, {
+      requestId,
+      attempt,
+      cliType,
+      targetProtocol: activeChannel.targetProtocol,
+      targetEndpoint: activeChannel.targetEndpoint,
+      requestedModel: rawModel,
+      reasoningEffort,
+      canonicalModel,
+      routeRuleId: activeRouteRuleId ?? activeChannel.routeRuleId,
+      siteId: activeChannel.siteId,
+      accountId: activeChannel.accountId,
+      apiKeyId: activeChannel.apiKeyId,
+      resolvedModel: activeChannel.resolvedModel,
+      requestKind: requestIsTokenCount ? 'token-count' : 'inference',
+    });
     const upstreamProtocol = resolveChannelUpstreamProtocol(
       activeChannel.targetProtocol,
       sourceProtocol
@@ -3871,7 +4337,10 @@ export async function handleRequest(
     const account = unifiedConfigManager.getAccountById(activeChannel.accountId);
 
     if (requestIsTokenCount && !bypassRoutePathState) {
-      const endpointUnsupported = isRouteEndpointUnsupported(activeChannel, tokenCountEndpoint);
+      const endpointUnsupported = isRouteEndpointUnsupported(
+        { ...activeChannel, cliType: getAdapterCliTypeForProtocol(upstreamProtocol) },
+        tokenCountEndpoint
+      );
       if (endpointUnsupported) {
         tokenCountFallbackReason ??= 'cached_unsupported';
         continue;
@@ -3888,6 +4357,9 @@ export async function handleRequest(
     const creds =
       targetLockCredentials ||
       (await resolveChannelCredentials(ch.siteId, ch.accountId, ch.apiKeyId));
+    if (stopRouteHandlingIfClientCancelled()) {
+      return;
+    }
     if (!creds) {
       if (targetLock) {
         notifyTargetLockTerminalFailure({
@@ -3944,7 +4416,7 @@ export async function handleRequest(
     let additionalHeaders: Record<string, string> = {};
     let methodOverride: string | undefined;
     let requestUrlOverride: string | undefined;
-    let upstreamCliType: RouteCliType = getUpstreamCliTypeForProtocol(upstreamProtocol);
+    let upstreamCliType: RouteCliType = getAdapterCliTypeForProtocol(upstreamProtocol);
     let responseAdapter: AnyRouterResponseAdapter = { type: 'transparent' };
     const protocolResponseAdapters: CliProtocolResponseAdapter[] = [];
     const applyProtocolRewrite = (
@@ -3953,7 +4425,7 @@ export async function handleRequest(
     ) => {
       const rewritten = adaptRequestToTargetProtocol(
         finalBody,
-        cliType,
+        sourceAdapterCliType,
         targetProtocol,
         requestUrlOverride ?? req.url,
         activeChannel.resolvedModel,
@@ -3969,8 +4441,6 @@ export async function handleRequest(
     };
 
     if (
-      cliType !== 'openCode' &&
-      cliType !== 'grokBuild' &&
       !requestIsTokenCount &&
       site &&
       account &&
@@ -3979,7 +4449,7 @@ export async function handleRequest(
     ) {
       const userHash = account.anyRouterConfig?.userHash;
 
-      if (!userHash && cliType === 'claudeCode') {
+      if (!userHash && sourceAdapterCliType === 'claudeCode') {
         log.warn(`[AnyRouter] Account ${account.account_name} missing userHash configuration`);
       }
 
@@ -3987,7 +4457,7 @@ export async function handleRequest(
         finalBody,
         userHash,
         req.headers,
-        cliType,
+        sourceAdapterCliType,
         req.url,
         activeChannel.resolvedModel
       );
@@ -4066,12 +4536,31 @@ export async function handleRequest(
     } catch {
       /* keep previous reasoningEffort */
     }
+    Object.assign(routeCancellationLogContext, { reasoningEffort });
 
     const attemptStartedAt = Date.now();
     const streamResponseBody =
       requestWantsStreaming && canStreamResponseAdapters(responseAdapter, protocolResponseAdapters);
+    const streamResponseAdapter = getIncrementalProtocolResponseAdapter(protocolResponseAdapters);
     const nativeResponsePassthrough =
       nativePassthroughChannels.has(ch) && !(site && isAnyRouterSite(site.name));
+    let streamedResourceAffinityBound = false;
+    const bindResourceAffinity = async (resourceId: string): Promise<void> => {
+      if (!routeProfile || streamedResourceAffinityBound) return;
+      await routeStateAffinityService.bind({
+        resourceId,
+        resourceType: responsesStateRequest?.resourceType || 'response',
+        profileId: routeProfile.id,
+        siteId: activeChannel.siteId,
+        accountId: activeChannel.accountId,
+        apiKeyId: activeChannel.apiKeyId,
+        routeRuleId: activeRouteRuleId ?? activeChannel.routeRuleId,
+        targetProtocol: 'openai-responses',
+        targetEndpoint: activeChannel.targetEndpoint || pathname,
+        createdAt: Date.now(),
+      });
+      streamedResourceAffinityBound = true;
+    };
     attemptedUpstream = true;
 
     // target-lock 上游预算：按"终结结果"计，瞬时错误在上限内不消耗预算。
@@ -4086,6 +4575,8 @@ export async function handleRequest(
             'Target-lock upstream request blocked after per-model attempt budget exhausted',
             {
               cliType,
+              agentId: routeAgentId,
+              agentName: routeAgentName,
               siteId: targetLock.siteId,
               accountId: targetLock.accountId,
               apiKeyId: targetLock.apiKeyId,
@@ -4108,11 +4599,15 @@ export async function handleRequest(
           creds.baseUrl,
           creds.apiKey,
           finalBody,
-          cliType,
+          sourceAdapterCliType,
           upstreamTimeouts.timeoutMs,
           activeChannel.resolvedModel,
           {
             upstreamProxyUrl: routing.server.upstreamProxyUrl,
+            upstreamAuthScheme:
+              'authScheme' in creds
+                ? (creds as { authScheme?: 'bearer' | 'x-api-key' }).authScheme
+                : undefined,
             additionalHeaders,
             methodOverride,
             requestUrlOverride,
@@ -4120,8 +4615,22 @@ export async function handleRequest(
             signal: routeAbortController.signal,
             streamResponse: res,
             streamResponseBody,
+            streamResponseAdapter: streamResponseAdapter ?? undefined,
             nativeResponsePassthrough,
             streamIdleTimeoutMs: upstreamTimeouts.streamIdleTimeoutMs,
+            beforeStreamCommit:
+              responsesStateRequest?.createsResource && streamResponseBody
+                ? async bufferedBody => {
+                    const resourceId = extractResponseResourceIdFromSse(bufferedBody);
+                    if (!resourceId) {
+                      throw new Error('state_affinity_response_id_missing');
+                    }
+                    await bindResourceAffinity(resourceId);
+                  }
+                : undefined,
+            onStreamCompletionDelivered: () => {
+              routeStreamCompletionDelivered = true;
+            },
           }
         );
 
@@ -4132,6 +4641,7 @@ export async function handleRequest(
           } catch (error: unknown) {
             if (
               targetLock ||
+              Boolean(responsesStateRequest) ||
               retry >= EMPTY_STREAM_UPSTREAM_RETRY_ATTEMPTS ||
               res.headersSent ||
               routeAbortController.signal.aborted ||
@@ -4153,18 +4663,13 @@ export async function handleRequest(
       };
 
       let result = await forwardActiveChannelWithEmptyStreamRetry();
-      if (routeAbortController.signal.aborted) {
-        if (!bypassRoutePathState && shouldRecordCancelledUpstreamSuccess(result)) {
-          await recordCancelledUpstreamSuccess({
-            requestId,
+      if (routeAbortController.signal.aborted || routeClientCancelled) {
+        routeClientCancelled = true;
+        recordRouteClientCancellation();
+        if (!bypassRoutePathState && shouldRecordCancelledUpstreamPathSuccess(result)) {
+          await recordCancelledUpstreamPathSuccess({
             requestSelectionStartedAt,
-            attempt,
             activeChannel,
-            activeRouteRuleId,
-            cliType,
-            rawModel,
-            reasoningEffort,
-            canonicalModel,
             result,
             routeRuntimeConfig,
           });
@@ -4178,6 +4683,7 @@ export async function handleRequest(
         zeroUsageRetry < ZERO_USAGE_UPSTREAM_RETRY_ATTEMPTS &&
         outcome === 'success' &&
         !requestIsTokenCount &&
+        !responsesStateRequest &&
         !result.semanticError &&
         !result.streamed &&
         isAllZeroRouteUsage(result.usage);
@@ -4192,18 +4698,13 @@ export async function handleRequest(
           resolvedModel: activeChannel.resolvedModel,
         });
         result = await forwardActiveChannel();
-        if (routeAbortController.signal.aborted) {
-          if (!bypassRoutePathState && shouldRecordCancelledUpstreamSuccess(result)) {
-            await recordCancelledUpstreamSuccess({
-              requestId,
+        if (routeAbortController.signal.aborted || routeClientCancelled) {
+          routeClientCancelled = true;
+          recordRouteClientCancellation();
+          if (!bypassRoutePathState && shouldRecordCancelledUpstreamPathSuccess(result)) {
+            await recordCancelledUpstreamPathSuccess({
               requestSelectionStartedAt,
-              attempt,
               activeChannel,
-              activeRouteRuleId,
-              cliType,
-              rawModel,
-              reasoningEffort,
-              canonicalModel,
               result,
               routeRuntimeConfig,
             });
@@ -4225,11 +4726,18 @@ export async function handleRequest(
 
       if (requestIsTokenCount && !bypassRoutePathState && isUnsupportedTokenCountResponse(result)) {
         const bodySnippet = summarizeUpstreamFailureBodyForLog(result.body) || '<empty>';
-        await recordRouteEndpointUnsupported(activeChannel, tokenCountEndpoint, {
-          statusCode: result.statusCode,
-          error: bodySnippet,
-          reason: 'upstream_unsupported',
-        });
+        await recordRouteEndpointUnsupported(
+          { ...activeChannel, cliType: getAdapterCliTypeForProtocol(upstreamProtocol) },
+          tokenCountEndpoint,
+          {
+            statusCode: result.statusCode,
+            error: bodySnippet,
+            reason: 'upstream_unsupported',
+          }
+        );
+        if (stopRouteHandlingIfClientCancelled()) {
+          return;
+        }
         recordRequestForSelection({
           requestId,
           attempt,
@@ -4302,6 +4810,9 @@ export async function handleRequest(
             },
             routeRuntimeConfig
           );
+          if (stopRouteHandlingIfClientCancelled()) {
+            return;
+          }
           recordRequestForSelection({
             requestId,
             attempt,
@@ -4357,6 +4868,9 @@ export async function handleRequest(
           },
           routeRuntimeConfig
         );
+        if (stopRouteHandlingIfClientCancelled()) {
+          return;
+        }
 
         // 记录分析统计
         recordRequestForSelection({
@@ -4579,7 +5093,29 @@ export async function handleRequest(
             { error: `adapter_response-adapt:${reason}` },
             routeRuntimeConfig
           );
+          if (stopRouteHandlingIfClientCancelled()) {
+            return;
+          }
         }
+        recordRequestForSelection({
+          requestId,
+          attempt,
+          routeRuleId: activeRouteRuleId,
+          cliType,
+          targetProtocol: activeChannel.targetProtocol,
+          targetEndpoint: activeChannel.targetEndpoint,
+          requestedModel: rawModel,
+          reasoningEffort,
+          canonicalModel,
+          requestKind: requestIsTokenCount ? 'token-count' : 'inference',
+          siteId: activeChannel.siteId,
+          accountId: activeChannel.accountId,
+          apiKeyId: activeChannel.apiKeyId,
+          resolvedModel: activeChannel.resolvedModel,
+          outcome: 'failure',
+          latencyMs: Date.now() - attemptStartedAt,
+          error: `adapter_response-adapt:${reason}`,
+        });
         // 响应字节尚未写入，可继续尝试下一通道
         continue;
       }
@@ -4596,6 +5132,18 @@ export async function handleRequest(
           body: transformed.body,
         });
       }
+      if (outcome === 'success' && responsesStateRequest && routeProfile) {
+        if (responsesStateRequest.createsResource) {
+          const resourceId = extractResponseResourceId(transformed.body);
+          if (!resourceId) {
+            throw new Error('state_affinity_response_id_missing');
+          }
+          await bindResourceAffinity(resourceId);
+        }
+        if (responsesStateRequest.removesResource && responsesStateRequest.resourceId) {
+          await routeStateAffinityService.remove(responsesStateRequest.resourceId);
+        }
+      }
       res.writeHead(
         result.statusCode,
         buildBufferedResponseHeaders(transformed.headers, transformed.body)
@@ -4603,7 +5151,13 @@ export async function handleRequest(
       res.end(transformed.body);
       return;
     } catch (err: unknown) {
-      if (isRouteClientCancelledError(err) || routeAbortController.signal.aborted) {
+      if (
+        isRouteClientCancelledError(err) ||
+        routeAbortController.signal.aborted ||
+        routeClientCancelled
+      ) {
+        routeClientCancelled = true;
+        recordRouteClientCancellation();
         finishRouteHandling();
         return;
       }
@@ -4665,6 +5219,9 @@ export async function handleRequest(
           },
           routeRuntimeConfig
         );
+        if (stopRouteHandlingIfClientCancelled()) {
+          return;
+        }
         recordRequestForSelection({
           requestId,
           attempt,
@@ -4727,7 +5284,6 @@ export async function handleRequest(
 
   if (!res.headersSent) {
     if (requestIsTokenCount) {
-      const estimate = estimateClaudeCountTokens(bodyBuffer);
       recordRequestForSelection({
         requestId,
         attempt: attempt + 1,
@@ -4737,13 +5293,11 @@ export async function handleRequest(
         reasoningEffort,
         canonicalModel,
         requestKind: 'token-count',
-        tokenUsageSource: 'local-estimate',
-        estimatedInputTokens: estimate.input_tokens,
         outcome: 'neutral',
-        statusCode: 200,
-        error: `count_tokens_local_estimate:${tokenCountFallbackReason || 'native_channels_unavailable'}`,
+        statusCode: 501,
+        error: `token_count_unsupported:${tokenCountFallbackReason || 'native_channels_unavailable'}`,
       });
-      writeInputTokensEstimate(res, estimate);
+      writeTokenCountUnsupported(res, tokenCountFallbackReason || 'native_channels_unavailable');
     } else if (!attemptedUpstream && adapterIncompatibilityReasons.length > 0) {
       res.writeHead(400, {
         'Content-Type': 'application/json',
@@ -4871,4 +5425,17 @@ export async function initializeRouteProxy(): Promise<void> {
     return;
   }
   await startProxyServer();
+}
+function isLikelyOpenCodeRequest(req: Pick<http.IncomingMessage, 'headers'>): boolean {
+  const userAgent = normalizeHeaderValue(req.headers['user-agent']).toLowerCase();
+  const originator = normalizeHeaderValue(req.headers['originator']).toLowerCase();
+  return userAgent.includes('opencode') || originator.includes('opencode');
+}
+
+function isLikelyGrokBuildRequest(req: Pick<http.IncomingMessage, 'headers'>): boolean {
+  const clientIdentifier = normalizeHeaderValue(
+    req.headers['x-grok-client-identifier']
+  ).toLowerCase();
+  const userAgent = normalizeHeaderValue(req.headers['user-agent']).toLowerCase();
+  return clientIdentifier === 'grok-shell' || userAgent.includes('grok-shell/');
 }

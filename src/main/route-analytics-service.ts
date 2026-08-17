@@ -249,6 +249,8 @@ function appendRouteRequestLog(params: {
   requestSelectionStartedAt?: number;
   attempt: number;
   cliType: RouteCliType;
+  agentId?: string;
+  agentName?: string;
   targetProtocol?: RouteRequestLogItem['targetProtocol'];
   targetEndpoint?: RouteRequestLogItem['targetEndpoint'];
   requestedModel?: string | null;
@@ -292,6 +294,8 @@ function appendRouteRequestLog(params: {
     requestSelectionStartedAt: params.requestSelectionStartedAt,
     attempt: params.attempt,
     cliType: params.cliType,
+    agentId: params.agentId,
+    agentName: params.agentName,
     targetProtocol: params.targetProtocol,
     targetEndpoint: params.targetEndpoint,
     requestedModel: params.requestedModel,
@@ -390,6 +394,8 @@ export function recordRouteRequest(params: {
   requestSelectionStartedAt?: number;
   attempt: number;
   cliType: RouteCliType;
+  agentId?: string;
+  agentName?: string;
   targetProtocol?: RouteRequestLogItem['targetProtocol'];
   targetEndpoint?: RouteRequestLogItem['targetEndpoint'];
   requestedModel?: string | null;
@@ -434,6 +440,8 @@ export function recordRouteRequest(params: {
     requestSelectionStartedAt: params.requestSelectionStartedAt,
     attempt: params.attempt,
     cliType: params.cliType,
+    agentId: params.agentId,
+    agentName: params.agentName,
     targetProtocol: params.targetProtocol,
     targetEndpoint: params.targetEndpoint,
     requestedModel: params.requestedModel,
@@ -476,7 +484,8 @@ export function recordRouteRequest(params: {
     params.siteId,
     params.accountId,
     params.apiKeyId,
-    params.routeRuleId
+    params.routeRuleId,
+    params.targetEndpoint
   );
 
   let bucket = pendingBuckets.get(bucketKey);
@@ -492,6 +501,7 @@ export function recordRouteRequest(params: {
           bucketSize: 'hour',
           cliType: params.cliType,
           targetProtocol: params.targetProtocol,
+          targetEndpoint: params.targetEndpoint,
           routeRuleId: params.routeRuleId,
           canonicalModel: params.canonicalModel || undefined,
           siteId: params.siteId,

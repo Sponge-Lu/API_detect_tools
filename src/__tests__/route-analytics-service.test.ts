@@ -126,6 +126,10 @@ describe('route-analytics-service token statistics', () => {
       requestId: 'req-1',
       attempt: 1,
       cliType: 'codex',
+      agentId: 'codex-agent',
+      agentName: 'Codex',
+      targetProtocol: 'openai-responses',
+      targetEndpoint: '/v1/responses',
       requestedModel: 'gpt-4.1',
       reasoningEffort: 'xhigh',
       canonicalModel: 'gpt-4.1',
@@ -148,6 +152,9 @@ describe('route-analytics-service token statistics', () => {
     expect(getRouteRequestLogs()).toMatchObject([
       {
         requestId: 'req-1',
+        agentId: 'codex-agent',
+        agentName: 'Codex',
+        targetEndpoint: '/v1/responses',
         reasoningEffort: 'xhigh',
         promptTokens: 120,
         completionTokens: 30,
@@ -166,6 +173,28 @@ describe('route-analytics-service token statistics', () => {
         apiKeyName: '主 Key',
       })
     );
+  });
+
+  it('keeps actual target endpoints in separate analytics buckets', () => {
+    const at = Date.now();
+    for (const targetEndpoint of ['/v1/responses', '/v1/chat/completions']) {
+      recordRouteRequest({
+        requestId: targetEndpoint,
+        attempt: 1,
+        cliType: 'codex',
+        targetProtocol: 'openai-responses',
+        targetEndpoint,
+        canonicalModel: 'gpt-4.1',
+        siteId: 'site-1',
+        accountId: 'account-1',
+        apiKeyId: 'key-1',
+        outcome: 'success',
+        at,
+      });
+    }
+    expect(
+      getAnalyticsDistribution({ window: '24h' }).buckets.map(bucket => bucket.targetEndpoint)
+    ).toEqual(expect.arrayContaining(['/v1/responses', '/v1/chat/completions']));
   });
 
   it('keeps token-count estimates out of inference token and cost analytics', () => {

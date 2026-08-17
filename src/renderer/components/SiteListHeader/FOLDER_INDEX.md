@@ -7,7 +7,7 @@
 **特点**:
 - 多列标题与列宽调整，账户和刷新时间作为独立只读列展示
 - 在列头内联显示排序状态
-- History 列头内嵌旧版 CLI 图标选择器和综合/探测/路由模式切换
+- History 列头按实际请求端点提供 Anthropic、OpenAI、OpenAI Chat 紧凑标签，并驱动所有行切换对应轨道
 - 右侧保留批量操作槽位
 - 未传入 actions 时最后一列表头保持空白，不显示默认“操作”文案
 - 保持列表扫描节奏稳定，不引入额外工具带
@@ -23,7 +23,7 @@
 
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
-| **SiteListHeader.tsx** | 站点列头主组件，显示站点/账户/刷新时间等多列标题、列宽调节、内联排序提示，并在 History 表头提供四种内建 CLI 图标选择器与模式切换 | `SiteListHeader` 组件 |
+| **SiteListHeader.tsx** | 站点列头主组件，显示站点/账户/刷新时间等多列标题、列宽调节、内联排序提示，并在 History 表头按请求端点显示 Anthropic/OpenAI/OpenAI Chat 选择器 | `SiteListHeader` 组件 |
 | **SearchBar.tsx** | 搜索框 | `SearchBar` 组件 |
 | **FilterBar.tsx** | 筛选栏 | `FilterBar` 组件 |
 | **SortMenu.tsx** | 排序菜单 | `SortMenu` 组件 |

@@ -31,7 +31,15 @@ interface RefreshMessage {
 }
 
 // Tab 页面类型（一级页面由 page metadata registry 定义；旧 route 子页仍需兼容）
-export type TabId = 'overview' | 'sites' | 'route' | 'logs' | 'credit' | 'settings';
+export type TabId =
+  | 'overview'
+  | 'sites'
+  | 'route'
+  | 'model-mapping'
+  | 'config-files'
+  | 'logs'
+  | 'credit'
+  | 'settings';
 
 export type VisibleTabId = TabId;
 export type OverviewSubtab = 'site' | 'route';
@@ -39,7 +47,7 @@ export type SidebarDisplayMode = 'expanded' | 'icon-only';
 export type SettingsSection = 'general' | 'detection' | 'sync' | 'update' | 'data';
 
 // 路由相关的 TabId
-export const ROUTE_TAB_IDS: TabId[] = ['route'];
+export const ROUTE_TAB_IDS: TabId[] = ['route', 'model-mapping', 'config-files'];
 export const isRouteTab = (id: TabId) => ROUTE_TAB_IDS.includes(id);
 
 // 排序字段类型
@@ -135,8 +143,10 @@ interface UIState {
   /** 已应用列宽默认值的版本；小于 COLUMN_WIDTHS_VERSION 时会在加载时一次性重置 */
   columnWidthsVersion: number;
 
-  // History 列：CLI 类型（共享于列表头与所有行）
+  // History 列：旧 CLI 选择仅保留用于持久化兼容，不参与路由
   historyCliType: RouteCliType;
+  // History 列：当前按实际请求端点查看的轨道
+  historyTargetEndpoint: string | null;
 
   // 排序状态
   sortField: SortField | null;
@@ -222,8 +232,9 @@ interface UIState {
   setColumnWidth: (index: number, width: number) => void;
   resetColumnWidths: () => void;
 
-  // Actions - History 列选择器
+  // Actions - History 列选择器（旧 CLI action 保留兼容）
   setHistoryCliType: (cliType: RouteCliType) => void;
+  setHistoryTargetEndpoint: (targetEndpoint: string | null) => void;
 
   // Actions - 排序
   setSortField: (field: SortField | null) => void;
@@ -290,6 +301,7 @@ export const useUIStore = create<UIState>()(
       columnWidths: [...DEFAULT_COLUMN_WIDTHS],
       columnWidthsVersion: COLUMN_WIDTHS_VERSION,
       historyCliType: 'claudeCode',
+      historyTargetEndpoint: null,
       sortField: null,
       sortOrder: 'desc',
       showDownloadPanel: false,
@@ -494,6 +506,7 @@ export const useUIStore = create<UIState>()(
         }),
 
       setHistoryCliType: cliType => set({ historyCliType: cliType }),
+      setHistoryTargetEndpoint: targetEndpoint => set({ historyTargetEndpoint: targetEndpoint }),
 
       // 排序 Actions
       setSortField: field => set({ sortField: field }),
@@ -543,6 +556,7 @@ export const useUIStore = create<UIState>()(
         columnWidths: state.columnWidths,
         columnWidthsVersion: state.columnWidthsVersion,
         historyCliType: state.historyCliType,
+        historyTargetEndpoint: state.historyTargetEndpoint,
       }),
       merge: (persistedState, currentState) => {
         const persisted = (persistedState ?? {}) as Partial<UIState>;

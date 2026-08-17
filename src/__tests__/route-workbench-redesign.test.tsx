@@ -7,6 +7,7 @@ import {
   shouldRefreshRegistrySourceDetails,
 } from '../renderer/components/Route/Redirection/ModelRedirectionTab';
 import { RoutePage } from '../renderer/pages/RoutePage';
+import { ConfigFilesPage } from '../renderer/pages/ConfigFilesPage';
 import { useCustomCliConfigStore } from '../renderer/store/customCliConfigStore';
 import { buildRouteApiKeyPriorityKey, buildRoutePathStateKey } from '../shared/types/route-proxy';
 import type {
@@ -45,6 +46,9 @@ let mockConfig: RoutingConfig;
 
 type MockElectronApi = {
   loadConfig?: typeof mockLoadConfig;
+  appData?: {
+    onChanged: ReturnType<typeof vi.fn>;
+  };
   token?: {
     createApiToken?: typeof mockCreateApiToken;
   };
@@ -898,6 +902,8 @@ beforeEach(() => {
     getAnalyticsSummary: mockGetAnalyticsSummary,
     getRequestLogs: mockGetRequestLogs,
     onRequestLogAppended: mockOnRequestLogAppended,
+    previewProfileStateClear: vi.fn(),
+    clearProfileState: vi.fn(),
   };
   electronApi.cliCompat = {
     ...(electronApi.cliCompat || {}),
@@ -908,6 +914,28 @@ beforeEach(() => {
     clearCache: mockClearCache,
   };
   electronApi.loadConfig = mockLoadConfig;
+  electronApi.appData = {
+    onChanged: vi.fn(() => vi.fn()),
+  };
+  electronApi.configFileProfiles = {
+    load: vi.fn().mockResolvedValue([]),
+    upsert: vi.fn().mockImplementation(async ({ profile }: any) => profile),
+    delete: vi.fn().mockResolvedValue(undefined),
+    getTargetCatalog: vi.fn().mockResolvedValue([]),
+    restoreBuiltin: vi.fn(),
+    readFiles: vi.fn().mockResolvedValue([]),
+    preview: vi.fn().mockResolvedValue({ files: [] }),
+    previewDirectEdit: vi.fn().mockResolvedValue({ files: [] }),
+    resolveValues: vi.fn().mockImplementation(async ({ profile }: any) => ({
+      baseUrl: profile.target.kind === 'local-route' ? 'http://127.0.0.1:3000/v1' : '',
+      apiKey: profile.localRouteCredential?.apiKey || '',
+      model: profile.target.model || '',
+    })),
+    generateRouteKey: vi.fn(),
+    previewRouteKeyRotation: vi.fn(),
+    commit: vi.fn().mockResolvedValue(undefined),
+    validateSessionRecord: vi.fn().mockResolvedValue({ records: [], diagnostics: [] }),
+  };
   electronApi.token = {
     ...(electronApi.token || {}),
     createApiToken: mockCreateApiToken,
@@ -924,366 +952,620 @@ describe('route workbench redesign', () => {
 
     expect(screen.getByText('代理服务器')).toBeInTheDocument();
     expect(screen.getByLabelText('代理')).toBeInTheDocument();
-    expect(screen.getByText('Claude Code')).toBeInTheDocument();
-    expect(screen.getByText('Codex')).toBeInTheDocument();
+    expect(screen.getByText('会话路由')).toBeInTheDocument();
     expect(screen.getByTestId('route-page-server-row')).toBeInTheDocument();
-    const primaryRow = screen.getByTestId('route-page-primary-row');
-    expect(primaryRow).toHaveClass('min-w-0');
-    expect(screen.getByTestId('route-page-cli-row')).toBeInTheDocument();
-    expect(screen.queryByTestId('redirect-leading-pane')).not.toBeInTheDocument();
-    expect(screen.getByTestId('redirect-two-pane-layout')).toHaveClass(
-      'grid-cols-[minmax(198px,0.3825fr)_minmax(189px,0.3825fr)_minmax(0,1.335fr)]'
-    );
     const serverSectionCard = screen.getByTestId('route-server-section-card');
     expect(serverSectionCard).toHaveClass('w-full');
-    expect(screen.getByTestId('route-cli-model-section-card')).toHaveClass('w-full');
-    expect(serverSectionCard).not.toHaveClass('h-fit', 'self-start');
-    expect(screen.getByTestId('route-cli-model-section-card')).not.toHaveClass('h-fit');
+    expect(screen.queryByTestId('route-cli-model-section-card')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('redirect-two-pane-layout')).not.toBeInTheDocument();
     expect(within(serverSectionCard).getByRole('button', { name: '停止' })).toBeInTheDocument();
-    expect(
-      within(serverSectionCard).getByRole('button', { name: '显示 API Key' })
-    ).toBeInTheDocument();
     const serverPrimaryRow = screen.getByTestId('route-server-primary-config-row');
-    const serverCredentialRow = screen.getByTestId('route-server-credential-row');
-    expect(serverSectionCard.firstElementChild).toHaveClass('p-2.5');
-    expect(screen.getByTestId('route-cli-model-section-card').firstElementChild).toHaveClass(
-      'px-3',
-      'py-2'
-    );
-    expect(serverPrimaryRow.className).toMatch(
-      /grid-cols-\[minmax\(5\.5rem,0\.7fr\)_minmax\(8rem,1fr\)_minmax\(10rem,1\.1fr\)_minmax\(12rem,1\.35fr\)\]/
-    );
+    expect(serverSectionCard.firstElementChild).toHaveClass('p-4');
+    expect(serverPrimaryRow).toHaveClass('grid', 'grid-cols-1', 'md:grid-cols-3', 'gap-3');
     expect(serverPrimaryRow).not.toContainElement(
       within(serverSectionCard).getByRole('button', { name: '停止' })
     );
-    expect(serverCredentialRow).toHaveClass('contents');
-    expect(serverPrimaryRow).toHaveClass('gap-x-2', 'items-center');
     expect(within(serverPrimaryRow).getByText('端口')).toBeInTheDocument();
     const serverFieldLabels = [
       within(serverPrimaryRow).getByText('端口'),
       within(serverPrimaryRow).getByText('代理'),
-      within(serverCredentialRow).getByText('Base URL'),
-      within(serverCredentialRow).getByText('API Key'),
+      within(serverPrimaryRow).getByText('Base URL'),
     ];
     serverFieldLabels.forEach(label => {
-      expect(label).toHaveClass(
-        'mb-0',
-        'shrink-0',
-        'text-xs',
-        'leading-4',
-        'text-[var(--text-secondary)]'
-      );
-      expect(label).not.toHaveClass('font-medium', 'text-[var(--text-primary)]', 'mb-0.5', 'block');
+      expect(label).toHaveClass('text-sm', 'font-medium', 'text-[var(--text-primary)]');
     });
     const portInput = screen.getByDisplayValue('3000');
     expect(portInput).toHaveAttribute('type', 'text');
     expect(portInput).toHaveAttribute('inputmode', 'numeric');
     expect(portInput).toHaveClass(
-      'h-6',
-      'rounded',
+      'w-full',
       'bg-[var(--surface-2)]',
-      'px-2',
-      'py-1',
-      'font-mono',
-      'text-xs',
-      'leading-4',
-      'text-[var(--text-secondary)]'
+      'text-[var(--text-primary)]',
+      'rounded-[10px]'
     );
     const upstreamProxyInput = within(serverPrimaryRow).getByLabelText('代理');
     expect(upstreamProxyInput).toBeInTheDocument();
     expect(upstreamProxyInput).toHaveClass(
-      'h-6',
-      'rounded',
+      'w-full',
       'bg-[var(--surface-2)]',
-      'px-2',
-      'py-1',
-      'font-mono',
-      'text-xs',
-      'leading-4',
-      'text-[var(--text-secondary)]'
+      'text-[var(--text-primary)]',
+      'rounded-[10px]'
     );
-    expect(within(serverCredentialRow).getByText('Base URL')).toBeInTheDocument();
-    expect(within(serverCredentialRow).getByText('API Key')).toBeInTheDocument();
-    expect(within(serverCredentialRow).getByTestId('route-server-base-url-value')).toHaveClass(
-      'h-6',
-      'rounded',
-      'bg-[var(--surface-2)]',
-      'px-2',
-      'py-1',
-      'font-mono',
-      'text-xs',
-      'leading-4',
-      'text-[var(--text-secondary)]'
-    );
-    expect(within(serverCredentialRow).getByTestId('route-server-api-key-value')).toHaveClass(
-      'h-6',
-      'rounded',
-      'bg-[var(--surface-2)]',
-      'px-2',
-      'py-1',
-      'font-mono',
-      'text-xs',
-      'leading-4',
-      'text-[var(--text-secondary)]'
-    );
-    const claudeRouteActions = screen.getByTestId('route-cli-actions-claudeCode');
-    const previewClaudeRouteButton = screen.getByRole('button', {
-      name: '预览 Claude Code 路由配置',
-    });
-    const applyClaudeRouteButton = screen.getByRole('button', {
-      name: '应用 Claude Code 路由配置',
-    });
-    expect(claudeRouteActions).toHaveClass('flex', 'shrink-0', 'items-center', 'gap-1');
-    expect(previewClaudeRouteButton).toHaveClass('h-6', 'whitespace-nowrap');
-    expect(applyClaudeRouteButton).toHaveClass('h-6', 'whitespace-nowrap');
-    expect(previewClaudeRouteButton.closest('div')).toBe(claudeRouteActions);
-    expect(applyClaudeRouteButton.closest('div')).toBe(claudeRouteActions);
-    expect(screen.getByDisplayValue('claude-opus-4-6')).toHaveClass('h-7', 'py-1', 'rounded-md');
-    const claudeSelectionRow = screen.getByTestId('route-cli-selection-row-claudeCode');
-    const claudeThinkingEffort = screen.getByTestId('route-cli-thinking-effort-claudeCode');
-    expect(claudeSelectionRow).toHaveClass(
-      'grid',
-      'grid-cols-[minmax(0,1fr)_minmax(105px,0.576fr)]'
-    );
-    expect(claudeSelectionRow.children[0]).toBe(screen.getByDisplayValue('claude-opus-4-6'));
-    expect(claudeSelectionRow.children[1]).toContainElement(claudeThinkingEffort);
-    expect(screen.getAllByDisplayValue('gpt-5.4').length).toBeGreaterThan(0);
-    expect(screen.queryByRole('option', { name: 'gpt-4.1' })).not.toBeInTheDocument();
-    expect(screen.getAllByRole('option', { name: 'claude-opus-4-6' }).length).toBeGreaterThan(0);
-    expect(screen.getByText('CLI 路由模型选择')).toBeInTheDocument();
-    expect(screen.getByText(/应用本地路由后，只需修改此处重定向模型即可/)).toHaveClass(
-      'text-[11px]',
-      'text-[var(--text-secondary)]'
-    );
-    const claudeRouteLabel = screen.getByText('Claude Code').closest('label');
-    expect(claudeRouteLabel?.querySelector('img[aria-hidden="true"]')).not.toBeNull();
-    const openCodeRouteLabel = screen.getByText('OpenCode').closest('label');
-    expect(openCodeRouteLabel?.querySelector('img[aria-hidden="true"]')).not.toBeNull();
-    const grokBuildRouteLabel = screen.getByText('Grok Build').closest('label');
-    expect(grokBuildRouteLabel?.querySelector('img[aria-hidden="true"]')).not.toBeNull();
+    expect(within(serverPrimaryRow).getByText('Base URL')).toBeInTheDocument();
+    expect(screen.queryByText('迁移兼容 Key')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('route-server-credential-row')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('route-cli-actions-claudeCode')).not.toBeInTheDocument();
+    expect(screen.queryByText('CLI 路由模型选择')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: '预览 Claude Code 路由配置' })
+    ).not.toBeInTheDocument();
     expect(screen.queryByText('入口端点')).not.toBeInTheDocument();
     expect(
       screen.queryByText(/写入 CLI 本地配置时仅生成连接到本地代理的配置/)
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/当 CLI 使用本地应用路由 URL 时/)).not.toBeInTheDocument();
-    expect(screen.getByTestId('redirect-two-pane-layout')).toHaveClass(
-      'grid-cols-[minmax(198px,0.3825fr)_minmax(189px,0.3825fr)_minmax(0,1.335fr)]'
-    );
-    expect(screen.getAllByText('claude-opus-4-6').length).toBeGreaterThan(0);
+    expect(screen.queryByTestId('redirect-two-pane-layout')).not.toBeInTheDocument();
     expect(screen.queryByText('统计已迁移到数据总览')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '打开数据总览' })).not.toBeInTheDocument();
   }, 15_000);
 
-  it('supports previewing and applying route-generated CLI configs from the proxy panel', async () => {
+  it('does not expose a Conversations state default channel setting', async () => {
     render(<RoutePage />);
 
-    fireEvent.click(screen.getByRole('button', { name: '预览 Claude Code 路由配置' }));
+    expect(await screen.findByText('客户端独立凭证')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Responses 状态默认通道')).not.toBeInTheDocument();
+    expect(screen.getByTestId('route-page-scroll-container')).toHaveClass(
+      'overflow-y-auto',
+      'overflow-x-hidden',
+      '[scrollbar-gutter:stable]'
+    );
+    expect(screen.getByTestId('route-page-primary-row')).toHaveClass('shrink-0');
+    expect(screen.getByTestId('route-page-primary-row')).not.toHaveClass('flex-1');
+  });
 
-    const previewDialog = await screen.findByRole('dialog', { name: 'Claude Code 路由配置预览' });
-    expect(within(previewDialog).getByText('~/.claude/settings.json')).toBeInTheDocument();
-    expect(within(previewDialog).getByText(/127\.0\.0\.1:3000/)).toBeInTheDocument();
-    expect(within(previewDialog).getByText(/sk-route-key/)).toBeInTheDocument();
-    expect(within(previewDialog).getByRole('button', { name: '重置' })).toBeInTheDocument();
-    expect(within(previewDialog).getByRole('button', { name: '编辑' })).toBeInTheDocument();
-
-    fireEvent.click(within(previewDialog).getByRole('button', { name: '编辑' }));
-
-    const settingsEditor = within(previewDialog).getByRole('textbox', {
-      name: '~/.claude/settings.json',
-    });
-    fireEvent.change(settingsEditor, {
-      target: {
-        value: (settingsEditor as HTMLTextAreaElement).value.replace(
-          'sk-route-key',
-          'sk-route-edited'
-        ),
+  it('lists local-route profiles and generates a key only for the selected client', async () => {
+    const api = window.electronAPI.configFileProfiles as any;
+    const profiles = [
+      {
+        id: 'client-a',
+        name: 'Client A',
+        files: [],
+        sessionRecordConnectors: [],
+        sessionRecordPaths: [],
+        target: { kind: 'local-route', model: null },
+        builtin: {
+          clientType: 'claudeCode',
+          version: 1,
+          fingerprint: 'builtin-client-a',
+        },
+        revision: 2,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        id: 'client-b',
+        name: 'Client B',
+        files: [],
+        sessionRecordConnectors: [],
+        sessionRecordPaths: [],
+        target: { kind: 'local-route', model: null },
+        localRouteCredential: {
+          id: 'credential-b',
+          apiKey: 'sk-route-client-b',
+          createdAt: 1,
+        },
+        revision: 4,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        id: 'direct-client',
+        name: 'Direct Client',
+        files: [],
+        sessionRecordConnectors: [],
+        sessionRecordPaths: [],
+        target: { kind: 'direct', configId: 'direct-a', model: null },
+        revision: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    api.load.mockResolvedValue(profiles);
+    api.generateRouteKey.mockResolvedValue({
+      ...profiles[0],
+      revision: 3,
+      localRouteCredential: {
+        id: 'credential-a',
+        apiKey: 'sk-route-client-a',
+        createdAt: 2,
       },
     });
 
-    fireEvent.click(within(previewDialog).getByRole('button', { name: '保存' }));
-    expect(within(previewDialog).getByText(/sk-route-edited/)).toBeInTheDocument();
+    render(<RoutePage />);
 
-    fireEvent.click(within(previewDialog).getByRole('button', { name: '关闭预览' }));
+    expect(await screen.findByText('Client A')).toBeInTheDocument();
+    expect(screen.getByText('Client B')).toBeInTheDocument();
+    expect(screen.getByTestId('route-profile-credentials')).toHaveClass('grid', 'grid-cols-3');
+    const clientA = screen.getByTestId('route-profile-credential-client-a');
+    const clientB = screen.getByTestId('route-profile-credential-client-b');
+    const clientAControls = screen.getByTestId('route-profile-credential-controls-client-a');
+    const clientBActions = screen.getByTestId('route-profile-credential-actions-client-b');
+    expect(clientA).toHaveClass('min-w-0', 'space-y-1.5');
+    expect(within(clientA).getByTitle('Claude Code')).toHaveAttribute(
+      'data-agent-logo',
+      'claudeCode'
+    );
+    expect(clientAControls).toHaveClass('flex', 'items-center', 'gap-1');
+    expect(within(clientAControls).getByLabelText('Client A API Key')).toHaveClass(
+      'min-w-0',
+      'flex-1'
+    );
+    expect(within(clientAControls).getByRole('button', { name: '生成' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Client B API Key')).toHaveAttribute('type', 'password');
+    expect(clientBActions).toHaveClass('gap-0.5');
+    expect(within(clientBActions).getAllByRole('button')).toHaveLength(4);
+    within(clientBActions)
+      .getAllByRole('button')
+      .forEach(button => expect(button).toHaveClass('h-7', 'w-7'));
+    fireEvent.click(within(clientB).getByRole('button', { name: '显示 Client B API Key' }));
+    expect(screen.getByLabelText('Client B API Key')).toHaveAttribute('type', 'text');
+    expect(screen.queryByText('Direct Client')).not.toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByTestId('route-profile-credentials')).getByRole('button', { name: '生成' })
+    );
 
-    fireEvent.click(screen.getByRole('button', { name: '应用 Claude Code 路由配置' }));
-    const mergeButton = screen.getByRole('button', { name: '合并' });
-    expect(mergeButton.parentElement?.parentElement).toBe(document.body);
-    fireEvent.click(mergeButton);
+    await waitFor(() =>
+      expect(api.generateRouteKey).toHaveBeenCalledWith({
+        profileId: 'client-a',
+        expectedRevision: 2,
+      })
+    );
+    expect(await screen.findByDisplayValue('sk-route-client-a')).toHaveAttribute(
+      'type',
+      'password'
+    );
+    expect(screen.getByLabelText('Client B API Key')).toHaveValue('sk-route-client-b');
+  });
 
-    await waitFor(() => {
-      expect(mockWriteConfig).toHaveBeenCalledWith(
-        expect.objectContaining({
-          cliType: 'claudeCode',
+  it('adds a credential-only client with a selected logo and generated key', async () => {
+    const api = window.electronAPI.configFileProfiles as any;
+    api.load.mockResolvedValue([]);
+    api.upsert.mockImplementation(async ({ profile }: any) => ({ ...profile, revision: 1 }));
+    api.generateRouteKey.mockImplementation(async ({ profileId }: any) => ({
+      id: profileId,
+      name: 'Aider Workbench',
+      agentLogoId: 'cursor',
+      credentialOnly: true,
+      files: [],
+      sessionRecordConnectors: [],
+      sessionRecordPaths: [],
+      target: { kind: 'local-route', model: null },
+      localRouteCredential: {
+        id: 'credential-aider',
+        apiKey: 'sk-route-aider',
+        createdAt: 1,
+      },
+      revision: 2,
+      createdAt: 1,
+      updatedAt: 1,
+    }));
+
+    render(<RoutePage />);
+    fireEvent.click(await screen.findByRole('button', { name: '新增客户端' }));
+    fireEvent.change(screen.getByLabelText('客户端名称'), {
+      target: { value: '  Aider Workbench  ' },
+    });
+    fireEvent.change(screen.getByLabelText('客户端 Logo'), {
+      target: { value: 'cursor' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存并生成' }));
+
+    await waitFor(() =>
+      expect(api.upsert).toHaveBeenCalledWith({
+        profile: expect.objectContaining({
+          name: 'Aider Workbench',
+          agentLogoId: 'cursor',
+          credentialOnly: true,
+          files: [],
+          target: { kind: 'local-route', model: null },
+        }),
+      })
+    );
+    expect(api.generateRouteKey).toHaveBeenCalledWith({
+      profileId: expect.any(String),
+      expectedRevision: 1,
+    });
+    expect(await screen.findByLabelText('Aider Workbench API Key')).toHaveValue('sk-route-aider');
+    expect(screen.getByLabelText('Aider Workbench API Key')).toHaveAttribute('type', 'password');
+    expect(screen.getByTitle('Cursor')).toHaveAttribute('data-agent-logo', 'cursor');
+  });
+
+  it('previews and commits one profile key rotation before reloading credentials', async () => {
+    const api = window.electronAPI.configFileProfiles as any;
+    const profile = {
+      id: 'client-a',
+      name: 'Client A',
+      files: [{ id: 'file-a', path: 'C:\\client-a.json', template: '{}' }],
+      sessionRecordConnectors: [],
+      sessionRecordPaths: [],
+      target: { kind: 'local-route', model: null },
+      localRouteCredential: { id: 'credential-a', apiKey: 'old-key', createdAt: 1 },
+      revision: 5,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    api.load.mockResolvedValueOnce([profile]).mockResolvedValueOnce([
+      {
+        ...profile,
+        revision: 6,
+        localRouteCredential: { ...profile.localRouteCredential, apiKey: 'new-key', rotatedAt: 2 },
+      },
+    ]);
+    api.previewRouteKeyRotation.mockResolvedValue({
+      transactionId: 'rotation-a',
+      profileId: profile.id,
+      profileRevision: profile.revision,
+      operation: 'key-rotation',
+      createdAt: 1,
+      expiresAt: 2,
+      files: [
+        {
+          fileId: 'file-a',
+          path: 'C:\\client-a.json',
+          exists: true,
+          content: 'old-key',
+          nextContent: 'new-key',
+          hash: 'hash',
+          mtimeMs: 1,
+          matchCounts: { baseUrl: 0, apiKey: 1, model: 0 },
+          changed: true,
+        },
+      ],
+    });
+
+    render(<RoutePage />);
+    fireEvent.click(await screen.findByRole('button', { name: '显示 Client A API Key' }));
+    expect(screen.getByDisplayValue('old-key')).toHaveAttribute('type', 'text');
+    fireEvent.click(await screen.findByRole('button', { name: '轮换 Client A API Key' }));
+    expect(await screen.findByText('C:\\client-a.json')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '确认轮换' }));
+
+    await waitFor(() => expect(api.commit).toHaveBeenCalledWith({ transactionId: 'rotation-a' }));
+    expect(await screen.findByDisplayValue('new-key')).toHaveAttribute('type', 'password');
+  });
+
+  it('reloads client credentials when configuration profiles change', async () => {
+    const electronApi = window.electronAPI as any;
+    const api = electronApi.configFileProfiles;
+    const previous = {
+      id: 'client-a',
+      name: 'Client A',
+      files: [],
+      sessionRecordConnectors: [],
+      sessionRecordPaths: [],
+      target: { kind: 'local-route', model: null },
+      localRouteCredential: { id: 'credential-a', apiKey: 'old-key', createdAt: 1 },
+      revision: 2,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    api.load.mockResolvedValueOnce([previous]).mockResolvedValue([
+      {
+        ...previous,
+        revision: 3,
+        localRouteCredential: { ...previous.localRouteCredential, apiKey: 'new-key', rotatedAt: 2 },
+      },
+    ]);
+
+    render(<RoutePage />);
+    expect(await screen.findByLabelText('Client A API Key')).toHaveValue('old-key');
+
+    const onChanged = electronApi.appData.onChanged.mock.calls.at(-1)?.[0];
+    act(() => {
+      onChanged({ domains: ['config-file-profiles'], emittedAt: Date.now() });
+    });
+
+    await waitFor(() => expect(screen.getByLabelText('Client A API Key')).toHaveValue('new-key'));
+  });
+
+  it('rotates credential-only keys with a transaction that does not require file matches', async () => {
+    const api = window.electronAPI.configFileProfiles as any;
+    const profile = {
+      id: 'credential-only',
+      name: 'Standalone Client',
+      credentialOnly: true,
+      files: [],
+      sessionRecordConnectors: [],
+      sessionRecordPaths: [],
+      target: { kind: 'local-route', model: null },
+      localRouteCredential: { id: 'credential-a', apiKey: 'old-key', createdAt: 1 },
+      revision: 4,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const updated = {
+      ...profile,
+      revision: 5,
+      localRouteCredential: { ...profile.localRouteCredential, apiKey: 'new-key', rotatedAt: 2 },
+    };
+    api.load.mockResolvedValueOnce([profile]).mockResolvedValue([updated]);
+    api.previewRouteKeyRotation.mockResolvedValue({
+      transactionId: 'credential-only-rotation',
+      profileId: profile.id,
+      profileRevision: profile.revision,
+      operation: 'key-rotation',
+      createdAt: 1,
+      expiresAt: 2,
+      files: [],
+    });
+
+    render(<RoutePage />);
+    fireEvent.click(await screen.findByRole('button', { name: '轮换 Standalone Client API Key' }));
+
+    await waitFor(() =>
+      expect(api.previewRouteKeyRotation).toHaveBeenCalledWith({
+        profileId: 'credential-only',
+        expectedRevision: 4,
+      })
+    );
+    expect(
+      screen.getByText('此客户端没有关联配置文件；确认后只更新客户端独立凭证。')
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '确认轮换' }));
+    await waitFor(() =>
+      expect(api.commit).toHaveBeenCalledWith({ transactionId: 'credential-only-rotation' })
+    );
+    expect(await screen.findByLabelText('Standalone Client API Key')).toHaveValue('new-key');
+    expect(api.generateRouteKey).not.toHaveBeenCalled();
+  });
+
+  it('previews profile state impact before allowing confirmed cleanup', async () => {
+    const api = window.electronAPI.configFileProfiles as any;
+    const routeApi = window.electronAPI.route as any;
+    api.load.mockResolvedValue([
+      {
+        id: 'client-a',
+        name: 'Client A',
+        files: [],
+        sessionRecordConnectors: [],
+        sessionRecordPaths: [],
+        target: { kind: 'local-route', model: null },
+        localRouteCredential: { id: 'credential-a', apiKey: 'client-key', createdAt: 1 },
+        revision: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ]);
+    routeApi.previewProfileStateClear.mockResolvedValue({
+      success: true,
+      data: {
+        profileId: 'client-a',
+        total: 6,
+        responses: 2,
+        conversations: 1,
+        conversationItems: 3,
+      },
+    });
+    routeApi.clearProfileState.mockResolvedValue({ success: true, data: { removed: 6 } });
+
+    render(<RoutePage />);
+    fireEvent.click(await screen.findByRole('button', { name: '清理 Client A 状态资源' }));
+
+    expect(routeApi.previewProfileStateClear).toHaveBeenCalledWith('client-a');
+    expect(routeApi.clearProfileState).not.toHaveBeenCalled();
+    expect(await screen.findByText(/将删除此客户端的 6 条本地亲和映射/)).toBeInTheDocument();
+    expect(screen.getByText('Responses').parentElement).toHaveTextContent('2Responses');
+    expect(screen.getByText('Conversations').parentElement).toHaveTextContent('1Conversations');
+    expect(screen.getByText('Items').parentElement).toHaveTextContent('3Items');
+
+    fireEvent.click(screen.getByRole('button', { name: '确认清理' }));
+    await waitFor(() => expect(routeApi.clearProfileState).toHaveBeenCalledWith('client-a'));
+  });
+
+  it(
+    'renders four example profiles through the shared configuration-card schema',
+    { timeout: 15_000 },
+    async () => {
+      const profiles = [
+        ...['Claude Code', 'Codex', 'OpenCode', 'Grok Build'].map((name, index) => ({
+          id: `example-${index}`,
+          name,
+          files: [
+            {
+              id: `file-${index}`,
+              path: `~/.${index}.config`,
+              template: '{{BASE_URL}} {{API_KEY}} {{MODEL}}',
+            },
+          ],
+          sessionRecordConnectors: [],
+          sessionRecordPaths: [],
+          target: { kind: 'local-route', model: null },
+          isExample: true,
+          createdAt: 1,
+          updatedAt: 1,
+        })),
+        {
+          id: 'credential-only',
+          name: 'Route Only Client',
+          credentialOnly: true,
+          files: [],
+          sessionRecordConnectors: [],
+          sessionRecordPaths: [],
+          target: { kind: 'local-route', model: null },
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ];
+      (window.electronAPI.configFileProfiles.load as ReturnType<typeof vi.fn>).mockResolvedValue(
+        profiles
+      );
+      render(<ConfigFilesPage />);
+      for (const name of ['Claude Code', 'Codex', 'OpenCode', 'Grok Build']) {
+        expect(await screen.findByText(name)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: `${name} 编辑` })).toBeInTheDocument();
+      }
+      expect(screen.queryByLabelText('配置卡片名称')).not.toBeInTheDocument();
+      expect(screen.queryByText('Route Only Client')).not.toBeInTheDocument();
+      expect(screen.queryByText(/应用 .* 路由配置/)).not.toBeInTheDocument();
+      expect(screen.getByText('4 个方案 · 4 个文件')).toBeInTheDocument();
+      expect(screen.getAllByText('内置')).toHaveLength(4);
+      expect(screen.getByLabelText('Claude Code 配置卡片').parentElement).toHaveClass(
+        'lg:grid-cols-2'
+      );
+      expect(screen.getByRole('button', { name: 'Claude Code 更多操作' })).toHaveAttribute(
+        'aria-expanded',
+        'false'
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Claude Code 编辑' }));
+      expect(await screen.findByText('基本信息')).toBeInTheDocument();
+      expect(screen.getByLabelText('Claude Code Logo')).toBeInTheDocument();
+      expect(screen.getByText('文件规则')).toBeInTheDocument();
+      expect(screen.getByText('会话关联')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '预览写入' })).toBeInTheDocument();
+      expect(await screen.findByRole('button', { name: '恢复最新示例' })).toBeInTheDocument();
+    }
+  );
+
+  it(
+    'previews and commits an edited configuration card transaction',
+    { timeout: 15_000 },
+    async () => {
+      const profile = {
+        id: 'user-profile',
+        name: '我的编辑器',
+        files: [
+          {
+            id: 'file-1',
+            path: 'C:/editor/config.json',
+            template: '{"base":"{{BASE_URL}}","model":"{{MODEL}}"}',
+          },
+        ],
+        sessionRecordConnectors: [
+          {
+            id: 'connector-1',
+            path: 'C:/editor/sessions.jsonl',
+            format: 'jsonl',
+            namespace: 'editor',
+            sessionIdPath: 'id',
+          },
+        ],
+        sessionRecordPaths: [],
+        target: { kind: 'local-route', model: null },
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      const preview = {
+        transactionId: 'tx-1',
+        profileId: profile.id,
+        createdAt: 1,
+        expiresAt: 999999,
+        files: [
+          {
+            fileId: 'file-1',
+            path: profile.files[0].path,
+            exists: true,
+            content: 'before',
+            hash: 'hash',
+            mtimeMs: 1,
+            nextContent: 'after',
+            matchCounts: { baseUrl: 1, apiKey: 0, model: 1 },
+            changed: true,
+          },
+        ],
+      };
+      const api = window.electronAPI.configFileProfiles as any;
+      api.load.mockResolvedValue([profile]);
+      api.getTargetCatalog.mockResolvedValue([
+        {
+          value: 'local-route',
+          label: '本地路由',
+          available: true,
+          allModels: [],
+          apiKeys: [],
+        },
+      ]);
+      api.upsert.mockImplementation(async ({ profile: value }: any) => ({ ...value, revision: 1 }));
+      api.preview = vi.fn();
+      api.commit = vi.fn();
+      api.preview.mockResolvedValue(preview);
+      api.commit.mockResolvedValue(undefined);
+      render(<ConfigFilesPage />);
+      expect(await screen.findByText('我的编辑器')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: '预览套用' })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: '我的编辑器 编辑' }));
+      expect(await screen.findByDisplayValue('我的编辑器')).toBeInTheDocument();
+      expect(screen.getByText('窗口打开状态路径')).toBeInTheDocument();
+      expect(screen.getByText('窗口当前 Session ID 路径')).toBeInTheDocument();
+      expect(screen.getByText(/只有窗口状态明确为打开时/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: '预览写入' }));
+      await waitFor(() =>
+        expect(api.preview).toHaveBeenCalledWith({
+          profileId: profile.id,
+          expectedRevision: 1,
           applyMode: 'merge',
         })
       );
-    });
+      expect(await screen.findByText('确认写入内容')).toBeInTheDocument();
+      expect(screen.getByText('+ after')).toBeInTheDocument();
+      expect(screen.getByText('- before')).toBeInTheDocument();
+      expect(screen.queryByRole('dialog', { name: '应用到本地' })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: '确认写入' }));
+      await waitFor(() => expect(api.commit).toHaveBeenCalledWith({ transactionId: 'tx-1' }));
+    }
+  );
 
-    const writtenConfig = mockWriteConfig.mock.calls[0]?.[0];
-    const settingsFile = writtenConfig.files.find(
-      (file: { path: string; content: string }) => file.path === '~/.claude/settings.json'
-    );
-
-    expect(settingsFile?.content).toContain('http://127.0.0.1:3000');
-    expect(settingsFile?.content).toContain('sk-route-edited');
-    expect(mockClearCache).toHaveBeenCalledWith('claudeCode');
-  }, 15_000);
-
-  it('generates Codex route configs that target the local route proxy', async () => {
+  it('does not render the legacy CLI thinking selector on the local route page', () => {
     render(<RoutePage />);
-
-    fireEvent.click(screen.getByRole('button', { name: '预览 Codex 路由配置' }));
-
-    const codexPreview = await screen.findByRole('dialog', { name: 'Codex 路由配置预览' });
-    expect(within(codexPreview).getByText('~/.codex/config.toml')).toBeInTheDocument();
-    expect(within(codexPreview).getByText('~/.codex/auth.json')).toBeInTheDocument();
-    expect(
-      within(codexPreview).getByText(/base_url = "http:\/\/127\.0\.0\.1:3000\/v1"/)
-    ).toBeInTheDocument();
-    expect(within(codexPreview).getByText(/OPENAI_API_KEY/)).toBeInTheDocument();
-    expect(within(codexPreview).getByText(/sk-route-key/)).toBeInTheDocument();
-
-    fireEvent.click(within(codexPreview).getByRole('button', { name: '关闭预览' }));
+    expect(screen.queryByTestId('route-cli-thinking-effort-claudeCode')).not.toBeInTheDocument();
+    expect(screen.getByText('会话路由')).toBeInTheDocument();
   });
 
-  it('applies the managed OpenCode providers only in merge mode', async () => {
-    render(<RoutePage />);
-
-    fireEvent.click(screen.getByRole('button', { name: '应用 OpenCode 路由配置' }));
-    expect(screen.getByRole('button', { name: '合并' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '覆盖' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '合并' }));
-
-    await waitFor(() => {
-      expect(mockWriteConfig).toHaveBeenCalledWith(
-        expect.objectContaining({ cliType: 'openCode', applyMode: 'merge' })
-      );
-    });
-    const payload = mockWriteConfig.mock.calls.find(call => call[0].cliType === 'openCode')?.[0];
-    const configFile = payload?.files.find(
-      (file: { path: string }) => file.path === '~/.config/opencode/opencode.json'
-    );
-    const authFile = payload?.files.find(
-      (file: { path: string }) => file.path === '~/.local/share/opencode/auth.json'
-    );
-    const config = JSON.parse(configFile?.content ?? '{}');
-    const auth = JSON.parse(authFile?.content ?? '{}');
-
-    expect(config.model).toBe('api-detect-responses/gpt-5.4');
-    expect(Object.keys(config.provider)).toEqual(
-      expect.arrayContaining(['api-detect-anthropic', 'api-detect-responses', 'api-detect-chat'])
-    );
-    expect(Object.keys(auth)).toEqual(expect.arrayContaining(Object.keys(config.provider)));
-  });
-
-  it('previews and applies the managed Grok Build models only in merge mode', async () => {
-    render(<RoutePage />);
-
-    fireEvent.click(screen.getByRole('button', { name: '预览 Grok Build 路由配置' }));
-    const preview = await screen.findByRole('dialog', { name: 'Grok Build 路由配置预览' });
-    expect(within(preview).getByText('~/.grok/config.toml')).toBeInTheDocument();
-    expect(within(preview).getByText(/\[model\.api-detect-grok-responses\]/)).toBeInTheDocument();
-    expect(within(preview).getByText(/\[model\.api-detect-grok-chat\]/)).toBeInTheDocument();
-    expect(within(preview).getByText(/\[model\.api-detect-grok-messages\]/)).toBeInTheDocument();
-    expect(within(preview).getByText(/x-api-detect-cli/)).toBeInTheDocument();
-    expect(within(preview).getByText(/grokBuild/)).toBeInTheDocument();
-    fireEvent.click(within(preview).getByRole('button', { name: '关闭预览' }));
-
-    fireEvent.click(screen.getByRole('button', { name: '应用 Grok Build 路由配置' }));
-    expect(screen.getByRole('button', { name: '合并' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '覆盖' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '合并' }));
-
-    await waitFor(() => {
-      expect(mockWriteConfig).toHaveBeenCalledWith(
-        expect.objectContaining({ cliType: 'grokBuild', applyMode: 'merge' })
-      );
-    });
-    const payload = mockWriteConfig.mock.calls.find(call => call[0].cliType === 'grokBuild')?.[0];
-    const configFile = payload?.files.find(
-      (file: { path: string }) => file.path === '~/.grok/config.toml'
-    );
-    expect(configFile?.content).toContain('default = "api-detect-grok-responses"');
-    expect(configFile?.content).toContain('api_backend = "responses"');
-    expect(configFile?.content).toContain('api_backend = "chat_completions"');
-    expect(configFile?.content).toContain('api_backend = "messages"');
-  });
-
-  it('shows a saved custom thinking effort in the selector and lets the user delete it', async () => {
-    const { rerender } = render(<RoutePage />);
-    const selector = screen.getByTestId('route-cli-thinking-effort-claudeCode');
-
-    expect(screen.queryByText('思考强度')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('route-cli-thinking-effort-custom-input')).not.toBeInTheDocument();
-    fireEvent.click(selector);
-    fireEvent.click(screen.getByTestId('route-cli-thinking-effort-custom-action-claudeCode'));
-    const customInput = await screen.findByTestId('route-cli-thinking-effort-custom-input');
-    fireEvent.change(customInput, { target: { value: 'ultra' } });
-    const thinkingDialog = screen.getByRole('dialog');
-    fireEvent.click(within(thinkingDialog).getByRole('button', { name: '保存' }));
-
-    expect(mockSaveCliThinkingEffortSelections).toHaveBeenCalledWith({ claudeCode: 'ultra' });
-    await waitFor(() => {
-      expect(
-        screen.queryByTestId('route-cli-thinking-effort-custom-input')
-      ).not.toBeInTheDocument();
-    });
-
-    mockConfig = {
-      ...mockConfig,
-      cliThinkingEffortSelections: {
-        ...mockConfig.cliThinkingEffortSelections,
-        claudeCode: 'ultra',
-      },
+  it('keeps real file editing separate from template preview', async () => {
+    const profile = {
+      id: 'real-file-profile',
+      name: '真实文件卡片',
+      files: [
+        {
+          id: 'file-1',
+          path: 'C:/editor/config.json',
+          template: '{"model":"{{MODEL}}"}',
+        },
+      ],
+      sessionRecordConnectors: [],
+      sessionRecordPaths: [],
+      target: { kind: 'local-route', model: null },
+      createdAt: 1,
+      updatedAt: 1,
     };
-    rerender(<RoutePage />);
-
-    const customSelector = screen.getByTestId('route-cli-thinking-effort-claudeCode');
-    expect(customSelector).toHaveTextContent('ultra');
-    expect(
-      screen.queryByRole('menuitem', { name: '删除 Claude Code 自定义思考强度' })
-    ).not.toBeInTheDocument();
-
-    fireEvent.click(customSelector);
-    const customOption = screen.getByTestId('route-cli-thinking-effort-custom-option-claudeCode');
-    const customAction = screen.getByTestId('route-cli-thinking-effort-custom-action-claudeCode');
-    expect(customOption).toHaveTextContent('ultra');
-    expect(customOption.nextElementSibling).toBe(customAction);
-    fireEvent.click(
-      within(customOption).getByRole('menuitem', {
-        name: '删除 Claude Code 自定义思考强度',
-      })
-    );
-    expect(mockSaveCliThinkingEffortSelections).toHaveBeenLastCalledWith({ claudeCode: null });
-  });
-
-  it('resets saved route preview edits back to the generated config', async () => {
-    render(<RoutePage />);
-
-    fireEvent.click(screen.getByRole('button', { name: '预览 Claude Code 路由配置' }));
-
-    const previewDialog = await screen.findByRole('dialog', { name: 'Claude Code 路由配置预览' });
-    fireEvent.click(within(previewDialog).getByRole('button', { name: '编辑' }));
-
-    const settingsEditor = within(previewDialog).getByRole('textbox', {
-      name: '~/.claude/settings.json',
-    });
-    fireEvent.change(settingsEditor, {
-      target: {
-        value: (settingsEditor as HTMLTextAreaElement).value.replace(
-          'sk-route-key',
-          'sk-route-edited'
-        ),
+    const api = window.electronAPI.configFileProfiles as any;
+    api.load.mockResolvedValue([profile]);
+    api.getTargetCatalog.mockResolvedValue([
+      {
+        value: 'local-route',
+        label: '本地路由',
+        available: true,
+        allModels: [],
+        apiKeys: [],
       },
-    });
-    fireEvent.click(within(previewDialog).getByRole('button', { name: '保存' }));
-
-    expect(within(previewDialog).getByText(/sk-route-edited/)).toBeInTheDocument();
-
-    fireEvent.click(within(previewDialog).getByRole('button', { name: '重置' }));
-
-    expect(within(previewDialog).queryByText(/sk-route-edited/)).not.toBeInTheDocument();
-    expect(within(previewDialog).getByText(/sk-route-key/)).toBeInTheDocument();
+    ]);
+    api.upsert.mockImplementation(async ({ profile: value }: any) => ({ ...value, revision: 1 }));
+    api.readFiles.mockResolvedValue([
+      {
+        fileId: 'file-1',
+        path: profile.files[0].path,
+        exists: true,
+        content: '{"model":"old"}',
+        hash: 'hash',
+        mtimeMs: 1,
+      },
+    ]);
+    render(<ConfigFilesPage />);
+    expect(await screen.findByText('真实文件卡片')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '真实文件卡片 编辑' }));
+    expect(await screen.findByDisplayValue('真实文件卡片')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '读取' }));
+    expect(await screen.findByDisplayValue('{"model":"old"}')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保存配置' })).toBeInTheDocument();
   });
 
   // P0-2: CliUsabilityTab 已合并到 RoutePage，该测试不再需要
@@ -1972,87 +2254,140 @@ describe('route workbench redesign', () => {
     ]);
   });
 
-  it('shows grouped site account api key details and missing key reminders in the detail pane', async () => {
-    render(<ModelRedirectionTab />);
+  it(
+    'shows grouped site account api key details and missing key reminders in the detail pane',
+    { timeout: 15_000 },
+    async () => {
+      render(<ModelRedirectionTab />);
 
-    const detailPane = await findPriorityDetailPane();
-    await waitFor(() => expect(mockRefreshRuntimeState).toHaveBeenCalled());
-    const compactList = within(detailPane).getByTestId('priority-detail-compact-list');
-    expect(compactList.className).toContain('overflow-hidden');
-    expect(compactList.className).not.toContain('rounded');
-    expect(compactList.className).not.toContain('border');
-    expect(within(detailPane).getByRole('radio', { name: '选择 Claude Site' })).toBeInTheDocument();
-    expect(
-      within(detailPane).getByRole('radio', { name: '选择 Claude Site 2' })
-    ).toBeInTheDocument();
-    expect(
-      within(detailPane).queryByRole('radio', { name: '选择 Claude Site 0' })
-    ).not.toBeInTheDocument();
-    const siteSections = getPrioritySiteSections(detailPane);
-    expect(siteSections).toHaveLength(2);
-    expect(siteSections[0]?.className).not.toContain('rounded');
-    expect(siteSections[0]?.className).not.toContain('shadow');
-    expect(siteSections[0]?.firstElementChild).toHaveClass(
-      'grid-cols-[minmax(0,calc(43%_+_64px))_minmax(0,calc(57%_-_94px))_76px_44px]'
-    );
-    expect(within(siteSections[0]!).getByRole('radio', { name: '选择 Claude Site' })).toBeChecked();
-    const firstSiteHeader = siteSections[0]!.firstElementChild as HTMLElement;
-    const firstSiteCells = Array.from(firstSiteHeader.children) as HTMLElement[];
-    expect(firstSiteCells).toHaveLength(3);
-    expect(firstSiteCells[0]).toHaveClass('col-span-2');
-    expect(
-      within(firstSiteCells[0]!).queryByRole('button', { name: 'Claude Site 上移' })
-    ).not.toBeInTheDocument();
-    expect(within(firstSiteCells[0]!).getByTitle('Claude Site')).toHaveClass(
-      'max-w-full',
-      'whitespace-normal',
-      'break-words'
-    );
-    expect(within(firstSiteCells[1]!).queryByText(/claude-/)).not.toBeInTheDocument();
-    expect(within(firstSiteCells[0]!).queryByText(/暂停至/)).not.toBeInTheDocument();
-    expect(
-      within(firstSiteCells[1]!).queryByRole('button', { name: 'Claude Site 上移' })
-    ).not.toBeInTheDocument();
-    expect(firstSiteCells[2]).toHaveAttribute('aria-label', 'Claude Site 禁用');
-    expect(firstSiteCells[2]).toHaveClass('h-6', 'min-w-10', 'text-[11px]');
-    expect(firstSiteCells[2]).toHaveTextContent('禁用');
-    expect(within(detailPane).getByText('来源')).toBeInTheDocument();
-    expect(within(detailPane).getByText('优先级')).toBeInTheDocument();
-    expect(within(detailPane).queryByText('站点优先级')).not.toBeInTheDocument();
-    expect(within(detailPane).queryByText('API Key 优先级')).not.toBeInTheDocument();
-    expect(within(detailPane).queryAllByRole('spinbutton')).toHaveLength(0);
-    expect(within(compactList).queryByRole('button', { name: '置顶' })).not.toBeInTheDocument();
-    expect(within(detailPane).getByRole('button', { name: '置顶' })).toBeInTheDocument();
-    expect(
-      within(detailPane)
-        .getAllByTestId('priority-detail-site-priority')
-        .map(node => node.textContent)
-    ).toEqual(['0', '1']);
-    expect(within(detailPane).getAllByText('站点')).toHaveLength(2);
-    const apiKeyBadges = within(detailPane).getAllByText('API Key');
-    expect(apiKeyBadges).toHaveLength(4);
-    expect(apiKeyBadges[0]).toHaveClass('px-1', 'py-px', 'text-[9px]', 'font-bold');
-    expect(within(detailPane).getAllByText('折叠')).toHaveLength(1);
-    expect(within(detailPane).getByRole('button', { name: '展开折叠站点' })).toBeInTheDocument();
-    const missingKeyToggles = within(detailPane).getAllByTestId(
-      'priority-detail-missing-key-toggle'
-    );
-    expect(missingKeyToggles).toHaveLength(1);
-    expect(within(detailPane).queryAllByTestId('priority-detail-missing-key-row')).toHaveLength(0);
-    expect(within(detailPane).queryByRole('button', { name: '创建' })).not.toBeInTheDocument();
-    expect(
-      within(detailPane).queryByText(
-        'Main / team-alpha（claude-opus-4.6-20260201、claude-sonnet-4.6-20260201）未创建可用 API key'
-      )
-    ).not.toBeInTheDocument();
-    missingKeyToggles.forEach(toggle => fireEvent.click(toggle));
-    fireEvent.click(within(detailPane).getByRole('button', { name: '展开折叠站点' }));
-    fireEvent.click(within(detailPane).getByRole('button', { name: 'Claude Site 0 展开折叠项' }));
-    await waitFor(() => {
-      expect(within(detailPane).getByTitle('Claude Site')).toBeInTheDocument();
-      expect(within(detailPane).getByText('（$15.50）')).toBeInTheDocument();
-      expect(within(detailPane).getByTitle('Claude Site 2')).toBeInTheDocument();
-      expect(within(detailPane).getByText('（无限额度）')).toBeInTheDocument();
+      const detailPane = await findPriorityDetailPane();
+      await waitFor(() => expect(mockRefreshRuntimeState).toHaveBeenCalled());
+      const compactList = within(detailPane).getByTestId('priority-detail-compact-list');
+      expect(compactList.className).toContain('overflow-hidden');
+      expect(compactList.className).not.toContain('rounded');
+      expect(compactList.className).not.toContain('border');
+      expect(
+        within(detailPane).getByRole('radio', { name: '选择 Claude Site' })
+      ).toBeInTheDocument();
+      expect(
+        within(detailPane).getByRole('radio', { name: '选择 Claude Site 2' })
+      ).toBeInTheDocument();
+      expect(
+        within(detailPane).queryByRole('radio', { name: '选择 Claude Site 0' })
+      ).not.toBeInTheDocument();
+      const siteSections = getPrioritySiteSections(detailPane);
+      expect(siteSections).toHaveLength(2);
+      expect(siteSections[0]?.className).not.toContain('rounded');
+      expect(siteSections[0]?.className).not.toContain('shadow');
+      expect(siteSections[0]?.firstElementChild).toHaveClass(
+        'grid-cols-[minmax(0,calc(43%_+_64px))_minmax(0,calc(57%_-_94px))_76px_44px]'
+      );
+      expect(
+        within(siteSections[0]!).getByRole('radio', { name: '选择 Claude Site' })
+      ).toBeChecked();
+      const firstSiteHeader = siteSections[0]!.firstElementChild as HTMLElement;
+      const firstSiteCells = Array.from(firstSiteHeader.children) as HTMLElement[];
+      expect(firstSiteCells).toHaveLength(3);
+      expect(firstSiteCells[0]).toHaveClass('col-span-2');
+      expect(
+        within(firstSiteCells[0]!).queryByRole('button', { name: 'Claude Site 上移' })
+      ).not.toBeInTheDocument();
+      expect(within(firstSiteCells[0]!).getByTitle('Claude Site')).toHaveClass(
+        'max-w-full',
+        'whitespace-normal',
+        'break-words'
+      );
+      expect(within(firstSiteCells[1]!).queryByText(/claude-/)).not.toBeInTheDocument();
+      expect(within(firstSiteCells[0]!).queryByText(/暂停至/)).not.toBeInTheDocument();
+      expect(
+        within(firstSiteCells[1]!).queryByRole('button', { name: 'Claude Site 上移' })
+      ).not.toBeInTheDocument();
+      expect(firstSiteCells[2]).toHaveAttribute('aria-label', 'Claude Site 禁用');
+      expect(firstSiteCells[2]).toHaveClass('h-6', 'min-w-10', 'text-[11px]');
+      expect(firstSiteCells[2]).toHaveTextContent('禁用');
+      expect(within(detailPane).getByText('来源')).toBeInTheDocument();
+      expect(within(detailPane).getByText('优先级')).toBeInTheDocument();
+      expect(within(detailPane).queryByText('站点优先级')).not.toBeInTheDocument();
+      expect(within(detailPane).queryByText('API Key 优先级')).not.toBeInTheDocument();
+      expect(within(detailPane).queryAllByRole('spinbutton')).toHaveLength(0);
+      expect(within(compactList).queryByRole('button', { name: '置顶' })).not.toBeInTheDocument();
+      expect(within(detailPane).getByRole('button', { name: '置顶' })).toBeInTheDocument();
+      expect(
+        within(detailPane)
+          .getAllByTestId('priority-detail-site-priority')
+          .map(node => node.textContent)
+      ).toEqual(['0', '1']);
+      expect(within(detailPane).getAllByText('站点')).toHaveLength(2);
+      const apiKeyBadges = within(detailPane).getAllByText('API Key');
+      expect(apiKeyBadges).toHaveLength(4);
+      expect(apiKeyBadges[0]).toHaveClass('px-1', 'py-px', 'text-[9px]', 'font-bold');
+      expect(within(detailPane).getAllByText('折叠')).toHaveLength(1);
+      expect(within(detailPane).getByRole('button', { name: '展开折叠站点' })).toBeInTheDocument();
+      const missingKeyToggles = within(detailPane).getAllByTestId(
+        'priority-detail-missing-key-toggle'
+      );
+      expect(missingKeyToggles).toHaveLength(1);
+      expect(within(detailPane).queryAllByTestId('priority-detail-missing-key-row')).toHaveLength(
+        0
+      );
+      expect(within(detailPane).queryByRole('button', { name: '创建' })).not.toBeInTheDocument();
+      expect(
+        within(detailPane).queryByText(
+          'Main / team-alpha（claude-opus-4.6-20260201、claude-sonnet-4.6-20260201）未创建可用 API key'
+        )
+      ).not.toBeInTheDocument();
+      missingKeyToggles.forEach(toggle => fireEvent.click(toggle));
+      fireEvent.click(within(detailPane).getByRole('button', { name: '展开折叠站点' }));
+      fireEvent.click(within(detailPane).getByRole('button', { name: 'Claude Site 0 展开折叠项' }));
+      await waitFor(() => {
+        expect(within(detailPane).getByTitle('Claude Site')).toBeInTheDocument();
+        expect(within(detailPane).getByText('（$15.50）')).toBeInTheDocument();
+        expect(within(detailPane).getByTitle('Claude Site 2')).toBeInTheDocument();
+        expect(within(detailPane).getByText('（无限额度）')).toBeInTheDocument();
+        expect(
+          within(detailPane).getByText('backup-key（Main / team-beta / ×1.50）')
+        ).toBeInTheDocument();
+        expect(
+          within(detailPane).getByText('backup-site-key（Backup / team-delta / ×2）')
+        ).toBeInTheDocument();
+        expect(
+          within(detailPane).getAllByText('claude-opus-4.6-20260201（↑$0.001 ↓$0.002）').length
+        ).toBeGreaterThan(0);
+        expect(
+          within(detailPane).getByText('claude-haiku-4.5-20251001（↑$1 ↓$3）')
+        ).toBeInTheDocument();
+      });
+      const apiKeyRows = within(detailPane).getAllByTestId('priority-detail-api-key-row');
+      expect(apiKeyRows).toHaveLength(4);
+      expect(apiKeyRows[0]).toHaveClass(
+        'grid-cols-[minmax(0,calc(43%_+_64px))_minmax(0,calc(57%_-_94px))_76px_44px]'
+      );
+      expect(apiKeyRows[0]?.className).toContain('text-xs');
+      expect(apiKeyRows[0]?.className).not.toContain('text-sm');
+      expect(within(apiKeyRows[0]!).queryByText('--')).not.toBeInTheDocument();
+      expect(apiKeyRows[0]).not.toHaveAttribute('data-priority-hit', 'true');
+      expect(apiKeyRows[0]).not.toHaveAttribute('aria-current', 'true');
+      expect(apiKeyRows[0]).not.toHaveClass('bg-[var(--success-soft)]');
+      expect(within(apiKeyRows[0]!).queryByText('当前优先命中')).not.toBeInTheDocument();
+      expect(apiKeyRows.every(row => row.getAttribute('data-priority-hit') !== 'true')).toBe(true);
+      const firstApiKeyCells = Array.from(apiKeyRows[0]!.children) as HTMLElement[];
+      expect(
+        within(firstApiKeyCells[0]!).getByRole('button', { name: 'backup-key 下移' })
+      ).toBeInTheDocument();
+      expect(
+        within(firstApiKeyCells[2]!).queryByRole('button', { name: 'backup-key 下移' })
+      ).not.toBeInTheDocument();
+      expect(firstApiKeyCells[3]).toHaveAttribute('aria-label', 'backup-key 禁用');
+      expect(firstApiKeyCells[3]).toHaveClass('h-5', 'min-w-8', 'text-[10px]');
+      expect(firstApiKeyCells[3]).toHaveTextContent('禁用');
+      expect(
+        within(apiKeyRows[0]!).queryByTestId('priority-detail-api-key-priority')
+      ).not.toBeInTheDocument();
+      const firstApiKeyMoveButton = within(firstApiKeyCells[0]!).getByRole('button', {
+        name: 'backup-key 下移',
+      });
+      expect(firstApiKeyMoveButton).toHaveClass('p-0');
+      expect(firstApiKeyMoveButton.querySelector('svg')).toHaveClass('h-2.5', 'w-2.5');
       expect(
         within(detailPane).getByText('backup-key（Main / team-beta / ×1.50）')
       ).toBeInTheDocument();
@@ -2060,86 +2395,43 @@ describe('route workbench redesign', () => {
         within(detailPane).getByText('backup-site-key（Backup / team-delta / ×2）')
       ).toBeInTheDocument();
       expect(
-        within(detailPane).getAllByText('claude-opus-4.6-20260201（↑$0.001 ↓$0.002）').length
-      ).toBeGreaterThan(0);
-      expect(
-        within(detailPane).getByText('claude-haiku-4.5-20251001（↑$1 ↓$3）')
+        within(detailPane).getByText('main-key（Main / team-beta / ×1.50）')
       ).toBeInTheDocument();
-    });
-    const apiKeyRows = within(detailPane).getAllByTestId('priority-detail-api-key-row');
-    expect(apiKeyRows).toHaveLength(4);
-    expect(apiKeyRows[0]).toHaveClass(
-      'grid-cols-[minmax(0,calc(43%_+_64px))_minmax(0,calc(57%_-_94px))_76px_44px]'
-    );
-    expect(apiKeyRows[0]?.className).toContain('text-xs');
-    expect(apiKeyRows[0]?.className).not.toContain('text-sm');
-    expect(within(apiKeyRows[0]!).queryByText('--')).not.toBeInTheDocument();
-    expect(apiKeyRows[0]).not.toHaveAttribute('data-priority-hit', 'true');
-    expect(apiKeyRows[0]).not.toHaveAttribute('aria-current', 'true');
-    expect(apiKeyRows[0]).not.toHaveClass('bg-[var(--success-soft)]');
-    expect(within(apiKeyRows[0]!).queryByText('当前优先命中')).not.toBeInTheDocument();
-    expect(apiKeyRows.every(row => row.getAttribute('data-priority-hit') !== 'true')).toBe(true);
-    const firstApiKeyCells = Array.from(apiKeyRows[0]!.children) as HTMLElement[];
-    expect(
-      within(firstApiKeyCells[0]!).getByRole('button', { name: 'backup-key 下移' })
-    ).toBeInTheDocument();
-    expect(
-      within(firstApiKeyCells[2]!).queryByRole('button', { name: 'backup-key 下移' })
-    ).not.toBeInTheDocument();
-    expect(firstApiKeyCells[3]).toHaveAttribute('aria-label', 'backup-key 禁用');
-    expect(firstApiKeyCells[3]).toHaveClass('h-5', 'min-w-8', 'text-[10px]');
-    expect(firstApiKeyCells[3]).toHaveTextContent('禁用');
-    expect(
-      within(apiKeyRows[0]!).queryByTestId('priority-detail-api-key-priority')
-    ).not.toBeInTheDocument();
-    const firstApiKeyMoveButton = within(firstApiKeyCells[0]!).getByRole('button', {
-      name: 'backup-key 下移',
-    });
-    expect(firstApiKeyMoveButton).toHaveClass('p-0');
-    expect(firstApiKeyMoveButton.querySelector('svg')).toHaveClass('h-2.5', 'w-2.5');
-    expect(
-      within(detailPane).getByText('backup-key（Main / team-beta / ×1.50）')
-    ).toBeInTheDocument();
-    expect(
-      within(detailPane).getByText('backup-site-key（Backup / team-delta / ×2）')
-    ).toBeInTheDocument();
-    expect(
-      within(detailPane).getByText('main-key（Main / team-beta / ×1.50）')
-    ).toBeInTheDocument();
-    const mainKeyRow = within(detailPane)
-      .getByText('main-key（Main / team-beta / ×1.50）')
-      .closest('[data-testid="priority-detail-api-key-row"]') as HTMLElement;
-    expect(mainKeyRow).not.toBeNull();
-    const mainKeyCells = Array.from(mainKeyRow.children) as HTMLElement[];
-    expect(within(mainKeyCells[0]!).queryByText(/暂停至/)).not.toBeInTheDocument();
-    expect(within(mainKeyCells[1]!).getByText(/claude-opus.*暂停至/)).toBeInTheDocument();
-    expect(mainKeyCells[1]).toHaveAttribute('title', expect.stringContaining('60分钟成功率 0%'));
-    expect(within(mainKeyCells[1]!).getByText(/claude-opus.*暂停至/).textContent).toMatch(
-      /claude-opus-4\.6-20260201（.*暂停至/
-    );
-    expect(
-      within(detailPane).getByText('shared-key（Secondary / team-gamma / ×1）')
-    ).toBeInTheDocument();
-    expect(
-      within(detailPane).getByText(
-        'Main / team-alpha（claude-opus-4.6-20260201、claude-sonnet-4.6-20260201）未创建可用 API key'
-      )
-    ).toBeInTheDocument();
-    expect(
-      within(detailPane).getByText(
-        'Empty / team-zeta（claude-instant-4.5-20251001）未创建可用 API key'
-      )
-    ).toBeInTheDocument();
-    const createButtons = within(detailPane).getAllByRole('button', { name: '创建' });
-    expect(createButtons).toHaveLength(2);
-    expect(createButtons[0]?.className).toContain('!h-6');
-    expect(createButtons[0]?.className).toContain('!min-h-6');
-    expect(createButtons[0]?.className).toContain('w-14');
-    expect(createButtons[0]?.className).toContain('justify-self-end');
-    expect((missingKeyToggles[0]?.children[1] as HTMLElement | undefined)?.className).toContain(
-      'justify-end'
-    );
-  });
+      const mainKeyRow = within(detailPane)
+        .getByText('main-key（Main / team-beta / ×1.50）')
+        .closest('[data-testid="priority-detail-api-key-row"]') as HTMLElement;
+      expect(mainKeyRow).not.toBeNull();
+      const mainKeyCells = Array.from(mainKeyRow.children) as HTMLElement[];
+      expect(within(mainKeyCells[0]!).queryByText(/暂停至/)).not.toBeInTheDocument();
+      expect(within(mainKeyCells[1]!).getByText(/claude-opus.*暂停至/)).toBeInTheDocument();
+      expect(mainKeyCells[1]).toHaveAttribute('title', expect.stringContaining('60分钟成功率 0%'));
+      expect(within(mainKeyCells[1]!).getByText(/claude-opus.*暂停至/).textContent).toMatch(
+        /claude-opus-4\.6-20260201（.*暂停至/
+      );
+      expect(
+        within(detailPane).getByText('shared-key（Secondary / team-gamma / ×1）')
+      ).toBeInTheDocument();
+      expect(
+        within(detailPane).getByText(
+          'Main / team-alpha（claude-opus-4.6-20260201、claude-sonnet-4.6-20260201）未创建可用 API key'
+        )
+      ).toBeInTheDocument();
+      expect(
+        within(detailPane).getByText(
+          'Empty / team-zeta（claude-instant-4.5-20251001）未创建可用 API key'
+        )
+      ).toBeInTheDocument();
+      const createButtons = within(detailPane).getAllByRole('button', { name: '创建' });
+      expect(createButtons).toHaveLength(2);
+      expect(createButtons[0]?.className).toContain('!h-6');
+      expect(createButtons[0]?.className).toContain('!min-h-6');
+      expect(createButtons[0]?.className).toContain('w-14');
+      expect(createButtons[0]?.className).toContain('justify-self-end');
+      expect((missingKeyToggles[0]?.children[1] as HTMLElement | undefined)?.className).toContain(
+        'justify-end'
+      );
+    }
+  );
 
   it('highlights the api key from the latest persisted first-hit route log', async () => {
     mockGetRequestLogs.mockResolvedValueOnce({

@@ -3,8 +3,31 @@
  * 负责：路径→CLI类型识别，pattern 匹配，规则排序
  */
 
-import type { RouteRule, RouteCliType, RoutePatternType } from '../shared/types/route-proxy';
+import type {
+  RouteRule,
+  RouteCliType,
+  RoutePatternType,
+  RouteSourceProtocol,
+} from '../shared/types/route-proxy';
 import { CLI_TYPE_PATH_MAP } from '../shared/types/route-proxy';
+
+export function detectSourceProtocolFromPath(pathname: string): RouteSourceProtocol | null {
+  if (pathname === '/v1/messages' || pathname.startsWith('/v1/messages/')) {
+    return 'anthropic-messages';
+  }
+  if (
+    pathname === '/v1/responses' ||
+    pathname.startsWith('/v1/responses/') ||
+    pathname === '/v1/conversations' ||
+    pathname.startsWith('/v1/conversations/')
+  ) {
+    return 'openai-responses';
+  }
+  if (pathname === '/v1/chat/completions' || pathname.startsWith('/v1/chat/completions/')) {
+    return 'openai-chat-completions';
+  }
+  return null;
+}
 
 /**
  * 从请求路径识别 CLI 类型
@@ -93,14 +116,14 @@ export function matchPattern(model: string, pattern: string, type: RoutePatternT
  * @param cliType 已识别的 CLI 类型
  * @param model   用 canonical model 参与匹配；若无 canonical，则可退化为原始 model
  */
-export function findMatchingRule(
+export function findMatchingProtocolRule(
   rules: RouteRule[],
-  cliType: RouteCliType,
+  sourceProtocol: RouteSourceProtocol,
   model: string | null
 ): RouteRule | null {
   for (const rule of rules) {
     if (!rule.enabled) continue;
-    if (rule.cliType !== cliType) continue;
+    if (rule.sourceProtocol !== sourceProtocol) continue;
     if (!model || rule.pattern === '*') return rule;
     if (matchPattern(model, rule.pattern, rule.patternType)) return rule;
   }

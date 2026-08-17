@@ -45,12 +45,38 @@ import type {
   RouteAnalyticsObjectStatsQuery,
   RouteAnalyticsWindowQuery,
   RouteHistoryBucketsQuery,
-  HistoryBucket,
+  HistoryEndpointTrack,
   RoutePathStateResetParams,
   RouteRequestLogItem,
   RouteRequestLogQuery,
+  RouteStateAffinitySummary,
+  RouteSessionActivity,
+  RouteSessionCandidate,
+  RouteSessionExtractionRule,
+  RouteSessionOverride,
+  RouteSessionRoutingConfig,
+  RouteInstance,
+  RouteInstanceUpdate,
 } from '../shared/types/route-proxy';
 import type { ThemeMode } from '../shared/theme/themePresets';
+import type {
+  CommitConfigFileProfileInput,
+  ConfigFileTargetCatalogEntry,
+  ConfigFileResolvedTargetValues,
+  ConfigFilePreviewTransaction,
+  ConfigFileProfile,
+  ConfigFileSnapshot,
+  ConfigSessionRecordScanResult,
+  DeleteConfigFileProfileInput,
+  GenerateConfigFileProfileRouteKeyInput,
+  PreviewConfigFileDirectEditInput,
+  PreviewConfigFileProfileInput,
+  PreviewConfigFileProfileRouteKeyRotationInput,
+  RestoreBuiltinConfigFileProfileInput,
+  ResolveConfigFileProfileValuesInput,
+  UpsertConfigFileProfileInput,
+  ValidateSessionRecordConnectorInput,
+} from '../shared/types/config-file-profile';
 import { LDC_UI_VISIBILITY } from '../shared/constants';
 export type { SiteConfig, DetectionResult } from '../shared/types/site';
 
@@ -62,6 +88,12 @@ const DataOverviewPage = lazy(() =>
 const CreditPage = lazy(() => import('./pages/CreditPage').then(m => ({ default: m.CreditPage })));
 const LogsPage = lazy(() => import('./pages/LogsPage').then(m => ({ default: m.LogsPage })));
 const RoutePage = lazy(() => import('./pages/RoutePage').then(m => ({ default: m.RoutePage })));
+const ModelMappingPage = lazy(() =>
+  import('./pages/ModelMappingPage').then(m => ({ default: m.ModelMappingPage }))
+);
+const ConfigFilesPage = lazy(() =>
+  import('./pages/ConfigFilesPage').then(m => ({ default: m.ConfigFilesPage }))
+);
 const SettingsPage = lazy(() =>
   import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage }))
 );
@@ -94,7 +126,9 @@ declare global {
       appData?: {
         onChanged: (
           callback: (payload: {
-            domains: Array<'site-config' | 'site-overview' | 'route-overview'>;
+            domains: Array<
+              'site-config' | 'site-overview' | 'route-overview' | 'config-file-profiles'
+            >;
             emittedAt: number;
           }) => void
         ) => () => void;
@@ -383,6 +417,31 @@ declare global {
           input: EndpointTestSelectionInput
         ) => Promise<{ success: boolean; data?: EndpointTestResult; error?: string }>;
       };
+      configFileProfiles: {
+        load: () => Promise<ConfigFileProfile[]>;
+        upsert: (input: UpsertConfigFileProfileInput) => Promise<ConfigFileProfile>;
+        delete: (input: DeleteConfigFileProfileInput) => Promise<void>;
+        generateRouteKey: (
+          input: GenerateConfigFileProfileRouteKeyInput
+        ) => Promise<ConfigFileProfile>;
+        getTargetCatalog: () => Promise<ConfigFileTargetCatalogEntry[]>;
+        resolveValues: (
+          input: ResolveConfigFileProfileValuesInput
+        ) => Promise<ConfigFileResolvedTargetValues>;
+        restoreBuiltin: (input: RestoreBuiltinConfigFileProfileInput) => Promise<ConfigFileProfile>;
+        readFiles: (profileId: string) => Promise<ConfigFileSnapshot[]>;
+        preview: (input: PreviewConfigFileProfileInput) => Promise<ConfigFilePreviewTransaction>;
+        previewRouteKeyRotation: (
+          input: PreviewConfigFileProfileRouteKeyRotationInput
+        ) => Promise<ConfigFilePreviewTransaction>;
+        previewDirectEdit: (
+          input: PreviewConfigFileDirectEditInput
+        ) => Promise<ConfigFilePreviewTransaction>;
+        commit: (input: CommitConfigFileProfileInput) => Promise<void>;
+        validateSessionRecord: (
+          input: ValidateSessionRecordConnectorInput
+        ) => Promise<ConfigSessionRecordScanResult>;
+      };
       route?: {
         getConfig: () => Promise<{ success: boolean; data?: any; error?: string }>;
         saveServerConfig: (updates: any) => Promise<{ success: boolean; error?: string }>;
@@ -423,6 +482,81 @@ declare global {
         saveCliThinkingEffortSelections: (
           selections: any
         ) => Promise<{ success: boolean; error?: string }>;
+        listSessions?: (scope?: 'active' | 'recent' | 'history' | 'all') => Promise<{
+          success: boolean;
+          data?: RouteSessionActivity[];
+          error?: string;
+        }>;
+        listRouteInstances?: () => Promise<{
+          success: boolean;
+          data?: RouteInstance[];
+          error?: string;
+        }>;
+        createArmedRouteInstance?: (input: {
+          modelId: string;
+          reasoningEffort: string;
+        }) => Promise<{ success: boolean; data?: RouteInstance; error?: string }>;
+        updateRouteInstance?: (
+          instanceId: string,
+          updates: RouteInstanceUpdate
+        ) => Promise<{ success: boolean; data?: RouteInstance; error?: string }>;
+        closeRouteInstance?: (
+          instanceId: string
+        ) => Promise<{ success: boolean; data?: RouteInstance; error?: string }>;
+        cancelArmedRouteInstance?: (
+          instanceId: string
+        ) => Promise<{ success: boolean; data?: RouteInstance; error?: string }>;
+        archiveRouteInstance?: (
+          instanceId: string
+        ) => Promise<{ success: boolean; data?: { archived: boolean }; error?: string }>;
+        upsertSessionOverride?: (
+          override: RouteSessionOverride
+        ) => Promise<{ success: boolean; data?: RouteSessionOverride; error?: string }>;
+        deleteSessionOverride?: (
+          key: string
+        ) => Promise<{ success: boolean; data?: { deleted: boolean }; error?: string }>;
+        previewProfileStateClear?: (profileId: string) => Promise<{
+          success: boolean;
+          data?: RouteStateAffinitySummary;
+          error?: string;
+        }>;
+        clearProfileState?: (profileId: string) => Promise<{
+          success: boolean;
+          data?: { removed: number };
+          error?: string;
+        }>;
+        clearSessionActivity?: (key?: string) => Promise<{ success: boolean; error?: string }>;
+        listSessionRules?: () => Promise<{
+          success: boolean;
+          data?: RouteSessionExtractionRule[];
+          error?: string;
+        }>;
+        upsertSessionRule?: (
+          rule: RouteSessionExtractionRule
+        ) => Promise<{ success: boolean; data?: RouteSessionExtractionRule; error?: string }>;
+        deleteSessionRule?: (
+          ruleId: string
+        ) => Promise<{ success: boolean; data?: { deleted: boolean }; error?: string }>;
+        rollbackSessionRule?: (
+          ruleId: string,
+          version: number
+        ) => Promise<{ success: boolean; data?: RouteSessionExtractionRule; error?: string }>;
+        listSessionCandidates?: () => Promise<{
+          success: boolean;
+          data?: RouteSessionCandidate[];
+          error?: string;
+        }>;
+        updateSessionSettings?: (
+          settings: Partial<
+            Pick<
+              RouteSessionRoutingConfig,
+              | 'activeWindowMinutes'
+              | 'recentWindowHours'
+              | 'historyRetentionDays'
+              | 'overrideRetentionDays'
+            >
+          >
+        ) => Promise<{ success: boolean; error?: string }>;
         getAnalyticsSummary: (
           params: RouteAnalyticsWindowQuery
         ) => Promise<{ success: boolean; data?: any; error?: string }>;
@@ -442,7 +576,7 @@ declare global {
         clearRequestLogs: () => Promise<{ success: boolean; error?: string }>;
         getHistoryBuckets: (
           query: RouteHistoryBucketsQuery
-        ) => Promise<{ success: boolean; data?: HistoryBucket[]; error?: string }>;
+        ) => Promise<{ success: boolean; data?: HistoryEndpointTrack[]; error?: string }>;
         onRequestLogAppended?: (callback: (item: RouteRequestLogItem) => void) => () => void;
         fetchLatestLog: (params: {
           siteId: string;
@@ -556,6 +690,8 @@ function App() {
     null
   );
   const [sitesPageHeaderActions, setSitesPageHeaderActions] = useState<ReactNode | null>(null);
+  const [modelMappingPageHeaderActions, setModelMappingPageHeaderActions] =
+    useState<ReactNode | null>(null);
 
   // 用于存储初始化状态的 ref
   const initRef = useRef(false);
@@ -824,7 +960,9 @@ function App() {
       ? overviewPageHeaderActions
       : visibleActiveTab === 'sites'
         ? sitesPageHeaderActions
-        : null;
+        : visibleActiveTab === 'model-mapping'
+          ? modelMappingPageHeaderActions
+          : null;
 
   if (!config) {
     return (
@@ -907,6 +1045,24 @@ function App() {
               }
             >
               <RoutePage />
+            </div>
+            <div
+              className={
+                visibleActiveTab === 'model-mapping'
+                  ? 'flex-1 flex flex-col overflow-hidden'
+                  : 'hidden'
+              }
+            >
+              <ModelMappingPage setPageHeaderActions={setModelMappingPageHeaderActions} />
+            </div>
+            <div
+              className={
+                visibleActiveTab === 'config-files'
+                  ? 'flex-1 flex flex-col overflow-hidden'
+                  : 'hidden'
+              }
+            >
+              <ConfigFilesPage />
             </div>
             <div
               className={

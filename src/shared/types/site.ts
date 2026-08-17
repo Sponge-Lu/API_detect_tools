@@ -196,6 +196,9 @@ export interface AccountCredential {
   cached_data?: DetectionCacheData; // 账户级检测缓存
 
   // === 账户级配置 ===
+  routeTargetProtocol?: CliTargetProtocol;
+  routeTargetProtocolNeedsConfirmation?: boolean;
+  routeAuthScheme?: 'bearer' | 'x-api-key';
   cli_config?: CliConfig; // v3.0.6: 账户的 CLI 配置（引用该账户的 api_key）
   anyRouterConfig?: AnyRouterAccountConfig; // AnyRouter 专用配置
 

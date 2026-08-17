@@ -17,8 +17,25 @@ import type {
   RouteAnalyticsWindowQuery,
   RoutePathStateResetParams,
   RouteRequestLogItem,
+  RouteStateAffinitySummary,
+  RouteSessionExtractionRule,
+  RouteSessionOverride,
+  RouteSessionRoutingConfig,
+  RouteInstanceUpdate,
 } from '../shared/types/route-proxy';
 import type { BrowserProfileOptionId } from '../shared/types/site';
+import type {
+  CommitConfigFileProfileInput,
+  DeleteConfigFileProfileInput,
+  GenerateConfigFileProfileRouteKeyInput,
+  PreviewConfigFileDirectEditInput,
+  PreviewConfigFileProfileInput,
+  PreviewConfigFileProfileRouteKeyRotationInput,
+  RestoreBuiltinConfigFileProfileInput,
+  ResolveConfigFileProfileValuesInput,
+  UpsertConfigFileProfileInput,
+  ValidateSessionRecordConnectorInput,
+} from '../shared/types/config-file-profile';
 
 const APP_DATA_CHANGED_EVENT = 'app-data:changed';
 const ROUTE_REQUEST_LOG_APPENDED_EVENT = 'route:request-log-appended';
@@ -45,7 +62,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   appData: {
     onChanged: (
       callback: (payload: {
-        domains: Array<'site-config' | 'site-overview' | 'route-overview'>;
+        domains: Array<'site-config' | 'site-overview' | 'route-overview' | 'config-file-profiles'>;
         emittedAt: number;
       }) => void
     ) => {
@@ -55,7 +72,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
             domains: [],
             emittedAt: Date.now(),
           }) as {
-            domains: Array<'site-config' | 'site-overview' | 'route-overview'>;
+            domains: Array<
+              'site-config' | 'site-overview' | 'route-overview' | 'config-file-profiles'
+            >;
             emittedAt: number;
           }
         );
@@ -355,6 +374,32 @@ contextBridge.exposeInMainWorld('electronAPI', {
     fetchModels: (configId: string) =>
       ipcRenderer.invoke('custom-cli-config:fetch-models', configId),
   },
+  configFileProfiles: {
+    load: () => ipcRenderer.invoke('config-file-profile:load'),
+    upsert: (input: UpsertConfigFileProfileInput) =>
+      ipcRenderer.invoke('config-file-profile:upsert', input),
+    delete: (input: DeleteConfigFileProfileInput) =>
+      ipcRenderer.invoke('config-file-profile:delete', input),
+    generateRouteKey: (input: GenerateConfigFileProfileRouteKeyInput) =>
+      ipcRenderer.invoke('config-file-profile:generate-route-key', input),
+    getTargetCatalog: () => ipcRenderer.invoke('config-file-profile:target-catalog'),
+    resolveValues: (input: ResolveConfigFileProfileValuesInput) =>
+      ipcRenderer.invoke('config-file-profile:resolve-values', input),
+    restoreBuiltin: (input: RestoreBuiltinConfigFileProfileInput) =>
+      ipcRenderer.invoke('config-file-profile:restore-builtin', input),
+    readFiles: (profileId: string) =>
+      ipcRenderer.invoke('config-file-profile:read-files', profileId),
+    preview: (input: PreviewConfigFileProfileInput) =>
+      ipcRenderer.invoke('config-file-profile:preview', input),
+    previewRouteKeyRotation: (input: PreviewConfigFileProfileRouteKeyRotationInput) =>
+      ipcRenderer.invoke('config-file-profile:preview-route-key-rotation', input),
+    previewDirectEdit: (input: PreviewConfigFileDirectEditInput) =>
+      ipcRenderer.invoke('config-file-profile:preview-direct-edit', input),
+    commit: (input: CommitConfigFileProfileInput) =>
+      ipcRenderer.invoke('config-file-profile:commit', input),
+    validateSessionRecord: (input: ValidateSessionRecordConnectorInput) =>
+      ipcRenderer.invoke('config-file-profile:validate-session-record', input),
+  },
 
   // 多账户管理 API
   accounts: {
@@ -455,6 +500,54 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('route:save-cli-model-selections', { selections }),
     saveCliThinkingEffortSelections: (selections: any) =>
       ipcRenderer.invoke('route:save-cli-thinking-effort-selections', { selections }),
+    listSessions: (scope?: 'active' | 'recent' | 'history' | 'all') =>
+      ipcRenderer.invoke('route:list-sessions', scope),
+    listRouteInstances: () => ipcRenderer.invoke('route:list-route-instances'),
+    createArmedRouteInstance: (input: { modelId: string; reasoningEffort: string }) =>
+      ipcRenderer.invoke('route:create-armed-route-instance', input),
+    updateRouteInstance: (instanceId: string, updates: RouteInstanceUpdate) =>
+      ipcRenderer.invoke('route:update-route-instance', instanceId, updates),
+    closeRouteInstance: (instanceId: string) =>
+      ipcRenderer.invoke('route:close-route-instance', instanceId),
+    cancelArmedRouteInstance: (instanceId: string) =>
+      ipcRenderer.invoke('route:cancel-armed-route-instance', instanceId),
+    archiveRouteInstance: (instanceId: string) =>
+      ipcRenderer.invoke('route:archive-route-instance', instanceId),
+    upsertSessionOverride: (override: RouteSessionOverride) =>
+      ipcRenderer.invoke('route:upsert-session-override', override),
+    deleteSessionOverride: (key: string) =>
+      ipcRenderer.invoke('route:delete-session-override', key),
+    previewProfileStateClear: (profileId: string) =>
+      ipcRenderer.invoke('route:preview-profile-state-clear', profileId) as Promise<{
+        success: boolean;
+        data?: RouteStateAffinitySummary;
+        error?: string;
+      }>,
+    clearProfileState: (profileId: string) =>
+      ipcRenderer.invoke('route:clear-profile-state', profileId) as Promise<{
+        success: boolean;
+        data?: { removed: number };
+        error?: string;
+      }>,
+    clearSessionActivity: (key?: string) => ipcRenderer.invoke('route:clear-session-activity', key),
+    listSessionRules: () => ipcRenderer.invoke('route:list-session-rules'),
+    upsertSessionRule: (rule: RouteSessionExtractionRule) =>
+      ipcRenderer.invoke('route:upsert-session-rule', rule),
+    deleteSessionRule: (ruleId: string) => ipcRenderer.invoke('route:delete-session-rule', ruleId),
+    rollbackSessionRule: (ruleId: string, version: number) =>
+      ipcRenderer.invoke('route:rollback-session-rule', ruleId, version),
+    listSessionCandidates: () => ipcRenderer.invoke('route:list-session-candidates'),
+    updateSessionSettings: (
+      settings: Partial<
+        Pick<
+          RouteSessionRoutingConfig,
+          | 'activeWindowMinutes'
+          | 'recentWindowHours'
+          | 'historyRetentionDays'
+          | 'overrideRetentionDays'
+        >
+      >
+    ) => ipcRenderer.invoke('route:update-session-settings', settings),
     getAnalyticsSummary: (params: RouteAnalyticsWindowQuery) =>
       ipcRenderer.invoke('route:get-analytics-summary', params),
     getAnalyticsDistribution: (params: RouteAnalyticsWindowQuery) =>
@@ -477,8 +570,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
       bucketSize: '2h';
       siteId?: string;
       accountId?: string;
-      cliType: 'claudeCode' | 'codex' | 'openCode' | 'grokBuild';
-      mode: 'combined' | 'probe-only' | 'route-only';
     }) => ipcRenderer.invoke('route:getHistoryBuckets', query),
   },
   overview: {

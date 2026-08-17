@@ -64,6 +64,7 @@ interface RouteState {
   saveCliThinkingEffortSelections: (
     selections: Partial<RoutingConfig['cliThinkingEffortSelections']>
   ) => Promise<void>;
+
 }
 
 function mergeModelRegistryIntoRouteConfig(
@@ -351,4 +352,5 @@ export const useRouteStore = create<RouteState>((set, get) => ({
     await get().fetchConfig();
     sessionEventLog.success('route', 'CLI 思考强度已更新');
   },
+
 }));

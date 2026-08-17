@@ -38,7 +38,7 @@
 | **groupStyle.test.tsx** | 分组样式测试 | groupStyle 工具 |
 | **useSiteGroups.test.ts** | Hook 测试 | useSiteGroups Hook |
 | **webdav-config.test.ts** | WebDAV 配置测试 | WebDAV 配置 |
-| **unified-config-manager.test.ts** | 配置恢复与持久化回归测试 | UnifiedConfigManager 损坏恢复、备份回滚、原子保存、legacy 默认账户/seeded 路由示例/旧 OpenCode 路由协议字段清理、旧站点缺失 `site_type` 不默认补值、保存配置不丢站点每日快照、路由路径暂停状态恢复 |
+| **unified-config-manager.test.ts** | 配置恢复与持久化回归测试 | 损坏恢复、原子保存、旧账户上游协议唯一值/冲突迁移、路由状态恢复 |
 | **atomic-json.test.ts** | 原子 JSON 工具测试 | 原子写入、缺失文件默认值、normalize 读取、失败临时文件清理、同目标串行写入和 Windows final rename 临时错误重试 |
 | **storage-manifest.test.ts** | 应用存储清单测试 | 本地存储 owner/path/retention/cap/备份边界、portable 仅含 config+custom-cli、credit 显式敏感、受保护浏览器状态不变更约束 |
 | **app-storage-bundle.test.ts** | 应用存储配置包测试 | portable 2 文件纳入、full-manifest 含 custom-cli、排除 credit/browser、portable 恢复保留 runtime/credit、full-manifest 清理缺失 runtime、legacy config-only 保留 sidecar |
@@ -48,7 +48,9 @@
 | **endpoint-test-service.test.ts** | 端点测试服务回归 | 三协议统一问题、无 CLI 特征、Key 分组模型、简短错误、托管/直连解析与 `testedAt` 持久化 |
 | **endpoint-test-panel.test.tsx** | 端点测试 UI 回归 | 三卡常驻展开、Key 分组/全部模型切换、独立选择、最新时间恢复与成功/失败显示 |
 | **route-model-registry-service.test.ts** | 路由模型注册表服务测试 | 手工/显式 override display item、来源扫描不自动生成重定向、厂商优先级、canonical 映射与四种 CLI 可用的自定义 CLI 来源 |
-| **route-proxy-service.test.ts** | 路由代理调度回归测试 | 路由、协议转换、CLI marker、客户端取消、target lock 与流式校验 |
+| **route-proxy-service.test.ts** | 路由代理调度回归测试 | 路由、协议转换、Responses 亲和、Conversations API 前置拒绝、客户端取消与流式校验 |
+| **protocol-sse-transformer.test.ts** | 增量协议 SSE 转换测试 | 六方向协议转换、UTF-8/字节分片、工具调用、usage、错误与缺失 terminal |
+| **route-state-affinity-service.test.ts** | Stateful 资源亲和 sidecar 回归测试 | profile/site/account/API Key 清理与不暴露资源标识的分类摘要 |
 | **cli-protocol-adapter.test.ts** | CLI 协议适配器请求/响应转换测试 | Claude/Codex 源 CLI 与 Anthropic Messages / OpenAI Chat Completions / OpenAI Responses 目标协议之间的 text/tool_use/tool_result/function_call/tool_choice 双向转换，覆盖流式 SSE 与非流式 JSON 矩阵及无损能力拒绝 |
 | **anyrouter-timeout.test.ts** | AnyRouter 站点识别测试 | `Any Router` / `AnyRouter` / 分隔符变体归一化命中，带额外前后缀的站点名不误判 |
 | **anyrouter-rewriter.test.ts** | AnyRouter 协议处理测试 | Claude Code 指纹改写、Codex 原生 Responses 补齐 metadata.user_id、Google/Gemini GenerateContent 原生透传 |
@@ -60,10 +62,17 @@
 | **update-service.test.ts** | 更新服务测试 | UpdateService 类 |
 | **auto-refresh.property.test.ts** | 自动刷新属性测试 | 自动刷新逻辑 |
 | **cli-config-generator.property.test.ts** | CLI 配置生成测试 | CLI 配置生成、端点选择、OpenCode 直连多协议思考参数及无硬编码思考默认的三路受管 Provider |
-| **cli-config-status.test.tsx** | CLI 配置状态组件回归测试 | 本地路由代理 Base URL 在紧凑状态中显示为“本地路由”，并覆盖本地路由、站点与自定义 CLI 的当前模型小字 |
 | **custom-cli-config-editor-dialog.test.tsx** | 直连 CLI 编辑内容回归测试 | 四种 CLI 分区、配置保存、预览/应用、上游协议与手动模型；OpenCode / Grok Build 保留配置但不调用模型探测 |
 | **custom-cli-config-store.test.ts** | 自定义 CLI 配置 Store 回归测试 | 拉取模型后清理旧 Base URL/API Key 遗留的 CLI 使用模型，并保留 `manualModels` 手动模型 |
 | **custom-cli-config-handlers.test.ts** | 自定义 CLI 配置 IPC 回归测试 | 保存自定义 CLI 配置后同步路由模型 registry，并在同步失败时暴露错误 |
+| **custom-cli-config-service.test.ts** | 直连接入点协议迁移测试 | 唯一旧协议迁移及冲突待确认 |
+| **config-file-profile-service.test.ts** | 配置方案、目标目录协议、独立凭证、文件事务与对话路径测试 | 完整内置模板、模型域、Key 轮换、profile affinity 清理、revision/路径冲突、回滚和增量扫描 |
+| **config-files-page-ui.test.tsx** | 配置文件页 UI 刷新回归测试 | 整卡点击编辑、卡片按钮隔离、内置/需修复徽章、删除配置/文件确认、segmented 模型范围、本地配置直接保存、行级 diff 预览与会话关联默认折叠 |
+| **route-session-service.test.ts** | RouteInstance 身份与生命周期测试 | 完整内部三元键优先级、Codex 原生 Header/Body、Claude Code 会话头、歧义拒绝、ARMED 原子认领、槽位切换、复用和配置优先级 |
+| **route-session-activity-service.test.ts** | 会话活动 sidecar 测试 | 合并写入、重启 hydrate、TTL 与容量限制 |
+| **route-session-section.test.tsx** | 会话路由卡片界面回归测试 | 固定三列横向滚动、仅模型/思考强度预创建、会话级运行范围、只读 Session ID、展示别名和显式关闭 |
+| **agent-logo.test.tsx** | Agent 产品 Logo 映射回归测试 | Claude Code、Codex、OpenCode、Grok Build、Pi、ZCode 与未知灰色占位 |
+| **route-history-service.test.ts** | History 请求端点分轨测试 | 跨 CLI/协议按规范化端点合并、固定标签顺序与旧数据未知端点归组 |
 | **app-data-events.test.ts** | 主进程数据变更广播回归测试 | 跳过已销毁窗口/webContents、吞掉 Electron disposed-frame 竞态错误并保留非预期 send 失败日志 |
 | **unified-cli-config-dialog.test.tsx** | 托管 CLI 编辑内容回归测试 | 四种 CLI 常驻配置、分组模型、协议、折叠预览与应用 |
 | **filter-model-logs.property.test.ts** | 日志过滤属性测试 | 日志过滤逻辑 |
@@ -72,11 +81,11 @@
 | **useDataLoader.test.ts** | 数据加载 Hook 回归测试 | 启动缓存加载将账户级 CLI 配置回填到 `siteName::accountId` card key，站点级仅作无账户 legacy fallback |
 | **theme-system-redesign.test.tsx** | 主题系统重设计测试 | 4 主题模式切换、旧主题值迁移 |
 | **overlay-family-redesign.test.tsx** | Overlay 家族重设计测试 | modal 与 drawer 的统一 chrome 标记，以及内嵌 CLI 内容不生成嵌套 overlay |
-| **data-overview-page.test.tsx** | 数据总览页回归测试 | 首页总览 KPI、站点榜单、规则解释、异常请求、快照趋势，以及路由趋势 `24h` / `7d` 部分数据窗口下的完整 X 轴与前置空桶绘制规则 |
+| **data-overview-page.test.tsx** | 数据总览页回归测试 | 首页总览 KPI、站点榜单、规则解释、异常请求、快照趋势，以及路由趋势 `24h` / `7d` 部分数据窗口下的完整 X 轴与前置空桶绘制规则、请求量/成功率双纵轴刻度与参考线 |
 | **route-analytics-service.test.ts** | 路由分析服务回归测试 | 请求日志 token/cache token 字段、站点/账户/API Key 对象级 token 聚合 |
-| **route-workbench-redesign.test.tsx** | Route 页面重设计测试 | route 页配置与重定向；覆盖 OpenCode/Grok Build 无入口端点选择器、Grok Build 三受管模型预览及仅合并应用 |
-| **sites-page-redesign.test.tsx** | 站点页重设计测试 | 多列列头、内联排序、高频动作、接入点详情、History 四 CLI 选择与 Grok Build 路由请求条形图、直连配置及行内控件回归 |
-| **logs-page.test.tsx** | 日志页回归测试 | 路由日志主页面、四种 CLI 筛选与图标、逐条 push、状态码、失败详情、token/cache token/按次参考金额与直连配置显示 |
+| **route-workbench-redesign.test.tsx** | Route 页面重设计测试 | route 页配置与重定向；覆盖 local-route profile 独立 Key 生成/轮换、亲和映射预览确认清理及模型重定向交互 |
+| **sites-page-redesign.test.tsx** | 站点页重设计测试 | 多列列头、内联排序、高频动作、接入点详情、History 端点切换与成功率渐变、直连配置及行内控件回归 |
+| **logs-page.test.tsx** | 日志页回归测试 | 路由日志 Agent 动态筛选与 Logo、逐条 push、状态码、失败详情、Token 双行布局/列宽、按次参考金额与直连配置显示 |
 | **toast-store.test.ts** | Toast Store 回归测试 | 可见队列上限、事件历史记录与清理 |
 | **close-behavior-manager.property.test.ts** | 窗口关闭行为测试 | CloseBehaviorManager 设置持久化、对话框显示条件与设置面板偏好映射 |
 | **config-detection.property.test.ts** | 配置检测属性测试 | ConfigDetectionService |

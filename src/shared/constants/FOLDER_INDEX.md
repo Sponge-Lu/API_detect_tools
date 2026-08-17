@@ -164,7 +164,7 @@ export const THEME_CONFIG = {
   SYSTEM: 'system'
 } as const;
 
-// 站点列表默认列宽（v4：站点 / 账户 / 刷新时间 / 余额 / 今日消费 / 模型数 / History）
+// 站点列表默认列宽（站点 / 账户 / 刷新时间 / 余额 / 今日消费 / 模型数 / LDC / History）
 export const COLUMN_WIDTHS_VERSION = 4;
 export const DEFAULT_COLUMN_WIDTHS = [
   180, // 站点名
@@ -173,7 +173,7 @@ export const DEFAULT_COLUMN_WIDTHS = [
   84,  // 余额
   84,  // 今日消费
   64,  // 模型数
-  320, // History（表头 CLI 选择器 + 24个时间桶）
+  320, // History（表头端点选择器 + 24个时间桶）
 ] as const;
 
 export const COLUMN_MAX_WIDTH = 480;
