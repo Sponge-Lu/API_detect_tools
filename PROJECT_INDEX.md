@@ -61,6 +61,7 @@
 | `src/main/handlers/*.ts` | `config:*`、`token:*`、`accounts:*`、`route:*`、`config-file-profile:*` 等 IPC；配置文件 I/O 和会话规则管理仅由主进程执行 |
 | `src/main/route-*.ts` / `src/main/anyrouter-request-rewriter.ts` / `src/main/cli-protocol-adapter.ts` | 按入站 pathname 接收 Messages、Chat Completions 与 Responses 的通用本地网关，在请求体解析后关联运行时会话身份，并执行模型映射、会话覆盖、故障转移和必要的双向协议转换；隐藏提供模型发现、CORS 预检、根探测和精确 Token 计数契约 |
 | `src/main/protocol-sse-transformer.ts` | 独立的跨协议增量 SSE 状态机，负责六个有向协议转换的分片解析、事件生命周期、工具/usage/error/terminal 透传 |
+| `src/main/streaming-protocol-validator.ts` | 三标准协议的有界增量 SSE 校验器，按实际下游字节验证帧、生命周期、输出、usage 与工具参数，不重建完整响应体 |
 | `src/main/endpoint-test-service.ts` | 手动执行 Messages、Responses 与 Chat Completions 非流式生成测试，保存每个接入目标/端点的最新选择、结果与测试时间 |
 | `src/main/route-history-service.ts` | 站点管理 History 列时间桶聚合服务，按实际请求端点分别聚合 48h / 2h 成功率轨道，并规范化 Messages、Responses 与 Chat Completions 路径 |
 | `src/main/route-state-manager.ts` | 路由运行态文件管理，将 stats/path state/health、CLI probe、analytics bucket 和模型来源快照拆到有 TTL/max-items 的 `state/*.json`，避免高频状态写入 `config.json` |

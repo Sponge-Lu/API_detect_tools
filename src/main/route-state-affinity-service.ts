@@ -2,6 +2,7 @@ import * as path from 'path';
 import { app } from 'electron';
 import type { CliTargetProtocol } from '../shared/types/cli-config';
 import type { RouteStateAffinitySummary } from '../shared/types/route-proxy';
+import Logger from './utils/logger';
 import { readJsonFile, writeJsonFileAtomically } from './utils/atomic-json';
 
 const STATE_AFFINITY_VERSION = '2';
@@ -91,14 +92,19 @@ export class RouteStateAffinityService {
       this.loadPromise = readJsonFile(this.getStoragePath(), {
         defaultValue: emptyState(),
         normalize: normalizeState,
-      }).then(state => {
-        const normalized = {
-          ...state,
-          resources: compactResources(state.resources, Date.now()),
-        };
-        this.state = normalized;
-        return normalized;
-      });
+      })
+        .catch(error => {
+          Logger.warn('[RouteStateAffinity] Ignoring unreadable affinity state:', error);
+          return emptyState();
+        })
+        .then(state => {
+          const normalized = {
+            ...state,
+            resources: compactResources(state.resources, Date.now()),
+          };
+          this.state = normalized;
+          return normalized;
+        });
     }
     return this.loadPromise;
   }

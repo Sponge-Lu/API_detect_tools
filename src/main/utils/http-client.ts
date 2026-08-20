@@ -42,6 +42,7 @@ interface RawRequestConfig extends Omit<AxiosRequestConfig, 'data' | 'headers' |
 
 interface RawStreamRequestConfig extends RawRequestConfig {
   streamIdleTimeout?: number;
+  retainStreamedBody?: boolean;
   onResponse?: (response: RawFetchStreamStart) => boolean | void;
   onChunk?: (chunk: Buffer) => void | Promise<void>;
   shouldResolveOnAbort?: () => boolean;
@@ -315,7 +316,10 @@ async function consumeAxiosStreamResponse(
     headers: unknown;
     data: NodeJS.ReadableStream;
   },
-  options: Pick<RawStreamRequestConfig, 'onResponse' | 'onChunk' | 'timeout' | 'streamIdleTimeout'>
+  options: Pick<
+    RawStreamRequestConfig,
+    'onResponse' | 'onChunk' | 'timeout' | 'streamIdleTimeout' | 'retainStreamedBody'
+  >
 ): Promise<RawHttpResponse> {
   const startedAt = Date.now();
   const headers = normalizeAxiosResponseHeaders(res.headers);
@@ -323,6 +327,7 @@ async function consumeAxiosStreamResponse(
     Boolean(options.onChunk) &&
     options.onResponse?.({ status: res.status, statusText: res.statusText || '', headers }) !==
       false;
+  const retainBody = options.retainStreamedBody !== false || !shouldStreamChunks;
 
   return await new Promise<RawHttpResponse>((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -380,7 +385,7 @@ async function consumeAxiosStreamResponse(
       armIdleTimeout(activeStreamIdleTimeoutMs);
 
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      chunks.push(buffer);
+      if (retainBody) chunks.push(buffer);
 
       if (!shouldStreamChunks || !options.onChunk) return;
 
@@ -403,7 +408,7 @@ async function consumeAxiosStreamResponse(
 }
 
 /**
- * Raw HTTP 流式请求：可在接收 chunk 时回调写下游，同时保留完整 body。
+ * Raw HTTP 流式请求：可在接收 chunk 时回调写下游，并按调用方需要保留完整 body。
  */
 export async function httpRawStreamRequest(
   url: string,
@@ -415,6 +420,7 @@ export async function httpRawStreamRequest(
     body,
     timeout = 30000,
     streamIdleTimeout,
+    retainStreamedBody,
     proxyUrl,
     preferElectronNet,
     signal,
@@ -436,7 +442,8 @@ export async function httpRawStreamRequest(
       proxyUrl,
       onResponse,
       onData: onChunk,
-      shouldResolveOnAbort,
+      ...(retainStreamedBody !== undefined ? { retainStreamedBody } : {}),
+      ...(shouldResolveOnAbort !== undefined ? { shouldResolveOnAbort } : {}),
       ...(signal ? { signal } : {}),
     });
     return toRawHttpResponse(res);
@@ -455,7 +462,13 @@ export async function httpRawStreamRequest(
     validateStatus: () => true,
   });
 
-  return consumeAxiosStreamResponse(res, { timeout, streamIdleTimeout, onResponse, onChunk });
+  return consumeAxiosStreamResponse(res, {
+    timeout,
+    streamIdleTimeout,
+    retainStreamedBody,
+    onResponse,
+    onChunk,
+  });
 }
 
 /**

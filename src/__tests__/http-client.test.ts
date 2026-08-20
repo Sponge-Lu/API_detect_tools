@@ -170,4 +170,30 @@ describe('httpRawStreamRequest', () => {
       }
     );
   });
+
+  it('forwards an explicit streamed-body retention opt-out', async () => {
+    const onChunk = vi.fn();
+
+    await httpRawStreamRequest('https://anyrouter.top/v1/responses', {
+      method: 'POST',
+      preferElectronNet: true,
+      retainStreamedBody: false,
+      onChunk,
+    });
+
+    expect(mocks.electronFetchRawStream).toHaveBeenLastCalledWith(
+      'https://anyrouter.top/v1/responses',
+      {
+        method: 'POST',
+        headers: {},
+        body: undefined,
+        timeout: 30000,
+        streamIdleTimeout: undefined,
+        proxyUrl: undefined,
+        onResponse: undefined,
+        onData: onChunk,
+        retainStreamedBody: false,
+      }
+    );
+  });
 });

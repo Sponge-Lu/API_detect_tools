@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   IncrementalProtocolSseTransformer,
   ProtocolSseTransformError,
+  SSE_FRAME_MAX_BYTES,
+  SSE_TOOL_ARGUMENT_MAX_BYTES,
+  SseFrameDecoder,
   type StreamingProtocol,
 } from '../main/protocol-sse-transformer';
 
@@ -176,6 +179,24 @@ function count(value: string, token: string): number {
   return value.split(token).length - 1;
 }
 
+function chatToolCalls(output: string): Array<Record<string, unknown>> {
+  return output
+    .split('\n')
+    .filter(line => line.startsWith('data: {'))
+    .map(line => JSON.parse(line.slice('data: '.length)) as Record<string, unknown>)
+    .flatMap(payload => (Array.isArray(payload.choices) ? payload.choices : []))
+    .flatMap(choice => {
+      if (!choice || typeof choice !== 'object') return [];
+      const delta = (choice as { delta?: unknown }).delta;
+      if (!delta || typeof delta !== 'object') return [];
+      const toolCalls = (delta as { tool_calls?: unknown }).tool_calls;
+      return Array.isArray(toolCalls) ? toolCalls : [];
+    })
+    .filter((toolCall): toolCall is Record<string, unknown> =>
+      Boolean(toolCall && typeof toolCall === 'object')
+    );
+}
+
 function expectOneSuccessfulTerminal(protocol: StreamingProtocol, output: string): void {
   if (protocol === 'anthropic-messages') {
     expect(count(output, 'event: message_stop')).toBe(1);
@@ -233,6 +254,26 @@ describe('IncrementalProtocolSseTransformer', () => {
     }
   }
 
+  it('ignores comment-only and empty data heartbeat frames before a valid stream', () => {
+    const transformer = new IncrementalProtocolSseTransformer({
+      sourceProtocol: 'openai-chat-completions',
+      targetProtocol: 'openai-responses',
+      model: 'fixture-model',
+    });
+    const input = Buffer.concat([
+      Buffer.from(': upstream keepalive\n\ndata: \t \n\n', 'utf8'),
+      buildFixture('openai-responses'),
+    ]);
+
+    const output = Buffer.concat([
+      ...transformer.transform(input),
+      ...transformer.finish(),
+    ]).toString('utf8');
+
+    expect(output).toContain('你');
+    expectOneSuccessfulTerminal('openai-chat-completions', output);
+  });
+
   it('translates an upstream error without a successful terminal', () => {
     const transformer = new IncrementalProtocolSseTransformer({
       sourceProtocol: 'anthropic-messages',
@@ -275,5 +316,236 @@ describe('IncrementalProtocolSseTransformer', () => {
       new ProtocolSseTransformError('missing_terminal_event')
     );
   });
-});
 
+  it('allocates distinct Chat indices for sequential completed tool calls', () => {
+    const transformer = new IncrementalProtocolSseTransformer({
+      sourceProtocol: 'openai-chat-completions',
+      targetProtocol: 'openai-responses',
+      model: 'fixture-model',
+    });
+    const input = Buffer.from(
+      [
+        sse('response.output_item.added', {
+          type: 'response.output_item.added',
+          item: {
+            id: 'fc_1',
+            type: 'function_call',
+            call_id: 'call_1',
+            name: 'first_tool',
+            arguments: '',
+          },
+        }),
+        sse('response.output_item.done', {
+          type: 'response.output_item.done',
+          item: {
+            id: 'fc_1',
+            type: 'function_call',
+            call_id: 'call_1',
+            name: 'first_tool',
+            arguments: '{}',
+          },
+        }),
+        sse('response.output_item.added', {
+          type: 'response.output_item.added',
+          item: {
+            id: 'fc_2',
+            type: 'function_call',
+            call_id: 'call_2',
+            name: 'second_tool',
+            arguments: '',
+          },
+        }),
+        sse('response.output_item.done', {
+          type: 'response.output_item.done',
+          item: {
+            id: 'fc_2',
+            type: 'function_call',
+            call_id: 'call_2',
+            name: 'second_tool',
+            arguments: '{}',
+          },
+        }),
+        sse('response.completed', {
+          type: 'response.completed',
+          response: { usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } },
+        }),
+        sse(null, '[DONE]'),
+      ].join(''),
+      'utf8'
+    );
+
+    const output = Buffer.concat([
+      ...transformer.transform(input),
+      ...transformer.finish(),
+    ]).toString('utf8');
+    const toolStartIndices = chatToolCalls(output)
+      .filter(toolCall => 'id' in toolCall)
+      .map(toolCall => toolCall.index);
+
+    expect(toolStartIndices).toEqual([0, 1]);
+  });
+
+  it('emits only the missing suffix from authoritative Responses tool argument events', () => {
+    const transformer = new IncrementalProtocolSseTransformer({
+      sourceProtocol: 'openai-chat-completions',
+      targetProtocol: 'openai-responses',
+      model: 'fixture-model',
+    });
+    const completeArguments = '{"query":"value"}';
+    const input = Buffer.from(
+      [
+        sse('response.output_item.added', {
+          type: 'response.output_item.added',
+          item: {
+            id: 'fc_1',
+            type: 'function_call',
+            call_id: 'call_1',
+            name: 'lookup',
+            arguments: '',
+          },
+        }),
+        sse('response.function_call_arguments.delta', {
+          type: 'response.function_call_arguments.delta',
+          item_id: 'fc_1',
+          delta: '{"query":',
+        }),
+        sse('response.function_call_arguments.done', {
+          type: 'response.function_call_arguments.done',
+          item_id: 'fc_1',
+          arguments: completeArguments,
+        }),
+        sse('response.output_item.done', {
+          type: 'response.output_item.done',
+          item: {
+            id: 'fc_1',
+            type: 'function_call',
+            call_id: 'call_1',
+            name: 'lookup',
+            arguments: completeArguments,
+          },
+        }),
+        sse('response.completed', { type: 'response.completed', response: {} }),
+        sse(null, '[DONE]'),
+      ].join(''),
+      'utf8'
+    );
+
+    const output = Buffer.concat([
+      ...transformer.transform(input),
+      ...transformer.finish(),
+    ]).toString('utf8');
+    const argumentDeltas = chatToolCalls(output).map(toolCall => {
+      const fn = toolCall.function;
+      if (!fn || typeof fn !== 'object') return '';
+      const args = (fn as { arguments?: unknown }).arguments;
+      return typeof args === 'string' ? args : '';
+    });
+
+    expect(argumentDeltas).toEqual(['', '{"query":', '"value"}']);
+    expect(argumentDeltas.join('')).toBe(completeArguments);
+  });
+
+  it('rejects non-prefix Responses tool argument documents', () => {
+    const transformer = new IncrementalProtocolSseTransformer({
+      sourceProtocol: 'openai-chat-completions',
+      targetProtocol: 'openai-responses',
+      model: 'fixture-model',
+    });
+    const input = Buffer.from(
+      [
+        sse('response.output_item.added', {
+          type: 'response.output_item.added',
+          item: {
+            id: 'fc_1',
+            type: 'function_call',
+            call_id: 'call_1',
+            name: 'lookup',
+            arguments: '',
+          },
+        }),
+        sse('response.function_call_arguments.delta', {
+          type: 'response.function_call_arguments.delta',
+          item_id: 'fc_1',
+          delta: '{"query":"left"}',
+        }),
+        sse('response.function_call_arguments.done', {
+          type: 'response.function_call_arguments.done',
+          item_id: 'fc_1',
+          arguments: '{"query":"right"}',
+        }),
+      ].join(''),
+      'utf8'
+    );
+
+    expect(() => transformer.transform(input)).toThrowError(
+      new ProtocolSseTransformError('tool_arguments_mismatch')
+    );
+  });
+
+  it('rejects an SSE frame larger than 1 MiB', () => {
+    const transformer = new IncrementalProtocolSseTransformer({
+      sourceProtocol: 'openai-responses',
+      targetProtocol: 'openai-chat-completions',
+      model: 'fixture-model',
+    });
+    const oversizedFrame = Buffer.from(`data: ${'x'.repeat(SSE_FRAME_MAX_BYTES)}\n\n`, 'utf8');
+
+    expect(() => transformer.transform(oversizedFrame)).toThrowError(
+      new ProtocolSseTransformError('sse_frame_too_large')
+    );
+  });
+
+  it('rejects in-flight tool arguments larger than 4 MiB', () => {
+    const transformer = new IncrementalProtocolSseTransformer({
+      sourceProtocol: 'anthropic-messages',
+      targetProtocol: 'openai-chat-completions',
+      model: 'fixture-model',
+    });
+    const argumentChunk = 'a'.repeat(SSE_TOOL_ARGUMENT_MAX_BYTES / 8);
+    const toolDelta = (argumentsDelta: string, includeIdentity = false): Buffer =>
+      Buffer.from(
+        sse(null, {
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    ...(includeIdentity ? { id: 'call_1' } : {}),
+                    function: {
+                      ...(includeIdentity ? { name: 'lookup' } : {}),
+                      arguments: argumentsDelta,
+                    },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        }),
+        'utf8'
+      );
+
+    for (let index = 0; index < 8; index += 1) {
+      expect(() => transformer.transform(toolDelta(argumentChunk, index === 0))).not.toThrow();
+    }
+    expect(() => transformer.transform(toolDelta('x'))).toThrowError(
+      new ProtocolSseTransformError('tool_arguments_too_large')
+    );
+  });
+
+  it('preserves CR-only and mixed SSE line-ending framing', () => {
+    const decoder = new SseFrameDecoder();
+
+    const frames = decoder.push(
+      Buffer.from('event: first\rdata: one\r\rdata: second\r\ndata: two\n\n', 'utf8')
+    );
+    frames.push(...decoder.finish());
+
+    expect(frames).toEqual([
+      { event: 'first', data: 'one' },
+      { event: '', data: 'second\ntwo' },
+    ]);
+  });
+});

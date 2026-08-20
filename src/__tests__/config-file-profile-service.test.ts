@@ -5,11 +5,13 @@ import * as path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ConfigFileProfile } from '../shared/types/config-file-profile';
 import * as atomicJson from '../main/utils/atomic-json';
+
 import {
   applyConfigFileProfile,
   commitConfigFileProfile,
   createDefaultConfigFileProfiles,
   deleteConfigFileProfile,
+  findConfigFileProfileByRouteApiKey,
   generateConfigFileProfileRouteKey,
   getConfigFileTargetCatalog,
   getSessionRecordCacheStats,
@@ -112,6 +114,29 @@ afterEach(async () => {
 });
 
 describe('config file profile service', () => {
+  it('caches unknown route credentials until the profile index is rebuilt', async () => {
+    const directory = await createTempDirectory();
+    mocks.userData = directory;
+    await saveConfigFileProfiles([]);
+    const storagePath = path.join(directory, 'config-file-profiles.json');
+    const added = profile([]);
+    added.localRouteCredential = {
+      id: 'credential-later',
+      apiKey: 'sk-route-later',
+      createdAt: 2,
+    };
+
+    await expect(findConfigFileProfileByRouteApiKey('sk-route-later')).resolves.toBeNull();
+    await fs.writeFile(storagePath, JSON.stringify({ version: 3, profiles: [added] }), 'utf8');
+    await expect(findConfigFileProfileByRouteApiKey('sk-route-later')).resolves.toBeNull();
+    await saveConfigFileProfiles([added]);
+
+    await expect(findConfigFileProfileByRouteApiKey('sk-route-later')).resolves.toMatchObject({
+      id: added.id,
+      localRouteCredential: added.localRouteCredential,
+    });
+  });
+
   it('persists and transactionally rotates a credential-only client route key', async () => {
     mocks.userData = await createTempDirectory();
     const now = Date.now();

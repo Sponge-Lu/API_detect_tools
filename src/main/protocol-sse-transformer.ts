@@ -23,10 +23,13 @@ type CanonicalEvent =
   | { type: 'terminal'; finishReason: FinishReason }
   | { type: 'error'; message: string };
 
-interface SseFrame {
+export interface SseFrame {
   event: string;
   data: string;
 }
+
+export const SSE_FRAME_MAX_BYTES = 1024 * 1024;
+export const SSE_TOOL_ARGUMENT_MAX_BYTES = 4 * 1024 * 1024;
 
 export type ProtocolSseTransformStatus = 'open' | 'completed' | 'failed';
 
@@ -38,9 +41,7 @@ export class ProtocolSseTransformError extends Error {
 }
 
 function record(value: unknown): JsonRecord {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : {};
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
 
 function text(value: unknown): string {
@@ -67,7 +68,8 @@ function readUsage(value: unknown): Usage {
   return {
     inputTokens,
     outputTokens,
-    totalTokens: finiteNumber(source.total_tokens) ??
+    totalTokens:
+      finiteNumber(source.total_tokens) ??
       (inputTokens !== undefined && outputTokens !== undefined
         ? inputTokens + outputTokens
         : undefined),
@@ -88,12 +90,16 @@ function messageId(prefix: string): string {
 
 function errorMessage(payload: JsonRecord): string {
   const error = record(payload.error);
-  return text(error.message) || text(payload.message) || text(payload.error) || 'upstream stream failed';
+  return (
+    text(error.message) || text(payload.message) || text(payload.error) || 'upstream stream failed'
+  );
 }
 
-class SseFrameDecoder {
+export class SseFrameDecoder {
   private readonly decoder = new TextDecoder('utf-8', { fatal: true });
   private buffer = '';
+
+  constructor(private readonly maxFrameBytes = SSE_FRAME_MAX_BYTES) {}
 
   push(chunk: Buffer): SseFrame[] {
     try {
@@ -101,7 +107,9 @@ class SseFrameDecoder {
     } catch {
       throw new ProtocolSseTransformError('invalid_utf8');
     }
-    return this.drain();
+    const frames = this.drain();
+    this.assertFrameSize(this.buffer);
+    return frames;
   }
 
   finish(): SseFrame[] {
@@ -111,6 +119,7 @@ class SseFrameDecoder {
       throw new ProtocolSseTransformError('invalid_utf8');
     }
     const frames = this.drain();
+    this.assertFrameSize(this.buffer);
     if (this.buffer.trim()) {
       throw new ProtocolSseTransformError('incomplete_sse_frame');
     }
@@ -121,10 +130,11 @@ class SseFrameDecoder {
   private drain(): SseFrame[] {
     const frames: SseFrame[] = [];
     while (true) {
-      const boundary = /\r?\n\r?\n/.exec(this.buffer);
+      const boundary = /(?:\r\n|\r(?!\n)|(?<!\r)\n)(?:\r\n|\r(?!\n)|(?<!\r)\n)/.exec(this.buffer);
       if (!boundary || boundary.index === undefined) break;
       const raw = this.buffer.slice(0, boundary.index);
       this.buffer = this.buffer.slice(boundary.index + boundary[0].length);
+      this.assertFrameSize(raw);
       const parsed = this.parse(raw);
       if (parsed) frames.push(parsed);
     }
@@ -134,7 +144,7 @@ class SseFrameDecoder {
   private parse(raw: string): SseFrame | null {
     let event = '';
     const data: string[] = [];
-    for (const line of raw.split(/\r?\n/)) {
+    for (const line of raw.split(/\r\n|\r|\n/)) {
       if (!line || line.startsWith(':')) continue;
       const separator = line.indexOf(':');
       const field = separator < 0 ? line : line.slice(0, separator);
@@ -144,12 +154,40 @@ class SseFrameDecoder {
     }
     return data.length ? { event, data: data.join('\n') } : null;
   }
+
+  private assertFrameSize(value: string): void {
+    if (Buffer.byteLength(value, 'utf8') > this.maxFrameBytes) {
+      throw new ProtocolSseTransformError('sse_frame_too_large');
+    }
+  }
+}
+
+function appendToolArgumentBytes(currentBytes: number, delta: string): number {
+  const nextBytes = currentBytes + Buffer.byteLength(delta, 'utf8');
+  if (nextBytes > SSE_TOOL_ARGUMENT_MAX_BYTES) {
+    throw new ProtocolSseTransformError('tool_arguments_too_large');
+  }
+  return nextBytes;
+}
+
+function appendRetainedToolArguments(
+  state: { arguments: string; argumentBytes: number },
+  delta: string
+): void {
+  state.argumentBytes = appendToolArgumentBytes(state.argumentBytes, delta);
+  state.arguments += delta;
 }
 
 class CanonicalSseParser {
-  private readonly messageBlocks = new Map<number, { key: string; kind: 'text' | 'tool' }>();
-  private readonly responseTools = new Map<string, { key: string; arguments: string }>();
-  private readonly chatTools = new Map<number, { key: string; arguments: string }>();
+  private readonly messageBlocks = new Map<
+    number,
+    { key: string; kind: 'text' } | { key: string; kind: 'tool'; argumentBytes: number }
+  >();
+  private readonly responseTools = new Map<
+    string,
+    { key: string; arguments: string; argumentBytes: number }
+  >();
+  private readonly chatTools = new Map<number, { key: string; argumentBytes: number }>();
   private terminal = false;
   private failed = false;
   private finishReason: FinishReason = 'stop';
@@ -157,6 +195,9 @@ class CanonicalSseParser {
   constructor(private readonly protocol: StreamingProtocol) {}
 
   parse(frame: SseFrame): CanonicalEvent[] {
+    if (!frame.data.trim()) {
+      return [];
+    }
     if (this.terminal || this.failed) {
       if (frame.data === '[DONE]') return [];
       throw new ProtocolSseTransformError('event_after_terminal');
@@ -200,13 +241,15 @@ class CanonicalSseParser {
       const block = record(payload.content_block);
       if (block.type === 'tool_use') {
         const key = `messages:${index}`;
-        this.messageBlocks.set(index, { key, kind: 'tool' });
-        return [{
-          type: 'tool-start',
-          key,
-          id: text(block.id) || messageId('call'),
-          name: text(block.name),
-        }];
+        this.messageBlocks.set(index, { key, kind: 'tool', argumentBytes: 0 });
+        return [
+          {
+            type: 'tool-start',
+            key,
+            id: text(block.id) || messageId('call'),
+            name: text(block.name),
+          },
+        ];
       }
       this.messageBlocks.set(index, { key: `messages:${index}`, kind: 'text' });
       return [];
@@ -218,6 +261,7 @@ class CanonicalSseParser {
       if (!block) throw new ProtocolSseTransformError('delta_without_content_block');
       if (block.kind === 'tool') {
         const value = text(delta.partial_json);
+        block.argumentBytes = appendToolArgumentBytes(block.argumentBytes, value);
         return value ? [{ type: 'tool-arguments', key: block.key, delta: value }] : [];
       }
       const value = text(delta.text);
@@ -263,15 +307,22 @@ class CanonicalSseParser {
       this.finishReason = 'tool_calls';
       const itemKey = text(item.id) || text(item.call_id) || messageId('fc');
       const key = `responses:${itemKey}`;
-      this.responseTools.set(itemKey, { key, arguments: text(item.arguments) });
-      const events: CanonicalEvent[] = [{
-        type: 'tool-start',
+      const initialArguments = text(item.arguments);
+      this.responseTools.set(itemKey, {
         key,
-        id: text(item.call_id) || itemKey,
-        name: text(item.name),
-      }];
-      if (text(item.arguments)) {
-        events.push({ type: 'tool-arguments', key, delta: text(item.arguments) });
+        arguments: initialArguments,
+        argumentBytes: appendToolArgumentBytes(0, initialArguments),
+      });
+      const events: CanonicalEvent[] = [
+        {
+          type: 'tool-start',
+          key,
+          id: text(item.call_id) || itemKey,
+          name: text(item.name),
+        },
+      ];
+      if (initialArguments) {
+        events.push({ type: 'tool-arguments', key, delta: initialArguments });
       }
       return events;
     }
@@ -280,8 +331,14 @@ class CanonicalSseParser {
       const tool = this.responseTools.get(itemKey);
       if (!tool) throw new ProtocolSseTransformError('tool_delta_without_start');
       const delta = text(payload.delta);
-      tool.arguments += delta;
+      appendRetainedToolArguments(tool, delta);
       return delta ? [{ type: 'tool-arguments', key: tool.key, delta }] : [];
+    }
+    if (kind === 'response.function_call_arguments.done') {
+      const itemKey = text(payload.item_id) || text(payload.call_id);
+      const tool = this.responseTools.get(itemKey);
+      if (!tool) throw new ProtocolSseTransformError('tool_delta_without_start');
+      return this.appendFinalResponseToolArguments(tool, text(payload.arguments));
     }
     if (kind === 'response.output_item.done') {
       const item = record(payload.item);
@@ -291,7 +348,7 @@ class CanonicalSseParser {
       const events: CanonicalEvent[] = [];
       if (!tool) {
         const key = `responses:${itemKey || messageId('fc')}`;
-        tool = { key, arguments: '' };
+        tool = { key, arguments: '', argumentBytes: 0 };
         events.push({
           type: 'tool-start',
           key,
@@ -300,9 +357,7 @@ class CanonicalSseParser {
         });
       }
       const finalArguments = text(item.arguments);
-      if (finalArguments && finalArguments !== tool.arguments) {
-        events.push({ type: 'tool-arguments', key: tool.key, delta: finalArguments });
-      }
+      events.push(...this.appendFinalResponseToolArguments(tool, finalArguments));
       events.push({ type: 'tool-end', key: tool.key });
       this.responseTools.delete(itemKey);
       return events;
@@ -322,6 +377,20 @@ class CanonicalSseParser {
     return [];
   }
 
+  private appendFinalResponseToolArguments(
+    tool: { key: string; arguments: string; argumentBytes: number },
+    finalArguments: string
+  ): CanonicalEvent[] {
+    if (!finalArguments) return [];
+    if (!finalArguments.startsWith(tool.arguments)) {
+      throw new ProtocolSseTransformError('tool_arguments_mismatch');
+    }
+    const missingArguments = finalArguments.slice(tool.arguments.length);
+    if (!missingArguments) return [];
+    appendRetainedToolArguments(tool, missingArguments);
+    return [{ type: 'tool-arguments', key: tool.key, delta: missingArguments }];
+  }
+
   private parseChat(payload: JsonRecord): CanonicalEvent[] {
     const events: CanonicalEvent[] = [];
     const choices = Array.isArray(payload.choices) ? payload.choices : [];
@@ -339,7 +408,7 @@ class CanonicalSseParser {
         let tool = this.chatTools.get(index);
         if (!tool) {
           const key = `chat:${index}`;
-          tool = { key, arguments: '' };
+          tool = { key, argumentBytes: 0 };
           this.chatTools.set(index, tool);
           events.push({
             type: 'tool-start',
@@ -350,7 +419,7 @@ class CanonicalSseParser {
         }
         const argumentsDelta = text(fn.arguments);
         if (argumentsDelta) {
-          tool.arguments += argumentsDelta;
+          tool.argumentBytes = appendToolArgumentBytes(tool.argumentBytes, argumentsDelta);
           events.push({ type: 'tool-arguments', key: tool.key, delta: argumentsDelta });
         }
       }
@@ -382,8 +451,17 @@ class ProtocolSseWriter {
   private readonly chatId = messageId('chatcmpl');
   private readonly createdAt = Math.floor(Date.now() / 1000);
   private readonly responseOutput: JsonRecord[] = [];
-  private readonly responseTools = new Map<string, { index: number; item: JsonRecord; arguments: string }>();
+  private readonly responseTools = new Map<
+    string,
+    {
+      index: number;
+      item: JsonRecord;
+      arguments: string;
+      argumentBytes: number;
+    }
+  >();
   private readonly chatTools = new Map<string, number>();
+  private nextChatToolIndex = 0;
   private usage: Usage = {};
   private started = false;
   private completed = false;
@@ -424,19 +502,21 @@ class ProtocolSseWriter {
     if (this.started) return [];
     this.started = true;
     if (this.protocol === 'anthropic-messages') {
-      return [eventFrame('message_start', {
-        type: 'message_start',
-        message: {
-          id: this.messageId,
-          type: 'message',
-          role: 'assistant',
-          model: this.model,
-          content: [],
-          stop_reason: null,
-          stop_sequence: null,
-          usage: { input_tokens: this.usage.inputTokens ?? 0, output_tokens: 0 },
-        },
-      })];
+      return [
+        eventFrame('message_start', {
+          type: 'message_start',
+          message: {
+            id: this.messageId,
+            type: 'message',
+            role: 'assistant',
+            model: this.model,
+            content: [],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: { input_tokens: this.usage.inputTokens ?? 0, output_tokens: 0 },
+          },
+        }),
+      ];
     }
     if (this.protocol === 'openai-responses') {
       const response = this.responseObject('in_progress', []);
@@ -452,11 +532,13 @@ class ProtocolSseWriter {
     this.text += delta;
     if (this.protocol === 'anthropic-messages') {
       if (this.activeMessageBlock && this.activeMessageBlock.key === undefined) {
-        return [eventFrame('content_block_delta', {
-          type: 'content_block_delta',
-          index: this.activeMessageBlock.index,
-          delta: { type: 'text_delta', text: delta },
-        })];
+        return [
+          eventFrame('content_block_delta', {
+            type: 'content_block_delta',
+            index: this.activeMessageBlock.index,
+            delta: { type: 'text_delta', text: delta },
+          }),
+        ];
       }
       const chunks = this.closeActiveMessageBlock();
       const index = this.messageBlockIndex++;
@@ -505,14 +587,16 @@ class ProtocolSseWriter {
           })
         );
       }
-      chunks.push(eventFrame('response.output_text.delta', {
-        type: 'response.output_text.delta',
-        response_id: this.responseId,
-        item_id: this.messageId,
-        output_index: this.textIndex,
-        content_index: 0,
-        delta,
-      }));
+      chunks.push(
+        eventFrame('response.output_text.delta', {
+          type: 'response.output_text.delta',
+          response_id: this.responseId,
+          item_id: this.messageId,
+          output_index: this.textIndex,
+          content_index: 0,
+          delta,
+        })
+      );
       return chunks;
     }
     return [this.chatChunk({ content: delta }, null)];
@@ -523,11 +607,13 @@ class ProtocolSseWriter {
       const chunks = this.closeActiveMessageBlock();
       const index = this.messageBlockIndex++;
       this.activeMessageBlock = { key: event.key, index };
-      chunks.push(eventFrame('content_block_start', {
-        type: 'content_block_start',
-        index,
-        content_block: { type: 'tool_use', id: event.id, name: event.name, input: {} },
-      }));
+      chunks.push(
+        eventFrame('content_block_start', {
+          type: 'content_block_start',
+          index,
+          content_block: { type: 'tool_use', id: event.id, name: event.name, input: {} },
+        })
+      );
       return chunks;
     }
     if (this.protocol === 'openai-responses') {
@@ -541,24 +627,33 @@ class ProtocolSseWriter {
         arguments: '',
       };
       this.responseOutput.push(item);
-      this.responseTools.set(event.key, { index, item, arguments: '' });
-      return [eventFrame('response.output_item.added', {
-        type: 'response.output_item.added',
-        response_id: this.responseId,
-        output_index: index,
-        item,
-      })];
+      this.responseTools.set(event.key, { index, item, arguments: '', argumentBytes: 0 });
+      return [
+        eventFrame('response.output_item.added', {
+          type: 'response.output_item.added',
+          response_id: this.responseId,
+          output_index: index,
+          item,
+        }),
+      ];
     }
-    const index = this.chatTools.size;
+    const index = this.nextChatToolIndex++;
     this.chatTools.set(event.key, index);
-    return [this.chatChunk({
-      tool_calls: [{
-        index,
-        id: event.id,
-        type: 'function',
-        function: { name: event.name, arguments: '' },
-      }],
-    }, null)];
+    return [
+      this.chatChunk(
+        {
+          tool_calls: [
+            {
+              index,
+              id: event.id,
+              type: 'function',
+              function: { name: event.name, arguments: '' },
+            },
+          ],
+        },
+        null
+      ),
+    ];
   }
 
   private writeToolArguments(event: Extract<CanonicalEvent, { type: 'tool-arguments' }>): Buffer[] {
@@ -566,30 +661,39 @@ class ProtocolSseWriter {
       if (this.activeMessageBlock?.key !== event.key) {
         throw new ProtocolSseTransformError('tool_arguments_without_active_block');
       }
-      return [eventFrame('content_block_delta', {
-        type: 'content_block_delta',
-        index: this.activeMessageBlock.index,
-        delta: { type: 'input_json_delta', partial_json: event.delta },
-      })];
+      return [
+        eventFrame('content_block_delta', {
+          type: 'content_block_delta',
+          index: this.activeMessageBlock.index,
+          delta: { type: 'input_json_delta', partial_json: event.delta },
+        }),
+      ];
     }
     if (this.protocol === 'openai-responses') {
       const tool = this.responseTools.get(event.key);
       if (!tool) throw new ProtocolSseTransformError('tool_arguments_without_start');
-      tool.arguments += event.delta;
-      return [eventFrame('response.function_call_arguments.delta', {
-        type: 'response.function_call_arguments.delta',
-        response_id: this.responseId,
-        item_id: tool.item.id,
-        output_index: tool.index,
-        call_id: tool.item.call_id,
-        delta: event.delta,
-      })];
+      appendRetainedToolArguments(tool, event.delta);
+      return [
+        eventFrame('response.function_call_arguments.delta', {
+          type: 'response.function_call_arguments.delta',
+          response_id: this.responseId,
+          item_id: tool.item.id,
+          output_index: tool.index,
+          call_id: tool.item.call_id,
+          delta: event.delta,
+        }),
+      ];
     }
     const index = this.chatTools.get(event.key);
     if (index === undefined) throw new ProtocolSseTransformError('tool_arguments_without_start');
-    return [this.chatChunk({
-      tool_calls: [{ index, function: { arguments: event.delta } }],
-    }, null)];
+    return [
+      this.chatChunk(
+        {
+          tool_calls: [{ index, function: { arguments: event.delta } }],
+        },
+        null
+      ),
+    ];
   }
 
   private writeToolEnd(key: string): Buffer[] {
@@ -632,7 +736,12 @@ class ProtocolSseWriter {
         eventFrame('message_delta', {
           type: 'message_delta',
           delta: {
-            stop_reason: reason === 'tool_calls' ? 'tool_use' : reason === 'length' ? 'max_tokens' : 'end_turn',
+            stop_reason:
+              reason === 'tool_calls'
+                ? 'tool_use'
+                : reason === 'length'
+                  ? 'max_tokens'
+                  : 'end_turn',
             stop_sequence: null,
           },
           usage: {
@@ -667,19 +776,23 @@ class ProtocolSseWriter {
   private writeError(message: string): Buffer[] {
     this.failed = true;
     if (this.protocol === 'anthropic-messages') {
-      return [eventFrame('error', {
-        type: 'error',
-        error: { type: 'api_error', message },
-      })];
+      return [
+        eventFrame('error', {
+          type: 'error',
+          error: { type: 'api_error', message },
+        }),
+      ];
     }
     if (this.protocol === 'openai-responses') {
-      return [eventFrame('response.failed', {
-        type: 'response.failed',
-        response: {
-          ...this.responseObject('failed', this.responseOutput),
-          error: { code: 'upstream_error', message },
-        },
-      })];
+      return [
+        eventFrame('response.failed', {
+          type: 'response.failed',
+          response: {
+            ...this.responseObject('failed', this.responseOutput),
+            error: { code: 'upstream_error', message },
+          },
+        }),
+      ];
     }
     return [eventFrame(null, { error: { type: 'upstream_error', message } })];
   }
@@ -729,7 +842,10 @@ class ProtocolSseWriter {
     ];
   }
 
-  private responseObject(status: 'in_progress' | 'completed' | 'failed', output: JsonRecord[]): JsonRecord {
+  private responseObject(
+    status: 'in_progress' | 'completed' | 'failed',
+    output: JsonRecord[]
+  ): JsonRecord {
     const inputTokens = this.usage.inputTokens ?? 0;
     const outputTokens = this.usage.outputTokens ?? 0;
     return {
@@ -748,11 +864,7 @@ class ProtocolSseWriter {
     };
   }
 
-  private chatChunk(
-    delta: JsonRecord,
-    finishReason: string | null,
-    usage?: Usage
-  ): Buffer {
+  private chatChunk(delta: JsonRecord, finishReason: string | null, usage?: Usage): Buffer {
     const inputTokens = usage?.inputTokens ?? 0;
     const outputTokens = usage?.outputTokens ?? 0;
     return eventFrame(null, {

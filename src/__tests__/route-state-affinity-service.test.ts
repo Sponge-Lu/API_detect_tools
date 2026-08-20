@@ -3,10 +3,14 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ userData: '' }));
+const mocks = vi.hoisted(() => ({ userData: '', loggerWarn: vi.fn() }));
 
 vi.mock('electron', () => ({
   app: { getPath: () => mocks.userData },
+}));
+
+vi.mock('../main/utils/logger', () => ({
+  default: { error: vi.fn(), warn: mocks.loggerWarn },
 }));
 
 import {
@@ -50,6 +54,26 @@ describe('route state affinity service', () => {
     expect(stored).not.toContain('sk-');
   });
 
+  it('recovers malformed storage and keeps get, bind, and remove usable', async () => {
+    mocks.userData = await fs.mkdtemp(path.join(os.tmpdir(), 'route-affinity-'));
+    directories.push(mocks.userData);
+    const storagePath = path.join(mocks.userData, 'state', 'route-state-affinity.json');
+    await fs.mkdir(path.dirname(storagePath), { recursive: true });
+    await fs.writeFile(storagePath, '{not-json', 'utf-8');
+    mocks.loggerWarn.mockClear();
+    const service = new RouteStateAffinityService();
+
+    await expect(service.get('missing', 'profile-1')).resolves.toBeNull();
+    await service.bind(record({ resourceId: 'recovered' }));
+    await expect(service.get('recovered', 'profile-1')).resolves.toMatchObject({
+      resourceId: 'recovered',
+    });
+    await service.remove('recovered');
+    await expect(service.get('recovered', 'profile-1')).resolves.toBeNull();
+
+    expect(mocks.loggerWarn).toHaveBeenCalledTimes(1);
+  });
+
   it('serializes concurrent binds without losing records and assigns a default TTL', async () => {
     mocks.userData = await fs.mkdtemp(path.join(os.tmpdir(), 'route-affinity-'));
     directories.push(mocks.userData);
@@ -90,7 +114,9 @@ describe('route state affinity service', () => {
       ROUTE_STATE_AFFINITY_MAX_RECORDS
     );
     expect(await service.get('resp_0', 'profile-1')).toBeNull();
-    expect(await service.get(`resp_${ROUTE_STATE_AFFINITY_MAX_RECORDS + 9}`, 'profile-1')).not.toBeNull();
+    expect(
+      await service.get(`resp_${ROUTE_STATE_AFFINITY_MAX_RECORDS + 9}`, 'profile-1')
+    ).not.toBeNull();
   });
 
   it('does not reveal resources across profiles and removes expired responses', async () => {

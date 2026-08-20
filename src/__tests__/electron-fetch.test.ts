@@ -254,6 +254,64 @@ describe('electronFetchRaw request headers', () => {
     );
   });
 
+  it('does not retain an accepted streamed body when retention is disabled', async () => {
+    mocks.state.autoRespond = false;
+    const received: Buffer[] = [];
+    const firstChunk = Buffer.from('data: one\n\n');
+    const secondChunk = Buffer.from('data: two\n\n');
+
+    const responsePromise = electronFetchRawStream('https://anyrouter.top/v1/responses', {
+      method: 'POST',
+      retainStreamedBody: false,
+      onResponse: () => true,
+      onData: async chunk => {
+        received.push(chunk);
+      },
+    });
+
+    await Promise.resolve();
+    const responseHandlers = mocks.startResponse();
+    responseHandlers.data?.(firstChunk);
+    await Promise.resolve();
+    await Promise.resolve();
+    responseHandlers.data?.(secondChunk);
+    await Promise.resolve();
+    await Promise.resolve();
+    responseHandlers.end?.();
+
+    await expect(responsePromise).resolves.toMatchObject({
+      status: 200,
+      body: Buffer.alloc(0),
+    });
+    expect(received).toEqual([firstChunk, secondChunk]);
+  });
+
+  it('retains the complete body when streaming callbacks reject the response', async () => {
+    mocks.state.autoRespond = false;
+    const onData = vi.fn();
+    const firstChunk = Buffer.from('failure one');
+    const secondChunk = Buffer.from('failure two');
+
+    const responsePromise = electronFetchRawStream('https://anyrouter.top/v1/responses', {
+      method: 'POST',
+      retainStreamedBody: false,
+      onResponse: () => false,
+      onData,
+    });
+
+    await Promise.resolve();
+    const responseHandlers = mocks.startResponse();
+    responseHandlers.data?.(firstChunk);
+    responseHandlers.data?.(secondChunk);
+    responseHandlers.end?.();
+
+    await expect(responsePromise).resolves.toMatchObject({
+      status: 200,
+      body: Buffer.concat([firstChunk, secondChunk]),
+    });
+    expect(onData).not.toHaveBeenCalled();
+  });
+
   it('rejects an aborted raw stream without waiting for the request timeout', async () => {
     mocks.state.autoRespond = false;
 

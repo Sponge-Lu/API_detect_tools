@@ -50,12 +50,13 @@
 | **close-behavior-manager.ts** | 窗口关闭行为管理 | `CloseBehaviorManager` 类 |
 | **credit-service.ts** | Linux Do Credit 积分检测、LDC 充值 | `CreditService` 类 |
 | **route-channel-resolver.ts** | 通道解析；接入点级上游协议优先并支持精确目标凭证解析 | `resolveChannels()`, `resolveChannelCredentials()`, `resolveChannelTarget()` |
-| **route-proxy-service.ts** | 三标准协议通用本地网关，支持 Responses 状态亲和、流/非流转换、会话覆盖与模型发现，并明确拒绝 Conversations API | `startRouteProxyServer()`, `stopRouteProxyServer()`, `buildUpstreamRequestUrl()` |
+| **route-proxy-service.ts** | 三标准协议通用本地网关，支持 Responses 状态亲和、增量流校验/转换、会话覆盖与模型发现，并明确拒绝 Conversations API | `startRouteProxyServer()`, `stopRouteProxyServer()`, `buildUpstreamRequestUrl()` |
 | **route-session-service.ts** | RouteInstance 规范化三元路由键、Codex 原生窗口/会话元数据与 Claude Code 会话头、ARMED 绑定、槽位切换、复用、显式关闭和展示别名 | `extractObservedRouteInstanceKey()`, `resolveRouteInstanceForRequest()`, `listRouteInstances()` |
 | **route-target-lock.ts** | 端点测试专用的 loopback 目标锁定编解码、终止错误状态与单测试上游尝试预算 | `buildTargetLockRouteApiKey()`, `parseTargetLockRouteApiKey()` |
 | **anyrouter-request-rewriter.ts** | AnyRouter 请求/响应适配器：Claude Code 保留原始工具语义并注入 Anthropic 指纹，Codex 原生 Responses 透传，Google/Gemini GenerateContent 原生透传 | `rewriteForAnyRouter()`, `transformAnyRouterResponse()` |
 | **cli-protocol-adapter.ts** | 通用 CLI 协议适配器：在 Anthropic Messages、OpenAI Chat Completions 与 OpenAI Responses 之间执行单次无损子集转换，覆盖文本、函数工具、共享 `tool_choice`/并行调用控制、思考强度、流式 SSE 与非流式 JSON；不可等价字段以 `CliProtocolAdapterError` 中立跳过候选 | `adaptRequestToTargetProtocol()`, `transformTargetProtocolResponse()`, `CliProtocolAdapterError` |
 | **protocol-sse-transformer.ts** | 协议对之间的增量 SSE 状态机，处理任意传输/UTF-8 分片、文本/工具/usage/error/terminal 事件与下游生命周期 | `IncrementalProtocolSseTransformer`, `ProtocolSseTransformError` |
+| **streaming-protocol-validator.ts** | Messages、Responses 与 Chat Completions 的有界增量 SSE 协议校验，维护终止、输出、usage 与工具参数状态 | `createIncrementalStreamingValidator()`, `StreamingProtocolValidationError` |
 | **route-model-registry-service.ts** | 模型注册表来源聚合、手工/显式 override 展示项维护与厂商优先级配置；所有模型来源均标记四种内置路由 CLI 可用，扫描只刷新候选来源，不自动创建重定向 | `rebuildModelRegistry()`, `syncModelRegistrySources()` |
 | **route-analytics-service.ts** | 路由请求分析、token/缓存 token/延迟/状态码统计与对象级排行 | `recordRouteRequest()`, `getRouteObjectStats()` |
 | **route-history-service.ts** | History 时间桶聚合服务，将真实路由请求按 Messages、Responses、Chat Completions 等实际请求端点分轨聚合为 48h / 2h 成功率数据 | `getHistoryBuckets()` |

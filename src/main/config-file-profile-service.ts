@@ -76,6 +76,7 @@ const MAX_SESSION_RECORD_FILES = 200;
 const MAX_SESSION_RECORD_FILE_BYTES = 10 * 1024 * 1024;
 const previewTransactions = new Map<string, ConfigFilePreviewTransaction>();
 let routeCredentialIndex = new Map<string, ConfigFileProfile>();
+const routeCredentialMisses = new Set<string>();
 const BUILTIN_TEMPLATE_VERSION = 3;
 const BUILTIN_NAMES: Record<BuiltinCliType, string> = {
   claudeCode: 'Claude Code',
@@ -564,12 +565,7 @@ export function getConfigFileProfileStoragePath(): string {
   return path.join(app.getPath('userData'), 'config-file-profiles.json');
 }
 
-async function writeProfileStorage(profiles: ConfigFileProfile[]): Promise<void> {
-  await writeJsonFileAtomically<ConfigFileProfileStorage>(
-    getConfigFileProfileStoragePath(),
-    { version: 3, profiles },
-    { trailingNewline: true, mode: 0o600 }
-  );
+function rebuildRouteCredentialIndex(profiles: ConfigFileProfile[]): void {
   routeCredentialIndex = new Map(
     profiles.flatMap(profile =>
       profile.localRouteCredential?.apiKey
@@ -577,6 +573,16 @@ async function writeProfileStorage(profiles: ConfigFileProfile[]): Promise<void>
         : []
     )
   );
+  routeCredentialMisses.clear();
+}
+
+async function writeProfileStorage(profiles: ConfigFileProfile[]): Promise<void> {
+  await writeJsonFileAtomically<ConfigFileProfileStorage>(
+    getConfigFileProfileStoragePath(),
+    { version: 3, profiles },
+    { trailingNewline: true, mode: 0o600 }
+  );
+  rebuildRouteCredentialIndex(profiles);
 }
 
 function upgradeBuiltinProfiles(profiles: ConfigFileProfile[]): ConfigFileProfile[] {
@@ -627,13 +633,7 @@ export async function loadConfigFileProfiles(): Promise<ConfigFileProfile[]> {
     if (raw.version !== 3 || upgraded.some((profile, index) => profile !== normalized[index])) {
       await writeProfileStorage(upgraded);
     }
-    routeCredentialIndex = new Map(
-      upgraded.flatMap(profile =>
-        profile.localRouteCredential?.apiKey
-          ? [[profile.localRouteCredential.apiKey, profile] as const]
-          : []
-      )
-    );
+    rebuildRouteCredentialIndex(upgraded);
     return upgraded;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -905,8 +905,11 @@ export async function findConfigFileProfileByRouteApiKey(
   if (!apiKey) return null;
   const cached = routeCredentialIndex.get(apiKey);
   if (cached) return cached;
+  if (routeCredentialMisses.has(apiKey)) return null;
   await loadConfigFileProfiles();
-  return routeCredentialIndex.get(apiKey) || null;
+  const loaded = routeCredentialIndex.get(apiKey) || null;
+  if (!loaded) routeCredentialMisses.add(apiKey);
+  return loaded;
 }
 
 function splitModelRestriction(value?: string): Set<string> | null {
@@ -1762,10 +1765,7 @@ function removeObsoleteBuiltinManagedFields(
     const generatedEnv = isRecord(generatedObject.env) ? generatedObject.env : null;
     if (currentEnv && generatedEnv) {
       for (const key of ['HTTPS_PROXY', 'HTTP_PROXY']) {
-        if (
-          generatedEnv[key] === undefined &&
-          currentEnv[key] === 'http://127.0.0.1:7890'
-        ) {
+        if (generatedEnv[key] === undefined && currentEnv[key] === 'http://127.0.0.1:7890') {
           delete currentEnv[key];
         }
       }

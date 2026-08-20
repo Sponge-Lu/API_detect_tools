@@ -14,7 +14,9 @@ vi.mock('../main/utils/logger', () => ({
 }));
 
 vi.mock('../main/unified-config-manager', () => ({
-  unifiedConfigManager: {},
+  unifiedConfigManager: {
+    saveConfig: vi.fn(async () => undefined),
+  },
 }));
 
 vi.mock('../main/config-file-profile-service', () => ({
@@ -113,6 +115,7 @@ import {
 import { unifiedConfigManager } from '../main/unified-config-manager';
 import { findConfigFileProfileByRouteApiKey } from '../main/config-file-profile-service';
 import { routeStateAffinityService } from '../main/route-state-affinity-service';
+import { STREAMING_VALIDATION_MAX_SSE_FRAME_BYTES } from '../main/streaming-protocol-validator';
 import {
   detectCliTypeFromPath,
   extractModelFromBody,
@@ -315,11 +318,12 @@ describe('route-proxy-service endpoint classification', () => {
   });
 
   it('rejects credentials that resolve to different active Profiles', async () => {
-    const lookup = vi.fn(async (apiKey: string) =>
-      ({
-        'key-a': { id: 'profile-a', name: 'Profile A' },
-        'key-b': { id: 'profile-b', name: 'Profile B' },
-      })[apiKey] as never
+    const lookup = vi.fn(
+      async (apiKey: string) =>
+        ({
+          'key-a': { id: 'profile-a', name: 'Profile A' },
+          'key-b': { id: 'profile-b', name: 'Profile B' },
+        })[apiKey] as never
     );
 
     const resolution = await resolveRouteProfileCredential(
@@ -636,6 +640,14 @@ describe('route-proxy-service endpoint classification', () => {
     expect(response.statusCode).toBe(501);
     expect(JSON.parse(response.body).error).toBe('stateful_route_operation_unsupported');
     expect(resolveChannels).not.toHaveBeenCalled();
+    expect(recordRouteRequest).toHaveBeenCalledTimes(1);
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'failure',
+        statusCode: 501,
+        error: 'stateful_route_operation_unsupported',
+      })
+    );
   });
 });
 
@@ -824,6 +836,14 @@ describe('route-proxy-service Responses state affinity', () => {
       if (conversation) {
         expect(resolveChannels).not.toHaveBeenCalled();
         expect(httpRawRequest).not.toHaveBeenCalled();
+        expect(recordRouteRequest).toHaveBeenCalledTimes(1);
+        expect(recordRouteRequest).toHaveBeenCalledWith(
+          expect.objectContaining({
+            outcome: 'failure',
+            statusCode: 501,
+            error: 'stateful_request_unsupported:conversation',
+          })
+        );
       } else {
         expect(resolveChannels).toHaveBeenCalled();
       }
@@ -838,7 +858,9 @@ describe('route-proxy-service Responses state affinity', () => {
     } as never);
     const ensureRouteRuleForProtocolModelSelection = vi.fn(async () => rule);
     Object.assign(unifiedConfigManager, { ensureRouteRuleForProtocolModelSelection });
-    vi.mocked(findMatchingRule).mockReturnValueOnce(null).mockReturnValueOnce(rule as never);
+    vi.mocked(findMatchingRule)
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce(rule as never);
     vi.mocked(httpRawRequest).mockResolvedValue({
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -1063,6 +1085,123 @@ describe('route-proxy-service Responses state affinity', () => {
     expect(response.statusCode).toBe(409);
     expect(JSON.parse(response.body).error.code).toBe('state_affinity_not_found');
     expect(resolveChannels).not.toHaveBeenCalled();
+    expect(httpRawRequest).not.toHaveBeenCalled();
+    expect(recordRouteRequest).toHaveBeenCalledTimes(1);
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'failure',
+        statusCode: 409,
+        error: 'state_affinity_not_found',
+      })
+    );
+  });
+
+  it('logs unsupported cross-protocol state creation exactly once', async () => {
+    setupStatefulRoute();
+    const incompatibleChannel = {
+      ...channel,
+      targetProtocol: 'openai-chat-completions' as const,
+      targetEndpoint: '/v1/chat/completions',
+    };
+    vi.mocked(resolveChannels).mockReturnValue([incompatibleChannel]);
+    vi.mocked(resolveChannelTarget).mockResolvedValue({
+      targetProtocol: 'openai-chat-completions',
+      targetEndpoint: '/v1/chat/completions',
+    });
+    const response = createMockResponse();
+
+    await handleRequest(
+      createJsonRequest(
+        '/v1/responses',
+        { authorization: 'Bearer sk-profile', 'content-type': 'application/json' },
+        { model: 'gpt-5', input: 'hello', store: true }
+      ),
+      response
+    );
+
+    expect(response.statusCode).toBe(501);
+    expect(JSON.parse(response.body).error.code).toBe('stateful_cross_protocol_unsupported');
+    expect(httpRawStreamRequest).not.toHaveBeenCalled();
+    expect(httpRawRequest).not.toHaveBeenCalled();
+    expect(recordRouteRequest).toHaveBeenCalledTimes(1);
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'failure',
+        statusCode: 501,
+        error: 'stateful_cross_protocol_unsupported',
+      })
+    );
+  });
+
+  it('keeps target-lock stateful profile rejections out of route analytics', async () => {
+    setupStatefulRoute();
+    const routeApiKey = buildProbeLockRouteApiKey('sk-route', {
+      siteId: channel.siteId,
+      accountId: channel.accountId,
+      apiKeyId: channel.apiKeyId,
+      cliType: 'codex',
+      canonicalModel: 'gpt-5',
+      rawModel: 'gpt-5',
+      targetProtocol: 'openai-responses',
+    });
+    const response = createMockResponse();
+
+    try {
+      await handleRequest(
+        createJsonRequest(
+          '/v1/responses',
+          { authorization: `Bearer ${routeApiKey}`, 'content-type': 'application/json' },
+          { model: 'gpt-5', input: 'hello', store: true }
+        ),
+        response
+      );
+    } finally {
+      clearRouteProbeLockTerminalFailure(routeApiKey);
+    }
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.body).error.code).toBe('stateful_profile_key_required');
+    expect(recordRouteRequest).not.toHaveBeenCalled();
+    expect(httpRawStreamRequest).not.toHaveBeenCalled();
+    expect(httpRawRequest).not.toHaveBeenCalled();
+  });
+
+  it('keeps target-lock provider-owned state rejections out of route analytics', async () => {
+    setupStatefulRoute();
+    const routeApiKey = buildProbeLockRouteApiKey('sk-route', {
+      siteId: channel.siteId,
+      accountId: channel.accountId,
+      apiKeyId: channel.apiKeyId,
+      cliType: 'codex',
+      canonicalModel: 'gpt-5',
+      rawModel: 'gpt-5',
+      targetProtocol: 'openai-responses',
+    });
+    const response = createMockResponse();
+
+    try {
+      await handleRequest(
+        createJsonRequest(
+          '/v1/responses',
+          { authorization: `Bearer ${routeApiKey}`, 'content-type': 'application/json' },
+          {
+            model: 'gpt-5',
+            input: 'hello',
+            conversation: 'conv_existing',
+            store: false,
+          }
+        ),
+        response
+      );
+    } finally {
+      clearRouteProbeLockTerminalFailure(routeApiKey);
+    }
+
+    expect(response.statusCode).toBe(501);
+    expect(JSON.parse(response.body).error).toBe('stateful_request_unsupported');
+    expect(recordRouteRequest).not.toHaveBeenCalled();
+    expect(resolveChannels).not.toHaveBeenCalled();
+    expect(httpRawStreamRequest).not.toHaveBeenCalled();
     expect(httpRawRequest).not.toHaveBeenCalled();
   });
 });
@@ -2802,7 +2941,9 @@ describe('route-proxy-service client cancellation', () => {
           ).toBe(true);
           void Promise.resolve(config.onChunk?.(completedStream))
             .then(() => {
+              expect(config.shouldResolveOnAbort?.()).toBe(false);
               response.emit('close');
+              expect(config.signal?.aborted).toBe(false);
               resolve({
                 status: 200,
                 headers: upstreamHeaders,
@@ -4138,6 +4279,22 @@ describe('route-proxy-service OpenCode native endpoint routing', () => {
     sourceProtocol: keyof typeof protocolCases;
     targetProtocol: keyof typeof protocolCases;
   }>;
+  const buildCompletedAnthropicToolPrefix = (): Buffer =>
+    Buffer.from(
+      [
+        'event: message_start',
+        'data: {"type":"message_start","message":{"content":[]}}',
+        '',
+        'event: content_block_start',
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"Read","input":{}}}',
+        '',
+        'event: content_block_stop',
+        'data: {"type":"content_block_stop","index":0}',
+        '',
+        '',
+      ].join('\n'),
+      'utf8'
+    );
 
   it.each(protocolMatrix)(
     'routes OpenCode $sourceProtocol -> $targetProtocol with at most one conversion',
@@ -4294,6 +4451,9 @@ describe('route-proxy-service OpenCode native endpoint routing', () => {
       const upstreamHeaders = { 'content-type': 'text/event-stream' };
       const response = createMockResponse();
       vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, requestConfig = {}) => {
+        if (sourceProtocol !== targetProtocol) {
+          expect(requestConfig.retainStreamedBody).toBe(false);
+        }
         expect(
           requestConfig.onResponse?.({ status: 200, statusText: 'OK', headers: upstreamHeaders })
         ).toBe(true);
@@ -4328,6 +4488,426 @@ describe('route-proxy-service OpenCode native endpoint routing', () => {
     }
   );
 
+  it('preserves a rejected cross-protocol streaming HTTP failure body', async () => {
+    vi.clearAllMocks();
+    const source = protocolCases['anthropic-messages'];
+    setupOpenCodeRoute({
+      detectedCliType: source.detectedCliType,
+      channelTargetProtocol: 'openai-responses',
+    });
+    const failureBody = Buffer.from(
+      JSON.stringify({ error: { type: 'server_error', message: 'upstream busy' } }),
+      'utf8'
+    );
+    const upstreamHeaders = { 'content-type': 'application/json' };
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, requestConfig = {}) => {
+      expect(requestConfig.retainStreamedBody).toBe(false);
+      expect(
+        requestConfig.onResponse?.({
+          status: 503,
+          statusText: 'Service Unavailable',
+          headers: upstreamHeaders,
+        })
+      ).toBe(false);
+      return { status: 503, headers: upstreamHeaders, body: failureBody };
+    });
+    const request = createJsonRequest(
+      source.path,
+      { ...source.routeHeaders, 'content-type': 'application/json' },
+      { ...source.requestBody, stream: true }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.statusCode).toBe(503);
+    expect(response.body).toBe(failureBody.toString('utf8'));
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: 'key-opencode' }),
+      'failure',
+      expect.objectContaining({ statusCode: 503 }),
+      expect.any(Object)
+    );
+  });
+
+  it('retries a zero-byte cross-protocol SSE response before transformer EOF validation', async () => {
+    vi.clearAllMocks();
+    const source = protocolCases['anthropic-messages'];
+    setupOpenCodeRoute({
+      detectedCliType: source.detectedCliType,
+      channelTargetProtocol: 'openai-responses',
+    });
+    const upstreamHeaders = { 'content-type': 'text/event-stream' };
+    const completedStream = buildResponsesTextSse('converted-after-empty');
+    vi.mocked(httpRawStreamRequest)
+      .mockImplementationOnce(async (_url, requestConfig = {}) => {
+        expect(
+          requestConfig.onResponse?.({ status: 200, statusText: 'OK', headers: upstreamHeaders })
+        ).toBe(true);
+        return { status: 200, headers: upstreamHeaders, body: Buffer.alloc(0) };
+      })
+      .mockImplementationOnce(async (_url, requestConfig = {}) => {
+        expect(
+          requestConfig.onResponse?.({ status: 200, statusText: 'OK', headers: upstreamHeaders })
+        ).toBe(true);
+        await requestConfig.onChunk?.(completedStream);
+        return { status: 200, headers: upstreamHeaders, body: Buffer.alloc(0) };
+      });
+    const request = createJsonRequest(
+      source.path,
+      { ...source.routeHeaders, 'content-type': 'application/json' },
+      { ...source.requestBody, stream: true }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(httpRawStreamRequest).toHaveBeenCalledTimes(2);
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('converted-after-empty');
+    expect(response.body).toContain('event: message_stop');
+    expect(recordRoutePathOutcome).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'failure',
+      expect.objectContaining({ error: 'protocol_sse_transform:missing_terminal_event' }),
+      expect.anything()
+    );
+  });
+
+  it('records a transformed upstream error without appending a second error frame', async () => {
+    vi.clearAllMocks();
+    const source = protocolCases['anthropic-messages'];
+    setupOpenCodeRoute({
+      detectedCliType: source.detectedCliType,
+      channelTargetProtocol: 'openai-responses',
+    });
+    const upstreamHeaders = { 'content-type': 'text/event-stream' };
+    const failedStream = Buffer.from(
+      [
+        'event: response.failed',
+        'data: {"type":"response.failed","response":{"error":{"type":"server_error","message":"capacity unavailable"}}}',
+        '',
+        '',
+      ].join('\n'),
+      'utf8'
+    );
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, requestConfig = {}) => {
+      expect(
+        requestConfig.onResponse?.({ status: 200, statusText: 'OK', headers: upstreamHeaders })
+      ).toBe(true);
+      await requestConfig.onChunk?.(failedStream);
+      return { status: 200, headers: upstreamHeaders, body: Buffer.alloc(0) };
+    });
+    const request = createJsonRequest(
+      source.path,
+      { ...source.routeHeaders, 'content-type': 'application/json' },
+      { ...source.requestBody, stream: true }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body.match(/event: error/g)).toHaveLength(1);
+    expect(response.body).toContain('capacity unavailable');
+    expect(response.body).not.toContain('message_stop');
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: 'key-opencode' }),
+      'failure',
+      expect.objectContaining({ error: 'upstream_streaming_error:api_error' }),
+      expect.any(Object)
+    );
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'failure',
+        error: 'upstream_streaming_error:api_error',
+      })
+    );
+  });
+
+  it('preserves Anthropic CRLF bytes when a UTF-8 code point is split across chunks', async () => {
+    vi.clearAllMocks();
+    const source = protocolCases['anthropic-messages'];
+    setupOpenCodeRoute({
+      detectedCliType: source.detectedCliType,
+      channelTargetProtocol: 'anthropic-messages',
+    });
+    Object.assign(unifiedConfigManager, {
+      getSiteById: vi.fn(() => ({ id: 'site-opencode', name: 'AnyRouter' })),
+    });
+    const streamBody = Buffer.from(
+      buildClaudeTextSse('跨块字符').toString('utf8').replace(/\n/g, '\r\n'),
+      'utf8'
+    );
+    const splitOffset = streamBody.indexOf(Buffer.from('跨', 'utf8')) + 1;
+    expect(splitOffset).toBeGreaterThan(0);
+    const upstreamHeaders = { 'content-type': 'text/event-stream' };
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, requestConfig = {}) => {
+      expect(
+        requestConfig.onResponse?.({ status: 200, statusText: 'OK', headers: upstreamHeaders })
+      ).toBe(true);
+      await requestConfig.onChunk?.(streamBody.subarray(0, splitOffset));
+      await requestConfig.onChunk?.(streamBody.subarray(splitOffset));
+      return { status: 200, headers: upstreamHeaders, body: Buffer.alloc(0) };
+    });
+    const request = createJsonRequest(
+      source.path,
+      { ...source.routeHeaders, 'content-type': 'application/json' },
+      { ...source.requestBody, stream: true }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe(streamBody.toString('utf8'));
+    expect(response.body).not.toContain('\ufffd');
+  });
+
+  it('keeps an Anthropic EOF tail incomplete instead of synthesizing a frame delimiter', async () => {
+    vi.clearAllMocks();
+    const source = protocolCases['anthropic-messages'];
+    setupOpenCodeRoute({
+      detectedCliType: source.detectedCliType,
+      channelTargetProtocol: 'anthropic-messages',
+    });
+    Object.assign(unifiedConfigManager, {
+      getSiteById: vi.fn(() => ({ id: 'site-opencode', name: 'AnyRouter' })),
+    });
+    const incompleteTail = Buffer.from(
+      'event: message_start\r\ndata: {"type":"message_start","message":{"content":[]}}',
+      'utf8'
+    );
+    const upstreamHeaders = { 'content-type': 'text/event-stream' };
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, requestConfig = {}) => {
+      expect(
+        requestConfig.onResponse?.({ status: 200, statusText: 'OK', headers: upstreamHeaders })
+      ).toBe(true);
+      await requestConfig.onChunk?.(incompleteTail);
+      return { status: 200, headers: upstreamHeaders, body: Buffer.alloc(0) };
+    });
+    const request = createJsonRequest(
+      source.path,
+      { ...source.routeHeaders, 'content-type': 'application/json' },
+      { ...source.requestBody, stream: true }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(httpRawStreamRequest).toHaveBeenCalledTimes(1);
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: 'key-opencode' }),
+      'failure',
+      expect.objectContaining({ error: 'malformed_streaming_response:incomplete_sse_frame' }),
+      expect.any(Object)
+    );
+  });
+
+  it('does not let Anthropic compatibility normalization mask invalid UTF-8', async () => {
+    vi.clearAllMocks();
+    const source = protocolCases['anthropic-messages'];
+    setupOpenCodeRoute({
+      detectedCliType: source.detectedCliType,
+      channelTargetProtocol: 'anthropic-messages',
+    });
+    Object.assign(unifiedConfigManager, {
+      getSiteById: vi.fn(() => ({ id: 'site-opencode', name: 'AnyRouter' })),
+    });
+    const validPrefix = buildCompletedAnthropicToolPrefix();
+    const invalidTerminal = Buffer.concat([
+      Buffer.from(
+        'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"vendor":"',
+        'utf8'
+      ),
+      Buffer.from([0xff]),
+      Buffer.from('"}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n', 'utf8'),
+    ]);
+    const upstreamHeaders = { 'content-type': 'text/event-stream' };
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, requestConfig = {}) => {
+      expect(
+        requestConfig.onResponse?.({ status: 200, statusText: 'OK', headers: upstreamHeaders })
+      ).toBe(true);
+      await requestConfig.onChunk?.(Buffer.concat([validPrefix, invalidTerminal]));
+      return { status: 200, headers: upstreamHeaders, body: Buffer.alloc(0) };
+    });
+    const request = createJsonRequest(
+      source.path,
+      { ...source.routeHeaders, 'content-type': 'application/json' },
+      { ...source.requestBody, stream: true }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.write).not.toHaveBeenCalled();
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: 'key-opencode' }),
+      'failure',
+      expect.objectContaining({ error: 'malformed_streaming_response:invalid_utf8' }),
+      expect.any(Object)
+    );
+  });
+
+  it('enforces the raw frame limit before Anthropic compatibility normalization', async () => {
+    vi.clearAllMocks();
+    const source = protocolCases['anthropic-messages'];
+    setupOpenCodeRoute({
+      detectedCliType: source.detectedCliType,
+      channelTargetProtocol: 'anthropic-messages',
+    });
+    Object.assign(unifiedConfigManager, {
+      getSiteById: vi.fn(() => ({ id: 'site-opencode', name: 'AnyRouter' })),
+    });
+    const framePrefix = Buffer.from('event: message_delta\ndata: {"type":"message_delta",', 'utf8');
+    const frameSuffix = Buffer.from(
+      '"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}',
+      'utf8'
+    );
+    const paddingBytes =
+      STREAMING_VALIDATION_MAX_SSE_FRAME_BYTES + 1 - framePrefix.length - frameSuffix.length;
+    const oversizedTerminal = Buffer.concat([
+      framePrefix,
+      Buffer.alloc(paddingBytes, 0x20),
+      frameSuffix,
+      Buffer.from('\n\n', 'utf8'),
+    ]);
+    expect(oversizedTerminal.length - 2).toBe(STREAMING_VALIDATION_MAX_SSE_FRAME_BYTES + 1);
+    const upstreamHeaders = { 'content-type': 'text/event-stream' };
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, requestConfig = {}) => {
+      expect(
+        requestConfig.onResponse?.({ status: 200, statusText: 'OK', headers: upstreamHeaders })
+      ).toBe(true);
+      await requestConfig.onChunk?.(
+        Buffer.concat([buildCompletedAnthropicToolPrefix(), oversizedTerminal])
+      );
+      return { status: 200, headers: upstreamHeaders, body: Buffer.alloc(0) };
+    });
+    const request = createJsonRequest(
+      source.path,
+      { ...source.routeHeaders, 'content-type': 'application/json' },
+      { ...source.requestBody, stream: true }
+    );
+    const response = createMockResponse();
+
+    await handleRequest(request, response);
+
+    expect(response.write).not.toHaveBeenCalled();
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKeyId: 'key-opencode' }),
+      'failure',
+      expect.objectContaining({ error: 'malformed_streaming_response:sse_frame_too_large' }),
+      expect.any(Object)
+    );
+  });
+
+  it('forwards CR-only SSE through strict same-protocol validation', async () => {
+    vi.clearAllMocks();
+    const source = protocolCases['openai-responses'];
+    setupOpenCodeRoute({
+      detectedCliType: source.detectedCliType,
+      channelTargetProtocol: 'openai-responses',
+    });
+    Object.assign(unifiedConfigManager, {
+      getSiteById: vi.fn(() => ({ id: 'site-opencode', name: 'AnyRouter' })),
+      getAccountById: vi.fn(() => ({
+        id: 'account-opencode',
+        account_name: 'OpenCode Account',
+        anyRouterConfig: { userHash: 'a'.repeat(64) },
+      })),
+    });
+    const streamBody = Buffer.from(
+      buildResponsesTextSse('cr-only-stream').toString('utf8').replace(/\n/g, '\r'),
+      'utf8'
+    );
+    const firstFrameEnd = streamBody.indexOf('\r\r') + 2;
+    const upstreamHeaders = { 'content-type': 'text/event-stream' };
+    const response = createMockResponse();
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, requestConfig = {}) => {
+      expect(requestConfig.retainStreamedBody).toBe(false);
+      expect(
+        requestConfig.onResponse?.({ status: 200, statusText: 'OK', headers: upstreamHeaders })
+      ).toBe(true);
+      await requestConfig.onChunk?.(streamBody.subarray(0, firstFrameEnd));
+      expect(response.body).toContain('cr-only-stream');
+      await requestConfig.onChunk?.(streamBody.subarray(firstFrameEnd));
+      return { status: 200, headers: upstreamHeaders, body: Buffer.alloc(0) };
+    });
+    const request = createJsonRequest(
+      source.path,
+      {
+        ...source.routeHeaders,
+        'content-type': 'application/json',
+        'x-api-detect-cli': 'openCode',
+      },
+      { ...source.requestBody, stream: true }
+    );
+
+    await handleRequest(request, response);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe(streamBody.toString('utf8'));
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'success', statusCode: 200 })
+    );
+  });
+
+  it('converts a fragmented 128K-token-class Responses frame without retaining the raw body', async () => {
+    vi.clearAllMocks();
+    const source = protocolCases['openai-chat-completions'];
+    setupOpenCodeRoute({
+      detectedCliType: source.detectedCliType,
+      channelTargetProtocol: 'openai-responses',
+    });
+    const output = ' token'.repeat(128 * 1024);
+    const streamBody = Buffer.from(
+      [
+        `event: response.output_text.delta\ndata: ${JSON.stringify({
+          type: 'response.output_text.delta',
+          delta: output,
+        })}\n\n`,
+        `event: response.completed\ndata: ${JSON.stringify({
+          type: 'response.completed',
+          response: {
+            usage: { input_tokens: 1, output_tokens: 128 * 1024, total_tokens: 128 * 1024 + 1 },
+          },
+        })}\n\n`,
+      ].join(''),
+      'utf8'
+    );
+    const upstreamHeaders = { 'content-type': 'text/event-stream' };
+    const response = createMockResponse();
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, requestConfig = {}) => {
+      expect(requestConfig.retainStreamedBody).toBe(false);
+      expect(
+        requestConfig.onResponse?.({ status: 200, statusText: 'OK', headers: upstreamHeaders })
+      ).toBe(true);
+      for (let offset = 0; offset < streamBody.length; offset += 1024) {
+        await requestConfig.onChunk?.(streamBody.subarray(offset, offset + 1024));
+      }
+      expect(requestConfig.shouldResolveOnAbort?.()).toBe(true);
+      return { status: 200, headers: upstreamHeaders, body: Buffer.alloc(0) };
+    });
+    const request = createJsonRequest(
+      source.path,
+      {
+        ...source.routeHeaders,
+        'content-type': 'application/json',
+        'x-api-detect-cli': 'openCode',
+      },
+      { ...source.requestBody, stream: true }
+    );
+
+    await handleRequest(request, response);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain(output);
+    expect(response.body).toContain('data: [DONE]');
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'success', completionTokens: 128 * 1024 })
+    );
+  });
+
   it.each([
     {
       sourceProtocol: 'anthropic-messages' as const,
@@ -4347,7 +4927,14 @@ describe('route-proxy-service OpenCode native endpoint routing', () => {
     },
   ])(
     'uses channel $authScheme auth for $sourceProtocol regardless of client marker',
-    async ({ sourceProtocol, authScheme, marker, expectedHeader, forbiddenHeader, expectedValue }) => {
+    async ({
+      sourceProtocol,
+      authScheme,
+      marker,
+      expectedHeader,
+      forbiddenHeader,
+      expectedValue,
+    }) => {
       vi.clearAllMocks();
       const source = protocolCases[sourceProtocol];
       setupOpenCodeRoute({

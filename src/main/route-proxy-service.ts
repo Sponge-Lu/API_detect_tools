@@ -71,6 +71,13 @@ import {
   IncrementalProtocolSseTransformer,
   type StreamingProtocol,
 } from './protocol-sse-transformer';
+import {
+  createIncrementalStreamingValidator,
+  STREAMING_VALIDATION_MAX_SSE_FRAME_BYTES,
+  StreamingProtocolValidationError,
+  type CompletedStreamValidation,
+  type StreamingValidationProtocol,
+} from './streaming-protocol-validator';
 import { routeSessionActivityService } from './route-session-activity-service';
 import {
   buildRouteProxyBaseUrl,
@@ -138,7 +145,6 @@ const OPENAI_STATEFUL_ROUTE_PREFIXES = [
   '/v1/containers',
 ] as const;
 const INITIAL_STREAM_VALIDATION_MAX_BYTES = 4096;
-const STREAM_TERMINAL_SCAN_MAX_CHARS = 8192;
 const NATIVE_OPENAI_RESPONSES_SSE_MAX_PRECOMMIT_BYTES = 1024 * 1024;
 const NATIVE_ANTHROPIC_SSE_MAX_FRAME_BYTES = 1024 * 1024;
 const NATIVE_ANTHROPIC_SSE_MAX_PRECOMMIT_BYTES = 1024 * 1024;
@@ -357,8 +363,7 @@ export function extractRouteCredentialCandidates(
 
 export async function resolveRouteProfileCredential(
   req: Pick<http.IncomingMessage, 'headers'>,
-  lookup: (apiKey: string) => Promise<ConfigFileProfile | null> =
-    findConfigFileProfileByRouteApiKey
+  lookup: (apiKey: string) => Promise<ConfigFileProfile | null> = findConfigFileProfileByRouteApiKey
 ): Promise<RouteProfileCredentialResolution> {
   return resolveRouteProfileCredentialCandidates(extractRouteCredentialCandidates(req), lookup);
 }
@@ -1162,7 +1167,7 @@ type InitialEventStreamValidation =
   | { status: 'pending' }
   | { status: 'rejected'; reason: string };
 
-type StreamingTerminalProtocol = 'anthropic' | 'openaiChat' | 'openaiResponses' | 'none';
+type StreamingTerminalProtocol = StreamingValidationProtocol | 'none';
 
 function getStreamingTerminalProtocolForWireProtocol(
   protocol: StreamingProtocol
@@ -1171,8 +1176,6 @@ function getStreamingTerminalProtocolForWireProtocol(
   if (protocol === 'openai-responses') return 'openaiResponses';
   return 'openaiChat';
 }
-type CompletedStreamValidation = { ok: true } | { ok: false; reason: string; message: string };
-
 interface ParsedSseBlock {
   event?: string;
   data: string;
@@ -1181,12 +1184,14 @@ interface ParsedSseBlock {
 interface StreamingSseObservationState {
   buffer: Buffer;
   errorSeen: boolean;
+  failureCode?: string;
   nextSequenceNumber: number;
   terminalSeen: boolean;
 }
 
 interface AnthropicSseCompatibilityNormalizerState {
-  buffer: string;
+  decodeBlock: (block: Buffer) => string;
+  frameBuffer: IncrementalSseFrameBuffer;
   openBlocks: Map<number, { type: string }>;
   completedToolBlocks: number;
 }
@@ -1252,51 +1257,6 @@ function getStreamingTerminalProtocol(requestUrl?: string): StreamingTerminalPro
   if (sourceProtocol === 'openai-responses') return 'openaiResponses';
   if (sourceProtocol === 'openai-chat-completions') return 'openaiChat';
   return 'none';
-}
-
-function appendStreamingTerminalScanText(
-  protocol: StreamingTerminalProtocol,
-  current: string,
-  chunk: Buffer
-): { text: string; terminalSeen: boolean } {
-  const next = `${current}${chunk.toString('utf-8')}`;
-  return {
-    text:
-      next.length > STREAM_TERMINAL_SCAN_MAX_CHARS
-        ? next.slice(-STREAM_TERMINAL_SCAN_MAX_CHARS)
-        : next,
-    terminalSeen: hasStreamingTerminalMarker(protocol, next),
-  };
-}
-
-function hasStreamingTerminalMarker(protocol: StreamingTerminalProtocol, text: string): boolean {
-  if (protocol === 'none') return true;
-
-  if (protocol === 'anthropic') {
-    return /event:\s*message_stop/.test(text) || /"type"\s*:\s*"message_stop"/.test(text);
-  }
-
-  if (protocol === 'openaiChat') {
-    return /data:\s*\[DONE\]/.test(text);
-  }
-
-  return (
-    /data:\s*\[DONE\]/.test(text) ||
-    /event:\s*response\.completed/.test(text) ||
-    /event:\s*response\.(?:failed|incomplete)/.test(text) ||
-    /"type"\s*:\s*"response\.(?:completed|failed|incomplete)"/.test(text)
-  );
-}
-
-function hasAnthropicMessageStop(body: Buffer): boolean {
-  for (const block of parseSseBlocks(body.toString('utf-8'))) {
-    const payload = parseSseJsonRecord(block.data);
-    if (readString(payload?.type) === 'message_stop') {
-      return true;
-    }
-  }
-
-  return false;
 }
 
 function buildStreamingErrorChunk(
@@ -1365,6 +1325,23 @@ function parseSseBlocks(text: string): ParsedSseBlock[] {
   return blocks;
 }
 
+function hasNativeResponsesOutputBeforeFrameBoundary(chunk: Buffer): boolean {
+  for (const block of parseSseBlocks(chunk.toString('utf-8'))) {
+    const payload = parseSseJsonRecord(block.data);
+    const eventType = readString(payload?.type) || block.event || '';
+    if (eventType === 'response.output_text.delta' || eventType === 'response.output_text.done') {
+      if (readString(payload?.delta).trim() || readString(payload?.text).trim()) return true;
+    }
+    if (
+      eventType === 'response.function_call_arguments.delta' ||
+      eventType === 'response.function_call_arguments.done'
+    ) {
+      if (readString(payload?.delta).trim() || readString(payload?.arguments).trim()) return true;
+    }
+  }
+  return false;
+}
+
 function createStreamingSseObservationState(
   protocol: StreamingTerminalProtocol
 ): StreamingSseObservationState {
@@ -1399,6 +1376,10 @@ function observeStreamingSseBlock(
 
   if (eventType === 'error' || asRecord(payload?.error)) {
     state.errorSeen = true;
+    const response = asRecord(payload?.response);
+    const error = asRecord(payload?.error) || asRecord(response?.error);
+    state.failureCode =
+      readString(error?.type) || readString(error?.code) || eventType || 'unknown_error';
     state.terminalSeen = true;
     return;
   }
@@ -1411,6 +1392,10 @@ function observeStreamingSseBlock(
   if (protocol === 'openaiResponses') {
     if (eventType === 'response.failed') {
       state.errorSeen = true;
+      const response = asRecord(payload?.response);
+      const error = asRecord(payload?.error) || asRecord(response?.error);
+      state.failureCode =
+        readString(error?.type) || readString(error?.code) || eventType || 'unknown_error';
     }
     state.terminalSeen =
       state.terminalSeen ||
@@ -1449,26 +1434,13 @@ function observeStreamingSseChunk(
 }
 
 function createAnthropicSseCompatibilityNormalizer(): AnthropicSseCompatibilityNormalizerState {
+  const decoder = new TextDecoder('utf-8', { fatal: true });
   return {
-    buffer: '',
+    decodeBlock: block => decoder.decode(block),
+    frameBuffer: new IncrementalSseFrameBuffer(STREAMING_VALIDATION_MAX_SSE_FRAME_BYTES),
     openBlocks: new Map(),
     completedToolBlocks: 0,
   };
-}
-
-function splitCompleteSseBlocks(text: string): { blocks: string[]; rest: string } {
-  const blocks: string[] = [];
-  let cursor = 0;
-  const separatorPattern = /\n\n+/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = separatorPattern.exec(text))) {
-    const end = match.index + match[0].length;
-    blocks.push(text.slice(cursor, end));
-    cursor = end;
-  }
-
-  return { blocks, rest: text.slice(cursor) };
 }
 
 function serializeSseBlock(event: string | undefined, data: string): string {
@@ -1477,9 +1449,15 @@ function serializeSseBlock(event: string | undefined, data: string): string {
 
 function normalizeAnthropicSseCompatibilityBlock(
   state: AnthropicSseCompatibilityNormalizerState,
-  rawBlock: string
-): string {
-  const blocks = parseSseBlocks(rawBlock);
+  rawBlock: Buffer
+): Buffer {
+  let decodedBlock: string;
+  try {
+    decodedBlock = state.decodeBlock(rawBlock);
+  } catch {
+    return rawBlock;
+  }
+  const blocks = parseSseBlocks(decodedBlock);
   if (blocks.length !== 1 || !blocks[0].data || blocks[0].data === '[DONE]') {
     return rawBlock;
   }
@@ -1524,42 +1502,34 @@ function normalizeAnthropicSseCompatibilityBlock(
     return rawBlock;
   }
 
-  return serializeSseBlock(
-    block.event,
-    JSON.stringify({
-      ...payload,
-      delta: {
-        ...delta,
-        stop_reason: 'tool_use',
-      },
-    })
+  return Buffer.from(
+    serializeSseBlock(
+      block.event,
+      JSON.stringify({
+        ...payload,
+        delta: {
+          ...delta,
+          stop_reason: 'tool_use',
+        },
+      })
+    ),
+    'utf-8'
   );
 }
 
 function normalizeAnthropicSseCompatibilityChunk(
   state: AnthropicSseCompatibilityNormalizerState,
   chunk: Buffer
-): Buffer {
-  const normalized = `${state.buffer}${chunk.toString('utf-8')}`.replace(/\r\n/g, '\n');
-  const { blocks, rest } = splitCompleteSseBlocks(normalized);
-  state.buffer = rest;
-  return Buffer.from(
-    blocks.map(block => normalizeAnthropicSseCompatibilityBlock(state, block)).join(''),
-    'utf-8'
+): Buffer[] {
+  return [...state.frameBuffer.push(chunk)].map(block =>
+    normalizeAnthropicSseCompatibilityBlock(state, block)
   );
 }
 
 function flushAnthropicSseCompatibilityNormalizer(
   state: AnthropicSseCompatibilityNormalizerState
 ): Buffer {
-  if (!state.buffer.trim()) {
-    state.buffer = '';
-    return Buffer.alloc(0);
-  }
-
-  const tail = state.buffer.endsWith('\n\n') ? state.buffer : `${state.buffer}\n\n`;
-  state.buffer = '';
-  return Buffer.from(normalizeAnthropicSseCompatibilityBlock(state, tail), 'utf-8');
+  return state.frameBuffer.hasTail ? state.frameBuffer.takeTail() : Buffer.alloc(0);
 }
 
 function parseSseJsonRecord(data: string): Record<string, unknown> | undefined {
@@ -1603,11 +1573,134 @@ function findSseFrameEnd(buffer: Buffer): number {
   return -1;
 }
 
+interface SseFrameBoundary {
+  end: number;
+  separatorStart: number;
+}
+
+function findValidatedSseFrameBoundary(buffer: Buffer, startIndex = 0): SseFrameBoundary | null {
+  for (let index = Math.max(0, startIndex); index < buffer.length; index += 1) {
+    const firstEndingBytes =
+      buffer[index] === 0x0a
+        ? 1
+        : buffer[index] === 0x0d && buffer[index + 1] === 0x0a
+          ? 2
+          : buffer[index] === 0x0d
+            ? 1
+            : 0;
+    if (!firstEndingBytes) continue;
+
+    const nextIndex = index + firstEndingBytes;
+    const secondEndingBytes =
+      buffer[nextIndex] === 0x0a
+        ? 1
+        : buffer[nextIndex] === 0x0d && buffer[nextIndex + 1] === 0x0a
+          ? 2
+          : buffer[nextIndex] === 0x0d
+            ? 1
+            : 0;
+    if (secondEndingBytes) {
+      return { end: nextIndex + secondEndingBytes, separatorStart: index };
+    }
+    index += firstEndingBytes - 1;
+  }
+  return null;
+}
+
+class IncrementalSseFrameBuffer {
+  private static readonly MAX_DELIMITER_BYTES = 4;
+  private buffer = Buffer.alloc(0);
+  private length = 0;
+  private scanOffset = 0;
+
+  constructor(private readonly maxFrameBytes: number) {}
+
+  *push(chunk: Buffer): Generator<Buffer> {
+    let chunkOffset = 0;
+
+    while (chunkOffset < chunk.length) {
+      this.ensureWritableCapacity();
+      const copyBytes = Math.min(this.buffer.length - this.length, chunk.length - chunkOffset);
+      chunk.copy(this.buffer, this.length, chunkOffset, chunkOffset + copyBytes);
+      this.length += copyBytes;
+      chunkOffset += copyBytes;
+
+      yield* this.drainFrames();
+
+      if (this.length >= this.maxBufferedBytes) {
+        throw this.buildFrameTooLargeError();
+      }
+    }
+  }
+
+  takeTail(): Buffer {
+    const tail = Buffer.from(this.buffer.subarray(0, this.length));
+    this.length = 0;
+    this.scanOffset = 0;
+    return tail;
+  }
+
+  get hasTail(): boolean {
+    return this.length > 0;
+  }
+
+  private get maxBufferedBytes(): number {
+    return this.maxFrameBytes + IncrementalSseFrameBuffer.MAX_DELIMITER_BYTES;
+  }
+
+  private *drainFrames(): Generator<Buffer> {
+    const frames: Buffer[] = [];
+    let frameStart = 0;
+    let searchOffset = this.scanOffset;
+
+    for (;;) {
+      const boundary = findValidatedSseFrameBoundary(
+        this.buffer.subarray(0, this.length),
+        searchOffset
+      );
+      if (!boundary) break;
+      if (boundary.separatorStart - frameStart > this.maxFrameBytes) {
+        throw this.buildFrameTooLargeError();
+      }
+      frames.push(Buffer.from(this.buffer.subarray(frameStart, boundary.end)));
+      frameStart = boundary.end;
+      searchOffset = boundary.end;
+    }
+
+    if (frameStart > 0) {
+      this.buffer.copyWithin(0, frameStart, this.length);
+      this.length -= frameStart;
+    }
+    this.scanOffset = Math.max(0, this.length - 3);
+    yield* frames;
+  }
+
+  private ensureWritableCapacity(): void {
+    if (this.length < this.buffer.length) return;
+    if (this.length >= this.maxBufferedBytes) throw this.buildFrameTooLargeError();
+
+    const nextCapacity = Math.min(
+      this.maxBufferedBytes,
+      Math.max(4096, this.buffer.length * 2, this.length + 1)
+    );
+    const nextBuffer = Buffer.allocUnsafe(nextCapacity);
+    this.buffer.copy(nextBuffer, 0, 0, this.length);
+    this.buffer = nextBuffer;
+  }
+
+  private buildFrameTooLargeError(): StreamingProtocolValidationError {
+    return new StreamingProtocolValidationError(
+      'sse_frame_too_large',
+      'upstream emitted an SSE frame above the safety limit'
+    );
+  }
+}
+
 function buildNativeAnthropicSseGuardFailure(
   reason: string,
   message: string
 ): CompletedStreamValidation {
-  return buildCompletedStreamFailure(reason, message);
+  return { ok: false, reason, message };
 }
 
 function validateNativeAnthropicSseFrame(
@@ -1787,7 +1880,8 @@ function* flushNativeAnthropicSseGuard(state: NativeAnthropicSseGuardState): Gen
 }
 
 function readStreamingValidationMessage(error: unknown): string {
-  return error instanceof NativeAnthropicSseGuardError
+  return error instanceof NativeAnthropicSseGuardError ||
+    error instanceof StreamingProtocolValidationError
     ? error.protocolMessage
     : 'upstream emitted an invalid streaming response';
 }
@@ -1801,508 +1895,8 @@ function readNumericIndex(value: unknown): number | undefined {
   return Number.isInteger(index) && index >= 0 ? index : undefined;
 }
 
-function findUpstreamStreamingFailureCode(body: Buffer): string | undefined {
-  for (const block of parseSseBlocks(body.toString('utf-8'))) {
-    const payload = parseSseJsonRecord(block.data);
-    if (!payload) continue;
-
-    const payloadType = readString(payload.type) || block.event || '';
-    const response = asRecord(payload.response);
-    const error = asRecord(payload.error) || asRecord(response?.error);
-    const isFailureEvent =
-      block.event === 'error' || payloadType === 'error' || payloadType === 'response.failed';
-    if (!isFailureEvent && !error) continue;
-
-    return readString(error?.type) || readString(error?.code) || payloadType || 'unknown_error';
-  }
-
-  return undefined;
-}
-
 function isRetryableEmptyStreamingResponse(error: unknown): boolean {
   return error instanceof Error && error.message === EMPTY_STREAMING_RESPONSE_ERROR;
-}
-
-function buildCompletedStreamFailure(reason: string, message: string): CompletedStreamValidation {
-  return { ok: false, reason, message };
-}
-
-function hasOpenAiResponsesOutputItem(item: unknown): boolean {
-  const record = asRecord(item);
-  if (!record) {
-    return false;
-  }
-
-  const itemType = readString(record.type);
-  if (itemType && itemType !== 'message') {
-    return true;
-  }
-
-  if (readString(record.output_text).trim() || readString(record.text).trim()) {
-    return true;
-  }
-
-  const content = Array.isArray(record.content) ? record.content : [];
-  return content.some(part => {
-    const partRecord = asRecord(part);
-    return Boolean(
-      partRecord &&
-        (readString(partRecord.text).trim() || readString(partRecord.output_text).trim())
-    );
-  });
-}
-
-function hasOnlyZeroUsageTokens(usage: Record<string, unknown> | undefined): boolean {
-  if (!usage) {
-    return false;
-  }
-
-  const tokenValues = [
-    usage.input_tokens,
-    usage.inputTokens,
-    usage.prompt_tokens,
-    usage.promptTokens,
-    usage.output_tokens,
-    usage.outputTokens,
-    usage.completion_tokens,
-    usage.completionTokens,
-    usage.total_tokens,
-    usage.totalTokens,
-  ]
-    .map(toFiniteTokenNumber)
-    .filter((value): value is number => value !== undefined);
-
-  return tokenValues.length > 0 && tokenValues.every(value => value === 0);
-}
-
-interface OpenAiResponsesStreamInspection {
-  sawFinished: boolean;
-  sawDone: boolean;
-  sawFailure: boolean;
-  textLength: number;
-  outputItems: number;
-  explicitZeroUsage: boolean;
-  malformedJson: boolean;
-}
-
-function inspectOpenAiResponsesStream(body: Buffer): OpenAiResponsesStreamInspection {
-  let sawFinished = false;
-  let sawDone = false;
-  let sawFailure = false;
-  let textLength = 0;
-  let outputItems = 0;
-  let explicitZeroUsage = false;
-  let malformedJson = false;
-
-  for (const block of parseSseBlocks(body.toString('utf-8'))) {
-    if (!block.data) {
-      continue;
-    }
-
-    if (block.data === '[DONE]') {
-      sawDone = true;
-      continue;
-    }
-
-    const payload = parseSseJsonRecord(block.data);
-    if (!payload) {
-      malformedJson = true;
-      continue;
-    }
-
-    const payloadType = readString(payload.type) || block.event || '';
-    if (payloadType === 'response.failed') {
-      sawFailure = true;
-      continue;
-    }
-    if (
-      payloadType === 'response.output_text.delta' ||
-      payloadType === 'response.output_text.done'
-    ) {
-      textLength +=
-        readString(payload.delta).trim().length + readString(payload.text).trim().length;
-      continue;
-    }
-
-    if (
-      payloadType === 'response.function_call_arguments.delta' ||
-      payloadType === 'response.function_call_arguments.done'
-    ) {
-      if (readString(payload.delta).trim() || readString(payload.arguments).trim()) {
-        outputItems += 1;
-      }
-      continue;
-    }
-
-    if (
-      payloadType === 'response.output_item.added' ||
-      payloadType === 'response.output_item.done'
-    ) {
-      if (hasOpenAiResponsesOutputItem(payload.item)) {
-        outputItems += 1;
-      }
-      continue;
-    }
-
-    if (payloadType === 'response.completed' || payloadType === 'response.incomplete') {
-      sawFinished = true;
-      const response = asRecord(payload.response);
-      textLength += readString(response?.output_text).trim().length;
-      const output = Array.isArray(response?.output) ? response.output : [];
-      outputItems += output.filter(hasOpenAiResponsesOutputItem).length;
-
-      const usage = asRecord(response?.usage) || asRecord(payload.usage);
-      if (hasOnlyZeroUsageTokens(usage)) {
-        explicitZeroUsage = true;
-      }
-    }
-  }
-
-  return {
-    sawFinished,
-    sawDone,
-    sawFailure,
-    textLength,
-    outputItems,
-    explicitZeroUsage,
-    malformedJson,
-  };
-}
-
-function hasOpenAiResponsesStreamOutput(inspection: OpenAiResponsesStreamInspection): boolean {
-  return inspection.textLength > 0 || inspection.outputItems > 0;
-}
-
-function validateCompletedOpenAiResponsesStream(body: Buffer): CompletedStreamValidation {
-  const inspection = inspectOpenAiResponsesStream(body);
-
-  if (inspection.malformedJson) {
-    return buildCompletedStreamFailure(
-      'malformed_sse_json',
-      'upstream emitted malformed OpenAI Responses SSE JSON'
-    );
-  }
-
-  if (!inspection.sawFinished && !inspection.sawDone) {
-    return buildCompletedStreamFailure(
-      'missing_response_terminal',
-      'upstream ended Codex stream without response.completed, response.incomplete, or [DONE]'
-    );
-  }
-
-  if (!hasOpenAiResponsesStreamOutput(inspection)) {
-    if (inspection.explicitZeroUsage) {
-      return buildCompletedStreamFailure(
-        'empty_response_zero_usage',
-        'upstream ended Codex stream without output and with all-zero usage'
-      );
-    }
-
-    return buildCompletedStreamFailure(
-      'empty_response',
-      'upstream ended Codex stream without assistant text, function_call, or tool output content'
-    );
-  }
-
-  return { ok: true };
-}
-
-function validateCompletedOpenAiChatStream(body: Buffer): CompletedStreamValidation {
-  let sawDone = false;
-  let textLength = 0;
-  let toolItems = 0;
-  let explicitZeroUsage = false;
-
-  for (const block of parseSseBlocks(body.toString('utf-8'))) {
-    if (!block.data) {
-      continue;
-    }
-
-    if (block.data === '[DONE]') {
-      sawDone = true;
-      continue;
-    }
-
-    const payload = parseSseJsonRecord(block.data);
-    if (!payload) {
-      return buildCompletedStreamFailure(
-        'malformed_sse_json',
-        'upstream emitted malformed OpenAI Chat Completions SSE JSON'
-      );
-    }
-
-    const choices = Array.isArray(payload.choices) ? payload.choices : [];
-    for (const rawChoice of choices) {
-      const choice = asRecord(rawChoice);
-      const delta = asRecord(choice?.delta);
-      const message = asRecord(choice?.message);
-      textLength += readString(delta?.content).length + readString(message?.content).length;
-      const deltaToolCalls = Array.isArray(delta?.tool_calls) ? delta.tool_calls : [];
-      const messageToolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
-      toolItems += deltaToolCalls.length + messageToolCalls.length;
-    }
-
-    if (hasOnlyZeroUsageTokens(asRecord(payload.usage))) {
-      explicitZeroUsage = true;
-    }
-  }
-
-  if (!sawDone) {
-    return buildCompletedStreamFailure(
-      'missing_chat_done',
-      'upstream ended OpenAI Chat Completions stream without [DONE]'
-    );
-  }
-
-  if (textLength === 0 && toolItems === 0) {
-    if (explicitZeroUsage) {
-      return buildCompletedStreamFailure(
-        'empty_response_zero_usage',
-        'upstream ended OpenAI Chat Completions stream without output and with all-zero usage'
-      );
-    }
-
-    return buildCompletedStreamFailure(
-      'empty_response',
-      'upstream ended OpenAI Chat Completions stream without assistant text or tool call content'
-    );
-  }
-
-  return { ok: true };
-}
-
-function isForeignOpenAiLikeAnthropicPayload(
-  payload: Record<string, unknown>,
-  eventType: string
-): boolean {
-  if (eventType.startsWith('response.') || eventType.startsWith('chat.completion')) {
-    return true;
-  }
-
-  if (Array.isArray(payload.choices) || Array.isArray(payload.tool_calls)) {
-    return true;
-  }
-
-  const objectType = readString(payload.object);
-  return objectType.startsWith('chat.completion') || objectType.startsWith('response.');
-}
-
-function hasDsmlToolMarkup(text: string): boolean {
-  return /<\/?\s*\|\s*DSML\s*\|\s*(?:parameter|invoke|tool_calls)\s*>/i.test(text);
-}
-
-function validateCompletedAnthropicStream(body: Buffer): CompletedStreamValidation {
-  const raw = body.toString('utf-8');
-  if (hasDsmlToolMarkup(raw)) {
-    return buildCompletedStreamFailure(
-      'foreign_dsml_tool_markup',
-      'upstream emitted non-Anthropic tool markup in Claude Code stream'
-    );
-  }
-
-  const openBlocks = new Map<
-    number,
-    { type: string; inputJson: string; textLength: number; thinkingLength: number }
-  >();
-  let sawMessageStart = false;
-  let sawMessageStop = false;
-  let stopReason = '';
-  let completedTextLength = 0;
-  let completedToolBlocks = 0;
-  let completedThinkingBlocks = 0;
-
-  for (const block of parseSseBlocks(raw)) {
-    if (!block.data || block.data === '[DONE]') {
-      continue;
-    }
-
-    const payload = parseSseJsonRecord(block.data);
-    if (!payload) {
-      return buildCompletedStreamFailure(
-        'malformed_sse_json',
-        'upstream emitted malformed Anthropic SSE JSON'
-      );
-    }
-
-    const payloadType = readString(payload.type);
-    const eventType = payloadType || block.event || '';
-
-    if (isForeignOpenAiLikeAnthropicPayload(payload, eventType)) {
-      return buildCompletedStreamFailure(
-        'foreign_openai_event',
-        'upstream emitted OpenAI-style events in Claude Code stream'
-      );
-    }
-
-    if (eventType === 'message_start') {
-      sawMessageStart = true;
-      continue;
-    }
-
-    if (eventType === 'content_block_start') {
-      const index = readNumericIndex(payload.index);
-      const contentBlock = asRecord(payload.content_block);
-      const blockType = readString(contentBlock?.type);
-      if (index === undefined || !blockType || openBlocks.has(index)) {
-        return buildCompletedStreamFailure(
-          'invalid_content_block_start',
-          'upstream emitted invalid Anthropic content block start'
-        );
-      }
-
-      openBlocks.set(index, {
-        type: blockType,
-        inputJson: '',
-        textLength: readString(contentBlock?.text).length,
-        thinkingLength: readString(contentBlock?.thinking).length,
-      });
-      continue;
-    }
-
-    if (eventType === 'content_block_delta') {
-      const index = readNumericIndex(payload.index);
-      const state = index === undefined ? undefined : openBlocks.get(index);
-      const delta = asRecord(payload.delta);
-      if (!state || !delta) {
-        return buildCompletedStreamFailure(
-          'unexpected_content_block_delta',
-          'upstream emitted Anthropic content delta without an open block'
-        );
-      }
-
-      const deltaType = readString(delta.type);
-      if (state.type === 'text') {
-        state.textLength += readString(delta.text).length;
-      } else if (state.type === 'tool_use' && deltaType === 'input_json_delta') {
-        state.inputJson += readString(delta.partial_json);
-      } else if (state.type === 'thinking') {
-        state.thinkingLength += readString(delta.thinking).length;
-      }
-      continue;
-    }
-
-    if (eventType === 'content_block_stop') {
-      const index = readNumericIndex(payload.index);
-      if (index === undefined) {
-        return buildCompletedStreamFailure(
-          'unexpected_content_block_stop',
-          'upstream emitted Anthropic content block stop without an open block'
-        );
-      }
-
-      const state = openBlocks.get(index);
-      if (!state) {
-        return buildCompletedStreamFailure(
-          'unexpected_content_block_stop',
-          'upstream emitted Anthropic content block stop without an open block'
-        );
-      }
-
-      if (state.type === 'tool_use') {
-        const inputJson = state.inputJson.trim();
-        if (inputJson) {
-          try {
-            if (!asRecord(JSON.parse(inputJson))) {
-              return buildCompletedStreamFailure(
-                'malformed_tool_input_json',
-                'upstream emitted a Claude tool_use with non-object input JSON'
-              );
-            }
-          } catch {
-            return buildCompletedStreamFailure(
-              'malformed_tool_input_json',
-              'upstream emitted an incomplete Claude tool_use input JSON stream'
-            );
-          }
-        }
-        completedToolBlocks += 1;
-      } else if (state.type === 'thinking') {
-        completedThinkingBlocks += 1;
-      } else {
-        completedTextLength += state.textLength;
-      }
-
-      openBlocks.delete(index);
-      continue;
-    }
-
-    if (eventType === 'message_delta') {
-      const delta = asRecord(payload.delta);
-      const nextStopReason = readString(delta?.stop_reason);
-      if (nextStopReason) {
-        stopReason = nextStopReason;
-      }
-      continue;
-    }
-
-    if (eventType === 'message_stop') {
-      sawMessageStop = true;
-    }
-  }
-
-  if (!sawMessageStart) {
-    return buildCompletedStreamFailure(
-      'missing_message_start',
-      'upstream ended Claude Code stream without message_start'
-    );
-  }
-
-  if (!sawMessageStop) {
-    return buildCompletedStreamFailure(
-      'missing_message_stop',
-      'upstream ended Claude Code stream without message_stop'
-    );
-  }
-
-  if (openBlocks.size > 0) {
-    return buildCompletedStreamFailure(
-      'unclosed_content_block',
-      'upstream ended Claude Code stream with an unclosed content block'
-    );
-  }
-
-  if (stopReason === 'tool_use' && completedToolBlocks === 0) {
-    return buildCompletedStreamFailure(
-      'tool_use_stop_without_tool_block',
-      'upstream ended Claude Code stream with tool_use stop_reason but no tool_use block'
-    );
-  }
-
-  if (completedToolBlocks > 0 && stopReason && stopReason !== 'tool_use') {
-    return buildCompletedStreamFailure(
-      'tool_block_without_tool_use_stop',
-      'upstream emitted Claude tool_use blocks without tool_use stop_reason'
-    );
-  }
-
-  if (completedTextLength === 0 && completedToolBlocks === 0) {
-    const reason = completedThinkingBlocks > 0 ? 'thinking_only_message' : 'empty_message';
-    return buildCompletedStreamFailure(
-      reason,
-      'upstream ended Claude Code stream without assistant text or tool_use content'
-    );
-  }
-
-  return { ok: true };
-}
-
-function validateCompletedStreamingBody(
-  protocol: StreamingTerminalProtocol,
-  body: Buffer
-): CompletedStreamValidation {
-  if (protocol === 'anthropic') {
-    return validateCompletedAnthropicStream(body);
-  }
-
-  if (protocol === 'openaiChat') {
-    return validateCompletedOpenAiChatStream(body);
-  }
-
-  if (protocol === 'openaiResponses') {
-    return validateCompletedOpenAiResponsesStream(body);
-  }
-
-  return { ok: true };
 }
 
 function writeResponseChunk(res: http.ServerResponse, chunk: Buffer): Promise<void> {
@@ -3134,9 +2728,17 @@ async function forwardToUpstream(
   let streamingStatusCode: number | undefined;
   let streamingHeaders: http.OutgoingHttpHeaders | undefined;
   let streamingRejectedBeforeBody: string | undefined;
-  let initialStreamingBuffer = Buffer.alloc(0);
+  let receivedUpstreamStreamingChunk = false;
+  const initialStreamingBuffer = Buffer.alloc(INITIAL_STREAM_VALIDATION_MAX_BYTES + 1);
+  let initialStreamingBytes = 0;
   let pendingStreamingChunks: Buffer[] = [];
-  const receivedStreamingChunks: Buffer[] = [];
+  let pendingStreamingBytes = 0;
+  const streamingResponsePreview = Buffer.alloc(INITIAL_STREAM_VALIDATION_MAX_BYTES);
+  let streamingResponsePreviewBytes = 0;
+  const incrementalValidationBuffer = new IncrementalSseFrameBuffer(
+    STREAMING_VALIDATION_MAX_SSE_FRAME_BYTES
+  );
+  let initialStreamAccepted = false;
   const incrementalProtocolTransformer = options.streamResponseAdapter?.sourceProtocol
     ? new IncrementalProtocolSseTransformer({
         sourceProtocol: options.streamResponseAdapter.sourceProtocol,
@@ -3155,188 +2757,228 @@ async function forwardToUpstream(
     options.nativeResponsePassthrough && streamingTerminalProtocol === 'anthropic'
       ? createNativeAnthropicSseGuard()
       : null;
+  const incrementalStreamingValidator =
+    streamingTerminalProtocol !== 'none' &&
+    (!options.nativeResponsePassthrough || streamingTerminalProtocol === 'openaiResponses')
+      ? createIncrementalStreamingValidator(streamingTerminalProtocol, {
+          strict: !options.nativeResponsePassthrough,
+          extractUsage: extractUsageFromParsed,
+        })
+      : null;
+  const strictIncrementalValidation = Boolean(
+    incrementalStreamingValidator && !options.nativeResponsePassthrough
+  );
   const streamingObservation = createStreamingSseObservationState(streamingTerminalProtocol);
-  let streamingTerminalScanText = '';
-  let streamingTerminalSeen = streamingTerminalProtocol === 'none';
-  let streamingCompletionValidated = false;
+  let streamingErrorWritten = false;
   let streamingCompletionNotified = false;
   let streamingSemanticError: typeof EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE | undefined;
   const inspectNativeOpenAiResponsesBeforeCommit =
     options.nativeResponsePassthrough && streamingTerminalProtocol === 'openaiResponses';
+  const isStreamingErrorSeen = (): boolean =>
+    streamingErrorWritten ||
+    (incrementalStreamingValidator
+      ? incrementalStreamingValidator.getState().errorSeen
+      : streamingObservation.errorSeen);
+  const isStreamingTerminalSeen = (): boolean =>
+    incrementalStreamingValidator
+      ? incrementalStreamingValidator.getState().terminalSeen
+      : streamingObservation.terminalSeen;
+  const getStreamingFailureCode = (): string | undefined =>
+    incrementalStreamingValidator
+      ? incrementalStreamingValidator.getState().failureCode
+      : streamingObservation.failureCode;
+  const getStreamingNextSequenceNumber = (): number =>
+    incrementalStreamingValidator
+      ? incrementalStreamingValidator.getState().nextSequenceNumber
+      : streamingObservation.nextSequenceNumber;
+  const isStreamingCompletionValidated = (): boolean => {
+    const state = incrementalStreamingValidator?.getState();
+    return Boolean(
+      state?.terminalSeen && !state.errorSeen && state.completedValidation?.ok === true
+    );
+  };
 
   const writeStreamingError = async (message: string): Promise<void> => {
     if (
       !streamed ||
-      streamingObservation.errorSeen ||
+      isStreamingErrorSeen() ||
       options.streamResponse?.writableEnded ||
       options.streamResponse?.destroyed
     ) {
       return;
     }
 
-    streamingObservation.errorSeen = true;
-    streamingObservation.terminalSeen = true;
-    streamingTerminalSeen = true;
+    streamingErrorWritten = true;
     await writeResponseChunk(
       options.streamResponse!,
-      buildStreamingErrorChunk(
-        streamingTerminalProtocol,
-        message,
-        streamingObservation.nextSequenceNumber
-      )
+      buildStreamingErrorChunk(streamingTerminalProtocol, message, getStreamingNextSequenceNumber())
     );
   };
 
   const notifyStreamCompletionIfDelivered = (): void => {
     if (streamingCompletionNotified || streamingSemanticError) return;
+    const state = incrementalStreamingValidator?.getState();
     const completionDelivered = options.nativeResponsePassthrough
-      ? streamingObservation.terminalSeen && !streamingObservation.errorSeen
-      : streamingCompletionValidated;
+      ? (state?.terminalSeen ?? streamingObservation.terminalSeen) &&
+        !(state?.errorSeen ?? streamingObservation.errorSeen)
+      : isStreamingCompletionValidated();
     if (!completionDelivered) return;
     streamingCompletionNotified = true;
     options.onStreamCompletionDelivered?.();
   };
 
-  const processStreamingOutgoingChunk = async (outgoingChunk: Buffer): Promise<void> => {
+  const appendStreamingPreview = (chunk: Buffer): void => {
+    const previewBytesRemaining =
+      INITIAL_STREAM_VALIDATION_MAX_BYTES - streamingResponsePreviewBytes;
+    if (previewBytesRemaining > 0) {
+      const previewBytes = Math.min(previewBytesRemaining, chunk.length);
+      chunk.copy(streamingResponsePreview, streamingResponsePreviewBytes, 0, previewBytes);
+      streamingResponsePreviewBytes += previewBytes;
+    }
+  };
+
+  const commitPendingStreamingChunks = async (): Promise<void> => {
+    if (
+      streamed ||
+      streamingSemanticError ||
+      !initialStreamAccepted ||
+      !streamingStatusCode ||
+      !streamingHeaders ||
+      pendingStreamingChunks.length === 0
+    ) {
+      return;
+    }
+
+    if (options.beforeStreamCommit) {
+      const bufferedBody =
+        pendingStreamingChunks.length === 1
+          ? pendingStreamingChunks[0]
+          : Buffer.concat(pendingStreamingChunks, pendingStreamingBytes);
+      await options.beforeStreamCommit(bufferedBody);
+    }
+    streamed = true;
+    options.streamResponse!.writeHead(streamingStatusCode, streamingHeaders);
+    const chunksToWrite = pendingStreamingChunks;
+    pendingStreamingChunks = [];
+    pendingStreamingBytes = 0;
+    for (const pendingChunk of chunksToWrite) {
+      await writeResponseChunk(options.streamResponse!, pendingChunk);
+    }
+    notifyStreamCompletionIfDelivered();
+  };
+
+  const queueOrWriteStreamingChunk = async (
+    outgoingChunk: Buffer,
+    deferCommit: boolean
+  ): Promise<void> => {
     if (!streamingStatusCode || !streamingHeaders || !outgoingChunk.length) return;
-    observeStreamingSseChunk(streamingObservation, streamingTerminalProtocol, outgoingChunk);
-    streamingTerminalSeen = streamingTerminalSeen || streamingObservation.terminalSeen;
-    if (
-      !options.nativeResponsePassthrough ||
-      (inspectNativeOpenAiResponsesBeforeCommit && !streamed)
-    ) {
-      receivedStreamingChunks.push(outgoingChunk);
-    }
+    if (streamingSemanticError) return;
+    appendStreamingPreview(outgoingChunk);
 
-    let nativeOpenAiInspection: OpenAiResponsesStreamInspection | undefined;
-    let nativeOpenAiTerminalParsed = false;
-    let nativeOpenAiPrecommitBytes = 0;
-    if (inspectNativeOpenAiResponsesBeforeCommit && !streamed) {
-      const terminalScan = appendStreamingTerminalScanText(
-        streamingTerminalProtocol,
-        streamingTerminalScanText,
-        outgoingChunk
-      );
-      streamingTerminalScanText = terminalScan.text;
-      streamingTerminalSeen = streamingTerminalSeen || terminalScan.terminalSeen;
-      const receivedStreamingBody = Buffer.concat(receivedStreamingChunks);
-      nativeOpenAiPrecommitBytes = receivedStreamingBody.length;
-      nativeOpenAiInspection = inspectOpenAiResponsesStream(receivedStreamingBody);
-      nativeOpenAiTerminalParsed =
-        nativeOpenAiInspection.sawFinished ||
-        nativeOpenAiInspection.sawDone ||
-        nativeOpenAiInspection.sawFailure;
-      if (
-        nativeOpenAiTerminalParsed &&
-        !nativeOpenAiInspection.sawFailure &&
-        nativeOpenAiInspection.explicitZeroUsage &&
-        !hasOpenAiResponsesStreamOutput(nativeOpenAiInspection)
-      ) {
-        streamingSemanticError = EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE;
-      }
-    }
-
-    if (
-      !options.nativeResponsePassthrough &&
-      streamingTerminalProtocol === 'anthropic' &&
-      !streamingTerminalSeen
-    ) {
-      const terminalScan = appendStreamingTerminalScanText(
-        streamingTerminalProtocol,
-        streamingTerminalScanText,
-        outgoingChunk
-      );
-      streamingTerminalScanText = terminalScan.text;
-      if (terminalScan.terminalSeen) {
-        const receivedBody = Buffer.concat(receivedStreamingChunks);
-        if (hasAnthropicMessageStop(receivedBody)) {
-          streamingTerminalSeen = true;
-          const completedValidation = validateCompletedStreamingBody(
-            streamingTerminalProtocol,
-            receivedBody
-          );
-          if (!completedValidation.ok) {
-            if (streamed) {
-              await writeStreamingError(completedValidation.message);
-            }
-            throw new Error(`malformed_streaming_response:${completedValidation.reason}`);
-          }
-          streamingCompletionValidated = true;
-        }
-      }
-    } else if (
-      !options.nativeResponsePassthrough &&
-      streamingTerminalProtocol !== 'none' &&
-      !streamingCompletionValidated
-    ) {
-      const terminalScan = appendStreamingTerminalScanText(
-        streamingTerminalProtocol,
-        streamingTerminalScanText,
-        outgoingChunk
-      );
-      streamingTerminalScanText = terminalScan.text;
-      streamingTerminalSeen = streamingTerminalSeen || terminalScan.terminalSeen;
-      if (streamingTerminalSeen) {
-        const completedValidation = validateCompletedStreamingBody(
-          streamingTerminalProtocol,
-          Buffer.concat(receivedStreamingChunks)
-        );
-        if (completedValidation.ok) {
-          streamingTerminalSeen = true;
-          streamingCompletionValidated = true;
-        }
-      }
-    }
-
-    if (!streamed) {
-      pendingStreamingChunks.push(outgoingChunk);
-      initialStreamingBuffer = Buffer.concat([
-        initialStreamingBuffer,
-        outgoingChunk.subarray(
-          0,
-          Math.max(0, INITIAL_STREAM_VALIDATION_MAX_BYTES + 1 - initialStreamingBuffer.length)
-        ),
-      ]);
-      const validation = validateInitialEventStreamChunk(initialStreamingBuffer);
-      if (validation.status === 'rejected') {
-        throw new Error(`invalid_streaming_response:${validation.reason}`);
-      }
-      if (validation.status === 'pending') {
-        return;
-      }
-
-      if (inspectNativeOpenAiResponsesBeforeCommit) {
-        if (streamingSemanticError) {
-          return;
-        }
-        const hasOutput = nativeOpenAiInspection
-          ? hasOpenAiResponsesStreamOutput(nativeOpenAiInspection)
-          : false;
-        if (
-          !hasOutput &&
-          !nativeOpenAiTerminalParsed &&
-          nativeOpenAiPrecommitBytes <= NATIVE_OPENAI_RESPONSES_SSE_MAX_PRECOMMIT_BYTES
-        ) {
-          return;
-        }
-      }
-
-      if (options.beforeStreamCommit) {
-        await options.beforeStreamCommit(Buffer.concat(pendingStreamingChunks));
-      }
-      streamed = true;
-      options.streamResponse!.writeHead(streamingStatusCode, streamingHeaders);
-      const chunksToWrite = pendingStreamingChunks;
-      pendingStreamingChunks = [];
-      for (const pendingChunk of chunksToWrite) {
-        await writeResponseChunk(options.streamResponse!, pendingChunk);
-      }
+    if (streamed) {
+      await writeResponseChunk(options.streamResponse!, outgoingChunk);
       notifyStreamCompletionIfDelivered();
       return;
     }
 
-    await writeResponseChunk(options.streamResponse!, outgoingChunk);
-    notifyStreamCompletionIfDelivered();
+    pendingStreamingChunks.push(outgoingChunk);
+    pendingStreamingBytes += outgoingChunk.length;
+    const initialBytesRemaining = initialStreamingBuffer.length - initialStreamingBytes;
+    if (initialBytesRemaining > 0) {
+      const initialBytes = Math.min(initialBytesRemaining, outgoingChunk.length);
+      outgoingChunk.copy(initialStreamingBuffer, initialStreamingBytes, 0, initialBytes);
+      initialStreamingBytes += initialBytes;
+    }
+    const initialStreamingView = initialStreamingBuffer.subarray(0, initialStreamingBytes);
+    const initialValidation = validateInitialEventStreamChunk(initialStreamingView);
+    if (initialValidation.status === 'rejected') {
+      throw new Error(`invalid_streaming_response:${initialValidation.reason}`);
+    }
+    if (initialValidation.status === 'pending') return;
+    initialStreamAccepted = true;
+
+    if (inspectNativeOpenAiResponsesBeforeCommit) {
+      const state = incrementalStreamingValidator!.getState();
+      const outputSeen =
+        state.outputSeen || hasNativeResponsesOutputBeforeFrameBoundary(initialStreamingView);
+      if (state.terminalSeen && !state.errorSeen && state.explicitZeroUsage && !outputSeen) {
+        streamingSemanticError = EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE;
+        pendingStreamingChunks = [];
+        pendingStreamingBytes = 0;
+        return;
+      }
+      if (
+        !outputSeen &&
+        !state.terminalSeen &&
+        pendingStreamingBytes < NATIVE_OPENAI_RESPONSES_SSE_MAX_PRECOMMIT_BYTES
+      ) {
+        return;
+      }
+    }
+
+    if (deferCommit && pendingStreamingBytes < NATIVE_OPENAI_RESPONSES_SSE_MAX_PRECOMMIT_BYTES) {
+      return;
+    }
+    await commitPendingStreamingChunks();
+  };
+
+  const validateOutgoingFrame = async (frame: Buffer): Promise<void> => {
+    try {
+      incrementalStreamingValidator!.push(frame);
+      const completedValidation = incrementalStreamingValidator!.getState().completedValidation;
+      if (completedValidation && !completedValidation.ok) {
+        throw new StreamingProtocolValidationError(
+          completedValidation.reason,
+          completedValidation.message
+        );
+      }
+    } catch (error: unknown) {
+      if (streamed && error instanceof StreamingProtocolValidationError) {
+        await writeStreamingError(readStreamingValidationMessage(error));
+      }
+      throw error;
+    }
+  };
+
+  const processStreamingOutgoingChunks = async (
+    outgoingChunks: Iterable<Buffer>
+  ): Promise<void> => {
+    for (const outgoingChunk of outgoingChunks) {
+      if (!streamingStatusCode || !streamingHeaders || !outgoingChunk.length) continue;
+
+      if (strictIncrementalValidation) {
+        try {
+          for (const frame of incrementalValidationBuffer.push(outgoingChunk)) {
+            await validateOutgoingFrame(frame);
+            await queueOrWriteStreamingChunk(frame, true);
+          }
+        } catch (error: unknown) {
+          if (streamed && error instanceof StreamingProtocolValidationError) {
+            await writeStreamingError(readStreamingValidationMessage(error));
+          }
+          throw error;
+        }
+        if (
+          !streamed &&
+          initialStreamAccepted &&
+          pendingStreamingBytes >= NATIVE_OPENAI_RESPONSES_SSE_MAX_PRECOMMIT_BYTES
+        ) {
+          await commitPendingStreamingChunks();
+        }
+        continue;
+      }
+
+      if (incrementalStreamingValidator) {
+        incrementalStreamingValidator.push(outgoingChunk);
+      } else {
+        observeStreamingSseChunk(streamingObservation, streamingTerminalProtocol, outgoingChunk);
+      }
+      await queueOrWriteStreamingChunk(outgoingChunk, false);
+    }
+
+    if (strictIncrementalValidation) {
+      await commitPendingStreamingChunks();
+    }
   };
 
   let response: Awaited<ReturnType<typeof httpRawRequest>>;
@@ -3345,6 +2987,7 @@ async function forwardToUpstream(
       options.streamResponse && options.streamResponseBody
         ? await httpRawStreamRequest(target.url, {
             ...requestConfig,
+            ...(!options.nativeResponsePassthrough ? { retainStreamedBody: false } : {}),
             onResponse: upstreamResponse => {
               const statusCode = upstreamResponse.status || 500;
               if (classifyRouteStatusCode(statusCode) !== 'success') return false;
@@ -3358,20 +3001,17 @@ async function forwardToUpstream(
               return true;
             },
             onChunk: async chunk => {
-              if (!streamingStatusCode || !streamingHeaders) return;
+              if (!streamingStatusCode || !streamingHeaders || !chunk.length) return;
+              receivedUpstreamStreamingChunk = true;
               try {
                 const outgoingChunks = incrementalProtocolTransformer
                   ? incrementalProtocolTransformer.transform(chunk)
                   : nativeAnthropicStreamGuard
                     ? processNativeAnthropicSseGuardChunk(nativeAnthropicStreamGuard, chunk)
-                    : [
-                        anthropicStreamNormalizer
-                          ? normalizeAnthropicSseCompatibilityChunk(anthropicStreamNormalizer, chunk)
-                          : chunk,
-                      ];
-                for (const outgoingChunk of outgoingChunks) {
-                  await processStreamingOutgoingChunk(outgoingChunk);
-                }
+                    : anthropicStreamNormalizer
+                      ? normalizeAnthropicSseCompatibilityChunk(anthropicStreamNormalizer, chunk)
+                      : [chunk];
+                await processStreamingOutgoingChunks(outgoingChunks);
               } catch (error: unknown) {
                 if (streamed && error instanceof NativeAnthropicSseGuardError) {
                   await writeStreamingError(readStreamingValidationMessage(error));
@@ -3381,39 +3021,63 @@ async function forwardToUpstream(
             },
             streamIdleTimeout: options.streamIdleTimeoutMs,
             shouldResolveOnAbort: () =>
-              !options.nativeResponsePassthrough && streamed && streamingCompletionValidated,
+              !options.nativeResponsePassthrough && streamed && isStreamingCompletionValidated(),
           })
         : await httpRawRequest(target.url, requestConfig);
   } catch (error: unknown) {
-    observeStreamingSseChunk(
-      streamingObservation,
-      streamingTerminalProtocol,
-      Buffer.alloc(0),
-      true
-    );
-    streamingTerminalSeen = streamingTerminalSeen || streamingObservation.terminalSeen;
+    if (!incrementalStreamingValidator) {
+      observeStreamingSseChunk(
+        streamingObservation,
+        streamingTerminalProtocol,
+        Buffer.alloc(0),
+        true
+      );
+    }
+    const upstreamFailureCode = getStreamingFailureCode();
+    if (upstreamFailureCode) {
+      throw new Error(`upstream_streaming_error:${upstreamFailureCode}`);
+    }
     if (
       streamed &&
       !options.signal?.aborted &&
-      !streamingObservation.errorSeen &&
-      !streamingObservation.terminalSeen
+      !isStreamingErrorSeen() &&
+      !isStreamingTerminalSeen()
     ) {
       await writeStreamingError('upstream stream terminated unexpectedly');
     }
     throw error;
   }
 
-  if (options.streamResponse && options.streamResponseBody && anthropicStreamNormalizer) {
-    await processStreamingOutgoingChunk(
-      flushAnthropicSseCompatibilityNormalizer(anthropicStreamNormalizer)
-    );
+  if (
+    options.streamResponse &&
+    options.streamResponseBody &&
+    streamingStatusCode !== undefined &&
+    !receivedUpstreamStreamingChunk
+  ) {
+    throw new Error(EMPTY_STREAMING_RESPONSE_ERROR);
   }
 
-  if (options.streamResponse && options.streamResponseBody && nativeAnthropicStreamGuard) {
+  if (
+    options.streamResponse &&
+    options.streamResponseBody &&
+    streamingStatusCode !== undefined &&
+    anthropicStreamNormalizer
+  ) {
+    await processStreamingOutgoingChunks([
+      flushAnthropicSseCompatibilityNormalizer(anthropicStreamNormalizer),
+    ]);
+  }
+
+  if (
+    options.streamResponse &&
+    options.streamResponseBody &&
+    streamingStatusCode !== undefined &&
+    nativeAnthropicStreamGuard
+  ) {
     try {
-      for (const outgoingChunk of flushNativeAnthropicSseGuard(nativeAnthropicStreamGuard)) {
-        await processStreamingOutgoingChunk(outgoingChunk);
-      }
+      await processStreamingOutgoingChunks(
+        flushNativeAnthropicSseGuard(nativeAnthropicStreamGuard)
+      );
     } catch (error: unknown) {
       if (streamed && error instanceof NativeAnthropicSseGuardError) {
         await writeStreamingError(readStreamingValidationMessage(error));
@@ -3422,22 +3086,93 @@ async function forwardToUpstream(
     }
   }
 
-  if (options.streamResponse && options.streamResponseBody && incrementalProtocolTransformer) {
+  if (
+    options.streamResponse &&
+    options.streamResponseBody &&
+    streamingStatusCode !== undefined &&
+    incrementalProtocolTransformer
+  ) {
     try {
-      for (const outgoingChunk of incrementalProtocolTransformer.finish()) {
-        await processStreamingOutgoingChunk(outgoingChunk);
-      }
+      await processStreamingOutgoingChunks(incrementalProtocolTransformer.finish());
     } catch (error: unknown) {
+      const upstreamFailureCode = getStreamingFailureCode();
+      if (upstreamFailureCode) {
+        throw new Error(`upstream_streaming_error:${upstreamFailureCode}`);
+      }
       if (
         streamed &&
         !options.signal?.aborted &&
-        !streamingObservation.errorSeen &&
-        !streamingObservation.terminalSeen
+        !isStreamingErrorSeen() &&
+        !isStreamingTerminalSeen()
       ) {
         await writeStreamingError(readStreamingValidationMessage(error));
       }
       throw error;
     }
+  }
+
+  if (strictIncrementalValidation && incrementalValidationBuffer.hasTail) {
+    const tail = incrementalValidationBuffer.takeTail();
+    try {
+      incrementalStreamingValidator!.push(tail);
+    } catch (error: unknown) {
+      if (streamed && error instanceof StreamingProtocolValidationError) {
+        await writeStreamingError(readStreamingValidationMessage(error));
+      }
+      throw error;
+    }
+  }
+
+  const completedStreamingValidation =
+    streamingStatusCode !== undefined ? incrementalStreamingValidator?.finish() : undefined;
+  if (streamingStatusCode !== undefined && !incrementalStreamingValidator) {
+    observeStreamingSseChunk(
+      streamingObservation,
+      streamingTerminalProtocol,
+      Buffer.alloc(0),
+      true
+    );
+  }
+
+  const upstreamStreamingFailureCode = getStreamingFailureCode();
+
+  if (
+    options.streamResponse &&
+    options.streamResponseBody &&
+    streamed &&
+    upstreamStreamingFailureCode
+  ) {
+    throw new Error(`upstream_streaming_error:${upstreamStreamingFailureCode}`);
+  }
+
+  if (
+    options.streamResponse &&
+    options.streamResponseBody &&
+    streamingStatusCode !== undefined &&
+    completedStreamingValidation &&
+    !completedStreamingValidation.ok &&
+    !(options.nativeResponsePassthrough && streamingSemanticError && !streamed)
+  ) {
+    const missingTerminal = [
+      'missing_message_stop',
+      'missing_response_terminal',
+      'missing_chat_done',
+    ].includes(completedStreamingValidation.reason);
+    const preservesNativeZeroUsageReason =
+      options.nativeResponsePassthrough &&
+      streamingTerminalProtocol === 'openaiResponses' &&
+      completedStreamingValidation.reason === 'empty_response_zero_usage';
+    const error = missingTerminal
+      ? 'incomplete_streaming_response:missing_terminal_event'
+      : preservesNativeZeroUsageReason
+        ? 'empty_response_zero_usage'
+        : `malformed_streaming_response:${completedStreamingValidation.reason}`;
+    await writeStreamingError(
+      missingTerminal
+        ? 'upstream stream ended before terminal SSE event'
+        : completedStreamingValidation.message
+    );
+    throw new Error(error);
   }
 
   if (
@@ -3462,57 +3197,22 @@ async function forwardToUpstream(
     }
   }
 
-  const completedStreamingBody = options.nativeResponsePassthrough
-    ? response.body
-    : Buffer.concat(receivedStreamingChunks);
-  observeStreamingSseChunk(streamingObservation, streamingTerminalProtocol, Buffer.alloc(0), true);
-  streamingTerminalSeen = streamingTerminalSeen || streamingObservation.terminalSeen;
-  const upstreamStreamingFailureCode = findUpstreamStreamingFailureCode(completedStreamingBody);
-
-  if (
-    options.streamResponse &&
-    options.streamResponseBody &&
-    streamed &&
-    upstreamStreamingFailureCode
-  ) {
-    throw new Error(`upstream_streaming_error:${upstreamStreamingFailureCode}`);
-  }
-
-  if (
-    options.streamResponse &&
-    options.streamResponseBody &&
-    streamed &&
-    streamingTerminalProtocol !== 'none' &&
-    !streamingTerminalSeen &&
-    !streamingObservation.errorSeen
-  ) {
-    await writeStreamingError('upstream stream ended before terminal SSE event');
-    throw new Error('incomplete_streaming_response:missing_terminal_event');
-  }
-
-  if (
-    options.streamResponse &&
-    options.streamResponseBody &&
-    !options.nativeResponsePassthrough &&
-    streamed
-  ) {
-    const completedValidation = validateCompletedStreamingBody(
-      streamingTerminalProtocol,
-      completedStreamingBody
-    );
-    if (!completedValidation.ok) {
-      await writeStreamingError(completedValidation.message);
-      throw new Error(`malformed_streaming_response:${completedValidation.reason}`);
-    }
-  }
+  const streamedUsage =
+    streamed && incrementalStreamingValidator && !options.nativeResponsePassthrough
+      ? finalizeRouteUsage(incrementalStreamingValidator.getUsage())
+      : undefined;
+  const responseBody =
+    streamed && incrementalStreamingValidator && !options.nativeResponsePassthrough
+      ? streamingResponsePreview.subarray(0, streamingResponsePreviewBytes)
+      : response.body;
 
   return {
     statusCode: response.status || 500,
     headers: response.headers,
-    body: response.body,
+    body: responseBody,
     latencyMs: Date.now() - startTime,
     firstByteLatencyMs: response.firstByteLatencyMs,
-    usage: extractUsageFromBody(response.body),
+    usage: streamedUsage ?? extractUsageFromBody(response.body),
     streamed,
     semanticError: streamingSemanticError,
   };
@@ -3771,9 +3471,8 @@ export async function handleRequest(
       candidate,
       lock: parseTargetLockRouteApiKey(candidate.value, routing.server.unifiedApiKey),
     }))
-    .filter(
-      (entry): entry is { candidate: RouteCredentialCandidate; lock: RouteTargetLock } =>
-        Boolean(entry.lock)
+    .filter((entry): entry is { candidate: RouteCredentialCandidate; lock: RouteTargetLock } =>
+      Boolean(entry.lock)
     );
   const targetLockValues = new Set(targetLockCandidates.map(entry => entry.candidate.value));
   const credentialResolution = await resolveRouteProfileCredentialCandidates(
@@ -3807,9 +3506,14 @@ export async function handleRequest(
       endpointOperation.capability === 'stateless-native-only' ? 'token-count' : 'inference',
   });
   const targetLock = targetLockCandidates[0]?.lock || null;
-  const token = targetLockCandidates[0]?.candidate.value || credentialResolution.candidates[0]?.value || '';
-  const routeProfile = credentialResolution.status === 'resolved' ? credentialResolution.profile : null;
-  if (credentialResolution.status === 'resolved' && credentialResolution.unknownCandidates.length > 0) {
+  const token =
+    targetLockCandidates[0]?.candidate.value || credentialResolution.candidates[0]?.value || '';
+  const routeProfile =
+    credentialResolution.status === 'resolved' ? credentialResolution.profile : null;
+  if (
+    credentialResolution.status === 'resolved' &&
+    credentialResolution.unknownCandidates.length > 0
+  ) {
     log.warn('Ignored unknown companion route credentials', {
       profileId: credentialResolution.profile.id,
       candidateCount: credentialResolution.candidates.length,
@@ -3968,6 +3672,15 @@ export async function handleRequest(
     routeProfile?.name;
   const responsesStateRequest = classifyResponsesStateRequest(endpointOperation, bodyJson);
   if (responsesStateRequest && !routeProfile) {
+    if (!targetLock) {
+      recordRequestForSelection({
+        ...routeCancellationLogContext,
+        requestedModel: extractModelFromBody(bodyJson),
+        outcome: 'failure',
+        statusCode: 400,
+        error: 'stateful_profile_key_required',
+      });
+    }
     writeStateAffinityError(
       res,
       400,
@@ -3983,6 +3696,13 @@ export async function handleRequest(
       routeProfile.id
     );
     if (!stateAffinityRecord) {
+      recordRequestForSelection({
+        ...routeCancellationLogContext,
+        requestedModel: extractModelFromBody(bodyJson),
+        outcome: 'failure',
+        statusCode: 409,
+        error: 'state_affinity_not_found',
+      });
       writeStateAffinityError(
         res,
         409,
@@ -3994,16 +3714,18 @@ export async function handleRequest(
   }
   const stateReference = findProviderOwnedStateReference(bodyJson);
   if (stateReference) {
-    recordRequestForSelection({
-      requestId,
-      attempt: 0,
-      cliType,
-      requestedModel: extractModelFromBody(bodyJson),
-      canonicalModel: null,
-      outcome: 'failure',
-      statusCode: 501,
-      error: `stateful_request_unsupported:${stateReference}`,
-    });
+    if (!targetLock) {
+      recordRequestForSelection({
+        requestId,
+        attempt: 0,
+        cliType,
+        requestedModel: extractModelFromBody(bodyJson),
+        canonicalModel: null,
+        outcome: 'failure',
+        statusCode: 501,
+        error: `stateful_request_unsupported:${stateReference}`,
+      });
+    }
     res.writeHead(501, {
       'Content-Type': 'application/json',
       'X-Route-Proxy-Error': 'stateful_request_unsupported',
@@ -4241,6 +3963,14 @@ export async function handleRequest(
         'openai-responses'
     );
     if (sortedChannels.length === 0) {
+      if (!targetLock) {
+        recordRequestForSelection({
+          ...routeCancellationLogContext,
+          outcome: 'failure',
+          statusCode: 501,
+          error: 'stateful_cross_protocol_unsupported',
+        });
+      }
       writeStateAffinityError(
         res,
         501,

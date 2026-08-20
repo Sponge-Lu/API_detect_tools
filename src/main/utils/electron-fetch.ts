@@ -52,6 +52,7 @@ export interface RawFetchStreamStart {
 
 interface RawFetchStreamOptions extends FetchOptions {
   streamIdleTimeout?: number;
+  retainStreamedBody?: boolean;
   onResponse?: (response: RawFetchStreamStart) => boolean | void;
   onData?: (chunk: Buffer) => void | Promise<void>;
   shouldResolveOnAbort?: () => boolean;
@@ -449,7 +450,7 @@ export async function electronFetchRaw(
 }
 
 /**
- * Raw HTTP 流式请求：边接收边回调，同时保留完整响应体用于统计和日志。
+ * Raw HTTP 流式请求：边接收边回调，并按调用方需要保留完整响应体。
  */
 export async function electronFetchRawStream(
   url: string,
@@ -461,6 +462,7 @@ export async function electronFetchRawStream(
     body,
     timeout = 30000,
     streamIdleTimeout,
+    retainStreamedBody = true,
     proxyUrl,
     signal,
     onResponse,
@@ -578,6 +580,7 @@ export async function electronFetchRawStream(
         rejectOnce(error instanceof Error ? error : new Error(String(error)));
         return;
       }
+      const retainBody = retainStreamedBody || !shouldStreamChunks;
 
       const finishResponse = () => {
         pendingChunkHandler.then(
@@ -626,7 +629,7 @@ export async function electronFetchRawStream(
         armIdleTimeout(streamIdleTimeout ?? timeout);
 
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        chunks.push(buffer);
+        if (retainBody) chunks.push(buffer);
 
         if (!shouldStreamChunks || !onData) return;
 
