@@ -1,11 +1,11 @@
 /**
- * 配置文件页 UI 回归测试
+ * 配置文件卡片区 UI 回归测试
  * 覆盖: 整卡点击编辑、卡片按钮 stopPropagation、徽章、删除确认、
  *       segmented 模型范围、本地配置直接保存、行级 diff 预览、会话关联默认折叠
  */
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ConfigFilesPage } from '../renderer/pages/ConfigFilesPage';
+import { ConfigProfilesSection } from '../renderer/components/Route/ConfigProfilesSection';
 
 vi.mock('../renderer/store/toastStore', () => ({
   toast: {
@@ -64,7 +64,7 @@ beforeEach(() => {
   config.commit.mockResolvedValue(undefined);
 });
 
-describe('ConfigFilesPage UI refresh', () => {
+describe('ConfigProfilesSection UI refresh', () => {
   it('reloads the API key shown in the editor when route credentials change', async () => {
     const config = api();
     const previous = makeProfile({
@@ -78,7 +78,7 @@ describe('ConfigFilesPage UI refresh', () => {
         localRouteCredential: { id: 'credential-a', apiKey: 'new-key', createdAt: 1, rotatedAt: 2 },
       },
     ]);
-    render(<ConfigFilesPage />);
+    render(<ConfigProfilesSection />);
     fireEvent.click(await screen.findByLabelText('测试方案 配置卡片'));
     expect(screen.getByLabelText('测试方案 API Key')).toHaveValue('old-key');
 
@@ -101,7 +101,7 @@ describe('ConfigFilesPage UI refresh', () => {
   it('opens the editor when the whole card is clicked and keeps card buttons isolated', async () => {
     const config = api();
     config.load.mockResolvedValue([makeProfile()]);
-    render(<ConfigFilesPage />);
+    render(<ConfigProfilesSection />);
 
     const card = await screen.findByLabelText('测试方案 配置卡片');
     expect(card).toHaveClass('shadow-[var(--shadow-md)]', 'hover:shadow-[var(--shadow-lg)]');
@@ -130,7 +130,7 @@ describe('ConfigFilesPage UI refresh', () => {
       apiKey: 'sk-local',
       model: 'claude-sonnet',
     });
-    render(<ConfigFilesPage />);
+    render(<ConfigProfilesSection />);
 
     fireEvent.click(await screen.findByLabelText('测试方案 配置卡片'));
     fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
@@ -153,7 +153,7 @@ describe('ConfigFilesPage UI refresh', () => {
         target: { kind: 'direct', configId: 'gone', model: null },
       }),
     ]);
-    render(<ConfigFilesPage />);
+    render(<ConfigProfilesSection />);
 
     const builtinBadge = await screen.findByText('内置');
     expect(builtinBadge).toHaveClass('bg-[var(--success-soft)]', 'text-[var(--success)]');
@@ -165,7 +165,7 @@ describe('ConfigFilesPage UI refresh', () => {
     const config = api();
     config.load.mockResolvedValue([makeProfile()]);
     config.delete = vi.fn().mockResolvedValue(undefined);
-    render(<ConfigFilesPage />);
+    render(<ConfigProfilesSection />);
 
     await screen.findByText('测试方案');
     fireEvent.click(screen.getByRole('button', { name: '测试方案 删除配置' }));
@@ -183,7 +183,7 @@ describe('ConfigFilesPage UI refresh', () => {
   it('confirms before removing a file rule', async () => {
     const config = api();
     config.load.mockResolvedValue([makeProfile()]);
-    render(<ConfigFilesPage />);
+    render(<ConfigProfilesSection />);
 
     fireEvent.click(await screen.findByLabelText('测试方案 配置卡片'));
     fireEvent.click(await screen.findByRole('button', { name: '测试方案 删除文件 1' }));
@@ -214,7 +214,7 @@ describe('ConfigFilesPage UI refresh', () => {
         allModels: ['claude-sonnet', 'claude-opus'],
       },
     ]);
-    render(<ConfigFilesPage />);
+    render(<ConfigProfilesSection />);
 
     fireEvent.click(await screen.findByLabelText('托管方案 配置卡片'));
     const group = await screen.findByRole('group', { name: '模型显示范围' });
@@ -251,7 +251,7 @@ describe('ConfigFilesPage UI refresh', () => {
     ]);
     const previewDirectEdit = vi.fn().mockResolvedValue({ files: [] });
     config.previewDirectEdit = previewDirectEdit;
-    render(<ConfigFilesPage />);
+    render(<ConfigProfilesSection />);
 
     fireEvent.click(await screen.findByLabelText('测试方案 配置卡片'));
     const saveButton = screen.getByRole('button', { name: '保存' });
@@ -289,7 +289,7 @@ describe('ConfigFilesPage UI refresh', () => {
         },
       ],
     });
-    render(<ConfigFilesPage />);
+    render(<ConfigProfilesSection />);
 
     fireEvent.click(await screen.findByLabelText('测试方案 配置卡片'));
     fireEvent.click(screen.getByRole('button', { name: '覆盖' }));
@@ -326,7 +326,7 @@ describe('ConfigFilesPage UI refresh', () => {
       },
     });
     config.load.mockResolvedValue([profile]);
-    render(<ConfigFilesPage />);
+    render(<ConfigProfilesSection />);
 
     fireEvent.click(await screen.findByLabelText('测试方案 配置卡片'));
     fireEvent.click(screen.getByRole('button', { name: '重新生成 API Key' }));
@@ -350,7 +350,7 @@ describe('ConfigFilesPage UI refresh', () => {
   it('keeps session association collapsed by default with a single heading', async () => {
     const config = api();
     config.load.mockResolvedValue([makeProfile()]);
-    render(<ConfigFilesPage />);
+    render(<ConfigProfilesSection />);
 
     fireEvent.click(await screen.findByLabelText('测试方案 配置卡片'));
     const heading = await screen.findByText('会话关联');

@@ -792,6 +792,75 @@ describe('route-analytics-service token statistics', () => {
     });
   });
 
+  it('exposes the explicit api key name for multi-key custom cli routes', () => {
+    const bucketStart = Date.now() - 60_000;
+    const siteId = 'custom-cli-site-workbench';
+    const accountId = 'custom-cli-account-workbench';
+    const apiKeyId = 'custom-cli-key-workbench:key-explicit';
+    const bucketKey = buildBucketKey(
+      bucketStart,
+      'codex',
+      undefined,
+      'gpt-5.5',
+      siteId,
+      accountId,
+      apiKeyId
+    );
+
+    resetRoutingBuckets({
+      [bucketKey]: {
+        bucketKey,
+        bucketStart,
+        bucketSize: 'hour',
+        cliType: 'codex',
+        canonicalModel: 'gpt-5.5',
+        siteId,
+        accountId,
+        apiKeyId,
+        requestCount: 1,
+        successCount: 1,
+        failureCount: 0,
+        neutralCount: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        statusCodeHistogram: { '200': 1 },
+        latencyHistogram: {},
+        firstByteHistogram: {},
+        updatedAt: bucketStart,
+      },
+    });
+    mocks.routingConfig.modelRegistry.sources = [
+      {
+        sourceKey: 'custom-cli-source',
+        siteId,
+        siteName: '自定义 CLI / Workbench 配置',
+        accountId,
+        accountName: '自定义 CLI',
+        sourceType: 'customCli',
+        originalModel: 'gpt-5.5',
+        vendor: 'openai',
+        availableApiKeys: [
+          {
+            apiKeyId,
+            apiKeyName: '备用 Key',
+            accountId,
+            accountName: '自定义 CLI',
+            group: 'custom-cli',
+          },
+        ],
+        firstSeenAt: bucketStart,
+        lastSeenAt: bucketStart,
+      },
+    ];
+
+    expect(getRouteObjectStats({ window: '24h', sortBy: 'requests' })[0]).toMatchObject({
+      siteName: 'Workbench 配置',
+      accountName: '默认',
+      apiKeyName: '备用 Key',
+    });
+  });
+
   it('merges duplicate custom cli route objects by display identity', () => {
     const bucketStart = Date.now() - 60_000;
     const firstSiteId = 'custom-cli-site-workbench-a';

@@ -9,6 +9,7 @@ import { ipcMain } from 'electron';
 import { randomBytes } from 'crypto';
 import Logger from '../utils/logger';
 import { unifiedConfigManager } from '../unified-config-manager';
+import { routeSessionBindingService } from '../route-session-binding-service';
 import { startProxyServer, stopProxyServer, getProxyStatus } from '../route-proxy-service';
 import * as modelRegistry from '../route-model-registry-service';
 import * as analytics from '../route-analytics-service';
@@ -71,6 +72,7 @@ export function registerRouteHandlers() {
         stats: routing.stats,
         routePathStates: routing.routePathStates,
         health: routing.health,
+        sessionChannelBindings: routeSessionBindingService.listActive(),
         modelRegistry: routing.modelRegistry,
         analytics: {
           config: routing.analytics.config,
@@ -101,6 +103,7 @@ export function registerRouteHandlers() {
   ipcMain.handle('route:start-server', async () => {
     try {
       await startProxyServer();
+      await unifiedConfigManager.updateRouteServerConfig({ enabled: true });
       return ok();
     } catch (e: any) {
       log.error('start server failed:', e);
@@ -111,6 +114,7 @@ export function registerRouteHandlers() {
   ipcMain.handle('route:stop-server', async () => {
     try {
       await stopProxyServer();
+      await unifiedConfigManager.updateRouteServerConfig({ enabled: false });
       return ok();
     } catch (e: any) {
       return err(e.message);
@@ -301,6 +305,7 @@ export function registerRouteHandlers() {
       const config = unifiedConfigManager.getRoutingConfig().sessionRouting;
       if (!config) throw new Error('会话路由配置不可用');
       const instance = closeRouteInstance(config, instanceId);
+      await routeSessionBindingService.removeByInstance(instanceId);
       await unifiedConfigManager.saveConfig();
       return ok(instance);
     } catch (e: any) {

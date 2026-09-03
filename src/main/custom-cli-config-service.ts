@@ -16,13 +16,17 @@ import * as fsSync from 'fs';
 import * as path from 'path';
 import Logger from './utils/logger';
 import type { CustomCliConfig, CustomCliSettings } from '../shared/types/custom-cli-config';
-import { normalizeCustomCliSettings } from '../shared/types/custom-cli-config';
+import {
+  normalizeCustomCliApiKeys,
+  normalizeCustomCliSettings,
+} from '../shared/types/custom-cli-config';
 import {
   CUSTOM_CLI_ROUTE_GROUP,
   buildCustomCliRouteAccountId,
   buildCustomCliRouteApiKeyId,
   buildCustomCliRouteSiteId,
   isCustomCliRouteChannel,
+  parseCustomCliRouteApiKeyId,
   parseCustomCliRouteConfigId,
 } from '../shared/utils/customCliRouteId';
 import { encryptCustomCliConfigs, decryptCustomCliConfigs } from './config-field-crypto';
@@ -50,6 +54,7 @@ export {
   buildCustomCliRouteApiKeyId,
   buildCustomCliRouteSiteId,
   isCustomCliRouteChannel,
+  parseCustomCliRouteApiKeyId,
   parseCustomCliRouteConfigId,
 };
 
@@ -59,6 +64,18 @@ export function getCustomCliConfigFilePath(): string {
 
 function normalizeCustomCliConfigs(configs: CustomCliConfig[]): void {
   for (const config of configs) {
+    if (typeof config.modelUrl === 'string') {
+      const modelUrl = config.modelUrl.trim();
+      config.modelUrl = modelUrl || undefined;
+    }
+    config.apiKeys = normalizeCustomCliApiKeys(config.apiKeys, {
+      legacyApiKey: config.apiKey,
+      legacyName: config.name,
+      legacyGroupMultiplier: config.groupMultiplier,
+    });
+    // `apiKey` is a legacy compatibility projection. Never let a stale projection overwrite
+    // the ordered multi-key list; derive it from the first configured key instead.
+    if (config.apiKeys[0]) config.apiKey = config.apiKeys[0].key;
     const legacyValues = new Set<CliTargetProtocol>();
     if (
       !(

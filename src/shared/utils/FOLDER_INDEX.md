@@ -15,7 +15,8 @@
 
 | 文件 | 职责 | 关键导出 |
 |------|------|--------|
-| **customCliRouteId.ts** | 自定义 CLI 路由通道合成 ID（site/account/apiKey）跨进程命名约定 | `buildCustomCliRouteSiteId()`, `buildCustomCliRouteAccountId()`, `buildCustomCliRouteApiKeyId()`, `parseCustomCliRouteConfigId()`, `isCustomCliRouteSiteId()`, `isCustomCliRouteChannel()` |
+| **customCliRouteId.ts** | 自定义 CLI 配置及其真实 API Key 的路由通道合成 ID 跨进程命名约定 | `buildCustomCliRouteSiteId()`, `buildCustomCliRouteAccountId()`, `buildCustomCliRouteApiKeyId()`, `parseCustomCliRouteApiKeyId()`, `parseCustomCliRouteConfigId()`, `isCustomCliRouteChannel()` |
+| **groupLabel.ts** | 将分组开头的 1–50 数字规范化为圆圈数字标签 | `normalizeCircledGroupLabel()` |
 | **headers.ts** | 生成兼容不同中转站大小写习惯的用户 ID 请求头 | `getAllUserIdHeaders()` |
 | **log-filter.ts** | 判断模型调用日志并聚合 usage / quota 指标 | `isModelLog()`, `aggregateUsageData()`, `filterAndAggregateUsageData()` |
 
@@ -59,6 +60,7 @@ filterAndAggregateUsageData([
 - `custom-cli-site-{encodedConfigId}`
 - `custom-cli-account-{encodedConfigId}`
 - `custom-cli-key-{encodedConfigId}`
+- `custom-cli-key-{encodedConfigId}:{encodedKeyId}`（真实多 Key 通道）
 
 所有跨进程代码必须通过本文件的 helper 生成或解析这些 ID，不要手写前缀。
 

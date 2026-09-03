@@ -278,6 +278,23 @@ describe('UnifiedConfigManager', () => {
     expect(backupManagerMock.restoreFromBackup).not.toHaveBeenCalled();
   });
 
+  it('loads stable config when a rebuildable route state file is corrupted', async () => {
+    const configPath = path.join(userDataDir, 'config.json');
+    const stateDir = path.join(userDataDir, 'state');
+    await fs.mkdir(stateDir, { recursive: true });
+    await Promise.all([
+      fs.writeFile(configPath, JSON.stringify(createSampleConfig(), null, 2), 'utf-8'),
+      fs.writeFile(path.join(stateDir, 'route-analytics.json'), '\0'.repeat(64), 'utf-8'),
+    ]);
+
+    const manager = await loadManager();
+    const config = await manager.loadConfig();
+
+    expect(config.sites).toHaveLength(1);
+    expect(config.routing?.analytics.buckets).toEqual({});
+    expect(backupManagerMock.restoreFromBackup).not.toHaveBeenCalled();
+  });
+
   it('restores the latest valid backup when config.json has an invalid structure', async () => {
     const configPath = path.join(userDataDir, 'config.json');
     await fs.writeFile(configPath, JSON.stringify({ version: '3.0' }), 'utf-8');
@@ -459,6 +476,23 @@ describe('UnifiedConfigManager', () => {
     const reloadedManager = await loadManager();
     const reloadedConfig = await reloadedManager.loadConfig();
     expect(reloadedConfig.accounts).toHaveLength(1);
+  });
+
+  it('repairs existing managed sites without credentials into maintainable accounts', async () => {
+    const configPath = path.join(userDataDir, 'config.json');
+    await fs.writeFile(configPath, JSON.stringify(createSampleConfig(), null, 2), 'utf-8');
+
+    const manager = await loadManager();
+    const loadedConfig = await manager.loadConfig();
+
+    expect(loadedConfig.accounts).toHaveLength(1);
+    expect(loadedConfig.accounts[0]).toMatchObject({
+      site_id: 'site-1',
+      account_name: '默认账户',
+      user_id: '',
+      access_token: '',
+      auth_source: 'manual',
+    });
   });
 
   it('migrates legacy site-level auth into the existing managed account and clears site-level auth fields', async () => {
@@ -1184,6 +1218,109 @@ describe('UnifiedConfigManager', () => {
     ]);
   });
 
+  it('keeps endpoint-differentiated analytics buckets distinct and merges key collisions additively', async () => {
+    const configPath = path.join(userDataDir, 'config.json');
+    const rawConfig = createSampleConfig();
+    rawConfig.version = '3.1';
+    await fs.writeFile(configPath, JSON.stringify(rawConfig, null, 2), 'utf-8');
+
+    const stateDir = path.join(userDataDir, 'state');
+    await fs.mkdir(stateDir, { recursive: true });
+    const baseBucket = {
+      bucketStart: 1,
+      bucketSize: 'hour',
+      cliType: 'claudeCode',
+      targetProtocol: 'anthropic-messages',
+      canonicalModel: 'glm-5.3',
+      siteId: 'site-1',
+      accountId: 'account-1',
+      apiKeyId: 'key-1',
+      routeRuleId: 'rule-1',
+      successCount: 0,
+      failureCount: 0,
+      neutralCount: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      statusCodeHistogram: {},
+      latencyHistogram: {},
+      firstByteHistogram: {},
+      updatedAt: 1,
+    };
+    const keyArgs = [
+      1,
+      'claudeCode',
+      'anthropic-messages',
+      'glm-5.3',
+      'site-1',
+      'account-1',
+      'key-1',
+      'rule-1',
+    ] as const;
+    const messagesKey = buildBucketKey(...keyArgs, '/v1/messages');
+    const responsesKey = buildBucketKey(...keyArgs, '/v1/responses');
+    // 历史缺陷遗留形态：key 丢失 endpoint 区分（:* 结尾），值中 endpoint 仍存在
+    const orphanKey = buildBucketKey(...keyArgs);
+    await fs.writeFile(
+      path.join(stateDir, 'route-analytics.json'),
+      JSON.stringify(
+        {
+          version: '1',
+          buckets: {
+            [messagesKey]: {
+              ...baseBucket,
+              bucketKey: messagesKey,
+              targetEndpoint: '/v1/messages',
+              requestCount: 30,
+              successCount: 30,
+            },
+            [responsesKey]: {
+              ...baseBucket,
+              bucketKey: responsesKey,
+              targetEndpoint: '/v1/responses',
+              requestCount: 45,
+              successCount: 40,
+              failureCount: 5,
+            },
+            [orphanKey]: {
+              ...baseBucket,
+              bucketKey: orphanKey,
+              targetEndpoint: '/v1/messages',
+              requestCount: 50,
+              successCount: 50,
+            },
+          },
+          last_updated: 1,
+        },
+        null,
+        2
+      ),
+      'utf-8'
+    );
+
+    const manager = await loadManager();
+    await manager.loadConfig();
+    const routing = manager.getRoutingConfig();
+
+    // 不同端点保持独立桶，不再折叠覆盖
+    expect(Object.keys(routing.analytics.buckets).sort()).toEqual(
+      [messagesKey, responsesKey].sort()
+    );
+    // 孤儿桶与新桶 key 相遇时计数累加而非 last-wins 覆盖
+    expect(routing.analytics.buckets[messagesKey]).toMatchObject({
+      requestCount: 80,
+      successCount: 80,
+    });
+    expect(routing.analytics.buckets[responsesKey]).toMatchObject({
+      requestCount: 45,
+      failureCount: 5,
+    });
+
+    // 归一化幂等：重复调用不再叠加
+    manager.getRoutingConfig();
+    expect(routing.analytics.buckets[messagesKey]).toMatchObject({ requestCount: 80 });
+  });
+
   it('preserves persisted site daily snapshots when saveConfig rewrites runtime cache', async () => {
     const manager = await loadManager();
     await manager.saveConfig(createSampleConfig() as any);
@@ -1384,6 +1521,49 @@ describe('UnifiedConfigManager', () => {
 
     // 验证内存中的配置：token 应该是明文的（通过返回的账户对象）
     expect(second.access_token).toBe('token-new'); // addAccount 返回的对象应该包含明文
+  });
+
+  it('allows a maintainable account container without credentials', async () => {
+    const manager = await loadManager();
+    await manager.saveConfig(createSampleConfig() as any);
+    const config = await manager.loadConfig();
+    config.accounts = [];
+
+    const account = await manager.addAccount({
+      site_id: 'site-1',
+      account_name: '默认账户',
+      user_id: '',
+      access_token: '',
+      auth_source: 'manual',
+    });
+
+    expect(account).toMatchObject({
+      site_id: 'site-1',
+      account_name: '默认账户',
+      user_id: '',
+      access_token: '',
+    });
+    expect(manager.getAccountsBySiteId('site-1')).toHaveLength(1);
+  });
+
+  it('reuses the empty account container when credentials are added later', async () => {
+    const configPath = path.join(userDataDir, 'config.json');
+    await fs.writeFile(configPath, JSON.stringify(createSampleConfig(), null, 2), 'utf-8');
+
+    const manager = await loadManager();
+    const loadedConfig = await manager.loadConfig();
+    const placeholder = loadedConfig.accounts[0];
+
+    const account = await manager.addAccount({
+      site_id: 'site-1',
+      account_name: '登录账户',
+      user_id: 'user-1',
+      access_token: 'token-1',
+      auth_source: 'manual',
+    });
+
+    expect(account.id).toBe(placeholder.id);
+    expect(manager.getAccountsBySiteId('site-1')).toHaveLength(1);
   });
 
   it('removes the site config when deleting the last account of a site', async () => {

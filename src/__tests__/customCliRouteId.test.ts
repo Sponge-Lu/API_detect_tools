@@ -12,6 +12,7 @@ import {
   buildCustomCliRouteSiteId,
   isCustomCliRouteChannel,
   isCustomCliRouteSiteId,
+  parseCustomCliRouteApiKeyId,
   parseCustomCliRouteConfigId,
 } from '../shared/utils/customCliRouteId';
 
@@ -27,6 +28,17 @@ describe('customCliRouteId helpers', () => {
     const id = '配置 #1/路径';
     const encoded = encodeURIComponent(id);
     expect(buildCustomCliRouteSiteId(id)).toBe(`${CUSTOM_CLI_ROUTE_SITE_PREFIX}${encoded}`);
+  });
+
+  it('为真实 Key 构建并解析配置级隔离的路由 ID', () => {
+    const apiKeyId = buildCustomCliRouteApiKeyId('配置 #1/路径', 'key:②');
+    expect(parseCustomCliRouteApiKeyId(apiKeyId)).toEqual({
+      configId: '配置 #1/路径',
+      keyId: 'key:②',
+    });
+    expect(parseCustomCliRouteApiKeyId(buildCustomCliRouteApiKeyId('cfg-1'))).toEqual({
+      configId: 'cfg-1',
+    });
   });
 
   it('空 / 全空白 id 落到 unknown 占位', () => {
@@ -58,6 +70,9 @@ describe('customCliRouteId helpers', () => {
     const accountId = buildCustomCliRouteAccountId(id);
     const apiKeyId = buildCustomCliRouteApiKeyId(id);
     expect(isCustomCliRouteChannel(siteId, accountId, apiKeyId)).toBe(true);
+    expect(
+      isCustomCliRouteChannel(siteId, accountId, buildCustomCliRouteApiKeyId(id, 'key-2'))
+    ).toBe(true);
     expect(isCustomCliRouteChannel(siteId, accountId, 'wrong')).toBe(false);
     expect(isCustomCliRouteChannel(siteId, 'wrong', apiKeyId)).toBe(false);
     expect(isCustomCliRouteChannel('site-real', accountId, apiKeyId)).toBe(false);

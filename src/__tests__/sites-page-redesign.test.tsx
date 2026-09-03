@@ -399,7 +399,14 @@ describe('sites page redesign', () => {
     expect(source).toContain('const createSiteWithDefaultAccount = useCallback(');
     expect(source).toContain('window.electronAPI.sites?.add(buildSitePayloadForCreate(site))');
     expect(source).toContain('window.electronAPI.accounts?.add({');
+    expect(source).toContain("user_id: auth.userId?.trim() || ''");
+    expect(source).toContain("access_token: auth.systemToken?.trim() || ''");
     expect(source).toContain('auth_source: auth.authSource');
+    expect(source).toContain(
+      'const hasCredentials = Boolean(auth.systemToken?.trim() && auth.userId?.trim())'
+    );
+    expect(source).toContain('if (!hasCredentials) return;');
+    expect(source).not.toContain('const accountResult = hasCredentials');
     expect(source).toContain("setSiteEditorInitialMode('auto')");
     expect(source).toContain("setSiteEditorInitialMode('manual')");
     expect(source).toContain('initialMode={siteEditorInitialMode}');
@@ -623,15 +630,15 @@ describe('sites page redesign', () => {
       expect(screen.queryByText('更新时间')).not.toBeInTheDocument();
       expect(screen.getByPlaceholderText('例如: 我的 API')).toBeInTheDocument();
       expect(screen.getByPlaceholderText('https://api.example.com')).toBeInTheDocument();
-      expect(screen.getByPlaceholderText('sk-...')).toBeInTheDocument();
+      expect(screen.queryByPlaceholderText('sk-...')).not.toBeInTheDocument();
       expect(screen.getAllByRole('button', { name: '保存配置' })).toHaveLength(1);
 
       fireEvent.click(screen.getByRole('button', { name: '删除配置' }));
       expect(onDeleteDirectConfig).toHaveBeenCalledWith(customCliConfig);
 
       fireEvent.click(screen.getByRole('button', { name: '模型 & 资源' }));
-      expect(screen.getByText('直连模型管理')).toBeInTheDocument();
-      expect(screen.getByText('手动模型')).toBeInTheDocument();
+      expect(screen.getByTestId('direct-tab2-content')).toBeInTheDocument();
+      expect(screen.getByText(/^手动模型 \(\d+\)$/)).toBeInTheDocument();
 
       expect(screen.queryByRole('button', { name: 'CLI 配置' })).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: '测试' }));
@@ -682,7 +689,7 @@ describe('sites page redesign', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: '模型 & 资源' }));
-    expect(screen.getByText('直连模型管理')).toBeInTheDocument();
+    expect(screen.getByTestId('direct-tab2-content')).toBeInTheDocument();
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
@@ -703,9 +710,41 @@ describe('sites page redesign', () => {
       );
     });
 
-    expect(screen.getByText('直连模型管理')).toBeInTheDocument();
-    expect(screen.getByText('手动模型')).toBeInTheDocument();
+    expect(screen.getByTestId('direct-tab2-content')).toBeInTheDocument();
+    expect(screen.getByText(/^手动模型 \(\d+\)$/)).toBeInTheDocument();
     expect(screen.queryByPlaceholderText('例如: 我的 API')).not.toBeInTheDocument();
+  });
+
+  it('uses the shared site resource shell for managed tab2', async () => {
+    render(
+      <AccessPointDetailPanel
+        open={true}
+        onClose={vi.fn()}
+        data={{
+          type: 'managed',
+          site: baseSite,
+          account: {
+            id: 'account-1',
+            account_name: 'Primary Account',
+            user_id: 'user-1',
+            status: 'active',
+            auth_source: 'manual',
+          },
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '模型 & 资源' }));
+
+    const content = screen.getByTestId('managed-tab2-content');
+    expect(content).toHaveClass(
+      'border-t',
+      'bg-[var(--surface-2)]/92',
+      'px-[var(--spacing-md)]',
+      'py-[var(--spacing-sm)]'
+    );
+    expect(within(content).getByText(/^本地令牌管理 \(0\)$/)).toBeInTheDocument();
+    expect(within(content).getByText(/^令牌管理 \(0\/0\)$/)).toBeInTheDocument();
   });
 
   it('merges managed side-panel tab1 into one editable information surface', async () => {
@@ -1259,10 +1298,7 @@ describe('sites page redesign', () => {
     window.electronAPI.route.getHistoryBuckets = getHistoryBuckets;
 
     render(
-      <SiteListHeader
-        columnWidths={[...DEFAULT_COLUMN_WIDTHS]}
-        onColumnWidthChange={vi.fn()}
-      />
+      <SiteListHeader columnWidths={[...DEFAULT_COLUMN_WIDTHS]} onColumnWidthChange={vi.fn()} />
     );
 
     expect(await screen.findByRole('button', { name: '选择端点 Anthropic' })).toBeInTheDocument();

@@ -230,6 +230,30 @@ describe('SiteEditor', () => {
     );
   });
 
+  it('手动添加信息不完整时仍允许保存站点', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <SiteEditor
+        initialMode="manual"
+        onSave={onSave}
+        onCancel={vi.fn()}
+        groups={[{ id: 'default', name: '默认分组' }]}
+        defaultGroupId="default"
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('https://api.example.com'), {
+      target: { value: 'partial.example.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存站点' }));
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ url: 'partial.example.com' }),
+      expect.objectContaining({ authSource: 'manual' })
+    );
+  });
+
   it('智能添加已有站点时应使用隔离 Profile 保存账户', async () => {
     vi.useFakeTimers();
     const onSave = vi.fn().mockResolvedValue(undefined);

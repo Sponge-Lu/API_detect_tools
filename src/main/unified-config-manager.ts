@@ -300,7 +300,8 @@ function routeRuleMatchesProtocolModel(
   canonicalModel: string
 ): boolean {
   return (
-    rule.enabled && rule.sourceProtocol === sourceProtocol &&
+    rule.enabled &&
+    rule.sourceProtocol === sourceProtocol &&
     routePatternMatchesModel(rule, canonicalModel)
   );
 }
@@ -1036,11 +1037,8 @@ export class UnifiedConfigManager {
         continue;
       }
 
-      const accessToken = site.access_token || (site as any).system_token;
-      const userId = site.user_id;
-      if (!accessToken || !userId) {
-        continue;
-      }
+      const accessToken = site.access_token || (site as any).system_token || '';
+      const userId = site.user_id || '';
 
       config.accounts.push({
         id: generateAccountId(),
@@ -1324,32 +1322,76 @@ export class UnifiedConfigManager {
       })
     );
 
-    r.analytics.buckets = Object.fromEntries(
-      Object.values(r.analytics.buckets || {}).map(bucket => {
-        const targetProtocol = normalizeCliTargetProtocol(bucket?.targetProtocol);
-        const normalizedBucketKey = buildBucketKey(
-          bucket.bucketStart,
-          bucket.cliType,
-          targetProtocol,
-          bucket.canonicalModel,
-          bucket.siteId,
-          bucket.accountId,
-          bucket.apiKeyId,
-          bucket.routeRuleId
-        );
-        const normalizedBucket: RouteAnalyticsBucket = {
-          ...bucket,
-          targetProtocol,
-          bucketKey: normalizedBucketKey,
-        };
-        return [normalizedBucketKey, normalizedBucket];
-      })
-    );
+    // 重建 key 必须带上 targetEndpoint（与写入路径一致）；同 key 相遇时累加计数而非覆盖，
+    // 避免同通道多端点桶在归一化时互相覆盖丢失 requestCount
+    const normalizedBuckets = new Map<string, RouteAnalyticsBucket>();
+    for (const bucket of Object.values(r.analytics.buckets || {})) {
+      const targetProtocol = normalizeCliTargetProtocol(bucket?.targetProtocol);
+      const normalizedBucketKey = buildBucketKey(
+        bucket.bucketStart,
+        bucket.cliType,
+        targetProtocol,
+        bucket.canonicalModel,
+        bucket.siteId,
+        bucket.accountId,
+        bucket.apiKeyId,
+        bucket.routeRuleId,
+        bucket.targetEndpoint
+      );
+      const normalizedBucket: RouteAnalyticsBucket = {
+        ...bucket,
+        targetProtocol,
+        bucketKey: normalizedBucketKey,
+      };
+      const existing = normalizedBuckets.get(normalizedBucketKey);
+      normalizedBuckets.set(
+        normalizedBucketKey,
+        existing ? this.mergeAnalyticsBuckets(existing, normalizedBucket) : normalizedBucket
+      );
+    }
+    r.analytics.buckets = Object.fromEntries(normalizedBuckets);
 
     r.cliModelSelections = normalizeRouteCliSelections(
       r.cliModelSelections,
       r.modelRegistry.entries
     );
+  }
+
+  /** key 归一化碰撞时累加计数与直方图（两桶为不相交请求集），避免 last-wins 覆盖丢数 */
+  private mergeAnalyticsBuckets(
+    base: RouteAnalyticsBucket,
+    incoming: RouteAnalyticsBucket
+  ): RouteAnalyticsBucket {
+    const merged: RouteAnalyticsBucket = { ...base };
+    for (const field of [
+      'requestCount',
+      'successCount',
+      'failureCount',
+      'neutralCount',
+      'promptTokens',
+      'completionTokens',
+      'totalTokens',
+      'cacheCreationTokens',
+      'cacheReadTokens',
+      'cachedTokens',
+    ] as const) {
+      merged[field] = (base[field] || 0) + (incoming[field] || 0);
+    }
+    if (base.estimatedCostUsd !== undefined || incoming.estimatedCostUsd !== undefined) {
+      merged.estimatedCostUsd = (base.estimatedCostUsd || 0) + (incoming.estimatedCostUsd || 0);
+    }
+    for (const histogram of [
+      'statusCodeHistogram',
+      'latencyHistogram',
+      'firstByteHistogram',
+    ] as const) {
+      merged[histogram] = { ...base[histogram] };
+      for (const [label, count] of Object.entries(incoming[histogram] || {})) {
+        merged[histogram][label] = (merged[histogram][label] || 0) + count;
+      }
+    }
+    merged.updatedAt = Math.max(base.updatedAt || 0, incoming.updatedAt || 0) || base.updatedAt;
+    return merged;
   }
 
   private cleanupLegacyOpenCodeRouteProtocol(config: UnifiedConfig): boolean {
@@ -1448,8 +1490,12 @@ export class UnifiedConfigManager {
         continue;
       }
 
-      const { cliType: _cliType, legacyCliType: _legacyCliType, migrationState: _state, ...rule } =
-        legacy;
+      const {
+        cliType: _cliType,
+        legacyCliType: _legacyCliType,
+        migrationState: _state,
+        ...rule
+      } = legacy;
       canonicalRules.push(rule as unknown as RouteRule);
     }
 
@@ -1903,10 +1949,22 @@ export class UnifiedConfigManager {
       }
     }
 
-    // 同一站点 + 同一用户只保留一个账户记录，避免重复账户导致自动刷新/Profile 绑定混乱。
+    const siteAccounts = this.config!.accounts.filter(
+      existing => existing.site_id === accountInput.site_id
+    );
+    const reusablePlaceholderId =
+      siteAccounts.length === 1 &&
+      !siteAccounts[0].user_id &&
+      !siteAccounts[0].access_token &&
+      (accountInput.user_id || accountInput.access_token)
+        ? siteAccounts[0].id
+        : undefined;
+
+    // 同一站点 + 同一用户只保留一个账户记录；首次补充凭证时复用唯一的空凭证账户。
     const duplicateIndex = this.config!.accounts.findIndex(
       existing =>
-        existing.site_id === accountInput.site_id && existing.user_id === accountInput.user_id
+        existing.id === reusablePlaceholderId ||
+        (existing.site_id === accountInput.site_id && existing.user_id === accountInput.user_id)
     );
     if (duplicateIndex >= 0) {
       const mergedAccount: AccountCredential = {
@@ -1957,6 +2015,7 @@ export class UnifiedConfigManager {
         | 'anyRouterConfig'
         | 'auth_source'
         | 'browser_profile_path'
+        | 'local_api_keys'
       >
     >
   ): Promise<boolean> {

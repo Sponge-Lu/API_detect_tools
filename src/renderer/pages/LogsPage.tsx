@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Eraser, Network } from 'lucide-react';
 import {
+  type RouteInstance,
   type RouteModelRegistryConfig,
   type RouteModelSourceRef,
   type RouteRequestLogItem,
@@ -14,6 +15,11 @@ import { ErrorState } from '../components/ErrorState';
 import { useConfigStore } from '../store/configStore';
 import { useRouteStore } from '../store/routeStore';
 import { resolveModelPricing } from '../utils/modelPricing';
+import {
+  buildRouteSessionOrdinals,
+  formatRouteSessionLabel,
+  type RouteSessionOrdinalMap,
+} from '../utils/routeSessionOrdinal';
 type RouteAgentFilter = 'all' | string;
 
 const ROUTE_OUTCOME_STYLES: Record<
@@ -79,6 +85,7 @@ const ROUTE_LOG_HEADER_LABELS = [
 interface RouteLogRegistryContext {
   registry: RouteModelRegistryConfig | null;
   sourceByKey: Map<string, RouteModelSourceRef>;
+  ordinalsByInstanceId: RouteSessionOrdinalMap;
 }
 
 interface RouteLogCostInfo {
@@ -92,6 +99,7 @@ interface RouteLogCostInfo {
 
 interface RouteLogRowViewModel {
   item: RouteRequestLogItem;
+  agentDisplayLabel: string;
   outcomeStyle: (typeof ROUTE_OUTCOME_STYLES)[RouteRequestLogItem['outcome']];
   failureInfo: string | null;
   requestedModelName: string;
@@ -179,11 +187,13 @@ function isCustomCliLog(item: RouteRequestLogItem, source?: RouteModelSourceRef)
 }
 
 function buildRouteLogRegistryContext(
-  registry: RouteModelRegistryConfig | null
+  registry: RouteModelRegistryConfig | null,
+  routeInstances: RouteInstance[]
 ): RouteLogRegistryContext {
   return {
     registry,
     sourceByKey: new Map((registry?.sources || []).map(source => [source.sourceKey, source])),
+    ordinalsByInstanceId: buildRouteSessionOrdinals(routeInstances),
   };
 }
 
@@ -231,7 +241,10 @@ function formatRouteLogSitePath(params: {
   apiKeyDisplayName: string;
 }): string {
   if (params.customCli) {
-    return `直连配置 / ${params.siteOrConfigName}`;
+    // 多 Key 直连需指明命中的 Key；legacy 单 Key 仍是「默认」，保持紧凑展示
+    return params.apiKeyDisplayName === DEFAULT_API_KEY_NAME
+      ? `直连配置 / ${params.siteOrConfigName}`
+      : `直连配置 / ${params.siteOrConfigName} / ${params.apiKeyDisplayName}`;
   }
   return `${params.siteOrConfigName} / ${params.accountDisplayName} / ${params.userGroupDisplayName} / ${params.apiKeyDisplayName}`;
 }
@@ -514,6 +527,10 @@ function buildRouteLogRowViewModel(params: {
 }): RouteLogRowViewModel {
   const { item, context, config } = params;
   const routeSource = findRouteLogSource(item, context);
+  const agentDisplayLabel = formatRouteSessionLabel(
+    item.agentName?.trim() || '未知 Agent',
+    context.ordinalsByInstanceId[item.routeInstanceId ?? '']
+  );
   const customCli = isCustomCliLog(item, routeSource);
   const siteOrConfigName = customCli
     ? normalizeCustomCliConfigName(item.siteName || routeSource?.siteName)
@@ -528,7 +545,7 @@ function buildRouteLogRowViewModel(params: {
     ? EMPTY_VALUE_TEXT
     : formatOptionalDisplayName(item.userGroupKey);
   const apiKeyDisplayName = customCli
-    ? DEFAULT_API_KEY_NAME
+    ? item.apiKeyName?.trim() || DEFAULT_API_KEY_NAME
     : formatOptionalDisplayName(item.apiKeyName);
   const sitePathDisplay = formatRouteLogSitePath({
     customCli,
@@ -540,6 +557,7 @@ function buildRouteLogRowViewModel(params: {
 
   return {
     item,
+    agentDisplayLabel,
     outcomeStyle: ROUTE_OUTCOME_STYLES[item.outcome],
     failureInfo: resolveRouteFailureInfo(item),
     requestedModelName,
@@ -597,6 +615,7 @@ export function LogsPage() {
   const [routeModelRegistry, setRouteModelRegistry] = useState<RouteModelRegistryConfig | null>(
     null
   );
+  const [routeInstances, setRouteInstances] = useState<RouteInstance[]>([]);
 
   useEffect(() => {
     if (!liveRouteConfig) {
@@ -623,9 +642,10 @@ export function LogsPage() {
       setRouteLogsError(null);
     }
     try {
-      const [result, routeConfigResult] = await Promise.all([
+      const [result, routeConfigResult, routeInstancesResult] = await Promise.all([
         routeApi.getRequestLogs({ limit: ROUTE_LOG_VIEW_LIMIT }),
         includeConfig && routeApi.getConfig ? routeApi.getConfig() : Promise.resolve(null),
+        routeApi.listRouteInstances?.() ?? Promise.resolve(undefined),
       ]);
       if (!result?.success) {
         if (!background) {
@@ -636,6 +656,9 @@ export function LogsPage() {
       }
       setRouteLogs(result.data || []);
       setRouteLogsError(null);
+      if (routeInstancesResult?.success) {
+        setRouteInstances(routeInstancesResult.data || []);
+      }
       if (includeConfig) {
         if (routeConfigResult?.success) {
           const routeConfig = routeConfigResult.data as
@@ -678,6 +701,14 @@ export function LogsPage() {
     }
   }, []);
 
+  /** 新实例的日志到达时刷新序号映射；本地内存读，开销可忽略 */
+  const loadRouteInstances = useCallback(async () => {
+    const result = await window.electronAPI.route?.listRouteInstances?.();
+    if (result?.success) {
+      setRouteInstances(result.data || []);
+    }
+  }, []);
+
   useEffect(() => {
     void loadRouteLogs({ background: true });
   }, [loadRouteLogs]);
@@ -686,16 +717,19 @@ export function LogsPage() {
     const unsubscribe = window.electronAPI.route?.onRequestLogAppended?.(item => {
       setRouteLogs(currentLogs => prependRouteLogItem(currentLogs, item));
       setRouteLogsError(null);
+      if (item.routeInstanceId) {
+        void loadRouteInstances();
+      }
     });
 
     return () => {
       unsubscribe?.();
     };
-  }, []);
+  }, [loadRouteInstances]);
 
   const routeLogContext = useMemo(
-    () => buildRouteLogRegistryContext(routeModelRegistry),
-    [routeModelRegistry]
+    () => buildRouteLogRegistryContext(routeModelRegistry, routeInstances),
+    [routeModelRegistry, routeInstances]
   );
   const routeAgentFilterOptions = useMemo(() => {
     const agents = new Map<string, string>();
@@ -821,12 +855,10 @@ export function LogsPage() {
                     <span
                       data-testid="route-request-agent"
                       className="flex min-w-0 items-center gap-1.5 text-[var(--text-primary)]"
-                      title={item.agentName?.trim() || '未知 Agent'}
+                      title={row.agentDisplayLabel}
                     >
                       <AgentLogo agentId={item.agentId} agentName={item.agentName} />
-                      <span className="min-w-0 truncate">
-                        {item.agentName?.trim() || '未知 Agent'}
-                      </span>
+                      <span className="min-w-0 truncate">{row.agentDisplayLabel}</span>
                     </span>
                     <span
                       data-testid="route-request-model-path"

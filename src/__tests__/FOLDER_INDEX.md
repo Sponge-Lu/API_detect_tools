@@ -48,7 +48,11 @@
 | **endpoint-test-service.test.ts** | 端点测试服务回归 | 三协议统一问题、无 CLI 特征、Key 分组模型、简短错误、托管/直连解析与 `testedAt` 持久化 |
 | **endpoint-test-panel.test.tsx** | 端点测试 UI 回归 | 三卡常驻展开、Key 分组/全部模型切换、独立选择、最新时间恢复与成功/失败显示 |
 | **route-model-registry-service.test.ts** | 路由模型注册表服务测试 | 手工/显式 override display item、来源扫描不自动生成重定向、厂商优先级、canonical 映射与四种 CLI 可用的自定义 CLI 来源 |
-| **route-proxy-service.test.ts** | 路由代理调度回归测试 | 路由、协议转换、Responses 亲和、Conversations API 前置拒绝、客户端取消与流式校验 |
+| **route-proxy-service.test.ts** | 路由代理调度回归测试 | 路由、协议转换、Responses 亲和、Conversations API 前置拒绝、客户端取消、上游失败分类记账与流式校验 |
+| **route-upstream-failure.test.ts** | 上游失败分类器单测 | 分类顺序与配额优先级、确证禁用原因解析、Retry-After 解析、留存排序、类别到 outcome 的映射 |
+| **route-session-binding-service.test.ts** | 会话-通道绑定侧车单测 | 持久化往返、未落盘先可读、TTL 与条数上限、instance/profile 清理、损坏文件降级 |
+| **route-session-ordinal.test.ts** | 会话编号规则单测 | 按客户端分组编号、跨客户端独立、关闭会话后既有编号不漂移、并列确定性 |
+| **priority-table-status.test.ts** | 优先级表状态派生单测 | 剩余时长格式化、价格与暂停分离、部分暂停聚合与原因平票的确定性 |
 | **protocol-sse-transformer.test.ts** | 增量协议 SSE 转换测试 | 六方向协议转换、UTF-8/字节分片、工具调用、usage、错误与缺失 terminal |
 | **route-state-affinity-service.test.ts** | Stateful 资源亲和 sidecar 回归测试 | profile/site/account/API Key 清理与不暴露资源标识的分类摘要 |
 | **cli-protocol-adapter.test.ts** | CLI 协议适配器请求/响应转换测试 | Claude/Codex 源 CLI 与 Anthropic Messages / OpenAI Chat Completions / OpenAI Responses 目标协议之间的 text/tool_use/tool_result/function_call/tool_choice 双向转换，覆盖流式 SSE 与非流式 JSON 矩阵及无损能力拒绝 |
@@ -66,8 +70,9 @@
 | **custom-cli-config-store.test.ts** | 自定义 CLI 配置 Store 回归测试 | 拉取模型后清理旧 Base URL/API Key 遗留的 CLI 使用模型，并保留 `manualModels` 手动模型 |
 | **custom-cli-config-handlers.test.ts** | 自定义 CLI 配置 IPC 回归测试 | 保存自定义 CLI 配置后同步路由模型 registry，并在同步失败时暴露错误 |
 | **custom-cli-config-service.test.ts** | 直连接入点协议迁移测试 | 唯一旧协议迁移及冲突待确认 |
+| **custom-cli-model-service.test.ts** | 直连配置模型 URL 选择测试 | 模型 URL 为空时回退 Base URL，非空时使用独立模型端点 |
 | **config-file-profile-service.test.ts** | 配置方案、目标目录协议、独立凭证、文件事务与对话路径测试 | 完整内置模板、模型域、Key 轮换、profile affinity 清理、revision/路径冲突、回滚和增量扫描 |
-| **config-files-page-ui.test.tsx** | 配置文件页 UI 刷新回归测试 | 整卡点击编辑、卡片按钮隔离、内置/需修复徽章、删除配置/文件确认、segmented 模型范围、本地配置直接保存、行级 diff 预览与会话关联默认折叠 |
+| **config-profiles-section.test.tsx** | 配置文件卡片区 UI 刷新回归测试 | 整卡点击编辑、卡片按钮隔离、内置/需修复徽章、删除配置/文件确认、segmented 模型范围、本地配置直接保存、行级 diff 预览与会话关联默认折叠 |
 | **route-session-service.test.ts** | RouteInstance 身份与生命周期测试 | 完整内部三元键优先级、Codex 原生 Header/Body、Claude Code 会话头、歧义拒绝、ARMED 原子认领、槽位切换、复用和配置优先级 |
 | **route-session-activity-service.test.ts** | 会话活动 sidecar 测试 | 合并写入、重启 hydrate、TTL 与容量限制 |
 | **route-session-section.test.tsx** | 会话路由卡片界面回归测试 | 固定三列横向滚动、仅模型/思考强度预创建、会话级运行范围、只读 Session ID、展示别名和显式关闭 |

@@ -15,14 +15,16 @@ import {
   EyeOff,
   RefreshCw,
   Loader2,
-  Key,
   Globe,
   Settings,
   ChevronDown,
+  ChevronUp,
   Search,
   X,
   Edit2,
   RotateCcw,
+  Plus,
+  Trash2,
 } from 'lucide-react';
 import { AppButton } from '../AppButton/AppButton';
 import { AppSwitch } from '../AppSwitch';
@@ -31,10 +33,14 @@ import { toast } from '../../store/toastStore';
 import {
   CUSTOM_CLI_GROUP_MULTIPLIER_MIN,
   normalizeCustomCliGroupMultiplier,
+  normalizeCustomCliApiKeys,
+  getCustomCliModelGroups,
   normalizeCustomCliSettings,
+  type CustomCliApiKey,
   type CustomCliConfig,
   type CustomCliSettings,
 } from '../../../shared/types/custom-cli-config';
+import { normalizeCircledGroupLabel } from '../../../shared/utils/groupLabel';
 import type { ModelPriceInfo, ModelPricingData } from '../../../shared/types/site';
 import {
   BUILTIN_CLI_LABELS,
@@ -54,6 +60,16 @@ import {
 } from '../../services/cli-config-generator';
 import { PanelSection } from './PanelSection';
 import { formatModelPrice, resolveModelPricing } from '../../utils/modelPricing';
+import { getGroupTextColor } from '../../utils/groupStyle';
+import {
+  AccessPointResourceSectionHeader,
+  AccessPointResourceShell,
+  accessPointResourceActionClass,
+  accessPointResourceIconActionClass,
+  accessPointResourceListClass,
+  accessPointResourceTokenListClass,
+  accessPointResourceTokenRowClass,
+} from './AccessPointResourcePrimitives';
 
 // 导入 CLI 图标
 import ClaudeCodeIcon from '../../assets/cli-icons/claude-code.svg';
@@ -194,13 +210,28 @@ function parseOptionalPrice(value: string): number | undefined {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
+function serializeApiKeys(apiKeys: CustomCliApiKey[]): string {
+  return JSON.stringify(
+    apiKeys.map(({ name, key, group, groupMultiplier, models, lastModelFetch }) => ({
+      name,
+      key,
+      group,
+      groupMultiplier,
+      models,
+      lastModelFetch,
+    }))
+  );
+}
+
 function DirectModelPriceEditor({
   model,
+  groups,
   pricing,
   onChange,
   onRemove,
 }: {
   model: string;
+  groups: string[];
   pricing?: ModelPriceInfo;
   onChange: (model: string, price: ModelPriceInfo) => void;
   onRemove: (model: string) => void;
@@ -254,7 +285,10 @@ function DirectModelPriceEditor({
   };
 
   return (
-    <div className="rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1.5">
+    <div
+      className={`${expanded ? 'w-full' : 'max-w-full'} rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-3)] px-1.5 py-0.5 transition-colors hover:border-[color-mix(in_srgb,var(--accent)_40%,var(--line-soft))] hover:bg-[var(--surface-1)]`}
+      data-testid="direct-model-item"
+    >
       <div className="flex min-w-0 items-center justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-1.5">
@@ -264,6 +298,13 @@ function DirectModelPriceEditor({
             >
               {model}
             </span>
+          </div>
+          <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1 text-xs">
+            {groups.map(group => (
+              <span key={group} className={`font-medium ${getGroupTextColor(group)}`}>
+                {group}
+              </span>
+            ))}
             {quotaInfo ? (
               <span
                 className={`inline-flex items-center rounded border px-0.5 py-0 leading-none ${quotaInfo.color}`}
@@ -303,9 +344,23 @@ function DirectModelPriceEditor({
           <button
             type="button"
             onClick={() => setExpanded(prev => !prev)}
-            className="rounded-[var(--radius-sm)] px-1.5 py-0.5 text-xs text-[var(--text-secondary)] hover:bg-[var(--surface-1)]"
+            className="flex h-5 w-5 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
+            aria-label={
+              expanded
+                ? `收起 ${model} 价格编辑`
+                : pricing
+                  ? `编辑 ${model} 价格`
+                  : `添加 ${model} 价格`
+            }
+            title={expanded ? '收起' : pricing ? '编辑价格' : '添加价格'}
           >
-            {expanded ? '收起' : pricing ? '编辑价格' : '添加价格'}
+            {expanded ? (
+              <ChevronUp className="h-3 w-3" />
+            ) : pricing ? (
+              <Edit2 className="h-3 w-3" />
+            ) : (
+              <Plus className="h-3 w-3" />
+            )}
           </button>
         </div>
       </div>
@@ -440,7 +495,9 @@ function isDirectCliConfigDirty(params: {
   config: CustomCliConfig;
   name: string;
   baseUrl: string;
+  modelUrl: string;
   apiKey: string;
+  apiKeys: CustomCliApiKey[];
   gasStationUrl: string;
   groupMultiplierInput: string;
   notes: string;
@@ -455,7 +512,9 @@ function isDirectCliConfigDirty(params: {
     config,
     name,
     baseUrl,
+    modelUrl,
     apiKey,
+    apiKeys,
     gasStationUrl,
     groupMultiplierInput,
     notes,
@@ -469,7 +528,19 @@ function isDirectCliConfigDirty(params: {
 
   if ((name.trim() || config.name) !== config.name) return true;
   if (baseUrl !== config.baseUrl) return true;
+  if ((modelUrl.trim() || '') !== (config.modelUrl || '')) return true;
   if (apiKey !== config.apiKey) return true;
+  if (
+    serializeApiKeys(apiKeys) !==
+    serializeApiKeys(
+      normalizeCustomCliApiKeys(config.apiKeys, {
+        legacyApiKey: config.apiKey,
+        legacyName: config.name,
+        legacyGroupMultiplier: config.groupMultiplier,
+      })
+    )
+  )
+    return true;
   if ((gasStationUrl.trim() || '') !== (config.gasStationUrl || '')) return true;
   if (
     parseGroupMultiplierInput(groupMultiplierInput) !==
@@ -751,7 +822,15 @@ export function DirectCliConfigEditorContent({
   // 本地编辑状态
   const [name, setName] = useState(config.name);
   const [baseUrl, setBaseUrl] = useState(config.baseUrl);
+  const [modelUrl, setModelUrl] = useState(config.modelUrl || '');
   const [apiKey, setApiKey] = useState(config.apiKey);
+  const [apiKeys, setApiKeys] = useState<CustomCliApiKey[]>(() =>
+    normalizeCustomCliApiKeys(config.apiKeys, {
+      legacyApiKey: config.apiKey,
+      legacyName: config.name,
+      legacyGroupMultiplier: config.groupMultiplier,
+    })
+  );
   const [showApiKey, setShowApiKey] = useState(false);
   const [gasStationUrl, setGasStationUrl] = useState(config.gasStationUrl || '');
   const [groupMultiplierInput, setGroupMultiplierInput] = useState(() =>
@@ -787,6 +866,15 @@ export function DirectCliConfigEditorContent({
   const { configs } = useCustomCliConfigStore();
   const currentConfig = configs.find(c => c.id === config.id);
   const models = currentConfig?.models || config.models;
+  const currentApiKeys = useMemo(
+    () =>
+      normalizeCustomCliApiKeys(apiKeys, {
+        legacyApiKey: apiKey,
+        legacyName: name,
+        legacyGroupMultiplier: config.groupMultiplier,
+      }),
+    [apiKey, apiKeys, config.groupMultiplier, name]
+  );
   const modelOptions = useMemo(
     () =>
       getModelInputOptions({
@@ -815,7 +903,15 @@ export function DirectCliConfigEditorContent({
   useEffect(() => {
     setName(config.name);
     setBaseUrl(config.baseUrl);
+    setModelUrl(config.modelUrl || '');
     setApiKey(config.apiKey);
+    setApiKeys(
+      normalizeCustomCliApiKeys(config.apiKeys, {
+        legacyApiKey: config.apiKey,
+        legacyName: config.name,
+        legacyGroupMultiplier: config.groupMultiplier,
+      })
+    );
     setShowApiKey(false);
     setGasStationUrl(config.gasStationUrl || '');
     setGroupMultiplierInput(buildGroupMultiplierInputValue(config.groupMultiplier));
@@ -940,7 +1036,13 @@ export function DirectCliConfigEditorContent({
 
   // 处理拉取模型
   const handleFetchModels = async () => {
-    updateConfig(config.id, { baseUrl, apiKey });
+    updateConfig(config.id, {
+      baseUrl,
+      modelUrl: modelUrl.trim() || undefined,
+      apiKey: apiKeys[0]?.key || '',
+      apiKeys,
+    });
+    await saveConfigs();
     await fetchModels(config.id);
     const latestConfig = useCustomCliConfigStore
       .getState()
@@ -948,6 +1050,8 @@ export function DirectCliConfigEditorContent({
     if (latestConfig) {
       const nextCliSettings = normalizeCliSettings(latestConfig.cliSettings);
       setManualModels(latestConfig.manualModels || []);
+      setApiKeys(normalizeCustomCliApiKeys(latestConfig.apiKeys));
+      setApiKey(latestConfig.apiKey);
       setModelPricing(normalizeModelPricingState(latestConfig.modelPricing));
       setCliSettings(nextCliSettings);
       setPerCliEdited(buildPerCliEditedFromSettings(nextCliSettings));
@@ -1050,6 +1154,44 @@ export function DirectCliConfigEditorContent({
     });
   };
 
+  const updateApiKey = (keyId: string, updates: Partial<CustomCliApiKey>) => {
+    setApiKeys(previous =>
+      previous.map((item, index) => {
+        if (item.id !== keyId) return item;
+        const next = { ...item, ...updates };
+        if (index === 0) {
+          setApiKey(next.key);
+          setGroupMultiplierInput(buildGroupMultiplierInputValue(next.groupMultiplier));
+        }
+        return next;
+      })
+    );
+  };
+
+  const addApiKey = () => {
+    const now = Date.now();
+    setApiKeys(previous => [
+      ...previous,
+      {
+        id: `key_${now}_${Math.random().toString(36).slice(2, 8)}`,
+        name: '',
+        key: '',
+        group: '',
+        groupMultiplier: 1,
+        models: [],
+      },
+    ]);
+  };
+
+  const removeApiKey = (keyId: string) => {
+    setApiKeys(previous => {
+      const next = previous.filter(item => item.id !== keyId);
+      setApiKey(next[0]?.key || '');
+      setGroupMultiplierInput(buildGroupMultiplierInputValue(next[0]?.groupMultiplier));
+      return next;
+    });
+  };
+
   const requestResetConfig = async () => {
     if (showDialog) {
       const confirmed = await showDialog({
@@ -1102,7 +1244,9 @@ export function DirectCliConfigEditorContent({
     updateConfig(config.id, {
       name: name.trim() || config.name,
       baseUrl,
-      apiKey,
+      modelUrl: modelUrl.trim() || undefined,
+      apiKey: apiKeys[0]?.key || '',
+      apiKeys,
       gasStationUrl: gasStationUrl.trim() || undefined,
       groupMultiplier: parseGroupMultiplierInput(groupMultiplierInput),
       notes,
@@ -1130,12 +1274,18 @@ export function DirectCliConfigEditorContent({
     section === 'identity' ? '' : section === 'models' ? '' : section === 'cli' ? '' : '';
   const shouldShowHeader = showHeader && section !== 'cli';
   const shouldShowStandaloneSaveAction =
-    !shouldShowHeader && showSaveAction && section !== 'cli' && section !== 'identity';
+    !shouldShowHeader &&
+    showSaveAction &&
+    section !== 'cli' &&
+    section !== 'identity' &&
+    section !== 'models';
   const isDirty = isDirectCliConfigDirty({
     config,
     name,
     baseUrl,
+    modelUrl,
     apiKey,
+    apiKeys,
     gasStationUrl,
     groupMultiplierInput,
     notes,
@@ -1171,7 +1321,7 @@ export function DirectCliConfigEditorContent({
                 取消
               </AppButton>
             ) : null}
-            {showSaveAction ? (
+            {showSaveAction && !showModelsSection ? (
               <AppButton
                 variant={saveButtonVariant}
                 size="sm"
@@ -1239,66 +1389,6 @@ export function DirectCliConfigEditorContent({
               </div>
               <div>
                 <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
-                  <Key className="mr-1 inline h-4 w-4" />
-                  API Key
-                </label>
-                <div className="relative">
-                  <input
-                    aria-label="API Key"
-                    type={showApiKey ? 'text' : 'password'}
-                    value={apiKey}
-                    onChange={e => setApiKey(e.target.value)}
-                    placeholder="sk-..."
-                    className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] py-2 pl-3 pr-20 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
-                  />
-                  <div className="absolute inset-y-0 right-1 flex items-center gap-0.5">
-                    <button
-                      type="button"
-                      onClick={() => setShowApiKey(visible => !visible)}
-                      aria-label={showApiKey ? '隐藏 API Key' : '显示 API Key'}
-                      title={showApiKey ? '隐藏 API Key' : '显示 API Key'}
-                      className="rounded-[var(--radius-sm)] p-1.5 text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
-                    >
-                      {showApiKey ? (
-                        <EyeOff className="h-4 w-4" aria-hidden="true" />
-                      ) : (
-                        <Eye className="h-4 w-4" aria-hidden="true" />
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleCopy('api-key', apiKey)}
-                      disabled={!apiKey}
-                      aria-label={copiedPath === 'api-key' ? 'API Key 已复制' : '复制 API Key'}
-                      title={copiedPath === 'api-key' ? '已复制' : '复制 API Key'}
-                      className="rounded-[var(--radius-sm)] p-1.5 text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      {copiedPath === 'api-key' ? (
-                        <Check className="h-4 w-4 text-[var(--success)]" aria-hidden="true" />
-                      ) : (
-                        <Copy className="h-4 w-4" aria-hidden="true" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-              </div>
-              <div>
-                <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
-                  分组倍率
-                </label>
-                <input
-                  aria-label="分组倍率"
-                  type="number"
-                  min={CUSTOM_CLI_GROUP_MULTIPLIER_MIN}
-                  step="0.001"
-                  value={groupMultiplierInput}
-                  onChange={e => setGroupMultiplierInput(e.target.value)}
-                  placeholder="1"
-                  className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
-                />
-              </div>
-              <div className="md:col-span-2">
-                <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
                   加油站链接
                 </label>
                 <input
@@ -1307,6 +1397,19 @@ export function DirectCliConfigEditorContent({
                   value={gasStationUrl}
                   onChange={e => setGasStationUrl(e.target.value)}
                   placeholder="https://example.com/topup"
+                  className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
+                  模型 URL
+                </label>
+                <input
+                  aria-label="模型 URL"
+                  type="url"
+                  value={modelUrl}
+                  onChange={e => setModelUrl(e.target.value)}
+                  placeholder="留空则使用 Base URL"
                   className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
                 />
               </div>
@@ -1339,66 +1442,214 @@ export function DirectCliConfigEditorContent({
         ) : null}
 
         {showModelsSection ? (
-          <div className="space-y-4">
-            <div>
-              <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
-                可用模型{' '}
-                <span className="font-normal text-[var(--text-secondary)]">
-                  ({models.length}个)
-                </span>
-              </label>
-              <div className="flex items-center gap-2">
-                <div className="relative min-w-0 flex-1">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-tertiary)]" />
-                  <input
-                    type="search"
-                    aria-label="搜索可用模型"
-                    value={modelSearchText}
-                    onChange={e => setModelSearchText(e.target.value)}
-                    placeholder="搜索模型"
-                    className="w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 pl-9 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
-                  />
+          <AccessPointResourceShell testId="direct-tab2-content">
+            <div className="space-y-0.5">
+              <AccessPointResourceSectionHeader
+                title="令牌管理"
+                meta={<> ({apiKeys.length})</>}
+                actions={
+                  <>
+                    {showSaveAction ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleSave()}
+                        className={`${accessPointResourceActionClass} ${
+                          isDirty
+                            ? 'bg-[var(--danger-soft)] text-[var(--danger)]'
+                            : 'bg-[var(--accent-soft)] text-[var(--accent-strong)]'
+                        }`}
+                        aria-label="保存配置"
+                        data-testid="direct-cli-save-button"
+                        data-dirty={isDirty ? 'true' : 'false'}
+                      >
+                        保存
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={addApiKey}
+                      className={accessPointResourceActionClass}
+                      title="手动添加 API Key"
+                    >
+                      <Plus className="h-3 w-3" />
+                      <span>手动添加</span>
+                    </button>
+                  </>
+                }
+              />
+              {apiKeys.length === 0 ? (
+                <div className="text-xs text-[var(--text-secondary)]">暂无 API Key</div>
+              ) : (
+                <div className={accessPointResourceTokenListClass}>
+                  {apiKeys.map((item, index) => {
+                    const copyId = `api-key-${item.id}`;
+                    return (
+                      <div
+                        key={item.id}
+                        className={accessPointResourceTokenRowClass}
+                        data-testid="direct-api-key-row"
+                      >
+                        <input
+                          aria-label={`API Key ${index + 1} 名称`}
+                          value={item.name}
+                          onChange={event => updateApiKey(item.id, { name: event.target.value })}
+                          placeholder="名称"
+                          className="min-w-0 w-[5rem] shrink-0 bg-transparent font-semibold text-[var(--text-primary)] outline-none"
+                        />
+                        <input
+                          aria-label={`API Key ${index + 1} 分组`}
+                          value={item.group}
+                          onChange={event => updateApiKey(item.id, { group: event.target.value })}
+                          onBlur={event =>
+                            updateApiKey(item.id, {
+                              group: normalizeCircledGroupLabel(event.target.value),
+                            })
+                          }
+                          placeholder="① 默认分组"
+                          className="min-w-0 w-[6rem] shrink-0 bg-transparent text-[var(--text-secondary)] outline-none"
+                        />
+                        <input
+                          aria-label={`API Key ${index + 1} 倍率`}
+                          type="number"
+                          min={CUSTOM_CLI_GROUP_MULTIPLIER_MIN}
+                          step="0.001"
+                          value={item.groupMultiplier}
+                          onChange={event =>
+                            updateApiKey(item.id, {
+                              groupMultiplier: event.target.value.trim()
+                                ? normalizeCustomCliGroupMultiplier(Number(event.target.value))
+                                : 1,
+                            })
+                          }
+                          className="w-[4rem] shrink-0 bg-transparent text-[var(--text-primary)] outline-none"
+                        />
+                        <div className="relative min-w-0 flex-1">
+                          <input
+                            aria-label={`API Key ${index + 1}`}
+                            type={showApiKey ? 'text' : 'password'}
+                            value={item.key}
+                            onChange={event => updateApiKey(item.id, { key: event.target.value })}
+                            placeholder="sk-..."
+                            className="w-full bg-transparent py-0.5 pr-12 font-mono text-xs text-[var(--accent-strong)] outline-none"
+                          />
+                          <div className="absolute inset-y-0 right-1 flex items-center">
+                            <button
+                              type="button"
+                              onClick={() => setShowApiKey(value => !value)}
+                              className="flex h-5 w-5 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-secondary)] hover:bg-[var(--surface-3)]"
+                              aria-label={showApiKey ? '隐藏 API Key' : '显示 API Key'}
+                              title={showApiKey ? '隐藏 API Key' : '显示 API Key'}
+                            >
+                              {showApiKey ? (
+                                <EyeOff className="h-3.5 w-3.5" />
+                              ) : (
+                                <Eye className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleCopy(copyId, item.key)}
+                              className="flex h-5 w-5 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-secondary)] hover:bg-[var(--surface-3)]"
+                              disabled={!item.key}
+                              aria-label={copiedPath === copyId ? 'API Key 已复制' : '复制 API Key'}
+                              title="复制 API Key"
+                            >
+                              {copiedPath === copyId ? (
+                                <Check className="h-3.5 w-3.5" />
+                              ) : (
+                                <Copy className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeApiKey(item.id)}
+                          className={`${accessPointResourceIconActionClass} text-[var(--danger)] hover:bg-[var(--danger-soft)]`}
+                          aria-label={`删除 API Key ${index + 1}`}
+                          title="删除"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                        {item.models.length > 0 ? (
+                          <span className="shrink-0 text-[11px] text-[var(--text-secondary)]">
+                            {item.models.length} 模型
+                          </span>
+                        ) : null}
+                      </div>
+                    );
+                  })}
                 </div>
-                <AppButton
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleFetchModels}
-                  disabled={isFetching || !baseUrl || !apiKey}
-                >
-                  {isFetching ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-4 w-4" />
-                  )}
-                  拉取
-                </AppButton>
-              </div>
-              {fetchedModelOptions.length > 0 ? (
-                <div className="mt-3 grid max-h-[270px] grid-cols-1 gap-2 overflow-y-auto lg:grid-cols-2">
-                  {filteredFetchedModelOptions.length > 0 ? (
-                    filteredFetchedModelOptions.map(model => (
-                      <DirectModelPriceEditor
-                        key={model}
-                        model={model}
-                        pricing={modelPricing[model]}
-                        onChange={handleUpdateModelPrice}
-                        onRemove={handleRemoveModelPrice}
+              )}
+            </div>
+            <div className="space-y-0.5">
+              <AccessPointResourceSectionHeader
+                title="可用模型"
+                meta={
+                  <>
+                    {' '}
+                    ({filteredFetchedModelOptions.length}/{models.length})
+                  </>
+                }
+                actions={
+                  <>
+                    <div className="relative ml-7 w-[120px]">
+                      <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[var(--text-tertiary)]" />
+                      <input
+                        type="search"
+                        aria-label="搜索可用模型"
+                        value={modelSearchText}
+                        onChange={e => setModelSearchText(e.target.value)}
+                        placeholder="搜索模型"
+                        className="h-7 w-full rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] pl-7 pr-2 text-xs text-[var(--text-primary)] outline-none focus:ring-1 focus:ring-[var(--accent)]"
                       />
-                    ))
-                  ) : (
-                    <div className="rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-secondary)] lg:col-span-2">
-                      没有匹配的模型
                     </div>
-                  )}
+                    <button
+                      type="button"
+                      onClick={handleFetchModels}
+                      disabled={isFetching || !baseUrl || !apiKeys.some(item => item.key.trim())}
+                      className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-transparent bg-[var(--success-soft)] px-2 py-1 text-xs font-medium text-[var(--success)] transition-colors hover:opacity-90 disabled:opacity-50"
+                    >
+                      {isFetching ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-3 w-3" />
+                      )}
+                      拉取
+                    </button>
+                  </>
+                }
+              />
+              {fetchedModelOptions.length > 0 ? (
+                <div className={accessPointResourceListClass}>
+                  <div className="flex flex-wrap gap-0.5">
+                    {filteredFetchedModelOptions.length > 0 ? (
+                      filteredFetchedModelOptions.map(model => (
+                        <DirectModelPriceEditor
+                          key={model}
+                          model={model}
+                          groups={getCustomCliModelGroups(currentApiKeys, model)}
+                          pricing={modelPricing[model]}
+                          onChange={handleUpdateModelPrice}
+                          onRemove={handleRemoveModelPrice}
+                        />
+                      ))
+                    ) : (
+                      <div className="px-2 py-1 text-xs text-[var(--text-secondary)]">
+                        没有匹配的模型
+                      </div>
+                    )}
+                  </div>
                 </div>
               ) : null}
             </div>
 
-            <div>
-              <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
-                手动模型
-              </label>
-              <div className="flex items-center gap-2">
+            <div className="space-y-0.5">
+              <AccessPointResourceSectionHeader
+                title="手动模型"
+                meta={<> ({manualModels.length})</>}
+              />
+              <div className="flex items-center gap-1">
                 <input
                   type="text"
                   value={manualModelInput}
@@ -1410,18 +1661,23 @@ export function DirectCliConfigEditorContent({
                     }
                   }}
                   placeholder="输入上游未返回的模型名"
-                  className="min-w-0 flex-1 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-2 text-sm text-[var(--text-primary)] transition-all focus:border-transparent focus:ring-2 focus:ring-[var(--accent)]"
+                  className="h-7 min-w-0 flex-1 rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 text-xs text-[var(--text-primary)] outline-none focus:ring-1 focus:ring-[var(--accent)]"
                 />
-                <AppButton variant="secondary" size="sm" onClick={handleAddManualModel}>
-                  添加模型
-                </AppButton>
+                <button
+                  type="button"
+                  onClick={handleAddManualModel}
+                  className={accessPointResourceActionClass}
+                >
+                  <Plus className="h-3 w-3" />
+                  添加
+                </button>
               </div>
-              <div className="mt-3 flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-0.5 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)]/72 p-1">
                 {manualModels.length > 0 ? (
                   manualModels.map(model => (
                     <span
                       key={model}
-                      className="inline-flex items-center gap-1 rounded-full border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 py-0.5 text-xs text-[var(--text-primary)]"
+                      className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-3)] px-1.5 py-0.5 font-mono text-xs text-[var(--text-primary)]"
                     >
                       <span className="max-w-[220px] truncate">{model}</span>
                       <button
@@ -1439,7 +1695,7 @@ export function DirectCliConfigEditorContent({
                 )}
               </div>
             </div>
-          </div>
+          </AccessPointResourceShell>
         ) : null}
 
         {/* CLI 配置：按 CLI 聚合模型、目标协议和应用操作 */}

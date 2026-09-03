@@ -54,6 +54,7 @@ export interface RouteInstanceDisplay {
   observedRuntimeSlotLabel?: string;
   customAgentName?: string;
   customRuntimeSlotLabel?: string;
+  customNote?: string;
 }
 
 export type RouteInstanceRoutingState = 'armed' | 'active' | 'closed' | 'cancelled';
@@ -65,6 +66,14 @@ export interface RouteInstance {
   /** Profile namespace that owns this bound generation. ARMED and legacy records may be unscoped. */
   profileId?: string;
   routeKey?: RouteInstanceKey;
+  /** Canonical model requested by the client, independent from the editable routing target. */
+  clientModelId?: string;
+  /** Top-level parent card for a verified different-model child session. */
+  parentInstanceId?: string;
+  /** Stable sibling number allocated by the parent card. */
+  childOrdinal?: number;
+  /** Bounded verified aliases that reuse this card, including same-model child sessions. */
+  memberSessionIds?: string[];
   display: RouteInstanceDisplay;
   modelId: string;
   reasoningEffort: RouteThinkingEffort;
@@ -76,11 +85,31 @@ export interface RouteInstance {
   closedReason?: RouteInstanceClosedReason;
 }
 
+/**
+ * 会话与上游通道的绑定。刻意只记通道身份、不含 canonicalModel：
+ * 会话中途换模型时同一通道仍被优先选中，保住该上游 key 上的 prompt cache 亲和性。
+ * 绑定是建议性的——通道被禁用/抑制或失败时立即让位给常规顺序。
+ */
+export interface RouteSessionChannelBinding {
+  instanceId: string;
+  profileId: string;
+  siteId: string;
+  accountId: string;
+  apiKeyId: string;
+  targetProtocol?: CliTargetProtocol;
+  /** 建立绑定时所用的模型，仅作诊断与展示 */
+  canonicalModel: string;
+  /** 建立绑定那次请求的 requestSelectionStartedAt，用于与 affinityInvalidatedAt 比较 */
+  boundAt: number;
+  lastUsedAt: number;
+}
+
 export interface RouteInstanceUpdate {
   modelId?: string;
   reasoningEffort?: RouteThinkingEffort;
   customAgentName?: string | null;
   customRuntimeSlotLabel?: string | null;
+  customNote?: string | null;
 }
 
 export type RouteSessionRuleSource = 'header' | 'query' | 'json';
@@ -283,6 +312,14 @@ export type RoutePatternType = 'exact' | 'wildcard' | 'regex';
 /** 路由结果分类 */
 export type RouteOutcome = 'success' | 'failure' | 'neutral';
 
+/** 上游失败类别：决定健康度记账与聚合响应，不影响故障转移 */
+export type RouteUpstreamFailureClass =
+  | 'request_fatal'
+  | 'channel_fatal'
+  | 'transient'
+  | 'quota_exhausted'
+  | 'unknown';
+
 /** 模型厂商归类 */
 export type RouteModelVendor =
   | 'claude'
@@ -366,6 +403,13 @@ export interface RouteChannelStats extends RouteChannelKey {
   lastFailureAt?: number;
 }
 
+/** 路径禁用原因：statistical 为推断，upstream_* 为上游确证 */
+export type RoutePathDisabledReason =
+  | 'success_rate_below_threshold'
+  | 'upstream_credential_rejected'
+  | 'upstream_model_unavailable'
+  | 'upstream_quota_exhausted';
+
 /** 单条路由路径的短窗口运行态（用于临时禁用不可用路径） */
 export interface RoutePathState extends Omit<RouteChannelKey, 'routeRuleId'> {
   routeRuleId?: string;
@@ -378,7 +422,9 @@ export interface RoutePathState extends Omit<RouteChannelKey, 'routeRuleId'> {
   windowSuccessCount: number;
   successRate: number;
   disabledUntil?: number;
-  disabledReason?: 'success_rate_below_threshold';
+  disabledReason?: RoutePathDisabledReason;
+  /** 同一确证原因连续禁用次数，任一成功即清除；驱动阶梯时长 */
+  disableStreak?: number;
   lastOutcome?: RouteOutcome;
   lastStatusCode?: number;
   lastLatencyMs?: number;
@@ -469,11 +515,19 @@ export interface RouteRuntimeConfig {
 
 export const DEFAULT_ROUTE_VENDOR_SITE_PRIORITY = 0;
 export const DEFAULT_ROUTE_VENDOR_API_KEY_PRIORITY = 0;
+/** 未显式配置 runtimeConfig 的重定向项的回退值；仅为兼容存量数据，不代表推荐取值 */
 export const DEFAULT_ROUTE_RUNTIME_CONFIG: RouteRuntimeConfig = {
   maxAttemptsPerRoutePath: 3,
   successRateWindowMinutes: 60,
   disableDurationMinutes: 60,
   minSuccessRate: 0.3,
+};
+/** 新建重定向规则的默认值，亦是运行时规则对话框「恢复默认值」的目标 */
+export const DEFAULT_NEW_ROUTE_RUNTIME_CONFIG: RouteRuntimeConfig = {
+  maxAttemptsPerRoutePath: 1,
+  successRateWindowMinutes: 5,
+  disableDurationMinutes: 30,
+  minSuccessRate: 0.8,
 };
 
 export function buildRouteApiKeyPriorityKey(
@@ -767,6 +821,8 @@ export interface RouteRequestLogItem {
   cliType: RouteCliType;
   agentId?: string;
   agentName?: string;
+  /** 命中的会话路由实例，用于渲染层对应卡片编号 */
+  routeInstanceId?: string;
   targetProtocol?: CliTargetProtocol;
   targetEndpoint?: string;
   requestedModel?: string | null;
@@ -891,6 +947,8 @@ export interface RoutingConfig {
   routePathStates: Record<string, RoutePathState>;
   routeEndpointCapabilities?: Record<string, RouteEndpointCapabilityState>;
   health: Record<string, RouteChannelHealth>;
+  /** 渲染层投影：当前活跃的会话-通道绑定。由 route:get-config 附带，不参与持久化。 */
+  sessionChannelBindings?: RouteSessionChannelBinding[];
   modelRegistry: RouteModelRegistryConfig;
   endpointTests: Record<string, EndpointTestTargetState>;
   analytics: {
@@ -902,7 +960,8 @@ export interface RoutingConfig {
 // ============= 默认值 =============
 
 export const DEFAULT_ROUTE_PROXY_SERVER_CONFIG: RouteProxyServerConfig = {
-  enabled: false,
+  // 默认开启：CLI 指向本地路由后，代理不自启会让请求直连上游，绕过全部路由规则
+  enabled: true,
   host: '127.0.0.1',
   port: 3210,
   unifiedApiKey: '',

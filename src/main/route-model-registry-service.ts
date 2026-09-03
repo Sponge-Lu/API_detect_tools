@@ -32,8 +32,9 @@ import {
 } from '../shared/types/route-proxy';
 import { BUILTIN_GROUP_IDS, isApiKeyActive } from '../shared/types/site';
 import type { AccountCredential, ApiKeyInfo, ModelPricingData } from '../shared/types/site';
-import type { CustomCliConfig } from '../shared/types/custom-cli-config';
+import { normalizeCustomCliApiKeys, type CustomCliConfig } from '../shared/types/custom-cli-config';
 import { BUILTIN_CLI_TYPES } from '../shared/types/cli-config';
+import { normalizeCircledGroupLabel } from '../shared/utils/groupLabel';
 
 const log = Logger.scope('RouteModelRegistry');
 const ROUTE_CLI_TYPES: RouteCliType[] = [...BUILTIN_CLI_TYPES];
@@ -234,13 +235,8 @@ function collectAvailableApiKeys(
   originalModel: string,
   availableUserGroups: string[]
 ): RouteModelSourceApiKeyRef[] {
-  if (availableUserGroups.length === 0) {
-    return [];
-  }
-
   const allowedGroups = new Set(availableUserGroups);
-
-  return (account.cached_data?.api_keys || [])
+  const remoteApiKeys = (account.cached_data?.api_keys || [])
     .filter(apiKey => {
       const group = apiKey.group?.trim();
       return (
@@ -257,6 +253,20 @@ function collectAvailableApiKeys(
       accountName: account.account_name,
       group: apiKey.group!.trim(),
     }));
+  const localApiKeys = (account.local_api_keys || [])
+    .filter(apiKey => {
+      const group = normalizeCircledGroupLabel(apiKey.group);
+      return !!group && !!apiKey.key.trim() && apiKey.models.includes(originalModel);
+    })
+    .map(apiKey => ({
+      apiKeyId: apiKey.id,
+      apiKeyName: apiKey.name || '本地 API Key',
+      accountId: account.id,
+      accountName: account.account_name,
+      group: normalizeCircledGroupLabel(apiKey.group),
+    }));
+
+  return [...remoteApiKeys, ...localApiKeys];
 }
 
 function addCustomCliModelCandidate(
@@ -550,12 +560,29 @@ async function rebuildModelRegistryInternal(force?: boolean): Promise<RouteModel
 
     const siteAccounts = accounts.filter(a => a.site_id === site.id);
     for (const account of siteAccounts) {
-      const models = account.cached_data?.models || [];
-      const userGroupKeys = Object.keys(account.cached_data?.user_groups || {});
+      const models = Array.from(
+        new Set([
+          ...(account.cached_data?.models || []),
+          ...(account.local_api_keys || []).flatMap(apiKey => apiKey.models),
+        ])
+      );
+      const userGroupKeys = Array.from(
+        new Set([
+          ...Object.keys(account.cached_data?.user_groups || {}),
+          ...(account.local_api_keys || [])
+            .map(apiKey => normalizeCircledGroupLabel(apiKey.group))
+            .filter(Boolean),
+        ])
+      );
       const modelPricing = account.cached_data?.model_pricing;
 
       for (const model of models) {
-        const availableUserGroups = collectAvailableUserGroups(modelPricing, model, userGroupKeys);
+        const pricedUserGroups = collectAvailableUserGroups(modelPricing, model, userGroupKeys);
+        const localUserGroups = (account.local_api_keys || [])
+          .filter(apiKey => apiKey.models.includes(model))
+          .map(apiKey => normalizeCircledGroupLabel(apiKey.group))
+          .filter(Boolean);
+        const availableUserGroups = Array.from(new Set([...pricedUserGroups, ...localUserGroups]));
         const availableApiKeys = collectAvailableApiKeys(account, model, availableUserGroups);
         const apiKeyNamesByGroup = buildApiKeyNamesByGroup(availableApiKeys);
         const apiKeyGroups = Array.from(new Set(availableApiKeys.map(apiKey => apiKey.group)));
@@ -592,20 +619,48 @@ async function rebuildModelRegistryInternal(force?: boolean): Promise<RouteModel
   const customCliStorage = await loadCustomCliConfigStorage();
   for (const customConfig of customCliStorage.configs) {
     const baseUrl = customConfig.baseUrl?.trim() ?? '';
-    const apiKey = customConfig.apiKey?.trim() ?? '';
-    if (!baseUrl || !apiKey) {
+    const apiKeys = normalizeCustomCliApiKeys(customConfig.apiKeys, {
+      legacyApiKey: customConfig.apiKey,
+      legacyName: customConfig.name,
+      legacyGroupMultiplier: customConfig.groupMultiplier,
+    }).filter(apiKey => apiKey.key.trim());
+    const hasExplicitApiKeys = !(
+      apiKeys.length === 1 && /^key_legacy(?:_|$)/.test(apiKeys[0]?.id || '')
+    );
+    if (!baseUrl || apiKeys.length === 0) {
       continue;
     }
 
     const displayName = customConfig.name?.trim() || baseUrl || customConfig.id;
     const siteId = buildCustomCliRouteSiteId(customConfig.id);
     const accountId = buildCustomCliRouteAccountId(customConfig.id);
-    const apiKeyId = buildCustomCliRouteApiKeyId(customConfig.id);
     const siteName = displayName;
     const accountName = '自定义 CLI';
-    const apiKeyName = `${displayName} Key`;
+    const manualModels = new Set((customConfig.manualModels || []).map(model => model.trim()));
+    const hasKeyModelSnapshots = apiKeys.some(apiKey => apiKey.models.length > 0);
 
     for (const { model, cliTypes } of collectCustomCliModelCandidates(customConfig)) {
+      const availableApiKeys = apiKeys.flatMap((apiKey, index) => {
+        if (!manualModels.has(model) && hasKeyModelSnapshots && !apiKey.models.includes(model)) {
+          return [];
+        }
+        return [
+          {
+            apiKeyId: buildCustomCliRouteApiKeyId(
+              customConfig.id,
+              hasExplicitApiKeys ? apiKey.id : undefined
+            ),
+            apiKeyName: hasExplicitApiKeys
+              ? apiKey.name.trim() || `${displayName} Key #${index + 1}`
+              : `${displayName} Key`,
+            accountId,
+            accountName,
+            group: normalizeCircledGroupLabel(apiKey.group) || CUSTOM_CLI_ROUTE_GROUP,
+          },
+        ];
+      });
+      if (availableApiKeys.length === 0) continue;
+      const apiKeyGroups = Array.from(new Set(availableApiKeys.map(apiKey => apiKey.group)));
       processModelSource(detectedEntries, sourcePool, overrideBySource, {
         siteId,
         siteName,
@@ -614,21 +669,11 @@ async function rebuildModelRegistryInternal(force?: boolean): Promise<RouteModel
         sourceType: 'customCli',
         originalModel: model,
         availableCliTypes: cliTypes,
-        apiKeyGroups: [CUSTOM_CLI_ROUTE_GROUP],
-        apiKeyNamesByGroup: {
-          [CUSTOM_CLI_ROUTE_GROUP]: [apiKeyName],
-        },
-        userGroupKeys: [CUSTOM_CLI_ROUTE_GROUP],
-        availableUserGroups: [CUSTOM_CLI_ROUTE_GROUP],
-        availableApiKeys: [
-          {
-            apiKeyId,
-            apiKeyName,
-            accountId,
-            accountName,
-            group: CUSTOM_CLI_ROUTE_GROUP,
-          },
-        ],
+        apiKeyGroups,
+        apiKeyNamesByGroup: buildApiKeyNamesByGroup(availableApiKeys),
+        userGroupKeys: apiKeyGroups,
+        availableUserGroups: apiKeyGroups,
+        availableApiKeys,
         now,
       });
     }

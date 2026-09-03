@@ -115,6 +115,7 @@ describe('route session instance cards', () => {
     );
     expect(screen.getByTestId('route-session-grid-scroll')).toHaveClass('overflow-x-auto');
     expect(screen.getByTestId('route-session-grid')).toHaveClass('grid-cols-3', 'min-w-[60rem]');
+    expect(screen.getByTestId('route-session-ordinal')).toHaveTextContent('#1');
     expect(screen.getByTestId('route-session-grid').className).not.toMatch(
       /(?:sm|md|lg|xl):grid-cols/
     );
@@ -126,6 +127,36 @@ describe('route session instance cards', () => {
       expect(mockUpdate).toHaveBeenCalledWith('route-1', { customAgentName: 'My Codex' })
     );
     expect(mockUpdate.mock.calls.flat().join(' ')).not.toContain('sessionId');
+  });
+
+  it('renders a different-model child with the parent sub-number', async () => {
+    const parent = activeRoute();
+    mockList.mockResolvedValue({
+      success: true,
+      data: [
+        parent,
+        {
+          ...parent,
+          id: 'route-child',
+          routeKey: {
+            agentId: 'codex',
+            runtimeSlotId: 'child-session',
+            sessionId: 'child-session',
+          },
+          parentInstanceId: parent.id,
+          childOrdinal: 1,
+          clientModelId: 'model-b',
+          modelId: 'model-b',
+          createdAt: 2_000,
+        },
+      ],
+    });
+
+    render(<RouteSessionSection />);
+
+    expect(
+      (await screen.findAllByTestId('route-session-ordinal')).map(node => node.textContent)
+    ).toEqual(['#1', '#1.1']);
   });
 
   it('describes session-scoped Codex routes without exposing context-window labels', async () => {
@@ -147,7 +178,7 @@ describe('route session instance cards', () => {
     render(<RouteSessionSection />);
 
     expect(await screen.findByDisplayValue('会话级路由')).toBeInTheDocument();
-    expect(screen.getByText('未提供稳定物理窗口标识')).toBeInTheDocument();
+    expect(screen.queryByText('未提供稳定物理窗口标识')).not.toBeInTheDocument();
     expect(screen.queryByDisplayValue('session-1:7')).not.toBeInTheDocument();
     expect(screen.queryByText('session-1:7')).not.toBeInTheDocument();
   });
@@ -175,7 +206,7 @@ describe('route session instance cards', () => {
     render(<RouteSessionSection />);
 
     expect(await screen.findByDisplayValue('会话级路由')).toBeInTheDocument();
-    expect(screen.getByText('未提供稳定物理窗口标识')).toBeInTheDocument();
+    expect(screen.queryByText('未提供稳定物理窗口标识')).not.toBeInTheDocument();
     expect(screen.getByText('claude-session-1')).toBeInTheDocument();
     expect(document.querySelector('[data-agent-logo="claudeCode"]')).toBeInTheDocument();
   });
@@ -204,6 +235,21 @@ describe('route session instance cards', () => {
       expect(mockUpdate).toHaveBeenCalledWith('route-1', {
         reasoningEffort: 'vendor-ultra',
       })
+    );
+  });
+
+  it('saves a session note on blur and skips saving when unchanged', async () => {
+    render(<RouteSessionSection />);
+    const noteInput = await screen.findByLabelText('route-1 备注');
+    expect(noteInput).toHaveValue('');
+
+    fireEvent.blur(noteInput);
+    expect(mockUpdate).not.toHaveBeenCalled();
+
+    fireEvent.change(noteInput, { target: { value: '重点客户会话' } });
+    fireEvent.blur(noteInput);
+    await waitFor(() =>
+      expect(mockUpdate).toHaveBeenCalledWith('route-1', { customNote: '重点客户会话' })
     );
   });
 

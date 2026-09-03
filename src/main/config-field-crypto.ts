@@ -207,6 +207,21 @@ function encryptAccountFields(account: AccountCredential): AccountCredential {
   if (encryptedAccount.access_token) {
     encryptedAccount.access_token = encryptField(encryptedAccount.access_token);
   }
+  if (encryptedAccount.local_api_keys) {
+    encryptedAccount.local_api_keys = encryptedAccount.local_api_keys.map(item => ({
+      ...item,
+      key: item.key ? encryptField(item.key) : item.key,
+    }));
+  }
+  if (encryptedAccount.cached_data?.local_api_keys) {
+    encryptedAccount.cached_data = {
+      ...encryptedAccount.cached_data,
+      local_api_keys: encryptedAccount.cached_data.local_api_keys.map(item => ({
+        ...item,
+        key: item.key ? encryptField(item.key) : item.key,
+      })),
+    };
+  }
 
   // 兼容嵌套的 account_info.access_token 字段
   const accountWithInfo = encryptedAccount as AccountCredential & {
@@ -230,6 +245,21 @@ function decryptAccountFields(account: AccountCredential): AccountCredential {
 
   if (decryptedAccount.access_token) {
     decryptedAccount.access_token = decryptField(decryptedAccount.access_token);
+  }
+  if (decryptedAccount.local_api_keys) {
+    decryptedAccount.local_api_keys = decryptedAccount.local_api_keys.map(item => ({
+      ...item,
+      key: item.key ? decryptField(item.key) : item.key,
+    }));
+  }
+  if (decryptedAccount.cached_data?.local_api_keys) {
+    decryptedAccount.cached_data = {
+      ...decryptedAccount.cached_data,
+      local_api_keys: decryptedAccount.cached_data.local_api_keys.map(item => ({
+        ...item,
+        key: item.key ? decryptField(item.key) : item.key,
+      })),
+    };
   }
 
   // 兼容嵌套的 account_info.access_token 字段
@@ -255,6 +285,10 @@ export function encryptCustomCliConfigs(configs: CustomCliConfig[]): CustomCliCo
   return configs.map(config => ({
     ...config,
     apiKey: config.apiKey ? encryptField(config.apiKey) : config.apiKey,
+    apiKeys: config.apiKeys?.map(item => ({
+      ...item,
+      key: item.key ? encryptField(item.key) : item.key,
+    })),
   }));
 }
 
@@ -268,6 +302,10 @@ export function decryptCustomCliConfigs(configs: CustomCliConfig[]): CustomCliCo
     return configs.map(config => ({
       ...config,
       apiKey: config.apiKey ? decryptField(config.apiKey) : config.apiKey,
+      apiKeys: config.apiKeys?.map(item => ({
+        ...item,
+        key: item.key ? decryptField(item.key) : item.key,
+      })),
     }));
   } catch (error: any) {
     getLogger().error('[ConfigFieldCrypto] 解密 custom-cli-configs 失败:', error?.message || error);

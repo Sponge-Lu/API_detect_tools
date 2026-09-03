@@ -13,8 +13,10 @@ import {
   buildCustomCliRouteSiteId,
   isCustomCliRouteChannel,
   loadCustomCliConfigStorage,
+  parseCustomCliRouteApiKeyId,
   parseCustomCliRouteConfigId,
 } from './custom-cli-config-service';
+import { normalizeCustomCliApiKeys } from '../shared/types/custom-cli-config';
 import { normalizeCliTargetProtocol } from '../shared/types/cli-config';
 import type {
   RouteRule,
@@ -545,10 +547,7 @@ function buildCanonicalModelChannels(
     );
     const channelTargetProtocol = isCustomCliChannel
       ? undefined
-      : resolveStoredTargetProtocol(
-          accountById.get(group.accountId),
-          rule.sourceProtocol
-        );
+      : resolveStoredTargetProtocol(accountById.get(group.accountId), rule.sourceProtocol);
 
     orderedOriginalModels.forEach((resolvedModel, originalModelIndex) => {
       channels.push({
@@ -699,7 +698,17 @@ export async function resolveChannelCredentials(
     const storage = await loadCustomCliConfigStorage();
     const config = storage.configs.find(item => item.id === configId);
     const baseUrl = config?.baseUrl?.trim();
-    const apiKey = config?.apiKey?.trim();
+    const parsedApiKey = parseCustomCliRouteApiKeyId(apiKeyId);
+    const apiKeys = normalizeCustomCliApiKeys(config?.apiKeys, {
+      legacyApiKey: config?.apiKey,
+      legacyName: config?.name,
+      legacyGroupMultiplier: config?.groupMultiplier,
+    });
+    const apiKey = (
+      parsedApiKey?.keyId
+        ? apiKeys.find(item => item.id === parsedApiKey.keyId)?.key
+        : config?.apiKey || apiKeys[0]?.key
+    )?.trim();
     if (!baseUrl || !apiKey || isRouteMaskedApiKeyValue(apiKey)) {
       return null;
     }
@@ -726,6 +735,15 @@ export async function resolveChannelCredentials(
       }
       return { baseUrl: site.url, apiKey: rawKey, authScheme: account.routeAuthScheme };
     }
+  }
+
+  const localApiKey = (account.local_api_keys || []).find(info => info.id === apiKeyId);
+  if (localApiKey?.key && !isRouteMaskedApiKeyValue(localApiKey.key)) {
+    return {
+      baseUrl: site.url,
+      apiKey: localApiKey.key,
+      authScheme: account.routeAuthScheme,
+    };
   }
 
   if (site.api_key) {
@@ -755,8 +773,7 @@ export async function resolveChannelTarget(
       const configured = normalizeCliTargetProtocol(
         config.targetProtocol ?? customConfig?.routeTargetProtocol
       );
-      const targetProtocol =
-        configured === 'native' ? config.sourceProtocol : configured;
+      const targetProtocol = configured === 'native' ? config.sourceProtocol : configured;
       return {
         targetProtocol,
         targetEndpoint: getTargetEndpoint(targetProtocol),

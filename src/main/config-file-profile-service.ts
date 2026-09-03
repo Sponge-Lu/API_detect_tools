@@ -52,6 +52,7 @@ import {
 import { writeJsonFileAtomically, writeTextFileAtomically } from './utils/atomic-json';
 import { routeStateAffinityService } from './route-state-affinity-service';
 import { routeSessionActivityService } from './route-session-activity-service';
+import { routeSessionBindingService } from './route-session-binding-service';
 import { getBuiltinClientConfigTemplates } from '../shared/config/builtin-client-configs';
 import { BUILTIN_GROUP_IDS, isApiKeyActive } from '../shared/types/site';
 import { normalizeTomlContent } from './utils/toml-parser';
@@ -745,6 +746,7 @@ export async function deleteConfigFileProfile(input: DeleteConfigFileProfileInpu
     await Promise.all([
       routeStateAffinityService.removeByProfile(input.profileId),
       routeSessionActivityService.removeByProfile(input.profileId),
+      routeSessionBindingService.removeByProfile(input.profileId),
     ]);
   } catch (error) {
     try {

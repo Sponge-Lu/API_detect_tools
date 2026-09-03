@@ -71,9 +71,13 @@ import {
   isRoutePathDisabled,
   recordRouteEndpointUnsupported,
   recordRoutePathOutcome,
+  ROUTE_PATH_DISABLE_LADDER_MINUTES,
   ROUTE_PATH_DISABLE_MS,
   ROUTE_PATH_MIN_DISABLE_SAMPLES,
 } from '../main/route-stats-service';
+
+const minutes = (value: number) => value * 60 * 1000;
+const [RUNG_1, RUNG_2, RUNG_3] = ROUTE_PATH_DISABLE_LADDER_MINUTES;
 
 const routePath = {
   routeRuleId: 'rule-1',
@@ -318,5 +322,172 @@ describe('route-stats-service route endpoint capabilities', () => {
         'claude_messages_count_tokens'
       )
     ).toBe(false);
+  });
+});
+
+describe('route-stats-service confirmed unavailability', () => {
+  beforeEach(() => {
+    mocks.routing.routePathStates = {};
+    mocks.routing.modelRegistry.displayItems = [];
+    mocks.upsertRoutePathState.mockClear();
+  });
+
+  it('disables on the first confirmed rejection instead of waiting for the window', async () => {
+    const now = 2_000_000;
+
+    const state = await recordRoutePathOutcome(
+      routePath,
+      'failure',
+      { statusCode: 401, confirmedUnavailable: 'upstream_credential_rejected' },
+      now
+    );
+
+    expect(state.windowRequestCount).toBe(1);
+    expect(state.disabledReason).toBe('upstream_credential_rejected');
+    expect(state.disableStreak).toBe(1);
+    expect(state.disabledUntil).toBe(now + minutes(RUNG_1));
+    expect(isRoutePathDisabled(routePath, now + 1)).toBe(true);
+  });
+
+  it('escalates the ladder on consecutive confirmations of the same reason', async () => {
+    let now = 2_100_000;
+
+    const first = await recordRoutePathOutcome(
+      routePath,
+      'failure',
+      { confirmedUnavailable: 'upstream_credential_rejected' },
+      now
+    );
+    expect(first.disabledUntil).toBe(now + minutes(RUNG_1));
+
+    now += minutes(RUNG_1) + 1;
+    const second = await recordRoutePathOutcome(
+      routePath,
+      'failure',
+      { confirmedUnavailable: 'upstream_credential_rejected' },
+      now
+    );
+    expect(second.disableStreak).toBe(2);
+    expect(second.disabledUntil).toBe(now + minutes(RUNG_2));
+
+    now += minutes(RUNG_2) + 1;
+    const third = await recordRoutePathOutcome(
+      routePath,
+      'failure',
+      { confirmedUnavailable: 'upstream_credential_rejected' },
+      now
+    );
+    expect(third.disableStreak).toBe(3);
+    expect(third.disabledUntil).toBe(now + minutes(RUNG_3));
+
+    now += minutes(RUNG_3) + 1;
+    const fourth = await recordRoutePathOutcome(
+      routePath,
+      'failure',
+      { confirmedUnavailable: 'upstream_credential_rejected' },
+      now
+    );
+    expect(fourth.disableStreak).toBe(4);
+    expect(fourth.disabledUntil).toBe(now + minutes(RUNG_3));
+  });
+
+  it('restarts the ladder when a different reason is confirmed', async () => {
+    let now = 2_200_000;
+
+    await recordRoutePathOutcome(
+      routePath,
+      'failure',
+      { confirmedUnavailable: 'upstream_credential_rejected' },
+      now
+    );
+    now += minutes(RUNG_1) + 1;
+    await recordRoutePathOutcome(
+      routePath,
+      'failure',
+      { confirmedUnavailable: 'upstream_credential_rejected' },
+      now
+    );
+
+    now += minutes(RUNG_2) + 1;
+    const switched = await recordRoutePathOutcome(
+      routePath,
+      'failure',
+      { confirmedUnavailable: 'upstream_model_unavailable' },
+      now
+    );
+
+    expect(switched.disabledReason).toBe('upstream_model_unavailable');
+    expect(switched.disableStreak).toBe(1);
+    expect(switched.disabledUntil).toBe(now + minutes(RUNG_1));
+  });
+
+  it('clears the streak after a success so recovery restarts at the first rung', async () => {
+    let now = 2_300_000;
+
+    await recordRoutePathOutcome(
+      routePath,
+      'failure',
+      { confirmedUnavailable: 'upstream_quota_exhausted' },
+      now
+    );
+    now += minutes(RUNG_1) + 1;
+    const recovered = await recordRoutePathOutcome(routePath, 'success', { statusCode: 200 }, now);
+    expect(recovered.disableStreak).toBeUndefined();
+
+    now += 1;
+    const again = await recordRoutePathOutcome(
+      routePath,
+      'failure',
+      { confirmedUnavailable: 'upstream_quota_exhausted' },
+      now
+    );
+    expect(again.disableStreak).toBe(1);
+    expect(again.disabledUntil).toBe(now + minutes(RUNG_1));
+  });
+
+  it('never lets a ladder rung exceed the configured disable duration', async () => {
+    let now = 2_400_000;
+    const runtimeConfig = { disableDurationMinutes: 5 };
+
+    const first = await recordRoutePathOutcome(
+      routePath,
+      'failure',
+      { confirmedUnavailable: 'upstream_credential_rejected' },
+      now,
+      runtimeConfig
+    );
+    expect(first.disabledUntil).toBe(now + minutes(RUNG_1));
+
+    now += minutes(RUNG_1) + 1;
+    const second = await recordRoutePathOutcome(
+      routePath,
+      'failure',
+      { confirmedUnavailable: 'upstream_credential_rejected' },
+      now,
+      runtimeConfig
+    );
+    expect(second.disabledUntil).toBe(now + minutes(5));
+  });
+
+  it('leaves the statistical path on its flat duration and reason', async () => {
+    const now = 2_500_000;
+
+    await recordRoutePathOutcome(routePath, 'failure', { statusCode: 502 }, now);
+    const state = await recordRoutePathOutcome(routePath, 'failure', { statusCode: 502 }, now + 1);
+
+    expect(state.disabledReason).toBe('success_rate_below_threshold');
+    expect(state.disabledUntil).toBe(now + 1 + ROUTE_PATH_DISABLE_MS);
+    expect(state.disableStreak).toBeUndefined();
+  });
+
+  it('never disables or touches the streak on a neutral sample', async () => {
+    const now = 2_600_000;
+
+    const state = await recordRoutePathOutcome(routePath, 'neutral', { statusCode: 400 }, now);
+
+    expect(state.windowRequestCount).toBe(0);
+    expect(state.disabledUntil).toBeUndefined();
+    expect(state.disableStreak).toBeUndefined();
+    expect(isRoutePathDisabled(routePath, now + 1)).toBe(false);
   });
 });

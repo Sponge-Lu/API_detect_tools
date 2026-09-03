@@ -16,10 +16,10 @@
 | 文件 | 职责 | 关键类型 |
 |------|------|--------|
 | **site.ts** | 站点、账户接入点级上游协议、检测缓存与运行期快照类型 | Site, UnifiedSite, AccountCredential, SiteDailySnapshot, RuntimeCacheFile |
-| **route-proxy.ts** | 通用网关、非敏感 Responses affinity 摘要、模型映射、会话路由实例与端点历史类型 | RoutingConfig, RouteStateAffinitySummary, RouteInstance, HistoryEndpointTrack |
+| **route-proxy.ts** | 通用网关、非敏感 Responses affinity 摘要、模型映射、含父子谱系与客户端模型的会话路由实例、端点历史类型 | RoutingConfig, RouteStateAffinitySummary, RouteInstance, HistoryEndpointTrack |
 | **config-file-profile.ts** | 版本化配置方案、含协议元数据的目标目录、文件事务和对话记录扫描类型 | ConfigFileProfile, ConfigFileTargetCatalogEntry, ConfigFilePreviewTransaction, ConfigSessionRecordScanResult |
 | **cli-config.ts** | 四种内置 CLI 的配置与目标协议类型 | BuiltinCliType, CliConfig, CLI_TARGET_PROTOCOLS |
-| **custom-cli-config.ts** | 直连接入点配置及接入点级上游协议 | CustomCliConfig, routeTargetProtocol, manualModels |
+| **custom-cli-config.ts** | 直连接入点配置、模型列表 URL 及接入点级上游协议 | CustomCliConfig, modelUrl, routeTargetProtocol, manualModels |
 | **config-detection.ts** | 四种 CLI 本地配置静态检测类型与官方端点/路径 | ConfigSourceType, CliDetectionResult, AllCliDetectionResult 等 |
 | **credit.ts** | Linux Do Credit 积分类型 | CreditInfo, CreditConfig, CreditState, CreditResponse 等 |
 ---
@@ -206,6 +206,10 @@ interface RouteInstanceKey {
 interface RouteInstance {
   id: string;
   routeKey?: RouteInstanceKey;
+  clientModelId?: string;
+  parentInstanceId?: string;
+  childOrdinal?: number;
+  memberSessionIds?: string[];
   routingState: 'armed' | 'active' | 'closed' | 'cancelled';
   modelId: string;
   reasoningEffort: string;

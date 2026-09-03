@@ -1183,6 +1183,117 @@ describe('route model registry service', () => {
     expect(result.sources.map(source => source.originalModel)).not.toContain('stale-gemini');
   });
 
+  it('routes direct models through only the API keys whose snapshots contain them', async () => {
+    const registry = createRegistryConfig();
+    const customConfig = createCustomCliConfig({
+      apiKey: 'sk-a',
+      apiKeys: [
+        {
+          id: 'key-a',
+          name: 'A',
+          key: 'sk-a',
+          group: '1 默认',
+          groupMultiplier: 1,
+          models: ['model-a', 'model-b'],
+        },
+        {
+          id: 'key-b',
+          name: 'B',
+          key: 'sk-b',
+          group: '2 高级',
+          groupMultiplier: 2,
+          models: ['model-b', 'model-c'],
+        },
+      ],
+      models: ['model-a', 'model-b', 'model-c'],
+      lastModelFetch: 100,
+    });
+    customCliStorageMock.mockResolvedValue({ configs: [customConfig], activeConfigId: null });
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({ sites: [], accounts: [] });
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({ modelRegistry: registry });
+
+    const result = await syncModelRegistrySources(true);
+    const byModel = new Map(result.sources.map(source => [source.originalModel, source]));
+    expect(byModel.get('model-a')?.availableApiKeys).toEqual([
+      expect.objectContaining({
+        apiKeyId: buildCustomCliRouteApiKeyId(customConfig.id, 'key-a'),
+        group: '① 默认',
+      }),
+    ]);
+    expect(byModel.get('model-b')?.availableApiKeys).toEqual([
+      expect.objectContaining({ apiKeyId: buildCustomCliRouteApiKeyId(customConfig.id, 'key-a') }),
+      expect.objectContaining({ apiKeyId: buildCustomCliRouteApiKeyId(customConfig.id, 'key-b') }),
+    ]);
+    expect(byModel.get('model-c')?.availableApiKeys).toEqual([
+      expect.objectContaining({
+        apiKeyId: buildCustomCliRouteApiKeyId(customConfig.id, 'key-b'),
+        group: '② 高级',
+      }),
+    ]);
+
+    const siteId = buildCustomCliRouteSiteId(customConfig.id);
+    const accountId = buildCustomCliRouteAccountId(customConfig.id);
+    await expect(
+      resolveChannelCredentials(
+        siteId,
+        accountId,
+        buildCustomCliRouteApiKeyId(customConfig.id, 'key-b')
+      )
+    ).resolves.toEqual({ baseUrl: customConfig.baseUrl, apiKey: 'sk-b' });
+    await expect(
+      resolveChannelCredentials(siteId, accountId, buildCustomCliRouteApiKeyId(customConfig.id))
+    ).resolves.toEqual({ baseUrl: customConfig.baseUrl, apiKey: 'sk-a' });
+  });
+
+  it('adds locally managed API key model snapshots to managed routing sources', async () => {
+    const registry = createRegistryConfig();
+    unifiedConfigManagerMock.exportConfigSync.mockReturnValue({
+      sites: [{ id: 'site-local', name: 'Local Site', url: 'https://local.example.com' }],
+      accounts: [
+        {
+          id: 'acc-local',
+          site_id: 'site-local',
+          account_name: 'Local Account',
+          local_api_keys: [
+            {
+              id: 'local-key',
+              name: 'Local Key',
+              key: 'sk-local',
+              group: '3 本地',
+              groupMultiplier: 1.5,
+              models: ['local-model'],
+              source: 'local',
+              createdAt: 1,
+              updatedAt: 1,
+            },
+          ],
+          cached_data: { models: [], api_keys: [], user_groups: {} },
+        },
+      ],
+    });
+    unifiedConfigManagerMock.getRoutingConfig.mockReturnValue({ modelRegistry: registry });
+
+    const result = await syncModelRegistrySources(true);
+    expect(result.sources).toEqual([
+      expect.objectContaining({
+        siteId: 'site-local',
+        accountId: 'acc-local',
+        originalModel: 'local-model',
+        availableUserGroups: ['③ 本地'],
+        availableApiKeys: [
+          expect.objectContaining({
+            apiKeyId: 'local-key',
+            apiKeyName: 'Local Key',
+            group: '③ 本地',
+          }),
+        ],
+      }),
+    ]);
+    await expect(
+      resolveChannelCredentials('site-local', 'acc-local', 'local-key')
+    ).resolves.toEqual({ baseUrl: 'https://local.example.com', apiKey: 'sk-local' });
+  });
+
   it('syncs manual custom CLI model sources even when all CLI settings are disabled', async () => {
     const registry = createRegistryConfig();
     const customConfig = createCustomCliConfig({

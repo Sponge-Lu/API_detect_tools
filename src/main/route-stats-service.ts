@@ -11,6 +11,7 @@ import type {
   RouteEndpointCapabilityName,
   RouteEndpointCapabilityState,
   RouteOutcome,
+  RoutePathDisabledReason,
   RoutePathState,
   RouteRuntimeConfig,
   RoutingConfig,
@@ -31,6 +32,11 @@ export const ROUTE_PATH_DISABLE_MS =
   DEFAULT_ROUTE_RUNTIME_CONFIG.disableDurationMinutes * 60 * 1000;
 export const ROUTE_PATH_MIN_SUCCESS_RATE = DEFAULT_ROUTE_RUNTIME_CONFIG.minSuccessRate;
 export const ROUTE_PATH_MIN_DISABLE_SAMPLES = 2;
+/**
+ * 上游确证不可用时的阶梯禁用时长（分钟）。首次很短，避免上游把瞬时故障
+ * 误报成 401/404 时长时间误伤健康通道；连续确认同一原因才逐级升到常规时长。
+ */
+export const ROUTE_PATH_DISABLE_LADDER_MINUTES = [2, 10, 30];
 
 /** 等待 flush 的内存缓冲区 */
 const pendingUpdates = new Map<string, RouteChannelStats>();
@@ -195,6 +201,8 @@ export async function recordRoutePathOutcome(
     latencyMs?: number;
     error?: string;
     requestSelectionStartedAt?: number;
+    /** 上游确证的不可用原因：首次即禁用，不等成功率窗口推断 */
+    confirmedUnavailable?: RoutePathDisabledReason;
   },
   nowOrRuntimeConfig: number | Partial<RouteRuntimeConfig> = Date.now(),
   runtimeConfig?: Partial<RouteRuntimeConfig>
@@ -245,6 +253,39 @@ export async function recordRoutePathOutcome(
     windowRequestCount > 0 &&
     successRate < effectiveRuntimeConfig.minSuccessRate;
 
+  // 上游确证优先于统计推断：证据比推断更可信，且首次即生效。
+  const confirmedUnavailable = meta?.confirmedUnavailable;
+  const disableStreak = confirmedUnavailable
+    ? confirmedUnavailable === existing?.disabledReason
+      ? (existing?.disableStreak ?? 0) + 1
+      : 1
+    : outcome === 'success'
+      ? undefined
+      : existing?.disableStreak;
+  const confirmedDisableMs = confirmedUnavailable
+    ? Math.min(
+        ROUTE_PATH_DISABLE_LADDER_MINUTES[
+          Math.min(disableStreak!, ROUTE_PATH_DISABLE_LADDER_MINUTES.length) - 1
+        ],
+        effectiveRuntimeConfig.disableDurationMinutes
+      ) *
+      60 *
+      1000
+    : undefined;
+
+  const nextDisabledUntil = confirmedUnavailable
+    ? now + confirmedDisableMs!
+    : shouldDisable
+      ? now + effectiveRuntimeConfig.disableDurationMinutes * 60 * 1000
+      : stillDisabledUntil;
+  const nextDisabledReason: RoutePathDisabledReason | undefined = confirmedUnavailable
+    ? confirmedUnavailable
+    : shouldDisable
+      ? 'success_rate_below_threshold'
+      : stillDisabledUntil
+        ? existing?.disabledReason
+        : undefined;
+
   const nextState: RoutePathState = {
     routeRuleId: key.routeRuleId,
     siteId: key.siteId,
@@ -258,14 +299,9 @@ export async function recordRoutePathOutcome(
     windowRequestCount,
     windowSuccessCount,
     successRate,
-    disabledUntil: shouldDisable
-      ? now + effectiveRuntimeConfig.disableDurationMinutes * 60 * 1000
-      : stillDisabledUntil,
-    disabledReason: shouldDisable
-      ? 'success_rate_below_threshold'
-      : stillDisabledUntil
-        ? existing?.disabledReason
-        : undefined,
+    disabledUntil: nextDisabledUntil,
+    disabledReason: nextDisabledReason,
+    disableStreak,
     lastOutcome: preservePostInvalidationSuccess ? existing?.lastOutcome : outcome,
     lastStatusCode: meta?.statusCode,
     lastLatencyMs: meta?.latencyMs,

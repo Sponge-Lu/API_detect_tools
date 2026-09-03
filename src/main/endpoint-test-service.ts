@@ -21,6 +21,7 @@ import {
   buildCustomCliRouteSiteId,
   loadCustomCliConfigStorage,
 } from './custom-cli-config-service';
+import { normalizeCustomCliApiKeys } from '../shared/types/custom-cli-config';
 import { isRouteMaskedApiKeyValue, resolveAccountApiKeyValue } from './route-channel-resolver';
 import { resolveApiKeyId } from './route-model-registry-service';
 import { ensureRouteProxyReady } from './route-proxy-service';
@@ -127,8 +128,13 @@ function createSelectionState(
   apiKeys: EndpointTestApiKeyOption[],
   models: string[]
 ): EndpointTestSelectionState {
+  const storedApiKeyId = stored?.apiKeyId;
   return {
-    apiKeyId: stored?.apiKeyId || apiKeys[0]?.id || null,
+    // 存量 apiKeyId 必须仍存在于当前 key 列表，否则回退首项，避免悬空值让下拉无法选中
+    apiKeyId:
+      (storedApiKeyId && apiKeys.some(apiKey => apiKey.id === storedApiKeyId)
+        ? storedApiKeyId
+        : apiKeys[0]?.id) || null,
     model: stored?.model || models[0] || null,
     ...(stored?.latest ? { latest: stored.latest } : {}),
   };
@@ -230,22 +236,45 @@ async function resolveTarget(target: EndpointTestTarget): Promise<ResolvedEndpoi
     if (!config) throw new Error('直连配置不存在');
 
     const baseUrl = normalizeText(config.baseUrl);
-    const apiKey = normalizeText(config.apiKey);
     if (!baseUrl) throw new Error('请先配置 Base URL');
-    if (!apiKey || isRouteMaskedApiKeyValue(apiKey)) throw new Error('请先配置可用的 API Key');
 
-    const apiKeyId = buildCustomCliRouteApiKeyId(config.id);
-    const models = uniqueStrings([...(config.models || []), ...(config.manualModels || [])]);
+    const apiKeys = normalizeCustomCliApiKeys(config.apiKeys, {
+      legacyApiKey: config.apiKey,
+      // legacyName 会让单 Key 继承配置名，测试页下拉里与配置名重复，故留空走「默认」标签
+      legacyName: undefined,
+      legacyGroupMultiplier: config.groupMultiplier,
+    })
+      .map(apiKey => ({ apiKey, value: normalizeText(apiKey.key) }))
+      .filter(item => item.value && !isRouteMaskedApiKeyValue(item.value));
+    if (apiKeys.length === 0) throw new Error('请先配置可用的 API Key');
+
+    const displayName = normalizeText(config.name) || baseUrl;
+    const hasExplicitApiKeys = !(apiKeys.length === 1 && apiKeys[0].apiKey.id === 'key_legacy');
+    const targetApiKeys = apiKeys.map(({ apiKey, value }, index) => ({
+      id: buildCustomCliRouteApiKeyId(config.id, hasExplicitApiKeys ? apiKey.id : undefined),
+      label: hasExplicitApiKeys
+        ? apiKey.name
+          ? `${displayName} / ${apiKey.name}`
+          : `${displayName} Key #${index + 1}`
+        : '默认 API Key',
+      models: uniqueStrings([
+        ...apiKey.models,
+        ...(apiKey.models.length > 0 ? [] : config.models || []),
+      ]),
+      value,
+    }));
+    const configModels = uniqueStrings([...(config.models || []), ...(config.manualModels || [])]);
     return {
       target,
       targetKey: buildTargetKey(target),
       siteId: buildCustomCliRouteSiteId(config.id),
       accountId: buildCustomCliRouteAccountId(config.id),
-      apiKeys: [{ id: apiKeyId, label: '默认 API Key', models, value: apiKey }],
-      models,
+      apiKeys: targetApiKeys,
+      models: uniqueStrings([...targetApiKeys.flatMap(apiKey => apiKey.models), ...configModels]),
       timeoutMs: DEFAULT_TIMEOUT_MS,
       upstreamBaseUrl: baseUrl,
-      upstreamApiKey: apiKey,
+      // 多 Key 直连没有统一上游 key：由运行时按所选 key 的值锁定（见 runEndpointTest）
+      upstreamApiKey: apiKeys.length === 1 ? apiKeys[0].value : undefined,
     };
   }
 
@@ -386,6 +415,9 @@ export async function runEndpointTest(
     }
 
     const routeRuntime = await ensureRouteProxyReady({ autoEnable: true });
+    // direct 多 Key：目标锁按所选 key 的实际值透传上游；单 Key / managed 沿用目标级值
+    const upstreamApiKey =
+      input.target.kind === 'direct' ? selectedKey.value : target.upstreamApiKey;
     const routeApiKey = buildTargetLockRouteApiKey(routeRuntime.unifiedApiKey, {
       siteId: target.siteId,
       accountId: target.accountId,
@@ -394,7 +426,7 @@ export async function runEndpointTest(
       rawModel: input.model.trim(),
       targetProtocol: input.protocol,
       upstreamBaseUrl: target.upstreamBaseUrl,
-      upstreamApiKey: target.upstreamApiKey,
+      upstreamApiKey,
     });
     const response = await fetch(`${routeRuntime.baseUrl}${endpoint}`, {
       method: 'POST',

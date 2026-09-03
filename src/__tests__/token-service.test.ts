@@ -41,6 +41,7 @@ async function loadTokenServiceModule(
 
   vi.doMock('../main/utils/logger', () => ({
     default: {
+      scope: vi.fn(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() })),
       info: vi.fn(),
       warn: vi.fn(),
       error: vi.fn(),
@@ -145,6 +146,7 @@ async function loadApiServiceModule(options?: {
 
   vi.doMock('../main/utils/logger', () => ({
     default: {
+      scope: vi.fn(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() })),
       info: vi.fn(),
       warn: vi.fn(),
       error: vi.fn(),
@@ -206,6 +208,7 @@ async function loadTokenHandlersModule(options?: {
 
   vi.doMock('../main/utils/logger', () => ({
     default: {
+      scope: vi.fn(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() })),
       info: vi.fn(),
       warn: vi.fn(),
       error: vi.fn(),

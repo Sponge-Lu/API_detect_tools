@@ -1,13 +1,13 @@
 /**
  * 路由页面
  * 输入: routeStore (配置/模型注册表)
- * 输出: 本地路由布局（代理服务器、会话路由）
+ * 输出: 本地路由布局（代理服务器、配置文件卡片）
  * 定位: 展示层 - Route 工作台入口
  */
 
 import { useShallow } from 'zustand/shallow';
 import { ServerSection } from '../components/Route/ProxyStats/ProxyStatsTab';
-import { RouteSessionSection } from '../components/Route/RouteSessionSection';
+import { ConfigProfilesSection } from '../components/Route/ConfigProfilesSection';
 import { LoadingState } from '../components/LoadingState';
 import { useRouteStore } from '../store/routeStore';
 
@@ -37,8 +37,8 @@ export function RoutePage() {
       </div>
 
       <div data-testid="route-page-primary-row" className="flex min-w-0 shrink-0 flex-col gap-2.5">
-        <div data-testid="route-page-cli-row" className="min-w-0 shrink-0">
-          <RouteSessionSection />
+        <div data-testid="route-page-config-row" className="min-w-0 shrink-0">
+          <ConfigProfilesSection />
         </div>
       </div>
     </div>

@@ -63,7 +63,7 @@ export const APP_PAGE_META = {
     id: 'route',
     navLabel: '本地路由',
     title: '本地路由',
-    description: '统一管理本地网关、会话路由与运行状态。',
+    description: '统一管理本地网关、客户端配置文件与运行状态。',
     icon: RouteIcon,
   },
   'model-mapping': {
@@ -75,9 +75,9 @@ export const APP_PAGE_META = {
   },
   'config-files': {
     id: 'config-files',
-    navLabel: '配置文件',
-    title: '配置文件',
-    description: '管理客户端、CLI 与 SDK 的本地配置文件。',
+    navLabel: '路由设置',
+    title: '路由设置',
+    description: '管理会话路由卡片与预创建路由。',
     icon: FileJson,
   },
   logs: {

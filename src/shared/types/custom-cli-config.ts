@@ -16,6 +16,7 @@ import {
   type CliTargetProtocol,
 } from './cli-config';
 import type { ModelPricingData } from './site';
+import { normalizeCircledGroupLabel } from '../utils/groupLabel';
 
 export const CUSTOM_CLI_GROUP_MULTIPLIER_DEFAULT = 1;
 export const CUSTOM_CLI_GROUP_MULTIPLIER_MIN = 0.001;
@@ -25,6 +26,17 @@ export function normalizeCustomCliGroupMultiplier(value: unknown): number {
     return CUSTOM_CLI_GROUP_MULTIPLIER_DEFAULT;
   }
   return Math.max(CUSTOM_CLI_GROUP_MULTIPLIER_MIN, value);
+}
+
+/** A direct configuration API key with its own group scope and model snapshot. */
+export interface CustomCliApiKey {
+  id: string;
+  name: string;
+  key: string;
+  group: string;
+  groupMultiplier: number;
+  models: string[];
+  lastModelFetch?: number;
 }
 
 /** 单个 CLI 的自定义配置 */
@@ -45,8 +57,12 @@ export interface CustomCliConfig {
   name: string;
   /** Base URL (如 https://api.example.com) */
   baseUrl: string;
+  /** 模型列表 URL；仅用于拉取模型，留空时回退到 baseUrl。 */
+  modelUrl?: string;
   /** API Key */
   apiKey: string;
+  /** Multi-key form. `apiKey` remains as a compatibility projection for older consumers. */
+  apiKeys?: CustomCliApiKey[];
   /** 真实路由请求使用的上游协议；测试请求始终按被测端点原生发送 */
   routeTargetProtocol?: CliTargetProtocol;
   routeTargetProtocolNeedsConfirmation?: boolean;
@@ -103,11 +119,16 @@ export function createDefaultCustomCliConfig(partial?: Partial<CustomCliConfig>)
       normalizeCustomCliSettings(partial?.cliSettings?.[cliType]),
     ])
   ) as Record<BuiltinCliType, CustomCliSettings>;
+  const legacyApiKey = partial?.apiKey ?? '';
+  const apiKeys = normalizeCustomCliApiKeys(partial?.apiKeys, {
+    legacyApiKey,
+    legacyName: partial?.name,
+    legacyGroupMultiplier: partial?.groupMultiplier,
+  });
   return {
     id: crypto.randomUUID(),
     name: '',
     baseUrl: '',
-    apiKey: '',
     models: [],
     manualModels: [],
     modelPricing: { data: {} },
@@ -118,5 +139,57 @@ export function createDefaultCustomCliConfig(partial?: Partial<CustomCliConfig>)
     ...partial,
     cliSettings,
     groupMultiplier: normalizeCustomCliGroupMultiplier(partial?.groupMultiplier),
+    apiKeys,
+    apiKey: partial?.apiKey ?? apiKeys[0]?.key ?? '',
   };
+}
+
+export function normalizeCustomCliApiKeys(
+  value: unknown,
+  legacy: { legacyApiKey?: unknown; legacyName?: unknown; legacyGroupMultiplier?: unknown } = {}
+): CustomCliApiKey[] {
+  const items = Array.isArray(value) ? value : [];
+  const normalized = items
+    .filter(item => item && typeof item === 'object')
+    .map((item, index) => {
+      const source = item as Partial<CustomCliApiKey>;
+      const key = typeof source.key === 'string' ? source.key : '';
+      return {
+        id: typeof source.id === 'string' && source.id ? source.id : `key_${index}`,
+        name: typeof source.name === 'string' ? source.name : '',
+        key,
+        group: normalizeCircledGroupLabel(source.group),
+        groupMultiplier: normalizeCustomCliGroupMultiplier(source.groupMultiplier),
+        models: Array.isArray(source.models)
+          ? source.models.filter((model): model is string => typeof model === 'string')
+          : [],
+        lastModelFetch:
+          typeof source.lastModelFetch === 'number' ? source.lastModelFetch : undefined,
+      };
+    });
+
+  const legacyKey = typeof legacy.legacyApiKey === 'string' ? legacy.legacyApiKey : '';
+  if (normalized.length === 0 && legacyKey) {
+    normalized.push({
+      id: 'key_legacy',
+      name: typeof legacy.legacyName === 'string' ? legacy.legacyName : '',
+      key: legacyKey,
+      group: '',
+      groupMultiplier: normalizeCustomCliGroupMultiplier(legacy.legacyGroupMultiplier),
+      models: [],
+      lastModelFetch: undefined,
+    });
+  }
+  return normalized;
+}
+
+export function getCustomCliModelGroups(
+  apiKeys: readonly CustomCliApiKey[],
+  model: string
+): string[] {
+  const groups = apiKeys
+    .filter(apiKey => apiKey.models.includes(model))
+    .map(apiKey => normalizeCircledGroupLabel(apiKey.group))
+    .filter(Boolean);
+  return Array.from(new Set(groups));
 }

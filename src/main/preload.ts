@@ -136,6 +136,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('token:fetch-api-tokens', baseUrl, userId, accessToken, accountId),
     resolveApiKeyValue: (siteUrl: string, apiKeyId: string | number, accountId?: string) =>
       ipcRenderer.invoke('token:resolve-api-key-value', siteUrl, apiKeyId, accountId),
+    listLocalApiKeys: (accountId: string) =>
+      ipcRenderer.invoke('token:list-local-api-keys', accountId),
+    addLocalApiKey: (accountId: string, input: any) =>
+      ipcRenderer.invoke('token:add-local-api-key', accountId, input),
+    updateLocalApiKey: (accountId: string, keyId: string, input: any) =>
+      ipcRenderer.invoke('token:update-local-api-key', accountId, keyId, input),
+    deleteLocalApiKey: (accountId: string, keyId: string) =>
+      ipcRenderer.invoke('token:delete-local-api-key', accountId, keyId),
+    revealLocalApiKey: (accountId: string, keyId: string) =>
+      ipcRenderer.invoke('token:reveal-local-api-key', accountId, keyId),
+    refreshLocalApiKeys: (accountId: string, baseUrl: string, keyId?: string) =>
+      ipcRenderer.invoke('token:refresh-local-api-keys', accountId, baseUrl, keyId),
     // 获取用户分组（兼容旧接口）
     fetchUserGroups: (baseUrl: string, userId: number, accessToken: string) =>
       ipcRenderer.invoke('token:fetch-user-groups', baseUrl, userId, accessToken),

@@ -27,6 +27,7 @@
 | **logger.ts** | 日志记录 | `info()`, `warn()`, `error()`, `debug()` |
 | **modelPricing.ts** | 模型计费方式与价格归一化 | `resolveModelPricing()`, `isPerCallPricing()` |
 | **routeLatency.ts** | 路由会话时间分位数估算（P90/P99，样本 <20 返 null）；命名导出桶解析与百分位算法供首字响应复用 | `computeLatencyPercentiles()`, `formatLatency()`, `buildSortedHistogramBuckets()`, `computePercentileFromBuckets()` |
+| **routeSessionOrdinal.ts** | 同一客户端父会话的稳定主编号与异模型子卡持久化副编号，统一格式化 `#N` / `#N.M` 标签 | `buildRouteSessionOrdinals()`, `formatRouteSessionOrdinal()`, `formatRouteSessionLabel()` |
 | **routeLogAxis.ts** | 散点矩阵首字响应 X 轴 0-120s 分段 value↔pixel 映射与默认刻度 | `createSegmentedResponseTimeScale()`, `buildAxisTicks()`, `DEFAULT_FIRST_BYTE_AXIS_TICKS` |
 | **routeModelDistribution.ts** | 按 canonicalModel 聚合路由桶生成模型热力项（含成功率），并提供 squarified treemap 布局 | `buildModelDistribution()`, `squarifiedTreemap()` |
 | **routeRulePresentation.ts** | 路由规则摘要 / 命中原因 / CLI 标签 | `getRouteCliLabel()`, `summarizeRouteRule()` |

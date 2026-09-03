@@ -13,7 +13,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../main/custom-cli-config-service', () => ({
   buildCustomCliRouteAccountId: (id: string) => `custom-cli-account:${id}`,
-  buildCustomCliRouteApiKeyId: (id: string) => `custom-cli-key:${id}`,
+  buildCustomCliRouteApiKeyId: (id: string, keyId?: string) =>
+    `custom-cli-key:${id}${keyId ? `:${keyId}` : ''}`,
   buildCustomCliRouteSiteId: (id: string) => `custom-cli-site:${id}`,
   loadCustomCliConfigStorage: mocks.loadStorage,
 }));
@@ -55,6 +56,17 @@ import {
 const directTarget = { kind: 'direct' as const, configId: 'direct-1' };
 const directApiKeyId = 'custom-cli-key:direct-1';
 
+function directConfig() {
+  return {
+    id: 'direct-1',
+    name: 'Direct One',
+    baseUrl: 'https://direct.example/v1',
+    apiKey: 'direct-secret',
+    models: ['model-a', 'model-b'],
+    manualModels: ['model-b', 'model-c'],
+  };
+}
+
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
@@ -69,18 +81,7 @@ describe('endpoint-test-service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     routing.endpointTests = {};
-    mocks.loadStorage.mockResolvedValue({
-      configs: [
-        {
-          id: 'direct-1',
-          name: 'Direct One',
-          baseUrl: 'https://direct.example/v1',
-          apiKey: 'direct-secret',
-          models: ['model-a', 'model-b'],
-          manualModels: ['model-b', 'model-c'],
-        },
-      ],
-    });
+    mocks.loadStorage.mockResolvedValue({ configs: [directConfig()] });
     mocks.getRoutingConfig.mockReturnValue(routing);
     mocks.ensureRouteProxyReady.mockResolvedValue({
       baseUrl: 'http://127.0.0.1:3456',
@@ -269,6 +270,63 @@ describe('endpoint-test-service', () => {
     });
     expect(state.protocols['openai-responses'].model).toBe('model-c');
     expect(state.protocols['anthropic-messages'].model).toBe('model-a');
+  });
+
+  it('lists every explicit api key for a multi-key direct target and locks the selected value', async () => {
+    mocks.loadStorage.mockResolvedValue({
+      configs: [
+        {
+          ...directConfig(),
+          apiKeys: [
+            { id: 'key-a', name: '主力 Key', key: 'direct-secret-a' },
+            { id: 'key-b', name: '', key: 'direct-secret-b', models: ['model-b'] },
+            { id: 'key-empty', name: '空 Key', key: '   ' },
+          ],
+        },
+      ],
+    });
+    fetchMock.mockResolvedValue(jsonResponse({ output_text: 'OK' }));
+
+    const state = await getEndpointTestState(directTarget);
+
+    expect(state.apiKeys).toMatchObject([
+      { id: 'custom-cli-key:direct-1:key-a', label: 'Direct One / 主力 Key' },
+      { id: 'custom-cli-key:direct-1:key-b', label: 'Direct One Key #2', models: ['model-b'] },
+    ]);
+    // 掩码/空 key 不出现在列表中
+    expect(state.apiKeys).toHaveLength(2);
+
+    await runEndpointTest({
+      target: directTarget,
+      protocol: 'openai-responses',
+      apiKeyId: 'custom-cli-key:direct-1:key-b',
+      model: 'model-b',
+    });
+
+    expect(mocks.buildTargetLockRouteApiKey).toHaveBeenCalledWith('route-secret', {
+      siteId: 'custom-cli-site:direct-1',
+      accountId: 'custom-cli-account:direct-1',
+      apiKeyId: 'custom-cli-key:direct-1:key-b',
+      canonicalModel: 'model-b',
+      rawModel: 'model-b',
+      targetProtocol: 'openai-responses',
+      upstreamBaseUrl: 'https://direct.example/v1',
+      upstreamApiKey: 'direct-secret-b',
+    });
+  });
+
+  it('falls back to the first key when a stored selection no longer exists', async () => {
+    routing.endpointTests['direct:direct-1'] = {
+      targetKey: 'direct:direct-1',
+      protocols: {
+        'openai-responses': { apiKeyId: 'custom-cli-key:direct-1:removed-key', model: 'model-a' },
+      },
+      updatedAt: 1,
+    };
+
+    const state = await getEndpointTestState(directTarget);
+
+    expect(state.protocols['openai-responses'].apiKeyId).toBe(directApiKeyId);
   });
 
   it('uses the direct Base URL, API Key, and selected model in the target lock', async () => {

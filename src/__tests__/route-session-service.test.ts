@@ -14,6 +14,7 @@ import {
   clearRouteSessionCandidates,
   discoverRouteSessionCandidates,
   extractObservedRouteInstanceKey,
+  hasObservedRouteInstanceEvidence,
   listRouteSessionCandidates,
   listRouteInstances,
   normalizeRouteInstanceCollections,
@@ -21,6 +22,7 @@ import {
   ROUTE_SESSION_CANDIDATE_MAX_VALUE_HASHES,
   ROUTE_SESSION_CANDIDATE_TTL_MS,
   resolveRouteInstanceForRequest,
+  type ObservedRouteInstanceKey,
   updateRouteInstance,
 } from '../main/route-session-service';
 
@@ -63,6 +65,25 @@ function resolve(
   });
 }
 
+function resolveObserved(
+  config: RouteSessionRoutingConfig,
+  observedKey: ObservedRouteInstanceKey | null,
+  requestAt: number,
+  requestedModel: string | null,
+  profileId = 'profile-1'
+) {
+  return resolveRouteInstanceForRequest({
+    config,
+    profileId,
+    observedKey,
+    requestedModel,
+    requestedReasoningEffort: 'high',
+    defaultModel: 'default-model',
+    defaultReasoningEffort: 'medium',
+    requestAt,
+  });
+}
+
 describe('route instance identity boundary', () => {
   it('bounds and expires high-cardinality session candidate observations', () => {
     clearRouteSessionCandidates();
@@ -88,9 +109,7 @@ describe('route instance identity boundary', () => {
       candidate => candidate.path === 'x-session-shared'
     );
     expect(shared?.distinctValueCount).toBe(ROUTE_SESSION_CANDIDATE_MAX_VALUE_HASHES);
-    expect(
-      listRouteSessionCandidates(3_000 + ROUTE_SESSION_CANDIDATE_TTL_MS + 1)
-    ).toEqual([]);
+    expect(listRouteSessionCandidates(3_000 + ROUTE_SESSION_CANDIDATE_TTL_MS + 1)).toEqual([]);
     clearRouteSessionCandidates();
   });
 
@@ -126,6 +145,7 @@ describe('route instance identity boundary', () => {
       agentId: 'codex',
       runtimeSlotId: 'session-1',
       sessionId: 'session-1',
+      lineage: { source: 'codex', rootSessionId: 'session-1' },
       observedAgentName: 'Codex',
       observedRuntimeSlotLabel: 'Codex 会话',
     });
@@ -138,6 +158,7 @@ describe('route instance identity boundary', () => {
       agentId: 'codex',
       runtimeSlotId: 'session-2',
       sessionId: 'session-2',
+      lineage: { source: 'codex', rootSessionId: 'session-2' },
       observedAgentName: 'Codex',
       observedRuntimeSlotLabel: 'Codex 会话',
     });
@@ -155,6 +176,159 @@ describe('route instance identity boundary', () => {
     });
   });
 
+  it('parses Codex 0.151 compatibility headers and bounded turn metadata', () => {
+    expect(
+      extractObservedRouteInstanceKey(
+        {
+          headers: {
+            'x-codex-window-id': 'window-1',
+            'session-id': 'root-session',
+            'thread-id': 'child-thread',
+            'x-codex-parent-thread-id': 'root-thread',
+            'x-openai-subagent': 'worker',
+            'x-codex-turn-metadata': JSON.stringify({
+              session_id: 'root-session',
+              thread_id: 'child-thread',
+              parent_thread_id: 'root-thread',
+            }),
+          },
+        },
+        null
+      )
+    ).toEqual({
+      agentId: 'codex',
+      runtimeSlotId: 'child-thread',
+      sessionId: 'child-thread',
+      lineage: {
+        source: 'codex',
+        rootSessionId: 'root-session',
+        parentSessionId: 'root-thread',
+      },
+      observedAgentName: 'Codex',
+      observedRuntimeSlotLabel: 'Codex 会话',
+    });
+  });
+
+  it('recognizes Codex compatibility headers without requiring x-codex aliases', () => {
+    expect(
+      extractObservedRouteInstanceKey({
+        headers: {
+          'x-codex-window-id': 'window-compat',
+          'session-id': 'root-session',
+          'thread-id': 'root-thread',
+        },
+      })
+    ).toMatchObject({
+      agentId: 'codex',
+      runtimeSlotId: 'root-thread',
+      sessionId: 'root-thread',
+      lineage: { source: 'codex', rootSessionId: 'root-session' },
+    });
+  });
+
+  it('rejects malformed or conflicting Codex lineage projections', () => {
+    expect(
+      extractObservedRouteInstanceKey({
+        headers: {
+          'x-codex-window-id': 'window-1',
+          'thread-id': 'child-thread',
+          'x-codex-parent-thread-id': 'root-thread',
+          'x-codex-turn-metadata': '{not-json',
+        },
+      })
+    ).toBeNull();
+    expect(
+      hasObservedRouteInstanceEvidence({
+        headers: {
+          'x-codex-window-id': 'window-1',
+          'thread-id': 'child-thread',
+          'x-openai-subagent': 'worker',
+        },
+      })
+    ).toBe(true);
+    expect(
+      extractObservedRouteInstanceKey({
+        headers: {
+          'x-codex-window-id': 'window-1',
+          'thread-id': 'child-thread',
+          'x-codex-parent-thread-id': 'root-thread',
+          'x-codex-turn-metadata': JSON.stringify({
+            thread_id: 'different-child',
+            parent_thread_id: 'root-thread',
+          }),
+        },
+      })
+    ).toBeNull();
+    expect(
+      extractObservedRouteInstanceKey({
+        headers: {
+          'x-codex-window-id': 'window-1',
+          'thread-id': 'child-thread',
+          'x-openai-subagent': 'worker',
+        },
+      })
+    ).toBeNull();
+  });
+
+  it('extracts Claude Code and OpenCode child lineage only from their native adapters', () => {
+    expect(
+      extractObservedRouteInstanceKey({
+        headers: {
+          'x-claude-code-session-id': 'claude-root',
+          'x-claude-code-agent-id': 'claude-child',
+          'x-claude-code-parent-agent-id': 'claude-parent',
+        },
+      })
+    ).toEqual({
+      agentId: 'claudeCode',
+      runtimeSlotId: 'claude-child',
+      sessionId: 'claude-child',
+      lineage: {
+        source: 'claudeCode',
+        rootSessionId: 'claude-root',
+        parentSessionId: 'claude-parent',
+      },
+      observedAgentName: 'Claude Code',
+      observedRuntimeSlotLabel: 'Claude Code 会话',
+    });
+    expect(
+      extractObservedRouteInstanceKey({
+        headers: {
+          'user-agent': 'OpenCode/2.0',
+          'x-session-affinity': 'opencode-child',
+          'x-parent-session-id': 'opencode-root',
+        },
+      })
+    ).toEqual({
+      agentId: 'session:session-affinity',
+      runtimeSlotId: 'opencode-child',
+      sessionId: 'opencode-child',
+      lineage: { source: 'openCode', parentSessionId: 'opencode-root' },
+      observedAgentName: 'OpenCode',
+      observedRuntimeSlotLabel: '会话级路由',
+    });
+    expect(
+      extractObservedRouteInstanceKey({
+        headers: {
+          'user-agent': 'GenericClient/1.0',
+          'x-session-affinity': 'generic-child',
+          'x-parent-session-id': 'untrusted-parent',
+        },
+      })
+    ).toMatchObject({
+      agentId: 'session:session-affinity',
+      sessionId: 'generic-child',
+    });
+  });
+
+  it('does not promote Grok request ids into route identity', () => {
+    expect(
+      extractObservedRouteInstanceKey({
+        headers: { 'user-agent': 'Grok Build/1.0', 'x-request-id': 'request-1' },
+      })
+    ).toBeNull();
+  });
+
   it('binds an ARMED route from the Claude Code session header despite a different request model', () => {
     const observedKey = extractObservedRouteInstanceKey({
       headers: { 'x-claude-code-session-id': 'claude-session-1' },
@@ -163,6 +337,7 @@ describe('route instance identity boundary', () => {
       agentId: 'claudeCode',
       runtimeSlotId: 'claude-session-1',
       sessionId: 'claude-session-1',
+      lineage: { source: 'claudeCode', rootSessionId: 'claude-session-1' },
       observedAgentName: 'Claude Code',
       observedRuntimeSlotLabel: 'Claude Code 会话',
     });
@@ -303,6 +478,310 @@ describe('route instance identity boundary', () => {
 });
 
 describe('route instance lifecycle', () => {
+  it('shares same-model Codex children with the parent route card', () => {
+    const config = baseConfig();
+    const parentKey: ObservedRouteInstanceKey = {
+      agentId: 'codex',
+      runtimeSlotId: 'root-thread',
+      sessionId: 'root-thread',
+      lineage: { source: 'codex', rootSessionId: 'root-session' },
+      observedAgentName: 'Codex',
+    };
+    const childKey: ObservedRouteInstanceKey = {
+      agentId: 'codex',
+      runtimeSlotId: 'child-thread',
+      sessionId: 'child-thread',
+      lineage: {
+        source: 'codex',
+        rootSessionId: 'root-session',
+        parentSessionId: 'root-thread',
+      },
+      observedAgentName: 'Codex',
+    };
+    const parent = resolveObserved(config, parentKey, 1_000, 'gpt-5.6-sol').instance!;
+    parent.modelId = 'manually-routed-model';
+
+    const child = resolveObserved(config, childKey, 2_000, 'gpt-5.6-sol');
+
+    expect(child.instance?.id).toBe(parent.id);
+    expect(parent).toMatchObject({
+      clientModelId: 'gpt-5.6-sol',
+      modelId: 'manually-routed-model',
+      memberSessionIds: ['root-session', 'child-thread'],
+      lastRequestAt: 2_000,
+    });
+    expect(Object.values(config.instances)).toHaveLength(1);
+  });
+
+  it('creates and reuses stable different-model child cards', () => {
+    const config = baseConfig();
+    const parentKey: ObservedRouteInstanceKey = {
+      agentId: 'codex',
+      runtimeSlotId: 'root-thread',
+      sessionId: 'root-thread',
+      lineage: { source: 'codex', rootSessionId: 'root-session' },
+    };
+    const childKey = (sessionId: string): ObservedRouteInstanceKey => ({
+      agentId: 'codex',
+      runtimeSlotId: sessionId,
+      sessionId,
+      lineage: {
+        source: 'codex',
+        rootSessionId: 'root-session',
+        parentSessionId: 'root-thread',
+      },
+    });
+    const parent = resolveObserved(config, parentKey, 1_000, 'gpt-5.6-sol').instance!;
+
+    const first = resolveObserved(
+      config,
+      childKey('child-terra'),
+      2_000,
+      'gpt-5.6-terra'
+    ).instance!;
+    const repeated = resolveObserved(
+      config,
+      childKey('child-terra'),
+      3_000,
+      'gpt-5.6-terra'
+    ).instance!;
+    const second = resolveObserved(config, childKey('child-luna'), 4_000, 'gpt-5.6-luna').instance!;
+
+    expect(repeated.id).toBe(first.id);
+    expect(first).toMatchObject({
+      parentInstanceId: parent.id,
+      childOrdinal: 1,
+      clientModelId: 'gpt-5.6-terra',
+      modelId: 'gpt-5.6-terra',
+      createdAt: 2_000,
+      lastRequestAt: 3_000,
+    });
+    expect(second).toMatchObject({
+      parentInstanceId: parent.id,
+      childOrdinal: 2,
+      clientModelId: 'gpt-5.6-luna',
+    });
+  });
+
+  it('applies the same-model sharing rule to Claude Code and OpenCode adapters', () => {
+    const cases = [
+      {
+        root: extractObservedRouteInstanceKey({
+          headers: { 'x-claude-code-session-id': 'claude-root' },
+        }),
+        same: extractObservedRouteInstanceKey({
+          headers: {
+            'x-claude-code-session-id': 'claude-root',
+            'x-claude-code-agent-id': 'claude-same',
+          },
+        }),
+        different: extractObservedRouteInstanceKey({
+          headers: {
+            'x-claude-code-session-id': 'claude-root',
+            'x-claude-code-agent-id': 'claude-different',
+          },
+        }),
+      },
+      {
+        root: extractObservedRouteInstanceKey({
+          headers: { 'user-agent': 'OpenCode/2.0', 'x-session-affinity': 'opencode-root' },
+        }),
+        same: extractObservedRouteInstanceKey({
+          headers: {
+            'user-agent': 'OpenCode/2.0',
+            'x-session-affinity': 'opencode-same',
+            'x-parent-session-id': 'opencode-root',
+          },
+        }),
+        different: extractObservedRouteInstanceKey({
+          headers: {
+            'user-agent': 'OpenCode/2.0',
+            'x-session-affinity': 'opencode-different',
+            'x-parent-session-id': 'opencode-root',
+          },
+        }),
+      },
+    ];
+
+    for (const item of cases) {
+      const config = baseConfig();
+      const parent = resolveObserved(config, item.root, 1_000, 'parent-model').instance!;
+      const sameModel = resolveObserved(config, item.same, 2_000, 'parent-model').instance!;
+      const differentModel = resolveObserved(
+        config,
+        item.different,
+        3_000,
+        'child-model'
+      ).instance!;
+
+      expect(sameModel.id).toBe(parent.id);
+      expect(differentModel).toMatchObject({
+        parentInstanceId: parent.id,
+        childOrdinal: 1,
+        clientModelId: 'child-model',
+      });
+    }
+  });
+
+  it('resolves nested lineage through a verified member or child alias', () => {
+    const config = baseConfig();
+    const parent = resolveObserved(
+      config,
+      {
+        agentId: 'claudeCode',
+        runtimeSlotId: 'claude-root',
+        sessionId: 'claude-root',
+        lineage: { source: 'claudeCode', rootSessionId: 'claude-root' },
+      },
+      1_000,
+      'claude-opus'
+    ).instance!;
+    const firstChild = resolveObserved(
+      config,
+      {
+        agentId: 'claudeCode',
+        runtimeSlotId: 'agent-1',
+        sessionId: 'agent-1',
+        lineage: {
+          source: 'claudeCode',
+          rootSessionId: 'claude-root',
+          parentSessionId: 'claude-root',
+        },
+      },
+      2_000,
+      'claude-sonnet'
+    ).instance!;
+    const nested = resolveObserved(
+      config,
+      {
+        agentId: 'claudeCode',
+        runtimeSlotId: 'agent-2',
+        sessionId: 'agent-2',
+        lineage: {
+          source: 'claudeCode',
+          rootSessionId: 'claude-root',
+          parentSessionId: 'agent-1',
+        },
+      },
+      3_000,
+      'claude-sonnet'
+    ).instance!;
+
+    expect(firstChild.parentInstanceId).toBe(parent.id);
+    expect(nested).toMatchObject({ parentInstanceId: parent.id, childOrdinal: 2 });
+  });
+
+  it('leaves ARMED untouched when a child parent cannot be proven', () => {
+    const config = baseConfig();
+    const armed = createArmedRouteInstance(config, 'chosen-model', 'max');
+    const resolution = resolveObserved(
+      config,
+      {
+        agentId: 'codex',
+        runtimeSlotId: 'orphan-child',
+        sessionId: 'orphan-child',
+        lineage: {
+          source: 'codex',
+          rootSessionId: 'missing-root',
+          parentSessionId: 'missing-parent',
+        },
+      },
+      1_000,
+      'gpt-5.6-terra'
+    );
+
+    expect(resolution.instance).toBeNull();
+    expect(config.instances[armed.id].routingState).toBe('armed');
+  });
+
+  it('keeps parent resolution profile-scoped', () => {
+    const config = baseConfig();
+    resolveObserved(
+      config,
+      {
+        agentId: 'codex',
+        runtimeSlotId: 'root-thread',
+        sessionId: 'root-thread',
+        lineage: { source: 'codex', rootSessionId: 'root-session' },
+      },
+      1_000,
+      'gpt-5.6-sol',
+      'profile-a'
+    );
+
+    const orphan = resolveObserved(
+      config,
+      {
+        agentId: 'codex',
+        runtimeSlotId: 'child-thread',
+        sessionId: 'child-thread',
+        lineage: {
+          source: 'codex',
+          rootSessionId: 'root-session',
+          parentSessionId: 'root-thread',
+        },
+      },
+      2_000,
+      'gpt-5.6-terra',
+      'profile-b'
+    );
+
+    expect(orphan.instance).toBeNull();
+    expect(Object.values(config.instances)).toHaveLength(1);
+  });
+
+  it('normalizes malformed optional lineage without repairing parent graphs', () => {
+    const config = baseConfig();
+    config.instances.legacy = {
+      id: 'legacy',
+      routeKey: { agentId: 'codex', runtimeSlotId: 'legacy', sessionId: 'legacy' },
+      clientModelId: '  ',
+      parentInstanceId: 'missing-parent',
+      childOrdinal: 0,
+      memberSessionIds: [' child ', 'child', 'legacy', '\u0001invalid'],
+      display: {},
+      modelId: 'model',
+      reasoningEffort: 'medium',
+      routingState: 'closed',
+      presenceState: 'unknown',
+    };
+
+    expect(normalizeRouteInstanceCollections(config)).toBe(true);
+    expect(config.instances.legacy).toMatchObject({
+      parentInstanceId: 'missing-parent',
+      memberSessionIds: ['child'],
+    });
+    expect(config.instances.legacy).not.toHaveProperty('clientModelId');
+    expect(config.instances.legacy).not.toHaveProperty('childOrdinal');
+  });
+
+  it('does not merge existing parentless polluted cards', () => {
+    const config = baseConfig();
+    config.instances = Object.fromEntries(
+      ['internal-1', 'internal-2'].map((sessionId, index) => [
+        sessionId,
+        {
+          id: sessionId,
+          profileId: 'profile-1',
+          routeKey: { agentId: 'codex', runtimeSlotId: sessionId, sessionId },
+          display: { observedAgentName: 'Codex' },
+          modelId: 'model',
+          reasoningEffort: 'medium',
+          routingState: 'active',
+          presenceState: 'unknown',
+          createdAt: 1_000 + index,
+        },
+      ])
+    );
+
+    normalizeRouteInstanceCollections(config);
+
+    expect(Object.keys(config.instances)).toEqual(['internal-1', 'internal-2']);
+    expect(Object.values(config.instances).every(instance => !instance.parentInstanceId)).toBe(
+      true
+    );
+  });
+
   it('allows one ARMED route, does not timestamp it, and binds it on the first new key', () => {
     const config = baseConfig();
     const armed = createArmedRouteInstance(config, 'chosen-model', 'xhigh');
@@ -331,17 +810,18 @@ describe('route instance lifecycle', () => {
     expect(second).toMatchObject({ modelId: 'request-b', reasoningEffort: 'high' });
   });
 
-  it('keeps stored configuration and createdAt across repeated requests', () => {
+  it('keeps stored route overrides while refreshing the direct client model', () => {
     const config = baseConfig();
     const first = resolve(config, 'session-1', 1_000).instance!;
     const repeated = resolve(config, 'session-1', 2_000, 'different-model');
     expect(config.instances[first.id]).toMatchObject({
       modelId: 'request-model',
+      clientModelId: 'different-model',
       reasoningEffort: 'high',
       createdAt: 1_000,
       lastRequestAt: 2_000,
     });
-    expect(repeated.changed).toBe(false);
+    expect(repeated.changed).toBe(true);
   });
 
   it('merges legacy Codex context-window routes for the same session', () => {
@@ -449,8 +929,22 @@ describe('route instance lifecycle', () => {
 
   it('isolates identical route keys by Profile', () => {
     const config = baseConfig();
-    const first = resolve(config, 'shared-session', 1_000, 'model-a', 'slot-1', 'profile-a').instance!;
-    const second = resolve(config, 'shared-session', 2_000, 'model-b', 'slot-1', 'profile-b').instance!;
+    const first = resolve(
+      config,
+      'shared-session',
+      1_000,
+      'model-a',
+      'slot-1',
+      'profile-a'
+    ).instance!;
+    const second = resolve(
+      config,
+      'shared-session',
+      2_000,
+      'model-b',
+      'slot-1',
+      'profile-b'
+    ).instance!;
 
     expect(second.id).not.toBe(first.id);
     expect(first).toMatchObject({ profileId: 'profile-a', modelId: 'model-a' });
@@ -483,13 +977,20 @@ describe('route instance lifecycle', () => {
       reasoningEffort: 'vendor-ultra',
       customAgentName: 'My Agent',
       customRuntimeSlotLabel: 'Work',
+      customNote: '重点会话',
     });
     expect(instance.routeKey).toEqual(routeKey);
     expect(instance).toMatchObject({
       modelId: 'new-model',
       reasoningEffort: 'vendor-ultra',
-      display: { customAgentName: 'My Agent', customRuntimeSlotLabel: 'Work' },
+      display: {
+        customAgentName: 'My Agent',
+        customRuntimeSlotLabel: 'Work',
+        customNote: '重点会话',
+      },
     });
+    updateRouteInstance(config, instance.id, { customNote: '   ' });
+    expect(instance.display.customNote).toBeUndefined();
   });
 
   it('cancels an ARMED route without adding timestamps', () => {

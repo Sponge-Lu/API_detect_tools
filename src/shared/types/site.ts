@@ -188,6 +188,8 @@ export interface AccountCredential {
   // === 敏感凭证（磁盘加密存储） ===
   access_token: string;
   api_key?: string; // v3.0.6: 从 Site.api_key 迁移过来
+  /** User-managed keys are persisted independently from remote token synchronization. */
+  local_api_keys?: LocalApiKeyRecord[];
 
   auth_source: AccountAuthSource;
   browser_profile_path?: string; // isolated profile 持久化路径
@@ -236,6 +238,8 @@ export interface DetectionCacheData {
   today_completion_tokens?: number;
   today_requests?: number;
   api_keys?: ApiKeyInfo[];
+  /** Locally managed API keys, retained when remote token APIs are unavailable. */
+  local_api_keys?: LocalApiKeyRecord[];
   user_groups?: Record<string, UserGroupInfo>;
   model_pricing?: ModelPricingData;
   last_refresh?: number;
@@ -274,6 +278,7 @@ export interface AccountRuntimeDetectionData {
   today_completion_tokens?: number;
   today_requests?: number;
   api_keys?: ApiKeyInfo[];
+  local_api_keys?: LocalApiKeyRecord[];
   last_refresh?: number;
   has_checkin?: boolean;
   can_check_in?: boolean;
@@ -534,6 +539,7 @@ export interface DetectionResult {
   has_checkin: boolean;
   can_check_in?: boolean;
   apiKeys?: ApiKeyInfo[];
+  localApiKeys?: LocalApiKeyRecord[];
   userGroups?: Record<string, UserGroupInfo>;
   modelPricing?: ModelPricingData;
   lastRefresh?: number;
@@ -574,6 +580,24 @@ export interface ApiKeyInfo {
   status_str?: string;
   state?: number | string | boolean;
   enabled?: number | string | boolean;
+  /** Models observed with this key via /v1/models. */
+  scopedModels?: string[];
+}
+
+/** Persisted local API key metadata and the last successful key-scoped model snapshot. */
+export interface LocalApiKeyRecord {
+  id: string;
+  name: string;
+  key: string;
+  group: string;
+  groupMultiplier: number;
+  models: string[];
+  modelsFetchedAt?: number;
+  remoteId?: number | string;
+  status?: number | string | boolean;
+  source: 'remote' | 'local';
+  createdAt: number;
+  updatedAt: number;
 }
 
 export type ApiKeyAvailability = 'active' | 'inactive' | 'unknown';
@@ -657,6 +681,7 @@ export interface CachedDisplayData {
   today_completion_tokens: number;
   today_requests_count: number;
   apiKeys?: ApiKeyInfo[];
+  localApiKeys?: LocalApiKeyRecord[];
   userGroups?: Record<string, UserGroupInfo>;
   modelPricing?: ModelPricingData;
   models?: string[];
@@ -755,6 +780,7 @@ export function splitDetectionCacheData(cache?: DetectionCacheData): {
     today_completion_tokens: cache.today_completion_tokens,
     today_requests: cache.today_requests,
     api_keys: cache.api_keys,
+    local_api_keys: cache.local_api_keys,
     last_refresh: cache.last_refresh,
     has_checkin: cache.has_checkin,
     can_check_in: cache.can_check_in,
@@ -787,6 +813,7 @@ export function mergeDetectionCacheData(
     today_completion_tokens: runtime?.today_completion_tokens,
     today_requests: runtime?.today_requests,
     api_keys: runtime?.api_keys,
+    local_api_keys: runtime?.local_api_keys,
     last_refresh: runtime?.last_refresh ?? shared?.last_refresh,
     has_checkin: runtime?.has_checkin,
     can_check_in: runtime?.can_check_in,

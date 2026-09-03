@@ -1,8 +1,8 @@
 /**
- * 配置文件页
+ * 配置文件卡片区
  * 输入: window.electronAPI.configFileProfiles (load/upsert/delete/preview/previewDirectEdit/commit/readFiles/...)
  * 输出: 配置方案摘要卡片、编辑弹窗、模板应用/本地文件保存预览
- * 定位: 展示层 - 配置文件页入口
+ * 定位: 展示层 - 本地路由页内的配置文件卡片区（原「配置文件」页内容）
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -30,15 +30,15 @@ import type {
   ConfigFileTarget,
   ConfigFileTargetCatalogEntry,
   SessionRecordConnector,
-} from '../../shared/types/config-file-profile';
-import { DEFAULT_CONFIG_FILE_REPLACEMENT_TOKENS } from '../../shared/types/config-file-profile';
-import { AppButton } from '../components/AppButton/AppButton';
-import { AppCard } from '../components/AppCard';
-import { AppModal } from '../components/AppModal/AppModal';
-import { AppInput } from '../components/AppInput/AppInput';
-import { AppSelect } from '../components/AppSelect';
-import { AgentLogo, AgentLogoSelect } from '../components/AgentLogo';
-import { toast } from '../store/toastStore';
+} from '../../../shared/types/config-file-profile';
+import { DEFAULT_CONFIG_FILE_REPLACEMENT_TOKENS } from '../../../shared/types/config-file-profile';
+import { AppButton } from '../AppButton/AppButton';
+import { AppCard } from '../AppCard';
+import { AppModal } from '../AppModal/AppModal';
+import { AppInput } from '../AppInput/AppInput';
+import { AppSelect } from '../AppSelect';
+import { AgentLogo, AgentLogoSelect } from '../AgentLogo';
+import { toast } from '../../store/toastStore';
 
 function createFile(profileId: string): ConfigFileDefinition {
   return {
@@ -165,7 +165,7 @@ function diffSummary(lines: DiffLine[]): { added: number; removed: number } {
   );
 }
 
-export function ConfigFilesPage() {
+export function ConfigProfilesSection() {
   const [profiles, setProfiles] = useState<ConfigFileProfile[]>([]);
   const [savedResolvedValues, setSavedResolvedValues] = useState<
     Record<string, ConfigFileResolvedTargetValues>
@@ -643,124 +643,125 @@ export function ConfigFilesPage() {
   };
 
   return (
-    <div className="h-full overflow-y-auto px-6 py-4">
-      <div className="mx-auto max-w-6xl space-y-4">
-        <div className="flex items-center justify-between gap-3 border-b border-[var(--line-muted)] pb-3">
-          <p className="text-xs text-[var(--text-tertiary)]">
+    <AppCard variant="standard" hoverable={false} blur={false} className="flex min-h-0 flex-col">
+      <div className="flex min-h-10 flex-wrap items-center justify-between gap-2 border-b border-[var(--line-soft)] px-3 py-1.5">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <h2 className="text-sm font-semibold text-[var(--text-primary)]">配置文件</h2>
+          <p className="min-w-0 truncate text-xs text-[var(--text-tertiary)]">
             {profiles.length} 个方案 · {profiles.reduce((sum, item) => sum + item.files.length, 0)}{' '}
             个文件
           </p>
-          <AppButton
-            size="sm"
-            onClick={() => {
-              const profile = createProfile();
-              setProfiles(current => [...current, profile]);
-              setSelectedProfileId(profile.id);
-              setHasUnsavedChanges(true);
-            }}
-          >
-            <Plus className="h-4 w-4" />
-            新增配置
-          </AppButton>
         </div>
+        <AppButton
+          size="sm"
+          onClick={() => {
+            const profile = createProfile();
+            setProfiles(current => [...current, profile]);
+            setSelectedProfileId(profile.id);
+            setHasUnsavedChanges(true);
+          }}
+        >
+          <Plus className="h-4 w-4" />
+          新增配置
+        </AppButton>
+      </div>
 
-        <div className="overflow-x-auto pb-1">
-          <div className="grid min-w-[56rem] grid-cols-4 gap-3">
-            {profiles.map(profile => {
-              const entry = targetEntryFor(profile);
-              const cardValues = profile.lastApplied || savedResolvedValues[profile.id];
-              return (
-                <AppCard
-                  key={profile.id}
-                  hoverable
-                  focusable
-                  aria-label={`${profile.name} 配置卡片`}
-                  className="flex min-w-0 cursor-pointer flex-col bg-[var(--surface-2)]"
-                  onClick={() => openEditor(profile.id)}
-                  onKeyDown={event => {
-                    if (event.target !== event.currentTarget) return;
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      openEditor(profile.id);
-                    }
-                  }}
-                >
-                  <div className="flex items-start gap-2.5 px-3 pb-2.5 pt-3">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-muted)] bg-[var(--surface-2)]">
-                      <AgentLogo
-                        logoId={profile.agentLogoId}
-                        agentId={profile.builtin?.clientType}
-                        agentName={profile.name}
-                        className="h-5 w-5"
-                      />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className="truncate text-sm font-semibold">{profile.name}</h3>
-                        {profile.isExample ? (
-                          <span className="shrink-0 rounded-full bg-[var(--success-soft)] px-2 py-0.5 text-xs font-medium text-[var(--success)]">
-                            内置
-                          </span>
-                        ) : null}
-                        {!entry || !entry.available ? (
-                          <span className="shrink-0 rounded-full bg-[var(--danger-soft)] px-2 py-0.5 text-xs font-medium text-[var(--danger)]">
-                            需修复
-                          </span>
-                        ) : null}
-                      </div>
-                      <p className="mt-1 truncate text-xs text-[var(--text-secondary)]">
-                        {entry?.label || '目标已不存在'}
-                      </p>
-                    </div>
+      <div className="overflow-x-auto p-2">
+        <div className="grid min-w-[56rem] grid-cols-4 gap-3">
+          {profiles.map(profile => {
+            const entry = targetEntryFor(profile);
+            const cardValues = profile.lastApplied || savedResolvedValues[profile.id];
+            return (
+              <AppCard
+                key={profile.id}
+                hoverable
+                focusable
+                aria-label={`${profile.name} 配置卡片`}
+                className="flex min-w-0 cursor-pointer flex-col bg-[var(--surface-2)]"
+                onClick={() => openEditor(profile.id)}
+                onKeyDown={event => {
+                  if (event.target !== event.currentTarget) return;
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    openEditor(profile.id);
+                  }
+                }}
+              >
+                <div className="flex items-start gap-2.5 px-3 pb-2.5 pt-3">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[var(--line-muted)] bg-[var(--surface-2)]">
+                    <AgentLogo
+                      logoId={profile.agentLogoId}
+                      agentId={profile.builtin?.clientType}
+                      agentName={profile.name}
+                      className="h-5 w-5"
+                    />
                   </div>
-                  <div className="space-y-1.5 border-y border-[var(--line-muted)] bg-[var(--surface-2)]/40 px-3 py-2 text-xs">
-                    {[
-                      ['配置目标', cardValues?.targetLabel || entry?.label || '未设置'],
-                      ['BaseURL', cardValues?.baseUrl || '未设置'],
-                      ['APIKey 名称', cardValues?.apiKeyName || '未设置'],
-                      ['模型', cardValues?.model || profile.target.model || '未设置'],
-                    ].map(([label, value]) => (
-                      <div
-                        key={label}
-                        className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)] gap-2"
-                      >
-                        <span className="text-[var(--text-tertiary)]">{label}</span>
-                        <span className="min-w-0 truncate" title={value}>
-                          {value}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="truncate text-sm font-semibold">{profile.name}</h3>
+                      {profile.isExample ? (
+                        <span className="shrink-0 rounded-full bg-[var(--success-soft)] px-2 py-0.5 text-xs font-medium text-[var(--success)]">
+                          内置
                         </span>
-                      </div>
-                    ))}
+                      ) : null}
+                      {!entry || !entry.available ? (
+                        <span className="shrink-0 rounded-full bg-[var(--danger-soft)] px-2 py-0.5 text-xs font-medium text-[var(--danger)]">
+                          需修复
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="mt-1 truncate text-xs text-[var(--text-secondary)]">
+                      {entry?.label || '目标已不存在'}
+                    </p>
                   </div>
-                  <div className="flex items-center justify-end gap-1 px-3 py-2">
-                    <AppButton
-                      variant="tertiary"
-                      size="sm"
-                      title="复制配置"
-                      aria-label={`${profile.name} 复制配置`}
-                      onClick={event => {
-                        event.stopPropagation();
-                        duplicateProfile(profile);
-                      }}
+                </div>
+                <div className="space-y-1.5 border-y border-[var(--line-muted)] bg-[var(--surface-2)]/40 px-3 py-2 text-xs">
+                  {[
+                    ['配置目标', cardValues?.targetLabel || entry?.label || '未设置'],
+                    ['BaseURL', cardValues?.baseUrl || '未设置'],
+                    ['APIKey 名称', cardValues?.apiKeyName || '未设置'],
+                    ['模型', cardValues?.model || profile.target.model || '未设置'],
+                  ].map(([label, value]) => (
+                    <div
+                      key={label}
+                      className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)] gap-2"
                     >
-                      <Copy className="h-4 w-4" />
-                    </AppButton>
-                    <AppButton
-                      variant="tertiary"
-                      size="sm"
-                      title="删除配置"
-                      aria-label={`${profile.name} 删除配置`}
-                      onClick={event => {
-                        event.stopPropagation();
-                        setDeleteProfileTarget(profile);
-                      }}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </AppButton>
-                  </div>
-                </AppCard>
-              );
-            })}
-          </div>
+                      <span className="text-[var(--text-tertiary)]">{label}</span>
+                      <span className="min-w-0 truncate" title={value}>
+                        {value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center justify-end gap-1 px-3 py-2">
+                  <AppButton
+                    variant="tertiary"
+                    size="sm"
+                    title="复制配置"
+                    aria-label={`${profile.name} 复制配置`}
+                    onClick={event => {
+                      event.stopPropagation();
+                      duplicateProfile(profile);
+                    }}
+                  >
+                    <Copy className="h-4 w-4" />
+                  </AppButton>
+                  <AppButton
+                    variant="tertiary"
+                    size="sm"
+                    title="删除配置"
+                    aria-label={`${profile.name} 删除配置`}
+                    onClick={event => {
+                      event.stopPropagation();
+                      setDeleteProfileTarget(profile);
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </AppButton>
+                </div>
+              </AppCard>
+            );
+          })}
         </div>
       </div>
 
@@ -993,7 +994,7 @@ export function ConfigFilesPage() {
           确定要从此配置规则中删除该文件吗？磁盘上的本地文件不会受影响。
         </p>
       </AppModal>
-    </div>
+    </AppCard>
   );
 }
 

@@ -168,12 +168,26 @@ describe('DirectCliConfigEditorContent', () => {
   it('filters available models from the model search input', async () => {
     await renderDialog();
 
+    expect(screen.getByTestId('direct-tab2-content')).toHaveClass(
+      'border-t',
+      'bg-[var(--surface-2)]/92',
+      'px-[var(--spacing-md)]',
+      'py-[var(--spacing-sm)]'
+    );
+    expect(screen.getByTestId('direct-api-key-row')).toHaveClass(
+      'bg-[var(--surface-1)]',
+      'px-2',
+      'py-1'
+    );
+    expect(screen.getByRole('button', { name: '添加 claude-3.7 价格' })).toBeInTheDocument();
+
     const modelSearchInput = screen.getByRole('searchbox', { name: '搜索可用模型' });
     expect(modelSearchInput).toHaveAttribute('placeholder', '搜索模型');
     expect(screen.getByTitle('claude-3.7')).toBeInTheDocument();
 
-    const modelGrid = screen.getByTitle('claude-3.7').closest('.grid');
-    expect(modelGrid).toHaveClass('max-h-[270px]');
+    expect(
+      screen.getByTitle('claude-3.7').closest('[data-testid="direct-model-item"]')
+    ).toBeInTheDocument();
 
     await act(async () => {
       fireEvent.change(modelSearchInput, { target: { value: '4.1-mini' } });
@@ -190,6 +204,36 @@ describe('DirectCliConfigEditorContent', () => {
     expect(screen.queryByTitle('gpt-4.1-mini')).not.toBeInTheDocument();
   });
 
+  it('normalizes API key groups and shows model ownership below the model name', async () => {
+    const config = createConfig();
+    config.apiKeys = [
+      {
+        id: 'key-a',
+        name: 'A',
+        key: 'sk-a',
+        group: '1 默认',
+        groupMultiplier: 1,
+        models: ['claude-3.7'],
+      },
+    ];
+    config.apiKey = 'sk-a';
+    useCustomCliConfigStore.setState({ configs: [config] });
+
+    await renderDialog(config);
+    const groupInput = screen.getByRole('textbox', { name: 'API Key 1 分组' });
+    expect(groupInput).toHaveValue('① 默认');
+    const modelItem = screen.getByTitle('claude-3.7').closest('[data-testid="direct-model-item"]');
+    expect(modelItem).toHaveTextContent('① 默认');
+    expect(modelItem?.firstElementChild?.firstElementChild?.children[1]).toHaveTextContent(
+      '① 默认'
+    );
+
+    fireEvent.change(groupInput, { target: { value: '2 高级' } });
+    fireEvent.blur(groupInput);
+    expect(groupInput).toHaveValue('② 高级');
+    expect(modelItem).toHaveTextContent('② 高级');
+  });
+
   it('saves the gas station URL with direct config identity fields', async () => {
     await renderDialog();
 
@@ -204,6 +248,44 @@ describe('DirectCliConfigEditorContent', () => {
         expect.objectContaining({ gasStationUrl: 'https://fuel.example.com/topup' })
       );
     });
+  });
+
+  it('saves the optional model URL with direct config identity fields', async () => {
+    await renderDialog();
+
+    fireEvent.change(screen.getByRole('textbox', { name: '模型 URL' }), {
+      target: { value: 'https://models.example.com/v1/models' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+
+    await waitFor(() => {
+      expect(useCustomCliConfigStore.getState().updateConfig).toHaveBeenCalledWith(
+        'cfg-1',
+        expect.objectContaining({ modelUrl: 'https://models.example.com/v1/models' })
+      );
+    });
+  });
+
+  it('marks the save action dirty when the model URL changes', async () => {
+    await renderDialog();
+
+    const saveButton = screen.getByTestId('direct-cli-save-button');
+    expect(saveButton).toHaveAttribute('data-dirty', 'false');
+    fireEvent.change(screen.getByRole('textbox', { name: '模型 URL' }), {
+      target: { value: 'https://models.example.com' },
+    });
+
+    await waitFor(() => expect(saveButton).toHaveAttribute('data-dirty', 'true'));
+  });
+
+  it('places the model URL and gas station URL in the same identity grid row', async () => {
+    await renderDialog();
+
+    const gasStationInput = screen.getByRole('textbox', { name: '加油站链接' });
+    const modelUrlInput = screen.getByRole('textbox', { name: '模型 URL' });
+    const gasStationGrid = gasStationInput.parentElement?.parentElement;
+    expect(gasStationGrid).toBe(modelUrlInput.parentElement?.parentElement);
+    expect(gasStationGrid).toHaveClass('md:grid-cols-2');
   });
 
   it('marks the save button dirty/red after editing identity fields', async () => {
@@ -232,7 +314,7 @@ describe('DirectCliConfigEditorContent', () => {
 
     await renderDialog();
 
-    const apiKeyInput = screen.getByLabelText('API Key');
+    const apiKeyInput = screen.getByLabelText('API Key 1');
     expect(apiKeyInput).toHaveAttribute('type', 'password');
 
     fireEvent.click(screen.getByRole('button', { name: '显示 API Key' }));
@@ -270,7 +352,7 @@ describe('DirectCliConfigEditorContent', () => {
     await renderDialog();
 
     await act(async () => {
-      fireEvent.change(screen.getByLabelText('分组倍率'), { target: { value: '2.5' } });
+      fireEvent.change(screen.getByLabelText('API Key 1 倍率'), { target: { value: '2.5' } });
     });
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
@@ -282,7 +364,7 @@ describe('DirectCliConfigEditorContent', () => {
     expect(updateConfig).toHaveBeenLastCalledWith(
       'cfg-1',
       expect.objectContaining({
-        groupMultiplier: 2.5,
+        apiKeys: expect.arrayContaining([expect.objectContaining({ groupMultiplier: 2.5 })]),
       })
     );
   });
@@ -291,7 +373,7 @@ describe('DirectCliConfigEditorContent', () => {
     await renderDialog();
 
     await act(async () => {
-      fireEvent.change(screen.getByDisplayValue('测试配置'), {
+      fireEvent.change(screen.getByPlaceholderText('例如: 我的 API'), {
         target: { value: '测试配置重命名' },
       });
     });
@@ -314,7 +396,7 @@ describe('DirectCliConfigEditorContent', () => {
     await renderDialog();
 
     await act(async () => {
-      fireEvent.change(screen.getByDisplayValue('测试配置'), {
+      fireEvent.change(screen.getByPlaceholderText('例如: 我的 API'), {
         target: { value: '   ' },
       });
     });
@@ -337,7 +419,7 @@ describe('DirectCliConfigEditorContent', () => {
     await renderDialog();
 
     await act(async () => {
-      fireEvent.change(screen.getByLabelText('分组倍率'), { target: { value: '' } });
+      fireEvent.change(screen.getByLabelText('API Key 1 倍率'), { target: { value: '' } });
     });
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
@@ -349,7 +431,7 @@ describe('DirectCliConfigEditorContent', () => {
     expect(updateConfig).toHaveBeenLastCalledWith(
       'cfg-1',
       expect.objectContaining({
-        groupMultiplier: 1,
+        apiKeys: expect.arrayContaining([expect.objectContaining({ groupMultiplier: 1 })]),
       })
     );
   });

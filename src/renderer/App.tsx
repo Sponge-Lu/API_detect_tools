@@ -91,8 +91,8 @@ const RoutePage = lazy(() => import('./pages/RoutePage').then(m => ({ default: m
 const ModelMappingPage = lazy(() =>
   import('./pages/ModelMappingPage').then(m => ({ default: m.ModelMappingPage }))
 );
-const ConfigFilesPage = lazy(() =>
-  import('./pages/ConfigFilesPage').then(m => ({ default: m.ConfigFilesPage }))
+const RouteSettingsPage = lazy(() =>
+  import('./pages/RouteSettingsPage').then(m => ({ default: m.RouteSettingsPage }))
 );
 const SettingsPage = lazy(() =>
   import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage }))
@@ -1062,7 +1062,7 @@ function App() {
                   : 'hidden'
               }
             >
-              <ConfigFilesPage />
+              <RouteSettingsPage />
             </div>
             <div
               className={

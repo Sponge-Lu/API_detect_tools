@@ -12,12 +12,19 @@ import { AppButton } from '../AppButton/AppButton';
 import { AppCard } from '../AppCard';
 import { AppSelect } from '../AppSelect';
 import { AgentLogo } from '../AgentLogo';
+import {
+  buildRouteSessionOrdinals,
+  formatRouteSessionOrdinal,
+} from '../../utils/routeSessionOrdinal';
 
 const inputClassName =
   'h-7 min-w-0 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent)]';
+const noteInputClassName =
+  'h-6 min-w-0 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 text-[11px] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]';
+// !py-0：AppSelect size=sm 自带 py-[var(--spacing-sm)]（8px），级联顺序在 py-0 之后，普通 py-0 无效，h-7 下会裁切文字下半
+const selectClassName = 'h-7 rounded-[var(--radius-sm)] !py-0 text-xs leading-4';
 const CUSTOM_REASONING_EFFORT = '__custom__';
 const SESSION_SCOPE_LABEL = '会话级路由';
-const SESSION_SCOPE_DESCRIPTION = '未提供稳定物理窗口标识';
 
 function formatTime(value?: number): string {
   if (!value) return '等待首条请求';
@@ -116,6 +123,7 @@ function ReasoningEffortEditor({ instance, onSave }: ReasoningEffortEditorProps)
     <div className="grid min-w-0 gap-1">
       <AppSelect
         size="sm"
+        className={selectClassName}
         aria-label={`${instance.id} 思考强度`}
         value={mode}
         onChange={event => void selectMode(event.target.value)}
@@ -148,6 +156,8 @@ function ReasoningEffortEditor({ instance, onSave }: ReasoningEffortEditorProps)
 export function RouteSessionSection() {
   const config = useRouteStore(state => state.config);
   const [instances, setInstances] = useState<RouteInstance[]>([]);
+  // 同一客户端开多个会话窗口时仅靠名称/色点无法区分，用稳定序号标识
+  const sessionOrdinals = useMemo(() => buildRouteSessionOrdinals(instances), [instances]);
   const [loading, setLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [draft, setDraft] = useState({ modelId: '', reasoningEffort: 'medium' });
@@ -329,13 +339,13 @@ export function RouteSessionSection() {
           >
             {instances.map(instance => {
               const bound = Boolean(instance.routeKey);
-              const sessionScopedRoute = isSessionScopedRoute(instance);
+              const ordinal = sessionOrdinals[instance.id];
               return (
                 <article
                   key={instance.id}
                   data-testid={`route-session-card-${instance.id}`}
                   data-density="compact"
-                  className="grid h-[13.5rem] min-w-0 grid-rows-[auto_auto_auto_1fr_auto] gap-2 rounded-[var(--radius-md)] border border-[var(--line-muted)] bg-[var(--surface-2)] p-2.5"
+                  className="grid h-auto min-w-0 grid-rows-[auto_auto_auto_auto_auto_auto] gap-1.5 rounded-[var(--radius-md)] border border-[var(--line-muted)] bg-[var(--surface-2)] p-2.5 pb-1.5"
                 >
                   <div className="flex min-w-0 items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-1.5">
@@ -348,6 +358,15 @@ export function RouteSessionSection() {
                           agentName={effectiveAgentName(instance)}
                           className="h-4 w-4"
                         />
+                      ) : null}
+                      {ordinal ? (
+                        <span
+                          className="shrink-0 text-[11px] font-semibold leading-4 tabular-nums text-[var(--text-secondary)]"
+                          title={`${effectiveAgentName(instance)} 会话 ${formatRouteSessionOrdinal(ordinal)}`}
+                          data-testid="route-session-ordinal"
+                        >
+                          {formatRouteSessionOrdinal(ordinal)}
+                        </span>
                       ) : null}
                     </div>
                     <div className="flex shrink-0 items-center">
@@ -422,7 +441,7 @@ export function RouteSessionSection() {
                   )}
 
                   {bound ? (
-                    <div className="grid min-w-0 gap-1">
+                    <div className="grid min-w-0">
                       <div className="flex h-7 min-w-0 items-center gap-1 rounded-[var(--radius-sm)] bg-[var(--surface-1)] px-2 text-xs text-[var(--text-secondary)]">
                         <span className="shrink-0 text-[10px] text-[var(--text-tertiary)]">
                           Session
@@ -444,14 +463,6 @@ export function RouteSessionSection() {
                           <Copy className="h-3.5 w-3.5" />
                         </button>
                       </div>
-                      {sessionScopedRoute ? (
-                        <span
-                          className="truncate text-[10px] text-[var(--text-tertiary)]"
-                          title={SESSION_SCOPE_DESCRIPTION}
-                        >
-                          {SESSION_SCOPE_DESCRIPTION}
-                        </span>
-                      ) : null}
                     </div>
                   ) : (
                     <div />
@@ -459,9 +470,12 @@ export function RouteSessionSection() {
 
                   <div className="grid min-h-0 grid-cols-2 content-start gap-1.5">
                     <div className="grid min-w-0 content-start gap-1">
-                      <span className="text-[10px] text-[var(--text-tertiary)]">模型</span>
+                      <span className="text-[10px] leading-3 text-[var(--text-tertiary)]">
+                        模型
+                      </span>
                       <AppSelect
                         size="sm"
+                        className={selectClassName}
                         aria-label={`${instance.id} 路由模型`}
                         value={instance.modelId}
                         onChange={event =>
@@ -476,7 +490,9 @@ export function RouteSessionSection() {
                       </AppSelect>
                     </div>
                     <div className="grid min-w-0 content-start gap-1">
-                      <span className="text-[10px] text-[var(--text-tertiary)]">思考强度</span>
+                      <span className="text-[10px] leading-3 text-[var(--text-tertiary)]">
+                        思考强度
+                      </span>
                       <ReasoningEffortEditor
                         instance={instance}
                         onSave={value => updateInstance(instance.id, { reasoningEffort: value })}
@@ -484,7 +500,21 @@ export function RouteSessionSection() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 border-t border-[var(--line-soft)] pt-1.5 text-[10px] text-[var(--text-tertiary)]">
+                  <input
+                    key={`${instance.id}-note-${instance.display.customNote ?? ''}`}
+                    className={noteInputClassName}
+                    aria-label={`${instance.id} 备注`}
+                    title={instance.display.customNote}
+                    placeholder="备注"
+                    defaultValue={instance.display.customNote ?? ''}
+                    onBlur={event => {
+                      const value = event.target.value.trim();
+                      if (value === (instance.display.customNote ?? '')) return;
+                      void updateInstance(instance.id, { customNote: value || null });
+                    }}
+                  />
+
+                  <div className="grid grid-cols-2 gap-2 border-t border-[var(--line-soft)] pt-1 text-[10px] leading-3 text-[var(--text-tertiary)]">
                     <span className="min-w-0 truncate">创建 {formatTime(instance.createdAt)}</span>
                     <span className="min-w-0 truncate text-right">
                       最近 {formatTime(instance.lastRequestAt)}

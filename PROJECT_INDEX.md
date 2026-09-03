@@ -55,11 +55,11 @@
 | `src/main/overview-service.ts` | 数据总览聚合服务，负责站点每日快照采集、查询与按日期汇总 |
 | `src/main/custom-cli-config-service.ts` | 直连接入点持久化与旧四 CLI 上游协议迁移，并为模型注册表生成虚拟通道标识 |
 | `src/main/config-file-profile-service.ts` | v3 配置方案、可用目标与模型域、单卡片 revision、结构化合并/覆盖、真实文件事务及增量对话记录扫描 |
-| `src/main/route-session-service.ts` | 以 `agentId + runtimeSlotId + sessionId` 管理 RouteInstance，归一化完整内部键、Codex 原生窗口/会话元数据与 Claude Code 会话头，负责 ARMED 原子绑定、槽位 Session 切换、配置优先级和展示别名 |
+| `src/main/route-session-service.ts` | 以 `agentId + runtimeSlotId + sessionId` 管理 RouteInstance，解析 Codex/Claude Code/OpenCode 原生父子谱系，按客户端规范化模型共享父卡或创建稳定副编号子卡，并负责 ARMED 原子绑定与生命周期 |
 | `src/main/route-session-activity-service.ts` | 将 RouteInstance 高频 `lastRequestAt` 从稳定配置拆到有界、合并、原子写 sidecar，支持启动 hydrate 与退出 flush |
-| `src/main/custom-cli-model-service.ts` | 直连配置模型获取服务，通过配置 `baseUrl + /v1/models` 拉取模型列表并写回 `CustomCliConfig.models` |
+| `src/main/custom-cli-model-service.ts` | 直连配置模型获取服务，通过配置 `modelUrl`（为空时回退 `baseUrl`）拼接 `/v1/models` 拉取模型列表并写回 `CustomCliConfig.models` |
 | `src/main/handlers/*.ts` | `config:*`、`token:*`、`accounts:*`、`route:*`、`config-file-profile:*` 等 IPC；配置文件 I/O 和会话规则管理仅由主进程执行 |
-| `src/main/route-*.ts` / `src/main/anyrouter-request-rewriter.ts` / `src/main/cli-protocol-adapter.ts` | 按入站 pathname 接收 Messages、Chat Completions 与 Responses 的通用本地网关，在请求体解析后关联运行时会话身份，并执行模型映射、会话覆盖、故障转移和必要的双向协议转换；隐藏提供模型发现、CORS 预检、根探测和精确 Token 计数契约 |
+| `src/main/route-*.ts` / `src/main/anyrouter-request-rewriter.ts` / `src/main/cli-protocol-adapter.ts` | 按入站 pathname 接收 Messages、Chat Completions 与 Responses 的通用本地网关，在请求体解析后关联运行时会话身份，并执行模型映射、会话覆盖、故障转移和必要的双向协议转换；上游失败按类别记账（仅请求侧致命记 `neutral`，不改变转移行为），凭证/模型/配额确证不可用时按阶梯时长首次即禁用该路径，全通道失败吸收为可重试 503；隐藏提供模型发现、CORS 预检、根探测和精确 Token 计数契约 |
 | `src/main/protocol-sse-transformer.ts` | 独立的跨协议增量 SSE 状态机，负责六个有向协议转换的分片解析、事件生命周期、工具/usage/error/terminal 透传 |
 | `src/main/streaming-protocol-validator.ts` | 三标准协议的有界增量 SSE 校验器，按实际下游字节验证帧、生命周期、输出、usage 与工具参数，不重建完整响应体 |
 | `src/main/endpoint-test-service.ts` | 手动执行 Messages、Responses 与 Chat Completions 非流式生成测试，保存每个接入目标/端点的最新选择、结果与测试时间 |
@@ -71,23 +71,23 @@
 
 | 模块 | 作用 |
 |------|------|
-| `src/renderer/App.tsx` | 侧边栏外壳与页面切换，注册并行的本地路由、模型映射、配置文件页面 |
+| `src/renderer/App.tsx` | 侧边栏外壳与页面切换，注册并行的本地路由、模型映射、路由设置页面 |
 | `src/renderer/components/AppErrorBoundary.tsx` | React 根错误边界，防止未捕获渲染异常留下白屏，并提供可见的重新加载操作 |
-| `src/renderer/components/AppShell/pageMeta.ts` | 注册一级页面元数据，包含并行的本地路由、模型映射、配置文件和路由日志入口 |
+| `src/renderer/components/AppShell/pageMeta.ts` | 注册一级页面元数据，包含并行的本地路由、模型映射、路由设置和路由日志入口 |
 | `src/renderer/components/Sidebar/VerticalSidebar.tsx` | 左侧导航组件，负责展示一级页面与 `数据总览` 子页入口 |
 | `src/renderer/components/LoadingState.tsx` / `ErrorState.tsx` / `AppSwitch.tsx` / `AppSelect.tsx` / `PageContainer.tsx` | 统一加载/错误/开关/下拉/页面容器原语；配合 `App*`/`DataTable` 收敛全 App 三态与同类控件视觉 |
 | `src/renderer/components/CreditPanel/DailyStatsCard.tsx` / `formatLastUpdated.ts` | 统一每日收支统计卡片（`variant: income/expense`，`Income/ExpenseStatsCard` 为其薄封装）与共享"更新于"时间格式化 |
 | `src/renderer/pages/DataOverviewPage.tsx` | 数据总览首页，按 `overviewSubtab` 渲染 `SiteOverviewView` 或 `RouteOverviewView`：站点视图展示资源 / 签到 / 历史快照；路由视图三行布局（KPI / 运行趋势 + 模型热力 / 通道散点 + 模型→通道 Sankey），通过路由内容区实际尺寸选择紧凑/常规布局，并用 scope (全部 / 站点 / 自定义 CLI) 控制路由视图范围；运行趋势在 `24h` / `7d` 视窗内补齐完整小时/日期 X 轴，前置空桶只显示标签不绘制柱/线，并提供左侧请求量（0–max）与右侧成功率（0–100%）双纵轴及对齐的 0/50/100 参考线；用 treemap 的 selectedModel 控制散点高亮；Sankey 独立展示不参与模型联动。KPI 第四张为首字响应 P95 + 会话时间 P99 合并卡。 |
 | `src/renderer/pages/SitesPage.tsx` | 站点管理主页面；接入点侧滑面板提供信息、资源和原生端点测试，不再承载 CLI 配置 |
 | `src/renderer/pages/CreditPage.tsx` | LDC 积分页面，展示 Linux Do Credit 账户信息、收支统计与充值入口 |
-| `src/renderer/pages/RoutePage.tsx` | 本地网关启停、鉴权、CORS、统计和会话级模型/思考强度路由 |
+| `src/renderer/pages/RoutePage.tsx` | 本地路由页：代理服务器区块 + 配置文件卡片区 |
 | `src/renderer/pages/ModelMappingPage.tsx` | 模型重定向、原始模型来源、站点/API Key 候选与优先级编辑 |
-| `src/renderer/pages/ConfigFilesPage.tsx` | 任意客户端/CLI/SDK 的摘要卡片（可整卡点击编辑）与详情弹窗、模板应用与本地文件保存、行级 diff 预览和对话记录路径 |
+| `src/renderer/pages/RouteSettingsPage.tsx` | 路由设置页，承载会话路由卡片区 |
 | `src/renderer/pages/LogsPage.tsx` | 路由日志主页面，通过逐条 push 追加；按日志中的 Agent 动态筛选并以 Logo + 名称展示首列，Token 固定两行展示输入/输出与缓存写/读 |
 | `src/renderer/components/AgentLogo.tsx` | 统一识别并展示主流 Agent/harness 产品 Logo，未知产品使用灰色占位图标 |
 | `src/renderer/components/HistoryCell.tsx` / `src/renderer/components/Route/Usability/HistoryBucketBars.tsx` / `src/renderer/components/SiteListHeader/SiteListHeader.tsx` | 站点管理 History 列 UI：表头按实际请求端点切换单条 24 个 2h 时间桶轨道，数据来自 `route:getHistoryBuckets` IPC 并按成功率渐变着色 |
-| `src/renderer/components/dialogs/AddAccessPointDialog.tsx` / `AccessPointDetailPanel.tsx` / `EndpointTestPanel.tsx` / `SiteSettingsDialog.tsx` | 统一添加接入点、接入点详情、三协议端点测试与站点刷新设置；端点测试独立选择 API Key/模型并显示最近测试时间 |
-| `src/renderer/components/Route/*` | 路由页内部区块（会话路由、模型重定向、服务器/统计面板，以及站点管理 History 条形图复用组件） |
+| `src/renderer/components/dialogs/AddAccessPointDialog.tsx` / `AccessPointDetailPanel.tsx` / `AccessPointResourcePrimitives.tsx` / `EndpointTestPanel.tsx` / `SiteSettingsDialog.tsx` | 统一添加接入点、接入点详情、托管/直连 Tab2 资源布局、三协议端点测试与站点刷新设置；端点测试独立选择 API Key/模型并显示最近测试时间 |
+| `src/renderer/components/Route/*` | 路由页内部区块（含 `#N` / `#N.M` 父子会话编号、模型重定向优先级色点、服务器/统计面板及 History 条形图） |
 | `src/renderer/services/sessionEventLog.ts` | 将关键操作写入当前会话事件历史，供站点页操作记录弹窗展示 |
 | `src/renderer/store/uiStore.ts` | 页面切换、`数据总览` 子页切换、侧边栏显示模式、排序、弹窗等 UI 状态 |
 | `src/renderer/store/toastStore.ts` | 管理可见 Toast 队列与当前会话内事件历史 |
@@ -96,6 +96,7 @@
 | `src/renderer/utils/siteOverview.ts` | 将站点/账户最新缓存聚合为首页资源指标 |
 | `src/renderer/utils/modelPricing.ts` | 统一解析模型按 token / 按次计费方式与价格，供路由日志和模型重定向复用 |
 | `src/renderer/utils/routeRulePresentation.ts` | 将路由规则转换为可解释的摘要、命中原因与标签 |
+| `src/renderer/utils/routeSessionOrdinal.ts` | 为父 RouteInstance 分配稳定主编号，并以持久化 childOrdinal 生成异模型子卡 `#N.M` 编号 |
 | `src/renderer/utils/routeLatency.ts` | 从 latencyHistogram 桶估算 P90/P99 延迟分位数，样本 <20 时返回 null；命名导出桶解析与百分位算法供 routeTtfb 复用 |
 | `src/renderer/utils/routeLogAxis.ts` | 散点矩阵首字响应 X 轴 0-120s 分段 value↔pixel 映射 + 默认刻度 (1s/3s/5s/10s/30s/60s/120s) |
 | `src/renderer/utils/routeModelDistribution.ts` | 按 canonicalModel 聚合 RouteAnalyticsBucket 生成模型热力分布项（含成功率），并提供 squarified treemap 布局 |
@@ -109,12 +110,12 @@
 | 模块 | 作用 |
 |------|------|
 | `src/shared/types/site.ts` | 站点、账户、浏览器 Profile 选择与绑定、账户级 CLI 配置、检测缓存（含 `has_checkin` / `can_check_in` 拆分）、API Key 活跃状态归一化、AnyRouter 站点名归一化识别、站点每日快照、运行期缓存等核心类型 |
-| `src/shared/types/route-proxy.ts` | 通用网关、Responses 状态亲和摘要、模型来源、路径状态、会话路由、端点测试与分析统计类型 |
+| `src/shared/types/route-proxy.ts` | 通用网关、Responses 状态亲和摘要、模型来源、路径状态、含父实例/副编号/客户端模型的会话路由、端点测试与分析统计类型 |
 | `src/shared/config/builtin-client-configs.ts` | Claude Code、Codex、OpenCode、Grok Build 完整配置的共享唯一来源 |
 | `src/shared/types/config-file-profile.ts` | 版本化配置方案、含协议元数据的目标目录、应用模式、文件事务和对话记录诊断类型 |
 | `src/shared/theme/themePresets.ts` | `Light` / `Dark` 主题预设与旧值归一化 |
 | `src/shared/constants/index.ts` | 列宽、默认值等共享常量 |
-| `src/shared/utils/customCliRouteId.ts` | 自定义 CLI 路由通道合成 ID（site/account/apiKey）跨进程命名约定 helper |
+| `src/shared/utils/customCliRouteId.ts` / `groupLabel.ts` | 自定义 CLI 真实多 Key 路由通道合成 ID helper；数字分组前缀到圆圈数字标签的共享规范化 |
 
 ---
 
@@ -209,6 +210,7 @@
 - 新增 `src/renderer/components/HistoryCell.tsx`
 - 新增 `src/renderer/components/dialogs/AddAccessPointDialog.tsx`
 - 新增 `src/renderer/components/dialogs/AccessPointDetailPanel.tsx`
+- 新增 `src/renderer/components/dialogs/AccessPointResourcePrimitives.tsx`
 - 新增 `src/renderer/components/dialogs/ManagedCliConfigEditorContent.tsx`
 - 新增 `src/renderer/components/dialogs/DirectCliConfigEditorContent.tsx`
 - 新增 `src/renderer/components/dialogs/PanelSection.tsx`

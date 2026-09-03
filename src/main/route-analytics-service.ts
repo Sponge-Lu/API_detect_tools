@@ -26,8 +26,14 @@ import type {
 } from '../shared/types/route-proxy';
 import { buildBucketKey } from '../shared/types/route-proxy';
 import { estimateModelCostUsd } from '../shared/utils/modelPricing';
-import { normalizeCustomCliGroupMultiplier } from '../shared/types/custom-cli-config';
-import { parseCustomCliRouteConfigId } from '../shared/utils/customCliRouteId';
+import {
+  normalizeCustomCliApiKeys,
+  normalizeCustomCliGroupMultiplier,
+} from '../shared/types/custom-cli-config';
+import {
+  parseCustomCliRouteApiKeyId,
+  parseCustomCliRouteConfigId,
+} from '../shared/utils/customCliRouteId';
 import type { ApiKeyInfo } from '../shared/types/site';
 import { resolveApiKeyId } from './route-model-registry-service';
 import { loadCustomCliConfigStorageSync } from './custom-cli-config-service';
@@ -105,11 +111,15 @@ function resolveRouteRegistryIdentity(params: {
     }
 
     if (source.sourceType === 'customCli') {
+      // 显式配置的多 Key 才有可区分的名称；legacy 单 Key 保持「默认」
+      const explicitKeyName = parseCustomCliRouteApiKeyId(params.apiKeyId || '')?.keyId
+        ? matchedApiKey?.apiKeyName
+        : undefined;
       return {
         siteName: normalizeCustomCliObjectName(source),
         accountName: '默认',
         userGroupKey: matchedApiKey?.group,
-        apiKeyName: '默认',
+        apiKeyName: explicitKeyName || '默认',
         sourceType: source.sourceType,
       };
     }
@@ -183,6 +193,7 @@ function buildRouteObjectStatsGroupKey(item: {
 
 function resolveDirectModelPriceInfo(params: {
   siteId?: string;
+  apiKeyId?: string;
   resolvedModel?: string;
   canonicalModel?: string | null;
   requestedModel?: string | null;
@@ -215,7 +226,14 @@ function resolveDirectModelPriceInfo(params: {
     if (priceInfo) {
       return {
         priceInfo,
-        groupMultiplier: normalizeCustomCliGroupMultiplier(directConfig?.groupMultiplier),
+        groupMultiplier: normalizeCustomCliGroupMultiplier(
+          normalizeCustomCliApiKeys(directConfig?.apiKeys, {
+            legacyApiKey: directConfig?.apiKey,
+            legacyName: directConfig?.name,
+            legacyGroupMultiplier: directConfig?.groupMultiplier,
+          }).find(key => key.id === parseCustomCliRouteApiKeyId(params.apiKeyId || '')?.keyId)
+            ?.groupMultiplier ?? directConfig?.groupMultiplier
+        ),
       };
     }
   }
@@ -225,6 +243,7 @@ function resolveDirectModelPriceInfo(params: {
 
 function resolveRouteEstimatedCostUsd(params: {
   siteId?: string;
+  apiKeyId?: string;
   resolvedModel?: string;
   canonicalModel?: string | null;
   requestedModel?: string | null;
@@ -251,6 +270,7 @@ function appendRouteRequestLog(params: {
   cliType: RouteCliType;
   agentId?: string;
   agentName?: string;
+  routeInstanceId?: string;
   targetProtocol?: RouteRequestLogItem['targetProtocol'];
   targetEndpoint?: RouteRequestLogItem['targetEndpoint'];
   requestedModel?: string | null;
@@ -296,6 +316,7 @@ function appendRouteRequestLog(params: {
     cliType: params.cliType,
     agentId: params.agentId,
     agentName: params.agentName,
+    routeInstanceId: params.routeInstanceId,
     targetProtocol: params.targetProtocol,
     targetEndpoint: params.targetEndpoint,
     requestedModel: params.requestedModel,
@@ -396,6 +417,7 @@ export function recordRouteRequest(params: {
   cliType: RouteCliType;
   agentId?: string;
   agentName?: string;
+  routeInstanceId?: string;
   targetProtocol?: RouteRequestLogItem['targetProtocol'];
   targetEndpoint?: RouteRequestLogItem['targetEndpoint'];
   requestedModel?: string | null;
@@ -428,6 +450,7 @@ export function recordRouteRequest(params: {
   const estimatedCostUsd = recordsInferenceUsage
     ? resolveRouteEstimatedCostUsd({
         siteId: params.siteId,
+        apiKeyId: params.apiKeyId,
         resolvedModel: params.resolvedModel,
         canonicalModel: params.canonicalModel,
         requestedModel: params.requestedModel,
@@ -442,6 +465,7 @@ export function recordRouteRequest(params: {
     cliType: params.cliType,
     agentId: params.agentId,
     agentName: params.agentName,
+    routeInstanceId: params.routeInstanceId,
     targetProtocol: params.targetProtocol,
     targetEndpoint: params.targetEndpoint,
     requestedModel: params.requestedModel,

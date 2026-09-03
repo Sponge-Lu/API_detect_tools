@@ -67,6 +67,7 @@ if (typeof window !== 'undefined') {
       onRequestLogAppended: vi.fn(),
       upsertModelDisplayItem: vi.fn(),
       resetPathStates: vi.fn(),
+      listRouteInstances: vi.fn(),
       saveCliProbeConfig: vi.fn(),
       runCliProbeNow: vi.fn(),
       getCliProbeLatest: vi.fn(),

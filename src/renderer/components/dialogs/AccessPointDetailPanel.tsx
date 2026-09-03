@@ -50,6 +50,39 @@ import type { CustomCliConfig } from '../../../shared/types/custom-cli-config';
 import type { DetectionResult } from '../../App';
 import type { CliTargetProtocol } from '../../../shared/types/cli-config';
 import type { ModelPricingData } from '../../../shared/types/site';
+import { normalizeCircledGroupLabel } from '../../../shared/utils/groupLabel';
+import {
+  AccessPointResourceSectionHeader,
+  AccessPointResourceShell,
+  accessPointResourceActionClass,
+  accessPointResourceIconActionClass,
+  accessPointResourceTokenListClass,
+  accessPointResourceTokenRowClass,
+} from './AccessPointResourcePrimitives';
+
+interface LocalApiKeyView {
+  id: string;
+  name: string;
+  maskedKey: string;
+  group: string;
+  groupMultiplier: number;
+  models: string[];
+  modelsFetchedAt?: number;
+}
+
+interface LocalApiKeyDraft {
+  name: string;
+  key: string;
+  group: string;
+  groupMultiplier: string;
+}
+
+const EMPTY_LOCAL_KEY_DRAFT: LocalApiKeyDraft = {
+  name: '',
+  key: '',
+  group: '',
+  groupMultiplier: '1',
+};
 
 // 账号信息接口（从 SitesPage 提取）
 export interface AccountInfo {
@@ -345,6 +378,36 @@ export function AccessPointDetailPanel({
   const [loadingBrowserProfiles, setLoadingBrowserProfiles] = useState(false);
   const [browserProfileError, setBrowserProfileError] = useState('');
   const [directIdentityDirty, setDirectIdentityDirty] = useState(false);
+  const [localApiKeys, setLocalApiKeys] = useState<LocalApiKeyView[]>([]);
+  const [localKeyDraft, setLocalKeyDraft] = useState<LocalApiKeyDraft>(EMPTY_LOCAL_KEY_DRAFT);
+  const [editingLocalKeyId, setEditingLocalKeyId] = useState<string | null>(null);
+  const [showLocalKeyForm, setShowLocalKeyForm] = useState(false);
+  const [revealedLocalKeys, setRevealedLocalKeys] = useState<Record<string, string>>({});
+  const [refreshingLocalKeyId, setRefreshingLocalKeyId] = useState<string | null>(null);
+  const localModelProjection = useMemo(() => {
+    const models = Array.from(
+      new Set([...(siteResult?.models || []), ...localApiKeys.flatMap(item => item.models)])
+    );
+    const pricingData = { ...(modelPricing?.data || {}) };
+    const projectedUserGroups = { ...userGroups };
+    for (const item of localApiKeys) {
+      const group = normalizeCircledGroupLabel(item.group);
+      if (!group) continue;
+      projectedUserGroups[group] ??= { desc: '本地 API Key 分组', ratio: item.groupMultiplier };
+      for (const model of item.models) {
+        const existing = pricingData[model] || {};
+        pricingData[model] = {
+          ...existing,
+          enable_groups: Array.from(new Set([...(existing.enable_groups || []), group])),
+        };
+      }
+    }
+    return {
+      siteResult: siteResult ? { ...siteResult, models } : { models },
+      modelPricing: { ...(modelPricing || {}), data: pricingData },
+      userGroups: projectedUserGroups,
+    };
+  }, [localApiKeys, modelPricing, siteResult, userGroups]);
 
   // 持久化 activeTab
   useEffect(() => {
@@ -497,6 +560,85 @@ export function AccessPointDetailPanel({
       cancelled = true;
     };
   }, [currentAccount?.id, data, onLoadBrowserProfileOptions, open]);
+
+  const loadLocalApiKeys = useCallback(async () => {
+    if (!currentAccount?.id) {
+      setLocalApiKeys([]);
+      return;
+    }
+    const response = await window.electronAPI.token?.listLocalApiKeys?.(currentAccount.id);
+    if (response?.success) setLocalApiKeys(response.data || []);
+  }, [currentAccount?.id]);
+
+  useEffect(() => {
+    if (!open || data?.type !== 'managed' || !currentAccount?.id) {
+      setLocalApiKeys([]);
+      return;
+    }
+    void loadLocalApiKeys();
+  }, [currentAccount?.id, data?.type, loadLocalApiKeys, open]);
+
+  const saveLocalApiKey = useCallback(async () => {
+    if (!currentAccount?.id) return;
+    const input = {
+      name: localKeyDraft.name,
+      key: localKeyDraft.key,
+      group: localKeyDraft.group,
+      groupMultiplier: Number(localKeyDraft.groupMultiplier) || 1,
+    };
+    const response = editingLocalKeyId
+      ? await window.electronAPI.token?.updateLocalApiKey?.(
+          currentAccount.id,
+          editingLocalKeyId,
+          input
+        )
+      : await window.electronAPI.token?.addLocalApiKey?.(currentAccount.id, input);
+    if (!response?.success) return;
+    setLocalApiKeys(response.data || []);
+    setLocalKeyDraft(EMPTY_LOCAL_KEY_DRAFT);
+    setEditingLocalKeyId(null);
+    setShowLocalKeyForm(false);
+  }, [currentAccount?.id, editingLocalKeyId, localKeyDraft]);
+
+  const revealLocalApiKey = useCallback(
+    async (keyId: string) => {
+      if (!currentAccount?.id) return;
+      if (revealedLocalKeys[keyId]) {
+        setRevealedLocalKeys(previous => {
+          const next = { ...previous };
+          delete next[keyId];
+          return next;
+        });
+        return;
+      }
+      const response = await window.electronAPI.token?.revealLocalApiKey?.(
+        currentAccount.id,
+        keyId
+      );
+      if (response?.success && response.data) {
+        setRevealedLocalKeys(previous => ({ ...previous, [keyId]: response.data }));
+      }
+    },
+    [currentAccount?.id, revealedLocalKeys]
+  );
+
+  const refreshLocalApiKey = useCallback(
+    async (keyId: string) => {
+      if (!currentAccount?.id || data?.type !== 'managed') return;
+      setRefreshingLocalKeyId(keyId);
+      try {
+        const response = await window.electronAPI.token?.refreshLocalApiKeys?.(
+          currentAccount.id,
+          data.site.url,
+          keyId
+        );
+        if (response?.success) setLocalApiKeys(response.data?.keys || []);
+      } finally {
+        setRefreshingLocalKeyId(null);
+      }
+    },
+    [currentAccount?.id, data]
+  );
 
   const updateManagedSiteDraft = useCallback(
     <K extends keyof ManagedSiteDraft>(key: K, value: ManagedSiteDraft[K]) => {
@@ -1107,31 +1249,230 @@ export function AccessPointDetailPanel({
           <div>
             {isManagedSite && data.type === 'managed' ? (
               currentAccount ? (
-                <SiteCardDetails
-                  site={data.site}
-                  cardKey={`${data.site.name}::${currentAccount.id}`}
-                  siteResult={siteResult}
-                  apiKeys={apiKeys}
-                  userGroups={userGroups}
-                  modelPricing={modelPricing}
-                  selectedGroup={selectedGroup}
-                  modelSearch={modelSearch}
-                  globalModelSearch=""
-                  showTokens={showTokens}
-                  selectedModels={selectedModels}
-                  deletingTokenKey={null}
-                  refreshingTokenKey={null}
-                  onToggleGroupFilter={handleToggleGroupFilter}
-                  onModelSearchChange={handleModelSearchChange}
-                  onToggleTokenVisibility={handleToggleTokenVisibility}
-                  onToggleModelSelection={handleToggleModelSelection}
-                  onCopySelectedModels={handleCopySelectedModels}
-                  onClearSelectedModels={handleClearSelectedModels}
-                  onCopyToClipboard={onCopyToClipboard || (() => {})}
-                  onOpenCreateTokenDialog={onOpenCreateTokenDialog || (() => {})}
-                  onRefreshToken={onRefreshToken || (() => {})}
-                  onDeleteToken={onDeleteToken || (() => {})}
-                />
+                <AccessPointResourceShell testId="managed-tab2-content">
+                  <section className="space-y-0.5">
+                    <AccessPointResourceSectionHeader
+                      title="本地令牌管理"
+                      meta={<> ({localApiKeys.length})</>}
+                      actions={
+                        <button
+                          type="button"
+                          className={accessPointResourceActionClass}
+                          onClick={() => {
+                            setEditingLocalKeyId(null);
+                            setLocalKeyDraft(EMPTY_LOCAL_KEY_DRAFT);
+                            setShowLocalKeyForm(true);
+                          }}
+                        >
+                          <Plus className="h-3 w-3" />
+                          手动添加
+                        </button>
+                      }
+                    />
+                    {showLocalKeyForm ? (
+                      <div className="grid grid-cols-1 gap-2 rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] p-2 md:grid-cols-2">
+                        <input
+                          aria-label="本地 API Key 名称"
+                          value={localKeyDraft.name}
+                          onChange={event =>
+                            setLocalKeyDraft(previous => ({
+                              ...previous,
+                              name: event.target.value,
+                            }))
+                          }
+                          placeholder="名称"
+                          className="rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1.5 text-xs"
+                        />
+                        <input
+                          aria-label="本地 API Key 分组"
+                          value={localKeyDraft.group}
+                          onChange={event =>
+                            setLocalKeyDraft(previous => ({
+                              ...previous,
+                              group: event.target.value,
+                            }))
+                          }
+                          onBlur={event =>
+                            setLocalKeyDraft(previous => ({
+                              ...previous,
+                              group: normalizeCircledGroupLabel(event.target.value),
+                            }))
+                          }
+                          placeholder="① 默认分组"
+                          className="rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1.5 text-xs"
+                        />
+                        <input
+                          aria-label="本地 API Key"
+                          value={localKeyDraft.key}
+                          onChange={event =>
+                            setLocalKeyDraft(previous => ({ ...previous, key: event.target.value }))
+                          }
+                          placeholder="sk-..."
+                          className="rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1.5 font-mono text-xs"
+                        />
+                        <input
+                          aria-label="本地 API Key 倍率"
+                          type="number"
+                          min="0.001"
+                          step="0.001"
+                          value={localKeyDraft.groupMultiplier}
+                          onChange={event =>
+                            setLocalKeyDraft(previous => ({
+                              ...previous,
+                              groupMultiplier: event.target.value,
+                            }))
+                          }
+                          className="rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1.5 text-xs"
+                        />
+                        <div className="flex justify-end gap-2 md:col-span-2">
+                          <AppButton
+                            variant="tertiary"
+                            size="sm"
+                            onClick={() => setShowLocalKeyForm(false)}
+                          >
+                            取消
+                          </AppButton>
+                          <AppButton
+                            variant="primary"
+                            size="sm"
+                            onClick={() => void saveLocalApiKey()}
+                          >
+                            保存
+                          </AppButton>
+                        </div>
+                      </div>
+                    ) : null}
+                    <div className={accessPointResourceTokenListClass}>
+                      {localApiKeys.map(item => {
+                        const rawKey = revealedLocalKeys[item.id];
+                        return (
+                          <div
+                            key={item.id}
+                            className={accessPointResourceTokenRowClass}
+                            data-testid="managed-local-api-key-row"
+                          >
+                            <span className="w-24 truncate font-semibold">{item.name}</span>
+                            <span className="w-24 truncate text-[var(--text-secondary)]">
+                              {item.group || '--'}
+                            </span>
+                            <span className="w-12 text-[var(--text-secondary)]">
+                              ×{item.groupMultiplier}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate font-mono text-[var(--accent-strong)]">
+                              {rawKey || item.maskedKey}
+                            </span>
+                            <span className="text-[var(--text-secondary)]">
+                              {item.models.length} 模型
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => void revealLocalApiKey(item.id)}
+                              className={accessPointResourceIconActionClass}
+                              title={rawKey ? '隐藏' : '显示'}
+                              aria-label={rawKey ? '隐藏本地 API Key' : '显示本地 API Key'}
+                            >
+                              {rawKey ? (
+                                <EyeOff className="h-3.5 w-3.5" />
+                              ) : (
+                                <Eye className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onCopyToClipboard?.(
+                                  rawKey || item.maskedKey,
+                                  `API Key: ${item.name}`
+                                )
+                              }
+                              className={accessPointResourceIconActionClass}
+                              title="复制"
+                              aria-label="复制本地 API Key"
+                            >
+                              <Copy className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void refreshLocalApiKey(item.id)}
+                              className={accessPointResourceIconActionClass}
+                              title="刷新模型"
+                              aria-label="刷新本地 API Key 模型"
+                            >
+                              <RefreshCw
+                                className={`h-3.5 w-3.5 ${refreshingLocalKeyId === item.id ? 'animate-spin' : ''}`}
+                              />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const response =
+                                  await window.electronAPI.token?.revealLocalApiKey?.(
+                                    currentAccount.id,
+                                    item.id
+                                  );
+                                setEditingLocalKeyId(item.id);
+                                setLocalKeyDraft({
+                                  name: item.name,
+                                  key: response?.success ? response.data : '',
+                                  group: item.group,
+                                  groupMultiplier: String(item.groupMultiplier),
+                                });
+                                setShowLocalKeyForm(true);
+                              }}
+                              className={accessPointResourceIconActionClass}
+                              title="编辑"
+                              aria-label="编辑本地 API Key"
+                            >
+                              <Save className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const response =
+                                  await window.electronAPI.token?.deleteLocalApiKey?.(
+                                    currentAccount.id,
+                                    item.id
+                                  );
+                                if (response?.success) setLocalApiKeys(response.data || []);
+                              }}
+                              className={`${accessPointResourceIconActionClass} text-[var(--danger)] hover:bg-[var(--danger-soft)]`}
+                              title="删除"
+                              aria-label="删除本地 API Key"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                  <SiteCardDetails
+                    embedded
+                    site={data.site}
+                    cardKey={`${data.site.name}::${currentAccount.id}`}
+                    siteResult={localModelProjection.siteResult}
+                    apiKeys={apiKeys}
+                    userGroups={localModelProjection.userGroups}
+                    modelPricing={localModelProjection.modelPricing}
+                    selectedGroup={selectedGroup}
+                    modelSearch={modelSearch}
+                    globalModelSearch=""
+                    showTokens={showTokens}
+                    selectedModels={selectedModels}
+                    deletingTokenKey={null}
+                    refreshingTokenKey={null}
+                    onToggleGroupFilter={handleToggleGroupFilter}
+                    onModelSearchChange={handleModelSearchChange}
+                    onToggleTokenVisibility={handleToggleTokenVisibility}
+                    onToggleModelSelection={handleToggleModelSelection}
+                    onCopySelectedModels={handleCopySelectedModels}
+                    onClearSelectedModels={handleClearSelectedModels}
+                    onCopyToClipboard={onCopyToClipboard || (() => {})}
+                    onOpenCreateTokenDialog={onOpenCreateTokenDialog || (() => {})}
+                    onRefreshToken={onRefreshToken || (() => {})}
+                    onDeleteToken={onDeleteToken || (() => {})}
+                  />
+                </AccessPointResourceShell>
               ) : (
                 <div className="rounded-[var(--radius-lg)] border border-[var(--line-soft)] bg-[var(--surface-2)] p-4 text-sm text-[var(--text-secondary)]">
                   添加账户后可查看模型、用户组与 API Key。
@@ -1141,6 +1482,7 @@ export function AccessPointDetailPanel({
               <DirectCliConfigEditorContent
                 section="models"
                 config={data.config}
+                showHeader={false}
                 onSaved={onConfigChanged}
                 showDialog={showDialog}
               />

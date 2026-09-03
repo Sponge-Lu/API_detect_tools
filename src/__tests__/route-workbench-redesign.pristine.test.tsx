@@ -7,7 +7,7 @@ import {
   shouldRefreshRegistrySourceDetails,
 } from '../renderer/components/Route/Redirection/ModelRedirectionTab';
 import { RoutePage } from '../renderer/pages/RoutePage';
-import { ConfigFilesPage } from '../renderer/pages/ConfigFilesPage';
+import { ConfigProfilesSection } from '../renderer/components/Route/ConfigProfilesSection';
 import { useCustomCliConfigStore } from '../renderer/store/customCliConfigStore';
 import { buildRouteApiKeyPriorityKey, buildRoutePathStateKey } from '../shared/types/route-proxy';
 import type {
@@ -946,7 +946,8 @@ describe('route workbench redesign', () => {
 
     expect(screen.getByText('代理服务器')).toBeInTheDocument();
     expect(screen.getByLabelText('代理')).toBeInTheDocument();
-    expect(screen.getByText('会话路由')).toBeInTheDocument();
+    expect(screen.getByText('配置文件')).toBeInTheDocument();
+    expect(screen.queryByText('会话路由')).not.toBeInTheDocument();
     expect(screen.getByTestId('route-page-server-row')).toBeInTheDocument();
     const serverSectionCard = screen.getByTestId('route-server-section-card');
     expect(serverSectionCard).toHaveClass('w-full');
@@ -1077,11 +1078,12 @@ describe('route workbench redesign', () => {
 
     render(<RoutePage />);
 
-    expect(await screen.findByText('Client A')).toBeInTheDocument();
-    expect(screen.getByText('Client B')).toBeInTheDocument();
-    expect(screen.getByTestId('route-profile-credentials')).toHaveClass('grid', 'grid-cols-3');
-    const clientA = screen.getByTestId('route-profile-credential-client-a');
-    const clientB = screen.getByTestId('route-profile-credential-client-b');
+    const credentialsGrid = await screen.findByTestId('route-profile-credentials');
+    expect(credentialsGrid).toHaveClass('grid', 'grid-cols-3');
+    const clientA = within(credentialsGrid).getByTestId('route-profile-credential-client-a');
+    const clientB = within(credentialsGrid).getByTestId('route-profile-credential-client-b');
+    expect(within(clientA).getByText('Client A')).toBeInTheDocument();
+    expect(within(clientB).getByText('Client B')).toBeInTheDocument();
     const clientAControls = screen.getByTestId('route-profile-credential-controls-client-a');
     const clientBActions = screen.getByTestId('route-profile-credential-actions-client-b');
     expect(clientA).toHaveClass('min-w-0', 'space-y-1.5');
@@ -1103,7 +1105,7 @@ describe('route workbench redesign', () => {
       .forEach(button => expect(button).toHaveClass('h-7', 'w-7'));
     fireEvent.click(within(clientB).getByRole('button', { name: '显示 Client B API Key' }));
     expect(screen.getByLabelText('Client B API Key')).toHaveAttribute('type', 'text');
-    expect(screen.queryByText('Direct Client')).not.toBeInTheDocument();
+    expect(within(credentialsGrid).queryByText('Direct Client')).not.toBeInTheDocument();
     fireEvent.click(
       within(screen.getByTestId('route-profile-credentials')).getByRole('button', { name: '生成' })
     );
@@ -1188,13 +1190,20 @@ describe('route workbench redesign', () => {
       createdAt: 1,
       updatedAt: 1,
     };
-    api.load.mockResolvedValueOnce([profile]).mockResolvedValueOnce([
-      {
-        ...profile,
-        revision: 6,
-        localRouteCredential: { ...profile.localRouteCredential, apiKey: 'new-key', rotatedAt: 2 },
-      },
-    ]);
+    api.load
+      .mockResolvedValueOnce([profile])
+      .mockResolvedValueOnce([profile])
+      .mockResolvedValue([
+        {
+          ...profile,
+          revision: 6,
+          localRouteCredential: {
+            ...profile.localRouteCredential,
+            apiKey: 'new-key',
+            rotatedAt: 2,
+          },
+        },
+      ]);
     api.previewRouteKeyRotation.mockResolvedValue({
       transactionId: 'rotation-a',
       profileId: profile.id,
@@ -1308,7 +1317,7 @@ describe('route workbench redesign', () => {
       (window.electronAPI.configFileProfiles.load as ReturnType<typeof vi.fn>).mockResolvedValue(
         profiles
       );
-      render(<ConfigFilesPage />);
+      render(<ConfigProfilesSection />);
       for (const name of ['Claude Code', 'Codex', 'OpenCode', 'Grok Build']) {
         expect(await screen.findByText(name)).toBeInTheDocument();
         expect(screen.getByRole('button', { name: `${name} 编辑` })).toBeInTheDocument();
@@ -1398,7 +1407,7 @@ describe('route workbench redesign', () => {
       api.commit = vi.fn();
       api.preview.mockResolvedValue(preview);
       api.commit.mockResolvedValue(undefined);
-      render(<ConfigFilesPage />);
+      render(<ConfigProfilesSection />);
       expect(await screen.findByText('我的编辑器')).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: '预览套用' })).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: '我的编辑器 编辑' }));
@@ -1416,7 +1425,7 @@ describe('route workbench redesign', () => {
       );
       expect(await screen.findByText('确认写入内容')).toBeInTheDocument();
       expect(screen.getByText('after')).toBeInTheDocument();
-      
+
       expect(screen.queryByRole('dialog', { name: '应用到本地' })).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: '确认写入' }));
       await waitFor(() => expect(api.commit).toHaveBeenCalledWith({ transactionId: 'tx-1' }));
@@ -1426,7 +1435,7 @@ describe('route workbench redesign', () => {
   it('does not render the legacy CLI thinking selector on the local route page', () => {
     render(<RoutePage />);
     expect(screen.queryByTestId('route-cli-thinking-effort-claudeCode')).not.toBeInTheDocument();
-    expect(screen.getByText('会话路由')).toBeInTheDocument();
+    expect(screen.getByText('配置文件')).toBeInTheDocument();
   });
 
   it('keeps real file editing separate from template preview', async () => {
@@ -1468,7 +1477,7 @@ describe('route workbench redesign', () => {
         mtimeMs: 1,
       },
     ]);
-    render(<ConfigFilesPage />);
+    render(<ConfigProfilesSection />);
     expect(await screen.findByText('真实文件卡片')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '真实文件卡片 编辑' }));
     expect(await screen.findByDisplayValue('真实文件卡片')).toBeInTheDocument();
@@ -1489,7 +1498,9 @@ describe('route workbench redesign', () => {
     expect(screen.getByText('gpt-5.4')).toBeInTheDocument();
     expect(screen.queryByText('gpt-5')).not.toBeInTheDocument();
     const priorityPane = await screen.findByTestId('redirect-detail-priority');
-    expect(within(priorityPane).getAllByText(/暂停至/).length).toBeGreaterThan(0);
+    expect(
+      within(priorityPane).getAllByTestId('priority-detail-status-badge').length
+    ).toBeGreaterThan(0);
     expect(priorityPane.querySelector('[title*="60分钟成功率 0%"]')).not.toBeNull();
     expect(screen.queryByTestId('redirect-card-header')).not.toBeInTheDocument();
     expect(screen.getByTestId('redirect-two-pane-layout')).toHaveClass(
@@ -1549,7 +1560,7 @@ describe('route workbench redesign', () => {
     const renderedOriginalModels = Array.from(originalModelsList.querySelectorAll('code'));
     expect(renderedOriginalModels.length).toBeGreaterThan(1);
     expect(within(originalModelsList).queryByText(',')).not.toBeInTheDocument();
-    expect(within(originalModelsList).queryByText(/暂停至/)).not.toBeInTheDocument();
+    expect(within(originalModelsList).queryByText(/暂停/)).not.toBeInTheDocument();
     expect(originalModelFrame).toHaveClass('border', 'bg-[var(--surface-2)]', 'px-2', 'py-1');
     expect(screen.getByText('claude-opus-4.6-20260201')).toHaveClass('leading-4');
     expect(screen.queryByText('手工新增')).not.toBeInTheDocument();
@@ -1677,7 +1688,6 @@ describe('route workbench redesign', () => {
 
     await waitFor(() => {
       expect(backupKeyRow).not.toHaveAttribute('data-priority-hit', 'true');
-      expect(within(backupKeyRow).queryByText('当前优先命中')).not.toBeInTheDocument();
     });
   });
 
@@ -2188,16 +2198,13 @@ describe('route workbench redesign', () => {
       expect(siteSections).toHaveLength(2);
       expect(siteSections[0]?.className).not.toContain('rounded');
       expect(siteSections[0]?.className).not.toContain('shadow');
-      expect(siteSections[0]?.firstElementChild).toHaveClass(
-        'grid-cols-[minmax(0,calc(43%_+_64px))_minmax(0,calc(57%_-_94px))_76px_44px]'
-      );
+      expect(siteSections[0]?.firstElementChild).toHaveClass('grid-cols-[minmax(0,1fr)_auto_44px]');
       expect(
         within(siteSections[0]!).getByRole('radio', { name: '选择 Claude Site' })
       ).toBeChecked();
       const firstSiteHeader = siteSections[0]!.firstElementChild as HTMLElement;
       const firstSiteCells = Array.from(firstSiteHeader.children) as HTMLElement[];
       expect(firstSiteCells).toHaveLength(3);
-      expect(firstSiteCells[0]).toHaveClass('col-span-2');
       expect(
         within(firstSiteCells[0]!).queryByRole('button', { name: 'Claude Site 上移' })
       ).not.toBeInTheDocument();
@@ -2207,7 +2214,7 @@ describe('route workbench redesign', () => {
         'break-words'
       );
       expect(within(firstSiteCells[1]!).queryByText(/claude-/)).not.toBeInTheDocument();
-      expect(within(firstSiteCells[0]!).queryByText(/暂停至/)).not.toBeInTheDocument();
+      expect(within(firstSiteCells[0]!).queryByText(/暂停/)).not.toBeInTheDocument();
       expect(
         within(firstSiteCells[1]!).queryByRole('button', { name: 'Claude Site 上移' })
       ).not.toBeInTheDocument();
@@ -2268,27 +2275,27 @@ describe('route workbench redesign', () => {
       });
       const apiKeyRows = within(detailPane).getAllByTestId('priority-detail-api-key-row');
       expect(apiKeyRows).toHaveLength(4);
-      expect(apiKeyRows[0]).toHaveClass(
-        'grid-cols-[minmax(0,calc(43%_+_64px))_minmax(0,calc(57%_-_94px))_76px_44px]'
-      );
+      // 设计 D：行本身不再是网格，第一行承载身份/状态/操作，第二行独占模型列表
+      expect(apiKeyRows[0]?.firstElementChild).toHaveClass('grid-cols-[minmax(0,1fr)_auto_44px]');
       expect(apiKeyRows[0]?.className).toContain('text-xs');
       expect(apiKeyRows[0]?.className).not.toContain('text-sm');
       expect(within(apiKeyRows[0]!).queryByText('--')).not.toBeInTheDocument();
       expect(apiKeyRows[0]).not.toHaveAttribute('data-priority-hit', 'true');
       expect(apiKeyRows[0]).not.toHaveAttribute('aria-current', 'true');
-      expect(apiKeyRows[0]).not.toHaveClass('bg-[var(--success-soft)]');
-      expect(within(apiKeyRows[0]!).queryByText('当前优先命中')).not.toBeInTheDocument();
       expect(apiKeyRows.every(row => row.getAttribute('data-priority-hit') !== 'true')).toBe(true);
-      const firstApiKeyCells = Array.from(apiKeyRows[0]!.children) as HTMLElement[];
+      const firstApiKeyCells = Array.from(
+        (apiKeyRows[0]!.firstElementChild as HTMLElement).children
+      ) as HTMLElement[];
+      expect(firstApiKeyCells).toHaveLength(3);
       expect(
         within(firstApiKeyCells[0]!).getByRole('button', { name: 'backup-key 下移' })
       ).toBeInTheDocument();
       expect(
-        within(firstApiKeyCells[2]!).queryByRole('button', { name: 'backup-key 下移' })
+        within(firstApiKeyCells[1]!).queryByRole('button', { name: 'backup-key 下移' })
       ).not.toBeInTheDocument();
-      expect(firstApiKeyCells[3]).toHaveAttribute('aria-label', 'backup-key 禁用');
-      expect(firstApiKeyCells[3]).toHaveClass('h-5', 'min-w-8', 'text-[10px]');
-      expect(firstApiKeyCells[3]).toHaveTextContent('禁用');
+      expect(firstApiKeyCells[2]).toHaveAttribute('aria-label', 'backup-key 禁用');
+      expect(firstApiKeyCells[2]).toHaveClass('h-5', 'min-w-8', 'text-[10px]');
+      expect(firstApiKeyCells[2]).toHaveTextContent('禁用');
       expect(
         within(apiKeyRows[0]!).queryByTestId('priority-detail-api-key-priority')
       ).not.toBeInTheDocument();
@@ -2310,12 +2317,20 @@ describe('route workbench redesign', () => {
         .getByText('main-key（Main / team-beta / ×1.50）')
         .closest('[data-testid="priority-detail-api-key-row"]') as HTMLElement;
       expect(mainKeyRow).not.toBeNull();
-      const mainKeyCells = Array.from(mainKeyRow.children) as HTMLElement[];
-      expect(within(mainKeyCells[0]!).queryByText(/暂停至/)).not.toBeInTheDocument();
-      expect(within(mainKeyCells[1]!).getByText(/claude-opus.*暂停至/)).toBeInTheDocument();
-      expect(mainKeyCells[1]).toHaveAttribute('title', expect.stringContaining('60分钟成功率 0%'));
-      expect(within(mainKeyCells[1]!).getByText(/claude-opus.*暂停至/).textContent).toMatch(
-        /claude-opus-4\.6-20260201（.*暂停至/
+      const mainKeyCells = Array.from(
+        (mainKeyRow.firstElementChild as HTMLElement).children
+      ) as HTMLElement[];
+      expect(within(mainKeyCells[0]!).queryByText(/暂停/)).not.toBeInTheDocument();
+      // 状态以徽章呈现，原因短词 + 剩余时长；完整说明留在 title
+      const mainKeyBadge = within(mainKeyCells[1]!).getByTestId('priority-detail-status-badge');
+      expect(mainKeyBadge).toHaveTextContent(/暂停·成功率<30%/);
+      expect(mainKeyBadge).toHaveAttribute('title', expect.stringContaining('成功率低于阈值30%'));
+      expect(mainKeyBadge).toHaveAttribute('title', expect.stringContaining('60分钟成功率 0%'));
+      // 模型列表移到第二行，被暂停的模型只做减淡 + 删除线，不再重复文字
+      const mainKeyModels = within(mainKeyRow).getByTestId('priority-detail-api-key-models');
+      expect(mainKeyModels.textContent).not.toMatch(/暂停/);
+      expect(within(mainKeyModels).getByText(/claude-opus-4\.6-20260201/)).toHaveClass(
+        'line-through'
       );
       expect(
         within(detailPane).getByText('shared-key（Secondary / team-gamma / ×1）')
@@ -2371,8 +2386,6 @@ describe('route workbench redesign', () => {
 
     expect(mockGetRequestLogs).toHaveBeenCalledWith({ limit: 200 });
     expect(backupKeyRow).toHaveAttribute('aria-current', 'true');
-    expect(backupKeyRow).toHaveClass('bg-[var(--success-soft)]');
-    expect(within(backupKeyRow).getByText('当前优先命中')).toBeInTheDocument();
 
     const mainKeyRow = within(detailPane)
       .getByText('main-key（Main / team-beta / ×1.50）')
@@ -2461,7 +2474,6 @@ describe('route workbench redesign', () => {
     });
 
     expect(backupKeyRow).toHaveAttribute('aria-current', 'true');
-    expect(within(backupKeyRow).getByText('当前优先命中')).toBeInTheDocument();
 
     fireEvent.click(
       within(screen.getByTestId('redirect-detail-actions')).getByRole('button', {
@@ -2525,7 +2537,6 @@ describe('route workbench redesign', () => {
 
     await waitFor(() => {
       expect(backupKeyRow).not.toHaveAttribute('data-priority-hit', 'true');
-      expect(within(backupKeyRow).queryByText('当前优先命中')).not.toBeInTheDocument();
     });
   });
 
@@ -2732,7 +2743,7 @@ describe('route workbench redesign', () => {
       expect(row).toHaveAttribute('data-priority-hit', 'true');
       return row!;
     });
-    expect(within(backupKeyRow).getByText('当前优先命中')).toBeInTheDocument();
+    expect(backupKeyRow).toHaveAttribute('aria-current', 'true');
 
     act(() => {
       routeLogCallback?.(

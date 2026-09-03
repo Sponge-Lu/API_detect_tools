@@ -4,6 +4,8 @@ import { CLI_TARGET_PROTOCOLS, type CliTargetProtocol } from '../shared/types/cl
 import {
   ROUTE_AGENT_ID_HEADER,
   ROUTE_AGENT_NAME_HEADER,
+  ROUTE_CLI_MARKER_HEADER,
+  ROUTE_CLI_MARKER_VALUES,
   ROUTE_RUNTIME_SLOT_ID_HEADER,
   ROUTE_RUNTIME_SLOT_LABEL_HEADER,
   ROUTE_SESSION_ID_HEADER,
@@ -46,8 +48,15 @@ export const ROUTE_SESSION_CANDIDATE_MAX_COUNT = 256;
 export const ROUTE_SESSION_CANDIDATE_MAX_VALUE_HASHES = 64;
 
 export interface ObservedRouteInstanceKey extends RouteInstanceKey {
+  lineage?: ObservedRouteLineage;
   observedAgentName?: string;
   observedRuntimeSlotLabel?: string;
+}
+
+export interface ObservedRouteLineage {
+  source: 'codex' | 'claudeCode' | 'openCode';
+  rootSessionId?: string;
+  parentSessionId?: string;
 }
 
 export interface RouteInstanceResolution {
@@ -63,9 +72,21 @@ interface IdentityPartResolution {
 const CODEX_WINDOW_ID_HEADER = 'x-codex-window-id';
 const CODEX_SESSION_ID_HEADER = 'x-codex-session-id';
 const CODEX_THREAD_ID_HEADER = 'x-codex-thread-id';
+const CODEX_SESSION_COMPAT_HEADER = 'session-id';
+const CODEX_THREAD_COMPAT_HEADER = 'thread-id';
+const CODEX_PARENT_THREAD_ID_HEADER = 'x-codex-parent-thread-id';
+const CODEX_TURN_METADATA_HEADER = 'x-codex-turn-metadata';
+const CODEX_SUBAGENT_HEADER = 'x-openai-subagent';
 const CODEX_SESSION_SLOT_LABEL = 'Codex 会话';
 const CLAUDE_CODE_SESSION_ID_HEADER = 'x-claude-code-session-id';
+const CLAUDE_CODE_AGENT_ID_HEADER = 'x-claude-code-agent-id';
+const CLAUDE_CODE_PARENT_AGENT_ID_HEADER = 'x-claude-code-parent-agent-id';
 const CLAUDE_CODE_SESSION_SLOT_LABEL = 'Claude Code 会话';
+const OPEN_CODE_SESSION_ID_HEADER = 'x-session-affinity';
+const OPEN_CODE_PARENT_SESSION_ID_HEADER = 'x-parent-session-id';
+const CODEX_TURN_METADATA_MAX_LENGTH = 8_192;
+const ROUTE_INSTANCE_MEMBER_SESSION_MAX_COUNT = 64;
+const ROUTE_INSTANCE_PARENT_MAX_DEPTH = 32;
 
 function normalizeIdentityPart(value: unknown): string | null {
   if (Array.isArray(value)) value = value[0];
@@ -84,6 +105,16 @@ function asIdentityRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function parseBoundedIdentityRecord(value: unknown): Record<string, unknown> | null {
+  if (Array.isArray(value)) value = value[0];
+  if (typeof value !== 'string' || value.length > CODEX_TURN_METADATA_MAX_LENGTH) return null;
+  try {
+    return asIdentityRecord(JSON.parse(value));
+  } catch {
+    return null;
+  }
 }
 
 function resolveConsistentIdentityPart(values: unknown[]): IdentityPartResolution {
@@ -111,6 +142,79 @@ function inferObservedAgentName(req: Pick<http.IncomingMessage, 'headers'>): str
   if (userAgent.includes('grok')) return 'Grok Build';
   if (userAgent.includes('zcode')) return 'ZCode';
   return '通用 Agent';
+}
+
+function requestMarker(req: Pick<http.IncomingMessage, 'headers'>): string {
+  return normalizeIdentityPart(req.headers[ROUTE_CLI_MARKER_HEADER])?.toLowerCase() || '';
+}
+
+function userAgentIncludes(req: Pick<http.IncomingMessage, 'headers'>, fragment: string): boolean {
+  return (normalizeIdentityPart(req.headers['user-agent'])?.toLowerCase() || '').includes(fragment);
+}
+
+function isLikelyCodexRequest(
+  req: Pick<http.IncomingMessage, 'headers'>,
+  clientMetadata: Record<string, unknown> | null
+): boolean {
+  return (
+    requestMarker(req) === ROUTE_CLI_MARKER_VALUES.codex.toLowerCase() ||
+    userAgentIncludes(req, 'codex') ||
+    [
+      req.headers[CODEX_WINDOW_ID_HEADER],
+      req.headers[CODEX_SESSION_ID_HEADER],
+      req.headers[CODEX_THREAD_ID_HEADER],
+      req.headers[CODEX_SESSION_COMPAT_HEADER],
+      req.headers[CODEX_THREAD_COMPAT_HEADER],
+      req.headers[CODEX_PARENT_THREAD_ID_HEADER],
+      req.headers[CODEX_TURN_METADATA_HEADER],
+      req.headers[CODEX_SUBAGENT_HEADER],
+      clientMetadata?.[CODEX_WINDOW_ID_HEADER],
+      clientMetadata?.window_id,
+      clientMetadata?.[CODEX_SESSION_COMPAT_HEADER],
+      clientMetadata?.[CODEX_THREAD_COMPAT_HEADER],
+      clientMetadata?.session_id,
+      clientMetadata?.thread_id,
+      clientMetadata?.[CODEX_PARENT_THREAD_ID_HEADER],
+      clientMetadata?.parent_thread_id,
+      clientMetadata?.[CODEX_TURN_METADATA_HEADER],
+      clientMetadata?.[CODEX_SUBAGENT_HEADER],
+    ].some(value => value !== undefined)
+  );
+}
+
+function isLikelyOpenCodeRequest(req: Pick<http.IncomingMessage, 'headers'>): boolean {
+  return (
+    requestMarker(req) === ROUTE_CLI_MARKER_VALUES.openCode.toLowerCase() ||
+    userAgentIncludes(req, 'opencode')
+  );
+}
+
+export function hasObservedRouteInstanceEvidence(
+  req: Pick<http.IncomingMessage, 'headers'>,
+  body?: unknown
+): boolean {
+  const bodyRecord = asIdentityRecord(body);
+  const clientMetadata = asIdentityRecord(bodyRecord?.client_metadata);
+  if (
+    [
+      req.headers[ROUTE_AGENT_ID_HEADER],
+      req.headers[ROUTE_RUNTIME_SLOT_ID_HEADER],
+      req.headers[ROUTE_SESSION_ID_HEADER],
+      req.headers[CLAUDE_CODE_SESSION_ID_HEADER],
+      req.headers[CLAUDE_CODE_AGENT_ID_HEADER],
+      req.headers[CLAUDE_CODE_PARENT_AGENT_ID_HEADER],
+    ].some(value => value !== undefined)
+  ) {
+    return true;
+  }
+  if (isLikelyCodexRequest(req, clientMetadata)) return true;
+  return (
+    isLikelyOpenCodeRequest(req) &&
+    [
+      req.headers[OPEN_CODE_SESSION_ID_HEADER],
+      req.headers[OPEN_CODE_PARENT_SESSION_ID_HEADER],
+    ].some(value => value !== undefined)
+  );
 }
 
 function inferObservedProtocol(req: Pick<http.IncomingMessage, 'headers'>): CliTargetProtocol {
@@ -159,6 +263,59 @@ function lastRequestAt(instance: RouteInstance): number {
   return instance.lastRequestAt ?? instance.createdAt ?? 0;
 }
 
+function normalizeMemberSessionIds(instance: RouteInstance): boolean {
+  if (instance.memberSessionIds === undefined) return false;
+  const values = Array.isArray(instance.memberSessionIds) ? instance.memberSessionIds : [];
+  const normalized = Array.from(
+    new Set(values.map(normalizeIdentityPart).filter((value): value is string => Boolean(value)))
+  )
+    .filter(value => value !== instance.routeKey?.sessionId)
+    .slice(0, ROUTE_INSTANCE_MEMBER_SESSION_MAX_COUNT);
+  if (JSON.stringify(instance.memberSessionIds) === JSON.stringify(normalized)) return false;
+  if (normalized.length > 0) instance.memberSessionIds = normalized;
+  else delete instance.memberSessionIds;
+  return true;
+}
+
+function normalizeRouteInstanceLineageFields(instance: RouteInstance): boolean {
+  let changed = false;
+  if (instance.clientModelId !== undefined) {
+    const clientModelId = normalizeIdentityPart(instance.clientModelId);
+    if (clientModelId !== instance.clientModelId) {
+      if (clientModelId) instance.clientModelId = clientModelId;
+      else delete instance.clientModelId;
+      changed = true;
+    }
+  }
+  if (instance.parentInstanceId !== undefined) {
+    const parentInstanceId = normalizeIdentityPart(instance.parentInstanceId);
+    if (parentInstanceId !== instance.parentInstanceId) {
+      if (parentInstanceId) instance.parentInstanceId = parentInstanceId;
+      else delete instance.parentInstanceId;
+      changed = true;
+    }
+  }
+  if (
+    instance.childOrdinal !== undefined &&
+    (!Number.isSafeInteger(instance.childOrdinal) || instance.childOrdinal < 1)
+  ) {
+    delete instance.childOrdinal;
+    changed = true;
+  }
+  return changed;
+}
+
+function appendMemberSessionId(instance: RouteInstance, value: string | undefined): boolean {
+  const sessionId = normalizeIdentityPart(value);
+  if (!sessionId || sessionId === instance.routeKey?.sessionId) return false;
+  const existing = instance.memberSessionIds || [];
+  if (existing.includes(sessionId) || existing.length >= ROUTE_INSTANCE_MEMBER_SESSION_MAX_COUNT) {
+    return false;
+  }
+  instance.memberSessionIds = [...existing, sessionId];
+  return true;
+}
+
 function mergeDuplicateRouteInstance(target: RouteInstance, duplicate: RouteInstance): void {
   const targetLastRequestAt = lastRequestAt(target);
   const duplicateLastRequestAt = lastRequestAt(duplicate);
@@ -175,10 +332,17 @@ function mergeDuplicateRouteInstance(target: RouteInstance, duplicate: RouteInst
   target.lastRequestAt = Math.max(targetLastRequestAt, duplicateLastRequestAt) || undefined;
   target.display.customAgentName ||= duplicate.display.customAgentName;
   target.display.customRuntimeSlotLabel ||= duplicate.display.customRuntimeSlotLabel;
+  target.display.customNote ||= duplicate.display.customNote;
   target.display.observedAgentName =
     latest.display.observedAgentName || target.display.observedAgentName;
   target.display.observedRuntimeSlotLabel =
     latest.display.observedRuntimeSlotLabel || target.display.observedRuntimeSlotLabel;
+  target.clientModelId ||= duplicate.clientModelId;
+  target.parentInstanceId ||= duplicate.parentInstanceId;
+  target.childOrdinal ||= duplicate.childOrdinal;
+  for (const memberSessionId of duplicate.memberSessionIds || []) {
+    appendMemberSessionId(target, memberSessionId);
+  }
 
   if (target.routingState === 'active' || duplicate.routingState === 'active') {
     target.routingState = 'active';
@@ -213,6 +377,8 @@ export function normalizeRouteInstanceCollections(config: RouteSessionRoutingCon
 
   for (const instance of orderedInstances) {
     instance.display ||= {};
+    if (normalizeRouteInstanceLineageFields(instance)) changed = true;
+    if (normalizeMemberSessionIds(instance)) changed = true;
     if (!instance.routeKey) {
       normalizedInstances[instance.id] = instance;
       continue;
@@ -294,48 +460,139 @@ export function extractObservedRouteInstanceKey(
     };
   }
 
+  const bodyRecord = asIdentityRecord(body);
+  const clientMetadata = asIdentityRecord(bodyRecord?.client_metadata);
+  if (isLikelyCodexRequest(req, clientMetadata)) {
+    const turnMetadataValues = [
+      req.headers[CODEX_TURN_METADATA_HEADER],
+      clientMetadata?.[CODEX_TURN_METADATA_HEADER],
+    ].filter(value => value !== undefined);
+    const turnMetadataRecords: Record<string, unknown>[] = [];
+    for (const value of turnMetadataValues) {
+      const record = parseBoundedIdentityRecord(value);
+      if (!record) return null;
+      turnMetadataRecords.push(record);
+    }
+
+    const runtimeSlot = resolveConsistentIdentityPart([
+      req.headers[CODEX_WINDOW_ID_HEADER],
+      clientMetadata?.[CODEX_WINDOW_ID_HEADER],
+      clientMetadata?.window_id,
+    ]);
+    if (!runtimeSlot.value) return null;
+    const nativeSession = resolveConsistentIdentityPart([
+      req.headers[CODEX_SESSION_COMPAT_HEADER],
+      req.headers[CODEX_SESSION_ID_HEADER],
+      clientMetadata?.session_id,
+      ...turnMetadataRecords.map(record => record.session_id),
+    ]);
+    const nativeThread = resolveConsistentIdentityPart([
+      req.headers[CODEX_THREAD_COMPAT_HEADER],
+      req.headers[CODEX_THREAD_ID_HEADER],
+      clientMetadata?.thread_id,
+      ...turnMetadataRecords.map(record => record.thread_id),
+    ]);
+    const parentThread = resolveConsistentIdentityPart([
+      req.headers[CODEX_PARENT_THREAD_ID_HEADER],
+      clientMetadata?.[CODEX_PARENT_THREAD_ID_HEADER],
+      clientMetadata?.parent_thread_id,
+      ...turnMetadataRecords.map(record => record.parent_thread_id),
+    ]);
+    const subagentMarker = resolveConsistentIdentityPart([
+      req.headers[CODEX_SUBAGENT_HEADER],
+      clientMetadata?.[CODEX_SUBAGENT_HEADER],
+    ]);
+    if (
+      (nativeSession.supplied && !nativeSession.value) ||
+      (nativeThread.supplied && !nativeThread.value) ||
+      (parentThread.supplied && !parentThread.value) ||
+      (subagentMarker.supplied && !subagentMarker.value)
+    ) {
+      return null;
+    }
+
+    const hasChildEvidence = parentThread.supplied || subagentMarker.supplied;
+    if (hasChildEvidence && (!nativeThread.value || !parentThread.value)) return null;
+    const sessionId = nativeThread.value || (!hasChildEvidence ? nativeSession.value : null);
+    if (!sessionId) return null;
+    if (parentThread.value === sessionId) return null;
+    return {
+      agentId: 'codex',
+      runtimeSlotId: sessionId,
+      sessionId,
+      ...(nativeSession.value || parentThread.value
+        ? {
+            lineage: {
+              source: 'codex' as const,
+              ...(nativeSession.value ? { rootSessionId: nativeSession.value } : {}),
+              ...(parentThread.value ? { parentSessionId: parentThread.value } : {}),
+            },
+          }
+        : {}),
+      observedAgentName: 'Codex',
+      observedRuntimeSlotLabel: CODEX_SESSION_SLOT_LABEL,
+    };
+  }
+
   const claudeCodeSession = resolveConsistentIdentityPart([
     req.headers[CLAUDE_CODE_SESSION_ID_HEADER],
   ]);
-  if (claudeCodeSession.supplied) {
-    if (!claudeCodeSession.value) return null;
+  const claudeCodeAgent = resolveConsistentIdentityPart([req.headers[CLAUDE_CODE_AGENT_ID_HEADER]]);
+  const claudeCodeParentAgent = resolveConsistentIdentityPart([
+    req.headers[CLAUDE_CODE_PARENT_AGENT_ID_HEADER],
+  ]);
+  if (claudeCodeSession.supplied || claudeCodeAgent.supplied || claudeCodeParentAgent.supplied) {
+    if (
+      !claudeCodeSession.value ||
+      (claudeCodeAgent.supplied && !claudeCodeAgent.value) ||
+      (claudeCodeParentAgent.supplied && !claudeCodeParentAgent.value) ||
+      (claudeCodeParentAgent.supplied && !claudeCodeAgent.value)
+    ) {
+      return null;
+    }
+    const sessionId = claudeCodeAgent.value || claudeCodeSession.value;
+    const parentSessionId = claudeCodeAgent.value
+      ? claudeCodeParentAgent.value || claudeCodeSession.value
+      : undefined;
+    if (parentSessionId === sessionId) return null;
     return {
       agentId: 'claudeCode',
-      runtimeSlotId: claudeCodeSession.value,
-      sessionId: claudeCodeSession.value,
+      runtimeSlotId: sessionId,
+      sessionId,
+      lineage: {
+        source: 'claudeCode',
+        rootSessionId: claudeCodeSession.value,
+        ...(parentSessionId ? { parentSessionId } : {}),
+      },
       observedAgentName: 'Claude Code',
       observedRuntimeSlotLabel: CLAUDE_CODE_SESSION_SLOT_LABEL,
     };
   }
 
-  const bodyRecord = asIdentityRecord(body);
-  const clientMetadata = asIdentityRecord(bodyRecord?.client_metadata);
-  const runtimeSlot = resolveConsistentIdentityPart([
-    req.headers[CODEX_WINDOW_ID_HEADER],
-    clientMetadata?.[CODEX_WINDOW_ID_HEADER],
-    clientMetadata?.window_id,
-  ]);
-  if (runtimeSlot.supplied) {
-    if (!runtimeSlot.value) return null;
-    const nativeSession = resolveConsistentIdentityPart([
-      req.headers[CODEX_SESSION_ID_HEADER],
-      clientMetadata?.session_id,
+  if (isLikelyOpenCodeRequest(req)) {
+    const openCodeSession = resolveConsistentIdentityPart([
+      req.headers[OPEN_CODE_SESSION_ID_HEADER],
     ]);
-    const nativeThread = nativeSession.supplied
-      ? { supplied: false, value: null }
-      : resolveConsistentIdentityPart([
-          req.headers[CODEX_THREAD_ID_HEADER],
-          clientMetadata?.thread_id,
-        ]);
-    const sessionId = nativeSession.supplied ? nativeSession.value : nativeThread.value;
-    if (!sessionId) return null;
-    return {
-      agentId: 'codex',
-      runtimeSlotId: sessionId,
-      sessionId,
-      observedAgentName: 'Codex',
-      observedRuntimeSlotLabel: CODEX_SESSION_SLOT_LABEL,
-    };
+    const openCodeParent = resolveConsistentIdentityPart([
+      req.headers[OPEN_CODE_PARENT_SESSION_ID_HEADER],
+    ]);
+    if (openCodeSession.supplied || openCodeParent.supplied) {
+      if (!openCodeSession.value || (openCodeParent.supplied && !openCodeParent.value)) return null;
+      if (openCodeParent.value === openCodeSession.value) return null;
+      return {
+        agentId: 'session:session-affinity',
+        runtimeSlotId: openCodeSession.value,
+        sessionId: openCodeSession.value,
+        lineage: {
+          source: 'openCode',
+          ...(openCodeParent.value
+            ? { parentSessionId: openCodeParent.value }
+            : { rootSessionId: openCodeSession.value }),
+        },
+        observedAgentName: 'OpenCode',
+        observedRuntimeSlotLabel: '会话级路由',
+      };
+    }
   }
 
   const genericIdentity = extractRouteSessionIdentity(
@@ -415,6 +672,9 @@ export function updateRouteInstance(
     instance.display.customRuntimeSlotLabel =
       normalizeIdentityPart(updates.customRuntimeSlotLabel) || undefined;
   }
+  if (updates.customNote !== undefined) {
+    instance.display.customNote = updates.customNote?.trim() || undefined;
+  }
   return instance;
 }
 
@@ -458,6 +718,171 @@ export function archiveRouteInstance(
   return true;
 }
 
+function resolveTopLevelRouteInstance(
+  config: RouteSessionRoutingConfig,
+  instance: RouteInstance,
+  profileId: string,
+  agentId: string
+): RouteInstance | null {
+  const visited = new Set<string>();
+  let current = instance;
+  for (let depth = 0; depth < ROUTE_INSTANCE_PARENT_MAX_DEPTH; depth += 1) {
+    if (
+      visited.has(current.id) ||
+      current.routingState !== 'active' ||
+      current.profileId !== profileId ||
+      current.routeKey?.agentId !== agentId
+    ) {
+      return null;
+    }
+    visited.add(current.id);
+    if (!current.parentInstanceId) return current;
+    const parent = config.instances[current.parentInstanceId];
+    if (!parent) return null;
+    current = parent;
+  }
+  return null;
+}
+
+function findActiveTopLevelBySessionAlias(
+  config: RouteSessionRoutingConfig,
+  profileId: string,
+  agentId: string,
+  sessionId: string
+): RouteInstance | null {
+  const roots = new Map<string, RouteInstance>();
+  for (const instance of Object.values(config.instances)) {
+    if (
+      instance.routingState !== 'active' ||
+      instance.profileId !== profileId ||
+      instance.routeKey?.agentId !== agentId ||
+      (instance.routeKey.sessionId !== sessionId && !instance.memberSessionIds?.includes(sessionId))
+    ) {
+      continue;
+    }
+    const root = resolveTopLevelRouteInstance(config, instance, profileId, agentId);
+    if (root) roots.set(root.id, root);
+  }
+  return roots.size === 1 ? Array.from(roots.values())[0] : null;
+}
+
+function resolveObservedParentInstance(
+  config: RouteSessionRoutingConfig,
+  profileId: string,
+  observedKey: ObservedRouteInstanceKey
+): RouteInstance | null {
+  const rootSessionId = observedKey.lineage?.rootSessionId;
+  const parentSessionId = observedKey.lineage?.parentSessionId;
+  if (!parentSessionId) return null;
+
+  const explicitRoot = rootSessionId
+    ? findActiveTopLevelBySessionAlias(config, profileId, observedKey.agentId, rootSessionId)
+    : null;
+  if (rootSessionId && !explicitRoot) return null;
+
+  const immediateRoot = findActiveTopLevelBySessionAlias(
+    config,
+    profileId,
+    observedKey.agentId,
+    parentSessionId
+  );
+  if (explicitRoot && immediateRoot && explicitRoot.id !== immediateRoot.id) return null;
+  return explicitRoot || immediateRoot;
+}
+
+function allocateChildOrdinal(config: RouteSessionRoutingConfig, parentInstanceId: string): number {
+  return (
+    Math.max(
+      0,
+      ...Object.values(config.instances)
+        .filter(instance => instance.parentInstanceId === parentInstanceId)
+        .map(instance =>
+          Number.isSafeInteger(instance.childOrdinal) && (instance.childOrdinal || 0) > 0
+            ? instance.childOrdinal || 0
+            : 0
+        )
+    ) + 1
+  );
+}
+
+function applyObservedInstanceState(params: {
+  config: RouteSessionRoutingConfig;
+  profileId: string;
+  observedKey: ObservedRouteInstanceKey;
+  instance: RouteInstance;
+  requestAt: number;
+  manageSlot: boolean;
+}): boolean {
+  const { config, profileId, observedKey, instance, requestAt, manageSlot } = params;
+  let changed = false;
+  if (
+    observedKey.observedAgentName &&
+    instance.display.observedAgentName !== observedKey.observedAgentName
+  ) {
+    instance.display.observedAgentName = observedKey.observedAgentName;
+    changed = true;
+  }
+  if (
+    observedKey.observedRuntimeSlotLabel &&
+    instance.display.observedRuntimeSlotLabel !== observedKey.observedRuntimeSlotLabel
+  ) {
+    instance.display.observedRuntimeSlotLabel = observedKey.observedRuntimeSlotLabel;
+    changed = true;
+  }
+  if (manageSlot) {
+    const slotKey = buildRouteSlotKey(profileId, observedKey);
+    const previousId = config.currentRouteBySlot[slotKey];
+    if (previousId && previousId !== instance.id) {
+      const previous = config.instances[previousId];
+      if (previous) {
+        previous.routingState = 'closed';
+        previous.closedReason = 'replaced';
+        previous.closedAt = requestAt;
+      }
+      changed = true;
+    }
+    if (config.currentRouteBySlot[slotKey] !== instance.id) {
+      config.currentRouteBySlot[slotKey] = instance.id;
+      changed = true;
+    }
+  }
+  if (instance.routingState !== 'active') {
+    instance.routingState = 'active';
+    changed = true;
+  }
+  if (instance.lastRequestAt !== requestAt) instance.lastRequestAt = requestAt;
+  return changed;
+}
+
+function closeActiveChildForSession(
+  config: RouteSessionRoutingConfig,
+  root: RouteInstance,
+  observedKey: ObservedRouteInstanceKey,
+  requestAt: number
+): boolean {
+  let changed = false;
+  for (const instance of Object.values(config.instances)) {
+    if (
+      instance.routingState !== 'active' ||
+      instance.parentInstanceId !== root.id ||
+      instance.profileId !== root.profileId ||
+      instance.routeKey?.agentId !== observedKey.agentId ||
+      instance.routeKey.sessionId !== observedKey.sessionId
+    ) {
+      continue;
+    }
+    instance.routingState = 'closed';
+    instance.closedReason = 'replaced';
+    instance.closedAt = requestAt;
+    const slotKey = buildRouteSlotKey(instance.profileId, instance.routeKey);
+    if (config.currentRouteBySlot[slotKey] === instance.id) {
+      delete config.currentRouteBySlot[slotKey];
+    }
+    changed = true;
+  }
+  return changed;
+}
+
 export function resolveRouteInstanceForRequest(params: {
   config: RouteSessionRoutingConfig;
   profileId: string;
@@ -472,6 +897,7 @@ export function resolveRouteInstanceForRequest(params: {
   ensureRouteInstanceCollections(config);
   if (!observedKey) return { instance: null, changed: false };
   let changed = normalizeRouteInstanceCollections(config);
+  const requestedModel = normalizeIdentityPart(params.requestedModel);
   const routeKey = buildRouteInstanceKey(profileId, observedKey);
   let instance = Object.values(config.instances).find(
     item =>
@@ -480,14 +906,97 @@ export function resolveRouteInstanceForRequest(params: {
       item.routeKey &&
       buildRouteInstanceKey(item.profileId, item.routeKey) === routeKey
   );
-  if (!instance) {
-    instance = Object.values(config.instances).find(item => item.routingState === 'armed');
+
+  if (observedKey.lineage?.parentSessionId) {
+    const parent = resolveObservedParentInstance(config, profileId, observedKey);
+    const parentClientModel = normalizeIdentityPart(parent?.clientModelId);
+    if (!parent || !requestedModel || !parentClientModel) {
+      return { instance: null, changed };
+    }
+
+    if (requestedModel === parentClientModel) {
+      changed = appendMemberSessionId(parent, observedKey.sessionId) || changed;
+      changed =
+        closeActiveChildForSession(config, parent, observedKey, params.requestAt) || changed;
+      changed =
+        applyObservedInstanceState({
+          config,
+          profileId,
+          observedKey,
+          instance: parent,
+          requestAt: params.requestAt,
+          manageSlot: false,
+        }) || changed;
+      return { instance: parent, changed };
+    }
+
+    instance = Object.values(config.instances).find(
+      item =>
+        item.routingState === 'active' &&
+        item.profileId === profileId &&
+        item.parentInstanceId === parent.id &&
+        item.clientModelId === requestedModel &&
+        item.routeKey &&
+        buildRouteInstanceKey(item.profileId, item.routeKey) === routeKey
+    );
     if (!instance) {
-      const modelId = params.requestedModel?.trim() || params.defaultModel.trim();
       const reasoningEffort =
         normalizeRouteThinkingEffort(params.requestedReasoningEffort) ||
         normalizeRouteThinkingEffort(params.defaultReasoningEffort);
-      if (!modelId || !reasoningEffort) return { instance: null, changed: false };
+      if (!reasoningEffort) return { instance: null, changed };
+      instance = {
+        id: randomUUID(),
+        profileId,
+        routeKey: normalizeRouteInstanceKey({
+          agentId: observedKey.agentId,
+          runtimeSlotId: observedKey.runtimeSlotId,
+          sessionId: observedKey.sessionId,
+        }),
+        clientModelId: requestedModel,
+        parentInstanceId: parent.id,
+        childOrdinal: allocateChildOrdinal(config, parent.id),
+        display: {},
+        modelId: requestedModel,
+        reasoningEffort,
+        routingState: 'active',
+        presenceState: 'unknown',
+        createdAt: params.requestAt,
+      };
+      config.instances[instance.id] = instance;
+      changed = true;
+    } else if (!instance.childOrdinal) {
+      instance.childOrdinal = allocateChildOrdinal(config, parent.id);
+      changed = true;
+    }
+    changed =
+      applyObservedInstanceState({
+        config,
+        profileId,
+        observedKey,
+        instance,
+        requestAt: params.requestAt,
+        manageSlot: true,
+      }) || changed;
+    return { instance, changed };
+  }
+
+  if (!instance && observedKey.lineage?.rootSessionId) {
+    instance =
+      findActiveTopLevelBySessionAlias(
+        config,
+        profileId,
+        observedKey.agentId,
+        observedKey.lineage.rootSessionId
+      ) || undefined;
+  }
+  if (!instance) {
+    instance = Object.values(config.instances).find(item => item.routingState === 'armed');
+    if (!instance) {
+      const modelId = requestedModel || normalizeIdentityPart(params.defaultModel);
+      const reasoningEffort =
+        normalizeRouteThinkingEffort(params.requestedReasoningEffort) ||
+        normalizeRouteThinkingEffort(params.defaultReasoningEffort);
+      if (!modelId || !reasoningEffort) return { instance: null, changed };
       instance = {
         id: randomUUID(),
         profileId,
@@ -508,42 +1017,23 @@ export function resolveRouteInstanceForRequest(params: {
     instance.createdAt = params.requestAt;
     changed = true;
   }
-  if (
-    observedKey.observedAgentName &&
-    instance.display.observedAgentName !== observedKey.observedAgentName
-  ) {
-    instance.display.observedAgentName = observedKey.observedAgentName;
+  if (requestedModel && instance.clientModelId !== requestedModel) {
+    instance.clientModelId = requestedModel;
     changed = true;
   }
-  if (
-    observedKey.observedRuntimeSlotLabel &&
-    instance.display.observedRuntimeSlotLabel !== observedKey.observedRuntimeSlotLabel
-  ) {
-    instance.display.observedRuntimeSlotLabel = observedKey.observedRuntimeSlotLabel;
-    changed = true;
-  }
-  const slotKey = buildRouteSlotKey(profileId, observedKey);
-  const previousId = config.currentRouteBySlot[slotKey];
-  if (previousId && previousId !== instance.id) {
-    const previous = config.instances[previousId];
-    if (previous) {
-      previous.routingState = 'closed';
-      previous.closedReason = 'replaced';
-      previous.closedAt = params.requestAt;
-    }
-    changed = true;
-  }
-  if (instance.routingState !== 'active') {
-    instance.routingState = 'active';
-    changed = true;
-  }
-  if (config.currentRouteBySlot[slotKey] !== instance.id) {
-    config.currentRouteBySlot[slotKey] = instance.id;
-    changed = true;
-  }
-  if (instance.lastRequestAt !== params.requestAt) {
-    instance.lastRequestAt = params.requestAt;
-  }
+  changed = appendMemberSessionId(instance, observedKey.lineage?.rootSessionId) || changed;
+  changed = appendMemberSessionId(instance, observedKey.sessionId) || changed;
+  const manageSlot =
+    Boolean(instance.routeKey) && buildRouteInstanceKey(profileId, instance.routeKey!) === routeKey;
+  changed =
+    applyObservedInstanceState({
+      config,
+      profileId,
+      observedKey,
+      instance,
+      requestAt: params.requestAt,
+      manageSlot,
+    }) || changed;
   return { instance, changed };
 }
 
@@ -791,10 +1281,7 @@ function observeCandidate(
     if (oldestKey) candidatesByKey.delete(oldestKey);
   }
   const valueHashes = existing?.valueHashes || new Set<string>();
-  if (
-    valueHashes.has(valueHash) ||
-    valueHashes.size < ROUTE_SESSION_CANDIDATE_MAX_VALUE_HASHES
-  ) {
+  if (valueHashes.has(valueHash) || valueHashes.size < ROUTE_SESSION_CANDIDATE_MAX_VALUE_HASHES) {
     valueHashes.add(valueHash);
   }
   candidatesByKey.set(key, {

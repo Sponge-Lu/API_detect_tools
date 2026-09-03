@@ -40,7 +40,8 @@
 | **config-file-profile-service.ts** | v3 配置方案、独立本地路由凭证、可用目标/模型域、结构化合并/覆盖、revision 文件事务、删除 affinity 清理和增量对话记录扫描 | `upsertConfigFileProfile()`, `previewConfigFileProfileRouteKeyRotation()`, `deleteConfigFileProfile()`, `scanSavedSessionRecordsWithDiagnostics()` |
 | **route-state-affinity-service.ts** | Stateful Responses 本地亲和映射、非敏感 profile 分类摘要与按 profile/site/account/API Key 实体清理；兼容清理旧 Conversation sidecar 记录 | `summarizeProfile()`, `removeByProfile()`, `removeBySites()`, `removeByAccount()`, `removeByApiKey()` |
 | **route-session-activity-service.ts** | RouteInstance 高频 `lastRequestAt` sidecar，按 instance/profile 合并写入、TTL/容量压缩、启动 hydrate 与退出 flush | `hydrate()`, `touch()`, `flush()`, `removeByProfile()` |
-| **custom-cli-model-service.ts** | 直连配置模型获取服务，通过 `baseUrl + /v1/models` 获取模型列表并写回配置 | `fetchModels()`, `fetchAllModels()` |
+| **custom-cli-model-service.ts** | 直连配置模型获取服务，通过 `modelUrl`（为空时回退 `baseUrl`）获取模型列表并写回配置 | `fetchModels()`, `fetchAllModels()` |
+| **local-api-key-service.ts** | Access Token 无效时仍可独立管理本地 API Key，并按 Key 刷新/保留模型快照 | `listLocalApiKeys()`, `addLocalApiKey()`, `refreshLocalApiKeys()` |
 | **backup-manager.ts** | 本地备份管理；自动备份保持 config-only 节流去重，手动备份生成 portable 2 文件包，恢复后重绑隔离 Profile | `backupManager` 实例 |
 | **webdav-manager.ts** | WebDAV 云端 portable 配置包上传、列表、删除与恢复，兼容旧 full-manifest / config-only `.json` 备份 | `WebDAVManager` 类 |
 | **unified-config-manager.ts** | 统一配置管理、损坏恢复、原子写入、legacy 字段清理、账户级 CLI 配置与路由运行态恢复 | `unifiedConfigManager` 实例 |
@@ -49,18 +50,20 @@
 | **config-detection-service.ts** | Claude Code、Codex、OpenCode、Grok Build 本地配置静态检测；Grok Build 仅读取 `~/.grok/config.toml`，不执行模型探测 | `ConfigDetectionService` 类 |
 | **close-behavior-manager.ts** | 窗口关闭行为管理 | `CloseBehaviorManager` 类 |
 | **credit-service.ts** | Linux Do Credit 积分检测、LDC 充值 | `CreditService` 类 |
-| **route-channel-resolver.ts** | 通道解析；接入点级上游协议优先并支持精确目标凭证解析 | `resolveChannels()`, `resolveChannelCredentials()`, `resolveChannelTarget()` |
-| **route-proxy-service.ts** | 三标准协议通用本地网关，支持 Responses 状态亲和、增量流校验/转换、会话覆盖与模型发现，并明确拒绝 Conversations API | `startRouteProxyServer()`, `stopRouteProxyServer()`, `buildUpstreamRequestUrl()` |
-| **route-session-service.ts** | RouteInstance 规范化三元路由键、Codex 原生窗口/会话元数据与 Claude Code 会话头、ARMED 绑定、槽位切换、复用、显式关闭和展示别名 | `extractObservedRouteInstanceKey()`, `resolveRouteInstanceForRequest()`, `listRouteInstances()` |
+| **route-channel-resolver.ts** | 通道解析；接入点级上游协议优先，直连真实多 Key 和托管本地 Key 均精确解析对应凭证 | `resolveChannels()`, `resolveChannelCredentials()`, `resolveChannelTarget()` |
+| **route-proxy-service.ts** | 三标准协议通用本地网关，支持 Responses 状态亲和、增量流校验/转换、原生 Anthropic 流延迟提交窗口与截断降级、会话覆盖与模型发现，并明确拒绝 Conversations API | `startRouteProxyServer()`, `stopRouteProxyServer()`, `buildUpstreamRequestUrl()` |
+| **route-session-service.ts** | RouteInstance 三元路由键与父子谱系归一化，解析 Codex/Claude Code/OpenCode 原生会话元数据，按客户端模型共享父卡或创建稳定副编号子卡，并保留 ARMED/生命周期语义 | `extractObservedRouteInstanceKey()`, `resolveRouteInstanceForRequest()`, `listRouteInstances()` |
 | **route-target-lock.ts** | 端点测试专用的 loopback 目标锁定编解码、终止错误状态与单测试上游尝试预算 | `buildTargetLockRouteApiKey()`, `parseTargetLockRouteApiKey()` |
 | **anyrouter-request-rewriter.ts** | AnyRouter 请求/响应适配器：Claude Code 保留原始工具语义并注入 Anthropic 指纹，Codex 原生 Responses 透传，Google/Gemini GenerateContent 原生透传 | `rewriteForAnyRouter()`, `transformAnyRouterResponse()` |
 | **cli-protocol-adapter.ts** | 通用 CLI 协议适配器：在 Anthropic Messages、OpenAI Chat Completions 与 OpenAI Responses 之间执行单次无损子集转换，覆盖文本、函数工具、共享 `tool_choice`/并行调用控制、思考强度、流式 SSE 与非流式 JSON；不可等价字段以 `CliProtocolAdapterError` 中立跳过候选 | `adaptRequestToTargetProtocol()`, `transformTargetProtocolResponse()`, `CliProtocolAdapterError` |
 | **protocol-sse-transformer.ts** | 协议对之间的增量 SSE 状态机，处理任意传输/UTF-8 分片、文本/工具/usage/error/terminal 事件与下游生命周期 | `IncrementalProtocolSseTransformer`, `ProtocolSseTransformError` |
 | **streaming-protocol-validator.ts** | Messages、Responses 与 Chat Completions 的有界增量 SSE 协议校验，维护终止、输出、usage 与工具参数状态 | `createIncrementalStreamingValidator()`, `StreamingProtocolValidationError` |
-| **route-model-registry-service.ts** | 模型注册表来源聚合、手工/显式 override 展示项维护与厂商优先级配置；所有模型来源均标记四种内置路由 CLI 可用，扫描只刷新候选来源，不自动创建重定向 | `rebuildModelRegistry()`, `syncModelRegistrySources()` |
+| **route-model-registry-service.ts** | 模型注册表来源聚合、真实直连多 Key/托管本地 Key 模型候选、手工/显式 override 展示项维护与厂商优先级配置 | `rebuildModelRegistry()`, `syncModelRegistrySources()` |
 | **route-analytics-service.ts** | 路由请求分析、token/缓存 token/延迟/状态码统计与对象级排行 | `recordRouteRequest()`, `getRouteObjectStats()` |
 | **route-history-service.ts** | History 时间桶聚合服务，将真实路由请求按 Messages、Responses、Chat Completions 等实际请求端点分轨聚合为 48h / 2h 成功率数据 | `getHistoryBuckets()` |
-| **route-stats-service.ts** | 路由调用统计与通道评分排序 | `recordOutcome()`, `sortChannelsByScore()` |
+| **route-stats-service.ts** | 路由调用统计与通道评分排序；上游确证不可用时按阶梯时长（2/10/30 分钟）首次即禁用路径 | `recordOutcome()`, `sortChannelsByScore()`, `recordRoutePathOutcome()` |
+| **route-upstream-failure.ts** | 上游失败分类（请求侧/通道侧/瞬时/配额耗尽）、确证不可用原因解析、响应体摘要归一化、Retry-After 解析与聚合响应留存排序 | `classifyUpstreamFailure()`, `resolveRoutePathDisabledReason()`, `failureClassToOutcome()` |
+| **route-session-binding-service.ts** | 会话-通道绑定侧车，让并发会话各自粘在不同上游通道；通道级绑定（不含模型）使换模型仍保住 prompt cache 亲和性 | `routeSessionBindingService`, `listActive()` |
 | **route-state-manager.ts** | 路由运行态文件管理，维护 `route-runtime.json`、`route-endpoint-tests.json`、`route-analytics.json` 与模型来源快照 | `routeStateManager` |
 | **power-manager.ts** | 电源管理，阻止系统休眠 | `powerManager` 实例 |
 | **preload.ts** | Preload 脚本 | IPC 上下文隔离，暴露统一站点 CRUD / 账户 / 浏览器 Profile 列表与绑定 / 检测 / token 基础信息刷新 / 路由路径恢复 / overview 接口，并提供总览数据变更与路由日志逐条追加订阅 |
@@ -245,6 +248,7 @@ main.ts: app.whenReady()
 - `route-cli-probe-service.ts` - 按站点下全部活跃账户和自定义 CLI 虚拟配置执行 Claude Code / Codex wrapper 探测，并维护 `history/latest`
 - `route-channel-resolver.ts` - 解析可用通道、补全真实 API Key 或自定义 CLI 凭证、结合厂商优先级选择实际出口
 - `route-stats-service.ts` - 记录运行结果并计算评分，供通道排序和统计视图复用
+- `route-upstream-failure.ts` - 纯函数失败分类器；仅 `request_fatal` 记 `neutral` 以避免调用方载荷缺陷误禁用健康通道，故障转移行为不受其影响
 
 ### PowerManager
 

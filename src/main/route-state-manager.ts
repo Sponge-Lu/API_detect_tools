@@ -10,6 +10,7 @@ import type {
   RoutePathState,
   RoutingConfig,
 } from '../shared/types/route-proxy';
+import Logger from './utils/logger';
 import { readJsonFile, writeJsonFileAtomically } from './utils/atomic-json';
 
 const ROUTE_RUNTIME_STATE_VERSION = '1';
@@ -130,6 +131,20 @@ function normalizeRouteModelSourcesState(value: unknown): RouteModelSourcesState
   };
 }
 
+async function readRecoverableState<T>(
+  statePath: string,
+  defaultValue: T,
+  normalize: (value: unknown) => T
+): Promise<T> {
+  try {
+    return await readJsonFile(statePath, { defaultValue, normalize });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    Logger.warn(`⚠️ [RouteStateManager] 读取运行态文件失败，改用空状态: ${statePath} - ${message}`);
+    return defaultValue;
+  }
+}
+
 function keepNewestRecordEntries<T>(
   record: Record<string, T>,
   maxItems: number,
@@ -176,22 +191,26 @@ export class RouteStateManager {
 
   async loadSnapshot(): Promise<RouteStateSnapshot> {
     const [runtime, endpointTests, analytics, modelSources] = await Promise.all([
-      readJsonFile(this.getRouteRuntimePath(), {
-        defaultValue: emptyRouteRuntimeState(),
-        normalize: normalizeRouteRuntimeState,
-      }),
-      readJsonFile(this.getRouteEndpointTestsPath(), {
-        defaultValue: emptyRouteEndpointTestsState(),
-        normalize: normalizeRouteEndpointTestsState,
-      }),
-      readJsonFile(this.getRouteAnalyticsPath(), {
-        defaultValue: emptyRouteAnalyticsState(),
-        normalize: normalizeRouteAnalyticsState,
-      }),
-      readJsonFile(this.getRouteModelSourcesPath(), {
-        defaultValue: emptyRouteModelSourcesState(),
-        normalize: normalizeRouteModelSourcesState,
-      }),
+      readRecoverableState(
+        this.getRouteRuntimePath(),
+        emptyRouteRuntimeState(),
+        normalizeRouteRuntimeState
+      ),
+      readRecoverableState(
+        this.getRouteEndpointTestsPath(),
+        emptyRouteEndpointTestsState(),
+        normalizeRouteEndpointTestsState
+      ),
+      readRecoverableState(
+        this.getRouteAnalyticsPath(),
+        emptyRouteAnalyticsState(),
+        normalizeRouteAnalyticsState
+      ),
+      readRecoverableState(
+        this.getRouteModelSourcesPath(),
+        emptyRouteModelSourcesState(),
+        normalizeRouteModelSourcesState
+      ),
     ]);
 
     return { runtime, endpointTests, analytics, modelSources };

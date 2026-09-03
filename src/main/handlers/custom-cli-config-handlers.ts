@@ -65,6 +65,8 @@ export function registerCustomCliConfigHandlers(): void {
       if (!result.success) {
         throw new Error(result.error || '拉取模型失败');
       }
+      await syncModelRegistrySources(true);
+      notifyAppDataChanged('route-overview');
       return result.models;
     } catch (error: unknown) {
       Logger.error(`❌ [CustomCliConfigHandlers] 拉取模型失败 (configId=${configId}):`, error);

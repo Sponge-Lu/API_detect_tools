@@ -32,14 +32,22 @@ import { isApiKeyActive, type SiteConfig } from '../../../shared/types/site';
 import type { DetectionResult } from '../../App';
 import { getGroupTextColor, getGroupIcon } from '../../utils/groupStyle';
 import { AppSearchInput } from '../AppInput';
+import {
+  AccessPointResourceSectionHeader,
+  AccessPointResourceShell,
+  accessPointResourceListClass,
+  accessPointResourceTokenListClass,
+  accessPointResourceTokenRowClass,
+} from '../dialogs/AccessPointResourcePrimitives';
 
 // 每页显示的模型数量
 const MODELS_PER_PAGE = 50;
 
 interface SiteCardDetailsProps {
+  embedded?: boolean;
   site: SiteConfig;
   cardKey: string;
-  siteResult?: DetectionResult;
+  siteResult?: Pick<DetectionResult, 'models' | 'error'>;
   apiKeys: any[];
   userGroups: Record<string, { desc: string; ratio: number }>;
   modelPricing: any;
@@ -99,6 +107,7 @@ const tokenActionButtonClass =
   'flex h-5 w-5 items-center justify-center rounded-[var(--radius-sm)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-primary)]';
 
 export function SiteCardDetails({
+  embedded = false,
   site,
   cardKey,
   siteResult,
@@ -187,11 +196,8 @@ export function SiteCardDetails({
   const hasMoreModels =
     filteredModels.length > MODELS_PER_PAGE && !globalModelSearch && !modelSearch;
 
-  return (
-    <div
-      className="cursor-default space-y-[var(--spacing-sm)] border-t border-[var(--line-soft)] bg-[var(--surface-2)]/92 px-[var(--spacing-md)] py-[var(--spacing-sm)]"
-      data-no-drag="true"
-    >
+  const content = (
+    <>
       {/* 用户分组 */}
       {Object.keys(userGroups).length > 0 && (
         <div className="flex items-center gap-1 flex-wrap py-0">
@@ -227,27 +233,35 @@ export function SiteCardDetails({
 
       {/* 令牌管理 */}
       <div className="space-y-0.5">
-        <div className="flex items-center gap-1 justify-between">
-          <span className="text-xs font-semibold text-[var(--text-secondary)]">
-            令牌管理 ({filteredApiKeys.length}/{apiKeys.length})
-            {selectedGroup && <span className="ml-1 text-[var(--accent)]">· {selectedGroup}</span>}
-          </span>
-          <button
-            onClick={() => onOpenCreateTokenDialog(site)}
-            className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-transparent bg-[var(--accent-soft)] px-2 py-1 text-xs font-medium text-[var(--accent-strong)] transition-colors hover:bg-[var(--accent-soft-strong)]"
-            title="创建新的 API Key"
-          >
-            <Plus className="h-3 w-3" />
-            <span>添加令牌</span>
-          </button>
-        </div>
+        <AccessPointResourceSectionHeader
+          title="令牌管理"
+          meta={
+            <>
+              {' '}
+              ({filteredApiKeys.length}/{apiKeys.length})
+              {selectedGroup && (
+                <span className="ml-1 text-[var(--accent)]">· {selectedGroup}</span>
+              )}
+            </>
+          }
+          actions={
+            <button
+              onClick={() => onOpenCreateTokenDialog(site)}
+              className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-transparent bg-[var(--accent-soft)] px-2 py-1 text-xs font-medium text-[var(--accent-strong)] transition-colors hover:bg-[var(--accent-soft-strong)]"
+              title="创建新的 API Key"
+            >
+              <Plus className="h-3 w-3" />
+              <span>添加令牌</span>
+            </button>
+          }
+        />
 
         {apiKeys.length === 0 ? (
           <div className="px-1 text-[11px] text-[var(--text-secondary)]/80">
             暂无 API Key，可点击右侧"添加令牌"创建。
           </div>
         ) : (
-          <div className="space-y-0.5 max-h-40 overflow-y-auto">
+          <div className={accessPointResourceTokenListClass}>
             {filteredApiKeys.map((token, idx) => {
               const quotaInfo = token.unlimited_quota ? null : getQuotaTypeInfo(token.type || 0);
               const tokenKey = `${cardKey}_key_${idx}`;
@@ -258,12 +272,9 @@ export function SiteCardDetails({
               const tokenActive = isApiKeyActive(token);
 
               return (
-                <div
-                  key={idx}
-                  className="rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-2 py-1 transition-colors hover:border-[color-mix(in_srgb,var(--accent)_40%,var(--line-soft))]"
-                >
+                <div key={idx} className={accessPointResourceTokenRowClass}>
                   <div
-                    className="flex min-w-0 items-center gap-x-2 overflow-hidden text-xs"
+                    className="flex min-w-0 flex-1 items-center gap-x-2 overflow-hidden text-xs"
                     data-testid="site-api-key-row"
                   >
                     {/* 名称 */}
@@ -428,7 +439,7 @@ export function SiteCardDetails({
               </div>
             )}
           </div>
-          <div className="max-h-56 overflow-y-auto rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)]/72 p-1">
+          <div className={accessPointResourceListClass}>
             <div className="flex flex-wrap gap-0.5">
               {displayedModels.map((model, idx) => {
                 const pricingData = modelPricing?.data?.[model] || modelPricing?.[model];
@@ -491,9 +502,16 @@ export function SiteCardDetails({
                     <div className="flex items-center gap-0.5 text-xs w-full mt-0.5">
                       {enableGroups.length > 0 && (
                         <div className="flex items-center gap-0.5">
-                          {enableGroups.map((group: string, gidx: number) => (
-                            <span key={gidx} className={getGroupTextColor(group)}>
-                              {getGroupIcon(group, Object.keys(userGroups).indexOf(group))}
+                          {enableGroups.map((group: string) => (
+                            <span
+                              key={group}
+                              className={`inline-flex max-w-[8rem] items-center gap-0.5 truncate font-medium ${getGroupTextColor(group)}`}
+                              title={group}
+                            >
+                              {!/^[①-⑳㉑-㊿]/u.test(group)
+                                ? getGroupIcon(group, Object.keys(userGroups).indexOf(group))
+                                : null}
+                              <span className="truncate">{group}</span>
                             </span>
                           ))}
                         </div>
@@ -576,6 +594,8 @@ export function SiteCardDetails({
           </p>
         </div>
       )}
-    </div>
+    </>
   );
+
+  return embedded ? content : <AccessPointResourceShell>{content}</AccessPointResourceShell>;
 }

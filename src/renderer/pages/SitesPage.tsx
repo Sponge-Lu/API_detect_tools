@@ -630,8 +630,8 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
     async (
       site: SiteConfig,
       auth: {
-        systemToken: string;
-        userId: string;
+        systemToken?: string;
+        userId?: string;
         authSource: AccountAuthSource;
         accountName?: string;
         anyRouterConfig?: AnyRouterAccountConfig;
@@ -645,11 +645,12 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
       const createdSiteId = siteResult.data.id;
       const createdSite = siteResult.data as SiteConfig;
 
+      // 始终创建默认账户容器，即使凭证为空；否则站点会退化为“无账户”卡片，无法进行删除或本地 Key 管理。
       const accountResult = await window.electronAPI.accounts?.add({
         site_id: createdSiteId,
         account_name: auth.accountName?.trim() || '默认账户',
-        user_id: auth.userId,
-        access_token: auth.systemToken,
+        user_id: auth.userId?.trim() || '',
+        access_token: auth.systemToken?.trim() || '',
         auth_source: auth.authSource,
         ...(auth.anyRouterConfig ? { anyRouterConfig: auth.anyRouterConfig } : {}),
       });
@@ -665,6 +666,9 @@ export function SitesPage({ setPageHeaderActions }: SitesPageProps) {
       const refreshedSite =
         refreshedConfig?.sites?.find((item: SiteConfig) => item.id === createdSiteId) ||
         createdSite;
+
+      const hasCredentials = Boolean(auth.systemToken?.trim() && auth.userId?.trim());
+      if (!hasCredentials) return;
 
       setTimeout(async () => {
         try {

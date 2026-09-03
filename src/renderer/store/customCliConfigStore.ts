@@ -14,6 +14,7 @@ import type { CustomCliConfig, CustomCliSettings } from '../../shared/types/cust
 import type { ModelPriceInfo, ModelPricingData } from '../../shared/types/site';
 import {
   createDefaultCustomCliConfig,
+  normalizeCustomCliApiKeys,
   normalizeCustomCliGroupMultiplier,
   normalizeCustomCliSettings,
 } from '../../shared/types/custom-cli-config';
@@ -219,6 +220,7 @@ function filterCustomCliConfigModels(
 }
 
 function normalizeCustomCliConfigModelBoundary(config: CustomCliConfig): CustomCliConfig {
+  const modelUrl = config.modelUrl?.trim() || undefined;
   const normalizedModels = normalizeModelNames(config.models);
   const manualModels = normalizeManualModels(config.manualModels, normalizedModels);
   const hasModelBoundary =
@@ -231,10 +233,18 @@ function normalizeCustomCliConfigModelBoundary(config: CustomCliConfig): CustomC
     openCode: normalizeCustomCliSettings(config.cliSettings?.openCode),
     grokBuild: normalizeCustomCliSettings(config.cliSettings?.grokBuild),
   };
+  const apiKeys = normalizeCustomCliApiKeys(config.apiKeys, {
+    legacyApiKey: config.apiKey,
+    legacyName: config.name,
+    legacyGroupMultiplier: config.groupMultiplier,
+  });
 
   if (!hasModelBoundary) {
     return {
       ...config,
+      modelUrl,
+      apiKeys,
+      apiKey: apiKeys[0]?.key ?? config.apiKey,
       models: normalizedModels,
       manualModels,
       groupMultiplier: normalizeCustomCliGroupMultiplier(config.groupMultiplier),
@@ -246,6 +256,9 @@ function normalizeCustomCliConfigModelBoundary(config: CustomCliConfig): CustomC
   const availableModels = new Set([...normalizedModels, ...manualModels]);
   return {
     ...config,
+    modelUrl,
+    apiKeys,
+    apiKey: apiKeys[0]?.key ?? config.apiKey,
     models: normalizedModels,
     manualModels,
     groupMultiplier: normalizeCustomCliGroupMultiplier(config.groupMultiplier),
@@ -394,7 +407,10 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
       return [];
     }
 
-    if (!config.baseUrl || !config.apiKey) {
+    const hasApiKey =
+      Boolean(config.apiKey?.trim()) ||
+      Boolean(config.apiKeys?.some(apiKey => apiKey.key.trim().length > 0));
+    if (!config.baseUrl || !hasApiKey) {
       toast.error('请先填写 Base URL 和 API Key');
       return [];
     }
@@ -406,10 +422,16 @@ export const useCustomCliConfigStore = create<CustomCliConfigState>()((set, get)
       const customCliConfig = getCustomCliConfigBridge();
       if (customCliConfig?.fetchModels) {
         const models = await customCliConfig.fetchModels(configId);
-
-        // 更新配置中的模型列表，并清理旧 Base URL / API Key 遗留的模型选择。
-        updateConfig(configId, filterCustomCliConfigModels(config, models, Date.now()));
-        await saveConfigs();
+        const persisted = await customCliConfig.load?.();
+        if (persisted) {
+          set({
+            configs: normalizeCustomCliConfigs(persisted.configs || []),
+            activeConfigId: persisted.activeConfigId || null,
+          });
+        } else {
+          updateConfig(configId, filterCustomCliConfigModels(config, models, Date.now()));
+          await saveConfigs();
+        }
 
         toast.success(`成功获取 ${models.length} 个模型`);
         sessionEventLog.success(

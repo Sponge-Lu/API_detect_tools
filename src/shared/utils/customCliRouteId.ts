@@ -39,8 +39,25 @@ export function buildCustomCliRouteAccountId(configId: string): string {
   return `${CUSTOM_CLI_ROUTE_ACCOUNT_PREFIX}${encodeCustomCliConfigId(configId)}`;
 }
 
-export function buildCustomCliRouteApiKeyId(configId: string): string {
-  return `${CUSTOM_CLI_ROUTE_API_KEY_PREFIX}${encodeCustomCliConfigId(configId)}`;
+export function buildCustomCliRouteApiKeyId(configId: string, keyId?: string): string {
+  const configPart = encodeCustomCliConfigId(configId);
+  const normalizedKeyId = keyId?.trim();
+  return `${CUSTOM_CLI_ROUTE_API_KEY_PREFIX}${configPart}${normalizedKeyId ? `:${encodeURIComponent(normalizedKeyId)}` : ''}`;
+}
+
+export function parseCustomCliRouteApiKeyId(
+  apiKeyId: string
+): { configId: string; keyId?: string } | null {
+  if (!apiKeyId.startsWith(CUSTOM_CLI_ROUTE_API_KEY_PREFIX)) return null;
+  const encoded = apiKeyId.slice(CUSTOM_CLI_ROUTE_API_KEY_PREFIX.length);
+  const separatorIndex = encoded.indexOf(':');
+  const encodedConfigId = separatorIndex >= 0 ? encoded.slice(0, separatorIndex) : encoded;
+  const configId = decodeCustomCliConfigId(encodedConfigId);
+  if (!configId) return null;
+  if (separatorIndex < 0) return { configId };
+
+  const keyId = decodeCustomCliConfigId(encoded.slice(separatorIndex + 1));
+  return keyId ? { configId, keyId } : null;
 }
 
 export function parseCustomCliRouteConfigId(siteId: string): string | null {
@@ -60,11 +77,11 @@ export function isCustomCliRouteChannel(
   apiKeyId: string
 ): boolean {
   const configId = parseCustomCliRouteConfigId(siteId);
+  const parsedApiKey = parseCustomCliRouteApiKeyId(apiKeyId);
   if (!configId) {
     return false;
   }
   return (
-    accountId === buildCustomCliRouteAccountId(configId) &&
-    apiKeyId === buildCustomCliRouteApiKeyId(configId)
+    accountId === buildCustomCliRouteAccountId(configId) && parsedApiKey?.configId === configId
   );
 }

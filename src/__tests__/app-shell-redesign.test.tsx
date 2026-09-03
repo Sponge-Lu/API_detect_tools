@@ -87,7 +87,7 @@ describe('app shell redesign', () => {
       within(nav as HTMLElement)
         .getAllByRole('button')
         .map(button => button.getAttribute('aria-label'))
-    ).toEqual(['数据总览', '站点管理', '本地路由', '模型映射', '配置文件', '路由日志', '设置']);
+    ).toEqual(['数据总览', '站点管理', '本地路由', '模型映射', '路由设置', '路由日志', '设置']);
   });
 
   it('supports manual sidebar mode switching and keeps version/update info in the bottom section', () => {
@@ -366,7 +366,6 @@ describe('app shell redesign', () => {
       ),
     }));
 
-
     vi.doMock('../renderer/pages/SitesPage', () => ({
       SitesPage: () => <div>Mock Sites Page</div>,
     }));
@@ -403,8 +402,8 @@ describe('app shell redesign', () => {
       ModelMappingPage: () => <div>Mock Model Mapping Page</div>,
     }));
 
-    vi.doMock('../renderer/pages/ConfigFilesPage', () => ({
-      ConfigFilesPage: () => <div>Mock Config Files Page</div>,
+    vi.doMock('../renderer/pages/RouteSettingsPage', () => ({
+      RouteSettingsPage: () => <div>Mock Route Settings Page</div>,
     }));
 
     vi.doMock('../renderer/store/configStore', () => ({
@@ -620,7 +619,6 @@ describe('app shell redesign', () => {
       ),
     }));
 
-
     vi.doMock('../renderer/pages/SitesPage', () => {
       const React = require('react');
       return {
@@ -673,8 +671,8 @@ describe('app shell redesign', () => {
       ModelMappingPage: () => <div>Mock Model Mapping Page</div>,
     }));
 
-    vi.doMock('../renderer/pages/ConfigFilesPage', () => ({
-      ConfigFilesPage: () => <div>Mock Config Files Page</div>,
+    vi.doMock('../renderer/pages/RouteSettingsPage', () => ({
+      RouteSettingsPage: () => <div>Mock Route Settings Page</div>,
     }));
 
     vi.doMock('../renderer/store/configStore', () => ({
@@ -855,7 +853,6 @@ describe('app shell redesign', () => {
       ),
     }));
 
-
     vi.doMock('../renderer/pages/SitesPage', () => ({
       SitesPage: () => <div>Mock Sites Page</div>,
     }));
@@ -901,8 +898,8 @@ describe('app shell redesign', () => {
       ModelMappingPage: () => <div>Mock Model Mapping Page</div>,
     }));
 
-    vi.doMock('../renderer/pages/ConfigFilesPage', () => ({
-      ConfigFilesPage: () => <div>Mock Config Files Page</div>,
+    vi.doMock('../renderer/pages/RouteSettingsPage', () => ({
+      RouteSettingsPage: () => <div>Mock Route Settings Page</div>,
     }));
 
     vi.doMock('../renderer/store/configStore', () => ({
@@ -1064,7 +1061,6 @@ describe('app shell redesign', () => {
       ),
     }));
 
-
     vi.doMock('../renderer/pages/SitesPage', () => ({
       SitesPage: () => <div>Mock Sites Page</div>,
     }));
@@ -1097,8 +1093,8 @@ describe('app shell redesign', () => {
       ModelMappingPage: () => <div>Mock Model Mapping Page</div>,
     }));
 
-    vi.doMock('../renderer/pages/ConfigFilesPage', () => ({
-      ConfigFilesPage: () => <div>Mock Config Files Page</div>,
+    vi.doMock('../renderer/pages/RouteSettingsPage', () => ({
+      RouteSettingsPage: () => <div>Mock Route Settings Page</div>,
     }));
 
     vi.doMock('../renderer/store/configStore', () => ({

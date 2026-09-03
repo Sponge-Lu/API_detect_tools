@@ -31,6 +31,7 @@ import {
 import {
   buildRouteOverrideDisplayItemId,
   buildRouteApiKeyPriorityKey,
+  DEFAULT_NEW_ROUTE_RUNTIME_CONFIG,
   DEFAULT_ROUTE_RUNTIME_CONFIG,
   inferRouteModelVendor,
   normalizeRouteRuntimeConfig,
@@ -44,10 +45,14 @@ import type {
   RouteModelRegistryEntry,
   RouteModelSourceRef,
   RouteRequestLogItem,
+  RouteInstance,
+  RoutePathDisabledReason,
   RoutePathState,
+  RouteSessionChannelBinding,
   RouteRuntimeConfig,
 } from '../../../../shared/types/route-proxy';
 import {
+  normalizeCustomCliApiKeys,
   normalizeCustomCliGroupMultiplier,
   type CustomCliConfig,
 } from '../../../../shared/types/custom-cli-config';
@@ -60,7 +65,16 @@ import type {
   UserGroupInfo,
 } from '../../../../shared/types/site';
 import { normalizeCliTargetProtocol } from '../../../../shared/types/cli-config';
-import { parseCustomCliRouteConfigId } from '../../../../shared/utils/customCliRouteId';
+import {
+  buildRouteSessionOrdinals,
+  formatRouteSessionLabel,
+  type RouteSessionOrdinal,
+  type RouteSessionOrdinalMap,
+} from '../../../utils/routeSessionOrdinal';
+import {
+  parseCustomCliRouteApiKeyId,
+  parseCustomCliRouteConfigId,
+} from '../../../../shared/utils/customCliRouteId';
 
 interface RedirectCandidateGroup {
   originalModel: string;
@@ -172,11 +186,25 @@ interface PriorityDraftInput {
   disabledApiKeyPriorityKeys?: string[];
 }
 
-interface RoutePathSuspensionLabel {
+export interface RoutePathSuspensionLabel {
   originalModel: string;
   label: string;
   title: string;
+  reason: RoutePathDisabledReason;
+  disabledUntil: number;
 }
+
+/** 优先级表中一个原始模型的展示数据：价格是静态配置，暂停是运行态，两者分开承载 */
+export interface PriorityModelEntry {
+  model: string;
+  priceLabel?: string;
+  suspension?: { reason: RoutePathDisabledReason; disabledUntil: number };
+}
+
+export type PriorityRowStatus =
+  | { kind: 'suspended'; reason: RoutePathDisabledReason; disabledUntil: number }
+  | { kind: 'partial'; suspended: number; total: number; disabledUntil: number }
+  | null;
 
 interface PriorityHitRoutePath {
   routeRuleId?: string;
@@ -199,8 +227,7 @@ interface CreateApiKeyDialogState {
 const QUOTA_CONVERSION_FACTOR = 500000;
 const PRIORITY_RUNTIME_REFRESH_INTERVAL_MS = 1500;
 const PRIORITY_ROUTE_LOG_LIMIT = 200;
-const PRIORITY_DETAIL_GRID_CLASS =
-  'grid-cols-[minmax(0,calc(43%_+_64px))_minmax(0,calc(57%_-_94px))_76px_44px]';
+const PRIORITY_DETAIL_GRID_CLASS = 'grid-cols-[minmax(0,1fr)_auto_44px]';
 
 function createLocalId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -382,29 +409,327 @@ function formatShortTime(timestamp: number | undefined): string {
   });
 }
 
-function formatModelListDetails(
+const ROUTE_PATH_DISABLED_REASON_LABELS: Record<
+  Exclude<RoutePathDisabledReason, 'success_rate_below_threshold'>,
+  string
+> = {
+  upstream_credential_rejected: '暂停·密钥无效',
+  upstream_model_unavailable: '暂停·模型不可用',
+  upstream_quota_exhausted: '暂停·余额耗尽',
+};
+
+/** 成功率原因需带上该项配置的阈值，故徽章短词走函数而非静态映射 */
+export function formatRoutePathDisabledReasonLabel(
+  reason: RoutePathDisabledReason,
+  minSuccessRate?: number
+): string {
+  if (reason === 'success_rate_below_threshold') {
+    return `暂停·成功率<${Math.round(
+      (minSuccessRate ?? DEFAULT_ROUTE_RUNTIME_CONFIG.minSuccessRate) * 100
+    )}%`;
+  }
+  return ROUTE_PATH_DISABLED_REASON_LABELS[reason];
+}
+
+const ROUTE_PATH_DISABLED_REASON_TEXT: Record<RoutePathDisabledReason, string> = {
+  upstream_credential_rejected: '上游拒绝该密钥',
+  upstream_model_unavailable: '上游无此模型',
+  upstream_quota_exhausted: '上游余额不足',
+  success_rate_below_threshold: '成功率低于阈值',
+};
+
+/** 剩余时长优于绝对时刻：用户不必心算 */
+export function formatRemainingDuration(disabledUntil: number, now: number): string {
+  const remainingMs = Math.max(0, disabledUntil - now);
+  const totalSeconds = Math.ceil(remainingMs / 1000);
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+
+  const totalMinutes = Math.ceil(totalSeconds / 60);
+  if (totalMinutes < 60) {
+    return `${totalMinutes}m`;
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes > 0 ? `${hours}h${minutes}m` : `${hours}h`;
+}
+
+/** 括号内只保留价格；暂停状态由行徽章与模型删除线承载，不再混入文本流 */
+export function buildPriorityModelEntries(
   models: string[],
   modelPriceLabels?: Record<string, string>,
-  modelRoutePathSuspensions?: Record<string, string[]>
-): string {
-  return models
-    .map(model => {
-      const details = [
-        modelPriceLabels?.[model],
-        ...(modelRoutePathSuspensions?.[model] || []),
-      ].filter(Boolean);
-      return details.length > 0 ? `${model}（${details.join(' / ')}）` : model;
-    })
-    .join('、');
+  suspensionsByModel?: Record<string, RoutePathSuspensionLabel[]>
+): PriorityModelEntry[] {
+  return models.map(model => {
+    const suspension = suspensionsByModel?.[model]?.[0];
+    return {
+      model,
+      priceLabel: modelPriceLabels?.[model],
+      ...(suspension
+        ? { suspension: { reason: suspension.reason, disabledUntil: suspension.disabledUntil } }
+        : {}),
+    };
+  });
+}
+
+export function derivePriorityRowStatus(
+  entries: PriorityModelEntry[],
+  suspensions: RoutePathSuspensionLabel[]
+): PriorityRowStatus {
+  const suspended = entries.filter(entry => entry.suspension);
+  if (suspended.length === 0) {
+    return null;
+  }
+
+  const earliestUntil = Math.min(...suspended.map(entry => entry.suspension!.disabledUntil));
+  if (suspended.length < entries.length) {
+    return {
+      kind: 'partial',
+      suspended: suspended.length,
+      total: entries.length,
+      disabledUntil: earliestUntil,
+    };
+  }
+
+  // 全部暂停时取占比最高的原因；同票时取最早恢复的一条，保证渲染稳定不闪烁。
+  const byReason = new Map<RoutePathDisabledReason, { count: number; until: number }>();
+  for (const entry of suspended) {
+    const { reason, disabledUntil } = entry.suspension!;
+    const current = byReason.get(reason);
+    byReason.set(reason, {
+      count: (current?.count ?? 0) + 1,
+      until: Math.min(current?.until ?? disabledUntil, disabledUntil),
+    });
+  }
+  const dominant = [...byReason.entries()].sort(
+    (left, right) => right[1].count - left[1].count || left[1].until - right[1].until
+  )[0];
+
+  return {
+    kind: 'suspended',
+    reason: dominant?.[0] ?? suspensions[0]?.reason ?? 'success_rate_below_threshold',
+    disabledUntil: dominant?.[1].until ?? earliestUntil,
+  };
 }
 
 function groupSuspensionLabelsByModel(
   suspensions: RoutePathSuspensionLabel[]
-): Record<string, string[]> {
-  return suspensions.reduce<Record<string, string[]>>((acc, suspension) => {
-    acc[suspension.originalModel] = [...(acc[suspension.originalModel] || []), suspension.label];
+): Record<string, RoutePathSuspensionLabel[]> {
+  return suspensions.reduce<Record<string, RoutePathSuspensionLabel[]>>((acc, suspension) => {
+    acc[suspension.originalModel] = [...(acc[suspension.originalModel] || []), suspension];
     return acc;
   }, {});
+}
+
+/** 模型列表：括号内只有价格；被暂停的模型走减淡 + 删除线，不再重复文字 */
+function PriorityModelList({ entries }: { entries: PriorityModelEntry[] }) {
+  if (entries.length === 0) {
+    return null;
+  }
+
+  return (
+    <span className="break-words">
+      {entries.map((entry, index) => (
+        <span key={entry.model}>
+          {index > 0 ? '、' : ''}
+          <span
+            className={entry.suspension ? 'text-[var(--text-disabled)] line-through' : undefined}
+            data-suspended={entry.suspension ? 'true' : undefined}
+          >
+            {entry.model}
+            {entry.priceLabel ? `（${entry.priceLabel}）` : ''}
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** 「API Key」标签即状态载体：全部暂停红 / 部分暂停橙 / 其余中性 */
+const PRIORITY_API_KEY_CHIP_CLASS: Record<string, string> = {
+  suspended: 'border-[var(--danger)]/35 bg-[var(--danger-soft)] text-[var(--danger)]',
+  partial: 'border-[var(--warning)]/35 bg-[var(--warning-soft)] text-[var(--warning)]',
+  idle: 'border-[var(--line-soft)] bg-[var(--surface-2)]',
+};
+
+const PRIORITY_STATUS_BADGE_CLASS =
+  'shrink-0 whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[10px] font-semibold';
+
+/** 会话色板：由会话身份哈希稳定取色，刷新与重启后颜色不变 */
+/** 八色沿色相环均匀分布，相邻至少隔约 27 度，任意两色都能一眼分开 */
+const SESSION_DOT_COLORS = [
+  '#dc2626', // 红 0
+  '#ca8a04', // 黄 41
+  '#65a30d', // 黄绿 85
+  '#16a34a', // 绿 142
+  '#0891b2', // 青 192
+  '#4f46e5', // 靛 243
+  '#c026d3', // 品红 293
+  '#db2777', // 粉 333
+];
+
+function paletteIndexForKey(key: string): number {
+  // FNV-1a + murmur3 终混：直接对弱哈希取模只会用到最低几位，
+  // 会让大量会话挤到少数几种颜色上。
+  let hash = 2166136261;
+  for (let index = 0; index < key.length; index += 1) {
+    hash ^= key.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 2246822507);
+  hash ^= hash >>> 13;
+  hash = Math.imul(hash, 3266489909);
+  hash ^= hash >>> 16;
+
+  return (hash >>> 0) % SESSION_DOT_COLORS.length;
+}
+
+export function sessionColorForKey(key: string): string {
+  return SESSION_DOT_COLORS[paletteIndexForKey(key)];
+}
+
+/**
+ * 颜色由「客户端 + 会话编号」共同决定：客户端定起点、编号定偏移，
+ * 因此同一客户端的相邻编号必然落到不同色板项，而不是碰运气靠哈希散开。
+ */
+export function sessionColorForSession(
+  agentId: string,
+  ordinal: RouteSessionOrdinal | undefined
+): string {
+  const offset = ordinal ? ordinal.primary - 1 + (ordinal.secondary || 0) : 0;
+  const index = (paletteIndexForKey(agentId) + offset) % SESSION_DOT_COLORS.length;
+  return SESSION_DOT_COLORS[index];
+}
+
+export interface PrioritySessionDot {
+  instanceId: string;
+  displayName: string;
+  color: string;
+  channelKey: string;
+}
+
+export function buildSessionChannelKey(channel: {
+  siteId?: string;
+  accountId?: string;
+  apiKeyId?: string;
+}): string {
+  return [channel.siteId || '', channel.accountId || '', channel.apiKeyId || ''].join('|');
+}
+
+/** 绑定 + 会话实例 → 色点。展示名沿用请求日志的解析顺序。 */
+/**
+ * 只展示绑定在**当前重定向模型**上的会话：会话 B 用的是模型 B，
+ * 不能出现在模型 A 的优先级表里。绑定的 canonicalModel 每次成功都会刷新，
+ * 因此它反映会话当前实际走的模型。
+ */
+export function buildPrioritySessionDots(
+  bindings: RouteSessionChannelBinding[] | undefined,
+  instances: Record<string, RouteInstance> | undefined,
+  canonicalModel: string | undefined,
+  ordinals?: RouteSessionOrdinalMap
+): PrioritySessionDot[] {
+  if (!bindings?.length || !canonicalModel) {
+    return [];
+  }
+
+  return bindings
+    .filter(binding => binding.canonicalModel === canonicalModel)
+    .map(binding => {
+      const instance = instances?.[binding.instanceId];
+      if (!instance || instance.routingState !== 'active') {
+        return null;
+      }
+      const routeKey = instance.routeKey;
+
+      const agentName =
+        instance.display.customAgentName ||
+        instance.display.observedAgentName ||
+        routeKey?.agentId ||
+        binding.instanceId;
+      const ordinal = ordinals?.[binding.instanceId];
+
+      return {
+        instanceId: binding.instanceId,
+        // 同一客户端的多个会话窗口靠编号区分，编号与会话卡片上的一致
+        displayName: formatRouteSessionLabel(agentName, ordinal),
+        color: sessionColorForSession(routeKey?.agentId ?? binding.instanceId, ordinal),
+        channelKey: buildSessionChannelKey(binding),
+      };
+    })
+    .filter((dot): dot is PrioritySessionDot => dot !== null);
+}
+
+function PrioritySessionDots({
+  dots,
+  selectedInstanceId,
+}: {
+  dots: PrioritySessionDot[];
+  selectedInstanceId: string | null;
+}) {
+  if (dots.length === 0) {
+    return null;
+  }
+
+  return (
+    <span className="flex shrink-0 items-center gap-0.5" data-testid="priority-session-dots">
+      {dots.map(dot => (
+        <span
+          key={dot.instanceId}
+          className="h-2 w-2 shrink-0 rounded-full transition-opacity"
+          style={{
+            backgroundColor: dot.color,
+            opacity: !selectedInstanceId || selectedInstanceId === dot.instanceId ? 1 : 0.25,
+          }}
+          title={dot.displayName}
+          data-session-instance={dot.instanceId}
+        />
+      ))}
+    </span>
+  );
+}
+
+function PriorityRowStatusBadge({
+  status,
+  now,
+  title,
+  minSuccessRate,
+}: {
+  status: PriorityRowStatus;
+  now: number;
+  title?: string;
+  minSuccessRate?: number;
+}) {
+  if (!status) {
+    return null;
+  }
+
+  const remaining = formatRemainingDuration(status.disabledUntil, now);
+  const isDanger =
+    status.kind === 'suspended' &&
+    (status.reason === 'upstream_credential_rejected' ||
+      status.reason === 'upstream_model_unavailable');
+  const label =
+    status.kind === 'partial'
+      ? `部分暂停 ${status.suspended}/${status.total}`
+      : formatRoutePathDisabledReasonLabel(status.reason, minSuccessRate);
+
+  return (
+    <span
+      className={`${PRIORITY_STATUS_BADGE_CLASS} ${
+        isDanger
+          ? 'border-[var(--danger)]/30 bg-[var(--danger-soft)] text-[var(--danger)]'
+          : 'border-[var(--warning)]/30 bg-[var(--warning-soft)] text-[var(--warning)]'
+      }`}
+      data-testid="priority-detail-status-badge"
+      data-priority-reason={status.kind === 'suspended' ? status.reason : 'partial'}
+      title={title || undefined}
+    >
+      {label} {remaining}
+    </span>
+  );
 }
 
 function getActiveRoutePathSuspensionLabels(params: {
@@ -438,11 +763,20 @@ function getActiveRoutePathSuspensionLabels(params: {
     .map(state => {
       const rate = Math.round((state.successRate ?? 0) * 100);
       const timeLabel = formatShortTime(state.disabledUntil);
+      const reason: RoutePathDisabledReason =
+        state.disabledReason ?? 'success_rate_below_threshold';
+      const model = state.resolvedModel || item.canonicalName;
+      const reasonText =
+        reason === 'success_rate_below_threshold'
+          ? `成功率低于阈值${Math.round(runtimeConfig.minSuccessRate * 100)}%`
+          : ROUTE_PATH_DISABLED_REASON_TEXT[reason];
 
       return {
-        originalModel: state.resolvedModel || item.canonicalName,
-        label: `暂停至 ${timeLabel}`,
-        title: `${state.resolvedModel || item.canonicalName} 暂停至 ${timeLabel}（${runtimeConfig.successRateWindowMinutes}分钟成功率 ${rate}%）`,
+        originalModel: model,
+        reason,
+        disabledUntil: state.disabledUntil!,
+        label: formatRoutePathDisabledReasonLabel(reason, runtimeConfig.minSuccessRate),
+        title: `${model} ${reasonText}，暂停至 ${timeLabel}（${runtimeConfig.successRateWindowMinutes}分钟成功率 ${rate}%）`,
       };
     });
 }
@@ -1481,8 +1815,18 @@ function buildDetailSiteAccountGroups(
         account?.cached_data?.user_groups?.[normalizedGroup]?.ratio ??
         site?.cached_data?.user_groups?.[normalizedGroup]?.ratio;
       const customCliConfig = getCustomCliConfigForSource(source, customCliConfigs);
+      const customCliApiKeyId = parseCustomCliRouteApiKeyId(apiKey.apiKeyId)?.keyId;
+      const customCliApiKey = customCliConfig
+        ? normalizeCustomCliApiKeys(customCliConfig.apiKeys, {
+            legacyApiKey: customCliConfig.apiKey,
+            legacyName: customCliConfig.name,
+            legacyGroupMultiplier: customCliConfig.groupMultiplier,
+          }).find(item => item.id === customCliApiKeyId)
+        : undefined;
       const groupMultiplier = customCliConfig
-        ? normalizeCustomCliGroupMultiplier(customCliConfig.groupMultiplier)
+        ? normalizeCustomCliGroupMultiplier(
+            customCliApiKey?.groupMultiplier ?? customCliConfig.groupMultiplier
+          )
         : undefined;
 
       const key = buildRouteApiKeyPriorityKey(source.siteId, apiKey.accountId, apiKey.apiKeyId);
@@ -1736,6 +2080,7 @@ export function ModelRedirectionTab({
     disabledApiKeyPriorityKeys: [],
   });
   const [selectedPrioritySiteId, setSelectedPrioritySiteId] = useState<string | null>(null);
+  const [selectedSessionInstanceId, setSelectedSessionInstanceId] = useState<string | null>(null);
   const [expandedMissingKeySiteIds, setExpandedMissingKeySiteIds] = useState<
     Record<string, boolean>
   >({});
@@ -1888,6 +2233,12 @@ export function ModelRedirectionTab({
   const closeRouteRules = useCallback(() => {
     setRouteRuleState(null);
     setRouteRuleDraft(createRouteRuntimeRuleDraft());
+    setRouteRuleErrors({});
+  }, []);
+
+  // 只重置草稿：保存仍由「保存路由规则」显式触发，dirty 态由既有比对逻辑自动得出。
+  const handleResetRouteRuleDraft = useCallback(() => {
+    setRouteRuleDraft(createRouteRuntimeRuleDraft(DEFAULT_NEW_ROUTE_RUNTIME_CONFIG));
     setRouteRuleErrors({});
   }, []);
 
@@ -2461,7 +2812,12 @@ export function ModelRedirectionTab({
         sourceKeys: Array.from(selectedSourceKeys),
         originalModelOrder: [...draft.selectedOriginalModels],
         priorityConfig: existingDisplayItem?.priorityConfig ?? createEmptyPriorityDraft(),
-        runtimeConfig: existingDisplayItem?.runtimeConfig,
+        // 判定依据必须是编辑器模式：existingDisplayItem 查找失败时也为 undefined，
+        // 用它判新建会把默认值静默覆盖到既有项上。
+        runtimeConfig:
+          editorContext.mode === 'create'
+            ? DEFAULT_NEW_ROUTE_RUNTIME_CONFIG
+            : existingDisplayItem?.runtimeConfig,
         mode: editorContext.displayItemMode ?? 'manual',
         createdAt: editorContext.displayItemCreatedAt ?? now,
         updatedAt: now,
@@ -2924,6 +3280,12 @@ export function ModelRedirectionTab({
     ? sortableDetailSiteGroups.findIndex(group => group.siteId === selectedPrioritySiteId)
     : -1;
   const now = Date.now();
+  const sessionDots = buildPrioritySessionDots(
+    config?.sessionChannelBindings,
+    config?.sessionRouting?.instances,
+    selectedDisplayItem?.item.canonicalName,
+    buildRouteSessionOrdinals(config?.sessionRouting?.instances)
+  );
   const sourceDetailStatePriorityHitPath = sourceDetailState
     ? (getPriorityHitRoutePathFromState({
         states: config?.routePathStates,
@@ -2975,6 +3337,9 @@ export function ModelRedirectionTab({
         now,
       })
     : 0;
+  const selectedMinSuccessRate = selectedDisplayItem
+    ? normalizeRouteRuntimeConfig(selectedDisplayItem.item.runtimeConfig).minSuccessRate
+    : undefined;
   const isResettingSelectedRoutePaths = selectedDisplayItem
     ? resettingPathCanonicalName === selectedDisplayItem.item.canonicalName
     : false;
@@ -3032,7 +3397,7 @@ export function ModelRedirectionTab({
     <>
       <div
         data-testid="redirect-workspace"
-        className={`flex h-full min-h-0 flex-col overflow-hidden border border-[var(--line-muted)] bg-[var(--surface-1)] ${className}`.trim()}
+        className={`flex h-full min-h-0 flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[var(--line-muted)] bg-[var(--surface-1)] ${className}`.trim()}
       >
         <div
           data-testid="redirect-two-pane-layout"
@@ -3167,7 +3532,7 @@ export function ModelRedirectionTab({
                     selectedDisplayItem.selectedOriginalModels.map(originalModel => (
                       <div
                         key={`${selectedDisplayItem.item.id}:${originalModel}`}
-                        className="max-w-full border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1"
+                        className="max-w-full rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1"
                       >
                         <code className="break-all font-mono text-[11px] leading-4 text-[var(--text-secondary)]">
                           {originalModel}
@@ -3175,7 +3540,7 @@ export function ModelRedirectionTab({
                       </div>
                     ))
                   ) : (
-                    <span className="border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 font-mono text-[11px] text-[var(--text-secondary)]">
+                    <span className="rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-2)] px-2 py-1 font-mono text-[11px] text-[var(--text-secondary)]">
                       {selectedDisplayItem.item.canonicalName}
                     </span>
                   )}
@@ -3347,7 +3712,7 @@ export function ModelRedirectionTab({
                   {siteOnlySourceNotices.length > 0 ? (
                     <div
                       data-testid="priority-detail-site-only-warning"
-                      className="mb-2 flex gap-2 border border-[var(--warning)]/25 bg-[var(--warning-soft)]/20 px-2.5 py-2 text-xs text-[var(--text-secondary)]"
+                      className="mb-2 flex gap-2 rounded-[var(--radius-md)] border border-[var(--warning)]/25 bg-[var(--warning-soft)]/20 px-2.5 py-2 text-xs text-[var(--text-secondary)]"
                     >
                       <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--warning)]" />
                       <div className="min-w-0 space-y-1">
@@ -3362,7 +3727,7 @@ export function ModelRedirectionTab({
                           {siteOnlySourceNotices.map(notice => (
                             <span
                               key={notice.key}
-                              className="max-w-full truncate border border-[var(--warning)]/20 bg-[var(--surface-1)] px-1.5 py-0.5 text-[11px] text-[var(--text-primary)]"
+                              className="max-w-full truncate rounded-[var(--radius-sm)] border border-[var(--warning)]/20 bg-[var(--surface-1)] px-1.5 py-0.5 text-[11px] text-[var(--text-primary)]"
                             >
                               {notice.siteName}（{notice.originalModels.join('、')}）
                             </span>
@@ -3374,11 +3739,55 @@ export function ModelRedirectionTab({
 
                   {sortedDetailSiteGroups.length > 0 ? (
                     <div className="overflow-hidden" data-testid="priority-detail-compact-list">
+                      {sessionDots.length > 0 ? (
+                        <div
+                          className="flex flex-wrap items-center gap-2 border-b border-[var(--line-muted)] bg-[var(--surface-2)] px-2.5 py-1 text-[10px] text-[var(--text-secondary)]"
+                          data-testid="priority-session-legend"
+                        >
+                          <button
+                            type="button"
+                            className={`rounded-full border px-1.5 py-0.5 font-semibold transition-colors ${
+                              selectedSessionInstanceId === null
+                                ? 'border-[var(--accent)]/35 bg-[var(--accent-soft)] text-[var(--accent)]'
+                                : 'border-[var(--line-soft)] bg-[var(--surface-1)]'
+                            }`}
+                            aria-pressed={selectedSessionInstanceId === null}
+                            onClick={() => setSelectedSessionInstanceId(null)}
+                            data-testid="priority-session-filter-all"
+                          >
+                            全部
+                          </button>
+                          {sessionDots.map(dot => (
+                            <button
+                              key={dot.instanceId}
+                              type="button"
+                              className={`flex items-center gap-1 rounded-full border px-1.5 py-0.5 transition-colors ${
+                                selectedSessionInstanceId === dot.instanceId
+                                  ? 'border-[var(--accent)]/35 bg-[var(--accent-soft)] text-[var(--accent)]'
+                                  : 'border-[var(--line-soft)] bg-[var(--surface-1)]'
+                              }`}
+                              aria-pressed={selectedSessionInstanceId === dot.instanceId}
+                              onClick={() =>
+                                setSelectedSessionInstanceId(current =>
+                                  current === dot.instanceId ? null : dot.instanceId
+                                )
+                              }
+                              data-testid="priority-session-filter-item"
+                              data-session-instance={dot.instanceId}
+                            >
+                              <span
+                                className="h-2 w-2 shrink-0 rounded-full"
+                                style={{ backgroundColor: dot.color }}
+                              />
+                              <span className="max-w-24 truncate">{dot.displayName}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
                       <div
                         className={`grid ${PRIORITY_DETAIL_GRID_CLASS} gap-2 border-y border-[var(--line-muted)] bg-[var(--surface-2)] px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]`}
                       >
                         <span>来源</span>
-                        <span>覆盖模型</span>
                         <span className="text-right">优先级</span>
                         <span aria-hidden="true" />
                       </div>
@@ -3399,7 +3808,7 @@ export function ModelRedirectionTab({
                                   onClick={toggleFoldedPrioritySites}
                                   data-testid="priority-detail-folded-sites-toggle"
                                 >
-                                  <div className="col-span-2 flex min-w-0 items-center gap-2">
+                                  <div className="flex min-w-0 items-center gap-2">
                                     <span className="h-5 w-px shrink-0 bg-[var(--line-soft)]" />
                                     <span className="shrink-0 rounded-full border border-[var(--line-soft)] bg-[var(--surface-1)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--text-secondary)]">
                                       折叠站点
@@ -3484,7 +3893,7 @@ export function ModelRedirectionTab({
                                   }
                                 }}
                               >
-                                <div className="col-span-2 flex min-w-0 items-center gap-2">
+                                <div className="flex min-w-0 items-center gap-2">
                                   <input
                                     type="radio"
                                     name="priority-site-selection"
@@ -3561,103 +3970,126 @@ export function ModelRedirectionTab({
                                 });
                                 const apiKeySuspensionLabels =
                                   groupSuspensionLabelsByModel(apiKeySuspensions);
-                                const formattedModelList = formatModelListDetails(
+                                const modelEntries = buildPriorityModelEntries(
                                   apiKey.supportedOriginalModels,
                                   apiKey.modelPriceLabels,
                                   apiKeySuspensionLabels
                                 );
                                 const isPriorityHit = priorityHitApiKeyKey === apiKey.key;
+                                const rowSessionDots = sessionDots.filter(
+                                  dot =>
+                                    dot.channelKey ===
+                                    buildSessionChannelKey({
+                                      siteId: siteGroup.siteId,
+                                      accountId: apiKey.accountId,
+                                      apiKeyId: apiKey.apiKeyId,
+                                    })
+                                );
+                                const rowStatus = derivePriorityRowStatus(
+                                  modelEntries,
+                                  apiKeySuspensions
+                                );
+                                const suspensionTitle = apiKeySuspensions
+                                  .map(suspension => suspension.title)
+                                  .join(' / ');
 
                                 return (
                                   <div
                                     key={apiKey.key}
-                                    className={`grid ${PRIORITY_DETAIL_GRID_CLASS} items-center gap-2 border-t border-l-4 px-2.5 py-1 text-xs transition-colors ${
-                                      isPriorityHit
-                                        ? 'border-t-[var(--success)]/25 border-l-[var(--success)] bg-[var(--success-soft)] text-[var(--text-primary)] shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--success)_18%,transparent)]'
-                                        : 'border-t-[var(--line-muted)] border-l-transparent bg-[var(--surface-1)] text-[var(--text-secondary)]'
-                                    }`}
+                                    className="border-t border-l-4 border-t-[var(--line-muted)] border-l-transparent bg-[var(--surface-1)] px-2.5 py-1 text-xs text-[var(--text-secondary)] transition-colors"
                                     data-testid="priority-detail-api-key-row"
                                     data-priority-hit={isPriorityHit ? 'true' : undefined}
+                                    data-priority-status={rowStatus?.kind}
                                     aria-current={isPriorityHit ? 'true' : undefined}
                                   >
-                                    <div className="min-w-0 pl-5">
-                                      <div className="flex min-w-0 items-center gap-1">
-                                        <span className="h-5 w-px shrink-0 bg-[var(--line-soft)]" />
-                                        <div className="flex shrink-0 flex-col items-center gap-px">
-                                          <button
-                                            type="button"
-                                            className="rounded-[var(--radius-sm)] p-0 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-35"
-                                            aria-label={`${apiKey.apiKeyName} 上移`}
-                                            title="上移"
-                                            disabled={apiKeyIndex === 0}
-                                            onClick={() =>
-                                              movePriorityApiKey(siteGroup.siteId, apiKey.key, 'up')
-                                            }
-                                          >
-                                            <ChevronUp className="h-2.5 w-2.5" />
-                                          </button>
-                                          <button
-                                            type="button"
-                                            className="rounded-[var(--radius-sm)] p-0 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-35"
-                                            aria-label={`${apiKey.apiKeyName} 下移`}
-                                            title="下移"
-                                            disabled={apiKeyIndex === enabledApiKeys.length - 1}
-                                            onClick={() =>
-                                              movePriorityApiKey(
-                                                siteGroup.siteId,
-                                                apiKey.key,
-                                                'down'
-                                              )
-                                            }
-                                          >
-                                            <ChevronDown className="h-2.5 w-2.5" />
-                                          </button>
-                                        </div>
-                                        <span
-                                          className={`shrink-0 rounded border px-1 py-px text-[9px] font-bold leading-3 ${
-                                            isPriorityHit
-                                              ? 'border-[var(--success)]/35 bg-[var(--success-soft)] text-[var(--success)]'
-                                              : 'border-[var(--line-soft)] bg-[var(--surface-2)]'
-                                          }`}
-                                        >
-                                          API Key
-                                        </span>
-                                        <span className="min-w-0 truncate">
-                                          {formatPriorityApiKeyDetails(apiKey)}
-                                        </span>
-                                      </div>
-                                    </div>
                                     <div
-                                      className="min-w-0 truncate"
-                                      title={
-                                        apiKeySuspensions.length > 0
-                                          ? apiKeySuspensions
-                                              .map(suspension => suspension.title)
-                                              .join(' / ')
-                                          : formattedModelList
-                                      }
+                                      className={`grid ${PRIORITY_DETAIL_GRID_CLASS} items-start gap-2`}
                                     >
-                                      {formattedModelList}
+                                      <div className="min-w-0">
+                                        <div className="flex min-w-0 items-start gap-1">
+                                          <span className="h-5 w-px shrink-0 bg-[var(--line-soft)]" />
+                                          <div className="flex shrink-0 flex-col items-center gap-px">
+                                            <button
+                                              type="button"
+                                              className="rounded-[var(--radius-sm)] p-0 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-35"
+                                              aria-label={`${apiKey.apiKeyName} 上移`}
+                                              title="上移"
+                                              disabled={apiKeyIndex === 0}
+                                              onClick={() =>
+                                                movePriorityApiKey(
+                                                  siteGroup.siteId,
+                                                  apiKey.key,
+                                                  'up'
+                                                )
+                                              }
+                                            >
+                                              <ChevronUp className="h-2.5 w-2.5" />
+                                            </button>
+                                            <button
+                                              type="button"
+                                              className="rounded-[var(--radius-sm)] p-0 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-35"
+                                              aria-label={`${apiKey.apiKeyName} 下移`}
+                                              title="下移"
+                                              disabled={apiKeyIndex === enabledApiKeys.length - 1}
+                                              onClick={() =>
+                                                movePriorityApiKey(
+                                                  siteGroup.siteId,
+                                                  apiKey.key,
+                                                  'down'
+                                                )
+                                              }
+                                            >
+                                              <ChevronDown className="h-2.5 w-2.5" />
+                                            </button>
+                                          </div>
+                                          <span
+                                            className={`shrink-0 rounded border px-1 py-px text-[9px] font-bold leading-3 ${PRIORITY_API_KEY_CHIP_CLASS[rowStatus?.kind ?? 'idle']}`}
+                                            data-priority-chip={rowStatus?.kind ?? 'idle'}
+                                          >
+                                            API Key
+                                          </span>
+                                          <div className="flex min-w-0 flex-1 flex-col">
+                                            <span
+                                              className="min-w-0 truncate"
+                                              title={formatPriorityApiKeyDetails(apiKey)}
+                                            >
+                                              {formatPriorityApiKeyDetails(apiKey)}
+                                            </span>
+                                            <span
+                                              className="mt-0.5 min-w-0 text-[11px] leading-4 text-[var(--text-tertiary)]"
+                                              data-testid="priority-detail-api-key-models"
+                                              title={suspensionTitle || undefined}
+                                            >
+                                              <PriorityModelList entries={modelEntries} />
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <div className="flex min-w-0 items-center justify-end gap-1">
+                                        <PrioritySessionDots
+                                          dots={rowSessionDots}
+                                          selectedInstanceId={selectedSessionInstanceId}
+                                        />
+                                        <PriorityRowStatusBadge
+                                          status={rowStatus}
+                                          now={now}
+                                          title={suspensionTitle}
+                                          minSuccessRate={selectedMinSuccessRate}
+                                        />
+                                      </div>
+                                      <button
+                                        type="button"
+                                        className="inline-flex h-5 min-w-8 items-center justify-center justify-self-end rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-1.5 text-[10px] font-semibold leading-none text-[var(--text-secondary)] transition-colors hover:border-[var(--danger)] hover:text-[var(--danger)]"
+                                        aria-label={`${apiKey.apiKeyName} 禁用`}
+                                        title="禁用 API key"
+                                        onClick={() =>
+                                          togglePriorityApiKeyDisabled(siteGroup.siteId, apiKey.key)
+                                        }
+                                        data-testid="priority-detail-api-key-disable-toggle"
+                                      >
+                                        禁用
+                                      </button>
                                     </div>
-                                    <div className="flex min-w-0 items-center justify-end gap-1">
-                                      {isPriorityHit ? (
-                                        <span className="truncate rounded-full border border-[var(--success)]/30 bg-[var(--success-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--success)]">
-                                          当前优先命中
-                                        </span>
-                                      ) : null}
-                                    </div>
-                                    <button
-                                      type="button"
-                                      className="inline-flex h-5 min-w-8 items-center justify-center justify-self-end rounded-[var(--radius-sm)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-1.5 text-[10px] font-semibold leading-none text-[var(--text-secondary)] transition-colors hover:border-[var(--danger)] hover:text-[var(--danger)]"
-                                      aria-label={`${apiKey.apiKeyName} 禁用`}
-                                      title="禁用 API key"
-                                      onClick={() =>
-                                        togglePriorityApiKeyDisabled(siteGroup.siteId, apiKey.key)
-                                      }
-                                      data-testid="priority-detail-api-key-disable-toggle"
-                                    >
-                                      禁用
-                                    </button>
                                   </div>
                                 );
                               })}
@@ -3675,7 +4107,7 @@ export function ModelRedirectionTab({
                                     onClick={() => toggleMissingKeyHints(siteGroup.siteId)}
                                     data-testid="priority-detail-missing-key-toggle"
                                   >
-                                    <div className="col-span-2 flex min-w-0 items-center gap-2 pl-5">
+                                    <div className="flex min-w-0 items-center gap-2">
                                       <span className="h-5 w-px shrink-0 bg-[var(--warning)]/35" />
                                       <span className="shrink-0 rounded-full border border-[var(--warning)]/30 bg-[var(--warning-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--warning)]">
                                         折叠
@@ -3698,7 +4130,7 @@ export function ModelRedirectionTab({
                                   {missingHintsExpanded ? (
                                     <div id={`priority-folded-hints-${siteGroup.siteId}`}>
                                       {disabledApiKeys.map(apiKey => {
-                                        const formattedModelList = formatModelListDetails(
+                                        const modelEntries = buildPriorityModelEntries(
                                           apiKey.supportedOriginalModels,
                                           apiKey.modelPriceLabels
                                         );
@@ -3706,43 +4138,52 @@ export function ModelRedirectionTab({
                                         return (
                                           <div
                                             key={`${siteGroup.key}:disabled:${apiKey.key}`}
-                                            className={`grid ${PRIORITY_DETAIL_GRID_CLASS} items-center gap-2 border-t border-[var(--warning)]/15 px-2.5 py-1`}
+                                            className="border-t border-[var(--warning)]/15 px-2.5 py-1"
                                             data-testid="priority-detail-disabled-api-key-row"
                                           >
-                                            <div className="flex min-w-0 items-center gap-2 pl-5">
-                                              <span className="h-5 w-px shrink-0 bg-[var(--warning)]/35" />
-                                              <span className="shrink-0 rounded border border-[var(--warning)]/30 bg-[var(--warning-soft)] px-1 py-px text-[9px] font-bold leading-3 text-[var(--warning)]">
-                                                API Key
-                                              </span>
-                                              <span className="min-w-0 truncate">
-                                                {formatPriorityApiKeyDetails(apiKey)}
-                                              </span>
-                                            </div>
                                             <div
-                                              className="min-w-0 truncate"
-                                              title={formattedModelList}
+                                              className={`grid ${PRIORITY_DETAIL_GRID_CLASS} items-start gap-2`}
                                             >
-                                              {formattedModelList}
+                                              <div className="flex min-w-0 items-start gap-2">
+                                                <span className="h-5 w-px shrink-0 bg-[var(--warning)]/35" />
+                                                <span className="shrink-0 rounded border border-[var(--warning)]/30 bg-[var(--warning-soft)] px-1 py-px text-[9px] font-bold leading-3 text-[var(--warning)]">
+                                                  API Key
+                                                </span>
+                                                <div className="flex min-w-0 flex-1 flex-col">
+                                                  <span
+                                                    className="min-w-0 truncate"
+                                                    title={formatPriorityApiKeyDetails(apiKey)}
+                                                  >
+                                                    {formatPriorityApiKeyDetails(apiKey)}
+                                                  </span>
+                                                  <span
+                                                    className="mt-0.5 min-w-0 text-[11px] leading-4 text-[var(--text-tertiary)]"
+                                                    data-testid="priority-detail-api-key-models"
+                                                  >
+                                                    <PriorityModelList entries={modelEntries} />
+                                                  </span>
+                                                </div>
+                                              </div>
+                                              <span className="shrink-0 justify-self-end whitespace-nowrap rounded-full bg-[var(--surface-1)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--warning)]">
+                                                {siteDisabled ? '随站点禁用' : '已禁用'}
+                                              </span>
+                                              <button
+                                                type="button"
+                                                className="inline-flex h-5 min-w-8 items-center justify-center justify-self-end rounded-[var(--radius-sm)] border border-[var(--success)]/35 bg-[var(--success-soft)] px-1.5 text-[10px] font-semibold leading-none text-[var(--success)] transition-colors hover:border-[var(--success)] disabled:cursor-not-allowed disabled:opacity-40"
+                                                aria-label={`${apiKey.apiKeyName} 启用`}
+                                                title={siteDisabled ? '先启用站点' : '启用 API key'}
+                                                disabled={siteDisabled}
+                                                onClick={() =>
+                                                  togglePriorityApiKeyDisabled(
+                                                    siteGroup.siteId,
+                                                    apiKey.key
+                                                  )
+                                                }
+                                                data-testid="priority-detail-api-key-enable-toggle"
+                                              >
+                                                启用
+                                              </button>
                                             </div>
-                                            <span className="justify-self-end rounded-full bg-[var(--surface-1)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--warning)]">
-                                              {siteDisabled ? '随站点禁用' : '已禁用'}
-                                            </span>
-                                            <button
-                                              type="button"
-                                              className="inline-flex h-5 min-w-8 items-center justify-center justify-self-end rounded-[var(--radius-sm)] border border-[var(--success)]/35 bg-[var(--success-soft)] px-1.5 text-[10px] font-semibold leading-none text-[var(--success)] transition-colors hover:border-[var(--success)] disabled:cursor-not-allowed disabled:opacity-40"
-                                              aria-label={`${apiKey.apiKeyName} 启用`}
-                                              title={siteDisabled ? '先启用站点' : '启用 API key'}
-                                              disabled={siteDisabled}
-                                              onClick={() =>
-                                                togglePriorityApiKeyDisabled(
-                                                  siteGroup.siteId,
-                                                  apiKey.key
-                                                )
-                                              }
-                                              data-testid="priority-detail-api-key-enable-toggle"
-                                            >
-                                              启用
-                                            </button>
                                           </div>
                                         );
                                       })}
@@ -3752,7 +4193,7 @@ export function ModelRedirectionTab({
                                           className={`grid ${PRIORITY_DETAIL_GRID_CLASS} items-center gap-2 border-t border-[var(--warning)]/15 px-2.5 py-1`}
                                           data-testid="priority-detail-missing-key-row"
                                         >
-                                          <div className="col-span-2 flex min-w-0 items-center gap-2 pl-5">
+                                          <div className="flex min-w-0 items-center gap-2">
                                             <span className="h-5 w-px shrink-0 bg-[var(--warning)]/35" />
                                             <span className="shrink-0 rounded-full border border-[var(--warning)]/30 bg-[var(--warning-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--warning)]">
                                               缺少 Key
@@ -3792,7 +4233,7 @@ export function ModelRedirectionTab({
                       </div>
                     </div>
                   ) : (
-                    <div className="border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-4 text-sm text-[var(--text-secondary)]">
+                    <div className="rounded-[var(--radius-md)] border border-[var(--line-soft)] bg-[var(--surface-1)] px-3 py-4 text-sm text-[var(--text-secondary)]">
                       当前重定向还没有可配置优先级的可用站点、账户或 API key。
                     </div>
                   )}
@@ -4030,30 +4471,40 @@ export function ModelRedirectionTab({
         title={routeRuleState ? `${routeRuleState.displayName} 路由规则` : '路由规则'}
         size="md"
         footer={
-          <div className="flex items-center justify-end gap-2">
-            <AppButton type="button" variant="secondary" onClick={closeRouteRules}>
-              取消
-            </AppButton>
+          <div className="flex items-center justify-between gap-2">
             <AppButton
               type="button"
-              onClick={handleSaveRouteRules}
-              loading={saving}
-              variant={
-                routeRuleState &&
-                isRouteRuntimeRuleDraftDirty(routeRuleDraft, routeRuleState.item.runtimeConfig)
-                  ? 'danger'
-                  : 'primary'
-              }
-              data-testid="route-rule-save-button"
-              data-dirty={
-                routeRuleState &&
-                isRouteRuntimeRuleDraftDirty(routeRuleDraft, routeRuleState.item.runtimeConfig)
-                  ? 'true'
-                  : 'false'
-              }
+              variant="tertiary"
+              onClick={handleResetRouteRuleDraft}
+              data-testid="route-rule-reset-button"
             >
-              保存路由规则
+              恢复默认值
             </AppButton>
+            <div className="flex items-center gap-2">
+              <AppButton type="button" variant="secondary" onClick={closeRouteRules}>
+                取消
+              </AppButton>
+              <AppButton
+                type="button"
+                onClick={handleSaveRouteRules}
+                loading={saving}
+                variant={
+                  routeRuleState &&
+                  isRouteRuntimeRuleDraftDirty(routeRuleDraft, routeRuleState.item.runtimeConfig)
+                    ? 'danger'
+                    : 'primary'
+                }
+                data-testid="route-rule-save-button"
+                data-dirty={
+                  routeRuleState &&
+                  isRouteRuntimeRuleDraftDirty(routeRuleDraft, routeRuleState.item.runtimeConfig)
+                    ? 'true'
+                    : 'false'
+                }
+              >
+                保存路由规则
+              </AppButton>
+            </div>
           </div>
         }
       >

@@ -1,9 +1,14 @@
 import { EventEmitter } from 'events';
 import { Readable } from 'stream';
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../main/utils/logger', () => ({
   default: {
+    // 顶层方法也要 mock：侧车服务直接用 Logger.error，缺了会让 catch 处理器自身抛出
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
     scope: () => ({
       debug: vi.fn(),
       info: vi.fn(),
@@ -93,7 +98,9 @@ vi.mock('../main/utils/http-client', () => ({
 }));
 
 import {
+  applySessionChannelAffinity,
   applySuccessfulRoutePathAffinity,
+  pickDistributedChannelIndex,
   buildChannelAttemptPlan,
   buildUpstreamRequestUrl,
   buildUpstreamHeaders,
@@ -115,6 +122,7 @@ import {
 import { unifiedConfigManager } from '../main/unified-config-manager';
 import { findConfigFileProfileByRouteApiKey } from '../main/config-file-profile-service';
 import { routeStateAffinityService } from '../main/route-state-affinity-service';
+import { routeSessionBindingService } from '../main/route-session-binding-service';
 import { STREAMING_VALIDATION_MAX_SSE_FRAME_BYTES } from '../main/streaming-protocol-validator';
 import {
   detectCliTypeFromPath,
@@ -829,9 +837,12 @@ describe('route-proxy-service Responses state affinity', () => {
         response
       );
 
-      expect(response.statusCode).toBe(conversation ? 501 : 502);
-      expect(JSON.parse(response.body).error).toBe(
-        conversation ? 'stateful_request_unsupported' : 'all_channels_failed'
+      // 非 conversation 分支没有可用上游，失败被路由吸收为可重试 503。
+      expect(response.statusCode).toBe(conversation ? 501 : 503);
+      expect(JSON.parse(response.body).error).toEqual(
+        conversation
+          ? 'stateful_request_unsupported'
+          : expect.objectContaining({ code: 'upstream_temporarily_unavailable' })
       );
       if (conversation) {
         expect(resolveChannels).not.toHaveBeenCalled();
@@ -1203,6 +1214,329 @@ describe('route-proxy-service Responses state affinity', () => {
     expect(resolveChannels).not.toHaveBeenCalled();
     expect(httpRawStreamRequest).not.toHaveBeenCalled();
     expect(httpRawRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe('route-proxy-service session channel affinity', () => {
+  const channel = (siteId: string, apiKeyId: string) => ({
+    routeRuleId: 'rule-1',
+    siteId,
+    accountId: 'acc-1',
+    apiKeyId,
+    canonicalModel: 'claude-opus-4-6',
+    resolvedModel: 'claude-opus-4.6-20260201',
+    targetProtocol: 'anthropic-messages' as const,
+  });
+  const channels = [
+    channel('site-a', 'key-a'),
+    channel('site-b', 'key-b'),
+    channel('site-c', 'key-c'),
+  ];
+  const bound = (siteId: string, apiKeyId: string, boundAt = 1_000) => ({
+    siteId,
+    accountId: 'acc-1',
+    apiKeyId,
+    boundAt,
+  });
+
+  beforeEach(() => {
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+  });
+
+  it('promotes the bound channel and preserves circular fallback order', () => {
+    const ordered = applySessionChannelAffinity(channels, bound('site-b', 'key-b'), {}, 2_000);
+
+    expect(ordered.map(entry => entry.siteId)).toEqual(['site-b', 'site-c', 'site-a']);
+  });
+
+  it('leaves the order untouched when the bound channel is already first', () => {
+    const ordered = applySessionChannelAffinity(channels, bound('site-a', 'key-a'), {}, 2_000);
+    expect(ordered).toBe(channels);
+  });
+
+  it('ignores a binding whose channel is not among the candidates', () => {
+    const ordered = applySessionChannelAffinity(channels, bound('site-z', 'key-z'), {}, 2_000);
+    expect(ordered).toBe(channels);
+  });
+
+  it('ignores a binding whose route path is disabled', () => {
+    vi.mocked(isRoutePathDisabled).mockImplementation(
+      key => (key as { siteId?: string }).siteId === 'site-b'
+    );
+
+    const ordered = applySessionChannelAffinity(channels, bound('site-b', 'key-b'), {}, 2_000);
+    expect(ordered).toBe(channels);
+  });
+
+  it('ignores a binding whose route path is affinity-suppressed by a priority-hit reset', () => {
+    const states = {
+      [buildRoutePathStateKey(channels[1]!)]: {
+        ...channels[1]!,
+        windowStartedAt: 0,
+        windowRequestCount: 0,
+        windowSuccessCount: 0,
+        successRate: 1,
+        affinitySuppressedUntil: 9_000,
+        updatedAt: 0,
+      },
+    };
+
+    const ordered = applySessionChannelAffinity(channels, bound('site-b', 'key-b'), states, 2_000);
+    expect(ordered).toBe(channels);
+  });
+
+  it('ignores a binding established before the affinity invalidation boundary', () => {
+    const stale = applySessionChannelAffinity(
+      channels,
+      bound('site-b', 'key-b', 1_000),
+      {},
+      2_000,
+      1_000
+    );
+    expect(stale).toBe(channels);
+
+    const fresh = applySessionChannelAffinity(
+      channels,
+      bound('site-b', 'key-b', 1_500),
+      {},
+      2_000,
+      1_000
+    );
+    expect(fresh.map(entry => entry.siteId)).toEqual(['site-b', 'site-c', 'site-a']);
+  });
+
+  it('does nothing without a binding', () => {
+    expect(applySessionChannelAffinity(channels, null, {}, 2_000)).toBe(channels);
+  });
+});
+
+describe('route-proxy-service new session distribution', () => {
+  const channel = (siteId: string) => ({ siteId, accountId: 'acc-1', apiKeyId: `key-${siteId}` });
+  const channels = [channel('site-a'), channel('site-b'), channel('site-c')];
+  const keyOf = (siteId: string) => `${siteId}|acc-1|key-${siteId}`;
+
+  it('keeps the configured priority order when nothing is occupied', () => {
+    expect(pickDistributedChannelIndex(channels, new Set())).toBe(0);
+  });
+
+  it('skips a channel already held by another live session', () => {
+    expect(pickDistributedChannelIndex(channels, new Set([keyOf('site-a')]))).toBe(1);
+  });
+
+  it('never jumps over a free higher-priority channel', () => {
+    // site-b 被占用，但 site-a 空闲：必须仍然选 site-a，不能因分散而降级用户优先级
+    expect(pickDistributedChannelIndex(channels, new Set([keyOf('site-b')]))).toBe(0);
+  });
+
+  it('falls back to the priority order when every channel is occupied', () => {
+    const occupied = new Set([keyOf('site-a'), keyOf('site-b'), keyOf('site-c')]);
+    expect(pickDistributedChannelIndex(channels, occupied)).toBe(0);
+  });
+});
+
+describe('route-proxy-service session channel binding end to end', () => {
+  const rule = {
+    id: 'rule-codex-session-bind',
+    cliType: 'codex' as const,
+    pattern: 'gpt-4.1-mini',
+    patternType: 'exact' as const,
+  };
+  const channelA = {
+    routeRuleId: rule.id,
+    siteId: 'site-a',
+    accountId: 'acc-a',
+    apiKeyId: 'key-a',
+    cliType: 'codex' as const,
+    targetProtocol: 'native' as const,
+    canonicalModel: 'gpt-4.1-mini',
+    resolvedModel: 'gpt-4.1-mini',
+  };
+  const channelB = {
+    ...channelA,
+    siteId: 'site-b',
+    accountId: 'acc-b',
+    apiKeyId: 'key-b',
+  };
+  const bindingOn = (siteId: string, accountId: string, apiKeyId: string) => ({
+    instanceId: 'any',
+    profileId: '',
+    siteId,
+    accountId,
+    apiKeyId,
+    canonicalModel: 'gpt-4.1-mini',
+    boundAt: 1,
+    lastUsedAt: Date.now(),
+  });
+
+  function setupSessionRoute(instances: Record<string, unknown> = {}) {
+    const routing = {
+      server: { unifiedApiKey: 'sk-route', requestTimeoutMs: 1000, upstreamProxyUrl: '' },
+      rules: [rule],
+      cliModelSelections: { claudeCode: null, codex: null },
+      sessionRouting: {
+        instances,
+        currentRouteBySlot: {},
+        extractionRules: [],
+        overrides: {},
+        activeWindowMinutes: 30,
+        recentWindowHours: 24,
+        historyRetentionDays: 30,
+        overrideRetentionDays: 90,
+      },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'gpt-4.1-mini': {
+            canonicalName: 'gpt-4.1-mini',
+            aliases: ['gpt-4.1-mini'],
+            sources: [],
+            vendor: 'gpt' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [],
+        vendorPriorities: {},
+      },
+      routePathStates: {},
+    };
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn((siteId: string) => ({ id: siteId, name: siteId })),
+      getAccountById: vi.fn((accountId: string) => ({ id: accountId, account_name: accountId })),
+      saveConfig: vi.fn(async () => undefined),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(extractModelFromBody).mockReturnValue('gpt-4.1-mini');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue([channelA, channelB]);
+    vi.mocked(resolveChannelCredentials).mockImplementation(
+      async (_siteId, _accountId, apiKeyId) => ({
+        baseUrl: `https://${apiKeyId}.example.com`,
+        apiKey: `sk-${apiKeyId}`,
+      })
+    );
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockImplementation(async (channel, outcome) => ({
+      ...channel,
+      windowStartedAt: 1,
+      windowRequestCount: 1,
+      windowSuccessCount: outcome === 'success' ? 1 : 0,
+      successRate: outcome === 'success' ? 1 : 0,
+      lastOutcome: outcome,
+      updatedAt: 1,
+    }));
+    vi.mocked(httpRawRequest).mockResolvedValue({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ ok: true, usage: { total_tokens: 5 } })),
+    });
+    return routing;
+  }
+
+  const liveInstance = (id: string) => ({
+    id,
+    display: {},
+    modelId: 'gpt-4.1-mini',
+    reasoningEffort: 'medium',
+    routingState: 'active',
+    presenceState: 'unknown',
+    routeKey: { agentId: 'codex', runtimeSlotId: id, sessionId: id },
+  });
+
+  const sessionRequest = (sessionId: string) =>
+    createJsonRequest(
+      '/v1/responses',
+      {
+        authorization: 'Bearer sk-route',
+        'content-type': 'application/json',
+        'x-codex-window-id': `${sessionId}:1`,
+      },
+      { model: 'gpt-4.1-mini', input: 'hi', client_metadata: { session_id: sessionId } }
+    );
+
+  const firstUsedApiKey = () => vi.mocked(resolveChannelCredentials).mock.calls[0]?.[2];
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('follows an existing session binding instead of the configured first channel', async () => {
+    vi.clearAllMocks();
+    setupSessionRoute();
+    vi.spyOn(routeSessionBindingService, 'get').mockReturnValue(
+      bindingOn('site-b', 'acc-b', 'key-b')
+    );
+
+    await handleRequest(sessionRequest('session-1'), createMockResponse());
+
+    expect(firstUsedApiKey()).toBe('key-b');
+  });
+
+  it('abandons a binding whose channel is disabled and falls back to normal ordering', async () => {
+    vi.clearAllMocks();
+    setupSessionRoute();
+    vi.mocked(isRoutePathDisabled).mockImplementation(
+      key => (key as { apiKeyId?: string }).apiKeyId === 'key-b'
+    );
+    vi.spyOn(routeSessionBindingService, 'get').mockReturnValue(
+      bindingOn('site-b', 'acc-b', 'key-b')
+    );
+
+    await handleRequest(sessionRequest('session-2'), createMockResponse());
+
+    expect(firstUsedApiKey()).toBe('key-a');
+  });
+
+  it('steers a fresh session away from a channel held by another live session', async () => {
+    vi.clearAllMocks();
+    setupSessionRoute({ 'other-instance': liveInstance('other-instance') });
+    vi.spyOn(routeSessionBindingService, 'get').mockReturnValue(undefined);
+    vi.spyOn(routeSessionBindingService, 'listActive').mockReturnValue([
+      { ...bindingOn('site-a', 'acc-a', 'key-a'), instanceId: 'other-instance' },
+    ]);
+
+    await handleRequest(sessionRequest('session-3'), createMockResponse());
+
+    expect(firstUsedApiKey()).toBe('key-b');
+  });
+
+  it('ignores occupancy from a session that is no longer active', async () => {
+    vi.clearAllMocks();
+    setupSessionRoute({
+      'closed-instance': { ...liveInstance('closed-instance'), routingState: 'closed' },
+    });
+    vi.spyOn(routeSessionBindingService, 'get').mockReturnValue(undefined);
+    vi.spyOn(routeSessionBindingService, 'listActive').mockReturnValue([
+      { ...bindingOn('site-a', 'acc-a', 'key-a'), instanceId: 'closed-instance' },
+    ]);
+
+    await handleRequest(sessionRequest('session-4'), createMockResponse());
+
+    expect(firstUsedApiKey()).toBe('key-a');
+  });
+
+  it('binds only after a successful attempt', async () => {
+    vi.clearAllMocks();
+    setupSessionRoute();
+    const bind = vi.spyOn(routeSessionBindingService, 'bind').mockImplementation(() => undefined);
+    vi.spyOn(routeSessionBindingService, 'get').mockReturnValue(undefined);
+    vi.spyOn(routeSessionBindingService, 'listActive').mockReturnValue([]);
+    vi.mocked(httpRawRequest).mockResolvedValue({
+      status: 500,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ error: { message: 'boom' } })),
+    });
+
+    await handleRequest(sessionRequest('session-5'), createMockResponse());
+
+    expect(bind).not.toHaveBeenCalled();
   });
 });
 
@@ -4488,7 +4822,7 @@ describe('route-proxy-service OpenCode native endpoint routing', () => {
     }
   );
 
-  it('preserves a rejected cross-protocol streaming HTTP failure body', async () => {
+  it('absorbs a rejected cross-protocol streaming HTTP failure into a retryable response', async () => {
     vi.clearAllMocks();
     const source = protocolCases['anthropic-messages'];
     setupOpenCodeRoute({
@@ -4521,7 +4855,9 @@ describe('route-proxy-service OpenCode native endpoint routing', () => {
     await handleRequest(request, response);
 
     expect(response.statusCode).toBe(503);
-    expect(response.body).toBe(failureBody.toString('utf8'));
+    expect(response.body).not.toBe(failureBody.toString('utf8'));
+    expect(JSON.parse(response.body).error.message).toContain('upstream busy');
+    expect(response.headers['X-Route-Proxy-Upstream-Status']).toBe('503');
     expect(recordRoutePathOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ apiKeyId: 'key-opencode' }),
       'failure',
@@ -5238,7 +5574,7 @@ describe('route-proxy-service quota exhaustion failover', () => {
     expect(response.body).not.toMatch(/403|billing|quota|余额|额度|预扣费/i);
   });
 
-  it('keeps unrelated 403 responses on the existing terminal path', async () => {
+  it('absorbs an unrelated 403 into a retryable response instead of terminating the client', async () => {
     vi.clearAllMocks();
     setupQuotaFailoverRoute([quotaChannel]);
     vi.mocked(httpRawRequest).mockResolvedValueOnce({
@@ -5254,10 +5590,10 @@ describe('route-proxy-service quota exhaustion failover', () => {
 
     await handleRequest(createQuotaTestRequest(), response);
 
-    expect(response.statusCode).toBe(403);
-    expect(JSON.parse(response.body)).toEqual({
-      error: { type: 'permission_error', message: 'API key is forbidden' },
-    });
+    expect(response.statusCode).toBe(503);
+    expect(response.headers['X-Route-Proxy-Failure-Class']).toBe('channel_fatal');
+    expect(response.headers['X-Route-Proxy-Upstream-Status']).toBe('403');
+    expect(JSON.parse(response.body).error.message).toContain('API key is forbidden');
     expect(recordRouteRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         apiKeyId: 'key-quota',
@@ -5265,6 +5601,414 @@ describe('route-proxy-service quota exhaustion failover', () => {
         error: 'permission_error: API key is forbidden',
       })
     );
+  });
+});
+
+describe('route-proxy-service upstream failure classification', () => {
+  const rule = {
+    id: 'rule-codex-failure-class',
+    cliType: 'codex' as const,
+    pattern: 'gpt-4.1-mini',
+    patternType: 'exact' as const,
+  };
+  const channelA = {
+    routeRuleId: rule.id,
+    siteId: 'site-a',
+    accountId: 'account-a',
+    apiKeyId: 'key-a',
+    cliType: 'codex' as const,
+    targetProtocol: 'native' as const,
+    canonicalModel: 'gpt-4.1-mini',
+    resolvedModel: 'model-a',
+  };
+  const channelB = {
+    ...channelA,
+    siteId: 'site-b',
+    accountId: 'account-b',
+    apiKeyId: 'key-b',
+    resolvedModel: 'model-b',
+  };
+
+  function setupFailureClassRoute(
+    channels: Array<typeof channelA>,
+    maxAttemptsPerRoutePath = 1
+  ): void {
+    const now = Date.now();
+    const routing = {
+      server: { unifiedApiKey: 'sk-route', requestTimeoutMs: 1000, upstreamProxyUrl: '' },
+      rules: [rule],
+      cliModelSelections: { claudeCode: null, codex: null },
+      modelRegistry: {
+        version: 1,
+        sources: [],
+        entries: {
+          'gpt-4.1-mini': {
+            canonicalName: 'gpt-4.1-mini',
+            aliases: ['gpt-4.1-mini'],
+            sources: [],
+            vendor: 'gpt' as const,
+            hasOverride: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+        overrides: [],
+        displayItems: [
+          {
+            id: 'display-failure-class',
+            canonicalName: 'gpt-4.1-mini',
+            mode: 'manual' as const,
+            sourceKeys: [],
+            originalModelOrder: [],
+            runtimeConfig: {
+              maxAttemptsPerRoutePath,
+              successRateWindowMinutes: 5,
+              disableDurationMinutes: 30,
+              minSuccessRate: 0.8,
+            },
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+        vendorPriorities: {},
+      },
+      routePathStates: {},
+    };
+
+    Object.assign(unifiedConfigManager, {
+      getRoutingConfig: vi.fn(() => routing),
+      getSiteById: vi.fn((siteId: string) => ({ id: siteId, name: siteId })),
+      getAccountById: vi.fn((accountId: string) => ({ id: accountId, account_name: accountId })),
+    });
+    vi.mocked(detectCliTypeFromPath).mockReturnValue('codex');
+    vi.mocked(extractModelFromBody).mockReturnValue('gpt-4.1-mini');
+    vi.mocked(extractModelFromPath).mockReturnValue(null);
+    vi.mocked(sortRules).mockReturnValue([rule as never]);
+    vi.mocked(findMatchingRule).mockReturnValue(rule as never);
+    vi.mocked(resolveChannels).mockReturnValue(channels);
+    vi.mocked(resolveChannelCredentials).mockImplementation(
+      async (_siteId, _accountId, apiKeyId) => ({
+        baseUrl: `https://${apiKeyId}.example.com`,
+        apiKey: `sk-${apiKeyId}`,
+      })
+    );
+    vi.mocked(isRoutePathDisabled).mockReturnValue(false);
+    vi.mocked(recordRoutePathOutcome).mockImplementation(async (channel, outcome) => ({
+      ...channel,
+      windowStartedAt: now,
+      windowRequestCount: outcome === 'neutral' ? 0 : 1,
+      windowSuccessCount: outcome === 'success' ? 1 : 0,
+      successRate: outcome === 'success' ? 1 : 0,
+      lastOutcome: outcome,
+      updatedAt: now,
+    }));
+  }
+
+  const createRequest = () =>
+    createJsonRequest(
+      '/v1/responses',
+      { authorization: 'Bearer sk-route', 'content-type': 'application/json' },
+      { model: 'gpt-4.1-mini', input: 'hi' }
+    );
+
+  const jsonBody = (payload: unknown) => Buffer.from(JSON.stringify(payload));
+
+  const pathOutcomeFor = (apiKeyId: string) =>
+    vi
+      .mocked(recordRoutePathOutcome)
+      .mock.calls.filter(([channel]) => (channel as { apiKeyId: string }).apiKeyId === apiKeyId)
+      .map(call => call[1]);
+
+  it('records a request-side rejection as neutral while still trying the next channel', async () => {
+    vi.clearAllMocks();
+    setupFailureClassRoute([channelA, channelB]);
+    vi.mocked(httpRawRequest)
+      .mockResolvedValueOnce({
+        status: 400,
+        headers: { 'content-type': 'application/json' },
+        body: jsonBody({ error: { message: 'context length exceeded' } }),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: jsonBody({ ok: true }),
+      });
+    const response = createMockResponse();
+
+    await handleRequest(createRequest(), response);
+
+    expect(httpRawRequest).toHaveBeenCalledTimes(2);
+    expect(response.statusCode).toBe(200);
+    expect(pathOutcomeFor('key-a')).toEqual(['neutral']);
+    const failureLog = vi
+      .mocked(recordRouteRequest)
+      .mock.calls.find(([params]) => params.apiKeyId === 'key-a')?.[0];
+    expect(failureLog).toEqual(expect.objectContaining({ outcome: 'failure', statusCode: 400 }));
+  });
+
+  it.each([
+    [401, 'invalid api key'],
+    [404, 'model not found'],
+    [429, 'too many requests'],
+    [500, 'internal error'],
+  ])('keeps upstream %s counted as a route path failure', async (status, message) => {
+    vi.clearAllMocks();
+    setupFailureClassRoute([channelA, channelB]);
+    vi.mocked(httpRawRequest)
+      .mockResolvedValueOnce({
+        status,
+        headers: { 'content-type': 'application/json' },
+        body: jsonBody({ error: { message } }),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: jsonBody({ ok: true }),
+      });
+
+    await handleRequest(createRequest(), createMockResponse());
+
+    expect(pathOutcomeFor('key-a')).toEqual(['failure']);
+  });
+
+  it('leaves every route path health-neutral when all candidates reject the same payload', async () => {
+    vi.clearAllMocks();
+    setupFailureClassRoute([channelA, channelB]);
+    const rejection = jsonBody({ error: { message: 'unsupported tool schema' } });
+    vi.mocked(httpRawRequest).mockResolvedValue({
+      status: 422,
+      headers: { 'content-type': 'application/json' },
+      body: rejection,
+    });
+    const response = createMockResponse();
+
+    await handleRequest(createRequest(), response);
+
+    expect(pathOutcomeFor('key-a')).toEqual(['neutral']);
+    expect(pathOutcomeFor('key-b')).toEqual(['neutral']);
+    // 全体候选一致判为 request_fatal：重试不可能成功，且 neutral 永不累积到禁用，
+    // 因此必须透传 4xx 让客户端停止，而不是吸收成可重试 503。
+    expect(response.statusCode).toBe(422);
+    expect(response.body).toBe(rejection.toString('utf8'));
+    expect(response.headers['X-Route-Proxy-Failure-Class']).toBe('request_fatal');
+    expect(response.headers['X-Route-Proxy-Attempts']).toBe('2');
+  });
+
+  it('absorbs a transport failure into a retryable response carrying the real cause', async () => {
+    vi.clearAllMocks();
+    setupFailureClassRoute([channelA]);
+    vi.mocked(httpRawRequest).mockRejectedValueOnce(new Error('ETIMEDOUT connecting to upstream'));
+    const response = createMockResponse();
+
+    await handleRequest(createRequest(), response);
+
+    expect(response.statusCode).toBe(503);
+    expect(JSON.parse(response.body).error).toEqual(
+      expect.objectContaining({ code: 'upstream_temporarily_unavailable' })
+    );
+    expect(JSON.parse(response.body).error.message).toContain('ETIMEDOUT connecting to upstream');
+    expect(response.headers['X-Route-Proxy-Attempts']).toBe('1');
+    expect(response.headers['X-Route-Proxy-Failure-Class']).toBe('transient');
+  });
+
+  it('does not let a single request-side rejection terminate the client when another channel failed differently', async () => {
+    vi.clearAllMocks();
+    setupFailureClassRoute([channelA, channelB]);
+    vi.mocked(httpRawRequest)
+      .mockResolvedValueOnce({
+        status: 503,
+        headers: { 'content-type': 'application/json' },
+        body: jsonBody({ error: { message: 'gateway busy' } }),
+      })
+      .mockResolvedValueOnce({
+        status: 400,
+        headers: { 'content-type': 'application/json' },
+        body: jsonBody({ error: { message: 'image input is not supported' } }),
+      });
+    const response = createMockResponse();
+
+    await handleRequest(createRequest(), response);
+
+    // 只有当所有尝试过的候选一致判为 request_fatal 时才终止；此处存在 transient，必须可重试。
+    expect(response.statusCode).toBe(503);
+    expect(response.headers['X-Route-Proxy-Failure-Class']).toBe('request_fatal');
+  });
+
+  it('never lets a quota-exhausted body reach the passthrough branch', async () => {
+    vi.clearAllMocks();
+    setupFailureClassRoute([channelA, channelB]);
+    vi.mocked(httpRawRequest)
+      .mockResolvedValueOnce({
+        status: 403,
+        headers: { 'content-type': 'application/json' },
+        body: jsonBody({ error: { message: 'INSUFFICIENT_BALANCE: 余额不足' } }),
+      })
+      .mockRejectedValueOnce(new Error('ECONNRESET'));
+    const response = createMockResponse();
+
+    await handleRequest(createRequest(), response);
+
+    expect(response.statusCode).toBe(503);
+    expect(response.headers['X-Route-Proxy-Error']).toBe('upstream_temporarily_unavailable');
+    expect(response.headers['X-Route-Proxy-Attempts']).toBeUndefined();
+    expect(response.headers['X-Route-Proxy-Failure-Class']).toBeUndefined();
+    expect(response.body).not.toMatch(/403|INSUFFICIENT|余额|ECONNRESET/i);
+  });
+
+  const pathOutcomeMetaFor = (apiKeyId: string) =>
+    vi
+      .mocked(recordRoutePathOutcome)
+      .mock.calls.filter(([channel]) => (channel as { apiKeyId: string }).apiKeyId === apiKeyId)
+      .map(call => call[2]);
+
+  it.each([
+    [401, 'upstream_credential_rejected'],
+    [402, 'upstream_credential_rejected'],
+    [403, 'upstream_credential_rejected'],
+    [404, 'upstream_model_unavailable'],
+    [405, 'upstream_model_unavailable'],
+    [410, 'upstream_model_unavailable'],
+  ])('confirms upstream %s as an immediate route path disable', async (status, reason) => {
+    vi.clearAllMocks();
+    setupFailureClassRoute([channelA, channelB]);
+    vi.mocked(httpRawRequest)
+      .mockResolvedValueOnce({
+        status,
+        headers: { 'content-type': 'application/json' },
+        body: jsonBody({ error: { message: 'rejected' } }),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: jsonBody({ ok: true }),
+      });
+
+    await handleRequest(createRequest(), createMockResponse());
+
+    expect(pathOutcomeMetaFor('key-a')).toEqual([
+      expect.objectContaining({ confirmedUnavailable: reason }),
+    ]);
+  });
+
+  it('persists quota exhaustion as a confirmed disable instead of only skipping in-request', async () => {
+    vi.clearAllMocks();
+    setupFailureClassRoute([channelA, channelB]);
+    vi.mocked(httpRawRequest)
+      .mockResolvedValueOnce({
+        status: 403,
+        headers: { 'content-type': 'application/json' },
+        body: jsonBody({ error: { message: 'INSUFFICIENT_BALANCE: 余额不足' } }),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: jsonBody({ ok: true }),
+      });
+
+    await handleRequest(createRequest(), createMockResponse());
+
+    expect(pathOutcomeMetaFor('key-a')).toEqual([
+      expect.objectContaining({ confirmedUnavailable: 'upstream_quota_exhausted' }),
+    ]);
+  });
+
+  it.each([
+    [400, 'request-side rejection'],
+    [422, 'request-side rejection'],
+    [500, 'transient failure'],
+    [429, 'transient failure'],
+  ])('never confirms a disable for upstream %s (%s)', async status => {
+    vi.clearAllMocks();
+    setupFailureClassRoute([channelA, channelB]);
+    vi.mocked(httpRawRequest).mockResolvedValue({
+      status,
+      headers: { 'content-type': 'application/json' },
+      body: jsonBody({ error: { message: 'boom' } }),
+    });
+
+    await handleRequest(createRequest(), createMockResponse());
+
+    for (const meta of pathOutcomeMetaFor('key-a')) {
+      expect(meta).not.toHaveProperty('confirmedUnavailable');
+    }
+  });
+
+  it('stops the client only once every route path is disabled', async () => {
+    vi.clearAllMocks();
+    setupFailureClassRoute([channelA, channelB]);
+    vi.mocked(httpRawRequest).mockResolvedValue({
+      status: 500,
+      headers: { 'content-type': 'application/json' },
+      body: jsonBody({ error: { message: 'internal error' } }),
+    });
+    // 两个通道在本次请求内先后被健康度规则挂起。
+    const disabled = new Set<string>();
+    vi.mocked(recordRoutePathOutcome).mockImplementation(async (channel, outcome) => {
+      disabled.add((channel as { apiKeyId: string }).apiKeyId);
+      return {
+        ...channel,
+        windowStartedAt: Date.now(),
+        windowRequestCount: 1,
+        windowSuccessCount: 0,
+        successRate: 0,
+        lastOutcome: outcome,
+        disabledUntil: Date.now() + 60_000,
+        updatedAt: Date.now(),
+      } as never;
+    });
+    vi.mocked(isRoutePathDisabled).mockImplementation(
+      channel => disabled.has((channel as { apiKeyId: string }).apiKeyId) && disabled.size >= 2
+    );
+    const response = createMockResponse();
+
+    await handleRequest(createRequest(), response);
+
+    expect(response.statusCode).toBe(400);
+    expect(response.headers['X-Route-Proxy-Error']).toBe('all_route_paths_disabled');
+  });
+
+  it('honors a short Retry-After before replanning the same route path', async () => {
+    vi.clearAllMocks();
+    setupFailureClassRoute([channelA, { ...channelA }], 2);
+    vi.mocked(httpRawRequest)
+      .mockResolvedValueOnce({
+        status: 429,
+        headers: {
+          'content-type': 'application/json',
+          'retry-after': new Date(Date.now() + 150).toISOString(),
+        },
+        body: jsonBody({ error: { message: 'slow down' } }),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: jsonBody({ ok: true }),
+      });
+    const startedAt = Date.now();
+    const response = createMockResponse();
+
+    await handleRequest(createRequest(), response);
+
+    expect(httpRawRequest).toHaveBeenCalledTimes(2);
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(100);
+    expect(response.statusCode).toBe(200);
+  });
+
+  it('skips a replanned attempt when Retry-After exceeds the wait ceiling', async () => {
+    vi.clearAllMocks();
+    setupFailureClassRoute([channelA, { ...channelA }], 2);
+    vi.mocked(httpRawRequest).mockResolvedValueOnce({
+      status: 429,
+      headers: { 'content-type': 'application/json', 'retry-after': '30' },
+      body: jsonBody({ error: { message: 'slow down' } }),
+    });
+    const response = createMockResponse();
+
+    await handleRequest(createRequest(), response);
+
+    expect(httpRawRequest).toHaveBeenCalledTimes(1);
+    expect(response.statusCode).toBe(503);
+    expect(response.headers['X-Route-Proxy-Upstream-Status']).toBe('429');
   });
 });
 
@@ -7835,7 +8579,9 @@ describe('route-proxy-service SSE streaming passthrough', () => {
                 'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
                 '',
                 'event: content_block_delta',
-                'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}',
+                // 超过原生 Anthropic 的提交字节阈值，确保这一路真的跨过提交窗口，
+                // 否则命中的是提交前分支（丢弃缓冲换通道），验证不到提交后错误处理。
+                `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial${'x'.repeat(64 * 1024)}"}}`,
                 '',
                 '',
               ].join('\n'),
@@ -9035,8 +9781,10 @@ describe('route-proxy-service SSE streaming passthrough', () => {
     };
     const malformedChunk = Buffer.from(
       [
+        // message_start 撑过原生 Anthropic 提交字节阈值，使畸形帧落在提交后分支；
+        // 不用额外的 delta 帧填充，避免与「畸形帧后不得转发内容」的断言互相干扰。
         'event: message_start',
-        'data: {"type":"message_start","message":{"id":"msg_bad","type":"message","role":"assistant","model":"claude-opus-4-6","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}',
+        `data: {"type":"message_start","message":{"id":"msg_bad${'x'.repeat(64 * 1024)}","type":"message","role":"assistant","model":"claude-opus-4-6","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}`,
         '',
         'event: content_block_start',
         'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
@@ -9138,6 +9886,231 @@ describe('route-proxy-service SSE streaming passthrough', () => {
         apiKeyId: 'key-claude',
         outcome: 'failure',
         error: expect.stringContaining('invalid_content_block_start'),
+      })
+    );
+  });
+
+  const NATIVE_CLAUDE_MESSAGE_START = [
+    'event: message_start',
+    'data: {"type":"message_start","message":{"id":"msg_win","type":"message","role":"assistant","model":"claude-opus-4-6","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}',
+    '',
+  ];
+  const NATIVE_CLAUDE_OPEN_BLOCK = [
+    'event: content_block_start',
+    'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+    '',
+    'event: content_block_delta',
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}',
+    '',
+    'event: content_block_stop',
+    'data: {"type":"content_block_stop","index":0}',
+    '',
+  ];
+  const NATIVE_CLAUDE_TERMINAL = [
+    'event: message_delta',
+    'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":2}}',
+    '',
+    'event: message_stop',
+    'data: {"type":"message_stop"}',
+    '',
+    '',
+  ];
+
+  function buildNativeClaudeRequest(): ReturnType<typeof createJsonRequest> {
+    return createJsonRequest(
+      '/v1/messages?beta=true',
+      { 'x-api-key': 'sk-route', 'content-type': 'application/json' },
+      { model: 'claude-opus-4-6', stream: true, messages: [{ role: 'user', content: 'hi' }] }
+    );
+  }
+
+  it('discards the buffered native Claude stream and fails over when it truncates before commit', async () => {
+    vi.clearAllMocks();
+    const channel = setupStreamingRoute('claudeCode', 'claude-opus-4-6');
+    vi.mocked(resolveChannels).mockReturnValue([
+      channel,
+      { ...channel, siteId: 'site-backup', apiKeyId: 'key-backup' },
+    ]);
+
+    const truncated = Buffer.from(
+      [...NATIVE_CLAUDE_MESSAGE_START, ...NATIVE_CLAUDE_OPEN_BLOCK, ''].join('\n'),
+      'utf-8'
+    );
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
+      expect(
+        config.onResponse?.({
+          status: 200,
+          statusText: 'OK',
+          headers: { 'content-type': 'text/event-stream' },
+        })
+      ).toBe(true);
+      await config.onChunk?.(truncated);
+      return { status: 200, headers: { 'content-type': 'text/event-stream' }, body: truncated };
+    });
+
+    const response = createMockResponse();
+    await handleRequest(buildNativeClaudeRequest(), response);
+
+    // 提交前截断：客户端不该收到任何上游字节，路由必须换下一个候选。
+    expect(response.body).not.toContain('event: message_start');
+    expect(response.body).not.toContain('event: content_block_start');
+    expect(vi.mocked(httpRawStreamRequest).mock.calls.length).toBeGreaterThan(1);
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.anything(),
+      'failure',
+      expect.objectContaining({
+        error: expect.stringContaining('incomplete_streaming_response:missing_terminal_event'),
+      }),
+      expect.any(Object)
+    );
+  });
+
+  it('commits a stalled native Claude stream once the delay window elapses', async () => {
+    vi.clearAllMocks();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      setupStreamingRoute('claudeCode', 'claude-opus-4-6');
+
+      const opening = Buffer.from(
+        [...NATIVE_CLAUDE_MESSAGE_START, ...NATIVE_CLAUDE_OPEN_BLOCK, ''].join('\n'),
+        'utf-8'
+      );
+      const terminal = Buffer.from(NATIVE_CLAUDE_TERMINAL.join('\n'), 'utf-8');
+      const response = createMockResponse();
+      let bodyBeforeDeadline = '';
+      let bodyAfterDeadline = '';
+
+      vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
+        expect(
+          config.onResponse?.({
+            status: 200,
+            statusText: 'OK',
+            headers: { 'content-type': 'text/event-stream' },
+          })
+        ).toBe(true);
+        await config.onChunk?.(opening);
+        // 远不到 64KB，也没有终止事件：只有定时器能推动提交。
+        bodyBeforeDeadline = response.body;
+        await vi.advanceTimersByTimeAsync(3_050);
+        bodyAfterDeadline = response.body;
+        await config.onChunk?.(terminal);
+        return {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+          body: Buffer.concat([opening, terminal]),
+        };
+      });
+
+      await handleRequest(buildNativeClaudeRequest(), response);
+
+      expect(bodyBeforeDeadline).toBe('');
+      expect(bodyAfterDeadline).toContain('event: message_start');
+      expect(bodyAfterDeadline).toContain('event: content_block_stop');
+      // 定时器提交后继续到达的字节必须顺序追加，不重复也不交错。
+      expect(response.body).toBe(opening.toString('utf-8') + terminal.toString('utf-8'));
+      expect(response.body).not.toContain('event: error');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('commits a complete native Claude stream inside the window and records success', async () => {
+    vi.clearAllMocks();
+    setupStreamingRoute('claudeCode', 'claude-opus-4-6');
+
+    const complete = Buffer.from(
+      [...NATIVE_CLAUDE_MESSAGE_START, ...NATIVE_CLAUDE_OPEN_BLOCK, ...NATIVE_CLAUDE_TERMINAL].join(
+        '\n'
+      ),
+      'utf-8'
+    );
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
+      expect(
+        config.onResponse?.({
+          status: 200,
+          statusText: 'OK',
+          headers: { 'content-type': 'text/event-stream' },
+        })
+      ).toBe(true);
+      await config.onChunk?.(complete);
+      return { status: 200, headers: { 'content-type': 'text/event-stream' }, body: complete };
+    });
+
+    const response = createMockResponse();
+    await handleRequest(buildNativeClaudeRequest(), response);
+
+    // 窗口没到期也要提交：终止事件本身就是提交信号。
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe(complete.toString('utf-8'));
+    expect(response.body).not.toContain('event: error');
+    expect(vi.mocked(httpRawStreamRequest)).toHaveBeenCalledTimes(1);
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.anything(),
+      'success',
+      expect.anything(),
+      expect.any(Object)
+    );
+  });
+
+  it('appends a retryable error when a committed native Claude stream loses its terminal event', async () => {
+    vi.clearAllMocks();
+    setupStreamingRoute('claudeCode', 'claude-opus-4-6');
+
+    // 撑过提交阈值，让截断落在提交后分支。
+    const committedThenTruncated = Buffer.from(
+      [
+        'event: message_start',
+        `data: {"type":"message_start","message":{"id":"msg_big${'x'.repeat(64 * 1024)}","type":"message","role":"assistant","model":"claude-opus-4-6","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}`,
+        '',
+        ...NATIVE_CLAUDE_OPEN_BLOCK,
+        '',
+      ].join('\n'),
+      'utf-8'
+    );
+    vi.mocked(httpRawStreamRequest).mockImplementation(async (_url, config = {}) => {
+      expect(
+        config.onResponse?.({
+          status: 200,
+          statusText: 'OK',
+          headers: { 'content-type': 'text/event-stream' },
+        })
+      ).toBe(true);
+      await config.onChunk?.(committedThenTruncated);
+      return {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+        body: committedThenTruncated,
+      };
+    });
+
+    const response = createMockResponse();
+    await handleRequest(buildNativeClaudeRequest(), response);
+
+    expect(response.statusCode).toBe(200);
+    // 上游字节原样保留，错误事件只追加在流尾。
+    expect(response.body.startsWith(committedThenTruncated.toString('utf-8'))).toBe(true);
+    expect(response.body.match(/event: error/g)).toHaveLength(1);
+    const errorLine = response.body
+      .split(/\r?\n/)
+      .find(line => line.startsWith('data: ') && line.includes('"type":"error"'));
+    expect(JSON.parse(errorLine!.slice('data: '.length))).toMatchObject({
+      type: 'error',
+      error: { type: 'overloaded_error' },
+    });
+    // 提交后禁止切换上游。
+    expect(vi.mocked(httpRawStreamRequest)).toHaveBeenCalledTimes(1);
+    expect(recordRoutePathOutcome).toHaveBeenCalledWith(
+      expect.anything(),
+      'failure',
+      expect.objectContaining({
+        error: 'incomplete_streaming_response:missing_terminal_event',
+      }),
+      expect.any(Object)
+    );
+    expect(recordRouteRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'failure',
+        error: 'incomplete_streaming_response:missing_terminal_event',
       })
     );
   });

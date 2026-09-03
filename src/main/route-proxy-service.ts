@@ -38,9 +38,9 @@ import type {
   RouteChannelKey,
   RouteCliType,
   RouteModelRegistryConfig,
-  RouteOutcome,
   RoutePathState,
   RouteRuntimeConfig,
+  RouteSessionChannelBinding,
   RouteThinkingEffort,
   RoutingConfig,
 } from '../shared/types/route-proxy';
@@ -79,6 +79,7 @@ import {
   type StreamingValidationProtocol,
 } from './streaming-protocol-validator';
 import { routeSessionActivityService } from './route-session-activity-service';
+import { routeSessionBindingService } from './route-session-binding-service';
 import {
   buildRouteProxyBaseUrl,
   beginRouteTargetLockUpstreamAttempt,
@@ -95,6 +96,7 @@ import {
 } from './route-target-lock';
 import {
   extractObservedRouteInstanceKey,
+  hasObservedRouteInstanceEvidence,
   resolveRouteInstanceForRequest,
 } from './route-session-service';
 import { findConfigFileProfileByRouteApiKey } from './config-file-profile-service';
@@ -103,6 +105,26 @@ import {
   routeStateAffinityService,
   type RouteStateAffinityRecord,
 } from './route-state-affinity-service';
+import {
+  buildQuotaExhaustedRouteLogError,
+  classifyRouteStatusCode,
+  classifyUpstreamFailure,
+  failureClassToOutcome,
+  isTransientUpstreamStatus,
+  isUpstreamQuotaExhaustionResponse,
+  resolveRoutePathDisabledReason,
+  retainUpstreamFailure,
+  summarizeUpstreamFailureBodyForLog,
+  summarizeUpstreamFailureBodyRaw,
+  type RouteUpstreamFailure,
+} from './route-upstream-failure';
+
+export {
+  classifyRouteStatusCode,
+  isTransientUpstreamStatus,
+  isUpstreamQuotaExhaustionResponse,
+  summarizeUpstreamFailureBodyForLog,
+};
 
 const log = Logger.scope('RouteProxyService');
 
@@ -118,18 +140,14 @@ const UPSTREAM_TEMPORARILY_UNAVAILABLE_ERROR_CODE = 'upstream_temporarily_unavai
 const UPSTREAM_TEMPORARILY_UNAVAILABLE_STATUS_CODE = 503;
 const UPSTREAM_TEMPORARILY_UNAVAILABLE_MESSAGE =
   'No upstream route is currently available. Please retry.';
-const QUOTA_EXHAUSTED_ROUTE_LOG_MESSAGE = '余额不足，已跳过当前通道';
-const UPSTREAM_QUOTA_EXHAUSTION_PATTERNS = [
-  /\binsufficient(?:[_\s-]+account)?[_\s-]+balance\b/i,
-  /\binsufficient[_\s-]+quota\b/i,
-  /\bbilling[_\s-]+error\b/i,
-  /\bupstream[_\s-]+quota[_\s-]+exhausted\b/i,
-  /\buser[_\s-]+quota[_\s-]+is[_\s-]+not[_\s-]+enough\b/i,
-  /(?:用户)?(?:余额|额度)不足/u,
-  /预扣费(?:额度)?失败/u,
-];
+const ALL_CHANNELS_FAILED_ERROR_CODE = 'all_channels_failed';
+const ALL_CHANNELS_FAILED_MESSAGE = 'All upstream channels failed';
 const ZERO_USAGE_UPSTREAM_RETRY_ATTEMPTS = 1;
 const EMPTY_STREAM_UPSTREAM_RETRY_ATTEMPTS = 1;
+/** 同通道立即重试的固定退避；此处无上游响应头可读，故不解析 Retry-After。 */
+const ROUTE_SAME_CHANNEL_RETRY_BACKOFF_MS = 200;
+/** Retry-After 超过该阈值则跳过该次计划尝试，绝不为等待阻塞 CLI。 */
+const ROUTE_SAME_PATH_RETRY_MAX_DELAY_MS = 2000;
 const EMPTY_STREAMING_RESPONSE_ERROR = 'invalid_streaming_response:empty_streaming_response';
 const TARGET_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_ERROR_CODE = 'target_lock_upstream_attempt_exhausted';
 const TARGET_LOCK_UPSTREAM_ATTEMPT_EXHAUSTED_STATUS_CODE = 400;
@@ -148,6 +166,15 @@ const INITIAL_STREAM_VALIDATION_MAX_BYTES = 4096;
 const NATIVE_OPENAI_RESPONSES_SSE_MAX_PRECOMMIT_BYTES = 1024 * 1024;
 const NATIVE_ANTHROPIC_SSE_MAX_FRAME_BYTES = 1024 * 1024;
 const NATIVE_ANTHROPIC_SSE_MAX_PRECOMMIT_BYTES = 1024 * 1024;
+/**
+ * 原生 Anthropic 流的下游提交窗口。窗口内的上游截断可以丢弃缓冲并换通道重试，
+ * 客户端无感；窗口一旦过去，已发出的字节无法撤回，只能靠可重试错误事件收尾。
+ */
+const NATIVE_ANTHROPIC_SSE_COMMIT_DELAY_MS = 3_000;
+const NATIVE_ANTHROPIC_SSE_COMMIT_BYTES = 64 * 1024;
+const NATIVE_STREAM_MISSING_TERMINAL_ERROR = 'incomplete_streaming_response:missing_terminal_event';
+const ROUTE_PROXY_STOPPED_ERROR_CODE = 'route_proxy_stopped';
+const ROUTE_PROXY_STOPPED_STATUS_CODE = 503;
 const ROUTE_CLIENT_CANCELLED_ERROR_CODE = 'route_client_cancelled';
 const ROUTE_CLIENT_CANCELLED_STATUS_CODE = 499;
 
@@ -183,6 +210,28 @@ function isRouteClientCancelledError(error: unknown): boolean {
 
 function createRouteClientCancelledError(): RouteClientCancelledError {
   return new RouteClientCancelledError(ROUTE_CLIENT_CANCELLED_ERROR_CODE);
+}
+
+/** 可取消延时：客户端断开时立即走既有取消路径，不拖慢拆除。 */
+function delayWithAbort(ms: number, signal: AbortSignal): Promise<void> {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+  if (signal.aborted) {
+    return Promise.reject(createRouteClientCancelledError());
+  }
+
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(createRouteClientCancelledError());
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 function shouldRecordCancelledUpstreamPathSuccess(result: {
@@ -229,11 +278,6 @@ async function recordCancelledUpstreamPathSuccess(params: {
 function nextRequestId(cliType: RouteCliType): string {
   requestSequence += 1;
   return `${cliType}-${Date.now()}-${requestSequence}`;
-}
-
-export function classifyRouteStatusCode(statusCode: number): RouteOutcome {
-  if (statusCode >= 200 && statusCode < 400) return 'success';
-  return 'failure';
 }
 
 function getEffectiveRouteDisplayItem(
@@ -926,6 +970,78 @@ export function applySuccessfulRoutePathAffinity<T extends RoutePathAffinityCand
   ];
 }
 
+function buildSessionChannelKey(channel: {
+  siteId?: string;
+  accountId?: string;
+  apiKeyId?: string;
+}): string {
+  return [
+    channel.siteId || '__site__',
+    channel.accountId || '__account__',
+    channel.apiKeyId || '__api_key__',
+  ].join('|');
+}
+
+/**
+ * 会话绑定重排：在全局 affinity 之后应用，因此排在更前面，
+ * 实现「会话绑定 → 全局 affinity → 配置优先级」的顺序。
+ * 绑定是建议性的：不在候选中、被禁用、被抑制，或早于优先级失效边界时一律忽略。
+ * 与全局 affinity 一致——只重排，不新增尝试，不绕过 maxAttemptsPerRoutePath。
+ */
+export function applySessionChannelAffinity<T extends RoutePathAffinityCandidate>(
+  channels: T[],
+  binding: Pick<RouteSessionChannelBinding, 'siteId' | 'accountId' | 'apiKeyId' | 'boundAt'> | null,
+  routePathStates: Record<string, RoutePathState> | null | undefined,
+  now: number = Date.now(),
+  affinityInvalidatedAt?: number
+): T[] {
+  if (!binding || channels.length <= 1) {
+    return channels;
+  }
+  // 优先级保存 / 重置优先命中会推进该边界，从而顺带失效会话绑定。
+  if (affinityInvalidatedAt !== undefined && binding.boundAt <= affinityInvalidatedAt) {
+    return channels;
+  }
+
+  const boundKey = buildSessionChannelKey(binding);
+  const index = channels.findIndex(channel => buildSessionChannelKey(channel) === boundKey);
+  if (index <= 0) {
+    return channels;
+  }
+
+  const candidate = channels[index];
+  if (isRoutePathDisabled(candidate)) {
+    return channels;
+  }
+  const state = routePathStates?.[buildRoutePathStateKey(candidate)];
+  const suppressedUntil = Math.max(
+    state?.affinitySuppressedUntil ?? 0,
+    routePathStates ? getRoutePathAffinitySuppressionUntil(candidate, routePathStates) : 0
+  );
+  if (suppressedUntil > now || (state?.disabledUntil ?? 0) > now) {
+    return channels;
+  }
+
+  return [candidate, ...channels.slice(index + 1), ...channels.slice(0, index)];
+}
+
+/**
+ * 新会话分散：只在用户配置顺序内部打破并列，返回第一个未被其他活跃会话占用的候选。
+ * 全部被占用时返回 0，因此绝不会把低优先级通道提到空闲的高优先级通道之前。
+ */
+export function pickDistributedChannelIndex<
+  T extends { siteId?: string; accountId?: string; apiKeyId?: string },
+>(channels: T[], occupiedChannelKeys: Set<string>): number {
+  if (channels.length <= 1 || occupiedChannelKeys.size === 0) {
+    return 0;
+  }
+
+  const index = channels.findIndex(
+    channel => !occupiedChannelKeys.has(buildSessionChannelKey(channel))
+  );
+  return index > 0 ? index : 0;
+}
+
 function readBody(req: http.IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -1262,13 +1378,14 @@ function getStreamingTerminalProtocol(requestUrl?: string): StreamingTerminalPro
 function buildStreamingErrorChunk(
   protocol: StreamingTerminalProtocol,
   message: string,
-  sequenceNumber = 0
+  sequenceNumber = 0,
+  anthropicErrorType: 'api_error' | 'overloaded_error' = 'api_error'
 ): Buffer {
   if (protocol === 'anthropic') {
     return Buffer.from(
       `event: error\ndata: ${JSON.stringify({
         type: 'error',
-        error: { type: 'api_error', message },
+        error: { type: anthropicErrorType, message },
       })}\n\n`,
       'utf-8'
     );
@@ -1287,6 +1404,7 @@ function buildStreamingErrorChunk(
     );
   }
 
+  // 不补 [DONE]：它是成功终结标记，错误后补发会让客户端把截断的回答当作完整结果接受。
   return Buffer.from(
     `data: ${JSON.stringify({
       error: {
@@ -1934,168 +2052,6 @@ function writeResponseChunk(res: http.ServerResponse, chunk: Buffer): Promise<vo
   });
 }
 
-export function summarizeUpstreamFailureBodyForLog(body: Buffer, maxChars: number = 1200): string {
-  const text = readUpstreamFailureBodyText(body);
-  if (!text) {
-    return '';
-  }
-
-  const summary =
-    summarizeJsonFailureText(text) || summarizeHtmlFailureText(text) || normalizeLogLine(text);
-
-  return truncateUpstreamFailureSummary(summary, maxChars);
-}
-
-export function isUpstreamQuotaExhaustionResponse(statusCode: number, body: Buffer): boolean {
-  if (classifyRouteStatusCode(statusCode) !== 'failure') {
-    return false;
-  }
-
-  const summary = summarizeUpstreamFailureBodyForLog(body, 4000);
-  return UPSTREAM_QUOTA_EXHAUSTION_PATTERNS.some(pattern => pattern.test(summary));
-}
-
-function buildQuotaExhaustedRouteLogError(upstreamFailureSummary: string): string {
-  return upstreamFailureSummary
-    ? `${QUOTA_EXHAUSTED_ROUTE_LOG_MESSAGE}；上游错误：${upstreamFailureSummary}`
-    : QUOTA_EXHAUSTED_ROUTE_LOG_MESSAGE;
-}
-
-function summarizeUpstreamFailureBodyRaw(body: Buffer, maxChars: number = 1200): string {
-  return truncateUpstreamFailureSummary(readUpstreamFailureBodyText(body), maxChars);
-}
-
-function readUpstreamFailureBodyText(body: Buffer): string {
-  if (!body.length) {
-    return '';
-  }
-
-  const text = body.toString('utf-8').split('\u0000').join('').trim();
-  if (!text) {
-    return '';
-  }
-
-  return text;
-}
-
-function truncateUpstreamFailureSummary(value: string, maxChars: number): string {
-  if (!value || value.length <= maxChars) {
-    return value;
-  }
-
-  return `${value.slice(0, maxChars)} ...(truncated ${value.length - maxChars} chars)`;
-}
-
-function summarizeJsonFailureText(text: string): string {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return '';
-  }
-
-  return summarizeJsonFailureValue(parsed);
-}
-
-function summarizeJsonFailureValue(value: unknown): string {
-  if (typeof value === 'string') {
-    return normalizeLogLine(value);
-  }
-
-  const record = asRecord(value);
-  if (!record) {
-    return '';
-  }
-
-  const error = record.error;
-  const nestedError = asRecord(error);
-  const source = nestedError || record;
-  const stringError = typeof error === 'string' && error.trim() ? error.trim() : '';
-  const message = firstStringValue(source, ['message', 'detail', 'reason', 'description']);
-  const type =
-    firstStringValue(source, ['type', 'code', 'error_code', 'errorCode']) ||
-    (nestedError ? '' : stringError);
-  const param = firstStringValue(source, ['param', 'parameter']);
-
-  if (message) {
-    const normalizedMessage = summarizeNestedJsonMessage(message);
-    const lowerType = type.toLowerCase();
-    const lowerMessage = normalizedMessage.toLowerCase();
-    const prefix =
-      type && lowerMessage !== lowerType && !lowerMessage.startsWith(`${lowerType}:`)
-        ? `${type}: `
-        : '';
-    const suffix = param ? ` (${param})` : '';
-    return normalizeLogLine(`${prefix}${normalizedMessage}${suffix}`);
-  }
-
-  if (stringError) {
-    const topLevelMessage = firstStringValue(record, ['message', 'detail', 'reason']);
-    const suffix = topLevelMessage ? `: ${summarizeNestedJsonMessage(topLevelMessage)}` : '';
-    return normalizeLogLine(`${stringError}${suffix}`);
-  }
-
-  if (type) {
-    return normalizeLogLine(type);
-  }
-
-  return '';
-}
-
-function summarizeNestedJsonMessage(message: string): string {
-  const normalized = normalizeLogLine(message);
-  if (!normalized.startsWith('{') && !normalized.startsWith('[')) {
-    return normalized;
-  }
-
-  return summarizeJsonFailureText(normalized) || normalized;
-}
-
-function firstStringValue(record: Record<string, unknown>, keys: string[]): string {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === 'string' && value.trim()) {
-      return value.trim();
-    }
-  }
-
-  return '';
-}
-
-function summarizeHtmlFailureText(text: string): string {
-  if (!/<[a-z][\s\S]*>/i.test(text)) {
-    return '';
-  }
-
-  const title = decodeBasicHtmlEntities(text.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '');
-  const body = decodeBasicHtmlEntities(
-    text
-      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-      .replace(/<[^>]+>/g, ' ')
-  );
-
-  return normalizeLogLine(title || body);
-}
-
-function decodeBasicHtmlEntities(value: string): string {
-  return value
-    .replace(/&#x([0-9a-f]+);/gi, (_match, code: string) =>
-      String.fromCodePoint(Number.parseInt(code, 16))
-    )
-    .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 10)))
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&amp;/gi, '&');
-}
-
-function normalizeLogLine(value: string): string {
-  return value.replace(/\s+/g, ' ').trim();
-}
-
 function summarizeTargetLockUpstreamBody(body: Buffer): string | undefined {
   return summarizeUpstreamFailureBodyRaw(body, 2000) || undefined;
 }
@@ -2167,11 +2123,6 @@ function buildTargetLockUpstreamAttemptExhaustedErrorText(): string {
   );
 }
 
-// 瞬时(可重试)上游状态：网关抖动/限流/超时，不应被当作 CLI 终结失败。
-const TRANSIENT_UPSTREAM_STATUS_CODES = new Set([
-  408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527, 529, 530,
-]);
-
 type UpstreamAuthScheme = 'native' | 'bearer' | 'x-api-key';
 const SENSENOVA_UPSTREAM_HOST = 'token.sensenova.cn';
 
@@ -2179,10 +2130,6 @@ function resolveUpstreamAuthScheme(targetBaseUrl: string): UpstreamAuthScheme {
   return new URL(targetBaseUrl).hostname.toLowerCase() === SENSENOVA_UPSTREAM_HOST
     ? 'bearer'
     : 'native';
-}
-
-export function isTransientUpstreamStatus(statusCode?: number): boolean {
-  return typeof statusCode === 'number' && TRANSIENT_UPSTREAM_STATUS_CODES.has(statusCode);
 }
 
 export function buildUpstreamHeaders(
@@ -2681,6 +2628,8 @@ async function forwardToUpstream(
   usage?: RouteUsageStats;
   streamed?: boolean;
   semanticError?: typeof EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE;
+  /** 原生 Anthropic 流已提交但上游未发终止事件；仅影响记账，不改变下游字节 */
+  missingTerminalEvent?: boolean;
 }> {
   const startTime = Date.now();
   const upstreamCliType = options.upstreamCliType ?? cliType;
@@ -2774,6 +2723,28 @@ async function forwardToUpstream(
   let streamingSemanticError: typeof EMPTY_RESPONSE_ZERO_USAGE_ERROR_CODE | undefined;
   const inspectNativeOpenAiResponsesBeforeCommit =
     options.nativeResponsePassthrough && streamingTerminalProtocol === 'openaiResponses';
+  // 原生 Anthropic 是唯一没有增量校验器的透传组合，提交时机改由窗口控制。
+  const nativeAnthropicDeferredCommit = Boolean(
+    options.nativeResponsePassthrough && streamingTerminalProtocol === 'anthropic'
+  );
+  let nativeAnthropicCommitTimer: NodeJS.Timeout | null = null;
+  let nativeAnthropicCommitDeadlineReached = false;
+  let nativeAnthropicMissingTerminal = false;
+  // 定时器与 onChunk 是两条独立调用链，共用一条写入队列避免字节交错。
+  let streamWriteChain: Promise<void> = Promise.resolve();
+  const serializeStreamWrite = <T>(operation: () => Promise<T>): Promise<T> => {
+    const next = streamWriteChain.then(operation);
+    streamWriteChain = next.then(
+      () => undefined,
+      () => undefined
+    );
+    return next;
+  };
+  const clearNativeAnthropicCommitTimer = (): void => {
+    if (!nativeAnthropicCommitTimer) return;
+    clearTimeout(nativeAnthropicCommitTimer);
+    nativeAnthropicCommitTimer = null;
+  };
   const isStreamingErrorSeen = (): boolean =>
     streamingErrorWritten ||
     (incrementalStreamingValidator
@@ -2798,7 +2769,10 @@ async function forwardToUpstream(
     );
   };
 
-  const writeStreamingError = async (message: string): Promise<void> => {
+  const writeStreamingError = async (
+    message: string,
+    anthropicErrorType: 'api_error' | 'overloaded_error' = 'api_error'
+  ): Promise<void> => {
     if (
       !streamed ||
       isStreamingErrorSeen() ||
@@ -2811,7 +2785,12 @@ async function forwardToUpstream(
     streamingErrorWritten = true;
     await writeResponseChunk(
       options.streamResponse!,
-      buildStreamingErrorChunk(streamingTerminalProtocol, message, getStreamingNextSequenceNumber())
+      buildStreamingErrorChunk(
+        streamingTerminalProtocol,
+        message,
+        getStreamingNextSequenceNumber(),
+        anthropicErrorType
+      )
     );
   };
 
@@ -2867,6 +2846,23 @@ async function forwardToUpstream(
     notifyStreamCompletionIfDelivered();
   };
 
+  const shouldCommitNativeAnthropicWindow = (): boolean =>
+    nativeAnthropicCommitDeadlineReached ||
+    pendingStreamingBytes >= NATIVE_ANTHROPIC_SSE_COMMIT_BYTES ||
+    pendingStreamingBytes >= NATIVE_ANTHROPIC_SSE_MAX_PRECOMMIT_BYTES ||
+    streamingObservation.terminalSeen ||
+    streamingObservation.errorSeen;
+
+  const ensureNativeAnthropicCommitTimer = (): void => {
+    if (nativeAnthropicCommitTimer || nativeAnthropicCommitDeadlineReached || streamed) return;
+    nativeAnthropicCommitTimer = setTimeout(() => {
+      nativeAnthropicCommitTimer = null;
+      nativeAnthropicCommitDeadlineReached = true;
+      void serializeStreamWrite(() => commitPendingStreamingChunks()).catch(() => undefined);
+    }, NATIVE_ANTHROPIC_SSE_COMMIT_DELAY_MS);
+    nativeAnthropicCommitTimer.unref?.();
+  };
+
   const queueOrWriteStreamingChunk = async (
     outgoingChunk: Buffer,
     deferCommit: boolean
@@ -2914,6 +2910,11 @@ async function forwardToUpstream(
       ) {
         return;
       }
+    }
+
+    if (nativeAnthropicDeferredCommit && !shouldCommitNativeAnthropicWindow()) {
+      ensureNativeAnthropicCommitTimer();
+      return;
     }
 
     if (deferCommit && pendingStreamingBytes < NATIVE_OPENAI_RESPONSES_SSE_MAX_PRECOMMIT_BYTES) {
@@ -3011,7 +3012,7 @@ async function forwardToUpstream(
                     : anthropicStreamNormalizer
                       ? normalizeAnthropicSseCompatibilityChunk(anthropicStreamNormalizer, chunk)
                       : [chunk];
-                await processStreamingOutgoingChunks(outgoingChunks);
+                await serializeStreamWrite(() => processStreamingOutgoingChunks(outgoingChunks));
               } catch (error: unknown) {
                 if (streamed && error instanceof NativeAnthropicSseGuardError) {
                   await writeStreamingError(readStreamingValidationMessage(error));
@@ -3025,6 +3026,7 @@ async function forwardToUpstream(
           })
         : await httpRawRequest(target.url, requestConfig);
   } catch (error: unknown) {
+    clearNativeAnthropicCommitTimer();
     if (!incrementalStreamingValidator) {
       observeStreamingSseChunk(
         streamingObservation,
@@ -3083,6 +3085,37 @@ async function forwardToUpstream(
         await writeStreamingError(readStreamingValidationMessage(error));
       }
       throw error;
+    }
+  }
+
+  // 原生 Anthropic 收尾：窗口内截断丢弃缓冲交给下一个通道，窗口外截断只能补一个可重试错误。
+  if (
+    options.streamResponse &&
+    options.streamResponseBody &&
+    streamingStatusCode !== undefined &&
+    nativeAnthropicDeferredCommit
+  ) {
+    clearNativeAnthropicCommitTimer();
+    observeStreamingSseChunk(
+      streamingObservation,
+      streamingTerminalProtocol,
+      Buffer.alloc(0),
+      true
+    );
+
+    if (streamingObservation.terminalSeen || streamingObservation.errorSeen) {
+      // 流已完整或上游已明确报错：不再等窗口到期。
+      await serializeStreamWrite(() => commitPendingStreamingChunks());
+    } else if (!streamed) {
+      pendingStreamingChunks = [];
+      pendingStreamingBytes = 0;
+      throw new Error(NATIVE_STREAM_MISSING_TERMINAL_ERROR);
+    } else {
+      // 字节已发出无法撤回：补一个官方定义的可重试错误，让客户端换通道重来。
+      nativeAnthropicMissingTerminal = true;
+      await serializeStreamWrite(() =>
+        writeStreamingError('upstream stream ended before terminal SSE event', 'overloaded_error')
+      );
     }
   }
 
@@ -3206,6 +3239,8 @@ async function forwardToUpstream(
       ? streamingResponsePreview.subarray(0, streamingResponsePreviewBytes)
       : response.body;
 
+  clearNativeAnthropicCommitTimer();
+
   return {
     statusCode: response.status || 500,
     headers: response.headers,
@@ -3215,11 +3250,8 @@ async function forwardToUpstream(
     usage: streamedUsage ?? extractUsageFromBody(response.body),
     streamed,
     semanticError: streamingSemanticError,
+    missingTerminalEvent: nativeAnthropicMissingTerminal,
   };
-}
-
-function hasEnabledRoutePath(channels: ResolvedChannel[]): boolean {
-  return channels.some(channel => !isRoutePathDisabled(channel));
 }
 
 function areAllRoutePathsDisabled(channels: ResolvedChannel[]): boolean {
@@ -3255,20 +3287,23 @@ function writeAllRoutePathsDisabledResponse(res: http.ServerResponse, cliType: R
   res.end(JSON.stringify(buildAllRoutePathsDisabledErrorBody(cliType)));
 }
 
-function buildUpstreamTemporarilyUnavailableErrorBody(cliType: RouteCliType): unknown {
+function buildUpstreamTemporarilyUnavailableErrorBody(
+  cliType: RouteCliType,
+  message: string = UPSTREAM_TEMPORARILY_UNAVAILABLE_MESSAGE
+): unknown {
   if (cliType === 'claudeCode') {
     return {
       type: 'error',
       error: {
         type: 'overloaded_error',
-        message: UPSTREAM_TEMPORARILY_UNAVAILABLE_MESSAGE,
+        message,
       },
     };
   }
 
   return {
     error: {
-      message: UPSTREAM_TEMPORARILY_UNAVAILABLE_MESSAGE,
+      message,
       type: 'server_error',
       param: null,
       code: UPSTREAM_TEMPORARILY_UNAVAILABLE_ERROR_CODE,
@@ -3287,6 +3322,63 @@ function writeUpstreamTemporarilyUnavailableResponse(
   res.end(JSON.stringify(buildUpstreamTemporarilyUnavailableErrorBody(cliType)));
 }
 
+function buildRetainedFailureErrorBody(summary: string): unknown {
+  return {
+    error: ALL_CHANNELS_FAILED_ERROR_CODE,
+    message: summary ? `${ALL_CHANNELS_FAILED_MESSAGE}: ${summary}` : ALL_CHANNELS_FAILED_MESSAGE,
+  };
+}
+
+/**
+ * 请求侧致命且所有尝试过的候选一致如此：重试不可能成功，且 request_fatal 记 neutral
+ * 永远不会累积到通道禁用，故必须把上游 4xx 透传出去让客户端停止，避免无限重试。
+ * 诊断信息只走响应头；配额类失败永不进入此分支。
+ */
+function writeRequestFatalPassthroughResponse(
+  res: http.ServerResponse,
+  failure: RouteUpstreamFailure,
+  attempts: number
+): void {
+  const upstreamBody = failure.rawBody?.length ? failure.rawBody : undefined;
+  const body =
+    upstreamBody ?? Buffer.from(JSON.stringify(buildRetainedFailureErrorBody(failure.summary)));
+
+  res.writeHead(failure.statusCode ?? 400, {
+    ...buildBufferedResponseHeaders(upstreamBody ? (failure.headers ?? {}) : {}, body),
+    ...(upstreamBody ? {} : { 'Content-Type': 'application/json' }),
+    'X-Route-Proxy-Attempts': String(attempts),
+    'X-Route-Proxy-Failure-Class': failure.failureClass,
+  });
+  res.end(body);
+}
+
+/**
+ * 其余所有上游失败都被路由吸收为可重试的 503：单个上游错误不得终止客户端对话。
+ * 真实成因保留在 message、路由日志与诊断响应头中，不透传上游状态码与响应体。
+ * 通道健康度会随失败累积，最终由 all_route_paths_disabled(400) 终止对话。
+ */
+function writeAbsorbedUpstreamFailureResponse(
+  res: http.ServerResponse,
+  cliType: RouteCliType,
+  failure: RouteUpstreamFailure,
+  attempts: number
+): void {
+  const message = failure.summary
+    ? `${UPSTREAM_TEMPORARILY_UNAVAILABLE_MESSAGE} (${failure.summary})`
+    : UPSTREAM_TEMPORARILY_UNAVAILABLE_MESSAGE;
+
+  res.writeHead(UPSTREAM_TEMPORARILY_UNAVAILABLE_STATUS_CODE, {
+    'Content-Type': 'application/json',
+    'X-Route-Proxy-Error': UPSTREAM_TEMPORARILY_UNAVAILABLE_ERROR_CODE,
+    'X-Route-Proxy-Attempts': String(attempts),
+    'X-Route-Proxy-Failure-Class': failure.failureClass,
+    ...(failure.statusCode !== undefined
+      ? { 'X-Route-Proxy-Upstream-Status': String(failure.statusCode) }
+      : {}),
+  });
+  res.end(JSON.stringify(buildUpstreamTemporarilyUnavailableErrorBody(cliType, message)));
+}
+
 export async function handleRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse
@@ -3294,11 +3386,13 @@ export async function handleRequest(
   const requestSelectionStartedAt = Date.now();
   let routeAgentId: string | undefined;
   let routeAgentName: string | undefined;
+  let routeInstanceLogId: string | undefined;
   type RouteCancellationLogContext = Omit<
     Parameters<typeof recordRouteRequest>[0],
     | 'requestSelectionStartedAt'
     | 'agentId'
     | 'agentName'
+    | 'routeInstanceId'
     | 'outcome'
     | 'statusCode'
     | 'error'
@@ -3316,6 +3410,7 @@ export async function handleRequest(
       requestSelectionStartedAt,
       agentId: routeAgentId,
       agentName: routeAgentName,
+      routeInstanceId: routeInstanceLogId,
     });
     recordedRouteRequestAttempts.add(params.attempt);
   };
@@ -3335,6 +3430,7 @@ export async function handleRequest(
       requestSelectionStartedAt,
       agentId: routeAgentId,
       agentName: routeAgentName,
+      routeInstanceId: routeInstanceLogId,
       outcome: 'neutral',
       statusCode: ROUTE_CLIENT_CANCELLED_STATUS_CODE,
       error: ROUTE_CLIENT_CANCELLED_ERROR_CODE,
@@ -3655,7 +3751,9 @@ export async function handleRequest(
     sessionRouting.extractionRules,
     sourceProtocol
   );
-  if (!observedRouteInstanceKey && routeProfile) {
+  const hasRejectedRouteInstanceEvidence =
+    !observedRouteInstanceKey && hasObservedRouteInstanceEvidence(req, bodyJson);
+  if (!observedRouteInstanceKey && routeProfile && !hasRejectedRouteInstanceEvidence) {
     const profileSessionKey = `profile:${routeProfile.id}`;
     observedRouteInstanceKey = {
       agentId: profileSessionKey,
@@ -3767,6 +3865,7 @@ export async function handleRequest(
     defaultReasoningEffort: 'medium',
     requestAt: requestSelectionStartedAt,
   });
+  routeInstanceLogId = routeInstanceResolution.instance?.id;
   if (!routeInstanceResolution.instance && !rawModel && !stateAffinityRecord && !targetLock) {
     recordRequestForSelection({
       requestId,
@@ -3939,6 +4038,49 @@ export async function handleRequest(
       getEffectiveRouteDisplayItem(routing.modelRegistry, canonicalModel)?.priorityConfig
         ?.affinityInvalidatedAt
     );
+    // 会话绑定排在全局 affinity 之后应用，因而位次更靠前；未绑定的新会话则在
+    // 用户配置顺序内部避开其他活跃会话已占用的通道。
+    const boundInstance = routeInstanceResolution.instance;
+    if (boundInstance) {
+      const affinityInvalidatedAt = getEffectiveRouteDisplayItem(
+        routing.modelRegistry,
+        canonicalModel
+      )?.priorityConfig?.affinityInvalidatedAt;
+      const existingBinding = routeSessionBindingService.get(boundInstance.id);
+      if (existingBinding) {
+        sortedChannels = applySessionChannelAffinity(
+          sortedChannels,
+          existingBinding,
+          routing.routePathStates,
+          Date.now(),
+          affinityInvalidatedAt
+        );
+      } else {
+        // 占用只统计仍然活跃的会话：已关闭/陈旧的绑定不得把新会话推离其首选通道。
+        const liveInstanceIds = new Set(
+          Object.values(sessionRouting.instances || {})
+            .filter(instance => instance.routingState === 'active')
+            .map(instance => instance.id)
+        );
+        const occupied = new Set(
+          routeSessionBindingService
+            .listActive()
+            .filter(
+              binding =>
+                binding.instanceId !== boundInstance.id && liveInstanceIds.has(binding.instanceId)
+            )
+            .map(binding => `${binding.siteId}|${binding.accountId}|${binding.apiKeyId}`)
+        );
+        const index = pickDistributedChannelIndex(sortedChannels, occupied);
+        if (index > 0) {
+          sortedChannels = [
+            sortedChannels[index],
+            ...sortedChannels.slice(index + 1),
+            ...sortedChannels.slice(0, index),
+          ];
+        }
+      }
+    }
     if (sortedChannels.length === 0) {
       recordRequestForSelection({
         requestId,
@@ -4019,6 +4161,10 @@ export async function handleRequest(
   const adapterIncompatibilityReasons: string[] = [];
   const attemptsByRoutePath = new Map<string, number>();
   const quotaExhaustedRoutePaths = new Set<string>();
+  const routePathRetryAfterUntil = new Map<string, number>();
+  let retainedFailure: RouteUpstreamFailure | undefined;
+  // 只有当所有实际尝试过的候选都判为 request_fatal 时，才认定请求本身不可重试。
+  let sawNonRequestFatalFailure = false;
   let quotaExhaustionEncountered = false;
   for (let i = 0; i < sortedChannels.length; i++) {
     if (stopRouteHandlingIfClientCancelled()) {
@@ -4036,6 +4182,22 @@ export async function handleRequest(
     const routePathAttempts = attemptsByRoutePath.get(routePathKey) ?? 0;
     if (routePathAttempts >= routeRuntimeConfig.maxAttemptsPerRoutePath) {
       continue;
+    }
+    // 上游给过 Retry-After：短冷却就等，长冷却直接跳过这次计划尝试。
+    const retryAfterRemaining = (routePathRetryAfterUntil.get(routePathKey) ?? 0) - Date.now();
+    if (retryAfterRemaining > 0) {
+      if (retryAfterRemaining > ROUTE_SAME_PATH_RETRY_MAX_DELAY_MS) {
+        continue;
+      }
+      try {
+        await delayWithAbort(retryAfterRemaining, routeAbortController.signal);
+      } catch {
+        stopRouteHandlingIfClientCancelled();
+        return;
+      }
+      if (stopRouteHandlingIfClientCancelled()) {
+        return;
+      }
     }
     attemptsByRoutePath.set(routePathKey, routePathAttempts + 1);
 
@@ -4388,6 +4550,7 @@ export async function handleRequest(
               apiKeyId: activeChannel.apiKeyId,
               resolvedModel: activeChannel.resolvedModel,
             });
+            await delayWithAbort(ROUTE_SAME_CHANNEL_RETRY_BACKOFF_MS, routeAbortController.signal);
           }
         }
       };
@@ -4427,6 +4590,7 @@ export async function handleRequest(
           apiKeyId: activeChannel.apiKeyId,
           resolvedModel: activeChannel.resolvedModel,
         });
+        await delayWithAbort(ROUTE_SAME_CHANNEL_RETRY_BACKOFF_MS, routeAbortController.signal);
         result = await forwardActiveChannel();
         if (routeAbortController.signal.aborted || routeClientCancelled) {
           routeClientCancelled = true;
@@ -4444,15 +4608,46 @@ export async function handleRequest(
         }
         outcome = classifyRouteStatusCode(result.statusCode);
       }
-      const upstreamFailureBodySnippet =
-        outcome === 'failure' ? summarizeUpstreamFailureBodyForLog(result.body) : '';
+      const upstreamFailure =
+        outcome === 'failure'
+          ? classifyUpstreamFailure({
+              statusCode: result.statusCode,
+              headers: result.headers,
+              body: result.body,
+            })
+          : undefined;
+      const upstreamFailureBodySnippet = upstreamFailure?.summary ?? '';
       const quotaExhausted =
-        outcome === 'failure' &&
-        !bypassRoutePathState &&
-        isUpstreamQuotaExhaustionResponse(result.statusCode, result.body);
-      const routeRequestLogError = quotaExhausted
-        ? buildQuotaExhaustedRouteLogError(upstreamFailureBodySnippet)
-        : upstreamFailureBodySnippet;
+        !bypassRoutePathState && upstreamFailure?.failureClass === 'quota_exhausted';
+      // 已提交的原生 Anthropic 流被上游截断：HTTP 仍是 2xx，只能靠这个标志纠正记账。
+      const nativeStreamTruncated = Boolean(result.missingTerminalEvent);
+      const routeRequestLogError = nativeStreamTruncated
+        ? NATIVE_STREAM_MISSING_TERMINAL_ERROR
+        : quotaExhausted
+          ? buildQuotaExhaustedRouteLogError(upstreamFailureBodySnippet)
+          : upstreamFailureBodySnippet;
+      // 请求侧致命错误在每个候选通道都会复现；计入成功率窗口会误禁用健康通道。
+      // 仅改记账，故障转移行为对所有类别保持不变。
+      // 截断只覆写记账：改写 outcome 会触发换通道，而字节已经发出去了。
+      const accountingOutcome = nativeStreamTruncated
+        ? 'failure'
+        : upstreamFailure
+          ? failureClassToOutcome(upstreamFailure.failureClass)
+          : outcome;
+      // 上游确证不可用（凭证被拒 / 模型不存在 / 配额耗尽）：首次即禁用该路径，
+      // 不再每次请求都先撞一次坏通道。request_fatal 恒为 undefined，永不禁用。
+      const confirmedUnavailable = upstreamFailure
+        ? resolveRoutePathDisabledReason(upstreamFailure)
+        : undefined;
+      if (upstreamFailure) {
+        retainedFailure = retainUpstreamFailure(retainedFailure, upstreamFailure);
+        if (upstreamFailure.failureClass !== 'request_fatal') {
+          sawNonRequestFatalFailure = true;
+        }
+        if (upstreamFailure.retryAfterMs !== undefined) {
+          routePathRetryAfterUntil.set(routePathKey, Date.now() + upstreamFailure.retryAfterMs);
+        }
+      }
 
       if (requestIsTokenCount && !bypassRoutePathState && isUnsupportedTokenCountResponse(result)) {
         const bodySnippet = summarizeUpstreamFailureBodyForLog(result.body) || '<empty>';
@@ -4578,26 +4773,48 @@ export async function handleRequest(
           apiKeyId: activeChannel.apiKeyId,
           resolvedModel: activeChannel.resolvedModel,
         });
+        sawNonRequestFatalFailure = true;
 
         continue;
       }
 
       if (!bypassRoutePathState) {
         // 记录实时选路统计
-        recordOutcome(activeChannel, outcome, {
+        recordOutcome(activeChannel, accountingOutcome, {
           statusCode: result.statusCode,
           latencyMs: result.latencyMs,
         });
         await recordPathOutcomeForSelection(
           activeChannel,
-          outcome,
+          accountingOutcome,
           {
             statusCode: result.statusCode,
             latencyMs: result.latencyMs,
-            ...(upstreamFailureBodySnippet ? { error: upstreamFailureBodySnippet } : {}),
+            ...(nativeStreamTruncated
+              ? { error: NATIVE_STREAM_MISSING_TERMINAL_ERROR }
+              : upstreamFailureBodySnippet
+                ? { error: upstreamFailureBodySnippet }
+                : {}),
+            ...(confirmedUnavailable ? { confirmedUnavailable } : {}),
           },
           routeRuntimeConfig
         );
+        // 成功才绑定/改绑；失败绝不动绑定，避免把会话钉在正在恶化的通道上。
+        if (accountingOutcome === 'success' && routeInstanceResolution.instance) {
+          routeSessionBindingService.bind({
+            instanceId: routeInstanceResolution.instance.id,
+            profileId: routeInstanceResolution.instance.profileId || routeProfile?.id || '',
+            siteId: activeChannel.siteId,
+            accountId: activeChannel.accountId,
+            apiKeyId: activeChannel.apiKeyId,
+            ...(activeChannel.targetProtocol
+              ? { targetProtocol: activeChannel.targetProtocol }
+              : {}),
+            canonicalModel: canonicalModel || '',
+            boundAt: requestSelectionStartedAt,
+            lastUsedAt: Date.now(),
+          });
+        }
         if (stopRouteHandlingIfClientCancelled()) {
           return;
         }
@@ -4619,7 +4836,8 @@ export async function handleRequest(
           accountId: activeChannel.accountId,
           apiKeyId: activeChannel.apiKeyId,
           resolvedModel: activeChannel.resolvedModel,
-          outcome,
+          // 不能改用 accountingOutcome：request_fatal 在日志里要显示为 failure 而非 neutral。
+          outcome: nativeStreamTruncated ? 'failure' : outcome,
           statusCode: result.statusCode,
           latencyMs: result.latencyMs,
           firstByteLatencyMs: result.firstByteLatencyMs,
@@ -4733,8 +4951,10 @@ export async function handleRequest(
           continue;
         }
 
-        if (hasEnabledRoutePath(sortedChannels.slice(i + 1)) && !bypassRoutePathState) {
-          log.warn(`Channel failed (${result.statusCode}), trying next channel`);
+        // 普通路由吸收上游失败：永不把上游状态码交给客户端，由终端分支统一裁决。
+        // target-lock / state-affinity 保留既有的原样透传契约。
+        if (!bypassRoutePathState) {
+          log.warn(`Channel failed (${result.statusCode}); absorbing and trying next channel`);
           continue;
         }
       }
@@ -4846,6 +5066,7 @@ export async function handleRequest(
           latencyMs: Date.now() - attemptStartedAt,
           error: `adapter_response-adapt:${reason}`,
         });
+        sawNonRequestFatalFailure = true;
         // 响应字节尚未写入，可继续尝试下一通道
         continue;
       }
@@ -4892,6 +5113,11 @@ export async function handleRequest(
         return;
       }
       const errorMessage = err instanceof Error ? err.message : 'unknown_error';
+      retainedFailure = retainUpstreamFailure(
+        retainedFailure,
+        classifyUpstreamFailure({ error: err })
+      );
+      sawNonRequestFatalFailure = true;
       if (targetLock) {
         // 网络异常无 statusCode，按瞬时错误处理：未达上限则不 settle/不通知，
         // 透传错误给 CLI,让后续请求继续尝试上游。
@@ -5042,12 +5268,21 @@ export async function handleRequest(
       );
     } else if (quotaExhaustionEncountered) {
       writeUpstreamTemporarilyUnavailableResponse(res, cliType);
+    } else if (retainedFailure?.failureClass === 'request_fatal' && !sawNonRequestFatalFailure) {
+      // 所有尝试过的候选一致判定请求本身不可用：重试无意义，透传让客户端停止。
+      writeRequestFatalPassthroughResponse(res, retainedFailure, attempt);
     } else if (!bypassRoutePathState && areAllRoutePathsDisabled(sortedChannels)) {
       writeAllRoutePathsDisabledResponse(res, cliType);
+    } else if (retainedFailure) {
+      // 其余上游失败被吸收为可重试 503，不终止客户端对话。
+      writeAbsorbedUpstreamFailureResponse(res, cliType, retainedFailure, attempt);
     } else {
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(
-        JSON.stringify({ error: 'all_channels_failed', message: 'All upstream channels failed' })
+        JSON.stringify({
+          error: ALL_CHANNELS_FAILED_ERROR_CODE,
+          message: ALL_CHANNELS_FAILED_MESSAGE,
+        })
       );
     }
   }
@@ -5064,6 +5299,21 @@ export async function startProxyServer(): Promise<void> {
   const { port, host } = routing.server;
 
   proxyServer = http.createServer((req, res) => {
+    // 运行态闸门：停止后若仍有请求抵达（例如残留连接），一律拒绝而非继续转发上游
+    if (!isRunning) {
+      res.writeHead(ROUTE_PROXY_STOPPED_STATUS_CODE, {
+        'Content-Type': 'application/json',
+        Connection: 'close',
+        'X-Route-Proxy-Error': ROUTE_PROXY_STOPPED_ERROR_CODE,
+      });
+      res.end(
+        JSON.stringify({
+          error: ROUTE_PROXY_STOPPED_ERROR_CODE,
+          message: 'Local route proxy is stopped; no request is forwarded upstream.',
+        })
+      );
+      return;
+    }
     handleRequest(req, res).catch(err => {
       log.error('Unhandled proxy error:', err);
       if (!res.headersSent) {
@@ -5091,13 +5341,18 @@ export async function stopProxyServer(): Promise<void> {
   stopHealthCheckTimer();
   if (!proxyServer) return;
 
+  const server = proxyServer;
+  // 先落闸再关闭：close() 只是停止接受新连接，CLI 持有的 keep-alive 连接
+  // 仍会把后续请求送进来。必须同时切断存量连接，否则「已停止」只是 UI 假象。
+  isRunning = false;
+  proxyServer = null;
+
   await new Promise<void>(resolve => {
-    proxyServer!.close(() => {
-      isRunning = false;
-      proxyServer = null;
+    server.close(() => {
       log.info('Route proxy server stopped');
       resolve();
     });
+    server.closeAllConnections?.();
   });
 }
 
@@ -5154,6 +5409,8 @@ export async function initializeRouteProxy(): Promise<void> {
     log.info('Route proxy server is disabled, skipping start');
     return;
   }
+  // 选路在热路径上同步读绑定，必须先把侧车载入内存。
+  await routeSessionBindingService.load();
   await startProxyServer();
 }
 function isLikelyOpenCodeRequest(req: Pick<http.IncomingMessage, 'headers'>): boolean {

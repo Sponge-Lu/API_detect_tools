@@ -12,6 +12,17 @@ import type { ChromeManager } from '../chrome-manager';
 import { unifiedConfigManager } from '../unified-config-manager';
 import { browserProfileManager } from '../browser-profile-manager';
 import type { AccountAuthSource, AccountCredential } from '../../shared/types/site';
+import {
+  addLocalApiKey,
+  deleteLocalApiKey,
+  listLocalApiKeys,
+  refreshLocalApiKeys,
+  revealLocalApiKey,
+  updateLocalApiKey,
+  type LocalApiKeyInput,
+} from '../local-api-key-service';
+import { syncModelRegistrySources } from '../route-model-registry-service';
+import { notifyAppDataChanged } from '../app-data-events';
 
 type BrowserProfileLaunchOptions = {
   userDataDir?: string;
@@ -30,6 +41,71 @@ export function registerTokenHandlers(
   chromeManager: ChromeManager,
   getMainWindow: () => BrowserWindow | null
 ) {
+  ipcMain.handle('token:list-local-api-keys', async (_, accountId: string) => {
+    try {
+      return { success: true, data: await listLocalApiKeys(accountId) };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  ipcMain.handle(
+    'token:add-local-api-key',
+    async (_, accountId: string, input: LocalApiKeyInput) => {
+      try {
+        const data = await addLocalApiKey(accountId, input);
+        await syncModelRegistrySources(true);
+        notifyAppDataChanged('route-overview');
+        return { success: true, data };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
+      }
+    }
+  );
+  ipcMain.handle(
+    'token:update-local-api-key',
+    async (_, accountId: string, keyId: string, input: LocalApiKeyInput) => {
+      try {
+        const data = await updateLocalApiKey(accountId, keyId, input);
+        await syncModelRegistrySources(true);
+        notifyAppDataChanged('route-overview');
+        return { success: true, data };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
+      }
+    }
+  );
+  ipcMain.handle('token:delete-local-api-key', async (_, accountId: string, keyId: string) => {
+    try {
+      const data = await deleteLocalApiKey(accountId, keyId);
+      await syncModelRegistrySources(true);
+      notifyAppDataChanged('route-overview');
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  ipcMain.handle('token:reveal-local-api-key', async (_, accountId: string, keyId: string) => {
+    try {
+      return { success: true, data: await revealLocalApiKey(accountId, keyId) };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  ipcMain.handle(
+    'token:refresh-local-api-keys',
+    async (_, accountId: string, baseUrl: string, keyId?: string) => {
+      try {
+        const data = await refreshLocalApiKeys(accountId, baseUrl, keyId);
+        if (data.results.some(result => result.success)) {
+          await syncModelRegistrySources(true);
+          notifyAppDataChanged('route-overview');
+        }
+        return { success: true, data };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
+      }
+    }
+  );
   const persistApiKeysCache = async (
     siteUrl: string,
     apiKeys: any[] | undefined,

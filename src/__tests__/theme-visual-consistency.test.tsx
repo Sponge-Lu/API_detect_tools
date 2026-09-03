@@ -9,8 +9,8 @@ const useSiteDragSource = readFileSync(
   resolve(process.cwd(), 'src/renderer/hooks/useSiteDrag.ts'),
   'utf8'
 );
-const configFilesPageSource = readFileSync(
-  resolve(process.cwd(), 'src/renderer/pages/ConfigFilesPage.tsx'),
+const configProfilesSectionSource = readFileSync(
+  resolve(process.cwd(), 'src/renderer/components/Route/ConfigProfilesSection.tsx'),
   'utf8'
 );
 const creditPanelCompactSource = readFileSync(
@@ -163,16 +163,16 @@ describe('theme visual consistency', () => {
   });
 
   it('keeps config files page and settings loading state on product theme tokens', () => {
-    expect(configFilesPageSource).not.toContain('text-green-600');
-    expect(configFilesPageSource).not.toContain('text-blue-600');
-    expect(configFilesPageSource).not.toContain('text-purple-600');
-    expect(configFilesPageSource).not.toContain('text-orange-600');
-    expect(configFilesPageSource).not.toContain('text-slate-500');
-    expect(configFilesPageSource).not.toContain('bg-green-50');
-    expect(configFilesPageSource).not.toContain('bg-blue-50');
-    expect(configFilesPageSource).not.toContain('bg-purple-50');
-    expect(configFilesPageSource).not.toContain('bg-orange-50');
-    expect(configFilesPageSource).not.toContain('bg-slate-100');
+    expect(configProfilesSectionSource).not.toContain('text-green-600');
+    expect(configProfilesSectionSource).not.toContain('text-blue-600');
+    expect(configProfilesSectionSource).not.toContain('text-purple-600');
+    expect(configProfilesSectionSource).not.toContain('text-orange-600');
+    expect(configProfilesSectionSource).not.toContain('text-slate-500');
+    expect(configProfilesSectionSource).not.toContain('bg-green-50');
+    expect(configProfilesSectionSource).not.toContain('bg-blue-50');
+    expect(configProfilesSectionSource).not.toContain('bg-purple-50');
+    expect(configProfilesSectionSource).not.toContain('bg-orange-50');
+    expect(configProfilesSectionSource).not.toContain('bg-slate-100');
     expect(settingsPageSource).not.toContain('text-slate-500');
   });
 

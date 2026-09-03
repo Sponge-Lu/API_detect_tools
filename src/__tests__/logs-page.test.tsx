@@ -6,6 +6,7 @@ import {
   DEFAULT_ANALYTICS_CONFIG,
   DEFAULT_ROUTE_PROXY_SERVER_CONFIG,
   type RouteDisplayItemPriorityConfig,
+  type RouteInstance,
   type RouteModelRegistryConfig,
   type RouteRequestLogItem,
   type RouteRule,
@@ -31,6 +32,7 @@ function buildRouteLog(
     cliType: partial.cliType,
     agentId: partial.agentId ?? 'codex',
     agentName: partial.agentName ?? 'Codex',
+    routeInstanceId: partial.routeInstanceId,
     outcome: partial.outcome,
     createdAt: partial.createdAt,
     requestedModel: partial.requestedModel ?? 'gpt-5.4',
@@ -59,6 +61,19 @@ function buildRouteLog(
     cacheReadTokens: partial.cacheReadTokens,
     cachedTokens: partial.cachedTokens,
     error: partial.error,
+  };
+}
+
+function buildRouteInstance(id: string, slotId: string, createdAt: number): RouteInstance {
+  return {
+    id,
+    routeKey: { agentId: 'codex', runtimeSlotId: slotId, sessionId: `session-${id}` },
+    display: {},
+    modelId: 'gpt-5.4',
+    reasoningEffort: 'high',
+    routingState: 'active',
+    presenceState: 'unknown',
+    createdAt,
   };
 }
 
@@ -278,6 +293,9 @@ describe('LogsPage', () => {
     });
     vi.mocked(routeApi.getRequestLogs).mockReset().mockResolvedValue({ success: true, data: [] });
     vi.mocked(routeApi.clearRequestLogs).mockReset().mockResolvedValue({ success: true });
+    vi.mocked(routeApi.listRouteInstances)
+      .mockReset()
+      .mockResolvedValue({ success: true, data: [] });
     vi.mocked(routeApi.upsertModelDisplayItem).mockReset();
     vi.mocked(routeApi.getConfig)
       .mockReset()
@@ -362,7 +380,7 @@ describe('LogsPage', () => {
                 availableUserGroups: ['custom-cli'],
                 availableApiKeys: [
                   {
-                    apiKeyId: 'custom-cli-key-duckcoding',
+                    apiKeyId: 'custom-cli-key-duckcoding:key-main',
                     apiKeyName: 'DuckCoding Key',
                     accountId: 'custom-cli-account-duckcoding',
                     accountName: '自定义 CLI',
@@ -423,6 +441,13 @@ describe('LogsPage', () => {
   });
 
   it('renders route request details from the logs page and clears logs', async () => {
+    vi.mocked(routeApi.listRouteInstances).mockResolvedValue({
+      success: true,
+      data: [
+        buildRouteInstance('instance-1', 'slot-1', 1),
+        buildRouteInstance('instance-2', 'slot-2', 2),
+      ],
+    });
     vi.mocked(routeApi.getRequestLogs).mockResolvedValue({
       success: true,
       data: [
@@ -433,6 +458,7 @@ describe('LogsPage', () => {
           attempt: 1,
           outcome: 'failure',
           createdAt: 100,
+          routeInstanceId: 'instance-1',
           reasoningEffort: 'xhigh',
           statusCode: 502,
           latencyMs: 1234,
@@ -451,6 +477,7 @@ describe('LogsPage', () => {
           attempt: 2,
           outcome: 'success',
           createdAt: 200,
+          routeInstanceId: 'instance-2',
           requestedModel: 'gpt-5.4-mini',
           canonicalModel: 'gpt-5.4-mini',
           resolvedModel: 'gpt-5.4-mini-2025-04-14',
@@ -483,7 +510,7 @@ describe('LogsPage', () => {
           accountId: 'custom-cli-account-duckcoding',
           accountName: '自定义 CLI',
           userGroupKey: 'custom-cli',
-          apiKeyId: 'custom-cli-key-duckcoding',
+          apiKeyId: 'custom-cli-key-duckcoding:key-main',
           apiKeyName: 'DuckCoding Key',
           statusCode: 200,
           latencyMs: 456,
@@ -553,7 +580,12 @@ describe('LogsPage', () => {
     const tableLine = within(rows[0]).getByTestId('route-request-table-line');
     expect(tableLine.style.gridTemplateColumns).toBe(ROUTE_LOG_RESPONSIVE_GRID_TEMPLATE);
     expect(tableLine).toHaveClass('gap-x-1');
-    expect(within(rows[0]).getByTestId('route-request-agent')).toHaveTextContent('Codex');
+    // Agent 列带上会话路由卡片编号；route-log-4 无实例映射，保持纯客户端名
+    expect(within(rows[0]).getByTestId('route-request-agent')).toHaveTextContent('Codex #1');
+    expect(within(rows[1]).getByTestId('route-request-agent')).toHaveTextContent('Codex #2');
+    expect(
+      within(getRouteLogRowByRequestId('codex-cache')).getByTestId('route-request-agent')
+    ).toHaveTextContent(/^Codex$/);
     expect(within(rows[0]).queryByTestId('route-request-id-attempt')).not.toBeInTheDocument();
     expect(rows[0]).toHaveAttribute('data-route-request-id', 'codex-1');
     const modelPath = within(rows[0]).getByTestId('route-request-model-path');
@@ -625,7 +657,7 @@ describe('LogsPage', () => {
       'IN 12OUT 3C.W —C.R —'
     );
     const customCliSitePath = within(rows[2]).getByTestId('route-request-site-path');
-    expect(customCliSitePath).toHaveTextContent(/^直连配置 \/ DuckCoding$/);
+    expect(customCliSitePath).toHaveTextContent(/^直连配置 \/ DuckCoding \/ DuckCoding Key$/);
     expect(customCliSitePath).not.toHaveAttribute('title');
     expect(within(rows[2]).getByTestId('route-request-cost')).toHaveTextContent('—');
     expect(
